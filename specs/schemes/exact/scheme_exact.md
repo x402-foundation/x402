@@ -30,4 +30,11 @@ While implementation details vary by network, facilitators MUST enforce security
 - Transfer correctness: `to` MUST equal `payTo` and `amount` MUST equal `requirements.amount` exactly.
 - Simulation verification: MUST emit events showing only the expected balance changes (recipient increase, payer decrease) for `requirements.amount`—no other balance changes allowed.
 
-Network-specific rules are in per-network documents: `scheme_exact_svm.md` (Solana), `scheme_exact_stellar.md` (Stellar), `scheme_exact_evm.md` (EVM), `scheme_exact_sui.md` (SUI).
+### TON
+
+- Relay safety: the relay/facilitator address MUST NOT appear as the source of any Jetton transfer or as the `walletAddress` (payer).
+- Transfer correctness: `jetton_transfer` destination MUST equal `payTo` (after Jetton wallet resolution) and `amount` MUST be `>=` `requirements.amount`.
+- Seqno validation: `seqno` MUST match the wallet's current on-chain seqno for replay protection.
+- Simulation verification: MUST confirm expected balance changes (recipient increase, payer decrease) before broadcast.
+
+Network-specific rules are in per-network documents: `scheme_exact_svm.md` (Solana), `scheme_exact_stellar.md` (Stellar), `scheme_exact_evm.md` (EVM), `scheme_exact_sui.md` (SUI), `scheme_exact_ton.md` (TON).
