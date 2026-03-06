@@ -33,7 +33,9 @@ While implementation details vary by network, facilitators MUST enforce security
 ### TON
 
 - Relay safety: the relay/facilitator address MUST NOT appear as the source of any Jetton transfer or as the `walletAddress` (payer).
-- Transfer correctness: `jetton_transfer` destination MUST equal `payTo` (after Jetton wallet resolution) and `amount` MUST be `>=` `requirements.amount`.
+- Transfer correctness: `jetton_transfer` destination MUST equal `payTo` (after Jetton wallet resolution) and transfer amount MUST equal `requirements.amount` exactly.
+- Commission bounds: if `extra.maxRelayCommission` is set, the relay commission transfer MUST NOT exceed it.
+- Wallet verification: if `stateInit` is present (`seqno == 0`), the contract code MUST match a known W5 wallet code hash.
 - Seqno validation: `seqno` MUST match the wallet's current on-chain seqno for replay protection.
 - Simulation verification: MUST confirm expected balance changes (recipient increase, payer decrease) before broadcast.
 

@@ -53,6 +53,7 @@ In addition to standard x402 fields, TON `exact` uses `extra` fields:
   "maxTimeoutSeconds": 300,
   "extra": {
     "relayAddress": "0:7ae5056c3fd9406f9bbbe7c7089cd4c40801d9075486cbedb7ce12df119eacf1",
+    "maxRelayCommission": "50000",
     "assetDecimals": 6,
     "assetSymbol": "USDT"
   }
@@ -64,7 +65,8 @@ In addition to standard x402 fields, TON `exact` uses `extra` fields:
 - `asset`: [TEP-74] Jetton master contract address (raw format `workchain:hex`).
 - `payTo`: Recipient TON address (raw format).
 - `amount`: Atomic token amount (6 decimals for USDT, so `10000` = $0.01).
-- `extra.relayAddress`: (Optional) Gasless relay address that receives excess TON, reducing fees for the client. When present, the client should set `response_destination` in `jetton_transfer` to this address. When absent, the client handles excess routing itself.
+- `extra.relayAddress`: (Optional) Gasless relay address that receives the relay commission. When present, the W5 batch includes a separate `jetton_transfer` to this address as commission for gas sponsorship. When absent, the client handles gas fees directly.
+- `extra.maxRelayCommission`: (Optional) Maximum relay commission in atomic token units. When present, facilitator MUST reject W5 batches where the commission transfer exceeds this amount. When absent, the facilitator applies its own commission policy.
 - `extra.assetDecimals`: Token decimal places for display purposes.
 - `extra.assetSymbol`: Human-readable token symbol.
 
@@ -101,6 +103,7 @@ Full `PaymentPayload` object:
     "maxTimeoutSeconds": 300,
     "extra": {
       "relayAddress": "0:7ae5056c3fd9406f9bbbe7c7089cd4c40801d9075486cbedb7ce12df119eacf1",
+      "maxRelayCommission": "50000",
       "assetDecimals": 6,
       "assetSymbol": "USDT"
     }
@@ -148,7 +151,7 @@ A facilitator verifying `exact` on TON MUST enforce all checks below before sett
 - `payload.accepted.network` MUST equal `requirements.network`.
 - `payload.accepted.asset` MUST equal `requirements.asset`.
 - `payload.accepted.payTo` MUST equal `requirements.payTo`.
-- `payload.accepted.amount` MUST be `>=` `requirements.amount`.
+- `payload.accepted.amount` MUST equal `requirements.amount` exactly.
 
 ### 2. Signed message validity
 
@@ -162,14 +165,16 @@ A facilitator verifying `exact` on TON MUST enforce all checks below before sett
 - The W5 message MUST contain outgoing internal messages.
 - At least one internal message MUST be a `jetton_transfer` (opcode `0xf8a7ea5`).
 - The `jetton_transfer` destination (after Jetton wallet resolution) MUST match `requirements.payTo`.
-- The transfer amount MUST be `>=` `requirements.amount`.
+- The transfer amount MUST equal `requirements.amount` exactly.
 - The Jetton master contract MUST match `requirements.asset`.
 
 ### 4. Replay and anti-abuse checks
 
 - `payload.seqno` MUST match the wallet's current on-chain seqno.
 - Duplicate `signedBoc` submissions MUST be rejected.
-- The W5 message MUST NOT contain additional unrelated actions beyond the payment transfer and relay commission.
+- The W5 message MUST contain exactly two actions: the payment `jetton_transfer` and (optionally) a relay commission `jetton_transfer`. Any additional actions MUST cause rejection.
+- If `extra.maxRelayCommission` is present, the relay commission transfer amount MUST NOT exceed `extra.maxRelayCommission`. If absent, the facilitator SHOULD apply its own commission policy.
+- If `payload.seqno == 0` and `stateInit` is present, the facilitator MUST verify that the contract code in `stateInit` matches a known W5 wallet contract. Facilitators SHOULD maintain an allowlist of accepted wallet code hashes and reject unknown contracts.
 
 ### 5. Relay sponsorship safety
 
@@ -185,7 +190,7 @@ A facilitator verifying `exact` on TON MUST enforce all checks below before sett
 
 - Facilitator SHOULD simulate message execution before broadcast.
 - Settlement MUST fail if: insufficient Jetton balance, expired message, or invalid seqno.
-- Simulation MUST confirm the expected balance changes: recipient receives `>= requirements.amount`, payer balance decreases accordingly.
+- Simulation MUST confirm the expected balance changes: recipient receives exactly `requirements.amount`, payer balance decreases accordingly.
 
 ## Settlement Logic
 
