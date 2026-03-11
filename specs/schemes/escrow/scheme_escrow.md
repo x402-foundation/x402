@@ -2,102 +2,85 @@
 
 ## Summary
 
-The `escrow` scheme transfers funds through an on-chain escrow contract, decoupling authorization from settlement. The client signs once to authorize a maximum amount, and the facilitator settles through the [Commerce Payments Protocol](https://github.com/base/commerce-payments) — routing funds into escrow (pre-settlement hold) or directly to the receiver (post-settlement refundable).
+`escrow` is a payment scheme where funds can be held and settled later. The client authorizes a maximum amount, and the facilitator submits it — either locking funds in escrow for later settlement (authorize) or sending them directly to the receiver with refund capability (charge).
 
-This scheme reuses audited commerce-payments contracts deployed on Base and other EVM chains.
+The **operator** is the entity that routes funds and manages the payment lifecycle (capture, refund, void). It may be the facilitator itself, a separate authorized account, or a smart contract — depending on the network and implementation.
+
+Unlike `exact`, which has no built-in mechanism for returning funds, `escrow` supports returning funds to the client through void, refund, and reclaim.
 
 ## Example Use Cases
 
 - Refundable payments with buyer protection
-- Post-settlement refunds via the charge path
-- Subscription / session billing with periodic captures
+- Delayed delivery where the client needs recourse if the service is unsatisfactory
+- Subscription or session billing with periodic captures against a single authorization
 
 ## Settlement Methods
 
-The scheme supports two settlement paths through the commerce-payments operator:
+The scheme supports two settlement paths:
 
-| Method      | Function      | Behavior                                                     |
-| :---------- | :------------ | :----------------------------------------------------------- |
-| `authorize` | `authorize()` | Funds held in escrow. Can be captured, refunded, or voided.  |
-| `charge`    | `charge()`    | Funds sent directly to receiver. Refundable post-settlement. |
-
-Both methods share identical function signatures and use the same operator, fee system, and token collector infrastructure.
-
-## Lifecycle
+| Method      | Behavior                                                               |
+| :---------- | :--------------------------------------------------------------------- |
+| `authorize` | Funds held in escrow. Can be captured, refunded, voided, or reclaimed. |
+| `charge`    | Funds sent directly to receiver. Refundable post-settlement.           |
 
 ### Authorize (default)
 
 ```
-SIGN → AUTHORIZE → RESOURCE DELIVERED
+AUTHORIZE → RESOURCE DELIVERED → CAPTURE / VOID → (REFUND)
 ```
 
-1. **Sign**: Client signs an ERC-3009 `receiveWithAuthorization` for the maximum amount
-2. **Authorize**: Facilitator calls `authorize()` on the operator — funds locked in escrow
-3. **Resource delivered**: Server returns the resource (HTTP 200)
-
-Post-settlement, the commerce-payments contracts enable capture, refund, void, or reclaim — see [Commerce Payments Protocol](#commerce-payments-protocol).
+1. **Authorize**: Client authorization is submitted — funds locked in escrow
+2. **Resource delivered**: Server returns the resource (HTTP 200)
+3. **Capture or void**: The operator can capture (finalize funds to the receiver) or void (release escrowed funds back to client).
+4. **Reclaim**: If the capture deadline passes without action, the client can reclaim directly.
+5. **Refund**: After capture, the operator can refund within the refund window.
 
 ### Charge
 
 ```
-SIGN → CHARGE → RESOURCE DELIVERED
+CHARGE → RESOURCE DELIVERED → (REFUND)
 ```
 
-1. **Sign**: Client signs an ERC-3009 authorization (same as above)
-2. **Charge**: Facilitator calls `charge()` on the operator — funds go directly to receiver
-3. **Resource delivered**: Server returns the resource (HTTP 200)
+1. **Charge**: Client authorization is submitted — funds sent directly to receiver
+2. **Resource delivered**: Server returns the resource (HTTP 200)
+3. **Refund**: The operator can refund within the refund window.
 
-Post-settlement, the operator can refund within `refundExpiry` if needed. Unlike the authorize path, the payer cannot `reclaim()` — funds are already with the receiver.
+No capture, void, or reclaim — funds are never held in escrow.
 
-## Relationship to `exact`
-
-| Aspect             | `exact`            | `escrow`                                           |
-| :----------------- | :----------------- | :------------------------------------------------- |
-| Settlement         | Immediate transfer | Via escrow contract (authorize) or direct (charge) |
-| Refundable         | No                 | Yes (both paths)                                   |
-| Fee system         | None               | Commerce-payments managed (min/max bps)            |
-| Gas payer          | Facilitator        | Facilitator                                        |
-| Signature          | ERC-3009 / Permit2 | ERC-3009                                           |
-| On-chain contracts | Token only         | Token + Escrow + Operator + Collector              |
-
-The `charge` settlement method gives `escrow` a direct-settlement path (like `exact`) while retaining post-settlement refund capability through the commerce-payments infrastructure.
-
-## Security Considerations
+## Core Properties
 
 ### Fund Safety
 
-- Funds held in audited [AuthCaptureEscrow](https://github.com/base/commerce-payments) contract
-- Cannot overcharge — `amount` capped by client-signed `maxAmount`
-- Client can reclaim funds after `authorizationExpiry` if operator disappears
-- Fee bounds (`minFeeBps`/`maxFeeBps`) are client-signed and enforced on-chain
+- Cannot overcharge — settlement amount is capped by the client-signed maximum
+- Authorize path: client can reclaim escrowed funds after the capture deadline if no action is taken
+- Fee bounds are client-signed and enforced at settlement
 
 ### Replay Prevention
 
-- Nonces derived from `keccak256(chainId, escrowAddress, paymentInfoHash)` — unique per payment
-- ERC-3009 nonce consumed on-chain by the token contract
-- `salt` field provides additional entropy for session uniqueness
+- Each payment has a unique nonce derived from the payment parameters
+- Nonce is consumed on-chain at settlement, preventing double-spend
 
 ### Expiry Enforcement
 
-The contract enforces strict ordering: `preApprovalExpiry <= authorizationExpiry <= refundExpiry`
+Three ordered deadlines govern the payment lifecycle:
 
-- `preApprovalExpiry`: Deadline for the ERC-3009 signature (doubles as `validBefore`)
-- `authorizationExpiry`: Deadline for capturing escrowed funds
-- `refundExpiry`: Deadline for requesting refunds on captured payments
+- **Authorization deadline**: Last moment to submit the client's authorization for settlement
+- **Capture deadline**: Last moment to capture escrowed funds (authorize path); after this, the client can reclaim
+- **Refund deadline**: Last moment to issue a refund on captured or charged payments
+
+## Relationship to `exact`
+
+| Aspect     | `exact`            | `escrow`                                                         |
+| :--------- | :----------------- | :--------------------------------------------------------------- |
+| Settlement | Immediate transfer | Via escrow (authorize) or direct with refund capability (charge) |
+| Refundable | No                 | Yes (both paths)                                                 |
+| Fee system | None               | Configurable (min/max bounds, client-signed)                     |
 
 ## Appendix
 
-### Commerce Payments Protocol
-
-The escrow scheme is built on Base's [Commerce Payments Protocol](https://blog.base.dev/commerce-payments-protocol), which provides:
-
-- **Escrow**: Singleton contract managing fund locking, capture, refund, and reclaim
-- **Operators**: Route payments through escrow with configurable fees
-- **Token Collectors**: Pluggable modules for different token authorization methods (ERC-3009, Permit2)
+Network-specific implementation details (contracts, signature formats, verification logic) are in per-network documents: `scheme_escrow_evm.md` (EVM).
 
 ### References
 
-- [Commerce Payments Protocol](https://github.com/base/commerce-payments)
-- [EIP-3009: Transfer With Authorization](https://eips.ethereum.org/EIPS/eip-3009)
 - [Escrow Scheme Proposal — Agentokratia (Issue #834)](https://github.com/coinbase/x402/issues/834)
 - [Escrow Scheme Proposal — x402r (Issue #1011)](https://github.com/coinbase/x402/issues/1011)
