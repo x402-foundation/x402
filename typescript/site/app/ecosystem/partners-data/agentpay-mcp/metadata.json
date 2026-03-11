@@ -1,0 +1,7 @@
+{
+  "name": "agentpay-mcp",
+  "description": "x402 payment MCP server for autonomous AI agents — handles 402 responses, signs payments, and retries requests automatically. The client-side complement to x402-protected resource servers. Any agent framework (Claude, LangGraph, CrewAI) gets pay-per-API-call capabilities with a single tool call and built-in spend limits.",
+  "logoUrl": "/logos/agentpay-mcp.png",
+  "websiteUrl": "https://www.npmjs.com/package/agentpay-mcp",
+  "category": "Client-Side Integrations"
+}
