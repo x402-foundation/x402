@@ -47,7 +47,7 @@ export type ClientTvmSigner = {
     walletAddress: string,
     walletPublicKey: string,
     messages: Cell[],
-  ) => Promise<{ address: string; amount: string; payload: Cell | null }[]>;
+  ) => Promise<{ address: string; amount: string; payload: Cell | null; stateInit?: string }[]>;
   /**
    * Sign a W5R1 transfer with the given messages and produce a settlement BOC.
    */
@@ -138,6 +138,7 @@ export function toClientTvmSigner(
         address: m.address.toRawString(),
         amount: m.amount.toString(),
         payload: m.payload ?? null,
+        stateInit: (m as any).stateInit,
       }));
     },
 

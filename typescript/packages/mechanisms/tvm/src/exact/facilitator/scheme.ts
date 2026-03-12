@@ -7,9 +7,12 @@ import {
   VerifyResponse,
   Network,
 } from "@x402/core/types";
+import { Cell } from "@ton/core";
+import { sign, keyPairFromSeed } from "@ton/crypto";
 import { FacilitatorTvmSigner } from "../../signer";
 import { TvmPaymentPayload } from "../../types";
 import {
+  ERR_INVALID_SIGNATURE,
   ERR_PAYMENT_EXPIRED,
   ERR_WRONG_RECIPIENT,
   ERR_WRONG_TOKEN,
@@ -20,20 +23,11 @@ import {
   ERR_SETTLEMENT_FAILED,
 } from "./errors";
 
-export interface ExactTvmSchemeConfig {
-  /**
-   * Maximum allowed age difference (in seconds) between now and validUntil.
-   * Payments with validUntil too far in the past are rejected.
-   * @default 0 (any non-expired payment is accepted)
-   */
-  maxAgeSeconds?: number;
-}
-
 /**
  * TVM facilitator implementation for the Exact payment scheme.
  *
- * Verifies payment fields (recipient, token, amount, expiry, replay)
- * and settles via TONAPI gasless/send.
+ * Verifies payment signature (Ed25519 over W5R1 body), field checks
+ * (recipient, token, amount, expiry, replay), and settles via TONAPI gasless/send.
  */
 export class ExactTvmScheme implements SchemeNetworkFacilitator {
   readonly scheme = "exact";
@@ -42,20 +36,12 @@ export class ExactTvmScheme implements SchemeNetworkFacilitator {
 
   constructor(
     private readonly signer: FacilitatorTvmSigner,
-    private readonly config?: ExactTvmSchemeConfig,
   ) {}
 
-  /**
-   * Returns undefined — TVM has no mechanism-specific extra data.
-   */
   getExtra(_network: string): Record<string, unknown> | undefined {
     return undefined;
   }
 
-  /**
-   * TVM facilitator doesn't hold signer addresses (gasless relay model).
-   * Returns empty array since the relay is the signer.
-   */
   getSigners(_network: string): string[] {
     return [];
   }
@@ -137,6 +123,74 @@ export class ExactTvmScheme implements SchemeNetworkFacilitator {
       };
     }
 
+    // Verify Ed25519 signature on the settlement BoC
+    try {
+      const bocBuffer = Buffer.from(tvmPayload.settlementBoc, "base64");
+      const cell = Cell.fromBoc(bocBuffer)[0];
+      // External message body is in a ref (standard serialization)
+      const bodyCell = cell.refs[0] ?? cell;
+      const bodySlice = bodyCell.beginParse();
+
+      if (bodySlice.remainingBits < 512) {
+        return {
+          isValid: false,
+          invalidReason: ERR_INVALID_SIGNATURE,
+          invalidMessage: "BoC body too short for Ed25519 signature",
+          payer: tvmPayload.from,
+        };
+      }
+
+      const signature = bodySlice.loadBuffer(64);
+
+      // Reconstruct the signed payload cell from remaining bits/refs
+      const signedPayloadBuilder = bodySlice.asCell().beginParse();
+      // Skip the 512 bits we already consumed — loadBuffer advanced the slice
+      // bodySlice is now positioned after the signature
+      // Build a cell from remaining data
+      const remainingCell = bodySlice.asCell();
+
+      // Verify signature: Ed25519(payload_cell_hash, pubkey)
+      const pubkeyBuffer = Buffer.from(tvmPayload.walletPublicKey, "hex");
+      if (pubkeyBuffer.length !== 32) {
+        return {
+          isValid: false,
+          invalidReason: ERR_INVALID_SIGNATURE,
+          invalidMessage: "Invalid public key length",
+          payer: tvmPayload.from,
+        };
+      }
+
+      // The signed data is the hash of the payload cell (everything after the signature)
+      const payloadHash = remainingCell.hash();
+      // Use @ton/crypto verify: reconstruct and check
+      // Ed25519 verify: sign(hash, secretKey) === signature
+      // We don't have the secret key, but we can verify using nacl-style check
+      const nacl = await import("tweetnacl");
+      const isValidSig = nacl.sign.detached.verify(
+        payloadHash,
+        signature,
+        pubkeyBuffer,
+      );
+
+      if (!isValidSig) {
+        return {
+          isValid: false,
+          invalidReason: ERR_INVALID_SIGNATURE,
+          invalidMessage: "Ed25519 signature verification failed",
+          payer: tvmPayload.from,
+        };
+      }
+    } catch (err: unknown) {
+      // If BoC parsing fails, signature is invalid
+      const message = err instanceof Error ? err.message : String(err);
+      return {
+        isValid: false,
+        invalidReason: ERR_INVALID_SIGNATURE,
+        invalidMessage: `Signature verification error: ${message}`,
+        payer: tvmPayload.from,
+      };
+    }
+
     return {
       isValid: true,
       payer: tvmPayload.from,
@@ -148,7 +202,6 @@ export class ExactTvmScheme implements SchemeNetworkFacilitator {
     requirements: PaymentRequirements,
     context?: FacilitatorContext,
   ): Promise<SettleResponse> {
-    // Re-verify before settling
     const verification = await this.verify(payload, requirements, context);
     if (!verification.isValid) {
       return {
@@ -169,7 +222,6 @@ export class ExactTvmScheme implements SchemeNetworkFacilitator {
         tvmPayload.walletPublicKey,
       );
 
-      // Mark nonce as used
       this.settledNonces.add(tvmPayload.nonce);
 
       return {

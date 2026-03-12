@@ -111,6 +111,11 @@ export class ExactTvmScheme implements SchemeNetworkClient {
     // Build x402 payment payload
     const nonce = crypto.randomUUID();
 
+    // Compute commission: sum of estimated message amounts (relay takes fees from these)
+    const commission = estimatedMessages
+      .reduce((sum, m) => sum + BigInt(m.amount), 0n)
+      .toString();
+
     const tvmPayload: TvmPaymentPayload = {
       from: this.signer.address,
       to: payTo,
@@ -124,8 +129,9 @@ export class ExactTvmScheme implements SchemeNetworkClient {
         payload: m.payload
           ? m.payload.toBoc().toString("base64")
           : "",
+        stateInit: m.stateInit,
       })),
-      commission: "0",
+      commission,
       settlementBoc,
       walletPublicKey: this.signer.publicKey,
     };

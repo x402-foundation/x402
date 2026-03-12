@@ -11,11 +11,50 @@ import {
   ERR_NO_SIGNED_MESSAGES,
   ERR_REPLAY,
   ERR_MISSING_SETTLEMENT_DATA,
+  ERR_INVALID_SIGNATURE,
 } from "../../../src/exact/facilitator/errors";
+import { beginCell, Cell } from "@ton/core";
+import nacl from "tweetnacl";
+
+/**
+ * Build a properly signed settlement BoC for testing.
+ *
+ * Mimics W5R1 external message layout:
+ *   root cell -> ref[0] = body cell
+ *   body cell = [512-bit Ed25519 signature][payload bits + refs]
+ *
+ * The signature is Ed25519(hash(payloadCell), secretKey).
+ */
+function buildSignedBoc(secretKey: Uint8Array): string {
+  // Build a payload cell (simulates W5R1 transfer body: wallet_id + valid_until + seqno)
+  const payloadCell = beginCell()
+    .storeUint(698983191, 32) // wallet_id
+    .storeUint(Math.floor(Date.now() / 1000) + 300, 32) // valid_until
+    .storeUint(1, 32) // seqno
+    .endCell();
+
+  // Sign the payload cell hash
+  const payloadHash = payloadCell.hash();
+  const signature = nacl.sign.detached(payloadHash, secretKey);
+
+  // Build body cell: signature + payload data (inline)
+  const bodyBuilder = beginCell();
+  bodyBuilder.storeBuffer(Buffer.from(signature)); // 512 bits
+  // Copy payload bits and refs into body
+  const payloadSlice = payloadCell.beginParse();
+  bodyBuilder.storeSlice(payloadSlice);
+  const bodyCell = bodyBuilder.endCell();
+
+  // Build external message with body as ref (standard serialization)
+  const extCell = beginCell().storeRef(bodyCell).endCell();
+  return extCell.toBoc().toString("base64");
+}
 
 describe("ExactTvmScheme (Facilitator)", () => {
   let facilitator: ExactTvmScheme;
   let mockSigner: FacilitatorTvmSigner;
+  let testKeyPair: nacl.SignKeyPair;
+  let testPublicKeyHex: string;
 
   const validRequirements: PaymentRequirements = {
     scheme: "exact",
@@ -28,6 +67,7 @@ describe("ExactTvmScheme (Facilitator)", () => {
   };
 
   function makeValidPayload(): PaymentPayload {
+    const settlementBoc = buildSignedBoc(testKeyPair.secretKey);
     return {
       x402Version: 2,
       accepted: validRequirements,
@@ -42,13 +82,15 @@ describe("ExactTvmScheme (Facilitator)", () => {
           { address: "0:jettonwallet", amount: "100000000", payload: "base64boc" },
         ],
         commission: "0",
-        settlementBoc: "te6cckEBAgEA...base64",
-        walletPublicKey: "abcdef1234567890",
+        settlementBoc,
+        walletPublicKey: testPublicKeyHex,
       },
     };
   }
 
   beforeEach(() => {
+    testKeyPair = nacl.sign.keyPair();
+    testPublicKeyHex = Buffer.from(testKeyPair.publicKey).toString("hex");
     mockSigner = {
       gaslessSend: vi.fn().mockResolvedValue("gasless-ok"),
     };
@@ -147,6 +189,16 @@ describe("ExactTvmScheme (Facilitator)", () => {
       const result = await facilitator.verify(payload, validRequirements);
       expect(result.isValid).toBe(false);
       expect(result.invalidReason).toBe(ERR_MISSING_SETTLEMENT_DATA);
+    });
+
+    it("should reject invalid signature (wrong key)", async () => {
+      const payload = makeValidPayload();
+      // Use a different keypair's public key
+      const otherKeyPair = nacl.sign.keyPair();
+      (payload.payload as any).walletPublicKey = Buffer.from(otherKeyPair.publicKey).toString("hex");
+      const result = await facilitator.verify(payload, validRequirements);
+      expect(result.isValid).toBe(false);
+      expect(result.invalidReason).toBe(ERR_INVALID_SIGNATURE);
     });
 
     it("should reject replay (same nonce after settle)", async () => {
