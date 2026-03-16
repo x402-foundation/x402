@@ -32,11 +32,10 @@ While implementation details vary by network, facilitators MUST enforce security
 
 ### TON
 
-- Relay safety: the relay/facilitator address MUST NOT appear as the source of any Jetton transfer or as the `walletAddress` (payer).
-- Transfer correctness: `jetton_transfer` destination MUST equal `payTo` (after Jetton wallet resolution) and transfer amount MUST equal `requirements.amount` exactly.
-- Commission bounds: if `extra.maxRelayCommission` is set, the relay commission transfer MUST NOT exceed it.
-- Wallet verification: if `stateInit` is present (`seqno == 0`), the contract code MUST match a known W5 wallet code hash.
-- Seqno validation: `seqno` MUST match the wallet's current on-chain seqno for replay protection.
-- Simulation verification: MUST confirm expected balance changes (recipient increase, payer decrease) before broadcast.
+- Self-relay safety: the facilitator address MUST NOT appear as the source of any Jetton transfer or as the sender wallet address.
+- Transfer correctness: exactly 1 `jetton_transfer` — destination MUST equal `payTo` (after Jetton wallet resolution) and transfer amount MUST equal `requirements.amount` exactly.
+- Signature validity: Ed25519 signature MUST verify against `walletPublicKey` for both `internal_signed` (0x73696e74) and `external_signed` (0x7369676e) opcodes.
+- Replay protection: seqno MUST NOT be stale; duplicate `settlementBoc` submissions rejected via BoC hash dedup.
+- Simulation verification: SHOULD simulate via emulation before broadcast to confirm expected balance changes.
 
 Network-specific rules are in per-network documents: `scheme_exact_svm.md` (Solana), `scheme_exact_stellar.md` (Stellar), `scheme_exact_evm.md` (EVM), `scheme_exact_sui.md` (SUI), `scheme_exact_ton.md` (TON).
