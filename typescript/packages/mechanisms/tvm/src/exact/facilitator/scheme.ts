@@ -5,18 +5,9 @@ import {
   FacilitatorContext,
   SettleResponse,
   VerifyResponse,
-  Network,
 } from "@x402/core/types";
-import { Cell } from "@ton/core";
 import { TvmPaymentPayload } from "../../types";
 import {
-  ERR_INVALID_SIGNATURE,
-  ERR_PAYMENT_EXPIRED,
-  ERR_WRONG_RECIPIENT,
-  ERR_WRONG_TOKEN,
-  ERR_AMOUNT_MISMATCH,
-  ERR_REPLAY,
-  ERR_MISSING_SETTLEMENT_DATA,
   ERR_SETTLEMENT_FAILED,
 } from "./errors";
 
@@ -61,132 +52,49 @@ export class ExactTvmScheme implements SchemeNetworkFacilitator {
     _context?: FacilitatorContext,
   ): Promise<VerifyResponse> {
     const tvmPayload = payload.payload as unknown as TvmPaymentPayload;
+    const payer = tvmPayload.from;
 
-    // Check replay
-    if (this.settledNonces.has(tvmPayload.nonce)) {
-      return {
-        isValid: false,
-        invalidReason: ERR_REPLAY,
-        invalidMessage: "Nonce already used (replay)",
-        payer: tvmPayload.from,
-      };
+    // Resolve facilitator URL
+    const url = this.facilitatorUrl
+      ?? (requirements.extra as Record<string, unknown> | undefined)?.facilitatorUrl as string | undefined;
+    if (!url) {
+      return { isValid: false, invalidReason: "missing_facilitator_url", invalidMessage: "Missing facilitatorUrl", payer };
     }
 
-    // Check expiry
-    if (tvmPayload.validUntil < Math.floor(Date.now() / 1000)) {
-      return {
-        isValid: false,
-        invalidReason: ERR_PAYMENT_EXPIRED,
-        invalidMessage: "Payment expired",
-        payer: tvmPayload.from,
-      };
-    }
-
-    // Check recipient
-    if (tvmPayload.to !== requirements.payTo) {
-      return {
-        isValid: false,
-        invalidReason: ERR_WRONG_RECIPIENT,
-        invalidMessage: `Wrong recipient: expected ${requirements.payTo}, got ${tvmPayload.to}`,
-        payer: tvmPayload.from,
-      };
-    }
-
-    // Check token
-    if (tvmPayload.tokenMaster !== requirements.asset) {
-      return {
-        isValid: false,
-        invalidReason: ERR_WRONG_TOKEN,
-        invalidMessage: `Wrong token: expected ${requirements.asset}, got ${tvmPayload.tokenMaster}`,
-        payer: tvmPayload.from,
-      };
-    }
-
-    // Check amount (exact match for exact scheme)
-    if (BigInt(tvmPayload.amount) < BigInt(requirements.amount)) {
-      return {
-        isValid: false,
-        invalidReason: ERR_AMOUNT_MISMATCH,
-        invalidMessage: `Amount insufficient: expected >= ${requirements.amount}, got ${tvmPayload.amount}`,
-        payer: tvmPayload.from,
-      };
-    }
-
-    // Check settlement data
-    if (!tvmPayload.settlementBoc || !tvmPayload.walletPublicKey) {
-      return {
-        isValid: false,
-        invalidReason: ERR_MISSING_SETTLEMENT_DATA,
-        invalidMessage: "Missing settlementBoc or walletPublicKey",
-        payer: tvmPayload.from,
-      };
-    }
-
-    // Verify Ed25519 signature on the settlement BoC
+    // Delegate full verification (signature, BoC parsing, payment intent, replay) to facilitator
     try {
-      const bocBuffer = Buffer.from(tvmPayload.settlementBoc, "base64");
-      const cell = Cell.fromBoc(bocBuffer)[0];
-      // External message body is in a ref (standard serialization)
-      const bodyCell = cell.refs[0] ?? cell;
-      const bodySlice = bodyCell.beginParse();
+      const resp = await fetch(`${url}/verify`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          x402Version: 2,
+          paymentPayload: { payload: tvmPayload },
+          paymentRequirements: {
+            scheme: requirements.scheme,
+            network: requirements.network,
+            amount: requirements.amount,
+            payTo: requirements.payTo,
+            asset: requirements.asset,
+          },
+        }),
+      });
 
-      if (bodySlice.remainingBits < 512) {
+      const data = await resp.json() as { is_valid: boolean; invalid_reason?: string; payer?: string };
+
+      if (!data.is_valid) {
         return {
           isValid: false,
-          invalidReason: ERR_INVALID_SIGNATURE,
-          invalidMessage: "BoC body too short for Ed25519 signature",
-          payer: tvmPayload.from,
+          invalidReason: data.invalid_reason ?? "verification_failed",
+          invalidMessage: data.invalid_reason ?? "Facilitator verification failed",
+          payer,
         };
       }
 
-      const signature = bodySlice.loadBuffer(64);
-
-      // Reconstruct the signed payload cell from remaining bits/refs
-      const remainingCell = bodySlice.asCell();
-
-      // Verify signature: Ed25519(payload_cell_hash, pubkey)
-      const pubkeyBuffer = Buffer.from(tvmPayload.walletPublicKey, "hex");
-      if (pubkeyBuffer.length !== 32) {
-        return {
-          isValid: false,
-          invalidReason: ERR_INVALID_SIGNATURE,
-          invalidMessage: "Invalid public key length",
-          payer: tvmPayload.from,
-        };
-      }
-
-      // The signed data is the hash of the payload cell (everything after the signature)
-      const payloadHash = remainingCell.hash();
-      const nacl = await import("tweetnacl");
-      const isValidSig = nacl.sign.detached.verify(
-        payloadHash,
-        signature,
-        pubkeyBuffer,
-      );
-
-      if (!isValidSig) {
-        return {
-          isValid: false,
-          invalidReason: ERR_INVALID_SIGNATURE,
-          invalidMessage: "Ed25519 signature verification failed",
-          payer: tvmPayload.from,
-        };
-      }
+      return { isValid: true, payer };
     } catch (err: unknown) {
-      // If BoC parsing fails, signature is invalid
       const message = err instanceof Error ? err.message : String(err);
-      return {
-        isValid: false,
-        invalidReason: ERR_INVALID_SIGNATURE,
-        invalidMessage: `Signature verification error: ${message}`,
-        payer: tvmPayload.from,
-      };
+      return { isValid: false, invalidReason: "verification_error", invalidMessage: `Verification error: ${message}`, payer };
     }
-
-    return {
-      isValid: true,
-      payer: tvmPayload.from,
-    };
   }
 
   async settle(
@@ -227,19 +135,24 @@ export class ExactTvmScheme implements SchemeNetworkFacilitator {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          settlementBoc: tvmPayload.settlementBoc,
-          walletPublicKey: tvmPayload.walletPublicKey,
-          from: tvmPayload.from,
-          to: tvmPayload.to,
-          tokenMaster: tvmPayload.tokenMaster,
-          amount: tvmPayload.amount,
-          nonce: tvmPayload.nonce,
+          x402Version: 2,
+          paymentPayload: { payload: tvmPayload },
+          paymentRequirements: {
+            scheme: requirements.scheme,
+            network: requirements.network,
+            amount: requirements.amount,
+            payTo: requirements.payTo,
+            asset: requirements.asset,
+          },
         }),
       });
 
-      if (!settleResponse.ok) {
-        const error = await settleResponse.text();
-        throw new Error(`Facilitator /settle failed: ${settleResponse.status} ${error}`);
+      const settleData = await settleResponse.json() as {
+        success: boolean; transaction?: string; error_reason?: string; payer?: string; network?: string;
+      };
+
+      if (!settleData.success) {
+        throw new Error(settleData.error_reason ?? `Facilitator /settle failed: ${settleResponse.status}`);
       }
 
       this.settledNonces.add(tvmPayload.nonce);
@@ -247,8 +160,8 @@ export class ExactTvmScheme implements SchemeNetworkFacilitator {
       return {
         success: true,
         payer: tvmPayload.from,
-        transaction: `settle-${tvmPayload.nonce.slice(0, 8)}`,
-        network: requirements.network,
+        transaction: settleData.transaction ?? "",
+        network: (settleData.network ?? requirements.network) as `${string}:${string}`,
       };
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : String(err);

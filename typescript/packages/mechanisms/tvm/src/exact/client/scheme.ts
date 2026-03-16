@@ -7,13 +7,14 @@ import {
 import { Cell } from "@ton/core";
 import { ClientTvmSigner } from "../../signer";
 import { TvmPaymentPayload } from "../../types";
-import { DEFAULT_VALID_UNTIL_OFFSET } from "../../constants";
 
 /**
  * Response from the facilitator /prepare endpoint.
  */
 interface PrepareResponse {
   seqno: number;
+  validUntil: number;
+  walletId: number;
   messages: { address: string; amount: string; payload?: string; stateInit?: string }[];
 }
 
@@ -43,16 +44,20 @@ export class ExactTvmScheme implements SchemeNetworkClient {
       throw new Error("Missing facilitatorUrl in paymentRequirements.extra");
     }
 
-    // Call facilitator /prepare to get seqno and messages to sign
+    // Call facilitator /prepare to get seqno, validUntil, and messages to sign
     const prepareResponse = await fetch(`${facilitatorUrl}/prepare`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        from: this.signer.address,
-        to: payTo,
-        tokenMaster,
-        amount,
+        walletAddress: this.signer.address,
         walletPublicKey: this.signer.publicKey,
+        paymentRequirements: {
+          scheme: paymentRequirements.scheme,
+          network: paymentRequirements.network,
+          amount,
+          payTo,
+          asset: tokenMaster,
+        },
       }),
     });
 
@@ -61,10 +66,7 @@ export class ExactTvmScheme implements SchemeNetworkClient {
       throw new Error(`Facilitator /prepare failed: ${prepareResponse.status} ${error}`);
     }
 
-    const { seqno, messages } = (await prepareResponse.json()) as PrepareResponse;
-
-    // Sign W5R1 transfer
-    const validUntil = Math.ceil(Date.now() / 1000) + DEFAULT_VALID_UNTIL_OFFSET;
+    const { seqno, validUntil, messages } = (await prepareResponse.json()) as PrepareResponse;
 
     const messagesToSign = messages.map((m) => ({
       address: m.address,

@@ -4,9 +4,15 @@ import type { ClientTvmSigner } from "../../../src/signer";
 import { PaymentRequirements } from "@x402/core/types";
 import { USDT_MASTER, TVM_MAINNET } from "../../../src/constants";
 
+// Mock global fetch
+const mockFetch = vi.fn();
+vi.stubGlobal("fetch", mockFetch);
+
 describe("ExactTvmScheme (Client)", () => {
   let client: ExactTvmScheme;
   let mockSigner: ClientTvmSigner;
+
+  const facilitatorUrl = "https://ton-facilitator.example.com";
 
   const mockRequirements: PaymentRequirements = {
     scheme: "exact",
@@ -15,30 +21,32 @@ describe("ExactTvmScheme (Client)", () => {
     asset: USDT_MASTER,
     payTo: "0:abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890",
     maxTimeoutSeconds: 300,
-    extra: {},
+    extra: { facilitatorUrl },
   };
 
   beforeEach(() => {
     mockSigner = {
       address: "0:1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef",
       publicKey: "abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890",
-      getSeqno: vi.fn().mockResolvedValue(5),
-      getJettonWallet: vi.fn().mockResolvedValue(
-        "0:aabbccdd1234567890abcdef1234567890abcdef1234567890abcdef12345678",
-      ),
-      getRelayAddress: vi.fn().mockResolvedValue(
-        "0:ee1a000000000000000000000000000000000000000000000000000000000000",
-      ),
-      gaslessEstimate: vi.fn().mockResolvedValue([
-        {
-          address: "0:aabbccdd1234567890abcdef1234567890abcdef1234567890abcdef12345678",
-          amount: "100000000",
-          payload: null,
-        },
-      ]),
       signTransfer: vi.fn().mockResolvedValue("te6cckEBAgEA...base64boc"),
     };
     client = new ExactTvmScheme(mockSigner);
+
+    // Mock /prepare response
+    mockFetch.mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({
+        seqno: 5,
+        validUntil: Math.floor(Date.now() / 1000) + 300,
+        walletId: 2147483409,
+        messages: [
+          {
+            address: "0:aabbccdd1234567890abcdef1234567890abcdef1234567890abcdef12345678",
+            amount: "10000000",
+          },
+        ],
+      }),
+    });
   });
 
   describe("Construction", () => {
@@ -49,35 +57,27 @@ describe("ExactTvmScheme (Client)", () => {
   });
 
   describe("createPaymentPayload", () => {
-    it("should create payment payload with correct x402Version", async () => {
-      const result = await client.createPaymentPayload(2, mockRequirements);
-      expect(result.x402Version).toBe(2);
-    });
-
-    it("should resolve jetton wallet address", async () => {
+    it("should call facilitator /prepare with correct shape", async () => {
       await client.createPaymentPayload(2, mockRequirements);
-      expect(mockSigner.getJettonWallet).toHaveBeenCalledWith(
-        USDT_MASTER,
-        mockSigner.address,
+      expect(mockFetch).toHaveBeenCalledWith(
+        `${facilitatorUrl}/prepare`,
+        expect.objectContaining({
+          method: "POST",
+          body: expect.stringContaining("walletAddress"),
+        }),
       );
+      const body = JSON.parse(mockFetch.mock.calls[0][1].body);
+      expect(body.walletAddress).toBe(mockSigner.address);
+      expect(body.walletPublicKey).toBe(mockSigner.publicKey);
+      expect(body.paymentRequirements.amount).toBe("10000");
+      expect(body.paymentRequirements.payTo).toBe(mockRequirements.payTo);
     });
 
-    it("should get relay address", async () => {
+    it("should sign transfer with seqno from /prepare", async () => {
       await client.createPaymentPayload(2, mockRequirements);
-      expect(mockSigner.getRelayAddress).toHaveBeenCalled();
-    });
-
-    it("should estimate gasless fees", async () => {
-      await client.createPaymentPayload(2, mockRequirements);
-      expect(mockSigner.gaslessEstimate).toHaveBeenCalled();
-    });
-
-    it("should sign transfer with seqno", async () => {
-      await client.createPaymentPayload(2, mockRequirements);
-      expect(mockSigner.getSeqno).toHaveBeenCalled();
       expect(mockSigner.signTransfer).toHaveBeenCalled();
       const signCall = (mockSigner.signTransfer as ReturnType<typeof vi.fn>).mock.calls[0];
-      expect(signCall[0]).toBe(5); // seqno
+      expect(signCall[0]).toBe(5); // seqno from prepare
     });
 
     it("should include sender address in payload", async () => {
@@ -88,16 +88,6 @@ describe("ExactTvmScheme (Client)", () => {
     it("should include recipient in payload", async () => {
       const result = await client.createPaymentPayload(2, mockRequirements);
       expect(result.payload.to).toBe(mockRequirements.payTo);
-    });
-
-    it("should include token master in payload", async () => {
-      const result = await client.createPaymentPayload(2, mockRequirements);
-      expect(result.payload.tokenMaster).toBe(USDT_MASTER);
-    });
-
-    it("should include amount in payload", async () => {
-      const result = await client.createPaymentPayload(2, mockRequirements);
-      expect(result.payload.amount).toBe("10000");
     });
 
     it("should include settlement BOC in payload", async () => {
@@ -116,10 +106,9 @@ describe("ExactTvmScheme (Client)", () => {
       expect(result1.payload.nonce).not.toBe(result2.payload.nonce);
     });
 
-    it("should set validUntil in the future", async () => {
-      const beforeTime = Math.floor(Date.now() / 1000);
-      const result = await client.createPaymentPayload(2, mockRequirements);
-      expect(result.payload.validUntil).toBeGreaterThan(beforeTime);
+    it("should throw if facilitatorUrl is missing", async () => {
+      const reqNoUrl = { ...mockRequirements, extra: {} };
+      await expect(client.createPaymentPayload(2, reqNoUrl)).rejects.toThrow("facilitatorUrl");
     });
   });
 });
