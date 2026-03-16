@@ -61,8 +61,17 @@ export class ExactTvmScheme implements SchemeNetworkServer {
     },
     extensionKeys: string[],
   ): Promise<PaymentRequirements> {
-    void supportedKind;
     void extensionKeys;
+
+    // Propagate facilitatorUrl from the facilitator's extra into payment requirements
+    const facilitatorUrl = supportedKind.extra?.facilitatorUrl;
+    if (facilitatorUrl) {
+      paymentRequirements.extra = {
+        ...paymentRequirements.extra,
+        facilitatorUrl,
+      };
+    }
+
     return Promise.resolve(paymentRequirements);
   }
 

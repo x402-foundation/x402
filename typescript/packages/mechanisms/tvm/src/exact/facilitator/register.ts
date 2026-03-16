@@ -1,6 +1,5 @@
 import { x402Facilitator } from "@x402/core/facilitator";
 import { Network } from "@x402/core/types";
-import { FacilitatorTvmSigner } from "../../signer";
 import { ExactTvmScheme, ExactTvmSchemeConfig } from "./scheme";
 
 /**
@@ -8,18 +7,13 @@ import { ExactTvmScheme, ExactTvmSchemeConfig } from "./scheme";
  */
 export interface TvmFacilitatorConfig {
   /**
-   * The TVM signer for facilitator operations (settle via gasless relay)
-   */
-  signer: FacilitatorTvmSigner;
-
-  /**
    * Networks to register (single network or array of networks)
    * Examples: "tvm:-239", ["tvm:-239", "tvm:-3"]
    */
   networks: Network | Network[];
 
   /**
-   * Optional scheme configuration
+   * Optional scheme configuration (e.g. facilitatorUrl)
    */
   schemeConfig?: ExactTvmSchemeConfig;
 }
@@ -35,13 +29,11 @@ export interface TvmFacilitatorConfig {
  * ```typescript
  * import { registerExactTvmScheme } from "@x402/tvm/exact/facilitator";
  * import { x402Facilitator } from "@x402/core/facilitator";
- * import { toFacilitatorTvmSigner } from "@x402/tvm";
  *
- * const signer = toFacilitatorTvmSigner(tonapiKey);
  * const facilitator = new x402Facilitator();
  * registerExactTvmScheme(facilitator, {
- *   signer,
  *   networks: "tvm:-239",
+ *   schemeConfig: { facilitatorUrl: "https://facilitator.example.com" },
  * });
  * ```
  */
@@ -51,7 +43,7 @@ export function registerExactTvmScheme(
 ): x402Facilitator {
   facilitator.register(
     config.networks,
-    new ExactTvmScheme(config.signer, config.schemeConfig),
+    new ExactTvmScheme(config.schemeConfig),
   );
 
   return facilitator;

@@ -1,6 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { ExactTvmScheme } from "../../../src/exact/facilitator/scheme";
-import type { FacilitatorTvmSigner } from "../../../src/signer";
 import { PaymentPayload, PaymentRequirements } from "@x402/core/types";
 import { USDT_MASTER, TVM_MAINNET } from "../../../src/constants";
 import {
@@ -8,13 +7,15 @@ import {
   ERR_WRONG_RECIPIENT,
   ERR_WRONG_TOKEN,
   ERR_AMOUNT_MISMATCH,
-  ERR_NO_SIGNED_MESSAGES,
   ERR_REPLAY,
   ERR_MISSING_SETTLEMENT_DATA,
   ERR_INVALID_SIGNATURE,
+  ERR_SETTLEMENT_FAILED,
 } from "../../../src/exact/facilitator/errors";
 import { beginCell, Cell } from "@ton/core";
 import nacl from "tweetnacl";
+
+const TEST_FACILITATOR_URL = "https://facilitator.test.example.com";
 
 /**
  * Build a properly signed settlement BoC for testing.
@@ -52,7 +53,6 @@ function buildSignedBoc(secretKey: Uint8Array): string {
 
 describe("ExactTvmScheme (Facilitator)", () => {
   let facilitator: ExactTvmScheme;
-  let mockSigner: FacilitatorTvmSigner;
   let testKeyPair: nacl.SignKeyPair;
   let testPublicKeyHex: string;
 
@@ -63,7 +63,7 @@ describe("ExactTvmScheme (Facilitator)", () => {
     asset: USDT_MASTER,
     payTo: "0:recipient000000000000000000000000000000000000000000000000000000",
     maxTimeoutSeconds: 300,
-    extra: {},
+    extra: { facilitatorUrl: TEST_FACILITATOR_URL },
   };
 
   function makeValidPayload(): PaymentPayload {
@@ -78,10 +78,6 @@ describe("ExactTvmScheme (Facilitator)", () => {
         amount: "10000",
         validUntil: Math.floor(Date.now() / 1000) + 300,
         nonce: crypto.randomUUID(),
-        signedMessages: [
-          { address: "0:jettonwallet", amount: "100000000", payload: "base64boc" },
-        ],
-        commission: "0",
         settlementBoc,
         walletPublicKey: testPublicKeyHex,
       },
@@ -91,10 +87,8 @@ describe("ExactTvmScheme (Facilitator)", () => {
   beforeEach(() => {
     testKeyPair = nacl.sign.keyPair();
     testPublicKeyHex = Buffer.from(testKeyPair.publicKey).toString("hex");
-    mockSigner = {
-      gaslessSend: vi.fn().mockResolvedValue("gasless-ok"),
-    };
-    facilitator = new ExactTvmScheme(mockSigner);
+    facilitator = new ExactTvmScheme({ facilitatorUrl: TEST_FACILITATOR_URL });
+    vi.restoreAllMocks();
   });
 
   describe("Construction", () => {
@@ -106,8 +100,14 @@ describe("ExactTvmScheme (Facilitator)", () => {
   });
 
   describe("getExtra", () => {
-    it("should return undefined", () => {
-      expect(facilitator.getExtra(TVM_MAINNET)).toBeUndefined();
+    it("should return facilitatorUrl when configured", () => {
+      const extra = facilitator.getExtra(TVM_MAINNET);
+      expect(extra).toEqual({ facilitatorUrl: TEST_FACILITATOR_URL });
+    });
+
+    it("should return undefined when not configured", () => {
+      const scheme = new ExactTvmScheme();
+      expect(scheme.getExtra(TVM_MAINNET)).toBeUndefined();
     });
   });
 
@@ -167,14 +167,6 @@ describe("ExactTvmScheme (Facilitator)", () => {
       expect(result.isValid).toBe(true);
     });
 
-    it("should reject empty signed messages", async () => {
-      const payload = makeValidPayload();
-      (payload.payload as any).signedMessages = [];
-      const result = await facilitator.verify(payload, validRequirements);
-      expect(result.isValid).toBe(false);
-      expect(result.invalidReason).toBe(ERR_NO_SIGNED_MESSAGES);
-    });
-
     it("should reject missing settlement BOC", async () => {
       const payload = makeValidPayload();
       (payload.payload as any).settlementBoc = "";
@@ -202,6 +194,11 @@ describe("ExactTvmScheme (Facilitator)", () => {
     });
 
     it("should reject replay (same nonce after settle)", async () => {
+      // Mock fetch for settle
+      vi.spyOn(global, "fetch").mockResolvedValue(
+        new Response(JSON.stringify({ ok: true }), { status: 200 }),
+      );
+
       const payload = makeValidPayload();
       // First settle should succeed
       const settleResult = await facilitator.settle(payload, validRequirements);
@@ -221,19 +218,31 @@ describe("ExactTvmScheme (Facilitator)", () => {
   });
 
   describe("settle", () => {
-    it("should settle valid payment", async () => {
+    it("should settle valid payment via facilitator /settle", async () => {
+      vi.spyOn(global, "fetch").mockResolvedValue(
+        new Response(JSON.stringify({ ok: true }), { status: 200 }),
+      );
+
       const result = await facilitator.settle(makeValidPayload(), validRequirements);
       expect(result.success).toBe(true);
       expect(result.network).toBe(TVM_MAINNET);
-      expect(result.transaction).toContain("gasless-");
+      expect(result.transaction).toContain("settle-");
     });
 
-    it("should call gaslessSend with correct params", async () => {
+    it("should call facilitator /settle endpoint", async () => {
+      const fetchSpy = vi.spyOn(global, "fetch").mockResolvedValue(
+        new Response(JSON.stringify({ ok: true }), { status: 200 }),
+      );
+
       const payload = makeValidPayload();
       await facilitator.settle(payload, validRequirements);
-      expect(mockSigner.gaslessSend).toHaveBeenCalledWith(
-        (payload.payload as any).settlementBoc,
-        (payload.payload as any).walletPublicKey,
+
+      expect(fetchSpy).toHaveBeenCalledWith(
+        `${TEST_FACILITATOR_URL}/settle`,
+        expect.objectContaining({
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+        }),
       );
     });
 
@@ -245,14 +254,30 @@ describe("ExactTvmScheme (Facilitator)", () => {
       expect(result.errorReason).toBe(ERR_WRONG_RECIPIENT);
     });
 
-    it("should handle gaslessSend failure", async () => {
-      mockSigner.gaslessSend = vi.fn().mockRejectedValue(new Error("TONAPI error"));
+    it("should handle /settle failure", async () => {
+      vi.spyOn(global, "fetch").mockResolvedValue(
+        new Response("Internal Server Error", { status: 500 }),
+      );
+
       const result = await facilitator.settle(makeValidPayload(), validRequirements);
       expect(result.success).toBe(false);
       expect(result.errorMessage).toContain("Settlement failed");
     });
 
+    it("should fail when no facilitatorUrl is available", async () => {
+      const noUrlFacilitator = new ExactTvmScheme();
+      const noUrlRequirements = { ...validRequirements, extra: {} };
+      const result = await noUrlFacilitator.settle(makeValidPayload(), noUrlRequirements);
+      expect(result.success).toBe(false);
+      expect(result.errorReason).toBe(ERR_SETTLEMENT_FAILED);
+      expect(result.errorMessage).toContain("Missing facilitatorUrl");
+    });
+
     it("should prevent replay on settle", async () => {
+      vi.spyOn(global, "fetch").mockResolvedValue(
+        new Response(JSON.stringify({ ok: true }), { status: 200 }),
+      );
+
       const payload = makeValidPayload();
       const result1 = await facilitator.settle(payload, validRequirements);
       expect(result1.success).toBe(true);

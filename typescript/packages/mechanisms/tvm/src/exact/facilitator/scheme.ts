@@ -8,8 +8,6 @@ import {
   Network,
 } from "@x402/core/types";
 import { Cell } from "@ton/core";
-import { sign, keyPairFromSeed } from "@ton/crypto";
-import { FacilitatorTvmSigner } from "../../signer";
 import { TvmPaymentPayload } from "../../types";
 import {
   ERR_INVALID_SIGNATURE,
@@ -17,28 +15,39 @@ import {
   ERR_WRONG_RECIPIENT,
   ERR_WRONG_TOKEN,
   ERR_AMOUNT_MISMATCH,
-  ERR_NO_SIGNED_MESSAGES,
   ERR_REPLAY,
   ERR_MISSING_SETTLEMENT_DATA,
   ERR_SETTLEMENT_FAILED,
 } from "./errors";
 
 /**
+ * Configuration for ExactTvmScheme facilitator.
+ */
+export interface ExactTvmSchemeConfig {
+  /** Override facilitator URL (otherwise taken from paymentRequirements.extra) */
+  facilitatorUrl?: string;
+}
+
+/**
  * TVM facilitator implementation for the Exact payment scheme.
  *
  * Verifies payment signature (Ed25519 over W5R1 body), field checks
- * (recipient, token, amount, expiry, replay), and settles via TONAPI gasless/send.
+ * (recipient, token, amount, expiry, replay), and settles via facilitator /settle.
  */
 export class ExactTvmScheme implements SchemeNetworkFacilitator {
   readonly scheme = "exact";
   readonly caipFamily = "tvm:*";
   private readonly settledNonces = new Set<string>();
+  private readonly facilitatorUrl?: string;
 
-  constructor(
-    private readonly signer: FacilitatorTvmSigner,
-  ) {}
+  constructor(config?: ExactTvmSchemeConfig) {
+    this.facilitatorUrl = config?.facilitatorUrl;
+  }
 
   getExtra(_network: string): Record<string, unknown> | undefined {
+    if (this.facilitatorUrl) {
+      return { facilitatorUrl: this.facilitatorUrl };
+    }
     return undefined;
   }
 
@@ -103,16 +112,6 @@ export class ExactTvmScheme implements SchemeNetworkFacilitator {
       };
     }
 
-    // Check signed messages exist
-    if (!tvmPayload.signedMessages || tvmPayload.signedMessages.length === 0) {
-      return {
-        isValid: false,
-        invalidReason: ERR_NO_SIGNED_MESSAGES,
-        invalidMessage: "No signed messages in payload",
-        payer: tvmPayload.from,
-      };
-    }
-
     // Check settlement data
     if (!tvmPayload.settlementBoc || !tvmPayload.walletPublicKey) {
       return {
@@ -143,10 +142,6 @@ export class ExactTvmScheme implements SchemeNetworkFacilitator {
       const signature = bodySlice.loadBuffer(64);
 
       // Reconstruct the signed payload cell from remaining bits/refs
-      const signedPayloadBuilder = bodySlice.asCell().beginParse();
-      // Skip the 512 bits we already consumed — loadBuffer advanced the slice
-      // bodySlice is now positioned after the signature
-      // Build a cell from remaining data
       const remainingCell = bodySlice.asCell();
 
       // Verify signature: Ed25519(payload_cell_hash, pubkey)
@@ -162,9 +157,6 @@ export class ExactTvmScheme implements SchemeNetworkFacilitator {
 
       // The signed data is the hash of the payload cell (everything after the signature)
       const payloadHash = remainingCell.hash();
-      // Use @ton/crypto verify: reconstruct and check
-      // Ed25519 verify: sign(hash, secretKey) === signature
-      // We don't have the secret key, but we can verify using nacl-style check
       const nacl = await import("tweetnacl");
       const isValidSig = nacl.sign.detached.verify(
         payloadHash,
@@ -216,18 +208,46 @@ export class ExactTvmScheme implements SchemeNetworkFacilitator {
 
     const tvmPayload = payload.payload as unknown as TvmPaymentPayload;
 
+    // Resolve facilitator URL
+    const url = this.facilitatorUrl
+      ?? (requirements.extra as Record<string, unknown> | undefined)?.facilitatorUrl as string | undefined;
+    if (!url) {
+      return {
+        success: false,
+        errorReason: ERR_SETTLEMENT_FAILED,
+        errorMessage: "Missing facilitatorUrl for settlement",
+        payer: tvmPayload.from,
+        transaction: "",
+        network: requirements.network,
+      };
+    }
+
     try {
-      await this.signer.gaslessSend(
-        tvmPayload.settlementBoc,
-        tvmPayload.walletPublicKey,
-      );
+      const settleResponse = await fetch(`${url}/settle`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          settlementBoc: tvmPayload.settlementBoc,
+          walletPublicKey: tvmPayload.walletPublicKey,
+          from: tvmPayload.from,
+          to: tvmPayload.to,
+          tokenMaster: tvmPayload.tokenMaster,
+          amount: tvmPayload.amount,
+          nonce: tvmPayload.nonce,
+        }),
+      });
+
+      if (!settleResponse.ok) {
+        const error = await settleResponse.text();
+        throw new Error(`Facilitator /settle failed: ${settleResponse.status} ${error}`);
+      }
 
       this.settledNonces.add(tvmPayload.nonce);
 
       return {
         success: true,
         payer: tvmPayload.from,
-        transaction: `gasless-${tvmPayload.nonce.slice(0, 8)}`,
+        transaction: `settle-${tvmPayload.nonce.slice(0, 8)}`,
         network: requirements.network,
       };
     } catch (err: unknown) {

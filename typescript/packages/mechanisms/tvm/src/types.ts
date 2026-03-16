@@ -1,18 +1,4 @@
 /**
- * A signed W5 internal message (from TONAPI gasless flow).
- */
-export interface SignedW5Message {
-  /** Destination address */
-  address: string;
-  /** Amount in nanoTON */
-  amount: string;
-  /** Payload as base64 BOC */
-  payload: string;
-  /** State init as base64 BOC (optional) */
-  stateInit?: string;
-}
-
-/**
  * TVM payment payload — the scheme-specific data inside PaymentPayload.payload.
  */
 export interface TvmPaymentPayload {
@@ -28,12 +14,8 @@ export interface TvmPaymentPayload {
   validUntil: number;
   /** Random nonce for replay protection */
   nonce: string;
-  /** Signed messages for W5 wallet (from TONAPI gasless/estimate) */
-  signedMessages: SignedW5Message[];
-  /** Commission amount in token units (paid to relay) */
-  commission: string;
-  /** Full signed external message BOC (base64) for gasless/send */
+  /** Full signed external message BOC (base64) for settlement */
   settlementBoc: string;
-  /** Wallet public key (hex) for gasless/send */
+  /** Wallet public key (hex) */
   walletPublicKey: string;
 }
