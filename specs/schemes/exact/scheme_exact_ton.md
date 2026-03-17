@@ -184,7 +184,7 @@ A facilitator verifying `exact` on TON MUST enforce all checks below before sett
 1. Re-run all verification checks (do not trust prior `/verify` result).
 2. Extract the signed body from the external message.
 3. Fetch the facilitator's own wallet seqno.
-4. Estimate gas via emulation: build a trial relay message, emulate the trace, sum all fees across the trace, and add a 50% buffer for gas price fluctuations.
+4. Estimate gas via emulation: build a trial relay message, emulate the trace, and sum all fees across the trace.
 5. Build the relay message: wrap the user's signed body in an internal message from the facilitator's wallet to the user's wallet, attaching the estimated TON for gas.
 6. Sign and broadcast the facilitator's external message.
 7. Wait for transaction confirmation (typically < 5 seconds on TON).
