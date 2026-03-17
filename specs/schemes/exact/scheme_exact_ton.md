@@ -37,9 +37,7 @@ There is no relay commission. The facilitator absorbs gas costs as the cost of o
 10. **Facilitator** returns a `VerifyResponse`. Verification is **REQUIRED** — it prevents the resource server from doing unnecessary work for invalid payloads.
 11. **Resource Server**, upon successful verification, fulfills the client's request.
 12. **Resource Server** calls the **Facilitator's** `/settle` endpoint. The facilitator MUST perform full verification independently and MUST NOT assume prior `/verify` results.
-13. **Facilitator** settles the payment using dual-mode logic:
-    - **`internal_signed` (opcode `0x73696e74`):** Gasless mode. Facilitator wraps the signed body in an internal message from its own wallet, attaching TON for gas (estimated via emulation). The facilitator's W5 wallet sends this internal message to the user's W5 wallet, which verifies the signature and executes the Jetton transfer.
-    - **`external_signed` (opcode `0x7369676e`):** Direct mode. Facilitator broadcasts the user's external message BOC as-is. The user pays their own gas in this mode.
+13. **Facilitator** settles the payment: wraps the client's signed body in an internal message from its own wallet, attaching TON for gas (estimated via emulation). The facilitator's W5 wallet sends this internal message to the user's W5 wallet, which verifies the signature and executes the Jetton transfer.
 14. **Resource Server** returns the final response to the **Client** with `X-PAYMENT-RESPONSE` header containing the settlement result.
 
 ## `PaymentRequirements` for `exact`
@@ -126,7 +124,7 @@ Full `PaymentPayload` object:
 - `amount`: Payment amount in atomic token units. Must match `requirements.amount`.
 - `validUntil`: Unix timestamp after which the signed message expires.
 - `nonce`: Random string for replay protection.
-- `settlementBoc`: Base64-encoded signed W5 external message BOC containing the Jetton transfer. Contains the `internal_signed` or `external_signed` body with Ed25519 signature.
+- `settlementBoc`: Base64-encoded signed W5 external message BOC containing the Jetton transfer with `internal_signed` body and Ed25519 signature.
 - `walletPublicKey`: Ed25519 public key in hex, used for signature verification.
 
 ## `SettlementResponse`
@@ -159,7 +157,7 @@ A facilitator verifying `exact` on TON MUST enforce all checks below before sett
 ### 2. Signature validity
 
 - `payload.settlementBoc` MUST decode as a valid TON external message.
-- The message body MUST contain a valid W5 (v5r1+) signed transfer with opcode `0x73696e74` (`internal_signed`) or `0x7369676e` (`external_signed`).
+- The message body MUST contain a valid W5 (v5r1+) signed transfer with opcode `0x73696e74` (`internal_signed`).
 - The Ed25519 signature MUST verify against `payload.walletPublicKey`. The signature is located at the TAIL of the W5 message body (after `walletId`, `validUntil`, `seqno`, and actions).
 - `payload.validUntil` MUST be in the future but within `maxTimeoutSeconds` of the current time.
 
@@ -184,18 +182,13 @@ A facilitator verifying `exact` on TON MUST enforce all checks below before sett
 ## Settlement Logic
 
 1. Re-run all verification checks (do not trust prior `/verify` result).
-2. Detect the auth opcode from the signed message body:
-   - **`internal_signed` (0x73696e74) — Gasless mode:**
-     1. Extract the signed body from the external message.
-     2. Fetch the facilitator's own wallet seqno.
-     3. Estimate gas via emulation: build a trial relay message, emulate the trace, sum all fees across the trace, and add a 50% buffer for gas price fluctuations.
-     4. Build the relay message: wrap the user's signed body in an internal message from the facilitator's wallet to the user's wallet, attaching the estimated TON for gas.
-     5. Sign and broadcast the facilitator's external message.
-   - **`external_signed` (0x7369676e) — Direct mode:**
-     1. Broadcast the user's external message BOC as-is to the TON network.
-     2. The user pays their own gas fees in this mode.
-3. Wait for transaction confirmation (typically < 5 seconds on TON).
-4. Return x402 `SettlementResponse` with `success`, `transaction`, `network`, and `payer`.
+2. Extract the signed body from the external message.
+3. Fetch the facilitator's own wallet seqno.
+4. Estimate gas via emulation: build a trial relay message, emulate the trace, sum all fees across the trace, and add a 50% buffer for gas price fluctuations.
+5. Build the relay message: wrap the user's signed body in an internal message from the facilitator's wallet to the user's wallet, attaching the estimated TON for gas.
+6. Sign and broadcast the facilitator's external message.
+7. Wait for transaction confirmation (typically < 5 seconds on TON).
+8. Return x402 `SettlementResponse` with `success`, `transaction`, `network`, and `payer`.
 
 ## Duplicate Settlement Mitigation (RECOMMENDED)
 
@@ -266,30 +259,9 @@ The client uses this data to construct and sign a W5 `internal_signed` message w
 
 ## Reference Implementations
 
-### Facilitator
-
-Self-relay facilitator with dual-mode settlement, emulation-based gas estimation, and 5-rule verification:
-- Repository: [ohld/x402-ton-facilitator](https://github.com/ohld/x402-ton-facilitator)
-- Mainnet address: [`UQAqn8F5nDx8ZvQut25e33uzcBioLLreha4yYujGdrIuHzXX`](https://tonviewer.com/UQAqn8F5nDx8ZvQut25e33uzcBioLLreha4yYujGdrIuHzXX)
-
-### Proof of Concept
-
-Side-by-side comparison: EVM, SVM, and TON payment in the same x402 client:
-- Repository: [ohld/x402-ton-poc](https://github.com/ohld/x402-ton-poc)
-
-### SDK
-
-TypeScript and Python client implementations:
-- Pull request: [coinbase/x402#1583](https://github.com/coinbase/x402/pull/1583)
-
-### On-chain Proof (7 mainnet USDT payments)
-
-All payments executed via the self-relay facilitator on TON mainnet:
-
-| # | Transaction | Amount | Date |
-|---|---|---|---|
-| 1 | [`ba96f62d...`](https://tonviewer.com/transaction/ba96f62d4ea651a21da4282809f2541ea42481ca35018129f29b406ef3fe36c0) | 0.01 USDT | First successful x402 payment on TON |
-| 2–7 | See [facilitator transaction history](https://tonviewer.com/UQAqn8F5nDx8ZvQut25e33uzcBioLLreha4yYujGdrIuHzXX) | 0.01 USDT | Subsequent test payments |
+- **Facilitator**: [ohld/x402-ton-facilitator](https://github.com/ohld/x402-ton-facilitator)
+- **POC**: [ohld/x402-ton-poc](https://github.com/ohld/x402-ton-poc)
+- **SDK**: [coinbase/x402#1583](https://github.com/coinbase/x402/pull/1583)
 
 ## Appendix
 
@@ -342,8 +314,7 @@ TON uses the [TEP-74 Jetton standard][TEP-74] for fungible tokens:
 - [TEP-74 Jetton Standard][TEP-74]
 - [W5 Wallet Contract](https://github.com/ton-blockchain/wallet-contract-v5)
 - [TVM CAIP-2 Namespace](https://namespaces.chainagnostic.org/tvm/caip2)
-- [Facilitator (self-relay)](https://github.com/ohld/x402-ton-facilitator)
-- [Working Demo](https://github.com/ohld/x402-ton-poc)
-- [SDK PR](https://github.com/coinbase/x402/pull/1583)
+- [Facilitator](https://github.com/ohld/x402-ton-facilitator)
+- [POC](https://github.com/ohld/x402-ton-poc)
 
 [TEP-74]: https://github.com/ton-blockchain/TEPs/blob/master/text/0074-jettons-standard.md
