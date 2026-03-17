@@ -79,13 +79,17 @@ export class ExactTvmScheme implements SchemeNetworkFacilitator {
         }),
       });
 
-      const data = await resp.json() as { is_valid: boolean; invalid_reason?: string; payer?: string };
+      const data = await resp.json() as Record<string, unknown>;
 
-      if (!data.is_valid) {
+      // Support both camelCase (x402 standard) and snake_case (legacy) response formats
+      const isValid = (data.isValid ?? data.is_valid) as boolean;
+      const invalidReason = (data.invalidReason ?? data.invalid_reason) as string | undefined;
+
+      if (!isValid) {
         return {
           isValid: false,
-          invalidReason: data.invalid_reason ?? "verification_failed",
-          invalidMessage: data.invalid_reason ?? "Facilitator verification failed",
+          invalidReason: invalidReason ?? "verification_failed",
+          invalidMessage: invalidReason ?? "Facilitator verification failed",
           payer,
         };
       }
@@ -147,12 +151,11 @@ export class ExactTvmScheme implements SchemeNetworkFacilitator {
         }),
       });
 
-      const settleData = await settleResponse.json() as {
-        success: boolean; transaction?: string; error_reason?: string; payer?: string; network?: string;
-      };
+      const settleData = await settleResponse.json() as Record<string, unknown>;
 
       if (!settleData.success) {
-        throw new Error(settleData.error_reason ?? `Facilitator /settle failed: ${settleResponse.status}`);
+        const errorReason = (settleData.errorReason ?? settleData.error_reason) as string | undefined;
+        throw new Error(errorReason ?? `Facilitator /settle failed: ${settleResponse.status}`);
       }
 
       this.settledNonces.add(tvmPayload.nonce);
@@ -160,8 +163,8 @@ export class ExactTvmScheme implements SchemeNetworkFacilitator {
       return {
         success: true,
         payer: tvmPayload.from,
-        transaction: settleData.transaction ?? "",
-        network: (settleData.network ?? requirements.network) as `${string}:${string}`,
+        transaction: (settleData.transaction as string) ?? "",
+        network: ((settleData.network as string) ?? requirements.network) as `${string}:${string}`,
       };
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : String(err);
