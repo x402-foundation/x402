@@ -5,7 +5,7 @@
  * optional chain configuration via environment variables.
  *
  * New chain support should be added here in alphabetic order by network prefix
- * (e.g., "algorand" before "eip155" before "solana" before "stellar").
+ * (e.g., "algorand" before "eip155" before "hedera" before "solana" before "stellar" before "tvm").
  */
 
 import { config } from "dotenv";
@@ -16,6 +16,7 @@ import { ExactEvmScheme } from "@x402/evm/exact/server";
 import { ExactHederaScheme } from "@x402/hedera/exact/server";
 import { ExactSvmScheme } from "@x402/svm/exact/server";
 import { ExactStellarScheme } from "@x402/stellar/exact/server";
+import { ExactTvmScheme } from "@x402/tvm/exact/server";
 import { HTTPFacilitatorClient } from "@x402/core/server";
 import type { Network, Price } from "@x402/core/types";
 
@@ -24,14 +25,15 @@ config();
 // Configuration - optional per network
 const avmAddress = process.env.AVM_ADDRESS as string | undefined;
 const evmAddress = process.env.EVM_ADDRESS as `0x${string}` | undefined;
+const hederaAddress = process.env.HEDERA_ACCOUNT_ID as string | undefined;
 const svmAddress = process.env.SVM_ADDRESS as string | undefined;
 const stellarAddress = process.env.STELLAR_ADDRESS as string | undefined;
-const hederaAddress = process.env.HEDERA_ACCOUNT_ID as string | undefined;
+const tvmAddress = process.env.TVM_ADDRESS as string | undefined;
 
 // Validate at least one address is provided
-if (!avmAddress && !evmAddress && !svmAddress && !stellarAddress && !hederaAddress) {
+if (!avmAddress && !evmAddress && !svmAddress && !stellarAddress && !hederaAddress && !tvmAddress) {
   console.error(
-    "❌ At least one of AVM_ADDRESS, EVM_ADDRESS, SVM_ADDRESS, STELLAR_ADDRESS, or HEDERA_ACCOUNT_ID is required",
+    "❌ At least one of AVM_ADDRESS, EVM_ADDRESS, SVM_ADDRESS, STELLAR_ADDRESS, HEDERA_ACCOUNT_ID, or TVM_ADDRESS is required",
   );
   process.exit(1);
 }
@@ -50,6 +52,7 @@ const SVM_NETWORK = "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1" as const; // Solan
 const STELLAR_NETWORK = "stellar:testnet" as const; // Stellar Testnet
 const HEDERA_HBAR_ASSET = "0.0.0" as const; // Native HBAR asset id
 const HEDERA_WEATHER_PRICE_TINYBARS = "100000" as const; // 0.001 HBAR
+const TVM_NETWORK = "tvm:-239" as const; // TON Mainnet
 
 // Build accepts array dynamically based on configured addresses
 const accepts: Array<{
@@ -74,6 +77,17 @@ if (evmAddress) {
     payTo: evmAddress,
   });
 }
+if (hederaAddress) {
+  accepts.push({
+    scheme: "exact",
+    price: {
+      amount: HEDERA_WEATHER_PRICE_TINYBARS,
+      asset: HEDERA_HBAR_ASSET,
+    },
+    network: HEDERA_NETWORK,
+    payTo: hederaAddress,
+  });
+}
 if (svmAddress) {
   accepts.push({
     scheme: "exact",
@@ -90,15 +104,12 @@ if (stellarAddress) {
     payTo: stellarAddress,
   });
 }
-if (hederaAddress) {
+if (tvmAddress) {
   accepts.push({
     scheme: "exact",
-    price: {
-      amount: HEDERA_WEATHER_PRICE_TINYBARS,
-      asset: HEDERA_HBAR_ASSET,
-    },
-    network: HEDERA_NETWORK,
-    payTo: hederaAddress,
+    price: "$0.001",
+    network: TVM_NETWORK,
+    payTo: tvmAddress,
   });
 }
 
@@ -113,14 +124,17 @@ if (avmAddress) {
 if (evmAddress) {
   server.register(EVM_NETWORK, new ExactEvmScheme());
 }
+if (hederaAddress) {
+  server.register(HEDERA_NETWORK, new ExactHederaScheme());
+}
 if (svmAddress) {
   server.register(SVM_NETWORK, new ExactSvmScheme());
 }
 if (stellarAddress) {
   server.register(STELLAR_NETWORK, new ExactStellarScheme());
 }
-if (hederaAddress) {
-  server.register(HEDERA_NETWORK, new ExactHederaScheme());
+if (tvmAddress) {
+  server.register(TVM_NETWORK, new ExactTvmScheme());
 }
 
 // Create Express app
@@ -165,14 +179,17 @@ app.listen(port, () => {
   if (evmAddress) {
     console.log(`   EVM: ${evmAddress} on ${EVM_NETWORK}`);
   }
+  if (hederaAddress) {
+    console.log(`   Hedera: ${hederaAddress} on ${HEDERA_NETWORK}`);
+  }
   if (svmAddress) {
     console.log(`   SVM: ${svmAddress} on ${SVM_NETWORK}`);
   }
   if (stellarAddress) {
     console.log(`   Stellar: ${stellarAddress} on ${STELLAR_NETWORK}`);
   }
-  if (hederaAddress) {
-    console.log(`   Hedera: ${hederaAddress} on ${HEDERA_NETWORK}`);
+  if (tvmAddress) {
+    console.log(`   TVM: ${tvmAddress} on ${TVM_NETWORK}`);
   }
   console.log(`   Facilitator: ${facilitatorUrl}`);
   console.log();
