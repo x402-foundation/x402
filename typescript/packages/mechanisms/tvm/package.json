@@ -17,13 +17,11 @@
     "@x402/core": "workspace:~",
     "@ton/core": "^0.63.1",
     "@ton/crypto": "^3.3.0",
-    "@ton/ton": "^16.2.2",
-    "@ton-api/client": "^0.4.0",
-    "@ton-api/ton-adapter": "^0.4.1",
-    "tweetnacl": "^1.0.3"
+    "@ton/ton": "^16.2.2"
   },
   "devDependencies": {
     "@types/node": "^22.13.1",
+    "tweetnacl": "^1.0.3",
     "tsup": "^8.4.0",
     "typescript": "^5.7.3",
     "vite": "^6.2.6",
