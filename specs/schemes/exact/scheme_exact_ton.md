@@ -140,7 +140,7 @@ Full `PaymentPayload` object:
 
 ## Facilitator Verification Rules (MUST)
 
-A facilitator verifying `exact` on TON MUST enforce all checks below. Verification happens at `/verify` time to protect the resource server from unnecessary work.
+A facilitator verifying `exact` on TON MUST enforce all of the following checks before sponsoring and relaying the transaction:
 
 ### 1. Protocol and requirement consistency
 
@@ -158,27 +158,31 @@ A facilitator verifying `exact` on TON MUST enforce all checks below. Verificati
 - The Ed25519 signature MUST verify against `payload.walletPublicKey`. The signature is located at the TAIL of the W5 message body (after `walletId`, `validUntil`, `seqno`, and actions).
 - `payload.validUntil` MUST be in the future but within `maxTimeoutSeconds` of the current time.
 
-### 3. Payment intent
+### 3. Facilitator safety
+
+- The facilitator's own address MUST NOT appear as the sender (`payload.from`) or as the source of any Jetton transfer. This prevents a malicious payload from tricking the facilitator into spending its own funds.
+
+### 4. Payment intent
 
 - The W5 message MUST contain exactly **1** `jetton_transfer` (opcode `0xf8a7ea5`) internal message. No additional actions are permitted.
-- The recipient Jetton wallet contract MUST match `get_wallet_address(requirements.payTo)` called on the Jetton master contract (`requirements.asset`).
+- The destination address of the `jetton_transfer` internal message in the BoC MUST match the Jetton wallet address returned by `get_wallet_address(requirements.payTo)` on the Jetton master contract (`requirements.asset`). This ensures the transfer targets the legitimate Jetton wallet, not a substitute contract.
 - The transfer amount MUST be equal to `requirements.amount`.
 - The Jetton master contract (`payload.tokenMaster`) MUST match `requirements.asset`.
 
-### 4. Replay protection
+### 5. Replay protection
 
 - `payload.validUntil` MUST NOT be expired and MUST NOT be more than `maxTimeoutSeconds` in the future.
 - The wallet's on-chain seqno MUST be checked: the seqno in the BoC MUST NOT be less than the current on-chain seqno.
 - The client MUST have sufficient balance of the payment asset.
 - Duplicate `settlementBoc` submissions MUST be rejected via BoC hash dedup (see [Duplicate Settlement Mitigation](#duplicate-settlement-mitigation-recommended)).
 
-> **Note:** Seqno and balance checks MAY be satisfied implicitly via transaction simulation (section 5). The spec declares them as explicit requirements so that implementations that do not simulate still enforce these checks.
+> **Note:** Seqno and balance checks MAY be satisfied implicitly via transaction simulation (section 6). The spec declares them as explicit requirements so that implementations that do not simulate still enforce these checks.
 
-### 5. Transaction simulation (recommended)
+### 6. Transaction simulation (recommended)
 
 - Facilitator SHOULD simulate message execution via emulation during `/verify`.
 - Verification SHOULD fail if simulation indicates: insufficient Jetton balance, expired message, or invalid seqno.
-- When simulation is performed, it implicitly covers seqno and balance checks from section 4.
+- When simulation is performed, it implicitly covers seqno and balance checks from section 5.
 
 ## Settlement Logic
 
