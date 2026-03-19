@@ -75,6 +75,7 @@ export class ExactTvmScheme implements SchemeNetworkFacilitator {
             amount: requirements.amount,
             payTo: requirements.payTo,
             asset: requirements.asset,
+            maxTimeoutSeconds: requirements.maxTimeoutSeconds,
           },
         }),
       });
@@ -147,6 +148,7 @@ export class ExactTvmScheme implements SchemeNetworkFacilitator {
             amount: requirements.amount,
             payTo: requirements.payTo,
             asset: requirements.asset,
+            maxTimeoutSeconds: requirements.maxTimeoutSeconds,
           },
         }),
       });

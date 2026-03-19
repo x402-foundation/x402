@@ -104,7 +104,8 @@ export class ExactTvmScheme implements SchemeNetworkClient {
       Address.parseRaw(this.signer.address), // response_destination (excess back to sender)
     );
 
-    const validUntil = Math.floor(Date.now() / 1000) + DEFAULT_VALID_UNTIL_OFFSET;
+    const timeoutSeconds = paymentRequirements.maxTimeoutSeconds ?? DEFAULT_VALID_UNTIL_OFFSET;
+    const validUntil = Math.floor(Date.now() / 1000) + timeoutSeconds;
 
     // Sign the W5R1 transfer
     const messagesToSign = [{
