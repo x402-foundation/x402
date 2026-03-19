@@ -28,7 +28,7 @@ export interface ExactTvmSchemeConfig {
 export class ExactTvmScheme implements SchemeNetworkFacilitator {
   readonly scheme = "exact";
   readonly caipFamily = "tvm:*";
-  private readonly settledNonces = new Set<string>();
+  private readonly settledBocHashes = new Set<string>();
   private readonly facilitatorUrl?: string;
 
   constructor(config?: ExactTvmSchemeConfig) {
@@ -158,7 +158,7 @@ export class ExactTvmScheme implements SchemeNetworkFacilitator {
         throw new Error(errorReason ?? `Facilitator /settle failed: ${settleResponse.status}`);
       }
 
-      this.settledNonces.add(tvmPayload.nonce);
+      this.settledBocHashes.add(tvmPayload.settlementBoc.slice(0, 64));
 
       return {
         success: true,

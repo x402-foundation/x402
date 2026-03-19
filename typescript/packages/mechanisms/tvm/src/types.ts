@@ -12,8 +12,6 @@ export interface TvmPaymentPayload {
   amount: string;
   /** Valid until unix timestamp */
   validUntil: number;
-  /** Random nonce for replay protection */
-  nonce: string;
   /** Full signed external message BOC (base64) for settlement */
   settlementBoc: string;
   /** Wallet public key (hex) */

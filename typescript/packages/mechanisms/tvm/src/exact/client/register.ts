@@ -14,6 +14,16 @@ export interface TvmClientConfig {
   signer: ClientTvmSigner;
 
   /**
+   * TON RPC endpoint URL (default: toncenter.com free tier)
+   */
+  rpcUrl?: string;
+
+  /**
+   * Optional API key for higher RPC rate limits
+   */
+  apiKey?: string;
+
+  /**
    * Optional payment requirements selector function
    */
   paymentRequirementsSelector?: SelectPaymentRequirements;
@@ -54,7 +64,10 @@ export function registerExactTvmScheme(
   client: x402Client,
   config: TvmClientConfig,
 ): x402Client {
-  const tvmScheme = new ExactTvmScheme(config.signer);
+  const tvmScheme = new ExactTvmScheme(config.signer, {
+    rpcUrl: config.rpcUrl,
+    apiKey: config.apiKey,
+  });
 
   if (config.networks && config.networks.length > 0) {
     config.networks.forEach((network) => {
