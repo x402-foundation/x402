@@ -159,7 +159,7 @@ A facilitator verifying `exact` on TON MUST enforce all of the following checks 
 - `payload.settlementBoc` MUST decode as a valid TON external message.
 - The message body MUST contain a valid W5 (v5r1+) signed transfer with opcode `0x73696e74` (`internal_signed`).
 - The Ed25519 signature MUST verify against `payload.walletPublicKey`. The signature is located at the TAIL of the W5 message body (after `walletId`, `validUntil`, `seqno`, and actions).
-- `payload.validUntil` MUST be in the future but within `maxTimeoutSeconds` of the current time.
+- If the external message includes `stateInit` (seqno == 0), the facilitator MUST verify the contract code matches a known W5 wallet contract. Implementations SHOULD maintain an allowlist of accepted wallet code hashes.
 
 ### 3. Facilitator safety
 
