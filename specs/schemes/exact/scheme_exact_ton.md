@@ -53,7 +53,8 @@ In addition to standard x402 fields, TON `exact` uses `extra` fields:
   "payTo": "0:92433a576cbe56c4dcc86d94b497a2cf18a9baa9c8283fea28ea43eb3c25cfed",
   "maxTimeoutSeconds": 300,
   "extra": {
-    "facilitatorUrl": "https://facilitator.example.com"
+    "facilitatorUrl": "https://facilitator.example.com",
+    "areFeesSponsored": true
   }
 }
 ```
@@ -64,6 +65,7 @@ In addition to standard x402 fields, TON `exact` uses `extra` fields:
 - `payTo`: Recipient TON address (raw format).
 - `amount`: Atomic token amount (6 decimals for USDT, so `10000` = $0.01).
 - `extra.facilitatorUrl`: URL of the facilitator server. The resource server calls `{facilitatorUrl}/verify` and `{facilitatorUrl}/settle`.
+- `extra.areFeesSponsored`: Whether the facilitator sponsors gas fees. Currently always `true`; a non-sponsored flow will be added later.
 
 ## PaymentPayload `payload` Field
 
@@ -99,7 +101,8 @@ Full `PaymentPayload` object:
     "payTo": "0:92433a576cbe56c4dcc86d94b497a2cf18a9baa9c8283fea28ea43eb3c25cfed",
     "maxTimeoutSeconds": 300,
     "extra": {
-      "facilitatorUrl": "https://facilitator.example.com"
+      "facilitatorUrl": "https://facilitator.example.com",
+      "areFeesSponsored": true
     }
   },
   "payload": {
