@@ -167,10 +167,12 @@ A facilitator verifying `exact` on TON MUST enforce all of the following checks 
 
 ### 4. Payment intent
 
+- `payload.to` MUST equal `requirements.payTo`.
 - The W5 message MUST contain exactly **1** `jetton_transfer` (opcode `0xf8a7ea5`) internal message. No additional actions are permitted.
-- The destination address of the `jetton_transfer` internal message in the BoC MUST match the Jetton wallet address returned by `get_wallet_address(requirements.payTo)` on the Jetton master contract (`requirements.asset`). This ensures the transfer targets the legitimate Jetton wallet, not a substitute contract.
 - The transfer amount MUST be equal to `requirements.amount`.
 - The Jetton master contract (`payload.tokenMaster`) MUST match `requirements.asset`.
+- The source Jetton wallet — i.e., the destination of the W5 internal message in the BoC — MUST match the Jetton wallet address returned by `get_wallet_address(payload.from)` on the Jetton master contract (`requirements.asset`). This prevents a malicious BoC from using a substitute source contract.
+- The `destination` field inside the `jetton_transfer` body MUST equal `requirements.payTo`. This ensures funds are routed to the correct recipient.
 
 ### 5. Replay protection
 
