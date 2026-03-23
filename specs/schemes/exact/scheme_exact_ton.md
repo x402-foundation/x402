@@ -26,7 +26,7 @@ There is no relay commission. The facilitator absorbs gas costs as the cost of o
 ## Protocol Flow
 
 1. **Client** requests a protected resource from the **Resource Server**.
-2. **Resource Server** responds with HTTP 402 and `PaymentRequired` data. The `accepts` array includes a TON payment option with `facilitatorUrl`.
+2. **Resource Server** responds with HTTP 402 and `PaymentRequired` data. The `accepts` array includes a TON payment option.
 3. **Client** queries a TON RPC endpoint to resolve its Jetton wallet address (`get_wallet_address` on the Jetton master contract) and fetches its current wallet seqno.
 4. **Client** constructs a `jetton_transfer` body ([TEP-74]) and wraps it in a W5 `internal_signed` message.
 5. **Client** signs the message with their Ed25519 private key.
@@ -53,7 +53,6 @@ In addition to standard x402 fields, TON `exact` uses `extra` fields:
   "payTo": "0:92433a576cbe56c4dcc86d94b497a2cf18a9baa9c8283fea28ea43eb3c25cfed",
   "maxTimeoutSeconds": 300,
   "extra": {
-    "facilitatorUrl": "https://facilitator.example.com",
     "areFeesSponsored": true
   }
 }
@@ -64,7 +63,6 @@ In addition to standard x402 fields, TON `exact` uses `extra` fields:
 - `asset`: [TEP-74] Jetton master contract address (raw format `workchain:hex`).
 - `payTo`: Recipient TON address (raw format).
 - `amount`: Atomic token amount (6 decimals for USDT, so `10000` = $0.01).
-- `extra.facilitatorUrl`: URL of the facilitator server. The resource server calls `{facilitatorUrl}/verify` and `{facilitatorUrl}/settle`.
 - `extra.areFeesSponsored`: Whether the facilitator sponsors gas fees. Currently always `true`; a non-sponsored flow will be added later.
 
 ## PaymentPayload `payload` Field
@@ -101,7 +99,6 @@ Full `PaymentPayload` object:
     "payTo": "0:92433a576cbe56c4dcc86d94b497a2cf18a9baa9c8283fea28ea43eb3c25cfed",
     "maxTimeoutSeconds": 300,
     "extra": {
-      "facilitatorUrl": "https://facilitator.example.com",
       "areFeesSponsored": true
     }
   },
@@ -159,7 +156,8 @@ A facilitator verifying `exact` on TON MUST enforce all of the following checks 
 - `payload.settlementBoc` MUST decode as a valid TON external message.
 - The message body MUST contain a valid W5 (v5r1+) signed transfer with opcode `0x73696e74` (`internal_signed`).
 - The Ed25519 signature MUST verify against `payload.walletPublicKey`. The signature is located at the TAIL of the W5 message body (after `walletId`, `validUntil`, `seqno`, and actions).
-- If the external message includes `stateInit` (seqno == 0), the facilitator MUST verify the contract code matches a known W5 wallet contract. Implementations SHOULD maintain an allowlist of accepted wallet code hashes.
+- If the external message includes `stateInit` (seqno == 0), the facilitator MUST verify the contract code matches a known W5 wallet contract. The canonical code hash for W5R1 is `20834b7b72b112147e1b2fb457b84e74d1a30f04f737d4f62a668e9552d2b72f`. Implementations SHOULD maintain an allowlist of accepted wallet code hashes and update it when TON Foundation publishes new wallet versions.
+- For wallets with seqno > 0, simulation (section 6) provides equivalent protection: if the contract does not execute the expected Jetton transfer, simulation will fail. Implementations that simulate MAY skip explicit code hash checks.
 
 ### 3. Facilitator safety
 
@@ -213,7 +211,7 @@ Facilitators SHOULD maintain a short-term, in-memory cache of BoC hashes that ha
 1. After verification succeeds, compute a hash of the `settlementBoc`.
 2. If the hash is already present in the cache, reject the settlement with a `"duplicate_settlement"` error.
 3. If the hash is not present, insert it into the cache and proceed with signing and submission.
-4. Evict entries older than `maxTimeoutSeconds` from the corresponding `PaymentRequirements`. After this window, the signed message will have expired and cannot land on-chain regardless.
+4. Evict entries older than 300 seconds. After this window, the signed message's `validUntil` will have passed (default `maxTimeoutSeconds` is 300s) and it cannot land on-chain regardless. This is analogous to SVM's fixed 120-second eviction window (tied to blockhash lifetime).
 
 This approach requires no external storage or long-lived state — only an in-process set with time-based eviction. It preserves the facilitator's otherwise stateless design while closing the duplicate settlement attack vector.
 
