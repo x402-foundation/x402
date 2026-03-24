@@ -522,6 +522,79 @@ Integrate the payment middleware into your application. You will need to provide
     }
     ```
   </Tab>
+  <Tab title="Go (Echo)">
+    Full example in the repo [here](https://github.com/x402-foundation/x402/tree/main/examples/go/servers/echo).
+
+    ```go
+    package main
+
+    import (
+        "net/http"
+        "time"
+
+        x402 "github.com/x402-foundation/x402/go"
+        x402http "github.com/x402-foundation/x402/go/http"
+        echomw "github.com/x402-foundation/x402/go/http/echo"
+        evm "github.com/x402-foundation/x402/go/mechanisms/evm/exact/server"
+        svm "github.com/x402-foundation/x402/go/mechanisms/svm/exact/server"
+        "github.com/labstack/echo/v4"
+    )
+
+    func main() {
+        evmAddress := "0xYourEvmAddress"
+        svmAddress := "YourSolanaAddress"
+        evmNetwork := x402.Network("eip155:84532")                              // Base Sepolia
+        svmNetwork := x402.Network("solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1")  // Solana Devnet
+
+        e := echo.New()
+
+        // Create facilitator client
+        facilitatorClient := x402http.NewHTTPFacilitatorClient(&x402http.FacilitatorConfig{
+            URL: "https://x402.org/facilitator",
+        })
+
+        // Apply x402 payment middleware
+        e.Use(echomw.X402Payment(echomw.Config{
+            Routes: x402http.RoutesConfig{
+                "GET /weather": {
+                    Accepts: x402http.PaymentOptions{
+                        {
+                            Scheme:  "exact",
+                            Price:   "$0.001",
+                            Network: "eip155:84532",
+                            PayTo:   evmAddress,
+                        },
+                        {
+                            Scheme:  "exact",
+                            Price:   "$0.001",
+                            Network: "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1",
+                            PayTo:   svmAddress,
+                        },
+                    },
+                    Description: "Get weather data for a city",
+                    MimeType:    "application/json",
+                },
+            },
+            Facilitator: facilitatorClient,
+            Schemes: []echomw.SchemeConfig{
+                {Network: evmNetwork, Server: evm.NewExactEvmScheme()},
+                {Network: svmNetwork, Server: svm.NewExactSvmScheme()},
+            },
+            Timeout: 30 * time.Second,
+        }))
+
+        // Protected endpoint
+        e.GET("/weather", func(c echo.Context) error {
+            return c.JSON(http.StatusOK, map[string]interface{}{
+                "weather":     "sunny",
+                "temperature": 70,
+            })
+        })
+
+        e.Start(":4021")
+    }
+    ```
+  </Tab>
   <Tab title="FastAPI">
     Full example in the repo [here](https://github.com/x402-foundation/x402/tree/main/examples/python/servers/fastapi).
 
