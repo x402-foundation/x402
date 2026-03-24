@@ -987,7 +987,15 @@ For mainnet, use a production facilitator. See the [x402 Ecosystem](https://www.
     });
     ```
   </Tab>
-  <Tab title="Go">
+  <Tab title="Go (Gin)">
+    ```go
+    facilitatorClient := x402http.NewHTTPFacilitatorClient(&x402http.FacilitatorConfig{
+        URL: "https://api.cdp.coinbase.com/platform/v2/x402",
+        // URL: "https://facilitator.payai.network",  // PayAI Facilitator
+    })
+    ```
+  </Tab>
+  <Tab title="Go (Echo)">
     ```go
     facilitatorClient := x402http.NewHTTPFacilitatorClient(&x402http.FacilitatorConfig{
         URL: "https://api.cdp.coinbase.com/platform/v2/x402",
