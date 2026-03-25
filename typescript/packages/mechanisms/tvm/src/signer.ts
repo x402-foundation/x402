@@ -4,9 +4,8 @@ import {
   Address,
   beginCell,
   internal,
-  external,
   SendMode,
-  storeMessage,
+  storeMessageRelaxed,
   Cell,
 } from "@ton/core";
 
@@ -24,6 +23,7 @@ export type ClientTvmSigner = {
   publicKey: string;
   /**
    * Sign a W5R1 transfer with the given messages and produce a settlement BOC.
+   * Returns a base64-encoded internal message BoC (not external).
    */
   signTransfer: (
     seqno: number,
@@ -72,11 +72,15 @@ export function toClientTvmSigner(
         ),
       });
 
-      const extMessage = beginCell()
+      // Encode as internal message (not external).
+      // The facilitator will extract body + stateInit and re-wrap with gas.
+      const intMessage = beginCell()
         .storeWritable(
-          storeMessage(
-            external({
+          storeMessageRelaxed(
+            internal({
               to: wallet.address,
+              value: 0n,
+              bounce: true,
               init: seqno === 0 ? wallet.init : undefined,
               body: transferBody,
             }),
@@ -84,7 +88,7 @@ export function toClientTvmSigner(
         )
         .endCell();
 
-      return extMessage.toBoc().toString("base64");
+      return intMessage.toBoc().toString("base64");
     },
   };
 }

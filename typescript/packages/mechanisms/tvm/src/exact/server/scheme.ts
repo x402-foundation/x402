@@ -53,7 +53,7 @@ export class ExactTvmScheme implements SchemeNetworkServer {
 
   enhancePaymentRequirements(
     paymentRequirements: PaymentRequirements,
-    supportedKind: {
+    _supportedKind: {
       x402Version: number;
       scheme: string;
       network: Network;
@@ -62,16 +62,6 @@ export class ExactTvmScheme implements SchemeNetworkServer {
     extensionKeys: string[],
   ): Promise<PaymentRequirements> {
     void extensionKeys;
-
-    // Propagate facilitatorUrl from the facilitator's extra into payment requirements
-    const facilitatorUrl = supportedKind.extra?.facilitatorUrl;
-    if (facilitatorUrl) {
-      paymentRequirements.extra = {
-        ...paymentRequirements.extra,
-        facilitatorUrl,
-      };
-    }
-
     return Promise.resolve(paymentRequirements);
   }
 

@@ -72,7 +72,7 @@ export class ExactTvmScheme implements SchemeNetworkClient {
     paymentRequirements: PaymentRequirements,
     _context?: PaymentPayloadContext,
   ): Promise<PaymentPayloadResult> {
-    const { asset: tokenMaster, amount, payTo } = paymentRequirements;
+    const { asset, amount, payTo } = paymentRequirements;
 
     // Create TON RPC client
     const client = new TonClient({
@@ -82,7 +82,7 @@ export class ExactTvmScheme implements SchemeNetworkClient {
 
     // Resolve client's Jetton wallet address via RPC
     const jettonMaster = client.open(
-      JettonMaster.create(Address.parseRaw(tokenMaster)),
+      JettonMaster.create(Address.parseRaw(asset)),
     );
     const jettonWalletAddress = await jettonMaster.getWalletAddress(
       Address.parseRaw(this.signer.address),
@@ -107,7 +107,7 @@ export class ExactTvmScheme implements SchemeNetworkClient {
     const timeoutSeconds = paymentRequirements.maxTimeoutSeconds ?? DEFAULT_VALID_UNTIL_OFFSET;
     const validUntil = Math.floor(Date.now() / 1000) + timeoutSeconds;
 
-    // Sign the W5R1 transfer
+    // Sign the W5R1 transfer — returns internal message BoC
     const messagesToSign = [{
       address: jettonWalletAddress.toRawString(),
       amount: DEFAULT_JETTON_FWD_AMOUNT,
@@ -120,14 +120,10 @@ export class ExactTvmScheme implements SchemeNetworkClient {
       messagesToSign,
     );
 
+    // Minimal payload: BoC + asset. Everything else derived by facilitator.
     const tvmPayload: TvmPaymentPayload = {
-      from: this.signer.address,
-      to: payTo,
-      tokenMaster,
-      amount: BigInt(amount).toString(),
-      validUntil,
       settlementBoc,
-      walletPublicKey: this.signer.publicKey,
+      asset,
     };
 
     return {

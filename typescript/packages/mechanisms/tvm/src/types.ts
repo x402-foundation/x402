@@ -1,19 +1,13 @@
 /**
  * TVM payment payload — the scheme-specific data inside PaymentPayload.payload.
+ *
+ * Minimal: only settlementBoc (internal message BoC) and asset (token master).
+ * All other fields (from, to, amount, publicKey) are derived from the BoC
+ * by the facilitator, per TON Core team review.
  */
 export interface TvmPaymentPayload {
-  /** Sender wallet address (raw format: 0:hex) */
-  from: string;
-  /** Recipient wallet address (raw format: 0:hex) */
-  to: string;
-  /** Jetton master contract address (raw format: 0:hex) */
-  tokenMaster: string;
-  /** Amount in token's smallest unit (e.g. 6 decimals for USDT) */
-  amount: string;
-  /** Valid until unix timestamp */
-  validUntil: number;
-  /** Full signed external message BOC (base64) for settlement */
+  /** Internal message BoC (base64) containing signed W5 body + optional stateInit */
   settlementBoc: string;
-  /** Wallet public key (hex) */
-  walletPublicKey: string;
+  /** Jetton master contract address (raw format: 0:hex) */
+  asset: string;
 }

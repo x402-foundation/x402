@@ -15,20 +15,20 @@ import {
  * Configuration for ExactTvmScheme facilitator.
  */
 export interface ExactTvmSchemeConfig {
-  /** Override facilitator URL (otherwise taken from paymentRequirements.extra) */
+  /** Facilitator URL for delegating verify/settle */
   facilitatorUrl?: string;
 }
 
 /**
  * TVM facilitator implementation for the Exact payment scheme.
  *
- * Verifies payment signature (Ed25519 over W5R1 body), field checks
- * (recipient, token, amount, expiry, replay), and settles via facilitator /settle.
+ * Delegates verification and settlement to a remote facilitator service.
+ * The facilitator derives all payment details (sender, amount, destination)
+ * from the settlementBoc itself.
  */
 export class ExactTvmScheme implements SchemeNetworkFacilitator {
   readonly scheme = "exact";
   readonly caipFamily = "tvm:*";
-  private readonly settledBocHashes = new Set<string>();
   private readonly facilitatorUrl?: string;
 
   constructor(config?: ExactTvmSchemeConfig) {
@@ -36,14 +36,16 @@ export class ExactTvmScheme implements SchemeNetworkFacilitator {
   }
 
   getExtra(_network: string): Record<string, unknown> | undefined {
-    if (this.facilitatorUrl) {
-      return { facilitatorUrl: this.facilitatorUrl };
-    }
     return undefined;
   }
 
   getSigners(_network: string): string[] {
     return [];
+  }
+
+  private resolveFacilitatorUrl(requirements: PaymentRequirements): string | undefined {
+    return this.facilitatorUrl
+      ?? (requirements.extra as Record<string, unknown> | undefined)?.facilitatorUrl as string | undefined;
   }
 
   async verify(
@@ -52,16 +54,12 @@ export class ExactTvmScheme implements SchemeNetworkFacilitator {
     _context?: FacilitatorContext,
   ): Promise<VerifyResponse> {
     const tvmPayload = payload.payload as unknown as TvmPaymentPayload;
-    const payer = tvmPayload.from;
 
-    // Resolve facilitator URL
-    const url = this.facilitatorUrl
-      ?? (requirements.extra as Record<string, unknown> | undefined)?.facilitatorUrl as string | undefined;
+    const url = this.resolveFacilitatorUrl(requirements);
     if (!url) {
-      return { isValid: false, invalidReason: "missing_facilitator_url", invalidMessage: "Missing facilitatorUrl", payer };
+      return { isValid: false, invalidReason: "missing_facilitator_url", invalidMessage: "Missing facilitatorUrl", payer: "" };
     }
 
-    // Delegate full verification (signature, BoC parsing, payment intent, replay) to facilitator
     try {
       const resp = await fetch(`${url}/verify`, {
         method: "POST",
@@ -82,9 +80,9 @@ export class ExactTvmScheme implements SchemeNetworkFacilitator {
 
       const data = await resp.json() as Record<string, unknown>;
 
-      // Support both camelCase (x402 standard) and snake_case (legacy) response formats
       const isValid = (data.isValid ?? data.is_valid) as boolean;
       const invalidReason = (data.invalidReason ?? data.invalid_reason) as string | undefined;
+      const payer = (data.payer as string) ?? "";
 
       if (!isValid) {
         return {
@@ -98,7 +96,7 @@ export class ExactTvmScheme implements SchemeNetworkFacilitator {
       return { isValid: true, payer };
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : String(err);
-      return { isValid: false, invalidReason: "verification_error", invalidMessage: `Verification error: ${message}`, payer };
+      return { isValid: false, invalidReason: "verification_error", invalidMessage: `Verification error: ${message}`, payer: "" };
     }
   }
 
@@ -121,15 +119,13 @@ export class ExactTvmScheme implements SchemeNetworkFacilitator {
 
     const tvmPayload = payload.payload as unknown as TvmPaymentPayload;
 
-    // Resolve facilitator URL
-    const url = this.facilitatorUrl
-      ?? (requirements.extra as Record<string, unknown> | undefined)?.facilitatorUrl as string | undefined;
+    const url = this.resolveFacilitatorUrl(requirements);
     if (!url) {
       return {
         success: false,
         errorReason: ERR_SETTLEMENT_FAILED,
         errorMessage: "Missing facilitatorUrl for settlement",
-        payer: tvmPayload.from,
+        payer: verification.payer,
         transaction: "",
         network: requirements.network,
       };
@@ -160,11 +156,9 @@ export class ExactTvmScheme implements SchemeNetworkFacilitator {
         throw new Error(errorReason ?? `Facilitator /settle failed: ${settleResponse.status}`);
       }
 
-      this.settledBocHashes.add(tvmPayload.settlementBoc.slice(0, 64));
-
       return {
         success: true,
-        payer: tvmPayload.from,
+        payer: (settleData.payer as string) ?? verification.payer,
         transaction: (settleData.transaction as string) ?? "",
         network: ((settleData.network as string) ?? requirements.network) as `${string}:${string}`,
       };
@@ -174,7 +168,7 @@ export class ExactTvmScheme implements SchemeNetworkFacilitator {
         success: false,
         errorReason: ERR_SETTLEMENT_FAILED,
         errorMessage: `Settlement failed: ${message}`,
-        payer: tvmPayload.from,
+        payer: verification.payer,
         transaction: "",
         network: requirements.network,
       };
