@@ -429,7 +429,7 @@ func TestServerSettlePayment(t *testing.T) {
 	}
 
 	// Server uses typed API now
-	response, err := server.SettlePayment(ctx, payload, requirements)
+	response, err := server.SettlePayment(ctx, payload, requirements, nil)
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}

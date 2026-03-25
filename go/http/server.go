@@ -632,10 +632,14 @@ func (s *x402HTTPResourceServer) RequiresPayment(reqCtx HTTPRequestContext) bool
 	return routeConfig != nil
 }
 
-// ProcessSettlement handles settlement after successful response
-func (s *x402HTTPResourceServer) ProcessSettlement(ctx context.Context, payload types.PaymentPayload, requirements types.PaymentRequirements) *ProcessSettleResult {
+// SettlementOverridesHeader is the HTTP header name for settlement overrides.
+const SettlementOverridesHeader = "settlement-overrides"
+
+// ProcessSettlement handles settlement after successful response.
+// If overrides is non-nil, the settlement amount is replaced before forwarding to SettlePayment.
+func (s *x402HTTPResourceServer) ProcessSettlement(ctx context.Context, payload types.PaymentPayload, requirements types.PaymentRequirements, overrides *x402.SettlementOverrides) *ProcessSettleResult {
 	// Settle payment (type-safe, no marshal needed)
-	settleResult, err := s.SettlePayment(ctx, payload, requirements)
+	settleResult, err := s.SettlePayment(ctx, payload, requirements, overrides)
 	if err != nil {
 		return s.buildSettlementFailureResult(err.Error(), x402.Network(requirements.Network), "", nil)
 	}

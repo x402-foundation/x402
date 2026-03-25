@@ -1,7 +1,7 @@
 import { config } from 'dotenv';
-import { spawn, execSync } from 'child_process';
-import { writeFileSync, mkdirSync } from 'fs';
-import { dirname } from 'path';
+import { spawn, execSync, ChildProcess } from 'child_process';
+import { writeFileSync } from 'fs';
+import { join } from 'path';
 import { createWalletClient, createPublicClient, http, parseEther, formatEther } from 'viem';
 import { privateKeyToAccount } from 'viem/accounts';
 import { base, baseSepolia } from 'viem/chains';
@@ -193,9 +193,7 @@ async function fundClientForRevoke(): Promise<boolean> {
     verboseLog(`  ✅ Funded client (tx: ${hash})`);
     return true;
   } catch (err) {
-    const errLines = (err instanceof Error ? err.message : String(err)).split('\n');
-    errorLog(`  ❌ Failed to fund client for revoke: ${errLines[0].trim()}`);
-    if (errLines.length > 1) verboseLog(errLines.slice(1).join('\n'));
+    errorLog(`  ❌ Failed to fund client for revoke: ${err instanceof Error ? err.message : err}`);
     return false;
   }
 }
@@ -238,9 +236,7 @@ async function drainClientETH(): Promise<boolean> {
     verboseLog(`  ✅ Drained client ETH (tx: ${hash}, remaining: ${formatEther(remaining)} ETH)`);
     return true;
   } catch (err) {
-    const errLines = (err instanceof Error ? err.message : String(err)).split('\n');
-    errorLog(`  ❌ Failed to drain client ETH: ${errLines[0].trim()}`);
-    if (errLines.length > 1) verboseLog(errLines.slice(1).join('\n'));
+    errorLog(`  ❌ Failed to drain client ETH: ${err instanceof Error ? err.message : err}`);
     return false;
   }
 }
@@ -368,13 +364,7 @@ async function runTest() {
     return;
   }
 
-  // Initialize logger — ensure parent directory exists for log file
-  if (parsedArgs.logFile) {
-    const logDir = dirname(parsedArgs.logFile);
-    if (logDir && logDir !== '.') {
-      mkdirSync(logDir, { recursive: true });
-    }
-  }
+  // Initialize logger
   loggerConfig({ logFile: parsedArgs.logFile, verbose: parsedArgs.verbose });
 
   log('🚀 Starting X402 E2E Test Suite');
@@ -440,15 +430,41 @@ async function runTest() {
     selectedExtensions = selections.extensions;
     networkMode = selections.networkMode;
   } else {
+    log('\n🤖 Programmatic Mode');
+    log('===================\n');
+
     filters = parsedArgs.filters;
     selectedExtensions = parsedArgs.filters.extensions;
 
     // In programmatic mode, network mode defaults to testnet if not specified
     networkMode = parsedArgs.networkMode || 'testnet';
+
+    // Print active filters
+    const filterEntries = Object.entries(filters).filter(([_, v]) => v && (Array.isArray(v) ? v.length > 0 : true));
+    if (filterEntries.length > 0) {
+      log('Active filters:');
+      filterEntries.forEach(([key, value]) => {
+        if (Array.isArray(value) && value.length > 0) {
+          log(`  - ${key}: ${value.join(', ')}`);
+        }
+      });
+      log('');
+    }
   }
 
   // Get network configuration based on selected mode
   const networks = getNetworkSet(networkMode);
+
+  log(`\n🌐 Network Mode: ${networkMode.toUpperCase()}`);
+  log(`   EVM: ${networks.evm.name} (${networks.evm.caip2})`);
+  log(`   SVM: ${networks.svm.name} (${networks.svm.caip2})`);
+  log(`   APTOS: ${networks.aptos.name} (${networks.aptos.caip2})`);
+  log(`   STELLAR: ${networks.stellar.name} (${networks.stellar.caip2})`);
+
+  if (networkMode === 'mainnet') {
+    log('\n⚠️  WARNING: Running on MAINNET - real funds will be used!');
+  }
+  log('');
 
   // Apply filters to scenarios
   let filteredScenarios = filterScenarios(allScenarios, filters);
@@ -468,24 +484,50 @@ async function runTest() {
       log('💡 This should not happen - coverage tracking may have an issue\n');
       return;
     }
+  } else {
+    log(`\n✅ ${filteredScenarios.length} scenarios selected`);
   }
 
-  // Show only the networks used by filtered scenarios
-  const activeProtocolFamilies = new Set(filteredScenarios.map(s => s.protocolFamily));
-  log(`\n🌐 Network Mode: ${networkMode.toUpperCase()}`);
-  if (activeProtocolFamilies.has('evm'))     log(`   EVM:     ${networks.evm.name} (${networks.evm.caip2})`);
-  if (activeProtocolFamilies.has('svm'))     log(`   SVM:     ${networks.svm.name} (${networks.svm.caip2})`);
-  if (activeProtocolFamilies.has('aptos'))   log(`   APTOS:   ${networks.aptos.name} (${networks.aptos.caip2})`);
-  if (activeProtocolFamilies.has('stellar')) log(`   STELLAR: ${networks.stellar.name} (${networks.stellar.caip2})`);
-  if (networkMode === 'mainnet') {
-    log('\n⚠️  WARNING: Running on MAINNET - real funds will be used!');
-  }
-
-  log(`\n✅ ${filteredScenarios.length} scenarios selected`);
   if (selectedExtensions && selectedExtensions.length > 0) {
     log(`🎁 Extensions enabled: ${selectedExtensions.join(', ')}`);
   }
   log('');
+
+  // Branch coverage assertions for EVM scenarios
+  const evmScenarios = filteredScenarios.filter(s => s.protocolFamily === 'evm');
+  if (evmScenarios.length > 0) {
+    const hasEip3009 = evmScenarios.some(s => (s.endpoint.transferMethod || 'eip3009') === 'eip3009');
+    const hasPermit2 = evmScenarios.some(s => s.endpoint.transferMethod === 'permit2');
+    const hasPermit2Direct = evmScenarios.some(s => s.endpoint.transferMethod === 'permit2' && s.endpoint.permit2Direct === true);
+    const hasPermit2Eip2612 = evmScenarios.some(s => s.endpoint.transferMethod === 'permit2' && !s.endpoint.extensions?.includes('erc20ApprovalGasSponsoring') && !s.endpoint.permit2Direct);
+    const hasPermit2Erc20 = evmScenarios.some(s => s.endpoint.transferMethod === 'permit2' && s.endpoint.extensions?.includes('erc20ApprovalGasSponsoring'));
+
+    const hasUpto = evmScenarios.some(s => s.endpoint.transferMethod === 'upto');
+    const hasUptoDirect = evmScenarios.some(s => s.endpoint.transferMethod === 'upto' && s.endpoint.permit2Direct === true);
+    const hasUptoEip2612 = evmScenarios.some(s => s.endpoint.transferMethod === 'upto' && !s.endpoint.extensions?.includes('erc20ApprovalGasSponsoring') && !s.endpoint.permit2Direct);
+    const hasUptoErc20 = evmScenarios.some(s => s.endpoint.transferMethod === 'upto' && s.endpoint.extensions?.includes('erc20ApprovalGasSponsoring'));
+
+    log('🔍 EVM Branch Coverage Check:');
+    log(`   EIP-3009 route:          ${hasEip3009 ? '✅' : '❌ MISSING'}`);
+    log(`   Permit2 route:           ${hasPermit2 ? '✅' : '❌ MISSING'}`);
+    log(`   Permit2+direct settle:   ${hasPermit2Direct ? '✅' : '⚠️  not found'}`);
+    log(`   Permit2+EIP2612 route:   ${hasPermit2Eip2612 ? '✅' : '⚠️  not found (may be covered by permit2 route if eip2612 extension enabled)'}`);
+    log(`   Permit2+ERC20 route:     ${hasPermit2Erc20 ? '✅' : '⚠️  not found'}`);
+    log(`   Upto route:              ${hasUpto ? '✅' : '⚠️  not found'}`);
+    log(`   Upto+direct settle:      ${hasUptoDirect ? '✅' : '⚠️  not found'}`);
+    log(`   Upto+EIP2612 route:      ${hasUptoEip2612 ? '✅' : '⚠️  not found'}`);
+    log(`   Upto+ERC20 route:        ${hasUptoErc20 ? '✅' : '⚠️  not found'}`);
+    log('');
+  }
+
+  // Auto-detect Permit2 scenarios (upto uses Permit2 under the hood)
+  const hasPermit2Scenarios = filteredScenarios.some(
+    (s) => s.endpoint.transferMethod === 'permit2' || s.endpoint.transferMethod === 'upto'
+  );
+
+  if (hasPermit2Scenarios) {
+    log('🔐 Permit2 scenarios detected — revoke before gas-sponsored tests, approve before permit2-direct tests');
+  }
 
   // Collect unique facilitators and servers
   const uniqueFacilitators = new Map<string, any>();
@@ -644,12 +686,56 @@ async function runTest() {
     log(`  ✅ Facilitator ${facilitatorName} ready at ${url}`);
   }
 
+  // Start mock facilitator (claims to support everything, used as fallback so
+  // servers with routes unsupported by the real facilitator can still start)
+  const mockFacilitatorPort = currentPort++;
+  log(`\n🎭 Starting mock facilitator on port ${mockFacilitatorPort}...`);
+  const mockFacilitatorProcess: ChildProcess = spawn(
+    'npx', ['tsx', 'index.ts'],
+    {
+      cwd: join(process.cwd(), 'mock-facilitator'),
+      env: {
+        ...process.env,
+        PORT: mockFacilitatorPort.toString(),
+        EVM_NETWORK: networks.evm.caip2,
+        SVM_NETWORK: networks.svm.caip2,
+        APTOS_NETWORK: networks.aptos.caip2,
+        STELLAR_NETWORK: networks.stellar.caip2,
+      },
+      stdio: 'pipe',
+    },
+  );
+  mockFacilitatorProcess.stderr?.on('data', (data: Buffer) => {
+    verboseLog(`[mock-facilitator] stderr: ${data.toString().trim()}`);
+  });
+  mockFacilitatorProcess.stdout?.on('data', (data: Buffer) => {
+    verboseLog(`[mock-facilitator] stdout: ${data.toString().trim()}`);
+  });
+
+  const mockFacilitatorUrl = `http://localhost:${mockFacilitatorPort}`;
+  const mockHealthy = await waitForHealth(
+    async () => {
+      try {
+        const res = await fetch(`${mockFacilitatorUrl}/health`);
+        return { success: res.ok };
+      } catch {
+        return { success: false };
+      }
+    },
+    { label: 'Mock facilitator' },
+  );
+  if (!mockHealthy) {
+    log('❌ Failed to start mock facilitator');
+    mockFacilitatorProcess.kill();
+    process.exit(1);
+  }
+  log(`  ✅ Mock facilitator ready at ${mockFacilitatorUrl}`);
+
   log('\n✅ All facilitators are ready! Servers will be started/restarted as needed per test scenario.\n');
 
   log(`🔧 Server/Facilitator combinations: ${serverFacilitatorCombos.length}`);
   serverFacilitatorCombos.forEach(combo => {
-    const uniqueClients = [...new Set(combo.scenarios.map(s => s.client.name))];
-    log(`   • ${combo.serverName} + ${combo.facilitatorName || 'none'}: ${combo.scenarios.length} test(s) [clients: ${uniqueClients.join(', ')}]`);
+    log(`   • ${combo.serverName} + ${combo.facilitatorName || 'none'}: ${combo.scenarios.length} test(s)`);
   });
   if (parsedArgs.parallel) {
     log(`\n⚡ Parallel mode enabled (concurrency: ${parsedArgs.concurrency})`);
@@ -702,8 +788,8 @@ async function runTest() {
       } else {
         cLog.log(`  ❌ Test failed: ${result.error}`);
         if (result.verboseLogs && result.verboseLogs.length > 0) {
-          cLog.verboseLog(`  🔍 Verbose logs:`);
-          result.verboseLogs.forEach(logLine => cLog.verboseLog(logLine));
+          cLog.log(`  🔍 Verbose logs:`);
+          result.verboseLogs.forEach(logLine => cLog.log(logLine));
         }
         cLog.verboseLog(`  🔍 Error details: ${JSON.stringify(result, null, 2)}`);
       }
@@ -765,6 +851,7 @@ async function runTest() {
       stellarPayTo: facilitatorSupportsStellar ? (serverStellarAddress || '') : '',
       networks,
       facilitatorUrl,
+      mockFacilitatorUrl,
     };
 
     const started = await startServer(serverProxy, serverConfig);
@@ -789,7 +876,7 @@ async function runTest() {
         const tn = nextTestNumber();
         const isEvm = scenario.protocolFamily === 'evm';
 
-        if (scenario.endpoint.transferMethod === 'permit2') {
+        if (scenario.endpoint.transferMethod === 'permit2' || scenario.endpoint.transferMethod === 'upto') {
           if (scenario.endpoint.permit2Direct) {
             await approvePermit2Approval(USDC_BASE_SEPOLIA);
           } else {
@@ -883,6 +970,8 @@ async function runTest() {
     log(`  🛑 Stopping facilitator: ${facilitatorName}`);
     facilitatorStopPromises.push(manager.stop());
   }
+  log('  🛑 Stopping mock facilitator');
+  mockFacilitatorProcess.kill();
   await Promise.all(facilitatorStopPromises);
 
   // Calculate totals

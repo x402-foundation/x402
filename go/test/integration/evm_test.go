@@ -503,7 +503,7 @@ func TestEVMIntegrationV2(t *testing.T) {
 		// Server does work here...
 
 		// Server - settles payment (typed)
-		settleResponse, err := server.SettlePayment(ctx, paymentPayload, *accepted)
+		settleResponse, err := server.SettlePayment(ctx, paymentPayload, *accepted, nil)
 		if err != nil {
 			t.Fatalf("Failed to settle payment: %v", err)
 		}
@@ -711,7 +711,7 @@ func TestEVMIntegrationV2Permit2(t *testing.T) {
 		}
 
 		// Server - settles payment
-		settleResponse, err := server.SettlePayment(ctx, paymentPayload, *accepted)
+		settleResponse, err := server.SettlePayment(ctx, paymentPayload, *accepted, nil)
 		if err != nil {
 			t.Fatalf("Failed to settle payment: %v", err)
 		}

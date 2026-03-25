@@ -1,4 +1,4 @@
-import { x402ResourceServer } from "../server";
+import { x402ResourceServer, SettlementOverrides } from "../server";
 import {
   decodePaymentSignatureHeader,
   encodePaymentRequiredHeader,
@@ -15,6 +15,8 @@ import {
   PaymentRequirements,
 } from "../types";
 import { x402Version } from "..";
+
+export const SETTLEMENT_OVERRIDES_HEADER = "settlement-overrides";
 
 /**
  * Framework-agnostic HTTP adapter interface
@@ -218,6 +220,8 @@ export interface HTTPTransportContext {
   request: HTTPRequestContext;
   /** The response body buffer */
   responseBody?: Buffer;
+  /** Response headers set by the route handler (used for settlement overrides) */
+  responseHeaders?: Record<string, string>;
 }
 
 /**
@@ -572,6 +576,7 @@ export class x402HTTPResourceServer {
    * @param requirements - The matching payment requirements
    * @param declaredExtensions - Optional declared extensions (for per-key enrichment)
    * @param transportContext - Optional HTTP transport context
+   * @param settlementOverrides - Optional settlement overrides (e.g., partial settlement amount)
    * @returns ProcessSettleResultResponse - SettleResponse with headers if success or errorReason if failure
    */
   async processSettlement(
@@ -579,13 +584,27 @@ export class x402HTTPResourceServer {
     requirements: PaymentRequirements,
     declaredExtensions?: Record<string, unknown>,
     transportContext?: HTTPTransportContext,
+    settlementOverrides?: SettlementOverrides,
   ): Promise<ProcessSettleResultResponse> {
     try {
+      // Resolve overrides: explicit param takes precedence, fall back to response header
+      let resolvedOverrides = settlementOverrides;
+      if (!resolvedOverrides && transportContext?.responseHeaders?.[SETTLEMENT_OVERRIDES_HEADER]) {
+        try {
+          resolvedOverrides = JSON.parse(
+            transportContext.responseHeaders[SETTLEMENT_OVERRIDES_HEADER],
+          );
+        } catch {
+          // Ignore malformed header
+        }
+      }
+
       const settleResponse = await this.ResourceServer.settlePayment(
         paymentPayload,
         requirements,
         declaredExtensions,
         transportContext,
+        resolvedOverrides,
       );
 
       if (!settleResponse.success) {

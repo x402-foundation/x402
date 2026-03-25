@@ -826,6 +826,167 @@ describe("x402HTTPResourceServer", () => {
         expect(result.headers["PAYMENT-RESPONSE"]).toBeDefined();
       }
     });
+
+    it("should forward explicit settlementOverrides to settlePayment", async () => {
+      const routes = {
+        "/api/test": {
+          accepts: {
+            scheme: "exact",
+            payTo: "0xabc",
+            price: "$1.00" as Price,
+            network: "eip155:8453" as Network,
+          },
+        },
+      };
+
+      const httpServer = new x402HTTPResourceServer(ResourceServer, routes);
+
+      const payload = buildPaymentPayload();
+      const requirements = buildPaymentRequirements({
+        scheme: "exact",
+        network: "eip155:8453" as Network,
+        amount: "1000000",
+      });
+
+      const result = await httpServer.processSettlement(
+        payload,
+        requirements,
+        undefined,
+        undefined,
+        { amount: "500000" },
+      );
+
+      expect(result.success).toBe(true);
+      // Verify the facilitator received the overridden amount
+      expect(mockFacilitator.settleCalls[0].requirements.amount).toBe("500000");
+    });
+
+    it("should extract overrides from responseHeaders in transport context", async () => {
+      const { SETTLEMENT_OVERRIDES_HEADER } = await import(
+        "../../../src/http/x402HTTPResourceServer"
+      );
+
+      const routes = {
+        "/api/test": {
+          accepts: {
+            scheme: "exact",
+            payTo: "0xabc",
+            price: "$1.00" as Price,
+            network: "eip155:8453" as Network,
+          },
+        },
+      };
+
+      const httpServer = new x402HTTPResourceServer(ResourceServer, routes);
+
+      const payload = buildPaymentPayload();
+      const requirements = buildPaymentRequirements({
+        scheme: "exact",
+        network: "eip155:8453" as Network,
+        amount: "1000000",
+      });
+
+      const result = await httpServer.processSettlement(payload, requirements, undefined, {
+        request: {
+          adapter: new MockHTTPAdapter(),
+          path: "/api/test",
+          method: "GET",
+        },
+        responseHeaders: {
+          [SETTLEMENT_OVERRIDES_HEADER]: JSON.stringify({ amount: "300000" }),
+        },
+      });
+
+      expect(result.success).toBe(true);
+      expect(mockFacilitator.settleCalls[0].requirements.amount).toBe("300000");
+    });
+
+    it("should ignore malformed overrides header gracefully", async () => {
+      const { SETTLEMENT_OVERRIDES_HEADER } = await import(
+        "../../../src/http/x402HTTPResourceServer"
+      );
+
+      const routes = {
+        "/api/test": {
+          accepts: {
+            scheme: "exact",
+            payTo: "0xabc",
+            price: "$1.00" as Price,
+            network: "eip155:8453" as Network,
+          },
+        },
+      };
+
+      const httpServer = new x402HTTPResourceServer(ResourceServer, routes);
+
+      const payload = buildPaymentPayload();
+      const requirements = buildPaymentRequirements({
+        scheme: "exact",
+        network: "eip155:8453" as Network,
+        amount: "1000000",
+      });
+
+      const result = await httpServer.processSettlement(payload, requirements, undefined, {
+        request: {
+          adapter: new MockHTTPAdapter(),
+          path: "/api/test",
+          method: "GET",
+        },
+        responseHeaders: {
+          [SETTLEMENT_OVERRIDES_HEADER]: "not-valid-json{{{",
+        },
+      });
+
+      // Should succeed with original amount (malformed header is ignored)
+      expect(result.success).toBe(true);
+      expect(mockFacilitator.settleCalls[0].requirements.amount).toBe("1000000");
+    });
+
+    it("should prefer explicit overrides over header overrides", async () => {
+      const { SETTLEMENT_OVERRIDES_HEADER } = await import(
+        "../../../src/http/x402HTTPResourceServer"
+      );
+
+      const routes = {
+        "/api/test": {
+          accepts: {
+            scheme: "exact",
+            payTo: "0xabc",
+            price: "$1.00" as Price,
+            network: "eip155:8453" as Network,
+          },
+        },
+      };
+
+      const httpServer = new x402HTTPResourceServer(ResourceServer, routes);
+
+      const payload = buildPaymentPayload();
+      const requirements = buildPaymentRequirements({
+        scheme: "exact",
+        network: "eip155:8453" as Network,
+        amount: "1000000",
+      });
+
+      const result = await httpServer.processSettlement(
+        payload,
+        requirements,
+        undefined,
+        {
+          request: {
+            adapter: new MockHTTPAdapter(),
+            path: "/api/test",
+            method: "GET",
+          },
+          responseHeaders: {
+            [SETTLEMENT_OVERRIDES_HEADER]: JSON.stringify({ amount: "999999" }),
+          },
+        },
+        { amount: "100000" }, // explicit takes precedence
+      );
+
+      expect(result.success).toBe(true);
+      expect(mockFacilitator.settleCalls[0].requirements.amount).toBe("100000");
+    });
   });
 
   describe("Browser detection", () => {

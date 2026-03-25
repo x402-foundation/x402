@@ -8,6 +8,7 @@
     "eip2612GasSponsoring",
     "erc20ApprovalGasSponsoring"
   ],
+  "evm": { "transferMethods": ["eip3009", "permit2"] },
   "description": "Python FastAPI server with x402 v2 payment middleware",
   "endpoints": [
     {

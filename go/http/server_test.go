@@ -466,7 +466,7 @@ func TestProcessSettlement(t *testing.T) {
 	}
 
 	// Test settlement processing
-	result := server.ProcessSettlement(ctx, payload, requirements)
+	result := server.ProcessSettlement(ctx, payload, requirements, nil)
 	if !result.Success {
 		t.Fatalf("Unexpected failure: %v", result.ErrorReason)
 	}
@@ -512,7 +512,7 @@ func TestProcessSettlement_Failure(t *testing.T) {
 		Payload:     map[string]interface{}{},
 	}
 
-	result := server.ProcessSettlement(ctx, payload, requirements)
+	result := server.ProcessSettlement(ctx, payload, requirements, nil)
 	if result.Success {
 		t.Fatal("Expected settlement failure")
 	}

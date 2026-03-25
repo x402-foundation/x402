@@ -4,81 +4,99 @@
   "language": "typescript",
   "x402Version": 2,
   "extensions": ["bazaar", "eip2612GasSponsoring", "erc20ApprovalGasSponsoring"],
+
   "endpoints": [
     {
-      "path": "/api/exact/evm/eip3009/proxy",
+      "path": "/api/protected-proxy",
       "method": "GET",
-      "description": "EVM EIP-3009 endpoint using proxy middleware",
+      "description": "Protected endpoint using proxy middleware",
       "requiresPayment": true,
       "protocolFamily": "evm",
       "transferMethod": "eip3009"
     },
     {
-      "path": "/api/exact/evm/permit2/proxy",
+      "path": "/api/protected-permit2-proxy",
       "method": "GET",
-      "description": "EVM Permit2 direct endpoint (standard settle, no gas sponsoring)",
+      "description": "Protected Permit2 direct endpoint (standard settle, no gas sponsoring)",
       "requiresPayment": true,
       "protocolFamily": "evm",
       "transferMethod": "permit2",
       "permit2Direct": true
     },
     {
-      "path": "/api/exact/evm/permit2-eip2612GasSponsoring/proxy",
+      "path": "/api/protected-permit2-eip2612-proxy",
       "method": "GET",
-      "description": "EVM Permit2 endpoint with EIP-2612 gas sponsoring using proxy middleware",
+      "description": "Protected Permit2 EIP-2612 endpoint using proxy middleware",
       "requiresPayment": true,
       "protocolFamily": "evm",
       "transferMethod": "permit2"
     },
     {
-      "path": "/api/exact/evm/permit2-erc20ApprovalGasSponsoring/proxy",
+      "path": "/api/protected-permit2-erc20-proxy",
       "method": "GET",
-      "description": "EVM Permit2 endpoint with ERC-20 approval gas sponsoring using proxy middleware",
+      "description": "Protected Permit2 endpoint with ERC-20 approval gas sponsoring using proxy middleware",
       "requiresPayment": true,
       "protocolFamily": "evm",
       "transferMethod": "permit2",
       "extensions": ["erc20ApprovalGasSponsoring"]
     },
     {
-      "path": "/api/exact/svm/proxy",
+      "path": "/api/upto/evm/permit2-eip2612GasSponsoring",
       "method": "GET",
-      "description": "SVM endpoint using proxy middleware",
+      "description": "Protected Upto Permit2 endpoint with EIP-2612 gas sponsoring",
+      "requiresPayment": true,
+      "protocolFamily": "evm",
+      "transferMethod": "upto"
+    },
+    {
+      "path": "/api/upto/evm/permit2-erc20ApprovalGasSponsoring",
+      "method": "GET",
+      "description": "Protected Upto Permit2 endpoint with ERC-20 approval gas sponsoring",
+      "requiresPayment": true,
+      "protocolFamily": "evm",
+      "transferMethod": "upto",
+      "extensions": ["erc20ApprovalGasSponsoring"]
+    },
+    {
+      "path": "/api/protected-svm-proxy",
+      "method": "GET",
+      "description": "Protected endpoint using proxy middleware on SVM",
       "requiresPayment": true,
       "protocolFamily": "svm"
     },
     {
-      "path": "/api/exact/aptos/proxy",
+      "path": "/api/protected-aptos-proxy",
       "method": "GET",
-      "description": "Aptos endpoint using proxy middleware",
+      "description": "Protected endpoint using proxy middleware on Aptos",
       "requiresPayment": true,
       "protocolFamily": "aptos"
     },
     {
-      "path": "/api/exact/stellar/proxy",
+      "path": "/api/protected-stellar-proxy",
       "method": "GET",
-      "description": "Stellar endpoint using proxy middleware",
+      "description": "Protected Stellar endpoint using proxy middleware",
       "requiresPayment": true,
       "protocolFamily": "stellar"
     },
     {
-      "path": "/api/exact/evm/eip3009/withx402",
+      "path": "/api/protected-withx402",
       "method": "GET",
-      "description": "EVM EIP-3009 endpoint using withX402 wrapper",
+      "description": "Protected endpoint using withX402 wrapper",
       "requiresPayment": true,
       "protocolFamily": "evm",
       "transferMethod": "eip3009"
     },
     {
-      "path": "/api/exact/svm/withx402",
+      "path": "/api/protected-svm-withx402",
       "method": "GET",
-      "description": "SVM endpoint using withX402 wrapper",
+      "description": "Protected endpoint using withX402 wrapper on SVM",
       "requiresPayment": true,
       "protocolFamily": "svm"
     },
     {
-      "path": "/api/exact/stellar/withx402",
+      "path": "/api/protected-stellar-withx402",
       "method": "GET",
-      "description": "Stellar endpoint using withX402 wrapper",
+      "description": "Protected Stellar endpoint using withX402 wrapper",
       "requiresPayment": true,
       "protocolFamily": "stellar"
     },

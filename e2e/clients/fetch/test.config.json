@@ -15,7 +15,8 @@
   "evm": {
     "transferMethods": [
       "eip3009",
-      "permit2"
+      "permit2",
+      "upto"
     ]
   },
   "extensions": [

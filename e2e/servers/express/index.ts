@@ -1,7 +1,8 @@
 import express from "express";
-import { paymentMiddleware } from "@x402/express";
+import { paymentMiddleware, setSettlementOverrides } from "@x402/express";
 import { x402ResourceServer, HTTPFacilitatorClient } from "@x402/core/server";
 import { ExactEvmScheme } from "@x402/evm/exact/server";
+import { UptoEvmScheme } from "@x402/evm/upto/server";
 import { ExactSvmScheme } from "@x402/svm/exact/server";
 import { ExactAptosScheme } from "@x402/aptos/exact/server";
 import { ExactStellarScheme } from "@x402/stellar/exact/server";
@@ -52,14 +53,19 @@ if (!facilitatorUrl) {
 // Initialize Express app
 const app = express();
 
-// Create HTTP facilitator client
-const facilitatorClient = new HTTPFacilitatorClient({ url: facilitatorUrl });
+// Create facilitator clients (mock facilitator as fallback for startup validation)
+const facilitatorClients = [new HTTPFacilitatorClient({ url: facilitatorUrl })];
+const mockFacilitatorUrl = process.env.MOCK_FACILITATOR_URL;
+if (mockFacilitatorUrl) {
+  facilitatorClients.push(new HTTPFacilitatorClient({ url: mockFacilitatorUrl }));
+}
 
 // Create x402 resource server
-const server = new x402ResourceServer(facilitatorClient);
+const server = new x402ResourceServer(facilitatorClients);
 
 // Register server schemes
 server.register("eip155:*", new ExactEvmScheme());
+server.register("eip155:*", new UptoEvmScheme());
 server.register("solana:*", new ExactSvmScheme());
 if (APTOS_PAYEE_ADDRESS) {
   server.register("aptos:*", new ExactAptosScheme());
@@ -277,6 +283,64 @@ app.use(
           ...declareEip2612GasSponsoringExtension(),
         },
       },
+      // Upto Permit2 standard/direct endpoint - no gas sponsoring, client must pre-approve Permit2
+      // Authorizes up to 2000 atomic units, settles 1000 (partial settlement)
+      "GET /upto/evm/permit2": {
+        accepts: {
+          payTo: EVM_PAYEE_ADDRESS,
+          scheme: "upto",
+          network: EVM_NETWORK,
+          price: {
+            amount: "2000",
+            asset: EVM_PERMIT2_ASSET,
+            extra: {
+              assetTransferMethod: "permit2",
+              name: EVM_NETWORK == "eip155:84532" ? "USDC" : "USD Coin",
+              version: "2",
+            },
+          },
+        },
+      },
+      // Upto Permit2 endpoint with EIP-2612 gas sponsoring
+      // Authorizes up to 2000 atomic units, settles 1000 (partial settlement)
+      "GET /upto/evm/permit2-eip2612GasSponsoring": {
+        accepts: {
+          payTo: EVM_PAYEE_ADDRESS,
+          scheme: "upto",
+          network: EVM_NETWORK,
+          price: {
+            amount: "2000",
+            asset: EVM_PERMIT2_ASSET,
+            extra: {
+              assetTransferMethod: "permit2",
+              name: EVM_NETWORK == "eip155:84532" ? "USDC" : "USD Coin",
+              version: "2",
+            },
+          },
+        },
+        extensions: {
+          ...declareEip2612GasSponsoringExtension(),
+        },
+      },
+      // Upto Permit2 endpoint for ERC-20 approval gas sponsoring (no EIP-2612)
+      // Authorizes up to 2000 atomic units, settles 1000 (partial settlement)
+      "GET /upto/evm/permit2-erc20ApprovalGasSponsoring": {
+        accepts: {
+          payTo: EVM_PAYEE_ADDRESS,
+          scheme: "upto",
+          network: EVM_NETWORK,
+          price: {
+            amount: "2000",
+            asset: EVM_PERMIT2_ASSET,
+            extra: {
+              assetTransferMethod: "permit2",
+            },
+          },
+        },
+        extensions: {
+          ...declareErc20ApprovalGasSponsoringExtension(),
+        },
+      },
       ...(STELLAR_PAYEE_ADDRESS
         ? {
           "GET /exact/stellar": {
@@ -390,6 +454,33 @@ app.get("/exact/evm/permit2-eip2612GasSponsoring", (req, res) => {
     message: "Permit2 EIP-2612 endpoint accessed successfully",
     timestamp: new Date().toISOString(),
     method: "permit2-eip2612",
+  });
+});
+
+app.get("/upto/evm/permit2", (req, res) => {
+  setSettlementOverrides(res, { amount: "1000" });
+  res.json({
+    message: "Upto Permit2 endpoint accessed successfully",
+    timestamp: new Date().toISOString(),
+    method: "upto-permit2",
+  });
+});
+
+app.get("/upto/evm/permit2-eip2612GasSponsoring", (req, res) => {
+  setSettlementOverrides(res, { amount: "1000" });
+  res.json({
+    message: "Upto Permit2 EIP-2612 endpoint accessed successfully",
+    timestamp: new Date().toISOString(),
+    method: "upto-permit2-eip2612",
+  });
+});
+
+app.get("/upto/evm/permit2-erc20ApprovalGasSponsoring", (req, res) => {
+  setSettlementOverrides(res, { amount: "1000" });
+  res.json({
+    message: "Upto Permit2 ERC-20 approval endpoint accessed successfully",
+    timestamp: new Date().toISOString(),
+    method: "upto-permit2-erc20-approval",
   });
 });
 

@@ -31,6 +31,7 @@ import {
 } from "@x402/core/types";
 import { toFacilitatorEvmSigner } from "@x402/evm";
 import { ExactEvmScheme } from "@x402/evm/exact/facilitator";
+import { UptoEvmScheme } from "@x402/evm/upto/facilitator";
 import { ExactEvmSchemeV1 } from "@x402/evm/exact/v1/facilitator";
 import { NETWORKS as EVM_V1_NETWORKS } from "@x402/evm/v1";
 import { BAZAAR, extractDiscoveryInfo } from "@x402/extensions/bazaar";
@@ -210,6 +211,7 @@ const facilitator = new x402Facilitator();
 // Register EVM, SVM, and Aptos schemes (v2 + v1)
 facilitator
   .register(EVM_NETWORK as Network, new ExactEvmScheme(evmSigner))
+  .register(EVM_NETWORK as Network, new UptoEvmScheme(evmSigner))
   .registerV1(EVM_V1_NETWORKS as Network[], new ExactEvmSchemeV1(evmSigner))
   .register(SVM_NETWORK as Network, new ExactSvmScheme(svmSigner))
   .registerV1(SVM_V1_NETWORKS as Network[], new ExactSvmSchemeV1(svmSigner));

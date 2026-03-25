@@ -1,6 +1,7 @@
 import { paymentProxy } from "@x402/next";
 import { x402ResourceServer, HTTPFacilitatorClient } from "@x402/core/server";
 import { ExactEvmScheme } from "@x402/evm/exact/server";
+import { UptoEvmScheme } from "@x402/evm/upto/server";
 import { ExactSvmScheme } from "@x402/svm/exact/server";
 import { ExactAptosScheme } from "@x402/aptos/exact/server";
 import { ExactStellarScheme } from "@x402/stellar/exact/server";
@@ -28,14 +29,19 @@ if (!facilitatorUrl) {
   process.exit(1);
 }
 
-// Create HTTP facilitator client
-const facilitatorClient = new HTTPFacilitatorClient({ url: facilitatorUrl });
+// Create facilitator clients (mock facilitator as fallback for startup validation)
+const facilitatorClients = [new HTTPFacilitatorClient({ url: facilitatorUrl })];
+const mockFacilitatorUrl = process.env.MOCK_FACILITATOR_URL;
+if (mockFacilitatorUrl) {
+  facilitatorClients.push(new HTTPFacilitatorClient({ url: mockFacilitatorUrl }));
+}
 
 // Create x402 resource server with builder pattern (cleaner!)
-export const server = new x402ResourceServer(facilitatorClient);
+export const server = new x402ResourceServer(facilitatorClients);
 
 // Register server schemes
 server.register("eip155:*", new ExactEvmScheme());
+server.register("eip155:*", new UptoEvmScheme());
 server.register("solana:*", new ExactSvmScheme());
 if (APTOS_PAYEE_ADDRESS) {
   server.register("aptos:*", new ExactAptosScheme());
@@ -51,7 +57,7 @@ console.log(`Using remote facilitator at: ${facilitatorUrl}`);
 
 export const proxy = paymentProxy(
   {
-    "/api/exact/evm/eip3009/proxy": {
+    "/api/protected-proxy": {
       accepts: {
         payTo: EVM_PAYEE_ADDRESS,
         scheme: "exact",
@@ -76,7 +82,7 @@ export const proxy = paymentProxy(
         }),
       },
     },
-    "/api/exact/svm/proxy": {
+    "/api/protected-svm-proxy": {
       accepts: {
         payTo: SVM_PAYEE_ADDRESS,
         scheme: "exact",
@@ -103,7 +109,7 @@ export const proxy = paymentProxy(
     },
     ...(APTOS_PAYEE_ADDRESS
       ? {
-          "/api/exact/aptos/proxy": {
+          "/api/protected-aptos-proxy": {
             accepts: {
               payTo: APTOS_PAYEE_ADDRESS,
               scheme: "exact",
@@ -132,7 +138,7 @@ export const proxy = paymentProxy(
       : {}),
     ...(STELLAR_PAYEE_ADDRESS
       ? {
-          "/api/exact/stellar/proxy": {
+          "/api/protected-stellar-proxy": {
             accepts: {
               payTo: STELLAR_PAYEE_ADDRESS,
               scheme: "exact",
@@ -159,7 +165,7 @@ export const proxy = paymentProxy(
           },
         }
       : {}),
-    "/api/exact/evm/permit2/proxy": {
+    "/api/protected-permit2-proxy": {
       accepts: {
         payTo: EVM_PAYEE_ADDRESS,
         scheme: "exact",
@@ -169,8 +175,6 @@ export const proxy = paymentProxy(
           asset: EVM_PERMIT2_ASSET,
           extra: {
             assetTransferMethod: "permit2",
-            name: EVM_NETWORK == "eip155:84532" ? "USDC" : "USD Coin",
-            version: "2",
           },
         },
       },
@@ -194,7 +198,7 @@ export const proxy = paymentProxy(
         }),
       },
     },
-    "/api/exact/evm/permit2-eip2612GasSponsoring/proxy": {
+    "/api/protected-permit2-eip2612-proxy": {
       accepts: {
         payTo: EVM_PAYEE_ADDRESS,
         scheme: "exact",
@@ -223,7 +227,7 @@ export const proxy = paymentProxy(
         ...declareEip2612GasSponsoringExtension(),
       },
     },
-    "/api/exact/evm/permit2-erc20ApprovalGasSponsoring/proxy": {
+    "/api/protected-permit2-erc20-proxy": {
       accepts: {
         payTo: EVM_PAYEE_ADDRESS,
         scheme: "exact",
@@ -240,18 +244,56 @@ export const proxy = paymentProxy(
         ...declareErc20ApprovalGasSponsoringExtension(),
       },
     },
+    "/api/upto/evm/permit2-eip2612GasSponsoring": {
+      accepts: {
+        payTo: EVM_PAYEE_ADDRESS,
+        scheme: "upto",
+        network: EVM_NETWORK,
+        price: {
+          amount: "2000",
+          asset: EVM_PERMIT2_ASSET,
+          extra: {
+            assetTransferMethod: "permit2",
+            name: EVM_NETWORK == "eip155:84532" ? "USDC" : "USD Coin",
+            version: "2",
+          },
+        },
+      },
+      extensions: {
+        ...declareEip2612GasSponsoringExtension(),
+      },
+    },
+    "/api/upto/evm/permit2-erc20ApprovalGasSponsoring": {
+      accepts: {
+        payTo: EVM_PAYEE_ADDRESS,
+        scheme: "upto",
+        network: EVM_NETWORK,
+        price: {
+          amount: "2000",
+          asset: EVM_PERMIT2_ASSET,
+          extra: {
+            assetTransferMethod: "permit2",
+          },
+        },
+      },
+      extensions: {
+        ...declareErc20ApprovalGasSponsoringExtension(),
+      },
+    },
   },
   server, // Pass pre-configured server instance
 );
 
 export const config = {
   matcher: [
-    "/api/exact/evm/eip3009/proxy",
-    "/api/exact/svm/proxy",
-    "/api/exact/aptos/proxy",
-    "/api/exact/stellar/proxy",
-    "/api/exact/evm/permit2/proxy",
-    "/api/exact/evm/permit2-eip2612GasSponsoring/proxy",
-    "/api/exact/evm/permit2-erc20ApprovalGasSponsoring/proxy",
+    "/api/protected-proxy",
+    "/api/protected-svm-proxy",
+    "/api/protected-aptos-proxy",
+    "/api/protected-stellar-proxy",
+    "/api/protected-permit2-proxy",
+    "/api/protected-permit2-eip2612-proxy",
+    "/api/protected-permit2-erc20-proxy",
+    "/api/upto/evm/permit2-eip2612GasSponsoring",
+    "/api/upto/evm/permit2-erc20ApprovalGasSponsoring",
   ],
 };

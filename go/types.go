@@ -98,6 +98,13 @@ type SettleResponse struct {
 	Network      Network `json:"network"`
 }
 
+// SettlementOverrides allows overriding settlement parameters.
+// Used to support partial settlement (e.g., upto scheme billing by actual usage).
+type SettlementOverrides struct {
+	// Amount is the actual amount to settle in atomic token units. Must be <= authorized max.
+	Amount string `json:"amount,omitempty"`
+}
+
 // ResourceConfig defines payment configuration for a protected resource
 type ResourceConfig struct {
 	Scheme            string                 `json:"scheme"`

@@ -378,6 +378,7 @@ func handlePaymentVerified(c echo.Context, next echo.HandlerFunc, server *x402ht
 		ctx,
 		*result.PaymentPayload,
 		*result.PaymentRequirements,
+		nil,
 	)
 
 	// Check settlement success

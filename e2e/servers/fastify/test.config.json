@@ -4,6 +4,7 @@
   "language": "typescript",
   "x402Version": 2,
   "extensions": ["bazaar", "eip2612GasSponsoring", "erc20ApprovalGasSponsoring"],
+
   "endpoints": [
     {
       "path": "/exact/evm/eip3009",

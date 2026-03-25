@@ -3,6 +3,7 @@ package gin
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"sync"
@@ -13,6 +14,13 @@ import (
 	x402http "github.com/coinbase/x402/go/http"
 	"github.com/gin-gonic/gin"
 )
+
+// SetSettlementOverrides sets settlement overrides on the Gin response for partial settlement.
+// The middleware extracts these before settlement and strips the header from the client response.
+func SetSettlementOverrides(c *gin.Context, overrides *x402.SettlementOverrides) {
+	data, _ := json.Marshal(overrides)
+	c.Header(x402http.SettlementOverridesHeader, string(data))
+}
 
 // ============================================================================
 // Gin Adapter Implementation
@@ -373,11 +381,22 @@ func handlePaymentVerified(c *gin.Context, server *x402http.HTTPServer, ctx cont
 		return
 	}
 
+	// Extract settlement overrides from response header (set by route handler)
+	var settlementOverrides *x402.SettlementOverrides
+	if overridesHeader := writer.Header().Get(x402http.SettlementOverridesHeader); overridesHeader != "" {
+		var overrides x402.SettlementOverrides
+		if err := json.Unmarshal([]byte(overridesHeader), &overrides); err == nil {
+			settlementOverrides = &overrides
+		}
+		writer.Header().Del(x402http.SettlementOverridesHeader)
+	}
+
 	// Process settlement
 	settleResult := server.ProcessSettlement(
 		ctx,
 		*result.PaymentPayload,
 		*result.PaymentRequirements,
+		settlementOverrides,
 	)
 
 	// Check settlement success

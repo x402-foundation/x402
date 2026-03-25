@@ -298,6 +298,7 @@ func handlePaymentVerified(w http.ResponseWriter, r *http.Request, next http.Han
 		ctx,
 		*result.PaymentPayload,
 		*result.PaymentRequirements,
+		nil,
 	)
 
 	if !settleResult.Success {
