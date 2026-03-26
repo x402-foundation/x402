@@ -30,7 +30,7 @@ There is no relay commission. The facilitator absorbs gas costs as the cost of o
 3. **Client** queries a TON RPC endpoint to resolve its Jetton wallet address (`get_wallet_address` on the Jetton master contract) and fetches its current wallet seqno.
 4. **Client** constructs a `jetton_transfer` body ([TEP-74]) and wraps it in a W5 `internal_signed` message.
 5. **Client** signs the message with their Ed25519 private key.
-6. **Client** wraps the signed body in a bounceable internal message BOC (dest = client wallet, value = 0, with `stateInit` if `seqno == 0`) and base64-encodes it.
+6. **Client** wraps the signed body in a bounceable internal message BOC (dest = client wallet, value = 0, with `stateInit` if the wallet account is not yet deployed, i.e. [`nonexist` or `uninit`](https://docs.ton.org/foundations/status)) and base64-encodes it.
 7. **Client** sends a second request to the **Resource Server** with the `PaymentPayload`.
 8. **Resource Server** forwards the payload and requirements to the **Facilitator's** `/verify` endpoint.
 9. **Facilitator** deserializes the internal message BoC, derives the sender address and public key, verifies the Ed25519 signature, validates payment intent (amount, destination, asset), and checks replay protection (seqno, validUntil, BoC hash).
@@ -146,9 +146,9 @@ A facilitator verifying `exact` on TON MUST enforce all of the following checks 
 - `payload.settlementBoc` MUST decode as a valid TON internal message.
 - The `dest` field of the internal message is the client's wallet address (the sender/payer).
 - The message body MUST contain a valid W5 (v5r1+) signed transfer with opcode `0x73696e74` (`internal_signed`).
-- The Ed25519 public key MUST be derived from the BoC's `stateInit` data cell (when `stateInit` is present, i.e. seqno == 0) or via the on-chain `get_public_key` getter on the client's wallet contract (when seqno > 0). The public key is NOT passed as a separate payload field.
+- The Ed25519 public key MUST be derived from the BoC's `stateInit` data cell (when `stateInit` is present, i.e. the wallet account is [`nonexist` or `uninit`](https://docs.ton.org/foundations/status)) or via the on-chain `get_public_key` getter on the client's wallet contract (when the account is `active`). The public key is NOT passed as a separate payload field.
 - The Ed25519 signature MUST verify against the derived public key. The signature is located at the TAIL of the W5 message body (after `walletId`, `validUntil`, `seqno`, and actions).
-- If the message includes `stateInit` (seqno == 0), the facilitator MUST verify the contract code matches a known W5 wallet contract. The canonical code hash for W5R1 is `20834b7b72b112147e1b2fb457b84e74d1a30f04f737d4f62a668e9552d2b72f`. Implementations SHOULD maintain an allowlist of accepted wallet code hashes and update it when TON Foundation publishes new wallet versions. Currently the allowlist contains one entry (W5R1). Wallet versions ship very rarely on TON (years apart), so this list is near-static.
+- If the message includes `stateInit` (wallet is not yet deployed), the facilitator MUST verify the contract code matches a known W5 wallet contract. The canonical code hash for W5R1 is `20834b7b72b112147e1b2fb457b84e74d1a30f04f737d4f62a668e9552d2b72f`. Implementations SHOULD maintain an allowlist of accepted wallet code hashes and update it when TON Foundation publishes new wallet versions. Currently the allowlist contains one entry (W5R1). Wallet versions ship very rarely on TON (years apart), so this list is near-static.
 - For wallets with seqno > 0, simulation (section 6) provides equivalent protection: if the contract does not execute the expected Jetton transfer, simulation will fail. Implementations that simulate MAY skip explicit code hash checks.
 
 ### 3. Facilitator safety
@@ -159,8 +159,8 @@ A facilitator verifying `exact` on TON MUST enforce all of the following checks 
 
 - The W5 message MUST contain exactly **1** `jetton_transfer` (opcode `0xf8a7ea5`) internal message. No additional actions are permitted.
 - The transfer amount MUST be equal to `requirements.amount`.
-- The `asset` field in the payload MUST match `requirements.asset`.
-- The source Jetton wallet (the destination of the W5 internal message in the BoC) MUST match the Jetton wallet address returned by `get_wallet_address(sender)` on the Jetton master contract (`requirements.asset`). This prevents a malicious BoC from using a substitute source contract.
+- The Jetton master address (`payload.asset`) MUST equal `requirements.asset`. Note: [TEP-74] `jetton_transfer` does not carry the master contract address in its body, so the on-chain asset binding is verified in the next check.
+- The source Jetton wallet (the destination of the W5 internal message in the BoC) MUST match the Jetton wallet address returned by `get_wallet_address(sender)` on the Jetton master contract (`requirements.asset`). This binds the BoC to the correct asset on-chain and prevents a malicious BoC from using a substitute Jetton wallet.
 - The `destination` field inside the `jetton_transfer` body MUST equal `requirements.payTo`. This ensures funds are routed to the correct recipient.
 
 ### 5. Replay protection
@@ -174,8 +174,8 @@ A facilitator verifying `exact` on TON MUST enforce all of the following checks 
 
 ### 6. Transaction simulation (recommended)
 
-- Facilitator SHOULD simulate message execution via emulation during `/verify`. This protects the resource server from doing unnecessary work for invalid payloads.
-- Verification SHOULD fail if simulation indicates: insufficient Jetton balance, expired message, or invalid seqno.
+- Facilitator SHOULD simulate message execution via emulation during `/verify`. Simulation traces the full [TEP-74 Jetton transfer chain](https://docs.ton.org/standard/tokens/jettons/how-it-works#token-transfer) (transfer -> internal_transfer) and confirms the transfer reaches the recipient's Jetton wallet. This protects the resource server from doing unnecessary work for invalid payloads.
+- Verification SHOULD fail if simulation indicates: insufficient Jetton balance, expired message, invalid seqno, or incomplete transfer chain.
 - When simulation is performed, it implicitly covers seqno, balance, and code hash checks from sections 2 and 5.
 
 ## Settlement Logic
@@ -184,9 +184,9 @@ A facilitator verifying `exact` on TON MUST enforce all of the following checks 
 2. Extract the signed body and optional `stateInit` from the internal message BoC.
 3. Fetch the facilitator's own wallet seqno.
 4. Estimate gas via emulation: build a trial relay message, emulate the trace, and sum all fees across the trace.
-5. Build the relay message: wrap the user's signed body in a bounceable internal message from the facilitator's wallet to the user's wallet, attaching the estimated TON for gas. If the user's wallet has a `stateInit` (seqno == 0), include it in the relay message for deployment.
+5. Build the relay message: wrap the user's signed body in a bounceable internal message from the facilitator's wallet to the user's wallet, attaching the estimated TON for gas. If the client's BoC includes a `stateInit` (the wallet account is [`nonexist` or `uninit`](https://docs.ton.org/foundations/status)), include it in the relay message for wallet deployment.
 6. Sign and broadcast the facilitator's external message.
-7. Wait for transaction confirmation (typically < 5 seconds on TON).
+7. Wait for transaction confirmation.
 8. Return x402 `SettlementResponse` with `success`, `transaction`, `network`, and `payer`.
 
 ## Duplicate Settlement Mitigation (RECOMMENDED)
@@ -273,6 +273,7 @@ TON uses the [TEP-74 Jetton standard][TEP-74] for fungible tokens:
 - [x402 v2 core specification](../../x402-specification-v2.md)
 - [TEP-74 Jetton Standard][TEP-74]
 - [W5 Wallet Contract](https://github.com/ton-blockchain/wallet-contract-v5)
+- [W5 Gasless Transactions](https://docs.ton.org/standard/wallets/v5#gasless-transactions)
 - [TVM CAIP-2 Namespace](https://namespaces.chainagnostic.org/tvm/caip2)
 - [Facilitator](https://github.com/ohld/x402-ton-facilitator)
 - [POC](https://github.com/ohld/x402-ton-poc)
