@@ -13,11 +13,11 @@ This spec uses [CAIP-2](https://namespaces.chainagnostic.org/tvm/caip2) identifi
 - `tvm:-3` — TON testnet
 
 > [!NOTE]
-> **Scope:** This spec covers [TEP-74]-compliant Jetton transfers using **W5+ wallets** (v5r1 and later) with gasless relay (`areFeesSponsored: true`). Non-gasless flows (`external_signed`, native TON transfers) are planned for a follow-up spec extension.
+> **Scope:** This spec covers [TEP-74]-compliant Jetton transfers using **W5 wallets** (v5r1) with gasless relay (`areFeesSponsored: true`). Non-gasless flows (`external_signed`, native TON transfers) are planned for a follow-up spec extension.
 
 ## Summary
 
-The `exact` scheme on TON transfers a specific amount of a [TEP-74] Jetton from the client to the resource server using a W5 wallet signed message.
+The `exact` scheme on TON transfers a specific amount of a [TEP-74] Jetton from the client to the resource server using a W5 (v5r1) wallet signed message.
 
 The facilitator IS the relay. It sponsors gas (~0.013 TON per transaction) by wrapping the client-signed message in an internal TON message from its own funded wallet. The client resolves signing data (seqno, Jetton wallet address) via a TON RPC endpoint, signs locally, and sends the result. The facilitator cannot modify the destination or amount; the client controls payment intent through Ed25519 signature.
 
@@ -34,7 +34,7 @@ There is no relay commission. The facilitator absorbs gas costs as the cost of o
 7. **Client** sends a second request to the **Resource Server** with the `PaymentPayload`.
 8. **Resource Server** forwards the payload and requirements to the **Facilitator's** `/verify` endpoint.
 9. **Facilitator** deserializes the internal message BoC, derives the sender address and public key, verifies the Ed25519 signature, validates payment intent (amount, destination, asset), and checks replay protection (seqno, validUntil, BoC hash).
-10. **Facilitator** returns a `VerifyResponse`. Verification is **REQUIRED** — it protects the resource server from doing unnecessary work for invalid payloads. This is an x402 protocol-level requirement, not specific to TON.
+10. **Facilitator** returns a `VerifyResponse`. Verification is **REQUIRED** — it protects the resource server from doing unnecessary work for invalid payloads.
 11. **Resource Server**, upon successful verification, fulfills the client's request.
 12. **Resource Server** calls the **Facilitator's** `/settle` endpoint. The facilitator MUST perform full verification independently and MUST NOT assume prior `/verify` results.
 13. **Facilitator** settles the payment: extracts the signed body from the internal message BoC, wraps it in a new internal message from its own wallet attaching TON for gas (estimated via emulation), signs and broadcasts. The user's W5 wallet verifies the signature and executes the Jetton transfer.
@@ -62,7 +62,7 @@ In addition to standard x402 fields, TON `exact` uses `extra` fields:
 
 - `asset`: [TEP-74] Jetton master contract address (raw format `workchain:hex`).
 - `payTo`: Recipient TON address (raw format).
-- `amount`: Atomic token amount (6 decimals for USDT, so `10000` = $0.01).
+- `amount`: Atomic token amount (6 decimals for USDT, so `10000` = $0.01). Decimals can be queried via `get_jetton_data` on the Jetton master contract.
 - `extra.areFeesSponsored`: Whether the facilitator sponsors gas fees. Currently always `true`; a non-sponsored flow will be added in a follow-up spec.
 
 ## PaymentPayload `payload` Field
@@ -112,7 +112,7 @@ Full `PaymentPayload` object:
 The facilitator derives the following from the BoC:
 - **Sender address**: the `dest` field of the internal message (the client's wallet).
 - **Public key**: from the `stateInit` data cell (if present) or via the on-chain `get_public_key` getter.
-- **Amount, destination, validUntil, seqno**: from the W5 signed body and its actions.
+- **walletId, amount, destination, validUntil, seqno**: from the W5 signed body and its actions.
 
 ## `SettlementResponse`
 
@@ -141,11 +141,11 @@ A facilitator verifying `exact` on TON MUST enforce all of the following checks 
 - `payload.accepted.payTo` MUST equal `requirements.payTo`.
 - `payload.accepted.amount` MUST equal `requirements.amount` exactly.
 
-### 2. Signature validity
+### 2. Message and signature verification
 
 - `payload.settlementBoc` MUST decode as a valid TON internal message.
 - The `dest` field of the internal message is the client's wallet address (the sender/payer).
-- The message body MUST contain a valid W5 (v5r1+) signed transfer with opcode `0x73696e74` (`internal_signed`).
+- The message body MUST contain a valid W5 (v5r1) signed transfer with opcode `0x73696e74` (`internal_signed`).
 - The Ed25519 public key MUST be derived from the BoC's `stateInit` data cell (when `stateInit` is present, i.e. the wallet account is [`nonexist` or `uninit`](https://docs.ton.org/foundations/status)) or via the on-chain `get_public_key` getter on the client's wallet contract (when the account is `active`). The public key is NOT passed as a separate payload field.
 - The Ed25519 signature MUST verify against the derived public key. The signature is located at the TAIL of the W5 message body (after `walletId`, `validUntil`, `seqno`, and actions).
 - If the message includes `stateInit` (wallet is not yet deployed), the facilitator MUST verify the contract code matches a known W5 wallet contract. The canonical code hash for W5R1 is `20834b7b72b112147e1b2fb457b84e74d1a30f04f737d4f62a668e9552d2b72f`. Implementations SHOULD maintain an allowlist of accepted wallet code hashes and update it when TON Foundation publishes new wallet versions. Currently the allowlist contains one entry (W5R1). Wallet versions ship very rarely on TON (years apart), so this list is near-static.
@@ -162,12 +162,12 @@ A facilitator verifying `exact` on TON MUST enforce all of the following checks 
 - The Jetton master address (`payload.asset`) MUST equal `requirements.asset`. Note: [TEP-74] `jetton_transfer` does not carry the master contract address in its body, so the on-chain asset binding is verified in the next check.
 - The source Jetton wallet (the destination of the W5 internal message in the BoC) MUST match the Jetton wallet address returned by `get_wallet_address(sender)` on the Jetton master contract (`requirements.asset`). This binds the BoC to the correct asset on-chain and prevents a malicious BoC from using a substitute Jetton wallet.
 - The `destination` field inside the `jetton_transfer` body MUST equal `requirements.payTo`. This ensures funds are routed to the correct recipient.
+- The client MUST have sufficient balance of the payment asset.
 
 ### 5. Replay protection
 
 - The `validUntil` timestamp in the W5 body MUST NOT be expired and MUST NOT be more than `maxTimeoutSeconds` in the future.
-- The wallet's on-chain seqno MUST be checked: the seqno in the BoC MUST be strictly equal to the current on-chain seqno. On TON, wallet contracts reject messages where the seqno does not match exactly.
-- The client MUST have sufficient balance of the payment asset.
+- The wallet's on-chain seqno MUST be checked: the seqno in the BoC MUST be strictly equal to the current on-chain seqno.
 - Duplicate `settlementBoc` submissions MUST be rejected via BoC hash dedup (see [Duplicate Settlement Mitigation](#duplicate-settlement-mitigation-recommended)).
 
 > **Note:** Seqno, balance, and expiry checks MAY be satisfied implicitly via transaction simulation (section 6). The spec declares them as explicit requirements so that implementations that do not simulate still enforce these checks.
