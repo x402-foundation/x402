@@ -78,8 +78,8 @@ export function createQueryDiscoveryExtension({
                 }
               : {}),
           },
-          required: ["type"] as ("type" | "method")[],
-          // pathParams and method are not declared here at schema build time --
+          required: ["type", "method"] as ("type" | "method")[],
+          // pathParams are not declared here at schema build time --
           // the server extension's enrichDeclaration adds them to both info and schema
           // atomically at request time, keeping data and schema consistent.
           additionalProperties: false,
@@ -176,8 +176,13 @@ export function createBodyDiscoveryExtension({
                 }
               : {}),
           },
-          required: ["type", "bodyType", "body"] as ("type" | "method" | "bodyType" | "body")[],
-          // pathParams and method are not declared here at schema build time --
+          required: ["type", "method", "bodyType", "body"] as (
+            | "type"
+            | "method"
+            | "bodyType"
+            | "body"
+          )[],
+          // pathParams are not declared here at schema build time --
           // the server extension's enrichDeclaration adds them to both info and schema
           // atomically at request time, keeping data and schema consistent.
           additionalProperties: false,

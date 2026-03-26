@@ -59,26 +59,41 @@ class TestValidateDiscoveryExtension:
     """Tests for validate_discovery_extension function."""
 
     def test_valid_query_extension(self) -> None:
-        """Test validating a valid query extension."""
+        """Test validating a valid query extension (enriched with method per spec)."""
+        ext = declare_discovery_extension(
+            input={"query": "test"},
+            input_schema={"properties": {"query": {"type": "string"}}},
+        )
+        inner = ext[BAZAAR.key]
+        inner["info"]["input"]["method"] = "GET"
+
+        result = validate_discovery_extension(inner)
+        assert result.valid is True
+        assert len(result.errors) == 0
+
+    def test_valid_body_extension(self) -> None:
+        """Test validating a valid body extension (enriched with method per spec)."""
+        ext = declare_discovery_extension(
+            input={"data": "test"},
+            input_schema={"properties": {"data": {"type": "string"}}},
+            body_type="json",
+        )
+        inner = ext[BAZAAR.key]
+        inner["info"]["input"]["method"] = "POST"
+
+        result = validate_discovery_extension(inner)
+        assert result.valid is True
+
+    def test_method_required_enforcement(self) -> None:
+        """Test that validation fails when method is absent per spec."""
         ext = declare_discovery_extension(
             input={"query": "test"},
             input_schema={"properties": {"query": {"type": "string"}}},
         )
 
         result = validate_discovery_extension(ext[BAZAAR.key])
-        assert result.valid is True
-        assert len(result.errors) == 0
-
-    def test_valid_body_extension(self) -> None:
-        """Test validating a valid body extension."""
-        ext = declare_discovery_extension(
-            input={"data": "test"},
-            input_schema={"properties": {"data": {"type": "string"}}},
-            body_type="json",
-        )
-
-        result = validate_discovery_extension(ext[BAZAAR.key])
-        assert result.valid is True
+        assert result.valid is False
+        assert any("method" in e for e in result.errors)
 
 
 class TestExtractDiscoveryInfo:
@@ -95,6 +110,7 @@ class TestExtractDiscoveryInfo:
         ext_dict = ext[BAZAAR.key]
         if hasattr(ext_dict, "model_dump"):
             ext_dict = ext_dict.model_dump(by_alias=True)
+        ext_dict["info"]["input"]["method"] = "GET"
 
         payload = {
             "x402Version": 2,
@@ -121,6 +137,7 @@ class TestExtractDiscoveryInfo:
         ext_dict = ext[BAZAAR.key]
         if hasattr(ext_dict, "model_dump"):
             ext_dict = ext_dict.model_dump(by_alias=True)
+        ext_dict["info"]["input"]["method"] = "POST"
 
         payload = {
             "x402Version": 2,
@@ -170,6 +187,7 @@ class TestExtractDiscoveryInfo:
         ext_dict = ext[BAZAAR.key]
         if hasattr(ext_dict, "model_dump"):
             ext_dict = ext_dict.model_dump(by_alias=True)
+        ext_dict["info"]["input"]["method"] = "GET"
 
         payload = {
             "x402Version": 2,
@@ -193,6 +211,7 @@ class TestExtractDiscoveryInfo:
         ext_dict = ext[BAZAAR.key]
         if hasattr(ext_dict, "model_dump"):
             ext_dict = ext_dict.model_dump(by_alias=True)
+        ext_dict["info"]["input"]["method"] = "GET"
 
         payload = {
             "x402Version": 2,
@@ -216,6 +235,7 @@ class TestExtractDiscoveryInfo:
         ext_dict = ext[BAZAAR.key]
         if hasattr(ext_dict, "model_dump"):
             ext_dict = ext_dict.model_dump(by_alias=True)
+        ext_dict["info"]["input"]["method"] = "GET"
 
         payload = {
             "x402Version": 2,
@@ -307,8 +327,10 @@ class TestExtractDiscoveryInfoFromExtension:
         ext = declare_discovery_extension(
             input={"q": "test"},
         )
+        inner = ext[BAZAAR.key]
+        inner["info"]["input"]["method"] = "GET"
 
-        info = extract_discovery_info_from_extension(ext[BAZAAR.key])
+        info = extract_discovery_info_from_extension(inner)
         assert isinstance(info, QueryDiscoveryInfo)
 
     def test_extract_without_validation(self) -> None:
@@ -329,8 +351,10 @@ class TestValidateAndExtract:
         ext = declare_discovery_extension(
             input={"query": "test"},
         )
+        inner = ext[BAZAAR.key]
+        inner["info"]["input"]["method"] = "GET"
 
-        result = validate_and_extract(ext[BAZAAR.key])
+        result = validate_and_extract(inner)
         assert result.valid is True
         assert result.info is not None
         assert len(result.errors) == 0
@@ -341,8 +365,10 @@ class TestValidateAndExtract:
             input={"name": "test"},
             body_type="json",
         )
+        inner = ext[BAZAAR.key]
+        inner["info"]["input"]["method"] = "POST"
 
-        result = validate_and_extract(ext[BAZAAR.key])
+        result = validate_and_extract(inner)
         assert result.valid is True
         assert isinstance(result.info, BodyDiscoveryInfo)
 

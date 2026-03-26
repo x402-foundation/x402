@@ -4,6 +4,7 @@ from x402.extensions.bazaar import (
     BAZAAR,
     bazaar_resource_server_extension,
     declare_discovery_extension,
+    validate_discovery_extension,
 )
 from x402.http.types import HTTPRequestContext
 
@@ -57,6 +58,53 @@ class TestBazaarResourceServerExtension:
         enriched = bazaar_resource_server_extension.enrich_declaration(declaration, context)
 
         assert enriched["info"]["input"]["method"] == "POST"
+
+    def test_enrich_then_validate_get(self) -> None:
+        """Test that declaring without method, then enriching, produces a valid extension."""
+        ext = declare_discovery_extension(
+            input={"query": "test"},
+            input_schema={"properties": {"query": {"type": "string"}}},
+        )
+        declaration = ext[BAZAAR.key]
+
+        if hasattr(declaration, "model_dump"):
+            declaration = declaration.model_dump(by_alias=True)
+
+        # Pre-enrichment: validation should fail (method missing)
+        pre_result = validate_discovery_extension(declaration)
+        assert pre_result.valid is False
+
+        context = MockHTTPRequest(method="GET")
+        enriched = bazaar_resource_server_extension.enrich_declaration(declaration, context)
+
+        # Post-enrichment: validation should pass
+        post_result = validate_discovery_extension(enriched)
+        assert post_result.valid is True, (
+            f"enriched GET extension should pass: {post_result.errors}"
+        )
+
+    def test_enrich_then_validate_post(self) -> None:
+        """Test that declaring without method, then enriching, produces a valid extension."""
+        ext = declare_discovery_extension(
+            input={"data": "test"},
+            input_schema={"properties": {"data": {"type": "string"}}},
+            body_type="json",
+        )
+        declaration = ext[BAZAAR.key]
+
+        if hasattr(declaration, "model_dump"):
+            declaration = declaration.model_dump(by_alias=True)
+
+        pre_result = validate_discovery_extension(declaration)
+        assert pre_result.valid is False
+
+        context = MockHTTPRequest(method="POST")
+        enriched = bazaar_resource_server_extension.enrich_declaration(declaration, context)
+
+        post_result = validate_discovery_extension(enriched)
+        assert post_result.valid is True, (
+            f"enriched POST extension should pass: {post_result.errors}"
+        )
 
     def test_enrich_no_context(self) -> None:
         """Test enriching without HTTP context returns unchanged."""

@@ -425,6 +425,10 @@ func (s *x402HTTPResourceServer) BuildPaymentRequirementsFromOptions(ctx context
 
 // ProcessHTTPRequest handles an HTTP request and returns processing result
 func (s *x402HTTPResourceServer) ProcessHTTPRequest(ctx context.Context, reqCtx HTTPRequestContext, paywallConfig *PaywallConfig) HTTPProcessResult {
+	if reqCtx.Method == "" {
+		reqCtx.Method = reqCtx.Adapter.GetMethod()
+	}
+
 	// Find matching route
 	routeConfig, routePattern := s.getRouteConfig(reqCtx.Path, reqCtx.Method)
 	if routeConfig == nil {
@@ -628,7 +632,11 @@ func (s *x402HTTPResourceServer) ProcessHTTPRequest(ctx context.Context, reqCtx 
 
 // RequiresPayment checks if a request requires payment based on route configuration
 func (s *x402HTTPResourceServer) RequiresPayment(reqCtx HTTPRequestContext) bool {
-	routeConfig, _ := s.getRouteConfig(reqCtx.Path, reqCtx.Method)
+	method := reqCtx.Method
+	if method == "" {
+		method = reqCtx.Adapter.GetMethod()
+	}
+	routeConfig, _ := s.getRouteConfig(reqCtx.Path, method)
 	return routeConfig != nil
 }
 

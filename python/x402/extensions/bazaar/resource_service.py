@@ -91,9 +91,9 @@ def _create_query_discovery_extension(
                 "type": {"type": "string", "const": "http"},
                 "method": {"type": "string", "enum": ["GET", "HEAD", "DELETE"]},
             },
-            "required": ["type"],
-            # pathParams and method are not declared here at schema build time —
-            # the server extension's enrich_declaration adds them to both info and schema
+            "required": ["type", "method"],
+            # pathParams are not declared here at schema build time —
+            # the server extension's enrich_declaration adds pathParams to both info and schema
             # atomically at request time, keeping data and schema consistent.
             "additionalProperties": False,
         }
@@ -183,9 +183,9 @@ def _create_body_discovery_extension(
                 "bodyType": {"type": "string", "enum": ["json", "form-data", "text"]},
                 "body": input_schema,
             },
-            "required": ["type", "bodyType", "body"],
-            # pathParams and method are not declared here at schema build time —
-            # the server extension's enrich_declaration adds them to both info and schema
+            "required": ["type", "method", "bodyType", "body"],
+            # pathParams are not declared here at schema build time —
+            # the server extension's enrich_declaration adds pathParams to both info and schema
             # atomically at request time, keeping data and schema consistent.
             "additionalProperties": False,
         }

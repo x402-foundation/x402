@@ -422,7 +422,9 @@ export class x402HTTPResourceServer {
     context: HTTPRequestContext,
     paywallConfig?: PaywallConfig,
   ): Promise<HTTPProcessResult> {
-    const { adapter, path, method } = context;
+    const method = context.method || context.adapter.getMethod();
+    context = { ...context, method };
+    const { adapter, path } = context;
 
     // Find matching route
     const routeMatch = this.getRouteConfig(path, method);
@@ -586,6 +588,15 @@ export class x402HTTPResourceServer {
     transportContext?: HTTPTransportContext,
     settlementOverrides?: SettlementOverrides,
   ): Promise<ProcessSettleResultResponse> {
+    if (transportContext?.request && !transportContext.request.method) {
+      transportContext = {
+        ...transportContext,
+        request: {
+          ...transportContext.request,
+          method: transportContext.request.adapter.getMethod(),
+        },
+      };
+    }
     try {
       // Resolve overrides: explicit param takes precedence, fall back to response header
       let resolvedOverrides = settlementOverrides;
@@ -675,7 +686,8 @@ export class x402HTTPResourceServer {
    * @returns True if the route requires payment, false otherwise
    */
   requiresPayment(context: HTTPRequestContext): boolean {
-    return this.getRouteConfig(context.path, context.method) !== undefined;
+    const method = context.method || context.adapter.getMethod();
+    return this.getRouteConfig(context.path, method) !== undefined;
   }
 
   /**
