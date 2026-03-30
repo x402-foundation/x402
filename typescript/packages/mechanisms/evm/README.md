@@ -57,33 +57,6 @@ This package provides three main components for handling x402 payments on EVM-co
 ]
 ```
 
-### Client Builder (`@x402/evm/client`)
-
-**Convenience builder** for creating fully-configured EVM clients
-
-**Exports:**
-- `createEvmClient(config)` - Creates x402Client with EVM support
-- `EvmClientConfig` - Configuration interface
-
-**What it does:**
-- Automatically registers V2 wildcard scheme (`eip155:*`)
-- Automatically registers all V1 networks from `NETWORKS`
-- Optionally applies payment policies
-- Optionally uses custom payment selector
-
-**Example:**
-```typescript
-import { createEvmClient } from "@x402/evm/client";
-import { toClientEvmSigner } from "@x402/evm";
-import { privateKeyToAccount } from "viem/accounts";
-
-const account = privateKeyToAccount("0x...");
-const signer = toClientEvmSigner(account);
-
-const client = createEvmClient({ signer });
-// Ready to use with both V1 and V2!
-```
-
 ## Version Differences
 
 ### V2 (Main Package)
@@ -102,17 +75,7 @@ const client = createEvmClient({ signer });
 
 ## Usage Patterns
 
-### 1. Using Pre-built Builder (Recommended)
-
-```typescript
-import { createEvmClient } from "@x402/evm/client";
-import { wrapFetchWithPayment } from "@x402/fetch";
-
-const client = createEvmClient({ signer: myEvmSigner });
-const paidFetch = wrapFetchWithPayment(fetch, client);
-```
-
-### 2. Direct Registration (Full Control)
+### 1. Direct Registration (Full Control)
 
 ```typescript
 import { x402Client } from "@x402/core/client";
@@ -149,7 +112,7 @@ const wildcardClient = new x402Client().register(
 );
 ```
 
-### 3. Using Config (Flexible)
+### 2. Using Config (Flexible)
 
 ```typescript
 import { x402Client } from "@x402/core/client";

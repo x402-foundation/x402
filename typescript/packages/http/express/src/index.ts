@@ -8,10 +8,23 @@ import {
   FacilitatorClient,
   FacilitatorResponseError,
   getFacilitatorResponseError,
+  SETTLEMENT_OVERRIDES_HEADER,
+  SettlementOverrides,
 } from "@x402/core/server";
 import { SchemeNetworkServer, Network } from "@x402/core/types";
 import { NextFunction, Request, Response } from "express";
 import { ExpressAdapter } from "./adapter";
+
+/**
+ * Set settlement overrides on the response for partial settlement.
+ * The middleware will extract these before settlement and strip the header from the client response.
+ *
+ * @param res - Express response object
+ * @param overrides - Settlement overrides (e.g., { amount: "500" } for partial settlement)
+ */
+export function setSettlementOverrides(res: Response, overrides: SettlementOverrides): void {
+  res.setHeader(SETTLEMENT_OVERRIDES_HEADER, JSON.stringify(overrides));
+}
 
 /**
  * Check if any routes in the configuration declare bazaar extensions
@@ -289,11 +302,18 @@ export function paymentMiddlewareFromHTTPServer(
             ),
           );
 
+          const responseHeaders: Record<string, string> = {};
+          for (const [key, value] of Object.entries(res.getHeaders())) {
+            if (value != null) {
+              responseHeaders[key] = String(value);
+            }
+          }
+
           const settleResult = await httpServer.processSettlement(
             paymentPayload,
             paymentRequirements,
             declaredExtensions,
-            { request: context, responseBody },
+            { request: context, responseBody, responseHeaders },
           );
 
           // If settlement fails, return an error and do not send the buffered response
@@ -448,9 +468,9 @@ export type {
   SchemeNetworkServer,
 } from "@x402/core/types";
 
-export type { PaywallProvider, PaywallConfig } from "@x402/core/server";
+export type { PaywallProvider, PaywallConfig, SettlementOverrides } from "@x402/core/server";
 
-export { RouteConfigurationError } from "@x402/core/server";
+export { RouteConfigurationError, SETTLEMENT_OVERRIDES_HEADER } from "@x402/core/server";
 
 export type { RouteValidationError } from "@x402/core/server";
 

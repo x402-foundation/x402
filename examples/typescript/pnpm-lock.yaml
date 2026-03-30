@@ -3724,6 +3724,64 @@ importers:
         specifier: ^5.3.0
         version: 5.9.2
 
+  servers/upto:
+    dependencies:
+      '@x402/core':
+        specifier: workspace:*
+        version: link:../../../../typescript/packages/core
+      '@x402/evm':
+        specifier: workspace:*
+        version: link:../../../../typescript/packages/mechanisms/evm
+      '@x402/express':
+        specifier: workspace:*
+        version: link:../../../../typescript/packages/http/express
+      '@x402/extensions':
+        specifier: workspace:*
+        version: link:../../../../typescript/packages/extensions
+      dotenv:
+        specifier: ^16.4.7
+        version: 16.6.1
+      express:
+        specifier: ^4.18.2
+        version: 4.21.2
+    devDependencies:
+      '@eslint/js':
+        specifier: ^9.24.0
+        version: 9.33.0
+      '@types/express':
+        specifier: ^5.0.1
+        version: 5.0.3
+      '@typescript-eslint/eslint-plugin':
+        specifier: ^8.29.1
+        version: 8.48.0(@typescript-eslint/parser@8.48.0(eslint@9.33.0(jiti@2.6.1))(typescript@5.9.2))(eslint@9.33.0(jiti@2.6.1))(typescript@5.9.2)
+      '@typescript-eslint/parser':
+        specifier: ^8.29.1
+        version: 8.48.0(eslint@9.33.0(jiti@2.6.1))(typescript@5.9.2)
+      eslint:
+        specifier: ^9.24.0
+        version: 9.33.0(jiti@2.6.1)
+      eslint-plugin-import:
+        specifier: ^2.31.0
+        version: 2.32.0(@typescript-eslint/parser@8.48.0(eslint@9.33.0(jiti@2.6.1))(typescript@5.9.2))(eslint-import-resolver-typescript@3.10.1)(eslint@9.33.0(jiti@2.6.1))
+      eslint-plugin-jsdoc:
+        specifier: ^50.6.9
+        version: 50.8.0(eslint@9.33.0(jiti@2.6.1))
+      eslint-plugin-prettier:
+        specifier: ^5.2.6
+        version: 5.5.4(eslint-config-prettier@10.1.8(eslint@9.33.0(jiti@2.6.1)))(eslint@9.33.0(jiti@2.6.1))(prettier@3.5.2)
+      prettier:
+        specifier: 3.5.2
+        version: 3.5.2
+      tsup:
+        specifier: ^7.2.0
+        version: 7.3.0(postcss@8.5.6)(typescript@5.9.2)
+      tsx:
+        specifier: ^4.7.0
+        version: 4.20.4
+      typescript:
+        specifier: ^5.3.0
+        version: 5.9.2
+
 packages:
 
   7zip-bin@5.2.0:

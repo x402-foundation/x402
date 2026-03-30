@@ -14,6 +14,12 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+// SetSettlementOverrides sets settlement overrides on the Gin response for partial settlement.
+// The middleware extracts these before settlement and strips the header from the client response.
+func SetSettlementOverrides(c *gin.Context, overrides *x402.SettlementOverrides) {
+	c.Header(x402http.SettlementOverridesHeader, x402http.MarshalSettlementOverrides(overrides))
+}
+
 // ============================================================================
 // Gin Adapter Implementation
 // ============================================================================
@@ -310,7 +316,7 @@ func createMiddlewareHandler(server *x402http.HTTPServer, config *MiddlewareConf
 
 		case x402http.ResultPaymentVerified:
 			// Payment verified, continue with settlement handling
-			handlePaymentVerified(c, server, ctx, result, config)
+			handlePaymentVerified(c, server, ctx, reqCtx, result, config)
 		}
 	}
 }
@@ -337,7 +343,7 @@ func handlePaymentError(c *gin.Context, response *x402http.HTTPResponseInstructi
 }
 
 // handlePaymentVerified handles verified payments with settlement
-func handlePaymentVerified(c *gin.Context, server *x402http.HTTPServer, ctx context.Context, result x402http.HTTPProcessResult, config *MiddlewareConfig) {
+func handlePaymentVerified(c *gin.Context, server *x402http.HTTPServer, ctx context.Context, reqCtx x402http.HTTPRequestContext, result x402http.HTTPProcessResult, config *MiddlewareConfig) {
 	// Capture response for settlement
 	writer := &responseCapture{
 		ResponseWriter: c.Writer,
@@ -373,11 +379,16 @@ func handlePaymentVerified(c *gin.Context, server *x402http.HTTPServer, ctx cont
 		return
 	}
 
-	// Process settlement
 	settleResult := server.ProcessSettlement(
 		ctx,
 		*result.PaymentPayload,
 		*result.PaymentRequirements,
+		nil,
+		&x402http.HTTPTransportContext{
+			Request:         &reqCtx,
+			ResponseBody:    writer.body.Bytes(),
+			ResponseHeaders: writer.Header(),
+		},
 	)
 
 	// Check settlement success

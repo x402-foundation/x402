@@ -178,6 +178,7 @@ describe("Bazaar Discovery Extension", () => {
   describe("validateDiscoveryExtension", () => {
     it("should validate a correct GET extension", () => {
       const declared = declareDiscoveryExtension({
+        method: "GET",
         input: { query: "test" },
         inputSchema: {
           properties: {
@@ -194,6 +195,7 @@ describe("Bazaar Discovery Extension", () => {
 
     it("should validate a correct POST extension", () => {
       const declared = declareDiscoveryExtension({
+        method: "POST",
         input: { name: "John" },
         inputSchema: {
           properties: {
@@ -206,6 +208,19 @@ describe("Bazaar Discovery Extension", () => {
       const extension = declared.bazaar;
       const result = validateDiscoveryExtension(extension);
       expect(result.valid).toBe(true);
+    });
+
+    it("should fail validation when method is absent", () => {
+      // Per spec, method is required. An extension without method (e.g. pre-enrichment)
+      // must be rejected.
+      const declared = declareDiscoveryExtension({
+        input: { query: "test" },
+        inputSchema: { properties: { query: { type: "string" } } },
+      });
+
+      const result = validateDiscoveryExtension(declared.bazaar);
+      expect(result.valid).toBe(false);
+      expect(result.errors?.some(e => e.includes("method"))).toBe(true);
     });
 
     it("should detect invalid extension structure", () => {
@@ -243,6 +258,7 @@ describe("Bazaar Discovery Extension", () => {
   describe("extractDiscoveryInfoFromExtension", () => {
     it("should extract info from a valid extension", () => {
       const declared = declareDiscoveryExtension({
+        method: "GET",
         input: { query: "test" },
         inputSchema: {
           properties: {
@@ -307,6 +323,7 @@ describe("Bazaar Discovery Extension", () => {
   describe("extractDiscoveryInfo (full flow)", () => {
     it("should extract info from v2 PaymentPayload with extensions", () => {
       const declared = declareDiscoveryExtension({
+        method: "POST",
         input: { userId: "123" },
         inputSchema: {
           properties: {
@@ -339,6 +356,7 @@ describe("Bazaar Discovery Extension", () => {
 
     it("should strip query params from v2 resourceUrl", () => {
       const declared = declareDiscoveryExtension({
+        method: "GET",
         input: { city: "NYC" },
         inputSchema: {
           properties: {
@@ -375,6 +393,7 @@ describe("Bazaar Discovery Extension", () => {
 
     it("should strip hash sections from v2 resourceUrl", () => {
       const declared = declareDiscoveryExtension({
+        method: "GET",
         input: {},
         inputSchema: { properties: {} },
       });
@@ -405,6 +424,7 @@ describe("Bazaar Discovery Extension", () => {
 
     it("should strip both query params and hash sections from v2 resourceUrl", () => {
       const declared = declareDiscoveryExtension({
+        method: "GET",
         input: {},
         inputSchema: { properties: {} },
       });
@@ -559,6 +579,7 @@ describe("Bazaar Discovery Extension", () => {
   describe("validateAndExtract", () => {
     it("should return valid result with info for correct extension", () => {
       const declared = declareDiscoveryExtension({
+        method: "GET",
         input: { query: "test" },
         inputSchema: {
           properties: {
@@ -922,6 +943,7 @@ describe("Bazaar Discovery Extension", () => {
   describe("Integration - Full workflow", () => {
     it("should handle GET endpoint with output schema (e2e scenario)", () => {
       const declared = declareDiscoveryExtension({
+        method: "GET",
         input: {},
         inputSchema: {
           properties: {},
@@ -963,6 +985,7 @@ describe("Bazaar Discovery Extension", () => {
 
     it("should handle complete v2 server-to-facilitator workflow", () => {
       const declared = declareDiscoveryExtension({
+        method: "POST",
         input: { userId: "123", action: "create" },
         inputSchema: {
           properties: {
@@ -1068,6 +1091,7 @@ describe("Bazaar Discovery Extension", () => {
 
     it("should handle unified extraction for both v1 and v2", () => {
       const declared = declareDiscoveryExtension({
+        method: "GET",
         input: { limit: 10 },
         inputSchema: {
           properties: {
@@ -1266,6 +1290,57 @@ describe("Bazaar Discovery Extension", () => {
 
       const required = extractRequiredFields(enriched.schema as Record<string, unknown>);
       expect(required).toContain("method");
+    });
+
+    it("should produce a valid extension after enrichment (GET)", () => {
+      const declared = declareDiscoveryExtension({
+        input: { query: "test" },
+        inputSchema: { properties: { query: { type: "string" } } },
+      });
+
+      // Pre-enrichment: method not set, validation should fail
+      const preResult = validateDiscoveryExtension(declared.bazaar);
+      expect(preResult.valid).toBe(false);
+
+      const httpContext: HTTPRequestContext = {
+        method: "GET",
+        path: "/test",
+        adapter: createMockAdapter(),
+      };
+
+      const enriched = bazaarResourceServerExtension.enrichDeclaration!(
+        declared.bazaar,
+        httpContext,
+      ) as DiscoveryExtension;
+
+      // Post-enrichment: validation should pass
+      const postResult = validateDiscoveryExtension(enriched);
+      expect(postResult.valid).toBe(true);
+    });
+
+    it("should produce a valid extension after enrichment (POST)", () => {
+      const declared = declareDiscoveryExtension({
+        input: { data: "test" },
+        inputSchema: { properties: { data: { type: "string" } } },
+        bodyType: "json",
+      });
+
+      const preResult = validateDiscoveryExtension(declared.bazaar);
+      expect(preResult.valid).toBe(false);
+
+      const httpContext: HTTPRequestContext = {
+        method: "POST",
+        path: "/test",
+        adapter: createMockAdapter(),
+      };
+
+      const enriched = bazaarResourceServerExtension.enrichDeclaration!(
+        declared.bazaar,
+        httpContext,
+      ) as DiscoveryExtension;
+
+      const postResult = validateDiscoveryExtension(enriched);
+      expect(postResult.valid).toBe(true);
     });
 
     it("should return unchanged declaration for non-HTTP context", () => {

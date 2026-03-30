@@ -9,6 +9,7 @@ export class MockSchemeNetworkServer implements SchemeNetworkServer {
   public readonly scheme: string;
   private parsePriceResult: AssetAmount | Error;
   private enhanceResult: PaymentRequirements | Error | null = null;
+  private assetDecimalsResult: number | null = null;
 
   // Call tracking
   public parsePriceCalls: Array<{ price: Price; network: Network }> = [];
@@ -71,7 +72,19 @@ export class MockSchemeNetworkServer implements SchemeNetworkServer {
     return this.enhanceResult || paymentRequirements;
   }
 
+  getAssetDecimals(_asset: string, _network: Network): number {
+    return this.assetDecimalsResult ?? 6;
+  }
+
   // Helper methods for test configuration
+  /**
+   *
+   * @param result
+   */
+  setAssetDecimalsResult(result: number): void {
+    this.assetDecimalsResult = result;
+  }
+
   /**
    *
    * @param result

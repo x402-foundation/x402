@@ -164,6 +164,14 @@ type SchemeNetworkServer interface {
 	) (types.PaymentRequirements, error)
 }
 
+// AssetDecimalsProvider is an optional interface that SchemeNetworkServer implementations
+// can satisfy to report the decimal precision of the asset for a given network.
+// SettlePayment uses this to convert dollar-format settlement overrides to atomic units.
+// Falls back to 6 decimals when the scheme does not implement this interface.
+type AssetDecimalsProvider interface {
+	GetAssetDecimals(asset string, network Network) int
+}
+
 // SchemeNetworkFacilitator is implemented by facilitator-side payment mechanisms (V2)
 type SchemeNetworkFacilitator interface {
 	Scheme() string

@@ -46,7 +46,6 @@ export const ErrPermit2InvalidNonce = "permit2_invalid_nonce";
 export const ErrPermit2612AmountMismatch = "permit2_2612_amount_mismatch";
 
 // ERC-20 approval gas sponsoring verify errors
-export const ErrErc20ApprovalInsufficientEthForGas = "erc20_approval_insufficient_eth_for_gas";
 export const ErrErc20ApprovalInvalidFormat = "invalid_erc20_approval_extension_format";
 export const ErrErc20ApprovalFromMismatch = "erc20_approval_from_mismatch";
 export const ErrErc20ApprovalAssetMismatch = "erc20_approval_asset_mismatch";

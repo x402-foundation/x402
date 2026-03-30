@@ -1,7 +1,7 @@
 import { config } from 'dotenv';
-import { spawn, execSync } from 'child_process';
-import { writeFileSync, mkdirSync } from 'fs';
-import { dirname } from 'path';
+import { spawn, execSync, ChildProcess } from 'child_process';
+import { writeFileSync } from 'fs';
+import { join } from 'path';
 import { createWalletClient, createPublicClient, http, parseEther, formatEther } from 'viem';
 import { privateKeyToAccount } from 'viem/accounts';
 import { base, baseSepolia } from 'viem/chains';
@@ -168,36 +168,50 @@ const REVOKE_FUND_AMOUNT = parseEther('0.001');
  * so the client can pay gas for Permit2 revocation transactions.
  */
 async function fundClientForRevoke(): Promise<boolean> {
-  try {
-    const { publicClient, facilitatorWallet, facilitatorAccount, clientAccount } = getEvmClients();
+  const { publicClient, facilitatorWallet, facilitatorAccount, clientAccount } = getEvmClients();
 
-    const clientBalance = await publicClient.getBalance({ address: clientAccount.address });
-    if (clientBalance >= REVOKE_FUND_AMOUNT) {
-      verboseLog(`  ℹ️  Client already has ${formatEther(clientBalance)} ETH, skipping fund`);
-      return true;
-    }
-
-    const facilitatorBalance = await publicClient.getBalance({ address: facilitatorAccount.address });
-    if (facilitatorBalance < REVOKE_FUND_AMOUNT) {
-      errorLog(`  ❌ Facilitator wallet ${facilitatorAccount.address} has insufficient ETH (${formatEther(facilitatorBalance)}) to fund client for revoke.`);
-      errorLog(`     Please fund the facilitator wallet with testnet ETH (need at least ${formatEther(REVOKE_FUND_AMOUNT)} ETH).`);
-      return false;
-    }
-
-    verboseLog(`  💸 Funding client ${clientAccount.address} with ${formatEther(REVOKE_FUND_AMOUNT)} ETH for revoke...`);
-    const hash = await facilitatorWallet.sendTransaction({
-      to: clientAccount.address,
-      value: REVOKE_FUND_AMOUNT,
-    });
-    await publicClient.waitForTransactionReceipt({ hash });
-    verboseLog(`  ✅ Funded client (tx: ${hash})`);
+  const clientBalance = await publicClient.getBalance({ address: clientAccount.address });
+  if (clientBalance >= REVOKE_FUND_AMOUNT) {
+    verboseLog(`  ℹ️  Client already has ${formatEther(clientBalance)} ETH, skipping fund`);
     return true;
-  } catch (err) {
-    const errLines = (err instanceof Error ? err.message : String(err)).split('\n');
-    errorLog(`  ❌ Failed to fund client for revoke: ${errLines[0].trim()}`);
-    if (errLines.length > 1) verboseLog(errLines.slice(1).join('\n'));
+  }
+
+  const facilitatorBalance = await publicClient.getBalance({ address: facilitatorAccount.address });
+  if (facilitatorBalance < REVOKE_FUND_AMOUNT) {
+    errorLog(`  ❌ Facilitator wallet ${facilitatorAccount.address} has insufficient ETH (${formatEther(facilitatorBalance)}) to fund client for revoke.`);
+    errorLog(`     Please fund the facilitator wallet with testnet ETH (need at least ${formatEther(REVOKE_FUND_AMOUNT)} ETH).`);
     return false;
   }
+
+  verboseLog(`  💸 Funding client ${clientAccount.address} with ${formatEther(REVOKE_FUND_AMOUNT)} ETH for revoke...`);
+  // Retry on nonce errors: load-balanced RPCs can return stale pending nonces,
+  // especially when the facilitator SERVICE process (same private key) is settling
+  // payments concurrently. A fresh nonce fetch + small delay usually resolves it.
+  let lastErr: Error | null = null;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    if (attempt > 0) await new Promise(r => setTimeout(r, 500));
+    try {
+      const nonce = await publicClient.getTransactionCount({
+        address: facilitatorAccount.address,
+        blockTag: 'pending',
+      });
+      const hash = await facilitatorWallet.sendTransaction({
+        to: clientAccount.address,
+        value: REVOKE_FUND_AMOUNT,
+        nonce,
+      });
+      verboseLog(`  ✅ Funded client (tx: ${hash})`);
+      return true;
+    } catch (err) {
+      lastErr = err instanceof Error ? err : new Error(String(err));
+      const isNonceError = lastErr.message.toLowerCase().includes('nonce');
+      if (!isNonceError) break;
+    }
+  }
+  const errLines = lastErr!.message.split('\n');
+  errorLog(`  ❌ Failed to fund client for revoke: ${errLines[0].trim()}`);
+  if (errLines.length > 1) verboseLog(errLines.slice(1).join('\n'));
+  return false;
 }
 
 /**
@@ -209,11 +223,8 @@ async function drainClientETH(): Promise<boolean> {
   try {
     const { publicClient, clientWallet, facilitatorAccount, clientAccount } = getEvmClients();
 
-    const balance = await publicClient.getBalance({ address: clientAccount.address });
-    if (balance === 0n) {
-      verboseLog('  ℹ️  Client ETH balance is already 0');
-      return true;
-    }
+    // Use pending balance so we see any in-flight fund transaction that hasn't confirmed yet.
+    const balance = await publicClient.getBalance({ address: clientAccount.address, blockTag: 'pending' });
 
     // Reserve enough for gas. On L2s getGasPrice() returns a tiny value but
     // viem's sendTransaction uses a higher maxFeePerGas with safety margin.
@@ -232,15 +243,10 @@ async function drainClientETH(): Promise<boolean> {
       to: facilitatorAccount.address,
       value: sendAmount,
     });
-    await publicClient.waitForTransactionReceipt({ hash });
-
-    const remaining = await publicClient.getBalance({ address: clientAccount.address });
-    verboseLog(`  ✅ Drained client ETH (tx: ${hash}, remaining: ${formatEther(remaining)} ETH)`);
+    verboseLog(`  ✅ Drained client ETH (tx: ${hash})`);
     return true;
   } catch (err) {
-    const errLines = (err instanceof Error ? err.message : String(err)).split('\n');
-    errorLog(`  ❌ Failed to drain client ETH: ${errLines[0].trim()}`);
-    if (errLines.length > 1) verboseLog(errLines.slice(1).join('\n'));
+    errorLog(`  ❌ Failed to drain client ETH: ${err instanceof Error ? err.message : err}`);
     return false;
   }
 }
@@ -368,13 +374,7 @@ async function runTest() {
     return;
   }
 
-  // Initialize logger — ensure parent directory exists for log file
-  if (parsedArgs.logFile) {
-    const logDir = dirname(parsedArgs.logFile);
-    if (logDir && logDir !== '.') {
-      mkdirSync(logDir, { recursive: true });
-    }
-  }
+  // Initialize logger
   loggerConfig({ logFile: parsedArgs.logFile, verbose: parsedArgs.verbose });
 
   log('🚀 Starting X402 E2E Test Suite');
@@ -440,15 +440,41 @@ async function runTest() {
     selectedExtensions = selections.extensions;
     networkMode = selections.networkMode;
   } else {
+    log('\n🤖 Programmatic Mode');
+    log('===================\n');
+
     filters = parsedArgs.filters;
     selectedExtensions = parsedArgs.filters.extensions;
 
     // In programmatic mode, network mode defaults to testnet if not specified
     networkMode = parsedArgs.networkMode || 'testnet';
+
+    // Print active filters
+    const filterEntries = Object.entries(filters).filter(([_, v]) => v && (Array.isArray(v) ? v.length > 0 : true));
+    if (filterEntries.length > 0) {
+      log('Active filters:');
+      filterEntries.forEach(([key, value]) => {
+        if (Array.isArray(value) && value.length > 0) {
+          log(`  - ${key}: ${value.join(', ')}`);
+        }
+      });
+      log('');
+    }
   }
 
   // Get network configuration based on selected mode
   const networks = getNetworkSet(networkMode);
+
+  log(`\n🌐 Network Mode: ${networkMode.toUpperCase()}`);
+  log(`   EVM: ${networks.evm.name} (${networks.evm.caip2})`);
+  log(`   SVM: ${networks.svm.name} (${networks.svm.caip2})`);
+  log(`   APTOS: ${networks.aptos.name} (${networks.aptos.caip2})`);
+  log(`   STELLAR: ${networks.stellar.name} (${networks.stellar.caip2})`);
+
+  if (networkMode === 'mainnet') {
+    log('\n⚠️  WARNING: Running on MAINNET - real funds will be used!');
+  }
+  log('');
 
   // Apply filters to scenarios
   let filteredScenarios = filterScenarios(allScenarios, filters);
@@ -468,24 +494,50 @@ async function runTest() {
       log('💡 This should not happen - coverage tracking may have an issue\n');
       return;
     }
+  } else {
+    log(`\n✅ ${filteredScenarios.length} scenarios selected`);
   }
 
-  // Show only the networks used by filtered scenarios
-  const activeProtocolFamilies = new Set(filteredScenarios.map(s => s.protocolFamily));
-  log(`\n🌐 Network Mode: ${networkMode.toUpperCase()}`);
-  if (activeProtocolFamilies.has('evm'))     log(`   EVM:     ${networks.evm.name} (${networks.evm.caip2})`);
-  if (activeProtocolFamilies.has('svm'))     log(`   SVM:     ${networks.svm.name} (${networks.svm.caip2})`);
-  if (activeProtocolFamilies.has('aptos'))   log(`   APTOS:   ${networks.aptos.name} (${networks.aptos.caip2})`);
-  if (activeProtocolFamilies.has('stellar')) log(`   STELLAR: ${networks.stellar.name} (${networks.stellar.caip2})`);
-  if (networkMode === 'mainnet') {
-    log('\n⚠️  WARNING: Running on MAINNET - real funds will be used!');
-  }
-
-  log(`\n✅ ${filteredScenarios.length} scenarios selected`);
   if (selectedExtensions && selectedExtensions.length > 0) {
     log(`🎁 Extensions enabled: ${selectedExtensions.join(', ')}`);
   }
   log('');
+
+  // Branch coverage assertions for EVM scenarios
+  const evmScenarios = filteredScenarios.filter(s => s.protocolFamily === 'evm');
+  if (evmScenarios.length > 0) {
+    const hasEip3009 = evmScenarios.some(s => (s.endpoint.transferMethod || 'eip3009') === 'eip3009');
+    const hasPermit2 = evmScenarios.some(s => s.endpoint.transferMethod === 'permit2');
+    const hasPermit2Direct = evmScenarios.some(s => s.endpoint.transferMethod === 'permit2' && s.endpoint.permit2Direct === true);
+    const hasPermit2Eip2612 = evmScenarios.some(s => s.endpoint.transferMethod === 'permit2' && !s.endpoint.extensions?.includes('erc20ApprovalGasSponsoring') && !s.endpoint.permit2Direct);
+    const hasPermit2Erc20 = evmScenarios.some(s => s.endpoint.transferMethod === 'permit2' && s.endpoint.extensions?.includes('erc20ApprovalGasSponsoring'));
+
+    const hasUpto = evmScenarios.some(s => s.endpoint.transferMethod === 'upto');
+    const hasUptoDirect = evmScenarios.some(s => s.endpoint.transferMethod === 'upto' && s.endpoint.permit2Direct === true);
+    const hasUptoEip2612 = evmScenarios.some(s => s.endpoint.transferMethod === 'upto' && !s.endpoint.extensions?.includes('erc20ApprovalGasSponsoring') && !s.endpoint.permit2Direct);
+    const hasUptoErc20 = evmScenarios.some(s => s.endpoint.transferMethod === 'upto' && s.endpoint.extensions?.includes('erc20ApprovalGasSponsoring'));
+
+    log('🔍 EVM Branch Coverage Check:');
+    log(`   EIP-3009 route:          ${hasEip3009 ? '✅' : '❌ MISSING'}`);
+    log(`   Permit2 route:           ${hasPermit2 ? '✅' : '❌ MISSING'}`);
+    log(`   Permit2+direct settle:   ${hasPermit2Direct ? '✅' : '⚠️  not found'}`);
+    log(`   Permit2+EIP2612 route:   ${hasPermit2Eip2612 ? '✅' : '⚠️  not found (may be covered by permit2 route if eip2612 extension enabled)'}`);
+    log(`   Permit2+ERC20 route:     ${hasPermit2Erc20 ? '✅' : '⚠️  not found'}`);
+    log(`   Upto route:              ${hasUpto ? '✅' : '⚠️  not found'}`);
+    log(`   Upto+direct settle:      ${hasUptoDirect ? '✅' : '⚠️  not found'}`);
+    log(`   Upto+EIP2612 route:      ${hasUptoEip2612 ? '✅' : '⚠️  not found'}`);
+    log(`   Upto+ERC20 route:        ${hasUptoErc20 ? '✅' : '⚠️  not found'}`);
+    log('');
+  }
+
+  // Auto-detect Permit2 scenarios (upto uses Permit2 under the hood)
+  const hasPermit2Scenarios = filteredScenarios.some(
+    (s) => s.endpoint.transferMethod === 'permit2' || s.endpoint.transferMethod === 'upto'
+  );
+
+  if (hasPermit2Scenarios) {
+    log('🔐 Permit2 scenarios detected — revoke before gas-sponsored tests, approve before permit2-direct tests');
+  }
 
   // Collect unique facilitators and servers
   const uniqueFacilitators = new Map<string, any>();
@@ -644,12 +696,56 @@ async function runTest() {
     log(`  ✅ Facilitator ${facilitatorName} ready at ${url}`);
   }
 
+  // Start mock facilitator (claims to support everything, used as fallback so
+  // servers with routes unsupported by the real facilitator can still start)
+  const mockFacilitatorPort = currentPort++;
+  log(`\n🎭 Starting mock facilitator on port ${mockFacilitatorPort}...`);
+  const mockFacilitatorProcess: ChildProcess = spawn(
+    'npx', ['tsx', 'index.ts'],
+    {
+      cwd: join(process.cwd(), 'mock-facilitator'),
+      env: {
+        ...process.env,
+        PORT: mockFacilitatorPort.toString(),
+        EVM_NETWORK: networks.evm.caip2,
+        SVM_NETWORK: networks.svm.caip2,
+        APTOS_NETWORK: networks.aptos.caip2,
+        STELLAR_NETWORK: networks.stellar.caip2,
+      },
+      stdio: 'pipe',
+    },
+  );
+  mockFacilitatorProcess.stderr?.on('data', (data: Buffer) => {
+    verboseLog(`[mock-facilitator] stderr: ${data.toString().trim()}`);
+  });
+  mockFacilitatorProcess.stdout?.on('data', (data: Buffer) => {
+    verboseLog(`[mock-facilitator] stdout: ${data.toString().trim()}`);
+  });
+
+  const mockFacilitatorUrl = `http://localhost:${mockFacilitatorPort}`;
+  const mockHealthy = await waitForHealth(
+    async () => {
+      try {
+        const res = await fetch(`${mockFacilitatorUrl}/health`);
+        return { success: res.ok };
+      } catch {
+        return { success: false };
+      }
+    },
+    { label: 'Mock facilitator' },
+  );
+  if (!mockHealthy) {
+    log('❌ Failed to start mock facilitator');
+    mockFacilitatorProcess.kill();
+    process.exit(1);
+  }
+  log(`  ✅ Mock facilitator ready at ${mockFacilitatorUrl}`);
+
   log('\n✅ All facilitators are ready! Servers will be started/restarted as needed per test scenario.\n');
 
   log(`🔧 Server/Facilitator combinations: ${serverFacilitatorCombos.length}`);
   serverFacilitatorCombos.forEach(combo => {
-    const uniqueClients = [...new Set(combo.scenarios.map(s => s.client.name))];
-    log(`   • ${combo.serverName} + ${combo.facilitatorName || 'none'}: ${combo.scenarios.length} test(s) [clients: ${uniqueClients.join(', ')}]`);
+    log(`   • ${combo.serverName} + ${combo.facilitatorName || 'none'}: ${combo.scenarios.length} test(s)`);
   });
   if (parsedArgs.parallel) {
     log(`\n⚡ Parallel mode enabled (concurrency: ${parsedArgs.concurrency})`);
@@ -702,8 +798,8 @@ async function runTest() {
       } else {
         cLog.log(`  ❌ Test failed: ${result.error}`);
         if (result.verboseLogs && result.verboseLogs.length > 0) {
-          cLog.verboseLog(`  🔍 Verbose logs:`);
-          result.verboseLogs.forEach(logLine => cLog.verboseLog(logLine));
+          cLog.log(`  🔍 Verbose logs:`);
+          result.verboseLogs.forEach(logLine => cLog.log(logLine));
         }
         cLog.verboseLog(`  🔍 Error details: ${JSON.stringify(result, null, 2)}`);
       }
@@ -765,6 +861,7 @@ async function runTest() {
       stellarPayTo: facilitatorSupportsStellar ? (serverStellarAddress || '') : '',
       networks,
       facilitatorUrl,
+      mockFacilitatorUrl,
     };
 
     const started = await startServer(serverProxy, serverConfig);
@@ -784,34 +881,43 @@ async function runTest() {
     cLog.log(`  ✅ Server ${serverName} ready`);
 
     const results: DetailedTestResult[] = [];
+    // Track which endpoint paths have already been "cold started" in this combo.
+    // The first test for each path runs the full state-setup (fund/revoke/drain);
+    // subsequent tests for the same path skip the setup and run warm.
+    const coldStartedEndpoints = new Set<string>();
     try {
       for (const scenario of scenarios) {
         const tn = nextTestNumber();
         const isEvm = scenario.protocolFamily === 'evm';
 
-        if (scenario.endpoint.transferMethod === 'permit2') {
-          if (scenario.endpoint.permit2Direct) {
-            await approvePermit2Approval(USDC_BASE_SEPOLIA);
-          } else {
-            await fundClientForRevoke();
+        if (scenario.endpoint.permit2Direct) {
+          await approvePermit2Approval(USDC_BASE_SEPOLIA);
+        } else if (scenario.endpoint.coldstart) {
+          const endpointKey = scenario.endpoint.path;
+          if (!coldStartedEndpoints.has(endpointKey)) {
+            coldStartedEndpoints.add(endpointKey);
             const token =
               scenario.endpoint.extensions?.includes('erc20ApprovalGasSponsoring')
                 ? MOCK_ERC20_BASE_SEPOLIA
                 : USDC_BASE_SEPOLIA;
+            await fundClientForRevoke();
+            // Give fund tx 1s to propagate before submitting revoke (from client wallet)
+            await new Promise(resolve => setTimeout(resolve, 1000));
             await revokePermit2Approval(token);
-            await new Promise(resolve => setTimeout(resolve, 2000));
+            // Give revoke tx 1s to propagate before drain reads pending balance
+            await new Promise(resolve => setTimeout(resolve, 1000));
             await drainClientETH();
+            // Wait for RPC nonce propagation across load-balanced nodes before the
+            // test client (which may use a separate RPC connection) queries the nonce.
+            await new Promise(resolve => setTimeout(resolve, 1500));
           }
-          // Wait for RPC nonce propagation across load-balanced nodes before the
-          // test client (which may use a separate RPC connection) queries the nonce.
-          await new Promise(resolve => setTimeout(resolve, 2000));
         }
 
         if (isEvm && facilitatorName && evmLock) {
           const releaseLock = await evmLock.acquire(facilitatorName);
           try {
             results.push(await runSingleTest(scenario, port, tn, cLog));
-            await new Promise(resolve => setTimeout(resolve, 2000));
+            await new Promise(resolve => setTimeout(resolve, 1000));
           } finally {
             releaseLock();
           }
@@ -883,6 +989,8 @@ async function runTest() {
     log(`  🛑 Stopping facilitator: ${facilitatorName}`);
     facilitatorStopPromises.push(manager.stop());
   }
+  log('  🛑 Stopping mock facilitator');
+  mockFacilitatorProcess.kill();
   await Promise.all(facilitatorStopPromises);
 
   // Calculate totals

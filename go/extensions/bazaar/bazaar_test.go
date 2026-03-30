@@ -1816,6 +1816,58 @@ func TestBazaarResourceServerExtension(t *testing.T) {
 		assert.True(t, hasMethod, "method should be in required array")
 	})
 
+	t.Run("should produce a valid extension after enrichment (GET)", func(t *testing.T) {
+		extension, err := bazaar.DeclareDiscoveryExtension(
+			bazaar.MethodGET,
+			map[string]interface{}{"query": "test"},
+			bazaar.JSONSchema{
+				"properties": map[string]interface{}{
+					"query": map[string]interface{}{"type": "string"},
+				},
+			},
+			"",
+			nil,
+		)
+		require.NoError(t, err)
+
+		httpContext := x402http.HTTPRequestContext{
+			Method: "GET",
+		}
+
+		enriched := bazaar.BazaarResourceServerExtension.EnrichDeclaration(extension, httpContext)
+		enrichedExt, ok := enriched.(bazaar.DiscoveryExtension)
+		require.True(t, ok)
+
+		result := bazaar.ValidateDiscoveryExtension(enrichedExt)
+		assert.True(t, result.Valid, "enriched GET extension should pass validation: %v", result.Errors)
+	})
+
+	t.Run("should produce a valid extension after enrichment (POST)", func(t *testing.T) {
+		extension, err := bazaar.DeclareDiscoveryExtension(
+			bazaar.MethodPOST,
+			map[string]interface{}{"data": "test"},
+			bazaar.JSONSchema{
+				"properties": map[string]interface{}{
+					"data": map[string]interface{}{"type": "string"},
+				},
+			},
+			bazaar.BodyTypeJSON,
+			nil,
+		)
+		require.NoError(t, err)
+
+		httpContext := x402http.HTTPRequestContext{
+			Method: "POST",
+		}
+
+		enriched := bazaar.BazaarResourceServerExtension.EnrichDeclaration(extension, httpContext)
+		enrichedExt, ok := enriched.(bazaar.DiscoveryExtension)
+		require.True(t, ok)
+
+		result := bazaar.ValidateDiscoveryExtension(enrichedExt)
+		assert.True(t, result.Valid, "enriched POST extension should pass validation: %v", result.Errors)
+	})
+
 	t.Run("should return unchanged declaration for non-HTTP context", func(t *testing.T) {
 		extension, err := bazaar.DeclareDiscoveryExtension(
 			bazaar.MethodPOST,

@@ -1145,6 +1145,105 @@ func TestPaymentMiddlewareFromHTTPServer_Returns402ForProtectedRoute(t *testing.
 	}
 }
 
+// ============================================================================
+// Settlement Override Round-Trip Tests
+// ============================================================================
+
+// TestPaymentMiddleware_SettlementOverrideViaHeader verifies the full path:
+// SetSettlementOverrides (handler) → responseCapture.Header() →
+// HTTPTransportContext.ResponseHeaders → ProcessSettlement → facilitator.
+//
+// This test would have caught the header canonicalization bug (issue #1):
+// net/http stores headers as Title-Case ("Settlement-Overrides") but the
+// old code used a raw map lookup with the lowercase key ("settlement-overrides"),
+// silently missing the override every time.
+func TestPaymentMiddleware_SettlementOverrideViaHeader(t *testing.T) {
+	var capturedRequirementsBytes []byte
+
+	mockClient := &mockFacilitatorClient{
+		verifyFunc: func(ctx context.Context, payloadBytes []byte, requirementsBytes []byte) (*x402.VerifyResponse, error) {
+			return &x402.VerifyResponse{IsValid: true, Payer: "0xpayer"}, nil
+		},
+		settleFunc: func(ctx context.Context, payloadBytes []byte, requirementsBytes []byte) (*x402.SettleResponse, error) {
+			capturedRequirementsBytes = requirementsBytes
+			return &x402.SettleResponse{
+				Success:     true,
+				Transaction: "0xtx",
+				Network:     "eip155:1",
+				Payer:       "0xpayer",
+			}, nil
+		},
+		supportedFunc: defaultSupportedFunc(),
+	}
+
+	mockServer := &mockSchemeServer{scheme: "exact"}
+
+	routes := x402http.RoutesConfig{
+		"POST /api": x402http.RouteConfig{
+			Accepts: x402http.PaymentOptions{
+				{
+					Scheme:  "exact",
+					PayTo:   "0xtest",
+					Price:   "$1.00", // mockSchemeServer.ParsePrice returns Amount "1000000"
+					Network: "eip155:1",
+				},
+			},
+		},
+	}
+
+	// Handler calls SetSettlementOverrides to request partial settlement of 500.
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		SetSettlementOverrides(w, &x402.SettlementOverrides{Amount: "500"})
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_ = json.NewEncoder(w).Encode(map[string]string{"data": "ok"})
+	})
+
+	middleware := PaymentMiddlewareFromConfig(routes,
+		WithFacilitatorClient(mockClient),
+		WithScheme("eip155:1", mockServer),
+		WithSyncFacilitatorOnStart(true),
+		WithTimeout(5*time.Second),
+	)
+	wrapped := middleware(handler)
+
+	req := httptest.NewRequest("POST", "/api", nil)
+	req.Header.Set("PAYMENT-SIGNATURE", createPaymentHeader("0xtest"))
+	req.Host = "example.com"
+
+	w := httptest.NewRecorder()
+	wrapped.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("Expected status 200, got %d. Body: %s", w.Code, w.Body.String())
+	}
+
+	if w.Header().Get("PAYMENT-RESPONSE") == "" {
+		t.Error("Expected PAYMENT-RESPONSE header (settlement must succeed)")
+	}
+
+	// The settlement-overrides header must be stripped from the client response.
+	// If the canonicalization bug were present, ProcessSettlement would fail to find
+	// and delete the canonical "Settlement-Overrides" key, and the header would leak.
+	if w.Header().Get(x402http.SettlementOverridesHeader) != "" {
+		t.Error("settlement-overrides header must be stripped from the client response by the middleware")
+	}
+
+	// Verify the overridden amount reached the facilitator.
+	if capturedRequirementsBytes == nil {
+		t.Fatal("settle was never called; payment was not processed")
+	}
+	var settledReqs struct {
+		Amount string `json:"amount"`
+	}
+	if err := json.Unmarshal(capturedRequirementsBytes, &settledReqs); err != nil {
+		t.Fatalf("failed to unmarshal captured requirements: %v", err)
+	}
+	if settledReqs.Amount != "500" {
+		t.Errorf("expected settle to be called with amount \"500\" (override), got %q", settledReqs.Amount)
+	}
+}
+
 func TestPaymentMiddlewareFromHTTPServer_SettlesVerifiedPayment(t *testing.T) {
 	settleCalled := false
 

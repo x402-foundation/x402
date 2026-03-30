@@ -4,6 +4,7 @@
   "language": "typescript",
   "x402Version": 2,
   "extensions": ["bazaar", "eip2612GasSponsoring", "erc20ApprovalGasSponsoring"],
+
   "endpoints": [
     {
       "path": "/api/exact/evm/eip3009/proxy",
@@ -28,7 +29,8 @@
       "description": "EVM Permit2 endpoint with EIP-2612 gas sponsoring using proxy middleware",
       "requiresPayment": true,
       "protocolFamily": "evm",
-      "transferMethod": "permit2"
+      "transferMethod": "permit2",
+      "coldstart": true
     },
     {
       "path": "/api/exact/evm/permit2-erc20ApprovalGasSponsoring/proxy",
@@ -37,24 +39,53 @@
       "requiresPayment": true,
       "protocolFamily": "evm",
       "transferMethod": "permit2",
-      "extensions": ["erc20ApprovalGasSponsoring"]
+      "extensions": ["erc20ApprovalGasSponsoring"],
+      "coldstart": true
     },
     {
-      "path": "/api/exact/svm/proxy",
+      "path": "/api/upto/evm/permit2",
+      "method": "GET",
+      "description": "Protected Upto Permit2 endpoint (direct, client must pre-approve)",
+      "requiresPayment": true,
+      "protocolFamily": "evm",
+      "transferMethod": "upto",
+      "permit2Direct": true
+    },
+    {
+      "path": "/api/upto/evm/permit2-eip2612GasSponsoring",
+      "method": "GET",
+      "description": "Protected Upto Permit2 endpoint with EIP-2612 gas sponsoring",
+      "requiresPayment": true,
+      "protocolFamily": "evm",
+      "transferMethod": "upto",
+      "coldstart": true
+    },
+    {
+      "path": "/api/upto/evm/permit2-erc20ApprovalGasSponsoring",
+      "method": "GET",
+      "description": "Protected Upto Permit2 endpoint with ERC-20 approval gas sponsoring",
+      "requiresPayment": true,
+      "protocolFamily": "evm",
+      "transferMethod": "upto",
+      "extensions": ["erc20ApprovalGasSponsoring"],
+      "coldstart": true
+    },
+    {
+      "path": "/api/exact/svm",
       "method": "GET",
       "description": "SVM endpoint using proxy middleware",
       "requiresPayment": true,
       "protocolFamily": "svm"
     },
     {
-      "path": "/api/exact/aptos/proxy",
+      "path": "/api/exact/aptos",
       "method": "GET",
       "description": "Aptos endpoint using proxy middleware",
       "requiresPayment": true,
       "protocolFamily": "aptos"
     },
     {
-      "path": "/api/exact/stellar/proxy",
+      "path": "/api/exact/stellar",
       "method": "GET",
       "description": "Stellar endpoint using proxy middleware",
       "requiresPayment": true,

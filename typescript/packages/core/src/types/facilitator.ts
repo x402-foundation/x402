@@ -28,6 +28,8 @@ export type SettleResponse = {
   payer?: string;
   transaction: string;
   network: Network;
+  /** Actual amount settled in atomic token units. Present for schemes like `upto` where settlement amount may differ from the authorized maximum. */
+  amount?: string;
   extensions?: Record<string, unknown>;
 };
 

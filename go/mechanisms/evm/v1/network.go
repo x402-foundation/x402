@@ -78,6 +78,15 @@ var NetworkConfigs = map[string]evm.NetworkConfig{
 			Decimals: evm.DefaultDecimals,
 		},
 	},
+	"polygon": {
+		ChainID: big.NewInt(137),
+		DefaultAsset: evm.AssetInfo{
+			Address:  "0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359",
+			Name:     "USD Coin",
+			Version:  "2",
+			Decimals: evm.DefaultDecimals,
+		},
+	},
 }
 
 // Networks is the list of all v1 network names.

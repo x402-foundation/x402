@@ -8,10 +8,23 @@ import {
   FacilitatorClient,
   FacilitatorResponseError,
   getFacilitatorResponseError,
+  SETTLEMENT_OVERRIDES_HEADER,
+  SettlementOverrides,
 } from "@x402/core/server";
 import { SchemeNetworkServer, Network } from "@x402/core/types";
 import { Context, MiddlewareHandler } from "hono";
 import { HonoAdapter } from "./adapter";
+
+/**
+ * Set settlement overrides on the response for partial settlement.
+ * The middleware will extract these before settlement and strip the header from the client response.
+ *
+ * @param c - Hono context
+ * @param overrides - Settlement overrides (e.g., { amount: "500" } for partial settlement)
+ */
+export function setSettlementOverrides(c: Context, overrides: SettlementOverrides): void {
+  c.header(SETTLEMENT_OVERRIDES_HEADER, JSON.stringify(overrides));
+}
 
 /**
  * Check if any routes in the configuration declare bazaar extensions
@@ -212,6 +225,11 @@ export function paymentMiddlewareFromHTTPServer(
         // Get response body for extensions
         const responseBody = Buffer.from(await res.clone().arrayBuffer());
 
+        const responseHeaders: Record<string, string> = {};
+        res.headers.forEach((value, key) => {
+          responseHeaders[key] = value;
+        });
+
         // Clear the response so we can modify headers
         c.res = undefined;
 
@@ -220,7 +238,7 @@ export function paymentMiddlewareFromHTTPServer(
             paymentPayload,
             paymentRequirements,
             declaredExtensions,
-            { request: context, responseBody },
+            { request: context, responseBody, responseHeaders },
           );
 
           if (!settleResult.success) {
@@ -356,9 +374,9 @@ export type {
   SchemeNetworkServer,
 } from "@x402/core/types";
 
-export type { PaywallProvider, PaywallConfig } from "@x402/core/server";
+export type { PaywallProvider, PaywallConfig, SettlementOverrides } from "@x402/core/server";
 
-export { RouteConfigurationError } from "@x402/core/server";
+export { RouteConfigurationError, SETTLEMENT_OVERRIDES_HEADER } from "@x402/core/server";
 
 export type { RouteValidationError } from "@x402/core/server";
 

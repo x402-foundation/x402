@@ -1,5 +1,8 @@
 import { describe, it, expect, beforeEach } from "vitest";
-import { x402ResourceServer } from "../../../src/server/x402ResourceServer";
+import {
+  x402ResourceServer,
+  resolveSettlementOverrideAmount,
+} from "../../../src/server/x402ResourceServer";
 import {
   MockFacilitatorClient,
   MockSchemeNetworkServer,
@@ -820,6 +823,242 @@ describe("x402ResourceServer", () => {
       expect(result.success).toBe(true);
       expect(mockClient.settleCalls.length).toBe(1);
     });
+
+    it("should use original amount when no overrides provided", async () => {
+      const mockClient = new MockFacilitatorClient(
+        buildSupportedResponse({
+          kinds: [{ x402Version: 2, scheme: "exact", network: "eip155:8453" as Network }],
+        }),
+        undefined,
+        buildSettleResponse({ success: true }),
+      );
+
+      const server = new x402ResourceServer(mockClient);
+
+      const payload = buildPaymentPayload();
+      const requirements = buildPaymentRequirements({
+        scheme: "exact",
+        network: "eip155:8453" as Network,
+        amount: "1000000",
+      });
+
+      await server.settlePayment(payload, requirements);
+
+      expect(mockClient.settleCalls[0].requirements.amount).toBe("1000000");
+    });
+
+    it("should override amount when settlementOverrides.amount is provided", async () => {
+      const mockClient = new MockFacilitatorClient(
+        buildSupportedResponse({
+          kinds: [{ x402Version: 2, scheme: "exact", network: "eip155:8453" as Network }],
+        }),
+        undefined,
+        buildSettleResponse({ success: true }),
+      );
+
+      const server = new x402ResourceServer(mockClient);
+
+      const payload = buildPaymentPayload();
+      const requirements = buildPaymentRequirements({
+        scheme: "exact",
+        network: "eip155:8453" as Network,
+        amount: "1000000",
+      });
+
+      await server.settlePayment(payload, requirements, undefined, undefined, { amount: "500000" });
+
+      // Facilitator should receive the overridden amount
+      expect(mockClient.settleCalls[0].requirements.amount).toBe("500000");
+    });
+
+    it("should not mutate original requirements when overrides applied", async () => {
+      const mockClient = new MockFacilitatorClient(
+        buildSupportedResponse({
+          kinds: [{ x402Version: 2, scheme: "exact", network: "eip155:8453" as Network }],
+        }),
+        undefined,
+        buildSettleResponse({ success: true }),
+      );
+
+      const server = new x402ResourceServer(mockClient);
+
+      const payload = buildPaymentPayload();
+      const requirements = buildPaymentRequirements({
+        scheme: "exact",
+        network: "eip155:8453" as Network,
+        amount: "1000000",
+      });
+
+      await server.settlePayment(payload, requirements, undefined, undefined, { amount: "250000" });
+
+      // Original requirements must not be mutated
+      expect(requirements.amount).toBe("1000000");
+    });
+
+    it("should use original amount when overrides has undefined amount", async () => {
+      const mockClient = new MockFacilitatorClient(
+        buildSupportedResponse({
+          kinds: [{ x402Version: 2, scheme: "exact", network: "eip155:8453" as Network }],
+        }),
+        undefined,
+        buildSettleResponse({ success: true }),
+      );
+
+      const server = new x402ResourceServer(mockClient);
+
+      const payload = buildPaymentPayload();
+      const requirements = buildPaymentRequirements({
+        scheme: "exact",
+        network: "eip155:8453" as Network,
+        amount: "1000000",
+      });
+
+      await server.settlePayment(payload, requirements, undefined, undefined, {});
+
+      expect(mockClient.settleCalls[0].requirements.amount).toBe("1000000");
+    });
+
+    it("should allow settling for zero amount", async () => {
+      const mockClient = new MockFacilitatorClient(
+        buildSupportedResponse({
+          kinds: [{ x402Version: 2, scheme: "exact", network: "eip155:8453" as Network }],
+        }),
+        undefined,
+        buildSettleResponse({ success: true }),
+      );
+
+      const server = new x402ResourceServer(mockClient);
+
+      const payload = buildPaymentPayload();
+      const requirements = buildPaymentRequirements({
+        scheme: "exact",
+        network: "eip155:8453" as Network,
+        amount: "1000000",
+      });
+
+      await server.settlePayment(payload, requirements, undefined, undefined, { amount: "0" });
+
+      expect(mockClient.settleCalls[0].requirements.amount).toBe("0");
+    });
+
+    it("should resolve percent override through settlePayment", async () => {
+      const mockClient = new MockFacilitatorClient(
+        buildSupportedResponse({
+          kinds: [{ x402Version: 2, scheme: "exact", network: "eip155:8453" as Network }],
+        }),
+        undefined,
+        buildSettleResponse({ success: true }),
+      );
+
+      const server = new x402ResourceServer(mockClient);
+      const payload = buildPaymentPayload();
+      const requirements = buildPaymentRequirements({
+        scheme: "exact",
+        network: "eip155:8453" as Network,
+        amount: "2000",
+      });
+
+      await server.settlePayment(payload, requirements, undefined, undefined, { amount: "50%" });
+
+      expect(mockClient.settleCalls[0].requirements.amount).toBe("1000");
+    });
+
+    it("should resolve dollar override through settlePayment with default decimals", async () => {
+      const mockClient = new MockFacilitatorClient(
+        buildSupportedResponse({
+          kinds: [{ x402Version: 2, scheme: "exact", network: "eip155:8453" as Network }],
+        }),
+        undefined,
+        buildSettleResponse({ success: true }),
+      );
+
+      const server = new x402ResourceServer(mockClient);
+      const payload = buildPaymentPayload();
+      const requirements = buildPaymentRequirements({
+        scheme: "exact",
+        network: "eip155:8453" as Network,
+        amount: "1000000",
+      });
+
+      await server.settlePayment(payload, requirements, undefined, undefined, { amount: "$0.001" });
+
+      expect(mockClient.settleCalls[0].requirements.amount).toBe("1000");
+    });
+
+    it("should resolve dollar override using scheme getAssetDecimals", async () => {
+      const mockClient = new MockFacilitatorClient(
+        buildSupportedResponse({
+          kinds: [{ x402Version: 2, scheme: "exact", network: "eip155:8453" as Network }],
+        }),
+        undefined,
+        buildSettleResponse({ success: true }),
+      );
+
+      const server = new x402ResourceServer(mockClient);
+      const mockScheme = new MockSchemeNetworkServer("exact");
+      mockScheme.setAssetDecimalsResult(8);
+      server.register("eip155:8453" as Network, mockScheme);
+
+      const payload = buildPaymentPayload();
+      const requirements = buildPaymentRequirements({
+        scheme: "exact",
+        network: "eip155:8453" as Network,
+        amount: "1000000",
+      });
+
+      await server.settlePayment(payload, requirements, undefined, undefined, { amount: "$0.05" });
+
+      expect(mockClient.settleCalls[0].requirements.amount).toBe("5000000");
+    });
+
+    it("should not mutate asset when dollar override is used", async () => {
+      const mockClient = new MockFacilitatorClient(
+        buildSupportedResponse({
+          kinds: [{ x402Version: 2, scheme: "exact", network: "eip155:8453" as Network }],
+        }),
+        undefined,
+        buildSettleResponse({ success: true }),
+      );
+
+      const server = new x402ResourceServer(mockClient);
+      const payload = buildPaymentPayload();
+      const requirements = buildPaymentRequirements({
+        scheme: "exact",
+        network: "eip155:8453" as Network,
+        amount: "1000000",
+        asset: "0xOriginalToken",
+      });
+
+      await server.settlePayment(payload, requirements, undefined, undefined, {
+        amount: "$0.10",
+      });
+
+      // Only amount changes, asset stays the same
+      expect(mockClient.settleCalls[0].requirements.amount).toBe("100000");
+      expect(mockClient.settleCalls[0].requirements.asset).toBe("0xOriginalToken");
+    });
+
+    it("should pass overridden requirements to beforeSettle hooks", async () => {
+      const mockClient = new MockFacilitatorClient(
+        buildSupportedResponse(),
+        buildVerifyResponse({ isValid: true }),
+        buildSettleResponse({ success: true }),
+      );
+
+      const server = new x402ResourceServer(mockClient);
+
+      let hookAmount: string | undefined;
+      server.onBeforeSettle(async context => {
+        hookAmount = context.requirements.amount;
+      });
+
+      const payload = buildPaymentPayload();
+      const requirements = buildPaymentRequirements({ amount: "1000000" });
+
+      await server.settlePayment(payload, requirements, undefined, undefined, { amount: "300000" });
+
+      expect(hookAmount).toBe("300000");
+    });
   });
 
   describe("findMatchingRequirements", () => {
@@ -1044,6 +1283,72 @@ describe("x402ResourceServer", () => {
       const extensions = server.getFacilitatorExtensions(2, "eip155:8453" as Network, "exact");
 
       expect(extensions).toEqual([]);
+    });
+  });
+});
+
+describe("resolveSettlementOverrideAmount", () => {
+  const baseRequirements = buildPaymentRequirements({ amount: "2000" });
+
+  describe("raw atomic units", () => {
+    it("passes through a plain numeric string unchanged", () => {
+      expect(resolveSettlementOverrideAmount("1000", baseRequirements)).toBe("1000");
+    });
+
+    it("passes through '0'", () => {
+      expect(resolveSettlementOverrideAmount("0", baseRequirements)).toBe("0");
+    });
+  });
+
+  describe("percent format", () => {
+    it("resolves '50%' to half of requirements.amount", () => {
+      expect(resolveSettlementOverrideAmount("50%", baseRequirements)).toBe("1000");
+    });
+
+    it("resolves '100%' to the full requirements.amount", () => {
+      expect(resolveSettlementOverrideAmount("100%", baseRequirements)).toBe("2000");
+    });
+
+    it("resolves '0%' to 0", () => {
+      expect(resolveSettlementOverrideAmount("0%", baseRequirements)).toBe("0");
+    });
+
+    it("resolves '25%' correctly", () => {
+      expect(resolveSettlementOverrideAmount("25%", baseRequirements)).toBe("500");
+    });
+
+    it("resolves '33.33%' and floors to nearest atomic unit", () => {
+      const reqs = buildPaymentRequirements({ amount: "3000" });
+      // 3000 * 3333 / 10000 = 999.9 → floored to 999
+      expect(resolveSettlementOverrideAmount("33.33%", reqs)).toBe("999");
+    });
+
+    it("resolves '10.5%' correctly", () => {
+      const reqs = buildPaymentRequirements({ amount: "1000" });
+      // 1000 * 1050 / 10000 = 105
+      expect(resolveSettlementOverrideAmount("10.5%", reqs)).toBe("105");
+    });
+  });
+
+  describe("dollar price format", () => {
+    it("converts '$1.00' using default 6 decimals", () => {
+      expect(resolveSettlementOverrideAmount("$1.00", baseRequirements)).toBe("1000000");
+    });
+
+    it("converts '$0.05' using default 6 decimals", () => {
+      expect(resolveSettlementOverrideAmount("$0.05", baseRequirements)).toBe("50000");
+    });
+
+    it("converts '$0.05' using 8 decimals when provided", () => {
+      expect(resolveSettlementOverrideAmount("$0.05", baseRequirements, 8)).toBe("5000000");
+    });
+
+    it("converts '$0.001' using default 6 decimals", () => {
+      expect(resolveSettlementOverrideAmount("$0.001", baseRequirements)).toBe("1000");
+    });
+
+    it("converts '$0' to '0'", () => {
+      expect(resolveSettlementOverrideAmount("$0", baseRequirements)).toBe("0");
     });
   });
 });

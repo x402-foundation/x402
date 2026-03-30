@@ -1,8 +1,9 @@
 import { serve } from "@hono/node-server";
 import { Hono } from "hono";
-import { paymentMiddleware } from "@x402/hono";
+import { paymentMiddleware, setSettlementOverrides } from "@x402/hono";
 import { x402ResourceServer, HTTPFacilitatorClient } from "@x402/core/server";
 import { ExactEvmScheme } from "@x402/evm/exact/server";
+import { UptoEvmScheme } from "@x402/evm/upto/server";
 import { ExactSvmScheme } from "@x402/svm/exact/server";
 import { ExactAptosScheme } from "@x402/aptos/exact/server";
 import { ExactStellarScheme } from "@x402/stellar/exact/server";
@@ -53,14 +54,19 @@ if (!facilitatorUrl) {
 // Initialize Hono app
 const app = new Hono();
 
-// Create HTTP facilitator client
-const facilitatorClient = new HTTPFacilitatorClient({ url: facilitatorUrl });
+// Create facilitator clients (mock facilitator as fallback for startup validation)
+const facilitatorClients = [new HTTPFacilitatorClient({ url: facilitatorUrl })];
+const mockFacilitatorUrl = process.env.MOCK_FACILITATOR_URL;
+if (mockFacilitatorUrl) {
+  facilitatorClients.push(new HTTPFacilitatorClient({ url: mockFacilitatorUrl }));
+}
 
 // Create x402 resource server with builder pattern (cleaner!)
-const x402Server = new x402ResourceServer(facilitatorClient);
+const x402Server = new x402ResourceServer(facilitatorClients);
 
 // Register server schemes
 x402Server.register("eip155:*", new ExactEvmScheme());
+x402Server.register("eip155:*", new UptoEvmScheme());
 x402Server.register("solana:*", new ExactSvmScheme());
 if (APTOS_PAYEE_ADDRESS) {
   x402Server.register("aptos:*", new ExactAptosScheme());
@@ -280,6 +286,64 @@ app.use(
           ...declareErc20ApprovalGasSponsoringExtension(),
         },
       },
+      // Upto Permit2 direct endpoint - client must have Permit2 pre-approved
+      // Authorizes up to 2000 atomic units, settles 1000 (partial settlement)
+      "GET /upto/evm/permit2": {
+        accepts: {
+          payTo: EVM_PAYEE_ADDRESS,
+          scheme: "upto",
+          network: EVM_NETWORK,
+          price: {
+            amount: "2000",
+            asset: EVM_PERMIT2_ASSET,
+            extra: {
+              assetTransferMethod: "permit2",
+              name: EVM_NETWORK == "eip155:84532" ? "USDC" : "USD Coin",
+              version: "2",
+            },
+          },
+        },
+      },
+      // Upto Permit2 endpoint with EIP-2612 gas sponsoring
+      // Authorizes up to 2000 atomic units, settles 1000 (partial settlement)
+      "GET /upto/evm/permit2-eip2612GasSponsoring": {
+        accepts: {
+          payTo: EVM_PAYEE_ADDRESS,
+          scheme: "upto",
+          network: EVM_NETWORK,
+          price: {
+            amount: "2000",
+            asset: EVM_PERMIT2_ASSET,
+            extra: {
+              assetTransferMethod: "permit2",
+              name: EVM_NETWORK == "eip155:84532" ? "USDC" : "USD Coin",
+              version: "2",
+            },
+          },
+        },
+        extensions: {
+          ...declareEip2612GasSponsoringExtension(),
+        },
+      },
+      // Upto Permit2 endpoint for ERC-20 approval gas sponsoring (no EIP-2612)
+      // Authorizes up to 2000 atomic units, settles 1000 (partial settlement)
+      "GET /upto/evm/permit2-erc20ApprovalGasSponsoring": {
+        accepts: {
+          payTo: EVM_PAYEE_ADDRESS,
+          scheme: "upto",
+          network: EVM_NETWORK,
+          price: {
+            amount: "2000",
+            asset: EVM_PERMIT2_ASSET,
+            extra: {
+              assetTransferMethod: "permit2",
+            },
+          },
+        },
+        extensions: {
+          ...declareErc20ApprovalGasSponsoringExtension(),
+        },
+      },
       ...(STELLAR_PAYEE_ADDRESS
         ? {
           "GET /exact/stellar": {
@@ -384,6 +448,45 @@ app.get("/exact/evm/permit2-erc20ApprovalGasSponsoring", c => {
     message: "Permit2 ERC-20 approval endpoint accessed successfully",
     timestamp: new Date().toISOString(),
     method: "permit2-erc20-approval",
+  });
+});
+
+/**
+ * Upto Permit2 direct endpoint - upto scheme, client must have Permit2 pre-approved
+ * Authorizes 2000, settles 1000 (partial settlement)
+ */
+app.get("/upto/evm/permit2", c => {
+  setSettlementOverrides(c, { amount: "1000" });
+  return c.json({
+    message: "Upto Permit2 endpoint accessed successfully",
+    timestamp: new Date().toISOString(),
+    method: "upto-permit2",
+  });
+});
+
+/**
+ * Upto Permit2 EIP-2612 endpoint - upto scheme with gas sponsoring
+ * Authorizes 2000, settles 1000 (partial settlement)
+ */
+app.get("/upto/evm/permit2-eip2612GasSponsoring", c => {
+  setSettlementOverrides(c, { amount: "1000" });
+  return c.json({
+    message: "Upto Permit2 EIP-2612 endpoint accessed successfully",
+    timestamp: new Date().toISOString(),
+    method: "upto-permit2-eip2612",
+  });
+});
+
+/**
+ * Upto Permit2 ERC-20 endpoint - upto scheme with ERC-20 approval gas sponsoring
+ * Authorizes 2000, settles 1000 (partial settlement)
+ */
+app.get("/upto/evm/permit2-erc20ApprovalGasSponsoring", c => {
+  setSettlementOverrides(c, { amount: "1000" });
+  return c.json({
+    message: "Upto Permit2 ERC-20 approval endpoint accessed successfully",
+    timestamp: new Date().toISOString(),
+    method: "upto-permit2-erc20-approval",
   });
 });
 

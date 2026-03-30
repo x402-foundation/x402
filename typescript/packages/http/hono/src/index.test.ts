@@ -41,6 +41,7 @@ let mockRegisterPaywallProvider: ReturnType<typeof vi.fn>;
 let mockRequiresPayment: ReturnType<typeof vi.fn>;
 
 vi.mock("@x402/core/server", () => ({
+  SETTLEMENT_OVERRIDES_HEADER: "Settlement-Overrides",
   FacilitatorResponseError: class FacilitatorResponseError extends Error {
     /**
      * Creates a mock facilitator response error.

@@ -191,7 +191,9 @@ export class HTTPFacilitatorClient implements FacilitatorClient {
    * @param config - Configuration options for the facilitator client
    */
   constructor(config?: FacilitatorConfig) {
-    this.url = config?.url || DEFAULT_FACILITATOR_URL;
+    // Normalize URL: strip trailing slashes to prevent redirect loops (e.g. 308)
+    // when constructing endpoint paths like `${url}/supported`
+    this.url = (config?.url || DEFAULT_FACILITATOR_URL).replace(/\/+$/, "");
     this._createAuthHeaders = config?.createAuthHeaders;
   }
 
@@ -218,6 +220,7 @@ export class HTTPFacilitatorClient implements FacilitatorClient {
     const response = await fetch(`${this.url}/verify`, {
       method: "POST",
       headers,
+      redirect: "follow",
       body: JSON.stringify({
         x402Version: paymentPayload.x402Version,
         paymentPayload: this.toJsonSafe(paymentPayload),
@@ -269,6 +272,7 @@ export class HTTPFacilitatorClient implements FacilitatorClient {
     const response = await fetch(`${this.url}/settle`, {
       method: "POST",
       headers,
+      redirect: "follow",
       body: JSON.stringify({
         x402Version: paymentPayload.x402Version,
         paymentPayload: this.toJsonSafe(paymentPayload),
@@ -318,6 +322,7 @@ export class HTTPFacilitatorClient implements FacilitatorClient {
       const response = await fetch(`${this.url}/supported`, {
         method: "GET",
         headers,
+        redirect: "follow",
       });
 
       if (response.ok) {
