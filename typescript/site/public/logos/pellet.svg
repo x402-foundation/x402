@@ -1,0 +1,35 @@
+<svg width="800" height="800" viewBox="0 0 800 800" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <rect width="800" height="800" fill="white"/>
+
+  <defs>
+    <radialGradient id="b5" cx="0.4" cy="0.32" r="0.55">
+      <stop offset="0%" stop-color="#505050"/>
+      <stop offset="45%" stop-color="#1a1a1a"/>
+      <stop offset="100%" stop-color="#050505"/>
+    </radialGradient>
+    <!-- subtle inner shadow on rings -->
+    <filter id="ringBlur">
+      <feGaussianBlur stdDeviation="0.5"/>
+    </filter>
+  </defs>
+
+  <!-- ambient ground shadow -->
+  <ellipse cx="400" cy="590" rx="100" ry="10" fill="#0d0d0d" opacity="0.04"/>
+
+  <!-- rings — weighted strokes, tighter vertical spacing for a compressed/solid feel -->
+  <ellipse cx="400" cy="540" rx="142" ry="36" stroke="#0d0d0d" stroke-width="2.8" opacity="0.1" stroke-linecap="round"/>
+  <ellipse cx="400" cy="500" rx="112" ry="29" stroke="#0d0d0d" stroke-width="3.2" opacity="0.2" stroke-linecap="round"/>
+  <ellipse cx="400" cy="463" rx="84" ry="23" stroke="#0d0d0d" stroke-width="3.6" opacity="0.35" stroke-linecap="round"/>
+  <ellipse cx="400" cy="430" rx="58" ry="17" stroke="#0d0d0d" stroke-width="4" opacity="0.52" stroke-linecap="round"/>
+  <ellipse cx="400" cy="400" rx="36" ry="11" stroke="#0d0d0d" stroke-width="4.5" opacity="0.72" stroke-linecap="round"/>
+
+  <!-- pellet — larger, bolder -->
+  <circle cx="400" cy="330" r="52" fill="url(#b5)"/>
+
+  <!-- highlight system -->
+  <ellipse cx="385" cy="310" rx="15" ry="12" fill="white" opacity="0.16"/>
+  <ellipse cx="390" cy="318" rx="6" ry="4" fill="white" opacity="0.06"/>
+
+  <!-- subtle rim light on bottom-right of ball -->
+  <path d="M 430 355 A 52 52 0 0 0 445 330" stroke="white" stroke-width="1.5" opacity="0.06" fill="none" stroke-linecap="round"/>
+</svg>
