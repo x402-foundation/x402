@@ -1,0 +1,5 @@
+---
+"@x402/evm": patch
+---
+
+Add Arbitrum One (chain ID 42161) and Arbitrum Sepolid (chain ID 421614) support with USDC as the default stablecoin
