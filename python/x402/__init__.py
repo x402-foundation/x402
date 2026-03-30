@@ -137,7 +137,7 @@ from .server import (
     x402ResourceServerSync,
 )
 
-__version__ = "0.1.0"
+__version__ = "2.5.0"
 
 __all__ = [
     # Version

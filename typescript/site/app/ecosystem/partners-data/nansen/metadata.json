@@ -2,6 +2,7 @@
   "name": "Nansen",
   "description": "Nansen uses x402 to monetize access to their blockchain analytics platform, enabling AI agents and developers to pay for on-chain intelligence and wallet analytics using stablecoins.",
   "logoUrl": "/logos/nansen-logo.png",
-  "websiteUrl": "https://nansen.ai",
-  "category": "Infrastructure & Tooling"
+  "websiteUrl": "https://docs.nansen.ai/getting-started/x402-payments",
+  "category": "Infrastructure & Tooling",
+  "top_section": true
 }

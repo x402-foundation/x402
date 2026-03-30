@@ -1,5 +1,5 @@
 #!/bin/bash
-# Python doesn't require a build step
-# This file is intentionally empty
-exit 0
+set -e
 
+# Rebuild the local x402 editable dependency so the venv reflects source changes
+uv sync --reinstall-package x402

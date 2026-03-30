@@ -1,0 +1,142 @@
+---
+title: "EIP-2612 Gas Sponsoring"
+description: "Gasless Permit2 approval for ERC-20 tokens that implement EIP-2612. The facilitator submits the permit on-chain, so the client never pays gas for the approval step."
+---
+
+The EIP-2612 gas sponsoring extension enables gasless Permit2 approval for tokens that implement the [EIP-2612](https://eips.ethereum.org/EIPS/eip-2612) `permit()` function (e.g., USDC). The client signs an off-chain permit authorizing the Permit2 contract, and the facilitator submits it atomically during settlement via `x402ExactPermit2Proxy.settleWithPermit`.
+
+## Overview
+
+When using the Permit2 asset transfer method, the user must first approve the Permit2 contract to spend their tokens. For tokens that support EIP-2612, this approval can be done entirely off-chain:
+
+* **For Buyers**: No gas needed — sign a permit off-chain and the facilitator handles the rest
+* **For Sellers**: Advertise this extension so clients using EIP-2612 tokens get a seamless experience
+* **For Facilitators**: Accept the permit signature and call `settleWithPermit` to atomically approve + settle in one transaction
+
+## How It Works
+
+1. **Server** advertises `eip2612GasSponsoring` in the `PaymentRequired` response extensions
+2. **Client** checks if Permit2 allowance is insufficient; if so, signs an EIP-2612 permit off-chain
+3. **Client** includes the permit data in the `extensions.eip2612GasSponsoring.info` field of the payment payload
+4. **Facilitator** calls `x402ExactPermit2Proxy.settleWithPermit()`, which atomically submits the EIP-2612 permit and executes the Permit2 transfer in a single transaction
+
+## Server Usage
+
+Advertise support for this extension in your route configuration:
+
+<Tabs>
+  <Tab title="TypeScript">
+    ```typescript
+    import { declareEip2612GasSponsoringExtension } from "@x402/extensions/eip2612-gas-sponsoring";
+
+    const routes = {
+      "GET /api/data": {
+        accepts: [{
+          scheme: "exact",
+          network: "eip155:84532",
+          price: "$0.01",
+          payTo: "0xYourAddress",
+        }],
+        extensions: {
+          ...declareEip2612GasSponsoringExtension(),
+        },
+      },
+    };
+    ```
+  </Tab>
+  <Tab title="Go">
+    ```go
+    import (
+        "github.com/coinbase/x402/go/extensions/eip2612gassponsor"
+    )
+
+    extensions := eip2612gassponsor.DeclareEip2612GasSponsoringExtension()
+    // Include in your route's Extensions field
+    ```
+  </Tab>
+  <Tab title="Python">
+    ```python
+    from x402.extensions.eip2612_gas_sponsoring import declare_eip2612_gas_sponsoring_extension
+
+    routes = {
+        "GET /api/data": {
+            "accepts": {
+                "scheme": "exact",
+                "network": "eip155:84532",
+                "price": "$0.01",
+                "payTo": "0xYourAddress",
+            },
+            "extensions": {
+                **declare_eip2612_gas_sponsoring_extension(),
+            },
+        },
+    }
+    ```
+  </Tab>
+</Tabs>
+
+## Client Usage
+
+The `ExactEvmScheme` handles EIP-2612 gas sponsoring automatically. When the server advertises this extension and the client's Permit2 allowance is insufficient, the scheme signs the EIP-2612 permit and includes it in the payment payload.
+
+<Tabs>
+  <Tab title="TypeScript">
+    ```typescript
+    import { ExactEvmScheme } from "@x402/evm/exact/client";
+
+    // readContract capability is required for EIP-2612 (to check allowance and nonce)
+    const scheme = new ExactEvmScheme(signer);
+    client.register("eip155:*", scheme);
+
+    // The scheme automatically signs an EIP-2612 permit when:
+    // 1. The server advertises eip2612GasSponsoring
+    // 2. The asset transfer method is "permit2"
+    // 3. The client's Permit2 allowance is insufficient
+    ```
+  </Tab>
+  <Tab title="Go">
+    ```go
+    import (
+        evm "github.com/coinbase/x402/go/mechanisms/evm/exact/client"
+    )
+
+    scheme := evm.NewExactEvmScheme(signer)
+    client.Register("eip155:*", scheme)
+
+    // EIP-2612 permit signing is handled automatically
+    // when the server advertises the extension
+    ```
+  </Tab>
+  <Tab title="Python">
+    ```python
+    from x402 import x402Client
+    from x402.mechanisms.evm import EthAccountSignerWithRPC
+    from x402.mechanisms.evm.exact import register_exact_evm_client
+
+    account = Account.from_key("0xYourPrivateKey")
+    signer = EthAccountSignerWithRPC(account, rpc_url="https://sepolia.base.org")
+
+    client = x402Client()
+    register_exact_evm_client(client, signer)
+    # Automatically signs EIP-2612 permit when needed
+    ```
+  </Tab>
+</Tabs>
+
+## When to Use
+
+Use this extension when:
+
+- Your payment token implements EIP-2612 (has a `permit()` function)
+- You want fully gasless Permit2 onboarding for your users
+- You're using the `permit2` asset transfer method
+
+Common EIP-2612 tokens include USDC, DAI, and many modern ERC-20 tokens.
+
+## SDK Support
+
+| SDK | Supported |
+|-----|-----------|
+| TypeScript | ✅ |
+| Go | ✅ |
+| Python | ✅ |

@@ -1,6 +1,6 @@
 {
   "name": "Augur",
-  "description": "Base mainnet smart contract bytecode risk scoring API for agents and the developers building them. Pay $0.10/call via x402 in USDC on Base and get deterministic findings plus a 0-100 score. \"safe\" is not an audit or guarantee.",
+  "description": "Deterministic Base contract admission control for agents. Pay $0.10/call via x402 in USDC on Base to get a default decision, policy recommendation, and supporting findings before your agent buys, routes funds, approves, pays, or interacts with a contract.",
   "logoUrl": "/logos/augur.png",
   "websiteUrl": "https://augurrisk.com/",
   "category": "Services/Endpoints"

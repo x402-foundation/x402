@@ -146,12 +146,11 @@ The `payload` field must contain:
       },
       "from": "0x857b06519E91e3A54538791bDbb0E22373e36b66",
       "spender": "0x402085c248EeA27D92E8b30b2C58ed07f9E20001", // Canonical x402ExactPermit2Proxy address
-      "nonce": "0xf3746613c2d920b5fdabc0856f2aeb2d4f88ee6037b8cc5d04a71a4462f13480",
+      "nonce": "33247007178036348590600198031289925668252061821958005840077069883511451257277",
       "deadline": "1740672154",
       "witness": {
         "to": "0x209693Bc6afc0C5328bA36FaF03C514EF312287C",
-        "validAfter": "1740672089",
-        "extra": {}
+        "validAfter": "1740672089"
       }
     }
   },
@@ -163,8 +162,6 @@ The `payload` field must contain:
 The verifier must execute these checks in order:
 
 1.  **Verify** `payload.signature` is valid and recovers to the `permit2Authorization.from`.
-
-    - Note that `extra` must be converted to its ABI encoded version.
 
 2.  **Verify** that the `client` has enabled the Permit2 approval.
 
@@ -181,7 +178,9 @@ The verifier must execute these checks in order:
 
 6.  **Verify** the Token and Network match the requirement.
 
-7.  **Simulation:**
+7.  **Simulation (Recommended):**
+
+    Simulation is recommended but implementations may defer to re-verify-before-settle.
 
     - _Standard:_ Simulate `x402ExactPermit2Proxy.settle`.
     - _With "Sponsored ERC20 Approval" (Extension):_ Simulate batch `transfer` -> `approve` -> `settle`.
@@ -354,20 +353,18 @@ contract x402ExactPermit2Proxy {
 
     event x402PermitTransfer(address from, address to, uint256 amount, address asset);
 
-    // EIP-712 Type Definition
+    // EIP-712 Type Definition (post-audit: extra removed from Witness)
     string public constant WITNESS_TYPE_STRING =
-        "Witness witness)Witness(bytes extra,address to,uint256 validAfter)TokenPermissions(address token,uint256 amount)";
+        "Witness witness)TokenPermissions(address token,uint256 amount)Witness(address to,uint256 validAfter)";
 
     bytes32 public constant WITNESS_TYPEHASH =
-        keccak256("Witness(bytes extra,address to,uint256 validAfter)");
+        keccak256("Witness(address to,uint256 validAfter)");
 
     struct Witness {
         address to;
         uint256 validAfter;
-        bytes extra;
     }
 
-    // New Struct to group EIP-2612 parameters and reduce stack depth
     struct EIP2612Permit {
         uint256 value;
         uint256 deadline;
@@ -385,21 +382,18 @@ contract x402ExactPermit2Proxy {
      */
     function settle(
         ISignatureTransfer.PermitTransferFrom calldata permit,
-        uint256 amount,
         address owner,
         Witness calldata witness,
         bytes calldata signature
     ) external {
-        _settleInternal(permit, amount, owner, witness, signature);
+        _settleInternal(permit, owner, witness, signature);
     }
 
     /**
      * @notice Extension: Settles a transfer using an EIP-2612 Permit for the allowance
-     * @dev Deconstructs the 2612 signature bytes to call the token contract
      */
-    function settleWith2612(
-        EIP2612Permit calldata permit2612, // Deduplicated/Grouped params
-        uint256 amount,
+    function settleWithPermit(
+        EIP2612Permit calldata permit2612,
         ISignatureTransfer.PermitTransferFrom calldata permit,
         address owner,
         Witness calldata witness,
@@ -415,29 +409,25 @@ contract x402ExactPermit2Proxy {
         );
 
         // 2. Execute Permit2 Settlement
-        _settleInternal(permit, amount, owner, witness, signature);
+        _settleInternal(permit, owner, witness, signature);
     }
 
     function _settleInternal(
         ISignatureTransfer.PermitTransferFrom calldata permit,
-        uint256 amount,
         address owner,
         Witness calldata witness,
         bytes calldata signature
     ) internal {
         require(block.timestamp >= witness.validAfter, "Too early");
-        require(amount <= permit.permitted.amount, "Amount higher than permitted");
 
         ISignatureTransfer.SignatureTransferDetails memory transferDetails =
             ISignatureTransfer.SignatureTransferDetails({
                 to: witness.to,
-                requestedAmount: amount
+                requestedAmount: permit.permitted.amount
             });
 
-        // Reconstruct hash to enforce witness integrity
         bytes32 witnessHash = keccak256(abi.encode(
             WITNESS_TYPEHASH,
-            keccak256(witness.extra),
             witness.to,
             witness.validAfter
         ));

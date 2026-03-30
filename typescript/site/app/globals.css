@@ -57,3 +57,16 @@ body {
 @utility max-w-container {
   max-width: var(--max-width-container);
 }
+
+@keyframes marquee {
+  0% {
+    transform: translateX(0);
+  }
+  100% {
+    transform: translateX(calc(-100% - var(--gap, 3rem)));
+  }
+}
+
+@utility animate-marquee {
+  animation: marquee var(--duration, 40s) linear infinite reverse;
+}

@@ -21,11 +21,16 @@ e2e/clients/mcp-go/mcp-client
 e2e/clients/mcp-go/mcp-go
 e2e/facilitators/go/facilitator
 e2e/facilitators/go/go
+e2e/servers/echo/echo
 e2e/servers/gin/gin
 e2e/servers/gin/server
+e2e/servers/nethttp/nethttp
 e2e/servers/mcp-go/mcp-go
 e2e/servers/mcp-go/mcp-server
 e2e/legacy/servers/gin/gin
+
+# Example build artifacts
+examples/go/servers/upto/upto
 
 # Agent artifacts
 TASK.md

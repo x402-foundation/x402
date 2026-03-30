@@ -57,6 +57,7 @@ class QueryInput(BaseModel):
     type: Literal["http"] = "http"
     method: QueryParamMethods | None = None
     query_params: dict[str, Any] | None = Field(default=None, alias="queryParams")
+    path_params: dict[str, Any] | None = Field(default=None, alias="pathParams")
     headers: dict[str, str] | None = None
 
     model_config = {"extra": "allow", "populate_by_name": True}
@@ -70,6 +71,7 @@ class BodyInput(BaseModel):
     body_type: BodyType = Field(default="json", alias="bodyType")
     body: dict[str, Any] | Any = Field(default_factory=dict)
     query_params: dict[str, Any] | None = Field(default=None, alias="queryParams")
+    path_params: dict[str, Any] | None = Field(default=None, alias="pathParams")
     headers: dict[str, str] | None = None
 
     model_config = {"extra": "allow", "populate_by_name": True}

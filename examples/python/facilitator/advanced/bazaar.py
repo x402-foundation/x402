@@ -205,11 +205,7 @@ async def verify(request: VerifyRequest):
         # - Extract and catalog discovery info (on_after_verify)
         response = await facilitator.verify(payload, requirements)
 
-        return {
-            "isValid": response.is_valid,
-            "payer": response.payer,
-            "invalidReason": response.invalid_reason,
-        }
+        return response.model_dump(by_alias=True, exclude_none=True)
     except Exception as e:
         print(f"Verify error: {e}")
         raise HTTPException(status_code=500, detail=str(e)) from e
@@ -234,25 +230,21 @@ async def settle(request: SettleRequest):
 
         response = await facilitator.settle(payload, requirements)
 
-        return {
-            "success": response.success,
-            "transaction": response.transaction,
-            "network": response.network,
-            "payer": response.payer,
-            "errorReason": response.error_reason,
-        }
+        return response.model_dump(by_alias=True, exclude_none=True)
     except Exception as e:
         print(f"Settle error: {e}")
 
         # Check if this was an abort from hook
         if "aborted" in str(e).lower() or "Settlement aborted" in str(e):
-            return {
-                "success": False,
-                "errorReason": str(e).replace("Settlement aborted: ", ""),
-                "network": request.paymentPayload.get("accepted", {}).get("network", "unknown"),
-                "transaction": "",
-                "payer": None,
-            }
+            from x402.schemas import SettleResponse
+
+            abort = SettleResponse(
+                success=False,
+                error_reason=str(e).replace("Settlement aborted: ", ""),
+                network=request.paymentPayload.get("accepted", {}).get("network", "unknown"),
+                transaction="",
+            )
+            return abort.model_dump(by_alias=True, exclude_none=True)
 
         raise HTTPException(status_code=500, detail=str(e)) from e
 
@@ -268,15 +260,7 @@ async def supported():
         response = facilitator.get_supported()
 
         return {
-            "kinds": [
-                {
-                    "x402Version": k.x402_version,
-                    "scheme": k.scheme,
-                    "network": k.network,
-                    "extra": k.extra,
-                }
-                for k in response.kinds
-            ],
+            "kinds": [k.model_dump(by_alias=True, exclude_none=True) for k in response.kinds],
             "extensions": response.extensions,
             "signers": response.signers,
         }

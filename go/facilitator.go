@@ -435,7 +435,8 @@ func (f *x402Facilitator) verifyV1(ctx context.Context, payload types.PaymentPay
 		}
 	}
 
-	return nil, NewVerifyError(ErrNoFacilitatorForNetwork, "", fmt.Sprintf("no facilitator for scheme %s on network %s", scheme, network))
+	registered := f.registeredV1Summary()
+	return nil, NewVerifyError(ErrNoFacilitatorForNetwork, "", fmt.Sprintf("no facilitator for scheme %q on network %q; registered: %s", scheme, network, registered))
 }
 
 // verifyV2 verifies a V2 payment (internal, typed)
@@ -460,7 +461,8 @@ func (f *x402Facilitator) verifyV2(ctx context.Context, payload types.PaymentPay
 		}
 	}
 
-	return nil, NewVerifyError(ErrNoFacilitatorForNetwork, "", fmt.Sprintf("no facilitator for scheme %s on network %s", scheme, network))
+	registered := f.registeredV2Summary()
+	return nil, NewVerifyError(ErrNoFacilitatorForNetwork, "", fmt.Sprintf("no facilitator for scheme %q on network %q; registered: %s", scheme, network, registered))
 }
 
 // settleV1 settles a V1 payment (internal, typed)
@@ -485,7 +487,8 @@ func (f *x402Facilitator) settleV1(ctx context.Context, payload types.PaymentPay
 		}
 	}
 
-	return nil, NewSettleError(ErrNoFacilitatorForNetwork, "", network, "", fmt.Sprintf("no facilitator for scheme %s on network %s", scheme, network))
+	registered := f.registeredV1Summary()
+	return nil, NewSettleError(ErrNoFacilitatorForNetwork, "", network, "", fmt.Sprintf("no facilitator for scheme %q on network %q; registered: %s", scheme, network, registered))
 }
 
 // settleV2 settles a V2 payment (internal, typed)
@@ -510,7 +513,38 @@ func (f *x402Facilitator) settleV2(ctx context.Context, payload types.PaymentPay
 		}
 	}
 
-	return nil, NewSettleError(ErrNoFacilitatorForNetwork, "", network, "", fmt.Sprintf("no facilitator for scheme %s on network %s", scheme, network))
+	registered := f.registeredV2Summary()
+	return nil, NewSettleError(ErrNoFacilitatorForNetwork, "", network, "", fmt.Sprintf("no facilitator for scheme %q on network %q; registered: %s", scheme, network, registered))
+}
+
+// registeredV1Summary returns a human-readable list of registered V1 scheme/network pairs.
+func (f *x402Facilitator) registeredV1Summary() string {
+	if len(f.schemesV1) == 0 {
+		return "(none)"
+	}
+	var parts []string
+	for _, data := range f.schemesV1 {
+		facilitator := data.facilitator.(SchemeNetworkFacilitatorV1)
+		for network := range data.networks {
+			parts = append(parts, fmt.Sprintf("%s@%s", facilitator.Scheme(), network))
+		}
+	}
+	return strings.Join(parts, ", ")
+}
+
+// registeredV2Summary returns a human-readable list of registered V2 scheme/network pairs.
+func (f *x402Facilitator) registeredV2Summary() string {
+	if len(f.schemes) == 0 {
+		return "(none)"
+	}
+	var parts []string
+	for _, data := range f.schemes {
+		facilitator := data.facilitator.(SchemeNetworkFacilitator)
+		for network := range data.networks {
+			parts = append(parts, fmt.Sprintf("%s@%s", facilitator.Scheme(), network))
+		}
+	}
+	return strings.Join(parts, ", ")
 }
 
 // GetSupported returns supported payment kinds

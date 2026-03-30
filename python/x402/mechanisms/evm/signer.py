@@ -1,6 +1,6 @@
 """EVM signer protocol definitions."""
 
-from typing import Any, Protocol
+from typing import Any, Protocol, runtime_checkable
 
 from .types import TransactionReceipt, TypedDataDomain, TypedDataField
 
@@ -175,4 +175,60 @@ class FacilitatorEvmSigner(Protocol):
         Returns:
             Bytecode (empty if EOA).
         """
+        ...
+
+
+@runtime_checkable
+class ClientEvmSignerWithReadContract(Protocol):
+    """Extension of ClientEvmSigner that adds on-chain read capability.
+
+    Required for EIP-2612 gas sponsoring (needs to read nonces from token).
+    """
+
+    @property
+    def address(self) -> str: ...
+
+    def sign_typed_data(
+        self,
+        domain: TypedDataDomain,
+        types: dict[str, list[TypedDataField]],
+        primary_type: str,
+        message: dict[str, Any],
+    ) -> bytes: ...
+
+    def read_contract(
+        self,
+        address: str,
+        abi: list[dict[str, Any]],
+        function_name: str,
+        *args: Any,
+    ) -> Any:
+        """Read data from a smart contract."""
+        ...
+
+
+@runtime_checkable
+class ClientEvmSignerWithSignTransaction(Protocol):
+    """Extension of ClientEvmSigner that adds raw transaction signing.
+
+    Required for ERC-20 approval gas sponsoring (signs approve tx off-chain).
+    """
+
+    @property
+    def address(self) -> str: ...
+
+    def sign_typed_data(
+        self,
+        domain: TypedDataDomain,
+        types: dict[str, list[TypedDataField]],
+        primary_type: str,
+        message: dict[str, Any],
+    ) -> bytes: ...
+
+    def sign_transaction(self, tx: dict[str, Any]) -> str:
+        """Sign an EIP-1559 transaction and return the RLP-encoded hex string."""
+        ...
+
+    def get_transaction_count(self, address: str) -> int:
+        """Get the pending nonce for an address."""
         ...

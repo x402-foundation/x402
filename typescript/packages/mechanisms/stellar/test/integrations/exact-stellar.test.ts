@@ -41,16 +41,11 @@ async function xlmFallbackParser(amount: number, network: string): Promise<Asset
   return null;
 }
 
-if (
+const missingEnvVars =
   !CLIENT_PRIVATE_KEY ||
   !FACILITATOR_PRIVATE_KEY ||
   !FACILITATOR_ADDRESS ||
-  !RESOURCE_SERVER_ADDRESS
-) {
-  throw new Error(
-    "CLIENT_PRIVATE_KEY, FACILITATOR_PRIVATE_KEY, FACILITATOR_ADDRESS and RESOURCE_SERVER_ADDRESS environment variables must be set for integration tests",
-  );
-}
+  !RESOURCE_SERVER_ADDRESS;
 
 const HORIZON_TESTNET = "https://horizon-testnet.stellar.org";
 const FRIENDBOT_URL = "https://friendbot.stellar.org";
@@ -172,7 +167,7 @@ function isInsufficientBalanceError(error: unknown): boolean {
   return false;
 }
 
-describe("Stellar Integration Tests", () => {
+describe.skipIf(missingEnvVars)("Stellar Integration Tests", () => {
   let clientAddress: string;
   let clientSigner: Ed25519Signer;
   let facilitatorSigner: Ed25519Signer;

@@ -2,6 +2,17 @@
 
 <!-- towncrier release notes start -->
 
+## [2.5.0] - 2026-03-19
+
+### Fixed
+
+- Fixed Python HTTP middleware to return `502` instead of `500` when the facilitator responds with invalid JSON or schema-invalid data. ([#545](https://github.com/coinbase/x402/pull/545))
+
+### Added
+
+- Added Permit2 support to the Python SDK exact EVM mechanism with full TS/Go parity. The client routes to Permit2 (`PermitWitnessTransferFrom`) when `assetTransferMethod == "permit2"` in payment requirements extra, and the facilitator verifies and settles via the `x402ExactPermit2Proxy` contract. Includes `eip2612GasSponsoring` and `erc20ApprovalGasSponsoring` extension support for gasless Permit2 approval flows, universal signature verification via `signer.verify_typed_data` (EOA + EIP-1271 + ERC-6492), and `settleWithPermit` settlement path. Added E2E `/protected-permit2`, `/protected-permit2-eip2612`, and `/protected-permit2-erc20` endpoints to Flask server, and updated httpx client for cross-language Permit2 testing. ([#689](https://github.com/coinbase/x402/pull/689))
+
+
 ## [2.4.0] - 2026-03-16
 
 ### Fixed

@@ -1,3 +1,12 @@
+## v2.7.0 - 2026-03-23
+### Changed
+- Changed Bazaar discovery extension to support dynamic route patterns. EnrichDeclaration now
+translates [param] route segments to :param-style routeTemplate and populates pathParams with
+concrete values from each request. The EnrichExtensions call in go/http/server.go, previously
+disabled (commented out) in all prior Go releases, is now active: ALL existing Go routes that
+declare extensions will have their extensions enriched at request time. Added RouteTemplate field
+to DiscoveryExtension so callers can read it without a type assertion.
+
 ## v2.6.0 - 2026-03-17
 ### Added
 - Added simulation to permit2 verify and (optional) settle

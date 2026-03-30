@@ -121,6 +121,18 @@ def create_nonce() -> str:
     return "0x" + os.urandom(32).hex()
 
 
+def create_permit2_nonce() -> str:
+    """Generate random uint256 nonce as decimal string for Permit2.
+
+    Permit2 uses uint256 nonces (not bytes32), so the nonce is returned
+    as a decimal string rather than a hex string.
+
+    Returns:
+        Decimal string representation of a random uint256.
+    """
+    return str(int.from_bytes(os.urandom(32), "big"))
+
+
 def normalize_address(address: str) -> str:
     """Normalize Ethereum address to checksummed format.
 

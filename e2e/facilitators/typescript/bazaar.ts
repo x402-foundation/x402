@@ -7,6 +7,7 @@ export interface DiscoveredResource {
   x402Version: number;
   accepts: PaymentRequirements[];
   discoveryInfo?: DiscoveryInfo;
+  routeTemplate?: string;
   lastUpdated: string;
   metadata?: Record<string, unknown>;
 }
@@ -20,10 +21,14 @@ export class BazaarCatalog {
     x402Version: number,
     discoveryInfo: DiscoveryInfo,
     paymentRequirements: PaymentRequirements,
+    routeTemplate?: string,
   ): void {
     console.log(`📝 Discovered resource: ${resourceUrl}`);
     console.log(`   Method: ${method}`);
     console.log(`   x402 Version: ${x402Version}`);
+    if (routeTemplate) {
+      console.log(`   Route template: ${routeTemplate}`);
+    }
 
     this.discoveredResources.set(resourceUrl, {
       resource: resourceUrl,
@@ -31,6 +36,7 @@ export class BazaarCatalog {
       x402Version,
       accepts: [paymentRequirements],
       discoveryInfo,
+      routeTemplate,
       lastUpdated: new Date().toISOString(),
       metadata: {},
     });

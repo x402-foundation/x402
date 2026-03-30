@@ -19,6 +19,10 @@ from x402.extensions.bazaar import (
     declare_discovery_extension,
     OutputConfig,
 )
+from x402.extensions.eip2612_gas_sponsoring import declare_eip2612_gas_sponsoring_extension
+from x402.extensions.erc20_approval_gas_sponsoring import (
+    declare_erc20_approval_gas_sponsoring_extension,
+)
 
 # Configure logging to reduce verbosity
 logging.getLogger("werkzeug").setLevel(logging.ERROR)
@@ -32,6 +36,9 @@ EVM_ADDRESS = os.getenv("EVM_PAYEE_ADDRESS")
 SVM_ADDRESS = os.getenv("SVM_PAYEE_ADDRESS")
 PORT = int(os.getenv("PORT", "4021"))
 FACILITATOR_URL = os.getenv("FACILITATOR_URL")
+EVM_PERMIT2_ASSET = os.getenv(
+    "EVM_PERMIT2_ASSET", "0x036CbD53842c5426634e7929541eC2318f3dCF7e"
+)
 
 if not EVM_ADDRESS:
     print("Error: Missing required environment variable EVM_PAYEE_ADDRESS")
@@ -68,7 +75,7 @@ server.register_extension(bazaar_resource_server_extension)
 
 # Define routes with payment requirements
 routes = {
-    "GET /protected": {
+    "GET /exact/evm/eip3009": {
         "accepts": {
             "scheme": "exact",
             "payTo": EVM_ADDRESS,
@@ -95,7 +102,7 @@ routes = {
             ),
         },
     },
-    "GET /protected-svm": {
+    "GET /exact/svm": {
         "accepts": {
             "scheme": "exact",
             "payTo": SVM_ADDRESS,
@@ -120,6 +127,57 @@ routes = {
             ),
         },
     },
+    "GET /exact/evm/permit2-eip2612GasSponsoring": {
+        "accepts": {
+            "scheme": "exact",
+            "payTo": EVM_ADDRESS,
+            "network": EVM_NETWORK,
+            "price": {
+                "amount": "1000",
+                "asset": EVM_PERMIT2_ASSET,
+                "extra": {
+                    "assetTransferMethod": "permit2",
+                    "name": "USDC",
+                    "version": "2",
+                },
+            },
+        },
+        "extensions": {
+            **declare_discovery_extension(
+                output=OutputConfig(
+                    example={
+                        "message": "Permit2 endpoint accessed successfully",
+                        "timestamp": "2024-01-01T00:00:00Z",
+                        "method": "permit2",
+                    },
+                    schema={
+                        "properties": {
+                            "message": {"type": "string"},
+                            "timestamp": {"type": "string"},
+                            "method": {"type": "string"},
+                        },
+                        "required": ["message", "timestamp"],
+                    },
+                )
+            ),
+            **declare_eip2612_gas_sponsoring_extension(),
+        },
+    },
+    "GET /exact/evm/permit2-erc20ApprovalGasSponsoring": {
+        "accepts": {
+            "scheme": "exact",
+            "payTo": EVM_ADDRESS,
+            "network": EVM_NETWORK,
+            "price": {
+                "amount": "1000",
+                "asset": EVM_PERMIT2_ASSET,
+                "extra": {"assetTransferMethod": "permit2"},
+            },
+        },
+        "extensions": {
+            **declare_erc20_approval_gas_sponsoring_extension(),
+        },
+    },
 }
 
 # Apply payment middleware
@@ -129,7 +187,7 @@ PaymentMiddleware(app, routes, server)
 shutdown_requested = False
 
 
-@app.route("/protected")
+@app.route("/exact/evm/eip3009")
 def protected_endpoint():
     """Protected endpoint that requires payment."""
     if shutdown_requested:
@@ -144,7 +202,7 @@ def protected_endpoint():
     )
 
 
-@app.route("/protected-svm")
+@app.route("/exact/svm")
 def protected_svm_endpoint():
     """Protected endpoint that requires SVM (Solana) payment."""
     if shutdown_requested:
@@ -154,6 +212,34 @@ def protected_svm_endpoint():
         {
             "message": "Access granted to SVM protected resource",
             "timestamp": "2024-01-01T00:00:00Z",
+        }
+    )
+
+
+@app.route("/exact/evm/permit2-eip2612GasSponsoring")
+def protected_permit2_endpoint():
+    """Protected endpoint that requires Permit2 payment."""
+    if shutdown_requested:
+        return jsonify({"error": "Server shutting down"}), 503
+    return jsonify(
+        {
+            "message": "Permit2 endpoint accessed successfully",
+            "timestamp": "2024-01-01T00:00:00Z",
+            "method": "permit2",
+        }
+    )
+
+
+@app.route("/exact/evm/permit2-erc20ApprovalGasSponsoring")
+def protected_permit2_erc20_endpoint():
+    """Protected endpoint that requires Permit2 payment with ERC-20 approval sponsoring."""
+    if shutdown_requested:
+        return jsonify({"error": "Server shutting down"}), 503
+    return jsonify(
+        {
+            "message": "Permit2+ERC20Approval endpoint accessed successfully",
+            "timestamp": "2024-01-01T00:00:00Z",
+            "method": "permit2+erc20approval",
         }
     )
 

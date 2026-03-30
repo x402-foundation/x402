@@ -6,12 +6,22 @@ import {
 } from "@stellar/stellar-sdk";
 import { AssembledTransaction } from "@stellar/stellar-sdk/contract";
 import { Api } from "@stellar/stellar-sdk/rpc";
-import { describe, it, expect, vi } from "vitest";
+import { beforeEach, describe, it, expect, vi } from "vitest";
 import { STELLAR_TESTNET_CAIP2 } from "../../src/constants";
 import { ExactStellarScheme } from "../../src/exact/client/scheme";
 import { gatherAuthEntrySignatureStatus, handleSimulationResult } from "../../src/shared";
 import { createEd25519Signer } from "../../src/signer";
+import * as stellarUtils from "../../src/utils";
 import type { PaymentRequirements } from "@x402/core/types";
+
+vi.mock("../../src/utils", async () => {
+  const actual = await vi.importActual<typeof stellarUtils>("../../src/utils");
+  return {
+    ...actual,
+    getEstimatedLedgerCloseTimeSeconds: vi.fn().mockResolvedValue(5),
+    getRpcClient: vi.fn(),
+  };
+});
 
 describe("Stellar Shared Utilities", () => {
   describe("handleSimulationResult", () => {
@@ -85,6 +95,14 @@ describe("Stellar Shared Utilities", () => {
   describe("gatherAuthEntrySignatureStatus", () => {
     const CLIENT_SECRET = "SDV3OZOPGIO6GQAVI7T6ZJ7NSNFB26JX6QZYCI64TBC7BAZY6FQVAXXK";
     const CLIENT_PUBLIC = "GBBO4ZDDZTSM2IUKQYBAST3CFHNPFXECGEFTGWTA2WELR2BIWDK57UVE";
+
+    const mockRpcServer = {
+      getLatestLedger: vi.fn().mockResolvedValue({ sequence: 100000 }),
+    };
+
+    beforeEach(() => {
+      vi.mocked(stellarUtils.getRpcClient).mockReturnValue(mockRpcServer as never);
+    });
 
     // paymenrRequirements is used to create a valid payload for the test
     const paymentRequirements: PaymentRequirements = {

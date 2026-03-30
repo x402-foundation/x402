@@ -1,0 +1,150 @@
+---
+title: "ERC-20 Approval Gas Sponsoring"
+description: "Gasless Permit2 approval for any ERC-20 token, including those without EIP-2612. The facilitator sponsors the gas for the approval transaction."
+---
+
+The ERC-20 approval gas sponsoring extension enables gasless Permit2 approval for **any ERC-20 token**, including those that do not implement EIP-2612. The client signs (but does not broadcast) a standard `approve(Permit2, MaxUint256)` transaction, and the facilitator broadcasts it atomically before settling the Permit2 payment.
+
+## Overview
+
+This is the universal fallback for gasless Permit2 onboarding. While [EIP-2612 gas sponsoring](/extensions/eip2612-gas-sponsoring) is preferred for tokens that support it, this extension works with every ERC-20 token:
+
+* **For Buyers**: No gas needed — sign an approval transaction off-chain and the facilitator broadcasts it
+* **For Sellers**: Advertise this extension to support the widest range of ERC-20 tokens
+* **For Facilitators**: Broadcast the pre-signed approval and settle in an atomic batch, optionally funding the client's gas if needed
+
+## How It Works
+
+1. **Server** advertises `erc20ApprovalGasSponsoring` in the `PaymentRequired` response extensions
+2. **Client** checks if Permit2 allowance is insufficient; if so, signs a raw `approve(Permit2, MaxUint256)` transaction without broadcasting it
+3. **Client** includes the signed transaction in `extensions.erc20ApprovalGasSponsoring.info.signedTransaction`
+4. **Facilitator** executes an atomic batch:
+   - Funds the client's wallet with gas (if needed)
+   - Broadcasts the client's signed approval transaction
+   - Calls `x402ExactPermit2Proxy.settle()` to complete the payment
+
+The atomic batch ensures the approval and settlement happen together — there is no window for front-running between the approval and the payment.
+
+## Server Usage
+
+Advertise support for this extension in your route configuration:
+
+<Tabs>
+  <Tab title="TypeScript">
+    ```typescript
+    import { declareErc20ApprovalGasSponsoringExtension } from "@x402/extensions/erc20-approval-gas-sponsoring";
+
+    const routes = {
+      "GET /api/data": {
+        accepts: [{
+          scheme: "exact",
+          network: "eip155:84532",
+          price: "$0.01",
+          payTo: "0xYourAddress",
+        }],
+        extensions: {
+          ...declareErc20ApprovalGasSponsoringExtension(),
+        },
+      },
+    };
+    ```
+  </Tab>
+  <Tab title="Go">
+    ```go
+    import (
+        "github.com/coinbase/x402/go/extensions/erc20approvalgassponsor"
+    )
+
+    extensions := erc20approvalgassponsor.DeclareExtension()
+    // Include in your route's Extensions field
+    ```
+  </Tab>
+  <Tab title="Python">
+    ```python
+    from x402.extensions.erc20_approval_gas_sponsoring import (
+        declare_erc20_approval_gas_sponsoring_extension,
+    )
+
+    routes = {
+        "GET /api/data": {
+            "accepts": {
+                "scheme": "exact",
+                "network": "eip155:84532",
+                "price": "$0.01",
+                "payTo": "0xYourAddress",
+            },
+            "extensions": {
+                **declare_erc20_approval_gas_sponsoring_extension(),
+            },
+        },
+    }
+    ```
+  </Tab>
+</Tabs>
+
+## Client Usage
+
+The `ExactEvmScheme` handles ERC-20 approval gas sponsoring automatically as a fallback when EIP-2612 is not available.
+
+<Tabs>
+  <Tab title="TypeScript">
+    ```typescript
+    import { ExactEvmScheme } from "@x402/evm/exact/client";
+
+    // signTransaction and getTransactionCount capabilities are required
+    const scheme = new ExactEvmScheme(signer);
+    client.register("eip155:*", scheme);
+
+    // The scheme automatically signs an ERC-20 approval when:
+    // 1. The server advertises erc20ApprovalGasSponsoring
+    // 2. The asset transfer method is "permit2"
+    // 3. The client's Permit2 allowance is insufficient
+    // 4. EIP-2612 gas sponsoring is not available or not supported by the token
+    ```
+  </Tab>
+  <Tab title="Go">
+    ```go
+    import (
+        evm "github.com/coinbase/x402/go/mechanisms/evm/exact/client"
+    )
+
+    scheme := evm.NewExactEvmScheme(signer)
+    client.Register("eip155:*", scheme)
+
+    // ERC-20 approval gas sponsoring is handled automatically
+    // as a fallback when EIP-2612 is not available
+    ```
+  </Tab>
+  <Tab title="Python">
+    ```python
+    from x402 import x402Client
+    from x402.mechanisms.evm import EthAccountSignerWithRPC
+    from x402.mechanisms.evm.exact import register_exact_evm_client
+
+    account = Account.from_key("0xYourPrivateKey")
+    signer = EthAccountSignerWithRPC(account, rpc_url="https://sepolia.base.org")
+
+    client = x402Client()
+    register_exact_evm_client(client, signer)
+    # Automatically signs ERC-20 approval transaction when needed
+    ```
+  </Tab>
+</Tabs>
+
+## When to Use
+
+Use this extension when:
+
+- You want to support any ERC-20 token, not just those with EIP-2612
+- You're using the `permit2` asset transfer method
+- You want fully gasless onboarding for your users regardless of the token
+
+This extension is typically advertised alongside [EIP-2612 gas sponsoring](/extensions/eip2612-gas-sponsoring). The client automatically selects the best option: EIP-2612 if the token supports it, ERC-20 approval otherwise.
+
+## SDK Support
+
+| SDK | Supported |
+|-----|-----------|
+| TypeScript | ✅ |
+| Go | ✅ |
+| Python | ✅ |

@@ -175,15 +175,7 @@ Environment variables required:
         nonce: nonce++,
       });
 
-      console.log(`   📝 Transaction: ${hash}`);
-      const receipt = await publicClient.waitForTransactionReceipt({ hash });
-
-      if (receipt.status === 'success') {
-        console.log(`   ✅ Revoked (block ${receipt.blockNumber}, gas ${receipt.gasUsed})`);
-      } else {
-        console.error(`   ❌ Revoke transaction failed`);
-        process.exit(1);
-      }
+      console.log(`   ✅ Revoke submitted (tx: ${hash})`);
     }
     return;
   }
@@ -205,15 +197,7 @@ Environment variables required:
       nonce: nonce++,
     });
 
-    console.log(`   📝 Transaction: ${hash}`);
-    const receipt = await publicClient.waitForTransactionReceipt({ hash });
-
-    if (receipt.status === 'success') {
-      console.log(`   ✅ Approved (block ${receipt.blockNumber}, gas ${receipt.gasUsed})`);
-    } else {
-      console.error(`   ❌ Transaction failed`);
-      process.exit(1);
-    }
+    console.log(`   ✅ Approve submitted (tx: ${hash})`);
   }
 }
 

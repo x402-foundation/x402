@@ -77,6 +77,7 @@ class HTTPRequestContext:
     path: str
     method: str
     payment_header: str | None = None
+    route_pattern: str | None = None
 
 
 @dataclass
@@ -194,6 +195,7 @@ class CompiledRoute:
     verb: str
     regex: re.Pattern[str]
     config: RouteConfig
+    pattern: str = ""
 
 
 # ============================================================================

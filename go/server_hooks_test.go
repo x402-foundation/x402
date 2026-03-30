@@ -272,6 +272,7 @@ func TestBeforeSettleHook_Abort(t *testing.T) {
 		context.Background(),
 		payload,
 		requirements,
+		nil,
 	)
 
 	if err == nil {
@@ -329,6 +330,7 @@ func TestAfterSettleHook(t *testing.T) {
 		context.Background(),
 		payload,
 		requirements,
+		nil,
 	)
 
 	if err != nil {
@@ -381,6 +383,7 @@ func TestOnSettleFailureHook_Recover(t *testing.T) {
 		context.Background(),
 		payload,
 		requirements,
+		nil,
 	)
 
 	if err != nil {

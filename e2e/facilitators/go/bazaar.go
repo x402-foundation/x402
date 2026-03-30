@@ -15,6 +15,7 @@ type DiscoveredResource struct {
 	X402Version   int                        `json:"x402Version"`
 	Accepts       []x402.PaymentRequirements `json:"accepts"`
 	DiscoveryInfo *exttypes.DiscoveryInfo    `json:"discoveryInfo,omitempty"`
+	RouteTemplate string                     `json:"routeTemplate,omitempty"`
 	LastUpdated   string                     `json:"lastUpdated"`
 	Metadata      map[string]interface{}     `json:"metadata,omitempty"`
 }
@@ -37,10 +38,14 @@ func (c *BazaarCatalog) CatalogResource(
 	x402Version int,
 	discoveryInfo *exttypes.DiscoveryInfo,
 	paymentRequirements x402.PaymentRequirements,
+	routeTemplate string,
 ) {
 	log.Printf("📝 Discovered resource: %s", resourceURL)
 	log.Printf("   Method: %s", method)
 	log.Printf("   x402 Version: %d", x402Version)
+	if routeTemplate != "" {
+		log.Printf("   Route template: %s", routeTemplate)
+	}
 
 	c.mutex.Lock()
 	defer c.mutex.Unlock()
@@ -51,6 +56,7 @@ func (c *BazaarCatalog) CatalogResource(
 		X402Version:   x402Version,
 		Accepts:       []x402.PaymentRequirements{paymentRequirements},
 		DiscoveryInfo: discoveryInfo,
+		RouteTemplate: routeTemplate,
 		LastUpdated:   time.Now().Format(time.RFC3339),
 		Metadata:      make(map[string]interface{}),
 	}

@@ -1,5 +1,13 @@
 # @x402/core Changelog
 
+## 2.8.0
+
+### Minor Changes
+
+- 067f297: Added `routePattern` to `HTTPRequestContext` and `pattern` to `CompiledRoute` to thread the matched route pattern through to server extensions, enabling dynamic route support in discovery extensions.
+- 4c1e44f: Treat malformed facilitator success payloads as upstream facilitator errors and return 502 responses from framework middleware instead of flattening them into payment failures.
+- 5135fab: Accept null in extra and extension fields
+
 ## 2.7.0
 
 ### Minor Changes

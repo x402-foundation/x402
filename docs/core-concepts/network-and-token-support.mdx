@@ -55,33 +55,44 @@ Multiple production-ready facilitators are available supporting various networks
 
 x402 supports tokens on EVM, Solana, Stellar, and Aptos networks:
 
-* **EVM**: Any ERC-20 token that implements the EIP-3009 standard
+* **EVM**: Any ERC-20 token (via EIP-3009 or Permit2)
 * **Solana**: Any SPL or token-2022 token
 * **Stellar**: Any Soroban token implementing SEP-41
 * **Aptos**: Any fungible asset using Aptos's native fungible asset framework
 
-**Important**: Facilitators support networks, not specific tokens — any EIP-3009 compatible token works on EVM networks, any SPL/token-2022 token works on Solana, any SEP-41 token works on Stellar, and any fungible asset works on Aptos, for the facilitators that support those networks.
+**Important**: Facilitators support networks, not specific tokens — any ERC-20 token works on EVM networks (via EIP-3009 or Permit2), any SPL/token-2022 token works on Solana, any SEP-41 token works on Stellar, and any fungible asset works on Aptos, for the facilitators that support those networks.
 
-#### EVM: EIP-3009 Requirement
+#### EVM: Asset Transfer Methods
 
-Tokens must implement the `transferWithAuthorization` function from the EIP-3009 standard. This enables:
+x402 supports two asset transfer methods on EVM, selected automatically based on token capabilities:
 
-* **Gasless transfers**: The facilitator sponsors gas fees
+| Method | When Used | How It Works |
+|--------|-----------|--------------|
+| **EIP-3009** | Tokens with `transferWithAuthorization` (e.g., USDC) | Single off-chain signature, simplest flow |
+| **Permit2** | Any ERC-20 token | Uses Uniswap's [Permit2](https://docs.uniswap.org/contracts/v4/deployments) contract + `x402ExactPermit2Proxy` |
+
+Both methods provide:
+
+* **Gasless transfers**: The facilitator sponsors gas for the payment itself. For Permit2, the one-time approval step can also be made gasless via optional [gas sponsoring extensions](/extensions/eip2612-gas-sponsoring)
 * **Signature-based authorization**: Users sign transfer authorizations off-chain
 * **Secure payments**: Transfers are authorized by cryptographic signatures
+
+EIP-3009 is preferred when available (simpler, no approval step). Permit2 serves as the universal fallback, enabling any ERC-20 token to work with x402.
+
+**Permit2 approval**: Permit2 requires a one-time on-chain approval of the Permit2 contract. x402 supports two gas sponsoring extensions that make this step gasless — see [EIP-2612 Gas Sponsoring](/extensions/eip2612-gas-sponsoring) and [ERC-20 Approval Gas Sponsoring](/extensions/erc20-approval-gas-sponsoring).
 
 #### Specifying Payment Amounts
 
 When configuring payment requirements, you have two options:
 
 1. **Price String** (e.g., `"$0.01"`) - The system infers USDC as the token
-2. **TokenAmount** - Specify exact atomic units of any EIP-3009 token
+2. **TokenAmount** - Specify exact atomic units of any ERC-20 token
 
-#### Using Custom EIP-3009 Tokens
+#### Using Custom ERC-20 Tokens
 
-To use a custom EIP-3009 token, you need three key pieces of information:
+To use a custom ERC-20 token, you need three key pieces of information:
 
-1. **Token Address**: The contract address of your EIP-3009 token
+1. **Token Address**: The contract address of your ERC-20 token
 2. **EIP-712 Name**: The token's name for EIP-712 signatures
 3. **EIP-712 Version**: The token's version for EIP-712 signatures
 
@@ -115,19 +126,17 @@ On Stellar, x402 supports all Soroban tokens implementing [SEP-41](https://githu
 
 On Aptos, x402 supports all fungible assets using Aptos's native fungible asset framework. Payments use the `primary_fungible_store::transfer` function for automatic store creation and management. The TypeScript SDK supports sponsored transactions where facilitators pay gas fees on behalf of clients.
 
-#### USDC - The Default Token
+#### Default Tokens
 
-* **Status**: Supported by default across all networks
-* **Why**: USDC implements EIP-3009 and is widely available
-* **Networks**: Available on `eip155:8453` (Base), `eip155:84532` (Base Sepolia), and all supported networks
+Each network defines its own default token. When you use a price string (e.g., `"$0.01"`), the system uses the network's configured default. USDC is the default on most EVM networks because it implements EIP-3009 (simplest flow) and is widely available, but other networks may define different defaults.
 
-#### Why EIP-3009?
+#### Why EIP-3009 + Permit2?
 
-The EIP-3009 standard is essential for x402 because it enables:
+These two transfer methods together give x402 full ERC-20 coverage on EVM:
 
 1. **Gas abstraction**: Buyers don't need native tokens (ETH, MATIC, etc.) for gas
-2. **One-step payments**: No separate approval transactions required
-3. **Universal facilitator support**: Any EIP-3009 token works with any facilitator
+2. **EIP-3009**: One-step payments with no approval needed — ideal for tokens like USDC
+3. **Permit2**: Universal fallback for any ERC-20 token, with optional gas-sponsored approval via [extensions](/extensions/eip2612-gas-sponsoring)
 
 ### Quick Reference
 
@@ -137,7 +146,7 @@ The EIP-3009 standard is essential for x402 because it enables:
 | [Production Facilitators](https://www.x402.org/ecosystem?filter=facilitators) | Various (Base, Solana, Polygon, Avalanche, etc.) | Yes | Varies |
 | Self-hosted | Any EVM network (CAIP-2 format) | Yes | Technical setup |
 
-**Note**: On EVM networks, facilitators support any EIP-3009 compatible token; on Solana, facilitators support any SPL/Token-2022 token.
+**Note**: On EVM networks, facilitators support any ERC-20 token (via EIP-3009 or Permit2); on Solana, facilitators support any SPL/Token-2022 token.
 
 ### Adding Support for New Networks
 
@@ -263,7 +272,7 @@ Key takeaways:
 
 * Base (`eip155:8453`), Base Sepolia (`eip155:84532`), Solana (`solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp`), and Solana Devnet (`solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1`) have the best out-of-the-box support
 * Any EVM network can be supported with a custom facilitator using CAIP-2 format
-* Any EIP-3009 token (with `transferWithAuthorization`) works on any facilitator
+* Any ERC-20 token works on any facilitator (via EIP-3009 or Permit2)
 * Use price strings for USDC or TokenAmount for custom tokens
 * Network choice affects gas costs and payment economics
 * V2 uses CAIP-2 network identifiers for unambiguous cross-chain support
