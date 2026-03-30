@@ -74,7 +74,7 @@ server.register_extension(bazaar_resource_server_extension)
 
 # Define routes with payment requirements
 routes = {
-    "GET /protected": {
+    "GET /exact/evm/eip3009": {
         "accepts": {
             "scheme": "exact",
             "payTo": EVM_ADDRESS,
@@ -99,7 +99,7 @@ routes = {
             ),
         },
     },
-    "GET /protected-svm": {
+    "GET /exact/svm": {
         "accepts": {
             "scheme": "exact",
             "payTo": SVM_ADDRESS,
@@ -124,7 +124,7 @@ routes = {
             ),
         },
     },
-    "GET /protected-permit2": {
+    "GET /exact/evm/permit2-eip2612GasSponsoring": {
         "accepts": {
             "scheme": "exact",
             "payTo": EVM_ADDRESS,
@@ -160,7 +160,7 @@ routes = {
             **declare_eip2612_gas_sponsoring_extension(),
         },
     },
-    "GET /protected-permit2-erc20": {
+    "GET /exact/evm/permit2-erc20ApprovalGasSponsoring": {
         "accepts": {
             "scheme": "exact",
             "payTo": EVM_ADDRESS,
@@ -188,7 +188,7 @@ async def x402_payment_middleware(request, call_next):
 shutdown_requested = False
 
 
-@app.get("/protected")
+@app.get("/exact/evm/eip3009")
 async def protected_endpoint() -> Dict[str, Any]:
     """Protected endpoint that requires payment."""
     if shutdown_requested:
@@ -200,7 +200,7 @@ async def protected_endpoint() -> Dict[str, Any]:
     }
 
 
-@app.get("/protected-svm")
+@app.get("/exact/svm")
 async def protected_svm_endpoint() -> Dict[str, Any]:
     """Protected endpoint that requires SVM (Solana) payment."""
     if shutdown_requested:
@@ -212,7 +212,7 @@ async def protected_svm_endpoint() -> Dict[str, Any]:
     }
 
 
-@app.get("/protected-permit2")
+@app.get("/exact/evm/permit2-eip2612GasSponsoring")
 async def protected_permit2_endpoint() -> Dict[str, Any]:
     """Protected endpoint that requires Permit2 payment."""
     if shutdown_requested:
@@ -225,7 +225,7 @@ async def protected_permit2_endpoint() -> Dict[str, Any]:
     }
 
 
-@app.get("/protected-permit2-erc20")
+@app.get("/exact/evm/permit2-erc20ApprovalGasSponsoring")
 async def protected_permit2_erc20_endpoint() -> Dict[str, Any]:
     """Protected endpoint that requires Permit2 payment with ERC-20 approval sponsoring."""
     if shutdown_requested:

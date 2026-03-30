@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -1352,11 +1353,15 @@ func TestResponseCapture_WriteHeaderOnlyOnce(t *testing.T) {
 	}
 }
 
-// mockGinResponseWriter implements gin.ResponseWriter for testing
+// mockGinResponseWriter implements gin.ResponseWriter for testing.
+// It tracks Flush and WriteHeaderNow calls so tests can verify that
+// responseCapture prevents them from reaching the embedded writer.
 type mockGinResponseWriter struct {
 	*httptest.ResponseRecorder
-	status int
-	size   int
+	status            int
+	size              int
+	flushCount        int
+	writeHeaderNowCnt int
 }
 
 func (m *mockGinResponseWriter) Status() int {
@@ -1376,7 +1381,9 @@ func (m *mockGinResponseWriter) WriteHeader(code int) {
 	m.ResponseRecorder.WriteHeader(code)
 }
 
-func (m *mockGinResponseWriter) WriteHeaderNow() {}
+func (m *mockGinResponseWriter) WriteHeaderNow() {
+	m.writeHeaderNowCnt++
+}
 
 func (m *mockGinResponseWriter) Write(data []byte) (int, error) {
 	n, err := m.ResponseRecorder.Write(data)
@@ -1397,9 +1404,191 @@ func (m *mockGinResponseWriter) CloseNotify() <-chan bool {
 }
 
 func (m *mockGinResponseWriter) Flush() {
+	m.flushCount++
 	m.ResponseRecorder.Flush()
 }
 
 func (m *mockGinResponseWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
 	return nil, nil, nil
+}
+
+// ============================================================================
+// responseCapture: Flush / WriteHeaderNow / Status / Size / Written tests
+// ============================================================================
+
+func TestResponseCapture_FlushIsNoOp(t *testing.T) {
+	mock := &mockGinResponseWriter{
+		ResponseRecorder: httptest.NewRecorder(),
+	}
+	capture := &responseCapture{
+		ResponseWriter: mock,
+		body:           &bytes.Buffer{},
+		statusCode:     http.StatusOK,
+	}
+
+	capture.Write([]byte("some data"))
+	capture.Flush()
+	capture.Flush()
+
+	if mock.flushCount != 0 {
+		t.Errorf("Expected Flush to NOT reach embedded writer, got %d calls", mock.flushCount)
+	}
+	if capture.body.String() != "some data" {
+		t.Errorf("Expected buffered body 'some data', got '%s'", capture.body.String())
+	}
+}
+
+func TestResponseCapture_WriteHeaderNowIsNoOp(t *testing.T) {
+	mock := &mockGinResponseWriter{
+		ResponseRecorder: httptest.NewRecorder(),
+	}
+	capture := &responseCapture{
+		ResponseWriter: mock,
+		body:           &bytes.Buffer{},
+		statusCode:     http.StatusOK,
+	}
+
+	capture.WriteHeaderNow()
+	capture.WriteHeaderNow()
+
+	if mock.writeHeaderNowCnt != 0 {
+		t.Errorf("Expected WriteHeaderNow to NOT reach embedded writer, got %d calls", mock.writeHeaderNowCnt)
+	}
+}
+
+func TestResponseCapture_StatusSizeWritten(t *testing.T) {
+	mock := &mockGinResponseWriter{
+		ResponseRecorder: httptest.NewRecorder(),
+	}
+	capture := &responseCapture{
+		ResponseWriter: mock,
+		body:           &bytes.Buffer{},
+		statusCode:     http.StatusOK,
+	}
+
+	if capture.Status() != http.StatusOK {
+		t.Errorf("Expected initial status 200, got %d", capture.Status())
+	}
+	if capture.Size() != 0 {
+		t.Errorf("Expected initial size 0, got %d", capture.Size())
+	}
+	if capture.Written() {
+		t.Error("Expected Written() == false before any write")
+	}
+
+	capture.WriteHeader(http.StatusCreated)
+	capture.Write([]byte("hello"))
+
+	if capture.Status() != http.StatusCreated {
+		t.Errorf("Expected status 201, got %d", capture.Status())
+	}
+	if capture.Size() != 5 {
+		t.Errorf("Expected size 5, got %d", capture.Size())
+	}
+	if !capture.Written() {
+		t.Error("Expected Written() == true after WriteHeader")
+	}
+
+	if mock.status != 0 {
+		t.Errorf("Expected embedded writer status unchanged (0), got %d", mock.status)
+	}
+	if mock.size != 0 {
+		t.Errorf("Expected embedded writer size unchanged (0), got %d", mock.size)
+	}
+}
+
+// ============================================================================
+// Streaming integration test
+// ============================================================================
+
+func TestPaymentMiddleware_StreamingDoesNotLeakHeaders(t *testing.T) {
+	settleCalled := false
+
+	mockClient := &mockFacilitatorClient{
+		verifyFunc: func(ctx context.Context, payloadBytes []byte, requirementsBytes []byte) (*x402.VerifyResponse, error) {
+			return &x402.VerifyResponse{IsValid: true, Payer: "0xpayer"}, nil
+		},
+		settleFunc: func(ctx context.Context, payloadBytes []byte, requirementsBytes []byte) (*x402.SettleResponse, error) {
+			settleCalled = true
+			return &x402.SettleResponse{
+				Success:     true,
+				Transaction: "0xtx",
+				Network:     "eip155:1",
+				Payer:       "0xpayer",
+			}, nil
+		},
+		supportedFunc: func(ctx context.Context) (x402.SupportedResponse, error) {
+			return x402.SupportedResponse{
+				Kinds: []x402.SupportedKind{
+					{X402Version: 2, Scheme: "exact", Network: "eip155:1"},
+				},
+				Extensions: []string{},
+				Signers:    make(map[string][]string),
+			}, nil
+		},
+	}
+
+	mockScheme := &mockSchemeServer{scheme: "exact"}
+
+	routes := x402http.RoutesConfig{
+		"GET /stream": x402http.RouteConfig{
+			Accepts: x402http.PaymentOptions{
+				{
+					Scheme:  "exact",
+					PayTo:   "0xtest",
+					Price:   "$1.00",
+					Network: "eip155:1",
+				},
+			},
+			MimeType: "text/event-stream",
+		},
+	}
+
+	router := createTestRouter()
+	router.Use(PaymentMiddlewareFromConfig(routes,
+		WithFacilitatorClient(mockClient),
+		WithScheme("eip155:1", mockScheme),
+		WithSyncFacilitatorOnStart(true),
+		WithTimeout(5*time.Second),
+	))
+
+	router.GET("/stream", func(c *gin.Context) {
+		c.Header("Content-Type", "text/event-stream")
+		c.Header("Cache-Control", "no-cache")
+		for i := 0; i < 3; i++ {
+			chunk := fmt.Sprintf("data: {\"n\":%d}\n\n", i)
+			_, _ = c.Writer.Write([]byte(chunk))
+			if f, ok := c.Writer.(http.Flusher); ok {
+				f.Flush()
+			}
+		}
+	})
+
+	req := httptest.NewRequest("GET", "/stream", nil)
+	req.Header.Set("PAYMENT-SIGNATURE", createPaymentHeader("0xtest"))
+	req.Host = "example.com"
+
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("Expected status 200, got %d. Body: %s", w.Code, w.Body.String())
+	}
+
+	if !settleCalled {
+		t.Error("Expected settlement to be called for streaming response")
+	}
+
+	paymentResponse := w.Header().Get("PAYMENT-RESPONSE")
+	if paymentResponse == "" {
+		t.Error("Expected PAYMENT-RESPONSE header in final response; streaming Flush must not commit headers early")
+	}
+
+	body := w.Body.String()
+	for i := 0; i < 3; i++ {
+		expected := fmt.Sprintf("data: {\"n\":%d}\n\n", i)
+		if !bytes.Contains([]byte(body), []byte(expected)) {
+			t.Errorf("Expected body to contain chunk %d (%q), got: %s", i, expected, body)
+		}
+	}
 }

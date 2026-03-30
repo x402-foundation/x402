@@ -3,7 +3,6 @@ package echo
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"fmt"
 	"net/http"
 	"sync"
@@ -14,6 +13,12 @@ import (
 	x402http "github.com/coinbase/x402/go/http"
 	"github.com/labstack/echo/v4"
 )
+
+// SetSettlementOverrides sets settlement overrides on the Echo response for partial settlement.
+// The middleware extracts these before settlement and strips the header from the client response.
+func SetSettlementOverrides(c echo.Context, overrides *x402.SettlementOverrides) {
+	c.Response().Header().Set(x402http.SettlementOverridesHeader, x402http.MarshalSettlementOverrides(overrides))
+}
 
 // ============================================================================
 // Echo Adapter Implementation
@@ -312,7 +317,7 @@ func createMiddlewareHandler(server *x402http.HTTPServer, config *MiddlewareConf
 
 			case x402http.ResultPaymentVerified:
 				// Payment verified, continue with settlement handling
-				return handlePaymentVerified(c, next, server, ctx, result, config)
+				return handlePaymentVerified(c, next, server, ctx, reqCtx, result, config)
 
 			default:
 				return next(c)
@@ -336,7 +341,7 @@ func handlePaymentError(c echo.Context, response *x402http.HTTPResponseInstructi
 }
 
 // handlePaymentVerified handles verified payments with settlement
-func handlePaymentVerified(c echo.Context, next echo.HandlerFunc, server *x402http.HTTPServer, ctx context.Context, result x402http.HTTPProcessResult, config *MiddlewareConfig) error {
+func handlePaymentVerified(c echo.Context, next echo.HandlerFunc, server *x402http.HTTPServer, ctx context.Context, reqCtx x402http.HTTPRequestContext, result x402http.HTTPProcessResult, config *MiddlewareConfig) error {
 	// Capture response for settlement
 	origWriter := c.Response().Writer
 	capture := &responseCapture{
@@ -359,6 +364,7 @@ func handlePaymentVerified(c echo.Context, next echo.HandlerFunc, server *x402ht
 
 	// Restore original writer
 	c.Response().Writer = origWriter
+	c.Response().Committed = false
 
 	// If handler returned error, propagate it
 	if err != nil {
@@ -373,31 +379,36 @@ func handlePaymentVerified(c echo.Context, next echo.HandlerFunc, server *x402ht
 		return nil
 	}
 
-	// Process settlement
 	settleResult := server.ProcessSettlement(
 		ctx,
 		*result.PaymentPayload,
 		*result.PaymentRequirements,
+		nil,
+		&x402http.HTTPTransportContext{
+			Request:         &reqCtx,
+			ResponseBody:    capture.body.Bytes(),
+			ResponseHeaders: capture.Header(),
+		},
 	)
 
 	// Check settlement success
 	if !settleResult.Success {
-		errorReason := settleResult.ErrorReason
-		if errorReason == "" {
-			errorReason = "Settlement failed"
+		// Always set PAYMENT-RESPONSE header on settlement failure
+		for key, value := range settleResult.Headers {
+			origWriter.Header().Set(key, value)
 		}
-		if config.ErrorHandler != nil {
+		switch {
+		case config.ErrorHandler != nil:
+			errorReason := settleResult.ErrorReason
+			if errorReason == "" {
+				errorReason = "Settlement failed"
+			}
 			config.ErrorHandler(c, fmt.Errorf("settlement failed: %s", errorReason))
-			return nil
+		case settleResult.Response != nil:
+			return handlePaymentError(c, settleResult.Response)
+		default:
+			return c.JSON(http.StatusPaymentRequired, map[string]interface{}{})
 		}
-		// Write error response directly to original writer
-		errorBody, _ := json.Marshal(map[string]interface{}{
-			"error":   "Settlement failed",
-			"details": errorReason,
-		})
-		origWriter.Header().Set("Content-Type", "application/json; charset=UTF-8")
-		origWriter.WriteHeader(http.StatusPaymentRequired)
-		_, _ = origWriter.Write(errorBody)
 		return nil
 	}
 
@@ -467,3 +478,6 @@ func (w *responseCapture) Write(data []byte) (int, error) {
 func (w *responseCapture) WriteString(s string) (int, error) {
 	return w.Write([]byte(s))
 }
+
+// Flush is a no-op to prevent premature flushing to the wire before settlement.
+func (w *responseCapture) Flush() {}

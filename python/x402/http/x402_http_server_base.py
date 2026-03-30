@@ -241,9 +241,10 @@ class x402HTTPServerBase:
         Returns:
             True if route requires payment.
         """
+        method = context.method or context.adapter.get_method()
         # _get_route_config returns tuple[RouteConfig, str] | None; 'is not None' is the
         # correct check for a union-with-None return type and does not rely on tuple truthiness.
-        return self._get_route_config(context.path, context.method) is not None
+        return self._get_route_config(context.path, method) is not None
 
     def _get_route_config(self, path: str, method: str) -> tuple[RouteConfig, str] | None:
         """Find matching route configuration, returning (config, pattern) or None."""
@@ -274,6 +275,9 @@ class x402HTTPServerBase:
 
         Returns HTTPProcessResult.
         """
+        if not context.method:
+            context = dataclasses.replace(context, method=context.adapter.get_method())
+
         # Find matching route
         route_match = self._get_route_config(context.path, context.method)
         if route_match is None:
@@ -584,6 +588,8 @@ class x402HTTPServerBase:
         Merges settlement headers (including PAYMENT-RESPONSE) into the response.
         """
         settlement_headers = failure.headers
+        if context and not context.method:
+            context = dataclasses.replace(context, method=context.adapter.get_method())
         route_match = self._get_route_config(context.path, context.method) if context else None
         route_config = route_match[0] if route_match else None
 

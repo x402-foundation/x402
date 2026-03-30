@@ -1391,7 +1391,7 @@ describe("ExactEvmScheme (Facilitator)", () => {
     });
 
     it("should accept when valid ERC-20 extension present and prerequisites pass", async () => {
-      // checkPermit2Prerequisites multicall: proxy deployed + sufficient token balance + sufficient ETH for gas
+      // checkPermit2Prerequisites multicall: proxy deployed + sufficient token balance
       mockFacilitatorSigner.readContract = vi
         .fn()
         .mockImplementation(({ address }: { address: string }) => {
@@ -1404,11 +1404,6 @@ describe("ExactEvmScheme (Facilitator)", () => {
               {
                 success: true,
                 returnData: "0x00000000000000000000000000000000000000000000000000000000000f4240",
-              },
-              // ETH balance: 0.001 ETH (well above the gas floor of 70_000 * 1 gwei)
-              {
-                success: true,
-                returnData: "0x00000000000000000000000000000000000000000000000000038D7EA4C68000",
               },
             ]);
           }
@@ -1555,7 +1550,7 @@ describe("ExactEvmScheme (Facilitator)", () => {
       } as any);
       vi.mocked(recoverTransactionAddress).mockResolvedValue(PAYER);
 
-      // prerequisites pass: proxy deployed + sufficient token balance + sufficient ETH for gas
+      // prerequisites pass: proxy deployed + sufficient token balance
       mockFacilitatorSigner.readContract = vi
         .fn()
         .mockImplementation(({ address }: { address: string }) => {
@@ -1568,11 +1563,6 @@ describe("ExactEvmScheme (Facilitator)", () => {
               {
                 success: true,
                 returnData: "0x00000000000000000000000000000000000000000000000000000000000f4240",
-              },
-              // ETH balance: 0.001 ETH (well above the gas floor of 70_000 * 1 gwei)
-              {
-                success: true,
-                returnData: "0x00000000000000000000000000000000000000000000000000038D7EA4C68000",
               },
             ]);
           }

@@ -163,4 +163,105 @@ describe("HTTPFacilitatorClient", () => {
     expect(result.errorMessage).toBeUndefined();
     expect(result.payer).toBeUndefined();
   });
+
+  describe("URL normalization", () => {
+    it("strips trailing slashes from the configured URL", () => {
+      const client = new HTTPFacilitatorClient({ url: "https://x402.org/facilitator/" });
+      expect(client.url).toBe("https://x402.org/facilitator");
+    });
+
+    it("strips multiple trailing slashes", () => {
+      const client = new HTTPFacilitatorClient({ url: "https://x402.org/facilitator///" });
+      expect(client.url).toBe("https://x402.org/facilitator");
+    });
+
+    it("leaves URLs without trailing slash unchanged", () => {
+      const client = new HTTPFacilitatorClient({ url: "https://x402.org/facilitator" });
+      expect(client.url).toBe("https://x402.org/facilitator");
+    });
+
+    it("uses default URL when no config is provided", () => {
+      const client = new HTTPFacilitatorClient();
+      expect(client.url).toBe("https://x402.org/facilitator");
+    });
+  });
+
+  describe("redirect handling", () => {
+    it("passes redirect: follow to fetch on getSupported", async () => {
+      const mockFetch = vi.fn().mockResolvedValue(
+        new Response(
+          JSON.stringify({
+            kinds: [{ x402Version: 2, scheme: "exact", network: "eip155:8453" }],
+          }),
+          { status: 200 },
+        ),
+      );
+      vi.stubGlobal("fetch", mockFetch);
+
+      const client = new HTTPFacilitatorClient({ url: "https://facilitator.test" });
+      await client.getSupported();
+
+      expect(mockFetch).toHaveBeenCalledWith(
+        "https://facilitator.test/supported",
+        expect.objectContaining({ redirect: "follow" }),
+      );
+    });
+
+    it("passes redirect: follow to fetch on verify", async () => {
+      const mockFetch = vi
+        .fn()
+        .mockResolvedValue(new Response(JSON.stringify({ isValid: true }), { status: 200 }));
+      vi.stubGlobal("fetch", mockFetch);
+
+      const client = new HTTPFacilitatorClient({ url: "https://facilitator.test" });
+      await client.verify(paymentPayload, paymentRequirements);
+
+      expect(mockFetch).toHaveBeenCalledWith(
+        "https://facilitator.test/verify",
+        expect.objectContaining({ redirect: "follow" }),
+      );
+    });
+
+    it("passes redirect: follow to fetch on settle", async () => {
+      const mockFetch = vi.fn().mockResolvedValue(
+        new Response(
+          JSON.stringify({
+            success: true,
+            transaction: "0xabc",
+            network: "eip155:8453",
+          }),
+          { status: 200 },
+        ),
+      );
+      vi.stubGlobal("fetch", mockFetch);
+
+      const client = new HTTPFacilitatorClient({ url: "https://facilitator.test" });
+      await client.settle(paymentPayload, paymentRequirements);
+
+      expect(mockFetch).toHaveBeenCalledWith(
+        "https://facilitator.test/settle",
+        expect.objectContaining({ redirect: "follow" }),
+      );
+    });
+
+    it("constructs correct endpoint URLs after trailing slash normalization", async () => {
+      const mockFetch = vi.fn().mockResolvedValue(
+        new Response(
+          JSON.stringify({
+            kinds: [{ x402Version: 2, scheme: "exact", network: "eip155:8453" }],
+          }),
+          { status: 200 },
+        ),
+      );
+      vi.stubGlobal("fetch", mockFetch);
+
+      const client = new HTTPFacilitatorClient({ url: "https://x402.org/facilitator/" });
+      await client.getSupported();
+
+      expect(mockFetch).toHaveBeenCalledWith(
+        "https://x402.org/facilitator/supported",
+        expect.anything(),
+      );
+    });
+  });
 });

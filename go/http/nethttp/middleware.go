@@ -14,6 +14,12 @@ import (
 	x402http "github.com/coinbase/x402/go/http"
 )
 
+// SetSettlementOverrides sets settlement overrides on the response for partial settlement.
+// The middleware extracts these before settlement and strips the header from the client response.
+func SetSettlementOverrides(w http.ResponseWriter, overrides *x402.SettlementOverrides) {
+	w.Header().Set(x402http.SettlementOverridesHeader, x402http.MarshalSettlementOverrides(overrides))
+}
+
 // ============================================================================
 // Middleware Configuration
 // ============================================================================
@@ -243,7 +249,7 @@ func createMiddlewareHandler(server *x402http.HTTPServer, config *MiddlewareConf
 				handlePaymentError(w, result.Response)
 
 			case x402http.ResultPaymentVerified:
-				handlePaymentVerified(w, r, next, server, ctx, result, config)
+				handlePaymentVerified(w, r, next, server, ctx, reqCtx, result, config)
 			}
 		})
 	}
@@ -267,7 +273,7 @@ func handlePaymentError(w http.ResponseWriter, response *x402http.HTTPResponseIn
 }
 
 // handlePaymentVerified handles verified payments with response capture and settlement.
-func handlePaymentVerified(w http.ResponseWriter, r *http.Request, next http.Handler, server *x402http.HTTPServer, ctx context.Context, result x402http.HTTPProcessResult, config *MiddlewareConfig) {
+func handlePaymentVerified(w http.ResponseWriter, r *http.Request, next http.Handler, server *x402http.HTTPServer, ctx context.Context, reqCtx x402http.HTTPRequestContext, result x402http.HTTPProcessResult, config *MiddlewareConfig) {
 	// Capture downstream handler response
 	capture := &responseCapture{
 		ResponseWriter: w,
@@ -293,27 +299,36 @@ func handlePaymentVerified(w http.ResponseWriter, r *http.Request, next http.Han
 		return
 	}
 
-	// Process settlement
 	settleResult := server.ProcessSettlement(
 		ctx,
 		*result.PaymentPayload,
 		*result.PaymentRequirements,
+		nil,
+		&x402http.HTTPTransportContext{
+			Request:         &reqCtx,
+			ResponseBody:    capture.body.Bytes(),
+			ResponseHeaders: capture.Header(),
+		},
 	)
 
 	if !settleResult.Success {
-		errorReason := settleResult.ErrorReason
-		if errorReason == "" {
-			errorReason = "Settlement failed"
+		// Always set PAYMENT-RESPONSE header on settlement failure
+		for key, value := range settleResult.Headers {
+			w.Header().Set(key, value)
 		}
-		if config.ErrorHandler != nil {
+		switch {
+		case config.ErrorHandler != nil:
+			errorReason := settleResult.ErrorReason
+			if errorReason == "" {
+				errorReason = "Settlement failed"
+			}
 			config.ErrorHandler(w, r, fmt.Errorf("settlement failed: %s", errorReason))
-		} else {
+		case settleResult.Response != nil:
+			handlePaymentError(w, settleResult.Response)
+		default:
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusPaymentRequired)
-			_ = json.NewEncoder(w).Encode(map[string]any{
-				"error":   "Settlement failed",
-				"details": errorReason,
-			})
+			_ = json.NewEncoder(w).Encode(map[string]any{})
 		}
 		return
 	}

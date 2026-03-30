@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"html"
 	"log"
+	"net/http"
 	"net/url"
 	"regexp"
 	"strconv"
@@ -155,6 +156,14 @@ type HTTPRequestContext struct {
 	Method        string
 	PaymentHeader string
 	RoutePattern  string
+}
+
+// HTTPTransportContext carries request and response data through settlement processing.
+// ResponseHeaders must be an http.Header — use Header.Get/Del to preserve canonicalization.
+type HTTPTransportContext struct {
+	Request         *HTTPRequestContext
+	ResponseBody    []byte
+	ResponseHeaders http.Header
 }
 
 // HTTPResponseInstructions tells the framework how to respond
@@ -425,6 +434,10 @@ func (s *x402HTTPResourceServer) BuildPaymentRequirementsFromOptions(ctx context
 
 // ProcessHTTPRequest handles an HTTP request and returns processing result
 func (s *x402HTTPResourceServer) ProcessHTTPRequest(ctx context.Context, reqCtx HTTPRequestContext, paywallConfig *PaywallConfig) HTTPProcessResult {
+	if reqCtx.Method == "" {
+		reqCtx.Method = reqCtx.Adapter.GetMethod()
+	}
+
 	// Find matching route
 	routeConfig, routePattern := s.getRouteConfig(reqCtx.Path, reqCtx.Method)
 	if routeConfig == nil {
@@ -628,14 +641,45 @@ func (s *x402HTTPResourceServer) ProcessHTTPRequest(ctx context.Context, reqCtx 
 
 // RequiresPayment checks if a request requires payment based on route configuration
 func (s *x402HTTPResourceServer) RequiresPayment(reqCtx HTTPRequestContext) bool {
-	routeConfig, _ := s.getRouteConfig(reqCtx.Path, reqCtx.Method)
+	method := reqCtx.Method
+	if method == "" {
+		method = reqCtx.Adapter.GetMethod()
+	}
+	routeConfig, _ := s.getRouteConfig(reqCtx.Path, method)
 	return routeConfig != nil
 }
 
-// ProcessSettlement handles settlement after successful response
-func (s *x402HTTPResourceServer) ProcessSettlement(ctx context.Context, payload types.PaymentPayload, requirements types.PaymentRequirements) *ProcessSettleResult {
-	// Settle payment (type-safe, no marshal needed)
-	settleResult, err := s.SettlePayment(ctx, payload, requirements)
+// SettlementOverridesHeader is the HTTP header name for settlement overrides.
+// The value is the canonical HTTP header form (Title-Case) so it works correctly
+// with both http.Header methods and direct map access.
+const SettlementOverridesHeader = "Settlement-Overrides"
+
+// MarshalSettlementOverrides serializes overrides to the JSON string suitable for
+// the SettlementOverridesHeader value. Returns an empty string on marshal failure
+// (which cannot happen for a well-formed SettlementOverrides value).
+func MarshalSettlementOverrides(overrides *x402.SettlementOverrides) string {
+	data, _ := json.Marshal(overrides)
+	return string(data)
+}
+
+// ProcessSettlement handles settlement after successful response.
+// If overrides is non-nil, it takes precedence. Otherwise, falls back to reading
+// the settlement-overrides header from the transport context's ResponseHeaders
+// (set by the route handler via SetSettlementOverrides). The header is deleted
+// from ResponseHeaders to prevent it from being sent to the client.
+func (s *x402HTTPResourceServer) ProcessSettlement(ctx context.Context, payload types.PaymentPayload, requirements types.PaymentRequirements, overrides *x402.SettlementOverrides, transportContext *HTTPTransportContext) *ProcessSettleResult {
+	resolved := overrides
+	if resolved == nil && transportContext != nil && transportContext.ResponseHeaders != nil {
+		if val := transportContext.ResponseHeaders.Get(SettlementOverridesHeader); val != "" {
+			var parsed x402.SettlementOverrides
+			if err := json.Unmarshal([]byte(val), &parsed); err == nil {
+				resolved = &parsed
+			}
+			transportContext.ResponseHeaders.Del(SettlementOverridesHeader)
+		}
+	}
+
+	settleResult, err := s.SettlePayment(ctx, payload, requirements, resolved)
 	if err != nil {
 		return s.buildSettlementFailureResult(err.Error(), x402.Network(requirements.Network), "", nil)
 	}

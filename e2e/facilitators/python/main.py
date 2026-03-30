@@ -90,9 +90,33 @@ class Erc20ApprovalSigner:
         hashes: list[str] = []
         for tx in transactions:
             if isinstance(tx, str):
-                tx_hash = self._signer._w3.eth.send_raw_transaction(
-                    bytes.fromhex(tx[2:] if tx.startswith("0x") else tx)
-                ).hex()
+                raw_bytes = bytes.fromhex(tx[2:] if tx.startswith("0x") else tx)
+                w3 = self._signer._w3
+
+                payer_address = w3.eth.account.recover_transaction(tx)
+                # Use the same gas constants as the library's approve tx builder
+                gas_cost = 70_000 * 1_000_000_000  # ERC20_APPROVE_GAS_LIMIT * DEFAULT_MAX_FEE_PER_GAS
+
+                payer_balance = w3.eth.get_balance(payer_address)
+                if payer_balance < gas_cost:
+                    deficit = gas_cost - payer_balance
+                    print(f"⛽ Funding payer {payer_address} with {deficit} wei for gas")
+                    fund_tx = {
+                        "to": payer_address,
+                        "value": deficit,
+                        "gas": 21000,
+                        "gasPrice": w3.eth.gas_price,
+                        "nonce": w3.eth.get_transaction_count(self._signer._account.address),
+                        "chainId": w3.eth.chain_id,
+                    }
+                    signed_fund = self._signer._account.sign_transaction(fund_tx)
+                    fund_hash = w3.eth.send_raw_transaction(signed_fund.raw_transaction).hex()
+                    fund_receipt = w3.eth.wait_for_transaction_receipt(fund_hash)
+                    if fund_receipt["status"] != 1:
+                        raise RuntimeError(f"gas_funding_failed: {fund_hash}")
+                    print(f"⛽ Gas funding confirmed: {fund_hash}")
+
+                tx_hash = w3.eth.send_raw_transaction(raw_bytes).hex()
             elif isinstance(tx, dict) or isinstance(tx, WriteContractCall):
                 if isinstance(tx, dict):
                     call = WriteContractCall(**tx)

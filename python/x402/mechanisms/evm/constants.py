@@ -353,6 +353,44 @@ NETWORK_CONFIGS: dict[str, NetworkConfig] = {
             },
         },
     },
+    # Polygon Mainnet
+    "eip155:137": {
+        "chain_id": 137,
+        "default_asset": {
+            "address": "0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359",
+            "name": "USD Coin",
+            "version": "2",
+            "decimals": 6,
+        },
+        "supported_assets": {
+            "USDC": {
+                "address": "0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359",
+                "name": "USD Coin",
+                "version": "2",
+                "decimals": 6,
+            },
+        },
+    },
+    # Arbitrum One
+    "eip155:42161": {
+        "chain_id": 42161,
+        "default_asset": {
+            "address": "0xaf88d065e77c8cC2239327C5EDb3A432268e5831",
+            "name": "USD Coin",
+            "version": "2",
+            "decimals": 6,
+        },
+    },
+    # Arbitrum Sepolia
+    "eip155:421614": {
+        "chain_id": 421614,
+        "default_asset": {
+            "address": "0x75faf114eafb1BDbe2F0316DF893fd58CE46AA4d",
+            "name": "USD Coin",
+            "version": "2",
+            "decimals": 6,
+        },
+    },
 }
 
 # V1 legacy constants are in x402.mechanisms.evm.v1.constants

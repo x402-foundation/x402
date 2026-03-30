@@ -80,3 +80,70 @@ export function isPermit2Payload(payload: ExactEvmPayloadV2): payload is ExactPe
 export function isEIP3009Payload(payload: ExactEvmPayloadV2): payload is ExactEIP3009Payload {
   return "authorization" in payload;
 }
+
+/**
+ * Upto Permit2 witness — includes `facilitator` field absent from exact witness.
+ * Only the address matching `witness.facilitator` can call settle() on-chain.
+ */
+export type UptoPermit2Witness = {
+  to: `0x${string}`;
+  facilitator: `0x${string}`;
+  validAfter: string;
+};
+
+export type UptoPermit2Authorization = {
+  permitted: {
+    token: `0x${string}`;
+    amount: string;
+  };
+  spender: `0x${string}`;
+  nonce: string;
+  deadline: string;
+  witness: UptoPermit2Witness;
+};
+
+export type UptoPermit2Payload = {
+  signature: `0x${string}`;
+  permit2Authorization: UptoPermit2Authorization & {
+    from: `0x${string}`;
+  };
+};
+
+/**
+ * Type guard to check if a payload is an upto Permit2 payload.
+ * Validates structural presence of all required fields: signature, permit2Authorization
+ * (with from, permitted, spender, nonce, deadline), and a witness containing facilitator.
+ *
+ * @param payload - The payload to check
+ * @returns True if the payload is an upto Permit2 payload, false otherwise
+ */
+export function isUptoPermit2Payload(
+  payload: Record<string, unknown>,
+): payload is UptoPermit2Payload {
+  if (typeof payload.signature !== "string") return false;
+  if (!("permit2Authorization" in payload)) return false;
+
+  const auth = payload.permit2Authorization;
+  if (typeof auth !== "object" || auth === null) return false;
+
+  const a = auth as Record<string, unknown>;
+  if (typeof a.from !== "string") return false;
+  if (typeof a.spender !== "string") return false;
+  if (typeof a.nonce !== "string") return false;
+  if (typeof a.deadline !== "string") return false;
+
+  const permitted = a.permitted;
+  if (typeof permitted !== "object" || permitted === null) return false;
+  const p = permitted as Record<string, unknown>;
+  if (typeof p.token !== "string") return false;
+  if (typeof p.amount !== "string") return false;
+
+  const witness = a.witness;
+  if (typeof witness !== "object" || witness === null) return false;
+  const w = witness as Record<string, unknown>;
+  return (
+    typeof w.facilitator === "string" &&
+    typeof w.to === "string" &&
+    typeof w.validAfter === "string"
+  );
+}

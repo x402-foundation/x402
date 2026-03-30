@@ -1,4 +1,4 @@
-import { x402ResourceServer } from "../server";
+import { x402ResourceServer, SettlementOverrides } from "../server";
 import {
   decodePaymentSignatureHeader,
   encodePaymentRequiredHeader,
@@ -15,6 +15,8 @@ import {
   PaymentRequirements,
 } from "../types";
 import { x402Version } from "..";
+
+export const SETTLEMENT_OVERRIDES_HEADER = "Settlement-Overrides";
 
 /**
  * Framework-agnostic HTTP adapter interface
@@ -218,6 +220,8 @@ export interface HTTPTransportContext {
   request: HTTPRequestContext;
   /** The response body buffer */
   responseBody?: Buffer;
+  /** Response headers set by the route handler (used for settlement overrides) */
+  responseHeaders?: Record<string, string>;
 }
 
 /**
@@ -418,7 +422,9 @@ export class x402HTTPResourceServer {
     context: HTTPRequestContext,
     paywallConfig?: PaywallConfig,
   ): Promise<HTTPProcessResult> {
-    const { adapter, path, method } = context;
+    const method = context.method || context.adapter.getMethod();
+    context = { ...context, method };
+    const { adapter, path } = context;
 
     // Find matching route
     const routeMatch = this.getRouteConfig(path, method);
@@ -572,6 +578,7 @@ export class x402HTTPResourceServer {
    * @param requirements - The matching payment requirements
    * @param declaredExtensions - Optional declared extensions (for per-key enrichment)
    * @param transportContext - Optional HTTP transport context
+   * @param settlementOverrides - Optional settlement overrides (e.g., partial settlement amount)
    * @returns ProcessSettleResultResponse - SettleResponse with headers if success or errorReason if failure
    */
   async processSettlement(
@@ -579,13 +586,36 @@ export class x402HTTPResourceServer {
     requirements: PaymentRequirements,
     declaredExtensions?: Record<string, unknown>,
     transportContext?: HTTPTransportContext,
+    settlementOverrides?: SettlementOverrides,
   ): Promise<ProcessSettleResultResponse> {
+    if (transportContext?.request && !transportContext.request.method) {
+      transportContext = {
+        ...transportContext,
+        request: {
+          ...transportContext.request,
+          method: transportContext.request.adapter.getMethod(),
+        },
+      };
+    }
     try {
+      // Resolve overrides: explicit param takes precedence, fall back to response header
+      let resolvedOverrides = settlementOverrides;
+      if (!resolvedOverrides && transportContext?.responseHeaders?.[SETTLEMENT_OVERRIDES_HEADER]) {
+        try {
+          resolvedOverrides = JSON.parse(
+            transportContext.responseHeaders[SETTLEMENT_OVERRIDES_HEADER],
+          );
+        } catch {
+          // Ignore malformed header
+        }
+      }
+
       const settleResponse = await this.ResourceServer.settlePayment(
         paymentPayload,
         requirements,
         declaredExtensions,
         transportContext,
+        resolvedOverrides,
       );
 
       if (!settleResponse.success) {
@@ -656,7 +686,8 @@ export class x402HTTPResourceServer {
    * @returns True if the route requires payment, false otherwise
    */
   requiresPayment(context: HTTPRequestContext): boolean {
-    return this.getRouteConfig(context.path, context.method) !== undefined;
+    const method = context.method || context.adapter.getMethod();
+    return this.getRouteConfig(context.path, method) !== undefined;
   }
 
   /**
@@ -916,6 +947,7 @@ export class x402HTTPResourceServer {
     const regex = new RegExp(
       `^${
         path
+          .replace(/\\/g, "\\\\") // Escape backslashes first
           .replace(/[$()+.?^{|}]/g, "\\$&") // Escape regex special chars
           .replace(/\*/g, ".*?") // Wildcards
           .replace(/\[([^\]]+)\]/g, "[^/]+") // Parameters (Next.js style [param])

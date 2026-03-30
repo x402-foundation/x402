@@ -30,6 +30,16 @@ func (s *ExactEvmScheme) Scheme() string {
 	return evm.SchemeExact
 }
 
+// GetAssetDecimals implements AssetDecimalsProvider. Returns the decimal precision for the
+// given asset on the given network, falling back to 6 if the asset is not recognized.
+func (s *ExactEvmScheme) GetAssetDecimals(asset string, network x402.Network) int {
+	info, err := evm.GetAssetInfo(string(network), asset)
+	if err != nil || info == nil {
+		return 6
+	}
+	return info.Decimals
+}
+
 // RegisterMoneyParser registers a custom money parser in the parser chain.
 // Multiple parsers can be registered - they will be tried in registration order.
 // Each parser receives a decimal amount (e.g., 1.50 for $1.50).
@@ -138,11 +148,8 @@ func (s *ExactEvmScheme) ParsePrice(price x402.Price, network x402.Network) (x40
 func (s *ExactEvmScheme) parseMoneyToDecimal(price x402.Price) (float64, error) {
 	switch v := price.(type) {
 	case string:
-		// Remove currency symbols
 		cleanPrice := strings.TrimSpace(v)
 		cleanPrice = strings.TrimPrefix(cleanPrice, "$")
-		cleanPrice = strings.TrimSuffix(cleanPrice, " USD")
-		cleanPrice = strings.TrimSuffix(cleanPrice, " USDC")
 		cleanPrice = strings.TrimSpace(cleanPrice)
 
 		// Parse as float

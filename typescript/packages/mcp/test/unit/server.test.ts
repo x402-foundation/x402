@@ -170,6 +170,31 @@ describe("createPaymentWrapper", () => {
       );
     });
 
+    it("should preserve structuredContent from handler result", async () => {
+      const paid = createPaymentWrapper(
+        mockResourceServer as unknown as Parameters<typeof createPaymentWrapper>[0],
+        {
+          accepts: [mockPaymentRequirements],
+        },
+      );
+
+      const structuredData = { query: "test", results: [{ id: 1 }], count: 1 };
+      const handler = vi.fn().mockResolvedValue({
+        content: [{ type: "text", text: JSON.stringify(structuredData) }],
+        structuredContent: structuredData,
+      });
+
+      const wrappedHandler = paid(handler);
+      const result = await wrappedHandler(
+        { test: "arg" },
+        { _meta: { "x402/payment": mockPaymentPayload } },
+      );
+
+      expect(result.structuredContent).toEqual(structuredData);
+      expect(result.content).toEqual([{ type: "text", text: JSON.stringify(structuredData) }]);
+      expect(result._meta?.[MCP_PAYMENT_RESPONSE_META_KEY]).toEqual(mockSettleResponse);
+    });
+
     it("should not settle payment if tool returns error", async () => {
       const paid = createPaymentWrapper(
         mockResourceServer as unknown as Parameters<typeof createPaymentWrapper>[0],

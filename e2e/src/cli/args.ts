@@ -16,6 +16,7 @@ export interface ParsedArgs {
   networkMode?: NetworkMode;  // undefined = prompt user, set = skip prompt
   parallel: boolean;
   concurrency: number;
+  endpoints?: string[];
 }
 
 export function parseArgs(): ParsedArgs {
@@ -35,14 +36,15 @@ export function parseArgs(): ParsedArgs {
   }
 
   // Check if any filter args present -> programmatic mode
-  const hasFilterArgs = args.some(arg => 
+  const hasFilterArgs = args.some(arg =>
     arg.startsWith('--transport=') ||
     arg.startsWith('--facilitators=') ||
     arg.startsWith('--servers=') ||
     arg.startsWith('--clients=') ||
     arg.startsWith('--extensions=') ||
     arg.startsWith('--versions=') ||
-    arg.startsWith('--families=')
+    arg.startsWith('--families=') ||
+    arg.startsWith('--endpoints=')
   );
 
   const mode: 'interactive' | 'programmatic' = hasFilterArgs ? 'programmatic' : 'interactive';
@@ -50,8 +52,20 @@ export function parseArgs(): ParsedArgs {
   // Parse verbose
   const verbose = args.includes('-v') || args.includes('--verbose');
 
-  // Parse log file
-  const logFile = args.find(arg => arg.startsWith('--log-file='))?.split('=')[1];
+  // Parse log file — supports --log (timestamped default), --log=path, and legacy --log-file=path
+  let logFile: string | undefined;
+  const logArg = args.find(arg => arg === '--log' || arg.startsWith('--log='));
+  const legacyLogArg = args.find(arg => arg.startsWith('--log-file='));
+  if (logArg) {
+    if (logArg.includes('=')) {
+      logFile = logArg.split('=').slice(1).join('=');
+    } else {
+      const ts = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+      logFile = `logs/e2e-run-${ts}.log`;
+    }
+  } else if (legacyLogArg) {
+    logFile = legacyLogArg.split('=')[1];
+  }
 
   // Parse JSON output file
   const outputJson = args.find(arg => arg.startsWith('--output-json='))?.split('=')[1];
@@ -80,6 +94,7 @@ export function parseArgs(): ParsedArgs {
   const extensions = parseListArg(args, '--extensions');
   const versions = parseListArg(args, '--versions')?.map(v => parseInt(v));
   const families = parseListArg(args, '--families');
+  const endpoints = parseListArg(args, '--endpoints');
 
   return {
     mode,
@@ -94,12 +109,14 @@ export function parseArgs(): ParsedArgs {
       extensions,
       versions,
       protocolFamilies: families,
+      endpoints,
     },
     showHelp: false,
     minimize,
     networkMode,
     parallel,
     concurrency,
+    endpoints,
   };
 }
 
@@ -130,10 +147,12 @@ export function printHelp(): void {
   console.log('  --extensions=<list>        Comma-separated extensions (e.g., bazaar)');
   console.log('  --versions=<list>          Comma-separated version numbers (e.g., 1,2)');
   console.log('  --families=<list>          Comma-separated protocol families (e.g., evm,svm)');
+  console.log('  --endpoints=<list>         Comma-separated endpoint paths or regex patterns (auto-anchored)');
   console.log('');
   console.log('Options:');
   console.log('  -v, --verbose              Enable verbose logging');
-  console.log('  --log-file=<path>          Save verbose output to file');
+  console.log('  --log[=<path>]             Write output to file (default: logs/e2e-run-<timestamp>.log)');
+  console.log('  --log-file=<path>          Alias for --log=<path> (legacy)');
   console.log('  --output-json=<path>       Write structured JSON results to file');
   console.log('  --min                      Minimize tests (coverage-based skipping)');
   console.log('  --parallel                 Run server+facilitator combos concurrently');
@@ -147,6 +166,8 @@ export function printHelp(): void {
   console.log('  pnpm test --min -v                                  # Minimize with verbose');
   console.log('  pnpm test --transport=mcp                                # MCP transport only');
   console.log('  pnpm test --mainnet --facilitators=go --servers=express  # Mainnet programmatic');
+  console.log("  pnpm test --testnet --endpoints='/protected'              # Exact path match");
+  console.log("  pnpm test --testnet --endpoints='/protected-permit2.*'   # Regex: all permit2 routes");
   console.log('  pnpm test --testnet --min --parallel -v                   # Parallel mode');
   console.log('  pnpm test --testnet --min --parallel --concurrency=2 -v   # Limited concurrency');
   console.log('');

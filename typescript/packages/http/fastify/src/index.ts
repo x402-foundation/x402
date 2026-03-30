@@ -1,3 +1,4 @@
+import type { ServerResponse } from "http";
 import {
   HTTPRequestContext,
   PaywallConfig,
@@ -6,6 +7,10 @@ import {
   x402ResourceServer,
   RoutesConfig,
   FacilitatorClient,
+  FacilitatorResponseError,
+  getFacilitatorResponseError,
+  SETTLEMENT_OVERRIDES_HEADER,
+  SettlementOverrides,
 } from "@x402/core/server";
 import {
   SchemeNetworkServer,
@@ -17,18 +22,56 @@ import { FastifyInstance, FastifyRequest, FastifyReply } from "fastify";
 import { FastifyAdapter } from "./adapter";
 
 /**
- * Symbol used to store x402 payment context on the request object.
+ * Sets settlement overrides on a Fastify reply for partial settlement (upto scheme).
+ * The middleware extracts these before settlement and strips the header from the client response.
+ *
+ * @param reply - The Fastify reply object
+ * @param overrides - Settlement overrides (e.g., { amount: "500" } for partial settlement)
  */
-const kX402Context = Symbol("x402Context");
+export function setSettlementOverrides(reply: FastifyReply, overrides: SettlementOverrides): void {
+  reply.header(SETTLEMENT_OVERRIDES_HEADER, JSON.stringify(overrides));
+}
 
-/**
- * Extended request type with x402 payment context.
- */
 interface X402PaymentContext {
   paymentPayload: PaymentPayload;
   paymentRequirements: PaymentRequirements;
   declaredExtensions?: Record<string, unknown>;
   requestContext: HTTPRequestContext;
+}
+
+interface BufferedWriteHead {
+  method: "writeHead";
+  statusCode: number;
+  headers?: Record<string, unknown>;
+}
+
+interface BufferedWrite {
+  method: "write";
+  data: string | Buffer;
+}
+
+interface BufferedEnd {
+  method: "end";
+  data?: string | Buffer;
+}
+
+interface BufferedFlushHeaders {
+  method: "flushHeaders";
+}
+
+type BufferedRawCall = BufferedWriteHead | BufferedWrite | BufferedEnd | BufferedFlushHeaders;
+
+interface RawGuard {
+  triggered: boolean;
+  buffer: BufferedRawCall[];
+  deactivate: () => void;
+}
+
+declare module "fastify" {
+  interface FastifyRequest {
+    x402Context?: X402PaymentContext;
+    x402RawGuard?: RawGuard;
+  }
 }
 
 /**
@@ -90,6 +133,101 @@ function checkIfBazaarNeeded(routes: RoutesConfig): boolean {
 }
 
 /**
+ * Buffers reply.raw method calls on a protected route so that settlement
+ * can inspect the response body before anything reaches the client.
+ *
+ * Fastify's normal reply flow (return value / reply.send) goes through the
+ * onSend hook where settlement runs before data reaches the client.  However,
+ * reply.raw gives direct access to the underlying Node.js ServerResponse,
+ * allowing data to be flushed without triggering onSend.
+ *
+ * This guard intercepts writeHead/write/end/flushHeaders, stores them in a
+ * buffer, and ensures Fastify's lifecycle still fires (via reply.send on end)
+ * so that onSend can reconstruct the response, settle, then replay the calls.
+ *
+ * The guard is deactivated at the start of onSend so that Fastify's own
+ * internal reply.raw usage (which happens after onSend) is unaffected.
+ *
+ * @param reply - Fastify reply whose raw ServerResponse is wrapped for buffering.
+ * @returns Guard state and buffer used to replay raw writes after settlement.
+ */
+function guardReplyRaw(reply: FastifyReply): RawGuard {
+  const raw = reply.raw;
+  const origWrite = raw.write;
+  const origEnd = raw.end;
+  const origWriteHead = raw.writeHead;
+  const origFlushHeaders = raw.flushHeaders;
+
+  let active = true;
+  const guard: RawGuard = {
+    triggered: false,
+    buffer: [],
+    deactivate() {
+      if (!active) return;
+      active = false;
+      raw.write = origWrite;
+      raw.end = origEnd;
+      raw.writeHead = origWriteHead;
+      raw.flushHeaders = origFlushHeaders;
+    },
+  };
+
+  raw.writeHead = function (this: ServerResponse, ...args: unknown[]) {
+    if (active) {
+      guard.triggered = true;
+      const statusCode = args[0] as number;
+      const headers = (typeof args[1] === "string" ? args[2] : args[1]) as
+        | Record<string, unknown>
+        | undefined;
+      guard.buffer.push({ method: "writeHead", statusCode, headers });
+      return this;
+    }
+    return Reflect.apply(origWriteHead, this, args) as ServerResponse;
+  } as ServerResponse["writeHead"];
+
+  raw.write = function (this: ServerResponse, ...args: unknown[]) {
+    if (active) {
+      guard.triggered = true;
+      guard.buffer.push({ method: "write", data: args[0] as string | Buffer });
+      return true;
+    }
+    return Reflect.apply(origWrite, this, args) as boolean;
+  } as ServerResponse["write"];
+
+  raw.end = function (this: ServerResponse, ...args: unknown[]) {
+    if (active) {
+      guard.triggered = true;
+      const data =
+        typeof args[0] === "function" ? undefined : (args[0] as string | Buffer | undefined);
+      guard.buffer.push({ method: "end", data });
+      return this;
+    }
+    return Reflect.apply(origEnd, this, args) as ServerResponse;
+  } as ServerResponse["end"];
+
+  raw.flushHeaders = function (this: ServerResponse) {
+    if (active) {
+      guard.triggered = true;
+      guard.buffer.push({ method: "flushHeaders" });
+    } else {
+      origFlushHeaders.call(this);
+    }
+  };
+
+  return guard;
+}
+
+/**
+ * Sends a normalized 502 response for facilitator boundary failures.
+ *
+ * @param reply - The Fastify reply to write to
+ * @param error - The facilitator response error to surface
+ */
+function sendFacilitatorError(reply: FastifyReply, error: FacilitatorResponseError): void {
+  reply.status(502).send({ error: error.message });
+}
+
+/**
  * Configuration for registering a payment scheme with a specific network.
  */
 export interface SchemeRegistration {
@@ -139,7 +277,32 @@ export function paymentMiddlewareFromHTTPServer(
     httpServer.registerPaywallProvider(paywall);
   }
 
+  app.decorateRequest("x402Context", undefined);
+  app.decorateRequest("x402RawGuard", undefined);
+
   let initPromise: Promise<void> | null = syncFacilitatorOnStart ? httpServer.initialize() : null;
+  let isInitialized = false;
+
+  /**
+   * Ensures facilitator initialization succeeds once, while allowing retries after failures.
+   */
+  async function initializeHttpServer(): Promise<void> {
+    if (!syncFacilitatorOnStart || isInitialized) {
+      return;
+    }
+
+    if (!initPromise) {
+      initPromise = httpServer.initialize();
+    }
+
+    try {
+      await initPromise;
+      isInitialized = true;
+    } catch (error) {
+      initPromise = null;
+      throw error;
+    }
+  }
 
   let bazaarPromise: Promise<void> | null = null;
   if (checkIfBazaarNeeded(httpServer.routes) && !httpServer.server.hasExtension("bazaar")) {
@@ -168,9 +331,16 @@ export function paymentMiddlewareFromHTTPServer(
       return;
     }
 
-    if (initPromise) {
-      await initPromise;
-      initPromise = null;
+    if (syncFacilitatorOnStart && !isInitialized) {
+      try {
+        await initializeHttpServer();
+      } catch (error) {
+        const facilitatorError = getFacilitatorResponseError(error);
+        if (facilitatorError) {
+          return sendFacilitatorError(reply, facilitatorError);
+        }
+        throw error;
+      }
     }
 
     if (bazaarPromise) {
@@ -178,7 +348,15 @@ export function paymentMiddlewareFromHTTPServer(
       bazaarPromise = null;
     }
 
-    const result = await httpServer.processHTTPRequest(context, paywallConfig);
+    let result: Awaited<ReturnType<x402HTTPResourceServer["processHTTPRequest"]>>;
+    try {
+      result = await httpServer.processHTTPRequest(context, paywallConfig);
+    } catch (error) {
+      if (error instanceof FacilitatorResponseError) {
+        return sendFacilitatorError(reply, error);
+      }
+      throw error;
+    }
 
     switch (result.type) {
       case "no-payment-required":
@@ -197,39 +375,75 @@ export function paymentMiddlewareFromHTTPServer(
       }
 
       case "payment-verified": {
-        const x402Context: X402PaymentContext = {
+        request.x402Context = {
           paymentPayload: result.paymentPayload,
           paymentRequirements: result.paymentRequirements,
           declaredExtensions: result.declaredExtensions,
           requestContext: context,
         };
-        (request as unknown as Record<symbol, unknown>)[kX402Context] = x402Context;
+        request.x402RawGuard = guardReplyRaw(reply);
         return;
       }
     }
   });
 
   app.addHook("onSend", async (request: FastifyRequest, reply: FastifyReply, payload: unknown) => {
-    const x402Context = (request as unknown as Record<symbol, unknown>)[kX402Context] as
-      | X402PaymentContext
-      | undefined;
+    const rawGuard = request.x402RawGuard;
+    if (rawGuard) {
+      rawGuard.deactivate();
+    }
 
+    const x402Context = request.x402Context;
     if (!x402Context) {
       return payload;
     }
 
+    let effectivePayload: unknown = payload;
+    if (rawGuard?.triggered && rawGuard.buffer.length > 0) {
+      const writeHeadCall = rawGuard.buffer.find(
+        (c): c is BufferedWriteHead => c.method === "writeHead",
+      );
+      if (writeHeadCall) {
+        reply.status(writeHeadCall.statusCode);
+        if (writeHeadCall.headers) {
+          for (const [key, value] of Object.entries(writeHeadCall.headers)) {
+            if (value != null) reply.header(key, String(value));
+          }
+        }
+      }
+
+      const bodyChunks: Buffer[] = [];
+      for (const call of rawGuard.buffer) {
+        if (call.method === "write") {
+          bodyChunks.push(Buffer.from(call.data));
+        } else if (call.method === "end" && call.data != null) {
+          bodyChunks.push(Buffer.from(call.data));
+        }
+      }
+      if (bodyChunks.length > 0) {
+        effectivePayload = Buffer.concat(bodyChunks);
+      }
+    }
+
     if (reply.statusCode >= 400) {
-      return payload;
+      return effectivePayload;
     }
 
     try {
-      const responseBody = getResponseBodyBuffer(payload);
+      const responseBody = getResponseBodyBuffer(effectivePayload);
+
+      const responseHeaders: Record<string, string> = {};
+      for (const [key, value] of Object.entries(reply.getHeaders())) {
+        if (value != null) {
+          responseHeaders[key] = String(value);
+        }
+      }
 
       const settleResult = await httpServer.processSettlement(
         x402Context.paymentPayload,
         x402Context.paymentRequirements,
         x402Context.declaredExtensions,
-        { request: x402Context.requestContext, responseBody },
+        { request: x402Context.requestContext, responseBody, responseHeaders },
       );
 
       if (!settleResult.success) {
@@ -248,8 +462,13 @@ export function paymentMiddlewareFromHTTPServer(
       for (const [key, value] of Object.entries(settleResult.headers)) {
         reply.header(key, value);
       }
-      return payload;
+      return effectivePayload;
     } catch (error) {
+      if (error instanceof FacilitatorResponseError) {
+        reply.status(502);
+        reply.type("application/json");
+        return JSON.stringify({ error: error.message });
+      }
       console.error(error);
       reply.status(402);
       reply.type("application/json");
@@ -354,7 +573,7 @@ export type {
 
 export type { PaywallProvider, PaywallConfig } from "@x402/core/server";
 
-export { RouteConfigurationError } from "@x402/core/server";
+export { RouteConfigurationError, SETTLEMENT_OVERRIDES_HEADER } from "@x402/core/server";
 
 export type { RouteValidationError } from "@x402/core/server";
 

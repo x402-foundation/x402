@@ -1,7 +1,8 @@
 import Fastify from "fastify";
-import { paymentMiddleware } from "@x402/fastify";
+import { paymentMiddleware, setSettlementOverrides } from "@x402/fastify";
 import { x402ResourceServer, HTTPFacilitatorClient } from "@x402/core/server";
 import { ExactEvmScheme } from "@x402/evm/exact/server";
+import { UptoEvmScheme } from "@x402/evm/upto/server";
 import { ExactSvmScheme } from "@x402/svm/exact/server";
 import { ExactAptosScheme } from "@x402/aptos/exact/server";
 import { ExactStellarScheme } from "@x402/stellar/exact/server";
@@ -29,6 +30,7 @@ const APTOS_NETWORK = (process.env.APTOS_NETWORK || "aptos:2") as `${string}:${s
 const STELLAR_NETWORK = (process.env.STELLAR_NETWORK || "stellar:testnet") as `${string}:${string}`;
 const EVM_PAYEE_ADDRESS = process.env.EVM_PAYEE_ADDRESS as `0x${string}`;
 const SVM_PAYEE_ADDRESS = process.env.SVM_PAYEE_ADDRESS as string;
+const EVM_PERMIT2_ASSET = process.env.EVM_PERMIT2_ASSET as `0x${string}`;
 const APTOS_PAYEE_ADDRESS = process.env.APTOS_PAYEE_ADDRESS as string;
 const STELLAR_PAYEE_ADDRESS = process.env.STELLAR_PAYEE_ADDRESS as string | undefined;
 const facilitatorUrl = process.env.FACILITATOR_URL;
@@ -59,6 +61,7 @@ const server = new x402ResourceServer(facilitatorClient);
 
 // Register server schemes
 server.register("eip155:*", new ExactEvmScheme());
+server.register("eip155:*", new UptoEvmScheme());
 server.register("solana:*", new ExactSvmScheme());
 if (APTOS_PAYEE_ADDRESS) {
   server.register("aptos:*", new ExactAptosScheme());
@@ -76,24 +79,18 @@ console.log(
 console.log(`Using remote facilitator at: ${facilitatorUrl}`);
 
 /**
- * Pre-middleware guard for optional Aptos endpoint
- * Returns 501 Not Implemented if Aptos is not configured
+ * Pre-middleware guard for optional Aptos / Stellar endpoints
+ * Returns 501 Not Implemented if not configured
  */
 app.addHook("onRequest", async (request, reply) => {
-  if (request.url.split("?")[0] === "/protected-aptos" && !APTOS_PAYEE_ADDRESS) {
+  const path = request.url.split("?")[0];
+  if (path === "/exact/aptos" && !APTOS_PAYEE_ADDRESS) {
     return reply.status(501).send({
       error: "Aptos payments not configured",
       message: "APTOS_PAYEE_ADDRESS environment variable is not set",
     });
   }
-});
-
-/**
- * Pre-middleware guard for optional Stellar endpoint
- * Returns 501 Not Implemented if Stellar is not configured
- */
-app.addHook("onRequest", async (request, reply) => {
-  if (request.url.split("?")[0] === "/protected-stellar" && !STELLAR_PAYEE_ADDRESS) {
+  if (path.startsWith("/exact/stellar") && !STELLAR_PAYEE_ADDRESS) {
     return reply.status(501).send({
       error: "Stellar payments not configured",
       message: "STELLAR_PAYEE_ADDRESS environment variable is not set",
@@ -111,7 +108,7 @@ paymentMiddleware(
   app,
   {
     // Route-specific payment configuration
-    "GET /protected": {
+    "GET /exact/evm/eip3009": {
       accepts: {
         payTo: EVM_PAYEE_ADDRESS,
         scheme: "exact",
@@ -136,7 +133,7 @@ paymentMiddleware(
         }),
       },
     },
-    "GET /protected-svm": {
+    "GET /exact/svm": {
       accepts: {
         payTo: SVM_PAYEE_ADDRESS,
         scheme: "exact",
@@ -163,7 +160,7 @@ paymentMiddleware(
     },
     ...(APTOS_PAYEE_ADDRESS
       ? {
-          "GET /protected-aptos": {
+          "GET /exact/aptos": {
             accepts: {
               payTo: APTOS_PAYEE_ADDRESS,
               scheme: "exact",
@@ -190,34 +187,21 @@ paymentMiddleware(
           },
         }
       : {}),
-    // Permit2 endpoint for generic ERC-20 tokens (no EIP-2612, uses raw approve tx)
-    "GET /protected-permit2-erc20": {
+    // Permit2 standard/direct endpoint - no gas sponsoring, client must pre-approve Permit2
+    "GET /exact/evm/permit2": {
       accepts: {
         payTo: EVM_PAYEE_ADDRESS,
         scheme: "exact",
         network: EVM_NETWORK,
         price: {
           amount: "1000",
-          asset: "0xeED520980fC7C7B4eB379B96d61CEdea2423005a", // Generic MockERC20 token (no EIP-2612)
+          asset: EVM_PERMIT2_ASSET,
           extra: {
             assetTransferMethod: "permit2",
-            // No name/version - generic ERC-20 without EIP-2612
+            name: EVM_NETWORK == "eip155:84532" ? "USDC" : "USD Coin",
+            version: "2",
           },
         },
-      },
-      extensions: {
-        ...declareErc20ApprovalGasSponsoringExtension(),
-      },
-    },
-    // Permit2 endpoint - explicitly requires Permit2 flow instead of EIP-3009
-    "GET /protected-permit2": {
-      accepts: {
-        payTo: EVM_PAYEE_ADDRESS,
-        scheme: "exact",
-        network: EVM_NETWORK,
-        price: "$0.001",
-        // Use pre-parsed price with assetTransferMethod to force Permit2
-        extra: { assetTransferMethod: "permit2" },
       },
       extensions: {
         ...declareDiscoveryExtension({
@@ -237,12 +221,114 @@ paymentMiddleware(
             },
           },
         }),
+      },
+    },
+    // Permit2 endpoint with EIP-2612 gas sponsoring
+    "GET /exact/evm/permit2-eip2612GasSponsoring": {
+      accepts: {
+        payTo: EVM_PAYEE_ADDRESS,
+        scheme: "exact",
+        network: EVM_NETWORK,
+        price: "$0.001",
+        extra: { assetTransferMethod: "permit2" },
+      },
+      extensions: {
+        ...declareDiscoveryExtension({
+          output: {
+            example: {
+              message: "Permit2 EIP-2612 endpoint accessed successfully",
+              timestamp: "2024-01-01T00:00:00Z",
+              method: "permit2-eip2612",
+            },
+            schema: {
+              properties: {
+                message: { type: "string" },
+                timestamp: { type: "string" },
+                method: { type: "string" },
+              },
+              required: ["message", "timestamp", "method"],
+            },
+          },
+        }),
         ...declareEip2612GasSponsoringExtension(),
+      },
+    },
+    // Permit2 endpoint for ERC-20 approval gas sponsoring (no EIP-2612)
+    "GET /exact/evm/permit2-erc20ApprovalGasSponsoring": {
+      accepts: {
+        payTo: EVM_PAYEE_ADDRESS,
+        scheme: "exact",
+        network: EVM_NETWORK,
+        price: {
+          amount: "1000",
+          asset: EVM_PERMIT2_ASSET,
+          extra: {
+            assetTransferMethod: "permit2",
+          },
+        },
+      },
+      extensions: {
+        ...declareErc20ApprovalGasSponsoringExtension(),
+      },
+    },
+    // Upto Permit2 direct endpoint - client must have Permit2 pre-approved
+    "GET /upto/evm/permit2": {
+      accepts: {
+        payTo: EVM_PAYEE_ADDRESS,
+        scheme: "upto",
+        network: EVM_NETWORK,
+        price: {
+          amount: "2000",
+          asset: EVM_PERMIT2_ASSET,
+          extra: {
+            assetTransferMethod: "permit2",
+            name: EVM_NETWORK == "eip155:84532" ? "USDC" : "USD Coin",
+            version: "2",
+          },
+        },
+      },
+    },
+    // Upto Permit2 endpoint with EIP-2612 gas sponsoring
+    "GET /upto/evm/permit2-eip2612GasSponsoring": {
+      accepts: {
+        payTo: EVM_PAYEE_ADDRESS,
+        scheme: "upto",
+        network: EVM_NETWORK,
+        price: {
+          amount: "2000",
+          asset: EVM_PERMIT2_ASSET,
+          extra: {
+            assetTransferMethod: "permit2",
+            name: EVM_NETWORK == "eip155:84532" ? "USDC" : "USD Coin",
+            version: "2",
+          },
+        },
+      },
+      extensions: {
+        ...declareEip2612GasSponsoringExtension(),
+      },
+    },
+    // Upto Permit2 endpoint for ERC-20 approval gas sponsoring
+    "GET /upto/evm/permit2-erc20ApprovalGasSponsoring": {
+      accepts: {
+        payTo: EVM_PAYEE_ADDRESS,
+        scheme: "upto",
+        network: EVM_NETWORK,
+        price: {
+          amount: "2000",
+          asset: EVM_PERMIT2_ASSET,
+          extra: {
+            assetTransferMethod: "permit2",
+          },
+        },
+      },
+      extensions: {
+        ...declareErc20ApprovalGasSponsoringExtension(),
       },
     },
     ...(STELLAR_PAYEE_ADDRESS
       ? {
-          "GET /protected-stellar": {
+          "GET /exact/stellar": {
             accepts: {
               payTo: STELLAR_PAYEE_ADDRESS!,
               scheme: "exact",
@@ -279,7 +365,7 @@ paymentMiddleware(
  * This endpoint demonstrates a resource protected by x402 payment middleware.
  * Clients must provide a valid payment signature to access this endpoint.
  */
-app.get("/protected", async () => {
+app.get("/exact/evm/eip3009", async () => {
   return {
     message: "Protected endpoint accessed successfully",
     timestamp: new Date().toISOString(),
@@ -292,7 +378,7 @@ app.get("/protected", async () => {
  * This endpoint demonstrates a resource protected by x402 payment middleware for SVM.
  * Clients must provide a valid payment signature to access this endpoint.
  */
-app.get("/protected-svm", async () => {
+app.get("/exact/svm", async () => {
   return {
     message: "Protected endpoint accessed successfully",
     timestamp: new Date().toISOString(),
@@ -306,10 +392,32 @@ app.get("/protected-svm", async () => {
  * Clients must provide a valid payment signature to access this endpoint.
  * Note: 501 check is handled by pre-middleware guard above.
  */
-app.get("/protected-aptos", async () => {
+app.get("/exact/aptos", async () => {
   return {
     message: "Protected endpoint accessed successfully",
     timestamp: new Date().toISOString(),
+  };
+});
+
+/**
+ * Protected Permit2 endpoint - standard settle (no gas sponsoring)
+ */
+app.get("/exact/evm/permit2", async () => {
+  return {
+    message: "Permit2 endpoint accessed successfully",
+    timestamp: new Date().toISOString(),
+    method: "permit2",
+  };
+});
+
+/**
+ * Protected Permit2 EIP-2612 endpoint - requires Permit2 with gas sponsoring
+ */
+app.get("/exact/evm/permit2-eip2612GasSponsoring", async () => {
+  return {
+    message: "Permit2 EIP-2612 endpoint accessed successfully",
+    timestamp: new Date().toISOString(),
+    method: "permit2-eip2612",
   };
 });
 
@@ -320,7 +428,7 @@ app.get("/protected-aptos", async () => {
  * that do NOT implement EIP-2612. The facilitator broadcasts the pre-signed
  * approve() transaction on the client's behalf before settling.
  */
-app.get("/protected-permit2-erc20", async () => {
+app.get("/exact/evm/permit2-erc20ApprovalGasSponsoring", async () => {
   return {
     message: "Permit2 ERC-20 approval endpoint accessed successfully",
     timestamp: new Date().toISOString(),
@@ -329,16 +437,38 @@ app.get("/protected-permit2-erc20", async () => {
 });
 
 /**
- * Protected Permit2 endpoint - requires payment via Permit2 flow
- *
- * This endpoint demonstrates the Permit2 payment flow.
- * Clients must have approved Permit2 to spend their USDC before accessing.
+ * Upto Permit2 direct endpoint - upto scheme, client must pre-approve Permit2
  */
-app.get("/protected-permit2", async () => {
+app.get("/upto/evm/permit2", async (_request, reply) => {
+  setSettlementOverrides(reply, { amount: "1000" });
   return {
-    message: "Permit2 endpoint accessed successfully",
+    message: "Upto Permit2 endpoint accessed successfully",
     timestamp: new Date().toISOString(),
-    method: "permit2",
+    method: "upto-permit2",
+  };
+});
+
+/**
+ * Upto Permit2 EIP-2612 endpoint - upto scheme with gas sponsoring
+ */
+app.get("/upto/evm/permit2-eip2612GasSponsoring", async (_request, reply) => {
+  setSettlementOverrides(reply, { amount: "1000" });
+  return {
+    message: "Upto Permit2 EIP-2612 endpoint accessed successfully",
+    timestamp: new Date().toISOString(),
+    method: "upto-permit2-eip2612",
+  };
+});
+
+/**
+ * Upto Permit2 ERC-20 approval endpoint - upto scheme with ERC-20 gas sponsoring
+ */
+app.get("/upto/evm/permit2-erc20ApprovalGasSponsoring", async (_request, reply) => {
+  setSettlementOverrides(reply, { amount: "1000" });
+  return {
+    message: "Upto Permit2 ERC-20 approval endpoint accessed successfully",
+    timestamp: new Date().toISOString(),
+    method: "upto-permit2-erc20-approval",
   };
 });
 
@@ -350,7 +480,7 @@ app.get("/protected-permit2", async () => {
  * Note: 501 check is handled by pre-middleware guard above.
  */
 if (STELLAR_PAYEE_ADDRESS) {
-  app.get("/protected-stellar", async () => {
+  app.get("/exact/stellar", async () => {
     return {
       message: "Protected Stellar endpoint accessed successfully",
       timestamp: new Date().toISOString(),
@@ -408,12 +538,13 @@ app.listen({ port: parseInt(PORT) }, (err, address) => {
 ║  Stellar Payee: ${STELLAR_PAYEE_ADDRESS || "(not configured)"}
 ║                                                        ║
 ║  Endpoints:                                            ║
-║  • GET  /protected             (EIP-3009 payment - EVM)    ║
-║  • GET  /protected-svm         (SVM payment)               ║
-║  • GET  /protected-aptos       (Aptos payment)             ║
-║  • GET  /protected-permit2     (Permit2 payment - EVM)     ║
-║  • GET  /protected-permit2-erc20 (Permit2 + ERC-20 approval) ║
-║  • GET  /protected-stellar     (Stellar payment)           ║
+║  • GET  /exact/evm/eip3009                    (EVM EIP-3009)  ║
+║  • GET  /exact/evm/permit2                    (Permit2)       ║
+║  • GET  /exact/evm/permit2-eip2612GasSponsoring               ║
+║  • GET  /exact/evm/permit2-erc20ApprovalGasSponsoring         ║
+║  • GET  /exact/svm                            (SVM)           ║
+║  • GET  /exact/aptos                          (Aptos)         ║
+║  • GET  /exact/stellar                        (Stellar)       ║
 ║  • GET  /health                (no payment required)       ║
 ║  • POST /close                 (shutdown server)           ║
 ╚════════════════════════════════════════════════════════╝

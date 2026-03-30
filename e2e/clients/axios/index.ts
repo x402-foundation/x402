@@ -5,6 +5,7 @@ import { createPublicClient, http } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import { base, baseSepolia } from "viem/chains";
 import { ExactEvmScheme, type ExactEvmSchemeOptions } from "@x402/evm/exact/client";
+import { UptoEvmScheme as UptoEvmClientScheme, type UptoEvmSchemeOptions } from "@x402/evm/upto/client";
 import { ExactEvmSchemeV1 } from "@x402/evm/v1";
 import { toClientEvmSigner } from "@x402/evm";
 import { ExactSvmScheme } from "@x402/svm/exact/client";
@@ -42,6 +43,10 @@ const evmSchemeOptions: ExactEvmSchemeOptions | undefined = process.env.EVM_RPC_
   ? { rpcUrl: process.env.EVM_RPC_URL }
   : undefined;
 
+const uptoSchemeOptions: UptoEvmSchemeOptions | undefined = process.env.EVM_RPC_URL
+  ? { rpcUrl: process.env.EVM_RPC_URL }
+  : undefined;
+
 // Initialize Aptos signer if key is provided
 let aptosAccount: Account | undefined;
 if (process.env.APTOS_PRIVATE_KEY) {
@@ -61,6 +66,7 @@ if (process.env.STELLAR_PRIVATE_KEY) {
 
 const client = new x402Client()
   .register("eip155:*", new ExactEvmScheme(evmSigner, evmSchemeOptions))
+  .register("eip155:*", new UptoEvmClientScheme(evmSigner, uptoSchemeOptions))
   .registerV1("base-sepolia", new ExactEvmSchemeV1(evmSigner))
   .registerV1("base", new ExactEvmSchemeV1(evmSigner))
   .register("solana:*", new ExactSvmScheme(svmSigner))

@@ -30,6 +30,7 @@ function createMockApp(): { app: FastifyInstance; hooks: CapturedHooks } {
       if (name === "onRequest") hooks.onRequest.push(handler);
       if (name === "onSend") hooks.onSend.push(handler);
     }),
+    decorateRequest: vi.fn(),
   } as unknown as FastifyInstance;
 
   return { app, hooks };

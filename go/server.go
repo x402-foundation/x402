@@ -4,11 +4,60 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"math/big"
+	"regexp"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/coinbase/x402/go/types"
 )
+
+var (
+	percentRegex = regexp.MustCompile(`^(\d+(?:\.\d{0,2})?)%$`)
+	dollarRegex  = regexp.MustCompile(`^\$(\d+(?:\.\d+)?)$`)
+)
+
+// ResolveSettlementOverrideAmount resolves a settlement override amount string
+// to a final atomic-unit string. Supports three formats:
+//   - Raw atomic units: "1000"
+//   - Percent of requirements.Amount: "50%"  (up to 2 decimal places, floored)
+//   - Dollar price: "$0.05" (converted using the provided decimals)
+func ResolveSettlementOverrideAmount(rawAmount string, requirements types.PaymentRequirements, decimals int) (string, error) {
+	if m := percentRegex.FindStringSubmatch(rawAmount); m != nil {
+		parts := strings.SplitN(m[1], ".", 2)
+		intPart, _ := strconv.ParseInt(parts[0], 10, 64)
+		decPart := int64(0)
+		if len(parts) == 2 {
+			padded := (parts[1] + "00")[:2]
+			decPart, _ = strconv.ParseInt(padded, 10, 64)
+		}
+		scaledPercent := big.NewInt(intPart*100 + decPart)
+		base, ok := new(big.Int).SetString(requirements.Amount, 10)
+		if !ok {
+			return "", fmt.Errorf("invalid requirements amount: %s", requirements.Amount)
+		}
+		result := new(big.Int).Mul(base, scaledPercent)
+		result.Div(result, big.NewInt(10000))
+		return result.String(), nil
+	}
+
+	if m := dollarRegex.FindStringSubmatch(rawAmount); m != nil {
+		dollarFloat, ok := new(big.Float).SetPrec(256).SetString(m[1])
+		if !ok {
+			return "", fmt.Errorf("invalid dollar amount: %s", rawAmount)
+		}
+		multiplier := new(big.Float).SetPrec(256).SetInt(
+			new(big.Int).Exp(big.NewInt(10), big.NewInt(int64(decimals)), nil),
+		)
+		atomicFloat := new(big.Float).SetPrec(256).Mul(dollarFloat, multiplier)
+		atomicInt, _ := atomicFloat.Int(nil) // truncates toward zero (floor for positive values)
+		return atomicInt.String(), nil
+	}
+
+	return rawAmount, nil
+}
 
 // x402ResourceServer manages payment requirements and verification for protected resources
 // V2 ONLY - This server only produces and accepts V2 payments
@@ -397,24 +446,46 @@ func (s *x402ResourceServer) VerifyPayment(ctx context.Context, payload types.Pa
 	return verifyResult, nil
 }
 
-// SettlePayment settles a V2 payment
-func (s *x402ResourceServer) SettlePayment(ctx context.Context, payload types.PaymentPayload, requirements types.PaymentRequirements) (*SettleResponse, error) {
+// SettlePayment settles a V2 payment.
+// If overrides is non-nil and overrides.Amount is set, the effective requirements amount
+// is replaced before settlement (partial settlement for upto scheme).
+func (s *x402ResourceServer) SettlePayment(ctx context.Context, payload types.PaymentPayload, requirements types.PaymentRequirements, overrides *SettlementOverrides) (*SettleResponse, error) {
+	effectiveRequirements := requirements
+	if overrides != nil && overrides.Amount != "" {
+		decimals := 6
+		s.mu.RLock()
+		network := Network(requirements.Network)
+		if networkSchemes, ok := s.schemes[network]; ok {
+			if scheme, ok := networkSchemes[requirements.Scheme]; ok {
+				if dp, ok := scheme.(AssetDecimalsProvider); ok {
+					decimals = dp.GetAssetDecimals(requirements.Asset, network)
+				}
+			}
+		}
+		s.mu.RUnlock()
+		resolved, err := ResolveSettlementOverrideAmount(overrides.Amount, requirements, decimals)
+		if err != nil {
+			return nil, NewSettleError("invalid_settlement_override", "", Network(requirements.Network), "", err.Error())
+		}
+		effectiveRequirements.Amount = resolved
+	}
+
 	// Marshal to bytes early for hooks (escape hatch for extensions)
 	payloadBytes, err := json.Marshal(payload)
 	if err != nil {
-		return nil, NewSettleError("failed_to_marshal_payload", "", Network(requirements.Network), "", err.Error())
+		return nil, NewSettleError("failed_to_marshal_payload", "", Network(effectiveRequirements.Network), "", err.Error())
 	}
 
-	requirementsBytes, err := json.Marshal(requirements)
+	requirementsBytes, err := json.Marshal(effectiveRequirements)
 	if err != nil {
-		return nil, NewSettleError("failed_to_marshal_requirements", "", Network(requirements.Network), "", err.Error())
+		return nil, NewSettleError("failed_to_marshal_requirements", "", Network(effectiveRequirements.Network), "", err.Error())
 	}
 
 	// Execute beforeSettle hooks
 	hookCtx := SettleContext{
 		Ctx:               ctx,
 		Payload:           payload,
-		Requirements:      requirements,
+		Requirements:      effectiveRequirements,
 		PayloadBytes:      payloadBytes,
 		RequirementsBytes: requirementsBytes,
 	}
@@ -425,13 +496,13 @@ func (s *x402ResourceServer) SettlePayment(ctx context.Context, payload types.Pa
 			return nil, err
 		}
 		if result != nil && result.Abort {
-			return nil, NewSettleError(result.Reason, "", Network(requirements.Network), "", "")
+			return nil, NewSettleError(result.Reason, "", Network(effectiveRequirements.Network), "", "")
 		}
 	}
 
 	s.mu.RLock()
-	scheme := requirements.Scheme
-	network := Network(requirements.Network)
+	scheme := effectiveRequirements.Scheme
+	network := Network(effectiveRequirements.Network)
 
 	facilitator := s.facilitatorClients[network][scheme]
 	s.mu.RUnlock()

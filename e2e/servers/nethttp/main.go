@@ -16,19 +16,18 @@ import (
 	"github.com/coinbase/x402/go/extensions/types"
 	x402http "github.com/coinbase/x402/go/http"
 	nethttpmw "github.com/coinbase/x402/go/http/nethttp"
-	evm "github.com/coinbase/x402/go/mechanisms/evm/exact/server"
+	exactevm "github.com/coinbase/x402/go/mechanisms/evm/exact/server"
+	uptoevm "github.com/coinbase/x402/go/mechanisms/evm/upto/server"
 	svm "github.com/coinbase/x402/go/mechanisms/svm/exact/server"
 	"github.com/joho/godotenv"
 )
 
 var shutdownRequested bool
 
-/**
- * net/http E2E Test Server with x402 v2 Payment Middleware
- *
- * This server demonstrates how to integrate x402 v2 payment middleware
- * with a standard net/http application for end-to-end testing.
- */
+// net/http E2E Test Server with x402 v2 Payment Middleware
+//
+// This server demonstrates how to integrate x402 v2 payment middleware
+// with a standard net/http application for end-to-end testing.
 
 func main() {
 	// Load .env file if it exists
@@ -72,6 +71,11 @@ func main() {
 	evmNetwork := x402.Network(evmNetworkStr)
 	svmNetwork := x402.Network(svmNetworkStr)
 
+	evmPermit2Asset := os.Getenv("EVM_PERMIT2_ASSET")
+	if evmPermit2Asset == "" {
+		evmPermit2Asset = "0x036CbD53842c5426634e7929541eC2318f3dCF7e"
+	}
+
 	fmt.Printf("EVM Payee address: %s\n", evmPayeeAddress)
 	fmt.Printf("SVM Payee address: %s\n", svmPayeeAddress)
 	fmt.Printf("Using remote facilitator at: %s\n", facilitatorURL)
@@ -81,12 +85,11 @@ func main() {
 		URL: facilitatorURL,
 	})
 
-	/**
-	 * Configure x402 payment middleware
-	 *
-	 * This middleware protects the /protected endpoint with a $0.001 USDC payment requirement
-	 * on the Base Sepolia testnet with bazaar discovery extension.
-	 */
+	// Configure x402 payment middleware
+	//
+	// This middleware protects /exact/* payment routes with USDC payment requirements
+	// on the Base Sepolia testnet with bazaar discovery extension.
+
 	// Declare bazaar discovery extension for GET endpoints
 	discoveryExtension, err := bazaar.DeclareDiscoveryExtension(
 		bazaar.MethodGET,
@@ -112,7 +115,7 @@ func main() {
 	}
 
 	routes := x402http.RoutesConfig{
-		"GET /protected": {
+		"GET /exact/evm/eip3009": {
 			Accepts: x402http.PaymentOptions{
 				{
 					Scheme:  "exact",
@@ -125,7 +128,7 @@ func main() {
 				types.BAZAAR.Key(): discoveryExtension,
 			},
 		},
-		"GET /protected-svm": {
+		"GET /exact/svm": {
 			Accepts: x402http.PaymentOptions{
 				{
 					Scheme:  "exact",
@@ -138,20 +141,45 @@ func main() {
 				types.BAZAAR.Key(): discoveryExtension,
 			},
 		},
-		// Permit2 endpoint - explicitly requires Permit2 flow instead of EIP-3009
-		"GET /protected-permit2": {
+		"GET /exact/evm/permit2": {
 			Accepts: x402http.PaymentOptions{
 				{
 					Scheme:  "exact",
 					PayTo:   evmPayeeAddress,
 					Network: evmNetwork,
-					// Use pre-parsed price with assetTransferMethod to force Permit2
 					Price: map[string]interface{}{
-						"amount": "1000", // 0.001 USDC (6 decimals)
-						"asset":  "0x036CbD53842c5426634e7929541eC2318f3dCF7e", // Base Sepolia USDC
+						"amount": "1000",
+						"asset":  "0x036CbD53842c5426634e7929541eC2318f3dCF7e",
 						"extra": map[string]interface{}{
 							"assetTransferMethod": "permit2",
 						},
+					},
+				},
+			},
+			Extensions: map[string]interface{}{
+				types.BAZAAR.Key(): discoveryExtension,
+			},
+		},
+		"GET /exact/evm/permit2-eip2612GasSponsoring": {
+			Accepts: x402http.PaymentOptions{
+				{
+					Scheme:  "exact",
+					PayTo:   evmPayeeAddress,
+					Network: evmNetwork,
+					Price: map[string]interface{}{
+						"amount": "1000",
+						"asset":  evmPermit2Asset,
+						"extra": func() map[string]interface{} {
+							name := "USD Coin"
+							if evmNetworkStr == "eip155:84532" {
+								name = "USDC"
+							}
+							return map[string]interface{}{
+								"assetTransferMethod": "permit2",
+								"name":                name,
+								"version":             "2",
+							}
+						}(),
 					},
 				},
 			},
@@ -159,24 +187,48 @@ func main() {
 				ext := map[string]interface{}{
 					types.BAZAAR.Key(): discoveryExtension,
 				}
-				// Add EIP-2612 gas sponsoring extension
 				for k, v := range eip2612gassponsor.DeclareEip2612GasSponsoringExtension() {
 					ext[k] = v
 				}
 				return ext
 			}(),
 		},
-		// Permit2 ERC-20 approval endpoint - requires Permit2 flow with a generic ERC-20 token (no EIP-2612)
-		"GET /protected-permit2-erc20": {
+		"GET /upto/evm/permit2": {
+			Accepts: x402http.PaymentOptions{
+				{
+					Scheme:  "upto",
+					PayTo:   evmPayeeAddress,
+					Network: evmNetwork,
+					Price: map[string]interface{}{
+						"amount": "2000",
+						"asset":  evmPermit2Asset,
+						"extra": map[string]interface{}{
+							"assetTransferMethod": "permit2",
+							"name":                "USDC",
+							"version":             "2",
+						},
+					},
+				},
+			},
+			Extensions: func() map[string]interface{} {
+				ext := map[string]interface{}{
+					types.BAZAAR.Key(): discoveryExtension,
+				}
+				for k, v := range eip2612gassponsor.DeclareEip2612GasSponsoringExtension() {
+					ext[k] = v
+				}
+				return ext
+			}(),
+		},
+		"GET /exact/evm/permit2-erc20ApprovalGasSponsoring": {
 			Accepts: x402http.PaymentOptions{
 				{
 					Scheme:  "exact",
 					PayTo:   evmPayeeAddress,
 					Network: evmNetwork,
-					// Use MockGenericERC20 token that does NOT implement EIP-2612
 					Price: map[string]interface{}{
-						"amount": "1000", // smallest unit
-						"asset":  "0xeED520980fC7C7B4eB379B96d61CEdea2423005a", // MockGenericERC20 on Base Sepolia
+						"amount": "1000",
+						"asset":  evmPermit2Asset,
 						"extra": map[string]interface{}{
 							"assetTransferMethod": "permit2",
 						},
@@ -187,7 +239,6 @@ func main() {
 				ext := map[string]interface{}{
 					types.BAZAAR.Key(): discoveryExtension,
 				}
-				// Advertise ERC-20 approval gas sponsoring (for tokens without EIP-2612)
 				for k, v := range erc20approvalgassponsor.DeclareExtension() {
 					ext[k] = v
 				}
@@ -199,10 +250,8 @@ func main() {
 	// Create ServeMux and register handlers
 	mux := http.NewServeMux()
 
-	/**
-	 * Protected endpoint - requires payment to access
-	 */
-	mux.HandleFunc("GET /protected", func(w http.ResponseWriter, r *http.Request) {
+	// Protected endpoint - requires payment to access
+	mux.HandleFunc("GET /exact/evm/eip3009", func(w http.ResponseWriter, r *http.Request) {
 		if shutdownRequested {
 			writeJSON(w, http.StatusServiceUnavailable, map[string]interface{}{
 				"error": "Server shutting down",
@@ -217,10 +266,8 @@ func main() {
 		})
 	})
 
-	/**
-	 * Protected SVM endpoint - requires payment to access
-	 */
-	mux.HandleFunc("GET /protected-svm", func(w http.ResponseWriter, r *http.Request) {
+	// Protected SVM endpoint - requires payment to access
+	mux.HandleFunc("GET /exact/svm", func(w http.ResponseWriter, r *http.Request) {
 		if shutdownRequested {
 			writeJSON(w, http.StatusServiceUnavailable, map[string]interface{}{
 				"error": "Server shutting down",
@@ -235,10 +282,8 @@ func main() {
 		})
 	})
 
-	/**
-	 * Protected Permit2 endpoint - requires payment via Permit2 flow
-	 */
-	mux.HandleFunc("GET /protected-permit2", func(w http.ResponseWriter, r *http.Request) {
+	// Protected Permit2 direct endpoint - standard settle (no gas sponsoring)
+	mux.HandleFunc("GET /exact/evm/permit2", func(w http.ResponseWriter, r *http.Request) {
 		if shutdownRequested {
 			writeJSON(w, http.StatusServiceUnavailable, map[string]interface{}{
 				"error": "Server shutting down",
@@ -253,10 +298,24 @@ func main() {
 		})
 	})
 
-	/**
-	 * Protected Permit2 ERC-20 approval endpoint
-	 */
-	mux.HandleFunc("GET /protected-permit2-erc20", func(w http.ResponseWriter, r *http.Request) {
+	// Protected Permit2 EIP-2612 endpoint - Permit2 with gas sponsoring
+	mux.HandleFunc("GET /exact/evm/permit2-eip2612GasSponsoring", func(w http.ResponseWriter, r *http.Request) {
+		if shutdownRequested {
+			writeJSON(w, http.StatusServiceUnavailable, map[string]interface{}{
+				"error": "Server shutting down",
+			})
+			return
+		}
+
+		writeJSON(w, http.StatusOK, map[string]interface{}{
+			"message":   "Permit2 EIP-2612 endpoint accessed successfully",
+			"timestamp": time.Now().Format(time.RFC3339),
+			"method":    "permit2-eip2612",
+		})
+	})
+
+	// Protected Permit2 ERC-20 approval endpoint
+	mux.HandleFunc("GET /exact/evm/permit2-erc20ApprovalGasSponsoring", func(w http.ResponseWriter, r *http.Request) {
 		if shutdownRequested {
 			writeJSON(w, http.StatusServiceUnavailable, map[string]interface{}{
 				"error": "Server shutting down",
@@ -271,9 +330,24 @@ func main() {
 		})
 	})
 
-	/**
-	 * Health check endpoint - no payment required
-	 */
+	mux.HandleFunc("GET /upto/evm/permit2", func(w http.ResponseWriter, r *http.Request) {
+		if shutdownRequested {
+			writeJSON(w, http.StatusServiceUnavailable, map[string]interface{}{
+				"error": "Server shutting down",
+			})
+			return
+		}
+
+		nethttpmw.SetSettlementOverrides(w, &x402.SettlementOverrides{Amount: "1000"})
+
+		writeJSON(w, http.StatusOK, map[string]interface{}{
+			"message":   "Upto Permit2 endpoint accessed successfully",
+			"timestamp": time.Now().Format(time.RFC3339),
+			"method":    "upto-permit2",
+		})
+	})
+
+	// Health check endpoint - no payment required
 	mux.HandleFunc("GET /health", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]interface{}{
 			"status":      "ok",
@@ -285,9 +359,7 @@ func main() {
 		})
 	})
 
-	/**
-	 * Shutdown endpoint - used by e2e tests
-	 */
+	// Shutdown endpoint - used by e2e tests
 	mux.HandleFunc("POST /close", func(w http.ResponseWriter, r *http.Request) {
 		shutdownRequested = true
 
@@ -308,7 +380,8 @@ func main() {
 		Routes:      routes,
 		Facilitator: facilitatorClient,
 		Schemes: []nethttpmw.SchemeConfig{
-			{Network: evmNetwork, Server: evm.NewExactEvmScheme()},
+			{Network: evmNetwork, Server: exactevm.NewExactEvmScheme()},
+			{Network: evmNetwork, Server: uptoevm.NewUptoEvmScheme()},
 			{Network: svmNetwork, Server: svm.NewExactSvmScheme()},
 		},
 		SyncFacilitatorOnStart: true,
@@ -358,10 +431,11 @@ func main() {
 ║  SVM Payee:   %-40s ║
 ║                                                        ║
 ║  Endpoints:                                            ║
-║  • GET  /protected              (EIP-3009 payment)    ║
-║  • GET  /protected-svm          (SVM payment)         ║
-║  • GET  /protected-permit2      (Permit2 payment)     ║
-║  • GET  /protected-permit2-erc20 (Permit2 ERC-20)     ║
+║  • GET  /exact/evm/eip3009                    (EVM EIP-3009)  ║
+║  • GET  /exact/evm/permit2                    (Permit2)       ║
+║  • GET  /exact/evm/permit2-eip2612GasSponsoring               ║
+║  • GET  /exact/evm/permit2-erc20ApprovalGasSponsoring         ║
+║  • GET  /exact/svm                            (SVM)           ║
 ║  • GET  /health                 (no payment required)  ║
 ║  • POST /close                  (shutdown server)      ║
 ╚════════════════════════════════════════════════════════╝

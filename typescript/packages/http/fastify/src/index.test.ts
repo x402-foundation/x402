@@ -40,6 +40,28 @@ let mockRegisterPaywallProvider: ReturnType<typeof vi.fn>;
 let mockRequiresPayment: ReturnType<typeof vi.fn>;
 
 vi.mock("@x402/core/server", () => ({
+  SETTLEMENT_OVERRIDES_HEADER: "Settlement-Overrides",
+  FacilitatorResponseError: class FacilitatorResponseError extends Error {
+    /**
+     * Mock error class matching @x402/core/server FacilitatorResponseError.
+     *
+     * @param message - Error message passed to the superclass.
+     */
+    constructor(message: string) {
+      super(message);
+      this.name = "FacilitatorResponseError";
+    }
+  },
+  getFacilitatorResponseError: (error: unknown) => {
+    let current = error;
+    while (current instanceof Error) {
+      if (current.name === "FacilitatorResponseError") {
+        return current;
+      }
+      current = (current as Error & { cause?: unknown }).cause;
+    }
+    return null;
+  },
   x402ResourceServer: vi.fn().mockImplementation(() => ({
     initialize: vi.fn().mockResolvedValue(undefined),
     registerExtension: vi.fn(),
@@ -84,6 +106,7 @@ function createMockApp(): { app: FastifyInstance; hooks: CapturedHooks } {
       if (name === "onRequest") hooks.onRequest.push(handler);
       if (name === "onSend") hooks.onSend.push(handler);
     }),
+    decorateRequest: vi.fn(),
   } as unknown as FastifyInstance;
 
   return { app, hooks };
@@ -162,6 +185,22 @@ function createMockReply(): FastifyReply & {
     _body: undefined as unknown,
     _type: undefined as string | undefined,
     statusCode: 200,
+    raw: {
+      write: vi.fn(),
+      end: vi.fn(),
+      writeHead: vi.fn(),
+      flushHeaders: vi.fn(),
+    },
+    getHeaders: vi.fn(function (this: typeof reply) {
+      return this._headers;
+    }),
+    getHeader: vi.fn(function (this: typeof reply, key: string) {
+      return this._headers[key];
+    }),
+    removeHeader: vi.fn(function (this: typeof reply, key: string) {
+      delete this._headers[key];
+      return this;
+    }),
     header: vi.fn(function (this: typeof reply, key: string, value: string) {
       this._headers[key] = value;
       return this;
@@ -349,9 +388,8 @@ describe("paymentMiddleware", () => {
     await hooks.onRequest[0](request, reply);
 
     expect(reply.send).not.toHaveBeenCalled();
-    // Payment context should be stashed on the request via symbol
-    const symbols = Object.getOwnPropertySymbols(request);
-    expect(symbols.length).toBe(1);
+    expect(request.x402Context).toBeDefined();
+    expect(request.x402RawGuard).toBeDefined();
   });
 
   it("settles payment and adds headers in onSend for verified payments", async () => {

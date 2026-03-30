@@ -31,6 +31,7 @@ import {
 } from "@x402/core/types";
 import { toFacilitatorEvmSigner } from "@x402/evm";
 import { ExactEvmScheme } from "@x402/evm/exact/facilitator";
+import { UptoEvmScheme } from "@x402/evm/upto/facilitator";
 import { ExactEvmSchemeV1 } from "@x402/evm/exact/v1/facilitator";
 import { NETWORKS as EVM_V1_NETWORKS } from "@x402/evm/v1";
 import { BAZAAR, extractDiscoveryInfo } from "@x402/extensions/bazaar";
@@ -47,7 +48,7 @@ import { ExactStellarScheme } from "@x402/stellar/exact/facilitator";
 import crypto from "crypto";
 import dotenv from "dotenv";
 import express from "express";
-import { createWalletClient, http, publicActions, Chain } from "viem";
+import { createWalletClient, http, publicActions, Chain, parseTransaction, recoverTransactionAddress } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import { baseSepolia, base } from "viem/chains";
 import { BazaarCatalog } from "./bazaar.js";
@@ -210,6 +211,7 @@ const facilitator = new x402Facilitator();
 // Register EVM, SVM, and Aptos schemes (v2 + v1)
 facilitator
   .register(EVM_NETWORK as Network, new ExactEvmScheme(evmSigner))
+  .register(EVM_NETWORK as Network, new UptoEvmScheme(evmSigner))
   .registerV1(EVM_V1_NETWORKS as Network[], new ExactEvmSchemeV1(evmSigner))
   .register(SVM_NETWORK as Network, new ExactSvmScheme(svmSigner))
   .registerV1(SVM_V1_NETWORKS as Network[], new ExactSvmSchemeV1(svmSigner));
@@ -246,6 +248,29 @@ const erc20ApprovalSigner = {
     for (const tx of transactions) {
       let hash: `0x${string}`;
       if (typeof tx === "string") {
+        // Parse the raw tx to extract sender and gas params for potential gas funding
+        const parsed = parseTransaction(tx);
+        const payerAddress = await recoverTransactionAddress({ serializedTransaction: tx });
+        const gas = parsed.gas ?? 70_000n;
+        const maxFeePerGas = parsed.maxFeePerGas ?? 1_000_000_000n;
+        const gasCost = gas * maxFeePerGas;
+
+        // Check if the payer has enough ETH for gas
+        const payerBalance = await viemClient.getBalance({ address: payerAddress });
+        if (payerBalance < gasCost) {
+          const deficit = gasCost - payerBalance;
+          console.log(`⛽ Funding payer ${payerAddress} with ${deficit} wei for gas`);
+          const fundHash = await viemClient.sendTransaction({
+            to: payerAddress,
+            value: deficit,
+          });
+          const fundReceipt = await viemClient.waitForTransactionReceipt({ hash: fundHash });
+          if (fundReceipt.status !== "success") {
+            throw new Error(`gas_funding_failed: ${fundHash}`);
+          }
+          console.log(`⛽ Gas funding confirmed: ${fundHash}`);
+        }
+
         hash = await viemClient.sendRawTransaction({ serializedTransaction: tx });
       } else {
         hash = await viemClient.sendTransaction(tx);

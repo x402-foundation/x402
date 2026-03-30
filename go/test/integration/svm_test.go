@@ -386,7 +386,7 @@ func TestSVMIntegrationV2(t *testing.T) {
 		// Server does work here...
 
 		// Server - settles payment (REAL ON-CHAIN TRANSACTION, typed)
-		settleResponse, err := server.SettlePayment(ctx, paymentPayload, *accepted)
+		settleResponse, err := server.SettlePayment(ctx, paymentPayload, *accepted, nil)
 		if err != nil {
 			t.Fatalf("Failed to settle payment: %v", err)
 		}
