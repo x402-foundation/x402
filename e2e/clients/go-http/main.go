@@ -12,8 +12,9 @@ import (
 
 	x402 "github.com/coinbase/x402/go"
 	x402http "github.com/coinbase/x402/go/http"
-	evm "github.com/coinbase/x402/go/mechanisms/evm/exact/client"
-	evmv1 "github.com/coinbase/x402/go/mechanisms/evm/exact/v1/client"
+	exactevm "github.com/coinbase/x402/go/mechanisms/evm/exact/client"
+	exactevmv1 "github.com/coinbase/x402/go/mechanisms/evm/exact/v1/client"
+	uptoevm "github.com/coinbase/x402/go/mechanisms/evm/upto/client"
 	svm "github.com/coinbase/x402/go/mechanisms/svm/exact/client"
 	svmv1 "github.com/coinbase/x402/go/mechanisms/svm/exact/v1/client"
 	evmsigners "github.com/coinbase/x402/go/signers/evm"
@@ -74,16 +75,22 @@ func main() {
 		return
 	}
 
-	var evmConfig *evm.ExactEvmSchemeConfig
+	var evmConfig *exactevm.ExactEvmSchemeConfig
 	if evmRpcURL != "" {
-		evmConfig = &evm.ExactEvmSchemeConfig{RPCURL: evmRpcURL}
+		evmConfig = &exactevm.ExactEvmSchemeConfig{RPCURL: evmRpcURL}
+	}
+
+	var uptoConfig *uptoevm.UptoEvmSchemeConfig
+	if evmRpcURL != "" {
+		uptoConfig = &uptoevm.UptoEvmSchemeConfig{RPCURL: evmRpcURL}
 	}
 
 	x402Client := x402.Newx402Client().
-		Register("eip155:*", evm.NewExactEvmScheme(evmSigner, evmConfig)).
+		Register("eip155:*", exactevm.NewExactEvmScheme(evmSigner, evmConfig)).
+		Register("eip155:*", uptoevm.NewUptoEvmScheme(evmSigner, uptoConfig)).
 		Register("solana:*", svm.NewExactSvmScheme(svmSigner)).
-		RegisterV1("base-sepolia", evmv1.NewExactEvmSchemeV1(evmSigner)).
-		RegisterV1("base", evmv1.NewExactEvmSchemeV1(evmSigner)).
+		RegisterV1("base-sepolia", exactevmv1.NewExactEvmSchemeV1(evmSigner)).
+		RegisterV1("base", exactevmv1.NewExactEvmSchemeV1(evmSigner)).
 		RegisterV1("solana-devnet", svmv1.NewExactSvmSchemeV1(svmSigner)).
 		RegisterV1("solana", svmv1.NewExactSvmSchemeV1(svmSigner))
 

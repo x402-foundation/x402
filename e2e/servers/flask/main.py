@@ -75,7 +75,7 @@ server.register_extension(bazaar_resource_server_extension)
 
 # Define routes with payment requirements
 routes = {
-    "GET /protected": {
+    "GET /exact/evm/eip3009": {
         "accepts": {
             "scheme": "exact",
             "payTo": EVM_ADDRESS,
@@ -102,7 +102,7 @@ routes = {
             ),
         },
     },
-    "GET /protected-svm": {
+    "GET /exact/svm": {
         "accepts": {
             "scheme": "exact",
             "payTo": SVM_ADDRESS,
@@ -127,7 +127,7 @@ routes = {
             ),
         },
     },
-    "GET /protected-permit2": {
+    "GET /exact/evm/permit2-eip2612GasSponsoring": {
         "accepts": {
             "scheme": "exact",
             "payTo": EVM_ADDRESS,
@@ -163,7 +163,7 @@ routes = {
             **declare_eip2612_gas_sponsoring_extension(),
         },
     },
-    "GET /protected-permit2-erc20": {
+    "GET /exact/evm/permit2-erc20ApprovalGasSponsoring": {
         "accepts": {
             "scheme": "exact",
             "payTo": EVM_ADDRESS,
@@ -187,7 +187,7 @@ PaymentMiddleware(app, routes, server)
 shutdown_requested = False
 
 
-@app.route("/protected")
+@app.route("/exact/evm/eip3009")
 def protected_endpoint():
     """Protected endpoint that requires payment."""
     if shutdown_requested:
@@ -202,7 +202,7 @@ def protected_endpoint():
     )
 
 
-@app.route("/protected-svm")
+@app.route("/exact/svm")
 def protected_svm_endpoint():
     """Protected endpoint that requires SVM (Solana) payment."""
     if shutdown_requested:
@@ -216,7 +216,7 @@ def protected_svm_endpoint():
     )
 
 
-@app.route("/protected-permit2")
+@app.route("/exact/evm/permit2-eip2612GasSponsoring")
 def protected_permit2_endpoint():
     """Protected endpoint that requires Permit2 payment."""
     if shutdown_requested:
@@ -230,7 +230,7 @@ def protected_permit2_endpoint():
     )
 
 
-@app.route("/protected-permit2-erc20")
+@app.route("/exact/evm/permit2-erc20ApprovalGasSponsoring")
 def protected_permit2_erc20_endpoint():
     """Protected endpoint that requires Permit2 payment with ERC-20 approval sponsoring."""
     if shutdown_requested:

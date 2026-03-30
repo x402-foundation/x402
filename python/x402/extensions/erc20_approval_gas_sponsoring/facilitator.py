@@ -116,9 +116,10 @@ def _validate_signed_approval_tx(
         return "erc20_approval_tx_signer_mismatch", "recovered signer does not match payer"
 
     try:
-        from eth_account._utils.typed_transactions import TypedTransaction
+        from eth_account.typed_transactions import TypedTransaction
+        from hexbytes import HexBytes
 
-        tx_obj = TypedTransaction.from_bytes(tx_bytes)
+        tx_obj = TypedTransaction.from_bytes(HexBytes(tx_bytes))
         tx_dict = tx_obj.transaction.dictionary
 
         to_addr = tx_dict.get("to", b"")

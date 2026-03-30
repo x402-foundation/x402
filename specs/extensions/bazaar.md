@@ -362,11 +362,107 @@ When a facilitator receives a `PaymentPayload` containing the `bazaar` extension
 
 How a facilitator stores, indexes, and exposes discovered resources is an implementation detail. Facilitators may choose to catalog resources in a database, expose them via a discovery API, or process them in any manner they see fit.
 
+### Settlement Response Header
+
+After processing a `PaymentPayload`, a facilitator **MAY** append an `EXTENSION-RESPONSES` HTTP header to the settlement response to communicate extension-specific outcomes to the client.
+
+**Header name:** `EXTENSION-RESPONSES`
+
+**Header value:** A base64-encoded JSON object keyed by extension name. The `bazaar` key contains the bazaar extension's response:
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `bazaar.status` | string | Yes | One of `"success"`, `"processing"`, or `"rejected"` |
+| `bazaar.rejectedReason` | string | No | Human-readable explanation. Only present when `status` is `"rejected"` |
+
+**Status values:**
+
+| Value | Meaning |
+|-------|---------|
+| `"success"` | The discovery info was validated and successfully cataloged |
+| `"processing"` | The discovery info was accepted and is being cataloged asynchronously |
+| `"rejected"` | The discovery info was rejected (e.g., failed schema validation). See `rejectedReason` for details |
+
+**Example (success):**
+
+```
+EXTENSION-RESPONSES: eyJiYXphYXIiOnsic3RhdHVzIjoic3VjY2VzcyJ9fQ==
+```
+*(base64 of `{"bazaar":{"status":"success"}}`)*
+
+**Example (rejected):**
+
+```
+EXTENSION-RESPONSES: eyJiYXphYXIiOnsic3RhdHVzIjoicmVqZWN0ZWQiLCJyZWplY3RlZFJlYXNvbiI6ImluZm8gZmFpbGVkIHNjaGVtYSB2YWxpZGF0aW9uIn19
+```
+*(base64 of `{"bazaar":{"status":"rejected","rejectedReason":"info failed schema validation"}}`)*
+
+Clients that understand the `bazaar` extension SHOULD read the `bazaar` key of this header to confirm cataloging succeeded and surface any rejection reason for debugging.
+
 ---
 
 ## Client Behavior
 
 Clients are expected to echo the `bazaar` extension from `PaymentRequired` into their `PaymentPayload`. If the extension is omitted, discovery cataloging will not occur.
+
+---
+
+## Dynamic Routes and `routeTemplate`
+
+HTTP endpoints can use parameterized route patterns (e.g. `/users/[userId]`). When a route has
+parameter segments, the server extension enriches the extension with two additional fields:
+
+- **`info.input.pathParams`** — concrete parameter values for this specific request (e.g. `{ "userId": "123" }`)
+- **`routeTemplate`** — the canonical template with `:param` syntax (e.g. `/users/:userId`)
+
+The `routeTemplate` field at the **top level** of the extension object is the catalog key contract between
+server and facilitator. Facilitators use it to map all concrete requests (e.g. `/users/123`, `/users/456`)
+to a single canonical catalog entry.
+
+### `routeTemplate` Wire Format
+
+- The server writes patterns using `[paramName]` syntax internally (matches the route framework convention).
+- The extension delivers `routeTemplate` externally using `:paramName` syntax, consistent with REST conventions.
+- The field is **absent** for static routes; facilitators MUST treat an absent `routeTemplate` as "use the concrete URL path".
+
+Example of an enriched extension for a dynamic route:
+
+```json
+{
+  "info": {
+    "input": {
+      "type": "http",
+      "method": "GET",
+      "pathParams": { "userId": "123" }
+    }
+  },
+  "schema": { ... },
+  "routeTemplate": "/users/:userId"
+}
+```
+
+### `routeTemplate` Validation Rules
+
+The facilitator MUST validate `routeTemplate` before using it as a catalog key. The expected format
+uses colon-prefixed parameter identifiers (e.g. `/users/:userId`, `/weather/:country/:city`).
+All SDK implementations use the function `isValidRouteTemplate` (TypeScript, Go) or
+`_is_valid_route_template` (Python) which applies the following rules identically.
+**All three copies must stay in sync.**
+
+| Rule | Reason |
+|------|--------|
+| Must be a non-empty string | Empty/absent means "no template" |
+| Must start with `/` | Prevents relative paths and external URLs |
+| Must match `^/[a-zA-Z0-9_/:.\-~%]+$` | Only allows safe URL path characters and `:param` identifiers |
+| Must not contain `..` | Prevents path traversal (`/users/../admin`) |
+| Must not contain `://` | Prevents URL injection (`http://evil.com`) |
+
+All implementations decode percent-encoding (e.g. `%2e%2e` -> `..`) before applying the traversal
+and scheme checks. A value that fails any rule is discarded; the facilitator falls back to the
+concrete URL path for cataloging.
+
+> **SDK implementers:** If you add a fourth SDK, copy these validation rules exactly, including
+> the percent-decoding step before the `..` and `://` checks.
 
 ---
 

@@ -79,7 +79,7 @@ func TestCoreIntegration(t *testing.T) {
 		// Server does work here...
 
 		// Server - settles payment (typed)
-		settleResponse, err := server.SettlePayment(ctx, payload, *accepted)
+		settleResponse, err := server.SettlePayment(ctx, payload, *accepted, nil)
 		if err != nil {
 			t.Fatalf("Failed to settle payment: %v", err)
 		}

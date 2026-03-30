@@ -35,7 +35,10 @@ async function main(): Promise<void> {
 
   console.log(`Making request to: ${url}\n`);
   const response = await fetchWithPayment(url, { method: "GET" });
-  const body = await response.json();
+  const contentType = response.headers.get("content-type") ?? "";
+  const body = contentType.includes("application/json")
+    ? await response.json()
+    : await response.text();
   console.log("Response body:", body);
 
   const paymentResponse = new x402HTTPClient(client).getPaymentSettleResponse(name =>

@@ -64,20 +64,44 @@ const GET_SUPPORTED_RETRY_DELAY_MS = 1000;
 
 const verifyResponseSchema: z.ZodType<VerifyResponse, z.ZodTypeDef, unknown> = z.object({
   isValid: z.boolean(),
-  invalidReason: z.string().optional(),
-  invalidMessage: z.string().optional(),
-  payer: z.string().optional(),
-  extensions: z.record(z.string(), z.unknown()).optional(),
+  invalidReason: z
+    .string()
+    .nullish()
+    .transform(v => v ?? undefined),
+  invalidMessage: z
+    .string()
+    .nullish()
+    .transform(v => v ?? undefined),
+  payer: z
+    .string()
+    .nullish()
+    .transform(v => v ?? undefined),
+  extensions: z
+    .record(z.string(), z.unknown())
+    .nullish()
+    .transform(v => v ?? undefined),
 });
 
 const settleResponseSchema: z.ZodType<SettleResponse, z.ZodTypeDef, unknown> = z.object({
   success: z.boolean(),
-  errorReason: z.string().optional(),
-  errorMessage: z.string().optional(),
-  payer: z.string().optional(),
+  errorReason: z
+    .string()
+    .nullish()
+    .transform(v => v ?? undefined),
+  errorMessage: z
+    .string()
+    .nullish()
+    .transform(v => v ?? undefined),
+  payer: z
+    .string()
+    .nullish()
+    .transform(v => v ?? undefined),
   transaction: z.string(),
   network: z.custom<SettleResponse["network"]>(value => typeof value === "string"),
-  extensions: z.record(z.string(), z.unknown()).optional(),
+  extensions: z
+    .record(z.string(), z.unknown())
+    .nullish()
+    .transform(v => v ?? undefined),
 });
 
 const supportedKindSchema: z.ZodType<SupportedResponse["kinds"][number], z.ZodTypeDef, unknown> =
@@ -87,7 +111,10 @@ const supportedKindSchema: z.ZodType<SupportedResponse["kinds"][number], z.ZodTy
     network: z.custom<SupportedResponse["kinds"][number]["network"]>(
       value => typeof value === "string",
     ),
-    extra: z.record(z.string(), z.unknown()).optional(),
+    extra: z
+      .record(z.string(), z.unknown())
+      .nullish()
+      .transform(v => v ?? undefined),
   });
 
 const supportedResponseSchema: z.ZodType<SupportedResponse, z.ZodTypeDef, unknown> = z.object({
@@ -164,7 +191,9 @@ export class HTTPFacilitatorClient implements FacilitatorClient {
    * @param config - Configuration options for the facilitator client
    */
   constructor(config?: FacilitatorConfig) {
-    this.url = config?.url || DEFAULT_FACILITATOR_URL;
+    // Normalize URL: strip trailing slashes to prevent redirect loops (e.g. 308)
+    // when constructing endpoint paths like `${url}/supported`
+    this.url = (config?.url || DEFAULT_FACILITATOR_URL).replace(/\/+$/, "");
     this._createAuthHeaders = config?.createAuthHeaders;
   }
 
@@ -191,6 +220,7 @@ export class HTTPFacilitatorClient implements FacilitatorClient {
     const response = await fetch(`${this.url}/verify`, {
       method: "POST",
       headers,
+      redirect: "follow",
       body: JSON.stringify({
         x402Version: paymentPayload.x402Version,
         paymentPayload: this.toJsonSafe(paymentPayload),
@@ -242,6 +272,7 @@ export class HTTPFacilitatorClient implements FacilitatorClient {
     const response = await fetch(`${this.url}/settle`, {
       method: "POST",
       headers,
+      redirect: "follow",
       body: JSON.stringify({
         x402Version: paymentPayload.x402Version,
         paymentPayload: this.toJsonSafe(paymentPayload),
@@ -291,6 +322,7 @@ export class HTTPFacilitatorClient implements FacilitatorClient {
       const response = await fetch(`${this.url}/supported`, {
         method: "GET",
         headers,
+        redirect: "follow",
       });
 
       if (response.ok) {

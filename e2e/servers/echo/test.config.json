@@ -1,0 +1,87 @@
+{
+  "name": "echo",
+  "type": "server",
+  "language": "go",
+  "x402Version": 2,
+  "extensions": [
+    "bazaar",
+    "eip2612GasSponsoring",
+    "erc20ApprovalGasSponsoring"
+  ],
+  "description": "Go Echo server with x402 v2 payment middleware",
+  "endpoints": [
+    {
+      "path": "/exact/evm/eip3009",
+      "method": "GET",
+      "description": "Protected endpoint requiring EIP-3009 payment",
+      "requiresPayment": true,
+      "protocolFamily": "evm",
+      "transferMethod": "eip3009"
+    },
+    {
+      "path": "/exact/evm/permit2",
+      "method": "GET",
+      "description": "Protected endpoint requiring Permit2 payment (standard settle, no gas sponsoring)",
+      "requiresPayment": true,
+      "protocolFamily": "evm",
+      "transferMethod": "permit2",
+      "permit2Direct": true
+    },
+    {
+      "path": "/exact/evm/permit2-eip2612GasSponsoring",
+      "method": "GET",
+      "description": "Protected endpoint requiring Permit2 payment with EIP-2612 gas sponsoring",
+      "requiresPayment": true,
+      "protocolFamily": "evm",
+      "transferMethod": "permit2",
+      "coldstart": true
+    },
+    {
+      "path": "/exact/evm/permit2-erc20ApprovalGasSponsoring",
+      "method": "GET",
+      "description": "Protected endpoint requiring Permit2 payment with ERC-20 approval gas sponsoring",
+      "requiresPayment": true,
+      "protocolFamily": "evm",
+      "transferMethod": "permit2",
+      "extensions": ["erc20ApprovalGasSponsoring"],
+      "coldstart": true
+    },
+    {
+      "path": "/upto/evm/permit2",
+      "method": "GET",
+      "description": "Protected endpoint requiring upto Permit2 payment (usage-based settlement)",
+      "requiresPayment": true,
+      "protocolFamily": "evm",
+      "transferMethod": "upto",
+      "permit2Direct": true
+    },
+    {
+      "path": "/exact/svm",
+      "method": "GET",
+      "description": "Protected endpoint requiring payment (SVM)",
+      "requiresPayment": true,
+      "protocolFamily": "svm"
+    },
+    {
+      "path": "/health",
+      "method": "GET",
+      "description": "Health check endpoint",
+      "health": true
+    },
+    {
+      "path": "/close",
+      "method": "POST",
+      "description": "Graceful shutdown endpoint",
+      "close": true
+    }
+  ],
+  "environment": {
+    "required": [
+      "PORT",
+      "EVM_PAYEE_ADDRESS",
+      "SVM_PAYEE_ADDRESS",
+      "FACILITATOR_URL"
+    ],
+    "optional": []
+  }
+}

@@ -1,5 +1,19 @@
 # @x402/extensions Changelog
 
+## 2.8.0
+
+### Minor Changes
+
+- 4f2f4f3: Added auth-only route support in createSIWxRequestHook via accepts: [] detection
+- 067f297: Added dynamic route support to the Bazaar discovery extension — servers can now declare `[param]` route segments that consolidate to a single catalog entry per route template, with automatic `pathParams` enrichment and `:param`-style `routeTemplate` in discovery output.
+
+### Patch Changes
+
+- Updated dependencies [067f297]
+- Updated dependencies [4c1e44f]
+- Updated dependencies [5135fab]
+  - @x402/core@2.8.0
+
 ## 2.7.0
 
 ### Minor Changes

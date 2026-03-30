@@ -312,12 +312,12 @@ export class TestDiscovery {
     const facilitators = this.discoverFacilitators();
     const scenarios = this.generateTestScenarios();
 
-    log('🔍 Test Discovery Summary');
-    log('========================');
+    verboseLog('🔍 Test Discovery Summary');
+    verboseLog('========================');
     if (this.includeLegacy) {
-      log('🔄 Legacy mode enabled - including legacy implementations');
+      verboseLog('🔄 Legacy mode enabled - including legacy implementations');
     }
-    log(`📡 Servers found: ${servers.length}`);
+    verboseLog(`📡 Servers found: ${servers.length}`);
     servers.forEach(server => {
       const paidEndpoints = server.config.endpoints?.filter(e => e.requiresPayment).length || 0;
       const protocolFamilies = new Set(
@@ -325,10 +325,10 @@ export class TestDiscovery {
       );
       const version = server.config.x402Version || 1;
       const transport = server.config.transport || 'http';
-      log(`   - ${server.name} (${server.config.language}) [${transport}] v${version} - ${paidEndpoints} x402 endpoints [${Array.from(protocolFamilies).join(', ')}]`);
+      verboseLog(`   - ${server.name} (${server.config.language}) [${transport}] v${version} - ${paidEndpoints} x402 endpoints [${Array.from(protocolFamilies).join(', ')}]`);
     });
 
-    log(`📱 Clients found: ${clients.length}`);
+    verboseLog(`📱 Clients found: ${clients.length}`);
     clients.forEach(client => {
       const protocolFamilies = client.config.protocolFamilies || ['evm'];
       const versions = client.config.x402Versions || [1];
@@ -336,10 +336,10 @@ export class TestDiscovery {
       const evmTransferMethods = client.config.evm?.transferMethods || ['eip3009'];
       const evmInfo = protocolFamilies.includes('evm') ? ` evm:${evmTransferMethods.join(',')}` : '';
       const extInfo = client.config.extensions ? ` {${client.config.extensions.join(', ')}}` : '';
-      log(`   - ${client.name} (${client.config.language}) [${transport}] v[${versions.join(', ')}] [${protocolFamilies.join(', ')}]${evmInfo}${extInfo}`);
+      verboseLog(`   - ${client.name} (${client.config.language}) [${transport}] v[${versions.join(', ')}] [${protocolFamilies.join(', ')}]${evmInfo}${extInfo}`);
     });
 
-    log(`🏛️ Facilitators found: ${facilitators.length}`);
+    verboseLog(`🏛️ Facilitators found: ${facilitators.length}`);
 
     const regularFacilitators = facilitators.filter(f => !f.isExternal);
     const externalFacilitators = facilitators.filter(f => f.isExternal);
@@ -349,17 +349,17 @@ export class TestDiscovery {
       const versions = facilitator.config.x402Versions || [2];
       const evmTransferMethods = facilitator.config.evm?.transferMethods || ['eip3009'];
       const evmInfo = protocolFamilies.includes('evm') ? ` evm:${evmTransferMethods.join(',')}` : '';
-      log(`   - ${facilitator.name} (${facilitator.config.language}) v[${versions.join(', ')}] [${protocolFamilies.join(', ')}]${evmInfo}`);
+      verboseLog(`   - ${facilitator.name} (${facilitator.config.language}) v[${versions.join(', ')}] [${protocolFamilies.join(', ')}]${evmInfo}`);
     });
 
     if (externalFacilitators.length > 0) {
-      log(`   External:`);
+      verboseLog(`   External:`);
       externalFacilitators.forEach(facilitator => {
         const protocolFamilies = facilitator.config.protocolFamilies || ['evm'];
         const versions = facilitator.config.x402Versions || [2];
         const evmTransferMethods = facilitator.config.evm?.transferMethods || ['eip3009'];
         const evmInfo = protocolFamilies.includes('evm') ? ` evm:${evmTransferMethods.join(',')}` : '';
-        log(`     - ${facilitator.name} (${facilitator.config.language}) v[${versions.join(', ')}] [${protocolFamilies.join(', ')}]${evmInfo}`);
+        verboseLog(`     - ${facilitator.name} (${facilitator.config.language}) v[${versions.join(', ')}] [${protocolFamilies.join(', ')}]${evmInfo}`);
       });
     }
 
@@ -369,10 +369,10 @@ export class TestDiscovery {
       return acc;
     }, {} as Record<ProtocolFamily, number>);
 
-    log(`📊 Test scenarios: ${scenarios.length}`);
+    verboseLog(`📊 Test scenarios: ${scenarios.length}`);
     Object.entries(protocolBreakdown).forEach(([protocol, count]) => {
-      log(`   - ${protocol.toUpperCase()}: ${count} scenarios`);
+      verboseLog(`   - ${protocol.toUpperCase()}: ${count} scenarios`);
     });
-    log('');
+    verboseLog('');
   }
 }

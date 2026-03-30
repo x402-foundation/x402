@@ -5,7 +5,9 @@ Contains shared logic for HTTP server implementations.
 
 from __future__ import annotations
 
+import dataclasses
 import html
+import logging
 import re
 from collections.abc import Generator
 from typing import TYPE_CHECKING, Any, Literal, Protocol
@@ -51,6 +53,8 @@ from .utils import (
 
 if TYPE_CHECKING:
     from ..server import x402ResourceServer, x402ResourceServerSync
+
+logger = logging.getLogger("x402")
 
 # ============================================================================
 # Paywall Provider Protocol
@@ -141,8 +145,10 @@ class x402HTTPServerBase:
                         raise ValueError(f"Invalid route config for pattern {pattern}")
 
         for pattern, config in normalized.items():
-            verb, regex = self._parse_route_pattern(pattern)
-            self._compiled_routes.append(CompiledRoute(verb=verb, regex=regex, config=config))
+            verb, path, regex = self._parse_route_pattern(pattern)
+            self._compiled_routes.append(
+                CompiledRoute(verb=verb, regex=regex, config=config, pattern=path)
+            )
 
     def _parse_route_config(self, config: dict[str, Any]) -> RouteConfig:
         """Parse a raw dict into a RouteConfig."""
@@ -235,17 +241,20 @@ class x402HTTPServerBase:
         Returns:
             True if route requires payment.
         """
-        return self._get_route_config(context.path, context.method) is not None
+        method = context.method or context.adapter.get_method()
+        # _get_route_config returns tuple[RouteConfig, str] | None; 'is not None' is the
+        # correct check for a union-with-None return type and does not rely on tuple truthiness.
+        return self._get_route_config(context.path, method) is not None
 
-    def _get_route_config(self, path: str, method: str) -> RouteConfig | None:
-        """Find matching route configuration."""
+    def _get_route_config(self, path: str, method: str) -> tuple[RouteConfig, str] | None:
+        """Find matching route configuration, returning (config, pattern) or None."""
         normalized_path = self._normalize_path(path)
         upper_method = method.upper()
 
         for route in self._compiled_routes:
             if route.regex.match(normalized_path):
                 if route.verb == "*" or route.verb == upper_method:
-                    return route.config
+                    return route.config, route.pattern
 
         return None
 
@@ -266,10 +275,15 @@ class x402HTTPServerBase:
 
         Returns HTTPProcessResult.
         """
+        if not context.method:
+            context = dataclasses.replace(context, method=context.adapter.get_method())
+
         # Find matching route
-        route_config = self._get_route_config(context.path, context.method)
-        if route_config is None:
+        route_match = self._get_route_config(context.path, context.method)
+        if route_match is None:
             return HTTPProcessResult(type=RESULT_NO_PAYMENT_REQUIRED)
+        route_config, route_pattern = route_match
+        context = dataclasses.replace(context, route_pattern=route_pattern)
 
         # Extract payment from headers
         payment_payload = self._extract_payment(context.adapter)
@@ -574,7 +588,10 @@ class x402HTTPServerBase:
         Merges settlement headers (including PAYMENT-RESPONSE) into the response.
         """
         settlement_headers = failure.headers
-        route_config = self._get_route_config(context.path, context.method) if context else None
+        if context and not context.method:
+            context = dataclasses.replace(context, method=context.adapter.get_method())
+        route_match = self._get_route_config(context.path, context.method) if context else None
+        route_config = route_match[0] if route_match else None
 
         custom_body = None
         if route_config and route_config.settlement_failed_response_body:
@@ -599,6 +616,21 @@ class x402HTTPServerBase:
 
         for route in self._compiled_routes:
             pattern = f"{route.verb} {route.regex.pattern}"
+
+            # Warn if wildcard routes are used with discovery extensions
+            if (
+                "*" in route.pattern
+                and route.config.extensions
+                and "bazaar" in route.config.extensions
+            ):
+                logger.warning(
+                    'Route "%s %s": Wildcard (*) patterns with bazaar discovery extensions '
+                    "will auto-generate parameter names (var1, var2, ...). "
+                    "Consider using named parameters instead (e.g. /weather/:city) "
+                    "for better discovery metadata.",
+                    route.verb,
+                    route.pattern,
+                )
 
             # Get options as list
             options = route.config.accepts
@@ -635,8 +667,8 @@ class x402HTTPServerBase:
         return errors
 
     @staticmethod
-    def _parse_route_pattern(pattern: str) -> tuple[str, re.Pattern[str]]:
-        """Parse route pattern into verb and regex."""
+    def _parse_route_pattern(pattern: str) -> tuple[str, str, re.Pattern[str]]:
+        """Parse route pattern into verb, raw path, and regex."""
         parts = pattern.split(None, 1)  # Split on whitespace
 
         if len(parts) == 2:
@@ -650,9 +682,10 @@ class x402HTTPServerBase:
         regex_pattern = "^" + re.escape(path)
         regex_pattern = regex_pattern.replace(r"\*", ".*?")  # Wildcards
         regex_pattern = re.sub(r"\\\[([^\]]+)\\\]", r"[^/]+", regex_pattern)  # [param]
+        regex_pattern = re.sub(r":([a-zA-Z_]\w*)", r"[^/]+", regex_pattern)  # :param
         regex_pattern += "$"
 
-        return verb, re.compile(regex_pattern, re.IGNORECASE)
+        return verb, path, re.compile(regex_pattern, re.IGNORECASE)
 
     @staticmethod
     def _normalize_path(path: str) -> str:

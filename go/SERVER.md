@@ -147,8 +147,12 @@ httpServer := x402http.Newx402HTTPResourceServer(
 // Process HTTP requests
 result := httpServer.ProcessHTTPRequest(ctx, reqCtx, nil)
 
-// Handle settlement
-headers, _ := httpServer.ProcessSettlement(ctx, payload, requirements, statusCode)
+// Handle settlement with transport context
+settleResult := httpServer.ProcessSettlement(ctx, payload, requirements, nil, &x402http.HTTPTransportContext{
+    Request:         &reqCtx,
+    ResponseBody:    responseBody,
+    ResponseHeaders: responseHeaders,
+})
 ```
 
 ### 4. Facilitator Client

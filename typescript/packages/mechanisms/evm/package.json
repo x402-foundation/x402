@@ -1,6 +1,6 @@
 {
   "name": "@x402/evm",
-  "version": "2.7.0",
+  "version": "2.8.0",
   "main": "./dist/cjs/index.js",
   "module": "./dist/esm/index.js",
   "types": "./dist/cjs/index.d.ts",
@@ -118,6 +118,36 @@
       "require": {
         "types": "./dist/cjs/exact/v1/facilitator/index.d.ts",
         "default": "./dist/cjs/exact/v1/facilitator/index.js"
+      }
+    },
+    "./upto/client": {
+      "import": {
+        "types": "./dist/esm/upto/client/index.d.mts",
+        "default": "./dist/esm/upto/client/index.mjs"
+      },
+      "require": {
+        "types": "./dist/cjs/upto/client/index.d.ts",
+        "default": "./dist/cjs/upto/client/index.js"
+      }
+    },
+    "./upto/server": {
+      "import": {
+        "types": "./dist/esm/upto/server/index.d.mts",
+        "default": "./dist/esm/upto/server/index.mjs"
+      },
+      "require": {
+        "types": "./dist/cjs/upto/server/index.d.ts",
+        "default": "./dist/cjs/upto/server/index.js"
+      }
+    },
+    "./upto/facilitator": {
+      "import": {
+        "types": "./dist/esm/upto/facilitator/index.d.mts",
+        "default": "./dist/esm/upto/facilitator/index.mjs"
+      },
+      "require": {
+        "types": "./dist/cjs/upto/facilitator/index.d.ts",
+        "default": "./dist/cjs/upto/facilitator/index.js"
       }
     }
   },
