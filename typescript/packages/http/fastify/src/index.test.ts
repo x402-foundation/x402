@@ -40,6 +40,7 @@ let mockRegisterPaywallProvider: ReturnType<typeof vi.fn>;
 let mockRequiresPayment: ReturnType<typeof vi.fn>;
 
 vi.mock("@x402/core/server", () => ({
+  SETTLEMENT_OVERRIDES_HEADER: "Settlement-Overrides",
   FacilitatorResponseError: class FacilitatorResponseError extends Error {
     /**
      * Mock error class matching @x402/core/server FacilitatorResponseError.
@@ -190,6 +191,16 @@ function createMockReply(): FastifyReply & {
       writeHead: vi.fn(),
       flushHeaders: vi.fn(),
     },
+    getHeaders: vi.fn(function (this: typeof reply) {
+      return this._headers;
+    }),
+    getHeader: vi.fn(function (this: typeof reply, key: string) {
+      return this._headers[key];
+    }),
+    removeHeader: vi.fn(function (this: typeof reply, key: string) {
+      delete this._headers[key];
+      return this;
+    }),
     header: vi.fn(function (this: typeof reply, key: string, value: string) {
       this._headers[key] = value;
       return this;

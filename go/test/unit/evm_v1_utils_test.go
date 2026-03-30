@@ -81,8 +81,27 @@ func TestV1GetNetworkConfig(t *testing.T) {
 		}
 	})
 
+	t.Run("polygon has default asset", func(t *testing.T) {
+		config, err := evmv1.GetNetworkConfig("polygon")
+		if err != nil {
+			t.Fatalf("Failed to get config: %v", err)
+		}
+
+		if config.ChainID.Int64() != 137 {
+			t.Errorf("Expected chain ID 137, got %d", config.ChainID.Int64())
+		}
+
+		if config.DefaultAsset.Address != "0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359" {
+			t.Errorf("Expected USDC address, got %s", config.DefaultAsset.Address)
+		}
+
+		if config.DefaultAsset.Decimals != 6 {
+			t.Errorf("Expected 6 decimals, got %d", config.DefaultAsset.Decimals)
+		}
+	})
+
 	t.Run("network without config returns error", func(t *testing.T) {
-		_, err := evmv1.GetNetworkConfig("polygon")
+		_, err := evmv1.GetNetworkConfig("iotex")
 		if err == nil {
 			t.Error("Expected error for network without configured default asset")
 		}
@@ -123,8 +142,19 @@ func TestV1GetAssetInfo(t *testing.T) {
 		}
 	})
 
+	t.Run("polygon empty asset uses default USDC", func(t *testing.T) {
+		info, err := evmv1.GetAssetInfo("polygon", "")
+		if err != nil {
+			t.Fatalf("Failed to get asset info: %v", err)
+		}
+
+		if info.Address != "0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359" {
+			t.Errorf("Expected Polygon USDC address, got %s", info.Address)
+		}
+	})
+
 	t.Run("network without config fails for empty asset", func(t *testing.T) {
-		_, err := evmv1.GetAssetInfo("polygon", "")
+		_, err := evmv1.GetAssetInfo("iotex", "")
 		if err == nil {
 			t.Error("Expected error for network without default asset")
 		}

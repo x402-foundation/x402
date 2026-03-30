@@ -168,34 +168,50 @@ const REVOKE_FUND_AMOUNT = parseEther('0.001');
  * so the client can pay gas for Permit2 revocation transactions.
  */
 async function fundClientForRevoke(): Promise<boolean> {
-  try {
-    const { publicClient, facilitatorWallet, facilitatorAccount, clientAccount } = getEvmClients();
+  const { publicClient, facilitatorWallet, facilitatorAccount, clientAccount } = getEvmClients();
 
-    const clientBalance = await publicClient.getBalance({ address: clientAccount.address });
-    if (clientBalance >= REVOKE_FUND_AMOUNT) {
-      verboseLog(`  ℹ️  Client already has ${formatEther(clientBalance)} ETH, skipping fund`);
-      return true;
-    }
-
-    const facilitatorBalance = await publicClient.getBalance({ address: facilitatorAccount.address });
-    if (facilitatorBalance < REVOKE_FUND_AMOUNT) {
-      errorLog(`  ❌ Facilitator wallet ${facilitatorAccount.address} has insufficient ETH (${formatEther(facilitatorBalance)}) to fund client for revoke.`);
-      errorLog(`     Please fund the facilitator wallet with testnet ETH (need at least ${formatEther(REVOKE_FUND_AMOUNT)} ETH).`);
-      return false;
-    }
-
-    verboseLog(`  💸 Funding client ${clientAccount.address} with ${formatEther(REVOKE_FUND_AMOUNT)} ETH for revoke...`);
-    const hash = await facilitatorWallet.sendTransaction({
-      to: clientAccount.address,
-      value: REVOKE_FUND_AMOUNT,
-    });
-    await publicClient.waitForTransactionReceipt({ hash });
-    verboseLog(`  ✅ Funded client (tx: ${hash})`);
+  const clientBalance = await publicClient.getBalance({ address: clientAccount.address });
+  if (clientBalance >= REVOKE_FUND_AMOUNT) {
+    verboseLog(`  ℹ️  Client already has ${formatEther(clientBalance)} ETH, skipping fund`);
     return true;
-  } catch (err) {
-    errorLog(`  ❌ Failed to fund client for revoke: ${err instanceof Error ? err.message : err}`);
+  }
+
+  const facilitatorBalance = await publicClient.getBalance({ address: facilitatorAccount.address });
+  if (facilitatorBalance < REVOKE_FUND_AMOUNT) {
+    errorLog(`  ❌ Facilitator wallet ${facilitatorAccount.address} has insufficient ETH (${formatEther(facilitatorBalance)}) to fund client for revoke.`);
+    errorLog(`     Please fund the facilitator wallet with testnet ETH (need at least ${formatEther(REVOKE_FUND_AMOUNT)} ETH).`);
     return false;
   }
+
+  verboseLog(`  💸 Funding client ${clientAccount.address} with ${formatEther(REVOKE_FUND_AMOUNT)} ETH for revoke...`);
+  // Retry on nonce errors: load-balanced RPCs can return stale pending nonces,
+  // especially when the facilitator SERVICE process (same private key) is settling
+  // payments concurrently. A fresh nonce fetch + small delay usually resolves it.
+  let lastErr: Error | null = null;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    if (attempt > 0) await new Promise(r => setTimeout(r, 500));
+    try {
+      const nonce = await publicClient.getTransactionCount({
+        address: facilitatorAccount.address,
+        blockTag: 'pending',
+      });
+      const hash = await facilitatorWallet.sendTransaction({
+        to: clientAccount.address,
+        value: REVOKE_FUND_AMOUNT,
+        nonce,
+      });
+      verboseLog(`  ✅ Funded client (tx: ${hash})`);
+      return true;
+    } catch (err) {
+      lastErr = err instanceof Error ? err : new Error(String(err));
+      const isNonceError = lastErr.message.toLowerCase().includes('nonce');
+      if (!isNonceError) break;
+    }
+  }
+  const errLines = lastErr!.message.split('\n');
+  errorLog(`  ❌ Failed to fund client for revoke: ${errLines[0].trim()}`);
+  if (errLines.length > 1) verboseLog(errLines.slice(1).join('\n'));
+  return false;
 }
 
 /**
@@ -207,11 +223,8 @@ async function drainClientETH(): Promise<boolean> {
   try {
     const { publicClient, clientWallet, facilitatorAccount, clientAccount } = getEvmClients();
 
-    const balance = await publicClient.getBalance({ address: clientAccount.address });
-    if (balance === 0n) {
-      verboseLog('  ℹ️  Client ETH balance is already 0');
-      return true;
-    }
+    // Use pending balance so we see any in-flight fund transaction that hasn't confirmed yet.
+    const balance = await publicClient.getBalance({ address: clientAccount.address, blockTag: 'pending' });
 
     // Reserve enough for gas. On L2s getGasPrice() returns a tiny value but
     // viem's sendTransaction uses a higher maxFeePerGas with safety margin.
@@ -230,10 +243,7 @@ async function drainClientETH(): Promise<boolean> {
       to: facilitatorAccount.address,
       value: sendAmount,
     });
-    await publicClient.waitForTransactionReceipt({ hash });
-
-    const remaining = await publicClient.getBalance({ address: clientAccount.address });
-    verboseLog(`  ✅ Drained client ETH (tx: ${hash}, remaining: ${formatEther(remaining)} ETH)`);
+    verboseLog(`  ✅ Drained client ETH (tx: ${hash})`);
     return true;
   } catch (err) {
     errorLog(`  ❌ Failed to drain client ETH: ${err instanceof Error ? err.message : err}`);
@@ -871,34 +881,43 @@ async function runTest() {
     cLog.log(`  ✅ Server ${serverName} ready`);
 
     const results: DetailedTestResult[] = [];
+    // Track which endpoint paths have already been "cold started" in this combo.
+    // The first test for each path runs the full state-setup (fund/revoke/drain);
+    // subsequent tests for the same path skip the setup and run warm.
+    const coldStartedEndpoints = new Set<string>();
     try {
       for (const scenario of scenarios) {
         const tn = nextTestNumber();
         const isEvm = scenario.protocolFamily === 'evm';
 
-        if (scenario.endpoint.transferMethod === 'permit2' || scenario.endpoint.transferMethod === 'upto') {
-          if (scenario.endpoint.permit2Direct) {
-            await approvePermit2Approval(USDC_BASE_SEPOLIA);
-          } else {
-            await fundClientForRevoke();
+        if (scenario.endpoint.permit2Direct) {
+          await approvePermit2Approval(USDC_BASE_SEPOLIA);
+        } else if (scenario.endpoint.coldstart) {
+          const endpointKey = scenario.endpoint.path;
+          if (!coldStartedEndpoints.has(endpointKey)) {
+            coldStartedEndpoints.add(endpointKey);
             const token =
               scenario.endpoint.extensions?.includes('erc20ApprovalGasSponsoring')
                 ? MOCK_ERC20_BASE_SEPOLIA
                 : USDC_BASE_SEPOLIA;
+            await fundClientForRevoke();
+            // Give fund tx 1s to propagate before submitting revoke (from client wallet)
+            await new Promise(resolve => setTimeout(resolve, 1000));
             await revokePermit2Approval(token);
-            await new Promise(resolve => setTimeout(resolve, 2000));
+            // Give revoke tx 1s to propagate before drain reads pending balance
+            await new Promise(resolve => setTimeout(resolve, 1000));
             await drainClientETH();
+            // Wait for RPC nonce propagation across load-balanced nodes before the
+            // test client (which may use a separate RPC connection) queries the nonce.
+            await new Promise(resolve => setTimeout(resolve, 1500));
           }
-          // Wait for RPC nonce propagation across load-balanced nodes before the
-          // test client (which may use a separate RPC connection) queries the nonce.
-          await new Promise(resolve => setTimeout(resolve, 2000));
         }
 
         if (isEvm && facilitatorName && evmLock) {
           const releaseLock = await evmLock.acquire(facilitatorName);
           try {
             results.push(await runSingleTest(scenario, port, tn, cLog));
-            await new Promise(resolve => setTimeout(resolve, 2000));
+            await new Promise(resolve => setTimeout(resolve, 1000));
           } finally {
             releaseLock();
           }

@@ -238,7 +238,8 @@ The `SettleResponse` schema contains the following fields:
 | `payer`       | `string`  | Optional | Address of the payer's wallet                                         |
 | `transaction` | `string`  | Required | Blockchain transaction hash (empty string if settlement failed)       |
 | `network`     | `string`  | Required | Blockchain network identifier in CAIP-2 format                        |
-| `extensions`  | `object`  | Optional | Protocol extensions data          |
+| `amount`      | `string`  | Optional | The actual amount settled in atomic units (omitted if not applicable) |
+| `extensions`  | `object`  | Optional | Protocol extensions data                                              |
 
 **5.4 VerifyResponse Schema**
 

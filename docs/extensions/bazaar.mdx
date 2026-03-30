@@ -21,6 +21,43 @@ Facilitators that support the Bazaar extension may provide a `/discovery/resourc
 
 **Note:** The spec for marketplace items is open and part of the x402 scheme, meaning any facilitator can implement their own discovery layer.
 
+#### Settlement Response Header
+
+After processing a payment that includes the `bazaar` extension, facilitators **may** return an `EXTENSION-RESPONSES` HTTP header to communicate extension-specific outcomes to the client.
+
+**Header name:** `EXTENSION-RESPONSES`
+
+**Header value:** A base64-encoded JSON object keyed by extension name. The `bazaar` key contains the bazaar extension's response:
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `bazaar.status` | string | Yes | One of `"success"`, `"processing"`, or `"rejected"` |
+| `bazaar.rejectedReason` | string | No | Human-readable explanation. Only present when `status` is `"rejected"` |
+
+**Status values:**
+
+| Value | Meaning |
+|-------|---------|
+| `"success"` | The discovery info was validated and successfully cataloged |
+| `"processing"` | The discovery info was accepted and is being cataloged asynchronously |
+| `"rejected"` | The discovery info was rejected (e.g., failed schema validation). See `rejectedReason` for details |
+
+**Example (success):**
+
+```
+EXTENSION-RESPONSES: eyJiYXphYXIiOnsic3RhdHVzIjoic3VjY2VzcyJ9fQ==
+```
+*(base64 of `{"bazaar":{"status":"success"}}`)*
+
+**Example (rejected):**
+
+```
+EXTENSION-RESPONSES: eyJiYXphYXIiOnsic3RhdHVzIjoicmVqZWN0ZWQiLCJyZWplY3RlZFJlYXNvbiI6ImluZm8gZmFpbGVkIHNjaGVtYSB2YWxpZGF0aW9uIn19
+```
+*(base64 of `{"bazaar":{"status":"rejected","rejectedReason":"info failed schema validation"}}`)*
+
+Clients that understand the `bazaar` extension should read the `bazaar` key of this header to confirm cataloging succeeded and surface any rejection reason for debugging.
+
 #### Basic Flow
 
 1. **Discovery**: Clients query the `/discovery/resources` endpoint to find available services

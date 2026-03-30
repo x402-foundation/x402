@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import threading
 from typing import Any
 from unittest.mock import MagicMock, patch
 
@@ -357,6 +358,117 @@ class TestPaymentMiddleware:
         middleware = PaymentMiddleware(app, routes, mock_server, sync_facilitator_on_start=False)
 
         assert middleware._original_wsgi == original_wsgi
+
+
+class TestFlaskMiddlewareConcurrency:
+    """Tests for concurrency-safe lazy facilitator initialization."""
+
+    def test_concurrent_threads_initialize_only_once(self):
+        """Test that concurrent threads only trigger one initialization call."""
+        import concurrent.futures
+
+        app = Flask(__name__)
+
+        @app.route("/api/protected")
+        def protected_route():
+            return "Protected content"
+
+        mock_server = MagicMock()
+        routes = {
+            "GET /api/protected": RouteConfig(
+                accepts=PaymentOption(
+                    scheme="exact",
+                    pay_to="0x1234567890123456789012345678901234567890",
+                    price="$0.01",
+                    network="eip155:8453",
+                ),
+            )
+        }
+
+        init_call_count = 0
+        count_lock = threading.Lock()
+
+        with patch("x402.http.middleware.flask.x402HTTPResourceServerSync") as mock_http_server:
+            mock_http_server_instance = MagicMock()
+            mock_http_server_instance.requires_payment.return_value = True
+            mock_http_server_instance.process_http_request.return_value = HTTPProcessResult(
+                type="payment-error",
+                response=HTTPResponseInstructions(
+                    status=402,
+                    headers={"PAYMENT-REQUIRED": "encoded"},
+                    body={"error": "Payment required"},
+                ),
+            )
+
+            def counting_initialize():
+                nonlocal init_call_count
+                with count_lock:
+                    init_call_count += 1
+
+            mock_http_server_instance.initialize.side_effect = counting_initialize
+            mock_http_server.return_value = mock_http_server_instance
+
+            PaymentMiddleware(app, routes, mock_server, sync_facilitator_on_start=True)
+
+            def make_request():
+                with app.test_client() as client:
+                    return client.get("/api/protected")
+
+            with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
+                futures = [executor.submit(make_request) for _ in range(5)]
+                responses = [f.result() for f in futures]
+
+            assert init_call_count == 1, (
+                f"Expected initialize() to be called exactly once, got {init_call_count}"
+            )
+            for resp in responses:
+                assert resp.status_code == 402
+
+    def test_init_error_does_not_block_subsequent_requests(self):
+        """Test that a failed init allows subsequent requests to retry."""
+        app = Flask(__name__)
+
+        @app.route("/api/protected")
+        def protected_route():
+            return "Protected content"
+
+        mock_server = MagicMock()
+        routes = {
+            "GET /api/protected": RouteConfig(
+                accepts=PaymentOption(
+                    scheme="exact",
+                    pay_to="0x1234567890123456789012345678901234567890",
+                    price="$0.01",
+                    network="eip155:8453",
+                ),
+            )
+        }
+
+        call_count = 0
+
+        with patch("x402.http.middleware.flask.x402HTTPResourceServerSync") as mock_http_server:
+            mock_http_server_instance = MagicMock()
+            mock_http_server_instance.requires_payment.return_value = True
+
+            def failing_initialize():
+                nonlocal call_count
+                call_count += 1
+                raise FacilitatorResponseError("Connection refused")
+
+            mock_http_server_instance.initialize.side_effect = failing_initialize
+            mock_http_server.return_value = mock_http_server_instance
+
+            PaymentMiddleware(app, routes, mock_server, sync_facilitator_on_start=True)
+
+            with app.test_client() as client:
+                # First request fails
+                response1 = client.get("/api/protected")
+                assert response1.status_code == 502
+
+                # Second request retries init since first failed
+                response2 = client.get("/api/protected")
+                assert response2.status_code == 502
+                assert call_count == 2
 
 
 class TestPaymentMiddlewareFunction:

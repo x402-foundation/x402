@@ -16,19 +16,18 @@ import (
 	"github.com/coinbase/x402/go/extensions/types"
 	x402http "github.com/coinbase/x402/go/http"
 	nethttpmw "github.com/coinbase/x402/go/http/nethttp"
-	evm "github.com/coinbase/x402/go/mechanisms/evm/exact/server"
+	exactevm "github.com/coinbase/x402/go/mechanisms/evm/exact/server"
+	uptoevm "github.com/coinbase/x402/go/mechanisms/evm/upto/server"
 	svm "github.com/coinbase/x402/go/mechanisms/svm/exact/server"
 	"github.com/joho/godotenv"
 )
 
 var shutdownRequested bool
 
-/**
- * net/http E2E Test Server with x402 v2 Payment Middleware
- *
- * This server demonstrates how to integrate x402 v2 payment middleware
- * with a standard net/http application for end-to-end testing.
- */
+// net/http E2E Test Server with x402 v2 Payment Middleware
+//
+// This server demonstrates how to integrate x402 v2 payment middleware
+// with a standard net/http application for end-to-end testing.
 
 func main() {
 	// Load .env file if it exists
@@ -86,12 +85,11 @@ func main() {
 		URL: facilitatorURL,
 	})
 
-	/**
-	 * Configure x402 payment middleware
-	 *
-	 * This middleware protects /exact/* payment routes with USDC payment requirements
-	 * on the Base Sepolia testnet with bazaar discovery extension.
-	 */
+	// Configure x402 payment middleware
+	//
+	// This middleware protects /exact/* payment routes with USDC payment requirements
+	// on the Base Sepolia testnet with bazaar discovery extension.
+
 	// Declare bazaar discovery extension for GET endpoints
 	discoveryExtension, err := bazaar.DeclareDiscoveryExtension(
 		bazaar.MethodGET,
@@ -195,6 +193,33 @@ func main() {
 				return ext
 			}(),
 		},
+		"GET /upto/evm/permit2": {
+			Accepts: x402http.PaymentOptions{
+				{
+					Scheme:  "upto",
+					PayTo:   evmPayeeAddress,
+					Network: evmNetwork,
+					Price: map[string]interface{}{
+						"amount": "2000",
+						"asset":  evmPermit2Asset,
+						"extra": map[string]interface{}{
+							"assetTransferMethod": "permit2",
+							"name":                "USDC",
+							"version":             "2",
+						},
+					},
+				},
+			},
+			Extensions: func() map[string]interface{} {
+				ext := map[string]interface{}{
+					types.BAZAAR.Key(): discoveryExtension,
+				}
+				for k, v := range eip2612gassponsor.DeclareEip2612GasSponsoringExtension() {
+					ext[k] = v
+				}
+				return ext
+			}(),
+		},
 		"GET /exact/evm/permit2-erc20ApprovalGasSponsoring": {
 			Accepts: x402http.PaymentOptions{
 				{
@@ -225,9 +250,7 @@ func main() {
 	// Create ServeMux and register handlers
 	mux := http.NewServeMux()
 
-	/**
-	 * Protected endpoint - requires payment to access
-	 */
+	// Protected endpoint - requires payment to access
 	mux.HandleFunc("GET /exact/evm/eip3009", func(w http.ResponseWriter, r *http.Request) {
 		if shutdownRequested {
 			writeJSON(w, http.StatusServiceUnavailable, map[string]interface{}{
@@ -243,9 +266,7 @@ func main() {
 		})
 	})
 
-	/**
-	 * Protected SVM endpoint - requires payment to access
-	 */
+	// Protected SVM endpoint - requires payment to access
 	mux.HandleFunc("GET /exact/svm", func(w http.ResponseWriter, r *http.Request) {
 		if shutdownRequested {
 			writeJSON(w, http.StatusServiceUnavailable, map[string]interface{}{
@@ -261,9 +282,7 @@ func main() {
 		})
 	})
 
-	/**
-	 * Protected Permit2 direct endpoint - standard settle (no gas sponsoring)
-	 */
+	// Protected Permit2 direct endpoint - standard settle (no gas sponsoring)
 	mux.HandleFunc("GET /exact/evm/permit2", func(w http.ResponseWriter, r *http.Request) {
 		if shutdownRequested {
 			writeJSON(w, http.StatusServiceUnavailable, map[string]interface{}{
@@ -279,9 +298,7 @@ func main() {
 		})
 	})
 
-	/**
-	 * Protected Permit2 EIP-2612 endpoint - Permit2 with gas sponsoring
-	 */
+	// Protected Permit2 EIP-2612 endpoint - Permit2 with gas sponsoring
 	mux.HandleFunc("GET /exact/evm/permit2-eip2612GasSponsoring", func(w http.ResponseWriter, r *http.Request) {
 		if shutdownRequested {
 			writeJSON(w, http.StatusServiceUnavailable, map[string]interface{}{
@@ -297,9 +314,7 @@ func main() {
 		})
 	})
 
-	/**
-	 * Protected Permit2 ERC-20 approval endpoint
-	 */
+	// Protected Permit2 ERC-20 approval endpoint
 	mux.HandleFunc("GET /exact/evm/permit2-erc20ApprovalGasSponsoring", func(w http.ResponseWriter, r *http.Request) {
 		if shutdownRequested {
 			writeJSON(w, http.StatusServiceUnavailable, map[string]interface{}{
@@ -315,9 +330,24 @@ func main() {
 		})
 	})
 
-	/**
-	 * Health check endpoint - no payment required
-	 */
+	mux.HandleFunc("GET /upto/evm/permit2", func(w http.ResponseWriter, r *http.Request) {
+		if shutdownRequested {
+			writeJSON(w, http.StatusServiceUnavailable, map[string]interface{}{
+				"error": "Server shutting down",
+			})
+			return
+		}
+
+		nethttpmw.SetSettlementOverrides(w, &x402.SettlementOverrides{Amount: "1000"})
+
+		writeJSON(w, http.StatusOK, map[string]interface{}{
+			"message":   "Upto Permit2 endpoint accessed successfully",
+			"timestamp": time.Now().Format(time.RFC3339),
+			"method":    "upto-permit2",
+		})
+	})
+
+	// Health check endpoint - no payment required
 	mux.HandleFunc("GET /health", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]interface{}{
 			"status":      "ok",
@@ -329,9 +359,7 @@ func main() {
 		})
 	})
 
-	/**
-	 * Shutdown endpoint - used by e2e tests
-	 */
+	// Shutdown endpoint - used by e2e tests
 	mux.HandleFunc("POST /close", func(w http.ResponseWriter, r *http.Request) {
 		shutdownRequested = true
 
@@ -352,7 +380,8 @@ func main() {
 		Routes:      routes,
 		Facilitator: facilitatorClient,
 		Schemes: []nethttpmw.SchemeConfig{
-			{Network: evmNetwork, Server: evm.NewExactEvmScheme()},
+			{Network: evmNetwork, Server: exactevm.NewExactEvmScheme()},
+			{Network: evmNetwork, Server: uptoevm.NewUptoEvmScheme()},
 			{Network: svmNetwork, Server: svm.NewExactSvmScheme()},
 		},
 		SyncFacilitatorOnStart: true,

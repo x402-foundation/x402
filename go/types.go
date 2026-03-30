@@ -96,12 +96,17 @@ type SettleResponse struct {
 	Payer        string  `json:"payer,omitempty"`
 	Transaction  string  `json:"transaction"`
 	Network      Network `json:"network"`
+	Amount       string  `json:"amount,omitempty"`
 }
 
 // SettlementOverrides allows overriding settlement parameters.
 // Used to support partial settlement (e.g., upto scheme billing by actual usage).
 type SettlementOverrides struct {
-	// Amount is the actual amount to settle in atomic token units. Must be <= authorized max.
+	// Amount to settle. Supports three formats:
+	//   - Raw atomic units: "1000" settles exactly 1000 atomic units.
+	//   - Percent: "50%" settles 50% of PaymentRequirements.Amount (up to 2 decimal places, floored).
+	//   - Dollar price: "$0.05" converts to atomic units using Extra["decimals"] (default 6).
+	// The resolved amount must be <= the authorized maximum in PaymentRequirements.
 	Amount string `json:"amount,omitempty"`
 }
 

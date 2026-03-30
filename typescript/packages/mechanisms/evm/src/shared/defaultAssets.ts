@@ -67,6 +67,12 @@ export const DEFAULT_STABLECOINS: Record<string, ExactDefaultAssetInfo> = {
     version: "2",
     decimals: 6,
   }, // Monad mainnet USDC
+  "eip155:137": {
+    address: "0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359",
+    name: "USD Coin",
+    version: "2",
+    decimals: 6,
+  }, // Polygon mainnet USDC
 };
 
 /**

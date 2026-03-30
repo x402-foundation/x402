@@ -286,6 +286,24 @@ app.use(
           ...declareErc20ApprovalGasSponsoringExtension(),
         },
       },
+      // Upto Permit2 direct endpoint - client must have Permit2 pre-approved
+      // Authorizes up to 2000 atomic units, settles 1000 (partial settlement)
+      "GET /upto/evm/permit2": {
+        accepts: {
+          payTo: EVM_PAYEE_ADDRESS,
+          scheme: "upto",
+          network: EVM_NETWORK,
+          price: {
+            amount: "2000",
+            asset: EVM_PERMIT2_ASSET,
+            extra: {
+              assetTransferMethod: "permit2",
+              name: EVM_NETWORK == "eip155:84532" ? "USDC" : "USD Coin",
+              version: "2",
+            },
+          },
+        },
+      },
       // Upto Permit2 endpoint with EIP-2612 gas sponsoring
       // Authorizes up to 2000 atomic units, settles 1000 (partial settlement)
       "GET /upto/evm/permit2-eip2612GasSponsoring": {
@@ -430,6 +448,19 @@ app.get("/exact/evm/permit2-erc20ApprovalGasSponsoring", c => {
     message: "Permit2 ERC-20 approval endpoint accessed successfully",
     timestamp: new Date().toISOString(),
     method: "permit2-erc20-approval",
+  });
+});
+
+/**
+ * Upto Permit2 direct endpoint - upto scheme, client must have Permit2 pre-approved
+ * Authorizes 2000, settles 1000 (partial settlement)
+ */
+app.get("/upto/evm/permit2", c => {
+  setSettlementOverrides(c, { amount: "1000" });
+  return c.json({
+    message: "Upto Permit2 endpoint accessed successfully",
+    timestamp: new Date().toISOString(),
+    method: "upto-permit2",
   });
 });
 

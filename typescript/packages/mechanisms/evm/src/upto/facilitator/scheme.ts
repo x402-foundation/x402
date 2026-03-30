@@ -36,7 +36,7 @@ export class UptoEvmScheme implements SchemeNetworkFacilitator {
     if (addresses.length === 0) {
       return undefined;
     }
-    return { facilitatorAddress: addresses[0] };
+    return { facilitatorAddress: addresses[Math.floor(Math.random() * addresses.length)] };
   }
 
   /**

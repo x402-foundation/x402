@@ -111,9 +111,9 @@ export interface SettlementOverrides {
    *   Supports up to two decimal places (e.g., `"33.33%"`). The result is floored
    *   to the nearest atomic unit.
    * - **Dollar price** — e.g., `"$0.05"` converts a USD-denominated price to
-   *   atomic units. Uses `PaymentRequirements.extra.decimals` if set; otherwise
-   *   defaults to 6 (standard for USDC stablecoins). The result is rounded to
-   *   the nearest atomic unit.
+   *   atomic units. Decimals are determined from the registered scheme's
+   *   `getAssetDecimals` method, falling back to 6 (standard for USDC stablecoins).
+   *   The result is rounded to the nearest atomic unit.
    *
    * The resolved amount must be <= the authorized maximum in `PaymentRequirements`.
    *
@@ -129,15 +129,17 @@ export interface SettlementOverrides {
  * Supports three input formats (see {@link SettlementOverrides.amount}):
  * - Raw atomic units: `"1000"`
  * - Percent of `PaymentRequirements.amount`: `"50%"`
- * - Dollar price: `"$0.05"` (uses `requirements.extra.decimals` or defaults to 6)
+ * - Dollar price: `"$0.05"` (converted using the provided decimals)
  *
  * @param rawAmount - The override amount string (e.g., `"1000"`, `"50%"`, `"$0.05"`)
- * @param requirements - The payment requirements containing the base amount and token decimals
+ * @param requirements - The payment requirements containing the base amount
+ * @param decimals - Decimal precision to use for dollar-format conversion (default 6)
  * @returns The resolved amount as an atomic-unit string
  */
 export function resolveSettlementOverrideAmount(
   rawAmount: string,
   requirements: PaymentRequirements,
+  decimals: number = 6,
 ): string {
   // Percent format: "50%" or "33.33%"
   const percentMatch = rawAmount.match(/^(\d+(?:\.\d{0,2})?)%$/);
@@ -151,8 +153,6 @@ export function resolveSettlementOverrideAmount(
   // Dollar price format: "$0.05"
   const dollarMatch = rawAmount.match(/^\$(\d+(?:\.\d+)?)$/);
   if (dollarMatch) {
-    const decimals =
-      typeof requirements.extra?.decimals === "number" ? requirements.extra.decimals : 6;
     const dollars = parseFloat(dollarMatch[1]);
     return Math.round(dollars * 10 ** decimals).toString();
   }
@@ -786,9 +786,16 @@ export class x402ResourceServer {
     // Apply settlement overrides (e.g., partial settlement for upto scheme)
     let effectiveRequirements = requirements;
     if (settlementOverrides?.amount !== undefined) {
+      const scheme = findByNetworkAndScheme(
+        this.registeredServerSchemes,
+        requirements.scheme,
+        requirements.network as Network,
+      );
+      const decimals =
+        scheme?.getAssetDecimals?.(requirements.asset ?? "", requirements.network as Network) ?? 6;
       effectiveRequirements = {
         ...requirements,
-        amount: resolveSettlementOverrideAmount(settlementOverrides.amount, requirements),
+        amount: resolveSettlementOverrideAmount(settlementOverrides.amount, requirements, decimals),
       };
     }
 

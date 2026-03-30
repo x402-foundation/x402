@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"net/http"
 	"strings"
 	"testing"
 
@@ -466,7 +467,7 @@ func TestProcessSettlement(t *testing.T) {
 	}
 
 	// Test settlement processing
-	result := server.ProcessSettlement(ctx, payload, requirements, nil)
+	result := server.ProcessSettlement(ctx, payload, requirements, nil, nil)
 	if !result.Success {
 		t.Fatalf("Unexpected failure: %v", result.ErrorReason)
 	}
@@ -512,7 +513,7 @@ func TestProcessSettlement_Failure(t *testing.T) {
 		Payload:     map[string]interface{}{},
 	}
 
-	result := server.ProcessSettlement(ctx, payload, requirements, nil)
+	result := server.ProcessSettlement(ctx, payload, requirements, nil, nil)
 	if result.Success {
 		t.Fatal("Expected settlement failure")
 	}
@@ -529,6 +530,188 @@ func TestProcessSettlement_Failure(t *testing.T) {
 	if !ok || len(body) != 0 {
 		t.Errorf("Expected empty body {}, got %v", result.Response.Body)
 	}
+}
+
+func TestProcessSettlement_OverridesFromTransportContext(t *testing.T) {
+	ctx := context.Background()
+
+	var capturedRequirements []byte
+	mockClient := &mockFacilitatorClient{
+		settle: func(ctx context.Context, payloadBytes []byte, requirementsBytes []byte) (*x402.SettleResponse, error) {
+			capturedRequirements = requirementsBytes
+			return &x402.SettleResponse{
+				Success:     true,
+				Transaction: "0xtx",
+				Payer:       "0xpayer",
+				Network:     "eip155:8453",
+			}, nil
+		},
+	}
+
+	server := Newx402HTTPResourceServer(RoutesConfig{}, x402.WithFacilitatorClient(mockClient))
+	_ = server.Initialize(ctx)
+
+	requirements := types.PaymentRequirements{
+		Scheme:  "exact",
+		Network: "eip155:1",
+		Amount:  "1000000",
+		PayTo:   "0xtest",
+	}
+	payload := types.PaymentPayload{
+		X402Version: 2,
+		Accepted:    requirements,
+		Payload:     map[string]interface{}{},
+	}
+
+	t.Run("reads overrides from response headers", func(t *testing.T) {
+		capturedRequirements = nil
+		h := http.Header{}
+		h.Set(SettlementOverridesHeader, `{"amount":"500"}`)
+		tc := &HTTPTransportContext{
+			ResponseHeaders: h,
+		}
+
+		result := server.ProcessSettlement(ctx, payload, requirements, nil, tc)
+		if !result.Success {
+			t.Fatalf("unexpected failure: %v", result.ErrorReason)
+		}
+
+		var settled types.PaymentRequirements
+		if err := json.Unmarshal(capturedRequirements, &settled); err != nil {
+			t.Fatalf("failed to unmarshal captured requirements: %v", err)
+		}
+		if settled.Amount != "500" {
+			t.Errorf("expected overridden amount 500, got %s", settled.Amount)
+		}
+	})
+
+	t.Run("explicit overrides take precedence over header", func(t *testing.T) {
+		capturedRequirements = nil
+		h := http.Header{}
+		h.Set(SettlementOverridesHeader, `{"amount":"500"}`)
+		tc := &HTTPTransportContext{
+			ResponseHeaders: h,
+		}
+		explicit := &x402.SettlementOverrides{Amount: "200"}
+
+		result := server.ProcessSettlement(ctx, payload, requirements, explicit, tc)
+		if !result.Success {
+			t.Fatalf("unexpected failure: %v", result.ErrorReason)
+		}
+
+		var settled types.PaymentRequirements
+		if err := json.Unmarshal(capturedRequirements, &settled); err != nil {
+			t.Fatalf("failed to unmarshal captured requirements: %v", err)
+		}
+		if settled.Amount != "200" {
+			t.Errorf("expected explicit override amount 200, got %s", settled.Amount)
+		}
+	})
+
+	t.Run("malformed header is ignored", func(t *testing.T) {
+		capturedRequirements = nil
+		h := http.Header{}
+		h.Set(SettlementOverridesHeader, "not-valid-json{{{")
+		tc := &HTTPTransportContext{
+			ResponseHeaders: h,
+		}
+
+		result := server.ProcessSettlement(ctx, payload, requirements, nil, tc)
+		if !result.Success {
+			t.Fatalf("unexpected failure: %v", result.ErrorReason)
+		}
+
+		var settled types.PaymentRequirements
+		if err := json.Unmarshal(capturedRequirements, &settled); err != nil {
+			t.Fatalf("failed to unmarshal captured requirements: %v", err)
+		}
+		if settled.Amount != "1000000" {
+			t.Errorf("expected original amount 1000000, got %s", settled.Amount)
+		}
+	})
+
+	t.Run("header is deleted after extraction", func(t *testing.T) {
+		h := http.Header{}
+		h.Set(SettlementOverridesHeader, `{"amount":"500"}`)
+		h.Set("Content-Type", "application/json")
+		tc := &HTTPTransportContext{
+			ResponseHeaders: h,
+		}
+
+		server.ProcessSettlement(ctx, payload, requirements, nil, tc)
+
+		if tc.ResponseHeaders.Get(SettlementOverridesHeader) != "" {
+			t.Error("expected settlement-overrides header to be deleted from transport context")
+		}
+		if tc.ResponseHeaders.Get("Content-Type") == "" {
+			t.Error("expected other headers to remain")
+		}
+	})
+
+	t.Run("nil transport context is safe", func(t *testing.T) {
+		result := server.ProcessSettlement(ctx, payload, requirements, nil, nil)
+		if !result.Success {
+			t.Fatalf("unexpected failure: %v", result.ErrorReason)
+		}
+	})
+
+	t.Run("nil response headers is safe", func(t *testing.T) {
+		tc := &HTTPTransportContext{
+			Request:         &HTTPRequestContext{Path: "/test", Method: "GET"},
+			ResponseHeaders: nil,
+		}
+		result := server.ProcessSettlement(ctx, payload, requirements, nil, tc)
+		if !result.Success {
+			t.Fatalf("unexpected failure: %v", result.ErrorReason)
+		}
+	})
+
+	t.Run("percent override via header", func(t *testing.T) {
+		capturedRequirements = nil
+		h := http.Header{}
+		h.Set(SettlementOverridesHeader, `{"amount":"50%"}`)
+		tc := &HTTPTransportContext{
+			ResponseHeaders: h,
+		}
+
+		result := server.ProcessSettlement(ctx, payload, requirements, nil, tc)
+		if !result.Success {
+			t.Fatalf("unexpected failure: %v", result.ErrorReason)
+		}
+
+		var settled types.PaymentRequirements
+		if err := json.Unmarshal(capturedRequirements, &settled); err != nil {
+			t.Fatalf("failed to unmarshal: %v", err)
+		}
+		// 50% of 1000000 = 500000
+		if settled.Amount != "500000" {
+			t.Errorf("expected 500000, got %s", settled.Amount)
+		}
+	})
+
+	t.Run("dollar override via header with default decimals", func(t *testing.T) {
+		capturedRequirements = nil
+		h := http.Header{}
+		h.Set(SettlementOverridesHeader, `{"amount":"$0.001"}`)
+		tc := &HTTPTransportContext{
+			ResponseHeaders: h,
+		}
+
+		result := server.ProcessSettlement(ctx, payload, requirements, nil, tc)
+		if !result.Success {
+			t.Fatalf("unexpected failure: %v", result.ErrorReason)
+		}
+
+		var settled types.PaymentRequirements
+		if err := json.Unmarshal(capturedRequirements, &settled); err != nil {
+			t.Fatalf("failed to unmarshal: %v", err)
+		}
+		// $0.001 with 6 decimals = 1000
+		if settled.Amount != "1000" {
+			t.Errorf("expected 1000, got %s", settled.Amount)
+		}
+	})
+
 }
 
 func TestParseRoutePattern(t *testing.T) {

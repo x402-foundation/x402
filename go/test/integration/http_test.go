@@ -217,6 +217,7 @@ func TestHTTPIntegration(t *testing.T) {
 			*httpProcessResult2.PaymentPayload,
 			*httpProcessResult2.PaymentRequirements,
 			nil,
+			nil,
 		)
 		if !settlementResult.Success {
 			t.Fatalf("Failed to process settlement: %v", settlementResult.ErrorReason)

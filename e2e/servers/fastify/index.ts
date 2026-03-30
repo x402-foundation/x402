@@ -1,7 +1,8 @@
 import Fastify from "fastify";
-import { paymentMiddleware } from "@x402/fastify";
+import { paymentMiddleware, setSettlementOverrides } from "@x402/fastify";
 import { x402ResourceServer, HTTPFacilitatorClient } from "@x402/core/server";
 import { ExactEvmScheme } from "@x402/evm/exact/server";
+import { UptoEvmScheme } from "@x402/evm/upto/server";
 import { ExactSvmScheme } from "@x402/svm/exact/server";
 import { ExactAptosScheme } from "@x402/aptos/exact/server";
 import { ExactStellarScheme } from "@x402/stellar/exact/server";
@@ -60,6 +61,7 @@ const server = new x402ResourceServer(facilitatorClient);
 
 // Register server schemes
 server.register("eip155:*", new ExactEvmScheme());
+server.register("eip155:*", new UptoEvmScheme());
 server.register("solana:*", new ExactSvmScheme());
 if (APTOS_PAYEE_ADDRESS) {
   server.register("aptos:*", new ExactAptosScheme());
@@ -269,6 +271,61 @@ paymentMiddleware(
         ...declareErc20ApprovalGasSponsoringExtension(),
       },
     },
+    // Upto Permit2 direct endpoint - client must have Permit2 pre-approved
+    "GET /upto/evm/permit2": {
+      accepts: {
+        payTo: EVM_PAYEE_ADDRESS,
+        scheme: "upto",
+        network: EVM_NETWORK,
+        price: {
+          amount: "2000",
+          asset: EVM_PERMIT2_ASSET,
+          extra: {
+            assetTransferMethod: "permit2",
+            name: EVM_NETWORK == "eip155:84532" ? "USDC" : "USD Coin",
+            version: "2",
+          },
+        },
+      },
+    },
+    // Upto Permit2 endpoint with EIP-2612 gas sponsoring
+    "GET /upto/evm/permit2-eip2612GasSponsoring": {
+      accepts: {
+        payTo: EVM_PAYEE_ADDRESS,
+        scheme: "upto",
+        network: EVM_NETWORK,
+        price: {
+          amount: "2000",
+          asset: EVM_PERMIT2_ASSET,
+          extra: {
+            assetTransferMethod: "permit2",
+            name: EVM_NETWORK == "eip155:84532" ? "USDC" : "USD Coin",
+            version: "2",
+          },
+        },
+      },
+      extensions: {
+        ...declareEip2612GasSponsoringExtension(),
+      },
+    },
+    // Upto Permit2 endpoint for ERC-20 approval gas sponsoring
+    "GET /upto/evm/permit2-erc20ApprovalGasSponsoring": {
+      accepts: {
+        payTo: EVM_PAYEE_ADDRESS,
+        scheme: "upto",
+        network: EVM_NETWORK,
+        price: {
+          amount: "2000",
+          asset: EVM_PERMIT2_ASSET,
+          extra: {
+            assetTransferMethod: "permit2",
+          },
+        },
+      },
+      extensions: {
+        ...declareErc20ApprovalGasSponsoringExtension(),
+      },
+    },
     ...(STELLAR_PAYEE_ADDRESS
       ? {
           "GET /exact/stellar": {
@@ -376,6 +433,42 @@ app.get("/exact/evm/permit2-erc20ApprovalGasSponsoring", async () => {
     message: "Permit2 ERC-20 approval endpoint accessed successfully",
     timestamp: new Date().toISOString(),
     method: "permit2-erc20-approval",
+  };
+});
+
+/**
+ * Upto Permit2 direct endpoint - upto scheme, client must pre-approve Permit2
+ */
+app.get("/upto/evm/permit2", async (_request, reply) => {
+  setSettlementOverrides(reply, { amount: "1000" });
+  return {
+    message: "Upto Permit2 endpoint accessed successfully",
+    timestamp: new Date().toISOString(),
+    method: "upto-permit2",
+  };
+});
+
+/**
+ * Upto Permit2 EIP-2612 endpoint - upto scheme with gas sponsoring
+ */
+app.get("/upto/evm/permit2-eip2612GasSponsoring", async (_request, reply) => {
+  setSettlementOverrides(reply, { amount: "1000" });
+  return {
+    message: "Upto Permit2 EIP-2612 endpoint accessed successfully",
+    timestamp: new Date().toISOString(),
+    method: "upto-permit2-eip2612",
+  };
+});
+
+/**
+ * Upto Permit2 ERC-20 approval endpoint - upto scheme with ERC-20 gas sponsoring
+ */
+app.get("/upto/evm/permit2-erc20ApprovalGasSponsoring", async (_request, reply) => {
+  setSettlementOverrides(reply, { amount: "1000" });
+  return {
+    message: "Upto Permit2 ERC-20 approval endpoint accessed successfully",
+    timestamp: new Date().toISOString(),
+    method: "upto-permit2-erc20-approval",
   };
 });
 
