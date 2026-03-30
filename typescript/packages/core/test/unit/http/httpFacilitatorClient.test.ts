@@ -208,12 +208,9 @@ describe("HTTPFacilitatorClient", () => {
     });
 
     it("passes redirect: follow to fetch on verify", async () => {
-      const mockFetch = vi.fn().mockResolvedValue(
-        new Response(
-          JSON.stringify({ isValid: true }),
-          { status: 200 },
-        ),
-      );
+      const mockFetch = vi
+        .fn()
+        .mockResolvedValue(new Response(JSON.stringify({ isValid: true }), { status: 200 }));
       vi.stubGlobal("fetch", mockFetch);
 
       const client = new HTTPFacilitatorClient({ url: "https://facilitator.test" });
