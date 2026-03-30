@@ -52,6 +52,7 @@ This page tracks which features are implemented in each SDK (TypeScript, Go, Pyt
 | exact | keeta | - | ✅ | ❌ | ❌ |
 | exact | near | - | ✅ | ❌ | ❌ |
 | exact | ccd (Concordium) | sponsored V1 | ✅ | ❌ | ❌ |
+| exact | bip122 | - | ❌ | ❌ | ✅ |
 | upto | evm | `permit2` | ✅ | ✅ | ✅ |
 | batch-settlement | evm | `eip3009` | ✅ | ✅ | ✅ |
 | batch-settlement | evm | `permit2` | ✅ | ✅ | ✅ |

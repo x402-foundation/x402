@@ -19,6 +19,7 @@ uv add x402[flask]      # Flask middleware
 uv add x402[evm]        # EVM/Ethereum
 uv add x402[svm]        # Solana
 uv add x402[tvm]        # TON/TVM
+uv add x402[lightning]  # Bitcoin Lightning
 
 # Multiple extras
 uv add x402[fastapi,httpx,evm]
@@ -291,6 +292,7 @@ client.register("eip155:8453", CustomScheme())
 - `x402.mechanisms.evm` - EVM/Ethereum implementation
 - `x402.mechanisms.svm` - Solana implementation
 - `x402.mechanisms.tvm` - TON/TVM implementation
+- `x402.mechanisms.bip122` - Bitcoin Lightning implementation
 - `x402.extensions` - Protocol extensions (Bazaar discovery)
 
 ## Examples
