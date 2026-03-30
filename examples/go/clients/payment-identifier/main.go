@@ -145,7 +145,7 @@ func main() {
 
 	// Create client with scheme registration
 	client := x402.Newx402Client().
-		Register("eip155:*", evm.NewExactEvmScheme(evmSigner))
+		Register("eip155:*", evm.NewExactEvmScheme(evmSigner, nil))
 
 	// Generate a unique payment ID for this session
 	paymentID := paymentidentifier.GeneratePaymentID("")

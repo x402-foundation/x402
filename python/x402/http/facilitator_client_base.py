@@ -66,6 +66,10 @@ class CreateHeadersAuthProvider:
         )
 
 
+class FacilitatorResponseError(ValueError):
+    """Facilitator returned malformed or schema-invalid response data."""
+
+
 # ============================================================================
 # FacilitatorClient Protocols
 # ============================================================================

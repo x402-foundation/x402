@@ -10,12 +10,21 @@
 import type { FacilitatorExtension } from "@x402/core/types";
 
 /**
+ * A single transaction to be executed by the signer.
+ * - `0x${string}`: a pre-signed serialized transaction (broadcast as-is via sendRawTransaction)
+ * - `{ to, data, gas? }`: an unsigned call intent (signer signs and broadcasts)
+ */
+export type TransactionRequest =
+  | `0x${string}`
+  | { to: `0x${string}`; data: `0x${string}`; gas?: bigint };
+
+/**
  * Signer capability carried by the ERC-20 approval extension when registered in a facilitator.
  *
- * Mirrors FacilitatorEvmSigner (from @x402/evm) plus `sendRawTransaction`.
- * The extension signer owns the full approve+settle flow: it broadcasts the
- * pre-signed approval transaction AND executes the Permit2 settle call, enabling
- * production implementations to bundle both atomically (e.g., Flashbots, multicall).
+ * Mirrors FacilitatorEvmSigner (from @x402/evm) plus `sendTransactions`.
+ * The signer owns execution of multiple transactions, enabling production implementations
+ * to bundle them atomically (e.g., Flashbots, multicall, smart account batching)
+ * while simpler implementations can execute them sequentially.
  *
  * The method signatures are duplicated here (rather than extending FacilitatorEvmSigner)
  * to avoid a circular dependency between @x402/extensions and @x402/evm.
@@ -41,11 +50,12 @@ export interface Erc20ApprovalGasSponsoringSigner {
     abi: readonly unknown[];
     functionName: string;
     args: readonly unknown[];
+    gas?: bigint;
   }): Promise<`0x${string}`>;
   sendTransaction(args: { to: `0x${string}`; data: `0x${string}` }): Promise<`0x${string}`>;
   waitForTransactionReceipt(args: { hash: `0x${string}` }): Promise<{ status: string }>;
   getCode(args: { address: `0x${string}` }): Promise<`0x${string}` | undefined>;
-  sendRawTransaction(args: { serializedTransaction: `0x${string}` }): Promise<`0x${string}`>;
+  sendTransactions(transactions: TransactionRequest[]): Promise<`0x${string}`[]>;
 }
 
 /**
@@ -61,54 +71,48 @@ export const ERC20_APPROVAL_GAS_SPONSORING_VERSION = "1";
 /**
  * Extended extension object registered in a facilitator via registerExtension().
  * Carries the signer that owns the full approve+settle flow for ERC-20 tokens
- * that lack EIP-2612. The signer must have all FacilitatorEvmSigner capabilities
- * plus `sendRawTransaction` for broadcasting the pre-signed approval tx.
+ * that lack EIP-2612.
  *
  * @example
  * ```typescript
  * import { createErc20ApprovalGasSponsoringExtension } from '@x402/extensions';
  *
  * facilitator.registerExtension(
- *   createErc20ApprovalGasSponsoringExtension(evmSigner, viemClient),
+ *   createErc20ApprovalGasSponsoringExtension(signer),
  * );
  * ```
  */
 export interface Erc20ApprovalGasSponsoringFacilitatorExtension extends FacilitatorExtension {
   key: "erc20ApprovalGasSponsoring";
-  /** Signer with broadcast + settle capability. Optional — settlement fails gracefully if absent. */
+  /** Default signer with approve+settle capability. Optional — settlement fails gracefully if absent. */
   signer?: Erc20ApprovalGasSponsoringSigner;
+  /** Network-specific signer resolver. Takes precedence over `signer` when provided. */
+  signerForNetwork?: (network: string) => Erc20ApprovalGasSponsoringSigner | undefined;
 }
 
 /**
- * Signer input for {@link createErc20ApprovalGasSponsoringExtension}.
+ * Base signer shape without `sendTransactions`.
  * Matches the FacilitatorEvmSigner shape from @x402/evm (duplicated to avoid circular dep).
  */
 export type Erc20ApprovalGasSponsoringBaseSigner = Omit<
   Erc20ApprovalGasSponsoringSigner,
-  "sendRawTransaction"
+  "sendTransactions"
 >;
 
 /**
  * Create an ERC-20 approval gas sponsoring extension ready to register in a facilitator.
  *
- * @param signer - The EVM facilitator signer (e.g. from `toFacilitatorEvmSigner()`)
- * @param client - Object providing `sendRawTransaction` (e.g. a viem WalletClient)
- * @param client.sendRawTransaction - Broadcasts a signed transaction to the network
+ * @param signer - A complete signer with `sendTransactions` already implemented.
+ *   The signer decides how to execute the transactions (sequentially, batched, or atomically).
+ * @param signerForNetwork - Optional network-specific signer resolver. When provided,
+ *   takes precedence over `signer` and allows different settlement signers per network.
  * @returns A fully configured extension to pass to `facilitator.registerExtension()`
  */
 export function createErc20ApprovalGasSponsoringExtension(
-  signer: Erc20ApprovalGasSponsoringBaseSigner,
-  client: {
-    sendRawTransaction: (args: { serializedTransaction: `0x${string}` }) => Promise<`0x${string}`>;
-  },
+  signer: Erc20ApprovalGasSponsoringSigner,
+  signerForNetwork?: (network: string) => Erc20ApprovalGasSponsoringSigner | undefined,
 ): Erc20ApprovalGasSponsoringFacilitatorExtension {
-  return {
-    ...ERC20_APPROVAL_GAS_SPONSORING,
-    signer: {
-      ...signer,
-      sendRawTransaction: client.sendRawTransaction.bind(client),
-    },
-  };
+  return { ...ERC20_APPROVAL_GAS_SPONSORING, signer, signerForNetwork };
 }
 
 /**

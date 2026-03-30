@@ -1,0 +1,7 @@
+{
+  "name": "OpenZeppelin",
+  "description": "OpenZeppelin provides an x402 facilitator plugin for their Relayer infrastructure, enabling secure and audited payment verification and settlement for the x402 protocol.",
+  "logoUrl": "/logos/openzeppelin.png",
+  "websiteUrl": "https://github.com/OpenZeppelin/relayer-plugin-x402-facilitator",
+  "category": "Facilitators"
+}

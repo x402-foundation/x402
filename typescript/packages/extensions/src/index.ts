@@ -8,6 +8,9 @@ export { bazaarResourceServerExtension } from "./bazaar/server";
 // Sign-in-with-x extension
 export * from "./sign-in-with-x";
 
+// Offer/Receipt extension
+export * from "./offer-receipt";
+
 // Payment-identifier extension
 export * from "./payment-identifier";
 export { paymentIdentifierResourceServerExtension } from "./payment-identifier/resourceServer";

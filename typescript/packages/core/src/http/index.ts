@@ -108,4 +108,5 @@ export {
   FacilitatorClient,
   FacilitatorConfig,
 } from "./httpFacilitatorClient";
+export { FacilitatorResponseError, getFacilitatorResponseError } from "../types";
 export { x402HTTPClient, PaymentRequiredContext, PaymentRequiredHook } from "./x402HTTPClient";

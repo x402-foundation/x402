@@ -2,7 +2,7 @@ import type { NetworkSet } from './networks/networks';
 
 export type ProtocolFamily = 'evm' | 'svm' | 'aptos' | 'stellar';
 export type Transport = 'http' | 'mcp';
-export type TransferMethod = 'eip3009' | 'permit2';
+export type TransferMethod = 'eip3009' | 'permit2' | 'upto';
 
 export interface ClientResult {
   success: boolean;
@@ -19,6 +19,8 @@ export interface ClientConfig {
   stellarPrivateKey: string;
   serverUrl: string;
   endpointPath: string;
+  evmNetwork: string;
+  evmRpcUrl: string;
 }
 
 export interface ServerConfig {
@@ -29,6 +31,7 @@ export interface ServerConfig {
   stellarPayTo: string;
   networks: NetworkSet;
   facilitatorUrl?: string;
+  mockFacilitatorUrl?: string;
 }
 
 export interface ServerProxy {
@@ -50,6 +53,11 @@ export interface TestEndpoint {
   requiresPayment?: boolean;
   protocolFamily?: ProtocolFamily;
   transferMethod?: TransferMethod;
+  extensions?: string[];
+  /** True for Permit2 standard/direct settle - requires pre-approval (approve before test, not revoke) */
+  permit2Direct?: boolean;
+  /** True for endpoints that require Permit2 revocation + fund/drain state setup before the first test (coldstart). */
+  coldstart?: boolean;
   health?: boolean;
   close?: boolean;
 }

@@ -38,7 +38,7 @@ func runHooksExample(ctx context.Context, evmPrivateKey, url string) error {
 
 	// Create client with scheme registration
 	client := x402.Newx402Client().
-		Register("eip155:*", evm.NewExactEvmScheme(evmSigner))
+		Register("eip155:*", evm.NewExactEvmScheme(evmSigner, nil))
 
 	// Register lifecycle hooks
 

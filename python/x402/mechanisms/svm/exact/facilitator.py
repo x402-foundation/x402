@@ -131,7 +131,7 @@ class ExactSvmScheme:
           - Token program is known (Token or Token-2022)
           - Mint matches requirements.asset
           - Destination ATA matches requirements.pay_to
-          - Amount >= requirements.amount
+        - Amount >= requirements.amount
           - Authority is not the facilitator (prevent self-transfer)
         - Simulates transaction to catch runtime errors
 

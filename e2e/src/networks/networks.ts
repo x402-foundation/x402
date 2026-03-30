@@ -12,6 +12,7 @@ export type NetworkConfig = {
   name: string;
   caip2: `${string}:${string}`;
   rpcUrl: string;
+  permit2Asset?: string;
 };
 
 export type NetworkSet = {
@@ -30,6 +31,7 @@ const NETWORK_SETS: Record<NetworkMode, NetworkSet> = {
       name: 'Base Sepolia',
       caip2: 'eip155:84532',
       rpcUrl: process.env.BASE_SEPOLIA_RPC_URL || 'https://sepolia.base.org',
+      permit2Asset: '0x036CbD53842c5426634e7929541eC2318f3dCF7e',
     },
     svm: {
       name: 'Solana Devnet',
@@ -52,6 +54,7 @@ const NETWORK_SETS: Record<NetworkMode, NetworkSet> = {
       name: 'Base',
       caip2: 'eip155:8453',
       rpcUrl: process.env.BASE_RPC_URL || 'https://mainnet.base.org',
+      permit2Asset: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913',
     },
     svm: {
       name: 'Solana',

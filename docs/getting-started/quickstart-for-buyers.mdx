@@ -32,6 +32,9 @@ There are pre-configured [examples available in the x402 repo](https://github.co
 
     # For Aptos support, also add:
     npm install @x402/aptos
+
+    # For Stellar support, also add:
+    npm install @x402/stellar
     ```
   </Tab>
   <Tab title="Go">
@@ -133,6 +136,20 @@ import { Account, Ed25519PrivateKey } from "@aptos-labs/ts-sdk";
 // Create account from private key
 const privateKey = new Ed25519PrivateKey(process.env.APTOS_PRIVATE_KEY!);
 const aptosSigner = Account.fromPrivateKey({ privateKey });
+```
+
+#### Stellar
+
+Use the Stellar SDK to instantiate a signer:
+
+```typescript
+import { createEd25519Signer } from "@x402/stellar";
+
+// Create signer from private key (S... format)
+const stellarSigner = createEd25519Signer(
+  process.env.STELLAR_PRIVATE_KEY!,
+  "stellar:testnet"
+);
 ```
 
 ### 3. Make Paid Requests Automatically
@@ -387,6 +404,15 @@ You can register multiple payment schemes to handle different networks:
     const aptosPrivateKey = new Ed25519PrivateKey(process.env.APTOS_PRIVATE_KEY!);
     const aptosSigner = Account.fromPrivateKey({ privateKey: aptosPrivateKey });
     client.register("aptos:*", new ExactAptosScheme(aptosSigner));
+
+    // For Stellar support, also add:
+    import { ExactStellarScheme, createEd25519Signer } from "@x402/stellar";
+
+    const stellarSigner = createEd25519Signer(
+      process.env.STELLAR_PRIVATE_KEY!,
+      "stellar:testnet"
+    );
+    client.register("stellar:*", new ExactStellarScheme(stellarSigner));
     ```
   </Tab>
   <Tab title="Go">

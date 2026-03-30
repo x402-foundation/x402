@@ -1,0 +1,7 @@
+{
+  "name": "Arch AI Tools",
+  "category": "Services/Endpoints",
+  "logoUrl": "/logos/arch-ai-tools.svg",
+  "description": "53 AI-powered tools in a single MCP server — web search, image generation, crypto prices, fact-checking, research reports, domain analysis, and more. Pay per use in USDC on Base via x402. No accounts required. Works with Claude Desktop, Cursor, and any MCP client.",
+  "websiteUrl": "https://archtools.dev"
+}

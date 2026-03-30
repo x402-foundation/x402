@@ -28,14 +28,16 @@ The protocol flow for `exact` on Stellar is client-driven with facilitator-spons
 4. **Client** signs the authorization entries (not the full transaction) with their wallet, setting expiration to `currentLedger + ledgerTimeout`, where `ledgerTimeout = ceil(maxTimeoutSeconds / estimatedLedgerSeconds)`; implementations should use the current network estimate for `estimatedLedgerSeconds` when available (fallback to `5` seconds).
 5. **Client** serializes the transaction with signed auth entries and encodes it as XDR (base64).
 6. **Client** sends a new request to the resource server with the `PaymentPayload` containing the base64-encoded transaction.
-7. **Resource Server** forwards the `PaymentPayload` and `PaymentRequirements` to the **Facilitator Server's** `/settle` endpoint.
-   - NOTE: `/verify` is optional and intended for pre-flight checks only. `/settle` MUST perform full verification independently and MUST NOT assume prior verification.
+7. **Resource Server** forwards the `PaymentPayload` and `PaymentRequirements` to the **Facilitator Server's** `/verify` endpoint.
 8. **Facilitator** decodes the transaction XDR and validates the transaction's: structure, auth entries, signature expiration, amount, payer, and recipient.
-9. **Facilitator** rebuilds the transaction with its own account as the source, preserving all operations and auth entries.
-10. **Facilitator** simulates the transaction to verify it succeeds and emits the expected transfer events.
-11. **Facilitator** signs the rebuilt transaction with its own key and submits it to the Stellar network via RPC `sendTransaction`.
-12. **Facilitator** polls for transaction confirmation and responds with a `SettlementResponse` to the **Resource Server**.
-13. **Resource Server** grants the **Client** access to the resource in its response upon successful settlement.
+9. **Facilitator** returns a `VerifyResponse` to the **Resource Server**.
+10. **Resource Server**, upon successful verification, forwards the payload to the facilitator's `/settle` endpoint.
+    - NOTE: `/settle` MUST perform full verification independently and MUST NOT assume prior verification.
+11. **Facilitator** rebuilds the transaction with its own account as the source, preserving all operations and auth entries.
+12. **Facilitator** simulates the transaction to verify it succeeds and emits the expected transfer events.
+13. **Facilitator** signs the rebuilt transaction with its own key and submits it to the Stellar network via RPC `sendTransaction`.
+14. **Facilitator** polls for transaction confirmation and responds with a `SettlementResponse` to the **Resource Server**.
+15. **Resource Server** grants the **Client** access to the resource in its response upon successful settlement.
 
 ## `PaymentRequirements` for `exact`
 

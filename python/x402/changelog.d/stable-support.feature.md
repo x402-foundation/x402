@@ -1,0 +1,1 @@
+Add Stable mainnet (chain ID 988) support with USDT0 as the default stablecoin

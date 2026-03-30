@@ -19,7 +19,7 @@ import (
 // proxy contract enforces permit2612.value == permittedAmount.
 func SignEip2612Permit(
 	ctx context.Context,
-	signer evm.ClientEvmSigner,
+	signer evm.ClientEvmSignerWithReadContract,
 	tokenAddress string,
 	tokenName string,
 	tokenVersion string,

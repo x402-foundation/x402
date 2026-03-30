@@ -38,7 +38,7 @@ func runAllNetworksExample(ctx context.Context, evmPrivateKey, svmPrivateKey, ur
 		if err != nil {
 			return fmt.Errorf("failed to create EVM signer: %w", err)
 		}
-		client.Register("eip155:*", evm.NewExactEvmScheme(evmSigner))
+		client.Register("eip155:*", evm.NewExactEvmScheme(evmSigner, nil))
 		fmt.Printf("✅ Registered EVM networks (eip155:*)\n")
 	}
 

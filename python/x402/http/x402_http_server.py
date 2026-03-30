@@ -272,6 +272,7 @@ class x402HTTPResourceServer(x402HTTPServerBase):
                 price=price,
                 network=option.network,
                 max_timeout_seconds=option.max_timeout_seconds,
+                extra=option.extra,
             )
 
             requirements = self._server.build_payment_requirements(config)
@@ -431,6 +432,7 @@ class x402HTTPResourceServerSync(x402HTTPServerBase):
                 price=price,
                 network=option.network,
                 max_timeout_seconds=option.max_timeout_seconds,
+                extra=option.extra,
             )
 
             requirements = self._server.build_payment_requirements(config)

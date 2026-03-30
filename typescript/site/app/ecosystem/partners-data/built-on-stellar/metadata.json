@@ -1,0 +1,19 @@
+{
+  "name": "Built on Stellar",
+  "description": "Free, public x402 facilitator for Stellar with ~5-second finality and sponsored fees. Full verification and settlement flow powered by the OpenZeppelin Relayer.",
+  "logoUrl": "/logos/built-on-stellar.png",
+  "websiteUrl": "https://developers.stellar.org/docs/build/apps/x402/built-on-stellar",
+  "category": "Facilitators",
+  "facilitator": {
+    "baseUrl": "https://channels.openzeppelin.com/x402",
+    "networks": ["stellar:pubnet", "stellar:testnet"],
+    "schemes": ["exact"],
+    "assets": ["SEP-41"],
+    "supports": {
+      "verify": true,
+      "settle": true,
+      "supported": true,
+      "list": false
+    }
+  }
+}

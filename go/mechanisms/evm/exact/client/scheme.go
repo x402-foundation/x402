@@ -17,14 +17,16 @@ import (
 // ExactEvmScheme implements the SchemeNetworkClient interface for EVM exact payments (V2)
 type ExactEvmScheme struct {
 	signer evm.ClientEvmSigner
+	config *ExactEvmSchemeConfig
 }
 
 // NewExactEvmScheme creates a new ExactEvmScheme.
-// The signer must implement ReadContract for EIP-2612 gas sponsoring support.
-// Use NewClientSignerFromPrivateKeyWithClient to create a signer with RPC connectivity.
-func NewExactEvmScheme(signer evm.ClientEvmSigner) *ExactEvmScheme {
+// Base flows only require a signer that can sign typed data.
+// Extension enrichment paths use optional runtime capabilities.
+func NewExactEvmScheme(signer evm.ClientEvmSigner, config *ExactEvmSchemeConfig) *ExactEvmScheme {
 	return &ExactEvmScheme{
 		signer: signer,
+		config: config,
 	}
 }
 
@@ -40,20 +42,15 @@ func (c *ExactEvmScheme) CreatePaymentPayload(
 	ctx context.Context,
 	requirements types.PaymentRequirements,
 ) (types.PaymentPayload, error) {
-	// Check asset transfer method
 	assetTransferMethod := evm.AssetTransferMethodEIP3009 // default
 	if requirements.Extra != nil {
 		if method, ok := requirements.Extra["assetTransferMethod"].(string); ok {
 			assetTransferMethod = evm.AssetTransferMethod(method)
 		}
 	}
-
-	// Route based on method
 	if assetTransferMethod == evm.AssetTransferMethodPermit2 {
 		return CreatePermit2Payload(ctx, c.signer, requirements)
 	}
-
-	// Default to EIP-3009
 	return c.createEIP3009Payload(ctx, requirements)
 }
 
@@ -66,26 +63,23 @@ func (c *ExactEvmScheme) CreatePaymentPayloadWithExtensions(
 	requirements types.PaymentRequirements,
 	extensions map[string]interface{},
 ) (types.PaymentPayload, error) {
-	// Check asset transfer method
 	assetTransferMethod := evm.AssetTransferMethodEIP3009
 	if requirements.Extra != nil {
 		if method, ok := requirements.Extra["assetTransferMethod"].(string); ok {
 			assetTransferMethod = evm.AssetTransferMethod(method)
 		}
 	}
-
 	if assetTransferMethod == evm.AssetTransferMethodPermit2 {
 		result, err := CreatePermit2Payload(ctx, c.signer, requirements)
 		if err != nil {
 			return types.PaymentPayload{}, err
 		}
 
-		// Try EIP-2612 permit first (preferred for compatible tokens)
 		extData, err := c.trySignEip2612Permit(ctx, requirements, result, extensions)
-		if err == nil && extData != nil {
+		if extData != nil {
 			result.Extensions = extData
-		} else {
-			// Fallback: ERC-20 approval (for tokens without EIP-2612)
+		} else if err == nil {
+			// EIP-2612 not applicable — try ERC-20 approval fallback
 			erc20ExtData, erc20Err := c.trySignErc20Approval(ctx, requirements, extensions)
 			if erc20Err == nil && erc20ExtData != nil {
 				result.Extensions = erc20ExtData
@@ -95,7 +89,6 @@ func (c *ExactEvmScheme) CreatePaymentPayloadWithExtensions(
 		return result, nil
 	}
 
-	// Default to EIP-3009
 	return c.createEIP3009Payload(ctx, requirements)
 }
 
@@ -106,7 +99,6 @@ func (c *ExactEvmScheme) trySignEip2612Permit(
 	result types.PaymentPayload,
 	extensions map[string]interface{},
 ) (map[string]interface{}, error) {
-	// Check if server advertises eip2612GasSponsoring
 	if extensions == nil {
 		return nil, nil
 	}
@@ -114,7 +106,6 @@ func (c *ExactEvmScheme) trySignEip2612Permit(
 		return nil, nil
 	}
 
-	// Check that required token metadata is available
 	tokenName, _ := requirements.Extra["name"].(string)
 	tokenVersion, _ := requirements.Extra["version"].(string)
 	if tokenName == "" || tokenVersion == "" {
@@ -128,8 +119,16 @@ func (c *ExactEvmScheme) trySignEip2612Permit(
 
 	tokenAddress := evm.NormalizeAddress(requirements.Asset)
 
+	readSigner, err := c.resolveReadSigner(ctx, requirements.Network)
+	if err != nil {
+		return nil, err
+	}
+	if readSigner == nil {
+		return nil, nil
+	}
+
 	// Check if user already has sufficient Permit2 allowance
-	allowanceResult, err := c.signer.ReadContract(
+	allowanceResult, err := readSigner.ReadContract(
 		ctx,
 		tokenAddress,
 		evm.ERC20AllowanceABI,
@@ -161,7 +160,7 @@ func (c *ExactEvmScheme) trySignEip2612Permit(
 
 	// Sign the EIP-2612 permit with the exact Permit2 permitted amount
 	// (the contract enforces permit2612.value == permit.permitted.amount)
-	info, err := SignEip2612Permit(ctx, c.signer, tokenAddress, tokenName, tokenVersion, chainID, deadline, requirements.Amount)
+	info, err := SignEip2612Permit(ctx, readSigner, tokenAddress, tokenName, tokenVersion, chainID, deadline, requirements.Amount)
 	if err != nil {
 		return nil, err
 	}
@@ -181,7 +180,6 @@ func (c *ExactEvmScheme) trySignErc20Approval(
 	requirements types.PaymentRequirements,
 	extensions map[string]interface{},
 ) (map[string]interface{}, error) {
-	// Check if server advertises erc20ApprovalGasSponsoring
 	if extensions == nil {
 		return nil, nil
 	}
@@ -189,9 +187,11 @@ func (c *ExactEvmScheme) trySignErc20Approval(
 		return nil, nil
 	}
 
-	// Signer must support transaction signing
-	txSigner, ok := c.signer.(evm.ClientEvmSignerWithTxSigning)
-	if !ok {
+	txSigner, err := c.resolveTxSigner(ctx, requirements.Network)
+	if err != nil {
+		return nil, err
+	}
+	if txSigner == nil {
 		return nil, nil
 	}
 
@@ -202,20 +202,22 @@ func (c *ExactEvmScheme) trySignErc20Approval(
 
 	tokenAddress := evm.NormalizeAddress(requirements.Asset)
 
-	// Check if user already has sufficient Permit2 allowance
-	allowanceResult, err := c.signer.ReadContract(
-		ctx,
-		tokenAddress,
-		evm.ERC20AllowanceABI,
-		"allowance",
-		common.HexToAddress(c.signer.Address()),
-		common.HexToAddress(evm.PERMIT2Address),
-	)
-	if err == nil {
-		if allowanceBig, ok := allowanceResult.(*big.Int); ok {
-			requiredAmount, ok := new(big.Int).SetString(requirements.Amount, 10)
-			if ok && allowanceBig.Cmp(requiredAmount) >= 0 {
-				return nil, nil // Already approved
+	// If read capability exists, skip signing when Permit2 allowance is already sufficient.
+	if readSigner, hasRead := c.signer.(evm.ClientEvmSignerWithReadContract); hasRead {
+		allowanceResult, err := readSigner.ReadContract(
+			ctx,
+			tokenAddress,
+			evm.ERC20AllowanceABI,
+			"allowance",
+			common.HexToAddress(c.signer.Address()),
+			common.HexToAddress(evm.PERMIT2Address),
+		)
+		if err == nil {
+			if allowanceBig, ok := allowanceResult.(*big.Int); ok {
+				requiredAmount, ok := new(big.Int).SetString(requirements.Amount, 10)
+				if ok && allowanceBig.Cmp(requiredAmount) >= 0 {
+					return nil, nil // Already approved
+				}
 			}
 		}
 	}

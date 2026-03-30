@@ -40,6 +40,12 @@ V1_DEFAULT_ASSETS: dict[str, AssetInfo] = {
         "version": "2",
         "decimals": 6,
     },
+    "stable": {
+        "address": "0x779Ded0c9e1022225f8E0630b35a9b54bE713736",
+        "name": "USDT0",
+        "version": "1",
+        "decimals": 6,
+    },
 }
 
 
@@ -62,6 +68,7 @@ V1_NETWORKS = [
     "skale-base-sepolia",
     "megaeth",
     "monad",
+    "stable",
 ]
 
 # V1 network name to chain ID mapping
@@ -84,4 +91,5 @@ V1_NETWORK_CHAIN_IDS: dict[str, int] = {
     "skale-base-sepolia": 1444673419,
     "megaeth": 4326,
     "monad": 143,
+    "stable": 988,
 }

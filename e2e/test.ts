@@ -1,6 +1,10 @@
 import { config } from 'dotenv';
-import { spawn, execSync } from 'child_process';
+import { spawn, execSync, ChildProcess } from 'child_process';
 import { writeFileSync } from 'fs';
+import { join } from 'path';
+import { createWalletClient, createPublicClient, http, parseEther, formatEther } from 'viem';
+import { privateKeyToAccount } from 'viem/accounts';
+import { base, baseSepolia } from 'viem/chains';
 import { TestDiscovery } from './src/discovery';
 import { ClientConfig, ScenarioResult, ServerConfig, TestScenario } from './src/types';
 import { config as loggerConfig, log, verboseLog, errorLog, close as closeLogger, createComboLogger } from './src/logger';
@@ -15,14 +19,24 @@ import { Semaphore, FacilitatorLock } from './src/concurrency';
 import { FacilitatorManager } from './src/facilitators/facilitator-manager';
 import { waitForHealth } from './src/health';
 
-/**
- * Run Permit2 setup script to ensure the client wallet has approved the Permit2 contract
- */
-async function setupPermit2Approval(): Promise<boolean> {
-  return new Promise((resolve) => {
-    log('\n🔑 Setting up Permit2 approval for EVM client wallet...');
+// Base Sepolia token addresses used by permit2 E2E tests
+const USDC_BASE_SEPOLIA = '0x036CbD53842c5426634e7929541eC2318f3dCF7e';
+const MOCK_ERC20_BASE_SEPOLIA = '0xeED520980fC7C7B4eB379B96d61CEdea2423005a';
 
-    const child = spawn('pnpm', ['permit2:approve'], {
+/**
+ * Approve Permit2 so that the standard/direct settle path can be exercised.
+ * Grants unlimited Permit2 allowance for the given token (or USDC by default).
+ */
+async function approvePermit2Approval(tokenAddress?: string): Promise<boolean> {
+  return new Promise((resolve) => {
+    const label = tokenAddress ? `token ${tokenAddress}` : 'USDC (default)';
+    verboseLog(`  🔓 Approving Permit2 for ${label}...`);
+
+    const args = ['scripts/permit2-approval.ts', 'approve'];
+    if (tokenAddress) {
+      args.push(tokenAddress);
+    }
+    const child = spawn('tsx', args, {
       cwd: process.cwd(),
       stdio: 'pipe',
       shell: true,
@@ -41,10 +55,10 @@ async function setupPermit2Approval(): Promise<boolean> {
 
     child.on('close', (code) => {
       if (code === 0) {
-        log('  ✅ Permit2 approval setup complete');
+        verboseLog('  ✅ Permit2 approval granted');
         resolve(true);
       } else {
-        errorLog(`  ❌ Permit2 setup failed (exit code ${code})`);
+        errorLog(`  ❌ Permit2 approve failed (exit code ${code})`);
         if (stderr) {
           errorLog(`  Error: ${stderr}`);
         }
@@ -53,21 +67,27 @@ async function setupPermit2Approval(): Promise<boolean> {
     });
 
     child.on('error', (error) => {
-      errorLog(`  ❌ Failed to run Permit2 setup: ${error.message}`);
+      errorLog(`  ❌ Failed to run Permit2 approve: ${error.message}`);
       resolve(false);
     });
   });
 }
 
 /**
- * Revoke Permit2 approval so that EIP-2612 gas sponsoring extension is exercised.
- * Sets the Permit2 allowance to 0, forcing the client to use the EIP-2612 permit path.
+ * Revoke Permit2 approval so that gas sponsoring extensions are exercised.
+ * Sets the Permit2 allowance to 0 for the given token (or USDC by default),
+ * forcing the client into the EIP-2612 or ERC-20 approval extension path.
  */
-async function revokePermit2Approval(): Promise<boolean> {
+async function revokePermit2Approval(tokenAddress?: string): Promise<boolean> {
   return new Promise((resolve) => {
-    verboseLog('  🔓 Revoking Permit2 approval for EIP-2612 test...');
+    const label = tokenAddress ? `token ${tokenAddress}` : 'USDC (default)';
+    verboseLog(`  🔓 Revoking Permit2 approval for ${label}...`);
 
-    const child = spawn('pnpm', ['permit2:revoke'], {
+    const args = ['scripts/permit2-approval.ts', 'revoke'];
+    if (tokenAddress) {
+      args.push(tokenAddress);
+    }
+    const child = spawn('tsx', args, {
       cwd: process.cwd(),
       stdio: 'pipe',
       shell: true,
@@ -102,6 +122,133 @@ async function revokePermit2Approval(): Promise<boolean> {
       resolve(false);
     });
   });
+}
+
+/**
+ * Shared EVM clients for the ETH sandwich helpers.
+ * Lazily initialised on first use so that missing env vars don't blow up
+ * non-EVM test runs.
+ */
+function getEvmClients() {
+  const evmNetwork = process.env.EVM_NETWORK || 'eip155:84532';
+  const evmRpcUrl = process.env.EVM_RPC_URL;
+  const evmChain = evmNetwork === 'eip155:8453' ? base : baseSepolia;
+
+  const facilitatorKey = process.env.FACILITATOR_EVM_PRIVATE_KEY;
+  const clientKey = process.env.CLIENT_EVM_PRIVATE_KEY;
+  if (!facilitatorKey || !clientKey) {
+    throw new Error('FACILITATOR_EVM_PRIVATE_KEY and CLIENT_EVM_PRIVATE_KEY must be set');
+  }
+
+  const facilitatorAccount = privateKeyToAccount(facilitatorKey as `0x${string}`);
+  const clientAccount = privateKeyToAccount(clientKey as `0x${string}`);
+
+  const publicClient = createPublicClient({
+    chain: evmChain,
+    transport: http(evmRpcUrl),
+  });
+  const facilitatorWallet = createWalletClient({
+    account: facilitatorAccount,
+    chain: evmChain,
+    transport: http(evmRpcUrl),
+  });
+  const clientWallet = createWalletClient({
+    account: clientAccount,
+    chain: evmChain,
+    transport: http(evmRpcUrl),
+  });
+
+  return { publicClient, facilitatorWallet, clientWallet, facilitatorAccount, clientAccount };
+}
+
+const REVOKE_FUND_AMOUNT = parseEther('0.001');
+
+/**
+ * Send a small amount of ETH from the facilitator wallet to the client wallet
+ * so the client can pay gas for Permit2 revocation transactions.
+ */
+async function fundClientForRevoke(): Promise<boolean> {
+  const { publicClient, facilitatorWallet, facilitatorAccount, clientAccount } = getEvmClients();
+
+  const clientBalance = await publicClient.getBalance({ address: clientAccount.address });
+  if (clientBalance >= REVOKE_FUND_AMOUNT) {
+    verboseLog(`  ℹ️  Client already has ${formatEther(clientBalance)} ETH, skipping fund`);
+    return true;
+  }
+
+  const facilitatorBalance = await publicClient.getBalance({ address: facilitatorAccount.address });
+  if (facilitatorBalance < REVOKE_FUND_AMOUNT) {
+    errorLog(`  ❌ Facilitator wallet ${facilitatorAccount.address} has insufficient ETH (${formatEther(facilitatorBalance)}) to fund client for revoke.`);
+    errorLog(`     Please fund the facilitator wallet with testnet ETH (need at least ${formatEther(REVOKE_FUND_AMOUNT)} ETH).`);
+    return false;
+  }
+
+  verboseLog(`  💸 Funding client ${clientAccount.address} with ${formatEther(REVOKE_FUND_AMOUNT)} ETH for revoke...`);
+  // Retry on nonce errors: load-balanced RPCs can return stale pending nonces,
+  // especially when the facilitator SERVICE process (same private key) is settling
+  // payments concurrently. A fresh nonce fetch + small delay usually resolves it.
+  let lastErr: Error | null = null;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    if (attempt > 0) await new Promise(r => setTimeout(r, 500));
+    try {
+      const nonce = await publicClient.getTransactionCount({
+        address: facilitatorAccount.address,
+        blockTag: 'pending',
+      });
+      const hash = await facilitatorWallet.sendTransaction({
+        to: clientAccount.address,
+        value: REVOKE_FUND_AMOUNT,
+        nonce,
+      });
+      verboseLog(`  ✅ Funded client (tx: ${hash})`);
+      return true;
+    } catch (err) {
+      lastErr = err instanceof Error ? err : new Error(String(err));
+      const isNonceError = lastErr.message.toLowerCase().includes('nonce');
+      if (!isNonceError) break;
+    }
+  }
+  const errLines = lastErr!.message.split('\n');
+  errorLog(`  ❌ Failed to fund client for revoke: ${errLines[0].trim()}`);
+  if (errLines.length > 1) verboseLog(errLines.slice(1).join('\n'));
+  return false;
+}
+
+/**
+ * Drain all ETH from the client wallet back to the facilitator wallet,
+ * leaving the client with ~0 ETH so the gas sponsoring funding step is
+ * exercised during the test.
+ */
+async function drainClientETH(): Promise<boolean> {
+  try {
+    const { publicClient, clientWallet, facilitatorAccount, clientAccount } = getEvmClients();
+
+    // Use pending balance so we see any in-flight fund transaction that hasn't confirmed yet.
+    const balance = await publicClient.getBalance({ address: clientAccount.address, blockTag: 'pending' });
+
+    // Reserve enough for gas. On L2s getGasPrice() returns a tiny value but
+    // viem's sendTransaction uses a higher maxFeePerGas with safety margin.
+    // Use a generous fixed buffer to avoid "insufficient funds" from the
+    // estimateGas pre-check.
+    const GAS_RESERVE = parseEther('0.0001');
+    const sendAmount = balance - GAS_RESERVE;
+
+    if (sendAmount <= 0n) {
+      verboseLog(`  ℹ️  Client balance (${formatEther(balance)} ETH) too small to drain, leaving as dust`);
+      return true;
+    }
+
+    verboseLog(`  💸 Draining ${formatEther(sendAmount)} ETH from client back to facilitator...`);
+    const hash = await clientWallet.sendTransaction({
+      to: facilitatorAccount.address,
+      value: sendAmount,
+    });
+    verboseLog(`  ✅ Drained client ETH (tx: ${hash})`);
+    return true;
+  } catch (err) {
+    errorLog(`  ❌ Failed to drain client ETH: ${err instanceof Error ? err.message : err}`);
+    return false;
+  }
 }
 
 // Load environment variables
@@ -356,31 +503,40 @@ async function runTest() {
   }
   log('');
 
-  // Auto-detect Permit2 scenarios
+  // Branch coverage assertions for EVM scenarios
+  const evmScenarios = filteredScenarios.filter(s => s.protocolFamily === 'evm');
+  if (evmScenarios.length > 0) {
+    const hasEip3009 = evmScenarios.some(s => (s.endpoint.transferMethod || 'eip3009') === 'eip3009');
+    const hasPermit2 = evmScenarios.some(s => s.endpoint.transferMethod === 'permit2');
+    const hasPermit2Direct = evmScenarios.some(s => s.endpoint.transferMethod === 'permit2' && s.endpoint.permit2Direct === true);
+    const hasPermit2Eip2612 = evmScenarios.some(s => s.endpoint.transferMethod === 'permit2' && !s.endpoint.extensions?.includes('erc20ApprovalGasSponsoring') && !s.endpoint.permit2Direct);
+    const hasPermit2Erc20 = evmScenarios.some(s => s.endpoint.transferMethod === 'permit2' && s.endpoint.extensions?.includes('erc20ApprovalGasSponsoring'));
+
+    const hasUpto = evmScenarios.some(s => s.endpoint.transferMethod === 'upto');
+    const hasUptoDirect = evmScenarios.some(s => s.endpoint.transferMethod === 'upto' && s.endpoint.permit2Direct === true);
+    const hasUptoEip2612 = evmScenarios.some(s => s.endpoint.transferMethod === 'upto' && !s.endpoint.extensions?.includes('erc20ApprovalGasSponsoring') && !s.endpoint.permit2Direct);
+    const hasUptoErc20 = evmScenarios.some(s => s.endpoint.transferMethod === 'upto' && s.endpoint.extensions?.includes('erc20ApprovalGasSponsoring'));
+
+    log('🔍 EVM Branch Coverage Check:');
+    log(`   EIP-3009 route:          ${hasEip3009 ? '✅' : '❌ MISSING'}`);
+    log(`   Permit2 route:           ${hasPermit2 ? '✅' : '❌ MISSING'}`);
+    log(`   Permit2+direct settle:   ${hasPermit2Direct ? '✅' : '⚠️  not found'}`);
+    log(`   Permit2+EIP2612 route:   ${hasPermit2Eip2612 ? '✅' : '⚠️  not found (may be covered by permit2 route if eip2612 extension enabled)'}`);
+    log(`   Permit2+ERC20 route:     ${hasPermit2Erc20 ? '✅' : '⚠️  not found'}`);
+    log(`   Upto route:              ${hasUpto ? '✅' : '⚠️  not found'}`);
+    log(`   Upto+direct settle:      ${hasUptoDirect ? '✅' : '⚠️  not found'}`);
+    log(`   Upto+EIP2612 route:      ${hasUptoEip2612 ? '✅' : '⚠️  not found'}`);
+    log(`   Upto+ERC20 route:        ${hasUptoErc20 ? '✅' : '⚠️  not found'}`);
+    log('');
+  }
+
+  // Auto-detect Permit2 scenarios (upto uses Permit2 under the hood)
   const hasPermit2Scenarios = filteredScenarios.some(
-    (s) => s.endpoint.transferMethod === 'permit2'
+    (s) => s.endpoint.transferMethod === 'permit2' || s.endpoint.transferMethod === 'upto'
   );
 
-  // Check if eip2612GasSponsoring extension should be tested
-  const hasEip2612Extension = selectedExtensions?.includes('eip2612GasSponsoring') ?? false;
-
   if (hasPermit2Scenarios) {
-    if (hasEip2612Extension) {
-      log('🔐 Permit2 scenarios detected with eip2612GasSponsoring extension');
-    } else {
-      // Standard permit2 flow: ensure approval exists
-      log('🔐 Permit2 scenarios detected - checking approval...');
-      const setupSuccess = await setupPermit2Approval();
-      if (!setupSuccess) {
-        errorLog(
-          '\n❌ Failed to setup Permit2 approval. Cannot continue with Permit2 tests.'
-        );
-        errorLog(
-          '💡 Make sure CLIENT_EVM_PRIVATE_KEY is set and the wallet has USDC.'
-        );
-        process.exit(1);
-      }
-    }
+    log('🔐 Permit2 scenarios detected — revoke before gas-sponsored tests, approve before permit2-direct tests');
   }
 
   // Collect unique facilitators and servers
@@ -540,6 +696,51 @@ async function runTest() {
     log(`  ✅ Facilitator ${facilitatorName} ready at ${url}`);
   }
 
+  // Start mock facilitator (claims to support everything, used as fallback so
+  // servers with routes unsupported by the real facilitator can still start)
+  const mockFacilitatorPort = currentPort++;
+  log(`\n🎭 Starting mock facilitator on port ${mockFacilitatorPort}...`);
+  const mockFacilitatorProcess: ChildProcess = spawn(
+    'npx', ['tsx', 'index.ts'],
+    {
+      cwd: join(process.cwd(), 'mock-facilitator'),
+      env: {
+        ...process.env,
+        PORT: mockFacilitatorPort.toString(),
+        EVM_NETWORK: networks.evm.caip2,
+        SVM_NETWORK: networks.svm.caip2,
+        APTOS_NETWORK: networks.aptos.caip2,
+        STELLAR_NETWORK: networks.stellar.caip2,
+      },
+      stdio: 'pipe',
+    },
+  );
+  mockFacilitatorProcess.stderr?.on('data', (data: Buffer) => {
+    verboseLog(`[mock-facilitator] stderr: ${data.toString().trim()}`);
+  });
+  mockFacilitatorProcess.stdout?.on('data', (data: Buffer) => {
+    verboseLog(`[mock-facilitator] stdout: ${data.toString().trim()}`);
+  });
+
+  const mockFacilitatorUrl = `http://localhost:${mockFacilitatorPort}`;
+  const mockHealthy = await waitForHealth(
+    async () => {
+      try {
+        const res = await fetch(`${mockFacilitatorUrl}/health`);
+        return { success: res.ok };
+      } catch {
+        return { success: false };
+      }
+    },
+    { label: 'Mock facilitator' },
+  );
+  if (!mockHealthy) {
+    log('❌ Failed to start mock facilitator');
+    mockFacilitatorProcess.kill();
+    process.exit(1);
+  }
+  log(`  ✅ Mock facilitator ready at ${mockFacilitatorUrl}`);
+
   log('\n✅ All facilitators are ready! Servers will be started/restarted as needed per test scenario.\n');
 
   log(`🔧 Server/Facilitator combinations: ${serverFacilitatorCombos.length}`);
@@ -571,6 +772,8 @@ async function runTest() {
       stellarPrivateKey: clientStellarPrivateKey || '',
       serverUrl: `http://localhost:${port}`,
       endpointPath: scenario.endpoint.path,
+      evmNetwork: networks.evm.caip2,
+      evmRpcUrl: networks.evm.rpcUrl,
     };
 
     try {
@@ -658,6 +861,7 @@ async function runTest() {
       stellarPayTo: facilitatorSupportsStellar ? (serverStellarAddress || '') : '',
       networks,
       facilitatorUrl,
+      mockFacilitatorUrl,
     };
 
     const started = await startServer(serverProxy, serverConfig);
@@ -677,20 +881,43 @@ async function runTest() {
     cLog.log(`  ✅ Server ${serverName} ready`);
 
     const results: DetailedTestResult[] = [];
+    // Track which endpoint paths have already been "cold started" in this combo.
+    // The first test for each path runs the full state-setup (fund/revoke/drain);
+    // subsequent tests for the same path skip the setup and run warm.
+    const coldStartedEndpoints = new Set<string>();
     try {
       for (const scenario of scenarios) {
         const tn = nextTestNumber();
         const isEvm = scenario.protocolFamily === 'evm';
 
-        if (hasEip2612Extension && scenario.endpoint.transferMethod === 'permit2') {
-          await revokePermit2Approval();
+        if (scenario.endpoint.permit2Direct) {
+          await approvePermit2Approval(USDC_BASE_SEPOLIA);
+        } else if (scenario.endpoint.coldstart) {
+          const endpointKey = scenario.endpoint.path;
+          if (!coldStartedEndpoints.has(endpointKey)) {
+            coldStartedEndpoints.add(endpointKey);
+            const token =
+              scenario.endpoint.extensions?.includes('erc20ApprovalGasSponsoring')
+                ? MOCK_ERC20_BASE_SEPOLIA
+                : USDC_BASE_SEPOLIA;
+            await fundClientForRevoke();
+            // Give fund tx 1s to propagate before submitting revoke (from client wallet)
+            await new Promise(resolve => setTimeout(resolve, 1000));
+            await revokePermit2Approval(token);
+            // Give revoke tx 1s to propagate before drain reads pending balance
+            await new Promise(resolve => setTimeout(resolve, 1000));
+            await drainClientETH();
+            // Wait for RPC nonce propagation across load-balanced nodes before the
+            // test client (which may use a separate RPC connection) queries the nonce.
+            await new Promise(resolve => setTimeout(resolve, 1500));
+          }
         }
 
         if (isEvm && facilitatorName && evmLock) {
           const releaseLock = await evmLock.acquire(facilitatorName);
           try {
             results.push(await runSingleTest(scenario, port, tn, cLog));
-            await new Promise(resolve => setTimeout(resolve, 2000));
+            await new Promise(resolve => setTimeout(resolve, 1000));
           } finally {
             releaseLock();
           }
@@ -762,6 +989,8 @@ async function runTest() {
     log(`  🛑 Stopping facilitator: ${facilitatorName}`);
     facilitatorStopPromises.push(manager.stop());
   }
+  log('  🛑 Stopping mock facilitator');
+  mockFacilitatorProcess.kill();
   await Promise.all(facilitatorStopPromises);
 
   // Calculate totals

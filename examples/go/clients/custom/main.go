@@ -70,7 +70,7 @@ func main() {
 	}
 
 	x402Client := x402.Newx402Client().
-		Register("eip155:*", evm.NewExactEvmScheme(evmSigner))
+		Register("eip155:*", evm.NewExactEvmScheme(evmSigner, nil))
 
 	// Make the request with custom payment handling
 	fmt.Println("🔧 Using custom payment implementation (no wrapper)\n")

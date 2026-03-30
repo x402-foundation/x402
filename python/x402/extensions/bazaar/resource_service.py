@@ -36,6 +36,7 @@ class DeclareQueryDiscoveryConfig:
 
     input: dict[str, Any] | None = None
     input_schema: dict[str, Any] | None = None
+    path_params_schema: dict[str, Any] | None = None
     output: OutputConfig | None = None
 
 
@@ -45,6 +46,7 @@ class DeclareBodyDiscoveryConfig:
 
     input: dict[str, Any] | None = None
     input_schema: dict[str, Any] | None = None
+    path_params_schema: dict[str, Any] | None = None
     body_type: BodyType = "json"
     output: OutputConfig | None = None
 
@@ -52,6 +54,7 @@ class DeclareBodyDiscoveryConfig:
 def _create_query_discovery_extension(
     input_data: dict[str, Any] | None = None,
     input_schema: dict[str, Any] | None = None,
+    path_params_schema: dict[str, Any] | None = None,
     output: OutputConfig | None = None,
 ) -> QueryDiscoveryExtension:
     """Create a query discovery extension.
@@ -59,6 +62,7 @@ def _create_query_discovery_extension(
     Args:
         input_data: Example query parameters.
         input_schema: JSON schema for query parameters.
+        path_params_schema: JSON schema for URL path parameters.
         output: Output specification with example.
 
     Returns:
@@ -87,7 +91,10 @@ def _create_query_discovery_extension(
                 "type": {"type": "string", "const": "http"},
                 "method": {"type": "string", "enum": ["GET", "HEAD", "DELETE"]},
             },
-            "required": ["type"],
+            "required": ["type", "method"],
+            # pathParams are not declared here at schema build time —
+            # the server extension's enrich_declaration adds pathParams to both info and schema
+            # atomically at request time, keeping data and schema consistent.
             "additionalProperties": False,
         }
     }
@@ -97,6 +104,12 @@ def _create_query_discovery_extension(
         schema_properties["input"]["properties"]["queryParams"] = {
             "type": "object",
             **input_schema,
+        }
+
+    if path_params_schema:
+        schema_properties["input"]["properties"]["pathParams"] = {
+            "type": "object",
+            **path_params_schema,
         }
 
     # Add output schema if provided
@@ -128,6 +141,7 @@ def _create_query_discovery_extension(
 def _create_body_discovery_extension(
     input_data: dict[str, Any] | None = None,
     input_schema: dict[str, Any] | None = None,
+    path_params_schema: dict[str, Any] | None = None,
     body_type: BodyType = "json",
     output: OutputConfig | None = None,
 ) -> BodyDiscoveryExtension:
@@ -136,6 +150,7 @@ def _create_body_discovery_extension(
     Args:
         input_data: Example request body.
         input_schema: JSON schema for request body.
+        path_params_schema: JSON schema for URL path parameters.
         body_type: Content type of body (json, form-data, text).
         output: Output specification with example.
 
@@ -168,10 +183,19 @@ def _create_body_discovery_extension(
                 "bodyType": {"type": "string", "enum": ["json", "form-data", "text"]},
                 "body": input_schema,
             },
-            "required": ["type", "bodyType", "body"],
+            "required": ["type", "method", "bodyType", "body"],
+            # pathParams are not declared here at schema build time —
+            # the server extension's enrich_declaration adds pathParams to both info and schema
+            # atomically at request time, keeping data and schema consistent.
             "additionalProperties": False,
         }
     }
+
+    if path_params_schema:
+        schema_properties["input"]["properties"]["pathParams"] = {
+            "type": "object",
+            **path_params_schema,
+        }
 
     # Add output schema if provided
     if output and output.example is not None:
@@ -202,6 +226,7 @@ def _create_body_discovery_extension(
 def declare_discovery_extension(
     input: dict[str, Any] | None = None,  # noqa: A002
     input_schema: dict[str, Any] | None = None,
+    path_params_schema: dict[str, Any] | None = None,
     body_type: BodyType | None = None,
     output: OutputConfig | None = None,
 ) -> dict[str, Any]:
@@ -218,6 +243,7 @@ def declare_discovery_extension(
         input: Example input data (query params for GET/HEAD/DELETE,
             body for POST/PUT/PATCH).
         input_schema: JSON Schema for the input.
+        path_params_schema: JSON Schema for URL path parameters (e.g. :city slugs).
         body_type: For POST/PUT/PATCH, specify "json", "form-data", or "text".
             When provided, creates a body extension. When None, creates a query extension.
         output: Output configuration with example and optional schema.
@@ -234,6 +260,15 @@ def declare_discovery_extension(
                 "properties": {"query": {"type": "string"}},
                 "required": ["query"]
             }
+        )
+
+        # For a GET endpoint with path params
+        extension = declare_discovery_extension(
+            path_params_schema={
+                "properties": {"city": {"type": "string"}},
+                "required": ["city"]
+            },
+            output=OutputConfig(example={"city": "sf", "weather": "foggy"})
         )
 
         # For a POST endpoint with JSON body
@@ -257,6 +292,7 @@ def declare_discovery_extension(
         extension = _create_body_discovery_extension(
             input_data=input,
             input_schema=input_schema,
+            path_params_schema=path_params_schema,
             body_type=body_type,  # type: ignore[arg-type]
             output=output,
         )
@@ -264,6 +300,7 @@ def declare_discovery_extension(
         extension = _create_query_discovery_extension(
             input_data=input,
             input_schema=input_schema,
+            path_params_schema=path_params_schema,
             output=output,
         )
 

@@ -1,6 +1,8 @@
 # Sign-In-With-X (SIWX) Client Example
 
-Client demonstrating how to use Sign-In-With-X authentication with x402, allowing wallet signatures to prove prior payment and skip re-payment on subsequent requests.
+Client demonstrating both SIWX flows supported by x402:
+- Auth-only access for routes that require a wallet signature but no payment
+- Paid-once access where SIWX proves a wallet has already paid
 
 ```typescript
 import { x402Client, x402HTTPClient, wrapFetchWithPayment } from "@x402/fetch";
@@ -24,19 +26,22 @@ const httpClient = new x402HTTPClient(client).onPaymentRequired(
 
 const fetchWithPayment = wrapFetchWithPayment(fetch, httpClient);
 
-// First request: pays for access
-const response1 = await fetchWithPayment("http://localhost:4021/weather");
+// Auth-only route: 402 challenge -> sign -> retry, no payment
+const profile = await fetchWithPayment("http://localhost:4021/profile");
 
-// Second request: SIWX proves we already paid, no payment needed
-const response2 = await fetchWithPayment("http://localhost:4021/weather");
+// Paid route: first request pays for access
+const weather1 = await fetchWithPayment("http://localhost:4021/weather");
+
+// Paid route: second request uses SIWX to prove prior payment
+const weather2 = await fetchWithPayment("http://localhost:4021/weather");
 ```
 
 ## How It Works
 
-1. **First request** — Client pays for resource access
-2. **Server remembers** — Payment is recorded against wallet address
-3. **Second request** — Client signs SIWX message proving wallet ownership
-4. **Server grants access** — No payment required, authenticated via signature
+1. **Auth-only route** — Client receives a SIWX challenge, signs it, and retries without payment
+2. **Paid route, first request** — Client pays for resource access
+3. **Server remembers** — Payment is recorded against wallet address
+4. **Paid route, later request** — Client signs SIWX message proving wallet ownership instead of paying again
 
 ## Prerequisites
 
@@ -59,7 +64,7 @@ and provide at least one private key:
 - `SVM_PRIVATE_KEY` - (Optional) Solana private key for SVM payments and SIWX authentication
 - `RESOURCE_SERVER_URL` - (Optional) Server URL (defaults to `http://localhost:4021`)
 
-**Note:** At least one private key (EVM or SVM) is required. SIWX supports both EVM signatures (EIP-191) and Solana signatures (Ed25519), so authentication works with either key type.
+**Note:** At least one private key (EVM or SVM) is required. The `/profile` auth-only example and the paid `/weather` and `/joke` routes all work with either signer type.
 
 2. Install and build from typescript examples root:
 
@@ -87,7 +92,12 @@ pnpm start
 
 ```
 Client EVM address: 0x...
+Client SVM address: ...
 Server: http://localhost:4021
+
+--- /profile (auth-only, no payment) ---
+   ✓ Authenticated via SIWX (no payment required)
+   Response: { address: '0x...', data: 'Your profile data' }
 
 --- /weather ---
 1. First request...
@@ -110,4 +120,6 @@ Server: http://localhost:4021
 2. Second request...
    ✓ Authenticated via SIWX (previously paid)
    ...
+
+Done. /profile used auth-only SIWX. /weather and /joke used payment + SIWX.
 ```

@@ -1,3 +1,8 @@
+"use client";
+
+import Link from "next/link";
+import Image from "next/image";
+
 interface StatsData {
   transactions: string;
   volume: string;
@@ -28,18 +33,56 @@ function StatItem({ value, label }: StatItemProps) {
   );
 }
 
+const brands = [
+  { name: "Stripe", logo: "/logos/stripe-mono.svg" },
+  { name: "AWS", logo: "/logos/aws.-mono.svg", className: "h-8" },
+  { name: "Messari", logo: "/logos/messari-mono.svg" },
+  { name: "Alchemy", logo: "/logos/alchemy-mono.svg" },
+  { name: "Nansen", logo: "/logos/nansen-mono.svg" },
+  { name: "Vercel", logo: "/logos/vercel-mono.svg" },
+  { name: "Cloudflare", logo: "/logos/cloudflare-mono.svg", className: "h-7" },
+  { name: "World", logo: "/logos/world-mono.svg" },
+];
+
+function BrandSet() {
+  return (
+    <div className="flex shrink-0 items-center [gap:var(--gap)] animate-marquee">
+      {brands.map((brand) => (
+        <Image
+          key={brand.name}
+          src={brand.logo}
+          alt={brand.name}
+          width={120}
+          height={32}
+          className={`w-auto brightness-0 opacity-70 hover:brightness-100 hover:opacity-100 transition-all duration-300 shrink-0 ${brand.className || "h-6"}`}
+        />
+      ))}
+    </div>
+  );
+}
+
 export function StatsSection() {
   return (
     <section className="max-w-container mx-auto px-4 sm:px-6 md:px-10 py-10 sm:py-12 md:py-14" aria-label="Platform statistics">
+      <p className="text-xs font-medium text-gray-40 uppercase tracking-wide mb-4">Last 30 days</p>
       <div className="flex flex-wrap items-end gap-6 sm:gap-8 md:gap-16 lg:gap-20">
-          <StatItem value={STATIC_STATS.transactions} label="Transactions" />
-          <StatItem value={STATIC_STATS.volume} label="Volume" />
-          <StatItem value={STATIC_STATS.buyers} label="Buyers" />
-          <StatItem value={STATIC_STATS.sellers} label="Sellers" />
-        <div className="flex flex-col items-start gap-1.5">
-          <div className="text-3xl sm:text-4xl md:text-[56px] font-display leading-none tracking-tighter text-black invisible">0</div>
-          <div className="text-xs sm:text-sm font-medium text-gray-40">Last 30 days</div>
-        </div>
+        <StatItem value={STATIC_STATS.transactions} label="Transactions" />
+        <StatItem value={STATIC_STATS.volume} label="Volume" />
+        <StatItem value={STATIC_STATS.buyers} label="Buyers" />
+        <StatItem value={STATIC_STATS.sellers} label="Sellers" />
+      </div>
+
+      <div className="border-t border-gray-10 mt-10 sm:mt-12 pt-6 sm:pt-8">
+        <Link href="/ecosystem" className="block" aria-label="View ecosystem partners">
+          <p className="text-xs font-medium text-gray-40 uppercase tracking-wide mb-5">Adopted by</p>
+          <div className="overflow-hidden [--gap:2.5rem] sm:[--gap:3rem] md:[--gap:4rem] [mask-image:linear-gradient(to_right,transparent,black_10%,black_90%,transparent)]">
+            <div className="flex [gap:var(--gap)]">
+              {Array.from({ length: 4 }).map((_, i) => (
+                <BrandSet key={i} />
+              ))}
+            </div>
+          </div>
+        </Link>
       </div>
     </section>
   );

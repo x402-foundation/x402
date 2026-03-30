@@ -1,5 +1,7 @@
-import { rpc } from "@stellar/stellar-sdk";
+import { Horizon, rpc } from "@stellar/stellar-sdk";
 import {
+  DEFAULT_PUBNET_HORIZON_URL,
+  DEFAULT_TESTNET_HORIZON_URL,
   DEFAULT_TESTNET_RPC_URL,
   DEFAULT_TOKEN_DECIMALS,
   STELLAR_ASSET_ADDRESS_REGEX,
@@ -13,7 +15,7 @@ import {
 import type { Network } from "@x402/core/types";
 
 export const DEFAULT_ESTIMATED_LEDGER_SECONDS = 5;
-const RPC_LEDGERS_SAMPLE_SIZE = 20;
+const HORIZON_LEDGERS_SAMPLE_SIZE = 20;
 
 /**
  * Configuration for RPC client connections
@@ -109,24 +111,42 @@ export function getRpcClient(network: Network, rpcConfig?: RpcConfig): rpc.Serve
 }
 
 /**
- * Fetches the estimated ledger close time (seconds per ledger) from RPC getLedgers.
+ * Creates a Horizon SDK client for the given network.
  *
- * @param server - The Soroban RPC Server instance
+ * @param network - The CAIP-2 network identifier
+ * @returns A configured Horizon.Server instance
+ * @throws {Error} If the network is unknown
+ */
+export function getHorizonClient(network: Network): Horizon.Server {
+  switch (network) {
+    case STELLAR_TESTNET_CAIP2:
+      return new Horizon.Server(DEFAULT_TESTNET_HORIZON_URL);
+    case STELLAR_PUBNET_CAIP2:
+      return new Horizon.Server(DEFAULT_PUBNET_HORIZON_URL);
+    default:
+      throw new Error(`Unknown Stellar network: ${network}`);
+  }
+}
+
+/**
+ * Estimates ledger close time by fetching the most recent ledgers from Horizon.
+ *
+ * Uses the Horizon SDK's ledger query builder which is significantly faster
+ * than the Soroban RPC `getLedgers` method for this purpose.
+ *
+ * @param network - The CAIP-2 network identifier
  * @returns Estimated seconds per ledger, or DEFAULT_ESTIMATED_LEDGER_SECONDS (5) on error
  */
-export async function getEstimatedLedgerCloseTimeSeconds(server: rpc.Server): Promise<number> {
+export async function getEstimatedLedgerCloseTimeSeconds(network: Network): Promise<number> {
   try {
-    const latestLedger = await server.getLatestLedger();
-    const startLedger = latestLedger.sequence;
-    const { ledgers } = await server.getLedgers({
-      startLedger,
-      pagination: { limit: RPC_LEDGERS_SAMPLE_SIZE },
-    });
-    if (!ledgers || ledgers.length < 2) return DEFAULT_ESTIMATED_LEDGER_SECONDS;
+    const horizon = getHorizonClient(network);
+    const page = await horizon.ledgers().limit(HORIZON_LEDGERS_SAMPLE_SIZE).order("desc").call();
+    const records = page.records;
+    if (!records || records.length < 2) return DEFAULT_ESTIMATED_LEDGER_SECONDS;
 
-    const oldestTs = parseInt(ledgers[0].ledgerCloseTime);
-    const newestTs = parseInt(ledgers[ledgers.length - 1].ledgerCloseTime);
-    const intervals = ledgers.length - 1;
+    const newestTs = new Date(records[0].closed_at).getTime() / 1000;
+    const oldestTs = new Date(records[records.length - 1].closed_at).getTime() / 1000;
+    const intervals = records.length - 1;
     return Math.ceil((newestTs - oldestTs) / intervals);
   } catch {
     return DEFAULT_ESTIMATED_LEDGER_SECONDS;

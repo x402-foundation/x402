@@ -1,3 +1,21 @@
+## v2.7.0 - 2026-03-23
+### Changed
+- Changed Bazaar discovery extension to support dynamic route patterns. EnrichDeclaration now
+translates [param] route segments to :param-style routeTemplate and populates pathParams with
+concrete values from each request. The EnrichExtensions call in go/http/server.go, previously
+disabled (commented out) in all prior Go releases, is now active: ALL existing Go routes that
+declare extensions will have their extensions enriched at request time. Added RouteTemplate field
+to DiscoveryExtension so callers can read it without a type assertion.
+
+## v2.6.0 - 2026-03-17
+### Added
+- Added simulation to permit2 verify and (optional) settle
+### Changed
+- Replaced SendRawApprovalAndSettle with a generic SendTransactions signer method that accepts an array of transaction requests (pre-signed or unsigned intents). Closed fail-open verification paths, aligned Permit2 amount check to exact match, and improved client extension fallback error handling
+- Simulate transaction in verify and (optional) settle; Added multicall utility for efficient rpc calls; Fixed undeployed smart wallet handling
+### Fixed
+- Fixed paywall config injection targeting `</body>` causing SVG parse errors in the browser
+
 ## v2.5.0 - 2026-03-06
 ### Added
 - Add route configuration validation during Initialize() to catch scheme/facilitator mismatches at startup

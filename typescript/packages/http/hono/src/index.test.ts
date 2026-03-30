@@ -7,6 +7,7 @@ import type {
   FacilitatorClient,
 } from "@x402/core/server";
 import {
+  FacilitatorResponseError,
   x402ResourceServer,
   x402HTTPResourceServer as HTTPResourceServer,
 } from "@x402/core/server";
@@ -40,6 +41,28 @@ let mockRegisterPaywallProvider: ReturnType<typeof vi.fn>;
 let mockRequiresPayment: ReturnType<typeof vi.fn>;
 
 vi.mock("@x402/core/server", () => ({
+  SETTLEMENT_OVERRIDES_HEADER: "Settlement-Overrides",
+  FacilitatorResponseError: class FacilitatorResponseError extends Error {
+    /**
+     * Creates a mock facilitator response error.
+     *
+     * @param message - Error message.
+     */
+    constructor(message: string) {
+      super(message);
+      this.name = "FacilitatorResponseError";
+    }
+  },
+  getFacilitatorResponseError: (error: unknown) => {
+    let current = error;
+    while (current instanceof Error) {
+      if (current.name === "FacilitatorResponseError") {
+        return current;
+      }
+      current = (current as Error & { cause?: unknown }).cause;
+    }
+    return null;
+  },
   x402ResourceServer: vi.fn().mockImplementation(() => ({
     initialize: vi.fn().mockResolvedValue(undefined),
     registerExtension: vi.fn(),
@@ -394,6 +417,46 @@ describe("paymentMiddleware", () => {
     await middleware(context, next);
 
     expect(context.json).toHaveBeenCalledWith({}, 402);
+  });
+
+  it("retries initialization after a facilitator init failure", async () => {
+    const initialize = vi
+      .fn()
+      .mockRejectedValueOnce(
+        new Error("Failed to initialize: no supported payment kinds loaded from any facilitator.", {
+          cause: new FacilitatorResponseError(
+            "Facilitator supported returned invalid JSON: not-json",
+          ),
+        }),
+      )
+      .mockResolvedValueOnce(undefined);
+
+    vi.mocked(HTTPResourceServer).mockImplementation(
+      (server, routes) =>
+        ({
+          initialize,
+          processHTTPRequest: mockProcessHTTPRequest,
+          processSettlement: mockProcessSettlement,
+          registerPaywallProvider: mockRegisterPaywallProvider,
+          requiresPayment: mockRequiresPayment,
+          routes,
+          server: server || {
+            hasExtension: vi.fn().mockReturnValue(false),
+            registerExtension: vi.fn(),
+          },
+        }) as unknown as x402HTTPResourceServer,
+    );
+    mockProcessHTTPRequest.mockResolvedValue({ type: "no-payment-required" });
+
+    const middleware = paymentMiddleware(mockRoutes, {} as unknown as x402ResourceServer);
+    const next = vi.fn().mockResolvedValue(undefined);
+
+    await middleware(createMockContext(), next);
+    await middleware(createMockContext(), next);
+
+    expect(initialize).toHaveBeenCalledTimes(2);
+    expect(mockProcessHTTPRequest).toHaveBeenCalledTimes(1);
+    expect(next).toHaveBeenCalledTimes(1);
   });
 
   it("returns 402 when settlement returns success: false", async () => {

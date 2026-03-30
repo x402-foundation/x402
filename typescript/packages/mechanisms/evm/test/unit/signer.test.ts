@@ -31,15 +31,15 @@ describe("EVM Signer Converters", () => {
       expect(result.readContract).toBeDefined();
     });
 
-    it("should throw when neither signer nor publicClient has readContract", () => {
+    it("should return minimal signer when no readContract exists", () => {
       const mockAccount = {
         address: "0x1234567890123456789012345678901234567890" as `0x${string}`,
         signTypedData: async () => "0xsignature" as `0x${string}`,
       };
 
-      expect(() => toClientEvmSigner(mockAccount)).toThrow(
-        "toClientEvmSigner requires either a signer with readContract or a publicClient",
-      );
+      const result = toClientEvmSigner(mockAccount);
+      expect(result.address).toBe(mockAccount.address);
+      expect(result.readContract).toBeUndefined();
     });
   });
 

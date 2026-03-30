@@ -11,6 +11,12 @@ export const STELLAR_WILDCARD_CAIP2 = "stellar:*";
 export const DEFAULT_TESTNET_RPC_URL = "https://soroban-testnet.stellar.org";
 
 /**
+ * Default Horizon API URLs
+ */
+export const DEFAULT_TESTNET_HORIZON_URL = "https://horizon-testnet.stellar.org";
+export const DEFAULT_PUBNET_HORIZON_URL = "https://horizon.stellar.org";
+
+/**
  * Stellar validation regex for destination and asset addresses
  */
 export const STELLAR_DESTINATION_ADDRESS_REGEX = /^(?:[GC][ABCD][A-Z2-7]{54}|M[ABCD][A-Z2-7]{67})$/; // Stellar address: G-account (56 chars), C-account (56 chars), or M-account (69 chars, muxed)

@@ -5,6 +5,7 @@ Provides payment-gated route protection for FastAPI applications.
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Any
 
@@ -18,6 +19,7 @@ except ImportError as e:
         "FastAPI middleware requires fastapi and starlette. Install with: uv add x402[fastapi]"
     ) from e
 
+from ..facilitator_client_base import FacilitatorResponseError
 from ..types import (
     HTTPAdapter,
     HTTPRequestContext,
@@ -187,6 +189,14 @@ class FastAPIAdapter(HTTPAdapter):
 # ============================================================================
 
 
+def _facilitator_error_response(error: FacilitatorResponseError) -> JSONResponse:
+    """Map invalid facilitator responses to a stable HTTP error."""
+    return JSONResponse(
+        content={"error": str(error)},
+        status_code=502,
+    )
+
+
 def payment_middleware(
     routes: RoutesConfig,
     server: x402ResourceServer,
@@ -248,8 +258,9 @@ def payment_middleware(
     if paywall_provider:
         http_server.register_paywall_provider(paywall_provider)
 
-    # Lazy initialization state
+    # Lazy initialization state with async lock for concurrency safety
     init_done = False
+    init_lock = asyncio.Lock()
 
     async def middleware(
         request: Request,
@@ -272,13 +283,21 @@ def payment_middleware(
         if not http_server.requires_payment(context):
             return await call_next(request)
 
-        # Initialize on first protected request
+        # Initialize on first protected request (double-checked locking)
         if sync_facilitator_on_start and not init_done:
-            http_server.initialize()
-            init_done = True
+            async with init_lock:
+                if not init_done:
+                    try:
+                        http_server.initialize()
+                    except FacilitatorResponseError as error:
+                        return _facilitator_error_response(error)
+                    init_done = True
 
         # Process payment request
-        result = await http_server.process_http_request(context, paywall_config)
+        try:
+            result = await http_server.process_http_request(context, paywall_config)
+        except FacilitatorResponseError as error:
+            return _facilitator_error_response(error)
 
         if result.type == "no-payment-required":
             return await call_next(request)
@@ -360,6 +379,8 @@ def payment_middleware(
                     media_type=response.media_type,
                 )
 
+            except FacilitatorResponseError as error:
+                return _facilitator_error_response(error)
             except Exception:
                 return JSONResponse(content={}, status_code=402)
 

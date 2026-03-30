@@ -31,7 +31,7 @@ func createMechanismHelperRegistrationClient(evmPrivateKey, svmPrivateKey string
 	// Register EVM scheme for all EVM networks using wildcard
 	// This registers:
 	// - eip155:* (all EVM networks in v2)
-	client.Register("eip155:*", evm.NewExactEvmScheme(evmSigner))
+	client.Register("eip155:*", evm.NewExactEvmScheme(evmSigner, nil))
 
 	// Register SVM scheme if key is provided
 	if svmPrivateKey != "" {
@@ -48,7 +48,7 @@ func createMechanismHelperRegistrationClient(evmPrivateKey, svmPrivateKey string
 
 	// The fluent API allows chaining for clean code:
 	// client := x402.Newx402Client().
-	//     Register("eip155:*", evm.NewExactEvmScheme(evmSigner)).
+	//     Register("eip155:*", evm.NewExactEvmScheme(evmSigner, nil)).
 	//     Register("solana:*", svm.NewExactSvmScheme(svmSigner))
 
 	return client, nil

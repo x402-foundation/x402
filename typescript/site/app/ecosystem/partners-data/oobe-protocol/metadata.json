@@ -1,0 +1,7 @@
+{
+  "name": "OOBE Protocol & Synapse",
+  "category": "Infrastructure & Tooling",
+  "logoUrl": "/logos/oobe-protocol.png",
+  "description": "Decentralized protocol for AI agent identity, discovery, and reputation on Solana. Agents register on-chain via indexed PDAs, publish capabilities, and are discovered trustlessly. Synapse, its TypeScript SDK, enables agent registration, transaction building, and x402 micropayments — each agent stores an x402Endpoint in its PDA for automatic per-call payments with SOL or USDC.",
+  "websiteUrl": "https://oobeprotocol.ai"
+}

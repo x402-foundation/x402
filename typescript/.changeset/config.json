@@ -3,9 +3,30 @@
   "changelog": "@changesets/cli/changelog",
   "commit": false,
   "fixed": [],
-  "linked": [],
+  "linked": [
+    [
+      "@x402/core",
+      "@x402/extensions",
+      "@x402/evm",
+      "@x402/aptos",
+      "@x402/stellar",
+      "@x402/svm",
+      "@x402/express",
+      "@x402/hono",
+      "@x402/next",
+      "@x402/paywall",
+      "@x402/fetch",
+      "@x402/axios",
+      "@x402/mcp"
+    ]
+  ],
   "access": "public",
   "baseBranch": "main",
   "updateInternalDependencies": "patch",
-  "ignore": ["site"]
+  "ignore": [
+    "site"
+  ],
+  "___experimentalUnsafeOptions_WILL_CHANGE_IN_PATCH": {
+    "onlyUpdatePeerDependentsWhenOutOfRange": true
+  }
 }

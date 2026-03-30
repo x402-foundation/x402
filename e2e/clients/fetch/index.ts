@@ -2,8 +2,9 @@ import { config } from "dotenv";
 import { wrapFetchWithPayment } from "@x402/fetch";
 import { createPublicClient, http } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
-import { baseSepolia } from "viem/chains";
-import { ExactEvmScheme } from "@x402/evm/exact/client";
+import { base, baseSepolia } from "viem/chains";
+import { ExactEvmScheme, type ExactEvmSchemeOptions } from "@x402/evm/exact/client";
+import { UptoEvmScheme as UptoEvmClientScheme, type UptoEvmSchemeOptions } from "@x402/evm/upto/client";
 import { ExactEvmSchemeV1 } from "@x402/evm/v1";
 import { toClientEvmSigner } from "@x402/evm";
 import { ExactSvmScheme } from "@x402/svm/exact/client";
@@ -24,12 +25,24 @@ const url = `${baseURL}${endpointPath}`;
 const evmAccount = privateKeyToAccount(process.env.EVM_PRIVATE_KEY as `0x${string}`);
 const svmSigner = await createKeyPairSignerFromBytes(base58.decode(process.env.SVM_PRIVATE_KEY as string));
 
+const evmNetwork = process.env.EVM_NETWORK || "eip155:84532";
+const evmRpcUrl = process.env.EVM_RPC_URL;
+const evmChain = evmNetwork === "eip155:8453" ? base : baseSepolia;
+
 const publicClient = createPublicClient({
-  chain: baseSepolia,
-  transport: http(),
+  chain: evmChain,
+  transport: http(evmRpcUrl),
 });
 
 const evmSigner = toClientEvmSigner(evmAccount, publicClient);
+
+const evmSchemeOptions: ExactEvmSchemeOptions | undefined = process.env.EVM_RPC_URL
+  ? { rpcUrl: process.env.EVM_RPC_URL }
+  : undefined;
+
+const uptoSchemeOptions: UptoEvmSchemeOptions | undefined = process.env.EVM_RPC_URL
+  ? { rpcUrl: process.env.EVM_RPC_URL }
+  : undefined;
 
 // Initialize Aptos signer if key is provided
 let aptosAccount: Account | undefined;
@@ -46,7 +59,8 @@ if (process.env.STELLAR_PRIVATE_KEY) {
 }
 
 const client = new x402Client()
-  .register("eip155:*", new ExactEvmScheme(evmSigner))
+  .register("eip155:*", new ExactEvmScheme(evmSigner, evmSchemeOptions))
+  .register("eip155:*", new UptoEvmClientScheme(evmSigner, uptoSchemeOptions))
   .registerV1("base-sepolia", new ExactEvmSchemeV1(evmSigner))
   .registerV1("base", new ExactEvmSchemeV1(evmSigner))
   .register("solana:*", new ExactSvmScheme(svmSigner))

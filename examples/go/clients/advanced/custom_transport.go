@@ -90,7 +90,7 @@ func runCustomTransportExample(ctx context.Context, evmPrivateKey, url string) e
 
 	// Create x402 client
 	client := x402.Newx402Client().
-		Register("eip155:*", evm.NewExactEvmScheme(evmSigner))
+		Register("eip155:*", evm.NewExactEvmScheme(evmSigner, nil))
 
 	httpClient := x402http.Newx402HTTPClient(client)
 

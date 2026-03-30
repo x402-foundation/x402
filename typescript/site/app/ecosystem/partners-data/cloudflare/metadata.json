@@ -1,0 +1,8 @@
+{
+  "name": "Cloudflare",
+  "description": "Cloudflare co-founded the x402 Foundation with Coinbase and provides native x402 support in Cloudflare Workers and AI Agents, enabling serverless HTTP payment flows at the edge.",
+  "logoUrl": "/logos/cloudflare.png",
+  "websiteUrl": "https://blog.cloudflare.com/x402/",
+  "category": "Infrastructure & Tooling",
+  "top_section": true
+}

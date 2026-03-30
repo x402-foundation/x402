@@ -171,8 +171,8 @@ func TestVerifyUniversalSignature_ERC6492(t *testing.T) {
 		if err != nil {
 			t.Errorf("unexpected error: %v", err)
 		}
-		if !valid {
-			t.Error("expected valid ERC-6492 signature")
+		if valid {
+			t.Error("expected ERC-6492 signature to require later simulation")
 		}
 		if sigData == nil {
 			t.Fatal("expected sigData to be non-nil")
@@ -223,7 +223,7 @@ func TestVerifyUniversalSignature_ERC6492(t *testing.T) {
 		)
 
 		if err == nil {
-			t.Error("expected error for undeployed wallet without deployment info")
+			t.Error("expected error for invalid EOA signature length when used as fallback")
 		}
 		if valid {
 			t.Error("expected invalid result")
@@ -245,7 +245,7 @@ func TestVerifyUniversalSignature_EdgeCases(t *testing.T) {
 			mock,
 			"0x1234",
 			testHash,
-			make([]byte, 65),
+			make([]byte, 100),
 			true,
 		)
 

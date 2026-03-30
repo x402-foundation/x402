@@ -1,7 +1,11 @@
 import { getAddress } from "viem";
-import type { Eip2612GasSponsoringInfo } from "@x402/extensions";
 import { eip2612PermitTypes, eip2612NoncesAbi, PERMIT2_ADDRESS } from "../../constants";
 import { ClientEvmSigner } from "../../signer";
+import type { Eip2612GasSponsoringInfo } from "../extensions";
+
+export type Eip2612PermitSigner = Pick<ClientEvmSigner, "address" | "signTypedData"> & {
+  readContract: NonNullable<ClientEvmSigner["readContract"]>;
+};
 
 /**
  * Signs an EIP-2612 permit authorizing the Permit2 contract to spend tokens.
@@ -22,7 +26,7 @@ import { ClientEvmSigner } from "../../signer";
  * @returns The EIP-2612 gas sponsoring info object
  */
 export async function signEip2612Permit(
-  signer: ClientEvmSigner,
+  signer: Eip2612PermitSigner,
   tokenAddress: `0x${string}`,
   tokenName: string,
   tokenVersion: string,

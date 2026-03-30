@@ -59,7 +59,7 @@ To mitigate this, servers that settle Solana payments themselves **must** mainta
 3. If the key is not present, insert it into the cache and proceed with settlement.
 4. Evict entries older than 120 seconds (approximately twice the Solana blockhash lifetime).
 
-If you are using a facilitator, the x402 SVM libraries already include built-in duplicate settlement protection via a `SettlementCache`. See the [Exact SVM Scheme Specification](/specs/schemes/exact/scheme_exact_svm#duplicate-settlement-mitigation-recommended) for full details.
+If you are using a facilitator, the x402 SVM libraries already include built-in duplicate settlement protection via a `SettlementCache`. See the [Exact SVM Scheme Specification](https://github.com/coinbase/x402/blob/main/specs/schemes/exact/scheme_exact_svm.md) for full details.
 
 ### Communication Flow
 

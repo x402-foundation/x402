@@ -81,7 +81,7 @@ func runAdvanced() error {
 
 	// Step 2: Create x402 payment client manually
 	paymentClient := x402.Newx402Client()
-	paymentClient.Register("eip155:84532", evm.NewExactEvmScheme(evmSigner))
+	paymentClient.Register("eip155:84532", evm.NewExactEvmScheme(evmSigner, nil))
 
 	// Step 3: Compose into X402MCPClient with session
 	x402Mcp := mcp.NewX402MCPClient(clientSession, paymentClient, mcp.Options{

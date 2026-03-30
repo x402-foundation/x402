@@ -1,6 +1,8 @@
 # Sign-In-With-X (SIWX) Server Example
 
-Express.js server demonstrating how to implement Sign-In-With-X authentication, allowing clients to prove prior payment via wallet signatures instead of paying again on subsequent requests.
+Express.js server demonstrating both SIWX patterns supported by x402:
+- Auth-only routes that require a wallet signature but no payment
+- Paid routes where a wallet can pay once, then authenticate with SIWX on later requests
 
 ```typescript
 import express from "express";
@@ -31,16 +33,16 @@ app.use(paymentMiddlewareFromHTTPServer(httpServer));
 
 ## How It Works
 
-1. **Client pays** — First request requires payment
-2. **Server records** — Payment recorded against wallet address in storage
-3. **Client signs** — Subsequent requests include SIWX signature
-4. **Server verifies** — Signature proves wallet ownership, grants access without payment
+1. **Auth-only route** — Server returns a SIWX challenge and grants access on a valid signature alone
+2. **Paid route** — First request requires payment
+3. **Server records** — Payment is recorded against the wallet address in storage
+4. **Later paid-route request** — Signature proves wallet ownership and grants access without re-payment
 
 ## Prerequisites
 
 - Node.js v20+ (install via [nvm](https://github.com/nvm-sh/nvm))
 - pnpm v10 (install via [pnpm.io/installation](https://pnpm.io/installation))
-- Valid EVM address (SVM optional)
+- At least one payout address: EVM, SVM, or both
 - Facilitator URL (see [facilitator list](https://www.x402.org/ecosystem?category=facilitators))
 
 ## Setup
@@ -54,8 +56,10 @@ cp .env-local .env
 and fill required environment variables:
 
 - `FACILITATOR_URL` - Facilitator endpoint URL
-- `EVM_ADDRESS` - Ethereum address to receive payments
+- `EVM_ADDRESS` - (Optional) Ethereum address to receive payments
 - `SVM_ADDRESS` - (Optional) Solana address for SVM payments
+
+At least one of `EVM_ADDRESS` or `SVM_ADDRESS` is required.
 
 2. Install and build from typescript examples root:
 
@@ -77,22 +81,24 @@ Start the SIWX client to test:
 
 ```bash
 cd ../../clients/sign-in-with-x
-# Ensure .env is setup with EVM_PRIVATE_KEY
+# Ensure .env is setup with EVM_PRIVATE_KEY or SVM_PRIVATE_KEY
 pnpm start
 ```
 
 The client will:
-1. Make first request and pay for `/weather`
-2. Make second request with SIWX signature (no payment)
-3. Make first request and pay for `/joke`
-4. Make second request with SIWX signature (no payment)
+1. Access `/profile` with SIWX and no payment
+2. Make first request and pay for `/weather`
+3. Make second request to `/weather` with SIWX instead of payment
+4. Make first request and pay for `/joke`
+5. Make second request to `/joke` with SIWX instead of payment
 
 ## Example Endpoints
 
+- `GET /profile` — Auth-only wallet-gated profile data (no payment)
 - `GET /weather` — Weather data ($0.001 USDC)
 - `GET /joke` — Joke content ($0.001 USDC)
 
-Each endpoint requires payment once per wallet address. Subsequent requests from the same wallet authenticate via SIWX signature.
+`/profile` requires only a valid SIWX signature. `/weather` and `/joke` require payment once per wallet address, then accept SIWX on later requests.
 
 ## SIWX Extension Configuration
 
@@ -107,6 +113,15 @@ const routes = {
     description: "Weather data",
     mimeType: "application/json",
     extensions: declareSIWxExtension(), // Announces SIWX support
+  },
+  "GET /profile": {
+    accepts: [],
+    description: "Auth-only: wallet signature required",
+    extensions: declareSIWxExtension({
+      network: ["eip155:84532", "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1"],
+      statement: "Sign in to view your profile",
+      expirationSeconds: 300,
+    }),
   },
 };
 ```
@@ -127,6 +142,8 @@ const httpServer = new x402HTTPResourceServer(resourceServer, routes)
   .onProtectedRequest(createSIWxRequestHook({ storage })); // Checks SIWX auth
 ```
 
+For routes declared with `accepts: []`, the request hook grants access on valid SIWX alone. For paid routes, it also checks whether that wallet has already paid.
+
 ## Storage Backend
 
 This example uses in-memory storage (`InMemorySIWxStorage`). For production, implement persistent storage:
@@ -135,11 +152,11 @@ This example uses in-memory storage (`InMemorySIWxStorage`). For production, imp
 import { SIWxStorage } from "@x402/extensions/sign-in-with-x";
 
 class RedisSIWxStorage implements SIWxStorage {
-  async recordPayment(address: string, resource: string): Promise<void> {
+  async recordPayment(resource: string, address: string): Promise<void> {
     // Store in Redis/database
   }
 
-  async hasAccess(address: string, resource: string): Promise<boolean> {
+  async hasPaid(resource: string, address: string): Promise<boolean> {
     // Check Redis/database
   }
 }
@@ -171,5 +188,6 @@ createSIWxRequestHook({ storage, onEvent });
 
 Event types:
 - `payment_recorded` — Wallet paid for resource
-- `access_granted` — SIWX signature verified
-- `access_denied` — Invalid or missing signature
+- `access_granted` — SIWX signature verified and access granted
+- `validation_failed` — Header parsing, message validation, or signature verification failed
+- `nonce_reused` — A previously used SIWX nonce was replayed

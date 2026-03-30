@@ -7,7 +7,7 @@ import type { Partner } from './data';
 
 interface FacilitatorCardProps {
   partner: Partner;
-  variant?: 'standard' | 'featured';
+  variant?: 'standard' | 'top_section';
 }
 
 export default function FacilitatorCard({ partner, variant = 'standard' }: FacilitatorCardProps) {
@@ -18,7 +18,7 @@ export default function FacilitatorCard({ partner, variant = 'standard' }: Facil
   }
 
   const { facilitator } = partner;
-  const isFeatured = variant === 'featured';
+  const isFeatured = variant === 'top_section';
   const tagLabel = partner.typeLabel ?? partner.category;
   const handleOpen = () => setIsModalOpen(true);
   const handleKeyDown = (event: KeyboardEvent<HTMLElement>) => {
@@ -38,7 +38,7 @@ export default function FacilitatorCard({ partner, variant = 'standard' }: Facil
         tabIndex={0}
         onClick={handleOpen}
         onKeyDown={handleKeyDown}
-        className={`group relative w-full flex flex-col border border-foreground bg-background cursor-pointer outline-none transition-all duration-200 hover:bg-gray-10 hover:border-accent-orange hover:shadow-lg focus-visible:ring-2 focus-visible:ring-foreground focus-visible:ring-offset-2 focus-visible:ring-offset-background ${
+        className={`group relative w-full h-full flex flex-col border border-foreground bg-background cursor-pointer outline-none transition-all duration-200 hover:bg-gray-10 hover:border-accent-orange hover:shadow-lg focus-visible:ring-2 focus-visible:ring-foreground focus-visible:ring-offset-2 focus-visible:ring-offset-background ${
           isFeatured ? 'px-3 pt-4 pb-5' : 'px-4 pt-5 pb-6'
         }`}
       >
@@ -51,7 +51,7 @@ export default function FacilitatorCard({ partner, variant = 'standard' }: Facil
         >
           {partner.logoUrl ? (
             <div
-              className={`overflow-hidden border border-foreground ${
+              className={`overflow-hidden ${
                 isFeatured ? 'h-[60px] w-[60px]' : 'h-[56px] w-[56px]'
               }`}
             >
@@ -65,7 +65,7 @@ export default function FacilitatorCard({ partner, variant = 'standard' }: Facil
             </div>
           ) : (
             <div
-              className={`border border-foreground ${
+              className={`${
                 isFeatured ? 'h-[60px] w-[60px]' : 'h-[56px] w-[56px]'
               }`}
               aria-hidden="true"
@@ -77,7 +77,7 @@ export default function FacilitatorCard({ partner, variant = 'standard' }: Facil
           </span>
         </div>
 
-        <div className="relative z-20 space-y-2">
+        <div className="relative z-20 flex-1 space-y-2">
           <h3
             className={`leading-snug ${
               isFeatured ? 'text-sm font-semibold uppercase' : 'text-base font-medium uppercase'
@@ -106,69 +106,65 @@ export default function FacilitatorCard({ partner, variant = 'standard' }: Facil
       {/* Modal */}
       {isModalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-          {/* Backdrop */}
           <div
-            className="absolute inset-0 bg-black/70 backdrop-blur-sm"
+            className="absolute inset-0 bg-black/40 backdrop-blur-sm"
             onClick={() => setIsModalOpen(false)}
           />
 
-          {/* Modal Content */}
-          <div className="relative bg-gray-900 rounded-lg shadow-2xl max-w-2xl w-full max-h-[90vh] overflow-y-auto border border-gray-700">
+          <div className="relative bg-background border border-foreground shadow-2xl max-w-2xl w-full max-h-[90vh] overflow-y-auto">
+            <div className="absolute inset-x-0 top-0 h-[7px] bg-black" aria-hidden="true" />
+
             {/* Header */}
-            <div className="flex items-center justify-between p-6 border-b border-gray-700">
-              <div className="flex items-center space-x-4">
-                <div className="relative w-12 h-12">
+            <div className="flex items-center justify-between px-8 pt-10 pb-6 border-b border-gray-10">
+              <div className="flex items-center gap-4">
+                <div className="relative w-12 h-12 overflow-hidden">
                   <Image
                     src={partner.logoUrl}
                     alt={`${partner.name} logo`}
                     fill
                     sizes="48px"
-                    style={{ objectFit: 'contain', borderRadius: '0.5rem' }}
-                    className="bg-gray-700/[.5] p-1"
+                    style={{ objectFit: 'contain' }}
                   />
                 </div>
                 <div>
-                  <h2 className="text-2xl font-bold text-white font-mono">{partner.name}</h2>
-                  <p className="text-sm text-gray-400 font-mono">Facilitator</p>
+                  <h2 className="text-2xl font-semibold uppercase">{partner.name}</h2>
+                  <p className="text-sm text-gray-40">Facilitator</p>
                 </div>
               </div>
               <button
                 onClick={() => setIsModalOpen(false)}
-                className="text-gray-400 hover:text-white transition-colors"
+                className="text-gray-40 hover:text-foreground transition-colors"
               >
                 <XMarkIcon className="w-6 h-6" />
               </button>
             </div>
 
             {/* Content */}
-            <div className="p-6 space-y-6">
-              {/* Description */}
+            <div className="px-8 py-6 space-y-6">
               <div>
-                <h3 className="text-lg font-semibold text-white mb-2 font-mono">Description</h3>
-                <p className="text-gray-300 font-mono">{partner.description}</p>
+                <h3 className="text-sm font-semibold uppercase tracking-wide mb-2">Description</h3>
+                <p className="text-sm text-gray-60 leading-relaxed">{partner.description}</p>
               </div>
 
-              {/* Base URL */}
               <div>
-                <h3 className="text-lg font-semibold text-white mb-2 font-mono">Base URL</h3>
+                <h3 className="text-sm font-semibold uppercase tracking-wide mb-2">Base URL</h3>
                 <a
                   href={facilitator.baseUrl}
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="text-blue-400 hover:text-blue-300 font-mono break-all"
+                  className="text-sm text-accent-orange hover:underline font-mono break-all"
                 >
                   {facilitator.baseUrl}
                 </a>
               </div>
 
-              {/* Networks */}
               <div>
-                <h3 className="text-lg font-semibold text-white mb-3 font-mono">Supported Networks</h3>
+                <h3 className="text-sm font-semibold uppercase tracking-wide mb-3">Supported Networks</h3>
                 <div className="flex flex-wrap gap-2">
                   {facilitator.networks.map((network) => (
                     <span
                       key={network}
-                      className="text-sm bg-gray-700 text-gray-300 px-3 py-1 rounded-full font-mono"
+                      className="text-xs bg-gray-10 text-foreground px-3 py-1 font-mono"
                     >
                       {network}
                     </span>
@@ -176,14 +172,13 @@ export default function FacilitatorCard({ partner, variant = 'standard' }: Facil
                 </div>
               </div>
 
-              {/* Schemes */}
               <div>
-                <h3 className="text-lg font-semibold text-white mb-3 font-mono">Payment Schemes</h3>
+                <h3 className="text-sm font-semibold uppercase tracking-wide mb-3">Payment Schemes</h3>
                 <div className="flex flex-wrap gap-2">
                   {facilitator.schemes.map((scheme) => (
                     <span
                       key={scheme}
-                      className="text-sm bg-green-700 text-green-200 px-3 py-1 rounded-full font-mono"
+                      className="text-xs bg-accent-green/10 text-accent-green px-3 py-1 font-mono"
                     >
                       {scheme}
                     </span>
@@ -191,14 +186,13 @@ export default function FacilitatorCard({ partner, variant = 'standard' }: Facil
                 </div>
               </div>
 
-              {/* Assets */}
               <div>
-                <h3 className="text-lg font-semibold text-white mb-3 font-mono">Supported Assets</h3>
+                <h3 className="text-sm font-semibold uppercase tracking-wide mb-3">Supported Assets</h3>
                 <div className="flex flex-wrap gap-2">
                   {facilitator.assets.map((asset) => (
                     <span
                       key={asset}
-                      className="text-sm bg-purple-700 text-purple-200 px-3 py-1 rounded-full font-mono"
+                      className="text-xs bg-accent-orange/10 text-accent-orange px-3 py-1 font-mono"
                     >
                       {asset}
                     </span>
@@ -206,56 +200,54 @@ export default function FacilitatorCard({ partner, variant = 'standard' }: Facil
                 </div>
               </div>
 
-              {/* Capabilities */}
               <div>
-                <h3 className="text-lg font-semibold text-white mb-3 font-mono">Capabilities</h3>
+                <h3 className="text-sm font-semibold uppercase tracking-wide mb-3">Capabilities</h3>
                 <div className="grid grid-cols-2 gap-3">
-                  <div className="flex items-center space-x-2">
-                    <div className={`w-3 h-3 rounded-full ${facilitator.supports.verify ? 'bg-green-500' : 'bg-red-500'}`} />
-                    <span className="text-gray-300 font-mono">Verify Payments</span>
+                  <div className="flex items-center gap-2">
+                    <div className={`w-2 h-2 rounded-full ${facilitator.supports.verify ? 'bg-accent-green' : 'bg-gray-20'}`} />
+                    <span className="text-sm text-gray-60">Verify Payments</span>
                   </div>
-                  <div className="flex items-center space-x-2">
-                    <div className={`w-3 h-3 rounded-full ${facilitator.supports.settle ? 'bg-green-500' : 'bg-red-500'}`} />
-                    <span className="text-gray-300 font-mono">Settle Payments</span>
+                  <div className="flex items-center gap-2">
+                    <div className={`w-2 h-2 rounded-full ${facilitator.supports.settle ? 'bg-accent-green' : 'bg-gray-20'}`} />
+                    <span className="text-sm text-gray-60">Settle Payments</span>
                   </div>
-                  <div className="flex items-center space-x-2">
-                    <div className={`w-3 h-3 rounded-full ${facilitator.supports.supported ? 'bg-green-500' : 'bg-red-500'}`} />
-                    <span className="text-gray-300 font-mono">Supported Endpoint</span>
+                  <div className="flex items-center gap-2">
+                    <div className={`w-2 h-2 rounded-full ${facilitator.supports.supported ? 'bg-accent-green' : 'bg-gray-20'}`} />
+                    <span className="text-sm text-gray-60">Supported Endpoint</span>
                   </div>
-                  <div className="flex items-center space-x-2">
-                    <div className={`w-3 h-3 rounded-full ${facilitator.supports.list ? 'bg-green-500' : 'bg-red-500'}`} />
-                    <span className="text-gray-300 font-mono">List Resources</span>
+                  <div className="flex items-center gap-2">
+                    <div className={`w-2 h-2 rounded-full ${facilitator.supports.list ? 'bg-accent-green' : 'bg-gray-20'}`} />
+                    <span className="text-sm text-gray-60">List Resources</span>
                   </div>
                 </div>
               </div>
 
-              {/* Facilitator Addresses (moved near footer) */}
               {hasAnyAddresses && (
                 <div>
-                  <h3 className="text-lg font-semibold text-white mb-3 font-mono">Facilitator Addresses</h3>
-                  <div className="overflow-x-auto rounded-lg border border-gray-700">
-                    <table className="min-w-full divide-y divide-gray-700">
-                      <thead className="bg-gray-800/60">
-                        <tr>
-                          <th className="px-4 py-2 text-left text-xs font-semibold text-gray-300 uppercase tracking-wider font-mono">Network</th>
-                          <th className="px-4 py-2 text-left text-xs font-semibold text-gray-300 uppercase tracking-wider font-mono">Addresses</th>
+                  <h3 className="text-sm font-semibold uppercase tracking-wide mb-3">Facilitator Addresses</h3>
+                  <div className="overflow-x-auto border border-gray-10">
+                    <table className="min-w-full divide-y divide-gray-10">
+                      <thead>
+                        <tr className="bg-gray-10/50">
+                          <th className="px-4 py-2 text-left text-xs font-semibold uppercase tracking-wide">Network</th>
+                          <th className="px-4 py-2 text-left text-xs font-semibold uppercase tracking-wide">Addresses</th>
                         </tr>
                       </thead>
-                      <tbody className="divide-y divide-gray-800">
+                      <tbody className="divide-y divide-gray-10">
                         {facilitator.networks.map((network) => {
                           const addresses = facilitator.addresses?.[network];
                           if (!addresses || addresses.length === 0) return null;
                           return (
-                            <tr key={network} className="hover:bg-gray-800/40">
+                            <tr key={network}>
                               <td className="px-4 py-2 align-top">
-                                <span className="text-sm bg-gray-700 text-gray-300 px-2 py-1 rounded-full font-mono">{network}</span>
+                                <span className="text-xs bg-gray-10 text-foreground px-2 py-1 font-mono">{network}</span>
                               </td>
                               <td className="px-4 py-2">
                                 <div className="flex flex-col gap-1">
                                   {addresses.map((addr, idx) => (
                                     <span
                                       key={`${network}-${idx}`}
-                                      className="text-xs text-gray-200 font-mono break-all bg-gray-900/70 border border-gray-700 rounded px-2 py-1"
+                                      className="text-xs font-mono break-all text-gray-60"
                                       title={addr}
                                     >
                                       {addr}
@@ -274,14 +266,15 @@ export default function FacilitatorCard({ partner, variant = 'standard' }: Facil
             </div>
 
             {/* Footer */}
-            <div className="flex justify-end p-6 border-t border-gray-700">
+            <div className="flex justify-end px-8 py-6 border-t border-gray-10">
               <a
                 href={partner.websiteUrl}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="bg-blue-600 hover:bg-blue-700 text-white px-6 py-2 rounded-lg font-mono transition-colors"
+                className="inline-flex items-center gap-2 bg-foreground text-background px-6 py-2.5 text-sm font-medium hover:opacity-80 transition-opacity"
               >
                 Visit Website
+                <span aria-hidden="true">→</span>
               </a>
             </div>
           </div>

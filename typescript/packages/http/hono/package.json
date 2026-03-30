@@ -1,6 +1,6 @@
 {
   "name": "@x402/hono",
-  "version": "2.6.0",
+  "version": "2.8.0",
   "main": "./dist/cjs/index.js",
   "module": "./dist/esm/index.js",
   "types": "./dist/index.d.ts",
@@ -45,7 +45,7 @@
   },
   "peerDependencies": {
     "hono": "^4.0.0",
-    "@x402/paywall": "workspace:*"
+    "@x402/paywall": "workspace:^"
   },
   "peerDependenciesMeta": {
     "@x402/paywall": {

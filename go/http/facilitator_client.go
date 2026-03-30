@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"time"
 
 	x402 "github.com/coinbase/x402/go"
@@ -66,6 +67,146 @@ const getSupportedRetries = 3
 
 // getSupportedRetryBaseDelay is the base delay for exponential backoff on retries
 const getSupportedRetryBaseDelay = 1 * time.Second
+
+// FacilitatorResponseError indicates a facilitator returned malformed success payload data.
+type FacilitatorResponseError struct {
+	message string
+	cause   error
+}
+
+func (e *FacilitatorResponseError) Error() string {
+	return e.message
+}
+
+func (e *FacilitatorResponseError) Unwrap() error {
+	return e.cause
+}
+
+type verifyResponseEnvelope struct {
+	IsValid        *bool  `json:"isValid"`
+	InvalidReason  string `json:"invalidReason,omitempty"`
+	InvalidMessage string `json:"invalidMessage,omitempty"`
+	Payer          string `json:"payer,omitempty"`
+}
+
+type settleResponseEnvelope struct {
+	Success      *bool         `json:"success"`
+	ErrorReason  string        `json:"errorReason,omitempty"`
+	ErrorMessage string        `json:"errorMessage,omitempty"`
+	Payer        string        `json:"payer,omitempty"`
+	Transaction  *string       `json:"transaction"`
+	Network      *x402.Network `json:"network"`
+}
+
+type supportedKindEnvelope struct {
+	X402Version *int                   `json:"x402Version"`
+	Scheme      string                 `json:"scheme"`
+	Network     string                 `json:"network"`
+	Extra       map[string]interface{} `json:"extra,omitempty"`
+}
+
+type supportedResponseEnvelope struct {
+	Kinds      []supportedKindEnvelope `json:"kinds"`
+	Extensions []string                `json:"extensions"`
+	Signers    map[string][]string     `json:"signers"`
+}
+
+func responseExcerpt(body []byte, limit int) string {
+	text := strings.TrimSpace(string(body))
+	if text == "" {
+		return "<empty response>"
+	}
+
+	compact := strings.Join(strings.Fields(text), " ")
+	if len(compact) <= limit {
+		return compact
+	}
+
+	return compact[:limit-3] + "..."
+}
+
+func newFacilitatorResponseError(operation string, kind string, body []byte, cause error) error {
+	return &FacilitatorResponseError{
+		message: fmt.Sprintf("facilitator %s returned invalid %s: %s", operation, kind, responseExcerpt(body, 200)),
+		cause:   cause,
+	}
+}
+
+func parseVerifySuccessResponse(body []byte) (*x402.VerifyResponse, error) {
+	var response verifyResponseEnvelope
+	if err := json.Unmarshal(body, &response); err != nil {
+		return nil, newFacilitatorResponseError("verify", "JSON", body, err)
+	}
+	if response.IsValid == nil {
+		return nil, newFacilitatorResponseError("verify", "data", body, fmt.Errorf("missing isValid"))
+	}
+
+	return &x402.VerifyResponse{
+		IsValid:        *response.IsValid,
+		InvalidReason:  response.InvalidReason,
+		InvalidMessage: response.InvalidMessage,
+		Payer:          response.Payer,
+	}, nil
+}
+
+func parseSettleSuccessResponse(body []byte) (*x402.SettleResponse, error) {
+	var response settleResponseEnvelope
+	if err := json.Unmarshal(body, &response); err != nil {
+		return nil, newFacilitatorResponseError("settle", "JSON", body, err)
+	}
+	if response.Success == nil || response.Transaction == nil || response.Network == nil {
+		return nil, newFacilitatorResponseError("settle", "data", body, fmt.Errorf("missing required fields"))
+	}
+
+	return &x402.SettleResponse{
+		Success:      *response.Success,
+		ErrorReason:  response.ErrorReason,
+		ErrorMessage: response.ErrorMessage,
+		Payer:        response.Payer,
+		Transaction:  *response.Transaction,
+		Network:      *response.Network,
+	}, nil
+}
+
+func parseSupportedSuccessResponse(body []byte) (x402.SupportedResponse, error) {
+	var response supportedResponseEnvelope
+	if err := json.Unmarshal(body, &response); err != nil {
+		return x402.SupportedResponse{}, newFacilitatorResponseError("getSupported", "JSON", body, err)
+	}
+	kinds := make([]x402.SupportedKind, 0, len(response.Kinds))
+	for _, kind := range response.Kinds {
+		if kind.X402Version == nil || kind.Scheme == "" || kind.Network == "" {
+			return x402.SupportedResponse{}, newFacilitatorResponseError(
+				"getSupported",
+				"data",
+				body,
+				fmt.Errorf("invalid supported response fields"),
+			)
+		}
+		kinds = append(kinds, x402.SupportedKind{
+			X402Version: *kind.X402Version,
+			Scheme:      kind.Scheme,
+			Network:     kind.Network,
+			Extra:       kind.Extra,
+		})
+	}
+
+	extensions := response.Extensions
+	if extensions == nil {
+		extensions = []string{}
+	}
+
+	signers := response.Signers
+	if signers == nil {
+		signers = map[string][]string{}
+	}
+
+	return x402.SupportedResponse{
+		Kinds:      kinds,
+		Extensions: extensions,
+		Signers:    signers,
+	}, nil
+}
 
 // NewHTTPFacilitatorClient creates a new HTTP facilitator client
 func NewHTTPFacilitatorClient(config *FacilitatorConfig) *HTTPFacilitatorClient {
@@ -183,14 +324,14 @@ func (c *HTTPFacilitatorClient) GetSupported(ctx context.Context) (x402.Supporte
 
 		// Success
 		if resp.StatusCode == http.StatusOK {
-			var supportedResponse x402.SupportedResponse
-			if err := json.Unmarshal(responseBody, &supportedResponse); err != nil {
-				return x402.SupportedResponse{}, fmt.Errorf("failed to decode supported response: %w", err)
-			}
-			return supportedResponse, nil
+			return parseSupportedSuccessResponse(responseBody)
 		}
 
-		lastErr = fmt.Errorf("facilitator supported failed (%d): %s", resp.StatusCode, string(responseBody))
+		lastErr = fmt.Errorf(
+			"facilitator supported failed (%d): %s",
+			resp.StatusCode,
+			responseExcerpt(responseBody, 200),
+		)
 
 		// Retry on 429 with exponential backoff, except on the last attempt
 		if resp.StatusCode == http.StatusTooManyRequests && attempt < getSupportedRetries-1 {
@@ -266,18 +407,9 @@ func (c *HTTPFacilitatorClient) verifyHTTP(ctx context.Context, version int, pay
 		return nil, fmt.Errorf("failed to read response body: %w", err)
 	}
 
-	var verifyResponse x402.VerifyResponse
-	if err := json.Unmarshal(responseBody, &verifyResponse); err != nil {
-		return nil, x402.NewVerifyError(
-			x402.ErrInvalidResponse,
-			"",
-			fmt.Sprintf("failed to unmarshal verify response: %s", err.Error()),
-		)
-	}
-
-	// For non-200 responses, return an error with the details from the response
 	if resp.StatusCode != http.StatusOK {
-		if verifyResponse.InvalidReason != "" {
+		var verifyResponse verifyResponseEnvelope
+		if err := json.Unmarshal(responseBody, &verifyResponse); err == nil && verifyResponse.InvalidReason != "" {
 			return nil, x402.NewVerifyError(
 				verifyResponse.InvalidReason,
 				verifyResponse.Payer,
@@ -287,7 +419,7 @@ func (c *HTTPFacilitatorClient) verifyHTTP(ctx context.Context, version int, pay
 		return nil, fmt.Errorf("facilitator verify failed (%d): %s", resp.StatusCode, string(responseBody))
 	}
 
-	return &verifyResponse, nil
+	return parseVerifySuccessResponse(responseBody)
 }
 
 func (c *HTTPFacilitatorClient) settleHTTP(ctx context.Context, version int, payloadBytes, requirementsBytes []byte) (*x402.SettleResponse, error) {
@@ -342,24 +474,27 @@ func (c *HTTPFacilitatorClient) settleHTTP(ctx context.Context, version int, pay
 		return nil, fmt.Errorf("failed to read response body: %w", err)
 	}
 
-	var settleResponse x402.SettleResponse
-	if err := json.Unmarshal(responseBody, &settleResponse); err != nil {
-		return nil, fmt.Errorf("facilitator settle failed (%d): %s", resp.StatusCode, string(responseBody))
-	}
-
-	// For non-200 responses, return an error with the details from the response
 	if resp.StatusCode != http.StatusOK {
-		if settleResponse.ErrorReason != "" {
+		var settleResponse settleResponseEnvelope
+		if err := json.Unmarshal(responseBody, &settleResponse); err == nil && settleResponse.ErrorReason != "" {
+			network := x402.Network("")
+			if settleResponse.Network != nil {
+				network = *settleResponse.Network
+			}
+			transaction := ""
+			if settleResponse.Transaction != nil {
+				transaction = *settleResponse.Transaction
+			}
 			return nil, x402.NewSettleError(
 				settleResponse.ErrorReason,
 				settleResponse.Payer,
-				settleResponse.Network,
-				settleResponse.Transaction,
+				network,
+				transaction,
 				fmt.Sprintf("facilitator returned %d", resp.StatusCode),
 			)
 		}
 		return nil, fmt.Errorf("facilitator settle failed (%d): %s", resp.StatusCode, string(responseBody))
 	}
 
-	return &settleResponse, nil
+	return parseSettleSuccessResponse(responseBody)
 }

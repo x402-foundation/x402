@@ -1,5 +1,27 @@
 # @x402/evm Changelog
 
+## 2.8.0
+
+### Minor Changes
+
+- Updated dependencies [067f297]
+- Updated dependencies [4c1e44f]
+- Updated dependencies [5135fab]
+  - @x402/core@2.8.0
+
+## 2.7.0
+
+### Minor Changes
+
+- 8b731cb: Replaced `sendRawApprovalAndSettle` with a generic `sendTransactions` signer method that accepts an array of pre-signed serialized transactions or unsigned call intents. The signer owns execution strategy (sequential, batched, or atomic bundling). Closed fail-open verification paths, aligned Permit2 amount check to exact match, and added `signerForNetwork` to the extensions package.
+
+### Patch Changes
+
+- d8e9f3f: Added simulation to permit2 verify and (optional) settle
+- 1a6e08b: Simulate transaction in verify and (optional) settle; Added multicall utility for efficient rpc calls; Fixed undeployed smart wallet handling to prevent facilitator grieving and account for implementation dependent verifyTypedData
+- Updated dependencies [8931cb3]
+  - @x402/core@2.7.0
+
 ## 2.6.0
 
 ### Minor Changes

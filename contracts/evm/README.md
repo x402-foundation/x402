@@ -24,8 +24,8 @@ Both contracts:
 
 | Contract | Address | Verified |
 |----------|---------|----------|
-| x402ExactPermit2Proxy | [`0x4020cd856c882d5fb903d99ce35316a085bb0001`](https://sepolia.basescan.org/address/0x4020cd856c882d5fb903d99ce35316a085bb0001) | ✓ |
-| x402UptoPermit2Proxy | [`0x40204513ec14919adfd30d77c0a991371b420002`](https://sepolia.basescan.org/address/0x40204513ec14919adfd30d77c0a991371b420002) | ✓ |
+| x402ExactPermit2Proxy | [`0x402085c248EeA27D92E8b30b2C58ed07f9E20001`](https://sepolia.basescan.org/address/0x402085c248EeA27D92E8b30b2C58ed07f9E20001) | ✓ |
+| x402UptoPermit2Proxy | [`0x402039b3d6E6BEC5A02c2C9fd937ac17A6940002`](https://sepolia.basescan.org/address/0x402039b3d6E6BEC5A02c2C9fd937ac17A6940002) | ✓ |
 
 ## Prerequisites
 

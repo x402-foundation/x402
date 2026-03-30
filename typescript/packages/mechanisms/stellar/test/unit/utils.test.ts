@@ -1,4 +1,4 @@
-import { rpc } from "@stellar/stellar-sdk";
+import { Horizon, rpc } from "@stellar/stellar-sdk";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { STELLAR_PUBNET_CAIP2, STELLAR_TESTNET_CAIP2 } from "../../src";
 import {
@@ -17,6 +17,9 @@ import {
 
 // Mock the Stellar SDK
 vi.mock("@stellar/stellar-sdk", () => ({
+  Horizon: {
+    Server: vi.fn(),
+  },
   rpc: {
     Server: vi.fn(),
   },
@@ -228,66 +231,64 @@ describe("Stellar RPC Helper Functions", () => {
   });
 
   describe("getEstimatedLedgerCloseTimeSeconds", () => {
-    it("should compute seconds per ledger from RPC getLedgers response", async () => {
-      const baseTs = 1734032457;
-      const ledgers = [100, 101, 102, 103, 104, 105].map((seq, i) => ({
-        sequence: seq,
-        ledgerCloseTime: String(baseTs + i * 3),
-      }));
-      const mockGetLedgers = vi.fn().mockResolvedValue({ ledgers });
-      const mockServer = {
-        getLatestLedger: vi.fn().mockResolvedValue({ sequence: 105 }),
-        getLedgers: mockGetLedgers,
-      } as unknown as rpc.Server;
+    function mockHorizonServer(records: Array<{ closed_at: string; sequence: number }>) {
+      const mockCall = vi.fn().mockResolvedValue({ records });
+      const mockOrder = vi.fn().mockReturnValue({ call: mockCall });
+      const mockLimit = vi.fn().mockReturnValue({ order: mockOrder });
+      const mockLedgers = vi.fn().mockReturnValue({ limit: mockLimit });
+      vi.mocked(Horizon.Server).mockImplementation(() => ({ ledgers: mockLedgers }) as any);
+      return { mockCall, mockOrder, mockLimit, mockLedgers };
+    }
 
-      const result = await getEstimatedLedgerCloseTimeSeconds(mockServer);
+    it("should compute seconds per ledger from Horizon SDK ledgers response", async () => {
+      const baseTs = 1734032457;
+      const records = [105, 104, 103, 102, 101, 100].map((seq, i) => ({
+        sequence: seq,
+        closed_at: new Date((baseTs + (5 - i) * 3) * 1000).toISOString(),
+      }));
+      const { mockLedgers, mockLimit, mockOrder } = mockHorizonServer(records);
+
+      const result = await getEstimatedLedgerCloseTimeSeconds(STELLAR_TESTNET_CAIP2);
 
       expect(result).toBe(3);
-      expect(mockGetLedgers).toHaveBeenCalledWith(
-        expect.objectContaining({
-          pagination: { limit: 20 },
-        }),
-      );
-      const callArg = mockGetLedgers.mock.calls[0][0];
-      expect(callArg.startLedger).toBeGreaterThanOrEqual(1);
-      expect(callArg.startLedger).toBeLessThanOrEqual(105);
+      expect(Horizon.Server).toHaveBeenCalledWith("https://horizon-testnet.stellar.org");
+      expect(mockLedgers).toHaveBeenCalled();
+      expect(mockLimit).toHaveBeenCalledWith(20);
+      expect(mockOrder).toHaveBeenCalledWith("desc");
     });
 
-    it("should return DEFAULT_ESTIMATED_LEDGER_SECONDS when getLatestLedger throws", async () => {
-      const mockGetLedgers = vi.fn();
-      const mockServer = {
-        getLatestLedger: vi.fn().mockRejectedValue(new Error("RPC error")),
-        getLedgers: mockGetLedgers,
-      } as unknown as rpc.Server;
+    it("should return DEFAULT_ESTIMATED_LEDGER_SECONDS when SDK call throws", async () => {
+      const mockCall = vi.fn().mockRejectedValue(new Error("Network error"));
+      const mockOrder = vi.fn().mockReturnValue({ call: mockCall });
+      const mockLimit = vi.fn().mockReturnValue({ order: mockOrder });
+      const mockLedgers = vi.fn().mockReturnValue({ limit: mockLimit });
+      vi.mocked(Horizon.Server).mockImplementation(() => ({ ledgers: mockLedgers }) as any);
 
-      const result = await getEstimatedLedgerCloseTimeSeconds(mockServer);
-
-      expect(result).toBe(DEFAULT_ESTIMATED_LEDGER_SECONDS);
-      expect(mockGetLedgers).not.toHaveBeenCalled();
-    });
-
-    it("should return DEFAULT_ESTIMATED_LEDGER_SECONDS when getLedgers throws", async () => {
-      const mockServer = {
-        getLatestLedger: vi.fn().mockResolvedValue({ sequence: 100 }),
-        getLedgers: vi.fn().mockRejectedValue(new Error("Network error")),
-      } as unknown as rpc.Server;
-
-      const result = await getEstimatedLedgerCloseTimeSeconds(mockServer);
+      const result = await getEstimatedLedgerCloseTimeSeconds(STELLAR_TESTNET_CAIP2);
 
       expect(result).toBe(DEFAULT_ESTIMATED_LEDGER_SECONDS);
     });
 
-    it("should return DEFAULT_ESTIMATED_LEDGER_SECONDS when getLedgers returns fewer than 2 records", async () => {
-      const mockServer = {
-        getLatestLedger: vi.fn().mockResolvedValue({ sequence: 100 }),
-        getLedgers: vi.fn().mockResolvedValue({
-          ledgers: [{ sequence: 100, ledgerCloseTime: "1734032457" }],
-        }),
-      } as unknown as rpc.Server;
+    it("should return DEFAULT_ESTIMATED_LEDGER_SECONDS when fewer than 2 records", async () => {
+      mockHorizonServer([{ sequence: 100, closed_at: "2024-12-13T00:00:57Z" }]);
 
-      const result = await getEstimatedLedgerCloseTimeSeconds(mockServer);
+      const result = await getEstimatedLedgerCloseTimeSeconds(STELLAR_TESTNET_CAIP2);
 
       expect(result).toBe(DEFAULT_ESTIMATED_LEDGER_SECONDS);
+    });
+
+    it("should use pubnet Horizon URL for pubnet network", async () => {
+      const baseTs = 1734032457;
+      const records = [102, 101, 100].map((seq, i) => ({
+        sequence: seq,
+        closed_at: new Date((baseTs + (2 - i) * 6) * 1000).toISOString(),
+      }));
+      mockHorizonServer(records);
+
+      const result = await getEstimatedLedgerCloseTimeSeconds(STELLAR_PUBNET_CAIP2);
+
+      expect(result).toBe(6);
+      expect(Horizon.Server).toHaveBeenCalledWith("https://horizon.stellar.org");
     });
   });
 

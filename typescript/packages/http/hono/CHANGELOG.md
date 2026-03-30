@@ -1,5 +1,32 @@
 # @x402/hono Changelog
 
+## 2.8.0
+
+### Minor Changes
+
+- 4c1e44f: Treat malformed facilitator success payloads as upstream facilitator errors and return 502 responses from framework middleware instead of flattening them into payment failures.
+- Updated dependencies [4f2f4f3]
+- Updated dependencies [067f297]
+- Updated dependencies [067f297]
+- Updated dependencies [4c1e44f]
+- Updated dependencies [5135fab]
+  - @x402/extensions@2.8.0
+  - @x402/core@2.8.0
+  - @x402/paywall@2.8.0
+
+## 2.7.0
+
+### Minor Changes
+
+- Updated dependencies [34d2442]
+- Updated dependencies [8b731cb]
+- Updated dependencies [f2bbb5c]
+- Updated dependencies [8931cb3]
+- Updated dependencies [34d2442]
+  - @x402/extensions@2.7.0
+  - @x402/core@2.7.0
+  - @x402/paywall@2.7.0
+
 ## 2.6.0
 
 ### Minor Changes

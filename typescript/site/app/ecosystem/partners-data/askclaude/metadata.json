@@ -1,0 +1,7 @@
+{
+  "name": "AskClaude",
+  "category": "Services/Endpoints",
+  "logoUrl": "/logos/askclaude.png",
+  "description": "Pay-per-question Claude AI service. Ask Claude Haiku ($0.01), Sonnet ($0.03), or Opus ($0.10) per question with no subscription or API key. Supports streaming. Pay with USDC on Base via x402.",
+  "websiteUrl": "https://askclaude.shop"
+}

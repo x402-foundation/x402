@@ -14,6 +14,12 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+// SetSettlementOverrides sets settlement overrides on the Gin response for partial settlement.
+// The middleware extracts these before settlement and strips the header from the client response.
+func SetSettlementOverrides(c *gin.Context, overrides *x402.SettlementOverrides) {
+	c.Header(x402http.SettlementOverridesHeader, x402http.MarshalSettlementOverrides(overrides))
+}
+
 // ============================================================================
 // Gin Adapter Implementation
 // ============================================================================
@@ -310,7 +316,7 @@ func createMiddlewareHandler(server *x402http.HTTPServer, config *MiddlewareConf
 
 		case x402http.ResultPaymentVerified:
 			// Payment verified, continue with settlement handling
-			handlePaymentVerified(c, server, ctx, result, config)
+			handlePaymentVerified(c, server, ctx, reqCtx, result, config)
 		}
 	}
 }
@@ -337,7 +343,7 @@ func handlePaymentError(c *gin.Context, response *x402http.HTTPResponseInstructi
 }
 
 // handlePaymentVerified handles verified payments with settlement
-func handlePaymentVerified(c *gin.Context, server *x402http.HTTPServer, ctx context.Context, result x402http.HTTPProcessResult, config *MiddlewareConfig) {
+func handlePaymentVerified(c *gin.Context, server *x402http.HTTPServer, ctx context.Context, reqCtx x402http.HTTPRequestContext, result x402http.HTTPProcessResult, config *MiddlewareConfig) {
 	// Capture response for settlement
 	writer := &responseCapture{
 		ResponseWriter: c.Writer,
@@ -373,11 +379,16 @@ func handlePaymentVerified(c *gin.Context, server *x402http.HTTPServer, ctx cont
 		return
 	}
 
-	// Process settlement
 	settleResult := server.ProcessSettlement(
 		ctx,
 		*result.PaymentPayload,
 		*result.PaymentRequirements,
+		nil,
+		&x402http.HTTPTransportContext{
+			Request:         &reqCtx,
+			ResponseBody:    writer.body.Bytes(),
+			ResponseHeaders: writer.Header(),
+		},
 	)
 
 	// Check settlement success
@@ -466,4 +477,35 @@ func (w *responseCapture) Write(data []byte) (int, error) {
 // WriteString captures string responses
 func (w *responseCapture) WriteString(s string) (int, error) {
 	return w.Write([]byte(s))
+}
+
+// Flush is a no-op to prevent premature flushing to the wire before settlement.
+// Gin's default Flush calls WriteHeaderNow then flushes the TCP connection,
+// which would commit HTTP headers before settlement can add PAYMENT-RESPONSE.
+func (w *responseCapture) Flush() {}
+
+// WriteHeaderNow is a no-op to prevent premature header commit before settlement.
+// Gin's default WriteHeaderNow writes the status line + headers to the underlying
+// http.ResponseWriter, which cannot be undone.
+func (w *responseCapture) WriteHeaderNow() {}
+
+// Status returns the captured status code instead of the embedded writer's.
+func (w *responseCapture) Status() int {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.statusCode
+}
+
+// Size returns the captured body length instead of the embedded writer's.
+func (w *responseCapture) Size() int {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.body.Len()
+}
+
+// Written returns whether any write has been captured.
+func (w *responseCapture) Written() bool {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.written
 }

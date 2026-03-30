@@ -6,6 +6,8 @@ import {
   x402HTTPResourceServer,
   x402ResourceServer,
   RoutesConfig,
+  FacilitatorResponseError,
+  getFacilitatorResponseError as getCoreFacilitatorResponseError,
 } from "@x402/core/server";
 import { PaymentPayload, PaymentRequirements } from "@x402/core/types";
 import { NextAdapter } from "./adapter";
@@ -16,6 +18,21 @@ import { NextAdapter } from "./adapter";
 export interface HttpServerInstance {
   httpServer: x402HTTPResourceServer;
   init: () => Promise<void>;
+}
+
+export const getFacilitatorResponseError = getCoreFacilitatorResponseError;
+
+/**
+ * Builds a normalized 502 response for facilitator boundary failures.
+ *
+ * @param error - The facilitator response error to surface
+ * @returns A JSON 502 response
+ */
+export function createFacilitatorErrorResponse(error: FacilitatorResponseError): NextResponse {
+  return new NextResponse(JSON.stringify({ error: error.message }), {
+    status: 502,
+    headers: { "Content-Type": "application/json" },
+  });
 }
 
 /**
@@ -39,14 +56,28 @@ export function prepareHttpServer(
   // Store initialization promise (not the result)
   // httpServer.initialize() fetches facilitator support and validates routes
   let initPromise: Promise<void> | null = syncFacilitatorOnStart ? httpServer.initialize() : null;
+  let isInitialized = false;
 
   return {
     httpServer,
+    /**
+     * Ensures facilitator initialization succeeds once, while allowing retries after failures.
+     */
     async init() {
-      // Ensure initialization completes before processing
-      if (initPromise) {
+      if (!syncFacilitatorOnStart || isInitialized) {
+        return;
+      }
+
+      if (!initPromise) {
+        initPromise = httpServer.initialize();
+      }
+
+      try {
         await initPromise;
-        initPromise = null; // Clear after first await
+        isInitialized = true;
+      } catch (error) {
+        initPromise = null;
+        throw error;
       }
     },
   };
@@ -165,6 +196,9 @@ export async function handleSettlement(
 
     return response;
   } catch (error) {
+    if (error instanceof FacilitatorResponseError) {
+      return createFacilitatorErrorResponse(error);
+    }
     console.error("Settlement failed:", error);
     // If settlement fails, return an error response
     return new NextResponse(JSON.stringify({}), {

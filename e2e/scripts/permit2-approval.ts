@@ -5,8 +5,10 @@
  * It can grant unlimited approval or revoke existing approval.
  *
  * Usage:
- *   pnpm tsx scripts/permit2-approval.ts approve  # Check and approve if needed
- *   pnpm tsx scripts/permit2-approval.ts revoke   # Revoke Permit2 approval (set allowance to 0)
+ *   pnpm tsx scripts/permit2-approval.ts approve [tokenAddress]
+ *   pnpm tsx scripts/permit2-approval.ts revoke  [tokenAddress]
+ *
+ * If tokenAddress is not provided, processes all known tokens.
  *
  * Environment variables required:
  *   CLIENT_EVM_PRIVATE_KEY - Private key of the client wallet
@@ -19,28 +21,44 @@ import {
   http,
   parseAbi,
   formatUnits,
+  getAddress,
 } from 'viem';
 import { privateKeyToAccount } from 'viem/accounts';
-import { baseSepolia } from 'viem/chains';
+import { base, baseSepolia } from 'viem/chains';
 
 config();
 
 // Permit2 canonical address (same on all EVM chains)
 const PERMIT2_ADDRESS = '0x000000000022D473030F116dDEE9F6B43aC78BA3';
 
-// Known tokens on Base Sepolia
-const TOKENS: Record<string, { address: `0x${string}`; decimals: number; name: string }> = {
-  USDC: {
-    address: '0x036CbD53842c5426634e7929541eC2318f3dCF7e',
-    decimals: 6,
-    name: 'USDC',
+const evmNetwork = process.env.EVM_NETWORK || 'eip155:84532';
+const evmRpcUrl = process.env.EVM_RPC_URL;
+const evmChain = evmNetwork === 'eip155:8453' ? base : baseSepolia;
+const isMainnet = evmNetwork === 'eip155:8453';
+
+const TOKENS_BY_NETWORK: Record<string, Record<string, { address: `0x${string}`; decimals: number; name: string }>> = {
+  'eip155:84532': {
+    USDC: {
+      address: '0x036CbD53842c5426634e7929541eC2318f3dCF7e',
+      decimals: 6,
+      name: 'USDC',
+    },
+    MockERC20: {
+      address: '0xeED520980fC7C7B4eB379B96d61CEdea2423005a',
+      decimals: 6,
+      name: 'MockERC20',
+    },
   },
-  MockERC20: {
-    address: '0xeED520980fC7C7B4eB379B96d61CEdea2423005a',
-    decimals: 6,
-    name: 'MockERC20',
+  'eip155:8453': {
+    USDC: {
+      address: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913',
+      decimals: 6,
+      name: 'USDC',
+    },
   },
 };
+
+const TOKENS = TOKENS_BY_NETWORK[evmNetwork] || TOKENS_BY_NETWORK['eip155:84532'];
 
 // Maximum uint256 for unlimited approval
 const MAX_UINT256 = 2n ** 256n - 1n;
@@ -54,14 +72,18 @@ const erc20Abi = parseAbi([
 
 async function main() {
   const action = process.argv[2];
+  const tokenAddressArg = process.argv[3];
+  const filterAddress = tokenAddressArg ? (getAddress(tokenAddressArg) as `0x${string}`) : undefined;
 
   if (!action || (action !== 'approve' && action !== 'revoke')) {
     console.log(`
 Permit2 Approval Script
 
 Usage:
-  pnpm tsx scripts/permit2-approval.ts approve  # Check and approve Permit2 if needed
-  pnpm tsx scripts/permit2-approval.ts revoke   # Revoke Permit2 approval (set allowance to 0)
+  pnpm tsx scripts/permit2-approval.ts approve [tokenAddress]
+  pnpm tsx scripts/permit2-approval.ts revoke  [tokenAddress]
+
+If tokenAddress is not provided, processes all known tokens (USDC and MockERC20).
 
 Environment variables required:
   CLIENT_EVM_PRIVATE_KEY - Private key of the client wallet
@@ -78,18 +100,18 @@ Environment variables required:
   const account = privateKeyToAccount(privateKey as `0x${string}`);
 
   const publicClient = createPublicClient({
-    chain: baseSepolia,
-    transport: http(),
+    chain: evmChain,
+    transport: http(evmRpcUrl),
   });
 
   const walletClient = createWalletClient({
     account,
-    chain: baseSepolia,
-    transport: http(),
+    chain: evmChain,
+    transport: http(evmRpcUrl),
   });
 
   console.log(`\n🔑 Wallet: ${account.address}`);
-  console.log(`📍 Network: Base Sepolia`);
+  console.log(`📍 Network: ${evmChain.name} (${evmNetwork})`);
   console.log(`🔐 Permit2: ${PERMIT2_ADDRESS}\n`);
 
   // Display balance and allowance for all known tokens
@@ -124,8 +146,20 @@ Environment variables required:
   }
   console.log();
 
+  const tokensToProcess = filterAddress
+    ? tokenStates.filter((t) => getAddress(t.address) === filterAddress)
+    : tokenStates;
+
+  if (tokensToProcess.length === 0) {
+    const addr = filterAddress ?? 'none';
+    console.error(`❌ No matching token found for address ${addr}`);
+    process.exit(1);
+  }
+
+  let nonce = await publicClient.getTransactionCount({ address: account.address });
+
   if (action === 'revoke') {
-    for (const token of tokenStates) {
+    for (const token of tokensToProcess) {
       if (token.allowance === 0n) {
         console.log(`✅ ${token.name}: Permit2 approval already revoked (allowance is 0)`);
         continue;
@@ -138,23 +172,16 @@ Environment variables required:
         abi: erc20Abi,
         functionName: 'approve',
         args: [PERMIT2_ADDRESS, 0n],
+        nonce: nonce++,
       });
 
-      console.log(`   📝 Transaction: ${hash}`);
-      const receipt = await publicClient.waitForTransactionReceipt({ hash });
-
-      if (receipt.status === 'success') {
-        console.log(`   ✅ Revoked (block ${receipt.blockNumber}, gas ${receipt.gasUsed})`);
-      } else {
-        console.error(`   ❌ Revoke transaction failed`);
-        process.exit(1);
-      }
+      console.log(`   ✅ Revoke submitted (tx: ${hash})`);
     }
     return;
   }
 
   // action === 'approve'
-  for (const token of tokenStates) {
+  for (const token of tokensToProcess) {
     if (token.allowance === MAX_UINT256) {
       console.log(`✅ ${token.name}: Permit2 already has unlimited approval`);
       continue;
@@ -167,17 +194,10 @@ Environment variables required:
       abi: erc20Abi,
       functionName: 'approve',
       args: [PERMIT2_ADDRESS, MAX_UINT256],
+      nonce: nonce++,
     });
 
-    console.log(`   📝 Transaction: ${hash}`);
-    const receipt = await publicClient.waitForTransactionReceipt({ hash });
-
-    if (receipt.status === 'success') {
-      console.log(`   ✅ Approved (block ${receipt.blockNumber}, gas ${receipt.gasUsed})`);
-    } else {
-      console.error(`   ❌ Transaction failed`);
-      process.exit(1);
-    }
+    console.log(`   ✅ Approve submitted (tx: ${hash})`);
   }
 }
 

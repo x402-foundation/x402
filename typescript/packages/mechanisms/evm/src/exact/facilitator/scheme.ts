@@ -19,6 +19,12 @@ export interface ExactEvmSchemeConfig {
    * @default false
    */
   deployERC4337WithEIP6492?: boolean;
+  /**
+   * If enabled, run on-chain simulation during settle's re-verify.
+   *
+   * @default false
+   */
+  simulateInSettle?: boolean;
 }
 
 /**
@@ -44,6 +50,7 @@ export class ExactEvmScheme implements SchemeNetworkFacilitator {
   ) {
     this.config = {
       deployERC4337WithEIP6492: config?.deployERC4337WithEIP6492 ?? false,
+      simulateInSettle: config?.simulateInSettle ?? false,
     };
   }
 
@@ -81,8 +88,9 @@ export class ExactEvmScheme implements SchemeNetworkFacilitator {
     context?: FacilitatorContext,
   ): Promise<VerifyResponse> {
     const rawPayload = payload.payload as ExactEvmPayloadV2;
+    const isPermit2 = isPermit2Payload(rawPayload);
 
-    if (isPermit2Payload(rawPayload)) {
+    if (isPermit2) {
       return verifyPermit2(this.signer, payload, requirements, rawPayload, context);
     }
 
@@ -104,9 +112,12 @@ export class ExactEvmScheme implements SchemeNetworkFacilitator {
     context?: FacilitatorContext,
   ): Promise<SettleResponse> {
     const rawPayload = payload.payload as ExactEvmPayloadV2;
+    const isPermit2 = isPermit2Payload(rawPayload);
 
-    if (isPermit2Payload(rawPayload)) {
-      return settlePermit2(this.signer, payload, requirements, rawPayload, context);
+    if (isPermit2) {
+      return settlePermit2(this.signer, payload, requirements, rawPayload, context, {
+        simulateInSettle: this.config.simulateInSettle,
+      });
     }
 
     const eip3009Payload: ExactEIP3009Payload = rawPayload;

@@ -1,5 +1,5 @@
 #!/bin/bash
-# Python build - no compilation needed
-# This file exists for consistency with the e2e setup process
-exit 0
+set -e
 
+# Rebuild the local x402 editable dependency so the venv reflects source changes
+uv sync --reinstall-package x402

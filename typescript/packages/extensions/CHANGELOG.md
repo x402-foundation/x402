@@ -1,5 +1,32 @@
 # @x402/extensions Changelog
 
+## 2.8.0
+
+### Minor Changes
+
+- 4f2f4f3: Added auth-only route support in createSIWxRequestHook via accepts: [] detection
+- 067f297: Added dynamic route support to the Bazaar discovery extension — servers can now declare `[param]` route segments that consolidate to a single catalog entry per route template, with automatic `pathParams` enrichment and `:param`-style `routeTemplate` in discovery output.
+
+### Patch Changes
+
+- Updated dependencies [067f297]
+- Updated dependencies [4c1e44f]
+- Updated dependencies [5135fab]
+  - @x402/core@2.8.0
+
+## 2.7.0
+
+### Minor Changes
+
+- 8b731cb: Replaced `sendRawApprovalAndSettle` with a generic `sendTransactions` signer method that accepts an array of pre-signed serialized transactions or unsigned call intents. The signer owns execution strategy (sequential, batched, or atomic bundling). Closed fail-open verification paths, aligned Permit2 amount check to exact match, and added `signerForNetwork` to the extensions package.
+- f2bbb5c: Added offer-receipt extension to enable signed offers and receipts in x402 payment flows
+
+### Patch Changes
+
+- 34d2442: Removed dependencie on node’s crypto module
+- Updated dependencies [8931cb3]
+  - @x402/core@2.7.0
+
 ## 2.6.0
 
 ### Minor Changes

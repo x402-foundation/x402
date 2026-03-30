@@ -17,12 +17,16 @@ import type {
  * @param root0.input - Query parameters
  * @param root0.inputSchema - JSON schema for query parameters
  * @param root0.output - Output specification with example
+ * @param root0.pathParams - Concrete path parameter values extracted from the request
+ * @param root0.pathParamsSchema - JSON schema for path parameters
  * @returns QueryDiscoveryExtension with info and schema
  */
 export function createQueryDiscoveryExtension({
   method,
   input = {},
   inputSchema = { properties: {} },
+  pathParams,
+  pathParamsSchema,
   output,
 }: DeclareQueryDiscoveryExtensionConfig): QueryDiscoveryExtension {
   return {
@@ -31,6 +35,7 @@ export function createQueryDiscoveryExtension({
         type: "http" as const,
         ...(method ? { method } : {}),
         ...(input ? { queryParams: input } : {}),
+        ...(pathParams ? { pathParams } : {}),
       },
       ...(output?.example
         ? {
@@ -64,8 +69,19 @@ export function createQueryDiscoveryExtension({
                   },
                 }
               : {}),
+            ...(pathParamsSchema
+              ? {
+                  pathParams: {
+                    type: "object" as const,
+                    ...(typeof pathParamsSchema === "object" ? pathParamsSchema : {}),
+                  },
+                }
+              : {}),
           },
-          required: ["type"] as ("type" | "method")[],
+          required: ["type", "method"] as ("type" | "method")[],
+          // pathParams are not declared here at schema build time --
+          // the server extension's enrichDeclaration adds them to both info and schema
+          // atomically at request time, keeping data and schema consistent.
           additionalProperties: false,
         },
         ...(output?.example
@@ -100,12 +116,16 @@ export function createQueryDiscoveryExtension({
  * @param root0.inputSchema - JSON schema for request body
  * @param root0.bodyType - Content type of body (json, form-data, text)
  * @param root0.output - Output specification with example
+ * @param root0.pathParams - Concrete path parameter values extracted from the request
+ * @param root0.pathParamsSchema - JSON schema for path parameters
  * @returns BodyDiscoveryExtension with info and schema
  */
 export function createBodyDiscoveryExtension({
   method,
   input = {},
   inputSchema = { properties: {} },
+  pathParams,
+  pathParamsSchema,
   bodyType,
   output,
 }: DeclareBodyDiscoveryExtensionConfig): BodyDiscoveryExtension {
@@ -116,6 +136,7 @@ export function createBodyDiscoveryExtension({
         ...(method ? { method } : {}),
         bodyType,
         body: input,
+        ...(pathParams ? { pathParams } : {}),
       },
       ...(output?.example
         ? {
@@ -146,8 +167,24 @@ export function createBodyDiscoveryExtension({
               enum: ["json", "form-data", "text"],
             },
             body: inputSchema,
+            ...(pathParamsSchema
+              ? {
+                  pathParams: {
+                    type: "object" as const,
+                    ...(typeof pathParamsSchema === "object" ? pathParamsSchema : {}),
+                  },
+                }
+              : {}),
           },
-          required: ["type", "bodyType", "body"] as ("type" | "method" | "bodyType" | "body")[],
+          required: ["type", "method", "bodyType", "body"] as (
+            | "type"
+            | "method"
+            | "bodyType"
+            | "body"
+          )[],
+          // pathParams are not declared here at schema build time --
+          // the server extension's enrichDeclaration adds them to both info and schema
+          // atomically at request time, keeping data and schema consistent.
           additionalProperties: false,
         },
         ...(output?.example

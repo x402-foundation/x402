@@ -277,7 +277,7 @@ func TestRegisterPaywallProvider(t *testing.T) {
 // --- injectPaywallConfig tests ---
 
 func TestInjectPaywallConfig(t *testing.T) {
-	template := "<html><body></body></html>"
+	template := "<html><head></head><body></body></html>"
 	paymentReq := makePaymentRequired("eip155:8453")
 
 	t.Run("injects window.x402 config", func(t *testing.T) {

@@ -29,12 +29,12 @@ contract DeployX402Proxies is Script {
     address constant CREATE2_DEPLOYER = 0x4e59b44847b379578588920cA78FbF26c0B4956C;
 
     /// @notice Salt for x402ExactPermit2Proxy deterministic deployment
-    /// @dev Vanity mined for address 0x4020cd856c882d5fb903d99ce35316a085bb0001
-    bytes32 constant EXACT_SALT = 0x0000000000000000000000000000000000000000000000002c00000003c30a30;
+    /// @dev Vanity mined for address 0x402085c248eea27d92e8b30b2c58ed07f9e20001
+    bytes32 constant EXACT_SALT = 0x0000000000000000000000000000000000000000000000003000000007263b0e;
 
     /// @notice Salt for x402UptoPermit2Proxy deterministic deployment
-    /// @dev Vanity mined for address 0x40204513ec14919adfd30d77c0a991371b420002
-    bytes32 constant UPTO_SALT = 0x00000000000000000000000000000000000000000000000084000000275d7dbb;
+    /// @dev Vanity mined for address 0x402039b3d6e6bec5a02c2c9fd937ac17a6940002
+    bytes32 constant UPTO_SALT = 0x0000000000000000000000000000000000000000000000000000000000edb738;
 
     function run() public {
         // Allow override of Permit2 address for chains with non-canonical deployments

@@ -38,7 +38,7 @@ func runErrorRecoveryExample(ctx context.Context, evmPrivateKey, url string) err
 
 	// Create x402 client with comprehensive error handling
 	client := x402.Newx402Client().
-		Register("eip155:*", evm.NewExactEvmScheme(evmSigner))
+		Register("eip155:*", evm.NewExactEvmScheme(evmSigner, nil))
 
 	// Recovery counter
 	recoveryAttempts := 0

@@ -4,6 +4,7 @@ import pytest
 
 from x402 import x402ResourceServer, x402ResourceServerSync
 from x402.schemas import (
+    ResourceConfig,
     SettleResponse,
     SupportedKind,
     SupportedResponse,
@@ -408,6 +409,64 @@ class TestExtensionRegistration:
 
         assert result is server
         assert "test" in server._extensions
+
+
+# =============================================================================
+# Build Requirements Tests
+# =============================================================================
+
+
+class TestBuildPaymentRequirements:
+    """Tests for build_payment_requirements."""
+
+    def test_merges_resource_config_extra_with_parsed_price_extra(self):
+        """Merchant config extra should be preserved when requirements are built."""
+
+        class SchemeWithParsedExtra(MockSchemeServer):
+            def parse_price(self, price, network):
+                from dataclasses import dataclass
+
+                @dataclass
+                class AssetAmount:
+                    asset: str
+                    amount: str
+                    extra: dict | None = None
+
+                return AssetAmount(
+                    asset="0x0000000000000000000000000000000000000000",
+                    amount="1000000",
+                    extra={"parsed": "value"},
+                )
+
+        kinds = [
+            SupportedKind(
+                x402_version=2,
+                scheme="exact",
+                network="eip155:8453",
+            )
+        ]
+        server = x402ResourceServerSync(MockFacilitatorClientSync(kinds))
+        server.register("eip155:8453", SchemeWithParsedExtra("exact"))
+        server.initialize()
+
+        requirements = server.build_payment_requirements(
+            ResourceConfig(
+                scheme="exact",
+                pay_to="0xmerchant",
+                price="$1.00",
+                network="eip155:8453",
+                extra={
+                    "assetTransferMethod": "permit2",
+                    "merchantNote": "custom-scheme-data",
+                },
+            )
+        )
+
+        assert len(requirements) == 1
+        assert requirements[0].extra is not None
+        assert requirements[0].extra.get("parsed") == "value"
+        assert requirements[0].extra.get("assetTransferMethod") == "permit2"
+        assert requirements[0].extra.get("merchantNote") == "custom-scheme-data"
 
 
 # =============================================================================

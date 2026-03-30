@@ -69,9 +69,13 @@ func main() {
 	}
 	defer session.Close()
 
-	// Use X402MCPClient - payment is transparent in CallTool
+	var evmConfig *evm.ExactEvmSchemeConfig
+	if rpcURL := os.Getenv("EVM_RPC_URL"); rpcURL != "" {
+		evmConfig = &evm.ExactEvmSchemeConfig{RPCURL: rpcURL}
+	}
+
 	paymentClient := x402.Newx402Client()
-	paymentClient.Register("eip155:*", evm.NewExactEvmScheme(evmSigner))
+	paymentClient.Register("eip155:*", evm.NewExactEvmScheme(evmSigner, evmConfig))
 	x402Mcp := mcp402.NewX402MCPClient(session, paymentClient, mcp402.Options{AutoPayment: mcp402.BoolPtr(true)})
 
 	result, err := x402Mcp.CallTool(ctx, endpointPath, map[string]any{

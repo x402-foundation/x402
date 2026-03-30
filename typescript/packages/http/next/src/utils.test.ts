@@ -13,15 +13,38 @@ import {
   handleSettlement,
 } from "./utils";
 
+let mockInitialize: ReturnType<typeof vi.fn>;
+
 // Mock @x402/core/server
 vi.mock("@x402/core/server", () => {
   const MockHTTPResourceServer = vi.fn().mockImplementation(() => ({
-    initialize: vi.fn().mockResolvedValue(undefined),
+    initialize: mockInitialize,
     registerPaywallProvider: vi.fn(),
     processSettlement: vi.fn(),
     requiresPayment: vi.fn().mockReturnValue(true),
   }));
   return {
+    FacilitatorResponseError: class FacilitatorResponseError extends Error {
+      /**
+       * Creates a mock facilitator response error.
+       *
+       * @param message - Error message.
+       */
+      constructor(message: string) {
+        super(message);
+        this.name = "FacilitatorResponseError";
+      }
+    },
+    getFacilitatorResponseError: (error: unknown) => {
+      let current = error;
+      while (current instanceof Error) {
+        if (current.name === "FacilitatorResponseError") {
+          return current;
+        }
+        current = (current as Error & { cause?: unknown }).cause;
+      }
+      return null;
+    },
     x402HTTPResourceServer: MockHTTPResourceServer,
     x402ResourceServer: vi.fn(),
   };
@@ -62,6 +85,10 @@ function createMockResourceServer(): x402ResourceServer {
 }
 
 describe("createHttpServer", () => {
+  beforeEach(() => {
+    mockInitialize = vi.fn().mockResolvedValue(undefined);
+  });
+
   it("creates server and initializes on start by default", async () => {
     const routes = {
       "/api/*": {
@@ -106,6 +133,25 @@ describe("createHttpServer", () => {
     // Wait for initialization to complete to avoid warnings
     await init();
     expect(httpServer.registerPaywallProvider).toHaveBeenCalledWith(paywall);
+  });
+
+  it("retries initialization after a facilitator init failure", async () => {
+    mockInitialize = vi
+      .fn()
+      .mockRejectedValueOnce(new Error("not-json"))
+      .mockResolvedValueOnce(undefined);
+    const routes = {
+      "/api/*": {
+        accepts: { scheme: "exact", payTo: "0x123", price: "$0.01", network: "eip155:84532" },
+      },
+    } as const;
+    const server = createMockResourceServer();
+
+    const { init } = createHttpServer(routes, server);
+
+    await expect(init()).rejects.toThrow("not-json");
+    await expect(init()).resolves.toBeUndefined();
+    expect(mockInitialize).toHaveBeenCalledTimes(2);
   });
 });
 

@@ -144,3 +144,20 @@ To add a new chain's default asset:
 4. Add the entry to `getDefaultAsset()` in `scheme.ts`
 5. Submit a PR with the chain name and rationale for the asset selection
 
+## Cross-SDK Checklist
+
+When adding a new chain's default asset, update all three SDKs to maintain parity:
+
+| SDK | File to edit | What to add |
+|-----|-------------|-------------|
+| **Go** | `go/mechanisms/evm/constants.go` | Entry in `NetworkConfigs` map |
+| **TypeScript** | `typescript/packages/mechanisms/evm/src/exact/server/scheme.ts` | Entry in `stablecoins` map inside `getDefaultAsset()` |
+| **Python** | `python/x402/mechanisms/evm/constants.py` | Entry in `NETWORK_CONFIGS` dict |
+
+All three must use:
+- The same CAIP-2 network key (e.g., `eip155:YOUR_CHAIN_ID`)
+- The same token contract address
+- The same EIP-712 domain `name` and `version`
+- The same `decimals` value
+- The same asset transfer method (EIP-3009 default, or Permit2 if specified)
+

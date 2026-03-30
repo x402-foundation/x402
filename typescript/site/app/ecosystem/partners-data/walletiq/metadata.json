@@ -1,0 +1,7 @@
+{
+  "name": "WalletIQ",
+  "description": "Wallet intelligence API for EVM addresses. One x402 call returns a full wallet profile: age, activity stats, DeFi protocol usage, risk score, and behavioral labels across 5+ chains. Pay $0.005 USDC per lookup on Base — no API key or signup required.",
+  "logoUrl": "/logos/walletiq.png",
+  "websiteUrl": "https://walletiq-zeta.vercel.app",
+  "category": "Services/Endpoints"
+}

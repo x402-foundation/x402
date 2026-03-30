@@ -190,6 +190,11 @@ func (s *facilitatorEvmSigner) ReadContract(
 		return nil, fmt.Errorf("failed to parse ABI: %w", err)
 	}
 
+	methodObj, exists := contractABI.Methods[method]
+	if !exists {
+		return nil, fmt.Errorf("method %s not found in ABI", method)
+	}
+
 	// Pack the method call
 	data, err := contractABI.Pack(method, args...)
 	if err != nil {
@@ -209,23 +214,11 @@ func (s *facilitatorEvmSigner) ReadContract(
 		return nil, fmt.Errorf("failed to call contract: %w", err)
 	}
 
-	// Handle empty result
-	if len(result) == 0 {
-		if method == "authorizationState" {
-			return false, nil
-		}
-		if method == "balanceOf" || method == "allowance" {
-			return big.NewInt(0), nil
-		}
-		return nil, fmt.Errorf("empty result from contract call")
+	if len(methodObj.Outputs) == 0 {
+		return nil, nil
 	}
 
 	// Unpack the result
-	methodObj, exists := contractABI.Methods[method]
-	if !exists {
-		return nil, fmt.Errorf("method %s not found in ABI", method)
-	}
-
 	output, err := methodObj.Outputs.Unpack(result)
 	if err != nil {
 		return nil, fmt.Errorf("failed to unpack result: %w", err)
@@ -606,4 +599,3 @@ func getBigIntFromInterface(v interface{}) *big.Int {
 	}
 	return big.NewInt(0)
 }
-

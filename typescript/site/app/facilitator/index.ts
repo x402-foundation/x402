@@ -133,10 +133,35 @@ async function createFacilitator(): Promise<x402Facilitator> {
     );
   }
 
+  // Build ERC-20 approval signer with sendTransactions for Permit2 gas sponsoring
+  const erc20ApprovalSigner = {
+    ...evmSigner,
+    sendTransactions: async (
+      transactions: (`0x${string}` | { to: `0x${string}`; data: `0x${string}`; gas?: bigint })[],
+    ): Promise<`0x${string}`[]> => {
+      const hashes: `0x${string}`[] = [];
+      for (const tx of transactions) {
+        let hash: `0x${string}`;
+        if (typeof tx === "string") {
+          hash = await viemClient.sendRawTransaction({ serializedTransaction: tx });
+        } else {
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          hash = await viemClient.sendTransaction(tx as any);
+        }
+        const receipt = await viemClient.waitForTransactionReceipt({ hash });
+        if (receipt.status !== "success") {
+          throw new Error(`transaction_failed: ${hash}`);
+        }
+        hashes.push(hash);
+      }
+      return hashes;
+    },
+  };
+
   // Register gas sponsorship extensions for Permit2 support
   facilitator
     .registerExtension(EIP2612_GAS_SPONSORING)
-    .registerExtension(createErc20ApprovalGasSponsoringExtension(evmSigner, viemClient));
+    .registerExtension(createErc20ApprovalGasSponsoringExtension(erc20ApprovalSigner));
 
   return facilitator;
 }

@@ -1,6 +1,6 @@
 {
   "name": "@x402/stellar",
-  "version": "2.6.0",
+  "version": "2.8.0",
   "main": "./dist/cjs/index.js",
   "module": "./dist/esm/index.js",
   "types": "./dist/cjs/index.d.ts",
@@ -46,7 +46,7 @@
     "vitest": "^3.0.5"
   },
   "dependencies": {
-    "@stellar/stellar-sdk": "^14.4.2",
+    "@stellar/stellar-sdk": "^14.6.1",
     "@x402/core": "workspace:*"
   },
   "exports": {

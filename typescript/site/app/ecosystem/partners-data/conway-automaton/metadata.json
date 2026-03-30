@@ -1,0 +1,7 @@
+{
+  "name": "Conway Automaton",
+  "description": "Conway Automaton is an autonomous agent framework that integrates x402 for native HTTP payment flows, enabling agents to pay for and monetize API access on-chain.",
+  "logoUrl": "/logos/conway-automaton.png",
+  "websiteUrl": "https://github.com/Conway-Research/automaton",
+  "category": "Client-Side Integrations"
+}

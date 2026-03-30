@@ -29,12 +29,12 @@ func createBuilderPatternClient(evmPrivateKey, svmPrivateKey string) (*x402.X402
 	client := x402.Newx402Client()
 
 	// Register EVM scheme for all EVM networks
-	client.Register("eip155:*", evm.NewExactEvmScheme(evmSigner))
+	client.Register("eip155:*", evm.NewExactEvmScheme(evmSigner, nil))
 
 	// You can also register specific networks for fine-grained control
 	// For example, use a different signer for Ethereum mainnet:
 	// ethereumSigner := evmsigners.NewClientSignerFromPrivateKey(ethereumKey)
-	// client.Register("eip155:1", evm.NewExactEvmScheme(ethereumSigner))
+	// client.Register("eip155:1", evm.NewExactEvmScheme(ethereumSigner, nil))
 
 	// Register SVM scheme if key is provided
 	if svmPrivateKey != "" {

@@ -28,15 +28,6 @@ abstract contract x402BasePermit2Proxy is ReentrancyGuard {
     /// @notice The Permit2 contract address (set once at construction, immutable)
     ISignatureTransfer public immutable PERMIT2;
 
-    /// @notice EIP-712 type string for witness data
-    /// @dev Must match the exact format expected by Permit2
-    /// Types must be in ALPHABETICAL order after the primary type (TokenPermissions < Witness)
-    string public constant WITNESS_TYPE_STRING =
-        "Witness witness)TokenPermissions(address token,uint256 amount)Witness(address to,address facilitator,uint256 validAfter)";
-
-    /// @notice EIP-712 typehash for witness struct
-    bytes32 public constant WITNESS_TYPEHASH = keccak256("Witness(address to,address facilitator,uint256 validAfter)");
-
     /// @notice Emitted when settle() completes successfully
     event Settled();
 
@@ -79,24 +70,6 @@ abstract contract x402BasePermit2Proxy is ReentrancyGuard {
     /// @notice Thrown when EIP-2612 permit value doesn't match Permit2 permitted amount
     error Permit2612AmountMismatch();
 
-    /// @notice Thrown when msg.sender does not match the facilitator in the witness
-    error UnauthorizedFacilitator();
-
-    /**
-     * @notice Witness data structure for payment authorization
-     * @param to Destination address (immutable once signed)
-     * @param facilitator Address authorized to settle this payment (must be msg.sender)
-     * @param validAfter Earliest timestamp when payment can be settled
-     * @dev The upper time bound is enforced by Permit2's deadline field.
-     *      The facilitator field prevents frontrunning/griefing by binding the
-     *      settlement caller to the payer's signature.
-     */
-    struct Witness {
-        address to;
-        address facilitator;
-        uint256 validAfter;
-    }
-
     /**
      * @notice EIP-2612 permit parameters grouped to reduce stack depth
      * @param value Approval amount for Permit2
@@ -129,43 +102,37 @@ abstract contract x402BasePermit2Proxy is ReentrancyGuard {
 
     /**
      * @notice Internal settlement logic shared by all settlement functions
-     * @dev Validates all parameters and executes the Permit2 transfer
+     * @dev Validates common parameters and executes the Permit2 witness transfer.
+     *      Each child contract computes its own witnessHash and witnessTypeString
+     *      based on its Witness struct definition.
      * @param permit The Permit2 transfer authorization
      * @param settlementAmount The actual amount to transfer (may be <= permit.permitted.amount)
      * @param owner The token owner (payer)
-     * @param witness The witness data containing destination and validity window
+     * @param to The destination address for the transfer
+     * @param validAfter Earliest timestamp when payment can be settled
+     * @param witnessHash The EIP-712 hash of the child's witness struct
+     * @param witnessTypeString The EIP-712 type string for the child's witness
      * @param signature The payer's signature
      */
     function _settle(
         ISignatureTransfer.PermitTransferFrom calldata permit,
         uint256 settlementAmount,
         address owner,
-        Witness calldata witness,
+        address to,
+        uint256 validAfter,
+        bytes32 witnessHash,
+        string memory witnessTypeString,
         bytes calldata signature
     ) internal {
-        // Validate amount is non-zero to prevent no-op settlements that consume nonces
         if (settlementAmount == 0) revert InvalidAmount();
-
-        // Validate addresses
         if (owner == address(0)) revert InvalidOwner();
-        if (witness.to == address(0)) revert InvalidDestination();
+        if (to == address(0)) revert InvalidDestination();
+        if (block.timestamp < validAfter) revert PaymentTooEarly();
 
-        // Validate caller is the authorized facilitator signed over by the payer
-        if (msg.sender != witness.facilitator) revert UnauthorizedFacilitator();
-
-        // Validate time window (upper bound enforced by Permit2's deadline)
-        if (block.timestamp < witness.validAfter) revert PaymentTooEarly();
-
-        // Prepare transfer details with destination from witness
         ISignatureTransfer.SignatureTransferDetails memory transferDetails =
-            ISignatureTransfer.SignatureTransferDetails({to: witness.to, requestedAmount: settlementAmount});
+            ISignatureTransfer.SignatureTransferDetails({to: to, requestedAmount: settlementAmount});
 
-        // Reconstruct witness hash to enforce integrity
-        bytes32 witnessHash =
-            keccak256(abi.encode(WITNESS_TYPEHASH, witness.to, witness.facilitator, witness.validAfter));
-
-        // Execute transfer via Permit2
-        PERMIT2.permitWitnessTransferFrom(permit, transferDetails, owner, witnessHash, WITNESS_TYPE_STRING, signature);
+        PERMIT2.permitWitnessTransferFrom(permit, transferDetails, owner, witnessHash, witnessTypeString, signature);
     }
 
     /**
@@ -184,21 +151,19 @@ abstract contract x402BasePermit2Proxy is ReentrancyGuard {
         EIP2612Permit calldata permit2612,
         uint256 permittedAmount
     ) internal {
-        if (permit2612.value != permittedAmount) revert Permit2612AmountMismatch();
+        if (permit2612.value != permittedAmount) {
+            revert Permit2612AmountMismatch();
+        }
 
         try IERC20Permit(token).permit(
             owner, address(PERMIT2), permit2612.value, permit2612.deadline, permit2612.v, permit2612.r, permit2612.s
         ) {
             // EIP-2612 permit succeeded
         } catch Error(string memory reason) {
-            // Legacy revert(string) or require(condition, string) — e.g. older token implementations
             emit EIP2612PermitFailedWithReason(token, owner, reason);
         } catch Panic(uint256 errorCode) {
-            // Solidity panic — e.g. arithmetic overflow in non-standard implementations
             emit EIP2612PermitFailedWithPanic(token, owner, errorCode);
         } catch (bytes memory data) {
-            // Custom errors (e.g. OZ v5 ERC2612ExpiredSignature, ERC2612InvalidSigner),
-            // empty reverts, or out-of-gas from non-EIP-2612 tokens
             emit EIP2612PermitFailedWithData(token, owner, data);
         }
     }
