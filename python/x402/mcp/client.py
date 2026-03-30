@@ -33,6 +33,7 @@ from ..schemas.responses import SettleResponse
 from .constants import MCP_PAYMENT_META_KEY, MCP_PAYMENT_RESPONSE_META_KEY
 from .utils import (
     convert_mcp_result,
+    extract_payment_required_from_error,
     extract_payment_required_from_result,
     extract_payment_response_from_meta,
 )
@@ -241,7 +242,14 @@ class x402MCPClientSync:
         args = args or {}
         params = {"name": name, "arguments": args}
 
-        result = self._mcp_client.call_tool(params, **kwargs)
+        try:
+            result = self._mcp_client.call_tool(params, **kwargs)
+        except Exception as exc:
+            payment_required = extract_payment_required_from_error(exc)
+            if payment_required is None:
+                raise
+            return self._handle_payment_required(name, args, payment_required, **kwargs)
+
         mcp_result = convert_mcp_result(result)
 
         payment_required = extract_payment_required_from_result(mcp_result)
@@ -251,12 +259,26 @@ class x402MCPClientSync:
         if not self._auto_payment:
             return self._build_result(mcp_result, payment_made=False)
 
+        return self._handle_payment_required(name, args, payment_required, **kwargs)
+
+    def _handle_payment_required(
+        self,
+        name: str,
+        args: dict[str, Any],
+        payment_required: PaymentRequired,
+        **kwargs: Any,
+    ) -> MCPToolCallResult:
+        """Handle a payment-required signal (from isError result or thrown exception)."""
         if self._on_payment_requested:
             approved = self._on_payment_requested(
                 type("Ctx", (), {"payment_required": payment_required})()
             )
             if not approved:
-                return self._build_result(mcp_result, payment_made=False)
+                return MCPToolCallResult(
+                    content=[],
+                    is_error=True,
+                    payment_made=False,
+                )
 
         payment_payload = self._payment_client.create_payment_payload(payment_required)
         payload_dict = payment_payload.model_dump(by_alias=True)

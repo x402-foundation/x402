@@ -5,6 +5,7 @@ from typing import Any
 
 from ..schemas import PaymentPayload, PaymentRequired, SettleResponse
 from .types import (
+    JSONRPC_PAYMENT_REQUIRED_CODE,
     MCP_PAYMENT_META_KEY,
     MCP_PAYMENT_REQUIRED_CODE,
     MCP_PAYMENT_RESPONSE_META_KEY,
@@ -238,44 +239,58 @@ def create_payment_required_error(
 def extract_payment_required_from_error(error: Any) -> PaymentRequired | None:
     """Extract PaymentRequired from an MCP JSON-RPC error.
 
-    This function checks if the error is a 402 payment required error and extracts
-    the PaymentRequired data from the error's data field.
+    Handles both thrown exceptions (with .code and .data attributes) and
+    dict-like error objects.  Recognises code 402 (legacy) and -32042
+    (SEP-1036 UrlElicitationRequired).
 
     Args:
-        error: The error object from a JSON-RPC response
+        error: The error object — an Exception with ``code``/``data`` attrs,
+               or a dict with ``code``/``data`` keys.
 
     Returns:
-        PaymentRequired if this is a 402 error, None otherwise
-
-    Example:
-        ```python
-        from x402.mcp import extract_payment_required_from_error
-
-        try:
-            result = client.call_tool("tool", {})
-        except Exception as err:
-            pr = extract_payment_required_from_error(err)
-            if pr:
-                # Handle payment required
-                pass
-        ```
+        PaymentRequired if valid payment data is found, None otherwise.
     """
-    if not is_object(error):
+    _PAYMENT_CODES = {MCP_PAYMENT_REQUIRED_CODE, JSONRPC_PAYMENT_REQUIRED_CODE}
+
+    # --- Exception path (McpError with .code / .data) ---
+    if isinstance(error, Exception):
+        code = getattr(error, "code", None)
+        if code not in _PAYMENT_CODES:
+            return None
+        data = getattr(error, "data", None)
+        if not is_object(data):
+            return None
+        return _try_parse_payment_data(data)
+
+    # --- Dict path (legacy JSON-RPC error dicts) ---
+    if is_object(error):
+        code = error.get("code")
+        if code not in _PAYMENT_CODES:
+            return None
+        data = error.get("data")
+        if not is_object(data):
+            return None
+        return _try_parse_payment_data(data)
+
+    return None
+
+
+def _try_parse_payment_data(data: dict[str, Any]) -> PaymentRequired | None:
+    """Try to parse PaymentRequired from a data dict.
+
+    Handles both direct PaymentRequired data and namespaced ``data.x402``.
+    """
+    if not data:
         return None
 
-    # Check if this is a 402 payment required error
-    code = error.get("code")
-    if code != MCP_PAYMENT_REQUIRED_CODE:
-        return None
+    # Check for namespaced x402 key first
+    if "x402" in data and is_object(data["x402"]):
+        pr = _extract_payment_required_from_object(data["x402"])
+        if pr is not None:
+            return pr
 
-    # Extract and validate the data field
-    data = error.get("data")
-    if not is_object(data):
-        return None
-
-    # Normalize camelCase to snake_case for Pydantic
-    normalized_data = {("x402_version" if k == "x402Version" else k): v for k, v in data.items()}
-    return _extract_payment_required_from_object(normalized_data)
+    # Try direct extraction
+    return _extract_payment_required_from_object(data)
 
 
 def convert_mcp_result(mcp_result: Any) -> "MCPToolResult":
@@ -339,14 +354,20 @@ def register_schemes(payment_client: Any, schemes: list[dict[str, Any]]) -> None
 
 
 def is_payment_required_error(error: Exception) -> bool:
-    """Check if an error is a PaymentRequiredError.
+    """Check if an error is a payment-required error.
+
+    Returns True for PaymentRequiredError instances as well as any exception
+    whose ``code`` attribute equals 402 or -32042.
 
     Args:
         error: The error to check
 
     Returns:
-        True if the error is a PaymentRequiredError
+        True if the error indicates payment is required
     """
     from .types import PaymentRequiredError
 
-    return isinstance(error, PaymentRequiredError)
+    if isinstance(error, PaymentRequiredError):
+        return True
+    code = getattr(error, "code", None)
+    return code in {MCP_PAYMENT_REQUIRED_CODE, JSONRPC_PAYMENT_REQUIRED_CODE}
