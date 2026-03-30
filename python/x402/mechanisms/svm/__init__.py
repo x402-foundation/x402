@@ -52,6 +52,9 @@ from .constants import (
     NetworkConfig,
 )
 
+# Settlement cache (shared across V1/V2 facilitator instances)
+from .settlement_cache import SettlementCache
+
 # Signer protocols
 from .signer import ClientSvmSigner, FacilitatorSvmSigner
 
@@ -139,6 +142,8 @@ __all__ = [
     "ExactSvmPayloadV1",
     "ExactSvmPayloadV2",
     "TransactionInfo",
+    # Settlement cache
+    "SettlementCache",
     # Signer protocols
     "ClientSvmSigner",
     "FacilitatorSvmSigner",

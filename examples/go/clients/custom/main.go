@@ -70,17 +70,22 @@ func main() {
 	}
 
 	x402Client := x402.Newx402Client().
-		Register("eip155:*", evm.NewExactEvmScheme(evmSigner))
+		Register("eip155:*", evm.NewExactEvmScheme(evmSigner, nil))
 
 	// Make the request with custom payment handling
 	fmt.Println("🔧 Using custom payment implementation (no wrapper)\n")
-	
+
 	resp, err := makeRequestWithPayment(ctx, x402Client, url)
+	if resp != nil {
+		defer resp.Body.Close()
+	}
 	if err != nil {
 		fmt.Printf("❌ Request failed: %v\n", err)
+		if resp != nil {
+			displayPaymentDetails(resp)
+		}
 		os.Exit(1)
 	}
-	defer resp.Body.Close()
 
 	// Read and display response
 	var responseData interface{}
@@ -93,16 +98,33 @@ func main() {
 	prettyJSON, _ := json.MarshalIndent(responseData, "  ", "  ")
 	fmt.Printf("  %s\n", string(prettyJSON))
 
-	// Extract payment settlement details
-	if paymentHeader := resp.Header.Get("PAYMENT-RESPONSE"); paymentHeader != "" {
-		settleResp, err := extractSettlementResponse(paymentHeader)
-		if err == nil {
-			fmt.Println("\n💰 Payment Settlement Details:")
-			fmt.Printf("  Transaction: %s\n", settleResp.Transaction)
-			fmt.Printf("  Network: %s\n", settleResp.Network)
-			fmt.Printf("  Payer: %s\n", settleResp.Payer)
-		}
+	displayPaymentDetails(resp)
+}
+
+// displayPaymentDetails extracts and prints payment settlement from response headers.
+// Payment-response header is sent on both success and error.
+func displayPaymentDetails(resp *http.Response) {
+	paymentHeader := resp.Header.Get("PAYMENT-RESPONSE")
+	if paymentHeader == "" {
+		paymentHeader = resp.Header.Get("X-PAYMENT-RESPONSE")
 	}
+	if paymentHeader == "" {
+		return
+	}
+	settleResp, err := extractSettlementResponse(paymentHeader)
+	if err != nil {
+		return
+	}
+	fmt.Println("\n💰 Payment Settlement Details:")
+	fmt.Printf("  Success: %v\n", settleResp.Success)
+	if settleResp.ErrorReason != "" {
+		fmt.Printf("  ErrorReason: %s\n", settleResp.ErrorReason)
+	}
+	if settleResp.Transaction != "" {
+		fmt.Printf("  Transaction: %s\n", settleResp.Transaction)
+	}
+	fmt.Printf("  Network: %s\n", settleResp.Network)
+	fmt.Printf("  Payer: %s\n", settleResp.Payer)
 }
 
 // makeRequestWithPayment implements the complete payment flow manually
@@ -247,9 +269,8 @@ func makeRequestWithPayment(ctx context.Context, x402Client *x402.X402Client, ur
 	// Step 6: Verify success
 	// ========================================================================
 	if retryResp.StatusCode >= 400 {
-		defer retryResp.Body.Close()
 		errorBody, _ := io.ReadAll(retryResp.Body)
-		return nil, fmt.Errorf("payment failed: status %d, body: %s", retryResp.StatusCode, string(errorBody))
+		return retryResp, fmt.Errorf("payment failed: status %d, body: %s", retryResp.StatusCode, string(errorBody))
 	}
 
 	fmt.Println("✅ Step 6: Payment successful!\n")

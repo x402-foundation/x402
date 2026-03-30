@@ -40,13 +40,15 @@ In addition to the standard x402 `PaymentRequirements` fields, the `exact` schem
   "payTo": "2wKupLR9q6wXYppw8Gr2NvWxKBUqm4PPJKkQfoxHDBg4",
   "maxTimeoutSeconds": 60,
   "extra": {
-    "feePayer": "EwWqGE4ZFKLofuestmU4LDdK7XM1N4ALgdZccwYugwGd"
+    "feePayer": "EwWqGE4ZFKLofuestmU4LDdK7XM1N4ALgdZccwYugwGd",
+    "memo": "pi_3abc123def456"
   }
 }
 ```
 
 - `asset`: The public key of the token mint.
 - `extra.feePayer`: The public key of the account that will pay for the transaction fees. This is typically the facilitator's public key.
+- `extra.memo` (optional): A seller-defined UTF-8 string to include in the transaction's Memo instruction. When present, the client MUST use this value as the Memo instruction data instead of a random nonce. Maximum 256 bytes. This enables sellers to attach payment references (e.g., invoice IDs) to on-chain transactions for reconciliation without requiring unique deposit addresses.
 
 ## PaymentPayload `payload` Field
 
@@ -78,7 +80,8 @@ Full `PaymentPayload` object:
     "payTo": "2wKupLR9q6wXYppw8Gr2NvWxKBUqm4PPJKkQfoxHDBg4",
     "maxTimeoutSeconds": 60,
     "extra": {
-      "feePayer": "EwWqGE4ZFKLofuestmU4LDdK7XM1N4ALgdZccwYugwGd"
+      "feePayer": "EwWqGE4ZFKLofuestmU4LDdK7XM1N4ALgdZccwYugwGd",
+      "memo": "pi_3abc123def456"
     }
   },
   "payload": {
@@ -106,16 +109,18 @@ A facilitator verifying an `exact`-scheme SVM payment MUST enforce all of the fo
 
 1. Instruction layout
 
-- The decompiled transaction MUST contain 3 to 5 instructions in this order:
+- The decompiled transaction MUST contain 3 to 6 instructions in this order:
   1. Compute Budget: Set Compute Unit Limit
   2. Compute Budget: Set Compute Unit Price
   3. SPL Token or Token-2022 TransferChecked
-  4. (Optional) Lighthouse program instruction (Phantom wallet protection)
-  5. (Optional) Lighthouse program instruction (Solflare wallet protection)
+  4. (Optional) Lighthouse or Memo program instruction
+  5. (Optional) Lighthouse or Memo program instruction
+  6. (Optional) Memo program instruction
 
-- If a 4th or 5th instruction is present, the program MUST be the Lighthouse program (`L2TExMFKdjpN9kozasaurPirfHy9P8sbXoAN1qA3S95`).
-- Phantom wallet injects 1 Lighthouse instruction; Solflare injects 2.
-- These Lighthouse instructions are wallet-injected user protection mechanisms and MUST be allowed to support these wallets.
+- Allowed optional programs: Lighthouse (`L2TExMFKdjpN9kozasaurPirfHy9P8sbXoAN1qA3S95`) and SPL Memo (`MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr`).
+- Phantom wallet injects 1 Lighthouse instruction; Solflare injects 2. These are wallet-injected user protection mechanisms and MUST be allowed.
+- The Memo instruction ensures transaction uniqueness across concurrent payments with identical parameters. Clients MUST include a Memo instruction containing either the value of `extra.memo` (when present) or a random nonce (at least 16 bytes, hex-encoded for UTF-8 compliance).
+- If `extra.memo` is present in `PaymentRequirements`, the facilitator MUST verify that exactly one Memo instruction exists and that its data matches the value of `extra.memo` encoded as UTF-8.
 
 2. Fee payer (facilitator) safety
 
@@ -143,3 +148,22 @@ A facilitator verifying an `exact`-scheme SVM payment MUST enforce all of the fo
 - The `amount` in TransferChecked MUST equal `PaymentRequirements.amount` exactly.
 
 These checks are security-critical to ensure the fee payer cannot be tricked into transferring their own funds or sponsoring unintended actions. Implementations MAY introduce stricter limits (e.g., lower compute price caps) but MUST NOT relax the above constraints.
+
+## Duplicate Settlement Mitigation (RECOMMENDED)
+
+### Vulnerability
+
+A race condition exists in the settlement flow: if the same payment transaction is submitted to the facilitator's `/settle` endpoint multiple times before the first submission is confirmed on-chain, each call may return a successful response. 
+
+Although Solana's transaction deduplication ensures the transfer only executes once on-chain, the RPC returns "success", and hence the facilitator could return `success` to each caller. A malicious client can exploit this to obtain access to multiple resources while only paying once.
+
+### Recommended Mitigation
+
+Merchants and/or Facilitators SHOULD maintain a short-term, in-memory cache of transaction payloads that are currently being settled. Before proceeding with settlement, the merchant/facilitator checks whether the transaction has already been seen:
+
+1. After verification succeeds, derive a cache key from the transaction payload (e.g., the base64-encoded transaction string).
+2. If the key is already present in the cache, reject the settlement with a `"duplicate_settlement"` error.
+3. If the key is not present, insert it into the cache and proceed with signing and submission.
+4. Evict entries older than 120 seconds (approximately twice the Solana blockhash lifetime of ~60–90 seconds). After this window, the transaction's blockhash will have expired and it cannot land on-chain regardless.
+
+This approach requires no external storage or long-lived state — only an in-process map with time-based eviction. It preserves the facilitator's otherwise stateless design while closing the duplicate settlement attack vector.

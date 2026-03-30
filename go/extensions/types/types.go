@@ -10,6 +10,10 @@ import (
 // BAZAAR is the extension identifier for the Bazaar discovery extension.
 var BAZAAR = x402.NewFacilitatorExtension("bazaar")
 
+// ColonParamRegex matches :paramName route segments (Express style).
+// Shared across http/server.go and extensions/bazaar/server.go to avoid drift.
+var ColonParamRegex = regexp.MustCompile(`:([a-zA-Z_][a-zA-Z0-9_]*)`)
+
 // Extension identifier constant for the Payment Identifier extension
 const PAYMENT_IDENTIFIER = "payment-identifier"
 
@@ -60,6 +64,7 @@ type QueryInput struct {
 	Type        string                 `json:"type"` // "http"
 	Method      QueryParamMethods      `json:"method"`
 	QueryParams map[string]interface{} `json:"queryParams,omitempty"`
+	PathParams  map[string]interface{} `json:"pathParams,omitempty"`
 	Headers     map[string]string      `json:"headers,omitempty"`
 }
 
@@ -76,6 +81,7 @@ type BodyInput struct {
 	BodyType    BodyType               `json:"bodyType"`
 	Body        interface{}            `json:"body"`
 	QueryParams map[string]interface{} `json:"queryParams,omitempty"`
+	PathParams  map[string]interface{} `json:"pathParams,omitempty"`
 	Headers     map[string]string      `json:"headers,omitempty"`
 }
 
@@ -145,8 +151,9 @@ type BodyDiscoveryExtension struct {
 
 // DiscoveryExtension is a union type that can be either Query or Body discovery extension
 type DiscoveryExtension struct {
-	Info   DiscoveryInfo `json:"info"`
-	Schema JSONSchema    `json:"schema"`
+	Info          DiscoveryInfo `json:"info"`
+	Schema        JSONSchema    `json:"schema"`
+	RouteTemplate string        `json:"routeTemplate,omitempty"`
 }
 
 // DeclareQueryDiscoveryConfig is the configuration for declaring a query discovery extension

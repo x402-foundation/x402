@@ -154,13 +154,12 @@ Incorrect fees or nonce values invalidate the signed transaction.
         "amount": "10000"
       },
       "from": "0x857b06519E91e3A54538791bDbb0E22373e36b66",
-      "spender": "0xx402Permit2ProxyAddress",
-      "nonce": "0xf3746613c2d920b5fdabc0856f2aeb2d4f88ee6037b8cc5d04a71a4462f13480",
+      "spender": "0x402085c248EeA27D92E8b30b2C58ed07f9E20001",
+      "nonce": "33247007178036348590600198031289925668252061821958005840077069883511451257277",
       "deadline": "1740672154",
       "witness": {
         "to": "0x209693Bc6afc0C5328bA36FaF03C514EF312287C",
-        "validAfter": "1740672089",
-        "extra": {}
+        "validAfter": "1740672089"
       }
     }
   },
@@ -169,7 +168,7 @@ Incorrect fees or nonce values invalidate the signed transaction.
       "info": {
         "from": "0x857b06519E91e3A54538791bDbb0E22373e36b66",
         "asset": "0x036CbD53842c5426634e7929541eC2318f3dCF7e",
-        "spender": "0xCanonicalPermit2",
+        "spender": "0x000000000022D473030F116dDEE9F6B43aC78BA3",
         "amount": "115792089237316195423570985008687907853269984665640564039457584007913129639935",
         "signedTransaction": "0x505cbf0d9a4a227e0c52c6c2d6a7588d6acca34008c8e8986a12832597641d6293af148b571c73608a2ce6496642e377d6da8dbbf5836e9bd15092f9ecab05ded3",
         "version": "1"

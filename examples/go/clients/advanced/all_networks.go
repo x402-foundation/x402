@@ -38,7 +38,7 @@ func runAllNetworksExample(ctx context.Context, evmPrivateKey, svmPrivateKey, ur
 		if err != nil {
 			return fmt.Errorf("failed to create EVM signer: %w", err)
 		}
-		client.Register("eip155:*", evm.NewExactEvmScheme(evmSigner))
+		client.Register("eip155:*", evm.NewExactEvmScheme(evmSigner, nil))
 		fmt.Printf("✅ Registered EVM networks (eip155:*)\n")
 	}
 
@@ -106,7 +106,13 @@ func printPaymentDetails(headers http.Header) {
 	}
 
 	fmt.Println("💰 Payment Details:")
-	fmt.Printf("  Transaction: %s\n", settleResp.Transaction)
+	fmt.Printf("  Success: %v\n", settleResp.Success)
+	if settleResp.ErrorReason != "" {
+		fmt.Printf("  ErrorReason: %s\n", settleResp.ErrorReason)
+	}
+	if settleResp.Transaction != "" {
+		fmt.Printf("  Transaction: %s\n", settleResp.Transaction)
+	}
 	fmt.Printf("  Network: %s\n", settleResp.Network)
 	fmt.Printf("  Payer: %s\n", settleResp.Payer)
 }

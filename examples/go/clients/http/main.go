@@ -121,7 +121,13 @@ func makeRequest(client *x402.X402Client, url string) error {
 		fmt.Println("\n💰 Payment Details:")
 		settleResp, err := extractPaymentResponse(resp.Header)
 		if err == nil {
-			fmt.Printf("  Transaction: %s\n", settleResp.Transaction)
+			fmt.Printf("  Success: %v\n", settleResp.Success)
+			if settleResp.ErrorReason != "" {
+				fmt.Printf("  ErrorReason: %s\n", settleResp.ErrorReason)
+			}
+			if settleResp.Transaction != "" {
+				fmt.Printf("  Transaction: %s\n", settleResp.Transaction)
+			}
 			fmt.Printf("  Network: %s\n", settleResp.Network)
 			fmt.Printf("  Payer: %s\n", settleResp.Payer)
 		}

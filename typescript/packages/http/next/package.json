@@ -1,6 +1,6 @@
 {
   "name": "@x402/next",
-  "version": "2.5.0",
+  "version": "2.8.0",
   "main": "./dist/cjs/index.js",
   "module": "./dist/esm/index.js",
   "types": "./dist/index.d.ts",
@@ -38,14 +38,13 @@
     "vitest": "^3.0.5"
   },
   "dependencies": {
-    "@coinbase/cdp-sdk": "^1.22.0",
     "@x402/core": "workspace:~",
     "@x402/extensions": "workspace:~",
     "zod": "^3.24.2"
   },
   "peerDependencies": {
     "next": "^16.0.10",
-    "@x402/paywall": "workspace:*"
+    "@x402/paywall": "workspace:^"
   },
   "peerDependenciesMeta": {
     "@x402/paywall": {

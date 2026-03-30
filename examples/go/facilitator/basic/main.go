@@ -11,6 +11,7 @@ import (
 	x402 "github.com/coinbase/x402/go"
 	evm "github.com/coinbase/x402/go/mechanisms/evm/exact/facilitator"
 	evmv1 "github.com/coinbase/x402/go/mechanisms/evm/exact/v1/facilitator"
+	svmmech "github.com/coinbase/x402/go/mechanisms/svm"
 	svm "github.com/coinbase/x402/go/mechanisms/svm/exact/facilitator"
 	svmv1 "github.com/coinbase/x402/go/mechanisms/svm/exact/v1/facilitator"
 	"github.com/gin-gonic/gin"
@@ -61,8 +62,9 @@ func main() {
 	facilitator.RegisterV1([]x402.Network{"base-sepolia"}, evmv1.NewExactEvmSchemeV1(evmSigner, evmV1Config))
 
 	if svmSigner != nil {
-		facilitator.Register([]x402.Network{svmNetwork}, svm.NewExactSvmScheme(svmSigner))
-		facilitator.RegisterV1([]x402.Network{"solana-devnet"}, svmv1.NewExactSvmSchemeV1(svmSigner))
+		settlementCache := svmmech.NewSettlementCache()
+		facilitator.Register([]x402.Network{svmNetwork}, svm.NewExactSvmScheme(svmSigner, settlementCache))
+		facilitator.RegisterV1([]x402.Network{"solana-devnet"}, svmv1.NewExactSvmSchemeV1(svmSigner, settlementCache))
 	}
 
 	facilitator.OnAfterVerify(func(ctx x402.FacilitatorVerifyResultContext) error {

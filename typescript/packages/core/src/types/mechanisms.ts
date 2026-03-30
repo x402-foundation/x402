@@ -149,6 +149,17 @@ export interface SchemeNetworkServer {
   parsePrice(price: Price, network: Network): Promise<AssetAmount>;
 
   /**
+   * Optional: Return the decimal precision of the asset for a given network.
+   * Used by `resolveSettlementOverrideAmount` to convert dollar-format overrides to atomic units.
+   * Defaults to 6 when not implemented.
+   *
+   * @param asset - The asset address or symbol
+   * @param network - The network identifier
+   * @returns Number of decimal places for the asset
+   */
+  getAssetDecimals?(asset: string, network: Network): number;
+
+  /**
    * Build payment requirements for this scheme/network combination
    *
    * @param paymentRequirements - Base payment requirements with amount/asset already set

@@ -5,7 +5,7 @@
  * optional chain configuration via environment variables.
  *
  * New chain support should be added here in alphabetic order by network prefix
- * (e.g., "eip155" before "solana").
+ * (e.g., "eip155" before "solana" before "stellar").
  */
 
 import { base58 } from "@scure/base";
@@ -21,6 +21,8 @@ import { toFacilitatorEvmSigner } from "@x402/evm";
 import { ExactEvmScheme } from "@x402/evm/exact/facilitator";
 import { toFacilitatorSvmSigner } from "@x402/svm";
 import { ExactSvmScheme } from "@x402/svm/exact/facilitator";
+import { createEd25519Signer } from "@x402/stellar";
+import { ExactStellarScheme } from "@x402/stellar/exact/facilitator";
 import dotenv from "dotenv";
 import express from "express";
 import { createWalletClient, http, publicActions } from "viem";
@@ -35,11 +37,12 @@ const PORT = process.env.PORT || "4022";
 // Configuration - optional per network
 const evmPrivateKey = process.env.EVM_PRIVATE_KEY as `0x${string}` | undefined;
 const svmPrivateKey = process.env.SVM_PRIVATE_KEY as string | undefined;
+const stellarPrivateKey = process.env.STELLAR_PRIVATE_KEY as string | undefined;
 
 // Validate at least one private key is provided
-if (!evmPrivateKey && !svmPrivateKey) {
+if (!evmPrivateKey && !svmPrivateKey && !stellarPrivateKey) {
   console.error(
-    "❌ At least one of EVM_PRIVATE_KEY or SVM_PRIVATE_KEY is required",
+    "❌ At least one of EVM_PRIVATE_KEY, SVM_PRIVATE_KEY, or STELLAR_PRIVATE_KEY is required",
   );
   process.exit(1);
 }
@@ -47,25 +50,26 @@ if (!evmPrivateKey && !svmPrivateKey) {
 // Network configuration
 const EVM_NETWORK = "eip155:84532"; // Base Sepolia
 const SVM_NETWORK = "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1"; // Solana Devnet
+const STELLAR_NETWORK = "stellar:testnet"; // Stellar Testnet
 
 // Initialize the x402 Facilitator
 const facilitator = new x402Facilitator()
-  .onBeforeVerify(async context => {
+  .onBeforeVerify(async (context) => {
     console.log("Before verify", context);
   })
-  .onAfterVerify(async context => {
+  .onAfterVerify(async (context) => {
     console.log("After verify", context);
   })
-  .onVerifyFailure(async context => {
+  .onVerifyFailure(async (context) => {
     console.log("Verify failure", context);
   })
-  .onBeforeSettle(async context => {
+  .onBeforeSettle(async (context) => {
     console.log("Before settle", context);
   })
-  .onAfterSettle(async context => {
+  .onAfterSettle(async (context) => {
     console.log("After settle", context);
   })
-  .onSettleFailure(async context => {
+  .onSettleFailure(async (context) => {
     console.log("Settle failure", context);
   });
 
@@ -135,6 +139,17 @@ if (svmPrivateKey) {
   const svmSigner = toFacilitatorSvmSigner(svmAccount);
 
   facilitator.register(SVM_NETWORK, new ExactSvmScheme(svmSigner));
+}
+
+// Register Stellar scheme if private key is provided
+if (stellarPrivateKey) {
+  const stellarSigner = createEd25519Signer(stellarPrivateKey);
+  console.info(`Stellar Facilitator account: ${stellarSigner.address}`);
+
+  facilitator.register(
+    STELLAR_NETWORK,
+    new ExactStellarScheme([stellarSigner]),
+  );
 }
 
 // Initialize Express app
@@ -239,7 +254,14 @@ app.get("/health", (req, res) => {
 
 // Start the server
 app.listen(parseInt(PORT), () => {
-  console.log(`🚀 All Networks Facilitator listening on http://localhost:${PORT}`);
-  console.log(`   Supported networks: ${facilitator.getSupported().kinds.map(k => k.network).join(", ")}`);
+  console.log(
+    `🚀 All Networks Facilitator listening on http://localhost:${PORT}`,
+  );
+  console.log(
+    `   Supported networks: ${facilitator
+      .getSupported()
+      .kinds.map((k) => k.network)
+      .join(", ")}`,
+  );
   console.log();
 });

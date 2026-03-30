@@ -59,13 +59,26 @@ interface DiscoveredResource {
 }
 
 // BazaarCatalog stores discovered resources
+/**
+ * Catalog of discovered resources from bazaar discovery extension.
+ */
 class BazaarCatalog {
   private resources: Map<string, DiscoveredResource> = new Map();
 
+  /**
+   * Adds a discovered resource to the catalog.
+   *
+   * @param res - The discovered resource to add
+   */
   add(res: DiscoveredResource): void {
     this.resources.set(res.resource, res);
   }
 
+  /**
+   * Returns all discovered resources in the catalog.
+   *
+   * @returns Array of all discovered resources
+   */
   getAll(): DiscoveredResource[] {
     return Array.from(this.resources.values());
   }
@@ -75,10 +88,10 @@ const bazaarCatalog = new BazaarCatalog();
 
 // Initialize the x402 Facilitator with discovery hooks
 const facilitator = new x402Facilitator()
-  .onBeforeVerify(async context => {
+  .onBeforeVerify(async (context) => {
     console.log("Before verify", context);
   })
-  .onAfterVerify(async context => {
+  .onAfterVerify(async (context) => {
     console.log("✅ Payment verified");
 
     // Extract discovered resource from payment for bazaar catalog
@@ -93,7 +106,11 @@ const facilitator = new x402Facilitator()
         console.log(`   📝 Discovered resource: ${discovered.resourceUrl}`);
         console.log(`   📝 Description: ${discovered.description}`);
         console.log(`   📝 MimeType: ${discovered.mimeType}`);
-        console.log(`   📝 Method: ${discovered.method}`);
+        if ("method" in discovered && discovered.method !== undefined) {
+          console.log(`   📝 Method: ${discovered.method}`);
+        } else if ("toolName" in discovered) {
+          console.log(`   📝 Tool: ${discovered.toolName}`);
+        }
         console.log(`   📝 X402Version: ${discovered.x402Version}`);
 
         bazaarCatalog.add({
@@ -112,16 +129,16 @@ const facilitator = new x402Facilitator()
       console.log(`   ⚠️  Failed to extract discovery info: ${err}`);
     }
   })
-  .onVerifyFailure(async context => {
+  .onVerifyFailure(async (context) => {
     console.log("Verify failure", context);
   })
-  .onBeforeSettle(async context => {
+  .onBeforeSettle(async (context) => {
     console.log("Before settle", context);
   })
-  .onAfterSettle(async context => {
+  .onAfterSettle(async (context) => {
     console.log(`🎉 Payment settled: ${context.result.transaction}`);
   })
-  .onSettleFailure(async context => {
+  .onSettleFailure(async (context) => {
     console.log("Settle failure", context);
   });
 
@@ -325,7 +342,12 @@ app.get("/health", (req, res) => {
 // Start the server
 app.listen(parseInt(PORT), () => {
   console.log(`🚀 Discovery Facilitator listening on http://localhost:${PORT}`);
-  console.log(`   Supported networks: ${facilitator.getSupported().kinds.map(k => k.network).join(", ")}`);
+  console.log(
+    `   Supported networks: ${facilitator
+      .getSupported()
+      .kinds.map((k) => k.network)
+      .join(", ")}`,
+  );
   console.log(`   Discovery endpoint: GET /discovery/resources`);
   console.log();
 });

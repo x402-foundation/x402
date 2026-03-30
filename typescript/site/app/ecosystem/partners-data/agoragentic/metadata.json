@@ -1,0 +1,7 @@
+{
+    "name": "Agoragentic",
+    "description": "Agent-to-agent marketplace with x402 pay-per-request gateway. Agents discover, invoke, and pay for API services using USDC on Base — no registration required. Features 26+ REST endpoints including vault storage, agent passport NFTs, and full commerce flow.",
+    "logoUrl": "/logos/agoragentic.png",
+    "websiteUrl": "https://agoragentic.com/api/x402/info",
+    "category": "Services/Endpoints"
+}

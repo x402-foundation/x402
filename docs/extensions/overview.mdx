@@ -1,0 +1,160 @@
+---
+title: "Extensions Overview"
+description: "x402 extensions are composable, optional capabilities that plug into the payment lifecycle. They enrich 402 responses, settlement responses, or both — without changing your business logic."
+---
+
+Extensions are the composable layer on top of x402's core payment protocol. They let resource servers, facilitators, and clients add optional capabilities — discovery, authentication, receipts, gas sponsoring — without modifying the core payment flow.
+
+## How Extensions Work
+
+x402 has two extension points that serve different roles in the payment flow:
+
+### Resource Server Extensions
+
+These run on the resource server (the service accepting payments) and hook into the HTTP payment lifecycle. A `ResourceServerExtension` can intervene at three points:
+
+1. **Declaration** (`enrichDeclaration`) — Called at route registration time. The extension can modify or narrow the route's extension declaration based on transport context (e.g., Bazaar narrows the HTTP method).
+2. **402 Response** (`enrichPaymentRequiredResponse`) — Called when the server returns `402 Payment Required`. The extension can add data to the response (e.g., signed offers, discovery metadata).
+3. **Settlement Response** (`enrichSettlementResponse`) — Called after successful payment. The extension can add data to the `PAYMENT-RESPONSE` header (e.g., signed receipts, payment identifiers).
+
+All three hooks are optional. Most extensions use one or two — not all three.
+
+### Facilitator Extensions
+
+These run on the facilitator (the service that verifies and settles payments on behalf of the resource server). A `FacilitatorExtension` provides a `key` and is stored for use by mechanism implementations during verification and settlement. Gas sponsoring extensions are the primary example — they inject batch signing capabilities into the settlement flow so the facilitator can sponsor gas on behalf of the payer.
+
+## Registering an Extension (Server)
+
+Extensions implement the `ResourceServerExtension` interface and are registered via `registerExtension`:
+
+```typescript
+import { x402ResourceServer } from "@x402/express";
+
+const resourceServer = new x402ResourceServer(facilitatorClient)
+  .register("eip155:84532", new ExactEvmScheme())
+  .registerExtension(myExtension)       // Add one extension
+  .registerExtension(anotherExtension); // Stack another
+```
+
+Each extension has a unique `key` that identifies it in route declarations and response payloads.
+
+## The ResourceServerExtension Interface
+
+```typescript
+interface ResourceServerExtension {
+  /** Unique identifier for this extension */
+  key: string;
+
+  /** Enrich the extension declaration at route registration time */
+  enrichDeclaration?: (declaration: unknown, transportContext: unknown) => unknown;
+
+  /** Add data to the 402 PaymentRequired response */
+  enrichPaymentRequiredResponse?: (
+    declaration: unknown,
+    context: PaymentRequiredContext,
+  ) => Promise<unknown>;
+
+  /** Add data to the settlement response after successful payment */
+  enrichSettlementResponse?: (
+    declaration: unknown,
+    context: SettleResultContext,
+  ) => Promise<unknown>;
+}
+```
+
+## Declaring Extensions on Routes
+
+Extensions are declared per-route in the payment middleware configuration. Each extension's declaration goes under `extensions` keyed by the extension's `key`:
+
+```typescript
+app.use(
+  paymentMiddleware(
+    {
+      "GET /api/data": {
+        accepts: [{ scheme: "exact", price: "$0.01", network: "eip155:84532", payTo: address }],
+        description: "Premium data",
+        mimeType: "application/json",
+        extensions: {
+          // Each key matches a registered extension
+          "offer-receipt": { includeTxHash: false },
+          "bazaar": { /* bazaar config */ },
+        },
+      },
+    },
+    resourceServer,
+  ),
+);
+```
+
+If an extension is declared on a route but not registered on the server, it is silently ignored.
+
+## Which Hooks Do Extensions Use?
+
+Not all extensions use the same hooks. Here's how the built-in extensions map to the extension points:
+
+| Extension | `enrichDeclaration` | `enrichPaymentRequiredResponse` | `enrichSettlementResponse` | Facilitator |
+|-----------|:---:|:---:|:---:|:---:|
+| Bazaar | ✅ (narrows HTTP method) | — | — | ✅ (discovery cataloging) |
+| EIP-2612 Gas Sponsoring | — | — | — | ✅ (batch signing) |
+| ERC-20 Approval Gas Sponsoring | — | — | — | ✅ (batch signing) |
+| Payment Identifier | — | ✅ | ✅ | — |
+| Sign-In-With-X | — | — | — | — |
+| Signed Offers & Receipts | — | ✅ (signs offers) | ✅ (signs receipts) | — |
+
+Bazaar is unique in that it spans both sides: the resource server extension enriches declarations, while the facilitator component handles discovery cataloging and validation. Sign-In-With-X manages its own session lifecycle outside the standard hooks.
+
+## Available Extensions
+
+
+| Extension | Type | Description | SDK Support |
+|-----------|------|-------------|-------------|
+| [Bazaar](./bazaar) | Server + Facilitator | Discovery layer for x402 endpoints and MCP tools. Makes your services findable by AI agents and developers. | TypeScript, Go, Python |
+| [EIP-2612 Gas Sponsoring](./eip2612-gas-sponsoring) | Facilitator | Sponsors gas for EIP-2612 permit-based token transfers. | TypeScript, Go, Python |
+| [ERC-20 Approval Gas Sponsoring](./erc20-approval-gas-sponsoring) | Facilitator | Sponsors gas for ERC-20 approval-based token transfers. | TypeScript, Go, Python |
+| [Payment Identifier](./payment-identifier) | Server + Client | Attaches a unique identifier to each payment for tracking, reconciliation, and idempotency. | TypeScript, Go, Python |
+| [Sign-In-With-X](./sign-in-with-x) | Server + Client | CAIP-122 wallet authentication. Lets clients prove wallet ownership to access previously purchased content without repaying. | TypeScript |
+| [Signed Offers & Receipts](./offer-receipt) | Server + Client | Signs offers on 402 responses and receipts on 200 responses, producing cryptographic proof-of-interaction artifacts. | TypeScript |
+
+## Building a Custom Extension
+
+To create your own extension:
+
+1. **Define the extension object** implementing `ResourceServerExtension`
+2. **Choose a unique key** — this identifies your extension in route declarations and response payloads
+3. **Implement the hooks you need** — `enrichDeclaration`, `enrichPaymentRequiredResponse`, `enrichSettlementResponse`
+4. **Create a declare function** — a helper that returns the route-level configuration for your extension
+5. **Register it** on the `x402ResourceServer` via `registerExtension`
+6. **Submit a pull request** to [coinbase/x402](https://github.com/coinbase/x402) — extensions must be reviewed and approved by the x402 maintainers before they are included in the SDK
+
+Here's a minimal example:
+
+```typescript
+import type { ResourceServerExtension } from "@x402/core";
+
+const myExtension: ResourceServerExtension = {
+  key: "my-extension",
+
+  enrichPaymentRequiredResponse: async (declaration, context) => {
+    // Add custom data to the 402 response
+    return { customField: "value", timestamp: Date.now() };
+  },
+
+  enrichSettlementResponse: async (declaration, context) => {
+    // Add custom data after successful payment
+    return { settled: true, processedAt: Date.now() };
+  },
+};
+
+// Declare helper for route config
+function declareMyExtension(config: { customOption: boolean }) {
+  return { "my-extension": config };
+}
+```
+
+The data returned from each hook is included in the response under `extensions["my-extension"]`.
+
+## Further Reading
+
+- [x402 SDK Features](/sdk-features) — Extension support across TypeScript, Go, and Python
+- [Extension Specs](https://github.com/coinbase/x402/tree/main/specs/extensions) — Protocol-level extension specifications
+- [@x402/extensions package](https://github.com/coinbase/x402/tree/main/typescript/packages/extensions) — TypeScript implementation source

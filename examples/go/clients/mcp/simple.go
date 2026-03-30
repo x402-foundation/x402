@@ -73,7 +73,7 @@ func runSimple() error {
 
 	// Create x402 payment client and wrap session
 	paymentClient := x402.Newx402Client()
-	paymentClient.Register("eip155:84532", evm.NewExactEvmScheme(evmSigner))
+	paymentClient.Register("eip155:84532", evm.NewExactEvmScheme(evmSigner, nil))
 	x402Mcp := mcp.NewX402MCPClient(clientSession, paymentClient, mcp.Options{
 		AutoPayment: mcp.BoolPtr(true),
 		OnPaymentRequested: func(context mcp.PaymentRequiredContext) (bool, error) {

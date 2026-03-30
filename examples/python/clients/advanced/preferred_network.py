@@ -129,16 +129,14 @@ async def run_preferred_network_example(
         print(f"\nResponse status: {response.status_code}")
         print(f"Response body: {response.text}")
 
-        if response.is_success:
-            try:
-                settle_response = http_client.get_payment_settle_response(
-                    lambda name: response.headers.get(name)
-                )
-                print(
-                    f"\n💰 Payment Details: {settle_response.model_dump_json(indent=2)}"
-                )
-            except ValueError:
-                print("\nNo payment response header found")
+        # Extract and print payment response if present
+        try:
+            settle_response = http_client.get_payment_settle_response(
+                lambda name: response.headers.get(name)
+            )
+            print(f"\n💰 Payment Details: {settle_response.model_dump_json(indent=2)}")
+        except ValueError:
+            print("\nNo payment response header found")
 
 
 async def main() -> None:

@@ -135,6 +135,18 @@ x402 aims to be chain-agnostic. New chain implementations are welcome.
 
 Because different chains have different best practices, a scheme may have a different mechanism on a new chain than it does on EVM. If the scheme mechanism varies from the reference implementation, the x402 Foundation will re-audit the scheme for that chain before accepting.
 
+### Adding a Default Asset for an EVM Chain
+
+If your chain is EVM-compatible and you want to add a default stablecoin for
+dollar-string pricing (`"$0.10"`), you don't need the full 3-PR workflow below. See:
+
+- [Go: DEFAULT_ASSET.md](go/mechanisms/evm/DEFAULT_ASSET.md)
+- [TypeScript: DEFAULT_ASSET.md](typescript/packages/mechanisms/evm/src/exact/server/DEFAULT_ASSET.md)
+
+These guides include a cross-SDK checklist of every file to update.
+
+### Adding a New Chain Family
+
 ### PR 1: Specification Only
 
 Open a PR with specs for one payment scheme implementation.

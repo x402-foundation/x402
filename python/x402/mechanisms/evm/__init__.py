@@ -8,10 +8,10 @@ from .constants import (
     DEFAULT_VALIDITY_PERIOD,
     EIP1271_MAGIC_VALUE,
     ERC6492_MAGIC_VALUE,
+    ERR_AUTHORIZATION_VALUE_MISMATCH,
     ERR_FAILED_TO_GET_ASSET_INFO,
     ERR_FAILED_TO_GET_NETWORK_CONFIG,
     ERR_FAILED_TO_VERIFY_SIGNATURE,
-    ERR_INSUFFICIENT_AMOUNT,
     ERR_INSUFFICIENT_BALANCE,
     ERR_INVALID_SIGNATURE,
     ERR_MISSING_EIP712_DOMAIN,
@@ -56,7 +56,7 @@ from .erc6492 import (
 from .signer import ClientEvmSigner, FacilitatorEvmSigner
 
 # Signer implementations
-from .signers import EthAccountSigner, FacilitatorWeb3Signer
+from .signers import EthAccountSigner, EthAccountSignerWithRPC, FacilitatorWeb3Signer
 
 # Types
 from .types import (
@@ -91,7 +91,6 @@ from .utils import (
 
 # V1 legacy constants (re-exported for backward compatibility)
 from .v1.constants import (
-    NETWORK_ALIASES,
     V1_NETWORK_CHAIN_IDS,
     V1_NETWORKS,
 )
@@ -113,14 +112,13 @@ __all__ = [
     "ERC6492_MAGIC_VALUE",
     "EIP1271_MAGIC_VALUE",
     "NETWORK_CONFIGS",
-    "NETWORK_ALIASES",
     "V1_NETWORKS",
     "V1_NETWORK_CHAIN_IDS",
     "ERR_INVALID_SIGNATURE",
     "ERR_UNDEPLOYED_SMART_WALLET",
     "ERR_SMART_WALLET_DEPLOYMENT_FAILED",
     "ERR_RECIPIENT_MISMATCH",
-    "ERR_INSUFFICIENT_AMOUNT",
+    "ERR_AUTHORIZATION_VALUE_MISMATCH",
     "ERR_VALID_BEFORE_EXPIRED",
     "ERR_VALID_AFTER_FUTURE",
     "ERR_NONCE_ALREADY_USED",
@@ -155,6 +153,7 @@ __all__ = [
     "FacilitatorEvmSigner",
     # Signer implementations
     "EthAccountSigner",
+    "EthAccountSignerWithRPC",
     "FacilitatorWeb3Signer",
     # Utilities
     "get_evm_chain_id",

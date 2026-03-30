@@ -74,7 +74,7 @@ func TestMCPEVMIntegration(t *testing.T) {
 		}
 
 		paymentClient := x402.Newx402Client()
-		evmClientScheme := evmclient.NewExactEvmScheme(clientSigner)
+		evmClientScheme := evmclient.NewExactEvmScheme(clientSigner, nil)
 		paymentClient.Register(TEST_NETWORK, evmClientScheme)
 
 		// Get client address

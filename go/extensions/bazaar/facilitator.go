@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/url"
+	"regexp"
+	"strings"
 
 	x402 "github.com/coinbase/x402/go"
 	"github.com/coinbase/x402/go/extensions/types"
@@ -93,6 +95,7 @@ type DiscoveredResource struct {
 	DiscoveryInfo *types.DiscoveryInfo
 	Description   string
 	MimeType      string
+	RouteTemplate string
 }
 
 // ExtractDiscoveredResourceFromPaymentPayload extracts a discovered resource from a client's payment payload and requirements.
@@ -142,6 +145,7 @@ func ExtractDiscoveredResourceFromPaymentPayload(
 	var resourceURL string
 	var description string
 	var mimeType string
+	var routeTemplate string
 	version := versionCheck.X402Version
 
 	switch version {
@@ -162,6 +166,18 @@ func ExtractDiscoveredResourceFromPaymentPayload(
 		// Extract discovery info from extensions
 		if payload.Extensions != nil {
 			if bazaarExt, ok := payload.Extensions[types.BAZAAR.Key()]; ok {
+				// routeTemplate uses :param syntax (e.g. "/users/:userId", "/weather/:country/:city").
+				// Must start with "/", must not contain ".." or "://".
+				var rawTemplate string
+				if m, ok := bazaarExt.(map[string]interface{}); ok {
+					if v, ok := m["routeTemplate"]; ok {
+						rawTemplate, _ = v.(string)
+					}
+				}
+				if isValidRouteTemplate(rawTemplate) {
+					routeTemplate = rawTemplate
+				}
+
 				extensionJSON, err := json.Marshal(bazaarExt)
 				if err != nil {
 					return nil, fmt.Errorf("failed to marshal bazaar extension: %w", err)
@@ -221,8 +237,7 @@ func ExtractDiscoveredResourceFromPaymentPayload(
 		return nil, fmt.Errorf("failed to extract method from discovery info")
 	}
 
-	// Strip query params and hash for discovery cataloging
-	normalizedURL := stripQueryParams(resourceURL)
+	normalizedURL := normalizeResourceURL(resourceURL, routeTemplate)
 
 	return &DiscoveredResource{
 		ResourceURL:   normalizedURL,
@@ -231,7 +246,46 @@ func ExtractDiscoveredResourceFromPaymentPayload(
 		Method:        method,
 		X402Version:   version,
 		DiscoveryInfo: discoveryInfo,
+		RouteTemplate: routeTemplate,
 	}, nil
+}
+
+// routeTemplateRegex validates the overall shape of a routeTemplate:
+// must start with "/" and contain only safe URL path characters and :param identifiers.
+// Expected format: "/users/:userId", "/weather/:country/:city", "/api/v1/items".
+var routeTemplateRegex = regexp.MustCompile(`^/[a-zA-Z0-9_/:.\-~%]+$`)
+
+// isValidRouteTemplate checks whether a routeTemplate value is structurally valid.
+//
+// Expected format: ":param" segments using colon-prefixed identifiers
+// (e.g. "/users/:userId", "/weather/:country/:city").
+//
+// The facilitator is a trust boundary: the client controls the payment payload and can modify
+// routeTemplate before submission. A malicious value could cause the facilitator to catalog the
+// payment under an arbitrary URL (catalog poisoning). This enforces minimal structural requirements:
+//   - Must be a non-empty string starting with "/"
+//   - Must match the safe URL path character set (alphanumeric, _, :, /, ., -, ~, %)
+//   - Must not contain ".." (path traversal)
+//   - Must not contain "://" (URL injection)
+func isValidRouteTemplate(s string) bool {
+	if s == "" {
+		return false
+	}
+	if !routeTemplateRegex.MatchString(s) {
+		return false
+	}
+	// Decode percent-encoding before traversal checks so that %2e%2e is caught.
+	decoded, err := url.PathUnescape(s)
+	if err != nil {
+		return false
+	}
+	if strings.Contains(decoded, "..") {
+		return false
+	}
+	if strings.Contains(decoded, "://") {
+		return false
+	}
+	return true
 }
 
 // stripQueryParams removes query parameters and fragments from a URL for cataloging
@@ -243,6 +297,22 @@ func stripQueryParams(rawURL string) string {
 	parsed.RawQuery = ""
 	parsed.Fragment = ""
 	return parsed.String()
+}
+
+// normalizeResourceURL returns the canonical URL for discovery cataloging.
+// If routeTemplate is non-empty (dynamic route), it replaces the URL path with the
+// template and strips query/fragment. Otherwise it just strips query/fragment.
+func normalizeResourceURL(rawURL, routeTemplate string) string {
+	if routeTemplate != "" {
+		parsed, err := url.Parse(rawURL)
+		if err == nil {
+			parsed.Path = routeTemplate
+			parsed.RawQuery = ""
+			parsed.Fragment = ""
+			return parsed.String()
+		}
+	}
+	return stripQueryParams(rawURL)
 }
 
 // ExtractDiscoveredResourceFromPaymentRequired extracts a discovered resource from a 402 PaymentRequired response.
@@ -293,6 +363,7 @@ func ExtractDiscoveredResourceFromPaymentRequired(
 	var resourceURL string
 	var description string
 	var mimeType string
+	var routeTemplate string
 	version := versionCheck.X402Version
 
 	switch version {
@@ -313,6 +384,18 @@ func ExtractDiscoveredResourceFromPaymentRequired(
 		// First check PaymentRequired.extensions for bazaar extension
 		if paymentRequired.Extensions != nil {
 			if bazaarExt, ok := paymentRequired.Extensions[types.BAZAAR.Key()]; ok {
+				// routeTemplate uses :param syntax (e.g. "/users/:userId", "/weather/:country/:city").
+				// Must start with "/", must not contain ".." or "://".
+				var rawTemplate string
+				if m, ok := bazaarExt.(map[string]interface{}); ok {
+					if v, ok := m["routeTemplate"]; ok {
+						rawTemplate, _ = v.(string)
+					}
+				}
+				if isValidRouteTemplate(rawTemplate) {
+					routeTemplate = rawTemplate
+				}
+
 				extensionJSON, err := json.Marshal(bazaarExt)
 				if err != nil {
 					return nil, fmt.Errorf("failed to marshal bazaar extension: %w", err)
@@ -378,8 +461,7 @@ func ExtractDiscoveredResourceFromPaymentRequired(
 		return nil, fmt.Errorf("failed to extract method from discovery info")
 	}
 
-	// Strip query params and hash for discovery cataloging
-	normalizedURL := stripQueryParams(resourceURL)
+	normalizedURL := normalizeResourceURL(resourceURL, routeTemplate)
 
 	return &DiscoveredResource{
 		ResourceURL:   normalizedURL,
@@ -388,6 +470,7 @@ func ExtractDiscoveredResourceFromPaymentRequired(
 		Method:        method,
 		X402Version:   version,
 		DiscoveryInfo: discoveryInfo,
+		RouteTemplate: routeTemplate,
 	}, nil
 }
 

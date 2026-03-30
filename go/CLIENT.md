@@ -39,7 +39,7 @@ func main() {
     
     // 2. Create x402 client and register schemes
     client := x402.Newx402Client().
-        Register("eip155:*", evm.NewExactEvmScheme(signer))
+        Register("eip155:*", evm.NewExactEvmScheme(signer, nil))
     
     // 3. Wrap HTTP client
     httpClient := x402http.WrapHTTPClientWithPayment(
@@ -109,7 +109,7 @@ Register mechanisms to enable payment creation for different networks.
 
 ```go
 // All EVM networks
-client.Register("eip155:*", evm.NewExactEvmScheme(evmSigner))
+client.Register("eip155:*", evm.NewExactEvmScheme(evmSigner, nil))
 
 // All Solana networks
 client.Register("solana:*", svm.NewExactSvmScheme(svmSigner))
@@ -119,13 +119,13 @@ client.Register("solana:*", svm.NewExactSvmScheme(svmSigner))
 
 ```go
 // Ethereum Mainnet
-client.Register("eip155:1", evm.NewExactEvmScheme(mainnetSigner))
+client.Register("eip155:1", evm.NewExactEvmScheme(mainnetSigner, nil))
 
 // Base Mainnet
-client.Register("eip155:8453", evm.NewExactEvmScheme(baseSigner))
+client.Register("eip155:8453", evm.NewExactEvmScheme(baseSigner, nil))
 
 // Base Sepolia
-client.Register("eip155:84532", evm.NewExactEvmScheme(testnetSigner))
+client.Register("eip155:84532", evm.NewExactEvmScheme(testnetSigner, nil))
 ```
 
 #### Registration Precedence
@@ -134,8 +134,34 @@ More specific registrations override wildcards:
 
 ```go
 client.
-    Register("eip155:*", evm.NewExactEvmScheme(defaultSigner)).     // Fallback
-    Register("eip155:1", evm.NewExactEvmScheme(mainnetSigner))      // Override for mainnet
+    Register("eip155:*", evm.NewExactEvmScheme(defaultSigner, nil)).     // Fallback
+    Register("eip155:1", evm.NewExactEvmScheme(mainnetSigner, nil))      // Override for mainnet
+```
+
+#### Optional Extension RPC Config (Explicit-Only)
+
+`NewExactEvmScheme` supports optional RPC config used only for extension
+enrichment when signer read/fee capabilities are unavailable.
+
+No chain-default RPC fallback is applied by the SDK.
+
+```go
+// Per-network explicit registration
+client.
+    Register("eip155:137", evm.NewExactEvmScheme(polygonSigner, &evm.ExactEvmSchemeConfig{
+        RPCURL: "https://polygon.example",
+    })).
+    Register("eip155:8453", evm.NewExactEvmScheme(baseSigner, &evm.ExactEvmSchemeConfig{
+        RPCURL: "https://base.example",
+    }))
+
+// Wildcard registration with chain-id map
+client.Register("eip155:*", evm.NewExactEvmScheme(defaultSigner, &evm.ExactEvmSchemeConfig{
+    RPCByChainID: map[int64]evm.ExactEvmChainConfig{
+        137:  {RPCURL: "https://polygon.example"},
+        8453: {RPCURL: "https://base.example"},
+    },
+}))
 ```
 
 ### 4. HTTP Integration

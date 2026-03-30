@@ -8,10 +8,9 @@ from typing import Any
 from .....schemas import Network, SettleResponse, VerifyResponse
 from .....schemas.v1 import PaymentPayloadV1, PaymentRequirementsV1
 from ...constants import (
+    ERR_AUTHORIZATION_VALUE_MISMATCH,
     ERR_FAILED_TO_GET_NETWORK_CONFIG,
     ERR_FAILED_TO_VERIFY_SIGNATURE,
-    ERR_INSUFFICIENT_AMOUNT,
-    ERR_INSUFFICIENT_BALANCE,
     ERR_INVALID_SIGNATURE,
     ERR_MISSING_EIP712_DOMAIN,
     ERR_NETWORK_MISMATCH,
@@ -23,17 +22,20 @@ from ...constants import (
     ERR_VALID_AFTER_FUTURE,
     ERR_VALID_BEFORE_EXPIRED,
     SCHEME_EXACT,
-    TRANSFER_WITH_AUTHORIZATION_BYTES_ABI,
-    TRANSFER_WITH_AUTHORIZATION_VRS_ABI,
     TX_STATUS_SUCCESS,
 )
-from ...eip712 import hash_eip3009_authorization
 from ...erc6492 import has_deployment_info, parse_erc6492_signature
 from ...signer import FacilitatorEvmSigner
 from ...types import ERC6492SignatureData, ExactEIP3009Payload
 from ...utils import bytes_to_hex, hex_to_bytes, normalize_address
 from ...v1.utils import get_evm_chain_id
-from ...verify import verify_universal_signature
+from ..eip3009_utils import (
+    classify_eip3009_signature,
+    diagnose_eip3009_simulation_failure,
+    execute_transfer_with_authorization,
+    parse_eip3009_authorization,
+    simulate_eip3009_transfer,
+)
 
 
 @dataclass
@@ -42,6 +44,9 @@ class ExactEvmSchemeV1Config:
 
     deploy_erc4337_with_eip6492: bool = False
     """Enable automatic smart wallet deployment via EIP-6492."""
+
+    simulate_in_settle: bool = False
+    """Rerun transfer simulation during settle."""
 
 
 class ExactEvmSchemeV1:
@@ -103,11 +108,19 @@ class ExactEvmSchemeV1:
         requirements: PaymentRequirementsV1,
         context=None,
     ) -> VerifyResponse:
+        return self._verify(payload, requirements, simulate=True)
+
+    def _verify(
+        self,
+        payload: PaymentPayloadV1,
+        requirements: PaymentRequirementsV1,
+        simulate: bool,
+    ) -> VerifyResponse:
         """Verify EIP-3009 payment payload (V1).
 
         V1 validation differences:
         - scheme/network at top level of payload
-        - Uses maxAmountRequired for amount check
+        - Uses maxAmountRequired for exact amount validation
         - extra is JSON-encoded
 
         Args:
@@ -161,9 +174,11 @@ class ExactEvmSchemeV1:
             )
 
         # V1: Use maxAmountRequired
-        if int(evm_payload.authorization.value) < int(requirements.max_amount_required):
+        if int(evm_payload.authorization.value) != int(requirements.max_amount_required):
             return VerifyResponse(
-                is_valid=False, invalid_reason=ERR_INSUFFICIENT_AMOUNT, payer=payer
+                is_valid=False,
+                invalid_reason=ERR_AUTHORIZATION_VALUE_MISMATCH,
+                payer=payer,
             )
 
         # V1: Check validBefore is in future (6 second buffer)
@@ -179,34 +194,30 @@ class ExactEvmSchemeV1:
                 is_valid=False, invalid_reason=ERR_VALID_AFTER_FUTURE, payer=payer
             )
 
-        # Check balance
-        try:
-            balance = self._signer.get_balance(payer, token_address)
-            if balance < int(requirements.max_amount_required):
-                return VerifyResponse(
-                    is_valid=False, invalid_reason=ERR_INSUFFICIENT_BALANCE, payer=payer
-                )
-        except Exception:
-            pass  # Continue if balance check fails
-
         # Verify signature
         if not evm_payload.signature:
             return VerifyResponse(is_valid=False, invalid_reason=ERR_INVALID_SIGNATURE, payer=payer)
 
-        signature = hex_to_bytes(evm_payload.signature)
-        hash_bytes = hash_eip3009_authorization(
-            evm_payload.authorization,
-            chain_id,
-            token_address,
-            extra["name"],
-            extra["version"],
-        )
-
         try:
-            valid, _ = verify_universal_signature(
-                self._signer, payer, hash_bytes, signature, allow_undeployed=True
+            signature = hex_to_bytes(evm_payload.signature)
+            classification = classify_eip3009_signature(
+                self._signer,
+                evm_payload.authorization,
+                signature,
+                chain_id,
+                token_address,
+                extra["name"],
+                extra["version"],
             )
-            if not valid:
+            if not classification.valid and classification.is_undeployed:
+                if not has_deployment_info(classification.sig_data):
+                    return VerifyResponse(
+                        is_valid=False,
+                        invalid_reason=ERR_UNDEPLOYED_SMART_WALLET,
+                        payer=payer,
+                    )
+
+            if not classification.valid and not classification.is_smart_wallet:
                 return VerifyResponse(
                     is_valid=False, invalid_reason=ERR_INVALID_SIGNATURE, payer=payer
                 )
@@ -215,6 +226,38 @@ class ExactEvmSchemeV1:
                 is_valid=False,
                 invalid_reason=ERR_FAILED_TO_VERIFY_SIGNATURE,
                 invalid_message=str(e),
+                payer=payer,
+            )
+
+        if not simulate:
+            return VerifyResponse(is_valid=True, payer=payer)
+
+        try:
+            parsed_authorization = parse_eip3009_authorization(evm_payload.authorization)
+        except Exception as e:
+            return VerifyResponse(
+                is_valid=False,
+                invalid_reason=ERR_FAILED_TO_VERIFY_SIGNATURE,
+                invalid_message=str(e),
+                payer=payer,
+            )
+
+        if not simulate_eip3009_transfer(
+            self._signer,
+            token_address,
+            parsed_authorization,
+            classification.sig_data,
+        ):
+            return VerifyResponse(
+                is_valid=False,
+                invalid_reason=diagnose_eip3009_simulation_failure(
+                    self._signer,
+                    token_address,
+                    evm_payload.authorization,
+                    int(requirements.max_amount_required),
+                    extra["name"],
+                    extra["version"],
+                ),
                 payer=payer,
             )
 
@@ -238,7 +281,11 @@ class ExactEvmSchemeV1:
             SettleResponse with success, transaction, and payer.
         """
         # First verify
-        verify_result = self.verify(payload, requirements, context)
+        verify_result = self._verify(
+            payload,
+            requirements,
+            simulate=self._config.simulate_in_settle,
+        )
         if not verify_result.is_valid:
             return SettleResponse(
                 success=False,
@@ -253,8 +300,19 @@ class ExactEvmSchemeV1:
         network = requirements.network
         token_address = normalize_address(requirements.asset)
 
-        signature = hex_to_bytes(evm_payload.signature)
-        sig_data = parse_erc6492_signature(signature)
+        try:
+            signature = hex_to_bytes(evm_payload.signature or "")
+            sig_data = parse_erc6492_signature(signature)
+            parsed_authorization = parse_eip3009_authorization(evm_payload.authorization)
+        except Exception as e:
+            return SettleResponse(
+                success=False,
+                error_reason=ERR_TRANSACTION_FAILED,
+                error_message=str(e),
+                network=network,
+                payer=payer,
+                transaction="",
+            )
 
         # Deploy smart wallet if needed
         if has_deployment_info(sig_data):
@@ -281,40 +339,13 @@ class ExactEvmSchemeV1:
                         transaction="",
                     )
 
-        inner_sig = sig_data.inner_signature
-        is_ecdsa = len(inner_sig) == 65
-
         try:
-            if is_ecdsa:
-                r, s, v = inner_sig[:32], inner_sig[32:64], inner_sig[64]
-                tx_hash = self._signer.write_contract(
-                    token_address,
-                    TRANSFER_WITH_AUTHORIZATION_VRS_ABI,
-                    "transferWithAuthorization",
-                    payer,
-                    evm_payload.authorization.to,
-                    int(evm_payload.authorization.value),
-                    int(evm_payload.authorization.valid_after),
-                    int(evm_payload.authorization.valid_before),
-                    hex_to_bytes(evm_payload.authorization.nonce),
-                    v,
-                    r,
-                    s,
-                )
-            else:
-                tx_hash = self._signer.write_contract(
-                    token_address,
-                    TRANSFER_WITH_AUTHORIZATION_BYTES_ABI,
-                    "transferWithAuthorization",
-                    payer,
-                    evm_payload.authorization.to,
-                    int(evm_payload.authorization.value),
-                    int(evm_payload.authorization.valid_after),
-                    int(evm_payload.authorization.valid_before),
-                    hex_to_bytes(evm_payload.authorization.nonce),
-                    inner_sig,
-                )
-
+            tx_hash = execute_transfer_with_authorization(
+                self._signer,
+                token_address,
+                parsed_authorization,
+                sig_data,
+            )
             receipt = self._signer.wait_for_transaction_receipt(tx_hash)
             if receipt.status != TX_STATUS_SUCCESS:
                 return SettleResponse(

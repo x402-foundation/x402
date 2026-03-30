@@ -1,13 +1,13 @@
 # E2E Test Server: Express (TypeScript)
 
-This server demonstrates and tests the x402 Express.js middleware with both EVM and SVM payment protection.
+This server demonstrates and tests the x402 Express.js middleware with EVM, SVM, and optional Stellar payment protection.
 
 ## What It Tests
 
 ### Core Functionality
 - ✅ **V2 Protocol** - Modern x402 server middleware
 - ✅ **Payment Protection** - Middleware protecting specific routes
-- ✅ **Multi-chain Support** - EVM and SVM payment acceptance
+- ✅ **Multi-chain Support** - EVM, SVM, and (optional) Stellar payment acceptance
 - ✅ **Facilitator Integration** - HTTP communication with facilitator
 - ✅ **Extension Support** - Bazaar discovery metadata
 - ✅ **Settlement Handling** - Payment verification and confirmation
@@ -15,6 +15,7 @@ This server demonstrates and tests the x402 Express.js middleware with both EVM 
 ### Protected Endpoints
 - ✅ `GET /protected` - Requires EVM payment (USDC on Base Sepolia)
 - ✅ `GET /protected-svm` - Requires SVM payment (USDC on Solana Devnet)
+- ✅ `GET /protected-stellar` - Requires Stellar payment (USDC on Stellar Testnet)
 
 ## What It Demonstrates
 
@@ -24,7 +25,8 @@ This server demonstrates and tests the x402 Express.js middleware with both EVM 
 import express from "express";
 import { x402Middleware } from "@x402/server/express";
 import { ExactEvmServer } from "@x402/evm";
-import { ExactEvmServer } from "@x402/svm";
+import { ExactSvmServer } from "@x402/svm";
+import { ExactStellarServer } from "@x402/stellar";
 
 const app = express();
 
@@ -47,16 +49,26 @@ const routes = {
     extensions: {
       bazaar: discoveryMetadata
     }
+  },
+  "GET /protected-stellar": {
+    scheme: "exact",
+    network: "stellar:testnet",
+    payTo: "YourStellarAddress",
+    price: "$0.001",
+    extensions: {
+      bazaar: discoveryMetadata
+    }
   }
 };
 
-// Apply x402 middleware with EVM and SVM servers
+// Apply x402 middleware with EVM, SVM, and Stellar servers
 app.use(x402Middleware({
   routes,
   facilitatorUrl: "http://localhost:4023",
   servers: {
     "eip155:84532": new ExactEvmServer(),
-    "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1": new ExactSvmServer()
+    "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1": new ExactSvmServer(),
+    "stellar:testnet": new ExactStellarServer()
   }
 }));
 
@@ -67,6 +79,10 @@ app.get("/protected", (req, res) => {
 
 app.get("/protected-svm", (req, res) => {
   res.json({ message: "SVM payment successful!" });
+});
+
+app.get("/protected-stellar", (req, res) => {
+  res.json({ message: "Stellar payment successful!" });
 });
 ```
 
@@ -84,7 +100,7 @@ app.get("/protected-svm", (req, res) => {
 This server is tested with:
 - **Clients:** TypeScript Fetch, Go HTTP
 - **Facilitators:** TypeScript, Go
-- **Payment Types:** EVM (Base Sepolia), SVM (Solana Devnet)
+- **Payment Types:** EVM (Base Sepolia), SVM (Solana Devnet), Stellar (Stellar Testnet)
 - **Protocols:** V2 (primary), V1 (via client negotiation)
 
 ### Request Flow
@@ -107,18 +123,24 @@ cd e2e/servers/express
 export FACILITATOR_URL="http://localhost:4023"
 export EVM_PAYEE_ADDRESS="0x..."
 export SVM_PAYEE_ADDRESS="..."
+export STELLAR_PAYEE_ADDRESS="G..." # optional
 export PORT=4022
 pnpm start
 ```
 
 ## Environment Variables
 
+### Required
 - `PORT` - HTTP server port (default: 4022)
 - `FACILITATOR_URL` - Facilitator endpoint URL
 - `EVM_PAYEE_ADDRESS` - Ethereum address to receive payments
 - `SVM_PAYEE_ADDRESS` - Solana address to receive payments
+
+### Optional
+- `STELLAR_PAYEE_ADDRESS` - Stellar address to receive payments - enables Stellar endpoint
 - `EVM_NETWORK` - EVM network (default: eip155:84532)
 - `SVM_NETWORK` - SVM network (default: solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1)
+- `STELLAR_NETWORK` - Stellar network (default: stellar:testnet)
 
 ## Response Examples
 
@@ -151,6 +173,7 @@ PAYMENT-RESPONSE: <base64-encoded-settlement-response>
 - `@x402/server` - Express middleware
 - `@x402/evm` - EVM server
 - `@x402/svm` - SVM server
+- `@x402/stellar` - Stellar server
 - `@x402/extensions/bazaar` - Discovery extension
 - `express` - HTTP server framework
 
@@ -166,5 +189,6 @@ PAYMENT-RESPONSE: <base64-encoded-settlement-response>
 ### Service Integration
 - **EVM Server** - Handles Base Sepolia USDC payments
 - **SVM Server** - Handles Solana Devnet USDC payments
+- **Stellar Server** - Handles Stellar Testnet USDC contract payments (SEP-41)
 - **Price Conversion** - "$0.001" → token amounts with decimals
 - **Asset Resolution** - Automatic USDC contract/mint lookup

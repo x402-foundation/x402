@@ -110,7 +110,7 @@ We now have everything we need on the renderer side.
 
 3. Set up call from electron
 
-Call from electron live in `operations` in `electron.ts` just for convinience.
+Call from electron live in `operations` in `electron.ts` just for convenience.
 You might add something like this
 
 ```typescript

@@ -13,6 +13,7 @@ import (
 
 	x402 "github.com/coinbase/x402/go"
 	"github.com/coinbase/x402/go/mechanisms/evm"
+	exactfacilitator "github.com/coinbase/x402/go/mechanisms/evm/exact/facilitator"
 	evmv1 "github.com/coinbase/x402/go/mechanisms/evm/v1"
 	"github.com/coinbase/x402/go/types"
 )
@@ -22,6 +23,8 @@ type ExactEvmSchemeV1Config struct {
 	// DeployERC4337WithEIP6492 enables automatic deployment of ERC-4337 smart wallets
 	// via EIP-6492 when encountering undeployed contract signatures during settlement
 	DeployERC4337WithEIP6492 bool
+	// SimulateInSettle reruns transfer simulation during settle. Verify always simulates.
+	SimulateInSettle bool
 }
 
 // ExactEvmSchemeV1 implements the SchemeNetworkFacilitatorV1 interface for EVM exact payments (V1)
@@ -77,7 +80,17 @@ func (f *ExactEvmSchemeV1) Verify(
 	ctx context.Context,
 	payload types.PaymentPayloadV1,
 	requirements types.PaymentRequirementsV1,
+	fctx *x402.FacilitatorContext,
+) (*x402.VerifyResponse, error) {
+	return f.verify(ctx, payload, requirements, fctx, true)
+}
+
+func (f *ExactEvmSchemeV1) verify(
+	ctx context.Context,
+	payload types.PaymentPayloadV1,
+	requirements types.PaymentRequirementsV1,
 	_ *x402.FacilitatorContext,
+	simulate bool,
 ) (*x402.VerifyResponse, error) {
 	// Validate scheme (v1 has scheme at top level)
 	if payload.Scheme != evm.SchemeExact || requirements.Scheme != evm.SchemeExact {
@@ -133,10 +146,9 @@ func (f *ExactEvmSchemeV1) Verify(
 		return nil, x402.NewVerifyError(ErrRecipientMismatch, evmPayload.Authorization.From, fmt.Sprintf("recipient mismatch: %s != %s", evmPayload.Authorization.To, requirements.PayTo))
 	}
 
-	// Parse and validate amount
-	authValue, ok := new(big.Int).SetString(evmPayload.Authorization.Value, 10)
-	if !ok || evmPayload.Authorization.Value == "" {
-		return nil, x402.NewVerifyError(ErrInvalidAuthorizationValue, evmPayload.Authorization.From, fmt.Sprintf("invalid value: %s", evmPayload.Authorization.Value))
+	parsedAuthorization, err := exactfacilitator.ParseEIP3009Authorization(evmPayload.Authorization)
+	if err != nil {
+		return nil, x402.NewVerifyError(ErrInvalidPayload, evmPayload.Authorization.From, err.Error())
 	}
 
 	// V1: Use MaxAmountRequired field
@@ -147,27 +159,19 @@ func (f *ExactEvmSchemeV1) Verify(
 		return nil, x402.NewVerifyError(ErrInvalidRequiredAmount, evmPayload.Authorization.From, fmt.Sprintf("invalid required amount: %s", amountStr))
 	}
 
-	if authValue.Cmp(requiredValue) < 0 {
-		return nil, x402.NewVerifyError(ErrAuthorizationValueInsufficient, evmPayload.Authorization.From, fmt.Sprintf("authorization value insufficient: %s < %s", authValue.String(), requiredValue.String()))
+	if parsedAuthorization.Value.Cmp(requiredValue) != 0 {
+		return nil, x402.NewVerifyError(ErrAuthorizationValueMismatch, evmPayload.Authorization.From, fmt.Sprintf("authorization value mismatch: %s != %s", parsedAuthorization.Value.String(), requiredValue.String()))
 	}
 
 	// V1 specific: Check validBefore is in the future (with 6 second buffer for block time)
 	now := time.Now().Unix()
-	validBefore, _ := new(big.Int).SetString(evmPayload.Authorization.ValidBefore, 10)
-	if validBefore.Cmp(big.NewInt(now+6)) < 0 {
-		return nil, x402.NewVerifyError(ErrAuthorizationValidBeforeExpired, evmPayload.Authorization.From, fmt.Sprintf("valid before expired: %s < %s", validBefore.String(), big.NewInt(now+6).String()))
+	if parsedAuthorization.ValidBefore.Cmp(big.NewInt(now+6)) < 0 {
+		return nil, x402.NewVerifyError(ErrAuthorizationValidBeforeExpired, evmPayload.Authorization.From, fmt.Sprintf("valid before expired: %s < %s", parsedAuthorization.ValidBefore.String(), big.NewInt(now+6).String()))
 	}
 
 	// V1 specific: Check validAfter is not in the future
-	validAfter, _ := new(big.Int).SetString(evmPayload.Authorization.ValidAfter, 10)
-	if validAfter.Cmp(big.NewInt(now)) > 0 {
-		return nil, x402.NewVerifyError(ErrAuthorizationValidAfterInFuture, evmPayload.Authorization.From, fmt.Sprintf("valid after in future: %s > %s", validAfter.String(), big.NewInt(now).String()))
-	}
-
-	// Check balance
-	balance, err := f.signer.GetBalance(ctx, evmPayload.Authorization.From, tokenAddress)
-	if err == nil && balance.Cmp(requiredValue) < 0 {
-		return nil, x402.NewVerifyError(ErrInsufficientFunds, evmPayload.Authorization.From, fmt.Sprintf("insufficient funds: wallet balance %s < %s", balance.String(), requiredValue.String()))
+	if parsedAuthorization.ValidAfter.Cmp(big.NewInt(now)) > 0 {
+		return nil, x402.NewVerifyError(ErrAuthorizationValidAfterInFuture, evmPayload.Authorization.From, fmt.Sprintf("valid after in future: %s > %s", parsedAuthorization.ValidAfter.String(), big.NewInt(now).String()))
 	}
 
 	// Extract token info from requirements (already unmarshaled earlier)
@@ -180,8 +184,9 @@ func (f *ExactEvmSchemeV1) Verify(
 		return nil, x402.NewVerifyError(ErrInvalidSignatureFormat, evmPayload.Authorization.From, err.Error())
 	}
 
-	valid, err := f.verifySignature(
+	classification, err := exactfacilitator.ClassifyEIP3009Signature(
 		ctx,
+		f.signer,
 		evmPayload.Authorization,
 		signatureBytes,
 		chainID,
@@ -193,8 +198,37 @@ func (f *ExactEvmSchemeV1) Verify(
 		return nil, x402.NewVerifyError(ErrFailedToVerifySignature, evmPayload.Authorization.From, err.Error())
 	}
 
-	if !valid {
+	if !classification.Valid && classification.IsUndeployed && !exactfacilitator.HasEIP6492Deployment(classification.SigData) {
+		return nil, x402.NewVerifyError(ErrUndeployedSmartWallet, evmPayload.Authorization.From, "")
+	}
+
+	if !classification.Valid && !classification.IsSmartWallet {
 		return nil, x402.NewVerifyError(ErrInvalidSignature, evmPayload.Authorization.From, "invalid signature")
+	}
+
+	if simulate {
+		simulationSucceeded, err := exactfacilitator.SimulateEIP3009Transfer(
+			ctx,
+			f.signer,
+			tokenAddress,
+			parsedAuthorization,
+			classification.SigData,
+		)
+		if err != nil {
+			return nil, x402.NewVerifyError(ErrInvalidPayload, evmPayload.Authorization.From, err.Error())
+		}
+		if !simulationSucceeded {
+			reason := exactfacilitator.DiagnoseEIP3009SimulationFailure(
+				ctx,
+				f.signer,
+				tokenAddress,
+				evmPayload.Authorization,
+				requiredValue,
+				tokenName,
+				tokenVersion,
+			)
+			return nil, x402.NewVerifyError(reason, evmPayload.Authorization.From, reason)
+		}
 	}
 
 	return &x402.VerifyResponse{
@@ -213,7 +247,7 @@ func (f *ExactEvmSchemeV1) Settle(
 	network := x402.Network(payload.Network)
 
 	// First verify the payment
-	verifyResp, err := f.Verify(ctx, payload, requirements, fctx)
+	verifyResp, err := f.verify(ctx, payload, requirements, fctx, f.config.SimulateInSettle)
 	if err != nil {
 		// Convert VerifyError to SettleError
 		ve := &x402.VerifyError{}
@@ -266,60 +300,12 @@ func (f *ExactEvmSchemeV1) Settle(
 		}
 	}
 
-	// Use inner signature for settlement
-	signatureBytes = sigData.InnerSignature
-
-	// Parse values
-	value, _ := new(big.Int).SetString(evmPayload.Authorization.Value, 10)
-	validAfter, _ := new(big.Int).SetString(evmPayload.Authorization.ValidAfter, 10)
-	validBefore, _ := new(big.Int).SetString(evmPayload.Authorization.ValidBefore, 10)
-	nonceBytes, _ := evm.HexToBytes(evmPayload.Authorization.Nonce)
-
-	// Determine signature type: ECDSA (65 bytes) or smart wallet (longer)
-	isECDSA := len(signatureBytes) == 65
-
-	var txHash string
-	if isECDSA {
-		// For EOA wallets, use v,r,s overload
-		r := signatureBytes[0:32]
-		s := signatureBytes[32:64]
-		v := signatureBytes[64]
-		if v == 0 || v == 1 {
-			v += 27
-		}
-
-		txHash, err = f.signer.WriteContract(
-			ctx,
-			tokenAddress,
-			evm.TransferWithAuthorizationVRSABI,
-			evm.FunctionTransferWithAuthorization,
-			common.HexToAddress(evmPayload.Authorization.From),
-			common.HexToAddress(evmPayload.Authorization.To),
-			value,
-			validAfter,
-			validBefore,
-			[32]byte(nonceBytes),
-			v,
-			[32]byte(r),
-			[32]byte(s),
-		)
-	} else {
-		// For smart wallets, use bytes signature overload
-		txHash, err = f.signer.WriteContract(
-			ctx,
-			tokenAddress,
-			evm.TransferWithAuthorizationBytesABI,
-			evm.FunctionTransferWithAuthorization,
-			common.HexToAddress(evmPayload.Authorization.From),
-			common.HexToAddress(evmPayload.Authorization.To),
-			value,
-			validAfter,
-			validBefore,
-			[32]byte(nonceBytes),
-			signatureBytes,
-		)
+	parsedAuthorization, err := exactfacilitator.ParseEIP3009Authorization(evmPayload.Authorization)
+	if err != nil {
+		return nil, x402.NewSettleError(ErrInvalidPayload, verifyResp.Payer, network, "", err.Error())
 	}
 
+	txHash, err := exactfacilitator.ExecuteTransferWithAuthorization(ctx, f.signer, tokenAddress, parsedAuthorization, sigData)
 	if err != nil {
 		return nil, x402.NewSettleError(ErrTransactionFailed, verifyResp.Payer, network, "", err.Error())
 	}
@@ -340,62 +326,6 @@ func (f *ExactEvmSchemeV1) Settle(
 		Network:     network,
 		Payer:       verifyResp.Payer,
 	}, nil
-}
-
-// verifySignature verifies the EIP-712 signature
-func (f *ExactEvmSchemeV1) verifySignature(
-	ctx context.Context,
-	authorization evm.ExactEIP3009Authorization,
-	signature []byte,
-	chainID *big.Int,
-	verifyingContract string,
-	tokenName string,
-	tokenVersion string,
-) (bool, error) {
-	// Hash the EIP-712 typed data
-	hash, err := evm.HashEIP3009Authorization(
-		authorization,
-		chainID,
-		verifyingContract,
-		tokenName,
-		tokenVersion,
-	)
-	if err != nil {
-		return false, err
-	}
-
-	// Convert hash to [32]byte
-	var hash32 [32]byte
-	copy(hash32[:], hash)
-
-	// Use universal verification (supports EOA, EIP-1271, and ERC-6492)
-	valid, sigData, err := evm.VerifyUniversalSignature(
-		ctx,
-		f.signer,
-		authorization.From,
-		hash32,
-		signature,
-		true, // allowUndeployed in verify()
-	)
-
-	if err != nil {
-		return false, err
-	}
-
-	// If undeployed wallet with deployment info, it will be deployed in settle()
-	if sigData != nil {
-		zeroFactory := [20]byte{}
-		if sigData.Factory != zeroFactory {
-			_, err := f.signer.GetCode(ctx, authorization.From)
-			if err != nil {
-				return false, err
-			}
-			// Wallet may not be deployed - this is OK in verify() if has deployment info
-			// Actual deployment happens in settle() if configured
-		}
-	}
-
-	return valid, nil
 }
 
 // deploySmartWallet deploys an ERC-4337 smart wallet using the ERC-6492 factory

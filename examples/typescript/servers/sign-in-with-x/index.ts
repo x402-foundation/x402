@@ -14,6 +14,7 @@ import {
   createSIWxSettleHook,
   createSIWxRequestHook,
   InMemorySIWxStorage,
+  parseSIWxHeader,
 } from "@x402/extensions/sign-in-with-x";
 config();
 
@@ -95,6 +96,15 @@ function routeConfig(path: string) {
 const routes = {
   "GET /weather": routeConfig("/weather"),
   "GET /joke": routeConfig("/joke"),
+  "GET /profile": {
+    accepts: [] as [],
+    description: "Auth-only: wallet signature required",
+    extensions: declareSIWxExtension({
+      network: [EVM_NETWORK, SVM_NETWORK], // Required for auth-only routes (no payment to infer from)
+      statement: "Sign in to view your profile",
+      expirationSeconds: 300,
+    }),
+  },
 };
 
 // Configure resource server with SIWX extension and settle hook
@@ -114,14 +124,20 @@ const httpServer = new x402HTTPResourceServer(resourceServer, routes).onProtecte
 );
 
 const app = express();
+
 app.use(paymentMiddlewareFromHTTPServer(httpServer));
 
 app.get("/weather", (_req, res) => res.json({ weather: "sunny", temperature: 72 }));
 app.get("/joke", (_req, res) =>
   res.json({ joke: "Why do programmers prefer dark mode? Because light attracts bugs." }),
 );
+app.get("/profile", (req, res) => {
+  // SIWX hook already verified the signature — just parse to extract the address
+  const { address } = parseSIWxHeader(req.headers["sign-in-with-x"] as string);
+  res.json({ address, data: "Your profile data" });
+});
 
 app.listen(PORT, () => {
   console.log(`Server running at http://localhost:${PORT}`);
-  console.log(`Routes: GET /weather, GET /joke`);
+  console.log(`Routes: GET /weather, GET /joke, GET /profile (auth-only)`);
 });

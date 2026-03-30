@@ -1,3 +1,0 @@
-kind: changed
-body: Separated v1 legacy network name resolution from v2 CAIP-2 resolution; v1 code now uses evm/v1 package, shared utils only accept eip155:CHAIN_ID format
-time: 2026-02-25T17:47:50.706805-08:00

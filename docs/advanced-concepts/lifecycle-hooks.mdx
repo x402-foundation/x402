@@ -118,7 +118,31 @@ Register hooks for HTTP-specific request handling before payment processing. Use
     *Coming soon.*
   </Tab>
   <Tab title="Go">
-    *Coming soon.*
+    ```go
+    import (
+        "context"
+        x402 "github.com/coinbase/x402/go"
+        x402http "github.com/coinbase/x402/go/http"
+    )
+
+    // Create resource server
+    resourceServer := x402.Newx402ResourceServer(
+        x402.WithFacilitatorClient(facilitatorClient),
+    )
+
+    // Wrap with HTTP server and register hook
+    httpServer := x402http.Wrappedx402HTTPResourceServer(routes, resourceServer).
+        OnProtectedRequest(func(ctx context.Context, reqCtx x402http.HTTPRequestContext, routeConfig x402http.RouteConfig) (*x402http.ProtectedRequestHookResult, error) {
+            apiKey := reqCtx.Adapter.GetHeader("X-API-Key")
+
+            if apiKey != "" && isValidApiKey(apiKey) {
+                return &x402http.ProtectedRequestHookResult{GrantAccess: true}, nil
+            }
+
+            // No valid API key — continue to payment flow
+            return nil, nil
+        })
+    ```
   </Tab>
 </Tabs>
 

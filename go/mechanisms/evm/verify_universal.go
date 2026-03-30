@@ -16,12 +16,13 @@ import (
 // - ERC-6492: Counterfactual signatures (undeployed contracts with deployment info)
 //
 // The verification flow:
-// 1. Parse ERC-6492 wrapper if present to extract inner signature
-// 2. If inner signature is exactly 65 bytes AND no factory: EOA path (optimization - skips GetCode)
-// 3. Otherwise: check if contract is deployed (GetCode)
-// 4. If undeployed + has deployment info + allowUndeployed: accept (deploy in settle)
-// 5. If undeployed without deployment info: fallback to EOA verification
-// 6. If deployed: use EIP-1271 verification
+//  1. Parse ERC-6492 wrapper if present to extract inner signature
+//  2. If inner signature is exactly 65 bytes AND no factory: EOA path (optimization - skips GetCode)
+//  3. Otherwise: check if contract is deployed (GetCode)
+//  4. If undeployed + has deployment info + allowUndeployed: classify as counterfactual,
+//     but do not treat it as valid until a later onchain simulation succeeds
+//  5. If undeployed without deployment info: fallback to EOA verification
+//  6. If deployed: use EIP-1271 verification
 //
 // Args:
 //
@@ -62,7 +63,10 @@ func VerifyUniversalSignature(
 		// EOA signature - use ECDSA recovery directly (avoids GetCode call)
 		signerAddr := common.HexToAddress(signerAddress)
 		valid, err := VerifyEOASignature(hash[:], sigData.InnerSignature, signerAddr)
-		return valid, sigData, err
+		if err == nil {
+			return valid, sigData, nil
+		}
+		// EOA verification failed - could be smart wallet with 65-byte sig, fall through to check GetCode
 	}
 
 	// Step 4: Potential smart wallet signature - check if contract is deployed
@@ -84,16 +88,19 @@ func VerifyUniversalSignature(
 			if !allowUndeployed {
 				return false, nil, errors.New(ErrUndeployedSmartWallet + ": undeployed not allowed")
 			}
-			// Valid ERC-6492 signature - allow it through
-			// Actual deployment happens in settle() if configured
-			return true, sigData, nil
+			// Preserve deployment info for callers, but require a later simulation
+			// to prove the inner signature would succeed onchain.
+			return false, sigData, nil
 		}
 
 		// No deployment info - try EOA verification as fallback
 		// This handles the case where someone sends a non-65-byte signature from an EOA
 		signerAddr := common.HexToAddress(signerAddress)
 		valid, err := VerifyEOASignature(hash[:], sigData.InnerSignature, signerAddr)
-		return valid, sigData, err
+		if err != nil {
+			return false, sigData, err
+		}
+		return valid, sigData, nil
 	}
 
 	// Step 6: Deployed smart contract - use EIP-1271 verification

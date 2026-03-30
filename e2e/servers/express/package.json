@@ -15,6 +15,7 @@
     "@x402/express": "workspace:*",
     "@x402/evm": "workspace:*",
     "@x402/extensions": "workspace:*",
+    "@x402/stellar": "workspace:*",
     "@x402/svm": "workspace:*",
     "dotenv": "^16.6.1",
     "express": "^4.18.2"

@@ -43,6 +43,12 @@ export const MAX_COMPUTE_UNIT_PRICE_MICROLAMPORTS = 5_000_000; // 5 lamports
 export const DEFAULT_COMPUTE_UNIT_LIMIT = 20_000;
 
 /**
+ * How long a transaction is held in the duplicate settlement cache (ms).
+ * Covers the Solana blockhash lifetime (~60-90s) with margin.
+ */
+export const SETTLEMENT_TTL_MS = 120_000;
+
+/**
  * Solana address validation regex (base58, 32-44 characters)
  */
 export const SVM_ADDRESS_REGEX = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/;

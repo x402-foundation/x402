@@ -44,6 +44,10 @@ const (
 	// ConfirmRetryDelay is the base delay between confirmation attempts
 	ConfirmRetryDelay = 1 * time.Second
 
+	// SettlementTTL is how long a transaction is held in the duplicate settlement cache.
+	// Covers the Solana blockhash lifetime (~60-90s) with margin.
+	SettlementTTL = 120 * time.Second
+
 	// CAIP-2 network identifiers (V2)
 	SolanaMainnetCAIP2 = "solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp"
 	SolanaDevnetCAIP2  = "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1"

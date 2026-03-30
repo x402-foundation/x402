@@ -38,7 +38,7 @@ func runErrorRecoveryExample(ctx context.Context, evmPrivateKey, url string) err
 
 	// Create x402 client with comprehensive error handling
 	client := x402.Newx402Client().
-		Register("eip155:*", evm.NewExactEvmScheme(evmSigner))
+		Register("eip155:*", evm.NewExactEvmScheme(evmSigner, nil))
 
 	// Recovery counter
 	recoveryAttempts := 0
@@ -122,7 +122,11 @@ func runErrorRecoveryExample(ctx context.Context, evmPrivateKey, url string) err
 	fmt.Printf("   Successful recoveries: %d\n", successfulRecoveries)
 	fmt.Printf("   Final status: %d\n\n", resp.StatusCode)
 
-	return printResponse(resp, "Response after error recovery")
+	if err := printResponse(resp, "Response after error recovery"); err != nil {
+		return err
+	}
+	printPaymentDetails(resp.Header)
+	return nil
 }
 
 // classifyError categorizes errors for targeted recovery strategies

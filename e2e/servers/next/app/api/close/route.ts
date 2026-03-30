@@ -20,4 +20,4 @@ export async function POST() {
   return NextResponse.json({
     message: "Shutting down gracefully",
   });
-} 
+}

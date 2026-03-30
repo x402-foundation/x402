@@ -13,6 +13,7 @@ describe("ExactEvmScheme (Server)", () => {
         expect(result.amount).toBe("100000"); // 0.10 USDC = 100000 smallest units
         expect(result.asset).toBe("0x036CbD53842c5426634e7929541eC2318f3dCF7e");
         expect(result.extra).toEqual({ name: "USDC", version: "2" });
+        expect(result.extra).not.toHaveProperty("assetTransferMethod");
       });
 
       it("should parse simple number string prices", async () => {
@@ -51,6 +52,28 @@ describe("ExactEvmScheme (Server)", () => {
         expect(result.asset).toBe("0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913");
         expect(result.amount).toBe("1000000");
         expect(result.extra).toEqual({ name: "USD Coin", version: "2" });
+        expect(result.extra).not.toHaveProperty("assetTransferMethod");
+      });
+    });
+
+    describe("MegaETH network", () => {
+      const network = "eip155:4326";
+
+      it("should parse dollar string and include assetTransferMethod permit2", async () => {
+        const result = await server.parsePrice("$0.10", network);
+        expect(result.asset).toBe("0xFAfDdbb3FC7688494971a79cc65DCa3EF82079E7");
+        expect(result.amount).toBe("100000000000000000"); // 0.10 * 10^18
+        expect(result.extra).toEqual({
+          name: "MegaUSD",
+          version: "1",
+          assetTransferMethod: "permit2",
+        });
+      });
+
+      it("should produce correct 18-decimal amount", async () => {
+        const result = await server.parsePrice("1.00", network);
+        expect(result.amount).toBe("1000000000000000000"); // 1.00 * 10^18
+        expect(result.extra).toHaveProperty("assetTransferMethod", "permit2");
       });
     });
 

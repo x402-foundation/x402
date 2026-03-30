@@ -1,7 +1,7 @@
 {
   "name": "Agently",
-  "description": "Agently is the routing and settlement layer for agentic commerce. It enables AI agents to discover, orchestrate, and pay other AI agents, tools, and data providers on a per-call basis, at scale through agentic protocols.",
+  "description": "The way AI coordinates and transacts. Agently is the routing and settlement layer for your agent economy.",
   "logoUrl": "/logos/agently.png",
-  "websiteUrl": "https://agently.to",
+  "websiteUrl": "https://use-agently.com",
   "category": "Infrastructure & Tooling"
 }

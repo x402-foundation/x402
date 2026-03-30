@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -646,16 +647,18 @@ func TestPaymentMiddleware_Returns402WhenSettlementFails(t *testing.T) {
 		t.Errorf("Expected status 402, got %d", w.Code)
 	}
 
+	// Empty body by default on settlement failure
 	var response map[string]interface{}
 	if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
 		t.Fatalf("Failed to parse response: %v", err)
 	}
-
-	if response["error"] != "Settlement failed" {
-		t.Errorf("Expected error 'Settlement failed', got '%v'", response["error"])
+	if len(response) != 0 {
+		t.Errorf("Expected empty body {}, got %v", response)
 	}
-	if response["details"] != "Insufficient funds" {
-		t.Errorf("Expected details 'Insufficient funds', got '%v'", response["details"])
+
+	// AYMENT-RESPONSE header must be included on settlement failure
+	if w.Header().Get("PAYMENT-RESPONSE") == "" {
+		t.Error("Expected PAYMENT-RESPONSE header on settlement failure")
 	}
 }
 
@@ -736,6 +739,11 @@ func TestPaymentMiddleware_CustomErrorHandler(t *testing.T) {
 
 	if response["custom_error"] == nil {
 		t.Error("Expected custom_error in response")
+	}
+
+	// PAYMENT-RESPONSE header must be set even when using custom error handler
+	if w.Header().Get("PAYMENT-RESPONSE") == "" {
+		t.Error("Expected PAYMENT-RESPONSE header when using custom error handler")
 	}
 }
 
@@ -879,6 +887,213 @@ func TestPaymentMiddleware_WithTimeout(t *testing.T) {
 	// Route should require payment
 	if w.Code != http.StatusPaymentRequired {
 		t.Errorf("Expected status 402, got %d", w.Code)
+	}
+}
+
+// ============================================================================
+// PaymentMiddlewareFromHTTPServer Tests
+// ============================================================================
+
+func TestPaymentMiddlewareFromHTTPServer_Returns402ForProtectedRoute(t *testing.T) {
+	mockClient := &mockFacilitatorClient{
+		supportedFunc: func(ctx context.Context) (x402.SupportedResponse, error) {
+			return x402.SupportedResponse{
+				Kinds: []x402.SupportedKind{
+					{X402Version: 2, Scheme: "exact", Network: "eip155:1"},
+				},
+				Extensions: []string{},
+				Signers:    make(map[string][]string),
+			}, nil
+		},
+	}
+
+	routes := x402http.RoutesConfig{
+		"GET /api": x402http.RouteConfig{
+			Accepts: x402http.PaymentOptions{
+				{
+					Scheme:  "exact",
+					PayTo:   "0xtest",
+					Price:   "$1.00",
+					Network: "eip155:1",
+				},
+			},
+		},
+	}
+
+	// Build the resource server externally
+	resourceServer := x402.Newx402ResourceServer(
+		x402.WithFacilitatorClient(mockClient),
+	)
+	resourceServer.Register("eip155:1", &mockSchemeServer{scheme: "exact"})
+
+	// Wrap with HTTP server
+	httpServer := x402http.Wrappedx402HTTPResourceServer(routes, resourceServer)
+
+	// Use PaymentMiddlewareFromHTTPServer
+	router := createTestRouter()
+	router.Use(PaymentMiddlewareFromHTTPServer(httpServer, WithTimeout(5*time.Second)))
+
+	router.GET("/api", func(c *gin.Context) {
+		c.JSON(http.StatusOK, gin.H{"data": "protected"})
+	})
+
+	req := httptest.NewRequest("GET", "/api", nil)
+	req.Header.Set("Accept", "application/json")
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusPaymentRequired {
+		t.Errorf("Expected status 402, got %d", w.Code)
+	}
+}
+
+func TestPaymentMiddlewareFromHTTPServer_PassesThroughNonProtectedRoute(t *testing.T) {
+	routes := x402http.RoutesConfig{
+		"GET /api": x402http.RouteConfig{
+			Accepts: x402http.PaymentOptions{
+				{
+					Scheme:  "exact",
+					PayTo:   "0xtest",
+					Price:   "$1.00",
+					Network: "eip155:1",
+				},
+			},
+		},
+	}
+
+	resourceServer := x402.Newx402ResourceServer()
+	httpServer := x402http.Wrappedx402HTTPResourceServer(routes, resourceServer)
+
+	router := createTestRouter()
+	router.Use(PaymentMiddlewareFromHTTPServer(httpServer, WithSyncFacilitatorOnStart(false)))
+
+	nextCalled := false
+	router.GET("/public", func(c *gin.Context) {
+		nextCalled = true
+		c.JSON(http.StatusOK, gin.H{"message": "public"})
+	})
+
+	req := httptest.NewRequest("GET", "/public", nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	if !nextCalled {
+		t.Error("Expected next() to be called for non-protected route")
+	}
+	if w.Code != http.StatusOK {
+		t.Errorf("Expected status 200, got %d", w.Code)
+	}
+}
+
+func TestPaymentMiddlewareFromHTTPServer_HookGrantsAccess(t *testing.T) {
+	mockClient := &mockFacilitatorClient{
+		supportedFunc: func(ctx context.Context) (x402.SupportedResponse, error) {
+			return x402.SupportedResponse{
+				Kinds: []x402.SupportedKind{
+					{X402Version: 2, Scheme: "exact", Network: "eip155:1"},
+				},
+				Extensions: []string{},
+				Signers:    make(map[string][]string),
+			}, nil
+		},
+	}
+
+	routes := x402http.RoutesConfig{
+		"GET /api": x402http.RouteConfig{
+			Accepts: x402http.PaymentOptions{
+				{
+					Scheme:  "exact",
+					PayTo:   "0xtest",
+					Price:   "$1.00",
+					Network: "eip155:1",
+				},
+			},
+		},
+	}
+
+	resourceServer := x402.Newx402ResourceServer(
+		x402.WithFacilitatorClient(mockClient),
+	)
+	resourceServer.Register("eip155:1", &mockSchemeServer{scheme: "exact"})
+
+	// Register a hook that grants free access
+	httpServer := x402http.Wrappedx402HTTPResourceServer(routes, resourceServer).
+		OnProtectedRequest(func(ctx context.Context, reqCtx x402http.HTTPRequestContext, routeConfig x402http.RouteConfig) (*x402http.ProtectedRequestHookResult, error) {
+			return &x402http.ProtectedRequestHookResult{GrantAccess: true}, nil
+		})
+
+	router := createTestRouter()
+	router.Use(PaymentMiddlewareFromHTTPServer(httpServer, WithTimeout(5*time.Second)))
+
+	nextCalled := false
+	router.GET("/api", func(c *gin.Context) {
+		nextCalled = true
+		c.JSON(http.StatusOK, gin.H{"data": "free-access"})
+	})
+
+	// Request without payment header - hook should grant access
+	req := httptest.NewRequest("GET", "/api", nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("Expected status 200 (hook granted access), got %d. Body: %s", w.Code, w.Body.String())
+	}
+	if !nextCalled {
+		t.Error("Expected next handler to be called when hook grants access")
+	}
+}
+
+func TestPaymentMiddlewareFromHTTPServer_HookAbortsRequest(t *testing.T) {
+	mockClient := &mockFacilitatorClient{
+		supportedFunc: func(ctx context.Context) (x402.SupportedResponse, error) {
+			return x402.SupportedResponse{
+				Kinds: []x402.SupportedKind{
+					{X402Version: 2, Scheme: "exact", Network: "eip155:1"},
+				},
+				Extensions: []string{},
+				Signers:    make(map[string][]string),
+			}, nil
+		},
+	}
+
+	routes := x402http.RoutesConfig{
+		"GET /api": x402http.RouteConfig{
+			Accepts: x402http.PaymentOptions{
+				{
+					Scheme:  "exact",
+					PayTo:   "0xtest",
+					Price:   "$1.00",
+					Network: "eip155:1",
+				},
+			},
+		},
+	}
+
+	resourceServer := x402.Newx402ResourceServer(
+		x402.WithFacilitatorClient(mockClient),
+	)
+	resourceServer.Register("eip155:1", &mockSchemeServer{scheme: "exact"})
+
+	// Register a hook that aborts the request
+	httpServer := x402http.Wrappedx402HTTPResourceServer(routes, resourceServer).
+		OnProtectedRequest(func(ctx context.Context, reqCtx x402http.HTTPRequestContext, routeConfig x402http.RouteConfig) (*x402http.ProtectedRequestHookResult, error) {
+			return &x402http.ProtectedRequestHookResult{Abort: true, Reason: "IP blocked"}, nil
+		})
+
+	router := createTestRouter()
+	router.Use(PaymentMiddlewareFromHTTPServer(httpServer, WithTimeout(5*time.Second)))
+
+	router.GET("/api", func(c *gin.Context) {
+		t.Error("Handler should not be called when hook aborts")
+	})
+
+	req := httptest.NewRequest("GET", "/api", nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusForbidden {
+		t.Errorf("Expected status 403 (hook aborted), got %d", w.Code)
 	}
 }
 
@@ -1138,11 +1353,15 @@ func TestResponseCapture_WriteHeaderOnlyOnce(t *testing.T) {
 	}
 }
 
-// mockGinResponseWriter implements gin.ResponseWriter for testing
+// mockGinResponseWriter implements gin.ResponseWriter for testing.
+// It tracks Flush and WriteHeaderNow calls so tests can verify that
+// responseCapture prevents them from reaching the embedded writer.
 type mockGinResponseWriter struct {
 	*httptest.ResponseRecorder
-	status int
-	size   int
+	status            int
+	size              int
+	flushCount        int
+	writeHeaderNowCnt int
 }
 
 func (m *mockGinResponseWriter) Status() int {
@@ -1162,7 +1381,9 @@ func (m *mockGinResponseWriter) WriteHeader(code int) {
 	m.ResponseRecorder.WriteHeader(code)
 }
 
-func (m *mockGinResponseWriter) WriteHeaderNow() {}
+func (m *mockGinResponseWriter) WriteHeaderNow() {
+	m.writeHeaderNowCnt++
+}
 
 func (m *mockGinResponseWriter) Write(data []byte) (int, error) {
 	n, err := m.ResponseRecorder.Write(data)
@@ -1183,9 +1404,191 @@ func (m *mockGinResponseWriter) CloseNotify() <-chan bool {
 }
 
 func (m *mockGinResponseWriter) Flush() {
+	m.flushCount++
 	m.ResponseRecorder.Flush()
 }
 
 func (m *mockGinResponseWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
 	return nil, nil, nil
+}
+
+// ============================================================================
+// responseCapture: Flush / WriteHeaderNow / Status / Size / Written tests
+// ============================================================================
+
+func TestResponseCapture_FlushIsNoOp(t *testing.T) {
+	mock := &mockGinResponseWriter{
+		ResponseRecorder: httptest.NewRecorder(),
+	}
+	capture := &responseCapture{
+		ResponseWriter: mock,
+		body:           &bytes.Buffer{},
+		statusCode:     http.StatusOK,
+	}
+
+	capture.Write([]byte("some data"))
+	capture.Flush()
+	capture.Flush()
+
+	if mock.flushCount != 0 {
+		t.Errorf("Expected Flush to NOT reach embedded writer, got %d calls", mock.flushCount)
+	}
+	if capture.body.String() != "some data" {
+		t.Errorf("Expected buffered body 'some data', got '%s'", capture.body.String())
+	}
+}
+
+func TestResponseCapture_WriteHeaderNowIsNoOp(t *testing.T) {
+	mock := &mockGinResponseWriter{
+		ResponseRecorder: httptest.NewRecorder(),
+	}
+	capture := &responseCapture{
+		ResponseWriter: mock,
+		body:           &bytes.Buffer{},
+		statusCode:     http.StatusOK,
+	}
+
+	capture.WriteHeaderNow()
+	capture.WriteHeaderNow()
+
+	if mock.writeHeaderNowCnt != 0 {
+		t.Errorf("Expected WriteHeaderNow to NOT reach embedded writer, got %d calls", mock.writeHeaderNowCnt)
+	}
+}
+
+func TestResponseCapture_StatusSizeWritten(t *testing.T) {
+	mock := &mockGinResponseWriter{
+		ResponseRecorder: httptest.NewRecorder(),
+	}
+	capture := &responseCapture{
+		ResponseWriter: mock,
+		body:           &bytes.Buffer{},
+		statusCode:     http.StatusOK,
+	}
+
+	if capture.Status() != http.StatusOK {
+		t.Errorf("Expected initial status 200, got %d", capture.Status())
+	}
+	if capture.Size() != 0 {
+		t.Errorf("Expected initial size 0, got %d", capture.Size())
+	}
+	if capture.Written() {
+		t.Error("Expected Written() == false before any write")
+	}
+
+	capture.WriteHeader(http.StatusCreated)
+	capture.Write([]byte("hello"))
+
+	if capture.Status() != http.StatusCreated {
+		t.Errorf("Expected status 201, got %d", capture.Status())
+	}
+	if capture.Size() != 5 {
+		t.Errorf("Expected size 5, got %d", capture.Size())
+	}
+	if !capture.Written() {
+		t.Error("Expected Written() == true after WriteHeader")
+	}
+
+	if mock.status != 0 {
+		t.Errorf("Expected embedded writer status unchanged (0), got %d", mock.status)
+	}
+	if mock.size != 0 {
+		t.Errorf("Expected embedded writer size unchanged (0), got %d", mock.size)
+	}
+}
+
+// ============================================================================
+// Streaming integration test
+// ============================================================================
+
+func TestPaymentMiddleware_StreamingDoesNotLeakHeaders(t *testing.T) {
+	settleCalled := false
+
+	mockClient := &mockFacilitatorClient{
+		verifyFunc: func(ctx context.Context, payloadBytes []byte, requirementsBytes []byte) (*x402.VerifyResponse, error) {
+			return &x402.VerifyResponse{IsValid: true, Payer: "0xpayer"}, nil
+		},
+		settleFunc: func(ctx context.Context, payloadBytes []byte, requirementsBytes []byte) (*x402.SettleResponse, error) {
+			settleCalled = true
+			return &x402.SettleResponse{
+				Success:     true,
+				Transaction: "0xtx",
+				Network:     "eip155:1",
+				Payer:       "0xpayer",
+			}, nil
+		},
+		supportedFunc: func(ctx context.Context) (x402.SupportedResponse, error) {
+			return x402.SupportedResponse{
+				Kinds: []x402.SupportedKind{
+					{X402Version: 2, Scheme: "exact", Network: "eip155:1"},
+				},
+				Extensions: []string{},
+				Signers:    make(map[string][]string),
+			}, nil
+		},
+	}
+
+	mockScheme := &mockSchemeServer{scheme: "exact"}
+
+	routes := x402http.RoutesConfig{
+		"GET /stream": x402http.RouteConfig{
+			Accepts: x402http.PaymentOptions{
+				{
+					Scheme:  "exact",
+					PayTo:   "0xtest",
+					Price:   "$1.00",
+					Network: "eip155:1",
+				},
+			},
+			MimeType: "text/event-stream",
+		},
+	}
+
+	router := createTestRouter()
+	router.Use(PaymentMiddlewareFromConfig(routes,
+		WithFacilitatorClient(mockClient),
+		WithScheme("eip155:1", mockScheme),
+		WithSyncFacilitatorOnStart(true),
+		WithTimeout(5*time.Second),
+	))
+
+	router.GET("/stream", func(c *gin.Context) {
+		c.Header("Content-Type", "text/event-stream")
+		c.Header("Cache-Control", "no-cache")
+		for i := 0; i < 3; i++ {
+			chunk := fmt.Sprintf("data: {\"n\":%d}\n\n", i)
+			_, _ = c.Writer.Write([]byte(chunk))
+			if f, ok := c.Writer.(http.Flusher); ok {
+				f.Flush()
+			}
+		}
+	})
+
+	req := httptest.NewRequest("GET", "/stream", nil)
+	req.Header.Set("PAYMENT-SIGNATURE", createPaymentHeader("0xtest"))
+	req.Host = "example.com"
+
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("Expected status 200, got %d. Body: %s", w.Code, w.Body.String())
+	}
+
+	if !settleCalled {
+		t.Error("Expected settlement to be called for streaming response")
+	}
+
+	paymentResponse := w.Header().Get("PAYMENT-RESPONSE")
+	if paymentResponse == "" {
+		t.Error("Expected PAYMENT-RESPONSE header in final response; streaming Flush must not commit headers early")
+	}
+
+	body := w.Body.String()
+	for i := 0; i < 3; i++ {
+		expected := fmt.Sprintf("data: {\"n\":%d}\n\n", i)
+		if !bytes.Contains([]byte(body), []byte(expected)) {
+			t.Errorf("Expected body to contain chunk %d (%q), got: %s", i, expected, body)
+		}
+	}
 }

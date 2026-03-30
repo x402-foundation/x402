@@ -5,7 +5,9 @@ import {
   SupportedResponse,
   VerifyError,
   SettleError,
+  FacilitatorResponseError,
 } from "../types/facilitator";
+import { z } from "../schemas";
 
 const DEFAULT_FACILITATOR_URL = "https://x402.org/facilitator";
 
@@ -60,6 +62,121 @@ const GET_SUPPORTED_RETRIES = 3;
 /** Base delay in ms for exponential backoff on retries */
 const GET_SUPPORTED_RETRY_DELAY_MS = 1000;
 
+const verifyResponseSchema: z.ZodType<VerifyResponse, z.ZodTypeDef, unknown> = z.object({
+  isValid: z.boolean(),
+  invalidReason: z
+    .string()
+    .nullish()
+    .transform(v => v ?? undefined),
+  invalidMessage: z
+    .string()
+    .nullish()
+    .transform(v => v ?? undefined),
+  payer: z
+    .string()
+    .nullish()
+    .transform(v => v ?? undefined),
+  extensions: z
+    .record(z.string(), z.unknown())
+    .nullish()
+    .transform(v => v ?? undefined),
+});
+
+const settleResponseSchema: z.ZodType<SettleResponse, z.ZodTypeDef, unknown> = z.object({
+  success: z.boolean(),
+  errorReason: z
+    .string()
+    .nullish()
+    .transform(v => v ?? undefined),
+  errorMessage: z
+    .string()
+    .nullish()
+    .transform(v => v ?? undefined),
+  payer: z
+    .string()
+    .nullish()
+    .transform(v => v ?? undefined),
+  transaction: z.string(),
+  network: z.custom<SettleResponse["network"]>(value => typeof value === "string"),
+  extensions: z
+    .record(z.string(), z.unknown())
+    .nullish()
+    .transform(v => v ?? undefined),
+});
+
+const supportedKindSchema: z.ZodType<SupportedResponse["kinds"][number], z.ZodTypeDef, unknown> =
+  z.object({
+    x402Version: z.number(),
+    scheme: z.string(),
+    network: z.custom<SupportedResponse["kinds"][number]["network"]>(
+      value => typeof value === "string",
+    ),
+    extra: z
+      .record(z.string(), z.unknown())
+      .nullish()
+      .transform(v => v ?? undefined),
+  });
+
+const supportedResponseSchema: z.ZodType<SupportedResponse, z.ZodTypeDef, unknown> = z.object({
+  kinds: z.array(supportedKindSchema),
+  extensions: z.array(z.string()).default([]),
+  signers: z.record(z.string(), z.array(z.string())).default({}),
+});
+
+/**
+ * Produces a compact excerpt of a facilitator response body for error messages.
+ *
+ * @param text - The raw response body text
+ * @param limit - The maximum number of characters to include
+ * @returns A normalized excerpt suitable for logs and thrown errors
+ */
+function responseExcerpt(text: string, limit: number = 200): string {
+  const compact = text.trim().replace(/\s+/g, " ");
+  if (!compact) {
+    return "<empty response>";
+  }
+
+  if (compact.length <= limit) {
+    return compact;
+  }
+
+  return `${compact.slice(0, limit - 3)}...`;
+}
+
+/**
+ * Parses and validates a successful facilitator response body.
+ *
+ * @param response - The HTTP response returned by the facilitator
+ * @param schema - The schema used to validate the response payload
+ * @param operation - The facilitator operation name for error reporting
+ * @returns The validated facilitator payload
+ */
+async function parseSuccessResponse<T>(
+  response: Response,
+  schema: z.ZodType<T, z.ZodTypeDef, unknown>,
+  operation: string,
+): Promise<T> {
+  const text = await response.text();
+
+  let data: unknown;
+  try {
+    data = JSON.parse(text);
+  } catch {
+    throw new FacilitatorResponseError(
+      `Facilitator ${operation} returned invalid JSON: ${responseExcerpt(text)}`,
+    );
+  }
+
+  const parsed = schema.safeParse(data);
+  if (!parsed.success) {
+    throw new FacilitatorResponseError(
+      `Facilitator ${operation} returned invalid data: ${responseExcerpt(text)}`,
+    );
+  }
+
+  return parsed.data;
+}
+
 /**
  * HTTP-based client for interacting with x402 facilitator services
  * Handles HTTP communication with facilitator endpoints
@@ -74,7 +191,9 @@ export class HTTPFacilitatorClient implements FacilitatorClient {
    * @param config - Configuration options for the facilitator client
    */
   constructor(config?: FacilitatorConfig) {
-    this.url = config?.url || DEFAULT_FACILITATOR_URL;
+    // Normalize URL: strip trailing slashes to prevent redirect loops (e.g. 308)
+    // when constructing endpoint paths like `${url}/supported`
+    this.url = (config?.url || DEFAULT_FACILITATOR_URL).replace(/\/+$/, "");
     this._createAuthHeaders = config?.createAuthHeaders;
   }
 
@@ -101,6 +220,7 @@ export class HTTPFacilitatorClient implements FacilitatorClient {
     const response = await fetch(`${this.url}/verify`, {
       method: "POST",
       headers,
+      redirect: "follow",
       body: JSON.stringify({
         x402Version: paymentPayload.x402Version,
         paymentPayload: this.toJsonSafe(paymentPayload),
@@ -108,17 +228,25 @@ export class HTTPFacilitatorClient implements FacilitatorClient {
       }),
     });
 
-    const data = await response.json();
-
-    if (typeof data === "object" && data !== null && "isValid" in data) {
-      const verifyResponse = data as VerifyResponse;
-      if (!response.ok) {
-        throw new VerifyError(response.status, verifyResponse);
+    if (!response.ok) {
+      const text = await response.text();
+      let data: unknown;
+      try {
+        data = JSON.parse(text);
+      } catch {
+        throw new Error(`Facilitator verify failed (${response.status}): ${responseExcerpt(text)}`);
       }
-      return verifyResponse;
+
+      if (typeof data === "object" && data !== null && "isValid" in data) {
+        throw new VerifyError(response.status, data as VerifyResponse);
+      }
+
+      throw new Error(
+        `Facilitator verify failed (${response.status}): ${responseExcerpt(JSON.stringify(data))}`,
+      );
     }
 
-    throw new Error(`Facilitator verify failed (${response.status}): ${JSON.stringify(data)}`);
+    return parseSuccessResponse(response, verifyResponseSchema, "verify");
   }
 
   /**
@@ -144,6 +272,7 @@ export class HTTPFacilitatorClient implements FacilitatorClient {
     const response = await fetch(`${this.url}/settle`, {
       method: "POST",
       headers,
+      redirect: "follow",
       body: JSON.stringify({
         x402Version: paymentPayload.x402Version,
         paymentPayload: this.toJsonSafe(paymentPayload),
@@ -151,17 +280,25 @@ export class HTTPFacilitatorClient implements FacilitatorClient {
       }),
     });
 
-    const data = await response.json();
-
-    if (typeof data === "object" && data !== null && "success" in data) {
-      const settleResponse = data as SettleResponse;
-      if (!response.ok) {
-        throw new SettleError(response.status, settleResponse);
+    if (!response.ok) {
+      const text = await response.text();
+      let data: unknown;
+      try {
+        data = JSON.parse(text);
+      } catch {
+        throw new Error(`Facilitator settle failed (${response.status}): ${responseExcerpt(text)}`);
       }
-      return settleResponse;
+
+      if (typeof data === "object" && data !== null && "success" in data) {
+        throw new SettleError(response.status, data as SettleResponse);
+      }
+
+      throw new Error(
+        `Facilitator settle failed (${response.status}): ${responseExcerpt(JSON.stringify(data))}`,
+      );
     }
 
-    throw new Error(`Facilitator settle failed (${response.status}): ${JSON.stringify(data)}`);
+    return parseSuccessResponse(response, settleResponseSchema, "settle");
   }
 
   /**
@@ -185,14 +322,17 @@ export class HTTPFacilitatorClient implements FacilitatorClient {
       const response = await fetch(`${this.url}/supported`, {
         method: "GET",
         headers,
+        redirect: "follow",
       });
 
       if (response.ok) {
-        return (await response.json()) as SupportedResponse;
+        return parseSuccessResponse(response, supportedResponseSchema, "supported");
       }
 
       const errorText = await response.text().catch(() => response.statusText);
-      lastError = new Error(`Facilitator getSupported failed (${response.status}): ${errorText}`);
+      lastError = new Error(
+        `Facilitator getSupported failed (${response.status}): ${responseExcerpt(errorText)}`,
+      );
 
       // Retry on 429 rate limit errors with exponential backoff
       if (response.status === 429 && attempt < GET_SUPPORTED_RETRIES - 1) {

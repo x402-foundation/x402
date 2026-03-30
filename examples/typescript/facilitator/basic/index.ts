@@ -116,8 +116,14 @@ const facilitator = new x402Facilitator()
   });
 
 // Register EVM and SVM schemes
-facilitator.register("eip155:84532", new ExactEvmScheme(evmSigner, { deployERC4337WithEIP6492: true })); // Base Sepolia
-facilitator.register("solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1", new ExactSvmScheme(svmSigner)); // Devnet
+facilitator.register(
+  "eip155:84532",
+  new ExactEvmScheme(evmSigner, { deployERC4337WithEIP6492: true }),
+); // Base Sepolia
+facilitator.register(
+  "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1",
+  new ExactSvmScheme(svmSigner),
+); // Devnet
 
 // Initialize Express app
 const app = express();

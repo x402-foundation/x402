@@ -8,7 +8,7 @@
  */
 
 import { SSEClientTransport } from "@modelcontextprotocol/sdk/client/sse.js";
-import { ExactEvmScheme } from "@x402/evm/exact/client";
+import { ExactEvmScheme, type ExactEvmSchemeOptions } from "@x402/evm/exact/client";
 import { createx402MCPClient } from "@x402/mcp";
 import { privateKeyToAccount } from "viem/accounts";
 
@@ -35,12 +35,14 @@ if (!serverUrl || !endpointPath || !evmPrivateKey) {
 
 async function main(): Promise<void> {
   const evmSigner = privateKeyToAccount(evmPrivateKey);
+  const evmSchemeOptions: ExactEvmSchemeOptions | undefined = process.env.EVM_RPC_URL
+    ? { rpcUrl: process.env.EVM_RPC_URL }
+    : undefined;
 
-  // Create x402 MCP client with auto-payment enabled
   const x402Mcp = createx402MCPClient({
     name: "x402-mcp-e2e-client",
     version: "1.0.0",
-    schemes: [{ network: "eip155:84532", client: new ExactEvmScheme(evmSigner) }],
+    schemes: [{ network: "eip155:84532", client: new ExactEvmScheme(evmSigner, evmSchemeOptions) }],
     autoPayment: true,
     onPaymentRequested: async () => true, // Auto-approve all payments for e2e
   });

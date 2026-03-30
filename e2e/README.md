@@ -85,26 +85,61 @@ Add the `-v` flag to any command for verbose output:
 
 Useful for debugging test failures or understanding the payment flow.
 
+## Wallet Safety Warning
+
+**Use dedicated test wallets only. Do NOT use wallets that hold real funds.**
+
+The test suite moves ETH between the configured wallets during a run. Funds stay
+within the set of wallets defined in `.env`, but individual wallet balances will
+change unpredictably:
+
+- **ETH is transferred** from the facilitator wallet to the client wallet so the
+  client can pay gas for granting and revoking Permit2 approvals between tests.
+- **ETH is swept** from the client wallet back to the facilitator after revocation
+  to create a zero-balance state, which is required to exercise the facilitator's
+  gasless funding step.
+- **Token approvals are granted and revoked** on the client wallet as part of
+  normal test flow.
+
+While no funds leave the configured wallet set, the client wallet's ETH balance
+will be drained to near-zero between tests. Do not rely on any particular wallet
+having a stable balance during or after a run.
+
 ## Environment Variables
 
 Required environment variables (set in `.env` file):
 
 ```bash
-# Client wallets
+# Client wallets (⚠️ TEST WALLETS ONLY — balances will be swept during runs)
 CLIENT_EVM_PRIVATE_KEY=0x...        # EVM private key for client payments
 CLIENT_SVM_PRIVATE_KEY=...          # Solana private key for client payments
 CLIENT_APTOS_PRIVATE_KEY=...        # Aptos private key for client payments (hex string)
+CLIENT_STELLAR_PRIVATE_KEY=...      # Stellar private key for client payments
 
 # Server payment addresses
 SERVER_EVM_ADDRESS=0x...            # Where servers receive EVM payments
 SERVER_SVM_ADDRESS=...              # Where servers receive Solana payments
 SERVER_APTOS_ADDRESS=0x...          # Where servers receive Aptos payments
+SERVER_STELLAR_ADDRESS=...          # Where servers receive Stellar payments
 
-# Facilitator wallets (for payment verification/settlement)
+# Facilitator wallets (⚠️ TEST WALLETS ONLY — used to fund/drain client between tests)
 FACILITATOR_EVM_PRIVATE_KEY=0x...   # EVM private key for facilitator
 FACILITATOR_SVM_PRIVATE_KEY=...     # Solana private key for facilitator
 FACILITATOR_APTOS_PRIVATE_KEY=...   # Aptos private key for facilitator (hex string)
+FACILITATOR_STELLAR_PRIVATE_KEY=... # Stellar private key for facilitator
 ```
+
+### Account Setup Instructions
+
+#### Stellar Testnet
+
+You need **three separate Stellar accounts** for e2e tests (client, server, facilitator):
+
+1. Go to [Stellar Laboratory](https://lab.stellar.org/account/create) ➡️ Generate keypair ➡️ Fund account with Friendbot, then copy the `Secret` and `Public` keys so you can use them.
+2. Add USDC trustline (required for client and server): go to [Fund Account](https://lab.stellar.org/account/fund) ➡️ Paste your `Public Key` ➡️ Add USDC Trustline ➡️ paste your `Secret key` ➡️ Sign transaction ➡️ Add Trustline.
+3. Get testnet USDC from [Circle Faucet](https://faucet.circle.com/) (select Stellar network).
+
+> **Note:** The facilitator account only needs XLM (step 1). Client and server accounts need all three steps.
 
 ## Example Session
 
@@ -118,7 +153,7 @@ $ pnpm test --min
 ✔ Select servers › express, hono, legacy-express
 ✔ Select clients › axios, fetch, httpx
 ✔ Select extensions › bazaar
-✔ Select protocol families › EVM, SVM, Aptos
+✔ Select protocol families › EVM, SVM, Aptos, Stellar
 
 📊 Coverage-Based Minimization
 Total scenarios: 156

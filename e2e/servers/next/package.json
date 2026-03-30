@@ -18,6 +18,7 @@
     "@x402/evm": "workspace:*",
     "@x402/extensions": "workspace:*",
     "@x402/next": "workspace:*",
+    "@x402/stellar": "workspace:*",
     "@x402/svm": "workspace:*",
     "@heroicons/react": "^2.2.0",
     "next": "^16.0.10",

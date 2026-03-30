@@ -1,0 +1,7 @@
+{
+  "name": "ClawPay MCP",
+  "description": "Open-source, non-custodial x402 MCP payment layer for AI agents. Agents sign transactions locally with no custodial infrastructure required. Supports x402 V2 sessions, spend limits, and multi-chain payments.",
+  "logoUrl": "/logos/clawpay-mcp.svg",
+  "websiteUrl": "https://www.npmjs.com/package/clawpay-mcp",
+  "category": "Infrastructure & Tooling"
+}

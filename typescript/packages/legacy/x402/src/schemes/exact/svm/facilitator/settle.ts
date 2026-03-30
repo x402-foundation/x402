@@ -35,6 +35,7 @@ import {
   createRecentSignatureConfirmationPromiseFactory,
 } from "@solana/transaction-confirmation";
 import { verify } from "./verify";
+import { SettlementCache } from "./settlement-cache";
 
 /**
  * Settle the payment payload against the payment requirements.
@@ -45,6 +46,17 @@ import { verify } from "./verify";
  * @param paymentRequirements - The payment requirements to settle against
  * @param config - Optional configuration for X402 operations (e.g., custom RPC URLs)
  * @returns A SettleResponse indicating if the payment is settled and any error reason
+ */
+const settlementCache = new SettlementCache();
+
+/**
+ * Settles an exact SVM payment by verifying the payment and recording the settlement.
+ *
+ * @param signer - Transaction signer used to verify the payment
+ * @param payload - The payment payload to settle
+ * @param paymentRequirements - The payment requirements to settle against
+ * @param config - Optional configuration for X402 operations (e.g., custom RPC URLs)
+ * @returns A promise that resolves to a SettleResponse indicating success or failure
  */
 export async function settle(
   signer: TransactionSigner,
@@ -63,6 +75,18 @@ export async function settle(
   }
 
   const svmPayload = payload.payload as ExactSvmPayload;
+
+  // Duplicate settlement check: reject if this transaction is already being settled.
+  // Must occur before any async work so concurrent calls for the same tx are caught.
+  const txKey = svmPayload.transaction;
+  if (settlementCache.isDuplicate(txKey)) {
+    return {
+      success: false,
+      errorReason: "duplicate_settlement",
+      network: payload.network,
+      transaction: "",
+    };
+  }
   const decodedTransaction = decodeTransactionFromPayload(svmPayload);
   const signedTransaction = await signTransactionWithSigner(signer, decodedTransaction);
   assertTransactionFullySigned(signedTransaction);

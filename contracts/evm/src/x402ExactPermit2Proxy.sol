@@ -12,12 +12,29 @@ import {ISignatureTransfer} from "./interfaces/ISignatureTransfer.sol";
  *      It uses the "witness" pattern to cryptographically bind the payment destination,
  *      preventing facilitators from redirecting funds.
  *
- *      Unlike x402UptoPermit2Proxy, this contract always transfers the EXACT permitted
- *      amount, similar to EIP-3009's transferWithAuthorization behavior.
+ *      This contract always transfers the EXACT permitted amount, similar to
+ *      EIP-3009's transferWithAuthorization behavior.
  *
  * @author x402 Protocol
  */
 contract x402ExactPermit2Proxy is x402BasePermit2Proxy {
+    /// @notice EIP-712 type string for witness data
+    string public constant WITNESS_TYPE_STRING =
+        "Witness witness)TokenPermissions(address token,uint256 amount)Witness(address to,uint256 validAfter)";
+
+    /// @notice EIP-712 typehash for witness struct
+    bytes32 public constant WITNESS_TYPEHASH = keccak256("Witness(address to,uint256 validAfter)");
+
+    /**
+     * @notice Witness data structure for payment authorization
+     * @param to Destination address (immutable once signed)
+     * @param validAfter Earliest timestamp when payment can be settled
+     */
+    struct Witness {
+        address to;
+        uint256 validAfter;
+    }
+
     constructor(
         address _permit2
     ) x402BasePermit2Proxy(_permit2) {}
@@ -37,7 +54,17 @@ contract x402ExactPermit2Proxy is x402BasePermit2Proxy {
         Witness calldata witness,
         bytes calldata signature
     ) external nonReentrant {
-        _settle(permit, permit.permitted.amount, owner, witness, signature);
+        bytes32 witnessHash = keccak256(abi.encode(WITNESS_TYPEHASH, witness.to, witness.validAfter));
+        _settle(
+            permit,
+            permit.permitted.amount,
+            owner,
+            witness.to,
+            witness.validAfter,
+            witnessHash,
+            WITNESS_TYPE_STRING,
+            signature
+        );
         emit Settled();
     }
 
@@ -63,7 +90,17 @@ contract x402ExactPermit2Proxy is x402BasePermit2Proxy {
         bytes calldata signature
     ) external nonReentrant {
         _executePermit(permit.permitted.token, owner, permit2612, permit.permitted.amount);
-        _settle(permit, permit.permitted.amount, owner, witness, signature);
+        bytes32 witnessHash = keccak256(abi.encode(WITNESS_TYPEHASH, witness.to, witness.validAfter));
+        _settle(
+            permit,
+            permit.permitted.amount,
+            owner,
+            witness.to,
+            witness.validAfter,
+            witnessHash,
+            WITNESS_TYPE_STRING,
+            signature
+        );
         emit SettledWithPermit();
     }
 }

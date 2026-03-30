@@ -23,6 +23,7 @@
     "@x402/express": "workspace:*",
     "@x402/evm": "workspace:*",
     "@x402/svm": "workspace:*",
+    "@x402/stellar": "workspace:*",
     "@x402/extensions": "workspace:*"
   },
   "devDependencies": {

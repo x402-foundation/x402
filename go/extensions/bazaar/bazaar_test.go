@@ -1615,6 +1615,47 @@ func TestExtractDiscoveredResourceFromPaymentRequired(t *testing.T) {
 		require.NotNil(t, info)
 		assert.Equal(t, "GET", info.Method)
 	})
+
+	t.Run("v2: should use routeTemplate as canonical URL for dynamic routes", func(t *testing.T) {
+		// Mirrors the TestBazaarDynamicRoutes/should use routeTemplate for canonical URL test,
+		// but exercises the ExtractDiscoveredResourceFromPaymentRequired code path so that
+		// facilitators consuming payment-required responses also produce stable catalog keys.
+		enrichedExt := map[string]interface{}{
+			"info": map[string]interface{}{
+				"input": map[string]interface{}{
+					"type":   "http",
+					"method": "GET",
+				},
+			},
+			"schema":        map[string]interface{}{},
+			"routeTemplate": "/products/:productId",
+		}
+
+		paymentRequired := x402.PaymentRequired{
+			X402Version: 2,
+			Resource: &x402.ResourceInfo{
+				URL: "https://api.example.com/products/42",
+			},
+			Accepts: []x402.PaymentRequirements{
+				{
+					Scheme:  "exact",
+					Network: "eip155:8453",
+				},
+			},
+			Extensions: map[string]interface{}{
+				bazaar.BAZAAR.Key(): enrichedExt,
+			},
+		}
+
+		paymentRequiredBytes, _ := json.Marshal(paymentRequired)
+
+		info, err := bazaar.ExtractDiscoveredResourceFromPaymentRequired(paymentRequiredBytes, false)
+		require.NoError(t, err)
+		require.NotNil(t, info)
+		// The routeTemplate replaces the concrete URL path as the canonical catalog key
+		assert.Equal(t, "https://api.example.com/products/:productId", info.ResourceURL)
+		assert.Equal(t, "/products/:productId", info.RouteTemplate)
+	})
 }
 
 // extractMethodEnum is a test helper that extracts the method enum from a discovery extension schema.
@@ -1775,6 +1816,58 @@ func TestBazaarResourceServerExtension(t *testing.T) {
 		assert.True(t, hasMethod, "method should be in required array")
 	})
 
+	t.Run("should produce a valid extension after enrichment (GET)", func(t *testing.T) {
+		extension, err := bazaar.DeclareDiscoveryExtension(
+			bazaar.MethodGET,
+			map[string]interface{}{"query": "test"},
+			bazaar.JSONSchema{
+				"properties": map[string]interface{}{
+					"query": map[string]interface{}{"type": "string"},
+				},
+			},
+			"",
+			nil,
+		)
+		require.NoError(t, err)
+
+		httpContext := x402http.HTTPRequestContext{
+			Method: "GET",
+		}
+
+		enriched := bazaar.BazaarResourceServerExtension.EnrichDeclaration(extension, httpContext)
+		enrichedExt, ok := enriched.(bazaar.DiscoveryExtension)
+		require.True(t, ok)
+
+		result := bazaar.ValidateDiscoveryExtension(enrichedExt)
+		assert.True(t, result.Valid, "enriched GET extension should pass validation: %v", result.Errors)
+	})
+
+	t.Run("should produce a valid extension after enrichment (POST)", func(t *testing.T) {
+		extension, err := bazaar.DeclareDiscoveryExtension(
+			bazaar.MethodPOST,
+			map[string]interface{}{"data": "test"},
+			bazaar.JSONSchema{
+				"properties": map[string]interface{}{
+					"data": map[string]interface{}{"type": "string"},
+				},
+			},
+			bazaar.BodyTypeJSON,
+			nil,
+		)
+		require.NoError(t, err)
+
+		httpContext := x402http.HTTPRequestContext{
+			Method: "POST",
+		}
+
+		enriched := bazaar.BazaarResourceServerExtension.EnrichDeclaration(extension, httpContext)
+		enrichedExt, ok := enriched.(bazaar.DiscoveryExtension)
+		require.True(t, ok)
+
+		result := bazaar.ValidateDiscoveryExtension(enrichedExt)
+		assert.True(t, result.Valid, "enriched POST extension should pass validation: %v", result.Errors)
+	})
+
 	t.Run("should return unchanged declaration for non-HTTP context", func(t *testing.T) {
 		extension, err := bazaar.DeclareDiscoveryExtension(
 			bazaar.MethodPOST,
@@ -1799,4 +1892,304 @@ func TestBazaarResourceServerExtension(t *testing.T) {
 		require.True(t, ok)
 		assert.Equal(t, extension.Info, resultExt.Info)
 	})
+}
+
+func declareEmptyGETExtension(t *testing.T) bazaar.DiscoveryExtension {
+	t.Helper()
+	ext, err := bazaar.DeclareDiscoveryExtension(
+		bazaar.MethodGET,
+		map[string]interface{}{},
+		bazaar.JSONSchema{"properties": map[string]interface{}{}},
+		"",
+		nil,
+	)
+	require.NoError(t, err)
+	return ext
+}
+
+type mockHTTPAdapterForBazaar struct {
+	headers map[string]string
+	method  string
+	path    string
+	url     string
+	accept  string
+	agent   string
+}
+
+func (m *mockHTTPAdapterForBazaar) GetHeader(name string) string {
+	if m.headers == nil {
+		return ""
+	}
+	return m.headers[name]
+}
+func (m *mockHTTPAdapterForBazaar) GetMethod() string       { return m.method }
+func (m *mockHTTPAdapterForBazaar) GetPath() string         { return m.path }
+func (m *mockHTTPAdapterForBazaar) GetURL() string          { return m.url }
+func (m *mockHTTPAdapterForBazaar) GetAcceptHeader() string { return m.accept }
+func (m *mockHTTPAdapterForBazaar) GetUserAgent() string    { return m.agent }
+
+func TestBazaarDynamicRoutes(t *testing.T) {
+	t.Run("should leave static routes unchanged", func(t *testing.T) {
+		extension, err := bazaar.DeclareDiscoveryExtension(
+			bazaar.MethodGET,
+			map[string]interface{}{"query": "test"},
+			bazaar.JSONSchema{"properties": map[string]interface{}{"query": map[string]interface{}{"type": "string"}}},
+			"",
+			nil,
+		)
+		require.NoError(t, err)
+
+		httpContext := x402http.HTTPRequestContext{
+			Method:       "GET",
+			Path:         "/users",
+			RoutePattern: "/users",
+			Adapter:      &mockHTTPAdapterForBazaar{path: "/users"},
+		}
+
+		enriched := bazaar.BazaarResourceServerExtension.EnrichDeclaration(extension, httpContext)
+
+		// Static route: enriched should be DiscoveryExtension with empty RouteTemplate
+		enrichedExt, ok := enriched.(bazaar.DiscoveryExtension)
+		require.True(t, ok, "should always produce DiscoveryExtension")
+		assert.Empty(t, enrichedExt.RouteTemplate, "static route should have empty RouteTemplate")
+	})
+
+	t.Run("should produce routeTemplate for dynamic routes", func(t *testing.T) {
+		extension := declareEmptyGETExtension(t)
+
+		httpContext := x402http.HTTPRequestContext{
+			Method:       "GET",
+			Path:         "/users/123",
+			RoutePattern: "/users/[userId]",
+			Adapter:      &mockHTTPAdapterForBazaar{path: "/users/123"},
+		}
+
+		enriched := bazaar.BazaarResourceServerExtension.EnrichDeclaration(extension, httpContext)
+
+		enrichedExt, ok := enriched.(bazaar.DiscoveryExtension)
+		require.True(t, ok, "dynamic route should produce a DiscoveryExtension")
+		assert.Equal(t, "/users/:userId", enrichedExt.RouteTemplate)
+	})
+
+	t.Run("should extract path params from concrete URL", func(t *testing.T) {
+		extension := declareEmptyGETExtension(t)
+
+		httpContext := x402http.HTTPRequestContext{
+			Method:       "GET",
+			Path:         "/users/123",
+			RoutePattern: "/users/[userId]",
+			Adapter:      &mockHTTPAdapterForBazaar{path: "/users/123"},
+		}
+
+		enriched := bazaar.BazaarResourceServerExtension.EnrichDeclaration(extension, httpContext)
+
+		enrichedExt, ok := enriched.(bazaar.DiscoveryExtension)
+		require.True(t, ok)
+
+		queryInput, ok := enrichedExt.Info.Input.(bazaar.QueryInput)
+		require.True(t, ok)
+		require.NotNil(t, queryInput.PathParams)
+		assert.Equal(t, "123", queryInput.PathParams["userId"])
+	})
+
+	t.Run("should extract multiple path params", func(t *testing.T) {
+		extension := declareEmptyGETExtension(t)
+
+		httpContext := x402http.HTTPRequestContext{
+			Method:       "GET",
+			Path:         "/users/42/posts/7",
+			RoutePattern: "/users/[userId]/posts/[postId]",
+			Adapter:      &mockHTTPAdapterForBazaar{path: "/users/42/posts/7"},
+		}
+
+		enriched := bazaar.BazaarResourceServerExtension.EnrichDeclaration(extension, httpContext)
+
+		enrichedExt, ok := enriched.(bazaar.DiscoveryExtension)
+		require.True(t, ok)
+		assert.Equal(t, "/users/:userId/posts/:postId", enrichedExt.RouteTemplate)
+
+		queryInput, ok := enrichedExt.Info.Input.(bazaar.QueryInput)
+		require.True(t, ok)
+		assert.Equal(t, "42", queryInput.PathParams["userId"])
+		assert.Equal(t, "7", queryInput.PathParams["postId"])
+	})
+
+	t.Run("should produce routeTemplate for colon-style dynamic routes", func(t *testing.T) {
+		extension := declareEmptyGETExtension(t)
+
+		httpContext := x402http.HTTPRequestContext{
+			Method:       "GET",
+			Path:         "/users/123",
+			RoutePattern: "/users/:userId",
+			Adapter:      &mockHTTPAdapterForBazaar{path: "/users/123"},
+		}
+
+		enriched := bazaar.BazaarResourceServerExtension.EnrichDeclaration(extension, httpContext)
+
+		enrichedExt, ok := enriched.(bazaar.DiscoveryExtension)
+		require.True(t, ok, "colon-param dynamic route should produce a DiscoveryExtension")
+		assert.Equal(t, "/users/:userId", enrichedExt.RouteTemplate)
+	})
+
+	t.Run("should extract path params from colon-style pattern", func(t *testing.T) {
+		extension := declareEmptyGETExtension(t)
+
+		httpContext := x402http.HTTPRequestContext{
+			Method:       "GET",
+			Path:         "/users/42/posts/7",
+			RoutePattern: "/users/:userId/posts/:postId",
+			Adapter:      &mockHTTPAdapterForBazaar{path: "/users/42/posts/7"},
+		}
+
+		enriched := bazaar.BazaarResourceServerExtension.EnrichDeclaration(extension, httpContext)
+
+		enrichedExt, ok := enriched.(bazaar.DiscoveryExtension)
+		require.True(t, ok)
+		assert.Equal(t, "/users/:userId/posts/:postId", enrichedExt.RouteTemplate)
+
+		queryInput, ok := enrichedExt.Info.Input.(bazaar.QueryInput)
+		require.True(t, ok)
+		assert.Equal(t, "42", queryInput.PathParams["userId"])
+		assert.Equal(t, "7", queryInput.PathParams["postId"])
+	})
+
+	t.Run("should handle mixed [param] and :param patterns", func(t *testing.T) {
+		extension := declareEmptyGETExtension(t)
+
+		httpContext := x402http.HTTPRequestContext{
+			Method:       "GET",
+			Path:         "/users/42/posts/7",
+			RoutePattern: "/users/[userId]/posts/:postId",
+			Adapter:      &mockHTTPAdapterForBazaar{path: "/users/42/posts/7"},
+		}
+
+		enriched := bazaar.BazaarResourceServerExtension.EnrichDeclaration(extension, httpContext)
+
+		enrichedExt, ok := enriched.(bazaar.DiscoveryExtension)
+		require.True(t, ok)
+		assert.Equal(t, "/users/:userId/posts/:postId", enrichedExt.RouteTemplate)
+
+		queryInput, ok := enrichedExt.Info.Input.(bazaar.QueryInput)
+		require.True(t, ok)
+		assert.Equal(t, "42", queryInput.PathParams["userId"])
+		assert.Equal(t, "7", queryInput.PathParams["postId"])
+	})
+
+	t.Run("should auto-convert wildcard * to :varN for discovery", func(t *testing.T) {
+		extension := declareEmptyGETExtension(t)
+
+		httpContext := x402http.HTTPRequestContext{
+			Method:       "GET",
+			Path:         "/weather/san-francisco",
+			RoutePattern: "/weather/*",
+			Adapter:      &mockHTTPAdapterForBazaar{path: "/weather/san-francisco"},
+		}
+
+		enriched := bazaar.BazaarResourceServerExtension.EnrichDeclaration(extension, httpContext)
+
+		enrichedExt, ok := enriched.(bazaar.DiscoveryExtension)
+		require.True(t, ok)
+		assert.Equal(t, "/weather/:var1", enrichedExt.RouteTemplate)
+
+		queryInput, ok := enrichedExt.Info.Input.(bazaar.QueryInput)
+		require.True(t, ok)
+		assert.Equal(t, "san-francisco", queryInput.PathParams["var1"])
+	})
+
+	t.Run("should auto-convert multiple wildcards to :var1 :var2 etc", func(t *testing.T) {
+		extension := declareEmptyGETExtension(t)
+
+		httpContext := x402http.HTTPRequestContext{
+			Method:       "GET",
+			Path:         "/api/users/42/posts/7",
+			RoutePattern: "/api/*/*/posts/*",
+			Adapter:      &mockHTTPAdapterForBazaar{path: "/api/users/42/posts/7"},
+		}
+
+		enriched := bazaar.BazaarResourceServerExtension.EnrichDeclaration(extension, httpContext)
+
+		enrichedExt, ok := enriched.(bazaar.DiscoveryExtension)
+		require.True(t, ok)
+		assert.Equal(t, "/api/:var1/:var2/posts/:var3", enrichedExt.RouteTemplate)
+	})
+
+	t.Run("should use concrete URL for static routes", func(t *testing.T) {
+		extension, err := bazaar.DeclareDiscoveryExtension(
+			bazaar.MethodGET,
+			map[string]interface{}{"query": "test"},
+			bazaar.JSONSchema{"properties": map[string]interface{}{"query": map[string]interface{}{"type": "string"}}},
+			"",
+			nil,
+		)
+		require.NoError(t, err)
+
+		extensionJSON, err := json.Marshal(map[string]interface{}{
+			"x402Version": 2,
+			"scheme":      "exact",
+			"network":     "eip155:8453",
+			"payload":     map[string]interface{}{},
+			"accepted":    map[string]interface{}{},
+			"resource":    map[string]interface{}{"url": "http://example.com/search?q=test"},
+			"extensions": map[string]interface{}{
+				bazaar.BAZAAR.Key(): extension,
+			},
+		})
+		require.NoError(t, err)
+
+		var payload x402.PaymentPayload
+		require.NoError(t, json.Unmarshal(extensionJSON, &payload))
+
+		payloadJSON, err := json.Marshal(payload)
+		require.NoError(t, err)
+
+		discovered, err := bazaar.ExtractDiscoveredResourceFromPaymentPayload(payloadJSON, nil, false)
+		require.NoError(t, err)
+		require.NotNil(t, discovered)
+		assert.Equal(t, "http://example.com/search", discovered.ResourceURL)
+		assert.Empty(t, discovered.RouteTemplate)
+	})
+}
+
+// TestDynamicRoutesCatalogConsolidation verifies that two requests to the same
+// parameterized route produce the same canonical ResourceURL, so a catalog keyed by ResourceURL
+// contains exactly one entry regardless of how many distinct concrete parameter values arrive.
+func TestDynamicRoutesCatalogConsolidation(t *testing.T) {
+	extension := declareEmptyGETExtension(t)
+
+	makePayloadJSON := func(userID string) []byte {
+		enrichedExt := map[string]interface{}{
+			"info":          extension.Info,
+			"schema":        extension.Schema,
+			"routeTemplate": "/users/:userId",
+		}
+		b, err := json.Marshal(map[string]interface{}{
+			"x402Version": 2,
+			"scheme":      "exact",
+			"network":     "eip155:8453",
+			"payload":     map[string]interface{}{},
+			"accepted":    map[string]interface{}{},
+			"resource":    map[string]interface{}{"url": "http://api.example.com/users/" + userID},
+			"extensions": map[string]interface{}{
+				bazaar.BAZAAR.Key(): enrichedExt,
+			},
+		})
+		require.NoError(t, err)
+		return b
+	}
+
+	// First request: /users/123
+	discovered1, err := bazaar.ExtractDiscoveredResourceFromPaymentPayload(makePayloadJSON("123"), nil, false)
+	require.NoError(t, err)
+	require.NotNil(t, discovered1)
+
+	// Second request: /users/456 — different concrete ID, same route
+	discovered2, err := bazaar.ExtractDiscoveredResourceFromPaymentPayload(makePayloadJSON("456"), nil, false)
+	require.NoError(t, err)
+	require.NotNil(t, discovered2)
+
+	// Both must produce the same canonical URL so catalog sees a single entry
+	assert.Equal(t, "http://api.example.com/users/:userId", discovered1.ResourceURL)
+	assert.Equal(t, "http://api.example.com/users/:userId", discovered2.ResourceURL)
+	assert.Equal(t, discovered1.ResourceURL, discovered2.ResourceURL,
+		"requests to the same parameterized route should consolidate to one catalog entry")
 }

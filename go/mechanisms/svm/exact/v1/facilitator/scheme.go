@@ -19,13 +19,23 @@ import (
 
 // ExactSvmSchemeV1 implements the SchemeNetworkFacilitator interface for SVM (Solana) exact payments (V1)
 type ExactSvmSchemeV1 struct {
-	signer svm.FacilitatorSvmSigner
+	signer          svm.FacilitatorSvmSigner
+	settlementCache *svm.SettlementCache
 }
 
-// NewExactSvmSchemeV1 creates a new ExactSvmSchemeV1
-func NewExactSvmSchemeV1(signer svm.FacilitatorSvmSigner) *ExactSvmSchemeV1 {
+// NewExactSvmSchemeV1 creates a new ExactSvmSchemeV1.
+// An optional SettlementCache may be provided to share deduplication state
+// across V1 and V2 instances; if nil a new cache is created.
+func NewExactSvmSchemeV1(signer svm.FacilitatorSvmSigner, cache ...*svm.SettlementCache) *ExactSvmSchemeV1 {
+	var c *svm.SettlementCache
+	if len(cache) > 0 && cache[0] != nil {
+		c = cache[0]
+	} else {
+		c = svm.NewSettlementCache()
+	}
 	return &ExactSvmSchemeV1{
-		signer: signer,
+		signer:          signer,
+		settlementCache: c,
 	}
 }
 
@@ -239,6 +249,12 @@ func (f *ExactSvmSchemeV1) Settle(
 	svmPayload, err := svm.PayloadFromMap(payload.Payload)
 	if err != nil {
 		return nil, x402.NewSettleError(ErrInvalidPayloadTransaction, verifyResp.Payer, network, "", err.Error())
+	}
+
+	// Duplicate settlement check: reject if this transaction is already being settled.
+	txKey := svmPayload.Transaction
+	if f.settlementCache.IsDuplicate(txKey) {
+		return nil, x402.NewSettleError(ErrDuplicateSettlement, verifyResp.Payer, network, "", "duplicate transaction")
 	}
 
 	// Decode transaction

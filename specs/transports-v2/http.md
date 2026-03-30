@@ -18,9 +18,7 @@ HTTP/1.1 402 Payment Required
 Content-Type: application/json
 PAYMENT-REQUIRED: eyJ4NDAyVmVyc2lvbiI6MiwiZXJyb3IiOiJQQVlNRU5ULVNJR05BVFVSRSBoZWFkZXIgaXMgcmVxdWlyZWQiLCJyZXNvdXJjZSI6eyJ1cmwiOiJodHRwczovL2FwaS5leGFtcGxlLmNvbS9wcmVtaXVtLWRhdGEiLCJkZXNjcmlwdGlvbiI6IkFjY2VzcyB0byBwcmVtaXVtIG1hcmtldCBkYXRhIiwibWltZVR5cGUiOiJhcHBsaWNhdGlvbi9qc29uIn0sImFjY2VwdHMiOlt7InNjaGVtZSI6ImV4YWN0IiwibmV0d29yayI6ImVpcDE1NTo4NDUzMiIsImFtb3VudCI6IjEwMDAwIiwiYXNzZXQiOiIweDAzNkNiRDUzODQyYzU0MjY2MzRlNzkyOTU0MWVDMjMxOGYzZENGN2UiLCJwYXlUbyI6IjB4MjA5NjkzQmM2YWZjMEM1MzI4YkEzNkZhRjAzQzUxNEVGMzEyMjg3QyIsIm1heFRpbWVvdXRTZWNvbmRzIjo2MCwiZXh0cmEiOnsibmFtZSI6IlVTREMiLCJ2ZXJzaW9uIjoiMiJ9fV19
 
-{
-  "error": "Payment required"
-}
+{}
 ```
 
 The base64 header decodes to:
@@ -145,10 +143,18 @@ HTTP/1.1 402 Payment Required
 Content-Type: application/json
 PAYMENT-RESPONSE: eyJzdWNjZXNzIjpmYWxzZSwiZXJyb3JSZWFzb24iOiJpbnN1ZmZpY2llbnRfZnVuZHMiLCJ0cmFuc2FjdGlvbiI6IiIsIm5ldHdvcmsiOiJlaXAxNTU6ODQ1MzIiLCJwYXllciI6IjB4ODU3YjA2NTE5RTkxZTNBNTQ1Mzg3OTFiRGJiMEUyMjM3M2UzNmI2NiJ9
 
+{}
+```
+
+The base64 response header decodes to:
+
+```json
 {
-  "x402Version": 2,
-  "error": "Payment failed: insufficient funds",
-  "accepts": [...]
+  "success": false,
+  "errorReason": "insufficient_funds",
+  "transaction": "",
+  "network": "eip155:84532",
+  "payer": "0x857b06519E91e3A54538791bDbb0E22373e36b66"
 }
 ```
 
@@ -159,6 +165,10 @@ PAYMENT-RESPONSE: eyJzdWNjZXNzIjpmYWxzZSwiZXJyb3JSZWFzb24iOiJpbnN1ZmZpY2llbnRfZn
 | `PAYMENT-REQUIRED` | Server → Client | Base64-encoded `PaymentRequired` object |
 | `PAYMENT-SIGNATURE` | Client → Server | Base64-encoded `PaymentPayload` object |
 | `PAYMENT-RESPONSE` | Server → Client | Base64-encoded `SettlementResponse` object |
+
+## Response Body
+
+Response bodies are a server implementation concern. All x402 protocol information is communicated through headers (`PAYMENT-REQUIRED`, `PAYMENT-SIGNATURE`, `PAYMENT-RESPONSE`). 
 
 ## Error Handling
 

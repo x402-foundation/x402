@@ -6,7 +6,10 @@ libraries like eth_account and web3.py.
 
 from __future__ import annotations
 
+import logging
 from typing import Any
+
+logger = logging.getLogger("x402.signers")
 
 try:
     from eth_account import Account
@@ -19,8 +22,8 @@ except ImportError as e:
         "EVM signers require eth_account and web3. Install with: pip install x402[evm]"
     ) from e
 
-from .constants import EIP1271_MAGIC_VALUE, IS_VALID_SIGNATURE_ABI, TX_STATUS_SUCCESS
-from .types import TransactionReceipt, TypedDataDomain, TypedDataField
+from .constants import EIP1271_MAGIC_VALUE, IS_VALID_SIGNATURE_ABI, TX_STATUS_SUCCESS  # noqa: E402
+from .types import TransactionReceipt, TypedDataDomain, TypedDataField  # noqa: E402
 
 # ERC20 ABI for balance checks
 _ERC20_BALANCE_ABI = [
@@ -117,6 +120,14 @@ class EthAccountSigner:
         else:
             domain_dict = domain
 
+        logger.info(
+            "EthAccountSigner.sign_typed_data: primaryType=%s domain_keys=%s type_names=%s",
+            primary_type,
+            list(domain_dict.keys()),
+            list(types_dict.keys()),
+        )
+        logger.debug("EthAccountSigner.sign_typed_data: domain=%s message=%s", domain_dict, message)
+
         # Sign typed data using eth_account
         signed = self._account.sign_typed_data(
             domain_data=domain_dict,
@@ -124,6 +135,102 @@ class EthAccountSigner:
             message_data=message,
         )
         return bytes(signed.signature)
+
+
+class EthAccountSignerWithRPC(EthAccountSigner):
+    """Client-side EVM signer with RPC capabilities for gas sponsoring extensions.
+
+    Extends EthAccountSigner with read_contract, sign_transaction, and
+    get_transaction_count — the capabilities needed for EIP-2612 and
+    ERC-20 approval gas sponsoring.
+
+    Equivalent to TS's toClientEvmSigner(account, publicClient).
+
+    Example:
+        ```python
+        from eth_account import Account
+        from x402.mechanisms.evm.signers import EthAccountSignerWithRPC
+
+        account = Account.from_key("0x...")
+        signer = EthAccountSignerWithRPC(account, rpc_url="https://sepolia.base.org")
+
+        # Supports Permit2 with gas sponsoring extensions
+        from x402 import x402Client
+        from x402.mechanisms.evm.exact import register_exact_evm_client
+
+        client = x402Client()
+        register_exact_evm_client(client, signer)
+        ```
+    """
+
+    def __init__(self, account: LocalAccount, rpc_url: str) -> None:
+        """Initialize signer with eth_account LocalAccount and RPC connection.
+
+        Args:
+            account: eth_account LocalAccount instance.
+            rpc_url: Ethereum RPC endpoint URL for on-chain reads.
+        """
+        super().__init__(account)
+        self._w3 = Web3(Web3.HTTPProvider(rpc_url))
+
+    def read_contract(
+        self,
+        address: str,
+        abi: list[dict[str, Any]],
+        function_name: str,
+        *args: Any,
+    ) -> Any:
+        """Read data from a smart contract.
+
+        Args:
+            address: Contract address.
+            abi: Contract ABI.
+            function_name: Function to call.
+            *args: Function arguments.
+
+        Returns:
+            Function return value.
+        """
+        contract = self._w3.eth.contract(
+            address=Web3.to_checksum_address(address),
+            abi=abi,
+        )
+        return getattr(contract.functions, function_name)(*args).call()
+
+    def sign_transaction(self, tx: dict[str, Any]) -> str:
+        """Sign an EIP-1559 transaction and return the RLP-encoded hex string.
+
+        Args:
+            tx: Transaction dict with fields like to, data, nonce, gas, etc.
+
+        Returns:
+            Hex-encoded signed transaction with 0x prefix.
+        """
+        signed = self._w3.eth.account.sign_transaction(tx, self._account.key)
+        return "0x" + signed.raw_transaction.hex()
+
+    def get_transaction_count(self, address: str) -> int:
+        """Get the pending nonce for an address.
+
+        Args:
+            address: Account address.
+
+        Returns:
+            Pending transaction count.
+        """
+        return self._w3.eth.get_transaction_count(Web3.to_checksum_address(address))
+
+    def estimate_fees_per_gas(self) -> tuple[int, int]:
+        """Estimate EIP-1559 fee parameters from the network.
+
+        Returns:
+            Tuple of (maxFeePerGas, maxPriorityFeePerGas) in wei.
+        """
+        latest = self._w3.eth.get_block("latest")
+        base_fee = latest.get("baseFeePerGas", 1_000_000_000)
+        max_priority_fee = self._w3.eth.max_priority_fee
+        max_fee = base_fee * 2 + max_priority_fee
+        return (max_fee, max_priority_fee)
 
 
 class FacilitatorWeb3Signer:
@@ -248,14 +355,30 @@ class FacilitatorWeb3Signer:
         Returns:
             True if signature is valid.
         """
-        # Build full types including EIP712Domain
+        # Build domain dict — handle both TypedDataDomain and raw dict (Permit2 has no version)
+        if isinstance(domain, dict):
+            domain_dict = domain
+        else:
+            domain_dict = {
+                "name": domain.name,
+                "chainId": domain.chain_id,
+                "verifyingContract": domain.verifying_contract,
+            }
+            if domain.version:
+                domain_dict["version"] = domain.version
+
+        # Derive EIP712Domain type from actual domain keys
+        domain_field_map = {
+            "name": {"name": "name", "type": "string"},
+            "version": {"name": "version", "type": "string"},
+            "chainId": {"name": "chainId", "type": "uint256"},
+            "verifyingContract": {"name": "verifyingContract", "type": "address"},
+            "salt": {"name": "salt", "type": "bytes32"},
+        }
+        eip712_domain_type = [domain_field_map[k] for k in domain_dict if k in domain_field_map]
+
         full_types: dict[str, list[dict[str, str]]] = {
-            "EIP712Domain": [
-                {"name": "name", "type": "string"},
-                {"name": "version", "type": "string"},
-                {"name": "chainId", "type": "uint256"},
-                {"name": "verifyingContract", "type": "address"},
-            ]
+            "EIP712Domain": eip712_domain_type,
         }
         for type_name, fields in types.items():
             full_types[type_name] = [
@@ -272,19 +395,27 @@ class FacilitatorWeb3Signer:
             typed_data = {
                 "types": full_types,
                 "primaryType": primary_type,
-                "domain": {
-                    "name": domain.name,
-                    "version": domain.version,
-                    "chainId": domain.chain_id,
-                    "verifyingContract": domain.verifying_contract,
-                },
+                "domain": domain_dict,
                 "message": msg_copy,
             }
 
+            logger.info(
+                "verify_typed_data: primaryType=%s domain_keys=%s type_names=%s",
+                primary_type,
+                list(domain_dict.keys()),
+                list(full_types.keys()),
+            )
+            logger.debug("verify_typed_data: full typed_data=%s", typed_data)
+
             # Try EOA signature verification first
-            recovered = Account.recover_message(
-                encode_typed_data(full_message=typed_data),
-                signature=signature,
+            signable = encode_typed_data(full_message=typed_data)
+            recovered = Account.recover_message(signable, signature=signature)
+
+            logger.info(
+                "verify_typed_data: expected=%s recovered=%s match=%s",
+                address.lower(),
+                recovered.lower(),
+                recovered.lower() == address.lower(),
             )
 
             if recovered.lower() == address.lower():
@@ -313,7 +444,7 @@ class FacilitatorWeb3Signer:
             return False
 
         except Exception as e:
-            print(f"Signature verification error: {e}")
+            logger.error("Signature verification error: %s", e, exc_info=True)
             return False
 
     def write_contract(

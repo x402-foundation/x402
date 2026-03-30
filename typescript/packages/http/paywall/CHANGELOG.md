@@ -1,5 +1,34 @@
 # @x402/paywall Changelog
 
+## 2.8.0
+
+### Minor Changes
+
+- Updated dependencies [067f297]
+- Updated dependencies [4c1e44f]
+- Updated dependencies [5135fab]
+  - @x402/core@2.8.0
+
+## 2.7.0
+
+### Minor Changes
+
+- 34d2442: Fixed encoding of characters outside of the Latin1 range
+- Updated dependencies [8931cb3]
+  - @x402/core@2.7.0
+
+## 2.6.0
+
+### Minor Changes
+
+- 29fe09a: Make ResourceInfo.description, ResourceInfo.mimeType, and PaymentPayload.resource optional to match v2 spec
+- Updated dependencies [f41baed]
+- Updated dependencies [aeef1bf]
+- Updated dependencies [2564781]
+- Updated dependencies [b341973]
+- Updated dependencies [29fe09a]
+  - @x402/core@2.6.0
+
 ## 2.5.0
 
 ### Minor Changes

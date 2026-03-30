@@ -1,0 +1,60 @@
+[project]
+name = "x402-v2-bazaar-example"
+version = "0.1.0"
+description = "Example of using Bazaar discovery with dynamic routes in x402"
+readme = "README.md"
+authors = [
+    { name = "logan", email = "kcs93023@gmail.com" },
+]
+requires-python = ">=3.10"
+keywords = ["x402", "payment", "protocol", "http", "402"]
+dependencies = [
+    "x402[fastapi,evm,svm]",
+    "python-dotenv>=1.2.1",
+    "uvicorn[standard]>=0.40.0",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=7.0.0",
+    "pytest-asyncio>=0.21.0",
+    "mypy>=1.0.0",
+    "ruff>=0.1.0",
+    "black>=23.0.0",
+]
+
+[tool.uv]
+package = false
+
+[tool.uv.sources]
+x402 = { path = "../../../../python/x402", editable = true } 
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = [
+    "E",   # pycodestyle errors
+    "W",   # pycodestyle warnings
+    "F",   # pyflakes
+    "I",   # isort
+    "B",   # flake8-bugbear
+    "C4",  # flake8-comprehensions
+    "UP",  # pyupgrade
+]
+ignore = [
+    "E501",  # line too long (handled by black)
+]
+
+[tool.ruff.lint.isort]
+known-first-party = ["x402"]
+
+[tool.mypy]
+python_version = "3.10"
+strict = true
+warn_return_any = true
+warn_unused_configs = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

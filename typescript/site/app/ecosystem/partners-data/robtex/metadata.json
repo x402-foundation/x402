@@ -1,0 +1,7 @@
+{
+  "name": "Robtex",
+  "description": "Network intelligence APIs for DNS, IP/domain reputation (100+ blocklists), BGP/AS analysis, passive DNS, and Bitcoin Lightning Network data. Available as 50+ API endpoints for seamless agent integration.",
+  "logoUrl": "/logos/robtex.png",
+  "websiteUrl": "https://x402.robtex.com",
+  "category": "Services/Endpoints"
+}

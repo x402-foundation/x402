@@ -1,0 +1,109 @@
+{
+  "name": "fastify",
+  "type": "server",
+  "language": "typescript",
+  "x402Version": 2,
+  "extensions": ["bazaar", "eip2612GasSponsoring", "erc20ApprovalGasSponsoring"],
+
+  "endpoints": [
+    {
+      "path": "/exact/evm/eip3009",
+      "method": "GET",
+      "description": "Protected endpoint requiring EIP-3009 payment",
+      "requiresPayment": true,
+      "protocolFamily": "evm",
+      "transferMethod": "eip3009"
+    },
+    {
+      "path": "/exact/evm/permit2",
+      "method": "GET",
+      "description": "Protected endpoint requiring Permit2 payment (standard settle, no gas sponsoring)",
+      "requiresPayment": true,
+      "protocolFamily": "evm",
+      "transferMethod": "permit2",
+      "permit2Direct": true
+    },
+    {
+      "path": "/exact/evm/permit2-eip2612GasSponsoring",
+      "method": "GET",
+      "description": "Protected endpoint requiring Permit2 payment with EIP-2612 gas sponsoring",
+      "requiresPayment": true,
+      "protocolFamily": "evm",
+      "transferMethod": "permit2",
+      "coldstart": true
+    },
+    {
+      "path": "/exact/evm/permit2-erc20ApprovalGasSponsoring",
+      "method": "GET",
+      "description": "Protected endpoint requiring Permit2 payment with ERC-20 approval gas sponsoring",
+      "requiresPayment": true,
+      "protocolFamily": "evm",
+      "transferMethod": "permit2",
+      "extensions": ["erc20ApprovalGasSponsoring"],
+      "coldstart": true
+    },
+    {
+      "path": "/upto/evm/permit2",
+      "method": "GET",
+      "description": "Protected endpoint requiring upto Permit2 payment (direct, client must pre-approve)",
+      "requiresPayment": true,
+      "protocolFamily": "evm",
+      "transferMethod": "upto",
+      "permit2Direct": true
+    },
+    {
+      "path": "/upto/evm/permit2-eip2612GasSponsoring",
+      "method": "GET",
+      "description": "Protected endpoint requiring upto Permit2 payment with EIP-2612 gas sponsoring",
+      "requiresPayment": true,
+      "protocolFamily": "evm",
+      "transferMethod": "upto"
+    },
+    {
+      "path": "/upto/evm/permit2-erc20ApprovalGasSponsoring",
+      "method": "GET",
+      "description": "Protected endpoint requiring upto Permit2 payment with ERC-20 approval gas sponsoring",
+      "requiresPayment": true,
+      "protocolFamily": "evm",
+      "transferMethod": "upto",
+      "extensions": ["erc20ApprovalGasSponsoring"]
+    },
+    {
+      "path": "/exact/svm",
+      "method": "GET",
+      "description": "Protected endpoint requiring payment on SVM network",
+      "requiresPayment": true,
+      "protocolFamily": "svm"
+    },
+    {
+      "path": "/exact/aptos",
+      "method": "GET",
+      "description": "Protected endpoint requiring payment on Aptos network",
+      "requiresPayment": true,
+      "protocolFamily": "aptos"
+    },
+    {
+      "path": "/exact/stellar",
+      "method": "GET",
+      "description": "Protected endpoint requiring payment on Stellar network",
+      "requiresPayment": true,
+      "protocolFamily": "stellar"
+    },
+    {
+      "path": "/health",
+      "method": "GET",
+      "description": "Health check endpoint",
+      "health": true
+    },
+    {
+      "path": "/close",
+      "method": "POST",
+      "description": "Graceful shutdown endpoint",
+      "close": true
+    }
+  ],
+  "environment": {
+    "required": ["PORT", "EVM_PAYEE_ADDRESS", "SVM_PAYEE_ADDRESS", "FACILITATOR_URL"],
+    "optional": ["APTOS_PAYEE_ADDRESS", "STELLAR_PAYEE_ADDRESS"]
+  }
+}

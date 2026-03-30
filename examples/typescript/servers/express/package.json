@@ -10,7 +10,6 @@
     "lint:check": "eslint . --ext .ts"
   },
   "dependencies": {
-    "@coinbase/x402": "^2.1.0",
     "@x402/core": "workspace:*",
     "@x402/evm": "workspace:*",
     "@x402/express": "workspace:*",

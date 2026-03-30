@@ -12,10 +12,12 @@ class VerifyRequest(BaseX402Model):
     """Request to verify a payment.
 
     Attributes:
+        x402_version: Protocol version (1 or 2).
         payment_payload: The payment payload to verify.
         payment_requirements: The requirements to verify against.
     """
 
+    x402_version: int
     payment_payload: PaymentPayload
     payment_requirements: PaymentRequirements
 
@@ -40,10 +42,12 @@ class SettleRequest(BaseX402Model):
     """Request to settle a payment.
 
     Attributes:
+        x402_version: Protocol version (1 or 2).
         payment_payload: The payment payload to settle.
         payment_requirements: The requirements for settlement.
     """
 
+    x402_version: int
     payment_payload: PaymentPayload
     payment_requirements: PaymentRequirements
 

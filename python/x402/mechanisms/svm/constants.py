@@ -85,6 +85,11 @@ ERR_FEE_PAYER_NOT_MANAGED = "fee_payer_not_managed_by_facilitator"
 ERR_FEE_PAYER_TRANSFERRING = "invalid_exact_svm_payload_transaction_fee_payer_transferring_funds"
 ERR_SIMULATION_FAILED = "transaction_simulation_failed"
 ERR_TRANSACTION_FAILED = "transaction_failed"
+ERR_DUPLICATE_SETTLEMENT = "duplicate_settlement"
+
+# How long a transaction is held in the duplicate settlement cache (seconds).
+# Covers the Solana blockhash lifetime (~60-90s) with margin.
+SETTLEMENT_TTL_SECONDS = 120.0
 
 
 class AssetInfo(TypedDict):

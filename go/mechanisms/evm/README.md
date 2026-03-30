@@ -8,7 +8,7 @@ This package provides scheme implementations for EVM-based blockchains (Ethereum
 
 ## Exact Payment Scheme
 
-The **exact** scheme implementation enables fixed-amount payments using EIP-3009 `transferWithAuthorization` for USDC and compatible tokens.
+The **exact** scheme implementation enables fixed-amount payments using EIP-3009 `transferWithAuthorization` or Permit2 for USDC and compatible tokens.
 
 ### Export Paths
 
@@ -22,8 +22,10 @@ github.com/coinbase/x402/go/mechanisms/evm/exact/client
 ```
 
 **Exports:**
-- `NewExactEvmScheme(signer)` - Creates client-side EVM exact payment mechanism
+- `NewExactEvmScheme(signer, config)` - Creates client-side EVM exact payment mechanism
 - Used for creating payment payloads that clients sign
+- Pass `nil` config for signer-only mode
+- Use config to provide explicit RPC URLs for extension enrichment (`RPCURL` or `RPCByChainID`)
 
 #### For Servers
 
@@ -63,6 +65,8 @@ Networks with default assets configured:
 
 - **Base Mainnet**: `eip155:8453` (USDC)
 - **Base Sepolia**: `eip155:84532` (USDC)
+- **MegaETH Mainnet**: `eip155:4326` (MegaUSD)
+- **Monad Mainnet**: `eip155:143` (USDC)
 
 To add default asset support for additional chains, see [DEFAULT_ASSET.md](./DEFAULT_ASSET.md).
 
@@ -70,8 +74,8 @@ To add default asset support for additional chains, see [DEFAULT_ASSET.md](./DEF
 
 The **exact** scheme implements fixed-amount payments:
 
-- **Standard**: EIP-3009 `transferWithAuthorization`
-- **Token**: USDC and EIP-3009 compatible tokens
+- **Standard**: EIP-3009 `transferWithAuthorization` or Permit2 (per-asset configuration)
+- **Token**: USDC and other stablecoins (EIP-3009 or any ERC-20 via Permit2)
 - **Gas**: Paid by facilitator
 - **Confirmation**: On-chain settlement with transaction hash
 

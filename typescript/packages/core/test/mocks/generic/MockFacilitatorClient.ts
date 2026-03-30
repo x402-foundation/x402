@@ -63,10 +63,13 @@ export class MockFacilitatorClient implements FacilitatorClient {
     payloadOrRequest: PaymentPayload | VerifyRequest,
     requirements?: PaymentRequirements,
   ): Promise<VerifyResponse> {
-    const payload = "payload" in payloadOrRequest ? payloadOrRequest.payload : payloadOrRequest;
+    const payload =
+      "paymentPayload" in payloadOrRequest ? payloadOrRequest.paymentPayload : payloadOrRequest;
     const reqs =
-      requirements ||
-      ("requirements" in payloadOrRequest ? payloadOrRequest.requirements : undefined)!;
+      requirements ??
+      ("paymentRequirements" in payloadOrRequest
+        ? payloadOrRequest.paymentRequirements
+        : undefined)!;
 
     this.verifyCalls.push({ payload, requirements: reqs });
 
@@ -93,10 +96,13 @@ export class MockFacilitatorClient implements FacilitatorClient {
     payloadOrRequest: PaymentPayload | SettleRequest,
     requirements?: PaymentRequirements,
   ): Promise<SettleResponse> {
-    const payload = "payload" in payloadOrRequest ? payloadOrRequest.payload : payloadOrRequest;
+    const payload =
+      "paymentPayload" in payloadOrRequest ? payloadOrRequest.paymentPayload : payloadOrRequest;
     const reqs =
-      requirements ||
-      ("requirements" in payloadOrRequest ? payloadOrRequest.requirements : undefined)!;
+      requirements ??
+      ("paymentRequirements" in payloadOrRequest
+        ? payloadOrRequest.paymentRequirements
+        : undefined)!;
 
     this.settleCalls.push({ payload, requirements: reqs });
 

@@ -1,5 +1,29 @@
 # @x402/core Changelog
 
+## 2.8.0
+
+### Minor Changes
+
+- 067f297: Added `routePattern` to `HTTPRequestContext` and `pattern` to `CompiledRoute` to thread the matched route pattern through to server extensions, enabling dynamic route support in discovery extensions.
+- 4c1e44f: Treat malformed facilitator success payloads as upstream facilitator errors and return 502 responses from framework middleware instead of flattening them into payment failures.
+- 5135fab: Accept null in extra and extension fields
+
+## 2.7.0
+
+### Minor Changes
+
+- 8931cb3: Added support for Express-style `:param` dynamic route parameters in route matching. Routes like `/api/users/:id` and `/api/chapters/:seriesId/:chapterId` now match correctly alongside the existing `[param]` (Next.js) and `*` (wildcard) patterns.
+
+## 2.6.0
+
+### Minor Changes
+
+- f41baed: Added `x402Version` field to `VerifyRequest`, `SettleRequest`, `VerifyRequestV1`, and `SettleRequestV1` types to match what all SDK implementations already send in facilitator request bodies.
+- aeef1bf: Added dynamic function for servers to generate custom response for settlement failures defaulting to empty
+- 2564781: Include PAYMENT-RESPONSE header on settlement failure responses
+- b341973: Remove duplicate server-local `ResourceInfo` interface; use the wire-format `ResourceInfo` from `types/payments.ts` directly throughout the server module.
+- 29fe09a: Make ResourceInfo.description, ResourceInfo.mimeType, and PaymentPayload.resource optional to match v2 spec
+
 ## 2.5.0
 
 ### Minor Changes

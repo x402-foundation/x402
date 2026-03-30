@@ -79,8 +79,8 @@ async function demonstrateResource(path: string): Promise<void> {
   const response1 = await fetchWithPayment(url);
   const body1 = await response1.json();
 
+  logPaymentResponse(response1);
   if (response1.ok) {
-    logPaymentResponse(response1);
     console.log("   Response:", body1);
   } else if (body1.error) {
     console.log("   ✗ Payment failed:", body1.details || body1.error);
@@ -91,14 +91,35 @@ async function demonstrateResource(path: string): Promise<void> {
   const response2 = await fetchWithPayment(url);
   const body2 = await response2.json();
 
+  const hasPayment = logPaymentResponse(response2);
   if (response2.ok) {
-    const hasPayment = logPaymentResponse(response2);
     if (!hasPayment) {
       console.log("   ✓ Authenticated via SIWX (previously paid)");
     }
     console.log("   Response:", body2);
   } else if (body2.error) {
     console.log("   ✗ Payment failed:", body2.details || body2.error);
+  }
+}
+
+/**
+ * Demonstrates auth-only SIWX flow (no payment required).
+ * The client hook handles the 402 → sign → retry cycle automatically.
+ */
+async function demonstrateAuthOnly(): Promise<void> {
+  const url = `${baseURL}/profile`;
+  console.log("\n--- /profile (auth-only, no payment) ---");
+
+  // fetchWithPayment handles auth-only routes the same way as paid routes:
+  // 402 → SIWX client hook signs the challenge → retry with signature
+  const response = await fetchWithPayment(url);
+  const body = await response.json();
+
+  if (response.ok) {
+    console.log("   ✓ Authenticated via SIWX (no payment required)");
+    console.log("   Response:", body);
+  } else {
+    console.log("   ✗ Auth failed:", body);
   }
 }
 
@@ -114,6 +135,9 @@ async function main(): Promise<void> {
   }
   console.log(`Server: ${baseURL}`);
 
+  // Auth-only: SIWX signature without payment
+  await demonstrateAuthOnly();
+
   await demonstrateResource("/weather");
 
   // Small delay to avoid facilitator race condition with rapid payments
@@ -121,7 +145,7 @@ async function main(): Promise<void> {
 
   await demonstrateResource("/joke");
 
-  console.log("\nDone. Each resource required payment once, then SIWX auth worked.");
+  console.log("\nDone. /profile used auth-only SIWX. /weather and /joke used payment + SIWX.");
 }
 
 main().catch(err => {

@@ -12,6 +12,7 @@ import {
 import { getRpcClient, getRpcSubscriptions } from "../../../../shared/svm/rpc";
 import { verify } from "./verify";
 import * as settleModule from "./settle";
+import { SettlementCache } from "./settlement-cache";
 
 // Mocking dependencies
 vi.mock("../../../../shared/svm");
@@ -105,6 +106,19 @@ describe("SVM Settle", () => {
     };
   });
 
+  let txCounter = 0;
+  /**
+   * Returns a unique payment payload for each call (increments tx counter).
+   *
+   * @returns A PaymentPayload with a unique transaction identifier
+   */
+  function uniquePayload(): PaymentPayload {
+    return {
+      ...paymentPayload,
+      payload: { transaction: `tx_${txCounter++}` } as ExactSvmPayload,
+    };
+  }
+
   afterEach(() => {
     vi.clearAllMocks();
   });
@@ -112,6 +126,7 @@ describe("SVM Settle", () => {
   describe("settle", () => {
     it("should successfully settle a payment when verification passes", async () => {
       // Arrange
+      const payload = uniquePayload();
       const mockVerifyResponse = {
         isValid: true,
         invalidReason: undefined,
@@ -142,11 +157,11 @@ describe("SVM Settle", () => {
       );
 
       // Act
-      const result = await settleModule.settle(signer, paymentPayload, paymentRequirements);
+      const result = await settleModule.settle(signer, payload, paymentRequirements);
 
       // Assert
-      expect(verify).toHaveBeenCalledWith(signer, paymentPayload, paymentRequirements, undefined);
-      expect(decodeTransactionFromPayload).toHaveBeenCalledWith(paymentPayload.payload);
+      expect(verify).toHaveBeenCalledWith(signer, payload, paymentRequirements, undefined);
+      expect(decodeTransactionFromPayload).toHaveBeenCalledWith(payload.payload);
       expect(signTransactionWithSigner).toHaveBeenCalledWith(signer, mockSignedTransaction);
       expect(transactionConfirmation.waitForRecentTransactionConfirmation).toHaveBeenCalledOnce();
       expect(mockRpcClient.sendTransaction).toHaveBeenCalled();
@@ -182,6 +197,7 @@ describe("SVM Settle", () => {
 
     it("should return unexpected errors during settlement", async () => {
       // Arrange
+      const payload = uniquePayload();
       const mockVerifyResponse = {
         isValid: true,
         invalidReason: undefined,
@@ -198,7 +214,7 @@ describe("SVM Settle", () => {
       });
 
       // Act
-      const result = await settleModule.settle(signer, paymentPayload, paymentRequirements);
+      const result = await settleModule.settle(signer, payload, paymentRequirements);
 
       // Assert
       expect(result).toEqual({
@@ -425,6 +441,7 @@ describe("SVM Settle", () => {
   describe("Custom RPC Configuration", () => {
     it("should use custom RPC URL from config for both client and subscriptions", async () => {
       // Arrange
+      const payload = uniquePayload();
       const customRpcUrl = "http://localhost:8899";
       const config = { svmConfig: { rpcUrl: customRpcUrl } };
       const mockVerifyResponse = {
@@ -450,12 +467,14 @@ describe("SVM Settle", () => {
         instructions: [],
         version: 0,
       } as any);
+      vi.mocked(getTokenPayerFromTransaction).mockReturnValue(payerAddress);
+      vi.mocked(signTransactionWithSigner).mockResolvedValue(mockSignedTransaction);
       vi.mocked(transactionConfirmation.waitForRecentTransactionConfirmation).mockResolvedValue(
         undefined,
       );
 
       // Act
-      await settleModule.settle(signer, paymentPayload, paymentRequirements, config);
+      await settleModule.settle(signer, payload, paymentRequirements, config);
 
       // Assert
       expect(getRpcClient).toHaveBeenCalledWith("solana-devnet", customRpcUrl);
@@ -464,6 +483,7 @@ describe("SVM Settle", () => {
 
     it("should propagate config to verify() call", async () => {
       // Arrange
+      const payload = uniquePayload();
       const customRpcUrl = "https://api.mainnet-beta.solana.com";
       const config = { svmConfig: { rpcUrl: customRpcUrl } };
       const mockVerifyResponse = {
@@ -489,19 +509,22 @@ describe("SVM Settle", () => {
         instructions: [],
         version: 0,
       } as any);
+      vi.mocked(getTokenPayerFromTransaction).mockReturnValue(payerAddress);
+      vi.mocked(signTransactionWithSigner).mockResolvedValue(mockSignedTransaction);
       vi.mocked(transactionConfirmation.waitForRecentTransactionConfirmation).mockResolvedValue(
         undefined,
       );
 
       // Act
-      await settleModule.settle(signer, paymentPayload, paymentRequirements, config);
+      await settleModule.settle(signer, payload, paymentRequirements, config);
 
       // Assert
-      expect(verify).toHaveBeenCalledWith(signer, paymentPayload, paymentRequirements, config);
+      expect(verify).toHaveBeenCalledWith(signer, payload, paymentRequirements, config);
     });
 
     it("should work without config (backward compatibility)", async () => {
       // Arrange
+      const payload = uniquePayload();
       const mockVerifyResponse = {
         isValid: true,
         invalidReason: undefined,
@@ -525,15 +548,17 @@ describe("SVM Settle", () => {
         instructions: [],
         version: 0,
       } as any);
+      vi.mocked(getTokenPayerFromTransaction).mockReturnValue(payerAddress);
+      vi.mocked(signTransactionWithSigner).mockResolvedValue(mockSignedTransaction);
       vi.mocked(transactionConfirmation.waitForRecentTransactionConfirmation).mockResolvedValue(
         undefined,
       );
 
       // Act
-      await settleModule.settle(signer, paymentPayload, paymentRequirements);
+      await settleModule.settle(signer, payload, paymentRequirements);
 
       // Assert
-      expect(verify).toHaveBeenCalledWith(signer, paymentPayload, paymentRequirements, undefined);
+      expect(verify).toHaveBeenCalledWith(signer, payload, paymentRequirements, undefined);
       expect(getRpcClient).toHaveBeenCalledWith("solana-devnet", undefined);
       expect(getRpcSubscriptions).toHaveBeenCalledWith("solana-devnet", undefined);
     });
@@ -665,5 +690,161 @@ describe("SVM Settle", () => {
         signature: "mock_signature_123",
       });
     });
+  });
+
+  describe("duplicate settlement cache", () => {
+    /**
+     * Builds a payment payload for the given transaction signature.
+     *
+     * @param transaction - The transaction signature to embed in the payload
+     * @returns A PaymentPayload for Solana devnet with the given transaction
+     */
+    function makePayload(transaction: string): PaymentPayload {
+      return {
+        scheme: "exact",
+        network: "solana-devnet",
+        x402Version: 1,
+        payload: { transaction } as ExactSvmPayload,
+      };
+    }
+
+    /**
+     * Configures mocks so that settle() succeeds (verify passes, RPC and decode mocks in place).
+     *
+     * @returns void
+     */
+    function setupMocksForSettle() {
+      const mockVerifyResponse = { isValid: true, invalidReason: undefined };
+      vi.mocked(verify).mockResolvedValue(mockVerifyResponse);
+      vi.mocked(decodeTransactionFromPayload).mockReturnValue(mockSignedTransaction);
+      vi.mocked(getRpcClient).mockReturnValue(mockRpcClient);
+      vi.mocked(getRpcSubscriptions).mockReturnValue(mockRpcSubscriptions);
+      vi.mocked(mockRpcClient.sendTransaction).mockReturnValue({
+        send: vi.fn().mockResolvedValue("mock_signature_123"),
+      });
+      vi.mocked(solanaKit.getCompiledTransactionMessageDecoder).mockReturnValue({
+        decode: vi.fn().mockReturnValue({}),
+        read: vi.fn(),
+      } as any);
+      vi.mocked(solanaKit.decompileTransactionMessageFetchingLookupTables).mockResolvedValue({
+        lifetimeConstraint: {
+          blockhash: "mock_blockhash" as any,
+          lastValidBlockHeight: BigInt(1234),
+        },
+        instructions: [],
+        version: 0,
+      } as any);
+      vi.mocked(getTokenPayerFromTransaction).mockReturnValue(payerAddress);
+      vi.mocked(signTransactionWithSigner).mockResolvedValue(mockSignedTransaction);
+      vi.mocked(transactionConfirmation.waitForRecentTransactionConfirmation).mockResolvedValue(
+        undefined,
+      );
+    }
+
+    it("should reject duplicate settlement of the same transaction", async () => {
+      setupMocksForSettle();
+
+      const payload = makePayload("sameTransactionBase64==");
+
+      const result1 = await settleModule.settle(signer, payload, paymentRequirements);
+      expect(result1.success).toBe(true);
+
+      const result2 = await settleModule.settle(signer, payload, paymentRequirements);
+      expect(result2.success).toBe(false);
+      expect(result2.errorReason).toBe("duplicate_settlement");
+    });
+
+    it("should allow settlement of distinct transactions", async () => {
+      setupMocksForSettle();
+
+      const result1 = await settleModule.settle(
+        signer,
+        makePayload("transactionA=="),
+        paymentRequirements,
+      );
+      expect(result1.success).toBe(true);
+
+      const result2 = await settleModule.settle(
+        signer,
+        makePayload("transactionB=="),
+        paymentRequirements,
+      );
+      expect(result2.success).toBe(true);
+    });
+
+    it("should evict cache entries after TTL", async () => {
+      vi.useFakeTimers();
+      try {
+        setupMocksForSettle();
+
+        const payload = makePayload("expiringTransaction==");
+
+        const result1 = await settleModule.settle(signer, payload, paymentRequirements);
+        expect(result1.success).toBe(true);
+
+        // Advance past the 120s TTL
+        vi.advanceTimersByTime(121_000);
+
+        const result2 = await settleModule.settle(signer, payload, paymentRequirements);
+        expect(result2.success).toBe(true);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+  });
+});
+
+describe("SettlementCache prune optimization", () => {
+  it("should prune only expired entries and preserve non-expired ones", () => {
+    vi.useFakeTimers();
+    try {
+      const cache = new SettlementCache();
+
+      cache.isDuplicate("tx-a");
+      vi.advanceTimersByTime(10_000);
+      cache.isDuplicate("tx-b");
+      vi.advanceTimersByTime(10_000);
+      cache.isDuplicate("tx-c");
+
+      // Advance so tx-a is expired (> 120s old) but tx-b and tx-c are not
+      vi.advanceTimersByTime(101_000); // total: tx-a=121s, tx-b=111s, tx-c=101s
+
+      expect(cache.isDuplicate("tx-a")).toBe(false); // expired, re-inserted as new
+      expect(cache.isDuplicate("tx-b")).toBe(true); // still cached
+      expect(cache.isDuplicate("tx-c")).toBe(true); // still cached
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("should prune all entries when all are expired", () => {
+    vi.useFakeTimers();
+    try {
+      const cache = new SettlementCache();
+
+      cache.isDuplicate("tx-1");
+      cache.isDuplicate("tx-2");
+      cache.isDuplicate("tx-3");
+
+      vi.advanceTimersByTime(121_000);
+
+      expect(cache.isDuplicate("tx-1")).toBe(false);
+      expect(cache.isDuplicate("tx-2")).toBe(false);
+      expect(cache.isDuplicate("tx-3")).toBe(false);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("should not prune any entries when none are expired", () => {
+    const cache = new SettlementCache();
+
+    cache.isDuplicate("tx-x");
+    cache.isDuplicate("tx-y");
+    cache.isDuplicate("tx-z");
+
+    expect(cache.isDuplicate("tx-x")).toBe(true);
+    expect(cache.isDuplicate("tx-y")).toBe(true);
+    expect(cache.isDuplicate("tx-z")).toBe(true);
   });
 });

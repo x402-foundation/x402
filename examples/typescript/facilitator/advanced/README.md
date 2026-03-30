@@ -8,6 +8,7 @@ Express.js facilitator service demonstrating advanced x402 patterns including al
 - pnpm v10 (install via [pnpm.io/installation](https://pnpm.io/installation))
 - EVM private key with Base Sepolia ETH for transaction fees
 - SVM private key with Solana Devnet SOL for transaction fees
+- Stellar private key with testnet XLM for transaction fees (fund via [Stellar Laboratory](https://lab.stellar.org/account/create) ➡️ Generate keypair ➡️ Fund account with Friendbot)
 
 ## Setup
 
@@ -21,6 +22,7 @@ and fill required environment variables:
 
 - `EVM_PRIVATE_KEY` - Ethereum private key
 - `SVM_PRIVATE_KEY` - Solana private key
+- `STELLAR_PRIVATE_KEY` - Stellar secret key (starts with `S`)
 - `PORT` - Server port (optional, defaults to 4022)
 
 2. Install and build all packages from the typescript examples root:
@@ -42,10 +44,10 @@ pnpm dev:bazaar         # Bazaar discovery extension
 
 Each example demonstrates a specific advanced pattern:
 
-| Example | Command | Description |
-| --- | --- | --- |
+| Example        | Command                 | Description                                              |
+| -------------- | ----------------------- | -------------------------------------------------------- |
 | `all-networks` | `pnpm dev:all-networks` | All supported networks with optional chain configuration |
-| `bazaar` | `pnpm dev:bazaar` | Bazaar discovery extension for cataloging x402 resources |
+| `bazaar`       | `pnpm dev:bazaar`       | Bazaar discovery extension for cataloging x402 resources |
 
 ## API Endpoints
 
@@ -68,12 +70,21 @@ Returns payment schemes and networks this facilitator supports.
       "extra": {
         "feePayer": "..."
       }
+    },
+    {
+      "x402Version": 2,
+      "scheme": "exact",
+      "network": "stellar:testnet",
+      "extra": {
+        "areFeesSponsored": true
+      }
     }
   ],
   "extensions": [],
   "signers": {
     "eip155": ["0x..."],
-    "solana": ["..."]
+    "solana": ["..."],
+    "stellar": ["G..."]
   }
 }
 ```
@@ -229,3 +240,5 @@ Networks use [CAIP-2](https://github.com/ChainAgnostic/CAIPs/blob/main/CAIPs/cai
 - `eip155:8453` — Base Mainnet
 - `solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1` — Solana Devnet
 - `solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp` — Solana Mainnet
+- `stellar:testnet` — Stellar Testnet
+- `stellar:pubnet` — Stellar Mainnet

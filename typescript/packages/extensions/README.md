@@ -471,7 +471,7 @@ The Sign-In-With-X extension implements [CAIP-122](https://chainagnostic.org/CAI
 1. Server returns 402 with `sign-in-with-x` extension containing challenge parameters
 2. Client signs the CAIP-122 message with their wallet
 3. Client sends signed proof in `SIGN-IN-WITH-X` header
-4. Server verifies signature and grants access if wallet has previous payment
+4. Server verifies signature and grants access either because the route is auth-only or because the wallet has previously paid
 
 ### Server Usage
 
@@ -495,7 +495,7 @@ const resourceServer = new x402ResourceServer(facilitatorClient)
   .registerExtension(siwxResourceServerExtension)  // Refreshes nonce/timestamps per request
   .onAfterSettle(createSIWxSettleHook({ storage }));  // Records payments
 
-// 2. Declare SIWX support in routes (network/domain/uri derived automatically)
+// 2. Declare SIWX support in routes
 const routes = {
   "GET /data": {
     accepts: [{scheme: "exact", price: "$0.01", network: "eip155:8453", payTo}],
@@ -503,11 +503,19 @@ const routes = {
       statement: 'Sign in to access your purchased content',
     }),
   },
+  "GET /profile": {
+    accepts: [],
+    extensions: declareSIWxExtension({
+      network: ["eip155:8453", "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1"],
+      statement: 'Sign in to view your profile',
+      expirationSeconds: 300,
+    }),
+  },
 };
 
 // 3. Verify incoming SIWX proofs
 const httpServer = new x402HTTPResourceServer(resourceServer, routes)
-  .onProtectedRequest(createSIWxRequestHook({ storage }));  // Grants access if paid
+  .onProtectedRequest(createSIWxRequestHook({ storage }));  // Grants access when SIWX auth is sufficient
 
 // Optional: Enable smart wallet support (EIP-1271/EIP-6492)
 import { createPublicClient, http } from 'viem';
@@ -524,7 +532,7 @@ const httpServerWithSmartWallets = new x402HTTPResourceServer(resourceServer, ro
 The hooks automatically:
 - **siwxResourceServerExtension**: Derives `network` from `accepts`, `domain`/`uri` from request URL, refreshes `nonce`/`issuedAt`/`expirationTime` per request
 - **createSIWxSettleHook**: Records payment when settlement succeeds
-- **createSIWxRequestHook**: Validates and verifies SIWX proofs, grants access if wallet has paid
+- **createSIWxRequestHook**: Validates and verifies SIWX proofs, grants access for auth-only routes or when the wallet has paid
 
 #### Manual Usage (Advanced)
 
@@ -534,18 +542,15 @@ import {
   parseSIWxHeader,
   validateSIWxMessage,
   verifySIWxSignature,
-  SIGN_IN_WITH_X,
 } from '@x402/extensions/sign-in-with-x';
 
 // 1. Declare in PaymentRequired response
-const extensions = {
-  [SIGN_IN_WITH_X]: declareSIWxExtension({
-    domain: 'api.example.com',
-    resourceUri: 'https://api.example.com/data',
-    network: 'eip155:8453',
-    statement: 'Sign in to access your purchased content',
-  }),
-};
+const extensions = declareSIWxExtension({
+  domain: 'api.example.com',
+  resourceUri: 'https://api.example.com/data',
+  network: 'eip155:8453',
+  statement: 'Sign in to access your purchased content',
+});
 
 // 2. Verify incoming proof
 async function handleRequest(request: Request) {
@@ -571,10 +576,8 @@ async function handleRequest(request: Request) {
   }
 
   // verification.address is the verified wallet
-  // Check if this wallet has paid before
-  const hasPaid = await checkPaymentHistory(verification.address);
-  if (hasPaid) {
-    // Grant access without payment
+  if (await isAuthOnlyRoute(request) || await checkPaymentHistory(verification.address)) {
+    // Grant access
   }
 }
 ```
@@ -612,15 +615,15 @@ import {
 // 1. Get extension and network from 402 response
 const paymentRequired = await response.json();
 const extension = paymentRequired.extensions['sign-in-with-x'];
-const paymentNetwork = paymentRequired.accepts[0].network; // e.g., "eip155:8453"
+const paymentNetwork = paymentRequired.accepts[0]?.network; // undefined for auth-only routes
 
 // 2. Find matching chain in supportedChains
-const matchingChain = extension.supportedChains.find(
-  chain => chain.chainId === paymentNetwork
-);
+const matchingChain = paymentNetwork
+  ? extension.supportedChains.find(chain => chain.chainId === paymentNetwork)
+  : extension.supportedChains[0];
 
 if (!matchingChain) {
-  // Payment network not supported for SIWX
+  // No chain supported by this signer / route combination
   throw new Error('Chain not supported');
 }
 
@@ -663,6 +666,8 @@ declareSIWxExtension({
 - `network` → from `accepts[].network` in route config
 - `resourceUri` → from request URL
 - `domain` → parsed from resourceUri
+
+For auth-only routes declared with `accepts: []`, `network` cannot be inferred from payment requirements and should be provided explicitly.
 
 **Multi-chain support:** When `network` is an array (or multiple networks in `accepts`), `supportedChains` will contain one entry per network.
 

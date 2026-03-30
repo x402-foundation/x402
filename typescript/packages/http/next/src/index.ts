@@ -5,6 +5,7 @@ import {
   RoutesConfig,
   RouteConfig,
   FacilitatorClient,
+  FacilitatorResponseError,
 } from "@x402/core/server";
 import { SchemeNetworkServer, Network } from "@x402/core/types";
 import { NextRequest, NextResponse } from "next/server";
@@ -13,6 +14,8 @@ import {
   createRequestContext,
   handlePaymentError,
   handleSettlement,
+  createFacilitatorErrorResponse,
+  getFacilitatorResponseError,
 } from "./utils";
 import { x402HTTPResourceServer } from "@x402/core/server";
 
@@ -85,7 +88,15 @@ export function paymentProxyFromHTTPServer(
     }
 
     // Only initialize when processing a protected route
-    await init();
+    try {
+      await init();
+    } catch (error) {
+      const facilitatorError = getFacilitatorResponseError(error);
+      if (facilitatorError) {
+        return createFacilitatorErrorResponse(facilitatorError);
+      }
+      throw error;
+    }
 
     // Await bazaar extension loading if needed
     if (bazaarPromise) {
@@ -94,7 +105,15 @@ export function paymentProxyFromHTTPServer(
     }
 
     // Process payment requirement check
-    const result = await httpServer.processHTTPRequest(context, paywallConfig);
+    let result: Awaited<ReturnType<x402HTTPResourceServer["processHTTPRequest"]>>;
+    try {
+      result = await httpServer.processHTTPRequest(context, paywallConfig);
+    } catch (error) {
+      if (error instanceof FacilitatorResponseError) {
+        return createFacilitatorErrorResponse(error);
+      }
+      throw error;
+    }
 
     // Handle the different result types
     switch (result.type) {

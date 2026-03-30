@@ -18,6 +18,7 @@
     "@scure/base": "^1.2.6",
     "@x402/evm": "workspace:*",
     "@x402/svm": "workspace:*",
+    "@x402/stellar": "workspace:*",
     "@x402/fetch": "workspace:*",
     "dotenv": "^16.4.7",
     "viem": "^2.39.0",

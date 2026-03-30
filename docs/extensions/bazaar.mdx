@@ -21,6 +21,43 @@ Facilitators that support the Bazaar extension may provide a `/discovery/resourc
 
 **Note:** The spec for marketplace items is open and part of the x402 scheme, meaning any facilitator can implement their own discovery layer.
 
+#### Settlement Response Header
+
+After processing a payment that includes the `bazaar` extension, facilitators **may** return an `EXTENSION-RESPONSES` HTTP header to communicate extension-specific outcomes to the client.
+
+**Header name:** `EXTENSION-RESPONSES`
+
+**Header value:** A base64-encoded JSON object keyed by extension name. The `bazaar` key contains the bazaar extension's response:
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `bazaar.status` | string | Yes | One of `"success"`, `"processing"`, or `"rejected"` |
+| `bazaar.rejectedReason` | string | No | Human-readable explanation. Only present when `status` is `"rejected"` |
+
+**Status values:**
+
+| Value | Meaning |
+|-------|---------|
+| `"success"` | The discovery info was validated and successfully cataloged |
+| `"processing"` | The discovery info was accepted and is being cataloged asynchronously |
+| `"rejected"` | The discovery info was rejected (e.g., failed schema validation). See `rejectedReason` for details |
+
+**Example (success):**
+
+```
+EXTENSION-RESPONSES: eyJiYXphYXIiOnsic3RhdHVzIjoic3VjY2VzcyJ9fQ==
+```
+*(base64 of `{"bazaar":{"status":"success"}}`)*
+
+**Example (rejected):**
+
+```
+EXTENSION-RESPONSES: eyJiYXphYXIiOnsic3RhdHVzIjoicmVqZWN0ZWQiLCJyZWplY3RlZFJlYXNvbiI6ImluZm8gZmFpbGVkIHNjaGVtYSB2YWxpZGF0aW9uIn19
+```
+*(base64 of `{"bazaar":{"status":"rejected","rejectedReason":"info failed schema validation"}}`)*
+
+Clients that understand the `bazaar` extension should read the `bazaar` key of this header to confirm cataloging succeeded and surface any rejection reason for debugging.
+
 #### Basic Flow
 
 1. **Discovery**: Clients query the `/discovery/resources` endpoint to find available services
@@ -130,6 +167,55 @@ Fetch the list of available x402 services using the facilitator client:
         Number(paymentRequirements.maxAmountRequired) < maxPrice
       )
     );
+    ```
+  </Tab>
+  <Tab title="Go">
+    ```go
+    package main
+
+    import (
+        "context"
+        "fmt"
+
+        "github.com/coinbase/x402/go/extensions/bazaar"
+        x402http "github.com/coinbase/x402/go/http"
+    )
+
+    func main() {
+        ctx := context.Background()
+
+        // Create facilitator client and extend with bazaar
+        facilitatorClient := x402http.NewHTTPFacilitatorClient(&x402http.FacilitatorConfig{
+            URL: "https://x402.org/facilitator",
+        })
+        client := bazaar.WithBazaar(facilitatorClient)
+
+        // List discovery resources
+        response, err := client.ListDiscoveryResources(ctx, &bazaar.ListDiscoveryResourcesParams{
+            Type:   "http",
+            Limit:  20,
+            Offset: 0,
+        })
+        if err != nil {
+            panic(err)
+        }
+
+        // Filter services under $0.10
+        usdcAsset := "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913"
+        maxPrice := 100000 // $0.10 in USDC atomic units (6 decimals)
+
+        for _, item := range response.Items {
+            for _, paymentReq := range item.Accepts {
+                // Parse asset and maxAmountRequired from payment requirements
+                if asset, ok := paymentReq["asset"].(string); ok && asset == usdcAsset {
+                    if maxAmount, ok := paymentReq["maxAmountRequired"].(string); ok {
+                        // Convert and compare price
+                        fmt.Printf("Found service: %s\n", item.Resource)
+                    }
+                }
+            }
+        }
+    }
     ```
   </Tab>
   <Tab title="Python">
@@ -248,6 +334,18 @@ Add the bazaar extension to your route configuration to make your API or MCP too
 **Supported Resource Types:**
 - **HTTP Endpoints** - Standard REST APIs (GET, POST, PUT, PATCH, DELETE, HEAD)
 - **MCP Tools** - Model Context Protocol tools for AI agent integration
+
+#### Dynamic Routes
+
+The Bazaar extension supports parameterized routes (e.g., `/users/[userId]`, `/weather/[country]/[city]`). When you use route parameters:
+
+- The extension automatically extracts concrete parameter values into `pathParams` (e.g., `{ "userId": "123" }`)
+- A `routeTemplate` field is added using `:param` syntax (e.g., `/users/:userId`)
+- Facilitators use `routeTemplate` as the catalog key, consolidating all requests to the same route pattern into a single discovery entry
+
+This means `/users/123`, `/users/456`, and `/users/789` all map to the same catalog entry: `/users/:userId`.
+
+**Note:** Wildcard segments (`*`) are automatically converted to named parameters (`:var1`, `:var2`, etc.) for catalog normalization.
 
 #### Adding Metadata
 

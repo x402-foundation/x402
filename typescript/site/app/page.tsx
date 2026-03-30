@@ -108,7 +108,7 @@ export default function HomePage() {
 
       <HeroSection codeSnippet={heroCodeSnippet} />
 
-      {/* Stats Section */}
+      {/* Stats & Social Proof */}
       <StatsSection />
 
       {/* What's x402? */}

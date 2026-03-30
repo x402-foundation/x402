@@ -18,6 +18,13 @@ Servers must declare which x402 protocol version they implement using the `x402V
 Servers may declare which protocol extensions they support using the `extensions` field:
 - **extensions**: Array of supported extension names (e.g., ["bazaar"])
 
+## Coldstart Tests
+Some endpoints require special pre-test state setup before they can be exercised (e.g., revoking a Permit2 approval so that the gas-sponsoring extension path is triggered). This setup is expensive: it involves funding the client wallet, submitting on-chain transactions, and draining ETH back.
+
+Endpoints that require this setup declare `"coldstart": true` in their test config. The test runner treats the **first** test for a given endpoint path within a combo as the "coldstart" test — it performs the full setup. Subsequent tests for the same endpoint path within the same combo skip the setup and run directly, exercising the "warm" (already-approved) code path.
+
+All explicit gas sponsorship extension endpoints (EIP-2612 and ERC-20 approval) should have `coldstart` enabled, as they must succeed without the user having gas or approval ahead of time.
+
 ## EVM Transfer Method
 For EVM endpoints, servers must declare the `transferMethod` used for the payment transfer:
 - **eip3009**: EIP-3009 transferWithAuthorization (default if omitted)

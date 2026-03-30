@@ -57,33 +57,6 @@ This package provides three main components for handling x402 payments on EVM-co
 ]
 ```
 
-### Client Builder (`@x402/evm/client`)
-
-**Convenience builder** for creating fully-configured EVM clients
-
-**Exports:**
-- `createEvmClient(config)` - Creates x402Client with EVM support
-- `EvmClientConfig` - Configuration interface
-
-**What it does:**
-- Automatically registers V2 wildcard scheme (`eip155:*`)
-- Automatically registers all V1 networks from `NETWORKS`
-- Optionally applies payment policies
-- Optionally uses custom payment selector
-
-**Example:**
-```typescript
-import { createEvmClient } from "@x402/evm/client";
-import { toClientEvmSigner } from "@x402/evm";
-import { privateKeyToAccount } from "viem/accounts";
-
-const account = privateKeyToAccount("0x...");
-const signer = toClientEvmSigner(account);
-
-const client = createEvmClient({ signer });
-// Ready to use with both V1 and V2!
-```
-
 ## Version Differences
 
 ### V2 (Main Package)
@@ -102,17 +75,7 @@ const client = createEvmClient({ signer });
 
 ## Usage Patterns
 
-### 1. Using Pre-built Builder (Recommended)
-
-```typescript
-import { createEvmClient } from "@x402/evm/client";
-import { wrapFetchWithPayment } from "@x402/fetch";
-
-const client = createEvmClient({ signer: myEvmSigner });
-const paidFetch = wrapFetchWithPayment(fetch, client);
-```
-
-### 2. Direct Registration (Full Control)
+### 1. Direct Registration (Full Control)
 
 ```typescript
 import { x402Client } from "@x402/core/client";
@@ -125,7 +88,31 @@ const client = new x402Client()
   .registerSchemeV1("base", new ExactEvmClientV1(signer));
 ```
 
-### 3. Using Config (Flexible)
+### Extension RPC Configuration (Optional)
+
+`ExactEvmClient` only requires signer support for `address` + `signTypedData`.
+Permit2 extension enrichment (EIP-2612 / ERC-20 approval gas sponsoring) can
+optionally use explicit RPC config when signer read/fee helpers are unavailable.
+
+No chain-default RPC fallback is applied by the SDK.
+
+```typescript
+// Per-network explicit registration
+const client = new x402Client()
+  .register("eip155:137", new ExactEvmClient(signer, { rpcUrl: polygonRpcUrl }))
+  .register("eip155:8453", new ExactEvmClient(signer, { rpcUrl: baseRpcUrl }));
+
+// Wildcard registration with chain-id keyed config map
+const wildcardClient = new x402Client().register(
+  "eip155:*",
+  new ExactEvmClient(signer, {
+    137: { rpcUrl: polygonRpcUrl },
+    8453: { rpcUrl: baseRpcUrl },
+  }),
+);
+```
+
+### 2. Using Config (Flexible)
 
 ```typescript
 import { x402Client } from "@x402/core/client";
@@ -154,10 +141,11 @@ See `NETWORKS` constant in `@x402/evm/v1`
 
 ## Asset Support
 
-Supports any ERC-3009 compatible token:
-- USDC (primary)
-- EURC
-- Any token implementing `transferWithAuthorization()`
+Supports two asset transfer methods:
+- **EIP-3009**: Tokens with native `transferWithAuthorization()` (e.g., USDC, EURC) — simplest, truly gasless
+- **Permit2**: Any ERC-20 token — universal fallback, requires one-time approval
+
+See [DEFAULT_ASSET.md](src/exact/server/DEFAULT_ASSET.md) for the current list of configured chains and how to add new ones.
 
 ## Development
 
@@ -181,3 +169,4 @@ npm run format
 - `@x402/core` - Core protocol types and client
 - `@x402/fetch` - HTTP wrapper with automatic payment handling
 - `@x402/svm` - Solana/SVM implementation
+- `@x402/stellar` - Stellar implementation

@@ -6,18 +6,20 @@
  */
 
 export type NetworkMode = 'testnet' | 'mainnet';
-export type ProtocolFamily = 'evm' | 'svm' | 'aptos';
+export type ProtocolFamily = 'evm' | 'svm' | 'aptos' | 'stellar';
 
 export type NetworkConfig = {
   name: string;
   caip2: `${string}:${string}`;
   rpcUrl: string;
+  permit2Asset?: string;
 };
 
 export type NetworkSet = {
   evm: NetworkConfig;
   svm: NetworkConfig;
   aptos: NetworkConfig;
+  stellar: NetworkConfig;
 };
 
 /**
@@ -29,6 +31,7 @@ const NETWORK_SETS: Record<NetworkMode, NetworkSet> = {
       name: 'Base Sepolia',
       caip2: 'eip155:84532',
       rpcUrl: process.env.BASE_SEPOLIA_RPC_URL || 'https://sepolia.base.org',
+      permit2Asset: '0x036CbD53842c5426634e7929541eC2318f3dCF7e',
     },
     svm: {
       name: 'Solana Devnet',
@@ -40,12 +43,18 @@ const NETWORK_SETS: Record<NetworkMode, NetworkSet> = {
       caip2: 'aptos:2',
       rpcUrl: process.env.APTOS_TESTNET_RPC_URL || 'https://fullnode.testnet.aptoslabs.com/v1',
     },
+    stellar: {
+      name: 'Stellar Testnet',
+      caip2: 'stellar:testnet',
+      rpcUrl: process.env.STELLAR_TESTNET_RPC_URL || 'https://soroban-testnet.stellar.org',
+    },
   },
   mainnet: {
     evm: {
       name: 'Base',
       caip2: 'eip155:8453',
       rpcUrl: process.env.BASE_RPC_URL || 'https://mainnet.base.org',
+      permit2Asset: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913',
     },
     svm: {
       name: 'Solana',
@@ -56,6 +65,11 @@ const NETWORK_SETS: Record<NetworkMode, NetworkSet> = {
       name: 'Aptos',
       caip2: 'aptos:1',
       rpcUrl: process.env.APTOS_RPC_URL || 'https://fullnode.mainnet.aptoslabs.com/v1',
+    },
+    stellar: {
+      name: 'Stellar Pubnet',
+      caip2: 'stellar:pubnet',
+      rpcUrl: process.env.STELLAR_RPC_URL || 'https://mainnet.sorobanrpc.com',
     },
   },
 };
@@ -74,7 +88,7 @@ export function getNetworkSet(mode: NetworkMode): NetworkSet {
  * Get network config for a protocol family in a given mode
  * 
  * @param mode - 'testnet' or 'mainnet'
- * @param protocolFamily - 'evm', 'svm', or 'aptos'
+ * @param protocolFamily - 'evm', 'svm', 'aptos', or 'stellar'
  * @returns NetworkConfig for the specified protocol
  */
 export function getNetworkForProtocol(
@@ -92,5 +106,6 @@ export function getNetworkForProtocol(
  */
 export function getNetworkModeDescription(mode: NetworkMode): string {
   const set = NETWORK_SETS[mode];
-  return `${set.evm.name} + ${set.svm.name} + ${set.aptos.name}`;
+  const networks = [set.evm.name, set.svm.name, set.aptos.name, set.stellar.name];
+  return networks.join(' + ');
 }

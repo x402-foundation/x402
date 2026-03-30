@@ -19,7 +19,7 @@ This page tracks which features are implemented in each SDK (TypeScript, Go, Pyt
 
 | Role | TypeScript | Go | Python |
 |------|------------|-----|--------|
-| Server | Express, Hono, Next.js | Gin | FastAPI, Flask |
+| Server | Express, Hono, Next.js | Gin, net/http | FastAPI, Flask |
 | Client | Fetch, Axios | net/http | httpx, requests |
 
 ## Networks
@@ -28,6 +28,7 @@ This page tracks which features are implemented in each SDK (TypeScript, Go, Pyt
 |---------|------------|-----|--------|
 | evm (EIP-155) | ✅ | ✅ | ✅ |
 | svm (Solana) | ✅ | ✅ | ✅ |
+| stellar | ✅ | ❌ | ❌ |
 | aptos | ✅ | ❌ | ❌ |
 
 ## Mechanisms
@@ -35,16 +36,23 @@ This page tracks which features are implemented in each SDK (TypeScript, Go, Pyt
 | Mechanism | TypeScript | Go | Python |
 |-----------|------------|-----|--------|
 | exact/evm (EIP-3009) | ✅ | ✅ | ✅ |
+| exact/evm (Permit2) | ✅ | ✅ | ✅ |
 | exact/svm (SPL) | ✅ | ✅ | ✅ |
+| exact/stellar (Soroban) | ✅ | ❌ | ❌ |
 | exact/aptos (Fungible Assets) | ✅ | ❌ | ❌ |
+| upto/evm (Permit2) | ✅ | ✅ | ❌ |
 
 ## Extensions
 
 | Extension | TypeScript | Go | Python |
 |-----------|------------|-----|--------|
-| bazaar | ✅ | ✅ | ✅ |
+| bazaar (server) | ✅ | ✅ | ✅ |
+| bazaar (facilitator client) | ✅ | ✅ | ✅ |
 | sign-in-with-x | ✅ | ❌ | ❌ |
-| payment-identifier | ✅ | ❌ | ✅ |
+| payment-identifier | ✅ | ✅ | ✅ |
+| offer-receipt | ✅ | ❌ | ❌ |
+| eip2612-gas-sponsoring | ✅ | ✅ | ✅ |
+| erc20-approval-gas-sponsoring | ✅ | ✅ | ✅ |
 
 ## Client Hooks
 
@@ -65,7 +73,7 @@ This page tracks which features are implemented in each SDK (TypeScript, Go, Pyt
 | onBeforeSettle | ✅ | ✅ | ✅ |
 | onAfterSettle | ✅ | ✅ | ✅ |
 | onSettleFailure | ✅ | ✅ | ✅ |
-| onProtectedRequest (HTTP) | ✅ | ❌ | ❌ |
+| onProtectedRequest (HTTP) | ✅ | ✅ | ❌ |
 
 ## Facilitator Hooks
 

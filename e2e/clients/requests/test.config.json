@@ -11,8 +11,12 @@
     2
   ],
   "evm": {
-    "transferMethods": ["eip3009"]
+    "transferMethods": ["eip3009", "permit2"]
   },
+  "extensions": [
+    "eip2612GasSponsoring",
+    "erc20ApprovalGasSponsoring"
+  ],
   "description": "Python requests client with x402 v2 HTTP adapter",
   "environment": {
     "required": [
@@ -21,7 +25,8 @@
     ],
     "optional": [
       "EVM_PRIVATE_KEY",
-      "SVM_PRIVATE_KEY"
+      "SVM_PRIVATE_KEY",
+      "EVM_RPC_URL"
     ]
   }
 }

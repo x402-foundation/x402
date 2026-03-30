@@ -56,12 +56,10 @@ export async function runBuilderPatternExample(
   console.log("✅ Request completed\n");
   console.log("Response body:", body);
 
-  if (response.ok) {
-    const paymentResponse = new x402HTTPClient(client).getPaymentSettleResponse(name =>
-      response.headers.get(name),
-    );
-    if (paymentResponse) {
-      console.log("\n💰 Payment Details:", paymentResponse);
-    }
+  const paymentResponse = new x402HTTPClient(client).getPaymentSettleResponse(name =>
+    response.headers.get(name),
+  );
+  if (paymentResponse) {
+    console.log("\n💰 Payment Details:", paymentResponse);
   }
 }

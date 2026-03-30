@@ -1,0 +1,7 @@
+{
+  "name": "OMATrust: x402 Reputation",
+  "logoUrl": "/logos/oma3-icon.png",
+  "description": "Decentralized reputation for x402 resource servers. Use x402 signed offers and receipts as cryptographic proof-of-interaction in on-chain EAS attestations.",
+  "websiteUrl": "https://docs.omatrust.org/integrations/x402/overview",
+  "category": "Infrastructure & Tooling"
+}

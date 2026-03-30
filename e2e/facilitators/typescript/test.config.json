@@ -5,7 +5,8 @@
   "protocolFamilies": [
     "evm",
     "svm",
-    "aptos"
+    "aptos",
+    "stellar"
   ],
   "x402Versions": [
     1,
@@ -17,7 +18,7 @@
     "erc20ApprovalGasSponsoring"
   ],
   "evm": {
-    "transferMethods": ["eip3009", "permit2"]
+    "transferMethods": ["eip3009", "permit2", "upto"]
   },
   "environment": {
     "required": [
@@ -27,9 +28,11 @@
     ],
     "optional": [
       "APTOS_PRIVATE_KEY",
+      "STELLAR_PRIVATE_KEY",
       "EVM_NETWORK",
       "SVM_NETWORK",
-      "APTOS_NETWORK"
+      "APTOS_NETWORK",
+      "STELLAR_NETWORK"
     ]
   }
 }

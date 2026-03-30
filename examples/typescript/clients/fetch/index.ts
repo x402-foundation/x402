@@ -35,17 +35,16 @@ async function main(): Promise<void> {
 
   console.log(`Making request to: ${url}\n`);
   const response = await fetchWithPayment(url, { method: "GET" });
-  const body = await response.json();
+  const contentType = response.headers.get("content-type") ?? "";
+  const body = contentType.includes("application/json")
+    ? await response.json()
+    : await response.text();
   console.log("Response body:", body);
 
-  if (response.ok) {
-    const paymentResponse = new x402HTTPClient(client).getPaymentSettleResponse(name =>
-      response.headers.get(name),
-    );
-    console.log("\nPayment response:", JSON.stringify(paymentResponse, null, 2));
-  } else {
-    console.log(`\nNo payment settled (response status: ${response.status})`);
-  }
+  const paymentResponse = new x402HTTPClient(client).getPaymentSettleResponse(name =>
+    response.headers.get(name),
+  );
+  console.log("\nPayment response:", JSON.stringify(paymentResponse, null, 2));
 }
 
 main().catch(error => {

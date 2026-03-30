@@ -27,6 +27,7 @@
     "@x402/extensions": "workspace:*",
     "@x402/next": "workspace:*",
     "@x402/paywall": "workspace:*",
+    "@x402/stellar": "workspace:*",
     "@x402/svm": "workspace:*",
     "lottie-react": "^2.4.1",
     "motion": "^11.18.0",

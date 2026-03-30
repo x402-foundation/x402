@@ -12,6 +12,8 @@ import {
   EIP2612_GAS_SPONSORING,
   createErc20ApprovalGasSponsoringExtension,
 } from "@x402/extensions";
+import { createEd25519Signer } from "@x402/stellar";
+import { ExactStellarScheme } from "@x402/stellar/exact/facilitator";
 import { toFacilitatorSvmSigner } from "@x402/svm";
 import { ExactSvmScheme } from "@x402/svm/exact/facilitator";
 import { ExactSvmSchemeV1 } from "@x402/svm/exact/v1/facilitator";
@@ -20,7 +22,7 @@ import { privateKeyToAccount } from "viem/accounts";
 import { baseSepolia } from "viem/chains";
 
 /**
- * Initialize and configure the x402 facilitator with EVM, SVM, and Aptos support
+ * Initialize and configure the x402 facilitator with EVM, SVM, Aptos, and Stellar support
  * This is called lazily on first use to support Next.js module loading
  *
  * @returns A configured x402Facilitator instance
@@ -114,10 +116,52 @@ async function createFacilitator(): Promise<x402Facilitator> {
     facilitator.register("aptos:2", new ExactAptosScheme(aptosSigner));
   }
 
+  // Optionally register Stellar if configured
+  if (process.env.FACILITATOR_STELLAR_PRIVATE_KEY) {
+    const stellarSigners = process.env.FACILITATOR_STELLAR_PRIVATE_KEY.split(",")
+      .map(k => k.trim())
+      .filter(k => k.length > 0)
+      .map(k => createEd25519Signer(k));
+
+    const feeBumpSigner = process.env.FACILITATOR_STELLAR_FEEBUMP_PRIVATE_KEY
+      ? createEd25519Signer(process.env.FACILITATOR_STELLAR_FEEBUMP_PRIVATE_KEY)
+      : undefined;
+
+    facilitator.register(
+      "stellar:testnet",
+      new ExactStellarScheme(stellarSigners, { feeBumpSigner }),
+    );
+  }
+
+  // Build ERC-20 approval signer with sendTransactions for Permit2 gas sponsoring
+  const erc20ApprovalSigner = {
+    ...evmSigner,
+    sendTransactions: async (
+      transactions: (`0x${string}` | { to: `0x${string}`; data: `0x${string}`; gas?: bigint })[],
+    ): Promise<`0x${string}`[]> => {
+      const hashes: `0x${string}`[] = [];
+      for (const tx of transactions) {
+        let hash: `0x${string}`;
+        if (typeof tx === "string") {
+          hash = await viemClient.sendRawTransaction({ serializedTransaction: tx });
+        } else {
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          hash = await viemClient.sendTransaction(tx as any);
+        }
+        const receipt = await viemClient.waitForTransactionReceipt({ hash });
+        if (receipt.status !== "success") {
+          throw new Error(`transaction_failed: ${hash}`);
+        }
+        hashes.push(hash);
+      }
+      return hashes;
+    },
+  };
+
   // Register gas sponsorship extensions for Permit2 support
   facilitator
     .registerExtension(EIP2612_GAS_SPONSORING)
-    .registerExtension(createErc20ApprovalGasSponsoringExtension(evmSigner, viemClient));
+    .registerExtension(createErc20ApprovalGasSponsoringExtension(erc20ApprovalSigner));
 
   return facilitator;
 }

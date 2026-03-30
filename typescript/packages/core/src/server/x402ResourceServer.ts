@@ -5,7 +5,12 @@ import {
   SupportedResponse,
   SupportedKind,
 } from "../types/facilitator";
-import { PaymentPayload, PaymentRequirements, PaymentRequired } from "../types/payments";
+import {
+  PaymentPayload,
+  PaymentRequirements,
+  PaymentRequired,
+  ResourceInfo,
+} from "../types/payments";
 import { SchemeNetworkServer } from "../types/mechanisms";
 import { Price, Network, ResourceServerExtension, VerifyError } from "../types";
 import { deepEqual, findByNetworkAndScheme } from "../utils";
@@ -23,15 +28,6 @@ export interface ResourceConfig {
   network: Network;
   maxTimeoutSeconds?: number;
   extra?: Record<string, unknown>; // Scheme-specific additional data
-}
-
-/**
- * Resource information for PaymentRequired response
- */
-export interface ResourceInfo {
-  url: string;
-  description: string;
-  mimeType: string;
 }
 
 /**
@@ -96,6 +92,74 @@ export type AfterSettleHook = (context: SettleResultContext) => Promise<void>;
 export type OnSettleFailureHook = (
   context: SettleFailureContext,
 ) => Promise<void | { recovered: true; result: SettleResponse }>;
+
+/**
+ * Optional overrides for settlement parameters.
+ * Used to support partial settlement (e.g., upto scheme billing by actual usage).
+ *
+ * Note: Overriding the amount to a value different from the agreed-upon
+ * `PaymentRequirements.amount` is only valid in schemes that explicitly support
+ * partial settlement, such as the `upto` scheme. Using this with standard
+ * x402 schemes (e.g., `exact`) will likely cause settlement verification to fail.
+ */
+export interface SettlementOverrides {
+  /**
+   * Amount to settle. Supports three formats:
+   *
+   * - **Raw atomic units** — e.g., `"1000"` settles exactly 1000 atomic units.
+   * - **Percent** — e.g., `"50%"` settles 50% of `PaymentRequirements.amount`.
+   *   Supports up to two decimal places (e.g., `"33.33%"`). The result is floored
+   *   to the nearest atomic unit.
+   * - **Dollar price** — e.g., `"$0.05"` converts a USD-denominated price to
+   *   atomic units. Decimals are determined from the registered scheme's
+   *   `getAssetDecimals` method, falling back to 6 (standard for USDC stablecoins).
+   *   The result is rounded to the nearest atomic unit.
+   *
+   * The resolved amount must be <= the authorized maximum in `PaymentRequirements`.
+   *
+   * Note: Setting this to an amount other than `PaymentRequirements.amount` is
+   * only valid in schemes that support partial settlement, such as `upto`.
+   */
+  amount?: string;
+}
+
+/**
+ * Resolves a settlement override amount string to a final atomic-unit string.
+ *
+ * Supports three input formats (see {@link SettlementOverrides.amount}):
+ * - Raw atomic units: `"1000"`
+ * - Percent of `PaymentRequirements.amount`: `"50%"`
+ * - Dollar price: `"$0.05"` (converted using the provided decimals)
+ *
+ * @param rawAmount - The override amount string (e.g., `"1000"`, `"50%"`, `"$0.05"`)
+ * @param requirements - The payment requirements containing the base amount
+ * @param decimals - Decimal precision to use for dollar-format conversion (default 6)
+ * @returns The resolved amount as an atomic-unit string
+ */
+export function resolveSettlementOverrideAmount(
+  rawAmount: string,
+  requirements: PaymentRequirements,
+  decimals: number = 6,
+): string {
+  // Percent format: "50%" or "33.33%"
+  const percentMatch = rawAmount.match(/^(\d+(?:\.\d{0,2})?)%$/);
+  if (percentMatch) {
+    const [intPart, decPart = ""] = percentMatch[1].split(".");
+    const scaledPercent = BigInt(intPart) * 100n + BigInt(decPart.padEnd(2, "0").slice(0, 2));
+    const base = BigInt(requirements.amount);
+    return ((base * scaledPercent) / 10000n).toString();
+  }
+
+  // Dollar price format: "$0.05"
+  const dollarMatch = rawAmount.match(/^\$(\d+(?:\.\d+)?)$/);
+  if (dollarMatch) {
+    const dollars = parseFloat(dollarMatch[1]);
+    return Math.round(dollars * 10 ** decimals).toString();
+  }
+
+  // Raw atomic units (existing behavior)
+  return rawAmount;
+}
 
 /**
  * Core x402 protocol server for resource protection
@@ -303,6 +367,7 @@ export class x402ResourceServer {
     // Clear existing mappings
     this.supportedResponsesMap.clear();
     this.facilitatorClientsMap.clear();
+    let lastError: Error | undefined;
 
     // Fetch supported kinds from all facilitator clients
     // Process in order to give precedence to earlier facilitators
@@ -345,15 +410,23 @@ export class x402ResourceServer {
           }
         }
       } catch (error) {
+        lastError = error as Error;
         // Log error but continue with other facilitators
         console.warn(`Failed to fetch supported kinds from facilitator: ${error}`);
       }
     }
 
     if (this.supportedResponsesMap.size === 0) {
-      throw new Error(
-        "Failed to initialize: no supported payment kinds loaded from any facilitator.",
-      );
+      throw lastError
+        ? new Error(
+            "Failed to initialize: no supported payment kinds loaded from any facilitator.",
+            {
+              cause: lastError,
+            },
+          )
+        : new Error(
+            "Failed to initialize: no supported payment kinds loaded from any facilitator.",
+          );
     }
   }
 
@@ -700,6 +773,7 @@ export class x402ResourceServer {
    * @param requirements - The payment requirements
    * @param declaredExtensions - Optional declared extensions (for per-key enrichment)
    * @param transportContext - Optional transport-specific context (e.g., HTTP request/response, MCP tool context)
+   * @param settlementOverrides - Optional overrides for settlement parameters (e.g., partial settlement amount)
    * @returns Settlement response
    */
   async settlePayment(
@@ -707,10 +781,27 @@ export class x402ResourceServer {
     requirements: PaymentRequirements,
     declaredExtensions?: Record<string, unknown>,
     transportContext?: unknown,
+    settlementOverrides?: SettlementOverrides,
   ): Promise<SettleResponse> {
+    // Apply settlement overrides (e.g., partial settlement for upto scheme)
+    let effectiveRequirements = requirements;
+    if (settlementOverrides?.amount !== undefined) {
+      const scheme = findByNetworkAndScheme(
+        this.registeredServerSchemes,
+        requirements.scheme,
+        requirements.network as Network,
+      );
+      const decimals =
+        scheme?.getAssetDecimals?.(requirements.asset ?? "", requirements.network as Network) ?? 6;
+      effectiveRequirements = {
+        ...requirements,
+        amount: resolveSettlementOverrideAmount(settlementOverrides.amount, requirements, decimals),
+      };
+    }
+
     const context: SettleContext = {
       paymentPayload,
-      requirements,
+      requirements: effectiveRequirements,
     };
 
     // Execute beforeSettle hooks
@@ -744,8 +835,8 @@ export class x402ResourceServer {
       // Find the facilitator that supports this payment type
       const facilitatorClient = this.getFacilitatorClient(
         paymentPayload.x402Version,
-        requirements.network,
-        requirements.scheme,
+        effectiveRequirements.network,
+        effectiveRequirements.scheme,
       );
 
       let settleResult: SettleResponse;
@@ -756,7 +847,7 @@ export class x402ResourceServer {
 
         for (const client of this.facilitatorClients) {
           try {
-            settleResult = await client.settle(paymentPayload, requirements);
+            settleResult = await client.settle(paymentPayload, effectiveRequirements);
             break;
           } catch (error) {
             lastError = error as Error;
@@ -767,13 +858,13 @@ export class x402ResourceServer {
           throw (
             lastError ||
             new Error(
-              `No facilitator supports ${requirements.scheme} on ${requirements.network} for v${paymentPayload.x402Version}`,
+              `No facilitator supports ${effectiveRequirements.scheme} on ${effectiveRequirements.network} for v${paymentPayload.x402Version}`,
             )
           );
         }
       } else {
         // Use the specific facilitator that supports this payment
-        settleResult = await facilitatorClient.settle(paymentPayload, requirements);
+        settleResult = await facilitatorClient.settle(paymentPayload, effectiveRequirements);
       }
 
       // Execute afterSettle hooks

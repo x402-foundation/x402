@@ -17,6 +17,7 @@
     "@x402/core": "workspace:*",
     "@x402/evm": "workspace:*",
     "@x402/fetch": "workspace:*",
+    "@x402/stellar": "workspace:*",
     "@x402/svm": "workspace:*",
     "axios": "^1.7.9",
     "dotenv": "^16.4.7",

@@ -174,6 +174,16 @@ The exact payment scheme uses SPL Token `TransferChecked` instruction with:
 - Source/destination ATAs (Associated Token Accounts)
 - Partial signing (client signs, facilitator completes and submits)
 
+## Duplicate Settlement Protection
+
+This package includes a built-in `SettlementCache` that prevents a known race condition on Solana where the same payment transaction could be settled multiple times before on-chain confirmation. When the facilitator scheme is registered via `registerExactSvmScheme`, a single `SettlementCache` instance is automatically shared across both V1 and V2 scheme versions.
+
+The cache rejects concurrent `/settle` calls that carry the same transaction payload, returning a `duplicate_settlement` error for the second and subsequent attempts. Entries are automatically evicted after 120 seconds (approximately twice the Solana blockhash lifetime).
+
+**No additional configuration is required** — duplicate settlement protection is enabled by default when using the standard registration helpers.
+
+For full details on the race condition and mitigation strategy, see the [Exact SVM Scheme Specification](../../../../specs/schemes/exact/scheme_exact_svm.md#duplicate-settlement-mitigation-recommended).
+
 ## Development
 
 ```bash
@@ -196,5 +206,5 @@ pnpm format
 - `@x402/core` - Core protocol types and client
 - `@x402/fetch` - HTTP wrapper with automatic payment handling
 - `@x402/evm` - EVM/Ethereum implementation
+- `@x402/stellar` - Stellar implementation
 - `@solana/web3.js` - Solana JavaScript SDK (peer dependency)
-

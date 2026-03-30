@@ -1,5 +1,7 @@
 """SVM facilitator implementation for the Exact payment scheme (V2)."""
 
+from __future__ import annotations
+
 import random
 from typing import Any
 
@@ -20,6 +22,7 @@ from ....schemas import (
 from ..constants import (
     COMPUTE_BUDGET_PROGRAM_ADDRESS,
     ERR_AMOUNT_INSUFFICIENT,
+    ERR_DUPLICATE_SETTLEMENT,
     ERR_FEE_PAYER_MISSING,
     ERR_FEE_PAYER_NOT_MANAGED,
     ERR_FEE_PAYER_TRANSFERRING,
@@ -44,6 +47,7 @@ from ..constants import (
     TOKEN_2022_PROGRAM_ADDRESS,
     TOKEN_PROGRAM_ADDRESS,
 )
+from ..settlement_cache import SettlementCache
 from ..signer import FacilitatorSvmSigner
 from ..types import ExactSvmPayload
 from ..utils import (
@@ -66,13 +70,19 @@ class ExactSvmScheme:
     scheme = SCHEME_EXACT
     caip_family = "solana:*"
 
-    def __init__(self, signer: FacilitatorSvmSigner):
+    def __init__(
+        self,
+        signer: FacilitatorSvmSigner,
+        settlement_cache: SettlementCache | None = None,
+    ):
         """Create ExactSvmScheme facilitator.
 
         Args:
             signer: SVM signer for verification and settlement.
+            settlement_cache: Optional shared settlement cache (one is created if omitted).
         """
         self._signer = signer
+        self._settlement_cache = settlement_cache or SettlementCache()
 
     def get_extra(self, network: Network) -> dict[str, Any] | None:
         """Get mechanism-specific extra data for the supported kinds endpoint.
@@ -121,7 +131,7 @@ class ExactSvmScheme:
           - Token program is known (Token or Token-2022)
           - Mint matches requirements.asset
           - Destination ATA matches requirements.pay_to
-          - Amount >= requirements.amount
+        - Amount >= requirements.amount
           - Authority is not the facilitator (prevent self-transfer)
         - Simulates transaction to catch runtime errors
 
@@ -359,6 +369,17 @@ class ExactSvmScheme:
                 error_reason=verify_result.invalid_reason,
                 network=network,
                 payer=verify_result.payer,
+                transaction="",
+            )
+
+        # Duplicate settlement check: reject if this transaction is already being settled.
+        tx_key = svm_payload.transaction
+        if self._settlement_cache.is_duplicate(tx_key):
+            return SettleResponse(
+                success=False,
+                error_reason=ERR_DUPLICATE_SETTLEMENT,
+                network=network,
+                payer=verify_result.payer or "",
                 transaction="",
             )
 

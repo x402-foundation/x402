@@ -1,3 +1,0 @@
-kind: changed
-body: GetSupported retries up to 3 times with exponential backoff on 429 rate limit responses
-time: 2026-02-26T17:53:44.305222+09:00

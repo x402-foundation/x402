@@ -50,19 +50,65 @@ type Extension struct {
 	Schema map[string]interface{} `json:"schema"`
 }
 
-// Erc20ApprovalGasSponsoringSigner extends FacilitatorEvmSigner with raw transaction broadcasting.
+// WriteContractCall encapsulates arguments for a WriteContract call,
+// used by SendTransactions to describe an unsigned contract call operation.
+type WriteContractCall struct {
+	Address  string
+	ABI      []byte
+	Function string
+	Args     []interface{}
+}
+
+// TransactionRequest represents a single transaction to be executed by the signer.
+// Either Serialized (pre-signed raw transaction) or Call (unsigned intent) must be set.
+type TransactionRequest struct {
+	// Serialized is a pre-signed raw transaction hex (0x-prefixed).
+	// When non-empty, the signer broadcasts it as-is via sendRawTransaction.
+	Serialized string
+	// Call is an unsigned contract write for the signer to sign and execute.
+	// Used when Serialized is empty.
+	Call *WriteContractCall
+}
+
+// Erc20ApprovalGasSponsoringSigner extends FacilitatorEvmSigner with multi-transaction execution.
+// The signer owns the execution strategy (sequential, batched, or atomic bundling via
+// Flashbots, multicall, or smart account batching).
 type Erc20ApprovalGasSponsoringSigner interface {
 	evm.FacilitatorEvmSigner
-	SendRawTransaction(ctx context.Context, signedTx string) (string, error)
+	SendTransactions(ctx context.Context, transactions []TransactionRequest) ([]string, error)
+}
+
+// Erc20ApprovalGasSponsoringSimulator is an optional extension of Erc20ApprovalGasSponsoringSigner with multi-transaction simulation.
+// The signer owns the simulation strategy.
+type Erc20ApprovalGasSponsoringSimulator interface {
+	Erc20ApprovalGasSponsoringSigner
+	SimulateTransactions(ctx context.Context, transactions []TransactionRequest) (bool, error)
 }
 
 // Erc20ApprovalFacilitatorExtension carries the signer; registered with the facilitator.
 // It implements x402.FacilitatorExtension so it can be registered and retrieved via FacilitatorContext.
 type Erc20ApprovalFacilitatorExtension struct {
 	Signer Erc20ApprovalGasSponsoringSigner
+	// Optional network-aware signer resolver. When provided, this takes precedence
+	// over Signer and allows different settlement signers per network.
+	SignerForNetwork func(network string) Erc20ApprovalGasSponsoringSigner
 }
 
 // Key returns the extension identifier.
 func (e *Erc20ApprovalFacilitatorExtension) Key() string {
 	return ERC20ApprovalGasSponsoring.Key()
+}
+
+// ResolveSigner returns the signer to use for a given network.
+// SignerForNetwork takes precedence when configured.
+func (e *Erc20ApprovalFacilitatorExtension) ResolveSigner(network string) Erc20ApprovalGasSponsoringSigner {
+	if e == nil {
+		return nil
+	}
+	if e.SignerForNetwork != nil {
+		if signer := e.SignerForNetwork(network); signer != nil {
+			return signer
+		}
+	}
+	return e.Signer
 }

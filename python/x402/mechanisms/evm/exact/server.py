@@ -105,6 +105,7 @@ class ExactEvmScheme:
 
         - Fills in default asset if not specified
         - Adds EIP-712 domain parameters (name, version) to extra
+        - Adds assetTransferMethod to extra when present on the asset
         - Converts decimal amounts to smallest unit
 
         Args:
@@ -119,42 +120,81 @@ class ExactEvmScheme:
 
         # Default asset
         if not requirements.asset:
-            requirements.asset = config["default_asset"]["address"]
+            default = config.get("default_asset")
+            if not default or not default.get("address"):
+                raise ValueError(
+                    f"No default stablecoin configured for network {requirements.network}; "
+                    "use register_money_parser or specify an explicit asset address"
+                )
+            requirements.asset = default["address"]
 
-        asset_info = get_asset_info(str(requirements.network), requirements.asset)
+        try:
+            asset_info = get_asset_info(str(requirements.network), requirements.asset)
+        except ValueError:
+            asset_info = None
 
         # Ensure amount is in smallest unit
         if "." in requirements.amount:
+            if asset_info is None:
+                raise ValueError(
+                    f"Token {requirements.asset} is not a registered asset for network "
+                    f"{requirements.network}; provide amount in atomic units"
+                )
             requirements.amount = str(parse_amount(requirements.amount, asset_info["decimals"]))
 
         # Add EIP-712 domain params
         if requirements.extra is None:
             requirements.extra = {}
-        if "name" not in requirements.extra:
-            requirements.extra["name"] = asset_info["name"]
-        if "version" not in requirements.extra:
-            requirements.extra["version"] = asset_info["version"]
+        if asset_info is not None:
+            atm = asset_info.get("asset_transfer_method")
+            include_eip712_domain = not atm or asset_info.get("supports_eip2612", False)
+
+            if include_eip712_domain:
+                if "name" not in requirements.extra:
+                    requirements.extra["name"] = asset_info["name"]
+                if "version" not in requirements.extra:
+                    requirements.extra["version"] = asset_info["version"]
+            if "assetTransferMethod" not in requirements.extra and atm:
+                requirements.extra["assetTransferMethod"] = atm
 
         return requirements
 
     def _default_money_conversion(self, amount: float, network: str) -> AssetAmount:
-        """Convert decimal amount to USDC AssetAmount.
+        """Convert decimal amount to network's default stablecoin AssetAmount.
 
         Args:
             amount: Decimal amount (e.g., 1.50).
             network: Network identifier.
 
         Returns:
-            AssetAmount in USDC.
+            AssetAmount for the network's default stablecoin.
+
+        Raises:
+            ValueError: If no default stablecoin is configured for the network.
         """
         config = get_network_config(network)
-        asset = config["default_asset"]
+        asset = config.get("default_asset")
 
-        # Convert to smallest unit (6 decimals for USDC)
+        if not asset or not asset.get("address"):
+            raise ValueError(
+                f"No default stablecoin configured for network {network}; "
+                "use register_money_parser or specify an explicit AssetAmount"
+            )
+
         token_amount = int(amount * (10 ** asset["decimals"]))
+
+        atm = asset.get("asset_transfer_method")
+        include_eip712_domain = not atm or asset.get("supports_eip2612", False)
+
+        extra: dict = {}
+        if include_eip712_domain:
+            extra["name"] = asset["name"]
+            extra["version"] = asset["version"]
+        if atm:
+            extra["assetTransferMethod"] = atm
 
         return AssetAmount(
             amount=str(token_amount),
             asset=asset["address"],
-            extra={"name": asset["name"], "version": asset["version"]},
+            extra=extra,
         )

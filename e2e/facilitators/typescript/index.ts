@@ -31,6 +31,7 @@ import {
 } from "@x402/core/types";
 import { toFacilitatorEvmSigner } from "@x402/evm";
 import { ExactEvmScheme } from "@x402/evm/exact/facilitator";
+import { UptoEvmScheme } from "@x402/evm/upto/facilitator";
 import { ExactEvmSchemeV1 } from "@x402/evm/exact/v1/facilitator";
 import { NETWORKS as EVM_V1_NETWORKS } from "@x402/evm/v1";
 import { BAZAAR, extractDiscoveryInfo } from "@x402/extensions/bazaar";
@@ -42,10 +43,12 @@ import { toFacilitatorSvmSigner } from "@x402/svm";
 import { ExactSvmScheme } from "@x402/svm/exact/facilitator";
 import { ExactSvmSchemeV1 } from "@x402/svm/exact/v1/facilitator";
 import { NETWORKS as SVM_V1_NETWORKS } from "@x402/svm/v1";
+import { createEd25519Signer, type FacilitatorStellarSigner } from "@x402/stellar";
+import { ExactStellarScheme } from "@x402/stellar/exact/facilitator";
 import crypto from "crypto";
 import dotenv from "dotenv";
 import express from "express";
-import { createWalletClient, http, publicActions, Chain } from "viem";
+import { createWalletClient, http, publicActions, Chain, parseTransaction, recoverTransactionAddress } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import { baseSepolia, base } from "viem/chains";
 import { BazaarCatalog } from "./bazaar.js";
@@ -58,9 +61,11 @@ const EVM_NETWORK = process.env.EVM_NETWORK || "eip155:84532";
 const SVM_NETWORK =
   process.env.SVM_NETWORK || "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1";
 const APTOS_NETWORK = process.env.APTOS_NETWORK || "aptos:2";
+const STELLAR_NETWORK = process.env.STELLAR_NETWORK || "stellar:testnet";
 const EVM_RPC_URL = process.env.EVM_RPC_URL;
 const SVM_RPC_URL = process.env.SVM_RPC_URL;
 const APTOS_RPC_URL = process.env.APTOS_RPC_URL;
+const STELLAR_RPC_URL = process.env.STELLAR_RPC_URL;
 
 // Map CAIP-2 network IDs to viem chains
 function getEvmChain(network: string): Chain {
@@ -76,9 +81,11 @@ function getEvmChain(network: string): Chain {
 console.log(`🌐 EVM Network: ${EVM_NETWORK}`);
 console.log(`🌐 SVM Network: ${SVM_NETWORK}`);
 console.log(`🌐 Aptos Network: ${APTOS_NETWORK}`);
+console.log(`🌐 Stellar Network: ${STELLAR_NETWORK}`);
 if (EVM_RPC_URL) console.log(`🌐 EVM RPC URL: ${EVM_RPC_URL}`);
 if (SVM_RPC_URL) console.log(`🌐 SVM RPC URL: ${SVM_RPC_URL}`);
 if (APTOS_RPC_URL) console.log(`🌐 Aptos RPC URL: ${APTOS_RPC_URL}`);
+if (STELLAR_RPC_URL) console.log(`🌐 Stellar RPC URL: ${STELLAR_RPC_URL}`);
 
 // Validate required environment variables
 if (!process.env.EVM_PRIVATE_KEY) {
@@ -117,6 +124,13 @@ if (process.env.APTOS_PRIVATE_KEY) {
   );
 }
 
+// Initialize the Stellar signer from private key (optional)
+let stellarSigner: FacilitatorStellarSigner | undefined;
+if (process.env.STELLAR_PRIVATE_KEY) {
+  stellarSigner = createEd25519Signer(process.env.STELLAR_PRIVATE_KEY as string, STELLAR_NETWORK as Network);
+  console.info(`Stellar Facilitator account: ${stellarSigner.address}`);
+}
+
 // Create a Viem client with both wallet and public capabilities
 const evmChain = getEvmChain(EVM_NETWORK);
 const viemClient = createWalletClient({
@@ -152,10 +166,12 @@ const evmSigner = toFacilitatorEvmSigner({
     abi: readonly unknown[];
     functionName: string;
     args: readonly unknown[];
+    gas?: bigint;
   }) =>
     viemClient.writeContract({
       ...args,
       args: args.args || [],
+      gas: args.gas,
     }),
   sendTransaction: (args: { to: `0x${string}`; data: `0x${string}` }) =>
     viemClient.sendTransaction(args),
@@ -195,6 +211,7 @@ const facilitator = new x402Facilitator();
 // Register EVM, SVM, and Aptos schemes (v2 + v1)
 facilitator
   .register(EVM_NETWORK as Network, new ExactEvmScheme(evmSigner))
+  .register(EVM_NETWORK as Network, new UptoEvmScheme(evmSigner))
   .registerV1(EVM_V1_NETWORKS as Network[], new ExactEvmSchemeV1(evmSigner))
   .register(SVM_NETWORK as Network, new ExactSvmScheme(svmSigner))
   .registerV1(SVM_V1_NETWORKS as Network[], new ExactSvmSchemeV1(svmSigner));
@@ -204,11 +221,74 @@ if (aptosSigner) {
     new ExactAptosScheme(aptosSigner),
   );
 }
+if (stellarSigner) {
+  facilitator.register(STELLAR_NETWORK as Network, new ExactStellarScheme([stellarSigner]));
+}
+
+const PERMIT2_ADDRESS = "0x000000000022D473030F116dDEE9F6B43aC78BA3" as const;
+const erc20AllowanceAbi = [
+  {
+    inputs: [
+      { name: "owner", type: "address" },
+      { name: "spender", type: "address" },
+    ],
+    name: "allowance",
+    outputs: [{ name: "", type: "uint256" }],
+    stateMutability: "view",
+    type: "function",
+  },
+] as const;
+
+const erc20ApprovalSigner = {
+  ...evmSigner,
+  sendTransactions: async (
+    transactions: (`0x${string}` | { to: `0x${string}`; data: `0x${string}`; gas?: bigint })[],
+  ): Promise<`0x${string}`[]> => {
+    const hashes: `0x${string}`[] = [];
+    for (const tx of transactions) {
+      let hash: `0x${string}`;
+      if (typeof tx === "string") {
+        // Parse the raw tx to extract sender and gas params for potential gas funding
+        const parsed = parseTransaction(tx);
+        const payerAddress = await recoverTransactionAddress({ serializedTransaction: tx });
+        const gas = parsed.gas ?? 70_000n;
+        const maxFeePerGas = parsed.maxFeePerGas ?? 1_000_000_000n;
+        const gasCost = gas * maxFeePerGas;
+
+        // Check if the payer has enough ETH for gas
+        const payerBalance = await viemClient.getBalance({ address: payerAddress });
+        if (payerBalance < gasCost) {
+          const deficit = gasCost - payerBalance;
+          console.log(`⛽ Funding payer ${payerAddress} with ${deficit} wei for gas`);
+          const fundHash = await viemClient.sendTransaction({
+            to: payerAddress,
+            value: deficit,
+          });
+          const fundReceipt = await viemClient.waitForTransactionReceipt({ hash: fundHash });
+          if (fundReceipt.status !== "success") {
+            throw new Error(`gas_funding_failed: ${fundHash}`);
+          }
+          console.log(`⛽ Gas funding confirmed: ${fundHash}`);
+        }
+
+        hash = await viemClient.sendRawTransaction({ serializedTransaction: tx });
+      } else {
+        hash = await viemClient.sendTransaction(tx);
+      }
+      const receipt = await viemClient.waitForTransactionReceipt({ hash });
+      if (receipt.status !== "success") {
+        throw new Error(`transaction_failed: ${hash}`);
+      }
+      hashes.push(hash);
+    }
+    return hashes;
+  },
+};
 
 facilitator
   .registerExtension(BAZAAR)
   .registerExtension(EIP2612_GAS_SPONSORING)
-  .registerExtension(createErc20ApprovalGasSponsoringExtension(evmSigner, viemClient))
+  .registerExtension(createErc20ApprovalGasSponsoringExtension(erc20ApprovalSigner))
   // Lifecycle hooks for payment tracking and discovery
   .onAfterVerify(async (context) => {
     // Hook 1: Track verified payment for verify→settle flow validation
@@ -228,6 +308,7 @@ facilitator
           discovered.x402Version,
           discovered.discoveryInfo,
           context.requirements,
+          discovered.routeTemplate,
         );
         console.log(
           `📦 Discovered resource: ${discovered.method} ${discovered.resourceUrl}`,
@@ -403,6 +484,7 @@ app.get("/health", (req, res) => {
     evmNetwork: EVM_NETWORK,
     svmNetwork: SVM_NETWORK,
     aptosNetwork: aptosAccount ? APTOS_NETWORK : "(not configured)",
+    stellarNetwork: stellarSigner ? STELLAR_NETWORK : "(not configured)",
     facilitator: "typescript",
     version: "2.0.0",
     extensions: [BAZAAR.key],
@@ -436,6 +518,7 @@ app.listen(parseInt(PORT), () => {
 ║  Aptos Network: ${APTOS_NETWORK}                       ║
 ║  EVM Address:  ${evmAccount.address}                   ║
 ║  Aptos Address: ${aptosAccount ? aptosAccount.accountAddress.toStringLong().slice(0, 20) + "..." : "(not configured)"}
+║  Stellar Address: ${stellarSigner ? stellarSigner.address : "(not configured)"} ║
 ║  Extensions:   bazaar                                  ║
 ║                                                        ║
 ║  Endpoints:                                            ║

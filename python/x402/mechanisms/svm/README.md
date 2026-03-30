@@ -121,3 +121,13 @@ The Exact scheme creates a partially-signed transaction:
 
 Automatic ATA derivation for source and destination addresses.
 
+## Duplicate Settlement Protection
+
+This package includes a built-in `SettlementCache` that prevents a known race condition on Solana where the same payment transaction could be settled multiple times before on-chain confirmation. When the facilitator scheme is registered via `register_exact_svm_facilitator()`, a single `SettlementCache` instance is automatically shared across both V1 and V2 scheme versions.
+
+The cache rejects concurrent `/settle` calls that carry the same transaction payload, returning a `duplicate_settlement` error for the second and subsequent attempts. Entries are automatically evicted after 120 seconds (approximately twice the Solana blockhash lifetime).
+
+**No additional configuration is required** — duplicate settlement protection is enabled by default when using the standard registration helpers.
+
+For full details on the race condition and mitigation strategy, see the [Exact SVM Scheme Specification](../../../../specs/schemes/exact/scheme_exact_svm.md#duplicate-settlement-mitigation-recommended).
+

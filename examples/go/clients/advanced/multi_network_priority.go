@@ -48,17 +48,17 @@ func runMultiNetworkPriorityExample(ctx context.Context, evmPrivateKey, url stri
 
 	// Level 1: Specific networks (highest priority)
 	fmt.Println("✅ Registering Ethereum Mainnet (eip155:1) with mainnet signer")
-	client.Register("eip155:1", evm.NewExactEvmScheme(mainnetSigner))
+	client.Register("eip155:1", evm.NewExactEvmScheme(mainnetSigner, nil))
 
 	fmt.Println("✅ Registering Base Mainnet (eip155:8453) with base signer")
-	client.Register("eip155:8453", evm.NewExactEvmScheme(baseSigner))
+	client.Register("eip155:8453", evm.NewExactEvmScheme(baseSigner, nil))
 
 	fmt.Println("✅ Registering Base Sepolia (eip155:84532) with testnet signer")
-	client.Register("eip155:84532", evm.NewExactEvmScheme(testnetSigner))
+	client.Register("eip155:84532", evm.NewExactEvmScheme(testnetSigner, nil))
 
 	// Level 2: Wildcard for all other EVM networks (fallback)
 	fmt.Println("✅ Registering all other EVM networks (eip155:*) with primary signer\n")
-	client.Register("eip155:*", evm.NewExactEvmScheme(primarySigner))
+	client.Register("eip155:*", evm.NewExactEvmScheme(primarySigner, nil))
 
 	// Add logging to show which network is being used
 	client.OnBeforePaymentCreation(func(ctx x402.PaymentCreationContext) (*x402.BeforePaymentCreationHookResult, error) {
@@ -111,6 +111,10 @@ func runMultiNetworkPriorityExample(ctx context.Context, evmPrivateKey, url stri
 	fmt.Println("   This allows fine-grained control per network while having")
 	fmt.Println("   sensible defaults for unknown networks.\n")
 
-	return printResponse(resp, "Response with multi-network priority")
+	if err := printResponse(resp, "Response with multi-network priority"); err != nil {
+		return err
+	}
+	printPaymentDetails(resp.Header)
+	return nil
 }
 

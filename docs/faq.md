@@ -63,8 +63,8 @@ Yes. x402 handles the _payment execution_. You can still meter usage, aggregate 
 
 | Network        | CAIP-2 ID | Asset | Fees\*   | Status      |
 | -------------- | --------- | ----- | -------- | ----------- |
-| Base           | `eip155:8453` | Any EIP-3009 token  | fee-free | **Mainnet** |
-| Base Sepolia   | `eip155:84532` | Any EIP-3009 token  | fee-free | **Testnet** |
+| Base           | `eip155:8453` | Any ERC-20 token  | fee-free | **Mainnet** |
+| Base Sepolia   | `eip155:84532` | Any ERC-20 token  | fee-free | **Testnet** |
 | Solana         | `solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp` | Any SPL token or Token-2022 token | fee-free | **Mainnet** |
 | Solana Devnet  | `solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1` | Any SPL token or Token-2022 | fee-free | **Testnet** |
 
@@ -119,7 +119,7 @@ Yes. Programmatic wallets (e.g., **CDP Wallet API**, **viem**, **ethers‑v6** H
 Tracked in public GitHub issues + community RFCs. Major themes:
 
 * Multi‑asset support
-* Additional schemes (`upto`, `stream`, `permit2`)
+* Additional schemes (`upto`, `stream`)
 * Discovery layer for service search & reputation
 
 **Why is x402 hosted in the Coinbase GitHub?**
@@ -131,7 +131,7 @@ We acknowledge that the repo is primarily under Coinbase ownership today. This i
 #### I keep getting `402 Payment Required`, even after attaching `PAYMENT-SIGNATURE`. Why?
 
 1. Signature is invalid (wrong chain ID or payload fields).
-2. Payment amount is less than the required `amount` in the payment requirements.
+2. Payment amount does not exactly match the required `amount` in the payment requirements (the exact scheme requires strict equality - no overpayment or underpayment).
 3. Address has insufficient USDC or was flagged by KYT.\
    Check the `error` field in the server's JSON response for details.
 

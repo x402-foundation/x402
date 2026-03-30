@@ -5,7 +5,8 @@
   "protocolFamilies": [
     "evm",
     "svm",
-    "aptos"
+    "aptos",
+    "stellar"
   ],
   "x402Versions": [
     1,
@@ -14,7 +15,8 @@
   "evm": {
     "transferMethods": [
       "eip3009",
-      "permit2"
+      "permit2",
+      "upto"
     ]
   },
   "extensions": [
@@ -29,7 +31,8 @@
       "ENDPOINT_PATH"
     ],
     "optional": [
-      "APTOS_PRIVATE_KEY"
+      "APTOS_PRIVATE_KEY",
+      "STELLAR_PRIVATE_KEY"
     ]
   }
 }

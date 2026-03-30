@@ -1,3 +1,0 @@
-kind: added
-body: Add route configuration validation during Initialize() to catch scheme/facilitator mismatches at startup
-time: 2026-02-27T08:57:21.873969+09:00

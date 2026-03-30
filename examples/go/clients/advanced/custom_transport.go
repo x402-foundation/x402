@@ -90,7 +90,7 @@ func runCustomTransportExample(ctx context.Context, evmPrivateKey, url string) e
 
 	// Create x402 client
 	client := x402.Newx402Client().
-		Register("eip155:*", evm.NewExactEvmScheme(evmSigner))
+		Register("eip155:*", evm.NewExactEvmScheme(evmSigner, nil))
 
 	httpClient := x402http.Newx402HTTPClient(client)
 
@@ -135,6 +135,10 @@ func runCustomTransportExample(ctx context.Context, evmPrivateKey, url string) e
 	}
 	defer resp.Body.Close()
 
-	return printResponse(resp, "Response with custom transport")
+	if err := printResponse(resp, "Response with custom transport"); err != nil {
+		return err
+	}
+	printPaymentDetails(resp.Header)
+	return nil
 }
 

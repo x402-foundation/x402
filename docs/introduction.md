@@ -15,16 +15,16 @@ With x402, any web service can require payment before serving a response, using 
 
 ### Why Use x402?
 
-x402 offers key advantages over traditional payment systems:
+x402 offers:
 
-* **Low fees and minimal friction** compared to traditional credit cards and fiat payment processors
-* **Native support for machine-to-machine payments**, enabling seamless use by AI agents
-* **Built-in micropayment support**, making it easy to monetize usage-based services
+- **No fees and minimal friction** x402 as a standard has 0 fees built in.
+- **Native support for machine-to-machine payments**, enabling seamless use by AI agents
+- **Built-in micropayment support**, making it easy to monetize usage-based services
 
 ### Who is x402 for?
 
-* **Sellers:** Service providers who want to monetize their APIs or content. x402 enables direct, programmatic payments from clients with minimal setup.
-* **Buyers:** Human developers and AI agents seeking to access paid services without accounts or manual payment flows.
+- **Sellers:** Service providers who want to monetize their APIs or content. x402 enables direct, programmatic payments from clients with minimal setup.
+- **Buyers:** Human developers and AI agents seeking to access paid services without accounts or manual payment flows.
 
 Both sellers and buyers interact directly through HTTP requests, with payment handled transparently through the protocol.
 
@@ -32,11 +32,11 @@ Both sellers and buyers interact directly through HTTP requests, with payment ha
 
 x402 enables a range of use cases, including:
 
-* API services paid per request
-* AI agents that autonomously pay for API access
-* [Paywalls](https://x.com/MurrLincoln/status/1935406976881803601) for digital content
-* Microservices and tooling monetized via microtransactions
-* Proxy services that aggregate and resell API capabilities
+- API services paid per request
+- AI agents that autonomously pay for API access
+- [Paywalls](https://x.com/MurrLincoln/status/1935406976881803601) for digital content
+- Microservices and tooling monetized via microtransactions
+- Proxy services that aggregate and resell API capabilities
 
 ### How Does It Work?
 
@@ -50,9 +50,9 @@ At a high level, the flow is simple:
 
 For more detail, see:
 
-* [Client / Server](/core-concepts/client-server)
-* [Facilitator](/core-concepts/facilitator)
-* [HTTP 402](/core-concepts/http-402)
+- [Client / Server](/core-concepts/client-server)
+- [Facilitator](/core-concepts/facilitator)
+- [HTTP 402](/core-concepts/http-402)
 
 The goal is to make programmatic commerce accessible, permissionless, and developer-friendly.
 
@@ -60,7 +60,7 @@ The goal is to make programmatic commerce accessible, permissionless, and develo
 
 Ready to build? Start here:
 
-* [Quickstart for Sellers](/getting-started/quickstart-for-sellers)
-* [Quickstart for Buyers](/getting-started/quickstart-for-buyers)
-* [Explore Core Concepts](/core-concepts/http-402)
-* [Join our community on Discord](https://discord.gg/invite/cdp)
+- [Quickstart for Sellers](/getting-started/quickstart-for-sellers)
+- [Quickstart for Buyers](/getting-started/quickstart-for-buyers)
+- [Explore Core Concepts](/core-concepts/http-402)
+- [Join our community on Discord](https://discord.gg/invite/cdp)

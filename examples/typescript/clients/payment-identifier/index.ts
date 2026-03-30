@@ -65,13 +65,11 @@ async function main(): Promise<void> {
 
   console.log(`Response (${duration1}ms):`, JSON.stringify(body1, null, 2));
 
-  if (response1.ok) {
-    const paymentResponse = new x402HTTPClient(client).getPaymentSettleResponse(name =>
-      response1.headers.get(name),
-    );
-    if (paymentResponse) {
-      console.log(`\n💰 Payment settled on ${paymentResponse.network}`);
-    }
+  const paymentResponse1 = new x402HTTPClient(client).getPaymentSettleResponse(name =>
+    response1.headers.get(name),
+  );
+  if (paymentResponse1) {
+    console.log(`\n💰 Payment settled on ${paymentResponse1.network}`);
   }
 
   // Second request - same payment ID, should return from cache
@@ -88,15 +86,13 @@ async function main(): Promise<void> {
 
   console.log(`Response (${duration2}ms):`, JSON.stringify(body2, null, 2));
 
-  if (response2.ok) {
-    const paymentResponse = new x402HTTPClient(client).getPaymentSettleResponse(name =>
-      response2.headers.get(name),
-    );
-    if (paymentResponse) {
-      console.log(`\n💰 Payment settled (unexpected - should have been cached)`);
-    } else {
-      console.log(`\n✅ No payment processed - response served from cache!`);
-    }
+  const paymentResponse2 = new x402HTTPClient(client).getPaymentSettleResponse(name =>
+    response2.headers.get(name),
+  );
+  if (paymentResponse2) {
+    console.log(`\n💰 Payment settled (unexpected - should have been cached)`);
+  } else {
+    console.log(`\n✅ No payment processed - response served from cache!`);
   }
 
   // Summary

@@ -280,6 +280,7 @@ Verifies a payment authorization without executing the transaction on the blockc
 
 ```json
 {
+  "x402Version": 1,
   "paymentPayload": {
     /* PaymentPayload schema */
   },
@@ -293,6 +294,7 @@ Example with actual data:
 
 ```json
 {
+  "x402Version": 1,
   "paymentPayload": {
     "x402Version": 1,
     "scheme": "exact",

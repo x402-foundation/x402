@@ -3,7 +3,6 @@
 import pytest
 
 from x402.mechanisms.evm import (
-    get_asset_info,
     get_network_config,
 )
 from x402.mechanisms.evm.exact import ExactEvmServerScheme
@@ -24,7 +23,7 @@ class TestParsePrice:
             result = server.parse_price("$0.10", network)
 
             assert result.amount == "100000"  # 0.10 USDC = 100000 smallest units
-            assert result.asset == get_asset_info(network, "USDC")["address"]
+            assert result.asset == get_network_config(network)["default_asset"]["address"]
             assert result.extra == {"name": "USD Coin", "version": "2"}
 
         def test_should_parse_simple_number_string_prices(self):
@@ -35,7 +34,7 @@ class TestParsePrice:
             result = server.parse_price("0.10", network)
 
             assert result.amount == "100000"
-            assert result.asset == get_asset_info(network, "USDC")["address"]
+            assert result.asset == get_network_config(network)["default_asset"]["address"]
 
         def test_should_parse_number_prices(self):
             """Should parse number prices."""
@@ -45,7 +44,7 @@ class TestParsePrice:
             result = server.parse_price(0.1, network)
 
             assert result.amount == "100000"
-            assert result.asset == get_asset_info(network, "USDC")["address"]
+            assert result.asset == get_network_config(network)["default_asset"]["address"]
 
         def test_should_handle_larger_amounts(self):
             """Should handle larger amounts."""
@@ -68,15 +67,13 @@ class TestParsePrice:
     class TestEthereumMainnetNetwork:
         """Test Ethereum Mainnet network."""
 
-        def test_should_use_ethereum_usdc_address(self):
-            """Should use Ethereum Mainnet USDC address."""
+        def test_should_raise_for_network_without_default_stablecoin(self):
+            """Should raise ValueError when network has no default stablecoin configured."""
             server = ExactEvmServerScheme()
             network = "eip155:1"
 
-            result = server.parse_price("1.00", network)
-
-            assert result.asset == get_asset_info(network, "USDC")["address"]
-            assert result.amount == "1000000"
+            with pytest.raises(ValueError, match="No default stablecoin"):
+                server.parse_price("1.00", network)
 
     class TestBaseSepoliaNetwork:
         """Test Base Sepolia network."""
@@ -88,7 +85,7 @@ class TestParsePrice:
 
             result = server.parse_price("1.00", network)
 
-            assert result.asset == get_asset_info(network, "USDC")["address"]
+            assert result.asset == get_network_config(network)["default_asset"]["address"]
             assert result.amount == "1000000"
 
     class TestPreParsedPriceObjects:
@@ -151,7 +148,7 @@ class TestEnhancePaymentRequirements:
         requirements = PaymentRequirements(
             scheme="exact",
             network=network,
-            asset=get_asset_info(network, "USDC")["address"],
+            asset=get_network_config(network)["default_asset"]["address"],
             amount="100000",
             pay_to="0x1234567890123456789012345678901234567890",
             max_timeout_seconds=3600,
@@ -181,7 +178,7 @@ class TestEnhancePaymentRequirements:
         requirements = PaymentRequirements(
             scheme="exact",
             network=network,
-            asset=get_asset_info(network, "USDC")["address"],
+            asset=get_network_config(network)["default_asset"]["address"],
             amount="100000",
             pay_to="0x1234567890123456789012345678901234567890",
             max_timeout_seconds=3600,
@@ -209,7 +206,7 @@ class TestEnhancePaymentRequirements:
         requirements = PaymentRequirements(
             scheme="exact",
             network=network,
-            asset=get_asset_info(network, "USDC")["address"],
+            asset=get_network_config(network)["default_asset"]["address"],
             amount="1.5",  # Decimal amount
             pay_to="0x1234567890123456789012345678901234567890",
             max_timeout_seconds=3600,
@@ -286,7 +283,7 @@ class TestRegisterMoneyParser:
 
             # Small amount should fall back to default (USDC)
             result2 = server.parse_price(50, network)
-            assert result2.asset == get_asset_info(network, "USDC")["address"]
+            assert result2.asset == get_network_config(network)["default_asset"]["address"]
             assert result2.amount == "50000000"  # 50 * 1e6
 
         def test_should_receive_decimal_number_not_raw_string(self):
@@ -351,7 +348,7 @@ class TestRegisterMoneyParser:
             result = server.parse_price(1, network)
 
             # Should use default USDC
-            assert result.asset == get_asset_info(network, "USDC")["address"]
+            assert result.asset == get_network_config(network)["default_asset"]["address"]
             assert result.amount == "1000000"
 
     class TestMultipleParsersChainOfResponsibility:
@@ -426,7 +423,7 @@ class TestRegisterMoneyParser:
             result = server.parse_price(1, network)
 
             # Should use default USDC
-            assert result.asset == get_asset_info(network, "USDC")["address"]
+            assert result.asset == get_network_config(network)["default_asset"]["address"]
             assert result.amount == "1000000"
 
     class TestErrorHandling:
@@ -552,7 +549,10 @@ class TestRegisterMoneyParser:
             assert sepolia_result.asset == "0xTestToken123456789012345678901234567890"
 
             mainnet_result = server.parse_price(10, "eip155:8453")
-            assert mainnet_result.asset == get_asset_info("eip155:8453", "USDC")["address"]
+            assert (
+                mainnet_result.asset
+                == get_network_config("eip155:8453")["default_asset"]["address"]
+            )
 
         def test_should_support_tiered_pricing(self):
             """Should support tiered pricing."""
@@ -588,7 +588,7 @@ class TestRegisterMoneyParser:
             assert standard.extra.get("tier") == "standard"
 
             basic = server.parse_price(50, network)
-            assert basic.asset == get_asset_info(network, "USDC")["address"]
+            assert basic.asset == get_network_config(network)["default_asset"]["address"]
 
     class TestIntegrationWithParsePriceFlow:
         """Test integration with parsePrice flow."""

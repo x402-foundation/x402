@@ -5,6 +5,13 @@
 import type { BodyMethods, QueryParamMethods } from "@x402/core/http";
 import type { DiscoveryInfo } from "../types";
 
+/** Shared schema definition for an object-typed parameter map (queryParams, pathParams, etc.) */
+interface ParamMapSchemaProperty {
+  type: "object";
+  properties?: Record<string, unknown>;
+  additionalProperties?: boolean;
+}
+
 /**
  * Discovery info for query parameter methods (GET, HEAD, DELETE)
  */
@@ -14,6 +21,7 @@ export interface QueryDiscoveryInfo {
     /** Absent at declaration time; set by bazaarResourceServerExtension.enrichDeclaration */
     method?: QueryParamMethods;
     queryParams?: Record<string, unknown>;
+    pathParams?: Record<string, unknown>;
     headers?: Record<string, string>;
   };
   output?: {
@@ -34,6 +42,7 @@ export interface BodyDiscoveryInfo {
     bodyType: "json" | "form-data" | "text";
     body: Record<string, unknown>;
     queryParams?: Record<string, unknown>;
+    pathParams?: Record<string, unknown>;
     headers?: Record<string, string>;
   };
   output?: {
@@ -48,6 +57,7 @@ export interface BodyDiscoveryInfo {
  */
 export interface QueryDiscoveryExtension {
   info: QueryDiscoveryInfo;
+  routeTemplate?: string;
 
   schema: {
     $schema: "https://json-schema.org/draft/2020-12/schema";
@@ -64,12 +74,8 @@ export interface QueryDiscoveryExtension {
             type: "string";
             enum: QueryParamMethods[];
           };
-          queryParams?: {
-            type: "object";
-            properties?: Record<string, unknown>;
-            required?: string[];
-            additionalProperties?: boolean;
-          };
+          queryParams?: ParamMapSchemaProperty & { required?: string[] };
+          pathParams?: ParamMapSchemaProperty;
           headers?: {
             type: "object";
             additionalProperties: {
@@ -96,6 +102,7 @@ export interface QueryDiscoveryExtension {
  */
 export interface BodyDiscoveryExtension {
   info: BodyDiscoveryInfo;
+  routeTemplate?: string;
 
   schema: {
     $schema: "https://json-schema.org/draft/2020-12/schema";
@@ -117,12 +124,8 @@ export interface BodyDiscoveryExtension {
             enum: ["json", "form-data", "text"];
           };
           body: Record<string, unknown>;
-          queryParams?: {
-            type: "object";
-            properties?: Record<string, unknown>;
-            required?: string[];
-            additionalProperties?: boolean;
-          };
+          queryParams?: ParamMapSchemaProperty & { required?: string[] };
+          pathParams?: ParamMapSchemaProperty;
           headers?: {
             type: "object";
             additionalProperties: {
@@ -148,6 +151,8 @@ export interface DeclareQueryDiscoveryExtensionConfig {
   method?: QueryParamMethods;
   input?: Record<string, unknown>;
   inputSchema?: Record<string, unknown>;
+  pathParams?: Record<string, unknown>;
+  pathParamsSchema?: Record<string, unknown>;
   output?: {
     example?: unknown;
     schema?: Record<string, unknown>;
@@ -158,6 +163,8 @@ export interface DeclareBodyDiscoveryExtensionConfig {
   method?: BodyMethods;
   input?: Record<string, unknown>;
   inputSchema?: Record<string, unknown>;
+  pathParams?: Record<string, unknown>;
+  pathParamsSchema?: Record<string, unknown>;
   bodyType: "json" | "form-data" | "text";
   output?: {
     example?: unknown;
@@ -171,6 +178,7 @@ export interface DiscoveredHTTPResource {
   mimeType?: string;
   /** Present after server extension enrichment; may be absent for pre-enrichment data */
   method?: string;
+  routeTemplate?: string;
   x402Version: number;
   discoveryInfo: DiscoveryInfo;
 }

@@ -3,14 +3,17 @@ import axios from "axios";
 import { wrapAxiosWithPayment, decodePaymentResponseHeader } from "@x402/axios";
 import { createPublicClient, http } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
-import { baseSepolia } from "viem/chains";
-import { ExactEvmScheme } from "@x402/evm/exact/client";
+import { base, baseSepolia } from "viem/chains";
+import { ExactEvmScheme, type ExactEvmSchemeOptions } from "@x402/evm/exact/client";
+import { UptoEvmScheme as UptoEvmClientScheme, type UptoEvmSchemeOptions } from "@x402/evm/upto/client";
 import { ExactEvmSchemeV1 } from "@x402/evm/v1";
 import { toClientEvmSigner } from "@x402/evm";
 import { ExactSvmScheme } from "@x402/svm/exact/client";
 import { ExactSvmSchemeV1 } from "@x402/svm/v1";
 import { ExactAptosScheme } from "@x402/aptos/exact/client";
 import { Account, Ed25519PrivateKey, PrivateKey, PrivateKeyVariants } from "@aptos-labs/ts-sdk";
+import { ExactStellarScheme } from "@x402/stellar/exact/client";
+import { createEd25519Signer, type Ed25519Signer } from "@x402/stellar";
 import { base58 } from "@scure/base";
 import { createKeyPairSignerFromBytes } from "@solana/kit";
 import { x402Client } from "@x402/core/client";
@@ -25,23 +28,45 @@ const svmSigner = await createKeyPairSignerFromBytes(
   base58.decode(process.env.SVM_PRIVATE_KEY as string),
 );
 
+const evmNetwork = process.env.EVM_NETWORK || "eip155:84532";
+const evmRpcUrl = process.env.EVM_RPC_URL;
+const evmChain = evmNetwork === "eip155:8453" ? base : baseSepolia;
+
 const publicClient = createPublicClient({
-  chain: baseSepolia,
-  transport: http(),
+  chain: evmChain,
+  transport: http(evmRpcUrl),
 });
 
 const evmSigner = toClientEvmSigner(evmAccount, publicClient);
 
+const evmSchemeOptions: ExactEvmSchemeOptions | undefined = process.env.EVM_RPC_URL
+  ? { rpcUrl: process.env.EVM_RPC_URL }
+  : undefined;
+
+const uptoSchemeOptions: UptoEvmSchemeOptions | undefined = process.env.EVM_RPC_URL
+  ? { rpcUrl: process.env.EVM_RPC_URL }
+  : undefined;
+
 // Initialize Aptos signer if key is provided
 let aptosAccount: Account | undefined;
 if (process.env.APTOS_PRIVATE_KEY) {
-  const formattedKey = PrivateKey.formatPrivateKey(process.env.APTOS_PRIVATE_KEY, PrivateKeyVariants.Ed25519);
+  const formattedKey = PrivateKey.formatPrivateKey(
+    process.env.APTOS_PRIVATE_KEY,
+    PrivateKeyVariants.Ed25519,
+  );
   const aptosPrivateKey = new Ed25519PrivateKey(formattedKey);
   aptosAccount = Account.fromPrivateKey({ privateKey: aptosPrivateKey });
 }
 
+// Initialize Stellar signer if key is provided
+let stellarSigner: Ed25519Signer | undefined;
+if (process.env.STELLAR_PRIVATE_KEY) {
+  stellarSigner = createEd25519Signer(process.env.STELLAR_PRIVATE_KEY);
+}
+
 const client = new x402Client()
-  .register("eip155:*", new ExactEvmScheme(evmSigner))
+  .register("eip155:*", new ExactEvmScheme(evmSigner, evmSchemeOptions))
+  .register("eip155:*", new UptoEvmClientScheme(evmSigner, uptoSchemeOptions))
   .registerV1("base-sepolia", new ExactEvmSchemeV1(evmSigner))
   .registerV1("base", new ExactEvmSchemeV1(evmSigner))
   .register("solana:*", new ExactSvmScheme(svmSigner))
@@ -49,6 +74,9 @@ const client = new x402Client()
   .registerV1("solana", new ExactSvmSchemeV1(svmSigner));
 if (aptosAccount) {
   client.register("aptos:*", new ExactAptosScheme(aptosAccount));
+}
+if (stellarSigner) {
+  client.register("stellar:*", new ExactStellarScheme(stellarSigner));
 }
 
 const axiosWithPayment = wrapAxiosWithPayment(axios.create(), client);

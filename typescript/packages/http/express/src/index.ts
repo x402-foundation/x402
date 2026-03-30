@@ -6,10 +6,25 @@ import {
   x402ResourceServer,
   RoutesConfig,
   FacilitatorClient,
+  FacilitatorResponseError,
+  getFacilitatorResponseError,
+  SETTLEMENT_OVERRIDES_HEADER,
+  SettlementOverrides,
 } from "@x402/core/server";
 import { SchemeNetworkServer, Network } from "@x402/core/types";
 import { NextFunction, Request, Response } from "express";
 import { ExpressAdapter } from "./adapter";
+
+/**
+ * Set settlement overrides on the response for partial settlement.
+ * The middleware will extract these before settlement and strip the header from the client response.
+ *
+ * @param res - Express response object
+ * @param overrides - Settlement overrides (e.g., { amount: "500" } for partial settlement)
+ */
+export function setSettlementOverrides(res: Response, overrides: SettlementOverrides): void {
+  res.setHeader(SETTLEMENT_OVERRIDES_HEADER, JSON.stringify(overrides));
+}
 
 /**
  * Check if any routes in the configuration declare bazaar extensions
@@ -42,6 +57,16 @@ export interface SchemeRegistration {
    * The scheme server implementation for this network
    */
   server: SchemeNetworkServer;
+}
+
+/**
+ * Sends a normalized 502 response for facilitator boundary failures.
+ *
+ * @param res - The Express response to write to
+ * @param error - The facilitator response error to surface
+ */
+function sendFacilitatorError(res: Response, error: FacilitatorResponseError): void {
+  res.status(502).json({ error: error.message });
 }
 
 /**
@@ -82,6 +107,28 @@ export function paymentMiddlewareFromHTTPServer(
   // Store initialization promise (not the result)
   // httpServer.initialize() fetches facilitator support and validates routes
   let initPromise: Promise<void> | null = syncFacilitatorOnStart ? httpServer.initialize() : null;
+  let isInitialized = false;
+
+  /**
+   * Ensures facilitator initialization succeeds once, while allowing retries after failures.
+   */
+  async function initializeHttpServer(): Promise<void> {
+    if (!syncFacilitatorOnStart || isInitialized) {
+      return;
+    }
+
+    if (!initPromise) {
+      initPromise = httpServer.initialize();
+    }
+
+    try {
+      await initPromise;
+      isInitialized = true;
+    } catch (error) {
+      initPromise = null;
+      throw error;
+    }
+  }
 
   // Dynamically register bazaar extension if routes declare it and not already registered
   // Skip if pre-registered (e.g., in serverless environments where static imports are used)
@@ -112,9 +159,17 @@ export function paymentMiddlewareFromHTTPServer(
     }
 
     // Only initialize when processing a protected route
-    if (initPromise) {
-      await initPromise;
-      initPromise = null; // Clear after first await
+    if (syncFacilitatorOnStart && !isInitialized) {
+      try {
+        await initializeHttpServer();
+      } catch (error) {
+        const facilitatorError = getFacilitatorResponseError(error);
+        if (facilitatorError) {
+          sendFacilitatorError(res, facilitatorError);
+          return;
+        }
+        return next(error);
+      }
     }
 
     // Await bazaar extension loading if needed
@@ -124,7 +179,16 @@ export function paymentMiddlewareFromHTTPServer(
     }
 
     // Process payment requirement check
-    const result = await httpServer.processHTTPRequest(context, paywallConfig);
+    let result: Awaited<ReturnType<x402HTTPResourceServer["processHTTPRequest"]>>;
+    try {
+      result = await httpServer.processHTTPRequest(context, paywallConfig);
+    } catch (error) {
+      if (error instanceof FacilitatorResponseError) {
+        sendFacilitatorError(res, error);
+        return;
+      }
+      return next(error);
+    }
 
     // Handle the different result types
     switch (result.type) {
@@ -238,23 +302,32 @@ export function paymentMiddlewareFromHTTPServer(
             ),
           );
 
+          const responseHeaders: Record<string, string> = {};
+          for (const [key, value] of Object.entries(res.getHeaders())) {
+            if (value != null) {
+              responseHeaders[key] = String(value);
+            }
+          }
+
           const settleResult = await httpServer.processSettlement(
             paymentPayload,
             paymentRequirements,
             declaredExtensions,
-            { request: context, responseBody },
+            { request: context, responseBody, responseHeaders },
           );
 
           // If settlement fails, return an error and do not send the buffered response
           if (!settleResult.success) {
             bufferedCalls = [];
-            Object.entries(settleResult.headers).forEach(([key, value]) => {
+            const { response } = settleResult;
+            Object.entries(response.headers).forEach(([key, value]) => {
               res.setHeader(key, value);
             });
-            res.status(402).json({
-              error: "Settlement failed",
-              details: settleResult.errorReason,
-            });
+            if (response.isHtml) {
+              res.status(response.status).send(response.body);
+            } else {
+              res.status(response.status).json(response.body ?? {});
+            }
             return;
           }
 
@@ -263,13 +336,15 @@ export function paymentMiddlewareFromHTTPServer(
             res.setHeader(key, value);
           });
         } catch (error) {
+          if (error instanceof FacilitatorResponseError) {
+            bufferedCalls = [];
+            sendFacilitatorError(res, error);
+            return;
+          }
           console.error(error);
           // If settlement fails, don't send the buffered response
           bufferedCalls = [];
-          res.status(402).json({
-            error: "Settlement failed",
-            details: error instanceof Error ? error.message : "Unknown error",
-          });
+          res.status(402).json({});
           return;
         } finally {
           settled = true;
@@ -393,9 +468,9 @@ export type {
   SchemeNetworkServer,
 } from "@x402/core/types";
 
-export type { PaywallProvider, PaywallConfig } from "@x402/core/server";
+export type { PaywallProvider, PaywallConfig, SettlementOverrides } from "@x402/core/server";
 
-export { RouteConfigurationError } from "@x402/core/server";
+export { RouteConfigurationError, SETTLEMENT_OVERRIDES_HEADER } from "@x402/core/server";
 
 export type { RouteValidationError } from "@x402/core/server";
 

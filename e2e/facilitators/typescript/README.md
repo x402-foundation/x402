@@ -1,6 +1,6 @@
 # E2E Test Facilitator: TypeScript
 
-This facilitator demonstrates and tests the TypeScript x402 facilitator implementation with both EVM and SVM payment verification and settlement.
+This facilitator demonstrates and tests the TypeScript x402 facilitator implementation with EVM, SVM, and optional Stellar payment verification and settlement.
 
 ## What It Tests
 
@@ -9,7 +9,7 @@ This facilitator demonstrates and tests the TypeScript x402 facilitator implemen
 - ✅ **V1 Protocol** - Legacy x402 facilitator protocol
 - ✅ **Payment Verification** - Validates payment payloads off-chain
 - ✅ **Payment Settlement** - Executes transactions on-chain
-- ✅ **Multi-chain Support** - EVM and SVM mechanisms
+- ✅ **Multi-chain Support** - EVM, SVM, and (optional) Stellar mechanisms
 - ✅ **HTTP API** - Express.js server exposing facilitator endpoints
 
 ### Facilitator Endpoints
@@ -27,6 +27,7 @@ This e2e facilitator showcases **production-ready lifecycle hook patterns**:
 ```typescript
 const facilitator = new x402Facilitator()
   .register("eip155:*", new ExactEvmFacilitator(evmSigner))
+  .register("stellar:*", new ExactStellarScheme([stellarSigner]))
   .registerExtension(BAZAAR)
   // Hook 1: Track verified payments + extract discovery info
   .onAfterVerify(async (context) => {
@@ -75,6 +76,7 @@ import { ExactEvmFacilitator } from "@x402/evm";
 import { ExactEvmFacilitatorV1, NETWORKS as EVM_NETWORKS } from "@x402/evm/v1";
 import { ExactSvmFacilitator } from "@x402/svm";
 import { ExactSvmFacilitatorV1, NETWORKS as SVM_NETWORKS } from "@x402/svm/v1";
+import { ExactStellarFacilitator } from "@x402/stellar";
 
 // Create facilitator with bazaar extension
 const facilitator = new x402Facilitator()
@@ -95,6 +97,8 @@ EVM_NETWORKS.forEach(network => {
 });
 
 // Register SVM schemes similarly...
+
+// Register Stellar (v2) schemes similarly...
 ```
 
 ### HTTP Server
@@ -118,7 +122,7 @@ app.listen(port, () => {
 
 1. **Extension Registration** - Bazaar discovery
 2. **Comprehensive Network Support** - All EVM V1 networks, all SVM V1 networks
-3. **Wildcard Schemes** - Efficient V2 registration with `eip155:*` and `solana:*`
+3. **Wildcard Schemes** - Efficient V2 registration with `eip155:*`, `solana:*`, and `stellar:*`
 4. **HTTP Router Integration** - `@x402/server/facilitator` for Express
 5. **Real Signers** - Actual blockchain transaction submission
 6. **Multi-Protocol** - V1 and V2 side-by-side
@@ -128,12 +132,13 @@ app.listen(port, () => {
 This facilitator is tested with:
 - **Clients:** TypeScript Fetch, Go HTTP
 - **Servers:** Express (TypeScript), Gin (Go)
-- **Networks:** Base Sepolia (EVM), Solana Devnet (SVM)
-- **Test Cases:** 
+- **Networks:** Base Sepolia (EVM), Solana Devnet (SVM), Stellar Testnet (Stellar)
+- **Test Cases:**
   - V1 EVM payments
   - V2 EVM payments
   - V1 SVM payments
   - V2 SVM payments
+  - V2 Stellar payments (optional)
 
 ### Success Criteria
 - ✅ Verification returns valid status
@@ -152,15 +157,23 @@ pnpm test --facilitator=typescript
 cd e2e/facilitators/typescript
 export EVM_PRIVATE_KEY="0x..."
 export SVM_PRIVATE_KEY="..."
+export STELLAR_PRIVATE_KEY="S..." # optional
 export PORT=4025
 pnpm start
 ```
 
 ## Environment Variables
 
+### Required
 - `PORT` - HTTP server port
 - `EVM_PRIVATE_KEY` - Ethereum private key (hex with 0x prefix)
 - `SVM_PRIVATE_KEY` - Solana private key (base58 encoded)
+
+### Optional
+- `STELLAR_PRIVATE_KEY` - Stellar private key (S... format) - enables Stellar support
+- `EVM_NETWORK` - EVM network (default: eip155:84532)
+- `SVM_NETWORK` - SVM network (default: solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1)
+- `STELLAR_NETWORK` - Stellar network (default: stellar:testnet)
 
 ## Package Dependencies
 
@@ -170,6 +183,7 @@ pnpm start
 - `@x402/evm/v1` - EVM facilitator (V1) + NETWORKS
 - `@x402/svm` - SVM facilitator (V2)
 - `@x402/svm/v1` - SVM facilitator (V1) + NETWORKS
+- `@x402/stellar` - Stellar facilitator (V2, SEP-41)
 - `express` - HTTP server
 - `viem` - Ethereum transactions
 - `@solana/web3.js` - Solana transactions

@@ -31,4 +31,5 @@ const (
 	ErrFeePayerMismatch              = "invalid_exact_solana_fee_payer_mismatch"
 	ErrTransactionFailed             = "invalid_exact_solana_transaction_failed"
 	ErrTransactionConfirmationFailed = "invalid_exact_solana_transaction_confirmation_failed"
+	ErrDuplicateSettlement           = "duplicate_settlement"
 )

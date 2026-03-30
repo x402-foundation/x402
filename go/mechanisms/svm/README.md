@@ -69,6 +69,24 @@ The **exact** scheme implements fixed-amount payments:
 - **Fees**: Rent and transaction fees paid by facilitator
 - **Confirmation**: On-chain settlement with transaction signature
 
+## Duplicate Settlement Protection
+
+This package includes a built-in `SettlementCache` that prevents a known race condition on Solana where the same payment transaction could be settled multiple times before on-chain confirmation. The `NewExactSvmScheme` facilitator constructor accepts an optional `*SettlementCache` parameter — when the same cache instance is passed to both V1 and V2 facilitator schemes, cross-version duplicate detection is enabled.
+
+The cache rejects concurrent `/settle` calls that carry the same transaction payload, returning a `duplicate_settlement` error for the second and subsequent attempts. Entries are automatically evicted after 120 seconds (approximately twice the Solana blockhash lifetime).
+
+```go
+import svm "github.com/coinbase/x402/go/mechanisms/svm"
+
+cache := svm.NewSettlementCache()
+
+// Share the same cache across V1 and V2 schemes
+v2Scheme := facilitator.NewExactSvmScheme(signer, cache)
+v1Scheme := v1facilitator.NewExactSvmSchemeV1(signer, cache)
+```
+
+For full details on the race condition and mitigation strategy, see the [Exact SVM Scheme Specification](../../specs/schemes/exact/scheme_exact_svm.md#duplicate-settlement-mitigation-recommended).
+
 ## Future Schemes
 
 This directory currently contains only the **exact** scheme implementation. As new payment schemes are developed for Solana networks, they will be added here alongside the exact implementation:

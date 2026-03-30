@@ -1,0 +1,7 @@
+{
+  "name": "Agent Health Monitor",
+  "description": "Pay-per-call diagnostic infrastructure for autonomous agents on Base. 11 x402 endpoints delivering health scores, risk analysis, gas optimisation, wash scans, and AHS composite scoring. The mechanic layer for the agent economy.",
+  "logoUrl": "/logos/agent-health-monitor.png",
+  "websiteUrl": "https://agenthealthmonitor.xyz",
+  "category": "Services/Endpoints"
+}

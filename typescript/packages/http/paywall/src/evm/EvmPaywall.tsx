@@ -5,6 +5,7 @@ import { useAccount, useSwitchChain, useWalletClient, useConnect, useDisconnect 
 
 import { ExactEvmScheme } from "@x402/evm/exact/client";
 import { x402Client } from "@x402/core/client";
+import { encodePaymentSignatureHeader } from "@x402/core/http";
 import type { PaymentRequired } from "@x402/core/types";
 import { getUSDCBalance } from "./utils";
 
@@ -154,7 +155,7 @@ export function EvmPaywall({ paymentRequired, onSuccessfulResponse }: EvmPaywall
       const paymentPayload = await client.createPaymentPayload(paymentRequired);
 
       // Encode as base64 JSON for v2 header
-      const paymentHeader = btoa(JSON.stringify(paymentPayload));
+      const paymentHeader = encodePaymentSignatureHeader(paymentPayload);
 
       setStatus("Requesting content with payment...");
       const response = await fetch(x402.currentUrl, {

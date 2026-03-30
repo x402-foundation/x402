@@ -2,6 +2,7 @@ import { x402Client, SelectPaymentRequirements, PaymentPolicy } from "@x402/core
 import { Network } from "@x402/core/types";
 import { ClientEvmSigner } from "../../signer";
 import { ExactEvmScheme } from "./scheme";
+import { ExactEvmSchemeOptions } from "./rpc";
 import { ExactEvmSchemeV1 } from "../v1/client/scheme";
 import { NETWORKS } from "../../v1";
 
@@ -26,8 +27,15 @@ export interface EvmClientConfig {
   policies?: PaymentPolicy[];
 
   /**
-   * Optional specific networks to register
-   * If not provided, registers wildcard support (eip155:*)
+   * Optional Exact EVM client scheme options.
+   * Supports either a single config ({ rpcUrl }) or per-chain configs
+   * keyed by EVM chain ID ({ 8453: { rpcUrl: "..." } }).
+   */
+  schemeOptions?: ExactEvmSchemeOptions;
+
+  /**
+   * Optional specific networks to register.
+   * If not provided, registers wildcard support (eip155:*).
    */
   networks?: Network[];
 }
@@ -55,7 +63,7 @@ export interface EvmClientConfig {
  * ```
  */
 export function registerExactEvmScheme(client: x402Client, config: EvmClientConfig): x402Client {
-  const evmScheme = new ExactEvmScheme(config.signer);
+  const evmScheme = new ExactEvmScheme(config.signer, config.schemeOptions);
 
   // Register V2 scheme
   // EIP-2612 gas sponsoring is handled internally by the scheme when the

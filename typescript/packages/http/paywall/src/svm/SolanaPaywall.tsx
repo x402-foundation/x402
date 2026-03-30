@@ -4,6 +4,7 @@ import type { WalletWithSolanaFeatures } from "@solana/wallet-standard-features"
 
 import { ExactSvmScheme } from "@x402/svm/exact/client";
 import { x402Client } from "@x402/core/client";
+import { encodePaymentSignatureHeader } from "@x402/core/http";
 import type { PaymentRequired } from "@x402/core/types";
 
 import { Spinner } from "./Spinner";
@@ -185,7 +186,7 @@ export function SolanaPaywall({ paymentRequired, onSuccessfulResponse }: SolanaP
 
       const paymentPayload = await client.createPaymentPayload(paymentRequired);
 
-      const paymentHeader = btoa(JSON.stringify(paymentPayload));
+      const paymentHeader = encodePaymentSignatureHeader(paymentPayload);
 
       setStatus("Requesting content with payment...");
       const response = await fetch(x402.currentUrl, {

@@ -86,7 +86,7 @@ func TestEVMVersionMismatch(t *testing.T) {
 		// Setup V2 client
 		clientSigner := &mockClientEvmSigner{}
 		client := x402.Newx402Client()
-		evmClient := evmclient.NewExactEvmScheme(clientSigner)
+		evmClient := evmclient.NewExactEvmScheme(clientSigner, nil)
 		client.Register("eip155:8453", evmClient)
 
 		// V2 requirements (typed)
@@ -129,7 +129,7 @@ func TestEVMDualVersionSupport(t *testing.T) {
 		client.RegisterV1("base", evmClientV1)
 
 		// Register V2 implementation with CAIP-2
-		evmClient := evmclient.NewExactEvmScheme(clientSigner)
+		evmClient := evmclient.NewExactEvmScheme(clientSigner, nil)
 		client.Register("eip155:8453", evmClient)
 
 		// V1 requirements use legacy network name
@@ -195,7 +195,7 @@ func TestEVMDualVersionSupport(t *testing.T) {
 		client.RegisterV1("base", evmClientV1)
 
 		// Register V2 implementation with CAIP-2
-		evmClient := evmclient.NewExactEvmScheme(clientSigner)
+		evmClient := evmclient.NewExactEvmScheme(clientSigner, nil)
 		client.Register("eip155:8453", evmClient)
 
 		// V2 requirements use CAIP-2

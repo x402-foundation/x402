@@ -7,10 +7,14 @@ The Sign-In-With-X (SIWX) extension implements [CAIP-122](https://chainagnostic.
 
 ## Overview
 
-SIWX solves a key problem in x402: **repeat access to purchased content**. Without SIWX, clients must pay every time they request a resource. With SIWX:
+SIWX solves two key problems in x402:
 
-* **For Buyers**: Sign in with your wallet to access content you've already paid for
-* **For Sellers**: Grant access to returning customers without requiring repayment
+1. **Repeat access to purchased content**: Without SIWX, clients must pay every time they request a resource. With SIWX, sign in with your wallet to access content you've already paid for.
+2. **Auth-only routes**: Protect resources with wallet authentication alone, without requiring payment.
+
+**Key Features:**
+* **For Buyers**: Sign in with your wallet to access content you've already paid for, or authenticate to access wallet-gated resources
+* **For Sellers**: Grant access to returning customers without requiring repayment, or create auth-only routes that require wallet signatures but no payment
 * **Chain-Agnostic**: Works with EVM (Ethereum, Base, etc.) and Solana wallets
 * **Standards-Based**: Built on CAIP-122, EIP-4361 (SIWE), and Sign-In-With-Solana
 
@@ -19,7 +23,9 @@ SIWX solves a key problem in x402: **repeat access to purchased content**. Witho
 1. **Server** returns 402 with `sign-in-with-x` extension containing challenge parameters
 2. **Client** signs the CAIP-122 message with their wallet
 3. **Client** sends signed proof in `SIGN-IN-WITH-X` HTTP header
-4. **Server** verifies signature and grants access if wallet has previous payment
+4. **Server** verifies signature and grants access either because:
+   - The route is auth-only (requires signature but no payment), or
+   - The wallet has previously paid for the resource
 
 This is a **Server ↔ Client** extension. The Facilitator is not involved in the authentication flow.
 
@@ -73,11 +79,19 @@ The easiest way to implement SIWX is using the provided hooks, which handle all 
           statement: 'Sign in to access your purchased content',
         }),
       },
+      'GET /profile': {
+        accepts: [],  // Auth-only route: no payment required
+        extensions: declareSIWxExtension({
+          network: NETWORK,  // Required for auth-only routes (cannot be inferred from accepts)
+          statement: 'Sign in to view your profile',
+          expirationSeconds: 300,
+        }),
+      },
     };
 
     // 3. Verify incoming SIWX proofs
     const httpServer = new x402HTTPResourceServer(resourceServer, routes)
-      .onProtectedRequest(createSIWxRequestHook({ storage }));  // Grants access if paid
+      .onProtectedRequest(createSIWxRequestHook({ storage }));  // Grants access for auth-only or paid routes
     ```
   </Tab>
 </Tabs>
@@ -85,7 +99,9 @@ The easiest way to implement SIWX is using the provided hooks, which handle all 
 The hooks automatically:
 - **siwxResourceServerExtension**: Derives `network` from `accepts`, `domain`/`uri` from request URL, refreshes `nonce`/`issuedAt`/`expirationTime` per request
 - **createSIWxSettleHook**: Records payment when settlement succeeds
-- **createSIWxRequestHook**: Validates and verifies SIWX proofs, grants access if wallet has paid
+- **createSIWxRequestHook**: Validates and verifies SIWX proofs, grants access for auth-only routes (`accepts: []`) or when wallet has paid
+
+**Auth-only routes** (declared with `accepts: []`) grant access based on a valid SIWX signature alone, without requiring payment. This is useful for wallet-gated content that doesn't need micropayments.
 
 ### Smart Wallet Support (EIP-1271 / EIP-6492)
 
@@ -166,10 +182,11 @@ For custom implementations, you can use the low-level functions directly:
       }
 
       // verification.address is the verified wallet
-      // Check if this wallet has paid before
+      // Grant access for auth-only routes or if wallet has paid
+      const isAuthOnly = await checkIfAuthOnlyRoute(request);
       const hasPaid = await checkPaymentHistory(verification.address);
-      if (hasPaid) {
-        // Grant access without payment
+      if (isAuthOnly || hasPaid) {
+        // Grant access
       }
     }
     ```
@@ -325,6 +342,8 @@ declareSIWxExtension({
   expirationSeconds?: number;          // Challenge TTL in seconds
 })
 ```
+
+**Note for auth-only routes:** When using `accepts: []`, the `network` parameter cannot be inferred from payment requirements and must be provided explicitly.
 
 ### `parseSIWxHeader(header)`
 

@@ -138,7 +138,7 @@ func (w *PaymentWrapper) Wrap(handler ToolHandler) ToolHandler {
 		}
 
 		// Settle payment -- return tool error result, NOT Go error
-		settleResp, err := w.server.SettlePayment(ctx, payload, w.config.Accepts[0])
+		settleResp, err := w.server.SettlePayment(ctx, payload, w.config.Accepts[0], nil)
 		if err != nil {
 			return w.settlementFailedResult(
 				fmt.Sprintf("Settlement error: %v", err)), nil

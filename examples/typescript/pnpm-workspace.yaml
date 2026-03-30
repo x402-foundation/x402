@@ -2,7 +2,7 @@ packages:
   - "clients/*"
   - "servers/*"
   - "fullstack/*"
-  - "facilitator"
+  - "facilitator/*"
   - "legacy/facilitator"
   - "legacy/servers/*"
   - "legacy/clients/*"

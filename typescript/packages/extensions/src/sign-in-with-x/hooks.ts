@@ -75,7 +75,11 @@ export function createSIWxSettleHook(options: CreateSIWxHookOptions) {
 }
 
 /**
- * Creates an onProtectedRequest hook that validates SIWX auth before payment.
+ * Creates an onProtectedRequest hook that validates SIWX auth.
+ *
+ * For paid routes: grants access when the SIWX signature is valid and the address has paid.
+ * For auth-only routes (accepts: []): grants access on valid SIWX signature alone.
+ * Auth-only detection uses the routeConfig passed by x402HTTPResourceServer.
  *
  * @param options - Hook configuration
  * @returns Hook function for x402HTTPResourceServer.onProtectedRequest()
@@ -99,10 +103,13 @@ export function createSIWxRequestHook(options: CreateSIWxHookOptions) {
     );
   }
 
-  return async (context: {
-    adapter: { getHeader(name: string): string | undefined; getUrl(): string };
-    path: string;
-  }): Promise<void | { grantAccess: true }> => {
+  return async (
+    context: {
+      adapter: { getHeader(name: string): string | undefined; getUrl(): string };
+      path: string;
+    },
+    routeConfig?: { accepts?: unknown },
+  ): Promise<void | { grantAccess: true }> => {
     // Try both cases for header (HTTP headers are case-insensitive)
     const header =
       context.adapter.getHeader(SIGN_IN_WITH_X) ||
@@ -134,8 +141,11 @@ export function createSIWxRequestHook(options: CreateSIWxHookOptions) {
         }
       }
 
-      const hasPaid = await storage.hasPaid(context.path, verification.address);
-      if (hasPaid) {
+      // Auth-only routes (accepts: []) grant access on valid SIWX alone
+      const isAuthOnly = Array.isArray(routeConfig?.accepts) && routeConfig.accepts.length === 0;
+
+      const shouldGrant = isAuthOnly || (await storage.hasPaid(context.path, verification.address));
+      if (shouldGrant) {
         // Record nonce as used before granting access
         if (storage.recordNonce) {
           await storage.recordNonce(payload.nonce);

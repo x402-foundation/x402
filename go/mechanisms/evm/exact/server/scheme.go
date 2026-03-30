@@ -30,6 +30,16 @@ func (s *ExactEvmScheme) Scheme() string {
 	return evm.SchemeExact
 }
 
+// GetAssetDecimals implements AssetDecimalsProvider. Returns the decimal precision for the
+// given asset on the given network, falling back to 6 if the asset is not recognized.
+func (s *ExactEvmScheme) GetAssetDecimals(asset string, network x402.Network) int {
+	info, err := evm.GetAssetInfo(string(network), asset)
+	if err != nil || info == nil {
+		return 6
+	}
+	return info.Decimals
+}
+
 // RegisterMoneyParser registers a custom money parser in the parser chain.
 // Multiple parsers can be registered - they will be tried in registration order.
 // Each parser receives a decimal amount (e.g., 1.50 for $1.50).
@@ -138,11 +148,8 @@ func (s *ExactEvmScheme) ParsePrice(price x402.Price, network x402.Network) (x40
 func (s *ExactEvmScheme) parseMoneyToDecimal(price x402.Price) (float64, error) {
 	switch v := price.(type) {
 	case string:
-		// Remove currency symbols
 		cleanPrice := strings.TrimSpace(v)
 		cleanPrice = strings.TrimPrefix(cleanPrice, "$")
-		cleanPrice = strings.TrimSuffix(cleanPrice, " USD")
-		cleanPrice = strings.TrimSuffix(cleanPrice, " USDC")
 		cleanPrice = strings.TrimSpace(cleanPrice)
 
 		// Parse as float
@@ -176,6 +183,23 @@ func (s *ExactEvmScheme) defaultMoneyConversion(amount float64, network x402.Net
 		return x402.AssetAmount{}, err
 	}
 
+	if config.DefaultAsset.Address == "" {
+		return x402.AssetAmount{}, fmt.Errorf("no default stablecoin configured for network %s; use RegisterMoneyParser or specify an explicit AssetAmount", networkStr)
+	}
+
+	// EIP-3009 tokens always need name/version for their transferWithAuthorization domain.
+	// Permit2 tokens only need them if the token supports EIP-2612 (for gasless permit signing).
+	// Omitting name/version for permit2 tokens signals the client to skip EIP-2612 and use ERC-20 approval gas sponsoring instead.
+	extra := map[string]interface{}{}
+	includeEip712Domain := config.DefaultAsset.AssetTransferMethod == "" || config.DefaultAsset.SupportsEip2612
+	if includeEip712Domain {
+		extra["name"] = config.DefaultAsset.Name
+		extra["version"] = config.DefaultAsset.Version
+	}
+	if config.DefaultAsset.AssetTransferMethod != "" {
+		extra["assetTransferMethod"] = string(config.DefaultAsset.AssetTransferMethod)
+	}
+
 	// Check if amount appears to already be in smallest unit
 	// (e.g., 1500000 for $1.50 USDC is likely already in smallest unit, not $1.5M)
 	oneUnit := float64(1)
@@ -188,7 +212,7 @@ func (s *ExactEvmScheme) defaultMoneyConversion(amount float64, network x402.Net
 		return x402.AssetAmount{
 			Asset:  config.DefaultAsset.Address,
 			Amount: fmt.Sprintf("%.0f", amount),
-			Extra:  make(map[string]interface{}),
+			Extra:  extra,
 		}, nil
 	}
 
@@ -202,7 +226,7 @@ func (s *ExactEvmScheme) defaultMoneyConversion(amount float64, network x402.Net
 	return x402.AssetAmount{
 		Asset:  config.DefaultAsset.Address,
 		Amount: parsedAmount.String(),
-		Extra:  make(map[string]interface{}),
+		Extra:  extra,
 	}, nil
 }
 
@@ -247,13 +271,15 @@ func (s *ExactEvmScheme) EnhancePaymentRequirements(
 		requirements.Extra = make(map[string]interface{})
 	}
 
-	// Add token name and version for EIP-712 signing
-	// ONLY add if not already present (client may have specified exact values)
-	if _, ok := requirements.Extra["name"]; !ok {
-		requirements.Extra["name"] = assetInfo.Name
-	}
-	if _, ok := requirements.Extra["version"]; !ok {
-		requirements.Extra["version"] = assetInfo.Version
+	// EIP-3009 tokens always need name/version; permit2 tokens only if they support EIP-2612
+	includeEip712Domain := assetInfo.AssetTransferMethod == "" || assetInfo.SupportsEip2612
+	if includeEip712Domain {
+		if _, ok := requirements.Extra["name"]; !ok {
+			requirements.Extra["name"] = assetInfo.Name
+		}
+		if _, ok := requirements.Extra["version"]; !ok {
+			requirements.Extra["version"] = assetInfo.Version
+		}
 	}
 
 	// Copy extensions from supportedKind if provided

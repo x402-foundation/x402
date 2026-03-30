@@ -382,6 +382,24 @@ Facilitator signers need to:
 - Monitor for unusual patterns
 - Set transaction value limits
 
+#### Duplicate Settlement (Solana / SVM)
+
+A race condition exists on Solana where the same payment transaction can be submitted to the `/settle` endpoint multiple times before the first submission is confirmed on-chain. Because Solana's RPC returns "success" for duplicate transaction submissions (the network deduplicates at the consensus level), the facilitator could return `success` to each caller. A malicious client can exploit this to obtain access to multiple resources while only paying once.
+
+The SVM mechanism packages include a built-in `SettlementCache` that mitigates this. When registering SVM facilitator schemes, pass a shared cache instance to both V1 and V2 schemes:
+
+```go
+import svm "github.com/coinbase/x402/go/mechanisms/svm"
+
+cache := svm.NewSettlementCache()
+v2Scheme := facilitator.NewExactSvmScheme(signer, cache)
+v1Scheme := v1facilitator.NewExactSvmSchemeV1(signer, cache)
+```
+
+The cache rejects concurrent settlement attempts for the same transaction payload with a `duplicate_settlement` error. Entries are evicted after 120 seconds (approximately twice the Solana blockhash lifetime).
+
+See the [Exact SVM Scheme Specification](../specs/schemes/exact/scheme_exact_svm.md#duplicate-settlement-mitigation-recommended) for full details.
+
 ### High Availability
 
 - Run multiple facilitator instances
