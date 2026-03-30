@@ -1,6 +1,6 @@
 {
   "name": "pellet.fi",
-  "description": "Token intelligence on Base. AI-powered contract analysis, creator forensics, and safety signals for any Base token. Free market data and flags. Full AI analysis for $0.01 USDC via x402.",
+  "description": "Token intelligence on Base. AI-powered contract analysis, creator forensics, and safety signals for any Base token. Free market data and flags. Full AI analysis for $0.05 USDC via x402. MCP server: npx -y @pelletfi/mcp",
   "logoUrl": "/logos/pellet.svg",
   "websiteUrl": "https://pelletfi.com",
   "category": "Services/Endpoints"
