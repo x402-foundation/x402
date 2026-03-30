@@ -4,6 +4,8 @@
 
 The `exact` scheme on Algorand uses the Algorand Standard Asset (ASA), native assets (no contract required) of the Algorand protocol, to authorize a transfer of a specific amount from the payor to the resource server. The approach results in the facilitator having no ability to direct funds anywhere but the address specified by the resource server in `paymentRequirements`.
 
+> **x402 v2:** `PaymentRequirements` use the field name **`amount`** (atomic units). Do not use the v1 name `maxAmountRequired` in specifications or v2 payloads for this scheme.
+
 ## Sequence of operations
 
 ```mermaid
@@ -141,7 +143,7 @@ Example of a USDC asset transfer with an abstracted fee (i.e paid by the facilit
 
 ## `PAYMENT-RESPONSE` Header
 
-Upon a successful settlement, the `PAYMENT-RESPONSE` **MUST** return the transaction ID of the `paymentGroup[paymentIndex]` transaction. This identifies the specific asset transfer transaction to the `payTo` address for the `maxAmountRequired`, and can be used to identify the transaction on the network.
+Upon a successful settlement, the `PAYMENT-RESPONSE` **MUST** return the transaction ID of the `paymentGroup[paymentIndex]` transaction. This identifies the specific asset transfer transaction to the `payTo` address for the `amount` specified in `PaymentRequirements`, and can be used to identify the transaction on the network.
 
 Should the settlement fail, the transaction ID **SHOULD** be returned, but since failed transactions are not committed to the network, it might not be visible on the chain.
 
@@ -158,25 +160,54 @@ Should the settlement fail, the transaction ID **SHOULD** be returned, but since
 
 ## Verification
 
-Steps to verify a payment for the `exact` scheme on Algorand:
+Steps to verify a payment for the `exact` scheme on Algorand. Implementations **SHOULD** perform **cross-validation** (subsection **1**) before relying on payment-line and fee-payer checks, so invalid protocol metadata fails fast with a structured error.
 
-1. Check the `paymentGroup` contains 16 or fewer elements.
-2. Decode all transactions from the `paymentGroup`.
-3. Locate the `paymentGroup[paymentIndex]` transaction from the `Payment Payload`.
-    1. Check the `aamt` (asset amount) matches `maxAmountRequired` from the `Payment Requirements`.
-    2. Check the `arcv` (asset receiver) matches `payTo` from the `Payment Requirements`.
-4. Locate all transactions where for `snd` (sender) is the `Facilitator`s Algorand address.
-    1. Check the `type` (transaction type) is `pay`.
-    2. Check the following fields are omitted: `close`, `rekey`, `amt`.
-    3. Check the `fee` (Fee) is a reasonable amount.
-    4. Sign the transaction.
-5. Evaluate the payment group against an Algorand node's `simulate` endpoint to ensure the transactions would succeed.
+### 1. Cross-validation (protocol metadata)
+
+Before relying on decoded transaction fields:
+
+1. **`x402Version`** — The `PAYMENT-SIGNATURE` header **MUST** include an `x402Version` compatible with the facilitator and resource server (typically `2` for v2 flows).
+2. **`scheme`** — **MUST** be `exact` for this scheme.
+3. **`network`** — The `network` carried in the payment payload (e.g. inside the `PAYMENT-SIGNATURE` header) **MUST** match the `network` in `PaymentRequirements` for this request (same CAIP-2 string, e.g. `algorand:<genesis-hash>`).
+4. **Consistency** — Any `accepted` / `resource` fields present in the header **MUST** be consistent with what the resource server previously returned in the 402 `accepts` list (same `scheme`, `network`, `asset`, `amount`, `payTo` as selected for payment).
+
+### 2. Transaction group structure
+
+5. Check the `paymentGroup` contains **16 or fewer** top-level transactions (Algorand atomic-group limit).
+6. Decode all transactions from the `paymentGroup` (base64 → msgpack).
+
+### 3. Genesis hash (network binding)
+
+7. For **every** decoded transaction in the group, the transaction’s **genesis hash** (`gh` in the decoded txn) **MUST** equal the genesis hash encoded in `PaymentRequirements.network` for CAIP-2 identifiers of the form `algorand:<base64-genesis-hash>`. This binds the group to the intended Algorand network and prevents cross-network replay.
+
+### 4. Payment transaction (index `paymentIndex`)
+
+8. Locate the `paymentGroup[paymentIndex]` transaction (the payment line to the resource server).
+9. **Asset amount** — For an `axfer` (ASA transfer), `aamt` **MUST** exactly equal the `amount` field from `PaymentRequirements` (same string interpreted in the asset’s base units). For native ALGO `pay` transfers, the transferred amount **MUST** match `PaymentRequirements.amount` under the same rules.
+10. **Receiver** — `arcv` / receiver **MUST** match `payTo` from `PaymentRequirements`.
+11. **Asset** — For `axfer`, the asset ID (`xaid`) **MUST** match `PaymentRequirements.asset` (ASA ID as a string). Implementations **MUST** reject transfers where the on-chain asset does not match the required asset.
+
+### 5. Facilitator fee-payer transactions
+
+12. Locate all transactions where `snd` (sender) is the facilitator’s Algorand address (fee-payer role).
+    1. Check the `type` is `pay`.
+    2. Check the following fields are omitted: `close`, `rekey`, `amt` (zero-ALGO self-transfer pattern for fee pooling as used in gasless flows).
+    3. Check the `fee` is within a reasonable upper bound (policy-defined) so the facilitator cannot be drained by excessive fees.
+    4. Sign the transaction if the facilitator is expected to co-sign.
+
+### 6. Simulation
+
+13. Evaluate the payment group against an Algorand node’s **`simulate`** endpoint to ensure the transactions would succeed.
+
+### Machine-readable errors
+
+Facilitators **SHOULD** return structured verify/settle responses using stable `invalidReason` / `errorReason` strings (and optional `invalidMessage` / `errorMessage` detail). The reference `@x402/avm` facilitator defines a fixed vocabulary in [`VerifyErrorReason`](../../../typescript/packages/mechanisms/avm/src/exact/facilitator/scheme.ts) (for example genesis hash mismatch, amount/receiver/asset mismatch, simulation failure). Implementations **MAY** adopt the same strings or extend them, but **SHOULD** keep reasons stable for client handling.
 
 ## Settlement
 
 Once the group is validated by the resource server, settlement can occur by the facilitator submitting the verified transaction group to the Algorand network through the `v2/transactions` endpoint against any valid Algorand node.
 
-In Algorand there are no consensus forks and so it achieves instant finality the moment a transaction is included in a block. So as soon as the transaction is included in a block, the payment is considered settled and the facilitator can inform the resource server of the successful payment and proceed with the resource delivery.
+In Algorand there are no long-range reorgs comparable to probabilistic-finality chains; once a transaction is included in a block it is final for practical purposes. Implementations **SHOULD** still confirm the transaction ID is **committed** (e.g. returned from `v2/transactions` or observed via `pending` → `confirmed`) before reporting settlement success to the resource server, so clients never see success for a dropped or never-broadcast group.
 
 ## Additional Considerations
 
