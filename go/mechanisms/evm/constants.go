@@ -76,6 +76,8 @@ var (
 	ChainIDMezoTestnet = big.NewInt(31611)
 	ChainIDStable      = big.NewInt(988)
 	ChainIDPolygon     = big.NewInt(137)
+	ChainIDArbOne      = big.NewInt(42161)
+	ChainIDArbSepolia  = big.NewInt(421614)
 
 	// Network configurations
 	// See DEFAULT_ASSET.md for guidelines on adding new chains
@@ -158,6 +160,27 @@ var (
 			ChainID: ChainIDPolygon,
 			DefaultAsset: AssetInfo{
 				Address:  "0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359", // USDC on Polygon
+				Name:     "USD Coin",
+				Version:  "2",
+				Decimals: DefaultDecimals,
+			},
+		},
+
+		// Arbitrum One
+		"eip155:42161": {
+			ChainID: ChainIDArbOne,
+			DefaultAsset: AssetInfo{
+				Address:  "0xaf88d065e77c8cC2239327C5EDb3A432268e5831", // USDC on ArbOne
+				Name:     "USD Coin",
+				Version:  "2",
+				Decimals: DefaultDecimals,
+			},
+		},
+		// Arbitrum Sepolia
+		"eip155:421614": {
+			ChainID: ChainIDArbSepolia,
+			DefaultAsset: AssetInfo{
+				Address:  "0x75faf114eafb1BDbe2F0316DF893fd58CE46AA4d", // USDC on ArbSepolia
 				Name:     "USD Coin",
 				Version:  "2",
 				Decimals: DefaultDecimals,
