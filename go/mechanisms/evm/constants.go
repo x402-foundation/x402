@@ -54,7 +54,7 @@ const (
 
 	// X402UptoPermit2ProxyAddress is the x402 upto payment proxy.
 	// Vanity address: 0x4020...0002 for easy recognition.
-	X402UptoPermit2ProxyAddress = "0x402039b3d6E6BEC5A02c2C9fd937ac17A6940002"
+	X402UptoPermit2ProxyAddress = "0x4020A4f3b7b90ccA423B9fabCc0CE57C6C240002"
 
 	// Permit2DeadlineBuffer is the time buffer (in seconds) added when checking
 	// deadline expiration to account for block propagation time.

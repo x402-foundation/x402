@@ -1,0 +1,3 @@
+kind: changed
+body: Updated x402UptoPermit2Proxy canonical address to 0x4020A4f3b7b90ccA423B9fabCc0CE57C6C240002, deployed with deterministic bytecode for reproducible cross-chain CREATE2 addresses
+time: 2026-03-30T15:56:01.761933-07:00

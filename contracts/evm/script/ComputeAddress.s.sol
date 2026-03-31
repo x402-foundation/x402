@@ -10,9 +10,11 @@ import {x402UptoPermit2Proxy} from "../src/x402UptoPermit2Proxy.sol";
  * @title ComputeAddress
  * @notice Compute the deterministic CREATE2 addresses for x402 Permit2 Proxies
  *
- * @dev The Permit2 address is a constructor argument. Since the canonical Permit2
- *      address is the same on all EVM chains, the initCode is identical everywhere,
- *      preserving uniform CREATE2 addresses.
+ * @dev x402ExactPermit2Proxy uses a pre-built initCode (script/data/exact-proxy-initcode.hex)
+ *      because the original build included non-deterministic CBOR metadata.
+ *
+ *      x402UptoPermit2Proxy uses compiler-derived creationCode, which is deterministic
+ *      thanks to cbor_metadata = false in foundry.toml.
  *
  * @dev Run with default salts:
  *      forge script script/ComputeAddress.s.sol
@@ -32,8 +34,11 @@ contract ComputeAddress is Script {
     bytes32 constant DEFAULT_EXACT_SALT = 0x0000000000000000000000000000000000000000000000003000000007263b0e;
 
     /// @notice Default salt for x402UptoPermit2Proxy
-    /// @dev Vanity mined for address 0x402039b3d6e6bec5a02c2c9fd937ac17a6940002
-    bytes32 constant DEFAULT_UPTO_SALT = 0x0000000000000000000000000000000000000000000000000000000000edb738;
+    /// @dev Vanity mined for address 0x4020a4f3b7b90cca423b9fabcc0ce57c6c240002
+    bytes32 constant DEFAULT_UPTO_SALT = 0x000000000000000000000000000000000000000000000000b000000001db633d;
+
+    /// @notice Expected initCodeHash for x402ExactPermit2Proxy (pre-built, includes CBOR metadata)
+    bytes32 constant EXACT_INIT_CODE_HASH = 0xe774d1d5a07218946ab54efe010b300481478b86861bb17d69c98a57f68a604c;
 
     /**
      * @notice Computes the CREATE2 addresses using the default salts
@@ -59,15 +64,17 @@ contract ComputeAddress is Script {
         console2.log("  Permit2 (ctor arg):  ", CANONICAL_PERMIT2);
         console2.log("");
 
-        // Compute x402ExactPermit2Proxy address
+        // x402ExactPermit2Proxy — uses pre-built initCode from hex file
         {
-            bytes memory initCode =
-                abi.encodePacked(type(x402ExactPermit2Proxy).creationCode, abi.encode(CANONICAL_PERMIT2));
+            bytes memory initCode = vm.parseBytes(vm.readFile("script/data/exact-proxy-initcode.hex"));
             bytes32 initCodeHash = keccak256(initCode);
+
+            require(initCodeHash == EXACT_INIT_CODE_HASH, "Exact initCode hash mismatch - hex file may be corrupted");
+
             address expectedAddress = _computeCreate2Addr(exactSalt, initCodeHash, CREATE2_DEPLOYER);
 
             console2.log("------------------------------------------------------------");
-            console2.log("  x402ExactPermit2Proxy");
+            console2.log("  x402ExactPermit2Proxy (pre-built initCode)");
             console2.log("------------------------------------------------------------");
             console2.log("  Salt:           ", vm.toString(exactSalt));
             console2.log("  Init Code Hash: ", vm.toString(initCodeHash));
@@ -81,7 +88,7 @@ contract ComputeAddress is Script {
             console2.log("");
         }
 
-        // Compute x402UptoPermit2Proxy address
+        // x402UptoPermit2Proxy — uses compiler-derived creationCode (deterministic)
         {
             bytes memory initCode =
                 abi.encodePacked(type(x402UptoPermit2Proxy).creationCode, abi.encode(CANONICAL_PERMIT2));
@@ -89,7 +96,7 @@ contract ComputeAddress is Script {
             address expectedAddress = _computeCreate2Addr(uptoSalt, initCodeHash, CREATE2_DEPLOYER);
 
             console2.log("------------------------------------------------------------");
-            console2.log("  x402UptoPermit2Proxy");
+            console2.log("  x402UptoPermit2Proxy (deterministic build)");
             console2.log("------------------------------------------------------------");
             console2.log("  Salt:           ", vm.toString(uptoSalt));
             console2.log("  Init Code Hash: ", vm.toString(initCodeHash));

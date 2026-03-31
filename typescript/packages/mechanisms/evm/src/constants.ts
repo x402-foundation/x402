@@ -214,7 +214,7 @@ export const x402ExactPermit2ProxyAddress = "0x402085c248EeA27D92E8b30b2C58ed07f
  * - Vanity-mined salt for prefix 0x4020 and suffix 0002
  * - Contract bytecode + constructor args (PERMIT2_ADDRESS)
  */
-export const x402UptoPermit2ProxyAddress = "0x402039b3d6E6BEC5A02c2C9fd937ac17A6940002" as const;
+export const x402UptoPermit2ProxyAddress = "0x4020A4f3b7b90ccA423B9fabCc0CE57C6C240002" as const;
 
 /**
  * ABI components for the exact Permit2 witness tuple: Witness(address to, uint256 validAfter).
