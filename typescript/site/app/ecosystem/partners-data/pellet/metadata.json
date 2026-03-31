@@ -1,6 +1,6 @@
 {
   "name": "pellet.fi",
-  "description": "Token intelligence on Base. Free market data, safety flags, and search. Contract forensics ($0.02 USDC) and full AI analysis with creator wallet profiling ($0.05 USDC) via x402. MCP server for AI assistants, CLI (npx pelletfi), and .well-known/x402 auto-discovery. Live on Base mainnet.",
+  "description": "x402-native token intelligence on Base. Free market data, safety flags, and search. Contract forensics ($0.02 USDC) and full AI analysis with creator wallet profiling ($0.05 USDC) paid via x402. MCP server for AI assistants, CLI (npx pelletfi), and .well-known/x402 auto-discovery. Live on Base mainnet.",
   "logoUrl": "/logos/pellet.svg",
   "websiteUrl": "https://pelletfi.com",
   "category": "Services/Endpoints"
