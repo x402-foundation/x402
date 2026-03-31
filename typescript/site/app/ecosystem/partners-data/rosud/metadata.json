@@ -1,0 +1,19 @@
+{
+  "name": "Rosud",
+  "description": "AI agent payment infrastructure API implementing the x402 Facilitator role. Abstracts Circle Programmable Wallets + EIP-3009 for seamless USDC payments on Base — no gas management required for agents.",
+  "logoUrl": "/logos/rosud.png",
+  "websiteUrl": "https://rosud.com",
+  "category": "Facilitators",
+  "facilitator": {
+    "baseUrl": "https://api.rosud.com",
+    "networks": ["base", "base-sepolia"],
+    "schemes": ["exact"],
+    "assets": ["ERC20"],
+    "supports": {
+      "verify": true,
+      "settle": true,
+      "supported": true,
+      "list": false
+    }
+  }
+}
