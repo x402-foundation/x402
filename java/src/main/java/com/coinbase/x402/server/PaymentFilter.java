@@ -109,7 +109,7 @@ public class PaymentFilter implements Filter {
                 return;
             }
 
-            vr = facilitator.verify(header, buildRequirements(path));
+            vr = facilitator.verify(payload, buildRequirements(path));
         } catch (IllegalArgumentException ex) {
             // Malformed payment header - client error
             respond402(response, path, "malformed X-PAYMENT header");
@@ -152,7 +152,7 @@ public class PaymentFilter implements Filter {
         }
 
         try {
-            SettlementResponse sr = facilitator.settle(header, buildRequirements(path));
+            SettlementResponse sr = facilitator.settle(payload, buildRequirements(path));
             if (sr == null || !sr.success) {
                 // Settlement failed - return 402 if headers not sent yet
                 if (!response.isCommitted()) {

@@ -1,5 +1,6 @@
 package com.coinbase.x402.client;
 
+import com.coinbase.x402.model.PaymentPayload;
 import com.coinbase.x402.model.PaymentRequirements;
 
 import java.io.IOException;
@@ -8,28 +9,28 @@ import java.util.Set;
 /** Contract for calling an x402 facilitator (HTTP, gRPC, mock, etc.). */
 public interface FacilitatorClient {
     /**
-     * Verifies a payment header against the given requirements.
+     * Verifies a payment payload against the given requirements.
      *
-     * @param paymentHeader the X-402 payment header to verify
+     * @param paymentPayload the payment payload to verify
      * @param req the payment requirements to validate against
      * @return verification response indicating if payment is valid
      * @throws IOException if HTTP request fails or returns non-200 status
      * @throws InterruptedException if the request is interrupted
      */
-    VerificationResponse verify(String paymentHeader,
+    VerificationResponse verify(PaymentPayload paymentPayload,
                                 PaymentRequirements req)
             throws IOException, InterruptedException;
 
     /**
      * Settles a verified payment on the blockchain.
      *
-     * @param paymentHeader the X-402 payment header to settle
+     * @param paymentPayload the payment payload to settle
      * @param req the payment requirements for settlement
      * @return settlement response with transaction details if successful
      * @throws IOException if HTTP request fails or returns non-200 status
      * @throws InterruptedException if the request is interrupted
      */
-    SettlementResponse settle(String paymentHeader,
+    SettlementResponse settle(PaymentPayload paymentPayload,
                               PaymentRequirements req)
             throws IOException, InterruptedException;
 

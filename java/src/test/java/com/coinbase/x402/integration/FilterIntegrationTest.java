@@ -37,12 +37,16 @@ class FilterIntegrationTest {
     static void startJetty() throws Exception {
         // ----- stub facilitator -----------------------------------------
         FacilitatorClient stubFac = new FacilitatorClient() {
-            @Override public VerificationResponse verify(String hdr, com.coinbase.x402.model.PaymentRequirements r) {
+            @Override public VerificationResponse verify(PaymentPayload payload, com.coinbase.x402.model.PaymentRequirements r) {
                 VerificationResponse vr = new VerificationResponse();
                 vr.isValid = true;                       // always accept
                 return vr;
             }
-            @Override public com.coinbase.x402.client.SettlementResponse settle(String h, com.coinbase.x402.model.PaymentRequirements r) { return new com.coinbase.x402.client.SettlementResponse(); }
+            @Override public com.coinbase.x402.client.SettlementResponse settle(PaymentPayload payload, com.coinbase.x402.model.PaymentRequirements r) {
+                com.coinbase.x402.client.SettlementResponse sr = new com.coinbase.x402.client.SettlementResponse();
+                sr.success = true;
+                return sr;
+            }
             @Override public java.util.Set<com.coinbase.x402.client.Kind> supported() { return java.util.Set.of(); }
         };
 
