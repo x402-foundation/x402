@@ -1,0 +1,7 @@
+{
+  "name": "CryptoGuard",
+  "category": "Services/Endpoints",
+  "logoUrl": "/logos/cryptoguard.png",
+  "description": "Deterministic crypto risk scanner powered by physics-based anomaly detection. Detected every major crypto crash in backtesting — 27 days early on average, 5× fewer false alarms than statistical baselines. Scan any token by name, ticker, or contract address for a PROCEED/CAUTION/BLOCK verdict. $0.05/scan via USDC on Base.",
+  "websiteUrl": "https://gpartin--cryptoguard-api-fastapi-app.modal.run"
+}
