@@ -1,0 +1,7 @@
+{
+  "name": "DeFi Yield Intelligence API",
+  "description": "Risk-adjusted DeFi yield optimization API with x402 micropayments. 7-factor scoring (APY, TVL, protocol age, audit status, IL risk, TVL trend, chain risk) across 17K+ pools on 5 chains. $0.005/query via USDC on Base.",
+  "logoUrl": "/logos/defi-yield-intel.png",
+  "websiteUrl": "https://defi-yield-intel.defirevived.workers.dev",
+  "category": "Services/Endpoints"
+}
