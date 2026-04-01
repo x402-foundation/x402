@@ -1,0 +1,7 @@
+{
+  "name": "KYA — Know Your Agent",
+  "description": "Consumer-side spending control proxy for AI agents making x402 payments. Enforces per-session budgets, tool allowlists, rate limits, and audit trails between agents and paid MCP tools. Manages agent wallets on Base/USDC with automatic 402→pay→retry flow.",
+  "logoUrl": "/logos/kya.svg",
+  "websiteUrl": "https://github.com/sm11t/KYA",
+  "category": "Infrastructure & Tooling"
+}

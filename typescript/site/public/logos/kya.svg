@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 400" width="400" height="400">
+  <rect width="400" height="400" rx="48" fill="#0d1117"/>
+  <text x="200" y="220" text-anchor="middle" font-family="monospace" font-weight="bold" font-size="120" fill="#58a6ff">KYA</text>
+  <text x="200" y="290" text-anchor="middle" font-family="monospace" font-size="28" fill="#8b949e">Know Your Agent</text>
+  <rect x="60" y="320" width="280" height="4" rx="2" fill="#21262d"/>
+  <rect x="60" y="320" width="180" height="4" rx="2" fill="#3fb950"/>
+</svg>
