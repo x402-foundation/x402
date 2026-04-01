@@ -1,0 +1,7 @@
+{
+  "name": "Vealth",
+  "description": "Four x402 pay-per-call cloud functions for trading agents and ecological data: Kelly position sizing ($0.001), portfolio risk gate ($0.002), Regen Ledger credit oracle ($0.005), and AI prediction market edge scoring ($0.01). USDC on Base.",
+  "logoUrl": "/logos/vealth.svg",
+  "websiteUrl": "https://vealth.net",
+  "category": "Services/Endpoints"
+}
