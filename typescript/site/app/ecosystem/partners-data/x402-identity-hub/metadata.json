@@ -1,0 +1,7 @@
+{
+  "name": "x402 Identity Hub",
+  "category": "Infrastructure & Tooling",
+  "logoUrl": "/logos/x402-identity-hub.png",
+  "description": "Permanent ENS subname registration for AI agents — fully onchain on Ethereum. Mint subnames under 402bot.eth, 402api.eth, or 402mcp.eth for 0.005 ETH each. No renewals, no expiry. Give your x402 agent a human-readable, verifiable onchain identity.",
+  "websiteUrl": "https://x402id.eth.link"
+}
