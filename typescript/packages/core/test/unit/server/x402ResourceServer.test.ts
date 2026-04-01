@@ -545,6 +545,43 @@ describe("x402ResourceServer", () => {
       });
     });
 
+    describe("hook error isolation", () => {
+      it("should not treat payment as failed when afterVerify hook throws", async () => {
+        server.onAfterVerify(async () => {
+          throw new Error("Hook side-effect failed");
+        });
+
+        // Hook error must not surface as a verify failure
+        const result = await server.verifyPayment(buildPaymentPayload(), buildPaymentRequirements());
+        expect(result.isValid).toBe(true);
+      });
+
+      it("should continue remaining afterVerify hooks after one throws", async () => {
+        let secondHookCalled = false;
+
+        server
+          .onAfterVerify(async () => {
+            throw new Error("First hook fails");
+          })
+          .onAfterVerify(async () => {
+            secondHookCalled = true;
+          });
+
+        await server.verifyPayment(buildPaymentPayload(), buildPaymentRequirements());
+        expect(secondHookCalled).toBe(true);
+      });
+
+      it("should not treat settlement as failed when afterSettle hook throws", async () => {
+        server.onAfterSettle(async () => {
+          throw new Error("Hook side-effect failed");
+        });
+
+        // Hook error must not surface as a settle failure
+        const result = await server.settlePayment(buildPaymentPayload(), buildPaymentRequirements());
+        expect(result.success).toBe(true);
+      });
+    });
+
     describe("onVerifyFailure", () => {
       it("should execute when verification fails", async () => {
         let hookExecuted = false;

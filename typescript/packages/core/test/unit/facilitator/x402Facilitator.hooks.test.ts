@@ -331,4 +331,51 @@ describe("x402Facilitator - Lifecycle Hooks", () => {
       expect(result).toBe(facilitator);
     });
   });
+
+  describe("hook error isolation", () => {
+    it("should not treat payment as failed when afterVerify hook throws", async () => {
+      const facilitator = new x402Facilitator();
+      facilitator.register("eip155:8453", new MockSchemeFacilitator());
+
+      facilitator.onAfterVerify(async () => {
+        throw new Error("Hook side-effect failed");
+      });
+
+      // Payment verification succeeded — hook error must not surface as a verify failure
+      const result = await facilitator.verify(buildPaymentPayload(), buildPaymentRequirements());
+      expect(result.isValid).toBe(true);
+    });
+
+    it("should not treat settlement as failed when afterSettle hook throws", async () => {
+      const facilitator = new x402Facilitator();
+      facilitator.register("eip155:8453", new MockSchemeFacilitator());
+
+      facilitator.onAfterSettle(async () => {
+        throw new Error("Hook side-effect failed");
+      });
+
+      // Settlement succeeded — hook error must not surface as a settle failure
+      const result = await facilitator.settle(buildPaymentPayload(), buildPaymentRequirements());
+      expect(result.success).toBe(true);
+    });
+
+    it("should continue remaining afterVerify hooks after one throws", async () => {
+      const facilitator = new x402Facilitator();
+      facilitator.register("eip155:8453", new MockSchemeFacilitator());
+
+      let secondHookCalled = false;
+
+      facilitator
+        .onAfterVerify(async () => {
+          throw new Error("First hook fails");
+        })
+        .onAfterVerify(async () => {
+          secondHookCalled = true;
+        });
+
+      await facilitator.verify(buildPaymentPayload(), buildPaymentRequirements());
+      expect(secondHookCalled).toBe(true);
+    });
+  });
+
 });

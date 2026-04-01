@@ -744,7 +744,11 @@ export class x402ResourceServer {
       };
 
       for (const hook of this.afterVerifyHooks) {
-        await hook(resultContext);
+        try {
+          await hook(resultContext);
+        } catch (hookError) {
+          console.error("afterVerify hook threw an error (payment succeeded):", hookError);
+        }
       }
 
       return verifyResult;
@@ -875,7 +879,11 @@ export class x402ResourceServer {
       };
 
       for (const hook of this.afterSettleHooks) {
-        await hook(resultContext);
+        try {
+          await hook(resultContext);
+        } catch (hookError) {
+          console.error("afterSettle hook threw an error (settlement succeeded):", hookError);
+        }
       }
 
       // Let declared extensions add data to settlement response
