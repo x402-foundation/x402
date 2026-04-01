@@ -67,6 +67,36 @@ export const DEFAULT_STABLECOINS: Record<string, ExactDefaultAssetInfo> = {
     version: "2",
     decimals: 6,
   }, // Monad mainnet USDC
+  "eip155:988": {
+    address: "0x779Ded0c9e1022225f8E0630b35a9b54bE713736",
+    name: "USDT0",
+    version: "1",
+    decimals: 6,
+  }, // Stable mainnet USDT0
+  "eip155:2201": {
+    address: "0x78Cf24370174180738C5B8E352B6D14c83a6c9A9",
+    name: "USDT0",
+    version: "1",
+    decimals: 6,
+  }, // Stable testnet USDT0
+  "eip155:137": {
+    address: "0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359",
+    name: "USD Coin",
+    version: "2",
+    decimals: 6,
+  }, // Polygon mainnet USDC
+  "eip155:42161": {
+    address: "0xaf88d065e77c8cC2239327C5EDb3A432268e5831",
+    name: "USD Coin",
+    version: "2",
+    decimals: 6,
+  }, // Arbitrum One USDC
+  "eip155:421614": {
+    address: "0x75faf114eafb1BDbe2F0316DF893fd58CE46AA4d",
+    name: "USD Coin",
+    version: "2",
+    decimals: 6,
+  }, // Arbitrum Sepolia USDC
 };
 
 /**

@@ -210,6 +210,19 @@ e.Use(echomw.PaymentMiddlewareFromConfig(routes,
 ))
 ```
 
+### Settlement Overrides (Upto Scheme)
+
+For the upto scheme, route handlers specify the actual settlement amount via `SetSettlementOverrides`:
+
+```go
+e.GET("/api/metered", func(c echo.Context) error {
+	usage := calculateUsage(c)
+	echomw.SetSettlementOverrides(c, &x402.SettlementOverrides{Amount: usage})
+
+	return c.JSON(http.StatusOK, map[string]interface{}{"result": "ok"})
+})
+```
+
 ### Error Handler
 
 Custom error handling:

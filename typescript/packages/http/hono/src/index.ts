@@ -225,13 +225,10 @@ export function paymentMiddlewareFromHTTPServer(
         // Get response body for extensions
         const responseBody = Buffer.from(await res.clone().arrayBuffer());
 
-        // Extract settlement overrides from response header (set by route handler)
         const responseHeaders: Record<string, string> = {};
-        const overridesHeaderValue = res.headers.get(SETTLEMENT_OVERRIDES_HEADER);
-        if (overridesHeaderValue) {
-          responseHeaders[SETTLEMENT_OVERRIDES_HEADER] = overridesHeaderValue;
-          res.headers.delete(SETTLEMENT_OVERRIDES_HEADER);
-        }
+        res.headers.forEach((value, key) => {
+          responseHeaders[key] = value;
+        });
 
         // Clear the response so we can modify headers
         c.res = undefined;

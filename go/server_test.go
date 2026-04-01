@@ -607,3 +607,109 @@ func TestSupportedCache(t *testing.T) {
 	}
 }
 */
+
+func TestResolveSettlementOverrideAmount(t *testing.T) {
+	baseReqs := types.PaymentRequirements{
+		Amount: "2000",
+	}
+
+	t.Run("raw atomic units", func(t *testing.T) {
+		tests := []struct {
+			input    string
+			expected string
+		}{
+			{"1000", "1000"},
+			{"0", "0"},
+			{"999999", "999999"},
+		}
+		for _, tt := range tests {
+			result, err := ResolveSettlementOverrideAmount(tt.input, baseReqs, 6)
+			if err != nil {
+				t.Errorf("ResolveSettlementOverrideAmount(%q) error: %v", tt.input, err)
+			}
+			if result != tt.expected {
+				t.Errorf("ResolveSettlementOverrideAmount(%q) = %q, want %q", tt.input, result, tt.expected)
+			}
+		}
+	})
+
+	t.Run("percent format", func(t *testing.T) {
+		tests := []struct {
+			input    string
+			amount   string
+			expected string
+		}{
+			{"50%", "2000", "1000"},
+			{"100%", "2000", "2000"},
+			{"0%", "2000", "0"},
+			{"25%", "2000", "500"},
+			{"33.33%", "3000", "999"},
+			{"10.5%", "1000", "105"},
+		}
+		for _, tt := range tests {
+			reqs := types.PaymentRequirements{Amount: tt.amount}
+			result, err := ResolveSettlementOverrideAmount(tt.input, reqs, 6)
+			if err != nil {
+				t.Errorf("ResolveSettlementOverrideAmount(%q, amount=%s) error: %v", tt.input, tt.amount, err)
+			}
+			if result != tt.expected {
+				t.Errorf("ResolveSettlementOverrideAmount(%q, amount=%s) = %q, want %q", tt.input, tt.amount, result, tt.expected)
+			}
+		}
+	})
+
+	t.Run("dollar price with default 6 decimals", func(t *testing.T) {
+		tests := []struct {
+			input    string
+			expected string
+		}{
+			{"$1.00", "1000000"},
+			{"$0.05", "50000"},
+			{"$0.001", "1000"},
+			{"$0", "0"},
+		}
+		for _, tt := range tests {
+			result, err := ResolveSettlementOverrideAmount(tt.input, baseReqs, 6)
+			if err != nil {
+				t.Errorf("ResolveSettlementOverrideAmount(%q) error: %v", tt.input, err)
+			}
+			if result != tt.expected {
+				t.Errorf("ResolveSettlementOverrideAmount(%q) = %q, want %q", tt.input, result, tt.expected)
+			}
+		}
+	})
+
+	t.Run("dollar price with 8 decimals", func(t *testing.T) {
+		reqs := types.PaymentRequirements{Amount: "2000"}
+		result, err := ResolveSettlementOverrideAmount("$0.05", reqs, 8)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if result != "5000000" {
+			t.Errorf("expected 5000000 (8 decimals), got %s", result)
+		}
+	})
+
+	t.Run("dollar price result uses requirements asset regardless of decimals", func(t *testing.T) {
+		reqs := types.PaymentRequirements{Amount: "2000", Asset: "0xSomeToken"}
+		result, err := ResolveSettlementOverrideAmount("$0.001", reqs, 6)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		// Only the amount changes; the asset remains whatever is in requirements
+		if result != "1000" {
+			t.Errorf("expected 1000, got %s", result)
+		}
+	})
+
+	t.Run("dollar price with 6 decimals", func(t *testing.T) {
+		reqs := types.PaymentRequirements{Amount: "2000", Asset: "0xUnknownToken"}
+		result, err := ResolveSettlementOverrideAmount("$0.05", reqs, 6)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if result != "50000" {
+			t.Errorf("expected 50000 (6 decimals), got %s", result)
+		}
+	})
+}

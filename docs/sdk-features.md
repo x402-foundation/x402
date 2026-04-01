@@ -19,7 +19,7 @@ This page tracks which features are implemented in each SDK (TypeScript, Go, Pyt
 
 | Role | TypeScript | Go | Python |
 |------|------------|-----|--------|
-| Server | Express, Hono, Next.js | Gin | FastAPI, Flask |
+| Server | Express, Hono, Next.js | Gin, net/http | FastAPI, Flask |
 | Client | Fetch, Axios | net/http | httpx, requests |
 
 ## Networks
@@ -40,6 +40,7 @@ This page tracks which features are implemented in each SDK (TypeScript, Go, Pyt
 | exact/svm (SPL) | ✅ | ✅ | ✅ |
 | exact/stellar (Soroban) | ✅ | ❌ | ❌ |
 | exact/aptos (Fungible Assets) | ✅ | ❌ | ❌ |
+| upto/evm (Permit2) | ✅ | ✅ | ❌ |
 
 ## Extensions
 

@@ -9,6 +9,8 @@ import {
   FacilitatorClient,
   FacilitatorResponseError,
   getFacilitatorResponseError,
+  SETTLEMENT_OVERRIDES_HEADER,
+  SettlementOverrides,
 } from "@x402/core/server";
 import {
   SchemeNetworkServer,
@@ -18,6 +20,17 @@ import {
 } from "@x402/core/types";
 import { FastifyInstance, FastifyRequest, FastifyReply } from "fastify";
 import { FastifyAdapter } from "./adapter";
+
+/**
+ * Sets settlement overrides on a Fastify reply for partial settlement (upto scheme).
+ * The middleware extracts these before settlement and strips the header from the client response.
+ *
+ * @param reply - The Fastify reply object
+ * @param overrides - Settlement overrides (e.g., { amount: "500" } for partial settlement)
+ */
+export function setSettlementOverrides(reply: FastifyReply, overrides: SettlementOverrides): void {
+  reply.header(SETTLEMENT_OVERRIDES_HEADER, JSON.stringify(overrides));
+}
 
 interface X402PaymentContext {
   paymentPayload: PaymentPayload;
@@ -419,11 +432,18 @@ export function paymentMiddlewareFromHTTPServer(
     try {
       const responseBody = getResponseBodyBuffer(effectivePayload);
 
+      const responseHeaders: Record<string, string> = {};
+      for (const [key, value] of Object.entries(reply.getHeaders())) {
+        if (value != null) {
+          responseHeaders[key] = String(value);
+        }
+      }
+
       const settleResult = await httpServer.processSettlement(
         x402Context.paymentPayload,
         x402Context.paymentRequirements,
         x402Context.declaredExtensions,
-        { request: x402Context.requestContext, responseBody },
+        { request: x402Context.requestContext, responseBody, responseHeaders },
       );
 
       if (!settleResult.success) {
@@ -553,7 +573,7 @@ export type {
 
 export type { PaywallProvider, PaywallConfig } from "@x402/core/server";
 
-export { RouteConfigurationError } from "@x402/core/server";
+export { RouteConfigurationError, SETTLEMENT_OVERRIDES_HEADER } from "@x402/core/server";
 
 export type { RouteValidationError } from "@x402/core/server";
 

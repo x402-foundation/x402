@@ -56,6 +56,8 @@ export interface TestEndpoint {
   extensions?: string[];
   /** True for Permit2 standard/direct settle - requires pre-approval (approve before test, not revoke) */
   permit2Direct?: boolean;
+  /** True for endpoints that require Permit2 revocation + fund/drain state setup before the first test (coldstart). */
+  coldstart?: boolean;
   health?: boolean;
   close?: boolean;
 }

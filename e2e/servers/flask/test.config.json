@@ -33,7 +33,8 @@
       "requiresPayment": true,
       "protocolFamily": "evm",
       "transferMethod": "permit2",
-      "extensions": ["eip2612GasSponsoring"]
+      "extensions": ["eip2612GasSponsoring"],
+      "coldstart": true
     },
     {
       "path": "/exact/evm/permit2-erc20ApprovalGasSponsoring",
@@ -42,7 +43,8 @@
       "requiresPayment": true,
       "protocolFamily": "evm",
       "transferMethod": "permit2",
-      "extensions": ["erc20ApprovalGasSponsoring"]
+      "extensions": ["erc20ApprovalGasSponsoring"],
+      "coldstart": true
     },
     {
       "path": "/health",

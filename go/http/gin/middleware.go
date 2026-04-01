@@ -3,7 +3,6 @@ package gin
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"fmt"
 	"net/http"
 	"sync"
@@ -18,8 +17,7 @@ import (
 // SetSettlementOverrides sets settlement overrides on the Gin response for partial settlement.
 // The middleware extracts these before settlement and strips the header from the client response.
 func SetSettlementOverrides(c *gin.Context, overrides *x402.SettlementOverrides) {
-	data, _ := json.Marshal(overrides)
-	c.Header(x402http.SettlementOverridesHeader, string(data))
+	c.Header(x402http.SettlementOverridesHeader, x402http.MarshalSettlementOverrides(overrides))
 }
 
 // ============================================================================
@@ -318,7 +316,7 @@ func createMiddlewareHandler(server *x402http.HTTPServer, config *MiddlewareConf
 
 		case x402http.ResultPaymentVerified:
 			// Payment verified, continue with settlement handling
-			handlePaymentVerified(c, server, ctx, result, config)
+			handlePaymentVerified(c, server, ctx, reqCtx, result, config)
 		}
 	}
 }
@@ -345,7 +343,7 @@ func handlePaymentError(c *gin.Context, response *x402http.HTTPResponseInstructi
 }
 
 // handlePaymentVerified handles verified payments with settlement
-func handlePaymentVerified(c *gin.Context, server *x402http.HTTPServer, ctx context.Context, result x402http.HTTPProcessResult, config *MiddlewareConfig) {
+func handlePaymentVerified(c *gin.Context, server *x402http.HTTPServer, ctx context.Context, reqCtx x402http.HTTPRequestContext, result x402http.HTTPProcessResult, config *MiddlewareConfig) {
 	// Capture response for settlement
 	writer := &responseCapture{
 		ResponseWriter: c.Writer,
@@ -381,22 +379,16 @@ func handlePaymentVerified(c *gin.Context, server *x402http.HTTPServer, ctx cont
 		return
 	}
 
-	// Extract settlement overrides from response header (set by route handler)
-	var settlementOverrides *x402.SettlementOverrides
-	if overridesHeader := writer.Header().Get(x402http.SettlementOverridesHeader); overridesHeader != "" {
-		var overrides x402.SettlementOverrides
-		if err := json.Unmarshal([]byte(overridesHeader), &overrides); err == nil {
-			settlementOverrides = &overrides
-		}
-		writer.Header().Del(x402http.SettlementOverridesHeader)
-	}
-
-	// Process settlement
 	settleResult := server.ProcessSettlement(
 		ctx,
 		*result.PaymentPayload,
 		*result.PaymentRequirements,
-		settlementOverrides,
+		nil,
+		&x402http.HTTPTransportContext{
+			Request:         &reqCtx,
+			ResponseBody:    writer.body.Bytes(),
+			ResponseHeaders: writer.Header(),
+		},
 	)
 
 	// Check settlement success

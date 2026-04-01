@@ -199,6 +199,19 @@ r.Use(ginmw.PaymentMiddlewareFromConfig(routes,
 ))
 ```
 
+### Settlement Overrides (Upto Scheme)
+
+For the upto scheme, route handlers specify the actual settlement amount via `SetSettlementOverrides`:
+
+```go
+r.GET("/api/metered", func(c *gin.Context) {
+	usage := calculateUsage(c)
+	ginmw.SetSettlementOverrides(c, &x402.SettlementOverrides{Amount: usage})
+
+	c.JSON(http.StatusOK, gin.H{"result": "ok"})
+})
+```
+
 ### Error Handler
 
 Custom error handling:

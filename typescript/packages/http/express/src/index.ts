@@ -302,12 +302,11 @@ export function paymentMiddlewareFromHTTPServer(
             ),
           );
 
-          // Extract settlement overrides from response header (set by route handler)
-          const overridesHeaderValue = res.getHeader(SETTLEMENT_OVERRIDES_HEADER);
           const responseHeaders: Record<string, string> = {};
-          if (overridesHeaderValue) {
-            responseHeaders[SETTLEMENT_OVERRIDES_HEADER] = String(overridesHeaderValue);
-            res.removeHeader(SETTLEMENT_OVERRIDES_HEADER);
+          for (const [key, value] of Object.entries(res.getHeaders())) {
+            if (value != null) {
+              responseHeaders[key] = String(value);
+            }
           }
 
           const settleResult = await httpServer.processSettlement(

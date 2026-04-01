@@ -16,7 +16,7 @@ import {
 } from "../types";
 import { x402Version } from "..";
 
-export const SETTLEMENT_OVERRIDES_HEADER = "settlement-overrides";
+export const SETTLEMENT_OVERRIDES_HEADER = "Settlement-Overrides";
 
 /**
  * Framework-agnostic HTTP adapter interface
@@ -947,6 +947,7 @@ export class x402HTTPResourceServer {
     const regex = new RegExp(
       `^${
         path
+          .replace(/\\/g, "\\\\") // Escape backslashes first
           .replace(/[$()+.?^{|}]/g, "\\$&") // Escape regex special chars
           .replace(/\*/g, ".*?") // Wildcards
           .replace(/\[([^\]]+)\]/g, "[^/]+") // Parameters (Next.js style [param])

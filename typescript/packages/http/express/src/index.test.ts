@@ -41,7 +41,7 @@ let mockRegisterPaywallProvider: ReturnType<typeof vi.fn>;
 let mockRequiresPayment: ReturnType<typeof vi.fn>;
 
 vi.mock("@x402/core/server", () => ({
-  SETTLEMENT_OVERRIDES_HEADER: "settlement-overrides",
+  SETTLEMENT_OVERRIDES_HEADER: "Settlement-Overrides",
   FacilitatorResponseError: class FacilitatorResponseError extends Error {
     /**
      * Creates a mock facilitator response error.
@@ -158,6 +158,9 @@ function createMockResponse(): Response & {
     setHeader: vi.fn(function (this: typeof res, key: string, value: string) {
       this._headers[key] = value;
       return this;
+    }),
+    getHeaders: vi.fn(function (this: typeof res) {
+      return this._headers;
     }),
     getHeader: vi.fn(function (this: typeof res, key: string) {
       return this._headers[key] ?? undefined;

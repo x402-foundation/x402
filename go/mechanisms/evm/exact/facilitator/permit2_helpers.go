@@ -215,7 +215,7 @@ func DiagnosePermit2SimulationFailure(
 	return &x402.VerifyResponse{IsValid: false, InvalidReason: ErrPermit2SimulationFailed, Payer: payer}
 }
 
-// CheckPermit2Prerequisites checks proxy deployment, payer token balance and payer ETH balance for gas.
+// CheckPermit2Prerequisites checks proxy deployment and payer token balance.
 func CheckPermit2Prerequisites(
 	ctx context.Context,
 	signer evm.FacilitatorEvmSigner,
@@ -235,14 +235,8 @@ func CheckPermit2Prerequisites(
 			FunctionName: "balanceOf",
 			Args:         []interface{}{common.HexToAddress(payer)},
 		},
-		{
-			Address:      evm.MULTICALL3Address,
-			ABI:          evm.Multicall3GetEthBalanceABI,
-			FunctionName: "getEthBalance",
-			Args:         []interface{}{common.HexToAddress(payer)},
-		},
 	})
-	if err != nil || len(results) < 3 {
+	if err != nil || len(results) < 2 {
 		// Fail open for prerequisites-only check
 		return &x402.VerifyResponse{IsValid: true, Payer: payer}
 	}
@@ -255,16 +249,6 @@ func CheckPermit2Prerequisites(
 	if ok && results[1].Success() {
 		if balance := asBigInt(results[1].Result); balance != nil && balance.Cmp(reqAmount) < 0 {
 			return &x402.VerifyResponse{IsValid: false, InvalidReason: ErrPermit2InsufficientBalance, Payer: payer}
-		}
-	}
-
-	if results[2].Success() {
-		minEthForGas := new(big.Int).Mul(
-			big.NewInt(int64(evm.ERC20ApproveGasLimit)),
-			big.NewInt(int64(evm.DefaultMaxFeePerGas)),
-		)
-		if ethBalance := asBigInt(results[2].Result); ethBalance != nil && ethBalance.Cmp(minEthForGas) < 0 {
-			return &x402.VerifyResponse{IsValid: false, InvalidReason: ErrErc20ApprovalInsufficientEth, Payer: payer}
 		}
 	}
 

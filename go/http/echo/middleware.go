@@ -14,6 +14,12 @@ import (
 	"github.com/labstack/echo/v4"
 )
 
+// SetSettlementOverrides sets settlement overrides on the Echo response for partial settlement.
+// The middleware extracts these before settlement and strips the header from the client response.
+func SetSettlementOverrides(c echo.Context, overrides *x402.SettlementOverrides) {
+	c.Response().Header().Set(x402http.SettlementOverridesHeader, x402http.MarshalSettlementOverrides(overrides))
+}
+
 // ============================================================================
 // Echo Adapter Implementation
 // ============================================================================
@@ -311,7 +317,7 @@ func createMiddlewareHandler(server *x402http.HTTPServer, config *MiddlewareConf
 
 			case x402http.ResultPaymentVerified:
 				// Payment verified, continue with settlement handling
-				return handlePaymentVerified(c, next, server, ctx, result, config)
+				return handlePaymentVerified(c, next, server, ctx, reqCtx, result, config)
 
 			default:
 				return next(c)
@@ -335,7 +341,7 @@ func handlePaymentError(c echo.Context, response *x402http.HTTPResponseInstructi
 }
 
 // handlePaymentVerified handles verified payments with settlement
-func handlePaymentVerified(c echo.Context, next echo.HandlerFunc, server *x402http.HTTPServer, ctx context.Context, result x402http.HTTPProcessResult, config *MiddlewareConfig) error {
+func handlePaymentVerified(c echo.Context, next echo.HandlerFunc, server *x402http.HTTPServer, ctx context.Context, reqCtx x402http.HTTPRequestContext, result x402http.HTTPProcessResult, config *MiddlewareConfig) error {
 	// Capture response for settlement
 	origWriter := c.Response().Writer
 	capture := &responseCapture{
@@ -373,12 +379,16 @@ func handlePaymentVerified(c echo.Context, next echo.HandlerFunc, server *x402ht
 		return nil
 	}
 
-	// Process settlement
 	settleResult := server.ProcessSettlement(
 		ctx,
 		*result.PaymentPayload,
 		*result.PaymentRequirements,
 		nil,
+		&x402http.HTTPTransportContext{
+			Request:         &reqCtx,
+			ResponseBody:    capture.body.Bytes(),
+			ResponseHeaders: capture.Header(),
+		},
 	)
 
 	// Check settlement success

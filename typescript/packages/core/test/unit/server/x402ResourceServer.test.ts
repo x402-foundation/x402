@@ -941,6 +941,103 @@ describe("x402ResourceServer", () => {
       expect(mockClient.settleCalls[0].requirements.amount).toBe("0");
     });
 
+    it("should resolve percent override through settlePayment", async () => {
+      const mockClient = new MockFacilitatorClient(
+        buildSupportedResponse({
+          kinds: [{ x402Version: 2, scheme: "exact", network: "eip155:8453" as Network }],
+        }),
+        undefined,
+        buildSettleResponse({ success: true }),
+      );
+
+      const server = new x402ResourceServer(mockClient);
+      const payload = buildPaymentPayload();
+      const requirements = buildPaymentRequirements({
+        scheme: "exact",
+        network: "eip155:8453" as Network,
+        amount: "2000",
+      });
+
+      await server.settlePayment(payload, requirements, undefined, undefined, { amount: "50%" });
+
+      expect(mockClient.settleCalls[0].requirements.amount).toBe("1000");
+    });
+
+    it("should resolve dollar override through settlePayment with default decimals", async () => {
+      const mockClient = new MockFacilitatorClient(
+        buildSupportedResponse({
+          kinds: [{ x402Version: 2, scheme: "exact", network: "eip155:8453" as Network }],
+        }),
+        undefined,
+        buildSettleResponse({ success: true }),
+      );
+
+      const server = new x402ResourceServer(mockClient);
+      const payload = buildPaymentPayload();
+      const requirements = buildPaymentRequirements({
+        scheme: "exact",
+        network: "eip155:8453" as Network,
+        amount: "1000000",
+      });
+
+      await server.settlePayment(payload, requirements, undefined, undefined, { amount: "$0.001" });
+
+      expect(mockClient.settleCalls[0].requirements.amount).toBe("1000");
+    });
+
+    it("should resolve dollar override using scheme getAssetDecimals", async () => {
+      const mockClient = new MockFacilitatorClient(
+        buildSupportedResponse({
+          kinds: [{ x402Version: 2, scheme: "exact", network: "eip155:8453" as Network }],
+        }),
+        undefined,
+        buildSettleResponse({ success: true }),
+      );
+
+      const server = new x402ResourceServer(mockClient);
+      const mockScheme = new MockSchemeNetworkServer("exact");
+      mockScheme.setAssetDecimalsResult(8);
+      server.register("eip155:8453" as Network, mockScheme);
+
+      const payload = buildPaymentPayload();
+      const requirements = buildPaymentRequirements({
+        scheme: "exact",
+        network: "eip155:8453" as Network,
+        amount: "1000000",
+      });
+
+      await server.settlePayment(payload, requirements, undefined, undefined, { amount: "$0.05" });
+
+      expect(mockClient.settleCalls[0].requirements.amount).toBe("5000000");
+    });
+
+    it("should not mutate asset when dollar override is used", async () => {
+      const mockClient = new MockFacilitatorClient(
+        buildSupportedResponse({
+          kinds: [{ x402Version: 2, scheme: "exact", network: "eip155:8453" as Network }],
+        }),
+        undefined,
+        buildSettleResponse({ success: true }),
+      );
+
+      const server = new x402ResourceServer(mockClient);
+      const payload = buildPaymentPayload();
+      const requirements = buildPaymentRequirements({
+        scheme: "exact",
+        network: "eip155:8453" as Network,
+        amount: "1000000",
+        asset: "0xOriginalToken",
+      });
+
+      await server.settlePayment(payload, requirements, undefined, undefined, {
+        amount: "$0.10",
+      });
+
+      // Only amount changes, asset stays the same
+      expect(mockClient.settleCalls[0].requirements.amount).toBe("100000");
+      expect(mockClient.settleCalls[0].requirements.asset).toBe("0xOriginalToken");
+    });
+
     it("should pass overridden requirements to beforeSettle hooks", async () => {
       const mockClient = new MockFacilitatorClient(
         buildSupportedResponse(),
@@ -1242,9 +1339,8 @@ describe("resolveSettlementOverrideAmount", () => {
       expect(resolveSettlementOverrideAmount("$0.05", baseRequirements)).toBe("50000");
     });
 
-    it("converts '$0.05' using extra.decimals = 8 when provided", () => {
-      const reqs = buildPaymentRequirements({ amount: "2000", extra: { decimals: 8 } });
-      expect(resolveSettlementOverrideAmount("$0.05", reqs)).toBe("5000000");
+    it("converts '$0.05' using 8 decimals when provided", () => {
+      expect(resolveSettlementOverrideAmount("$0.05", baseRequirements, 8)).toBe("5000000");
     });
 
     it("converts '$0.001' using default 6 decimals", () => {
