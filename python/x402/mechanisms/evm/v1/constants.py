@@ -46,6 +46,12 @@ V1_DEFAULT_ASSETS: dict[str, AssetInfo] = {
         "version": "1",
         "decimals": 6,
     },
+    "stable-testnet": {
+        "address": "0x78Cf24370174180738C5B8E352B6D14c83a6c9A9",
+        "name": "USDT0",
+        "version": "1",
+        "decimals": 6,
+    },
 }
 
 
@@ -69,6 +75,7 @@ V1_NETWORKS = [
     "megaeth",
     "monad",
     "stable",
+    "stable-testnet",
 ]
 
 # V1 network name to chain ID mapping
@@ -92,4 +99,5 @@ V1_NETWORK_CHAIN_IDS: dict[str, int] = {
     "megaeth": 4326,
     "monad": 143,
     "stable": 988,
+    "stable-testnet": 2201,
 }

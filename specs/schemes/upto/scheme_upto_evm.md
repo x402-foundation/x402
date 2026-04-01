@@ -124,7 +124,7 @@ The `payload` field must contain:
         "amount": "5000000"
       },
       "from": "0x857b06519E91e3A54538791bDbb0E22373e36b66",
-      "spender": "0x402039b3d6E6BEC5A02c2C9fd937ac17A6940002",
+      "spender": "0x4020A4f3b7b90ccA423B9fabCc0CE57C6C240002",
       "nonce": "0xf3746613c2d920b5fdabc0856f2aeb2d4f88ee6037b8cc5d04a71a4462f13480",
       "deadline": "1740672154",
       "witness": {
@@ -264,7 +264,7 @@ The Canonical Permit2 contract address can be found at [https://docs.uniswap.org
 
 ### Reference Implementation: `x402Permit2Proxy`
 
-The `upto` scheme uses its own `x402UptoPermit2Proxy` contract (deployed at `0x402039b3d6E6BEC5A02c2C9fd937ac17A6940002`), which is structurally similar to the `x402ExactPermit2Proxy` used by the [exact scheme](../exact/scheme_exact_evm.md#reference-implementation-x402permit2proxy) but includes a `facilitator` field in the witness struct for access control. The contract's `settle` function accepts an `amount` parameter that can be less than or equal to `permit.permitted.amount`, which enables the variable settlement amounts required by the `upto` scheme.
+The `upto` scheme uses its own `x402UptoPermit2Proxy` contract (deployed at `0x4020A4f3b7b90ccA423B9fabCc0CE57C6C240002`), which is structurally similar to the `x402ExactPermit2Proxy` used by the [exact scheme](../exact/scheme_exact_evm.md#reference-implementation-x402permit2proxy) but includes a `facilitator` field in the witness struct for access control. The contract's `settle` function accepts an `amount` parameter that can be less than or equal to `permit.permitted.amount`, which enables the variable settlement amounts required by the `upto` scheme.
 
 ---
 

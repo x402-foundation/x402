@@ -13,14 +13,19 @@ const PREFIX: [u8; 2] = [0x40, 0x20]; // 0x4020
 const EXACT_SUFFIX: [u8; 2] = [0x00, 0x01]; // ...0001
 const UPTO_SUFFIX: [u8; 2] = [0x00, 0x02]; // ...0002
 
-// Init code hashes (computed from contracts - no constructor args for chain portability)
-// Run `forge script script/ComputeAddress.s.sol` to verify these match
-// x402ExactPermit2Proxy
+// Init code hashes: keccak256(creationCode ++ abi.encode(PERMIT2))
+// Run `forge script script/ComputeAddress.s.sol` to verify these match.
+//
+// IMPORTANT: The Exact hash is from the ORIGINAL build (with CBOR metadata enabled).
+// Since that bytecode is already deployed, we preserve it via script/data/exact-proxy-initcode.hex.
+// The Upto hash is from the current build (cbor_metadata = false, bytecode_hash = "none").
+//
+// x402ExactPermit2Proxy (pre-built initCode, includes CBOR metadata)
 const EXACT_INIT_CODE_HASH: [u8; 32] =
     hex_literal::hex!("e774d1d5a07218946ab54efe010b300481478b86861bb17d69c98a57f68a604c");
-// x402UptoPermit2Proxy
+// x402UptoPermit2Proxy (deterministic build, no CBOR metadata)
 const UPTO_INIT_CODE_HASH: [u8; 32] =
-    hex_literal::hex!("b956a3d1d040d7b587f0dc6e8145368a5501bac459a111e73a4954ada577673b");
+    hex_literal::hex!("74f7a29cbc3c55f87cdef7f7c551643189e8bb62eed9de67753aebc402b83797");
 
 fn compute_create2_address(salt: &[u8; 32], init_code_hash: &[u8; 32]) -> [u8; 20] {
     let mut hasher = Keccak::v256();
@@ -115,23 +120,37 @@ fn mine_vanity(
 }
 
 fn main() {
+    let args: Vec<String> = std::env::args().collect();
+    let filter = args.get(1).map(|s| s.as_str());
+
+    let mine_exact = matches!(filter, None | Some("exact"));
+    let mine_upto = matches!(filter, None | Some("upto"));
+
     println!("\n🔍 x402 Vanity Address Miner (Rust)");
     println!("   Prefix: 0x{}", hex::encode(PREFIX));
-    println!("   Exact suffix: 0x{}", hex::encode(EXACT_SUFFIX));
-    println!("   Upto suffix: 0x{}", hex::encode(UPTO_SUFFIX));
+    if mine_exact {
+        println!("   Exact suffix: 0x{}", hex::encode(EXACT_SUFFIX));
+    }
+    if mine_upto {
+        println!("   Upto suffix: 0x{}", hex::encode(UPTO_SUFFIX));
+    }
     println!("   CREATE2 Deployer: 0x{}", hex::encode(CREATE2_DEPLOYER));
 
-    // Get number of threads
     let num_threads = rayon::current_num_threads();
     println!("   Using {} threads", num_threads);
 
-    // Mine for Exact contract
-    let exact_result = mine_vanity("x402ExactPermit2Proxy", &EXACT_INIT_CODE_HASH, &PREFIX, &EXACT_SUFFIX);
+    let exact_result = if mine_exact {
+        mine_vanity("x402ExactPermit2Proxy", &EXACT_INIT_CODE_HASH, &PREFIX, &EXACT_SUFFIX)
+    } else {
+        None
+    };
 
-    // Mine for Upto contract  
-    let upto_result = mine_vanity("x402UptoPermit2Proxy", &UPTO_INIT_CODE_HASH, &PREFIX, &UPTO_SUFFIX);
+    let upto_result = if mine_upto {
+        mine_vanity("x402UptoPermit2Proxy", &UPTO_INIT_CODE_HASH, &PREFIX, &UPTO_SUFFIX)
+    } else {
+        None
+    };
 
-    // Summary
     println!("\n{}", "=".repeat(60));
     println!("SUMMARY");
     println!("{}", "=".repeat(60));
@@ -148,12 +167,13 @@ fn main() {
         println!("  Address: 0x{}", hex::encode(addr));
     }
 
-    if exact_result.is_some() && upto_result.is_some() {
-        let (exact_salt, _) = exact_result.unwrap();
-        let (upto_salt, _) = upto_result.unwrap();
+    if let (Some((exact_salt, _)), Some((upto_salt, _))) = (exact_result, upto_result) {
         println!("\n// Update Deploy.s.sol with these values:");
         println!("bytes32 constant EXACT_SALT = 0x{};", hex::encode(exact_salt));
         println!("bytes32 constant UPTO_SALT = 0x{};", hex::encode(upto_salt));
+    } else if let Some((salt, _)) = exact_result.or(upto_result) {
+        println!("\n// Update Deploy.s.sol:");
+        println!("bytes32 constant SALT = 0x{};", hex::encode(salt));
     }
 }
 
