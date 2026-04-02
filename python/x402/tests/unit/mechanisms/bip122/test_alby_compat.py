@@ -16,7 +16,7 @@ from x402.mechanisms.bip122.constants import (
     BTC_MAINNET_CAIP2,
     SCHEME_EXACT,
 )
-from x402.schemas.responses import SupportedKind, SupportedResponse
+from x402.schemas.responses import SupportedResponse
 
 ALBY_FACILITATOR_URL = "https://x402.albylabs.com"
 
