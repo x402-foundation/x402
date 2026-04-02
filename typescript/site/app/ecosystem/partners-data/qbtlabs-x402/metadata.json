@@ -3,5 +3,12 @@
   "description": "Multi-chain x402 SDK with native support for Base (EIP-3009), Solana (SPL TransferChecked), and Cardano. First x402 SDK to support Cardano/ADA. Includes MCP integration via OpenMM for AI agent payments.",
   "logoUrl": "/logos/qbtlabs-x402.png",
   "websiteUrl": "https://www.npmjs.com/package/@qbtlabs/x402",
-  "category": "Infrastructure & Tooling"
+  "category": "Facilitators",
+  "facilitator": {
+    "baseUrl": "https://facilitator.qbtlabs.io",
+    "networks": ["base", "base-sepolia", "solana-mainnet", "solana-devnet"],
+    "schemes": ["exact"],
+    "assets": ["EIP-3009", "SPL"],
+    "supports": { "verify": true, "settle": true, "supported": true, "list": true }
+  }
 }
