@@ -61,9 +61,7 @@ class TestAlbyFacilitatorCompat:
         data = _fetch_json(f"{ALBY_FACILITATOR_URL}/supported")
         resp = SupportedResponse.model_validate(data)
         versions = [k.x402_version for k in resp.kinds]
-        assert 2 in versions, (
-            f"Expected x402Version 2 in Alby's response, got {versions}"
-        )
+        assert 2 in versions, f"Expected x402Version 2 in Alby's response, got {versions}"
 
     def test_our_payment_requirements_format_matches_alby(self):
         """Verify the payment requirements our server would generate
