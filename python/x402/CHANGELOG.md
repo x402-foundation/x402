@@ -2,6 +2,23 @@
 
 <!-- towncrier release notes start -->
 
+## [2.6.0] - 2026-04-02
+
+### Fixed
+
+- Fixed author attribution to reference x402 Foundation instead of Coinbase ([#123](https://github.com/x402-foundation/x402/pull/123))
+- Fixed race condition in lazy facilitator initialization for FastAPI and Flask middleware under concurrent requests. ([#1584](https://github.com/x402-foundation/x402/pull/1584))
+- Fix extra: null incompatibility between python facilitator and TS zod schema ([#1762](https://github.com/x402-foundation/x402/pull/1762))
+
+### Added
+
+- Add Mezo Testnet (chain ID 31611) support with mUSD as the default stablecoin ([#mezo-testnet-default-asset](https://github.com/x402-foundation/x402/pull/mezo-testnet-default-asset))
+- Add Polygon mainnet (chain ID 137) support with USDC as the default stablecoin ([#polygon-support](https://github.com/x402-foundation/x402/pull/polygon-support))
+- Add Stable mainnet (chain ID 988) support with USDT0 as the default stablecoin ([#stable-support](https://github.com/x402-foundation/x402/pull/stable-support))
+- Add Stable testnet (chain ID 2201) support with USDT0 as the default stablecoin ([#stable-testnet-support](https://github.com/x402-foundation/x402/pull/stable-testnet-support))
+- Added dynamic route support to the Bazaar discovery extension — servers can now declare ``[param]`` route segments that consolidate to a single catalog entry per route template, with automatic ``pathParams`` enrichment and ``:param``-style ``routeTemplate`` in discovery output. ([#424](https://github.com/x402-foundation/x402/pull/424))
+
+
 ## [2.5.0] - 2026-03-19
 
 ### Fixed
