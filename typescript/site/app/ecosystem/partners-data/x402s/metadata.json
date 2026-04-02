@@ -1,0 +1,7 @@
+{
+  "name": "x402s",
+  "description": "State-channel-based HTTP 402 payments for agents and APIs. x402s implements SCP (State Channel Payments) with an on-chain dispute contract, hub server for quote/issue/settlement workflows, agent SDK and CLI, and challenge watcher — enabling API micropayments without on-chain transactions per request.",
+  "logoUrl": "/logos/x402s.png",
+  "websiteUrl": "https://github.com/Keychain-Inc/x402s",
+  "category": "Infrastructure & Tooling"
+}
