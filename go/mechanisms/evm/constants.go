@@ -54,7 +54,7 @@ const (
 
 	// X402UptoPermit2ProxyAddress is the x402 upto payment proxy.
 	// Vanity address: 0x4020...0002 for easy recognition.
-	X402UptoPermit2ProxyAddress = "0x402039b3d6E6BEC5A02c2C9fd937ac17A6940002"
+	X402UptoPermit2ProxyAddress = "0x4020A4f3b7b90ccA423B9fabCc0CE57C6C240002"
 
 	// Permit2DeadlineBuffer is the time buffer (in seconds) added when checking
 	// deadline expiration to account for block propagation time.
@@ -69,13 +69,16 @@ const (
 
 var (
 	// Network chain IDs
-	ChainIDBase        = big.NewInt(8453)
-	ChainIDBaseSepolia = big.NewInt(84532)
-	ChainIDMegaETH     = big.NewInt(4326)
-	ChainIDMonad       = big.NewInt(143)
-	ChainIDMezoTestnet = big.NewInt(31611)
-	ChainIDStable      = big.NewInt(988)
-	ChainIDPolygon     = big.NewInt(137)
+	ChainIDBase          = big.NewInt(8453)
+	ChainIDBaseSepolia   = big.NewInt(84532)
+	ChainIDMegaETH       = big.NewInt(4326)
+	ChainIDMonad         = big.NewInt(143)
+	ChainIDMezoTestnet   = big.NewInt(31611)
+	ChainIDStable        = big.NewInt(988)
+	ChainIDStableTestnet = big.NewInt(2201)
+	ChainIDPolygon       = big.NewInt(137)
+	ChainIDArbOne        = big.NewInt(42161)
+	ChainIDArbSepolia    = big.NewInt(421614)
 
 	// Network configurations
 	// See DEFAULT_ASSET.md for guidelines on adding new chains
@@ -153,11 +156,41 @@ var (
 				Decimals: DefaultDecimals,
 			},
 		},
+		// Stable Testnet
+		"eip155:2201": {
+			ChainID: ChainIDStableTestnet,
+			DefaultAsset: AssetInfo{
+				Address:  "0x78Cf24370174180738C5B8E352B6D14c83a6c9A9", // USDT0 on Stable Testnet
+				Name:     "USDT0",
+				Version:  "1",
+				Decimals: DefaultDecimals,
+			},
+		},
 		// Polygon Mainnet
 		"eip155:137": {
 			ChainID: ChainIDPolygon,
 			DefaultAsset: AssetInfo{
 				Address:  "0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359", // USDC on Polygon
+				Name:     "USD Coin",
+				Version:  "2",
+				Decimals: DefaultDecimals,
+			},
+		},
+		// Arbitrum One
+		"eip155:42161": {
+			ChainID: ChainIDArbOne,
+			DefaultAsset: AssetInfo{
+				Address:  "0xaf88d065e77c8cC2239327C5EDb3A432268e5831", // USDC on ArbOne
+				Name:     "USD Coin",
+				Version:  "2",
+				Decimals: DefaultDecimals,
+			},
+		},
+		// Arbitrum Sepolia
+		"eip155:421614": {
+			ChainID: ChainIDArbSepolia,
+			DefaultAsset: AssetInfo{
+				Address:  "0x75faf114eafb1BDbe2F0316DF893fd58CE46AA4d", // USDC on ArbSepolia
 				Name:     "USD Coin",
 				Version:  "2",
 				Decimals: DefaultDecimals,

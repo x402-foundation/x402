@@ -11,14 +11,26 @@ import {ISignatureTransfer} from "../src/interfaces/ISignatureTransfer.sol";
  * @notice Deployment script for x402 Permit2 Proxy contracts using CREATE2
  * @dev Run with: forge script script/Deploy.s.sol --rpc-url $RPC_URL --broadcast --verify
  *
- *      The Permit2 address is passed as a constructor argument. Since Permit2 is
- *      deployed via a deterministic CREATE2 deployer, its canonical address
- *      (0x000000000022D473030F116dDEE9F6B43aC78BA3) is the same on all EVM chains.
- *      Using the same constructor argument on every chain keeps the initCode identical,
- *      preserving a uniform CREATE2 address for these proxies across all chains.
+ *      ## Deployment Strategy
  *
- *      If Permit2 has not yet been deployed on the target chain, deploy it first
- *      using the canonical Permit2 deployment method before running this script.
+ *      **x402ExactPermit2Proxy** — Uses a pre-built initCode blob stored at
+ *      `script/data/exact-proxy-initcode.hex`.  The original build included
+ *      Solidity CBOR metadata (an IPFS hash that varies per build
+ *      environment), so recompiling from source produces a *different*
+ *      initCodeHash and therefore a different CREATE2 address.  By shipping
+ *      the exact initCode that was used for the first deployment, anyone can
+ *      deploy to the canonical address on any chain without needing the
+ *      original build environment.
+ *
+ *      **x402UptoPermit2Proxy** — Built from source with deterministic
+ *      bytecode (`cbor_metadata = false` in foundry.toml).  Any machine
+ *      compiling at the same git commit will produce the same initCode and
+ *      therefore the same CREATE2 address.
+ *
+ *      Both contracts use the canonical Permit2 address
+ *      (0x000000000022D473030F116dDEE9F6B43aC78BA3) as a constructor
+ *      argument. If Permit2 has not yet been deployed on the target chain,
+ *      deploy it first.
  */
 contract DeployX402Proxies is Script {
     /// @notice Canonical Permit2 address (Uniswap's official deployment)
@@ -33,11 +45,13 @@ contract DeployX402Proxies is Script {
     bytes32 constant EXACT_SALT = 0x0000000000000000000000000000000000000000000000003000000007263b0e;
 
     /// @notice Salt for x402UptoPermit2Proxy deterministic deployment
-    /// @dev Vanity mined for address 0x402039b3d6e6bec5a02c2c9fd937ac17a6940002
-    bytes32 constant UPTO_SALT = 0x0000000000000000000000000000000000000000000000000000000000edb738;
+    /// @dev Vanity mined for address 0x4020a4f3b7b90cca423b9fabcc0ce57c6c240002
+    bytes32 constant UPTO_SALT = 0x000000000000000000000000000000000000000000000000b000000001db633d;
+
+    /// @notice Expected initCodeHash for x402ExactPermit2Proxy (pre-built, includes CBOR metadata)
+    bytes32 constant EXACT_INIT_CODE_HASH = 0xe774d1d5a07218946ab54efe010b300481478b86861bb17d69c98a57f68a604c;
 
     function run() public {
-        // Allow override of Permit2 address for chains with non-canonical deployments
         address permit2 = vm.envOr("PERMIT2_ADDRESS", CANONICAL_PERMIT2);
 
         console2.log("");
@@ -46,13 +60,11 @@ contract DeployX402Proxies is Script {
         console2.log("============================================================");
         console2.log("");
 
-        // Log configuration
         console2.log("Network: chainId", block.chainid);
         console2.log("Permit2:", permit2);
         console2.log("CREATE2 Deployer:", CREATE2_DEPLOYER);
         console2.log("");
 
-        // Verify Permit2 exists (skip for local networks)
         if (block.chainid != 31_337 && block.chainid != 1337) {
             require(permit2.code.length > 0, "Permit2 not found on this network");
             console2.log("Permit2 verified");
@@ -61,7 +73,6 @@ contract DeployX402Proxies is Script {
             console2.log("CREATE2 deployer verified");
         }
 
-        // Deploy both contracts (Permit2 address is a constructor arg, no initialization needed)
         _deployExact(permit2);
         _deployUpto(permit2);
 
@@ -78,8 +89,16 @@ contract DeployX402Proxies is Script {
         console2.log("  Deploying x402ExactPermit2Proxy");
         console2.log("------------------------------------------------------------");
 
-        // Constructor arg is the canonical Permit2 address (same on all chains)
-        bytes memory initCode = abi.encodePacked(type(x402ExactPermit2Proxy).creationCode, abi.encode(permit2));
+        bytes memory initCode;
+
+        if (block.chainid == 31_337 || block.chainid == 1337) {
+            initCode = abi.encodePacked(type(x402ExactPermit2Proxy).creationCode, abi.encode(permit2));
+        } else {
+            initCode = vm.parseBytes(vm.readFile("script/data/exact-proxy-initcode.hex"));
+            bytes32 actualHash = keccak256(initCode);
+            require(actualHash == EXACT_INIT_CODE_HASH, "Exact initCode hash mismatch - hex file may be corrupted");
+        }
+
         bytes32 initCodeHash = keccak256(initCode);
         address expectedAddress = _computeCreate2Addr(EXACT_SALT, initCodeHash, CREATE2_DEPLOYER);
 
@@ -127,7 +146,6 @@ contract DeployX402Proxies is Script {
         console2.log("  Deploying x402UptoPermit2Proxy");
         console2.log("------------------------------------------------------------");
 
-        // Constructor arg is the canonical Permit2 address (same on all chains)
         bytes memory initCode = abi.encodePacked(type(x402UptoPermit2Proxy).creationCode, abi.encode(permit2));
         bytes32 initCodeHash = keccak256(initCode);
         address expectedAddress = _computeCreate2Addr(UPTO_SALT, initCodeHash, CREATE2_DEPLOYER);
