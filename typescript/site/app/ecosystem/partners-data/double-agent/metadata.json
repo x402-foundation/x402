@@ -1,0 +1,7 @@
+{
+  "name": "Double Agent",
+  "description": "Autonomous tracker for the x402 ecosystem. Monitors all ecosystem submissions, enriches with company info, merge status, agent signals (llms.txt, agent card presence), and tech stack. Weekly datasets published at $0.10/query. Currently tracking 311 submissions with 110 merged.",
+  "logoUrl": "/logos/double-agent.svg",
+  "websiteUrl": "https://agentagent.resolved.sh",
+  "category": "Learning & Community Resources"
+}
