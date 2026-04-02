@@ -1,5 +1,22 @@
 # @x402/express Changelog
 
+## 2.9.0
+
+### Minor Changes
+
+- 2250cae: Migrated project from coinbase/x402 to x402-foundation/x402 organization
+- d352574: Add SettlementOverrides support for partial settlement (upto scheme). Route handlers can call setSettlementOverrides() to settle less than the authorized maximum, enabling usage-based billing.
+
+### Patch Changes
+
+- Updated dependencies [8cf3fca]
+- Updated dependencies [c0e3969]
+- Updated dependencies [2250cae]
+- Updated dependencies [d352574]
+  - @x402/core@2.9.0
+  - @x402/paywall@2.9.0
+  - @x402/extensions@2.9.0
+
 ## 2.8.0
 
 ### Minor Changes
