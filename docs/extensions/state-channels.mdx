@@ -1,0 +1,186 @@
+---
+title: "State Channels (SCP)"
+description: "Off-chain micropayments for x402. Pay thousands of API calls through a single funded channel with zero per-payment gas cost."
+---
+
+State channels reduce per-request settlement cost by moving repeated payments off-chain. A payer opens one funded channel, then pays any number of API calls by signing balance updates — no on-chain transaction until the channel closes.
+
+## Route Modes
+
+The `statechannel` scheme supports two route modes, declared via the `route` field in `extensions.statechannel.info`:
+
+| Route | Flow | How it works |
+|-------|------|-------------|
+| `hub` | Payer → Hub → Payee | One channel, many payees. Hub routes payments. |
+| `direct` | Payer → Payee | Direct channel. No intermediary. |
+
+Both preserve standard x402 request/retry semantics — the payee returns `402`, the client signs a payment proof, the client retries.
+
+## When to Use State Channels vs `exact`
+
+| Use case | Recommended scheme |
+|----------|-------------------|
+| One-off API call, article purchase | `exact` |
+| Agent making 100+ API calls per session | `statechannel` (hub route) |
+| Pay-per-second media streaming | `statechannel` (hub route) with streaming extension |
+| Direct bilateral payment channel | `statechannel` (direct route) |
+
+## Payment Flow (Hub Route)
+
+```
+Agent (A)              Hub (H)                   Payee API (B)
+  │                      │                            │
+  │  GET /resource       │                            │
+  │─────────────────────────────────────────────────>│
+  │<─────────────── 402 + offers ────────────────────│
+  │                      │                            │
+  │  POST /v1/tickets/quote                           │
+  │─────────────────────>│                            │
+  │<──── quote + draft ──│                            │
+  │                      │                            │
+  │  POST /v1/tickets/issue (signed channel state)    │
+  │─────────────────────>│                            │
+  │<── ticket + ack ─────│                            │
+  │                      │                            │
+  │  GET /resource + PAYMENT-SIGNATURE ──────────────>│
+  │<──────────────── 200 + receipt ───────────────────│
+```
+
+1. Agent requests a resource, gets a `402` with statechannel offer.
+2. Agent asks the hub for a fee quote.
+3. Agent signs a channel state update debiting the payment + fee.
+4. Hub issues a signed ticket.
+5. Agent retries the request with the ticket as payment proof.
+6. Payee verifies the ticket and serves the resource.
+
+## 402 Response Example
+
+```json
+{
+  "x402Version": 2,
+  "error": "Payment required",
+  "resource": {
+    "url": "https://payee.example/v1/data",
+    "description": "Premium endpoint",
+    "mimeType": "application/json"
+  },
+  "accepts": [
+    {
+      "scheme": "statechannel",
+      "network": "eip155:8453",
+      "amount": "1000000",
+      "asset": "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+      "payTo": "pay.eth",
+      "maxTimeoutSeconds": 60
+    }
+  ],
+  "extensions": {
+    "statechannel": {
+      "info": {
+        "route": "hub",
+        "hubEndpoint": "https://pay.eth/.well-known/x402",
+        "mode": "proxy_hold",
+        "feeModel": {
+          "base": "10",
+          "bps": 30
+        }
+      },
+      "schema": {
+        "type": "object"
+      }
+    }
+  }
+}
+```
+
+## On-Chain Contract
+
+The `X402StateChannel` contract is the on-chain adjudicator. It handles:
+
+| Function | Purpose |
+|----------|---------|
+| `openChannel(...)` | Open and fund a new channel |
+| `deposit(...)` | Add funds to an existing channel |
+| `cooperativeClose(...)` | Instant close — both parties sign the final state |
+| `startClose(...)` | Begin unilateral close (starts challenge period) |
+| `challenge(...)` | Submit a higher-nonce state during dispute |
+| `finalizeClose(...)` | Settle after challenge period expires |
+| `rebalance(...)` | Hub moves earned funds between channels atomically |
+
+Canonical deployment via CREATE2: `0x07ECA6701062Db12eDD04bEa391eD226C95aaD4b` (same address on all supported EVM chains).
+
+## Security Model
+
+- **Payer** signs state updates with EIP-712 typed data. Can never be debited more than the signed amount.
+- **Hub** routes payments but cannot move funds without a co-signed state. No unilateral custody.
+- **Payee** holds a hub-signed ticket as payment proof (hub route) or the latest signed state with on-chain dispute rights (direct route).
+- **Unilateral close** includes a challenge period — if one party submits a stale state, the counterparty can submit a newer one.
+
+## Streaming Extension
+
+SCP supports interval-based payment streaming. The payee advertises a tick cadence and per-tick amount:
+
+```json
+{
+  "extensions": {
+    "statechannel": {
+      "info": {
+        "route": "hub",
+        "stream": {
+          "amount": "100000000000",
+          "t": 5
+        },
+        "hubEndpoint": "https://pay.eth/.well-known/x402"
+      },
+      "schema": { "type": "object" }
+    }
+  }
+}
+```
+
+The client signs a new state update every `t` seconds. The server delivers content and returns stream metadata (`nextCursor`, `hasMore`). When `hasMore` is `false`, the stream ends.
+
+Use cases: pay-per-second audio, pay-per-token LLM generation, metered data feeds.
+
+## Fee Model
+
+Hub fees follow: `fee = base + floor(amount × bps / 10000) + gasSurcharge`
+
+Agents set a `maxFee` ceiling in quote requests. The hub rejects if the computed fee exceeds it.
+
+## Hub API (Reference Implementation)
+
+These endpoints are from the current reference implementation:
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/.well-known/x402` | GET | Hub metadata, supported assets, public key |
+| `/v1/tickets/quote` | POST | Get fee quote and payment draft |
+| `/v1/tickets/issue` | POST | Submit signed state, receive ticket |
+| `/v1/payments/{id}` | GET | Payment status lookup |
+| `/v1/channels/{id}` | GET | Channel state lookup |
+| `/v1/refunds` | POST | Request a refund |
+| `/v1/payee/inbox` | GET | Payee payment inbox |
+| `/v1/payee/balance` | GET | Payee balance at hub |
+| `/v1/payee/settle` | POST | Request on-chain settlement |
+
+## FAQ
+
+**How does this differ from `exact`?**
+`exact` settles each payment on-chain. SCP amortizes cost over a channel lifetime — open once, pay thousands of times off-chain, close once.
+
+**Can SCP run without a hub?**
+Yes. Set `route: "direct"` in the offer. The payer opens a channel directly with the payee.
+
+**What if the hub goes offline?**
+Both parties can use the on-chain close/challenge paths with the latest signed state. Funds are never locked.
+
+**Is this a custodial wallet?**
+No. The hub cannot move funds without the payer's signature. Every balance change requires a co-signed state update.
+
+## Specifications
+
+- Scheme overview: [`specs/schemes/statechannel/scheme_statechannel.md`](https://github.com/coinbase/x402/blob/main/specs/schemes/statechannel/scheme_statechannel.md)
+- EVM implementation: [`specs/schemes/statechannel/scheme_statechannel_evm.md`](https://github.com/coinbase/x402/blob/main/specs/schemes/statechannel/scheme_statechannel_evm.md)
+- Full SCP specification: [X402S_SPEC_V2.md](https://github.com/Keychain-Inc/x402s/blob/main/docs/X402S_SPEC_V2.md)
+- Reference implementation: [github.com/Keychain-Inc/x402s](https://github.com/Keychain-Inc/x402s)
