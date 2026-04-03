@@ -1,0 +1,7 @@
+{
+  "name": "Valorem MEV Intelligence",
+  "category": "Services/Endpoints",
+  "logoUrl": "/logos/valorem-mev-intelligence.png",
+  "description": "Real-time Ethereum MEV intelligence API — liquidation watchlists, decoded builder hints, pool spread analysis, token safety scoring, RPC health monitoring. Pay-per-query via USDC on Base. 8 paid endpoints from $0.001 to $1.00 per request.",
+  "websiteUrl": "https://18-220-76-66.nip.io/engine-api/x402/catalog"
+}
