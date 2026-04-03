@@ -20,3 +20,7 @@ export * from "./eip2612-gas-sponsoring";
 
 // ERC-20 Approval Gas Sponsoring extension
 export * from "./erc20-approval-gas-sponsoring";
+
+// Builder Code extension (ERC-8021)
+export * from "./builder-code";
+export { builderCodeResourceServerExtension } from "./builder-code/resourceServer";

@@ -218,9 +218,15 @@ export function parseEip3009TransferError(error: unknown): string {
 /**
  * Executes transferWithAuthorization onchain.
  *
+ * When a calldataSuffix is provided (e.g., ERC-8021 builder code attribution),
+ * the function manually encodes the calldata, appends the suffix, and uses
+ * sendTransaction instead of writeContract. The EVM ignores trailing calldata
+ * bytes, so the transfer executes normally while indexers can read the suffix.
+ *
  * @param signer - EVM signer for contract writes
  * @param erc20Address - ERC-20 token contract address
  * @param payload - EIP-3009 transfer authorization payload
+ * @param calldataSuffix - Optional hex bytes to append after the ABI-encoded calldata
  *
  * @returns Transaction hash
  */
@@ -228,6 +234,7 @@ export async function executeTransferWithAuthorization(
   signer: FacilitatorEvmSigner,
   erc20Address: `0x${string}`,
   payload: ExactEIP3009Payload,
+  calldataSuffix?: Hex,
 ): Promise<Hex> {
   const { signature } = parseErc6492Signature(payload.signature!);
   const signatureLength = signature.startsWith("0x") ? signature.length - 2 : signature.length;
@@ -243,10 +250,36 @@ export async function executeTransferWithAuthorization(
     auth.nonce,
   ] as const;
 
-  if (isECDSA) {
-    const parsedSig = parseSignature(signature);
+  // If no suffix, use the standard writeContract path (unchanged behavior)
+  if (!calldataSuffix) {
+    if (isECDSA) {
+      const parsedSig = parseSignature(signature);
+      return signer.writeContract({
+        address: erc20Address,
+        abi: eip3009ABI,
+        functionName: "transferWithAuthorization",
+        args: [
+          ...baseArgs,
+          (parsedSig.v as number | undefined) || parsedSig.yParity,
+          parsedSig.r,
+          parsedSig.s,
+        ],
+      });
+    }
+
     return signer.writeContract({
       address: erc20Address,
+      abi: eip3009ABI,
+      functionName: "transferWithAuthorization",
+      args: [...baseArgs, signature],
+    });
+  }
+
+  // With suffix: encode calldata manually, append suffix, use sendTransaction
+  let calldata: Hex;
+  if (isECDSA) {
+    const parsedSig = parseSignature(signature);
+    calldata = encodeFunctionData({
       abi: eip3009ABI,
       functionName: "transferWithAuthorization",
       args: [
@@ -256,12 +289,20 @@ export async function executeTransferWithAuthorization(
         parsedSig.s,
       ],
     });
+  } else {
+    calldata = encodeFunctionData({
+      abi: eip3009ABI,
+      functionName: "transferWithAuthorization",
+      args: [...baseArgs, signature],
+    });
   }
 
-  return signer.writeContract({
-    address: erc20Address,
-    abi: eip3009ABI,
-    functionName: "transferWithAuthorization",
-    args: [...baseArgs, signature],
+  // Append the suffix (strip 0x prefix from suffix before concatenating)
+  const suffixHex = calldataSuffix.startsWith("0x") ? calldataSuffix.slice(2) : calldataSuffix;
+  const calldataWithSuffix = `${calldata}${suffixHex}` as Hex;
+
+  return signer.sendTransaction({
+    to: erc20Address,
+    data: calldataWithSuffix,
   });
 }

@@ -103,6 +103,16 @@
         "types": "./dist/cjs/payment-identifier/index.d.ts",
         "default": "./dist/cjs/payment-identifier/index.js"
       }
+    },
+    "./builder-code": {
+      "import": {
+        "types": "./dist/esm/builder-code/index.d.mts",
+        "default": "./dist/esm/builder-code/index.mjs"
+      },
+      "require": {
+        "types": "./dist/cjs/builder-code/index.d.ts",
+        "default": "./dist/cjs/builder-code/index.js"
+      }
     }
   },
   "files": [

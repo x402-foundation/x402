@@ -1,6 +1,7 @@
 import {
   PaymentPayload,
   PaymentRequirements,
+  FacilitatorContext,
   SettleResponse,
   VerifyResponse,
 } from "@x402/core/types";
@@ -241,11 +242,16 @@ export async function verifyEIP3009(
 /**
  * Settles an EIP-3009 payment by executing transferWithAuthorization.
  *
+ * If a BuilderCodeFacilitatorExtension is registered, the facilitator will
+ * append an ERC-8021 Schema 2 suffix to the settlement transaction calldata
+ * containing builder codes from the agent, service, and facilitator.
+ *
  * @param signer - The facilitator signer for contract writes
  * @param payload - The payment payload to settle
  * @param requirements - The payment requirements
  * @param eip3009Payload - The EIP-3009 specific payload
  * @param config - Facilitator configuration
+ * @param context - Optional facilitator context for extension capabilities
  * @returns Promise resolving to settlement response
  */
 export async function settleEIP3009(
@@ -254,6 +260,7 @@ export async function settleEIP3009(
   requirements: PaymentRequirements,
   eip3009Payload: ExactEIP3009Payload,
   config: EIP3009FacilitatorConfig,
+  context?: FacilitatorContext,
 ): Promise<SettleResponse> {
   const payer = eip3009Payload.authorization.from;
 
@@ -312,10 +319,22 @@ export async function settleEIP3009(
       }
     }
 
+    // Build ERC-8021 calldata suffix if builder code extension is registered
+    let calldataSuffix: Hex | undefined;
+    if (context) {
+      const builderCodeExt = context.getExtension("builder-code");
+      if (builderCodeExt && "buildCalldataSuffix" in builderCodeExt) {
+        calldataSuffix = (builderCodeExt as { buildCalldataSuffix: (ext?: Record<string, unknown>) => Hex | undefined }).buildCalldataSuffix(
+          payload.extensions as Record<string, unknown> | undefined,
+        );
+      }
+    }
+
     const tx = await executeTransferWithAuthorization(
       signer,
       getAddress(requirements.asset),
       eip3009Payload,
+      calldataSuffix,
     );
 
     // Wait for transaction confirmation

@@ -124,6 +124,6 @@ export class ExactEvmScheme implements SchemeNetworkFacilitator {
     }
 
     const eip3009Payload: ExactEIP3009Payload = rawPayload;
-    return settleEIP3009(this.signer, payload, requirements, eip3009Payload, this.config);
+    return settleEIP3009(this.signer, payload, requirements, eip3009Payload, this.config, context);
   }
 }
