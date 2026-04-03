@@ -1,0 +1,26 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" role="img" aria-label="Headless Oracle logo">
+  <!-- Dark background — matches x402 ecosystem palette -->
+  <rect width="256" height="256" rx="36" fill="#0F172A"/>
+
+  <!-- H: Left vertical bar -->
+  <rect x="48" y="52" width="22" height="152" rx="3" fill="#F8FAFC"/>
+
+  <!-- H: Right vertical bar -->
+  <rect x="186" y="52" width="22" height="152" rx="3" fill="#F8FAFC"/>
+
+  <!--
+    Ascending crossbar — the oracle market signal line.
+    Left attachment (x=70) at y-center 130, right attachment (x=186) at y-center 90.
+    Rise: 40px over 116px run (19° angle). Bar thickness: 22px.
+    Points: BL(70,141) TL(70,119) TR(186,79) BR(186,101)
+  -->
+  <polygon points="70,141 70,119 186,79 186,101" fill="#10B981"/>
+
+  <!--
+    Oracle reading node — verification point at midpoint of ascending line.
+    Center: x=(70+186)/2=128, y-center=(130+90)/2=110.
+    Outer ring (white) + inner dot (emerald): target / scope metaphor.
+  -->
+  <circle cx="128" cy="110" r="13" fill="#F8FAFC"/>
+  <circle cx="128" cy="110" r="6" fill="#10B981"/>
+</svg>

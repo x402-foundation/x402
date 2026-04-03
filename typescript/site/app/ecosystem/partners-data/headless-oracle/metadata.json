@@ -1,7 +1,7 @@
 {
   "name": "Headless Oracle",
   "description": "Ed25519-signed market-state receipts for 28 global exchanges. Pre-trade verification gate for autonomous financial agents — UNKNOWN = CLOSED. Real-time session status (OPEN/CLOSED/HALTED), holiday-aware calendar, 60-second TTL. $0.001 USDC per call on Base mainnet via x402.",
-  "logoUrl": "/logos/headless-oracle.png",
+  "logoUrl": "/logos/headless-oracle.svg",
   "websiteUrl": "https://headlessoracle.com",
   "category": "Services/Endpoints"
 }
