@@ -48,7 +48,7 @@
     "@x402/core": "workspace:~",
     "ajv": "^8.17.1",
     "jose": "^5.9.6",
-    "siwe": "^2.3.2",
+    "@signinwithethereum/siwe": "^4.1.0",
     "tweetnacl": "^1.0.3",
     "viem": "^2.43.5",
     "zod": "^3.24.2"

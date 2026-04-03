@@ -6,7 +6,7 @@
  */
 
 import { verifyMessage } from "viem";
-import { SiweMessage } from "siwe";
+import { SiweMessage } from "@signinwithethereum/siwe";
 import type { EVMMessageVerifier } from "./types";
 import type { CompleteSIWxInfo } from "./client";
 import type { SIWxSigner } from "./sign";
