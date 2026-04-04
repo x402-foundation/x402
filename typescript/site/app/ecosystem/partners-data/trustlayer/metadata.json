@@ -1,0 +1,7 @@
+{
+  "name": "TrustLayer",
+  "description": "TrustLayer uses x402 to monetize its agent reputation scoring API, enabling AI agents to pay $0.001 USDC per query for trust scores, Sybil detection, and cross-chain identity resolution across 20+ chains.",
+  "logoUrl": "/logos/trustlayer.png",
+  "websiteUrl": "https://api.thetrustlayer.xyz",
+  "category": "Services/Endpoints"
+}
