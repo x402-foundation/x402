@@ -233,6 +233,24 @@ export class x402ResourceServer {
   }
 
   /**
+   * Returns the decimal precision for the asset specified in the given payment requirements.
+   * Looks up the registered scheme for the network and delegates to its getAssetDecimals
+   * method if available. Falls back to 6 (standard for USDC stablecoins) when the scheme
+   * does not implement getAssetDecimals or is not registered.
+   *
+   * @param requirements - The payment requirements containing scheme, network, and asset
+   * @returns The number of decimal places for the asset
+   */
+  getAssetDecimalsForRequirements(requirements: PaymentRequirements): number {
+    const scheme = findByNetworkAndScheme(
+      this.registeredServerSchemes,
+      requirements.scheme,
+      requirements.network as Network,
+    );
+    return scheme?.getAssetDecimals?.(requirements.asset ?? "", requirements.network as Network) ?? 6;
+  }
+
+  /**
    * Registers a resource service extension that can enrich extension declarations.
    *
    * @param extension - The extension to register
