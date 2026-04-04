@@ -228,16 +228,131 @@ describe("@x402/svm", () => {
     });
   });
 
-  // Integration tests would require mocking Solana RPC and transaction signing
-  describe("Integration (placeholder)", () => {
-    it.todo("should create a valid payment payload with ExactSvmScheme");
-    it.todo("should verify a valid payment with ExactSvmScheme");
-    it.todo("should reject invalid signatures");
-    it.todo("should reject insufficient amounts");
-    it.todo("should reject wrong recipients");
-    it.todo("should reject expired transactions");
-    it.todo("should settle valid payments");
-    it.todo("should handle compute budget instructions");
-    it.todo("should verify both SPL Token and Token-2022 transfers");
+  describe("ExactSvmScheme (Server) - additional coverage", () => {
+    const server = new ServerExactSvmScheme();
+
+    it("should have scheme set to 'exact'", () => {
+      expect(server.scheme).toBe("exact");
+    });
+
+    it("should register custom money parser and use it", async () => {
+      const customServer = new ServerExactSvmScheme();
+      const customParser = async (amount: number, _network: string) => {
+        if (amount === 42) {
+          return { amount: "42000000", asset: "custom_asset_address", extra: {} };
+        }
+        return null;
+      };
+      customServer.registerMoneyParser(customParser);
+
+      const result = await customServer.parsePrice(42, SOLANA_MAINNET_CAIP2);
+      expect(result.amount).toBe("42000000");
+      expect(result.asset).toBe("custom_asset_address");
+    });
+
+    it("should fall back to default when custom parser returns null", async () => {
+      const customServer = new ServerExactSvmScheme();
+      const nullParser = async () => null;
+      customServer.registerMoneyParser(nullParser);
+
+      const result = await customServer.parsePrice(1.0, SOLANA_MAINNET_CAIP2);
+      expect(result.amount).toBe("1000000");
+      expect(result.asset).toBe(USDC_MAINNET_ADDRESS);
+    });
+
+    it("should chain registerMoneyParser calls", () => {
+      const customServer = new ServerExactSvmScheme();
+      const parser1 = async () => null;
+      const parser2 = async () => null;
+      const result = customServer.registerMoneyParser(parser1).registerMoneyParser(parser2);
+      expect(result).toBe(customServer);
+    });
+
+    it("should try custom parsers in registration order", async () => {
+      const customServer = new ServerExactSvmScheme();
+      const firstParser = async (amount: number) => {
+        if (amount > 0) return { amount: "first", asset: "first_asset", extra: {} };
+        return null;
+      };
+      const secondParser = async (amount: number) => {
+        if (amount > 0) return { amount: "second", asset: "second_asset", extra: {} };
+        return null;
+      };
+      customServer.registerMoneyParser(firstParser).registerMoneyParser(secondParser);
+
+      const result = await customServer.parsePrice(1, SOLANA_MAINNET_CAIP2);
+      expect(result.amount).toBe("first");
+    });
+
+    it("should preserve existing extra fields in enhancePaymentRequirements", async () => {
+      const requirements = {
+        scheme: "exact",
+        network: SOLANA_MAINNET_CAIP2,
+        asset: USDC_MAINNET_ADDRESS,
+        amount: "100000",
+        payTo: "11111111111111111111111111111111",
+        maxTimeoutSeconds: 3600,
+        extra: { existingField: "keep_me" },
+      };
+
+      const result = await server.enhancePaymentRequirements(
+        requirements as never,
+        {
+          x402Version: 2,
+          scheme: "exact",
+          network: SOLANA_MAINNET_CAIP2,
+          extra: { feePayer: "FacilitatorAddr111111111111111111111" },
+        },
+        [],
+      );
+
+      expect(result.extra?.existingField).toBe("keep_me");
+      expect(result.extra?.feePayer).toBe("FacilitatorAddr111111111111111111111");
+    });
+
+    it("should handle enhancePaymentRequirements without feePayer", async () => {
+      const requirements = {
+        scheme: "exact",
+        network: SOLANA_MAINNET_CAIP2,
+        asset: USDC_MAINNET_ADDRESS,
+        amount: "100000",
+        payTo: "11111111111111111111111111111111",
+        maxTimeoutSeconds: 3600,
+      };
+
+      const result = await server.enhancePaymentRequirements(
+        requirements as never,
+        {
+          x402Version: 2,
+          scheme: "exact",
+          network: SOLANA_MAINNET_CAIP2,
+        },
+        [],
+      );
+
+      expect(result.extra?.feePayer).toBeUndefined();
+    });
+
+    it("should parse price with zero amount", async () => {
+      const result = await server.parsePrice(0, SOLANA_MAINNET_CAIP2);
+      expect(result.amount).toBe("0");
+      expect(result.asset).toBe(USDC_MAINNET_ADDRESS);
+    });
+
+    it("should parse price with large amount", async () => {
+      const result = await server.parsePrice(1000000, SOLANA_MAINNET_CAIP2);
+      expect(result.amount).toBe("1000000000000");
+      expect(result.asset).toBe(USDC_MAINNET_ADDRESS);
+    });
+
+    it("should handle pre-parsed AssetAmount with extra data", async () => {
+      const result = await server.parsePrice(
+        { amount: "500", asset: "custom_token", extra: { memo: "test" } },
+        SOLANA_MAINNET_CAIP2,
+      );
+      expect(result.amount).toBe("500");
+      expect(result.asset).toBe("custom_token");
+      expect(result.extra).toEqual({ memo: "test" });
+    });
   });
 });
