@@ -4,7 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"math/rand"
+	"math/rand/v2"
 	"strconv"
 
 	solana "github.com/gagliardetto/solana-go"
@@ -55,7 +55,7 @@ func (f *ExactSvmScheme) GetExtra(network x402.Network) map[string]interface{} {
 	addresses := f.signer.GetAddresses(context.Background(), string(network))
 
 	// Randomly select from available addresses to distribute load
-	randomIndex := rand.Intn(len(addresses))
+	randomIndex := rand.IntN(len(addresses))
 
 	return map[string]interface{}{
 		"feePayer": addresses[randomIndex].String(),
