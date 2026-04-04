@@ -334,9 +334,26 @@ export class HTTPFacilitatorClient implements FacilitatorClient {
         `Facilitator getSupported failed (${response.status}): ${responseExcerpt(errorText)}`,
       );
 
-      // Retry on 429 rate limit errors with exponential backoff
+      // Retry on 429 rate limit errors with Retry-After header support
       if (response.status === 429 && attempt < GET_SUPPORTED_RETRIES - 1) {
-        const delay = GET_SUPPORTED_RETRY_DELAY_MS * Math.pow(2, attempt);
+        const retryAfter = response.headers.get("Retry-After");
+        let delay: number;
+        if (retryAfter !== null) {
+          const retryAfterNum = Number(retryAfter);
+          if (!isNaN(retryAfterNum)) {
+            // 秒数として解釈してミリ秒に変換
+            delay = retryAfterNum * 1000;
+          } else {
+            // HTTP-date として解釈して現在時刻との差分を計算
+            const retryDate = new Date(retryAfter).getTime();
+            delay = Math.max(0, retryDate - Date.now());
+          }
+          // 安全上限: 最大30秒
+          delay = Math.min(delay, 30_000);
+        } else {
+          // Retry-After がない場合は指数バックオフをフォールバックとして使用
+          delay = GET_SUPPORTED_RETRY_DELAY_MS * Math.pow(2, attempt);
+        }
         await new Promise(resolve => setTimeout(resolve, delay));
         continue;
       }
