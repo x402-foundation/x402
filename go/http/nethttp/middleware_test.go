@@ -191,6 +191,11 @@ func TestNetHTTPAdapter_GetURL(t *testing.T) {
 			target:   "/api/test?id=1&foo=bar",
 			expected: "http://example.com/api/test?id=1&foo=bar",
 		},
+		{
+			name:     "x forwarded for",
+			target:   "/api/test",
+			expected: "https://example.com/api/test",
+		},
 	}
 
 	for _, tt := range tests {
@@ -198,6 +203,11 @@ func TestNetHTTPAdapter_GetURL(t *testing.T) {
 			req := httptest.NewRequest("GET", tt.target, nil)
 			req.Host = "example.com"
 			adapter := NewNetHTTPAdapter(req)
+
+			if tt.name == "x forwarded for" {
+				req.Header.Set("X-Forwarded-Proto", "https")
+				req.Header.Set("X-Forwarded-Host", "example.com")
+			}
 
 			if adapter.GetURL() != tt.expected {
 				t.Errorf("Expected URL '%s', got '%s'", tt.expected, adapter.GetURL())

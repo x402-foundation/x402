@@ -212,6 +212,11 @@ func TestEchoAdapter_GetURL(t *testing.T) {
 			target:   "/api/test?id=1&foo=bar",
 			expected: "http://example.com/api/test?id=1&foo=bar",
 		},
+		{
+			name:     "x forwarded for",
+			target:   "/api/test",
+			expected: "https://example.com/api/test",
+		},
 	}
 
 	for _, tt := range tests {
@@ -226,6 +231,10 @@ func TestEchoAdapter_GetURL(t *testing.T) {
 
 			req := httptest.NewRequest("GET", tt.target, nil)
 			req.Host = "example.com"
+			if tt.name == "x forwarded for" {
+				req.Header.Set("X-Forwarded-Proto", "https")
+				req.Header.Set("X-Forwarded-Host", "example.com")
+			}
 			w := httptest.NewRecorder()
 			e.ServeHTTP(w, req)
 
