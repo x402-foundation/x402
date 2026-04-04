@@ -1,5 +1,5 @@
 import type { PaymentRequirements } from "@x402/core/types";
-import * as allChains from "viem/chains";
+import { base, baseSepolia } from "viem/chains";
 
 // Chain configuration constants
 
@@ -9,6 +9,9 @@ export const EVM_CHAIN_IDS = {
   BASE_MAINNET: "8453",
   BASE_SEPOLIA: "84532",
 } as const;
+
+// Local map of supported EVM chains (avoids importing all viem/chains)
+const SUPPORTED_EVM_CHAINS = [base, baseSepolia] as const;
 
 // Solana Network References (CAIP-2 format: solana:genesisHash)
 export const SOLANA_NETWORK_REFS = {
@@ -102,8 +105,8 @@ export function getNetworkDisplayName(network: string): string {
   if (network.startsWith("eip155:")) {
     const chainId = parseInt(network.split(":")[1]);
 
-    // Find matching chain in viem's chain definitions
-    const chain = Object.values(allChains).find(c => c.id === chainId);
+    // Find matching chain in supported chain definitions
+    const chain = SUPPORTED_EVM_CHAINS.find(c => c.id === chainId);
 
     if (chain) {
       return chain.name;
@@ -130,7 +133,7 @@ export function getNetworkDisplayName(network: string): string {
 export function isTestnetNetwork(network: string): boolean {
   if (network.startsWith("eip155:")) {
     const chainId = parseInt(network.split(":")[1]);
-    const chain = Object.values(allChains).find(c => c.id === chainId);
+    const chain = SUPPORTED_EVM_CHAINS.find(c => c.id === chainId);
     return chain?.testnet ?? false;
   }
 
