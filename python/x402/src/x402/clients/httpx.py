@@ -59,7 +59,7 @@ class HttpxHooks:
             request.headers["Access-Control-Expose-Headers"] = "X-Payment-Response"
 
             # Retry the request
-            async with AsyncClient() as client:
+            async with AsyncClient(follow_redirects=True) as client:
                 retry_response = await client.send(request)
 
                 # Copy the retry response data to the original response
