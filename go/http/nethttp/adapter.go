@@ -33,11 +33,15 @@ func (a *NetHTTPAdapter) GetPath() string {
 // GetURL gets the full request URL.
 func (a *NetHTTPAdapter) GetURL() string {
 	scheme := "http"
-	if a.r.TLS != nil {
+	if xForwardedProto := a.r.Header.Get("X-Forwarded-Proto"); xForwardedProto != "" {
+		scheme = xForwardedProto
+	} else if a.r.TLS != nil {
 		scheme = "https"
 	}
 	host := a.r.Host
-	if host == "" {
+	if xForwardedHost := a.r.Header.Get("X-Forwarded-Host"); xForwardedHost != "" {
+		host = xForwardedHost
+	} else if host == "" {
 		host = a.r.Header.Get("Host")
 	}
 	return fmt.Sprintf("%s://%s%s", scheme, host, a.r.URL.RequestURI())

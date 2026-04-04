@@ -53,11 +53,15 @@ func (a *EchoAdapter) GetPath() string {
 func (a *EchoAdapter) GetURL() string {
 	req := a.ctx.Request()
 	scheme := "http"
-	if req.TLS != nil {
+	if xForwardedProto := req.Header.Get("X-Forwarded-Proto"); xForwardedProto != "" {
+		scheme = xForwardedProto
+	} else if req.TLS != nil {
 		scheme = "https"
 	}
 	host := req.Host
-	if host == "" {
+	if xForwardedHost := req.Header.Get("X-Forwarded-Host"); xForwardedHost != "" {
+		host = xForwardedHost
+	} else if host == "" {
 		host = req.Header.Get("Host")
 	}
 	return fmt.Sprintf("%s://%s%s", scheme, host, req.RequestURI)
