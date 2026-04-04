@@ -11,6 +11,7 @@ import {
   getFacilitatorResponseError,
   SETTLEMENT_OVERRIDES_HEADER,
   SettlementOverrides,
+  checkIfBazaarNeeded,
 } from "@x402/core/server";
 import {
   SchemeNetworkServer,
@@ -114,22 +115,6 @@ function getResponseBodyBuffer(payload: unknown): Buffer | undefined {
   }
 
   return Buffer.from(JSON.stringify(payload ?? {}));
-}
-
-/**
- * Check if any routes in the configuration declare bazaar extensions.
- *
- * @param routes - Route configuration
- * @returns True if any route has extensions.bazaar defined
- */
-function checkIfBazaarNeeded(routes: RoutesConfig): boolean {
-  if ("accepts" in routes) {
-    return !!(routes.extensions && "bazaar" in routes.extensions);
-  }
-
-  return Object.values(routes).some(routeConfig => {
-    return !!(routeConfig.extensions && "bazaar" in routeConfig.extensions);
-  });
 }
 
 /**

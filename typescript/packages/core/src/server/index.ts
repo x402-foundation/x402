@@ -25,6 +25,7 @@ export {
   x402HTTPResourceServer,
   RouteConfigurationError,
   SETTLEMENT_OVERRIDES_HEADER,
+  checkIfBazaarNeeded,
 } from "../http/x402HTTPResourceServer";
 export type {
   HTTPRequestContext,
