@@ -38,6 +38,20 @@ const WEATHER_BINDING: OperationBindingInfo = {
   bindBody: false,
 };
 
+const SEARCH_BINDING: OperationBindingInfo = {
+  transport: "http",
+  resourceUrl: "https://api.example.com/search",
+  method: "POST",
+  pathTemplate: "/search",
+  operationId: "search.run",
+  policyVersion: "2026-04-04",
+  canonicalization: "rfc8785-jcs",
+  digestAlgorithm: "sha-256",
+  bindPathParams: false,
+  bindQuery: false,
+  bindBody: true,
+};
+
 describe("Operation-Binding Extension", () => {
   describe("declareOperationBindingExtension", () => {
     it("normalizes defaults for binding flags", () => {
@@ -181,6 +195,44 @@ describe("Operation-Binding Extension", () => {
       });
 
       expect(digestA).not.toBe(digestB);
+    });
+
+    it("matches the RFC 8785 digest for a newline-containing body", async () => {
+      const digest = await computeOperationDigest(SEARCH_BINDING, {
+        body: {
+          query: "line1\nline2",
+          limit: 1,
+        },
+      });
+
+      expect(digest).toBe("5caac7f75db73ddc5c662458aec0f25a58f50358c68c12a17cb7925f43291223");
+    });
+
+    it("matches the RFC 8785 digest for tab and unicode content", async () => {
+      const digest = await computeOperationDigest(SEARCH_BINDING, {
+        body: {
+          q: "hello\tworld",
+          emoji: "café 🐢",
+        },
+      });
+
+      expect(digest).toBe("ac24f9d26314787e218aa0ae946e94a2be76e9cc63325afcca5e3c8b00a04333");
+    });
+
+    it("matches the RFC 8785 digest when bindBody is disabled", async () => {
+      const digest = await computeOperationDigest(
+        {
+          ...SEARCH_BINDING,
+          bindBody: false,
+        },
+        {
+          body: {
+            should: "be ignored",
+          },
+        },
+      );
+
+      expect(digest).toBe("85d5bd39278b4dda2e79ed21bf0dd21e58399fc17c019283ac939e5cc5bd096b");
     });
   });
 

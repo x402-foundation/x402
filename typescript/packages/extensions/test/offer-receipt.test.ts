@@ -372,6 +372,9 @@ describe("x402 Offer/Receipt Extension", () => {
     it("handles -0 as 0", () => {
       expect(canonicalize({ n: -0 })).toBe('{"n":0}');
     });
+    it("uses short escape sequences for RFC 8785 control characters", () => {
+      expect(canonicalize({ s: "\b\f\n\r\t" })).toBe('{"s":"\\b\\f\\n\\r\\t"}');
+    });
   });
 
   describe("Cryptographic Verification", () => {

@@ -99,7 +99,25 @@ function serializeString(str: string): string {
     const char = str[i];
     const code = str.charCodeAt(i);
     if (code < 0x20) {
-      result += "\\u" + code.toString(16).padStart(4, "0");
+      switch (code) {
+        case 0x08:
+          result += "\\b";
+          break;
+        case 0x09:
+          result += "\\t";
+          break;
+        case 0x0a:
+          result += "\\n";
+          break;
+        case 0x0c:
+          result += "\\f";
+          break;
+        case 0x0d:
+          result += "\\r";
+          break;
+        default:
+          result += "\\u" + code.toString(16).padStart(4, "0");
+      }
     } else if (char === '"') {
       result += '\\"';
     } else if (char === "\\") {
