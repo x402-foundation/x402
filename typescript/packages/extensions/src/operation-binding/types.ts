@@ -117,15 +117,26 @@ export interface EIP712OperationReceipt {
 
 export type SignedOperationReceipt = JWSOperationReceipt | EIP712OperationReceipt;
 
+/**
+ * Narrow a signed receipt to the JWS representation.
+ *
+ * @param receipt - Receipt value to inspect.
+ * @returns `true` when the receipt uses the JWS format.
+ */
 export function isJWSOperationReceipt(
   receipt: SignedOperationReceipt,
 ): receipt is JWSOperationReceipt {
   return receipt.format === "jws";
 }
 
+/**
+ * Narrow a signed receipt to the EIP-712 representation.
+ *
+ * @param receipt - Receipt value to inspect.
+ * @returns `true` when the receipt uses the EIP-712 format.
+ */
 export function isEIP712OperationReceipt(
   receipt: SignedOperationReceipt,
 ): receipt is EIP712OperationReceipt {
   return receipt.format === "eip712";
 }
-

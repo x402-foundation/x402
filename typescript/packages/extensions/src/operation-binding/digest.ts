@@ -8,10 +8,22 @@ import type {
   OperationReceiptPayload,
 } from "./types";
 
+/**
+ * Check whether a value can be normalized as a JSON object.
+ *
+ * @param value - Candidate value from caller input.
+ * @returns `true` when the value is a non-array object.
+ */
 function isPlainObject(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
+/**
+ * Normalize arbitrary input into the JSON subset supported by operation binding.
+ *
+ * @param value - Candidate JSON-compatible value.
+ * @returns A normalized JSON value with `undefined` removed and `-0` rewritten to `0`.
+ */
 function normalizeJsonValue(value: unknown): JsonValue {
   if (value === null || value === undefined) {
     return null;
@@ -45,6 +57,13 @@ function normalizeJsonValue(value: unknown): JsonValue {
   throw new Error("Operation-binding only supports JSON-compatible values");
 }
 
+/**
+ * Normalize a top-level object field used in the logical binding input.
+ *
+ * @param value - Candidate object value for the field.
+ * @param fieldName - Human-readable field name for validation errors.
+ * @returns A normalized JSON object or `null` when omitted.
+ */
 function normalizeJsonObject(
   value: Record<string, unknown> | null | undefined,
   fieldName: string,
@@ -60,6 +79,13 @@ function normalizeJsonObject(
   return normalizeJsonValue(value) as JsonObject;
 }
 
+/**
+ * Build the logical input that is hashed for an operation-bound receipt.
+ *
+ * @param binding - Static and enriched binding metadata for the operation.
+ * @param components - Validated request components that may be bound into the digest.
+ * @returns The normalized logical input object used for canonicalization.
+ */
 export function createOperationBindingInput(
   binding: OperationBindingInfo,
   components: OperationBindingComponents = {},
@@ -80,6 +106,13 @@ export function createOperationBindingInput(
   };
 }
 
+/**
+ * Canonicalize an operation-binding input and return its UTF-8 bytes.
+ *
+ * @param binding - Static and enriched binding metadata for the operation.
+ * @param components - Validated request components that may be bound into the digest.
+ * @returns UTF-8 bytes of the canonicalized logical input.
+ */
 export function getOperationBindingCanonicalBytes(
   binding: OperationBindingInfo,
   components: OperationBindingComponents = {},
@@ -88,6 +121,12 @@ export function getOperationBindingCanonicalBytes(
   return new TextEncoder().encode(canonicalize(input));
 }
 
+/**
+ * Compute a SHA-256 digest and encode it as lowercase hexadecimal.
+ *
+ * @param bytes - Canonical bytes to hash.
+ * @returns Lowercase hexadecimal digest output.
+ */
 async function sha256Hex(bytes: Uint8Array): Promise<string> {
   const copy = new Uint8Array(bytes.byteLength);
   copy.set(bytes);
@@ -97,6 +136,13 @@ async function sha256Hex(bytes: Uint8Array): Promise<string> {
     .join("");
 }
 
+/**
+ * Compute the operation digest for a binding plus validated request components.
+ *
+ * @param binding - Static and enriched binding metadata for the operation.
+ * @param components - Validated request components that may be bound into the digest.
+ * @returns Lowercase hexadecimal digest for the canonical logical input.
+ */
 export async function computeOperationDigest(
   binding: OperationBindingInfo,
   components: OperationBindingComponents = {},
@@ -105,6 +151,13 @@ export async function computeOperationDigest(
   return sha256Hex(bytes);
 }
 
+/**
+ * Recompute the digest for a request and compare it against a signed receipt payload.
+ *
+ * @param payload - Receipt payload containing the claimed operation digest and binding flags.
+ * @param components - Validated request components to compare against the receipt.
+ * @returns Whether the digest matches plus both the expected and actual digest values.
+ */
 export async function verifyOperationReceiptMatchesInput(
   payload: OperationReceiptPayload,
   components: OperationBindingComponents = {},

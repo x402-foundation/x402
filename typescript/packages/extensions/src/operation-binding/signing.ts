@@ -15,6 +15,11 @@ import { isEIP712OperationReceipt, isJWSOperationReceipt } from "./types";
 
 const OPERATION_RECEIPT_VERSION = 1;
 
+/**
+ * Create the fixed EIP-712 domain used for operation-receipt signatures.
+ *
+ * @returns The typed-data domain shared by all operation receipts.
+ */
 export function createOperationReceiptDomain(): TypedDataDomain {
   return { name: "x402 operation receipt", version: "1", chainId: 1 };
 }
@@ -47,6 +52,12 @@ export type SignTypedDataFn = (params: {
   message: Record<string, unknown>;
 }) => Promise<Hex>;
 
+/**
+ * Prepare a typed-data message from an operation-receipt payload.
+ *
+ * @param payload - Receipt payload to encode for EIP-712 signing.
+ * @returns The bigint-normalized message object expected by `viem`.
+ */
 export function prepareOperationReceiptForEIP712(payload: OperationReceiptPayload): {
   version: bigint;
   network: string;
@@ -85,6 +96,12 @@ export function prepareOperationReceiptForEIP712(payload: OperationReceiptPayloa
   };
 }
 
+/**
+ * Hash an operation-receipt payload as EIP-712 typed data.
+ *
+ * @param payload - Receipt payload to hash.
+ * @returns The EIP-712 digest as a hex string.
+ */
 export function hashOperationReceiptTypedData(payload: OperationReceiptPayload): Hex {
   return hashTypedData({
     domain: createOperationReceiptDomain(),
@@ -94,6 +111,12 @@ export function hashOperationReceiptTypedData(payload: OperationReceiptPayload):
   });
 }
 
+/**
+ * Create the canonical payload that both JWS and EIP-712 receipts sign.
+ *
+ * @param input - Operation-binding metadata plus payer and request components.
+ * @returns Receipt payload with a freshly computed operation digest.
+ */
 export async function createOperationReceiptPayload(
   input: OperationReceiptInput,
 ): Promise<OperationReceiptPayload> {
@@ -119,6 +142,13 @@ export async function createOperationReceiptPayload(
   };
 }
 
+/**
+ * Sign an operation receipt using the JWS format.
+ *
+ * @param input - Operation-binding metadata plus payer and request components.
+ * @param signer - JWS signer implementation for the receipt issuer.
+ * @returns Signed receipt encoded as a compact JWS.
+ */
 export async function createOperationReceiptJWS(
   input: OperationReceiptInput,
   signer: JWSSigner,
@@ -131,6 +161,13 @@ export async function createOperationReceiptJWS(
   };
 }
 
+/**
+ * Sign an operation receipt using the EIP-712 format.
+ *
+ * @param input - Operation-binding metadata plus payer and request components.
+ * @param signTypedData - Callback that signs the prepared typed-data message.
+ * @returns Signed receipt containing the payload and EIP-712 signature.
+ */
 export async function createOperationReceiptEIP712(
   input: OperationReceiptInput,
   signTypedData: SignTypedDataFn,
@@ -150,6 +187,12 @@ export async function createOperationReceiptEIP712(
   };
 }
 
+/**
+ * Extract the payload from either supported signed receipt format.
+ *
+ * @param receipt - Signed receipt in JWS or EIP-712 form.
+ * @returns The decoded operation-receipt payload.
+ */
 export function extractOperationReceiptPayload(
   receipt: SignedOperationReceipt,
 ): OperationReceiptPayload {
@@ -164,11 +207,20 @@ export function extractOperationReceiptPayload(
   throw new Error(`Unknown receipt format: ${(receipt as SignedOperationReceipt).format}`);
 }
 
+/**
+ * Result returned after recovering the signer of an EIP-712 receipt.
+ */
 export interface EIP712VerificationResult<T> {
   signer: Hex;
   payload: T;
 }
 
+/**
+ * Verify an EIP-712 receipt signature and recover the signer address.
+ *
+ * @param receipt - Signed receipt in EIP-712 form.
+ * @returns The recovered signer address together with the verified payload.
+ */
 export async function verifyOperationReceiptSignatureEIP712(
   receipt: EIP712OperationReceipt,
 ): Promise<EIP712VerificationResult<OperationReceiptPayload>> {
@@ -190,6 +242,13 @@ export async function verifyOperationReceiptSignatureEIP712(
   };
 }
 
+/**
+ * Resolve the public key that should be used to verify a JWS receipt.
+ *
+ * @param jws - Compact JWS receipt string.
+ * @param providedKey - Optional explicit verification key or JWK.
+ * @returns A public key usable with `jose.compactVerify`.
+ */
 async function resolveVerificationKey(
   jws: string,
   providedKey?: jose.KeyLike | jose.JWK,
@@ -213,6 +272,13 @@ async function resolveVerificationKey(
   return extractPublicKeyFromKid(header.kid);
 }
 
+/**
+ * Verify a JWS receipt signature and return the decoded payload.
+ *
+ * @param receipt - Signed receipt in JWS form.
+ * @param publicKey - Optional explicit verification key or JWK.
+ * @returns The verified operation-receipt payload.
+ */
 export async function verifyOperationReceiptSignatureJWS(
   receipt: JWSOperationReceipt,
   publicKey?: jose.KeyLike | jose.JWK,
@@ -225,4 +291,3 @@ export async function verifyOperationReceiptSignatureJWS(
   const { payload } = await jose.compactVerify(receipt.signature, key);
   return JSON.parse(new TextDecoder().decode(payload)) as OperationReceiptPayload;
 }
-

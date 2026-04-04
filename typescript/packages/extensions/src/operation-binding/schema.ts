@@ -31,4 +31,3 @@ export const operationBindingSchema: OperationBindingSchema = {
   ],
   additionalProperties: false,
 };
-

@@ -24,11 +24,7 @@ export type {
   EIP712OperationReceipt,
 } from "./types";
 
-export {
-  OPERATION_BINDING,
-  isEIP712OperationReceipt,
-  isJWSOperationReceipt,
-} from "./types";
+export { OPERATION_BINDING, isEIP712OperationReceipt, isJWSOperationReceipt } from "./types";
 
 export { operationBindingSchema } from "./schema";
 
