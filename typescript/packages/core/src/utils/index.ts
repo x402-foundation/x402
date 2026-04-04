@@ -114,45 +114,36 @@ export function safeBase64Decode(data: string): string {
 
 /**
  * Deep equality comparison for payment requirements
- * Uses a normalized JSON.stringify for consistent comparison
+ * Recursively compares objects with key-order independence
  *
  * @param obj1 - First object to compare
  * @param obj2 - Second object to compare
  * @returns True if objects are deeply equal
  */
 export function deepEqual(obj1: unknown, obj2: unknown): boolean {
-  // Normalize and stringify both objects for comparison
-  // This handles nested objects, arrays, and different property orders
-  const normalize = (obj: unknown): string => {
-    // Handle primitives and null/undefined
-    if (obj === null || obj === undefined) return JSON.stringify(obj);
-    if (typeof obj !== "object") return JSON.stringify(obj);
+  if (obj1 === obj2) return true;
+  if (obj1 === null || obj2 === null) return false;
+  if (obj1 === undefined || obj2 === undefined) return false;
+  if (typeof obj1 !== typeof obj2) return false;
+  if (typeof obj1 !== "object") return false;
 
-    // Handle arrays
-    if (Array.isArray(obj)) {
-      return JSON.stringify(
-        obj.map(item =>
-          typeof item === "object" && item !== null ? JSON.parse(normalize(item)) : item,
-        ),
-      );
-    }
-
-    // Handle objects - sort keys and recursively normalize values
-    const sorted: Record<string, unknown> = {};
-    Object.keys(obj as Record<string, unknown>)
-      .sort()
-      .forEach(key => {
-        const value = (obj as Record<string, unknown>)[key];
-        sorted[key] =
-          typeof value === "object" && value !== null ? JSON.parse(normalize(value)) : value;
-      });
-    return JSON.stringify(sorted);
-  };
-
-  try {
-    return normalize(obj1) === normalize(obj2);
-  } catch {
-    // Fallback to simple comparison if normalization fails
-    return JSON.stringify(obj1) === JSON.stringify(obj2);
+  if (Array.isArray(obj1)) {
+    if (!Array.isArray(obj2)) return false;
+    if (obj1.length !== obj2.length) return false;
+    return obj1.every((item, i) => deepEqual(item, obj2[i]));
   }
+
+  if (Array.isArray(obj2)) return false;
+
+  const keys1 = Object.keys(obj1 as Record<string, unknown>);
+  const keys2 = Object.keys(obj2 as Record<string, unknown>);
+  if (keys1.length !== keys2.length) return false;
+
+  return keys1.every(key => {
+    if (!Object.prototype.hasOwnProperty.call(obj2, key)) return false;
+    return deepEqual(
+      (obj1 as Record<string, unknown>)[key],
+      (obj2 as Record<string, unknown>)[key],
+    );
+  });
 }
