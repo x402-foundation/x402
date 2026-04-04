@@ -94,6 +94,16 @@
         "default": "./dist/cjs/offer-receipt/index.js"
       }
     },
+    "./operation-binding": {
+      "import": {
+        "types": "./dist/esm/operation-binding/index.d.mts",
+        "default": "./dist/esm/operation-binding/index.mjs"
+      },
+      "require": {
+        "types": "./dist/cjs/operation-binding/index.d.ts",
+        "default": "./dist/cjs/operation-binding/index.js"
+      }
+    },
     "./payment-identifier": {
       "import": {
         "types": "./dist/esm/payment-identifier/index.d.mts",
