@@ -20,6 +20,7 @@
     ]
   },
   "extensions": [
+    "operation-binding",
     "eip2612GasSponsoring",
     "erc20ApprovalGasSponsoring"
   ],

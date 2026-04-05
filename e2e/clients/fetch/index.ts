@@ -4,7 +4,10 @@ import { createPublicClient, http } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import { base, baseSepolia } from "viem/chains";
 import { ExactEvmScheme, type ExactEvmSchemeOptions } from "@x402/evm/exact/client";
-import { UptoEvmScheme as UptoEvmClientScheme, type UptoEvmSchemeOptions } from "@x402/evm/upto/client";
+import {
+  UptoEvmScheme as UptoEvmClientScheme,
+  type UptoEvmSchemeOptions,
+} from "@x402/evm/upto/client";
 import { ExactEvmSchemeV1 } from "@x402/evm/v1";
 import { toClientEvmSigner } from "@x402/evm";
 import { ExactSvmScheme } from "@x402/svm/exact/client";
@@ -23,7 +26,9 @@ const baseURL = process.env.RESOURCE_SERVER_URL as string;
 const endpointPath = process.env.ENDPOINT_PATH as string;
 const url = `${baseURL}${endpointPath}`;
 const evmAccount = privateKeyToAccount(process.env.EVM_PRIVATE_KEY as `0x${string}`);
-const svmSigner = await createKeyPairSignerFromBytes(base58.decode(process.env.SVM_PRIVATE_KEY as string));
+const svmSigner = await createKeyPairSignerFromBytes(
+  base58.decode(process.env.SVM_PRIVATE_KEY as string),
+);
 
 const evmNetwork = process.env.EVM_NETWORK || "eip155:84532";
 const evmRpcUrl = process.env.EVM_RPC_URL;
@@ -47,7 +52,10 @@ const uptoSchemeOptions: UptoEvmSchemeOptions | undefined = process.env.EVM_RPC_
 // Initialize Aptos signer if key is provided
 let aptosAccount: Account | undefined;
 if (process.env.APTOS_PRIVATE_KEY) {
-  const formattedKey = PrivateKey.formatPrivateKey(process.env.APTOS_PRIVATE_KEY, PrivateKeyVariants.Ed25519);
+  const formattedKey = PrivateKey.formatPrivateKey(
+    process.env.APTOS_PRIVATE_KEY,
+    PrivateKeyVariants.Ed25519,
+  );
   const aptosPrivateKey = new Ed25519PrivateKey(formattedKey);
   aptosAccount = Account.fromPrivateKey({ privateKey: aptosPrivateKey });
 }
@@ -73,13 +81,21 @@ if (stellarSigner) {
   client.register("stellar:*", new ExactStellarScheme(stellarSigner));
 }
 
-const fetchWithPayment = wrapFetchWithPayment(fetch, client);
+let capturedPaymentRequired: unknown;
+
+const httpClient = new x402HTTPClient(client).onPaymentRequired(async ({ paymentRequired }) => {
+  capturedPaymentRequired = paymentRequired;
+});
+
+const fetchWithPayment = wrapFetchWithPayment(fetch, httpClient);
 
 fetchWithPayment(url, {
   method: "GET",
 }).then(async response => {
   const data = await response.json();
-  const paymentResponse = new x402HTTPClient(client).getPaymentSettleResponse((name) => response.headers.get(name));
+  const paymentResponse = new x402HTTPClient(client).getPaymentSettleResponse(name =>
+    response.headers.get(name),
+  );
 
   if (!paymentResponse) {
     // No payment was required
@@ -87,6 +103,7 @@ fetchWithPayment(url, {
       success: true,
       data: data,
       status_code: response.status,
+      payment_required: capturedPaymentRequired,
     };
     console.log(JSON.stringify(result));
     process.exit(0);
@@ -97,6 +114,7 @@ fetchWithPayment(url, {
     success: paymentResponse.success,
     data: data,
     status_code: response.status,
+    payment_required: capturedPaymentRequired,
     payment_response: paymentResponse,
   };
 

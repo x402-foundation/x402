@@ -1,13 +1,14 @@
-import type { NetworkSet } from './networks/networks';
+import type { NetworkSet } from "./networks/networks";
 
-export type ProtocolFamily = 'evm' | 'svm' | 'aptos' | 'stellar';
-export type Transport = 'http' | 'mcp';
-export type TransferMethod = 'eip3009' | 'permit2' | 'upto';
+export type ProtocolFamily = "evm" | "svm" | "aptos" | "stellar";
+export type Transport = "http" | "mcp";
+export type TransferMethod = "eip3009" | "permit2" | "upto";
 
 export interface ClientResult {
   success: boolean;
   data?: any;
   status_code?: number;
+  payment_required?: any;
   payment_response?: any;
   error?: string;
 }
@@ -64,7 +65,7 @@ export interface TestEndpoint {
 
 export interface TestConfig {
   name: string;
-  type: 'server' | 'client' | 'facilitator';
+  type: "server" | "client" | "facilitator";
   transport?: Transport;
   language: string;
   protocolFamilies?: ProtocolFamily[];
@@ -127,5 +128,6 @@ export interface ScenarioResult {
   error?: string;
   data?: any;
   status_code?: number;
+  payment_required?: any;
   payment_response?: any;
 }
