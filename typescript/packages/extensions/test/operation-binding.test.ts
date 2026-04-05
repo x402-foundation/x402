@@ -1,22 +1,22 @@
-import { describe, it, expect } from "vitest";
+import { describe, expect, it } from "vitest";
 import type { PaymentRequired } from "@x402/core";
 import { privateKeyToAccount } from "viem/accounts";
 import type { Hex } from "viem";
 
 import {
   OPERATION_BINDING,
-  operationBindingSchema,
-  declareOperationBindingExtension,
-  operationBindingResourceServerExtension,
-  createOperationBindingInput,
-  getOperationBindingCanonicalBytes,
   computeOperationDigest,
-  createOperationReceiptJWS,
+  createOperationBindingInput,
   createOperationReceiptEIP712,
+  createOperationReceiptJWS,
+  declareOperationBindingExtension,
   extractOperationReceiptPayload,
-  verifyOperationReceiptSignatureJWS,
-  verifyOperationReceiptSignatureEIP712,
+  getOperationBindingCanonicalBytes,
+  operationBindingResourceServerExtension,
+  operationBindingSchema,
   verifyOperationReceiptMatchesInput,
+  verifyOperationReceiptSignatureEIP712,
+  verifyOperationReceiptSignatureJWS,
   type OperationBindingInfo,
 } from "../src/operation-binding";
 import { createES256KSigner, generateES256KKeyPair } from "./offer-receipt-test-utils";
@@ -51,6 +51,93 @@ const SEARCH_BINDING: OperationBindingInfo = {
   bindQuery: false,
   bindBody: true,
 };
+
+const OPERATION_DIGEST_VECTORS = [
+  {
+    name: "matches the RFC 8785 digest for weather path and query input",
+    binding: WEATHER_BINDING,
+    components: {
+      pathParams: { city: "SF" },
+      query: { units: "metric" },
+    },
+    digest: "fc54afe61f8ecb553a313c317bc31785def72ac348213718235077586956fd45",
+  },
+  {
+    name: "matches the RFC 8785 digest for weather query expansion",
+    binding: WEATHER_BINDING,
+    components: {
+      pathParams: { city: "SF" },
+      query: { units: "metric", lang: "en" },
+    },
+    digest: "263839b2849b379b304775feb8e88724ac5b0d7f3fb418a71b197ec4a4e35618",
+  },
+  {
+    name: "matches the RFC 8785 digest for a basic search body",
+    binding: SEARCH_BINDING,
+    components: {
+      body: {
+        query: "x402",
+        limit: 10,
+      },
+    },
+    digest: "44bb1eb7c73f954faf13b4996eaeb0f1c2b98a9cc5c4e741c5e25d3d21dc0a11",
+  },
+  {
+    name: "matches the RFC 8785 digest for a newline-containing body",
+    binding: SEARCH_BINDING,
+    components: {
+      body: {
+        query: "line1\nline2",
+        limit: 1,
+      },
+    },
+    digest: "5caac7f75db73ddc5c662458aec0f25a58f50358c68c12a17cb7925f43291223",
+  },
+  {
+    name: "matches the RFC 8785 digest for tab and unicode content",
+    binding: SEARCH_BINDING,
+    components: {
+      body: {
+        q: "hello\tworld",
+        emoji: "caf\u00e9 \ud83d\udc22",
+      },
+    },
+    digest: "ac24f9d26314787e218aa0ae946e94a2be76e9cc63325afcca5e3c8b00a04333",
+  },
+  {
+    name: "matches the RFC 8785 digest when bindBody is disabled",
+    binding: {
+      ...SEARCH_BINDING,
+      bindBody: false,
+    },
+    components: {
+      body: {
+        should: "be ignored",
+      },
+    },
+    digest: "85d5bd39278b4dda2e79ed21bf0dd21e58399fc17c019283ac939e5cc5bd096b",
+  },
+  {
+    name: "matches the RFC 8785 digest at the max safe integer boundary",
+    binding: SEARCH_BINDING,
+    components: {
+      body: {
+        max_safe: 9007199254740991,
+      },
+    },
+    digest: "a1b5ce6dfecedc5adc4793aa97acf61f85107c530bf850fb3331a76f4c071177",
+  },
+  {
+    name: "matches the RFC 8785 digest when DEL is preserved in a string",
+    binding: SEARCH_BINDING,
+    components: {
+      body: {
+        s: "a\u007fb",
+      },
+    },
+    digest: "a73790954115b12634364b06ab3aeba5d0eaecffe0dced0daf15e9fc3f05bc9e",
+  },
+] as const;
 
 describe("Operation-Binding Extension", () => {
   describe("declareOperationBindingExtension", () => {
@@ -197,43 +284,12 @@ describe("Operation-Binding Extension", () => {
       expect(digestA).not.toBe(digestB);
     });
 
-    it("matches the RFC 8785 digest for a newline-containing body", async () => {
-      const digest = await computeOperationDigest(SEARCH_BINDING, {
-        body: {
-          query: "line1\nline2",
-          limit: 1,
-        },
+    for (const vector of OPERATION_DIGEST_VECTORS) {
+      it(vector.name, async () => {
+        const digest = await computeOperationDigest(vector.binding, vector.components);
+        expect(digest).toBe(vector.digest);
       });
-
-      expect(digest).toBe("5caac7f75db73ddc5c662458aec0f25a58f50358c68c12a17cb7925f43291223");
-    });
-
-    it("matches the RFC 8785 digest for tab and unicode content", async () => {
-      const digest = await computeOperationDigest(SEARCH_BINDING, {
-        body: {
-          q: "hello\tworld",
-          emoji: "café 🐢",
-        },
-      });
-
-      expect(digest).toBe("ac24f9d26314787e218aa0ae946e94a2be76e9cc63325afcca5e3c8b00a04333");
-    });
-
-    it("matches the RFC 8785 digest when bindBody is disabled", async () => {
-      const digest = await computeOperationDigest(
-        {
-          ...SEARCH_BINDING,
-          bindBody: false,
-        },
-        {
-          body: {
-            should: "be ignored",
-          },
-        },
-      );
-
-      expect(digest).toBe("85d5bd39278b4dda2e79ed21bf0dd21e58399fc17c019283ac939e5cc5bd096b");
-    });
+    }
   });
 
   describe("receipt signing and verification", () => {
