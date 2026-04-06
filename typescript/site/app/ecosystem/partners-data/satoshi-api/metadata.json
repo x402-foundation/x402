@@ -1,0 +1,7 @@
+{
+  "name": "Satoshi API",
+  "description": "Bitcoin fee intelligence API with 10 x402-paid endpoints. Live fee recommendations, mempool analysis, block predictions, and AI-powered transaction explanations -- all payable with USDC on Base.",
+  "logoUrl": "/logos/satoshi-api.png",
+  "websiteUrl": "https://bitcoinsapi.com",
+  "category": "Services/Endpoints"
+}
