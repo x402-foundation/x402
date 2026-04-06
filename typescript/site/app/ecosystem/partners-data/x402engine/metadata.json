@@ -2,6 +2,6 @@
   "name": "x402engine",
   "category": "Services/Endpoints",
   "logoUrl": "/logos/x402engine.png",
-  "description": "28 pay-per-call APIs for AI agents — image generation, LLM inference, code execution, audio transcription, crypto market data, blockchain analytics, ENS resolution, IPFS storage, and travel search. Supports USDC on Base/Solana and USDm on MegaETH.",
+  "description": "70+ pay-per-call APIs for AI agents — 44 LLMs, image/video generation, crypto data, wallet analytics, web search, code execution, TTS, IPFS, and travel. Supports USDC on Base/Solana and USDm on MegaETH.",
   "websiteUrl": "https://x402engine.app"
 }
