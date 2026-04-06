@@ -369,7 +369,7 @@ All EIP-712 signatures in this extension use:
     "bindPathParams": true,
     "bindQuery": true,
     "bindBody": false,
-    "operationDigest": "8db6ee2cc9d1f19dbf9d502f92c0edcf3f48c8a7f8fd5378d8cebd1d7955db6b",
+    "operationDigest": "fc54afe61f8ecb553a313c317bc31785def72ac348213718235077586956fd45",
     "payer": "0x857b06519E91e3A54538791bDbb0E22373e36b66",
     "issuedAt": 1775289900
   },
@@ -526,7 +526,7 @@ X-PAYMENT: <omitted>
             "bindPathParams": true,
             "bindQuery": true,
             "bindBody": false,
-            "operationDigest": "8db6ee2cc9d1f19dbf9d502f92c0edcf3f48c8a7f8fd5378d8cebd1d7955db6b",
+            "operationDigest": "fc54afe61f8ecb553a313c317bc31785def72ac348213718235077586956fd45",
             "payer": "0x857b06519E91e3A54538791bDbb0E22373e36b66",
             "issuedAt": 1775289900
           },
@@ -585,6 +585,55 @@ Content-Type: application/json
 
 ---
 
+## Appendix A: Test Vectors
+
+This appendix is informative, but implementations SHOULD treat these vectors as bit-for-bit interoperability targets for `rfc8785-jcs` plus `sha-256`.
+
+The vectors below use these advertised bindings:
+
+### WEATHER Binding
+
+```json
+{
+  "resourceUrl": "https://api.example.com/weather/SF",
+  "method": "GET",
+  "pathTemplate": "/weather/:city",
+  "operationId": "weather.getCurrent",
+  "policyVersion": "2026-04-04",
+  "bindPathParams": true,
+  "bindQuery": true,
+  "bindBody": false
+}
+```
+
+### SEARCH Binding
+
+```json
+{
+  "resourceUrl": "https://api.example.com/search",
+  "method": "POST",
+  "pathTemplate": "/search",
+  "operationId": "search.run",
+  "policyVersion": "2026-04-04",
+  "bindPathParams": false,
+  "bindQuery": false,
+  "bindBody": true
+}
+```
+
+| # | Binding | Components | `operationDigest` |
+| --- | --- | --- | --- |
+| V1 | WEATHER | `pathParams={city:"SF"}, query={units:"metric"}` | `fc54afe61f8ecb553a313c317bc31785def72ac348213718235077586956fd45` |
+| V2 | WEATHER | `pathParams={city:"SF"}, query={units:"metric",lang:"en"}` | `263839b2849b379b304775feb8e88724ac5b0d7f3fb418a71b197ec4a4e35618` |
+| V3 | SEARCH | `body={query:"x402",limit:10}` | `44bb1eb7c73f954faf13b4996eaeb0f1c2b98a9cc5c4e741c5e25d3d21dc0a11` |
+| V4 | SEARCH | `body={query:"line1\nline2",limit:1}` | `5caac7f75db73ddc5c662458aec0f25a58f50358c68c12a17cb7925f43291223` |
+| V5 | SEARCH | `body={q:"hello\tworld",emoji:"caf\u00e9 \ud83d\udc22"}` | `ac24f9d26314787e218aa0ae946e94a2be76e9cc63325afcca5e3c8b00a04333` |
+| V6 | SEARCH with `bindBody=false` | `body={should:"be ignored"}` -> logical body is `null` | `85d5bd39278b4dda2e79ed21bf0dd21e58399fc17c019283ac939e5cc5bd096b` |
+| V7 | SEARCH | `body={max_safe:9007199254740991}` (`2^53 - 1`) | `a1b5ce6dfecedc5adc4793aa97acf61f85107c530bf850fb3331a76f4c071177` |
+| V8 | SEARCH | `body={s:"a\u007fb"}` (DEL preserved per RFC 8785) | `a73790954115b12634364b06ab3aeba5d0eaecffe0dced0daf15e9fc3f05bc9e` |
+
+---
+
 ## Security Considerations
 
 - Servers MUST compute the digest after validation, not from raw request bytes.
@@ -617,4 +666,5 @@ Content-Type: application/json
 
 | Version | Date | Changes | Author |
 | --- | --- | --- | --- |
+| 0.2 | 2026-04-06 | Added interoperability test vectors appendix and aligned example digests with the published vectors. | Ayush Ozha |
 | 0.1 | 2026-04-04 | Initial companion extension draft for operation-bound receipts. | Ayush Ozha |
