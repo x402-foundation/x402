@@ -1,0 +1,7 @@
+{
+  "name": "WaveGuard",
+  "category": "Services/Endpoints",
+  "logoUrl": "/logos/waveguard.png",
+  "description": "Physics-based anomaly detection API and MCP server for AI agents. Uses wave-equation PDEs (no ML training) to detect anomalies in time-series data — flash crashes, stale feeds, price manipulation, structural breaks. Also provides 52-dim physics fingerprinting, structural similarity comparison, and live crypto market data. $0.001/scan via USDC on Base.",
+  "websiteUrl": "https://www.emergentphysicslab.com/products/waveguard"
+}

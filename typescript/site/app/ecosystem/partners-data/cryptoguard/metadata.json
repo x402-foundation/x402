@@ -1,0 +1,7 @@
+{
+  "name": "CryptoGuard",
+  "category": "Services/Endpoints",
+  "logoUrl": "/logos/cryptoguard.png",
+  "description": "Per-transaction crypto trade validator powered by physics-based anomaly detection. One API call before every trade: resolves token, runs anomaly scan, checks rug pull risk, cross-references CEX/DEX pricing, and returns PROCEED/CAUTION/BLOCK verdict. Also provides portfolio scanning, historical self-comparison, and new DEX pair discovery. $0.05/scan via USDC on Base.",
+  "websiteUrl": "https://www.emergentphysicslab.com/products/cryptoguard"
+}
