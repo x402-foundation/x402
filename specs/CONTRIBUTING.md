@@ -21,6 +21,7 @@ specs/
 │   └── exact/
 │       ├── scheme_exact.md    # Scheme overview
 │       ├── scheme_exact_evm.md
+│       ├── scheme_exact_ilp.md
 │       ├── scheme_exact_svm.md
 │       └── scheme_exact_sui.md
 ├── transports/

@@ -30,4 +30,10 @@ While implementation details vary by network, facilitators MUST enforce security
 - Transfer correctness: `to` MUST equal `payTo` and `amount` MUST equal `requirements.amount` exactly.
 - Simulation verification: MUST emit events showing only the expected balance changes (recipient increase, payer decrease) for `requirements.amount`—no other balance changes allowed.
 
-Network-specific rules are in per-network documents: `scheme_exact_svm.md` (Solana), `scheme_exact_stellar.md` (Stellar), `scheme_exact_evm.md` (EVM), `scheme_exact_sui.md` (SUI).
+### ILP
+
+- Wallet binding: the host of `payload.incomingPaymentUrl` MUST match the host of `requirements.payTo`, and the `walletAddress` of the fetched incoming payment MUST equal `requirements.payTo`.
+- Amount correctness: `receivedAmount.value` MUST equal `requirements.amount` exactly.
+- Replay prevention: each incoming payment URL MUST NOT be accepted more than once outside the idempotency window.
+
+Network-specific rules are in per-network documents: `scheme_exact_evm.md` (EVM), `scheme_exact_ilp.md` (ILP / Open Payments), `scheme_exact_stellar.md` (Stellar), `scheme_exact_sui.md` (SUI), `scheme_exact_svm.md` (Solana).
