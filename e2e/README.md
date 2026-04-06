@@ -48,11 +48,11 @@ pnpm test
 ```
 
 Launches an interactive CLI where you can select:
-- **Facilitators** - Payment verification/settlement services (Go, TypeScript)
+- **Facilitators** - Payment verification/settlement services (Go, TypeScript, Python)
 - **Servers** - Protected endpoints requiring payment (Express, Gin, Hono, Next.js, FastAPI, Flask, etc.)
 - **Clients** - Payment-capable HTTP clients (axios, fetch, httpx, requests, etc.)
 - **Extensions** - Additional features like Bazaar discovery
-- **Protocols** - EVM, SVM, Aptos, and/or Hedera networks
+- **Protocols** - EVM, SVM, Aptos, Hedera, Stellar, and/or TVM networks
 - **Payment schemes** (when multiple apply) - `exact`, `upto`, or `batch-settlement`
 
 Every valid combination of your selections will be tested. For example, selecting 2 facilitators, 3 servers, and 2 clients will generate and run all compatible test scenarios.
@@ -118,6 +118,7 @@ CLIENT_APTOS_PRIVATE_KEY=...        # Aptos private key for client payments (hex
 CLIENT_HEDERA_ACCOUNT_ID=0.0....    # Hedera account id for client payments
 CLIENT_HEDERA_PRIVATE_KEY=0x...     # Hedera ECDSA private key for client payments
 CLIENT_STELLAR_PRIVATE_KEY=...      # Stellar private key for client payments
+CLIENT_TVM_PRIVATE_KEY=...          # TVM private key for client payments
 
 # Server payment addresses
 SERVER_EVM_ADDRESS=0x...            # Where servers receive EVM payments
@@ -125,6 +126,7 @@ SERVER_SVM_ADDRESS=...              # Where servers receive Solana payments
 SERVER_APTOS_ADDRESS=0x...          # Where servers receive Aptos payments
 SERVER_HEDERA_ADDRESS=0.0....       # Where servers receive Hedera payments
 SERVER_STELLAR_ADDRESS=...          # Where servers receive Stellar payments
+SERVER_TVM_ADDRESS=...              # Where servers receive TVM payments
 
 # Facilitator wallets (⚠️ TEST WALLETS ONLY — used to fund/drain client between tests)
 FACILITATOR_EVM_PRIVATE_KEY=0x...   # EVM private key for facilitator
@@ -133,6 +135,10 @@ FACILITATOR_APTOS_PRIVATE_KEY=...   # Aptos private key for facilitator (hex str
 FACILITATOR_HEDERA_ACCOUNT_ID=0.0... # Hedera fee payer account id for facilitator
 FACILITATOR_HEDERA_PRIVATE_KEY=0x... # Hedera ECDSA private key for facilitator
 FACILITATOR_STELLAR_PRIVATE_KEY=... # Stellar private key for facilitator
+FACILITATOR_TVM_PRIVATE_KEY=...     # TVM private key for facilitator
+
+# TVM support
+TONCENTER_API_KEY=...               # Recommended for TVM client/facilitator access
 ```
 
 Optional environment variables (batch-settlement scheme):
@@ -167,7 +173,7 @@ $ pnpm test --min
 ✔ Select servers › express, hono, legacy-express
 ✔ Select clients › axios, fetch, httpx
 ✔ Select extensions › bazaar
-✔ Select protocol families › EVM, SVM, Aptos, Hedera, Stellar
+✔ Select protocol families › EVM, SVM, Aptos, Hedera, Stellar, TVM
 
 📊 Coverage-Based Minimization
 Total scenarios: 156

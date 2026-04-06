@@ -493,6 +493,7 @@ async function runTest() {
   const serverAptosAddress = process.env.SERVER_APTOS_ADDRESS;
   const serverHederaAddress = process.env.SERVER_HEDERA_ADDRESS;
   const serverStellarAddress = process.env.SERVER_STELLAR_ADDRESS;
+  const serverTvmAddress = process.env.SERVER_TVM_ADDRESS;
   const clientEvmPrivateKey = process.env.CLIENT_EVM_PRIVATE_KEY;
   const clientSvmPrivateKey = process.env.CLIENT_SVM_PRIVATE_KEY;
   const clientAvmPrivateKey = process.env.CLIENT_AVM_PRIVATE_KEY;
@@ -500,6 +501,7 @@ async function runTest() {
   const clientHederaAccountId = process.env.CLIENT_HEDERA_ACCOUNT_ID;
   const clientHederaPrivateKey = process.env.CLIENT_HEDERA_PRIVATE_KEY;
   const clientStellarPrivateKey = process.env.CLIENT_STELLAR_PRIVATE_KEY;
+  const clientTvmPrivateKey = process.env.CLIENT_TVM_PRIVATE_KEY;
   const facilitatorEvmPrivateKey = process.env.FACILITATOR_EVM_PRIVATE_KEY;
   const facilitatorSvmPrivateKey = process.env.FACILITATOR_SVM_PRIVATE_KEY;
   const facilitatorAvmPrivateKey = process.env.FACILITATOR_AVM_PRIVATE_KEY;
@@ -507,6 +509,7 @@ async function runTest() {
   const facilitatorHederaAccountId = process.env.FACILITATOR_HEDERA_ACCOUNT_ID;
   const facilitatorHederaPrivateKey = process.env.FACILITATOR_HEDERA_PRIVATE_KEY;
   const facilitatorStellarPrivateKey = process.env.FACILITATOR_STELLAR_PRIVATE_KEY;
+  const facilitatorTvmPrivateKey = process.env.FACILITATOR_TVM_PRIVATE_KEY;
   const batchSettlementRecovery = envFlagDefaultTrue(process.env.BATCH_SETTLEMENT_RECOVERY);
   if (!serverEvmAddress || !serverSvmAddress || !clientEvmPrivateKey || !clientSvmPrivateKey || !facilitatorEvmPrivateKey || !facilitatorSvmPrivateKey) {
     errorLog('❌ Missing required environment variables:');
@@ -594,6 +597,7 @@ async function runTest() {
   log(`   APTOS: ${networks.aptos.name} (${networks.aptos.caip2})`);
   log(`   HEDERA: ${networks.hedera.name} (${networks.hedera.caip2})`);
   log(`   STELLAR: ${networks.stellar.name} (${networks.stellar.caip2})`);
+  log(`   TVM: ${networks.tvm.name} (${networks.tvm.caip2})`);
 
   if (networkMode === 'mainnet') {
     log('\n⚠️  WARNING: Running on MAINNET - real funds will be used!');
@@ -609,6 +613,34 @@ async function runTest() {
     return;
   }
 
+  const requiredEnvByFamily: Record<string, Array<[string, string | undefined]>> = {
+    evm: [
+      ['SERVER_EVM_ADDRESS', serverEvmAddress],
+      ['CLIENT_EVM_PRIVATE_KEY', clientEvmPrivateKey],
+      ['FACILITATOR_EVM_PRIVATE_KEY', facilitatorEvmPrivateKey],
+    ],
+    svm: [
+      ['SERVER_SVM_ADDRESS', serverSvmAddress],
+      ['CLIENT_SVM_PRIVATE_KEY', clientSvmPrivateKey],
+      ['FACILITATOR_SVM_PRIVATE_KEY', facilitatorSvmPrivateKey],
+    ],
+    aptos: [
+      ['SERVER_APTOS_ADDRESS', serverAptosAddress],
+      ['CLIENT_APTOS_PRIVATE_KEY', clientAptosPrivateKey],
+      ['FACILITATOR_APTOS_PRIVATE_KEY', facilitatorAptosPrivateKey],
+    ],
+    stellar: [
+      ['SERVER_STELLAR_ADDRESS', serverStellarAddress],
+      ['CLIENT_STELLAR_PRIVATE_KEY', clientStellarPrivateKey],
+      ['FACILITATOR_STELLAR_PRIVATE_KEY', facilitatorStellarPrivateKey],
+    ],
+    tvm: [
+      ['SERVER_TVM_ADDRESS', serverTvmAddress],
+      ['CLIENT_TVM_PRIVATE_KEY', clientTvmPrivateKey],
+      ['FACILITATOR_TVM_PRIVATE_KEY', facilitatorTvmPrivateKey],
+    ],
+  };
+
   // Apply coverage-based minimization if --min flag is set
   if (parsedArgs.minimize) {
     filteredScenarios = minimizeScenarios(filteredScenarios);
@@ -620,6 +652,22 @@ async function runTest() {
     }
   } else {
     log(`\n✅ ${filteredScenarios.length} scenarios selected`);
+  }
+
+  const selectedProtocolFamilies = new Set(filteredScenarios.map(scenario => scenario.protocolFamily));
+  const missingRequiredEnv = new Set<string>();
+  for (const family of selectedProtocolFamilies) {
+    for (const [name, value] of requiredEnvByFamily[family] || []) {
+      if (!value) {
+        missingRequiredEnv.add(name);
+      }
+    }
+  }
+
+  if (missingRequiredEnv.size > 0) {
+    errorLog('❌ Missing required environment variables for selected protocol families:');
+    Array.from(missingRequiredEnv).forEach(name => errorLog(` ${name}`));
+    process.exit(1);
   }
 
   if (selectedExtensions && selectedExtensions.length > 0) {
@@ -758,16 +806,19 @@ async function runTest() {
     'HEDERA_ACCOUNT_ID',
     'HEDERA_PRIVATE_KEY',
     'STELLAR_PRIVATE_KEY',
+    'TVM_PRIVATE_KEY',
     'EVM_NETWORK',
     'SVM_NETWORK',
     'APTOS_NETWORK',
     'HEDERA_NETWORK',
     'STELLAR_NETWORK',
+    'TVM_NETWORK',
     'EVM_RPC_URL',
     'SVM_RPC_URL',
     'APTOS_RPC_URL',
     'HEDERA_NODE_URL',
     'STELLAR_RPC_URL',
+    'TONCENTER_BASE_URL',
   ]);
 
   for (const [facilitatorName, facilitator] of uniqueFacilitators) {
@@ -912,6 +963,7 @@ async function runTest() {
         SVM_NETWORK: networks.svm.caip2,
         APTOS_NETWORK: networks.aptos.caip2,
         STELLAR_NETWORK: networks.stellar.caip2,
+        TVM_NETWORK: networks.tvm.caip2,
       },
       stdio: 'pipe',
     },
@@ -976,12 +1028,15 @@ async function runTest() {
       hederaAccountId: clientHederaAccountId || '',
       hederaPrivateKey: clientHederaPrivateKey || '',
       stellarPrivateKey: clientStellarPrivateKey || '',
+      tvmPrivateKey: clientTvmPrivateKey || '',
       serverUrl: `http://localhost:${port}`,
       endpointPath: scenario.endpoint.path,
       evmNetwork: networks.evm.caip2,
       evmRpcUrl: networks.evm.rpcUrl,
       hederaNetwork: networks.hedera.caip2,
       hederaNodeUrl: networks.hedera.rpcUrl,
+      tvmNetwork: networks.tvm.caip2,
+      tvmRpcUrl: networks.tvm.rpcUrl,
     };
 
     try {
@@ -1226,6 +1281,7 @@ async function runTest() {
       hederaAsset: process.env.HEDERA_ASSET,
       hederaAmount: process.env.HEDERA_AMOUNT,
       stellarPayTo: facilitatorSupportsStellar ? (serverStellarAddress || '') : '',
+      tvmPayTo: serverTvmAddress || '',
       networks,
       facilitatorUrl,
       mockFacilitatorUrl,

@@ -6,6 +6,7 @@ on-chain for the x402 protocol.
 Supports:
 - EVM networks (Base Sepolia) via web3.py
 - SVM networks (Solana Devnet) via solders
+- TVM networks (TON testnet/mainnet) via pytoniq + Toncenter
 - Bazaar discovery extension for resource cataloging
 - EIP-2612 gas sponsoring extension (gasless Permit2 approval via permit)
 - ERC-20 approval gas sponsoring extension (gasless Permit2 via signed tx relay)
@@ -43,6 +44,12 @@ from x402.mechanisms.evm.types import TransactionReceipt
 from x402.mechanisms.evm.upto import UptoEvmFacilitatorScheme
 from x402.mechanisms.svm import FacilitatorKeypairSigner
 from x402.mechanisms.svm.exact import register_exact_svm_facilitator
+from x402.mechanisms.tvm import (
+    TVM_TESTNET,
+    HighloadV3Config,
+    FacilitatorHighloadV3Signer,
+)
+from x402.mechanisms.tvm.exact import register_exact_tvm_facilitator
 
 # Load environment variables
 load_dotenv()
@@ -53,27 +60,49 @@ PORT = int(os.environ.get("PORT", "4022"))
 # Initialize bazaar catalog
 bazaar_catalog = BazaarCatalog()
 
-# Validate required environment variables
-if not os.environ.get("EVM_PRIVATE_KEY"):
-    print("❌ EVM_PRIVATE_KEY environment variable is required")
+# Validate that at least one chain is configured
+if not any(
+    [
+        os.environ.get("EVM_PRIVATE_KEY"),
+        os.environ.get("SVM_PRIVATE_KEY"),
+        os.environ.get("TVM_PRIVATE_KEY"),
+    ]
+):
+    print(
+        "❌ At least one of EVM_PRIVATE_KEY, SVM_PRIVATE_KEY, or TVM_PRIVATE_KEY is required"
+    )
     sys.exit(1)
 
-if not os.environ.get("SVM_PRIVATE_KEY"):
-    print("❌ SVM_PRIVATE_KEY environment variable is required")
-    sys.exit(1)
+# Network configuration
+EVM_NETWORK = os.environ.get("EVM_NETWORK", "eip155:84532")
+SVM_NETWORK = os.environ.get("SVM_NETWORK", "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1")
+TVM_NETWORK = os.environ.get("TVM_NETWORK", TVM_TESTNET)
 
-# Initialize the EVM signer from private key
-evm_rpc_url = os.environ.get("EVM_RPC_URL") or "https://sepolia.base.org"
-evm_signer = FacilitatorWeb3Signer(
-    private_key=os.environ["EVM_PRIVATE_KEY"],
-    rpc_url=evm_rpc_url,
-)
-print(f"EVM Facilitator account: {evm_signer.get_addresses()[0]}")
+# Initialize the EVM signer from private key when configured
+evm_signer = None
+if os.environ.get("EVM_PRIVATE_KEY"):
+    evm_rpc_url = os.environ.get("EVM_RPC_URL") or "https://sepolia.base.org"
+    evm_signer = FacilitatorWeb3Signer(
+        private_key=os.environ["EVM_PRIVATE_KEY"],
+        rpc_url=evm_rpc_url,
+    )
+    print(f"EVM Facilitator account: {evm_signer.get_addresses()[0]}")
 
-# Initialize the SVM signer from private key
-svm_keypair = Keypair.from_base58_string(os.environ["SVM_PRIVATE_KEY"])
-svm_signer = FacilitatorKeypairSigner(svm_keypair)
-print(f"SVM Facilitator account: {svm_signer.get_addresses()[0]}")
+# Initialize the SVM signer from private key when configured
+svm_signer = None
+if os.environ.get("SVM_PRIVATE_KEY"):
+    svm_keypair = Keypair.from_base58_string(os.environ["SVM_PRIVATE_KEY"])
+    svm_signer = FacilitatorKeypairSigner(svm_keypair)
+    print(f"SVM Facilitator account: {svm_signer.get_addresses()[0]}")
+
+# Initialize the TVM signer from private key when configured
+tvm_signer = None
+if os.environ.get("TVM_PRIVATE_KEY"):
+    tvm_config = HighloadV3Config.from_private_key(os.environ["TVM_PRIVATE_KEY"])
+    tvm_config.api_key = os.environ.get("TONCENTER_API_KEY")
+    tvm_config.toncenter_base_url = os.environ.get("TONCENTER_BASE_URL")
+    tvm_signer = FacilitatorHighloadV3Signer({TVM_NETWORK: tvm_config})
+    print(f"TVM Facilitator account: {tvm_signer.get_addresses()[0]}")
 
 
 class Erc20ApprovalSigner:
@@ -138,7 +167,9 @@ class Erc20ApprovalSigner:
         return self._signer.wait_for_transaction_receipt(tx_hash)
 
 
-erc20_approval_signer = Erc20ApprovalSigner(evm_signer)
+erc20_approval_signer = (
+    Erc20ApprovalSigner(evm_signer) if evm_signer is not None else None
+)
 
 
 def _handle_after_verify(ctx: Any) -> None:
@@ -183,7 +214,7 @@ def _handle_after_verify(ctx: Any) -> None:
         print(f"   ⚠️  Failed to extract discovery info: {err}")
 
 
-# Initialize the x402 Facilitator with EVM and SVM support
+# Initialize the x402 Facilitator with optional EVM/SVM/TVM support
 facilitator = (
     x402Facilitator()
     .on_before_verify(lambda ctx: print("Before verify", ctx))
@@ -194,33 +225,40 @@ facilitator = (
     .on_settle_failure(lambda ctx: print("Settle failure", ctx))
 )
 
-# Network configuration (from env or defaults)
-evm_network = os.environ.get("EVM_NETWORK", "eip155:84532") # Base Sepolia
-
 # Register EVM schemes (V1 and V2)
-register_exact_evm_facilitator(
-    facilitator,
-    evm_signer,
-    networks=evm_network,
-    deploy_erc4337_with_eip6492=True,
-)
+if evm_signer is not None:
+    register_exact_evm_facilitator(
+        facilitator,
+        evm_signer,
+        networks=EVM_NETWORK,
+        deploy_erc4337_with_eip6492=True,
+    )
 
-# Register upto EVM scheme (V2 only)
-facilitator.register([evm_network], UptoEvmFacilitatorScheme(evm_signer))
+    # Register upto EVM scheme (V2 only)
+    facilitator.register([EVM_NETWORK], UptoEvmFacilitatorScheme(evm_signer))
 
 # Register SVM schemes (V1 and V2)
-svm_network = os.environ.get("SVM_NETWORK", "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1")
-register_exact_svm_facilitator(
-    facilitator,
-    svm_signer,
-    networks=svm_network,
-)
+if svm_signer is not None:
+    register_exact_svm_facilitator(
+        facilitator,
+        svm_signer,
+        networks=SVM_NETWORK,
+    )
+
+# Register TVM schemes (V2)
+if tvm_signer is not None:
+    register_exact_tvm_facilitator(
+        facilitator,
+        tvm_signer,
+        networks=TVM_NETWORK,
+    )
 
 # Register gas sponsoring extensions
-facilitator.register_extension(EIP2612_GAS_SPONSORING)
-facilitator.register_extension(
-    Erc20ApprovalFacilitatorExtension(signer=erc20_approval_signer)
-)
+if evm_signer is not None and erc20_approval_signer is not None:
+    facilitator.register_extension(EIP2612_GAS_SPONSORING)
+    facilitator.register_extension(
+        Erc20ApprovalFacilitatorExtension(signer=erc20_approval_signer)
+    )
 
 
 # Pydantic models for request/response
@@ -273,11 +311,14 @@ async def verify(request: VerifyRequest):
         response = await facilitator.verify(payload, requirements)
 
         if not response.is_valid:
-            print(f"  ❌ Verify rejected: {response.invalid_reason} (payer={response.payer})")
+            print(
+                f"  ❌ Verify rejected: {response.invalid_reason} (payer={response.payer})"
+            )
 
         return response.model_dump(by_alias=True, exclude_none=True)
     except Exception as e:
         import traceback
+
         print(f"Verify error: {e}")
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
@@ -342,7 +383,9 @@ async def supported():
         response = facilitator.get_supported()
 
         return {
-            "kinds": [k.model_dump(by_alias=True, exclude_none=True) for k in response.kinds],
+            "kinds": [
+                k.model_dump(by_alias=True, exclude_none=True) for k in response.kinds
+            ],
             "extensions": response.extensions,
             "signers": response.signers,
         }
@@ -389,7 +432,7 @@ async def health():
     """Health check endpoint."""
     return {
         "status": "ok",
-        "network": evm_network,
+        "networks": [kind.network for kind in facilitator.get_supported().kinds],
         "facilitator": "python",
         "version": "2.0.0",
         "extensions": facilitator.get_extensions(),
@@ -403,6 +446,8 @@ async def close():
     import asyncio
 
     print("Received shutdown request")
+    if tvm_signer is not None:
+        tvm_signer.close()
 
     async def shutdown():
         await asyncio.sleep(0.1)
@@ -415,14 +460,16 @@ async def close():
 if __name__ == "__main__":
     import uvicorn
 
+    supported_networks = [kind.network for kind in facilitator.get_supported().kinds]
+    active_extensions = facilitator.get_extensions()
+
     print(f"""
 ╔════════════════════════════════════════════════════════╗
 ║           x402 Python Facilitator (E2E)                ║
 ╠════════════════════════════════════════════════════════╣
 ║  Server:     http://localhost:{PORT}                       ║
-║  Network:    eip155:84532                              ║
-║  Address:    {evm_signer.get_addresses()[0]}  ║
-║  Extensions: bazaar, eip2612, erc20approval             ║
+║  Networks:   {", ".join(supported_networks[:2])[:36]:<36}║
+║  Extensions: {", ".join(active_extensions)[:36]:<36}║
 ║                                                        ║
 ║  Endpoints:                                            ║
 ║  • POST /verify              (verify payment)          ║

@@ -28,6 +28,7 @@ e2e/servers/gin/server
 e2e/servers/nethttp/nethttp
 e2e/servers/mcp-go/mcp-go
 e2e/servers/mcp-go/mcp-server
+e2e/servers/nethttp/nethttp
 e2e/legacy/servers/gin/gin
 
 # Example build artifacts

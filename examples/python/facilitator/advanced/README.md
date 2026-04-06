@@ -1,13 +1,15 @@
 # x402 Advanced Facilitator Examples (Python)
 
-FastAPI facilitator service demonstrating advanced x402 patterns including all-networks support, bazaar discovery, and lifecycle hooks.
+FastAPI facilitator service demonstrating advanced x402 patterns including all-networks support, bazaar discovery, and lifecycle hooks across EVM, SVM, and TVM.
 
 ## Prerequisites
 
 - Python 3.10+
 - uv (install via [docs.astral.sh/uv](https://docs.astral.sh/uv/getting-started/installation/))
-- EVM private key with Base Sepolia ETH for transaction fees
-- SVM private key with Solana Devnet SOL for transaction fees
+- Any configured payment signer set:
+  - EVM private key with Base Sepolia ETH for transaction fees
+  - SVM private key with Solana Devnet SOL for transaction fees
+  - TVM private key with TON testnet funds
 
 ## Setup
 
@@ -21,6 +23,10 @@ cp .env-local .env
 
 - `EVM_PRIVATE_KEY` - Ethereum private key
 - `SVM_PRIVATE_KEY` - Solana private key
+- `TVM_PRIVATE_KEY` - TVM private key for the facilitator wallet
+- `TVM_NETWORK` - TVM CAIP-2 network (optional, defaults to `tvm:-3`)
+- `TONCENTER_API_KEY` - Toncenter API key for TVM testnet (optional)
+- `TONCENTER_BASE_URL` - Custom Toncenter base URL (optional)
 - `PORT` - Server port (optional, defaults to 4022)
 
 3. Install dependencies:
@@ -38,10 +44,10 @@ uv run python bazaar.py         # Bazaar discovery extension
 
 ## Available Examples
 
-| Example | Command | Description |
-| --- | --- | --- |
+| Example        | Command                         | Description                                              |
+| -------------- | ------------------------------- | -------------------------------------------------------- |
 | `all_networks` | `uv run python all_networks.py` | All supported networks with optional chain configuration |
-| `bazaar` | `uv run python bazaar.py` | Bazaar discovery extension for cataloging x402 resources |
+| `bazaar`       | `uv run python bazaar.py`       | Bazaar discovery extension for cataloging x402 resources |
 
 ## API Endpoints
 
@@ -65,3 +71,5 @@ Networks use [CAIP-2](https://github.com/ChainAgnostic/CAIPs/blob/main/CAIPs/cai
 - `eip155:8453` — Base Mainnet
 - `solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1` — Solana Devnet
 - `solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp` — Solana Mainnet
+- `tvm:-3` — TON Testnet
+- `tvm:-239` — TON Mainnet

@@ -1,11 +1,14 @@
 # Advanced Python Client Examples
 
-This directory contains advanced x402 client examples demonstrating hooks, custom selectors, and builder patterns.
+This directory contains advanced x402 client examples demonstrating hooks, custom selectors, and builder patterns across EVM, SVM, and TVM networks.
 
 ## Prerequisites
 
 - Python 3.11+
-- An EVM private key with testnet funds (e.g., Base Sepolia)
+- At least one configured signer:
+  - EVM private key with testnet funds (e.g., Base Sepolia)
+  - SVM private key with Solana Devnet funds
+  - TVM private key with TON testnet funds and testnet USDT
 - A running x402 resource server (e.g., the FastAPI example server)
 
 ## Setup
@@ -21,7 +24,7 @@ This directory contains advanced x402 client examples demonstrating hooks, custo
 
    ```bash
    cp .env-local .env
-   # Edit .env and add your private key
+   # Edit .env and add one or more signer credentials
    ```
 
 3. **Start a test server** (in another terminal):
@@ -62,7 +65,7 @@ uv run python builder_pattern.py
 
 ### 0. All Networks (`all_networks.py`)
 
-Demonstrates how to add all supported networks with optional chain configuration
+Demonstrates how to add all supported networks with optional chain configuration, including TVM.
 
 ### 1. Hooks (`hooks.py`)
 
@@ -110,6 +113,7 @@ Demonstrates network-specific scheme registration:
 advanced/
 ├── .env-local              # Environment template
 ├── README.md               # This file
+├── all_networks.py         # Register EVM, SVM, and TVM schemes
 ├── pyproject.toml          # Dependencies
 ├── index.py                # CLI entry point
 ├── hooks.py                # Lifecycle hooks example

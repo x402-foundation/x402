@@ -4,7 +4,7 @@ A Python implementation of an x402 facilitator service for end-to-end testing.
 
 ## Features
 
-- **Multi-Chain Support**: Handles both EVM (Base Sepolia) and SVM (Solana Devnet) networks
+- **Multi-Chain Support**: Handles EVM (Base Sepolia), SVM (Solana Devnet), and TVM (TON testnet/mainnet) networks
 - **Protocol Versions**: Supports both x402 V1 and V2 protocols
 - **Bazaar Extension**: Full support for resource discovery and cataloging
 - **Lifecycle Hooks**: Payment verification tracking and discovery info extraction
@@ -39,25 +39,29 @@ uv run uvicorn main:app --port 4022
 
 ## Environment Variables
 
-| Variable | Required | Description |
-|----------|----------|-------------|
-| `PORT` | No | Server port (default: 4022) |
-| `EVM_PRIVATE_KEY` | Yes | Private key for EVM transactions |
-| `SVM_PRIVATE_KEY` | Yes | Private key for SVM transactions |
-| `EVM_RPC_URL` | No | Custom EVM RPC URL (default: Base Sepolia) |
-| `EVM_NETWORK` | No | EVM network identifier |
-| `SVM_NETWORK` | No | SVM network identifier |
+| Variable              | Required      | Description                                      |
+| --------------------- | ------------- | ------------------------------------------------ |
+| `PORT`                | No            | Server port (default: 4022)                      |
+| `EVM_PRIVATE_KEY`     | Conditionally | Private key for EVM transactions                 |
+| `SVM_PRIVATE_KEY`     | Conditionally | Private key for SVM transactions                 |
+| `TVM_PRIVATE_KEY`     | Conditionally | Private key for the TVM highload facilitator wallet |
+| `EVM_RPC_URL`         | No            | Custom EVM RPC URL (default: Base Sepolia)       |
+| `EVM_NETWORK`         | No            | EVM network identifier                           |
+| `SVM_NETWORK`         | No            | SVM network identifier                           |
+| `TVM_NETWORK`         | No            | TVM network identifier (default: `tvm:-3`)       |
+| `TONCENTER_API_KEY`   | No            | Toncenter API key for TVM testnet                |
+| `TONCENTER_BASE_URL`  | No            | Custom Toncenter base URL for TVM                |
 
 ## Endpoints
 
-| Method | Path | Description |
-|--------|------|-------------|
-| POST | `/verify` | Verify a payment against requirements |
-| POST | `/settle` | Settle a payment on-chain |
-| GET | `/supported` | Get supported payment kinds and extensions |
-| GET | `/discovery/resources` | List discovered resources (bazaar) |
-| GET | `/health` | Health check |
-| POST | `/close` | Graceful shutdown |
+| Method | Path                   | Description                                |
+| ------ | ---------------------- | ------------------------------------------ |
+| POST   | `/verify`              | Verify a payment against requirements      |
+| POST   | `/settle`              | Settle a payment on-chain                  |
+| GET    | `/supported`           | Get supported payment kinds and extensions |
+| GET    | `/discovery/resources` | List discovered resources (bazaar)         |
+| GET    | `/health`              | Health check                               |
+| POST   | `/close`               | Graceful shutdown                          |
 
 ## API Examples
 
@@ -97,6 +101,7 @@ The facilitator uses:
 - **x402 Python SDK**: Core x402 functionality
 - **web3.py**: EVM blockchain interactions
 - **solders**: SVM blockchain interactions
+- **pytoniq + Toncenter**: TVM blockchain interactions
 
 ## E2E Test Integration
 
@@ -107,4 +112,3 @@ This facilitator is automatically discovered by the e2e test framework via
 2. Wait for the "Facilitator listening" log message
 3. Run tests through the facilitator
 4. Shut down via POST `/close`
-
