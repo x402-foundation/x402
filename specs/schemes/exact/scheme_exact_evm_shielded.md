@@ -156,13 +156,29 @@ Full `PaymentPayload` example:
 
 ## Verification
 
-A facilitator verifying a `shielded` payment MUST enforce all of the following:
+Verification happens in two layers: the privacy pool contract handles ZK proof verification and double-spend prevention on-chain, while the facilitator confirms the resulting transfer matches the payment requirements.
 
-### 1. Transaction Existence
+### On-chain layer (handled by the privacy pool contract)
 
-The `txHash` MUST reference a confirmed transaction on the target chain. Facilitators MAY accept mempool transactions for low-value payments, but SHOULD require at least 1 confirmation for amounts exceeding a configurable threshold.
+Before the facilitator is involved, the following has already happened on-chain:
 
-### 2. Transfer Event Inspection
+1. The client generated a groth16 ZK proof proving ownership of a UTXO in the pool's shielded Merkle tree.
+2. The proof includes **nullifiers** — deterministic hashes derived from the UTXO being spent. Each UTXO produces a unique nullifier.
+3. The client submitted the proof to the pool contract.
+4. The pool contract verified the ZK proof, checked that the nullifiers are not in its on-chain spent set (preventing double-spend), added the nullifiers to the spent set, and executed the ERC-20 transfer.
+5. If the transaction was not reverted, all of the above succeeded.
+
+The facilitator does not need to verify the ZK proof or check nullifiers against the pool's on-chain state — the pool contract already did this. A non-reverted transaction is sufficient proof.
+
+### Facilitator layer
+
+The facilitator MUST enforce all of the following:
+
+#### 1. Transaction Existence
+
+The `txHash` MUST reference a non-reverted transaction on the target chain. A reverted transaction means the pool contract rejected the ZK proof or the nullifiers were already spent. Facilitators MAY accept mempool transactions for low-value payments, but SHOULD require at least 1 confirmation for amounts exceeding a configurable threshold.
+
+#### 2. Transfer Event Inspection
 
 The transaction receipt MUST contain an ERC-20 `Transfer(address indexed from, address indexed to, uint256 value)` event for the required `asset` token, where:
 
@@ -170,7 +186,7 @@ The transaction receipt MUST contain an ERC-20 `Transfer(address indexed from, a
 - `to` MUST match the `payTo` address from `PaymentRequirements`.
 - `value` MUST be greater than or equal to the required `amount`.
 
-### 3. Pool Contract Validation
+#### 3. Pool Contract Validation
 
 The `from` address in the Transfer event MUST be a recognized privacy pool contract. The facilitator MUST maintain an allowlist of accepted pool contracts, either:
 
@@ -179,19 +195,15 @@ The `from` address in the Transfer event MUST be a recognized privacy pool contr
 
 The facilitator MUST NOT accept transfers from arbitrary addresses — only from registered privacy pool contracts.
 
-### 4. Replay Protection
+#### 4. Application-Level Replay Protection
 
-The facilitator MUST prevent the same payment from being used twice. Two mechanisms are supported:
-
-**a. Transaction hash replay protection (REQUIRED)**
+The on-chain nullifiers prevent the same UTXO from being spent twice at the protocol level. However, the facilitator MUST also prevent the same **payment transaction** from being used to access multiple resources (application-level replay).
 
 The facilitator MUST track used `txHash` values. A `txHash` that has already been used for a successful verification MUST be rejected.
 
-**b. Nullifier replay protection (RECOMMENDED)**
+If `nullifiers` are provided in the payload, the facilitator MAY additionally track nullifiers for defense-in-depth.
 
-If `nullifiers` are provided in the payload, the facilitator SHOULD verify that each nullifier has not been previously used. Nullifiers provide ZK-level double-spend prevention that is independent of transaction identity.
-
-### 5. Timeout Enforcement
+#### 5. Timeout Enforcement
 
 If the facilitator cannot retrieve and verify the transaction within the `maxTimeoutSeconds` window, verification MUST fail.
 
