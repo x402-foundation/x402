@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200" width="200" height="200">
+  <style>
+    .bg { fill: #0d2e1a; }
+    .hex { fill: none; stroke: #1a5c30; stroke-width: 1.5; opacity: 0.5; }
+    .pch { font-family: Arial, sans-serif; font-size: 42px; font-weight: 700; fill: #2ecc71; letter-spacing: 2px; }
+    .gw { font-family: Arial, sans-serif; font-size: 10px; font-weight: 400; fill: #2ecc71; letter-spacing: 3px; opacity: 0.85; }
+    .div { stroke: #2ecc71; stroke-width: 0.8; opacity: 0.6; }
+  </style>
+  <rect width="200" height="200" rx="8" class="bg"/>
+  <polygon points="100,16 158,49 158,116 100,149 42,116 42,49" class="hex"/>
+  <polygon points="100,30 144,55 144,105 100,130 56,105 56,55" class="hex"/>
+  <text x="100" y="103" text-anchor="middle" class="pch">PCH</text>
+  <line x1="68" y1="112" x2="132" y2="112" class="div"/>
+  <text x="100" y="124" text-anchor="middle" class="gw">GATEWAY</text>
+</svg>
