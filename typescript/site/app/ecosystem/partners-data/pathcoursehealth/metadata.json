@@ -1,0 +1,7 @@
+{
+  "name": "PathCourse Health — Autonomous AI Token Gateway",
+  "description": "Autonomous AI token gateway for agent-native LLM inference. Agents deposit USDC on Base, receive an API key, and run inference — no accounts, no signup, no human steps. Wallet is authentication. pch-fast $0.44/M, pch-pro $1.96/M, pch-coder $3.50/M. OpenAI-compatible API. x402 native on Base L2. ERC-8004 certified. A2A ready.",
+  "logoUrl": "/logos/pathcoursehealth.svg",
+  "websiteUrl": "https://pathcoursehealth.com",
+  "category": "Services/Endpoints"
+}
