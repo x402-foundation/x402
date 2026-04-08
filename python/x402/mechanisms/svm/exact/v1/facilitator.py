@@ -50,7 +50,7 @@ from ...types import ExactSvmPayload
 from ...utils import (
     decode_transaction_from_payload,
     derive_ata,
-    get_token_payer_from_transaction,
+    get_transfer_details_from_instruction,
     transaction_message_hash,
 )
 
@@ -135,16 +135,22 @@ class ExactSvmSchemeV1:
 
         # V1: Validate scheme at top level
         if payload.scheme != SCHEME_EXACT or requirements.scheme != SCHEME_EXACT:
-            return VerifyResponse(is_valid=False, invalid_reason=ERR_UNSUPPORTED_SCHEME, payer="")
+            return VerifyResponse(
+                is_valid=False, invalid_reason=ERR_UNSUPPORTED_SCHEME, payer=""
+            )
 
         # V1: Validate network at top level
         if payload.network != requirements.network:
-            return VerifyResponse(is_valid=False, invalid_reason=ERR_NETWORK_MISMATCH, payer="")
+            return VerifyResponse(
+                is_valid=False, invalid_reason=ERR_NETWORK_MISMATCH, payer=""
+            )
 
         extra = requirements.extra or {}
         fee_payer_str = extra.get("feePayer")
         if not fee_payer_str or not isinstance(fee_payer_str, str):
-            return VerifyResponse(is_valid=False, invalid_reason=ERR_FEE_PAYER_MISSING, payer="")
+            return VerifyResponse(
+                is_valid=False, invalid_reason=ERR_FEE_PAYER_MISSING, payer=""
+            )
 
         # Verify that the requested feePayer is managed by this facilitator
         signer_addresses = self._signer.get_addresses()
@@ -211,20 +217,21 @@ class ExactSvmSchemeV1:
                 payer="",
             )
 
-        # Get token payer
-        payer = get_token_payer_from_transaction(tx)
-        if not payer:
+        transfer_details = get_transfer_details_from_instruction(
+            static_accounts, instructions[2]
+        )
+        if transfer_details is None:
             return VerifyResponse(
                 is_valid=False, invalid_reason=ERR_NO_TRANSFER_INSTRUCTION, payer=""
             )
+        payer = transfer_details.authority
 
         # Verify Transfer Instruction
-        transfer_ix = instructions[2]
-        transfer_program = static_accounts[transfer_ix.program_id_index]
-        transfer_program_str = str(transfer_program)
+        transfer_program_str = transfer_details.token_program
 
         token_program = Pubkey.from_string(TOKEN_PROGRAM_ADDRESS)
         token_2022_program = Pubkey.from_string(TOKEN_2022_PROGRAM_ADDRESS)
+        transfer_program = Pubkey.from_string(transfer_program_str)
 
         if transfer_program != token_program and transfer_program != token_2022_program:
             return VerifyResponse(
@@ -270,53 +277,30 @@ class ExactSvmSchemeV1:
             if actual_memo != expected_memo:
                 return VerifyResponse(is_valid=False, invalid_reason=ERR_MEMO_MISMATCH, payer=payer)
 
-        # Parse transfer instruction
-        transfer_accounts = list(transfer_ix.accounts)
-        transfer_data = bytes(transfer_ix.data)
-
-        # TransferChecked data: [12 (discriminator), u64 amount, u8 decimals]
-        if len(transfer_data) < 10 or transfer_data[0] != 12:
-            return VerifyResponse(
-                is_valid=False, invalid_reason=ERR_NO_TRANSFER_INSTRUCTION, payer=payer
-            )
-
-        # TransferChecked accounts: [source, mint, destination, owner]
-        if len(transfer_accounts) < 4:
-            return VerifyResponse(
-                is_valid=False, invalid_reason=ERR_NO_TRANSFER_INSTRUCTION, payer=payer
-            )
-
-        _source_ata = static_accounts[transfer_accounts[0]]  # noqa: F841
-        mint = static_accounts[transfer_accounts[1]]
-        dest_ata = static_accounts[transfer_accounts[2]]
-        authority = static_accounts[transfer_accounts[3]]
-
-        amount = int.from_bytes(transfer_data[1:9], "little")
-
         # Verify facilitator's signers are not transferring their own funds
-        authority_str = str(authority)
-        if authority_str in signer_addresses:
+        if transfer_details.authority in signer_addresses:
             return VerifyResponse(
                 is_valid=False, invalid_reason=ERR_FEE_PAYER_TRANSFERRING, payer=payer
             )
 
         # Verify mint address matches requirements
-        mint_str = str(mint)
-        if mint_str != requirements.asset:
-            return VerifyResponse(is_valid=False, invalid_reason=ERR_MINT_MISMATCH, payer=payer)
+        if transfer_details.mint != requirements.asset:
+            return VerifyResponse(
+                is_valid=False, invalid_reason=ERR_MINT_MISMATCH, payer=payer
+            )
 
         # Verify destination ATA
         expected_dest_ata = derive_ata(
             requirements.pay_to, requirements.asset, transfer_program_str
         )
-        if str(dest_ata) != expected_dest_ata:
+        if transfer_details.destination != expected_dest_ata:
             return VerifyResponse(
                 is_valid=False, invalid_reason=ERR_RECIPIENT_MISMATCH, payer=payer
             )
 
         # V1: Verify transfer amount meets maxAmountRequired
         required_amount = int(requirements.max_amount_required)
-        if amount < required_amount:
+        if transfer_details.amount < required_amount:
             return VerifyResponse(
                 is_valid=False, invalid_reason=ERR_AMOUNT_INSUFFICIENT, payer=payer
             )

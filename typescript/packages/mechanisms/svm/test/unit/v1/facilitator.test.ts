@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { COMPUTE_BUDGET_PROGRAM_ADDRESS } from "@solana-program/compute-budget";
 import { ExactSvmSchemeV1 } from "../../../src/exact/v1/facilitator/scheme";
@@ -15,6 +16,27 @@ function makeComputePriceData(microLamports: bigint): Uint8Array {
   view.setBigUint64(1, microLamports, true);
   return new Uint8Array(buf);
 }
+
+type WrappedPaymentFixture = {
+  name: string;
+  transaction: string;
+  network: string;
+  asset: string;
+  payTo: string;
+  amount: string;
+  feePayer: string;
+  payer: string;
+};
+
+const wrappedPaymentFixtures = JSON.parse(
+  readFileSync(
+    new URL(
+      "../../../../../../../go/mechanisms/svm/testdata/swig_wrapped_payments.json",
+      import.meta.url,
+    ),
+    "utf8",
+  ),
+) as WrappedPaymentFixture[];
 
 describe("ExactSvmSchemeV1", () => {
   let mockSigner: FacilitatorSvmSigner;
@@ -374,6 +396,44 @@ describe("ExactSvmSchemeV1", () => {
       } finally {
         vi.useRealTimers();
       }
+    });
+  });
+
+  describe("built-in SWIG support", () => {
+    it.each(wrappedPaymentFixtures)("should verify $name wrapped transfers", async fixture => {
+      const facilitator = new ExactSvmSchemeV1({
+        ...mockSigner,
+        getAddresses: vi.fn().mockReturnValue([fixture.feePayer]) as never,
+        signTransaction: vi
+          .fn()
+          .mockImplementation(async (transaction: string) => transaction) as never,
+        simulateTransaction: vi.fn().mockResolvedValue(undefined) as never,
+      });
+
+      const payload: PaymentPayloadV1 = {
+        x402Version: 1,
+        scheme: "exact",
+        network: fixture.network,
+        payload: {
+          transaction: fixture.transaction,
+        },
+      };
+
+      const requirements: PaymentRequirementsV1 = {
+        scheme: "exact",
+        network: fixture.network,
+        asset: fixture.asset,
+        maxAmountRequired: fixture.amount,
+        payTo: fixture.payTo,
+        maxTimeoutSeconds: 300,
+        extra: {
+          feePayer: fixture.feePayer,
+        },
+      };
+
+      const result = await facilitator.verify(payload as never, requirements as never);
+      expect(result.isValid).toBe(true);
+      expect(result.payer).toBe(fixture.payer);
     });
   });
 });

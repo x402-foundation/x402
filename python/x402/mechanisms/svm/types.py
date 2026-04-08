@@ -42,6 +42,18 @@ ExactSvmPayloadV2 = ExactSvmPayload
 
 
 @dataclass
+class TransferDetails:
+    """Canonical SPL token transfer details extracted from a transaction."""
+
+    token_program: str
+    source: str
+    mint: str
+    destination: str
+    authority: str
+    amount: int
+
+
+@dataclass
 class TransactionInfo:
     """Information extracted from a parsed Solana transaction."""
 

@@ -23,6 +23,8 @@ import {
   DEVNET_RPC_URL,
   TESTNET_RPC_URL,
   MAINNET_RPC_URL,
+  MEMO_PROGRAM_ADDRESS,
+  SWIG_PROGRAM_ADDRESS,
   USDC_MAINNET_ADDRESS,
   USDC_DEVNET_ADDRESS,
   USDC_TESTNET_ADDRESS,
@@ -32,6 +34,30 @@ import {
   V1_TO_V2_NETWORK_MAP,
 } from "./constants";
 import type { ExactSvmPayloadV1 } from "./types";
+
+const TOKEN_TRANSFER_CHECKED_DISCRIMINATOR = 12;
+const SWIG_SIGN_V2_DISCRIMINATOR = 11;
+const SWIG_SUBACCOUNT_SIGN_V1_DISCRIMINATOR = 9;
+
+type CompiledInstructionLike = {
+  programAddressIndex: number;
+  accountIndices?: readonly number[];
+  data: Uint8Array;
+};
+
+type CompiledMessageLike = {
+  staticAccounts?: readonly { toString(): string }[];
+  instructions?: readonly CompiledInstructionLike[];
+};
+
+export type TransferDetails = {
+  programAddress: string;
+  source: string;
+  mint: string;
+  destination: string;
+  authority: string;
+  amount: bigint;
+};
 
 /**
  * Normalize network identifier to CAIP-2 format
@@ -107,30 +133,305 @@ export function decodeTransactionFromPayload(svmPayload: ExactSvmPayloadV1): Tra
  * @returns The token payer address as a base58 string
  */
 export function getTokenPayerFromTransaction(transaction: Transaction): string {
-  const compiled = getCompiledTransactionMessageDecoder().decode(transaction.messageBytes);
-  const staticAccounts = compiled.staticAccounts ?? [];
-  const instructions = compiled.instructions ?? [];
+  const transferDetails = getTransferDetailsFromTransaction(transaction);
+  return transferDetails?.authority ?? "";
+}
 
-  for (const ix of instructions) {
-    const programIndex = ix.programAddressIndex;
-    const programAddress = staticAccounts[programIndex].toString();
+/**
+ * Extract canonical transfer details from the first supported payment
+ * instruction in a transaction.
+ *
+ * @param transaction - Decoded Solana transaction to inspect.
+ * @returns Canonical transfer details when a supported payment instruction is found.
+ */
+export function getTransferDetailsFromTransaction(
+  transaction: Transaction,
+): TransferDetails | null {
+  const compiled = getCompiledTransactionMessageDecoder().decode(
+    transaction.messageBytes,
+  ) as CompiledMessageLike;
 
-    // Check if this is a token program instruction
-    if (
-      programAddress === TOKEN_PROGRAM_ADDRESS.toString() ||
-      programAddress === TOKEN_2022_PROGRAM_ADDRESS.toString()
-    ) {
-      const accountIndices: number[] = ix.accountIndices ?? [];
-      // TransferChecked account order: [source, mint, destination, owner, ...]
-      if (accountIndices.length >= 4) {
-        const ownerIndex = accountIndices[3];
-        const ownerAddress = staticAccounts[ownerIndex].toString();
-        if (ownerAddress) return ownerAddress;
-      }
+  for (const ix of compiled.instructions ?? []) {
+    const transferDetails = getTransferDetailsFromCompiledInstruction(compiled, ix);
+    if (transferDetails) {
+      return transferDetails;
     }
   }
 
-  return "";
+  return null;
+}
+
+/**
+ * Extract canonical transfer details from a compiled instruction using the
+ * built-in exact SVM payment parsers.
+ *
+ * @param compiled - Compiled transaction message containing the instruction.
+ * @param instruction - Compiled instruction to inspect.
+ * @returns Canonical transfer details when the instruction is recognized.
+ */
+export function getTransferDetailsFromCompiledInstruction(
+  compiled: CompiledMessageLike,
+  instruction: CompiledInstructionLike,
+): TransferDetails | null {
+  const staticAccounts = compiled.staticAccounts ?? [];
+  const direct = extractDirectTransferDetails(staticAccounts, instruction);
+  if (direct) {
+    return direct;
+  }
+
+  return extractSwigTransferDetails(staticAccounts, instruction);
+}
+
+/**
+ * Decode a direct top-level SPL `TransferChecked` instruction into canonical
+ * transfer details.
+ *
+ * @param staticAccounts - Static account list from the compiled message.
+ * @param instruction - Compiled instruction to inspect.
+ * @returns Canonical transfer details for a direct SPL transfer.
+ */
+function extractDirectTransferDetails(
+  staticAccounts: readonly { toString(): string }[],
+  instruction: CompiledInstructionLike,
+): TransferDetails | null {
+  const programAddress = staticAccounts[instruction.programAddressIndex]?.toString();
+  if (
+    programAddress !== TOKEN_PROGRAM_ADDRESS.toString() &&
+    programAddress !== TOKEN_2022_PROGRAM_ADDRESS.toString()
+  ) {
+    return null;
+  }
+
+  const accountIndices = instruction.accountIndices ?? [];
+  if (
+    accountIndices.length < 4 ||
+    instruction.data.length < 10 ||
+    instruction.data[0] !== TOKEN_TRANSFER_CHECKED_DISCRIMINATOR
+  ) {
+    return null;
+  }
+
+  const source = staticAccounts[accountIndices[0]]?.toString();
+  const mint = staticAccounts[accountIndices[1]]?.toString();
+  const destination = staticAccounts[accountIndices[2]]?.toString();
+  const authority = staticAccounts[accountIndices[3]]?.toString();
+  if (!source || !mint || !destination || !authority) {
+    return null;
+  }
+
+  return {
+    programAddress,
+    source,
+    mint,
+    destination,
+    authority,
+    amount: readU64LE(instruction.data, 1),
+  };
+}
+
+/**
+ * Decode a SWIG-wrapped SPL transfer into canonical transfer details.
+ *
+ * @param staticAccounts - Static account list from the compiled message.
+ * @param instruction - Compiled instruction to inspect.
+ * @returns Canonical transfer details for a supported SWIG wrapper.
+ */
+function extractSwigTransferDetails(
+  staticAccounts: readonly { toString(): string }[],
+  instruction: CompiledInstructionLike,
+): TransferDetails | null {
+  if (staticAccounts[instruction.programAddressIndex]?.toString() !== SWIG_PROGRAM_ADDRESS) {
+    return null;
+  }
+
+  const outerAccounts = Array.from(
+    instruction.accountIndices ?? [],
+    index => staticAccounts[index],
+  );
+  if (outerAccounts.length === 0) {
+    return null;
+  }
+
+  const compactInstructions = decodeSwigCompactInstructions(instruction.data);
+  if (!compactInstructions) {
+    return null;
+  }
+
+  let transferDetails: TransferDetails | null = null;
+  for (const compactInstruction of compactInstructions) {
+    const innerProgramAddress = outerAccounts[compactInstruction.programAddressIndex]?.toString();
+    if (!innerProgramAddress) {
+      return null;
+    }
+
+    if (
+      innerProgramAddress === TOKEN_PROGRAM_ADDRESS.toString() ||
+      innerProgramAddress === TOKEN_2022_PROGRAM_ADDRESS.toString()
+    ) {
+      if (transferDetails) {
+        return null;
+      }
+      transferDetails = decodeTransferDetailsFromIndexes(
+        outerAccounts,
+        innerProgramAddress,
+        compactInstruction.accountIndices,
+        compactInstruction.data,
+      );
+      if (!transferDetails) {
+        return null;
+      }
+      continue;
+    }
+
+    if (innerProgramAddress === MEMO_PROGRAM_ADDRESS) {
+      continue;
+    }
+
+    return null;
+  }
+
+  return transferDetails;
+}
+
+/**
+ * Reconstruct canonical transfer details from indexed account references and
+ * `TransferChecked` instruction data.
+ *
+ * @param accounts - Resolved account list for the instruction scope.
+ * @param programAddress - Token program address for the transfer.
+ * @param accountIndices - Indexed transfer account order.
+ * @param data - Raw instruction data bytes.
+ * @returns Canonical transfer details when the instruction data matches `TransferChecked`.
+ */
+function decodeTransferDetailsFromIndexes(
+  accounts: readonly { toString(): string }[],
+  programAddress: string,
+  accountIndices: readonly number[],
+  data: Uint8Array,
+): TransferDetails | null {
+  if (
+    accountIndices.length < 4 ||
+    data.length < 10 ||
+    data[0] !== TOKEN_TRANSFER_CHECKED_DISCRIMINATOR
+  ) {
+    return null;
+  }
+
+  const source = accounts[accountIndices[0]]?.toString();
+  const mint = accounts[accountIndices[1]]?.toString();
+  const destination = accounts[accountIndices[2]]?.toString();
+  const authority = accounts[accountIndices[3]]?.toString();
+  if (!source || !mint || !destination || !authority) {
+    return null;
+  }
+
+  return {
+    programAddress,
+    source,
+    mint,
+    destination,
+    authority,
+    amount: readU64LE(data, 1),
+  };
+}
+
+/**
+ * Decode SWIG compact instruction bytes from SignV2 or SubAccountSignV1.
+ *
+ * @param data - Raw SWIG instruction data.
+ * @returns Decoded compact instructions when the payload matches a supported SWIG wrapper.
+ */
+function decodeSwigCompactInstructions(data: Uint8Array): CompiledInstructionLike[] | null {
+  if (data.length < 4) {
+    return null;
+  }
+
+  const discriminator = readU16LE(data, 0);
+  let compactOffset = 0;
+  if (discriminator === SWIG_SIGN_V2_DISCRIMINATOR) {
+    compactOffset = 8;
+  } else if (discriminator === SWIG_SUBACCOUNT_SIGN_V1_DISCRIMINATOR) {
+    compactOffset = 16;
+  } else {
+    return null;
+  }
+
+  const compactLength = readU16LE(data, 2);
+  if (compactLength <= 0 || compactOffset + compactLength > data.length) {
+    return null;
+  }
+
+  const compactData = data.slice(compactOffset, compactOffset + compactLength);
+  if (compactData.length === 0) {
+    return null;
+  }
+
+  const instructionCount = compactData[0];
+  let offset = 1;
+  const instructions = [];
+
+  for (let i = 0; i < instructionCount; i += 1) {
+    if (offset + 4 > compactData.length) {
+      return null;
+    }
+
+    const programAddressIndex = compactData[offset];
+    offset += 1;
+    const accountCount = compactData[offset];
+    offset += 1;
+    if (offset + accountCount + 2 > compactData.length) {
+      return null;
+    }
+
+    const accountIndices = Array.from(compactData.slice(offset, offset + accountCount));
+    offset += accountCount;
+    const innerDataLength = readU16LE(compactData, offset);
+    offset += 2;
+    if (offset + innerDataLength > compactData.length) {
+      return null;
+    }
+
+    const instructionData = compactData.slice(offset, offset + innerDataLength);
+    offset += innerDataLength;
+
+    instructions.push({
+      programAddressIndex,
+      accountIndices,
+      data: instructionData,
+    });
+  }
+
+  if (offset !== compactData.length) {
+    return null;
+  }
+
+  return instructions;
+}
+
+/**
+ * Read a little-endian `u16` from a byte buffer.
+ *
+ * @param data - Byte buffer to read from.
+ * @param offset - Start offset.
+ * @returns Parsed unsigned 16-bit integer.
+ */
+function readU16LE(data: Uint8Array, offset: number): number {
+  return data[offset] | (data[offset + 1] << 8);
+}
+
+/**
+ * Read a little-endian `u64` from a byte buffer.
+ *
+ * @param data - Byte buffer to read from.
+ * @param offset - Start offset.
+ * @returns Parsed unsigned 64-bit integer as bigint.
+ */
+function readU64LE(data: Uint8Array, offset: number): bigint {
+  let result = 0n;
+  for (let i = 0; i < 8; i += 1) {
+    result |= BigInt(data[offset + i]) << BigInt(i * 8);
+  }
+  return result;
 }
 
 /**
