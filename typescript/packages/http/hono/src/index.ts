@@ -10,8 +10,10 @@ import {
   getFacilitatorResponseError,
   SETTLEMENT_OVERRIDES_HEADER,
   SettlementOverrides,
+  normalizeRoutes,
 } from "@x402/core/server";
 import { SchemeNetworkServer, Network } from "@x402/core/types";
+import { generateOpenAPISpec, OpenAPIOptions } from "@x402/core/openapi";
 import { Context, MiddlewareHandler } from "hono";
 import { HonoAdapter } from "./adapter";
 
@@ -28,20 +30,11 @@ export function setSettlementOverrides(c: Context, overrides: SettlementOverride
 
 /**
  * Check if any routes in the configuration declare bazaar extensions
- *
- * @param routes - Route configuration
- * @returns True if any route has extensions.bazaar defined
  */
 function checkIfBazaarNeeded(routes: RoutesConfig): boolean {
-  // Handle single route config
-  if ("accepts" in routes) {
-    return !!(routes.extensions && "bazaar" in routes.extensions);
-  }
-
-  // Handle multiple routes
-  return Object.values(routes).some(routeConfig => {
-    return !!(routeConfig.extensions && "bazaar" in routeConfig.extensions);
-  });
+  return Object.values(normalizeRoutes(routes)).some(
+    routeConfig => !!(routeConfig.extensions && "bazaar" in routeConfig.extensions),
+  );
 }
 
 /**
@@ -99,6 +92,7 @@ export function paymentMiddlewareFromHTTPServer(
   paywallConfig?: PaywallConfig,
   paywall?: PaywallProvider,
   syncFacilitatorOnStart: boolean = true,
+  openAPIOptions?: OpenAPIOptions | false,
 ): MiddlewareHandler {
   // Register custom paywall provider if provided
   if (paywall) {
@@ -144,7 +138,26 @@ export function paymentMiddlewareFromHTTPServer(
       });
   }
 
+  // Generate OpenAPI spec (lazily cached)
+  let openApiSpec: Record<string, unknown> | null = null;
+  function getOpenAPISpec(serverUrl?: string): Record<string, unknown> {
+    if (!openApiSpec) {
+      openApiSpec = generateOpenAPISpec(httpServer.routes, {
+        ...(openAPIOptions ? openAPIOptions : {}),
+        serverUrl: serverUrl || (openAPIOptions && typeof openAPIOptions === "object" ? openAPIOptions.serverUrl : undefined),
+      });
+    }
+    return openApiSpec;
+  }
+
   return async (c: Context, next: () => Promise<void>) => {
+    // Serve OpenAPI spec at /openapi.json
+    if (openAPIOptions !== false && c.req.method === "GET" && c.req.path === "/openapi.json") {
+      const url = new URL(c.req.url);
+      const serverUrl = `${url.protocol}//${url.host}`;
+      return c.json(getOpenAPISpec(serverUrl));
+    }
+
     // Create adapter and context
     const adapter = new HonoAdapter(c);
     const context: HTTPRequestContext = {
@@ -305,6 +318,7 @@ export function paymentMiddleware(
   paywallConfig?: PaywallConfig,
   paywall?: PaywallProvider,
   syncFacilitatorOnStart: boolean = true,
+  openAPIOptions?: OpenAPIOptions | false,
 ): MiddlewareHandler {
   // Create the x402 HTTP server instance with the resource server
   const httpServer = new x402HTTPResourceServer(server, routes);
@@ -314,6 +328,7 @@ export function paymentMiddleware(
     paywallConfig,
     paywall,
     syncFacilitatorOnStart,
+    openAPIOptions,
   );
 }
 
@@ -350,6 +365,7 @@ export function paymentMiddlewareFromConfig(
   paywallConfig?: PaywallConfig,
   paywall?: PaywallProvider,
   syncFacilitatorOnStart: boolean = true,
+  openAPIOptions?: OpenAPIOptions | false,
 ): MiddlewareHandler {
   const ResourceServer = new x402ResourceServer(facilitatorClients);
 
@@ -361,7 +377,7 @@ export function paymentMiddlewareFromConfig(
 
   // Use the direct paymentMiddleware with the configured server
   // Note: paymentMiddleware handles dynamic bazaar registration
-  return paymentMiddleware(routes, ResourceServer, paywallConfig, paywall, syncFacilitatorOnStart);
+  return paymentMiddleware(routes, ResourceServer, paywallConfig, paywall, syncFacilitatorOnStart, openAPIOptions);
 }
 
 export { x402ResourceServer, x402HTTPResourceServer } from "@x402/core/server";
@@ -381,3 +397,5 @@ export { RouteConfigurationError, SETTLEMENT_OVERRIDES_HEADER } from "@x402/core
 export type { RouteValidationError } from "@x402/core/server";
 
 export { HonoAdapter } from "./adapter";
+
+export type { OpenAPIOptions } from "@x402/core/openapi";

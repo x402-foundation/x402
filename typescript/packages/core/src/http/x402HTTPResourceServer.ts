@@ -178,6 +178,31 @@ export interface RouteConfig {
 export type RoutesConfig = Record<string, RouteConfig> | RouteConfig;
 
 /**
+ * Type guard: returns true when routes is a single RouteConfig,
+ * false when it's a Record<string, RouteConfig> (route pattern map).
+ */
+export function isSingleRouteConfig(routes: RoutesConfig): routes is RouteConfig {
+  return "accepts" in routes;
+}
+
+/**
+ * Normalize RoutesConfig into a consistent Record<string, RouteConfig>.
+ *
+ * A single RouteConfig is wrapped as { [defaultPattern]: config }.
+ *
+ * @param routes - The route configuration (single or map)
+ * @param defaultPattern - Pattern to use for single RouteConfig (default: "*")
+ */
+export function normalizeRoutes(
+  routes: RoutesConfig,
+  defaultPattern: string = "*",
+): Record<string, RouteConfig> {
+  return isSingleRouteConfig(routes)
+    ? { [defaultPattern]: routes }
+    : routes;
+}
+
+/**
  * Hook that runs on every request to a protected route, before payment processing.
  * Can grant access without payment, deny the request, or continue to payment flow.
  *
@@ -325,13 +350,7 @@ export class x402HTTPResourceServer {
     this.ResourceServer = ResourceServer;
     this.routesConfig = routes;
 
-    // Handle both single route and multiple routes
-    const normalizedRoutes =
-      typeof routes === "object" && !("accepts" in routes)
-        ? (routes as Record<string, RouteConfig>)
-        : { "*": routes as RouteConfig };
-
-    for (const [pattern, config] of Object.entries(normalizedRoutes)) {
+    for (const [pattern, config] of Object.entries(normalizeRoutes(routes))) {
       const parsed = this.parseRoutePattern(pattern);
       this.compiledRoutes.push({
         verb: parsed.verb,
@@ -749,13 +768,7 @@ export class x402HTTPResourceServer {
   private validateRouteConfiguration(): RouteValidationError[] {
     const errors: RouteValidationError[] = [];
 
-    // Normalize routes to array of [pattern, config] pairs
-    const normalizedRoutes =
-      typeof this.routesConfig === "object" && !("accepts" in this.routesConfig)
-        ? Object.entries(this.routesConfig as Record<string, RouteConfig>)
-        : [["*", this.routesConfig as RouteConfig] as [string, RouteConfig]];
-
-    for (const [pattern, config] of normalizedRoutes) {
+    for (const [pattern, config] of Object.entries(normalizeRoutes(this.routesConfig))) {
       // Warn if wildcard routes are used with discovery extensions
       const pathPart = pattern.includes(" ") ? pattern.split(/\s+/)[1] : pattern;
       if (

@@ -6,8 +6,10 @@ import {
   RouteConfig,
   FacilitatorClient,
   FacilitatorResponseError,
+  normalizeRoutes,
 } from "@x402/core/server";
 import { SchemeNetworkServer, Network } from "@x402/core/types";
+import { generateOpenAPISpec, OpenAPIOptions } from "@x402/core/openapi";
 import { NextRequest, NextResponse } from "next/server";
 import {
   prepareHttpServer,
@@ -63,6 +65,7 @@ export function paymentProxyFromHTTPServer(
   paywallConfig?: PaywallConfig,
   paywall?: PaywallProvider,
   syncFacilitatorOnStart: boolean = true,
+  openAPIOptions?: OpenAPIOptions | false,
 ) {
   const { init } = prepareHttpServer(httpServer, paywall, syncFacilitatorOnStart);
 
@@ -79,7 +82,26 @@ export function paymentProxyFromHTTPServer(
       });
   }
 
+  // Generate OpenAPI spec (lazily cached)
+  let openApiSpec: Record<string, unknown> | null = null;
+  function getOpenAPISpec(serverUrl?: string): Record<string, unknown> {
+    if (!openApiSpec) {
+      openApiSpec = generateOpenAPISpec(httpServer.routes, {
+        ...(openAPIOptions ? openAPIOptions : {}),
+        serverUrl: serverUrl || (openAPIOptions && typeof openAPIOptions === "object" ? openAPIOptions.serverUrl : undefined),
+      });
+    }
+    return openApiSpec;
+  }
+
   return async (req: NextRequest) => {
+    // Serve OpenAPI spec at /openapi.json
+    if (openAPIOptions !== false && req.method === "GET" && new URL(req.url).pathname === "/openapi.json") {
+      const url = new URL(req.url);
+      const serverUrl = `${url.protocol}//${url.host}`;
+      return NextResponse.json(getOpenAPISpec(serverUrl));
+    }
+
     const context = createRequestContext(req);
 
     // Check if route requires payment before initializing facilitator
@@ -173,11 +195,12 @@ export function paymentProxy(
   paywallConfig?: PaywallConfig,
   paywall?: PaywallProvider,
   syncFacilitatorOnStart: boolean = true,
+  openAPIOptions?: OpenAPIOptions | false,
 ) {
   // Create the x402 HTTP server instance with the resource server
   const httpServer = new x402HTTPResourceServer(server, routes);
 
-  return paymentProxyFromHTTPServer(httpServer, paywallConfig, paywall, syncFacilitatorOnStart);
+  return paymentProxyFromHTTPServer(httpServer, paywallConfig, paywall, syncFacilitatorOnStart, openAPIOptions);
 }
 
 /**
@@ -213,6 +236,7 @@ export function paymentProxyFromConfig(
   paywallConfig?: PaywallConfig,
   paywall?: PaywallProvider,
   syncFacilitatorOnStart: boolean = true,
+  openAPIOptions?: OpenAPIOptions | false,
 ) {
   const ResourceServer = new x402ResourceServer(facilitatorClients);
 
@@ -224,7 +248,7 @@ export function paymentProxyFromConfig(
 
   // Use the direct paymentProxy with the configured server
   // Note: paymentProxy handles dynamic bazaar registration
-  return paymentProxy(routes, ResourceServer, paywallConfig, paywall, syncFacilitatorOnStart);
+  return paymentProxy(routes, ResourceServer, paywallConfig, paywall, syncFacilitatorOnStart, openAPIOptions);
 }
 
 /**
@@ -385,20 +409,11 @@ export function withX402<T = unknown>(
 
 /**
  * Check if any routes in the configuration declare bazaar extensions
- *
- * @param routes - Route configuration
- * @returns True if any route has extensions.bazaar defined
  */
 function checkIfBazaarNeeded(routes: RoutesConfig): boolean {
-  // Handle single route config
-  if ("accepts" in routes) {
-    return !!(routes.extensions && "bazaar" in routes.extensions);
-  }
-
-  // Handle multiple routes
-  return Object.values(routes).some(routeConfig => {
-    return !!(routeConfig.extensions && "bazaar" in routeConfig.extensions);
-  });
+  return Object.values(normalizeRoutes(routes)).some(
+    routeConfig => !!(routeConfig.extensions && "bazaar" in routeConfig.extensions),
+  );
 }
 
 export type {
@@ -420,3 +435,5 @@ export {
 export type { RouteValidationError } from "@x402/core/server";
 
 export { NextAdapter } from "./adapter";
+
+export type { OpenAPIOptions } from "@x402/core/openapi";

@@ -47,6 +47,9 @@ vi.mock("@x402/core/server", () => {
     },
     x402HTTPResourceServer: MockHTTPResourceServer,
     x402ResourceServer: vi.fn(),
+    isSingleRouteConfig: (routes: Record<string, unknown>) => "accepts" in routes,
+    normalizeRoutes: (routes: Record<string, unknown>, defaultPattern = "*") =>
+      "accepts" in routes ? { [defaultPattern]: routes } : routes,
   };
 });
 
