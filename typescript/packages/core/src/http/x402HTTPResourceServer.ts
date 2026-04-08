@@ -180,6 +180,9 @@ export type RoutesConfig = Record<string, RouteConfig> | RouteConfig;
 /**
  * Type guard: returns true when routes is a single RouteConfig,
  * false when it's a Record<string, RouteConfig> (route pattern map).
+ *
+ * @param routes - The routes configuration to check
+ * @returns True if routes is a single RouteConfig
  */
 export function isSingleRouteConfig(routes: RoutesConfig): routes is RouteConfig {
   return "accepts" in routes;
@@ -192,14 +195,13 @@ export function isSingleRouteConfig(routes: RoutesConfig): routes is RouteConfig
  *
  * @param routes - The route configuration (single or map)
  * @param defaultPattern - Pattern to use for single RouteConfig (default: "*")
+ * @returns A normalized record of route patterns to configs
  */
 export function normalizeRoutes(
   routes: RoutesConfig,
   defaultPattern: string = "*",
 ): Record<string, RouteConfig> {
-  return isSingleRouteConfig(routes)
-    ? { [defaultPattern]: routes }
-    : routes;
+  return isSingleRouteConfig(routes) ? { [defaultPattern]: routes } : routes;
 }
 
 /**

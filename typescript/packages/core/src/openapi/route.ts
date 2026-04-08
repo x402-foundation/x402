@@ -3,7 +3,14 @@
  */
 
 export const HTTP_METHODS = [
-  "get", "post", "put", "delete", "patch", "head", "options", "trace",
+  "get",
+  "post",
+  "put",
+  "delete",
+  "patch",
+  "head",
+  "options",
+  "trace",
 ] as const;
 
 export type HttpMethod = (typeof HTTP_METHODS)[number];
@@ -26,6 +33,12 @@ export const DEFAULT_ROUTE: ParsedRoute = {
   pathParams: [],
 };
 
+/**
+ * Check if a string is a valid HTTP method.
+ *
+ * @param value - The string to check
+ * @returns True if the value is a valid HTTP method
+ */
 function isHttpMethod(value: string): value is HttpMethod {
   return (HTTP_METHODS as readonly string[]).includes(value);
 }
@@ -34,6 +47,9 @@ function isHttpMethod(value: string): value is HttpMethod {
  * Parse an x402 route pattern like "GET /weather/:city" into its components.
  *
  * Converts Express-style `:param` segments to OpenAPI `{param}` format.
+ *
+ * @param pattern - Route pattern string (e.g., "GET /weather/:city")
+ * @returns Parsed route with method, path, and path parameter names
  */
 export function parseRoutePattern(pattern: string): ParsedRoute {
   const parts = pattern.trim().split(/\s+/);

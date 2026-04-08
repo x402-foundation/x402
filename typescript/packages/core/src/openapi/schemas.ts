@@ -6,6 +6,10 @@
  */
 import { z } from "zod";
 
+// ─── OpenAPI path item ──────────────────────────────────────────────────────
+
+import { HTTP_METHODS, type HttpMethod } from "./route";
+
 // ─── x-payment-info ─────────────────────────────────────────────────────────
 
 export const FixedPriceSchema = z.object({
@@ -98,10 +102,6 @@ export const OperationSchema = z.object({
     .optional(),
   responses: z.record(z.string(), ResponseSchema),
 });
-
-// ─── OpenAPI path item ──────────────────────────────────────────────────────
-
-import { HTTP_METHODS, type HttpMethod } from "./route";
 
 export const PathItemSchema = z.object(
   Object.fromEntries(HTTP_METHODS.map(m => [m, OperationSchema.optional()])) as Record<

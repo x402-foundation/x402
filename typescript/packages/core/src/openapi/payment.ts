@@ -13,6 +13,9 @@ import type { PaymentInfo } from "./schemas";
  * - Numbers: 0.5 → "0.5"
  * - AssetAmount objects: { amount: "1000", asset: "..." } → "1000"
  * - Dynamic functions: () => Price → undefined (cannot resolve statically)
+ *
+ * @param price - The price value to resolve
+ * @returns The display amount string, or undefined for dynamic prices
  */
 function resolvePrice(price: unknown): string | undefined {
   if (typeof price === "function") return undefined;
@@ -37,6 +40,9 @@ function resolvePrice(price: unknown): string | undefined {
  * Build a structured x-payment-info object from x402 PaymentOption(s).
  *
  * Uses the first option's price for the spec. All options share the x402 protocol.
+ *
+ * @param accepts - One or more payment options from the route config
+ * @returns A structured x-payment-info object
  */
 export function buildPaymentInfo(accepts: PaymentOption | PaymentOption[]): PaymentInfo {
   const options = Array.isArray(accepts) ? accepts : [accepts];

@@ -45,6 +45,7 @@ export interface SchemeRegistration {
  * @param paywallConfig - Optional configuration for the built-in paywall UI
  * @param paywall - Optional custom paywall provider (overrides default)
  * @param syncFacilitatorOnStart - Whether to sync with the facilitator on startup (defaults to true)
+ * @param openAPIOptions - OpenAPI spec options, or false to disable /openapi.json
  * @returns Next.js proxy handler
  *
  * @example
@@ -84,11 +85,21 @@ export function paymentProxyFromHTTPServer(
 
   // Generate OpenAPI spec (lazily cached)
   let openApiSpec: Record<string, unknown> | null = null;
+  /**
+   * Get or generate the cached OpenAPI spec.
+   *
+   * @param serverUrl - The server URL to include in the spec
+   * @returns The OpenAPI spec object
+   */
   function getOpenAPISpec(serverUrl?: string): Record<string, unknown> {
     if (!openApiSpec) {
       openApiSpec = generateOpenAPISpec(httpServer.routes, {
         ...(openAPIOptions ? openAPIOptions : {}),
-        serverUrl: serverUrl || (openAPIOptions && typeof openAPIOptions === "object" ? openAPIOptions.serverUrl : undefined),
+        serverUrl:
+          serverUrl ||
+          (openAPIOptions && typeof openAPIOptions === "object"
+            ? openAPIOptions.serverUrl
+            : undefined),
       });
     }
     return openApiSpec;
@@ -96,7 +107,11 @@ export function paymentProxyFromHTTPServer(
 
   return async (req: NextRequest) => {
     // Serve OpenAPI spec at /openapi.json
-    if (openAPIOptions !== false && req.method === "GET" && new URL(req.url).pathname === "/openapi.json") {
+    if (
+      openAPIOptions !== false &&
+      req.method === "GET" &&
+      new URL(req.url).pathname === "/openapi.json"
+    ) {
       const url = new URL(req.url);
       const serverUrl = `${url.protocol}//${url.host}`;
       return NextResponse.json(getOpenAPISpec(serverUrl));
@@ -177,6 +192,7 @@ export function paymentProxyFromHTTPServer(
  * @param paywallConfig - Optional configuration for the built-in paywall UI
  * @param paywall - Optional custom paywall provider (overrides default)
  * @param syncFacilitatorOnStart - Whether to sync with the facilitator on startup (defaults to true)
+ * @param openAPIOptions - OpenAPI spec options, or false to disable /openapi.json
  * @returns Next.js proxy handler
  *
  * @example
@@ -200,7 +216,13 @@ export function paymentProxy(
   // Create the x402 HTTP server instance with the resource server
   const httpServer = new x402HTTPResourceServer(server, routes);
 
-  return paymentProxyFromHTTPServer(httpServer, paywallConfig, paywall, syncFacilitatorOnStart, openAPIOptions);
+  return paymentProxyFromHTTPServer(
+    httpServer,
+    paywallConfig,
+    paywall,
+    syncFacilitatorOnStart,
+    openAPIOptions,
+  );
 }
 
 /**
@@ -215,6 +237,7 @@ export function paymentProxy(
  * @param paywallConfig - Optional configuration for the built-in paywall UI
  * @param paywall - Optional custom paywall provider (overrides default)
  * @param syncFacilitatorOnStart - Whether to sync with the facilitator on startup (defaults to true)
+ * @param openAPIOptions - OpenAPI spec options, or false to disable /openapi.json
  * @returns Next.js proxy handler
  *
  * @example
@@ -248,7 +271,14 @@ export function paymentProxyFromConfig(
 
   // Use the direct paymentProxy with the configured server
   // Note: paymentProxy handles dynamic bazaar registration
-  return paymentProxy(routes, ResourceServer, paywallConfig, paywall, syncFacilitatorOnStart, openAPIOptions);
+  return paymentProxy(
+    routes,
+    ResourceServer,
+    paywallConfig,
+    paywall,
+    syncFacilitatorOnStart,
+    openAPIOptions,
+  );
 }
 
 /**
@@ -408,7 +438,10 @@ export function withX402<T = unknown>(
 }
 
 /**
- * Check if any routes in the configuration declare bazaar extensions
+ * Check if any routes in the configuration declare bazaar extensions.
+ *
+ * @param routes - Route configuration to check
+ * @returns True if any route has extensions.bazaar defined
  */
 function checkIfBazaarNeeded(routes: RoutesConfig): boolean {
   return Object.values(normalizeRoutes(routes)).some(

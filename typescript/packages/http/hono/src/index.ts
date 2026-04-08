@@ -29,7 +29,10 @@ export function setSettlementOverrides(c: Context, overrides: SettlementOverride
 }
 
 /**
- * Check if any routes in the configuration declare bazaar extensions
+ * Check if any routes in the configuration declare bazaar extensions.
+ *
+ * @param routes - Route configuration to check
+ * @returns True if any route has extensions.bazaar defined
  */
 function checkIfBazaarNeeded(routes: RoutesConfig): boolean {
   return Object.values(normalizeRoutes(routes)).some(
@@ -72,6 +75,7 @@ function facilitatorErrorResponse(c: Context, error: FacilitatorResponseError): 
  * @param paywallConfig - Optional configuration for the built-in paywall UI
  * @param paywall - Optional custom paywall provider (overrides default)
  * @param syncFacilitatorOnStart - Whether to sync with the facilitator on startup (defaults to true)
+ * @param openAPIOptions - OpenAPI spec options, or false to disable /openapi.json
  * @returns Hono middleware handler
  *
  * @example
@@ -140,11 +144,21 @@ export function paymentMiddlewareFromHTTPServer(
 
   // Generate OpenAPI spec (lazily cached)
   let openApiSpec: Record<string, unknown> | null = null;
+  /**
+   * Get or generate the cached OpenAPI spec.
+   *
+   * @param serverUrl - The server URL to include in the spec
+   * @returns The OpenAPI spec object
+   */
   function getOpenAPISpec(serverUrl?: string): Record<string, unknown> {
     if (!openApiSpec) {
       openApiSpec = generateOpenAPISpec(httpServer.routes, {
         ...(openAPIOptions ? openAPIOptions : {}),
-        serverUrl: serverUrl || (openAPIOptions && typeof openAPIOptions === "object" ? openAPIOptions.serverUrl : undefined),
+        serverUrl:
+          serverUrl ||
+          (openAPIOptions && typeof openAPIOptions === "object"
+            ? openAPIOptions.serverUrl
+            : undefined),
       });
     }
     return openApiSpec;
@@ -300,6 +314,7 @@ export function paymentMiddlewareFromHTTPServer(
  * @param paywallConfig - Optional configuration for the built-in paywall UI
  * @param paywall - Optional custom paywall provider (overrides default)
  * @param syncFacilitatorOnStart - Whether to sync with the facilitator on startup (defaults to true)
+ * @param openAPIOptions - OpenAPI spec options, or false to disable /openapi.json
  * @returns Hono middleware handler
  *
  * @example
@@ -344,6 +359,7 @@ export function paymentMiddleware(
  * @param paywallConfig - Optional configuration for the built-in paywall UI
  * @param paywall - Optional custom paywall provider (overrides default)
  * @param syncFacilitatorOnStart - Whether to sync with the facilitator on startup (defaults to true)
+ * @param openAPIOptions - OpenAPI spec options, or false to disable /openapi.json
  * @returns Hono middleware handler
  *
  * @example
@@ -377,7 +393,14 @@ export function paymentMiddlewareFromConfig(
 
   // Use the direct paymentMiddleware with the configured server
   // Note: paymentMiddleware handles dynamic bazaar registration
-  return paymentMiddleware(routes, ResourceServer, paywallConfig, paywall, syncFacilitatorOnStart, openAPIOptions);
+  return paymentMiddleware(
+    routes,
+    ResourceServer,
+    paywallConfig,
+    paywall,
+    syncFacilitatorOnStart,
+    openAPIOptions,
+  );
 }
 
 export { x402ResourceServer, x402HTTPResourceServer } from "@x402/core/server";

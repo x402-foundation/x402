@@ -29,6 +29,10 @@ export interface OpenAPIOptions {
 
 /**
  * Adds an operation to the paths map at the given route.
+ *
+ * @param paths - The paths map to add the operation to
+ * @param route - The parsed route with method, path, and params
+ * @param routeConfig - The x402 route configuration
  */
 function addRoute(
   paths: Record<string, PathItem>,

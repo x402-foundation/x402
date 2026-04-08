@@ -8,6 +8,11 @@ import { buildPaymentInfo } from "./payment";
 
 /**
  * Build an OpenAPI operation from a route config, path params, and bazaar schemas.
+ *
+ * @param routeConfig - The x402 route configuration
+ * @param pathParams - Extracted path parameter names from the route pattern
+ * @param bazaar - Schemas extracted from the bazaar discovery extension
+ * @returns A typed OpenAPI operation object
  */
 export function buildOperation(
   routeConfig: RouteConfig,
@@ -50,6 +55,10 @@ export function buildOperation(
 
 /**
  * Build OpenAPI parameters from path params and bazaar input schemas.
+ *
+ * @param pathParams - Path parameter names from the route pattern
+ * @param bazaar - Schemas extracted from the bazaar discovery extension
+ * @returns An array of OpenAPI parameter objects
  */
 function buildParameters(pathParams: string[], bazaar: BazaarSchemas): Parameter[] {
   const parameters: Parameter[] = [];
@@ -83,6 +92,10 @@ function buildParameters(pathParams: string[], bazaar: BazaarSchemas): Parameter
 
 /**
  * Look up a specific path parameter's schema from the bazaar pathParamsSchema.
+ *
+ * @param pathParamsSchema - The path parameters schema object
+ * @param paramName - The parameter name to look up
+ * @returns The JSON Schema for the parameter, or undefined if not found
  */
 function getPathParamSchema(
   pathParamsSchema: JsonSchemaProperty | undefined,

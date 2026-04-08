@@ -120,6 +120,9 @@ function getResponseBodyBuffer(payload: unknown): Buffer | undefined {
 
 /**
  * Check if any routes in the configuration declare bazaar extensions.
+ *
+ * @param routes - Route configuration to check
+ * @returns True if any route has extensions.bazaar defined
  */
 function checkIfBazaarNeeded(routes: RoutesConfig): boolean {
   return Object.values(normalizeRoutes(routes)).some(
@@ -248,6 +251,7 @@ export interface SchemeRegistration {
  * @param paywall - Optional custom paywall provider (overrides default)
  * @param syncFacilitatorOnStart - Whether to sync with the facilitator on startup (defaults to true)
  *
+ * @param openAPIOptions - OpenAPI spec options, or false to disable /openapi.json
  * @example
  * ```typescript
  * import { paymentMiddlewareFromHTTPServer, x402ResourceServer, x402HTTPResourceServer } from "@x402/fastify";
@@ -316,7 +320,11 @@ export function paymentMiddlewareFromHTTPServer(
 
   app.addHook("onRequest", async (request: FastifyRequest, reply: FastifyReply) => {
     // Serve OpenAPI spec at /openapi.json
-    if (openAPIOptions !== false && request.method === "GET" && request.url.split("?")[0] === "/openapi.json") {
+    if (
+      openAPIOptions !== false &&
+      request.method === "GET" &&
+      request.url.split("?")[0] === "/openapi.json"
+    ) {
       if (!openApiSpec) {
         openApiSpec = generateOpenAPISpec(httpServer.routes, {
           ...(openAPIOptions ? openAPIOptions : {}),
@@ -500,6 +508,7 @@ export function paymentMiddlewareFromHTTPServer(
  * @param paywall - Optional custom paywall provider (overrides default)
  * @param syncFacilitatorOnStart - Whether to sync with the facilitator on startup (defaults to true)
  *
+ * @param openAPIOptions - OpenAPI spec options, or false to disable /openapi.json
  * @example
  * ```typescript
  * import { paymentMiddleware } from "@x402/fastify";
@@ -521,7 +530,14 @@ export function paymentMiddleware(
 ): void {
   const httpServer = new x402HTTPResourceServer(server, routes);
 
-  paymentMiddlewareFromHTTPServer(app, httpServer, paywallConfig, paywall, syncFacilitatorOnStart, openAPIOptions);
+  paymentMiddlewareFromHTTPServer(
+    app,
+    httpServer,
+    paywallConfig,
+    paywall,
+    syncFacilitatorOnStart,
+    openAPIOptions,
+  );
 }
 
 /**
@@ -538,6 +554,7 @@ export function paymentMiddleware(
  * @param paywall - Optional custom paywall provider (overrides default)
  * @param syncFacilitatorOnStart - Whether to sync with the facilitator on startup (defaults to true)
  *
+ * @param openAPIOptions - OpenAPI spec options, or false to disable /openapi.json
  * @example
  * ```typescript
  * import { paymentMiddlewareFromConfig } from "@x402/fastify";
@@ -569,7 +586,15 @@ export function paymentMiddlewareFromConfig(
     }
   }
 
-  paymentMiddleware(app, routes, ResourceServer, paywallConfig, paywall, syncFacilitatorOnStart, openAPIOptions);
+  paymentMiddleware(
+    app,
+    routes,
+    ResourceServer,
+    paywallConfig,
+    paywall,
+    syncFacilitatorOnStart,
+    openAPIOptions,
+  );
 }
 
 export { x402ResourceServer, x402HTTPResourceServer } from "@x402/core/server";
