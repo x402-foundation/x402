@@ -140,6 +140,12 @@ func (e *bazaarResourceServerExtension) EnrichDeclaration(
 		return declaration
 	}
 
+	// MCP extensions pass through unchanged — they don't need HTTP method narrowing
+	// or dynamic route extraction.
+	if _, ok := extension.Info.Input.(types.McpInput); ok {
+		return declaration
+	}
+
 	method := httpContext.Method
 
 	if queryInput, ok := extension.Info.Input.(types.QueryInput); ok {
