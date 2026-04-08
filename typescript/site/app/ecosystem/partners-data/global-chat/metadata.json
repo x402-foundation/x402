@@ -1,0 +1,7 @@
+{
+  "name": "Global Chat",
+  "description": "Cross-protocol AI agent discovery platform with x402-gated directory feed API. Aggregates 100K+ agents across MCP, A2A, agents.txt, and 12+ registries. Pay 0.10 USDC per request on Base.",
+  "logoUrl": "/logos/global-chat.svg",
+  "websiteUrl": "https://global-chat.io",
+  "category": "Services/Endpoints"
+}
