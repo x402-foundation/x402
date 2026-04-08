@@ -34,7 +34,7 @@ The v2 extension follows a pattern where:
 		Resource: x402.Resource{...},
 		Accepts: []x402.PaymentRequirements{...},
 		Extensions: map[string]interface{}{
-			bazaar.BAZAAR: extension,
+			bazaar.BAZAAR.Key(): extension,
 		},
 	}
 
@@ -63,7 +63,7 @@ The v2 extension follows a pattern where:
 		Resource: x402.Resource{...},
 		Accepts: []x402.PaymentRequirements{...},
 		Extensions: map[string]interface{}{
-			bazaar.BAZAAR: extension,
+			bazaar.BAZAAR.Key(): extension,
 		},
 	}
 

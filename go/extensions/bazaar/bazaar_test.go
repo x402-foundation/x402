@@ -2227,6 +2227,17 @@ func TestDeclareMcpDiscoveryExtension(t *testing.T) {
 		assert.Contains(t, err.Error(), "inputSchema is required")
 	})
 
+	t.Run("should return error when toolName is whitespace-only", func(t *testing.T) {
+		_, err := bazaar.DeclareMcpDiscoveryExtension(bazaar.DeclareMcpDiscoveryConfig{
+			ToolName:    "   ",
+			InputSchema: map[string]interface{}{"type": "object"},
+		})
+
+		// Current implementation only checks for empty string, so whitespace passes declaration.
+		// This documents the current behavior.
+		require.NoError(t, err)
+	})
+
 	t.Run("should support SSE transport", func(t *testing.T) {
 		extension, err := bazaar.DeclareMcpDiscoveryExtension(bazaar.DeclareMcpDiscoveryConfig{
 			ToolName:  "sse_tool",
@@ -2242,6 +2253,28 @@ func TestDeclareMcpDiscoveryExtension(t *testing.T) {
 		mcpInput, ok := extension.Info.Input.(bazaar.McpInput)
 		require.True(t, ok)
 		assert.Equal(t, bazaar.TransportSSE, mcpInput.Transport)
+	})
+
+	t.Run("should accept an arbitrary transport value without error", func(t *testing.T) {
+		extension, err := bazaar.DeclareMcpDiscoveryExtension(bazaar.DeclareMcpDiscoveryConfig{
+			ToolName:  "custom_transport_tool",
+			Transport: bazaar.McpTransport("custom-protocol"),
+			InputSchema: map[string]interface{}{
+				"type":       "object",
+				"properties": map[string]interface{}{},
+			},
+		})
+
+		// Declaration succeeds since transport is not validated at declaration time
+		require.NoError(t, err)
+
+		mcpInput, ok := extension.Info.Input.(bazaar.McpInput)
+		require.True(t, ok)
+		assert.Equal(t, bazaar.McpTransport("custom-protocol"), mcpInput.Transport)
+
+		// But schema validation should fail because transport enum only allows known values
+		result := bazaar.ValidateDiscoveryExtension(extension)
+		assert.False(t, result.Valid, "Invalid transport should fail schema validation")
 	})
 
 	t.Run("should support streamable-http transport", func(t *testing.T) {
@@ -2301,6 +2334,88 @@ func TestValidateDiscoveryExtension_MCP(t *testing.T) {
 
 		result := bazaar.ValidateDiscoveryExtension(extension)
 		assert.True(t, result.Valid, "MCP extension with output should be valid: %v", result.Errors)
+	})
+
+	t.Run("should reject MCP extension with wrong type in info", func(t *testing.T) {
+		// Manually construct an extension where info.input.type != "mcp"
+		// but schema requires const: "mcp"
+		extension := bazaar.DiscoveryExtension{
+			Info: bazaar.DiscoveryInfo{
+				Input: bazaar.McpInput{
+					Type:        "http", // wrong type
+					ToolName:    "bad_tool",
+					InputSchema: map[string]interface{}{"type": "object"},
+				},
+			},
+			Schema: bazaar.JSONSchema{
+				"$schema": "https://json-schema.org/draft/2020-12/schema",
+				"type":    "object",
+				"properties": map[string]interface{}{
+					"input": map[string]interface{}{
+						"type": "object",
+						"properties": map[string]interface{}{
+							"type": map[string]interface{}{
+								"type":  "string",
+								"const": "mcp",
+							},
+							"toolName": map[string]interface{}{
+								"type": "string",
+							},
+							"inputSchema": map[string]interface{}{
+								"type": "object",
+							},
+						},
+						"required":             []string{"type", "toolName", "inputSchema"},
+						"additionalProperties": false,
+					},
+				},
+				"required": []string{"input"},
+			},
+		}
+
+		result := bazaar.ValidateDiscoveryExtension(extension)
+		assert.False(t, result.Valid, "Extension with wrong type should fail validation")
+	})
+
+	t.Run("should reject MCP extension missing toolName in info", func(t *testing.T) {
+		// Manually construct an extension where info is missing toolName
+		extension := bazaar.DiscoveryExtension{
+			Info: bazaar.DiscoveryInfo{
+				Input: bazaar.McpInput{
+					Type:        "mcp",
+					ToolName:    "", // missing
+					InputSchema: map[string]interface{}{"type": "object"},
+				},
+			},
+			Schema: bazaar.JSONSchema{
+				"$schema": "https://json-schema.org/draft/2020-12/schema",
+				"type":    "object",
+				"properties": map[string]interface{}{
+					"input": map[string]interface{}{
+						"type": "object",
+						"properties": map[string]interface{}{
+							"type": map[string]interface{}{
+								"type":  "string",
+								"const": "mcp",
+							},
+							"toolName": map[string]interface{}{
+								"type":      "string",
+								"minLength": 1,
+							},
+							"inputSchema": map[string]interface{}{
+								"type": "object",
+							},
+						},
+						"required":             []string{"type", "toolName", "inputSchema"},
+						"additionalProperties": false,
+					},
+				},
+				"required": []string{"input"},
+			},
+		}
+
+		result := bazaar.ValidateDiscoveryExtension(extension)
+		assert.False(t, result.Valid, "Extension with empty toolName should fail validation when schema has minLength")
 	})
 }
 

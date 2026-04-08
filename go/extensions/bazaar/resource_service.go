@@ -125,11 +125,6 @@ func DeclareDiscoveryExtension(
 //	    Example: map[string]interface{}{"city": "San Francisco"},
 //	})
 func DeclareMcpDiscoveryExtension(config types.DeclareMcpDiscoveryConfig) (types.DiscoveryExtension, error) {
-	return createMcpDiscoveryExtension(config)
-}
-
-// createMcpDiscoveryExtension builds the MCP discovery extension from config
-func createMcpDiscoveryExtension(config types.DeclareMcpDiscoveryConfig) (types.DiscoveryExtension, error) {
 	if config.ToolName == "" {
 		return types.DiscoveryExtension{}, fmt.Errorf("toolName is required for MCP discovery extension")
 	}
@@ -187,7 +182,7 @@ func createMcpDiscoveryExtension(config types.DeclareMcpDiscoveryConfig) (types.
 	if config.Transport != "" {
 		inputSchemaProperties["transport"] = map[string]interface{}{
 			"type": "string",
-			"enum": []string{string(config.Transport)},
+			"enum": []string{string(TransportStreamableHTTP), string(TransportSSE)},
 		}
 	}
 	if config.Example != nil {
