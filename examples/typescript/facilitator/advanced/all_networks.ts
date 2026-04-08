@@ -5,7 +5,7 @@
  * optional chain configuration via environment variables.
  *
  * New chain support should be added here in alphabetic order by network prefix
- * (e.g., "eip155" before "solana" before "stellar").
+ * (e.g., "eip155" before "ilp" before "solana" before "stellar").
  */
 
 import { base58 } from "@scure/base";
@@ -19,6 +19,7 @@ import {
 } from "@x402/core/types";
 import { toFacilitatorEvmSigner } from "@x402/evm";
 import { ExactEvmScheme } from "@x402/evm/exact/facilitator";
+import { ExactOpenPaymentsScheme } from "@x402/openpayments/exact/facilitator";
 import { toFacilitatorSvmSigner } from "@x402/svm";
 import { ExactSvmScheme } from "@x402/svm/exact/facilitator";
 import { createEd25519Signer } from "@x402/stellar";
@@ -36,19 +37,24 @@ const PORT = process.env.PORT || "4022";
 
 // Configuration - optional per network
 const evmPrivateKey = process.env.EVM_PRIVATE_KEY as `0x${string}` | undefined;
+const ilpKeyId = process.env.ILP_KEY_ID as string | undefined;
+const ilpPrivateKey = process.env.ILP_PRIVATE_KEY as string | undefined; // base64-encoded Ed25519
+const ilpWalletAddress = process.env.ILP_WALLET_ADDRESS as string | undefined;
 const svmPrivateKey = process.env.SVM_PRIVATE_KEY as string | undefined;
 const stellarPrivateKey = process.env.STELLAR_PRIVATE_KEY as string | undefined;
 
 // Validate at least one private key is provided
-if (!evmPrivateKey && !svmPrivateKey && !stellarPrivateKey) {
+const hasIlpConfig = ilpKeyId && ilpPrivateKey && ilpWalletAddress;
+if (!evmPrivateKey && !hasIlpConfig && !svmPrivateKey && !stellarPrivateKey) {
   console.error(
-    "❌ At least one of EVM_PRIVATE_KEY, SVM_PRIVATE_KEY, or STELLAR_PRIVATE_KEY is required",
+    "❌ At least one of EVM_PRIVATE_KEY, ILP ENVs, SVM_PRIVATE_KEY, or STELLAR_PRIVATE_KEY is required",
   );
   process.exit(1);
 }
 
 // Network configuration
 const EVM_NETWORK = "eip155:84532"; // Base Sepolia
+const ILP_NETWORK = "ilp:openpayments"; // Open Payments (Interledger)
 const SVM_NETWORK = "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1"; // Solana Devnet
 const STELLAR_NETWORK = "stellar:testnet"; // Stellar Testnet
 
@@ -126,6 +132,19 @@ if (evmPrivateKey) {
   facilitator.register(
     EVM_NETWORK,
     new ExactEvmScheme(evmSigner, { deployERC4337WithEIP6492: true }),
+  );
+}
+
+// Register ILP Open Payments scheme if credentials are provided
+if (hasIlpConfig) {
+  console.info(`ILP Facilitator wallet: ${ilpWalletAddress}`);
+  facilitator.register(
+    ILP_NETWORK,
+    new ExactOpenPaymentsScheme({
+      keyId: ilpKeyId!,
+      privateKey: ilpPrivateKey!,
+      walletAddress: ilpWalletAddress!,
+    }),
   );
 }
 

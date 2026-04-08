@@ -5,13 +5,14 @@
  * optional chain configuration via environment variables.
  *
  * New chain support should be added here in alphabetic order by network prefix
- * (e.g., "eip155" before "solana" before "stellar").
+ * (e.g., "eip155" before "ilp" before "solana" before "stellar").
  */
 
 import { config } from "dotenv";
 import express from "express";
 import { paymentMiddleware, x402ResourceServer } from "@x402/express";
 import { ExactEvmScheme } from "@x402/evm/exact/server";
+import { ExactOpenPaymentsScheme } from "@x402/openpayments/exact/server";
 import { ExactSvmScheme } from "@x402/svm/exact/server";
 import { ExactStellarScheme } from "@x402/stellar/exact/server";
 import { HTTPFacilitatorClient } from "@x402/core/server";
@@ -20,12 +21,15 @@ config();
 
 // Configuration - optional per network
 const evmAddress = process.env.EVM_ADDRESS as `0x${string}` | undefined;
+const ilpWalletAddress = process.env.ILP_WALLET_ADDRESS as string | undefined;
 const svmAddress = process.env.SVM_ADDRESS as string | undefined;
 const stellarAddress = process.env.STELLAR_ADDRESS as string | undefined;
 
 // Validate at least one address is provided
-if (!evmAddress && !svmAddress && !stellarAddress) {
-  console.error("❌ At least one of EVM_ADDRESS, SVM_ADDRESS, or STELLAR_ADDRESS is required");
+if (!evmAddress && !ilpWalletAddress && !svmAddress && !stellarAddress) {
+  console.error(
+    "❌ At least one of EVM_ADDRESS, ILP_WALLET_ADDRESS, SVM_ADDRESS, or STELLAR_ADDRESS is required",
+  );
   process.exit(1);
 }
 
@@ -37,6 +41,7 @@ if (!facilitatorUrl) {
 
 // Network configuration
 const EVM_NETWORK = "eip155:84532" as const; // Base Sepolia
+const ILP_NETWORK = "ilp:openpayments" as const; // Open Payments (ILP)
 const SVM_NETWORK = "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1" as const; // Solana Devnet
 const STELLAR_NETWORK = "stellar:testnet" as const; // Stellar Testnet
 
@@ -53,6 +58,14 @@ if (evmAddress) {
     price: "$0.001",
     network: EVM_NETWORK,
     payTo: evmAddress,
+  });
+}
+if (ilpWalletAddress) {
+  accepts.push({
+    scheme: "exact",
+    price: "0.01",
+    network: ILP_NETWORK,
+    payTo: ilpWalletAddress,
   });
 }
 if (svmAddress) {
@@ -79,6 +92,9 @@ const facilitatorClient = new HTTPFacilitatorClient({ url: facilitatorUrl });
 const server = new x402ResourceServer(facilitatorClient);
 if (evmAddress) {
   server.register(EVM_NETWORK, new ExactEvmScheme());
+}
+if (ilpWalletAddress) {
+  server.register(ILP_NETWORK, new ExactOpenPaymentsScheme({ walletAddress: ilpWalletAddress }));
 }
 if (svmAddress) {
   server.register(SVM_NETWORK, new ExactSvmScheme());
@@ -125,6 +141,9 @@ app.listen(port, () => {
   console.log(`🚀 All Networks Server listening at http://localhost:${port}`);
   if (evmAddress) {
     console.log(`   EVM: ${evmAddress} on ${EVM_NETWORK}`);
+  }
+  if (ilpWalletAddress) {
+    console.log(`   ILP: ${ilpWalletAddress} on ${ILP_NETWORK}`);
   }
   if (svmAddress) {
     console.log(`   SVM: ${svmAddress} on ${SVM_NETWORK}`);
