@@ -102,7 +102,7 @@ const (
 
 // McpInput represents input information for MCP tool discovery
 type McpInput struct {
-	Type        string       `json:"type"`                  // "mcp"
+	Type        string       `json:"type"` // "mcp"
 	ToolName    string       `json:"toolName"`
 	Description string       `json:"description,omitempty"`
 	Transport   McpTransport `json:"transport,omitempty"`
@@ -157,19 +157,20 @@ func (d *DiscoveryInfo) UnmarshalJSON(data []byte) error {
 	// Intentionally ignore error - we're just probing for field existence
 	_ = json.Unmarshal(raw.Input, &checkFields)
 
-	if checkFields.Type == "mcp" {
+	switch {
+	case checkFields.Type == "mcp":
 		var mcpInput McpInput
 		if err := json.Unmarshal(raw.Input, &mcpInput); err != nil {
 			return err
 		}
 		d.Input = mcpInput
-	} else if checkFields.BodyType != nil {
+	case checkFields.BodyType != nil:
 		var bodyInput BodyInput
 		if err := json.Unmarshal(raw.Input, &bodyInput); err != nil {
 			return err
 		}
 		d.Input = bodyInput
-	} else {
+	default:
 		var queryInput QueryInput
 		if err := json.Unmarshal(raw.Input, &queryInput); err != nil {
 			return err

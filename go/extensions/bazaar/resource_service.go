@@ -199,8 +199,8 @@ func createMcpDiscoveryExtension(config types.DeclareMcpDiscoveryConfig) (types.
 	schemaProperties := map[string]interface{}{
 		"input": map[string]interface{}{
 			"type":                 "object",
-			"properties":          inputSchemaProperties,
-			"required":            inputRequired,
+			"properties":           inputSchemaProperties,
+			"required":             inputRequired,
 			"additionalProperties": false,
 		},
 	}
