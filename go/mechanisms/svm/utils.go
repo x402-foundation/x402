@@ -10,7 +10,6 @@ import (
 
 	bin "github.com/gagliardetto/binary"
 	solana "github.com/gagliardetto/solana-go"
-	"github.com/gagliardetto/solana-go/programs/token"
 )
 
 var (
@@ -171,41 +170,15 @@ func DecodeTransaction(base64Tx string) (*solana.Transaction, error) {
 	return tx, nil
 }
 
-// GetTokenPayerFromTransaction extracts the token payer (owner) address from a transaction
-// This looks for the TransferChecked instruction and returns the owner/authority address
+// GetTokenPayerFromTransaction extracts the token payer (owner) address from a
+// transaction using the stock transfer extractors supported by x402.
 func GetTokenPayerFromTransaction(tx *solana.Transaction) (string, error) {
-	if tx == nil || tx.Message.Instructions == nil {
-		return "", fmt.Errorf("invalid transaction: nil transaction or instructions")
+	details, err := FindTransferDetails(tx)
+	if err != nil {
+		return "", fmt.Errorf("no TransferChecked instruction found in transaction: %w", err)
 	}
 
-	// Iterate through instructions to find TransferChecked
-	for _, inst := range tx.Message.Instructions {
-		programID := tx.Message.AccountKeys[inst.ProgramIDIndex]
-
-		// Check if this is a token program instruction
-		if programID == solana.TokenProgramID || programID == solana.Token2022ProgramID {
-			// Decode the instruction
-			accounts, err := inst.ResolveInstructionAccounts(&tx.Message)
-			if err != nil {
-				continue
-			}
-
-			decoded, err := token.DecodeInstruction(accounts, inst.Data)
-			if err != nil {
-				continue
-			}
-
-			// Check if it's a TransferChecked instruction
-			if _, ok := decoded.Impl.(*token.TransferChecked); ok {
-				// The owner/authority is the 4th account (index 3)
-				if len(accounts) >= 4 {
-					return accounts[3].PublicKey.String(), nil
-				}
-			}
-		}
-	}
-
-	return "", fmt.Errorf("no TransferChecked instruction found in transaction")
+	return details.Authority.String(), nil
 }
 
 // EncodeTransaction encodes a Solana transaction to base64

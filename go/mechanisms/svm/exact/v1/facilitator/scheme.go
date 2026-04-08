@@ -10,7 +10,6 @@ import (
 
 	solana "github.com/gagliardetto/solana-go"
 	computebudget "github.com/gagliardetto/solana-go/programs/compute-budget"
-	"github.com/gagliardetto/solana-go/programs/token"
 
 	x402 "github.com/x402-foundation/x402/go"
 	svm "github.com/x402-foundation/x402/go/mechanisms/svm"
@@ -21,6 +20,7 @@ import (
 type ExactSvmSchemeV1 struct {
 	signer          svm.FacilitatorSvmSigner
 	settlementCache *svm.SettlementCache
+	extractors      []svm.TransferExtractor
 }
 
 // NewExactSvmSchemeV1 creates a new ExactSvmSchemeV1.
@@ -36,7 +36,18 @@ func NewExactSvmSchemeV1(signer svm.FacilitatorSvmSigner, cache ...*svm.Settleme
 	return &ExactSvmSchemeV1{
 		signer:          signer,
 		settlementCache: c,
+		extractors:      svm.DefaultTransferExtractors(),
 	}
+}
+
+// RegisterTransferExtractor prepends a custom transfer extractor to the exact
+// facilitator. This allows callers to support wrapped payment instructions
+// while keeping the stock direct TransferChecked extractor as a fallback.
+func (f *ExactSvmSchemeV1) RegisterTransferExtractor(extractor svm.TransferExtractor) {
+	if extractor == nil {
+		return
+	}
+	f.extractors = append([]svm.TransferExtractor{extractor}, f.extractors...)
 }
 
 // Scheme returns the scheme identifier
@@ -161,14 +172,18 @@ func (f *ExactSvmSchemeV1) Verify(
 		return nil, x402.NewVerifyError(err.Error(), "", err.Error())
 	}
 
-	// Extract payer from transaction
-	payer, err := svm.GetTokenPayerFromTransaction(tx)
+	// Extract payer from the payment instruction using the configured
+	// transfer extractors. This keeps exact verification compatible with the
+	// stock top-level TransferChecked flow while allowing wrapped payment
+	// instructions to expose the same canonical transfer details.
+	transferDetails, err := svm.ExtractTransferDetails(tx, tx.Message.Instructions[2], f.extractors...)
 	if err != nil {
-		return nil, x402.NewVerifyError(ErrNoTransferInstruction, payer, err.Error())
+		return nil, x402.NewVerifyError(ErrNoTransferInstruction, "", err.Error())
 	}
+	payer := transferDetails.Authority.String()
 
 	// Step 4: Verify Transfer Instruction
-	if err := f.verifyTransferInstruction(tx, tx.Message.Instructions[2], requirements, signerAddressStrs); err != nil {
+	if err := f.verifyTransferDetails(transferDetails, requirements, signerAddressStrs); err != nil {
 		return nil, x402.NewVerifyError(err.Error(), payer, err.Error())
 	}
 
@@ -377,42 +392,26 @@ func (f *ExactSvmSchemeV1) verifyComputePriceInstruction(tx *solana.Transaction,
 	return nil
 }
 
-// verifyTransferInstruction verifies the transfer instruction
-func (f *ExactSvmSchemeV1) verifyTransferInstruction(
-	tx *solana.Transaction,
-	inst solana.CompiledInstruction,
+// verifyTransferDetails verifies the canonical transfer details extracted from
+// the payment instruction.
+func (f *ExactSvmSchemeV1) verifyTransferDetails(
+	transfer *svm.TransferDetails,
 	requirements types.PaymentRequirementsV1,
 	signerAddresses []string,
 ) error {
-	progID := tx.Message.AccountKeys[inst.ProgramIDIndex]
-
-	// Must be Token Program or Token-2022 Program
-	if progID != solana.TokenProgramID && progID != solana.Token2022ProgramID {
+	if transfer == nil {
 		return errors.New(ErrNoTransferInstruction)
 	}
 
-	accounts, err := inst.ResolveInstructionAccounts(&tx.Message)
-	if err != nil {
-		return errors.New(ErrNoTransferInstruction)
-	}
-
-	if len(accounts) < 4 {
-		return errors.New(ErrNoTransferInstruction)
-	}
-
-	decoded, err := token.DecodeInstruction(accounts, inst.Data)
-	if err != nil {
-		return errors.New(ErrNoTransferInstruction)
-	}
-
-	transferChecked, ok := decoded.Impl.(*token.TransferChecked)
-	if !ok {
+	// Must still be a token transfer, even if it arrived through a wrapped
+	// instruction parser.
+	if transfer.ProgramID != solana.TokenProgramID && transfer.ProgramID != solana.Token2022ProgramID {
 		return errors.New(ErrNoTransferInstruction)
 	}
 
 	// SECURITY: Verify that the facilitator's signers are not transferring their own funds
 	// Prevent facilitator from signing away their own tokens
-	authorityAddr := accounts[3].PublicKey.String() // TransferChecked: [source, mint, destination, authority, ...]
+	authorityAddr := transfer.Authority.String()
 	for _, signerAddr := range signerAddresses {
 		if authorityAddr == signerAddr {
 			return errors.New(ErrFeePayerTransferringFunds)
@@ -420,7 +419,7 @@ func (f *ExactSvmSchemeV1) verifyTransferInstruction(
 	}
 
 	// Verify mint address
-	mintAddr := accounts[1].PublicKey.String()
+	mintAddr := transfer.Mint.String()
 	if mintAddr != requirements.Asset {
 		return errors.New(ErrMintMismatch)
 	}
@@ -441,8 +440,7 @@ func (f *ExactSvmSchemeV1) verifyTransferInstruction(
 		return errors.New(ErrRecipientMismatch)
 	}
 
-	destATA := transferChecked.GetDestinationAccount().PublicKey
-	if destATA.String() != expectedDestATA.String() {
+	if transfer.Destination.String() != expectedDestATA.String() {
 		return errors.New(ErrRecipientMismatch)
 	}
 
@@ -454,7 +452,7 @@ func (f *ExactSvmSchemeV1) verifyTransferInstruction(
 		return errors.New(ErrAmountInsufficient)
 	}
 
-	if *transferChecked.Amount < requiredAmount {
+	if transfer.Amount < requiredAmount {
 		return errors.New(ErrAmountInsufficient)
 	}
 

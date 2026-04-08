@@ -112,7 +112,11 @@ A facilitator verifying an `exact`-scheme SVM payment MUST enforce all of the fo
 - The decompiled transaction MUST contain 3 to 6 instructions in this order:
   1. Compute Budget: Set Compute Unit Limit
   2. Compute Budget: Set Compute Unit Price
-  3. SPL Token or Token-2022 TransferChecked
+  3. A payment instruction that either:
+     - is a direct SPL Token / Token-2022 `TransferChecked`, or
+     - can be deterministically decoded by the facilitator into the same
+       canonical token transfer details (`source`, `mint`, `destination`,
+       `authority`, `amount`)
   4. (Optional) Lighthouse or Memo program instruction
   5. (Optional) Lighthouse or Memo program instruction
   6. (Optional) Memo program instruction
@@ -125,7 +129,7 @@ A facilitator verifying an `exact`-scheme SVM payment MUST enforce all of the fo
 2. Fee payer (facilitator) safety
 
 - The configured fee payer address MUST NOT appear in the `accounts` of any instruction in the transaction.
-- The fee payer MUST NOT be the `authority` for the TransferChecked instruction.
+- The fee payer MUST NOT be the `authority` for the canonical token transfer.
 - The fee payer MUST NOT be the `source` of the transferred funds.
 
 3. Compute budget validity
@@ -135,7 +139,7 @@ A facilitator verifying an `exact`-scheme SVM payment MUST enforce all of the fo
 
 4. Transfer intent and destination
 
-- The TransferChecked program MUST be either `spl-token` or `token-2022`.
+- The canonical token transfer MUST target either `spl-token` or `token-2022`.
 - Destination MUST equal the Associated Token Account PDA for `(owner = payTo, mint = asset)` under the selected token program.
 
 5. Account existence
@@ -145,7 +149,7 @@ A facilitator verifying an `exact`-scheme SVM payment MUST enforce all of the fo
 
 6. Amount
 
-- The `amount` in TransferChecked MUST equal `PaymentRequirements.amount` exactly.
+- The canonical token transfer `amount` MUST equal `PaymentRequirements.amount` exactly.
 
 These checks are security-critical to ensure the fee payer cannot be tricked into transferring their own funds or sponsoring unintended actions. Implementations MAY introduce stricter limits (e.g., lower compute price caps) but MUST NOT relax the above constraints.
 
