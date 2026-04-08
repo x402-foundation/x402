@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { readFileSync } from "node:fs";
 import { ExactSvmScheme } from "../../src/exact/facilitator/scheme";
 import { ExactSvmSchemeV1 } from "../../src/exact/v1/facilitator/scheme";
 import { SettlementCache } from "../../src/settlement-cache";
@@ -6,6 +7,27 @@ import type { FacilitatorSvmSigner } from "../../src/signer";
 import type { PaymentRequirements, PaymentPayload } from "@x402/core/types";
 import type { PaymentPayloadV1, PaymentRequirementsV1 } from "@x402/core/types/v1";
 import { USDC_DEVNET_ADDRESS, SOLANA_DEVNET_CAIP2 } from "../../src/constants";
+
+type WrappedPaymentFixture = {
+  name: string;
+  transaction: string;
+  network: string;
+  asset: string;
+  payTo: string;
+  amount: string;
+  feePayer: string;
+  payer: string;
+};
+
+const wrappedPaymentFixtures = JSON.parse(
+  readFileSync(
+    new URL(
+      "../../../../../../go/mechanisms/svm/testdata/swig_wrapped_payments.json",
+      import.meta.url,
+    ),
+    "utf8",
+  ),
+) as WrappedPaymentFixture[];
 
 describe("ExactSvmScheme", () => {
   let mockSigner: FacilitatorSvmSigner;
@@ -403,6 +425,44 @@ describe("ExactSvmScheme", () => {
       const v1Result = await v1.settle(v1Payload as never, v1Requirements as never);
       expect(v1Result.success).toBe(false);
       expect(v1Result.errorReason).toBe("duplicate_settlement");
+    });
+  });
+
+  describe("built-in SWIG support", () => {
+    it.each(wrappedPaymentFixtures)("should verify $name wrapped transfers", async fixture => {
+      const facilitator = new ExactSvmScheme({
+        ...mockSigner,
+        getAddresses: vi.fn().mockReturnValue([fixture.feePayer]) as never,
+        signTransaction: vi
+          .fn()
+          .mockImplementation(async (transaction: string) => transaction) as never,
+        simulateTransaction: vi.fn().mockResolvedValue(undefined) as never,
+      });
+
+      const payload: PaymentPayload = {
+        x402Version: 2,
+        resource: {
+          url: "http://example.com/protected",
+          description: "Test resource",
+          mimeType: "application/json",
+        },
+        accepted: {
+          scheme: "exact",
+          network: fixture.network,
+          asset: fixture.asset,
+          amount: fixture.amount,
+          payTo: fixture.payTo,
+          maxTimeoutSeconds: 300,
+          extra: { feePayer: fixture.feePayer },
+        },
+        payload: {
+          transaction: fixture.transaction,
+        },
+      };
+
+      const result = await facilitator.verify(payload, payload.accepted);
+      expect(result.isValid).toBe(true);
+      expect(result.payer).toBe(fixture.payer);
     });
   });
 });

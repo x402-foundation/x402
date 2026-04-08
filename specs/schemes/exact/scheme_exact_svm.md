@@ -114,7 +114,7 @@ A facilitator verifying an `exact`-scheme SVM payment MUST enforce all of the fo
   2. Compute Budget: Set Compute Unit Price
   3. A payment instruction that either:
      - is a direct SPL Token / Token-2022 `TransferChecked`, or
-     - can be deterministically decoded by the facilitator into the same
+     - is a known wrapped payment program that can be deterministically decoded by the facilitator into the same
        canonical token transfer details (`source`, `mint`, `destination`,
        `authority`, `amount`)
   4. (Optional) Lighthouse or Memo program instruction
@@ -152,6 +152,30 @@ A facilitator verifying an `exact`-scheme SVM payment MUST enforce all of the fo
 - The canonical token transfer `amount` MUST equal `PaymentRequirements.amount` exactly.
 
 These checks are security-critical to ensure the fee payer cannot be tricked into transferring their own funds or sponsoring unintended actions. Implementations MAY introduce stricter limits (e.g., lower compute price caps) but MUST NOT relax the above constraints.
+
+### Known Wrapped Payment Programs
+
+The reference implementation currently treats the following wrapped payment
+programs as valid exact SVM payment instructions in addition to direct
+`TransferChecked`:
+
+- **SWIG**
+  - `SignV2`
+  - `SubAccountSignV1`
+
+When a wrapped payment program is accepted, the facilitator MUST decode the
+wrapped instruction into the same canonical SPL transfer effect it would verify
+for a direct payment:
+
+- token program (`spl-token` or `token-2022`)
+- source token account
+- mint
+- destination associated token account
+- transfer authority
+- exact amount
+
+This preserves compatibility with programmable wallets while keeping the same
+exact-scheme safety guarantees.
 
 ## Duplicate Settlement Mitigation (RECOMMENDED)
 

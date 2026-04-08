@@ -35,6 +35,9 @@ const (
 	// MemoProgramAddress is the SPL Memo program address
 	MemoProgramAddress = "MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr"
 
+	// SwigProgramAddress is the SWIG programmable wallet program.
+	SwigProgramAddress = "swigypWHEksbC64pWKwah1WTeh9JXwx8H1rJHLdbQMB"
+
 	// DefaultCommitment is the default commitment level for transactions
 	DefaultCommitment = rpc.CommitmentConfirmed
 

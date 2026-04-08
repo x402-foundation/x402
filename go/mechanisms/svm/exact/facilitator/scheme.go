@@ -19,7 +19,6 @@ import (
 type ExactSvmScheme struct {
 	signer          svm.FacilitatorSvmSigner
 	settlementCache *svm.SettlementCache
-	extractors      []svm.TransferExtractor
 }
 
 // NewExactSvmScheme creates a new ExactSvmScheme.
@@ -35,18 +34,7 @@ func NewExactSvmScheme(signer svm.FacilitatorSvmSigner, cache ...*svm.Settlement
 	return &ExactSvmScheme{
 		signer:          signer,
 		settlementCache: c,
-		extractors:      svm.DefaultTransferExtractors(),
 	}
-}
-
-// RegisterTransferExtractor prepends a custom transfer extractor to the exact
-// facilitator. This allows callers to support wrapped payment instructions
-// while keeping the stock direct TransferChecked extractor as a fallback.
-func (f *ExactSvmScheme) RegisterTransferExtractor(extractor svm.TransferExtractor) {
-	if extractor == nil {
-		return
-	}
-	f.extractors = append([]svm.TransferExtractor{extractor}, f.extractors...)
 }
 
 // Scheme returns the scheme identifier
@@ -162,11 +150,11 @@ func (f *ExactSvmScheme) Verify(
 		return nil, x402.NewVerifyError(err.Error(), "", err.Error())
 	}
 
-	// Extract payer from the payment instruction using the configured
-	// transfer extractors. This keeps exact verification compatible with the
-	// stock top-level TransferChecked flow while allowing wrapped payment
-	// instructions to expose the same canonical transfer details.
-	transferDetails, err := svm.ExtractTransferDetails(tx, tx.Message.Instructions[2], f.extractors...)
+	// Extract payer from the payment instruction using the built-in exact SVM
+	// payment decoders. This keeps exact verification compatible with the stock
+	// top-level TransferChecked flow while allowing known wrapped payment
+	// programs such as SWIG to expose the same canonical transfer details.
+	transferDetails, err := svm.ExtractTransferDetails(tx, tx.Message.Instructions[2])
 	if err != nil {
 		return nil, x402.NewVerifyError(ErrNoTransferInstruction, "", err.Error())
 	}

@@ -3,6 +3,7 @@
 import base64
 import re
 from decimal import Decimal
+from typing import Any
 
 try:
     from solders.pubkey import Pubkey
@@ -13,11 +14,14 @@ except ImportError as e:
     ) from e
 
 from .constants import (
+    DEFAULT_DECIMALS,
+    MEMO_PROGRAM_ADDRESS,
     NETWORK_CONFIGS,
     SOLANA_DEVNET_CAIP2,
     SOLANA_MAINNET_CAIP2,
     SOLANA_TESTNET_CAIP2,
     SVM_ADDRESS_REGEX,
+    SWIG_PROGRAM_ADDRESS,
     TOKEN_2022_PROGRAM_ADDRESS,
     TOKEN_PROGRAM_ADDRESS,
     USDC_DEVNET_ADDRESS,
@@ -27,7 +31,11 @@ from .constants import (
     AssetInfo,
     NetworkConfig,
 )
-from .types import ExactSvmPayload, TransactionInfo
+from .types import ExactSvmPayload, TransactionInfo, TransferDetails
+
+TOKEN_TRANSFER_CHECKED_DISCRIMINATOR = 12
+SWIG_SIGN_V2_DISCRIMINATOR = 11
+SWIG_SUBACCOUNT_SIGN_V1_DISCRIMINATOR = 9
 
 
 def normalize_network(network: str) -> str:
@@ -132,7 +140,9 @@ def get_asset_info(network: str, asset_address: str | None = None) -> AssetInfo:
     if not asset_address or asset_address == default_asset["address"]:
         return default_asset
 
-    raise ValueError(f"Token {asset_address} is not a registered asset for network {network}.")
+    raise ValueError(
+        f"Token {asset_address} is not a registered asset for network {network}."
+    )
 
 
 def convert_to_token_amount(decimal_amount: str, decimals: int) -> str:
@@ -239,27 +249,189 @@ def get_token_payer_from_transaction(tx: VersionedTransaction) -> str:
     Returns:
         The token payer address as a base58 string, or empty string if not found.
     """
+    transfer_details = get_transfer_details_from_transaction(tx)
+    return transfer_details.authority if transfer_details else ""
+
+
+def get_transfer_details_from_transaction(
+    tx: VersionedTransaction,
+) -> TransferDetails | None:
+    """Extract canonical transfer details from a transaction."""
     message = tx.message
     static_accounts = list(message.account_keys)
     instructions = message.instructions
 
+    for ix in instructions:
+        transfer_details = get_transfer_details_from_instruction(static_accounts, ix)
+        if transfer_details is not None:
+            return transfer_details
+
+    return None
+
+
+def get_transfer_details_from_instruction(
+    static_accounts: list[Pubkey], ix: Any
+) -> TransferDetails | None:
+    """Extract canonical transfer details from one compiled instruction."""
+    transfer_details = _extract_direct_transfer_details(static_accounts, ix)
+    if transfer_details is not None:
+        return transfer_details
+
+    return _extract_swig_transfer_details(static_accounts, ix)
+
+
+def _extract_direct_transfer_details(
+    static_accounts: list[Pubkey], ix: Any
+) -> TransferDetails | None:
+    program_address = static_accounts[ix.program_id_index]
     token_program = Pubkey.from_string(TOKEN_PROGRAM_ADDRESS)
     token_2022_program = Pubkey.from_string(TOKEN_2022_PROGRAM_ADDRESS)
 
-    for ix in instructions:
-        program_index = ix.program_id_index
-        program_address = static_accounts[program_index]
+    if program_address != token_program and program_address != token_2022_program:
+        return None
 
-        # Check if this is a token program instruction
+    account_indices = list(ix.accounts)
+    ix_data = bytes(ix.data)
+    if (
+        len(account_indices) < 4
+        or len(ix_data) < 10
+        or ix_data[0] != TOKEN_TRANSFER_CHECKED_DISCRIMINATOR
+    ):
+        return None
+
+    return TransferDetails(
+        token_program=str(program_address),
+        source=str(static_accounts[account_indices[0]]),
+        mint=str(static_accounts[account_indices[1]]),
+        destination=str(static_accounts[account_indices[2]]),
+        authority=str(static_accounts[account_indices[3]]),
+        amount=int.from_bytes(ix_data[1:9], "little"),
+    )
+
+
+def _extract_swig_transfer_details(
+    static_accounts: list[Pubkey], ix: Any
+) -> TransferDetails | None:
+    swig_program = Pubkey.from_string(SWIG_PROGRAM_ADDRESS)
+    if static_accounts[ix.program_id_index] != swig_program:
+        return None
+
+    outer_accounts = [static_accounts[index] for index in ix.accounts]
+    compact_instructions = _decode_swig_compact_instructions(bytes(ix.data))
+    if compact_instructions is None:
+        return None
+
+    transfer_details: TransferDetails | None = None
+    token_program = Pubkey.from_string(TOKEN_PROGRAM_ADDRESS)
+    token_2022_program = Pubkey.from_string(TOKEN_2022_PROGRAM_ADDRESS)
+    memo_program = Pubkey.from_string(MEMO_PROGRAM_ADDRESS)
+
+    for compact_instruction in compact_instructions:
+        program_index = compact_instruction["program_id_index"]
+        if program_index >= len(outer_accounts):
+            return None
+
+        program_address = outer_accounts[program_index]
         if program_address == token_program or program_address == token_2022_program:
-            account_indices = list(ix.accounts)
-            # TransferChecked account order: [source, mint, destination, owner, ...]
-            if len(account_indices) >= 4:
-                owner_index = account_indices[3]
-                owner_address = static_accounts[owner_index]
-                return str(owner_address)
+            if transfer_details is not None:
+                return None
+            transfer_details = _decode_transfer_details_from_indexes(
+                outer_accounts,
+                str(program_address),
+                compact_instruction["account_indexes"],
+                compact_instruction["data"],
+            )
+            if transfer_details is None:
+                return None
+            continue
 
-    return ""
+        if program_address == memo_program:
+            continue
+
+        return None
+
+    return transfer_details
+
+
+def _decode_swig_compact_instructions(data: bytes) -> list[dict[str, Any]] | None:
+    if len(data) < 4:
+        return None
+
+    discriminator = int.from_bytes(data[0:2], "little")
+    if discriminator == SWIG_SIGN_V2_DISCRIMINATOR:
+        compact_offset = 8
+    elif discriminator == SWIG_SUBACCOUNT_SIGN_V1_DISCRIMINATOR:
+        compact_offset = 16
+    else:
+        return None
+
+    compact_length = int.from_bytes(data[2:4], "little")
+    if compact_length <= 0 or compact_offset + compact_length > len(data):
+        return None
+
+    compact_data = data[compact_offset : compact_offset + compact_length]
+    if not compact_data:
+        return None
+
+    instruction_count = compact_data[0]
+    offset = 1
+    instructions: list[dict[str, object]] = []
+
+    for _ in range(instruction_count):
+        if offset + 4 > len(compact_data):
+            return None
+
+        program_id_index = compact_data[offset]
+        offset += 1
+        account_count = compact_data[offset]
+        offset += 1
+        if offset + account_count + 2 > len(compact_data):
+            return None
+
+        account_indexes = list(compact_data[offset : offset + account_count])
+        offset += account_count
+        inner_data_length = int.from_bytes(compact_data[offset : offset + 2], "little")
+        offset += 2
+        if offset + inner_data_length > len(compact_data):
+            return None
+
+        instruction_data = compact_data[offset : offset + inner_data_length]
+        offset += inner_data_length
+        instructions.append(
+            {
+                "program_id_index": program_id_index,
+                "account_indexes": account_indexes,
+                "data": instruction_data,
+            }
+        )
+
+    if offset != len(compact_data):
+        return None
+
+    return instructions
+
+
+def _decode_transfer_details_from_indexes(
+    accounts: list[Pubkey], token_program: str, account_indexes: list[int], data: bytes
+) -> TransferDetails | None:
+    if (
+        len(account_indexes) < 4
+        or len(data) < 10
+        or data[0] != TOKEN_TRANSFER_CHECKED_DISCRIMINATOR
+    ):
+        return None
+
+    if any(index >= len(accounts) for index in account_indexes[:4]):
+        return None
+
+    return TransferDetails(
+        token_program=token_program,
+        source=str(accounts[account_indexes[0]]),
+        mint=str(accounts[account_indexes[1]]),
+        destination=str(accounts[account_indexes[2]]),
+        authority=str(accounts[account_indexes[3]]),
+        amount=int.from_bytes(data[1:9], "little"),
+    )
 
 
 def extract_transaction_info(tx: VersionedTransaction) -> TransactionInfo | None:
@@ -275,49 +447,20 @@ def extract_transaction_info(tx: VersionedTransaction) -> TransactionInfo | None
     """
     message = tx.message
     static_accounts = list(message.account_keys)
-    instructions = message.instructions
+    transfer_details = get_transfer_details_from_transaction(tx)
+    if transfer_details is None:
+        return None
 
-    token_program = Pubkey.from_string(TOKEN_PROGRAM_ADDRESS)
-    token_2022_program = Pubkey.from_string(TOKEN_2022_PROGRAM_ADDRESS)
-
-    # Fee payer is always the first account
-    fee_payer = str(static_accounts[0])
-
-    for ix in instructions:
-        program_index = ix.program_id_index
-        program_address = static_accounts[program_index]
-
-        # Check if this is a token program instruction
-        if program_address == token_program or program_address == token_2022_program:
-            account_indices = list(ix.accounts)
-            # TransferChecked account order: [source, mint, destination, owner, ...]
-            if len(account_indices) >= 4:
-                source_index = account_indices[0]
-                mint_index = account_indices[1]
-                dest_index = account_indices[2]
-                owner_index = account_indices[3]
-
-                # TransferChecked data layout:
-                # byte 0: instruction type (12 for TransferChecked)
-                # bytes 1-8: amount (u64, little-endian)
-                # byte 9: decimals (u8)
-                ix_data = bytes(ix.data)
-                if len(ix_data) >= 10 and ix_data[0] == 12:  # TransferChecked = 12
-                    amount = int.from_bytes(ix_data[1:9], "little")
-                    decimals = ix_data[9]
-
-                    return TransactionInfo(
-                        fee_payer=fee_payer,
-                        payer=str(static_accounts[owner_index]),
-                        source_ata=str(static_accounts[source_index]),
-                        destination_ata=str(static_accounts[dest_index]),
-                        mint=str(static_accounts[mint_index]),
-                        amount=amount,
-                        decimals=decimals,
-                        token_program=str(program_address),
-                    )
-
-    return None
+    return TransactionInfo(
+        fee_payer=str(static_accounts[0]),
+        payer=transfer_details.authority,
+        source_ata=transfer_details.source,
+        destination_ata=transfer_details.destination,
+        mint=transfer_details.mint,
+        amount=transfer_details.amount,
+        decimals=DEFAULT_DECIMALS,
+        token_program=transfer_details.token_program,
+    )
 
 
 def derive_ata(owner: str, mint: str, token_program: str | None = None) -> str:
@@ -333,7 +476,9 @@ def derive_ata(owner: str, mint: str, token_program: str | None = None) -> str:
     """
     from solders.pubkey import Pubkey
 
-    ASSOCIATED_TOKEN_PROGRAM_ID = Pubkey.from_string("ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL")
+    ASSOCIATED_TOKEN_PROGRAM_ID = Pubkey.from_string(
+        "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL"
+    )
 
     if token_program is None:
         token_program = TOKEN_PROGRAM_ADDRESS

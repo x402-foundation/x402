@@ -171,11 +171,11 @@ func DecodeTransaction(base64Tx string) (*solana.Transaction, error) {
 }
 
 // GetTokenPayerFromTransaction extracts the token payer (owner) address from a
-// transaction using the stock transfer extractors supported by x402.
+// transaction using the built-in exact SVM payment decoders supported by x402.
 func GetTokenPayerFromTransaction(tx *solana.Transaction) (string, error) {
 	details, err := FindTransferDetails(tx)
 	if err != nil {
-		return "", fmt.Errorf("no TransferChecked instruction found in transaction: %w", err)
+		return "", fmt.Errorf("no supported payment instruction found in transaction: %w", err)
 	}
 
 	return details.Authority.String(), nil

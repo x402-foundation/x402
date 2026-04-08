@@ -3,15 +3,8 @@ import {
   parseSetComputeUnitLimitInstruction,
   parseSetComputeUnitPriceInstruction,
 } from "@solana-program/compute-budget";
-import {
-  parseTransferCheckedInstruction as parseTransferCheckedInstructionToken,
-  TOKEN_PROGRAM_ADDRESS,
-} from "@solana-program/token";
-import {
-  findAssociatedTokenPda,
-  parseTransferCheckedInstruction as parseTransferCheckedInstruction2022,
-  TOKEN_2022_PROGRAM_ADDRESS,
-} from "@solana-program/token-2022";
+import { TOKEN_PROGRAM_ADDRESS } from "@solana-program/token";
+import { findAssociatedTokenPda, TOKEN_2022_PROGRAM_ADDRESS } from "@solana-program/token-2022";
 import {
   decompileTransactionMessage,
   getCompiledTransactionMessageDecoder,
@@ -32,7 +25,10 @@ import {
 import { SettlementCache } from "../../settlement-cache";
 import type { FacilitatorSvmSigner } from "../../signer";
 import type { ExactSvmPayloadV2 } from "../../types";
-import { decodeTransactionFromPayload, getTokenPayerFromTransaction } from "../../utils";
+import {
+  decodeTransactionFromPayload,
+  getTransferDetailsFromCompiledInstruction,
+} from "../../utils";
 
 /**
  * SVM facilitator implementation for the Exact payment scheme.
@@ -177,18 +173,21 @@ export class ExactSvmScheme implements SchemeNetworkFacilitator {
       };
     }
 
-    const payer = getTokenPayerFromTransaction(transaction);
-    if (!payer) {
+    const transferDetails = getTransferDetailsFromCompiledInstruction(
+      compiled,
+      compiled.instructions[2],
+    );
+    if (!transferDetails) {
       return {
         isValid: false,
         invalidReason: "invalid_exact_svm_payload_no_transfer_instruction",
         payer: "",
       };
     }
+    const payer = transferDetails.authority;
 
     // Step 4: Verify Transfer Instruction
-    const transferIx = instructions[2];
-    const programAddress = transferIx.programAddress.toString();
+    const programAddress = transferDetails.programAddress;
 
     if (
       programAddress !== TOKEN_PROGRAM_ADDRESS.toString() &&
@@ -201,26 +200,9 @@ export class ExactSvmScheme implements SchemeNetworkFacilitator {
       };
     }
 
-    // Parse the transfer instruction using the appropriate library helper
-    let parsedTransfer;
-    try {
-      if (programAddress === TOKEN_PROGRAM_ADDRESS.toString()) {
-        parsedTransfer = parseTransferCheckedInstructionToken(transferIx as never);
-      } else {
-        parsedTransfer = parseTransferCheckedInstruction2022(transferIx as never);
-      }
-    } catch {
-      return {
-        isValid: false,
-        invalidReason: "invalid_exact_svm_payload_no_transfer_instruction",
-        payer,
-      };
-    }
-
     // Verify that the facilitator's signers are not transferring their own funds
     // SECURITY: Prevent facilitator from signing away their own tokens
-    const authorityAddress = parsedTransfer.accounts.authority.address.toString();
-    if (signerAddresses.includes(authorityAddress)) {
+    if (signerAddresses.includes(transferDetails.authority)) {
       return {
         isValid: false,
         invalidReason: "invalid_exact_svm_payload_transaction_fee_payer_transferring_funds",
@@ -229,8 +211,7 @@ export class ExactSvmScheme implements SchemeNetworkFacilitator {
     }
 
     // Verify mint address matches requirements
-    const mintAddress = parsedTransfer.accounts.mint.address.toString();
-    if (mintAddress !== requirements.asset) {
+    if (transferDetails.mint !== requirements.asset) {
       return {
         isValid: false,
         invalidReason: "invalid_exact_svm_payload_mint_mismatch",
@@ -239,7 +220,6 @@ export class ExactSvmScheme implements SchemeNetworkFacilitator {
     }
 
     // Verify destination ATA matches expected ATA for payTo address
-    const destATA = parsedTransfer.accounts.destination.address.toString();
     try {
       const [expectedDestATA] = await findAssociatedTokenPda({
         mint: requirements.asset as Address,
@@ -250,7 +230,7 @@ export class ExactSvmScheme implements SchemeNetworkFacilitator {
             : (TOKEN_2022_PROGRAM_ADDRESS as Address),
       });
 
-      if (destATA !== expectedDestATA.toString()) {
+      if (transferDetails.destination !== expectedDestATA.toString()) {
         return {
           isValid: false,
           invalidReason: "invalid_exact_svm_payload_recipient_mismatch",
@@ -266,8 +246,7 @@ export class ExactSvmScheme implements SchemeNetworkFacilitator {
     }
 
     // Verify transfer amount meets requirements
-    const amount = parsedTransfer.data.amount;
-    if (amount !== BigInt(requirements.amount)) {
+    if (transferDetails.amount !== BigInt(requirements.amount)) {
       return {
         isValid: false,
         invalidReason: "invalid_exact_svm_payload_amount_mismatch",

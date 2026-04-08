@@ -1,5 +1,7 @@
 """Tests for ExactSvmScheme facilitator."""
 
+import json
+from pathlib import Path
 from unittest.mock import patch
 
 from x402.mechanisms.svm import (
@@ -8,7 +10,24 @@ from x402.mechanisms.svm import (
     USDC_DEVNET_ADDRESS,
 )
 from x402.mechanisms.svm.exact import ExactSvmFacilitatorScheme
-from x402.schemas import PaymentPayload, PaymentRequirements, ResourceInfo, VerifyResponse
+from x402.schemas import (
+    PaymentPayload,
+    PaymentRequirements,
+    ResourceInfo,
+    VerifyResponse,
+)
+
+
+def load_wrapped_payment_fixtures() -> list[dict[str, str]]:
+    fixture_path = (
+        Path(__file__).resolve().parents[6]
+        / "go"
+        / "mechanisms"
+        / "svm"
+        / "testdata"
+        / "swig_wrapped_payments.json"
+    )
+    return json.loads(fixture_path.read_text())
 
 
 class MockFacilitatorSigner:
@@ -358,10 +377,14 @@ class TestDuplicateSettlementCache:
             "verify",
             return_value=VerifyResponse(is_valid=True, payer="PayerAddress"),
         ):
-            result1 = facilitator.settle(self._make_payload("transactionA=="), requirements)
+            result1 = facilitator.settle(
+                self._make_payload("transactionA=="), requirements
+            )
             assert result1.success is True
 
-            result2 = facilitator.settle(self._make_payload("transactionB=="), requirements)
+            result2 = facilitator.settle(
+                self._make_payload("transactionB=="), requirements
+            )
             assert result2.success is True
 
     def test_should_evict_cache_entries_after_ttl(self):
@@ -485,6 +508,66 @@ class TestVerifyFeePayer:
         assert result.invalid_reason == "fee_payer_not_managed_by_facilitator"
 
 
+class TestBuiltInWrappedTransfers:
+    def test_v2_verify_accepts_swig_wrapped_transfers(self):
+        for fixture in load_wrapped_payment_fixtures():
+            signer = MockFacilitatorSigner([fixture["feePayer"]])
+            facilitator = ExactSvmFacilitatorScheme(signer)
+
+            payload = PaymentPayload(
+                x402_version=2,
+                resource=ResourceInfo(
+                    url="http://example.com/protected",
+                    description="Test resource",
+                    mime_type="application/json",
+                ),
+                accepted=PaymentRequirements(
+                    scheme="exact",
+                    network=fixture["network"],
+                    asset=fixture["asset"],
+                    amount=fixture["amount"],
+                    pay_to=fixture["payTo"],
+                    max_timeout_seconds=300,
+                    extra={"feePayer": fixture["feePayer"]},
+                ),
+                payload={"transaction": fixture["transaction"]},
+            )
+
+            result = facilitator.verify(payload, payload.accepted)
+            assert result.is_valid is True
+            assert result.payer == fixture["payer"]
+
+    def test_v1_verify_accepts_swig_wrapped_transfers(self):
+        from x402.mechanisms.svm.exact.v1.facilitator import (
+            ExactSvmSchemeV1 as ExactSvmFacilitatorSchemeV1,
+        )
+        from x402.schemas.v1 import PaymentPayloadV1, PaymentRequirementsV1
+
+        for fixture in load_wrapped_payment_fixtures():
+            signer = MockFacilitatorSigner([fixture["feePayer"]])
+            facilitator = ExactSvmFacilitatorSchemeV1(signer)
+
+            payload = PaymentPayloadV1(
+                scheme="exact",
+                network=fixture["network"],
+                payload={"transaction": fixture["transaction"]},
+            )
+            requirements = PaymentRequirementsV1(
+                scheme="exact",
+                network=fixture["network"],
+                asset=fixture["asset"],
+                max_amount_required=fixture["amount"],
+                pay_to=fixture["payTo"],
+                max_timeout_seconds=300,
+                resource="https://example.com",
+                extra={"feePayer": fixture["feePayer"]},
+            )
+
+            result = facilitator.verify(payload, requirements)
+            assert result.is_valid is True
+            assert result.payer == fixture["payer"]
+
+
 class TestSettlementCachePruneOptimization:
     """Verify the early-break prune optimization preserves insertion-order semantics."""
 
@@ -502,7 +585,9 @@ class TestSettlementCachePruneOptimization:
         base = cache.entries["tx-a"]
         cache.entries["tx-a"] = base - 121.0
 
-        assert cache.is_duplicate("tx-a") is False, "expired entry should have been pruned"
+        assert (
+            cache.is_duplicate("tx-a") is False
+        ), "expired entry should have been pruned"
         assert cache.is_duplicate("tx-b") is True, "fresh entry should still be cached"
         assert cache.is_duplicate("tx-c") is True, "fresh entry should still be cached"
 
@@ -557,5 +642,7 @@ class TestSettlementCachePruneOptimization:
 
         assert "tx-old-1" not in cache.entries, "first expired entry should be pruned"
         assert "tx-old-2" not in cache.entries, "second expired entry should be pruned"
-        assert "tx-fresh" in cache.entries, "fresh entry after expired ones should survive"
+        assert (
+            "tx-fresh" in cache.entries
+        ), "fresh entry after expired ones should survive"
         assert "tx-new" in cache.entries, "newly inserted entry should be present"
