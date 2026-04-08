@@ -48,6 +48,7 @@ github.com/x402-foundation/x402/go/mechanisms/svm/exact/facilitator
 - `NewExactSvmScheme(signer)` - Creates facilitator-side SVM exact payment mechanism
 - Used for verifying transaction signatures and settling payments on-chain
 - Requires facilitator signer with Solana RPC integration
+- Supports custom payment instruction decoding via `RegisterTransferExtractor()`
 
 ## Supported Networks
 
@@ -84,6 +85,16 @@ cache := svm.NewSettlementCache()
 v2Scheme := facilitator.NewExactSvmScheme(signer, cache)
 v1Scheme := v1facilitator.NewExactSvmSchemeV1(signer, cache)
 ```
+
+## Wrapped Transfer Support
+
+Some Solana payment stacks wrap the token transfer inside a higher-level program
+instruction instead of placing a direct top-level SPL `TransferChecked` in the
+transaction message. The exact SVM facilitators now expose
+`RegisterTransferExtractor(...)` so callers can teach the verifier how to
+extract the canonical transfer details from those wrapped payment instructions
+without changing the exact scheme's amount, mint, recipient, and anti-self-pay
+checks.
 
 For full details on the race condition and mitigation strategy, see the [Exact SVM Scheme Specification](../../specs/schemes/exact/scheme_exact_svm.md#duplicate-settlement-mitigation-recommended).
 
