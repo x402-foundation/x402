@@ -1,0 +1,6 @@
+{
+  "name": "Rug Scanner",
+  "description": "On-chain token risk analysis API. 7 parallel checks, deterministic rug pull scoring. $0.05 USDC per scan via x402 on Base.",
+  "websiteUrl": "https://rug-scanner-production.up.railway.app",
+  "category": "Services/Endpoints"
+}
