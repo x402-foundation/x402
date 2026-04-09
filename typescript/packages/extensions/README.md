@@ -1,4 +1,4 @@
-# @x402/extensions
+# `@x402/extensions` • [![npm version](https://img.shields.io/npm/v/%40x402%2Fextensions.svg)](https://www.npmjs.com/package/@x402/extensions)
 
 x402 Payment Protocol Extensions. This package provides optional extensions that enhance the x402 payment protocol with additional functionality.
 

@@ -1,4 +1,4 @@
-# @x402/stellar
+# `@x402/stellar` [![npm version](https://img.shields.io/npm/v/%40x402%2Fstellar.svg)](https://www.npmjs.com/package/@x402/stellar)
 
 Stellar implementation of the x402 payment protocol using the **Exact** payment scheme with [Soroban token](https://stellar.org/protocol/sep-41) transfers.
 

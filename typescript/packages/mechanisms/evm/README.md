@@ -1,4 +1,4 @@
-# @x402/evm
+# `@x402/evm` [![npm version](https://img.shields.io/npm/v/%40x402%2Fevm.svg)](https://www.npmjs.com/package/@x402/evm)
 
 EVM (Ethereum Virtual Machine) implementation of the x402 payment protocol using the **Exact** payment scheme with EIP-3009 TransferWithAuthorization.
 

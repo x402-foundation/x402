@@ -1,4 +1,4 @@
-# @x402/svm
+# `@x402/svm` [![npm version](https://img.shields.io/npm/v/%40x402%2Fsvm.svg)](https://www.npmjs.com/package/@x402/svm)
 
 SVM (Solana Virtual Machine) implementation of the x402 payment protocol using the **Exact** payment scheme with SPL Token transfers.
 
