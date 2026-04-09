@@ -29,20 +29,30 @@ export const BUILDER_CODE_PATTERN = /^[a-z0-9_]{1,32}$/;
  * Builder code extension data as it appears in PaymentRequired/PaymentPayload extensions.
  *
  * Maps to ERC-8021 Schema 2 fields:
- * - a: app/agent code (the entity that initiated the payment)
- * - s: service codes array (facilitator, service endpoint, platform, etc.)
+ * - a: app code (the x402 service that exposed the endpoint)
+ * - w: wallet code (the facilitator that settled the payment on-chain)
+ * - s: service codes array (related on-chain services the app depends on)
  */
 export interface BuilderCodeExtensionData {
   /**
-   * App/agent builder code — the entity that initiated the payment.
+   * App builder code — the x402 service that exposed the paid endpoint.
    * Maps to the "a" field in ERC-8021 Schema 2.
+   * Set by the service in the 402 response.
    */
   a?: string;
 
   /**
-   * Service builder codes — service-layer participants involved in the transaction.
+   * Wallet builder code — the facilitator that settled the payment on-chain.
+   * Maps to the "w" field in ERC-8021 Schema 2.
+   * Set by the facilitator at settlement time.
+   */
+  w?: string;
+
+  /**
+   * Service builder codes — related on-chain services the app depends on.
    * Maps to the "s" field in ERC-8021 Schema 2.
-   * Includes: facilitator, service endpoint, platform, etc.
+   * Optionally set by the service to attribute protocols it interacts with
+   * (e.g., Morpho for lending, Aerodrome for swaps).
    */
   s?: string[];
 }
@@ -52,17 +62,7 @@ export interface BuilderCodeExtensionData {
  */
 export interface BuilderCodeFacilitatorConfig {
   /**
-   * The facilitator's own builder code, added to the "s" array at settlement.
-   */
-  builderCode: string;
-}
-
-/**
- * Configuration for the builder code client extension.
- */
-export interface BuilderCodeClientConfig {
-  /**
-   * The agent/app's own builder code, set as the "a" field.
+   * The facilitator's own builder code, set as the "w" field at settlement.
    */
   builderCode: string;
 }

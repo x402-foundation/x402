@@ -6,6 +6,7 @@
  *
  * CBOR payload uses single-letter keys:
  *   "a" — app builder code (string)
+ *   "w" — wallet/facilitator builder code (string)
  *   "s" — service codes (string array)
  */
 
@@ -16,8 +17,9 @@ import { ERC_8021_MARKER, SCHEMA_2_ID, type BuilderCodeExtensionData } from "./t
  * Encodes a CBOR map from builder code extension data.
  *
  * Produces a minimal CBOR map with:
- * - "a" key (major type 3, length 1) → string value
- * - "s" key (major type 3, length 1) → array of strings
+ * - "a" key (major type 3, length 1) → string value (app/service code)
+ * - "w" key (major type 3, length 1) → string value (facilitator code)
+ * - "s" key (major type 3, length 1) → array of strings (related services)
  *
  * Uses hand-rolled CBOR to avoid adding a dependency.
  */
@@ -29,6 +31,12 @@ function encodeCborMap(data: BuilderCodeExtensionData): Uint8Array {
     mapSize++;
     entries.push(encodeCborString("a"));
     entries.push(encodeCborString(data.a));
+  }
+
+  if (data.w) {
+    mapSize++;
+    entries.push(encodeCborString("w"));
+    entries.push(encodeCborString(data.w));
   }
 
   if (data.s && data.s.length > 0) {

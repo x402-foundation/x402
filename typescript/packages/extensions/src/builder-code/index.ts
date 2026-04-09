@@ -4,23 +4,14 @@
  * Enables attribution tracking for x402 payments by appending ERC-8021
  * Schema 2 builder codes to settlement transaction calldata.
  *
- * Three parties can attach their builder code:
- * - Agent (client): Sets the "a" field via BuilderCodeClientExtension
- * - Service (server): Declares in 402 response via declareBuilderCodeExtension()
- * - Facilitator: Adds to "s" array at settlement via BuilderCodeFacilitatorExtension
+ * Two parties attach their builder code:
+ * - Service (server): Declares as "a" (app) in 402 response via declareBuilderCodeExtension()
+ * - Facilitator: Adds as "w" (wallet) at settlement via BuilderCodeFacilitatorExtension
+ *
+ * The service can optionally include related on-chain services in the "s" array
+ * (e.g., Morpho, Aerodrome) to attribute protocols it depends on.
  *
  * ## Usage
- *
- * ### For Agents (Clients)
- *
- * ```typescript
- * import { createBuilderCodeClientExtension } from '@x402/extensions/builder-code';
- *
- * const client = new x402Client();
- * client.registerExtension(createBuilderCodeClientExtension({
- *   builderCode: "bc_my_agent",
- * }));
- * ```
  *
  * ### For Services (Resource Servers)
  *
@@ -30,6 +21,11 @@
  * // In paywall config extensions
  * extensions: {
  *   [BUILDER_CODE]: declareBuilderCodeExtension("bc_my_service"),
+ * }
+ *
+ * // With related on-chain services
+ * extensions: {
+ *   [BUILDER_CODE]: declareBuilderCodeExtension("bc_my_service", ["bc_morpho", "bc_aerodrome"]),
  * }
  * ```
  *
@@ -49,7 +45,6 @@
 export type {
   BuilderCodeExtensionData,
   BuilderCodeFacilitatorConfig,
-  BuilderCodeClientConfig,
 } from "./types";
 
 export {
@@ -61,9 +56,6 @@ export {
 
 // CBOR encoding
 export { encodeBuilderCodeSuffix } from "./cbor";
-
-// Client
-export { createBuilderCodeClientExtension } from "./client";
 
 // Resource Server
 export {

@@ -3,7 +3,7 @@
  *
  * At settlement time, the facilitator:
  * 1. Reads builder code data from the payment payload extensions
- * 2. Adds its own builder code to the "s" array
+ * 2. Adds its own builder code as the "w" (wallet) field
  * 3. Encodes the combined data as an ERC-8021 Schema 2 CBOR suffix
  * 4. The suffix is appended to the settlement transaction calldata
  */
@@ -52,8 +52,9 @@ export class BuilderCodeFacilitatorExtension implements FacilitatorExtension {
   /**
    * Builds the ERC-8021 Schema 2 calldata suffix from payment payload extensions.
    *
-   * Reads "a" (agent code) and "s" (service codes) from the payment payload,
-   * prepends the facilitator's own code to "s", and encodes as Schema 2 CBOR.
+   * Reads "a" (app/service code) and "s" (related service codes) from the
+   * payment payload, adds the facilitator's own code as "w" (wallet), and
+   * encodes as Schema 2 CBOR.
    *
    * @param payloadExtensions - The extensions from the payment payload
    * @returns Hex-encoded suffix to append to settlement calldata, or undefined if no builder codes
@@ -63,23 +64,12 @@ export class BuilderCodeFacilitatorExtension implements FacilitatorExtension {
       | BuilderCodeExtensionData
       | undefined;
 
-    // Collect service codes: facilitator's own code first, then any from the payload
-    const serviceCodes: string[] = [this.config.builderCode];
-    if (extData?.s) {
-      for (const code of extData.s) {
-        if (!serviceCodes.includes(code)) {
-          serviceCodes.push(code);
-        }
-      }
-    }
-
     const suffixData: BuilderCodeExtensionData = {
       a: extData?.a,
-      s: serviceCodes,
+      w: this.config.builderCode,
+      s: extData?.s ? [...extData.s] : undefined,
     };
 
-    // If we only have the facilitator's code and nothing else, still encode
-    // (facilitator attribution alone is still valuable)
     return encodeBuilderCodeSuffix(suffixData);
   }
 }
