@@ -48,7 +48,8 @@ The `payload` field must contain:
     "extra": {
       "assetTransferMethod": "eip3009",
       "name": "USDC",
-      "version": "2"
+      "version": "2",
+      "decimals": 6
     }
   },
   "payload": {
@@ -133,7 +134,8 @@ The `payload` field must contain:
     "extra": {
       "assetTransferMethod": "permit2",
       "name": "USDC",
-      "version": "2"
+      "version": "2",
+      "decimals": 6
     }
   }
   "payload": {
