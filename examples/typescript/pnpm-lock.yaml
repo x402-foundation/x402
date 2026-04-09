@@ -78,6 +78,9 @@ importers:
       '@scure/base':
         specifier: ^1.2.6
         version: 1.2.6
+      '@signinwithethereum/siwe':
+        specifier: ^4.1.0
+        version: 4.1.0(ethers@6.15.0(bufferutil@4.0.9)(utf-8-validate@5.0.10))(viem@2.43.5(bufferutil@4.0.9)(typescript@5.9.2)(utf-8-validate@5.0.10)(zod@3.25.76))
       '@x402/core':
         specifier: workspace:~
         version: link:../core
@@ -87,9 +90,6 @@ importers:
       jose:
         specifier: ^5.9.6
         version: 5.10.0
-      siwe:
-        specifier: ^2.3.2
-        version: 2.3.2(ethers@6.15.0(bufferutil@4.0.9)(utf-8-validate@5.0.10))
       tweetnacl:
         specifier: ^1.0.3
         version: 1.0.3
@@ -6593,6 +6593,20 @@ packages:
 
   '@selderee/plugin-htmlparser2@0.11.0':
     resolution: {integrity: sha512-P33hHGdldxGabLFjPPpaTxVolMrzrcegejx+0GxjrIb9Zv48D8yAIA/QTDR2dFl7Uz7urX8aX6+5bCZslr+gWQ==}
+
+  '@signinwithethereum/siwe-parser@4.1.0':
+    resolution: {integrity: sha512-aS+bU5QpTQgMpC6HjQHuKJpltUrkyGUVNuhuBLARa39wF1B+m05/4bgnf2qrEcgQONfU36A2Nbn3ibmwhHkc2Q==}
+
+  '@signinwithethereum/siwe@4.1.0':
+    resolution: {integrity: sha512-NT56M82i+A2uBU++F9PSBvEYPcjUV3BdClRVojWt3cbe7WizIVH1wi2qKJJR570RLHZvr8q1gUf0E90WymlMeA==}
+    peerDependencies:
+      ethers: ^5.7.0 || ^6.13.0
+      viem: ^2.7.0
+    peerDependenciesMeta:
+      ethers:
+        optional: true
+      viem:
+        optional: true
 
   '@sindresorhus/is@4.6.0':
     resolution: {integrity: sha512-t09vSN3MdfsyCHoFcTRCH/iUtG7OJ0CsjzB8cjAmKc/va/kIgeDI/TxsigdncE/4be734m0cvIYwNaV4i2XqAw==}
@@ -19252,6 +19266,18 @@ snapshots:
     dependencies:
       domhandler: 5.0.3
       selderee: 0.11.0
+
+  '@signinwithethereum/siwe-parser@4.1.0':
+    dependencies:
+      '@noble/hashes': 1.8.0
+      apg-js: 4.4.0
+
+  '@signinwithethereum/siwe@4.1.0(ethers@6.15.0(bufferutil@4.0.9)(utf-8-validate@5.0.10))(viem@2.43.5(bufferutil@4.0.9)(typescript@5.9.2)(utf-8-validate@5.0.10)(zod@3.25.76))':
+    dependencies:
+      '@signinwithethereum/siwe-parser': 4.1.0
+    optionalDependencies:
+      ethers: 6.15.0(bufferutil@4.0.9)(utf-8-validate@5.0.10)
+      viem: 2.43.5(bufferutil@4.0.9)(typescript@5.9.2)(utf-8-validate@5.0.10)(zod@3.25.76)
 
   '@sindresorhus/is@4.6.0': {}
 
