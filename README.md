@@ -16,10 +16,14 @@ app.use(
 // That's it! See examples/ for full details
 ```
 
-<details>
-<summary><b>Installation</b></summary>
+## Installation
 
-### Typescript
+<details>
+<summary><b>Typescript</b></summary>
+
+<br/> 
+
+> See all the packages available in the [**Typescript SDK**](./typescript/), including chain implementations of x402, code examples and integration guides.
 
 ```shell
 # All available reference sdks
@@ -32,19 +36,34 @@ npm install @x402/core @x402/evm @x402/svm @x402/fetch
 npm install @x402/core @x402/evm @x402/svm @x402/express
 ```
 
-### Python
+</details>
+
+<details>
+<summary><b>Python</b></summary>
+
+<br/> 
+
+> See the [**`python/`**](./python/) folder for code examples and integration guides.
 
 ```shell
 pip install x402
 ```
 
-### Go
+</details>
+
+<details>
+<summary><b>Go</b></summary>
+
+<br/> 
+
+> See the [**`go/`**](./go/) folder for code examples and integration guides.
 
 ```shell
 go get github.com/x402-foundation/x402/go
 ```
 
 </details>
+
 
 ## Principles
 

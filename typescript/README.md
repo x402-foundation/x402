@@ -8,7 +8,7 @@ This folder contains Typescript packages to help developers implement the x402 p
 | [`@x402/extensions`](./packages/extensions) | Additional functionality built on top of x402 (Bazaar, Sign-in-with-x). | [![npm version](https://img.shields.io/npm/v/%40x402%2Fextensions.svg)](https://www.npmjs.com/package/@x402/extensions) |
 | [`@x402/mcp`](./packages/mcp) | MCP server integration for x402. | [![npm version](https://img.shields.io/npm/v/%40x402%2Fmcp.svg)](https://www.npmjs.com/package/@x402/mcp) |
 
-## HTTP clients
+## HTTP integrations
 
 | Package | Description | Latest version |
 | --- | --- | --- |
