@@ -1,8 +1,8 @@
-# Scheme: `escrow` on `EVM`
+# Scheme: `commerce` on `EVM`
 
 ## Summary
 
-The `escrow` scheme on EVM uses the [Commerce Payments Protocol](https://github.com/base/commerce-payments) contract stack:
+The `commerce` scheme on EVM uses the [Commerce Payments Protocol](https://github.com/base/commerce-payments) contract stack:
 
 - **Escrow** (`AuthCaptureEscrow`): Singleton — locks funds, enforces expiries, distributes on capture/refund
 - **Operator**: Routes payments through escrow with fee management
@@ -10,18 +10,18 @@ The `escrow` scheme on EVM uses the [Commerce Payments Protocol](https://github.
 
 The client signs a single ERC-3009 authorization. The facilitator submits it to the operator, which handles token collection, escrow locking, and fee distribution — all in one transaction.
 
-The escrow scheme uses ERC-3009 (`receiveWithAuthorization`) exclusively. The commerce-payments token collector architecture supports pluggable collection methods; future collectors (e.g., Permit2) could be added via `assetTransferMethod` in `extra` without changing the scheme.
+The commerce scheme uses ERC-3009 (`receiveWithAuthorization`) exclusively. The commerce-payments token collector architecture supports pluggable collection methods; future collectors (e.g., Permit2) could be added via `assetTransferMethod` in `extra` without changing the scheme.
 
 ## PaymentRequirements
 
-Escrow-accepting servers advertise with scheme `escrow`:
+Commerce-accepting servers advertise with scheme `commerce`:
 
 ```json
 {
   "x402Version": 2,
   "accepts": [
     {
-      "scheme": "escrow",
+      "scheme": "commerce",
       "network": "eip155:8453",
       "amount": "1000000",
       "asset": "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
@@ -36,7 +36,10 @@ Escrow-accepting servers advertise with scheme `escrow`:
         "settlementMethod": "authorize",
         "minFeeBps": 0,
         "maxFeeBps": 1000,
-        "feeReceiver": "0xOperatorAddress"
+        "feeReceiver": "0xOperatorAddress",
+        "preApprovalExpirySeconds": 3600,
+        "authorizationExpirySeconds": 86400,
+        "refundExpirySeconds": 604800
       }
     }
   ]
@@ -56,9 +59,9 @@ Escrow-accepting servers advertise with scheme `escrow`:
 | `minFeeBps`                  | No       | `uint16`                  | Minimum fee in basis points. Default: `0`          |
 | `maxFeeBps`                  | No       | `uint16`                  | Maximum fee in basis points. Default: `0`          |
 | `feeReceiver`                | No       | `address`                 | Fee recipient. Default: `address(0)` (no fees)     |
-| `preApprovalExpirySeconds`   | No       | `uint48`                  | ERC-3009 signature validity / pre-approval expiry  |
-| `authorizationExpirySeconds` | No       | `uint48`                  | Deadline for capturing escrowed funds              |
-| `refundExpirySeconds`        | No       | `uint48`                  | Deadline for refund requests                       |
+| `preApprovalExpirySeconds`   | No       | `uint48`                  | Seconds until pre-approval / ERC-3009 sig expires  |
+| `authorizationExpirySeconds` | No       | `uint48`                  | Seconds until capture deadline for escrowed funds  |
+| `refundExpirySeconds`        | No       | `uint48`                  | Seconds until refund request deadline              |
 
 ## PaymentPayload
 
@@ -70,7 +73,7 @@ Escrow-accepting servers advertise with scheme `escrow`:
     "method": "GET"
   },
   "accepted": {
-    "scheme": "escrow",
+    "scheme": "commerce",
     "network": "eip155:8453",
     "amount": "1000000",
     "asset": "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
@@ -94,7 +97,7 @@ Escrow-accepting servers advertise with scheme `escrow`:
       "to": "0xCollectorAddress",
       "value": "1000000",
       "validAfter": "0",
-      "validBefore": "1740672154",
+      "validBefore": "1740675754",
       "nonce": "0xf374...3480"
     },
     "signature": "0x2d6a...571c",
@@ -103,9 +106,9 @@ Escrow-accepting servers advertise with scheme `escrow`:
       "receiver": "0xReceiverAddress",
       "token": "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
       "maxAmount": "1000000",
-      "preApprovalExpiry": 1740672154,
-      "authorizationExpiry": 4294967295,
-      "refundExpiry": 281474976710655,
+      "preApprovalExpiry": 1740675754,
+      "authorizationExpiry": 1740758554,
+      "refundExpiry": 1741276954,
       "minFeeBps": 0,
       "maxFeeBps": 1000,
       "feeReceiver": "0xOperatorAddress",
@@ -130,9 +133,9 @@ This ties the off-chain signature to the specific escrow contract and payment te
 The facilitator performs these checks in order:
 
 1. **Type guard**: Verify `payload` contains `authorization`, `signature`, and `paymentInfo` fields
-2. **Scheme match**: Verify `requirements.scheme === "escrow"` and `payload.accepted.scheme === "escrow"`
+2. **Scheme match**: Verify `requirements.scheme === "commerce"` and `payload.accepted.scheme === "commerce"`
 3. **Network match**: Verify `payload.accepted.network === requirements.network` and format is `eip155:<chainId>`
-4. **Extra validation**: Verify `requirements.extra` contains required escrow fields (`escrowAddress`, `operatorAddress`, `tokenCollector`)
+4. **Extra validation**: Verify `requirements.extra` contains required commerce fields (`escrowAddress`, `operatorAddress`, `tokenCollector`)
 5. **Time window**: Verify `validBefore > now + 6s` (not expired) and `validAfter <= now` (active)
 6. **ERC-3009 signature**: Recover signer from EIP-712 typed data (`ReceiveWithAuthorization` primary type) and verify matches `authorization.from`
 7. **Amount**: Verify `authorization.value === requirements.amount`
@@ -163,20 +166,20 @@ The operator handles:
 
 ## Error Codes
 
-The escrow scheme uses the standard x402 error codes plus these scheme-specific codes:
+The commerce scheme uses the standard x402 error codes plus these scheme-specific codes:
 
 ### Verification Errors
 
 | Error Code                    | Description                                                                          |
 | :---------------------------- | :----------------------------------------------------------------------------------- |
 | `invalid_payload_format`      | Payload missing `authorization`, `signature`, or `paymentInfo`                       |
-| `unsupported_scheme`          | Scheme is not `escrow`                                                               |
+| `unsupported_scheme`          | Scheme is not `commerce`                                                             |
 | `network_mismatch`            | Payload network does not match requirements                                          |
 | `invalid_network`             | Network format is not `eip155:<chainId>`                                             |
-| `invalid_escrow_extra`        | Missing required extra fields (`escrowAddress`, `operatorAddress`, `tokenCollector`) |
+| `invalid_commerce_extra`      | Missing required extra fields (`escrowAddress`, `operatorAddress`, `tokenCollector`) |
 | `authorization_expired`       | `validBefore <= now + 6s`                                                            |
 | `authorization_not_yet_valid` | `validAfter > now`                                                                   |
-| `invalid_escrow_signature`    | ERC-3009 signature verification failed                                               |
+| `invalid_commerce_signature`  | ERC-3009 signature verification failed                                               |
 | `amount_mismatch`             | `authorization.value !== requirements.amount`                                        |
 | `token_collector_mismatch`    | `authorization.to !== extra.tokenCollector`                                          |
 | `token_mismatch`              | `paymentInfo.token !== requirements.asset`                                           |
