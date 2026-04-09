@@ -502,9 +502,7 @@ describe("createPaymentWrapper", () => {
         "Payment required to access this tool",
         extensions,
       );
-      expect(
-        (result.structuredContent as Record<string, unknown>)?.extensions,
-      ).toEqual(extensions);
+      expect((result.structuredContent as Record<string, unknown>)?.extensions).toEqual(extensions);
     });
 
     it("should not include extensions when not configured", async () => {

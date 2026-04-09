@@ -399,7 +399,10 @@ describe.skipIf(SKIP_TESTS)("Real SSE MCP Integration Tests", () => {
       await manualClient.callTool("get_weather", { city: "Chicago" });
       expect.fail("Should have thrown 402 error");
     } catch (error) {
-      const err = error as { code?: number; paymentRequired?: { extensions?: Record<string, unknown> } };
+      const err = error as {
+        code?: number;
+        paymentRequired?: { extensions?: Record<string, unknown> };
+      };
       expect(err.code).toBe(402);
       expect(err.paymentRequired).toBeDefined();
       // Verify bazaar extension is present if the server was configured with it
