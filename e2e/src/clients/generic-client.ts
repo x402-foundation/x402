@@ -1,10 +1,11 @@
-import { BaseProxy, RunConfig } from '../proxy-base';
-import { ClientConfig, ClientProxy } from '../types';
+import { BaseProxy, RunConfig } from "../proxy-base";
+import { ClientConfig, ClientProxy } from "../types";
 
 export interface ClientCallResult {
   success: boolean;
   data?: any;
   status_code?: number;
+  payment_required?: any;
   payment_response?: any;
   error?: string;
   exitCode?: number;
@@ -13,7 +14,7 @@ export interface ClientCallResult {
 export class GenericClientProxy extends BaseProxy implements ClientProxy {
   constructor(directory: string) {
     // For clients, we don't wait for a ready log since they're one-shot processes
-    super(directory, '');
+    super(directory, "");
   }
 
   async call(config: ClientConfig): Promise<ClientCallResult> {
@@ -28,7 +29,7 @@ export class GenericClientProxy extends BaseProxy implements ClientProxy {
           ENDPOINT_PATH: config.endpointPath,
           EVM_NETWORK: config.evmNetwork,
           EVM_RPC_URL: config.evmRpcUrl,
-        }
+        },
       };
 
       // For clients, we run the process and wait for it to complete
@@ -40,20 +41,21 @@ export class GenericClientProxy extends BaseProxy implements ClientProxy {
           success: true,
           data: result.data.data,
           status_code: result.data.status_code,
+          payment_required: result.data.payment_required,
           payment_response: result.data.payment_response,
-          exitCode: result.exitCode
+          exitCode: result.exitCode,
         };
       } else {
         return {
           success: false,
           error: result.error,
-          exitCode: result.exitCode
+          exitCode: result.exitCode,
         };
       }
     } catch (error) {
       return {
         success: false,
-        error: error instanceof Error ? error.message : String(error)
+        error: error instanceof Error ? error.message : String(error),
       };
     }
   }
@@ -71,4 +73,4 @@ export class GenericClientProxy extends BaseProxy implements ClientProxy {
   async forceStop(): Promise<void> {
     await this.stopProcess();
   }
-} 
+}
