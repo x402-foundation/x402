@@ -101,6 +101,7 @@ Integrate the payment middleware into your application. You will need to provide
     import { paymentMiddleware, x402ResourceServer } from "@x402/express";
     import { ExactEvmScheme } from "@x402/evm/exact/server";
     import { ExactSvmScheme } from "@x402/svm/exact/server";
+    import { ExactAvmScheme } from "@x402/avm/exact/server";
     import { HTTPFacilitatorClient } from "@x402/core/server";
 
     const app = express();
@@ -108,6 +109,7 @@ Integrate the payment middleware into your application. You will need to provide
     // Your receiving wallet addresses
     const evmAddress = "0xYourEvmAddress";
     const svmAddress = "YourSolanaAddress";
+    const avmAddress = "YourAlgorandAddress";
 
     // Create facilitator client (testnet)
     const facilitatorClient = new HTTPFacilitatorClient({
