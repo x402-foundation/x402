@@ -419,6 +419,12 @@ You can register multiple payment schemes to handle different networks:
     const aptosSigner = Account.fromPrivateKey({ privateKey: aptosPrivateKey });
     client.register("aptos:*", new ExactAptosScheme(aptosSigner));
 
+    // For Algorand support, also add:
+    import { ExactAvmScheme, toClientAvmSigner } from "@x402/avm";
+
+    const avmSigner = toClientAvmSigner(process.env.AVM_PRIVATE_KEY!);
+    client.register("algorand:*", new ExactAvmScheme(avmSigner));
+
     // For Stellar support, also add:
     import { ExactStellarScheme, createEd25519Signer } from "@x402/stellar";
 
