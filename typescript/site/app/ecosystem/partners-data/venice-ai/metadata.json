@@ -1,0 +1,7 @@
+{
+  "name": "Venice.ai",
+  "description": "Venice.ai provides an OpenAI-compatible inference API with x402 wallet auth, USDC top-ups, and agent-friendly access to text, image, audio, and video models.",
+  "logoUrl": "/logos/venice-ai.svg",
+  "websiteUrl": "https://docs.venice.ai/overview/guides/x402-venice-api",
+  "category": "Services/Endpoints"
+}
