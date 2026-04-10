@@ -1,0 +1,7 @@
+{
+  "name": "Ai Crypto API",
+  "category": "Services/Endpoints",
+  "logoUrl": "/logos/ai-crypto-api.svg",
+  "description": "x402-gated crypto data API for AI agents. Real-time prices, gas fees, trending tokens, DeFi yields, and market analysis. Pay-per-request with USDC on Base via OpenFacilitator.",
+  "websiteUrl": "https://github.com/aoi-dev-0411/x402-crypto-api"
+}
