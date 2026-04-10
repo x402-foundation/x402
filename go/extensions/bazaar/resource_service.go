@@ -2,6 +2,7 @@ package bazaar
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/x402-foundation/x402/go/extensions/types"
 )
@@ -125,7 +126,7 @@ func DeclareDiscoveryExtension(
 //	    Example: map[string]interface{}{"city": "San Francisco"},
 //	})
 func DeclareMcpDiscoveryExtension(config types.DeclareMcpDiscoveryConfig) (types.DiscoveryExtension, error) {
-	if config.ToolName == "" {
+	if strings.TrimSpace(config.ToolName) == "" {
 		return types.DiscoveryExtension{}, fmt.Errorf("toolName is required for MCP discovery extension")
 	}
 	if config.InputSchema == nil {
@@ -180,10 +181,13 @@ func DeclareMcpDiscoveryExtension(config types.DeclareMcpDiscoveryConfig) (types
 		}
 	}
 	if config.Transport != "" {
-		inputSchemaProperties["transport"] = map[string]interface{}{
+		transportSchema := map[string]interface{}{
 			"type": "string",
-			"enum": []string{string(TransportStreamableHTTP), string(TransportSSE)},
 		}
+		if config.Transport == TransportStreamableHTTP || config.Transport == TransportSSE {
+			transportSchema["enum"] = []string{string(config.Transport)}
+		}
+		inputSchemaProperties["transport"] = transportSchema
 	}
 	if config.Example != nil {
 		inputSchemaProperties["example"] = map[string]interface{}{

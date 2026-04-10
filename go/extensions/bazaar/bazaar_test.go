@@ -2233,9 +2233,8 @@ func TestDeclareMcpDiscoveryExtension(t *testing.T) {
 			InputSchema: map[string]interface{}{"type": "object"},
 		})
 
-		// Current implementation only checks for empty string, so whitespace passes declaration.
-		// This documents the current behavior.
-		require.NoError(t, err)
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "toolName is required")
 	})
 
 	t.Run("should support SSE transport", func(t *testing.T) {
@@ -2272,9 +2271,9 @@ func TestDeclareMcpDiscoveryExtension(t *testing.T) {
 		require.True(t, ok)
 		assert.Equal(t, bazaar.McpTransport("custom-protocol"), mcpInput.Transport)
 
-		// But schema validation should fail because transport enum only allows known values
+		// Custom transports should pass both declaration and schema validation
 		result := bazaar.ValidateDiscoveryExtension(extension)
-		assert.False(t, result.Valid, "Invalid transport should fail schema validation")
+		assert.True(t, result.Valid, "Custom transport should pass schema validation")
 	})
 
 	t.Run("should support streamable-http transport", func(t *testing.T) {

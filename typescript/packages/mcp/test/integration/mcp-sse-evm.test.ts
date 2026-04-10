@@ -405,16 +405,13 @@ describe.skipIf(SKIP_TESTS)("Real SSE MCP Integration Tests", () => {
       };
       expect(err.code).toBe(402);
       expect(err.paymentRequired).toBeDefined();
-      // Verify bazaar extension is present if the server was configured with it
-      // This test validates extension passthrough from server to client
-      if (err.paymentRequired?.extensions?.bazaar) {
-        const bazaar = err.paymentRequired.extensions.bazaar as Record<string, unknown>;
-        expect(bazaar).toBeDefined();
-        const info = bazaar.info as Record<string, unknown>;
-        expect(info).toBeDefined();
-        const input = info.input as Record<string, unknown>;
-        expect(input.toolName).toBe("get_weather");
-      }
+      // Verify bazaar extension is present — hard-fail if absent
+      expect(err.paymentRequired?.extensions?.bazaar).toBeDefined();
+      const bazaar = err.paymentRequired!.extensions!.bazaar as Record<string, unknown>;
+      const info = bazaar.info as Record<string, unknown>;
+      expect(info).toBeDefined();
+      const input = info.input as Record<string, unknown>;
+      expect(input.toolName).toBe("get_weather");
     }
   });
 
