@@ -1,0 +1,36 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" role="img" aria-labelledby="title desc">
+  <title id="title">402.ad ecosystem logo</title>
+  <desc id="desc">Centered orb wordmark with a right-aligned .ad.</desc>
+  <defs>
+    <linearGradient id="tile" x1="22" y1="16" x2="234" y2="240" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#0d1018"/>
+      <stop offset="100%" stop-color="#08090f"/>
+    </linearGradient>
+    <pattern id="macroGrid" width="64" height="64" patternUnits="userSpaceOnUse">
+      <path d="M64 0H0V64" fill="none" stroke="#00d4ff" stroke-opacity="0.04" stroke-width="1"/>
+    </pattern>
+    <pattern id="microGrid" width="16" height="16" patternUnits="userSpaceOnUse">
+      <path d="M16 0H0V16" fill="none" stroke="#00d4ff" stroke-opacity="0.02" stroke-width="1"/>
+    </pattern>
+    <radialGradient id="orbFill" cx="50%" cy="38%" r="78%">
+      <stop offset="0%" stop-color="#121823"/>
+      <stop offset="56%" stop-color="#0b0d14"/>
+      <stop offset="100%" stop-color="#07080d"/>
+    </radialGradient>
+    <radialGradient id="orbGlow" cx="50%" cy="36%" r="74%">
+      <stop offset="0%" stop-color="#d4f000" stop-opacity="0.12"/>
+      <stop offset="42%" stop-color="#00d4ff" stop-opacity="0.04"/>
+      <stop offset="100%" stop-color="#08090f" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+  <rect width="256" height="256" rx="34" fill="url(#tile)"/>
+  <rect width="256" height="256" rx="34" fill="url(#macroGrid)"/>
+  <rect width="256" height="256" rx="34" fill="url(#microGrid)"/>
+  <rect x="18" y="18" width="220" height="220" rx="26" fill="#0a0c12" fill-opacity="0.68"/>
+  <circle cx="128" cy="134" r="80" fill="url(#orbFill)"/>
+  <circle cx="128" cy="134" r="80" fill="url(#orbGlow)"/>
+  <rect x="56" y="94" width="20" height="20" rx="2" fill="#fafafa" fill-opacity="0.045"/>
+  <rect x="176" y="68" width="16" height="16" rx="2" fill="#fafafa" fill-opacity="0.05"/>
+  <text x="128" y="126" text-anchor="middle" fill="#d4f000" font-family="Inter, system-ui, sans-serif" font-size="90" font-weight="800" letter-spacing="-5.4">402</text>
+  <text x="214" y="170" text-anchor="end" fill="#99a08e" font-family="Inter, system-ui, sans-serif" font-size="34" font-weight="700" letter-spacing="-1.25">.ad</text>
+</svg>
