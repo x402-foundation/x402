@@ -1,0 +1,7 @@
+{
+  "name": "tx402.ai — Agent LLM Gateway",
+  "description": "x402 payment gateway for agent-native EU LLM inference. 20+ models (DeepSeek, Qwen, Llama, GLM, Mixtral) with USDC micropayments on Base. No API keys, no accounts — wallet is auth. OpenAI-compatible API, SSE streaming, GDPR-compliant with zero data retention. Powered by Tensorix EU infrastructure.",
+  "logoUrl": "/logos/tx402ai.svg",
+  "websiteUrl": "https://tx402.ai",
+  "category": "Services/Endpoints"
+}

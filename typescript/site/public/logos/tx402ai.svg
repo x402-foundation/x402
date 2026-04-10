@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200" width="200" height="200">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#0a0a0f"/>
+      <stop offset="100%" stop-color="#12121a"/>
+    </linearGradient>
+    <linearGradient id="accent" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#2563eb"/>
+      <stop offset="100%" stop-color="#3b82f6"/>
+    </linearGradient>
+  </defs>
+  <rect width="200" height="200" rx="32" fill="url(#bg)"/>
+  <text x="100" y="85" text-anchor="middle" font-family="monospace" font-size="42" font-weight="800" fill="url(#accent)">tx402</text>
+  <text x="100" y="125" text-anchor="middle" font-family="monospace" font-size="22" font-weight="600" fill="#22c55e">.ai</text>
+  <text x="100" y="160" text-anchor="middle" font-family="sans-serif" font-size="14" fill="#8888a0">x402 gateway</text>
+</svg>
