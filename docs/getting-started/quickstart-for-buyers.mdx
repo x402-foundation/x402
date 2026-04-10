@@ -141,6 +141,17 @@ const privateKey = new Ed25519PrivateKey(process.env.APTOS_PRIVATE_KEY!);
 const aptosSigner = Account.fromPrivateKey({ privateKey });
 ```
 
+#### Algorand (AVM)
+
+Use the `@x402/avm` package to instantiate a signer:
+
+```typescript
+import { toClientAvmSigner } from "@x402/avm";
+
+// Create signer from Base64-encoded private key (64-byte: seed + pubkey)
+const avmSigner = toClientAvmSigner(process.env.AVM_PRIVATE_KEY!);
+```
+
 #### Stellar
 
 Use the Stellar SDK to instantiate a signer:
