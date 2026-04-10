@@ -1,0 +1,7 @@
+{
+  "name": "mnemospark",
+  "description": "OpenClaw plugin and API for encrypted cloud backup and agent-driven storage. Quote, pay, and renew storage with x402 and USDC on Base—wallet-native, no API keys.",
+  "logoUrl": "/logos/mnemospark.svg",
+  "websiteUrl": "https://mnemospark.ai",
+  "category": "Services/Endpoints"
+}
