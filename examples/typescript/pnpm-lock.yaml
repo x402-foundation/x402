@@ -78,6 +78,9 @@ importers:
       '@scure/base':
         specifier: ^1.2.6
         version: 1.2.6
+      '@signinwithethereum/siwe':
+        specifier: ^4.1.0
+        version: 4.1.0(ethers@6.15.0(bufferutil@4.0.9)(utf-8-validate@5.0.10))(viem@2.43.5(bufferutil@4.0.9)(typescript@5.9.2)(utf-8-validate@5.0.10)(zod@3.25.76))
       '@x402/core':
         specifier: workspace:~
         version: link:../core
@@ -87,9 +90,6 @@ importers:
       jose:
         specifier: ^5.9.6
         version: 5.10.0
-      siwe:
-        specifier: ^2.3.2
-        version: 2.3.2(ethers@6.15.0(bufferutil@4.0.9)(utf-8-validate@5.0.10))
       tweetnacl:
         specifier: ^1.0.3
         version: 1.0.3
@@ -3663,6 +3663,67 @@ importers:
         specifier: ^5.3.0
         version: 5.9.2
 
+  servers/self-facilitation:
+    dependencies:
+      '@x402/core':
+        specifier: workspace:*
+        version: link:../../../../typescript/packages/core
+      '@x402/evm':
+        specifier: workspace:*
+        version: link:../../../../typescript/packages/mechanisms/evm
+      '@x402/express':
+        specifier: workspace:*
+        version: link:../../../../typescript/packages/http/express
+      dotenv:
+        specifier: ^16.4.7
+        version: 16.6.1
+      express:
+        specifier: ^4.18.2
+        version: 4.21.2
+      viem:
+        specifier: ^2.21.54
+        version: 2.43.5(bufferutil@4.0.9)(typescript@5.9.2)(utf-8-validate@5.0.10)(zod@4.1.13)
+    devDependencies:
+      '@eslint/js':
+        specifier: ^9.24.0
+        version: 9.33.0
+      '@types/express':
+        specifier: ^5.0.1
+        version: 5.0.3
+      '@types/node':
+        specifier: ^22.13.4
+        version: 22.17.2
+      '@typescript-eslint/eslint-plugin':
+        specifier: ^8.29.1
+        version: 8.48.0(@typescript-eslint/parser@8.48.0(eslint@9.33.0(jiti@2.6.1))(typescript@5.9.2))(eslint@9.33.0(jiti@2.6.1))(typescript@5.9.2)
+      '@typescript-eslint/parser':
+        specifier: ^8.29.1
+        version: 8.48.0(eslint@9.33.0(jiti@2.6.1))(typescript@5.9.2)
+      eslint:
+        specifier: ^9.24.0
+        version: 9.33.0(jiti@2.6.1)
+      eslint-plugin-import:
+        specifier: ^2.31.0
+        version: 2.32.0(@typescript-eslint/parser@8.48.0(eslint@9.33.0(jiti@2.6.1))(typescript@5.9.2))(eslint-import-resolver-typescript@3.10.1)(eslint@9.33.0(jiti@2.6.1))
+      eslint-plugin-jsdoc:
+        specifier: ^50.6.9
+        version: 50.8.0(eslint@9.33.0(jiti@2.6.1))
+      eslint-plugin-prettier:
+        specifier: ^5.2.6
+        version: 5.5.4(eslint-config-prettier@10.1.8(eslint@9.33.0(jiti@2.6.1)))(eslint@9.33.0(jiti@2.6.1))(prettier@3.5.2)
+      prettier:
+        specifier: 3.5.2
+        version: 3.5.2
+      tsup:
+        specifier: ^7.2.0
+        version: 7.3.0(postcss@8.5.6)(typescript@5.9.2)
+      tsx:
+        specifier: ^4.7.0
+        version: 4.20.4
+      typescript:
+        specifier: ^5.3.0
+        version: 5.9.2
+
   servers/sign-in-with-x:
     dependencies:
       '@x402/core':
@@ -6593,6 +6654,20 @@ packages:
 
   '@selderee/plugin-htmlparser2@0.11.0':
     resolution: {integrity: sha512-P33hHGdldxGabLFjPPpaTxVolMrzrcegejx+0GxjrIb9Zv48D8yAIA/QTDR2dFl7Uz7urX8aX6+5bCZslr+gWQ==}
+
+  '@signinwithethereum/siwe-parser@4.1.0':
+    resolution: {integrity: sha512-aS+bU5QpTQgMpC6HjQHuKJpltUrkyGUVNuhuBLARa39wF1B+m05/4bgnf2qrEcgQONfU36A2Nbn3ibmwhHkc2Q==}
+
+  '@signinwithethereum/siwe@4.1.0':
+    resolution: {integrity: sha512-NT56M82i+A2uBU++F9PSBvEYPcjUV3BdClRVojWt3cbe7WizIVH1wi2qKJJR570RLHZvr8q1gUf0E90WymlMeA==}
+    peerDependencies:
+      ethers: ^5.7.0 || ^6.13.0
+      viem: ^2.7.0
+    peerDependenciesMeta:
+      ethers:
+        optional: true
+      viem:
+        optional: true
 
   '@sindresorhus/is@4.6.0':
     resolution: {integrity: sha512-t09vSN3MdfsyCHoFcTRCH/iUtG7OJ0CsjzB8cjAmKc/va/kIgeDI/TxsigdncE/4be734m0cvIYwNaV4i2XqAw==}
@@ -12142,7 +12217,7 @@ packages:
     engines: {node: '>=6.0.0'}
 
   prettier@3.5.2:
-    resolution: {integrity: sha512-lc6npv5PH7hVqozBR7lkBNOGXV9vMwROAPlumdBkX0wTbbzPu/U1hk5yL8p2pt4Xoc+2mkT8t/sow2YrV/M5qg==}
+    resolution: {integrity: sha512-lc6npv5PH7hVqozBR7lkBNOGXV9vMwROAPlumdBkX0wTbbzPu/U1hk5yL8p2pt4Xoc+2mkT8t/sow2YrV/M5qg==, tarball: https://registry.npmjs.org/prettier/-/prettier-3.5.2.tgz}
     engines: {node: '>=14'}
     hasBin: true
 
@@ -19252,6 +19327,18 @@ snapshots:
     dependencies:
       domhandler: 5.0.3
       selderee: 0.11.0
+
+  '@signinwithethereum/siwe-parser@4.1.0':
+    dependencies:
+      '@noble/hashes': 1.8.0
+      apg-js: 4.4.0
+
+  '@signinwithethereum/siwe@4.1.0(ethers@6.15.0(bufferutil@4.0.9)(utf-8-validate@5.0.10))(viem@2.43.5(bufferutil@4.0.9)(typescript@5.9.2)(utf-8-validate@5.0.10)(zod@3.25.76))':
+    dependencies:
+      '@signinwithethereum/siwe-parser': 4.1.0
+    optionalDependencies:
+      ethers: 6.15.0(bufferutil@4.0.9)(utf-8-validate@5.0.10)
+      viem: 2.43.5(bufferutil@4.0.9)(typescript@5.9.2)(utf-8-validate@5.0.10)(zod@3.25.76)
 
   '@sindresorhus/is@4.6.0': {}
 

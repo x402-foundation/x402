@@ -5,10 +5,11 @@ import (
 	"fmt"
 	"net/http"
 
-	x402 "github.com/coinbase/x402/go"
-	x402http "github.com/coinbase/x402/go/http"
-	evm "github.com/coinbase/x402/go/mechanisms/evm/exact/client"
-	evmsigners "github.com/coinbase/x402/go/signers/evm"
+	x402 "github.com/x402-foundation/x402/go"
+	x402http "github.com/x402-foundation/x402/go/http"
+	exactevm "github.com/x402-foundation/x402/go/mechanisms/evm/exact/client"
+	uptoevm "github.com/x402-foundation/x402/go/mechanisms/evm/upto/client"
+	evmsigners "github.com/x402-foundation/x402/go/signers/evm"
 )
 
 /**
@@ -33,9 +34,9 @@ func runMultiNetworkPriorityExample(ctx context.Context, evmPrivateKey, url stri
 
 	// In a real scenario, you might have different signers for different networks
 	// For demo purposes, we'll use the same signer but show the pattern
-	mainnetSigner := primarySigner   // Would be different in production
-	testnetSigner := primarySigner   // Would be different in production
-	baseSigner := primarySigner      // Would be different in production
+	mainnetSigner := primarySigner // Would be different in production
+	testnetSigner := primarySigner // Would be different in production
+	baseSigner := primarySigner    // Would be different in production
 
 	fmt.Println("📝 Registering networks with priority:")
 	fmt.Println("   1. Specific networks (highest priority)")
@@ -46,25 +47,29 @@ func runMultiNetworkPriorityExample(ctx context.Context, evmPrivateKey, url stri
 	// More specific registrations take precedence over wildcards
 	client := x402.Newx402Client()
 
-	// Level 1: Specific networks (highest priority)
+	// Level 1: Specific networks (highest priority) — exact + upto
 	fmt.Println("✅ Registering Ethereum Mainnet (eip155:1) with mainnet signer")
-	client.Register("eip155:1", evm.NewExactEvmScheme(mainnetSigner, nil))
+	client.Register("eip155:1", exactevm.NewExactEvmScheme(mainnetSigner, nil))
+	client.Register("eip155:1", uptoevm.NewUptoEvmScheme(mainnetSigner, nil))
 
 	fmt.Println("✅ Registering Base Mainnet (eip155:8453) with base signer")
-	client.Register("eip155:8453", evm.NewExactEvmScheme(baseSigner, nil))
+	client.Register("eip155:8453", exactevm.NewExactEvmScheme(baseSigner, nil))
+	client.Register("eip155:8453", uptoevm.NewUptoEvmScheme(baseSigner, nil))
 
 	fmt.Println("✅ Registering Base Sepolia (eip155:84532) with testnet signer")
-	client.Register("eip155:84532", evm.NewExactEvmScheme(testnetSigner, nil))
+	client.Register("eip155:84532", exactevm.NewExactEvmScheme(testnetSigner, nil))
+	client.Register("eip155:84532", uptoevm.NewUptoEvmScheme(testnetSigner, nil))
 
 	// Level 2: Wildcard for all other EVM networks (fallback)
 	fmt.Println("✅ Registering all other EVM networks (eip155:*) with primary signer\n")
-	client.Register("eip155:*", evm.NewExactEvmScheme(primarySigner, nil))
+	client.Register("eip155:*", exactevm.NewExactEvmScheme(primarySigner, nil))
+	client.Register("eip155:*", uptoevm.NewUptoEvmScheme(primarySigner, nil))
 
 	// Add logging to show which network is being used
 	client.OnBeforePaymentCreation(func(ctx x402.PaymentCreationContext) (*x402.BeforePaymentCreationHookResult, error) {
 		fmt.Printf("💰 Creating payment for network: %s\n", ctx.SelectedRequirements.GetNetwork())
 		fmt.Printf("   Scheme: %s\n", ctx.SelectedRequirements.GetScheme())
-		
+
 		// Show which signer would be used based on network
 		var signerType string
 		switch ctx.SelectedRequirements.GetNetwork() {
@@ -117,4 +122,3 @@ func runMultiNetworkPriorityExample(ctx context.Context, evmPrivateKey, url stri
 	printPaymentDetails(resp.Header)
 	return nil
 }
-

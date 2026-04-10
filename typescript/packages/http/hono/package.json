@@ -1,6 +1,6 @@
 {
   "name": "@x402/hono",
-  "version": "2.8.0",
+  "version": "2.9.0",
   "main": "./dist/cjs/index.js",
   "module": "./dist/esm/index.js",
   "types": "./dist/index.d.ts",
@@ -17,8 +17,8 @@
   },
   "keywords": [],
   "license": "Apache-2.0",
-  "author": "Coinbase Inc.",
-  "repository": "https://github.com/coinbase/x402",
+  "author": "x402 Foundation",
+  "repository": "https://github.com/x402-foundation/x402",
   "description": "x402 Payment Protocol",
   "devDependencies": {
     "@eslint/js": "^9.24.0",

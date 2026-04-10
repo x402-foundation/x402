@@ -3,9 +3,9 @@ package echo
 import (
 	"time"
 
-	x402 "github.com/coinbase/x402/go"
-	x402http "github.com/coinbase/x402/go/http"
 	"github.com/labstack/echo/v4"
+	x402 "github.com/x402-foundation/x402/go"
+	x402http "github.com/x402-foundation/x402/go/http"
 )
 
 // Config provides struct-based configuration for x402 payment middleware.

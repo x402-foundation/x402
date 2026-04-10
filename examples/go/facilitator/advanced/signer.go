@@ -9,8 +9,6 @@ import (
 	"strings"
 	"time"
 
-	evmmech "github.com/coinbase/x402/go/mechanisms/evm"
-	svmmech "github.com/coinbase/x402/go/mechanisms/svm"
 	"github.com/ethereum/go-ethereum"
 	"github.com/ethereum/go-ethereum/accounts/abi"
 	"github.com/ethereum/go-ethereum/common"
@@ -21,6 +19,8 @@ import (
 	"github.com/ethereum/go-ethereum/signer/core/apitypes"
 	solana "github.com/gagliardetto/solana-go"
 	"github.com/gagliardetto/solana-go/rpc"
+	evmmech "github.com/x402-foundation/x402/go/mechanisms/evm"
+	svmmech "github.com/x402-foundation/x402/go/mechanisms/svm"
 )
 
 const (

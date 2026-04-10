@@ -9,7 +9,7 @@ x402 is the open payment standard that enables services to charge for access to 
 
 With x402, any web service can require payment before serving a response, using crypto-native payments for speed, privacy, and efficiency.
 
-**Want to contribute to our docs?** [The GitBook repo is open to PRs! ](https://github.com/coinbase/x402) Our only ask is that you keep these docs as a neutral resource, with no branded content other than linking out to other resources where appropriate.
+**Want to contribute to our docs?** [The GitBook repo is open to PRs! ](https://github.com/x402-foundation/x402) Our only ask is that you keep these docs as a neutral resource, with no branded content other than linking out to other resources where appropriate.
 
 **Note about the docs:** These docs are the credibly neutral source of truth for x402, as x402 is a completely open standard under the Apache-2.0 license. Coinbase Developer Platform is currently sponsoring [AI-powered docs for users here](https://docs.cdp.coinbase.com/x402/welcome), as we migrate to our own AI-powered solution on the main x402.org domain.
 

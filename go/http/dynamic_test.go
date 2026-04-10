@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	x402 "github.com/coinbase/x402/go"
+	x402 "github.com/x402-foundation/x402/go"
 )
 
 // Note: mockHTTPAdapter and mockSchemeServer are defined in server_test.go

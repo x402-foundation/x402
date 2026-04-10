@@ -8,14 +8,14 @@ import (
 	"os"
 	"time"
 
-	x402 "github.com/coinbase/x402/go"
-	evm "github.com/coinbase/x402/go/mechanisms/evm/exact/facilitator"
-	evmv1 "github.com/coinbase/x402/go/mechanisms/evm/exact/v1/facilitator"
-	svmmech "github.com/coinbase/x402/go/mechanisms/svm"
-	svm "github.com/coinbase/x402/go/mechanisms/svm/exact/facilitator"
-	svmv1 "github.com/coinbase/x402/go/mechanisms/svm/exact/v1/facilitator"
 	"github.com/gin-gonic/gin"
 	"github.com/joho/godotenv"
+	x402 "github.com/x402-foundation/x402/go"
+	evm "github.com/x402-foundation/x402/go/mechanisms/evm/exact/facilitator"
+	evmv1 "github.com/x402-foundation/x402/go/mechanisms/evm/exact/v1/facilitator"
+	svmmech "github.com/x402-foundation/x402/go/mechanisms/svm"
+	svm "github.com/x402-foundation/x402/go/mechanisms/svm/exact/facilitator"
+	svmv1 "github.com/x402-foundation/x402/go/mechanisms/svm/exact/v1/facilitator"
 )
 
 const (
@@ -48,7 +48,7 @@ func main() {
 	}
 
 	facilitator := x402.Newx402Facilitator()
-	
+
 	// Register V2 EVM scheme with smart wallet deployment enabled
 	evmConfig := &evm.ExactEvmSchemeConfig{
 		DeployERC4337WithEIP6492: true,
@@ -166,4 +166,3 @@ func main() {
 		os.Exit(1)
 	}
 }
-

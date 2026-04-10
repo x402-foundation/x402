@@ -5,7 +5,7 @@ Gin middleware integration for the x402 Payment Protocol. This package provides 
 ## Installation
 
 ```bash
-go get github.com/coinbase/x402/go
+go get github.com/x402-foundation/x402/go
 ```
 
 ## Quick Start
@@ -16,10 +16,10 @@ package main
 import (
 	"time"
 
-	x402 "github.com/coinbase/x402/go"
-	x402http "github.com/coinbase/x402/go/http"
-	ginmw "github.com/coinbase/x402/go/http/gin"
-	evm "github.com/coinbase/x402/go/mechanisms/evm/exact/server"
+	x402 "github.com/x402-foundation/x402/go"
+	x402http "github.com/x402-foundation/x402/go/http"
+	ginmw "github.com/x402-foundation/x402/go/http/gin"
+	evm "github.com/x402-foundation/x402/go/mechanisms/evm/exact/server"
 	"github.com/gin-gonic/gin"
 )
 
@@ -154,8 +154,8 @@ Register schemes for different networks:
 
 ```go
 import (
-	evm "github.com/coinbase/x402/go/mechanisms/evm/exact/server"
-	svm "github.com/coinbase/x402/go/mechanisms/svm/exact/server"
+	evm "github.com/x402-foundation/x402/go/mechanisms/evm/exact/server"
+	svm "github.com/x402-foundation/x402/go/mechanisms/svm/exact/server"
 )
 
 r.Use(ginmw.PaymentMiddlewareFromConfig(routes,
@@ -238,10 +238,10 @@ import (
 	"log"
 	"time"
 
-	x402 "github.com/coinbase/x402/go"
-	x402http "github.com/coinbase/x402/go/http"
-	ginmw "github.com/coinbase/x402/go/http/gin"
-	evm "github.com/coinbase/x402/go/mechanisms/evm/exact/server"
+	x402 "github.com/x402-foundation/x402/go"
+	x402http "github.com/x402-foundation/x402/go/http"
+	ginmw "github.com/x402-foundation/x402/go/http/gin"
+	evm "github.com/x402-foundation/x402/go/mechanisms/evm/exact/server"
 	"github.com/gin-gonic/gin"
 )
 

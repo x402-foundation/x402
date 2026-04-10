@@ -7,8 +7,8 @@ import (
 
 	"github.com/ethereum/go-ethereum/common"
 
-	"github.com/coinbase/x402/go/extensions/eip2612gassponsor"
-	"github.com/coinbase/x402/go/mechanisms/evm"
+	"github.com/x402-foundation/x402/go/extensions/eip2612gassponsor"
+	"github.com/x402-foundation/x402/go/mechanisms/evm"
 )
 
 // SignEip2612Permit signs an EIP-2612 permit authorizing the Permit2 contract

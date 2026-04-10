@@ -48,7 +48,7 @@ go run main.go
 ### Generating a Payment ID
 
 ```go
-import "github.com/coinbase/x402/go/extensions/paymentidentifier"
+import "github.com/x402-foundation/x402/go/extensions/paymentidentifier"
 
 // Generate with default prefix "pay_"
 id := paymentidentifier.GeneratePaymentID("")

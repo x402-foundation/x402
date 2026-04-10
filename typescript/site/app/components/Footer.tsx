@@ -72,7 +72,7 @@ export function Footer() {
         {/* Social icons */}
         <div className="flex items-center gap-6 mb-8">
           <Link
-            href="https://github.com/coinbase/x402"
+            href="https://github.com/x402-foundation/x402"
             target="_blank"
             rel="noopener noreferrer"
             className="hover:opacity-80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white focus-visible:ring-offset-2 focus-visible:ring-offset-black"

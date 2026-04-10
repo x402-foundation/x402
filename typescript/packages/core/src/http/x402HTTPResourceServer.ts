@@ -600,13 +600,17 @@ export class x402HTTPResourceServer {
     try {
       // Resolve overrides: explicit param takes precedence, fall back to response header
       let resolvedOverrides = settlementOverrides;
-      if (!resolvedOverrides && transportContext?.responseHeaders?.[SETTLEMENT_OVERRIDES_HEADER]) {
-        try {
-          resolvedOverrides = JSON.parse(
-            transportContext.responseHeaders[SETTLEMENT_OVERRIDES_HEADER],
-          );
-        } catch {
-          // Ignore malformed header
+      if (!resolvedOverrides && transportContext?.responseHeaders) {
+        const overridesKey = SETTLEMENT_OVERRIDES_HEADER.toLowerCase();
+        const rawValue = Object.entries(transportContext.responseHeaders).find(
+          ([key]) => key.toLowerCase() === overridesKey,
+        )?.[1];
+        if (rawValue) {
+          try {
+            resolvedOverrides = JSON.parse(rawValue);
+          } catch {
+            // Ignore malformed header
+          }
         }
       }
 

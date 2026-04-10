@@ -22,16 +22,16 @@ import (
 	"github.com/ethereum/go-ethereum/ethclient"
 	"github.com/ethereum/go-ethereum/signer/core/apitypes"
 
-	x402 "github.com/coinbase/x402/go"
-	"github.com/coinbase/x402/go/mechanisms/evm"
-	exactevmclient "github.com/coinbase/x402/go/mechanisms/evm/exact/client"
-	exactevmfacilitator "github.com/coinbase/x402/go/mechanisms/evm/exact/facilitator"
-	exactevmserver "github.com/coinbase/x402/go/mechanisms/evm/exact/server"
-	uptoevmclient "github.com/coinbase/x402/go/mechanisms/evm/upto/client"
-	uptoevmfacilitator "github.com/coinbase/x402/go/mechanisms/evm/upto/facilitator"
-	uptoevmserver "github.com/coinbase/x402/go/mechanisms/evm/upto/server"
-	evmsigners "github.com/coinbase/x402/go/signers/evm"
-	"github.com/coinbase/x402/go/types"
+	x402 "github.com/x402-foundation/x402/go"
+	"github.com/x402-foundation/x402/go/mechanisms/evm"
+	exactevmclient "github.com/x402-foundation/x402/go/mechanisms/evm/exact/client"
+	exactevmfacilitator "github.com/x402-foundation/x402/go/mechanisms/evm/exact/facilitator"
+	exactevmserver "github.com/x402-foundation/x402/go/mechanisms/evm/exact/server"
+	uptoevmclient "github.com/x402-foundation/x402/go/mechanisms/evm/upto/client"
+	uptoevmfacilitator "github.com/x402-foundation/x402/go/mechanisms/evm/upto/facilitator"
+	uptoevmserver "github.com/x402-foundation/x402/go/mechanisms/evm/upto/server"
+	evmsigners "github.com/x402-foundation/x402/go/signers/evm"
+	"github.com/x402-foundation/x402/go/types"
 )
 
 // newRealClientEvmSigner creates a client signer using the helper

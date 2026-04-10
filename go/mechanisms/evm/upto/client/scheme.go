@@ -8,11 +8,11 @@ import (
 
 	"github.com/ethereum/go-ethereum/common"
 
-	"github.com/coinbase/x402/go/extensions/eip2612gassponsor"
-	"github.com/coinbase/x402/go/extensions/erc20approvalgassponsor"
-	"github.com/coinbase/x402/go/mechanisms/evm"
-	exactclient "github.com/coinbase/x402/go/mechanisms/evm/exact/client"
-	"github.com/coinbase/x402/go/types"
+	"github.com/x402-foundation/x402/go/extensions/eip2612gassponsor"
+	"github.com/x402-foundation/x402/go/extensions/erc20approvalgassponsor"
+	"github.com/x402-foundation/x402/go/mechanisms/evm"
+	exactclient "github.com/x402-foundation/x402/go/mechanisms/evm/exact/client"
+	"github.com/x402-foundation/x402/go/types"
 )
 
 // UptoEvmScheme implements SchemeNetworkClient and ExtensionAwareClient for EVM upto payments.

@@ -8,8 +8,8 @@ import (
 	"os"
 	"time"
 
-	x402 "github.com/coinbase/x402/go"
 	"github.com/joho/godotenv"
+	x402 "github.com/x402-foundation/x402/go"
 )
 
 /**
@@ -135,4 +135,3 @@ func makeRequest(client *x402.X402Client, url string) error {
 
 	return nil
 }
-

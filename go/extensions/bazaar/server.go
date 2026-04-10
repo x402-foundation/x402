@@ -6,8 +6,8 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/coinbase/x402/go/extensions/types"
-	"github.com/coinbase/x402/go/http"
+	"github.com/x402-foundation/x402/go/extensions/types"
+	"github.com/x402-foundation/x402/go/http"
 )
 
 // bracketParamRegex matches [paramName] route segments (Next.js style).

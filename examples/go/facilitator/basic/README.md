@@ -235,9 +235,9 @@ Register additional schemes for other networks:
 
 ```go
 import (
-    x402 "github.com/coinbase/x402/go"
-    evm "github.com/coinbase/x402/go/mechanisms/evm/exact/facilitator"
-    svm "github.com/coinbase/x402/go/mechanisms/svm/exact/facilitator"
+    x402 "github.com/x402-foundation/x402/go"
+    evm "github.com/x402-foundation/x402/go/mechanisms/evm/exact/facilitator"
+    svm "github.com/x402-foundation/x402/go/mechanisms/svm/exact/facilitator"
 )
 
 facilitator := x402.Newx402Facilitator()

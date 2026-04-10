@@ -12,7 +12,7 @@ The v2 extension follows a pattern where:
 
 # For Resource Servers (V2)
 
-	import "github.com/coinbase/x402/go/extensions/bazaar"
+	import "github.com/x402-foundation/x402/go/extensions/bazaar"
 
 	// Declare a GET endpoint
 	extension, err := bazaar.DeclareDiscoveryExtension(
@@ -40,7 +40,7 @@ The v2 extension follows a pattern where:
 
 # For Facilitators (V2 and V1)
 
-	import "github.com/coinbase/x402/go/extensions/bazaar"
+	import "github.com/x402-foundation/x402/go/extensions/bazaar"
 
 	// Extract from client's PaymentPayload (facilitator hook context)
 	// V2: Extensions are in PaymentPayload.Extensions (client copied from PaymentRequired)
@@ -57,7 +57,7 @@ The v2 extension follows a pattern where:
 
 # For Clients (Processing 402 Responses)
 
-	import "github.com/coinbase/x402/go/extensions/bazaar"
+	import "github.com/x402-foundation/x402/go/extensions/bazaar"
 
 	// Extract from server's 402 PaymentRequired response
 	// V2: Checks PaymentRequired.Extensions, falls back to Accepts[0]
@@ -76,7 +76,7 @@ The v2 extension follows a pattern where:
 V1 discovery information is stored in the `outputSchema` field of PaymentRequirements.
 Both extraction functions automatically handle v1 format.
 
-	import v1 "github.com/coinbase/x402/go/extensions/bazaar/v1"
+	import v1 "github.com/x402-foundation/x402/go/extensions/bazaar/v1"
 
 	// Direct v1 extraction (for advanced use cases)
 	infoV1, err := v1.ExtractDiscoveryInfoV1(paymentRequirementsV1)

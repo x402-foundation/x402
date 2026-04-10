@@ -5,7 +5,7 @@
 // facilitator submits it on-chain via x402Permit2Proxy.settleWithPermit.
 package eip2612gassponsor
 
-import x402 "github.com/coinbase/x402/go"
+import x402 "github.com/x402-foundation/x402/go"
 
 // EIP2612GasSponsoring is the extension identifier for the EIP-2612 gas sponsoring extension.
 var EIP2612GasSponsoring = x402.NewFacilitatorExtension("eip2612GasSponsoring")

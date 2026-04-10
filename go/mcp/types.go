@@ -1,8 +1,8 @@
 package mcp
 
 import (
-	x402 "github.com/coinbase/x402/go"
-	"github.com/coinbase/x402/go/types"
+	x402 "github.com/x402-foundation/x402/go"
+	"github.com/x402-foundation/x402/go/types"
 )
 
 // Protocol constants for MCP x402 payment integration.

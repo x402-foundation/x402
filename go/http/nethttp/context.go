@@ -3,7 +3,7 @@ package nethttp
 import (
 	"context"
 
-	"github.com/coinbase/x402/go/types"
+	"github.com/x402-foundation/x402/go/types"
 )
 
 // contextKey is a private type for context keys defined in this package.

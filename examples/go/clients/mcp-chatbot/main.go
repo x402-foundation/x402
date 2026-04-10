@@ -21,13 +21,14 @@ import (
 	"os"
 	"strings"
 
-	x402 "github.com/coinbase/x402/go"
-	evm "github.com/coinbase/x402/go/mechanisms/evm/exact/client"
-	"github.com/coinbase/x402/go/mcp"
-	evmsigners "github.com/coinbase/x402/go/signers/evm"
 	"github.com/joho/godotenv"
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
 	openai "github.com/sashabaranov/go-openai"
+	x402 "github.com/x402-foundation/x402/go"
+	"github.com/x402-foundation/x402/go/mcp"
+	exactevm "github.com/x402-foundation/x402/go/mechanisms/evm/exact/client"
+	uptoevm "github.com/x402-foundation/x402/go/mechanisms/evm/upto/client"
+	evmsigners "github.com/x402-foundation/x402/go/signers/evm"
 )
 
 // ============================================================================
@@ -105,7 +106,8 @@ func run() error {
 
 	// Create x402 payment client and wrap session
 	paymentClient := x402.Newx402Client()
-	paymentClient.Register("eip155:84532", evm.NewExactEvmScheme(evmSigner, nil))
+	paymentClient.Register("eip155:84532", exactevm.NewExactEvmScheme(evmSigner, nil))
+	paymentClient.Register("eip155:84532", uptoevm.NewUptoEvmScheme(evmSigner, nil))
 	x402Mcp := mcp.NewX402MCPClient(clientSession, paymentClient, mcp.Options{
 		AutoPayment: mcp.BoolPtr(true),
 		OnPaymentRequested: func(context mcp.PaymentRequiredContext) (bool, error) {

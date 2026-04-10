@@ -14,6 +14,7 @@ jobs:
       url: https://pypi.org/p/x402
     permissions:
       contents: read
+      id-token: write
 
     steps:
       - uses: actions/checkout@v4
@@ -45,4 +46,3 @@ jobs:
         uses: pypa/gh-action-pypi-publish@76f52bc884231f62b9a034ebfe128415bbaabdfc
         with:
           packages-dir: python/x402/dist/
-          password: ${{ secrets.PYPI_X402_TOKEN }}

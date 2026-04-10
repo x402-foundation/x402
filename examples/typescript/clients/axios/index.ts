@@ -1,6 +1,7 @@
 import { config } from "dotenv";
 import { x402Client, wrapAxiosWithPayment, x402HTTPClient } from "@x402/axios";
 import { ExactEvmScheme } from "@x402/evm/exact/client";
+import { UptoEvmScheme } from "@x402/evm/upto/client";
 import { ExactSvmScheme } from "@x402/svm/exact/client";
 import { privateKeyToAccount } from "viem/accounts";
 import { createKeyPairSignerFromBytes } from "@solana/kit";
@@ -30,6 +31,7 @@ async function main(): Promise<void> {
 
   const client = new x402Client();
   client.register("eip155:*", new ExactEvmScheme(evmSigner));
+  client.register("eip155:*", new UptoEvmScheme(evmSigner));
   client.register("solana:*", new ExactSvmScheme(svmSigner));
 
   const api = wrapAxiosWithPayment(axios.create(), client);

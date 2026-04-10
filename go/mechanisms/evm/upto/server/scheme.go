@@ -8,9 +8,9 @@ import (
 	"strconv"
 	"strings"
 
-	x402 "github.com/coinbase/x402/go"
-	"github.com/coinbase/x402/go/mechanisms/evm"
-	"github.com/coinbase/x402/go/types"
+	x402 "github.com/x402-foundation/x402/go"
+	"github.com/x402-foundation/x402/go/mechanisms/evm"
+	"github.com/x402-foundation/x402/go/types"
 )
 
 // UptoEvmScheme implements the SchemeNetworkServer interface for EVM upto payments (V2).

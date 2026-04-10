@@ -286,8 +286,8 @@ For blockchain-specific implementations:
 
 ## Examples
 
-See the [examples directory](https://github.com/coinbase/x402/tree/main/examples/typescript) for complete examples.
+See the [examples directory](https://github.com/x402-foundation/x402/tree/main/examples/typescript) for complete examples.
 
 ## Contributing
 
-Contributions welcome! See [Contributing Guide](https://github.com/coinbase/x402/blob/main/CONTRIBUTING.md).
+Contributions welcome! See [Contributing Guide](https://github.com/x402-foundation/x402/blob/main/CONTRIBUTING.md).

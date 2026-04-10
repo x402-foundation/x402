@@ -16,7 +16,7 @@ import (
 	"github.com/ethereum/go-ethereum/ethclient"
 	"github.com/ethereum/go-ethereum/signer/core/apitypes"
 
-	x402evm "github.com/coinbase/x402/go/mechanisms/evm"
+	x402evm "github.com/x402-foundation/x402/go/mechanisms/evm"
 )
 
 // ClientSigner implements x402evm.ClientEvmSigner using an ECDSA private key.

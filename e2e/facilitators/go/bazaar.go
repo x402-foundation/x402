@@ -5,8 +5,8 @@ import (
 	"sync"
 	"time"
 
-	x402 "github.com/coinbase/x402/go"
-	exttypes "github.com/coinbase/x402/go/extensions/types"
+	x402 "github.com/x402-foundation/x402/go"
+	exttypes "github.com/x402-foundation/x402/go/extensions/types"
 )
 
 type DiscoveredResource struct {

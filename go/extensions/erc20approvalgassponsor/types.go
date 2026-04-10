@@ -9,8 +9,8 @@ package erc20approvalgassponsor
 import (
 	"context"
 
-	x402 "github.com/coinbase/x402/go"
-	evm "github.com/coinbase/x402/go/mechanisms/evm"
+	x402 "github.com/x402-foundation/x402/go"
+	evm "github.com/x402-foundation/x402/go/mechanisms/evm"
 )
 
 // ERC20ApprovalGasSponsoring is the extension identifier for the ERC-20 approval gas sponsoring extension.

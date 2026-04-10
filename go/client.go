@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"sync"
 
-	"github.com/coinbase/x402/go/types"
+	"github.com/x402-foundation/x402/go/types"
 )
 
 // x402Client manages payment mechanisms and creates payment payloads

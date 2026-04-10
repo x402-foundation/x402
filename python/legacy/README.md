@@ -218,4 +218,4 @@ async def foo(request: Request, response: Response):
         )
 ```
 
-For more examples and advanced usage patterns, check out our [examples directory](https://github.com/coinbase/x402/tree/main/examples/python/legacy/).
+For more examples and advanced usage patterns, check out our [examples directory](https://github.com/x402-foundation/x402/tree/main/examples/python/legacy/).

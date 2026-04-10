@@ -4,9 +4,9 @@ import (
 	"context"
 	"testing"
 
-	x402 "github.com/coinbase/x402/go"
-	"github.com/coinbase/x402/go/test/mocks/cash"
-	"github.com/coinbase/x402/go/types"
+	x402 "github.com/x402-foundation/x402/go"
+	"github.com/x402-foundation/x402/go/test/mocks/cash"
+	"github.com/x402-foundation/x402/go/types"
 )
 
 // TestCoreIntegration tests the integration between x402Client, x402ResourceServer, and x402Facilitator

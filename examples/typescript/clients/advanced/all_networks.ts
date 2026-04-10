@@ -11,6 +11,7 @@
 import { config } from "dotenv";
 import { x402Client, wrapFetchWithPayment, x402HTTPClient } from "@x402/fetch";
 import { ExactEvmScheme } from "@x402/evm/exact/client";
+import { UptoEvmScheme } from "@x402/evm/upto/client";
 import { ExactSvmScheme } from "@x402/svm/exact/client";
 import { ExactStellarScheme } from "@x402/stellar/exact/client";
 import { createEd25519Signer } from "@x402/stellar";
@@ -48,6 +49,7 @@ async function main(): Promise<void> {
   if (evmPrivateKey) {
     const evmSigner = privateKeyToAccount(evmPrivateKey);
     client.register("eip155:*", new ExactEvmScheme(evmSigner));
+    client.register("eip155:*", new UptoEvmScheme(evmSigner));
     console.log(`Initialized EVM account: ${evmSigner.address}`);
   }
 

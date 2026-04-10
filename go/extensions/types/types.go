@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"regexp"
 
-	x402 "github.com/coinbase/x402/go"
+	x402 "github.com/x402-foundation/x402/go"
 )
 
 // BAZAAR is the extension identifier for the Bazaar discovery extension.

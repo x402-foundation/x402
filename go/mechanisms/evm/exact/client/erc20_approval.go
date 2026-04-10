@@ -11,8 +11,8 @@ import (
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/types"
 
-	"github.com/coinbase/x402/go/extensions/erc20approvalgassponsor"
-	"github.com/coinbase/x402/go/mechanisms/evm"
+	"github.com/x402-foundation/x402/go/extensions/erc20approvalgassponsor"
+	"github.com/x402-foundation/x402/go/mechanisms/evm"
 )
 
 // SignErc20ApprovalTransaction creates a signed (but unbroadcast) EIP-1559 transaction

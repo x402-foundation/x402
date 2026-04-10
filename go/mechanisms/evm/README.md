@@ -18,7 +18,7 @@ The exact scheme is organized by role:
 
 **Import Path:**
 ```
-github.com/coinbase/x402/go/mechanisms/evm/exact/client
+github.com/x402-foundation/x402/go/mechanisms/evm/exact/client
 ```
 
 **Exports:**
@@ -31,7 +31,7 @@ github.com/coinbase/x402/go/mechanisms/evm/exact/client
 
 **Import Path:**
 ```
-github.com/coinbase/x402/go/mechanisms/evm/exact/server
+github.com/x402-foundation/x402/go/mechanisms/evm/exact/server
 ```
 
 **Exports:**
@@ -43,7 +43,7 @@ github.com/coinbase/x402/go/mechanisms/evm/exact/server
 
 **Import Path:**
 ```
-github.com/coinbase/x402/go/mechanisms/evm/exact/facilitator
+github.com/x402-foundation/x402/go/mechanisms/evm/exact/facilitator
 ```
 
 **Exports:**

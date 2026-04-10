@@ -12,11 +12,11 @@ import (
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/crypto"
 
-	"github.com/coinbase/x402/go/mechanisms/evm"
-	evmclient "github.com/coinbase/x402/go/mechanisms/evm/exact/client"
-	evmfacilitator "github.com/coinbase/x402/go/mechanisms/evm/exact/facilitator"
-	evmv1facilitator "github.com/coinbase/x402/go/mechanisms/evm/exact/v1/facilitator"
-	"github.com/coinbase/x402/go/types"
+	"github.com/x402-foundation/x402/go/mechanisms/evm"
+	evmclient "github.com/x402-foundation/x402/go/mechanisms/evm/exact/client"
+	evmfacilitator "github.com/x402-foundation/x402/go/mechanisms/evm/exact/facilitator"
+	evmv1facilitator "github.com/x402-foundation/x402/go/mechanisms/evm/exact/v1/facilitator"
+	"github.com/x402-foundation/x402/go/types"
 )
 
 // =========================================================================

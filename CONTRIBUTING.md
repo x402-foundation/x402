@@ -168,7 +168,7 @@ After spec approval, implement in a **single SDK** (TypeScript, Python OR Go).
 | SDK | Interfaces |
 |-----|------------|
 | TypeScript (`@x402/core`) | `SchemeNetworkClient`, `SchemeNetworkServer`, `SchemeNetworkFacilitator` |
-| Go (`github.com/coinbase/x402/go`) | `ClientScheme`, `ServerScheme`, `FacilitatorScheme` |
+| Go (`github.com/x402-foundation/x402/go`) | `ClientScheme`, `ServerScheme`, `FacilitatorScheme` |
 | Python (`x402`) | `SchemeNetworkClient`, `SchemeNetworkServer`, `SchemeNetworkFacilitator` |
 
 **Required tests:**

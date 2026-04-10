@@ -5,10 +5,10 @@ import (
 	"math/big"
 	"os"
 
-	"github.com/coinbase/x402/go/pkg/coinbasefacilitator"
-	x402gin "github.com/coinbase/x402/go/pkg/gin"
 	"github.com/gin-gonic/gin"
 	"github.com/joho/godotenv"
+	"github.com/x402-foundation/x402/go/pkg/coinbasefacilitator"
+	x402gin "github.com/x402-foundation/x402/go/pkg/gin"
 )
 
 func main() {

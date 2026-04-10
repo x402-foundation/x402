@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"testing"
 
-	x402 "github.com/coinbase/x402/go"
+	x402 "github.com/x402-foundation/x402/go"
 )
 
 const baseMainnetUSDC = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913"

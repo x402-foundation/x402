@@ -240,7 +240,7 @@ export default function X402V2LaunchPage() {
               </p>
               <p className="text-base leading-relaxed text-gray-70">
                 You can check out the repo{" "}
-                <Link href="https://github.com/coinbase/x402" target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline">
+                <Link href="https://github.com/x402-foundation/x402" target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline">
                   here
                 </Link>{" "}
                 or{" "}

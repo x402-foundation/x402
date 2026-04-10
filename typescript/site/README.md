@@ -151,7 +151,7 @@ We welcome projects that are building with x402! To add your project to our ecos
 To learn more about the technologies used in this project:
 
 - [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API
-- [x402 Protocol Documentation](https://github.com/coinbase/x402) - learn about the x402 payment protocol
+- [x402 Protocol Documentation](https://github.com/x402-foundation/x402) - learn about the x402 payment protocol
 - [EVM Documentation](https://ethereum.org/en/developers/docs/) - learn about Ethereum Virtual Machine
 
 ## Deploy on Vercel
@@ -162,8 +162,8 @@ Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/bui
 
 ## Contributing
 
-We welcome contributions! Please see our [Contributing Guidelines](https://github.com/coinbase/x402/blob/main/CONTRIBUTING.md) for details.
+We welcome contributions! Please see our [Contributing Guidelines](https://github.com/x402-foundation/x402/blob/main/CONTRIBUTING.md) for details.
 
 ## License
 
-This project is licensed under the MIT License - see the [LICENSE](https://github.com/coinbase/x402/blob/main/LICENSE) file for details.
+This project is licensed under the MIT License - see the [LICENSE](https://github.com/x402-foundation/x402/blob/main/LICENSE) file for details.

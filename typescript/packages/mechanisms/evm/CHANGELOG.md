@@ -1,5 +1,26 @@
 # @x402/evm Changelog
 
+## 2.9.0
+
+### Minor Changes
+
+- 8c80edd: Add Polygon mainnet (chain ID 137) support with USDC as the default stablecoin
+- bbe45f5: Add Stable mainnet (chain ID 988) support with USDT0 as the default stablecoin
+- bff876d: Add Stable testnet (chain ID 2201) support with USDT0 as the default stablecoin
+- 2250cae: Migrated project from coinbase/x402 to x402-foundation/x402 organization
+- d352574: Add upto payment scheme TypeScript SDK with client, facilitator, and server support for permit2-based "up to" payments on EVM chains.
+
+### Patch Changes
+
+- 9f52f9c: Add Arbitrum One (chain ID 42161) and Arbitrum Sepolid (chain ID 421614) support with USDC as the default stablecoin
+- 011e680: Add Mezo Testnet (chain ID 31611) support with mUSD as the default stablecoin
+- ad2658a: Updated x402UptoPermit2Proxy canonical address to 0x4020A4f3b7b90ccA423B9fabCc0CE57C6C240002, deployed with deterministic bytecode for reproducible cross-chain CREATE2 addresses
+- Updated dependencies [8cf3fca]
+- Updated dependencies [c0e3969]
+- Updated dependencies [2250cae]
+- Updated dependencies [d352574]
+  - @x402/core@2.9.0
+
 ## 2.8.0
 
 ### Minor Changes

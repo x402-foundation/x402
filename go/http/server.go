@@ -13,9 +13,9 @@ import (
 	"strconv"
 	"strings"
 
-	x402 "github.com/coinbase/x402/go"
-	exttypes "github.com/coinbase/x402/go/extensions/types"
-	"github.com/coinbase/x402/go/types"
+	x402 "github.com/x402-foundation/x402/go"
+	exttypes "github.com/x402-foundation/x402/go/extensions/types"
+	"github.com/x402-foundation/x402/go/types"
 )
 
 // Pre-compiled regex patterns to avoid recompilation on every call.

@@ -5,11 +5,11 @@ import (
 	"strings"
 	"testing"
 
-	x402 "github.com/coinbase/x402/go"
-	"github.com/coinbase/x402/go/extensions/paymentidentifier"
-	"github.com/coinbase/x402/go/extensions/types"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	x402 "github.com/x402-foundation/x402/go"
+	"github.com/x402-foundation/x402/go/extensions/paymentidentifier"
+	"github.com/x402-foundation/x402/go/extensions/types"
 )
 
 func TestConstants(t *testing.T) {

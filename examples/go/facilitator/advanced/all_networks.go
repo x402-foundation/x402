@@ -7,10 +7,10 @@ import (
 	"net/http"
 	"time"
 
-	x402 "github.com/coinbase/x402/go"
-	evm "github.com/coinbase/x402/go/mechanisms/evm/exact/facilitator"
-	svm "github.com/coinbase/x402/go/mechanisms/svm/exact/facilitator"
 	"github.com/gin-gonic/gin"
+	x402 "github.com/x402-foundation/x402/go"
+	evm "github.com/x402-foundation/x402/go/mechanisms/evm/exact/facilitator"
+	svm "github.com/x402-foundation/x402/go/mechanisms/svm/exact/facilitator"
 )
 
 /**

@@ -126,7 +126,7 @@ changelog-merge: $(CHANGIE)
 docs:
 	@echo "Generating documentation..."
 	@godoc -http=:6060 &
-	@echo "Documentation server started at http://localhost:6060/pkg/github.com/coinbase/x402/go/"
+	@echo "Documentation server started at http://localhost:6060/pkg/github.com/x402-foundation/x402/go/"
 
 ## example-client: Run client example
 example-client:

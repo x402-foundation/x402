@@ -138,9 +138,9 @@ function App() {
                 <h3>{option.name}</h3>
                 <p className="price">{option.price}</p>
                 <p className="description">{option.description}</p>
-                
+
                 {option.endpoint === '/api/pay/session' && (
-                  <button 
+                  <button
                     onClick={handle24HourSession}
                     disabled={loading === 'session'}
                     className="action-btn"
@@ -148,9 +148,9 @@ function App() {
                     {loading === 'session' ? 'Processing...' : 'Purchase 24-Hour Session'}
                   </button>
                 )}
-                
+
                 {option.endpoint === '/api/pay/onetime' && (
-                  <button 
+                  <button
                     onClick={handleOneTimeAccess}
                     disabled={loading === 'onetime'}
                     className="action-btn"
@@ -178,7 +178,7 @@ function App() {
               Check Session
             </button>
           </div>
-          
+
           {validationResult && (
             <div className={`validation-result ${validationResult.type || (validationResult.valid ? 'success' : 'error')}`}>
               {validationResult.message && <p>{validationResult.message}</p>}
@@ -245,7 +245,7 @@ function App() {
             <a href="https://x402.org" target="_blank" rel="noopener noreferrer">
               📚 x402 Documentation
             </a>
-            <a href="https://github.com/coinbase/x402" target="_blank" rel="noopener noreferrer">
+            <a href="https://github.com/x402-foundation/x402" target="_blank" rel="noopener noreferrer">
               💻 GitHub Repository
             </a>
             <a href="https://discord.gg/invite/cdp" target="_blank" rel="noopener noreferrer">

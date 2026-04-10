@@ -1,7 +1,7 @@
 package bazaar
 
 // Re-export types from the shared types package for convenience
-import "github.com/coinbase/x402/go/extensions/types"
+import "github.com/x402-foundation/x402/go/extensions/types"
 
 // Re-export extension identifier
 var BAZAAR = types.BAZAAR
