@@ -1,0 +1,7 @@
+{
+  "name": "Ai Crypto API",
+  "description": "Multi-chain crypto data API with x402 pay-per-call pricing. Endpoints for real-time prices, gas fees, trending tokens, DeFi yields, and market analysis.",
+  "logoUrl": "/logos/ai-crypto-api.svg",
+  "websiteUrl": "https://github.com/aoi-dev-0411/x402-crypto-api",
+  "category": "Services/Endpoints"
+}
