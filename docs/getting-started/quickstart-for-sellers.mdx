@@ -133,6 +133,12 @@ Integrate the payment middleware into your application. You will need to provide
                 network: "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1", // Solana Devnet
                 payTo: svmAddress,
               },
+              {
+                scheme: "exact",
+                price: "$0.001",
+                network: "algorand:SGO1GKSzyE7IEPItTxCByw9x8FmnrCDexi9/cOUJOiI=", // Algorand Testnet
+                payTo: avmAddress,
+              },
             ],
             description: "Weather data",
             mimeType: "application/json",
