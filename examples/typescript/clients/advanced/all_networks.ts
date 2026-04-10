@@ -5,13 +5,14 @@
  * optional chain configuration via environment variables.
  *
  * New chain support should be added here in alphabetic order by network prefix
- * (e.g., "eip155" before "solana" before "stellar").
+ * (e.g., "eip155" before "ilp" before "solana" before "stellar").
  */
 
 import { config } from "dotenv";
 import { x402Client, wrapFetchWithPayment, x402HTTPClient } from "@x402/fetch";
 import { ExactEvmScheme } from "@x402/evm/exact/client";
 import { UptoEvmScheme } from "@x402/evm/upto/client";
+import { ExactOpenPaymentsScheme } from "@x402/openpayments/exact/client";
 import { ExactSvmScheme } from "@x402/svm/exact/client";
 import { ExactStellarScheme } from "@x402/stellar/exact/client";
 import { createEd25519Signer } from "@x402/stellar";
@@ -23,6 +24,11 @@ config();
 
 // Configuration - optional per network
 const evmPrivateKey = process.env.EVM_PRIVATE_KEY as `0x${string}` | undefined;
+const ilpClientWalletAddress = process.env.ILP_CLIENT_WALLET_ADDRESS as string | undefined;
+const ilpKeyId = process.env.ILP_KEY_ID as string | undefined;
+const ilpPrivateKey = process.env.ILP_PRIVATE_KEY as string | undefined; // base64-encoded Ed25519
+const ilpGrantToken = process.env.ILP_GRANT_TOKEN as string | undefined;
+const ilpGrantTokenManageUrl = process.env.ILP_GRANT_TOKEN_MANAGE_URL as string | undefined; // optional: enables token rotation on 401
 const svmPrivateKey = process.env.SVM_PRIVATE_KEY as string | undefined;
 const stellarPrivateKey = process.env.STELLAR_PRIVATE_KEY as string | undefined;
 const baseURL = process.env.RESOURCE_SERVER_URL || "http://localhost:4021";
@@ -35,9 +41,10 @@ const url = `${baseURL}${endpointPath}`;
  */
 async function main(): Promise<void> {
   // Validate at least one private key is provided
-  if (!evmPrivateKey && !svmPrivateKey && !stellarPrivateKey) {
+  const hasIlpConfig = ilpClientWalletAddress && ilpKeyId && ilpPrivateKey && ilpGrantToken;
+  if (!evmPrivateKey && !hasIlpConfig && !svmPrivateKey && !stellarPrivateKey) {
     console.error(
-      "❌ At least one of EVM_PRIVATE_KEY, SVM_PRIVATE_KEY, or STELLAR_PRIVATE_KEY is required",
+      "❌ At least one of EVM_PRIVATE_KEY, ILP ENVs, SVM_PRIVATE_KEY, or STELLAR_PRIVATE_KEY is required",
     );
     process.exit(1);
   }
@@ -51,6 +58,21 @@ async function main(): Promise<void> {
     client.register("eip155:*", new ExactEvmScheme(evmSigner));
     client.register("eip155:*", new UptoEvmScheme(evmSigner));
     console.log(`Initialized EVM account: ${evmSigner.address}`);
+  }
+
+  // Register ILP Open Payments scheme if credentials are provided
+  if (hasIlpConfig) {
+    client.register(
+      "ilp:*",
+      new ExactOpenPaymentsScheme({
+        clientWalletAddress: ilpClientWalletAddress!,
+        keyId: ilpKeyId!,
+        privateKey: ilpPrivateKey!,
+        grantToken: ilpGrantToken!,
+        grantTokenManageUrl: ilpGrantTokenManageUrl,
+      }),
+    );
+    console.log(`Initialized ILP account: ${ilpClientWalletAddress}`);
   }
 
   // Register SVM scheme if private key is provided

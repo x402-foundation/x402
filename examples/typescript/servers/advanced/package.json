@@ -24,6 +24,7 @@
     "@x402/evm": "workspace:*",
     "@x402/svm": "workspace:*",
     "@x402/stellar": "workspace:*",
+    "@x402/openpayments": "workspace:*",
     "@x402/extensions": "workspace:*"
   },
   "devDependencies": {

@@ -24,7 +24,7 @@ const response = await fetchWithPayment("http://localhost:4021/weather");
 
 - Node.js v20+ (install via [nvm](https://github.com/nvm-sh/nvm))
 - pnpm v10 (install via [pnpm.io/installation](https://pnpm.io/installation))
-- Valid EVM, SVM, and/or Stellar private keys for making payments
+- Valid EVM, ILP Open Payments, SVM, and/or Stellar private keys for making payments (each network is optional)
 - A running x402 server (see [server examples](../../servers/))
 - Familiarity with the [basic fetch client](../fetch/)
 
@@ -41,6 +41,12 @@ and fill required environment variables:
 - `EVM_PRIVATE_KEY` - Ethereum private key for EVM payments
 - `SVM_PRIVATE_KEY` - Solana private key for SVM payments
 - `STELLAR_PRIVATE_KEY` - Stellar secret key (starts with `S`) for signing Stellar payments
+- **Open Payments (ILP)** — set all of the following to enable `ilp:*`:
+  - `ILP_CLIENT_WALLET_ADDRESS` — client Open Payments wallet address URL
+  - `ILP_KEY_ID` — key id (`kid`) for the client’s key
+  - `ILP_PRIVATE_KEY` — base64-encoded Ed25519 private key
+  - `ILP_GRANT_TOKEN` — pre-approved grant access token for outgoing payments
+  - `ILP_GRANT_TOKEN_MANAGE_URL` — (optional) management URL for grant token rotation on 401
 
 2. Install and build all packages from the typescript examples root:
 
@@ -65,6 +71,12 @@ Stellar accounts need to be created and funded with both XLM and USDC. Instructi
 1. Go to [Stellar Laboratory](https://lab.stellar.org/account/create) ➡️ Generate keypair ➡️ Fund account with Friendbot, then copy the `Secret` and `Public` keys so you can use them.
 2. Add USDC trustline (required to transact USDC): go to [Fund Account](https://lab.stellar.org/account/fund) ➡️ Paste your `Public Key` ➡️ Add USDC Trustline ➡️ paste your `Secret key` ➡️ Sign transaction ➡️ Add Trustline.
 3. Get testnet USDC from [Circle Faucet](https://faucet.circle.com/) (select Stellar network).
+
+#### Open Payments (ILP)
+
+The client uses `@x402/openpayments` with network pattern `ilp:*` and `ilp:openpayments` requirements from the server. You need a funded Open Payments wallet, a registered signing key, and an **outgoing-payment grant** issued by your auth server.
+
+For testing, create a free account at [Interledger Test Wallet](https://wallet.interledger-test.dev/).
 
 ## Available Examples
 
@@ -178,7 +190,7 @@ import { ExactSvmScheme } from "@x402/svm/exact/client";
 import { ExactStellarScheme } from "@x402/stellar/exact/client";
 
 // Define network preference order (most preferred first)
-const networkPreferences = ["eip155:", "solana:", "stellar:"];
+const networkPreferences = ["eip155:", "ilp:", "solana:", "stellar:"];
 
 const preferredNetworkSelector = (
   _x402Version: number,
@@ -201,6 +213,8 @@ const client = new x402Client(preferredNetworkSelector)
 const fetchWithPayment = wrapFetchWithPayment(fetch, client);
 const response = await fetchWithPayment("http://localhost:4021/weather");
 ```
+
+Include `ilp:` in `networkPreferences` when using the all-networks Open Payments setup.
 
 **Use case:**
 

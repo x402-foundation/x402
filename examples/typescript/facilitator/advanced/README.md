@@ -9,6 +9,7 @@ Express.js facilitator service demonstrating advanced x402 patterns including al
 - EVM private key with Base Sepolia ETH for transaction fees
 - SVM private key with Solana Devnet SOL for transaction fees
 - Stellar private key with testnet XLM for transaction fees (fund via [Stellar Laboratory](https://lab.stellar.org/account/create) ➡️ Generate keypair ➡️ Fund account with Friendbot)
+- Open Payments credentials (`ILP_KEY_ID`, `ILP_PRIVATE_KEY`, `ILP_WALLET_ADDRESS`) — create a free wallet at [Interledger Test Wallet](https://wallet.interledger-test.dev/) and register an Ed25519 signing key
 
 ## Setup
 
@@ -23,6 +24,7 @@ and fill required environment variables:
 - `EVM_PRIVATE_KEY` - Ethereum private key
 - `SVM_PRIVATE_KEY` - Solana private key
 - `STELLAR_PRIVATE_KEY` - Stellar secret key (starts with `S`)
+- **Open Payments** (all required together): `ILP_KEY_ID`, `ILP_PRIVATE_KEY` (base64), `ILP_WALLET_ADDRESS` (facilitator wallet address URL)
 - `PORT` - Server port (optional, defaults to 4022)
 
 2. Install and build all packages from the typescript examples root:
@@ -242,3 +244,4 @@ Networks use [CAIP-2](https://github.com/ChainAgnostic/CAIPs/blob/main/CAIPs/cai
 - `solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp` — Solana Mainnet
 - `stellar:testnet` — Stellar Testnet
 - `stellar:pubnet` — Stellar Mainnet
+- `ilp:openpayments` — ILP Open Payments
