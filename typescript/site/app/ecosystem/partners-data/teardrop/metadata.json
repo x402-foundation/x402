@@ -1,0 +1,7 @@
+{
+  "name": "Teardrop",
+  "description": "Streaming agent infrastructure for the on-chain economy. SIWE auth, native Web3 tools, x402 settlement for agents that pay and get paid.",
+  "logoUrl": "/logos/teardrop.png",
+  "websiteUrl": "https://teardrop.dev/",
+  "category": "Services/Endpoints"
+}
