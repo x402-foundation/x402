@@ -144,6 +144,40 @@ function responseExcerpt(text: string, limit: number = 200): string {
 }
 
 /**
+ * Produces a compact explanation for an unknown thrown value.
+ *
+ * @param error - The thrown value
+ * @returns A short message suitable for user-facing error context
+ */
+function errorDetail(error: unknown): string {
+  if (error instanceof Error && error.message) {
+    return error.message;
+  }
+
+  if (typeof error === "string") {
+    return error;
+  }
+
+  try {
+    return responseExcerpt(JSON.stringify(error));
+  } catch {
+    return String(error);
+  }
+}
+
+/**
+ * Builds a contextual error while preserving the original cause when available.
+ *
+ * @param context - The contextual prefix for the error
+ * @param error - The original thrown value
+ * @returns An Error with contextual detail
+ */
+function contextualError(context: string, error: unknown): Error {
+  const message = `${context}: ${errorDetail(error)}`;
+  return error instanceof Error ? new Error(message, { cause: error }) : new Error(message);
+}
+
+/**
  * Parses and validates a successful facilitator response body.
  *
  * @param response - The HTTP response returned by the facilitator
@@ -208,6 +242,7 @@ export class HTTPFacilitatorClient implements FacilitatorClient {
     paymentPayload: PaymentPayload,
     paymentRequirements: PaymentRequirements,
   ): Promise<VerifyResponse> {
+    const verifyUrl = `${this.url}/verify`;
     let headers: Record<string, string> = {
       "Content-Type": "application/json",
     };
@@ -217,7 +252,7 @@ export class HTTPFacilitatorClient implements FacilitatorClient {
       headers = { ...headers, ...authHeaders.headers };
     }
 
-    const response = await fetch(`${this.url}/verify`, {
+    const response = await this.fetchWithContext("verify", verifyUrl, {
       method: "POST",
       headers,
       redirect: "follow",
@@ -260,6 +295,7 @@ export class HTTPFacilitatorClient implements FacilitatorClient {
     paymentPayload: PaymentPayload,
     paymentRequirements: PaymentRequirements,
   ): Promise<SettleResponse> {
+    const settleUrl = `${this.url}/settle`;
     let headers: Record<string, string> = {
       "Content-Type": "application/json",
     };
@@ -269,7 +305,7 @@ export class HTTPFacilitatorClient implements FacilitatorClient {
       headers = { ...headers, ...authHeaders.headers };
     }
 
-    const response = await fetch(`${this.url}/settle`, {
+    const response = await this.fetchWithContext("settle", settleUrl, {
       method: "POST",
       headers,
       redirect: "follow",
@@ -308,6 +344,7 @@ export class HTTPFacilitatorClient implements FacilitatorClient {
    * @returns Supported payment kinds and extensions
    */
   async getSupported(): Promise<SupportedResponse> {
+    const supportedUrl = `${this.url}/supported`;
     let headers: Record<string, string> = {
       "Content-Type": "application/json",
     };
@@ -319,7 +356,7 @@ export class HTTPFacilitatorClient implements FacilitatorClient {
 
     let lastError: Error | null = null;
     for (let attempt = 0; attempt < GET_SUPPORTED_RETRIES; attempt++) {
-      const response = await fetch(`${this.url}/supported`, {
+      const response = await this.fetchWithContext("supported", supportedUrl, {
         method: "GET",
         headers,
         redirect: "follow",
@@ -357,17 +394,41 @@ export class HTTPFacilitatorClient implements FacilitatorClient {
     headers: Record<string, string>;
   }> {
     if (this._createAuthHeaders) {
-      const authHeaders = (await this._createAuthHeaders()) as Record<
-        string,
-        Record<string, string>
-      >;
-      return {
-        headers: authHeaders[path] ?? {},
-      };
+      try {
+        const authHeaders = (await this._createAuthHeaders()) as Record<
+          string,
+          Record<string, string>
+        >;
+        return {
+          headers: authHeaders[path] ?? {},
+        };
+      } catch (error) {
+        throw contextualError(`Facilitator ${path} auth header setup failed`, error);
+      }
     }
     return {
       headers: {},
     };
+  }
+
+  /**
+   * Executes a facilitator HTTP request with operation-specific transport context.
+   *
+   * @param operation - The facilitator operation name
+   * @param url - The request URL
+   * @param init - The fetch request options
+   * @returns The HTTP response
+   */
+  private async fetchWithContext(
+    operation: "verify" | "settle" | "supported",
+    url: string,
+    init: RequestInit,
+  ): Promise<Response> {
+    try {
+      return await fetch(url, init);
+    } catch (error) {
+      throw contextualError(`Facilitator ${operation} request to ${url} failed`, error);
+    }
   }
 
   /**
