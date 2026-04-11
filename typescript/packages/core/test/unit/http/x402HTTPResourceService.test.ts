@@ -633,6 +633,86 @@ describe("x402HTTPResourceServer", () => {
   });
 
   describe("Payment processing", () => {
+    it("should return 400 and skip payment processing for malformed PAYMENT-SIGNATURE headers", async () => {
+      let priceResolved = false;
+
+      const routes = {
+        "/api/test": {
+          accepts: {
+            scheme: "exact",
+            payTo: "0xabc",
+            price: async () => {
+              priceResolved = true;
+              return "$1.00" as Price;
+            },
+            network: "eip155:8453" as Network,
+          },
+        },
+      };
+
+      const httpServer = new x402HTTPResourceServer(ResourceServer, routes);
+      const adapter = new MockHTTPAdapter({
+        "payment-signature": "not-base64!",
+      });
+      const context: HTTPRequestContext = {
+        adapter,
+        path: "/api/test",
+        method: "GET",
+      };
+
+      const result = await httpServer.processHTTPRequest(context);
+
+      expect(priceResolved).toBe(false);
+      expect(mockFacilitator.verifyCalls.length).toBe(0);
+      expect(result.type).toBe("payment-error");
+      if (result.type === "payment-error") {
+        expect(result.response.status).toBe(400);
+        expect(result.response.headers["Content-Type"]).toBe("application/json");
+        expect(result.response.headers["PAYMENT-REQUIRED"]).toBeUndefined();
+        expect(result.response.body).toEqual({ error: "Invalid PAYMENT-SIGNATURE header" });
+      }
+    });
+
+    it("should return 400 for decoded payment headers that fail schema validation", async () => {
+      const routes = {
+        "/api/test": {
+          accepts: {
+            scheme: "exact",
+            payTo: "0xabc",
+            price: "$1.00" as Price,
+            network: "eip155:8453" as Network,
+          },
+        },
+      };
+
+      const httpServer = new x402HTTPResourceServer(ResourceServer, routes);
+      const invalidPaymentHeader = Buffer.from(
+        JSON.stringify({
+          x402Version: 2,
+          payload: {},
+        }),
+        "utf8",
+      ).toString("base64");
+
+      const adapter = new MockHTTPAdapter({
+        "payment-signature": invalidPaymentHeader,
+      });
+      const context: HTTPRequestContext = {
+        adapter,
+        path: "/api/test",
+        method: "GET",
+      };
+
+      const result = await httpServer.processHTTPRequest(context);
+
+      expect(mockFacilitator.verifyCalls.length).toBe(0);
+      expect(result.type).toBe("payment-error");
+      if (result.type === "payment-error") {
+        expect(result.response.status).toBe(400);
+        expect(result.response.body).toEqual({ error: "Invalid PAYMENT-SIGNATURE header" });
+      }
+    });
+
     it("should return payment-error if no payment provided", async () => {
       const routes = {
         "/api/test": {
