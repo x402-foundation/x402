@@ -68,7 +68,7 @@ Networks with default assets configured:
 - **MegaETH Mainnet**: `eip155:4326` (MegaUSD)
 - **Monad Mainnet**: `eip155:143` (USDC)
 
-To add default asset support for additional chains, see [DEFAULT_ASSET.md](./DEFAULT_ASSET.md).
+To add default asset support for additional chains, see [DEFAULT_ASSETS.md](../../../DEFAULT_ASSETS.md).
 
 ## Scheme Implementation
 

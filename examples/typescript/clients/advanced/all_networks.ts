@@ -5,23 +5,26 @@
  * optional chain configuration via environment variables.
  *
  * New chain support should be added here in alphabetic order by network prefix
- * (e.g., "eip155" before "solana" before "stellar").
+ * (e.g., "algorand" before "eip155" before "solana").
  */
 
 import { config } from "dotenv";
 import { x402Client, wrapFetchWithPayment, x402HTTPClient } from "@x402/fetch";
+import { toClientAvmSigner } from "@x402/avm";
+import { ExactAvmScheme } from "@x402/avm/exact/client";
 import { ExactEvmScheme } from "@x402/evm/exact/client";
 import { UptoEvmScheme } from "@x402/evm/upto/client";
 import { ExactSvmScheme } from "@x402/svm/exact/client";
 import { ExactStellarScheme } from "@x402/stellar/exact/client";
 import { createEd25519Signer } from "@x402/stellar";
-import { privateKeyToAccount } from "viem/accounts";
-import { createKeyPairSignerFromBytes } from "@solana/kit";
 import { base58 } from "@scure/base";
+import { createKeyPairSignerFromBytes } from "@solana/kit";
+import { privateKeyToAccount } from "viem/accounts";
 
 config();
 
 // Configuration - optional per network
+const avmPrivateKey = process.env.AVM_PRIVATE_KEY as string | undefined;
 const evmPrivateKey = process.env.EVM_PRIVATE_KEY as `0x${string}` | undefined;
 const svmPrivateKey = process.env.SVM_PRIVATE_KEY as string | undefined;
 const stellarPrivateKey = process.env.STELLAR_PRIVATE_KEY as string | undefined;
@@ -35,15 +38,22 @@ const url = `${baseURL}${endpointPath}`;
  */
 async function main(): Promise<void> {
   // Validate at least one private key is provided
-  if (!evmPrivateKey && !svmPrivateKey && !stellarPrivateKey) {
+  if (!avmPrivateKey && !evmPrivateKey && !svmPrivateKey && !stellarPrivateKey) {
     console.error(
-      "❌ At least one of EVM_PRIVATE_KEY, SVM_PRIVATE_KEY, or STELLAR_PRIVATE_KEY is required",
+      "❌ At least one of AVM_PRIVATE_KEY, EVM_PRIVATE_KEY, SVM_PRIVATE_KEY, or STELLAR_PRIVATE_KEY is required",
     );
     process.exit(1);
   }
 
   // Create x402 client
   const client = new x402Client();
+
+  // Register AVM scheme if private key is provided
+  if (avmPrivateKey) {
+    const avmSigner = toClientAvmSigner(avmPrivateKey);
+    client.register("algorand:*", new ExactAvmScheme(avmSigner));
+    console.log(`Initialized AVM account: ${avmSigner.address}`);
+  }
 
   // Register EVM scheme if private key is provided
   if (evmPrivateKey) {

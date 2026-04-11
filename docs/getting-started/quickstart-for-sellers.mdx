@@ -47,7 +47,14 @@ There are pre-configured examples available in the x402 repo for both [Node.js](
     npm install @x402/fastify @x402/core @x402/evm @x402/svm
     ```
   </Tab>
-  <Tab title="Go">
+  <Tab title="Go (Gin)">
+    Add the x402 Go module to your project:
+
+    ```bash
+    go get github.com/x402-foundation/x402/go
+    ```
+  </Tab>
+  <Tab title="Go (Echo)">
     Add the x402 Go module to your project:
 
     ```bash
@@ -515,6 +522,79 @@ Integrate the payment middleware into your application. You will need to provide
     }
     ```
   </Tab>
+  <Tab title="Go (Echo)">
+    Full example in the repo [here](https://github.com/x402-foundation/x402/tree/main/examples/go/servers/echo).
+
+    ```go
+    package main
+
+    import (
+        "net/http"
+        "time"
+
+        x402 "github.com/x402-foundation/x402/go"
+        x402http "github.com/x402-foundation/x402/go/http"
+        echomw "github.com/x402-foundation/x402/go/http/echo"
+        evm "github.com/x402-foundation/x402/go/mechanisms/evm/exact/server"
+        svm "github.com/x402-foundation/x402/go/mechanisms/svm/exact/server"
+        "github.com/labstack/echo/v4"
+    )
+
+    func main() {
+        evmAddress := "0xYourEvmAddress"
+        svmAddress := "YourSolanaAddress"
+        evmNetwork := x402.Network("eip155:84532")                              // Base Sepolia
+        svmNetwork := x402.Network("solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1")  // Solana Devnet
+
+        e := echo.New()
+
+        // Create facilitator client
+        facilitatorClient := x402http.NewHTTPFacilitatorClient(&x402http.FacilitatorConfig{
+            URL: "https://x402.org/facilitator",
+        })
+
+        // Apply x402 payment middleware
+        e.Use(echomw.X402Payment(echomw.Config{
+            Routes: x402http.RoutesConfig{
+                "GET /weather": {
+                    Accepts: x402http.PaymentOptions{
+                        {
+                            Scheme:  "exact",
+                            Price:   "$0.001",
+                            Network: "eip155:84532",
+                            PayTo:   evmAddress,
+                        },
+                        {
+                            Scheme:  "exact",
+                            Price:   "$0.001",
+                            Network: "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1",
+                            PayTo:   svmAddress,
+                        },
+                    },
+                    Description: "Get weather data for a city",
+                    MimeType:    "application/json",
+                },
+            },
+            Facilitator: facilitatorClient,
+            Schemes: []echomw.SchemeConfig{
+                {Network: evmNetwork, Server: evm.NewExactEvmScheme()},
+                {Network: svmNetwork, Server: svm.NewExactSvmScheme()},
+            },
+            Timeout: 30 * time.Second,
+        }))
+
+        // Protected endpoint
+        e.GET("/weather", func(c echo.Context) error {
+            return c.JSON(http.StatusOK, map[string]interface{}{
+                "weather":     "sunny",
+                "temperature": 70,
+            })
+        })
+
+        e.Start(":4021")
+    }
+    ```
+  </Tab>
   <Tab title="FastAPI">
     Full example in the repo [here](https://github.com/x402-foundation/x402/tree/main/examples/python/servers/fastapi).
 
@@ -907,7 +987,15 @@ For mainnet, use a production facilitator. See the [x402 Ecosystem](https://www.
     });
     ```
   </Tab>
-  <Tab title="Go">
+  <Tab title="Go (Gin)">
+    ```go
+    facilitatorClient := x402http.NewHTTPFacilitatorClient(&x402http.FacilitatorConfig{
+        URL: "https://api.cdp.coinbase.com/platform/v2/x402",
+        // URL: "https://facilitator.payai.network",  // PayAI Facilitator
+    })
+    ```
+  </Tab>
+  <Tab title="Go (Echo)">
     ```go
     facilitatorClient := x402http.NewHTTPFacilitatorClient(&x402http.FacilitatorConfig{
         URL: "https://api.cdp.coinbase.com/platform/v2/x402",
@@ -998,7 +1086,7 @@ For multi-network support, register both EVM and SVM schemes:
     server.register("solana:*", new ExactSvmScheme());
     ```
   </Tab>
-  <Tab title="Go">
+  <Tab title="Go (Gin)">
     ```go
     import (
         evm "github.com/x402-foundation/x402/go/mechanisms/evm/exact/server"
@@ -1008,6 +1096,22 @@ For multi-network support, register both EVM and SVM schemes:
     r.Use(ginmw.X402Payment(ginmw.Config{
         // ...
         Schemes: []ginmw.SchemeConfig{
+            {Network: x402.Network("eip155:8453"), Server: evm.NewExactEvmScheme()},
+            {Network: x402.Network("solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp"), Server: svm.NewExactSvmScheme()},
+        },
+    }))
+    ```
+  </Tab>
+  <Tab title="Go (Echo)">
+    ```go
+    import (
+        evm "github.com/coinbase/x402/go/mechanisms/evm/exact/server"
+        svm "github.com/coinbase/x402/go/mechanisms/svm/exact/server"
+    )
+
+    e.Use(echomw.X402Payment(echomw.Config{
+        // ...
+        Schemes: []echomw.SchemeConfig{
             {Network: x402.Network("eip155:8453"), Server: evm.NewExactEvmScheme()},
             {Network: x402.Network("solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp"), Server: svm.NewExactSvmScheme()},
         },

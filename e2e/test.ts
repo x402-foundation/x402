@@ -383,14 +383,17 @@ async function runTest() {
   // Load configuration from environment
   const serverEvmAddress = process.env.SERVER_EVM_ADDRESS;
   const serverSvmAddress = process.env.SERVER_SVM_ADDRESS;
+  const serverAvmAddress = process.env.SERVER_AVM_ADDRESS;
   const serverAptosAddress = process.env.SERVER_APTOS_ADDRESS;
   const serverStellarAddress = process.env.SERVER_STELLAR_ADDRESS;
   const clientEvmPrivateKey = process.env.CLIENT_EVM_PRIVATE_KEY;
   const clientSvmPrivateKey = process.env.CLIENT_SVM_PRIVATE_KEY;
+  const clientAvmPrivateKey = process.env.CLIENT_AVM_PRIVATE_KEY;
   const clientAptosPrivateKey = process.env.CLIENT_APTOS_PRIVATE_KEY;
   const clientStellarPrivateKey = process.env.CLIENT_STELLAR_PRIVATE_KEY;
   const facilitatorEvmPrivateKey = process.env.FACILITATOR_EVM_PRIVATE_KEY;
   const facilitatorSvmPrivateKey = process.env.FACILITATOR_SVM_PRIVATE_KEY;
+  const facilitatorAvmPrivateKey = process.env.FACILITATOR_AVM_PRIVATE_KEY;
   const facilitatorAptosPrivateKey = process.env.FACILITATOR_APTOS_PRIVATE_KEY;
   const facilitatorStellarPrivateKey = process.env.FACILITATOR_STELLAR_PRIVATE_KEY;
   if (!serverEvmAddress || !serverSvmAddress || !clientEvmPrivateKey || !clientSvmPrivateKey || !facilitatorEvmPrivateKey || !facilitatorSvmPrivateKey) {
@@ -768,6 +771,7 @@ async function runTest() {
     const clientConfig: ClientConfig = {
       evmPrivateKey: clientEvmPrivateKey!,
       svmPrivateKey: clientSvmPrivateKey!,
+      avmPrivateKey: clientAvmPrivateKey || '',
       aptosPrivateKey: clientAptosPrivateKey || '',
       stellarPrivateKey: clientStellarPrivateKey || '',
       serverUrl: `http://localhost:${port}`,
@@ -850,6 +854,7 @@ async function runTest() {
     cLog.log(`🚀 Starting server: ${serverName} (port ${port}) with facilitator: ${facilitatorName || 'none'}`);
 
     const facilitatorConfig = facilitatorName ? uniqueFacilitators.get(facilitatorName)?.config : undefined;
+    const facilitatorSupportsAvm = facilitatorConfig?.protocolFamilies?.includes('avm') ?? false;
     const facilitatorSupportsAptos = facilitatorConfig?.protocolFamilies?.includes('aptos') ?? false;
     const facilitatorSupportsStellar = facilitatorConfig?.protocolFamilies?.includes('stellar') ?? false;
 
@@ -857,6 +862,7 @@ async function runTest() {
       port,
       evmPayTo: serverEvmAddress!,
       svmPayTo: serverSvmAddress!,
+      avmPayTo: facilitatorSupportsAvm ? (serverAvmAddress || '') : '',
       aptosPayTo: facilitatorSupportsAptos ? (serverAptosAddress || '') : '',
       stellarPayTo: facilitatorSupportsStellar ? (serverStellarAddress || '') : '',
       networks,
@@ -913,6 +919,8 @@ async function runTest() {
           }
         }
 
+        const isAvm = scenario.protocolFamily === 'avm';
+
         if (isEvm && facilitatorName && evmLock) {
           const releaseLock = await evmLock.acquire(facilitatorName);
           try {
@@ -923,6 +931,10 @@ async function runTest() {
           }
         } else {
           results.push(await runSingleTest(scenario, port, tn, cLog));
+          if (isAvm) {
+            // Pause between AVM tests to avoid 403 rate limiting on free public Algorand nodes
+            await new Promise(resolve => setTimeout(resolve, 8000));
+          }
         }
       }
     } finally {

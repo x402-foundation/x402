@@ -91,6 +91,7 @@ func ValidateDiscoveryExtension(extension types.DiscoveryExtension) ValidationRe
 type DiscoveredResource struct {
 	ResourceURL   string
 	Method        string
+	ToolName      string
 	X402Version   int
 	DiscoveryInfo *types.DiscoveryInfo
 	Description   string
@@ -224,17 +225,20 @@ func ExtractDiscoveredResourceFromPaymentPayload(
 		return nil, nil
 	}
 
-	// Extract method from discovery info
-	method := "UNKNOWN"
+	// Extract method or toolName from discovery info
+	method := ""
+	toolName := ""
 	switch input := discoveryInfo.Input.(type) {
 	case types.QueryInput:
 		method = string(input.Method)
 	case types.BodyInput:
 		method = string(input.Method)
+	case types.McpInput:
+		toolName = input.ToolName
 	}
 
-	if method == "UNKNOWN" {
-		return nil, fmt.Errorf("failed to extract method from discovery info")
+	if method == "" && toolName == "" {
+		return nil, fmt.Errorf("failed to extract method/toolName from discovery info")
 	}
 
 	normalizedURL := normalizeResourceURL(resourceURL, routeTemplate)
@@ -244,6 +248,7 @@ func ExtractDiscoveredResourceFromPaymentPayload(
 		Description:   description,
 		MimeType:      mimeType,
 		Method:        method,
+		ToolName:      toolName,
 		X402Version:   version,
 		DiscoveryInfo: discoveryInfo,
 		RouteTemplate: routeTemplate,
@@ -448,17 +453,20 @@ func ExtractDiscoveredResourceFromPaymentRequired(
 		return nil, nil
 	}
 
-	// Extract method from discovery info
-	method := "UNKNOWN"
+	// Extract method or toolName from discovery info
+	method := ""
+	toolName := ""
 	switch input := discoveryInfo.Input.(type) {
 	case types.QueryInput:
 		method = string(input.Method)
 	case types.BodyInput:
 		method = string(input.Method)
+	case types.McpInput:
+		toolName = input.ToolName
 	}
 
-	if method == "UNKNOWN" {
-		return nil, fmt.Errorf("failed to extract method from discovery info")
+	if method == "" && toolName == "" {
+		return nil, fmt.Errorf("failed to extract method/toolName from discovery info")
 	}
 
 	normalizedURL := normalizeResourceURL(resourceURL, routeTemplate)
@@ -468,6 +476,7 @@ func ExtractDiscoveredResourceFromPaymentRequired(
 		Description:   description,
 		MimeType:      mimeType,
 		Method:        method,
+		ToolName:      toolName,
 		X402Version:   version,
 		DiscoveryInfo: discoveryInfo,
 		RouteTemplate: routeTemplate,

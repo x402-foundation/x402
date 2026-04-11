@@ -502,6 +502,129 @@ func TestNewPaymentWrapper_HookErrors_NonFatal(t *testing.T) {
 	}
 }
 
+func TestNewPaymentWrapper_ExtensionsIncludedIn402(t *testing.T) {
+	server := x402.Newx402ResourceServer()
+
+	extensions := map[string]interface{}{
+		"bazaar": map[string]interface{}{
+			"info": map[string]interface{}{
+				"input": map[string]interface{}{
+					"type":     "mcp",
+					"toolName": "get_weather",
+				},
+			},
+		},
+	}
+
+	config := PaymentWrapperConfig{
+		Accepts: []types.PaymentRequirements{
+			{Scheme: "cash", Network: "x402:cash", Amount: "1000", PayTo: "test-recipient"},
+		},
+		Extensions: extensions,
+	}
+
+	wrapper := NewPaymentWrapper(server, config)
+	handler := func(ctx context.Context, request *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		return &mcp.CallToolResult{}, nil
+	}
+	wrapped := wrapper.Wrap(handler)
+
+	ctx := context.Background()
+	req := makeCallToolRequest(map[string]interface{}{}, mcp.Meta{})
+	result, err := wrapped(ctx, req)
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	if !result.IsError {
+		t.Error("Expected error result for missing payment")
+	}
+
+	// Verify structuredContent contains extensions.bazaar
+	if result.StructuredContent == nil {
+		t.Fatal("Expected structuredContent to be set")
+	}
+	sc, ok := result.StructuredContent.(map[string]interface{})
+	if !ok {
+		t.Fatalf("Expected structuredContent to be a map, got %T", result.StructuredContent)
+	}
+	extRaw, ok := sc["extensions"]
+	if !ok {
+		t.Fatal("Expected 'extensions' key in structuredContent")
+	}
+	extMap, ok := extRaw.(map[string]interface{})
+	if !ok {
+		t.Fatalf("Expected extensions to be a map, got %T", extRaw)
+	}
+	bazaarRaw, ok := extMap["bazaar"]
+	if !ok {
+		t.Fatal("Expected 'bazaar' key in extensions")
+	}
+	bazaarMap, ok := bazaarRaw.(map[string]interface{})
+	if !ok {
+		t.Fatalf("Expected bazaar to be a map, got %T", bazaarRaw)
+	}
+	infoRaw, ok := bazaarMap["info"]
+	if !ok {
+		t.Fatal("Expected 'info' key in bazaar extension")
+	}
+	infoMap, ok := infoRaw.(map[string]interface{})
+	if !ok {
+		t.Fatalf("Expected info to be a map, got %T", infoRaw)
+	}
+	inputRaw, ok := infoMap["input"]
+	if !ok {
+		t.Fatal("Expected 'input' key in bazaar info")
+	}
+	inputMap, ok := inputRaw.(map[string]interface{})
+	if !ok {
+		t.Fatalf("Expected input to be a map, got %T", inputRaw)
+	}
+	if inputMap["toolName"] != "get_weather" {
+		t.Errorf("Expected toolName 'get_weather', got '%v'", inputMap["toolName"])
+	}
+}
+
+func TestNewPaymentWrapper_NilExtensionsOmitted(t *testing.T) {
+	server := x402.Newx402ResourceServer()
+
+	config := PaymentWrapperConfig{
+		Accepts: []types.PaymentRequirements{
+			{Scheme: "cash", Network: "x402:cash", Amount: "1000", PayTo: "test-recipient"},
+		},
+		// Extensions not set (nil)
+	}
+
+	wrapper := NewPaymentWrapper(server, config)
+	handler := func(ctx context.Context, request *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		return &mcp.CallToolResult{}, nil
+	}
+	wrapped := wrapper.Wrap(handler)
+
+	ctx := context.Background()
+	req := makeCallToolRequest(map[string]interface{}{}, mcp.Meta{})
+	result, err := wrapped(ctx, req)
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	if !result.IsError {
+		t.Error("Expected error result for missing payment")
+	}
+
+	// Verify structuredContent does NOT contain "extensions" key
+	if result.StructuredContent == nil {
+		t.Fatal("Expected structuredContent to be set")
+	}
+	sc, ok := result.StructuredContent.(map[string]interface{})
+	if !ok {
+		t.Fatalf("Expected structuredContent to be a map, got %T", result.StructuredContent)
+	}
+	if _, ok := sc["extensions"]; ok {
+		t.Error("Expected 'extensions' key to be absent when Extensions is nil")
+	}
+}
+
 func TestNewPaymentWrapper_SettlementFailure(t *testing.T) {
 	mockFacilitator := &mockFacilitatorClient{
 		settleFunc: func(ctx context.Context, payloadBytes []byte, requirementsBytes []byte) (*x402.SettleResponse, error) {

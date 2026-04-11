@@ -3,66 +3,29 @@ title: "Networks & Token Support"
 description: "This page explains which blockchain networks and tokens are supported by x402, and how to extend support to additional networks."
 ---
 
-## V2 Network Identifiers (CAIP-2)
+## Network Identifiers (CAIP-2)
 
-x402 V2 uses [CAIP-2](https://chainagnostic.org/CAIPs/caip-2) standard network identifiers for unambiguous cross-chain support. This format follows the pattern `namespace:reference`.
+x402 uses [CAIP-2](https://chainagnostic.org/CAIPs/caip-2) standard network identifiers (`namespace:reference`) for unambiguous cross-chain support:
 
-### Network Identifier Reference
+- **EVM networks**: `eip155:<chainId>` — any EVM chain is supported (e.g., `eip155:8453` for Base)
+- **Solana**: `solana:<genesisHash>` (first 32 bytes of the genesis block hash)
+- **Stellar**: `stellar:<network>` (`pubnet` or `testnet`)
+- **Aptos**: `aptos:<chainId>` (e.g., `aptos:1` for mainnet)
 
-| V1 Name | V2 CAIP-2 ID | Chain ID | Description |
-|---------|--------------|----------|-------------|
-| `base` | `eip155:8453` | 8453 | Base mainnet |
-| `base-sepolia` | `eip155:84532` | 84532 | Base Sepolia testnet |
-| `solana` | `solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp` | - | Solana mainnet |
-| `solana-devnet` | `solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1` | - | Solana Devnet |
-| - | `aptos:1` | 1 | Aptos Mainnet |
-| - | `aptos:2` | 2 | Aptos Testnet |
-| - | `stellar:pubnet` | - | Stellar Mainnet |
-| - | `stellar:testnet` | - | Stellar Testnet |
-| `avalanche` | `eip155:43114` | 43114 | Avalanche C-Chain mainnet |
-| `avalanche-fuji` | `eip155:43113` | 43113 | Avalanche Fuji testnet |
-| `polygon` | `eip155:137` | 137 | Polygon mainnet |
-| `polygon-amoy` | `eip155:80002` | 80002 | Polygon Amoy testnet |
-| `sei` | `eip155:1329` | 1329 | Sei mainnet |
-| `sei-testnet` | `eip155:713715` | 713715 | Sei testnet |
-| `skale-base` | `eip155:1187947933` | 1187947933 | SKALE mainnet |
-| `skale-base-sepolia` | `eip155:324705682` | 324705682 | SKALE testnet |
-
-### Format Explanation
-- **EVM networks**: `eip155:<chainId>` where chainId is the numeric chain identifier
-- **Solana**: `solana:<genesisHash>` where genesisHash is the first 32 bytes of the genesis block hash
-- **Stellar**: `stellar:<network>` where network is `pubnet` (mainnet) or `testnet`
-- **Aptos**: `aptos:<chainId>` where chainId is the numeric chain identifier
-
-## Overview
-
-x402 is designed to work across multiple blockchain networks, with different levels of support depending on the facilitator being used. The protocol itself is network-agnostic, but facilitators need to implement network-specific logic for payment verification and settlement.
-
-### Supported Facilitators
-
-Network support in x402 depends on which facilitator you use. For a complete and up-to-date list of available facilitators and their supported networks, see the [x402 Ecosystem](https://www.x402.org/ecosystem?filter=facilitators).
-
-#### x402.org Facilitator
-
-* **Supports**: `eip155:84532` (Base Sepolia), `solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1` (Solana Devnet)
-* **Notes**: Recommended for testing and development. This is the default facilitator in the x402 packages and requires no setup.
-
-#### Production Facilitators
-
-Multiple production-ready facilitators are available supporting various networks including Base, Solana, Polygon, Avalanche, and more. See the [x402 Ecosystem](https://www.x402.org/ecosystem?filter=facilitators) for available options and their documentation.
-
-### Token Support
+## Token Support
 
 x402 supports tokens on EVM, Solana, Stellar, and Aptos networks:
 
-* **EVM**: Any ERC-20 token (via EIP-3009 or Permit2)
-* **Solana**: Any SPL or token-2022 token
-* **Stellar**: Any Soroban token implementing SEP-41
-* **Aptos**: Any fungible asset using Aptos's native fungible asset framework
+| Ecosystem | Supported Tokens | Transfer Method |
+|-----------|------------------|-----------------|
+| **EVM** | Any ERC-20 token | EIP-3009 or Permit2 |
+| **Solana** | Any SPL or Token-2022 token | SPL Transfer |
+| **Stellar** | Any Soroban token implementing SEP-41 | `transfer(from, to, amount)` |
+| **Aptos** | Any fungible asset | `primary_fungible_store::transfer` |
 
-**Important**: Facilitators support networks, not specific tokens — any ERC-20 token works on EVM networks (via EIP-3009 or Permit2), any SPL/token-2022 token works on Solana, any SEP-41 token works on Stellar, and any fungible asset works on Aptos, for the facilitators that support those networks.
+Facilitators support **networks**, not specific tokens — any compatible token works on any facilitator that supports that network.
 
-#### EVM: Asset Transfer Methods
+### EVM: Asset Transfer Methods
 
 x402 supports two asset transfer methods on EVM, selected automatically based on token capabilities:
 
@@ -71,24 +34,18 @@ x402 supports two asset transfer methods on EVM, selected automatically based on
 | **EIP-3009** | Tokens with `transferWithAuthorization` (e.g., USDC) | Single off-chain signature, simplest flow |
 | **Permit2** | Any ERC-20 token | Uses Uniswap's [Permit2](https://docs.uniswap.org/contracts/v4/deployments) contract + `x402ExactPermit2Proxy` |
 
-Both methods provide:
+Both methods provide gasless transfers (facilitator sponsors gas), signature-based authorization, and secure payments. EIP-3009 is preferred when available (simpler, no approval step). Permit2 serves as the universal fallback.
 
-* **Gasless transfers**: The facilitator sponsors gas for the payment itself. For Permit2, the one-time approval step can also be made gasless via optional [gas sponsoring extensions](/extensions/eip2612-gas-sponsoring)
-* **Signature-based authorization**: Users sign transfer authorizations off-chain
-* **Secure payments**: Transfers are authorized by cryptographic signatures
+**Permit2 approval**: Requires a one-time on-chain approval. x402 supports two gas sponsoring extensions that make this step gasless — see [EIP-2612 Gas Sponsoring](/extensions/eip2612-gas-sponsoring) and [ERC-20 Approval Gas Sponsoring](/extensions/erc20-approval-gas-sponsoring).
 
-EIP-3009 is preferred when available (simpler, no approval step). Permit2 serves as the universal fallback, enabling any ERC-20 token to work with x402.
-
-**Permit2 approval**: Permit2 requires a one-time on-chain approval of the Permit2 contract. x402 supports two gas sponsoring extensions that make this step gasless — see [EIP-2612 Gas Sponsoring](/extensions/eip2612-gas-sponsoring) and [ERC-20 Approval Gas Sponsoring](/extensions/erc20-approval-gas-sponsoring).
-
-#### Specifying Payment Amounts
+### Specifying Payment Amounts
 
 When configuring payment requirements, you have two options:
 
-1. **Price String** (e.g., `"$0.01"`) - The system infers USDC as the token
-2. **TokenAmount** - Specify exact atomic units of any ERC-20 token
+1. **Price String** (e.g., `"$0.01"`) — The system uses the chain's [default stablecoin](#default-assets-for-dollar-string-pricing). Only works on chains with a configured default.
+2. **TokenAmount** — Specify exact `amountInAtomicUnits` + asset address. Works on **any chain** with no configuration needed.
 
-#### Using Custom ERC-20 Tokens
+### Using Custom ERC-20 Tokens
 
 To use a custom ERC-20 token, you need three key pieces of information:
 
@@ -96,9 +53,7 @@ To use a custom ERC-20 token, you need three key pieces of information:
 2. **EIP-712 Name**: The token's name for EIP-712 signatures
 3. **EIP-712 Version**: The token's version for EIP-712 signatures
 
-**Finding Token Information on Basescan**
-
-You can retrieve the required EIP-712 values from any block explorer:
+You can retrieve these from any block explorer:
 
 1. **Name**: Read the `name()` function - [Example on Basescan](https://basescan.org/token/0x833589fcd6edb6e08f4c7c32d4f71b54bda02913#readProxyContract#F16)
 2. **Version**: Read the `version()` function - [Example on Basescan](https://basescan.org/token/0x833589fcd6edb6e08f4c7c32d4f71b54bda02913#readProxyContract#F24)
@@ -114,47 +69,74 @@ These values are used in the `eip712` nested object when configuring TokenAmount
 }
 ```
 
-#### Solana: SPL Tokens & Token 2022 Tokens
+## Default Assets for Dollar-String Pricing
 
-On Solana, x402 supports all SPL tokens and Token 2022 tokens. When using facilitators that support Solana or Solana Devnet, payments can be made in any SPL/token-2022 token, including USDC (SPL). No EIP-712 configuration is required on Solana.
+When you use `"$0.01"` syntax, x402 needs to know which stablecoin to use. The following chains have pre-configured defaults. For chains not listed, use `registerMoneyParser()` or specify the price directly as a `TokenAmount` with `amountInAtomicUnits`.
 
-#### Stellar: Soroban Tokens
+See [DEFAULT_ASSETS.md](/DEFAULT_ASSETS.md) for how to contribute a new default.
 
-On Stellar, x402 supports all Soroban tokens implementing [SEP-41](https://github.com/stellar/stellar-protocol/blob/master/ecosystem/sep-0041.md). Payments use the `transfer(from, to, amount)` function. The TypeScript SDK supports sponsored transactions where facilitators pay gas fees on behalf of clients. Stellar uses ledger-based expiration (default ~12 ledgers ≈ 60 seconds) instead of timestamps.
+### EVM
 
-#### Aptos: Fungible Assets
+| Chain | CAIP-2 | Token Address | EIP-712 Name | Decimals | Transfer Method |
+|-------|--------|---------------|--------------|----------|-----------------|
+| Base | `eip155:8453` | `0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913` | USD Coin | 6 | EIP-3009 |
+| Base Sepolia | `eip155:84532` | `0x036CbD53842c5426634e7929541eC2318f3dCF7e` | USDC | 6 | EIP-3009 |
+| Polygon | `eip155:137` | `0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359` | USD Coin | 6 | EIP-3009 |
+| Arbitrum One | `eip155:42161` | `0xaf88d065e77c8cC2239327C5EDb3A432268e5831` | USD Coin | 6 | EIP-3009 |
+| Arbitrum Sepolia | `eip155:421614` | `0x75faf114eafb1BDbe2F0316DF893fd58CE46AA4d` | USD Coin | 6 | EIP-3009 |
+| Monad | `eip155:143` | `0x754704Bc059F8C67012fEd69BC8A327a5aafb603` | USD Coin | 6 | EIP-3009 |
+| Stable | `eip155:988` | `0x779Ded0c9e1022225f8E0630b35a9b54bE713736` | USDT0 | 6 | EIP-3009 |
+| Stable Testnet | `eip155:2201` | `0x78Cf24370174180738C5B8E352B6D14c83a6c9A9` | USDT0 | 6 | EIP-3009 |
+| MegaETH | `eip155:4326` | `0xFAfDdbb3FC7688494971a79cc65DCa3EF82079E7` | MegaUSD | 18 | Permit2 + EIP-2612 |
+| Mezo Testnet | `eip155:31611` | `0x118917a40FAf1CD7a13dB0Ef56C86De7973Ac503` | Mezo USD | 18 | Permit2 + EIP-2612 |
 
-On Aptos, x402 supports all fungible assets using Aptos's native fungible asset framework. Payments use the `primary_fungible_store::transfer` function for automatic store creation and management. The TypeScript SDK supports sponsored transactions where facilitators pay gas fees on behalf of clients.
 
-#### Default Tokens
 
-Each network defines its own default token. When you use a price string (e.g., `"$0.01"`), the system uses the network's configured default. USDC is the default on most EVM networks because it implements EIP-3009 (simplest flow) and is widely available, but other networks may define different defaults.
+### Solana (SVM)
 
-#### Why EIP-3009 + Permit2?
+| Chain | CAIP-2 | Token Mint | Decimals |
+|-------|--------|------------|----------|
+| Solana Mainnet | `solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp` | `EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v` (USDC) | 6 |
+| Solana Devnet | `solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1` | `4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU` (USDC) | 6 |
 
-These two transfer methods together give x402 full ERC-20 coverage on EVM:
+### Stellar
 
-1. **Gas abstraction**: Buyers don't need native tokens (ETH, MATIC, etc.) for gas
-2. **EIP-3009**: One-step payments with no approval needed — ideal for tokens like USDC
-3. **Permit2**: Universal fallback for any ERC-20 token, with optional gas-sponsored approval via [extensions](/extensions/eip2612-gas-sponsoring)
+| Chain | CAIP-2 | Token Contract | Decimals |
+|-------|--------|---------------|----------|
+| Stellar Pubnet | `stellar:pubnet` | `CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75` (USDC) | 7 |
+| Stellar Testnet | `stellar:testnet` | `CBIELTK6YBZJU5UP2WWQEUCYKLPU6AUNZ2BQ4WWFEIE3USCIHMXQDAMA` (USDC) | 7 |
+
+### Aptos
+
+| Chain | CAIP-2 | Fungible Asset Address | Decimals |
+|-------|--------|----------------------|----------|
+| Aptos Mainnet | `aptos:1` | `0xbae207659db88bea0cbead6da0ed00aac12edcdda169e591cd41c94180b46f3b` (USDC) | 6 |
+| Aptos Testnet | `aptos:2` | `0x69091fbab5f7d635ee7ac5098cf0c1efbe31d68fec0f2cd565e8d168daf52832` (USDC) | 6 |
+
+## Facilitators
+
+Network support in x402 depends on which facilitator you use. For a complete list, see the [x402 Ecosystem](https://www.x402.org/ecosystem?filter=facilitators).
+
+### x402.org Facilitator
+
+* **Supports**: `eip155:84532` (Base Sepolia), `solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1` (Solana Devnet), `stellar:testnet` (Stellar Testnet), `aptos:2` (Aptos Testnet)
+* **Notes**: Recommended for testing and development. This is the default facilitator in the x402 packages and requires no setup.
+
+### Production Facilitators
+
+Multiple production-ready facilitators are available supporting various networks including Base, Solana, Polygon, Avalanche, and more. See the [x402 Ecosystem](https://www.x402.org/ecosystem?filter=facilitators) for available options.
 
 ### Quick Reference
 
 | Facilitator Type | Networks Supported | Production Ready | Requirements |
 | ---------------- | ------------------ | ---------------- | ------------ |
-| x402.org (Default) | `eip155:84532`, `solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1` | Testnet only | None |
+| x402.org (Default) | `eip155:84532`, `solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1`, `stellar:testnet`, `aptos:2` | Testnet only | None |
 | [Production Facilitators](https://www.x402.org/ecosystem?filter=facilitators) | Various (Base, Solana, Polygon, Avalanche, etc.) | Yes | Varies |
-| Self-hosted | Any EVM network (CAIP-2 format) | Yes | Technical setup |
+| Self-hosted | Any network  | Yes | Technical setup |
 
-**Note**: On EVM networks, facilitators support any ERC-20 token (via EIP-3009 or Permit2); on Solana, facilitators support any SPL/Token-2022 token.
+## Adding Support for New Networks
 
-### Adding Support for New Networks
-
-x402 V2 uses dynamic network registration - you can support any EVM network without modifying source files.
-
-#### V2: Dynamic Registration (Recommended)
-
-In V2, networks are supported through the registration pattern using CAIP-2 identifiers. No source code changes are required:
+x402 uses dynamic network registration — you can support any EVM network without modifying source files.
 
 <Tabs>
   <Tab title="TypeScript">
@@ -167,9 +149,8 @@ In V2, networks are supported through the registration pattern using CAIP-2 iden
     });
 
     const server = new x402ResourceServer(facilitatorClient);
-    server.register("eip155:*", new ExactEvmScheme());  // Registers wildcard support for all EVM chains
+    server.register("eip155:*", new ExactEvmScheme());
 
-    // Now use any CAIP-2 network identifier in your routes:
     const routes = {
       "GET /api/data": {
         accepts: [{
@@ -193,7 +174,6 @@ In V2, networks are supported through the registration pattern using CAIP-2 iden
         URL: "https://your-facilitator.com",
     })
 
-    // Register EVM scheme - supports any CAIP-2 EVM network
     schemes := []ginmw.SchemeConfig{
         {Network: x402.Network("eip155:43114"), Server: evm.NewExactEvmScheme()},  // Avalanche
     }
@@ -206,23 +186,19 @@ In V2, networks are supported through the registration pattern using CAIP-2 iden
     from x402.mechanisms.evm.exact import ExactEvmServerScheme
     from x402.server import x402ResourceServer
 
-    # Create facilitator client for your network
     facilitator = HTTPFacilitatorClient(
         FacilitatorConfig(url="https://your-facilitator.com")
     )
 
-    # Create server and register EVM scheme for your network
     server = x402ResourceServer(facilitator)
     server.register("eip155:43114", ExactEvmServerScheme())  # Avalanche mainnet
-
-    # Now use any CAIP-2 network identifier in your routes:
     routes: dict[str, RouteConfig] = {
         "GET /api/data": RouteConfig(
             accepts=[
                 PaymentOption(
                     scheme="exact",
                     price="$0.001",
-                    network="eip155:43114",  # Avalanche mainnet
+                    network="eip155:43114",
                     pay_to="0xYourAddress",
                 ),
             ],
@@ -237,7 +213,7 @@ In V2, networks are supported through the registration pattern using CAIP-2 iden
 - The scheme implementation handles the network automatically
 - You only need a facilitator that supports your target network (or run your own)
 
-#### Running Your Own Facilitator
+### Running Your Own Facilitator
 
 If you need immediate support or want to test before contributing, you can run your own facilitator.
 
@@ -249,33 +225,19 @@ Video Guide: [Adding EVM Chains to x402](https://x.com/jaycoolh/status/192085155
 2. A wallet with native tokens for gas sponsorship
 3. The x402 facilitator code
 
-### Future Network Support
-
-The x402 ecosystem is actively expanding network support. Planned additions include:
-
-* Additional L2 networks
-* Additional non-EVM chain support
-* Cross-chain payment capabilities
-
-### Getting Help
-
-For help with network integration:
+## Getting Help
 
 * Join the [x402 Discord community](https://discord.gg/cdp)
 * Check the [x402 GitHub repository](https://github.com/x402-foundation/x402)
 
-### Summary
-
-x402's network support is designed to be extensible while maintaining security and reliability. Whether you're using the default Base Sepolia (`eip155:84532`) setup for testing or running your own facilitator for custom networks, the protocol provides flexibility for various use cases.
+## Summary
 
 Key takeaways:
 
-* Base (`eip155:8453`), Base Sepolia (`eip155:84532`), Solana (`solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp`), and Solana Devnet (`solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1`) have the best out-of-the-box support
-* Any EVM network can be supported with a custom facilitator using CAIP-2 format
-* Any ERC-20 token works on any facilitator (via EIP-3009 or Permit2)
-* Use price strings for USDC or TokenAmount for custom tokens
-* Network choice affects gas costs and payment economics
-* V2 uses CAIP-2 network identifiers for unambiguous cross-chain support
+* **Any EVM chain** is supported via `eip155:<chainId>` — plus Solana, Stellar, and Aptos
+* [Default assets](#default-assets-for-dollar-string-pricing) are a convenience for `"$0.01"` dollar-string pricing; explicit `TokenAmount` works on any chain
+* Any ERC-20 token works on any EVM facilitator (via EIP-3009 or Permit2)
+* CAIP-2 identifiers provide unambiguous cross-chain support
 
 Next, explore:
 

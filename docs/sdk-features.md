@@ -19,7 +19,7 @@ This page tracks which features are implemented in each SDK (TypeScript, Go, Pyt
 
 | Role | TypeScript | Go | Python |
 |------|------------|-----|--------|
-| Server | Express, Hono, Next.js | Gin, net/http | FastAPI, Flask |
+| Server | Express, Hono, Next.js, Fastify | Gin, net/http, Echo | FastAPI, Flask |
 | Client | Fetch, Axios | net/http | httpx, requests |
 
 ## Networks

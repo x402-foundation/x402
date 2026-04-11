@@ -10,6 +10,7 @@ import { SSEServerTransport } from "@modelcontextprotocol/sdk/server/sse.js";
 import { ExactEvmScheme } from "@x402/evm/exact/server";
 import { createPaymentWrapper, x402ResourceServer } from "@x402/mcp";
 import { HTTPFacilitatorClient } from "@x402/core/server";
+import { declareDiscoveryExtension } from "@x402/extensions/bazaar";
 import express from "express";
 import { z } from "zod";
 
@@ -60,12 +61,26 @@ async function main(): Promise<void> {
     extra: { name: "USDC", version: "2" },
   });
 
-  // Step 4: Create payment wrapper
-  const paidWeather = createPaymentWrapper(resourceServer, {
-    accepts: weatherAccepts,
+  // Step 4: Declare bazaar discovery extension for the weather tool
+  const weatherExtensions = declareDiscoveryExtension({
+    toolName: "get_weather",
+    description: "Get current weather for a city. Requires payment of $0.001.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        city: { type: "string", description: "The city name to get weather for" },
+      },
+      required: ["city"],
+    },
   });
 
-  // Step 5: Register tools
+  // Step 5: Create payment wrapper with extensions
+  const paidWeather = createPaymentWrapper(resourceServer, {
+    accepts: weatherAccepts,
+    extensions: weatherExtensions,
+  });
+
+  // Step 6: Register tools
   mcpServer.tool(
     "get_weather",
     "Get current weather for a city. Requires payment of $0.001.",

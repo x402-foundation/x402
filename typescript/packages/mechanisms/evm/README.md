@@ -145,7 +145,7 @@ Supports two asset transfer methods:
 - **EIP-3009**: Tokens with native `transferWithAuthorization()` (e.g., USDC, EURC) — simplest, truly gasless
 - **Permit2**: Any ERC-20 token — universal fallback, requires one-time approval
 
-See [DEFAULT_ASSET.md](src/exact/server/DEFAULT_ASSET.md) for the current list of configured chains and how to add new ones.
+See [DEFAULT_ASSETS.md](../../../../DEFAULT_ASSETS.md) for the current list of configured chains and how to add new ones.
 
 ## Development
 

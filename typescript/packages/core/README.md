@@ -283,6 +283,7 @@ For blockchain-specific implementations:
 
 - `@x402/evm` - Ethereum and EVM-compatible chains
 - `@x402/svm` - Solana blockchain
+- `@x402/avm` - Algorand blockchain
 
 ## Examples
 

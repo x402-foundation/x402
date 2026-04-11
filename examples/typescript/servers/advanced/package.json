@@ -19,6 +19,7 @@
   "dependencies": {
     "dotenv": "^16.4.7",
     "express": "^4.18.2",
+    "@x402/avm": "workspace:*",
     "@x402/core": "workspace:*",
     "@x402/express": "workspace:*",
     "@x402/evm": "workspace:*",

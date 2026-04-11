@@ -34,7 +34,36 @@ The v2 extension follows a pattern where:
 		Resource: x402.Resource{...},
 		Accepts: []x402.PaymentRequirements{...},
 		Extensions: map[string]interface{}{
-			bazaar.BAZAAR: extension,
+			bazaar.BAZAAR.Key(): extension,
+		},
+	}
+
+# For MCP Tool Servers (V2)
+
+	import "github.com/x402-foundation/x402/go/extensions/bazaar"
+
+	// Declare an MCP tool
+	extension, err := bazaar.DeclareMcpDiscoveryExtension(bazaar.DeclareMcpDiscoveryConfig{
+		ToolName:    "weather_lookup",
+		Description: "Look up weather for a city",
+		Transport:   bazaar.TransportStreamableHTTP,
+		InputSchema: map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"city": map[string]interface{}{"type": "string"},
+			},
+			"required": []string{"city"},
+		},
+		Example: map[string]interface{}{"city": "San Francisco"},
+	})
+
+	// Include in PaymentRequired response
+	paymentRequired := x402.PaymentRequired{
+		X402Version: 2,
+		Resource: x402.Resource{...},
+		Accepts: []x402.PaymentRequirements{...},
+		Extensions: map[string]interface{}{
+			bazaar.BAZAAR.Key(): extension,
 		},
 	}
 
