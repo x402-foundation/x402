@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" fill="none">
+  <rect width="256" height="256" rx="48" fill="#06080D"/>
+  <text x="128" y="116" text-anchor="middle" font-family="ui-monospace, 'Geist Mono', 'SF Mono', Menlo, monospace" font-size="52" font-weight="800" fill="#00D4FF" letter-spacing="-1.5">payapi</text>
+  <text x="128" y="158" text-anchor="middle" font-family="ui-monospace, 'Geist Mono', 'SF Mono', Menlo, monospace" font-size="28" font-weight="400" fill="#8A92A6" letter-spacing="0.5">market</text>
+  <rect x="56" y="182" width="144" height="2" rx="1" fill="#1A1F2A"/>
+  <text x="128" y="214" text-anchor="middle" font-family="ui-monospace, 'Geist Mono', 'SF Mono', Menlo, monospace" font-size="18" font-weight="600" fill="#00D4FF">x402 · MCP · USDC</text>
+</svg>
