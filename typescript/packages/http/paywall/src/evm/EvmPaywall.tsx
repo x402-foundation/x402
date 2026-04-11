@@ -1,5 +1,12 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { createPublicClient, formatUnits, http, publicActions, type Chain } from "viem";
+import {
+  createPublicClient,
+  formatUnits,
+  http,
+  publicActions,
+  type Address,
+  type Chain,
+} from "viem";
 import * as allChains from "viem/chains";
 import { useAccount, useSwitchChain, useWalletClient, useConnect, useDisconnect } from "wagmi";
 
@@ -7,7 +14,7 @@ import { ExactEvmScheme } from "@x402/evm/exact/client";
 import { x402Client } from "@x402/core/client";
 import { encodePaymentSignatureHeader } from "@x402/core/http";
 import type { PaymentRequired } from "@x402/core/types";
-import { getUSDCBalance } from "./utils";
+import { getTokenBalance, getTokenDecimals } from "./utils";
 
 import { Spinner } from "./Spinner";
 import { getNetworkDisplayName, isTestnetNetwork } from "../paywallUtils";
@@ -36,7 +43,7 @@ export function EvmPaywall({ paymentRequired, onSuccessfulResponse }: EvmPaywall
   const [status, setStatus] = useState<string>("");
   const [isCorrectChain, setIsCorrectChain] = useState<boolean | null>(null);
   const [isPaying, setIsPaying] = useState(false);
-  const [formattedUsdcBalance, setFormattedUsdcBalance] = useState<string>("");
+  const [formattedTokenBalance, setFormattedTokenBalance] = useState<string>("");
   const [hideBalance, setHideBalance] = useState(true);
   const [selectedConnectorId, setSelectedConnectorId] = useState<string>("");
 
@@ -50,6 +57,9 @@ export function EvmPaywall({ paymentRequired, onSuccessfulResponse }: EvmPaywall
 
   const network = firstRequirement.network;
   const tokenName = (firstRequirement.extra?.name as string) || "Token";
+  const paymentTokenAddress = firstRequirement.asset as Address;
+  const fallbackTokenDecimals =
+    typeof firstRequirement.extra?.decimals === "number" ? firstRequirement.extra.decimals : 6;
   const chainName = getNetworkDisplayName(network);
   const testnet = isTestnetNetwork(network);
 
@@ -71,14 +81,17 @@ export function EvmPaywall({ paymentRequired, onSuccessfulResponse }: EvmPaywall
     [paymentChain],
   );
 
-  const checkUSDCBalance = useCallback(async () => {
+  const checkTokenBalance = useCallback(async () => {
     if (!address) {
       return;
     }
-    const balance = await getUSDCBalance(publicClient, address);
-    const formattedBalance = formatUnits(balance, 6);
-    setFormattedUsdcBalance(formattedBalance);
-  }, [address, publicClient]);
+    const [balance, decimals] = await Promise.all([
+      getTokenBalance(publicClient, paymentTokenAddress, address),
+      getTokenDecimals(publicClient, paymentTokenAddress, fallbackTokenDecimals),
+    ]);
+    const formattedBalance = formatUnits(balance, decimals);
+    setFormattedTokenBalance(formattedBalance);
+  }, [address, fallbackTokenDecimals, paymentTokenAddress, publicClient]);
 
   const handleSwitchChain = useCallback(async () => {
     if (isCorrectChain) {
@@ -100,8 +113,8 @@ export function EvmPaywall({ paymentRequired, onSuccessfulResponse }: EvmPaywall
     }
 
     void handleSwitchChain();
-    void checkUSDCBalance();
-  }, [address, handleSwitchChain, checkUSDCBalance]);
+    void checkTokenBalance();
+  }, [address, handleSwitchChain, checkTokenBalance]);
 
   useEffect(() => {
     if (isConnected && chainId === connectedChainId) {
@@ -140,7 +153,7 @@ export function EvmPaywall({ paymentRequired, onSuccessfulResponse }: EvmPaywall
 
     try {
       setStatus("Checking balance...");
-      const balance = await getUSDCBalance(publicClient, address);
+      const balance = await getTokenBalance(publicClient, paymentTokenAddress, address);
 
       if (balance === 0n) {
         throw new Error(`Insufficient balance. Make sure you have ${tokenName} on ${chainName}`);
@@ -183,6 +196,7 @@ export function EvmPaywall({ paymentRequired, onSuccessfulResponse }: EvmPaywall
     handleSwitchChain,
     wagmiWalletClient,
     publicClient,
+    paymentTokenAddress,
     chainName,
     onSuccessfulResponse,
   ]);
@@ -259,8 +273,8 @@ export function EvmPaywall({ paymentRequired, onSuccessfulResponse }: EvmPaywall
                 <span className="payment-label">Available balance:</span>
                 <span className="payment-value">
                   <button className="balance-button" onClick={() => setHideBalance(prev => !prev)}>
-                    {formattedUsdcBalance && !hideBalance
-                      ? `$${formattedUsdcBalance} ${tokenName}`
+                    {formattedTokenBalance && !hideBalance
+                      ? `$${formattedTokenBalance} ${tokenName}`
                       : `••••• ${tokenName}`}
                   </button>
                 </span>

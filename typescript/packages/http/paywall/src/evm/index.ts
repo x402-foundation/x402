@@ -1,3 +1,5 @@
+import type { Network } from "@x402/core/types";
+import { formatUnits } from "viem";
 import type {
   PaywallNetworkHandler,
   PaymentRequirements,
@@ -5,6 +7,32 @@ import type {
   PaywallConfig,
 } from "../types";
 import { getEvmPaywallHtml } from "./paywall";
+import { getDefaultAsset } from "../../../../mechanisms/evm/src/shared/defaultAssets";
+
+function getRequirementDecimals(requirement: PaymentRequirements): number {
+  const decimals = requirement.extra?.decimals;
+  if (typeof decimals === "number") {
+    return decimals;
+  }
+
+  try {
+    return getDefaultAsset(requirement.network as Network).decimals;
+  } catch {
+    return 6;
+  }
+}
+
+function getDisplayAmount(rawAmount: string | undefined, decimals: number): number {
+  if (!rawAmount) {
+    return 0;
+  }
+
+  try {
+    return Number(formatUnits(BigInt(rawAmount), decimals));
+  } catch {
+    return parseFloat(rawAmount) / 10 ** decimals;
+  }
+}
 
 /**
  * EVM paywall handler that supports EVM-based networks (CAIP-2 format only)
@@ -33,11 +61,8 @@ export const evmPaywall: PaywallNetworkHandler = {
     paymentRequired: PaymentRequired,
     config: PaywallConfig,
   ): string {
-    const amount = requirement.amount
-      ? parseFloat(requirement.amount) / 1000000
-      : requirement.maxAmountRequired
-        ? parseFloat(requirement.maxAmountRequired) / 1000000
-        : 0;
+    const decimals = getRequirementDecimals(requirement);
+    const amount = getDisplayAmount(requirement.amount ?? requirement.maxAmountRequired, decimals);
 
     return getEvmPaywallHtml({
       amount,

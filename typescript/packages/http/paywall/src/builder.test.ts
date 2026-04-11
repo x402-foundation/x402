@@ -131,6 +131,27 @@ describe("PaywallBuilder", () => {
       expect(html).toContain("0.1");
     });
 
+    it("uses the payment token decimals for non-6-decimal EVM assets", () => {
+      const paywall = createPaywall().withNetwork(evmPaywall).build();
+      const megaUsdPaymentRequired: PaymentRequired = {
+        ...mockPaymentRequired,
+        accepts: [
+          {
+            scheme: "exact",
+            network: "eip155:4326",
+            asset: "0xFAfDdbb3FC7688494971a79cc65DCa3EF82079E7",
+            amount: "1000000000000000",
+            payTo: "0x209693Bc6afc0C5328bA36FaF04C514EF312287C",
+            maxTimeoutSeconds: 60,
+          },
+        ],
+      };
+
+      const html = paywall.generateHtml(megaUsdPaymentRequired);
+
+      expect(html).toContain("amount: 0.001");
+    });
+
     it("uses resource URL as currentUrl when not provided", () => {
       const paywall = createPaywall().withNetwork(evmPaywall).build();
       const html = paywall.generateHtml(mockPaymentRequired);

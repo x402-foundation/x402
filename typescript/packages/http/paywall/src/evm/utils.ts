@@ -1,18 +1,9 @@
 import type { Address, Client, Chain, Transport, Account } from "viem";
 
 /**
- * USDC contract addresses by chain ID
+ * ERC20 token ABI fragments used by the EVM paywall.
  */
-const USDC_ADDRESSES: Record<number, Address> = {
-  1: "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48", // Ethereum Mainnet
-  8453: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913", // Base Mainnet
-  84532: "0x036CbD53842c5426634e7929541eC2318f3dCF7e", // Base Sepolia
-};
-
-/**
- * ERC20 balanceOf ABI
- */
-const ERC20_BALANCE_ABI = [
+const ERC20_ABI = [
   {
     name: "balanceOf",
     type: "function",
@@ -20,36 +11,73 @@ const ERC20_BALANCE_ABI = [
     inputs: [{ name: "account", type: "address" }],
     outputs: [{ name: "balance", type: "uint256" }],
   },
+  {
+    name: "decimals",
+    type: "function",
+    stateMutability: "view",
+    inputs: [],
+    outputs: [{ name: "decimals", type: "uint8" }],
+  },
 ] as const;
 
 /**
- * Gets the USDC balance for a specific address on the current chain.
+ * Gets an ERC-20 token balance for a specific address on the current chain.
  *
  * @param client - Viem client instance connected to the blockchain
- * @param address - Address to check the USDC balance for
- * @returns USDC balance as bigint (0 if USDC not supported on chain or error)
+ * @param tokenAddress - Token contract address
+ * @param address - Address to check the token balance for
+ * @returns Token balance as bigint (0 if the lookup fails)
  */
-export async function getUSDCBalance<
+export async function getTokenBalance<
   TTransport extends Transport,
   TChain extends Chain,
   TAccount extends Account | undefined = undefined,
->(client: Client<TTransport, TChain, TAccount>, address: Address): Promise<bigint> {
-  const chainId = client.chain?.id;
-  if (!chainId) return 0n;
-
-  const usdcAddress = USDC_ADDRESSES[chainId];
-  if (!usdcAddress) return 0n;
-
+>(
+  client: Client<TTransport, TChain, TAccount>,
+  tokenAddress: Address,
+  address: Address,
+): Promise<bigint> {
   try {
     const balance = await client.readContract({
-      address: usdcAddress,
-      abi: ERC20_BALANCE_ABI,
+      address: tokenAddress,
+      abi: ERC20_ABI,
       functionName: "balanceOf",
       args: [address],
     });
     return balance as bigint;
   } catch (error) {
-    console.error("Failed to fetch USDC balance:", error);
+    console.error("Failed to fetch token balance:", error);
     return 0n;
+  }
+}
+
+/**
+ * Gets the decimal precision for an ERC-20 token.
+ *
+ * @param client - Viem client instance connected to the blockchain
+ * @param tokenAddress - Token contract address
+ * @param fallbackDecimals - Decimal precision to use if the lookup fails
+ * @returns Token decimals, or the fallback value when unavailable
+ */
+export async function getTokenDecimals<
+  TTransport extends Transport,
+  TChain extends Chain,
+  TAccount extends Account | undefined = undefined,
+>(
+  client: Client<TTransport, TChain, TAccount>,
+  tokenAddress: Address,
+  fallbackDecimals: number = 6,
+): Promise<number> {
+  try {
+    const decimals = await client.readContract({
+      address: tokenAddress,
+      abi: ERC20_ABI,
+      functionName: "decimals",
+      args: [],
+    });
+    return Number(decimals);
+  } catch (error) {
+    console.error("Failed to fetch token decimals:", error);
+    return fallbackDecimals;
   }
 }
