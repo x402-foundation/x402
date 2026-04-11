@@ -19,8 +19,10 @@ import { HTTPFacilitatorClient } from "@x402/core/server";
 const app = express();
 
 const facilitatorClient = new HTTPFacilitatorClient({ url: "https://facilitator.x402.org" });
-const resourceServer = new x402ResourceServer(facilitatorClient)
-  .register("eip155:84532", new ExactEvmScheme());
+const resourceServer = new x402ResourceServer(facilitatorClient).register(
+  "eip155:84532",
+  new ExactEvmScheme(),
+);
 
 // Apply the payment middleware with your configuration
 app.use(
@@ -108,7 +110,7 @@ Creates Express middleware that:
 3. Validates payment headers if required
 4. Returns payment instructions (402 status) if payment is missing or invalid
 5. Processes the request if payment is valid
-6. Handles settlement after successful response
+6. Buffers the handler response and settles payment only after a successful response (`status < 400`)
 
 ### Route Configuration
 
@@ -130,6 +132,44 @@ const routes: RoutesConfig = {
 
 app.use(paymentMiddleware(routes, resourceServer));
 ```
+
+### Dynamic Routes and Server-Side Operations
+
+Yes. `paymentMiddleware` can protect parameterized routes like `GET /api/:id` and handlers that perform real server-side work.
+
+The middleware verifies the payment before your route handler runs. It then buffers the response and only settles the payment after the handler finishes with a successful response (`status < 400`).
+
+```typescript
+app.use(
+  paymentMiddleware(
+    {
+      "GET /api/:id": {
+        accepts: {
+          scheme: "exact",
+          price: "$0.10",
+          network: "eip155:84532",
+          payTo: "0xYourAddress",
+        },
+        description: "Execute a paid operation by ID",
+      },
+    },
+    resourceServer,
+  ),
+);
+
+app.get("/api/:id", async (req, res) => {
+  const record = await loadRecord(req.params.id);
+  if (!record) {
+    return res.status(404).json({ error: "Not found" });
+  }
+
+  // Perform the paid operation once you know you're ready to return success.
+  const result = await performOperation(record);
+  return res.json({ result });
+});
+```
+
+If your handler throws or returns an error status after doing irreversible work, x402 will not settle the payment. For one-way operations, validate prerequisites first and make the underlying action idempotent or otherwise safe to retry.
 
 ### Paywall Configuration
 
@@ -229,8 +269,10 @@ const customFacilitator = new HTTPFacilitatorClient({
   }),
 });
 
-const resourceServer = new x402ResourceServer(customFacilitator)
-  .register("eip155:84532", new ExactEvmScheme());
+const resourceServer = new x402ResourceServer(customFacilitator).register(
+  "eip155:84532",
+  new ExactEvmScheme(),
+);
 
 app.use(paymentMiddleware(routes, resourceServer, paywallConfig));
 ```
@@ -266,8 +308,10 @@ import { HTTPFacilitatorClient } from "@x402/core/server";
 import { ExactEvmScheme } from "@x402/evm/exact/server";
 
 const facilitator = new HTTPFacilitatorClient({ url: facilitatorUrl });
-const resourceServer = new x402ResourceServer(facilitator)
-  .register("eip155:84532", new ExactEvmScheme());
+const resourceServer = new x402ResourceServer(facilitator).register(
+  "eip155:84532",
+  new ExactEvmScheme(),
+);
 
 app.use(
   paymentMiddleware(

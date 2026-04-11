@@ -29,14 +29,22 @@ Typescript, Python, and Go are reference implementations, but x402 is an **open 
 
 Nothing prevents you from implementing the spec in Rust, Java, or other languages. If you're interested in building support for your favorite language, please [open an issue](https://github.com/x402-foundation/x402/issues) and let us know, we'd be happy to help!
 
+#### Can I use x402 to protect dynamic routes or server-side operations?
+
+Yes. Parameterized routes like `GET /api/:id` are supported.
+
+Framework integrations such as Express, Fastify, and Hono verify the payment before your handler runs, then settle only after the handler finishes with a successful response (`status < 400`). Next.js API routes have the same behavior when you use `withX402`.
+
+That means x402 works well for paid server-side logic, but you should still validate inputs and prerequisites before performing any irreversible action. If your handler throws or returns an error after doing one-way work, the payment will not settle, so those operations should be idempotent or otherwise safe to retry.
+
 ### Facilitators
 
 #### Who runs facilitators today?
 
 Multiple organizations operate production facilitators. The protocol is **permissionless**—anyone can run a facilitator. See the [x402 Ecosystem](https://www.x402.org/ecosystem?filter=facilitators) for available options, including:
 
-* Community‑run facilitators for various networks and assets
-* Private facilitators for enterprises that need custom KYT / KYC flows.
+- Community‑run facilitators for various networks and assets
+- Private facilitators for enterprises that need custom KYT / KYC flows.
 
 #### What stops a malicious facilitator from stealing funds or lying about settlement?
 
@@ -49,9 +57,9 @@ A facilitator that tampers with the transaction would fail signature checks and 
 
 There is no single answer, but common patterns are:
 
-* **Flat per‑call** (e.g., `$0.001` per request)
-* **Tiered** (`/basic` vs `/pro` endpoints with different prices)
-* **Up‑to** (`scheme: "upto"`): The client authorizes a maximum amount but is only charged for actual usage (tokens, compute time, bandwidth, etc.). Available on EVM networks in TypeScript and Go. See the [Seller Quickstart](/getting-started/quickstart-for-sellers#payment-schemes-exact-vs-upto) for setup.
+- **Flat per‑call** (e.g., `$0.001` per request)
+- **Tiered** (`/basic` vs `/pro` endpoints with different prices)
+- **Up‑to** (`scheme: "upto"`): The client authorizes a maximum amount but is only charged for actual usage (tokens, compute time, bandwidth, etc.). Available on EVM networks in TypeScript and Go. See the [Seller Quickstart](/getting-started/quickstart-for-sellers#payment-schemes-exact-vs-upto) for setup.
 
 #### Can I integrate x402 with a usage / plan manager like Metronome?
 
@@ -61,12 +69,12 @@ Yes. x402 handles the _payment execution_. You can still meter usage, aggregate 
 
 #### Which assets and networks are supported today?
 
-| Network        | CAIP-2 ID | Asset | Fees\*   | Status      |
-| -------------- | --------- | ----- | -------- | ----------- |
-| Base           | `eip155:8453` | Any ERC-20 token  | fee-free | **Mainnet** |
-| Base Sepolia   | `eip155:84532` | Any ERC-20 token  | fee-free | **Testnet** |
-| Solana         | `solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp` | Any SPL token or Token-2022 token | fee-free | **Mainnet** |
-| Solana Devnet  | `solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1` | Any SPL token or Token-2022 | fee-free | **Testnet** |
+| Network       | CAIP-2 ID                                 | Asset                             | Fees\*   | Status      |
+| ------------- | ----------------------------------------- | --------------------------------- | -------- | ----------- |
+| Base          | `eip155:8453`                             | Any ERC-20 token                  | fee-free | **Mainnet** |
+| Base Sepolia  | `eip155:84532`                            | Any ERC-20 token                  | fee-free | **Testnet** |
+| Solana        | `solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp` | Any SPL token or Token-2022 token | fee-free | **Mainnet** |
+| Solana Devnet | `solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1` | Any SPL token or Token-2022       | fee-free | **Testnet** |
 
 \* Gas paid on chain; many facilitators offer **zero** facilitator fees (see [ecosystem](https://www.x402.org/ecosystem?filter=facilitators) for details).
 
@@ -101,7 +109,7 @@ Agents follow the same flow as humans:
 1. Make a request.
 2. Parse the `PAYMENT-REQUIRED` header.
 3. Choose a suitable requirement and sign a payload via the x402 client SDKs.
-4. Retry with the `PAYMENT-SIGNATURE` header. 
+4. Retry with the `PAYMENT-SIGNATURE` header.
 
 #### Do agents need wallets?
 
@@ -111,16 +119,16 @@ Yes. Programmatic wallets (e.g., **CDP Wallet API**, **viem**, **ethers‑v6** H
 
 #### Is there a formal spec or whitepaper?
 
-* **Spec:** [GitHub Specification](https://github.com/x402-foundation/x402/tree/main/specs)
-* [**Whitepaper**](https://www.x402.org/x402-whitepaper.pdf)
+- **Spec:** [GitHub Specification](https://github.com/x402-foundation/x402/tree/main/specs)
+- [**Whitepaper**](https://www.x402.org/x402-whitepaper.pdf)
 
 #### How will x402 evolve?
 
 Tracked in public GitHub issues + community RFCs. Major themes:
 
-* Multi‑asset support
-* Additional schemes (`stream`)
-* Discovery layer for service search & reputation
+- Multi‑asset support
+- Additional schemes (`stream`)
+- Discovery layer for service search & reputation
 
 **Why is x402 hosted in the Coinbase GitHub?**
 
@@ -137,9 +145,9 @@ We acknowledge that the repo is primarily under Coinbase ownership today. This i
 
 #### My test works on Base Sepolia but fails on Base mainnet—what changed?
 
-* Ensure you set `network: "eip155:8453"` (Base mainnet) instead of `"eip155:84532"` (Base Sepolia).
-* Confirm your wallet has _mainnet_ USDC.
-* Gas fees are higher on mainnet; fund the wallet with a small amount of ETH for gas.
+- Ensure you set `network: "eip155:8453"` (Base mainnet) instead of `"eip155:84532"` (Base Sepolia).
+- Confirm your wallet has _mainnet_ USDC.
+- Gas fees are higher on mainnet; fund the wallet with a small amount of ETH for gas.
 
 ### Still have questions?
 
