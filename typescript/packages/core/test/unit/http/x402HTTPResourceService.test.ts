@@ -713,6 +713,47 @@ describe("x402HTTPResourceServer", () => {
       }
     });
 
+    it("should return 400 for PAYMENT-SIGNATURE headers with a v1 payload", async () => {
+      const routes = {
+        "/api/test": {
+          accepts: {
+            scheme: "exact",
+            payTo: "0xabc",
+            price: "$1.00" as Price,
+            network: "eip155:8453" as Network,
+          },
+        },
+      };
+
+      const httpServer = new x402HTTPResourceServer(ResourceServer, routes);
+      const v1PaymentHeader = Buffer.from(
+        JSON.stringify({
+          x402Version: 1,
+          scheme: "exact",
+          network: "base",
+          payload: { signature: "0x123" },
+        }),
+      ).toString("base64");
+
+      const adapter = new MockHTTPAdapter({
+        "payment-signature": v1PaymentHeader,
+      });
+      const context: HTTPRequestContext = {
+        adapter,
+        path: "/api/test",
+        method: "GET",
+      };
+
+      const result = await httpServer.processHTTPRequest(context);
+
+      expect(mockFacilitator.verifyCalls.length).toBe(0);
+      expect(result.type).toBe("payment-error");
+      if (result.type === "payment-error") {
+        expect(result.response.status).toBe(400);
+        expect(result.response.body).toEqual({ error: "Invalid PAYMENT-SIGNATURE header" });
+      }
+    });
+
     it("should return payment-error if no payment provided", async () => {
       const routes = {
         "/api/test": {

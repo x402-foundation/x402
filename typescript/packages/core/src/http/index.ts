@@ -1,7 +1,7 @@
 import { SettleResponse } from "../types";
 import { PaymentPayload, PaymentRequired } from "../types/payments";
 import { Base64EncodedRegex, safeBase64Decode, safeBase64Encode } from "../utils";
-import { validatePaymentPayload } from "../schemas";
+import { isPaymentPayloadV2, validatePaymentPayload } from "../schemas";
 
 // HTTP Methods that typically use query parameters
 export type QueryParamMethods = "GET" | "HEAD" | "DELETE";
@@ -45,7 +45,13 @@ export function decodePaymentSignatureHeader(paymentSignatureHeader: string): Pa
     throw new InvalidPaymentHeaderError();
   }
   try {
-    return validatePaymentPayload(JSON.parse(safeBase64Decode(paymentSignatureHeader)));
+    const paymentPayload = validatePaymentPayload(
+      JSON.parse(safeBase64Decode(paymentSignatureHeader)),
+    );
+    if (!isPaymentPayloadV2(paymentPayload)) {
+      throw new InvalidPaymentHeaderError();
+    }
+    return paymentPayload;
   } catch {
     throw new InvalidPaymentHeaderError();
   }
