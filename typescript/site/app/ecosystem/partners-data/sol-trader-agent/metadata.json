@@ -1,6 +1,6 @@
 {
   "name": "Sol Trader Agent",
-  "description": "Gemini-powered CLI agent that analyses Solana tokens and trades on DEXs via MCP servers. Discovers tools on remote x402-gated MCP endpoints for paid token analysis ($0.10 USDC/call), with optional local MCP servers for Jupiter trading, DexScreener discovery, RugCheck safety, and Solana RPC queries.",
+  "description": "Gemini-powered CLI agent that autonomously pays for Solana token analysis via x402-gated MCP tools. Demonstrates the agent-as-payer pattern — discovers remote MCP endpoints, handles 402 payment challenges with USDC on Solana, and combines paid analysis with free local MCP servers for Jupiter DEX trading, DexScreener discovery, RugCheck safety, and on-chain queries.",
   "logoUrl": "/logos/sol-trader-agent.png",
   "websiteUrl": "https://github.com/dchu3/sol-trader-agent",
   "category": "Client-Side Integrations"
