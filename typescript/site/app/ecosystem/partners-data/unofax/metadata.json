@@ -1,0 +1,7 @@
+{
+  "name": "Unofax",
+  "description": "Send faxes to 45+ countries — no account, no API key, just pay per page with x402. Handles PDF and more automatically. Auto-refund on failure.",
+  "logoUrl": "/logos/unofax.svg",
+  "websiteUrl": "https://unofax.com/x402",
+  "category": "Services/Endpoints"
+}
