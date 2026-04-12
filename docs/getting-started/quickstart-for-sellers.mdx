@@ -9,9 +9,9 @@ description: "This guide walks you through integrating with **x402** to enable p
 
 Before you begin, ensure you have:
 
-* A crypto wallet to receive funds (any EVM or SVM compatible wallet)
-* [Node.js](https://nodejs.org/en) and npm, [Go](https://go.dev/), or Python and pip installed
-* An existing API or server
+- A crypto wallet to receive funds (any EVM or SVM compatible wallet)
+- [Node.js](https://nodejs.org/en) and npm, [Go](https://go.dev/), or Python and pip installed
+- An existing API or server
 
 **Note**\
 There are pre-configured examples available in the x402 repo for both [Node.js](https://github.com/x402-foundation/x402/tree/main/examples/typescript/servers) and [Go](https://github.com/x402-foundation/x402/tree/main/examples/go/servers). There is also an [advanced example](https://github.com/x402-foundation/x402/tree/main/examples/typescript/servers/advanced) that shows how to use the x402 SDKs to build a more complex payment flow.
@@ -25,6 +25,7 @@ There are pre-configured examples available in the x402 repo for both [Node.js](
     ```bash
     npm install @x402/express @x402/core @x402/evm @x402/svm
     ```
+
   </Tab>
   <Tab title="Next.js">
     Install the [x402 Next.js middleware package](https://www.npmjs.com/package/@x402/next).
@@ -32,6 +33,7 @@ There are pre-configured examples available in the x402 repo for both [Node.js](
     ```bash
     npm install @x402/next @x402/core @x402/evm @x402/svm
     ```
+
   </Tab>
   <Tab title="Hono">
     Install the [x402 Hono middleware package](https://www.npmjs.com/package/@x402/hono).
@@ -39,6 +41,7 @@ There are pre-configured examples available in the x402 repo for both [Node.js](
     ```bash
     npm install @x402/hono @x402/core @x402/evm @x402/svm
     ```
+
   </Tab>
   <Tab title="Fastify">
     Install the [x402 Fastify middleware package](https://www.npmjs.com/package/@x402/fastify).
@@ -46,6 +49,7 @@ There are pre-configured examples available in the x402 repo for both [Node.js](
     ```bash
     npm install @x402/fastify @x402/core @x402/evm @x402/svm
     ```
+
   </Tab>
   <Tab title="Go (Gin)">
     Add the x402 Go module to your project:
@@ -53,6 +57,7 @@ There are pre-configured examples available in the x402 repo for both [Node.js](
     ```bash
     go get github.com/x402-foundation/x402/go
     ```
+
   </Tab>
   <Tab title="Go (Echo)">
     Add the x402 Go module to your project:
@@ -60,6 +65,7 @@ There are pre-configured examples available in the x402 repo for both [Node.js](
     ```bash
     go get github.com/x402-foundation/x402/go
     ```
+
   </Tab>
   <Tab title="FastAPI">
     [Install the x402 Python package](https://pypi.org/project/x402/) with FastAPI support:
@@ -70,6 +76,7 @@ There are pre-configured examples available in the x402 repo for both [Node.js](
     # For Solana support, also add:
     pip install "x402[svm]"
     ```
+
   </Tab>
   <Tab title="Flask">
     [Install the x402 Python package](https://pypi.org/project/x402/) with Flask support:
@@ -80,6 +87,7 @@ There are pre-configured examples available in the x402 repo for both [Node.js](
     # For Solana support, also add:
     pip install "x402[svm]"
     ```
+
   </Tab>
 </Tabs>
 
@@ -87,10 +95,10 @@ There are pre-configured examples available in the x402 repo for both [Node.js](
 
 Integrate the payment middleware into your application. You will need to provide:
 
-* The Facilitator URL or facilitator client. For testing, use `https://x402.org/facilitator` which works on Base Sepolia and Solana devnet.
-  * For mainnet setup, see [Running on Mainnet](#running-on-mainnet)
-* The routes you want to protect.
-* Your receiving wallet address.
+- The Facilitator URL or facilitator client. For testing, use `https://x402.org/facilitator` which works on Base Sepolia and Solana devnet.
+  - For mainnet setup, see [Running on Mainnet](#running-on-mainnet)
+- The routes you want to protect.
+- Your receiving wallet address.
 
 <Tabs>
   <Tab title="Express">
@@ -155,6 +163,7 @@ Integrate the payment middleware into your application. You will need to provide
       console.log(`Server listening at http://localhost:4021`);
     });
     ```
+
   </Tab>
   <Tab title="Next.js">
     Full example in the repo [here](https://github.com/x402-foundation/x402/tree/main/examples/typescript/fullstack/next).
@@ -253,6 +262,7 @@ Integrate the payment middleware into your application. You will need to provide
       server,
     );
     ```
+
   </Tab>
   <Tab title="Hono">
     Full example in the repo [here](https://github.com/x402-foundation/x402/tree/main/examples/typescript/servers/hono).
@@ -312,6 +322,7 @@ Integrate the payment middleware into your application. You will need to provide
 
     serve({ fetch: app.fetch, port: 4021 });
     ```
+
   </Tab>
   <Tab title="Fastify">
     Full example in the repo [here](https://github.com/x402-foundation/x402/tree/main/examples/typescript/servers/fastify).
@@ -369,6 +380,7 @@ Integrate the payment middleware into your application. You will need to provide
 
     app.listen({ port: 4021 });
     ```
+
   </Tab>
   <Tab title="Go (Gin)">
     Full example in the repo [here](https://github.com/x402-foundation/x402/tree/main/examples/go/servers/gin).
@@ -442,6 +454,7 @@ Integrate the payment middleware into your application. You will need to provide
         r.Run(":4021")
     }
     ```
+
   </Tab>
   <Tab title="Go (net/http)">
     Full example in the repo [here](https://github.com/x402-foundation/x402/tree/main/examples/go/servers/nethttp).
@@ -521,6 +534,7 @@ Integrate the payment middleware into your application. You will need to provide
         http.ListenAndServe(":4021", handler)
     }
     ```
+
   </Tab>
   <Tab title="Go (Echo)">
     Full example in the repo [here](https://github.com/x402-foundation/x402/tree/main/examples/go/servers/echo).
@@ -594,6 +608,7 @@ Integrate the payment middleware into your application. You will need to provide
         e.Start(":4021")
     }
     ```
+
   </Tab>
   <Tab title="FastAPI">
     Full example in the repo [here](https://github.com/x402-foundation/x402/tree/main/examples/python/servers/fastapi).
@@ -669,6 +684,7 @@ Integrate the payment middleware into your application. You will need to provide
         import uvicorn
         uvicorn.run(app, host="0.0.0.0", port=4021)
     ```
+
   </Tab>
   <Tab title="Flask">
     Full example in the repo [here](https://github.com/x402-foundation/x402/tree/main/examples/python/servers/flask).
@@ -737,6 +753,7 @@ Integrate the payment middleware into your application. You will need to provide
     if __name__ == "__main__":
         app.run(host="0.0.0.0", port=4021)
     ```
+
   </Tab>
 </Tabs>
 
@@ -745,14 +762,14 @@ Integrate the payment middleware into your application. You will need to provide
 ```typescript
 interface RouteConfig {
   accepts: Array<{
-    scheme: string;           // Payment scheme: "exact" or "upto"
-    price: string;            // For "exact": the fixed price. For "upto": the maximum authorized amount.
-    network: string;          // Network in CAIP-2 format (e.g., "eip155:84532" or "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1")
-    payTo: string;            // Your wallet address
+    scheme: string; // Payment scheme: "exact" or "upto"
+    price: string; // For "exact": the fixed price. For "upto": the maximum authorized amount.
+    network: string; // Network in CAIP-2 format (e.g., "eip155:84532" or "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1")
+    payTo: string; // Your wallet address
   }>;
-  description?: string;       // Description of the resource
-  mimeType?: string;          // MIME type of the response
-  extensions?: object;        // Optional extensions (e.g., Bazaar)
+  description?: string; // Description of the resource
+  mimeType?: string; // MIME type of the response
+  extensions?: object; // Optional extensions (e.g., Bazaar)
 }
 ```
 
@@ -830,6 +847,7 @@ The examples in step 2 above all use the `exact` scheme. To use `upto` instead, 
       console.log("Server listening at http://localhost:4021");
     });
     ```
+
   </Tab>
   <Tab title="Go (Gin)">
     Full example in the repo [here](https://github.com/x402-foundation/x402/tree/main/examples/go/servers/upto).
@@ -906,14 +924,15 @@ The examples in step 2 above all use the `exact` scheme. To use `upto` instead, 
         r.Run(":4021")
     }
     ```
+
   </Tab>
 </Tabs>
 
 The `setSettlementOverrides` amount supports three formats:
 
-* **Raw atomic units** — e.g., `"1000"` settles exactly 1,000 atomic units of the token (for USDC with 6 decimals, `"1000"` = $0.001)
-* **Percentage of authorized maximum** — e.g., `"50%"` settles 50% of `PaymentRequirements.amount`. Supports up to two decimal places (e.g., `"33.33%"`). The result is floored to the nearest atomic unit.
-* **Dollar price** — e.g., `"$0.05"` converts a USD-denominated price to atomic units. This format works when you configured your route with `$`-prefixed pricing (e.g., `price: "$0.10"`). Token decimals are determined from the registered scheme. The result is rounded to the nearest atomic unit.
+- **Raw atomic units** — e.g., `"1000"` settles exactly 1,000 atomic units of the token (for USDC with 6 decimals, `"1000"` = $0.001)
+- **Percentage of authorized maximum** — e.g., `"50%"` settles 50% of `PaymentRequirements.amount`. Supports up to two decimal places (e.g., `"33.33%"`). The result is floored to the nearest atomic unit.
+- **Dollar price** — e.g., `"$0.05"` converts a USD-denominated price to atomic units. This format works when you configured your route with `$`-prefixed pricing (e.g., `price: "$0.10"`). Token decimals are determined from the registered scheme. The result is rounded to the nearest atomic unit.
 
 The resolved amount must always be &lt;= the authorized maximum. If the amount is `"0"`, no on-chain transaction occurs and the client is not charged.
 
@@ -932,6 +951,8 @@ To verify:
 When using a facilitator that supports the Bazaar extension, your endpoints can be listed in the [x402 Bazaar](/extensions/bazaar), the discovery layer that helps buyers and AI agents find services. To enable discovery:
 
 ```typescript
+import { declareDiscoveryExtension } from "@x402/extensions/bazaar";
+
 {
   "GET /weather": {
     accepts: [
@@ -951,22 +972,41 @@ When using a facilitator that supports the Bazaar extension, your endpoints can 
     description: "Get real-time weather data including temperature, conditions, and humidity",
     mimeType: "application/json",
     extensions: {
-      bazaar: {
-        discoverable: true,
-        category: "weather",
-        tags: ["forecast", "real-time"],
-      },
+      ...declareDiscoveryExtension({
+        input: {
+          city: "San Francisco",
+        },
+        inputSchema: {
+          properties: {
+            city: {
+              type: "string",
+              description: "City name or coordinates",
+            },
+          },
+          required: ["city"],
+        },
+        output: {
+          example: {
+            city: "San Francisco",
+            temperature: 68,
+            conditions: "sunny",
+            humidity: 45,
+          },
+        },
+      }),
     },
   },
 }
 ```
 
+For x402 v2, keep payment metadata in `accepts[]`, keep human-readable endpoint metadata in `resource`/route config (`description`, `mimeType`), and put invocation schemas in `extensions.bazaar`. Avoid adding ad hoc Bazaar fields directly to `accepts[]`.
+
 Learn more about the discovery layer in the [Bazaar documentation](/extensions/bazaar).
 
 ### 5. Error Handling
 
-* If you run into trouble, check out the examples in the [repo](https://github.com/x402-foundation/x402/tree/main/examples) for more context and full code.
-* Run `npm install` or `go mod tidy` to install dependencies
+- If you run into trouble, check out the examples in the [repo](https://github.com/x402-foundation/x402/tree/main/examples) for more context and full code.
+- Run `npm install` or `go mod tidy` to install dependencies
 
 ---
 
@@ -1012,6 +1052,7 @@ For mainnet, use a production facilitator. See the [x402 Ecosystem](https://www.
         #FacilitatorConfig(url="https://facilitator.payai.network")  # PayAI Facilitator
     )
     ```
+
   </Tab>
   <Tab title="Python (Flask)">
     ```python
@@ -1022,6 +1063,7 @@ For mainnet, use a production facilitator. See the [x402 Ecosystem](https://www.
         #FacilitatorConfig(url="https://facilitator.payai.network")  # PayAI Facilitator
     )
     ```
+
   </Tab>
 </Tabs>
 
@@ -1044,6 +1086,7 @@ Change from testnet to mainnet network identifiers:
     // For Solana, use a Solana wallet address (base58 format)
     payTo: "YourSolanaWalletAddress",
     ```
+
   </Tab>
   <Tab title="Multi-Network">
     ```typescript
@@ -1085,6 +1128,7 @@ For multi-network support, register both EVM and SVM schemes:
     server.register("eip155:*", new ExactEvmScheme());
     server.register("solana:*", new ExactSvmScheme());
     ```
+
   </Tab>
   <Tab title="Go (Gin)">
     ```go
@@ -1101,6 +1145,7 @@ For multi-network support, register both EVM and SVM schemes:
         },
     }))
     ```
+
   </Tab>
   <Tab title="Go (Echo)">
     ```go
@@ -1117,6 +1162,7 @@ For multi-network support, register both EVM and SVM schemes:
         },
     }))
     ```
+
   </Tab>
   <Tab title="Python">
     ```python
@@ -1128,6 +1174,7 @@ For multi-network support, register both EVM and SVM schemes:
     server.register("eip155:8453", ExactEvmServerScheme())  # Base mainnet
     server.register("solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp", ExactSvmServerScheme())  # Solana mainnet
     ```
+
   </Tab>
 </Tabs>
 
@@ -1138,6 +1185,7 @@ Make sure your receiving wallet address is a real mainnet address where you want
 ### 5. Test with Real Payments
 
 Before going live:
+
 1. Test with small amounts first
 2. Verify payments are arriving in your wallet
 3. Monitor the facilitator for any issues
@@ -1150,12 +1198,12 @@ Before going live:
 
 x402 v2 uses [CAIP-2](https://github.com/ChainAgnostic/CAIPs/blob/main/CAIPs/caip-2.md) format for network identifiers:
 
-| Network | CAIP-2 Identifier |
-|---------|-------------------|
-| Base Mainnet | `eip155:8453` |
-| Base Sepolia | `eip155:84532` |
+| Network        | CAIP-2 Identifier                         |
+| -------------- | ----------------------------------------- |
+| Base Mainnet   | `eip155:8453`                             |
+| Base Sepolia   | `eip155:84532`                            |
 | Solana Mainnet | `solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp` |
-| Solana Devnet | `solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1` |
+| Solana Devnet  | `solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1` |
 
 See [Network Support](/core-concepts/network-and-token-support) for the full list.
 
@@ -1163,10 +1211,10 @@ See [Network Support](/core-concepts/network-and-token-support) for the full lis
 
 ### Next Steps
 
-* Check out the [Advanced Example](https://github.com/x402-foundation/x402/tree/main/examples/typescript/servers/advanced) for a more complex payment flow
-* Explore [Advanced Concepts](/advanced-concepts/lifecycle-hooks) like lifecycle hooks for custom logic before/after verification/settlement
-* Explore [Extensions](/extensions/bazaar) like Bazaar for service discovery
-* Get started as a [buyer](/getting-started/quickstart-for-buyers)
+- Check out the [Advanced Example](https://github.com/x402-foundation/x402/tree/main/examples/typescript/servers/advanced) for a more complex payment flow
+- Explore [Advanced Concepts](/advanced-concepts/lifecycle-hooks) like lifecycle hooks for custom logic before/after verification/settlement
+- Explore [Extensions](/extensions/bazaar) like Bazaar for service discovery
+- Get started as a [buyer](/getting-started/quickstart-for-buyers)
 
 For questions or support, join our [Discord](https://discord.gg/cdp).
 
@@ -1174,10 +1222,10 @@ For questions or support, join our [Discord](https://discord.gg/cdp).
 
 This quickstart covered:
 
-* Installing the x402 SDK and relevant middleware
-* Adding payment middleware to your API and configuring it
-* Choosing between `exact` (fixed-price) and `upto` (usage-based) payment schemes
-* Testing your integration
-* Deploying to mainnet with CAIP-2 network identifiers
+- Installing the x402 SDK and relevant middleware
+- Adding payment middleware to your API and configuring it
+- Choosing between `exact` (fixed-price) and `upto` (usage-based) payment schemes
+- Testing your integration
+- Deploying to mainnet with CAIP-2 network identifiers
 
 Your API is now ready to accept crypto payments through x402.

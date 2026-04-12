@@ -11,9 +11,9 @@ The x402 Bazaar is in early development. While our vision is to build the "Googl
 
 The Bazaar solves a critical problem in the x402 ecosystem: **discoverability**. Without it, x402-compatible endpoints and MCP tools are like hidden stalls in a vast market. The Bazaar provides:
 
-* **For Buyers (API Consumers)**: Programmatically discover available x402-enabled services (HTTP endpoints and MCP tools), understand their capabilities, pricing, and schemas
-* **For Sellers (API Providers)**: Automatic visibility for your x402-enabled services to a global audience of developers and AI agents
-* **For AI Agents**: Dynamic service discovery without pre-baked integrations - query, find, pay, and use
+- **For Buyers (API Consumers)**: Programmatically discover available x402-enabled services (HTTP endpoints and MCP tools), understand their capabilities, pricing, and schemas
+- **For Sellers (API Providers)**: Automatic visibility for your x402-enabled services to a global audience of developers and AI agents
+- **For AI Agents**: Dynamic service discovery without pre-baked integrations - query, find, pay, and use
 
 ### How It Works
 
@@ -29,32 +29,34 @@ After processing a payment that includes the `bazaar` extension, facilitators **
 
 **Header value:** A base64-encoded JSON object keyed by extension name. The `bazaar` key contains the bazaar extension's response:
 
-| Field | Type | Required | Description |
-|-------|------|----------|-------------|
-| `bazaar.status` | string | Yes | One of `"success"`, `"processing"`, or `"rejected"` |
-| `bazaar.rejectedReason` | string | No | Human-readable explanation. Only present when `status` is `"rejected"` |
+| Field                   | Type   | Required | Description                                                            |
+| ----------------------- | ------ | -------- | ---------------------------------------------------------------------- |
+| `bazaar.status`         | string | Yes      | One of `"success"`, `"processing"`, or `"rejected"`                    |
+| `bazaar.rejectedReason` | string | No       | Human-readable explanation. Only present when `status` is `"rejected"` |
 
 **Status values:**
 
-| Value | Meaning |
-|-------|---------|
-| `"success"` | The discovery info was validated and successfully cataloged |
-| `"processing"` | The discovery info was accepted and is being cataloged asynchronously |
-| `"rejected"` | The discovery info was rejected (e.g., failed schema validation). See `rejectedReason` for details |
+| Value          | Meaning                                                                                            |
+| -------------- | -------------------------------------------------------------------------------------------------- |
+| `"success"`    | The discovery info was validated and successfully cataloged                                        |
+| `"processing"` | The discovery info was accepted and is being cataloged asynchronously                              |
+| `"rejected"`   | The discovery info was rejected (e.g., failed schema validation). See `rejectedReason` for details |
 
 **Example (success):**
 
 ```
 EXTENSION-RESPONSES: eyJiYXphYXIiOnsic3RhdHVzIjoic3VjY2VzcyJ9fQ==
 ```
-*(base64 of `{"bazaar":{"status":"success"}}`)*
+
+_(base64 of `{"bazaar":{"status":"success"}}`)_
 
 **Example (rejected):**
 
 ```
 EXTENSION-RESPONSES: eyJiYXphYXIiOnsic3RhdHVzIjoicmVqZWN0ZWQiLCJyZWplY3RlZFJlYXNvbiI6ImluZm8gZmFpbGVkIHNjaGVtYSB2YWxpZGF0aW9uIn19
 ```
-*(base64 of `{"bazaar":{"status":"rejected","rejectedReason":"info failed schema validation"}}`)*
+
+_(base64 of `{"bazaar":{"status":"rejected","rejectedReason":"info failed schema validation"}}`)_
 
 Clients that understand the `bazaar` extension should read the `bazaar` key of this header to confirm cataloging succeeded and surface any rejection reason for debugging.
 
@@ -72,15 +74,16 @@ Clients that understand the `bazaar` extension should read the `bazaar` key of t
 Retrieve all available x402-compatible endpoints and MCP tools:
 
 ##### Coinbase
+
 ```bash
 GET https://api.cdp.coinbase.com/platform/v2/x402/discovery/resources
 ```
 
 ##### PayAI
+
 ```bash
 GET https://facilitator.payai.network/discovery/resources
 ```
-
 
 **Note**: The recommended way to use this endpoint is to use the `useFacilitator` hook as described below.
 
@@ -90,53 +93,54 @@ Each resource in the list contains the following fields:
 
 ```json
 {
-  "accepts": [
+  "x402Version": 2,
+  "items": [
     {
-      "asset": "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
-      "description": "",
-      "extra": {
-        "name": "USD Coin",
-        "version": "2"
-      },
-      "maxAmountRequired": "200",
-      "maxTimeoutSeconds": 60,
-      "mimeType": "",
-      "network": "eip155:8453",
-      "outputSchema": {
-        "input": {
-          "method": "GET",
-          "type": "http"
-        },
-        "output": null
-      },
-      "payTo": "0xa2477E16dCB42E2AD80f03FE97D7F1a1646cd1c0",
       "resource": "https://api.example.com/x402/weather",
-      "scheme": "exact"
+      "type": "http",
+      "x402Version": 2,
+      "accepts": [
+        {
+          "scheme": "exact",
+          "network": "eip155:8453",
+          "amount": "200",
+          "asset": "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+          "payTo": "0xa2477E16dCB42E2AD80f03FE97D7F1a1646cd1c0",
+          "maxTimeoutSeconds": 60,
+          "extra": {
+            "name": "USD Coin",
+            "version": "2"
+          }
+        }
+      ],
+      "lastUpdated": "2025-08-09T01:07:04.005Z",
+      "metadata": {}
     }
   ],
-  "lastUpdated": "2025-08-09T01:07:04.005Z",
-  "metadata": {},
-  "resource": "https://api.example.com/x402/weather",
-  "type": "http",
-  "x402Version": 2
+  "pagination": {
+    "limit": 20,
+    "offset": 0,
+    "total": 1
+  }
 }
 ```
 
 **Resource Types**
 
 The `type` field indicates the resource type:
+
 - `"http"` - HTTP endpoints (GET, POST, PUT, PATCH, DELETE, HEAD)
 - `"mcp"` - MCP (Model Context Protocol) tools
 
-For MCP tools, the `outputSchema.input` object will contain:
-- `type: "mcp"` - Identifies this as an MCP tool
-- `tool` - The MCP tool name (used in `tools/call` requests)
-- `inputSchema` - JSON Schema for the tool's arguments (follows MCP `Tool.inputSchema` format)
-- `description` - Human-readable description of the tool (optional)
-- `transport` - MCP transport protocol: `"streamable-http"` (default) or `"sse"` (optional)
-- `example` - Example arguments object (optional)
+<Callout type="info">
+  In x402 v2, seller-declared Bazaar metadata lives in
+  `PaymentRequired.resource` plus `PaymentRequired.extensions.bazaar`. The
+  `accepts[]` array remains payment-method data. Facilitators may copy or derive
+  extra Bazaar fields into discovery `metadata`, but that catalog shape is
+  facilitator-specific and not part of the seller-side v2 contract.
+</Callout>
 
-**Note:** For MCP tools, the unique resource identifier is the tuple (`resource`, `input.tool`) since MCP multiplexes multiple tools over a single server endpoint.
+**Note:** For MCP tools, the unique resource identifier is the tuple (`resource`, `input.toolName`) since MCP multiplexes multiple tools over a single server endpoint.
 
 ### Quickstart for Buyers
 
@@ -161,13 +165,21 @@ Fetch the list of available x402 services using the facilitator client:
     const usdcAsset = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913";
     const maxPrice = 100000; // $0.10 in USDC atomic units (6 decimals)
 
+    const getAtomicAmount = (paymentRequirements: Record<string, unknown>) =>
+      Number(
+        ("amount" in paymentRequirements
+          ? paymentRequirements.amount
+          : paymentRequirements.maxAmountRequired) ?? 0,
+      );
+
     const affordableServices = response.items.filter(item =>
       item.accepts.find(paymentRequirements =>
         paymentRequirements.asset === usdcAsset &&
-        Number(paymentRequirements.maxAmountRequired) < maxPrice
+        getAtomicAmount(paymentRequirements as Record<string, unknown>) < maxPrice
       )
     );
     ```
+
   </Tab>
   <Tab title="Go">
     ```go
@@ -176,6 +188,7 @@ Fetch the list of available x402 services using the facilitator client:
     import (
         "context"
         "fmt"
+        "strconv"
 
         "github.com/x402-foundation/x402/go/extensions/bazaar"
         x402http "github.com/x402-foundation/x402/go/http"
@@ -206,48 +219,56 @@ Fetch the list of available x402 services using the facilitator client:
 
         for _, item := range response.Items {
             for _, paymentReq := range item.Accepts {
-                // Parse asset and maxAmountRequired from payment requirements
+                // Parse asset and amount from payment requirements
                 if asset, ok := paymentReq["asset"].(string); ok && asset == usdcAsset {
-                    if maxAmount, ok := paymentReq["maxAmountRequired"].(string); ok {
-                        // Convert and compare price
-                        fmt.Printf("Found service: %s\n", item.Resource)
+                    amount, ok := paymentReq["amount"].(string)
+                    if !ok {
+                        amount, ok = paymentReq["maxAmountRequired"].(string)
+                    }
+                    if ok {
+                        if amountAtomic, err := strconv.Atoi(amount); err == nil && amountAtomic < maxPrice {
+                            fmt.Printf("Found service: %s\n", item.Resource)
+                        }
                     }
                 }
             }
         }
     }
     ```
+
   </Tab>
   <Tab title="Python">
     ```python
+    from x402.extensions.bazaar import ListDiscoveryResourcesParams, with_bazaar
     from x402.http import FacilitatorConfig, HTTPFacilitatorClient
 
-    facilitator = HTTPFacilitatorClient(
+    facilitator = with_bazaar(HTTPFacilitatorClient(
         FacilitatorConfig(url="https://x402.org/facilitator")
+    ))
+
+    response = facilitator.extensions.discovery.list_resources(
+        ListDiscoveryResourcesParams(type="http", limit=20, offset=0)
     )
 
-    response = await facilitator.list_resources(type="http")
-
-    # Filter services under $0.10
-    usdc_asset = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913"
-    max_price = 100000  # $0.10 in USDC atomic units (6 decimals)
-
-    affordable_services = [
-        item
-        for item in response.items
-        if any(
-            payment_req.asset == usdc_asset
-            and int(payment_req.max_amount_required) < max_price
-            for payment_req in item.accepts
-        )
-    ]
+    for item in response.resources:
+        print(f"Found service: {item.url}")
     ```
+
   </Tab>
 </Tabs>
 
 #### Step 2: Call a Discovered Service
 
 Once you've found a suitable service, use an x402 client to call it:
+
+<Callout type="info">
+  The stable cross-facilitator discovery fields are `resource`, `type`,
+  `accepts`, and pagination. Some facilitators may expose richer Bazaar
+  invocation details in `metadata`, but that is facilitator-specific. For
+  portable clients, treat discovery as a way to find resources and payment
+  methods, then call the resource with the method and parameters your
+  application expects.
+</Callout>
 
 <Tabs>
   <Tab title="TypeScript">
@@ -271,19 +292,16 @@ Once you've found a suitable service, use an x402 client to call it:
       client
     );
 
-    // Select the payment method of your choice
-    const selectedPaymentRequirements = selectedService.accepts[0];
-    const inputSchema = selectedPaymentRequirements.outputSchema.input;
-
-    // Build the request using the service's schema
+    // Build the request using the discovered resource URL
     const response = await api.request({
-      method: inputSchema.method,
-      url: inputSchema.resource,
-      params: { location: "San Francisco" } // Based on inputSchema
+      method: "GET",
+      url: selectedService.resource,
+      params: { city: "San Francisco" },
     });
 
     console.log("Response data:", response.data);
     ```
+
   </Tab>
   <Tab title="Python">
     ```python
@@ -303,18 +321,14 @@ Once you've found a suitable service, use an x402 client to call it:
         register_exact_evm_client(client, EthAccountSigner(account))
 
         # Select a service from discovery (from Step 1)
-        selected_service = affordable_services[0]
+        selected_service = response.resources[0]
 
-        # Select the payment method of your choice
-        selected_payment_requirements = selected_service.accepts[0]
-        input_schema = selected_payment_requirements.output_schema.input
-
-        # Make the request using httpx client
+        # Make the request using the discovered resource URL
         async with x402HttpxClient(client) as http:
             response = await http.request(
-                method=input_schema.method,
-                url=input_schema.resource,
-                params={"location": "San Francisco"}  # Based on input_schema
+                method="GET",
+                url=selected_service.url,
+                params={"city": "San Francisco"},
             )
             await response.aread()
             print(f"Response data: {response.json()}")
@@ -322,6 +336,7 @@ Once you've found a suitable service, use an x402 client to call it:
 
     asyncio.run(main())
     ```
+
   </Tab>
 </Tabs>
 
@@ -332,6 +347,7 @@ Once you've found a suitable service, use an x402 client to call it:
 Add the bazaar extension to your route configuration to make your API or MCP tools discoverable.
 
 **Supported Resource Types:**
+
 - **HTTP Endpoints** - Standard REST APIs (GET, POST, PUT, PATCH, DELETE, HEAD)
 - **MCP Tools** - Model Context Protocol tools for AI agent integration
 
@@ -358,51 +374,63 @@ To enhance your listing with descriptions and schemas, include them when setting
     import { x402ResourceServer, HTTPFacilitatorClient } from "@x402/core/server";
     import { ExactEvmScheme } from "@x402/evm/exact/server";
     import { bazaarResourceServerExtension } from "@x402/extensions";
+    import { declareDiscoveryExtension } from "@x402/extensions/bazaar";
 
     const facilitatorClient = new HTTPFacilitatorClient({
       url: "https://x402.org/facilitator"
     });
-    const server = new x402ResourceServer(facilitatorClient);
-    server.register("eip155:*", new ExactEvmScheme());
+    const server = new x402ResourceServer(facilitatorClient)
+      .register("eip155:*", new ExactEvmScheme())
+      .registerExtension(bazaarResourceServerExtension);
 
     const routes = {
       "GET /weather": {
-        price: "$0.001",
-        network: "eip155:8453",
-        resource: "0xYourAddress",
+        accepts: [
+          {
+            scheme: "exact",
+            price: "$0.001",
+            network: "eip155:8453",
+            payTo: "0xYourAddress"
+          }
+        ],
         description: "Get current weather data for any location",
+        mimeType: "application/json",
         extensions: {
-          bazaar: {
-            discoverable: true,
+          ...declareDiscoveryExtension({
+            input: {
+              location: "San Francisco"
+            },
             inputSchema: {
-              queryParams: {
+              properties: {
                 location: {
                   type: "string",
-                  description: "City name or coordinates",
-                  required: true
+                  description: "City name or coordinates"
                 }
-              }
+              },
+              required: ["location"]
             },
-            outputSchema: {
-              type: "object",
-              properties: {
-                temperature: { type: "number" },
-                conditions: { type: "string" },
-                humidity: { type: "number" }
+            output: {
+              example: {
+                location: "San Francisco",
+                temperature: 68,
+                conditions: "sunny",
+                humidity: 45
               }
             }
-          }
+          })
         }
       }
     };
 
     app.use(paymentMiddleware(routes, server));
     ```
+
   </Tab>
   <Tab title="Python">
     ```python
     from fastapi import FastAPI
 
+    from x402.extensions.bazaar import OutputConfig, declare_discovery_extension
     from x402.http import FacilitatorConfig, HTTPFacilitatorClient, PaymentOption
     from x402.http.middleware.fastapi import PaymentMiddlewareASGI
     from x402.http.types import RouteConfig
@@ -434,32 +462,33 @@ To enhance your listing with descriptions and schemas, include them when setting
             mime_type="application/json",
             description="Get current weather data for any location",
             extensions={
-                "bazaar": {
-                    "discoverable": True,
-                    "inputSchema": {
-                        "queryParams": {
+                **declare_discovery_extension(
+                    input={"location": "San Francisco"},
+                    input_schema={
+                        "properties": {
                             "location": {
                                 "type": "string",
                                 "description": "City name or coordinates",
-                                "required": True,
                             }
-                        }
-                    },
-                    "outputSchema": {
-                        "type": "object",
-                        "properties": {
-                            "temperature": {"type": "number"},
-                            "conditions": {"type": "string"},
-                            "humidity": {"type": "number"},
                         },
+                        "required": ["location"],
                     },
-                }
+                    output=OutputConfig(
+                        example={
+                            "location": "San Francisco",
+                            "temperature": 68,
+                            "conditions": "sunny",
+                            "humidity": 45,
+                        }
+                    ),
+                )
             },
         ),
     }
 
     app.add_middleware(PaymentMiddlewareASGI, routes=routes, server=server)
     ```
+
   </Tab>
   <Tab title="Go">
     ```go
@@ -544,6 +573,7 @@ To enhance your listing with descriptions and schemas, include them when setting
         r.Run(":4021")
     }
     ```
+
   </Tab>
 </Tabs>
 
@@ -553,8 +583,8 @@ The x402 Bazaar is rapidly evolving, and your feedback helps us prioritize featu
 
 ### Support
 
-* **GitHub**: [github.com/x402-foundation/x402](https://github.com/x402-foundation/x402)
-* **Discord**: [Join #x402 channel](https://discord.com/invite/cdp)
+- **GitHub**: [github.com/x402-foundation/x402](https://github.com/x402-foundation/x402)
+- **Discord**: [Join #x402 channel](https://discord.com/invite/cdp)
 
 ### FAQ
 

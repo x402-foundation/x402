@@ -11,10 +11,12 @@ The `bazaar` extension enables **resource discovery and cataloging** for x402-en
 A resource server advertises its endpoint specification by including the `bazaar` extension in the `extensions` object of the **402 Payment Required** response.
 
 The extension follows the standard v2 pattern:
+
 - **`info`**: Contains the actual discovery data (HTTP method or MCP tool name, input parameters, and output format)
 - **`schema`**: JSON Schema that validates the structure of `info`
 
 The `info.input` object uses a discriminated union type, distinguished by the `type` field:
+
 - `input.type: "http"` — HTTP endpoints (further discriminated by `method` into query parameter methods vs body methods)
 - `input.type: "mcp"` — MCP (Model Context Protocol) tools
 
@@ -181,7 +183,7 @@ The `info.input` object uses a discriminated union type, distinguished by the `t
       "info": {
         "input": {
           "type": "mcp",
-          "tool": "financial_analysis",
+          "toolName": "financial_analysis",
           "description": "Advanced AI-powered financial analysis",
           "inputSchema": {
             "type": "object",
@@ -212,13 +214,13 @@ The `info.input` object uses a discriminated union type, distinguished by the `t
             "type": "object",
             "properties": {
               "type": { "type": "string", "const": "mcp" },
-              "tool": { "type": "string" },
+              "toolName": { "type": "string" },
               "description": { "type": "string" },
               "transport": { "type": "string", "enum": ["streamable-http", "sse"] },
               "inputSchema": { "type": "object" },
               "example": { "type": "object" }
             },
-            "required": ["type", "tool", "inputSchema"],
+            "required": ["type", "toolName", "inputSchema"],
             "additionalProperties": false
           },
           "output": {
@@ -247,46 +249,46 @@ The `info.input` object describes how to call the endpoint or tool.
 
 #### Query Parameter Methods (GET, HEAD, DELETE)
 
-| Field | Type | Required | Description |
-|-------|------|----------|-------------|
-| `type` | string | Yes | Always `"http"` |
-| `method` | string | Yes | One of `"GET"`, `"HEAD"`, `"DELETE"` |
-| `queryParams` | object | No | Query parameter examples |
-| `headers` | object | No | Custom header examples |
+| Field         | Type   | Required | Description                          |
+| ------------- | ------ | -------- | ------------------------------------ |
+| `type`        | string | Yes      | Always `"http"`                      |
+| `method`      | string | Yes      | One of `"GET"`, `"HEAD"`, `"DELETE"` |
+| `queryParams` | object | No       | Query parameter examples             |
+| `headers`     | object | No       | Custom header examples               |
 
 #### Body Methods (POST, PUT, PATCH)
 
-| Field | Type | Required | Description |
-|-------|------|----------|-------------|
-| `type` | string | Yes | Always `"http"` |
-| `method` | string | Yes | One of `"POST"`, `"PUT"`, `"PATCH"` |
-| `bodyType` | string | Yes | One of `"json"`, `"form-data"`, `"text"` |
-| `body` | object/string | Yes | Request body example |
-| `queryParams` | object | No | Query parameter examples |
-| `headers` | object | No | Custom header examples |
+| Field         | Type          | Required | Description                              |
+| ------------- | ------------- | -------- | ---------------------------------------- |
+| `type`        | string        | Yes      | Always `"http"`                          |
+| `method`      | string        | Yes      | One of `"POST"`, `"PUT"`, `"PATCH"`      |
+| `bodyType`    | string        | Yes      | One of `"json"`, `"form-data"`, `"text"` |
+| `body`        | object/string | Yes      | Request body example                     |
+| `queryParams` | object        | No       | Query parameter examples                 |
+| `headers`     | object        | No       | Custom header examples                   |
 
 #### MCP Tools
 
-| Field | Type | Required | Description |
-|-------|------|----------|-------------|
-| `type` | string | Yes | Always `"mcp"` |
-| `tool` | string | Yes | MCP tool name (matches what's passed to `tools/call`) |
-| `description` | string | No | Human-readable description of the tool |
-| `inputSchema` | object | Yes | JSON Schema for the tool's `arguments`, following the MCP [`Tool.inputSchema`](https://spec.modelcontextprotocol.io/) format (a JSON Schema subset with `type: "object"`, `properties`, and `required`). Servers should reuse the same schema their MCP tool already declares. |
-| `transport` | string | No | MCP transport protocol. One of `"streamable-http"` or `"sse"`. Defaults to `"streamable-http"` if omitted. |
-| `example` | object | No | Example `arguments` object |
+| Field         | Type   | Required | Description                                                                                                                                                                                                                                                                    |
+| ------------- | ------ | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `type`        | string | Yes      | Always `"mcp"`                                                                                                                                                                                                                                                                 |
+| `toolName`    | string | Yes      | MCP tool name (matches what's passed to `tools/call`)                                                                                                                                                                                                                          |
+| `description` | string | No       | Human-readable description of the tool                                                                                                                                                                                                                                         |
+| `inputSchema` | object | Yes      | JSON Schema for the tool's `arguments`, following the MCP [`Tool.inputSchema`](https://spec.modelcontextprotocol.io/) format (a JSON Schema subset with `type: "object"`, `properties`, and `required`). Servers should reuse the same schema their MCP tool already declares. |
+| `transport`   | string | No       | MCP transport protocol. One of `"streamable-http"` or `"sse"`. Defaults to `"streamable-http"` if omitted.                                                                                                                                                                     |
+| `example`     | object | No       | Example `arguments` object                                                                                                                                                                                                                                                     |
 
-> **Note:** For MCP tools, the unique resource identifier is the tuple (`resource.url`, `input.tool`). Since MCP multiplexes multiple tools over a single server endpoint, `resource.url` alone may not be unique. Facilitators **must** use both fields when cataloging MCP tools.
+> **Note:** For MCP tools, the unique resource identifier is the tuple (`resource.url`, `input.toolName`). Since MCP multiplexes multiple tools over a single server endpoint, `resource.url` alone may not be unique. Facilitators **must** use both fields when cataloging MCP tools.
 
 ### Output Types
 
 The `info.output` object (optional) describes the expected response format:
 
-| Field | Type | Required | Description |
-|-------|------|----------|-------------|
-| `type` | string | Yes | Response content type (e.g., `"json"`, `"text"`) |
-| `format` | string | No | Additional format information |
-| `example` | any | No | Example response value |
+| Field     | Type   | Required | Description                                      |
+| --------- | ------ | -------- | ------------------------------------------------ |
+| `type`    | string | Yes      | Response content type (e.g., `"json"`, `"text"`) |
+| `format`  | string | No       | Additional format information                    |
+| `example` | any    | No       | Example response value                           |
 
 > **Note:** For MCP tools, if `output` is omitted, facilitators should assume arbitrary text content (MCP's default response type).
 
@@ -294,11 +296,11 @@ The `info.output` object (optional) describes the expected response format:
 
 The `input.type` field acts as a discriminator for the discovery info structure:
 
-| `input.type` | Structure | Description |
-|--------------|-----------|-------------|
-| `"http"` | QueryDiscoveryInfo | HTTP GET/HEAD/DELETE with query parameters |
-| `"http"` | BodyDiscoveryInfo | HTTP POST/PUT/PATCH with request body (has `bodyType`) |
-| `"mcp"` | MCPDiscoveryInfo | MCP tool invocation |
+| `input.type` | Structure          | Description                                            |
+| ------------ | ------------------ | ------------------------------------------------------ |
+| `"http"`     | QueryDiscoveryInfo | HTTP GET/HEAD/DELETE with query parameters             |
+| `"http"`     | BodyDiscoveryInfo  | HTTP POST/PUT/PATCH with request body (has `bodyType`) |
+| `"mcp"`      | MCPDiscoveryInfo   | MCP tool invocation                                    |
 
 Facilitators should use `input.type` to determine which validation rules apply. For HTTP inputs, the presence of `bodyType` further distinguishes between query and body methods.
 
@@ -309,12 +311,13 @@ Facilitators should use `input.type` to determine which validation rules apply. 
 The `schema` field contains a JSON Schema (Draft 2020-12) that validates the structure of `info`.
 
 **Requirements:**
+
 - Must use JSON Schema Draft 2020-12
 - Must define an `input` property (required)
 - May define an `output` property (optional)
 - Must validate that `input.type` equals `"http"` (for HTTP endpoints) or `"mcp"` (for MCP tools)
 - For HTTP endpoints: Must validate the appropriate `method` enum based on operation type
-- For MCP tools: Must require `tool` and `inputSchema` fields
+- For MCP tools: Must require `toolName` and `inputSchema` fields
 
 Facilitators **must** validate `info` against `schema` before cataloging.
 
@@ -329,13 +332,13 @@ Facilitators **must** validate `info` against `schema` before cataloging.
       "type": "object",
       "properties": {
         "type": { "type": "string", "const": "mcp" },
-        "tool": { "type": "string" },
+        "toolName": { "type": "string" },
         "description": { "type": "string" },
         "transport": { "type": "string", "enum": ["streamable-http", "sse"] },
         "inputSchema": { "type": "object" },
         "example": { "type": "object" }
       },
-      "required": ["type", "tool", "inputSchema"],
+      "required": ["type", "toolName", "inputSchema"],
       "additionalProperties": false
     },
     "output": {
@@ -370,32 +373,34 @@ After processing a `PaymentPayload`, a facilitator **MAY** append an `EXTENSION-
 
 **Header value:** A base64-encoded JSON object keyed by extension name. The `bazaar` key contains the bazaar extension's response:
 
-| Field | Type | Required | Description |
-|-------|------|----------|-------------|
-| `bazaar.status` | string | Yes | One of `"success"`, `"processing"`, or `"rejected"` |
-| `bazaar.rejectedReason` | string | No | Human-readable explanation. Only present when `status` is `"rejected"` |
+| Field                   | Type   | Required | Description                                                            |
+| ----------------------- | ------ | -------- | ---------------------------------------------------------------------- |
+| `bazaar.status`         | string | Yes      | One of `"success"`, `"processing"`, or `"rejected"`                    |
+| `bazaar.rejectedReason` | string | No       | Human-readable explanation. Only present when `status` is `"rejected"` |
 
 **Status values:**
 
-| Value | Meaning |
-|-------|---------|
-| `"success"` | The discovery info was validated and successfully cataloged |
-| `"processing"` | The discovery info was accepted and is being cataloged asynchronously |
-| `"rejected"` | The discovery info was rejected (e.g., failed schema validation). See `rejectedReason` for details |
+| Value          | Meaning                                                                                            |
+| -------------- | -------------------------------------------------------------------------------------------------- |
+| `"success"`    | The discovery info was validated and successfully cataloged                                        |
+| `"processing"` | The discovery info was accepted and is being cataloged asynchronously                              |
+| `"rejected"`   | The discovery info was rejected (e.g., failed schema validation). See `rejectedReason` for details |
 
 **Example (success):**
 
 ```
 EXTENSION-RESPONSES: eyJiYXphYXIiOnsic3RhdHVzIjoic3VjY2VzcyJ9fQ==
 ```
-*(base64 of `{"bazaar":{"status":"success"}}`)*
+
+_(base64 of `{"bazaar":{"status":"success"}}`)_
 
 **Example (rejected):**
 
 ```
 EXTENSION-RESPONSES: eyJiYXphYXIiOnsic3RhdHVzIjoicmVqZWN0ZWQiLCJyZWplY3RlZFJlYXNvbiI6ImluZm8gZmFpbGVkIHNjaGVtYSB2YWxpZGF0aW9uIn19
 ```
-*(base64 of `{"bazaar":{"status":"rejected","rejectedReason":"info failed schema validation"}}`)*
+
+_(base64 of `{"bazaar":{"status":"rejected","rejectedReason":"info failed schema validation"}}`)_
 
 Clients that understand the `bazaar` extension SHOULD read the `bazaar` key of this header to confirm cataloging succeeded and surface any rejection reason for debugging.
 
@@ -449,13 +454,13 @@ All SDK implementations use the function `isValidRouteTemplate` (TypeScript, Go)
 `_is_valid_route_template` (Python) which applies the following rules identically.
 **All three copies must stay in sync.**
 
-| Rule | Reason |
-|------|--------|
-| Must be a non-empty string | Empty/absent means "no template" |
-| Must start with `/` | Prevents relative paths and external URLs |
+| Rule                                 | Reason                                                        |
+| ------------------------------------ | ------------------------------------------------------------- |
+| Must be a non-empty string           | Empty/absent means "no template"                              |
+| Must start with `/`                  | Prevents relative paths and external URLs                     |
 | Must match `^/[a-zA-Z0-9_/:.\-~%]+$` | Only allows safe URL path characters and `:param` identifiers |
-| Must not contain `..` | Prevents path traversal (`/users/../admin`) |
-| Must not contain `://` | Prevents URL injection (`http://evil.com`) |
+| Must not contain `..`                | Prevents path traversal (`/users/../admin`)                   |
+| Must not contain `://`               | Prevents URL injection (`http://evil.com`)                    |
 
 All implementations decode percent-encoding (e.g. `%2e%2e` -> `..`) before applying the traversal
 and scheme checks. A value that fails any rule is discarded; the facilitator falls back to the
@@ -472,11 +477,16 @@ The `bazaar` extension was formalized in x402 v2. Discovery functionality unoffi
 
 Facilitators are **not expected** to support v1. If v1 support is desired:
 
-| V1 Location | V2 Location |
-|-------------|-------------|
-| `accepts[0].outputSchema` | `extensions.bazaar` |
-| `accepts[0].resource` | `resource.url` |
-| `accepts[0].description` | `description` (top-level) |
-| `accepts[0].mimeType` | `mimeType` (top-level) |
+| V1 Location               | V2 Location            |
+| ------------------------- | ---------------------- |
+| `accepts[0].outputSchema` | `extensions.bazaar`    |
+| `accepts[0].resource`     | `resource.url`         |
+| `accepts[0].description`  | `resource.description` |
+| `accepts[0].mimeType`     | `resource.mimeType`    |
 
 V1 had no formal schema validation.
+
+For x402 v2, servers SHOULD keep `accepts[]` limited to payment requirements. Human-readable
+resource metadata belongs in `resource`, and Bazaar invocation metadata belongs in
+`extensions.bazaar`. If a facilitator later exposes enriched catalog fields derived from that
+data, treat that as facilitator output rather than part of the seller-side v2 wire contract.
