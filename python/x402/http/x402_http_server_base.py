@@ -90,6 +90,10 @@ ProcessPhase = Literal["resolve_options", "verify_payment", "build_requirements"
 ProcessCommand = tuple[ProcessPhase, Any, Any]  # (phase, target, context)
 
 
+class MalformedPaymentHeaderError(ValueError):
+    """Raised when PAYMENT-SIGNATURE cannot be decoded into a payment payload."""
+
+
 # ============================================================================
 # Base HTTP Server Class (Shared Logic)
 # ============================================================================
@@ -286,7 +290,17 @@ class x402HTTPServerBase:
         context = dataclasses.replace(context, route_pattern=route_pattern)
 
         # Extract payment from headers
-        payment_payload = self._extract_payment(context.adapter)
+        try:
+            payment_payload = self._extract_payment(context.adapter)
+        except MalformedPaymentHeaderError:
+            return HTTPProcessResult(
+                type=RESULT_PAYMENT_ERROR,
+                response=HTTPResponseInstructions(
+                    status=400,
+                    headers={"Content-Type": "application/json"},
+                    body={"error": "Invalid payment"},
+                ),
+            )
 
         # Build resource info (Static metadata as per maintainer feedback)
         resource_info = ResourceInfo(
@@ -517,8 +531,8 @@ class x402HTTPServerBase:
         if header:
             try:
                 return decode_payment_signature_header(header)
-            except Exception:
-                return None
+            except Exception as exc:
+                raise MalformedPaymentHeaderError("Invalid payment") from exc
 
         return None
 
