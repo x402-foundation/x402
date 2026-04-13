@@ -20,7 +20,39 @@ if err != nil {
 evmScheme := evmclient.NewExactEvmScheme(signer)
 ```
 
+For HSMs, MPC/TSS systems, custodial signing services, or remote wallets, use a callback signer:
+
+```go
+import x402evm "github.com/x402-foundation/x402/go/mechanisms/evm"
+
+signer, err := evmsigners.NewClientSigner("0xYourAddress", func(
+    ctx context.Context,
+    domain x402evm.TypedDataDomain,
+    types map[string][]x402evm.TypedDataField,
+    primaryType string,
+    message map[string]interface{},
+) ([]byte, error) {
+    return remoteSigner.SignTypedData(ctx, domain, types, primaryType, message)
+})
+```
+
 ## API
+
+### NewClientSigner
+
+```go
+func NewClientSigner(address string, signFunc SignTypedDataFunc) (evm.ClientEvmSigner, error)
+```
+
+Creates a client signer from an Ethereum address and EIP-712 signing callback. Use this when raw private keys are held outside the process.
+
+**Args:**
+- `address`: Ethereum address for the signer
+- `signFunc`: Callback that signs EIP-712 typed data and returns a 65-byte signature
+
+**Returns:**
+- `evm.ClientEvmSigner` implementation
+- Error if the address is invalid or the callback is nil
 
 ### NewClientSignerFromPrivateKey
 
@@ -167,4 +199,3 @@ func TestPayment(t *testing.T) {
 - [../svm/README.md](../svm/README.md) - SVM client signer
 - [../../mechanisms/evm/README.md](../../mechanisms/evm/README.md) - EVM mechanism documentation
 - [../README.md](../README.md) - Signers package overview
-

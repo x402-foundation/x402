@@ -1,0 +1,2 @@
+kind: added
+body: Add callback-based EVM and SVM client signer helpers for external signing systems

@@ -1,6 +1,7 @@
 package evm
 
 import (
+	"bytes"
 	"context"
 	"math/big"
 	"strings"
@@ -98,6 +99,77 @@ func TestClientSigner_Address(t *testing.T) {
 	expected := "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266"
 	if !equalAddresses(addr, expected) {
 		t.Errorf("Address() = %v, want %v", addr, expected)
+	}
+}
+
+func TestNewClientSigner(t *testing.T) {
+	expectedAddress := "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266"
+	expectedSignature := make([]byte, 65)
+	expectedSignature[64] = 27
+	called := false
+
+	signer, err := NewClientSigner(expectedAddress, func(ctx context.Context, domain x402evm.TypedDataDomain, types map[string][]x402evm.TypedDataField, primaryType string, message map[string]interface{}) ([]byte, error) {
+		called = true
+		if ctx == nil {
+			t.Fatal("expected context")
+		}
+		if domain.Name != "USD Coin" {
+			t.Fatalf("domain.Name = %q, want USD Coin", domain.Name)
+		}
+		if primaryType != "TransferWithAuthorization" {
+			t.Fatalf("primaryType = %q, want TransferWithAuthorization", primaryType)
+		}
+		if len(types["TransferWithAuthorization"]) == 0 {
+			t.Fatal("expected typed data fields")
+		}
+		if message["from"] != expectedAddress {
+			t.Fatalf("message.from = %v, want %s", message["from"], expectedAddress)
+		}
+		return expectedSignature, nil
+	})
+	if err != nil {
+		t.Fatalf("NewClientSigner() failed: %v", err)
+	}
+
+	domain := x402evm.TypedDataDomain{
+		Name:              "USD Coin",
+		Version:           "2",
+		ChainID:           big.NewInt(84532),
+		VerifyingContract: "0x036CbD53842c5426634e7929541eC2318f3dCF7e",
+	}
+	types := map[string][]x402evm.TypedDataField{
+		"TransferWithAuthorization": {
+			{Name: "from", Type: "address"},
+		},
+	}
+	message := map[string]interface{}{"from": expectedAddress}
+
+	signature, err := signer.SignTypedData(context.Background(), domain, types, "TransferWithAuthorization", message)
+	if err != nil {
+		t.Fatalf("SignTypedData() failed: %v", err)
+	}
+
+	if !called {
+		t.Fatal("expected signing callback to be called")
+	}
+	if !bytes.Equal(signature, expectedSignature) {
+		t.Fatal("SignTypedData() did not return callback signature")
+	}
+	if !equalAddresses(signer.Address(), expectedAddress) {
+		t.Fatalf("Address() = %v, want %v", signer.Address(), expectedAddress)
+	}
+}
+
+func TestNewClientSignerValidation(t *testing.T) {
+	signFunc := func(context.Context, x402evm.TypedDataDomain, map[string][]x402evm.TypedDataField, string, map[string]interface{}) ([]byte, error) {
+		return make([]byte, 65), nil
+	}
+
+	if _, err := NewClientSigner("not-an-address", signFunc); err == nil {
+		t.Fatal("expected invalid address error")
+	}
+	if _, err := NewClientSigner("0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266", nil); err == nil {
+		t.Fatal("expected nil callback error")
 	}
 }
 

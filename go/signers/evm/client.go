@@ -19,12 +19,45 @@ import (
 	x402evm "github.com/x402-foundation/x402/go/mechanisms/evm"
 )
 
-// ClientSigner implements x402evm.ClientEvmSigner using an ECDSA private key.
-// This provides client-side EIP-712 signing for creating payment payloads.
+// SignTypedDataFunc signs EIP-712 typed data for an Ethereum address.
+//
+// Use this callback when signing is delegated to an external system such as an
+// HSM, MPC/TSS service, custody provider, or remote wallet.
+type SignTypedDataFunc func(
+	ctx context.Context,
+	domain x402evm.TypedDataDomain,
+	types map[string][]x402evm.TypedDataField,
+	primaryType string,
+	message map[string]interface{},
+) ([]byte, error)
+
+// ClientSigner implements x402evm.ClientEvmSigner.
+//
+// Signers can be backed by either an ECDSA private key or a callback to an
+// external signing system. Private-key signers also support optional extension
+// capabilities such as transaction signing and contract reads.
 type ClientSigner struct {
-	privateKey *ecdsa.PrivateKey
-	address    common.Address
-	ethClient  *ethclient.Client
+	privateKey    *ecdsa.PrivateKey
+	address       common.Address
+	ethClient     *ethclient.Client
+	signTypedData SignTypedDataFunc
+}
+
+// NewClientSigner creates a client signer from an Ethereum address and signing callback.
+//
+// Use this constructor when raw private keys are held by an external signer.
+func NewClientSigner(address string, signFunc SignTypedDataFunc) (x402evm.ClientEvmSigner, error) {
+	if !common.IsHexAddress(address) {
+		return nil, fmt.Errorf("invalid address: %s", address)
+	}
+	if signFunc == nil {
+		return nil, fmt.Errorf("sign callback is required")
+	}
+
+	return &ClientSigner{
+		address:       common.HexToAddress(address),
+		signTypedData: signFunc,
+	}, nil
 }
 
 // NewClientSignerFromPrivateKey creates a client signer from a hex-encoded private key.
@@ -71,6 +104,9 @@ func NewClientSignerFromPrivateKeyWithClient(privateKeyHex string, ethClient *et
 		privateKey: privateKey,
 		address:    address,
 		ethClient:  ethClient,
+		signTypedData: func(_ context.Context, domain x402evm.TypedDataDomain, types map[string][]x402evm.TypedDataField, primaryType string, message map[string]interface{}) ([]byte, error) {
+			return signTypedDataWithPrivateKey(privateKey, domain, types, primaryType, message)
+		},
 	}, nil
 }
 
@@ -95,6 +131,20 @@ func (s *ClientSigner) Address() string {
 //	Error if signing fails
 func (s *ClientSigner) SignTypedData(
 	ctx context.Context,
+	domain x402evm.TypedDataDomain,
+	types map[string][]x402evm.TypedDataField,
+	primaryType string,
+	message map[string]interface{},
+) ([]byte, error) {
+	if s.signTypedData == nil {
+		return nil, fmt.Errorf("sign callback is required")
+	}
+
+	return s.signTypedData(ctx, domain, types, primaryType, message)
+}
+
+func signTypedDataWithPrivateKey(
+	privateKey *ecdsa.PrivateKey,
 	domain x402evm.TypedDataDomain,
 	types map[string][]x402evm.TypedDataField,
 	primaryType string,
@@ -154,7 +204,7 @@ func (s *ClientSigner) SignTypedData(
 	digest := crypto.Keccak256(rawData)
 
 	// Sign the digest with ECDSA
-	signature, err := crypto.Sign(digest, s.privateKey)
+	signature, err := crypto.Sign(digest, privateKey)
 	if err != nil {
 		return nil, fmt.Errorf("failed to sign: %w", err)
 	}
@@ -215,6 +265,10 @@ func (s *ClientSigner) EstimateFeesPerGas(ctx context.Context) (maxFeePerGas, ma
 // SignTransaction signs an EIP-1559 transaction using the signer's private key
 // and returns the RLP-encoded signed transaction bytes.
 func (s *ClientSigner) SignTransaction(ctx context.Context, tx *types.Transaction) ([]byte, error) {
+	if s.privateKey == nil {
+		return nil, fmt.Errorf("SignTransaction requires a private key; use NewClientSignerFromPrivateKey")
+	}
+
 	// Derive chain ID from tx
 	chainID := tx.ChainId()
 	signer := types.LatestSignerForChainID(chainID)

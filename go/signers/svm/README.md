@@ -20,7 +20,37 @@ if err != nil {
 svmScheme := svmclient.NewExactSvmScheme(signer)
 ```
 
+For HSMs, MPC/TSS systems, custodial signing services, or remote wallets, use a callback signer:
+
+```go
+import solana "github.com/gagliardetto/solana-go"
+
+publicKey := solana.MustPublicKeyFromBase58("YourPublicKey")
+signer, err := svmsigners.NewClientSigner(publicKey, func(
+    ctx context.Context,
+    tx *solana.Transaction,
+) error {
+    return remoteSigner.SignTransaction(ctx, tx)
+})
+```
+
 ## API
+
+### NewClientSigner
+
+```go
+func NewClientSigner(publicKey solana.PublicKey, signFunc SignTransactionFunc) (svm.ClientSvmSigner, error)
+```
+
+Creates a client signer from a Solana public key and transaction signing callback. Use this when raw private keys are held outside the process.
+
+**Args:**
+- `publicKey`: Solana public key for the signer
+- `signFunc`: Callback that signs the transaction in place
+
+**Returns:**
+- `svm.ClientSvmSigner` implementation
+- Error if the public key is zero or the callback is nil
 
 ### NewClientSignerFromPrivateKey
 
@@ -213,4 +243,3 @@ fmt.Println("Public Key:", privateKey.PublicKey())
 - [../evm/README.md](../evm/README.md) - EVM client signer
 - [../../mechanisms/svm/README.md](../../mechanisms/svm/README.md) - SVM mechanism documentation
 - [../README.md](../README.md) - Signers package overview
-
