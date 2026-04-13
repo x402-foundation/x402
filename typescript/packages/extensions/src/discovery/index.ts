@@ -31,12 +31,7 @@
 
 import type { RoutesConfig } from "@x402/core/http";
 import type { DiscoveryOptions, OpenAPIDocument } from "./types";
-import {
-  buildPaths,
-  buildSiwxComponents,
-  isSiwxRoute,
-  normalizeRoutes,
-} from "./utils";
+import { buildPaths, buildSiwxComponents, isSiwxRoute, normalizeRoutes } from "./utils";
 
 export * from "./types";
 

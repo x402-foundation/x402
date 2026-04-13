@@ -7,10 +7,7 @@
 
 import { z } from "zod";
 import type { RouteConfig } from "@x402/core/http";
-import type {
-  QueryDiscoveryExtension,
-  BodyDiscoveryExtension,
-} from "../bazaar";
+import type { QueryDiscoveryExtension, BodyDiscoveryExtension } from "../bazaar";
 
 const ServerSchema = z.object({
   url: z.string(),
@@ -55,9 +52,7 @@ export const OpenAPIDocumentSchema = z.object({
   }),
   "x-discovery": z.object({ ownershipProofs: z.array(z.string()) }).optional(),
   servers: z.array(ServerSchema).optional(),
-  components: z
-    .object({ securitySchemes: z.record(z.unknown()).optional() })
-    .optional(),
+  components: z.object({ securitySchemes: z.record(z.unknown()).optional() }).optional(),
   paths: z.record(z.record(z.unknown())),
 });
 

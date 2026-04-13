@@ -21,6 +21,6 @@ export * from "./eip2612-gas-sponsoring";
 // ERC-20 Approval Gas Sponsoring extension
 export * from "./erc20-approval-gas-sponsoring";
 
-// OpenAPI discovery 
+// OpenAPI discovery
 export { discovery, DiscoveryOptionsSchema, OpenAPIDocumentSchema } from "./discovery";
 export type { DiscoveryOptions, OpenAPIDocument } from "./discovery";
