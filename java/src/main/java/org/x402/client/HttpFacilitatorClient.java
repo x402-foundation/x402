@@ -1,5 +1,6 @@
 package org.x402.client;
 
+import org.x402.model.PaymentPayload;
 import org.x402.model.PaymentRequirements;
 import org.x402.util.Json;
 
@@ -38,13 +39,13 @@ public class HttpFacilitatorClient implements FacilitatorClient {
     /* ------------------------------------------------ verify ------------- */
 
     @Override
-    public VerificationResponse verify(String paymentHeader,
+    public VerificationResponse verify(PaymentPayload paymentPayload,
                                        PaymentRequirements req)
             throws IOException, InterruptedException {
 
         Map<String,Object> body = Map.of(
-                "x402Version", 1,
-                "paymentHeader", paymentHeader,
+                "x402Version", paymentPayload.x402Version,
+                "paymentPayload", paymentPayload,
                 "paymentRequirements", req
         );
 
@@ -65,13 +66,13 @@ public class HttpFacilitatorClient implements FacilitatorClient {
     /* ------------------------------------------------ settle ------------- */
 
     @Override
-    public SettlementResponse settle(String paymentHeader,
+    public SettlementResponse settle(PaymentPayload paymentPayload,
                                      PaymentRequirements req)
             throws IOException, InterruptedException {
 
         Map<String,Object> body = Map.of(
-                "x402Version", 1,
-                "paymentHeader", paymentHeader,
+                "x402Version", paymentPayload.x402Version,
+                "paymentPayload", paymentPayload,
                 "paymentRequirements", req
         );
 

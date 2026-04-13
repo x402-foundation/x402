@@ -37,12 +37,16 @@ class FilterIntegrationTest {
     static void startJetty() throws Exception {
         // ----- stub facilitator -----------------------------------------
         FacilitatorClient stubFac = new FacilitatorClient() {
-            @Override public VerificationResponse verify(String hdr, org.x402.model.PaymentRequirements r) {
+            @Override public VerificationResponse verify(PaymentPayload payload, org.x402.model.PaymentRequirements r) {
                 VerificationResponse vr = new VerificationResponse();
                 vr.isValid = true;                       // always accept
                 return vr;
             }
-            @Override public org.x402.client.SettlementResponse settle(String h, org.x402.model.PaymentRequirements r) { return new org.x402.client.SettlementResponse(); }
+            @Override public org.x402.client.SettlementResponse settle(PaymentPayload payload, org.x402.model.PaymentRequirements r) {
+                org.x402.client.SettlementResponse sr = new org.x402.client.SettlementResponse();
+                sr.success = true;
+                return sr;
+            }
             @Override public java.util.Set<org.x402.client.Kind> supported() { return java.util.Set.of(); }
         };
 

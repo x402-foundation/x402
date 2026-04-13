@@ -13,6 +13,7 @@ import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.MockitoAnnotations;
 
@@ -23,6 +24,8 @@ import java.math.BigInteger;
 import java.util.Base64;
 import java.util.Map;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.mockito.Mockito.*;
 
 class PaymentFilterTest {
@@ -88,7 +91,7 @@ class PaymentFilterTest {
         // facilitator says it's valid
         VerificationResponse vr = new VerificationResponse();
         vr.isValid = true;
-        when(fac.verify(eq(header), any())).thenReturn(vr);
+        when(fac.verify(any(PaymentPayload.class), any())).thenReturn(vr);
 
         // handler returns 200 OK
         when(resp.getStatus()).thenReturn(HttpServletResponse.SC_OK);
@@ -98,14 +101,23 @@ class PaymentFilterTest {
         sr.success = true;
         sr.txHash = "0xabcdef1234567890";
         sr.networkId = "base-sepolia";
-        when(fac.settle(eq(header), any())).thenReturn(sr);
+        when(fac.settle(any(PaymentPayload.class), any())).thenReturn(sr);
 
         filter.doFilter(req, resp, chain);
 
         verify(chain).doFilter(req, resp);
         verify(resp, never()).setStatus(HttpServletResponse.SC_PAYMENT_REQUIRED);
-        verify(fac).verify(eq(header), any());
-        verify(fac).settle(eq(header), any());
+        ArgumentCaptor<PaymentPayload> verifyPayloadCaptor =
+                ArgumentCaptor.forClass(PaymentPayload.class);
+        ArgumentCaptor<PaymentPayload> settlePayloadCaptor =
+                ArgumentCaptor.forClass(PaymentPayload.class);
+        verify(fac).verify(verifyPayloadCaptor.capture(), any());
+        verify(fac).settle(settlePayloadCaptor.capture(), any());
+        assertSame(
+                verifyPayloadCaptor.getValue(),
+                settlePayloadCaptor.getValue());
+        assertEquals(1, verifyPayloadCaptor.getValue().x402Version);
+        assertEquals("/private", verifyPayloadCaptor.getValue().payload.get("resource"));
     }
 
     /* ------------ error response skips settlement ------------------------- */
@@ -123,7 +135,7 @@ class PaymentFilterTest {
 
         VerificationResponse vr = new VerificationResponse();
         vr.isValid = true;
-        when(fac.verify(eq(header), any())).thenReturn(vr);
+        when(fac.verify(any(PaymentPayload.class), any())).thenReturn(vr);
 
         // handler returns 500 error
         when(resp.getStatus()).thenReturn(HttpServletResponse.SC_INTERNAL_SERVER_ERROR);
@@ -132,7 +144,7 @@ class PaymentFilterTest {
 
         verify(chain).doFilter(req, resp);
         // settle should NOT be called for error responses
-        verify(fac, never()).settle(any(), any());
+        verify(fac, never()).settle(any(PaymentPayload.class), any());
     }
 
     /* ------------ 4xx response skips settlement ---------------------------- */
@@ -150,7 +162,7 @@ class PaymentFilterTest {
 
         VerificationResponse vr = new VerificationResponse();
         vr.isValid = true;
-        when(fac.verify(eq(header), any())).thenReturn(vr);
+        when(fac.verify(any(PaymentPayload.class), any())).thenReturn(vr);
 
         // handler returns 404 error
         when(resp.getStatus()).thenReturn(HttpServletResponse.SC_NOT_FOUND);
@@ -159,7 +171,7 @@ class PaymentFilterTest {
 
         verify(chain).doFilter(req, resp);
         // settle should NOT be called for 4xx responses
-        verify(fac, never()).settle(any(), any());
+        verify(fac, never()).settle(any(PaymentPayload.class), any());
     }
 
     /* ------------ facilitator rejects payment → 402 ------------------- */
@@ -180,14 +192,14 @@ class PaymentFilterTest {
         VerificationResponse vr = new VerificationResponse();
         vr.isValid = false;
         vr.invalidReason = "insufficient funds";
-        when(fac.verify(eq(header), any())).thenReturn(vr);
+        when(fac.verify(any(PaymentPayload.class), any())).thenReturn(vr);
 
         filter.doFilter(req, resp, chain);
 
         verify(resp).setStatus(HttpServletResponse.SC_PAYMENT_REQUIRED);
         verify(chain, never()).doFilter(any(), any());
         // settle must NOT be called
-        verify(fac, never()).settle(any(), any());
+        verify(fac, never()).settle(any(PaymentPayload.class), any());
     }
 
     /* ------------ resource mismatch in header → 402 ------------------- */
@@ -209,7 +221,7 @@ class PaymentFilterTest {
         verify(resp).setStatus(HttpServletResponse.SC_PAYMENT_REQUIRED);
         verify(chain, never()).doFilter(any(), any());
         // facilitator should NOT have been called
-        verify(fac, never()).verify(any(), any());
+        verify(fac, never()).verify(any(PaymentPayload.class), any());
     }
     
     /* ------------ empty header (vs null) → 402 ---------------------------- */
@@ -265,7 +277,7 @@ class PaymentFilterTest {
         when(req.getHeader("X-PAYMENT")).thenReturn(header);
         
         // Make facilitator throw exception during verify
-        when(fac.verify(any(), any())).thenThrow(new IOException("Network error"));
+        when(fac.verify(any(PaymentPayload.class), any())).thenThrow(new IOException("Network error"));
         
         filter.doFilter(req, resp, chain);
         
@@ -292,10 +304,10 @@ class PaymentFilterTest {
         // Verification succeeds
         VerificationResponse vr = new VerificationResponse();
         vr.isValid = true;
-        when(fac.verify(eq(header), any())).thenReturn(vr);
+        when(fac.verify(any(PaymentPayload.class), any())).thenReturn(vr);
         
         // But settlement throws exception (should return 402)
-        doThrow(new IOException("Network error")).when(fac).settle(any(), any());
+        doThrow(new IOException("Network error")).when(fac).settle(any(PaymentPayload.class), any());
         
         filter.doFilter(req, resp, chain);
         
@@ -304,8 +316,8 @@ class PaymentFilterTest {
         verify(resp).setStatus(HttpServletResponse.SC_PAYMENT_REQUIRED);
         
         // Verify and settle were both called
-        verify(fac).verify(eq(header), any());
-        verify(fac).settle(eq(header), any());
+        verify(fac).verify(any(PaymentPayload.class), any());
+        verify(fac).settle(any(PaymentPayload.class), any());
     }
 
     /* ------------ settlement failure returns 402 */
@@ -325,13 +337,13 @@ class PaymentFilterTest {
         // Verification succeeds
         VerificationResponse vr = new VerificationResponse();
         vr.isValid = true;
-        when(fac.verify(eq(header), any())).thenReturn(vr);
+        when(fac.verify(any(PaymentPayload.class), any())).thenReturn(vr);
         
         // Settlement fails (facilitator returns success=false)
         SettlementResponse sr = new SettlementResponse();
         sr.success = false;
         sr.error = "insufficient balance";
-        when(fac.settle(eq(header), any())).thenReturn(sr);
+        when(fac.settle(any(PaymentPayload.class), any())).thenReturn(sr);
         
         filter.doFilter(req, resp, chain);
         
@@ -340,8 +352,8 @@ class PaymentFilterTest {
         verify(resp).setStatus(HttpServletResponse.SC_PAYMENT_REQUIRED);
         
         // Verify and settle were both called
-        verify(fac).verify(eq(header), any());
-        verify(fac).settle(eq(header), any());
+        verify(fac).verify(any(PaymentPayload.class), any());
+        verify(fac).settle(any(PaymentPayload.class), any());
     }
 
     /* ------------ payer extraction from payment payload ---------------- */
@@ -387,14 +399,14 @@ class PaymentFilterTest {
         // Verification succeeds
         VerificationResponse vr = new VerificationResponse();
         vr.isValid = true;
-        when(fac.verify(eq(header), any())).thenReturn(vr);
+        when(fac.verify(any(PaymentPayload.class), any())).thenReturn(vr);
         
         // Settlement succeeds  
         SettlementResponse sr = new SettlementResponse();
         sr.success = true;
         sr.txHash = "0xabcdef1234567890";
         sr.networkId = "base-sepolia";
-        when(fac.settle(eq(header), any())).thenReturn(sr);
+        when(fac.settle(any(PaymentPayload.class), any())).thenReturn(sr);
         
         filter.doFilter(req, resp, chain);
         
@@ -439,14 +451,14 @@ class PaymentFilterTest {
         // Verification succeeds
         VerificationResponse vr = new VerificationResponse();
         vr.isValid = true;
-        when(fac.verify(eq(header), any())).thenReturn(vr);
+        when(fac.verify(any(PaymentPayload.class), any())).thenReturn(vr);
         
         // Settlement succeeds  
         SettlementResponse sr = new SettlementResponse();
         sr.success = true;
         sr.txHash = "0xabcdef1234567890";
         sr.networkId = "base-sepolia";
-        when(fac.settle(eq(header), any())).thenReturn(sr);
+        when(fac.settle(any(PaymentPayload.class), any())).thenReturn(sr);
         
         filter.doFilter(req, resp, chain);
         
@@ -488,14 +500,14 @@ class PaymentFilterTest {
         // Verification succeeds
         VerificationResponse vr = new VerificationResponse();
         vr.isValid = true;
-        when(fac.verify(eq(header), any())).thenReturn(vr);
+        when(fac.verify(any(PaymentPayload.class), any())).thenReturn(vr);
         
         // Settlement succeeds  
         SettlementResponse sr = new SettlementResponse();
         sr.success = true;
         sr.txHash = "0xabcdef1234567890";
         sr.networkId = "base-sepolia";
-        when(fac.settle(eq(header), any())).thenReturn(sr);
+        when(fac.settle(any(PaymentPayload.class), any())).thenReturn(sr);
         
         filter.doFilter(req, resp, chain);
         
@@ -531,7 +543,7 @@ class PaymentFilterTest {
         when(req.getHeader("X-PAYMENT")).thenReturn(header);
         
         // Make facilitator throw IOException during verify
-        when(fac.verify(any(), any())).thenThrow(new IOException("Network timeout"));
+        when(fac.verify(any(PaymentPayload.class), any())).thenThrow(new IOException("Network timeout"));
         
         filter.doFilter(req, resp, chain);
         
@@ -559,7 +571,7 @@ class PaymentFilterTest {
         when(req.getHeader("X-PAYMENT")).thenReturn(header);
         
         // Make facilitator throw unexpected exception during verify
-        when(fac.verify(any(), any())).thenThrow(new RuntimeException("Unexpected error"));
+        when(fac.verify(any(PaymentPayload.class), any())).thenThrow(new RuntimeException("Unexpected error"));
         
         filter.doFilter(req, resp, chain);
         
