@@ -30,7 +30,7 @@ There is no relay commission. The facilitator absorbs gas costs as the cost of o
 1. **Client** requests a protected resource from the **Resource Server**.
 2. **Resource Server** responds with HTTP 402 and `PaymentRequired` data. The `accepts` array includes a TON payment option.
 3. **Client** queries a TON RPC endpoint to resolve its Jetton wallet address (`get_wallet_address` on the Jetton master contract) and fetches its current wallet seqno.
-4. **Client** constructs a `jetton_transfer` body ([TEP-74](https://github.com/ton-blockchain/TEPs/blob/master/text/0074-jettons-standard.md)) and wraps it in a W5 `internal_signed` message with [sending mode 1 (PAY_FEES_SEPARATELY)](https://docs.ton.org/foundations/messages/modes). The outbound internal message sent by the client's W5 wallet to the source Jetton wallet MUST be bounceable.
+4. **Client** constructs a `jetton_transfer` body ([TEP-74](https://github.com/ton-blockchain/TEPs/blob/master/text/0074-jettons-standard.md)) and wraps it in a W5 `internal_signed` message with [sending mode 1 (`PAY_FEES_SEPARATELY`) or mode 3 (`PAY_FEES_SEPARATELY | IGNORE_ERRORS`)](https://docs.ton.org/foundations/messages/modes). The outbound internal message sent by the client's W5 wallet to the source Jetton wallet MUST be bounceable.
 5. **Client** signs the message with their Ed25519 private key.
 6. **Client** wraps the signed body in an internal message BoC (dest = client wallet, value = 0, with `stateInit` if the wallet account is not yet deployed, i.e. [`nonexist` or `uninit`](https://docs.ton.org/foundations/status)) and base64-encodes it.
 7. **Client** sends a second request to the **Resource Server** with the `PaymentPayload`.
@@ -167,7 +167,7 @@ A facilitator verifying `exact` on TON MUST enforce all of the following checks 
 
 ### 3. Payment intent
 
-- The W5 message MUST contain exactly **1** `jetton_transfer` (opcode `0xf8a7ea5`) internal message with [sending mode 1 (PAY_FEES_SEPARATELY)](https://docs.ton.org/foundations/messages/modes). No additional actions are permitted.
+- The W5 message MUST contain exactly **1** `jetton_transfer` (opcode `0xf8a7ea5`) internal message with [sending mode 1 (`PAY_FEES_SEPARATELY`) or mode 3 (`PAY_FEES_SEPARATELY | IGNORE_ERRORS`)](https://docs.ton.org/foundations/messages/modes). No additional actions are permitted.
 - The transfer amount MUST be equal to `requirements.amount`.
 - The Jetton master address (`payload.asset`) MUST equal `requirements.asset`. Note: [TEP-74](https://github.com/ton-blockchain/TEPs/blob/master/text/0074-jettons-standard.md) `jetton_transfer` does not carry the master contract address in its body, so the on-chain asset binding is verified in the next check.
 - The source Jetton wallet (the destination of the W5 internal message in the BoC) MUST match the Jetton wallet address returned by `get_wallet_address(sender)` on the Jetton master contract (`requirements.asset`). This binds the BoC to the correct asset on-chain and prevents a malicious BoC from using a substitute Jetton wallet.
