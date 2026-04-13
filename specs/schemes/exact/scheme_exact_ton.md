@@ -218,9 +218,8 @@ This approach requires no external storage or long-lived state — only an in-pr
 
 ## Reference Implementations
 
-- **Facilitator**: [ohld/x402-ton-facilitator](https://github.com/ohld/x402-ton-facilitator)
-- **POC**: [ohld/x402-ton-poc](https://github.com/ohld/x402-ton-poc)
-- **SDK**: [coinbase/x402#1583](https://github.com/coinbase/x402/pull/1583)
+- **POC**: [ArkadiyStena/ton-x402-demo](https://github.com/ArkadiyStena/ton-x402-demo)
+- **SDK**: [x402-foundation/x402#1944](https://github.com/x402-foundation/x402/pull/1944)
 
 ## Appendix
 
