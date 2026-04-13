@@ -1,0 +1,182 @@
+---
+title: "Discovery (OpenAPI for x402)"
+description: "Generate an OpenAPI 3.1 document directly from your x402 routes configuration, so crawlers and AI agents can discover and invoke your paid endpoints."
+---
+
+The `discovery` helper turns the same `routes` map you pass to `paymentMiddleware` into a validated OpenAPI 3.1 document ready to serve at `/openapi.json`. It is a pure function — no registration, no hooks, no middleware of its own. The idea is that any x402 server already declares everything a crawler needs (paths, HTTP methods, payment options, bazaar input/output schemas); `discovery` just assembles that into the format [AgentCash discovery](https://docs.agentcash.dev) expects.
+
+### Why
+
+`bazaar` tells a facilitator how to call one endpoint at a time, embedded inside a 402 response. That is great for cataloging services a client has already hit, but it does not give you a single URL a crawler can fetch to enumerate everything a server offers. `discovery` closes that gap without changing core or introducing a new runtime component:
+
+- **One function, one file in your server.** `app.get("/openapi.json", …)` and you are done.
+- **No duplicate source of truth.** The OpenAPI doc is derived from the same `routes` object the payment middleware already uses, so drift is impossible.
+- **Works with validators out of the box.** The output is valid OpenAPI 3.1 plus the required AgentCash extension fields (`info.x-guidance`, `x-discovery.ownershipProofs`, `x-payment-info` per operation).
+
+### Installation
+
+Already included in `@x402/extensions`. No separate package.
+
+```bash
+pnpm add @x402/extensions
+```
+
+### Basic Usage
+
+#### Express
+
+```typescript
+import express from "express";
+import { paymentMiddleware } from "@x402/express";
+import { discovery } from "@x402/extensions";
+import { declareDiscoveryExtension } from "@x402/extensions/bazaar";
+
+const routes = {
+  "POST /analyze": {
+    accepts: [{
+      scheme: "exact",
+      network: "eip155:84532",
+      payTo: "0xYourAddress",
+      price: "$0.01",
+    }],
+    description: "Run analysis on a document",
+    extensions: declareDiscoveryExtension({
+      bodyType: "json",
+      input: { text: "hello" },
+      inputSchema: {
+        type: "object",
+        properties: { text: { type: "string" } },
+        required: ["text"],
+      },
+      output: { example: { score: 0.87 } },
+    }),
+  },
+};
+
+const app = express();
+app.use(paymentMiddleware(routes, resourceServer));
+
+app.get("/openapi.json", (_req, res) =>
+  res.json(
+    discovery(routes, {
+      info: {
+        title: "My API",
+        version: "1.0.0",
+        description: "Example x402 server",
+        xGuidance: "Use POST /analyze to score a document. $0.01 per call.",
+      },
+    }),
+  ),
+);
+```
+
+#### Next.js (App Router)
+
+Create `app/openapi.json/route.ts`:
+
+```typescript
+import { NextResponse } from "next/server";
+import { discovery } from "@x402/extensions";
+import { routes, discoveryOptions } from "@/lib/x402";
+
+export const GET = () => NextResponse.json(discovery(routes, discoveryOptions));
+```
+
+Where `routes` is the same object you pass to your Next.js `paymentMiddleware`, and `discoveryOptions` is a `DiscoveryOptions` value you keep next to it.
+
+### What discovery Derives Automatically
+
+For each entry in `routes`, `discovery` maps:
+
+| Source in `RouteConfig`                                | Where it lands in the OpenAPI doc                          |
+|--------------------------------------------------------|-------------------------------------------------------------|
+| Route key `"POST /analyze"`                            | `paths["/analyze"].post`                                    |
+| `config.description`                                   | `operation.summary`                                         |
+| `config.accepts[0].price`                              | `operation["x-payment-info"].price`                         |
+| `config.extensions.bazaar` body schema                 | `operation.requestBody.content["application/json"].schema`  |
+| `config.extensions.bazaar` query/path schemas          | `operation.parameters[]`                                    |
+| `config.extensions.bazaar.info.output.example`         | `operation.responses["200"]` (with inferred schema)         |
+| `config.extensions["sign-in-with-x"]` present          | `operation.security = [{ siwx: [] }]`, no `x-payment-info`  |
+
+Path parameters are auto-converted from `:param` or `[param]` syntax to OpenAPI's `{param}` form. Every paid operation gets a `responses["402"]` entry; every SIWX-only operation gets a `responses["401"]` entry plus a top-level `components.securitySchemes.siwx` block.
+
+### What You Must Provide
+
+`discovery` cannot synthesize document-level metadata out of routes — you pass these via the second argument (`DiscoveryOptions`):
+
+| Option                    | Required | Notes                                                                                                 |
+|---------------------------|:--------:|-------------------------------------------------------------------------------------------------------|
+| `info.title`              | ✅        | Human-readable API name.                                                                             |
+| `info.version`            | ✅        | Semver string.                                                                                       |
+| `info.description`        |          | Short description of the API.                                                                       |
+| `info.xGuidance`          | ✅        | High-level natural-language guidance for AI agents. Emitted as `info["x-guidance"]`. AgentCash `check` requires this. |
+| `servers`                 |          | Array of `{ url, description? }`. If omitted, agents fall back to the request host.                  |
+| `protocols`               |          | Defaults to `[{ x402: {} }]`.|
+
+### Identity-Gated Routes (SIWX)
+
+If a route declares the `sign-in-with-x` extension, `discovery` automatically:
+
+1. Omits `x-payment-info` from that operation.
+2. Adds `security: [{ siwx: [] }]` to it.
+3. Emits a top-level `components.securitySchemes.siwx` bearer scheme on the document.
+
+You do not need to configure anything additional — the presence of the extension is enough.
+
+```typescript
+const routes = {
+  "GET /premium": {
+    accepts: [{ /* ignored for SIWX-only */ }],
+    extensions: {
+      "sign-in-with-x": { /* SIWX config */ },
+    },
+  },
+};
+```
+
+### Validating Your Document
+
+The [AgentCash discovery CLI](https://www.npmjs.com/package/@agentcash/discovery) checks that your document meets all requirements for agent discovery:
+
+```bash
+# Dump and inspect
+npx -y @agentcash/discovery@latest discover "$TARGET_URL"
+
+# Validate against the discovery schema
+npx -y @agentcash/discovery@latest check "$TARGET_URL"
+```
+
+Run `check` after wiring up `discovery` and fix any warnings it surfaces before registering your server with X402Scan.
+
+### Known Limitations
+
+- **Dynamic prices.** `DynamicPrice` functions cannot be resolved statically. They are emitted as `{ mode: "dynamic", currency: "USD", min: "0", max: "0" }`. If you need real bounds, use a static price fallback in `config.accepts` when declaring the route.
+- **Currency is hardcoded to `"USD"`.** The x402 `Price` type carries an asset address, not a currency. Converting USDC/PYUSD/WETH to a user-facing currency requires an oracle that the builder intentionally does not pull in.
+- **First accept option only.** Multi-option `accepts` arrays are summarized by `accepts[0]`. The AgentCash `x-payment-info` shape currently assumes a single price per operation.
+- **Response schemas are inferred from examples.** If your bazaar declaration only supplies `output.example`, `discovery` infers a coarse schema from the example's shape. Supplying a richer `output.schema` in `declareDiscoveryExtension` improves the emitted OpenAPI response schema.
+
+### Type Reference
+
+```typescript
+import {
+  discovery,
+  type DiscoveryOptions,
+  type OpenAPIDocument,
+  DiscoveryOptionsSchema,
+  OpenAPIDocumentSchema,
+} from "@x402/extensions";
+
+// Pure function: routes → OpenAPI 3.1 doc
+function discovery(
+  routes: RoutesConfig,
+  options: DiscoveryOptions,
+): OpenAPIDocument;
+```
+
+Both `DiscoveryOptionsSchema` and `OpenAPIDocumentSchema` are exported Zod schemas — useful if you want to validate options at server startup or assert the document shape in a test.
+
+### Further Reading
+
+- [Bazaar extension](./bazaar) — per-route discovery declarations that feed into this document
+- [AgentCash discovery spec](https://agentcash.dev/discovery) — the target format and validator
+- [@x402/extensions package](https://github.com/x402-foundation/x402/tree/main/typescript/packages/extensions) — source

@@ -67,6 +67,7 @@
         "pages": [
           "extensions/overview",
           "extensions/bazaar",
+          "extensions/discovery",
           "extensions/payment-identifier",
           "extensions/sign-in-with-x",
           "extensions/offer-receipt",
