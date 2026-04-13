@@ -1,0 +1,89 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 500" width="400" height="500">
+  <defs>
+    <linearGradient id="skinGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#d4a574"/>
+      <stop offset="50%" stop-color="#c49a6c"/>
+      <stop offset="100%" stop-color="#b8895a"/>
+    </linearGradient>
+    <linearGradient id="hairGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#2a2a35"/>
+      <stop offset="100%" stop-color="#1a1a22"/>
+    </linearGradient>
+    <linearGradient id="bgGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#0f0f1a"/>
+      <stop offset="100%" stop-color="#1a1a2e"/>
+    </linearGradient>
+    <linearGradient id="accentGrad" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#00d4ff"/>
+      <stop offset="100%" stop-color="#a855f7"/>
+    </linearGradient>
+  </defs>
+  
+  <!-- Background -->
+  <rect width="400" height="500" fill="url(#bgGrad)"/>
+  
+  <!-- Accent circle behind head -->
+  <circle cx="200" cy="200" r="130" fill="none" stroke="url(#accentGrad)" stroke-width="1.5" opacity="0.4"/>
+  <circle cx="200" cy="200" r="150" fill="none" stroke="url(#accentGrad)" stroke-width="0.8" opacity="0.2"/>
+  
+  <!-- Neck -->
+  <rect x="170" y="280" width="60" height="50" fill="url(#skinGrad)"/>
+  
+  <!-- Shoulders hint -->
+  <ellipse cx="200" cy="400" rx="120" ry="80" fill="#1e1e2e"/>
+  
+  <!-- Face shape -->
+  <ellipse cx="200" cy="190" rx="85" ry="100" fill="url(#skinGrad)"/>
+  
+  <!-- Hair -->
+  <path d="M115 160 Q120 80 200 70 Q280 80 285 160 Q285 120 260 100 Q200 60 140 100 Q115 120 115 160" fill="url(#hairGrad)"/>
+  
+  <!-- Hair top texture -->
+  <path d="M130 100 Q160 75 200 72 Q240 75 270 100" fill="none" stroke="#3a3a45" stroke-width="2"/>
+  
+  <!-- Ears -->
+  <ellipse cx="115" cy="195" rx="12" ry="20" fill="#c49a6c"/>
+  <ellipse cx="285" cy="195" rx="12" ry="20" fill="#c49a6c"/>
+  
+  <!-- Eyes -->
+  <ellipse cx="160" cy="180" rx="22" ry="14" fill="#fff"/>
+  <ellipse cx="240" cy="180" rx="22" ry="14" fill="#fff"/>
+  
+  <!-- Eye color (blue with AI edge) -->
+  <ellipse cx="162" cy="180" rx="12" ry="10" fill="#00d4ff"/>
+  <ellipse cx="242" cy="180" rx="12" ry="10" fill="#00d4ff"/>
+  
+  <!-- Pupils -->
+  <ellipse cx="163" cy="181" rx="6" ry="6" fill="#1a1a22"/>
+  <ellipse cx="243" cy="181" rx="6" ry="6" fill="#1a1a22"/>
+  
+  <!-- Eye highlight -->
+  <circle cx="158" cy="177" r="3" fill="#fff" opacity="0.8"/>
+  <circle cx="238" cy="177" r="3" fill="#fff" opacity="0.8"/>
+  
+  <!-- Eyebrows -->
+  <path d="M135 155 Q160 148 180 152" fill="none" stroke="#2a2a35" stroke-width="4" stroke-linecap="round"/>
+  <path d="M220 152 Q240 148 265 155" fill="none" stroke="#2a2a35" stroke-width="4" stroke-linecap="round"/>
+  
+  <!-- Nose -->
+  <path d="M200 195 L195 230 Q200 238 205 230 L200 195" fill="#c49a6c"/>
+  
+  <!-- Mouth (slight confident smile) -->
+  <path d="M170 260 Q200 275 230 260" fill="none" stroke="#8b6b4a" stroke-width="3" stroke-linecap="round"/>
+  
+  <!-- Subtle beard shadow -->
+  <ellipse cx="200" cy="290" rx="50" ry="20" fill="#b8895a" opacity="0.15"/>
+  
+  <!-- Collar/Shirt hint -->
+  <path d="M155 340 L200 380 L245 340 L230 335 L200 360 L170 335 Z" fill="#2a2a3a"/>
+  
+  <!-- AI accent - small circuit dots on temple -->
+  <circle cx="290" cy="160" r="3" fill="#00d4ff" opacity="0.8"/>
+  <circle cx="300" cy="175" r="2" fill="#a855f7" opacity="0.8"/>
+  <circle cx="295" cy="190" r="2" fill="#00d4ff" opacity="0.6"/>
+  
+  <!-- Small tech dot on left temple -->
+  <circle cx="110" cy="160" r="3" fill="#00d4ff" opacity="0.8"/>
+  <circle cx="100" cy="175" r="2" fill="#a855f7" opacity="0.8"/>
+  <circle cx="105" cy="190" r="2" fill="#00d4ff" opacity="0.6"/>
+</svg>
