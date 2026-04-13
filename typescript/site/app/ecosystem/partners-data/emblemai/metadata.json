@@ -1,0 +1,7 @@
+{
+  "name": "EmblemAI",
+  "category": "Services/Endpoints",
+  "logoUrl": "/logos/emblemai.png",
+  "description": "AI agent toolkit with 200+ pay-per-call tools and multi-chain x402 support. Native facilitator for Base (USDC) and a custom ExactStacksScheme adapter for STX, sBTC, and USDCx. Ships .well-known/x402 discovery, unified tool execution, an MCP server, and a bazaar-compatible ecosystem explorer.",
+  "websiteUrl": "https://emblemvault.ai"
+}
