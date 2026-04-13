@@ -1,0 +1,7 @@
+{
+  "name": "picoads",
+  "description": "Open protocol for agent-to-agent advertising. AI agents serve sponsored recommendations via MCP tools and earn USDC per click. CPC billing settles on Base via x402. No API keys, no accounts — agents discover bids, serve ads, and get paid permissionlessly.",
+  "logoUrl": "/logos/picoads.png",
+  "websiteUrl": "https://picoads.xyz",
+  "category": "Services/Endpoints"
+}
