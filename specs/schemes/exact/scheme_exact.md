@@ -32,9 +32,9 @@ While implementation details vary by network, facilitators MUST enforce security
 
 ### TON
 
-- Self-relay safety: the facilitator address MUST NOT appear as the sender or source of any Jetton transfer.
 - Transfer correctness: exactly 1 `jetton_transfer` with destination equal to `payTo` and amount equal to `requirements.amount` exactly.
 - Signature validity: Ed25519 signature MUST verify against a public key derived from the BoC's `stateInit` (seqno == 0) or from the on-chain `get_public_key` getter (seqno > 0). Only `internal_signed` (0x73696e74) opcode is supported in the current gasless flow.
+- Wallet code validity: contract code MUST match a known W5 wallet contract, using `stateInit` for `nonexist`/`uninit` wallets and on-chain code for `active` wallets.
 - Replay protection: seqno MUST be strictly equal to on-chain value; duplicate `settlementBoc` submissions rejected via BoC hash dedup.
 - Simulation verification: SHOULD simulate via emulation during `/verify` to confirm expected balance changes.
 
