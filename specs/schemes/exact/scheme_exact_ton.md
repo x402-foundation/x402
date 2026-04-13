@@ -14,6 +14,8 @@ This spec uses [CAIP-2](https://namespaces.chainagnostic.org/tvm/caip2) identifi
 
 > [!NOTE]
 > **Scope:** This spec covers [TEP-74](https://github.com/ton-blockchain/TEPs/blob/master/text/0074-jettons-standard.md)-compliant Jetton transfers using **W5 wallets** (v5r1) with gasless relay (`areFeesSponsored: true`). Non-gasless flows (`external_signed`, native TON transfers) are planned for a follow-up spec extension.
+>
+> For clients, only W5 wallets in account states `active` and `uninit`/`nonexist` are supported. `frozen` accounts are not supported. In practice this is not expected to constrain implementations because `frozen` W5 accounts are not expected to appear in the next 5 years.
 
 ## Summary
 
@@ -69,6 +71,8 @@ In addition to standard x402 fields, TON `exact` uses `extra` fields:
 - `extra.forwardPayload` (optional): Base64-encoded cell used as the jetton transfer forward payload (see [TEP-74](https://github.com/ton-blockchain/TEPs/blob/63fc78718dd9930f3e106954ebec743c3ad07993/text/0074-jettons-standard.md?plain=1#L68)). If omitted, the effective value is a zero-bit cell.
 - `extra.forwardTonAmount` (optional): the amount of nanotons to be attached to the jetton transfer (see [TEP-74](https://github.com/ton-blockchain/TEPs/blob/63fc78718dd9930f3e106954ebec743c3ad07993/text/0074-jettons-standard.md?plain=1#L68)). If omitted, the effective value is `"0"`.
 - `extra.areFeesSponsored`: Whether the facilitator sponsors gas fees. Currently always `true`; a non-sponsored flow will be added in a follow-up spec.
+
+These `extra` fields exist for TON-specific payment semantics: `forwardPayload` lets the payment carry application-level metadata (for example an invoice ID, analogous to a memo in other networks), `forwardTonAmount` enables the recipient to route the payment into custom contracts that require TON to execute logic on receipt, and `responseDestination` specifies where unused TON is returned as Jetton-transfer `excesses` as the exact network fee cannot be known in advance.
 
 ## PaymentPayload `payload` Field
 
@@ -156,6 +160,7 @@ A facilitator verifying `exact` on TON MUST enforce all of the following checks 
 - `payload.settlementBoc` MUST decode as a valid TON internal message.
 - The `dest` field of the internal message is the client's wallet address (the sender/payer).
 - The message body MUST contain a valid W5 (v5r1) signed transfer with opcode `0x73696e74` (`internal_signed`).
+- The client's wallet account state MUST be either [`active`, `nonexist`, or `uninit`](https://docs.ton.org/foundations/status). `frozen` accounts are out of scope and MUST be rejected.
 - The Ed25519 public key MUST be derived from the BoC's `stateInit` data cell (when `stateInit` is present, i.e. the wallet account is [`nonexist` or `uninit`](https://docs.ton.org/foundations/status)) or via the on-chain `get_public_key` getter on the client's wallet contract (when the account is `active`). The public key is NOT passed as a separate payload field.
 - The Ed25519 signature MUST verify against the derived public key. The signature is located at the TAIL of the W5 message body (after `walletId`, `validUntil`, `seqno`, and actions).
 - If the message includes `stateInit` (wallet is not yet deployed), the facilitator MUST verify the contract code matches a known W5 wallet contract. The canonical code hash for W5R1 is `20834b7b72b112147e1b2fb457b84e74d1a30f04f737d4f62a668e9552d2b72f`. Implementations SHOULD maintain an allowlist of accepted wallet code hashes and update it when TON Foundation publishes new wallet versions. Currently the allowlist contains one entry (W5R1). Wallet versions ship very rarely on TON (years apart), so this list is near-static.
