@@ -1,0 +1,68 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 400" width="400" height="400">
+  <defs>
+    <linearGradient id="bgGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#0a0a1a"/>
+      <stop offset="100%" stop-color="#1a1a3a"/>
+    </linearGradient>
+    <linearGradient id="glowGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#00d4ff"/>
+      <stop offset="100%" stop-color="#a855f7"/>
+    </linearGradient>
+  </defs>
+  
+  <!-- Background circle with gradient -->
+  <circle cx="200" cy="200" r="180" fill="url(#bgGrad)" stroke="url(#glowGrad)" stroke-width="3"/>
+  
+  <!-- Outer ring -->
+  <circle cx="200" cy="200" r="160" fill="none" stroke="#00d4ff" stroke-width="1" opacity="0.3"/>
+  
+  <!-- Brain/circuit pattern - left half -->
+  <g fill="none" stroke="#00d4ff" stroke-width="2.5" stroke-linecap="round" opacity="0.9">
+    <!-- Main circuit lines left -->
+    <path d="M80 160 L120 160 L140 140 L160 140"/>
+    <path d="M80 200 L130 200 L150 180 L170 180"/>
+    <path d="M80 240 L120 240 L140 260 L160 260"/>
+    <!-- Neural nodes left -->
+    <circle cx="80" cy="160" r="6" fill="#00d4ff"/>
+    <circle cx="140" cy="140" r="5" fill="#00d4ff"/>
+    <circle cx="80" cy="200" r="7" fill="#a855f7"/>
+    <circle cx="150" cy="180" r="5" fill="#00d4ff"/>
+    <circle cx="80" cy="240" r="6" fill="#00d4ff"/>
+    <circle cx="140" cy="260" r="5" fill="#00d4ff"/>
+  </g>
+  
+  <!-- Brain/circuit pattern - right half -->
+  <g fill="none" stroke="#a855f7" stroke-width="2.5" stroke-linecap="round" opacity="0.9">
+    <!-- Main circuit lines right -->
+    <path d="M320 160 L280 160 L260 140 L240 140"/>
+    <path d="M320 200 L270 200 L250 180 L230 180"/>
+    <path d="M320 240 L280 240 L260 260 L240 260"/>
+    <!-- Neural nodes right -->
+    <circle cx="320" cy="160" r="6" fill="#a855f7"/>
+    <circle cx="260" cy="140" r="5" fill="#a855f7"/>
+    <circle cx="320" cy="200" r="7" fill="#00d4ff"/>
+    <circle cx="250" cy="180" r="5" fill="#a855f7"/>
+    <circle cx="320" cy="240" r="6" fill="#a855f7"/>
+    <circle cx="260" cy="260" r="5" fill="#a855f7"/>
+  </g>
+  
+  <!-- Center - soul/AI core -->
+  <circle cx="200" cy="200" r="45" fill="#0a0a1a" stroke="url(#glowGrad)" stroke-width="3"/>
+  
+  <!-- Inner glow -->
+  <circle cx="200" cy="200" r="30" fill="none" stroke="#00d4ff" stroke-width="1.5" opacity="0.6"/>
+  
+  <!-- Core pulse -->
+  <circle cx="200" cy="200" r="15" fill="url(#glowGrad)" opacity="0.8"/>
+  
+  <!-- Pulse rings -->
+  <circle cx="200" cy="200" r="20" fill="none" stroke="#00d4ff" stroke-width="1" opacity="0.4"/>
+  <circle cx="200" cy="200" r="35" fill="none" stroke="#a855f7" stroke-width="0.8" opacity="0.3"/>
+  
+  <!-- Connection lines from center to outer nodes -->
+  <g stroke-width="1" opacity="0.4">
+    <line x1="200" y1="155" x2="155" y2="140" stroke="#00d4ff"/>
+    <line x1="200" y1="170" x2="170" y2="180" stroke="#a855f7"/>
+    <line x1="200" y1="245" x2="160" y2="260" stroke="#00d4ff"/>
+  </g>
+</svg>
