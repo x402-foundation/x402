@@ -85,6 +85,14 @@ Integrate the payment middleware into your application. You will need to provide
 * The routes you want to protect.
 * Your receiving wallet address.
 
+In simple examples, one address often appears to do everything. In real deployments, these roles can be separated:
+
+* **Seller payout wallet**: receives payment for the resource
+* **Facilitator operational wallet**: may be a different signer or gas-funded wallet if you run settlement infrastructure yourself
+* **Buyer wallet**: belongs to the client and should never be reused as seller or facilitator infrastructure by default
+
+That separation becomes especially useful once you add custom facilitator operations, multiple environments, or SIWX-based access flows.
+
 <Tabs>
   <Tab title="Express">
     Full example in the repo [here](https://github.com/x402-foundation/x402/tree/main/examples/typescript/servers/express).

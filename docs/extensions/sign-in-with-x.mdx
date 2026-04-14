@@ -18,6 +18,8 @@ SIWX solves two key problems in x402:
 * **Chain-Agnostic**: Works with EVM (Ethereum, Base, etc.) and Solana wallets
 * **Standards-Based**: Built on CAIP-122, EIP-4361 (SIWE), and Sign-In-With-Solana
 
+If you're building with MCP, also read [MCP Server with x402](/guides/mcp-server-with-x402). SIWX support for MCP is currently an integration pattern rather than a first-class `@x402/mcp` helper: payment-first MCP flows are available today, while auth-only MCP routes and pay-once-then-reopen MCP flows still require custom wrapper logic.
+
 ## How It Works
 
 1. **Server** returns 402 with `sign-in-with-x` extension containing challenge parameters
@@ -400,6 +402,16 @@ The package includes `InMemorySIWxStorage` for development. For production, impl
 - **Temporal Bounds**: The `issuedAt`, `expirationTime`, and `notBefore` fields constrain signature validity windows
 - **Chain-Specific Verification**: Signatures are verified using chain-appropriate algorithms, preventing cross-chain signature reuse
 - **Smart Wallet Support**: EIP-1271 and EIP-6492 verification requires an RPC call to the wallet contract
+
+## MCP Note
+
+For HTTP resources, SIWX can be added with the built-in hooks shown above. For MCP tools, the same idea still applies, but today's MCP integrations usually need one additional layer owned by the application:
+
+- map the MCP tool to the protected resource or entitlement being unlocked
+- verify SIWX proofs in the MCP request path or a backing HTTP resource
+- optionally issue an MCP-scoped access grant or session after the first successful payment
+
+That means SIWX is already a good fit for MCP-enabled products, but entrants should not assume that the basic MCP payment example automatically provides auth-only SIWX or post-payment reopen semantics.
 
 ## Troubleshooting
 
