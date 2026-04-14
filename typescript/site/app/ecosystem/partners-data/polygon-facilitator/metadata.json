@@ -2,7 +2,7 @@
   "name": "Polygon Facilitator",
   "description": "Production-grade x402 facilitator for Polygon networks. Supports EIP-3009 USDC payments with verify and settle capabilities on Polygon Mainnet and Polygon Amoy testnet.",
   "logoUrl": "/logos/polygon.png",
-  "websiteUrl": "https://x402.polygon.technology",
+  "websiteUrl": "https://docs.polygon.technology/payment-services/agentic-payments/x402/intro/",
   "category": "Facilitators",
   "facilitator": {
     "baseUrl": "https://x402.polygon.technology",
