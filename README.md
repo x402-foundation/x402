@@ -70,6 +70,10 @@ Want to add your project to the ecosystem? See our [demo site README](https://gi
 
 **Documentation:** see [docs/](./docs/) for the GitBook documentation source
 
+### QuantOracle
+
+- [QuantOracle](https://github.com/QuantOracle) — 63 quant finance tools for AI agents, including market data, technical analysis, and portfolio management. All accessible via x402 micropayments.
+
 ## Terms:
 
 - `resource`: Something on the internet. This could be a webpage, file server, RPC service, API, any resource on the internet that accepts HTTP / HTTPS requests.
