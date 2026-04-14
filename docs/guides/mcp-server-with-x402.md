@@ -15,6 +15,19 @@ This lets you (or your agent) access paid APIs programmatically, with no manual 
 
 ***
 
+### Current MCP Boundary
+
+This guide demonstrates the **payment-first** MCP pattern that works out of the box today: an MCP tool calls an x402-protected HTTP resource, receives an HTTP `402 Payment Required`, pays through an x402 client, and returns the paid response to the MCP client.
+
+If you want to go further, there are two important boundaries to understand:
+
+1. **Auth-only MCP tools via SIWX** are possible, but they are **not** provided by this example directly. You need custom MCP server logic that validates SIWX proofs and decides when a tool can run without payment.
+2. **Pay once, reopen the same paid MCP tool via SIWX** is also possible as a pattern, but it is **not yet a first-class built-in flow** in `@x402/mcp` or this example. The usual approach today is to keep x402 payment as the first unlock step, then layer your own MCP-side access grant or session logic on top of [Sign-In-With-X (SIWX)](/extensions/sign-in-with-x).
+
+In short: use this guide for paid MCP access today, and treat SIWX-enabled MCP reuse as an advanced custom integration until the MCP helpers grow first-class support.
+
+***
+
 ### Prerequisites
 
 * Node.js v20+ (install via [nvm](https://github.com/nvm-sh/nvm))
@@ -186,6 +199,18 @@ The MCP server exposes a tool that, when called, fetches data from a paid API en
 4. **Retry Request**: Sends the original request with the `PAYMENT-SIGNATURE` header
 5. **Return Data**: Once payment is verified, the data is returned to Claude
 
+For this guide, every MCP tool call should be understood as an independent paid-access attempt unless your server adds its own reuse layer. The example does **not** persist an MCP-specific access grant after payment.
+
+***
+
+### Supported vs Custom Today
+
+| Pattern | Status |
+|----------|--------|
+| MCP tool pays for an x402 HTTP resource on demand | Supported by this guide |
+| MCP tool calls an auth-only SIWX-protected route | Requires custom MCP wrapper logic |
+| MCP tool pays once, then reopens via SIWX without repaying | Requires custom MCP wrapper or access-grant logic |
+
 ***
 
 ### Multi-Network Support
@@ -301,6 +326,14 @@ The example uses these x402 v2 packages:
 * **x402-compatible server**: Hosts the paid API (e.g., weather data). Responds with HTTP 402 and `PAYMENT-REQUIRED` header if payment is required.
 * **MCP server (this implementation)**: Acts as a bridge, handling payment via `@x402/axios` and exposing tools to MCP clients.
 * **Claude Desktop**: Calls the MCP tool, receives the paid data, and displays it to the user.
+
+In more advanced deployments, these roles do not need to share one wallet:
+
+* **Buyer wallet**: Signs and funds the payment from the MCP client side
+* **Seller payout wallet**: Receives settlement for the protected resource
+* **Facilitator signer / gas wallet**: May be a separate operational wallet when running your own facilitator or settlement infrastructure
+
+Keeping those roles separate is often cleaner operationally than reusing one key everywhere.
 
 ***
 
