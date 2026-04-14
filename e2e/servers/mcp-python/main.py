@@ -46,7 +46,7 @@ def main() -> None:
     from x402.http import FacilitatorConfig, HTTPFacilitatorClient
     from x402.mcp import create_payment_wrapper
     from x402.mechanisms.evm.exact import register_exact_evm_server
-    from x402.mechanisms.tvm.exact import register_exact_tvm_server
+    from x402.mechanisms.tvm.exact import ExactTvmServerScheme
 
     # Create FastMCP server
     mcp = FastMCP("x402 MCP E2E Server")
@@ -57,7 +57,7 @@ def main() -> None:
     if EVM_PAYEE_ADDRESS:
         register_exact_evm_server(resource_server, EVM_NETWORK)
     if TVM_PAYEE_ADDRESS:
-        register_exact_tvm_server(resource_server, TVM_NETWORK)
+        resource_server.register(TVM_NETWORK, ExactTvmServerScheme())
 
     # Initialize (fetches supported kinds from facilitator)
     resource_server.initialize()

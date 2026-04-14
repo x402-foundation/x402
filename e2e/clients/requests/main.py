@@ -13,6 +13,8 @@ from x402.mechanisms.evm.exact import register_exact_evm_client
 from x402.mechanisms.evm.upto import UptoEvmClientScheme
 from x402.mechanisms.svm import KeypairSigner
 from x402.mechanisms.svm.exact import register_exact_svm_client
+from x402.mechanisms.tvm import TVM_MAINNET, TVM_TESTNET, WalletV5R1Config, WalletV5R1MnemonicSigner
+from x402.mechanisms.tvm.exact import ExactTvmClientScheme
 
 # Load environment variables
 load_dotenv()
@@ -20,7 +22,11 @@ load_dotenv()
 # Get environment variables
 evm_private_key = os.getenv("EVM_PRIVATE_KEY")
 svm_private_key = os.getenv("SVM_PRIVATE_KEY")
+tvm_private_key = os.getenv("TVM_PRIVATE_KEY")
 evm_rpc_url = os.getenv("EVM_RPC_URL", "https://sepolia.base.org")
+toncenter_api_key = os.getenv("TONCENTER_API_KEY")
+toncenter_base_url = os.getenv("TONCENTER_BASE_URL")
+tvm_network = os.getenv("TVM_NETWORK", TVM_TESTNET)
 base_url = os.getenv("RESOURCE_SERVER_URL")
 endpoint_path = os.getenv("ENDPOINT_PATH")
 
@@ -29,10 +35,10 @@ if not base_url or not endpoint_path:
     print(json.dumps(error_result))
     exit(1)
 
-if not evm_private_key and not svm_private_key:
+if not evm_private_key and not svm_private_key and not tvm_private_key:
     error_result = {
         "success": False,
-        "error": "At least one of EVM_PRIVATE_KEY or SVM_PRIVATE_KEY must be set",
+        "error": "At least one of EVM_PRIVATE_KEY, SVM_PRIVATE_KEY, or TVM_PRIVATE_KEY must be set",
     }
     print(json.dumps(error_result))
     exit(1)
@@ -54,6 +60,17 @@ def main():
         svm_signer = KeypairSigner.from_base58(svm_private_key)
         register_exact_svm_client(client, svm_signer)
 
+    if tvm_private_key:
+        if tvm_network not in {TVM_TESTNET, TVM_MAINNET}:
+            raise ValueError(f"Unsupported TVM network: {tvm_network}")
+        tvm_config = WalletV5R1Config.from_private_key(tvm_network, tvm_private_key)
+        tvm_config.api_key = toncenter_api_key
+        tvm_config.base_url = toncenter_base_url
+        client.register(
+            tvm_network,
+            ExactTvmClientScheme(WalletV5R1MnemonicSigner(tvm_config)),
+        )
+
     # Create a session with x402 payment handling
     session = x402_requests(client)
 
@@ -74,9 +91,9 @@ def main():
         }
 
         # Check for payment response header (V2: PAYMENT-RESPONSE, V1: X-PAYMENT-RESPONSE)
-        payment_header = response.headers.get(
-            "PAYMENT-RESPONSE"
-        ) or response.headers.get("X-PAYMENT-RESPONSE")
+        payment_header = response.headers.get("PAYMENT-RESPONSE") or response.headers.get(
+            "X-PAYMENT-RESPONSE"
+        )
         if payment_header:
             payment_response = decode_payment_response_header(payment_header)
             result["payment_response"] = payment_response.model_dump()

@@ -639,6 +639,7 @@ class TestTvmPriceParsing:
             "foo": "bar",
             "areFeesSponsored": True,
         }
+
     def test_custom_money_parser(self) -> None:
         from x402.schemas import AssetAmount
 

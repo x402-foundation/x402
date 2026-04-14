@@ -21,7 +21,7 @@ from x402.mechanisms.evm.exact.facilitator import ExactEvmScheme, ExactEvmScheme
 from x402.mechanisms.svm import FacilitatorKeypairSigner
 from x402.mechanisms.svm.exact.facilitator import ExactSvmScheme
 from x402.mechanisms.tvm import TVM_TESTNET, FacilitatorHighloadV3Signer, HighloadV3Config
-from x402.mechanisms.tvm.exact import register_exact_tvm_facilitator
+from x402.mechanisms.tvm.exact.facilitator import ExactTvmScheme
 
 # Load environment variables
 load_dotenv()
@@ -113,10 +113,9 @@ if evm_signer:
 if svm_signer:
     facilitator.register([SVM_NETWORK], ExactSvmScheme(svm_signer))
 if tvm_signer:
-    register_exact_tvm_facilitator(
-        facilitator,
-        tvm_signer,
-        networks=TVM_NETWORK,
+    facilitator.register(
+        [TVM_NETWORK],
+        ExactTvmScheme(tvm_signer),
     )
 
 

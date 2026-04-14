@@ -19,6 +19,8 @@ from x402.mechanisms.evm.exact import (
 )
 from x402.mechanisms.evm.upto import UptoEvmServerScheme
 from x402.mechanisms.svm.exact import register_exact_svm_server
+from x402.mechanisms.tvm import TVM_TESTNET
+from x402.mechanisms.tvm.exact import ExactTvmServerScheme
 from x402.extensions.bazaar import (
     bazaar_resource_server_extension,
     declare_discovery_extension,
@@ -35,11 +37,11 @@ load_dotenv()
 # Get configuration from environment
 EVM_ADDRESS = os.getenv("EVM_PAYEE_ADDRESS")
 SVM_ADDRESS = os.getenv("SVM_PAYEE_ADDRESS")
+TVM_ADDRESS = os.getenv("TVM_PAYEE_ADDRESS")
 PORT = int(os.getenv("PORT", "4021"))
 FACILITATOR_URL = os.getenv("FACILITATOR_URL")
-EVM_PERMIT2_ASSET = os.getenv(
-    "EVM_PERMIT2_ASSET", "0x036CbD53842c5426634e7929541eC2318f3dCF7e"
-)
+EVM_PERMIT2_ASSET = os.getenv("EVM_PERMIT2_ASSET", "0x036CbD53842c5426634e7929541eC2318f3dCF7e")
+TVM_NETWORK = os.getenv("TVM_NETWORK", TVM_TESTNET)
 
 if not EVM_ADDRESS:
     print("Error: Missing required environment variable EVM_PAYEE_ADDRESS")
@@ -47,6 +49,9 @@ if not EVM_ADDRESS:
 
 if not SVM_ADDRESS:
     print("Error: Missing required environment variable SVM_PAYEE_ADDRESS")
+    sys.exit(1)
+if not TVM_ADDRESS:
+    print("Error: Missing required environment variable TVM_PAYEE_ADDRESS")
     sys.exit(1)
 
 # Network configurations (CAIP-2 format)
@@ -71,6 +76,7 @@ server = x402ResourceServer(facilitator)
 register_exact_evm_server(server, EVM_NETWORK)
 server.register(EVM_NETWORK, UptoEvmServerScheme())
 register_exact_svm_server(server, SVM_NETWORK)
+server.register(TVM_NETWORK, ExactTvmServerScheme())
 
 # Register Bazaar discovery extension
 server.register_extension(bazaar_resource_server_extension)
@@ -114,6 +120,31 @@ routes = {
                 output=OutputConfig(
                     example={
                         "message": "Access granted to SVM protected resource",
+                        "timestamp": "2024-01-01T00:00:00Z",
+                    },
+                    schema={
+                        "properties": {
+                            "message": {"type": "string"},
+                            "timestamp": {"type": "string"},
+                        },
+                        "required": ["message", "timestamp"],
+                    },
+                )
+            ),
+        },
+    },
+    "GET /exact/tvm": {
+        "accepts": {
+            "scheme": "exact",
+            "payTo": TVM_ADDRESS,
+            "price": "$0.001",
+            "network": TVM_NETWORK,
+        },
+        "extensions": {
+            **declare_discovery_extension(
+                output=OutputConfig(
+                    example={
+                        "message": "Access granted to TVM protected resource",
                         "timestamp": "2024-01-01T00:00:00Z",
                     },
                     schema={
@@ -282,6 +313,18 @@ async def protected_svm_endpoint() -> Dict[str, Any]:
 
     return {
         "message": "Access granted to SVM protected resource",
+        "timestamp": "2024-01-01T00:00:00Z",
+    }
+
+
+@app.get("/exact/tvm")
+async def protected_tvm_endpoint() -> Dict[str, Any]:
+    """Protected endpoint that requires TVM payment."""
+    if shutdown_requested:
+        raise HTTPException(status_code=503, detail="Server shutting down")
+
+    return {
+        "message": "Access granted to TVM protected resource",
         "timestamp": "2024-01-01T00:00:00Z",
     }
 

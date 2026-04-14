@@ -46,7 +46,7 @@ async def main() -> dict:
         WalletV5R1Config,
         WalletV5R1MnemonicSigner,
     )
-    from x402.mechanisms.tvm.exact import register_exact_tvm_client
+    from x402.mechanisms.tvm.exact import ExactTvmClientScheme
 
     # Create x402 client with the configured payment schemes
     client = x402Client()
@@ -62,7 +62,10 @@ async def main() -> dict:
         tvm_config = WalletV5R1Config.from_private_key(tvm_network, tvm_private_key)
         tvm_config.api_key = os.getenv("TONCENTER_API_KEY")
         tvm_config.base_url = os.getenv("TONCENTER_BASE_URL")
-        register_exact_tvm_client(client, WalletV5R1MnemonicSigner(tvm_config))
+        client.register(
+            tvm_network,
+            ExactTvmClientScheme(WalletV5R1MnemonicSigner(tvm_config)),
+        )
 
     try:
         async with create_x402_mcp_client(client, server_url, auto_payment=True) as mcp:

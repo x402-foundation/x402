@@ -4,7 +4,8 @@
   "language": "python",
   "protocolFamilies": [
     "evm",
-    "svm"
+    "svm",
+    "tvm"
   ],
   "x402Versions": [
     1,
@@ -33,7 +34,11 @@
     "optional": [
       "EVM_PRIVATE_KEY",
       "SVM_PRIVATE_KEY",
-      "EVM_RPC_URL"
+      "TVM_PRIVATE_KEY",
+      "EVM_RPC_URL",
+      "TVM_NETWORK",
+      "TONCENTER_API_KEY",
+      "TONCENTER_BASE_URL"
     ]
   }
 }

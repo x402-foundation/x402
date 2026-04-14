@@ -27,7 +27,7 @@ from x402.mechanisms.tvm import (
     WalletV5R1Config,
     WalletV5R1MnemonicSigner,
 )
-from x402.mechanisms.tvm.exact.register import register_exact_tvm_client
+from x402.mechanisms.tvm.exact import ExactTvmClientScheme
 
 # Load environment variables
 load_dotenv()
@@ -50,9 +50,7 @@ def validate_environment() -> tuple[str | None, str | None, str | None, str, str
 
     # Validate at least one signer credential is provided
     if not evm_private_key and not svm_private_key and not tvm_private_key:
-        print(
-            "❌ At least one of EVM_PRIVATE_KEY, SVM_PRIVATE_KEY, or TVM_PRIVATE_KEY is required"
-        )
+        print("❌ At least one of EVM_PRIVATE_KEY, SVM_PRIVATE_KEY, or TVM_PRIVATE_KEY is required")
         print("Please copy .env-local to .env and fill in the values.")
         sys.exit(1)
 
@@ -106,7 +104,7 @@ async def main() -> None:
         tvm_config.api_key = os.getenv("TONCENTER_API_KEY")
         tvm_config.base_url = os.getenv("TONCENTER_BASE_URL")
         tvm_signer = WalletV5R1MnemonicSigner(tvm_config)
-        register_exact_tvm_client(client, tvm_signer)
+        client.register(tvm_network, ExactTvmClientScheme(tvm_signer))
         print(f"Initialized TVM account: {tvm_signer.address}")
 
     # Create HTTP client helper for payment response extraction

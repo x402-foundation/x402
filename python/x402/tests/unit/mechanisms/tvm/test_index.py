@@ -1,4 +1,4 @@
-"""Tests for TVM mechanism exports and registration helpers."""
+"""Tests for TVM mechanism exports."""
 
 from __future__ import annotations
 
@@ -6,8 +6,6 @@ import pytest
 
 pytest.importorskip("pytoniq_core")
 
-import x402.mechanisms.tvm.exact.facilitator as facilitator_module
-from x402 import x402ClientSync, x402FacilitatorSync, x402ResourceServerSync
 from x402.mechanisms.tvm import (
     SCHEME_EXACT,
     SUPPORTED_NETWORKS,
@@ -30,33 +28,7 @@ from x402.mechanisms.tvm.exact import (
     ExactTvmFacilitatorScheme,
     ExactTvmScheme,
     ExactTvmServerScheme,
-    register_exact_tvm_client,
-    register_exact_tvm_facilitator,
-    register_exact_tvm_server,
 )
-
-
-class _ClientSignerStub:
-    address = "0:" + "1" * 64
-    network = TVM_TESTNET
-    wallet_id = 1
-    state_init = object()
-
-    def sign_message(self, message: bytes) -> bytes:
-        return b"\x00" * 64
-
-
-class _FacilitatorSignerStub:
-    def get_addresses(self) -> list[str]:
-        return ["0:" + "f" * 64]
-
-    def get_addresses_for_network(self, network: str) -> list[str]:
-        return ["0:" + "f" * 64]
-
-
-class _FakeBatcher:
-    def __init__(self, *args, **kwargs) -> None:
-        pass
 
 
 class TestExports:
@@ -103,44 +75,3 @@ class TestAmountUtilities:
         raw = "0:" + "1" * 64
 
         assert normalize_address(raw) == raw
-
-
-class TestRegisterHelpers:
-    def test_register_exact_tvm_client_should_register_on_signer_network_and_policies(self):
-        client = x402ClientSync()
-        policy = lambda version, requirements: requirements
-
-        result = register_exact_tvm_client(client, _ClientSignerStub(), policies=[policy])
-
-        assert result is client
-        assert TVM_TESTNET in client._schemes
-        assert client._schemes[TVM_TESTNET]["exact"].scheme == "exact"
-        assert client._policies == [policy]
-
-    def test_register_exact_tvm_server_should_register_all_supported_networks_by_default(self):
-        server = x402ResourceServerSync()
-
-        result = register_exact_tvm_server(server)
-
-        assert result is server
-        for network in SUPPORTED_NETWORKS:
-            assert network in server._schemes
-            assert server._schemes[network]["exact"].scheme == "exact"
-
-    def test_register_exact_tvm_facilitator_should_register_one_scheme_for_requested_networks(
-        self, monkeypatch
-    ):
-        facilitator = x402FacilitatorSync()
-        monkeypatch.setattr(facilitator_module, "_SettlementBatcher", _FakeBatcher)
-
-        result = register_exact_tvm_facilitator(
-            facilitator,
-            _FacilitatorSignerStub(),
-            [TVM_TESTNET, TVM_MAINNET],
-        )
-
-        assert result is facilitator
-        assert len(facilitator._schemes) == 1
-        scheme_data = facilitator._schemes[0]
-        assert scheme_data.networks == {TVM_TESTNET, TVM_MAINNET}
-        assert scheme_data.facilitator.scheme == "exact"

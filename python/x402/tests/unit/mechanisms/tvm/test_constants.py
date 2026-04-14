@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from x402.mechanisms.tvm import (
     ERR_EXACT_TVM_ACCOUNT_FROZEN,
+    ERR_EXACT_TVM_TON_AMOUNT_TOO_HIGH,
     ERR_EXACT_TVM_DUPLICATE_SETTLEMENT,
     ERR_EXACT_TVM_INSUFFICIENT_BALANCE,
     ERR_EXACT_TVM_INVALID_AMOUNT,
@@ -56,6 +57,10 @@ def test_should_export_canonical_tvm_error_constants() -> None:
     assert (
         ERR_EXACT_TVM_INVALID_EXTENSIONS_DICT
         == "invalid_exact_tvm_payload_extensions_dict_mismatch"
+    )
+    assert (
+        ERR_EXACT_TVM_TON_AMOUNT_TOO_HIGH
+        == "invalid_exact_tvm_payload_attached_ton_amount_too_high"
     )
     assert ERR_EXACT_TVM_ACCOUNT_FROZEN == "account_frozen"
     assert ERR_EXACT_TVM_INVALID_UNTIL_EXPIRED == "invalid_exact_tvm_payload_valid_until_expired"

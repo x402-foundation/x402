@@ -23,12 +23,14 @@ from ..codecs.w5 import (
 )
 from ..constants import (
     ALLOWED_CLIENT_CODES,
+    DEFAULT_JETTON_WALLET_MESSAGE_AMOUNT,
     DEFAULT_SETTLEMENT_BATCH_FLUSH_INTERVAL_SECONDS,
     DEFAULT_SETTLEMENT_BATCH_FLUSH_SIZE,
     DEFAULT_SETTLEMENT_CONFIRMATION_WORKERS,
     DEFAULT_TRACE_CONFIRMATION_TIMEOUT_SECONDS,
     DEFAULT_TVM_OUTER_GAS_BUFFER,
     ERR_EXACT_TVM_ACCOUNT_FROZEN,
+    ERR_EXACT_TVM_TON_AMOUNT_TOO_HIGH,
     ERR_EXACT_TVM_DUPLICATE_SETTLEMENT,
     ERR_EXACT_TVM_INSUFFICIENT_BALANCE,
     ERR_EXACT_TVM_INVALID_AMOUNT,
@@ -59,9 +61,9 @@ from ..signer import FacilitatorTvmSigner
 from ..trace_utils import (
     message_body_hash_matches,
     parse_trace_transactions,
-    trace_transaction_hash_to_hex,
     trace_transaction_compute_fees,
     trace_transaction_fwd_fees,
+    trace_transaction_hash_to_hex,
     trace_transaction_storage_fees,
     transaction_succeeded,
 )
@@ -318,6 +320,11 @@ class ExactTvmScheme:
             return invalid_response(ERR_EXACT_TVM_INVALID_JETTON_TRANSFER)
         if settlement.transfer.forward_payload.hash != expected_forward_payload.hash:
             return invalid_response(ERR_EXACT_TVM_INVALID_JETTON_TRANSFER)
+        max_attached_ton_amount = (
+            settlement.transfer.forward_ton_amount + DEFAULT_JETTON_WALLET_MESSAGE_AMOUNT
+        )
+        if settlement.transfer.attached_ton_amount > max_attached_ton_amount:
+            return invalid_response(ERR_EXACT_TVM_TON_AMOUNT_TOO_HIGH)
 
         now = int(time.time())
         if settlement.valid_until <= now:

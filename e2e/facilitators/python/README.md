@@ -39,18 +39,25 @@ uv run uvicorn main:app --port 4022
 
 ## Environment Variables
 
-| Variable              | Required      | Description                                      |
-| --------------------- | ------------- | ------------------------------------------------ |
-| `PORT`                | No            | Server port (default: 4022)                      |
-| `EVM_PRIVATE_KEY`     | Conditionally | Private key for EVM transactions                 |
-| `SVM_PRIVATE_KEY`     | Conditionally | Private key for SVM transactions                 |
-| `TVM_PRIVATE_KEY`     | Conditionally | Private key for the TVM highload facilitator wallet |
-| `EVM_RPC_URL`         | No            | Custom EVM RPC URL (default: Base Sepolia)       |
-| `EVM_NETWORK`         | No            | EVM network identifier                           |
-| `SVM_NETWORK`         | No            | SVM network identifier                           |
-| `TVM_NETWORK`         | No            | TVM network identifier (default: `tvm:-3`)       |
-| `TONCENTER_API_KEY`   | No            | Toncenter API key for TVM testnet                |
-| `TONCENTER_BASE_URL`  | No            | Custom Toncenter base URL for TVM                |
+| Variable             | Required      | Description                                         |
+| -------------------- | ------------- | --------------------------------------------------- |
+| `PORT`               | No            | Server port (default: 4022)                         |
+| `EVM_PRIVATE_KEY`    | Conditionally | Private key for EVM transactions                    |
+| `SVM_PRIVATE_KEY`    | Conditionally | Private key for SVM transactions                    |
+| `TVM_PRIVATE_KEY`    | Conditionally | Private key for the TVM highload facilitator wallet |
+| `EVM_RPC_URL`        | No            | Custom EVM RPC URL (default: Base Sepolia)          |
+| `EVM_NETWORK`        | No            | EVM network identifier                              |
+| `SVM_NETWORK`        | No            | SVM network identifier                              |
+| `TVM_NETWORK`        | No            | TVM network identifier (default: `tvm:-3`)          |
+| `TONCENTER_API_KEY`  | No            | Toncenter API key for TVM testnet                   |
+| `TONCENTER_BASE_URL` | No            | Custom Toncenter base URL for TVM                   |
+
+### TVM funding notes
+
+To fund the TVM facilitator wallet, request testnet TON from [@testgiver_ton_bot](https://t.me/testgiver_ton_bot). The facilitator wallet only needs TON for relay fees.
+
+To get testnet-USDT for the payer wallet, open the [testnet USDT transfer link](ton://transfer/kQDNUDJC0iQvJoZp0ml-YteL1NtTXKphU03CTI5v4VtBhGYs?amount=49000000&bin=te6cckEBAQEAFgAAKClXdJkAAAAAAAAAAAAAAAAAmJaAhDUekg) or scan the QR code below:
+<img width="228" height="228" alt="QR code for the testnet USDT transfer link" src="https://github.com/user-attachments/assets/da09ad03-388d-4960-88bf-afbacf4a7c65" />
 
 ## Endpoints
 

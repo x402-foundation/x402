@@ -7,17 +7,17 @@ import time
 from typing import Any
 
 from ....schemas import PaymentRequirements
-from ..codecs.jetton import build_jetton_transfer_body
 from ..codecs.common import normalize_address
+from ..codecs.jetton import build_jetton_transfer_body
 from ..codecs.w5 import build_w5_signed_body, get_w5_seqno
 from ..constants import (
+    DEFAULT_JETTON_WALLET_MESSAGE_AMOUNT,
+    DEFAULT_TONCENTER_EMULATION_TIMEOUT_SECONDS,
+    DEFAULT_TONCENTER_TIMEOUT_SECONDS,
     DEFAULT_TVM_EMULATION_ADDRESS,
     DEFAULT_TVM_EMULATION_RELAY_AMOUNT,
     DEFAULT_TVM_EMULATION_SEQNO,
     DEFAULT_TVM_EMULATION_WALLET_ID,
-    DEFAULT_JETTON_WALLET_MESSAGE_AMOUNT,
-    DEFAULT_TONCENTER_EMULATION_TIMEOUT_SECONDS,
-    DEFAULT_TONCENTER_TIMEOUT_SECONDS,
     DEFAULT_TVM_INNER_GAS_BUFFER,
     SCHEME_EXACT,
     SEND_MODE_IGNORE_ERRORS,
@@ -30,7 +30,6 @@ from ..provider import ToncenterRestClient
 from ..signer import ClientTvmSigner
 from ..trace_utils import (
     parse_trace_transactions,
-    trace_transaction_balance_before,
     trace_transaction_compute_fees,
     trace_transaction_fwd_fees,
     trace_transaction_storage_fees,

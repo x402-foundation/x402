@@ -77,15 +77,12 @@ facilitator.register([TVM_TESTNET], ExactTvmFacilitatorScheme(signer))
 
 ### `x402.mechanisms.tvm.exact`
 
-| Export                             | Description                                      |
-| ---------------------------------- | ------------------------------------------------ |
-| `ExactTvmScheme`                   | Client scheme (alias for `ExactTvmClientScheme`) |
-| `ExactTvmClientScheme`             | Client-side payment creation                     |
-| `ExactTvmServerScheme`             | Server-side requirement building                 |
-| `ExactTvmFacilitatorScheme`        | Facilitator verification/settlement              |
-| `register_exact_tvm_client()`      | Helper to register client                        |
-| `register_exact_tvm_server()`      | Helper to register server                        |
-| `register_exact_tvm_facilitator()` | Helper to register facilitator                   |
+| Export                      | Description                                      |
+| --------------------------- | ------------------------------------------------ |
+| `ExactTvmScheme`            | Client scheme (alias for `ExactTvmClientScheme`) |
+| `ExactTvmClientScheme`      | Client-side payment creation                     |
+| `ExactTvmServerScheme`      | Server-side requirement building                 |
+| `ExactTvmFacilitatorScheme` | Facilitator verification/settlement              |
 
 ### `x402.mechanisms.tvm`
 
@@ -122,6 +119,11 @@ For non-default jettons, provide either:
 
 - the amount in atomic units, or
 - `extra.decimals` so decimal amounts can be normalized correctly
+
+## Testnet funding
+
+To fund a TVM payer wallet, request testnet TON from [@testgiver_ton_bot](https://t.me/testgiver_ton_bot) for fees. Then open the [testnet USDT transfer link](ton://transfer/kQDNUDJC0iQvJoZp0ml-YteL1NtTXKphU03CTI5v4VtBhGYs?amount=49000000&bin=te6cckEBAQEAFgAAKClXdJkAAAAAAAAAAAAAAAAAmJaAhDUekg) or scan the QR code below to obtain testnet USDT:
+<img width="228" height="228" alt="QR code for the testnet USDT transfer link" src="https://github.com/user-attachments/assets/da09ad03-388d-4960-88bf-afbacf4a7c65" />
 
 ## Technical Details
 

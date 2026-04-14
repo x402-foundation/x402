@@ -37,6 +37,13 @@
       "protocolFamily": "svm"
     },
     {
+      "path": "/exact/tvm",
+      "method": "GET",
+      "description": "Protected endpoint requiring TVM payment",
+      "requiresPayment": true,
+      "protocolFamily": "tvm"
+    },
+    {
       "path": "/exact/evm/permit2-eip2612GasSponsoring",
       "method": "GET",
       "description": "Protected endpoint requiring Permit2 payment with EIP-2612 gas sponsoring",
@@ -121,12 +128,14 @@
   "environment": {
     "required": [
       "EVM_PAYEE_ADDRESS",
-      "SVM_PAYEE_ADDRESS"
+      "SVM_PAYEE_ADDRESS",
+      "TVM_PAYEE_ADDRESS"
     ],
     "optional": [
       "PORT",
       "FACILITATOR_URL",
-      "EVM_PERMIT2_ASSET"
+      "EVM_PERMIT2_ASSET",
+      "TVM_NETWORK"
     ]
   }
 }
