@@ -55,6 +55,8 @@ There is no single answer, but common patterns are:
 
 #### Can I integrate x402 with a usage / plan manager like Metronome?
 
+**Status note:** `upto` is already specified and available today for EVM in the TypeScript and Go SDKs. Python support is still in progress. See [SDK Features](/sdk-features) for the current implementation matrix.
+
 Yes. x402 handles the _payment execution_. You can still meter usage, aggregate calls, or issue prepaid credits in Metronome and only charge when limits are exceeded. Example glue code is coming soon.
 
 ### Assets, Networks & Fees
