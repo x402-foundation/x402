@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120" width="120" height="120" aria-label="QuestNet logo">
+  <!-- Background -->
+  <rect width="120" height="120" rx="24" fill="#0a1a16"/>
+  <!-- Outer diamond -->
+  <path d="M60 18 L102 60 L60 102 L18 60 Z" stroke="#00d4aa" stroke-width="3" fill="none" stroke-linejoin="round"/>
+  <!-- Inner diamond -->
+  <path d="M60 36 L84 60 L60 84 L36 60 Z" stroke="#00d4aa" stroke-width="2" fill="none" stroke-linejoin="round" opacity="0.5"/>
+  <!-- Center dot -->
+  <circle cx="60" cy="60" r="7" fill="#00d4aa"/>
+  <!-- Cardinal tick marks -->
+  <line x1="60" y1="18" x2="60" y2="30" stroke="#00d4aa" stroke-width="2.5" stroke-linecap="round"/>
+  <line x1="60" y1="90" x2="60" y2="102" stroke="#00d4aa" stroke-width="2.5" stroke-linecap="round"/>
+  <line x1="18" y1="60" x2="30" y2="60" stroke="#00d4aa" stroke-width="2.5" stroke-linecap="round"/>
+  <line x1="90" y1="60" x2="102" y2="60" stroke="#00d4aa" stroke-width="2.5" stroke-linecap="round"/>
+</svg>

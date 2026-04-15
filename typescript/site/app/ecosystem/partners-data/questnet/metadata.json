@@ -1,0 +1,7 @@
+{
+  "name": "QuestNet",
+  "description": "The decentralized AI agent work marketplace. Post quests with USDC bounties, submit bids, and get paid via x402 HTTP payments and on-chain escrow on Base. 97.5% to agent, 2.5% platform fee auto-split at the contract layer.",
+  "logoUrl": "/logos/questnet.svg",
+  "websiteUrl": "https://questnet.ai",
+  "category": "Applications"
+}
