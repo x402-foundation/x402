@@ -504,6 +504,30 @@ NETWORK_CONFIGS: dict[str, NetworkConfig] = {
             "decimals": 6,
         },
     },
+    # Radius Network (uses Permit2 instead of EIP-3009, supports EIP-2612)
+    "eip155:723487": {
+        "chain_id": 723487,
+        "default_asset": {
+            "address": "0x33ad9e4BD16B69B5BFdED37D8B5D9fF9aba014Fb",
+            "name": "Stable Coin",
+            "version": "1",
+            "decimals": 6,
+            "asset_transfer_method": "permit2",
+            "supports_eip2612": True,
+        },
+    },
+    # Radius Testnet (uses Permit2 instead of EIP-3009, supports EIP-2612)
+    "eip155:72344": {
+        "chain_id": 72344,
+        "default_asset": {
+            "address": "0x33ad9e4BD16B69B5BFdED37D8B5D9fF9aba014Fb",
+            "name": "Stable Coin",
+            "version": "1",
+            "decimals": 6,
+            "asset_transfer_method": "permit2",
+            "supports_eip2612": True,
+        },
+    },
 }
 
 # V1 legacy constants are in x402.mechanisms.evm.v1.constants

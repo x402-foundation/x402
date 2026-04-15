@@ -79,6 +79,8 @@ var (
 	ChainIDPolygon       = big.NewInt(137)
 	ChainIDArbOne        = big.NewInt(42161)
 	ChainIDArbSepolia    = big.NewInt(421614)
+	ChainIDRadius        = big.NewInt(723487)
+	ChainIDRadiusTestnet = big.NewInt(72344)
 
 	// Network configurations
 	// See DEFAULT_ASSET.md for guidelines on adding new chains
@@ -194,6 +196,30 @@ var (
 				Name:     "USD Coin",
 				Version:  "2",
 				Decimals: DefaultDecimals,
+			},
+		},
+		// Radius Network (uses Permit2 instead of EIP-3009, supports EIP-2612)
+		"eip155:723487": {
+			ChainID: ChainIDRadius,
+			DefaultAsset: AssetInfo{
+				Address:             "0x33ad9e4BD16B69B5BFdED37D8B5D9fF9aba014Fb", // SBC on Radius
+				Name:                "Stable Coin",
+				Version:             "1",
+				Decimals:            DefaultDecimals,
+				AssetTransferMethod: AssetTransferMethodPermit2,
+				SupportsEip2612:     true,
+			},
+		},
+		// Radius Testnet (uses Permit2 instead of EIP-3009, supports EIP-2612)
+		"eip155:72344": {
+			ChainID: ChainIDRadiusTestnet,
+			DefaultAsset: AssetInfo{
+				Address:             "0x33ad9e4BD16B69B5BFdED37D8B5D9fF9aba014Fb", // SBC on Radius Testnet
+				Name:                "Stable Coin",
+				Version:             "1",
+				Decimals:            DefaultDecimals,
+				AssetTransferMethod: AssetTransferMethodPermit2,
+				SupportsEip2612:     true,
 			},
 		},
 	}

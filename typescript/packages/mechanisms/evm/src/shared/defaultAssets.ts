@@ -105,6 +105,22 @@ export const DEFAULT_STABLECOINS: Record<string, ExactDefaultAssetInfo> = {
     assetTransferMethod: "permit2",
     supportsEip2612: true,
   }, // Mezo Testnet mUSD (no EIP-3009, supports EIP-2612)
+  "eip155:723487": {
+    address: "0x33ad9e4BD16B69B5BFdED37D8B5D9fF9aba014Fb",
+    name: "Stable Coin",
+    version: "1",
+    decimals: 6,
+    assetTransferMethod: "permit2",
+    supportsEip2612: true,
+  }, // Radius Network SBC (no EIP-3009, supports EIP-2612)
+  "eip155:72344": {
+    address: "0x33ad9e4BD16B69B5BFdED37D8B5D9fF9aba014Fb",
+    name: "Stable Coin",
+    version: "1",
+    decimals: 6,
+    assetTransferMethod: "permit2",
+    supportsEip2612: true,
+  }, // Radius Testnet SBC (no EIP-3009, supports EIP-2612)
 };
 
 /**
