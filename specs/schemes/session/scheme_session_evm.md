@@ -39,6 +39,190 @@ All amounts are in **base units** (smallest indivisible token unit). For USDC (6
 
 ---
 
+## Protocol Flow Overview
+
+### Happy Path — Client-Broadcast (`feePayer: false`)
+
+```
+   Client (Payer)                  Resource Server (Payee)            Escrow Contract
+      |                                    |                                |
+      |  (1) GET /resource                 |                                |
+      |----------------------------------->|                                |
+      |                                    |                                |
+      |  (2) 402 PaymentRequired           |                                |
+      |      scheme="session"              |                                |
+      |      extra.feePayer=false           |                                |
+      |<-----------------------------------|                                |
+      |                                    |                                |
+      |  (3) approve(escrow, deposit)      |                                |
+      |------------------------------------------------------------------->|
+      |                                    |                                |
+      |  (4) open(payee, token, deposit,   |                                |
+      |      salt, authorizedSigner,       |                                |
+      |      splits)                       |                                |
+      |------------------------------------------------------------------->|
+      |      channelId, txHash             |                                |
+      |<-------------------------------------------------------------------|
+      |                                    |                                |
+      |  (5) Sign initial voucher          |                                |
+      |      (channelId, cumAmt=0)         |                                |
+      |                                    |                                |
+      |  (6) PAYMENT-SIGNATURE             |                                |
+      |      action="open"                 |                                |
+      |      type="hash"                   |                                |
+      |      hash=txHash                   |                                |
+      |      signature=voucherSig          |                                |
+      |----------------------------------->|                                |
+      |                                    |  (7) verify channel state      |
+      |                                    |------------------------------->|
+      |                                    |      payee, token, deposit OK  |
+      |                                    |<-------------------------------|
+      |                                    |                                |
+      |  (8) 200 OK + payment-receipt      |                                |
+      |      {channelId}                   |                                |
+      |<-----------------------------------|                                |
+      |                                    |                                |
+      |  ======= Active Session ========   |                                |
+      |                                    |                                |
+      |  (9) Sign voucher                  |                                |
+      |      (channelId, cumAmt=N)         |                                |
+      |                                    |                                |
+      |  (10) PAYMENT-SIGNATURE            |                                |
+      |       action="voucher"             |                                |
+      |       cumulativeAmount=N           |                                |
+      |       signature=voucherSig         |                                |
+      |----------------------------------->|                                |
+      |                                    |  (11) verify sig, persist,     |
+      |                                    |       deduct cost              |
+      |  (12) 200 SSE stream               |                                |
+      |       (data chunks...)             |                                |
+      |<-----------------------------------|                                |
+      |                                    |                                |
+      |  (13) SSE: payment-need-voucher    |                                |
+      |       {requiredCumulative,         |                                |
+      |        acceptedCumulative,         |                                |
+      |        deposit}                    |                                |
+      |<-----------------------------------|                                |
+      |                                    |                                |
+      |  (14) Sign voucher                 |                                |
+      |       (channelId, cumAmt=M)        |                                |
+      |                                    |                                |
+      |  (15) PAYMENT-SIGNATURE            |                                |
+      |       action="voucher"             |                                |
+      |       cumulativeAmount=M           |                                |
+      |----------------------------------->|                                |
+      |                                    |                                |
+      |  (16) 200 SSE stream continues     |                                |
+      |<-----------------------------------|                                |
+      |                                    |                                |
+      |  (17) SSE: payment-receipt         |                                |
+      |       {spent, acceptedCumulative,  |                                |
+      |        units}                      |                                |
+      |<-----------------------------------|                                |
+      |                                    |                                |
+      |  ======= Cooperative Close ======  |                                |
+      |                                    |                                |
+      |  (18) Sign final voucher           |                                |
+      |       (channelId, cumAmt=final)    |                                |
+      |                                    |                                |
+      |  (19) PAYMENT-SIGNATURE            |                                |
+      |       action="close"               |                                |
+      |       cumulativeAmount=final       |                                |
+      |       signature=voucherSig         |                                |
+      |----------------------------------->|                                |
+      |                                    |  (20) close(channelId,         |
+      |                                    |       final, sig)              |
+      |                                    |------------------------------->|
+      |                                    |      settle + refund           |
+      |                                    |<-------------------------------|
+      |                                    |                                |
+      |  (21) 200 + payment-receipt        |                                |
+      |       {transaction: txHash}        |                                |
+      |<-----------------------------------|                                |
+      |                                    |                                |
+```
+
+### Happy Path — Server-Submitted (`feePayer: true`)
+
+```
+   Client (Payer)                  Resource Server (Payee)            Escrow Contract
+      |                                    |                                |
+      |  (1) GET /resource                 |                                |
+      |----------------------------------->|                                |
+      |                                    |                                |
+      |  (2) 402 PaymentRequired           |                                |
+      |      scheme="session"              |                                |
+      |      extra.feePayer=true            |                                |
+      |<-----------------------------------|                                |
+      |                                    |                                |
+      |  (3) Sign EIP-3009                 |                                |
+      |      transferWithAuthorization     |                                |
+      |      (from, to=escrow, value,      |                                |
+      |       nonce, ...)                  |                                |
+      |                                    |                                |
+      |  (4) Sign initial voucher          |                                |
+      |      (channelId, cumAmt=0)         |                                |
+      |                                    |                                |
+      |  (5) PAYMENT-SIGNATURE             |                                |
+      |      action="open"                 |                                |
+      |      type="transaction"            |                                |
+      |      authorization={eip3009}       |                                |
+      |      signature=eip3009Sig          |                                |
+      |      voucherSignature=voucherSig   |                                |
+      |----------------------------------->|                                |
+      |                                    |  (6) openWithAuthorization(    |
+      |                                    |      payee, token, deposit,    |
+      |                                    |      salt, ..., eip3009Sig,    |
+      |                                    |      splits)                   |
+      |                                    |------------------------------->|
+      |                                    |      channelId                 |
+      |                                    |<-------------------------------|
+      |                                    |                                |
+      |                                    |  (7) verify initial voucher    |
+      |                                    |      signature                 |
+      |                                    |                                |
+      |  (8) 200 OK + payment-receipt      |                                |
+      |      {channelId}                   |                                |
+      |<-----------------------------------|                                |
+      |                                    |                                |
+      |  Steps (9)–(21): identical to      |                                |
+      |  Client-Broadcast flow above       |                                |
+      |                                    |                                |
+```
+
+### Forced Close (Non-Cooperative)
+
+```
+   Client (Payer)                  Resource Server (Payee)            Escrow Contract
+      |                                    |                                |
+      |  Server unresponsive               |                                |
+      |                                    |                                |
+      |  (1) requestClose(channelId)       |                                |
+      |------------------------------------------------------------------->|
+      |                                    |      closeRequestedAt = now    |
+      |<-------------------------------------------------------------------|
+      |                                    |                                |
+      |  ======= Grace Period ==========  |                                |
+      |  (ref: 15 min L2, 60 min L1)      |                                |
+      |                                    |                                |
+      |                                    |  (2) settle(channelId,         |
+      |                                    |      lastVoucherAmt, sig)      |
+      |                                    |------------------------------->|
+      |                                    |      earned revenue settled    |
+      |                                    |<-------------------------------|
+      |                                    |                                |
+      |  ======= After Grace Period ====   |                                |
+      |                                    |                                |
+      |  (3) withdraw(channelId)           |                                |
+      |------------------------------------------------------------------->|
+      |      remaining deposit refunded    |                                |
+      |      channel finalized             |                                |
+      |<-------------------------------------------------------------------|
+      |                                    |                                |
+```
+
+---
+
 ## 1. PaymentRequirements Schema
 
 The `session` scheme uses the following `PaymentRequirements` schema:
@@ -111,6 +295,22 @@ The `session` scheme uses an `action` discriminator in the `payload` field to su
 | `action` | `string` | Required | One of `"open"`, `"topUp"`, `"voucher"`, `"close"` |
 
 The remaining fields depend on the `action` value.
+
+
+### Signature Field Reference
+
+The `signature` field is overloaded: in `feePayer: true` open/topUp payloads it carries the EIP-3009 authorization signature, while in all other contexts it carries the EIP-712 voucher signature. The `voucherSignature` field only appears when both signature types are needed in the same payload.
+
+| Action | `feePayer` | `signature` contains | `voucherSignature` contains |
+| :--- | :--- | :--- | :--- |
+| `open` | `false` | EIP-712 voucher signature | N/A (not present) |
+| `open` | `true` | EIP-3009 `transferWithAuthorization` signature | EIP-712 voucher signature |
+| `topUp` | `false` | N/A (not present — client submits txHash) | N/A |
+| `topUp` | `true` | EIP-3009 `transferWithAuthorization` signature | N/A |
+| `voucher` | N/A | EIP-712 voucher signature | N/A |
+| `close` | N/A | EIP-712 voucher signature | N/A |
+
+All signatures are 65 bytes (`r ‖ s ‖ v`), encoded as 0x-prefixed lowercase hex (132 characters).
 
 ### 2.1 Open Payload (`feePayer: false`)
 
