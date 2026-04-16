@@ -1,9 +1,18 @@
 package batched
 
 import (
+	"context"
 	"fmt"
 	"math/big"
 )
+
+// AuthorizerSigner is the interface for a dedicated key that provides EIP-712
+// signatures for claimWithSignature / refundWithSignature.
+type AuthorizerSigner interface {
+	Address() string
+	SignClaimBatch(ctx context.Context, claims []BatchedVoucherClaim, network string) ([]byte, error)
+	SignRefund(ctx context.Context, channelId string, amount string, nonce string, network string) ([]byte, error)
+}
 
 // ChannelConfig is the immutable configuration for a payment channel.
 // channelId = keccak256(abi.encode(channelConfig))
@@ -55,9 +64,9 @@ type BatchedDepositData struct {
 
 // BatchedDepositPayload is sent on the first request to fund a channel.
 type BatchedDepositPayload struct {
-	Type          string               `json:"type"` // "deposit"
-	Deposit       BatchedDepositData   `json:"deposit"`
-	Voucher       BatchedVoucherFields `json:"voucher"`
+	Type          string                 `json:"type"` // "deposit"
+	Deposit       BatchedDepositData     `json:"deposit"`
+	Voucher       BatchedVoucherFields   `json:"voucher"`
 	ResponseExtra map[string]interface{} `json:"responseExtra,omitempty"`
 }
 
@@ -94,17 +103,13 @@ type BatchedPaymentResponseExtra struct {
 
 // --- Settle Action Payloads (server -> facilitator) ---
 
-// BatchedClaimPayload batches multiple voucher claims.
-type BatchedClaimPayload struct {
-	SettleAction string                `json:"settleAction"` // "claim"
-	Claims       []BatchedVoucherClaim `json:"claims"`
-}
-
 // BatchedClaimWithSignaturePayload batches claims with receiverAuthorizer signature.
+// ClaimAuthorizerSignature is optional — when absent, the facilitator auto-signs
+// using its AuthorizerSigner.
 type BatchedClaimWithSignaturePayload struct {
-	SettleAction        string                `json:"settleAction"` // "claimWithSignature"
-	Claims              []BatchedVoucherClaim `json:"claims"`
-	AuthorizerSignature string                `json:"authorizerSignature"`
+	SettleAction             string                `json:"settleAction"` // "claimWithSignature"
+	Claims                   []BatchedVoucherClaim `json:"claims"`
+	ClaimAuthorizerSignature string                `json:"claimAuthorizerSignature,omitempty"`
 }
 
 // BatchedSettleActionPayload transfers claimed funds to receiver.
@@ -120,25 +125,18 @@ type BatchedDepositSettlePayload struct {
 	Deposit      BatchedDepositData `json:"deposit"`
 }
 
-// BatchedRefundPayload is a msg.sender-gated cooperative refund.
-type BatchedRefundPayload struct {
-	SettleAction  string                        `json:"settleAction"` // "refund"
-	Config        ChannelConfig                 `json:"config"`
-	Amount        string                        `json:"amount"`
-	Claims        []BatchedVoucherClaim         `json:"claims"`
-	ResponseExtra *BatchedPaymentResponseExtra  `json:"responseExtra,omitempty"`
-}
-
 // BatchedRefundWithSignaturePayload is a signature-based cooperative refund.
+// RefundAuthorizerSignature and ClaimAuthorizerSignature are optional — when absent,
+// the facilitator auto-signs using its AuthorizerSigner.
 type BatchedRefundWithSignaturePayload struct {
-	SettleAction                string                       `json:"settleAction"` // "refundWithSignature"
-	Config                      ChannelConfig                `json:"config"`
-	Amount                      string                       `json:"amount"`
-	Nonce                       string                       `json:"nonce"`
-	Claims                      []BatchedVoucherClaim        `json:"claims"`
-	ReceiverAuthorizerSignature string                       `json:"receiverAuthorizerSignature"`
-	ClaimAuthorizerSignature    string                       `json:"claimAuthorizerSignature,omitempty"`
-	ResponseExtra               *BatchedPaymentResponseExtra `json:"responseExtra,omitempty"`
+	SettleAction              string                       `json:"settleAction"` // "refundWithSignature"
+	Config                    ChannelConfig                `json:"config"`
+	Amount                    string                       `json:"amount"`
+	Nonce                     string                       `json:"nonce"`
+	Claims                    []BatchedVoucherClaim        `json:"claims"`
+	RefundAuthorizerSignature string                       `json:"refundAuthorizerSignature,omitempty"`
+	ClaimAuthorizerSignature  string                       `json:"claimAuthorizerSignature,omitempty"`
+	ResponseExtra             *BatchedPaymentResponseExtra `json:"responseExtra,omitempty"`
 }
 
 // ============================================================================
@@ -163,19 +161,12 @@ func IsVoucherPayload(data map[string]interface{}) bool {
 	return typ == "voucher" && hasConfig && hasId && hasAmount && hasSig
 }
 
-// IsClaimPayload checks if a raw payload map is a batch claim settle action.
-func IsClaimPayload(data map[string]interface{}) bool {
-	action, _ := data["settleAction"].(string)
-	_, hasClaims := data["claims"]
-	return action == "claim" && hasClaims
-}
-
-// IsClaimWithSignaturePayload checks if a raw payload map is a claim-with-signature settle action.
+// IsClaimWithSignaturePayload checks if a raw payload map is a claimWithSignature settle action.
+// The claimAuthorizerSignature field is optional (facilitator auto-signs when absent).
 func IsClaimWithSignaturePayload(data map[string]interface{}) bool {
 	action, _ := data["settleAction"].(string)
 	_, hasClaims := data["claims"]
-	_, hasSig := data["authorizerSignature"]
-	return action == "claimWithSignature" && hasClaims && hasSig
+	return action == "claimWithSignature" && hasClaims
 }
 
 // IsSettleActionPayload checks if a raw payload map is a settle action (transfer to receiver).
@@ -193,20 +184,12 @@ func IsDepositSettlePayload(data map[string]interface{}) bool {
 	return action == "deposit" && hasDeposit
 }
 
-// IsRefundPayload checks if a raw payload map is a msg.sender-gated refund.
-func IsRefundPayload(data map[string]interface{}) bool {
-	action, _ := data["settleAction"].(string)
-	_, hasConfig := data["config"]
-	_, hasSig := data["receiverAuthorizerSignature"]
-	return action == "refund" && hasConfig && !hasSig
-}
-
-// IsRefundWithSignaturePayload checks if a raw payload map is a signature-based refund.
+// IsRefundWithSignaturePayload checks if a raw payload map is a refundWithSignature settle action.
+// The refundAuthorizerSignature field is optional (facilitator auto-signs when absent).
 func IsRefundWithSignaturePayload(data map[string]interface{}) bool {
 	action, _ := data["settleAction"].(string)
 	_, hasConfig := data["config"]
-	_, hasSig := data["receiverAuthorizerSignature"]
-	return action == "refundWithSignature" && hasConfig && hasSig
+	return action == "refundWithSignature" && hasConfig
 }
 
 // IsBatchedPayload checks if a raw payload map is any batched payload type.
@@ -361,21 +344,6 @@ func VoucherClaimsFromList(data []interface{}) ([]BatchedVoucherClaim, error) {
 	return claims, nil
 }
 
-// ClaimPayloadFromMap creates a BatchedClaimPayload from a raw map.
-func ClaimPayloadFromMap(data map[string]interface{}) (*BatchedClaimPayload, error) {
-	payload := &BatchedClaimPayload{SettleAction: "claim"}
-	claimsList, ok := data["claims"].([]interface{})
-	if !ok {
-		return nil, fmt.Errorf("missing or invalid claims")
-	}
-	claims, err := VoucherClaimsFromList(claimsList)
-	if err != nil {
-		return nil, err
-	}
-	payload.Claims = claims
-	return payload, nil
-}
-
 // ClaimWithSignaturePayloadFromMap creates a BatchedClaimWithSignaturePayload from a raw map.
 func ClaimWithSignaturePayloadFromMap(data map[string]interface{}) (*BatchedClaimWithSignaturePayload, error) {
 	payload := &BatchedClaimWithSignaturePayload{SettleAction: "claimWithSignature"}
@@ -388,7 +356,7 @@ func ClaimWithSignaturePayloadFromMap(data map[string]interface{}) (*BatchedClai
 		return nil, err
 	}
 	payload.Claims = claims
-	payload.AuthorizerSignature, _ = data["authorizerSignature"].(string)
+	payload.ClaimAuthorizerSignature, _ = data["claimAuthorizerSignature"].(string)
 	return payload, nil
 }
 
@@ -432,29 +400,6 @@ func DepositSettlePayloadFromMap(data map[string]interface{}) (*BatchedDepositSe
 	return payload, nil
 }
 
-// RefundPayloadFromMap creates a BatchedRefundPayload from a raw map.
-func RefundPayloadFromMap(data map[string]interface{}) (*BatchedRefundPayload, error) {
-	payload := &BatchedRefundPayload{SettleAction: "refund"}
-	configMap, ok := data["config"].(map[string]interface{})
-	if !ok {
-		return nil, fmt.Errorf("missing or invalid config")
-	}
-	config, err := ChannelConfigFromMap(configMap)
-	if err != nil {
-		return nil, err
-	}
-	payload.Config = config
-	payload.Amount, _ = data["amount"].(string)
-	if claimsList, ok := data["claims"].([]interface{}); ok {
-		claims, err := VoucherClaimsFromList(claimsList)
-		if err != nil {
-			return nil, err
-		}
-		payload.Claims = claims
-	}
-	return payload, nil
-}
-
 // RefundWithSignaturePayloadFromMap creates a BatchedRefundWithSignaturePayload from a raw map.
 func RefundWithSignaturePayloadFromMap(data map[string]interface{}) (*BatchedRefundWithSignaturePayload, error) {
 	payload := &BatchedRefundWithSignaturePayload{SettleAction: "refundWithSignature"}
@@ -469,7 +414,7 @@ func RefundWithSignaturePayloadFromMap(data map[string]interface{}) (*BatchedRef
 	payload.Config = config
 	payload.Amount, _ = data["amount"].(string)
 	payload.Nonce, _ = data["nonce"].(string)
-	payload.ReceiverAuthorizerSignature, _ = data["receiverAuthorizerSignature"].(string)
+	payload.RefundAuthorizerSignature, _ = data["refundAuthorizerSignature"].(string)
 	payload.ClaimAuthorizerSignature, _ = data["claimAuthorizerSignature"].(string)
 	if claimsList, ok := data["claims"].([]interface{}); ok {
 		claims, err := VoucherClaimsFromList(claimsList)

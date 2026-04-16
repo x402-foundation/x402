@@ -9,7 +9,7 @@ import (
 // ChannelSession holds per-channel session state on the server side.
 type ChannelSession struct {
 	ChannelId               string                `json:"channelId"`
-	ChannelConfig           batched.ChannelConfig  `json:"channelConfig"`
+	ChannelConfig           batched.ChannelConfig `json:"channelConfig"`
 	Payer                   string                `json:"payer"`
 	ChargedCumulativeAmount string                `json:"chargedCumulativeAmount"`
 	SignedMaxClaimable      string                `json:"signedMaxClaimable"`

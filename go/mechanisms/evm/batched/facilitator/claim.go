@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"math/big"
+	"strings"
 
 	"github.com/ethereum/go-ethereum/common"
 
@@ -13,57 +14,15 @@ import (
 	"github.com/x402-foundation/x402/go/types"
 )
 
-// ExecuteClaim executes a batch claim on-chain (msg.sender must be receiver or receiverAuthorizer).
-func ExecuteClaim(
-	ctx context.Context,
-	signer evm.FacilitatorEvmSigner,
-	payload *batched.BatchedClaimPayload,
-	requirements types.PaymentRequirements,
-) (*x402.SettleResponse, error) {
-	network := x402.Network(requirements.Network)
-
-	if len(payload.Claims) == 0 {
-		return nil, x402.NewSettleError(ErrInvalidClaimPayload, "", network, "",
-			"no claims provided")
-	}
-
-	claimArgs := buildVoucherClaimArgs(payload.Claims)
-
-	txHash, err := signer.WriteContract(
-		ctx,
-		batched.BatchSettlementAddress,
-		batched.BatchSettlementClaimABI,
-		"claim",
-		claimArgs,
-	)
-	if err != nil {
-		return nil, x402.NewSettleError(ErrTransactionFailed, "", network, "",
-			fmt.Sprintf("claim transaction failed: %s", err))
-	}
-
-	receipt, err := signer.WaitForTransactionReceipt(ctx, txHash)
-	if err != nil {
-		return nil, x402.NewSettleError(ErrWaitForReceipt, txHash, network, "",
-			fmt.Sprintf("failed waiting for claim receipt: %s", err))
-	}
-	if receipt.Status != evm.TxStatusSuccess {
-		return nil, x402.NewSettleError(ErrTransactionReverted, txHash, network, "",
-			"claim transaction reverted")
-	}
-
-	return &x402.SettleResponse{
-		Success:     true,
-		Transaction: txHash,
-		Network:     network,
-	}, nil
-}
-
 // ExecuteClaimWithSignature executes a batch claim with receiverAuthorizer signature.
+// If ClaimAuthorizerSignature is absent from the payload, the authorizerSigner
+// auto-signs the ClaimBatch digest.
 func ExecuteClaimWithSignature(
 	ctx context.Context,
 	signer evm.FacilitatorEvmSigner,
 	payload *batched.BatchedClaimWithSignaturePayload,
 	requirements types.PaymentRequirements,
+	authorizerSigner batched.AuthorizerSigner,
 ) (*x402.SettleResponse, error) {
 	network := x402.Network(requirements.Network)
 
@@ -72,13 +31,51 @@ func ExecuteClaimWithSignature(
 			"no claims provided")
 	}
 
-	sigBytes, err := evm.HexToBytes(payload.AuthorizerSignature)
-	if err != nil {
-		return nil, x402.NewSettleError(ErrInvalidClaimPayload, "", network, "",
-			fmt.Sprintf("invalid authorizer signature: %s", err))
+	// Resolve signature — auto-sign if absent
+	var sigBytes []byte
+	if payload.ClaimAuthorizerSignature != "" {
+		var err error
+		sigBytes, err = evm.HexToBytes(payload.ClaimAuthorizerSignature)
+		if err != nil {
+			return nil, x402.NewSettleError(ErrInvalidClaimPayload, "", network, "",
+				fmt.Sprintf("invalid claim authorizer signature: %s", err))
+		}
+	} else {
+		// Verify authorizer address matches all claims' receiverAuthorizer
+		for _, claim := range payload.Claims {
+			if !strings.EqualFold(claim.Voucher.Channel.ReceiverAuthorizer, authorizerSigner.Address()) {
+				return nil, x402.NewSettleError(ErrAuthorizerAddressMismatch, "", network, "",
+					fmt.Sprintf("claim receiverAuthorizer %s does not match authorizerSigner %s",
+						claim.Voucher.Channel.ReceiverAuthorizer, authorizerSigner.Address()))
+			}
+		}
+		// Auto-sign
+		var err error
+		sigBytes, err = authorizerSigner.SignClaimBatch(ctx, payload.Claims, string(network))
+		if err != nil {
+			return nil, x402.NewSettleError(ErrClaimTransactionFailed, "", network, "",
+				fmt.Sprintf("failed to sign claim batch: %s", err))
+		}
 	}
 
 	claimArgs := buildVoucherClaimArgs(payload.Claims)
+
+	// Simulate the transaction before submitting
+	if _, simErr := signer.ReadContract(
+		ctx,
+		batched.BatchSettlementAddress,
+		batched.BatchSettlementClaimWithSignatureABI,
+		"claimWithSignature",
+		claimArgs,
+		sigBytes,
+	); simErr != nil {
+		return &x402.SettleResponse{ //nolint:nilerr // simulation failure → error encoded in response
+			Success:     false,
+			ErrorReason: ErrClaimSimulationFailed,
+			Transaction: "",
+			Network:     network,
+		}, nil
+	}
 
 	txHash, err := signer.WriteContract(
 		ctx,
@@ -89,7 +86,7 @@ func ExecuteClaimWithSignature(
 		sigBytes,
 	)
 	if err != nil {
-		return nil, x402.NewSettleError(ErrTransactionFailed, "", network, "",
+		return nil, x402.NewSettleError(ErrClaimTransactionFailed, "", network, "",
 			fmt.Sprintf("claimWithSignature transaction failed: %s", err))
 	}
 

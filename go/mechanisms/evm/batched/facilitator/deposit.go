@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"math/big"
-	"strings"
 
 	"github.com/ethereum/go-ethereum/accounts/abi"
 	"github.com/ethereum/go-ethereum/common"
@@ -132,6 +131,31 @@ func VerifyDeposit(
 			fmt.Sprintf("maxClaimableAmount %s is below totalClaimed %s", maxClaimable.String(), state.TotalClaimed.String()))
 	}
 
+	// Simulate the deposit transaction to catch on-chain errors early
+	configTuple := buildChannelConfigTuple(config)
+	collectorData, err := buildERC3009CollectorData(payload)
+	if err != nil {
+		return nil, x402.NewVerifyError(ErrInvalidDepositPayload, config.Payer,
+			fmt.Sprintf("failed to build collector data for simulation: %s", err))
+	}
+	_, simErr := signer.ReadContract(
+		ctx,
+		batched.BatchSettlementAddress,
+		batched.BatchSettlementDepositABI,
+		"deposit",
+		configTuple,
+		depositAmount,
+		common.HexToAddress(batched.ERC3009DepositCollectorAddress),
+		collectorData,
+	)
+	if simErr != nil {
+		return &x402.VerifyResponse{ //nolint:nilerr // simulation failure → error encoded in response
+			IsValid:       false,
+			InvalidReason: ErrDepositSimulationFailed,
+			Payer:         config.Payer,
+		}, nil
+	}
+
 	// Build response with projected state after deposit
 	projectedState := &batched.ChannelState{
 		Balance:             effectiveBalance,
@@ -186,7 +210,7 @@ func SettleDeposit(
 		collectorData,
 	)
 	if err != nil {
-		return nil, x402.NewSettleError(ErrTransactionFailed, "", network, config.Payer,
+		return nil, x402.NewSettleError(ErrDepositTransactionFailed, "", network, config.Payer,
 			fmt.Sprintf("deposit transaction failed: %s", err))
 	}
 
@@ -288,9 +312,9 @@ func getTokenDomainInfo(ctx context.Context, signer evm.FacilitatorEvmSigner, to
 		return "", "", fmt.Errorf("token name is not a string")
 	}
 
-	versionResult, err := signer.ReadContract(ctx, token, evm.ERC20VersionABI, "version")
-	if err != nil {
-		return name, "1", nil // Default version if not available
+	versionResult, versionErr := signer.ReadContract(ctx, token, evm.ERC20VersionABI, "version")
+	if versionErr != nil {
+		return name, "1", nil //nolint:nilerr // version() is optional, default to "1"
 	}
 	version, ok := versionResult.(string)
 	if !ok {
@@ -378,6 +402,3 @@ func buildChannelConfigTuple(config batched.ChannelConfig) interface{} {
 		Salt:               salt,
 	}
 }
-
-// Ensure these are used (suppress unused import warnings)
-var _ = strings.EqualFold

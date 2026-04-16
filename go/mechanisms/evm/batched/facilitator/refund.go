@@ -4,6 +4,9 @@ import (
 	"context"
 	"fmt"
 	"math/big"
+	"strings"
+
+	"github.com/ethereum/go-ethereum/accounts/abi"
 
 	x402 "github.com/x402-foundation/x402/go"
 	"github.com/x402-foundation/x402/go/mechanisms/evm"
@@ -11,62 +14,15 @@ import (
 	"github.com/x402-foundation/x402/go/types"
 )
 
-// ExecuteRefund executes a cooperative refund on-chain.
-// If claims are present, uses multicall to atomically claim + refund.
-func ExecuteRefund(
-	ctx context.Context,
-	signer evm.FacilitatorEvmSigner,
-	payload *batched.BatchedRefundPayload,
-	requirements types.PaymentRequirements,
-) (*x402.SettleResponse, error) {
-	network := x402.Network(requirements.Network)
-
-	refundAmount, ok := new(big.Int).SetString(payload.Amount, 10)
-	if !ok {
-		return nil, x402.NewSettleError(ErrInvalidRefundPayload, "", network, "",
-			fmt.Sprintf("invalid refund amount: %s", payload.Amount))
-	}
-
-	configTuple := buildChannelConfigTuple(payload.Config)
-
-	// If we have claims, use multicall to claim + refund atomically
-	if len(payload.Claims) > 0 {
-		return executeClaimAndRefund(ctx, signer, payload.Claims, configTuple, refundAmount, network, nil, nil)
-	}
-
-	// Direct refund (no claims)
-	txHash, err := signer.WriteContract(
-		ctx,
-		batched.BatchSettlementAddress,
-		batched.BatchSettlementRefundABI,
-		"refund",
-		configTuple,
-		refundAmount,
-	)
-	if err != nil {
-		return nil, x402.NewSettleError(ErrTransactionFailed, "", network, "",
-			fmt.Sprintf("refund transaction failed: %s", err))
-	}
-
-	receipt, err := signer.WaitForTransactionReceipt(ctx, txHash)
-	if err != nil {
-		return nil, x402.NewSettleError(ErrWaitForReceipt, txHash, network, "",
-			fmt.Sprintf("failed waiting for refund receipt: %s", err))
-	}
-	if receipt.Status != evm.TxStatusSuccess {
-		return nil, x402.NewSettleError(ErrTransactionReverted, txHash, network, "",
-			"refund transaction reverted")
-	}
-
-	return buildRefundResponse(txHash, network, payload.ResponseExtra), nil
-}
-
 // ExecuteRefundWithSignature executes a cooperative refund using receiverAuthorizer signature.
+// If RefundAuthorizerSignature or ClaimAuthorizerSignature are absent, the
+// authorizerSigner auto-signs them.
 func ExecuteRefundWithSignature(
 	ctx context.Context,
 	signer evm.FacilitatorEvmSigner,
 	payload *batched.BatchedRefundWithSignaturePayload,
 	requirements types.PaymentRequirements,
+	authorizerSigner batched.AuthorizerSigner,
 ) (*x402.SettleResponse, error) {
 	network := x402.Network(requirements.Network)
 
@@ -82,28 +38,135 @@ func ExecuteRefundWithSignature(
 			fmt.Sprintf("invalid nonce: %s", payload.Nonce))
 	}
 
-	receiverSig, err := evm.HexToBytes(payload.ReceiverAuthorizerSignature)
-	if err != nil {
-		return nil, x402.NewSettleError(ErrInvalidRefundPayload, "", network, "",
-			fmt.Sprintf("invalid receiver authorizer signature: %s", err))
+	// Resolve refund authorizer signature — auto-sign if absent
+	var refundSig []byte
+	if payload.RefundAuthorizerSignature != "" {
+		var err error
+		refundSig, err = evm.HexToBytes(payload.RefundAuthorizerSignature)
+		if err != nil {
+			return nil, x402.NewSettleError(ErrInvalidRefundPayload, "", network, "",
+				fmt.Sprintf("invalid refund authorizer signature: %s", err))
+		}
+	} else {
+		// Verify authorizer address matches config's receiverAuthorizer
+		if !strings.EqualFold(payload.Config.ReceiverAuthorizer, authorizerSigner.Address()) {
+			return nil, x402.NewSettleError(ErrAuthorizerAddressMismatch, "", network, "",
+				fmt.Sprintf("config receiverAuthorizer %s does not match authorizerSigner %s",
+					payload.Config.ReceiverAuthorizer, authorizerSigner.Address()))
+		}
+		channelId, err := batched.ComputeChannelId(payload.Config)
+		if err != nil {
+			return nil, x402.NewSettleError(ErrInvalidRefundPayload, "", network, "",
+				fmt.Sprintf("failed to compute channel id: %s", err))
+		}
+		refundSig, err = authorizerSigner.SignRefund(ctx, channelId, payload.Amount, payload.Nonce, string(network))
+		if err != nil {
+			return nil, x402.NewSettleError(ErrRefundTransactionFailed, "", network, "",
+				fmt.Sprintf("failed to sign refund: %s", err))
+		}
 	}
 
 	configTuple := buildChannelConfigTuple(payload.Config)
 
-	// If we have claims, handle them first
+	// Handle claims + refund atomically if claims are present
 	if len(payload.Claims) > 0 {
+		// Resolve claim authorizer signature — auto-sign if absent
 		var claimSig []byte
 		if payload.ClaimAuthorizerSignature != "" {
+			var err error
 			claimSig, err = evm.HexToBytes(payload.ClaimAuthorizerSignature)
 			if err != nil {
 				return nil, x402.NewSettleError(ErrInvalidRefundPayload, "", network, "",
 					fmt.Sprintf("invalid claim authorizer signature: %s", err))
 			}
+		} else {
+			var err error
+			claimSig, err = authorizerSigner.SignClaimBatch(ctx, payload.Claims, string(network))
+			if err != nil {
+				return nil, x402.NewSettleError(ErrRefundTransactionFailed, "", network, "",
+					fmt.Sprintf("failed to sign claim batch for refund: %s", err))
+			}
 		}
-		return executeClaimAndRefundWithSignature(ctx, signer, payload.Claims, configTuple, refundAmount, nonce, receiverSig, claimSig, network, payload.ResponseExtra)
+
+		claimArgs := buildVoucherClaimArgs(payload.Claims)
+
+		// Encode both calls for multicall
+		claimCalldata, err := encodeClaimWithSignatureCalldata(claimArgs, claimSig)
+		if err != nil {
+			return nil, x402.NewSettleError(ErrInvalidRefundPayload, "", network, "",
+				fmt.Sprintf("failed to encode claim calldata: %s", err))
+		}
+
+		refundCalldata, err := encodeRefundWithSignatureCalldata(configTuple, refundAmount, nonce, refundSig)
+		if err != nil {
+			return nil, x402.NewSettleError(ErrInvalidRefundPayload, "", network, "",
+				fmt.Sprintf("failed to encode refund calldata: %s", err))
+		}
+
+		// Simulate via readContract
+		_, simErr := signer.ReadContract(
+			ctx,
+			batched.BatchSettlementAddress,
+			batched.BatchSettlementMulticallABI,
+			"multicall",
+			[][]byte{claimCalldata, refundCalldata},
+		)
+		if simErr != nil {
+			return &x402.SettleResponse{ //nolint:nilerr // simulation failure → error encoded in response
+				Success:     false,
+				ErrorReason: ErrRefundSimulationFailed,
+				Transaction: "",
+				Network:     network,
+			}, nil
+		}
+
+		txHash, err := signer.WriteContract(
+			ctx,
+			batched.BatchSettlementAddress,
+			batched.BatchSettlementMulticallABI,
+			"multicall",
+			[][]byte{claimCalldata, refundCalldata},
+		)
+		if err != nil {
+			return nil, x402.NewSettleError(ErrRefundTransactionFailed, "", network, "",
+				fmt.Sprintf("multicall (claim+refund) transaction failed: %s", err))
+		}
+
+		receipt, err := signer.WaitForTransactionReceipt(ctx, txHash)
+		if err != nil {
+			return nil, x402.NewSettleError(ErrWaitForReceipt, txHash, network, "",
+				fmt.Sprintf("failed waiting for multicall receipt: %s", err))
+		}
+		if receipt.Status != evm.TxStatusSuccess {
+			return nil, x402.NewSettleError(ErrTransactionReverted, txHash, network, "",
+				"multicall (claim+refund) transaction reverted")
+		}
+
+		return buildRefundResponse(txHash, network, payload.ResponseExtra), nil
 	}
 
-	// Direct refundWithSignature
+	// No claims — direct refundWithSignature
+
+	// Simulate
+	_, simErr := signer.ReadContract(
+		ctx,
+		batched.BatchSettlementAddress,
+		batched.BatchSettlementRefundWithSignatureABI,
+		"refundWithSignature",
+		configTuple,
+		refundAmount,
+		nonce,
+		refundSig,
+	)
+	if simErr != nil {
+		return &x402.SettleResponse{ //nolint:nilerr // simulation failure → error encoded in response
+			Success:     false,
+			ErrorReason: ErrRefundSimulationFailed,
+			Transaction: "",
+			Network:     network,
+		}, nil
+	}
+
 	txHash, err := signer.WriteContract(
 		ctx,
 		batched.BatchSettlementAddress,
@@ -112,10 +175,10 @@ func ExecuteRefundWithSignature(
 		configTuple,
 		refundAmount,
 		nonce,
-		receiverSig,
+		refundSig,
 	)
 	if err != nil {
-		return nil, x402.NewSettleError(ErrTransactionFailed, "", network, "",
+		return nil, x402.NewSettleError(ErrRefundTransactionFailed, "", network, "",
 			fmt.Sprintf("refundWithSignature transaction failed: %s", err))
 	}
 
@@ -132,128 +195,6 @@ func ExecuteRefundWithSignature(
 	return buildRefundResponse(txHash, network, payload.ResponseExtra), nil
 }
 
-// executeClaimAndRefund uses multicall to atomically claim + refund.
-func executeClaimAndRefund(
-	ctx context.Context,
-	signer evm.FacilitatorEvmSigner,
-	claims []batched.BatchedVoucherClaim,
-	configTuple interface{},
-	refundAmount *big.Int,
-	network x402.Network,
-	_ []byte,
-	_ []byte,
-) (*x402.SettleResponse, error) {
-	// For the multicall approach, we encode both calls and send via multicall
-	// This is a simplified version - in production you'd encode calldata and use multicall
-	// For now, execute claim first, then refund sequentially
-
-	claimPayload := &batched.BatchedClaimPayload{
-		SettleAction: "claim",
-		Claims:       claims,
-	}
-
-	requirements := types.PaymentRequirements{Network: string(network)}
-	_, err := ExecuteClaim(ctx, signer, claimPayload, requirements)
-	if err != nil {
-		return nil, err
-	}
-
-	txHash, err := signer.WriteContract(
-		ctx,
-		batched.BatchSettlementAddress,
-		batched.BatchSettlementRefundABI,
-		"refund",
-		configTuple,
-		refundAmount,
-	)
-	if err != nil {
-		return nil, x402.NewSettleError(ErrTransactionFailed, "", network, "",
-			fmt.Sprintf("refund transaction failed after claim: %s", err))
-	}
-
-	receipt, err := signer.WaitForTransactionReceipt(ctx, txHash)
-	if err != nil {
-		return nil, x402.NewSettleError(ErrWaitForReceipt, txHash, network, "",
-			fmt.Sprintf("failed waiting for refund receipt: %s", err))
-	}
-	if receipt.Status != evm.TxStatusSuccess {
-		return nil, x402.NewSettleError(ErrTransactionReverted, txHash, network, "",
-			"refund transaction reverted after claim")
-	}
-
-	return &x402.SettleResponse{
-		Success:     true,
-		Transaction: txHash,
-		Network:     network,
-	}, nil
-}
-
-// executeClaimAndRefundWithSignature claims with signature then refunds with signature.
-func executeClaimAndRefundWithSignature(
-	ctx context.Context,
-	signer evm.FacilitatorEvmSigner,
-	claims []batched.BatchedVoucherClaim,
-	configTuple interface{},
-	refundAmount *big.Int,
-	nonce *big.Int,
-	receiverSig []byte,
-	claimSig []byte,
-	network x402.Network,
-	responseExtra *batched.BatchedPaymentResponseExtra,
-) (*x402.SettleResponse, error) {
-	// Execute claim first
-	if claimSig != nil {
-		claimPayload := &batched.BatchedClaimWithSignaturePayload{
-			SettleAction:        "claimWithSignature",
-			Claims:              claims,
-			AuthorizerSignature: evm.BytesToHex(claimSig),
-		}
-		requirements := types.PaymentRequirements{Network: string(network)}
-		_, err := ExecuteClaimWithSignature(ctx, signer, claimPayload, requirements)
-		if err != nil {
-			return nil, err
-		}
-	} else {
-		claimPayload := &batched.BatchedClaimPayload{
-			SettleAction: "claim",
-			Claims:       claims,
-		}
-		requirements := types.PaymentRequirements{Network: string(network)}
-		_, err := ExecuteClaim(ctx, signer, claimPayload, requirements)
-		if err != nil {
-			return nil, err
-		}
-	}
-
-	// Then refund with signature
-	txHash, err := signer.WriteContract(
-		ctx,
-		batched.BatchSettlementAddress,
-		batched.BatchSettlementRefundWithSignatureABI,
-		"refundWithSignature",
-		configTuple,
-		refundAmount,
-		nonce,
-		receiverSig,
-	)
-	if err != nil {
-		return nil, x402.NewSettleError(ErrTransactionFailed, "", network, "",
-			fmt.Sprintf("refundWithSignature transaction failed: %s", err))
-	}
-
-	receipt, err := signer.WaitForTransactionReceipt(ctx, txHash)
-	if err != nil {
-		return nil, x402.NewSettleError(ErrWaitForReceipt, txHash, network, "",
-			fmt.Sprintf("failed waiting for refundWithSignature receipt: %s", err))
-	}
-	if receipt.Status != evm.TxStatusSuccess {
-		return nil, x402.NewSettleError(ErrTransactionReverted, txHash, network, "",
-			"refundWithSignature transaction reverted")
-	}
-
-	return buildRefundResponse(txHash, network, responseExtra), nil
-}
-
 func buildRefundResponse(txHash string, network x402.Network, responseExtra *batched.BatchedPaymentResponseExtra) *x402.SettleResponse {
 	resp := &x402.SettleResponse{
 		Success:     true,
@@ -265,4 +206,22 @@ func buildRefundResponse(txHash string, network x402.Network, responseExtra *bat
 		resp.Extensions["refund"] = true
 	}
 	return resp
+}
+
+// encodeClaimWithSignatureCalldata ABI-encodes claimWithSignature calldata for multicall.
+func encodeClaimWithSignatureCalldata(claimArgs interface{}, sig []byte) ([]byte, error) {
+	contractABI, err := abi.JSON(strings.NewReader(string(batched.BatchSettlementClaimWithSignatureABI)))
+	if err != nil {
+		return nil, err
+	}
+	return contractABI.Pack("claimWithSignature", claimArgs, sig)
+}
+
+// encodeRefundWithSignatureCalldata ABI-encodes refundWithSignature calldata for multicall.
+func encodeRefundWithSignatureCalldata(configTuple interface{}, amount, nonce *big.Int, sig []byte) ([]byte, error) {
+	contractABI, err := abi.JSON(strings.NewReader(string(batched.BatchSettlementRefundWithSignatureABI)))
+	if err != nil {
+		return nil, err
+	}
+	return contractABI.Pack("refundWithSignature", configTuple, amount, nonce, sig)
 }

@@ -7,7 +7,6 @@ import (
 	"math/big"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	x402 "github.com/x402-foundation/x402/go"
@@ -53,7 +52,6 @@ type BatchedEvmScheme struct {
 	receiverAuthorizerSigner AuthorizerSigner
 	withdrawDelay            int
 	moneyParsers             []x402.MoneyParser
-	mu                       sync.RWMutex
 }
 
 // NewBatchedEvmScheme creates a new batched server scheme.

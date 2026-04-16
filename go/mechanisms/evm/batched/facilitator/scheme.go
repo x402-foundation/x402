@@ -10,14 +10,18 @@ import (
 	"github.com/x402-foundation/x402/go/types"
 )
 
-// BatchedEvmScheme implements SchemeNetworkFacilitator for batched settlement on EVM.
+// BatchedEvmScheme implements SchemeNetworkFacilitator for batch settlement on EVM.
 type BatchedEvmScheme struct {
-	signer evm.FacilitatorEvmSigner
+	signer           evm.FacilitatorEvmSigner
+	authorizerSigner batched.AuthorizerSigner
 }
 
-// NewBatchedEvmScheme creates a new batched settlement facilitator scheme.
-func NewBatchedEvmScheme(signer evm.FacilitatorEvmSigner) *BatchedEvmScheme {
-	return &BatchedEvmScheme{signer: signer}
+// NewBatchedEvmScheme creates a new batch settlement facilitator scheme.
+// The authorizerSigner is a dedicated key that provides EIP-712 signatures for
+// claimWithSignature / refundWithSignature. The facilitator auto-signs when the
+// server omits signatures from the payload.
+func NewBatchedEvmScheme(signer evm.FacilitatorEvmSigner, authorizerSigner batched.AuthorizerSigner) *BatchedEvmScheme {
+	return &BatchedEvmScheme{signer: signer, authorizerSigner: authorizerSigner}
 }
 
 // Scheme returns the scheme identifier.
@@ -31,8 +35,11 @@ func (f *BatchedEvmScheme) CaipFamily() string {
 }
 
 // GetExtra returns mechanism-specific extra data for the supported kinds endpoint.
+// Exposes the receiverAuthorizer address so server and client can embed it in ChannelConfig.
 func (f *BatchedEvmScheme) GetExtra(_ x402.Network) map[string]interface{} {
-	return nil
+	return map[string]interface{}{
+		"receiverAuthorizer": f.authorizerSigner.Address(),
+	}
 }
 
 // GetSigners returns signer addresses used by this facilitator.
@@ -48,6 +55,14 @@ func (f *BatchedEvmScheme) Verify(
 	requirements types.PaymentRequirements,
 	fctx *x402.FacilitatorContext,
 ) (*x402.VerifyResponse, error) {
+	// Defensive scheme and network validation (matches TS facilitator)
+	if payload.Accepted.Scheme != batched.SchemeBatched || requirements.Scheme != batched.SchemeBatched {
+		return &x402.VerifyResponse{IsValid: false, InvalidReason: ErrInvalidScheme}, nil
+	}
+	if payload.Accepted.Network != requirements.Network {
+		return &x402.VerifyResponse{IsValid: false, InvalidReason: ErrNetworkMismatch}, nil
+	}
+
 	data := payload.Payload
 
 	if batched.IsDepositPayload(data) {
@@ -68,8 +83,7 @@ func (f *BatchedEvmScheme) Verify(
 		return VerifyVoucher(ctx, f.signer, voucherPayload, requirements, voucherPayload.ChannelConfig)
 	}
 
-	return nil, x402.NewVerifyError(ErrInvalidPayload, "",
-		"payload is neither a deposit nor a voucher")
+	return &x402.VerifyResponse{IsValid: false, InvalidReason: ErrInvalidPayload}, nil
 }
 
 // Settle settles a batched payment on-chain.
@@ -100,7 +114,6 @@ func (f *BatchedEvmScheme) Settle(
 			return nil, x402.NewSettleError(ErrInvalidDepositPayload, "", network, "",
 				fmt.Sprintf("failed to parse deposit settle payload: %s", err))
 		}
-		// Convert to full deposit payload for settlement
 		fullPayload := &batched.BatchedDepositPayload{
 			Type:    "deposit",
 			Deposit: depositSettlePayload.Deposit,
@@ -108,23 +121,22 @@ func (f *BatchedEvmScheme) Settle(
 		return SettleDeposit(ctx, f.signer, fullPayload, requirements)
 	}
 
-	// Route settle actions
-	if batched.IsClaimPayload(data) {
-		claimPayload, err := batched.ClaimPayloadFromMap(data)
-		if err != nil {
-			return nil, x402.NewSettleError(ErrInvalidClaimPayload, "", network, "",
-				fmt.Sprintf("failed to parse claim payload: %s", err))
-		}
-		return ExecuteClaim(ctx, f.signer, claimPayload, requirements)
-	}
-
 	if batched.IsClaimWithSignaturePayload(data) {
 		claimPayload, err := batched.ClaimWithSignaturePayloadFromMap(data)
 		if err != nil {
 			return nil, x402.NewSettleError(ErrInvalidClaimPayload, "", network, "",
-				fmt.Sprintf("failed to parse claim with signature payload: %s", err))
+				fmt.Sprintf("failed to parse claim payload: %s", err))
 		}
-		return ExecuteClaimWithSignature(ctx, f.signer, claimPayload, requirements)
+		return ExecuteClaimWithSignature(ctx, f.signer, claimPayload, requirements, f.authorizerSigner)
+	}
+
+	if batched.IsRefundWithSignaturePayload(data) {
+		refundPayload, err := batched.RefundWithSignaturePayloadFromMap(data)
+		if err != nil {
+			return nil, x402.NewSettleError(ErrInvalidRefundPayload, "", network, "",
+				fmt.Sprintf("failed to parse refund payload: %s", err))
+		}
+		return ExecuteRefundWithSignature(ctx, f.signer, refundPayload, requirements, f.authorizerSigner)
 	}
 
 	if batched.IsSettleActionPayload(data) {
@@ -136,24 +148,6 @@ func (f *BatchedEvmScheme) Settle(
 		return ExecuteSettle(ctx, f.signer, settlePayload, requirements)
 	}
 
-	if batched.IsRefundWithSignaturePayload(data) {
-		refundPayload, err := batched.RefundWithSignaturePayloadFromMap(data)
-		if err != nil {
-			return nil, x402.NewSettleError(ErrInvalidRefundPayload, "", network, "",
-				fmt.Sprintf("failed to parse refund with signature payload: %s", err))
-		}
-		return ExecuteRefundWithSignature(ctx, f.signer, refundPayload, requirements)
-	}
-
-	if batched.IsRefundPayload(data) {
-		refundPayload, err := batched.RefundPayloadFromMap(data)
-		if err != nil {
-			return nil, x402.NewSettleError(ErrInvalidRefundPayload, "", network, "",
-				fmt.Sprintf("failed to parse refund payload: %s", err))
-		}
-		return ExecuteRefund(ctx, f.signer, refundPayload, requirements)
-	}
-
 	return nil, x402.NewSettleError(ErrUnknownSettleAction, "", network, "",
-		"unrecognized batched settle action or payload type")
+		"unrecognized batch-settlement settle action or payload type")
 }

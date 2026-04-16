@@ -29,9 +29,9 @@ func (s *BatchedEvmScheme) BeforeVerifyHook() x402.BeforeVerifyHook {
 		}
 
 		channelId, _ := payload["channelId"].(string)
-		session, err := s.storage.Get(batched.NormalizeChannelId(channelId))
-		if err != nil || session == nil {
-			return nil, nil
+		session, storageErr := s.storage.Get(batched.NormalizeChannelId(channelId))
+		if storageErr != nil || session == nil {
+			return nil, nil //nolint:nilerr // storage error is non-fatal; skip stale check
 		}
 
 		prevCharged, _ := new(big.Int).SetString(session.ChargedCumulativeAmount, 10)
@@ -75,10 +75,11 @@ func (s *BatchedEvmScheme) AfterVerifyHook() x402.AfterVerifyHook {
 		var channelId, signedMaxClaimable, signature, payer string
 		var channelConfig *batched.ChannelConfig
 
-		if batched.IsDepositPayload(payload) {
-			dp, err := batched.DepositPayloadFromMap(payload)
-			if err != nil {
-				return nil
+		switch {
+		case batched.IsDepositPayload(payload):
+			dp, parseErr := batched.DepositPayloadFromMap(payload)
+			if parseErr != nil {
+				return nil //nolint:nilerr // parse failure in after-hook is non-fatal
 			}
 			channelId = dp.Voucher.ChannelId
 			signedMaxClaimable = dp.Voucher.MaxClaimableAmount
@@ -86,10 +87,10 @@ func (s *BatchedEvmScheme) AfterVerifyHook() x402.AfterVerifyHook {
 			cfg := dp.Deposit.ChannelConfig
 			channelConfig = &cfg
 			payer = cfg.Payer
-		} else if batched.IsVoucherPayload(payload) {
-			vp, err := batched.VoucherPayloadFromMap(payload)
-			if err != nil {
-				return nil
+		case batched.IsVoucherPayload(payload):
+			vp, parseErr := batched.VoucherPayloadFromMap(payload)
+			if parseErr != nil {
+				return nil //nolint:nilerr // parse failure in after-hook is non-fatal
 			}
 			channelId = vp.ChannelId
 			signedMaxClaimable = vp.MaxClaimableAmount
@@ -97,7 +98,7 @@ func (s *BatchedEvmScheme) AfterVerifyHook() x402.AfterVerifyHook {
 			cfg := vp.ChannelConfig
 			channelConfig = &cfg
 			payer = cfg.Payer
-		} else {
+		default:
 			return nil
 		}
 
@@ -138,7 +139,7 @@ func (s *BatchedEvmScheme) AfterVerifyHook() x402.AfterVerifyHook {
 			TotalClaimed:            totalClaimed,
 			WithdrawRequestedAt:     withdrawRequestedAt,
 			RefundNonce:             refundNonce,
-			LastRequestTimestamp:     time.Now().UnixMilli(),
+			LastRequestTimestamp:    time.Now().UnixMilli(),
 		}
 
 		return s.storage.Set(normalizedId, session)
@@ -195,9 +196,9 @@ func (s *BatchedEvmScheme) BeforeSettleHook() x402.BeforeSettleHook {
 		channelId, _ := payload["channelId"].(string)
 		normalizedId := batched.NormalizeChannelId(channelId)
 
-		session, err := s.storage.Get(normalizedId)
-		if err != nil || session == nil {
-			return &x402.BeforeHookResult{
+		session, storageErr := s.storage.Get(normalizedId)
+		if storageErr != nil || session == nil {
+			return &x402.BeforeHookResult{ //nolint:nilerr // storage error treated as missing session
 				Abort:   true,
 				Reason:  "missing_batched_session",
 				Message: "No session for channel; verify may not have completed",
@@ -244,7 +245,7 @@ func (s *BatchedEvmScheme) BeforeSettleHook() x402.BeforeSettleHook {
 			TotalClaimed:            session.TotalClaimed,
 			WithdrawRequestedAt:     session.WithdrawRequestedAt,
 			RefundNonce:             session.RefundNonce,
-			LastRequestTimestamp:     time.Now().UnixMilli(),
+			LastRequestTimestamp:    time.Now().UnixMilli(),
 		}
 
 		swapped, err := s.storage.CompareAndSet(normalizedId, session.ChargedCumulativeAmount, updatedSession)
@@ -330,13 +331,13 @@ func (s *BatchedEvmScheme) handleRefundRewrite(
 		}
 
 		refundPayload := &batched.BatchedRefundWithSignaturePayload{
-			SettleAction:                "refundWithSignature",
-			Config:                      config,
-			Amount:                      refundAmount.String(),
-			Nonce:                       nonce,
-			Claims:                      []batched.BatchedVoucherClaim{claimEntry},
-			ReceiverAuthorizerSignature: evm.BytesToHex(authSig),
-			ClaimAuthorizerSignature:    evm.BytesToHex(claimAuthSig),
+			SettleAction:              "refundWithSignature",
+			Config:                    config,
+			Amount:                    refundAmount.String(),
+			Nonce:                     nonce,
+			Claims:                    []batched.BatchedVoucherClaim{claimEntry},
+			RefundAuthorizerSignature: evm.BytesToHex(authSig),
+			ClaimAuthorizerSignature:  evm.BytesToHex(claimAuthSig),
 			ResponseExtra: &batched.BatchedPaymentResponseExtra{
 				ChannelId:               normalizedId,
 				ChargedCumulativeAmount: newCharged.String(),
@@ -359,14 +360,18 @@ func (s *BatchedEvmScheme) handleRefundRewrite(
 		payload["amount"] = refundPayload.Amount
 		payload["nonce"] = refundPayload.Nonce
 		payload["claims"] = batched.VoucherClaimsToList(refundPayload.Claims)
-		payload["receiverAuthorizerSignature"] = refundPayload.ReceiverAuthorizerSignature
+		payload["refundAuthorizerSignature"] = refundPayload.RefundAuthorizerSignature
 		payload["claimAuthorizerSignature"] = refundPayload.ClaimAuthorizerSignature
 		payload["responseExtra"] = refundPayload.ResponseExtra.ToMap()
 	} else {
-		refundPayload := &batched.BatchedRefundPayload{
-			SettleAction: "refund",
+		// No receiverAuthorizerSigner — create payload without pre-signed signatures.
+		// The facilitator will auto-sign using its own AuthorizerSigner.
+		nonce := fmt.Sprintf("%d", session.RefundNonce)
+		refundPayload := &batched.BatchedRefundWithSignaturePayload{
+			SettleAction: "refundWithSignature",
 			Config:       config,
 			Amount:       refundAmount.String(),
+			Nonce:        nonce,
 			Claims:       []batched.BatchedVoucherClaim{claimEntry},
 			ResponseExtra: &batched.BatchedPaymentResponseExtra{
 				ChannelId:               normalizedId,
@@ -374,7 +379,7 @@ func (s *BatchedEvmScheme) handleRefundRewrite(
 				Balance:                 session.Balance,
 				TotalClaimed:            session.TotalClaimed,
 				WithdrawRequestedAt:     session.WithdrawRequestedAt,
-				RefundNonce:             fmt.Sprintf("%d", session.RefundNonce),
+				RefundNonce:             nonce,
 				Refund:                  true,
 			},
 		}
@@ -385,14 +390,10 @@ func (s *BatchedEvmScheme) handleRefundRewrite(
 		payload["settleAction"] = refundPayload.SettleAction
 		payload["config"] = batched.ChannelConfigToMap(refundPayload.Config)
 		payload["amount"] = refundPayload.Amount
+		payload["nonce"] = refundPayload.Nonce
 		payload["claims"] = batched.VoucherClaimsToList(refundPayload.Claims)
 		payload["responseExtra"] = refundPayload.ResponseExtra.ToMap()
 	}
-
-	// Mark channel as pending refund
-	s.mu.Lock()
-	// pendingRefundChannels tracking (for AfterSettleHook cleanup)
-	s.mu.Unlock()
 
 	return nil, nil // Let the facilitator handle the rewritten refund payload
 }
@@ -418,9 +419,9 @@ func (s *BatchedEvmScheme) AfterSettleHook() x402.AfterSettleHook {
 					return nil
 				}
 				normalizedId := batched.NormalizeChannelId(channelId)
-				session, err := s.storage.Get(normalizedId)
-				if err != nil || session == nil {
-					return nil
+				session, getErr := s.storage.Get(normalizedId)
+				if getErr != nil || session == nil {
+					return nil //nolint:nilerr // storage error in after-hook is non-fatal
 				}
 				session.Balance = mapStringField(ctx.Result.Extensions, "balance", session.Balance)
 				session.TotalClaimed = mapStringField(ctx.Result.Extensions, "totalClaimed", session.TotalClaimed)
@@ -438,7 +439,7 @@ func (s *BatchedEvmScheme) AfterSettleHook() x402.AfterSettleHook {
 		}
 
 		// After refund: delete session
-		if batched.IsRefundPayload(payload) || batched.IsRefundWithSignaturePayload(payload) {
+		if batched.IsRefundWithSignaturePayload(payload) {
 			// Extract channelId from responseExtra
 			if responseExtra, ok := payload["responseExtra"].(map[string]interface{}); ok {
 				channelId, _ := responseExtra["channelId"].(string)

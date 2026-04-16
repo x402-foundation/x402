@@ -225,6 +225,16 @@ func (m *BatchedChannelManager) Refund(ctx context.Context, channelIds []string)
 		var refundPayloadMap map[string]interface{}
 		nonce := fmt.Sprintf("%d", session.RefundNonce)
 
+		// All refunds now go through refundWithSignature.
+		// Pre-sign if server has authorizerSigner; otherwise facilitator auto-signs.
+		refundPayloadMap = map[string]interface{}{
+			"settleAction": "refundWithSignature",
+			"config":       batched.ChannelConfigToMap(session.ChannelConfig),
+			"amount":       refundAmount.String(),
+			"nonce":        nonce,
+			"claims":       batched.VoucherClaimsToList([]batched.BatchedVoucherClaim{claimEntry}),
+		}
+
 		if m.scheme.receiverAuthorizerSigner != nil {
 			authSig, err := m.scheme.SignRefund(ctx, normalizedId, refundAmount.String(), nonce, string(m.network))
 			if err != nil {
@@ -234,23 +244,8 @@ func (m *BatchedChannelManager) Refund(ctx context.Context, channelIds []string)
 			if err != nil {
 				continue
 			}
-
-			refundPayloadMap = map[string]interface{}{
-				"settleAction":                "refundWithSignature",
-				"config":                      batched.ChannelConfigToMap(session.ChannelConfig),
-				"amount":                      refundAmount.String(),
-				"nonce":                        nonce,
-				"claims":                      batched.VoucherClaimsToList([]batched.BatchedVoucherClaim{claimEntry}),
-				"receiverAuthorizerSignature": evm.BytesToHex(authSig),
-				"claimAuthorizerSignature":    evm.BytesToHex(claimAuthSig),
-			}
-		} else {
-			refundPayloadMap = map[string]interface{}{
-				"settleAction": "refund",
-				"config":       batched.ChannelConfigToMap(session.ChannelConfig),
-				"amount":       refundAmount.String(),
-				"claims":       batched.VoucherClaimsToList([]batched.BatchedVoucherClaim{claimEntry}),
-			}
+			refundPayloadMap["refundAuthorizerSignature"] = evm.BytesToHex(authSig)
+			refundPayloadMap["claimAuthorizerSignature"] = evm.BytesToHex(claimAuthSig)
 		}
 
 		payloadBytes, err := json.Marshal(map[string]interface{}{
@@ -449,10 +444,9 @@ func (m *BatchedChannelManager) tick() {
 	}
 
 	// Check settle triggers
-	shouldSettle := false
-	if config.SettleIntervalSecs > 0 && now.Sub(m.lastSettleTime) >= time.Duration(config.SettleIntervalSecs)*time.Second && m.pendingSettle {
-		shouldSettle = true
-	}
+	shouldSettle := config.SettleIntervalSecs > 0 &&
+		now.Sub(m.lastSettleTime) >= time.Duration(config.SettleIntervalSecs)*time.Second &&
+		m.pendingSettle
 
 	if shouldSettle {
 		result, err := m.Settle(ctx)
@@ -496,26 +490,20 @@ func (m *BatchedChannelManager) tick() {
 }
 
 func (m *BatchedChannelManager) executeClaim(ctx context.Context, claims []batched.BatchedVoucherClaim) (*ClaimResult, error) {
-	// Build claim payload
-	var payloadMap map[string]interface{}
+	// All claims now go through claimWithSignature.
+	// If the server has an authorizerSigner, pre-sign; otherwise the
+	// facilitator will auto-sign using its own AuthorizerSigner.
+	payloadMap := map[string]interface{}{
+		"settleAction": "claimWithSignature",
+		"claims":       batched.VoucherClaimsToList(claims),
+	}
 
 	if m.scheme.receiverAuthorizerSigner != nil {
-		// Sign the claim batch
 		sig, err := m.scheme.SignClaimBatch(ctx, claims, string(m.network))
 		if err != nil {
 			return nil, fmt.Errorf("failed to sign claim batch: %w", err)
 		}
-
-		payloadMap = map[string]interface{}{
-			"settleAction":        "claimWithSignature",
-			"claims":              batched.VoucherClaimsToList(claims),
-			"authorizerSignature": fmt.Sprintf("0x%x", sig),
-		}
-	} else {
-		payloadMap = map[string]interface{}{
-			"settleAction": "claim",
-			"claims":       batched.VoucherClaimsToList(claims),
-		}
+		payloadMap["claimAuthorizerSignature"] = evm.BytesToHex(sig)
 	}
 
 	payloadBytes, err := json.Marshal(map[string]interface{}{

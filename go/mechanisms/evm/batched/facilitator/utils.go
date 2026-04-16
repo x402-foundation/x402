@@ -105,11 +105,11 @@ func ValidateChannelConfig(
 
 	// Validate withdraw delay bounds
 	if config.WithdrawDelay < batched.MinWithdrawDelay {
-		return x402.NewVerifyError(ErrWithdrawDelayTooShort, "",
+		return x402.NewVerifyError(ErrWithdrawDelayOutOfRange, "",
 			fmt.Sprintf("withdrawDelay %d is below minimum %d", config.WithdrawDelay, batched.MinWithdrawDelay))
 	}
 	if config.WithdrawDelay > batched.MaxWithdrawDelay {
-		return x402.NewVerifyError(ErrWithdrawDelayTooLong, "",
+		return x402.NewVerifyError(ErrWithdrawDelayOutOfRange, "",
 			fmt.Sprintf("withdrawDelay %d exceeds maximum %d", config.WithdrawDelay, batched.MaxWithdrawDelay))
 	}
 

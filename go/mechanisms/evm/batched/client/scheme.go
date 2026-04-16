@@ -349,6 +349,10 @@ func (c *BatchedEvmScheme) ProcessCorrectivePaymentRequired(
 // recoverFromSignature recovers session from a corrective 402 that includes a
 // server-provided voucher signature. Verifies the signature was produced by the
 // client's own signing key before accepting.
+//
+// Errors from individual recovery steps are intentionally swallowed (returning
+// false) to match the TypeScript SDK behavior where catch blocks silently return
+// false, allowing the caller to fall back to alternative recovery or retry.
 func (c *BatchedEvmScheme) recoverFromSignature(
 	ctx context.Context,
 	accept types.PaymentRequirements,
@@ -358,11 +362,11 @@ func (c *BatchedEvmScheme) recoverFromSignature(
 ) (bool, error) {
 	charged, ok := new(big.Int).SetString(chargedStr, 10)
 	if !ok {
-		return false, nil
+		return false, nil //nolint:nilerr // parse failure = unrecoverable, matches TS try/catch
 	}
 	signed, ok := new(big.Int).SetString(signedStr, 10)
 	if !ok {
-		return false, nil
+		return false, nil //nolint:nilerr
 	}
 	if charged.Cmp(signed) > 0 {
 		return false, nil
@@ -376,7 +380,7 @@ func (c *BatchedEvmScheme) recoverFromSignature(
 	config := c.BuildChannelConfig(accept)
 	channelId, err := batched.ComputeChannelId(config)
 	if err != nil {
-		return false, nil
+		return false, nil //nolint:nilerr // matches TS catch-all
 	}
 	channelId = batched.NormalizeChannelId(channelId)
 
@@ -390,7 +394,7 @@ func (c *BatchedEvmScheme) recoverFromSignature(
 		channelIdBytes,
 	)
 	if err != nil {
-		return false, nil
+		return false, nil //nolint:nilerr // matches TS catch
 	}
 
 	var chBalance, chTotalClaimed *big.Int
@@ -410,16 +414,16 @@ func (c *BatchedEvmScheme) recoverFromSignature(
 	// Verify the signature was produced by our key
 	chainId, err := evm.GetEvmChainId(string(accept.Network))
 	if err != nil {
-		return false, nil
+		return false, nil //nolint:nilerr // matches TS catch
 	}
 
 	sigBytes, err := evm.HexToBytes(sig)
 	if err != nil {
-		return false, nil
+		return false, nil //nolint:nilerr
 	}
 	channelIdRawBytes, err := evm.HexToBytes(channelId)
 	if err != nil {
-		return false, nil
+		return false, nil //nolint:nilerr
 	}
 
 	domain := evm.TypedDataDomain{
@@ -429,8 +433,6 @@ func (c *BatchedEvmScheme) recoverFromSignature(
 		VerifyingContract: batched.BatchSettlementAddress,
 	}
 
-	// Recover the signer from the signature using VerifyTypedData if the signer
-	// supports it, otherwise skip (we can't verify without verification capability)
 	voucherSigner := c.signer
 	if c.config.VoucherSigner != nil {
 		voucherSigner = c.config.VoucherSigner
@@ -441,11 +443,10 @@ func (c *BatchedEvmScheme) recoverFromSignature(
 		expectedAddr = c.config.PayerAuthorizer
 	}
 
-	// Use the facilitator-style verification if the signer supports read
-	// We verify against expectedAddr using EIP-712 typed data recovery
+	// Use the facilitator-style verification if the signer supports it
 	verifiable, isVerifiable := readSigner.(evm.FacilitatorEvmSigner)
 	if isVerifiable {
-		valid, err := verifiable.VerifyTypedData(
+		valid, verifyErr := verifiable.VerifyTypedData(
 			ctx,
 			expectedAddr,
 			domain,
@@ -457,8 +458,8 @@ func (c *BatchedEvmScheme) recoverFromSignature(
 			},
 			sigBytes,
 		)
-		if err != nil || !valid {
-			return false, nil
+		if verifyErr != nil || !valid {
+			return false, nil //nolint:nilerr // signature mismatch = not recoverable
 		}
 	}
 
@@ -486,7 +487,7 @@ func (c *BatchedEvmScheme) recoverFromOnChainState(
 ) (bool, error) {
 	_, err := c.RecoverSession(ctx, accept)
 	if err != nil {
-		return false, nil
+		return false, nil //nolint:nilerr // matches TS catch returning false
 	}
 	return true, nil
 }

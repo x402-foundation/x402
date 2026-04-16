@@ -22,6 +22,24 @@ func ExecuteSettle(
 ) (*x402.SettleResponse, error) {
 	network := x402.Network(requirements.Network)
 
+	// Simulate before submitting
+	_, simErr := signer.ReadContract(
+		ctx,
+		batched.BatchSettlementAddress,
+		batched.BatchSettlementSettleABI,
+		"settle",
+		common.HexToAddress(payload.Receiver),
+		common.HexToAddress(payload.Token),
+	)
+	if simErr != nil {
+		return &x402.SettleResponse{ //nolint:nilerr // simulation failure → error encoded in response
+			Success:     false,
+			ErrorReason: ErrSettleSimulationFailed,
+			Transaction: "",
+			Network:     network,
+		}, nil
+	}
+
 	txHash, err := signer.WriteContract(
 		ctx,
 		batched.BatchSettlementAddress,
@@ -31,7 +49,7 @@ func ExecuteSettle(
 		common.HexToAddress(payload.Token),
 	)
 	if err != nil {
-		return nil, x402.NewSettleError(ErrTransactionFailed, "", network, "",
+		return nil, x402.NewSettleError(ErrSettleTransactionFailed, "", network, "",
 			fmt.Sprintf("settle transaction failed: %s", err))
 	}
 

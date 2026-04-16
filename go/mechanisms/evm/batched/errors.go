@@ -2,9 +2,9 @@ package batched
 
 const (
 	// Shared error codes
-	ErrInvalidPayload     = "invalid_batched_payload"
-	ErrInvalidAmount      = "invalid_batched_amount"
-	ErrInvalidChannelId   = "invalid_batched_channel_id"
-	ErrInvalidChannelConf = "invalid_batched_channel_config"
-	ErrChannelNotFound    = "batched_channel_not_found"
+	ErrInvalidPayload     = "batch_settlement_evm_invalid_payload_type"
+	ErrInvalidAmount      = "batch_settlement_evm_invalid_amount"
+	ErrInvalidChannelId   = "batch_settlement_evm_channel_id_mismatch"
+	ErrInvalidChannelConf = "batch_settlement_evm_invalid_channel_config"
+	ErrChannelNotFound    = "batch_settlement_evm_channel_not_found"
 )

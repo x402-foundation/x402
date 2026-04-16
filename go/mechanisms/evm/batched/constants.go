@@ -5,8 +5,8 @@ import (
 )
 
 const (
-	// SchemeBatched is the scheme identifier for batched settlement.
-	SchemeBatched = "batched"
+	// SchemeBatched is the scheme identifier for batch settlement.
+	SchemeBatched = "batch-settlement"
 
 	// BatchSettlementAddress is the deployed x402BatchSettlement contract address (CREATE2, all chains).
 	BatchSettlementAddress = "0x4020e07E964De72a79367828c9C6140fcaE00003"
