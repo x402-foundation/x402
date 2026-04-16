@@ -1,0 +1,7 @@
+{
+  "name": "ln-church-agent",
+  "description": "Agent-native Python SDK for autonomous HTTP 402 settlement. It abstracts the complex 'Probe → Pay → Execute' cycle, offering seamless integration with MCP and LangChain while supporting both standard x402 (EVM) and L402 (Lightning) workflows.",
+  "logoUrl": "/logos/ln-church-agent.svg",
+  "websiteUrl": "https://github.com/mayim-mayim/ln-church-agent",
+  "category": "Client-Side Integrations"
+}
