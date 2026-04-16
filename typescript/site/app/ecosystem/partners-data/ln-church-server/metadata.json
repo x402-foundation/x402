@@ -1,0 +1,7 @@
+{
+  "name": "ln-church-server",
+  "description": "A production-ready Cloudflare Workers + Hono template for hosting HTTP 402 paywalled APIs. It features built-in verifiers for x402 (EVM) and L402, empowering developers to instantly monetize their agentic services.",
+  "logoUrl": "/logos/ln-church-server.svg",
+  "websiteUrl": "https://github.com/mayim-mayim/ln-church-server",
+  "category": "Infrastructure & Tooling"
+}
