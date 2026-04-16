@@ -504,8 +504,18 @@ func (s *x402ResourceServer) SettlePayment(ctx context.Context, payload types.Pa
 		if err != nil {
 			return nil, err
 		}
-		if result != nil && result.Abort {
-			return nil, NewSettleError(result.Reason, "", Network(effectiveRequirements.Network), "", "")
+		if result != nil {
+			if result.Abort {
+				return nil, NewSettleError(result.Reason, "", Network(effectiveRequirements.Network), "", result.Message)
+			}
+			if result.Skip && result.SkipResult != nil {
+				// Execute afterSettle hooks even when skipping
+				skipResultCtx := SettleResultContext{SettleContext: hookCtx, Result: result.SkipResult}
+				for _, afterHook := range s.afterSettleHooks {
+					_ = afterHook(skipResultCtx)
+				}
+				return result.SkipResult, nil
+			}
 		}
 	}
 

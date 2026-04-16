@@ -58,12 +58,17 @@ type SettleFailureContext struct {
 // Resource Server Hook Result Types
 // ============================================================================
 
-// BeforeHookResult represents the result of a "before" hook
-// If Abort is true, the operation will be aborted with the given Reason
+// BeforeHookResult represents the result of a "before" hook.
+// If Abort is true, the operation will be aborted with the given Reason.
+// If Skip is true (settle hooks only), the operation will be short-circuited
+// and SkipResult will be returned as the settlement response. This is used by
+// the batched scheme to handle voucher payloads without on-chain settlement.
 type BeforeHookResult struct {
-	Abort   bool
-	Reason  string
-	Message string
+	Abort      bool
+	Reason     string
+	Message    string
+	Skip       bool
+	SkipResult *SettleResponse
 }
 
 // VerifyFailureHookResult represents the result of a verify failure hook

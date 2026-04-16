@@ -6,8 +6,9 @@ import (
 
 const (
 	// Scheme identifiers
-	SchemeExact = "exact"
-	SchemeUpto  = "upto"
+	SchemeExact   = "exact"
+	SchemeUpto    = "upto"
+	SchemeBatched = "batched"
 
 	// Default token decimals for USDC
 	DefaultDecimals = 6
