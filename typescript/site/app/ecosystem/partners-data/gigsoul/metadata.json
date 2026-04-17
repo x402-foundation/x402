@@ -1,1 +1,7 @@
-{"name": "GigSoul", "description": "AI-powered API marketplace. Pay per call via x402 — no subscriptions, no API keys. USDC on Base. 9 production endpoints for marketing intelligence, content generation, sales research, and document analysis.", "logoUrl": "/logos/gigsoul.svg", "websiteUrl": "https://gigsoul.com/api/", "category": "Services/Endpoints", "githubUrl": "https://github.com/gigsoul"}
+{
+  "name": "GigSoul",
+  "description": "AI-powered marketing intelligence API with 22 endpoints for content repurposing, competitor research, cold email generation, and pain point extraction. Agents pay .05 per call via x402 USDC on Base — no account required.",
+  "logoUrl": "/logos/gigsoul.png",
+  "websiteUrl": "https://gigsoul.com/api",
+  "category": "Services/Endpoints"
+}
