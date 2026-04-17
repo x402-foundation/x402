@@ -1,0 +1,7 @@
+{
+  "name": "Trip1",
+  "description": "Hotel booking MCP server. Agents pay per reservation in USDC on Base over x402. 3M+ properties in 200+ countries.",
+  "logoUrl": "/logos/trip1.png",
+  "websiteUrl": "https://trip1.com/en/agents",
+  "category": "Services/Endpoints"
+}
