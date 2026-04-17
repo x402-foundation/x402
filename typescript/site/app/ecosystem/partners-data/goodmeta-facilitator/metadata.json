@@ -1,0 +1,19 @@
+{
+  "name": "Good Meta x402 Facilitator",
+  "description": "Permissionless x402 facilitator for Base mainnet and Base Sepolia. Supports exact and upto schemes on ERC-2612 (USDC, SBC) and Permit2 (USDC) assets.",
+  "logoUrl": "/logos/goodmeta.png",
+  "websiteUrl": "https://x402.goodmeta.co",
+  "category": "Facilitators",
+  "facilitator": {
+    "baseUrl": "https://x402.goodmeta.co",
+    "networks": ["base", "base-sepolia"],
+    "schemes": ["exact", "upto"],
+    "assets": ["ERC20"],
+    "supports": {
+      "verify": true,
+      "settle": true,
+      "supported": true,
+      "list": false
+    }
+  }
+}

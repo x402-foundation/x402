@@ -1,0 +1,7 @@
+{
+  "name": "Agent Payments Intelligence",
+  "description": "Paid MCP server for agent payments ecosystem intelligence. Scans GitHub, Hacker News, and npm for signals across AP2, ACP, x402, MPP, and UCP. $0.01 USDC per scan via x402 on Base mainnet.",
+  "logoUrl": "/logos/goodmeta.png",
+  "websiteUrl": "https://intel.goodmeta.co",
+  "category": "Services/Endpoints"
+}
