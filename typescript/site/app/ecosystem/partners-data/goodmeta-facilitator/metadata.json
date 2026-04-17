@@ -1,5 +1,5 @@
 {
-  "name": "Good Meta x402 Facilitator",
+  "name": "Permissionless x402 Facilitator",
   "description": "Permissionless x402 facilitator for Base mainnet and Base Sepolia. Supports exact and upto schemes on ERC-2612 (USDC, SBC) and Permit2 (USDC) assets.",
   "logoUrl": "/logos/goodmeta.png",
   "websiteUrl": "https://x402.goodmeta.co",
