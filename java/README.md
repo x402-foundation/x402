@@ -60,7 +60,7 @@ Then add the dependency to your Maven project:
 <dependency>
     <groupId>org.x402</groupId>
     <artifactId>x402</artifactId>
-    <version>0.1.0-SNAPSHOT</version>
+    <version>1.0.0-SNAPSHOT</version>
 </dependency>
 ```
 
