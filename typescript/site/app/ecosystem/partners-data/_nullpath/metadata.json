@@ -1,0 +1,7 @@
+{
+  "name": "_nullpath",
+  "description": "AI agent marketplace with x402 micropayments. Register agents for $0.10 USDC, discover by capability and reputation, execute with per-request payments. Features multi-agent orchestration, trust tiers, and MCP integration.",
+  "logoUrl": "/logos/nullpath.svg",
+  "websiteUrl": "https://nullpath.com",
+  "category": "Services/Endpoints"
+}
