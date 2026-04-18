@@ -1,0 +1,7 @@
+{
+  "name": "Treebeard",
+  "description": "Independent rating layer for on-chain AI agents. Treebeard indexes x402-enabled agents across 14 chains and publishes continuous trust ratings across six signal categories — methodology public, no token, no paid placement.",
+  "logoUrl": "/logos/treebeard.png",
+  "websiteUrl": "https://treebeardai.com/how-it-works",
+  "category": "Infrastructure & Tooling"
+}
