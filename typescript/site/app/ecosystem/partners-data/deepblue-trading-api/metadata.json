@@ -1,0 +1,7 @@
+{
+  "name": "DeepBlue Trading API",
+  "category": "Services/Endpoints",
+  "logoUrl": "/logos/deepblue-trading-api.png",
+  "description": "AI-powered crypto intelligence API offering prediction market analytics, real-time trading signals, sentiment analysis, and DeFi data. First crypto-native x402 API with 16 paid endpoints. Supports x402 + MPP/Tempo protocols.",
+  "websiteUrl": "https://api.deepbluebase.xyz"
+}
