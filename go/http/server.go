@@ -859,9 +859,9 @@ func (s *x402HTTPResourceServer) createHTTPResponseV2(paymentRequired types.Paym
 		}, nil
 	}
 
-	// Use custom unpaid response if provided, otherwise default to JSON with no body
+	// Use custom unpaid response if provided, otherwise include payment info in body for agent discoverability
 	contentType := "application/json"
-	var body interface{}
+	var body interface{} = paymentRequired
 
 	if unpaidResponse != nil {
 		contentType = unpaidResponse.ContentType

@@ -603,9 +603,9 @@ class x402HTTPServerBase:
                 is_html=True,
             )
 
-        # API response
+        # API response — include payment info in body for agent discoverability
         content_type = "application/json"
-        body: Any = {}
+        body: Any = payment_required.model_dump(by_alias=True, exclude_none=True)
 
         if unpaid_response:
             content_type = unpaid_response.content_type
