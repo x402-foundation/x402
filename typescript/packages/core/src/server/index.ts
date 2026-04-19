@@ -25,6 +25,8 @@ export {
   x402HTTPResourceServer,
   RouteConfigurationError,
   SETTLEMENT_OVERRIDES_HEADER,
+  isSingleRouteConfig,
+  normalizeRoutes,
 } from "../http/x402HTTPResourceServer";
 export type {
   HTTPRequestContext,

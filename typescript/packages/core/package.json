@@ -122,6 +122,16 @@
         "default": "./dist/cjs/utils/index.js"
       }
     },
+    "./openapi": {
+      "import": {
+        "types": "./dist/esm/openapi/index.d.mts",
+        "default": "./dist/esm/openapi/index.mjs"
+      },
+      "require": {
+        "types": "./dist/cjs/openapi/index.d.ts",
+        "default": "./dist/cjs/openapi/index.js"
+      }
+    },
     "./schemas": {
       "import": {
         "types": "./dist/esm/schemas/index.d.mts",

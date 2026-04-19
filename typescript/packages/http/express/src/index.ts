@@ -10,8 +10,10 @@ import {
   getFacilitatorResponseError,
   SETTLEMENT_OVERRIDES_HEADER,
   SettlementOverrides,
+  normalizeRoutes,
 } from "@x402/core/server";
 import { SchemeNetworkServer, Network } from "@x402/core/types";
+import { generateOpenAPISpec, OpenAPIOptions } from "@x402/core/openapi";
 import { NextFunction, Request, Response } from "express";
 import { ExpressAdapter } from "./adapter";
 
@@ -27,21 +29,15 @@ export function setSettlementOverrides(res: Response, overrides: SettlementOverr
 }
 
 /**
- * Check if any routes in the configuration declare bazaar extensions
+ * Check if any routes in the configuration declare bazaar extensions.
  *
- * @param routes - Route configuration
+ * @param routes - Route configuration to check
  * @returns True if any route has extensions.bazaar defined
  */
 function checkIfBazaarNeeded(routes: RoutesConfig): boolean {
-  // Handle single route config
-  if ("accepts" in routes) {
-    return !!(routes.extensions && "bazaar" in routes.extensions);
-  }
-
-  // Handle multiple routes
-  return Object.values(routes).some(routeConfig => {
-    return !!(routeConfig.extensions && "bazaar" in routeConfig.extensions);
-  });
+  return Object.values(normalizeRoutes(routes)).some(
+    routeConfig => !!(routeConfig.extensions && "bazaar" in routeConfig.extensions),
+  );
 }
 
 /**
@@ -78,6 +74,7 @@ function sendFacilitatorError(res: Response, error: FacilitatorResponseError): v
  * @param paywallConfig - Optional configuration for the built-in paywall UI
  * @param paywall - Optional custom paywall provider (overrides default)
  * @param syncFacilitatorOnStart - Whether to sync with the facilitator on startup (defaults to true)
+ * @param openAPIOptions - OpenAPI spec options, or false to disable /openapi.json
  * @returns Express middleware handler
  *
  * @example
@@ -98,6 +95,7 @@ export function paymentMiddlewareFromHTTPServer(
   paywallConfig?: PaywallConfig,
   paywall?: PaywallProvider,
   syncFacilitatorOnStart: boolean = true,
+  openAPIOptions?: OpenAPIOptions | false,
 ) {
   // Register custom paywall provider if provided
   if (paywall) {
@@ -143,7 +141,36 @@ export function paymentMiddlewareFromHTTPServer(
       });
   }
 
+  // Generate OpenAPI spec (lazily cached)
+  let openApiSpec: Record<string, unknown> | null = null;
+  /**
+   * Get or generate the cached OpenAPI spec.
+   *
+   * @param serverUrl - The server URL to include in the spec
+   * @returns The OpenAPI spec object
+   */
+  function getOpenAPISpec(serverUrl?: string): Record<string, unknown> {
+    if (!openApiSpec) {
+      openApiSpec = generateOpenAPISpec(httpServer.routes, {
+        ...(openAPIOptions ? openAPIOptions : {}),
+        serverUrl:
+          serverUrl ||
+          (openAPIOptions && typeof openAPIOptions === "object"
+            ? openAPIOptions.serverUrl
+            : undefined),
+      });
+    }
+    return openApiSpec;
+  }
+
   return async (req: Request, res: Response, next: NextFunction) => {
+    // Serve OpenAPI spec at /openapi.json
+    if (openAPIOptions !== false && req.method === "GET" && req.path === "/openapi.json") {
+      const serverUrl = `${req.protocol}://${req.get("host")}`;
+      res.json(getOpenAPISpec(serverUrl));
+      return;
+    }
+
     // Create adapter and context
     const adapter = new ExpressAdapter(req);
     const context: HTTPRequestContext = {
@@ -381,6 +408,7 @@ export function paymentMiddlewareFromHTTPServer(
  * @param paywallConfig - Optional configuration for the built-in paywall UI
  * @param paywall - Optional custom paywall provider (overrides default)
  * @param syncFacilitatorOnStart - Whether to sync with the facilitator on startup (defaults to true)
+ * @param openAPIOptions - OpenAPI spec options, or false to disable /openapi.json
  * @returns Express middleware handler
  *
  * @example
@@ -399,6 +427,7 @@ export function paymentMiddleware(
   paywallConfig?: PaywallConfig,
   paywall?: PaywallProvider,
   syncFacilitatorOnStart: boolean = true,
+  openAPIOptions?: OpenAPIOptions | false,
 ) {
   // Create the x402 HTTP server instance with the resource server
   const httpServer = new x402HTTPResourceServer(server, routes);
@@ -408,6 +437,7 @@ export function paymentMiddleware(
     paywallConfig,
     paywall,
     syncFacilitatorOnStart,
+    openAPIOptions,
   );
 }
 
@@ -423,6 +453,7 @@ export function paymentMiddleware(
  * @param paywallConfig - Optional configuration for the built-in paywall UI
  * @param paywall - Optional custom paywall provider (overrides default)
  * @param syncFacilitatorOnStart - Whether to sync with the facilitator on startup (defaults to true)
+ * @param openAPIOptions - OpenAPI spec options, or false to disable /openapi.json
  * @returns Express middleware handler
  *
  * @example
@@ -444,6 +475,7 @@ export function paymentMiddlewareFromConfig(
   paywallConfig?: PaywallConfig,
   paywall?: PaywallProvider,
   syncFacilitatorOnStart: boolean = true,
+  openAPIOptions?: OpenAPIOptions | false,
 ) {
   const ResourceServer = new x402ResourceServer(facilitatorClients);
 
@@ -455,7 +487,14 @@ export function paymentMiddlewareFromConfig(
 
   // Use the direct paymentMiddleware with the configured server
   // Note: paymentMiddleware handles dynamic bazaar registration
-  return paymentMiddleware(routes, ResourceServer, paywallConfig, paywall, syncFacilitatorOnStart);
+  return paymentMiddleware(
+    routes,
+    ResourceServer,
+    paywallConfig,
+    paywall,
+    syncFacilitatorOnStart,
+    openAPIOptions,
+  );
 }
 
 export { x402ResourceServer, x402HTTPResourceServer } from "@x402/core/server";
@@ -475,3 +514,5 @@ export { RouteConfigurationError, SETTLEMENT_OVERRIDES_HEADER } from "@x402/core
 export type { RouteValidationError } from "@x402/core/server";
 
 export { ExpressAdapter } from "./adapter";
+
+export type { OpenAPIOptions } from "@x402/core/openapi";

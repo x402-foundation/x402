@@ -69,6 +69,9 @@ vi.mock("@x402/core/server", () => ({
       registerExtension: vi.fn(),
     },
   })),
+  isSingleRouteConfig: (routes: Record<string, unknown>) => "accepts" in routes,
+  normalizeRoutes: (routes: Record<string, unknown>, defaultPattern = "*") =>
+    "accepts" in routes ? { [defaultPattern]: routes } : routes,
 }));
 
 // --- Test Fixtures ---

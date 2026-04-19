@@ -11,6 +11,7 @@ const baseConfig = {
     "types/v1/index": "src/types/v1/index.ts",
     "utils/index": "src/utils/index.ts",
     "schemas/index": "src/schemas/index.ts",
+    "openapi/index": "src/openapi/index.ts",
   },
   dts: {
     resolve: true,
