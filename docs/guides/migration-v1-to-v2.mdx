@@ -310,6 +310,10 @@ description: "This guide helps you migrate from x402 V1 to V2. The V2 protocol i
   </Tab>
 </Tabs>
 
+### Schema Declaration
+
+In V2, hand-rolling `extensions.bazaar.schema` on a route config passes through `@x402/core` unchanged but fails silently during discovery-crawler verification, because the required envelope fields (`type`, `method`, `bodyType`, `body` for input; `type`, `example` for output) are only populated by the `declareDiscoveryExtension()` helper from `@x402/extensions/bazaar`. V1 declared these as `config.inputSchema` / `config.outputSchema` and relied on middleware forwarding; V2 requires the helper and spreads its return value into `extensions.bazaar`. See the [Bazaar Discovery Extension](/extensions/bazaar) documentation for full helper usage.
+
 ## Network Identifier Mapping
 
 | V1 Name | V2 CAIP-2 ID | Chain ID | Description |
