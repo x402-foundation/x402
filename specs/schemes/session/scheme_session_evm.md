@@ -11,7 +11,7 @@ The scheme uses an **escrow contract** as the sole on-chain primitive. Two openi
 | **Client-Broadcast** (`feePayer: false`) | Client has native token for gas | Client | Client calls `approve()` + `open()` on escrow |
 | **Server-Submitted** (`feePayer: true`) | Gasless client experience | Server | Client signs EIP-3009 off-chain, server calls `openWithAuthorization()` |
 
-> **Note**: EIP-3009 (`transferWithAuthorization`) is the only authorization mechanism for server-submitted opens because the escrow contract's `openWithAuthorization` function is designed around it. For client-broadcast mode, the client may use any mechanism (Permit2, multicall, UserOp, etc.) to fund the escrow — they simply submit the txHash.
+> **Note**: EIP-3009 (`receiveWithAuthorization`) is the only authorization mechanism for server-submitted opens because the escrow contract's `openWithAuthorization` function is designed around it. `receiveWithAuthorization` is used rather than `transferWithAuthorization` because it enforces `msg.sender == to`, preventing mempool signature-extraction attacks (see Section 12.13). For client-broadcast mode, the client may use any mechanism (Permit2, multicall, UserOp, etc.) to fund the escrow — they simply submit the txHash.
 
 ---
 
@@ -156,7 +156,7 @@ All amounts are in **base units** (smallest indivisible token unit). For USDC (6
       |<-----------------------------------|                                |
       |                                    |                                |
       |  (3) Sign EIP-3009                 |                                |
-      |      transferWithAuthorization     |                                |
+      |      receiveWithAuthorization      |                                |
       |      (from, to=escrow, value,      |                                |
       |       nonce, ...)                  |                                |
       |                                    |                                |
@@ -304,9 +304,9 @@ The `signature` field is overloaded: in `feePayer: true` open/topUp payloads it 
 | Action | `feePayer` | `signature` contains | `voucherSignature` contains |
 | :--- | :--- | :--- | :--- |
 | `open` | `false` | EIP-712 voucher signature | N/A (not present) |
-| `open` | `true` | EIP-3009 `transferWithAuthorization` signature | EIP-712 voucher signature |
+| `open` | `true` | EIP-3009 `receiveWithAuthorization` signature | EIP-712 voucher signature |
 | `topUp` | `false` | N/A (not present — client submits txHash) | N/A |
-| `topUp` | `true` | EIP-3009 `transferWithAuthorization` signature | N/A |
+| `topUp` | `true` | EIP-3009 `receiveWithAuthorization` signature | N/A |
 | `voucher` | N/A | EIP-712 voucher signature | N/A |
 | `close` | N/A | EIP-712 voucher signature | N/A |
 
@@ -422,7 +422,7 @@ Client signs EIP-3009 authorization off-chain. Server calls `openWithAuthorizati
 | `type` | `string` | Required | `"transaction"` |
 | `channelId` | `string` | Required | Channel identifier (hex bytes32) |
 | `authorization` | `object` | Required | EIP-3009 authorization parameters (see below) |
-| `signature` | `string` | Required | EIP-3009 `transferWithAuthorization` signature (65 bytes, 0x-prefixed hex). Note: in `feePayer: true` payloads, `signature` is the EIP-3009 signature and `voucherSignature` is the EIP-712 voucher signature. In `feePayer: false` payloads (Section 2.1), `signature` is the voucher signature |
+| `signature` | `string` | Required | EIP-3009 `receiveWithAuthorization` signature (65 bytes, 0x-prefixed hex). Note: in `feePayer: true` payloads, `signature` is the EIP-3009 signature and `voucherSignature` is the EIP-712 voucher signature. In `feePayer: false` payloads (Section 2.1), `signature` is the voucher signature |
 | `salt` | `string` | Required | Random bytes32 hex for channelId computation |
 | `authorizedSigner` | `string` | Optional | Delegated voucher signer. `address(0)` or omitted = payer |
 | `cumulativeAmount` | `string` | Required | Initial cumulative amount (typically `"0"`) |
@@ -438,7 +438,7 @@ Client signs EIP-3009 authorization off-chain. Server calls `openWithAuthorizati
 | `value` | `string` | Required | Deposit amount in base units |
 | `validAfter` | `string` | Required | Unix timestamp, valid from. `"0"` = immediately |
 | `validBefore` | `string` | Required | Unix timestamp, expires. Must exceed `maxTimeoutSeconds` |
-| `nonce` | `string` | Required | Random bytes32 hex. EIP-3009 nonce, unique per token per authorizer |
+| `nonce` | `string` | Required | `bytes32` hex, unique per token per authorizer. Implementations SHOULD derive this deterministically from channel parameters to prevent parameter-substitution front-running (see Section 12.13) |
 
 ### 2.3 TopUp Payload
 
@@ -736,10 +736,10 @@ channelId = keccak256(abi.encode(payer, payee, token, salt, authorizedSigner, ad
 | Function | Caller | Description |
 | :--- | :--- | :--- |
 | `open(payee, token, deposit, salt, authorizedSigner, splitRecipients, splitBps)` | Anyone | Creates channel; caller becomes payer. Requires prior `approve(escrow, deposit)` |
-| `openWithAuthorization(payee, token, deposit, salt, authorizedSigner, from, validAfter, validBefore, nonce, v, r, s, splitRecipients, splitBps)` | Anyone (typically server) | Creates channel via EIP-3009; `from` becomes payer |
+| `openWithAuthorization(payee, token, deposit, salt, authorizedSigner, from, validAfter, validBefore, nonce, signature, splitRecipients, splitBps)` | Anyone (typically server) | Creates channel via EIP-3009 `receiveWithAuthorization`; `from` becomes payer. `signature` is the packed 65-byte EIP-3009 authorization |
 | `settle(channelId, cumulativeAmount, signature)` | Payee only | Withdraws funds using voucher without closing channel |
 | `topUp(channelId, additionalDeposit)` | Payer only | Adds funds. Resets pending close timer |
-| `topUpWithAuthorization(channelId, additionalDeposit, from, validAfter, validBefore, nonce, v, r, s)` | Anyone (typically server) | Adds funds via EIP-3009 |
+| `topUpWithAuthorization(channelId, additionalDeposit, from, validAfter, validBefore, nonce, signature)` | Anyone (typically server) | Adds funds via EIP-3009 `receiveWithAuthorization` |
 | `close(channelId, cumulativeAmount, signature)` | Payee only | Final settle + refund remainder to payer |
 | `requestClose(channelId)` | Payer only | Initiates forced close, starts grace period |
 | `withdraw(channelId)` | Payer only | Withdraws remaining funds after grace period |
@@ -1118,7 +1118,7 @@ The `session` scheme uses the standard x402 error codes defined in the [x402 spe
 
 6. **Denial of Service**: Rate limit voucher submissions (SHOULD limit to 10/second/session). Enforce `minVoucherDelta`. Enforce minimum deposit thresholds. When `feePayer: true`, servers SHOULD enforce minimum deposit to prevent gas griefing.
 
-7. **Front-Running Protection**: `channelId` includes payer address, so front-runners produce different IDs. When `feePayer: true`, the EIP-3009 `to` field MUST be the escrow contract address, preventing signature extraction and fund diversion.
+7. **Front-Running Protection**: `channelId` includes payer address, so front-runners produce different IDs. When `feePayer: true`, the EIP-3009 `to` field MUST be the escrow contract address, and the escrow MUST use `receiveWithAuthorization` (which enforces `msg.sender == to`) — together these prevent an attacker from extracting the mempool signature and calling the token directly. See Section 12.13 for the additional parameter-substitution attack and deterministic-nonce mitigation.
 
 8. **Chain Reorganization**: Servers SHOULD use sufficient confirmation depth before accepting open/topUp. Reference values: L2 rollups ~1 block, Ethereum mainnet ~12 blocks. Voucher-based payments are not affected (off-chain).
 
@@ -1130,7 +1130,23 @@ The `session` scheme uses the standard x402 error codes defined in the [x402 spe
 
 12. **Disconnection Handling**: If the client disconnects mid-session, the server holds the last accepted voucher and can call `settle()` unilaterally to recover earned revenue. Servers MUST persist the latest voucher signature to durable storage to survive crashes. If the server disappears, the client can `requestClose()` → wait grace period → `withdraw()` to recover unspent funds.
 
-13. **EIP-3009 Authorization Security (feePayer: true)**: The `authorization.to` field MUST equal the escrow contract address. This prevents an attacker from extracting the EIP-3009 signature and redirecting the `transferWithAuthorization` to a different contract. The escrow contract's `openWithAuthorization` atomically receives and locks the funds, leaving no window for extraction.
+13. **EIP-3009 Authorization Security (feePayer: true)**:
+
+    **Token-level extraction.** The `authorization.to` field MUST equal the escrow contract address, and the escrow MUST pull funds via `receiveWithAuthorization` (not `transferWithAuthorization`). `receiveWithAuthorization` enforces `msg.sender == to`, so only the escrow contract can execute the transfer — an attacker who extracts the signature from the mempool cannot call the token directly. Servers MUST NOT advertise `feePayer: true` for tokens that do not implement `receiveWithAuthorization`.
+
+    **Parameter substitution.** `receiveWithAuthorization` alone does not prevent an attacker from calling the **escrow** itself with modified channel parameters. The EIP-3009 signature only covers `from`, `to`, `value`, `validAfter`, `validBefore`, and `nonce` — it does NOT cover channel parameters such as `payee`, `salt`, `authorizedSigner`, or `splits`. A front-runner could submit `openWithAuthorization` with a different `payee` (their own address) and the signature would remain valid.
+
+    **Mitigation — deterministic nonce.** Escrow implementations SHOULD derive the EIP-3009 `nonce` deterministically from the channel parameters rather than accepting an arbitrary random value:
+
+    ```
+    // openWithAuthorization
+    nonce = keccak256(abi.encode(payee, token, salt, authorizedSigner, splitRecipients, splitBps))
+
+    // topUpWithAuthorization
+    nonce = keccak256(abi.encode(channelId, additionalDeposit))
+    ```
+
+    The contract recomputes the nonce from its own function arguments and forwards it to `receiveWithAuthorization`. If a front-runner substitutes different parameters, the recomputed nonce differs from the one the payer signed over, and signature verification on the token fails. The client MUST use the same derivation formula when signing the authorization.
 
 ---
 
@@ -1149,7 +1165,7 @@ interface ISessionEscrow {
         address payee, address token, uint128 deposit, bytes32 salt,
         address authorizedSigner, address from,
         uint256 validAfter, uint256 validBefore, bytes32 nonce,
-        uint8 v, bytes32 r, bytes32 s,
+        bytes calldata signature,
         address[] calldata splitRecipients, uint16[] calldata splitBps
     ) external returns (bytes32 channelId);
 
@@ -1160,7 +1176,7 @@ interface ISessionEscrow {
     function topUpWithAuthorization(
         bytes32 channelId, uint128 additionalDeposit, address from,
         uint256 validAfter, uint256 validBefore, bytes32 nonce,
-        uint8 v, bytes32 r, bytes32 s
+        bytes calldata signature
     ) external;
 
     function close(bytes32 channelId, uint128 cumulativeAmount, bytes calldata signature) external;
