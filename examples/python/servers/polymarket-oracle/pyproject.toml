@@ -1,0 +1,22 @@
+[project]
+name = "x402-polymarket-oracle"
+version = "1.0.0"
+description = "Prediction market oracle gated by x402 micropayments — live Polymarket signals"
+readme = "README.md"
+authors = [
+    { name = "DeepBlue", email = "deepbluebase.xyz" },
+]
+requires-python = ">=3.10"
+keywords = ["x402", "payment", "polymarket", "prediction-markets", "crypto", "trading"]
+dependencies = [
+    "x402[fastapi,evm,svm]",
+    "python-dotenv>=1.2.1",
+    "uvicorn[standard]>=0.40.0",
+    "httpx>=0.27.0",
+]
+
+[tool.uv]
+package = false
+
+[tool.uv.sources]
+x402 = { path = "../../../../python/x402", editable = true }
