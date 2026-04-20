@@ -206,15 +206,44 @@ pnpm test:watch
 
 ### Integration Tests
 
-Integration tests require network access and may use testnets:
+Integration tests require network access and may use testnets. They also
+require test credentials — most suites will skip themselves cleanly when the
+required environment variables are not set, so you only need to populate the
+subsets you want to exercise.
+
+Create a `.env` at the repository root (or in the specific package you're
+testing) with the variables the target suites read. A starting template:
 
 ```bash
-pnpm test:integration
+# --- EVM mechanism (@x402/evm) ---
+EVM_CLIENT_PRIVATE_KEY=
+EVM_FACILITATOR_PRIVATE_KEY=
+EVM_RESOURCE_SERVER_ADDRESS=
+# Optional: override the RPC endpoint (defaults to Base Sepolia)
+# EVM_RPC_URL=https://sepolia.base.org
+
+# --- SVM mechanism (@x402/svm) + Stellar ---
+CLIENT_PRIVATE_KEY=
+FACILITATOR_PRIVATE_KEY=
+FACILITATOR_ADDRESS=
+RESOURCE_SERVER_ADDRESS=
+
+# --- Aptos mechanism (@x402/aptos) ---
+APTOS_CLIENT_PRIVATE_KEY=
+APTOS_FACILITATOR_PRIVATE_KEY=
 ```
 
-Or for a specific package:
+Each mechanism's `test/integrations/*.test.ts` file is the authoritative
+source for the exact variables it consumes — read the one for your target
+package to see the complete list.
+
+Run everything or scope to a single package:
 
 ```bash
+# All packages
+pnpm test:integration
+
+# Single package
 pnpm --filter @x402/evm test:integration
 ```
 
