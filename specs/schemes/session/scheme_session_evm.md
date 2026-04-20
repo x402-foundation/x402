@@ -316,7 +316,7 @@ All signatures are 65 bytes (`r ‖ s ‖ v`), encoded as 0x-prefixed lowercase 
 
 Client broadcasts `approve()` + `open()` on-chain and submits the txHash.
 
-> **Smart Wallet Support (ERC-4337)**: When the client is a smart contract wallet (e.g., ERC-4337 account), it cannot produce ECDSA voucher signatures directly. The client MUST set `authorizedSigner` to an EOA that will sign vouchers on its behalf. The smart wallet MAY batch `approve()` + `open()` into a single UserOperation via the EntryPoint contract. The `authorizedSigner` is registered at channel open time and cannot be changed afterward.
+> **Smart Wallet Support**: `authorizedSigner` MAY be either an EOA (voucher verified via secp256k1 ECDSA `ecrecover`) or an ERC-1271-compliant contract wallet such as Safe or an ERC-4337 account (voucher verified by calling `isValidSignature(bytes32,bytes)` on the wallet contract). A smart wallet MAY therefore sign vouchers directly — delegating to a separate EOA is no longer required. Alternatively the smart wallet MAY still set `authorizedSigner` to an EOA if that fits its key-management model better. The smart wallet MAY batch `approve()` + `open()` into a single UserOperation via an ERC-4337 EntryPoint. The `authorizedSigner` is registered at channel open time and cannot be changed afterward.
 
 ```json
 {
@@ -370,6 +370,8 @@ Client broadcasts `approve()` + `open()` on-chain and submits the txHash.
 ### 2.2 Open Payload (`feePayer: true`)
 
 Client signs EIP-3009 authorization off-chain. Server calls `openWithAuthorization()`.
+
+> **Token compatibility**: This scheme targets tokens that expose the USDC v2.2 `bytes signature` overload of `receiveWithAuthorization`. The escrow contract calls that overload directly with the packed 65-byte signature. Tokens that only expose the canonical `(uint8 v, bytes32 r, bytes32 s)` interface are NOT supported — servers MUST NOT advertise `feePayer: true` for such tokens. Applies equally to `topUpWithAuthorization` (Section 2.3).
 
 ```json
 {
@@ -487,6 +489,7 @@ Adds funds to an existing channel. Resets any pending forced close timer.
 | `action` | `string` | Required | `"topUp"` |
 | `type` | `string` | Required | `"transaction"` |
 | `channelId` | `string` | Required | Channel ID |
+| `topUpSalt` | `string` | Required | Random bytes32 hex fed into the deterministic nonce derivation (see Section 12.13). Ensures uniqueness across repeated top-ups of the same amount on the same channel |
 | `authorization` | `object` | Required | EIP-3009 authorization parameters (includes `type: "eip-3009"`, see Section 2.2) |
 | `signature` | `string` | Required | EIP-3009 signature |
 | `additionalDeposit` | `string` | Required | Additional amount to deposit in base units |
@@ -511,6 +514,7 @@ Adds funds to an existing channel. Resets any pending forced close timer.
     "action": "topUp",
     "type": "transaction",
     "channelId": "0x6d0f4fdf1f2f6a1f6c1b0fbd6a7d5c2c0a8d3d7b1f6a9c1b3e2d4a5b6c7d8e9f",
+    "topUpSalt": "0xcccc5678dddd9012eeee3456ffff7890aaaa1234bbbb5678cccc9012dddd3456",
     "authorization": {
       "type": "eip-3009",
       "from": "0xaabbccddee11223344556677889900aabbccddee",
@@ -577,7 +581,7 @@ Vouchers MAY carry an optional `deposit` field to merge a deposit authorization 
 | `deposit.action` | `string` | Required | `"open"` or `"topUp"` |
 | `deposit.authorization` | `object` | Required | EIP-3009 authorization parameters (includes `type: "eip-3009"`, see Section 2.2) |
 | `deposit.signature` | `string` | Required | EIP-3009 signature (65 bytes hex) |
-| `deposit.salt` | `string` | Conditional | Required when `deposit.action` is `"open"` |
+| `deposit.salt` | `string` | Required | Random bytes32 hex. Used for `channelId` computation when `deposit.action` is `"open"`; passed as `topUpSalt` into the deterministic nonce derivation when `deposit.action` is `"topUp"` (see Section 12.13) |
 | `deposit.authorizedSigner` | `string` | Optional | Delegated voucher signer. Only for `deposit.action: "open"` |
 
 When `deposit` is present, the server processes the deposit first (`openWithAuthorization` or `topUpWithAuthorization`), then validates and accepts the voucher.
@@ -610,6 +614,7 @@ When `deposit` is present, the server processes the deposit first (`openWithAuth
     "signature": "0xabcdef...vouchersig",
     "deposit": {
       "action": "topUp",
+      "salt": "0xdddd5678eeee9012ffff3456aaaa7890bbbb1234cccc5678dddd9012eeee3456",
       "authorization": {
         "type": "eip-3009",
         "from": "0xaabbccddee11223344556677889900aabbccddee",
@@ -666,7 +671,9 @@ Requests the server to close the channel and settle on-chain.
 | `action` | `string` | Required | `"close"` |
 | `channelId` | `string` | Required | Channel identifier |
 | `cumulativeAmount` | `string` | Required | Final cumulative amount |
-| `signature` | `string` | Required | EIP-712 voucher signature |
+| `signature` | `string` | Conditional | EIP-712 voucher signature. MAY be empty when `cumulativeAmount <= channel.settled` — the forfeit path (see below) |
+
+> **Forfeit path**: When `cumulativeAmount <= channel.settled`, the payee is forfeiting any uncollected amount (e.g., to cleanly close an exhausted or abandoned channel whose last voucher the server never received). In that case the escrow contract MAY skip voucher signature verification and `signature` MAY be empty. This lets the server close the channel unilaterally when the client's final voucher is insufficient or unavailable.
 
 ---
 
@@ -739,8 +746,8 @@ channelId = keccak256(abi.encode(payer, payee, token, salt, authorizedSigner, ad
 | `openWithAuthorization(payee, token, deposit, salt, authorizedSigner, from, validAfter, validBefore, nonce, signature, splitRecipients, splitBps)` | Anyone (typically server) | Creates channel via EIP-3009 `receiveWithAuthorization`; `from` becomes payer. `signature` is the packed 65-byte EIP-3009 authorization |
 | `settle(channelId, cumulativeAmount, signature)` | Payee only | Withdraws funds using voucher without closing channel |
 | `topUp(channelId, additionalDeposit)` | Payer only | Adds funds. Resets pending close timer |
-| `topUpWithAuthorization(channelId, additionalDeposit, from, validAfter, validBefore, nonce, signature)` | Anyone (typically server) | Adds funds via EIP-3009 `receiveWithAuthorization` |
-| `close(channelId, cumulativeAmount, signature)` | Payee only | Final settle + refund remainder to payer |
+| `topUpWithAuthorization(channelId, additionalDeposit, topUpSalt, from, validAfter, validBefore, nonce, signature)` | Anyone (typically server) | Adds funds via EIP-3009 `receiveWithAuthorization`. `topUpSalt` seeds the deterministic nonce derivation so repeated top-ups of the same amount produce distinct nonces |
+| `close(channelId, cumulativeAmount, signature)` | Payee only | Final settle + refund remainder to payer. If `cumulativeAmount <= channel.settled`, the payee is forfeiting any uncollected amount and `signature` MAY be empty (forfeit path) |
 | `requestClose(channelId)` | Payer only | Initiates forced close, starts grace period |
 | `withdraw(channelId)` | Payer only | Withdraws remaining funds after grace period |
 
@@ -849,8 +856,8 @@ Each entry in `extra.splits`:
 5. Verify `(cumulativeAmount - acceptedCumulative) >= minVoucherDelta`
 6. Verify `cumulativeAmount <= channel.deposit` (deposit cap)
 7. Verify `cumulativeAmount <= 2^128 - 1` (uint128 bound)
-8. Recover signer from EIP-712 signature; verify matches expected signer
-9. Verify signature uses canonical low-s values
+8. Determine the expected signer: `channel.authorizedSigner` if non-zero, otherwise `channel.payer`. If the expected signer is an EOA, recover the signer from the EIP-712 signature via `ecrecover` and verify it matches. If the expected signer has contract code deployed, call `isValidSignature(bytes32 digest, bytes signature)` per ERC-1271 and verify it returns the magic value `0x1626ba7e`
+9. Verify signature uses canonical low-s values (applies to ECDSA path; ERC-1271 wallets are responsible for their own canonical-form checks)
 10. Persist voucher to durable storage BEFORE providing service
 11. Update `acceptedCumulative = cumulativeAmount`
 
@@ -879,10 +886,11 @@ Each entry in `extra.splits`:
 
 ### 7.4 Close Verification
 
-1. Verify `cumulativeAmount >= spent` (covers all delivered service)
-2. Verify voucher signature
-3. Call `close(channelId, cumulativeAmount, signature)` on escrow
-4. Return receipt with transaction hash
+1. If `cumulativeAmount <= channel.settled`: forfeit path — proceed to step 4 without signature verification (the contract accepts an empty `signature`)
+2. Otherwise verify `cumulativeAmount >= spent` (covers all delivered service)
+3. Verify voucher signature
+4. Call `close(channelId, cumulativeAmount, signature)` on escrow
+5. Return receipt with transaction hash
 
 ---
 
@@ -1110,7 +1118,7 @@ The `session` scheme uses the standard x402 error codes defined in the [x402 spe
 
 2. **Cross-Chain Replay**: The EIP-712 domain separator includes `chainId`, making voucher signatures invalid on other chains.
 
-3. **Signature Malleability**: The escrow contract MUST enforce canonical (low-s) ECDSA signatures. Signatures MUST have `s <= secp256k1_order / 2`.
+3. **Signature Malleability**: The escrow contract MUST enforce canonical (low-s) ECDSA signatures on the EOA path. Signatures MUST have `s <= secp256k1_order / 2`. For ERC-1271 contract-wallet signers, malleability defense is delegated to the wallet contract's own `isValidSignature` implementation.
 
 4. **Deposit Cap**: Server MUST verify `cumulativeAmount <= channel.deposit`. The escrow contract enforces this on-chain as well.
 
@@ -1143,7 +1151,7 @@ The `session` scheme uses the standard x402 error codes defined in the [x402 spe
     nonce = keccak256(abi.encode(payee, token, salt, authorizedSigner, splitRecipients, splitBps))
 
     // topUpWithAuthorization
-    nonce = keccak256(abi.encode(channelId, additionalDeposit))
+    nonce = keccak256(abi.encode(channelId, additionalDeposit, from, topUpSalt))
     ```
 
     The contract recomputes the nonce from its own function arguments and forwards it to `receiveWithAuthorization`. If a front-runner substitutes different parameters, the recomputed nonce differs from the one the payer signed over, and signature verification on the token fails. The client MUST use the same derivation formula when signing the authorization.
@@ -1174,8 +1182,8 @@ interface ISessionEscrow {
     function topUp(bytes32 channelId, uint128 additionalDeposit) external;
 
     function topUpWithAuthorization(
-        bytes32 channelId, uint128 additionalDeposit, address from,
-        uint256 validAfter, uint256 validBefore, bytes32 nonce,
+        bytes32 channelId, uint128 additionalDeposit, bytes32 topUpSalt,
+        address from, uint256 validAfter, uint256 validBefore, bytes32 nonce,
         bytes calldata signature
     ) external;
 
