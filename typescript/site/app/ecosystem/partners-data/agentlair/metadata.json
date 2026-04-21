@@ -1,0 +1,7 @@
+{
+  "name": "AgentLair",
+  "description": "Identity and behavioral trust infrastructure for AI agents. x402-gated endpoints for agent provisioning, AAT token verification (JWKS-backed), audit event logging, and agent email on Base. Behavioral trust scores computed from audit history — not bond deposits.",
+  "logoUrl": "/logos/agentlair.svg",
+  "websiteUrl": "https://agentlair.dev",
+  "category": "Services/Endpoints"
+}

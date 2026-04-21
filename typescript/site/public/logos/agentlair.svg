@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" role="img" aria-label="AgentLair logo">
+  <rect width="256" height="256" rx="36" fill="#0f172a"/>
+  <!-- Envelope body -->
+  <rect x="52" y="88" width="152" height="100" rx="12" fill="none" stroke="#22d3ee" stroke-width="8"/>
+  <!-- Envelope flap -->
+  <path d="M52 92l76 52 76-52" fill="none" stroke="#22d3ee" stroke-width="8" stroke-linejoin="round"/>
+  <!-- Keyhole circle on envelope -->
+  <circle cx="128" cy="152" r="14" fill="#22d3ee"/>
+  <!-- Keyhole slot -->
+  <rect x="124" y="156" width="8" height="20" rx="2" fill="#22d3ee"/>
+  <!-- Agent dot / eye above -->
+  <circle cx="128" cy="60" r="8" fill="#f8fafc"/>
+</svg>
