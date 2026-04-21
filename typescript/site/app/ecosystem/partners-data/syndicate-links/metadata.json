@@ -1,0 +1,7 @@
+{
+  "name": "Syndicate Links",
+  "description": "Affiliate attribution API for AI agents. POST /affiliate/links generates a tracking link for $0.01 USDC on Base — no signup, no API key required. Attribution tokens (atxp_reference) embed in x402 payment proofs for on-chain commission tracking.",
+  "logoUrl": "/logos/syndicate-links.svg",
+  "websiteUrl": "https://syndicatelinks.co/docs/x402",
+  "category": "Services/Endpoints"
+}
