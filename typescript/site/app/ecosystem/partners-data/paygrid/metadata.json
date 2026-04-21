@@ -1,0 +1,7 @@
+{
+  "name": "PAYGRID",
+  "description": "Three AI data APIs (hotel readiness scoring, content QA, M&A deal flow intel) running on a live x402 server. Pay-per-request with USDC on Base mainnet — no accounts, no API keys.",
+  "logoUrl": "/logos/paygrid.png",
+  "websiteUrl": "https://github.com/AutopilotPR/paygrid",
+  "category": "Services/Endpoints"
+}
