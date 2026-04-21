@@ -1,0 +1,7 @@
+{
+  "name": "Northeast Deal Intel API",
+  "description": "Commercial real estate intelligence API \u2014 AI deal scoring, sell-probability signals, closed comp search, and owner-lookup across 9 Northeast US states. 100K+ deed records. Per-call pricing via x402.",
+  "logoUrl": "/logos/northeast-deal-intel.png",
+  "websiteUrl": "https://northeastdealintel.com/agent-api.html",
+  "category": "Services/Endpoints"
+}
