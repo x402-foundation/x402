@@ -1,0 +1,52 @@
+# CODEOWNERS
+#
+# Teams:
+#   @x402-foundation/evm     — EVM network maintainers
+#   @x402-foundation/svm     — SVM (Solana) network maintainers
+#   @x402-foundation/stellar — Stellar network maintainers
+#   @x402-foundation/aptos   — Aptos network maintainers
+#   @x402-foundation/core    — Core protocol / shared infrastructure
+
+# ── Core (required on shared infrastructure, not every PR) ───────────────────
+specs/                                     @x402-foundation/core
+docs/                                      @x402-foundation/core
+typescript/packages/core/                  @x402-foundation/core
+typescript/packages/http/                  @x402-foundation/core
+typescript/packages/extensions/            @x402-foundation/core
+.github/                                   @x402-foundation/core
+package.json                               @x402-foundation/core
+CONTRIBUTING.md                            @x402-foundation/core
+ROADMAP.md                                 @x402-foundation/core
+SECURITY.md                                @x402-foundation/core
+
+# ── EVM ───────────────────────────────────────────────────────────────────────
+contracts/evm/                             @x402-foundation/evm
+typescript/packages/mechanisms/evm/        @x402-foundation/evm
+go/mechanisms/evm/                         @x402-foundation/evm
+go/signers/evm/                            @x402-foundation/evm
+python/x402/mechanisms/evm/                @x402-foundation/evm
+python/x402/tests/unit/mechanisms/evm/     @x402-foundation/evm
+e2e/servers/next/app/api/exact/evm/        @x402-foundation/evm
+e2e/servers/next/app/api/upto/evm/         @x402-foundation/evm
+.github/workflows/publish_npm_scoped_x402_evm.yml  @x402-foundation/evm
+
+# ── SVM (Solana) ──────────────────────────────────────────────────────────────
+typescript/packages/mechanisms/svm/        @x402-foundation/svm
+go/mechanisms/svm/                         @x402-foundation/svm
+go/signers/svm/                            @x402-foundation/svm
+python/x402/mechanisms/svm/                @x402-foundation/svm
+python/x402/tests/unit/mechanisms/svm/     @x402-foundation/svm
+e2e/servers/next/app/api/exact/svm/        @x402-foundation/svm
+.github/workflows/publish_npm_scoped_x402_svm.yml  @x402-foundation/svm
+
+# ── Stellar ───────────────────────────────────────────────────────────────────
+typescript/packages/mechanisms/stellar/    @x402-foundation/stellar
+e2e/servers/next/app/api/exact/stellar/    @x402-foundation/stellar
+typescript/site/app/ecosystem/partners-data/stellar/       @x402-foundation/stellar
+typescript/site/app/ecosystem/partners-data/built-on-stellar/  @x402-foundation/stellar
+.github/workflows/publish_npm_scoped_x402_stellar.yml  @x402-foundation/stellar
+
+# ── Aptos ─────────────────────────────────────────────────────────────────────
+typescript/packages/mechanisms/aptos/      @x402-foundation/aptos
+e2e/servers/next/app/api/exact/aptos/      @x402-foundation/aptos
+.github/workflows/publish_npm_scoped_x402_aptos.yml  @x402-foundation/aptos
