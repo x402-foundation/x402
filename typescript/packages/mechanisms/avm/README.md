@@ -1,4 +1,4 @@
-# @x402/avm
+# @x402/avm [![npm version](https://img.shields.io/npm/v/%40x402%2Favm.svg)](https://www.npmjs.com/package/@x402/avm)
 
 AVM (Algorand Virtual Machine) implementation of the x402 payment protocol using the **Exact** payment scheme with ASA (Algorand Standard Asset) transfers.
 
