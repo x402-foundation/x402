@@ -1,1 +1,7 @@
-
+{
+  "name": "AceOracle",
+  "category": "Services/Endpoints",
+  "logoUrl": "",
+  "description": "Tennis intelligence API — Elo ratings, match predictions, and H2H analysis for 2,640+ ATP players. Pay per call ($0.01–$0.10 USDC on Base). First sports analytics service on x402.",
+  "websiteUrl": "https://aceoracle.aceoracle-tennis.workers.dev"
+}
