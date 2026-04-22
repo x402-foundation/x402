@@ -248,7 +248,25 @@ func (c *x402Client) CreatePaymentPayloadV1(
 		}
 	}
 
-	return client.CreatePaymentPayload(ctx, requirements)
+	// Before hooks
+	for _, hook := range c.beforePaymentCreationHooks {
+		if err := hook(ctx, requirements); err != nil {
+			return types.PaymentPayloadV1{}, err
+		}
+	}
+
+	payload, err := client.CreatePaymentPayload(ctx, requirements)
+	if err != nil {
+		for _, hook := range c.onPaymentCreationFailureHooks {
+			hook(ctx, requirements, err)
+		}
+		return types.PaymentPayloadV1{}, err
+	}
+
+	for _, hook := range c.afterPaymentCreationHooks {
+		hook(ctx, payload)
+	}
+	return payload, nil
 }
 
 // CreatePaymentPayload creates a payment payload (V2, default)
@@ -281,6 +299,13 @@ func (c *x402Client) CreatePaymentPayload(
 		}
 	}
 
+	// Before hooks
+	for _, hook := range c.beforePaymentCreationHooks {
+		if err := hook(ctx, requirements); err != nil {
+			return types.PaymentPayload{}, err
+		}
+	}
+	
 	// Get partial payload from mechanism.
 	// If the scheme supports extensions (e.g., EIP-2612), pass them for enrichment.
 	var partial types.PaymentPayload
@@ -291,6 +316,9 @@ func (c *x402Client) CreatePaymentPayload(
 		partial, err = client.CreatePaymentPayload(ctx, requirements)
 	}
 	if err != nil {
+		for _, hook := range c.onPaymentCreationFailureHooks {
+			hook(ctx, requirements, err)
+		}
 		return types.PaymentPayload{}, err
 	}
 
@@ -308,9 +336,15 @@ func (c *x402Client) CreatePaymentPayload(
 		Resource:    resource,
 	})
 	if err != nil {
+		for _, hook := range c.onPaymentCreationFailureHooks {
+			hook(ctx, requirements, err)
+		}
 		return types.PaymentPayload{}, err
 	}
 
+	for _, hook := range c.afterPaymentCreationHooks {
+		hook(ctx, partial)
+	}
 	return partial, nil
 }
 
