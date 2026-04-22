@@ -23,12 +23,12 @@ This server demonstrates and tests the x402 net/http middleware with both EVM an
 ```go
 import (
     "net/http"
-    x402 "github.com/coinbase/x402/go"
-    x402http "github.com/coinbase/x402/go/http"
-    nethttpmw "github.com/coinbase/x402/go/http/nethttp"
-    evm "github.com/coinbase/x402/go/mechanisms/evm/exact/server"
-    svm "github.com/coinbase/x402/go/mechanisms/svm/exact/server"
-    "github.com/coinbase/x402/go/extensions/bazaar"
+    x402 "github.com/x402-foundation/x402/go"
+    x402http "github.com/x402-foundation/x402/go/http"
+    nethttpmw "github.com/x402-foundation/x402/go/http/nethttp"
+    evm "github.com/x402-foundation/x402/go/mechanisms/evm/exact/server"
+    svm "github.com/x402-foundation/x402/go/mechanisms/svm/exact/server"
+    "github.com/x402-foundation/x402/go/extensions/bazaar"
 )
 
 // Create ServeMux
@@ -175,12 +175,12 @@ Content-Type: application/json
 
 ## Dependencies
 
-- `github.com/coinbase/x402/go` - Core x402
-- `github.com/coinbase/x402/go/http` - HTTP integration
-- `github.com/coinbase/x402/go/http/nethttp` - net/http middleware
-- `github.com/coinbase/x402/go/mechanisms/evm` - EVM server
-- `github.com/coinbase/x402/go/mechanisms/svm` - SVM server
-- `github.com/coinbase/x402/go/extensions/bazaar` - Discovery extension
+- `github.com/x402-foundation/x402/go` - Core x402
+- `github.com/x402-foundation/x402/go/http` - HTTP integration
+- `github.com/x402-foundation/x402/go/http/nethttp` - net/http middleware
+- `github.com/x402-foundation/x402/go/mechanisms/evm` - EVM server
+- `github.com/x402-foundation/x402/go/mechanisms/svm` - SVM server
+- `github.com/x402-foundation/x402/go/extensions/bazaar` - Discovery extension
 
 ## Implementation Highlights
 

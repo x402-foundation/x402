@@ -3,7 +3,7 @@ package unit_test
 import (
 	"testing"
 
-	"github.com/coinbase/x402/go/mechanisms/evm"
+	"github.com/x402-foundation/x402/go/mechanisms/evm"
 )
 
 // TestEIP3009PayloadParsing tests EIP-3009 payload parsing and serialization

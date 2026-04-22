@@ -1,5 +1,25 @@
 # @x402/stellar Changelog
 
+## 2.10.0
+
+### Minor Changes
+
+- @x402/core@2.10.0
+
+## 2.9.0
+
+### Minor Changes
+
+- 2250cae: Migrated project from coinbase/x402 to x402-foundation/x402 organization
+
+### Patch Changes
+
+- Updated dependencies [8cf3fca]
+- Updated dependencies [c0e3969]
+- Updated dependencies [2250cae]
+- Updated dependencies [d352574]
+  - @x402/core@2.9.0
+
 ## 2.8.0
 
 ### Minor Changes

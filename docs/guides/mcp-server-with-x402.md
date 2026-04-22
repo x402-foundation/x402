@@ -19,7 +19,7 @@ This lets you (or your agent) access paid APIs programmatically, with no manual 
 
 * Node.js v20+ (install via [nvm](https://github.com/nvm-sh/nvm))
 * pnpm v10 (install via [pnpm.io/installation](https://pnpm.io/installation))
-* An x402-compatible server to connect to (for this demo, we'll use the [sample express server with weather data](https://github.com/coinbase/x402/tree/main/examples/typescript/servers/express) from the x402 repo, or any external x402 API)
+* An x402-compatible server to connect to (for this demo, we'll use the [sample express server with weather data](https://github.com/x402-foundation/x402/tree/main/examples/typescript/servers/express) from the x402 repo, or any external x402 API)
 * An Ethereum wallet with USDC (on Base Sepolia or Base Mainnet) and/or a Solana wallet with USDC (on Devnet or Mainnet)
 * [Claude Desktop with MCP support](https://claude.ai/download)
 
@@ -31,7 +31,7 @@ This lets you (or your agent) access paid APIs programmatically, with no manual 
 
 ```bash
 # Clone the x402 repository
-git clone https://github.com/coinbase/x402.git
+git clone https://github.com/x402-foundation/x402.git
 cd x402/examples/typescript
 
 # Install dependencies and build packages
@@ -306,7 +306,7 @@ The example uses these x402 v2 packages:
 
 ### Next Steps
 
-* [See the full example in the repo](https://github.com/coinbase/x402/tree/main/examples/typescript/clients/mcp)
+* [See the full example in the repo](https://github.com/x402-foundation/x402/tree/main/examples/typescript/clients/mcp)
 * Try integrating with your own x402-compatible APIs
 * Extend the MCP server with more tools or custom logic as needed
 * [Learn about building x402 servers](/getting-started/quickstart-for-sellers)

@@ -15,8 +15,9 @@
     "eip2612GasSponsoring",
     "erc20ApprovalGasSponsoring"
   ],
+  "schemes": ["exact", "upto"],
   "evm": {
-    "transferMethods": ["eip3009", "permit2"]
+    "transferMethods": ["eip3009", "permit2", "upto"]
   },
   "environment": {
     "required": [

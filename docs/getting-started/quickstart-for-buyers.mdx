@@ -12,7 +12,7 @@ Before you begin, ensure you have:
 * A service that requires payment via x402
 
 **Note**\
-There are pre-configured [examples available in the x402 repo](https://github.com/coinbase/x402/tree/main/examples), including examples for [fetch](https://github.com/coinbase/x402/tree/main/examples/typescript/clients/fetch), [Axios](https://github.com/coinbase/x402/tree/main/examples/typescript/clients/axios), [Go](https://github.com/coinbase/x402/tree/main/examples/go/clients), and [MCP](https://github.com/coinbase/x402/tree/main/examples/typescript/clients/mcp).
+There are pre-configured [examples available in the x402 repo](https://github.com/x402-foundation/x402/tree/main/examples), including examples for [fetch](https://github.com/x402-foundation/x402/tree/main/examples/typescript/clients/fetch), [Axios](https://github.com/x402-foundation/x402/tree/main/examples/typescript/clients/axios), [Go](https://github.com/x402-foundation/x402/tree/main/examples/go/clients), and [MCP](https://github.com/x402-foundation/x402/tree/main/examples/typescript/clients/mcp).
 
 ### 1. Install Dependencies
 
@@ -30,6 +30,9 @@ There are pre-configured [examples available in the x402 repo](https://github.co
     # For Solana support, also add:
     npm install @x402/svm
 
+    # For Algorand support, also add:
+    npm install @x402/avm
+
     # For Aptos support, also add:
     npm install @x402/aptos
 
@@ -41,7 +44,7 @@ There are pre-configured [examples available in the x402 repo](https://github.co
     Add the x402 Go module to your project:
 
     ```bash
-    go get github.com/coinbase/x402/go
+    go get github.com/x402-foundation/x402/go
     ```
   </Tab>
   <Tab title="Python">
@@ -82,7 +85,7 @@ There are pre-configured [examples available in the x402 repo](https://github.co
   <Tab title="Go">
     ```go
     import (
-        evmsigners "github.com/coinbase/x402/go/signers/evm"
+        evmsigners "github.com/x402-foundation/x402/go/signers/evm"
     )
 
     // Load private key from environment
@@ -138,6 +141,17 @@ const privateKey = new Ed25519PrivateKey(process.env.APTOS_PRIVATE_KEY!);
 const aptosSigner = Account.fromPrivateKey({ privateKey });
 ```
 
+#### Algorand (AVM)
+
+Use the `@x402/avm` package to instantiate a signer:
+
+```typescript
+import { toClientAvmSigner } from "@x402/avm";
+
+// Create signer from Base64-encoded private key (64-byte: seed + pubkey)
+const avmSigner = toClientAvmSigner(process.env.AVM_PRIVATE_KEY!);
+```
+
 #### Stellar
 
 Use the Stellar SDK to instantiate a signer:
@@ -156,7 +170,7 @@ const stellarSigner = createEd25519Signer(
 
 <Tabs>
   <Tab title="Fetch">
-    **@x402/fetch** extends the native `fetch` API to handle 402 responses and payment headers for you. [Full example here](https://github.com/coinbase/x402/tree/main/examples/typescript/clients/fetch)
+    **@x402/fetch** extends the native `fetch` API to handle 402 responses and payment headers for you. [Full example here](https://github.com/x402-foundation/x402/tree/main/examples/typescript/clients/fetch)
 
     ```typescript
     import { wrapFetchWithPayment } from "@x402/fetch";
@@ -193,7 +207,7 @@ const stellarSigner = createEd25519Signer(
     ```
   </Tab>
   <Tab title="Axios">
-    **@x402/axios** adds a payment interceptor to Axios, so your requests are retried with payment headers automatically. [Full example here](https://github.com/coinbase/x402/tree/main/examples/typescript/clients/axios)
+    **@x402/axios** adds a payment interceptor to Axios, so your requests are retried with payment headers automatically. [Full example here](https://github.com/x402-foundation/x402/tree/main/examples/typescript/clients/axios)
 
     ```typescript
     import { x402Client, wrapAxiosWithPayment, x402HTTPClient } from "@x402/axios";
@@ -227,7 +241,7 @@ const stellarSigner = createEd25519Signer(
     ```
   </Tab>
   <Tab title="Go">
-    [Full example here](https://github.com/coinbase/x402/tree/main/examples/go/clients/http)
+    [Full example here](https://github.com/x402-foundation/x402/tree/main/examples/go/clients/http)
 
     ```go
     package main
@@ -240,10 +254,10 @@ const stellarSigner = createEd25519Signer(
         "os"
         "time"
 
-        x402 "github.com/coinbase/x402/go"
-        x402http "github.com/coinbase/x402/go/http"
-        evm "github.com/coinbase/x402/go/mechanisms/evm/exact/client"
-        evmsigners "github.com/coinbase/x402/go/signers/evm"
+        x402 "github.com/x402-foundation/x402/go"
+        x402http "github.com/x402-foundation/x402/go/http"
+        evm "github.com/x402-foundation/x402/go/mechanisms/evm/exact/client"
+        evmsigners "github.com/x402-foundation/x402/go/signers/evm"
     )
 
     func main() {
@@ -290,7 +304,7 @@ const stellarSigner = createEd25519Signer(
   <Tab title="Python (httpx)">
     **httpx** provides async HTTP client support with automatic 402 payment handling.
 
-    [Full HTTPX example](https://github.com/coinbase/x402/tree/main/examples/python/clients/httpx) | [Full Requests example](https://github.com/coinbase/x402/tree/main/examples/python/clients/requests)
+    [Full HTTPX example](https://github.com/x402-foundation/x402/tree/main/examples/python/clients/httpx) | [Full Requests example](https://github.com/x402-foundation/x402/tree/main/examples/python/clients/requests)
 
     ```python
     import asyncio
@@ -330,7 +344,7 @@ const stellarSigner = createEd25519Signer(
   <Tab title="Python (requests)">
     **requests** provides sync HTTP client support with automatic 402 payment handling.
 
-    [Full Requests example](https://github.com/coinbase/x402/tree/main/examples/python/clients/requests)
+    [Full Requests example](https://github.com/x402-foundation/x402/tree/main/examples/python/clients/requests)
 
     ```python
     import os
@@ -405,6 +419,12 @@ You can register multiple payment schemes to handle different networks:
     const aptosSigner = Account.fromPrivateKey({ privateKey: aptosPrivateKey });
     client.register("aptos:*", new ExactAptosScheme(aptosSigner));
 
+    // For Algorand support, also add:
+    import { ExactAvmScheme, toClientAvmSigner } from "@x402/avm";
+
+    const avmSigner = toClientAvmSigner(process.env.AVM_PRIVATE_KEY!);
+    client.register("algorand:*", new ExactAvmScheme(avmSigner));
+
     // For Stellar support, also add:
     import { ExactStellarScheme, createEd25519Signer } from "@x402/stellar";
 
@@ -418,12 +438,12 @@ You can register multiple payment schemes to handle different networks:
   <Tab title="Go">
     ```go
     import (
-        x402 "github.com/coinbase/x402/go"
-        x402http "github.com/coinbase/x402/go/http"
-        evm "github.com/coinbase/x402/go/mechanisms/evm/exact/client"
-        svm "github.com/coinbase/x402/go/mechanisms/svm/exact/client"
-        evmsigners "github.com/coinbase/x402/go/signers/evm"
-        svmsigners "github.com/coinbase/x402/go/signers/svm"
+        x402 "github.com/x402-foundation/x402/go"
+        x402http "github.com/x402-foundation/x402/go/http"
+        evm "github.com/x402-foundation/x402/go/mechanisms/evm/exact/client"
+        svm "github.com/x402-foundation/x402/go/mechanisms/svm/exact/client"
+        evmsigners "github.com/x402-foundation/x402/go/signers/evm"
+        svmsigners "github.com/x402-foundation/x402/go/signers/svm"
     )
 
     // Create signers
@@ -480,6 +500,74 @@ You can register multiple payment schemes to handle different networks:
   </Tab>
 </Tabs>
 
+### Supporting the Upto Scheme
+
+If you need to interact with services that use the `upto` payment scheme (usage-based billing), register the `UptoEvmScheme` alongside your existing exact schemes. The upto scheme is transparent to the buyer -- the SDK handles the max-authorization signing automatically, and you are only charged the actual settled amount (which may be less than the authorized maximum).
+
+<Tabs>
+  <Tab title="TypeScript">
+    ```typescript
+    import { x402Client } from "@x402/core/client";
+    import { ExactEvmScheme } from "@x402/evm/exact/client";
+    import { UptoEvmScheme } from "@x402/evm/upto/client";
+    import { privateKeyToAccount } from "viem/accounts";
+
+    const signer = privateKeyToAccount(process.env.EVM_PRIVATE_KEY as `0x${string}`);
+
+    const client = new x402Client();
+    client.register("eip155:*", new ExactEvmScheme(signer));
+    client.register("eip155:*", new UptoEvmScheme(signer));
+    ```
+  </Tab>
+  <Tab title="Go">
+    ```go
+    import (
+        x402 "github.com/x402-foundation/x402/go"
+        exactevm "github.com/x402-foundation/x402/go/mechanisms/evm/exact/client"
+        uptoevm "github.com/x402-foundation/x402/go/mechanisms/evm/upto/client"
+        evmsigners "github.com/x402-foundation/x402/go/signers/evm"
+    )
+
+    evmSigner, _ := evmsigners.NewClientSignerFromPrivateKey(os.Getenv("EVM_PRIVATE_KEY"))
+
+    x402Client := x402.Newx402Client().
+        Register("eip155:*", exactevm.NewExactEvmScheme(evmSigner)).
+        Register("eip155:*", uptoevm.NewUptoEvmScheme(evmSigner))
+    ```
+  </Tab>
+  <Tab title="Python">
+    ```python
+    import asyncio
+    import os
+    from eth_account import Account
+
+    from x402 import x402Client
+    from x402.http.clients import x402HttpxClient
+    from x402.mechanisms.evm import EthAccountSigner
+    from x402.mechanisms.evm.exact.register import register_exact_evm_client
+    from x402.mechanisms.evm.upto.client import UptoEvmScheme
+
+
+    async def main() -> None:
+        account = Account.from_key(os.getenv("EVM_PRIVATE_KEY"))
+        signer = EthAccountSigner(account)
+
+        client = x402Client()
+        register_exact_evm_client(client, signer)
+        client.register("eip155:*", UptoEvmScheme(signer))
+
+        async with x402HttpxClient(client) as http:
+            response = await http.get("https://api.example.com/paid-endpoint")
+            print(f"Response: {response.text}")
+
+
+    asyncio.run(main())
+    ```
+  </Tab>
+</Tabs>
+
+**Note:** The `upto` scheme is currently available on EVM networks only. When registered, the SDK automatically selects the correct scheme based on what the server advertises in its 402 response.
+
 ### 4. Discover Available Services (Optional)
 
 Instead of hardcoding endpoints, you can use the x402 Bazaar to dynamically discover available services. This is especially powerful for building autonomous agents.
@@ -532,10 +620,10 @@ try {
 
 * Install x402 client packages (`@x402/fetch` or `@x402/axios`) and mechanism packages (`@x402/evm`, `@x402/svm`, `@x402/aptos`)
 * Create a wallet signer
-* Create an `x402Client` and register payment schemes
+* Create an `x402Client` and register payment schemes (`exact` for fixed-price, `upto` for usage-based billing)
 * Use the provided wrapper/interceptor to make paid API requests
 * (Optional) Use the x402 Bazaar to discover services dynamically
-* Payment flows are handled automatically for you
+* Payment flows are handled automatically for you -- including `upto` where you only pay the actual usage
 
 ***
 
@@ -549,6 +637,6 @@ try {
 * [@x402/fetch on npm](https://www.npmjs.com/package/@x402/fetch)
 * [@x402/axios on npm](https://www.npmjs.com/package/@x402/axios)
 * [@x402/evm on npm](https://www.npmjs.com/package/@x402/evm)
-* [x402 Go module](https://github.com/coinbase/x402/tree/main/go)
+* [x402 Go module](https://github.com/x402-foundation/x402/tree/main/go)
 
 For questions or support, join our [Discord](https://discord.gg/cdp).

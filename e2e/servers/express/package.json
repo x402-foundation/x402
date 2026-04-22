@@ -11,6 +11,7 @@
   },
   "dependencies": {
     "@x402/aptos": "workspace:*",
+    "@x402/avm": "workspace:*",
     "@x402/core": "workspace:*",
     "@x402/express": "workspace:*",
     "@x402/evm": "workspace:*",

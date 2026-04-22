@@ -1,6 +1,6 @@
 package unit_test
 
-import "github.com/coinbase/x402/go/mechanisms/evm"
+import "github.com/x402-foundation/x402/go/mechanisms/evm"
 
 // defaultTestWitness returns a standard Permit2Witness fixture for unit tests.
 // Tests that need to vary one field should call this and override only that field,

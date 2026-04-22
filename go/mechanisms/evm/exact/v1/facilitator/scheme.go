@@ -11,11 +11,11 @@ import (
 
 	"github.com/ethereum/go-ethereum/common"
 
-	x402 "github.com/coinbase/x402/go"
-	"github.com/coinbase/x402/go/mechanisms/evm"
-	exactfacilitator "github.com/coinbase/x402/go/mechanisms/evm/exact/facilitator"
-	evmv1 "github.com/coinbase/x402/go/mechanisms/evm/v1"
-	"github.com/coinbase/x402/go/types"
+	x402 "github.com/x402-foundation/x402/go"
+	"github.com/x402-foundation/x402/go/mechanisms/evm"
+	exactfacilitator "github.com/x402-foundation/x402/go/mechanisms/evm/exact/facilitator"
+	evmv1 "github.com/x402-foundation/x402/go/mechanisms/evm/v1"
+	"github.com/x402-foundation/x402/go/types"
 )
 
 // ExactEvmSchemeV1Config holds configuration for the ExactEvmSchemeV1 facilitator
@@ -215,7 +215,7 @@ func (f *ExactEvmSchemeV1) verify(
 			classification.SigData,
 		)
 		if err != nil {
-			return nil, x402.NewVerifyError(ErrInvalidPayload, evmPayload.Authorization.From, err.Error())
+			return nil, x402.NewVerifyError(exactfacilitator.ErrEip3009SimulationFailed, evmPayload.Authorization.From, err.Error())
 		}
 		if !simulationSucceeded {
 			reason := exactfacilitator.DiagnoseEIP3009SimulationFailure(

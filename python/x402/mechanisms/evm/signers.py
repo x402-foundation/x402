@@ -329,7 +329,7 @@ class FacilitatorWeb3Signer:
             abi=abi,
         )
         func = getattr(contract.functions, function_name)
-        return func(*args).call()
+        return func(*args).call({"from": Web3.to_checksum_address(self._account.address)})
 
     def verify_typed_data(
         self,

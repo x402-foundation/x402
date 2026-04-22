@@ -1,6 +1,6 @@
 # x402 Advanced Facilitator Examples
 
-Express.js facilitator service demonstrating advanced x402 patterns including all-networks support, bazaar discovery, and lifecycle hooks.
+Express.js facilitator service demonstrating advanced x402 patterns including all-networks support, bazaar discovery, Permit2 gas-sponsoring extensions (`gas_extensions`), and lifecycle hooks.
 
 ## Prerequisites
 
@@ -38,6 +38,7 @@ cd facilitator/advanced
 ```bash
 pnpm dev:all-networks   # All supported networks
 pnpm dev:bazaar         # Bazaar discovery extension
+pnpm dev:gas-extensions # exact + upto with EIP-2612 and ERC-20 approval gas sponsoring
 ```
 
 ## Available Examples
@@ -48,6 +49,7 @@ Each example demonstrates a specific advanced pattern:
 | -------------- | ----------------------- | -------------------------------------------------------- |
 | `all-networks` | `pnpm dev:all-networks` | All supported networks with optional chain configuration |
 | `bazaar`       | `pnpm dev:bazaar`       | Bazaar discovery extension for cataloging x402 resources |
+| `gas_extensions` | `pnpm dev:gas-extensions` | Base Sepolia `exact` + `upto` with both Permit2 gas-sponsoring extensions |
 
 ## API Endpoints
 

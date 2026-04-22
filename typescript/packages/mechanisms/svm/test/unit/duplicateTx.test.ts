@@ -281,6 +281,185 @@ describe("Memo Uniqueness", () => {
     expect(memoString).toMatch(/^[0-9a-f]+$/);
   });
 
+  it("uses extra.memo as memo data when provided", async () => {
+    blockhashes = [FIXED_BLOCKHASH];
+
+    const { ExactSvmScheme } = await import("../../src/exact/client/scheme");
+    const { decodeTransactionFromPayload } = await import("../../src/utils");
+
+    const clientSigner = await createSigner();
+    const feePayer = await createSigner();
+    const payTo = await createSigner();
+
+    const client = new ExactSvmScheme(clientSigner);
+    mockAtaMap = {
+      [clientSigner.address]: clientSigner.address as Address,
+      [payTo.address]: payTo.address as Address,
+    };
+
+    const sellerMemo = "pi_3abc123def456";
+    const requirements: PaymentRequirements = {
+      scheme: "exact",
+      network: SOLANA_DEVNET_CAIP2,
+      asset: USDC_DEVNET_ADDRESS,
+      amount: "100000",
+      payTo: payTo.address,
+      maxTimeoutSeconds: 3600,
+      extra: {
+        feePayer: feePayer.address,
+        memo: sellerMemo,
+      },
+    };
+
+    const payload = await client.createPaymentPayload(2, requirements);
+    const txBase64 = (payload.payload as { transaction: string }).transaction;
+
+    const tx = decodeTransactionFromPayload({ transaction: txBase64 });
+    const compiled = getCompiledTransactionMessageDecoder().decode(tx.messageBytes);
+    const decompiled = decompileTransactionMessage(compiled);
+    const instructions = decompiled.instructions ?? [];
+
+    const memoIx = instructions.find(ix => ix.programAddress.toString() === MEMO_PROGRAM_ADDRESS);
+    expect(memoIx).toBeDefined();
+
+    const memoData = new TextDecoder().decode(new Uint8Array(memoIx!.data!));
+    expect(memoData).toBe(sellerMemo);
+  });
+
+  it("produces identical memo data with extra.memo across calls", async () => {
+    blockhashes = [FIXED_BLOCKHASH, FIXED_BLOCKHASH];
+
+    const { ExactSvmScheme } = await import("../../src/exact/client/scheme");
+    const { decodeTransactionFromPayload } = await import("../../src/utils");
+
+    const clientSigner = await createSigner();
+    const feePayer = await createSigner();
+    const payTo = await createSigner();
+
+    const client = new ExactSvmScheme(clientSigner);
+    mockAtaMap = {
+      [clientSigner.address]: clientSigner.address as Address,
+      [payTo.address]: payTo.address as Address,
+    };
+
+    const sellerMemo = "order_12345";
+    const requirements: PaymentRequirements = {
+      scheme: "exact",
+      network: SOLANA_DEVNET_CAIP2,
+      asset: USDC_DEVNET_ADDRESS,
+      amount: "100000",
+      payTo: payTo.address,
+      maxTimeoutSeconds: 3600,
+      extra: {
+        feePayer: feePayer.address,
+        memo: sellerMemo,
+      },
+    };
+
+    const payload1 = await client.createPaymentPayload(2, requirements);
+    const payload2 = await client.createPaymentPayload(2, requirements);
+
+    const decode = (p: typeof payload1) => {
+      const txBase64 = (p.payload as { transaction: string }).transaction;
+      const tx = decodeTransactionFromPayload({ transaction: txBase64 });
+      const compiled = getCompiledTransactionMessageDecoder().decode(tx.messageBytes);
+      const decompiled = decompileTransactionMessage(compiled);
+      const memoIx = (decompiled.instructions ?? []).find(
+        ix => ix.programAddress.toString() === MEMO_PROGRAM_ADDRESS,
+      );
+      return new TextDecoder().decode(new Uint8Array(memoIx!.data!));
+    };
+
+    expect(decode(payload1)).toBe(sellerMemo);
+    expect(decode(payload2)).toBe(sellerMemo);
+  });
+
+  it("falls back to random nonce when extra.memo is absent", async () => {
+    blockhashes = [FIXED_BLOCKHASH, FIXED_BLOCKHASH];
+
+    const { ExactSvmScheme } = await import("../../src/exact/client/scheme");
+    const { decodeTransactionFromPayload } = await import("../../src/utils");
+
+    const clientSigner = await createSigner();
+    const feePayer = await createSigner();
+    const payTo = await createSigner();
+
+    const client = new ExactSvmScheme(clientSigner);
+    mockAtaMap = {
+      [clientSigner.address]: clientSigner.address as Address,
+      [payTo.address]: payTo.address as Address,
+    };
+
+    const requirements: PaymentRequirements = {
+      scheme: "exact",
+      network: SOLANA_DEVNET_CAIP2,
+      asset: USDC_DEVNET_ADDRESS,
+      amount: "100000",
+      payTo: payTo.address,
+      maxTimeoutSeconds: 3600,
+      extra: {
+        feePayer: feePayer.address,
+        // no memo
+      },
+    };
+
+    const payload1 = await client.createPaymentPayload(2, requirements);
+    const payload2 = await client.createPaymentPayload(2, requirements);
+
+    const decode = (p: typeof payload1) => {
+      const txBase64 = (p.payload as { transaction: string }).transaction;
+      const tx = decodeTransactionFromPayload({ transaction: txBase64 });
+      const compiled = getCompiledTransactionMessageDecoder().decode(tx.messageBytes);
+      const decompiled = decompileTransactionMessage(compiled);
+      const memoIx = (decompiled.instructions ?? []).find(
+        ix => ix.programAddress.toString() === MEMO_PROGRAM_ADDRESS,
+      );
+      return new TextDecoder().decode(new Uint8Array(memoIx!.data!));
+    };
+
+    const memo1 = decode(payload1);
+    const memo2 = decode(payload2);
+
+    // Random nonces should differ
+    expect(memo1).not.toBe(memo2);
+    // Random nonces are 32 hex chars
+    expect(memo1).toMatch(/^[0-9a-f]{32}$/);
+    expect(memo2).toMatch(/^[0-9a-f]{32}$/);
+  });
+
+  it("rejects extra.memo exceeding 256 bytes", async () => {
+    blockhashes = [FIXED_BLOCKHASH];
+
+    const { ExactSvmScheme } = await import("../../src/exact/client/scheme");
+
+    const clientSigner = await createSigner();
+    const feePayer = await createSigner();
+    const payTo = await createSigner();
+
+    const client = new ExactSvmScheme(clientSigner);
+    mockAtaMap = {
+      [clientSigner.address]: clientSigner.address as Address,
+      [payTo.address]: payTo.address as Address,
+    };
+
+    const requirements: PaymentRequirements = {
+      scheme: "exact",
+      network: SOLANA_DEVNET_CAIP2,
+      asset: USDC_DEVNET_ADDRESS,
+      amount: "100000",
+      payTo: payTo.address,
+      maxTimeoutSeconds: 3600,
+      extra: {
+        feePayer: feePayer.address,
+        memo: "x".repeat(257),
+      },
+    };
+
+    await expect(client.createPaymentPayload(2, requirements)).rejects.toThrow(
+      /extra\.memo exceeds maximum/,
+    );
+  });
+
   // Empty accounts is critical - signers break facilitator verification
   it("memo instruction has no accounts", async () => {
     blockhashes = [FIXED_BLOCKHASH];

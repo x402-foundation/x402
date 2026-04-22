@@ -7,12 +7,12 @@ import (
 	"os"
 	"time"
 
-	x402 "github.com/coinbase/x402/go"
-	x402http "github.com/coinbase/x402/go/http"
-	nethttpmw "github.com/coinbase/x402/go/http/nethttp"
-	evm "github.com/coinbase/x402/go/mechanisms/evm/exact/server"
-	svm "github.com/coinbase/x402/go/mechanisms/svm/exact/server"
 	"github.com/joho/godotenv"
+	x402 "github.com/x402-foundation/x402/go"
+	x402http "github.com/x402-foundation/x402/go/http"
+	nethttpmw "github.com/x402-foundation/x402/go/http/nethttp"
+	evm "github.com/x402-foundation/x402/go/mechanisms/evm/exact/server"
+	svm "github.com/x402-foundation/x402/go/mechanisms/svm/exact/server"
 )
 
 const (

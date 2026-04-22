@@ -70,7 +70,7 @@ Register hooks on the core resource server for verification and settlement lifec
   </Tab>
   <Tab title="Go">
     ```go
-    import x402 "github.com/coinbase/x402/go"
+    import x402 "github.com/x402-foundation/x402/go"
 
     server := x402.Newx402ResourceServer(facilitatorClient)
 
@@ -121,8 +121,8 @@ Register hooks for HTTP-specific request handling before payment processing. Use
     ```go
     import (
         "context"
-        x402 "github.com/coinbase/x402/go"
-        x402http "github.com/coinbase/x402/go/http"
+        x402 "github.com/x402-foundation/x402/go"
+        x402http "github.com/x402-foundation/x402/go/http"
     )
 
     // Create resource server
@@ -210,7 +210,7 @@ Register hooks on the core client for payment payload creation lifecycle events.
   </Tab>
   <Tab title="Go">
     ```go
-    import x402 "github.com/coinbase/x402/go"
+    import x402 "github.com/x402-foundation/x402/go"
 
     client := x402.Newx402Client()
 
@@ -342,7 +342,7 @@ Register hooks on the facilitator for verification and settlement lifecycle even
   </Tab>
   <Tab title="Go">
     ```go
-    import x402 "github.com/coinbase/x402/go"
+    import x402 "github.com/x402-foundation/x402/go"
 
     facilitator := x402.Newx402Facilitator()
 

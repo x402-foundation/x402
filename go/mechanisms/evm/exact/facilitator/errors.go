@@ -1,6 +1,6 @@
 package facilitator
 
-import "github.com/coinbase/x402/go/mechanisms/evm"
+import "github.com/x402-foundation/x402/go/mechanisms/evm"
 
 // Facilitator error constants for the exact EVM scheme
 const (

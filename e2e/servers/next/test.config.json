@@ -78,6 +78,13 @@
       "protocolFamily": "svm"
     },
     {
+      "path": "/api/exact/avm",
+      "method": "GET",
+      "description": "AVM endpoint using proxy middleware",
+      "requiresPayment": true,
+      "protocolFamily": "avm"
+    },
+    {
       "path": "/api/exact/aptos",
       "method": "GET",
       "description": "Aptos endpoint using proxy middleware",
@@ -128,6 +135,6 @@
   ],
   "environment": {
     "required": ["PORT", "EVM_PAYEE_ADDRESS", "SVM_PAYEE_ADDRESS", "FACILITATOR_URL"],
-    "optional": ["APTOS_PAYEE_ADDRESS", "STELLAR_PAYEE_ADDRESS"]
+    "optional": ["AVM_PAYEE_ADDRESS", "APTOS_PAYEE_ADDRESS", "STELLAR_PAYEE_ADDRESS"]
   }
 }

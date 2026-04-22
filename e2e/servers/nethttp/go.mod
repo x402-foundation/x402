@@ -1,12 +1,12 @@
-module github.com/coinbase/x402/e2e/servers/nethttp
+module github.com/x402-foundation/x402/e2e/servers/nethttp
 
 go 1.24.0
 
 toolchain go1.24.1
 
 require (
-	github.com/coinbase/x402/go v0.0.0
 	github.com/joho/godotenv v1.5.1
+	github.com/x402-foundation/x402/go v0.0.0
 )
 
 require (
@@ -64,4 +64,4 @@ require (
 	golang.org/x/time v0.14.0 // indirect
 )
 
-replace github.com/coinbase/x402/go => ../../../go
+replace github.com/x402-foundation/x402/go => ../../../go

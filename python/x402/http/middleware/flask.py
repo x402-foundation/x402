@@ -18,6 +18,7 @@ except ImportError as e:
         "Flask middleware requires the flask package. Install with: uv add x402[flask]"
     ) from e
 
+from ..constants import SETTLEMENT_OVERRIDES_HEADER
 from ..facilitator_client_base import FacilitatorResponseError
 from ..types import (
     HTTPAdapter,
@@ -437,12 +438,23 @@ class PaymentMiddleware:
                     response_wrapper.status_code is not None
                     and 200 <= response_wrapper.status_code < 300
                 ):
+                    # Extract settlement overrides from response headers and strip them
+                    overrides = self._http_server._extract_settlement_overrides(
+                        response_wrapper.headers,
+                    )
+                    response_wrapper.headers = [
+                        (k, v)
+                        for k, v in response_wrapper.headers
+                        if k.lower() != SETTLEMENT_OVERRIDES_HEADER.lower()
+                    ]
+
                     # Settle payment
                     try:
                         settle_result = self._http_server.process_settlement(
                             result.payment_payload,
                             result.payment_requirements,
                             context=context,
+                            settlement_overrides=overrides,
                         )
 
                         if settle_result.success:
@@ -493,6 +505,19 @@ class PaymentMiddleware:
 # ============================================================================
 # Convenience Functions
 # ============================================================================
+
+
+def set_settlement_overrides(response: Any, overrides: dict[str, Any]) -> None:
+    """Set settlement overrides on a Flask response for partial settlement.
+
+    The middleware extracts these before settlement and strips the header
+    from the client response.
+
+    Args:
+        response: Flask ``Response`` object (or ``make_response()`` result).
+        overrides: Settlement overrides, e.g. ``{"amount": "500"}``.
+    """
+    response.headers[SETTLEMENT_OVERRIDES_HEADER] = json.dumps(overrides)
 
 
 def payment_middleware(

@@ -8,9 +8,9 @@ import (
 	"net/url"
 	"os"
 
-	x402gin "github.com/coinbase/x402/go/pkg/gin"
-	"github.com/coinbase/x402/go/pkg/types"
 	"github.com/gin-gonic/gin"
+	x402gin "github.com/x402-foundation/x402/go/pkg/gin"
+	"github.com/x402-foundation/x402/go/pkg/types"
 )
 
 func main() {

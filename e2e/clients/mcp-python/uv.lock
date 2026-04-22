@@ -1,5 +1,5 @@
 version = 1
-revision = 2
+revision = 3
 requires-python = ">=3.10"
 
 [[package]]
@@ -2137,7 +2137,7 @@ wheels = [
 
 [[package]]
 name = "x402"
-version = "2.5.0"
+version = "2.7.0"
 source = { editable = "../../../python/x402" }
 dependencies = [
     { name = "nest-asyncio" },

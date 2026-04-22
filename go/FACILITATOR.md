@@ -29,7 +29,7 @@ Client → Resource Server → Facilitator → Network
 ### Installation
 
 ```bash
-go get github.com/coinbase/x402/go
+go get github.com/x402-foundation/x402/go
 ```
 
 ### Basic Facilitator Server
@@ -39,8 +39,8 @@ package main
 
 import (
     "github.com/gin-gonic/gin"
-    x402 "github.com/coinbase/x402/go"
-    evm "github.com/coinbase/x402/go/mechanisms/evm/exact/facilitator"
+    x402 "github.com/x402-foundation/x402/go"
+    evm "github.com/x402-foundation/x402/go/mechanisms/evm/exact/facilitator"
 )
 
 func main() {
@@ -389,7 +389,7 @@ A race condition exists on Solana where the same payment transaction can be subm
 The SVM mechanism packages include a built-in `SettlementCache` that mitigates this. When registering SVM facilitator schemes, pass a shared cache instance to both V1 and V2 schemes:
 
 ```go
-import svm "github.com/coinbase/x402/go/mechanisms/svm"
+import svm "github.com/x402-foundation/x402/go/mechanisms/svm"
 
 cache := svm.NewSettlementCache()
 v2Scheme := facilitator.NewExactSvmScheme(signer, cache)

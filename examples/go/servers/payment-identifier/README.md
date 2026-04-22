@@ -48,7 +48,7 @@ go run main.go
 ### Declaring the Extension
 
 ```go
-import "github.com/coinbase/x402/go/extensions/paymentidentifier"
+import "github.com/x402-foundation/x402/go/extensions/paymentidentifier"
 
 // Require payment identifier (clients MUST provide one)
 paymentIdExtension := paymentidentifier.DeclarePaymentIdentifierExtension(true)

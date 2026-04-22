@@ -8,7 +8,8 @@
     "eip2612GasSponsoring",
     "erc20ApprovalGasSponsoring"
   ],
-  "evm": { "transferMethods": ["eip3009", "permit2"] },
+  "schemes": ["exact", "upto"],
+  "evm": { "transferMethods": ["eip3009", "permit2", "upto"] },
   "description": "Python Flask server with x402 v2 payment middleware",
   "endpoints": [
     {
@@ -43,6 +44,34 @@
       "requiresPayment": true,
       "protocolFamily": "evm",
       "transferMethod": "permit2",
+      "extensions": ["erc20ApprovalGasSponsoring"],
+      "coldstart": true
+    },
+    {
+      "path": "/upto/evm/permit2",
+      "method": "GET",
+      "description": "Protected endpoint requiring upto Permit2 payment (partial settlement)",
+      "requiresPayment": true,
+      "protocolFamily": "evm",
+      "transferMethod": "upto",
+      "permit2Direct": true
+    },
+    {
+      "path": "/upto/evm/permit2-eip2612GasSponsoring",
+      "method": "GET",
+      "description": "Protected endpoint requiring upto Permit2 payment with EIP-2612 gas sponsoring",
+      "requiresPayment": true,
+      "protocolFamily": "evm",
+      "transferMethod": "upto",
+      "coldstart": true
+    },
+    {
+      "path": "/upto/evm/permit2-erc20ApprovalGasSponsoring",
+      "method": "GET",
+      "description": "Protected endpoint requiring upto Permit2 payment with ERC-20 approval gas sponsoring",
+      "requiresPayment": true,
+      "protocolFamily": "evm",
+      "transferMethod": "upto",
       "extensions": ["erc20ApprovalGasSponsoring"],
       "coldstart": true
     },

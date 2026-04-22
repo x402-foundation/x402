@@ -6,6 +6,7 @@ import {
   SchemeNetworkServer,
   MoneyParser,
 } from "@x402/core/types";
+import { convertToTokenAmount, numberToDecimalString } from "@x402/core/utils";
 import { getAddress } from "viem";
 import { getDefaultAsset } from "../../shared/defaultAssets";
 
@@ -140,7 +141,7 @@ export class UptoEvmScheme implements SchemeNetworkServer {
    */
   private defaultMoneyConversion(amount: number, network: Network): AssetAmount {
     const assetInfo = getDefaultAsset(network);
-    const tokenAmount = this.convertToTokenAmount(amount.toString(), assetInfo.decimals);
+    const tokenAmount = convertToTokenAmount(numberToDecimalString(amount), assetInfo.decimals);
 
     return {
       amount: tokenAmount,
@@ -151,23 +152,5 @@ export class UptoEvmScheme implements SchemeNetworkServer {
         assetTransferMethod: "permit2",
       },
     };
-  }
-
-  /**
-   * Converts a decimal string amount to an integer token amount using the given decimals.
-   *
-   * @param decimalAmount - The amount as a decimal string (e.g. "1.5")
-   * @param decimals - The number of decimal places for the token
-   * @returns The token amount as an integer string in smallest units
-   */
-  private convertToTokenAmount(decimalAmount: string, decimals: number): string {
-    const amount = parseFloat(decimalAmount);
-    if (isNaN(amount)) {
-      throw new Error(`Invalid amount: ${decimalAmount}`);
-    }
-    const [intPart, decPart = ""] = String(amount).split(".");
-    const paddedDec = decPart.padEnd(decimals, "0").slice(0, decimals);
-    const tokenAmount = (intPart + paddedDec).replace(/^0+/, "") || "0";
-    return tokenAmount;
   }
 }

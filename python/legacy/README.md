@@ -1,5 +1,9 @@
 # x402 Python
 
+> **Deprecated (v1)**  
+> The code in `python/legacy` implements x402 **v1**. It is **deprecated** and will only receive **security patches**. Please migrate to **v2** on PyPI: use the `x402` package at version **> 2.0.0** (imports and APIs change). See the [Migration guide: v1 to v2](https://docs.x402.org/guides/migration-v1-to-v2).
+> Legacy examples are available at git tag `archive/legacy-v1-examples`.
+
 Python package for the x402 payments protocol.
 
 ## Installation
@@ -218,4 +222,4 @@ async def foo(request: Request, response: Response):
         )
 ```
 
-For more examples and advanced usage patterns, check out our [examples directory](https://github.com/coinbase/x402/tree/main/examples/python/legacy/).
+For more examples and advanced usage patterns, check out our [examples directory](https://github.com/x402-foundation/x402/tree/main/examples/python/legacy/).

@@ -1,12 +1,12 @@
-module github.com/coinbase/x402/e2e/clients/mcp-go
+module github.com/x402-foundation/x402/e2e/clients/mcp-go
 
 go 1.24.0
 
 toolchain go1.24.1
 
 require (
-	github.com/coinbase/x402/go v0.0.0
 	github.com/modelcontextprotocol/go-sdk v1.3.0
+	github.com/x402-foundation/x402/go v0.0.0
 )
 
 require (
@@ -37,4 +37,4 @@ require (
 	golang.org/x/sys v0.39.0 // indirect
 )
 
-replace github.com/coinbase/x402/go => ../../../go
+replace github.com/x402-foundation/x402/go => ../../../go

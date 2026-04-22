@@ -83,12 +83,12 @@ facilitator := x402.Newx402Facilitator()
 
 ```go
 import (
-    x402 "github.com/coinbase/x402/go"
-    "github.com/coinbase/x402/go/mechanisms/evm"
-    evmv1 "github.com/coinbase/x402/go/mechanisms/evm/exact/v1"
-    "github.com/coinbase/x402/go/mechanisms/svm"
-    svmv1 "github.com/coinbase/x402/go/mechanisms/svm/exact/v1"
-    "github.com/coinbase/x402/go/extensions/bazaar"
+    x402 "github.com/x402-foundation/x402/go"
+    "github.com/x402-foundation/x402/go/mechanisms/evm"
+    evmv1 "github.com/x402-foundation/x402/go/mechanisms/evm/exact/v1"
+    "github.com/x402-foundation/x402/go/mechanisms/svm"
+    svmv1 "github.com/x402-foundation/x402/go/mechanisms/svm/exact/v1"
+    "github.com/x402-foundation/x402/go/extensions/bazaar"
 )
 
 // Create facilitator
@@ -258,9 +258,9 @@ export PORT=4024
 
 ## Dependencies
 
-- `github.com/coinbase/x402/go` - Core facilitator
-- `github.com/coinbase/x402/go/mechanisms/evm` - EVM mechanisms
-- `github.com/coinbase/x402/go/mechanisms/svm` - SVM mechanisms
-- `github.com/coinbase/x402/go/extensions/bazaar` - Bazaar extension
+- `github.com/x402-foundation/x402/go` - Core facilitator
+- `github.com/x402-foundation/x402/go/mechanisms/evm` - EVM mechanisms
+- `github.com/x402-foundation/x402/go/mechanisms/svm` - SVM mechanisms
+- `github.com/x402-foundation/x402/go/extensions/bazaar` - Bazaar extension
 - `github.com/ethereum/go-ethereum` - Ethereum client
 - `github.com/gagliardetto/solana-go` - Solana client

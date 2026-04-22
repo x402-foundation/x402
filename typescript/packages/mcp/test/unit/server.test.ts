@@ -458,6 +458,77 @@ describe("createPaymentWrapper", () => {
     });
   });
 
+  describe("extensions", () => {
+    it("should include extensions in 402 response when configured", async () => {
+      const extensions = {
+        bazaar: {
+          info: {
+            input: {
+              type: "mcp",
+              toolName: "test",
+            },
+          },
+        },
+      };
+
+      const mockPaymentRequiredWithExtensions = {
+        ...mockPaymentRequired,
+        extensions,
+      };
+
+      mockResourceServer.createPaymentRequiredResponse.mockResolvedValueOnce(
+        mockPaymentRequiredWithExtensions,
+      );
+
+      const paid = createPaymentWrapper(
+        mockResourceServer as unknown as Parameters<typeof createPaymentWrapper>[0],
+        {
+          accepts: [mockPaymentRequirements],
+          extensions,
+        },
+      );
+
+      const handler = vi.fn().mockResolvedValue({
+        content: [{ type: "text", text: "success" }],
+      });
+
+      const wrappedHandler = paid(handler);
+      const result = await wrappedHandler({ test: "arg" }, {});
+
+      expect(result.isError).toBe(true);
+      expect(mockResourceServer.createPaymentRequiredResponse).toHaveBeenCalledWith(
+        [mockPaymentRequirements],
+        expect.any(Object),
+        "Payment required to access this tool",
+        extensions,
+      );
+      expect((result.structuredContent as Record<string, unknown>)?.extensions).toEqual(extensions);
+    });
+
+    it("should not include extensions when not configured", async () => {
+      const paid = createPaymentWrapper(
+        mockResourceServer as unknown as Parameters<typeof createPaymentWrapper>[0],
+        {
+          accepts: [mockPaymentRequirements],
+        },
+      );
+
+      const handler = vi.fn().mockResolvedValue({
+        content: [{ type: "text", text: "success" }],
+      });
+
+      const wrappedHandler = paid(handler);
+      await wrappedHandler({ test: "arg" }, {});
+
+      expect(mockResourceServer.createPaymentRequiredResponse).toHaveBeenCalledWith(
+        [mockPaymentRequirements],
+        expect.any(Object),
+        "Payment required to access this tool",
+        undefined,
+      );
+    });
+  });
+
   describe("settlement failures", () => {
     it("should return 402 error when settlement fails", async () => {
       mockResourceServer.settlePayment.mockRejectedValueOnce(new Error("Settlement failed"));

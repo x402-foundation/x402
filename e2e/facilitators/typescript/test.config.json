@@ -5,6 +5,7 @@
   "protocolFamilies": [
     "evm",
     "svm",
+    "avm",
     "aptos",
     "stellar"
   ],
@@ -27,10 +28,12 @@
       "SVM_PRIVATE_KEY"
     ],
     "optional": [
+      "AVM_PRIVATE_KEY",
       "APTOS_PRIVATE_KEY",
       "STELLAR_PRIVATE_KEY",
       "EVM_NETWORK",
       "SVM_NETWORK",
+      "AVM_NETWORK",
       "APTOS_NETWORK",
       "STELLAR_NETWORK"
     ]

@@ -9,7 +9,7 @@ import (
 	"github.com/ethereum/go-ethereum/accounts/abi"
 	"github.com/ethereum/go-ethereum/common"
 
-	"github.com/coinbase/x402/go/mechanisms/evm"
+	"github.com/x402-foundation/x402/go/mechanisms/evm"
 )
 
 // ParsedEIP3009Authorization contains the parsed transfer arguments used by verify and settle.
@@ -434,6 +434,25 @@ func mustNonce(nonce string) [32]byte {
 	var nonceArray [32]byte
 	copy(nonceArray[:], nonceBytes)
 	return nonceArray
+}
+
+// parseEIP3009TransferError maps EIP-3009 contract revert reasons to specific error codes.
+func parseEIP3009TransferError(err error) string {
+	msg := err.Error()
+	switch {
+	case strings.Contains(msg, "authorization is expired") || strings.Contains(msg, "AuthorizationExpired"):
+		return ErrValidBeforeExpired
+	case strings.Contains(msg, "authorization is not yet valid") || strings.Contains(msg, "AuthorizationNotYetValid"):
+		return ErrValidAfterInFuture
+	case strings.Contains(msg, "authorization is used") || strings.Contains(msg, "AuthorizationAlreadyUsed") || strings.Contains(msg, "AuthorizationUsedOrCanceled"):
+		return ErrNonceAlreadyUsed
+	case strings.Contains(msg, "transfer amount exceeds balance") || strings.Contains(msg, "ERC20InsufficientBalance"):
+		return ErrInsufficientBalance
+	case strings.Contains(msg, "invalid signature") || strings.Contains(msg, "SignerMismatch") || strings.Contains(msg, "InvalidSignatureV") || strings.Contains(msg, "InvalidSignatureS"):
+		return ErrInvalidSignature
+	default:
+		return ErrFailedToExecuteTransfer
+	}
 }
 
 func asBigInt(value interface{}) *big.Int {

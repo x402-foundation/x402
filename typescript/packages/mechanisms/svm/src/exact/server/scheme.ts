@@ -6,7 +6,7 @@ import type {
   SchemeNetworkServer,
   MoneyParser,
 } from "@x402/core/types";
-import { convertToTokenAmount, getUsdcAddress } from "../../utils";
+import { convertToTokenAmount, getUsdcAddress, numberToDecimalString } from "../../utils";
 
 /**
  * SVM server implementation for the Exact payment scheme.
@@ -137,7 +137,7 @@ export class ExactSvmScheme implements SchemeNetworkServer {
    */
   private defaultMoneyConversion(amount: number, network: Network): AssetAmount {
     // Convert decimal amount to token amount (USDC has 6 decimals)
-    const tokenAmount = convertToTokenAmount(amount.toString(), 6);
+    const tokenAmount = convertToTokenAmount(numberToDecimalString(amount), 6);
 
     return {
       amount: tokenAmount,

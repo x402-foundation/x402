@@ -9,7 +9,7 @@ x402 is an open protocol for internet-native payments built around the HTTP 402 
 - Payment-gated content access
 - Real-time payment verification
 - Payment settlement
-- Integration with EVM-compatible blockchains
+- Integration with EVM, SVM, and AVM blockchains
 
 ## Features
 
@@ -38,8 +38,10 @@ x402 is an open protocol for internet-native payments built around the HTTP 402 
   FACILITATOR_URL=your_facilitator_url
   RESOURCE_EVM_ADDRESS=your_evm_wallet_address
   RESOURCE_SVM_ADDRESS=your_solana_wallet_address
+  RESOURCE_AVM_ADDRESS=your_algorand_wallet_address
   FACILITATOR_EVM_PRIVATE_KEY=your_evm_private_key
   FACILITATOR_SVM_PRIVATE_KEY=your_solana_private_key
+  FACILITATOR_AVM_PRIVATE_KEY=your_algorand_private_key
   ```
 
 ### Running the Development Server
@@ -151,7 +153,7 @@ We welcome projects that are building with x402! To add your project to our ecos
 To learn more about the technologies used in this project:
 
 - [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API
-- [x402 Protocol Documentation](https://github.com/coinbase/x402) - learn about the x402 payment protocol
+- [x402 Protocol Documentation](https://github.com/x402-foundation/x402) - learn about the x402 payment protocol
 - [EVM Documentation](https://ethereum.org/en/developers/docs/) - learn about Ethereum Virtual Machine
 
 ## Deploy on Vercel
@@ -162,8 +164,8 @@ Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/bui
 
 ## Contributing
 
-We welcome contributions! Please see our [Contributing Guidelines](https://github.com/coinbase/x402/blob/main/CONTRIBUTING.md) for details.
+We welcome contributions! Please see our [Contributing Guidelines](https://github.com/x402-foundation/x402/blob/main/CONTRIBUTING.md) for details.
 
 ## License
 
-This project is licensed under the MIT License - see the [LICENSE](https://github.com/coinbase/x402/blob/main/LICENSE) file for details.
+This project is licensed under the MIT License - see the [LICENSE](https://github.com/x402-foundation/x402/blob/main/LICENSE) file for details.

@@ -9,10 +9,14 @@ from ..constants import (
     BALANCE_OF_ABI,
     ERR_EIP3009_NOT_SUPPORTED,
     ERR_INSUFFICIENT_BALANCE,
+    ERR_INVALID_SIGNATURE,
     ERR_NONCE_ALREADY_USED,
     ERR_TOKEN_NAME_MISMATCH,
     ERR_TOKEN_VERSION_MISMATCH,
+    ERR_TRANSACTION_FAILED,
     ERR_TRANSACTION_SIMULATION_FAILED,
+    ERR_VALID_AFTER_FUTURE,
+    ERR_VALID_BEFORE_EXPIRED,
     FUNCTION_TRANSFER_WITH_AUTHORIZATION,
     NAME_ABI,
     TRANSFER_WITH_AUTHORIZATION_BYTES_ABI,
@@ -265,6 +269,34 @@ def diagnose_eip3009_simulation_failure(
             pass
 
     return ERR_TRANSACTION_SIMULATION_FAILED
+
+
+def parse_eip3009_transfer_error(error: Exception) -> str:
+    """Map an EIP-3009 contract revert to a specific error code.
+
+    Falls back to ERR_TRANSACTION_FAILED when the revert reason is unknown.
+    """
+    msg = str(error).lower()
+    if "authorization is expired" in msg or "authorizationexpired" in msg:
+        return ERR_VALID_BEFORE_EXPIRED
+    if "authorization is not yet valid" in msg or "authorizationnotyetvalid" in msg:
+        return ERR_VALID_AFTER_FUTURE
+    if (
+        "authorization is used" in msg
+        or "authorizationalreadyused" in msg
+        or "authorizationusedorcanceled" in msg
+    ):
+        return ERR_NONCE_ALREADY_USED
+    if "transfer amount exceeds balance" in msg or "erc20insufficientbalance" in msg:
+        return ERR_INSUFFICIENT_BALANCE
+    if (
+        "invalid signature" in msg
+        or "signermismatch" in msg
+        or "invalidsignaturev" in msg
+        or "invalidsignatures" in msg
+    ):
+        return ERR_INVALID_SIGNATURE
+    return ERR_TRANSACTION_FAILED
 
 
 def execute_transfer_with_authorization(

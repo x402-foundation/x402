@@ -5,6 +5,7 @@ import { UptoEvmScheme } from "@x402/evm/upto/server";
 import { ExactSvmScheme } from "@x402/svm/exact/server";
 import { ExactAptosScheme } from "@x402/aptos/exact/server";
 import { ExactStellarScheme } from "@x402/stellar/exact/server";
+import { ExactAvmScheme } from "@x402/avm/exact/server";
 import { bazaarResourceServerExtension, declareDiscoveryExtension } from "@x402/extensions/bazaar";
 import {
   declareEip2612GasSponsoringExtension,
@@ -13,11 +14,13 @@ import {
 
 export const EVM_PAYEE_ADDRESS = process.env.EVM_PAYEE_ADDRESS as `0x${string}`;
 export const SVM_PAYEE_ADDRESS = process.env.SVM_PAYEE_ADDRESS as string;
+export const AVM_PAYEE_ADDRESS = process.env.AVM_PAYEE_ADDRESS as string;
 export const APTOS_PAYEE_ADDRESS = process.env.APTOS_PAYEE_ADDRESS as string;
 export const STELLAR_PAYEE_ADDRESS = process.env.STELLAR_PAYEE_ADDRESS as string | undefined;
 export const EVM_NETWORK = (process.env.EVM_NETWORK || "eip155:84532") as `${string}:${string}`;
 export const SVM_NETWORK = (process.env.SVM_NETWORK ||
   "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1") as `${string}:${string}`;
+export const AVM_NETWORK = (process.env.AVM_NETWORK || "algorand:SGO1GKSzyE7IEPItTxCByw9x8FmnrCDexi9/cOUJOiI=") as `${string}:${string}`;
 export const APTOS_NETWORK = (process.env.APTOS_NETWORK || "aptos:2") as `${string}:${string}`;
 export const STELLAR_NETWORK = (process.env.STELLAR_NETWORK ||
   "stellar:testnet") as `${string}:${string}`;
@@ -40,6 +43,9 @@ if (mockFacilitatorUrl) {
 export const server = new x402ResourceServer(facilitatorClients);
 
 // Register server schemes
+if (AVM_PAYEE_ADDRESS) {
+  server.register("algorand:*", new ExactAvmScheme());
+}
 server.register("eip155:*", new ExactEvmScheme());
 server.register("eip155:*", new UptoEvmScheme());
 server.register("solana:*", new ExactSvmScheme());
@@ -107,6 +113,35 @@ export const proxy = paymentProxy(
         }),
       },
     },
+    ...(AVM_PAYEE_ADDRESS
+      ? {
+          "/api/exact/avm": {
+            accepts: {
+              payTo: AVM_PAYEE_ADDRESS,
+              scheme: "exact",
+              price: "$0.001",
+              network: AVM_NETWORK,
+            },
+            extensions: {
+              ...declareDiscoveryExtension({
+                output: {
+                  example: {
+                    message: "Protected endpoint accessed successfully",
+                    timestamp: "2024-01-01T00:00:00Z",
+                  },
+                  schema: {
+                    properties: {
+                      message: { type: "string" },
+                      timestamp: { type: "string" },
+                    },
+                    required: ["message", "timestamp"],
+                  },
+                },
+              }),
+            },
+          },
+        }
+      : {}),
     ...(APTOS_PAYEE_ADDRESS
       ? {
           "/api/exact/aptos": {
@@ -304,6 +339,7 @@ export const config = {
   matcher: [
     "/api/exact/evm/eip3009/proxy",
     "/api/exact/svm",
+    "/api/exact/avm",
     "/api/exact/aptos",
     "/api/exact/stellar",
     "/api/exact/evm/permit2/proxy",

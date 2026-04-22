@@ -3,6 +3,5 @@
   "description": "Messari leverages x402 to gate access to their professional-grade crypto intelligence and research APIs, enabling pay-per-use access to on-chain data and market analytics.",
   "logoUrl": "/logos/messari.png",
   "websiteUrl": "https://messari.io/x402",
-  "category": "Infrastructure & Tooling",
-  "top_section": true
+  "category": "Infrastructure & Tooling"
 }

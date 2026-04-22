@@ -14,6 +14,8 @@ import { ExactAptosScheme } from "@x402/aptos/exact/client";
 import { Account, Ed25519PrivateKey, PrivateKey, PrivateKeyVariants } from "@aptos-labs/ts-sdk";
 import { ExactStellarScheme } from "@x402/stellar/exact/client";
 import { createEd25519Signer, type Ed25519Signer } from "@x402/stellar";
+import { ExactAvmScheme as ExactAvmClientScheme } from "@x402/avm/exact/client";
+import { toClientAvmSigner } from "@x402/avm";
 import { base58 } from "@scure/base";
 import { createKeyPairSignerFromBytes } from "@solana/kit";
 import { x402Client } from "@x402/core/client";
@@ -64,6 +66,12 @@ if (process.env.STELLAR_PRIVATE_KEY) {
   stellarSigner = createEd25519Signer(process.env.STELLAR_PRIVATE_KEY);
 }
 
+// Initialize AVM signer if key is provided
+let avmSigner: ReturnType<typeof toClientAvmSigner> | undefined;
+if (process.env.AVM_PRIVATE_KEY) {
+  avmSigner = toClientAvmSigner(process.env.AVM_PRIVATE_KEY);
+}
+
 const client = new x402Client()
   .register("eip155:*", new ExactEvmScheme(evmSigner, evmSchemeOptions))
   .register("eip155:*", new UptoEvmClientScheme(evmSigner, uptoSchemeOptions))
@@ -77,6 +85,9 @@ if (aptosAccount) {
 }
 if (stellarSigner) {
   client.register("stellar:*", new ExactStellarScheme(stellarSigner));
+}
+if (avmSigner) {
+  client.register("algorand:*", new ExactAvmClientScheme(avmSigner));
 }
 
 const axiosWithPayment = wrapAxiosWithPayment(axios.create(), client);

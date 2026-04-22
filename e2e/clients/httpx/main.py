@@ -16,6 +16,7 @@ from x402.http import decode_payment_response_header
 from x402.http.clients import x402_httpx_transport
 from x402.mechanisms.evm import EthAccountSignerWithRPC
 from x402.mechanisms.evm.exact import register_exact_evm_client
+from x402.mechanisms.evm.upto import UptoEvmClientScheme
 from x402.mechanisms.svm import KeypairSigner
 from x402.mechanisms.svm.exact import register_exact_svm_client
 import httpx
@@ -53,6 +54,7 @@ async def main():
         evm_account = Account.from_key(evm_private_key)
         evm_signer = EthAccountSignerWithRPC(evm_account, rpc_url=evm_rpc_url)
         register_exact_evm_client(client, evm_signer)
+        client.register("eip155:*", UptoEvmClientScheme(evm_signer))
 
     # Register SVM exact scheme if private key is available
     if svm_private_key:

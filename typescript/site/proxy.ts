@@ -2,17 +2,21 @@ import { paymentProxyFromConfig } from "@x402/next";
 import { HTTPFacilitatorClient } from "@x402/core/server";
 import { ExactEvmScheme } from "@x402/evm/exact/server";
 import { ExactSvmScheme } from "@x402/svm/exact/server";
+import { ExactAvmScheme } from "@x402/avm/exact/server";
 import { NextRequest, NextResponse } from "next/server";
 import { createPaywall } from "@x402/paywall";
 import { evmPaywall } from "@x402/paywall/evm";
 import { svmPaywall } from "@x402/paywall/svm";
+import { avmPaywall } from "@x402/paywall/avm";
 
 const evmPayeeAddress = process.env.RESOURCE_EVM_ADDRESS as `0x${string}`;
 const svmPayeeAddress = process.env.RESOURCE_SVM_ADDRESS as string;
+const avmPayeeAddress = process.env.RESOURCE_AVM_ADDRESS;
 const facilitatorUrl = process.env.FACILITATOR_URL as string;
 
 const EVM_NETWORK = "eip155:84532" as const; // Base Sepolia
 const SVM_NETWORK = "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1" as const; // Solana Devnet
+const AVM_NETWORK = "algorand:SGO1GKSzyE7IEPItTxCByw9x8FmnrCDexi9/cOUJOiI=" as const; // Algorand Testnet
 
 // List of blocked countries and regions
 const BLOCKED_COUNTRIES = [
@@ -36,9 +40,11 @@ if (!facilitatorUrl) {
 const facilitatorClient = new HTTPFacilitatorClient({ url: facilitatorUrl });
 
 // Build the paywall provider
-const paywall = createPaywall()
-  .withNetwork(evmPaywall)
-  .withNetwork(svmPaywall)
+const paywallBuilder = createPaywall().withNetwork(evmPaywall).withNetwork(svmPaywall);
+if (avmPayeeAddress) {
+  paywallBuilder.withNetwork(avmPaywall);
+}
+const paywall = paywallBuilder
   .withConfig({
     appName: "x402 Demo",
     appLogo: "/logos/x402-examples.png",
@@ -61,6 +67,16 @@ const x402PaymentProxy = paymentProxyFromConfig(
           price: "$0.01",
           network: SVM_NETWORK,
         },
+        ...(avmPayeeAddress
+          ? [
+              {
+                payTo: avmPayeeAddress,
+                scheme: "exact" as const,
+                price: "$0.01",
+                network: AVM_NETWORK,
+              },
+            ]
+          : []),
       ],
       description: "Access to protected content",
     },
@@ -69,6 +85,7 @@ const x402PaymentProxy = paymentProxyFromConfig(
   [
     { network: EVM_NETWORK, server: new ExactEvmScheme() },
     { network: SVM_NETWORK, server: new ExactSvmScheme() },
+    ...(avmPayeeAddress ? [{ network: AVM_NETWORK, server: new ExactAvmScheme() }] : []),
   ],
   undefined, // paywallConfig
   paywall, // paywall provider

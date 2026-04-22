@@ -124,7 +124,7 @@ To create your own extension:
 3. **Implement the hooks you need** — `enrichDeclaration`, `enrichPaymentRequiredResponse`, `enrichSettlementResponse`
 4. **Create a declare function** — a helper that returns the route-level configuration for your extension
 5. **Register it** on the `x402ResourceServer` via `registerExtension`
-6. **Submit a pull request** to [coinbase/x402](https://github.com/coinbase/x402) — extensions must be reviewed and approved by the x402 maintainers before they are included in the SDK
+6. **Submit a pull request** to [x402-foundation/x402](https://github.com/x402-foundation/x402) — extensions must be reviewed and approved by the x402 maintainers before they are included in the SDK
 
 Here's a minimal example:
 
@@ -156,5 +156,5 @@ The data returned from each hook is included in the response under `extensions["
 ## Further Reading
 
 - [x402 SDK Features](/sdk-features) — Extension support across TypeScript, Go, and Python
-- [Extension Specs](https://github.com/coinbase/x402/tree/main/specs/extensions) — Protocol-level extension specifications
-- [@x402/extensions package](https://github.com/coinbase/x402/tree/main/typescript/packages/extensions) — TypeScript implementation source
+- [Extension Specs](https://github.com/x402-foundation/x402/tree/main/specs/extensions) — Protocol-level extension specifications
+- [@x402/extensions package](https://github.com/x402-foundation/x402/tree/main/typescript/packages/extensions) — TypeScript implementation source

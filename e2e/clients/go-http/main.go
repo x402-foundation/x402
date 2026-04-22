@@ -10,15 +10,15 @@ import (
 
 	"github.com/ethereum/go-ethereum/ethclient"
 
-	x402 "github.com/coinbase/x402/go"
-	x402http "github.com/coinbase/x402/go/http"
-	exactevm "github.com/coinbase/x402/go/mechanisms/evm/exact/client"
-	exactevmv1 "github.com/coinbase/x402/go/mechanisms/evm/exact/v1/client"
-	uptoevm "github.com/coinbase/x402/go/mechanisms/evm/upto/client"
-	svm "github.com/coinbase/x402/go/mechanisms/svm/exact/client"
-	svmv1 "github.com/coinbase/x402/go/mechanisms/svm/exact/v1/client"
-	evmsigners "github.com/coinbase/x402/go/signers/evm"
-	svmsigners "github.com/coinbase/x402/go/signers/svm"
+	x402 "github.com/x402-foundation/x402/go"
+	x402http "github.com/x402-foundation/x402/go/http"
+	exactevm "github.com/x402-foundation/x402/go/mechanisms/evm/exact/client"
+	exactevmv1 "github.com/x402-foundation/x402/go/mechanisms/evm/exact/v1/client"
+	uptoevm "github.com/x402-foundation/x402/go/mechanisms/evm/upto/client"
+	svm "github.com/x402-foundation/x402/go/mechanisms/svm/exact/client"
+	svmv1 "github.com/x402-foundation/x402/go/mechanisms/svm/exact/v1/client"
+	evmsigners "github.com/x402-foundation/x402/go/signers/evm"
+	svmsigners "github.com/x402-foundation/x402/go/signers/svm"
 )
 
 // Result structure for e2e test output

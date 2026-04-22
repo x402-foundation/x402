@@ -327,3 +327,137 @@ class TestMemoInstructionHasNoSigners:
         memo_ix = tx.message.instructions[3]
         assert str(tx.message.account_keys[memo_ix.program_id_index]) == MEMO_PROGRAM_ADDRESS
         assert len(memo_ix.accounts) == 0, "memo must have no accounts"
+
+
+class TestSellerMemo:
+    """Tests for optional extra.memo seller-defined memo support."""
+
+    @pytest.fixture
+    def mock_rpc_client(self):
+        mock_client = MagicMock()
+        mock_blockhash_resp = MagicMock()
+        mock_blockhash_resp.value.blockhash = Hash.from_string(FIXED_BLOCKHASH)
+        mock_client.get_latest_blockhash.return_value = mock_blockhash_resp
+
+        mock_account_info = MagicMock()
+        mock_account_info.value = MagicMock()
+        mock_account_info.value.owner = Pubkey.from_string(TOKEN_PROGRAM_ADDRESS)
+        mock_account_info.value.data = bytes(44) + bytes([6]) + bytes(37)
+        mock_client.get_account_info.return_value = mock_account_info
+        return mock_client
+
+    @pytest.fixture
+    def test_keypair(self):
+        return Keypair.from_seed(bytes([1] * 32))
+
+    def test_uses_extra_memo_as_memo_data(self, mock_rpc_client, test_keypair):
+        """When extra.memo is provided, client uses it as memo instruction data."""
+        seller_memo = "pi_3abc123def456"
+        fee_payer = Keypair.from_seed(bytes([2] * 32))
+        pay_to = Keypair.from_seed(bytes([3] * 32))
+
+        requirements = PaymentRequirements(
+            scheme="exact",
+            network=SOLANA_DEVNET_CAIP2,
+            asset=USDC_DEVNET_ADDRESS,
+            amount="100000",
+            pay_to=str(pay_to.pubkey()),
+            max_timeout_seconds=3600,
+            extra={"feePayer": str(fee_payer.pubkey()), "memo": seller_memo},
+        )
+
+        client = ExactSvmClientScheme(KeypairSigner(test_keypair))
+        with patch.object(client, "_get_client", return_value=mock_rpc_client):
+            payload = client.create_payment_payload(requirements)
+
+        tx = decode_transaction_from_payload(ExactSvmPayload(transaction=payload["transaction"]))
+        assert len(tx.message.instructions) >= 4
+
+        memo_ix = tx.message.instructions[3]
+        assert str(tx.message.account_keys[memo_ix.program_id_index]) == MEMO_PROGRAM_ADDRESS
+
+        memo_data = bytes(memo_ix.data).decode("utf-8")
+        assert memo_data == seller_memo
+
+    def test_produces_identical_memo_with_extra_memo(self, mock_rpc_client, test_keypair):
+        """With extra.memo, memo data is deterministic across calls."""
+        seller_memo = "order_12345"
+        fee_payer = Keypair.from_seed(bytes([2] * 32))
+        pay_to = Keypair.from_seed(bytes([3] * 32))
+
+        requirements = PaymentRequirements(
+            scheme="exact",
+            network=SOLANA_DEVNET_CAIP2,
+            asset=USDC_DEVNET_ADDRESS,
+            amount="100000",
+            pay_to=str(pay_to.pubkey()),
+            max_timeout_seconds=3600,
+            extra={"feePayer": str(fee_payer.pubkey()), "memo": seller_memo},
+        )
+
+        client = ExactSvmClientScheme(KeypairSigner(test_keypair))
+        with patch.object(client, "_get_client", return_value=mock_rpc_client):
+            payload1 = client.create_payment_payload(requirements)
+            payload2 = client.create_payment_payload(requirements)
+
+        tx1 = decode_transaction_from_payload(ExactSvmPayload(transaction=payload1["transaction"]))
+        tx2 = decode_transaction_from_payload(ExactSvmPayload(transaction=payload2["transaction"]))
+
+        memo1 = bytes(tx1.message.instructions[3].data).decode("utf-8")
+        memo2 = bytes(tx2.message.instructions[3].data).decode("utf-8")
+
+        assert memo1 == seller_memo
+        assert memo2 == seller_memo
+        assert memo1 == memo2
+
+    def test_falls_back_to_random_nonce_without_memo(self, mock_rpc_client, test_keypair):
+        """Without extra.memo, falls back to random hex nonce."""
+        fee_payer = Keypair.from_seed(bytes([2] * 32))
+        pay_to = Keypair.from_seed(bytes([3] * 32))
+
+        requirements = PaymentRequirements(
+            scheme="exact",
+            network=SOLANA_DEVNET_CAIP2,
+            asset=USDC_DEVNET_ADDRESS,
+            amount="100000",
+            pay_to=str(pay_to.pubkey()),
+            max_timeout_seconds=3600,
+            extra={"feePayer": str(fee_payer.pubkey())},
+        )
+
+        client = ExactSvmClientScheme(KeypairSigner(test_keypair))
+        with patch.object(client, "_get_client", return_value=mock_rpc_client):
+            payload1 = client.create_payment_payload(requirements)
+            payload2 = client.create_payment_payload(requirements)
+
+        tx1 = decode_transaction_from_payload(ExactSvmPayload(transaction=payload1["transaction"]))
+        tx2 = decode_transaction_from_payload(ExactSvmPayload(transaction=payload2["transaction"]))
+
+        memo1 = bytes(tx1.message.instructions[3].data).decode("utf-8")
+        memo2 = bytes(tx2.message.instructions[3].data).decode("utf-8")
+
+        import re
+
+        assert memo1 != memo2, "Random nonces should differ between calls"
+        assert re.match(r"^[0-9a-f]{32}$", memo1), "Nonce should be 32 hex chars"
+        assert re.match(r"^[0-9a-f]{32}$", memo2), "Nonce should be 32 hex chars"
+
+    def test_rejects_memo_exceeding_256_bytes(self, mock_rpc_client, test_keypair):
+        """Client should reject extra.memo exceeding 256 bytes."""
+        fee_payer = Keypair.from_seed(bytes([2] * 32))
+        pay_to = Keypair.from_seed(bytes([3] * 32))
+
+        requirements = PaymentRequirements(
+            scheme="exact",
+            network=SOLANA_DEVNET_CAIP2,
+            asset=USDC_DEVNET_ADDRESS,
+            amount="100000",
+            pay_to=str(pay_to.pubkey()),
+            max_timeout_seconds=3600,
+            extra={"feePayer": str(fee_payer.pubkey()), "memo": "x" * 257},
+        )
+
+        client = ExactSvmClientScheme(KeypairSigner(test_keypair))
+        with patch.object(client, "_get_client", return_value=mock_rpc_client):
+            with pytest.raises(ValueError, match="extra.memo exceeds maximum 256 bytes"):
+                client.create_payment_payload(requirements)

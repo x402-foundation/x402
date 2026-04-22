@@ -1,5 +1,9 @@
 # x402
 
+> **Deprecated (v1)**  
+> This npm package implements x402 **v1**. It is **deprecated** and will only receive **security patches**. Please migrate to **v2** (`@x402/core` and related packages). See the [Migration guide: v1 to v2](https://docs.x402.org/guides/migration-v1-to-v2).
+> Legacy examples are available at git tag `archive/legacy-v1-examples`.
+
 Core TypeScript implementation of the x402 Payment Protocol. This package provides the foundational types, schemas, and utilities that power all x402 integrations.
 
 ## Installation
@@ -36,7 +40,7 @@ If you're not using one of our server middleware packages, you can implement the
 3. Use the facilitator to settle payments
 4. Return the appropriate response header to the caller
 
-For a complete example implementation, see our [advanced server example](https://github.com/coinbase/x402/tree/main/examples/typescript/servers/advanced) which demonstrates both synchronous and asynchronous payment processing patterns.
+For a complete example implementation, see our [advanced server example](https://github.com/x402-foundation/x402/tree/main/examples/typescript/servers/advanced) which demonstrates both synchronous and asynchronous payment processing patterns.
 
 ## Manual Client Integration
 
@@ -55,6 +59,6 @@ If you're not using our `x402-fetch` or `x402-axios` packages, you can manually 
    - The `Access-Control-Expose-Headers` field set to `"X-PAYMENT-RESPONSE"` to receive the server's transaction response
 
 For implementation examples, we recommend reviewing our official client packages:
-- [x402-fetch implementation](https://github.com/coinbase/x402/tree/main/typescript/packages/legacy/x402-fetch)
-- [x402-axios implementation](https://github.com/coinbase/x402/tree/main/typescript/packages/legacy/x402-axios)
+- [x402-fetch implementation](https://github.com/x402-foundation/x402/tree/main/typescript/packages/legacy/x402-fetch)
+- [x402-axios implementation](https://github.com/x402-foundation/x402/tree/main/typescript/packages/legacy/x402-axios)
 

@@ -11,7 +11,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/coinbase/x402/go/types"
+	"github.com/x402-foundation/x402/go/types"
 )
 
 var (
@@ -115,6 +115,15 @@ func (c *SupportedCache) Get(key string) (SupportedResponse, bool) {
 	}
 
 	return response, true
+}
+
+// Clear removes all cached supported responses and expiry entries
+func (c *SupportedCache) Clear() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	clear(c.data)
+	clear(c.expiry)
 }
 
 // ResourceServerOption configures the server

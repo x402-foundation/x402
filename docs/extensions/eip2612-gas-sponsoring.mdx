@@ -47,7 +47,7 @@ Advertise support for this extension in your route configuration:
   <Tab title="Go">
     ```go
     import (
-        "github.com/coinbase/x402/go/extensions/eip2612gassponsor"
+        "github.com/x402-foundation/x402/go/extensions/eip2612gassponsor"
     )
 
     extensions := eip2612gassponsor.DeclareEip2612GasSponsoringExtension()
@@ -97,7 +97,7 @@ The `ExactEvmScheme` handles EIP-2612 gas sponsoring automatically. When the ser
   <Tab title="Go">
     ```go
     import (
-        evm "github.com/coinbase/x402/go/mechanisms/evm/exact/client"
+        evm "github.com/x402-foundation/x402/go/mechanisms/evm/exact/client"
     )
 
     scheme := evm.NewExactEvmScheme(signer)

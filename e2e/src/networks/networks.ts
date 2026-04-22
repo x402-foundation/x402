@@ -6,7 +6,7 @@
  */
 
 export type NetworkMode = 'testnet' | 'mainnet';
-export type ProtocolFamily = 'evm' | 'svm' | 'aptos' | 'stellar';
+export type ProtocolFamily = 'evm' | 'svm' | 'avm' | 'aptos' | 'stellar';
 
 export type NetworkConfig = {
   name: string;
@@ -18,6 +18,7 @@ export type NetworkConfig = {
 export type NetworkSet = {
   evm: NetworkConfig;
   svm: NetworkConfig;
+  avm: NetworkConfig;
   aptos: NetworkConfig;
   stellar: NetworkConfig;
 };
@@ -37,6 +38,11 @@ const NETWORK_SETS: Record<NetworkMode, NetworkSet> = {
       name: 'Solana Devnet',
       caip2: 'solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1',
       rpcUrl: process.env.SOLANA_DEVNET_RPC_URL || 'https://api.devnet.solana.com',
+    },
+    avm: {
+      name: 'Algorand Testnet',
+      caip2: 'algorand:SGO1GKSzyE7IEPItTxCByw9x8FmnrCDexi9/cOUJOiI=',
+      rpcUrl: process.env.AVM_TESTNET_RPC_URL || 'https://testnet-api.4160.nodely.dev',
     },
     aptos: {
       name: 'Aptos Testnet',
@@ -60,6 +66,11 @@ const NETWORK_SETS: Record<NetworkMode, NetworkSet> = {
       name: 'Solana',
       caip2: 'solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp',
       rpcUrl: process.env.SOLANA_RPC_URL || 'https://api.mainnet-beta.solana.com',
+    },
+    avm: {
+      name: 'Algorand Mainnet',
+      caip2: 'algorand:wGHE2Pwdvd7S12BL5FaOP20EGYesN73ktiC1qzkkit8=',
+      rpcUrl: process.env.AVM_RPC_URL || 'https://mainnet-api.4160.nodely.dev',
     },
     aptos: {
       name: 'Aptos',
@@ -88,7 +99,7 @@ export function getNetworkSet(mode: NetworkMode): NetworkSet {
  * Get network config for a protocol family in a given mode
  * 
  * @param mode - 'testnet' or 'mainnet'
- * @param protocolFamily - 'evm', 'svm', 'aptos', or 'stellar'
+ * @param protocolFamily - 'evm', 'svm', 'avm', 'aptos', or 'stellar'
  * @returns NetworkConfig for the specified protocol
  */
 export function getNetworkForProtocol(
@@ -106,6 +117,6 @@ export function getNetworkForProtocol(
  */
 export function getNetworkModeDescription(mode: NetworkMode): string {
   const set = NETWORK_SETS[mode];
-  const networks = [set.evm.name, set.svm.name, set.aptos.name, set.stellar.name];
+  const networks = [set.evm.name, set.svm.name, set.avm.name, set.aptos.name, set.stellar.name];
   return networks.join(' + ');
 }

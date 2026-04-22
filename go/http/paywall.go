@@ -3,7 +3,7 @@ package http
 import (
 	"strings"
 
-	"github.com/coinbase/x402/go/types"
+	"github.com/x402-foundation/x402/go/types"
 )
 
 // ============================================================================

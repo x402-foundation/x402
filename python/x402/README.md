@@ -260,4 +260,4 @@ client.register("eip155:8453", CustomScheme())
 
 ## Examples
 
-See [examples/python](https://github.com/coinbase/x402/tree/main/examples/python).
+See [examples/python](https://github.com/x402-foundation/x402/tree/main/examples/python).

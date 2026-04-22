@@ -8,10 +8,10 @@ import (
 	"sync"
 	"time"
 
-	x402 "github.com/coinbase/x402/go"
-	"github.com/coinbase/x402/go/extensions/bazaar"
-	x402http "github.com/coinbase/x402/go/http"
 	"github.com/gin-gonic/gin"
+	x402 "github.com/x402-foundation/x402/go"
+	"github.com/x402-foundation/x402/go/extensions/bazaar"
+	x402http "github.com/x402-foundation/x402/go/http"
 )
 
 // SetSettlementOverrides sets settlement overrides on the Gin response for partial settlement.

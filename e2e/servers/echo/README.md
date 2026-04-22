@@ -22,12 +22,12 @@ This server demonstrates and tests the x402 Echo middleware with both EVM and SV
 
 ```go
 import (
-    x402 "github.com/coinbase/x402/go"
-    x402http "github.com/coinbase/x402/go/http"
-    echomw "github.com/coinbase/x402/go/http/echo"
-    evm "github.com/coinbase/x402/go/mechanisms/evm/exact/server"
-    svm "github.com/coinbase/x402/go/mechanisms/svm/exact/server"
-    "github.com/coinbase/x402/go/extensions/bazaar"
+    x402 "github.com/x402-foundation/x402/go"
+    x402http "github.com/x402-foundation/x402/go/http"
+    echomw "github.com/x402-foundation/x402/go/http/echo"
+    evm "github.com/x402-foundation/x402/go/mechanisms/evm/exact/server"
+    svm "github.com/x402-foundation/x402/go/mechanisms/svm/exact/server"
+    "github.com/x402-foundation/x402/go/extensions/bazaar"
     "github.com/labstack/echo/v4"
 )
 
@@ -173,12 +173,12 @@ Content-Type: application/json
 
 ## Dependencies
 
-- `github.com/coinbase/x402/go` - Core x402
-- `github.com/coinbase/x402/go/http` - HTTP integration
-- `github.com/coinbase/x402/go/http/echo` - Echo middleware
-- `github.com/coinbase/x402/go/mechanisms/evm` - EVM server
-- `github.com/coinbase/x402/go/mechanisms/svm` - SVM server
-- `github.com/coinbase/x402/go/extensions/bazaar` - Discovery extension
+- `github.com/x402-foundation/x402/go` - Core x402
+- `github.com/x402-foundation/x402/go/http` - HTTP integration
+- `github.com/x402-foundation/x402/go/http/echo` - Echo middleware
+- `github.com/x402-foundation/x402/go/mechanisms/evm` - EVM server
+- `github.com/x402-foundation/x402/go/mechanisms/svm` - SVM server
+- `github.com/x402-foundation/x402/go/extensions/bazaar` - Discovery extension
 - `github.com/labstack/echo/v4` - HTTP framework
 
 ## Implementation Highlights

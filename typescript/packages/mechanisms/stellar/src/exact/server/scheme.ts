@@ -1,5 +1,6 @@
+import { convertToTokenAmount, numberToDecimalString } from "@x402/core/utils";
 import { DEFAULT_TOKEN_DECIMALS } from "../../constants";
-import { convertToTokenAmount, getUsdcAddress } from "../../utils";
+import { getUsdcAddress } from "../../utils";
 import type {
   AssetAmount,
   Network,
@@ -139,7 +140,7 @@ export class ExactStellarScheme implements SchemeNetworkServer {
    */
   private defaultMoneyConversion(amount: number, network: Network): AssetAmount {
     // Convert decimal amount to token amount (USDC on Stellar has 7 decimals)
-    const tokenAmount = convertToTokenAmount(amount.toString(), DEFAULT_TOKEN_DECIMALS);
+    const tokenAmount = convertToTokenAmount(numberToDecimalString(amount), DEFAULT_TOKEN_DECIMALS);
 
     return {
       amount: tokenAmount,

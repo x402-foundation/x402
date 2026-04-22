@@ -97,6 +97,14 @@ export const DEFAULT_STABLECOINS: Record<string, ExactDefaultAssetInfo> = {
     version: "2",
     decimals: 6,
   }, // Arbitrum Sepolia USDC
+  "eip155:31611": {
+    address: "0x118917a40FAF1CD7a13dB0Ef56C86De7973Ac503",
+    name: "Mezo USD",
+    version: "1",
+    decimals: 18,
+    assetTransferMethod: "permit2",
+    supportsEip2612: true,
+  }, // Mezo Testnet mUSD (no EIP-3009, supports EIP-2612)
 };
 
 /**

@@ -239,12 +239,37 @@ async function drainClientETH(): Promise<boolean> {
     }
 
     verboseLog(`  💸 Draining ${formatEther(sendAmount)} ETH from client back to facilitator...`);
-    const hash = await clientWallet.sendTransaction({
-      to: facilitatorAccount.address,
-      value: sendAmount,
-    });
-    verboseLog(`  ✅ Drained client ETH (tx: ${hash})`);
-    return true;
+    // Retry on nonce/replacement errors: the revoke tx may still be pending on
+    // some RPC nodes so the pending nonce can be stale. A short delay + explicit
+    // pending-nonce fetch resolves it the same way fundClientForRevoke does.
+    let lastErr: Error | null = null;
+    for (let attempt = 0; attempt < 3; attempt++) {
+      if (attempt > 0) await new Promise(r => setTimeout(r, 1000));
+      try {
+        const nonce = await publicClient.getTransactionCount({
+          address: clientAccount.address,
+          blockTag: 'pending',
+        });
+        const hash = await clientWallet.sendTransaction({
+          to: facilitatorAccount.address,
+          value: sendAmount,
+          nonce,
+        });
+        verboseLog(`  ✅ Drained client ETH (tx: ${hash})`);
+        return true;
+      } catch (err) {
+        lastErr = err instanceof Error ? err : new Error(String(err));
+        const isNonceError =
+          lastErr.message.toLowerCase().includes('nonce') ||
+          lastErr.message.toLowerCase().includes('replacement') ||
+          lastErr.message.toLowerCase().includes('underpriced');
+        if (!isNonceError) break;
+      }
+    }
+    const errLines = lastErr!.message.split('\n');
+    errorLog(`  ❌ Failed to drain client ETH: ${errLines[0].trim()}`);
+    if (errLines.length > 1) verboseLog(errLines.slice(1).join('\n'));
+    return false;
   } catch (err) {
     errorLog(`  ❌ Failed to drain client ETH: ${err instanceof Error ? err.message : err}`);
     return false;
@@ -383,14 +408,17 @@ async function runTest() {
   // Load configuration from environment
   const serverEvmAddress = process.env.SERVER_EVM_ADDRESS;
   const serverSvmAddress = process.env.SERVER_SVM_ADDRESS;
+  const serverAvmAddress = process.env.SERVER_AVM_ADDRESS;
   const serverAptosAddress = process.env.SERVER_APTOS_ADDRESS;
   const serverStellarAddress = process.env.SERVER_STELLAR_ADDRESS;
   const clientEvmPrivateKey = process.env.CLIENT_EVM_PRIVATE_KEY;
   const clientSvmPrivateKey = process.env.CLIENT_SVM_PRIVATE_KEY;
+  const clientAvmPrivateKey = process.env.CLIENT_AVM_PRIVATE_KEY;
   const clientAptosPrivateKey = process.env.CLIENT_APTOS_PRIVATE_KEY;
   const clientStellarPrivateKey = process.env.CLIENT_STELLAR_PRIVATE_KEY;
   const facilitatorEvmPrivateKey = process.env.FACILITATOR_EVM_PRIVATE_KEY;
   const facilitatorSvmPrivateKey = process.env.FACILITATOR_SVM_PRIVATE_KEY;
+  const facilitatorAvmPrivateKey = process.env.FACILITATOR_AVM_PRIVATE_KEY;
   const facilitatorAptosPrivateKey = process.env.FACILITATOR_APTOS_PRIVATE_KEY;
   const facilitatorStellarPrivateKey = process.env.FACILITATOR_STELLAR_PRIVATE_KEY;
   if (!serverEvmAddress || !serverSvmAddress || !clientEvmPrivateKey || !clientSvmPrivateKey || !facilitatorEvmPrivateKey || !facilitatorSvmPrivateKey) {
@@ -768,6 +796,7 @@ async function runTest() {
     const clientConfig: ClientConfig = {
       evmPrivateKey: clientEvmPrivateKey!,
       svmPrivateKey: clientSvmPrivateKey!,
+      avmPrivateKey: clientAvmPrivateKey || '',
       aptosPrivateKey: clientAptosPrivateKey || '',
       stellarPrivateKey: clientStellarPrivateKey || '',
       serverUrl: `http://localhost:${port}`,
@@ -850,6 +879,7 @@ async function runTest() {
     cLog.log(`🚀 Starting server: ${serverName} (port ${port}) with facilitator: ${facilitatorName || 'none'}`);
 
     const facilitatorConfig = facilitatorName ? uniqueFacilitators.get(facilitatorName)?.config : undefined;
+    const facilitatorSupportsAvm = facilitatorConfig?.protocolFamilies?.includes('avm') ?? false;
     const facilitatorSupportsAptos = facilitatorConfig?.protocolFamilies?.includes('aptos') ?? false;
     const facilitatorSupportsStellar = facilitatorConfig?.protocolFamilies?.includes('stellar') ?? false;
 
@@ -857,6 +887,7 @@ async function runTest() {
       port,
       evmPayTo: serverEvmAddress!,
       svmPayTo: serverSvmAddress!,
+      avmPayTo: facilitatorSupportsAvm ? (serverAvmAddress || '') : '',
       aptosPayTo: facilitatorSupportsAptos ? (serverAptosAddress || '') : '',
       stellarPayTo: facilitatorSupportsStellar ? (serverStellarAddress || '') : '',
       networks,
@@ -893,7 +924,11 @@ async function runTest() {
         if (scenario.endpoint.permit2Direct) {
           await approvePermit2Approval(USDC_BASE_SEPOLIA);
         } else if (scenario.endpoint.coldstart) {
-          const endpointKey = scenario.endpoint.path;
+          // Key on (client, path) so each client independently runs its own
+          // fund → revoke → drain cycle. Without the client name, the second
+          // client in a combo silently skips the coldstart and inherits
+          // whatever wallet state the first client left behind.
+          const endpointKey = `${scenario.client.name}::${scenario.endpoint.path}`;
           if (!coldStartedEndpoints.has(endpointKey)) {
             coldStartedEndpoints.add(endpointKey);
             const token =
@@ -904,14 +939,19 @@ async function runTest() {
             // Give fund tx 1s to propagate before submitting revoke (from client wallet)
             await new Promise(resolve => setTimeout(resolve, 1000));
             await revokePermit2Approval(token);
-            // Give revoke tx 1s to propagate before drain reads pending balance
-            await new Promise(resolve => setTimeout(resolve, 1000));
+            // Give revoke tx 2s to propagate before drain reads pending nonce.
+            // Load-balanced RPCs can return a stale pending nonce if queried
+            // immediately after the revoke submission, causing the drain to
+            // collide with the revoke's nonce ("replacement transaction underpriced").
+            await new Promise(resolve => setTimeout(resolve, 2000));
             await drainClientETH();
             // Wait for RPC nonce propagation across load-balanced nodes before the
             // test client (which may use a separate RPC connection) queries the nonce.
             await new Promise(resolve => setTimeout(resolve, 1500));
           }
         }
+
+        const isAvm = scenario.protocolFamily === 'avm';
 
         if (isEvm && facilitatorName && evmLock) {
           const releaseLock = await evmLock.acquire(facilitatorName);
@@ -923,6 +963,16 @@ async function runTest() {
           }
         } else {
           results.push(await runSingleTest(scenario, port, tn, cLog));
+          if (isAvm) {
+            // Pause between AVM tests to avoid 403 rate limiting on free public Algorand nodes
+            await new Promise(resolve => setTimeout(resolve, 8000));
+          } else if (isEvm) {
+            // Brief pause between sequential EVM tests so the facilitator wallet's
+            // settlement tx has time to propagate before the next cold-start setup
+            // sends from the same account (fundClientForRevoke). Without this,
+            // the two can collide on the same nonce on load-balanced RPCs.
+            await new Promise(resolve => setTimeout(resolve, 1500));
+          }
         }
       }
     } finally {

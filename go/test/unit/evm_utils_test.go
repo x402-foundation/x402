@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/coinbase/x402/go/mechanisms/evm"
+	"github.com/x402-foundation/x402/go/mechanisms/evm"
 )
 
 // TestGetEvmChainId tests chain ID retrieval for various network formats

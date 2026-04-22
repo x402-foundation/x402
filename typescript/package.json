@@ -21,7 +21,7 @@
     "lint:check": "turbo run lint:check",
     "format:check": "turbo run format:check",
     "test": "turbo run test",
-    "test:integration": "pnpm --filter @x402/core --filter @x402/evm --filter @x402/svm --filter @x402/aptos --filter @x402/stellar test:integration",
+    "test:integration": "pnpm --filter @x402/core --filter @x402/evm --filter @x402/svm --filter @x402/avm --filter @x402/aptos --filter @x402/stellar test:integration",
     "test:all": "pnpm test && pnpm test:integration"
   },
   "keywords": [],
