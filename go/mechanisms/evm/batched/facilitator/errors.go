@@ -31,12 +31,11 @@ const (
 	ErrMaxClaimableTooLow      = "batch_settlement_evm_cumulative_below_claimed"
 	ErrMaxClaimableExceedsBal  = "batch_settlement_evm_cumulative_exceeds_balance"
 	ErrInsufficientBalance     = "batch_settlement_evm_insufficient_balance"
-	ErrDepositVoucherMismatch  = "batch_settlement_evm_deposit_voucher_mismatch"
 
 	// Channel state errors
 	ErrChannelStateReadFailed = "batch_settlement_evm_channel_state_read_failed"
 	ErrChannelNotFound        = "batch_settlement_evm_channel_not_found"
-	ErrWithdrawalPending      = "batch_settlement_evm_withdrawal_pending"
+	ErrRpcReadFailed          = "batch_settlement_evm_rpc_read_failed"
 
 	// Transaction errors
 	ErrDepositTransactionFailed = "batch_settlement_evm_deposit_transaction_failed"

@@ -52,17 +52,33 @@ func CreateBatchedEIP3009DepositPayload(
 		return types.PaymentPayload{}, fmt.Errorf("invalid deposit amount: %s", depositAmount)
 	}
 
-	// Create nonce for ERC-3009
-	nonce, err := evm.CreateNonce()
+	// Salt is a random per-deposit value; the actual ERC-3009 nonce is derived
+	// from (channelId, salt) — the deposit collector reproduces the same hash.
+	salt, err := evm.CreateNonce()
 	if err != nil {
-		return types.PaymentPayload{}, fmt.Errorf("failed to create nonce: %w", err)
+		return types.PaymentPayload{}, fmt.Errorf("failed to create salt: %w", err)
 	}
 
-	// Create validity window
 	validAfter, validBefore := evm.CreateValidityWindow(time.Hour)
 
+	// Compute channel ID
+	channelId, err := batched.ComputeChannelId(channelConfig)
+	if err != nil {
+		return types.PaymentPayload{}, fmt.Errorf("failed to compute channel ID: %w", err)
+	}
+
+	// Derive the on-chain ERC-3009 nonce: keccak256(abi.encode(channelId, salt)).
+	erc3009Nonce, err := batched.BuildErc3009DepositNonce(channelId, salt)
+	if err != nil {
+		return types.PaymentPayload{}, fmt.Errorf("failed to build ERC-3009 nonce: %w", err)
+	}
+	nonceBytes, err := evm.HexToBytes(erc3009Nonce)
+	if err != nil {
+		return types.PaymentPayload{}, fmt.Errorf("failed to parse derived nonce: %w", err)
+	}
+
 	// Sign ReceiveWithAuthorization
-	// "to" is the ERC3009DepositCollector, which will forward to the BatchSettlement contract
+	// "to" is the ERC3009DepositCollector, which forwards into the BatchSettlement contract.
 	erc3009Domain := evm.TypedDataDomain{
 		Name:              tokenName,
 		Version:           tokenVersion,
@@ -80,11 +96,6 @@ func CreateBatchedEIP3009DepositPayload(
 		"ReceiveWithAuthorization": batched.ReceiveAuthorizationTypes["ReceiveWithAuthorization"],
 	}
 
-	nonceBytes, err := evm.HexToBytes(nonce)
-	if err != nil {
-		return types.PaymentPayload{}, fmt.Errorf("failed to parse nonce: %w", err)
-	}
-
 	erc3009Message := map[string]interface{}{
 		"from":        signer.Address(),
 		"to":          batched.ERC3009DepositCollectorAddress,
@@ -97,12 +108,6 @@ func CreateBatchedEIP3009DepositPayload(
 	erc3009Sig, err := signer.SignTypedData(ctx, erc3009Domain, erc3009Types, "ReceiveWithAuthorization", erc3009Message)
 	if err != nil {
 		return types.PaymentPayload{}, fmt.Errorf("failed to sign ERC-3009 authorization: %w", err)
-	}
-
-	// Compute channel ID
-	channelId, err := batched.ComputeChannelId(channelConfig)
-	if err != nil {
-		return types.PaymentPayload{}, fmt.Errorf("failed to compute channel ID: %w", err)
 	}
 
 	// Sign voucher (use voucherSigner if provided)
@@ -126,7 +131,7 @@ func CreateBatchedEIP3009DepositPayload(
 				Erc3009Authorization: &batched.BatchedErc3009Authorization{
 					ValidAfter:  validAfter.String(),
 					ValidBefore: validBefore.String(),
-					Salt:        nonce,
+					Salt:        salt,
 					Signature:   evm.BytesToHex(erc3009Sig),
 				},
 			},

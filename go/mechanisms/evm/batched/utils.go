@@ -8,6 +8,8 @@ import (
 	"github.com/ethereum/go-ethereum/accounts/abi"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/crypto"
+
+	"github.com/x402-foundation/x402/go/mechanisms/evm"
 )
 
 // channelConfigABIType is the ABI tuple type for ChannelConfig, used for encoding.
@@ -64,6 +66,17 @@ func ComputeChannelId(config ChannelConfig) (string, error) {
 // NormalizeChannelId lowercases and normalizes a channel ID hex string.
 func NormalizeChannelId(channelId string) string {
 	return strings.ToLower(channelId)
+}
+
+// GetBatchSettlementEip712Domain returns the EIP-712 domain for the
+// batch-settlement contract on the given chain. Mirrors TS getBatchSettlementEip712Domain.
+func GetBatchSettlementEip712Domain(chainId *big.Int) evm.TypedDataDomain {
+	return evm.TypedDataDomain{
+		Name:              BatchSettlementDomain.Name,
+		Version:           BatchSettlementDomain.Version,
+		ChainID:           chainId,
+		VerifyingContract: BatchSettlementAddress,
+	}
 }
 
 // hexToBytes32 converts a hex string to a [32]byte array.

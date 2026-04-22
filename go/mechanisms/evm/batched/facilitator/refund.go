@@ -66,7 +66,7 @@ func ExecuteRefundWithSignature(
 		}
 	}
 
-	configTuple := buildChannelConfigTuple(payload.Config)
+	configTuple := ToContractChannelConfig(payload.Config)
 
 	// Handle claims + refund atomically if claims are present
 	if len(payload.Claims) > 0 {

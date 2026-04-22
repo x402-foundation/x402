@@ -101,6 +101,22 @@ type BatchedPaymentResponseExtra struct {
 	Refund                  bool   `json:"refund,omitempty"`
 }
 
+// BatchSettlementPaymentRequirementsExtra is the typed shape of the `extra`
+// field on PaymentRequirements for the batch-settlement scheme.
+type BatchSettlementPaymentRequirementsExtra struct {
+	ReceiverAuthorizer   string `json:"receiverAuthorizer"`
+	WithdrawDelay        int    `json:"withdrawDelay"`
+	Name                 string `json:"name"`
+	Version              string `json:"version"`
+	AssetTransferMethod  string `json:"assetTransferMethod,omitempty"` // "eip3009"
+}
+
+// FileSessionStorageOptions configures file-backed session storage.
+// Sessions are stored under {Directory}/{client|server}/{channelId}.json.
+type FileSessionStorageOptions struct {
+	Directory string
+}
+
 // --- Settle Action Payloads (server -> facilitator) ---
 
 // BatchedClaimWithSignaturePayload batches claims with receiverAuthorizer signature.

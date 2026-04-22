@@ -33,12 +33,7 @@ func SignVoucher(
 		return nil, fmt.Errorf("invalid channelId: %w", err)
 	}
 
-	domain := evm.TypedDataDomain{
-		Name:              batched.BatchSettlementDomain.Name,
-		Version:           batched.BatchSettlementDomain.Version,
-		ChainID:           chainId,
-		VerifyingContract: batched.BatchSettlementAddress,
-	}
+	domain := batched.GetBatchSettlementEip712Domain(chainId)
 
 	types := map[string][]evm.TypedDataField{
 		"EIP712Domain": {

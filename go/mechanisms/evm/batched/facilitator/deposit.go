@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"math/big"
 
-	"github.com/ethereum/go-ethereum/accounts/abi"
 	"github.com/ethereum/go-ethereum/common"
 
 	x402 "github.com/x402-foundation/x402/go"
@@ -59,9 +58,18 @@ func VerifyDeposit(
 			return nil, x402.NewVerifyError(reason, config.Payer, "ERC-3009 authorization time window invalid")
 		}
 
+		// Derive the on-chain ERC-3009 nonce from (channelId, salt). The deposit
+		// collector reproduces this same hash before invoking the token's
+		// receiveWithAuthorization, so the signature must commit to it.
+		erc3009Nonce, err := batched.BuildErc3009DepositNonce(channelId, auth.Salt)
+		if err != nil {
+			return nil, x402.NewVerifyError(ErrInvalidDepositPayload, config.Payer,
+				fmt.Sprintf("failed to derive ERC-3009 nonce: %s", err))
+		}
+
 		// Verify ReceiveWithAuthorization signature
 		erc3009Valid, err := verifyReceiveWithAuthorization(
-			ctx, signer, config.Payer, config.Token, depositAmount, validAfter, validBefore, auth.Salt, auth.Signature, chainId,
+			ctx, signer, config.Payer, config.Token, depositAmount, validAfter, validBefore, erc3009Nonce, auth.Signature, chainId,
 		)
 		if err != nil {
 			return nil, x402.NewVerifyError(ErrErc3009SignatureInvalid, config.Payer,
@@ -132,7 +140,7 @@ func VerifyDeposit(
 	}
 
 	// Simulate the deposit transaction to catch on-chain errors early
-	configTuple := buildChannelConfigTuple(config)
+	configTuple := ToContractChannelConfig(config)
 	collectorData, err := buildERC3009CollectorData(payload)
 	if err != nil {
 		return nil, x402.NewVerifyError(ErrInvalidDepositPayload, config.Payer,
@@ -196,7 +204,7 @@ func SettleDeposit(
 	}
 
 	// Build channel config tuple for contract call
-	configTuple := buildChannelConfigTuple(config)
+	configTuple := ToContractChannelConfig(config)
 
 	// Call deposit on the BatchSettlement contract
 	txHash, err := signer.WriteContract(
@@ -325,80 +333,11 @@ func getTokenDomainInfo(ctx context.Context, signer evm.FacilitatorEvmSigner, to
 }
 
 // buildERC3009CollectorData encodes the ERC-3009 authorization data for the collector contract.
+// The collector ABI is (uint256 validAfter, uint256 validBefore, uint256 salt, bytes signature).
 func buildERC3009CollectorData(payload *batched.BatchedDepositPayload) ([]byte, error) {
 	auth := payload.Deposit.Authorization.Erc3009Authorization
 	if auth == nil {
 		return nil, fmt.Errorf("no ERC-3009 authorization provided")
 	}
-
-	// The collector expects the ReceiveWithAuthorization parameters ABI-encoded
-	validAfter, ok := new(big.Int).SetString(auth.ValidAfter, 10)
-	if !ok {
-		return nil, fmt.Errorf("invalid validAfter: %s", auth.ValidAfter)
-	}
-	validBefore, ok := new(big.Int).SetString(auth.ValidBefore, 10)
-	if !ok {
-		return nil, fmt.Errorf("invalid validBefore: %s", auth.ValidBefore)
-	}
-	saltBytes, err := evm.HexToBytes(auth.Salt)
-	if err != nil {
-		return nil, fmt.Errorf("invalid salt: %w", err)
-	}
-	sigBytes, err := evm.HexToBytes(auth.Signature)
-	if err != nil {
-		return nil, fmt.Errorf("invalid signature: %w", err)
-	}
-
-	// ABI-encode: (address from, uint256 validAfter, uint256 validBefore, bytes32 nonce, bytes signature)
-	addressTy, _ := abi.NewType("address", "", nil)
-	uint256Ty, _ := abi.NewType("uint256", "", nil)
-	bytes32Ty, _ := abi.NewType("bytes32", "", nil)
-	bytesTy, _ := abi.NewType("bytes", "", nil)
-
-	args := abi.Arguments{
-		{Type: addressTy},
-		{Type: uint256Ty},
-		{Type: uint256Ty},
-		{Type: bytes32Ty},
-		{Type: bytesTy},
-	}
-
-	var salt32 [32]byte
-	copy(salt32[:], saltBytes)
-
-	return args.Pack(
-		common.HexToAddress(payload.Deposit.ChannelConfig.Payer),
-		validAfter,
-		validBefore,
-		salt32,
-		sigBytes,
-	)
-}
-
-// buildChannelConfigTuple creates the Solidity-compatible struct for contract calls.
-func buildChannelConfigTuple(config batched.ChannelConfig) interface{} {
-	withdrawDelay := new(big.Int).SetInt64(int64(config.WithdrawDelay))
-
-	saltBytes := common.FromHex(config.Salt)
-	var salt [32]byte
-	copy(salt[:], saltBytes)
-
-	// Use anonymous struct matching the Solidity tuple
-	return struct {
-		Payer              common.Address
-		PayerAuthorizer    common.Address
-		Receiver           common.Address
-		ReceiverAuthorizer common.Address
-		Token              common.Address
-		WithdrawDelay      *big.Int
-		Salt               [32]byte
-	}{
-		Payer:              common.HexToAddress(config.Payer),
-		PayerAuthorizer:    common.HexToAddress(config.PayerAuthorizer),
-		Receiver:           common.HexToAddress(config.Receiver),
-		ReceiverAuthorizer: common.HexToAddress(config.ReceiverAuthorizer),
-		Token:              common.HexToAddress(config.Token),
-		WithdrawDelay:      withdrawDelay,
-		Salt:               salt,
-	}
+	return batched.BuildErc3009CollectorData(auth.ValidAfter, auth.ValidBefore, auth.Salt, auth.Signature)
 }

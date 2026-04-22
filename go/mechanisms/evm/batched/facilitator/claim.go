@@ -6,8 +6,6 @@ import (
 	"math/big"
 	"strings"
 
-	"github.com/ethereum/go-ethereum/common"
-
 	x402 "github.com/x402-foundation/x402/go"
 	"github.com/x402-foundation/x402/go/mechanisms/evm"
 	"github.com/x402-foundation/x402/go/mechanisms/evm/batched"
@@ -125,28 +123,7 @@ func buildVoucherClaimArgs(claims []batched.BatchedVoucherClaim) interface{} {
 		totalClaimed, _ := new(big.Int).SetString(claim.TotalClaimed, 10)
 		sigBytes, _ := evm.HexToBytes(claim.Signature)
 
-		withdrawDelay := new(big.Int).SetInt64(int64(claim.Voucher.Channel.WithdrawDelay))
-		saltBytes := common.FromHex(claim.Voucher.Channel.Salt)
-		var salt [32]byte
-		copy(salt[:], saltBytes)
-
-		channelTuple := struct {
-			Payer              common.Address
-			PayerAuthorizer    common.Address
-			Receiver           common.Address
-			ReceiverAuthorizer common.Address
-			Token              common.Address
-			WithdrawDelay      *big.Int
-			Salt               [32]byte
-		}{
-			Payer:              common.HexToAddress(claim.Voucher.Channel.Payer),
-			PayerAuthorizer:    common.HexToAddress(claim.Voucher.Channel.PayerAuthorizer),
-			Receiver:           common.HexToAddress(claim.Voucher.Channel.Receiver),
-			ReceiverAuthorizer: common.HexToAddress(claim.Voucher.Channel.ReceiverAuthorizer),
-			Token:              common.HexToAddress(claim.Voucher.Channel.Token),
-			WithdrawDelay:      withdrawDelay,
-			Salt:               salt,
-		}
+		channelTuple := ToContractChannelConfig(claim.Voucher.Channel)
 
 		result[i] = VoucherClaimStruct{
 			Voucher: VoucherStruct{

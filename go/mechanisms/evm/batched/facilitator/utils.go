@@ -17,8 +17,40 @@ import (
 
 var zeroAddress = "0x0000000000000000000000000000000000000000"
 
+// ToContractChannelConfig normalizes a ChannelConfig into the address-checksummed
+// Solidity tuple expected by the batch-settlement contract's deposit / refund /
+// claim entry points. Mirrors TS toContractChannelConfig.
+func ToContractChannelConfig(config batched.ChannelConfig) interface{} {
+	withdrawDelay := new(big.Int).SetInt64(int64(config.WithdrawDelay))
+
+	saltBytes := common.FromHex(config.Salt)
+	var salt [32]byte
+	copy(salt[:], saltBytes)
+
+	return struct {
+		Payer              common.Address
+		PayerAuthorizer    common.Address
+		Receiver           common.Address
+		ReceiverAuthorizer common.Address
+		Token              common.Address
+		WithdrawDelay      *big.Int
+		Salt               [32]byte
+	}{
+		Payer:              common.HexToAddress(config.Payer),
+		PayerAuthorizer:    common.HexToAddress(config.PayerAuthorizer),
+		Receiver:           common.HexToAddress(config.Receiver),
+		ReceiverAuthorizer: common.HexToAddress(config.ReceiverAuthorizer),
+		Token:              common.HexToAddress(config.Token),
+		WithdrawDelay:      withdrawDelay,
+		Salt:               salt,
+	}
+}
+
 // ReadChannelState reads on-chain channel state via a 3-call multicall:
 // channels(channelId), pendingWithdrawals(channelId), refundNonce(channelId).
+// Returns an error tagged with ErrRpcReadFailed when any sub-call fails so
+// callers can distinguish RPC failures from a missing channel (which returns
+// zero balance/totalClaimed/refundNonce).
 func ReadChannelState(
 	ctx context.Context,
 	signer evm.FacilitatorEvmSigner,
@@ -51,7 +83,7 @@ func ReadChannelState(
 	}
 
 	if !results[0].Success() || !results[1].Success() || !results[2].Success() {
-		return nil, fmt.Errorf("one or more multicall reads failed")
+		return nil, fmt.Errorf("%s: multicall returned failure for %s", ErrRpcReadFailed, channelId)
 	}
 
 	state := &batched.ChannelState{
@@ -123,7 +155,53 @@ func ValidateChannelConfig(
 			fmt.Sprintf("computed channelId %s does not match provided %s", computed, channelId))
 	}
 
+	// Validate against typed extra fields if present.
+	if extra := parseRequirementsExtra(requirements.Extra); extra != nil {
+		if extra.ReceiverAuthorizer != "" &&
+			!strings.EqualFold(config.ReceiverAuthorizer, extra.ReceiverAuthorizer) {
+			return x402.NewVerifyError(ErrReceiverAuthorizerMismatch, "",
+				fmt.Sprintf("channel receiverAuthorizer %s does not match required %s",
+					config.ReceiverAuthorizer, extra.ReceiverAuthorizer))
+		}
+		if extra.WithdrawDelay != 0 && config.WithdrawDelay != extra.WithdrawDelay {
+			return x402.NewVerifyError(ErrWithdrawDelayMismatch, "",
+				fmt.Sprintf("channel withdrawDelay %d does not match required %d",
+					config.WithdrawDelay, extra.WithdrawDelay))
+		}
+	}
+
 	return nil
+}
+
+// parseRequirementsExtra best-effort decodes the PaymentRequirements.Extra map
+// into a typed BatchSettlementPaymentRequirementsExtra. Returns nil when extra
+// is nil or unusable.
+func parseRequirementsExtra(extra map[string]interface{}) *batched.BatchSettlementPaymentRequirementsExtra {
+	if extra == nil {
+		return nil
+	}
+	out := &batched.BatchSettlementPaymentRequirementsExtra{}
+	if v, ok := extra["receiverAuthorizer"].(string); ok {
+		out.ReceiverAuthorizer = v
+	}
+	switch v := extra["withdrawDelay"].(type) {
+	case float64:
+		out.WithdrawDelay = int(v)
+	case int:
+		out.WithdrawDelay = v
+	case int64:
+		out.WithdrawDelay = int(v)
+	}
+	if v, ok := extra["name"].(string); ok {
+		out.Name = v
+	}
+	if v, ok := extra["version"].(string); ok {
+		out.Version = v
+	}
+	if v, ok := extra["assetTransferMethod"].(string); ok {
+		out.AssetTransferMethod = v
+	}
+	return out
 }
 
 // VerifyBatchedVoucherTypedData verifies a voucher signature using dual-path verification.
@@ -139,12 +217,7 @@ func VerifyBatchedVoucherTypedData(
 	signature string,
 	chainId *big.Int,
 ) (bool, error) {
-	domain := evm.TypedDataDomain{
-		Name:              batched.BatchSettlementDomain.Name,
-		Version:           batched.BatchSettlementDomain.Version,
-		ChainID:           chainId,
-		VerifyingContract: batched.BatchSettlementAddress,
-	}
+	domain := batched.GetBatchSettlementEip712Domain(chainId)
 
 	maxClaimable, ok := new(big.Int).SetString(maxClaimableAmount, 10)
 	if !ok {
