@@ -96,6 +96,14 @@ This page tracks which features are implemented in each SDK (TypeScript, Go, Pyt
 | enrichPaymentRequiredResponse | ✅ | ❌ | ❌ |
 | enrichSettlementResponse | ✅ | ❌ | ❌ |
 
+## MCP (Model Context Protocol)
+
+| Feature | TypeScript | Go | Python |
+|---------|------------|-----|--------|
+| MCP server payment wrapper | ✅ | ✅ | ✅ |
+| MCP client (auto-pay tools) | ✅ | ✅ | ✅ |
+| Bazaar discovery for MCP tools | ✅ | ✅ | ✅ |
+
 ## HTTP Server Features
 
 | Feature | TypeScript | Go | Python |
