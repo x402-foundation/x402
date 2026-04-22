@@ -11,9 +11,11 @@ FastAPI facilitator service demonstrating advanced x402 patterns including all-n
   - SVM private key with Solana Devnet SOL for transaction fees
   - TVM private key with TON testnet funds
 
-To fund the TVM facilitator wallet, request testnet TON from [@testgiver_ton_bot](https://t.me/testgiver_ton_bot). The facilitator wallet only needs TON for relay fees.
+To fund the TVM facilitator wallet, request testnet TON from [@testgiver_ton_bot](https://t.me/testgiver_ton_bot). The facilitator wallet only needs TON for relay fees and must hold **at least 1.1 TON** before running tests.
 
-To get testnet-USDT for the payer wallet, open the [testnet USDT transfer link](ton://transfer/kQDNUDJC0iQvJoZp0ml-YteL1NtTXKphU03CTI5v4VtBhGYs?amount=49000000&bin=te6cckEBAQEAFgAAKClXdJkAAAAAAAAAAAAAAAAAmJaAhDUekg) or scan the QR code below:
+> **Note:** the facilitator uses a highload-wallet-v3 account, so the facilitator's wallet address differs from your W5 address — fund the highload-v3 address, not the W5 one derived from the same key.
+
+To get testnet-USDT for the payer wallet, open the [testnet USDT transfer link](https://app.tonkeeper.com/transfer/kQDNUDJC0iQvJoZp0ml-YteL1NtTXKphU03CTI5v4VtBhGYs?amount=49000000&bin=te6cckEBAQEAFgAAKClXdJkAAAAAAAAAAAAAAAAAmJaAhDUekg) or scan the QR code below:
 <img width="228" height="228" alt="QR code for the testnet USDT transfer link" src="https://github.com/user-attachments/assets/da09ad03-388d-4960-88bf-afbacf4a7c65" />
 
 ## Setup

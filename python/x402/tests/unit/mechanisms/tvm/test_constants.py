@@ -6,6 +6,7 @@ from x402.mechanisms.tvm import (
     ERR_EXACT_TVM_ACCOUNT_FROZEN,
     ERR_EXACT_TVM_TON_AMOUNT_TOO_HIGH,
     ERR_EXACT_TVM_DUPLICATE_SETTLEMENT,
+    ERR_EXACT_TVM_FACILITATOR_INSUFFICIENT_BALANCE,
     ERR_EXACT_TVM_INSUFFICIENT_BALANCE,
     ERR_EXACT_TVM_INVALID_AMOUNT,
     ERR_EXACT_TVM_INVALID_ASSET,
@@ -66,6 +67,7 @@ def test_should_export_canonical_tvm_error_constants() -> None:
     assert ERR_EXACT_TVM_INVALID_UNTIL_EXPIRED == "invalid_exact_tvm_payload_valid_until_expired"
     assert ERR_EXACT_TVM_VALID_UNTIL_TOO_FAR == "invalid_exact_tvm_payload_valid_until_too_far"
     assert ERR_EXACT_TVM_INSUFFICIENT_BALANCE == "insufficient_balance"
+    assert ERR_EXACT_TVM_FACILITATOR_INSUFFICIENT_BALANCE == "facilitator_insufficient_balance"
     assert ERR_EXACT_TVM_DUPLICATE_SETTLEMENT == "duplicate_settlement"
     assert ERR_EXACT_TVM_SIMULATION_FAILED == "simulation_failed"
     assert ERR_EXACT_TVM_TRANSACTION_FAILED == "transaction_failed"

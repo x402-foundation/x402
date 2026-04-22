@@ -29,9 +29,11 @@ from ..constants import (
     DEFAULT_SETTLEMENT_CONFIRMATION_WORKERS,
     DEFAULT_TRACE_CONFIRMATION_TIMEOUT_SECONDS,
     DEFAULT_TVM_OUTER_GAS_BUFFER,
+    MIN_FACILITATOR_TON_BALANCE,
     ERR_EXACT_TVM_ACCOUNT_FROZEN,
     ERR_EXACT_TVM_TON_AMOUNT_TOO_HIGH,
     ERR_EXACT_TVM_DUPLICATE_SETTLEMENT,
+    ERR_EXACT_TVM_FACILITATOR_INSUFFICIENT_BALANCE,
     ERR_EXACT_TVM_INSUFFICIENT_BALANCE,
     ERR_EXACT_TVM_INVALID_AMOUNT,
     ERR_EXACT_TVM_INVALID_ASSET,
@@ -275,6 +277,26 @@ class ExactTvmScheme:
 
         if str(payload.accepted.network) != str(requirements.network):
             return invalid_response(ERR_EXACT_TVM_NETWORK_MISMATCH)
+
+        facilitator_addresses = self._signer.get_addresses_for_network(str(requirements.network))
+        for facilitator_address in facilitator_addresses:
+            facilitator_state = self._signer.get_account_state(
+                facilitator_address, str(requirements.network)
+            )
+            if facilitator_state.balance < MIN_FACILITATOR_TON_BALANCE:
+                return (
+                    VerifyResponse(
+                        is_valid=False,
+                        invalid_reason=ERR_EXACT_TVM_FACILITATOR_INSUFFICIENT_BALANCE,
+                        invalid_message=(
+                            f"Facilitator wallet {facilitator_address} balance "
+                            f"{facilitator_state.balance} nanotons is below required "
+                            f"{MIN_FACILITATOR_TON_BALANCE} nanotons (1.1 TON)"
+                        ),
+                        payer=payer,
+                    ),
+                    None,
+                )
 
         if int(payload.accepted.amount) != int(requirements.amount):
             return invalid_response(ERR_EXACT_TVM_INVALID_AMOUNT)

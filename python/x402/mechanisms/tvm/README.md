@@ -122,7 +122,12 @@ For non-default jettons, provide either:
 
 ## Testnet funding
 
-To fund a TVM payer wallet, request testnet TON from [@testgiver_ton_bot](https://t.me/testgiver_ton_bot) for fees. Then open the [testnet USDT transfer link](ton://transfer/kQDNUDJC0iQvJoZp0ml-YteL1NtTXKphU03CTI5v4VtBhGYs?amount=49000000&bin=te6cckEBAQEAFgAAKClXdJkAAAAAAAAAAAAAAAAAmJaAhDUekg) or scan the QR code below to obtain testnet USDT:
+To fund a TVM payer wallet, request testnet TON from [@testgiver_ton_bot](https://t.me/testgiver_ton_bot) for fees. Then open the [testnet USDT transfer link](https://app.tonkeeper.com/transfer/kQDNUDJC0iQvJoZp0ml-YteL1NtTXKphU03CTI5v4VtBhGYs?amount=49000000&bin=te6cckEBAQEAFgAAKClXdJkAAAAAAAAAAAAAAAAAmJaAhDUekg) or scan the QR code below to obtain testnet USDT:
+
+The facilitator wallet also needs testnet TON (no USDT required) and must hold **at least 1.1 TON** before running tests.
+
+> **Note:** the facilitator uses a highload-wallet-v3 account, so the facilitator's wallet address differs from your W5 address — fund the highload-v3 address, not the W5 one derived from the same key.
+
 <img width="228" height="228" alt="QR code for the testnet USDT transfer link" src="https://github.com/user-attachments/assets/da09ad03-388d-4960-88bf-afbacf4a7c65" />
 
 ## Technical Details

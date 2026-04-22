@@ -24,6 +24,7 @@ from x402.mechanisms.tvm.constants import (
     ERR_EXACT_TVM_ACCOUNT_FROZEN,
     ERR_EXACT_TVM_TON_AMOUNT_TOO_HIGH,
     ERR_EXACT_TVM_DUPLICATE_SETTLEMENT,
+    ERR_EXACT_TVM_FACILITATOR_INSUFFICIENT_BALANCE,
     ERR_EXACT_TVM_INVALID_AMOUNT,
     ERR_EXACT_TVM_INVALID_ASSET,
     ERR_EXACT_TVM_INVALID_JETTON_TRANSFER,
@@ -356,6 +357,22 @@ class TestVerify:
         result = facilitator.verify(_make_payload(), _make_requirements())
 
         _assert_invalid_verify(result, ERR_EXACT_TVM_ACCOUNT_FROZEN)
+
+    def test_should_reject_facilitator_with_insufficient_ton_balance(self, facilitator_env):
+        facilitator = facilitator_env.facilitator
+        signer = facilitator_env.signer
+        signer.facilitator_account_state = TvmAccountState(
+            address=signer.facilitator_account_state.address,
+            balance=1_000_000_000,
+            is_active=True,
+            is_frozen=False,
+            is_uninitialized=False,
+            state_init=None,
+        )
+
+        result = facilitator.verify(_make_payload(), _make_requirements())
+
+        _assert_invalid_verify(result, ERR_EXACT_TVM_FACILITATOR_INSUFFICIENT_BALANCE)
 
     def test_should_ignore_settlement_state_init_for_active_account(
         self, facilitator_env, monkeypatch

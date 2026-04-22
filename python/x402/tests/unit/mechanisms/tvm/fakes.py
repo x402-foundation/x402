@@ -230,6 +230,14 @@ class FacilitatorSignerStub:
             is_uninitialized=False,
             state_init=None,
         )
+        self.facilitator_account_state = TvmAccountState(
+            address=FACILITATOR,
+            balance=10_000_000_000,
+            is_active=True,
+            is_frozen=False,
+            is_uninitialized=False,
+            state_init=None,
+        )
         self.jetton_wallet_data = TvmJettonWalletData(
             address=SOURCE_WALLET,
             balance=1_000_000,
@@ -246,8 +254,10 @@ class FacilitatorSignerStub:
         return [FACILITATOR]
 
     def get_account_state(self, address: str, network: str) -> TvmAccountState:
-        assert address == PAYER
         assert network == TVM_TESTNET
+        if address == FACILITATOR:
+            return self.facilitator_account_state
+        assert address == PAYER
         return self.account_state
 
     def get_jetton_wallet(self, asset: str, owner: str, network: str) -> str:

@@ -162,8 +162,9 @@ You need **three separate Stellar accounts** for e2e tests (client, server, faci
 > **Note:** The facilitator account only needs XLM (step 1). Client and server accounts need all three steps.
 ##### TON testnet funding for TVM e2e and examples
 
-- **Testnet TON**: use [@testgiver_ton_bot](https://t.me/testgiver_ton_bot) to fund the facilitator and payer wallets with TON for relay fees.
-- **Testnet USDT**: the payer wallet also needs testnet USDT. Open the [TON transfer link](ton://transfer/kQDNUDJC0iQvJoZp0ml-YteL1NtTXKphU03CTI5v4VtBhGYs?amount=49000000&bin=te6cckEBAQEAFgAAKClXdJkAAAAAAAAAAAAAAAAAmJaAhDUekg) or scan the QR code below to get them. The facilitator wallet only needs TON.
+- **Testnet TON**: use [@testgiver_ton_bot](https://t.me/testgiver_ton_bot) to fund the facilitator and payer wallets with TON for relay fees. The facilitator wallet must hold **at least 1.1 TON** before running tests.
+- **Testnet USDT**: the payer wallet also needs testnet USDT. Open the [TON transfer link](https://app.tonkeeper.com/transfer/kQDNUDJC0iQvJoZp0ml-YteL1NtTXKphU03CTI5v4VtBhGYs?amount=49000000&bin=te6cckEBAQEAFgAAKClXdJkAAAAAAAAAAAAAAAAAmJaAhDUekg) or scan the QR code below to get them. The facilitator wallet only needs TON.
+- **Note:** the facilitator uses a highload-wallet-v3 account, so the facilitator's wallet address differs from your W5 address — fund the highload-v3 address, not the W5 one derived from the same key.
   <img width="228" height="228" alt="QR code for the testnet USDT transfer link" src="https://github.com/user-attachments/assets/da09ad03-388d-4960-88bf-afbacf4a7c65" />
 
 ## Example Session
