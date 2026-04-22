@@ -1,0 +1,8 @@
+{
+  "name": "Token Risk Scanner",
+  "description": "Smart contract security scanner for AI agents. Honeypot detection, rug pull analysis, tax traps, hidden owners, and risk scoring (0-100) across 10+ EVM chains. $0.003 USDC per scan on Base. No API keys, no signup.",
+  "url": "https://token-risk-scanner-production.up.railway.app",
+  "github": "https://github.com/xuansun/token-risk-scanner",
+  "category": "service",
+  "tags": ["security", "defi", "token-analysis", "risk-scoring"]
+}
