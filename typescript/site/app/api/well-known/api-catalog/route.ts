@@ -20,24 +20,15 @@ export function GET() {
         ],
       },
       {
-        anchor: "https://x402.org/api/x402/demo",
-        links: [
-          {
-            rel: "payment-required",
-            href: "https://x402.org/api/x402/demo",
-          },
-          {
-            rel: "service-desc",
-            href: "https://github.com/coinbase/x402",
-          },
-        ],
-      },
-      {
         anchor: "https://x402.org/protected",
         links: [
           {
             rel: "payment-required",
             href: "https://x402.org/protected",
+          },
+          {
+            rel: "service-desc",
+            href: "https://github.com/coinbase/x402",
           },
         ],
       },

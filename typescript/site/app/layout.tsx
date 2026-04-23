@@ -69,7 +69,7 @@ export default function RootLayout({
           Skip to main content
         </a>
         <main id="main-content">{children}</main>
-        <Script id="webmcp" strategy="beforeInteractive">{`
+        <Script id="webmcp" strategy="afterInteractive">{`
 (function() {
   if (typeof navigator === 'undefined') return;
   var mc = navigator.modelContext;

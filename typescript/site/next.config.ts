@@ -30,7 +30,7 @@ const nextConfig: NextConfig = {
           {
             key: "Link",
             value:
-              '</.well-known/api-catalog>; rel="api-catalog", </writing/x402-v2-launch>; rel="service-doc", </api/x402/demo>; rel="payment-required"',
+              '</.well-known/api-catalog>; rel="api-catalog", </writing/x402-v2-launch>; rel="service-doc", </protected>; rel="payment-required"',
           },
         ],
       },
@@ -45,14 +45,6 @@ const nextConfig: NextConfig = {
       {
         source: "/.well-known/api-catalog",
         destination: "/api/well-known/api-catalog",
-      },
-      {
-        source: "/.well-known/openid-configuration",
-        destination: "/api/well-known/openid-configuration",
-      },
-      {
-        source: "/.well-known/oauth-protected-resource",
-        destination: "/api/well-known/oauth-protected-resource",
       },
     ];
   },

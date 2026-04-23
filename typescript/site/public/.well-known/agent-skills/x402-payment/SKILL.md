@@ -16,10 +16,10 @@ x402 is an open standard for internet-native payments. When an API endpoint requ
 
 ## Supported Networks
 
-- Base (Chain ID: 8453)
-- Ethereum (Chain ID: 1)
-- Arbitrum (Chain ID: 42161)
-- Solana
+- Base: `eip155:8453`
+- Ethereum: `eip155:1`
+- Arbitrum: `eip155:42161`
+- Solana: `solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp`
 
 ## Supported Tokens
 
@@ -37,7 +37,7 @@ app.use(
       accepts: [
         {
           scheme: "exact",
-          network: "base-sepolia",
+          network: "eip155:84532",
           maxAmountRequired: "100000",
           resource: "https://api.example.com/data",
         },
