@@ -112,7 +112,75 @@ const geolocationProxy = async (req: NextRequest) => {
   return null;
 };
 
+const homepageMarkdown = `# x402 — Payment Required | Internet-Native Payments Standard
+
+x402 is the internet's payment standard. An open standard for internet-native payments that empowers agentic payments at scale. Build a more free and fair internet.
+
+## Accept payments with a single line of code
+
+\`\`\`javascript
+app.use(
+  paymentMiddleware(
+    {
+      "GET /weather": {
+        accepts: [...],
+        description: "Weather data",
+      },
+    },
+  )
+);
+\`\`\`
+
+Add one line of code to require payment for each incoming request. If a request arrives without payment, the server responds with HTTP 402, prompting the client to pay and retry.
+
+## Key Features
+
+- **Zero protocol fees** — x402 is free for the customer and the merchant—just pay nominal payment network fees
+- **Zero wait** — Money moves at the speed of the internet
+- **Zero friction** — No accounts or personal information needed
+- **Zero centralization** — Anyone on the internet can build on or extend x402
+- **Zero restrictions** — x402 is a neutral standard, not tied to any specific network
+
+## How x402 Works vs Traditional Payments
+
+### Traditional (5 steps)
+
+1. Create account with new API provider
+2. Add payment method (KYC required)
+3. Buy credits or subscription
+4. Manage API key
+5. Make payment
+
+### x402 (3 steps)
+
+1. AI agent sends HTTP request and receives 402: Payment Required
+2. AI agent pays instantly with stablecoins
+3. API access granted
+
+## x402 is HTTP-native
+
+x402 uses the HTTP 402 status code — a status code reserved since the beginning of HTTP for exactly this purpose. No proprietary protocols, no walled gardens — just the web, working as intended.
+
+## Links
+
+- [Ecosystem](https://x402.org/ecosystem) — Explore the x402 ecosystem of partners and integrations
+- [GitHub](https://github.com/coinbase/x402) — Open source repository
+- [x402 v2 Launch](https://x402.org/writing/x402-v2-launch) — Read about the latest release
+- [Whitepaper](https://x402.org/x402-whitepaper.pdf) — Technical specification
+`;
+
 export const proxy = async (req: NextRequest) => {
+  const pathname = new URL(req.url).pathname;
+  const accept = req.headers.get("accept") || "";
+
+  if (pathname === "/" && accept.includes("text/markdown")) {
+    return new NextResponse(homepageMarkdown, {
+      headers: {
+        "Content-Type": "text/markdown; charset=utf-8",
+      },
+    });
+  }
+
   const geolocationResponse = await geolocationProxy(req);
   if (geolocationResponse) {
     return geolocationResponse;

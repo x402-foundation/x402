@@ -1,0 +1,12 @@
+{
+  "serverInfo": {
+    "name": "x402",
+    "version": "2.0.0"
+  },
+  "endpoint": "https://x402.org/mcp",
+  "capabilities": {
+    "tools": true,
+    "resources": true,
+    "prompts": false
+  }
+}
