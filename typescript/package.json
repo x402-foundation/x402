@@ -15,7 +15,7 @@
     }
   },
   "scripts": {
-    "build": "turbo run build",
+    "build": "turbo run build --filter='!./packages/legacy/*'",
     "lint": "turbo run lint",
     "format": "turbo run format",
     "lint:check": "turbo run lint:check",
