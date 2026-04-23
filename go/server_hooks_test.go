@@ -123,9 +123,9 @@ func TestAfterVerifyHook(t *testing.T) {
 	server := Newx402ResourceServer()
 
 	// Register hook to capture result
-	server.OnAfterVerify(func(ctx VerifyResultContext) error {
+	server.OnAfterVerify(func(ctx VerifyResultContext) (*AfterVerifyResult, error) {
 		capturedResult = ctx.Result
-		return nil
+		return nil, nil
 	})
 
 	// Mock facilitator that returns success
@@ -416,14 +416,14 @@ func TestMultipleHooks_ExecutionOrder(t *testing.T) {
 		return nil, nil
 	})
 
-	server.OnAfterVerify(func(ctx VerifyResultContext) error {
+	server.OnAfterVerify(func(ctx VerifyResultContext) (*AfterVerifyResult, error) {
 		executionOrder = append(executionOrder, "after1")
-		return nil
+		return nil, nil
 	})
 
-	server.OnAfterVerify(func(ctx VerifyResultContext) error {
+	server.OnAfterVerify(func(ctx VerifyResultContext) (*AfterVerifyResult, error) {
 		executionOrder = append(executionOrder, "after2")
-		return nil
+		return nil, nil
 	})
 
 	// Mock facilitator

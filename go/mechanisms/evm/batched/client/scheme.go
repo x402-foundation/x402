@@ -4,10 +4,10 @@ import (
 	"context"
 	"fmt"
 	"math/big"
-	"sync"
 
 	"github.com/ethereum/go-ethereum/common"
 
+	x402 "github.com/x402-foundation/x402/go"
 	"github.com/x402-foundation/x402/go/mechanisms/evm"
 	"github.com/x402-foundation/x402/go/mechanisms/evm/batched"
 	"github.com/x402-foundation/x402/go/types"
@@ -46,12 +46,10 @@ type BatchedEvmSchemeConfig struct {
 
 // BatchedEvmScheme implements SchemeNetworkClient for batched EVM payments.
 type BatchedEvmScheme struct {
-	signer        evm.ClientEvmSigner
-	config        BatchedEvmSchemeConfig
-	autoTopUp     bool
-	storage       ClientSessionStorage
-	pendingRefund map[string]bool
-	mu            sync.Mutex
+	signer    evm.ClientEvmSigner
+	config    BatchedEvmSchemeConfig
+	autoTopUp bool
+	storage   ClientSessionStorage
 }
 
 // NewBatchedEvmScheme creates a new batched client scheme.
@@ -88,11 +86,10 @@ func NewBatchedEvmScheme(signer evm.ClientEvmSigner, config *BatchedEvmSchemeCon
 	}
 
 	return &BatchedEvmScheme{
-		signer:        signer,
-		config:        cfg,
-		autoTopUp:     autoTopUp,
-		storage:       storage,
-		pendingRefund: make(map[string]bool),
+		signer:    signer,
+		config:    cfg,
+		autoTopUp: autoTopUp,
+		storage:   storage,
 	}
 }
 
@@ -197,11 +194,11 @@ func (c *BatchedEvmScheme) BuildChannelConfig(requirements types.PaymentRequirem
 	}
 }
 
-// RequestRefund marks a channel for cooperative refund on the next voucher.
-func (c *BatchedEvmScheme) RequestRefund(channelId string) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	c.pendingRefund[batched.NormalizeChannelId(channelId)] = true
+// Refund sends a cooperative refund request to the channel that backs `url`.
+// On success, the local session is updated (or deleted on full refund) and the
+// parsed SettleResponse is returned.
+func (c *BatchedEvmScheme) Refund(ctx context.Context, url string, options *RefundOptions) (*x402.SettleResponse, error) {
+	return RefundChannel(ctx, &refundContextAdapter{scheme: c}, url, options)
 }
 
 // ProcessSettleResponse updates local session state from a settle response.
@@ -217,9 +214,10 @@ func (c *BatchedEvmScheme) ProcessSettleResponse(settle map[string]interface{}) 
 
 	channelId := batched.NormalizeChannelId(extra.ChannelId)
 
-	// If refund flag is set, delete the session
+	// If refund flag is set, reconcile via UpdateSessionAfterRefund: delete on
+	// full refund (balance==0), otherwise update balance/charged/totalClaimed.
 	if extra.Refund {
-		return c.storage.Delete(channelId)
+		return UpdateSessionAfterRefund(c.storage, channelId, settle)
 	}
 
 	session := &BatchedClientContext{
@@ -511,21 +509,12 @@ func (c *BatchedEvmScheme) createVoucherPayload(
 		return types.PaymentPayload{}, fmt.Errorf("failed to sign voucher: %w", err)
 	}
 
-	// Check for pending refund
-	c.mu.Lock()
-	refund := c.pendingRefund[channelId]
-	if refund {
-		delete(c.pendingRefund, channelId)
-	}
-	c.mu.Unlock()
-
 	voucherPayload := &batched.BatchedVoucherPayload{
 		Type:               "voucher",
 		ChannelConfig:      channelConfig,
 		ChannelId:          voucher.ChannelId,
 		MaxClaimableAmount: voucher.MaxClaimableAmount,
 		Signature:          voucher.Signature,
-		Refund:             refund,
 	}
 
 	return types.PaymentPayload{
@@ -550,6 +539,29 @@ func (c *BatchedEvmScheme) createDepositPayload(
 		maxClaimableAmount,
 		c.config.VoucherSigner,
 	)
+}
+
+// refundContextAdapter wires *BatchedEvmScheme into the RefundContext interface.
+type refundContextAdapter struct {
+	scheme *BatchedEvmScheme
+}
+
+func (a *refundContextAdapter) Storage() ClientSessionStorage { return a.scheme.storage }
+func (a *refundContextAdapter) Signer() evm.ClientEvmSigner   { return a.scheme.signer }
+func (a *refundContextAdapter) VoucherSigner() evm.ClientEvmSigner {
+	return a.scheme.config.VoucherSigner
+}
+func (a *refundContextAdapter) BuildChannelConfig(requirements types.PaymentRequirements) batched.ChannelConfig {
+	return a.scheme.BuildChannelConfig(requirements)
+}
+func (a *refundContextAdapter) RecoverSession(ctx context.Context, requirements types.PaymentRequirements) (*BatchedClientContext, error) {
+	return a.scheme.RecoverSession(ctx, requirements)
+}
+func (a *refundContextAdapter) ProcessSettleResponse(settle map[string]interface{}) error {
+	return a.scheme.ProcessSettleResponse(settle)
+}
+func (a *refundContextAdapter) ProcessCorrectivePaymentRequired(ctx context.Context, errorReason string, accepts []types.PaymentRequirements) (bool, error) {
+	return a.scheme.ProcessCorrectivePaymentRequired(ctx, errorReason, accepts)
 }
 
 func (c *BatchedEvmScheme) calculateDepositAmount(requiredAmount *big.Int) *big.Int {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"math/big"
+	"time"
 
 	"github.com/ethereum/go-ethereum/common"
 
@@ -173,9 +174,9 @@ func VerifyDeposit(
 	}
 
 	return &x402.VerifyResponse{
-		IsValid:    true,
-		Payer:      config.Payer,
-		Extensions: BuildChannelStateExtra(channelId, payload.Voucher.MaxClaimableAmount, projectedState),
+		IsValid: true,
+		Payer:   config.Payer,
+		Extra:   BuildChannelStateExtra(channelId, payload.Voucher.MaxClaimableAmount, projectedState),
 	}, nil
 }
 
@@ -233,15 +234,58 @@ func SettleDeposit(
 			"deposit transaction reverted")
 	}
 
-	// Read updated channel state
-	state, err := ReadChannelState(ctx, signer, payload.Voucher.ChannelId)
-	if err != nil {
-		state = &batched.ChannelState{
-			Balance:      depositAmount,
-			TotalClaimed: big.NewInt(0),
-			RefundNonce:  big.NewInt(0),
+	// Build optimistic post-deposit extra (used as a fallback if the RPC hasn't
+	// caught up yet to the just-confirmed transaction).
+	chargedFromExtra := requirements.Amount
+	if payload.ResponseExtra != nil {
+		if v, ok := payload.ResponseExtra["chargedCumulativeAmount"].(string); ok && v != "" {
+			chargedFromExtra = v
 		}
 	}
+	priorState, _ := ReadChannelState(ctx, signer, payload.Voucher.ChannelId)
+	priorBalance := big.NewInt(0)
+	priorTotalClaimed := big.NewInt(0)
+	priorWithdrawRequestedAt := 0
+	priorRefundNonce := big.NewInt(0)
+	if priorState != nil {
+		if priorState.Balance != nil {
+			priorBalance = priorState.Balance
+		}
+		if priorState.TotalClaimed != nil {
+			priorTotalClaimed = priorState.TotalClaimed
+		}
+		priorWithdrawRequestedAt = priorState.WithdrawRequestedAt
+		if priorState.RefundNonce != nil {
+			priorRefundNonce = priorState.RefundNonce
+		}
+	}
+	optimisticBalance := new(big.Int).Add(priorBalance, depositAmount)
+	optimisticState := &batched.ChannelState{
+		Balance:             optimisticBalance,
+		TotalClaimed:        priorTotalClaimed,
+		WithdrawRequestedAt: priorWithdrawRequestedAt,
+		RefundNonce:         priorRefundNonce,
+	}
+
+	// Poll the RPC until it reflects the just-confirmed deposit, so subsequent
+	// verify reads are guaranteed to see this balance.
+	expectedMinBalance := new(big.Int).Set(optimisticBalance)
+	deadline := time.Now().Add(2 * time.Second)
+	postState, _ := ReadChannelState(ctx, signer, payload.Voucher.ChannelId)
+	for postState == nil || postState.Balance == nil || postState.Balance.Cmp(expectedMinBalance) < 0 {
+		if time.Now().After(deadline) {
+			break
+		}
+		time.Sleep(150 * time.Millisecond)
+		postState, _ = ReadChannelState(ctx, signer, payload.Voucher.ChannelId)
+	}
+
+	finalState := optimisticState
+	if postState != nil && postState.Balance != nil && postState.Balance.Cmp(expectedMinBalance) >= 0 {
+		finalState = postState
+	}
+
+	extra := BuildChannelStateExtra(payload.Voucher.ChannelId, chargedFromExtra, finalState)
 
 	return &x402.SettleResponse{
 		Success:     true,
@@ -249,7 +293,7 @@ func SettleDeposit(
 		Network:     network,
 		Payer:       config.Payer,
 		Amount:      payload.Deposit.Amount,
-		Extensions:  BuildChannelStateExtra(payload.Voucher.ChannelId, payload.Voucher.MaxClaimableAmount, state),
+		Extra:       extra,
 	}, nil
 }
 

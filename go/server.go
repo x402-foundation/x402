@@ -446,10 +446,19 @@ func (s *x402ResourceServer) VerifyPayment(ctx context.Context, payload types.Pa
 		return verifyResult, verifyErr
 	}
 
-	// Execute afterVerify hooks
+	// Execute afterVerify hooks. The last hook to return a SkipHandler directive
+	// wins; this lets schemes signal that a self-contained operation (e.g.
+	// cooperative refund) should bypass the resource handler and settle inline.
 	resultCtx := VerifyResultContext{VerifyContext: hookCtx, Result: verifyResult}
 	for _, hook := range s.afterVerifyHooks {
-		_ = hook(resultCtx) // Log errors but don't fail
+		directive, _ := hook(resultCtx) // Log errors but don't fail
+		if directive != nil && directive.SkipHandler {
+			resp := directive.Response
+			if resp == nil {
+				resp = &SkipHandlerDirective{}
+			}
+			verifyResult.SkipHandler = resp
+		}
 	}
 
 	return verifyResult, nil

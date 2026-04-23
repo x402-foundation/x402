@@ -27,4 +27,5 @@ facilitator is in `examples/go/facilitator/batch-settlement`.
 | `CHANNEL_SALT`                    | 32-byte hex; default `0x000…000` |
 | `STORAGE_DIR`                     | If set, persists session state under `${STORAGE_DIR}/client/` |
 | `NUMBER_OF_REQUESTS`              | Default `3` |
-| `REFUND_ON_LAST_REQUEST`          | If `"true"`, requests cooperative refund before the last request |
+| `REFUND_AFTER_REQUESTS`           | If `"true"`, requests a cooperative refund after the request loop completes |
+| `REFUND_AMOUNT`                   | Optional partial refund amount in base units. Empty drains remaining channel balance |

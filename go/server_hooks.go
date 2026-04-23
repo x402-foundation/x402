@@ -31,6 +31,23 @@ type VerifyFailureContext struct {
 	Error error
 }
 
+// SkipHandlerDirective is an optional acknowledgement body returned to the caller
+// when an AfterVerifyHook requests that the resource handler be skipped for a
+// self-contained operation (e.g. cooperative refund). Travels in-process only —
+// never on the facilitator wire.
+type SkipHandlerDirective struct {
+	ContentType string
+	Body        interface{}
+}
+
+// AfterVerifyResult is the optional return value of an AfterVerifyHook.
+// When SkipHandler is true, the resource handler is bypassed and settlement is
+// performed inline; the optional Response is used to craft the success body.
+type AfterVerifyResult struct {
+	SkipHandler bool
+	Response    *SkipHandlerDirective
+}
+
 // SettleContext contains information passed to settle hooks
 // Uses view interfaces for version-agnostic hooks
 // PayloadBytes and RequirementsBytes provide escape hatch for extensions (e.g., Bazaar)
@@ -93,9 +110,12 @@ type SettleFailureHookResult struct {
 // and an invalid VerifyResponse will be returned with the provided reason
 type BeforeVerifyHook func(VerifyContext) (*BeforeHookResult, error)
 
-// AfterVerifyHook is called after successful payment verification
-// Any error returned will be logged but will not affect the verification result
-type AfterVerifyHook func(VerifyResultContext) error
+// AfterVerifyHook is called after successful payment verification.
+// Any error returned will be logged but will not affect the verification result.
+// Returning an AfterVerifyResult with SkipHandler=true signals the HTTP layer to
+// bypass the resource handler and perform settlement inline (e.g. cooperative refund).
+// The last hook to return a SkipHandler directive wins.
+type AfterVerifyHook func(VerifyResultContext) (*AfterVerifyResult, error)
 
 // OnVerifyFailureHook is called when payment verification fails
 // If it returns a result with Recovered=true, the provided VerifyResponse

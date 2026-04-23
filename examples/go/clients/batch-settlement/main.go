@@ -37,7 +37,8 @@ func main() {
 	channelSalt := envOr("CHANNEL_SALT", batchedclient.DefaultSalt)
 	storageDir := os.Getenv("STORAGE_DIR")
 	numberOfRequests := atoiOr("NUMBER_OF_REQUESTS", 3)
-	refundOnLast := os.Getenv("REFUND_ON_LAST_REQUEST") == "true"
+	refundAfterRequests := os.Getenv("REFUND_AFTER_REQUESTS") == "true"
+	refundAmount := os.Getenv("REFUND_AMOUNT")
 
 	signer, err := evmsigners.NewClientSignerFromPrivateKey(evmPrivateKey)
 	if err != nil {
@@ -82,15 +83,8 @@ func main() {
 		fmt.Printf("payerAuthorizer: %s\n\n", signer.Address())
 	}
 
-	var channelId string
-
 	for i := 0; i < numberOfRequests; i++ {
 		t0 := time.Now()
-
-		if refundOnLast && i == numberOfRequests-1 && channelId != "" {
-			fmt.Printf("REQUESTING REFUND for %s\n", channelId)
-			scheme.RequestRefund(channelId)
-		}
 
 		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 		req, _ := http.NewRequestWithContext(ctx, "GET", url, nil)
@@ -106,15 +100,30 @@ func main() {
 
 		if settle, _ := extractSettleResponse(resp); settle != nil {
 			fmt.Println(indent(settle))
-			if extra, ok := (*settle)["extra"].(map[string]interface{}); ok {
-				if cid, ok := extra["channelId"].(string); ok {
-					channelId = cid
-				}
-			}
 		}
 
 		_ = resp.Body.Close()
 		fmt.Printf("Request %d — completed in %.3fs\n\n", i+1, time.Since(t0).Seconds())
+	}
+
+	if refundAfterRequests {
+		if refundAmount != "" {
+			fmt.Printf("REQUESTING PARTIAL REFUND of %s base units\n", refundAmount)
+		} else {
+			fmt.Println("REQUESTING FULL REFUND of remaining channel balance")
+		}
+		opts := &batchedclient.RefundOptions{}
+		if refundAmount != "" {
+			opts.Amount = refundAmount
+		}
+		refundCtx, refundCancel := context.WithTimeout(context.Background(), 60*time.Second)
+		settle, err := scheme.Refund(refundCtx, url, opts)
+		refundCancel()
+		if err != nil {
+			fmt.Printf("Refund failed: %v\n", err)
+			os.Exit(1)
+		}
+		fmt.Println(indent(settle))
 	}
 }
 

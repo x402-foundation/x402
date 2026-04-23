@@ -202,8 +202,8 @@ func buildRefundResponse(txHash string, network x402.Network, responseExtra *bat
 		Network:     network,
 	}
 	if responseExtra != nil {
-		resp.Extensions = responseExtra.ToMap()
-		resp.Extensions["refund"] = true
+		resp.Extra = responseExtra.ToMap()
+		resp.Extra["refund"] = true
 	}
 	return resp
 }

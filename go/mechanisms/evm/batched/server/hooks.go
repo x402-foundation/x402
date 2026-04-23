@@ -29,9 +29,23 @@ func (s *BatchedEvmScheme) BeforeVerifyHook() x402.BeforeVerifyHook {
 		}
 
 		channelId, _ := payload["channelId"].(string)
+		isRefund, _ := payload["refund"].(bool)
+
 		session, storageErr := s.storage.Get(batched.NormalizeChannelId(channelId))
-		if storageErr != nil || session == nil {
+		if storageErr != nil {
 			return nil, nil //nolint:nilerr // storage error is non-fatal; skip stale check
+		}
+		if session == nil {
+			// Refund without a server session is unrecoverable: the client must
+			// resync from on-chain state before issuing the refund voucher.
+			if isRefund {
+				return &x402.BeforeHookResult{
+					Abort:   true,
+					Reason:  "batch_settlement_evm_cumulative_below_claimed",
+					Message: "No server session for refund voucher; client must resync from on-chain state",
+				}, nil
+			}
+			return nil, nil
 		}
 
 		prevCharged, _ := new(big.Int).SetString(session.ChargedCumulativeAmount, 10)
@@ -43,7 +57,14 @@ func (s *BatchedEvmScheme) BeforeVerifyHook() x402.BeforeVerifyHook {
 			return nil, nil
 		}
 
-		expectedMaxClaimable := new(big.Int).Add(prevCharged, reqAmount)
+		// Refund vouchers are zero-charge: client signs the existing
+		// chargedCumulativeAmount (no requirement.amount added).
+		var expectedMaxClaimable *big.Int
+		if isRefund {
+			expectedMaxClaimable = new(big.Int).Set(prevCharged)
+		} else {
+			expectedMaxClaimable = new(big.Int).Add(prevCharged, reqAmount)
+		}
 		actualMaxClaimable, _ := new(big.Int).SetString(payload["maxClaimableAmount"].(string), 10)
 
 		if actualMaxClaimable != nil && actualMaxClaimable.Cmp(expectedMaxClaimable) == 0 {
@@ -61,25 +82,30 @@ func (s *BatchedEvmScheme) BeforeVerifyHook() x402.BeforeVerifyHook {
 // AfterVerifyHook returns a hook that persists channel session state after
 // successful verification.  It extracts channelId, voucher signature, and
 // on-chain snapshot from the verify response and stores/updates the session.
+//
+// For refund vouchers (refund: true), additionally returns a SkipHandler
+// directive so the resource server bypasses the application handler and
+// settles inline.
 func (s *BatchedEvmScheme) AfterVerifyHook() x402.AfterVerifyHook {
-	return func(ctx x402.VerifyResultContext) error {
+	return func(ctx x402.VerifyResultContext) (*x402.AfterVerifyResult, error) {
 		if ctx.Requirements.GetScheme() != batched.SchemeBatched {
-			return nil
+			return nil, nil
 		}
 		if ctx.Result == nil || !ctx.Result.IsValid || ctx.Result.Payer == "" {
-			return nil
+			return nil, nil
 		}
 
 		payload := ctx.Payload.GetPayload()
 
 		var channelId, signedMaxClaimable, signature, payer string
 		var channelConfig *batched.ChannelConfig
+		isRefundVoucher := false
 
 		switch {
 		case batched.IsDepositPayload(payload):
 			dp, parseErr := batched.DepositPayloadFromMap(payload)
 			if parseErr != nil {
-				return nil //nolint:nilerr // parse failure in after-hook is non-fatal
+				return nil, nil //nolint:nilerr // parse failure in after-hook is non-fatal
 			}
 			channelId = dp.Voucher.ChannelId
 			signedMaxClaimable = dp.Voucher.MaxClaimableAmount
@@ -90,7 +116,7 @@ func (s *BatchedEvmScheme) AfterVerifyHook() x402.AfterVerifyHook {
 		case batched.IsVoucherPayload(payload):
 			vp, parseErr := batched.VoucherPayloadFromMap(payload)
 			if parseErr != nil {
-				return nil //nolint:nilerr // parse failure in after-hook is non-fatal
+				return nil, nil //nolint:nilerr // parse failure in after-hook is non-fatal
 			}
 			channelId = vp.ChannelId
 			signedMaxClaimable = vp.MaxClaimableAmount
@@ -98,15 +124,16 @@ func (s *BatchedEvmScheme) AfterVerifyHook() x402.AfterVerifyHook {
 			cfg := vp.ChannelConfig
 			channelConfig = &cfg
 			payer = cfg.Payer
+			isRefundVoucher = vp.Refund
 		default:
-			return nil
+			return nil, nil
 		}
 
 		if payer == "" {
 			payer = ctx.Result.Payer
 		}
 
-		ex := ctx.Result.Extensions
+		ex := ctx.Result.Extra
 		balance := mapStringField(ex, "balance", "0")
 		totalClaimed := mapStringField(ex, "totalClaimed", "0")
 		withdrawRequestedAt := mapIntField(ex, "withdrawRequestedAt", 0)
@@ -120,7 +147,7 @@ func (s *BatchedEvmScheme) AfterVerifyHook() x402.AfterVerifyHook {
 			resolvedConfig = &prev.ChannelConfig
 		}
 		if resolvedConfig == nil {
-			return nil
+			return nil, nil
 		}
 
 		prevCharged := totalClaimed
@@ -142,7 +169,23 @@ func (s *BatchedEvmScheme) AfterVerifyHook() x402.AfterVerifyHook {
 			LastRequestTimestamp:    time.Now().UnixMilli(),
 		}
 
-		return s.storage.Set(normalizedId, session)
+		if err := s.storage.Set(normalizedId, session); err != nil {
+			return nil, err
+		}
+
+		if isRefundVoucher {
+			return &x402.AfterVerifyResult{
+				SkipHandler: true,
+				Response: &x402.SkipHandlerDirective{
+					ContentType: "application/json",
+					Body: map[string]interface{}{
+						"message":   "Refund acknowledged",
+						"channelId": normalizedId,
+					},
+				},
+			}, nil
+		}
+		return nil, nil
 	}
 }
 
@@ -205,6 +248,13 @@ func (s *BatchedEvmScheme) BeforeSettleHook() x402.BeforeSettleHook {
 			}, nil
 		}
 
+		// Cooperative refund: zero-charge voucher, no increment to apply.
+		// Delegate to refund-specific rewrite which uses session.chargedCumulativeAmount
+		// and supports an optional partial refundAmount.
+		if refund, _ := payload["refund"].(bool); refund {
+			return s.handleRefundRewrite(ctx, session, payload)
+		}
+
 		increment, _ := new(big.Int).SetString(ctx.Requirements.GetAmount(), 10)
 		if increment == nil {
 			increment = big.NewInt(0)
@@ -222,12 +272,6 @@ func (s *BatchedEvmScheme) BeforeSettleHook() x402.BeforeSettleHook {
 				Reason:  "batched_charge_exceeds_signed_cumulative",
 				Message: fmt.Sprintf("Charged %s exceeds signed max %s", newCharged.String(), signedCap.String()),
 			}, nil
-		}
-
-		// Check for cooperative refund flag
-		refund, _ := payload["refund"].(bool)
-		if refund {
-			return s.handleRefundRewrite(ctx, session, newCharged, payload)
 		}
 
 		// Normal voucher: CAS update session and skip settlement
@@ -268,7 +312,7 @@ func (s *BatchedEvmScheme) BeforeSettleHook() x402.BeforeSettleHook {
 				Network:     x402.Network(ctx.Requirements.GetNetwork()),
 				Payer:       session.Payer,
 				Amount:      ctx.Requirements.GetAmount(),
-				Extensions: map[string]interface{}{
+				Extra: map[string]interface{}{
 					"channelId":               normalizedId,
 					"chargedCumulativeAmount": newCharged.String(),
 					"balance":                 session.Balance,
@@ -281,18 +325,20 @@ func (s *BatchedEvmScheme) BeforeSettleHook() x402.BeforeSettleHook {
 	}
 }
 
-// handleRefundRewrite rewrites a refund-flagged voucher into a refund settle
-// action payload for the facilitator to execute on-chain.
+// handleRefundRewrite rewrites a refund-flagged (zero-charge) voucher into a
+// refundWithSignature settle-action payload for the facilitator to execute
+// on-chain. Supports an optional partial refundAmount in the voucher; otherwise
+// drains the channel's full remainder.
 func (s *BatchedEvmScheme) handleRefundRewrite(
 	ctx x402.SettleContext,
 	session *ChannelSession,
-	newCharged *big.Int,
 	payload map[string]interface{},
 ) (*x402.BeforeHookResult, error) {
 	config := session.ChannelConfig
 	maxClaimable, _ := payload["maxClaimableAmount"].(string)
 	sig, _ := payload["signature"].(string)
 
+	// Refund vouchers are zero-charge: claim's totalClaimed == session.chargedCumulativeAmount.
 	claimEntry := batched.BatchedVoucherClaim{
 		Voucher: struct {
 			Channel            batched.ChannelConfig `json:"channel"`
@@ -302,16 +348,44 @@ func (s *BatchedEvmScheme) handleRefundRewrite(
 			MaxClaimableAmount: maxClaimable,
 		},
 		Signature:    sig,
-		TotalClaimed: newCharged.String(),
+		TotalClaimed: session.ChargedCumulativeAmount,
 	}
 
 	balance, _ := new(big.Int).SetString(session.Balance, 10)
 	if balance == nil {
 		balance = big.NewInt(0)
 	}
-	refundAmount := new(big.Int).Sub(balance, newCharged)
-	if refundAmount.Sign() < 0 {
-		refundAmount = big.NewInt(0)
+	charged, _ := new(big.Int).SetString(session.ChargedCumulativeAmount, 10)
+	if charged == nil {
+		charged = big.NewInt(0)
+	}
+	remainder := new(big.Int).Sub(balance, charged)
+	if remainder.Sign() <= 0 {
+		return &x402.BeforeHookResult{
+			Abort:   true,
+			Reason:  "batch_settlement_refund_no_balance",
+			Message: "Channel has no remaining balance to refund",
+		}, nil
+	}
+
+	refundAmount := new(big.Int).Set(remainder)
+	if requestedStr, ok := payload["refundAmount"].(string); ok && requestedStr != "" {
+		requested, ok := new(big.Int).SetString(requestedStr, 10)
+		if !ok || requested.Sign() <= 0 {
+			return &x402.BeforeHookResult{
+				Abort:   true,
+				Reason:  "batch_settlement_refund_amount_invalid",
+				Message: "refundAmount must be a positive integer",
+			}, nil
+		}
+		if requested.Cmp(remainder) > 0 {
+			return &x402.BeforeHookResult{
+				Abort:   true,
+				Reason:  "batch_settlement_refund_amount_exceeds_balance",
+				Message: fmt.Sprintf("refundAmount %s exceeds remainder %s", requested.String(), remainder.String()),
+			}, nil
+		}
+		refundAmount = requested
 	}
 
 	normalizedId := batched.NormalizeChannelId(session.ChannelId)
@@ -338,15 +412,7 @@ func (s *BatchedEvmScheme) handleRefundRewrite(
 			Claims:                    []batched.BatchedVoucherClaim{claimEntry},
 			RefundAuthorizerSignature: evm.BytesToHex(authSig),
 			ClaimAuthorizerSignature:  evm.BytesToHex(claimAuthSig),
-			ResponseExtra: &batched.BatchedPaymentResponseExtra{
-				ChannelId:               normalizedId,
-				ChargedCumulativeAmount: newCharged.String(),
-				Balance:                 session.Balance,
-				TotalClaimed:            session.TotalClaimed,
-				WithdrawRequestedAt:     session.WithdrawRequestedAt,
-				RefundNonce:             nonce,
-				Refund:                  true,
-			},
+			ResponseExtra:             buildRefundResponseSnapshot(session, normalizedId, refundAmount),
 		}
 
 		// Rewrite the payload to the refund settle action.
@@ -368,20 +434,12 @@ func (s *BatchedEvmScheme) handleRefundRewrite(
 		// The facilitator will auto-sign using its own AuthorizerSigner.
 		nonce := fmt.Sprintf("%d", session.RefundNonce)
 		refundPayload := &batched.BatchedRefundWithSignaturePayload{
-			SettleAction: "refundWithSignature",
-			Config:       config,
-			Amount:       refundAmount.String(),
-			Nonce:        nonce,
-			Claims:       []batched.BatchedVoucherClaim{claimEntry},
-			ResponseExtra: &batched.BatchedPaymentResponseExtra{
-				ChannelId:               normalizedId,
-				ChargedCumulativeAmount: newCharged.String(),
-				Balance:                 session.Balance,
-				TotalClaimed:            session.TotalClaimed,
-				WithdrawRequestedAt:     session.WithdrawRequestedAt,
-				RefundNonce:             nonce,
-				Refund:                  true,
-			},
+			SettleAction:  "refundWithSignature",
+			Config:        config,
+			Amount:        refundAmount.String(),
+			Nonce:         nonce,
+			Claims:        []batched.BatchedVoucherClaim{claimEntry},
+			ResponseExtra: buildRefundResponseSnapshot(session, normalizedId, refundAmount),
 		}
 
 		for k := range payload {
@@ -399,7 +457,8 @@ func (s *BatchedEvmScheme) handleRefundRewrite(
 }
 
 // AfterSettleHook returns a hook that updates session state after settlement.
-// For deposits: updates balance. For refunds: deletes the session.
+// For deposits: updates balance. For refunds: deletes the session on full
+// refund or updates balance/refundNonce on partial refund.
 func (s *BatchedEvmScheme) AfterSettleHook() x402.AfterSettleHook {
 	return func(ctx x402.SettleResultContext) error {
 		if ctx.Requirements.GetScheme() != batched.SchemeBatched {
@@ -413,8 +472,8 @@ func (s *BatchedEvmScheme) AfterSettleHook() x402.AfterSettleHook {
 
 		// After deposit: update session balance from response
 		if batched.IsDepositPayload(payload) {
-			if ctx.Result.Extensions != nil {
-				channelId := mapStringField(ctx.Result.Extensions, "channelId", "")
+			if ctx.Result.Extra != nil {
+				channelId := mapStringField(ctx.Result.Extra, "channelId", "")
 				if channelId == "" {
 					return nil
 				}
@@ -423,8 +482,8 @@ func (s *BatchedEvmScheme) AfterSettleHook() x402.AfterSettleHook {
 				if getErr != nil || session == nil {
 					return nil //nolint:nilerr // storage error in after-hook is non-fatal
 				}
-				session.Balance = mapStringField(ctx.Result.Extensions, "balance", session.Balance)
-				session.TotalClaimed = mapStringField(ctx.Result.Extensions, "totalClaimed", session.TotalClaimed)
+				session.Balance = mapStringField(ctx.Result.Extra, "balance", session.Balance)
+				session.TotalClaimed = mapStringField(ctx.Result.Extra, "totalClaimed", session.TotalClaimed)
 
 				// Update charged from responseExtra if present
 				if responseExtra, ok := payload["responseExtra"].(map[string]interface{}); ok {
@@ -438,19 +497,110 @@ func (s *BatchedEvmScheme) AfterSettleHook() x402.AfterSettleHook {
 			return nil
 		}
 
-		// After refund: delete session
+		// After refund: reconcile session — delete on full refund (remainder<=0),
+		// otherwise update balance and bump refundNonce.
 		if batched.IsRefundWithSignaturePayload(payload) {
-			// Extract channelId from responseExtra
-			if responseExtra, ok := payload["responseExtra"].(map[string]interface{}); ok {
-				channelId, _ := responseExtra["channelId"].(string)
-				if channelId != "" {
-					return s.storage.Delete(batched.NormalizeChannelId(channelId))
+			refundPayload, err := batched.RefundWithSignaturePayloadFromMap(payload)
+			if err != nil {
+				return nil //nolint:nilerr // parse failure in after-hook is non-fatal
+			}
+			channelId, err := batched.ComputeChannelId(refundPayload.Config)
+			if err != nil {
+				return nil //nolint:nilerr
+			}
+			normalizedId := batched.NormalizeChannelId(channelId)
+			prevSession, _ := s.storage.Get(normalizedId)
+
+			fallback := refundPayload.ResponseExtra
+			if prevSession != nil {
+				amountBig, _ := new(big.Int).SetString(refundPayload.Amount, 10)
+				if amountBig == nil {
+					amountBig = big.NewInt(0)
+				}
+				fallback = buildRefundResponseSnapshot(prevSession, normalizedId, amountBig)
+			}
+			if fallback == nil {
+				fallback = &batched.BatchedPaymentResponseExtra{
+					ChannelId:   normalizedId,
+					Balance:     "0",
+					RefundNonce: "0",
 				}
 			}
-			return nil
+
+			extra := ctx.Result.Extra
+			refundedAmount := mapStringField(extra, "refundedAmount", refundPayload.Amount)
+
+			ctx.Result.Extra = map[string]interface{}{
+				"channelId":               mapStringField(extra, "channelId", fallback.ChannelId),
+				"chargedCumulativeAmount": mapStringField(extra, "chargedCumulativeAmount", fallback.ChargedCumulativeAmount),
+				"balance":                 mapStringField(extra, "balance", fallback.Balance),
+				"totalClaimed":            mapStringField(extra, "totalClaimed", fallback.TotalClaimed),
+				"withdrawRequestedAt":     mapIntField(extra, "withdrawRequestedAt", fallback.WithdrawRequestedAt),
+				"refundNonce":             mapStringField(extra, "refundNonce", fallback.RefundNonce),
+				"refund":                  true,
+				"refundedAmount":          refundedAmount,
+			}
+
+			refundedBig, _ := new(big.Int).SetString(refundedAmount, 10)
+			if refundedBig == nil {
+				refundedBig = big.NewInt(0)
+			}
+
+			if prevSession == nil {
+				return nil
+			}
+
+			prevBalance, _ := new(big.Int).SetString(prevSession.Balance, 10)
+			if prevBalance == nil {
+				prevBalance = big.NewInt(0)
+			}
+			prevCharged, _ := new(big.Int).SetString(prevSession.ChargedCumulativeAmount, 10)
+			if prevCharged == nil {
+				prevCharged = big.NewInt(0)
+			}
+			remainderAfter := new(big.Int).Sub(prevBalance, prevCharged)
+			remainderAfter.Sub(remainderAfter, refundedBig)
+
+			if remainderAfter.Sign() <= 0 {
+				return s.storage.Delete(normalizedId)
+			}
+
+			prevSession.Balance = new(big.Int).Sub(prevBalance, refundedBig).String()
+			prevSession.RefundNonce++
+			prevSession.LastRequestTimestamp = time.Now().UnixMilli()
+			return s.storage.Set(normalizedId, prevSession)
 		}
 
 		return nil
+	}
+}
+
+// buildRefundResponseSnapshot mirrors the TS helper of the same name: it builds
+// the BatchedPaymentResponseExtra describing channel state immediately after a
+// cooperative refund of `refundAmount` is applied to `session`.
+func buildRefundResponseSnapshot(session *ChannelSession, channelId string, refundAmount *big.Int) *batched.BatchedPaymentResponseExtra {
+	balance, _ := new(big.Int).SetString(session.Balance, 10)
+	if balance == nil {
+		balance = big.NewInt(0)
+	}
+	postBalance := new(big.Int).Sub(balance, refundAmount)
+	if postBalance.Sign() < 0 {
+		postBalance = big.NewInt(0)
+	}
+	finalClaimed := session.ChargedCumulativeAmount
+	totalClaimed := finalClaimed
+	if session.TotalClaimed != "" {
+		totalClaimed = finalClaimed
+	}
+	return &batched.BatchedPaymentResponseExtra{
+		ChannelId:               channelId,
+		ChargedCumulativeAmount: finalClaimed,
+		Balance:                 postBalance.String(),
+		TotalClaimed:            totalClaimed,
+		WithdrawRequestedAt:     0,
+		RefundNonce:             fmt.Sprintf("%d", session.RefundNonce+1),
+		Refund:                  true,
+		RefundedAmount:          refundAmount.String(),
 	}
 }
 

@@ -180,6 +180,9 @@ type HTTPProcessResult struct {
 	Response            *HTTPResponseInstructions
 	PaymentPayload      *types.PaymentPayload      // V2 only
 	PaymentRequirements *types.PaymentRequirements // V2 only
+	// SkipHandler is set when an AfterVerifyHook signals that the resource handler
+	// should be bypassed and settlement performed inline (e.g. cooperative refund).
+	SkipHandler *x402.SkipHandlerDirective
 }
 
 // Result type constants
@@ -602,7 +605,7 @@ func (s *x402HTTPResourceServer) ProcessHTTPRequest(ctx context.Context, reqCtx 
 	}
 
 	// Verify payment (type-safe)
-	_, verifyErr := s.VerifyPayment(ctx, *typedPayload, *matchingReqs)
+	verifyResp, verifyErr := s.VerifyPayment(ctx, *typedPayload, *matchingReqs)
 	if verifyErr != nil {
 		err = verifyErr
 		errorMsg := err.Error()
@@ -632,11 +635,15 @@ func (s *x402HTTPResourceServer) ProcessHTTPRequest(ctx context.Context, reqCtx 
 	}
 
 	// Payment verified
-	return HTTPProcessResult{
+	result := HTTPProcessResult{
 		Type:                ResultPaymentVerified,
 		PaymentPayload:      typedPayload,
 		PaymentRequirements: matchingReqs,
 	}
+	if verifyResp != nil {
+		result.SkipHandler = verifyResp.SkipHandler
+	}
+	return result
 }
 
 // RequiresPayment checks if a request requires payment based on route configuration

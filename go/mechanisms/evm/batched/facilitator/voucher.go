@@ -57,13 +57,20 @@ func VerifyVoucher(
 			fmt.Sprintf("failed to read channel state: %s", err))
 	}
 
-	// Check maxClaimableAmount >= totalClaimed (monotonic increase)
+	// Check maxClaimableAmount vs totalClaimed.
+	// Normal vouchers must strictly increase claimable above totalClaimed; refund
+	// vouchers are zero-charge and may equal totalClaimed (only `<` fails).
 	maxClaimable, ok := new(big.Int).SetString(payload.MaxClaimableAmount, 10)
 	if !ok {
 		return nil, x402.NewVerifyError(ErrInvalidVoucherPayload, channelConfig.Payer,
 			"invalid maxClaimableAmount")
 	}
-	if maxClaimable.Cmp(state.TotalClaimed) < 0 {
+	cmp := maxClaimable.Cmp(state.TotalClaimed)
+	belowClaimed := cmp < 0
+	if !payload.Refund && cmp <= 0 {
+		belowClaimed = true
+	}
+	if belowClaimed {
 		return nil, x402.NewVerifyError(ErrMaxClaimableTooLow, channelConfig.Payer,
 			fmt.Sprintf("maxClaimableAmount %s is below totalClaimed %s", maxClaimable.String(), state.TotalClaimed.String()))
 	}
@@ -75,8 +82,8 @@ func VerifyVoucher(
 	}
 
 	return &x402.VerifyResponse{
-		IsValid:    true,
-		Payer:      channelConfig.Payer,
-		Extensions: BuildChannelStateExtra(payload.ChannelId, payload.MaxClaimableAmount, state),
+		IsValid: true,
+		Payer:   channelConfig.Payer,
+		Extra:   BuildChannelStateExtra(payload.ChannelId, payload.MaxClaimableAmount, state),
 	}, nil
 }

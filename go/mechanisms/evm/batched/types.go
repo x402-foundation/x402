@@ -48,6 +48,7 @@ type BatchedVoucherFields struct {
 	MaxClaimableAmount string `json:"maxClaimableAmount"`
 	Signature          string `json:"signature"`
 	Refund             bool   `json:"refund,omitempty"`
+	RefundAmount       string `json:"refundAmount,omitempty"`
 }
 
 // BatchedDepositAuthorization wraps asset-transfer authorization data.
@@ -78,6 +79,7 @@ type BatchedVoucherPayload struct {
 	MaxClaimableAmount string        `json:"maxClaimableAmount"`
 	Signature          string        `json:"signature"`
 	Refund             bool          `json:"refund,omitempty"`
+	RefundAmount       string        `json:"refundAmount,omitempty"`
 }
 
 // BatchedVoucherClaim is used in claim operations on-chain.
@@ -99,16 +101,17 @@ type BatchedPaymentResponseExtra struct {
 	WithdrawRequestedAt     int    `json:"withdrawRequestedAt"`
 	RefundNonce             string `json:"refundNonce"`
 	Refund                  bool   `json:"refund,omitempty"`
+	RefundedAmount          string `json:"refundedAmount,omitempty"`
 }
 
 // BatchSettlementPaymentRequirementsExtra is the typed shape of the `extra`
 // field on PaymentRequirements for the batch-settlement scheme.
 type BatchSettlementPaymentRequirementsExtra struct {
-	ReceiverAuthorizer   string `json:"receiverAuthorizer"`
-	WithdrawDelay        int    `json:"withdrawDelay"`
-	Name                 string `json:"name"`
-	Version              string `json:"version"`
-	AssetTransferMethod  string `json:"assetTransferMethod,omitempty"` // "eip3009"
+	ReceiverAuthorizer  string `json:"receiverAuthorizer"`
+	WithdrawDelay       int    `json:"withdrawDelay"`
+	Name                string `json:"name"`
+	Version             string `json:"version"`
+	AssetTransferMethod string `json:"assetTransferMethod,omitempty"` // "eip3009"
 }
 
 // FileSessionStorageOptions configures file-backed session storage.
@@ -289,6 +292,9 @@ func DepositPayloadFromMap(data map[string]interface{}) (*BatchedDepositPayload,
 		if refund, ok := voucherMap["refund"].(bool); ok {
 			payload.Voucher.Refund = refund
 		}
+		if refundAmount, ok := voucherMap["refundAmount"].(string); ok {
+			payload.Voucher.RefundAmount = refundAmount
+		}
 	}
 
 	if extra, ok := data["responseExtra"].(map[string]interface{}); ok {
@@ -316,6 +322,9 @@ func VoucherPayloadFromMap(data map[string]interface{}) (*BatchedVoucherPayload,
 	payload.Signature, _ = data["signature"].(string)
 	if refund, ok := data["refund"].(bool); ok {
 		payload.Refund = refund
+	}
+	if refundAmount, ok := data["refundAmount"].(string); ok {
+		payload.RefundAmount = refundAmount
 	}
 	return payload, nil
 }
@@ -488,6 +497,9 @@ func (p *BatchedDepositPayload) ToMap() map[string]interface{} {
 	if p.Voucher.Refund {
 		result["voucher"].(map[string]interface{})["refund"] = true
 	}
+	if p.Voucher.RefundAmount != "" {
+		result["voucher"].(map[string]interface{})["refundAmount"] = p.Voucher.RefundAmount
+	}
 	if p.ResponseExtra != nil {
 		result["responseExtra"] = p.ResponseExtra
 	}
@@ -505,6 +517,9 @@ func (p *BatchedVoucherPayload) ToMap() map[string]interface{} {
 	}
 	if p.Refund {
 		result["refund"] = true
+	}
+	if p.RefundAmount != "" {
+		result["refundAmount"] = p.RefundAmount
 	}
 	return result
 }
@@ -543,6 +558,9 @@ func (e *BatchedPaymentResponseExtra) ToMap() map[string]interface{} {
 	if e.Refund {
 		result["refund"] = true
 	}
+	if e.RefundedAmount != "" {
+		result["refundedAmount"] = e.RefundedAmount
+	}
 	return result
 }
 
@@ -562,6 +580,9 @@ func PaymentResponseExtraFromMap(data map[string]interface{}) (*BatchedPaymentRe
 	extra.RefundNonce, _ = data["refundNonce"].(string)
 	if refund, ok := data["refund"].(bool); ok {
 		extra.Refund = refund
+	}
+	if refundedAmount, ok := data["refundedAmount"].(string); ok {
+		extra.RefundedAmount = refundedAmount
 	}
 	return extra, nil
 }
