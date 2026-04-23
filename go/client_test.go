@@ -3,8 +3,10 @@ package x402
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 
+	"github.com/stretchr/testify/require"
 	"github.com/x402-foundation/x402/go/types"
 )
 
@@ -351,4 +353,99 @@ func TestClientNetworkPatternMatching(t *testing.T) {
 	if payload.Accepted.Scheme != "exact" {
 		t.Fatal("Expected payload to be created with pattern match")
 	}
+}
+
+// mockFailableV1 and mockFailableV2 support failure simulation for hook tests
+
+type mockFailableV1 struct{ fail bool }
+
+func (m *mockFailableV1) Scheme() string { return "mock" }
+func (m *mockFailableV1) CreatePaymentPayload(
+	_ context.Context,
+	_ types.PaymentRequirementsV1,
+) (types.PaymentPayloadV1, error) {
+	if m.fail {
+		return types.PaymentPayloadV1{}, fmt.Errorf("fail")
+	}
+	return types.PaymentPayloadV1{}, nil
+}
+
+type mockFailableV2 struct{ fail bool }
+
+func (m *mockFailableV2) Scheme() string { return "mock" }
+func (m *mockFailableV2) CreatePaymentPayload(
+	_ context.Context,
+	_ types.PaymentRequirements,
+) (types.PaymentPayload, error) {
+	if m.fail {
+		return types.PaymentPayload{}, fmt.Errorf("fail")
+	}
+	return types.PaymentPayload{}, nil
+}
+
+func TestPaymentHooksOrder_V1_vs_V2(t *testing.T) {
+	ctx := context.Background()
+
+	makeClient := func(fail bool) *x402Client {
+		c := Newx402Client()
+		c.RegisterV1(Network("test"), &mockFailableV1{fail: fail})
+		c.Register(Network("test"), &mockFailableV2{fail: fail})
+		return c
+	}
+
+	run := func(c *x402Client, useV1 bool, expectErr bool) []string {
+		var calls []string
+		// СТАЛО:
+		c.OnBeforePaymentCreation(func(pcc PaymentCreationContext) (*BeforePaymentCreationHookResult, error) {
+			calls = append(calls, "before")
+			return nil, nil
+		})
+		c.OnAfterPaymentCreation(func(pcc PaymentCreatedContext) error {
+			calls = append(calls, "after")
+			return nil
+		})
+		c.OnPaymentCreationFailure(func(pcc PaymentCreationFailureContext) (*PaymentCreationFailureHookResult, error) {
+			calls = append(calls, "failure")
+			return nil, nil
+		})
+
+		if useV1 {
+			_, err := c.CreatePaymentPayloadV1(ctx, types.PaymentRequirementsV1{
+				Scheme:  "mock",
+				Network: "test",
+			})
+			if expectErr {
+				require.Error(t, err)
+			} else {
+				require.NoError(t, err)
+			}
+		} else {
+			_, err := c.CreatePaymentPayload(ctx, types.PaymentRequirements{
+				Scheme:  "mock",
+				Network: "test",
+			}, nil, nil)
+			if expectErr {
+				require.Error(t, err)
+			} else {
+				require.NoError(t, err)
+			}
+		}
+		return calls
+	}
+
+	t.Run("success", func(t *testing.T) {
+		v1 := run(makeClient(false), true, false)
+		v2 := run(makeClient(false), false, false)
+		require.Equal(t, []string{"before", "after"}, v1)
+		require.Equal(t, []string{"before", "after"}, v2)
+		require.Equal(t, v1, v2)
+	})
+
+	t.Run("failure", func(t *testing.T) {
+		v1 := run(makeClient(true), true, true)
+		v2 := run(makeClient(true), false, true)
+		require.Equal(t, []string{"before", "failure"}, v1)
+		require.Equal(t, []string{"before", "failure"}, v2)
+		require.Equal(t, v1, v2)
+	})
 }
