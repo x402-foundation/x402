@@ -1,5 +1,10 @@
 import type { MetadataRoute } from "next";
 
+/**
+ * Generates the sitemap.xml for x402.org.
+ *
+ * @returns Array of sitemap entries with URLs, priorities, and change frequencies
+ */
 export default function sitemap(): MetadataRoute.Sitemap {
   return [
     {

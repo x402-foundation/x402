@@ -21,6 +21,11 @@ const paymentRequired = {
 
 const encodedPaymentRequired = Buffer.from(JSON.stringify(paymentRequired)).toString("base64");
 
+/**
+ * Demo endpoint that returns HTTP 402 with x402 payment requirements.
+ *
+ * @returns 402 response with PAYMENT-REQUIRED header for agent discovery
+ */
 export function GET() {
   return new Response(JSON.stringify({}), {
     status: 402,

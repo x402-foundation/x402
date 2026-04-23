@@ -1,3 +1,8 @@
+/**
+ * Returns OpenID Connect discovery metadata for agent authentication.
+ *
+ * @returns JSON response with issuer, endpoints, and supported grant types
+ */
 export function GET() {
   const config = {
     issuer: "https://x402.org",

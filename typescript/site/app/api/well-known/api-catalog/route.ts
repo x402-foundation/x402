@@ -1,3 +1,8 @@
+/**
+ * Returns the API catalog in application/linkset+json format per RFC 9727.
+ *
+ * @returns API catalog response with linkset entries for x402 services
+ */
 export function GET() {
   const catalog = {
     linkset: [
