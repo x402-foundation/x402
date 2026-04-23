@@ -1,0 +1,508 @@
+package client
+
+import (
+	"context"
+	"errors"
+	"math/big"
+	"testing"
+
+	"github.com/x402-foundation/x402/go/mechanisms/evm"
+	"github.com/x402-foundation/x402/go/mechanisms/evm/batched"
+	"github.com/x402-foundation/x402/go/types"
+)
+
+const (
+	testNetwork = "eip155:8453"
+	testAsset   = "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913"
+	testPayTo   = "0x3333333333333333333333333333333333333333"
+)
+
+// readSigner extends mockSigner with ReadContract.
+type readSigner struct {
+	*mockSigner
+	readResult interface{}
+	readErr    error
+}
+
+func (r *readSigner) ReadContract(_ context.Context, _ string, _ []byte, _ string, _ ...interface{}) (interface{}, error) {
+	return r.readResult, r.readErr
+}
+
+func defaultRequirements() types.PaymentRequirements {
+	return types.PaymentRequirements{
+		Scheme:  batched.SchemeBatched,
+		Network: testNetwork,
+		Asset:   testAsset,
+		Amount:  "100",
+		PayTo:   testPayTo,
+		Extra:   map[string]interface{}{"name": "USDC", "version": "2"},
+	}
+}
+
+// ---------- NewBatchedEvmScheme defaults ----------
+
+func TestNewBatchedEvmScheme_Defaults(t *testing.T) {
+	signer := &mockSigner{address: "0x1"}
+	scheme := NewBatchedEvmScheme(signer, nil)
+	if scheme.config.DepositMultiplier != DefaultDepositMultiplier {
+		t.Fatalf("multiplier = %d", scheme.config.DepositMultiplier)
+	}
+	if scheme.config.Salt != DefaultSalt {
+		t.Fatalf("salt = %s", scheme.config.Salt)
+	}
+	if !scheme.autoTopUp {
+		t.Fatalf("autoTopUp default should be true")
+	}
+	if scheme.storage == nil {
+		t.Fatal("storage default missing")
+	}
+	if scheme.Scheme() != batched.SchemeBatched {
+		t.Fatalf("Scheme() = %s", scheme.Scheme())
+	}
+}
+
+func TestNewBatchedEvmScheme_OverridesConfig(t *testing.T) {
+	signer := &mockSigner{address: "0x1"}
+	autoTopUp := false
+	storage := NewInMemoryClientSessionStorage()
+	cfg := &BatchedEvmSchemeConfig{
+		DepositMultiplier: 5,
+		MaxDeposit:        "10000",
+		AutoTopUp:         &autoTopUp,
+		Storage:           storage,
+		Salt:              "0xfeed",
+		PayerAuthorizer:   "0xPA",
+		VoucherSigner:     &mockSigner{address: "0xV"},
+	}
+	scheme := NewBatchedEvmScheme(signer, cfg)
+	if scheme.config.DepositMultiplier != 5 {
+		t.Fatalf("multiplier = %d", scheme.config.DepositMultiplier)
+	}
+	if scheme.config.MaxDeposit != "10000" {
+		t.Fatalf("max deposit = %s", scheme.config.MaxDeposit)
+	}
+	if scheme.autoTopUp {
+		t.Fatal("autoTopUp should be false")
+	}
+	if scheme.storage != storage {
+		t.Fatal("storage should be the explicit one")
+	}
+	if scheme.config.Salt != "0xfeed" {
+		t.Fatalf("salt = %s", scheme.config.Salt)
+	}
+	if scheme.config.PayerAuthorizer != "0xPA" {
+		t.Fatalf("payerAuthorizer = %s", scheme.config.PayerAuthorizer)
+	}
+	if scheme.config.VoucherSigner == nil {
+		t.Fatal("voucherSigner missing")
+	}
+}
+
+// ---------- BuildChannelConfig ----------
+
+func TestBuildChannelConfig_DefaultsAndOverrides(t *testing.T) {
+	signer := &mockSigner{address: "0xSIGNER"}
+	scheme := NewBatchedEvmScheme(signer, nil)
+	req := defaultRequirements()
+	config := scheme.BuildChannelConfig(req)
+
+	if config.Payer != "0xSIGNER" || config.PayerAuthorizer != "0xSIGNER" {
+		t.Fatalf("payer/payerAuthorizer = %s/%s", config.Payer, config.PayerAuthorizer)
+	}
+	if config.Receiver != testPayTo || config.ReceiverAuthorizer != testPayTo {
+		t.Fatalf("receiver default mismatch: %s/%s", config.Receiver, config.ReceiverAuthorizer)
+	}
+	if config.Token != testAsset {
+		t.Fatalf("token = %s", config.Token)
+	}
+	if config.WithdrawDelay != DefaultWithdrawDelay {
+		t.Fatalf("withdrawDelay = %d", config.WithdrawDelay)
+	}
+}
+
+func TestBuildChannelConfig_ReceiverAuthorizerOverride(t *testing.T) {
+	scheme := NewBatchedEvmScheme(&mockSigner{address: "0x1"}, nil)
+	req := defaultRequirements()
+	req.Extra["receiverAuthorizer"] = "0xRA"
+	cfg := scheme.BuildChannelConfig(req)
+	if cfg.ReceiverAuthorizer != "0xRA" {
+		t.Fatalf("receiverAuthorizer = %s", cfg.ReceiverAuthorizer)
+	}
+}
+
+func TestBuildChannelConfig_WithdrawDelayOverride(t *testing.T) {
+	scheme := NewBatchedEvmScheme(&mockSigner{address: "0x1"}, nil)
+
+	for _, v := range []interface{}{float64(1800), int(1800)} {
+		req := defaultRequirements()
+		req.Extra["withdrawDelay"] = v
+		cfg := scheme.BuildChannelConfig(req)
+		if cfg.WithdrawDelay != 1800 {
+			t.Fatalf("%T: withdrawDelay = %d", v, cfg.WithdrawDelay)
+		}
+	}
+}
+
+func TestBuildChannelConfig_ExplicitPayerAuthorizer(t *testing.T) {
+	scheme := NewBatchedEvmScheme(&mockSigner{address: "0xSIG"}, &BatchedEvmSchemeConfig{
+		PayerAuthorizer: "0xPA",
+	})
+	cfg := scheme.BuildChannelConfig(defaultRequirements())
+	if cfg.PayerAuthorizer != "0xPA" {
+		t.Fatalf("payerAuthorizer = %s", cfg.PayerAuthorizer)
+	}
+	if cfg.Payer != "0xSIG" {
+		t.Fatalf("payer = %s", cfg.Payer)
+	}
+}
+
+// ---------- calculateDepositAmount ----------
+
+func TestCalculateDepositAmount_BasicMultiplier(t *testing.T) {
+	scheme := NewBatchedEvmScheme(&mockSigner{address: "0x1"}, nil)
+	got := scheme.calculateDepositAmount(big.NewInt(100))
+	if got.Cmp(big.NewInt(1000)) != 0 {
+		t.Fatalf("got %s", got.String())
+	}
+}
+
+func TestCalculateDepositAmount_RespectsMax(t *testing.T) {
+	scheme := NewBatchedEvmScheme(&mockSigner{address: "0x1"}, &BatchedEvmSchemeConfig{
+		DepositMultiplier: 100,
+		MaxDeposit:        "5000",
+	})
+	got := scheme.calculateDepositAmount(big.NewInt(100))
+	if got.Cmp(big.NewInt(5000)) != 0 {
+		t.Fatalf("got %s, expected cap at 5000", got.String())
+	}
+}
+
+func TestCalculateDepositAmount_BadMaxIgnored(t *testing.T) {
+	scheme := NewBatchedEvmScheme(&mockSigner{address: "0x1"}, &BatchedEvmSchemeConfig{
+		MaxDeposit: "not-a-number",
+	})
+	got := scheme.calculateDepositAmount(big.NewInt(100))
+	// Default multiplier 10 → 1000.
+	if got.Cmp(big.NewInt(1000)) != 0 {
+		t.Fatalf("got %s", got.String())
+	}
+}
+
+// ---------- HasSession / GetSession ----------
+
+func TestHasSession_GetSession(t *testing.T) {
+	storage := NewInMemoryClientSessionStorage()
+	scheme := NewBatchedEvmScheme(&mockSigner{address: "0x1"}, &BatchedEvmSchemeConfig{Storage: storage})
+
+	if scheme.HasSession("0xMISSING") {
+		t.Fatal("missing should be false")
+	}
+	if _, ok := scheme.GetSession("0xMISSING"); ok {
+		t.Fatal("missing should not return ok")
+	}
+
+	_ = storage.Set("0xabc", &BatchedClientContext{Balance: "100"})
+	if !scheme.HasSession("0xABC") {
+		t.Fatal("case-insensitive lookup failed")
+	}
+	got, ok := scheme.GetSession("0xABC")
+	if !ok || got.Balance != "100" {
+		t.Fatalf("GetSession = %+v ok=%v", got, ok)
+	}
+}
+
+// ---------- ProcessSettleResponse ----------
+
+func TestProcessSettleResponse_NilNoop(t *testing.T) {
+	scheme := NewBatchedEvmScheme(&mockSigner{address: "0x1"}, nil)
+	if err := scheme.ProcessSettleResponse(nil); err != nil {
+		t.Fatalf("err: %v", err)
+	}
+}
+
+func TestProcessSettleResponse_StoresSession(t *testing.T) {
+	storage := NewInMemoryClientSessionStorage()
+	scheme := NewBatchedEvmScheme(&mockSigner{address: "0x1"}, &BatchedEvmSchemeConfig{Storage: storage})
+
+	err := scheme.ProcessSettleResponse(map[string]interface{}{
+		"channelId":               "0xABC",
+		"chargedCumulativeAmount": "10",
+		"balance":                 "1000",
+		"totalClaimed":            "5",
+	})
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	got, _ := storage.Get("0xabc")
+	if got == nil || got.Balance != "1000" || got.ChargedCumulativeAmount != "10" {
+		t.Fatalf("session = %+v", got)
+	}
+}
+
+func TestProcessSettleResponse_RefundDeletes(t *testing.T) {
+	storage := NewInMemoryClientSessionStorage()
+	_ = storage.Set("0xabc", &BatchedClientContext{Balance: "100"})
+
+	scheme := NewBatchedEvmScheme(&mockSigner{address: "0x1"}, &BatchedEvmSchemeConfig{Storage: storage})
+	err := scheme.ProcessSettleResponse(map[string]interface{}{
+		"channelId": "0xabc",
+		"balance":   "0",
+		"refund":    true,
+	})
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	if got, _ := storage.Get("0xabc"); got != nil {
+		t.Fatalf("session not deleted: %+v", got)
+	}
+}
+
+// ---------- CreatePaymentPayload (deposit + voucher branches) ----------
+
+func TestCreatePaymentPayload_FirstRequestDeposit(t *testing.T) {
+	scheme := NewBatchedEvmScheme(&mockSigner{address: "0x1111111111111111111111111111111111111111", sig: []byte{0xaa}}, nil)
+	payload, err := scheme.CreatePaymentPayload(context.Background(), defaultRequirements())
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	if payload.Payload["type"] != "deposit" {
+		t.Fatalf("expected deposit, got %v", payload.Payload["type"])
+	}
+}
+
+func TestCreatePaymentPayload_VoucherWhenSessionHasFunds(t *testing.T) {
+	storage := NewInMemoryClientSessionStorage()
+	signer := &mockSigner{address: "0x1111111111111111111111111111111111111111", sig: []byte{0xab}}
+	scheme := NewBatchedEvmScheme(signer, &BatchedEvmSchemeConfig{Storage: storage})
+
+	// Pre-seed session with sufficient funds.
+	channelConfig := scheme.BuildChannelConfig(defaultRequirements())
+	channelId, _ := batched.ComputeChannelId(channelConfig)
+	channelId = batched.NormalizeChannelId(channelId)
+	_ = storage.Set(channelId, &BatchedClientContext{Balance: "1000", ChargedCumulativeAmount: "100"})
+
+	payload, err := scheme.CreatePaymentPayload(context.Background(), defaultRequirements())
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	if payload.Payload["type"] != "voucher" {
+		t.Fatalf("expected voucher, got %v", payload.Payload["type"])
+	}
+}
+
+func TestCreatePaymentPayload_AutoTopUpDepositOnInsufficient(t *testing.T) {
+	storage := NewInMemoryClientSessionStorage()
+	signer := &mockSigner{address: "0x1111111111111111111111111111111111111111", sig: []byte{0xac}}
+	scheme := NewBatchedEvmScheme(signer, &BatchedEvmSchemeConfig{Storage: storage})
+
+	channelConfig := scheme.BuildChannelConfig(defaultRequirements())
+	channelId, _ := batched.ComputeChannelId(channelConfig)
+	channelId = batched.NormalizeChannelId(channelId)
+	_ = storage.Set(channelId, &BatchedClientContext{Balance: "50", ChargedCumulativeAmount: "0"})
+
+	payload, err := scheme.CreatePaymentPayload(context.Background(), defaultRequirements())
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	if payload.Payload["type"] != "deposit" {
+		t.Fatalf("expected deposit (auto-topup), got %v", payload.Payload["type"])
+	}
+}
+
+func TestCreatePaymentPayload_NoAutoTopUpYieldsVoucher(t *testing.T) {
+	storage := NewInMemoryClientSessionStorage()
+	signer := &mockSigner{address: "0x1111111111111111111111111111111111111111", sig: []byte{0xad}}
+	off := false
+	scheme := NewBatchedEvmScheme(signer, &BatchedEvmSchemeConfig{Storage: storage, AutoTopUp: &off})
+
+	channelConfig := scheme.BuildChannelConfig(defaultRequirements())
+	channelId, _ := batched.ComputeChannelId(channelConfig)
+	channelId = batched.NormalizeChannelId(channelId)
+	_ = storage.Set(channelId, &BatchedClientContext{Balance: "50"})
+
+	payload, err := scheme.CreatePaymentPayload(context.Background(), defaultRequirements())
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	if payload.Payload["type"] != "voucher" {
+		t.Fatalf("expected voucher (no autoTopUp), got %v", payload.Payload["type"])
+	}
+}
+
+func TestCreatePaymentPayload_BadAmount(t *testing.T) {
+	scheme := NewBatchedEvmScheme(&mockSigner{address: "0x1"}, nil)
+	req := defaultRequirements()
+	req.Amount = "not-a-number"
+	if _, err := scheme.CreatePaymentPayload(context.Background(), req); err == nil {
+		t.Fatal("expected error")
+	}
+}
+
+// ---------- RecoverSession ----------
+
+func TestRecoverSession_RequiresReadCapableSigner(t *testing.T) {
+	scheme := NewBatchedEvmScheme(&mockSigner{address: "0x1"}, nil)
+	if _, err := scheme.RecoverSession(context.Background(), defaultRequirements()); err == nil {
+		t.Fatal("expected error: signer lacks ReadContract")
+	}
+}
+
+func TestRecoverSession_OK(t *testing.T) {
+	signer := &readSigner{
+		mockSigner: &mockSigner{address: "0x1111111111111111111111111111111111111111"},
+		readResult: []interface{}{big.NewInt(900), big.NewInt(100)},
+	}
+	scheme := NewBatchedEvmScheme(signer, nil)
+	got, err := scheme.RecoverSession(context.Background(), defaultRequirements())
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	if got.Balance != "900" || got.TotalClaimed != "100" || got.ChargedCumulativeAmount != "100" {
+		t.Fatalf("session = %+v", got)
+	}
+}
+
+func TestRecoverSession_ReadError(t *testing.T) {
+	signer := &readSigner{
+		mockSigner: &mockSigner{address: "0x1"},
+		readErr:    errors.New("rpc down"),
+	}
+	scheme := NewBatchedEvmScheme(signer, nil)
+	if _, err := scheme.RecoverSession(context.Background(), defaultRequirements()); err == nil {
+		t.Fatal("expected RPC error")
+	}
+}
+
+// ---------- ProcessCorrectivePaymentRequired ----------
+
+func TestProcessCorrective_UnrelatedReason(t *testing.T) {
+	scheme := NewBatchedEvmScheme(&mockSigner{address: "0x1"}, nil)
+	ok, err := scheme.ProcessCorrectivePaymentRequired(context.Background(), "other_reason", nil)
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	if ok {
+		t.Fatal("unrelated reason should not recover")
+	}
+}
+
+func TestProcessCorrective_NoBatchedAccept(t *testing.T) {
+	scheme := NewBatchedEvmScheme(&mockSigner{address: "0x1"}, nil)
+	ok, err := scheme.ProcessCorrectivePaymentRequired(
+		context.Background(),
+		"batch_settlement_stale_cumulative_amount",
+		[]types.PaymentRequirements{{Scheme: "exact"}},
+	)
+	if err != nil || ok {
+		t.Fatalf("expected (false, nil), got (%v, %v)", ok, err)
+	}
+}
+
+func TestProcessCorrective_FallsBackToOnChain(t *testing.T) {
+	signer := &readSigner{
+		mockSigner: &mockSigner{address: "0x1111111111111111111111111111111111111111"},
+		readResult: []interface{}{big.NewInt(900), big.NewInt(100)},
+	}
+	scheme := NewBatchedEvmScheme(signer, nil)
+	req := defaultRequirements()
+	ok, err := scheme.ProcessCorrectivePaymentRequired(
+		context.Background(),
+		"batch_settlement_stale_cumulative_amount",
+		[]types.PaymentRequirements{req},
+	)
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	if !ok {
+		t.Fatal("expected on-chain recovery to succeed")
+	}
+}
+
+func TestProcessCorrective_RecoverFromSignatureBadCharged(t *testing.T) {
+	signer := &readSigner{
+		mockSigner: &mockSigner{address: "0x1"},
+		readResult: []interface{}{big.NewInt(900), big.NewInt(100)},
+	}
+	scheme := NewBatchedEvmScheme(signer, nil)
+	req := defaultRequirements()
+	req.Extra["chargedCumulativeAmount"] = "not-a-number"
+	req.Extra["signedMaxClaimable"] = "100"
+	req.Extra["signature"] = "0xff"
+	ok, err := scheme.ProcessCorrectivePaymentRequired(
+		context.Background(),
+		"batch_settlement_stale_cumulative_amount",
+		[]types.PaymentRequirements{req},
+	)
+	if err != nil || ok {
+		t.Fatalf("expected (false, nil), got (%v, %v)", ok, err)
+	}
+}
+
+func TestProcessCorrective_RecoverFromSignatureChargedBeyondSigned(t *testing.T) {
+	signer := &readSigner{
+		mockSigner: &mockSigner{address: "0x1"},
+		readResult: []interface{}{big.NewInt(900), big.NewInt(100)},
+	}
+	scheme := NewBatchedEvmScheme(signer, nil)
+	req := defaultRequirements()
+	req.Extra["chargedCumulativeAmount"] = "200"
+	req.Extra["signedMaxClaimable"] = "100"
+	req.Extra["signature"] = "0xff"
+	ok, _ := scheme.ProcessCorrectivePaymentRequired(
+		context.Background(),
+		"batch_settlement_stale_cumulative_amount",
+		[]types.PaymentRequirements{req},
+	)
+	if ok {
+		t.Fatal("charged > signed should refuse")
+	}
+}
+
+func TestProcessCorrective_RecoverFromSignatureNoReadCapability(t *testing.T) {
+	scheme := NewBatchedEvmScheme(&mockSigner{address: "0x1"}, nil)
+	req := defaultRequirements()
+	req.Extra["chargedCumulativeAmount"] = "10"
+	req.Extra["signedMaxClaimable"] = "100"
+	req.Extra["signature"] = "0xff"
+	ok, _ := scheme.ProcessCorrectivePaymentRequired(
+		context.Background(),
+		"batch_settlement_stale_cumulative_amount",
+		[]types.PaymentRequirements{req},
+	)
+	if ok {
+		t.Fatal("no read capability should not recover")
+	}
+}
+
+// ---------- Refund adapter ----------
+
+func TestRefundContextAdapter(t *testing.T) {
+	signer := &mockSigner{address: "0x1"}
+	voucherSigner := &mockSigner{address: "0xV"}
+	storage := NewInMemoryClientSessionStorage()
+	scheme := NewBatchedEvmScheme(signer, &BatchedEvmSchemeConfig{
+		Storage:       storage,
+		VoucherSigner: voucherSigner,
+	})
+	a := &refundContextAdapter{scheme: scheme}
+	if a.Storage() != storage {
+		t.Fatal("Storage() mismatch")
+	}
+	if a.Signer() != evm.ClientEvmSigner(signer) {
+		t.Fatal("Signer() mismatch")
+	}
+	if a.VoucherSigner() != evm.ClientEvmSigner(voucherSigner) {
+		t.Fatal("VoucherSigner() mismatch")
+	}
+	cfg := a.BuildChannelConfig(defaultRequirements())
+	if cfg.Payer != signer.Address() {
+		t.Fatalf("BuildChannelConfig.Payer = %s", cfg.Payer)
+	}
+	if err := a.ProcessSettleResponse(nil); err != nil {
+		t.Fatalf("ProcessSettleResponse: %v", err)
+	}
+	ok, err := a.ProcessCorrectivePaymentRequired(context.Background(), "x", nil)
+	if err != nil || ok {
+		t.Fatalf("got (%v, %v)", ok, err)
+	}
+}
