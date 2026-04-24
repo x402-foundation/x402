@@ -121,6 +121,15 @@ When you use `"$0.01"` syntax, x402 needs to know which stablecoin to use. The f
 | Aptos Mainnet | `aptos:1` | `0xbae207659db88bea0cbead6da0ed00aac12edcdda169e591cd41c94180b46f3b` (USDC) | 6 |
 | Aptos Testnet | `aptos:2` | `0x69091fbab5f7d635ee7ac5098cf0c1efbe31d68fec0f2cd565e8d168daf52832` (USDC) | 6 |
 
+### Hedera
+
+| Chain | CAIP-2 | Token ID | Decimals |
+|-------|--------|----------|----------|
+| Hedera Mainnet | `hedera:mainnet` | `0.0.456858` (USDC) | 6 |
+| Hedera Testnet | `hedera:testnet` | `0.0.429274` (USDC) | 6 |
+
+HBAR (native token) is also supported using asset ID `0.0.0`, with amounts in tinybars (1 HBAR = 10⁸ tinybars).
+
 ## Adding Support for New Networks
 
 There are two distinct paths, depending on your goal:
