@@ -1,0 +1,7 @@
+{
+  "name": "Prosharky Agent Gateway",
+  "description": "Unified agent gateway spanning EVM and Solana with 32 MCP tools over JSON-RPC 2.0. x402 USDC billing on Base for 5 paid data endpoints (Aave V4 + Morpho Blue risk analytics, ERC-4337 paymaster leaderboard, middleware mempool stream, recurring-bot leaderboard). Swap aggregators (0x / LI.FI / deBridge / Mayan / KyberSwap / Relay) and Jupiter v6 Solana Referral Program with 50 bps integrator fees. LLM inference via LiteLLM proxy (Claude / GPT-5 / Grok / DeepSeek V4). FHA-defended against arxiv:2604.20994. Includes Morpho MCP upstream.",
+  "logoUrl": "/logos/prosharky-agent-gateway.png",
+  "websiteUrl": "https://prosharky-gw.173-249-14-219.sslip.io/llms.txt",
+  "category": "Services/Endpoints"
+}
