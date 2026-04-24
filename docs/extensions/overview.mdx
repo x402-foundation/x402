@@ -60,6 +60,21 @@ interface ResourceServerExtension {
     declaration: unknown,
     context: SettleResultContext,
   ) => Promise<unknown>;
+
+  /**
+   * Verify/settle lifecycle hooks scoped to this extension.
+   * These run only when the extension is declared on the route (i.e. declaredExtensions[key] is set).
+   * The extension's declaration is passed as the first argument to each hook.
+   * Hook contexts are read-only for core protocol fields; use abort/recover return values instead of mutation.
+   */
+  hooks?: {
+    onBeforeVerify?: (declaration: unknown, context: VerifyContext) => Promise<void | { abort: true; reason: string; message?: string }>;
+    onAfterVerify?: (declaration: unknown, context: VerifyResultContext) => Promise<void>;
+    onVerifyFailure?: (declaration: unknown, context: VerifyFailureContext) => Promise<void | { recovered: true; result: VerifyResponse }>;
+    onBeforeSettle?: (declaration: unknown, context: SettleContext) => Promise<void | { abort: true; reason: string; message?: string }>;
+    onAfterSettle?: (declaration: unknown, context: SettleResultContext) => Promise<void>;
+    onSettleFailure?: (declaration: unknown, context: SettleFailureContext) => Promise<void | { recovered: true; result: SettleResponse }>;
+  };
 }
 ```
 
