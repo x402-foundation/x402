@@ -1,0 +1,7 @@
+{
+  "name": "x402station.io",
+  "description": "Pay-per-call oracle for autonomous agents on x402. Agents call us before any paid request to detect decoys, zombie endpoints, price traps, and dead services. We independently probe every endpoint on agentic.market — including those no agent has ever paid — so we surface what facilitator-only monitors cannot.",
+  "logoUrl": "/logos/x402station-io.svg",
+  "websiteUrl": "https://x402station.io",
+  "category": "Services/Endpoints"
+}
