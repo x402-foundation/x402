@@ -32,6 +32,10 @@ const nextConfig: NextConfig = {
             value:
               '</.well-known/api-catalog>; rel="api-catalog", </writing/x402-v2-launch>; rel="service-doc", </protected>; rel="payment-required"',
           },
+          {
+            key: "X-X402-Supported",
+            value: "true",
+          },
         ],
       },
     ];

@@ -25,5 +25,11 @@ export default function sitemap(): MetadataRoute.Sitemap {
       changeFrequency: "monthly",
       priority: 0.7,
     },
+    {
+      url: "https://x402.org/protected",
+      lastModified: new Date("2026-04-23"),
+      changeFrequency: "monthly",
+      priority: 0.5,
+    },
   ];
 }
