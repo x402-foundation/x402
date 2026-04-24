@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="utf-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="-8 -2 150 72">
+  <!--
+    RTK monogram: spines aligned on single vertical axis.
+    Composite reads as a figure throwing a spear.
+    Dark surface background baked in so the logo renders correctly
+    against any ecosystem page theme.
+  -->
+
+  <!-- Dark surface background -->
+  <rect x="-8" y="-2" width="150" height="72" fill="#040d1a" rx="8"/>
+
+  <!-- Shared vertical spine (R + T + K) -->
+  <line x1="40" y1="4" x2="40" y2="66" stroke="#f0f6ff" stroke-width="5" stroke-linecap="round"/>
+
+  <!-- R bowl (head) — wide, short curve upper-right of spine -->
+  <path d="M 40,4 C 88,4 88,28 40,28" stroke="#f0f6ff" stroke-width="5" fill="none" stroke-linejoin="round"/>
+
+  <!-- K upper arm (mirrored — from junction up-left) -->
+  <line x1="40" y1="35" x2="4" y2="10" stroke="#f0f6ff" stroke-width="5" stroke-linecap="round"/>
+
+  <!-- K lower arm (mirrored — from junction down-left) -->
+  <line x1="40" y1="32" x2="4" y2="66" stroke="#f0f6ff" stroke-width="5" stroke-linecap="round"/>
+
+  <!-- R leg (down-right) -->
+  <line x1="40" y1="28" x2="76" y2="66" stroke="#f0f6ff" stroke-width="5" stroke-linecap="round"/>
+
+  <!-- T crossbar (spear) with arrowhead -->
+  <line x1="-4" y1="4" x2="126" y2="4" stroke="#60a5fa" stroke-width="3" stroke-linecap="round"/>
+  <polygon points="126,0 138,4 126,8" fill="#60a5fa"/>
+</svg>

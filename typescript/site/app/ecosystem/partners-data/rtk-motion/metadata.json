@@ -1,0 +1,7 @@
+{
+  "name": "RTK Motion",
+  "description": "Agent-to-agent paid access to 4D motion capture, rehabilitation biomechanics, and location threat intelligence via x402v2 anchor routes and MCP.",
+  "logoUrl": "/logos/rtk-motion.svg",
+  "websiteUrl": "https://rtkmotion.io",
+  "category": "Services/Endpoints"
+}
