@@ -43,6 +43,7 @@ This page tracks which features are implemented in each SDK (TypeScript, Go, Pyt
 | exact/avm (ASA) | ✅ | ❌ | ❌ |
 | exact/stellar (Soroban) | ✅ | ❌ | ❌ |
 | exact/aptos (Fungible Assets) | ✅ | ❌ | ❌ |
+| exact/hedera (HBAR + HTS) | ✅ | ❌ | ❌ |
 | upto/evm (Permit2) | ✅ | ✅ | ✅ |
 
 ## Extensions
