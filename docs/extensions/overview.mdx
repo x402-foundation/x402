@@ -137,7 +137,7 @@ To create your own extension:
 
 1. **Define the extension object** implementing `ResourceServerExtension`
 2. **Choose a unique key** — this identifies your extension in route declarations and response payloads
-3. **Implement the hooks you need** — `enrichDeclaration`, `enrichPaymentRequiredResponse`, `enrichSettlementResponse`
+3. **Implement the hooks you need** — `enrichDeclaration`, `enrichPaymentRequiredResponse`, `enrichSettlementResponse`, and/or `hooks`
 4. **Create a declare function** — a helper that returns the route-level configuration for your extension
 5. **Register it** on the `x402ResourceServer` via `registerExtension`
 6. **Submit a pull request** to [x402-foundation/x402](https://github.com/x402-foundation/x402) — extensions must be reviewed and approved by the x402 maintainers before they are included in the SDK
@@ -159,6 +159,19 @@ const myExtension: ResourceServerExtension = {
     // Add custom data after successful payment
     return { settled: true, processedAt: Date.now() };
   },
+
+  hooks: {
+    // Runs only when this extension is declared on the route
+    onAfterSettle: async (declaration, context) => {
+      // declaration is the per-route config for this extension
+      // context.result, context.requirements, etc. are read-only
+      await auditLog.record({
+        extensionConfig: declaration,
+        payer: context.result.payer,
+        transaction: context.result.transaction,
+      });
+    },
+  },
 };
 
 // Declare helper for route config
@@ -167,7 +180,7 @@ function declareMyExtension(config: { customOption: boolean }) {
 }
 ```
 
-The data returned from each hook is included in the response under `extensions["my-extension"]`.
+The data returned from `enrichPaymentRequiredResponse` and `enrichSettlementResponse` is included in the response under `extensions["my-extension"]`. The `hooks` callbacks run as part of the server's verify/settle lifecycle but only when the extension is active on the route.
 
 ## Further Reading
 
