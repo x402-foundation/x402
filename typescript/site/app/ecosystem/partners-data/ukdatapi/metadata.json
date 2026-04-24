@@ -1,0 +1,7 @@
+{
+  "name": "UKDataAPI",
+  "description": "22 enriched UK government data endpoints with proprietary scoring algorithms. AI agents pay per request in USDC on Base via x402 — no signup required.",
+  "logoUrl": "/logos/ukdatapi.png",
+  "websiteUrl": "https://www.ukdatapi.com/agents",
+  "category": "Services/Endpoints"
+}
