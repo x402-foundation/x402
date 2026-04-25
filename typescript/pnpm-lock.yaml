@@ -589,6 +589,9 @@ importers:
       '@x402/core':
         specifier: workspace:~
         version: link:../../core
+      '@x402/evm':
+        specifier: workspace:~
+        version: link:../../mechanisms/evm
       lute-connect:
         specifier: ^1.6.3
         version: 1.7.0
@@ -626,9 +629,6 @@ importers:
       '@x402/avm':
         specifier: workspace:~
         version: link:../../mechanisms/avm
-      '@x402/evm':
-        specifier: workspace:~
-        version: link:../../mechanisms/evm
       '@x402/svm':
         specifier: workspace:~
         version: link:../../mechanisms/svm

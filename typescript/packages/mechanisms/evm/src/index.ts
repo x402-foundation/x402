@@ -13,6 +13,9 @@ export {
   type Permit2AllowanceParams,
 } from "./exact/client";
 
+// Default asset registry
+export { getDefaultAsset } from "./shared/defaultAssets";
+
 // Signers
 export { toClientEvmSigner, toFacilitatorEvmSigner } from "./signer";
 export type { ClientEvmSigner, FacilitatorEvmSigner } from "./signer";

@@ -55,6 +55,36 @@ describe("Network Handlers", () => {
       expect(html).toContain("<!DOCTYPE html>");
       expect(html).toMatch(/Test App|EVM Paywall/);
     });
+
+    it("scales the displayed amount by the network's token decimals (6 for USDC)", () => {
+      const html = evmPaywall.generateHtml(
+        { ...evmRequirement, network: "eip155:8453", amount: "100000" },
+        mockPaymentRequired,
+        { appName: "Test", testnet: false },
+      );
+      // 100000 / 10^6 = 0.1
+      expect(html).toContain("amount: 0.1,");
+    });
+
+    it("scales the displayed amount for 18-decimal tokens (e.g. MegaUSD on MegaETH)", () => {
+      const html = evmPaywall.generateHtml(
+        { ...evmRequirement, network: "eip155:4326", amount: "100000000000000000" },
+        mockPaymentRequired,
+        { appName: "Test", testnet: false },
+      );
+      // 10^17 / 10^18 = 0.1; previously hardcoded /1e6 produced 100000000000.
+      expect(html).toContain("amount: 0.1,");
+    });
+
+    it("falls back to 6 decimals for networks without a default asset", () => {
+      const html = evmPaywall.generateHtml(
+        { ...evmRequirement, network: "eip155:99999999", amount: "100000" },
+        mockPaymentRequired,
+        { appName: "Test", testnet: false },
+      );
+      // 100000 / 10^6 = 0.1 via fallback
+      expect(html).toContain("amount: 0.1,");
+    });
   });
 
   describe("svmPaywall", () => {
