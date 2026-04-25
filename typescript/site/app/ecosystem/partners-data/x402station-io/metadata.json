@@ -1,0 +1,7 @@
+{
+  "name": "x402station.io",
+  "description": "Pre-flight oracle for x402 agents — independently probes 20,338 endpoints across the agentic.market catalog every 10 minutes, surfacing decoys, zombie services, price drift and catalog concentration. Three paid endpoints on Base mainnet via the CDP facilitator.",
+  "logoUrl": "/logos/x402station-io.png",
+  "websiteUrl": "https://x402station.io",
+  "category": "Services/Endpoints"
+}
