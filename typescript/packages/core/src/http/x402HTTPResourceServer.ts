@@ -1095,19 +1095,3 @@ export class x402HTTPResourceServer {
     return 0;
   }
 }
-
-/**
- * Check if any routes in the configuration declare bazaar extensions
- *
- * @param routes - Route configuration
- * @returns True if any route has extensions.bazaar defined
- */
-export function checkIfBazaarNeeded(routes: RoutesConfig): boolean {
-  if ("accepts" in routes) {
-    return !!(routes.extensions && "bazaar" in routes.extensions);
-  }
-
-  return Object.values(routes).some(routeConfig => {
-    return !!(routeConfig.extensions && "bazaar" in routeConfig.extensions);
-  });
-}
