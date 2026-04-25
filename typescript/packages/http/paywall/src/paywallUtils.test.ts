@@ -86,11 +86,20 @@ describe("paywallUtils", () => {
   });
 
   describe("getNetworkDisplayName", () => {
-    it("returns display names for CAIP-2 EVM networks using viem", () => {
+    it("returns display names for CAIP-2 EVM networks using the x402 chain registry", () => {
       expect(getNetworkDisplayName("eip155:8453")).toBe("Base");
       expect(getNetworkDisplayName("eip155:84532")).toBe("Base Sepolia");
       expect(getNetworkDisplayName("eip155:1")).toBe("Ethereum");
       expect(getNetworkDisplayName("eip155:137")).toBe("Polygon");
+    });
+
+    it("returns display names for additional x402-supported EVM chains", () => {
+      expect(getNetworkDisplayName("eip155:43114")).toBe("Avalanche");
+      expect(getNetworkDisplayName("eip155:43113")).toBe("Avalanche Fuji");
+      expect(getNetworkDisplayName("eip155:80002")).toBe("Polygon Amoy");
+      expect(getNetworkDisplayName("eip155:11155111")).toBe("Sepolia");
+      expect(getNetworkDisplayName("eip155:2741")).toBe("Abstract");
+      expect(getNetworkDisplayName("eip155:1329")).toBe("Sei");
     });
 
     it("returns display names for CAIP-2 Solana networks", () => {
@@ -140,9 +149,12 @@ describe("paywallUtils", () => {
   });
 
   describe("isTestnetNetwork", () => {
-    it("identifies EVM testnets using viem metadata", () => {
+    it("identifies EVM testnets using the x402 chain registry", () => {
       expect(isTestnetNetwork("eip155:84532")).toBe(true);
       expect(isTestnetNetwork("eip155:80002")).toBe(true);
+      expect(isTestnetNetwork("eip155:11155111")).toBe(true);
+      expect(isTestnetNetwork("eip155:43113")).toBe(true);
+      expect(isTestnetNetwork("eip155:11124")).toBe(true);
     });
 
     it("identifies Solana testnets", () => {
@@ -152,7 +164,13 @@ describe("paywallUtils", () => {
     it("rejects mainnets", () => {
       expect(isTestnetNetwork("eip155:8453")).toBe(false);
       expect(isTestnetNetwork("eip155:1")).toBe(false);
+      expect(isTestnetNetwork("eip155:137")).toBe(false);
+      expect(isTestnetNetwork("eip155:43114")).toBe(false);
       expect(isTestnetNetwork("solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp")).toBe(false);
+    });
+
+    it("returns false for unknown chain IDs", () => {
+      expect(isTestnetNetwork("eip155:999999")).toBe(false);
     });
   });
 });
