@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { HTTPFacilitatorClient } from "../../../src/http/httpFacilitatorClient";
+import { HTTPFacilitatorClient, computeRetryDelay } from "../../../src/http/httpFacilitatorClient";
 import { FacilitatorResponseError, SettleError, VerifyError } from "../../../src/types";
 import { PaymentPayload, PaymentRequirements } from "../../../src/types/payments";
 
@@ -263,5 +263,39 @@ describe("HTTPFacilitatorClient", () => {
         expect.anything(),
       );
     });
+  });
+});
+
+describe("computeRetryDelay", () => {
+  it("uses Retry-After delta-seconds when present", () => {
+    expect(computeRetryDelay("5", 0)).toBe(5000);
+    expect(computeRetryDelay("12", 1)).toBe(12_000);
+  });
+
+  it("uses Retry-After HTTP-date when present", () => {
+    const future = new Date(Date.now() + 7000).toUTCString();
+    const delay = computeRetryDelay(future, 0);
+    // Allow a small window for elapsed time during the call.
+    expect(delay).toBeGreaterThan(5000);
+    expect(delay).toBeLessThanOrEqual(7000);
+  });
+
+  it("falls back to exponential backoff when Retry-After is missing", () => {
+    expect(computeRetryDelay(null, 0)).toBe(1000);
+    expect(computeRetryDelay(null, 1)).toBe(2000);
+    expect(computeRetryDelay(null, 2)).toBe(4000);
+  });
+
+  it("falls back to exponential backoff when Retry-After is zero or negative", () => {
+    expect(computeRetryDelay("0", 0)).toBe(1000);
+    expect(computeRetryDelay("-5", 1)).toBe(2000);
+  });
+
+  it("falls back to exponential backoff when Retry-After is unparseable", () => {
+    expect(computeRetryDelay("not-a-date", 1)).toBe(2000);
+  });
+
+  it("caps the delay to MAX_RETRY_DELAY_MS to prevent pathological waits", () => {
+    expect(computeRetryDelay("9999", 0)).toBe(30_000);
   });
 });
