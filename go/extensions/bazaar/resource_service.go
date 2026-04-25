@@ -2,6 +2,7 @@ package bazaar
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/x402-foundation/x402/go/extensions/types"
 )
@@ -95,6 +96,152 @@ func DeclareDiscoveryExtension(
 	}
 
 	return types.DiscoveryExtension{}, fmt.Errorf("unsupported HTTP method: %s", methodStr)
+}
+
+// DeclareMcpDiscoveryExtension creates a discovery extension for an MCP tool.
+//
+// This function helps servers declare how their MCP tool should be discovered,
+// including the tool name, input schema, and optional transport/description/example.
+//
+// Args:
+//   - config: Configuration for the MCP discovery extension
+//
+// Returns:
+//   - DiscoveryExtension with both info and schema
+//   - Error if required fields are missing
+//
+// Example:
+//
+//	extension, err := bazaar.DeclareMcpDiscoveryExtension(bazaar.DeclareMcpDiscoveryConfig{
+//	    ToolName:    "weather_lookup",
+//	    Description: "Look up weather for a city",
+//	    Transport:   bazaar.TransportStreamableHTTP,
+//	    InputSchema: map[string]interface{}{
+//	        "type": "object",
+//	        "properties": map[string]interface{}{
+//	            "city": map[string]interface{}{"type": "string"},
+//	        },
+//	        "required": []string{"city"},
+//	    },
+//	    Example: map[string]interface{}{"city": "San Francisco"},
+//	})
+func DeclareMcpDiscoveryExtension(config types.DeclareMcpDiscoveryConfig) (types.DiscoveryExtension, error) {
+	if strings.TrimSpace(config.ToolName) == "" {
+		return types.DiscoveryExtension{}, fmt.Errorf("toolName is required for MCP discovery extension")
+	}
+	if config.InputSchema == nil {
+		return types.DiscoveryExtension{}, fmt.Errorf("inputSchema is required for MCP discovery extension")
+	}
+
+	// Build the info
+	mcpInput := types.McpInput{
+		Type:        "mcp",
+		ToolName:    config.ToolName,
+		InputSchema: config.InputSchema,
+	}
+	if config.Description != "" {
+		mcpInput.Description = config.Description
+	}
+	if config.Transport != "" {
+		mcpInput.Transport = config.Transport
+	}
+	if config.Example != nil {
+		mcpInput.Example = config.Example
+	}
+
+	mcpInfo := types.McpDiscoveryInfo{
+		Input: mcpInput,
+	}
+
+	if config.Output != nil && config.Output.Example != nil {
+		mcpInfo.Output = &types.OutputInfo{
+			Type:    "json",
+			Example: config.Output.Example,
+		}
+	}
+
+	// Build the schema
+	inputSchemaProperties := map[string]interface{}{
+		"type": map[string]interface{}{
+			"type":  "string",
+			"const": "mcp",
+		},
+		"toolName": map[string]interface{}{
+			"type": "string",
+		},
+		"inputSchema": map[string]interface{}{
+			"type": "object",
+		},
+	}
+	inputRequired := []string{"type", "toolName", "inputSchema"}
+
+	if config.Description != "" {
+		inputSchemaProperties["description"] = map[string]interface{}{
+			"type": "string",
+		}
+	}
+	if config.Transport != "" {
+		transportSchema := map[string]interface{}{
+			"type": "string",
+		}
+		if config.Transport == TransportStreamableHTTP || config.Transport == TransportSSE {
+			transportSchema["enum"] = []string{string(config.Transport)}
+		}
+		inputSchemaProperties["transport"] = transportSchema
+	}
+	if config.Example != nil {
+		inputSchemaProperties["example"] = map[string]interface{}{
+			"type": "object",
+		}
+	}
+
+	schemaProperties := map[string]interface{}{
+		"input": map[string]interface{}{
+			"type":                 "object",
+			"properties":           inputSchemaProperties,
+			"required":             inputRequired,
+			"additionalProperties": false,
+		},
+	}
+
+	// Add output schema if provided
+	if config.Output != nil && config.Output.Example != nil {
+		outputSchema := map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"type": map[string]interface{}{
+					"type": "string",
+				},
+				"example": map[string]interface{}{
+					"type": "object",
+				},
+			},
+			"required": []string{"type"},
+		}
+
+		if config.Output.Schema != nil {
+			for k, v := range config.Output.Schema {
+				outputSchema["properties"].(map[string]interface{})["example"].(map[string]interface{})[k] = v
+			}
+		}
+
+		schemaProperties["output"] = outputSchema
+	}
+
+	schema := types.JSONSchema{
+		"$schema":    "https://json-schema.org/draft/2020-12/schema",
+		"type":       "object",
+		"properties": schemaProperties,
+		"required":   []string{"input"},
+	}
+
+	return types.DiscoveryExtension{
+		Info: types.DiscoveryInfo{
+			Input:  mcpInfo.Input,
+			Output: mcpInfo.Output,
+		},
+		Schema: schema,
+	}, nil
 }
 
 // createQueryDiscoveryExtension creates a query discovery extension

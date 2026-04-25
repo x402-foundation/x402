@@ -6,7 +6,7 @@ import {
   RouteConfig,
   ProtectedRequestHook,
 } from "../../../src/http/x402HTTPResourceServer";
-import { x402ResourceServer } from "../../../src/server/x402ResourceServer";
+import { x402ResourceServer, type VerifyContext } from "../../../src/server/x402ResourceServer";
 import {
   MockFacilitatorClient,
   MockSchemeNetworkServer,
@@ -571,6 +571,63 @@ describe("x402HTTPResourceServer Hooks", () => {
         // Both should have transportContext
         expect(receivedContexts[0].transportContext).toBeDefined();
         expect(receivedContexts[1].transportContext).toBeDefined();
+      });
+    });
+
+    describe("verifyPayment declaredExtensions from HTTP", () => {
+      it("passes route extensions map to manual onBeforeVerify", async () => {
+        extensionMockFacilitator.setVerifyResponse(buildVerifyResponse({ isValid: true }));
+
+        let verifyCtx: VerifyContext | undefined;
+        extensionResourceServer.onBeforeVerify(async ctx => {
+          verifyCtx = ctx;
+        });
+
+        const routes: Record<string, RouteConfig> = {
+          "/api/test": {
+            accepts: {
+              scheme: "exact",
+              payTo: "0xabc",
+              price: "$1.00" as Price,
+              network: "eip155:8453" as Network,
+            },
+            extensions: {
+              bazaar: { tool: "x" },
+            },
+          },
+        };
+
+        const httpServer = new x402HTTPResourceServer(extensionResourceServer, routes);
+
+        const paymentRequired = await extensionResourceServer.createPaymentRequiredResponse(
+          await extensionResourceServer.buildPaymentRequirements({
+            scheme: "exact",
+            payTo: "0xabc",
+            price: "$1.00" as Price,
+            network: "eip155:8453" as Network,
+          }),
+          { url: "/api/test", description: "", mimeType: "" },
+          undefined,
+          routes["/api/test"].extensions,
+        );
+
+        const payload = buildPaymentPayload({
+          accepted: paymentRequired.accepts[0],
+          resource: paymentRequired.resource,
+        });
+        const paymentHeader = encodePaymentSignatureHeader(payload);
+        const adapter = new MockHTTPAdapter({ "payment-signature": paymentHeader });
+        const context: HTTPRequestContext = {
+          adapter,
+          path: "/api/test",
+          method: "GET",
+        };
+
+        const result = await httpServer.processHTTPRequest(context);
+        expect(result.type).toBe("payment-verified");
+        expect(verifyCtx).toBeDefined();
+        expect(verifyCtx!.declaredExtensions).toEqual({ bazaar: { tool: "x" } });
+        expect(verifyCtx!.transportContext).toBeDefined();
       });
     });
 

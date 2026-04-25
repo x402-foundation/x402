@@ -65,6 +65,34 @@ routes = {
 }
 ```
 
+#### MCP Tool
+
+For paid MCP tools, use `declare_mcp_discovery_extension` instead:
+
+```python
+from x402.mcp import create_payment_wrapper
+from x402.extensions.bazaar import DeclareMcpDiscoveryConfig, declare_mcp_discovery_extension
+
+weather_discovery = declare_mcp_discovery_extension(
+    DeclareMcpDiscoveryConfig(
+        tool_name="get_weather",
+        description="Get current weather for a city",
+        input_schema={
+            "properties": {"city": {"type": "string", "description": "City name"}},
+            "required": ["city"],
+        },
+        example={"city": "San Francisco"},
+    )
+)
+
+weather_wrapper = create_payment_wrapper(
+    resource_server,
+    accepts=weather_accepts,
+    resource=ResourceInfo(url="mcp://tool/get_weather"),
+    extensions=weather_discovery,  # Bazaar metadata attached to PaymentRequired
+)
+```
+
 ### For Facilitators
 
 Extract discovery information from payment requests:

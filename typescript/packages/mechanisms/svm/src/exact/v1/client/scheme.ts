@@ -30,6 +30,7 @@ import type { PaymentRequirementsV1 } from "@x402/core/types/v1";
 import {
   DEFAULT_COMPUTE_UNIT_LIMIT,
   DEFAULT_COMPUTE_UNIT_PRICE_MICROLAMPORTS,
+  MAX_MEMO_BYTES,
   MEMO_PROGRAM_ADDRESS,
 } from "../../../constants";
 import type { ClientSvmConfig, ClientSvmSigner } from "../../../signer";
@@ -112,15 +113,25 @@ export class ExactSvmSchemeV1 implements SchemeNetworkClient {
 
     const { value: latestBlockhash } = await rpc.getLatestBlockhash().send();
 
-    const nonce = crypto.getRandomValues(new Uint8Array(16));
-    const memoIx = {
-      programAddress: MEMO_PROGRAM_ADDRESS as Address,
-      accounts: [] as const,
-      data: new TextEncoder().encode(
+    const sellerMemo = selectedV1.extra?.memo as string | undefined;
+    let memoData: Uint8Array;
+    if (sellerMemo) {
+      memoData = new TextEncoder().encode(sellerMemo);
+      if (memoData.byteLength > MAX_MEMO_BYTES) {
+        throw new Error(`extra.memo exceeds maximum ${MAX_MEMO_BYTES} bytes`);
+      }
+    } else {
+      const nonce = crypto.getRandomValues(new Uint8Array(16));
+      memoData = new TextEncoder().encode(
         Array.from(nonce)
           .map(b => b.toString(16).padStart(2, "0"))
           .join(""),
-      ),
+      );
+    }
+    const memoIx = {
+      programAddress: MEMO_PROGRAM_ADDRESS as Address,
+      accounts: [] as const,
+      data: memoData,
     };
 
     const tx = pipe(

@@ -34,6 +34,7 @@ import (
 
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
 	x402 "github.com/x402-foundation/x402/go"
+	"github.com/x402-foundation/x402/go/extensions/bazaar"
 	"github.com/x402-foundation/x402/go/mcp"
 	evmclient "github.com/x402-foundation/x402/go/mechanisms/evm/exact/client"
 	evmfacilitator "github.com/x402-foundation/x402/go/mechanisms/evm/exact/facilitator"
@@ -150,6 +151,22 @@ func TestMCPEVMIntegration(t *testing.T) {
 			Version: "1.0.0",
 		}, nil)
 
+		// Declare bazaar MCP discovery extension for weather tool
+		bazaarExtension, err := bazaar.DeclareMcpDiscoveryExtension(bazaar.DeclareMcpDiscoveryConfig{
+			ToolName:    "get_weather",
+			Description: "Get weather for a city",
+			Transport:   bazaar.TransportSSE,
+			InputSchema: map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"city": map[string]interface{}{"type": "string"},
+				},
+			},
+		})
+		if err != nil {
+			t.Fatalf("Failed to declare bazaar extension: %v", err)
+		}
+
 		// Create payment wrapper
 		paymentWrapper := mcp.NewPaymentWrapper(resourceServer, mcp.PaymentWrapperConfig{
 			Accepts: accepts,
@@ -157,6 +174,9 @@ func TestMCPEVMIntegration(t *testing.T) {
 				URL:         "mcp://tool/get_weather",
 				Description: "Get weather for a city",
 				MimeType:    "application/json",
+			},
+			Extensions: map[string]interface{}{
+				bazaar.BAZAAR.Key(): bazaarExtension,
 			},
 		})
 
@@ -299,7 +319,61 @@ func TestMCPEVMIntegration(t *testing.T) {
 		})
 
 		// ========================================================================
-		// Test 3: Paid tool with payment succeeds (REAL BLOCKCHAIN TRANSACTION)
+		// Test 3: 402 response includes bazaar extensions
+		// ========================================================================
+		t.Run("402 response includes bazaar extensions", func(t *testing.T) {
+			manualClient := mcp.NewX402MCPClient(clientSession, paymentClient, mcp.Options{
+				AutoPayment: mcp.BoolPtr(false),
+			})
+
+			_, err := manualClient.CallTool(ctx, "get_weather", map[string]interface{}{"city": "San Francisco"})
+			if err == nil {
+				t.Fatal("Expected 402 error")
+			}
+
+			paymentErr, ok := err.(*mcp.PaymentRequiredError)
+			if !ok {
+				t.Fatalf("Expected PaymentRequiredError, got %T: %v", err, err)
+			}
+			if paymentErr.PaymentRequired == nil {
+				t.Fatal("Expected PaymentRequired to be set")
+			}
+			if paymentErr.PaymentRequired.Extensions == nil {
+				t.Fatal("Expected Extensions to be set in PaymentRequired")
+			}
+
+			bazaarRaw, ok := paymentErr.PaymentRequired.Extensions[bazaar.BAZAAR.Key()]
+			if !ok {
+				t.Fatal("Expected 'bazaar' key in Extensions")
+			}
+
+			// Round-trip through JSON to verify it deserializes to a valid DiscoveryExtension
+			bazaarJSON, err := json.Marshal(bazaarRaw)
+			if err != nil {
+				t.Fatalf("Failed to marshal bazaar extension: %v", err)
+			}
+
+			var ext bazaar.DiscoveryExtension
+			if err := json.Unmarshal(bazaarJSON, &ext); err != nil {
+				t.Fatalf("Failed to unmarshal bazaar extension: %v", err)
+			}
+
+			// Verify the MCP input contains the expected tool name
+			if ext.Info.McpInput == nil {
+				t.Fatal("Expected McpInput to be set in bazaar extension")
+			}
+			if ext.Info.McpInput.ToolName != "get_weather" {
+				t.Errorf("Expected toolName 'get_weather', got '%s'", ext.Info.McpInput.ToolName)
+			}
+			if ext.Info.McpInput.Type != "mcp" {
+				t.Errorf("Expected type 'mcp', got '%s'", ext.Info.McpInput.Type)
+			}
+
+			t.Logf("✅ Bazaar extension present in 402 response with toolName: %s", ext.Info.McpInput.ToolName)
+		})
+
+		// ========================================================================
+		// Test 4: Paid tool with payment succeeds (REAL BLOCKCHAIN TRANSACTION)
 		// ========================================================================
 		t.Run("Paid tool with auto-payment and real blockchain settlement", func(t *testing.T) {
 			t.Log("\n🔄 Starting paid tool call with real blockchain settlement...\n")
@@ -343,7 +417,7 @@ func TestMCPEVMIntegration(t *testing.T) {
 		})
 
 		// ========================================================================
-		// Test 4: Multiple paid tool calls work
+		// Test 5: Multiple paid tool calls work
 		// ========================================================================
 		t.Run("Multiple paid tool calls work", func(t *testing.T) {
 			// Wait for the previous test's settlement tx to be mined
@@ -376,7 +450,7 @@ func TestMCPEVMIntegration(t *testing.T) {
 		})
 
 		// ========================================================================
-		// Test 5: List tools works
+		// Test 6: List tools works
 		// ========================================================================
 		t.Run("List tools works", func(t *testing.T) {
 			session, ok := x402McpClient.Client().(*mcpsdk.ClientSession)

@@ -1,6 +1,7 @@
 import { privateKeyToAccount } from "viem/accounts";
 import { x402Client } from "@x402/fetch";
 import { ExactEvmScheme } from "@x402/evm/exact/client";
+import { UptoEvmScheme } from "@x402/evm/upto/client";
 
 /**
  * Hooks Example
@@ -27,6 +28,7 @@ export async function runHooksExample(evmPrivateKey: `0x${string}`, url: string)
 
   const client = new x402Client()
     .register("eip155:*", new ExactEvmScheme(evmSigner))
+    .register("eip155:*", new UptoEvmScheme(evmSigner))
     .onBeforePaymentCreation(async context => {
       console.log("🔍 [BeforePaymentCreation] Creating payment for:");
       console.log(`   Network: ${context.selectedRequirements.network}`);

@@ -197,6 +197,25 @@ func (f *ExactSvmSchemeV1) Verify(
 
 			return nil, x402.NewVerifyError(reason, payer, fmt.Sprintf("unknown optional instruction: %s", progID.String()))
 		}
+
+		// Step 5b: Verify memo content matches extra.memo when present
+		if expectedMemo, ok := reqExtraMap["memo"].(string); ok && expectedMemo != "" {
+			var memoCount int
+			var actualMemoData []byte
+			for _, instruction := range optionalInstructions {
+				progID := tx.Message.AccountKeys[instruction.ProgramIDIndex]
+				if progID.Equals(memoPubkey) {
+					memoCount++
+					actualMemoData = instruction.Data
+				}
+			}
+			if memoCount != 1 {
+				return nil, x402.NewVerifyError(ErrMemoCount, payer, "expected exactly one memo instruction when extra.memo is present")
+			}
+			if string(actualMemoData) != expectedMemo {
+				return nil, x402.NewVerifyError(ErrMemoMismatch, payer, "memo data does not match extra.memo")
+			}
+		}
 	}
 
 	// Step 6: Sign and Simulate Transaction

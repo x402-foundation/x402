@@ -1,6 +1,67 @@
 import { Network } from "../types";
 
 /**
+ * Converts a JavaScript number to a plain decimal string, expanding scientific notation
+ * via string manipulation rather than parseFloat round-tripping.
+ *
+ * e.g. 1e-7 → "0.0000001", 4.02 → "4.02"
+ *
+ * @param n - The number to convert
+ * @returns A plain decimal string representation with no scientific notation
+ */
+export function numberToDecimalString(n: number): string {
+  const str = n.toString();
+  if (!/[eE]/.test(str)) return str;
+
+  const [significand, exponentStr] = str.split(/[eE]/);
+  const exp = parseInt(exponentStr, 10);
+  const negative = significand.startsWith("-");
+  const abs = negative ? significand.slice(1) : significand;
+  const [intDigits, fracDigits = ""] = abs.split(".");
+  const allDigits = intDigits + fracDigits;
+  const decimalPos = intDigits.length + exp;
+
+  let result: string;
+  if (decimalPos <= 0) {
+    result = "0." + "0".repeat(-decimalPos) + allDigits;
+  } else if (decimalPos >= allDigits.length) {
+    result = allDigits + "0".repeat(decimalPos - allDigits.length);
+  } else {
+    result = allDigits.slice(0, decimalPos) + "." + allDigits.slice(decimalPos);
+  }
+  return (negative ? "-" : "") + result;
+}
+
+/**
+ * Convert a decimal amount to token smallest units.
+ * Accepts only plain decimal strings — scientific notation is not allowed.
+ * Throws if the amount is non-zero but too small to represent with the given decimal precision.
+ *
+ * @param decimalAmount - The decimal amount as a plain string (e.g., "0.10")
+ * @param decimals - The number of decimals for the token (e.g., 6 for USDC)
+ * @returns The amount in smallest units as a string
+ */
+export function convertToTokenAmount(decimalAmount: string, decimals: number): string {
+  if (/[eE]/.test(decimalAmount)) {
+    throw new Error(
+      `Invalid amount: ${decimalAmount} — use decimal notation, not scientific notation`,
+    );
+  }
+  if (!/^-?\d+\.?\d*$/.test(decimalAmount)) {
+    throw new Error(`Invalid amount: ${decimalAmount}`);
+  }
+  const [intPart, decPart = ""] = decimalAmount.split(".");
+  const paddedDec = decPart.padEnd(decimals, "0").slice(0, decimals);
+  const tokenAmount = (intPart + paddedDec).replace(/^0+/, "") || "0";
+  if (tokenAmount === "0" && /[1-9]/.test(decimalAmount)) {
+    throw new Error(
+      `Amount ${decimalAmount} is too small to represent with ${decimals} decimal places`,
+    );
+  }
+  return tokenAmount;
+}
+
+/**
  * Scheme data structure for facilitator storage
  */
 export interface SchemeData<T> {

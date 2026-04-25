@@ -189,7 +189,7 @@ export async function handleSettlement(
       });
     }
 
-    // Settlement succeeded - add headers and return original response
+    // Settlement succeeded - add headers and return original response.
     Object.entries(result.headers).forEach(([key, value]) => {
       response.headers.set(key, value);
     });

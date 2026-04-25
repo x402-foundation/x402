@@ -5,8 +5,8 @@ go 1.24.0
 toolchain go1.24.1
 
 require (
-	github.com/x402-foundation/x402/go v0.0.0
 	github.com/modelcontextprotocol/go-sdk v1.3.0
+	github.com/x402-foundation/x402/go v0.0.0
 )
 
 require (

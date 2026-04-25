@@ -1,12 +1,16 @@
 /**
  * Bazaar Discovery Extension Validation for E2E Tests
- * 
+ *
  * This module validates that the bazaar discovery extension is working correctly
  * by checking that facilitators have discovered all expected endpoints from servers.
  */
 
-import { log, verboseLog, errorLog } from '../src/logger';
-import type { FacilitatorProxy, DiscoveredServer, TestConfig } from '../src/types';
+import { log, verboseLog, errorLog } from "../src/logger";
+import type {
+  FacilitatorProxy,
+  DiscoveredServer,
+  TestConfig,
+} from "../src/types";
 
 /**
  * Discovery resources response structure
@@ -40,6 +44,14 @@ interface ExpectedDiscoverableEndpoint {
   endpointPath: string;
   method: string;
   description: string;
+  /** For MCP tools: expected resource URL is mcp://tool/{toolName} */
+  expectedResourceUrl: string;
+  /** For MCP tools: the tool name expected in discoveryInfo.input.toolName */
+  toolName?: string;
+  /** For MCP tools: expected discoveryInfo.input.transport value. */
+  mcpTransport?: "streamable-http" | "sse";
+  /** Transport type ('http' or 'mcp') */
+  transport: string;
 }
 
 /**
@@ -74,14 +86,14 @@ export interface DiscoveryValidationResult {
  * Check if a server supports the bazaar extension
  */
 function serverSupportsBazaar(serverConfig: TestConfig): boolean {
-  return serverConfig.extensions?.includes('bazaar') ?? false;
+  return serverConfig.extensions?.includes("bazaar") ?? false;
 }
 
 /**
  * Check if a facilitator supports the bazaar extension
  */
 function facilitatorSupportsBazaar(facilitatorConfig: TestConfig): boolean {
-  return facilitatorConfig.extensions?.includes('bazaar') ?? false;
+  return facilitatorConfig.extensions?.includes("bazaar") ?? false;
 }
 
 /**
@@ -89,27 +101,42 @@ function facilitatorSupportsBazaar(facilitatorConfig: TestConfig): boolean {
  */
 function getDiscoverableEndpoints(
   server: DiscoveredServer,
-  serverPort: number
+  serverPort: number,
 ): ExpectedDiscoverableEndpoint[] {
   if (!serverSupportsBazaar(server.config)) {
     return [];
   }
 
+  const serverTransport = server.config.transport ?? "http";
   const serverUrl = `http://localhost:${serverPort}`;
   const discoverableEndpoints: ExpectedDiscoverableEndpoint[] = [];
 
   // Find all payment-required endpoints (these should have discovery info)
-  const paymentEndpoints = server.config.endpoints?.filter(
-    endpoint => endpoint.requiresPayment === true
-  ) || [];
+  const paymentEndpoints =
+    server.config.endpoints?.filter(
+      (endpoint) => endpoint.requiresPayment === true,
+    ) || [];
 
   for (const endpoint of paymentEndpoints) {
+    const isMcpEndpoint =
+      serverTransport === "mcp" || endpoint.method === "tool";
+    const toolName = endpoint.toolName ?? endpoint.path;
+
+    // MCP resources are identified by mcp://tool/{toolName}; HTTP by server URL + path
+    const expectedResourceUrl = isMcpEndpoint
+      ? `mcp://tool/${toolName}`
+      : `${serverUrl}${endpoint.path}`;
+
     discoverableEndpoints.push({
       serverName: server.config.name,
       serverUrl,
       endpointPath: endpoint.path,
       method: endpoint.method,
       description: endpoint.description,
+      expectedResourceUrl,
+      toolName: isMcpEndpoint ? toolName : undefined,
+      mcpTransport: isMcpEndpoint ? endpoint.mcpTransport : undefined,
+      transport: isMcpEndpoint ? "mcp" : "http",
     });
   }
 
@@ -120,7 +147,7 @@ function getDiscoverableEndpoints(
  * Fetch discovered resources from a facilitator
  */
 async function fetchDiscoveredResources(
-  facilitatorProxy: FacilitatorProxy
+  facilitatorProxy: FacilitatorProxy,
 ): Promise<DiscoveryResourcesResponse | null> {
   try {
     const url = `${facilitatorProxy.getUrl()}/discovery/resources?limit=1000`;
@@ -129,14 +156,18 @@ async function fetchDiscoveredResources(
     const response = await fetch(url);
 
     if (!response.ok) {
-      errorLog(`  ❌ Failed to fetch discovery resources: ${response.status} ${response.statusText}`);
+      errorLog(
+        `  ❌ Failed to fetch discovery resources: ${response.status} ${response.statusText}`,
+      );
       return null;
     }
 
     const data = await response.json();
     return data as DiscoveryResourcesResponse;
   } catch (error) {
-    errorLog(`  ❌ Error fetching discovery resources: ${error instanceof Error ? error.message : String(error)}`);
+    errorLog(
+      `  ❌ Error fetching discovery resources: ${error instanceof Error ? error.message : String(error)}`,
+    );
     return null;
   }
 }
@@ -147,7 +178,7 @@ async function fetchDiscoveredResources(
 async function validateFacilitatorDiscovery(
   facilitatorProxy: FacilitatorProxy,
   facilitatorConfig: TestConfig,
-  expectedEndpoints: ExpectedDiscoverableEndpoint[]
+  expectedEndpoints: ExpectedDiscoverableEndpoint[],
 ): Promise<FacilitatorDiscoveryResult> {
   const facilitatorName = facilitatorConfig.name;
   const facilitatorUrl = facilitatorProxy.getUrl();
@@ -183,27 +214,74 @@ async function validateFacilitatorDiscovery(
       missingEndpoints: expectedEndpoints,
       unexpectedEndpoints: [],
       success: false,
-      error: 'Failed to fetch discovery resources',
+      error: "Failed to fetch discovery resources",
     };
   }
 
-  verboseLog(`  📊 Total resources discovered: ${discoveryResponse.items.length}`);
+  verboseLog(
+    `  📊 Total resources discovered: ${discoveryResponse.items.length}`,
+  );
 
-  // Build set of discovered resource URLs for easy comparison
-  const discoveredUrls = new Set(
-    discoveryResponse.items.map(item => item.resource)
+  // Build map of discovered resource URL → item for easy lookup
+  const discoveredItemsByUrl = new Map(
+    discoveryResponse.items.map((item) => [item.resource, item]),
   );
 
   // Check which expected endpoints were discovered
   const missingEndpoints: ExpectedDiscoverableEndpoint[] = [];
   const discoveredEndpoints: string[] = [];
+  const metadataMismatches: string[] = [];
 
   for (const expected of expectedEndpoints) {
-    const expectedResourceUrl = `${expected.serverUrl}${expected.endpointPath}`;
+    const { expectedResourceUrl } = expected;
+    const discoveredItem = discoveredItemsByUrl.get(expectedResourceUrl);
 
-    if (discoveredUrls.has(expectedResourceUrl)) {
+    if (discoveredItem) {
       discoveredEndpoints.push(expectedResourceUrl);
       verboseLog(`  ✅ Discovered: ${expected.method} ${expectedResourceUrl}`);
+
+      // For MCP resources, additionally verify type and toolName in discoveryInfo
+      if (expected.transport === "mcp" && expected.toolName) {
+        const inputType = discoveredItem.discoveryInfo?.input?.type;
+        const inputToolName = discoveredItem.discoveryInfo?.input?.toolName;
+        const inputTransport = discoveredItem.discoveryInfo?.input?.transport;
+        let hasMetadataMismatch = false;
+
+        if (inputType !== "mcp") {
+          hasMetadataMismatch = true;
+          verboseLog(
+            `  ⚠️  MCP resource ${expectedResourceUrl}: expected discoveryInfo.input.type "mcp", got "${inputType}"`,
+          );
+        }
+        if (inputToolName !== expected.toolName) {
+          hasMetadataMismatch = true;
+          verboseLog(
+            `  ⚠️  MCP resource ${expectedResourceUrl}: expected toolName "${expected.toolName}", got "${inputToolName}"`,
+          );
+        }
+        if (
+          expected.mcpTransport !== undefined &&
+          inputTransport !== expected.mcpTransport
+        ) {
+          hasMetadataMismatch = true;
+          verboseLog(
+            `  ⚠️  MCP resource ${expectedResourceUrl}: expected transport "${expected.mcpTransport}", got "${inputTransport}"`,
+          );
+        }
+        if (hasMetadataMismatch) {
+          metadataMismatches.push(expectedResourceUrl);
+        }
+        if (
+          inputType === "mcp" &&
+          inputToolName === expected.toolName &&
+          (expected.mcpTransport === undefined ||
+            inputTransport === expected.mcpTransport)
+        ) {
+          verboseLog(
+            `  ✅ MCP discovery metadata verified for tool: ${expected.toolName}`,
+          );
+        }
+      }
     } else {
       missingEndpoints.push(expected);
       verboseLog(`  ❌ Missing: ${expected.method} ${expectedResourceUrl}`);
@@ -212,18 +290,28 @@ async function validateFacilitatorDiscovery(
 
   // Find any unexpected resources (discovered but not expected)
   const expectedUrls = new Set(
-    expectedEndpoints.map(e => `${e.serverUrl}${e.endpointPath}`)
+    expectedEndpoints.map((e) => e.expectedResourceUrl),
   );
   const unexpectedEndpoints = discoveryResponse.items
-    .filter(item => !expectedUrls.has(item.resource))
-    .map(item => item.resource);
+    .filter((item) => !expectedUrls.has(item.resource))
+    .map((item) => item.resource);
 
   if (unexpectedEndpoints.length > 0) {
-    verboseLog(`  ℹ️  Unexpected endpoints discovered: ${unexpectedEndpoints.length}`);
-    unexpectedEndpoints.forEach(url => verboseLog(`     • ${url}`));
+    verboseLog(
+      `  ℹ️  Unexpected endpoints discovered: ${unexpectedEndpoints.length}`,
+    );
+    unexpectedEndpoints.forEach((url) => verboseLog(`     • ${url}`));
   }
 
-  const success = missingEndpoints.length === 0;
+  if (metadataMismatches.length > 0) {
+    errorLog(
+      `  ❌ MCP discovery metadata mismatches: ${metadataMismatches.length}`,
+    );
+    metadataMismatches.forEach((url) => errorLog(`     • ${url}`));
+  }
+
+  const success =
+    missingEndpoints.length === 0 && metadataMismatches.length === 0;
 
   return {
     facilitatorName,
@@ -239,15 +327,15 @@ async function validateFacilitatorDiscovery(
 
 /**
  * Main discovery validation handler
- * 
+ *
  * Validates that all expected endpoints have been discovered by facilitators
- * 
+ *
  * @param facilitators - Array of facilitator proxies with their configs
  * @param servers - Array of discovered servers with their configs
  * @param serverPorts - Map of server name to port number
  * @param facilitatorServerMap - Optional map tracking which facilitators processed which servers (for minimized test runs)
  * @returns Validation result
- * 
+ *
  * @example
  * ```typescript
  * const result = await handleDiscoveryValidation(
@@ -255,7 +343,7 @@ async function validateFacilitatorDiscovery(
  *   servers,
  *   new Map([['express', 4021], ['hono', 4022]])
  * );
- * 
+ *
  * if (!result.success) {
  *   console.error('Discovery validation failed');
  * }
@@ -265,11 +353,11 @@ export async function handleDiscoveryValidation(
   facilitators: Array<{ proxy: FacilitatorProxy; config: TestConfig }>,
   servers: DiscoveredServer[],
   serverPorts: Map<string, number>,
-  facilitatorServerMap?: Map<string, Set<string>>
+  facilitatorServerMap?: Map<string, Set<string>>,
 ): Promise<DiscoveryValidationResult> {
-  log('\n╔════════════════════════════════════════════════════════╗');
-  log('║         Bazaar Discovery Extension Validation          ║');
-  log('╚════════════════════════════════════════════════════════╝');
+  log("\n╔════════════════════════════════════════════════════════╗");
+  log("║         Bazaar Discovery Extension Validation          ║");
+  log("╚════════════════════════════════════════════════════════╝");
 
   // Calculate all expected discoverable endpoints
   const allExpectedEndpoints: ExpectedDiscoverableEndpoint[] = [];
@@ -277,7 +365,9 @@ export async function handleDiscoveryValidation(
   for (const server of servers) {
     const serverPort = serverPorts.get(server.config.name);
     if (!serverPort) {
-      verboseLog(`  ⚠️  No port found for server: ${server.config.name}, skipping`);
+      verboseLog(
+        `  ⚠️  No port found for server: ${server.config.name}, skipping`,
+      );
       continue;
     }
 
@@ -287,9 +377,11 @@ export async function handleDiscoveryValidation(
 
   log(`\n📋 Expected Discoverable Endpoints: ${allExpectedEndpoints.length}`);
   if (allExpectedEndpoints.length > 0) {
-    verboseLog('');
-    allExpectedEndpoints.forEach(endpoint => {
-      verboseLog(`  • ${endpoint.method} ${endpoint.serverUrl}${endpoint.endpointPath} (${endpoint.serverName})`);
+    verboseLog("");
+    allExpectedEndpoints.forEach((endpoint) => {
+      verboseLog(
+        `  • ${endpoint.method} ${endpoint.expectedResourceUrl} (${endpoint.serverName})`,
+      );
     });
   }
 
@@ -305,19 +397,23 @@ export async function handleDiscoveryValidation(
     if (facilitatorServerMap) {
       const processedServers = facilitatorServerMap.get(config.name);
       if (processedServers && processedServers.size > 0) {
-        facilitatorExpectedEndpoints = allExpectedEndpoints.filter(
-          endpoint => processedServers.has(endpoint.serverName)
+        facilitatorExpectedEndpoints = allExpectedEndpoints.filter((endpoint) =>
+          processedServers.has(endpoint.serverName),
         );
 
-        verboseLog(`\n  📋 Facilitator ${config.name} processed ${processedServers.size} server(s): ${Array.from(processedServers).join(', ')}`);
-        verboseLog(`     Expected to discover ${facilitatorExpectedEndpoints.length} endpoint(s) from those servers`);
+        verboseLog(
+          `\n  📋 Facilitator ${config.name} processed ${processedServers.size} server(s): ${Array.from(processedServers).join(", ")}`,
+        );
+        verboseLog(
+          `     Expected to discover ${facilitatorExpectedEndpoints.length} endpoint(s) from those servers`,
+        );
       }
     }
 
     const result = await validateFacilitatorDiscovery(
       proxy,
       config,
-      facilitatorExpectedEndpoints
+      facilitatorExpectedEndpoints,
     );
 
     facilitatorResults.push(result);
@@ -329,14 +425,14 @@ export async function handleDiscoveryValidation(
   }
 
   // Determine overall success
-  const allEndpointsDiscovered = facilitatorResults.every(r => r.success);
+  const allEndpointsDiscovered = facilitatorResults.every((r) => r.success);
   const hasExpectedEndpoints = allExpectedEndpoints.length > 0;
   const success = !hasExpectedEndpoints || allEndpointsDiscovered;
 
   // Print summary
-  log('\n═══════════════════════════════════════════════════════');
-  log('                 Discovery Summary');
-  log('═══════════════════════════════════════════════════════');
+  log("\n═══════════════════════════════════════════════════════");
+  log("                 Discovery Summary");
+  log("═══════════════════════════════════════════════════════");
   log(`Total Facilitators:          ${facilitators.length}`);
   log(`Facilitators with Bazaar:    ${facilitatorsChecked}`);
   log(`Expected Endpoints:          ${allExpectedEndpoints.length}`);
@@ -344,17 +440,24 @@ export async function handleDiscoveryValidation(
 
   // Print per-facilitator results
   for (const result of facilitatorResults) {
-    if (!facilitatorSupportsBazaar(facilitators.find(f => f.config.name === result.facilitatorName)!.config)) {
+    if (
+      !facilitatorSupportsBazaar(
+        facilitators.find((f) => f.config.name === result.facilitatorName)!
+          .config,
+      )
+    ) {
       continue;
     }
 
     log(`\n📍 ${result.facilitatorName}:`);
-    log(`   Discovered: ${result.discoveredEndpoints.length}/${result.expectedEndpoints.length}`);
+    log(
+      `   Discovered: ${result.discoveredEndpoints.length}/${result.expectedEndpoints.length}`,
+    );
 
     if (result.missingEndpoints.length > 0) {
       errorLog(`   ❌ Missing: ${result.missingEndpoints.length}`);
-      result.missingEndpoints.forEach(endpoint => {
-        errorLog(`      • ${endpoint.method} ${endpoint.serverUrl}${endpoint.endpointPath}`);
+      result.missingEndpoints.forEach((endpoint) => {
+        errorLog(`      • ${endpoint.method} ${endpoint.expectedResourceUrl}`);
       });
     } else if (result.expectedEndpoints.length > 0) {
       log(`   ✅ All expected endpoints discovered`);
@@ -362,7 +465,7 @@ export async function handleDiscoveryValidation(
 
     if (result.unexpectedEndpoints.length > 0) {
       verboseLog(`   ℹ️  Unexpected: ${result.unexpectedEndpoints.length}`);
-      result.unexpectedEndpoints.forEach(url => {
+      result.unexpectedEndpoints.forEach((url) => {
         verboseLog(`      • ${url}`);
       });
     }
@@ -372,13 +475,13 @@ export async function handleDiscoveryValidation(
     }
   }
 
-  log('\n═══════════════════════════════════════════════════════');
+  log("\n═══════════════════════════════════════════════════════");
   if (success) {
-    log('✅ Discovery Validation: PASSED');
+    log("✅ Discovery Validation: PASSED");
   } else {
-    errorLog('❌ Discovery Validation: FAILED');
+    errorLog("❌ Discovery Validation: FAILED");
   }
-  log('═══════════════════════════════════════════════════════\n');
+  log("═══════════════════════════════════════════════════════\n");
 
   return {
     totalFacilitators: facilitators.length,
@@ -396,11 +499,14 @@ export async function handleDiscoveryValidation(
  */
 export function shouldRunDiscoveryValidation(
   facilitators: Array<{ config: TestConfig }>,
-  servers: DiscoveredServer[]
+  servers: DiscoveredServer[],
 ): boolean {
-  const hasServerWithBazaar = servers.some(s => serverSupportsBazaar(s.config));
-  const hasFacilitatorWithBazaar = facilitators.some(f => facilitatorSupportsBazaar(f.config));
+  const hasServerWithBazaar = servers.some((s) =>
+    serverSupportsBazaar(s.config),
+  );
+  const hasFacilitatorWithBazaar = facilitators.some((f) =>
+    facilitatorSupportsBazaar(f.config),
+  );
 
   return hasServerWithBazaar && hasFacilitatorWithBazaar;
 }
-

@@ -18,6 +18,8 @@ Register hooks on the core resource server for verification and settlement lifec
 * **onAfterSettle** — Runs after successful settlement.
 * **onSettleFailure** — Runs on settlement failure. Return `{ recovered: true, result }` to override.
 
+These server-level hooks run for every payment regardless of which extensions are active. Extensions can also register the same hooks scoped to their own key via the `hooks` property on `ResourceServerExtension` — those run only when the extension is declared on the route. See [Extensions Overview](/extensions/overview) for details.
+
 <Tabs>
   <Tab title="TypeScript">
     ```typescript

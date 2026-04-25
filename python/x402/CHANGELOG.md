@@ -2,6 +2,21 @@
 
 <!-- towncrier release notes start -->
 
+## [2.8.0] - 2026-04-17
+
+### Added
+
+- Add Arbitrum One (chain ID 42161) and Arbitrum Sepolia (chain ID 421614) support with USDC as the default stablecoin ([#1877](https://github.com/x402-foundation/x402/pull/1877))
+- Add `upto` scheme support for Python SDK, including EVM client, server, and facilitator implementations with partial settlement support ([#2023](https://github.com/x402-foundation/x402/pull/2023))
+
+
+## [2.7.0] - 2026-04-13
+
+### Added
+
+- Add optional `extra.memo` support to SVM exact scheme. When present, the client uses the seller-provided memo as Memo instruction data instead of a random nonce, and the facilitator verifies the memo content matches. ([#1682](https://github.com/x402-foundation/x402/pull/1682))
+
+
 ## [2.6.0] - 2026-04-02
 
 ### Fixed

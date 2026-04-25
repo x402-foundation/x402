@@ -20,6 +20,7 @@ from .types import (
     BodyInput,
     DiscoveryExtension,
     DiscoveryInfo,
+    McpDiscoveryInfo,
     QueryDiscoveryInfo,
     QueryInput,
     parse_discovery_extension,
@@ -92,9 +93,10 @@ class DiscoveredResource:
     """A discovered x402 resource with its metadata."""
 
     resource_url: str
-    method: str
     x402_version: int
     discovery_info: DiscoveryInfo
+    method: str = ""
+    tool_name: str | None = None
     description: str | None = None
     mime_type: str | None = None
     route_template: str | None = None
@@ -157,23 +159,21 @@ def validate_discovery_extension(extension: DiscoveryExtension) -> ValidationRes
 
 
 def _get_method_from_info(info: DiscoveryInfo | dict[str, Any]) -> str:
-    """Extract HTTP method from discovery info.
+    """Extract HTTP method from discovery info. Returns empty string for MCP resources."""
+    if isinstance(info, McpDiscoveryInfo):
+        return ""
 
-    Args:
-        info: Discovery info object or dictionary.
-
-    Returns:
-        HTTP method string or "UNKNOWN" if not found.
-    """
     if isinstance(info, dict):
         input_data = info.get("input", {})
-        return input_data.get("method", "UNKNOWN")
+        if input_data.get("type") == "mcp":
+            return ""
+        return input_data.get("method", "")
 
     if isinstance(info, QueryDiscoveryInfo | BodyDiscoveryInfo):
         if isinstance(info.input, QueryInput | BodyInput):
-            return info.input.method or "UNKNOWN"
+            return info.input.method or ""
 
-    return "UNKNOWN"
+    return ""
 
 
 def extract_discovery_info(
@@ -269,6 +269,14 @@ def extract_discovery_info(
         return None
 
     method = _get_method_from_info(discovery_info)
+    tool_name: str | None = None
+    if isinstance(discovery_info, McpDiscoveryInfo):
+        tool_name = discovery_info.input.tool_name
+
+    if not method and not tool_name:
+        logger.warning("Failed to extract method or tool_name from discovery info")
+        return None
+
     # Strip query params (?) and hash sections (#) for discovery cataloging
     parsed = urlparse(resource_url)
     # If a routeTemplate is present (dynamic route), use it as the canonical path
@@ -294,9 +302,10 @@ def extract_discovery_info(
 
     return DiscoveredResource(
         resource_url=normalized_url,
-        method=method,
         x402_version=version,
         discovery_info=discovery_info,
+        method=method,
+        tool_name=tool_name,
         description=description,
         mime_type=mime_type,
         route_template=route_template,

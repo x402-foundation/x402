@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/x402-foundation/x402/go/extensions/types"
 )
 
 func TestIsValidRouteTemplate(t *testing.T) {
@@ -83,6 +84,52 @@ func TestExtractPathParams(t *testing.T) {
 	t.Run("returns empty map when URL path mismatches (colon)", func(t *testing.T) {
 		result := extractPathParams("/users/:userId", "/api/other", false)
 		assert.Equal(t, map[string]string{}, result)
+	})
+}
+
+func TestRawString(t *testing.T) {
+	t.Run("returns empty string for nil map", func(t *testing.T) {
+		assert.Equal(t, "", rawString(nil, "key"))
+	})
+
+	t.Run("returns empty string for empty map", func(t *testing.T) {
+		assert.Equal(t, "", rawString(map[string]interface{}{}, "key"))
+	})
+
+	t.Run("returns empty string when key is absent", func(t *testing.T) {
+		assert.Equal(t, "", rawString(map[string]interface{}{"other": "val"}, "key"))
+	})
+
+	t.Run("returns empty string when value is not a string", func(t *testing.T) {
+		assert.Equal(t, "", rawString(map[string]interface{}{"key": 42}, "key"))
+		assert.Equal(t, "", rawString(map[string]interface{}{"key": true}, "key"))
+		assert.Equal(t, "", rawString(map[string]interface{}{"key": nil}, "key"))
+	})
+
+	t.Run("returns trimmed string value", func(t *testing.T) {
+		assert.Equal(t, "mcp", rawString(map[string]interface{}{"type": "  mcp  "}, "type"))
+	})
+}
+
+func TestExtractMethodAndToolName(t *testing.T) {
+	t.Run("returns empty strings when discoveryInfo is nil", func(t *testing.T) {
+		method, toolName := extractMethodAndToolName(nil, nil)
+		assert.Equal(t, "", method)
+		assert.Equal(t, "", toolName)
+	})
+
+	t.Run("extracts toolName from McpInput via type switch when rawInput has no MCP signals", func(t *testing.T) {
+		// rawInput has no type="mcp" and no toolName, so rawInputLooksLikeMCP returns false.
+		// discoveryInfo.Input is McpInput so the type switch McpInput case fires.
+		info := &types.DiscoveryInfo{
+			Input: types.McpInput{
+				Type:     "mcp",
+				ToolName: "switch_case_tool",
+			},
+		}
+		method, toolName := extractMethodAndToolName(info, map[string]interface{}{})
+		assert.Equal(t, "", method)
+		assert.Equal(t, "switch_case_tool", toolName)
 	})
 }
 

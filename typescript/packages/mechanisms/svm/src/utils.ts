@@ -173,21 +173,5 @@ export function getUsdcAddress(network: Network): string {
   }
 }
 
-/**
- * Convert a decimal amount to token smallest units
- *
- * @param decimalAmount - The decimal amount (e.g., "0.10")
- * @param decimals - The number of decimals for the token (e.g., 6 for USDC)
- * @returns The amount in smallest units as a string
- */
-export function convertToTokenAmount(decimalAmount: string, decimals: number): string {
-  const amount = parseFloat(decimalAmount);
-  if (isNaN(amount)) {
-    throw new Error(`Invalid amount: ${decimalAmount}`);
-  }
-  // Convert to smallest unit (e.g., for USDC with 6 decimals: 0.10 * 10^6 = 100000)
-  const [intPart, decPart = ""] = String(amount).split(".");
-  const paddedDec = decPart.padEnd(decimals, "0").slice(0, decimals);
-  const tokenAmount = (intPart + paddedDec).replace(/^0+/, "") || "0";
-  return tokenAmount;
-}
+// Re-export from core for backward compatibility
+export { convertToTokenAmount, numberToDecimalString } from "@x402/core/utils";
