@@ -183,6 +183,16 @@ export function safeBase64Decode(data: string): string {
  */
 export function deepEqual(obj1: unknown, obj2: unknown): boolean {
   if (obj1 === obj2) return true;
+  // Treat NaN as equal to NaN to preserve the previous JSON-based behavior,
+  // where both serialize to "null" and compared equal.
+  if (
+    typeof obj1 === "number" &&
+    typeof obj2 === "number" &&
+    Number.isNaN(obj1) &&
+    Number.isNaN(obj2)
+  ) {
+    return true;
+  }
   if (obj1 === null || obj2 === null) return false;
   if (obj1 === undefined || obj2 === undefined) return false;
   if (typeof obj1 !== typeof obj2) return false;

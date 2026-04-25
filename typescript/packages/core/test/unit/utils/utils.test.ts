@@ -263,6 +263,33 @@ describe("Utils", () => {
       });
     });
 
+    describe("edge cases", () => {
+      it("treats NaN as equal to NaN", () => {
+        expect(deepEqual(NaN, NaN)).toBe(true);
+        expect(deepEqual({ a: NaN }, { a: NaN })).toBe(true);
+      });
+
+      it("returns true for the same reference", () => {
+        const obj = { a: 1, b: { c: 2 } };
+        expect(deepEqual(obj, obj)).toBe(true);
+      });
+
+      it("does not consider an array equal to an object", () => {
+        expect(deepEqual([], {})).toBe(false);
+        expect(deepEqual({}, [])).toBe(false);
+        expect(deepEqual({ 0: "a", 1: "b", length: 2 }, ["a", "b"])).toBe(false);
+      });
+
+      it("differentiates objects with different key counts", () => {
+        expect(deepEqual({ a: 1 }, { a: 1, b: 2 })).toBe(false);
+        expect(deepEqual({ a: 1, b: 2 }, { a: 1 })).toBe(false);
+      });
+
+      it("differentiates objects with same key count but different keys", () => {
+        expect(deepEqual({ a: 1, b: 2 }, { a: 1, c: 2 })).toBe(false);
+      });
+    });
+
     describe("complex structures", () => {
       it("should match payment requirements with different key orders", () => {
         const req1 = {
