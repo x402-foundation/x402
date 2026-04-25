@@ -1,0 +1,13 @@
+{
+  "name": "Hermes Income Engine",
+  "description": "x402 microservice providing paid AI endpoints — news digest, sentiment analysis, SEO keywords, and content rewriting. Built on Node.js with HTTP 402 payments on Base.",
+  "logoUrl": "/logos/hermes-income-engine.png",
+  "websiteUrl": "https://nurses-previously-fonts-single.trycloudflare.com",
+  "documentationUrl": "https://nurses-previously-fonts-single.trycloudflare.com",
+  "category": "Services/Endpoints",
+  "pricing": "Per-call (USDC)",
+  "network": "base",
+  "payTo": "0x72E8433F3E5Aa1f95E2374D9cd3e008664c15daC",
+  "tags": ["ai", "news", "sentiment", "seo", "writing", "x402"],
+  "verified": true
+}
