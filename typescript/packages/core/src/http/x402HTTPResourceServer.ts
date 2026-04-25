@@ -1032,6 +1032,11 @@ export class x402HTTPResourceServer {
     const resource = paymentRequired.resource;
     const displayAmount = this.getDisplayAmount(paymentRequired);
     const firstAccept = paymentRequired.accepts?.[0];
+    const decimals =
+      firstAccept && "amount" in firstAccept
+        ? this.ResourceServer.getAssetDecimalsForRequirements(firstAccept)
+        : 6;
+    const displayAmountText = parseFloat(displayAmount.toFixed(decimals)).toString();
     const assetLabel =
       typeof firstAccept?.extra?.name === "string"
         ? firstAccept.extra.name
@@ -1052,7 +1057,7 @@ export class x402HTTPResourceServer {
             ${paywallConfig?.appLogo ? `<img src="${paywallConfig.appLogo}" alt="${paywallConfig.appName || "App"}" style="max-width: 200px; margin-bottom: 20px;">` : ""}
             <h1>Payment Required</h1>
             ${resource ? `<p><strong>Resource:</strong> ${resource.description || resource.url}</p>` : ""}
-            <p><strong>Amount:</strong> ${displayAmount.toFixed(6)} ${assetLabel}</p>
+            <p><strong>Amount:</strong> ${displayAmountText} ${assetLabel}</p>
             <div id="payment-widget" 
                  data-requirements='${JSON.stringify(paymentRequired)}'
                  data-app-name="${paywallConfig?.appName || ""}"
