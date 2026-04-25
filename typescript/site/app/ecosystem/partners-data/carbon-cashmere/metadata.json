@@ -1,0 +1,7 @@
+{
+  "name": "Carbon & Cashmere",
+  "description": "Node-backed crypto market intelligence for AI agents. 103 x402 endpoints across Base, Solana, Algorand, and Stellar — on-chain analytics from proprietary Bitcoin Core, Kaspa, and Subtensor lite nodes, derivatives data (funding/OI/liquidations), regime detection, ML signals, and quantitative research bundles. From $0.003 per call. Informational research data only, not investment advice.",
+  "logoUrl": "/logos/carbon-cashmere.png",
+  "websiteUrl": "https://api.carbon-cashmere.de",
+  "category": "Services/Endpoints"
+}
