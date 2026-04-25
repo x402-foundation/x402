@@ -47,6 +47,7 @@ vi.mock("@x402/core/server", () => {
     },
     x402HTTPResourceServer: MockHTTPResourceServer,
     x402ResourceServer: vi.fn(),
+    checkIfBazaarNeeded: vi.fn().mockReturnValue(false),
   };
 });
 

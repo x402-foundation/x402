@@ -69,6 +69,7 @@ vi.mock("@x402/core/server", () => ({
       registerExtension: vi.fn(),
     },
   })),
+  checkIfBazaarNeeded: vi.fn().mockReturnValue(false),
 }));
 
 // --- Test Fixtures ---
