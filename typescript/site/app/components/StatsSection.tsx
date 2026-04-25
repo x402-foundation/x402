@@ -42,6 +42,7 @@ const brands = [
   { name: "Vercel", logo: "/logos/vercel-mono.svg" },
   { name: "Cloudflare", logo: "/logos/cloudflare-mono.svg", className: "h-7" },
   { name: "World", logo: "/logos/world-mono.svg" },
+  { name: "Quicknode", logo: "/logos/quicknode-mono.svg", className: "h-7" },
 ];
 
 function BrandSet() {

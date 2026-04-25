@@ -40,6 +40,7 @@ def main() -> None:
     from mcp.server.fastmcp import FastMCP
 
     from x402 import ResourceConfig, ResourceInfo, x402ResourceServer
+    from x402.extensions.bazaar import DeclareMcpDiscoveryConfig, declare_mcp_discovery_extension
     from x402.http import FacilitatorConfig, HTTPFacilitatorClient
     from x402.mcp import create_payment_wrapper
     from x402.mechanisms.evm.exact import register_exact_evm_server
@@ -64,6 +65,20 @@ def main() -> None:
     )
     weather_accepts = resource_server.build_payment_requirements(weather_config)
 
+    # Declare Bazaar discovery metadata for the weather tool
+    weather_discovery = declare_mcp_discovery_extension(
+        DeclareMcpDiscoveryConfig(
+            tool_name="get_weather",
+            description="Get current weather for a city",
+            transport="sse",
+            input_schema={
+                "properties": {"city": {"type": "string", "description": "City name"}},
+                "required": ["city"],
+            },
+            example={"city": "San Francisco"},
+        )
+    )
+
     # Create payment wrapper for the weather tool
     weather_wrapper = create_payment_wrapper(
         resource_server,
@@ -73,6 +88,7 @@ def main() -> None:
             description="Get current weather for a city",
             mime_type="application/json",
         ),
+        extensions=weather_discovery,
     )
 
     @mcp.tool(

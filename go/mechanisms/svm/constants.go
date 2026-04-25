@@ -24,6 +24,9 @@ const (
 	// Set to 20000 to accommodate: transfer (~6200 CUs) + memo (~8500 CUs without signer) + budget instructions (~300 CUs) + headroom
 	DefaultComputeUnitLimit uint32 = 20000
 
+	// MaxMemoBytes is the maximum byte length for seller-defined memo data (extra.memo)
+	MaxMemoBytes = 256
+
 	// LighthouseProgramAddress is the Phantom/Solflare Lighthouse program address
 	// Phantom and Solflare wallets inject Lighthouse instructions for user protection on mainnet transactions.
 	// - Phantom adds 1 Lighthouse instruction (4th instruction)

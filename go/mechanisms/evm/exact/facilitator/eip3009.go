@@ -113,7 +113,7 @@ func (f *ExactEvmScheme) verifyEIP3009(
 			classification.SigData,
 		)
 		if err != nil {
-			return nil, x402.NewVerifyError(ErrInvalidPayload, evmPayload.Authorization.From, err.Error())
+			return nil, x402.NewVerifyError(ErrEip3009SimulationFailed, evmPayload.Authorization.From, err.Error())
 		}
 		if !simulationSucceeded {
 			reason := DiagnoseEIP3009SimulationFailure(
@@ -193,7 +193,7 @@ func (f *ExactEvmScheme) settleEIP3009(
 
 	txHash, err := ExecuteTransferWithAuthorization(ctx, f.signer, tokenAddress, parsedAuthorization, sigData)
 	if err != nil {
-		return nil, x402.NewSettleError(ErrFailedToExecuteTransfer, verifyResp.Payer, network, "", err.Error())
+		return nil, x402.NewSettleError(parseEIP3009TransferError(err), verifyResp.Payer, network, "", err.Error())
 	}
 
 	receipt, err := f.signer.WaitForTransactionReceipt(ctx, txHash)

@@ -52,6 +52,7 @@ def create_payment_wrapper(
     accepts: list[PaymentRequirements],
     resource: ResourceInfo | None = None,
     hooks: PaymentWrapperHooks | None = None,
+    extensions: dict[str, Any] | None = None,
 ) -> Callable:
     """Create a decorator that wraps a FastMCP tool handler with x402 payment logic.
 
@@ -79,6 +80,9 @@ def create_payment_wrapper(
             Defaults to ``mcp://tool/{function_name}``.
         hooks: Optional ``PaymentWrapperHooks`` for on_before_execution,
             on_after_execution, on_after_settlement (matches server_async).
+        extensions: Optional x402 extensions to include in PaymentRequired responses.
+            Use this to attach Bazaar discovery metadata so facilitators can index
+            the tool. Example: ``declare_mcp_discovery_extension(config)``
 
     Returns:
         A decorator to apply to a FastMCP tool handler function.
@@ -127,7 +131,9 @@ def create_payment_wrapper(
             payment_data = _extract_payment_from_context(ctx)
 
             if not payment_data:
-                return _create_payment_required_result(accepts, tool_resource, "Payment Required")
+                return _create_payment_required_result(
+                    accepts, tool_resource, "Payment Required", extensions
+                )
 
             # Parse payment payload
             try:
@@ -136,7 +142,7 @@ def create_payment_wrapper(
                 payload = PaymentPayload.model_validate(payment_data)
             except Exception as e:
                 return _create_payment_required_result(
-                    accepts, tool_resource, f"Invalid payment payload: {e}"
+                    accepts, tool_resource, f"Invalid payment payload: {e}", extensions
                 )
 
             if asyncio.iscoroutinefunction(resource_server.verify_payment):
@@ -150,6 +156,7 @@ def create_payment_wrapper(
                     accepts,
                     tool_resource,
                     f"Payment verification failed: {verify_result.invalid_reason}",
+                    extensions,
                 )
 
             # OnBeforeExecution hook
@@ -168,6 +175,7 @@ def create_payment_wrapper(
                         accepts,
                         tool_resource,
                         "Execution blocked by on_before_execution hook",
+                        extensions,
                     )
 
             # Execute the original handler
@@ -234,12 +242,14 @@ def create_payment_wrapper(
                         accepts,
                         tool_resource,
                         f"Settlement failed: {settle_result.error_reason}",
+                        extensions,
                     )
             except Exception as e:
                 return _create_payment_required_result(
                     accepts,
                     tool_resource,
                     f"Settlement error: {e}",
+                    extensions,
                 )
 
             # OnAfterSettlement hook
@@ -326,17 +336,20 @@ def _create_payment_required_result(
     accepts: list[PaymentRequirements],
     resource: ResourceInfo,
     error_message: str,
+    extensions: dict[str, Any] | None = None,
 ) -> Any:
     """Create a payment required CallToolResult."""
     from mcp.types import CallToolResult, TextContent
 
     accepts_dicts = [req.model_dump(by_alias=True) for req in accepts]
-    payment_required = {
+    payment_required: dict[str, Any] = {
         "x402Version": 2,
         "accepts": accepts_dicts,
         "error": error_message,
         "resource": resource.model_dump(by_alias=True),
     }
+    if extensions:
+        payment_required["extensions"] = extensions
     return CallToolResult(
         content=[TextContent(type="text", text=json.dumps(payment_required))],
         structuredContent=payment_required,

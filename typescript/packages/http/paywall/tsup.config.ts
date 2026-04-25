@@ -5,6 +5,7 @@ const baseConfig = {
     index: "src/index.ts",
     "evm/index": "src/evm/index.ts",
     "svm/index": "src/svm/index.ts",
+    "avm/index": "src/avm/index.ts",
   },
   dts: {
     resolve: true,

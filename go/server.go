@@ -117,6 +117,15 @@ func (c *SupportedCache) Get(key string) (SupportedResponse, bool) {
 	return response, true
 }
 
+// Clear removes all cached supported responses and expiry entries
+func (c *SupportedCache) Clear() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	clear(c.data)
+	clear(c.expiry)
+}
+
 // ResourceServerOption configures the server
 type ResourceServerOption func(*x402ResourceServer)
 

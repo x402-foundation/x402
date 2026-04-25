@@ -11,8 +11,9 @@ from dotenv import load_dotenv
 # Import from new x402 package (sync variants for Flask)
 from x402 import x402ResourceServerSync
 from x402.http import FacilitatorConfig, HTTPFacilitatorClientSync
-from x402.http.middleware.flask import PaymentMiddleware
+from x402.http.middleware.flask import PaymentMiddleware, set_settlement_overrides
 from x402.mechanisms.evm.exact import register_exact_evm_server
+from x402.mechanisms.evm.upto import UptoEvmServerScheme
 from x402.mechanisms.svm.exact import register_exact_svm_server
 from x402.extensions.bazaar import (
     bazaar_resource_server_extension,
@@ -68,6 +69,7 @@ server = x402ResourceServerSync(facilitator)
 
 # Register EVM and SVM exact schemes
 register_exact_evm_server(server, EVM_NETWORK)
+server.register(EVM_NETWORK, UptoEvmServerScheme())
 register_exact_svm_server(server, SVM_NETWORK)
 
 # Register Bazaar discovery extension
@@ -178,6 +180,77 @@ routes = {
             **declare_erc20_approval_gas_sponsoring_extension(),
         },
     },
+    "GET /upto/evm/permit2": {
+        "accepts": {
+            "scheme": "upto",
+            "payTo": EVM_ADDRESS,
+            "network": EVM_NETWORK,
+            "price": {
+                "amount": "2000",
+                "asset": EVM_PERMIT2_ASSET,
+                "extra": {
+                    "assetTransferMethod": "permit2",
+                    "name": "USDC",
+                    "version": "2",
+                },
+            },
+        },
+        "extensions": {
+            **declare_discovery_extension(
+                output=OutputConfig(
+                    example={
+                        "message": "Upto endpoint accessed successfully",
+                        "timestamp": "2024-01-01T00:00:00Z",
+                        "method": "upto-permit2",
+                    },
+                    schema={
+                        "properties": {
+                            "message": {"type": "string"},
+                            "timestamp": {"type": "string"},
+                            "method": {"type": "string"},
+                        },
+                        "required": ["message", "timestamp"],
+                    },
+                )
+            ),
+        },
+    },
+    "GET /upto/evm/permit2-eip2612GasSponsoring": {
+        "accepts": {
+            "scheme": "upto",
+            "payTo": EVM_ADDRESS,
+            "network": EVM_NETWORK,
+            "price": {
+                "amount": "2000",
+                "asset": EVM_PERMIT2_ASSET,
+                "extra": {
+                    "assetTransferMethod": "permit2",
+                    "name": "USDC",
+                    "version": "2",
+                },
+            },
+        },
+        "extensions": {
+            **declare_eip2612_gas_sponsoring_extension(),
+        },
+    },
+    "GET /upto/evm/permit2-erc20ApprovalGasSponsoring": {
+        "accepts": {
+            "scheme": "upto",
+            "payTo": EVM_ADDRESS,
+            "network": EVM_NETWORK,
+            "price": {
+                "amount": "2000",
+                "asset": EVM_PERMIT2_ASSET,
+                "extra": {
+                    "assetTransferMethod": "permit2",
+                },
+            },
+        },
+        "extensions": {
+            **declare_erc20_approval_gas_sponsoring_extension(),
+        },
+    },
 }
 
 # Apply payment middleware
@@ -242,6 +315,54 @@ def protected_permit2_erc20_endpoint():
             "method": "permit2+erc20approval",
         }
     )
+
+
+@app.route("/upto/evm/permit2")
+def protected_upto_permit2_endpoint():
+    """Protected endpoint that requires upto Permit2 payment."""
+    if shutdown_requested:
+        return jsonify({"error": "Server shutting down"}), 503
+    resp = jsonify(
+        {
+            "message": "Upto endpoint accessed successfully",
+            "timestamp": "2024-01-01T00:00:00Z",
+            "method": "upto-permit2",
+        }
+    )
+    set_settlement_overrides(resp, {"amount": "1000"})
+    return resp
+
+
+@app.route("/upto/evm/permit2-eip2612GasSponsoring")
+def protected_upto_permit2_eip2612_endpoint():
+    """Protected endpoint that requires upto Permit2 payment with EIP-2612 gas sponsoring."""
+    if shutdown_requested:
+        return jsonify({"error": "Server shutting down"}), 503
+    resp = jsonify(
+        {
+            "message": "Upto Permit2 EIP-2612 endpoint accessed successfully",
+            "timestamp": "2024-01-01T00:00:00Z",
+            "method": "upto-permit2-eip2612",
+        }
+    )
+    set_settlement_overrides(resp, {"amount": "1000"})
+    return resp
+
+
+@app.route("/upto/evm/permit2-erc20ApprovalGasSponsoring")
+def protected_upto_permit2_erc20_endpoint():
+    """Protected endpoint that requires upto Permit2 payment with ERC-20 approval gas sponsoring."""
+    if shutdown_requested:
+        return jsonify({"error": "Server shutting down"}), 503
+    resp = jsonify(
+        {
+            "message": "Upto Permit2 ERC-20 approval endpoint accessed successfully",
+            "timestamp": "2024-01-01T00:00:00Z",
+            "method": "upto-permit2-erc20-approval",
+        }
+    )
+    set_settlement_overrides(resp, {"amount": "1000"})
+    return resp
 
 
 @app.route("/health")

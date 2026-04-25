@@ -47,12 +47,20 @@ func (c *BazaarCatalog) CatalogResource(
 		log.Printf("   Route template: %s", routeTemplate)
 	}
 
+	// Derive type from discovery info input type
+	resourceType := "http"
+	if discoveryInfo != nil {
+		if _, ok := discoveryInfo.Input.(exttypes.McpInput); ok {
+			resourceType = "mcp"
+		}
+	}
+
 	c.mutex.Lock()
 	defer c.mutex.Unlock()
 
 	c.discoveredResources[resourceURL] = DiscoveredResource{
 		Resource:      resourceURL,
-		Type:          "http",
+		Type:          resourceType,
 		X402Version:   x402Version,
 		Accepts:       []x402.PaymentRequirements{paymentRequirements},
 		DiscoveryInfo: discoveryInfo,

@@ -15,11 +15,13 @@ import (
  * - all-networks: Facilitator with all supported networks
  * - bazaar: Facilitator with bazaar discovery extension
  * - payment-identifier: Facilitator with payment identifier idempotency
+ * - gas-extensions: Base Sepolia exact + upto with EIP-2612 and ERC-20 approval gas sponsoring
  *
  * Usage:
  *   go run . all-networks
  *   go run . bazaar
  *   go run . payment-identifier
+ *   go run . gas-extensions
  */
 
 func main() {
@@ -38,6 +40,18 @@ func main() {
 	// Get configuration
 	evmPrivateKey := os.Getenv("EVM_PRIVATE_KEY")
 	svmPrivateKey := os.Getenv("SVM_PRIVATE_KEY")
+
+	if pattern == "gas-extensions" {
+		if evmPrivateKey == "" {
+			fmt.Println("❌ EVM_PRIVATE_KEY environment variable is required for gas-extensions")
+			os.Exit(1)
+		}
+		if err := runGasExtensionsExample(evmPrivateKey); err != nil {
+			fmt.Printf("❌ Error: %v\n", err)
+			os.Exit(1)
+		}
+		return
+	}
 
 	// Validate at least one private key is provided
 	if evmPrivateKey == "" && svmPrivateKey == "" {
@@ -67,7 +81,7 @@ func main() {
 
 	default:
 		fmt.Printf("❌ Unknown pattern: %s\n", pattern)
-		fmt.Println("Available patterns: all-networks, bazaar, payment-identifier")
+		fmt.Println("Available patterns: all-networks, bazaar, payment-identifier, gas-extensions")
 		os.Exit(1)
 	}
 }

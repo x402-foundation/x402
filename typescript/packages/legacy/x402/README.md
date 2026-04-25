@@ -1,5 +1,9 @@
 # x402
 
+> **Deprecated (v1)**  
+> This npm package implements x402 **v1**. It is **deprecated** and will only receive **security patches**. Please migrate to **v2** (`@x402/core` and related packages). See the [Migration guide: v1 to v2](https://docs.x402.org/guides/migration-v1-to-v2).
+> Legacy examples are available at git tag `archive/legacy-v1-examples`.
+
 Core TypeScript implementation of the x402 Payment Protocol. This package provides the foundational types, schemas, and utilities that power all x402 integrations.
 
 ## Installation

@@ -1,5 +1,16 @@
 # @x402/extensions Changelog
 
+## 2.10.0
+
+### Minor Changes
+
+- 9424291: chore: bump viem lockfile to 2.47.12
+
+  Updates the resolved viem version across all direct dependencies, adding chain definitions for Mezo Testnet, MegaETH, Stable, and Stable Testnet that were missing from previously locked versions.
+
+- a4e4911: Migrate SIWE dependency from `siwe` (Spruce) to `@signinwithethereum/siwe` (Ethereum Identity Foundation). The new package is the official successor, supports viem natively as a peer dependency, and maintains the same `SiweMessage` API.
+  - @x402/core@2.10.0
+
 ## 2.9.0
 
 ### Minor Changes

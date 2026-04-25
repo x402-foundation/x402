@@ -1,0 +1,8 @@
+{
+  "name": "Exa",
+  "description": "Exa is an AI-native search engine that provides high-quality web data through its API, enabling AI agents and applications to search and retrieve content from the web.",
+  "logoUrl": "/logos/exa-ai.svg",
+  "websiteUrl": "https://exa.ai/",
+  "category": "Services/Endpoints",
+  "top_section": true
+}

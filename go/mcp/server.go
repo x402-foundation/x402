@@ -200,6 +200,7 @@ func (w *PaymentWrapper) paymentRequiredResult(errorMsg string) *mcp.CallToolRes
 		Accepts:     w.config.Accepts,
 		Error:       errorMsg,
 		Resource:    resource,
+		Extensions:  w.config.Extensions,
 	}
 
 	data, _ := json.Marshal(pr)

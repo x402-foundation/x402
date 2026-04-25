@@ -304,9 +304,52 @@ The example uses these x402 v2 packages:
 
 ***
 
+***
+
+### Making Your MCP Tools Discoverable via Bazaar
+
+If you are building an MCP **server** (not just a client bridge), you can make your paid tools visible in the [x402 Bazaar](/extensions/bazaar) so AI agents and other buyers can discover them without prior knowledge of your server.
+
+Pass `extensions` in the payment wrapper config with the Bazaar discovery metadata:
+
+```typescript
+import { createPaymentWrapper } from "@x402/mcp";
+import { declareDiscoveryExtension } from "@x402/extensions/bazaar";
+
+const paid = createPaymentWrapper(resourceServer, {
+  accepts,
+  resource: {
+    url: "mcp://tool/get_weather",
+    description: "Get current weather for a city",
+  },
+  // Bazaar discovery metadata — facilitators will catalog this tool
+  extensions: declareDiscoveryExtension({
+    toolName: "get_weather",
+    description: "Get current weather for a city",
+    transport: "sse",
+    inputSchema: {
+      properties: { city: { type: "string", description: "City name" } },
+      required: ["city"],
+    },
+    example: { city: "San Francisco" },
+  }),
+});
+```
+
+When a client pays for the tool, the facilitator extracts the Bazaar extension from the payment payload and indexes the tool in `/discovery/resources` with `type: "mcp"`. Buyers can then discover it by querying a Bazaar-enabled facilitator:
+
+```typescript
+const mcpTools = await client.extensions.discovery.listResources({ type: "mcp" });
+```
+
+See the full [Bazaar documentation](/extensions/bazaar) for details on buyers querying and calling discovered MCP tools.
+
+***
+
 ### Next Steps
 
 * [See the full example in the repo](https://github.com/x402-foundation/x402/tree/main/examples/typescript/clients/mcp)
 * Try integrating with your own x402-compatible APIs
 * Extend the MCP server with more tools or custom logic as needed
 * [Learn about building x402 servers](/getting-started/quickstart-for-sellers)
+* [Explore the Bazaar discovery layer](/extensions/bazaar)

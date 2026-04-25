@@ -13,6 +13,7 @@ import (
 	"github.com/x402-foundation/x402/go/extensions/bazaar"
 	exttypes "github.com/x402-foundation/x402/go/extensions/types"
 	evm "github.com/x402-foundation/x402/go/mechanisms/evm/exact/facilitator"
+	uptoevm "github.com/x402-foundation/x402/go/mechanisms/evm/upto/facilitator"
 	svm "github.com/x402-foundation/x402/go/mechanisms/svm/exact/facilitator"
 )
 
@@ -96,6 +97,7 @@ func runBazaarExample(evmPrivateKey, svmPrivateKey string) error {
 			DeployERC4337WithEIP6492: true,
 		}
 		facilitator.Register([]x402.Network{evmNetwork}, evm.NewExactEvmScheme(evmSigner, evmConfig))
+		facilitator.Register([]x402.Network{evmNetwork}, uptoevm.NewUptoEvmScheme(evmSigner, nil))
 	}
 
 	// Register SVM scheme if signer is available

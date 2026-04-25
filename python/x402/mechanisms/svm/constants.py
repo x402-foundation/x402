@@ -35,6 +35,7 @@ USDC_TESTNET_ADDRESS = "4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU"  # Same as
 DEFAULT_COMPUTE_UNIT_PRICE_MICROLAMPORTS = 1
 MAX_COMPUTE_UNIT_PRICE_MICROLAMPORTS = 5_000_000  # 5 lamports
 DEFAULT_COMPUTE_UNIT_LIMIT = 20000
+MAX_MEMO_BYTES = 256
 
 # Solana address validation regex (base58, 32-44 characters)
 SVM_ADDRESS_REGEX = r"^[1-9A-HJ-NP-Za-km-z]{32,44}$"
@@ -86,6 +87,8 @@ ERR_FEE_PAYER_TRANSFERRING = "invalid_exact_svm_payload_transaction_fee_payer_tr
 ERR_SIMULATION_FAILED = "transaction_simulation_failed"
 ERR_TRANSACTION_FAILED = "transaction_failed"
 ERR_DUPLICATE_SETTLEMENT = "duplicate_settlement"
+ERR_MEMO_MISMATCH = "invalid_exact_svm_payload_memo_mismatch"
+ERR_MEMO_COUNT = "invalid_exact_svm_payload_memo_count"
 
 # How long a transaction is held in the duplicate settlement cache (seconds).
 # Covers the Solana blockhash lifetime (~60-90s) with margin.

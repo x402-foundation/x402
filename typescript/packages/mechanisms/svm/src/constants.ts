@@ -41,6 +41,7 @@ export const USDC_TESTNET_ADDRESS = "4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncD
 export const DEFAULT_COMPUTE_UNIT_PRICE_MICROLAMPORTS = 1;
 export const MAX_COMPUTE_UNIT_PRICE_MICROLAMPORTS = 5_000_000; // 5 lamports
 export const DEFAULT_COMPUTE_UNIT_LIMIT = 20_000;
+export const MAX_MEMO_BYTES = 256;
 
 /**
  * How long a transaction is held in the duplicate settlement cache (ms).

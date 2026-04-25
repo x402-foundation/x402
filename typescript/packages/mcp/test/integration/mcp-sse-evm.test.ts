@@ -385,7 +385,38 @@ describe.skipIf(SKIP_TESTS)("Real SSE MCP Integration Tests", () => {
   }, 60000); // 60s timeout for blockchain transaction
 
   // ==========================================================================
-  // Test 6: Multiple paid tool calls work
+  // Test 6: 402 response includes bazaar extensions
+  // ==========================================================================
+  it("should include bazaar extensions in 402 response", async () => {
+    // Use a client with autoPayment disabled to see the 402
+    const manualClient = new x402MCPClient(
+      x402ClientInstance.client,
+      x402ClientInstance.paymentClient,
+      { autoPayment: false },
+    );
+
+    try {
+      await manualClient.callTool("get_weather", { city: "Chicago" });
+      expect.fail("Should have thrown 402 error");
+    } catch (error) {
+      const err = error as {
+        code?: number;
+        paymentRequired?: { extensions?: Record<string, unknown> };
+      };
+      expect(err.code).toBe(402);
+      expect(err.paymentRequired).toBeDefined();
+      // Verify bazaar extension is present — hard-fail if absent
+      expect(err.paymentRequired?.extensions?.bazaar).toBeDefined();
+      const bazaar = err.paymentRequired!.extensions!.bazaar as Record<string, unknown>;
+      const info = bazaar.info as Record<string, unknown>;
+      expect(info).toBeDefined();
+      const input = info.input as Record<string, unknown>;
+      expect(input.toolName).toBe("get_weather");
+    }
+  });
+
+  // ==========================================================================
+  // Test 7: Multiple paid tool calls work
   // ==========================================================================
   it("should handle multiple paid tool calls", async () => {
     console.log("\n🔄 Starting second paid tool call...\n");

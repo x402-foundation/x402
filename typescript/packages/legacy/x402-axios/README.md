@@ -1,5 +1,9 @@
 # x402-axios
 
+> **Deprecated (v1)**  
+> This npm package implements x402 **v1**. It is **deprecated** and will only receive **security patches**. Please migrate to **v2** (`@x402/axios`, `@x402/evm`, etc.). See the [Migration guide: v1 to v2](https://docs.x402.org/guides/migration-v1-to-v2).
+> Legacy examples are available at git tag `archive/legacy-v1-examples`.
+
 A utility package that extends Axios to automatically handle 402 Payment Required responses using the x402 payment protocol. This package enables seamless integration of payment functionality into your applications when making HTTP requests with Axios.
 
 ## Installation

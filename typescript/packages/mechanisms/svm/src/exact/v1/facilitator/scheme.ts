@@ -304,6 +304,30 @@ export class ExactSvmSchemeV1 implements SchemeNetworkFacilitator {
       };
     }
 
+    // Step 5b: Verify memo content matches extra.memo when present
+    const expectedMemo = requirementsV1.extra?.memo as string | undefined;
+    if (expectedMemo) {
+      const memoInstructions = optionalInstructions.filter(
+        ix => ix.programAddress.toString() === MEMO_PROGRAM_ADDRESS,
+      );
+      if (memoInstructions.length !== 1) {
+        return {
+          isValid: false,
+          invalidReason: "invalid_exact_svm_payload_memo_count",
+          payer,
+        };
+      }
+      const memoData = memoInstructions[0].data;
+      const actualMemo = memoData ? new TextDecoder().decode(new Uint8Array(memoData)) : "";
+      if (actualMemo !== expectedMemo) {
+        return {
+          isValid: false,
+          invalidReason: "invalid_exact_svm_payload_memo_mismatch",
+          payer,
+        };
+      }
+    }
+
     // Step 6: Sign and Simulate Transaction
     // CRITICAL: Simulation proves transaction will succeed (catches insufficient balance, invalid accounts, etc)
     try {

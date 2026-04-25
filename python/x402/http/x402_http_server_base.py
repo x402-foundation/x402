@@ -26,6 +26,7 @@ from .constants import (
     PAYMENT_REQUIRED_HEADER,
     PAYMENT_RESPONSE_HEADER,
     PAYMENT_SIGNATURE_HEADER,
+    SETTLEMENT_OVERRIDES_HEADER,
 )
 from .types import (
     RESULT_NO_PAYMENT_REQUIRED,
@@ -421,11 +422,58 @@ class x402HTTPServerBase:
     # Settlement
     # =========================================================================
 
+    @staticmethod
+    def _extract_settlement_overrides(
+        response_headers: dict[str, str] | list[tuple[str, str]] | None,
+    ) -> dict[str, Any] | None:
+        """Extract settlement overrides from response headers.
+
+        Looks for the ``Settlement-Overrides`` header (case-insensitive) and
+        parses it as JSON.  Returns *None* when the header is absent or
+        malformed so callers can fall through to the default behaviour.
+        """
+        if response_headers is None:
+            return None
+
+        key = SETTLEMENT_OVERRIDES_HEADER.lower()
+        raw: str | None = None
+        if isinstance(response_headers, dict):
+            for k, v in response_headers.items():
+                if k.lower() == key:
+                    raw = v
+                    break
+        else:
+            for k, v in response_headers:
+                if k.lower() == key:
+                    raw = v
+                    break
+
+        if raw is None:
+            return None
+
+        try:
+            import json
+
+            return json.loads(raw)
+        except (json.JSONDecodeError, TypeError):
+            return None
+
+    @staticmethod
+    def _apply_settlement_overrides(
+        requirements: PaymentRequirements,
+        overrides: dict[str, Any] | None,
+    ) -> PaymentRequirements:
+        """Return *requirements* with the amount replaced by the override, if any."""
+        if overrides is None or "amount" not in overrides:
+            return requirements
+        return requirements.model_copy(update={"amount": str(overrides["amount"])})
+
     def process_settlement(
         self,
         payment_payload: PaymentPayload | PaymentPayloadV1,
         requirements: PaymentRequirements,
         context: HTTPRequestContext | None = None,
+        settlement_overrides: dict[str, Any] | None = None,
     ) -> ProcessSettleResult:
         """Process settlement after successful response.
 
@@ -435,14 +483,19 @@ class x402HTTPServerBase:
             payment_payload: The verified payment payload.
             requirements: The matching payment requirements.
             context: Optional HTTP request context for route config lookup and hooks.
+            settlement_overrides: Optional overrides (e.g. ``{"amount": "1000"}``
+                for partial settlement with the *upto* scheme).
 
         Returns:
             ProcessSettleResult with headers if success, or response if failure.
         """
+        effective_requirements = self._apply_settlement_overrides(
+            requirements, settlement_overrides
+        )
         try:
             settle_response = self._server.settle_payment(
                 payment_payload,
-                requirements,
+                effective_requirements,
             )
 
             if not settle_response.success:

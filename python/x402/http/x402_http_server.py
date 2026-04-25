@@ -128,6 +128,7 @@ class x402HTTPResourceServer(x402HTTPServerBase):
         payment_payload: PaymentPayload | PaymentPayloadV1,
         requirements: PaymentRequirements,
         context: HTTPRequestContext | None = None,
+        settlement_overrides: dict[str, Any] | None = None,
     ) -> ProcessSettleResult:
         """Process settlement after successful response (async).
 
@@ -137,14 +138,19 @@ class x402HTTPResourceServer(x402HTTPServerBase):
             payment_payload: The verified payment payload.
             requirements: The matching payment requirements.
             context: Optional HTTP request context for route config lookup and hooks.
+            settlement_overrides: Optional overrides (e.g. ``{"amount": "1000"}``
+                for partial settlement with the *upto* scheme).
 
         Returns:
             ProcessSettleResult with headers if success, or response if failure.
         """
+        effective_requirements = self._apply_settlement_overrides(
+            requirements, settlement_overrides
+        )
         try:
             settle_response = await self._server.settle_payment(
                 payment_payload,
-                requirements,
+                effective_requirements,
             )
 
             if not settle_response.success:

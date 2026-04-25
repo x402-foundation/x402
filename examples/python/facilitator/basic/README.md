@@ -6,8 +6,8 @@ FastAPI-based facilitator service that verifies and settles payments on-chain fo
 
 - Python 3.10+ (install via [pyenv](https://github.com/pyenv/pyenv) or [uv](https://docs.astral.sh/uv/))
 - uv package manager (install via [uv installation](https://docs.astral.sh/uv/getting-started/installation/))
-- EVM private key with Base Sepolia ETH for transaction fees
-- SVM private key with Solana Devnet SOL for transaction fees
+- Dedicated EVM facilitator private key with Base Sepolia ETH for transaction fees
+- Dedicated SVM facilitator private key with Solana Devnet SOL for transaction fees
 
 ## Setup
 
@@ -19,10 +19,12 @@ cp .env-local .env
 
 and fill required environment variables:
 
-- `EVM_PRIVATE_KEY` - Ethereum private key (hex with 0x prefix)
-- `SVM_PRIVATE_KEY` - Solana private key (base58 encoded)
+- `EVM_PRIVATE_KEY` - Ethereum facilitator private key (hex with 0x prefix)
+- `SVM_PRIVATE_KEY` - Solana facilitator private key (base58 encoded)
 - `PORT` - Server port (optional, defaults to 4022)
 - `EVM_RPC_URL` - Custom EVM RPC URL (optional, defaults to Base Sepolia)
+
+**⚠️ Security Note:** The facilitator key is the signer used to settle payments on-chain. Keep it separate from your seller `payTo` wallet and buyer test wallets, and make sure it is funded only for facilitator gas/fees.
 
 2. Install dependencies:
 
