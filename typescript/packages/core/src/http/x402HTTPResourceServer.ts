@@ -1036,7 +1036,8 @@ export class x402HTTPResourceServer {
       firstAccept && "amount" in firstAccept
         ? this.ResourceServer.getAssetDecimalsForRequirements(firstAccept)
         : 6;
-    const displayAmountText = parseFloat(displayAmount.toFixed(decimals)).toString();
+    const safeDecimals = Math.min(Math.max(decimals, 0), 100);
+    const displayAmountText = parseFloat(displayAmount.toFixed(safeDecimals)).toString();
     const assetLabel =
       typeof firstAccept?.extra?.name === "string"
         ? firstAccept.extra.name
