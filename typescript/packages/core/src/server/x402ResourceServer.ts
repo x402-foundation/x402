@@ -280,7 +280,9 @@ export class x402ResourceServer {
       requirements.scheme,
       requirements.network as Network,
     );
-    return scheme?.getAssetDecimals?.(requirements.asset ?? "", requirements.network as Network) ?? 6;
+    return (
+      scheme?.getAssetDecimals?.(requirements.asset ?? "", requirements.network as Network) ?? 6
+    );
   }
 
   /**
