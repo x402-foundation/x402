@@ -1,6 +1,6 @@
 {
   "name": "@x402/aptos",
-  "version": "2.9.0",
+  "version": "2.10.0",
   "main": "./dist/cjs/index.js",
   "module": "./dist/esm/index.js",
   "types": "./dist/cjs/index.d.ts",
@@ -44,7 +44,7 @@
     "vitest": "^3.0.5"
   },
   "dependencies": {
-    "@x402/core": "workspace:*",
+    "@x402/core": "workspace:~",
     "@aptos-labs/ts-sdk": "^5.2.1"
   },
   "exports": {

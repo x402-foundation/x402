@@ -16,35 +16,60 @@ app.use(
 // That's it! See examples/ for full details
 ```
 
-<details>
-<summary><b>Installation</b></summary>
+## Installation
 
-### Typescript
+<details>
+<summary><b>Typescript</b></summary>
+
+<br/> 
+
+> See all the packages available in the [**Typescript SDK**](./typescript/), including chain implementations of x402, code examples and integration guides.
 
 ```shell
 # All available reference sdks
-npm install @x402/core @x402/evm @x402/svm @x402/axios @x402/fetch @x402/express @x402/hono @x402/next @x402/paywall @x402/extensions
+npm install @x402/core \
+  @x402/evm @x402/svm @x402/stellar @x402/svm \
+  @x402/axios @x402/fastify @x402/fetch @x402/express @x402/hono @x402/next @x402/paywall @x402/extensions
+```
 
+```shell
 # Minimal Fetch client
 npm install @x402/core @x402/evm @x402/svm @x402/fetch
+```
 
+```shell
 # Minimal express Server
 npm install @x402/core @x402/evm @x402/svm @x402/express
 ```
 
-### Python
+</details>
+
+<details>
+<summary><b>Python</b></summary>
+
+<br/> 
+
+> See the [**`python/x402`**](./python/) folder for code examples and integration guides.
 
 ```shell
 pip install x402
 ```
 
-### Go
+</details>
+
+<details>
+<summary><b>Go</b></summary>
+
+<br/> 
+
+> See the [**`go/`**](./go/) folder for code examples and integration guides.
 
 ```shell
 go get github.com/x402-foundation/x402/go
 ```
 
 </details>
+
 
 ## Principles
 

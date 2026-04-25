@@ -9,7 +9,7 @@ x402 is an open protocol for internet-native payments built around the HTTP 402 
 - Payment-gated content access
 - Real-time payment verification
 - Payment settlement
-- Integration with EVM-compatible blockchains
+- Integration with EVM, SVM, and AVM blockchains
 
 ## Features
 
@@ -38,8 +38,10 @@ x402 is an open protocol for internet-native payments built around the HTTP 402 
   FACILITATOR_URL=your_facilitator_url
   RESOURCE_EVM_ADDRESS=your_evm_wallet_address
   RESOURCE_SVM_ADDRESS=your_solana_wallet_address
+  RESOURCE_AVM_ADDRESS=your_algorand_wallet_address
   FACILITATOR_EVM_PRIVATE_KEY=your_evm_private_key
   FACILITATOR_SVM_PRIVATE_KEY=your_solana_private_key
+  FACILITATOR_AVM_PRIVATE_KEY=your_algorand_private_key
   ```
 
 ### Running the Development Server

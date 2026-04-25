@@ -174,15 +174,24 @@ func (c *ExactSvmSchemeV1) CreatePaymentPayload(
 		return types.PaymentPayloadV1{}, fmt.Errorf(ErrFailedToBuildTransferIx+": %w", err)
 	}
 
-	// Memo with random nonce for transaction uniqueness (empty accounts - SPL Memo doesn't require signers)
-	memoBytes := make([]byte, 16)
-	if _, err := rand.Read(memoBytes); err != nil {
-		return types.PaymentPayloadV1{}, fmt.Errorf(ErrFailedToBuildMemoIx+": %w", err)
+	// Memo instruction: use seller-defined memo from extra.memo, or random nonce for uniqueness
+	var memoPayload []byte
+	if memoStr, ok := extraMap["memo"].(string); ok && memoStr != "" {
+		memoPayload = []byte(memoStr)
+		if len(memoPayload) > svm.MaxMemoBytes {
+			return types.PaymentPayloadV1{}, errors.New(ErrMemoExceedsMaxSize)
+		}
+	} else {
+		memoBytes := make([]byte, 16)
+		if _, err := rand.Read(memoBytes); err != nil {
+			return types.PaymentPayloadV1{}, fmt.Errorf(ErrFailedToBuildMemoIx+": %w", err)
+		}
+		memoPayload = []byte(hex.EncodeToString(memoBytes))
 	}
 	memoIx := solana.NewInstruction(
 		solana.MustPublicKeyFromBase58(svm.MemoProgramAddress),
 		solana.AccountMetaSlice{},
-		[]byte(hex.EncodeToString(memoBytes)),
+		memoPayload,
 	)
 
 	// Create final transaction

@@ -19,7 +19,7 @@ This page tracks which features are implemented in each SDK (TypeScript, Go, Pyt
 
 | Role | TypeScript | Go | Python |
 |------|------------|-----|--------|
-| Server | Express, Hono, Next.js | Gin, net/http | FastAPI, Flask |
+| Server | Express, Hono, Next.js, Fastify | Gin, net/http, Echo | FastAPI, Flask |
 | Client | Fetch, Axios | net/http | httpx, requests |
 
 ## Networks
@@ -28,6 +28,7 @@ This page tracks which features are implemented in each SDK (TypeScript, Go, Pyt
 |---------|------------|-----|--------|
 | evm (EIP-155) | ✅ | ✅ | ✅ |
 | svm (Solana) | ✅ | ✅ | ✅ |
+| avm (Algorand) | ✅ | ❌ | ❌ |
 | stellar | ✅ | ❌ | ❌ |
 | aptos | ✅ | ❌ | ❌ |
 
@@ -38,9 +39,10 @@ This page tracks which features are implemented in each SDK (TypeScript, Go, Pyt
 | exact/evm (EIP-3009) | ✅ | ✅ | ✅ |
 | exact/evm (Permit2) | ✅ | ✅ | ✅ |
 | exact/svm (SPL) | ✅ | ✅ | ✅ |
+| exact/avm (ASA) | ✅ | ❌ | ❌ |
 | exact/stellar (Soroban) | ✅ | ❌ | ❌ |
 | exact/aptos (Fungible Assets) | ✅ | ❌ | ❌ |
-| upto/evm (Permit2) | ✅ | ✅ | ❌ |
+| upto/evm (Permit2) | ✅ | ✅ | ✅ |
 
 ## Extensions
 
@@ -93,6 +95,14 @@ This page tracks which features are implemented in each SDK (TypeScript, Go, Pyt
 | enrichDeclaration | ✅ | ✅ | ✅ |
 | enrichPaymentRequiredResponse | ✅ | ❌ | ❌ |
 | enrichSettlementResponse | ✅ | ❌ | ❌ |
+
+## MCP (Model Context Protocol)
+
+| Feature | TypeScript | Go | Python |
+|---------|------------|-----|--------|
+| MCP server payment wrapper | ✅ | ✅ | ✅ |
+| MCP client (auto-pay tools) | ✅ | ✅ | ✅ |
+| Bazaar discovery for MCP tools | ✅ | ✅ | ✅ |
 
 ## HTTP Server Features
 

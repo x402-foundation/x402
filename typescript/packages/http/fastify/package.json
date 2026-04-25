@@ -1,6 +1,6 @@
 {
   "name": "@x402/fastify",
-  "version": "2.9.0",
+  "version": "2.10.1",
   "main": "./dist/cjs/index.js",
   "module": "./dist/esm/index.js",
   "types": "./dist/index.d.ts",
@@ -44,7 +44,7 @@
   },
   "peerDependencies": {
     "fastify": "^5.0.0",
-    "@x402/paywall": "workspace:*"
+    "@x402/paywall": "workspace:^"
   },
   "peerDependenciesMeta": {
     "@x402/paywall": {

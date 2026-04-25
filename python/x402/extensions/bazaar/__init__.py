@@ -69,9 +69,11 @@ from .facilitator_client import (
 )
 from .resource_service import (
     DeclareBodyDiscoveryConfig,
+    DeclareMcpDiscoveryConfig,
     DeclareQueryDiscoveryConfig,
     OutputConfig,
     declare_discovery_extension,
+    declare_mcp_discovery_extension,
 )
 from .server import bazaar_resource_server_extension
 from .types import (
@@ -83,6 +85,10 @@ from .types import (
     BodyType,
     DiscoveryExtension,
     DiscoveryInfo,
+    McpDiscoveryExtension,
+    McpDiscoveryInfo,
+    McpInput,
+    McpTransport,
     OutputInfo,
     QueryDiscoveryExtension,
     QueryDiscoveryInfo,
@@ -100,18 +106,23 @@ __all__ = [
     # Input types
     "QueryInput",
     "BodyInput",
+    "McpInput",
+    "McpTransport",
     "OutputInfo",
     # Discovery info types
     "QueryDiscoveryInfo",
     "BodyDiscoveryInfo",
+    "McpDiscoveryInfo",
     "DiscoveryInfo",
     # Extension types
     "QueryDiscoveryExtension",
     "BodyDiscoveryExtension",
+    "McpDiscoveryExtension",
     "DiscoveryExtension",
     # Config types
     "DeclareQueryDiscoveryConfig",
     "DeclareBodyDiscoveryConfig",
+    "DeclareMcpDiscoveryConfig",
     "OutputConfig",
     # Result types
     "ValidationResult",
@@ -127,6 +138,7 @@ __all__ = [
     "BazaarExtendedClient",
     # Functions
     "declare_discovery_extension",
+    "declare_mcp_discovery_extension",
     "validate_discovery_extension",
     "extract_discovery_info",
     "extract_discovery_info_from_extension",

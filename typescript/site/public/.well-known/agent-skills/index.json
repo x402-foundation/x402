@@ -1,0 +1,12 @@
+{
+  "$schema": "https://schemas.agentskills.io/discovery/0.2.0/schema.json",
+  "skills": [
+    {
+      "name": "x402-payment",
+      "type": "skill-md",
+      "description": "Make HTTP payments using the x402 protocol with stablecoins",
+      "url": "https://x402.org/.well-known/agent-skills/x402-payment/SKILL.md",
+      "digest": "sha256:010ead99436b33470888a4df05c2a379b9a942d2ba9c6e4e22ac0dfe05256885"
+    }
+  ]
+}

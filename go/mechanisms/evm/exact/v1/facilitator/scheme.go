@@ -215,7 +215,7 @@ func (f *ExactEvmSchemeV1) verify(
 			classification.SigData,
 		)
 		if err != nil {
-			return nil, x402.NewVerifyError(ErrInvalidPayload, evmPayload.Authorization.From, err.Error())
+			return nil, x402.NewVerifyError(exactfacilitator.ErrEip3009SimulationFailed, evmPayload.Authorization.From, err.Error())
 		}
 		if !simulationSucceeded {
 			reason := exactfacilitator.DiagnoseEIP3009SimulationFailure(

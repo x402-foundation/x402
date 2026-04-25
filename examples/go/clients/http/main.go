@@ -48,6 +48,7 @@ func main() {
 	}
 
 	svmPrivateKey := os.Getenv("SVM_PRIVATE_KEY")
+	evmRpcURL := os.Getenv("EVM_RPC_URL")
 
 	url := os.Getenv("SERVER_URL")
 	if url == "" {
@@ -60,9 +61,9 @@ func main() {
 
 	switch pattern {
 	case "builder-pattern":
-		client, err = createBuilderPatternClient(evmPrivateKey, svmPrivateKey)
+		client, err = createBuilderPatternClient(evmPrivateKey, svmPrivateKey, evmRpcURL)
 	case "mechanism-helper-registration":
-		client, err = createMechanismHelperRegistrationClient(evmPrivateKey, svmPrivateKey)
+		client, err = createMechanismHelperRegistrationClient(evmPrivateKey, svmPrivateKey, evmRpcURL)
 	default:
 		fmt.Printf("❌ Unknown pattern: %s\n", pattern)
 		fmt.Println("Available patterns: builder-pattern, mechanism-helper-registration")

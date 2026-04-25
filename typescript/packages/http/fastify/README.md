@@ -1,4 +1,4 @@
-# @x402/fastify
+# `@x402/fastify` [![npm version](https://img.shields.io/npm/v/%40x402%2Ffastify.svg)](https://www.npmjs.com/package/@x402/fastify)
 
 Fastify middleware integration for the x402 Payment Protocol. This package provides payment middleware for adding x402 payment requirements to your Fastify applications.
 

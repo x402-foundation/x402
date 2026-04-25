@@ -14,16 +14,22 @@ jobs:
       - uses: actions/checkout@v4
       
       - name: Setup pnpm
-        uses: pnpm/action-setup@a7487c7e89a18df4991f7f222e4898a00d66ddda
+        uses: pnpm/action-setup@41ff72655975bd51cab0327fa583b6e92b6d3061
         with:
           version: 10.7.0
       
       - uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          node-version: "24"
           registry-url: "https://registry.npmjs.org"
           cache: "pnpm"
           cache-dependency-path: ./typescript
+      
+      - name: Update npm for OIDC trusted publishing
+        run: npm install -g npm@latest
+      
+      - name: Configure npm for trusted publishing
+        run: npm config delete always-auth 2>/dev/null || true
       
       - name: Install and build
         working-directory: ./typescript
@@ -48,5 +54,3 @@ jobs:
             echo "Dry run only (non-main branch: ${{ github.ref }})"
             pnpm publish --dry-run --no-git-checks
           fi
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }} 

@@ -12,8 +12,15 @@ import {
   ResourceInfo,
 } from "../types/payments";
 import { SchemeNetworkServer } from "../types/mechanisms";
-import { Price, Network, ResourceServerExtension, VerifyError } from "../types";
+import { Price, Network, ResourceServerExtension, ResourceServerExtensionHooks } from "../types";
+import type { DeepReadonly } from "../types/readonly";
 import { deepEqual, findByNetworkAndScheme } from "../utils";
+import {
+  assertAcceptsAllowlistedAfterExtensionEnrich,
+  assertSettleResponseCoreUnchanged,
+  snapshotPaymentRequirementsList,
+  snapshotSettleResponseCore,
+} from "./extensionResponsePolicy";
 import { FacilitatorClient, HTTPFacilitatorClient } from "../http/httpFacilitatorClient";
 import { x402Version } from "..";
 
@@ -23,7 +30,12 @@ import { x402Version } from "..";
  */
 export interface ResourceConfig {
   scheme: string;
-  payTo: string; // Payment recipient address
+  /**
+   * Payment recipient. Use a **vacant** value (`""` or whitespace-only) when an extension must
+   * fill `payTo` during `enrichPaymentRequiredResponse`; non-vacant values are **immutable** there
+   * so extensions cannot redirect funds to an arbitrary address.
+   */
+  payTo: string;
   price: Price;
   network: Network;
   maxTimeoutSeconds?: number;
@@ -31,9 +43,12 @@ export interface ResourceConfig {
 }
 
 /**
- * Lifecycle Hook Context Interfaces
+ * Context for `enrichPaymentRequiredResponse`. Extensions may merge extension payload via the
+ * return value. In-place edits to `paymentRequiredResponse.accepts` are **allowlisted** only
+ * (see {@link assertAcceptsAllowlistedAfterExtensionEnrich}): `scheme`, `network`, and
+ * `maxTimeoutSeconds` are immutable; `payTo`, `amount`, and `asset` may change only when the
+ * baseline value was vacant; `extra` may add keys but must not change or remove baseline keys.
  */
-
 export interface PaymentRequiredContext {
   requirements: PaymentRequirements[];
   resourceInfo: ResourceInfo;
@@ -42,13 +57,19 @@ export interface PaymentRequiredContext {
   transportContext?: unknown;
 }
 
+/**
+ * Verify / settle lifecycle hook context: treat as **read-only** for core protocol fields.
+ * Control flow uses **abort** / **recover** return values only, not in-place mutation.
+ */
 export interface VerifyContext {
-  paymentPayload: PaymentPayload;
-  requirements: PaymentRequirements;
+  paymentPayload: DeepReadonly<PaymentPayload>;
+  requirements: DeepReadonly<PaymentRequirements>;
+  declaredExtensions: DeepReadonly<Record<string, unknown>>;
+  transportContext?: unknown;
 }
 
 export interface VerifyResultContext extends VerifyContext {
-  result: VerifyResponse;
+  result: DeepReadonly<VerifyResponse>;
 }
 
 export interface VerifyFailureContext extends VerifyContext {
@@ -56,22 +77,19 @@ export interface VerifyFailureContext extends VerifyContext {
 }
 
 export interface SettleContext {
-  paymentPayload: PaymentPayload;
-  requirements: PaymentRequirements;
+  paymentPayload: DeepReadonly<PaymentPayload>;
+  requirements: DeepReadonly<PaymentRequirements>;
+  declaredExtensions: DeepReadonly<Record<string, unknown>>;
+  transportContext?: unknown;
 }
 
 export interface SettleResultContext extends SettleContext {
-  result: SettleResponse;
-  transportContext?: unknown;
+  result: DeepReadonly<SettleResponse>;
 }
 
 export interface SettleFailureContext extends SettleContext {
   error: Error;
 }
-
-/**
- * Lifecycle Hook Type Definitions
- */
 
 export type BeforeVerifyHook = (
   context: VerifyContext,
@@ -161,6 +179,20 @@ export function resolveSettlementOverrideAmount(
   return rawAmount;
 }
 
+type ExtensionAdapterHandles = {
+  beforeVerify?: BeforeVerifyHook;
+  afterVerify?: AfterVerifyHook;
+  onVerifyFailure?: OnVerifyFailureHook;
+  beforeSettle?: BeforeSettleHook;
+  afterSettle?: AfterSettleHook;
+  onSettleFailure?: OnSettleFailureHook;
+};
+
+/** Keys shared by {@link ExtensionAdapterHandles} and manual `*Hooks` arrays on the server. */
+type ResourceServerHookPhase = keyof ExtensionAdapterHandles;
+
+type ResourceServerManualHookArrayKey = `${ResourceServerHookPhase}Hooks`;
+
 /**
  * Core x402 protocol server for resource protection
  * Transport-agnostic implementation of the x402 payment protocol
@@ -173,6 +205,7 @@ export class x402ResourceServer {
   private facilitatorClientsMap: Map<number, Map<string, Map<string, FacilitatorClient>>> =
     new Map();
   private registeredExtensions: Map<string, ResourceServerExtension> = new Map();
+  private extensionHookAdapters = new Map<string, ExtensionAdapterHandles>();
 
   private beforeVerifyHooks: BeforeVerifyHook[] = [];
   private afterVerifyHooks: AfterVerifyHook[] = [];
@@ -233,13 +266,54 @@ export class x402ResourceServer {
   }
 
   /**
-   * Registers a resource service extension that can enrich extension declarations.
+   * Registers a resource server extension (enrichment and optional verify/settle hooks).
+   * Re-registering the same key overwrites; omitting `hooks` removes adapter handles for that key.
    *
-   * @param extension - The extension to register
-   * @returns The x402ResourceServer instance for chaining
+   * @param extension - Extension definition including `key` and optional `hooks`
+   * @returns This server instance for chaining
    */
   registerExtension(extension: ResourceServerExtension): this {
     this.registeredExtensions.set(extension.key, extension);
+    const extensionKey = extension.key;
+    const extensionHooks = extension.hooks;
+    if (!extensionHooks) {
+      this.extensionHookAdapters.delete(extensionKey);
+      return this;
+    }
+    const handles: ExtensionAdapterHandles = {};
+
+    const bindExtensionHookAdapter = <
+      ExtKey extends keyof ResourceServerExtensionHooks,
+      Phase extends ResourceServerHookPhase,
+    >(
+      extensionHookKey: ExtKey,
+      adapterPhase: Phase,
+    ): void => {
+      const impl = extensionHooks[extensionHookKey];
+      if (!impl) return;
+
+      type AdapterContext = Parameters<NonNullable<ExtensionAdapterHandles[Phase]>>[0];
+
+      handles[adapterPhase] = (async (ctx: AdapterContext) => {
+        if (ctx.declaredExtensions[extensionKey] === undefined) return;
+        return (impl as (declaration: unknown, context: AdapterContext) => Promise<unknown>)(
+          ctx.declaredExtensions[extensionKey],
+          ctx,
+        );
+      }) as ExtensionAdapterHandles[Phase];
+    };
+
+    bindExtensionHookAdapter("onBeforeVerify", "beforeVerify");
+    bindExtensionHookAdapter("onAfterVerify", "afterVerify");
+    bindExtensionHookAdapter("onVerifyFailure", "onVerifyFailure");
+    bindExtensionHookAdapter("onBeforeSettle", "beforeSettle");
+    bindExtensionHookAdapter("onAfterSettle", "afterSettle");
+    bindExtensionHookAdapter("onSettleFailure", "onSettleFailure");
+    if (Object.keys(handles).length > 0) {
+      this.extensionHookAdapters.set(extensionKey, handles);
+    } else {
+      this.extensionHookAdapters.delete(extensionKey);
+    }
     return this;
   }
 
@@ -279,7 +353,12 @@ export class x402ResourceServer {
       const extension = this.registeredExtensions.get(key);
 
       if (extension?.enrichDeclaration) {
-        enriched[key] = extension.enrichDeclaration(declaration, transportContext);
+        try {
+          enriched[key] = extension.enrichDeclaration(declaration, transportContext);
+        } catch (error) {
+          this.warnExtensionHookFailure(key, "enrichDeclaration", error);
+          enriched[key] = declaration;
+        }
       } else {
         enriched[key] = declaration;
       }
@@ -616,12 +695,18 @@ export class x402ResourceServer {
     extensions?: Record<string, unknown>,
     transportContext?: unknown,
   ): Promise<PaymentRequired> {
+    const acceptsClone = requirements.map(req => ({
+      ...req,
+      extra: structuredClone(req.extra),
+    }));
+    let baselineAccepts = snapshotPaymentRequirementsList(acceptsClone);
+
     // V2 response with resource at top level
     let response: PaymentRequired = {
       x402Version: 2,
       error,
       resource: resourceInfo,
-      accepts: requirements as PaymentRequirements[],
+      accepts: acceptsClone,
     };
 
     // Add extensions if provided
@@ -636,7 +721,7 @@ export class x402ResourceServer {
         if (extension?.enrichPaymentRequiredResponse) {
           try {
             const context: PaymentRequiredContext = {
-              requirements,
+              requirements: acceptsClone,
               resourceInfo,
               error,
               paymentRequiredResponse: response,
@@ -653,11 +738,10 @@ export class x402ResourceServer {
               response.extensions[key] = extensionData;
             }
           } catch (error) {
-            console.error(
-              `Error in enrichPaymentRequiredResponse hook for extension ${key}:`,
-              error,
-            );
+            this.warnExtensionHookFailure(key, "enrichPaymentRequiredResponse", error);
           }
+          assertAcceptsAllowlistedAfterExtensionEnrich(baselineAccepts, acceptsClone, key);
+          baselineAccepts = snapshotPaymentRequirementsList(acceptsClone);
         }
       }
     }
@@ -666,23 +750,31 @@ export class x402ResourceServer {
   }
 
   /**
-   * Verify a payment against requirements
+   * Verifies a payment against requirements, running manual and in-use extension hooks.
    *
-   * @param paymentPayload - The payment payload to verify
-   * @param requirements - The payment requirements
-   * @returns Verification response
+   * @param paymentPayload - Signed payment payload from the client
+   * @param requirements - Requirements matched to the payload
+   * @param declaredExtensions - Optional per-extension declarations for the request
+   * @param transportContext - Optional transport-specific context (e.g. HTTP, MCP)
+   * @returns Facilitator verify outcome, or abort/recovery as driven by hooks
    */
   async verifyPayment(
     paymentPayload: PaymentPayload,
     requirements: PaymentRequirements,
+    declaredExtensions?: Record<string, unknown>,
+    transportContext?: unknown,
   ): Promise<VerifyResponse> {
+    const resolvedDeclaredExtensions = declaredExtensions ?? {};
+    const extensionKeysInUse = Object.keys(resolvedDeclaredExtensions);
+
     const context: VerifyContext = {
       paymentPayload,
       requirements,
+      declaredExtensions: resolvedDeclaredExtensions,
+      transportContext,
     };
 
-    // Execute beforeVerify hooks
-    for (const hook of this.beforeVerifyHooks) {
+    for (const { label, hook } of this.getLabeledHooks("beforeVerify", extensionKeysInUse)) {
       try {
         const result = await hook(context);
         if (result && "abort" in result && result.abort) {
@@ -693,11 +785,7 @@ export class x402ResourceServer {
           };
         }
       } catch (error) {
-        throw new VerifyError(400, {
-          isValid: false,
-          invalidReason: "before_verify_hook_error",
-          invalidMessage: error instanceof Error ? error.message : "",
-        });
+        this.warnResourceServerHookFailure("beforeVerify", label, error);
       }
     }
 
@@ -743,8 +831,12 @@ export class x402ResourceServer {
         result: verifyResult,
       };
 
-      for (const hook of this.afterVerifyHooks) {
-        await hook(resultContext);
+      for (const { label, hook } of this.getLabeledHooks("afterVerify", extensionKeysInUse)) {
+        try {
+          await hook(resultContext);
+        } catch (error) {
+          this.warnResourceServerHookFailure("afterVerify", label, error);
+        }
       }
 
       return verifyResult;
@@ -754,11 +846,14 @@ export class x402ResourceServer {
         error: error as Error,
       };
 
-      // Execute onVerifyFailure hooks
-      for (const hook of this.onVerifyFailureHooks) {
-        const result = await hook(failureContext);
-        if (result && "recovered" in result && result.recovered) {
-          return result.result;
+      for (const { label, hook } of this.getLabeledHooks("onVerifyFailure", extensionKeysInUse)) {
+        try {
+          const result = await hook(failureContext);
+          if (result && "recovered" in result && result.recovered) {
+            return result.result;
+          }
+        } catch (error) {
+          this.warnResourceServerHookFailure("onVerifyFailure", label, error);
         }
       }
 
@@ -783,6 +878,9 @@ export class x402ResourceServer {
     transportContext?: unknown,
     settlementOverrides?: SettlementOverrides,
   ): Promise<SettleResponse> {
+    const resolvedDeclaredExtensions = declaredExtensions ?? {};
+    const extensionKeysInUse = Object.keys(resolvedDeclaredExtensions);
+
     // Apply settlement overrides (e.g., partial settlement for upto scheme)
     let effectiveRequirements = requirements;
     if (settlementOverrides?.amount !== undefined) {
@@ -802,10 +900,11 @@ export class x402ResourceServer {
     const context: SettleContext = {
       paymentPayload,
       requirements: effectiveRequirements,
+      declaredExtensions: resolvedDeclaredExtensions,
+      transportContext,
     };
 
-    // Execute beforeSettle hooks
-    for (const hook of this.beforeSettleHooks) {
+    for (const { label, hook } of this.getLabeledHooks("beforeSettle", extensionKeysInUse)) {
       try {
         const result = await hook(context);
         if (result && "abort" in result && result.abort) {
@@ -821,13 +920,7 @@ export class x402ResourceServer {
         if (error instanceof SettleError) {
           throw error;
         }
-        throw new SettleError(400, {
-          success: false,
-          errorReason: "before_settle_hook_error",
-          errorMessage: error instanceof Error ? error.message : "",
-          transaction: "",
-          network: requirements.network,
-        });
+        this.warnResourceServerHookFailure("beforeSettle", label, error);
       }
     }
 
@@ -871,16 +964,20 @@ export class x402ResourceServer {
       const resultContext: SettleResultContext = {
         ...context,
         result: settleResult,
-        transportContext,
       };
 
-      for (const hook of this.afterSettleHooks) {
-        await hook(resultContext);
+      for (const { label, hook } of this.getLabeledHooks("afterSettle", extensionKeysInUse)) {
+        try {
+          await hook(resultContext);
+        } catch (error) {
+          this.warnResourceServerHookFailure("afterSettle", label, error);
+        }
       }
 
       // Let declared extensions add data to settlement response
-      if (declaredExtensions) {
-        for (const [key, declaration] of Object.entries(declaredExtensions)) {
+      if (Object.keys(resolvedDeclaredExtensions).length > 0) {
+        const settleCoreSnapshot = snapshotSettleResponseCore(settleResult);
+        for (const [key, declaration] of Object.entries(resolvedDeclaredExtensions)) {
           const extension = this.registeredExtensions.get(key);
           if (extension?.enrichSettlementResponse) {
             try {
@@ -895,8 +992,9 @@ export class x402ResourceServer {
                 settleResult.extensions[key] = extensionData;
               }
             } catch (error) {
-              console.error(`Error in enrichSettlementResponse hook for extension ${key}:`, error);
+              this.warnExtensionHookFailure(key, "enrichSettlementResponse", error);
             }
+            assertSettleResponseCoreUnchanged(settleCoreSnapshot, settleResult, key);
           }
         }
       }
@@ -908,11 +1006,14 @@ export class x402ResourceServer {
         error: error as Error,
       };
 
-      // Execute onSettleFailure hooks
-      for (const hook of this.onSettleFailureHooks) {
-        const result = await hook(failureContext);
-        if (result && "recovered" in result && result.recovered) {
-          return result.result;
+      for (const { label, hook } of this.getLabeledHooks("onSettleFailure", extensionKeysInUse)) {
+        try {
+          const result = await hook(failureContext);
+          if (result && "recovered" in result && result.recovered) {
+            return result.result;
+          }
+        } catch (error) {
+          this.warnResourceServerHookFailure("onSettleFailure", label, error);
         }
       }
 
@@ -958,6 +1059,7 @@ export class x402ResourceServer {
    * @param resourceConfig - Configuration for the protected resource
    * @param resourceInfo - Information about the resource being accessed
    * @param extensions - Optional extensions to include in the response
+   * @param transportContext - Optional transport context for extension hooks and enrichment
    * @returns Processing result
    */
   async processPaymentRequest(
@@ -965,6 +1067,7 @@ export class x402ResourceServer {
     resourceConfig: ResourceConfig,
     resourceInfo: ResourceInfo,
     extensions?: Record<string, unknown>,
+    transportContext?: unknown,
   ): Promise<{
     success: boolean;
     requiresPayment?: PaymentRequired;
@@ -973,6 +1076,7 @@ export class x402ResourceServer {
     error?: string;
   }> {
     const requirements = await this.buildPaymentRequirements(resourceConfig);
+    const resolvedRouteExtensions = extensions ?? {};
 
     if (!paymentPayload) {
       return {
@@ -982,12 +1086,23 @@ export class x402ResourceServer {
           resourceInfo,
           "Payment required",
           extensions,
+          transportContext,
         ),
       };
     }
 
-    // Find matching requirements
-    const matchingRequirements = this.findMatchingRequirements(requirements, paymentPayload);
+    // findMatching must use the same accepts the client saw (extensions may rewrite requirements).
+    const paymentRequired = await this.createPaymentRequiredResponse(
+      requirements,
+      resourceInfo,
+      undefined,
+      extensions,
+      transportContext,
+    );
+    const matchingRequirements = this.findMatchingRequirements(
+      paymentRequired.accepts,
+      paymentPayload,
+    );
     if (!matchingRequirements) {
       return {
         success: false,
@@ -996,12 +1111,18 @@ export class x402ResourceServer {
           resourceInfo,
           "No matching payment requirements found",
           extensions,
+          transportContext,
         ),
       };
     }
 
     // Verify payment
-    const verificationResult = await this.verifyPayment(paymentPayload, matchingRequirements);
+    const verificationResult = await this.verifyPayment(
+      paymentPayload,
+      matchingRequirements,
+      resolvedRouteExtensions,
+      transportContext,
+    );
     if (!verificationResult.isValid) {
       return {
         success: false,
@@ -1015,6 +1136,70 @@ export class x402ResourceServer {
       success: true,
       verificationResult,
     };
+  }
+
+  /**
+   * Logs a warning when a manual or extension adapter lifecycle hook throws.
+   *
+   * @param phase - Lifecycle phase name (e.g. `beforeVerify`)
+   * @param label - Hook source label from {@link getLabeledHooks} (manual index or extension key)
+   * @param error - Thrown value or rejection reason
+   */
+  private warnResourceServerHookFailure(
+    phase: ResourceServerHookPhase,
+    label: string,
+    error: unknown,
+  ): void {
+    const detail = error instanceof Error ? error.message : String(error);
+    console.warn(`[x402] Resource server ${phase} hook threw (${label}): ${detail}`);
+  }
+
+  /**
+   * Logs a warning when a registered extension enrichment hook throws.
+   *
+   * @param extensionKey - Registered extension identifier
+   * @param hookName - Hook method name (e.g. `enrichDeclaration`)
+   * @param error - Thrown value or rejection reason
+   */
+  private warnExtensionHookFailure(extensionKey: string, hookName: string, error: unknown): void {
+    const detail = error instanceof Error ? error.message : String(error);
+    console.warn(`[x402] extension "${extensionKey}" ${hookName} threw: ${detail}`);
+  }
+
+  /**
+   * Manual hooks first, then extension adapters for keys in `extensionKeysInUse`.
+   * Each entry carries a stable label for logging when a hook throws.
+   *
+   * @param phase - Hook slot (e.g. `beforeVerify`)
+   * @param extensionKeysInUse - Declared extension keys for this request
+   * @returns Hooks in invocation order with source labels
+   */
+  private getLabeledHooks<P extends ResourceServerHookPhase>(
+    phase: P,
+    extensionKeysInUse: readonly string[],
+  ): Array<{
+    label: string;
+    hook: NonNullable<ExtensionAdapterHandles[P]>;
+  }> {
+    type HookFn = NonNullable<ExtensionAdapterHandles[P]>;
+    const manualKey = `${phase}Hooks` as ResourceServerManualHookArrayKey;
+    const manual = (this as Record<ResourceServerManualHookArrayKey, HookFn[]>)[manualKey];
+
+    const out: Array<{ label: string; hook: HookFn }> = [];
+    manual.forEach((hook, index) => {
+      out.push({ label: `manual ${phase} hook #${index}`, hook });
+    });
+
+    const inUse = new Set(extensionKeysInUse);
+    for (const [extensionKey, adapterHandles] of this.extensionHookAdapters.entries()) {
+      if (!inUse.has(extensionKey)) continue;
+      const hook = adapterHandles[phase];
+      if (hook !== undefined) {
+        out.push({ label: `extension "${extensionKey}" ${phase}`, hook });
+      }
+    }
+
+    return out;
   }
 
   /**

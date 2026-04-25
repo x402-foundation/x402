@@ -25,6 +25,9 @@ Required environment variables:
 - `SVM_PRIVATE_KEY` - Solana private key for SVM payments (optional)
 - `SERVER_URL` - Server endpoint (defaults to `http://localhost:4021/weather`)
 
+Optional environment variables:
+- `EVM_RPC_URL` - JSON-RPC endpoint for on-chain reads. Enables gas sponsoring extensions (EIP-2612 and ERC-20 approval). Example: `https://sepolia.base.org`
+
 **⚠️ Security Warning:** Never use mainnet keys in `.env` files! Use testnet keys only.
 
 3. Run the client:

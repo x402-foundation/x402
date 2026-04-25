@@ -135,8 +135,8 @@ export function printHelp(): void {
   console.log('  pnpm test -v               Interactive with verbose logging');
   console.log('');
   console.log('Network Selection:');
-  console.log('  --testnet                  Use testnet networks (Base Sepolia + Solana Devnet)');
-  console.log('  --mainnet                  Use mainnet networks (Base + Solana) ⚠️  Real funds!');
+  console.log('  --testnet                  Use testnet networks');
+  console.log('  --mainnet                  Use mainnet networks ⚠️  Real funds!');
   console.log('  (If not specified, will prompt in interactive mode)');
   console.log('');
   console.log('Programmatic Mode (for CI/workflows):');
@@ -146,7 +146,7 @@ export function printHelp(): void {
   console.log('  --clients=<list>           Comma-separated client names');
   console.log('  --extensions=<list>        Comma-separated extensions (e.g., bazaar)');
   console.log('  --versions=<list>          Comma-separated version numbers (e.g., 1,2)');
-  console.log('  --families=<list>          Comma-separated protocol families (e.g., evm,svm)');
+  console.log('  --families=<list>          Comma-separated protocol families (e.g., evm,svm,hedera)');
   console.log('  --endpoints=<list>         Comma-separated endpoint paths or regex patterns (auto-anchored)');
   console.log('');
   console.log('Options:');

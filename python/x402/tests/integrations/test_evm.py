@@ -18,6 +18,7 @@ from web3 import Web3
 from x402 import x402ClientSync, x402FacilitatorSync, x402ResourceServerSync
 from x402.mechanisms.evm import (
     SCHEME_EXACT,
+    SCHEME_UPTO,
     TypedDataDomain,
     TypedDataField,
 )
@@ -28,6 +29,11 @@ from x402.mechanisms.evm.exact import (
     ExactEvmServerScheme,
 )
 from x402.mechanisms.evm.signers import EthAccountSigner, FacilitatorWeb3Signer
+from x402.mechanisms.evm.upto import (
+    UptoEvmClientScheme,
+    UptoEvmFacilitatorScheme,
+    UptoEvmServerScheme,
+)
 from x402.schemas import (
     PaymentPayload,
     PaymentRequirements,
@@ -669,3 +675,161 @@ class TestEvmSignersIntegration:
             signature=signature,
         )
         assert is_valid is False
+
+
+# =============================================================================
+# Upto Integration Tests
+# =============================================================================
+
+
+def build_upto_payment_requirements(
+    pay_to: str,
+    amount: str,
+    facilitator_address: str,
+    network: str = "eip155:84532",
+) -> PaymentRequirements:
+    return PaymentRequirements(
+        scheme=SCHEME_UPTO,
+        network=network,
+        asset=USDC_ADDRESS,
+        amount=amount,
+        pay_to=pay_to,
+        max_timeout_seconds=3600,
+        extra={
+            "assetTransferMethod": "permit2",
+            "facilitatorAddress": facilitator_address,
+        },
+    )
+
+
+class UptoEvmFacilitatorClientSync:
+    """Facilitator client wrapper for upto scheme."""
+
+    scheme = SCHEME_UPTO
+    network = "eip155:84532"
+    x402_version = 2
+
+    def __init__(self, facilitator: x402FacilitatorSync):
+        self._facilitator = facilitator
+
+    def verify(self, payload: PaymentPayload, requirements: PaymentRequirements) -> VerifyResponse:
+        return self._facilitator.verify(payload, requirements)
+
+    def settle(self, payload: PaymentPayload, requirements: PaymentRequirements) -> SettleResponse:
+        return self._facilitator.settle(payload, requirements)
+
+    def get_supported(self) -> SupportedResponse:
+        return self._facilitator.get_supported()
+
+
+class TestEvmUptoIntegrationV2:
+    """Integration tests for EVM Upto (V2) payment flow with REAL blockchain transactions."""
+
+    def setup_method(self) -> None:
+        client_account = Account.from_key(CLIENT_PRIVATE_KEY)
+        self.client_signer = EthAccountSigner(client_account)
+        self.facilitator_signer = FacilitatorWeb3Signer(
+            private_key=FACILITATOR_PRIVATE_KEY,
+            rpc_url=RPC_URL,
+        )
+
+        self.client_address = self.client_signer.address
+        self.facilitator_address = self.facilitator_signer.address
+
+        # Register both exact and upto
+        self.client = x402ClientSync()
+        self.client.register("eip155:84532", UptoEvmClientScheme(self.client_signer))
+
+        self.facilitator = x402FacilitatorSync()
+        self.facilitator.register(
+            ["eip155:84532"],
+            UptoEvmFacilitatorScheme(self.facilitator_signer),
+        )
+
+        facilitator_client = UptoEvmFacilitatorClientSync(self.facilitator)
+
+        self.server = x402ResourceServerSync(facilitator_client)
+        self.server.register("eip155:84532", UptoEvmServerScheme())
+        self.server.initialize()
+
+    def test_server_should_verify_and_settle_upto_payment(self) -> None:
+        """Full upto flow: client authorizes max, server settles actual amount."""
+        recipient = self.facilitator_address
+
+        accepts = [
+            build_upto_payment_requirements(
+                recipient,
+                "1000",
+                self.facilitator_address,
+            )
+        ]
+        resource = ResourceInfo(
+            url="https://api.example.com/llm/generate",
+            description="LLM text generation",
+            mime_type="application/json",
+        )
+        payment_required = self.server.create_payment_required_response(accepts, resource)
+
+        assert payment_required.x402_version == 2
+
+        payment_payload = self.client.create_payment_payload(payment_required)
+
+        assert payment_payload.x402_version == 2
+        assert payment_payload.accepted.scheme == SCHEME_UPTO
+        assert "permit2Authorization" in payment_payload.payload
+        assert "signature" in payment_payload.payload
+
+        auth = payment_payload.payload["permit2Authorization"]
+        assert auth["from"].lower() == self.client_address.lower()
+        assert "facilitator" in auth["witness"]
+
+        accepted = self.server.find_matching_requirements(accepts, payment_payload)
+        assert accepted is not None
+
+        verify_response = self.server.verify_payment(payment_payload, accepted)
+        assert verify_response.is_valid is True
+        assert verify_response.payer.lower() == self.client_address.lower()
+
+        # Settle for a partial amount (500 of 1000 authorized)
+        partial_requirements = build_upto_payment_requirements(
+            recipient,
+            "500",
+            self.facilitator_address,
+        )
+
+        settle_response = self.server.settle_payment(payment_payload, partial_requirements)
+        assert settle_response.success is True
+        assert settle_response.network == "eip155:84532"
+        assert settle_response.transaction != ""
+        assert settle_response.payer.lower() == self.client_address.lower()
+
+    def test_facilitator_get_supported_includes_upto(self) -> None:
+        supported = self.facilitator.get_supported()
+
+        upto_support = None
+        for kind in supported.kinds:
+            if kind.network == "eip155:84532" and kind.scheme == SCHEME_UPTO:
+                upto_support = kind
+                break
+
+        assert upto_support is not None
+        assert upto_support.x402_version == 2
+        assert upto_support.extra is not None
+        assert "facilitatorAddress" in upto_support.extra
+
+    def test_client_creates_valid_upto_payload(self) -> None:
+        accepts = [
+            build_upto_payment_requirements(
+                "0x1234567890123456789012345678901234567890",
+                "5000000",
+                self.facilitator_address,
+            )
+        ]
+        payment_required = self.server.create_payment_required_response(accepts)
+        payload = self.client.create_payment_payload(payment_required)
+
+        assert payload.x402_version == 2
+        assert payload.accepted.scheme == SCHEME_UPTO
+        p2 = payload.payload["permit2Authorization"]
+        assert p2["permitted"]["amount"] == "5000000"
+        assert "facilitator" in p2["witness"]

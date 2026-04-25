@@ -10,8 +10,9 @@ import (
 
 	x402 "github.com/x402-foundation/x402/go"
 	x402http "github.com/x402-foundation/x402/go/http"
-	evm "github.com/x402-foundation/x402/go/mechanisms/evm/exact/client"
-	svm "github.com/x402-foundation/x402/go/mechanisms/svm/exact/client"
+	exactevm "github.com/x402-foundation/x402/go/mechanisms/evm/exact/client"
+	uptoevm "github.com/x402-foundation/x402/go/mechanisms/evm/upto/client"
+	exactsvm "github.com/x402-foundation/x402/go/mechanisms/svm/exact/client"
 	evmsigners "github.com/x402-foundation/x402/go/signers/evm"
 	svmsigners "github.com/x402-foundation/x402/go/signers/svm"
 )
@@ -38,8 +39,9 @@ func runAllNetworksExample(ctx context.Context, evmPrivateKey, svmPrivateKey, ur
 		if err != nil {
 			return fmt.Errorf("failed to create EVM signer: %w", err)
 		}
-		client.Register("eip155:*", evm.NewExactEvmScheme(evmSigner, nil))
-		fmt.Printf("✅ Registered EVM networks (eip155:*)\n")
+		client.Register("eip155:*", exactevm.NewExactEvmScheme(evmSigner, nil))
+		client.Register("eip155:*", uptoevm.NewUptoEvmScheme(evmSigner, nil))
+		fmt.Printf("✅ Registered EVM networks (eip155:*) — exact + upto\n")
 	}
 
 	// Register SVM scheme if private key is provided
@@ -48,7 +50,7 @@ func runAllNetworksExample(ctx context.Context, evmPrivateKey, svmPrivateKey, ur
 		if err != nil {
 			return fmt.Errorf("failed to create SVM signer: %w", err)
 		}
-		client.Register("solana:*", svm.NewExactSvmScheme(svmSigner))
+		client.Register("solana:*", exactsvm.NewExactSvmScheme(svmSigner))
 		fmt.Printf("✅ Registered SVM networks (solana:*)\n")
 	}
 

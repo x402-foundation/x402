@@ -95,8 +95,42 @@ class BodyDiscoveryInfo(BaseModel):
     model_config = {"extra": "allow"}
 
 
+McpTransport = Literal["streamable-http", "sse"]
+
+
+class McpInput(BaseModel):
+    """Input information for MCP tools."""
+
+    type: Literal["mcp"] = "mcp"
+    tool_name: str = Field(alias="toolName")
+    description: str | None = None
+    transport: McpTransport | None = None
+    input_schema: dict[str, Any] = Field(alias="inputSchema")
+    example: dict[str, Any] | None = None
+
+    model_config = {"extra": "allow", "populate_by_name": True}
+
+
+class McpDiscoveryInfo(BaseModel):
+    """Discovery info for MCP tools."""
+
+    input: McpInput
+    output: OutputInfo | None = None
+
+    model_config = {"extra": "allow"}
+
+
+class McpDiscoveryExtension(BaseModel):
+    """Discovery extension for MCP tools."""
+
+    info: McpDiscoveryInfo
+    schema_: dict[str, Any] = Field(alias="schema")
+
+    model_config = {"extra": "allow", "populate_by_name": True}
+
+
 # Union type for discovery info
-DiscoveryInfo = QueryDiscoveryInfo | BodyDiscoveryInfo
+DiscoveryInfo = QueryDiscoveryInfo | BodyDiscoveryInfo | McpDiscoveryInfo
 
 
 class QueryDiscoveryExtension(BaseModel):
@@ -118,25 +152,25 @@ class BodyDiscoveryExtension(BaseModel):
 
 
 # Union type for discovery extension
-DiscoveryExtension = QueryDiscoveryExtension | BodyDiscoveryExtension
+DiscoveryExtension = QueryDiscoveryExtension | BodyDiscoveryExtension | McpDiscoveryExtension
 
 
 def parse_discovery_extension(data: dict[str, Any]) -> DiscoveryExtension:
     """Parse a discovery extension from a dictionary.
 
-    Automatically determines if it's a query or body extension based on
-    the presence of bodyType in the input.
+    Determines type from the input.type field (mcp) or bodyType presence (body vs query).
 
     Args:
         data: Dictionary containing extension data.
 
     Returns:
-        Parsed DiscoveryExtension (Query or Body variant).
+        Parsed DiscoveryExtension (Query, Body, or Mcp variant).
     """
     info = data.get("info", {})
     input_data = info.get("input", {})
 
-    # Check if it's a body extension by looking for bodyType
+    if input_data.get("type") == "mcp":
+        return McpDiscoveryExtension.model_validate(data)
     if "bodyType" in input_data or "body_type" in input_data:
         return BodyDiscoveryExtension.model_validate(data)
     return QueryDiscoveryExtension.model_validate(data)
@@ -145,18 +179,18 @@ def parse_discovery_extension(data: dict[str, Any]) -> DiscoveryExtension:
 def parse_discovery_info(data: dict[str, Any]) -> DiscoveryInfo:
     """Parse discovery info from a dictionary.
 
-    Automatically determines if it's query or body info based on
-    the presence of bodyType in the input.
+    Determines type from the input.type field (mcp) or bodyType presence (body vs query).
 
     Args:
         data: Dictionary containing discovery info.
 
     Returns:
-        Parsed DiscoveryInfo (Query or Body variant).
+        Parsed DiscoveryInfo (Query, Body, or Mcp variant).
     """
     input_data = data.get("input", {})
 
-    # Check if it's body info by looking for bodyType
+    if input_data.get("type") == "mcp":
+        return McpDiscoveryInfo.model_validate(data)
     if "bodyType" in input_data or "body_type" in input_data:
         return BodyDiscoveryInfo.model_validate(data)
     return QueryDiscoveryInfo.model_validate(data)

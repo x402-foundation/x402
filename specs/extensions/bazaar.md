@@ -362,9 +362,9 @@ When a facilitator receives a `PaymentPayload` containing the `bazaar` extension
 
 How a facilitator stores, indexes, and exposes discovered resources is an implementation detail. Facilitators may choose to catalog resources in a database, expose them via a discovery API, or process them in any manner they see fit.
 
-### Settlement Response Header
+### Verify and Settlement Response Header
 
-After processing a `PaymentPayload`, a facilitator **MAY** append an `EXTENSION-RESPONSES` HTTP header to the settlement response to communicate extension-specific outcomes to the client.
+After processing a `PaymentPayload`, a facilitator **MAY** append an `EXTENSION-RESPONSES` HTTP header to the verify or settlement response to communicate extension-specific outcomes to the client.
 
 **Header name:** `EXTENSION-RESPONSES`
 

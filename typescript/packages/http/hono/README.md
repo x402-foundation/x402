@@ -1,4 +1,4 @@
-# @x402/hono
+# `@x402/hono` [![npm version](https://img.shields.io/npm/v/%40x402%2Fhono.svg)](https://www.npmjs.com/package/@x402/hono)
 
 Hono middleware integration for the x402 Payment Protocol. This package provides a simple middleware function for adding x402 payment requirements to your Hono applications.
 

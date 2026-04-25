@@ -331,7 +331,10 @@ describe("Stellar RPC Helper Functions", () => {
 
       it("should handle very small amounts", () => {
         expect(convertToTokenAmount("0.0000001")).toBe("1");
-        expect(convertToTokenAmount("0.00000001")).toBe("0");
+      });
+
+      it("should throw when amount rounds down to 0", () => {
+        expect(() => convertToTokenAmount("0.00000001")).toThrow("too small");
       });
 
       it("should truncate excess decimal places", () => {
@@ -361,12 +364,10 @@ describe("Stellar RPC Helper Functions", () => {
         expect(convertToTokenAmount("-1.5")).toBe("-15000000");
       });
 
-      it("should handle scientific notation input", () => {
-        // Scientific notation should be correctly converted
-        // 1e-7 = 0.0000001, which with 7 decimals = 1
-        expect(convertToTokenAmount("1e-7")).toBe("1");
-        expect(convertToTokenAmount("1e-6")).toBe("10");
-        expect(convertToTokenAmount("1.5e-6")).toBe("15");
+      it("should throw for scientific notation input", () => {
+        expect(() => convertToTokenAmount("1e-7")).toThrow("scientific notation");
+        expect(() => convertToTokenAmount("1e-6")).toThrow("scientific notation");
+        expect(() => convertToTokenAmount("1.5e-6")).toThrow("scientific notation");
       });
 
       it("should handle very large numbers", () => {
@@ -383,15 +384,6 @@ describe("Stellar RPC Helper Functions", () => {
 
       it("should throw error for NaN", () => {
         expect(() => convertToTokenAmount("NaN")).toThrow("Invalid amount: NaN");
-      });
-
-      it("should throw error for invalid decimals", () => {
-        expect(() => convertToTokenAmount("1.5", -1)).toThrow(
-          "Decimals must be between 0 and 20, got -1",
-        );
-        expect(() => convertToTokenAmount("1.5", 21)).toThrow(
-          "Decimals must be between 0 and 20, got 21",
-        );
       });
     });
   });

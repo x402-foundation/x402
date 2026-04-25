@@ -30,9 +30,17 @@ export type { PaymentRequirementsV1, PaymentRequiredV1, PaymentPayloadV1 } from 
 export type {
   FacilitatorExtension,
   ResourceServerExtension,
+  ResourceServerExtensionHooks,
   PaymentRequiredContext,
   SettleResultContext,
+  VerifyContext,
+  VerifyResultContext,
+  VerifyFailureContext,
+  SettleContext,
+  SettleFailureContext,
 } from "./extensions";
+
+export type { DeepReadonly } from "./readonly";
 
 export type Network = `${string}:${string}`;
 

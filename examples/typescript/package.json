@@ -16,6 +16,7 @@
   "license": "ISC",
   "packageManager": "pnpm@10.7.0",
   "devDependencies": {
+    "prettier-linter-helpers": "^1.0.1",
     "tsup": "^8.4.0",
     "turbo": "^2.5.0",
     "typescript": "^5.8.3"

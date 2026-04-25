@@ -1,5 +1,21 @@
 # @x402/paywall Changelog
 
+## 2.10.0
+
+### Minor Changes
+
+- a25800e: Add Algorand (AVM) chain support with exact payment scheme and paywall UI
+
+- 9424291: chore: bump viem lockfile to 2.47.12
+
+  Updates the resolved viem version across all direct dependencies, adding chain definitions for Mezo Testnet, MegaETH, Stable, and Stable Testnet that were missing from previously locked versions.
+
+- 37b8347: fix(paywall): read token name from payment requirements instead of hardcoding "USDC"
+
+  The EVM paywall now reads the token name from `extra.name` in payment requirements and uses it for all display text. Falls back to "Token" (generic) when `extra.name` is absent. This fixes mislabeled token names for non-USDC chains (MegaUSD, USDT0, Mezo USD, etc.).
+
+  - @x402/core@2.10.0
+
 ## 2.9.0
 
 ### Minor Changes

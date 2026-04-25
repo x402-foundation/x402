@@ -104,6 +104,8 @@ Supports ERC-3009 compatible tokens:
 - EURC
 - Any token implementing `transferWithAuthorization()`
 
+For the current list of chains with default assets configured, see [Default Assets for Dollar-String Pricing](../../../../docs/core-concepts/network-and-token-support.mdx#default-assets-for-dollar-string-pricing) in the x402 docs. To add default asset support for a new chain, see [Adding Support for New Networks](../../../../docs/core-concepts/network-and-token-support.mdx#adding-support-for-new-networks).
+
 ## Technical Details
 
 ### EIP-3009 TransferWithAuthorization

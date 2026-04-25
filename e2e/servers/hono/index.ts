@@ -6,7 +6,9 @@ import { ExactEvmScheme } from "@x402/evm/exact/server";
 import { UptoEvmScheme } from "@x402/evm/upto/server";
 import { ExactSvmScheme } from "@x402/svm/exact/server";
 import { ExactAptosScheme } from "@x402/aptos/exact/server";
+import { ExactHederaScheme } from "@x402/hedera/exact/server";
 import { ExactStellarScheme } from "@x402/stellar/exact/server";
+import { ExactAvmScheme } from "@x402/avm/exact/server";
 import { bazaarResourceServerExtension, declareDiscoveryExtension } from "@x402/extensions/bazaar";
 import {
   declareEip2612GasSponsoringExtension,
@@ -28,11 +30,17 @@ const EVM_NETWORK = (process.env.EVM_NETWORK || "eip155:84532") as `${string}:${
 const SVM_NETWORK = (process.env.SVM_NETWORK ||
   "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1") as `${string}:${string}`;
 const APTOS_NETWORK = (process.env.APTOS_NETWORK || "aptos:2") as `${string}:${string}`;
+const HEDERA_NETWORK = (process.env.HEDERA_NETWORK || "hedera:testnet") as `${string}:${string}`;
+const AVM_NETWORK = (process.env.AVM_NETWORK || "algorand:SGO1GKSzyE7IEPItTxCByw9x8FmnrCDexi9/cOUJOiI=") as `${string}:${string}`;
 const STELLAR_NETWORK = (process.env.STELLAR_NETWORK || "stellar:testnet") as `${string}:${string}`;
 const EVM_PAYEE_ADDRESS = process.env.EVM_PAYEE_ADDRESS as `0x${string}`;
 const SVM_PAYEE_ADDRESS = process.env.SVM_PAYEE_ADDRESS as string;
 const APTOS_PAYEE_ADDRESS = process.env.APTOS_PAYEE_ADDRESS as string;
+const HEDERA_PAYEE_ADDRESS = process.env.HEDERA_PAYEE_ADDRESS as string | undefined;
+const AVM_PAYEE_ADDRESS = process.env.AVM_PAYEE_ADDRESS as string;
 const STELLAR_PAYEE_ADDRESS = process.env.STELLAR_PAYEE_ADDRESS as string | undefined;
+const HEDERA_ASSET = process.env.HEDERA_ASSET ?? "0.0.0"; // 0.0.0 = HBAR or 0.0.429274 for USDC testnet
+const HEDERA_AMOUNT = process.env.HEDERA_AMOUNT ?? "100000"; // price in smallest units (tinybars or token decimals), defaults to 0.001 HBAR or 0.1 USDC
 const EVM_PERMIT2_ASSET = process.env.EVM_PERMIT2_ASSET as `0x${string}`;
 const facilitatorUrl = process.env.FACILITATOR_URL;
 
@@ -65,11 +73,17 @@ if (mockFacilitatorUrl) {
 const x402Server = new x402ResourceServer(facilitatorClients);
 
 // Register server schemes
+if (AVM_PAYEE_ADDRESS) {
+  x402Server.register("algorand:*", new ExactAvmScheme());
+}
 x402Server.register("eip155:*", new ExactEvmScheme());
 x402Server.register("eip155:*", new UptoEvmScheme());
 x402Server.register("solana:*", new ExactSvmScheme());
 if (APTOS_PAYEE_ADDRESS) {
   x402Server.register("aptos:*", new ExactAptosScheme());
+}
+if (HEDERA_PAYEE_ADDRESS) {
+  x402Server.register("hedera:*", new ExactHederaScheme());
 }
 if (STELLAR_PAYEE_ADDRESS) {
   x402Server.register("stellar:*", new ExactStellarScheme());
@@ -84,6 +98,23 @@ console.log(
 console.log(`Using remote facilitator at: ${facilitatorUrl}`);
 
 /**
+ * Pre-middleware guard for optional AVM endpoint
+ * Returns 501 Not Implemented if AVM is not configured
+ */
+app.use("/exact/avm", async (c, next) => {
+  if (!AVM_PAYEE_ADDRESS) {
+    return c.json(
+      {
+        error: "AVM payments not configured",
+        message: "AVM_PAYEE_ADDRESS environment variable is not set",
+      },
+      501,
+    );
+  }
+  await next();
+});
+
+/**
  * Pre-middleware guard for optional Aptos endpoint
  * Returns 501 Not Implemented if Aptos is not configured
  */
@@ -93,6 +124,23 @@ app.use("/exact/aptos", async (c, next) => {
       {
         error: "Aptos payments not configured",
         message: "APTOS_PAYEE_ADDRESS environment variable is not set",
+      },
+      501,
+    );
+  }
+  await next();
+});
+
+/**
+ * Pre-middleware guard for optional Hedera endpoint
+ * Returns 501 Not Implemented if Hedera is not configured
+ */
+app.use("/exact/hedera", async (c, next) => {
+  if (!HEDERA_PAYEE_ADDRESS) {
+    return c.json(
+      {
+        error: "Hedera payments not configured",
+        message: "HEDERA_PAYEE_ADDRESS environment variable is not set",
       },
       501,
     );
@@ -125,6 +173,35 @@ app.use(
   paymentMiddleware(
     {
       // Route-specific payment configuration
+      ...(AVM_PAYEE_ADDRESS
+        ? {
+          "GET /exact/avm": {
+            accepts: {
+              payTo: AVM_PAYEE_ADDRESS,
+              scheme: "exact",
+              price: "$0.001",
+              network: AVM_NETWORK,
+            },
+            extensions: {
+              ...declareDiscoveryExtension({
+                output: {
+                  example: {
+                    message: "Protected endpoint accessed successfully",
+                    timestamp: "2024-01-01T00:00:00Z",
+                  },
+                  schema: {
+                    properties: {
+                      message: { type: "string" },
+                      timestamp: { type: "string" },
+                    },
+                    required: ["message", "timestamp"],
+                  },
+                },
+              }),
+            },
+          },
+        }
+        : {}),
       "GET /exact/evm/eip3009": {
         accepts: {
           payTo: EVM_PAYEE_ADDRESS,
@@ -189,6 +266,38 @@ app.use(
                 output: {
                   example: {
                     message: "Protected endpoint accessed successfully",
+                    timestamp: "2024-01-01T00:00:00Z",
+                  },
+                  schema: {
+                    properties: {
+                      message: { type: "string" },
+                      timestamp: { type: "string" },
+                    },
+                    required: ["message", "timestamp"],
+                  },
+                },
+              }),
+            },
+          },
+        }
+        : {}),
+      ...(HEDERA_PAYEE_ADDRESS
+        ? {
+          "GET /exact/hedera": {
+            accepts: {
+              payTo: HEDERA_PAYEE_ADDRESS,
+              scheme: "exact",
+              price: {
+                amount: HEDERA_AMOUNT,
+                asset: HEDERA_ASSET,
+              },
+              network: HEDERA_NETWORK,
+            },
+            extensions: {
+              ...declareDiscoveryExtension({
+                output: {
+                  example: {
+                    message: "Protected Hedera endpoint accessed successfully",
                     timestamp: "2024-01-01T00:00:00Z",
                   },
                   schema: {
@@ -405,6 +514,20 @@ app.get("/exact/svm", c => {
 });
 
 /**
+ * Protected AVM endpoint - requires payment to access
+ *
+ * This endpoint demonstrates a resource protected by x402 payment middleware for AVM.
+ * Clients must provide a valid payment signature to access this endpoint.
+ * Note: 501 check is handled by pre-middleware guard above.
+ */
+app.get("/exact/avm", c => {
+  return c.json({
+    message: "Protected endpoint accessed successfully",
+    timestamp: new Date().toISOString(),
+  });
+});
+
+/**
  * Protected Aptos endpoint - requires payment to access
  *
  * This endpoint demonstrates a resource protected by x402 payment middleware for Aptos.
@@ -414,6 +537,19 @@ app.get("/exact/svm", c => {
 app.get("/exact/aptos", c => {
   return c.json({
     message: "Protected endpoint accessed successfully",
+    timestamp: new Date().toISOString(),
+  });
+});
+
+/**
+ * Protected Hedera endpoint - requires payment to access
+ *
+ * This endpoint demonstrates a resource protected by x402 payment middleware for Hedera.
+ * Note: 501 check is handled by pre-middleware guard above.
+ */
+app.get("/exact/hedera", c => {
+  return c.json({
+    message: "Protected Hedera endpoint accessed successfully",
     timestamp: new Date().toISOString(),
   });
 });
@@ -547,22 +683,28 @@ console.log(`
 ║           x402 Hono E2E Test Server                    ║
 ╠════════════════════════════════════════════════════════╣
 ║  Server:         http://localhost:${PORT}              ║
+║  AVM Network:    ${AVM_NETWORK}                         ║
 ║  EVM Network:    ${EVM_NETWORK}                         ║
 ║  SVM Network:    ${SVM_NETWORK}                         ║
 ║  Aptos Network:  ${APTOS_NETWORK}                       ║
+║  Hedera Network: ${HEDERA_NETWORK}                      ║
 ║  Stellar Network: ${STELLAR_NETWORK}                    ║
+║  AVM Payee:      ${AVM_PAYEE_ADDRESS || "(not configured)"}
 ║  EVM Payee:      ${EVM_PAYEE_ADDRESS}                   ║
 ║  SVM Payee:      ${SVM_PAYEE_ADDRESS}                   ║
 ║  Aptos Payee:    ${APTOS_PAYEE_ADDRESS || "(not configured)"}
+║  Hedera Payee:   ${HEDERA_PAYEE_ADDRESS || "(not configured)"}
 ║  Stellar Payee:  ${STELLAR_PAYEE_ADDRESS || "(not configured)"}
 ║                                                        ║
 ║  Endpoints:                                            ║
+║  • GET  /exact/avm                            (AVM)           ║
 ║  • GET  /exact/evm/eip3009                    (EVM EIP-3009)  ║
 ║  • GET  /exact/evm/permit2                    (Permit2)       ║
 ║  • GET  /exact/evm/permit2-eip2612GasSponsoring               ║
 ║  • GET  /exact/evm/permit2-erc20ApprovalGasSponsoring         ║
 ║  • GET  /exact/svm                            (SVM)           ║
 ║  • GET  /exact/aptos                          (Aptos)         ║
+║  • GET  /exact/hedera                         (Hedera)        ║
 ║  • GET  /exact/stellar                        (Stellar)       ║
 ║  • GET  /health                  (no payment required)     ║
 ║  • POST /close                   (shutdown server)         ║
