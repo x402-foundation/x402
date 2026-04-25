@@ -1,0 +1,7 @@
+{
+  "name": "Node4All",
+  "description": "Node4All is an agent-first platform shipping x402-ready services, alongside the documentation, testing tools, and code examples needed to build payment-ready agents. Live services include Markdown to PDF and PDF to Markdown, and our @node4all/x402-agent-toolkit MCP server lets agents pay and consume them natively.",
+  "logoUrl": "/logos/node4all.svg",
+  "websiteUrl": "https://node4all.com",
+  "category": "Services/Endpoints"
+}
