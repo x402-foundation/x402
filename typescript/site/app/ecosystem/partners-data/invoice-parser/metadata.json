@@ -1,0 +1,7 @@
+{
+  "name": "Invoice Parser",
+  "description": "AI-powered invoice data extraction API. Parses text, images, and PDFs into structured JSON. Supports Russian formats (УПД, Счёт-фактура, ТОРГ-12) and international invoices. Includes validation, confidence scores, and batch processing up to 10 invoices per call.",
+  "logoUrl": "/logos/invoice-parser.png",
+  "websiteUrl": "https://invoice-parser-572078894996.us-central1.run.app",
+  "category": "Services/Endpoints"
+}

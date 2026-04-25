@@ -1,0 +1,7 @@
+{
+  "name": "Contract Risk Checker",
+  "description": "AI legal analysis API for autonomous agents. Detects killer clauses, calculates risk score (0–100), generates negotiation scripts and exact fix language. Supports PDF, DOCX, and TXT up to 600 pages.",
+  "logoUrl": "/logos/contract-risk-checker.png",
+  "websiteUrl": "https://contract-checker-572078894996.us-central1.run.app",
+  "category": "Services/Endpoints"
+}
