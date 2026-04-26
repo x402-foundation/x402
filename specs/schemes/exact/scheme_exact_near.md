@@ -218,6 +218,19 @@ Facilitators and/or resource servers SHOULD maintain a short-term, in-memory cac
 
 This mitigation requires no persistent storage or long-lived facilitator state. It is only a short-term in-process cache for the settlement race window.
 
+### Implementing Verification with NEAR RPC
+
+The checks in §5, §8, and §9 use only standard methods on the [NEAR JSON-RPC API](https://docs.near.org/api/rpc/introduction). No custom endpoints are required. Each verification item below maps to the RPC method that produces the answer:
+
+- **Current block height** (for the nonce upper bound and `max_block_height` comparison): [`block`](https://docs.near.org/api/rpc/block-chunk) with `{"finality": "final"}`; read `header.height`. Optimistic finality MUST NOT be used here — it would re-open the replay window.
+- **Account existence and contract-code presence** (sender account, token contract): [`query`](https://docs.near.org/api/rpc/contracts) with `request_type: "view_account"`. A non-existent account returns `UNKNOWN_ACCOUNT`; an account with no deployed contract has `code_hash = "11111111111111111111111111111111"`.
+- **Access-key existence, nonce, and permission**: [`query`](https://docs.near.org/api/rpc/access-keys) with `request_type: "view_access_key"`, supplying `account_id` and `public_key`. Returns `nonce` and `permission` (`FullAccess`, `FunctionCall { allowance, receiver_id, method_names }`, etc.); a non-existent key returns `UNKNOWN_ACCESS_KEY`. Replay protection uses the returned `nonce` directly — no facilitator state required.
+- **`ft_balance_of(sender_id)` and `storage_balance_of(payTo)` on the token contract**: [`query`](https://docs.near.org/api/rpc/contracts) with `request_type: "call_function"`, `method_name` set accordingly, and `args_base64` set to the base64 of `{"account_id": <id>}`. `ft_balance_of` returns a JSON string in atomic units — parse and compare as `u128`, not lexicographically. `storage_balance_of` returns `null` when the recipient is not registered for NEP-145 storage; a non-null `{"total":"...","available":"..."}` object is sufficient.
+- **Settlement — waiting for the inner `ft_transfer` receipt to finish executing**: [`tx`](https://docs.near.org/api/rpc/transactions) or `EXPERIMENTAL_tx_status` with `wait_until: "FINAL"`. Inspect `receipts_outcome` after the response and return `success: true` only when the inner `ft_transfer` receipt's status is `SuccessValue`.
+- **Finality consistency**: all preflight queries MUST pin the same finality level (typically `final`) to avoid TOCTOU windows where one query reads optimistic state and another reads final. Where supported, fix `block_id` across queries so every check reads against the same block.
+
+These methods together cover everything §5 / §8 / §9 require and are sufficient to implement verification on a stock public NEAR RPC node — no archival access, no custom indexer, no relayer-side state.
+
 ## Settlement
 
 NEAR runs contract calls asynchronously through cross-contract receipts: the outer relayer transaction can be accepted, and may even succeed on its own, before the inner `ft_transfer` receipt has actually executed. Settlement therefore waits for the inner receipt to finish before reporting `success: true`.
