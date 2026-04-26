@@ -181,24 +181,60 @@ A facilitator verifying a NEAR `exact` payment MUST reject any payload that fail
 - Parsed `ft_transfer.args.amount` MUST equal `PaymentRequirements.amount` exactly.
 - Attached deposit MUST be exactly `1` yoctoNEAR.
 - Sponsored gas MUST be within facilitator policy bounds.
+- The `1` yoctoNEAR attached deposit is part of the delegated function call and is sponsored by the facilitator relayer under NEP-366. The NEP-141 token amount is debited from `delegate_action.sender_id` by the token contract.
 
 ### 8. Access-Key Permission Safety
 
-- Facilitator MUST ensure the delegate public key has permission compatible with the intended call.
-- At minimum, permission checks MUST prevent the delegate key from being used to authorize actions outside the intended token transfer context.
+- Facilitator MUST query `view_access_key` for `(delegate_action.sender_id, delegate_action.public_key)` before returning a valid verification result.
+- `FullAccess` keys are compatible only after all structural, exact-transfer, nonce, expiry, and chain-state preflight checks in this section pass.
+- Standard NEAR `FunctionCall` access keys MUST be rejected for this `ft_transfer` flow because NEAR function-call keys cannot attach a positive NEAR deposit, while NEP-141 `ft_transfer` requires exactly `1` yoctoNEAR.
+- Implementations MUST reject unknown or unsupported access-key permission variants unless they can apply nearcore-equivalent validation for the exact delegated action.
+
+### 9. Chain-State Preflight
+
+Public NEAR RPC does not provide a full transaction simulation API for the asynchronous delegate-action execution path. Facilitators therefore MUST perform targeted chain-state checks before returning a valid verification result:
+
+- Sender account (`delegate_action.sender_id`) MUST exist.
+- Delegate public key MUST exist for the sender account and pass the nonce and permission checks above.
+- Token contract account (`PaymentRequirements.asset`) MUST exist and have contract code deployed.
+- `ft_balance_of({"account_id": delegate_action.sender_id})` on the token contract MUST return a decimal-string balance greater than or equal to `PaymentRequirements.amount`.
+- If the token contract supports NEP-145 storage management, `storage_balance_of({"account_id": PaymentRequirements.payTo})` MUST return a non-null value.
+- If any required preflight query fails, returns an unparsable value, or cannot be safely determined, verification MUST fail closed.
+
+These checks reduce relayer gas sponsorship risk, but they cannot guarantee success if on-chain state changes between verification and settlement.
+
+### 10. Duplicate Settlement Mitigation (RECOMMENDED)
+
+A race condition can occur if the same verified payment payload is submitted to `settle` more than once before the first settlement has finished executing on chain. NEAR's access-key nonce prevents the delegated action from executing more than once, but duplicate `settle` calls could otherwise produce more than one successful-looking response to resource servers.
+
+This section adapts the [SVM duplicate-settlement mitigation](./scheme_exact_svm.md#duplicate-settlement-mitigation-recommended) — same in-memory-cache pattern, with NEAR-specific eviction tied to `delegate_action.max_block_height` and on-chain receipt completion rather than SVM's blockhash-lifetime window.
+
+Facilitators and/or resource servers SHOULD maintain a short-term, in-memory cache of delegate-action payloads currently being settled:
+
+1. Derive a cache key from the exact `signedDelegateAction` bytes, for example a cryptographic hash of the base64-decoded payload.
+2. If the key is already present, reject settlement with `duplicate_settlement`.
+3. If the key is not present, insert it before submitting the outer relayer transaction.
+4. Evict the key after `delegate_action.max_block_height` has passed, or after the facilitator observes that the inner receipt has finished executing on chain.
+
+This mitigation requires no persistent storage or long-lived facilitator state. It is only a short-term in-process cache for the settlement race window.
 
 ## Settlement
 
+NEAR runs contract calls asynchronously through cross-contract receipts: the outer relayer transaction can be accepted, and may even succeed on its own, before the inner `ft_transfer` receipt has actually executed. Settlement therefore waits for the inner receipt to finish before reporting `success: true`.
+
 After successful verification, settlement proceeds as follows:
 
-1. Select relayer from `PaymentRequirements.extra.relayerId`.
+1. Select relayer from facilitator-managed configuration for the requested NEAR network.
 2. Decode `signedDelegateAction`.
 3. Build an outer relayer transaction containing `Action::Delegate`.
 4. Sign outer transaction with relayer key.
 5. Submit to the NEAR RPC endpoint for the selected network.
-6. Return the resulting transaction id if accepted.
+6. Wait until the outer transaction and all of its spawned receipts have finished executing on chain — that is, until the transaction's final status (success or failure) is known.
+7. Return `success: true` only if the delegated `ft_transfer` receipt itself succeeded; otherwise return `success: false`.
 
-If submission fails, facilitator returns `success: false` with an implementation-specific `errorReason` and empty `transaction`.
+If submission or delegated execution fails, facilitator returns `success: false` with an implementation-specific `errorReason` and empty `transaction`.
+
+An RPC acknowledgement, mempool acceptance, or outer transaction inclusion is not sufficient for `success: true` — and even outer-transaction success is not sufficient if the inner `ft_transfer` receipt is still pending or has failed. The protected resource MUST only be released after the inner `ft_transfer` receipt has succeeded on chain.
 
 On `success: false`, `payer` MUST be omitted unless it has been independently verified by the facilitator. `payer` MUST NOT be included based only on untrusted client-claimed payload fields.
 
