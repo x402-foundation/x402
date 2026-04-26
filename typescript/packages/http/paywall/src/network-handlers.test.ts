@@ -68,11 +68,32 @@ describe("Network Handlers", () => {
 
     it("scales the displayed amount for 18-decimal tokens (e.g. MegaUSD on MegaETH)", () => {
       const html = evmPaywall.generateHtml(
-        { ...evmRequirement, network: "eip155:4326", amount: "100000000000000000" },
+        {
+          ...evmRequirement,
+          network: "eip155:4326",
+          asset: "0xFAfDdbb3FC7688494971a79cc65DCa3EF82079E7", // MegaUSD (18 decimals)
+          amount: "100000000000000000",
+        },
         mockPaymentRequired,
         { appName: "Test", testnet: false },
       );
       // 10^17 / 10^18 = 0.1; previously hardcoded /1e6 produced 100000000000.
+      expect(html).toContain("amount: 0.1,");
+    });
+
+    it("falls back to 6 decimals when the asset is not the network's default token", () => {
+      // Some custom 6-decimal token on MegaETH whose default is MegaUSD (18 decimals).
+      const html = evmPaywall.generateHtml(
+        {
+          ...evmRequirement,
+          network: "eip155:4326",
+          asset: "0xDeadBeefDeadBeefDeadBeefDeadBeefDeadBeef",
+          amount: "100000",
+        },
+        mockPaymentRequired,
+        { appName: "Test", testnet: false },
+      );
+      // Without asset-default match the divisor falls back to 1e6, so 100000 → 0.1.
       expect(html).toContain("amount: 0.1,");
     });
 

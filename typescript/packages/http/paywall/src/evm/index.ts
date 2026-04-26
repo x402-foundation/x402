@@ -9,18 +9,30 @@ import type {
 import { getEvmPaywallHtml } from "./paywall";
 
 /**
- * Resolves the decimal precision for the payment token of a given EVM network.
- * Falls back to 6 (USDC standard) when the network has no default asset registered.
+ * Resolves the decimal precision for a payment requirement's token.
  *
- * @param network - CAIP-2 EVM network identifier (e.g. "eip155:8453")
- * @returns Decimal precision for the network's default payment asset
+ * Server-side we cannot read `decimals()` from the token contract, so we trust the
+ * x402 default-asset registry only when the requirement's `asset` matches the
+ * registered default token address for the network. For any other asset we fall
+ * back to 6 (USDC standard) — the on-chain `decimals()` read on the client side
+ * still produces the correct precision for balance display.
+ *
+ * @param requirement - The payment requirement whose amount needs scaling
+ * @returns Decimal precision to use when formatting the displayed amount
  */
-function getNetworkDecimals(network: string): number {
+function getRequirementDecimals(requirement: PaymentRequirements): number {
   try {
-    return getDefaultAsset(network as Network).decimals;
+    const defaultAsset = getDefaultAsset(requirement.network as Network);
+    if (
+      requirement.asset &&
+      requirement.asset.toLowerCase() === defaultAsset.address.toLowerCase()
+    ) {
+      return defaultAsset.decimals;
+    }
   } catch {
-    return 6;
+    // No default asset registered for this network; fall through to fallback.
   }
+  return 6;
 }
 
 /**
@@ -50,7 +62,7 @@ export const evmPaywall: PaywallNetworkHandler = {
     paymentRequired: PaymentRequired,
     config: PaywallConfig,
   ): string {
-    const decimals = getNetworkDecimals(requirement.network);
+    const decimals = getRequirementDecimals(requirement);
     const divisor = 10 ** decimals;
     const amount = requirement.amount
       ? parseFloat(requirement.amount) / divisor
