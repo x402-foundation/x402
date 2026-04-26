@@ -29,6 +29,7 @@ const EVM_CHAIN_METADATA: Record<number, { name: string; testnet: boolean }> = {
   4689: { name: "IoTeX", testnet: false },
   8453: { name: "Base", testnet: false },
   41923: { name: "EDU Chain", testnet: false },
+  42161: { name: "Arbitrum One", testnet: false },
   43114: { name: "Avalanche", testnet: false },
   // Testnets
   143: { name: "Monad", testnet: true },
@@ -36,9 +37,11 @@ const EVM_CHAIN_METADATA: Record<number, { name: string; testnet: boolean }> = {
   2201: { name: "Stable Testnet", testnet: true },
   11124: { name: "Abstract Testnet", testnet: true },
   11155111: { name: "Sepolia", testnet: true },
+  31611: { name: "Mezo Testnet", testnet: true },
   43113: { name: "Avalanche Fuji", testnet: true },
   80002: { name: "Polygon Amoy", testnet: true },
   84532: { name: "Base Sepolia", testnet: true },
+  421614: { name: "Arbitrum Sepolia", testnet: true },
   324705682: { name: "SKALE Base Sepolia", testnet: true },
 };
 

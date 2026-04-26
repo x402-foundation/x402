@@ -100,6 +100,9 @@ describe("paywallUtils", () => {
       expect(getNetworkDisplayName("eip155:11155111")).toBe("Sepolia");
       expect(getNetworkDisplayName("eip155:2741")).toBe("Abstract");
       expect(getNetworkDisplayName("eip155:1329")).toBe("Sei");
+      expect(getNetworkDisplayName("eip155:42161")).toBe("Arbitrum One");
+      expect(getNetworkDisplayName("eip155:421614")).toBe("Arbitrum Sepolia");
+      expect(getNetworkDisplayName("eip155:31611")).toBe("Mezo Testnet");
     });
 
     it("returns display names for CAIP-2 Solana networks", () => {
@@ -155,6 +158,8 @@ describe("paywallUtils", () => {
       expect(isTestnetNetwork("eip155:11155111")).toBe(true);
       expect(isTestnetNetwork("eip155:43113")).toBe(true);
       expect(isTestnetNetwork("eip155:11124")).toBe(true);
+      expect(isTestnetNetwork("eip155:421614")).toBe(true);
+      expect(isTestnetNetwork("eip155:31611")).toBe(true);
     });
 
     it("identifies Solana testnets", () => {
@@ -166,6 +171,7 @@ describe("paywallUtils", () => {
       expect(isTestnetNetwork("eip155:1")).toBe(false);
       expect(isTestnetNetwork("eip155:137")).toBe(false);
       expect(isTestnetNetwork("eip155:43114")).toBe(false);
+      expect(isTestnetNetwork("eip155:42161")).toBe(false);
       expect(isTestnetNetwork("solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp")).toBe(false);
     });
 
