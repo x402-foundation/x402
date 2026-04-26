@@ -181,7 +181,7 @@ A facilitator verifying a NEAR `exact` payment MUST reject any payload that fail
 - Parsed `ft_transfer.args.amount` MUST equal `PaymentRequirements.amount` exactly.
 - Attached deposit MUST be exactly `1` yoctoNEAR.
 - Sponsored gas MUST be within facilitator policy bounds.
-- The `1` yoctoNEAR attached deposit is part of the delegated function call and is sponsored by the facilitator relayer under NEP-366. The NEP-141 token amount is debited from `delegate_action.sender_id` by the token contract.
+- The `1` yoctoNEAR attached deposit is the NEP-141 security marker that forces `ft_transfer` to be authorized by a full-access key: `FunctionCall` access keys cannot attach a positive NEAR deposit, so the requirement rules them out (see Access-Key Permission Safety below). In a meta-transaction the deposit itself is paid by the facilitator relayer, not by the client — NEAR's runtime takes any attached balance on inner actions from the relayer's account ([NEAR docs](https://docs.near.org/protocol/transactions/meta-tx#balance-refunds-in-meta-transactions); the docs example uses a native `Transfer` action, but the same rule applies to a `FunctionCall` with a non-zero `deposit`, which is what `ft_transfer` is). The NEP-141 token amount itself is debited from `delegate_action.sender_id` by the token contract.
 
 ### 8. Access-Key Permission Safety
 
