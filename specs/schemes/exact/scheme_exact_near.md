@@ -4,7 +4,7 @@
 
 The `exact` scheme on NEAR lets a client pay an exact amount of a NEP-141 token while a facilitator-sponsored relayer submits the on-chain transaction.
 
-The client signs a NEP-366 `SignedDelegateAction` that authorizes one exact `ft_transfer` call. The facilitator verifies that payload against `PaymentRequirements`, then submits it through a configured relayer account.
+The client signs a NEP-366 `SignedDelegateAction` that authorizes one exact `ft_transfer` call. The facilitator verifies that payload against `PaymentRequirements`, then submits it through a relayer account selected from facilitator configuration.
 
 NEAR account keys and signatures may use either `ed25519` or `secp256k1`; implementers should account for both when validating signed delegate actions.
 
@@ -117,10 +117,7 @@ Full `PaymentPayload` example:
     "amount": "1000000",
     "asset": "usdc.testnet",
     "payTo": "merchant.testnet",
-    "maxTimeoutSeconds": 60,
-    "extra": {
-      "relayerId": "x402-relayer.testnet"
-    }
+    "maxTimeoutSeconds": 60
   },
   "payload": {
     "signedDelegateAction": "AQAAA...<base64>..."
@@ -143,17 +140,18 @@ A facilitator verifying a NEAR `exact` payment MUST reject any payload that fail
 
 - `asset`, `payTo`, and `amount` in `payload.accepted` MUST exactly match `PaymentRequirements`.
 - `maxTimeoutSeconds` MUST be an integer greater than `0`.
-- `extra.relayerId` MUST exist and be a string.
+- `extra`, when present, MUST NOT alter the required transfer target, amount, nonce, expiry, or settlement semantics.
 
 ### 3. Relayer Sponsorship Abuse Prevention
 
-- `extra.relayerId` MUST be managed by the facilitator.
+- Facilitator MUST select the relayer account from trusted local configuration, not from client-supplied payment payload fields.
 - Relayer account MUST NOT equal the payer (`delegate_action.sender_id`).
-- Facilitator MUST apply policy controls to relayer usage (for example per-relayer allowlists, budget, and rate limits).
+- Facilitator MUST apply policy controls to relayer usage (for example relayer allowlists, budgets, gas limits, and rate limits).
+- Facilitator MUST NOT sponsor payloads that would require relayer funds beyond the `Action::Delegate` gas and the exact attached deposits permitted by this spec.
 
 ### 4. SignedDelegateAction Integrity
 
-- `payload.signedDelegateAction` MUST decode as a valid Borsh `SignedDelegateAction`.
+- `PaymentPayload.payload.signedDelegateAction` MUST decode as a valid [Borsh](https://borsh.io) `SignedDelegateAction`.
 - Signature type and key type MUST be valid NEAR-supported types (`ed25519` or `secp256k1`).
 - Signature verification MUST use the matching curve for the declared key type.
 - Signature MUST verify against the exact encoded `delegate_action` bytes and the included public key.
@@ -164,8 +162,11 @@ A facilitator verifying a NEAR `exact` payment MUST reject any payload that fail
 - `remainingBlocks = delegate_action.max_block_height - current_block_height`.
 - Facilitator MUST reject if `remainingBlocks <= 0` (for example `delegate_action_expired`).
 - Facilitator MUST reject if `remainingBlocks > timeoutBlocks` (for example `delegate_action_timeout_window_exceeds_maxTimeout`).
-- Facilitator MUST perform nonce replay protection for `(sender_id, public_key, nonce)`.
-- If nonce state cannot be safely determined, verification MUST fail closed.
+- Facilitator MUST query current on-chain access-key state for `(delegate_action.sender_id, delegate_action.public_key)` and reject if the key does not exist.
+- Facilitator MUST reject if `delegate_action.nonce <= access_key.nonce` (for example `delegate_action_nonce_already_used`).
+- Facilitator MUST reject if `delegate_action.nonce >= current_block_height * 1_000_000`, matching NEAR's delegate-action nonce upper bound.
+- These nonce checks use NEAR's on-chain access-key nonce and do not require persistent facilitator nonce storage.
+- If current block height or access-key nonce state cannot be safely determined, verification MUST fail closed.
 
 ### 6. Delegated Action Safety (No Extra Actions)
 
@@ -192,7 +193,7 @@ A facilitator verifying a NEAR `exact` payment MUST reject any payload that fail
 
 ### 9. Chain-State Preflight
 
-Public NEAR RPC does not provide a full transaction simulation API for the asynchronous delegate-action execution path. Facilitators therefore MUST perform targeted chain-state checks before returning a valid verification result:
+Public NEAR RPC does not expose a transaction-simulation API equivalent to EVM's `eth_call` or Solana's `simulateTransaction` for the delegate-action execution path. NEAR runs contract calls asynchronously through cross-contract receipts (see Settlement below), so a complete simulation would have to run the runtime forward across shard boundaries — something the public RPC does not do. Facilitators therefore MUST perform targeted chain-state checks against current on-chain state before returning a valid verification result. Each check below maps to a specific failure mode that would otherwise burn relayer gas without delivering payment:
 
 - Sender account (`delegate_action.sender_id`) MUST exist.
 - Delegate public key MUST exist for the sender account and pass the nonce and permission checks above.
@@ -205,18 +206,16 @@ These checks reduce relayer gas sponsorship risk, but they cannot guarantee succ
 
 ### 10. Duplicate Settlement Mitigation (RECOMMENDED)
 
-A race condition can occur if the same verified payment payload is submitted to `settle` more than once before the first settlement has finished executing on chain. NEAR's access-key nonce prevents the delegated action from executing more than once, but duplicate `settle` calls could otherwise produce more than one successful-looking response to resource servers.
+**Vulnerability.** A race condition exists in the settlement flow: if the same verified payment payload is submitted to the facilitator's `/settle` endpoint multiple times before the first submission has finished executing on chain, each call may return a successful-looking response. NEAR's on-chain access-key nonce ensures the delegated action executes at most once on chain — the second attempt is rejected by nearcore as `DelegateActionInvalidNonce` — but the facilitator may still observe each outer transaction reach a "successful" RPC state independently and could otherwise return `success: true` to each caller. A malicious client could exploit this to obtain access to multiple resources while only paying once. This is the same race condition the [SVM scheme documents](./scheme_exact_svm.md#duplicate-settlement-mitigation-recommended); only the chain-specific time window differs.
 
-This section adapts the [SVM duplicate-settlement mitigation](./scheme_exact_svm.md#duplicate-settlement-mitigation-recommended) — same in-memory-cache pattern, with NEAR-specific eviction tied to `delegate_action.max_block_height` and on-chain receipt completion rather than SVM's blockhash-lifetime window.
+**Recommended Mitigation.** Facilitators and/or resource servers SHOULD maintain a short-term, in-memory cache of delegate-action payloads currently being settled:
 
-Facilitators and/or resource servers SHOULD maintain a short-term, in-memory cache of delegate-action payloads currently being settled:
-
-1. Derive a cache key from the exact `signedDelegateAction` bytes, for example a cryptographic hash of the base64-decoded payload.
+1. After verification succeeds, derive a cache key from the exact `signedDelegateAction` bytes — for example a cryptographic hash of the base64-decoded payload.
 2. If the key is already present, reject settlement with `duplicate_settlement`.
 3. If the key is not present, insert it before submitting the outer relayer transaction.
-4. Evict the key after `delegate_action.max_block_height` has passed, or after the facilitator observes that the inner receipt has finished executing on chain.
+4. Evict the key after `delegate_action.max_block_height` has passed (the delegate action can no longer land), or after the facilitator observes the inner `ft_transfer` receipt has finished executing on chain (the outcome is now authoritatively known).
 
-This mitigation requires no persistent storage or long-lived facilitator state. It is only a short-term in-process cache for the settlement race window.
+This is a NEAR-flavored adaptation of the SVM mitigation — same in-memory-cache pattern, with eviction tied to NEAR's `max_block_height` instead of Solana's blockhash lifetime. It requires no external storage or long-lived state, only an in-process map with the eviction triggers above. It preserves the facilitator's otherwise-stateless design while closing the duplicate-settlement attack vector.
 
 ### Implementing Verification with NEAR RPC
 
@@ -269,7 +268,7 @@ Failure:
 ```json
 {
   "success": false,
-  "errorReason": "delegate_action_nonce_reused",
+  "errorReason": "duplicate_settlement",
   "transaction": "",
   "network": "near:testnet"
 }
