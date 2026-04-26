@@ -1,0 +1,7 @@
+{
+  "name": "Satoshi API",
+  "category": "Services/Endpoints",
+  "logoUrl": "/logos/satoshi-api.svg",
+  "description": "Bitcoin fee intelligence for AI agents and apps. Satoshi API exposes x402-paid endpoints for fee landscape, AI fee advice, next-block pressure, transaction context, and fee-estimator accuracy over Base USDC.",
+  "websiteUrl": "https://bitcoinsapi.com/x402"
+}
