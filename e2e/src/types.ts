@@ -1,6 +1,6 @@
 import type { NetworkSet } from './networks/networks';
 
-export type ProtocolFamily = 'evm' | 'svm' | 'aptos' | 'stellar';
+export type ProtocolFamily = 'evm' | 'svm' | 'avm' | 'aptos' | 'hedera' | 'stellar';
 export type Transport = 'http' | 'mcp';
 export type TransferMethod = 'eip3009' | 'permit2' | 'upto';
 
@@ -15,19 +15,28 @@ export interface ClientResult {
 export interface ClientConfig {
   evmPrivateKey: string;
   svmPrivateKey: string;
+  avmPrivateKey: string;
   aptosPrivateKey: string;
+  hederaAccountId: string;
+  hederaPrivateKey: string;
   stellarPrivateKey: string;
   serverUrl: string;
   endpointPath: string;
   evmNetwork: string;
   evmRpcUrl: string;
+  hederaNetwork: string;
+  hederaNodeUrl: string;
 }
 
 export interface ServerConfig {
   port: number;
   evmPayTo: string;
   svmPayTo: string;
+  avmPayTo: string;
   aptosPayTo: string;
+  hederaPayTo: string;
+  hederaAsset?: string;
+  hederaAmount?: string;
   stellarPayTo: string;
   networks: NetworkSet;
   facilitatorUrl?: string;
@@ -54,6 +63,10 @@ export interface TestEndpoint {
   protocolFamily?: ProtocolFamily;
   transferMethod?: TransferMethod;
   extensions?: string[];
+  /** For MCP tools: the tool name used in tools/call. Defaults to path if not specified. */
+  toolName?: string;
+  /** For MCP tools: expected MCP wire transport for discovery metadata. */
+  mcpTransport?: 'streamable-http' | 'sse';
   /** True for Permit2 standard/direct settle - requires pre-approval (approve before test, not revoke) */
   permit2Direct?: boolean;
   /** True for endpoints that require Permit2 revocation + fund/drain state setup before the first test (coldstart). */

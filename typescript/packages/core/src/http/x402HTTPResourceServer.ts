@@ -518,7 +518,7 @@ export class x402HTTPResourceServer {
           requirements,
           resourceInfo,
           "No matching payment requirements",
-          routeConfig.extensions,
+          extensions ?? {},
           transportContext,
         );
         return {
@@ -530,6 +530,8 @@ export class x402HTTPResourceServer {
       const verifyResult = await this.ResourceServer.verifyPayment(
         paymentPayload,
         matchingRequirements,
+        extensions ?? {},
+        transportContext,
       );
 
       if (!verifyResult.isValid) {
@@ -537,7 +539,7 @@ export class x402HTTPResourceServer {
           requirements,
           resourceInfo,
           verifyResult.invalidReason,
-          routeConfig.extensions,
+          extensions ?? {},
           transportContext,
         );
         return {
@@ -551,7 +553,7 @@ export class x402HTTPResourceServer {
         type: "payment-verified",
         paymentPayload,
         paymentRequirements: matchingRequirements,
-        declaredExtensions: routeConfig.extensions,
+        declaredExtensions: extensions ?? {},
       };
     } catch (error) {
       if (error instanceof FacilitatorResponseError) {
@@ -561,7 +563,7 @@ export class x402HTTPResourceServer {
         requirements,
         resourceInfo,
         error instanceof Error ? error.message : "Payment verification failed",
-        routeConfig.extensions,
+        extensions ?? {},
         transportContext,
       );
       return {

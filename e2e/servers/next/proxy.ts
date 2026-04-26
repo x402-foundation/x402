@@ -4,7 +4,9 @@ import { ExactEvmScheme } from "@x402/evm/exact/server";
 import { UptoEvmScheme } from "@x402/evm/upto/server";
 import { ExactSvmScheme } from "@x402/svm/exact/server";
 import { ExactAptosScheme } from "@x402/aptos/exact/server";
+import { ExactHederaScheme } from "@x402/hedera/exact/server";
 import { ExactStellarScheme } from "@x402/stellar/exact/server";
+import { ExactAvmScheme } from "@x402/avm/exact/server";
 import { bazaarResourceServerExtension, declareDiscoveryExtension } from "@x402/extensions/bazaar";
 import {
   declareEip2612GasSponsoringExtension,
@@ -13,12 +15,18 @@ import {
 
 export const EVM_PAYEE_ADDRESS = process.env.EVM_PAYEE_ADDRESS as `0x${string}`;
 export const SVM_PAYEE_ADDRESS = process.env.SVM_PAYEE_ADDRESS as string;
+export const AVM_PAYEE_ADDRESS = process.env.AVM_PAYEE_ADDRESS as string;
 export const APTOS_PAYEE_ADDRESS = process.env.APTOS_PAYEE_ADDRESS as string;
+export const HEDERA_PAYEE_ADDRESS = process.env.HEDERA_PAYEE_ADDRESS as string | undefined;
 export const STELLAR_PAYEE_ADDRESS = process.env.STELLAR_PAYEE_ADDRESS as string | undefined;
 export const EVM_NETWORK = (process.env.EVM_NETWORK || "eip155:84532") as `${string}:${string}`;
 export const SVM_NETWORK = (process.env.SVM_NETWORK ||
   "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1") as `${string}:${string}`;
+export const AVM_NETWORK = (process.env.AVM_NETWORK || "algorand:SGO1GKSzyE7IEPItTxCByw9x8FmnrCDexi9/cOUJOiI=") as `${string}:${string}`;
 export const APTOS_NETWORK = (process.env.APTOS_NETWORK || "aptos:2") as `${string}:${string}`;
+export const HEDERA_NETWORK = (process.env.HEDERA_NETWORK || "hedera:testnet") as `${string}:${string}`;
+export const HEDERA_ASSET = process.env.HEDERA_ASSET ?? "0.0.0"; // 0.0.0 = HBAR or 0.0.429274 for USDC testnet
+export const HEDERA_AMOUNT = process.env.HEDERA_AMOUNT ?? "100000"; // price in smallest units (tinybars or token decimals), defaults to 0.001 HBAR or 0.1 USDC
 export const STELLAR_NETWORK = (process.env.STELLAR_NETWORK ||
   "stellar:testnet") as `${string}:${string}`;
 const EVM_PERMIT2_ASSET = process.env.EVM_PERMIT2_ASSET as `0x${string}`;
@@ -40,11 +48,17 @@ if (mockFacilitatorUrl) {
 export const server = new x402ResourceServer(facilitatorClients);
 
 // Register server schemes
+if (AVM_PAYEE_ADDRESS) {
+  server.register("algorand:*", new ExactAvmScheme());
+}
 server.register("eip155:*", new ExactEvmScheme());
 server.register("eip155:*", new UptoEvmScheme());
 server.register("solana:*", new ExactSvmScheme());
 if (APTOS_PAYEE_ADDRESS) {
   server.register("aptos:*", new ExactAptosScheme());
+}
+if (HEDERA_PAYEE_ADDRESS) {
+  server.register("hedera:*", new ExactHederaScheme());
 }
 if (STELLAR_PAYEE_ADDRESS) {
   server.register("stellar:*", new ExactStellarScheme());
@@ -107,6 +121,35 @@ export const proxy = paymentProxy(
         }),
       },
     },
+    ...(AVM_PAYEE_ADDRESS
+      ? {
+          "/api/exact/avm": {
+            accepts: {
+              payTo: AVM_PAYEE_ADDRESS,
+              scheme: "exact",
+              price: "$0.001",
+              network: AVM_NETWORK,
+            },
+            extensions: {
+              ...declareDiscoveryExtension({
+                output: {
+                  example: {
+                    message: "Protected endpoint accessed successfully",
+                    timestamp: "2024-01-01T00:00:00Z",
+                  },
+                  schema: {
+                    properties: {
+                      message: { type: "string" },
+                      timestamp: { type: "string" },
+                    },
+                    required: ["message", "timestamp"],
+                  },
+                },
+              }),
+            },
+          },
+        }
+      : {}),
     ...(APTOS_PAYEE_ADDRESS
       ? {
           "/api/exact/aptos": {
@@ -121,6 +164,38 @@ export const proxy = paymentProxy(
                 output: {
                   example: {
                     message: "Protected endpoint accessed successfully",
+                    timestamp: "2024-01-01T00:00:00Z",
+                  },
+                  schema: {
+                    properties: {
+                      message: { type: "string" },
+                      timestamp: { type: "string" },
+                    },
+                    required: ["message", "timestamp"],
+                  },
+                },
+              }),
+            },
+          },
+        }
+      : {}),
+    ...(HEDERA_PAYEE_ADDRESS
+      ? {
+          "/api/exact/hedera": {
+            accepts: {
+              payTo: HEDERA_PAYEE_ADDRESS,
+              scheme: "exact",
+              price: {
+                amount: HEDERA_AMOUNT,
+                asset: HEDERA_ASSET,
+              },
+              network: HEDERA_NETWORK,
+            },
+            extensions: {
+              ...declareDiscoveryExtension({
+                output: {
+                  example: {
+                    message: "Protected Hedera endpoint accessed successfully",
                     timestamp: "2024-01-01T00:00:00Z",
                   },
                   schema: {
@@ -304,7 +379,9 @@ export const config = {
   matcher: [
     "/api/exact/evm/eip3009/proxy",
     "/api/exact/svm",
+    "/api/exact/avm",
     "/api/exact/aptos",
+    "/api/exact/hedera",
     "/api/exact/stellar",
     "/api/exact/evm/permit2/proxy",
     "/api/exact/evm/permit2-eip2612GasSponsoring/proxy",

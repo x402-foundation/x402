@@ -7,13 +7,14 @@ This directory contains TypeScript server examples demonstrating how to protect 
 | Directory | Description |
 | --- | --- |
 | [`express/`](./express/) | Using `@x402/express` middleware |
+| [`self-facilitation/`](./self-facilitation/) | Express middleware with in-process SDK facilitator |
 | [`hono/`](./hono/) | Using `@x402/hono` middleware |
 | [`advanced/`](./advanced/) | Advanced patterns: hooks, dynamic pricing, custom tokens |
 | [`custom/`](./custom/) | Manual implementation using only `@x402/core` |
 
 ## Framework Examples
 
-The **express** and **hono** directories showcase the minimal approach to adding x402 paywalls to your API. These use our middleware packages that automatically handle:
+The **express**, **self-facilitation**, and **hono** directories showcase the minimal approach to adding x402 paywalls to your API. These use our middleware packages that automatically handle:
 
 1. Checking for payment headers on protected routes
 2. Returning 402 with payment requirements if no payment

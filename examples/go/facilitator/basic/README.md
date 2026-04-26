@@ -73,7 +73,7 @@ EVM_PRIVATE_KEY=<your-evm-private-key>
 SVM_PRIVATE_KEY=<your-svm-private-key>
 ```
 
-**⚠️ Security Note:** The facilitator private key needs ETH/SOL for gas fees. Use a dedicated testnet account.
+**⚠️ Security Note:** The facilitator private key needs ETH/SOL for gas fees. Use a dedicated facilitator account for settlement, and keep it separate from your seller `payTo` wallet and buyer test wallets.
 
 2. Install dependencies and run:
 

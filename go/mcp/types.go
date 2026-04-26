@@ -99,9 +99,10 @@ type MCPToolCallResult struct {
 
 // PaymentWrapperConfig configures payment wrapper behavior
 type PaymentWrapperConfig struct {
-	Accepts  []types.PaymentRequirements
-	Resource *ResourceInfo
-	Hooks    *PaymentWrapperHooks
+	Accepts    []types.PaymentRequirements
+	Resource   *ResourceInfo
+	Hooks      *PaymentWrapperHooks
+	Extensions map[string]interface{}
 }
 
 // ResourceInfo provides resource metadata. Alias for types.ResourceInfo for compatibility.

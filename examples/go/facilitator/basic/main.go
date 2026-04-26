@@ -13,6 +13,7 @@ import (
 	x402 "github.com/x402-foundation/x402/go"
 	evm "github.com/x402-foundation/x402/go/mechanisms/evm/exact/facilitator"
 	evmv1 "github.com/x402-foundation/x402/go/mechanisms/evm/exact/v1/facilitator"
+	uptoevm "github.com/x402-foundation/x402/go/mechanisms/evm/upto/facilitator"
 	svmmech "github.com/x402-foundation/x402/go/mechanisms/svm"
 	svm "github.com/x402-foundation/x402/go/mechanisms/svm/exact/facilitator"
 	svmv1 "github.com/x402-foundation/x402/go/mechanisms/svm/exact/v1/facilitator"
@@ -54,6 +55,7 @@ func main() {
 		DeployERC4337WithEIP6492: true,
 	}
 	facilitator.Register([]x402.Network{evmNetwork}, evm.NewExactEvmScheme(evmSigner, evmConfig))
+	facilitator.Register([]x402.Network{evmNetwork}, uptoevm.NewUptoEvmScheme(evmSigner, nil))
 
 	// Register V1 EVM scheme with smart wallet deployment enabled
 	evmV1Config := &evmv1.ExactEvmSchemeV1Config{

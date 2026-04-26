@@ -13,7 +13,8 @@ import (
 
 	"github.com/joho/godotenv"
 	x402 "github.com/x402-foundation/x402/go"
-	evm "github.com/x402-foundation/x402/go/mechanisms/evm/exact/client"
+	exactevm "github.com/x402-foundation/x402/go/mechanisms/evm/exact/client"
+	uptoevm "github.com/x402-foundation/x402/go/mechanisms/evm/upto/client"
 	evmsigners "github.com/x402-foundation/x402/go/signers/evm"
 	"github.com/x402-foundation/x402/go/types"
 )
@@ -70,7 +71,8 @@ func main() {
 	}
 
 	x402Client := x402.Newx402Client().
-		Register("eip155:*", evm.NewExactEvmScheme(evmSigner, nil))
+		Register("eip155:*", exactevm.NewExactEvmScheme(evmSigner, nil)).
+		Register("eip155:*", uptoevm.NewUptoEvmScheme(evmSigner, nil))
 
 	// Make the request with custom payment handling
 	fmt.Println("🔧 Using custom payment implementation (no wrapper)\n")

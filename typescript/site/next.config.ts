@@ -24,6 +24,16 @@ const nextConfig: NextConfig = {
           },
         ],
       },
+      {
+        source: "/",
+        headers: [
+          {
+            key: "Link",
+            value:
+              '</.well-known/api-catalog>; rel="api-catalog", </writing/x402-v2-launch>; rel="service-doc", </protected>; rel="payment-required"',
+          },
+        ],
+      },
     ];
   },
   async rewrites() {
@@ -31,6 +41,10 @@ const nextConfig: NextConfig = {
       {
         source: "/build",
         destination: "/build-with-us",
+      },
+      {
+        source: "/.well-known/api-catalog",
+        destination: "/api/well-known/api-catalog",
       },
     ];
   },

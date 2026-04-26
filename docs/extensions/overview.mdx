@@ -11,13 +11,14 @@ x402 has two extension points that serve different roles in the payment flow:
 
 ### Resource Server Extensions
 
-These run on the resource server (the service accepting payments) and hook into the HTTP payment lifecycle. A `ResourceServerExtension` can intervene at three points:
+These run on the resource server (the service accepting payments) and hook into the HTTP payment lifecycle. A `ResourceServerExtension` can intervene at four points:
 
 1. **Declaration** (`enrichDeclaration`) — Called at route registration time. The extension can modify or narrow the route's extension declaration based on transport context (e.g., Bazaar narrows the HTTP method).
 2. **402 Response** (`enrichPaymentRequiredResponse`) — Called when the server returns `402 Payment Required`. The extension can add data to the response (e.g., signed offers, discovery metadata).
 3. **Settlement Response** (`enrichSettlementResponse`) — Called after successful payment. The extension can add data to the `PAYMENT-RESPONSE` header (e.g., signed receipts, payment identifiers).
+4. **Verify/settle lifecycle hooks** (`hooks`) — Scoped verify and settle hooks that run only when the extension is declared on the route. These follow the same pattern as the server-level hooks (`onBeforeVerify`, `onAfterVerify`, `onVerifyFailure`, `onBeforeSettle`, `onAfterSettle`, `onSettleFailure`) but receive the extension's declaration as a first argument.
 
-All three hooks are optional. Most extensions use one or two — not all three.
+All four points are optional. Most extensions use one or two — not all.
 
 ### Facilitator Extensions
 
@@ -59,6 +60,21 @@ interface ResourceServerExtension {
     declaration: unknown,
     context: SettleResultContext,
   ) => Promise<unknown>;
+
+  /**
+   * Verify/settle lifecycle hooks scoped to this extension.
+   * These run only when the extension is declared on the route (i.e. declaredExtensions[key] is set).
+   * The extension's declaration is passed as the first argument to each hook.
+   * Hook contexts are read-only for core protocol fields; use abort/recover return values instead of mutation.
+   */
+  hooks?: {
+    onBeforeVerify?: (declaration: unknown, context: VerifyContext) => Promise<void | { abort: true; reason: string; message?: string }>;
+    onAfterVerify?: (declaration: unknown, context: VerifyResultContext) => Promise<void>;
+    onVerifyFailure?: (declaration: unknown, context: VerifyFailureContext) => Promise<void | { recovered: true; result: VerifyResponse }>;
+    onBeforeSettle?: (declaration: unknown, context: SettleContext) => Promise<void | { abort: true; reason: string; message?: string }>;
+    onAfterSettle?: (declaration: unknown, context: SettleResultContext) => Promise<void>;
+    onSettleFailure?: (declaration: unknown, context: SettleFailureContext) => Promise<void | { recovered: true; result: SettleResponse }>;
+  };
 }
 ```
 
@@ -121,7 +137,7 @@ To create your own extension:
 
 1. **Define the extension object** implementing `ResourceServerExtension`
 2. **Choose a unique key** — this identifies your extension in route declarations and response payloads
-3. **Implement the hooks you need** — `enrichDeclaration`, `enrichPaymentRequiredResponse`, `enrichSettlementResponse`
+3. **Implement the hooks you need** — `enrichDeclaration`, `enrichPaymentRequiredResponse`, `enrichSettlementResponse`, and/or `hooks`
 4. **Create a declare function** — a helper that returns the route-level configuration for your extension
 5. **Register it** on the `x402ResourceServer` via `registerExtension`
 6. **Submit a pull request** to [x402-foundation/x402](https://github.com/x402-foundation/x402) — extensions must be reviewed and approved by the x402 maintainers before they are included in the SDK
@@ -143,6 +159,19 @@ const myExtension: ResourceServerExtension = {
     // Add custom data after successful payment
     return { settled: true, processedAt: Date.now() };
   },
+
+  hooks: {
+    // Runs only when this extension is declared on the route
+    onAfterSettle: async (declaration, context) => {
+      // declaration is the per-route config for this extension
+      // context.result, context.requirements, etc. are read-only
+      await auditLog.record({
+        extensionConfig: declaration,
+        payer: context.result.payer,
+        transaction: context.result.transaction,
+      });
+    },
+  },
 };
 
 // Declare helper for route config
@@ -151,7 +180,7 @@ function declareMyExtension(config: { customOption: boolean }) {
 }
 ```
 
-The data returned from each hook is included in the response under `extensions["my-extension"]`.
+The data returned from `enrichPaymentRequiredResponse` and `enrichSettlementResponse` is included in the response under `extensions["my-extension"]`. The `hooks` callbacks run as part of the server's verify/settle lifecycle but only when the extension is active on the route.
 
 ## Further Reading
 

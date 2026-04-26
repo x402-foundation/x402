@@ -6,7 +6,7 @@
  */
 
 export type NetworkMode = 'testnet' | 'mainnet';
-export type ProtocolFamily = 'evm' | 'svm' | 'aptos' | 'stellar';
+export type ProtocolFamily = 'evm' | 'svm' | 'avm' | 'aptos' | 'hedera' | 'stellar';
 
 export type NetworkConfig = {
   name: string;
@@ -18,7 +18,9 @@ export type NetworkConfig = {
 export type NetworkSet = {
   evm: NetworkConfig;
   svm: NetworkConfig;
+  avm: NetworkConfig;
   aptos: NetworkConfig;
+  hedera: NetworkConfig;
   stellar: NetworkConfig;
 };
 
@@ -38,10 +40,20 @@ const NETWORK_SETS: Record<NetworkMode, NetworkSet> = {
       caip2: 'solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1',
       rpcUrl: process.env.SOLANA_DEVNET_RPC_URL || 'https://api.devnet.solana.com',
     },
+    avm: {
+      name: 'Algorand Testnet',
+      caip2: 'algorand:SGO1GKSzyE7IEPItTxCByw9x8FmnrCDexi9/cOUJOiI=',
+      rpcUrl: process.env.AVM_TESTNET_RPC_URL || 'https://testnet-api.4160.nodely.dev',
+    },
     aptos: {
       name: 'Aptos Testnet',
       caip2: 'aptos:2',
       rpcUrl: process.env.APTOS_TESTNET_RPC_URL || 'https://fullnode.testnet.aptoslabs.com/v1',
+    },
+    hedera: {
+      name: 'Hedera Testnet',
+      caip2: 'hedera:testnet',
+      rpcUrl: process.env.HEDERA_TESTNET_NODE_URL || '',
     },
     stellar: {
       name: 'Stellar Testnet',
@@ -61,10 +73,20 @@ const NETWORK_SETS: Record<NetworkMode, NetworkSet> = {
       caip2: 'solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp',
       rpcUrl: process.env.SOLANA_RPC_URL || 'https://api.mainnet-beta.solana.com',
     },
+    avm: {
+      name: 'Algorand Mainnet',
+      caip2: 'algorand:wGHE2Pwdvd7S12BL5FaOP20EGYesN73ktiC1qzkkit8=',
+      rpcUrl: process.env.AVM_RPC_URL || 'https://mainnet-api.4160.nodely.dev',
+    },
     aptos: {
       name: 'Aptos',
       caip2: 'aptos:1',
       rpcUrl: process.env.APTOS_RPC_URL || 'https://fullnode.mainnet.aptoslabs.com/v1',
+    },
+    hedera: {
+      name: 'Hedera Mainnet',
+      caip2: 'hedera:mainnet',
+      rpcUrl: process.env.HEDERA_NODE_URL || '',
     },
     stellar: {
       name: 'Stellar Pubnet',
@@ -78,7 +100,7 @@ const NETWORK_SETS: Record<NetworkMode, NetworkSet> = {
  * Get the network set for a given mode
  * 
  * @param mode - 'testnet' or 'mainnet'
- * @returns NetworkSet containing EVM, SVM, and Aptos network configs
+ * @returns NetworkSet containing configured protocol network configs
  */
 export function getNetworkSet(mode: NetworkMode): NetworkSet {
   return NETWORK_SETS[mode];
@@ -88,7 +110,7 @@ export function getNetworkSet(mode: NetworkMode): NetworkSet {
  * Get network config for a protocol family in a given mode
  * 
  * @param mode - 'testnet' or 'mainnet'
- * @param protocolFamily - 'evm', 'svm', 'aptos', or 'stellar'
+ * @param protocolFamily - 'evm', 'svm', 'avm', 'aptos', 'hedera', or 'stellar'
  * @returns NetworkConfig for the specified protocol
  */
 export function getNetworkForProtocol(
@@ -106,6 +128,6 @@ export function getNetworkForProtocol(
  */
 export function getNetworkModeDescription(mode: NetworkMode): string {
   const set = NETWORK_SETS[mode];
-  const networks = [set.evm.name, set.svm.name, set.aptos.name, set.stellar.name];
+  const networks = [set.evm.name, set.svm.name, set.avm.name, set.aptos.name, set.hedera.name, set.stellar.name];
   return networks.join(' + ');
 }

@@ -1,0 +1,7 @@
+{
+  "name": "OpenPayment",
+  "description": "OpenPayment is a stablecoin payment link platform for sales, subscriptions, donations, paywalls, and agent-driven payments, with wallet-native checkout and direct USDC settlement powered by x402.",
+  "logoUrl": "/logos/openpayment.png",
+  "websiteUrl": "https://openpayment.link",
+  "category": "Client-Side Integrations"
+}

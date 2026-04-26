@@ -1,6 +1,7 @@
 import { config } from "dotenv";
 import { x402Client, wrapFetchWithPayment, x402HTTPClient } from "@x402/fetch";
 import { ExactEvmScheme } from "@x402/evm/exact/client";
+import { UptoEvmScheme } from "@x402/evm/upto/client";
 import { privateKeyToAccount } from "viem/accounts";
 import {
   appendPaymentIdentifierToExtensions,
@@ -35,6 +36,7 @@ async function main(): Promise<void> {
 
   const client = new x402Client();
   client.register("eip155:*", new ExactEvmScheme(signer));
+  client.register("eip155:*", new UptoEvmScheme(signer));
 
   // Generate a unique payment ID for this request
   const paymentId = generatePaymentId();

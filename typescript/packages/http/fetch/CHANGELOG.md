@@ -1,5 +1,11 @@
 # @x402/fetch Changelog
 
+## 2.10.0
+
+### Minor Changes
+
+- @x402/core@2.10.0
+
 ## 2.9.0
 
 ### Minor Changes

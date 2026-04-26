@@ -24,6 +24,8 @@ from ...constants import (
     ERR_INVALID_COMPUTE_LIMIT,
     ERR_INVALID_COMPUTE_PRICE,
     ERR_INVALID_INSTRUCTION_COUNT,
+    ERR_MEMO_COUNT,
+    ERR_MEMO_MISMATCH,
     ERR_MINT_MISMATCH,
     ERR_NETWORK_MISMATCH,
     ERR_NO_TRANSFER_INSTRUCTION,
@@ -250,6 +252,22 @@ class ExactSvmSchemeV1:
                     else ERR_UNKNOWN_SIXTH_INSTRUCTION
                 )
                 return VerifyResponse(is_valid=False, invalid_reason=reason, payer=payer)
+
+        # Verify memo content matches extra.memo when present
+        extra = requirements.extra or {}
+        expected_memo = extra.get("memo")
+        if expected_memo and isinstance(expected_memo, str):
+            memo_program = Pubkey.from_string(MEMO_PROGRAM_ADDRESS)
+            memo_ixs = [
+                ix
+                for ix in optional_instructions
+                if static_accounts[ix.program_id_index] == memo_program
+            ]
+            if len(memo_ixs) != 1:
+                return VerifyResponse(is_valid=False, invalid_reason=ERR_MEMO_COUNT, payer=payer)
+            actual_memo = bytes(memo_ixs[0].data).decode("utf-8")
+            if actual_memo != expected_memo:
+                return VerifyResponse(is_valid=False, invalid_reason=ERR_MEMO_MISMATCH, payer=payer)
 
         # Parse transfer instruction
         transfer_accounts = list(transfer_ix.accounts)

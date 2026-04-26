@@ -22,12 +22,17 @@ export class GenericClientProxy extends BaseProxy implements ClientProxy {
         env: {
           EVM_PRIVATE_KEY: config.evmPrivateKey,
           SVM_PRIVATE_KEY: config.svmPrivateKey,
+          AVM_PRIVATE_KEY: config.avmPrivateKey,
           APTOS_PRIVATE_KEY: config.aptosPrivateKey,
+          HEDERA_ACCOUNT_ID: config.hederaAccountId,
+          HEDERA_PRIVATE_KEY: config.hederaPrivateKey,
           STELLAR_PRIVATE_KEY: config.stellarPrivateKey,
           RESOURCE_SERVER_URL: config.serverUrl,
           ENDPOINT_PATH: config.endpointPath,
           EVM_NETWORK: config.evmNetwork,
           EVM_RPC_URL: config.evmRpcUrl,
+          HEDERA_NETWORK: config.hederaNetwork,
+          HEDERA_NODE_URL: config.hederaNodeUrl,
         }
       };
 

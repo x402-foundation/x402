@@ -479,3 +479,165 @@ func TestMemoInstructionHasNoSigners(t *testing.T) {
 	// Empty accounts is critical - signers break facilitator verification
 	assert.Empty(t, memoIx.Accounts, "memo must have no accounts")
 }
+
+func TestSellerMemo(t *testing.T) {
+	t.Run("uses extra.memo as memo data when provided", func(t *testing.T) {
+		server := httptest.NewServer(mockSolanaRPCHandler(t, func() string {
+			return fixedBlockhash
+		}))
+		defer server.Close()
+
+		signer := &mockClientSigner{keypair: solana.NewWallet().PrivateKey}
+		client := NewExactSvmScheme(signer, &svm.ClientConfig{RPCURL: server.URL})
+
+		sellerMemo := "pi_3abc123def456"
+		requirements := types.PaymentRequirements{
+			Scheme:            "exact",
+			Network:           "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1",
+			Asset:             "4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU",
+			Amount:            "100000",
+			PayTo:             solana.NewWallet().PublicKey().String(),
+			MaxTimeoutSeconds: 3600,
+			Extra: map[string]interface{}{
+				"feePayer": solana.NewWallet().PublicKey().String(),
+				"memo":     sellerMemo,
+			},
+		}
+
+		payload, err := client.CreatePaymentPayload(context.Background(), requirements)
+		require.NoError(t, err)
+
+		decoded, err := svm.DecodeTransaction(payload.Payload["transaction"].(string))
+		require.NoError(t, err)
+		require.GreaterOrEqual(t, len(decoded.Message.Instructions), 4)
+
+		memoIx := decoded.Message.Instructions[3]
+		memoProgramID := decoded.Message.AccountKeys[memoIx.ProgramIDIndex]
+		assert.Equal(t, solana.MustPublicKeyFromBase58(svm.MemoProgramAddress), memoProgramID)
+
+		// Memo data should contain a length prefix byte followed by the seller memo
+		memoData := memoIx.Data
+		assert.True(t, utf8.Valid(memoData), "Memo data must be valid UTF-8")
+		assert.Contains(t, string(memoData), sellerMemo, "Memo data should contain seller memo")
+	})
+
+	t.Run("produces identical memo data with extra.memo across calls", func(t *testing.T) {
+		server := httptest.NewServer(mockSolanaRPCHandler(t, func() string {
+			return fixedBlockhash
+		}))
+		defer server.Close()
+
+		signer := &mockClientSigner{keypair: solana.NewWallet().PrivateKey}
+		client := NewExactSvmScheme(signer, &svm.ClientConfig{RPCURL: server.URL})
+
+		feePayer := solana.NewWallet().PublicKey()
+		payTo := solana.NewWallet().PublicKey()
+		sellerMemo := "order_12345"
+
+		requirements := types.PaymentRequirements{
+			Scheme:            "exact",
+			Network:           "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1",
+			Asset:             "4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU",
+			Amount:            "100000",
+			PayTo:             payTo.String(),
+			MaxTimeoutSeconds: 3600,
+			Extra: map[string]interface{}{
+				"feePayer": feePayer.String(),
+				"memo":     sellerMemo,
+			},
+		}
+
+		ctx := context.Background()
+
+		payload1, err := client.CreatePaymentPayload(ctx, requirements)
+		require.NoError(t, err)
+		payload2, err := client.CreatePaymentPayload(ctx, requirements)
+		require.NoError(t, err)
+
+		decoded1, err := svm.DecodeTransaction(payload1.Payload["transaction"].(string))
+		require.NoError(t, err)
+		decoded2, err := svm.DecodeTransaction(payload2.Payload["transaction"].(string))
+		require.NoError(t, err)
+
+		memo1 := string(decoded1.Message.Instructions[3].Data)
+		memo2 := string(decoded2.Message.Instructions[3].Data)
+
+		assert.Equal(t, memo1, memo2, "Seller memo should be deterministic across calls")
+		assert.Contains(t, memo1, sellerMemo)
+	})
+
+	t.Run("rejects extra.memo exceeding max size", func(t *testing.T) {
+		server := httptest.NewServer(mockSolanaRPCHandler(t, func() string {
+			return fixedBlockhash
+		}))
+		defer server.Close()
+
+		signer := &mockClientSigner{keypair: solana.NewWallet().PrivateKey}
+		client := NewExactSvmScheme(signer, &svm.ClientConfig{RPCURL: server.URL})
+
+		longMemo := ""
+		for i := 0; i < 257; i++ {
+			longMemo += "x"
+		}
+
+		requirements := types.PaymentRequirements{
+			Scheme:            "exact",
+			Network:           "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1",
+			Asset:             "4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU",
+			Amount:            "100000",
+			PayTo:             solana.NewWallet().PublicKey().String(),
+			MaxTimeoutSeconds: 3600,
+			Extra: map[string]interface{}{
+				"feePayer": solana.NewWallet().PublicKey().String(),
+				"memo":     longMemo,
+			},
+		}
+
+		_, err := client.CreatePaymentPayload(context.Background(), requirements)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), ErrMemoExceedsMaxSize)
+	})
+
+	t.Run("falls back to random nonce when extra.memo is absent", func(t *testing.T) {
+		server := httptest.NewServer(mockSolanaRPCHandler(t, func() string {
+			return fixedBlockhash
+		}))
+		defer server.Close()
+
+		signer := &mockClientSigner{keypair: solana.NewWallet().PrivateKey}
+		client := NewExactSvmScheme(signer, &svm.ClientConfig{RPCURL: server.URL})
+
+		feePayer := solana.NewWallet().PublicKey()
+		payTo := solana.NewWallet().PublicKey()
+
+		requirements := types.PaymentRequirements{
+			Scheme:            "exact",
+			Network:           "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1",
+			Asset:             "4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU",
+			Amount:            "100000",
+			PayTo:             payTo.String(),
+			MaxTimeoutSeconds: 3600,
+			Extra: map[string]interface{}{
+				"feePayer": feePayer.String(),
+				// no memo
+			},
+		}
+
+		ctx := context.Background()
+
+		payload1, err := client.CreatePaymentPayload(ctx, requirements)
+		require.NoError(t, err)
+		payload2, err := client.CreatePaymentPayload(ctx, requirements)
+		require.NoError(t, err)
+
+		decoded1, err := svm.DecodeTransaction(payload1.Payload["transaction"].(string))
+		require.NoError(t, err)
+		decoded2, err := svm.DecodeTransaction(payload2.Payload["transaction"].(string))
+		require.NoError(t, err)
+
+		memo1 := string(decoded1.Message.Instructions[3].Data)
+		memo2 := string(decoded2.Message.Instructions[3].Data)
+
+		assert.NotEqual(t, memo1, memo2, "Random nonces should differ between calls")
+	})
+}

@@ -130,13 +130,13 @@ The `type` field indicates the resource type:
 
 For MCP tools, the `outputSchema.input` object will contain:
 - `type: "mcp"` - Identifies this as an MCP tool
-- `tool` - The MCP tool name (used in `tools/call` requests)
+- `toolName` - The MCP tool name (used in `tools/call` requests)
 - `inputSchema` - JSON Schema for the tool's arguments (follows MCP `Tool.inputSchema` format)
 - `description` - Human-readable description of the tool (optional)
 - `transport` - MCP transport protocol: `"streamable-http"` (default) or `"sse"` (optional)
 - `example` - Example arguments object (optional)
 
-**Note:** For MCP tools, the unique resource identifier is the tuple (`resource`, `input.tool`) since MCP multiplexes multiple tools over a single server endpoint.
+**Note:** For MCP tools, the unique resource identifier is the tuple (`resource`, `input.toolName`) since MCP multiplexes multiple tools over a single server endpoint.
 
 ### Quickstart for Buyers
 
@@ -155,6 +155,7 @@ Fetch the list of available x402 services using the facilitator client:
     });
     const client = withBazaar(facilitatorClient);
 
+    // List HTTP services; use type: "mcp" to list MCP tools instead
     const response = await client.extensions.discovery.listResources({ type: "http" });
 
     // Filter services under $0.10
@@ -321,6 +322,43 @@ Once you've found a suitable service, use an x402 client to call it:
 
 
     asyncio.run(main())
+    ```
+  </Tab>
+</Tabs>
+
+#### Step 2 (MCP tools): Call a Discovered MCP Tool
+
+For discovered MCP tools, use the x402 MCP client to call the tool after paying:
+
+<Tabs>
+  <Tab title="TypeScript">
+    ```typescript
+    import { createx402MCPClient } from "@x402/mcp";
+    import { ExactEvmScheme } from "@x402/evm/exact/client";
+    import { SSEClientTransport } from "@modelcontextprotocol/sdk/client/sse.js";
+    import { privateKeyToAccount } from "viem/accounts";
+
+    const account = privateKeyToAccount("0xYourPrivateKey");
+
+    // Discover MCP tools from the Bazaar
+    const mcpItems = await client.extensions.discovery.listResources({ type: "mcp" });
+    const selectedTool = mcpItems.items[0];
+    const { toolName } = selectedTool.discoveryInfo.input;
+
+    // Connect the x402 MCP client to the tool's server
+    const x402Mcp = createx402MCPClient({
+      name: "my-mcp-client",
+      schemes: [{ network: "eip155:8453", scheme: new ExactEvmScheme(account) }],
+    });
+
+    const transport = new SSEClientTransport(new URL(`${selectedTool.resource}/sse`));
+    await x402Mcp.connect(transport);
+
+    // Call the paid tool — x402Mcp handles payment automatically
+    const result = await x402Mcp.callTool(toolName, { city: "San Francisco" });
+    console.log("Tool result:", result);
+
+    await x402Mcp.close();
     ```
   </Tab>
 </Tabs>
@@ -543,6 +581,111 @@ To enhance your listing with descriptions and schemas, include them when setting
 
         r.Run(":4021")
     }
+    ```
+  </Tab>
+</Tabs>
+
+#### Adding Metadata for MCP Tools
+
+To make paid MCP tools discoverable, pass the discovery extension in your payment wrapper config:
+
+<Tabs>
+  <Tab title="TypeScript">
+    ```typescript
+    import { createPaymentWrapper } from "@x402/mcp";
+    import { declareDiscoveryExtension } from "@x402/extensions/bazaar";
+
+    const paid = createPaymentWrapper(resourceServer, {
+      accepts,
+      resource: {
+        url: "mcp://tool/get_weather",
+        description: "Get current weather for a city",
+      },
+      extensions: declareDiscoveryExtension({
+        toolName: "get_weather",
+        description: "Get current weather for a city",
+        transport: "sse",
+        inputSchema: {
+          properties: { city: { type: "string", description: "City name" } },
+          required: ["city"],
+        },
+        example: { city: "San Francisco" },
+      }),
+    });
+
+    mcpServer.tool("get_weather", "Get current weather ($0.001)", { city: z.string() },
+      paid(async ({ city }) => ({ content: [{ type: "text", text: JSON.stringify(await fetchWeather(city)) }] }))
+    );
+    ```
+  </Tab>
+  <Tab title="Python">
+    ```python
+    from x402.mcp import create_payment_wrapper
+    from x402.extensions.bazaar import DeclareMcpDiscoveryConfig, declare_mcp_discovery_extension
+
+    weather_discovery = declare_mcp_discovery_extension(
+        DeclareMcpDiscoveryConfig(
+            tool_name="get_weather",
+            description="Get current weather for a city",
+            transport="sse",
+            input_schema={
+                "properties": {"city": {"type": "string", "description": "City name"}},
+                "required": ["city"],
+            },
+            example={"city": "San Francisco"},
+        )
+    )
+
+    weather_wrapper = create_payment_wrapper(
+        resource_server,
+        accepts=weather_accepts,
+        resource=ResourceInfo(
+            url="mcp://tool/get_weather",
+            description="Get current weather for a city",
+        ),
+        extensions=weather_discovery,
+    )
+
+    @mcp.tool(name="get_weather", description="Get current weather ($0.001)")
+    @weather_wrapper
+    async def get_weather(city: str) -> str:
+        return json.dumps(await fetch_weather(city))
+    ```
+  </Tab>
+  <Tab title="Go">
+    ```go
+    import (
+        "github.com/x402-foundation/x402/go/extensions/bazaar"
+        mcp402 "github.com/x402-foundation/x402/go/mcp"
+        "github.com/x402-foundation/x402/go/types"
+    )
+
+    weatherDiscovery, _ := bazaar.DeclareMcpDiscoveryExtension(bazaar.DeclareMcpDiscoveryConfig{
+        ToolName:    "get_weather",
+        Description: "Get current weather for a city",
+        Transport:   bazaar.TransportSSE,
+        InputSchema: bazaar.JSONSchema{
+            "properties": map[string]interface{}{
+                "city": map[string]interface{}{
+                    "type":        "string",
+                    "description": "City name",
+                },
+            },
+            "required": []string{"city"},
+        },
+        Example: map[string]interface{}{"city": "San Francisco"},
+    })
+
+    paymentWrapper := mcp402.NewPaymentWrapper(resourceServer, mcp402.PaymentWrapperConfig{
+        Accepts: weatherAccepts,
+        Resource: &types.ResourceInfo{
+            URL:         "mcp://tool/get_weather",
+            Description: "Get current weather for a city",
+        },
+        Extensions: map[string]interface{}{
+            bazaar.BAZAAR.Key(): weatherDiscovery,
+        },
+    })
     ```
   </Tab>
 </Tabs>
