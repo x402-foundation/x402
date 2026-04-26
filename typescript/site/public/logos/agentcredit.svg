@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120" fill="none">
+  <rect width="120" height="120" rx="24" fill="#0D0D0D"/>
+  <circle cx="60" cy="52" r="28" stroke="#22C55E" stroke-width="4" fill="none"/>
+  <path d="M52 52 L60 60 L72 44" stroke="#22C55E" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
+  <text x="60" y="95" text-anchor="middle" font-family="system-ui,sans-serif" font-size="14" font-weight="700" fill="#22C55E">AC</text>
+</svg>

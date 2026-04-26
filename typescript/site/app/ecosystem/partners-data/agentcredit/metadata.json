@@ -1,0 +1,7 @@
+{
+  "name": "AgentCredit",
+  "description": "Autonomous flash-loan facilitator for AI agents on x402. When an agent's USDC balance can't cover an HTTP 402 payment, AgentCredit silently extends micro-credit ($1–$5), completes the payment, and collects repayment from subsequent revenue — no human intervention required.",
+  "logoUrl": "/logos/agentcredit.svg",
+  "websiteUrl": "https://agentlending.spekn.com",
+  "category": "Infrastructure & Tooling"
+}
