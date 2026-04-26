@@ -1,0 +1,9 @@
+
+{
+  "name": "SOVIGL",
+  "description": "Payment governance layer for x402 AI agents. Evaluates every payment before execution — returns allowed, pending_approval, or blocked based on org-defined spend limits and vendor rules.",
+  "logo": "/logos/sovigl-logo.png",
+  "website": "https://github.com/riteshkumar10000/sovigl-sdk",
+  "github": "https://github.com/riteshkumar10000/sovigl-sdk",
+  "category": "Ecosystem Infrastructure and Tooling"
+}
