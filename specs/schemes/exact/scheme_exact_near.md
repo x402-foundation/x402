@@ -32,12 +32,14 @@ Implementations MAY support additional `near:*` identifiers, but this spec defin
 4. Client retries with `PAYMENT-SIGNATURE`, carrying a v2 `PaymentPayload`.
 5. Resource server calls facilitator `verify` with the `PaymentPayload` and selected `PaymentRequirements`.
 6. If verification succeeds, resource server calls facilitator `settle`.
-7. Facilitator relayer submits the delegate action to NEAR and returns `SettlementResponse`.
+7. Facilitator relayer submits the delegate action to NEAR and waits until the inner `ft_transfer` receipt has finished executing on chain (succeeded or failed) before returning `SettlementResponse`.
 8. Resource server returns the protected response and includes `PAYMENT-RESPONSE`.
 
 ## `PaymentRequirements` for `exact`
 
-`PaymentRequirements` follows the core v2 schema. For NEAR exact payments, `extra.relayerId` is required.
+`PaymentRequirements` follows the core v2 schema. NEAR exact payments do not require any scheme-specific `extra` field.
+
+The client does not need a sponsoring account identifier to create the signed payload. The NEAR relayer is not part of `SignedDelegateAction`; it is selected by the facilitator when building the outer relayer transaction.
 
 ```json
 {
@@ -46,10 +48,7 @@ Implementations MAY support additional `near:*` identifiers, but this spec defin
   "amount": "1000000",
   "asset": "usdc.testnet",
   "payTo": "merchant.testnet",
-  "maxTimeoutSeconds": 60,
-  "extra": {
-    "relayerId": "x402-relayer.testnet"
-  }
+  "maxTimeoutSeconds": 60
 }
 ```
 
@@ -59,8 +58,8 @@ Implementations MAY support additional `near:*` identifiers, but this spec defin
 - `asset`: NEP-141 token contract account ID.
 - `payTo`: recipient NEAR account ID that must receive the transfer.
 - `maxTimeoutSeconds`: positive integer timeout budget in seconds.
-- `extra.relayerId`: facilitator-managed relayer account that will sponsor submission.
 - `extra` MAY contain additional metadata, but unknown keys MUST NOT change verification of amount, recipient, asset, nonce, or expiry.
+- Relayer account selection is facilitator-local configuration and MUST NOT be required from the client-facing `PaymentRequirements`.
 
 ### Timeout Mapping: `maxTimeoutSeconds` -> `max_block_height`
 
