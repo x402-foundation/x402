@@ -161,3 +161,11 @@ See `specs/schemes` for more details on schemes, and see `specs/schemes/exact/sc
 Because a scheme is a logical way of moving money, the way a scheme is implemented can be different for different blockchains. (ex: the way you need to implement `exact` on Ethereum is very different from the way you need to implement `exact` on Solana).
 
 Clients and facilitators must explicitly support different `(scheme, network)` pairs in order to be able to create proper payloads and verify / settle payments.
+
+## 💰 Bounty Contribution
+
+- **Task:** Ecosystem Submission: AgentPay — Autonomous M2M Service Marketplace on x402 v2
+- **Reward:** $200
+- **Source:** GitHub-Paid
+- **Date:** 2026-04-27
+
