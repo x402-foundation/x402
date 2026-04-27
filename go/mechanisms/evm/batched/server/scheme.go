@@ -7,7 +7,6 @@ import (
 	"math/big"
 	"strconv"
 	"strings"
-	"time"
 
 	x402 "github.com/x402-foundation/x402/go"
 	"github.com/x402-foundation/x402/go/mechanisms/evm"
@@ -245,71 +244,6 @@ func (s *BatchedEvmScheme) EnhancePaymentRequirements(
 	}
 
 	return requirements, nil
-}
-
-// GetClaimableVouchers returns voucher claims ready for on-chain settlement.
-type GetClaimableVouchersOpts struct {
-	IdleSecs int // Filter sessions idle for at least this many seconds
-}
-
-func (s *BatchedEvmScheme) GetClaimableVouchers(opts *GetClaimableVouchersOpts) ([]batched.BatchedVoucherClaim, error) {
-	sessions, err := s.storage.List()
-	if err != nil {
-		return nil, err
-	}
-
-	now := time.Now().UnixMilli()
-	claims := make([]batched.BatchedVoucherClaim, 0)
-
-	for _, session := range sessions {
-		// Filter by idle time if specified
-		if opts != nil && opts.IdleSecs > 0 {
-			idleMs := now - session.LastRequestTimestamp
-			if idleMs < int64(opts.IdleSecs)*1000 {
-				continue
-			}
-		}
-
-		// Only include sessions with claimable amount
-		signed, _ := new(big.Int).SetString(session.SignedMaxClaimable, 10)
-		claimed, _ := new(big.Int).SetString(session.TotalClaimed, 10)
-		if signed == nil || claimed == nil {
-			continue
-		}
-		if signed.Cmp(claimed) <= 0 {
-			continue
-		}
-
-		claims = append(claims, batched.BatchedVoucherClaim{
-			Voucher: struct {
-				Channel            batched.ChannelConfig `json:"channel"`
-				MaxClaimableAmount string                `json:"maxClaimableAmount"`
-			}{
-				Channel:            session.ChannelConfig,
-				MaxClaimableAmount: session.SignedMaxClaimable,
-			},
-			Signature:    session.Signature,
-			TotalClaimed: session.TotalClaimed,
-		})
-	}
-
-	return claims, nil
-}
-
-// GetWithdrawalPendingSessions returns sessions that have a pending withdrawal
-// (withdrawRequestedAt > 0).
-func (s *BatchedEvmScheme) GetWithdrawalPendingSessions() ([]*ChannelSession, error) {
-	sessions, err := s.storage.List()
-	if err != nil {
-		return nil, err
-	}
-	var result []*ChannelSession
-	for _, session := range sessions {
-		if session.WithdrawRequestedAt > 0 {
-			result = append(result, session)
-		}
-	}
-	return result, nil
 }
 
 // SignRefund signs a cooperative refund EIP-712 message.

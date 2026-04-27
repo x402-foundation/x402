@@ -97,6 +97,74 @@ func NewBatchedChannelManager(config ChannelManagerConfig) *BatchedChannelManage
 	}
 }
 
+// GetClaimableVouchersOpts filters claimable vouchers by idle time.
+type GetClaimableVouchersOpts struct {
+	IdleSecs int // Filter sessions idle for at least this many seconds
+}
+
+// GetClaimableVouchers returns voucher claims ready for on-chain settlement.
+//
+// A voucher is claimable when its `chargedCumulativeAmount` exceeds what has
+// already been claimed on-chain. An optional `IdleSecs` filter skips sessions
+// that received a request within the last `IdleSecs` seconds.
+func (m *BatchedChannelManager) GetClaimableVouchers(opts *GetClaimableVouchersOpts) ([]batched.BatchedVoucherClaim, error) {
+	sessions, err := m.scheme.storage.List()
+	if err != nil {
+		return nil, err
+	}
+
+	now := time.Now().UnixMilli()
+	claims := make([]batched.BatchedVoucherClaim, 0)
+
+	for _, session := range sessions {
+		if opts != nil && opts.IdleSecs > 0 {
+			idleMs := now - session.LastRequestTimestamp
+			if idleMs < int64(opts.IdleSecs)*1000 {
+				continue
+			}
+		}
+
+		charged, _ := new(big.Int).SetString(session.ChargedCumulativeAmount, 10)
+		claimed, _ := new(big.Int).SetString(session.TotalClaimed, 10)
+		if charged == nil || claimed == nil {
+			continue
+		}
+		if charged.Cmp(claimed) <= 0 {
+			continue
+		}
+
+		claims = append(claims, batched.BatchedVoucherClaim{
+			Voucher: struct {
+				Channel            batched.ChannelConfig `json:"channel"`
+				MaxClaimableAmount string                `json:"maxClaimableAmount"`
+			}{
+				Channel:            session.ChannelConfig,
+				MaxClaimableAmount: session.SignedMaxClaimable,
+			},
+			Signature:    session.Signature,
+			TotalClaimed: session.ChargedCumulativeAmount,
+		})
+	}
+
+	return claims, nil
+}
+
+// GetWithdrawalPendingSessions returns sessions that have a pending payer-initiated
+// withdrawal (withdrawRequestedAt > 0).
+func (m *BatchedChannelManager) GetWithdrawalPendingSessions() ([]*ChannelSession, error) {
+	sessions, err := m.scheme.storage.List()
+	if err != nil {
+		return nil, err
+	}
+	var result []*ChannelSession
+	for _, session := range sessions {
+		if session.WithdrawRequestedAt > 0 {
+			result = append(result, session)
+		}
+	}
+	return result, nil
+}
+
 // Claim collects and claims outstanding vouchers.
 type ClaimOptions struct {
 	MaxClaimsPerBatch int
@@ -115,7 +183,7 @@ func (m *BatchedChannelManager) Claim(ctx context.Context, opts *ClaimOptions) (
 		}
 	}
 
-	claims, err := m.scheme.GetClaimableVouchers(&GetClaimableVouchersOpts{IdleSecs: idleSecs})
+	claims, err := m.GetClaimableVouchers(&GetClaimableVouchersOpts{IdleSecs: idleSecs})
 	if err != nil {
 		return nil, fmt.Errorf("failed to get claimable vouchers: %w", err)
 	}
@@ -386,9 +454,9 @@ func (m *BatchedChannelManager) tick() {
 
 	// Withdrawal-based claim: if a payer initiated a withdrawal, claim their vouchers
 	if config.ClaimOnWithdrawal {
-		withdrawals, err := m.scheme.GetWithdrawalPendingSessions()
+		withdrawals, err := m.GetWithdrawalPendingSessions()
 		if err == nil && len(withdrawals) > 0 {
-			claimable, err := m.scheme.GetClaimableVouchers(nil)
+			claimable, err := m.GetClaimableVouchers(nil)
 			if err == nil {
 				withdrawalPayers := make(map[string]bool)
 				for _, w := range withdrawals {
@@ -408,18 +476,16 @@ func (m *BatchedChannelManager) tick() {
 	if config.ClaimThreshold != "" {
 		threshold, ok := new(big.Int).SetString(config.ClaimThreshold, 10)
 		if ok {
-			claims, err := m.scheme.GetClaimableVouchers(nil)
+			claims, err := m.GetClaimableVouchers(nil)
 			if err == nil {
 				total := big.NewInt(0)
 				for _, claim := range claims {
-					max, _ := new(big.Int).SetString(claim.Voucher.MaxClaimableAmount, 10)
 					tc, _ := new(big.Int).SetString(claim.TotalClaimed, 10)
-					if max != nil && tc != nil {
-						diff := new(big.Int).Sub(max, tc)
-						total.Add(total, diff)
+					if tc != nil {
+						total.Add(total, tc)
 					}
 				}
-				if total.Cmp(threshold) >= 0 {
+				if total.Cmp(threshold) > 0 {
 					shouldClaim = true
 				}
 			}
@@ -530,6 +596,9 @@ func (m *BatchedChannelManager) executeClaim(ctx context.Context, claims []batch
 	resp, err := m.facilitator.Settle(ctx, payloadBytes, requirementsBytes)
 	if err != nil {
 		return nil, err
+	}
+	if !resp.Success {
+		return nil, fmt.Errorf("claim settle failed: %s — %s", resp.ErrorReason, resp.ErrorMessage)
 	}
 
 	return &ClaimResult{

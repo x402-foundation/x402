@@ -68,10 +68,11 @@ func ExecuteClaimWithSignature(
 		sigBytes,
 	); simErr != nil {
 		return &x402.SettleResponse{ //nolint:nilerr // simulation failure → error encoded in response
-			Success:     false,
-			ErrorReason: ErrClaimSimulationFailed,
-			Transaction: "",
-			Network:     network,
+			Success:      false,
+			ErrorReason:  ErrClaimSimulationFailed,
+			ErrorMessage: simErr.Error(),
+			Transaction:  "",
+			Network:      network,
 		}, nil
 	}
 
@@ -108,7 +109,7 @@ func ExecuteClaimWithSignature(
 // buildVoucherClaimArgs builds the Solidity-compatible VoucherClaim[] argument for claim calls.
 func buildVoucherClaimArgs(claims []batched.BatchedVoucherClaim) interface{} {
 	type VoucherStruct struct {
-		Channel            interface{}
+		Channel            ContractChannelConfigTuple
 		MaxClaimableAmount *big.Int
 	}
 	type VoucherClaimStruct struct {

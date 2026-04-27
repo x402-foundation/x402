@@ -17,6 +17,16 @@ import (
 	"github.com/x402-foundation/x402/go/types"
 )
 
+// nonRecoverableRefundErrors are refund-specific server errors that the client
+// cannot recover from automatically. Seeing any of these means the user should
+// adjust their request (or accept that the channel has nothing left to refund) —
+// retrying will not help.
+var nonRecoverableRefundErrors = map[string]struct{}{
+	"batch_settlement_refund_no_balance":             {},
+	"batch_settlement_refund_amount_invalid":         {},
+	"batch_settlement_refund_amount_exceeds_balance": {},
+}
+
 // RefundOptions configures a cooperative refund call.
 type RefundOptions struct {
 	// Amount is the optional partial refund (token base units, decimal string).
@@ -181,13 +191,22 @@ func executeRefund(
 		}
 
 		if resp.StatusCode == http.StatusPaymentRequired {
+			// A 402 may carry either a PAYMENT-RESPONSE (settle aborted with a structured
+			// SettleResponse) or a PAYMENT-REQUIRED (verify aborted with corrective hints).
+			// Settle-side aborts for refunds are non-recoverable, so fail fast instead of retrying.
+			settleHeader := resp.Header.Get("PAYMENT-RESPONSE")
 			func() {
 				defer resp.Body.Close()
 				_, _ = io.Copy(io.Discard, resp.Body)
 			}()
-			if attempt >= maxAttempts {
-				return nil, fmt.Errorf("refund failed: server returned 402 after %d attempt(s)", attempt)
+			if settleHeader != "" {
+				settle, decErr := decodePaymentResponseHeader(settleHeader)
+				if decErr != nil {
+					return nil, fmt.Errorf("refund: decode PAYMENT-RESPONSE: %w", decErr)
+				}
+				return nil, fmt.Errorf("%s", formatRefundFailure(settle))
 			}
+
 			requiredHeader := resp.Header.Get("PAYMENT-REQUIRED")
 			if requiredHeader == "" {
 				return nil, fmt.Errorf("refund 402 missing PAYMENT-REQUIRED header")
@@ -195,6 +214,12 @@ func executeRefund(
 			paymentRequired, err := decodePaymentRequiredHeader(requiredHeader)
 			if err != nil {
 				return nil, fmt.Errorf("refund: decode corrective PAYMENT-REQUIRED: %w", err)
+			}
+			if _, nonRecoverable := nonRecoverableRefundErrors[paymentRequired.Error]; nonRecoverable {
+				return nil, fmt.Errorf("refund failed: %s", paymentRequired.Error)
+			}
+			if attempt >= maxAttempts {
+				return nil, fmt.Errorf("refund failed: server returned 402 after %d attempt(s)", attempt)
 			}
 			recovered, recErr := scheme.ProcessCorrectivePaymentRequired(ctx, paymentRequired.Error, paymentRequired.Accepts)
 			if recErr != nil || !recovered {
@@ -264,6 +289,19 @@ func buildRefundVoucherPayload(
 		charged = "0"
 	}
 
+	// Skip the network round-trip when our local view of the channel already shows
+	// it is fully drained (balance <= chargedCumulativeAmount).
+	if session.Balance != "" {
+		balance, balOk := new(big.Int).SetString(session.Balance, 10)
+		chargedBig, chargedOk := new(big.Int).SetString(charged, 10)
+		if balOk && chargedOk && balance.Cmp(chargedBig) <= 0 {
+			return nil, fmt.Errorf(
+				"refund failed: channel has no remaining balance (balance=%s, chargedCumulativeAmount=%s)",
+				session.Balance, charged,
+			)
+		}
+	}
+
 	voucherSigner := scheme.VoucherSigner()
 	if voucherSigner == nil {
 		voucherSigner = scheme.Signer()
@@ -288,6 +326,22 @@ func buildRefundVoucherPayload(
 		X402Version: 2,
 		Payload:     voucherPayload.ToMap(),
 	}, nil
+}
+
+// formatRefundFailure builds a human-readable error message from a settle
+// failure response carried in a refund 402 PAYMENT-RESPONSE header.
+func formatRefundFailure(settle *x402.SettleResponse) string {
+	if settle == nil {
+		return "Refund failed: unknown_settlement_error"
+	}
+	reason := settle.ErrorReason
+	if reason == "" {
+		reason = "unknown_settlement_error"
+	}
+	if settle.ErrorMessage != "" && settle.ErrorMessage != reason {
+		return fmt.Sprintf("Refund failed: %s: %s", reason, settle.ErrorMessage)
+	}
+	return fmt.Sprintf("Refund failed: %s", reason)
 }
 
 // normalizeRefundAmount validates the optional refundAmount argument.

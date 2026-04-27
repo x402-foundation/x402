@@ -91,6 +91,7 @@ func TestClaim_SingleBatch(t *testing.T) {
 	sess := sampleSession("0xa", "100")
 	sess.SignedMaxClaimable = "1000"
 	sess.TotalClaimed = "100"
+	sess.ChargedCumulativeAmount = "1000"
 	_ = s.UpdateSession("0xa", sess)
 
 	f := &fakeFacilitator{}
@@ -116,6 +117,7 @@ func TestClaim_BatchesAcrossMaxClaimsPerBatch(t *testing.T) {
 		sess := sampleSession(id, "100")
 		sess.SignedMaxClaimable = "1000"
 		sess.TotalClaimed = "100"
+		sess.ChargedCumulativeAmount = "1000"
 		_ = s.UpdateSession(id, sess)
 	}
 
@@ -142,6 +144,7 @@ func TestClaim_FacilitatorError(t *testing.T) {
 	sess := sampleSession("0xa", "100")
 	sess.SignedMaxClaimable = "1000"
 	sess.TotalClaimed = "100"
+	sess.ChargedCumulativeAmount = "1000"
 	_ = s.UpdateSession("0xa", sess)
 
 	f := &fakeFacilitator{settleErr: errors.New("boom")}
@@ -319,6 +322,7 @@ func TestClaimAndSettle_PropagatesClaimError(t *testing.T) {
 	sess := sampleSession("0xa", "100")
 	sess.SignedMaxClaimable = "1000"
 	sess.TotalClaimed = "100"
+	sess.ChargedCumulativeAmount = "1000"
 	_ = s.UpdateSession("0xa", sess)
 
 	f := &fakeFacilitator{settleErr: errors.New("boom")}
@@ -333,6 +337,7 @@ func TestClaimAndSettle_SettlesAfterClaim(t *testing.T) {
 	sess := sampleSession("0xa", "100")
 	sess.SignedMaxClaimable = "1000"
 	sess.TotalClaimed = "100"
+	sess.ChargedCumulativeAmount = "1000"
 	_ = s.UpdateSession("0xa", sess)
 
 	f := &fakeFacilitator{}
@@ -387,6 +392,7 @@ func TestStop_FlushTriggersClaimAndSettle(t *testing.T) {
 	sess := sampleSession("0xa", "100")
 	sess.SignedMaxClaimable = "1000"
 	sess.TotalClaimed = "100"
+	sess.ChargedCumulativeAmount = "1000"
 	_ = s.UpdateSession("0xa", sess)
 
 	f := &fakeFacilitator{}
@@ -405,6 +411,7 @@ func TestTick_ClaimOnInterval(t *testing.T) {
 	sess := sampleSession("0xa", "100")
 	sess.SignedMaxClaimable = "1000"
 	sess.TotalClaimed = "100"
+	sess.ChargedCumulativeAmount = "1000"
 	_ = s.UpdateSession("0xa", sess)
 
 	f := &fakeFacilitator{}
@@ -471,7 +478,7 @@ func TestTick_SettleErrorTriggersOnError(t *testing.T) {
 	var errs []error
 	m.config = AutoSettlementConfig{
 		SettleIntervalSecs: 1,
-		OnError: func(e error) { errs = append(errs, e) },
+		OnError:            func(e error) { errs = append(errs, e) },
 	}
 	m.lastSettleTime = time.Now().Add(-2 * time.Second)
 	m.pendingSettle = true
@@ -487,6 +494,7 @@ func TestTick_ClaimThresholdTriggers(t *testing.T) {
 	sess := sampleSession("0xa", "100")
 	sess.SignedMaxClaimable = "1000"
 	sess.TotalClaimed = "100"
+	sess.ChargedCumulativeAmount = "1000"
 	_ = s.UpdateSession("0xa", sess)
 
 	f := &fakeFacilitator{}
@@ -504,6 +512,7 @@ func TestTick_ClaimThresholdBelowDoesNotTrigger(t *testing.T) {
 	sess := sampleSession("0xa", "100")
 	sess.SignedMaxClaimable = "1000"
 	sess.TotalClaimed = "100"
+	sess.ChargedCumulativeAmount = "1000"
 	_ = s.UpdateSession("0xa", sess)
 
 	f := &fakeFacilitator{}
@@ -522,6 +531,7 @@ func TestTick_ClaimOnWithdrawalTriggers(t *testing.T) {
 	sess := sampleSession("0xa", "100")
 	sess.SignedMaxClaimable = "1000"
 	sess.TotalClaimed = "100"
+	sess.ChargedCumulativeAmount = "1000"
 	sess.WithdrawRequestedAt = 12345
 	sess.ChannelConfig.Payer = "0xpayer"
 	_ = s.UpdateSession("0xa", sess)
@@ -541,7 +551,7 @@ func TestTick_RefundOnIdleTriggers(t *testing.T) {
 	sess := sampleSession("0xa", "100")
 	sess.Balance = "1000"
 	sess.ChargedCumulativeAmount = "100"
-	sess.LastRequestTimestamp = time.Now().Add(-1*time.Hour).UnixMilli() // very idle
+	sess.LastRequestTimestamp = time.Now().Add(-1 * time.Hour).UnixMilli() // very idle
 	_ = s.UpdateSession("0xa", sess)
 
 	f := &fakeFacilitator{}
@@ -564,6 +574,7 @@ func TestTick_ConcurrentTicksAreSerialized(t *testing.T) {
 	sess := sampleSession("0xa", "100")
 	sess.SignedMaxClaimable = "1000"
 	sess.TotalClaimed = "100"
+	sess.ChargedCumulativeAmount = "1000"
 	_ = s.UpdateSession("0xa", sess)
 
 	// Slow facilitator so tick takes time.
@@ -613,4 +624,78 @@ func (s *slowFacilitator) settleCalls() int {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.calls
+}
+
+func TestGetClaimableVouchers_NoSessions(t *testing.T) {
+	s := NewBatchedEvmScheme("0xreceiver", nil)
+	m := newManager(s, &fakeFacilitator{})
+	got, err := m.GetClaimableVouchers(nil)
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	if len(got) != 0 {
+		t.Fatalf("expected zero claims, got %d", len(got))
+	}
+}
+
+func TestGetClaimableVouchers_FiltersUnclaimed(t *testing.T) {
+	s := NewBatchedEvmScheme("0xreceiver", nil)
+	sess := sampleSession("0xa", "10")
+	sess.SignedMaxClaimable = "10"
+	sess.TotalClaimed = "10"
+	_ = s.UpdateSession("0xa", sess)
+	m := newManager(s, &fakeFacilitator{})
+	got, _ := m.GetClaimableVouchers(nil)
+	if len(got) != 0 {
+		t.Fatalf("expected 0, got %d", len(got))
+	}
+}
+
+func TestGetClaimableVouchers_ReturnsClaimable(t *testing.T) {
+	s := NewBatchedEvmScheme("0xreceiver", nil)
+	sess := sampleSession("0xa", "100")
+	sess.SignedMaxClaimable = "1000"
+	sess.TotalClaimed = "100"
+	sess.ChargedCumulativeAmount = "1000"
+	_ = s.UpdateSession("0xa", sess)
+	m := newManager(s, &fakeFacilitator{})
+	got, err := m.GetClaimableVouchers(nil)
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	if len(got) != 1 || got[0].Voucher.MaxClaimableAmount != "1000" {
+		t.Fatalf("got %+v", got)
+	}
+}
+
+func TestGetClaimableVouchers_FiltersByIdle(t *testing.T) {
+	s := NewBatchedEvmScheme("0xreceiver", nil)
+	sess := sampleSession("0xa", "100")
+	sess.SignedMaxClaimable = "1000"
+	sess.TotalClaimed = "100"
+	sess.ChargedCumulativeAmount = "1000"
+	sess.LastRequestTimestamp = nowMs() // very recent
+	_ = s.UpdateSession("0xa", sess)
+	m := newManager(s, &fakeFacilitator{})
+	got, _ := m.GetClaimableVouchers(&GetClaimableVouchersOpts{IdleSecs: 3600})
+	if len(got) != 0 {
+		t.Fatalf("expected idle filter to drop session, got %d", len(got))
+	}
+}
+
+func TestGetWithdrawalPendingSessions(t *testing.T) {
+	s := NewBatchedEvmScheme("0xreceiver", nil)
+	a := sampleSession("0xa", "10")
+	b := sampleSession("0xb", "10")
+	b.WithdrawRequestedAt = 12345
+	_ = s.UpdateSession("0xa", a)
+	_ = s.UpdateSession("0xb", b)
+	m := newManager(s, &fakeFacilitator{})
+	got, err := m.GetWithdrawalPendingSessions()
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	if len(got) != 1 || got[0].ChannelId != "0xb" {
+		t.Fatalf("got %+v", got)
+	}
 }

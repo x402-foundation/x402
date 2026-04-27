@@ -727,6 +727,7 @@ func (s *x402HTTPResourceServer) buildSettlementFailureResult(errorReason string
 	if settleResult != nil {
 		failureResponse.Network = settleResult.Network
 		failureResponse.Payer = settleResult.Payer
+		failureResponse.ErrorMessage = settleResult.ErrorMessage
 	}
 
 	headers, err := s.createSettlementHeaders(&failureResponse)

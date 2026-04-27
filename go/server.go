@@ -539,7 +539,15 @@ func (s *x402ResourceServer) SettlePayment(ctx context.Context, payload types.Pa
 		return nil, NewSettleError("no_facilitator", "", network, "", fmt.Sprintf("no facilitator for %s on %s", scheme, network))
 	}
 
-	// Use already marshaled bytes for network call
+	// Re-marshal payload after hooks: BeforeSettle hooks may rewrite payload.Payload
+	// in place (e.g., the batch-settlement refund hook turns a voucher payload into
+	// a refundWithSignature settle action). The pre-hook bytes would carry the
+	// original shape and the facilitator would reject it.
+	payloadBytes, err = json.Marshal(payload)
+	if err != nil {
+		return nil, NewSettleError("failed_to_marshal_payload", "", Network(effectiveRequirements.Network), "", err.Error())
+	}
+
 	settleResult, settleErr := facilitator.Settle(ctx, payloadBytes, requirementsBytes)
 
 	// Handle failure

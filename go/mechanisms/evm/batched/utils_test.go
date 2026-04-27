@@ -71,10 +71,10 @@ func TestComputeChannelId_RejectsTooLongSalt(t *testing.T) {
 
 func TestNormalizeChannelId(t *testing.T) {
 	cases := map[string]string{
-		"0xABCDEF":            "0xabcdef",
-		"0xabc":               "0xabc",
-		"0x":                  "0x",
-		"0xMixedCASE12345":    "0xmixedcase12345",
+		"0xABCDEF":         "0xabcdef",
+		"0xabc":            "0xabc",
+		"0x":               "0x",
+		"0xMixedCASE12345": "0xmixedcase12345",
 	}
 	for in, want := range cases {
 		if got := NormalizeChannelId(in); got != want {

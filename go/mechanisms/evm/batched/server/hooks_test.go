@@ -24,13 +24,13 @@ type stubRequirements struct {
 	amount  string
 }
 
-func (s stubRequirements) GetScheme() string                 { return s.scheme }
-func (s stubRequirements) GetNetwork() string                { return s.network }
-func (s stubRequirements) GetAsset() string                  { return s.asset }
-func (s stubRequirements) GetAmount() string                 { return s.amount }
-func (s stubRequirements) GetPayTo() string                  { return "" }
-func (s stubRequirements) GetMaxTimeoutSeconds() int         { return 60 }
-func (s stubRequirements) GetExtra() map[string]interface{}  { return nil }
+func (s stubRequirements) GetScheme() string                { return s.scheme }
+func (s stubRequirements) GetNetwork() string               { return s.network }
+func (s stubRequirements) GetAsset() string                 { return s.asset }
+func (s stubRequirements) GetAmount() string                { return s.amount }
+func (s stubRequirements) GetPayTo() string                 { return "" }
+func (s stubRequirements) GetMaxTimeoutSeconds() int        { return 60 }
+func (s stubRequirements) GetExtra() map[string]interface{} { return nil }
 
 func batchedReqs() stubRequirements {
 	return stubRequirements{scheme: batched.SchemeBatched, network: "eip155:8453", amount: "10"}
@@ -100,7 +100,10 @@ func TestBeforeVerifyHook_NonVoucherIgnored(t *testing.T) {
 	}
 }
 
-func TestBeforeVerifyHook_RefundWithoutSessionAborts(t *testing.T) {
+func TestBeforeVerifyHook_RefundWithoutSessionPassesThrough(t *testing.T) {
+	// When no local session exists for a refund voucher, BeforeVerify must
+	// pass through so the facilitator can verify against on-chain state and
+	// AfterVerify can rebuild the session.
 	s := NewBatchedEvmScheme("0xreceiver", nil)
 	payload := voucherPayload("0xabcd", "0", "0xsig")
 	payload["refund"] = true
@@ -108,11 +111,8 @@ func TestBeforeVerifyHook_RefundWithoutSessionAborts(t *testing.T) {
 		Payload:      &stubPayload{data: payload},
 		Requirements: batchedReqs(),
 	})
-	if err != nil {
-		t.Fatalf("err: %v", err)
-	}
-	if res == nil || !res.Abort || res.Reason != "batch_settlement_evm_cumulative_below_claimed" {
-		t.Fatalf("got %+v", res)
+	if err != nil || res != nil {
+		t.Fatalf("expected pass-through, got %+v / %v", res, err)
 	}
 }
 

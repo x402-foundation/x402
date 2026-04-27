@@ -359,17 +359,18 @@ func TestMCPEVMIntegration(t *testing.T) {
 			}
 
 			// Verify the MCP input contains the expected tool name
-			if ext.Info.McpInput == nil {
-				t.Fatal("Expected McpInput to be set in bazaar extension")
+			mcpInput, ok := ext.Info.Input.(bazaar.McpInput)
+			if !ok {
+				t.Fatalf("Expected McpInput in bazaar extension Info.Input, got %T", ext.Info.Input)
 			}
-			if ext.Info.McpInput.ToolName != "get_weather" {
-				t.Errorf("Expected toolName 'get_weather', got '%s'", ext.Info.McpInput.ToolName)
+			if mcpInput.ToolName != "get_weather" {
+				t.Errorf("Expected toolName 'get_weather', got '%s'", mcpInput.ToolName)
 			}
-			if ext.Info.McpInput.Type != "mcp" {
-				t.Errorf("Expected type 'mcp', got '%s'", ext.Info.McpInput.Type)
+			if mcpInput.Type != "mcp" {
+				t.Errorf("Expected type 'mcp', got '%s'", mcpInput.Type)
 			}
 
-			t.Logf("✅ Bazaar extension present in 402 response with toolName: %s", ext.Info.McpInput.ToolName)
+			t.Logf("✅ Bazaar extension present in 402 response with toolName: %s", mcpInput.ToolName)
 		})
 
 		// ========================================================================

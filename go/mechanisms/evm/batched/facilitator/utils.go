@@ -17,25 +17,30 @@ import (
 
 var zeroAddress = "0x0000000000000000000000000000000000000000"
 
+// ContractChannelConfigTuple is the concrete struct shape passed to BatchSettlement
+// contract calls (deposit, refund, claim). Field names and ordering match the
+// Solidity ChannelConfig struct so go-ethereum's ABI packer can map them by reflection.
+type ContractChannelConfigTuple struct {
+	Payer              common.Address
+	PayerAuthorizer    common.Address
+	Receiver           common.Address
+	ReceiverAuthorizer common.Address
+	Token              common.Address
+	WithdrawDelay      *big.Int
+	Salt               [32]byte
+}
+
 // ToContractChannelConfig normalizes a ChannelConfig into the address-checksummed
 // Solidity tuple expected by the batch-settlement contract's deposit / refund /
 // claim entry points. Mirrors TS toContractChannelConfig.
-func ToContractChannelConfig(config batched.ChannelConfig) interface{} {
+func ToContractChannelConfig(config batched.ChannelConfig) ContractChannelConfigTuple {
 	withdrawDelay := new(big.Int).SetInt64(int64(config.WithdrawDelay))
 
 	saltBytes := common.FromHex(config.Salt)
 	var salt [32]byte
 	copy(salt[:], saltBytes)
 
-	return struct {
-		Payer              common.Address
-		PayerAuthorizer    common.Address
-		Receiver           common.Address
-		ReceiverAuthorizer common.Address
-		Token              common.Address
-		WithdrawDelay      *big.Int
-		Salt               [32]byte
-	}{
+	return ContractChannelConfigTuple{
 		Payer:              common.HexToAddress(config.Payer),
 		PayerAuthorizer:    common.HexToAddress(config.PayerAuthorizer),
 		Receiver:           common.HexToAddress(config.Receiver),

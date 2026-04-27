@@ -7,8 +7,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ethereum/go-ethereum/common"
-
 	x402 "github.com/x402-foundation/x402/go"
 	"github.com/x402-foundation/x402/go/mechanisms/evm/batched"
 	"github.com/x402-foundation/x402/go/types"
@@ -29,19 +27,7 @@ func validConfig() batched.ChannelConfig {
 
 func TestToContractChannelConfig_Roundtrips(t *testing.T) {
 	cfg := validConfig()
-	tuple := ToContractChannelConfig(cfg)
-	v, ok := tuple.(struct {
-		Payer              common.Address
-		PayerAuthorizer    common.Address
-		Receiver           common.Address
-		ReceiverAuthorizer common.Address
-		Token              common.Address
-		WithdrawDelay      *big.Int
-		Salt               [32]byte
-	})
-	if !ok {
-		t.Fatalf("unexpected tuple shape: %T", tuple)
-	}
+	v := ToContractChannelConfig(cfg)
 	if !strings.EqualFold(v.Payer.Hex(), cfg.Payer) {
 		t.Fatalf("payer = %s", v.Payer.Hex())
 	}
@@ -59,16 +45,7 @@ func TestToContractChannelConfig_Roundtrips(t *testing.T) {
 func TestToContractChannelConfig_ShortSaltLeftPads(t *testing.T) {
 	cfg := validConfig()
 	cfg.Salt = "0xff"
-	tuple := ToContractChannelConfig(cfg)
-	v := tuple.(struct {
-		Payer              common.Address
-		PayerAuthorizer    common.Address
-		Receiver           common.Address
-		ReceiverAuthorizer common.Address
-		Token              common.Address
-		WithdrawDelay      *big.Int
-		Salt               [32]byte
-	})
+	v := ToContractChannelConfig(cfg)
 	if v.Salt[0] != 0xff {
 		t.Fatalf("expected leading 0xff, got %x", v.Salt[0])
 	}

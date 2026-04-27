@@ -35,16 +35,9 @@ func (s *BatchedEvmScheme) BeforeVerifyHook() x402.BeforeVerifyHook {
 		if storageErr != nil {
 			return nil, nil //nolint:nilerr // storage error is non-fatal; skip stale check
 		}
+		// When no local session exists, verification is delegated to the facilitator
+		// (which checks on-chain state); AfterVerifyHook then rebuilds the session.
 		if session == nil {
-			// Refund without a server session is unrecoverable: the client must
-			// resync from on-chain state before issuing the refund voucher.
-			if isRefund {
-				return &x402.BeforeHookResult{
-					Abort:   true,
-					Reason:  "batch_settlement_evm_cumulative_below_claimed",
-					Message: "No server session for refund voucher; client must resync from on-chain state",
-				}, nil
-			}
 			return nil, nil
 		}
 

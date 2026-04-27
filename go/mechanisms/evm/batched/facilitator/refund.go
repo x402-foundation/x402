@@ -113,10 +113,11 @@ func ExecuteRefundWithSignature(
 		)
 		if simErr != nil {
 			return &x402.SettleResponse{ //nolint:nilerr // simulation failure → error encoded in response
-				Success:     false,
-				ErrorReason: ErrRefundSimulationFailed,
-				Transaction: "",
-				Network:     network,
+				Success:      false,
+				ErrorReason:  ErrRefundSimulationFailed,
+				ErrorMessage: simErr.Error(),
+				Transaction:  "",
+				Network:      network,
 			}, nil
 		}
 
@@ -160,10 +161,11 @@ func ExecuteRefundWithSignature(
 	)
 	if simErr != nil {
 		return &x402.SettleResponse{ //nolint:nilerr // simulation failure → error encoded in response
-			Success:     false,
-			ErrorReason: ErrRefundSimulationFailed,
-			Transaction: "",
-			Network:     network,
+			Success:      false,
+			ErrorReason:  ErrRefundSimulationFailed,
+			ErrorMessage: simErr.Error(),
+			Transaction:  "",
+			Network:      network,
 		}, nil
 	}
 

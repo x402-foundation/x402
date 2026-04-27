@@ -292,8 +292,8 @@ type fakeRefundContext struct {
 	recovered     *BatchedClientContext
 }
 
-func (f *fakeRefundContext) Storage() ClientSessionStorage   { return f.storage }
-func (f *fakeRefundContext) Signer() evm.ClientEvmSigner     { return f.signer }
+func (f *fakeRefundContext) Storage() ClientSessionStorage { return f.storage }
+func (f *fakeRefundContext) Signer() evm.ClientEvmSigner   { return f.signer }
 func (f *fakeRefundContext) VoucherSigner() evm.ClientEvmSigner {
 	if f.voucherSigner == nil {
 		return nil
@@ -436,5 +436,232 @@ func TestRefundChannel_ProbeFailure(t *testing.T) {
 	_, err := RefundChannel(context.Background(), fctx, srv.URL, nil)
 	if err == nil {
 		t.Fatal("expected probe error")
+	}
+}
+
+// ---------- formatRefundFailure ----------
+
+func TestFormatRefundFailure_NilSettle(t *testing.T) {
+	got := formatRefundFailure(nil)
+	if !strings.Contains(got, "unknown_settlement_error") {
+		t.Fatalf("got %q", got)
+	}
+}
+
+func TestFormatRefundFailure_ReasonOnly(t *testing.T) {
+	got := formatRefundFailure(&x402.SettleResponse{ErrorReason: "boom"})
+	if got != "Refund failed: boom" {
+		t.Fatalf("got %q", got)
+	}
+}
+
+func TestFormatRefundFailure_ReasonAndMessage(t *testing.T) {
+	got := formatRefundFailure(&x402.SettleResponse{ErrorReason: "boom", ErrorMessage: "details"})
+	if got != "Refund failed: boom: details" {
+		t.Fatalf("got %q", got)
+	}
+}
+
+func TestFormatRefundFailure_DropsDuplicateMessage(t *testing.T) {
+	// When errorMessage == errorReason, don't duplicate.
+	got := formatRefundFailure(&x402.SettleResponse{ErrorReason: "same", ErrorMessage: "same"})
+	if got != "Refund failed: same" {
+		t.Fatalf("got %q", got)
+	}
+}
+
+func TestFormatRefundFailure_EmptyDefaults(t *testing.T) {
+	got := formatRefundFailure(&x402.SettleResponse{})
+	if !strings.Contains(got, "unknown_settlement_error") {
+		t.Fatalf("got %q", got)
+	}
+}
+
+// ---------- buildRefundVoucherPayload — drained channel short-circuit ----------
+
+func TestBuildRefundVoucherPayload_DrainedChannelShortCircuits(t *testing.T) {
+	channelId, _ := batched.ComputeChannelId(defaultConfig())
+	storage := NewInMemoryClientSessionStorage()
+	_ = storage.Set(batched.NormalizeChannelId(channelId), &BatchedClientContext{
+		Balance:                 "100",
+		ChargedCumulativeAmount: "100", // balance <= charged → drained
+	})
+
+	fctx := &fakeRefundContext{
+		storage: storage,
+		signer:  &mockSigner{address: "0x1", sig: []byte{0x77}},
+		config:  defaultConfig(),
+	}
+	_, err := buildRefundVoucherPayload(context.Background(), fctx, types.PaymentRequirements{Network: "eip155:8453"}, "")
+	if err == nil || !strings.Contains(err.Error(), "no remaining balance") {
+		t.Fatalf("expected drained-channel error, got %v", err)
+	}
+}
+
+func TestBuildRefundVoucherPayload_PartiallyDrainedProceeds(t *testing.T) {
+	channelId, _ := batched.ComputeChannelId(defaultConfig())
+	storage := NewInMemoryClientSessionStorage()
+	_ = storage.Set(batched.NormalizeChannelId(channelId), &BatchedClientContext{
+		Balance:                 "1000",
+		ChargedCumulativeAmount: "100", // 1000 > 100 → has remainder
+	})
+
+	fctx := &fakeRefundContext{
+		storage: storage,
+		signer:  &mockSigner{address: "0x1", sig: []byte{0x77}},
+		config:  defaultConfig(),
+	}
+	_, err := buildRefundVoucherPayload(context.Background(), fctx, types.PaymentRequirements{Network: "eip155:8453"}, "")
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+}
+
+func TestBuildRefundVoucherPayload_EmptyBalanceBypassesShortCircuit(t *testing.T) {
+	// session.balance == "" → can't compare → don't short-circuit.
+	channelId, _ := batched.ComputeChannelId(defaultConfig())
+	storage := NewInMemoryClientSessionStorage()
+	_ = storage.Set(batched.NormalizeChannelId(channelId), &BatchedClientContext{
+		ChargedCumulativeAmount: "100",
+	})
+
+	fctx := &fakeRefundContext{
+		storage: storage,
+		signer:  &mockSigner{address: "0x1", sig: []byte{0x77}},
+		config:  defaultConfig(),
+	}
+	if _, err := buildRefundVoucherPayload(context.Background(), fctx, types.PaymentRequirements{Network: "eip155:8453"}, ""); err != nil {
+		t.Fatalf("err: %v", err)
+	}
+}
+
+// ---------- executeRefund — 402 PAYMENT-RESPONSE handling ----------
+
+// fakeRefundContextWithSession is a refund context that pre-seeds a session for the
+// channel computed from defaultConfig() so executeRefund can reach the network.
+func fakeRefundContextWithSession(charged string) *fakeRefundContext {
+	channelId, _ := batched.ComputeChannelId(defaultConfig())
+	storage := NewInMemoryClientSessionStorage()
+	_ = storage.Set(batched.NormalizeChannelId(channelId), &BatchedClientContext{
+		Balance:                 "10000",
+		ChargedCumulativeAmount: charged,
+	})
+	return &fakeRefundContext{
+		storage: storage,
+		signer:  &mockSigner{address: "0x1", sig: []byte{0xaa}},
+		config:  defaultConfig(),
+	}
+}
+
+func TestExecuteRefund_402WithPaymentResponseFailsFast(t *testing.T) {
+	// Settle-side abort: server returns 402 + PAYMENT-RESPONSE → no retry, fail with formatted reason.
+	settle := x402.SettleResponse{
+		Success:      false,
+		ErrorReason:  "batch_settlement_refund_no_balance",
+		ErrorMessage: "Channel drained",
+	}
+	settleBytes, _ := json.Marshal(settle)
+	settleHeader := base64.StdEncoding.EncodeToString(settleBytes)
+
+	calls := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		calls++
+		w.Header().Set("PAYMENT-RESPONSE", settleHeader)
+		w.WriteHeader(http.StatusPaymentRequired)
+	}))
+	defer srv.Close()
+
+	fctx := fakeRefundContextWithSession("100")
+	_, err := executeRefund(context.Background(), fctx, srv.URL,
+		types.PaymentRequirements{Scheme: batched.SchemeBatched, Network: "eip155:8453"},
+		"", http.DefaultClient)
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if !strings.Contains(err.Error(), "batch_settlement_refund_no_balance") {
+		t.Fatalf("got %v", err)
+	}
+	if !strings.Contains(err.Error(), "Channel drained") {
+		t.Fatalf("expected message in error, got %v", err)
+	}
+	if calls != 1 {
+		t.Fatalf("expected fail-fast (1 call), got %d", calls)
+	}
+}
+
+func TestExecuteRefund_402WithBadPaymentResponseHeader(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("PAYMENT-RESPONSE", "!!!not-base64!!!")
+		w.WriteHeader(http.StatusPaymentRequired)
+	}))
+	defer srv.Close()
+	fctx := fakeRefundContextWithSession("100")
+	_, err := executeRefund(context.Background(), fctx, srv.URL,
+		types.PaymentRequirements{Scheme: batched.SchemeBatched, Network: "eip155:8453"},
+		"", http.DefaultClient)
+	if err == nil || !strings.Contains(err.Error(), "decode PAYMENT-RESPONSE") {
+		t.Fatalf("got %v", err)
+	}
+}
+
+func TestExecuteRefund_NonRecoverableErrorFailsFast(t *testing.T) {
+	// Verify-side abort with a known non-recoverable error code: don't retry.
+	pr := x402.PaymentRequired{Error: "batch_settlement_refund_amount_invalid"}
+	prBytes, _ := json.Marshal(pr)
+	prHeader := base64.StdEncoding.EncodeToString(prBytes)
+
+	calls := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		calls++
+		w.Header().Set("PAYMENT-REQUIRED", prHeader)
+		w.WriteHeader(http.StatusPaymentRequired)
+	}))
+	defer srv.Close()
+
+	fctx := fakeRefundContextWithSession("100")
+	_, err := executeRefund(context.Background(), fctx, srv.URL,
+		types.PaymentRequirements{Scheme: batched.SchemeBatched, Network: "eip155:8453"},
+		"", http.DefaultClient)
+	if err == nil || !strings.Contains(err.Error(), "batch_settlement_refund_amount_invalid") {
+		t.Fatalf("got %v", err)
+	}
+	if calls != 1 {
+		t.Fatalf("expected fail-fast (1 call), got %d", calls)
+	}
+}
+
+func TestExecuteRefund_RecoverableErrorRetriesAndExhausts(t *testing.T) {
+	// Recoverable error code (not in non-recoverable set) but recovery returns false → fail with reason.
+	pr := x402.PaymentRequired{Error: "some_recoverable_thing"}
+	prBytes, _ := json.Marshal(pr)
+	prHeader := base64.StdEncoding.EncodeToString(prBytes)
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("PAYMENT-REQUIRED", prHeader)
+		w.WriteHeader(http.StatusPaymentRequired)
+	}))
+	defer srv.Close()
+
+	fctx := fakeRefundContextWithSession("100")
+	_, err := executeRefund(context.Background(), fctx, srv.URL,
+		types.PaymentRequirements{Scheme: batched.SchemeBatched, Network: "eip155:8453"},
+		"", http.DefaultClient)
+	if err == nil || !strings.Contains(err.Error(), "some_recoverable_thing") {
+		t.Fatalf("got %v", err)
+	}
+}
+
+func TestExecuteRefund_402MissingHeadersErrors(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusPaymentRequired)
+	}))
+	defer srv.Close()
+
+	fctx := fakeRefundContextWithSession("100")
+	_, err := executeRefund(context.Background(), fctx, srv.URL,
+		types.PaymentRequirements{Scheme: batched.SchemeBatched, Network: "eip155:8453"},
+		"", http.DefaultClient)
+	if err == nil || !strings.Contains(err.Error(), "missing PAYMENT-REQUIRED") {
+		t.Fatalf("got %v", err)
 	}
 }
