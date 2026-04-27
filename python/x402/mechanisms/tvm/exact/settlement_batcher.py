@@ -202,6 +202,8 @@ class _SettlementBatcher:
                     )
                     continue
                 queued.completed.set()
+                # On-chain seqno already advanced; further retries fail at verify
+                self._settlement_cache.release(queued.settlement_hash)
 
     def _fail_queued_settlement(
         self,

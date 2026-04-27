@@ -170,6 +170,40 @@ def test_confirmation_worker_releases_only_after_result_and_completion_on_wait_f
     ]
 
 
+def test_confirmation_worker_releases_after_completion_on_success():
+    queued = _make_queued_settlement()
+    cache = _ReleaseSpyCache()
+    cache.register(queued)
+    batcher = _make_batcher(
+        signer=_ConfirmedSigner(),
+        settlement_cache=cache,
+        settlement_verifier=lambda trace_data, settlement: "tx-hash",
+    )
+    batcher._confirmation_queue = _SinglePendingQueue(
+        _PendingConfirmation(
+            network=TVM_TESTNET,
+            batch=[queued],
+            trace_external_hash_norm="trace-hash",
+        )
+    )
+
+    with pytest.raises(_StopWorker):
+        batcher._run_confirmation_worker()
+
+    assert queued.completed.is_set() is True
+    assert queued.result is not None
+    assert queued.result.success is True
+    assert queued.result.transaction == "tx-hash"
+    assert cache.release_checks == [
+        {
+            "key": queued.settlement_hash,
+            "completed": True,
+            "error_reason": None,
+            "success": True,
+        }
+    ]
+
+
 def test_confirmation_worker_releases_only_after_result_and_completion_on_verify_failure():
     queued = _make_queued_settlement()
     cache = _ReleaseSpyCache()
