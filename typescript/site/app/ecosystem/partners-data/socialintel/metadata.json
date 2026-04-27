@@ -1,0 +1,7 @@
+{
+  "name": "Social Intel",
+  "description": "Pay-per-request Instagram influencer search API for AI agents. Search by niche, country, demographics, or follower count, returns usernames, bios, follower counts, business categories, and public business emails. USDC on Base, Solana, Polygon, Arbitrum.",
+  "logoUrl": "/logos/socialintel.png",
+  "websiteUrl": "https://socialintel.dev",
+  "category": "Services/Endpoints"
+}
