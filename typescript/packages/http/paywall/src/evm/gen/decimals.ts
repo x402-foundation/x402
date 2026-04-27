@@ -16,6 +16,8 @@ export const NETWORK_DECIMALS: Record<string, number> = {
   "eip155:42161": 6,
   "eip155:421614": 6,
   "eip155:4326": 18,
+  "eip155:72344": 6,
+  "eip155:723487": 6,
   "eip155:8453": 6,
   "eip155:84532": 6,
   "eip155:988": 6,
