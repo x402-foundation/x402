@@ -1,0 +1,7 @@
+{
+  "name": "AgentPay",
+  "description": "Autonomous M2M service marketplace using x402 v2. AI agents discover real-world services via OpenStreetMap, negotiate pricing with UPTO protocol, lock funds in smart contract escrow, and settle with USDC on Base — zero human interaction required. Patent pending.",
+  "logoUrl": "/logos/agentpay.png",
+  "websiteUrl": "https://www.x402-agent-pay.com",
+  "category": "Services/Endpoints"
+}
