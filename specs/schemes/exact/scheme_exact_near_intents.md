@@ -311,7 +311,7 @@ When the facilitator receives a `PaymentPayload`:
      "network": "near:mainnet",
      "transaction": "<destinationChainTxHashes from 1Click status>",
      "payer": "<payload.clientAddress>",
-     "exteonsions": {
+     "extensions": {
        "depositAddress": "<depositAddress>",
        "originTxHash": "<payload.txHash>",
        "nearTxHashes": ["6XqqDwoa...", "EVcgKukw..."],
