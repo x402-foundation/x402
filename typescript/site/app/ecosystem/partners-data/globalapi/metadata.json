@@ -1,0 +1,7 @@
+{
+  "name": "GlobalAPI",
+  "category": "Services/Endpoints",
+  "logoUrl": "/logos/globalapi.png",
+  "description": "Pay-per-call global economics and compliance data for AI agents. Covers macroeconomic indicators (US, UK, EU, Canada, Japan, IMF, World Bank), company registry lookups across multiple countries, and multi-list sanctions screening (OFAC SDN, UK FCDO, UN SC). USDC on Base via CDP facilitator. No API keys or accounts required.",
+  "websiteUrl": "https://globalapi.dev"
+}
