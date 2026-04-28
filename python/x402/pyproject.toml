@@ -125,7 +125,17 @@ exclude = [
 "http" = "x402/http"
 "mechanisms" = "x402/mechanisms"
 "extensions" = "x402/extensions"
-"mcp" = "x402/mcp"
+"mcp/CHANGELOG.md" = "x402/mcp/CHANGELOG.md"
+"mcp/README.md" = "x402/mcp/README.md"
+"mcp/__init__.py" = "x402/mcp/__init__.py"
+"mcp/client.py" = "x402/mcp/client.py"
+"mcp/client_async.py" = "x402/mcp/client_async.py"
+"mcp/constants.py" = "x402/mcp/constants.py"
+"mcp/server.py" = "x402/mcp/server.py"
+"mcp/server_async.py" = "x402/mcp/server_async.py"
+"mcp/server_sync.py" = "x402/mcp/server_sync.py"
+"mcp/types.py" = "x402/mcp/types.py"
+"mcp/utils.py" = "x402/mcp/utils.py"
 
 [tool.ruff]
 line-length = 100
