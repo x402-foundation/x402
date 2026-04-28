@@ -3,6 +3,7 @@ package evm
 import (
 	"fmt"
 	"math/big"
+	"strings"
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/math"
@@ -256,6 +257,172 @@ func BuildPermit2WitnessMap(to string, validAfter *big.Int) map[string]interface
 		"to":         to,
 		"validAfter": validAfter,
 	}
+}
+
+// HashReceiveWithAuthorization hashes a ReceiveWithAuthorization message for EIP-3009
+//
+// Same structure as TransferWithAuthorization but uses "ReceiveWithAuthorization" as primary type.
+// Used by the commerce scheme where the token collector calls receiveWithAuthorization.
+//
+// Args:
+//
+//	authorization: The EIP-3009 authorization data
+//	chainID: The chain ID for the EIP-712 domain
+//	verifyingContract: The token contract address
+//	tokenName: The token name (e.g., "USD Coin")
+//	tokenVersion: The token version (e.g., "2")
+//
+// Returns:
+//
+//	32-byte hash suitable for signing or verification
+//	error if hashing fails
+func HashReceiveWithAuthorization(
+	authorization ExactEIP3009Authorization,
+	chainID *big.Int,
+	verifyingContract string,
+	tokenName string,
+	tokenVersion string,
+) ([]byte, error) {
+	// Create EIP-712 domain
+	domain := TypedDataDomain{
+		Name:              tokenName,
+		Version:           tokenVersion,
+		ChainID:           chainID,
+		VerifyingContract: verifyingContract,
+	}
+
+	// Define EIP-712 types
+	types := map[string][]TypedDataField{
+		"EIP712Domain": {
+			{Name: "name", Type: "string"},
+			{Name: "version", Type: "string"},
+			{Name: "chainId", Type: "uint256"},
+			{Name: "verifyingContract", Type: "address"},
+		},
+		"ReceiveWithAuthorization": {
+			{Name: "from", Type: "address"},
+			{Name: "to", Type: "address"},
+			{Name: "value", Type: "uint256"},
+			{Name: "validAfter", Type: "uint256"},
+			{Name: "validBefore", Type: "uint256"},
+			{Name: "nonce", Type: "bytes32"},
+		},
+	}
+
+	// Parse values for message
+	value, ok := new(big.Int).SetString(authorization.Value, 10)
+	if !ok {
+		return nil, fmt.Errorf("invalid authorization value: %s", authorization.Value)
+	}
+	validAfter, ok := new(big.Int).SetString(authorization.ValidAfter, 10)
+	if !ok {
+		return nil, fmt.Errorf("invalid validAfter: %s", authorization.ValidAfter)
+	}
+	validBefore, ok := new(big.Int).SetString(authorization.ValidBefore, 10)
+	if !ok {
+		return nil, fmt.Errorf("invalid validBefore: %s", authorization.ValidBefore)
+	}
+	nonceBytes, err := HexToBytes(authorization.Nonce)
+	if err != nil {
+		return nil, fmt.Errorf("invalid nonce: %w", err)
+	}
+
+	// Ensure addresses are checksummed
+	from := common.HexToAddress(authorization.From).Hex()
+	to := common.HexToAddress(authorization.To).Hex()
+
+	// Create message
+	message := map[string]interface{}{
+		"from":        from,
+		"to":          to,
+		"value":       value,
+		"validAfter":  validAfter,
+		"validBefore": validBefore,
+		"nonce":       nonceBytes,
+	}
+
+	return HashTypedData(domain, types, "ReceiveWithAuthorization", message)
+}
+
+// ComputeCommerceNonce computes the deterministic nonce for commerce scheme.
+// This mirrors the on-chain _getHashPayerAgnostic logic:
+//
+//	paymentInfoZeroPayer = paymentInfo with payer = address(0)
+//	paymentInfoHash = keccak256(abi.encode(PAYMENT_INFO_TYPEHASH, paymentInfoZeroPayer))
+//	nonce = keccak256(abi.encode(chainId, escrowAddress, paymentInfoHash))
+//
+// Args:
+//
+//	chainID: The chain ID
+//	escrowAddress: The AuthCaptureEscrow contract address
+//	paymentInfo: The CommercePaymentInfo struct
+//
+// Returns:
+//
+//	32-byte nonce as hex string with 0x prefix
+//	error if computation fails
+func ComputeCommerceNonce(chainID *big.Int, escrowAddress string, paymentInfo CommercePaymentInfo) (string, error) {
+	// Compute PaymentInfo typehash
+	typehash := crypto.Keccak256([]byte(PaymentInfoTypehash))
+
+	// Parse PaymentInfo fields
+	operator := common.HexToAddress(paymentInfo.Operator)
+	payer := common.HexToAddress("0x0000000000000000000000000000000000000000") // zeroed payer
+	receiver := common.HexToAddress(paymentInfo.Receiver)
+	token := common.HexToAddress(paymentInfo.Token)
+
+	maxAmount, ok := new(big.Int).SetString(paymentInfo.MaxAmount, 10)
+	if !ok {
+		return "", fmt.Errorf("invalid maxAmount: %s", paymentInfo.MaxAmount)
+	}
+
+	preApprovalExpiry := new(big.Int).SetUint64(paymentInfo.PreApprovalExpiry)
+	authorizationExpiry := new(big.Int).SetUint64(paymentInfo.AuthorizationExpiry)
+	refundExpiry := new(big.Int).SetUint64(paymentInfo.RefundExpiry)
+	minFeeBps := new(big.Int).SetUint64(uint64(paymentInfo.MinFeeBps))
+	maxFeeBps := new(big.Int).SetUint64(uint64(paymentInfo.MaxFeeBps))
+	feeReceiver := common.HexToAddress(paymentInfo.FeeReceiver)
+
+	// Parse salt - can be hex or decimal
+	var salt *big.Int
+	if strings.HasPrefix(paymentInfo.Salt, "0x") || strings.HasPrefix(paymentInfo.Salt, "0X") {
+		salt, ok = new(big.Int).SetString(strings.TrimPrefix(strings.TrimPrefix(paymentInfo.Salt, "0x"), "0X"), 16)
+	} else {
+		salt, ok = new(big.Int).SetString(paymentInfo.Salt, 10)
+	}
+	if !ok {
+		return "", fmt.Errorf("invalid salt: %s", paymentInfo.Salt)
+	}
+
+	// abi.encode(TYPEHASH, operator, payer(zeroed), receiver, token, maxAmount,
+	//            preApprovalExpiry, authorizationExpiry, refundExpiry, minFeeBps, maxFeeBps, feeReceiver, salt)
+	// Each field is padded to 32 bytes
+	encoded := make([]byte, 0, 13*32) // typehash + 12 fields
+	encoded = append(encoded, common.LeftPadBytes(typehash, 32)...)
+	encoded = append(encoded, common.LeftPadBytes(operator.Bytes(), 32)...)
+	encoded = append(encoded, common.LeftPadBytes(payer.Bytes(), 32)...)
+	encoded = append(encoded, common.LeftPadBytes(receiver.Bytes(), 32)...)
+	encoded = append(encoded, common.LeftPadBytes(token.Bytes(), 32)...)
+	encoded = append(encoded, common.LeftPadBytes(maxAmount.Bytes(), 32)...)
+	encoded = append(encoded, common.LeftPadBytes(preApprovalExpiry.Bytes(), 32)...)
+	encoded = append(encoded, common.LeftPadBytes(authorizationExpiry.Bytes(), 32)...)
+	encoded = append(encoded, common.LeftPadBytes(refundExpiry.Bytes(), 32)...)
+	encoded = append(encoded, common.LeftPadBytes(minFeeBps.Bytes(), 32)...)
+	encoded = append(encoded, common.LeftPadBytes(maxFeeBps.Bytes(), 32)...)
+	encoded = append(encoded, common.LeftPadBytes(feeReceiver.Bytes(), 32)...)
+	encoded = append(encoded, common.LeftPadBytes(salt.Bytes(), 32)...)
+
+	paymentInfoHash := crypto.Keccak256(encoded)
+
+	// nonce = keccak256(abi.encode(chainId, escrowAddress, paymentInfoHash))
+	escrow := common.HexToAddress(escrowAddress)
+	nonceEncoded := make([]byte, 0, 3*32)
+	nonceEncoded = append(nonceEncoded, common.LeftPadBytes(chainID.Bytes(), 32)...)
+	nonceEncoded = append(nonceEncoded, common.LeftPadBytes(escrow.Bytes(), 32)...)
+	nonceEncoded = append(nonceEncoded, common.LeftPadBytes(paymentInfoHash, 32)...)
+
+	nonce := crypto.Keccak256(nonceEncoded)
+	return BytesToHex(nonce), nil
 }
 
 // HashPermit2Authorization hashes a PermitWitnessTransferFrom message for Permit2.

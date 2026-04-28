@@ -6,9 +6,10 @@ import (
 
 const (
 	// Scheme identifiers
-	SchemeExact   = "exact"
-	SchemeUpto    = "upto"
-	SchemeBatched = "batch-settlement"
+	SchemeExact    = "exact"
+	SchemeUpto     = "upto"
+	SchemeBatched  = "batch-settlement"
+	SchemeCommerce = "commerce"
 
 	// Default token decimals for USDC
 	DefaultDecimals = 6
@@ -726,3 +727,146 @@ func GetUptoPermit2EIP712Types() map[string][]TypedDataField {
 		"Witness":                   UptoPermit2WitnessTypes["Witness"],
 	}
 }
+
+// EIP-3009 ABI for receiveWithAuthorization with v,r,s (EOA signatures)
+var ReceiveWithAuthorizationVRSABI = []byte(`[
+	{
+		"inputs": [
+			{"name": "from", "type": "address"},
+			{"name": "to", "type": "address"},
+			{"name": "value", "type": "uint256"},
+			{"name": "validAfter", "type": "uint256"},
+			{"name": "validBefore", "type": "uint256"},
+			{"name": "nonce", "type": "bytes32"},
+			{"name": "v", "type": "uint8"},
+			{"name": "r", "type": "bytes32"},
+			{"name": "s", "type": "bytes32"}
+		],
+		"name": "receiveWithAuthorization",
+		"outputs": [],
+		"stateMutability": "nonpayable",
+		"type": "function"
+	}
+]`)
+
+// EIP-3009 ABI for receiveWithAuthorization with bytes signature (smart wallets)
+var ReceiveWithAuthorizationBytesABI = []byte(`[
+	{
+		"inputs": [
+			{"name": "from", "type": "address"},
+			{"name": "to", "type": "address"},
+			{"name": "value", "type": "uint256"},
+			{"name": "validAfter", "type": "uint256"},
+			{"name": "validBefore", "type": "uint256"},
+			{"name": "nonce", "type": "bytes32"},
+			{"name": "signature", "type": "bytes"}
+		],
+		"name": "receiveWithAuthorization",
+		"outputs": [],
+		"stateMutability": "nonpayable",
+		"type": "function"
+	}
+]`)
+
+// AuthCaptureEscrow ABI for authorize function
+var EscrowAuthorizeABI = []byte(`[
+	{
+		"inputs": [
+			{
+				"name": "paymentInfo",
+				"type": "tuple",
+				"components": [
+					{"name": "operator", "type": "address"},
+					{"name": "payer", "type": "address"},
+					{"name": "receiver", "type": "address"},
+					{"name": "token", "type": "address"},
+					{"name": "maxAmount", "type": "uint120"},
+					{"name": "preApprovalExpiry", "type": "uint48"},
+					{"name": "authorizationExpiry", "type": "uint48"},
+					{"name": "refundExpiry", "type": "uint48"},
+					{"name": "minFeeBps", "type": "uint16"},
+					{"name": "maxFeeBps", "type": "uint16"},
+					{"name": "feeReceiver", "type": "address"},
+					{"name": "salt", "type": "uint256"}
+				]
+			},
+			{"name": "amount", "type": "uint256"},
+			{"name": "tokenCollector", "type": "address"},
+			{"name": "collectorData", "type": "bytes"}
+		],
+		"name": "authorize",
+		"outputs": [],
+		"stateMutability": "nonpayable",
+		"type": "function"
+	}
+]`)
+
+// AuthCaptureEscrow ABI for charge function
+var EscrowChargeABI = []byte(`[
+	{
+		"inputs": [
+			{
+				"name": "paymentInfo",
+				"type": "tuple",
+				"components": [
+					{"name": "operator", "type": "address"},
+					{"name": "payer", "type": "address"},
+					{"name": "receiver", "type": "address"},
+					{"name": "token", "type": "address"},
+					{"name": "maxAmount", "type": "uint120"},
+					{"name": "preApprovalExpiry", "type": "uint48"},
+					{"name": "authorizationExpiry", "type": "uint48"},
+					{"name": "refundExpiry", "type": "uint48"},
+					{"name": "minFeeBps", "type": "uint16"},
+					{"name": "maxFeeBps", "type": "uint16"},
+					{"name": "feeReceiver", "type": "address"},
+					{"name": "salt", "type": "uint256"}
+				]
+			},
+			{"name": "amount", "type": "uint256"},
+			{"name": "tokenCollector", "type": "address"},
+			{"name": "collectorData", "type": "bytes"},
+			{"name": "feeBps", "type": "uint16"},
+			{"name": "feeReceiver", "type": "address"}
+		],
+		"name": "charge",
+		"outputs": [],
+		"stateMutability": "nonpayable",
+		"type": "function"
+	}
+]`)
+
+// AuthCaptureEscrow ABI for getHash function
+var EscrowGetHashABI = []byte(`[
+	{
+		"inputs": [
+			{
+				"name": "paymentInfo",
+				"type": "tuple",
+				"components": [
+					{"name": "operator", "type": "address"},
+					{"name": "payer", "type": "address"},
+					{"name": "receiver", "type": "address"},
+					{"name": "token", "type": "address"},
+					{"name": "maxAmount", "type": "uint120"},
+					{"name": "preApprovalExpiry", "type": "uint48"},
+					{"name": "authorizationExpiry", "type": "uint48"},
+					{"name": "refundExpiry", "type": "uint48"},
+					{"name": "minFeeBps", "type": "uint16"},
+					{"name": "maxFeeBps", "type": "uint16"},
+					{"name": "feeReceiver", "type": "address"},
+					{"name": "salt", "type": "uint256"}
+				]
+			}
+		],
+		"name": "getHash",
+		"outputs": [{"name": "", "type": "bytes32"}],
+		"stateMutability": "view",
+		"type": "function"
+	}
+]`)
+
+// PaymentInfoTypehash is the EIP-712 typehash for PaymentInfo struct (from contract)
+const PaymentInfoTypehash = "PaymentInfo(address operator,address payer,address receiver,address token,uint120 maxAmount,uint48 preApprovalExpiry,uint48 authorizationExpiry,uint48 refundExpiry,uint16 minFeeBps,uint16 maxFeeBps,address feeReceiver,uint256 salt)"
+
+// Note: MaxUint256() is defined in utils.go

@@ -530,3 +530,143 @@ type ERC6492SignatureData struct {
 	FactoryCalldata []byte   // Calldata to deploy the wallet (empty if not ERC-6492)
 	InnerSignature  []byte   // The actual signature (EIP-1271 or EOA)
 }
+
+// CommercePaymentInfo represents the on-chain PaymentInfo struct for the commerce scheme
+type CommercePaymentInfo struct {
+	Operator            string `json:"operator"`            // Operator address (facilitator's signer)
+	Payer               string `json:"payer"`               // Payer address (== authorization.from, set by client)
+	Receiver            string `json:"receiver"`            // Receiver address (== requirements.payTo)
+	Token               string `json:"token"`               // Token address (== requirements.asset)
+	MaxAmount           string `json:"maxAmount"`           // uint120 as decimal string
+	PreApprovalExpiry   uint64 `json:"preApprovalExpiry"`   // Unix timestamp
+	AuthorizationExpiry uint64 `json:"authorizationExpiry"` // Unix timestamp
+	RefundExpiry        uint64 `json:"refundExpiry"`        // Unix timestamp
+	MinFeeBps           uint16 `json:"minFeeBps"`           // Minimum fee in basis points
+	MaxFeeBps           uint16 `json:"maxFeeBps"`           // Maximum fee in basis points
+	FeeReceiver         string `json:"feeReceiver"`         // Fee receiver address (address(0) = flexible)
+	Salt                string `json:"salt"`                // uint256 as hex string
+}
+
+// CommercePayload represents the full commerce payment payload
+type CommercePayload struct {
+	Authorization ExactEIP3009Authorization `json:"authorization"`
+	Signature     string                    `json:"signature"`
+	PaymentInfo   CommercePaymentInfo       `json:"paymentInfo"`
+}
+
+// ToMap converts a CommercePayload to a map for JSON marshaling
+func (p *CommercePayload) ToMap() map[string]interface{} {
+	return map[string]interface{}{
+		"authorization": map[string]interface{}{
+			"from":        p.Authorization.From,
+			"to":          p.Authorization.To,
+			"value":       p.Authorization.Value,
+			"validAfter":  p.Authorization.ValidAfter,
+			"validBefore": p.Authorization.ValidBefore,
+			"nonce":       p.Authorization.Nonce,
+		},
+		"signature": p.Signature,
+		"paymentInfo": map[string]interface{}{
+			"operator":            p.PaymentInfo.Operator,
+			"payer":               p.PaymentInfo.Payer,
+			"receiver":            p.PaymentInfo.Receiver,
+			"token":               p.PaymentInfo.Token,
+			"maxAmount":           p.PaymentInfo.MaxAmount,
+			"preApprovalExpiry":   p.PaymentInfo.PreApprovalExpiry,
+			"authorizationExpiry": p.PaymentInfo.AuthorizationExpiry,
+			"refundExpiry":        p.PaymentInfo.RefundExpiry,
+			"minFeeBps":           p.PaymentInfo.MinFeeBps,
+			"maxFeeBps":           p.PaymentInfo.MaxFeeBps,
+			"feeReceiver":         p.PaymentInfo.FeeReceiver,
+			"salt":                p.PaymentInfo.Salt,
+		},
+	}
+}
+
+// CommercePayloadFromMap creates a CommercePayload from a map
+func CommercePayloadFromMap(data map[string]interface{}) (*CommercePayload, error) {
+	payload := &CommercePayload{}
+
+	if sig, ok := data["signature"].(string); ok {
+		payload.Signature = sig
+	} else {
+		return nil, fmt.Errorf("missing or invalid signature field")
+	}
+
+	// Parse authorization
+	auth, ok := data["authorization"].(map[string]interface{})
+	if !ok {
+		return nil, fmt.Errorf("missing or invalid authorization field")
+	}
+	if from, ok := auth["from"].(string); ok {
+		payload.Authorization.From = from
+	}
+	if to, ok := auth["to"].(string); ok {
+		payload.Authorization.To = to
+	}
+	if value, ok := auth["value"].(string); ok {
+		payload.Authorization.Value = value
+	}
+	if validAfter, ok := auth["validAfter"].(string); ok {
+		payload.Authorization.ValidAfter = validAfter
+	}
+	if validBefore, ok := auth["validBefore"].(string); ok {
+		payload.Authorization.ValidBefore = validBefore
+	}
+	if nonce, ok := auth["nonce"].(string); ok {
+		payload.Authorization.Nonce = nonce
+	}
+
+	// Parse paymentInfo
+	pi, ok := data["paymentInfo"].(map[string]interface{})
+	if !ok {
+		return nil, fmt.Errorf("missing or invalid paymentInfo field")
+	}
+	if v, ok := pi["operator"].(string); ok {
+		payload.PaymentInfo.Operator = v
+	}
+	if v, ok := pi["payer"].(string); ok {
+		payload.PaymentInfo.Payer = v
+	}
+	if v, ok := pi["receiver"].(string); ok {
+		payload.PaymentInfo.Receiver = v
+	}
+	if v, ok := pi["token"].(string); ok {
+		payload.PaymentInfo.Token = v
+	}
+	if v, ok := pi["maxAmount"].(string); ok {
+		payload.PaymentInfo.MaxAmount = v
+	}
+	// Handle preApprovalExpiry (can be float64 from JSON or uint64)
+	if v, ok := pi["preApprovalExpiry"].(float64); ok {
+		payload.PaymentInfo.PreApprovalExpiry = uint64(v)
+	}
+	if v, ok := pi["authorizationExpiry"].(float64); ok {
+		payload.PaymentInfo.AuthorizationExpiry = uint64(v)
+	}
+	if v, ok := pi["refundExpiry"].(float64); ok {
+		payload.PaymentInfo.RefundExpiry = uint64(v)
+	}
+	if v, ok := pi["minFeeBps"].(float64); ok {
+		payload.PaymentInfo.MinFeeBps = uint16(v)
+	}
+	if v, ok := pi["maxFeeBps"].(float64); ok {
+		payload.PaymentInfo.MaxFeeBps = uint16(v)
+	}
+	if v, ok := pi["feeReceiver"].(string); ok {
+		payload.PaymentInfo.FeeReceiver = v
+	}
+	if v, ok := pi["salt"].(string); ok {
+		payload.PaymentInfo.Salt = v
+	}
+
+	return payload, nil
+}
+
+// IsCommercePayload checks if a payload map is a commerce payload.
+// Commerce payloads have both "authorization" and "paymentInfo" keys.
+func IsCommercePayload(data map[string]interface{}) bool {
+	_, hasAuth := data["authorization"]
+	_, hasPaymentInfo := data["paymentInfo"]
+	return hasAuth && hasPaymentInfo
+}
