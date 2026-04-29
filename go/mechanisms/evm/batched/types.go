@@ -94,14 +94,42 @@ type BatchedVoucherClaim struct {
 	TotalClaimed string `json:"totalClaimed"`
 }
 
-// BatchedPaymentResponseExtra carries channel state in settle/verify responses.
-type BatchedPaymentResponseExtra struct {
+// BatchedChannelStateExtra is the public per-channel state snapshot embedded in
+// settle/verify response extras. Mirrors TS `BatchSettlementChannelStateExtra`.
+type BatchedChannelStateExtra struct {
 	ChannelId               string `json:"channelId"`
-	ChargedCumulativeAmount string `json:"chargedCumulativeAmount"`
 	Balance                 string `json:"balance"`
 	TotalClaimed            string `json:"totalClaimed"`
 	WithdrawRequestedAt     int    `json:"withdrawRequestedAt"`
 	RefundNonce             string `json:"refundNonce"`
+	ChargedCumulativeAmount string `json:"chargedCumulativeAmount,omitempty"`
+}
+
+// BatchedVoucherStateExtra is the public latest-voucher snapshot embedded in
+// settle/verify response extras. Mirrors TS `BatchSettlementVoucherStateExtra`.
+type BatchedVoucherStateExtra struct {
+	SignedMaxClaimable string `json:"signedMaxClaimable,omitempty"`
+	Signature          string `json:"signature,omitempty"`
+}
+
+// BatchedPaymentResponseExtra carries channel state in settle/verify responses.
+// Mirrors TS `BatchSettlementPaymentResponseExtra`. The nested shape is the
+// canonical wire format; the legacy flat fields are still accepted on parse for
+// backward compatibility.
+type BatchedPaymentResponseExtra struct {
+	ChargedAmount string                    `json:"chargedAmount,omitempty"`
+	ChannelState  *BatchedChannelStateExtra `json:"channelState,omitempty"`
+	VoucherState  *BatchedVoucherStateExtra `json:"voucherState,omitempty"`
+
+	// Deprecated legacy flat fields. Retained as no-json-tag to avoid emitting
+	// them on the wire; populated by parsers when only flat fields are present
+	// so callers can transparently read either shape via the helper accessors.
+	ChannelId               string `json:"-"`
+	ChargedCumulativeAmount string `json:"-"`
+	Balance                 string `json:"-"`
+	TotalClaimed            string `json:"-"`
+	WithdrawRequestedAt     int    `json:"-"`
+	RefundNonce             string `json:"-"`
 }
 
 // BatchSettlementRequirementsChannelState is the corrective-402 recovery payload
@@ -594,32 +622,108 @@ func VoucherClaimsToList(claims []BatchedVoucherClaim) []interface{} {
 	return list
 }
 
-// ToMap converts a BatchedPaymentResponseExtra to a map.
+// ToMap converts a BatchedPaymentResponseExtra to its canonical nested wire shape.
+// Legacy flat fields are populated into the nested ChannelState if no nested
+// state is present, ensuring round-tripping of constructions that only set the
+// flat fields.
 func (e *BatchedPaymentResponseExtra) ToMap() map[string]interface{} {
-	return map[string]interface{}{
-		"channelId":               e.ChannelId,
-		"chargedCumulativeAmount": e.ChargedCumulativeAmount,
-		"balance":                 e.Balance,
-		"totalClaimed":            e.TotalClaimed,
-		"withdrawRequestedAt":     e.WithdrawRequestedAt,
-		"refundNonce":             e.RefundNonce,
+	out := map[string]interface{}{}
+	if e.ChargedAmount != "" {
+		out["chargedAmount"] = e.ChargedAmount
 	}
+	cs := e.ChannelState
+	if cs == nil && (e.ChannelId != "" || e.Balance != "" || e.TotalClaimed != "" ||
+		e.RefundNonce != "" || e.WithdrawRequestedAt != 0 || e.ChargedCumulativeAmount != "") {
+		cs = &BatchedChannelStateExtra{
+			ChannelId:               e.ChannelId,
+			Balance:                 e.Balance,
+			TotalClaimed:            e.TotalClaimed,
+			WithdrawRequestedAt:     e.WithdrawRequestedAt,
+			RefundNonce:             e.RefundNonce,
+			ChargedCumulativeAmount: e.ChargedCumulativeAmount,
+		}
+	}
+	if cs != nil {
+		csMap := map[string]interface{}{
+			"channelId":           cs.ChannelId,
+			"balance":             cs.Balance,
+			"totalClaimed":        cs.TotalClaimed,
+			"withdrawRequestedAt": cs.WithdrawRequestedAt,
+			"refundNonce":         cs.RefundNonce,
+		}
+		if cs.ChargedCumulativeAmount != "" {
+			csMap["chargedCumulativeAmount"] = cs.ChargedCumulativeAmount
+		}
+		out["channelState"] = csMap
+	}
+	if vs := e.VoucherState; vs != nil {
+		vsMap := map[string]interface{}{}
+		if vs.SignedMaxClaimable != "" {
+			vsMap["signedMaxClaimable"] = vs.SignedMaxClaimable
+		}
+		if vs.Signature != "" {
+			vsMap["signature"] = vs.Signature
+		}
+		if len(vsMap) > 0 {
+			out["voucherState"] = vsMap
+		}
+	}
+	return out
 }
 
 // PaymentResponseExtraFromMap parses a BatchedPaymentResponseExtra from a map.
+// Reads the canonical nested shape and falls back to legacy flat keys.
 func PaymentResponseExtraFromMap(data map[string]interface{}) (*BatchedPaymentResponseExtra, error) {
 	extra := &BatchedPaymentResponseExtra{}
-	extra.ChannelId, _ = data["channelId"].(string)
-	extra.ChargedCumulativeAmount, _ = data["chargedCumulativeAmount"].(string)
-	extra.Balance, _ = data["balance"].(string)
-	extra.TotalClaimed, _ = data["totalClaimed"].(string)
-	switch v := data["withdrawRequestedAt"].(type) {
-	case float64:
-		extra.WithdrawRequestedAt = int(v)
-	case int:
-		extra.WithdrawRequestedAt = v
+	if data == nil {
+		return extra, nil
 	}
-	extra.RefundNonce, _ = data["refundNonce"].(string)
+	if v, ok := data["chargedAmount"].(string); ok {
+		extra.ChargedAmount = v
+	}
+
+	if csRaw, ok := data["channelState"].(map[string]interface{}); ok && csRaw != nil {
+		cs := &BatchedChannelStateExtra{}
+		cs.ChannelId, _ = csRaw["channelId"].(string)
+		cs.Balance, _ = csRaw["balance"].(string)
+		cs.TotalClaimed, _ = csRaw["totalClaimed"].(string)
+		cs.RefundNonce, _ = csRaw["refundNonce"].(string)
+		cs.ChargedCumulativeAmount, _ = csRaw["chargedCumulativeAmount"].(string)
+		switch v := csRaw["withdrawRequestedAt"].(type) {
+		case float64:
+			cs.WithdrawRequestedAt = int(v)
+		case int:
+			cs.WithdrawRequestedAt = v
+		}
+		extra.ChannelState = cs
+		// Mirror into flat fields for legacy callers.
+		extra.ChannelId = cs.ChannelId
+		extra.Balance = cs.Balance
+		extra.TotalClaimed = cs.TotalClaimed
+		extra.WithdrawRequestedAt = cs.WithdrawRequestedAt
+		extra.RefundNonce = cs.RefundNonce
+		extra.ChargedCumulativeAmount = cs.ChargedCumulativeAmount
+	} else {
+		// Legacy flat shape.
+		extra.ChannelId, _ = data["channelId"].(string)
+		extra.ChargedCumulativeAmount, _ = data["chargedCumulativeAmount"].(string)
+		extra.Balance, _ = data["balance"].(string)
+		extra.TotalClaimed, _ = data["totalClaimed"].(string)
+		extra.RefundNonce, _ = data["refundNonce"].(string)
+		switch v := data["withdrawRequestedAt"].(type) {
+		case float64:
+			extra.WithdrawRequestedAt = int(v)
+		case int:
+			extra.WithdrawRequestedAt = v
+		}
+	}
+
+	if vsRaw, ok := data["voucherState"].(map[string]interface{}); ok && vsRaw != nil {
+		vs := &BatchedVoucherStateExtra{}
+		vs.SignedMaxClaimable, _ = vsRaw["signedMaxClaimable"].(string)
+		vs.Signature, _ = vsRaw["signature"].(string)
+		extra.VoucherState = vs
+	}
 	return extra, nil
 }
 

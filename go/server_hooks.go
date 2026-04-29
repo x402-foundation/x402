@@ -2,6 +2,7 @@ package x402
 
 import (
 	"context"
+	"sync"
 )
 
 // ============================================================================
@@ -71,21 +72,66 @@ type SettleFailureContext struct {
 	Error error
 }
 
+// VerifiedPaymentCancellationReason describes why a verified payment is being canceled
+// before settlement runs. Mirrors TS `VerifiedPaymentCancellationReason`.
+type VerifiedPaymentCancellationReason string
+
+const (
+	// CancellationReasonHandlerThrew indicates the resource handler panicked or returned an error.
+	CancellationReasonHandlerThrew VerifiedPaymentCancellationReason = "handler_threw"
+	// CancellationReasonHandlerFailed indicates the resource handler completed but with a failing
+	// response status (>= 400).
+	CancellationReasonHandlerFailed VerifiedPaymentCancellationReason = "handler_failed"
+)
+
+// VerifiedPaymentCanceledContext is delivered to OnVerifiedPaymentCanceled hooks when a
+// verified payment is canceled before settlement.
+type VerifiedPaymentCanceledContext struct {
+	SettleContext
+	Reason         VerifiedPaymentCancellationReason
+	Err            error
+	ResponseStatus int
+}
+
+// VerifiedPaymentCancelOptions describes a single cancellation event.
+type VerifiedPaymentCancelOptions struct {
+	Reason         VerifiedPaymentCancellationReason
+	Err            error
+	ResponseStatus int
+}
+
+// PaymentCancellationDispatcher fires onVerifiedPaymentCanceled hooks at most once.
+type PaymentCancellationDispatcher struct {
+	once sync.Once
+	fire func(VerifiedPaymentCancelOptions)
+}
+
+// Cancel fires the underlying hooks. Safe to call multiple times — only the first call wins.
+func (d *PaymentCancellationDispatcher) Cancel(opts VerifiedPaymentCancelOptions) {
+	if d == nil || d.fire == nil {
+		return
+	}
+	d.once.Do(func() { d.fire(opts) })
+}
+
 // ============================================================================
 // Resource Server Hook Result Types
 // ============================================================================
 
 // BeforeHookResult represents the result of a "before" hook.
 // If Abort is true, the operation will be aborted with the given Reason.
-// If Skip is true (settle hooks only), the operation will be short-circuited
-// and SkipResult will be returned as the settlement response. This is used by
-// the batched scheme to handle voucher payloads without on-chain settlement.
+// If Skip is true, the operation will be short-circuited; the hook supplies
+// either SkipResult (settle hooks) or SkipVerifyResult (verify hooks). The
+// batched scheme uses this to handle voucher payloads without on-chain
+// settlement and to short-circuit verification when local channel state is
+// fresh enough to verify against.
 type BeforeHookResult struct {
-	Abort      bool
-	Reason     string
-	Message    string
-	Skip       bool
-	SkipResult *SettleResponse
+	Abort            bool
+	Reason           string
+	Message          string
+	Skip             bool
+	SkipResult       *SettleResponse
+	SkipVerifyResult *VerifyResponse
 }
 
 // VerifyFailureHookResult represents the result of a verify failure hook
@@ -136,6 +182,11 @@ type AfterSettleHook func(SettleResultContext) error
 // will be returned instead of the error
 type OnSettleFailureHook func(SettleFailureContext) (*SettleFailureHookResult, error)
 
+// OnVerifiedPaymentCanceledHook is called when a verified payment is canceled
+// before settlement runs (e.g. resource handler error or non-2xx response).
+// Returned errors are logged but do not affect the response.
+type OnVerifiedPaymentCanceledHook func(VerifiedPaymentCanceledContext) error
+
 // ============================================================================
 // Resource Server Hook Registration Options
 // ============================================================================
@@ -179,5 +230,13 @@ func WithAfterSettleHook(hook AfterSettleHook) ResourceServerOption {
 func WithOnSettleFailureHook(hook OnSettleFailureHook) ResourceServerOption {
 	return func(s *x402ResourceServer) {
 		s.onSettleFailureHooks = append(s.onSettleFailureHooks, hook)
+	}
+}
+
+// WithOnVerifiedPaymentCanceledHook registers a hook fired when a verified payment
+// is canceled before settlement (handler error or non-2xx response).
+func WithOnVerifiedPaymentCanceledHook(hook OnVerifiedPaymentCanceledHook) ResourceServerOption {
+	return func(s *x402ResourceServer) {
+		s.onVerifiedPaymentCanceledHooks = append(s.onVerifiedPaymentCanceledHooks, hook)
 	}
 }

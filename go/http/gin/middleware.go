@@ -361,10 +361,33 @@ func handlePaymentVerified(c *gin.Context, server *x402http.HTTPServer, ctx cont
 	}
 
 	// Continue to protected handler
-	c.Next()
+	func() {
+		defer func() {
+			if rec := recover(); rec != nil {
+				if result.CancellationDispatcher != nil {
+					err, ok := rec.(error)
+					if !ok {
+						err = fmt.Errorf("%v", rec)
+					}
+					result.CancellationDispatcher.Cancel(x402.VerifiedPaymentCancelOptions{
+						Reason: x402.CancellationReasonHandlerThrew,
+						Err:    err,
+					})
+				}
+				panic(rec)
+			}
+		}()
+		c.Next()
+	}()
 
 	// Check if aborted
 	if c.IsAborted() {
+		if result.CancellationDispatcher != nil {
+			result.CancellationDispatcher.Cancel(x402.VerifiedPaymentCancelOptions{
+				Reason:         x402.CancellationReasonHandlerFailed,
+				ResponseStatus: writer.statusCode,
+			})
+		}
 		return
 	}
 
@@ -373,6 +396,12 @@ func handlePaymentVerified(c *gin.Context, server *x402http.HTTPServer, ctx cont
 
 	// Don't settle if response failed
 	if writer.statusCode >= 400 {
+		if result.CancellationDispatcher != nil {
+			result.CancellationDispatcher.Cancel(x402.VerifiedPaymentCancelOptions{
+				Reason:         x402.CancellationReasonHandlerFailed,
+				ResponseStatus: writer.statusCode,
+			})
+		}
 		// Write captured response
 		c.Writer.WriteHeader(writer.statusCode)
 		_, _ = c.Writer.Write(writer.body.Bytes())

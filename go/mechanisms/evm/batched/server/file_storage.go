@@ -122,3 +122,67 @@ func (s *FileChannelStorage) CompareAndSet(channelId string, expectedCharged str
 	}
 	return true, nil
 }
+
+// UpdateChannel atomically reads, mutates, and writes a channel record under an
+// exclusive lock file. Returning a different pointer commits the new session;
+// returning nil deletes the file; returning the same pointer is treated as a
+// no-op (status: unchanged).
+func (s *FileChannelStorage) UpdateChannel(channelId string, update func(current *ChannelSession) *ChannelSession) (*ChannelUpdateResult, error) {
+	path := s.filePath(channelId)
+	lockPath := path + ".lock"
+
+	if err := os.MkdirAll(filepath.Dir(lockPath), 0o755); err != nil {
+		return nil, fmt.Errorf("mkdir %s: %w", filepath.Dir(lockPath), err)
+	}
+
+	// Spin-lock until we acquire the exclusive lock file. Concurrent writers see
+	// ErrExist and retry; bounded retries keep this from hanging on stale locks.
+	const maxAttempts = 50
+	var lockFile *os.File
+	for attempt := 0; attempt < maxAttempts; attempt++ {
+		f, err := os.OpenFile(lockPath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o644)
+		if err == nil {
+			lockFile = f
+			break
+		}
+		if !errors.Is(err, os.ErrExist) {
+			return nil, fmt.Errorf("acquire lock %s: %w", lockPath, err)
+		}
+	}
+	if lockFile == nil {
+		return nil, fmt.Errorf("acquire lock %s: contended", lockPath)
+	}
+	defer func() {
+		_ = lockFile.Close()
+		_ = os.Remove(lockPath)
+	}()
+
+	var current *ChannelSession
+	out := &ChannelSession{}
+	ok, err := batched.ReadJSONFile(path, out)
+	if err != nil {
+		return nil, err
+	}
+	if ok {
+		current = out
+	}
+
+	next := update(current)
+	switch {
+	case next == nil:
+		if !ok {
+			return &ChannelUpdateResult{Status: ChannelUnchanged}, nil
+		}
+		if rmErr := os.Remove(path); rmErr != nil && !batched.IsNotExist(rmErr) {
+			return nil, rmErr
+		}
+		return &ChannelUpdateResult{Status: ChannelDeleted}, nil
+	case current != nil && next == current:
+		return &ChannelUpdateResult{Channel: current, Status: ChannelUnchanged}, nil
+	default:
+		if err := batched.WriteJSONAtomic(path, next); err != nil {
+			return nil, err
+		}
+		return &ChannelUpdateResult{Channel: next, Status: ChannelUpdated}, nil
+	}
+}

@@ -204,13 +204,25 @@ func (c *BatchedEvmScheme) Refund(ctx context.Context, url string, options *Refu
 // ProcessSettleResponse updates local session state from a settle response.
 // Mirrors TS processSettleResponse: merges present fields into existing session.
 // Refund-specific reconciliation is handled at the refund call site via
-// UpdateSessionAfterRefund.
+// UpdateSessionAfterRefund. Reads the canonical nested wire shape (channelState)
+// and falls back to legacy flat keys.
 func (c *BatchedEvmScheme) ProcessSettleResponse(settle map[string]interface{}) error {
 	if settle == nil {
 		return nil
 	}
 
-	channelId, _ := settle["channelId"].(string)
+	parsed, _ := batched.PaymentResponseExtraFromMap(settle)
+	if parsed == nil {
+		return nil
+	}
+
+	channelId := ""
+	if parsed.ChannelState != nil {
+		channelId = parsed.ChannelState.ChannelId
+	}
+	if channelId == "" {
+		channelId = parsed.ChannelId
+	}
 	if channelId == "" {
 		return nil
 	}
@@ -222,14 +234,26 @@ func (c *BatchedEvmScheme) ProcessSettleResponse(settle map[string]interface{}) 
 		*next = *prev
 	}
 
-	if v, ok := settle["chargedCumulativeAmount"].(string); ok {
-		next.ChargedCumulativeAmount = v
-	}
-	if v, ok := settle["balance"].(string); ok {
-		next.Balance = v
-	}
-	if v, ok := settle["totalClaimed"].(string); ok {
-		next.TotalClaimed = v
+	if parsed.ChannelState != nil {
+		if v := parsed.ChannelState.ChargedCumulativeAmount; v != "" {
+			next.ChargedCumulativeAmount = v
+		}
+		if v := parsed.ChannelState.Balance; v != "" {
+			next.Balance = v
+		}
+		if v := parsed.ChannelState.TotalClaimed; v != "" {
+			next.TotalClaimed = v
+		}
+	} else {
+		if v := parsed.ChargedCumulativeAmount; v != "" {
+			next.ChargedCumulativeAmount = v
+		}
+		if v := parsed.Balance; v != "" {
+			next.Balance = v
+		}
+		if v := parsed.TotalClaimed; v != "" {
+			next.TotalClaimed = v
+		}
 	}
 
 	return c.storage.Set(channelId, next)

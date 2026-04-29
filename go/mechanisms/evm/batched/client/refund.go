@@ -84,11 +84,29 @@ func RefundChannel(ctx context.Context, scheme RefundContext, url string, option
 // UpdateSessionAfterRefund reconciles local session state with the outcome of a
 // cooperative refund. Deletes the session when the post-refund balance is zero
 // (full refund), otherwise updates balance/chargedCumulativeAmount/totalClaimed
-// from the server snapshot (partial refund — channel stays open).
+// from the server snapshot (partial refund — channel stays open). Reads the
+// canonical nested wire shape and falls back to legacy flat keys.
 func UpdateSessionAfterRefund(storage ClientChannelStorage, channelKey string, settleExtra map[string]interface{}) error {
+	parsed, _ := batched.PaymentResponseExtraFromMap(settleExtra)
+
+	balanceStr := ""
+	chargedStr := ""
+	totalClaimedStr := ""
+	if parsed != nil {
+		if cs := parsed.ChannelState; cs != nil {
+			balanceStr = cs.Balance
+			chargedStr = cs.ChargedCumulativeAmount
+			totalClaimedStr = cs.TotalClaimed
+		} else {
+			balanceStr = parsed.Balance
+			chargedStr = parsed.ChargedCumulativeAmount
+			totalClaimedStr = parsed.TotalClaimed
+		}
+	}
+
 	var balanceAfter *big.Int
-	if balRaw, ok := settleExtra["balance"]; ok && balRaw != nil {
-		if bal, ok := new(big.Int).SetString(fmt.Sprintf("%v", balRaw), 10); ok {
+	if balanceStr != "" {
+		if bal, ok := new(big.Int).SetString(balanceStr, 10); ok {
 			balanceAfter = bal
 		}
 	}
@@ -103,11 +121,11 @@ func UpdateSessionAfterRefund(storage ClientChannelStorage, channelKey string, s
 		*next = *prev
 	}
 	next.Balance = balanceAfter.String()
-	if charged, ok := settleExtra["chargedCumulativeAmount"]; ok && charged != nil {
-		next.ChargedCumulativeAmount = fmt.Sprintf("%v", charged)
+	if chargedStr != "" {
+		next.ChargedCumulativeAmount = chargedStr
 	}
-	if tc, ok := settleExtra["totalClaimed"]; ok && tc != nil {
-		next.TotalClaimed = fmt.Sprintf("%v", tc)
+	if totalClaimedStr != "" {
+		next.TotalClaimed = totalClaimedStr
 	}
 	return storage.Set(channelKey, next)
 }

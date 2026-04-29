@@ -293,9 +293,11 @@ func buildBatchedPipeline(t *testing.T, keys *batchedTestKeys) *batchedPipeline 
 	})
 	x402Server := x402.Newx402ResourceServer(x402.WithFacilitatorClient(facClient))
 	x402Server.Register(batchedTestNetwork, serverScheme)
+	x402Server.OnBeforeVerify(serverScheme.BeforeVerifyHook())
 	x402Server.OnAfterVerify(serverScheme.AfterVerifyHook())
 	x402Server.OnBeforeSettle(serverScheme.BeforeSettleHook())
 	x402Server.OnAfterSettle(serverScheme.AfterSettleHook())
+	x402Server.OnVerifiedPaymentCanceled(serverScheme.OnVerifiedPaymentCanceledHook())
 
 	if err := x402Server.Initialize(context.Background()); err != nil {
 		t.Fatalf("server initialize: %v", err)

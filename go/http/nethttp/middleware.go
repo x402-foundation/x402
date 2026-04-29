@@ -306,12 +306,34 @@ func handlePaymentVerified(w http.ResponseWriter, r *http.Request, next http.Han
 		capture.written = true
 		_, _ = capture.body.Write(bodyBytes)
 	} else {
-		// Call downstream handler with captured writer
-		next.ServeHTTP(capture, r)
+		func() {
+			defer func() {
+				if rec := recover(); rec != nil {
+					if result.CancellationDispatcher != nil {
+						err, ok := rec.(error)
+						if !ok {
+							err = fmt.Errorf("%v", rec)
+						}
+						result.CancellationDispatcher.Cancel(x402.VerifiedPaymentCancelOptions{
+							Reason: x402.CancellationReasonHandlerThrew,
+							Err:    err,
+						})
+					}
+					panic(rec)
+				}
+			}()
+			next.ServeHTTP(capture, r)
+		}()
 	}
 
 	// Don't settle if response failed
 	if capture.statusCode >= 400 {
+		if result.CancellationDispatcher != nil {
+			result.CancellationDispatcher.Cancel(x402.VerifiedPaymentCancelOptions{
+				Reason:         x402.CancellationReasonHandlerFailed,
+				ResponseStatus: capture.statusCode,
+			})
+		}
 		w.WriteHeader(capture.statusCode)
 		_, _ = w.Write(capture.body.Bytes())
 		return

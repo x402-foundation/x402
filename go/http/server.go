@@ -183,6 +183,10 @@ type HTTPProcessResult struct {
 	// SkipHandler is set when an AfterVerifyHook signals that the resource handler
 	// should be bypassed and settlement performed inline (e.g. cooperative refund).
 	SkipHandler *x402.SkipHandlerDirective
+	// CancellationDispatcher fires onVerifiedPaymentCanceled hooks if the resource
+	// handler errors or returns a non-2xx status before settlement runs. Set when
+	// Type is ResultPaymentVerified.
+	CancellationDispatcher *x402.PaymentCancellationDispatcher
 }
 
 // Result type constants
@@ -648,6 +652,11 @@ func (s *x402HTTPResourceServer) ProcessHTTPRequest(ctx context.Context, reqCtx 
 	}
 	if verifyResp != nil {
 		result.SkipHandler = verifyResp.SkipHandler
+	}
+	// Skip-handler runs inline; only attach a cancellation dispatcher when there
+	// is a downstream resource handler whose outcome can fail.
+	if result.SkipHandler == nil {
+		result.CancellationDispatcher = s.CreatePaymentCancellationDispatcher(ctx, *typedPayload, *matchingReqs)
 	}
 	return result
 }

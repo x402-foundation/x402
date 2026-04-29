@@ -496,20 +496,52 @@ func TestChannelConfigToMap_RoundTrip(t *testing.T) {
 
 func TestPaymentResponseExtra_RoundTrip(t *testing.T) {
 	e := &BatchedPaymentResponseExtra{
-		ChannelId:               "0xabc",
-		ChargedCumulativeAmount: "100",
-		Balance:                 "900",
-		TotalClaimed:            "50",
-		WithdrawRequestedAt:     1234,
-		RefundNonce:             "1",
+		ChargedAmount: "10",
+		ChannelState: &BatchedChannelStateExtra{
+			ChannelId:               "0xabc",
+			Balance:                 "900",
+			TotalClaimed:            "50",
+			WithdrawRequestedAt:     1234,
+			RefundNonce:             "1",
+			ChargedCumulativeAmount: "100",
+		},
+		VoucherState: &BatchedVoucherStateExtra{
+			SignedMaxClaimable: "200",
+			Signature:          "0xdeadbeef",
+		},
 	}
 	out := e.ToMap()
 	parsed, err := PaymentResponseExtraFromMap(out)
 	if err != nil {
 		t.Fatalf("err: %v", err)
 	}
-	if !reflect.DeepEqual(e, parsed) {
-		t.Fatalf("round-trip mismatch:\nwant %+v\ngot  %+v", e, parsed)
+	if parsed.ChargedAmount != e.ChargedAmount {
+		t.Fatalf("ChargedAmount = %q, want %q", parsed.ChargedAmount, e.ChargedAmount)
+	}
+	if !reflect.DeepEqual(parsed.ChannelState, e.ChannelState) {
+		t.Fatalf("ChannelState mismatch:\nwant %+v\ngot  %+v", e.ChannelState, parsed.ChannelState)
+	}
+	if !reflect.DeepEqual(parsed.VoucherState, e.VoucherState) {
+		t.Fatalf("VoucherState mismatch:\nwant %+v\ngot  %+v", e.VoucherState, parsed.VoucherState)
+	}
+}
+
+// Legacy flat-shape parsing should still work for backward compatibility.
+func TestPaymentResponseExtra_FromMap_LegacyFlat(t *testing.T) {
+	m := map[string]interface{}{
+		"channelId":               "0xabc",
+		"chargedCumulativeAmount": "100",
+		"balance":                 "900",
+		"totalClaimed":            "50",
+		"withdrawRequestedAt":     1234,
+		"refundNonce":             "1",
+	}
+	parsed, err := PaymentResponseExtraFromMap(m)
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	if parsed.ChannelId != "0xabc" || parsed.Balance != "900" || parsed.RefundNonce != "1" {
+		t.Fatalf("legacy flat fields not populated: %+v", parsed)
 	}
 }
 

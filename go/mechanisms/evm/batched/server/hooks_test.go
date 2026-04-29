@@ -342,7 +342,7 @@ func TestBeforeSettleHook_VoucherWithoutSessionAborts(t *testing.T) {
 	if err != nil {
 		t.Fatalf("err: %v", err)
 	}
-	if res == nil || !res.Abort || res.Reason != "missing_batched_session" {
+	if res == nil || !res.Abort || res.Reason != "missing_batch_settlement_channel" {
 		t.Fatalf("got %+v", res)
 	}
 }
@@ -350,8 +350,12 @@ func TestBeforeSettleHook_VoucherWithoutSessionAborts(t *testing.T) {
 func TestBeforeSettleHook_VoucherSkipsAndUpdates(t *testing.T) {
 	s := NewBatchedEvmScheme("0xreceiver", nil)
 	_ = s.UpdateSession("0xabcd", sampleSession("0xabcd", "10"))
+	stub := &stubPayload{data: voucherPayload("0xabcd", "20", "0xsig")}
+	if _, err := s.BeforeVerifyHook()(x402.VerifyContext{Payload: stub, Requirements: batchedReqs()}); err != nil {
+		t.Fatalf("setup verify: %v", err)
+	}
 	res, err := s.BeforeSettleHook()(x402.SettleContext{
-		Payload:      &stubPayload{data: voucherPayload("0xabcd", "20", "0xsig")},
+		Payload:      stub,
 		Requirements: batchedReqs(),
 	})
 	if err != nil {
@@ -367,17 +371,29 @@ func TestBeforeSettleHook_VoucherSkipsAndUpdates(t *testing.T) {
 }
 
 func TestBeforeSettleHook_VoucherExceedsSignedCapAborts(t *testing.T) {
+	// Defensive-guard test: simulate a race where chargedCumulativeAmount
+	// is bumped between reservation and settle, making the voucher's signed
+	// cap unreachable. Install a reservation for cap=20 first, then advance
+	// stored charged so 15+10>20 trips the in-tx cap check.
 	s := NewBatchedEvmScheme("0xreceiver", nil)
 	_ = s.UpdateSession("0xabcd", sampleSession("0xabcd", "10"))
-	// Voucher signedCap=15 but charged 10+10=20 → exceeds cap.
+	stub := &stubPayload{data: voucherPayload("0xabcd", "20", "0xsig")}
+	if _, err := s.BeforeVerifyHook()(x402.VerifyContext{Payload: stub, Requirements: batchedReqs()}); err != nil {
+		t.Fatalf("setup verify: %v", err)
+	}
+	cur, _ := s.GetSession("0xabcd")
+	cur.ChargedCumulativeAmount = "15"
+	_ = s.UpdateSession("0xabcd", cur)
+	// Issue settle against the lower-cap voucher (cap=15) so 15+10>15 trips cap_exceeded.
+	stub.data = voucherPayload("0xabcd", "15", "0xsig")
 	res, err := s.BeforeSettleHook()(x402.SettleContext{
-		Payload:      &stubPayload{data: voucherPayload("0xabcd", "15", "0xsig")},
+		Payload:      stub,
 		Requirements: batchedReqs(),
 	})
 	if err != nil {
 		t.Fatalf("err: %v", err)
 	}
-	if res == nil || !res.Abort || res.Reason != "batched_charge_exceeds_signed_cumulative" {
+	if res == nil || !res.Abort || res.Reason != "batch_settlement_charge_exceeds_signed_cumulative" {
 		t.Fatalf("got %+v", res)
 	}
 }

@@ -78,9 +78,10 @@ type x402ResourceServer struct {
 	beforeVerifyHooks    []BeforeVerifyHook
 	afterVerifyHooks     []AfterVerifyHook
 	onVerifyFailureHooks []OnVerifyFailureHook
-	beforeSettleHooks    []BeforeSettleHook
-	afterSettleHooks     []AfterSettleHook
-	onSettleFailureHooks []OnSettleFailureHook
+	beforeSettleHooks              []BeforeSettleHook
+	afterSettleHooks               []AfterSettleHook
+	onSettleFailureHooks           []OnSettleFailureHook
+	onVerifiedPaymentCanceledHooks []OnVerifiedPaymentCanceledHook
 }
 
 // SupportedCache caches facilitator capabilities
@@ -300,6 +301,49 @@ func (s *x402ResourceServer) OnSettleFailure(hook OnSettleFailureHook) *x402Reso
 	return s
 }
 
+func (s *x402ResourceServer) OnVerifiedPaymentCanceled(hook OnVerifiedPaymentCanceledHook) *x402ResourceServer {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.onVerifiedPaymentCanceledHooks = append(s.onVerifiedPaymentCanceledHooks, hook)
+	return s
+}
+
+// CreatePaymentCancellationDispatcher returns a dispatcher that, when Cancel'd,
+// invokes onVerifiedPaymentCanceled hooks exactly once. The HTTP transport calls
+// this after a successful Verify but before/instead of Settle when the resource
+// handler errors or returns a non-2xx response.
+func (s *x402ResourceServer) CreatePaymentCancellationDispatcher(
+	ctx context.Context,
+	payload types.PaymentPayload,
+	requirements types.PaymentRequirements,
+) *PaymentCancellationDispatcher {
+	payloadBytes, _ := json.Marshal(payload)
+	requirementsBytes, _ := json.Marshal(requirements)
+	settleCtx := SettleContext{
+		Ctx:               ctx,
+		Payload:           payload,
+		Requirements:      requirements,
+		PayloadBytes:      payloadBytes,
+		RequirementsBytes: requirementsBytes,
+	}
+	return &PaymentCancellationDispatcher{
+		fire: func(opts VerifiedPaymentCancelOptions) {
+			cancelCtx := VerifiedPaymentCanceledContext{
+				SettleContext:  settleCtx,
+				Reason:         opts.Reason,
+				Err:            opts.Err,
+				ResponseStatus: opts.ResponseStatus,
+			}
+			s.mu.RLock()
+			hooks := append([]OnVerifiedPaymentCanceledHook(nil), s.onVerifiedPaymentCanceledHooks...)
+			s.mu.RUnlock()
+			for _, hook := range hooks {
+				_ = hook(cancelCtx)
+			}
+		},
+	}
+}
+
 // ============================================================================
 // Core Payment Methods (V2 Only)
 // ============================================================================
@@ -410,14 +454,39 @@ func (s *x402ResourceServer) VerifyPayment(ctx context.Context, payload types.Pa
 		RequirementsBytes: requirementsBytes,
 	}
 
+	var skipVerifyResult *VerifyResponse
 	for _, hook := range s.beforeVerifyHooks {
 		result, err := hook(hookCtx)
 		if err != nil {
 			return nil, err
 		}
-		if result != nil && result.Abort {
+		if result == nil {
+			continue
+		}
+		if result.Abort {
 			return nil, NewVerifyError(result.Reason, "", result.Message)
 		}
+		if result.Skip && result.SkipVerifyResult != nil {
+			// Last skip wins, like SettleResponse for after-hooks
+			skipVerifyResult = result.SkipVerifyResult
+		}
+	}
+
+	// Short-circuit: a BeforeVerify hook produced a local verify result. Still run
+	// AfterVerify hooks so cooperative-refund SkipHandler signaling works.
+	if skipVerifyResult != nil {
+		resultCtx := VerifyResultContext{VerifyContext: hookCtx, Result: skipVerifyResult}
+		for _, hook := range s.afterVerifyHooks {
+			directive, _ := hook(resultCtx)
+			if directive != nil && directive.SkipHandler {
+				resp := directive.Response
+				if resp == nil {
+					resp = &SkipHandlerDirective{}
+				}
+				skipVerifyResult.SkipHandler = resp
+			}
+		}
+		return skipVerifyResult, nil
 	}
 
 	s.mu.RLock()

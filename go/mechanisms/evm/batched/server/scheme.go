@@ -15,6 +15,15 @@ import (
 	"github.com/x402-foundation/x402/go/types"
 )
 
+// BatchedRequestContext carries per-request state across the verify→settle
+// lifecycle for a single payment. Mirrors TS `BatchSettlementRequestContext`.
+type BatchedRequestContext struct {
+	ChannelId       string
+	PendingId       string
+	ChannelSnapshot *ChannelSession
+	LocalVerify     bool
+}
+
 const (
 	ErrAmountMustBeString   = "amount must be a string for batched scheme"
 	ErrAssetAddressRequired = "asset address is required for batched scheme"
@@ -43,6 +52,10 @@ type BatchedEvmSchemeConfig struct {
 	ReceiverAuthorizerSigner AuthorizerSigner
 	// WithdrawDelay is the withdraw delay in seconds. Defaults to 900 (15 min).
 	WithdrawDelay int
+	// OnchainStateTtlMs is the maximum age of cached on-chain state, in
+	// milliseconds, that may be trusted for local voucher verification.
+	// When zero, derived from WithdrawDelay (clamped between 30s and 5min).
+	OnchainStateTtlMs int64
 }
 
 // BatchedEvmScheme implements SchemeNetworkServer for batched settlement.
@@ -51,13 +64,26 @@ type BatchedEvmScheme struct {
 	storage                  SessionStorage
 	receiverAuthorizerSigner AuthorizerSigner
 	withdrawDelay            int
+	onchainStateTtlMs        int64
 	moneyParsers             []x402.MoneyParser
 
-	// channelSnapshots holds per-payload channel state captured during BeforeVerify
-	// aborts so that EnrichPaymentRequiredResponse can echo it back in the
-	// corrective 402 response. Keyed by payload pointer identity.
-	snapshotMu       sync.Mutex
-	channelSnapshots map[*types.PaymentPayload]*ChannelSession
+	// requestContexts maps a payload pointer to its per-request state
+	// (channel id, pending reservation id, snapshot). Mirrors the TS
+	// WeakMap<PaymentPayload, BatchSettlementRequestContext> used to thread
+	// reservation id from BeforeVerify through AfterVerify and BeforeSettle,
+	// and to provide channel snapshots to EnrichPaymentRequiredResponse.
+	// Keyed by `any` so both *types.PaymentPayload and PaymentPayloadView
+	// stub implementations (used in tests) can act as identity keys.
+	//
+	// Note on lifecycle: entries are cleared on the normal happy path via
+	// TakeRequestContext/TakeChannelSnapshot in BeforeSettleHook,
+	// EnrichPaymentRequiredResponse, and ClearPendingRequest (failure paths).
+	// Unlike a JS WeakMap, Go has no GC notification, so a payload that is
+	// verified successfully but never reaches Settle (and never triggers the
+	// cancellation hook) leaves an entry behind. In practice the resource
+	// server invokes one of those terminal hooks for every verified payment,
+	// but a buggy host that drops payloads silently could grow this map.
+	requestContexts sync.Map
 }
 
 // NewBatchedEvmScheme creates a new batched server scheme.
@@ -65,6 +91,7 @@ func NewBatchedEvmScheme(receiverAddress string, config *BatchedEvmSchemeConfig)
 	storage := SessionStorage(nil)
 	var authSigner AuthorizerSigner
 	withdrawDelay := batched.MinWithdrawDelay
+	var onchainStateTtlMs int64
 
 	if config != nil {
 		storage = config.Storage
@@ -72,6 +99,11 @@ func NewBatchedEvmScheme(receiverAddress string, config *BatchedEvmSchemeConfig)
 		if config.WithdrawDelay > 0 {
 			withdrawDelay = config.WithdrawDelay
 		}
+		onchainStateTtlMs = config.OnchainStateTtlMs
+	}
+
+	if onchainStateTtlMs <= 0 {
+		onchainStateTtlMs = defaultOnchainStateTtlMs(withdrawDelay)
 	}
 
 	if storage == nil {
@@ -83,34 +115,133 @@ func NewBatchedEvmScheme(receiverAddress string, config *BatchedEvmSchemeConfig)
 		storage:                  storage,
 		receiverAuthorizerSigner: authSigner,
 		withdrawDelay:            withdrawDelay,
+		onchainStateTtlMs:        onchainStateTtlMs,
 		moneyParsers:             []x402.MoneyParser{},
-		channelSnapshots:         make(map[*types.PaymentPayload]*ChannelSession),
 	}
+}
+
+// GetOnchainStateTtlMs returns the configured TTL (in ms) for trusting cached
+// on-chain channel state for local voucher verification.
+func (s *BatchedEvmScheme) GetOnchainStateTtlMs() int64 {
+	return s.onchainStateTtlMs
+}
+
+// defaultOnchainStateTtlMs derives a reasonable TTL from the channel withdraw
+// delay: WithdrawDelay/3, clamped to [30s, 5min]. Mirrors TS.
+func defaultOnchainStateTtlMs(withdrawDelaySeconds int) int64 {
+	if withdrawDelaySeconds < 0 {
+		withdrawDelaySeconds = 0
+	}
+	withdrawDelayMs := int64(withdrawDelaySeconds) * 1000
+	ttl := withdrawDelayMs / 3
+	const minTtl = int64(30 * 1000)
+	const maxTtl = int64(5 * 60 * 1000)
+	if ttl < minTtl {
+		ttl = minTtl
+	}
+	if ttl > maxTtl {
+		ttl = maxTtl
+	}
+	return ttl
+}
+
+// MergeRequestContext merges fields into the per-payload request context,
+// creating one if none exists. Mirrors TS `mergeRequestContext`.
+func (s *BatchedEvmScheme) MergeRequestContext(payload any, partial BatchedRequestContext) {
+	if payload == nil {
+		return
+	}
+	prev, _ := s.requestContexts.Load(payload)
+	merged := BatchedRequestContext{}
+	if cur, ok := prev.(*BatchedRequestContext); ok && cur != nil {
+		merged = *cur
+	}
+	if partial.ChannelId != "" {
+		merged.ChannelId = partial.ChannelId
+	}
+	if partial.PendingId != "" {
+		merged.PendingId = partial.PendingId
+	}
+	if partial.ChannelSnapshot != nil {
+		merged.ChannelSnapshot = partial.ChannelSnapshot
+	}
+	if partial.LocalVerify {
+		merged.LocalVerify = true
+	}
+	s.requestContexts.Store(payload, &merged)
+}
+
+// ReadRequestContext returns the per-payload request context without clearing it.
+func (s *BatchedEvmScheme) ReadRequestContext(payload any) *BatchedRequestContext {
+	if payload == nil {
+		return nil
+	}
+	v, ok := s.requestContexts.Load(payload)
+	if !ok {
+		return nil
+	}
+	rc, _ := v.(*BatchedRequestContext)
+	return rc
+}
+
+// TakeRequestContext reads and clears the per-payload request context.
+func (s *BatchedEvmScheme) TakeRequestContext(payload any) *BatchedRequestContext {
+	if payload == nil {
+		return nil
+	}
+	v, ok := s.requestContexts.LoadAndDelete(payload)
+	if !ok {
+		return nil
+	}
+	rc, _ := v.(*BatchedRequestContext)
+	return rc
 }
 
 // RememberChannelSnapshot stores a channel snapshot keyed to a specific payload
 // so EnrichPaymentRequiredResponse can echo it in the corrective 402.
-func (s *BatchedEvmScheme) RememberChannelSnapshot(payload *types.PaymentPayload, session *ChannelSession) {
+func (s *BatchedEvmScheme) RememberChannelSnapshot(payload any, session *ChannelSession) {
 	if payload == nil || session == nil {
 		return
 	}
-	s.snapshotMu.Lock()
-	defer s.snapshotMu.Unlock()
-	s.channelSnapshots[payload] = session
+	s.MergeRequestContext(payload, BatchedRequestContext{
+		ChannelId:       session.ChannelId,
+		ChannelSnapshot: session,
+	})
 }
 
 // TakeChannelSnapshot reads and clears the channel snapshot for a payload.
-func (s *BatchedEvmScheme) TakeChannelSnapshot(payload *types.PaymentPayload) *ChannelSession {
-	if payload == nil {
+func (s *BatchedEvmScheme) TakeChannelSnapshot(payload any) *ChannelSession {
+	rc := s.TakeRequestContext(payload)
+	if rc == nil {
 		return nil
 	}
-	s.snapshotMu.Lock()
-	defer s.snapshotMu.Unlock()
-	session, ok := s.channelSnapshots[payload]
-	if ok {
-		delete(s.channelSnapshots, payload)
+	return rc.ChannelSnapshot
+}
+
+// ClearPendingRequest clears this request's pending reservation in storage,
+// without affecting any newer reservation that may have replaced it. If the
+// stored channel only existed for this reservation (no snapshot), the channel
+// record is deleted entirely. Mirrors TS `clearPendingRequest`.
+func (s *BatchedEvmScheme) ClearPendingRequest(payload any) error {
+	rc := s.TakeRequestContext(payload)
+	if rc == nil || rc.ChannelId == "" || rc.PendingId == "" {
+		return nil
 	}
-	return session
+	_, err := s.storage.UpdateChannel(rc.ChannelId, func(current *ChannelSession) *ChannelSession {
+		if current == nil {
+			return current
+		}
+		if current.PendingRequest == nil || current.PendingRequest.PendingId != rc.PendingId {
+			return current
+		}
+		if rc.ChannelSnapshot == nil {
+			return nil // delete: this reservation is the only reason the row exists
+		}
+		next := *current
+		next.PendingRequest = nil
+		return &next
+	})
+	return err
 }
 
 // EnrichPaymentRequiredResponse implements x402.PaymentRequiredEnricher.
@@ -127,7 +258,10 @@ func (s *BatchedEvmScheme) EnrichPaymentRequiredResponse(ctx x402.PaymentRequire
 		return
 	}
 
-	session := s.TakeChannelSnapshot(ctx.PaymentPayload)
+	var session *ChannelSession
+	if ctx.PaymentPayload != nil {
+		session = s.TakeChannelSnapshot(ctx.PaymentPayload)
+	}
 	if session == nil {
 		stored, err := s.storage.Get(batched.NormalizeChannelId(channelId))
 		if err != nil || stored == nil {
@@ -153,6 +287,19 @@ func (s *BatchedEvmScheme) EnrichPaymentRequiredResponse(ctx x402.PaymentRequire
 			"signedMaxClaimable":      session.SignedMaxClaimable,
 			"signature":               session.Signature,
 		}
+	}
+}
+
+// OnVerifiedPaymentCanceledHook returns a hook that releases this request's
+// pending reservation when the resource handler errors or returns a non-2xx
+// response. Mirrors TS `handleVerifiedPaymentCanceled`.
+func (s *BatchedEvmScheme) OnVerifiedPaymentCanceledHook() x402.OnVerifiedPaymentCanceledHook {
+	return func(ctx x402.VerifiedPaymentCanceledContext) error {
+		if ctx.Reason != x402.CancellationReasonHandlerThrew &&
+			ctx.Reason != x402.CancellationReasonHandlerFailed {
+			return nil
+		}
+		return s.ClearPendingRequest(ctx.Payload)
 	}
 }
 

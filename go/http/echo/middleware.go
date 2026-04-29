@@ -360,7 +360,25 @@ func handlePaymentVerified(c echo.Context, next echo.HandlerFunc, server *x402ht
 	}
 
 	// Continue to protected handler
-	err := next(c)
+	var err error
+	func() {
+		defer func() {
+			if rec := recover(); rec != nil {
+				if result.CancellationDispatcher != nil {
+					perr, ok := rec.(error)
+					if !ok {
+						perr = fmt.Errorf("%v", rec)
+					}
+					result.CancellationDispatcher.Cancel(x402.VerifiedPaymentCancelOptions{
+						Reason: x402.CancellationReasonHandlerThrew,
+						Err:    perr,
+					})
+				}
+				panic(rec)
+			}
+		}()
+		err = next(c)
+	}()
 
 	// Restore original writer
 	c.Response().Writer = origWriter
@@ -368,11 +386,23 @@ func handlePaymentVerified(c echo.Context, next echo.HandlerFunc, server *x402ht
 
 	// If handler returned error, propagate it
 	if err != nil {
+		if result.CancellationDispatcher != nil {
+			result.CancellationDispatcher.Cancel(x402.VerifiedPaymentCancelOptions{
+				Reason: x402.CancellationReasonHandlerThrew,
+				Err:    err,
+			})
+		}
 		return err
 	}
 
 	// Don't settle if response failed
 	if capture.statusCode >= 400 {
+		if result.CancellationDispatcher != nil {
+			result.CancellationDispatcher.Cancel(x402.VerifiedPaymentCancelOptions{
+				Reason:         x402.CancellationReasonHandlerFailed,
+				ResponseStatus: capture.statusCode,
+			})
+		}
 		// Write captured error response
 		origWriter.WriteHeader(capture.statusCode)
 		_, _ = origWriter.Write(capture.body.Bytes())
