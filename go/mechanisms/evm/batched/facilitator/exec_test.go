@@ -30,7 +30,7 @@ func TestExecuteClaimWithSignature_NoClaims(t *testing.T) {
 	resp, err := ExecuteClaimWithSignature(
 		context.Background(),
 		scheme.signer,
-		&batched.BatchedClaimWithSignaturePayload{Claims: nil},
+		&batched.BatchedClaimPayload{Claims: nil},
 		reqsFor(testNetwork),
 		scheme.authorizerSigner,
 	)
@@ -45,7 +45,7 @@ func TestExecuteClaimWithSignature_NoClaims(t *testing.T) {
 
 func TestExecuteClaimWithSignature_BadProvidedSignature(t *testing.T) {
 	scheme := newScheme()
-	payload := &batched.BatchedClaimWithSignaturePayload{
+	payload := &batched.BatchedClaimPayload{
 		Claims:                   []batched.BatchedVoucherClaim{sampleClaim()},
 		ClaimAuthorizerSignature: "not-hex",
 	}
@@ -60,7 +60,7 @@ func TestExecuteClaimWithSignature_AuthorizerAddressMismatch(t *testing.T) {
 	scheme := newScheme()
 	claim := sampleClaim()
 	claim.Voucher.Channel.ReceiverAuthorizer = "0xfeedfeedfeedfeedfeedfeedfeedfeedfeedfeed"
-	payload := &batched.BatchedClaimWithSignaturePayload{Claims: []batched.BatchedVoucherClaim{claim}}
+	payload := &batched.BatchedClaimPayload{Claims: []batched.BatchedVoucherClaim{claim}}
 	_, err := ExecuteClaimWithSignature(context.Background(), scheme.signer, payload, reqsFor(testNetwork), scheme.authorizerSigner)
 	var se *x402.SettleError
 	if !errors.As(err, &se) || se.ErrorReason != ErrAuthorizerAddressMismatch {
@@ -72,7 +72,7 @@ func TestExecuteClaimWithSignature_SimulationFailed(t *testing.T) {
 	scheme := newScheme()
 	claim := sampleClaim()
 	claim.Voucher.Channel.ReceiverAuthorizer = "0xauthorizer"
-	payload := &batched.BatchedClaimWithSignaturePayload{Claims: []batched.BatchedVoucherClaim{claim}}
+	payload := &batched.BatchedClaimPayload{Claims: []batched.BatchedVoucherClaim{claim}}
 	resp, err := ExecuteClaimWithSignature(context.Background(), scheme.signer, payload, reqsFor(testNetwork), scheme.authorizerSigner)
 	if err != nil {
 		t.Fatalf("err: %v", err)
@@ -86,10 +86,11 @@ func TestExecuteClaimWithSignature_SimulationFailed(t *testing.T) {
 
 func TestExecuteRefundWithSignature_BadAmount(t *testing.T) {
 	scheme := newScheme()
-	payload := &batched.BatchedRefundWithSignaturePayload{
-		Config: validConfig(),
-		Amount: "not-a-number",
-		Nonce:  "1",
+	payload := &batched.BatchedEnrichedRefundPayload{
+		Type:          "refund",
+		ChannelConfig: validConfig(),
+		Amount:        "not-a-number",
+		RefundNonce:   "1",
 	}
 	_, err := ExecuteRefundWithSignature(context.Background(), scheme.signer, payload, reqsFor(testNetwork), scheme.authorizerSigner)
 	var se *x402.SettleError
@@ -100,10 +101,11 @@ func TestExecuteRefundWithSignature_BadAmount(t *testing.T) {
 
 func TestExecuteRefundWithSignature_BadNonce(t *testing.T) {
 	scheme := newScheme()
-	payload := &batched.BatchedRefundWithSignaturePayload{
-		Config: validConfig(),
-		Amount: "100",
-		Nonce:  "not-a-number",
+	payload := &batched.BatchedEnrichedRefundPayload{
+		Type:          "refund",
+		ChannelConfig: validConfig(),
+		Amount:        "100",
+		RefundNonce:   "not-a-number",
 	}
 	_, err := ExecuteRefundWithSignature(context.Background(), scheme.signer, payload, reqsFor(testNetwork), scheme.authorizerSigner)
 	var se *x402.SettleError
@@ -114,10 +116,11 @@ func TestExecuteRefundWithSignature_BadNonce(t *testing.T) {
 
 func TestExecuteRefundWithSignature_BadProvidedRefundSig(t *testing.T) {
 	scheme := newScheme()
-	payload := &batched.BatchedRefundWithSignaturePayload{
-		Config:                    validConfig(),
+	payload := &batched.BatchedEnrichedRefundPayload{
+		Type:                      "refund",
+		ChannelConfig:             validConfig(),
 		Amount:                    "100",
-		Nonce:                     "1",
+		RefundNonce:               "1",
 		RefundAuthorizerSignature: "not-hex",
 	}
 	_, err := ExecuteRefundWithSignature(context.Background(), scheme.signer, payload, reqsFor(testNetwork), scheme.authorizerSigner)
@@ -131,10 +134,11 @@ func TestExecuteRefundWithSignature_AuthorizerAddressMismatch(t *testing.T) {
 	scheme := newScheme()
 	cfg := validConfig()
 	cfg.ReceiverAuthorizer = "0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
-	payload := &batched.BatchedRefundWithSignaturePayload{
-		Config: cfg,
-		Amount: "100",
-		Nonce:  "1",
+	payload := &batched.BatchedEnrichedRefundPayload{
+		Type:          "refund",
+		ChannelConfig: cfg,
+		Amount:        "100",
+		RefundNonce:   "1",
 	}
 	_, err := ExecuteRefundWithSignature(context.Background(), scheme.signer, payload, reqsFor(testNetwork), scheme.authorizerSigner)
 	var se *x402.SettleError
@@ -147,10 +151,11 @@ func TestExecuteRefundWithSignature_SimulationFailed_DirectPath(t *testing.T) {
 	scheme := newScheme()
 	cfg := validConfig()
 	cfg.ReceiverAuthorizer = "0xauthorizer"
-	payload := &batched.BatchedRefundWithSignaturePayload{
-		Config: cfg,
-		Amount: "100",
-		Nonce:  "1",
+	payload := &batched.BatchedEnrichedRefundPayload{
+		Type:          "refund",
+		ChannelConfig: cfg,
+		Amount:        "100",
+		RefundNonce:   "1",
 	}
 	resp, err := ExecuteRefundWithSignature(context.Background(), scheme.signer, payload, reqsFor(testNetwork), scheme.authorizerSigner)
 	if err != nil {
@@ -165,10 +170,11 @@ func TestExecuteRefundWithSignature_BadProvidedClaimSig(t *testing.T) {
 	scheme := newScheme()
 	cfg := validConfig()
 	cfg.ReceiverAuthorizer = "0xauthorizer"
-	payload := &batched.BatchedRefundWithSignaturePayload{
-		Config:                    cfg,
+	payload := &batched.BatchedEnrichedRefundPayload{
+		Type:                      "refund",
+		ChannelConfig:             cfg,
 		Amount:                    "100",
-		Nonce:                     "1",
+		RefundNonce:               "1",
 		Claims:                    []batched.BatchedVoucherClaim{sampleClaim()},
 		ClaimAuthorizerSignature:  "not-hex",
 		RefundAuthorizerSignature: "0xdead",
@@ -184,7 +190,8 @@ func TestExecuteRefundWithSignature_BadProvidedClaimSig(t *testing.T) {
 
 func TestExecuteSettle_SimulationFailed(t *testing.T) {
 	scheme := newScheme()
-	payload := &batched.BatchedSettleActionPayload{
+	payload := &batched.BatchedSettlePayload{
+		Type:     "settle",
 		Receiver: "0x3333333333333333333333333333333333333333",
 		Token:    "0x5555555555555555555555555555555555555555",
 	}
@@ -202,10 +209,10 @@ func TestExecuteSettle_SimulationFailed(t *testing.T) {
 func TestSettleDeposit_BadAmount(t *testing.T) {
 	scheme := newScheme()
 	payload := &batched.BatchedDepositPayload{
-		Type: "deposit",
+		Type:          "deposit",
+		ChannelConfig: validConfig(),
 		Deposit: batched.BatchedDepositData{
-			ChannelConfig: validConfig(),
-			Amount:        "not-a-number",
+			Amount: "not-a-number",
 		},
 	}
 	_, err := SettleDeposit(context.Background(), scheme.signer, payload, reqsFor(testNetwork))
@@ -220,10 +227,10 @@ func TestSettleDeposit_MissingAuthorization(t *testing.T) {
 	// SettleDeposit short-circuits with ErrInvalidDepositPayload before any RPC.
 	scheme := newScheme()
 	payload := &batched.BatchedDepositPayload{
-		Type: "deposit",
+		Type:          "deposit",
+		ChannelConfig: validConfig(),
 		Deposit: batched.BatchedDepositData{
-			ChannelConfig: validConfig(),
-			Amount:        "100",
+			Amount: "100",
 		},
 	}
 	_, err := SettleDeposit(context.Background(), scheme.signer, payload, reqsFor(testNetwork))
@@ -238,12 +245,12 @@ func TestSettleDeposit_MissingAuthorization(t *testing.T) {
 func TestVerifyDeposit_BadAmount(t *testing.T) {
 	scheme := newScheme()
 	cfg := validConfig()
-	id, _ := batched.ComputeChannelId(cfg)
+	id, _ := batched.ComputeChannelId(cfg, testNetwork)
 	payload := &batched.BatchedDepositPayload{
-		Type: "deposit",
+		Type:          "deposit",
+		ChannelConfig: cfg,
 		Deposit: batched.BatchedDepositData{
-			ChannelConfig: cfg,
-			Amount:        "0",
+			Amount: "0",
 		},
 		Voucher: batched.BatchedVoucherFields{
 			ChannelId:          id,
@@ -261,12 +268,12 @@ func TestVerifyDeposit_BadAmount(t *testing.T) {
 func TestVerifyDeposit_BadValidAfter(t *testing.T) {
 	scheme := newScheme()
 	cfg := validConfig()
-	id, _ := batched.ComputeChannelId(cfg)
+	id, _ := batched.ComputeChannelId(cfg, testNetwork)
 	payload := &batched.BatchedDepositPayload{
-		Type: "deposit",
+		Type:          "deposit",
+		ChannelConfig: cfg,
 		Deposit: batched.BatchedDepositData{
-			ChannelConfig: cfg,
-			Amount:        "100",
+			Amount: "100",
 			Authorization: batched.BatchedDepositAuthorization{
 				Erc3009Authorization: &batched.BatchedErc3009Authorization{
 					ValidAfter:  "not-a-number",
@@ -292,12 +299,12 @@ func TestVerifyDeposit_BadValidAfter(t *testing.T) {
 func TestVerifyDeposit_BadValidBefore(t *testing.T) {
 	scheme := newScheme()
 	cfg := validConfig()
-	id, _ := batched.ComputeChannelId(cfg)
+	id, _ := batched.ComputeChannelId(cfg, testNetwork)
 	payload := &batched.BatchedDepositPayload{
-		Type: "deposit",
+		Type:          "deposit",
+		ChannelConfig: cfg,
 		Deposit: batched.BatchedDepositData{
-			ChannelConfig: cfg,
-			Amount:        "100",
+			Amount: "100",
 			Authorization: batched.BatchedDepositAuthorization{
 				Erc3009Authorization: &batched.BatchedErc3009Authorization{
 					ValidAfter:  "0",
@@ -323,12 +330,12 @@ func TestVerifyDeposit_BadValidBefore(t *testing.T) {
 func TestVerifyDeposit_ExpiredAuthorization(t *testing.T) {
 	scheme := newScheme()
 	cfg := validConfig()
-	id, _ := batched.ComputeChannelId(cfg)
+	id, _ := batched.ComputeChannelId(cfg, testNetwork)
 	payload := &batched.BatchedDepositPayload{
-		Type: "deposit",
+		Type:          "deposit",
+		ChannelConfig: cfg,
 		Deposit: batched.BatchedDepositData{
-			ChannelConfig: cfg,
-			Amount:        "100",
+			Amount: "100",
 			Authorization: batched.BatchedDepositAuthorization{
 				Erc3009Authorization: &batched.BatchedErc3009Authorization{
 					ValidAfter:  "0",
@@ -356,10 +363,10 @@ func TestVerifyDeposit_ChannelConfigInvalid(t *testing.T) {
 	scheme := newScheme()
 	cfg := validConfig()
 	payload := &batched.BatchedDepositPayload{
-		Type: "deposit",
+		Type:          "deposit",
+		ChannelConfig: cfg,
 		Deposit: batched.BatchedDepositData{
-			ChannelConfig: cfg,
-			Amount:        "100",
+			Amount: "100",
 		},
 		Voucher: batched.BatchedVoucherFields{
 			ChannelId:          "0x" + zeros(64),
@@ -380,11 +387,13 @@ func TestVerifyVoucher_ChannelConfigInvalid(t *testing.T) {
 	scheme := newScheme()
 	cfg := validConfig()
 	payload := &batched.BatchedVoucherPayload{
-		Type:               "voucher",
-		ChannelConfig:      cfg,
-		ChannelId:          "0x" + zeros(64),
-		MaxClaimableAmount: "100",
-		Signature:          "0xsig",
+		Type:          "voucher",
+		ChannelConfig: cfg,
+		Voucher: batched.BatchedVoucherFields{
+			ChannelId:          "0x" + zeros(64),
+			MaxClaimableAmount: "100",
+			Signature:          "0xsig",
+		},
 	}
 	_, err := VerifyVoucher(context.Background(), scheme.signer, payload, reqsFor(testNetwork), cfg)
 	var ve *x402.VerifyError
@@ -415,34 +424,13 @@ func zeros(n int) string {
 
 // ----- buildRefundResponse -----
 
-func TestBuildRefundResponse_NoExtra(t *testing.T) {
-	resp := buildRefundResponse("0xtx", x402.Network(testNetwork), nil)
+func TestBuildRefundResponse(t *testing.T) {
+	resp := buildRefundResponse("0xtx", x402.Network(testNetwork))
 	if !resp.Success || resp.Transaction != "0xtx" || resp.Network != x402.Network(testNetwork) {
 		t.Fatalf("got %+v", resp)
 	}
-	if resp.Extra != nil {
-		t.Fatalf("expected no extra, got %+v", resp.Extra)
-	}
-}
-
-func TestBuildRefundResponse_WithExtra(t *testing.T) {
-	extra := &batched.BatchedPaymentResponseExtra{
-		ChannelId:               "0xabc",
-		ChargedCumulativeAmount: "100",
-		Balance:                 "900",
-		TotalClaimed:            "100",
-		WithdrawRequestedAt:     0,
-		RefundNonce:             "1",
-	}
-	resp := buildRefundResponse("0xtx", x402.Network(testNetwork), extra)
-	if !resp.Success || resp.Extra == nil {
-		t.Fatalf("got %+v", resp)
-	}
-	if resp.Extra["refund"] != true {
-		t.Fatalf("expected refund=true, got %+v", resp.Extra["refund"])
-	}
-	if resp.Extra["channelId"] != "0xabc" {
-		t.Fatalf("channelId = %v", resp.Extra["channelId"])
+	if resp.Extra == nil || resp.Extra["refund"] != true {
+		t.Fatalf("expected refund=true, got %+v", resp.Extra)
 	}
 }
 

@@ -14,27 +14,27 @@ type BatchedClientContext struct {
 	Signature               string `json:"signature,omitempty"`
 }
 
-// ClientSessionStorage is the interface for persisting client-side channel sessions.
-type ClientSessionStorage interface {
+// ClientChannelStorage is the interface for persisting client-side channel sessions.
+type ClientChannelStorage interface {
 	Get(channelId string) (*BatchedClientContext, error)
 	Set(channelId string, ctx *BatchedClientContext) error
 	Delete(channelId string) error
 }
 
-// InMemoryClientSessionStorage is a volatile in-memory implementation of ClientSessionStorage.
-type InMemoryClientSessionStorage struct {
+// InMemoryClientChannelStorage is a volatile in-memory implementation of ClientChannelStorage.
+type InMemoryClientChannelStorage struct {
 	mu       sync.RWMutex
 	sessions map[string]*BatchedClientContext
 }
 
-// NewInMemoryClientSessionStorage creates a new in-memory client session storage.
-func NewInMemoryClientSessionStorage() *InMemoryClientSessionStorage {
-	return &InMemoryClientSessionStorage{
+// NewInMemoryClientChannelStorage creates a new in-memory client session storage.
+func NewInMemoryClientChannelStorage() *InMemoryClientChannelStorage {
+	return &InMemoryClientChannelStorage{
 		sessions: make(map[string]*BatchedClientContext),
 	}
 }
 
-func (s *InMemoryClientSessionStorage) Get(channelId string) (*BatchedClientContext, error) {
+func (s *InMemoryClientChannelStorage) Get(channelId string) (*BatchedClientContext, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	ctx, ok := s.sessions[channelId]
@@ -46,7 +46,7 @@ func (s *InMemoryClientSessionStorage) Get(channelId string) (*BatchedClientCont
 	return &copy, nil
 }
 
-func (s *InMemoryClientSessionStorage) Set(channelId string, ctx *BatchedClientContext) error {
+func (s *InMemoryClientChannelStorage) Set(channelId string, ctx *BatchedClientContext) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	copy := *ctx
@@ -54,7 +54,7 @@ func (s *InMemoryClientSessionStorage) Set(channelId string, ctx *BatchedClientC
 	return nil
 }
 
-func (s *InMemoryClientSessionStorage) Delete(channelId string) error {
+func (s *InMemoryClientChannelStorage) Delete(channelId string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	delete(s.sessions, channelId)

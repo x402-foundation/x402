@@ -64,7 +64,7 @@ func TestNewBatchedEvmScheme_Defaults(t *testing.T) {
 func TestNewBatchedEvmScheme_OverridesConfig(t *testing.T) {
 	signer := &mockSigner{address: "0x1"}
 	autoTopUp := false
-	storage := NewInMemoryClientSessionStorage()
+	storage := NewInMemoryClientChannelStorage()
 	cfg := &BatchedEvmSchemeConfig{
 		DepositMultiplier: 5,
 		MaxDeposit:        "10000",
@@ -191,7 +191,7 @@ func TestCalculateDepositAmount_BadMaxIgnored(t *testing.T) {
 // ---------- HasSession / GetSession ----------
 
 func TestHasSession_GetSession(t *testing.T) {
-	storage := NewInMemoryClientSessionStorage()
+	storage := NewInMemoryClientChannelStorage()
 	scheme := NewBatchedEvmScheme(&mockSigner{address: "0x1"}, &BatchedEvmSchemeConfig{Storage: storage})
 
 	if scheme.HasSession("0xMISSING") {
@@ -221,7 +221,7 @@ func TestProcessSettleResponse_NilNoop(t *testing.T) {
 }
 
 func TestProcessSettleResponse_StoresSession(t *testing.T) {
-	storage := NewInMemoryClientSessionStorage()
+	storage := NewInMemoryClientChannelStorage()
 	scheme := NewBatchedEvmScheme(&mockSigner{address: "0x1"}, &BatchedEvmSchemeConfig{Storage: storage})
 
 	err := scheme.ProcessSettleResponse(map[string]interface{}{
@@ -239,21 +239,27 @@ func TestProcessSettleResponse_StoresSession(t *testing.T) {
 	}
 }
 
-func TestProcessSettleResponse_RefundDeletes(t *testing.T) {
-	storage := NewInMemoryClientSessionStorage()
+// ProcessSettleResponse is a pure-merge updater (mirrors TS processSettleResponse).
+// It does NOT delete sessions on zero balance — that responsibility belongs to
+// UpdateSessionAfterRefund, called explicitly at the refund call site.
+func TestProcessSettleResponse_DoesNotDeleteOnZeroBalance(t *testing.T) {
+	storage := NewInMemoryClientChannelStorage()
 	_ = storage.Set("0xabc", &BatchedClientContext{Balance: "100"})
 
 	scheme := NewBatchedEvmScheme(&mockSigner{address: "0x1"}, &BatchedEvmSchemeConfig{Storage: storage})
 	err := scheme.ProcessSettleResponse(map[string]interface{}{
 		"channelId": "0xabc",
 		"balance":   "0",
-		"refund":    true,
 	})
 	if err != nil {
 		t.Fatalf("err: %v", err)
 	}
-	if got, _ := storage.Get("0xabc"); got != nil {
-		t.Fatalf("session not deleted: %+v", got)
+	got, _ := storage.Get("0xabc")
+	if got == nil {
+		t.Fatal("session unexpectedly deleted by ProcessSettleResponse")
+	}
+	if got.Balance != "0" {
+		t.Fatalf("balance not merged: %+v", got)
 	}
 }
 
@@ -271,13 +277,13 @@ func TestCreatePaymentPayload_FirstRequestDeposit(t *testing.T) {
 }
 
 func TestCreatePaymentPayload_VoucherWhenSessionHasFunds(t *testing.T) {
-	storage := NewInMemoryClientSessionStorage()
+	storage := NewInMemoryClientChannelStorage()
 	signer := &mockSigner{address: "0x1111111111111111111111111111111111111111", sig: []byte{0xab}}
 	scheme := NewBatchedEvmScheme(signer, &BatchedEvmSchemeConfig{Storage: storage})
 
 	// Pre-seed session with sufficient funds.
 	channelConfig := scheme.BuildChannelConfig(defaultRequirements())
-	channelId, _ := batched.ComputeChannelId(channelConfig)
+	channelId, _ := batched.ComputeChannelId(channelConfig, testNetwork)
 	channelId = batched.NormalizeChannelId(channelId)
 	_ = storage.Set(channelId, &BatchedClientContext{Balance: "1000", ChargedCumulativeAmount: "100"})
 
@@ -291,12 +297,12 @@ func TestCreatePaymentPayload_VoucherWhenSessionHasFunds(t *testing.T) {
 }
 
 func TestCreatePaymentPayload_AutoTopUpDepositOnInsufficient(t *testing.T) {
-	storage := NewInMemoryClientSessionStorage()
+	storage := NewInMemoryClientChannelStorage()
 	signer := &mockSigner{address: "0x1111111111111111111111111111111111111111", sig: []byte{0xac}}
 	scheme := NewBatchedEvmScheme(signer, &BatchedEvmSchemeConfig{Storage: storage})
 
 	channelConfig := scheme.BuildChannelConfig(defaultRequirements())
-	channelId, _ := batched.ComputeChannelId(channelConfig)
+	channelId, _ := batched.ComputeChannelId(channelConfig, testNetwork)
 	channelId = batched.NormalizeChannelId(channelId)
 	_ = storage.Set(channelId, &BatchedClientContext{Balance: "50", ChargedCumulativeAmount: "0"})
 
@@ -310,13 +316,13 @@ func TestCreatePaymentPayload_AutoTopUpDepositOnInsufficient(t *testing.T) {
 }
 
 func TestCreatePaymentPayload_NoAutoTopUpYieldsVoucher(t *testing.T) {
-	storage := NewInMemoryClientSessionStorage()
+	storage := NewInMemoryClientChannelStorage()
 	signer := &mockSigner{address: "0x1111111111111111111111111111111111111111", sig: []byte{0xad}}
 	off := false
 	scheme := NewBatchedEvmScheme(signer, &BatchedEvmSchemeConfig{Storage: storage, AutoTopUp: &off})
 
 	channelConfig := scheme.BuildChannelConfig(defaultRequirements())
-	channelId, _ := batched.ComputeChannelId(channelConfig)
+	channelId, _ := batched.ComputeChannelId(channelConfig, testNetwork)
 	channelId = batched.NormalizeChannelId(channelId)
 	_ = storage.Set(channelId, &BatchedClientContext{Balance: "50"})
 
@@ -390,7 +396,7 @@ func TestProcessCorrective_NoBatchedAccept(t *testing.T) {
 	scheme := NewBatchedEvmScheme(&mockSigner{address: "0x1"}, nil)
 	ok, err := scheme.ProcessCorrectivePaymentRequired(
 		context.Background(),
-		"batch_settlement_stale_cumulative_amount",
+		batched.ErrCumulativeAmountMismatch,
 		[]types.PaymentRequirements{{Scheme: "exact"}},
 	)
 	if err != nil || ok {
@@ -407,7 +413,7 @@ func TestProcessCorrective_FallsBackToOnChain(t *testing.T) {
 	req := defaultRequirements()
 	ok, err := scheme.ProcessCorrectivePaymentRequired(
 		context.Background(),
-		"batch_settlement_stale_cumulative_amount",
+		batched.ErrCumulativeAmountMismatch,
 		[]types.PaymentRequirements{req},
 	)
 	if err != nil {
@@ -430,7 +436,7 @@ func TestProcessCorrective_RecoverFromSignatureBadCharged(t *testing.T) {
 	req.Extra["signature"] = "0xff"
 	ok, err := scheme.ProcessCorrectivePaymentRequired(
 		context.Background(),
-		"batch_settlement_stale_cumulative_amount",
+		batched.ErrCumulativeAmountMismatch,
 		[]types.PaymentRequirements{req},
 	)
 	if err != nil || ok {
@@ -450,7 +456,7 @@ func TestProcessCorrective_RecoverFromSignatureChargedBeyondSigned(t *testing.T)
 	req.Extra["signature"] = "0xff"
 	ok, _ := scheme.ProcessCorrectivePaymentRequired(
 		context.Background(),
-		"batch_settlement_stale_cumulative_amount",
+		batched.ErrCumulativeAmountMismatch,
 		[]types.PaymentRequirements{req},
 	)
 	if ok {
@@ -466,7 +472,7 @@ func TestProcessCorrective_RecoverFromSignatureNoReadCapability(t *testing.T) {
 	req.Extra["signature"] = "0xff"
 	ok, _ := scheme.ProcessCorrectivePaymentRequired(
 		context.Background(),
-		"batch_settlement_stale_cumulative_amount",
+		batched.ErrCumulativeAmountMismatch,
 		[]types.PaymentRequirements{req},
 	)
 	if ok {
@@ -479,7 +485,7 @@ func TestProcessCorrective_RecoverFromSignatureNoReadCapability(t *testing.T) {
 func TestRefundContextAdapter(t *testing.T) {
 	signer := &mockSigner{address: "0x1"}
 	voucherSigner := &mockSigner{address: "0xV"}
-	storage := NewInMemoryClientSessionStorage()
+	storage := NewInMemoryClientChannelStorage()
 	scheme := NewBatchedEvmScheme(signer, &BatchedEvmSchemeConfig{
 		Storage:       storage,
 		VoucherSigner: voucherSigner,
@@ -497,9 +503,6 @@ func TestRefundContextAdapter(t *testing.T) {
 	cfg := a.BuildChannelConfig(defaultRequirements())
 	if cfg.Payer != signer.Address() {
 		t.Fatalf("BuildChannelConfig.Payer = %s", cfg.Payer)
-	}
-	if err := a.ProcessSettleResponse(nil); err != nil {
-		t.Fatalf("ProcessSettleResponse: %v", err)
 	}
 	ok, err := a.ProcessCorrectivePaymentRequired(context.Background(), "x", nil)
 	if err != nil || ok {

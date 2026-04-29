@@ -62,7 +62,7 @@ func CreateBatchedEIP3009DepositPayload(
 	validAfter, validBefore := evm.CreateValidityWindow(time.Hour)
 
 	// Compute channel ID
-	channelId, err := batched.ComputeChannelId(channelConfig)
+	channelId, err := batched.ComputeChannelId(channelConfig, chainId)
 	if err != nil {
 		return types.PaymentPayload{}, fmt.Errorf("failed to compute channel ID: %w", err)
 	}
@@ -123,10 +123,11 @@ func CreateBatchedEIP3009DepositPayload(
 
 	// Build deposit payload
 	depositPayload := &batched.BatchedDepositPayload{
-		Type: "deposit",
+		Type:          "deposit",
+		ChannelConfig: channelConfig,
+		Voucher:       *voucher,
 		Deposit: batched.BatchedDepositData{
-			ChannelConfig: channelConfig,
-			Amount:        depositAmount,
+			Amount: depositAmount,
 			Authorization: batched.BatchedDepositAuthorization{
 				Erc3009Authorization: &batched.BatchedErc3009Authorization{
 					ValidAfter:  validAfter.String(),
@@ -136,7 +137,6 @@ func CreateBatchedEIP3009DepositPayload(
 				},
 			},
 		},
-		Voucher: *voucher,
 	}
 
 	return types.PaymentPayload{

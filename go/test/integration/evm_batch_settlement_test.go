@@ -137,7 +137,7 @@ func (s *batchedAuthorizerSigner) SignClaimBatch(
 	}
 	entries := make([]map[string]interface{}, len(claims))
 	for i, claim := range claims {
-		channelId, _ := batched.ComputeChannelId(claim.Voucher.Channel)
+		channelId, _ := batched.ComputeChannelId(claim.Voucher.Channel, network)
 		channelIdBytes, _ := evmmech.HexToBytes(channelId)
 		maxClaimable, _ := new(big.Int).SetString(claim.Voucher.MaxClaimableAmount, 10)
 		totalClaimed, _ := new(big.Int).SetString(claim.TotalClaimed, 10)
@@ -410,7 +410,7 @@ func assertTotalClaimedAtLeast(ctx context.Context, t *testing.T, signer *realFa
 // channelIdForRequirements computes the channel ID the client will derive for these requirements.
 func (p *batchedPipeline) channelIdForRequirements(req types.PaymentRequirements) string {
 	cfg := p.clientScheme.BuildChannelConfig(req)
-	id, err := batched.ComputeChannelId(cfg)
+	id, err := batched.ComputeChannelId(cfg, req.Network)
 	if err != nil {
 		return ""
 	}
@@ -922,8 +922,8 @@ func TestBatchSettlementIntegration_RefundNonRecoverableFastFail(t *testing.T) {
 
 // alwaysStaleRefundHandler serves a payment-required probe (so the client can
 // build a refund payload) and then always responds to PAYMENT-SIGNATURE with a
-// recoverable 402 (batch_settlement_stale_cumulative_amount). Used to exercise
-// the client's retry-exhaustion path.
+// recoverable 402 (ErrCumulativeAmountMismatch). Used to exercise the client's
+// retry-exhaustion path.
 func alwaysStaleRefundHandler(t *testing.T, pipe *batchedPipeline, price string) http.HandlerFunc {
 	t.Helper()
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -934,7 +934,7 @@ func alwaysStaleRefundHandler(t *testing.T, pipe *batchedPipeline, price string)
 			Accepts:     []types.PaymentRequirements{req},
 		}
 		if r.Header.Get("PAYMENT-SIGNATURE") != "" {
-			paymentRequired.Error = "batch_settlement_stale_cumulative_amount"
+			paymentRequired.Error = batched.ErrCumulativeAmountMismatch
 		}
 
 		bytes, _ := json.Marshal(paymentRequired)

@@ -155,12 +155,13 @@ func TestVerify_UnknownPayload(t *testing.T) {
 
 func TestVerify_MalformedDepositPayload(t *testing.T) {
 	s := newScheme()
-	// IsDepositPayload requires type=deposit + deposit + voucher fields. Provide
-	// them, but with a bad nested channelConfig so DepositPayloadFromMap errors.
+	// IsDepositPayload requires type=deposit + channelConfig + voucher + deposit.
+	// Pass them, but with channelConfig as a non-map so DepositPayloadFromMap errors.
 	pp := payloadEnvelope("eip155:8453", map[string]interface{}{
-		"type":    "deposit",
-		"deposit": map[string]interface{}{"channelConfig": "not-a-map"},
-		"voucher": map[string]interface{}{},
+		"type":          "deposit",
+		"channelConfig": "not-a-map",
+		"voucher":       map[string]interface{}{},
+		"deposit":       map[string]interface{}{},
 	})
 	req := types.PaymentRequirements{Scheme: batched.SchemeBatched, Network: "eip155:8453"}
 	_, err := s.Verify(context.Background(), pp, req, nil)
@@ -172,15 +173,16 @@ func TestVerify_MalformedDepositPayload(t *testing.T) {
 
 func TestVerify_MalformedVoucherPayload(t *testing.T) {
 	s := newScheme()
-	// IsVoucherPayload requires type=voucher + channelConfig + channelId +
-	// maxClaimableAmount + signature. Pass them, but with channelConfig as a
-	// non-map so VoucherPayloadFromMap errors.
+	// IsVoucherPayload requires type=voucher + channelConfig + voucher. Pass them,
+	// but with channelConfig as a non-map so VoucherPayloadFromMap errors.
 	pp := payloadEnvelope("eip155:8453", map[string]interface{}{
-		"type":               "voucher",
-		"channelConfig":      "not-a-map",
-		"channelId":          "0xabc",
-		"maxClaimableAmount": "1",
-		"signature":          "0xsig",
+		"type":          "voucher",
+		"channelConfig": "not-a-map",
+		"voucher": map[string]interface{}{
+			"channelId":          "0xabc",
+			"maxClaimableAmount": "1",
+			"signature":          "0xsig",
+		},
 	})
 	req := types.PaymentRequirements{Scheme: batched.SchemeBatched, Network: "eip155:8453"}
 	_, err := s.Verify(context.Background(), pp, req, nil)
@@ -204,23 +206,10 @@ func TestSettle_UnknownAction(t *testing.T) {
 func TestSettle_MalformedDepositPayload(t *testing.T) {
 	s := newScheme()
 	pp := payloadEnvelope("eip155:8453", map[string]interface{}{
-		"type":    "deposit",
-		"deposit": map[string]interface{}{"channelConfig": "not-a-map"},
-		"voucher": map[string]interface{}{},
-	})
-	req := types.PaymentRequirements{Scheme: batched.SchemeBatched, Network: "eip155:8453"}
-	_, err := s.Settle(context.Background(), pp, req, nil)
-	var se *x402.SettleError
-	if !errors.As(err, &se) || se.ErrorReason != ErrInvalidDepositPayload {
-		t.Fatalf("got err = %v", err)
-	}
-}
-
-func TestSettle_MalformedDepositSettlePayload(t *testing.T) {
-	s := newScheme()
-	pp := payloadEnvelope("eip155:8453", map[string]interface{}{
-		"settleAction": "deposit",
-		"deposit":      map[string]interface{}{"channelConfig": "not-a-map"},
+		"type":          "deposit",
+		"channelConfig": "not-a-map",
+		"voucher":       map[string]interface{}{},
+		"deposit":       map[string]interface{}{},
 	})
 	req := types.PaymentRequirements{Scheme: batched.SchemeBatched, Network: "eip155:8453"}
 	_, err := s.Settle(context.Background(), pp, req, nil)
@@ -232,9 +221,11 @@ func TestSettle_MalformedDepositSettlePayload(t *testing.T) {
 
 func TestSettle_MalformedClaimPayload(t *testing.T) {
 	s := newScheme()
+	// IsClaimPayload requires type=claim + claims. Pass a non-list claims so
+	// ClaimPayloadFromMap errors.
 	pp := payloadEnvelope("eip155:8453", map[string]interface{}{
-		"settleAction": "claimWithSignature",
-		"claims":       "not-a-list",
+		"type":   "claim",
+		"claims": "not-a-list",
 	})
 	req := types.PaymentRequirements{Scheme: batched.SchemeBatched, Network: "eip155:8453"}
 	_, err := s.Settle(context.Background(), pp, req, nil)
@@ -246,9 +237,16 @@ func TestSettle_MalformedClaimPayload(t *testing.T) {
 
 func TestSettle_MalformedRefundPayload(t *testing.T) {
 	s := newScheme()
+	// IsEnrichedRefundPayload requires type=refund + channelConfig + voucher +
+	// amount + refundNonce + claims. Pass them, but with channelConfig as a
+	// non-map so EnrichedRefundPayloadFromMap errors.
 	pp := payloadEnvelope("eip155:8453", map[string]interface{}{
-		"settleAction": "refundWithSignature",
-		"config":       "not-a-map",
+		"type":          "refund",
+		"channelConfig": "not-a-map",
+		"voucher":       map[string]interface{}{},
+		"amount":        "1",
+		"refundNonce":   "1",
+		"claims":        []interface{}{},
 	})
 	req := types.PaymentRequirements{Scheme: batched.SchemeBatched, Network: "eip155:8453"}
 	_, err := s.Settle(context.Background(), pp, req, nil)

@@ -151,7 +151,7 @@ func ValidateChannelConfig(
 	}
 
 	// Validate channelId matches computed
-	computed, err := batched.ComputeChannelId(config)
+	computed, err := batched.ComputeChannelId(config, requirements.Network)
 	if err != nil {
 		return x402.NewVerifyError(ErrChannelIdMismatch, "", fmt.Sprintf("failed to compute channel id: %s", err))
 	}

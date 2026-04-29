@@ -608,13 +608,19 @@ func (s *x402HTTPResourceServer) ProcessHTTPRequest(ctx context.Context, reqCtx 
 	verifyResp, verifyErr := s.VerifyPayment(ctx, *typedPayload, *matchingReqs)
 	if verifyErr != nil {
 		err = verifyErr
+		// Prefer InvalidReason (the protocol error code) over the free-form
+		// message so enrichers can match on a stable identifier.
 		errorMsg := err.Error()
+		if ve, ok := verifyErr.(*x402.VerifyError); ok && ve.InvalidReason != "" {
+			errorMsg = ve.InvalidReason
+		}
 
-		paymentRequired := s.CreatePaymentRequiredResponse(
+		paymentRequired := s.CreatePaymentRequiredResponseWithPayload(
 			requirements,
 			resourceInfo,
 			errorMsg,
 			extensions,
+			typedPayload,
 		)
 
 		response, err := s.createHTTPResponseV2(paymentRequired, false, paywallConfig, "", nil)

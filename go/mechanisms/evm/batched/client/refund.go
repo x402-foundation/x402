@@ -41,12 +41,11 @@ type RefundOptions struct {
 // *BatchedEvmScheme) keeps refund.go decoupled and enables alternate implementations
 // in tests.
 type RefundContext interface {
-	Storage() ClientSessionStorage
+	Storage() ClientChannelStorage
 	Signer() evm.ClientEvmSigner
 	VoucherSigner() evm.ClientEvmSigner
 	BuildChannelConfig(requirements types.PaymentRequirements) batched.ChannelConfig
 	RecoverSession(ctx context.Context, requirements types.PaymentRequirements) (*BatchedClientContext, error)
-	ProcessSettleResponse(settle map[string]interface{}) error
 	ProcessCorrectivePaymentRequired(ctx context.Context, errorReason string, accepts []types.PaymentRequirements) (bool, error)
 }
 
@@ -86,7 +85,7 @@ func RefundChannel(ctx context.Context, scheme RefundContext, url string, option
 // cooperative refund. Deletes the session when the post-refund balance is zero
 // (full refund), otherwise updates balance/chargedCumulativeAmount/totalClaimed
 // from the server snapshot (partial refund — channel stays open).
-func UpdateSessionAfterRefund(storage ClientSessionStorage, channelKey string, settleExtra map[string]interface{}) error {
+func UpdateSessionAfterRefund(storage ClientChannelStorage, channelKey string, settleExtra map[string]interface{}) error {
 	var balanceAfter *big.Int
 	if balRaw, ok := settleExtra["balance"]; ok && balRaw != nil {
 		if bal, ok := new(big.Int).SetString(fmt.Sprintf("%v", balRaw), 10); ok {
@@ -244,10 +243,12 @@ func executeRefund(
 			return nil, fmt.Errorf("refund: decode PAYMENT-RESPONSE: %w", err)
 		}
 
-		// Mirror the TS scheme: feed the settle.extra back through the scheme so
-		// it can update local session state.
+		// Mirror TS: the caller knows it just initiated a refund, so reconcile
+		// directly via UpdateSessionAfterRefund (deletes on full drain).
 		if settle != nil && settle.Extra != nil {
-			_ = scheme.ProcessSettleResponse(settle.Extra)
+			if channelId, ok := settle.Extra["channelId"].(string); ok && channelId != "" {
+				_ = UpdateSessionAfterRefund(scheme.Storage(), batched.NormalizeChannelId(channelId), settle.Extra)
+			}
 		}
 		return settle, nil
 	}
@@ -263,7 +264,7 @@ func buildRefundVoucherPayload(
 	refundAmount string,
 ) (*types.PaymentPayload, error) {
 	config := scheme.BuildChannelConfig(requirements)
-	channelId, err := batched.ComputeChannelId(config)
+	channelId, err := batched.ComputeChannelId(config, requirements.Network)
 	if err != nil {
 		return nil, fmt.Errorf("refund: compute channel ID: %w", err)
 	}
@@ -312,19 +313,16 @@ func buildRefundVoucherPayload(
 		return nil, fmt.Errorf("refund: sign voucher: %w", err)
 	}
 
-	voucherPayload := &batched.BatchedVoucherPayload{
-		Type:               "voucher",
-		ChannelConfig:      config,
-		ChannelId:          voucher.ChannelId,
-		MaxClaimableAmount: voucher.MaxClaimableAmount,
-		Signature:          voucher.Signature,
-		Refund:             true,
-		RefundAmount:       refundAmount,
+	refundPayload := &batched.BatchedRefundPayload{
+		Type:          "refund",
+		ChannelConfig: config,
+		Voucher:       *voucher,
+		Amount:        refundAmount,
 	}
 
 	return &types.PaymentPayload{
 		X402Version: 2,
-		Payload:     voucherPayload.ToMap(),
+		Payload:     refundPayload.ToMap(),
 	}, nil
 }
 

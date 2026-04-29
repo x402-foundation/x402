@@ -75,7 +75,7 @@ func main() {
 
 	cfg := &batchedserver.BatchedEvmSchemeConfig{WithdrawDelay: withdrawDelay}
 	if storageDir := os.Getenv("STORAGE_DIR"); storageDir != "" {
-		cfg.Storage = batchedserver.NewFileSessionStorage(batched.FileSessionStorageOptions{
+		cfg.Storage = batchedserver.NewFileChannelStorage(batched.FileChannelStorageOptions{
 			Directory: storageDir,
 		})
 	}

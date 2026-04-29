@@ -64,7 +64,7 @@ func main() {
 		cfg.ReceiverAuthorizerSigner = signer
 	}
 	if storageDir != "" {
-		cfg.Storage = batchedserver.NewFileSessionStorage(batched.FileSessionStorageOptions{
+		cfg.Storage = batchedserver.NewFileChannelStorage(batched.FileChannelStorageOptions{
 			Directory: storageDir,
 		})
 	}

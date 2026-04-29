@@ -131,7 +131,7 @@ func TestDecodePaymentResponseHeader_Errors(t *testing.T) {
 // ---------- UpdateSessionAfterRefund ----------
 
 func TestUpdateSessionAfterRefund_FullRefundDeletes(t *testing.T) {
-	storage := NewInMemoryClientSessionStorage()
+	storage := NewInMemoryClientChannelStorage()
 	_ = storage.Set("ch", &BatchedClientContext{Balance: "100"})
 	err := UpdateSessionAfterRefund(storage, "ch", map[string]interface{}{"balance": "0"})
 	if err != nil {
@@ -143,7 +143,7 @@ func TestUpdateSessionAfterRefund_FullRefundDeletes(t *testing.T) {
 }
 
 func TestUpdateSessionAfterRefund_MissingBalanceDeletes(t *testing.T) {
-	storage := NewInMemoryClientSessionStorage()
+	storage := NewInMemoryClientChannelStorage()
 	_ = storage.Set("ch", &BatchedClientContext{Balance: "100"})
 	err := UpdateSessionAfterRefund(storage, "ch", map[string]interface{}{})
 	if err != nil {
@@ -155,7 +155,7 @@ func TestUpdateSessionAfterRefund_MissingBalanceDeletes(t *testing.T) {
 }
 
 func TestUpdateSessionAfterRefund_PartialRefundUpdates(t *testing.T) {
-	storage := NewInMemoryClientSessionStorage()
+	storage := NewInMemoryClientChannelStorage()
 	_ = storage.Set("ch", &BatchedClientContext{
 		Balance:                 "1000",
 		ChargedCumulativeAmount: "100",
@@ -183,7 +183,7 @@ func TestUpdateSessionAfterRefund_PartialRefundUpdates(t *testing.T) {
 }
 
 func TestUpdateSessionAfterRefund_NoPriorSessionPartial(t *testing.T) {
-	storage := NewInMemoryClientSessionStorage()
+	storage := NewInMemoryClientChannelStorage()
 	err := UpdateSessionAfterRefund(storage, "ch", map[string]interface{}{
 		"balance":                 "500",
 		"chargedCumulativeAmount": "10",
@@ -284,7 +284,7 @@ func TestProbeRefundRequirements_BadHeader(t *testing.T) {
 // ---------- buildRefundVoucherPayload via stub RefundContext ----------
 
 type fakeRefundContext struct {
-	storage       *InMemoryClientSessionStorage
+	storage       *InMemoryClientChannelStorage
 	signer        *mockSigner
 	voucherSigner *mockSigner
 	config        batched.ChannelConfig
@@ -292,7 +292,7 @@ type fakeRefundContext struct {
 	recovered     *BatchedClientContext
 }
 
-func (f *fakeRefundContext) Storage() ClientSessionStorage { return f.storage }
+func (f *fakeRefundContext) Storage() ClientChannelStorage { return f.storage }
 func (f *fakeRefundContext) Signer() evm.ClientEvmSigner   { return f.signer }
 func (f *fakeRefundContext) VoucherSigner() evm.ClientEvmSigner {
 	if f.voucherSigner == nil {
@@ -331,7 +331,7 @@ func defaultConfig() batched.ChannelConfig {
 
 func TestBuildRefundVoucherPayload_NoSession(t *testing.T) {
 	fctx := &fakeRefundContext{
-		storage: NewInMemoryClientSessionStorage(),
+		storage: NewInMemoryClientChannelStorage(),
 		signer:  &mockSigner{address: "0x1"},
 		config:  defaultConfig(),
 	}
@@ -342,11 +342,11 @@ func TestBuildRefundVoucherPayload_NoSession(t *testing.T) {
 }
 
 func TestBuildRefundVoucherPayload_HasSession(t *testing.T) {
-	channelId, err := batched.ComputeChannelId(defaultConfig())
+	channelId, err := batched.ComputeChannelId(defaultConfig(), "eip155:8453")
 	if err != nil {
 		t.Fatalf("compute: %v", err)
 	}
-	storage := NewInMemoryClientSessionStorage()
+	storage := NewInMemoryClientChannelStorage()
 	_ = storage.Set(batched.NormalizeChannelId(channelId), &BatchedClientContext{
 		ChargedCumulativeAmount: "200",
 	})
@@ -361,17 +361,18 @@ func TestBuildRefundVoucherPayload_HasSession(t *testing.T) {
 		t.Fatalf("err: %v", err)
 	}
 	body := payload.Payload
-	if body["type"] != "voucher" || body["refund"] != true || body["refundAmount"] != "100" {
+	if body["type"] != "refund" || body["amount"] != "100" {
 		t.Fatalf("payload = %+v", body)
 	}
-	if body["maxClaimableAmount"] != "200" {
-		t.Fatalf("expected charged echoed back as max, got %v", body["maxClaimableAmount"])
+	voucherMap, _ := body["voucher"].(map[string]interface{})
+	if voucherMap == nil || voucherMap["maxClaimableAmount"] != "200" {
+		t.Fatalf("expected charged echoed back as max, got %v", body["voucher"])
 	}
 }
 
 func TestBuildRefundVoucherPayload_DefaultsChargedZero(t *testing.T) {
-	channelId, _ := batched.ComputeChannelId(defaultConfig())
-	storage := NewInMemoryClientSessionStorage()
+	channelId, _ := batched.ComputeChannelId(defaultConfig(), "eip155:8453")
+	storage := NewInMemoryClientChannelStorage()
 	_ = storage.Set(batched.NormalizeChannelId(channelId), &BatchedClientContext{})
 
 	fctx := &fakeRefundContext{
@@ -383,14 +384,15 @@ func TestBuildRefundVoucherPayload_DefaultsChargedZero(t *testing.T) {
 	if err != nil {
 		t.Fatalf("err: %v", err)
 	}
-	if payload.Payload["maxClaimableAmount"] != "0" {
-		t.Fatalf("expected 0, got %v", payload.Payload["maxClaimableAmount"])
+	voucherMap, _ := payload.Payload["voucher"].(map[string]interface{})
+	if voucherMap == nil || voucherMap["maxClaimableAmount"] != "0" {
+		t.Fatalf("expected voucher.maxClaimableAmount=0, got %v", payload.Payload["voucher"])
 	}
 }
 
 func TestBuildRefundVoucherPayload_SignerError(t *testing.T) {
-	channelId, _ := batched.ComputeChannelId(defaultConfig())
-	storage := NewInMemoryClientSessionStorage()
+	channelId, _ := batched.ComputeChannelId(defaultConfig(), "eip155:8453")
+	storage := NewInMemoryClientChannelStorage()
 	_ = storage.Set(batched.NormalizeChannelId(channelId), &BatchedClientContext{ChargedCumulativeAmount: "1"})
 
 	fctx := &fakeRefundContext{
@@ -412,7 +414,7 @@ func TestRefundChannel_BadAmount(t *testing.T) {
 	defer srv.Close()
 
 	fctx := &fakeRefundContext{
-		storage: NewInMemoryClientSessionStorage(),
+		storage: NewInMemoryClientChannelStorage(),
 		signer:  &mockSigner{address: "0x1"},
 		config:  defaultConfig(),
 	}
@@ -429,7 +431,7 @@ func TestRefundChannel_ProbeFailure(t *testing.T) {
 	}))
 	defer srv.Close()
 	fctx := &fakeRefundContext{
-		storage: NewInMemoryClientSessionStorage(),
+		storage: NewInMemoryClientChannelStorage(),
 		signer:  &mockSigner{address: "0x1"},
 		config:  defaultConfig(),
 	}
@@ -480,8 +482,8 @@ func TestFormatRefundFailure_EmptyDefaults(t *testing.T) {
 // ---------- buildRefundVoucherPayload — drained channel short-circuit ----------
 
 func TestBuildRefundVoucherPayload_DrainedChannelShortCircuits(t *testing.T) {
-	channelId, _ := batched.ComputeChannelId(defaultConfig())
-	storage := NewInMemoryClientSessionStorage()
+	channelId, _ := batched.ComputeChannelId(defaultConfig(), "eip155:8453")
+	storage := NewInMemoryClientChannelStorage()
 	_ = storage.Set(batched.NormalizeChannelId(channelId), &BatchedClientContext{
 		Balance:                 "100",
 		ChargedCumulativeAmount: "100", // balance <= charged → drained
@@ -499,8 +501,8 @@ func TestBuildRefundVoucherPayload_DrainedChannelShortCircuits(t *testing.T) {
 }
 
 func TestBuildRefundVoucherPayload_PartiallyDrainedProceeds(t *testing.T) {
-	channelId, _ := batched.ComputeChannelId(defaultConfig())
-	storage := NewInMemoryClientSessionStorage()
+	channelId, _ := batched.ComputeChannelId(defaultConfig(), "eip155:8453")
+	storage := NewInMemoryClientChannelStorage()
 	_ = storage.Set(batched.NormalizeChannelId(channelId), &BatchedClientContext{
 		Balance:                 "1000",
 		ChargedCumulativeAmount: "100", // 1000 > 100 → has remainder
@@ -519,8 +521,8 @@ func TestBuildRefundVoucherPayload_PartiallyDrainedProceeds(t *testing.T) {
 
 func TestBuildRefundVoucherPayload_EmptyBalanceBypassesShortCircuit(t *testing.T) {
 	// session.balance == "" → can't compare → don't short-circuit.
-	channelId, _ := batched.ComputeChannelId(defaultConfig())
-	storage := NewInMemoryClientSessionStorage()
+	channelId, _ := batched.ComputeChannelId(defaultConfig(), "eip155:8453")
+	storage := NewInMemoryClientChannelStorage()
 	_ = storage.Set(batched.NormalizeChannelId(channelId), &BatchedClientContext{
 		ChargedCumulativeAmount: "100",
 	})
@@ -540,8 +542,8 @@ func TestBuildRefundVoucherPayload_EmptyBalanceBypassesShortCircuit(t *testing.T
 // fakeRefundContextWithSession is a refund context that pre-seeds a session for the
 // channel computed from defaultConfig() so executeRefund can reach the network.
 func fakeRefundContextWithSession(charged string) *fakeRefundContext {
-	channelId, _ := batched.ComputeChannelId(defaultConfig())
-	storage := NewInMemoryClientSessionStorage()
+	channelId, _ := batched.ComputeChannelId(defaultConfig(), "eip155:8453")
+	storage := NewInMemoryClientChannelStorage()
 	_ = storage.Set(batched.NormalizeChannelId(channelId), &BatchedClientContext{
 		Balance:                 "10000",
 		ChargedCumulativeAmount: charged,

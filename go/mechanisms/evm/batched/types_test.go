@@ -27,10 +27,11 @@ func validVoucherSubMap() map[string]interface{} {
 
 func validDepositPayloadMap() map[string]interface{} {
 	return map[string]interface{}{
-		"type": "deposit",
+		"type":          "deposit",
+		"channelConfig": validChannelConfigMap(),
+		"voucher":       validVoucherSubMap(),
 		"deposit": map[string]interface{}{
-			"channelConfig": validChannelConfigMap(),
-			"amount":        "1000",
+			"amount": "1000",
 			"authorization": map[string]interface{}{
 				"erc3009Authorization": map[string]interface{}{
 					"validAfter":  "0",
@@ -40,17 +41,22 @@ func validDepositPayloadMap() map[string]interface{} {
 				},
 			},
 		},
-		"voucher": validVoucherSubMap(),
 	}
 }
 
 func validVoucherPayloadMap() map[string]interface{} {
 	return map[string]interface{}{
-		"type":               "voucher",
-		"channelConfig":      validChannelConfigMap(),
-		"channelId":          "0xabc",
-		"maxClaimableAmount": "500",
-		"signature":          "0xsig",
+		"type":          "voucher",
+		"channelConfig": validChannelConfigMap(),
+		"voucher":       validVoucherSubMap(),
+	}
+}
+
+func validRefundPayloadMap() map[string]interface{} {
+	return map[string]interface{}{
+		"type":          "refund",
+		"channelConfig": validChannelConfigMap(),
+		"voucher":       validVoucherSubMap(),
 	}
 }
 
@@ -63,9 +69,10 @@ func TestIsDepositPayload(t *testing.T) {
 		want bool
 	}{
 		{"valid", validDepositPayloadMap(), true},
-		{"wrong type", map[string]interface{}{"type": "voucher", "deposit": 1, "voucher": 1}, false},
-		{"missing deposit", map[string]interface{}{"type": "deposit", "voucher": 1}, false},
-		{"missing voucher", map[string]interface{}{"type": "deposit", "deposit": 1}, false},
+		{"wrong type", map[string]interface{}{"type": "voucher", "channelConfig": 1, "voucher": 1, "deposit": 1}, false},
+		{"missing deposit", map[string]interface{}{"type": "deposit", "channelConfig": 1, "voucher": 1}, false},
+		{"missing voucher", map[string]interface{}{"type": "deposit", "channelConfig": 1, "deposit": 1}, false},
+		{"missing channelConfig", map[string]interface{}{"type": "deposit", "voucher": 1, "deposit": 1}, false},
 		{"empty", map[string]interface{}{}, false},
 	}
 	for _, tc := range tests {
@@ -84,11 +91,9 @@ func TestIsVoucherPayload(t *testing.T) {
 		want bool
 	}{
 		{"valid", validVoucherPayloadMap(), true},
-		{"wrong type", map[string]interface{}{"type": "deposit", "channelConfig": 1, "channelId": 1, "maxClaimableAmount": 1, "signature": 1}, false},
-		{"missing config", map[string]interface{}{"type": "voucher", "channelId": 1, "maxClaimableAmount": 1, "signature": 1}, false},
-		{"missing id", map[string]interface{}{"type": "voucher", "channelConfig": 1, "maxClaimableAmount": 1, "signature": 1}, false},
-		{"missing amount", map[string]interface{}{"type": "voucher", "channelConfig": 1, "channelId": 1, "signature": 1}, false},
-		{"missing signature", map[string]interface{}{"type": "voucher", "channelConfig": 1, "channelId": 1, "maxClaimableAmount": 1}, false},
+		{"wrong type", map[string]interface{}{"type": "deposit", "channelConfig": 1, "voucher": 1}, false},
+		{"missing config", map[string]interface{}{"type": "voucher", "voucher": 1}, false},
+		{"missing voucher", map[string]interface{}{"type": "voucher", "channelConfig": 1}, false},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -99,80 +104,74 @@ func TestIsVoucherPayload(t *testing.T) {
 	}
 }
 
-func TestIsClaimWithSignaturePayload(t *testing.T) {
+func TestIsRefundPayload(t *testing.T) {
 	tests := []struct {
 		name string
 		in   map[string]interface{}
 		want bool
 	}{
-		{"valid", map[string]interface{}{"settleAction": "claimWithSignature", "claims": []interface{}{}}, true},
-		{"wrong action", map[string]interface{}{"settleAction": "settle", "claims": []interface{}{}}, false},
-		{"missing claims", map[string]interface{}{"settleAction": "claimWithSignature"}, false},
+		{"valid", validRefundPayloadMap(), true},
+		{"wrong type", map[string]interface{}{"type": "voucher", "channelConfig": 1, "voucher": 1}, false},
+		{"missing config", map[string]interface{}{"type": "refund", "voucher": 1}, false},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := IsClaimWithSignaturePayload(tc.in); got != tc.want {
+			if got := IsRefundPayload(tc.in); got != tc.want {
+				t.Fatalf("IsRefundPayload = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestIsClaimPayload(t *testing.T) {
+	tests := []struct {
+		name string
+		in   map[string]interface{}
+		want bool
+	}{
+		{"valid", map[string]interface{}{"type": "claim", "claims": []interface{}{}}, true},
+		{"wrong type", map[string]interface{}{"type": "settle", "claims": []interface{}{}}, false},
+		{"missing claims", map[string]interface{}{"type": "claim"}, false},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := IsClaimPayload(tc.in); got != tc.want {
 				t.Fatalf("got %v, want %v", got, tc.want)
 			}
 		})
 	}
 }
 
-func TestIsSettleActionPayload(t *testing.T) {
+func TestIsSettlePayload(t *testing.T) {
 	tests := []struct {
 		name string
 		in   map[string]interface{}
 		want bool
 	}{
-		{"valid", map[string]interface{}{"settleAction": "settle", "receiver": "0x1", "token": "0x2"}, true},
-		{"wrong action", map[string]interface{}{"settleAction": "claim", "receiver": "0x1", "token": "0x2"}, false},
-		{"missing receiver", map[string]interface{}{"settleAction": "settle", "token": "0x2"}, false},
-		{"missing token", map[string]interface{}{"settleAction": "settle", "receiver": "0x1"}, false},
+		{"valid", map[string]interface{}{"type": "settle", "receiver": "0x1", "token": "0x2"}, true},
+		{"wrong type", map[string]interface{}{"type": "claim", "receiver": "0x1", "token": "0x2"}, false},
+		{"missing receiver", map[string]interface{}{"type": "settle", "token": "0x2"}, false},
+		{"missing token", map[string]interface{}{"type": "settle", "receiver": "0x1"}, false},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := IsSettleActionPayload(tc.in); got != tc.want {
+			if got := IsSettlePayload(tc.in); got != tc.want {
 				t.Fatalf("got %v, want %v", got, tc.want)
 			}
 		})
 	}
 }
 
-func TestIsDepositSettlePayload(t *testing.T) {
-	tests := []struct {
-		name string
-		in   map[string]interface{}
-		want bool
-	}{
-		{"valid", map[string]interface{}{"settleAction": "deposit", "deposit": map[string]interface{}{}}, true},
-		{"wrong action", map[string]interface{}{"settleAction": "settle", "deposit": map[string]interface{}{}}, false},
-		{"missing deposit", map[string]interface{}{"settleAction": "deposit"}, false},
+func TestIsEnrichedRefundPayload(t *testing.T) {
+	enriched := validRefundPayloadMap()
+	enriched["amount"] = "100"
+	enriched["refundNonce"] = "0"
+	enriched["claims"] = []interface{}{}
+	if !IsEnrichedRefundPayload(enriched) {
+		t.Fatal("expected enriched refund to be detected")
 	}
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			if got := IsDepositSettlePayload(tc.in); got != tc.want {
-				t.Fatalf("got %v, want %v", got, tc.want)
-			}
-		})
-	}
-}
-
-func TestIsRefundWithSignaturePayload(t *testing.T) {
-	tests := []struct {
-		name string
-		in   map[string]interface{}
-		want bool
-	}{
-		{"valid", map[string]interface{}{"settleAction": "refundWithSignature", "config": map[string]interface{}{}}, true},
-		{"wrong action", map[string]interface{}{"settleAction": "settle", "config": map[string]interface{}{}}, false},
-		{"missing config", map[string]interface{}{"settleAction": "refundWithSignature"}, false},
-	}
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			if got := IsRefundWithSignaturePayload(tc.in); got != tc.want {
-				t.Fatalf("got %v, want %v", got, tc.want)
-			}
-		})
+	if IsEnrichedRefundPayload(validRefundPayloadMap()) {
+		t.Fatal("plain refund should not be detected as enriched")
 	}
 }
 
@@ -182,6 +181,9 @@ func TestIsBatchedPayload(t *testing.T) {
 	}
 	if !IsBatchedPayload(validVoucherPayloadMap()) {
 		t.Fatal("voucher map should be batched")
+	}
+	if !IsBatchedPayload(validRefundPayloadMap()) {
+		t.Fatal("refund map should be batched")
 	}
 	if IsBatchedPayload(map[string]interface{}{"type": "other"}) {
 		t.Fatal("unrelated map should not be batched")
@@ -227,9 +229,6 @@ func TestChannelConfigFromMap_InvalidWithdrawDelay(t *testing.T) {
 
 func TestDepositPayloadFromMap_ToMap_RoundTrip(t *testing.T) {
 	original := validDepositPayloadMap()
-	original["voucher"].(map[string]interface{})["refund"] = true
-	original["voucher"].(map[string]interface{})["refundAmount"] = "200"
-	original["responseExtra"] = map[string]interface{}{"k": "v"}
 
 	p, err := DepositPayloadFromMap(original)
 	if err != nil {
@@ -244,11 +243,8 @@ func TestDepositPayloadFromMap_ToMap_RoundTrip(t *testing.T) {
 	if p.Deposit.Authorization.Erc3009Authorization == nil {
 		t.Fatal("missing erc3009 authorization")
 	}
-	if !p.Voucher.Refund || p.Voucher.RefundAmount != "200" {
-		t.Fatalf("voucher refund=%v amount=%q", p.Voucher.Refund, p.Voucher.RefundAmount)
-	}
-	if p.ResponseExtra["k"] != "v" {
-		t.Fatalf("responseExtra not preserved")
+	if p.Voucher.ChannelId != "0xabc" || p.Voucher.MaxClaimableAmount != "1000" {
+		t.Fatalf("voucher fields = %+v", p.Voucher)
 	}
 
 	out := p.ToMap()
@@ -256,19 +252,28 @@ func TestDepositPayloadFromMap_ToMap_RoundTrip(t *testing.T) {
 		t.Fatalf("ToMap type = %v", out["type"])
 	}
 	voucher := out["voucher"].(map[string]interface{})
-	if voucher["refund"] != true || voucher["refundAmount"] != "200" {
+	if voucher["channelId"] != "0xabc" {
 		t.Fatalf("ToMap voucher = %v", voucher)
 	}
 }
 
 func TestDepositPayloadFromMap_MissingDeposit(t *testing.T) {
-	if _, err := DepositPayloadFromMap(map[string]interface{}{"type": "deposit"}); err == nil {
+	in := map[string]interface{}{
+		"type":          "deposit",
+		"channelConfig": validChannelConfigMap(),
+		"voucher":       validVoucherSubMap(),
+	}
+	if _, err := DepositPayloadFromMap(in); err == nil {
 		t.Fatal("expected error")
 	}
 }
 
 func TestDepositPayloadFromMap_MissingChannelConfig(t *testing.T) {
-	in := map[string]interface{}{"type": "deposit", "deposit": map[string]interface{}{"amount": "1"}}
+	in := map[string]interface{}{
+		"type":    "deposit",
+		"voucher": validVoucherSubMap(),
+		"deposit": map[string]interface{}{"amount": "1"},
+	}
 	if _, err := DepositPayloadFromMap(in); err == nil {
 		t.Fatal("expected error")
 	}
@@ -277,7 +282,12 @@ func TestDepositPayloadFromMap_MissingChannelConfig(t *testing.T) {
 func TestDepositPayloadFromMap_InvalidChannelConfig(t *testing.T) {
 	bad := validChannelConfigMap()
 	delete(bad, "payer")
-	in := map[string]interface{}{"type": "deposit", "deposit": map[string]interface{}{"channelConfig": bad}}
+	in := map[string]interface{}{
+		"type":          "deposit",
+		"channelConfig": bad,
+		"voucher":       validVoucherSubMap(),
+		"deposit":       map[string]interface{}{"amount": "1"},
+	}
 	if _, err := DepositPayloadFromMap(in); err == nil {
 		t.Fatal("expected error")
 	}
@@ -287,20 +297,15 @@ func TestDepositPayloadFromMap_InvalidChannelConfig(t *testing.T) {
 
 func TestVoucherPayloadFromMap_ToMap_RoundTrip(t *testing.T) {
 	original := validVoucherPayloadMap()
-	original["refund"] = true
-	original["refundAmount"] = "100"
 	p, err := VoucherPayloadFromMap(original)
 	if err != nil {
 		t.Fatalf("VoucherPayloadFromMap: %v", err)
 	}
-	if p.ChannelId != "0xabc" || p.MaxClaimableAmount != "500" || p.Signature != "0xsig" {
+	if p.Voucher.ChannelId != "0xabc" || p.Voucher.MaxClaimableAmount != "1000" || p.Voucher.Signature != "0xsig" {
 		t.Fatalf("payload fields not parsed: %+v", p)
 	}
-	if !p.Refund || p.RefundAmount != "100" {
-		t.Fatalf("refund fields not parsed")
-	}
 	out := p.ToMap()
-	if out["type"] != "voucher" || out["refund"] != true || out["refundAmount"] != "100" {
+	if out["type"] != "voucher" {
 		t.Fatalf("ToMap = %v", out)
 	}
 }
@@ -344,15 +349,12 @@ func TestVoucherClaimFromMap_ToMap_RoundTrip(t *testing.T) {
 }
 
 func TestVoucherClaimFromMap_Errors(t *testing.T) {
-	// missing voucher
 	if _, err := VoucherClaimFromMap(map[string]interface{}{}); err == nil {
 		t.Fatal("expected error: missing voucher")
 	}
-	// missing channel
 	if _, err := VoucherClaimFromMap(map[string]interface{}{"voucher": map[string]interface{}{}}); err == nil {
 		t.Fatal("expected error: missing channel")
 	}
-	// invalid channel
 	bad := validChannelConfigMap()
 	delete(bad, "payer")
 	if _, err := VoucherClaimFromMap(map[string]interface{}{"voucher": map[string]interface{}{"channel": bad}}); err == nil {
@@ -384,99 +386,59 @@ func TestVoucherClaimsFromList_RoundTrip(t *testing.T) {
 }
 
 func TestVoucherClaimsFromList_Errors(t *testing.T) {
-	// non-map element
 	if _, err := VoucherClaimsFromList([]interface{}{"not a map"}); err == nil {
 		t.Fatal("expected error")
 	}
-	// invalid claim
 	if _, err := VoucherClaimsFromList([]interface{}{map[string]interface{}{}}); err == nil {
 		t.Fatal("expected error")
 	}
 }
 
-// ---------- ClaimWithSignaturePayloadFromMap ----------
+// ---------- ClaimPayloadFromMap ----------
 
-func TestClaimWithSignaturePayloadFromMap(t *testing.T) {
+func TestClaimPayloadFromMap(t *testing.T) {
 	in := map[string]interface{}{
-		"settleAction":             "claimWithSignature",
+		"type":                     "claim",
 		"claims":                   []interface{}{},
 		"claimAuthorizerSignature": "0xauth",
 	}
-	p, err := ClaimWithSignaturePayloadFromMap(in)
+	p, err := ClaimPayloadFromMap(in)
 	if err != nil {
 		t.Fatalf("err: %v", err)
 	}
-	if p.SettleAction != "claimWithSignature" || p.ClaimAuthorizerSignature != "0xauth" {
+	if p.Type != "claim" || p.ClaimAuthorizerSignature != "0xauth" {
 		t.Fatalf("parsed = %+v", p)
 	}
-	if _, err := ClaimWithSignaturePayloadFromMap(map[string]interface{}{}); err == nil {
+	if _, err := ClaimPayloadFromMap(map[string]interface{}{}); err == nil {
 		t.Fatal("expected error: missing claims")
 	}
 	bad := map[string]interface{}{"claims": []interface{}{"not a map"}}
-	if _, err := ClaimWithSignaturePayloadFromMap(bad); err == nil {
+	if _, err := ClaimPayloadFromMap(bad); err == nil {
 		t.Fatal("expected error: bad claim")
 	}
 }
 
-// ---------- SettleActionPayloadFromMap ----------
+// ---------- SettlePayloadFromMap ----------
 
-func TestSettleActionPayloadFromMap(t *testing.T) {
-	p, err := SettleActionPayloadFromMap(map[string]interface{}{"receiver": "0x1", "token": "0x2"})
+func TestSettlePayloadFromMap(t *testing.T) {
+	p, err := SettlePayloadFromMap(map[string]interface{}{"type": "settle", "receiver": "0x1", "token": "0x2"})
 	if err != nil {
 		t.Fatalf("err: %v", err)
 	}
-	if p.Receiver != "0x1" || p.Token != "0x2" || p.SettleAction != "settle" {
+	if p.Receiver != "0x1" || p.Token != "0x2" || p.Type != "settle" {
 		t.Fatalf("parsed = %+v", p)
 	}
 }
 
-// ---------- DepositSettlePayloadFromMap ----------
+// ---------- EnrichedRefundPayloadFromMap ----------
 
-func TestDepositSettlePayloadFromMap(t *testing.T) {
+func TestEnrichedRefundPayloadFromMap(t *testing.T) {
 	in := map[string]interface{}{
-		"settleAction": "deposit",
-		"deposit": map[string]interface{}{
-			"channelConfig": validChannelConfigMap(),
-			"amount":        "100",
-			"authorization": map[string]interface{}{
-				"erc3009Authorization": map[string]interface{}{
-					"validAfter":  "0",
-					"validBefore": "1",
-					"salt":        "0x01",
-					"signature":   "0xff",
-				},
-			},
-		},
-	}
-	p, err := DepositSettlePayloadFromMap(in)
-	if err != nil {
-		t.Fatalf("err: %v", err)
-	}
-	if p.Deposit.Amount != "100" || p.Deposit.Authorization.Erc3009Authorization == nil {
-		t.Fatalf("parsed = %+v", p)
-	}
-
-	if _, err := DepositSettlePayloadFromMap(map[string]interface{}{}); err == nil {
-		t.Fatal("expected error: missing deposit")
-	}
-	if _, err := DepositSettlePayloadFromMap(map[string]interface{}{"deposit": map[string]interface{}{}}); err == nil {
-		t.Fatal("expected error: missing channelConfig")
-	}
-	bad := validChannelConfigMap()
-	delete(bad, "payer")
-	if _, err := DepositSettlePayloadFromMap(map[string]interface{}{"deposit": map[string]interface{}{"channelConfig": bad}}); err == nil {
-		t.Fatal("expected error: invalid channelConfig")
-	}
-}
-
-// ---------- RefundWithSignaturePayloadFromMap ----------
-
-func TestRefundWithSignaturePayloadFromMap(t *testing.T) {
-	in := map[string]interface{}{
-		"settleAction":              "refundWithSignature",
-		"config":                    validChannelConfigMap(),
+		"type":                      "refund",
+		"channelConfig":             validChannelConfigMap(),
+		"voucher":                   validVoucherSubMap(),
 		"amount":                    "100",
-		"nonce":                     "1",
+		"refundNonce":               "1",
 		"refundAuthorizerSignature": "0xrefund",
 		"claimAuthorizerSignature":  "0xclaim",
 		"claims": []interface{}{
@@ -490,28 +452,21 @@ func TestRefundWithSignaturePayloadFromMap(t *testing.T) {
 			},
 		},
 	}
-	p, err := RefundWithSignaturePayloadFromMap(in)
+	p, err := EnrichedRefundPayloadFromMap(in)
 	if err != nil {
 		t.Fatalf("err: %v", err)
 	}
-	if p.Amount != "100" || p.Nonce != "1" || len(p.Claims) != 1 {
+	if p.Amount != "100" || p.RefundNonce != "1" || len(p.Claims) != 1 {
 		t.Fatalf("parsed = %+v", p)
 	}
 
-	if _, err := RefundWithSignaturePayloadFromMap(map[string]interface{}{}); err == nil {
-		t.Fatal("expected error: missing config")
+	if _, err := EnrichedRefundPayloadFromMap(map[string]interface{}{}); err == nil {
+		t.Fatal("expected error: missing channelConfig")
 	}
 	bad := validChannelConfigMap()
 	delete(bad, "payer")
-	if _, err := RefundWithSignaturePayloadFromMap(map[string]interface{}{"config": bad}); err == nil {
-		t.Fatal("expected error: invalid config")
-	}
-	badClaims := map[string]interface{}{
-		"config": validChannelConfigMap(),
-		"claims": []interface{}{"not a map"},
-	}
-	if _, err := RefundWithSignaturePayloadFromMap(badClaims); err == nil {
-		t.Fatal("expected error: bad claims")
+	if _, err := EnrichedRefundPayloadFromMap(map[string]interface{}{"channelConfig": bad}); err == nil {
+		t.Fatal("expected error: invalid channelConfig")
 	}
 }
 
@@ -547,13 +502,8 @@ func TestPaymentResponseExtra_RoundTrip(t *testing.T) {
 		TotalClaimed:            "50",
 		WithdrawRequestedAt:     1234,
 		RefundNonce:             "1",
-		Refund:                  true,
-		RefundedAmount:          "10",
 	}
 	out := e.ToMap()
-	if out["refund"] != true || out["refundedAmount"] != "10" {
-		t.Fatalf("ToMap = %v", out)
-	}
 	parsed, err := PaymentResponseExtraFromMap(out)
 	if err != nil {
 		t.Fatalf("err: %v", err)
@@ -573,5 +523,141 @@ func TestPaymentResponseExtra_FromMap_NumericWithdrawRequestedAt(t *testing.T) {
 		if parsed.WithdrawRequestedAt != 1234 {
 			t.Fatalf("withdrawRequestedAt = %d", parsed.WithdrawRequestedAt)
 		}
+	}
+}
+
+// ---------- RefundPayload round-trip ----------
+
+func TestRefundPayloadFromMap_ToMap_RoundTrip(t *testing.T) {
+	in := validRefundPayloadMap()
+	in["amount"] = "250"
+	p, err := RefundPayloadFromMap(in)
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	if p.Amount != "250" || p.Voucher.ChannelId != "0xabc" {
+		t.Fatalf("parsed = %+v", p)
+	}
+	out := p.ToMap()
+	if out["type"] != "refund" || out["amount"] != "250" {
+		t.Fatalf("ToMap = %+v", out)
+	}
+	if _, ok := out["channelConfig"].(map[string]interface{}); !ok {
+		t.Fatalf("missing channelConfig in %+v", out)
+	}
+
+	// Empty amount should be omitted.
+	p.Amount = ""
+	if _, hasAmount := p.ToMap()["amount"]; hasAmount {
+		t.Fatal("expected amount omitted when empty")
+	}
+}
+
+func TestRefundPayloadFromMap_Errors(t *testing.T) {
+	if _, err := RefundPayloadFromMap(map[string]interface{}{}); err == nil {
+		t.Fatal("expected error: missing channelConfig")
+	}
+	bad := map[string]interface{}{"channelConfig": map[string]interface{}{}}
+	if _, err := RefundPayloadFromMap(bad); err == nil {
+		t.Fatal("expected error: invalid channelConfig")
+	}
+	noVoucher := map[string]interface{}{"channelConfig": validChannelConfigMap()}
+	if _, err := RefundPayloadFromMap(noVoucher); err == nil {
+		t.Fatal("expected error: missing voucher")
+	}
+}
+
+// ---------- Wire-format ToMap converters used by the channel manager ----------
+
+func TestClaimPayload_ToMap(t *testing.T) {
+	p := &BatchedClaimPayload{Type: "claim"}
+	if got := p.ToMap(); got["type"] != "claim" {
+		t.Fatalf("ToMap = %+v", got)
+	}
+	if _, has := p.ToMap()["claimAuthorizerSignature"]; has {
+		t.Fatal("expected claimAuthorizerSignature omitted when empty")
+	}
+
+	p.ClaimAuthorizerSignature = "0xsig"
+	out := p.ToMap()
+	if out["claimAuthorizerSignature"] != "0xsig" {
+		t.Fatalf("ToMap = %+v", out)
+	}
+}
+
+func TestSettlePayload_ToMap(t *testing.T) {
+	p := &BatchedSettlePayload{Type: "settle", Receiver: "0xrcv", Token: "0xtok"}
+	out := p.ToMap()
+	if out["type"] != "settle" || out["receiver"] != "0xrcv" || out["token"] != "0xtok" {
+		t.Fatalf("ToMap = %+v", out)
+	}
+}
+
+func TestEnrichedRefundPayload_ToMap(t *testing.T) {
+	p := &BatchedEnrichedRefundPayload{
+		Type: "refund",
+		ChannelConfig: ChannelConfig{
+			Payer: "0x1", PayerAuthorizer: "0x2", Receiver: "0x3",
+			ReceiverAuthorizer: "0x4", Token: "0x5", WithdrawDelay: 900,
+			Salt: "0x6",
+		},
+		Voucher:     BatchedVoucherFields{ChannelId: "0xabc", MaxClaimableAmount: "1000", Signature: "0xsig"},
+		Amount:      "100",
+		RefundNonce: "1",
+		Claims:      []BatchedVoucherClaim{},
+	}
+	out := p.ToMap()
+	if out["type"] != "refund" || out["amount"] != "100" || out["refundNonce"] != "1" {
+		t.Fatalf("ToMap = %+v", out)
+	}
+	if _, has := out["refundAuthorizerSignature"]; has {
+		t.Fatal("expected refundAuthorizerSignature omitted when empty")
+	}
+
+	p.RefundAuthorizerSignature = "0xref"
+	p.ClaimAuthorizerSignature = "0xclm"
+	out = p.ToMap()
+	if out["refundAuthorizerSignature"] != "0xref" || out["claimAuthorizerSignature"] != "0xclm" {
+		t.Fatalf("ToMap with sigs = %+v", out)
+	}
+}
+
+// ---------- ChannelState requirements ----------
+
+func TestChannelStateRequirements_FromMapAndToMap(t *testing.T) {
+	in := map[string]interface{}{
+		"channelId":               "0xabc",
+		"chargedCumulativeAmount": "100",
+		"signedMaxClaimable":      "1000",
+		"signature":               "0xsig",
+	}
+	cs := ChannelStateRequirementsFromMap(in)
+	if cs == nil || cs.ChannelId != "0xabc" || cs.ChargedCumulativeAmount != "100" {
+		t.Fatalf("parsed = %+v", cs)
+	}
+
+	out := cs.ToMap()
+	if out["channelId"] != "0xabc" || out["chargedCumulativeAmount"] != "100" {
+		t.Fatalf("ToMap = %+v", out)
+	}
+
+	// Missing channelId returns nil.
+	if got := ChannelStateRequirementsFromMap(map[string]interface{}{}); got != nil {
+		t.Fatalf("expected nil for empty map, got %+v", got)
+	}
+	// Nil input returns nil.
+	if got := ChannelStateRequirementsFromMap(nil); got != nil {
+		t.Fatalf("expected nil for nil map, got %+v", got)
+	}
+	// Receiver-nil ToMap returns nil.
+	var nilCS *BatchSettlementRequirementsChannelState
+	if got := nilCS.ToMap(); got != nil {
+		t.Fatalf("expected nil ToMap for nil receiver, got %+v", got)
+	}
+	// Empty optional fields are omitted.
+	cs2 := &BatchSettlementRequirementsChannelState{ChannelId: "0xabc"}
+	out2 := cs2.ToMap()
+	if _, has := out2["chargedCumulativeAmount"]; has {
+		t.Fatalf("expected optional fields omitted, got %+v", out2)
 	}
 }

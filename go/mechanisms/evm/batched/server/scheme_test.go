@@ -46,7 +46,7 @@ func TestNewBatchedEvmScheme_NilConfigDefaults(t *testing.T) {
 }
 
 func TestNewBatchedEvmScheme_OverridesApplied(t *testing.T) {
-	storage := NewInMemorySessionStorage()
+	storage := NewInMemoryChannelStorage()
 	auth := &mockAuthorizerSigner{address: "0xauth"}
 	s := NewBatchedEvmScheme("0xreceiver", &BatchedEvmSchemeConfig{
 		Storage:                  storage,
@@ -362,4 +362,200 @@ func TestParseMoneyToDecimal_UnsupportedType(t *testing.T) {
 
 func nowMs() int64 {
 	return int64(1) << 50 // far in the future, simulates "very recent"
+}
+
+// ----- Snapshot + EnrichPaymentRequiredResponse -----
+
+func makeBatchedPayload(channelId string) *types.PaymentPayload {
+	return &types.PaymentPayload{
+		X402Version: 2,
+		Payload: map[string]interface{}{
+			"type": "voucher",
+			"voucher": map[string]interface{}{
+				"channelId":          channelId,
+				"maxClaimableAmount": "100",
+				"signature":          "0xsig",
+			},
+		},
+		Accepted: types.PaymentRequirements{
+			Scheme:  batched.SchemeBatched,
+			Network: "eip155:8453",
+		},
+	}
+}
+
+// enrich is a test helper that invokes EnrichPaymentRequiredResponse with a
+// minimal context, mutating reqs in place and returning the same slice for
+// chained assertions.
+func enrich(s *BatchedEvmScheme, pp *types.PaymentPayload, errReason string, reqs []types.PaymentRequirements) []types.PaymentRequirements {
+	s.EnrichPaymentRequiredResponse(x402.PaymentRequiredContext{
+		Requirements:   reqs,
+		PaymentPayload: pp,
+		Error:          errReason,
+	})
+	return reqs
+}
+
+func TestRememberAndTakeChannelSnapshot_RoundTrip(t *testing.T) {
+	s := NewBatchedEvmScheme("0xreceiver", nil)
+	pp := makeBatchedPayload("0xabcd")
+	sess := sampleSession("0xabcd", "10")
+
+	s.RememberChannelSnapshot(pp, sess)
+	got := s.TakeChannelSnapshot(pp)
+	if got != sess {
+		t.Fatalf("expected snapshot back, got %+v", got)
+	}
+	// Second take returns nil (snapshot consumed).
+	if got2 := s.TakeChannelSnapshot(pp); got2 != nil {
+		t.Fatalf("expected nil after take, got %+v", got2)
+	}
+}
+
+func TestRememberChannelSnapshot_NilInputsAreNoOp(t *testing.T) {
+	s := NewBatchedEvmScheme("0xreceiver", nil)
+	pp := makeBatchedPayload("0xabcd")
+	s.RememberChannelSnapshot(nil, sampleSession("0xabcd", "10"))
+	s.RememberChannelSnapshot(pp, nil)
+	if got := s.TakeChannelSnapshot(pp); got != nil {
+		t.Fatalf("expected nil snapshot, got %+v", got)
+	}
+	if got := s.TakeChannelSnapshot(nil); got != nil {
+		t.Fatalf("expected nil for nil payload")
+	}
+}
+
+func TestEnrichPaymentRequiredResponse_WrongReasonNoOp(t *testing.T) {
+	s := NewBatchedEvmScheme("0xreceiver", nil)
+	pp := makeBatchedPayload("0xabcd")
+	s.RememberChannelSnapshot(pp, sampleSession("0xabcd", "10"))
+	reqs := enrich(s, pp, "some_other_reason",
+		[]types.PaymentRequirements{{Scheme: batched.SchemeBatched, Network: "eip155:8453"}})
+	if reqs[0].Extra != nil {
+		t.Fatalf("expected no enrichment, got %+v", reqs[0].Extra)
+	}
+}
+
+func TestEnrichPaymentRequiredResponse_NilPayloadNoOp(t *testing.T) {
+	s := NewBatchedEvmScheme("0xreceiver", nil)
+	reqs := enrich(s, nil, batched.ErrCumulativeAmountMismatch,
+		[]types.PaymentRequirements{{Scheme: batched.SchemeBatched, Network: "eip155:8453"}})
+	if reqs[0].Extra != nil {
+		t.Fatalf("expected no enrichment, got %+v", reqs[0].Extra)
+	}
+}
+
+func TestEnrichPaymentRequiredResponse_FromSnapshot(t *testing.T) {
+	s := NewBatchedEvmScheme("0xreceiver", nil)
+	pp := makeBatchedPayload("0xabcd")
+	s.RememberChannelSnapshot(pp, sampleSession("0xabcd", "42"))
+
+	reqs := enrich(s, pp, batched.ErrCumulativeAmountMismatch,
+		[]types.PaymentRequirements{{Scheme: batched.SchemeBatched, Network: "eip155:8453"}})
+
+	state, ok := reqs[0].Extra["ChannelState"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("expected ChannelState map, got %+v", reqs[0].Extra)
+	}
+	if state["channelId"] != "0xabcd" {
+		t.Fatalf("channelId = %v", state["channelId"])
+	}
+	if state["chargedCumulativeAmount"] != "42" {
+		t.Fatalf("chargedCumulativeAmount = %v", state["chargedCumulativeAmount"])
+	}
+	if state["signedMaxClaimable"] != "1000" {
+		t.Fatalf("signedMaxClaimable = %v", state["signedMaxClaimable"])
+	}
+	if state["signature"] != "0xsig" {
+		t.Fatalf("signature = %v", state["signature"])
+	}
+	// Snapshot should be consumed.
+	if got := s.TakeChannelSnapshot(pp); got != nil {
+		t.Fatalf("expected snapshot consumed")
+	}
+}
+
+func TestEnrichPaymentRequiredResponse_FallsBackToStorage(t *testing.T) {
+	s := NewBatchedEvmScheme("0xreceiver", nil)
+	pp := makeBatchedPayload("0xabcd")
+	_ = s.UpdateSession("0xabcd", sampleSession("0xabcd", "77"))
+
+	reqs := enrich(s, pp, batched.ErrCumulativeAmountMismatch,
+		[]types.PaymentRequirements{{Scheme: batched.SchemeBatched, Network: "eip155:8453"}})
+
+	state, ok := reqs[0].Extra["ChannelState"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("expected ChannelState map from storage fallback, got %+v", reqs[0].Extra)
+	}
+	if state["chargedCumulativeAmount"] != "77" {
+		t.Fatalf("chargedCumulativeAmount = %v", state["chargedCumulativeAmount"])
+	}
+}
+
+func TestEnrichPaymentRequiredResponse_NoSessionNoOp(t *testing.T) {
+	s := NewBatchedEvmScheme("0xreceiver", nil)
+	pp := makeBatchedPayload("0xabcd")
+	reqs := enrich(s, pp, batched.ErrCumulativeAmountMismatch,
+		[]types.PaymentRequirements{{Scheme: batched.SchemeBatched, Network: "eip155:8453"}})
+	if reqs[0].Extra != nil {
+		t.Fatalf("expected no enrichment without session, got %+v", reqs[0].Extra)
+	}
+}
+
+func TestEnrichPaymentRequiredResponse_SkipsNonBatchedAndMismatchedNetwork(t *testing.T) {
+	s := NewBatchedEvmScheme("0xreceiver", nil)
+	pp := makeBatchedPayload("0xabcd")
+	s.RememberChannelSnapshot(pp, sampleSession("0xabcd", "10"))
+
+	reqs := enrich(s, pp, batched.ErrCumulativeAmountMismatch, []types.PaymentRequirements{
+		{Scheme: "exact", Network: "eip155:8453"},
+		{Scheme: batched.SchemeBatched, Network: "eip155:1"},
+		{Scheme: batched.SchemeBatched, Network: "eip155:8453"},
+	})
+
+	if reqs[0].Extra != nil {
+		t.Fatalf("non-batched req should not be enriched: %+v", reqs[0].Extra)
+	}
+	if reqs[1].Extra != nil {
+		t.Fatalf("network-mismatch req should not be enriched: %+v", reqs[1].Extra)
+	}
+	if _, ok := reqs[2].Extra["ChannelState"]; !ok {
+		t.Fatalf("matching req should be enriched: %+v", reqs[2].Extra)
+	}
+}
+
+func TestEnrichPaymentRequiredResponse_MissingChannelIdNoOp(t *testing.T) {
+	s := NewBatchedEvmScheme("0xreceiver", nil)
+	pp := &types.PaymentPayload{
+		X402Version: 2,
+		Payload:     map[string]interface{}{"type": "voucher"},
+		Accepted:    types.PaymentRequirements{Scheme: batched.SchemeBatched, Network: "eip155:8453"},
+	}
+	reqs := enrich(s, pp, batched.ErrCumulativeAmountMismatch,
+		[]types.PaymentRequirements{{Scheme: batched.SchemeBatched, Network: "eip155:8453"}})
+	if reqs[0].Extra != nil {
+		t.Fatalf("expected no enrichment without channelId, got %+v", reqs[0].Extra)
+	}
+}
+
+func TestExtractChannelIdFromPayload(t *testing.T) {
+	if got := extractChannelIdFromPayload(nil); got != "" {
+		t.Fatalf("nil payload: got %q", got)
+	}
+	if got := extractChannelIdFromPayload(map[string]interface{}{}); got != "" {
+		t.Fatalf("missing voucher: got %q", got)
+	}
+	if got := extractChannelIdFromPayload(map[string]interface{}{"voucher": "not-a-map"}); got != "" {
+		t.Fatalf("voucher non-map: got %q", got)
+	}
+	if got := extractChannelIdFromPayload(map[string]interface{}{
+		"voucher": map[string]interface{}{"channelId": 123},
+	}); got != "" {
+		t.Fatalf("channelId non-string: got %q", got)
+	}
+	if got := extractChannelIdFromPayload(map[string]interface{}{
+		"voucher": map[string]interface{}{"channelId": "0xabcd"},
+	}); got != "0xabcd" {
+		t.Fatalf("got %q", got)
+	}
 }

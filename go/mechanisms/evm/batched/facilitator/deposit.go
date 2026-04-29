@@ -22,7 +22,7 @@ func VerifyDeposit(
 	payload *batched.BatchedDepositPayload,
 	requirements types.PaymentRequirements,
 ) (*x402.VerifyResponse, error) {
-	config := payload.Deposit.ChannelConfig
+	config := payload.ChannelConfig
 	channelId := payload.Voucher.ChannelId
 
 	// Validate channel config
@@ -188,7 +188,7 @@ func SettleDeposit(
 	payload *batched.BatchedDepositPayload,
 	requirements types.PaymentRequirements,
 ) (*x402.SettleResponse, error) {
-	config := payload.Deposit.ChannelConfig
+	config := payload.ChannelConfig
 	network := x402.Network(requirements.Network)
 
 	depositAmount, ok := new(big.Int).SetString(payload.Deposit.Amount, 10)
@@ -234,14 +234,11 @@ func SettleDeposit(
 			"deposit transaction reverted")
 	}
 
-	// Build optimistic post-deposit extra (used as a fallback if the RPC hasn't
-	// caught up yet to the just-confirmed transaction).
+	// Optimistic post-deposit extra (fallback if RPC hasn't caught up to
+	// the just-confirmed tx). The on-the-wire deposit payload no longer
+	// carries chargedCumulativeAmount, so this defaults to the per-request
+	// requirement amount.
 	chargedFromExtra := requirements.Amount
-	if payload.ResponseExtra != nil {
-		if v, ok := payload.ResponseExtra["chargedCumulativeAmount"].(string); ok && v != "" {
-			chargedFromExtra = v
-		}
-	}
 	priorState, _ := ReadChannelState(ctx, signer, payload.Voucher.ChannelId)
 	priorBalance := big.NewInt(0)
 	priorTotalClaimed := big.NewInt(0)

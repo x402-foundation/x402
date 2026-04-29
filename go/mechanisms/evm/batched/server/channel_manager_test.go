@@ -106,7 +106,7 @@ func TestClaim_SingleBatch(t *testing.T) {
 	if f.settleCalls != 1 {
 		t.Fatalf("settleCalls = %d", f.settleCalls)
 	}
-	if f.settlePayloads[0]["settleAction"] != "claimWithSignature" {
+	if f.settlePayloads[0]["type"] != "claim" {
 		t.Fatalf("payload = %+v", f.settlePayloads[0])
 	}
 }
@@ -170,7 +170,7 @@ func TestSettle_Success(t *testing.T) {
 	if res == nil || res.Transaction != "0xtx" {
 		t.Fatalf("got %+v", res)
 	}
-	if f.settlePayloads[0]["settleAction"] != "settle" {
+	if f.settlePayloads[0]["type"] != "settle" {
 		t.Fatalf("payload = %+v", f.settlePayloads[0])
 	}
 	if f.settlePayloads[0]["token"] != "0xtoken" {
@@ -262,7 +262,7 @@ func TestRefund_SuccessDeletesSession(t *testing.T) {
 	if res.Transaction != "0xtx" {
 		t.Fatalf("tx = %s", res.Transaction)
 	}
-	if f.settlePayloads[0]["settleAction"] != "refundWithSignature" {
+	if f.settlePayloads[0]["type"] != "refund" {
 		t.Fatalf("payload = %+v", f.settlePayloads[0])
 	}
 	// Session should be deleted.
@@ -271,7 +271,7 @@ func TestRefund_SuccessDeletesSession(t *testing.T) {
 	}
 }
 
-func TestRefund_FacilitatorErrorSkipsChannel(t *testing.T) {
+func TestRefund_FacilitatorErrorIsReturned(t *testing.T) {
 	s := NewBatchedEvmScheme("0xreceiver", nil)
 	sess := sampleSession("0xa", "100")
 	sess.Balance = "1000"
@@ -280,7 +280,10 @@ func TestRefund_FacilitatorErrorSkipsChannel(t *testing.T) {
 
 	f := &fakeFacilitator{settleErr: errors.New("boom")}
 	m := newManager(s, f)
-	res, _ := m.Refund(context.Background(), []string{"0xa"})
+	res, err := m.Refund(context.Background(), []string{"0xa"})
+	if err == nil {
+		t.Fatal("expected error from facilitator failure")
+	}
 	if res != nil {
 		t.Fatalf("expected nil result on facilitator error, got %+v", res)
 	}
@@ -352,10 +355,10 @@ func TestClaimAndSettle_SettlesAfterClaim(t *testing.T) {
 	if f.settleCalls != 2 {
 		t.Fatalf("expected claim + settle, got %d", f.settleCalls)
 	}
-	if f.settlePayloads[0]["settleAction"] != "claimWithSignature" {
+	if f.settlePayloads[0]["type"] != "claim" {
 		t.Fatalf("first payload = %+v", f.settlePayloads[0])
 	}
-	if f.settlePayloads[1]["settleAction"] != "settle" {
+	if f.settlePayloads[1]["type"] != "settle" {
 		t.Fatalf("second payload = %+v", f.settlePayloads[1])
 	}
 }

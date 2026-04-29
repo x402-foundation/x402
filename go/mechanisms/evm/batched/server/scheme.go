@@ -7,6 +7,7 @@ import (
 	"math/big"
 	"strconv"
 	"strings"
+	"sync"
 
 	x402 "github.com/x402-foundation/x402/go"
 	"github.com/x402-foundation/x402/go/mechanisms/evm"
@@ -51,6 +52,12 @@ type BatchedEvmScheme struct {
 	receiverAuthorizerSigner AuthorizerSigner
 	withdrawDelay            int
 	moneyParsers             []x402.MoneyParser
+
+	// channelSnapshots holds per-payload channel state captured during BeforeVerify
+	// aborts so that EnrichPaymentRequiredResponse can echo it back in the
+	// corrective 402 response. Keyed by payload pointer identity.
+	snapshotMu       sync.Mutex
+	channelSnapshots map[*types.PaymentPayload]*ChannelSession
 }
 
 // NewBatchedEvmScheme creates a new batched server scheme.
@@ -68,7 +75,7 @@ func NewBatchedEvmScheme(receiverAddress string, config *BatchedEvmSchemeConfig)
 	}
 
 	if storage == nil {
-		storage = NewInMemorySessionStorage()
+		storage = NewInMemoryChannelStorage()
 	}
 
 	return &BatchedEvmScheme{
@@ -77,7 +84,89 @@ func NewBatchedEvmScheme(receiverAddress string, config *BatchedEvmSchemeConfig)
 		receiverAuthorizerSigner: authSigner,
 		withdrawDelay:            withdrawDelay,
 		moneyParsers:             []x402.MoneyParser{},
+		channelSnapshots:         make(map[*types.PaymentPayload]*ChannelSession),
 	}
+}
+
+// RememberChannelSnapshot stores a channel snapshot keyed to a specific payload
+// so EnrichPaymentRequiredResponse can echo it in the corrective 402.
+func (s *BatchedEvmScheme) RememberChannelSnapshot(payload *types.PaymentPayload, session *ChannelSession) {
+	if payload == nil || session == nil {
+		return
+	}
+	s.snapshotMu.Lock()
+	defer s.snapshotMu.Unlock()
+	s.channelSnapshots[payload] = session
+}
+
+// TakeChannelSnapshot reads and clears the channel snapshot for a payload.
+func (s *BatchedEvmScheme) TakeChannelSnapshot(payload *types.PaymentPayload) *ChannelSession {
+	if payload == nil {
+		return nil
+	}
+	s.snapshotMu.Lock()
+	defer s.snapshotMu.Unlock()
+	session, ok := s.channelSnapshots[payload]
+	if ok {
+		delete(s.channelSnapshots, payload)
+	}
+	return session
+}
+
+// EnrichPaymentRequiredResponse implements x402.PaymentRequiredEnricher.
+// On a cumulative-amount-mismatch verify failure it adds corrective ChannelState
+// (sourced first from a BeforeVerifyHook snapshot, then from storage) to each
+// matching batch-settlement requirement so the client can resync.
+func (s *BatchedEvmScheme) EnrichPaymentRequiredResponse(ctx x402.PaymentRequiredContext) {
+	if ctx.Error != batched.ErrCumulativeAmountMismatch || ctx.PaymentPayload == nil {
+		return
+	}
+
+	channelId := extractChannelIdFromPayload(ctx.PaymentPayload.Payload)
+	if channelId == "" {
+		return
+	}
+
+	session := s.TakeChannelSnapshot(ctx.PaymentPayload)
+	if session == nil {
+		stored, err := s.storage.Get(batched.NormalizeChannelId(channelId))
+		if err != nil || stored == nil {
+			return
+		}
+		session = stored
+	}
+
+	network := ctx.PaymentPayload.Accepted.Network
+	for i := range ctx.Requirements {
+		if ctx.Requirements[i].Scheme != batched.SchemeBatched {
+			continue
+		}
+		if ctx.Requirements[i].Network != network {
+			continue
+		}
+		if ctx.Requirements[i].Extra == nil {
+			ctx.Requirements[i].Extra = make(map[string]interface{})
+		}
+		ctx.Requirements[i].Extra["ChannelState"] = map[string]interface{}{
+			"channelId":               session.ChannelId,
+			"chargedCumulativeAmount": session.ChargedCumulativeAmount,
+			"signedMaxClaimable":      session.SignedMaxClaimable,
+			"signature":               session.Signature,
+		}
+	}
+}
+
+// extractChannelIdFromPayload pulls voucher.channelId from a deposit/voucher/refund payload map.
+func extractChannelIdFromPayload(payload map[string]interface{}) string {
+	if payload == nil {
+		return ""
+	}
+	if v, ok := payload["voucher"].(map[string]interface{}); ok {
+		if id, ok := v["channelId"].(string); ok {
+			return id
+		}
+	}
+	return ""
 }
 
 // Scheme returns the scheme identifier.
@@ -328,7 +417,7 @@ func (s *BatchedEvmScheme) SignClaimBatch(ctx context.Context, claims []batched.
 
 	entries := make([]map[string]interface{}, len(claims))
 	for i, claim := range claims {
-		channelId, _ := batched.ComputeChannelId(claim.Voucher.Channel)
+		channelId, _ := batched.ComputeChannelId(claim.Voucher.Channel, network)
 		channelIdBytes, _ := evm.HexToBytes(channelId)
 		maxClaimable, _ := new(big.Int).SetString(claim.Voucher.MaxClaimableAmount, 10)
 		totalClaimed, _ := new(big.Int).SetString(claim.TotalClaimed, 10)

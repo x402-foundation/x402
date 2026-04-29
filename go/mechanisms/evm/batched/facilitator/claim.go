@@ -18,7 +18,7 @@ import (
 func ExecuteClaimWithSignature(
 	ctx context.Context,
 	signer evm.FacilitatorEvmSigner,
-	payload *batched.BatchedClaimWithSignaturePayload,
+	payload *batched.BatchedClaimPayload,
 	requirements types.PaymentRequirements,
 	authorizerSigner batched.AuthorizerSigner,
 ) (*x402.SettleResponse, error) {

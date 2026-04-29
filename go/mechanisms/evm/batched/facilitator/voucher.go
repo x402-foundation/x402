@@ -21,7 +21,7 @@ func VerifyVoucher(
 	channelConfig batched.ChannelConfig,
 ) (*x402.VerifyResponse, error) {
 	// Validate channel config
-	if err := ValidateChannelConfig(channelConfig, payload.ChannelId, requirements); err != nil {
+	if err := ValidateChannelConfig(channelConfig, payload.Voucher.ChannelId, requirements); err != nil {
 		return nil, err
 	}
 
@@ -34,11 +34,11 @@ func VerifyVoucher(
 	// Verify voucher signature
 	valid, err := VerifyBatchedVoucherTypedData(
 		ctx, signer,
-		payload.ChannelId,
-		payload.MaxClaimableAmount,
+		payload.Voucher.ChannelId,
+		payload.Voucher.MaxClaimableAmount,
 		channelConfig.PayerAuthorizer,
 		channelConfig.Payer,
-		payload.Signature,
+		payload.Voucher.Signature,
 		chainId,
 	)
 	if err != nil {
@@ -51,7 +51,7 @@ func VerifyVoucher(
 	}
 
 	// Read on-chain channel state
-	state, err := ReadChannelState(ctx, signer, payload.ChannelId)
+	state, err := ReadChannelState(ctx, signer, payload.Voucher.ChannelId)
 	if err != nil {
 		return nil, x402.NewVerifyError(ErrChannelStateReadFailed, channelConfig.Payer,
 			fmt.Sprintf("failed to read channel state: %s", err))
@@ -60,17 +60,13 @@ func VerifyVoucher(
 	// Check maxClaimableAmount vs totalClaimed.
 	// Normal vouchers must strictly increase claimable above totalClaimed; refund
 	// vouchers are zero-charge and may equal totalClaimed (only `<` fails).
-	maxClaimable, ok := new(big.Int).SetString(payload.MaxClaimableAmount, 10)
+	maxClaimable, ok := new(big.Int).SetString(payload.Voucher.MaxClaimableAmount, 10)
 	if !ok {
 		return nil, x402.NewVerifyError(ErrInvalidVoucherPayload, channelConfig.Payer,
 			"invalid maxClaimableAmount")
 	}
-	cmp := maxClaimable.Cmp(state.TotalClaimed)
-	belowClaimed := cmp < 0
-	if !payload.Refund && cmp <= 0 {
-		belowClaimed = true
-	}
-	if belowClaimed {
+	// Voucher payloads are non-refund: maxClaimable must strictly exceed totalClaimed.
+	if maxClaimable.Cmp(state.TotalClaimed) <= 0 {
 		return nil, x402.NewVerifyError(ErrMaxClaimableTooLow, channelConfig.Payer,
 			fmt.Sprintf("maxClaimableAmount %s is below totalClaimed %s", maxClaimable.String(), state.TotalClaimed.String()))
 	}
@@ -84,6 +80,6 @@ func VerifyVoucher(
 	return &x402.VerifyResponse{
 		IsValid: true,
 		Payer:   channelConfig.Payer,
-		Extra:   BuildChannelStateExtra(payload.ChannelId, payload.MaxClaimableAmount, state),
+		Extra:   BuildChannelStateExtra(payload.Voucher.ChannelId, payload.Voucher.MaxClaimableAmount, state),
 	}, nil
 }

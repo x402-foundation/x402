@@ -213,22 +213,31 @@ func (m *BatchedChannelManager) Claim(ctx context.Context, opts *ClaimOptions) (
 
 // Settle transfers claimed funds to the receiver.
 func (m *BatchedChannelManager) Settle(ctx context.Context) (*SettleResult, error) {
-	settlePayload := map[string]interface{}{
-		"settleAction": "settle",
-		"receiver":     m.scheme.receiverAddress,
-		"token":        m.getToken(),
+	settle := &batched.BatchedSettlePayload{
+		Type:     "settle",
+		Receiver: m.scheme.receiverAddress,
+		Token:    m.getToken(),
 	}
+	resp, err := m.facilitatorSettle(ctx, settle.ToMap())
+	if err != nil {
+		return nil, err
+	}
+	return &SettleResult{Transaction: resp.Transaction}, nil
+}
 
+// facilitatorSettle marshals the (payload, requirements) pair this manager uses
+// for its claim/settle/refund calls and forwards them to the facilitator.
+func (m *BatchedChannelManager) facilitatorSettle(ctx context.Context, payloadMap map[string]interface{}) (*x402.SettleResponse, error) {
 	payloadBytes, err := json.Marshal(map[string]interface{}{
 		"x402Version": 2,
-		"payload":     settlePayload,
+		"payload":     payloadMap,
 		"accepted": map[string]interface{}{
 			"scheme":  batched.SchemeBatched,
 			"network": string(m.network),
 		},
 	})
 	if err != nil {
-		return nil, fmt.Errorf("failed to marshal settle payload: %w", err)
+		return nil, fmt.Errorf("failed to marshal payload: %w", err)
 	}
 
 	requirementsBytes, err := json.Marshal(map[string]interface{}{
@@ -240,12 +249,7 @@ func (m *BatchedChannelManager) Settle(ctx context.Context) (*SettleResult, erro
 		return nil, fmt.Errorf("failed to marshal requirements: %w", err)
 	}
 
-	resp, err := m.facilitator.Settle(ctx, payloadBytes, requirementsBytes)
-	if err != nil {
-		return nil, err
-	}
-
-	return &SettleResult{Transaction: resp.Transaction}, nil
+	return m.facilitator.Settle(ctx, payloadBytes, requirementsBytes)
 }
 
 // Refund cooperatively refunds the given channels. For each channel, claims
@@ -289,57 +293,40 @@ func (m *BatchedChannelManager) Refund(ctx context.Context, channelIds []string)
 			continue
 		}
 
-		// Build the refund payload
-		var refundPayloadMap map[string]interface{}
-		nonce := fmt.Sprintf("%d", session.RefundNonce)
-
-		// All refunds now go through refundWithSignature.
 		// Pre-sign if server has authorizerSigner; otherwise facilitator auto-signs.
-		refundPayloadMap = map[string]interface{}{
-			"settleAction": "refundWithSignature",
-			"config":       batched.ChannelConfigToMap(session.ChannelConfig),
-			"amount":       refundAmount.String(),
-			"nonce":        nonce,
-			"claims":       batched.VoucherClaimsToList([]batched.BatchedVoucherClaim{claimEntry}),
+		nonce := fmt.Sprintf("%d", session.RefundNonce)
+		refund := &batched.BatchedEnrichedRefundPayload{
+			Type:          "refund",
+			ChannelConfig: session.ChannelConfig,
+			Voucher: batched.BatchedVoucherFields{
+				ChannelId:          normalizedId,
+				MaxClaimableAmount: session.SignedMaxClaimable,
+				Signature:          session.Signature,
+			},
+			Amount:      refundAmount.String(),
+			RefundNonce: nonce,
+			Claims:      []batched.BatchedVoucherClaim{claimEntry},
 		}
 
 		if m.scheme.receiverAuthorizerSigner != nil {
 			authSig, err := m.scheme.SignRefund(ctx, normalizedId, refundAmount.String(), nonce, string(m.network))
 			if err != nil {
-				continue
+				return nil, fmt.Errorf("sign refund for %s: %w", normalizedId, err)
 			}
 			claimAuthSig, err := m.scheme.SignClaimBatch(ctx, []batched.BatchedVoucherClaim{claimEntry}, string(m.network))
 			if err != nil {
-				continue
+				return nil, fmt.Errorf("sign claim batch for %s: %w", normalizedId, err)
 			}
-			refundPayloadMap["refundAuthorizerSignature"] = evm.BytesToHex(authSig)
-			refundPayloadMap["claimAuthorizerSignature"] = evm.BytesToHex(claimAuthSig)
+			refund.RefundAuthorizerSignature = evm.BytesToHex(authSig)
+			refund.ClaimAuthorizerSignature = evm.BytesToHex(claimAuthSig)
 		}
 
-		payloadBytes, err := json.Marshal(map[string]interface{}{
-			"x402Version": 2,
-			"payload":     refundPayloadMap,
-			"accepted": map[string]interface{}{
-				"scheme":  batched.SchemeBatched,
-				"network": string(m.network),
-			},
-		})
+		resp, err := m.facilitatorSettle(ctx, refund.ToMap())
 		if err != nil {
-			continue
+			return nil, fmt.Errorf("refund settle for %s: %w", normalizedId, err)
 		}
-
-		requirementsBytes, err := json.Marshal(map[string]interface{}{
-			"scheme":  batched.SchemeBatched,
-			"network": string(m.network),
-			"payTo":   m.scheme.receiverAddress,
-		})
-		if err != nil {
-			continue
-		}
-
-		resp, err := m.facilitator.Settle(ctx, payloadBytes, requirementsBytes)
-		if err != nil {
-			continue
+		if !resp.Success {
+			return nil, fmt.Errorf("refund settle for %s failed: %s — %s", normalizedId, resp.ErrorReason, resp.ErrorMessage)
 		}
 
 		lastTxHash = resp.Transaction
@@ -556,44 +543,18 @@ func (m *BatchedChannelManager) tick() {
 }
 
 func (m *BatchedChannelManager) executeClaim(ctx context.Context, claims []batched.BatchedVoucherClaim) (*ClaimResult, error) {
-	// All claims now go through claimWithSignature.
-	// If the server has an authorizerSigner, pre-sign; otherwise the
-	// facilitator will auto-sign using its own AuthorizerSigner.
-	payloadMap := map[string]interface{}{
-		"settleAction": "claimWithSignature",
-		"claims":       batched.VoucherClaimsToList(claims),
-	}
-
+	// Pre-sign with the receiver's authorizer when configured; otherwise the
+	// facilitator auto-signs via its own AuthorizerSigner.
+	claim := &batched.BatchedClaimPayload{Type: "claim", Claims: claims}
 	if m.scheme.receiverAuthorizerSigner != nil {
 		sig, err := m.scheme.SignClaimBatch(ctx, claims, string(m.network))
 		if err != nil {
 			return nil, fmt.Errorf("failed to sign claim batch: %w", err)
 		}
-		payloadMap["claimAuthorizerSignature"] = evm.BytesToHex(sig)
+		claim.ClaimAuthorizerSignature = evm.BytesToHex(sig)
 	}
 
-	payloadBytes, err := json.Marshal(map[string]interface{}{
-		"x402Version": 2,
-		"payload":     payloadMap,
-		"accepted": map[string]interface{}{
-			"scheme":  batched.SchemeBatched,
-			"network": string(m.network),
-		},
-	})
-	if err != nil {
-		return nil, fmt.Errorf("failed to marshal claim payload: %w", err)
-	}
-
-	requirementsBytes, err := json.Marshal(map[string]interface{}{
-		"scheme":  batched.SchemeBatched,
-		"network": string(m.network),
-		"payTo":   m.scheme.receiverAddress,
-	})
-	if err != nil {
-		return nil, fmt.Errorf("failed to marshal requirements: %w", err)
-	}
-
-	resp, err := m.facilitator.Settle(ctx, payloadBytes, requirementsBytes)
+	resp, err := m.facilitatorSettle(ctx, claim.ToMap())
 	if err != nil {
 		return nil, err
 	}

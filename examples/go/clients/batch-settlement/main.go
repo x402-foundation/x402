@@ -63,7 +63,7 @@ func main() {
 	}
 
 	if storageDir != "" {
-		cfg.Storage = batchedclient.NewFileClientSessionStorage(batched.FileSessionStorageOptions{
+		cfg.Storage = batchedclient.NewFileClientChannelStorage(batched.FileChannelStorageOptions{
 			Directory: storageDir,
 		})
 	}

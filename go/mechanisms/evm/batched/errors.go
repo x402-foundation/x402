@@ -7,4 +7,9 @@ const (
 	ErrInvalidChannelId   = "batch_settlement_evm_channel_id_mismatch"
 	ErrInvalidChannelConf = "batch_settlement_evm_invalid_channel_config"
 	ErrChannelNotFound    = "batch_settlement_evm_channel_not_found"
+
+	// ErrCumulativeAmountMismatch signals a recoverable 402 from the server when
+	// the client's cumulative amount disagrees with the on-chain channel state.
+	// Clients refresh from the corrective ChannelState in requirements.extra and retry.
+	ErrCumulativeAmountMismatch = "batch_settlement_cumulative_amount_mismatch"
 )

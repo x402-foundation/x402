@@ -17,8 +17,8 @@ func sampleCtx() *BatchedClientContext {
 	}
 }
 
-func TestInMemoryClientSessionStorage_GetMissing(t *testing.T) {
-	s := NewInMemoryClientSessionStorage()
+func TestInMemoryClientChannelStorage_GetMissing(t *testing.T) {
+	s := NewInMemoryClientChannelStorage()
 	got, err := s.Get("missing")
 	if err != nil {
 		t.Fatalf("err: %v", err)
@@ -28,8 +28,8 @@ func TestInMemoryClientSessionStorage_GetMissing(t *testing.T) {
 	}
 }
 
-func TestInMemoryClientSessionStorage_SetGet(t *testing.T) {
-	s := NewInMemoryClientSessionStorage()
+func TestInMemoryClientChannelStorage_SetGet(t *testing.T) {
+	s := NewInMemoryClientChannelStorage()
 	in := sampleCtx()
 	if err := s.Set("ch", in); err != nil {
 		t.Fatalf("Set: %v", err)
@@ -43,8 +43,8 @@ func TestInMemoryClientSessionStorage_SetGet(t *testing.T) {
 	}
 }
 
-func TestInMemoryClientSessionStorage_ReturnsCopy(t *testing.T) {
-	s := NewInMemoryClientSessionStorage()
+func TestInMemoryClientChannelStorage_ReturnsCopy(t *testing.T) {
+	s := NewInMemoryClientChannelStorage()
 	in := sampleCtx()
 	_ = s.Set("ch", in)
 
@@ -63,8 +63,8 @@ func TestInMemoryClientSessionStorage_ReturnsCopy(t *testing.T) {
 	}
 }
 
-func TestInMemoryClientSessionStorage_Delete(t *testing.T) {
-	s := NewInMemoryClientSessionStorage()
+func TestInMemoryClientChannelStorage_Delete(t *testing.T) {
+	s := NewInMemoryClientChannelStorage()
 	_ = s.Set("ch", sampleCtx())
 	if err := s.Delete("ch"); err != nil {
 		t.Fatalf("Delete: %v", err)
@@ -79,8 +79,8 @@ func TestInMemoryClientSessionStorage_Delete(t *testing.T) {
 	}
 }
 
-func TestInMemoryClientSessionStorage_ConcurrentAccess(t *testing.T) {
-	s := NewInMemoryClientSessionStorage()
+func TestInMemoryClientChannelStorage_ConcurrentAccess(t *testing.T) {
+	s := NewInMemoryClientChannelStorage()
 	var wg sync.WaitGroup
 	for i := range 50 {
 		wg.Add(2)

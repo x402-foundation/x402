@@ -591,20 +591,65 @@ func (s *x402ResourceServer) EnrichExtensions(
 	return enriched
 }
 
-// CreatePaymentRequiredResponse creates a V2 PaymentRequired response
+// CreatePaymentRequiredResponse creates a V2 PaymentRequired response.
+// Equivalent to CreatePaymentRequiredResponseWithPayload with a nil payload —
+// scheme enrichers that depend on the failed payload (e.g. batched corrective
+// ChannelState) become no-ops.
 func (s *x402ResourceServer) CreatePaymentRequiredResponse(
 	requirements []types.PaymentRequirements,
 	resourceInfo *types.ResourceInfo,
 	errorMsg string,
 	extensions map[string]interface{},
 ) types.PaymentRequired {
-	return types.PaymentRequired{
+	return s.CreatePaymentRequiredResponseWithPayload(requirements, resourceInfo, errorMsg, extensions, nil)
+}
+
+// CreatePaymentRequiredResponseWithPayload creates a V2 PaymentRequired response
+// and runs each registered scheme's PaymentRequiredEnricher (when implemented).
+// Pass the failing payment payload on the verify-failure branch so per-scheme
+// enrichers can attach corrective recovery state (e.g. batched ChannelState)
+// to matching requirements; pass nil otherwise.
+func (s *x402ResourceServer) CreatePaymentRequiredResponseWithPayload(
+	requirements []types.PaymentRequirements,
+	resourceInfo *types.ResourceInfo,
+	errorMsg string,
+	extensions map[string]interface{},
+	paymentPayload *types.PaymentPayload,
+) types.PaymentRequired {
+	response := types.PaymentRequired{
 		X402Version: 2,
 		Error:       errorMsg,
 		Resource:    resourceInfo,
 		Accepts:     requirements,
 		Extensions:  extensions,
 	}
+
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	for i := range requirements {
+		networkSchemes, ok := s.schemes[Network(requirements[i].Network)]
+		if !ok {
+			continue
+		}
+		scheme, ok := networkSchemes[requirements[i].Scheme]
+		if !ok {
+			continue
+		}
+		enricher, ok := scheme.(PaymentRequiredEnricher)
+		if !ok {
+			continue
+		}
+		enricher.EnrichPaymentRequiredResponse(PaymentRequiredContext{
+			Requirements:            requirements,
+			PaymentPayload:          paymentPayload,
+			ResourceInfo:            resourceInfo,
+			Error:                   errorMsg,
+			PaymentRequiredResponse: &response,
+		})
+	}
+
+	return response
 }
 
 // ProcessPaymentRequest processes a payment request end-to-end

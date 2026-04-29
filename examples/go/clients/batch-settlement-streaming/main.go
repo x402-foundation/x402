@@ -81,7 +81,7 @@ func main() {
 		VoucherSigner:     voucherSigner,
 	}
 	if storageDir != "" {
-		cfg.Storage = batchedclient.NewFileClientSessionStorage(batched.FileSessionStorageOptions{
+		cfg.Storage = batchedclient.NewFileClientChannelStorage(batched.FileChannelStorageOptions{
 			Directory: storageDir,
 		})
 	}
@@ -142,7 +142,7 @@ func main() {
 	}
 
 	channelConfig := scheme.BuildChannelConfig(requirements)
-	channelId, err := batched.ComputeChannelId(channelConfig)
+	channelId, err := batched.ComputeChannelId(channelConfig, requirements.Network)
 	if err != nil {
 		fmt.Printf("Failed to compute channel id: %v\n", err)
 		os.Exit(1)

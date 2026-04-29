@@ -5,62 +5,71 @@ import (
 	"math/big"
 	"strings"
 
-	"github.com/ethereum/go-ethereum/accounts/abi"
 	"github.com/ethereum/go-ethereum/common"
-	"github.com/ethereum/go-ethereum/crypto"
 
 	"github.com/x402-foundation/x402/go/mechanisms/evm"
 )
 
-// channelConfigABIType is the ABI tuple type for ChannelConfig, used for encoding.
-var channelConfigABIType abi.Arguments
-
-func init() {
-	addressTy, _ := abi.NewType("address", "", nil)
-	uint40Ty, _ := abi.NewType("uint40", "", nil)
-	bytes32Ty, _ := abi.NewType("bytes32", "", nil)
-
-	channelConfigABIType = abi.Arguments{
-		{Name: "payer", Type: addressTy},
-		{Name: "payerAuthorizer", Type: addressTy},
-		{Name: "receiver", Type: addressTy},
-		{Name: "receiverAuthorizer", Type: addressTy},
-		{Name: "token", Type: addressTy},
-		{Name: "withdrawDelay", Type: uint40Ty},
-		{Name: "salt", Type: bytes32Ty},
+// ComputeChannelId computes the chain-bound channel ID from a ChannelConfig
+// via EIP-712 hashTypedData. The networkOrChainID argument may be either a
+// CAIP-2 network identifier (e.g. "eip155:84532") or a numeric chain id as
+// a *big.Int. Matches TS computeChannelId(config, networkOrChainId).
+func ComputeChannelId(config ChannelConfig, networkOrChainID interface{}) (string, error) {
+	chainID, err := resolveChainID(networkOrChainID)
+	if err != nil {
+		return "", err
 	}
-}
-
-// ComputeChannelId computes the channel ID from a ChannelConfig.
-// Matches the on-chain getChannelId: keccak256(abi.encode(channelConfig)).
-func ComputeChannelId(config ChannelConfig) (string, error) {
-	payer := common.HexToAddress(config.Payer)
-	payerAuthorizer := common.HexToAddress(config.PayerAuthorizer)
-	receiver := common.HexToAddress(config.Receiver)
-	receiverAuthorizer := common.HexToAddress(config.ReceiverAuthorizer)
-	token := common.HexToAddress(config.Token)
-	withdrawDelay := new(big.Int).SetInt64(int64(config.WithdrawDelay))
 
 	saltBytes, err := hexToBytes32(config.Salt)
 	if err != nil {
 		return "", fmt.Errorf("invalid salt: %w", err)
 	}
 
-	encoded, err := channelConfigABIType.Pack(
-		payer,
-		payerAuthorizer,
-		receiver,
-		receiverAuthorizer,
-		token,
-		withdrawDelay,
-		saltBytes,
-	)
-	if err != nil {
-		return "", fmt.Errorf("failed to ABI-encode channel config: %w", err)
+	message := map[string]interface{}{
+		"payer":              common.HexToAddress(config.Payer).Hex(),
+		"payerAuthorizer":    common.HexToAddress(config.PayerAuthorizer).Hex(),
+		"receiver":           common.HexToAddress(config.Receiver).Hex(),
+		"receiverAuthorizer": common.HexToAddress(config.ReceiverAuthorizer).Hex(),
+		"token":              common.HexToAddress(config.Token).Hex(),
+		"withdrawDelay":      big.NewInt(int64(config.WithdrawDelay)),
+		"salt":               saltBytes[:],
 	}
 
-	hash := crypto.Keccak256(encoded)
+	hash, err := evm.HashTypedData(
+		GetBatchSettlementEip712Domain(chainID),
+		ChannelConfigTypes,
+		"ChannelConfig",
+		message,
+	)
+	if err != nil {
+		return "", fmt.Errorf("failed to hash channel config: %w", err)
+	}
 	return fmt.Sprintf("0x%x", hash), nil
+}
+
+// resolveChainID accepts either a CAIP-2 network string (e.g. "eip155:84532"),
+// a numeric chain id (*big.Int, int, int64, uint64), or anything that
+// converts via fmt.Sprint to a CAIP-2 string.
+func resolveChainID(networkOrChainID interface{}) (*big.Int, error) {
+	switch v := networkOrChainID.(type) {
+	case nil:
+		return nil, fmt.Errorf("networkOrChainID is required")
+	case string:
+		return evm.GetEvmChainId(v)
+	case *big.Int:
+		if v == nil {
+			return nil, fmt.Errorf("networkOrChainID is required")
+		}
+		return new(big.Int).Set(v), nil
+	case int:
+		return big.NewInt(int64(v)), nil
+	case int64:
+		return big.NewInt(v), nil
+	case uint64:
+		return new(big.Int).SetUint64(v), nil
+	default:
+		return nil, fmt.Errorf("unsupported networkOrChainID type %T", networkOrChainID)
+	}
 }
 
 // NormalizeChannelId lowercases and normalizes a channel ID hex string.
@@ -70,12 +79,12 @@ func NormalizeChannelId(channelId string) string {
 
 // GetBatchSettlementEip712Domain returns the EIP-712 domain for the
 // batch-settlement contract on the given chain. Mirrors TS getBatchSettlementEip712Domain.
-func GetBatchSettlementEip712Domain(chainId *big.Int) evm.TypedDataDomain {
+func GetBatchSettlementEip712Domain(chainID *big.Int) evm.TypedDataDomain {
 	return evm.TypedDataDomain{
 		Name:              BatchSettlementDomain.Name,
 		Version:           BatchSettlementDomain.Version,
-		ChainID:           chainId,
-		VerifyingContract: BatchSettlementAddress,
+		ChainID:           chainID,
+		VerifyingContract: common.HexToAddress(BatchSettlementAddress).Hex(),
 	}
 }
 

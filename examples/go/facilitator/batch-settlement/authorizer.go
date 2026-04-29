@@ -54,7 +54,7 @@ func (a *authorizerSigner) SignClaimBatch(ctx context.Context, claims []batched.
 
 	entries := make([]map[string]interface{}, len(claims))
 	for i, claim := range claims {
-		channelId, _ := batched.ComputeChannelId(claim.Voucher.Channel)
+		channelId, _ := batched.ComputeChannelId(claim.Voucher.Channel, network)
 		channelIdBytes, _ := evmmech.HexToBytes(channelId)
 		maxClaimable, _ := new(big.Int).SetString(claim.Voucher.MaxClaimableAmount, 10)
 		totalClaimed, _ := new(big.Int).SetString(claim.TotalClaimed, 10)

@@ -7,6 +7,7 @@ import (
 
 	x402 "github.com/x402-foundation/x402/go"
 	"github.com/x402-foundation/x402/go/mechanisms/evm/batched"
+	"github.com/x402-foundation/x402/go/types"
 )
 
 // stubPayload satisfies types.PaymentPayloadView with a mutable underlying map.
@@ -38,21 +39,36 @@ func batchedReqs() stubRequirements {
 
 func voucherPayload(channelId, maxClaimable, sig string) map[string]interface{} {
 	return map[string]interface{}{
-		"type":               "voucher",
-		"channelConfig":      batched.ChannelConfigToMap(testConfig()),
-		"channelId":          channelId,
-		"maxClaimableAmount": maxClaimable,
-		"signature":          sig,
+		"type":          "voucher",
+		"channelConfig": batched.ChannelConfigToMap(testConfig()),
+		"voucher": map[string]interface{}{
+			"channelId":          channelId,
+			"maxClaimableAmount": maxClaimable,
+			"signature":          sig,
+		},
+	}
+}
+
+func refundPayload(channelId, maxClaimable, sig string) map[string]interface{} {
+	return map[string]interface{}{
+		"type":          "refund",
+		"channelConfig": batched.ChannelConfigToMap(testConfig()),
+		"voucher": map[string]interface{}{
+			"channelId":          channelId,
+			"maxClaimableAmount": maxClaimable,
+			"signature":          sig,
+		},
 	}
 }
 
 func depositPayloadFor(channelId, maxClaimable, sig string) map[string]interface{} {
 	cfg := testConfig()
 	return map[string]interface{}{
-		"type": "deposit",
+		"type":          "deposit",
+		"channelConfig": batched.ChannelConfigToMap(cfg),
 		"deposit": map[string]interface{}{
-			"channelConfig": batched.ChannelConfigToMap(cfg),
 			"amount":        "1000",
+			"authorization": map[string]interface{}{},
 		},
 		"voucher": map[string]interface{}{
 			"channelId":          channelId,
@@ -105,10 +121,8 @@ func TestBeforeVerifyHook_RefundWithoutSessionPassesThrough(t *testing.T) {
 	// pass through so the facilitator can verify against on-chain state and
 	// AfterVerify can rebuild the session.
 	s := NewBatchedEvmScheme("0xreceiver", nil)
-	payload := voucherPayload("0xabcd", "0", "0xsig")
-	payload["refund"] = true
 	res, err := s.BeforeVerifyHook()(x402.VerifyContext{
-		Payload:      &stubPayload{data: payload},
+		Payload:      &stubPayload{data: refundPayload("0xabcd", "0", "0xsig")},
 		Requirements: batchedReqs(),
 	})
 	if err != nil || res != nil {
@@ -138,8 +152,37 @@ func TestBeforeVerifyHook_StaleCumulativeAborts(t *testing.T) {
 	if err != nil {
 		t.Fatalf("err: %v", err)
 	}
-	if res == nil || !res.Abort || res.Reason != "batch_settlement_stale_cumulative_amount" {
+	if res == nil || !res.Abort || res.Reason != batched.ErrCumulativeAmountMismatch {
 		t.Fatalf("got %+v", res)
+	}
+}
+
+func TestBeforeVerifyHook_StaleCumulativeCapturesSnapshot(t *testing.T) {
+	// When the payload is a real *types.PaymentPayload (not a stub), aborting
+	// must also stash the current session as a snapshot so the resource server
+	// can echo ChannelState in the corrective 402.
+	s := NewBatchedEvmScheme("0xreceiver", nil)
+	sess := sampleSession("0xabcd", "10")
+	_ = s.UpdateSession("0xabcd", sess)
+
+	pp := &types.PaymentPayload{
+		X402Version: 2,
+		Payload:     voucherPayload("0xabcd", "999", "0xsig"),
+		Accepted:    types.PaymentRequirements{Scheme: batched.SchemeBatched, Network: "eip155:8453"},
+	}
+	res, err := s.BeforeVerifyHook()(x402.VerifyContext{
+		Payload:      pp,
+		Requirements: batchedReqs(),
+	})
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	if res == nil || !res.Abort {
+		t.Fatalf("expected abort, got %+v", res)
+	}
+	got := s.TakeChannelSnapshot(pp)
+	if got == nil || got.ChargedCumulativeAmount != "10" {
+		t.Fatalf("expected snapshot for payload, got %+v", got)
 	}
 }
 
@@ -162,10 +205,8 @@ func TestBeforeVerifyHook_RefundFreshCumulativePasses(t *testing.T) {
 	sess := sampleSession("0xabcd", "10")
 	_ = s.UpdateSession("0xabcd", sess)
 	// Refund: expected = prevCharged (10), no req amount added.
-	payload := voucherPayload("0xabcd", "10", "0xsig")
-	payload["refund"] = true
 	res, err := s.BeforeVerifyHook()(x402.VerifyContext{
-		Payload:      &stubPayload{data: payload},
+		Payload:      &stubPayload{data: refundPayload("0xabcd", "10", "0xsig")},
 		Requirements: batchedReqs(),
 	})
 	if err != nil || res != nil {
@@ -228,7 +269,7 @@ func TestAfterVerifyHook_VoucherStoresSession(t *testing.T) {
 
 func TestAfterVerifyHook_DepositStoresSession(t *testing.T) {
 	s := NewBatchedEvmScheme("0xreceiver", nil)
-	id, _ := batched.ComputeChannelId(testConfig())
+	id, _ := batched.ComputeChannelId(testConfig(), "eip155:8453")
 	_, err := s.AfterVerifyHook()(x402.VerifyResultContext{
 		VerifyContext: x402.VerifyContext{
 			Payload:      &stubPayload{data: depositPayloadFor(id, "100", "0xsig")},
@@ -250,11 +291,9 @@ func TestAfterVerifyHook_DepositStoresSession(t *testing.T) {
 
 func TestAfterVerifyHook_RefundReturnsSkipHandler(t *testing.T) {
 	s := NewBatchedEvmScheme("0xreceiver", nil)
-	payload := voucherPayload("0xabcd", "10", "0xsig")
-	payload["refund"] = true
 	res, err := s.AfterVerifyHook()(x402.VerifyResultContext{
 		VerifyContext: x402.VerifyContext{
-			Payload:      &stubPayload{data: payload},
+			Payload:      &stubPayload{data: refundPayload("0xabcd", "10", "0xsig")},
 			Requirements: batchedReqs(),
 		},
 		Result: &x402.VerifyResponse{
@@ -274,7 +313,7 @@ func TestAfterVerifyHook_RefundReturnsSkipHandler(t *testing.T) {
 
 func TestBeforeSettleHook_DepositAnnotatesResponseExtra(t *testing.T) {
 	s := NewBatchedEvmScheme("0xreceiver", nil)
-	id, _ := batched.ComputeChannelId(testConfig())
+	id, _ := batched.ComputeChannelId(testConfig(), "eip155:8453")
 	sess := sampleSession(id, "5")
 	_ = s.UpdateSession(id, sess)
 	payload := depositPayloadFor(id, "100", "0xsig")
@@ -345,13 +384,12 @@ func TestBeforeSettleHook_VoucherExceedsSignedCapAborts(t *testing.T) {
 
 func TestBeforeSettleHook_RefundRewritesPayload(t *testing.T) {
 	s := NewBatchedEvmScheme("0xreceiver", nil)
-	id, _ := batched.ComputeChannelId(testConfig())
+	id, _ := batched.ComputeChannelId(testConfig(), "eip155:8453")
 	sess := sampleSession(id, "10")
 	sess.ChannelConfig = testConfig()
 	sess.Balance = "1000"
 	_ = s.UpdateSession(id, sess)
-	payload := voucherPayload(id, "10", "0xsig")
-	payload["refund"] = true
+	payload := refundPayload(id, "10", "0xsig")
 	res, err := s.BeforeSettleHook()(x402.SettleContext{
 		Payload:      &stubPayload{data: payload},
 		Requirements: batchedReqs(),
@@ -359,22 +397,21 @@ func TestBeforeSettleHook_RefundRewritesPayload(t *testing.T) {
 	if err != nil || res != nil {
 		t.Fatalf("got %v / %v", res, err)
 	}
-	if payload["settleAction"] != "refundWithSignature" {
+	// After rewrite, payload becomes an enriched-refund settle-action with claims+refundNonce.
+	if payload["type"] != "refund" || payload["claims"] == nil || payload["refundNonce"] == nil {
 		t.Fatalf("not rewritten: %+v", payload)
 	}
 }
 
 func TestBeforeSettleHook_RefundNoBalanceAborts(t *testing.T) {
 	s := NewBatchedEvmScheme("0xreceiver", nil)
-	id, _ := batched.ComputeChannelId(testConfig())
+	id, _ := batched.ComputeChannelId(testConfig(), "eip155:8453")
 	sess := sampleSession(id, "1000")
 	sess.ChannelConfig = testConfig()
 	sess.Balance = "1000"
 	_ = s.UpdateSession(id, sess)
-	payload := voucherPayload(id, "1000", "0xsig")
-	payload["refund"] = true
 	res, err := s.BeforeSettleHook()(x402.SettleContext{
-		Payload:      &stubPayload{data: payload},
+		Payload:      &stubPayload{data: refundPayload(id, "1000", "0xsig")},
 		Requirements: batchedReqs(),
 	})
 	if err != nil {
@@ -387,14 +424,13 @@ func TestBeforeSettleHook_RefundNoBalanceAborts(t *testing.T) {
 
 func TestBeforeSettleHook_RefundAmountInvalidAborts(t *testing.T) {
 	s := NewBatchedEvmScheme("0xreceiver", nil)
-	id, _ := batched.ComputeChannelId(testConfig())
+	id, _ := batched.ComputeChannelId(testConfig(), "eip155:8453")
 	sess := sampleSession(id, "10")
 	sess.ChannelConfig = testConfig()
 	sess.Balance = "1000"
 	_ = s.UpdateSession(id, sess)
-	payload := voucherPayload(id, "10", "0xsig")
-	payload["refund"] = true
-	payload["refundAmount"] = "not-a-number"
+	payload := refundPayload(id, "10", "0xsig")
+	payload["amount"] = "not-a-number"
 	res, err := s.BeforeSettleHook()(x402.SettleContext{
 		Payload:      &stubPayload{data: payload},
 		Requirements: batchedReqs(),
@@ -409,14 +445,13 @@ func TestBeforeSettleHook_RefundAmountInvalidAborts(t *testing.T) {
 
 func TestBeforeSettleHook_RefundAmountExceedsRemainderAborts(t *testing.T) {
 	s := NewBatchedEvmScheme("0xreceiver", nil)
-	id, _ := batched.ComputeChannelId(testConfig())
+	id, _ := batched.ComputeChannelId(testConfig(), "eip155:8453")
 	sess := sampleSession(id, "10")
 	sess.ChannelConfig = testConfig()
 	sess.Balance = "1000"
 	_ = s.UpdateSession(id, sess)
-	payload := voucherPayload(id, "10", "0xsig")
-	payload["refund"] = true
-	payload["refundAmount"] = "9999"
+	payload := refundPayload(id, "10", "0xsig")
+	payload["amount"] = "9999"
 	res, err := s.BeforeSettleHook()(x402.SettleContext{
 		Payload:      &stubPayload{data: payload},
 		Requirements: batchedReqs(),
@@ -463,7 +498,7 @@ func TestAfterSettleHook_FailedResultIgnored(t *testing.T) {
 
 func TestAfterSettleHook_DepositUpdatesBalance(t *testing.T) {
 	s := NewBatchedEvmScheme("0xreceiver", nil)
-	id, _ := batched.ComputeChannelId(testConfig())
+	id, _ := batched.ComputeChannelId(testConfig(), "eip155:8453")
 	_ = s.UpdateSession(id, sampleSession(id, "0"))
 	payload := depositPayloadFor(id, "100", "0xsig")
 	payload["responseExtra"] = map[string]interface{}{"chargedCumulativeAmount": "55"}
@@ -492,21 +527,27 @@ func TestAfterSettleHook_DepositUpdatesBalance(t *testing.T) {
 
 func TestAfterSettleHook_RefundFullDeletes(t *testing.T) {
 	s := NewBatchedEvmScheme("0xreceiver", nil)
-	id, _ := batched.ComputeChannelId(testConfig())
+	id, _ := batched.ComputeChannelId(testConfig(), "eip155:8453")
 	sess := sampleSession(id, "100")
 	sess.ChannelConfig = testConfig()
 	sess.Balance = "1000"
 	_ = s.UpdateSession(id, sess)
 	// Refund the full remainder: balance 1000 - charged 100 = 900 to refund.
-	refundPayload := map[string]interface{}{
-		"settleAction": "refundWithSignature",
-		"config":       batched.ChannelConfigToMap(testConfig()),
-		"amount":       "900",
-		"nonce":        "0",
+	rp := map[string]interface{}{
+		"type":          "refund",
+		"channelConfig": batched.ChannelConfigToMap(testConfig()),
+		"voucher": map[string]interface{}{
+			"channelId":          id,
+			"maxClaimableAmount": "100",
+			"signature":          "0xsig",
+		},
+		"amount":      "900",
+		"refundNonce": "0",
+		"claims":      []interface{}{},
 	}
 	err := s.AfterSettleHook()(x402.SettleResultContext{
 		SettleContext: x402.SettleContext{
-			Payload:      &stubPayload{data: refundPayload},
+			Payload:      &stubPayload{data: rp},
 			Requirements: batchedReqs(),
 		},
 		Result: &x402.SettleResponse{
@@ -524,21 +565,27 @@ func TestAfterSettleHook_RefundFullDeletes(t *testing.T) {
 
 func TestAfterSettleHook_RefundPartialUpdates(t *testing.T) {
 	s := NewBatchedEvmScheme("0xreceiver", nil)
-	id, _ := batched.ComputeChannelId(testConfig())
+	id, _ := batched.ComputeChannelId(testConfig(), "eip155:8453")
 	sess := sampleSession(id, "100")
 	sess.ChannelConfig = testConfig()
 	sess.Balance = "1000"
 	sess.RefundNonce = 0
 	_ = s.UpdateSession(id, sess)
-	refundPayload := map[string]interface{}{
-		"settleAction": "refundWithSignature",
-		"config":       batched.ChannelConfigToMap(testConfig()),
-		"amount":       "100",
-		"nonce":        "0",
+	rp := map[string]interface{}{
+		"type":          "refund",
+		"channelConfig": batched.ChannelConfigToMap(testConfig()),
+		"voucher": map[string]interface{}{
+			"channelId":          id,
+			"maxClaimableAmount": "100",
+			"signature":          "0xsig",
+		},
+		"amount":      "100",
+		"refundNonce": "0",
+		"claims":      []interface{}{},
 	}
 	err := s.AfterSettleHook()(x402.SettleResultContext{
 		SettleContext: x402.SettleContext{
-			Payload:      &stubPayload{data: refundPayload},
+			Payload:      &stubPayload{data: rp},
 			Requirements: batchedReqs(),
 		},
 		Result: &x402.SettleResponse{
@@ -606,14 +653,11 @@ func TestBuildRefundResponseSnapshot(t *testing.T) {
 	sess.Balance = "1000"
 	sess.RefundNonce = 3
 	out := buildRefundResponseSnapshot(sess, "0xa", big.NewInt(200))
-	if out.ChannelId != "0xa" || out.Balance != "800" || out.RefundedAmount != "200" {
+	if out.ChannelId != "0xa" || out.Balance != "800" {
 		t.Fatalf("got %+v", out)
 	}
 	if out.RefundNonce != "4" {
 		t.Fatalf("nonce = %s", out.RefundNonce)
-	}
-	if !out.Refund {
-		t.Fatal("expected refund=true")
 	}
 }
 

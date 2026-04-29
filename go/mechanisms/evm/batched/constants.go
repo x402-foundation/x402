@@ -1,6 +1,8 @@
 package batched
 
 import (
+	"github.com/ethereum/go-ethereum/crypto"
+
 	"github.com/x402-foundation/x402/go/mechanisms/evm"
 )
 
@@ -9,10 +11,13 @@ const (
 	SchemeBatched = "batch-settlement"
 
 	// BatchSettlementAddress is the deployed x402BatchSettlement contract address (CREATE2, all chains).
-	BatchSettlementAddress = "0x4020e07E964De72a79367828c9C6140fcaE00003"
+	BatchSettlementAddress = "0x4020e66668E58c108e7e94db2F800C9F8C150003"
 
 	// ERC3009DepositCollectorAddress is the deployed ERC3009DepositCollector contract address.
-	ERC3009DepositCollectorAddress = "0x402064ac4dA4f510EeC7D71fDc23A7D47fb10004"
+	ERC3009DepositCollectorAddress = "0x4020aE5A8d3DC3B505942Ce8CECC6776a6ED0004"
+
+	// Permit2DepositCollectorAddress is the deployed Permit2DepositCollector contract address.
+	Permit2DepositCollectorAddress = "0x4020e27bcea6C226BF888C61b6C520C0fcC50005"
 
 	// MinWithdrawDelay is the minimum withdraw delay in seconds (15 minutes).
 	MinWithdrawDelay = 900
@@ -21,11 +26,32 @@ const (
 	MaxWithdrawDelay = 2_592_000
 )
 
+// ChannelConfigTypeString is the EIP-712 typed-data primary type string used
+// for the on-chain channel-id pre-image.
+const ChannelConfigTypeString = "ChannelConfig(address payer,address payerAuthorizer,address receiver,address receiverAuthorizer,address token,uint40 withdrawDelay,bytes32 salt)"
+
+// ChannelConfigTypeHash is keccak256(ChannelConfigTypeString).
+var ChannelConfigTypeHash = crypto.Keccak256([]byte(ChannelConfigTypeString))
+
 // BatchSettlementDomain is the EIP-712 domain for the batch settlement contract.
 // ChainId and VerifyingContract are set per-network at signing time.
 var BatchSettlementDomain = evm.TypedDataDomain{
 	Name:    "x402 Batch Settlement",
 	Version: "1",
+}
+
+// ChannelConfigTypes defines the EIP-712 types for the channel-config struct,
+// used to compute the chain-bound channel id via hashTypedData.
+var ChannelConfigTypes = map[string][]evm.TypedDataField{
+	"ChannelConfig": {
+		{Name: "payer", Type: "address"},
+		{Name: "payerAuthorizer", Type: "address"},
+		{Name: "receiver", Type: "address"},
+		{Name: "receiverAuthorizer", Type: "address"},
+		{Name: "token", Type: "address"},
+		{Name: "withdrawDelay", Type: "uint40"},
+		{Name: "salt", Type: "bytes32"},
+	},
 }
 
 // VoucherTypes defines the EIP-712 types for a cumulative voucher.

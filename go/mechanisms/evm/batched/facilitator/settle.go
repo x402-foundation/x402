@@ -17,7 +17,7 @@ import (
 func ExecuteSettle(
 	ctx context.Context,
 	signer evm.FacilitatorEvmSigner,
-	payload *batched.BatchedSettleActionPayload,
+	payload *batched.BatchedSettlePayload,
 	requirements types.PaymentRequirements,
 ) (*x402.SettleResponse, error) {
 	network := x402.Network(requirements.Network)

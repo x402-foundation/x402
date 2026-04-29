@@ -107,31 +107,10 @@ func (f *BatchedEvmScheme) Settle(
 		return SettleDeposit(ctx, f.signer, depositPayload, requirements)
 	}
 
-	// Check for deposit settle action (settleAction="deposit")
-	if batched.IsDepositSettlePayload(data) {
-		depositSettlePayload, err := batched.DepositSettlePayloadFromMap(data)
-		if err != nil {
-			return nil, x402.NewSettleError(ErrInvalidDepositPayload, "", network, "",
-				fmt.Sprintf("failed to parse deposit settle payload: %s", err))
-		}
-		fullPayload := &batched.BatchedDepositPayload{
-			Type:    "deposit",
-			Deposit: depositSettlePayload.Deposit,
-		}
-		return SettleDeposit(ctx, f.signer, fullPayload, requirements)
-	}
-
-	if batched.IsClaimWithSignaturePayload(data) {
-		claimPayload, err := batched.ClaimWithSignaturePayloadFromMap(data)
-		if err != nil {
-			return nil, x402.NewSettleError(ErrInvalidClaimPayload, "", network, "",
-				fmt.Sprintf("failed to parse claim payload: %s", err))
-		}
-		return ExecuteClaimWithSignature(ctx, f.signer, claimPayload, requirements, f.authorizerSigner)
-	}
-
-	if batched.IsRefundWithSignaturePayload(data) {
-		refundPayload, err := batched.RefundWithSignaturePayloadFromMap(data)
+	// Enriched refund settle-action (must be checked BEFORE plain claim, since both
+	// have type="refund" but enriched also has claims+amount+refundNonce).
+	if batched.IsEnrichedRefundPayload(data) {
+		refundPayload, err := batched.EnrichedRefundPayloadFromMap(data)
 		if err != nil {
 			return nil, x402.NewSettleError(ErrInvalidRefundPayload, "", network, "",
 				fmt.Sprintf("failed to parse refund payload: %s", err))
@@ -139,8 +118,17 @@ func (f *BatchedEvmScheme) Settle(
 		return ExecuteRefundWithSignature(ctx, f.signer, refundPayload, requirements, f.authorizerSigner)
 	}
 
-	if batched.IsSettleActionPayload(data) {
-		settlePayload, err := batched.SettleActionPayloadFromMap(data)
+	if batched.IsClaimPayload(data) {
+		claimPayload, err := batched.ClaimPayloadFromMap(data)
+		if err != nil {
+			return nil, x402.NewSettleError(ErrInvalidClaimPayload, "", network, "",
+				fmt.Sprintf("failed to parse claim payload: %s", err))
+		}
+		return ExecuteClaimWithSignature(ctx, f.signer, claimPayload, requirements, f.authorizerSigner)
+	}
+
+	if batched.IsSettlePayload(data) {
+		settlePayload, err := batched.SettlePayloadFromMap(data)
 		if err != nil {
 			return nil, x402.NewSettleError(ErrInvalidSettlePayload, "", network, "",
 				fmt.Sprintf("failed to parse settle payload: %s", err))

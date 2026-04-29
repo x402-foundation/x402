@@ -7,7 +7,7 @@ import (
 )
 
 // AuthorizerSigner is the interface for a dedicated key that provides EIP-712
-// signatures for claimWithSignature / refundWithSignature.
+// signatures for claim / refund settle-action payloads.
 type AuthorizerSigner interface {
 	Address() string
 	SignClaimBatch(ctx context.Context, claims []BatchedVoucherClaim, network string) ([]byte, error)
@@ -15,7 +15,7 @@ type AuthorizerSigner interface {
 }
 
 // ChannelConfig is the immutable configuration for a payment channel.
-// channelId = keccak256(abi.encode(channelConfig))
+// channelId = EIP-712 hashTypedData of ChannelConfig with the BatchSettlement domain.
 type ChannelConfig struct {
 	Payer              string `json:"payer"`
 	PayerAuthorizer    string `json:"payerAuthorizer"`
@@ -42,13 +42,11 @@ type BatchedErc3009Authorization struct {
 	Signature   string `json:"signature"`
 }
 
-// BatchedVoucherFields holds common voucher fields (cumulative ceiling).
+// BatchedVoucherFields holds the cumulative-ceiling voucher.
 type BatchedVoucherFields struct {
 	ChannelId          string `json:"channelId"`
 	MaxClaimableAmount string `json:"maxClaimableAmount"`
 	Signature          string `json:"signature"`
-	Refund             bool   `json:"refund,omitempty"`
-	RefundAmount       string `json:"refundAmount,omitempty"`
 }
 
 // BatchedDepositAuthorization wraps asset-transfer authorization data.
@@ -58,28 +56,32 @@ type BatchedDepositAuthorization struct {
 
 // BatchedDepositData is the deposit portion of a deposit payload.
 type BatchedDepositData struct {
-	ChannelConfig ChannelConfig               `json:"channelConfig"`
 	Amount        string                      `json:"amount"`
 	Authorization BatchedDepositAuthorization `json:"authorization"`
 }
 
 // BatchedDepositPayload is sent on the first request to fund a channel.
 type BatchedDepositPayload struct {
-	Type          string                 `json:"type"` // "deposit"
-	Deposit       BatchedDepositData     `json:"deposit"`
-	Voucher       BatchedVoucherFields   `json:"voucher"`
-	ResponseExtra map[string]interface{} `json:"responseExtra,omitempty"`
+	Type          string               `json:"type"` // "deposit"
+	ChannelConfig ChannelConfig        `json:"channelConfig"`
+	Voucher       BatchedVoucherFields `json:"voucher"`
+	Deposit       BatchedDepositData   `json:"deposit"`
 }
 
 // BatchedVoucherPayload is sent on subsequent requests (no new deposit).
 type BatchedVoucherPayload struct {
-	Type               string        `json:"type"` // "voucher"
-	ChannelConfig      ChannelConfig `json:"channelConfig"`
-	ChannelId          string        `json:"channelId"`
-	MaxClaimableAmount string        `json:"maxClaimableAmount"`
-	Signature          string        `json:"signature"`
-	Refund             bool          `json:"refund,omitempty"`
-	RefundAmount       string        `json:"refundAmount,omitempty"`
+	Type          string               `json:"type"` // "voucher"
+	ChannelConfig ChannelConfig        `json:"channelConfig"`
+	Voucher       BatchedVoucherFields `json:"voucher"`
+}
+
+// BatchedRefundPayload is the client-side cooperative-refund request.
+// `Amount` is optional — when absent, it defaults to the full remaining balance.
+type BatchedRefundPayload struct {
+	Type          string               `json:"type"` // "refund"
+	ChannelConfig ChannelConfig        `json:"channelConfig"`
+	Voucher       BatchedVoucherFields `json:"voucher"`
+	Amount        string               `json:"amount,omitempty"`
 }
 
 // BatchedVoucherClaim is used in claim operations on-chain.
@@ -100,62 +102,68 @@ type BatchedPaymentResponseExtra struct {
 	TotalClaimed            string `json:"totalClaimed"`
 	WithdrawRequestedAt     int    `json:"withdrawRequestedAt"`
 	RefundNonce             string `json:"refundNonce"`
-	Refund                  bool   `json:"refund,omitempty"`
-	RefundedAmount          string `json:"refundedAmount,omitempty"`
+}
+
+// BatchSettlementRequirementsChannelState is the corrective-402 recovery payload
+// embedded in PaymentRequirements.extra.ChannelState. Mirrors TS BatchSettlementRequirementsChannelState.
+type BatchSettlementRequirementsChannelState struct {
+	ChannelId               string `json:"channelId"`
+	ChargedCumulativeAmount string `json:"chargedCumulativeAmount,omitempty"`
+	SignedMaxClaimable      string `json:"signedMaxClaimable,omitempty"`
+	Signature               string `json:"signature,omitempty"`
 }
 
 // BatchSettlementPaymentRequirementsExtra is the typed shape of the `extra`
 // field on PaymentRequirements for the batch-settlement scheme.
 type BatchSettlementPaymentRequirementsExtra struct {
-	ReceiverAuthorizer  string `json:"receiverAuthorizer"`
-	WithdrawDelay       int    `json:"withdrawDelay"`
-	Name                string `json:"name"`
-	Version             string `json:"version"`
-	AssetTransferMethod string `json:"assetTransferMethod,omitempty"` // "eip3009"
+	ReceiverAuthorizer  string                                   `json:"receiverAuthorizer"`
+	WithdrawDelay       int                                      `json:"withdrawDelay"`
+	Name                string                                   `json:"name"`
+	Version             string                                   `json:"version"`
+	AssetTransferMethod string                                   `json:"assetTransferMethod,omitempty"` // "eip3009"
+	ChannelState        *BatchSettlementRequirementsChannelState `json:"ChannelState,omitempty"`
 }
 
-// FileSessionStorageOptions configures file-backed session storage.
-// Sessions are stored under {Directory}/{client|server}/{channelId}.json.
-type FileSessionStorageOptions struct {
+// FileChannelStorageOptions configures file-backed channel storage.
+// Channels are stored under {Directory}/{client|server}/{channelId}.json.
+type FileChannelStorageOptions struct {
 	Directory string
 }
 
 // --- Settle Action Payloads (server -> facilitator) ---
+// All settle-action payloads use the `type` discriminator (same field as
+// client-side payloads), matching TS BatchSettlementFacilitatorSettlePayload.
 
-// BatchedClaimWithSignaturePayload batches claims with receiverAuthorizer signature.
+// BatchedClaimPayload batches claims with receiverAuthorizer signature.
 // ClaimAuthorizerSignature is optional — when absent, the facilitator auto-signs
 // using its AuthorizerSigner.
-type BatchedClaimWithSignaturePayload struct {
-	SettleAction             string                `json:"settleAction"` // "claimWithSignature"
+type BatchedClaimPayload struct {
+	Type                     string                `json:"type"` // "claim"
 	Claims                   []BatchedVoucherClaim `json:"claims"`
 	ClaimAuthorizerSignature string                `json:"claimAuthorizerSignature,omitempty"`
 }
 
-// BatchedSettleActionPayload transfers claimed funds to receiver.
-type BatchedSettleActionPayload struct {
-	SettleAction string `json:"settleAction"` // "settle"
-	Receiver     string `json:"receiver"`
-	Token        string `json:"token"`
+// BatchedSettlePayload transfers claimed funds to receiver.
+type BatchedSettlePayload struct {
+	Type     string `json:"type"` // "settle"
+	Receiver string `json:"receiver"`
+	Token    string `json:"token"`
 }
 
-// BatchedDepositSettlePayload wraps a deposit for settlement.
-type BatchedDepositSettlePayload struct {
-	SettleAction string             `json:"settleAction"` // "deposit"
-	Deposit      BatchedDepositData `json:"deposit"`
-}
-
-// BatchedRefundWithSignaturePayload is a signature-based cooperative refund.
-// RefundAuthorizerSignature and ClaimAuthorizerSignature are optional — when absent,
-// the facilitator auto-signs using its AuthorizerSigner.
-type BatchedRefundWithSignaturePayload struct {
-	SettleAction              string                       `json:"settleAction"` // "refundWithSignature"
-	Config                    ChannelConfig                `json:"config"`
-	Amount                    string                       `json:"amount"`
-	Nonce                     string                       `json:"nonce"`
-	Claims                    []BatchedVoucherClaim        `json:"claims"`
-	RefundAuthorizerSignature string                       `json:"refundAuthorizerSignature,omitempty"`
-	ClaimAuthorizerSignature  string                       `json:"claimAuthorizerSignature,omitempty"`
-	ResponseExtra             *BatchedPaymentResponseExtra `json:"responseExtra,omitempty"`
+// BatchedEnrichedRefundPayload is a refund payload enriched by the server with
+// the resolved amount, refundNonce, and any claims that need to be included
+// atomically with the refund. RefundAuthorizerSignature and
+// ClaimAuthorizerSignature are optional — when absent, the facilitator
+// auto-signs via its AuthorizerSigner.
+type BatchedEnrichedRefundPayload struct {
+	Type                      string                `json:"type"` // "refund"
+	ChannelConfig             ChannelConfig         `json:"channelConfig"`
+	Voucher                   BatchedVoucherFields  `json:"voucher"`
+	Amount                    string                `json:"amount"`
+	RefundNonce               string                `json:"refundNonce"`
+	Claims                    []BatchedVoucherClaim `json:"claims"`
+	RefundAuthorizerSignature string                `json:"refundAuthorizerSignature,omitempty"`
+	ClaimAuthorizerSignature  string                `json:"claimAuthorizerSignature,omitempty"`
 }
 
 // ============================================================================
@@ -165,55 +173,59 @@ type BatchedRefundWithSignaturePayload struct {
 // IsDepositPayload checks if a raw payload map is a batched deposit payload.
 func IsDepositPayload(data map[string]interface{}) bool {
 	typ, _ := data["type"].(string)
-	_, hasDeposit := data["deposit"]
+	_, hasConfig := data["channelConfig"]
 	_, hasVoucher := data["voucher"]
-	return typ == "deposit" && hasDeposit && hasVoucher
+	_, hasDeposit := data["deposit"]
+	return typ == "deposit" && hasConfig && hasVoucher && hasDeposit
 }
 
 // IsVoucherPayload checks if a raw payload map is a batched voucher-only payload.
 func IsVoucherPayload(data map[string]interface{}) bool {
 	typ, _ := data["type"].(string)
 	_, hasConfig := data["channelConfig"]
-	_, hasId := data["channelId"]
-	_, hasAmount := data["maxClaimableAmount"]
-	_, hasSig := data["signature"]
-	return typ == "voucher" && hasConfig && hasId && hasAmount && hasSig
+	_, hasVoucher := data["voucher"]
+	return typ == "voucher" && hasConfig && hasVoucher
 }
 
-// IsClaimWithSignaturePayload checks if a raw payload map is a claimWithSignature settle action.
+// IsRefundPayload checks if a raw payload map is a client-side refund payload.
+func IsRefundPayload(data map[string]interface{}) bool {
+	typ, _ := data["type"].(string)
+	_, hasConfig := data["channelConfig"]
+	_, hasVoucher := data["voucher"]
+	return typ == "refund" && hasConfig && hasVoucher
+}
+
+// IsClaimPayload checks if a raw payload map is a claim settle-action payload.
 // The claimAuthorizerSignature field is optional (facilitator auto-signs when absent).
-func IsClaimWithSignaturePayload(data map[string]interface{}) bool {
-	action, _ := data["settleAction"].(string)
+func IsClaimPayload(data map[string]interface{}) bool {
+	typ, _ := data["type"].(string)
 	_, hasClaims := data["claims"]
-	return action == "claimWithSignature" && hasClaims
+	return typ == "claim" && hasClaims
 }
 
-// IsSettleActionPayload checks if a raw payload map is a settle action (transfer to receiver).
-func IsSettleActionPayload(data map[string]interface{}) bool {
-	action, _ := data["settleAction"].(string)
+// IsSettlePayload checks if a raw payload map is a settle action (transfer to receiver).
+func IsSettlePayload(data map[string]interface{}) bool {
+	typ, _ := data["type"].(string)
 	_, hasReceiver := data["receiver"]
 	_, hasToken := data["token"]
-	return action == "settle" && hasReceiver && hasToken
+	return typ == "settle" && hasReceiver && hasToken
 }
 
-// IsDepositSettlePayload checks if a raw payload map is a deposit-only settle payload.
-func IsDepositSettlePayload(data map[string]interface{}) bool {
-	action, _ := data["settleAction"].(string)
-	_, hasDeposit := data["deposit"]
-	return action == "deposit" && hasDeposit
-}
-
-// IsRefundWithSignaturePayload checks if a raw payload map is a refundWithSignature settle action.
-// The refundAuthorizerSignature field is optional (facilitator auto-signs when absent).
-func IsRefundWithSignaturePayload(data map[string]interface{}) bool {
-	action, _ := data["settleAction"].(string)
-	_, hasConfig := data["config"]
-	return action == "refundWithSignature" && hasConfig
+// IsEnrichedRefundPayload checks if a raw payload is an enriched refund settle-action.
+// The amount + refundNonce + claims fields are added by the server's enrichment hook.
+func IsEnrichedRefundPayload(data map[string]interface{}) bool {
+	if !IsRefundPayload(data) {
+		return false
+	}
+	_, hasAmount := data["amount"]
+	_, hasRefundNonce := data["refundNonce"]
+	_, hasClaims := data["claims"]
+	return hasAmount && hasRefundNonce && hasClaims
 }
 
 // IsBatchedPayload checks if a raw payload map is any batched payload type.
 func IsBatchedPayload(data map[string]interface{}) bool {
-	return IsDepositPayload(data) || IsVoucherPayload(data)
+	return IsDepositPayload(data) || IsVoucherPayload(data) || IsRefundPayload(data)
 }
 
 // ============================================================================
@@ -255,50 +267,55 @@ func ChannelConfigFromMap(data map[string]interface{}) (ChannelConfig, error) {
 	return config, nil
 }
 
+// voucherFieldsFromMap parses BatchedVoucherFields from a raw map.
+func voucherFieldsFromMap(data map[string]interface{}) BatchedVoucherFields {
+	v := BatchedVoucherFields{}
+	v.ChannelId, _ = data["channelId"].(string)
+	v.MaxClaimableAmount, _ = data["maxClaimableAmount"].(string)
+	v.Signature, _ = data["signature"].(string)
+	return v
+}
+
+// erc3009AuthFromMap parses an ERC-3009 authorization from a raw map.
+func erc3009AuthFromMap(data map[string]interface{}) *BatchedErc3009Authorization {
+	auth := &BatchedErc3009Authorization{}
+	auth.ValidAfter, _ = data["validAfter"].(string)
+	auth.ValidBefore, _ = data["validBefore"].(string)
+	auth.Salt, _ = data["salt"].(string)
+	auth.Signature, _ = data["signature"].(string)
+	return auth
+}
+
 // DepositPayloadFromMap creates a BatchedDepositPayload from a raw map.
 func DepositPayloadFromMap(data map[string]interface{}) (*BatchedDepositPayload, error) {
 	payload := &BatchedDepositPayload{Type: "deposit"}
+
+	configMap, ok := data["channelConfig"].(map[string]interface{})
+	if !ok {
+		return nil, fmt.Errorf("missing or invalid channelConfig")
+	}
+	config, err := ChannelConfigFromMap(configMap)
+	if err != nil {
+		return nil, fmt.Errorf("invalid channelConfig: %w", err)
+	}
+	payload.ChannelConfig = config
+
+	voucherMap, ok := data["voucher"].(map[string]interface{})
+	if !ok {
+		return nil, fmt.Errorf("missing or invalid voucher")
+	}
+	payload.Voucher = voucherFieldsFromMap(voucherMap)
 
 	depositMap, ok := data["deposit"].(map[string]interface{})
 	if !ok {
 		return nil, fmt.Errorf("missing or invalid deposit field")
 	}
-	configMap, ok := depositMap["channelConfig"].(map[string]interface{})
-	if !ok {
-		return nil, fmt.Errorf("missing or invalid deposit.channelConfig")
-	}
-	config, err := ChannelConfigFromMap(configMap)
-	if err != nil {
-		return nil, fmt.Errorf("invalid deposit.channelConfig: %w", err)
-	}
-	payload.Deposit.ChannelConfig = config
 	payload.Deposit.Amount, _ = depositMap["amount"].(string)
 
 	if authMap, ok := depositMap["authorization"].(map[string]interface{}); ok {
 		if erc3009Map, ok := authMap["erc3009Authorization"].(map[string]interface{}); ok {
-			auth := &BatchedErc3009Authorization{}
-			auth.ValidAfter, _ = erc3009Map["validAfter"].(string)
-			auth.ValidBefore, _ = erc3009Map["validBefore"].(string)
-			auth.Salt, _ = erc3009Map["salt"].(string)
-			auth.Signature, _ = erc3009Map["signature"].(string)
-			payload.Deposit.Authorization.Erc3009Authorization = auth
+			payload.Deposit.Authorization.Erc3009Authorization = erc3009AuthFromMap(erc3009Map)
 		}
-	}
-
-	if voucherMap, ok := data["voucher"].(map[string]interface{}); ok {
-		payload.Voucher.ChannelId, _ = voucherMap["channelId"].(string)
-		payload.Voucher.MaxClaimableAmount, _ = voucherMap["maxClaimableAmount"].(string)
-		payload.Voucher.Signature, _ = voucherMap["signature"].(string)
-		if refund, ok := voucherMap["refund"].(bool); ok {
-			payload.Voucher.Refund = refund
-		}
-		if refundAmount, ok := voucherMap["refundAmount"].(string); ok {
-			payload.Voucher.RefundAmount = refundAmount
-		}
-	}
-
-	if extra, ok := data["responseExtra"].(map[string]interface{}); ok {
-		payload.ResponseExtra = extra
 	}
 
 	return payload, nil
@@ -317,15 +334,35 @@ func VoucherPayloadFromMap(data map[string]interface{}) (*BatchedVoucherPayload,
 		return nil, fmt.Errorf("invalid channelConfig: %w", err)
 	}
 	payload.ChannelConfig = config
-	payload.ChannelId, _ = data["channelId"].(string)
-	payload.MaxClaimableAmount, _ = data["maxClaimableAmount"].(string)
-	payload.Signature, _ = data["signature"].(string)
-	if refund, ok := data["refund"].(bool); ok {
-		payload.Refund = refund
+
+	voucherMap, ok := data["voucher"].(map[string]interface{})
+	if !ok {
+		return nil, fmt.Errorf("missing or invalid voucher")
 	}
-	if refundAmount, ok := data["refundAmount"].(string); ok {
-		payload.RefundAmount = refundAmount
+	payload.Voucher = voucherFieldsFromMap(voucherMap)
+	return payload, nil
+}
+
+// RefundPayloadFromMap creates a BatchedRefundPayload from a raw map.
+func RefundPayloadFromMap(data map[string]interface{}) (*BatchedRefundPayload, error) {
+	payload := &BatchedRefundPayload{Type: "refund"}
+
+	configMap, ok := data["channelConfig"].(map[string]interface{})
+	if !ok {
+		return nil, fmt.Errorf("missing or invalid channelConfig")
 	}
+	config, err := ChannelConfigFromMap(configMap)
+	if err != nil {
+		return nil, fmt.Errorf("invalid channelConfig: %w", err)
+	}
+	payload.ChannelConfig = config
+
+	voucherMap, ok := data["voucher"].(map[string]interface{})
+	if !ok {
+		return nil, fmt.Errorf("missing or invalid voucher")
+	}
+	payload.Voucher = voucherFieldsFromMap(voucherMap)
+	payload.Amount, _ = data["amount"].(string)
 	return payload, nil
 }
 
@@ -369,9 +406,9 @@ func VoucherClaimsFromList(data []interface{}) ([]BatchedVoucherClaim, error) {
 	return claims, nil
 }
 
-// ClaimWithSignaturePayloadFromMap creates a BatchedClaimWithSignaturePayload from a raw map.
-func ClaimWithSignaturePayloadFromMap(data map[string]interface{}) (*BatchedClaimWithSignaturePayload, error) {
-	payload := &BatchedClaimWithSignaturePayload{SettleAction: "claimWithSignature"}
+// ClaimPayloadFromMap creates a BatchedClaimPayload from a raw map.
+func ClaimPayloadFromMap(data map[string]interface{}) (*BatchedClaimPayload, error) {
+	payload := &BatchedClaimPayload{Type: "claim"}
 	claimsList, ok := data["claims"].([]interface{})
 	if !ok {
 		return nil, fmt.Errorf("missing or invalid claims")
@@ -385,60 +422,35 @@ func ClaimWithSignaturePayloadFromMap(data map[string]interface{}) (*BatchedClai
 	return payload, nil
 }
 
-// SettleActionPayloadFromMap creates a BatchedSettleActionPayload from a raw map.
-func SettleActionPayloadFromMap(data map[string]interface{}) (*BatchedSettleActionPayload, error) {
-	payload := &BatchedSettleActionPayload{SettleAction: "settle"}
+// SettlePayloadFromMap creates a BatchedSettlePayload from a raw map.
+func SettlePayloadFromMap(data map[string]interface{}) (*BatchedSettlePayload, error) {
+	payload := &BatchedSettlePayload{Type: "settle"}
 	payload.Receiver, _ = data["receiver"].(string)
 	payload.Token, _ = data["token"].(string)
 	return payload, nil
 }
 
-// DepositSettlePayloadFromMap creates a BatchedDepositSettlePayload from a raw map.
-func DepositSettlePayloadFromMap(data map[string]interface{}) (*BatchedDepositSettlePayload, error) {
-	payload := &BatchedDepositSettlePayload{SettleAction: "deposit"}
-	depositMap, ok := data["deposit"].(map[string]interface{})
+// EnrichedRefundPayloadFromMap creates a BatchedEnrichedRefundPayload from a raw map.
+func EnrichedRefundPayloadFromMap(data map[string]interface{}) (*BatchedEnrichedRefundPayload, error) {
+	payload := &BatchedEnrichedRefundPayload{Type: "refund"}
+	configMap, ok := data["channelConfig"].(map[string]interface{})
 	if !ok {
-		return nil, fmt.Errorf("missing or invalid deposit")
-	}
-	configMap, ok := depositMap["channelConfig"].(map[string]interface{})
-	if !ok {
-		return nil, fmt.Errorf("missing or invalid deposit.channelConfig")
+		return nil, fmt.Errorf("missing or invalid channelConfig")
 	}
 	config, err := ChannelConfigFromMap(configMap)
 	if err != nil {
 		return nil, err
 	}
-	payload.Deposit.ChannelConfig = config
-	payload.Deposit.Amount, _ = depositMap["amount"].(string)
+	payload.ChannelConfig = config
 
-	if authMap, ok := depositMap["authorization"].(map[string]interface{}); ok {
-		if erc3009Map, ok := authMap["erc3009Authorization"].(map[string]interface{}); ok {
-			auth := &BatchedErc3009Authorization{}
-			auth.ValidAfter, _ = erc3009Map["validAfter"].(string)
-			auth.ValidBefore, _ = erc3009Map["validBefore"].(string)
-			auth.Salt, _ = erc3009Map["salt"].(string)
-			auth.Signature, _ = erc3009Map["signature"].(string)
-			payload.Deposit.Authorization.Erc3009Authorization = auth
-		}
-	}
-
-	return payload, nil
-}
-
-// RefundWithSignaturePayloadFromMap creates a BatchedRefundWithSignaturePayload from a raw map.
-func RefundWithSignaturePayloadFromMap(data map[string]interface{}) (*BatchedRefundWithSignaturePayload, error) {
-	payload := &BatchedRefundWithSignaturePayload{SettleAction: "refundWithSignature"}
-	configMap, ok := data["config"].(map[string]interface{})
+	voucherMap, ok := data["voucher"].(map[string]interface{})
 	if !ok {
-		return nil, fmt.Errorf("missing or invalid config")
+		return nil, fmt.Errorf("missing or invalid voucher")
 	}
-	config, err := ChannelConfigFromMap(configMap)
-	if err != nil {
-		return nil, err
-	}
-	payload.Config = config
+	payload.Voucher = voucherFieldsFromMap(voucherMap)
+
 	payload.Amount, _ = data["amount"].(string)
-	payload.Nonce, _ = data["nonce"].(string)
+	payload.RefundNonce, _ = data["refundNonce"].(string)
 	payload.RefundAuthorizerSignature, _ = data["refundAuthorizerSignature"].(string)
 	payload.ClaimAuthorizerSignature, _ = data["claimAuthorizerSignature"].(string)
 	if claimsList, ok := data["claims"].([]interface{}); ok {
@@ -468,7 +480,15 @@ func ChannelConfigToMap(c ChannelConfig) map[string]interface{} {
 	}
 }
 
-// DepositPayloadToMap converts a BatchedDepositPayload to a map.
+func voucherFieldsToMap(v BatchedVoucherFields) map[string]interface{} {
+	return map[string]interface{}{
+		"channelId":          v.ChannelId,
+		"maxClaimableAmount": v.MaxClaimableAmount,
+		"signature":          v.Signature,
+	}
+}
+
+// ToMap converts a BatchedDepositPayload to a map.
 func (p *BatchedDepositPayload) ToMap() map[string]interface{} {
 	authMap := map[string]interface{}{}
 	if p.Deposit.Authorization.Erc3009Authorization != nil {
@@ -480,46 +500,75 @@ func (p *BatchedDepositPayload) ToMap() map[string]interface{} {
 			"signature":   a.Signature,
 		}
 	}
-
-	result := map[string]interface{}{
-		"type": "deposit",
+	return map[string]interface{}{
+		"type":          "deposit",
+		"channelConfig": ChannelConfigToMap(p.ChannelConfig),
+		"voucher":       voucherFieldsToMap(p.Voucher),
 		"deposit": map[string]interface{}{
-			"channelConfig": ChannelConfigToMap(p.Deposit.ChannelConfig),
 			"amount":        p.Deposit.Amount,
 			"authorization": authMap,
 		},
-		"voucher": map[string]interface{}{
-			"channelId":          p.Voucher.ChannelId,
-			"maxClaimableAmount": p.Voucher.MaxClaimableAmount,
-			"signature":          p.Voucher.Signature,
-		},
 	}
-	if p.Voucher.Refund {
-		result["voucher"].(map[string]interface{})["refund"] = true
+}
+
+// ToMap converts a BatchedVoucherPayload to a map.
+func (p *BatchedVoucherPayload) ToMap() map[string]interface{} {
+	return map[string]interface{}{
+		"type":          "voucher",
+		"channelConfig": ChannelConfigToMap(p.ChannelConfig),
+		"voucher":       voucherFieldsToMap(p.Voucher),
 	}
-	if p.Voucher.RefundAmount != "" {
-		result["voucher"].(map[string]interface{})["refundAmount"] = p.Voucher.RefundAmount
+}
+
+// ToMap converts a BatchedRefundPayload to a map.
+func (p *BatchedRefundPayload) ToMap() map[string]interface{} {
+	result := map[string]interface{}{
+		"type":          "refund",
+		"channelConfig": ChannelConfigToMap(p.ChannelConfig),
+		"voucher":       voucherFieldsToMap(p.Voucher),
 	}
-	if p.ResponseExtra != nil {
-		result["responseExtra"] = p.ResponseExtra
+	if p.Amount != "" {
+		result["amount"] = p.Amount
 	}
 	return result
 }
 
-// VoucherPayloadToMap converts a BatchedVoucherPayload to a map.
-func (p *BatchedVoucherPayload) ToMap() map[string]interface{} {
+// ToMap converts a BatchedClaimPayload to a map.
+func (p *BatchedClaimPayload) ToMap() map[string]interface{} {
 	result := map[string]interface{}{
-		"type":               "voucher",
-		"channelConfig":      ChannelConfigToMap(p.ChannelConfig),
-		"channelId":          p.ChannelId,
-		"maxClaimableAmount": p.MaxClaimableAmount,
-		"signature":          p.Signature,
+		"type":   "claim",
+		"claims": VoucherClaimsToList(p.Claims),
 	}
-	if p.Refund {
-		result["refund"] = true
+	if p.ClaimAuthorizerSignature != "" {
+		result["claimAuthorizerSignature"] = p.ClaimAuthorizerSignature
 	}
-	if p.RefundAmount != "" {
-		result["refundAmount"] = p.RefundAmount
+	return result
+}
+
+// ToMap converts a BatchedSettlePayload to a map.
+func (p *BatchedSettlePayload) ToMap() map[string]interface{} {
+	return map[string]interface{}{
+		"type":     "settle",
+		"receiver": p.Receiver,
+		"token":    p.Token,
+	}
+}
+
+// ToMap converts a BatchedEnrichedRefundPayload to a map.
+func (p *BatchedEnrichedRefundPayload) ToMap() map[string]interface{} {
+	result := map[string]interface{}{
+		"type":          "refund",
+		"channelConfig": ChannelConfigToMap(p.ChannelConfig),
+		"voucher":       voucherFieldsToMap(p.Voucher),
+		"amount":        p.Amount,
+		"refundNonce":   p.RefundNonce,
+		"claims":        VoucherClaimsToList(p.Claims),
+	}
+	if p.RefundAuthorizerSignature != "" {
+		result["refundAuthorizerSignature"] = p.RefundAuthorizerSignature
+	}
+	if p.ClaimAuthorizerSignature != "" {
+		result["claimAuthorizerSignature"] = p.ClaimAuthorizerSignature
 	}
 	return result
 }
@@ -545,9 +594,9 @@ func VoucherClaimsToList(claims []BatchedVoucherClaim) []interface{} {
 	return list
 }
 
-// PaymentResponseExtraToMap converts a BatchedPaymentResponseExtra to a map.
+// ToMap converts a BatchedPaymentResponseExtra to a map.
 func (e *BatchedPaymentResponseExtra) ToMap() map[string]interface{} {
-	result := map[string]interface{}{
+	return map[string]interface{}{
 		"channelId":               e.ChannelId,
 		"chargedCumulativeAmount": e.ChargedCumulativeAmount,
 		"balance":                 e.Balance,
@@ -555,13 +604,6 @@ func (e *BatchedPaymentResponseExtra) ToMap() map[string]interface{} {
 		"withdrawRequestedAt":     e.WithdrawRequestedAt,
 		"refundNonce":             e.RefundNonce,
 	}
-	if e.Refund {
-		result["refund"] = true
-	}
-	if e.RefundedAmount != "" {
-		result["refundedAmount"] = e.RefundedAmount
-	}
-	return result
 }
 
 // PaymentResponseExtraFromMap parses a BatchedPaymentResponseExtra from a map.
@@ -578,11 +620,42 @@ func PaymentResponseExtraFromMap(data map[string]interface{}) (*BatchedPaymentRe
 		extra.WithdrawRequestedAt = v
 	}
 	extra.RefundNonce, _ = data["refundNonce"].(string)
-	if refund, ok := data["refund"].(bool); ok {
-		extra.Refund = refund
-	}
-	if refundedAmount, ok := data["refundedAmount"].(string); ok {
-		extra.RefundedAmount = refundedAmount
-	}
 	return extra, nil
+}
+
+// ChannelStateRequirementsFromMap parses a BatchSettlementRequirementsChannelState
+// from PaymentRequirements.extra["ChannelState"]. Returns nil when absent.
+func ChannelStateRequirementsFromMap(data map[string]interface{}) *BatchSettlementRequirementsChannelState {
+	if data == nil {
+		return nil
+	}
+	cs := &BatchSettlementRequirementsChannelState{}
+	cs.ChannelId, _ = data["channelId"].(string)
+	cs.ChargedCumulativeAmount, _ = data["chargedCumulativeAmount"].(string)
+	cs.SignedMaxClaimable, _ = data["signedMaxClaimable"].(string)
+	cs.Signature, _ = data["signature"].(string)
+	if cs.ChannelId == "" {
+		return nil
+	}
+	return cs
+}
+
+// ToMap converts a BatchSettlementRequirementsChannelState to a map.
+func (cs *BatchSettlementRequirementsChannelState) ToMap() map[string]interface{} {
+	if cs == nil {
+		return nil
+	}
+	result := map[string]interface{}{
+		"channelId": cs.ChannelId,
+	}
+	if cs.ChargedCumulativeAmount != "" {
+		result["chargedCumulativeAmount"] = cs.ChargedCumulativeAmount
+	}
+	if cs.SignedMaxClaimable != "" {
+		result["signedMaxClaimable"] = cs.SignedMaxClaimable
+	}
+	if cs.Signature != "" {
+		result["signature"] = cs.Signature
+	}
+	return result
 }

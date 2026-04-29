@@ -10,10 +10,10 @@ import (
 	"github.com/x402-foundation/x402/go/mechanisms/evm/batched"
 )
 
-func newServerFileStore(t *testing.T) (*FileSessionStorage, string) {
+func newServerFileStore(t *testing.T) (*FileChannelStorage, string) {
 	t.Helper()
 	dir := t.TempDir()
-	return NewFileSessionStorage(batched.FileSessionStorageOptions{Directory: dir}), dir
+	return NewFileChannelStorage(batched.FileChannelStorageOptions{Directory: dir}), dir
 }
 
 func TestServerFileStorage_GetMissing(t *testing.T) {
@@ -181,7 +181,7 @@ func TestServerFileStorage_CompareAndSet_CreatesDirectoryFromCold(t *testing.T) 
 	// Mirrors the 5a007ae70 fix — a brand-new directory must not blow up on
 	// the very first CompareAndSet.
 	dir := t.TempDir()
-	s := NewFileSessionStorage(batched.FileSessionStorageOptions{Directory: dir})
+	s := NewFileChannelStorage(batched.FileChannelStorageOptions{Directory: dir})
 	ok, err := s.CompareAndSet("ch", "0", sampleSession("ch", "1"))
 	if err != nil {
 		t.Fatalf("err: %v", err)

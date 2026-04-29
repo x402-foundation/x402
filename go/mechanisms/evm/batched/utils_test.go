@@ -18,13 +18,15 @@ func sampleConfig() ChannelConfig {
 	}
 }
 
+const testNetwork = "eip155:8453"
+
 func TestComputeChannelId_Deterministic(t *testing.T) {
 	cfg := sampleConfig()
-	a, err := ComputeChannelId(cfg)
+	a, err := ComputeChannelId(cfg, testNetwork)
 	if err != nil {
 		t.Fatalf("err: %v", err)
 	}
-	b, err := ComputeChannelId(cfg)
+	b, err := ComputeChannelId(cfg, testNetwork)
 	if err != nil {
 		t.Fatalf("err: %v", err)
 	}
@@ -37,17 +39,17 @@ func TestComputeChannelId_Deterministic(t *testing.T) {
 }
 
 func TestComputeChannelId_DistinctConfigsDiffer(t *testing.T) {
-	a, _ := ComputeChannelId(sampleConfig())
+	a, _ := ComputeChannelId(sampleConfig(), testNetwork)
 	cfg2 := sampleConfig()
 	cfg2.Salt = "0x0000000000000000000000000000000000000000000000000000000000000002"
-	b, _ := ComputeChannelId(cfg2)
+	b, _ := ComputeChannelId(cfg2, testNetwork)
 	if a == b {
 		t.Fatal("different salts produced same channelId")
 	}
 
 	cfg3 := sampleConfig()
 	cfg3.WithdrawDelay = 901
-	c, _ := ComputeChannelId(cfg3)
+	c, _ := ComputeChannelId(cfg3, testNetwork)
 	if a == c {
 		t.Fatal("different withdrawDelay produced same channelId")
 	}
@@ -56,7 +58,7 @@ func TestComputeChannelId_DistinctConfigsDiffer(t *testing.T) {
 func TestComputeChannelId_AcceptsShortSalt(t *testing.T) {
 	cfg := sampleConfig()
 	cfg.Salt = "0x01"
-	if _, err := ComputeChannelId(cfg); err != nil {
+	if _, err := ComputeChannelId(cfg, testNetwork); err != nil {
 		t.Fatalf("short salt rejected: %v", err)
 	}
 }
@@ -64,7 +66,7 @@ func TestComputeChannelId_AcceptsShortSalt(t *testing.T) {
 func TestComputeChannelId_RejectsTooLongSalt(t *testing.T) {
 	cfg := sampleConfig()
 	cfg.Salt = "0x" + strings.Repeat("ab", 33)
-	if _, err := ComputeChannelId(cfg); err == nil {
+	if _, err := ComputeChannelId(cfg, testNetwork); err == nil {
 		t.Fatal("expected error")
 	}
 }

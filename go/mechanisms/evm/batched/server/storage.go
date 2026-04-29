@@ -33,20 +33,20 @@ type SessionStorage interface {
 	CompareAndSet(channelId string, expectedCharged string, session *ChannelSession) (bool, error)
 }
 
-// InMemorySessionStorage is a volatile in-memory implementation of SessionStorage.
-type InMemorySessionStorage struct {
+// InMemoryChannelStorage is a volatile in-memory implementation of SessionStorage.
+type InMemoryChannelStorage struct {
 	mu       sync.RWMutex
 	sessions map[string]*ChannelSession
 }
 
-// NewInMemorySessionStorage creates a new in-memory server session storage.
-func NewInMemorySessionStorage() *InMemorySessionStorage {
-	return &InMemorySessionStorage{
+// NewInMemoryChannelStorage creates a new in-memory server session storage.
+func NewInMemoryChannelStorage() *InMemoryChannelStorage {
+	return &InMemoryChannelStorage{
 		sessions: make(map[string]*ChannelSession),
 	}
 }
 
-func (s *InMemorySessionStorage) Get(channelId string) (*ChannelSession, error) {
+func (s *InMemoryChannelStorage) Get(channelId string) (*ChannelSession, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	session, ok := s.sessions[channelId]
@@ -57,7 +57,7 @@ func (s *InMemorySessionStorage) Get(channelId string) (*ChannelSession, error) 
 	return &copy, nil
 }
 
-func (s *InMemorySessionStorage) Set(channelId string, session *ChannelSession) error {
+func (s *InMemoryChannelStorage) Set(channelId string, session *ChannelSession) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	copy := *session
@@ -65,14 +65,14 @@ func (s *InMemorySessionStorage) Set(channelId string, session *ChannelSession) 
 	return nil
 }
 
-func (s *InMemorySessionStorage) Delete(channelId string) error {
+func (s *InMemoryChannelStorage) Delete(channelId string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	delete(s.sessions, channelId)
 	return nil
 }
 
-func (s *InMemorySessionStorage) List() ([]*ChannelSession, error) {
+func (s *InMemoryChannelStorage) List() ([]*ChannelSession, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	result := make([]*ChannelSession, 0, len(s.sessions))
@@ -83,7 +83,7 @@ func (s *InMemorySessionStorage) List() ([]*ChannelSession, error) {
 	return result, nil
 }
 
-func (s *InMemorySessionStorage) CompareAndSet(channelId string, expectedCharged string, session *ChannelSession) (bool, error) {
+func (s *InMemoryChannelStorage) CompareAndSet(channelId string, expectedCharged string, session *ChannelSession) (bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	current, ok := s.sessions[channelId]

@@ -20,7 +20,7 @@ import (
 func ExecuteRefundWithSignature(
 	ctx context.Context,
 	signer evm.FacilitatorEvmSigner,
-	payload *batched.BatchedRefundWithSignaturePayload,
+	payload *batched.BatchedEnrichedRefundPayload,
 	requirements types.PaymentRequirements,
 	authorizerSigner batched.AuthorizerSigner,
 ) (*x402.SettleResponse, error) {
@@ -32,10 +32,10 @@ func ExecuteRefundWithSignature(
 			fmt.Sprintf("invalid refund amount: %s", payload.Amount))
 	}
 
-	nonce, ok := new(big.Int).SetString(payload.Nonce, 10)
+	nonce, ok := new(big.Int).SetString(payload.RefundNonce, 10)
 	if !ok {
 		return nil, x402.NewSettleError(ErrInvalidRefundPayload, "", network, "",
-			fmt.Sprintf("invalid nonce: %s", payload.Nonce))
+			fmt.Sprintf("invalid nonce: %s", payload.RefundNonce))
 	}
 
 	// Resolve refund authorizer signature — auto-sign if absent
@@ -49,24 +49,24 @@ func ExecuteRefundWithSignature(
 		}
 	} else {
 		// Verify authorizer address matches config's receiverAuthorizer
-		if !strings.EqualFold(payload.Config.ReceiverAuthorizer, authorizerSigner.Address()) {
+		if !strings.EqualFold(payload.ChannelConfig.ReceiverAuthorizer, authorizerSigner.Address()) {
 			return nil, x402.NewSettleError(ErrAuthorizerAddressMismatch, "", network, "",
 				fmt.Sprintf("config receiverAuthorizer %s does not match authorizerSigner %s",
-					payload.Config.ReceiverAuthorizer, authorizerSigner.Address()))
+					payload.ChannelConfig.ReceiverAuthorizer, authorizerSigner.Address()))
 		}
-		channelId, err := batched.ComputeChannelId(payload.Config)
+		channelId, err := batched.ComputeChannelId(payload.ChannelConfig, string(network))
 		if err != nil {
 			return nil, x402.NewSettleError(ErrInvalidRefundPayload, "", network, "",
 				fmt.Sprintf("failed to compute channel id: %s", err))
 		}
-		refundSig, err = authorizerSigner.SignRefund(ctx, channelId, payload.Amount, payload.Nonce, string(network))
+		refundSig, err = authorizerSigner.SignRefund(ctx, channelId, payload.Amount, payload.RefundNonce, string(network))
 		if err != nil {
 			return nil, x402.NewSettleError(ErrRefundTransactionFailed, "", network, "",
 				fmt.Sprintf("failed to sign refund: %s", err))
 		}
 	}
 
-	configTuple := ToContractChannelConfig(payload.Config)
+	configTuple := ToContractChannelConfig(payload.ChannelConfig)
 
 	// Handle claims + refund atomically if claims are present
 	if len(payload.Claims) > 0 {
@@ -143,7 +143,7 @@ func ExecuteRefundWithSignature(
 				"multicall (claim+refund) transaction reverted")
 		}
 
-		return buildRefundResponse(txHash, network, payload.ResponseExtra), nil
+		return buildRefundResponse(txHash, network), nil
 	}
 
 	// No claims — direct refundWithSignature
@@ -194,20 +194,18 @@ func ExecuteRefundWithSignature(
 			"refundWithSignature transaction reverted")
 	}
 
-	return buildRefundResponse(txHash, network, payload.ResponseExtra), nil
+	return buildRefundResponse(txHash, network), nil
 }
 
-func buildRefundResponse(txHash string, network x402.Network, responseExtra *batched.BatchedPaymentResponseExtra) *x402.SettleResponse {
-	resp := &x402.SettleResponse{
+func buildRefundResponse(txHash string, network x402.Network) *x402.SettleResponse {
+	return &x402.SettleResponse{
 		Success:     true,
 		Transaction: txHash,
 		Network:     network,
+		Extra: map[string]interface{}{
+			"refund": true,
+		},
 	}
-	if responseExtra != nil {
-		resp.Extra = responseExtra.ToMap()
-		resp.Extra["refund"] = true
-	}
-	return resp
 }
 
 // encodeClaimWithSignatureCalldata ABI-encodes claimWithSignature calldata for multicall.

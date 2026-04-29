@@ -69,13 +69,13 @@ The server claims any outstanding vouchers and then executes `refundWithSignatur
 
 ### Persistence
 
-By default, channel state is stored in memory. For long-lived clients, use `FileClientSessionStorage`:
+By default, channel state is stored in memory. For long-lived clients, use `FileClientChannelStorage`:
 
 ```go
 import "github.com/x402-foundation/x402/go/mechanisms/evm/batched"
 
 scheme := client.NewBatchedEvmScheme(signer, &client.BatchedEvmSchemeConfig{
-    Storage: client.NewFileClientSessionStorage(batched.FileSessionStorageOptions{
+    Storage: client.NewFileClientChannelStorage(batched.FileChannelStorageOptions{
         Directory: "./channels",
     }),
 })
@@ -97,7 +97,7 @@ import (
 scheme := server.NewBatchedEvmScheme(receiverAddress, &server.BatchedEvmSchemeConfig{
     ReceiverAuthorizerSigner: receiverAuthorizerSigner, // optional: self-managed authorizer (recommended)
     WithdrawDelay:            900,                       // 15 min – 30 days
-    Storage: server.NewFileSessionStorage(batched.FileSessionStorageOptions{
+    Storage: server.NewFileChannelStorage(batched.FileChannelStorageOptions{
         Directory: "./sessions",
     }),
 })

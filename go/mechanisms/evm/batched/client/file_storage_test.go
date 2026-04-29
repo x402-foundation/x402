@@ -9,10 +9,10 @@ import (
 	"github.com/x402-foundation/x402/go/mechanisms/evm/batched"
 )
 
-func newFileStore(t *testing.T) (*FileClientSessionStorage, string) {
+func newFileStore(t *testing.T) (*FileClientChannelStorage, string) {
 	t.Helper()
 	dir := t.TempDir()
-	return NewFileClientSessionStorage(batched.FileSessionStorageOptions{Directory: dir}), dir
+	return NewFileClientChannelStorage(batched.FileChannelStorageOptions{Directory: dir}), dir
 }
 
 func TestFileClientStorage_GetMissing(t *testing.T) {

@@ -96,12 +96,12 @@ func TestParseRequirementsExtra_IgnoresWrongTypes(t *testing.T) {
 }
 
 func reqs(payTo, asset string) types.PaymentRequirements {
-	return types.PaymentRequirements{PayTo: payTo, Asset: asset}
+	return types.PaymentRequirements{PayTo: payTo, Asset: asset, Network: "eip155:8453"}
 }
 
 func TestValidateChannelConfig_OK(t *testing.T) {
 	cfg := validConfig()
-	id, err := batched.ComputeChannelId(cfg)
+	id, err := batched.ComputeChannelId(cfg, "eip155:8453")
 	if err != nil {
 		t.Fatalf("compute: %v", err)
 	}
@@ -112,7 +112,7 @@ func TestValidateChannelConfig_OK(t *testing.T) {
 
 func TestValidateChannelConfig_ReceiverMismatch(t *testing.T) {
 	cfg := validConfig()
-	id, _ := batched.ComputeChannelId(cfg)
+	id, _ := batched.ComputeChannelId(cfg, "eip155:8453")
 	err := ValidateChannelConfig(cfg, id, reqs("0xabc", cfg.Token))
 	var ve *x402.VerifyError
 	if !errors.As(err, &ve) || ve.InvalidReason != ErrReceiverMismatch {
@@ -122,7 +122,7 @@ func TestValidateChannelConfig_ReceiverMismatch(t *testing.T) {
 
 func TestValidateChannelConfig_TokenMismatch(t *testing.T) {
 	cfg := validConfig()
-	id, _ := batched.ComputeChannelId(cfg)
+	id, _ := batched.ComputeChannelId(cfg, "eip155:8453")
 	err := ValidateChannelConfig(cfg, id, reqs(cfg.Receiver, "0xabc"))
 	var ve *x402.VerifyError
 	if !errors.As(err, &ve) || ve.InvalidReason != ErrTokenMismatch {
@@ -133,7 +133,7 @@ func TestValidateChannelConfig_TokenMismatch(t *testing.T) {
 func TestValidateChannelConfig_DelayBelowMin(t *testing.T) {
 	cfg := validConfig()
 	cfg.WithdrawDelay = batched.MinWithdrawDelay - 1
-	id, _ := batched.ComputeChannelId(cfg)
+	id, _ := batched.ComputeChannelId(cfg, "eip155:8453")
 	err := ValidateChannelConfig(cfg, id, reqs(cfg.Receiver, cfg.Token))
 	var ve *x402.VerifyError
 	if !errors.As(err, &ve) || ve.InvalidReason != ErrWithdrawDelayOutOfRange {
@@ -144,7 +144,7 @@ func TestValidateChannelConfig_DelayBelowMin(t *testing.T) {
 func TestValidateChannelConfig_DelayAboveMax(t *testing.T) {
 	cfg := validConfig()
 	cfg.WithdrawDelay = batched.MaxWithdrawDelay + 1
-	id, _ := batched.ComputeChannelId(cfg)
+	id, _ := batched.ComputeChannelId(cfg, "eip155:8453")
 	err := ValidateChannelConfig(cfg, id, reqs(cfg.Receiver, cfg.Token))
 	var ve *x402.VerifyError
 	if !errors.As(err, &ve) || ve.InvalidReason != ErrWithdrawDelayOutOfRange {
@@ -163,7 +163,7 @@ func TestValidateChannelConfig_ChannelIdMismatch(t *testing.T) {
 
 func TestValidateChannelConfig_ExtraReceiverAuthorizerMismatch(t *testing.T) {
 	cfg := validConfig()
-	id, _ := batched.ComputeChannelId(cfg)
+	id, _ := batched.ComputeChannelId(cfg, "eip155:8453")
 	r := reqs(cfg.Receiver, cfg.Token)
 	r.Extra = map[string]interface{}{
 		"receiverAuthorizer": "0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef",
@@ -177,7 +177,7 @@ func TestValidateChannelConfig_ExtraReceiverAuthorizerMismatch(t *testing.T) {
 
 func TestValidateChannelConfig_ExtraWithdrawDelayMismatch(t *testing.T) {
 	cfg := validConfig()
-	id, _ := batched.ComputeChannelId(cfg)
+	id, _ := batched.ComputeChannelId(cfg, "eip155:8453")
 	r := reqs(cfg.Receiver, cfg.Token)
 	r.Extra = map[string]interface{}{"withdrawDelay": float64(2000)}
 	err := ValidateChannelConfig(cfg, id, r)
@@ -189,7 +189,7 @@ func TestValidateChannelConfig_ExtraWithdrawDelayMismatch(t *testing.T) {
 
 func TestValidateChannelConfig_ExtraMatching(t *testing.T) {
 	cfg := validConfig()
-	id, _ := batched.ComputeChannelId(cfg)
+	id, _ := batched.ComputeChannelId(cfg, "eip155:8453")
 	r := reqs(cfg.Receiver, cfg.Token)
 	r.Extra = map[string]interface{}{
 		"receiverAuthorizer": cfg.ReceiverAuthorizer,

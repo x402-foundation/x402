@@ -25,8 +25,8 @@ func sampleSession(id, charged string) *ChannelSession {
 	}
 }
 
-func TestInMemorySessionStorage_GetMissing(t *testing.T) {
-	s := NewInMemorySessionStorage()
+func TestInMemoryChannelStorage_GetMissing(t *testing.T) {
+	s := NewInMemoryChannelStorage()
 	got, err := s.Get("missing")
 	if err != nil {
 		t.Fatalf("err: %v", err)
@@ -36,8 +36,8 @@ func TestInMemorySessionStorage_GetMissing(t *testing.T) {
 	}
 }
 
-func TestInMemorySessionStorage_SetGet(t *testing.T) {
-	s := NewInMemorySessionStorage()
+func TestInMemoryChannelStorage_SetGet(t *testing.T) {
+	s := NewInMemoryChannelStorage()
 	in := sampleSession("ch", "10")
 	if err := s.Set("ch", in); err != nil {
 		t.Fatalf("Set: %v", err)
@@ -51,8 +51,8 @@ func TestInMemorySessionStorage_SetGet(t *testing.T) {
 	}
 }
 
-func TestInMemorySessionStorage_ReturnsCopy(t *testing.T) {
-	s := NewInMemorySessionStorage()
+func TestInMemoryChannelStorage_ReturnsCopy(t *testing.T) {
+	s := NewInMemoryChannelStorage()
 	in := sampleSession("ch", "10")
 	_ = s.Set("ch", in)
 	in.Balance = "999"
@@ -67,8 +67,8 @@ func TestInMemorySessionStorage_ReturnsCopy(t *testing.T) {
 	}
 }
 
-func TestInMemorySessionStorage_Delete(t *testing.T) {
-	s := NewInMemorySessionStorage()
+func TestInMemoryChannelStorage_Delete(t *testing.T) {
+	s := NewInMemoryChannelStorage()
 	_ = s.Set("ch", sampleSession("ch", "10"))
 	if err := s.Delete("ch"); err != nil {
 		t.Fatalf("Delete: %v", err)
@@ -81,8 +81,8 @@ func TestInMemorySessionStorage_Delete(t *testing.T) {
 	}
 }
 
-func TestInMemorySessionStorage_List(t *testing.T) {
-	s := NewInMemorySessionStorage()
+func TestInMemoryChannelStorage_List(t *testing.T) {
+	s := NewInMemoryChannelStorage()
 	_ = s.Set("a", sampleSession("a", "1"))
 	_ = s.Set("b", sampleSession("b", "2"))
 	got, err := s.List()
@@ -98,8 +98,8 @@ func TestInMemorySessionStorage_List(t *testing.T) {
 	}
 }
 
-func TestInMemorySessionStorage_CompareAndSet_FirstWriteWins(t *testing.T) {
-	s := NewInMemorySessionStorage()
+func TestInMemoryChannelStorage_CompareAndSet_FirstWriteWins(t *testing.T) {
+	s := NewInMemoryChannelStorage()
 	ok, err := s.CompareAndSet("ch", "0", sampleSession("ch", "10"))
 	if err != nil || !ok {
 		t.Fatalf("CAS on missing should succeed: ok=%v err=%v", ok, err)
@@ -110,8 +110,8 @@ func TestInMemorySessionStorage_CompareAndSet_FirstWriteWins(t *testing.T) {
 	}
 }
 
-func TestInMemorySessionStorage_CompareAndSet_StaleFails(t *testing.T) {
-	s := NewInMemorySessionStorage()
+func TestInMemoryChannelStorage_CompareAndSet_StaleFails(t *testing.T) {
+	s := NewInMemoryChannelStorage()
 	_ = s.Set("ch", sampleSession("ch", "10"))
 	ok, err := s.CompareAndSet("ch", "0", sampleSession("ch", "20"))
 	if err != nil {
@@ -126,8 +126,8 @@ func TestInMemorySessionStorage_CompareAndSet_StaleFails(t *testing.T) {
 	}
 }
 
-func TestInMemorySessionStorage_CompareAndSet_FreshSucceeds(t *testing.T) {
-	s := NewInMemorySessionStorage()
+func TestInMemoryChannelStorage_CompareAndSet_FreshSucceeds(t *testing.T) {
+	s := NewInMemoryChannelStorage()
 	_ = s.Set("ch", sampleSession("ch", "10"))
 	ok, err := s.CompareAndSet("ch", "10", sampleSession("ch", "20"))
 	if err != nil || !ok {
@@ -139,8 +139,8 @@ func TestInMemorySessionStorage_CompareAndSet_FreshSucceeds(t *testing.T) {
 	}
 }
 
-func TestInMemorySessionStorage_Concurrent(t *testing.T) {
-	s := NewInMemorySessionStorage()
+func TestInMemoryChannelStorage_Concurrent(t *testing.T) {
+	s := NewInMemoryChannelStorage()
 	var wg sync.WaitGroup
 	for i := range 50 {
 		wg.Add(2)

@@ -172,6 +172,24 @@ type AssetDecimalsProvider interface {
 	GetAssetDecimals(asset string, network Network) int
 }
 
+// PaymentRequiredContext is passed to PaymentRequiredEnricher.EnrichPaymentRequiredResponse.
+// PaymentPayload is non-nil only on the verify-failure branch.
+type PaymentRequiredContext struct {
+	Requirements            []types.PaymentRequirements
+	PaymentPayload          *types.PaymentPayload
+	ResourceInfo            *types.ResourceInfo
+	Error                   string
+	PaymentRequiredResponse *types.PaymentRequired
+}
+
+// PaymentRequiredEnricher is an optional interface for SchemeNetworkServer
+// implementations that want to add per-scheme corrective state to the 402
+// response. Invoked once per matching scheme during PaymentRequired construction;
+// implementations may mutate ctx.Requirements entries in place.
+type PaymentRequiredEnricher interface {
+	EnrichPaymentRequiredResponse(ctx PaymentRequiredContext)
+}
+
 // SchemeNetworkFacilitator is implemented by facilitator-side payment mechanisms (V2)
 type SchemeNetworkFacilitator interface {
 	Scheme() string

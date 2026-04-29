@@ -34,7 +34,7 @@ type BatchedEvmSchemeConfig struct {
 	// Defaults to true. Set to false to disable.
 	AutoTopUp *bool
 	// Storage is the session persistence backend. Defaults to in-memory.
-	Storage ClientSessionStorage
+	Storage ClientChannelStorage
 	// Salt is the channel salt for differentiating identical configs. Defaults to zero.
 	Salt string
 	// PayerAuthorizer is the EOA address used for voucher signing (separate from payer).
@@ -49,7 +49,7 @@ type BatchedEvmScheme struct {
 	signer    evm.ClientEvmSigner
 	config    BatchedEvmSchemeConfig
 	autoTopUp bool
-	storage   ClientSessionStorage
+	storage   ClientChannelStorage
 }
 
 // NewBatchedEvmScheme creates a new batched client scheme.
@@ -82,7 +82,7 @@ func NewBatchedEvmScheme(signer evm.ClientEvmSigner, config *BatchedEvmSchemeCon
 
 	storage := cfg.Storage
 	if storage == nil {
-		storage = NewInMemoryClientSessionStorage()
+		storage = NewInMemoryClientChannelStorage()
 	}
 
 	return &BatchedEvmScheme{
@@ -106,7 +106,7 @@ func (c *BatchedEvmScheme) CreatePaymentPayload(
 ) (types.PaymentPayload, error) {
 	channelConfig := c.BuildChannelConfig(requirements)
 
-	channelId, err := batched.ComputeChannelId(channelConfig)
+	channelId, err := batched.ComputeChannelId(channelConfig, requirements.Network)
 	if err != nil {
 		return types.PaymentPayload{}, fmt.Errorf("failed to compute channel ID: %w", err)
 	}
@@ -202,31 +202,37 @@ func (c *BatchedEvmScheme) Refund(ctx context.Context, url string, options *Refu
 }
 
 // ProcessSettleResponse updates local session state from a settle response.
+// Mirrors TS processSettleResponse: merges present fields into existing session.
+// Refund-specific reconciliation is handled at the refund call site via
+// UpdateSessionAfterRefund.
 func (c *BatchedEvmScheme) ProcessSettleResponse(settle map[string]interface{}) error {
 	if settle == nil {
 		return nil
 	}
 
-	extra, err := batched.PaymentResponseExtraFromMap(settle)
-	if err != nil {
-		return err
+	channelId, _ := settle["channelId"].(string)
+	if channelId == "" {
+		return nil
+	}
+	channelId = batched.NormalizeChannelId(channelId)
+
+	prev, _ := c.storage.Get(channelId)
+	next := &BatchedClientContext{}
+	if prev != nil {
+		*next = *prev
 	}
 
-	channelId := batched.NormalizeChannelId(extra.ChannelId)
-
-	// If refund flag is set, reconcile via UpdateSessionAfterRefund: delete on
-	// full refund (balance==0), otherwise update balance/charged/totalClaimed.
-	if extra.Refund {
-		return UpdateSessionAfterRefund(c.storage, channelId, settle)
+	if v, ok := settle["chargedCumulativeAmount"].(string); ok {
+		next.ChargedCumulativeAmount = v
+	}
+	if v, ok := settle["balance"].(string); ok {
+		next.Balance = v
+	}
+	if v, ok := settle["totalClaimed"].(string); ok {
+		next.TotalClaimed = v
 	}
 
-	session := &BatchedClientContext{
-		ChargedCumulativeAmount: extra.ChargedCumulativeAmount,
-		Balance:                 extra.Balance,
-		TotalClaimed:            extra.TotalClaimed,
-	}
-
-	return c.storage.Set(channelId, session)
+	return c.storage.Set(channelId, next)
 }
 
 // HasSession checks if a session exists for the given channel ID.
@@ -254,7 +260,7 @@ func (c *BatchedEvmScheme) RecoverSession(ctx context.Context, requirements type
 	}
 
 	channelConfig := c.BuildChannelConfig(requirements)
-	channelId, err := batched.ComputeChannelId(channelConfig)
+	channelId, err := batched.ComputeChannelId(channelConfig, requirements.Network)
 	if err != nil {
 		return nil, fmt.Errorf("failed to compute channel ID: %w", err)
 	}
@@ -298,23 +304,17 @@ func (c *BatchedEvmScheme) RecoverSession(ctx context.Context, requirements type
 	return session, nil
 }
 
-// ProcessCorrectivePaymentRequired handles a corrective 402 response from the
-// server when the client's cumulative base is out of sync.
-//
-// It validates the server-provided state (chargedCumulativeAmount, signedMaxClaimable,
-// signature) against on-chain data, then updates the local session if everything
-// checks out.
-//
-// The paymentRequired parameter should be the decoded 402 response. The error field
-// is checked for "batch_settlement_stale_cumulative_amount".
-//
-// Returns true if the session was successfully resynced and the request can be retried.
+// ProcessCorrectivePaymentRequired handles a corrective 402 response when the
+// client's cumulative base is out of sync. It validates the server-provided
+// ChannelState (under accept.Extra) against on-chain data and updates the local
+// session, falling back to pure on-chain recovery if no recovery data is sent.
+// Returns true when the session was resynced and the request can be retried.
 func (c *BatchedEvmScheme) ProcessCorrectivePaymentRequired(
 	ctx context.Context,
 	errorReason string,
 	accepts []types.PaymentRequirements,
 ) (bool, error) {
-	if errorReason != "batch_settlement_stale_cumulative_amount" &&
+	if errorReason != batched.ErrCumulativeAmountMismatch &&
 		errorReason != "batch_settlement_evm_cumulative_below_claimed" {
 		return false, nil
 	}
@@ -331,17 +331,37 @@ func (c *BatchedEvmScheme) ProcessCorrectivePaymentRequired(
 		return false, nil
 	}
 
-	ex := accept.Extra
-	chargedRaw, hasCharged := ex["chargedCumulativeAmount"]
-	signedRaw, hasSigned := ex["signedMaxClaimable"]
-	sigRaw, hasSig := ex["signature"]
-
-	if !hasCharged || !hasSigned || !hasSig {
+	chargedStr, signedStr, sig, ok := readChannelStateFromExtra(accept.Extra)
+	if !ok {
 		// No signature-based recovery data — fall back to on-chain recovery
 		return c.recoverFromOnChainState(ctx, *accept)
 	}
 
-	return c.recoverFromSignature(ctx, *accept, fmt.Sprintf("%v", chargedRaw), fmt.Sprintf("%v", signedRaw), fmt.Sprintf("%v", sigRaw))
+	return c.recoverFromSignature(ctx, *accept, chargedStr, signedStr, sig)
+}
+
+// readChannelStateFromExtra extracts the corrective-402 recovery fields from
+// accept.Extra. Prefers the nested `ChannelState` object (current TS shape) and
+// falls back to the legacy flat keys for backward compatibility.
+func readChannelStateFromExtra(ex map[string]interface{}) (charged, signed, sig string, ok bool) {
+	if ex == nil {
+		return "", "", "", false
+	}
+	if nested, isMap := ex["ChannelState"].(map[string]interface{}); isMap {
+		c, hasC := nested["chargedCumulativeAmount"]
+		s, hasS := nested["signedMaxClaimable"]
+		g, hasG := nested["signature"]
+		if hasC && hasS && hasG {
+			return fmt.Sprintf("%v", c), fmt.Sprintf("%v", s), fmt.Sprintf("%v", g), true
+		}
+	}
+	c, hasC := ex["chargedCumulativeAmount"]
+	s, hasS := ex["signedMaxClaimable"]
+	g, hasG := ex["signature"]
+	if hasC && hasS && hasG {
+		return fmt.Sprintf("%v", c), fmt.Sprintf("%v", s), fmt.Sprintf("%v", g), true
+	}
+	return "", "", "", false
 }
 
 // recoverFromSignature recovers session from a corrective 402 that includes a
@@ -376,7 +396,7 @@ func (c *BatchedEvmScheme) recoverFromSignature(
 	}
 
 	config := c.BuildChannelConfig(accept)
-	channelId, err := batched.ComputeChannelId(config)
+	channelId, err := batched.ComputeChannelId(config, accept.Network)
 	if err != nil {
 		return false, nil //nolint:nilerr // matches TS catch-all
 	}
@@ -510,11 +530,9 @@ func (c *BatchedEvmScheme) createVoucherPayload(
 	}
 
 	voucherPayload := &batched.BatchedVoucherPayload{
-		Type:               "voucher",
-		ChannelConfig:      channelConfig,
-		ChannelId:          voucher.ChannelId,
-		MaxClaimableAmount: voucher.MaxClaimableAmount,
-		Signature:          voucher.Signature,
+		Type:          "voucher",
+		ChannelConfig: channelConfig,
+		Voucher:       *voucher,
 	}
 
 	return types.PaymentPayload{
@@ -546,7 +564,7 @@ type refundContextAdapter struct {
 	scheme *BatchedEvmScheme
 }
 
-func (a *refundContextAdapter) Storage() ClientSessionStorage { return a.scheme.storage }
+func (a *refundContextAdapter) Storage() ClientChannelStorage { return a.scheme.storage }
 func (a *refundContextAdapter) Signer() evm.ClientEvmSigner   { return a.scheme.signer }
 func (a *refundContextAdapter) VoucherSigner() evm.ClientEvmSigner {
 	return a.scheme.config.VoucherSigner
@@ -556,9 +574,6 @@ func (a *refundContextAdapter) BuildChannelConfig(requirements types.PaymentRequ
 }
 func (a *refundContextAdapter) RecoverSession(ctx context.Context, requirements types.PaymentRequirements) (*BatchedClientContext, error) {
 	return a.scheme.RecoverSession(ctx, requirements)
-}
-func (a *refundContextAdapter) ProcessSettleResponse(settle map[string]interface{}) error {
-	return a.scheme.ProcessSettleResponse(settle)
 }
 func (a *refundContextAdapter) ProcessCorrectivePaymentRequired(ctx context.Context, errorReason string, accepts []types.PaymentRequirements) (bool, error) {
 	return a.scheme.ProcessCorrectivePaymentRequired(ctx, errorReason, accepts)

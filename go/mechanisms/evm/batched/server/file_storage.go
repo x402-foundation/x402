@@ -12,24 +12,24 @@ import (
 	"github.com/x402-foundation/x402/go/mechanisms/evm/batched"
 )
 
-// FileSessionStorage is a file-backed SessionStorage. Each session is stored
+// FileChannelStorage is a file-backed SessionStorage. Each session is stored
 // as {root}/server/{channelId}.json. CompareAndSet is serialised through an
 // exclusive lock file ({channelId}.json.lock) so concurrent writers see the
 // loser as a no-op rather than racing.
-type FileSessionStorage struct {
+type FileChannelStorage struct {
 	root string
 }
 
-// NewFileSessionStorage returns a file-backed server session storage.
-func NewFileSessionStorage(opts batched.FileSessionStorageOptions) *FileSessionStorage {
-	return &FileSessionStorage{root: opts.Directory}
+// NewFileChannelStorage returns a file-backed server session storage.
+func NewFileChannelStorage(opts batched.FileChannelStorageOptions) *FileChannelStorage {
+	return &FileChannelStorage{root: opts.Directory}
 }
 
-func (s *FileSessionStorage) filePath(channelId string) string {
+func (s *FileChannelStorage) filePath(channelId string) string {
 	return filepath.Join(s.root, "server", strings.ToLower(channelId)+".json")
 }
 
-func (s *FileSessionStorage) Get(channelId string) (*ChannelSession, error) {
+func (s *FileChannelStorage) Get(channelId string) (*ChannelSession, error) {
 	out := &ChannelSession{}
 	ok, err := batched.ReadJSONFile(s.filePath(channelId), out)
 	if err != nil {
@@ -41,18 +41,18 @@ func (s *FileSessionStorage) Get(channelId string) (*ChannelSession, error) {
 	return out, nil
 }
 
-func (s *FileSessionStorage) Set(channelId string, session *ChannelSession) error {
+func (s *FileChannelStorage) Set(channelId string, session *ChannelSession) error {
 	return batched.WriteJSONAtomic(s.filePath(channelId), session)
 }
 
-func (s *FileSessionStorage) Delete(channelId string) error {
+func (s *FileChannelStorage) Delete(channelId string) error {
 	if err := os.Remove(s.filePath(channelId)); err != nil && !batched.IsNotExist(err) {
 		return err
 	}
 	return nil
 }
 
-func (s *FileSessionStorage) List() ([]*ChannelSession, error) {
+func (s *FileChannelStorage) List() ([]*ChannelSession, error) {
 	dir := filepath.Join(s.root, "server")
 	entries, err := os.ReadDir(dir)
 	if err != nil {
@@ -89,7 +89,7 @@ func (s *FileSessionStorage) List() ([]*ChannelSession, error) {
 // CompareAndSet uses an exclusive lock file to serialise concurrent writers.
 // The mkdir call mirrors the TS fix in 5a007ae70 — without it, the very first
 // CompareAndSet on a fresh directory fails with ENOENT on the lock file.
-func (s *FileSessionStorage) CompareAndSet(channelId string, expectedCharged string, session *ChannelSession) (bool, error) {
+func (s *FileChannelStorage) CompareAndSet(channelId string, expectedCharged string, session *ChannelSession) (bool, error) {
 	path := s.filePath(channelId)
 	lockPath := path + ".lock"
 
