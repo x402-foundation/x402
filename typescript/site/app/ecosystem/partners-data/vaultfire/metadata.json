@@ -1,0 +1,7 @@
+{
+  "name": "Vaultfire",
+  "description": "Pay-per-call on-chain trust verification for AI agents. x402 endpoints deliver ERC-8004 identity, accountability/partnership bond status, trust scores (0–95), and protocol stats across Base, Avalanche, Arbitrum, and Polygon. The trust layer for the agent economy.",
+  "logoUrl": "/logos/vaultfire.png",
+  "websiteUrl": "https://theloopbreaker.com",
+  "category": "Services/Endpoints"
+}
