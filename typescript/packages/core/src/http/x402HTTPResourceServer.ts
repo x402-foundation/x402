@@ -536,6 +536,10 @@ export class x402HTTPResourceServer {
       );
 
       if (!matchingRequirements) {
+        console.warn("[x402] no matching payment requirements for protected route", {
+          path,
+          adapterUrl: adapter.getUrl(),
+        });
         const errorResponse = await this.ResourceServer.createPaymentRequiredResponse(
           requirements,
           resourceInfo,
@@ -557,6 +561,10 @@ export class x402HTTPResourceServer {
       );
 
       if (!verifyResult.isValid) {
+        console.warn("[x402] verify rejected", {
+          reason: verifyResult.invalidReason,
+          path,
+        });
         const errorResponse = await this.ResourceServer.createPaymentRequiredResponse(
           requirements,
           resourceInfo,
@@ -598,6 +606,7 @@ export class x402HTTPResourceServer {
         declaredExtensions: extensions ?? {},
       };
     } catch (error) {
+      console.warn("[x402] verify threw", error);
       if (error instanceof FacilitatorResponseError) {
         throw error;
       }

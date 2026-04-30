@@ -292,12 +292,10 @@ func buildBatchedPipeline(t *testing.T, keys *batchedTestKeys) *batchedPipeline 
 		ReceiverAuthorizerSigner: authorizerSigner,
 	})
 	x402Server := x402.Newx402ResourceServer(x402.WithFacilitatorClient(facClient))
+	// Register auto-wires scheme-provided lifecycle hooks (BeforeVerify, AfterVerify,
+	// BeforeSettle, AfterSettle, OnVerifiedPaymentCanceled) — no manual On*(...) calls
+	// needed; mirrors TS schemeHooks auto-registration.
 	x402Server.Register(batchedTestNetwork, serverScheme)
-	x402Server.OnBeforeVerify(serverScheme.BeforeVerifyHook())
-	x402Server.OnAfterVerify(serverScheme.AfterVerifyHook())
-	x402Server.OnBeforeSettle(serverScheme.BeforeSettleHook())
-	x402Server.OnAfterSettle(serverScheme.AfterSettleHook())
-	x402Server.OnVerifiedPaymentCanceled(serverScheme.OnVerifiedPaymentCanceledHook())
 
 	if err := x402Server.Initialize(context.Background()); err != nil {
 		t.Fatalf("server initialize: %v", err)
@@ -764,14 +762,9 @@ func makePaidRequest(ctx context.Context, t *testing.T, pipe *batchedPipeline, u
 	if err := json.Unmarshal(decoded, &settle); err != nil {
 		t.Fatalf("unmarshal settle: %v", err)
 	}
-	// The HTTP middleware does not propagate settlement extras back into the
-	// client scheme's session store. For the batched scheme this means the
-	// client never learns about server-tracked chargedCumulativeAmount or the
-	// signed maxClaimable, so subsequent vouchers are signed with stale data.
-	// Mirror the manual ProcessSettleResponse calls the non-HTTP scenarios use.
-	if settle.Extra != nil {
-		_ = pipe.clientScheme.ProcessSettleResponse(asMap(settle.Extra))
-	}
+	// PaymentRoundTripper now auto-dispatches the scheme's OnPaymentResponse hook
+	// after each paid retry, so local session state is folded back without a
+	// manual ProcessSettleResponse call (mirrors TS @x402/fetch behavior).
 	return &settle
 }
 

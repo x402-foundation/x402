@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/ethereum/go-ethereum/ethclient"
 	"github.com/joho/godotenv"
 	x402 "github.com/x402-foundation/x402/go"
 	x402http "github.com/x402-foundation/x402/go/http"
@@ -34,13 +35,25 @@ func main() {
 	endpointPath := envOr("ENDPOINT_PATH", "/api/generate")
 	url := baseURL + endpointPath
 
+	rpcURL := envOr("EVM_RPC_URL", "https://sepolia.base.org")
 	channelSalt := envOr("CHANNEL_SALT", batchedclient.DefaultSalt)
 	storageDir := os.Getenv("STORAGE_DIR")
 	numberOfRequests := atoiOr("NUMBER_OF_REQUESTS", 3)
 	refundAfterRequests := os.Getenv("REFUND_AFTER_REQUESTS") == "true"
 	refundAmount := os.Getenv("REFUND_AMOUNT")
 
-	signer, err := evmsigners.NewClientSignerFromPrivateKey(evmPrivateKey)
+	// Dial an RPC client so the signer can read on-chain channel state when
+	// local storage is cold. Without this, a fresh client run against a channel
+	// that already has on-chain totalClaimed would sign vouchers with a stale
+	// cumulative base and the facilitator would reject them.
+	ethClient, err := ethclient.Dial(rpcURL)
+	if err != nil {
+		fmt.Printf("Failed to dial EVM RPC %s: %v\n", rpcURL, err)
+		os.Exit(1)
+	}
+	defer ethClient.Close()
+
+	signer, err := evmsigners.NewClientSignerFromPrivateKeyWithClient(evmPrivateKey, ethClient)
 	if err != nil {
 		fmt.Printf("Failed to create signer: %v\n", err)
 		os.Exit(1)
@@ -95,11 +108,18 @@ func main() {
 			os.Exit(1)
 		}
 
-		body, _ := readJSON(resp)
-		fmt.Printf("Request %d — RESPONSE\n%s\n", i+1, indent(body))
+		fmt.Printf("Request %d — %s\n", i+1, resp.Status)
+		body, errBody := readJSON(resp)
+		if errBody != nil {
+			fmt.Printf("  body: <not JSON: %v>\n", errBody)
+		} else {
+			fmt.Printf("Request %d — RESPONSE\n%s\n", i+1, indent(body))
+		}
 
 		if settle, _ := extractSettleResponse(resp); settle != nil {
 			fmt.Println(indent(settle))
+		} else if resp.StatusCode != http.StatusOK {
+			fmt.Printf("  no PAYMENT-RESPONSE (%s) — payment did not settle\n", resp.Status)
 		}
 
 		_ = resp.Body.Close()

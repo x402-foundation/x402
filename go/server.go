@@ -75,9 +75,9 @@ type x402ResourceServer struct {
 	supportedCache       *SupportedCache
 
 	// Lifecycle hooks
-	beforeVerifyHooks    []BeforeVerifyHook
-	afterVerifyHooks     []AfterVerifyHook
-	onVerifyFailureHooks []OnVerifyFailureHook
+	beforeVerifyHooks              []BeforeVerifyHook
+	afterVerifyHooks               []AfterVerifyHook
+	onVerifyFailureHooks           []OnVerifyFailureHook
 	beforeSettleHooks              []BeforeSettleHook
 	afterSettleHooks               []AfterSettleHook
 	onSettleFailureHooks           []OnSettleFailureHook
@@ -234,7 +234,15 @@ func (s *x402ResourceServer) HasFacilitatorSupport(network Network, scheme strin
 	return exists
 }
 
-// Register registers a payment mechanism (V2, default)
+// Register registers a payment mechanism (V2, default).
+//
+// Auto-wires lifecycle hooks contributed by the scheme via the optional
+// BeforeVerifyHookProvider / AfterVerifyHookProvider / BeforeSettleHookProvider
+// / AfterSettleHookProvider / OnVerifyFailureHookProvider / OnSettleFailureHookProvider
+// / OnVerifiedPaymentCanceledHookProvider interfaces (mirrors the TS schemeHooks field).
+// User code never has to call OnBeforeSettle(scheme.BeforeSettleHook()) manually —
+// scheme-provided hooks fire automatically. Manual OnBeforeSettle / OnAfterSettle
+// / etc. registrations are still honored and run in addition to the scheme's hooks.
 func (s *x402ResourceServer) Register(network Network, schemeServer SchemeNetworkServer) *x402ResourceServer {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -244,6 +252,43 @@ func (s *x402ResourceServer) Register(network Network, schemeServer SchemeNetwor
 	}
 
 	s.schemes[network][schemeServer.Scheme()] = schemeServer
+
+	if h, ok := schemeServer.(BeforeVerifyHookProvider); ok {
+		if hook := h.BeforeVerifyHook(); hook != nil {
+			s.beforeVerifyHooks = append(s.beforeVerifyHooks, hook)
+		}
+	}
+	if h, ok := schemeServer.(AfterVerifyHookProvider); ok {
+		if hook := h.AfterVerifyHook(); hook != nil {
+			s.afterVerifyHooks = append(s.afterVerifyHooks, hook)
+		}
+	}
+	if h, ok := schemeServer.(OnVerifyFailureHookProvider); ok {
+		if hook := h.OnVerifyFailureHook(); hook != nil {
+			s.onVerifyFailureHooks = append(s.onVerifyFailureHooks, hook)
+		}
+	}
+	if h, ok := schemeServer.(BeforeSettleHookProvider); ok {
+		if hook := h.BeforeSettleHook(); hook != nil {
+			s.beforeSettleHooks = append(s.beforeSettleHooks, hook)
+		}
+	}
+	if h, ok := schemeServer.(AfterSettleHookProvider); ok {
+		if hook := h.AfterSettleHook(); hook != nil {
+			s.afterSettleHooks = append(s.afterSettleHooks, hook)
+		}
+	}
+	if h, ok := schemeServer.(OnSettleFailureHookProvider); ok {
+		if hook := h.OnSettleFailureHook(); hook != nil {
+			s.onSettleFailureHooks = append(s.onSettleFailureHooks, hook)
+		}
+	}
+	if h, ok := schemeServer.(OnVerifiedPaymentCanceledHookProvider); ok {
+		if hook := h.OnVerifiedPaymentCanceledHook(); hook != nil {
+			s.onVerifiedPaymentCanceledHooks = append(s.onVerifiedPaymentCanceledHooks, hook)
+		}
+	}
+
 	return s
 }
 

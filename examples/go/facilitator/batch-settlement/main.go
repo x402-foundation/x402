@@ -18,6 +18,8 @@ const defaultPort = "4022"
 func main() {
 	_ = godotenv.Load()
 
+	port := envOr("PORT", defaultPort)
+
 	evmPrivateKey := os.Getenv("EVM_PRIVATE_KEY")
 	if evmPrivateKey == "" {
 		fmt.Println("EVM_PRIVATE_KEY environment variable is required")
@@ -100,8 +102,8 @@ func main() {
 		writeJSON(w, http.StatusOK, result)
 	})
 
-	fmt.Printf("Facilitator listening on http://localhost:%s\n", defaultPort)
-	if err := http.ListenAndServe(":"+defaultPort, mux); err != nil {
+	fmt.Printf("Facilitator listening on http://localhost:%s\n", port)
+	if err := http.ListenAndServe(":"+port, mux); err != nil {
 		fmt.Printf("Server error: %v\n", err)
 		os.Exit(1)
 	}

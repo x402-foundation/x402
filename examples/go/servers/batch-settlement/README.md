@@ -19,6 +19,15 @@ go run .
 Pair with `examples/go/clients/batch-settlement` and
 `examples/go/facilitator/batch-settlement`.
 
+### Cross-SDK local testing
+
+Use `FACILITATOR_URL=http://localhost:4022` with the local facilitator. The same
+env keys and defaults match `examples/typescript/servers/batch-settlement/.env-example`
+so you can run the Express server instead of this binary without changing
+variables. Response JSON from `GET /api/generate` includes `usage.maxPrice`,
+`usage.chargedRatio`, and `usage.chargedPrice` in both implementations for
+assertion parity.
+
 ## Environment
 
 | Variable                                  | Description |

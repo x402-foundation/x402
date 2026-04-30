@@ -9,6 +9,7 @@ import (
 	"time"
 
 	x402 "github.com/x402-foundation/x402/go"
+	"github.com/x402-foundation/x402/go/mechanisms/evm/batched"
 )
 
 // fakeFacilitator records Settle/Verify calls and returns canned responses.
@@ -108,6 +109,57 @@ func TestClaim_SingleBatch(t *testing.T) {
 	}
 	if f.settlePayloads[0]["type"] != "claim" {
 		t.Fatalf("payload = %+v", f.settlePayloads[0])
+	}
+}
+
+// Regression: a successful claim must advance session.TotalClaimed in storage so
+// that GetClaimableVouchers no longer returns the same channel until a fresh
+// voucher pushes ChargedCumulativeAmount higher. Without this fix, every tick
+// re-submits the same claim transaction. Mirrors TS updateClaimedSessions.
+func TestClaim_AdvancesTotalClaimedInStorageAfterSuccess(t *testing.T) {
+	s := NewBatchedEvmScheme("0xreceiver", nil)
+	// Use a real ChannelConfig so the manager's post-claim storage lookup
+	// (keyed by ComputeChannelId(claim.Voucher.Channel, network)) hits the
+	// session we just stored.
+	cfg := batched.ChannelConfig{
+		Payer:              "0xabc1000000000000000000000000000000000001",
+		PayerAuthorizer:    "0xabc1000000000000000000000000000000000001",
+		Receiver:           "0xabc2000000000000000000000000000000000002",
+		ReceiverAuthorizer: "0xabc3000000000000000000000000000000000003",
+		Token:              "0xabc4000000000000000000000000000000000004",
+		WithdrawDelay:      900,
+		Salt:               "0x0000000000000000000000000000000000000000000000000000000000000000",
+	}
+	channelId, err := batched.ComputeChannelId(cfg, "eip155:8453")
+	if err != nil {
+		t.Fatalf("ComputeChannelId: %v", err)
+	}
+	channelId = batched.NormalizeChannelId(channelId)
+
+	sess := sampleSession(channelId, "1000")
+	sess.ChannelConfig = cfg
+	sess.SignedMaxClaimable = "1000"
+	sess.TotalClaimed = "100"
+	_ = s.UpdateSession(channelId, sess)
+
+	f := &fakeFacilitator{}
+	m := &BatchedChannelManager{scheme: s, facilitator: f, network: "eip155:8453"}
+
+	// First claim: storage advances from 100 -> 1000.
+	if _, err := m.Claim(context.Background(), nil); err != nil {
+		t.Fatalf("first claim: %v", err)
+	}
+	got, _ := s.GetSession(channelId)
+	if got == nil || got.TotalClaimed != "1000" {
+		t.Fatalf("expected TotalClaimed=1000 after claim, got %+v", got)
+	}
+
+	// Second tick should be a no-op — channel no longer claimable.
+	if _, err := m.Claim(context.Background(), nil); err != nil {
+		t.Fatalf("second claim: %v", err)
+	}
+	if f.settleCalls != 1 {
+		t.Fatalf("expected 1 facilitator settle call total, got %d (channel was re-claimed)", f.settleCalls)
 	}
 }
 

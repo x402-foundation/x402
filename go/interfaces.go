@@ -98,6 +98,41 @@ type ExtensionAwareClient interface {
 	CreatePaymentPayloadWithExtensions(ctx context.Context, requirements types.PaymentRequirements, extensions map[string]interface{}) (types.PaymentPayload, error)
 }
 
+// PaymentResponseContext is passed to PaymentResponseHandler implementations after
+// the transport receives the response to a paid request. Exactly one of SettleResponse
+// or PaymentRequired is populated:
+//
+//   - SettleResponse: the request succeeded (HTTP 200) and the server returned a
+//     PAYMENT-RESPONSE header carrying the settle outcome.
+//   - PaymentRequired: the request was rejected (HTTP 402) with a corrective
+//     PAYMENT-REQUIRED header (e.g. cumulative_amount_mismatch).
+//
+// Mirrors the TS PaymentResponseContext shape consumed by SchemeClientHooks.onPaymentResponse.
+type PaymentResponseContext struct {
+	PaymentPayload  types.PaymentPayload
+	Requirements    types.PaymentRequirements
+	SettleResponse  *SettleResponse
+	PaymentRequired *types.PaymentRequired
+}
+
+// PaymentResponseResult is returned by PaymentResponseHandler.OnPaymentResponse.
+// When Recovered is true, the transport may attempt one additional retry with a
+// freshly built payment payload. Used to handle corrective 402 responses where
+// the scheme has resynced its session state.
+type PaymentResponseResult struct {
+	Recovered bool
+}
+
+// PaymentResponseHandler is an optional interface that SchemeNetworkClient
+// implementations satisfy to reconcile local state after a paid response.
+// The transport (PaymentRoundTripper) invokes this hook automatically — user
+// code does not need to call ProcessSettleResponse manually.
+//
+// Mirrors the TS schemeHooks.onPaymentResponse field on SchemeClientHooks.
+type PaymentResponseHandler interface {
+	OnPaymentResponse(ctx context.Context, prCtx PaymentResponseContext) (PaymentResponseResult, error)
+}
+
 // ClientExtension can enrich payment payloads on the client side.
 // Client extensions are invoked after the scheme creates the base payload
 // but before it is returned. This allows mechanism-specific logic (e.g., EVM EIP-2612

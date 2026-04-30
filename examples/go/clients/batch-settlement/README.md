@@ -8,13 +8,17 @@ that update cumulative claimable amount.
 
 ```bash
 cp .env.example .env
-# fill in EVM_PRIVATE_KEY and (optional) FILE_STORAGE_DIR
+# fill in EVM_PRIVATE_KEY and optional STORAGE_DIR
 
 go run .
 ```
 
 The companion server is in `examples/go/servers/batch-settlement` and the
 facilitator is in `examples/go/facilitator/batch-settlement`.
+
+For **cross-SDK** runs (Go server + TypeScript client, etc.), use the same
+variable names as `examples/typescript/clients/batch-settlement/.env-example`
+— they are aligned with this file so one `.env` can drive either stack.
 
 ## Environment
 

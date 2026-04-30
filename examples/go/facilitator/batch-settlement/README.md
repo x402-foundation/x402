@@ -23,7 +23,8 @@ cp .env.example .env
 go run .
 ```
 
-Listens on `http://localhost:4022` by default.
+Listens on `http://localhost:4022` by default (`PORT` overrides; same as the
+TypeScript facilitator example).
 
 ## Environment
 
@@ -32,3 +33,4 @@ Listens on `http://localhost:4022` by default.
 | `EVM_PRIVATE_KEY` (required)              | Facilitator wallet — signs and submits on-chain transactions |
 | `EVM_RECEIVER_AUTHORIZER_PRIVATE_KEY`     | Optional dedicated authorizer key. Defaults to `EVM_PRIVATE_KEY`. |
 | `EVM_RPC_URL`                             | Default `https://sepolia.base.org` |
+| `PORT`                                    | Listen port (default `4022`) |

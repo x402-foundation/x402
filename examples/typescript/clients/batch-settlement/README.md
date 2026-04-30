@@ -48,7 +48,7 @@ const scheme = new BatchSettlementEvmScheme(signer, {
 ## Setup
 
 ```bash
-cp .env-local .env
+cp .env-example .env
 # fill EVM_PRIVATE_KEY (and optionally EVM_VOUCHER_SIGNER_PRIVATE_KEY)
 
 cd ../../

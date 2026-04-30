@@ -240,3 +240,56 @@ func WithOnVerifiedPaymentCanceledHook(hook OnVerifiedPaymentCanceledHook) Resou
 		s.onVerifiedPaymentCanceledHooks = append(s.onVerifiedPaymentCanceledHooks, hook)
 	}
 }
+
+// ============================================================================
+// Scheme-Provided Hook Provider Interfaces (Auto-Wiring)
+// ============================================================================
+//
+// SchemeNetworkServer implementations may optionally satisfy these interfaces to
+// have their lifecycle hooks auto-registered when the scheme is registered with
+// an x402ResourceServer (mirrors the TS schemeHooks field). User code does not
+// need to call OnBeforeVerify / OnAfterVerify / OnBeforeSettle / OnAfterSettle /
+// OnVerifiedPaymentCanceled manually — Register inspects the scheme via type
+// assertion and wires hooks automatically.
+
+// BeforeVerifyHookProvider is implemented by schemes that contribute a
+// BeforeVerifyHook to the resource server's lifecycle pipeline.
+type BeforeVerifyHookProvider interface {
+	BeforeVerifyHook() BeforeVerifyHook
+}
+
+// AfterVerifyHookProvider is implemented by schemes that contribute an
+// AfterVerifyHook to the resource server's lifecycle pipeline.
+type AfterVerifyHookProvider interface {
+	AfterVerifyHook() AfterVerifyHook
+}
+
+// OnVerifyFailureHookProvider is implemented by schemes that contribute an
+// OnVerifyFailureHook to the resource server's lifecycle pipeline.
+type OnVerifyFailureHookProvider interface {
+	OnVerifyFailureHook() OnVerifyFailureHook
+}
+
+// BeforeSettleHookProvider is implemented by schemes that contribute a
+// BeforeSettleHook to the resource server's lifecycle pipeline.
+type BeforeSettleHookProvider interface {
+	BeforeSettleHook() BeforeSettleHook
+}
+
+// AfterSettleHookProvider is implemented by schemes that contribute an
+// AfterSettleHook to the resource server's lifecycle pipeline.
+type AfterSettleHookProvider interface {
+	AfterSettleHook() AfterSettleHook
+}
+
+// OnSettleFailureHookProvider is implemented by schemes that contribute an
+// OnSettleFailureHook to the resource server's lifecycle pipeline.
+type OnSettleFailureHookProvider interface {
+	OnSettleFailureHook() OnSettleFailureHook
+}
+
+// OnVerifiedPaymentCanceledHookProvider is implemented by schemes that contribute
+// an OnVerifiedPaymentCanceledHook to the resource server's lifecycle pipeline.
+type OnVerifiedPaymentCanceledHookProvider interface {
+	OnVerifiedPaymentCanceledHook() OnVerifiedPaymentCanceledHook
+}

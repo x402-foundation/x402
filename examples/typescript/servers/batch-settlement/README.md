@@ -80,7 +80,7 @@ For serverless deployments or multi-instance servers, configure the scheme with 
 ## Setup
 
 ```bash
-cp .env-local .env
+cp .env-example .env
 # fill EVM_ADDRESS, FACILITATOR_URL, optionally EVM_RECEIVER_AUTHORIZER_PRIVATE_KEY
 
 cd ../../
@@ -91,6 +91,13 @@ pnpm dev
 ```
 
 The server listens on `http://localhost:4021`. Hit it with the [client example](../../clients/batch-settlement).
+
+### Cross-SDK local testing
+
+For local interop, set `FACILITATOR_URL=http://localhost:4022` (same as
+`examples/go/servers/batch-settlement/.env.example`). Env keys match the Go
+server example; `GET /api/generate` returns the same `usage` fields as the Go
+demo for stable assertions across stacks.
 
 ## Environment
 

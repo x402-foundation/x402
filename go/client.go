@@ -28,6 +28,7 @@ type x402Client struct {
 	beforePaymentCreationHooks    []BeforePaymentCreationHook
 	afterPaymentCreationHooks     []AfterPaymentCreationHook
 	onPaymentCreationFailureHooks []OnPaymentCreationFailureHook
+	onPaymentResponseHooks        []OnPaymentResponseHook
 }
 
 // ClientOption configures the client
@@ -129,6 +130,55 @@ func (c *x402Client) OnPaymentCreationFailure(hook OnPaymentCreationFailureHook)
 	defer c.mu.Unlock()
 	c.onPaymentCreationFailureHooks = append(c.onPaymentCreationFailureHooks, hook)
 	return c
+}
+
+// OnPaymentResponse registers a hook fired by the transport after each paid
+// response. Returning Recovered=true on a corrective 402 instructs the transport
+// to retry once with a freshly built payment payload.
+func (c *x402Client) OnPaymentResponse(hook OnPaymentResponseHook) *x402Client {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.onPaymentResponseHooks = append(c.onPaymentResponseHooks, hook)
+	return c
+}
+
+// HandlePaymentResponse dispatches the OnPaymentResponse lifecycle for a paid
+// response: invokes the scheme's PaymentResponseHandler (if implemented) followed
+// by every user-registered OnPaymentResponseHook. Returns Recovered=true if any
+// hook recovered (first wins; subsequent hooks still run for instrumentation).
+func (c *x402Client) HandlePaymentResponse(
+	ctx context.Context,
+	prCtx PaymentResponseContext,
+) (PaymentResponseResult, error) {
+	c.mu.RLock()
+	schemes := findSchemesByNetwork(c.schemes, Network(prCtx.Requirements.Network))
+	var schemeImpl SchemeNetworkClient
+	if schemes != nil {
+		schemeImpl = schemes[prCtx.Requirements.Scheme]
+	}
+	userHooks := append([]OnPaymentResponseHook(nil), c.onPaymentResponseHooks...)
+	c.mu.RUnlock()
+
+	combined := PaymentResponseResult{}
+	if handler, ok := schemeImpl.(PaymentResponseHandler); ok {
+		res, err := handler.OnPaymentResponse(ctx, prCtx)
+		if err != nil {
+			return PaymentResponseResult{}, fmt.Errorf("scheme OnPaymentResponse: %w", err)
+		}
+		if res.Recovered {
+			combined.Recovered = true
+		}
+	}
+	for _, hook := range userHooks {
+		res, err := hook(ctx, prCtx)
+		if err != nil {
+			return combined, fmt.Errorf("user OnPaymentResponse hook: %w", err)
+		}
+		if res.Recovered {
+			combined.Recovered = true
+		}
+	}
+	return combined, nil
 }
 
 // SelectPaymentRequirementsV1 selects a V1 payment requirement

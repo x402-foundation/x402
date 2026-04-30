@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"math/big"
 	"strings"
 	"sync"
@@ -562,10 +563,54 @@ func (m *BatchedChannelManager) executeClaim(ctx context.Context, claims []batch
 		return nil, fmt.Errorf("claim settle failed: %s — %s", resp.ErrorReason, resp.ErrorMessage)
 	}
 
+	// Update each session's TotalClaimed so subsequent ticks don't re-submit
+	// the same claim. Mirrors TS BatchSettlementChannelManager.updateClaimedSessions.
+	// Storage write failures are logged but non-fatal — the on-chain claim already
+	// succeeded, and the next tick will retry the storage advance.
+	if err := m.updateClaimedSessions(claims); err != nil {
+		log.Printf("[batched] post-claim storage update failed (claims will be re-submitted on next tick): %v", err)
+	}
+
 	return &ClaimResult{
 		Vouchers:    len(claims),
 		Transaction: resp.Transaction,
 	}, nil
+}
+
+// updateClaimedSessions advances each session's TotalClaimed to the just-claimed
+// cumulative amount so that GetClaimableVouchers stops returning the same
+// channel until a fresh voucher pushes ChargedCumulativeAmount higher.
+func (m *BatchedChannelManager) updateClaimedSessions(claims []batched.BatchedVoucherClaim) error {
+	for _, claim := range claims {
+		// resolveChainID inside ComputeChannelId switches on a closed set of types
+		// (string, *big.Int, ints) — convert the named Network type to its
+		// underlying string so the chain id lookup hits the string branch.
+		channelId, err := batched.ComputeChannelId(claim.Voucher.Channel, string(m.network))
+		if err != nil {
+			return fmt.Errorf("compute channel id: %w", err)
+		}
+		normalizedId := batched.NormalizeChannelId(channelId)
+		claimedAmount, ok := new(big.Int).SetString(claim.TotalClaimed, 10)
+		if !ok || claimedAmount == nil {
+			continue
+		}
+		_, err = m.scheme.storage.UpdateChannel(normalizedId, func(current *ChannelSession) *ChannelSession {
+			if current == nil {
+				return current
+			}
+			curClaimed, _ := new(big.Int).SetString(current.TotalClaimed, 10)
+			if curClaimed != nil && claimedAmount.Cmp(curClaimed) <= 0 {
+				return current // already at or above this claim
+			}
+			next := *current
+			next.TotalClaimed = claimedAmount.String()
+			return &next
+		})
+		if err != nil {
+			return fmt.Errorf("update session %s: %w", normalizedId, err)
+		}
+	}
+	return nil
 }
 
 func (m *BatchedChannelManager) getToken() string {

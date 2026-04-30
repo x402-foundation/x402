@@ -166,6 +166,54 @@ func TestEnhancePaymentRequirements_ExplicitAsset(t *testing.T) {
 	}
 }
 
+// In delegated-authorizer mode (no local ReceiverAuthorizerSigner) the server
+// must surface the facilitator-advertised authorizer from supportedKind.Extra so
+// clients build channelConfig.receiverAuthorizer correctly. Without this fallback
+// the delegated mode produced channelId mismatches and on-chain deposit reverts.
+func TestEnhancePaymentRequirements_FallsBackToFacilitatorAuthorizerInDelegatedMode(t *testing.T) {
+	// No ReceiverAuthorizerSigner configured — delegated to facilitator.
+	s := NewBatchedEvmScheme("0xreceiver", nil)
+	req := types.PaymentRequirements{
+		Network: "eip155:8453",
+		Asset:   "0x1234567890abcdef1234567890abcdef12345678",
+		Amount:  "1000",
+	}
+	supported := types.SupportedKind{
+		Extra: map[string]interface{}{
+			"receiverAuthorizer": "0xCFA51eEAF6B2831d2A7e09829477E88154647cbB",
+		},
+	}
+	out, err := s.EnhancePaymentRequirements(context.Background(), req, supported, nil)
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	got, _ := out.Extra["receiverAuthorizer"].(string)
+	if got != "0xCFA51eEAF6B2831d2A7e09829477E88154647cbB" {
+		t.Fatalf("expected facilitator authorizer to be surfaced, got %q", got)
+	}
+}
+
+// Local signer must take precedence over the facilitator-advertised authorizer.
+func TestEnhancePaymentRequirements_LocalAuthorizerWinsOverFacilitator(t *testing.T) {
+	auth := &mockAuthorizerSigner{address: "0xLocalAuth"}
+	s := NewBatchedEvmScheme("0xreceiver", &BatchedEvmSchemeConfig{ReceiverAuthorizerSigner: auth})
+	req := types.PaymentRequirements{
+		Network: "eip155:8453",
+		Asset:   "0x1234567890abcdef1234567890abcdef12345678",
+		Amount:  "1000",
+	}
+	supported := types.SupportedKind{
+		Extra: map[string]interface{}{"receiverAuthorizer": "0xFacilitator"},
+	}
+	out, err := s.EnhancePaymentRequirements(context.Background(), req, supported, nil)
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	if got := out.Extra["receiverAuthorizer"]; got != "0xLocalAuth" {
+		t.Fatalf("local signer should win, got %v", got)
+	}
+}
+
 func TestEnhancePaymentRequirements_DecimalAmountNormalized(t *testing.T) {
 	s := NewBatchedEvmScheme("0xreceiver", nil)
 	req := types.PaymentRequirements{

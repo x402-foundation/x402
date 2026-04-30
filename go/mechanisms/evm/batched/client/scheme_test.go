@@ -6,6 +6,7 @@ import (
 	"math/big"
 	"testing"
 
+	x402 "github.com/x402-foundation/x402/go"
 	"github.com/x402-foundation/x402/go/mechanisms/evm"
 	"github.com/x402-foundation/x402/go/mechanisms/evm/batched"
 	"github.com/x402-foundation/x402/go/types"
@@ -477,6 +478,89 @@ func TestProcessCorrective_RecoverFromSignatureNoReadCapability(t *testing.T) {
 	)
 	if ok {
 		t.Fatal("no read capability should not recover")
+	}
+}
+
+// ---------- OnPaymentResponse (PaymentResponseHandler) ----------
+
+func TestOnPaymentResponse_SettleResponseFoldsState(t *testing.T) {
+	storage := NewInMemoryClientChannelStorage()
+	scheme := NewBatchedEvmScheme(&mockSigner{address: "0x1"}, &BatchedEvmSchemeConfig{Storage: storage})
+
+	res, err := scheme.OnPaymentResponse(context.Background(), x402.PaymentResponseContext{
+		Requirements: defaultRequirements(),
+		SettleResponse: &x402.SettleResponse{
+			Success: true,
+			Extra: map[string]interface{}{
+				"channelId":               "0xabc",
+				"chargedCumulativeAmount": "12345",
+				"balance":                 "67890",
+				"totalClaimed":            "100",
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	if res.Recovered {
+		t.Fatal("settle response should not signal Recovered")
+	}
+	got, _ := storage.Get("0xabc")
+	if got == nil || got.ChargedCumulativeAmount != "12345" || got.Balance != "67890" {
+		t.Fatalf("session not folded: %+v", got)
+	}
+}
+
+func TestOnPaymentResponse_NilExtraIsNoop(t *testing.T) {
+	scheme := NewBatchedEvmScheme(&mockSigner{address: "0x1"}, nil)
+	res, err := scheme.OnPaymentResponse(context.Background(), x402.PaymentResponseContext{
+		Requirements:   defaultRequirements(),
+		SettleResponse: &x402.SettleResponse{Success: true},
+	})
+	if err != nil || res.Recovered {
+		t.Fatalf("expected no-op, got recovered=%v err=%v", res.Recovered, err)
+	}
+}
+
+func TestOnPaymentResponse_CorrectiveMismatchSignalsRecovered(t *testing.T) {
+	signer := &readSigner{
+		mockSigner: &mockSigner{address: "0x1"},
+		readResult: []interface{}{big.NewInt(900), big.NewInt(50)},
+	}
+	storage := NewInMemoryClientChannelStorage()
+	scheme := NewBatchedEvmScheme(signer, &BatchedEvmSchemeConfig{Storage: storage})
+
+	res, err := scheme.OnPaymentResponse(context.Background(), x402.PaymentResponseContext{
+		Requirements: defaultRequirements(),
+		PaymentRequired: &types.PaymentRequired{
+			X402Version: 2,
+			Error:       batched.ErrCumulativeAmountMismatch,
+			Accepts:     []types.PaymentRequirements{defaultRequirements()},
+		},
+	})
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	if !res.Recovered {
+		t.Fatal("on-chain recovery should set Recovered=true")
+	}
+}
+
+func TestOnPaymentResponse_CorrectiveUnknownErrorDoesNotRecover(t *testing.T) {
+	scheme := NewBatchedEvmScheme(&mockSigner{address: "0x1"}, nil)
+	res, err := scheme.OnPaymentResponse(context.Background(), x402.PaymentResponseContext{
+		Requirements: defaultRequirements(),
+		PaymentRequired: &types.PaymentRequired{
+			X402Version: 2,
+			Error:       "some_other_error",
+			Accepts:     []types.PaymentRequirements{defaultRequirements()},
+		},
+	})
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	if res.Recovered {
+		t.Fatal("unrelated error should not signal Recovered")
 	}
 }
 

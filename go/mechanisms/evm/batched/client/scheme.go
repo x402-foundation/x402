@@ -3,6 +3,7 @@ package client
 import (
 	"context"
 	"fmt"
+	"log"
 	"math/big"
 
 	"github.com/ethereum/go-ethereum/common"
@@ -99,7 +100,11 @@ func (c *BatchedEvmScheme) Scheme() string {
 }
 
 // CreatePaymentPayload creates a batched payment payload.
-// Checks for existing session to determine deposit vs. voucher.
+//
+// Mirrors the TS scheme's flow: load local session, fall back to on-chain
+// recovery when storage is empty (so a cold client picks up the channel's
+// existing chargedCumulativeAmount/balance), then choose deposit vs voucher
+// from the resulting context.
 func (c *BatchedEvmScheme) CreatePaymentPayload(
 	ctx context.Context,
 	requirements types.PaymentRequirements,
@@ -112,10 +117,26 @@ func (c *BatchedEvmScheme) CreatePaymentPayload(
 	}
 	channelId = batched.NormalizeChannelId(channelId)
 
-	// Check for existing session
 	session, err := c.storage.Get(channelId)
 	if err != nil {
 		return types.PaymentPayload{}, fmt.Errorf("failed to get session: %w", err)
+	}
+
+	// Cold-start recovery: if storage has nothing, try to rebuild from the
+	// on-chain channel record. Best-effort — any error means we proceed as a
+	// truly fresh deposit. We log the failure so misconfigured signers (e.g.
+	// no RPC wired) surface immediately instead of silently signing vouchers
+	// the facilitator will reject as cumulative_below_claimed.
+	if session == nil {
+		if _, ok := c.signer.(evm.ClientEvmSignerWithReadContract); ok {
+			recovered, recErr := c.RecoverSession(ctx, requirements)
+			if recErr != nil {
+				log.Printf("[x402 batch-settlement] on-chain channel recovery failed: %v "+
+					"(proceeding as fresh deposit; this will fail if the channel already has on-chain totalClaimed > 0)", recErr)
+			} else {
+				session = recovered
+			}
+		}
 	}
 
 	requiredAmount, ok := new(big.Int).SetString(requirements.Amount, 10)
@@ -123,39 +144,28 @@ func (c *BatchedEvmScheme) CreatePaymentPayload(
 		return types.PaymentPayload{}, fmt.Errorf("invalid amount: %s", requirements.Amount)
 	}
 
+	balance := big.NewInt(0)
+	baseCumulative := big.NewInt(0)
 	if session != nil {
-		// Check if we have enough balance for another request
-		balance, _ := new(big.Int).SetString(session.Balance, 10)
-		charged, _ := new(big.Int).SetString(session.ChargedCumulativeAmount, 10)
-		if balance == nil {
-			balance = big.NewInt(0)
+		if v, ok := new(big.Int).SetString(session.Balance, 10); ok && v != nil {
+			balance = v
 		}
-		if charged == nil {
-			charged = big.NewInt(0)
+		if v, ok := new(big.Int).SetString(session.ChargedCumulativeAmount, 10); ok && v != nil {
+			baseCumulative = v
 		}
-
-		newCumulative := new(big.Int).Add(charged, requiredAmount)
-
-		if newCumulative.Cmp(balance) <= 0 {
-			// Enough balance - create voucher-only payload
-			return c.createVoucherPayload(ctx, channelId, channelConfig, newCumulative.String(), requirements)
-		}
-
-		// Insufficient balance - need deposit if autoTopUp is enabled
-		if c.autoTopUp {
-			depositAmount := c.calculateDepositAmount(requiredAmount)
-			return c.createDepositPayload(ctx, channelConfig, depositAmount.String(), newCumulative.String(), requirements)
-		}
-
-		// No autoTopUp - still create voucher, server will handle
-		return c.createVoucherPayload(ctx, channelId, channelConfig, newCumulative.String(), requirements)
 	}
 
-	// No session - first request, need deposit
-	depositAmount := c.calculateDepositAmount(requiredAmount)
-	maxClaimable := requiredAmount.String()
+	newCumulative := new(big.Int).Add(baseCumulative, requiredAmount)
 
-	return c.createDepositPayload(ctx, channelConfig, depositAmount.String(), maxClaimable, requirements)
+	needsInitialDeposit := balance.Sign() == 0
+	needsTopUp := c.autoTopUp && !needsInitialDeposit && newCumulative.Cmp(balance) > 0
+
+	if needsInitialDeposit || needsTopUp {
+		depositAmount := c.calculateDepositAmount(requiredAmount)
+		return c.createDepositPayload(ctx, channelConfig, depositAmount.String(), newCumulative.String(), requirements)
+	}
+
+	return c.createVoucherPayload(ctx, channelId, channelConfig, newCumulative.String(), requirements)
 }
 
 // BuildChannelConfig constructs a ChannelConfig from payment requirements and scheme config.
@@ -199,6 +209,45 @@ func (c *BatchedEvmScheme) BuildChannelConfig(requirements types.PaymentRequirem
 // parsed SettleResponse is returned.
 func (c *BatchedEvmScheme) Refund(ctx context.Context, url string, options *RefundOptions) (*x402.SettleResponse, error) {
 	return RefundChannel(ctx, &refundContextAdapter{scheme: c}, url, options)
+}
+
+// OnPaymentResponse implements x402.PaymentResponseHandler so the transport can
+// auto-sync local session state after every paid response, matching the TS
+// schemeHooks.onPaymentResponse contract.
+//
+// On a successful settle (HTTP 200 + PAYMENT-RESPONSE), folds the server-tracked
+// channel snapshot back into the local session so the next request signs a
+// voucher built from the right cumulative base.
+//
+// On a corrective 402 (PAYMENT-REQUIRED carrying batch_settlement_cumulative_*
+// or signature recovery data), runs ProcessCorrectivePaymentRequired and reports
+// Recovered=true so the transport retries once with a freshly built payload.
+func (c *BatchedEvmScheme) OnPaymentResponse(
+	ctx context.Context,
+	prCtx x402.PaymentResponseContext,
+) (x402.PaymentResponseResult, error) {
+	if prCtx.SettleResponse != nil {
+		if prCtx.SettleResponse.Extra != nil {
+			if err := c.ProcessSettleResponse(prCtx.SettleResponse.Extra); err != nil {
+				return x402.PaymentResponseResult{}, fmt.Errorf("process settle response: %w", err)
+			}
+		}
+		return x402.PaymentResponseResult{}, nil
+	}
+
+	if prCtx.PaymentRequired != nil {
+		recovered, err := c.ProcessCorrectivePaymentRequired(
+			ctx,
+			prCtx.PaymentRequired.Error,
+			prCtx.PaymentRequired.Accepts,
+		)
+		if err != nil {
+			return x402.PaymentResponseResult{}, fmt.Errorf("process corrective payment required: %w", err)
+		}
+		return x402.PaymentResponseResult{Recovered: recovered}, nil
+	}
+
+	return x402.PaymentResponseResult{}, nil
 }
 
 // ProcessSettleResponse updates local session state from a settle response.

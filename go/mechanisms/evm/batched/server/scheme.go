@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"math/big"
@@ -67,23 +68,59 @@ type BatchedEvmScheme struct {
 	onchainStateTtlMs        int64
 	moneyParsers             []x402.MoneyParser
 
-	// requestContexts maps a payload pointer to its per-request state
-	// (channel id, pending reservation id, snapshot). Mirrors the TS
-	// WeakMap<PaymentPayload, BatchSettlementRequestContext> used to thread
-	// reservation id from BeforeVerify through AfterVerify and BeforeSettle,
-	// and to provide channel snapshots to EnrichPaymentRequiredResponse.
-	// Keyed by `any` so both *types.PaymentPayload and PaymentPayloadView
-	// stub implementations (used in tests) can act as identity keys.
+	// requestContexts maps a per-request key to its state (channel id, pending
+	// reservation id, snapshot). Mirrors the TS WeakMap<PaymentPayload, ...>
+	// used to thread reservation id from BeforeVerify through AfterVerify and
+	// BeforeSettle.
 	//
-	// Note on lifecycle: entries are cleared on the normal happy path via
-	// TakeRequestContext/TakeChannelSnapshot in BeforeSettleHook,
+	// Go's sync.Map can't key on types.PaymentPayload directly because the
+	// struct contains a `map[string]interface{}` (unhashable). Instead we key
+	// on a stable string identity derived from the payload — the
+	// JSON-serialized PayloadBytes when available, or a fingerprint computed
+	// from interface methods otherwise. The same payload produces the same
+	// key across verify → settle phases.
+	//
+	// Lifecycle: entries are cleared on the normal happy path via
+	// TakeRequestContext / TakeChannelSnapshot in BeforeSettleHook,
 	// EnrichPaymentRequiredResponse, and ClearPendingRequest (failure paths).
-	// Unlike a JS WeakMap, Go has no GC notification, so a payload that is
-	// verified successfully but never reaches Settle (and never triggers the
-	// cancellation hook) leaves an entry behind. In practice the resource
-	// server invokes one of those terminal hooks for every verified payment,
-	// but a buggy host that drops payloads silently could grow this map.
-	requestContexts sync.Map
+	// Unlike a JS WeakMap, Go has no GC notification, so a payload verified
+	// successfully but never reaching Settle (and never firing the cancellation
+	// hook) would leak an entry. Resource server lifecycles always fire one of
+	// those terminal hooks today.
+	requestContextsMu sync.Mutex
+	requestContexts   map[string]*BatchedRequestContext
+}
+
+// requestContextKey returns a stable identity for the given payload, used as
+// the map key for per-request state. Prefers an explicit fingerprint string
+// when the caller wraps the payload in a (key, view) pair (test usage), then
+// the payload's JSON-marshal output, and finally interface fields.
+func requestContextKey(payload any) string {
+	if payload == nil {
+		return ""
+	}
+	if k, ok := payload.(interface{ RequestKey() string }); ok {
+		if rk := k.RequestKey(); rk != "" {
+			return rk
+		}
+	}
+	if v, ok := payload.(types.PaymentPayload); ok {
+		if data, err := json.Marshal(v); err == nil {
+			return string(data)
+		}
+	}
+	if v, ok := payload.(*types.PaymentPayload); ok && v != nil {
+		if data, err := json.Marshal(*v); err == nil {
+			return string(data)
+		}
+	}
+	if view, ok := payload.(x402.PaymentPayloadView); ok {
+		// Fallback for arbitrary view implementations (e.g. test stubs that
+		// embed a non-marshalable payload). Use pointer identity if available.
+		return fmt.Sprintf("%p|%d|%s|%s",
+			view, view.GetVersion(), view.GetScheme(), view.GetNetwork())
+	}
+	return fmt.Sprintf("%p", payload)
 }
 
 // NewBatchedEvmScheme creates a new batched server scheme.
@@ -117,6 +154,7 @@ func NewBatchedEvmScheme(receiverAddress string, config *BatchedEvmSchemeConfig)
 		withdrawDelay:            withdrawDelay,
 		onchainStateTtlMs:        onchainStateTtlMs,
 		moneyParsers:             []x402.MoneyParser{},
+		requestContexts:          make(map[string]*BatchedRequestContext),
 	}
 }
 
@@ -148,12 +186,14 @@ func defaultOnchainStateTtlMs(withdrawDelaySeconds int) int64 {
 // MergeRequestContext merges fields into the per-payload request context,
 // creating one if none exists. Mirrors TS `mergeRequestContext`.
 func (s *BatchedEvmScheme) MergeRequestContext(payload any, partial BatchedRequestContext) {
-	if payload == nil {
+	key := requestContextKey(payload)
+	if key == "" {
 		return
 	}
-	prev, _ := s.requestContexts.Load(payload)
+	s.requestContextsMu.Lock()
+	defer s.requestContextsMu.Unlock()
 	merged := BatchedRequestContext{}
-	if cur, ok := prev.(*BatchedRequestContext); ok && cur != nil {
+	if cur := s.requestContexts[key]; cur != nil {
 		merged = *cur
 	}
 	if partial.ChannelId != "" {
@@ -168,32 +208,30 @@ func (s *BatchedEvmScheme) MergeRequestContext(payload any, partial BatchedReque
 	if partial.LocalVerify {
 		merged.LocalVerify = true
 	}
-	s.requestContexts.Store(payload, &merged)
+	s.requestContexts[key] = &merged
 }
 
 // ReadRequestContext returns the per-payload request context without clearing it.
 func (s *BatchedEvmScheme) ReadRequestContext(payload any) *BatchedRequestContext {
-	if payload == nil {
+	key := requestContextKey(payload)
+	if key == "" {
 		return nil
 	}
-	v, ok := s.requestContexts.Load(payload)
-	if !ok {
-		return nil
-	}
-	rc, _ := v.(*BatchedRequestContext)
-	return rc
+	s.requestContextsMu.Lock()
+	defer s.requestContextsMu.Unlock()
+	return s.requestContexts[key]
 }
 
 // TakeRequestContext reads and clears the per-payload request context.
 func (s *BatchedEvmScheme) TakeRequestContext(payload any) *BatchedRequestContext {
-	if payload == nil {
+	key := requestContextKey(payload)
+	if key == "" {
 		return nil
 	}
-	v, ok := s.requestContexts.LoadAndDelete(payload)
-	if !ok {
-		return nil
-	}
-	rc, _ := v.(*BatchedRequestContext)
+	s.requestContextsMu.Lock()
+	defer s.requestContextsMu.Unlock()
+	rc := s.requestContexts[key]
+	delete(s.requestContexts, key)
 	return rc
 }
 
@@ -459,9 +497,22 @@ func (s *BatchedEvmScheme) EnhancePaymentRequirements(
 		}
 	}
 
-	// Add batched-specific fields
+	// Add batched-specific fields. Resolution order (mirrors TS scheme):
+	//   1. Pre-existing requirements.Extra["receiverAuthorizer"] (caller override).
+	//   2. Locally-configured ReceiverAuthorizerSigner address.
+	//   3. Facilitator-advertised authorizer from supportedKind.Extra (delegated mode).
+	//
+	// Without step 3 the delegated-authorizer flow produced an empty `receiverAuthorizer`
+	// in the requirements. Clients then fell back to the zero address when building
+	// `channelConfig`, deriving the wrong channelId and causing the on-chain deposit
+	// transaction to revert at the contract boundary.
 	if _, ok := requirements.Extra["receiverAuthorizer"]; !ok {
 		receiverAuth := s.GetReceiverAuthorizerAddress()
+		if receiverAuth == "" && supportedKind.Extra != nil {
+			if facilitatorAuth, ok := supportedKind.Extra["receiverAuthorizer"].(string); ok {
+				receiverAuth = facilitatorAuth
+			}
+		}
 		if receiverAuth != "" {
 			requirements.Extra["receiverAuthorizer"] = receiverAuth
 		}

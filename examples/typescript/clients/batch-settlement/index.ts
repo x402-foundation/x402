@@ -11,14 +11,18 @@ import { privateKeyToAccount } from "viem/accounts";
 
 config();
 
-const evmPrivateKey = process.env.EVM_PRIVATE_KEY as `0x${string}`;
-const evmVoucherSignerPrivateKey = process.env.EVM_VOUCHER_SIGNER_PRIVATE_KEY as
-  | `0x${string}`
-  | undefined;
+const evmPrivateKeyRaw = process.env.EVM_PRIVATE_KEY?.trim();
+if (!evmPrivateKeyRaw) {
+  console.error("EVM_PRIVATE_KEY environment variable is required");
+  process.exit(1);
+}
+const evmPrivateKey = evmPrivateKeyRaw as `0x${string}`;
+// Blank `KEY=` in .env is "" not undefined — treat as unset (same as optional Go env).
+const evmVoucherSignerPrivateKey = process.env.EVM_VOUCHER_SIGNER_PRIVATE_KEY?.trim() || undefined;
 const baseURL = process.env.RESOURCE_SERVER_URL || "http://localhost:4021";
 const endpointPath = process.env.ENDPOINT_PATH || "/weather";
 const url = `${baseURL}${endpointPath}`;
-const storageDir = process.env.STORAGE_DIR ?? process.env.STORAGE_DIR_DIR;
+const storageDir = process.env.STORAGE_DIR;
 const channelSalt = (process.env.CHANNEL_SALT ??
   "0x0000000000000000000000000000000000000000000000000000000000000000") as `0x${string}`;
 const numberOfRequests = Number(process.env.NUMBER_OF_REQUESTS ?? "3");
@@ -39,10 +43,9 @@ async function main(): Promise<void> {
   });
   const signer = toClientEvmSigner(account, publicClient);
 
-  const voucherSigner =
-    evmVoucherSignerPrivateKey !== undefined
-      ? toClientEvmSigner(privateKeyToAccount(evmVoucherSignerPrivateKey))
-      : undefined;
+  const voucherSigner = evmVoucherSignerPrivateKey
+    ? toClientEvmSigner(privateKeyToAccount(evmVoucherSignerPrivateKey as `0x${string}`))
+    : undefined;
 
   const batchedScheme = new BatchSettlementEvmScheme(signer, {
     depositPolicy: {

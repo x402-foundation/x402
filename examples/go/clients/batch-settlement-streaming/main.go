@@ -14,6 +14,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/ethereum/go-ethereum/ethclient"
 	"github.com/joho/godotenv"
 	x402 "github.com/x402-foundation/x402/go"
 	x402http "github.com/x402-foundation/x402/go/http"
@@ -50,10 +51,19 @@ func main() {
 		os.Exit(1)
 	}
 	baseURL := envOr("RESOURCE_SERVER_URL", "http://localhost:4021")
+	rpcURL := envOr("EVM_RPC_URL", "https://sepolia.base.org")
 	channelSalt := envOr("CHANNEL_SALT", batchedclient.DefaultSalt)
 	storageDir := os.Getenv("STORAGE_DIR")
 
-	signer, err := evmsigners.NewClientSignerFromPrivateKey(evmPrivateKey)
+	// RPC required so the signer can recover channel state when local storage is empty.
+	ethClient, err := ethclient.Dial(rpcURL)
+	if err != nil {
+		fmt.Printf("Failed to dial EVM RPC %s: %v\n", rpcURL, err)
+		os.Exit(1)
+	}
+	defer ethClient.Close()
+
+	signer, err := evmsigners.NewClientSignerFromPrivateKeyWithClient(evmPrivateKey, ethClient)
 	if err != nil {
 		fmt.Printf("Failed to create signer: %v\n", err)
 		os.Exit(1)

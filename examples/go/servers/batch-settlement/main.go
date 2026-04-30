@@ -25,6 +25,8 @@ const (
 	defaultPort = "4021"
 	network     = x402.Network("eip155:84532")
 	maxPrice    = "$0.01"
+	// maxPriceUSDMicros matches maxPrice ("$0.01") for usage.chargedPrice (parity with TS example).
+	maxPriceUSDMicros int64 = 10_000 // $0.01 in micro-dollars
 )
 
 func main() {
@@ -120,12 +122,17 @@ func main() {
 			Amount: fmt.Sprintf("%d%%", percent),
 		})
 
+		// Same amount as examples/typescript/servers/batch-settlement (integer micro-dollars).
+		chargedMicros := maxPriceUSDMicros * int64(percent) / 100
+		chargedPrice := "$" + strconv.FormatFloat(float64(chargedMicros)/1e6, 'f', -1, 64)
+
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"result": "Here is your generated text...",
 			"usage": map[string]string{
 				"maxPrice":     maxPrice,
 				"chargedRatio": fmt.Sprintf("%d%%", percent),
+				"chargedPrice": chargedPrice,
 			},
 		})
 	})
