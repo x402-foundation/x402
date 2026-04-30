@@ -1,0 +1,19 @@
+{
+  "name": "Arkhia Facilitator",
+  "description": "Providing trusted, white-label x402 Facilitator-as-a-Service (FaaS) solutions to global enterprises, financial institutions, and Web3 foundations.",
+  "logoUrl": "/logos/arkhia.png",
+  "websiteUrl": "https://arkhia.io/",
+  "category": "Facilitators",
+  "facilitator": {
+    "baseUrl": "https://starter.arkhia.io/x402",
+    "networks": ["sepolia", "eip155:11155111"],
+    "schemes": ["exact"],
+    "assets": ["ERC20"],
+    "supports": {
+      "verify": true,
+      "settle": true,
+      "supported": true,
+      "list": false
+    }
+  }
+}
