@@ -61,6 +61,8 @@ func newManager(s *BatchedEvmScheme, f *fakeFacilitator) *BatchedChannelManager 
 	return NewBatchedChannelManager(ChannelManagerConfig{
 		Scheme:      s,
 		Facilitator: f,
+		Receiver:    "0xreceiver",
+		Token:       "0xtoken",
 		Network:     x402.Network("eip155:8453"),
 	})
 }
@@ -239,7 +241,8 @@ func TestSettle_FacilitatorError(t *testing.T) {
 	}
 }
 
-func TestRefund_EmptyChannelIds(t *testing.T) {
+func TestRefund_EmptyChannelIdsRefundsAll(t *testing.T) {
+	// Per upstream parity: passing nil/empty refunds every stored channel.
 	s := NewBatchedEvmScheme("0xreceiver", nil)
 	f := &fakeFacilitator{}
 	m := newManager(s, f)
@@ -257,8 +260,8 @@ func TestRefund_SkipsMissingSession(t *testing.T) {
 	f := &fakeFacilitator{}
 	m := newManager(s, f)
 	res, _ := m.Refund(context.Background(), []string{"0xnope"})
-	if res != nil {
-		t.Fatalf("expected nil, got %+v", res)
+	if len(res) != 0 {
+		t.Fatalf("expected empty, got %+v", res)
 	}
 	if f.settleCalls != 0 {
 		t.Fatalf("settleCalls = %d", f.settleCalls)
@@ -274,8 +277,8 @@ func TestRefund_SkipsZeroRefundAmount(t *testing.T) {
 	f := &fakeFacilitator{}
 	m := newManager(s, f)
 	res, _ := m.Refund(context.Background(), []string{"0xa"})
-	if res != nil {
-		t.Fatalf("expected nil, got %+v", res)
+	if len(res) != 0 {
+		t.Fatalf("expected empty, got %+v", res)
 	}
 	if f.settleCalls != 0 {
 		t.Fatalf("settleCalls = %d", f.settleCalls)
@@ -290,8 +293,8 @@ func TestRefund_SkipsMalformedNumbers(t *testing.T) {
 	f := &fakeFacilitator{}
 	m := newManager(s, f)
 	res, _ := m.Refund(context.Background(), []string{"0xa"})
-	if res != nil {
-		t.Fatalf("expected nil, got %+v", res)
+	if len(res) != 0 {
+		t.Fatalf("expected empty, got %+v", res)
 	}
 }
 
@@ -308,11 +311,11 @@ func TestRefund_SuccessDeletesSession(t *testing.T) {
 	if err != nil {
 		t.Fatalf("err: %v", err)
 	}
-	if res == nil || len(res.Channels) != 1 || res.Channels[0] != "0xa" {
+	if len(res) != 1 || res[0].Channel != "0xa" {
 		t.Fatalf("got %+v", res)
 	}
-	if res.Transaction != "0xtx" {
-		t.Fatalf("tx = %s", res.Transaction)
+	if res[0].Transaction != "0xtx" {
+		t.Fatalf("tx = %s", res[0].Transaction)
 	}
 	if f.settlePayloads[0]["type"] != "refund" {
 		t.Fatalf("payload = %+v", f.settlePayloads[0])
@@ -336,8 +339,8 @@ func TestRefund_FacilitatorErrorIsReturned(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error from facilitator failure")
 	}
-	if res != nil {
-		t.Fatalf("expected nil result on facilitator error, got %+v", res)
+	if len(res) != 0 {
+		t.Fatalf("expected empty results on facilitator error, got %+v", res)
 	}
 	// Session must NOT be deleted on failure.
 	if got, _ := s.GetSession("0xa"); got == nil {
@@ -350,9 +353,9 @@ func TestRefund_WithAuthorizerSignerAttachesSignatures(t *testing.T) {
 	s := NewBatchedEvmScheme("0xreceiver", &BatchedEvmSchemeConfig{
 		ReceiverAuthorizerSigner: auth,
 	})
-	sess := sampleSession("0xab", "100")
+	sess := sampleSession("0xab", "500")
 	sess.Balance = "1000"
-	sess.ChargedCumulativeAmount = "100"
+	sess.ChargedCumulativeAmount = "500" // > TotalClaimed (100) → claim batch is non-empty
 	_ = s.UpdateSession("0xab", sess)
 
 	f := &fakeFacilitator{}
@@ -372,6 +375,28 @@ func TestRefund_WithAuthorizerSignerAttachesSignatures(t *testing.T) {
 	}
 }
 
+func TestRefund_SkipsChannelWithLivePendingRequest(t *testing.T) {
+	s := NewBatchedEvmScheme("0xreceiver", nil)
+	sess := sampleSession("0xa", "100")
+	sess.Balance = "1000"
+	sess.ChargedCumulativeAmount = "100"
+	sess.PendingRequest = &PendingRequest{
+		PendingId: "p1",
+		ExpiresAt: time.Now().Add(time.Minute).UnixMilli(),
+	}
+	_ = s.UpdateSession("0xa", sess)
+
+	f := &fakeFacilitator{}
+	m := newManager(s, f)
+	res, err := m.Refund(context.Background(), []string{"0xa"})
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	if len(res) != 0 {
+		t.Fatalf("expected refund to skip in-flight channel, got %+v", res)
+	}
+}
+
 func TestClaimAndSettle_PropagatesClaimError(t *testing.T) {
 	s := NewBatchedEvmScheme("0xreceiver", nil)
 	sess := sampleSession("0xa", "100")
@@ -382,7 +407,7 @@ func TestClaimAndSettle_PropagatesClaimError(t *testing.T) {
 
 	f := &fakeFacilitator{settleErr: errors.New("boom")}
 	m := newManager(s, f)
-	if _, err := m.ClaimAndSettle(context.Background(), nil); err == nil {
+	if _, _, err := m.ClaimAndSettle(context.Background(), nil); err == nil {
 		t.Fatal("expected error")
 	}
 }
@@ -397,12 +422,15 @@ func TestClaimAndSettle_SettlesAfterClaim(t *testing.T) {
 
 	f := &fakeFacilitator{}
 	m := newManager(s, f)
-	res, err := m.ClaimAndSettle(context.Background(), nil)
+	claims, settle, err := m.ClaimAndSettle(context.Background(), nil)
 	if err != nil {
 		t.Fatalf("err: %v", err)
 	}
-	if res == nil || res.Transaction != "0xtx" {
-		t.Fatalf("got %+v", res)
+	if len(claims) != 1 || claims[0].Transaction != "0xtx" {
+		t.Fatalf("claims = %+v", claims)
+	}
+	if settle == nil || settle.Transaction != "0xtx" {
+		t.Fatalf("settle = %+v", settle)
 	}
 	if f.settleCalls != 2 {
 		t.Fatalf("expected claim + settle, got %d", f.settleCalls)
@@ -415,11 +443,31 @@ func TestClaimAndSettle_SettlesAfterClaim(t *testing.T) {
 	}
 }
 
+func TestClaimAndSettle_SkipsSettleWhenNothingClaimed(t *testing.T) {
+	// No claimable vouchers → claim returns empty, settle should not run.
+	s := NewBatchedEvmScheme("0xreceiver", nil)
+	f := &fakeFacilitator{}
+	m := newManager(s, f)
+	claims, settle, err := m.ClaimAndSettle(context.Background(), nil)
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	if len(claims) != 0 {
+		t.Fatalf("expected 0 claims, got %d", len(claims))
+	}
+	if settle != nil {
+		t.Fatalf("expected nil settle, got %+v", settle)
+	}
+	if f.settleCalls != 0 {
+		t.Fatalf("expected no facilitator calls, got %d", f.settleCalls)
+	}
+}
+
 func TestStop_NotRunningIsNoop(t *testing.T) {
 	s := NewBatchedEvmScheme("0xreceiver", nil)
 	f := &fakeFacilitator{}
 	m := newManager(s, f)
-	if err := m.Stop(context.Background(), false); err != nil {
+	if err := m.Stop(context.Background(), nil); err != nil {
 		t.Fatalf("err: %v", err)
 	}
 }
@@ -429,15 +477,14 @@ func TestStartStop_Idempotent(t *testing.T) {
 	f := &fakeFacilitator{}
 	m := newManager(s, f)
 
-	// Use a long tick so the goroutine doesn't fire while we're testing.
-	m.Start(AutoSettlementConfig{TickSecs: 3600})
-	m.Start(AutoSettlementConfig{TickSecs: 3600}) // second Start is no-op
+	// Long intervals so the goroutines never fire while we're testing.
+	m.Start(AutoSettlementConfig{ClaimIntervalSecs: 3600, SettleIntervalSecs: 3600})
+	m.Start(AutoSettlementConfig{ClaimIntervalSecs: 3600}) // second Start is a no-op
 
-	if err := m.Stop(context.Background(), false); err != nil {
+	if err := m.Stop(context.Background(), nil); err != nil {
 		t.Fatalf("stop: %v", err)
 	}
-	// Second Stop is no-op.
-	if err := m.Stop(context.Background(), false); err != nil {
+	if err := m.Stop(context.Background(), nil); err != nil {
 		t.Fatalf("second stop: %v", err)
 	}
 }
@@ -452,8 +499,8 @@ func TestStop_FlushTriggersClaimAndSettle(t *testing.T) {
 
 	f := &fakeFacilitator{}
 	m := newManager(s, f)
-	m.Start(AutoSettlementConfig{TickSecs: 3600})
-	if err := m.Stop(context.Background(), true); err != nil {
+	m.Start(AutoSettlementConfig{ClaimIntervalSecs: 3600})
+	if err := m.Stop(context.Background(), &StopOptions{Flush: true}); err != nil {
 		t.Fatalf("stop: %v", err)
 	}
 	if f.settleCalls != 2 {
@@ -461,7 +508,10 @@ func TestStop_FlushTriggersClaimAndSettle(t *testing.T) {
 	}
 }
 
-func TestTick_ClaimOnInterval(t *testing.T) {
+// runClaimJob, runSettleJob, runRefundJob are private but covered through the
+// public auto-loop here. We seed lastClaimTime/pendingSettle directly via the
+// runtime helpers to avoid needing a full timer dance.
+func TestRunClaimJob_FiresOnClaim(t *testing.T) {
 	s := NewBatchedEvmScheme("0xreceiver", nil)
 	sess := sampleSession("0xa", "100")
 	sess.SignedMaxClaimable = "1000"
@@ -471,187 +521,109 @@ func TestTick_ClaimOnInterval(t *testing.T) {
 
 	f := &fakeFacilitator{}
 	m := newManager(s, f)
-
-	var claimResults []ClaimResult
-	var mu sync.Mutex
-	m.config = AutoSettlementConfig{
-		ClaimIntervalSecs: 1,
-		OnClaim: func(r ClaimResult) {
-			mu.Lock()
-			defer mu.Unlock()
-			claimResults = append(claimResults, r)
-		},
+	var claims []ClaimResult
+	m.autoSettleConfig = AutoSettlementConfig{
+		OnClaim: func(r ClaimResult) { claims = append(claims, r) },
 	}
-	m.lastClaimTime = time.Now().Add(-2 * time.Second)
-	m.tick()
-
+	m.runClaimJob(context.Background())
 	if f.settleCalls != 1 {
 		t.Fatalf("expected 1 claim, got %d", f.settleCalls)
 	}
-	mu.Lock()
-	if len(claimResults) != 1 {
-		t.Fatalf("expected 1 OnClaim callback, got %d", len(claimResults))
+	if len(claims) != 1 {
+		t.Fatalf("expected 1 OnClaim, got %d", len(claims))
 	}
-	mu.Unlock()
-	if !m.pendingSettle {
+	m.mu.Lock()
+	pendingSettle := m.pendingSettle
+	m.mu.Unlock()
+	if !pendingSettle {
 		t.Fatal("expected pendingSettle = true after claim")
 	}
 }
 
-func TestTick_SettleAfterClaimOnInterval(t *testing.T) {
+func TestRunSettleJob_NoOpUnlessPendingSettle(t *testing.T) {
 	s := NewBatchedEvmScheme("0xreceiver", nil)
 	f := &fakeFacilitator{}
 	m := newManager(s, f)
-
-	var settleResults []SettleResult
-	m.config = AutoSettlementConfig{
-		SettleIntervalSecs: 1,
-		OnSettle: func(r SettleResult) {
-			settleResults = append(settleResults, r)
-		},
+	m.autoSettleConfig = AutoSettlementConfig{}
+	// pendingSettle = false → runSettleJob is a no-op.
+	m.runSettleJob(context.Background())
+	if f.settleCalls != 0 {
+		t.Fatalf("expected no settle when nothing pending, got %d", f.settleCalls)
 	}
-	m.lastSettleTime = time.Now().Add(-2 * time.Second)
-	m.pendingSettle = true
-	m.tick()
+}
 
+func TestRunSettleJob_FiresOnSettle(t *testing.T) {
+	s := NewBatchedEvmScheme("0xreceiver", nil)
+	f := &fakeFacilitator{}
+	m := newManager(s, f)
+	var settles []SettleResult
+	m.autoSettleConfig = AutoSettlementConfig{
+		OnSettle: func(r SettleResult) { settles = append(settles, r) },
+	}
+	m.mu.Lock()
+	m.pendingSettle = true
+	m.mu.Unlock()
+	m.runSettleJob(context.Background())
 	if f.settleCalls != 1 {
 		t.Fatalf("expected 1 settle, got %d", f.settleCalls)
 	}
-	if len(settleResults) != 1 {
-		t.Fatalf("expected OnSettle callback, got %d", len(settleResults))
-	}
-	if m.pendingSettle {
-		t.Fatal("expected pendingSettle = false after settle")
+	if len(settles) != 1 {
+		t.Fatalf("expected OnSettle, got %d", len(settles))
 	}
 }
 
-func TestTick_SettleErrorTriggersOnError(t *testing.T) {
+func TestRunSettleJob_ShouldSettleFalseSkips(t *testing.T) {
 	s := NewBatchedEvmScheme("0xreceiver", nil)
-	f := &fakeFacilitator{settleErr: errors.New("boom")}
+	f := &fakeFacilitator{}
 	m := newManager(s, f)
-
-	var errs []error
-	m.config = AutoSettlementConfig{
-		SettleIntervalSecs: 1,
-		OnError:            func(e error) { errs = append(errs, e) },
+	m.autoSettleConfig = AutoSettlementConfig{
+		ShouldSettle: func(_ AutoSettlementContext) (bool, error) { return false, nil },
 	}
-	m.lastSettleTime = time.Now().Add(-2 * time.Second)
+	m.mu.Lock()
 	m.pendingSettle = true
-	m.tick()
-
-	if len(errs) != 1 {
-		t.Fatalf("expected OnError callback, got %d", len(errs))
-	}
-}
-
-func TestTick_ClaimThresholdTriggers(t *testing.T) {
-	s := NewBatchedEvmScheme("0xreceiver", nil)
-	sess := sampleSession("0xa", "100")
-	sess.SignedMaxClaimable = "1000"
-	sess.TotalClaimed = "100"
-	sess.ChargedCumulativeAmount = "1000"
-	_ = s.UpdateSession("0xa", sess)
-
-	f := &fakeFacilitator{}
-	m := newManager(s, f)
-	m.config = AutoSettlementConfig{ClaimThreshold: "500"} // 1000-100 = 900 ≥ 500
-	m.tick()
-
-	if f.settleCalls != 1 {
-		t.Fatalf("expected claim triggered by threshold, got %d", f.settleCalls)
-	}
-}
-
-func TestTick_ClaimThresholdBelowDoesNotTrigger(t *testing.T) {
-	s := NewBatchedEvmScheme("0xreceiver", nil)
-	sess := sampleSession("0xa", "100")
-	sess.SignedMaxClaimable = "1000"
-	sess.TotalClaimed = "100"
-	sess.ChargedCumulativeAmount = "1000"
-	_ = s.UpdateSession("0xa", sess)
-
-	f := &fakeFacilitator{}
-	m := newManager(s, f)
-	m.config = AutoSettlementConfig{ClaimThreshold: "10000"} // 900 < 10000
-	m.tick()
-
+	m.mu.Unlock()
+	m.runSettleJob(context.Background())
 	if f.settleCalls != 0 {
-		t.Fatalf("expected no claim, got %d", f.settleCalls)
+		t.Fatalf("expected ShouldSettle=false to skip settle, got %d", f.settleCalls)
 	}
 }
 
-func TestTick_ClaimOnWithdrawalTriggers(t *testing.T) {
-	s := NewBatchedEvmScheme("0xreceiver", nil)
-	// Session with pending withdrawal AND claimable amount.
-	sess := sampleSession("0xa", "100")
-	sess.SignedMaxClaimable = "1000"
-	sess.TotalClaimed = "100"
-	sess.ChargedCumulativeAmount = "1000"
-	sess.WithdrawRequestedAt = 12345
-	sess.ChannelConfig.Payer = "0xpayer"
-	_ = s.UpdateSession("0xa", sess)
-
-	f := &fakeFacilitator{}
-	m := newManager(s, f)
-	m.config = AutoSettlementConfig{ClaimOnWithdrawal: true}
-	m.tick()
-
-	if f.settleCalls != 1 {
-		t.Fatalf("expected claim, got %d", f.settleCalls)
-	}
-}
-
-func TestTick_RefundOnIdleTriggers(t *testing.T) {
+func TestRunRefundJob_UsesSelectRefundChannels(t *testing.T) {
 	s := NewBatchedEvmScheme("0xreceiver", nil)
 	sess := sampleSession("0xa", "100")
 	sess.Balance = "1000"
 	sess.ChargedCumulativeAmount = "100"
-	sess.LastRequestTimestamp = time.Now().Add(-1 * time.Hour).UnixMilli() // very idle
+	sess.LastRequestTimestamp = time.Now().Add(-1 * time.Hour).UnixMilli()
 	_ = s.UpdateSession("0xa", sess)
 
 	f := &fakeFacilitator{}
 	m := newManager(s, f)
-
-	var refundResults []RefundResult
-	m.config = AutoSettlementConfig{
-		RefundOnIdleSecs: 1,
-		OnRefund:         func(r RefundResult) { refundResults = append(refundResults, r) },
+	var refunds []RefundResult
+	m.autoSettleConfig = AutoSettlementConfig{
+		SelectRefundChannels: func(channels []*ChannelSession, _ AutoSettlementContext) ([]*ChannelSession, error) {
+			return channels, nil
+		},
+		OnRefund: func(r RefundResult) { refunds = append(refunds, r) },
 	}
-	m.tick()
-
-	if len(refundResults) != 1 {
-		t.Fatalf("expected refund callback, got %d", len(refundResults))
+	m.runRefundJob(context.Background())
+	if len(refunds) != 1 {
+		t.Fatalf("expected refund callback, got %d", len(refunds))
 	}
 }
 
-func TestTick_ConcurrentTicksAreSerialized(t *testing.T) {
+func TestRunRefundJob_NoOpWithoutSelectRefundChannels(t *testing.T) {
 	s := NewBatchedEvmScheme("0xreceiver", nil)
 	sess := sampleSession("0xa", "100")
-	sess.SignedMaxClaimable = "1000"
-	sess.TotalClaimed = "100"
-	sess.ChargedCumulativeAmount = "1000"
+	sess.Balance = "1000"
+	sess.ChargedCumulativeAmount = "100"
 	_ = s.UpdateSession("0xa", sess)
 
-	// Slow facilitator so tick takes time.
-	slow := &slowFacilitator{delay: 50 * time.Millisecond}
-	m := NewBatchedChannelManager(ChannelManagerConfig{
-		Scheme:      s,
-		Facilitator: slow,
-		Network:     x402.Network("eip155:8453"),
-	})
-	m.config = AutoSettlementConfig{ClaimIntervalSecs: 1}
-	m.lastClaimTime = time.Now().Add(-2 * time.Second)
-
-	var wg sync.WaitGroup
-	for range 5 {
-		wg.Add(1)
-		go func() { defer wg.Done(); m.tick() }()
-	}
-	wg.Wait()
-
-	// Only one tick should have run to completion; others bailed via CAS.
-	if got := slow.settleCalls(); got != 1 {
-		t.Fatalf("expected exactly 1 settle (CAS-serialized), got %d", got)
+	f := &fakeFacilitator{}
+	m := newManager(s, f)
+	m.autoSettleConfig = AutoSettlementConfig{}
+	m.runRefundJob(context.Background())
+	if f.settleCalls != 0 {
+		t.Fatalf("expected no facilitator calls without selector, got %d", f.settleCalls)
 	}
 }
 

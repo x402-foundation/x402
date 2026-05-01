@@ -4,6 +4,7 @@ import (
 	"context"
 	"math/big"
 	"testing"
+	"time"
 
 	x402 "github.com/x402-foundation/x402/go"
 	"github.com/x402-foundation/x402/go/mechanisms/evm/batched"
@@ -118,7 +119,7 @@ func TestBeforeVerifyHook_NonVoucherIgnored(t *testing.T) {
 
 func TestBeforeVerifyHook_RefundWithoutSessionPassesThrough(t *testing.T) {
 	// When no local session exists for a refund voucher, BeforeVerify must
-	// pass through so the facilitator can verify against on-chain state and
+	// pass through so the facilitator can verify against onchain state and
 	// AfterVerify can rebuild the session.
 	s := NewBatchedEvmScheme("0xreceiver", nil)
 	res, err := s.BeforeVerifyHook()(x402.VerifyContext{
@@ -526,9 +527,11 @@ func TestAfterSettleHook_DepositUpdatesBalance(t *testing.T) {
 		Result: &x402.SettleResponse{
 			Success: true,
 			Extra: map[string]interface{}{
-				"channelId":    id,
-				"balance":      "2000",
-				"totalClaimed": "55",
+				"channelState": map[string]interface{}{
+					"channelId":    id,
+					"balance":      "2000",
+					"totalClaimed": "55",
+				},
 			},
 		},
 	})
@@ -538,6 +541,48 @@ func TestAfterSettleHook_DepositUpdatesBalance(t *testing.T) {
 	got, _ := s.GetSession(id)
 	if got == nil || got.Balance != "2000" || got.ChargedCumulativeAmount != "55" {
 		t.Fatalf("session = %+v", got)
+	}
+}
+
+// Regression: after a successful deposit settle, the AfterSettleHook must
+// clear PendingRequest. Otherwise the next voucher hits the 5s pending-TTL
+// guard in BeforeVerifyHook and 402's with `batch_settlement_channel_busy`.
+func TestAfterSettleHook_DepositClearsPendingRequest(t *testing.T) {
+	s := NewBatchedEvmScheme("0xreceiver", nil)
+	id, _ := batched.ComputeChannelId(testConfig(), "eip155:8453")
+	sess := sampleSession(id, "0")
+	sess.PendingRequest = &PendingRequest{
+		PendingId: "p1",
+		ExpiresAt: time.Now().Add(time.Minute).UnixMilli(),
+	}
+	_ = s.UpdateSession(id, sess)
+	payload := depositPayloadFor(id, "100", "0xsig")
+	payload["responseExtra"] = map[string]interface{}{"chargedCumulativeAmount": "55"}
+	err := s.AfterSettleHook()(x402.SettleResultContext{
+		SettleContext: x402.SettleContext{
+			Payload:      &stubPayload{data: payload},
+			Requirements: batchedReqs(),
+		},
+		Result: &x402.SettleResponse{
+			Success: true,
+			Extra: map[string]interface{}{
+				"channelState": map[string]interface{}{
+					"channelId":    id,
+					"balance":      "2000",
+					"totalClaimed": "55",
+				},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	got, _ := s.GetSession(id)
+	if got == nil {
+		t.Fatal("session unexpectedly missing after deposit AfterSettle")
+	}
+	if got.PendingRequest != nil {
+		t.Fatalf("PendingRequest not cleared after deposit settle: %+v", got.PendingRequest)
 	}
 }
 
@@ -664,11 +709,11 @@ func TestMapIntField(t *testing.T) {
 	}
 }
 
-func TestBuildRefundResponseSnapshot(t *testing.T) {
+func TestBuildRefundChannelStateSnapshot(t *testing.T) {
 	sess := sampleSession("0xa", "100")
 	sess.Balance = "1000"
 	sess.RefundNonce = 3
-	out := buildRefundResponseSnapshot(sess, "0xa", big.NewInt(200))
+	out := buildRefundChannelStateSnapshot(sess, "0xa", big.NewInt(200))
 	if out.ChannelId != "0xa" || out.Balance != "800" {
 		t.Fatalf("got %+v", out)
 	}

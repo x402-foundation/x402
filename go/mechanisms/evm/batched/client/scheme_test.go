@@ -51,8 +51,8 @@ func TestNewBatchedEvmScheme_Defaults(t *testing.T) {
 	if scheme.config.Salt != DefaultSalt {
 		t.Fatalf("salt = %s", scheme.config.Salt)
 	}
-	if !scheme.autoTopUp {
-		t.Fatalf("autoTopUp default should be true")
+	if scheme.config.DepositStrategy != nil {
+		t.Fatal("DepositStrategy should be nil by default")
 	}
 	if scheme.storage == nil {
 		t.Fatal("storage default missing")
@@ -64,26 +64,17 @@ func TestNewBatchedEvmScheme_Defaults(t *testing.T) {
 
 func TestNewBatchedEvmScheme_OverridesConfig(t *testing.T) {
 	signer := &mockSigner{address: "0x1"}
-	autoTopUp := false
 	storage := NewInMemoryClientChannelStorage()
 	cfg := &BatchedEvmSchemeConfig{
-		DepositMultiplier: 5,
-		MaxDeposit:        "10000",
-		AutoTopUp:         &autoTopUp,
+		DepositMultiplier: 7,
 		Storage:           storage,
 		Salt:              "0xfeed",
 		PayerAuthorizer:   "0xPA",
 		VoucherSigner:     &mockSigner{address: "0xV"},
 	}
 	scheme := NewBatchedEvmScheme(signer, cfg)
-	if scheme.config.DepositMultiplier != 5 {
+	if scheme.config.DepositMultiplier != 7 {
 		t.Fatalf("multiplier = %d", scheme.config.DepositMultiplier)
-	}
-	if scheme.config.MaxDeposit != "10000" {
-		t.Fatalf("max deposit = %s", scheme.config.MaxDeposit)
-	}
-	if scheme.autoTopUp {
-		t.Fatal("autoTopUp should be false")
 	}
 	if scheme.storage != storage {
 		t.Fatal("storage should be the explicit one")
@@ -161,31 +152,92 @@ func TestBuildChannelConfig_ExplicitPayerAuthorizer(t *testing.T) {
 
 func TestCalculateDepositAmount_BasicMultiplier(t *testing.T) {
 	scheme := NewBatchedEvmScheme(&mockSigner{address: "0x1"}, nil)
+	// Default multiplier 5 → 5 * 100 = 500.
 	got := scheme.calculateDepositAmount(big.NewInt(100))
-	if got.Cmp(big.NewInt(1000)) != 0 {
+	if got.Cmp(big.NewInt(500)) != 0 {
 		t.Fatalf("got %s", got.String())
 	}
 }
 
-func TestCalculateDepositAmount_RespectsMax(t *testing.T) {
+func TestCalculateDepositAmount_HonorsCustomMultiplier(t *testing.T) {
 	scheme := NewBatchedEvmScheme(&mockSigner{address: "0x1"}, &BatchedEvmSchemeConfig{
 		DepositMultiplier: 100,
-		MaxDeposit:        "5000",
 	})
 	got := scheme.calculateDepositAmount(big.NewInt(100))
-	if got.Cmp(big.NewInt(5000)) != 0 {
-		t.Fatalf("got %s, expected cap at 5000", got.String())
+	if got.Cmp(big.NewInt(10_000)) != 0 {
+		t.Fatalf("got %s", got.String())
 	}
 }
 
-func TestCalculateDepositAmount_BadMaxIgnored(t *testing.T) {
+// ---------- DepositStrategy ----------
+
+func TestDepositStrategy_OverridesAmount(t *testing.T) {
+	called := false
 	scheme := NewBatchedEvmScheme(&mockSigner{address: "0x1"}, &BatchedEvmSchemeConfig{
-		MaxDeposit: "not-a-number",
+		DepositStrategy: func(_ context.Context, c DepositStrategyContext) (DepositStrategyResult, error) {
+			called = true
+			// Return a higher deposit than the default.
+			return DepositStrategyResult{Amount: "999999"}, nil
+		},
 	})
-	got := scheme.calculateDepositAmount(big.NewInt(100))
-	// Default multiplier 10 → 1000.
-	if got.Cmp(big.NewInt(1000)) != 0 {
-		t.Fatalf("got %s", got.String())
+	res, err := scheme.resolveDepositAmount(context.Background(), DepositStrategyContext{
+		MinimumDepositAmount: "100",
+		DepositAmount:        "500",
+	})
+	if err != nil || !called {
+		t.Fatalf("strategy not invoked or err: called=%v err=%v", called, err)
+	}
+	if res.amount != "999999" || res.skip {
+		t.Fatalf("got %+v", res)
+	}
+}
+
+func TestDepositStrategy_SkipsDeposit(t *testing.T) {
+	scheme := NewBatchedEvmScheme(&mockSigner{address: "0x1"}, &BatchedEvmSchemeConfig{
+		DepositStrategy: func(_ context.Context, _ DepositStrategyContext) (DepositStrategyResult, error) {
+			return DepositStrategyResult{Skip: true}, nil
+		},
+	})
+	res, err := scheme.resolveDepositAmount(context.Background(), DepositStrategyContext{
+		MinimumDepositAmount: "100",
+		DepositAmount:        "500",
+	})
+	if err != nil || !res.skip {
+		t.Fatalf("expected skip; got %+v err=%v", res, err)
+	}
+}
+
+func TestDepositStrategy_RejectsBelowMinimum(t *testing.T) {
+	scheme := NewBatchedEvmScheme(&mockSigner{address: "0x1"}, &BatchedEvmSchemeConfig{
+		DepositStrategy: func(_ context.Context, _ DepositStrategyContext) (DepositStrategyResult, error) {
+			return DepositStrategyResult{Amount: "50"}, nil
+		},
+	})
+	_, err := scheme.resolveDepositAmount(context.Background(), DepositStrategyContext{
+		MinimumDepositAmount: "100",
+		DepositAmount:        "500",
+	})
+	if err == nil {
+		t.Fatal("expected error: deposit below minimum")
+	}
+}
+
+func TestDepositStrategy_DefaultsToComputedAmountWhenStrategyReturnsEmpty(t *testing.T) {
+	scheme := NewBatchedEvmScheme(&mockSigner{address: "0x1"}, &BatchedEvmSchemeConfig{
+		DepositStrategy: func(_ context.Context, _ DepositStrategyContext) (DepositStrategyResult, error) {
+			// Empty Amount with Skip=false → SDK uses computed deposit.
+			return DepositStrategyResult{}, nil
+		},
+	})
+	res, err := scheme.resolveDepositAmount(context.Background(), DepositStrategyContext{
+		MinimumDepositAmount: "100",
+		DepositAmount:        "500",
+	})
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	if res.amount != "500" {
+		t.Fatalf("expected fallback to 500, got %q", res.amount)
 	}
 }
 
@@ -226,10 +278,12 @@ func TestProcessSettleResponse_StoresSession(t *testing.T) {
 	scheme := NewBatchedEvmScheme(&mockSigner{address: "0x1"}, &BatchedEvmSchemeConfig{Storage: storage})
 
 	err := scheme.ProcessSettleResponse(map[string]interface{}{
-		"channelId":               "0xABC",
-		"chargedCumulativeAmount": "10",
-		"balance":                 "1000",
-		"totalClaimed":            "5",
+		"channelState": map[string]interface{}{
+			"channelId":               "0xABC",
+			"chargedCumulativeAmount": "10",
+			"balance":                 "1000",
+			"totalClaimed":            "5",
+		},
 	})
 	if err != nil {
 		t.Fatalf("err: %v", err)
@@ -249,8 +303,10 @@ func TestProcessSettleResponse_DoesNotDeleteOnZeroBalance(t *testing.T) {
 
 	scheme := NewBatchedEvmScheme(&mockSigner{address: "0x1"}, &BatchedEvmSchemeConfig{Storage: storage})
 	err := scheme.ProcessSettleResponse(map[string]interface{}{
-		"channelId": "0xabc",
-		"balance":   "0",
+		"channelState": map[string]interface{}{
+			"channelId": "0xabc",
+			"balance":   "0",
+		},
 	})
 	if err != nil {
 		t.Fatalf("err: %v", err)
@@ -297,7 +353,7 @@ func TestCreatePaymentPayload_VoucherWhenSessionHasFunds(t *testing.T) {
 	}
 }
 
-func TestCreatePaymentPayload_AutoTopUpDepositOnInsufficient(t *testing.T) {
+func TestCreatePaymentPayload_TopsUpOnInsufficient(t *testing.T) {
 	storage := NewInMemoryClientChannelStorage()
 	signer := &mockSigner{address: "0x1111111111111111111111111111111111111111", sig: []byte{0xac}}
 	scheme := NewBatchedEvmScheme(signer, &BatchedEvmSchemeConfig{Storage: storage})
@@ -312,15 +368,22 @@ func TestCreatePaymentPayload_AutoTopUpDepositOnInsufficient(t *testing.T) {
 		t.Fatalf("err: %v", err)
 	}
 	if payload.Payload["type"] != "deposit" {
-		t.Fatalf("expected deposit (auto-topup), got %v", payload.Payload["type"])
+		t.Fatalf("expected deposit (top-up), got %v", payload.Payload["type"])
 	}
 }
 
-func TestCreatePaymentPayload_NoAutoTopUpYieldsVoucher(t *testing.T) {
+// DepositStrategy returning Skip=true causes an insufficient-balance request to
+// fall through as a voucher (the request will then fail at verify; the caller
+// is opting out of auto top-up). Mirrors TS depositStrategy returning false.
+func TestCreatePaymentPayload_DepositStrategySkipYieldsVoucher(t *testing.T) {
 	storage := NewInMemoryClientChannelStorage()
 	signer := &mockSigner{address: "0x1111111111111111111111111111111111111111", sig: []byte{0xad}}
-	off := false
-	scheme := NewBatchedEvmScheme(signer, &BatchedEvmSchemeConfig{Storage: storage, AutoTopUp: &off})
+	scheme := NewBatchedEvmScheme(signer, &BatchedEvmSchemeConfig{
+		Storage: storage,
+		DepositStrategy: func(_ context.Context, _ DepositStrategyContext) (DepositStrategyResult, error) {
+			return DepositStrategyResult{Skip: true}, nil
+		},
+	})
 
 	channelConfig := scheme.BuildChannelConfig(defaultRequirements())
 	channelId, _ := batched.ComputeChannelId(channelConfig, testNetwork)
@@ -332,7 +395,7 @@ func TestCreatePaymentPayload_NoAutoTopUpYieldsVoucher(t *testing.T) {
 		t.Fatalf("err: %v", err)
 	}
 	if payload.Payload["type"] != "voucher" {
-		t.Fatalf("expected voucher (no autoTopUp), got %v", payload.Payload["type"])
+		t.Fatalf("expected voucher (deposit skipped), got %v", payload.Payload["type"])
 	}
 }
 
@@ -382,6 +445,51 @@ func TestRecoverSession_ReadError(t *testing.T) {
 
 // ---------- ProcessCorrectivePaymentRequired ----------
 
+// readChannelStateFromExtra accepts the canonical TS shape
+// (extra.channelState + extra.voucherState, camelCase split) emitted by both
+// the Go and TS servers.
+func TestReadChannelStateFromExtra_CanonicalSplitShape(t *testing.T) {
+	extra := map[string]interface{}{
+		"channelState": map[string]interface{}{
+			"channelId":               "0xabc",
+			"chargedCumulativeAmount": "200",
+			"balance":                 "1000",
+			"totalClaimed":            "100",
+		},
+		"voucherState": map[string]interface{}{
+			"signedMaxClaimable": "300",
+			"signature":          "0xsig",
+		},
+	}
+	charged, signed, sig, ok := readChannelStateFromExtra(extra)
+	if !ok || charged != "200" || signed != "300" || sig != "0xsig" {
+		t.Fatalf("canonical shape: ok=%v charged=%q signed=%q sig=%q", ok, charged, signed, sig)
+	}
+}
+
+func TestReadChannelStateFromExtra_MissingFieldsReturnsFalse(t *testing.T) {
+	if _, _, _, ok := readChannelStateFromExtra(nil); ok {
+		t.Fatal("nil extra should be rejected")
+	}
+	// channelState present but voucherState missing — not enough for signature recovery.
+	extra := map[string]interface{}{
+		"channelState": map[string]interface{}{"chargedCumulativeAmount": "200"},
+	}
+	if _, _, _, ok := readChannelStateFromExtra(extra); ok {
+		t.Fatal("missing voucherState should be rejected")
+	}
+	// voucherState present but channelState missing.
+	extra = map[string]interface{}{
+		"voucherState": map[string]interface{}{
+			"signedMaxClaimable": "300",
+			"signature":          "0xsig",
+		},
+	}
+	if _, _, _, ok := readChannelStateFromExtra(extra); ok {
+		t.Fatal("missing channelState should be rejected")
+	}
+}
+
 func TestProcessCorrective_UnrelatedReason(t *testing.T) {
 	scheme := NewBatchedEvmScheme(&mockSigner{address: "0x1"}, nil)
 	ok, err := scheme.ProcessCorrectivePaymentRequired(context.Background(), "other_reason", nil)
@@ -421,7 +529,7 @@ func TestProcessCorrective_FallsBackToOnChain(t *testing.T) {
 		t.Fatalf("err: %v", err)
 	}
 	if !ok {
-		t.Fatal("expected on-chain recovery to succeed")
+		t.Fatal("expected onchain recovery to succeed")
 	}
 }
 
@@ -432,9 +540,14 @@ func TestProcessCorrective_RecoverFromSignatureBadCharged(t *testing.T) {
 	}
 	scheme := NewBatchedEvmScheme(signer, nil)
 	req := defaultRequirements()
-	req.Extra["chargedCumulativeAmount"] = "not-a-number"
-	req.Extra["signedMaxClaimable"] = "100"
-	req.Extra["signature"] = "0xff"
+	// Canonical TS shape with bad charged amount.
+	req.Extra["channelState"] = map[string]interface{}{
+		"chargedCumulativeAmount": "not-a-number",
+	}
+	req.Extra["voucherState"] = map[string]interface{}{
+		"signedMaxClaimable": "100",
+		"signature":          "0xff",
+	}
 	ok, err := scheme.ProcessCorrectivePaymentRequired(
 		context.Background(),
 		batched.ErrCumulativeAmountMismatch,
@@ -452,9 +565,14 @@ func TestProcessCorrective_RecoverFromSignatureChargedBeyondSigned(t *testing.T)
 	}
 	scheme := NewBatchedEvmScheme(signer, nil)
 	req := defaultRequirements()
-	req.Extra["chargedCumulativeAmount"] = "200"
-	req.Extra["signedMaxClaimable"] = "100"
-	req.Extra["signature"] = "0xff"
+	// Canonical TS shape with charged > signed.
+	req.Extra["channelState"] = map[string]interface{}{
+		"chargedCumulativeAmount": "200",
+	}
+	req.Extra["voucherState"] = map[string]interface{}{
+		"signedMaxClaimable": "100",
+		"signature":          "0xff",
+	}
 	ok, _ := scheme.ProcessCorrectivePaymentRequired(
 		context.Background(),
 		batched.ErrCumulativeAmountMismatch,
@@ -468,9 +586,11 @@ func TestProcessCorrective_RecoverFromSignatureChargedBeyondSigned(t *testing.T)
 func TestProcessCorrective_RecoverFromSignatureNoReadCapability(t *testing.T) {
 	scheme := NewBatchedEvmScheme(&mockSigner{address: "0x1"}, nil)
 	req := defaultRequirements()
-	req.Extra["chargedCumulativeAmount"] = "10"
-	req.Extra["signedMaxClaimable"] = "100"
-	req.Extra["signature"] = "0xff"
+	req.Extra["channelState"] = map[string]interface{}{"chargedCumulativeAmount": "10"}
+	req.Extra["voucherState"] = map[string]interface{}{
+		"signedMaxClaimable": "100",
+		"signature":          "0xff",
+	}
 	ok, _ := scheme.ProcessCorrectivePaymentRequired(
 		context.Background(),
 		batched.ErrCumulativeAmountMismatch,
@@ -492,10 +612,12 @@ func TestOnPaymentResponse_SettleResponseFoldsState(t *testing.T) {
 		SettleResponse: &x402.SettleResponse{
 			Success: true,
 			Extra: map[string]interface{}{
-				"channelId":               "0xabc",
-				"chargedCumulativeAmount": "12345",
-				"balance":                 "67890",
-				"totalClaimed":            "100",
+				"channelState": map[string]interface{}{
+					"channelId":               "0xabc",
+					"chargedCumulativeAmount": "12345",
+					"balance":                 "67890",
+					"totalClaimed":            "100",
+				},
 			},
 		},
 	})
@@ -542,7 +664,7 @@ func TestOnPaymentResponse_CorrectiveMismatchSignalsRecovered(t *testing.T) {
 		t.Fatalf("err: %v", err)
 	}
 	if !res.Recovered {
-		t.Fatal("on-chain recovery should set Recovered=true")
+		t.Fatal("onchain recovery should set Recovered=true")
 	}
 }
 

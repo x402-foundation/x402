@@ -1,48 +1,48 @@
 # Batch-Settlement Server (Go)
 
-Demo resource server using the batch-settlement scheme. A client opens a payment
-channel with a single deposit; subsequent paid requests update an off-chain
-voucher. The `ChannelManager` periodically claims and settles on-chain.
+Go port of [`examples/typescript/servers/batch-settlement`](../../../typescript/servers/batch-settlement). Demo resource server using the batch-settlement scheme: a client opens a payment channel with a single deposit; subsequent paid requests update an off-chain voucher. The `ChannelManager` periodically claims and settles onchain.
 
-Demonstrates dynamic pricing: each request charges a random fraction of
-`maxPrice` via `Settlement-Overrides`.
+The route demonstrates **dynamic pricing**: the client authorizes up to `$0.01` per request, and the handler bills a random fraction of that via `Settlement-Overrides`.
 
 ## Run
 
 ```bash
-cp .env.example .env
+cp .env-example .env
 # fill in EVM_ADDRESS (the receiver) and FACILITATOR_URL
 
 go run .
 ```
 
-Pair with `examples/go/clients/batch-settlement` and
-`examples/go/facilitator/batch-settlement`.
+The server listens on `http://localhost:4021` and exposes `GET /weather`. Pair with `examples/go/clients/batch-settlement` and `examples/go/facilitator/batch-settlement`.
 
 ### Cross-SDK local testing
 
-Use `FACILITATOR_URL=http://localhost:4022` with the local facilitator. The same
-env keys and defaults match `examples/typescript/servers/batch-settlement/.env-example`
-so you can run the Express server instead of this binary without changing
-variables. Response JSON from `GET /api/generate` includes `usage.maxPrice`,
-`usage.chargedRatio`, and `usage.chargedPrice` in both implementations for
-assertion parity.
+The Go and TS servers share the same `.env-example` keys, route (`GET /weather`), response shape (`{report: {weather, temperature}}`), and channel-manager cadences, so you can swap one for the other without changing client config:
+
+```bash
+# Go server
+EVM_ADDRESS=0x... FACILITATOR_URL=http://localhost:4022 go run .
+
+# TS server (same .env)
+cd examples/typescript/servers/batch-settlement && pnpm dev
+```
 
 ## Environment
 
-| Variable                                  | Description |
-|-------------------------------------------|-------------|
-| `EVM_ADDRESS` (required)                  | Receiver address (settlement payout target) |
-| `FACILITATOR_URL` (required)              | Facilitator base URL (e.g. `http://localhost:4022`) |
-| `EVM_RECEIVER_AUTHORIZER_PRIVATE_KEY`     | Optional self-managed authorizer key. **Recommended** — channels survive facilitator changes when you control this key. Omit to delegate to the facilitator's advertised authorizer (existing channels must be drained before switching facilitators). |
-| `STORAGE_DIR`                             | If set, persists session state under `${STORAGE_DIR}/server/` |
-| `DEFERRED_WITHDRAW_DELAY_SECONDS`         | Channel withdraw delay (default 900 = 15 min) |
+| Variable                              | Required | Description |
+|---------------------------------------|----------|-------------|
+| `EVM_ADDRESS`                         | yes      | `payTo` address (channel receiver) |
+| `FACILITATOR_URL`                     | yes      | Batch-settlement facilitator endpoint (e.g. `http://localhost:4022`) |
+| `EVM_RECEIVER_AUTHORIZER_PRIVATE_KEY` | no       | Self-managed authorizer key. **Recommended** — channels survive facilitator changes when you control this key. Omit to delegate to the facilitator's advertised authorizer (existing channels must be drained before switching facilitators). |
+| `STORAGE_DIR`                         | no       | If set, persists channel sessions under `${STORAGE_DIR}/server/` |
+| `DEFERRED_WITHDRAW_DELAY_SECONDS`     | no       | Channel `withdrawDelay`; defaults to `86400` (1 day) |
 
-## Auto-settlement triggers
+## Auto-settlement
 
-The example wires up a `ChannelManager` with all three triggers active:
+The example wires up a `ChannelManager` with the same triggers as the TS demo:
 
-- **Claim** every 10s (or on detected withdrawal).
-- **Settle** every 20s (sweeps claimed funds to `payTo`).
-- **Refund** channels idle for 30s (cooperative — claims first, then refunds the
-  unclaimed remainder to the payer).
+- **Claim** every 60 s.
+- **Settle** every 120 s (sweeps claimed funds to `payTo`).
+- **Refund** channels idle for 180 s (cooperative — claims first, then refunds the unclaimed remainder to the payer).
+
+For production, choose a `withdrawDelay` greater than your claim cadence plus an operational safety margin.

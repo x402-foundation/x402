@@ -169,7 +169,7 @@ func TestEnhancePaymentRequirements_ExplicitAsset(t *testing.T) {
 // In delegated-authorizer mode (no local ReceiverAuthorizerSigner) the server
 // must surface the facilitator-advertised authorizer from supportedKind.Extra so
 // clients build channelConfig.receiverAuthorizer correctly. Without this fallback
-// the delegated mode produced channelId mismatches and on-chain deposit reverts.
+// the delegated mode produced channelId mismatches and onchain deposit reverts.
 func TestEnhancePaymentRequirements_FallsBackToFacilitatorAuthorizerInDelegatedMode(t *testing.T) {
 	// No ReceiverAuthorizerSigner configured — delegated to facilitator.
 	s := NewBatchedEvmScheme("0xreceiver", nil)
@@ -211,6 +211,26 @@ func TestEnhancePaymentRequirements_LocalAuthorizerWinsOverFacilitator(t *testin
 	}
 	if got := out.Extra["receiverAuthorizer"]; got != "0xLocalAuth" {
 		t.Fatalf("local signer should win, got %v", got)
+	}
+}
+
+// Routes can set `extra.assetTransferMethod = "permit2"` on the accept config to
+// switch the deposit transport. EnhancePaymentRequirements must pass it
+// through unchanged so the client picks the right deposit signer.
+func TestEnhancePaymentRequirements_PassesThroughAssetTransferMethod(t *testing.T) {
+	s := NewBatchedEvmScheme("0xreceiver", nil)
+	req := types.PaymentRequirements{
+		Network: "eip155:8453",
+		Asset:   "0x1234567890abcdef1234567890abcdef12345678",
+		Amount:  "1000",
+		Extra:   map[string]interface{}{"assetTransferMethod": "permit2"},
+	}
+	out, err := s.EnhancePaymentRequirements(context.Background(), req, types.SupportedKind{}, nil)
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	if got, _ := out.Extra["assetTransferMethod"].(string); got != "permit2" {
+		t.Fatalf("expected assetTransferMethod=permit2 to pass through, got %q", got)
 	}
 }
 
@@ -501,21 +521,28 @@ func TestEnrichPaymentRequiredResponse_FromSnapshot(t *testing.T) {
 	reqs := enrich(s, pp, batched.ErrCumulativeAmountMismatch,
 		[]types.PaymentRequirements{{Scheme: batched.SchemeBatched, Network: "eip155:8453"}})
 
-	state, ok := reqs[0].Extra["ChannelState"].(map[string]interface{})
+	channelState, ok := reqs[0].Extra["channelState"].(map[string]interface{})
 	if !ok {
-		t.Fatalf("expected ChannelState map, got %+v", reqs[0].Extra)
+		t.Fatalf("expected channelState map, got %+v", reqs[0].Extra)
 	}
-	if state["channelId"] != "0xabcd" {
-		t.Fatalf("channelId = %v", state["channelId"])
+	if channelState["channelId"] != "0xabcd" {
+		t.Fatalf("channelId = %v", channelState["channelId"])
 	}
-	if state["chargedCumulativeAmount"] != "42" {
-		t.Fatalf("chargedCumulativeAmount = %v", state["chargedCumulativeAmount"])
+	if channelState["chargedCumulativeAmount"] != "42" {
+		t.Fatalf("chargedCumulativeAmount = %v", channelState["chargedCumulativeAmount"])
 	}
-	if state["signedMaxClaimable"] != "1000" {
-		t.Fatalf("signedMaxClaimable = %v", state["signedMaxClaimable"])
+	if channelState["balance"] == "" {
+		t.Fatalf("expected balance present, got %+v", channelState)
 	}
-	if state["signature"] != "0xsig" {
-		t.Fatalf("signature = %v", state["signature"])
+	voucherState, ok := reqs[0].Extra["voucherState"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("expected voucherState map, got %+v", reqs[0].Extra)
+	}
+	if voucherState["signedMaxClaimable"] != "1000" {
+		t.Fatalf("signedMaxClaimable = %v", voucherState["signedMaxClaimable"])
+	}
+	if voucherState["signature"] != "0xsig" {
+		t.Fatalf("signature = %v", voucherState["signature"])
 	}
 	// Snapshot should be consumed.
 	if got := s.TakeChannelSnapshot(pp); got != nil {
@@ -531,9 +558,9 @@ func TestEnrichPaymentRequiredResponse_FallsBackToStorage(t *testing.T) {
 	reqs := enrich(s, pp, batched.ErrCumulativeAmountMismatch,
 		[]types.PaymentRequirements{{Scheme: batched.SchemeBatched, Network: "eip155:8453"}})
 
-	state, ok := reqs[0].Extra["ChannelState"].(map[string]interface{})
+	state, ok := reqs[0].Extra["channelState"].(map[string]interface{})
 	if !ok {
-		t.Fatalf("expected ChannelState map from storage fallback, got %+v", reqs[0].Extra)
+		t.Fatalf("expected channelState map from storage fallback, got %+v", reqs[0].Extra)
 	}
 	if state["chargedCumulativeAmount"] != "77" {
 		t.Fatalf("chargedCumulativeAmount = %v", state["chargedCumulativeAmount"])
@@ -567,7 +594,7 @@ func TestEnrichPaymentRequiredResponse_SkipsNonBatchedAndMismatchedNetwork(t *te
 	if reqs[1].Extra != nil {
 		t.Fatalf("network-mismatch req should not be enriched: %+v", reqs[1].Extra)
 	}
-	if _, ok := reqs[2].Extra["ChannelState"]; !ok {
+	if _, ok := reqs[2].Extra["channelState"]; !ok {
 		t.Fatalf("matching req should be enriched: %+v", reqs[2].Extra)
 	}
 }

@@ -276,7 +276,6 @@ func buildBatchedPipeline(t *testing.T, keys *batchedTestKeys) *batchedPipeline 
 	salt := randomChannelSalt(t)
 
 	clientScheme := batchedclient.NewBatchedEvmScheme(clientSigner, &batchedclient.BatchedEvmSchemeConfig{
-		MaxDeposit:        "1000000",
 		DepositMultiplier: 5,
 		Salt:              salt,
 	})
@@ -736,9 +735,6 @@ func TestBatchSettlementIntegration_MultiVoucherClaimSettle(t *testing.T) {
 // that want to inspect the deposit/voucher tx.
 func makePaidRequest(ctx context.Context, t *testing.T, pipe *batchedPipeline, url string) *x402.SettleResponse {
 	t.Helper()
-	// Use a fresh client per call: WrapHTTPClientWithPayment mutates the client's
-	// Transport in place, so reusing http.DefaultClient would leak payment-retry
-	// behavior into unrelated probes (e.g., the refund probe) and turn 402s into 200s.
 	httpClient := x402http.WrapHTTPClientWithPayment(&http.Client{}, x402http.Newx402HTTPClient(pipe.x402Client))
 	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	resp, err := httpClient.Do(req)
@@ -971,12 +967,11 @@ func TestBatchSettlementIntegration_AutoClaimTick(t *testing.T) {
 	errCh := make(chan error, 4)
 	manager.Start(batchedserver.AutoSettlementConfig{
 		ClaimIntervalSecs: 2,
-		TickSecs:          1,
 		MaxClaimsPerBatch: 50,
 		OnClaim:           func(r batchedserver.ClaimResult) { claimCh <- r },
 		OnError:           func(err error) { errCh <- err },
 	})
-	defer func() { _ = manager.Stop(context.Background(), false) }()
+	defer func() { _ = manager.Stop(context.Background(), nil) }()
 
 	select {
 	case r := <-claimCh:
@@ -1027,12 +1022,11 @@ func TestBatchSettlementIntegration_AutoClaimAndSettleTick(t *testing.T) {
 	manager.Start(batchedserver.AutoSettlementConfig{
 		ClaimIntervalSecs:  2,
 		SettleIntervalSecs: 2,
-		TickSecs:           1,
 		OnClaim:            func(r batchedserver.ClaimResult) { claimCh <- r },
 		OnSettle:           func(r batchedserver.SettleResult) { settleCh <- r },
 		OnError:            func(err error) { errCh <- err },
 	})
-	defer func() { _ = manager.Stop(context.Background(), false) }()
+	defer func() { _ = manager.Stop(context.Background(), nil) }()
 
 	// Wait for claim first.
 	select {
@@ -1110,15 +1104,15 @@ func TestBatchSettlementIntegration_WithdrawalPendingRefund(t *testing.T) {
 	}
 
 	// Manager-driven cooperative refund — claims the outstanding voucher and
-	// refunds the unclaimed remainder. Produces a real on-chain tx.
-	result, err := manager.Refund(ctx, []string{channelId})
+	// refunds the unclaimed remainder. Produces a real onchain tx.
+	results, err := manager.Refund(ctx, []string{channelId})
 	if err != nil {
 		t.Fatalf("manager.Refund: %v", err)
 	}
-	if result == nil || result.Transaction == "" {
-		t.Fatal("expected refund result with tx hash")
+	if len(results) != 1 || results[0].Transaction == "" {
+		t.Fatalf("expected 1 refund result with tx hash, got %+v", results)
 	}
-	t.Logf("manager refund tx=%s channels=%v", result.Transaction, result.Channels)
+	t.Logf("manager refund tx=%s channel=%s", results[0].Transaction, results[0].Channel)
 
 	// Session should be deleted post-refund.
 	post, _ := storage.Get(channelId)

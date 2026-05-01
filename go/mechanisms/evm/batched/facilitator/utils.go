@@ -51,7 +51,7 @@ func ToContractChannelConfig(config batched.ChannelConfig) ContractChannelConfig
 	}
 }
 
-// ReadChannelState reads on-chain channel state via a 3-call multicall:
+// ReadChannelState reads onchain channel state via a 3-call multicall:
 // channels(channelId), pendingWithdrawals(channelId), refundNonce(channelId).
 // Returns an error tagged with ErrRpcReadFailed when any sub-call fails so
 // callers can distinguish RPC failures from a missing channel (which returns
@@ -269,19 +269,47 @@ func VerifyBatchedVoucherTypedData(
 	)
 }
 
-// BuildChannelStateExtra creates the Extensions map for verify/settle responses.
-func BuildChannelStateExtra(
-	channelId string,
-	chargedCumulativeAmount string,
-	state *batched.ChannelState,
-) map[string]interface{} {
+// channelStateFields builds the shared field set used by both verify and
+// settle response extras: { channelId, balance, totalClaimed,
+// withdrawRequestedAt, refundNonce }. Mirrors TS facilitator output verbatim;
+// crucially does NOT include `chargedCumulativeAmount` — that field is the
+// SERVER's responsibility to enrich (the resource server's
+// `enrichSettlementResponse` hook adds it, and the additive enrichment policy
+// rejects duplicates emitted by the facilitator).
+func channelStateFields(channelId string, state *batched.ChannelState) map[string]interface{} {
 	return map[string]interface{}{
-		"channelId":               channelId,
-		"chargedCumulativeAmount": chargedCumulativeAmount,
-		"balance":                 state.Balance.String(),
-		"totalClaimed":            state.TotalClaimed.String(),
-		"withdrawRequestedAt":     state.WithdrawRequestedAt,
-		"refundNonce":             state.RefundNonce.String(),
+		"channelId":           channelId,
+		"balance":             state.Balance.String(),
+		"totalClaimed":        state.TotalClaimed.String(),
+		"withdrawRequestedAt": state.WithdrawRequestedAt,
+		"refundNonce":         state.RefundNonce.String(),
+	}
+}
+
+// BuildVerifyExtra creates the Extensions map for VERIFY responses in the
+// canonical FLAT TS shape used by `verifyVoucher` / `verifyDeposit`:
+//
+//	{ channelId, balance, totalClaimed, withdrawRequestedAt, refundNonce }
+//
+// Server-side `AfterVerifyHook` (Go and TS) reads these fields directly off
+// `extra` (e.g. `extra["balance"]`); wrapping them in `channelState` like the
+// settle response would silently break state tracking.
+func BuildVerifyExtra(channelId string, state *batched.ChannelState) map[string]interface{} {
+	return channelStateFields(channelId, state)
+}
+
+// BuildSettleExtra creates the Extensions map for SETTLE responses in the
+// canonical NESTED TS shape used by `settleDeposit` / `executeRefundWithSignature`:
+//
+//	{ "channelState": { channelId, balance, totalClaimed, withdrawRequestedAt,
+//	                    refundNonce } }
+//
+// Server-side `AfterSettleHook` reads `extra.channelState.*` and the resource
+// server's `enrichSettlementResponse` hook then adds `chargedCumulativeAmount`
+// (and, for deposits, `chargedAmount`) on top via additive enrichment.
+func BuildSettleExtra(channelId string, state *batched.ChannelState) map[string]interface{} {
+	return map[string]interface{}{
+		"channelState": channelStateFields(channelId, state),
 	}
 }
 

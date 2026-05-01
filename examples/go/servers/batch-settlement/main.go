@@ -21,12 +21,11 @@ import (
 	batchedserver "github.com/x402-foundation/x402/go/mechanisms/evm/batched/server"
 )
 
+// Mirrors examples/typescript/servers/batch-settlement/index.ts.
 const (
 	defaultPort = "4021"
 	network     = x402.Network("eip155:84532")
 	maxPrice    = "$0.01"
-	// maxPriceUSDMicros matches maxPrice ("$0.01") for usage.chargedPrice (parity with TS example).
-	maxPriceUSDMicros int64 = 10_000 // $0.01 in micro-dollars
 )
 
 func main() {
@@ -44,7 +43,8 @@ func main() {
 		os.Exit(1)
 	}
 
-	withdrawDelay := batched.MinWithdrawDelay
+	// TS code default: 86400 (1 day). Falls back to that when env unset.
+	withdrawDelay := 86400
 	if v := os.Getenv("DEFERRED_WITHDRAW_DELAY_SECONDS"); v != "" {
 		if n, err := strconv.Atoi(v); err == nil {
 			withdrawDelay = n
@@ -79,12 +79,27 @@ func main() {
 
 	manager := scheme.CreateChannelManager(facilitator, network)
 	manager.Start(batchedserver.AutoSettlementConfig{
-		TickSecs:           5,
-		ClaimIntervalSecs:  10,
-		ClaimOnWithdrawal:  true,
-		MaxClaimsPerBatch:  50,
-		SettleIntervalSecs: 20,
-		RefundOnIdleSecs:   30,
+		ClaimIntervalSecs:  60,
+		SettleIntervalSecs: 120,
+		RefundIntervalSecs: 180,
+		MaxClaimsPerBatch:  100,
+		// Refund channels after 3 minutes of inactivity (mirrors TS demo).
+		SelectRefundChannels: func(channels []*batchedserver.ChannelSession, ctx batchedserver.AutoSettlementContext) ([]*batchedserver.ChannelSession, error) {
+			out := make([]*batchedserver.ChannelSession, 0, len(channels))
+			for _, c := range channels {
+				if c.Balance == "" || c.Balance == "0" {
+					continue
+				}
+				if c.PendingRequest != nil && c.PendingRequest.ExpiresAt > ctx.Now {
+					continue
+				}
+				if ctx.Now-c.LastRequestTimestamp < 180_000 {
+					continue
+				}
+				out = append(out, c)
+			}
+			return out, nil
+		},
 		OnClaim: func(r batchedserver.ClaimResult) {
 			fmt.Printf("Claimed %d vouchers (tx: %s)\n", r.Vouchers, r.Transaction)
 		},
@@ -92,15 +107,19 @@ func main() {
 			fmt.Printf("Settled to %s (tx: %s)\n", evmAddress, r.Transaction)
 		},
 		OnRefund: func(r batchedserver.RefundResult) {
-			fmt.Printf("Refund for %d channel(s) (tx: %s)\n", len(r.Channels), r.Transaction)
+			fmt.Printf("Refunded channel %s (tx: %s)\n", r.Channel, r.Transaction)
 		},
 		OnError: func(err error) {
 			fmt.Printf("Settlement error: %v\n", err)
 		},
 	})
 
+	// SIGINT-only graceful shutdown (no SIGTERM), mirroring TS.
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, syscall.SIGINT)
+
 	routes := x402http.RoutesConfig{
-		"GET /api/generate": {
+		"GET /weather": {
 			Accepts: x402http.PaymentOptions{
 				{
 					Scheme:  batched.SchemeBatched,
@@ -109,30 +128,25 @@ func main() {
 					PayTo:   evmAddress,
 				},
 			},
-			Description: "Batch-settlement demo — voucher updates session without per-request chain settle",
+			Description: "Weather data",
 			MimeType:    "application/json",
 		},
 	}
 
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET /api/generate", func(w http.ResponseWriter, r *http.Request) {
-		// Charge a random fraction of maxPrice (1–100%) to demonstrate dynamic pricing.
-		percent := 1 + rand.Intn(100)
+	mux.HandleFunc("GET /weather", func(w http.ResponseWriter, r *http.Request) {
+		// Bill a random fraction of maxPrice (1–100%) to demonstrate
+		// usage-based pricing. Mirrors TS demo verbatim.
+		chargedPercent := 1 + rand.Intn(100)
 		nethttpmw.SetSettlementOverrides(w, &x402.SettlementOverrides{
-			Amount: fmt.Sprintf("%d%%", percent),
+			Amount: fmt.Sprintf("%d%%", chargedPercent),
 		})
-
-		// Same amount as examples/typescript/servers/batch-settlement (integer micro-dollars).
-		chargedMicros := maxPriceUSDMicros * int64(percent) / 100
-		chargedPrice := "$" + strconv.FormatFloat(float64(chargedMicros)/1e6, 'f', -1, 64)
 
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]any{
-			"result": "Here is your generated text...",
-			"usage": map[string]string{
-				"maxPrice":     maxPrice,
-				"chargedRatio": fmt.Sprintf("%d%%", percent),
-				"chargedPrice": chargedPrice,
+			"report": map[string]any{
+				"weather":     "sunny",
+				"temperature": 70,
 			},
 		})
 	})
@@ -146,14 +160,6 @@ func main() {
 		Timeout: 30 * time.Second,
 	})(mux)
 
-	fmt.Printf("Batch-settlement server listening at http://localhost:%s\n", defaultPort)
-	fmt.Printf("  GET /api/generate\n")
-	if cfg.ReceiverAuthorizerSigner != nil {
-		fmt.Printf("  Receiver authorizer: local signer %s\n", cfg.ReceiverAuthorizerSigner.Address())
-	} else {
-		fmt.Println("  Receiver authorizer: facilitator")
-	}
-
 	server := &http.Server{Addr: ":" + defaultPort, Handler: handler}
 	go func() {
 		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
@@ -162,13 +168,19 @@ func main() {
 		}
 	}()
 
-	sigCh := make(chan os.Signal, 1)
-	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
+	fmt.Printf("Batch-settlement server listening at http://localhost:%s\n", defaultPort)
+	fmt.Printf("  GET /weather\n")
+	if cfg.ReceiverAuthorizerSigner != nil {
+		fmt.Printf("  Receiver authorizer: local signer %s\n", cfg.ReceiverAuthorizerSigner.Address())
+	} else {
+		fmt.Println("  Receiver authorizer: facilitator")
+	}
+
 	<-sigCh
 
-	fmt.Println("\nShutting down — flushing pending claims...")
+	fmt.Println("Shutting down — flushing pending claims…")
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
-	_ = manager.Stop(ctx, true)
+	_ = manager.Stop(ctx, &batchedserver.StopOptions{Flush: true})
 	_ = server.Shutdown(ctx)
 }

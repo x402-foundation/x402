@@ -145,6 +145,12 @@ export interface TestConfig {
   x402Version?: number;
   x402Versions?: number[];
   extensions?: string[];
+  /**
+   * Payment schemes the component supports. Required on clients and
+   * facilitators that participate in EVM scenarios; the discovery filter
+   * skips pairings whose endpoint scheme is not in this list.
+   */
+  schemes?: PaymentScheme[];
   evm?: {
     assetTransferMethods?: AssetTransferMethod[];
   };

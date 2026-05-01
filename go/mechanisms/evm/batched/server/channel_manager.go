@@ -8,7 +8,6 @@ import (
 	"math/big"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	x402 "github.com/x402-foundation/x402/go"
@@ -16,77 +15,128 @@ import (
 	"github.com/x402-foundation/x402/go/mechanisms/evm/batched"
 )
 
-// ChannelManagerConfig holds the dependencies for a channel manager.
+// ChannelManagerConfig wires the channel manager to its dependencies.
+//
+// Receiver and Token are required: the manager calls
+// `settle(receiver, token)` directly, so storage may be empty when settle()
+// fires (e.g. immediately after a flush). Mirrors TS `ChannelManagerConfig`.
 type ChannelManagerConfig struct {
 	Scheme      *BatchedEvmScheme
 	Facilitator x402.FacilitatorClient
+	Receiver    string
+	Token       string
 	Network     x402.Network
 }
 
-// AutoSettlementConfig configures auto claim/settle/refund behavior.
-type AutoSettlementConfig struct {
-	// ClaimIntervalSecs claims on a fixed interval.
-	ClaimIntervalSecs int
-	// ClaimOnIdleSecs claims when channels are idle for this long.
-	ClaimOnIdleSecs int
-	// ClaimThreshold claims when total claimable exceeds this amount.
-	ClaimThreshold string
-	// MaxClaimsPerBatch limits the number of vouchers per claim tx.
-	MaxClaimsPerBatch int
-	// ClaimOnWithdrawal claims all when a withdrawal is detected.
-	ClaimOnWithdrawal bool
-	// SettleIntervalSecs settles on a fixed interval.
-	SettleIntervalSecs int
-	// SettleThreshold settles when total claimed exceeds this amount.
-	SettleThreshold string
-	// RefundOnIdleSecs cooperatively refunds channels idle for this long.
-	RefundOnIdleSecs int
-	// TickSecs is how often the manager evaluates triggers. Defaults to 5.
-	TickSecs int
-	// OnClaim is called after a successful claim.
-	OnClaim func(ClaimResult)
-	// OnSettle is called after a successful settle.
-	OnSettle func(SettleResult)
-	// OnRefund is called after a successful refund.
-	OnRefund func(RefundResult)
-	// OnError is called when any auto-settlement operation fails.
-	OnError func(error)
+// AutoSettlementContext is the policy context passed to caller-provided
+// claim/settle/refund selectors.
+type AutoSettlementContext struct {
+	Now            int64
+	LastClaimTime  int64
+	LastSettleTime int64
+	PendingSettle  bool
 }
 
-// ClaimResult holds the result of a claim operation.
+// ClaimChannelSelector picks the channel set the manager should consider for
+// claiming on each pass. Returning a subset of `channels` is the supported way
+// to express custom claim policy (e.g. only channels with non-trivial pending
+// amounts).
+type ClaimChannelSelector func(channels []*ChannelSession, ctx AutoSettlementContext) ([]*ChannelSession, error)
+
+// ShouldSettleFunc decides whether a settle pass should fire for this tick.
+// Return false to skip; the next interval will re-evaluate.
+type ShouldSettleFunc func(ctx AutoSettlementContext) (bool, error)
+
+// RefundChannelSelector picks idle channels for cooperative refund.
+type RefundChannelSelector func(channels []*ChannelSession, ctx AutoSettlementContext) ([]*ChannelSession, error)
+
+// ClaimOptions tunes a one-shot Claim call.
+type ClaimOptions struct {
+	// MaxClaimsPerBatch caps the number of vouchers per facilitator claim tx.
+	// Defaults to 100.
+	MaxClaimsPerBatch int
+	// IdleSecs filters out channels that received a request within the last
+	// `IdleSecs` seconds. Zero means "no idle filter".
+	IdleSecs int
+	// SelectClaimChannels narrows the channel set considered for claiming.
+	SelectClaimChannels ClaimChannelSelector
+}
+
+// AutoSettlementConfig configures interval-driven auto claim/settle/refund.
+//
+// Each *IntervalSecs schedules an independent timer; passing zero leaves that
+// job disabled. Selector callbacks let callers express custom claim/refund
+// policy (e.g. claim only after a withdrawal trigger, refund only stale
+// channels).
+type AutoSettlementConfig struct {
+	ClaimIntervalSecs    int
+	SettleIntervalSecs   int
+	RefundIntervalSecs   int
+	MaxClaimsPerBatch    int
+	SelectClaimChannels  ClaimChannelSelector
+	ShouldSettle         ShouldSettleFunc
+	SelectRefundChannels RefundChannelSelector
+	OnClaim              func(ClaimResult)
+	OnSettle             func(SettleResult)
+	OnRefund             func(RefundResult)
+	OnError              func(error)
+}
+
+// ClaimResult is one batch worth of claim submission.
 type ClaimResult struct {
 	Vouchers    int
 	Transaction string
 }
 
-// SettleResult holds the result of a settle operation.
+// SettleResult is one settle transaction.
 type SettleResult struct {
 	Transaction string
 }
 
-// RefundResult holds the result of a refund operation.
+// RefundResult is one cooperative refund transaction (one channel).
+//
+// The TS API moved from a single `{Channels, Transaction}` to one result per
+// refunded channel; the Go SDK matches that shape.
 type RefundResult struct {
-	Channels    []string
+	Channel     string
 	Transaction string
 }
 
+type autoJob string
+
+const (
+	autoJobClaim  autoJob = "claim"
+	autoJobSettle autoJob = "settle"
+	autoJobRefund autoJob = "refund"
+)
+
+// autoJobPriority orders the queue: claim drains before settle drains before
+// refund. Mirrors TS `AUTO_JOB_PRIORITY`.
+var autoJobPriority = []autoJob{autoJobClaim, autoJobSettle, autoJobRefund}
+
 // BatchedChannelManager handles auto-settlement of batched payment channels.
+// Provides one-shot operations (Claim, Settle, ClaimAndSettle, Refund,
+// RefundIdleChannels) and an interval runner via Start/Stop.
 type BatchedChannelManager struct {
 	scheme      *BatchedEvmScheme
 	facilitator x402.FacilitatorClient
+	receiver    string
+	token       string
 	network     x402.Network
 
-	// Auto-settlement state
-	ticker         *time.Ticker
-	stopCh         chan struct{}
-	lastClaimTime  time.Time
-	lastSettleTime time.Time
-	pendingSettle  bool
-	config         AutoSettlementConfig
-	running        bool
-	tickInProgress int32 // atomic
-
-	mu sync.Mutex
+	mu               sync.Mutex
+	timers           map[autoJob]*time.Ticker
+	stopCh           chan struct{}
+	wg               sync.WaitGroup
+	autoSettleConfig AutoSettlementConfig
+	running          bool
+	lastClaimTime    int64
+	lastSettleTime   int64
+	pendingSettle    bool
+	pendingJobs      map[autoJob]struct{}
+	pendingJobsCh    chan struct{}
+	drainingJobsDone chan struct{}
+	currentDrainCtx  context.Context
 }
 
 // NewBatchedChannelManager creates a new channel manager.
@@ -94,295 +144,237 @@ func NewBatchedChannelManager(config ChannelManagerConfig) *BatchedChannelManage
 	return &BatchedChannelManager{
 		scheme:      config.Scheme,
 		facilitator: config.Facilitator,
+		receiver:    config.Receiver,
+		token:       config.Token,
 		network:     config.Network,
 	}
 }
 
-// GetClaimableVouchersOpts filters claimable vouchers by idle time.
-type GetClaimableVouchersOpts struct {
-	IdleSecs int // Filter sessions idle for at least this many seconds
+// hasLivePendingRequest returns true when the channel currently has a
+// non-expired payer request reservation. Mirrors TS `hasLivePendingRequest`.
+func hasLivePendingRequest(s *ChannelSession, nowMs int64) bool {
+	return s != nil && s.PendingRequest != nil && s.PendingRequest.ExpiresAt > nowMs
 }
 
-// GetClaimableVouchers returns voucher claims ready for on-chain settlement.
-//
-// A voucher is claimable when its `chargedCumulativeAmount` exceeds what has
-// already been claimed on-chain. An optional `IdleSecs` filter skips sessions
-// that received a request within the last `IdleSecs` seconds.
+// formatFacilitatorFailure renders a SettleResponse error consistently across
+// claim/settle/refund operations.
+func formatFacilitatorFailure(operation string, resp *x402.SettleResponse) string {
+	if resp == nil {
+		return fmt.Sprintf("%s failed: nil response", operation)
+	}
+	reason := resp.ErrorReason
+	if reason == "" {
+		reason = "unknown"
+	}
+	return fmt.Sprintf("%s failed: %s — %s", operation, reason, resp.ErrorMessage)
+}
+
+// ----- One-shot operations ---------------------------------------------------
+
+// GetClaimableVouchersOpts filters claimable vouchers by idle time.
+type GetClaimableVouchersOpts struct {
+	IdleSecs int
+}
+
+// GetClaimableVouchers returns voucher claims ready for onchain settlement.
+// Skips entries whose `chargedCumulativeAmount` does not exceed `totalClaimed`.
 func (m *BatchedChannelManager) GetClaimableVouchers(opts *GetClaimableVouchersOpts) ([]batched.BatchedVoucherClaim, error) {
-	sessions, err := m.scheme.storage.List()
+	channels, err := m.scheme.storage.List()
 	if err != nil {
 		return nil, err
 	}
-
-	now := time.Now().UnixMilli()
-	claims := make([]batched.BatchedVoucherClaim, 0)
-
-	for _, session := range sessions {
-		if opts != nil && opts.IdleSecs > 0 {
-			idleMs := now - session.LastRequestTimestamp
-			if idleMs < int64(opts.IdleSecs)*1000 {
-				continue
-			}
-		}
-
-		charged, _ := new(big.Int).SetString(session.ChargedCumulativeAmount, 10)
-		claimed, _ := new(big.Int).SetString(session.TotalClaimed, 10)
-		if charged == nil || claimed == nil {
-			continue
-		}
-		if charged.Cmp(claimed) <= 0 {
-			continue
-		}
-
-		claims = append(claims, batched.BatchedVoucherClaim{
-			Voucher: struct {
-				Channel            batched.ChannelConfig `json:"channel"`
-				MaxClaimableAmount string                `json:"maxClaimableAmount"`
-			}{
-				Channel:            session.ChannelConfig,
-				MaxClaimableAmount: session.SignedMaxClaimable,
-			},
-			Signature:    session.Signature,
-			TotalClaimed: session.ChargedCumulativeAmount,
-		})
+	idleSecs := 0
+	if opts != nil {
+		idleSecs = opts.IdleSecs
 	}
-
-	return claims, nil
+	return m.collectClaimsFromChannels(channels, idleSecs), nil
 }
 
 // GetWithdrawalPendingSessions returns sessions that have a pending payer-initiated
 // withdrawal (withdrawRequestedAt > 0).
 func (m *BatchedChannelManager) GetWithdrawalPendingSessions() ([]*ChannelSession, error) {
-	sessions, err := m.scheme.storage.List()
+	channels, err := m.scheme.storage.List()
 	if err != nil {
 		return nil, err
 	}
-	var result []*ChannelSession
-	for _, session := range sessions {
-		if session.WithdrawRequestedAt > 0 {
-			result = append(result, session)
+	out := make([]*ChannelSession, 0, len(channels))
+	for _, c := range channels {
+		if c.WithdrawRequestedAt > 0 {
+			out = append(out, c)
 		}
 	}
-	return result, nil
+	return out, nil
 }
 
-// Claim collects and claims outstanding vouchers.
-type ClaimOptions struct {
-	MaxClaimsPerBatch int
-	IdleSecs          int
-}
-
+// Claim collects claimable vouchers and submits them in batches.
 func (m *BatchedChannelManager) Claim(ctx context.Context, opts *ClaimOptions) ([]ClaimResult, error) {
-	idleSecs := 0
-	maxClaims := 50
-	if opts != nil {
-		if opts.IdleSecs > 0 {
-			idleSecs = opts.IdleSecs
-		}
-		if opts.MaxClaimsPerBatch > 0 {
-			maxClaims = opts.MaxClaimsPerBatch
-		}
-	}
-
-	claims, err := m.GetClaimableVouchers(&GetClaimableVouchersOpts{IdleSecs: idleSecs})
-	if err != nil {
-		return nil, fmt.Errorf("failed to get claimable vouchers: %w", err)
-	}
-
-	if len(claims) == 0 {
-		return nil, nil
-	}
-
-	// Batch claims
-	var results []ClaimResult
-	for i := 0; i < len(claims); i += maxClaims {
-		end := i + maxClaims
-		if end > len(claims) {
-			end = len(claims)
-		}
-		batch := claims[i:end]
-
-		result, err := m.executeClaim(ctx, batch)
-		if err != nil {
-			return results, fmt.Errorf("claim batch failed: %w", err)
-		}
-		results = append(results, *result)
-	}
-
-	return results, nil
-}
-
-// Settle transfers claimed funds to the receiver.
-func (m *BatchedChannelManager) Settle(ctx context.Context) (*SettleResult, error) {
-	settle := &batched.BatchedSettlePayload{
-		Type:     "settle",
-		Receiver: m.scheme.receiverAddress,
-		Token:    m.getToken(),
-	}
-	resp, err := m.facilitatorSettle(ctx, settle.ToMap())
+	resolved := normalizeClaimOptions(opts)
+	channels, err := m.selectClaimTargets(ctx, resolved.SelectClaimChannels)
 	if err != nil {
 		return nil, err
 	}
+	return m.claimFromChannels(ctx, channels, resolved.MaxClaimsPerBatch, resolved.IdleSecs)
+}
+
+// Settle transfers claimed funds to the receiver via a `settle(receiver, token)` call.
+func (m *BatchedChannelManager) Settle(ctx context.Context) (*SettleResult, error) {
+	payload := m.buildSettlePaymentPayloadMap()
+	resp, err := m.facilitatorSettle(ctx, payload)
+	if err != nil {
+		return nil, err
+	}
+	if !resp.Success {
+		return nil, fmt.Errorf("%s", formatFacilitatorFailure("Settle", resp))
+	}
+	m.mu.Lock()
+	m.pendingSettle = false
+	m.mu.Unlock()
 	return &SettleResult{Transaction: resp.Transaction}, nil
 }
 
-// facilitatorSettle marshals the (payload, requirements) pair this manager uses
-// for its claim/settle/refund calls and forwards them to the facilitator.
-func (m *BatchedChannelManager) facilitatorSettle(ctx context.Context, payloadMap map[string]interface{}) (*x402.SettleResponse, error) {
-	payloadBytes, err := json.Marshal(map[string]interface{}{
-		"x402Version": 2,
-		"payload":     payloadMap,
-		"accepted": map[string]interface{}{
-			"scheme":  batched.SchemeBatched,
-			"network": string(m.network),
-		},
-	})
+// ClaimAndSettle claims any eligible vouchers, then settles when claims fired.
+func (m *BatchedChannelManager) ClaimAndSettle(ctx context.Context, opts *ClaimOptions) ([]ClaimResult, *SettleResult, error) {
+	claims, err := m.Claim(ctx, opts)
 	if err != nil {
-		return nil, fmt.Errorf("failed to marshal payload: %w", err)
+		return nil, nil, err
 	}
-
-	requirementsBytes, err := json.Marshal(map[string]interface{}{
-		"scheme":  batched.SchemeBatched,
-		"network": string(m.network),
-		"payTo":   m.scheme.receiverAddress,
-	})
+	if len(claims) == 0 {
+		return claims, nil, nil
+	}
+	settle, err := m.Settle(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("failed to marshal requirements: %w", err)
+		return claims, nil, err
 	}
-
-	return m.facilitator.Settle(ctx, payloadBytes, requirementsBytes)
+	return claims, settle, nil
 }
 
-// Refund cooperatively refunds the given channels. For each channel, claims
-// any outstanding vouchers and refunds the unclaimed balance back to the payer.
-func (m *BatchedChannelManager) Refund(ctx context.Context, channelIds []string) (*RefundResult, error) {
-	if len(channelIds) == 0 {
-		return nil, nil
-	}
-
-	var refundedChannels []string
-	var lastTxHash string
-
-	for _, channelId := range channelIds {
-		normalizedId := batched.NormalizeChannelId(channelId)
-		session, err := m.scheme.storage.Get(normalizedId)
-		if err != nil || session == nil {
-			continue
-		}
-
-		// Build claim entry from current session state
-		claimEntry := batched.BatchedVoucherClaim{
-			Voucher: struct {
-				Channel            batched.ChannelConfig `json:"channel"`
-				MaxClaimableAmount string                `json:"maxClaimableAmount"`
-			}{
-				Channel:            session.ChannelConfig,
-				MaxClaimableAmount: session.SignedMaxClaimable,
-			},
-			Signature:    session.Signature,
-			TotalClaimed: session.ChargedCumulativeAmount,
-		}
-
-		// Calculate refund amount: balance - chargedCumulativeAmount
-		balance, _ := new(big.Int).SetString(session.Balance, 10)
-		charged, _ := new(big.Int).SetString(session.ChargedCumulativeAmount, 10)
-		if balance == nil || charged == nil {
-			continue
-		}
-		refundAmount := new(big.Int).Sub(balance, charged)
-		if refundAmount.Sign() <= 0 {
-			continue
-		}
-
-		// Pre-sign if server has authorizerSigner; otherwise facilitator auto-signs.
-		nonce := fmt.Sprintf("%d", session.RefundNonce)
-		refund := &batched.BatchedEnrichedRefundPayload{
-			Type:          "refund",
-			ChannelConfig: session.ChannelConfig,
-			Voucher: batched.BatchedVoucherFields{
-				ChannelId:          normalizedId,
-				MaxClaimableAmount: session.SignedMaxClaimable,
-				Signature:          session.Signature,
-			},
-			Amount:      refundAmount.String(),
-			RefundNonce: nonce,
-			Claims:      []batched.BatchedVoucherClaim{claimEntry},
-		}
-
-		if m.scheme.receiverAuthorizerSigner != nil {
-			authSig, err := m.scheme.SignRefund(ctx, normalizedId, refundAmount.String(), nonce, string(m.network))
-			if err != nil {
-				return nil, fmt.Errorf("sign refund for %s: %w", normalizedId, err)
-			}
-			claimAuthSig, err := m.scheme.SignClaimBatch(ctx, []batched.BatchedVoucherClaim{claimEntry}, string(m.network))
-			if err != nil {
-				return nil, fmt.Errorf("sign claim batch for %s: %w", normalizedId, err)
-			}
-			refund.RefundAuthorizerSignature = evm.BytesToHex(authSig)
-			refund.ClaimAuthorizerSignature = evm.BytesToHex(claimAuthSig)
-		}
-
-		resp, err := m.facilitatorSettle(ctx, refund.ToMap())
-		if err != nil {
-			return nil, fmt.Errorf("refund settle for %s: %w", normalizedId, err)
-		}
-		if !resp.Success {
-			return nil, fmt.Errorf("refund settle for %s failed: %s — %s", normalizedId, resp.ErrorReason, resp.ErrorMessage)
-		}
-
-		lastTxHash = resp.Transaction
-		refundedChannels = append(refundedChannels, normalizedId)
-
-		// Delete the session after successful refund
-		_ = m.scheme.storage.Delete(normalizedId)
-	}
-
-	if len(refundedChannels) == 0 {
-		return nil, nil
-	}
-
-	return &RefundResult{
-		Channels:    refundedChannels,
-		Transaction: lastTxHash,
-	}, nil
-}
-
-// ClaimAndSettle claims then settles.
-func (m *BatchedChannelManager) ClaimAndSettle(ctx context.Context, opts *ClaimOptions) (*SettleResult, error) {
-	_, err := m.Claim(ctx, opts)
+// Refund refunds the listed channels. Channels with a live in-flight request
+// reservation are skipped. Pass an empty slice to refund every stored channel.
+func (m *BatchedChannelManager) Refund(ctx context.Context, channelIds []string) ([]RefundResult, error) {
+	channels, err := m.scheme.storage.List()
 	if err != nil {
 		return nil, err
 	}
-	return m.Settle(ctx)
+	now := time.Now().UnixMilli()
+	var targets []*ChannelSession
+	if len(channelIds) == 0 {
+		targets = channels
+	} else {
+		want := make(map[string]struct{}, len(channelIds))
+		for _, id := range channelIds {
+			want[strings.ToLower(id)] = struct{}{}
+		}
+		for _, c := range channels {
+			if _, ok := want[strings.ToLower(c.ChannelId)]; ok {
+				targets = append(targets, c)
+			}
+		}
+	}
+	live := make([]*ChannelSession, 0, len(targets))
+	for _, c := range targets {
+		if !hasLivePendingRequest(c, now) {
+			live = append(live, c)
+		}
+	}
+	if len(live) == 0 {
+		return nil, nil
+	}
+	return m.refundChannels(ctx, live)
 }
 
-// Start begins auto-settlement with the given configuration.
+// RefundIdleChannels cooperatively refunds channels that have been idle for at
+// least `idleSecs` seconds and still hold a non-zero balance.
+func (m *BatchedChannelManager) RefundIdleChannels(ctx context.Context, idleSecs int) ([]RefundResult, error) {
+	channels, err := m.scheme.storage.List()
+	if err != nil {
+		return nil, err
+	}
+	idle := getIdleChannelsForRefund(channels, idleSecs)
+	if len(idle) == 0 {
+		return nil, nil
+	}
+	return m.refundChannels(ctx, idle)
+}
+
+// ----- Auto-settlement loop --------------------------------------------------
+
+// Start begins auto-settlement with the given configuration. Each non-zero
+// *IntervalSecs schedules an independent timer; jobs are queued and drained in
+// {claim, settle, refund} priority.
 func (m *BatchedChannelManager) Start(config AutoSettlementConfig) {
 	m.mu.Lock()
-	defer m.mu.Unlock()
-
 	if m.running {
+		m.mu.Unlock()
 		return
 	}
-
-	m.config = config
+	now := time.Now().UnixMilli()
+	m.lastClaimTime = now
+	m.lastSettleTime = now
 	m.running = true
-	m.lastClaimTime = time.Now()
-	m.lastSettleTime = time.Now()
-
-	tickSecs := config.TickSecs
-	if tickSecs <= 0 {
-		tickSecs = 5
-	}
-
-	m.ticker = time.NewTicker(time.Duration(tickSecs) * time.Second)
+	m.autoSettleConfig = config
+	m.timers = make(map[autoJob]*time.Ticker)
 	m.stopCh = make(chan struct{})
+	m.pendingJobs = make(map[autoJob]struct{})
+	m.pendingJobsCh = make(chan struct{}, 1)
+	m.mu.Unlock()
 
+	m.startAutoTimer(autoJobClaim, config.ClaimIntervalSecs)
+	m.startAutoTimer(autoJobSettle, config.SettleIntervalSecs)
+	m.startAutoTimer(autoJobRefund, config.RefundIntervalSecs)
+
+	m.wg.Add(1)
+	go m.drainLoop()
+}
+
+// Stop halts auto-settlement. When opts.Flush is true, runs a final
+// ClaimAndSettle before returning.
+type StopOptions struct {
+	Flush bool
+}
+
+func (m *BatchedChannelManager) Stop(ctx context.Context, opts *StopOptions) error {
+	m.mu.Lock()
+	if !m.running {
+		m.mu.Unlock()
+		return nil
+	}
+	m.running = false
+	for _, t := range m.timers {
+		t.Stop()
+	}
+	m.timers = nil
+	m.pendingJobs = nil
+	close(m.stopCh)
+	m.mu.Unlock()
+
+	m.wg.Wait()
+
+	if opts != nil && opts.Flush {
+		_, _, err := m.ClaimAndSettle(ctx, &ClaimOptions{
+			MaxClaimsPerBatch:   m.autoSettleConfig.MaxClaimsPerBatch,
+			SelectClaimChannels: m.autoSettleConfig.SelectClaimChannels,
+		})
+		return err
+	}
+	return nil
+}
+
+func (m *BatchedChannelManager) startAutoTimer(job autoJob, intervalSecs int) {
+	if intervalSecs <= 0 {
+		return
+	}
+	ticker := time.NewTicker(time.Duration(intervalSecs) * time.Second)
+	m.mu.Lock()
+	m.timers[job] = ticker
+	m.mu.Unlock()
+
+	m.wg.Add(1)
 	go func() {
+		defer m.wg.Done()
 		for {
 			select {
-			case <-m.ticker.C:
-				m.tick()
+			case <-ticker.C:
+				m.enqueueJob(job)
 			case <-m.stopCh:
 				return
 			}
@@ -390,201 +382,404 @@ func (m *BatchedChannelManager) Start(config AutoSettlementConfig) {
 	}()
 }
 
-// Stop halts auto-settlement. If flush is true, performs a final ClaimAndSettle.
-func (m *BatchedChannelManager) Stop(ctx context.Context, flush bool) error {
+func (m *BatchedChannelManager) enqueueJob(job autoJob) {
 	m.mu.Lock()
 	if !m.running {
 		m.mu.Unlock()
-		return nil
+		return
 	}
-
-	m.running = false
-	m.ticker.Stop()
-	close(m.stopCh)
+	if m.pendingJobs == nil {
+		m.pendingJobs = make(map[autoJob]struct{})
+	}
+	m.pendingJobs[job] = struct{}{}
 	m.mu.Unlock()
 
-	if flush {
-		_, err := m.ClaimAndSettle(ctx, nil)
-		return err
+	select {
+	case m.pendingJobsCh <- struct{}{}:
+	default:
+		// drain loop already has a wakeup pending
 	}
-
-	return nil
 }
 
-func (m *BatchedChannelManager) tick() {
-	if !atomic.CompareAndSwapInt32(&m.tickInProgress, 0, 1) {
-		return // Skip if previous tick is still running
+func (m *BatchedChannelManager) drainLoop() {
+	defer m.wg.Done()
+	for {
+		select {
+		case <-m.stopCh:
+			return
+		case <-m.pendingJobsCh:
+			for {
+				job, ok := m.popNextPendingJob()
+				if !ok {
+					break
+				}
+				m.runAutoJob(job)
+			}
+		}
 	}
-	defer atomic.StoreInt32(&m.tickInProgress, 0)
+}
 
+func (m *BatchedChannelManager) popNextPendingJob() (autoJob, bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if !m.running || len(m.pendingJobs) == 0 {
+		return "", false
+	}
+	for _, j := range autoJobPriority {
+		if _, ok := m.pendingJobs[j]; ok {
+			delete(m.pendingJobs, j)
+			return j, true
+		}
+	}
+	return "", false
+}
+
+func (m *BatchedChannelManager) runAutoJob(job autoJob) {
 	ctx := context.Background()
-	config := m.config
-	now := time.Now()
-
-	// Check claim triggers
-	shouldClaim := false
-	claimOpts := &ClaimOptions{}
-
-	if config.MaxClaimsPerBatch > 0 {
-		claimOpts.MaxClaimsPerBatch = config.MaxClaimsPerBatch
+	switch job {
+	case autoJobClaim:
+		m.runClaimJob(ctx)
+	case autoJobSettle:
+		m.runSettleJob(ctx)
+	case autoJobRefund:
+		m.runRefundJob(ctx)
 	}
+}
 
-	// Time-based claim
-	if config.ClaimIntervalSecs > 0 && now.Sub(m.lastClaimTime) >= time.Duration(config.ClaimIntervalSecs)*time.Second {
-		shouldClaim = true
-	}
-
-	// Idle-based claim
-	if config.ClaimOnIdleSecs > 0 {
-		claimOpts.IdleSecs = config.ClaimOnIdleSecs
-		shouldClaim = true
-	}
-
-	// Withdrawal-based claim: if a payer initiated a withdrawal, claim their vouchers
-	if config.ClaimOnWithdrawal {
-		withdrawals, err := m.GetWithdrawalPendingSessions()
-		if err == nil && len(withdrawals) > 0 {
-			claimable, err := m.GetClaimableVouchers(nil)
-			if err == nil {
-				withdrawalPayers := make(map[string]bool)
-				for _, w := range withdrawals {
-					withdrawalPayers[strings.ToLower(w.ChannelConfig.Payer)] = true
-				}
-				for _, c := range claimable {
-					if withdrawalPayers[strings.ToLower(c.Voucher.Channel.Payer)] {
-						shouldClaim = true
-						break
-					}
-				}
-			}
+func (m *BatchedChannelManager) runClaimJob(ctx context.Context) {
+	cfg := m.snapshotAutoSettlementConfig()
+	results, err := m.Claim(ctx, &ClaimOptions{
+		MaxClaimsPerBatch:   cfg.MaxClaimsPerBatch,
+		SelectClaimChannels: cfg.SelectClaimChannels,
+	})
+	if err != nil {
+		if cfg.OnError != nil {
+			cfg.OnError(fmt.Errorf("auto-claim: %w", err))
 		}
+		return
 	}
-
-	// Threshold-based claim
-	if config.ClaimThreshold != "" {
-		threshold, ok := new(big.Int).SetString(config.ClaimThreshold, 10)
-		if ok {
-			claims, err := m.GetClaimableVouchers(nil)
-			if err == nil {
-				total := big.NewInt(0)
-				for _, claim := range claims {
-					tc, _ := new(big.Int).SetString(claim.TotalClaimed, 10)
-					if tc != nil {
-						total.Add(total, tc)
-					}
-				}
-				if total.Cmp(threshold) > 0 {
-					shouldClaim = true
-				}
-			}
-		}
-	}
-
-	if shouldClaim {
-		results, err := m.Claim(ctx, claimOpts)
-		if err != nil {
-			if config.OnError != nil {
-				config.OnError(fmt.Errorf("auto-claim failed: %w", err))
-			}
-		} else if len(results) > 0 {
-			m.lastClaimTime = now
-			m.pendingSettle = true
-			if config.OnClaim != nil {
-				for _, result := range results {
-					config.OnClaim(result)
-				}
-			}
-		}
-	}
-
-	// Check settle triggers
-	shouldSettle := config.SettleIntervalSecs > 0 &&
-		now.Sub(m.lastSettleTime) >= time.Duration(config.SettleIntervalSecs)*time.Second &&
-		m.pendingSettle
-
-	if shouldSettle {
-		result, err := m.Settle(ctx)
-		if err != nil {
-			if config.OnError != nil {
-				config.OnError(fmt.Errorf("auto-settle failed: %w", err))
-			}
-		} else if result != nil {
-			m.lastSettleTime = now
-			m.pendingSettle = false
-			if config.OnSettle != nil {
-				config.OnSettle(*result)
-			}
-		}
-	}
-
-	// Check refund triggers (idle channels)
-	if config.RefundOnIdleSecs > 0 {
-		sessions, err := m.scheme.storage.List()
-		if err == nil {
-			nowMs := now.UnixMilli()
-			var refundChannelIds []string
-			for _, session := range sessions {
-				idleMs := nowMs - session.LastRequestTimestamp
-				if idleMs >= int64(config.RefundOnIdleSecs)*1000 {
-					refundChannelIds = append(refundChannelIds, session.ChannelId)
-				}
-			}
-			if len(refundChannelIds) > 0 {
-				result, err := m.Refund(ctx, refundChannelIds)
-				if err != nil {
-					if config.OnError != nil {
-						config.OnError(fmt.Errorf("auto-refund failed: %w", err))
-					}
-				} else if result != nil && config.OnRefund != nil {
-					config.OnRefund(*result)
-				}
-			}
+	m.mu.Lock()
+	m.lastClaimTime = time.Now().UnixMilli()
+	m.mu.Unlock()
+	for _, r := range results {
+		if cfg.OnClaim != nil {
+			cfg.OnClaim(r)
 		}
 	}
 }
 
-func (m *BatchedChannelManager) executeClaim(ctx context.Context, claims []batched.BatchedVoucherClaim) (*ClaimResult, error) {
-	// Pre-sign with the receiver's authorizer when configured; otherwise the
-	// facilitator auto-signs via its own AuthorizerSigner.
+func (m *BatchedChannelManager) runSettleJob(ctx context.Context) {
+	cfg := m.snapshotAutoSettlementConfig()
+	autoCtx := m.buildAutoSettlementContext(time.Now().UnixMilli())
+	if !autoCtx.PendingSettle {
+		return
+	}
+	if cfg.ShouldSettle != nil {
+		ok, err := cfg.ShouldSettle(autoCtx)
+		if err != nil {
+			if cfg.OnError != nil {
+				cfg.OnError(fmt.Errorf("auto-settle shouldSettle: %w", err))
+			}
+			return
+		}
+		if !ok {
+			return
+		}
+	}
+	result, err := m.Settle(ctx)
+	if err != nil {
+		if cfg.OnError != nil {
+			cfg.OnError(fmt.Errorf("auto-settle: %w", err))
+		}
+		return
+	}
+	m.mu.Lock()
+	m.lastSettleTime = time.Now().UnixMilli()
+	m.mu.Unlock()
+	if result != nil && cfg.OnSettle != nil {
+		cfg.OnSettle(*result)
+	}
+}
+
+func (m *BatchedChannelManager) runRefundJob(ctx context.Context) {
+	cfg := m.snapshotAutoSettlementConfig()
+	if cfg.SelectRefundChannels == nil {
+		return
+	}
+	channels, err := m.scheme.storage.List()
+	if err != nil {
+		if cfg.OnError != nil {
+			cfg.OnError(fmt.Errorf("auto-refund list: %w", err))
+		}
+		return
+	}
+	autoCtx := m.buildAutoSettlementContext(time.Now().UnixMilli())
+	targets, err := cfg.SelectRefundChannels(channels, autoCtx)
+	if err != nil {
+		if cfg.OnError != nil {
+			cfg.OnError(fmt.Errorf("auto-refund select: %w", err))
+		}
+		return
+	}
+	results, err := m.refundChannels(ctx, targets)
+	if err != nil {
+		if cfg.OnError != nil {
+			cfg.OnError(fmt.Errorf("auto-refund: %w", err))
+		}
+		return
+	}
+	for _, r := range results {
+		if cfg.OnRefund != nil {
+			cfg.OnRefund(r)
+		}
+	}
+}
+
+func (m *BatchedChannelManager) snapshotAutoSettlementConfig() AutoSettlementConfig {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.autoSettleConfig
+}
+
+func (m *BatchedChannelManager) buildAutoSettlementContext(nowMs int64) AutoSettlementContext {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return AutoSettlementContext{
+		Now:            nowMs,
+		LastClaimTime:  m.lastClaimTime,
+		LastSettleTime: m.lastSettleTime,
+		PendingSettle:  m.pendingSettle,
+	}
+}
+
+// ----- internals --------------------------------------------------------------
+
+type resolvedClaimOptions struct {
+	MaxClaimsPerBatch   int
+	IdleSecs            int
+	SelectClaimChannels ClaimChannelSelector
+}
+
+func normalizeClaimOptions(opts *ClaimOptions) resolvedClaimOptions {
+	out := resolvedClaimOptions{MaxClaimsPerBatch: 100}
+	if opts != nil {
+		if opts.MaxClaimsPerBatch > 0 {
+			out.MaxClaimsPerBatch = opts.MaxClaimsPerBatch
+		}
+		out.IdleSecs = opts.IdleSecs
+		out.SelectClaimChannels = opts.SelectClaimChannels
+	}
+	return out
+}
+
+func (m *BatchedChannelManager) selectClaimTargets(ctx context.Context, selector ClaimChannelSelector) ([]*ChannelSession, error) {
+	channels, err := m.scheme.storage.List()
+	if err != nil {
+		return nil, err
+	}
+	if selector == nil {
+		return channels, nil
+	}
+	autoCtx := m.buildAutoSettlementContext(time.Now().UnixMilli())
+	out, err := selector(channels, autoCtx)
+	if err != nil {
+		return nil, fmt.Errorf("selectClaimChannels: %w", err)
+	}
+	return out, nil
+}
+
+func (m *BatchedChannelManager) collectClaimsFromChannels(channels []*ChannelSession, idleSecs int) []batched.BatchedVoucherClaim {
+	now := time.Now().UnixMilli()
+	out := make([]batched.BatchedVoucherClaim, 0, len(channels))
+	for _, c := range channels {
+		charged, _ := new(big.Int).SetString(c.ChargedCumulativeAmount, 10)
+		claimed, _ := new(big.Int).SetString(c.TotalClaimed, 10)
+		if charged == nil || claimed == nil || charged.Cmp(claimed) <= 0 {
+			continue
+		}
+		if idleSecs > 0 {
+			idleMs := now - c.LastRequestTimestamp
+			if idleMs < int64(idleSecs)*1000 {
+				continue
+			}
+		}
+		out = append(out, batched.BatchedVoucherClaim{
+			Voucher: struct {
+				Channel            batched.ChannelConfig `json:"channel"`
+				MaxClaimableAmount string                `json:"maxClaimableAmount"`
+			}{
+				Channel:            c.ChannelConfig,
+				MaxClaimableAmount: c.SignedMaxClaimable,
+			},
+			Signature:    c.Signature,
+			TotalClaimed: c.ChargedCumulativeAmount,
+		})
+	}
+	return out
+}
+
+func (m *BatchedChannelManager) claimFromChannels(
+	ctx context.Context,
+	channels []*ChannelSession,
+	maxClaimsPerBatch int,
+	idleSecs int,
+) ([]ClaimResult, error) {
+	all := m.collectClaimsFromChannels(channels, idleSecs)
+	if len(all) == 0 {
+		return nil, nil
+	}
+	results := make([]ClaimResult, 0)
+	for i := 0; i < len(all); i += maxClaimsPerBatch {
+		end := i + maxClaimsPerBatch
+		if end > len(all) {
+			end = len(all)
+		}
+		batch := all[i:end]
+		res, err := m.submitClaim(ctx, batch)
+		if err != nil {
+			return results, err
+		}
+		results = append(results, *res)
+		if err := m.updateClaimedSessions(batch); err != nil {
+			log.Printf("[batched] post-claim storage update failed: %v", err)
+		}
+	}
+	if len(results) > 0 {
+		m.mu.Lock()
+		m.pendingSettle = true
+		m.mu.Unlock()
+	}
+	return results, nil
+}
+
+// submitClaim sends a single claim batch to the facilitator.
+func (m *BatchedChannelManager) submitClaim(ctx context.Context, claims []batched.BatchedVoucherClaim) (*ClaimResult, error) {
 	claim := &batched.BatchedClaimPayload{Type: "claim", Claims: claims}
 	if m.scheme.receiverAuthorizerSigner != nil {
 		sig, err := m.scheme.SignClaimBatch(ctx, claims, string(m.network))
 		if err != nil {
-			return nil, fmt.Errorf("failed to sign claim batch: %w", err)
+			return nil, fmt.Errorf("sign claim batch: %w", err)
 		}
 		claim.ClaimAuthorizerSignature = evm.BytesToHex(sig)
 	}
-
 	resp, err := m.facilitatorSettle(ctx, claim.ToMap())
 	if err != nil {
 		return nil, err
 	}
 	if !resp.Success {
-		return nil, fmt.Errorf("claim settle failed: %s — %s", resp.ErrorReason, resp.ErrorMessage)
+		return nil, fmt.Errorf("%s", formatFacilitatorFailure("Claim", resp))
+	}
+	return &ClaimResult{Vouchers: len(claims), Transaction: resp.Transaction}, nil
+}
+
+// refundChannels refunds each eligible channel independently and returns one
+// RefundResult per successful refund.
+func (m *BatchedChannelManager) refundChannels(ctx context.Context, channels []*ChannelSession) ([]RefundResult, error) {
+	results := make([]RefundResult, 0, len(channels))
+	now := time.Now().UnixMilli()
+	for _, c := range channels {
+		if hasLivePendingRequest(c, now) {
+			continue
+		}
+		res, err := m.refundChannel(ctx, c)
+		if err != nil {
+			return results, err
+		}
+		if res != nil {
+			results = append(results, *res)
+		}
+	}
+	return results, nil
+}
+
+func (m *BatchedChannelManager) refundChannel(ctx context.Context, target *ChannelSession) (*RefundResult, error) {
+	normalizedId := batched.NormalizeChannelId(target.ChannelId)
+
+	balance, _ := new(big.Int).SetString(target.Balance, 10)
+	charged, _ := new(big.Int).SetString(target.ChargedCumulativeAmount, 10)
+	if balance == nil || charged == nil {
+		return nil, nil
+	}
+	refundAmount := new(big.Int).Sub(balance, charged)
+	if refundAmount.Sign() <= 0 {
+		return nil, nil
 	}
 
-	// Update each session's TotalClaimed so subsequent ticks don't re-submit
-	// the same claim. Mirrors TS BatchSettlementChannelManager.updateClaimedSessions.
-	// Storage write failures are logged but non-fatal — the on-chain claim already
-	// succeeded, and the next tick will retry the storage advance.
-	if err := m.updateClaimedSessions(claims); err != nil {
-		log.Printf("[batched] post-claim storage update failed (claims will be re-submitted on next tick): %v", err)
+	// Build the outstanding voucher claim that must be settled before the
+	// refund can move the unclaimed balance.
+	var claims []batched.BatchedVoucherClaim
+	totalClaimedBig, _ := new(big.Int).SetString(target.TotalClaimed, 10)
+	if charged != nil && totalClaimedBig != nil && charged.Cmp(totalClaimedBig) > 0 {
+		claims = []batched.BatchedVoucherClaim{{
+			Voucher: struct {
+				Channel            batched.ChannelConfig `json:"channel"`
+				MaxClaimableAmount string                `json:"maxClaimableAmount"`
+			}{
+				Channel:            target.ChannelConfig,
+				MaxClaimableAmount: target.SignedMaxClaimable,
+			},
+			Signature:    target.Signature,
+			TotalClaimed: target.ChargedCumulativeAmount,
+		}}
 	}
 
-	return &ClaimResult{
-		Vouchers:    len(claims),
-		Transaction: resp.Transaction,
-	}, nil
+	nonce := fmt.Sprintf("%d", target.RefundNonce)
+	refund := &batched.BatchedEnrichedRefundPayload{
+		Type:          "refund",
+		ChannelConfig: target.ChannelConfig,
+		Voucher: batched.BatchedVoucherFields{
+			ChannelId:          normalizedId,
+			MaxClaimableAmount: target.SignedMaxClaimable,
+			Signature:          target.Signature,
+		},
+		Amount:      refundAmount.String(),
+		RefundNonce: nonce,
+		Claims:      claims,
+	}
+
+	if m.scheme.receiverAuthorizerSigner != nil {
+		authSig, err := m.scheme.SignRefund(ctx, normalizedId, refundAmount.String(), nonce, string(m.network))
+		if err != nil {
+			return nil, fmt.Errorf("sign refund for %s: %w", normalizedId, err)
+		}
+		refund.RefundAuthorizerSignature = evm.BytesToHex(authSig)
+		if len(claims) > 0 {
+			claimAuthSig, err := m.scheme.SignClaimBatch(ctx, claims, string(m.network))
+			if err != nil {
+				return nil, fmt.Errorf("sign claim batch for %s: %w", normalizedId, err)
+			}
+			refund.ClaimAuthorizerSignature = evm.BytesToHex(claimAuthSig)
+		}
+	}
+
+	resp, err := m.facilitatorSettle(ctx, refund.ToMap())
+	if err != nil {
+		return nil, fmt.Errorf("refund settle for %s: %w", normalizedId, err)
+	}
+	if !resp.Success {
+		return nil, fmt.Errorf("%s", formatFacilitatorFailure("Refund", resp))
+	}
+
+	// Drop the session so it doesn't churn through future refund cycles.
+	// Mirrors TS `updateChannel(... => undefined)` which deletes the entry.
+	_, _ = m.scheme.storage.UpdateChannel(normalizedId, func(current *ChannelSession) *ChannelSession {
+		if current == nil {
+			return current
+		}
+		if hasLivePendingRequest(current, time.Now().UnixMilli()) {
+			return current
+		}
+		return nil
+	})
+
+	return &RefundResult{Channel: normalizedId, Transaction: resp.Transaction}, nil
 }
 
 // updateClaimedSessions advances each session's TotalClaimed to the just-claimed
-// cumulative amount so that GetClaimableVouchers stops returning the same
-// channel until a fresh voucher pushes ChargedCumulativeAmount higher.
+// cumulative amount so GetClaimableVouchers stops returning the same channel
+// until a fresh voucher pushes ChargedCumulativeAmount higher.
 func (m *BatchedChannelManager) updateClaimedSessions(claims []batched.BatchedVoucherClaim) error {
 	for _, claim := range claims {
-		// resolveChainID inside ComputeChannelId switches on a closed set of types
-		// (string, *big.Int, ints) — convert the named Network type to its
-		// underlying string so the chain id lookup hits the string branch.
 		channelId, err := batched.ComputeChannelId(claim.Voucher.Channel, string(m.network))
 		if err != nil {
 			return fmt.Errorf("compute channel id: %w", err)
@@ -600,7 +795,7 @@ func (m *BatchedChannelManager) updateClaimedSessions(claims []batched.BatchedVo
 			}
 			curClaimed, _ := new(big.Int).SetString(current.TotalClaimed, 10)
 			if curClaimed != nil && claimedAmount.Cmp(curClaimed) <= 0 {
-				return current // already at or above this claim
+				return current
 			}
 			next := *current
 			next.TotalClaimed = claimedAmount.String()
@@ -613,10 +808,77 @@ func (m *BatchedChannelManager) updateClaimedSessions(claims []batched.BatchedVo
 	return nil
 }
 
-func (m *BatchedChannelManager) getToken() string {
-	sessions, err := m.scheme.storage.List()
-	if err != nil || len(sessions) == 0 {
-		return ""
+// getIdleChannelsForRefund returns channels that have been idle for at least
+// `idleSecs` seconds and still hold a non-zero balance. Skips channels with a
+// live in-flight request reservation. Mirrors TS
+// `getIdleChannelsForRefundFromChannels` (also private).
+//
+// Callers wanting "refund all idle channels" should inline this predicate
+// inside their SelectRefundChannels callback (the TS canonical demo does so).
+func getIdleChannelsForRefund(channels []*ChannelSession, idleSecs int) []*ChannelSession {
+	if idleSecs <= 0 {
+		return nil
 	}
-	return sessions[0].ChannelConfig.Token
+	now := time.Now().UnixMilli()
+	idleMs := int64(idleSecs) * 1000
+	out := make([]*ChannelSession, 0, len(channels))
+	for _, c := range channels {
+		balance, _ := new(big.Int).SetString(c.Balance, 10)
+		if balance == nil || balance.Sign() == 0 {
+			continue
+		}
+		if hasLivePendingRequest(c, now) {
+			continue
+		}
+		if now-c.LastRequestTimestamp < idleMs {
+			continue
+		}
+		out = append(out, c)
+	}
+	return out
+}
+
+// buildSettlePaymentPayloadMap produces the v2 PaymentPayload JSON map for
+// `settle(receiver, token)`. The manager passes `(payload, requirements)` to
+// the FacilitatorClient as marshaled JSON, so we keep this as a map shape that
+// matches `BatchedSettlePayload.ToMap()`.
+func (m *BatchedChannelManager) buildSettlePaymentPayloadMap() map[string]interface{} {
+	settle := &batched.BatchedSettlePayload{
+		Type:     "settle",
+		Receiver: m.receiver,
+		Token:    m.token,
+	}
+	return settle.ToMap()
+}
+
+// facilitatorSettle marshals the (payload, requirements) pair this manager uses
+// for its claim/settle/refund calls and forwards them to the facilitator.
+func (m *BatchedChannelManager) facilitatorSettle(ctx context.Context, payloadMap map[string]interface{}) (*x402.SettleResponse, error) {
+	payloadBytes, err := json.Marshal(map[string]interface{}{
+		"x402Version": 2,
+		"payload":     payloadMap,
+		"accepted":    m.requirementsMap(),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("marshal payload: %w", err)
+	}
+	requirementsBytes, err := json.Marshal(m.requirementsMap())
+	if err != nil {
+		return nil, fmt.Errorf("marshal requirements: %w", err)
+	}
+	return m.facilitator.Settle(ctx, payloadBytes, requirementsBytes)
+}
+
+// requirementsMap returns the minimal PaymentRequirements shape used for the
+// manager's own facilitator calls. Mirrors TS `buildPaymentRequirements`.
+func (m *BatchedChannelManager) requirementsMap() map[string]interface{} {
+	return map[string]interface{}{
+		"scheme":            batched.SchemeBatched,
+		"network":           string(m.network),
+		"asset":             m.token,
+		"amount":            "0",
+		"payTo":             m.receiver,
+		"maxTimeoutSeconds": 0,
+		"extra":             map[string]interface{}{},
+	}
 }

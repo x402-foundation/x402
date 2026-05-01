@@ -1,6 +1,6 @@
 # Batch-Settlement EVM Scheme (`go/mechanisms/evm/batched`)
 
-The **batch-settlement** scheme enables high-throughput, low-cost EVM payments via **stateless unidirectional payment channels**. Clients deposit funds into an on-chain escrow once, then sign off-chain **cumulative vouchers** per request. Servers verify vouchers with a fast signature check and claim them on-chain in batches at their discretion.
+The **batch-settlement** scheme enables high-throughput, low-cost EVM payments via **stateless unidirectional payment channels**. Clients deposit funds into an onchain escrow once, then sign off-chain **cumulative vouchers** per request. Servers verify vouchers with a fast signature check and claim them onchain in batches at their discretion.
 
 A single claim transaction can cover many channels at once, and claimed funds are swept to the receiver in a separate `settle` step. The scheme also supports **dynamic pricing**: the client authorizes a max per-request and the server charges only what was actually used.
 
@@ -28,7 +28,6 @@ import (
 signer, _ := evmsigners.NewClientSignerFromPrivateKey(os.Getenv("EVM_PRIVATE_KEY"))
 
 scheme := client.NewBatchedEvmScheme(signer, &client.BatchedEvmSchemeConfig{
-    MaxDeposit:        "1000000",
     DepositMultiplier: 5,
 })
 
@@ -42,13 +41,26 @@ Controls how much the client deposits when the channel needs funding:
 
 | Field               | Description |
 |---------------------|-------------|
-| `DepositMultiplier` | Per-request `amount × multiplier` is deposited (default 10) |
-| `MaxDeposit`        | Hard cap on a single deposit (atomic units) |
-| `AutoTopUp`         | Re-deposit automatically when balance is insufficient (default `true`; pass `*bool` to disable) |
+| `DepositMultiplier` | Per-request `amount × multiplier` is deposited (default 5). |
+| `DepositStrategy`   | Optional callback that overrides the computed amount or returns `Skip: true` to send a voucher-only payload (verify will fail; the caller is opting out of auto top-up). |
+
+```go
+scheme := client.NewBatchedEvmScheme(signer, &client.BatchedEvmSchemeConfig{
+    DepositStrategy: func(ctx context.Context, c client.DepositStrategyContext) (client.DepositStrategyResult, error) {
+        // Cap deposits at 1_000_000 base units.
+        capped, _ := new(big.Int).SetString("1000000", 10)
+        proposed, _ := new(big.Int).SetString(c.DepositAmount, 10)
+        if proposed.Cmp(capped) > 0 {
+            return client.DepositStrategyResult{Amount: capped.String()}, nil
+        }
+        return client.DepositStrategyResult{}, nil // use computed
+    },
+})
+```
 
 ### Voucher Signer Delegation
 
-By default, vouchers are signed by the same key as the payer. For better performance — especially when the payer is a **smart wallet** (EIP-1271) — delegate voucher signing to a dedicated EOA. The scheme commits this address as the channel's `payerAuthorizer`, so the facilitator can verify vouchers via fast ECDSA recovery instead of an on-chain `isValidSignature` RPC.
+By default, vouchers are signed by the same key as the payer. For better performance — especially when the payer is a **smart wallet** (EIP-1271) — delegate voucher signing to a dedicated EOA. The scheme commits this address as the channel's `payerAuthorizer`, so the facilitator can verify vouchers via fast ECDSA recovery instead of an onchain `isValidSignature` RPC.
 
 ```go
 voucherSigner, _ := evmsigners.NewClientSignerFromPrivateKey(voucherKey)
@@ -81,7 +93,7 @@ scheme := client.NewBatchedEvmScheme(signer, &client.BatchedEvmSchemeConfig{
 })
 ```
 
-If state is lost, the client recovers from on-chain `channels(channelId)` plus corrective 402s — see the spec's *Recovery After State Loss* section.
+If state is lost, the client recovers from onchain `channels(channelId)` plus corrective 402s — see the spec's *Recovery After State Loss* section.
 
 ## Server Usage
 
@@ -106,14 +118,32 @@ srv := x402.Newx402ResourceServer().Register("eip155:84532", scheme)
 
 manager := scheme.CreateChannelManager(facilitatorClient, "eip155:84532")
 manager.Start(server.AutoSettlementConfig{
-    ClaimIntervalSecs:   60,
-    ClaimOnWithdrawal:   true,  // race the client's withdraw delay
-    SettleIntervalSecs:  300,
-    RefundOnIdleSecs:    3600,
+    ClaimIntervalSecs:  60,
+    SettleIntervalSecs: 300,
+    RefundIntervalSecs: 3600,
+    // Refund channels with non-zero balance, no live pending request, and
+    // idle for at least 1 hour. Inline the predicate so callers can swap in
+    // their own logic (e.g. balance thresholds, pending-withdrawal flushing).
+    SelectRefundChannels: func(channels []*server.ChannelSession, ctx server.AutoSettlementContext) ([]*server.ChannelSession, error) {
+        out := make([]*server.ChannelSession, 0, len(channels))
+        for _, c := range channels {
+            if c.Balance == "" || c.Balance == "0" {
+                continue
+            }
+            if c.PendingRequest != nil && c.PendingRequest.ExpiresAt > ctx.Now {
+                continue
+            }
+            if ctx.Now-c.LastRequestTimestamp < 3600_000 {
+                continue
+            }
+            out = append(out, c)
+        }
+        return out, nil
+    },
 })
 
 // On shutdown, drain pending claims:
-defer manager.Stop(ctx, true /* flush */)
+defer manager.Stop(ctx, &server.StopOptions{Flush: true})
 ```
 
 ### Receiver Authorizer
@@ -155,7 +185,7 @@ Requires the x402 batch-settlement contract deployed on the target network.
 
 ## Asset Transfer Methods
 
-Deposits use one of two on-chain transfer methods, controlled by `extra.assetTransferMethod`:
+Deposits use one of two onchain transfer methods, controlled by `extra.assetTransferMethod`:
 
 | Method     | Description |
 |------------|-------------|

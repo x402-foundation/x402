@@ -125,14 +125,30 @@ func (s *ClientSigner) SignTypedData(
 		typedData.Types[typeName] = typedFields
 	}
 
-	// Add EIP712Domain type if not present
+	// Add EIP712Domain type if not present.
+	//
+	// Domain fields are conditionally declared based on which TypedDataDomain
+	// fields are populated. go-ethereum's `apitypes.TypedDataDomain.Map()`
+	// drops empty Name/Version/VerifyingContract and nil ChainID; if the type
+	// list still names them, `HashStruct("EIP712Domain", ...)` errors with
+	// "provided data '<nil>' doesn't match type 'string'" (Permit2's no-version
+	// domain is the canonical case). Mirrors viem's `getTypesForEIP712Domain`
+	// and the same fix applied to `go/mechanisms/evm/eip712.go`.
 	if _, exists := typedData.Types["EIP712Domain"]; !exists {
-		typedData.Types["EIP712Domain"] = []apitypes.Type{
-			{Name: "name", Type: "string"},
-			{Name: "version", Type: "string"},
-			{Name: "chainId", Type: "uint256"},
-			{Name: "verifyingContract", Type: "address"},
+		domainFields := make([]apitypes.Type, 0, 4)
+		if typedData.Domain.Name != "" {
+			domainFields = append(domainFields, apitypes.Type{Name: "name", Type: "string"})
 		}
+		if typedData.Domain.Version != "" {
+			domainFields = append(domainFields, apitypes.Type{Name: "version", Type: "string"})
+		}
+		if typedData.Domain.ChainId != nil {
+			domainFields = append(domainFields, apitypes.Type{Name: "chainId", Type: "uint256"})
+		}
+		if typedData.Domain.VerifyingContract != "" {
+			domainFields = append(domainFields, apitypes.Type{Name: "verifyingContract", Type: "address"})
+		}
+		typedData.Types["EIP712Domain"] = domainFields
 	}
 
 	// Hash the struct data

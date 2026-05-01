@@ -235,6 +235,31 @@ func TestSettle_MalformedClaimPayload(t *testing.T) {
 	}
 }
 
+// TestVerify_MalformedRefundPayload is a regression test for the bug where the
+// Go facilitator's Verify dispatch only handled deposit and voucher payloads,
+// causing cooperative-refund flows from cross-SDK clients (TS axios) to fail
+// with `batch_settlement_evm_invalid_payload_type`. Refund payloads must now
+// route to VerifyRefundVoucher; a malformed refund must surface as
+// `batch_settlement_evm_invalid_refund_payload`, not the generic invalid type.
+func TestVerify_MalformedRefundPayload(t *testing.T) {
+	s := newScheme()
+	pp := payloadEnvelope("eip155:8453", map[string]interface{}{
+		"type":          "refund",
+		"channelConfig": "not-a-map",
+		"voucher": map[string]interface{}{
+			"channelId":          "0xabc",
+			"maxClaimableAmount": "0",
+			"signature":          "0xsig",
+		},
+	})
+	req := types.PaymentRequirements{Scheme: batched.SchemeBatched, Network: "eip155:8453"}
+	_, err := s.Verify(context.Background(), pp, req, nil)
+	var ve *x402.VerifyError
+	if !errors.As(err, &ve) || ve.InvalidReason != ErrInvalidRefundPayload {
+		t.Fatalf("got err = %v (want %s)", err, ErrInvalidRefundPayload)
+	}
+}
+
 func TestSettle_MalformedRefundPayload(t *testing.T) {
 	s := newScheme()
 	// IsEnrichedRefundPayload requires type=refund + channelConfig + voucher +

@@ -182,7 +182,7 @@ func (s *BatchedEvmScheme) BeforeVerifyHook() x402.BeforeVerifyHook {
 				ChannelSnapshot: outcomePrevSession,
 			})
 
-			// Try a local voucher verification when cached on-chain state is fresh.
+			// Try a local voucher verification when cached onchain state is fresh.
 			// Only voucher payloads (not deposit/refund) qualify.
 			if batched.IsVoucherPayload(payload) {
 				localResult := s.verifyVoucherLocally(ctx.Requirements, payload, outcomePrevSession, now)
@@ -201,7 +201,7 @@ func (s *BatchedEvmScheme) BeforeVerifyHook() x402.BeforeVerifyHook {
 
 // verifyVoucherLocally returns a successful VerifyResponse when the voucher can
 // be verified entirely against locally cached channel state — i.e. the cache is
-// within the configured TTL of last on-chain sync, the channel config validates,
+// within the configured TTL of last onchain sync, the channel config validates,
 // the recomputed channelId matches, and the voucher signature recovers to the
 // payerAuthorizer. Returns nil on any check that requires falling back to the
 // facilitator, and an explicit invalid VerifyResponse when a local check fails.
@@ -289,7 +289,7 @@ func (s *BatchedEvmScheme) verifyVoucherLocally(
 	}
 }
 
-// isOnchainStateFresh reports whether the cached on-chain fields for the
+// isOnchainStateFresh reports whether the cached onchain fields for the
 // channel are still within the configured freshness window.
 func isOnchainStateFresh(channel *ChannelSession, ttlMs, now int64) bool {
 	if channel == nil || channel.OnchainSyncedAt == 0 {
@@ -393,7 +393,7 @@ func buildProvisionalChannelFromPayload(
 
 // AfterVerifyHook returns a hook that persists channel session state after
 // successful verification.  It extracts channelId, voucher signature, and
-// on-chain snapshot from the verify response and stores/updates the session.
+// onchain snapshot from the verify response and stores/updates the session.
 //
 // For refund vouchers (refund: true), additionally returns a SkipHandler
 // directive so the resource server bypasses the application handler and
@@ -518,7 +518,7 @@ func (s *BatchedEvmScheme) AfterVerifyHook() x402.AfterVerifyHook {
 		}
 
 		// When local verify already succeeded for a voucher payload, the cached
-		// on-chain fields were trusted as-is — preserve the existing
+		// onchain fields were trusted as-is — preserve the existing
 		// OnchainSyncedAt rather than treating this commit as a fresh sync.
 		updateRes, err := s.storage.UpdateChannel(normalizedId, func(current *ChannelSession) *ChannelSession {
 			if current == nil || current.PendingRequest == nil ||
@@ -576,9 +576,9 @@ func (s *BatchedEvmScheme) AfterVerifyHook() x402.AfterVerifyHook {
 // BeforeSettleHook returns a hook that implements the core batched settlement
 // logic.  For voucher payloads it:
 //   - Increments chargedCumulativeAmount locally via UpdateChannel
-//   - Returns a Skip result so on-chain settlement is NOT triggered
+//   - Returns a Skip result so onchain settlement is NOT triggered
 //   - If the voucher has refund=true, rewrites the payload to a refund settle
-//     action that the facilitator will execute on-chain
+//     action that the facilitator will execute onchain
 //
 // For deposit payloads it annotates responseExtra with the new charged amount.
 // All other payload types pass through to the facilitator.
@@ -634,7 +634,7 @@ func (s *BatchedEvmScheme) BeforeSettleHook() x402.BeforeSettleHook {
 			return s.handleRefundRewrite(ctx, session, payload)
 		}
 
-		// --- Voucher path: skip on-chain settlement ---
+		// --- Voucher path: skip onchain settlement ---
 		if !batched.IsVoucherPayload(payload) {
 			return nil, nil
 		}
@@ -770,7 +770,7 @@ func (s *BatchedEvmScheme) BeforeSettleHook() x402.BeforeSettleHook {
 
 // handleRefundRewrite rewrites a refund-flagged (zero-charge) voucher into a
 // refundWithSignature settle-action payload for the facilitator to execute
-// on-chain. Supports an optional partial refundAmount in the voucher; otherwise
+// onchain. Supports an optional partial refundAmount in the voucher; otherwise
 // drains the channel's full remainder.
 func (s *BatchedEvmScheme) handleRefundRewrite(
 	ctx x402.SettleContext,
@@ -908,9 +908,6 @@ func (s *BatchedEvmScheme) AfterSettleHook() x402.AfterSettleHook {
 			if parsedExtra != nil && parsedExtra.ChannelState != nil {
 				channelId = parsedExtra.ChannelState.ChannelId
 			}
-			if channelId == "" && parsedExtra != nil {
-				channelId = parsedExtra.ChannelId
-			}
 			if channelId == "" {
 				return nil
 			}
@@ -949,6 +946,13 @@ func (s *BatchedEvmScheme) AfterSettleHook() x402.AfterSettleHook {
 			}
 			ctx.Result.Extra = out.ToMap()
 
+			// Clear the pending-request reservation that BeforeVerifyHook set —
+			// the voucher path does this in BeforeSettle, but the deposit path
+			// passes through to the facilitator so cleanup must happen here.
+			// Without this, the 5s TTL blocks the next voucher with a stale
+			// "busy" 402 until expiry.
+			session.PendingRequest = nil
+
 			return s.storage.Set(normalizedId, session)
 		}
 
@@ -968,16 +972,16 @@ func (s *BatchedEvmScheme) AfterSettleHook() x402.AfterSettleHook {
 			normalizedId := batched.NormalizeChannelId(channelId)
 			prevSession, _ := s.storage.Get(normalizedId)
 
-			var fallback *batched.BatchedPaymentResponseExtra
+			var defaults *batched.BatchedChannelStateExtra
 			if prevSession != nil {
 				amountBig, _ := new(big.Int).SetString(refundPayload.Amount, 10)
 				if amountBig == nil {
 					amountBig = big.NewInt(0)
 				}
-				fallback = buildRefundResponseSnapshot(prevSession, normalizedId, amountBig)
+				defaults = buildRefundChannelStateSnapshot(prevSession, normalizedId, amountBig)
 			}
-			if fallback == nil {
-				fallback = &batched.BatchedPaymentResponseExtra{
+			if defaults == nil {
+				defaults = &batched.BatchedChannelStateExtra{
 					ChannelId:   normalizedId,
 					Balance:     "0",
 					RefundNonce: "0",
@@ -988,16 +992,8 @@ func (s *BatchedEvmScheme) AfterSettleHook() x402.AfterSettleHook {
 			refundedAmount := refundPayload.Amount
 
 			// Reshape into nested wire format. Allow the facilitator's response
-			// extra (legacy flat or new nested) to override fallback values.
+			// extra to override default values.
 			parsedExtra, _ := batched.PaymentResponseExtraFromMap(extra)
-			defaults := &batched.BatchedChannelStateExtra{
-				ChannelId:               fallback.ChannelId,
-				Balance:                 fallback.Balance,
-				TotalClaimed:            fallback.TotalClaimed,
-				WithdrawRequestedAt:     fallback.WithdrawRequestedAt,
-				RefundNonce:             fallback.RefundNonce,
-				ChargedCumulativeAmount: fallback.ChargedCumulativeAmount,
-			}
 			cs := mergeChannelStateFromResponse(parsedExtra, defaults)
 			out := &batched.BatchedPaymentResponseExtra{ChannelState: cs}
 			ctx.Result.Extra = out.ToMap()
@@ -1036,10 +1032,9 @@ func (s *BatchedEvmScheme) AfterSettleHook() x402.AfterSettleHook {
 	}
 }
 
-// mergeChannelStateFromResponse layers a parsed response extra over a defaults
-// snapshot. Prefers nested ChannelState; falls back to legacy flat fields. Only
-// non-zero fields override the defaults so callers can pre-populate sensible
-// values from local session state.
+// mergeChannelStateFromResponse layers a parsed response extra's channelState
+// over a defaults snapshot. Only non-zero fields override the defaults so
+// callers can pre-populate sensible values from local session state.
 func mergeChannelStateFromResponse(
 	parsed *batched.BatchedPaymentResponseExtra,
 	defaults *batched.BatchedChannelStateExtra,
@@ -1048,21 +1043,10 @@ func mergeChannelStateFromResponse(
 	if defaults != nil {
 		*cs = *defaults
 	}
-	if parsed == nil {
+	if parsed == nil || parsed.ChannelState == nil {
 		return cs
 	}
 	src := parsed.ChannelState
-	if src == nil {
-		// Legacy flat fields — adapt to the nested shape.
-		src = &batched.BatchedChannelStateExtra{
-			ChannelId:               parsed.ChannelId,
-			Balance:                 parsed.Balance,
-			TotalClaimed:            parsed.TotalClaimed,
-			WithdrawRequestedAt:     parsed.WithdrawRequestedAt,
-			RefundNonce:             parsed.RefundNonce,
-			ChargedCumulativeAmount: parsed.ChargedCumulativeAmount,
-		}
-	}
 	if src.ChannelId != "" {
 		cs.ChannelId = src.ChannelId
 	}
@@ -1084,10 +1068,10 @@ func mergeChannelStateFromResponse(
 	return cs
 }
 
-// buildRefundResponseSnapshot mirrors the TS helper of the same name: it builds
-// the BatchedPaymentResponseExtra describing channel state immediately after a
-// cooperative refund of `refundAmount` is applied to `session`.
-func buildRefundResponseSnapshot(session *ChannelSession, channelId string, refundAmount *big.Int) *batched.BatchedPaymentResponseExtra {
+// buildRefundChannelStateSnapshot mirrors the TS helper of the same name: it
+// builds the BatchedChannelStateExtra describing channel state immediately
+// after a cooperative refund of `refundAmount` is applied to `session`.
+func buildRefundChannelStateSnapshot(session *ChannelSession, channelId string, refundAmount *big.Int) *batched.BatchedChannelStateExtra {
 	balance, _ := new(big.Int).SetString(session.Balance, 10)
 	if balance == nil {
 		balance = big.NewInt(0)
@@ -1101,7 +1085,7 @@ func buildRefundResponseSnapshot(session *ChannelSession, channelId string, refu
 	if session.TotalClaimed != "" {
 		totalClaimed = finalClaimed
 	}
-	return &batched.BatchedPaymentResponseExtra{
+	return &batched.BatchedChannelStateExtra{
 		ChannelId:               channelId,
 		ChargedCumulativeAmount: finalClaimed,
 		Balance:                 postBalance.String(),

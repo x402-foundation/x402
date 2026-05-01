@@ -11,13 +11,13 @@ const (
 	SchemeBatched = "batch-settlement"
 
 	// BatchSettlementAddress is the deployed x402BatchSettlement contract address (CREATE2, all chains).
-	BatchSettlementAddress = "0x4020e66668E58c108e7e94db2F800C9F8C150003"
+	BatchSettlementAddress = "0x8f79473b50d67733349191d7349FE45977d44AF7"
 
 	// ERC3009DepositCollectorAddress is the deployed ERC3009DepositCollector contract address.
-	ERC3009DepositCollectorAddress = "0x4020aE5A8d3DC3B505942Ce8CECC6776a6ED0004"
+	ERC3009DepositCollectorAddress = "0xE9460Cb807D97325E70e41De191430Bea39497f5"
 
 	// Permit2DepositCollectorAddress is the deployed Permit2DepositCollector contract address.
-	Permit2DepositCollectorAddress = "0x4020e27bcea6C226BF888C61b6C520C0fcC50005"
+	Permit2DepositCollectorAddress = "0x1D859871C289cB1e28DB38077272244C6343F7B9"
 
 	// MinWithdrawDelay is the minimum withdraw delay in seconds (15 minutes).
 	MinWithdrawDelay = 900
@@ -27,7 +27,7 @@ const (
 )
 
 // ChannelConfigTypeString is the EIP-712 typed-data primary type string used
-// for the on-chain channel-id pre-image.
+// for the onchain channel-id pre-image.
 const ChannelConfigTypeString = "ChannelConfig(address payer,address payerAuthorizer,address receiver,address receiverAuthorizer,address token,uint40 withdrawDelay,bytes32 salt)"
 
 // ChannelConfigTypeHash is keccak256(ChannelConfigTypeString).
@@ -96,6 +96,42 @@ var ReceiveAuthorizationTypes = map[string][]evm.TypedDataField{
 		{Name: "nonce", Type: "bytes32"},
 	},
 }
+
+// Permit2Address is the universal Permit2 deployment used across EVM chains.
+const Permit2Address = "0x000000000022D473030F116dDEE9F6B43aC78BA3"
+
+// Permit2DomainName is the EIP-712 domain name used by Permit2 typed data.
+const Permit2DomainName = "Permit2"
+
+// BatchPermit2WitnessTypes defines the EIP-712 types for the channel-bound
+// Permit2 PermitWitnessTransferFrom signed by the payer when the deposit uses
+// the permit2 transfer method. The witness binds the transfer to a specific
+// batch-settlement channel id so the Permit2DepositCollector can route funds
+// on the receiver's behalf.
+//
+// Mirrors TS `batchPermit2WitnessTypes` in
+// `typescript/.../batch-settlement/constants.ts`.
+var BatchPermit2WitnessTypes = map[string][]evm.TypedDataField{
+	"PermitWitnessTransferFrom": {
+		{Name: "permitted", Type: "TokenPermissions"},
+		{Name: "spender", Type: "address"},
+		{Name: "nonce", Type: "uint256"},
+		{Name: "deadline", Type: "uint256"},
+		{Name: "witness", Type: "DepositWitness"},
+	},
+	"TokenPermissions": {
+		{Name: "token", Type: "address"},
+		{Name: "amount", Type: "uint256"},
+	},
+	"DepositWitness": {
+		{Name: "channelId", Type: "bytes32"},
+	},
+}
+
+// DepositWitnessTypeString is the canonical witness type-string fragment that
+// must be appended (without the leading `,`) when computing the Permit2
+// witness type hash. Mirrors TS `DEPOSIT_WITNESS_TYPE_STRING`.
+const DepositWitnessTypeString = "DepositWitness witness)DepositWitness(bytes32 channelId)TokenPermissions(address token,uint256 amount)"
 
 // ============================================================================
 // ABI Definitions

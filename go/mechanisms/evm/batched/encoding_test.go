@@ -103,3 +103,106 @@ func TestBuildErc3009CollectorData_InvalidSalt(t *testing.T) {
 		t.Fatal("expected error")
 	}
 }
+
+// ----- Permit2 collector data ------------------------------------------------
+
+func TestBuildPermit2CollectorData_Deterministic(t *testing.T) {
+	a, err := BuildPermit2CollectorData("100", "9999999999", "0xdeadbeef", nil)
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	b, err := BuildPermit2CollectorData("100", "9999999999", "0xdeadbeef", []byte{})
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	if !bytes.Equal(a, b) {
+		t.Fatalf("nil and empty eip2612PermitData should encode identically")
+	}
+	if len(a) == 0 {
+		t.Fatal("empty encoding")
+	}
+}
+
+func TestBuildPermit2CollectorData_AcceptsEip2612Segment(t *testing.T) {
+	permit, err := BuildEip2612PermitData(Eip2612PermitInput{
+		Value:    "1000000",
+		Deadline: "9999999999",
+		V:        27,
+		R:        "0x" + strings.Repeat("11", 32),
+		S:        "0x" + strings.Repeat("22", 32),
+	})
+	if err != nil {
+		t.Fatalf("permit data: %v", err)
+	}
+	with, err := BuildPermit2CollectorData("1", "9999999999", "0xff", permit)
+	if err != nil {
+		t.Fatalf("with permit: %v", err)
+	}
+	without, err := BuildPermit2CollectorData("1", "9999999999", "0xff", nil)
+	if err != nil {
+		t.Fatalf("without permit: %v", err)
+	}
+	if bytes.Equal(with, without) {
+		t.Fatal("eip2612 permit segment did not affect encoding")
+	}
+}
+
+func TestBuildPermit2CollectorData_InvalidNonce(t *testing.T) {
+	if _, err := BuildPermit2CollectorData("not-a-number", "1", "0xff", nil); err == nil {
+		t.Fatal("expected error")
+	}
+}
+
+func TestBuildPermit2CollectorData_InvalidDeadline(t *testing.T) {
+	if _, err := BuildPermit2CollectorData("1", "not-a-number", "0xff", nil); err == nil {
+		t.Fatal("expected error")
+	}
+}
+
+// ----- EIP-2612 permit segment ----------------------------------------------
+
+func TestBuildEip2612PermitData_Deterministic(t *testing.T) {
+	in := Eip2612PermitInput{
+		Value:    "1000",
+		Deadline: "1234567890",
+		V:        28,
+		R:        "0x" + strings.Repeat("aa", 32),
+		S:        "0x" + strings.Repeat("bb", 32),
+	}
+	a, err := BuildEip2612PermitData(in)
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	b, err := BuildEip2612PermitData(in)
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	if !bytes.Equal(a, b) {
+		t.Fatal("non-deterministic encoding")
+	}
+}
+
+func TestBuildEip2612PermitData_InvalidR(t *testing.T) {
+	// hexToBytes32 only rejects hex strings longer than 32 bytes (64 chars).
+	if _, err := BuildEip2612PermitData(Eip2612PermitInput{
+		Value:    "1",
+		Deadline: "1",
+		V:        27,
+		R:        "0x" + strings.Repeat("ff", 33),
+		S:        "0x" + strings.Repeat("00", 32),
+	}); err == nil {
+		t.Fatal("expected error for over-long r")
+	}
+}
+
+func TestBuildEip2612PermitData_InvalidValue(t *testing.T) {
+	if _, err := BuildEip2612PermitData(Eip2612PermitInput{
+		Value:    "not-a-number",
+		Deadline: "1",
+		V:        27,
+		R:        "0x" + strings.Repeat("00", 32),
+		S:        "0x" + strings.Repeat("00", 32),
+	}); err == nil {
+		t.Fatal("expected error for non-numeric value")
+	}
+}

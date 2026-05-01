@@ -9,6 +9,9 @@
   "x402Versions": [
     2
   ],
+  "schemes": [
+    "exact"
+  ],
   "evm": {
     "assetTransferMethods": [
       "eip3009"

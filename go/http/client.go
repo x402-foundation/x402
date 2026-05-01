@@ -113,26 +113,33 @@ func (c *x402HTTPClient) GetPaymentSettleResponse(headers map[string]string) (*x
 // HTTP Client Wrapper
 // ============================================================================
 
-// WrapHTTPClientWithPayment wraps a standard HTTP client with x402 payment handling
-// This allows transparent payment handling for HTTP requests
+// WrapHTTPClientWithPayment returns a new *http.Client whose Transport is wrapped
+// with x402 payment handling. The input client is NEVER mutated — its Transport,
+// Timeout, Jar and CheckRedirect are copied into a fresh *http.Client. Passing
+// http.DefaultClient is safe; the returned client is independent and the global
+// default remains untouched.
 func WrapHTTPClientWithPayment(client *http.Client, x402Client *x402HTTPClient) *http.Client {
 	if client == nil {
 		client = http.DefaultClient
 	}
 
-	// Wrap the transport with payment handling
 	originalTransport := client.Transport
 	if originalTransport == nil {
 		originalTransport = http.DefaultTransport
 	}
 
-	client.Transport = &PaymentRoundTripper{
-		Transport:  originalTransport,
-		x402Client: x402Client,
-		retryCount: &sync.Map{},
+	wrapped := &http.Client{
+		Transport: &PaymentRoundTripper{
+			Transport:  originalTransport,
+			x402Client: x402Client,
+			retryCount: &sync.Map{},
+		},
+		CheckRedirect: client.CheckRedirect,
+		Jar:           client.Jar,
+		Timeout:       client.Timeout,
 	}
 
-	return client
+	return wrapped
 }
 
 // PaymentRoundTripper implements http.RoundTripper with x402 payment handling

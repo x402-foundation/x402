@@ -12,6 +12,7 @@ import {
   TestScenario,
   ProtocolFamily,
   endpointAssetTransferMethod,
+  endpointPaymentScheme,
 } from './types';
 
 export class TestDiscovery {
@@ -259,31 +260,45 @@ export class TestDiscovery {
 
         for (const endpoint of testableEndpoints) {
           const endpointProtocolFamily = endpoint.protocolFamily || 'evm';
+          const endpointScheme = endpointPaymentScheme(endpoint);
 
           // Only create scenarios where client supports endpoint's protocol family
           if (!clientProtocolFamilies.includes(endpointProtocolFamily)) {
             continue;
           }
 
-          // For EVM endpoints, check transfer method compatibility with client
+          // For EVM endpoints, check the client supports the endpoint's
+          // payment scheme and asset transfer method. Both `schemes` and
+          // `evm.assetTransferMethods` must be declared explicitly on the
+          // client config — there is no implicit default.
           if (endpointProtocolFamily === 'evm') {
+            const clientSchemes = client.config.schemes ?? [];
+            if (endpointScheme && !clientSchemes.includes(endpointScheme)) {
+              verboseLog(`  ⚠️  Skipping ${client.name} ↔ ${server.name} ${endpoint.path}: Payment scheme mismatch (client supports [${clientSchemes.join(', ')}], endpoint requires ${endpointScheme})`);
+              continue;
+            }
             const endpointAtm = endpointAssetTransferMethod(endpoint)!;
-            const clientAssetMethods = client.config.evm?.assetTransferMethods || ['eip3009'];
+            const clientAssetMethods = client.config.evm?.assetTransferMethods ?? [];
             if (!clientAssetMethods.includes(endpointAtm)) {
               verboseLog(`  ⚠️  Skipping ${client.name} ↔ ${server.name} ${endpoint.path}: Asset transfer method mismatch (client supports [${clientAssetMethods.join(', ')}], endpoint requires ${endpointAtm})`);
               continue;
             }
           }
 
-          // Find facilitators that support this protocol family and version
+          // Find facilitators that support this protocol family, version,
+          // payment scheme, and asset transfer method. Facilitators must
+          // declare `schemes` and `evm.assetTransferMethods` explicitly.
           const matchingFacilitators = facilitators.filter(f => {
             const supportsProtocol = f.config.protocolFamilies?.includes(endpointProtocolFamily);
             const supportsVersion = f.config.x402Versions?.includes(serverVersion);
-            // For EVM, also check transfer method support
             if (endpointProtocolFamily === 'evm') {
               const endpointAtm = endpointAssetTransferMethod(endpoint)!;
-              const facilAssetMethods = f.config.evm?.assetTransferMethods || ['eip3009'];
+              const facilAssetMethods = f.config.evm?.assetTransferMethods ?? [];
               if (!facilAssetMethods.includes(endpointAtm)) return false;
+              if (endpointScheme) {
+                const facilSchemes = f.config.schemes ?? [];
+                if (!facilSchemes.includes(endpointScheme)) return false;
+              }
             }
             return supportsProtocol && supportsVersion;
           });

@@ -26,13 +26,32 @@ type ChannelConfig struct {
 	Salt               string `json:"salt"`
 }
 
-// ChannelState represents on-chain state read from the BatchSettlement contract.
+// ChannelState represents onchain state read from the BatchSettlement contract.
 type ChannelState struct {
 	Balance             *big.Int
 	TotalClaimed        *big.Int
 	WithdrawRequestedAt int
 	RefundNonce         *big.Int
 }
+
+// AssetTransferMethod identifies how a deposit moves tokens into the channel:
+// either an ERC-3009 ReceiveWithAuthorization (default) or a Permit2
+// channel-bound PermitWitnessTransferFrom. Servers opt into a non-default
+// method by setting `accepts.extra.assetTransferMethod` on payment
+// requirements; clients dispatch on the same field. Mirrors the TS
+// `BatchSettlementAssetTransferMethod` union.
+type AssetTransferMethod string
+
+const (
+	// AssetTransferMethodEip3009 is the default — uses USDC's
+	// `transferWithAuthorization` (EIP-3009) via the ERC3009DepositCollector.
+	AssetTransferMethodEip3009 AssetTransferMethod = "eip3009"
+
+	// AssetTransferMethodPermit2 funds the deposit via a channel-bound
+	// `PermitWitnessTransferFrom` against the universal Permit2 contract,
+	// brokered by the Permit2DepositCollector.
+	AssetTransferMethodPermit2 AssetTransferMethod = "permit2"
+)
 
 // BatchedErc3009Authorization represents the ERC-3009 ReceiveWithAuthorization params.
 type BatchedErc3009Authorization struct {
@@ -42,6 +61,32 @@ type BatchedErc3009Authorization struct {
 	Signature   string `json:"signature"`
 }
 
+// BatchedPermit2TokenPermissions is the {token, amount} pair signed inside a
+// Permit2 `PermitWitnessTransferFrom` authorization.
+type BatchedPermit2TokenPermissions struct {
+	Token  string `json:"token"`
+	Amount string `json:"amount"`
+}
+
+// BatchedPermit2Witness is the channel-bound witness binding a Permit2 transfer
+// to a specific batch-settlement channel id.
+type BatchedPermit2Witness struct {
+	ChannelId string `json:"channelId"`
+}
+
+// BatchedPermit2Authorization is the Permit2 PermitWitnessTransferFrom
+// authorization signed by the payer when the deposit uses the permit2 transfer
+// method. Mirrors the TS `BatchSettlementPermit2Authorization` shape.
+type BatchedPermit2Authorization struct {
+	From      string                         `json:"from"`
+	Permitted BatchedPermit2TokenPermissions `json:"permitted"`
+	Spender   string                         `json:"spender"`
+	Nonce     string                         `json:"nonce"`
+	Deadline  string                         `json:"deadline"`
+	Witness   BatchedPermit2Witness          `json:"witness"`
+	Signature string                         `json:"signature"`
+}
+
 // BatchedVoucherFields holds the cumulative-ceiling voucher.
 type BatchedVoucherFields struct {
 	ChannelId          string `json:"channelId"`
@@ -49,9 +94,13 @@ type BatchedVoucherFields struct {
 	Signature          string `json:"signature"`
 }
 
-// BatchedDepositAuthorization wraps asset-transfer authorization data.
+// BatchedDepositAuthorization wraps asset-transfer authorization data. Exactly
+// one of the fields is populated per deposit, matching the TS
+// `BatchSettlementDepositAuthorization` discriminated union (`erc3009Authorization`
+// XOR `permit2Authorization`).
 type BatchedDepositAuthorization struct {
 	Erc3009Authorization *BatchedErc3009Authorization `json:"erc3009Authorization,omitempty"`
+	Permit2Authorization *BatchedPermit2Authorization `json:"permit2Authorization,omitempty"`
 }
 
 // BatchedDepositData is the deposit portion of a deposit payload.
@@ -84,7 +133,7 @@ type BatchedRefundPayload struct {
 	Amount        string               `json:"amount,omitempty"`
 }
 
-// BatchedVoucherClaim is used in claim operations on-chain.
+// BatchedVoucherClaim is used in claim operations onchain.
 type BatchedVoucherClaim struct {
 	Voucher struct {
 		Channel            ChannelConfig `json:"channel"`
@@ -113,43 +162,26 @@ type BatchedVoucherStateExtra struct {
 }
 
 // BatchedPaymentResponseExtra carries channel state in settle/verify responses.
-// Mirrors TS `BatchSettlementPaymentResponseExtra`. The nested shape is the
-// canonical wire format; the legacy flat fields are still accepted on parse for
-// backward compatibility.
+// Mirrors TS `BatchSettlementPaymentResponseExtra`.
 type BatchedPaymentResponseExtra struct {
 	ChargedAmount string                    `json:"chargedAmount,omitempty"`
 	ChannelState  *BatchedChannelStateExtra `json:"channelState,omitempty"`
 	VoucherState  *BatchedVoucherStateExtra `json:"voucherState,omitempty"`
-
-	// Deprecated legacy flat fields. Retained as no-json-tag to avoid emitting
-	// them on the wire; populated by parsers when only flat fields are present
-	// so callers can transparently read either shape via the helper accessors.
-	ChannelId               string `json:"-"`
-	ChargedCumulativeAmount string `json:"-"`
-	Balance                 string `json:"-"`
-	TotalClaimed            string `json:"-"`
-	WithdrawRequestedAt     int    `json:"-"`
-	RefundNonce             string `json:"-"`
-}
-
-// BatchSettlementRequirementsChannelState is the corrective-402 recovery payload
-// embedded in PaymentRequirements.extra.ChannelState. Mirrors TS BatchSettlementRequirementsChannelState.
-type BatchSettlementRequirementsChannelState struct {
-	ChannelId               string `json:"channelId"`
-	ChargedCumulativeAmount string `json:"chargedCumulativeAmount,omitempty"`
-	SignedMaxClaimable      string `json:"signedMaxClaimable,omitempty"`
-	Signature               string `json:"signature,omitempty"`
 }
 
 // BatchSettlementPaymentRequirementsExtra is the typed shape of the `extra`
-// field on PaymentRequirements for the batch-settlement scheme.
+// field on PaymentRequirements for the batch-settlement scheme. Mirrors the TS
+// `BatchSettlementPaymentRequirementsExtra` type — the corrective-402 recovery
+// payload is split across two camelCase keys: `channelState` (channel snapshot)
+// and `voucherState` (latest signed voucher proof).
 type BatchSettlementPaymentRequirementsExtra struct {
-	ReceiverAuthorizer  string                                   `json:"receiverAuthorizer"`
-	WithdrawDelay       int                                      `json:"withdrawDelay"`
-	Name                string                                   `json:"name"`
-	Version             string                                   `json:"version"`
-	AssetTransferMethod string                                   `json:"assetTransferMethod,omitempty"` // "eip3009"
-	ChannelState        *BatchSettlementRequirementsChannelState `json:"ChannelState,omitempty"`
+	ReceiverAuthorizer  string                    `json:"receiverAuthorizer"`
+	WithdrawDelay       int                       `json:"withdrawDelay"`
+	Name                string                    `json:"name"`
+	Version             string                    `json:"version"`
+	AssetTransferMethod string                    `json:"assetTransferMethod,omitempty"` // "eip3009" or "permit2"
+	ChannelState        *BatchedChannelStateExtra `json:"channelState,omitempty"`
+	VoucherState        *BatchedVoucherStateExtra `json:"voucherState,omitempty"`
 }
 
 // FileChannelStorageOptions configures file-backed channel storage.
@@ -314,6 +346,32 @@ func erc3009AuthFromMap(data map[string]interface{}) *BatchedErc3009Authorizatio
 	return auth
 }
 
+// permit2AuthFromMap parses a Permit2 PermitWitnessTransferFrom authorization
+// from a raw map. Returns nil if `permitted` or `witness` are missing.
+func permit2AuthFromMap(data map[string]interface{}) *BatchedPermit2Authorization {
+	if data == nil {
+		return nil
+	}
+	auth := &BatchedPermit2Authorization{}
+	auth.From, _ = data["from"].(string)
+	auth.Spender, _ = data["spender"].(string)
+	auth.Nonce, _ = data["nonce"].(string)
+	auth.Deadline, _ = data["deadline"].(string)
+	auth.Signature, _ = data["signature"].(string)
+	if permitted, ok := data["permitted"].(map[string]interface{}); ok {
+		auth.Permitted.Token, _ = permitted["token"].(string)
+		auth.Permitted.Amount, _ = permitted["amount"].(string)
+	} else {
+		return nil
+	}
+	if witness, ok := data["witness"].(map[string]interface{}); ok {
+		auth.Witness.ChannelId, _ = witness["channelId"].(string)
+	} else {
+		return nil
+	}
+	return auth
+}
+
 // DepositPayloadFromMap creates a BatchedDepositPayload from a raw map.
 func DepositPayloadFromMap(data map[string]interface{}) (*BatchedDepositPayload, error) {
 	payload := &BatchedDepositPayload{Type: "deposit"}
@@ -343,6 +401,9 @@ func DepositPayloadFromMap(data map[string]interface{}) (*BatchedDepositPayload,
 	if authMap, ok := depositMap["authorization"].(map[string]interface{}); ok {
 		if erc3009Map, ok := authMap["erc3009Authorization"].(map[string]interface{}); ok {
 			payload.Deposit.Authorization.Erc3009Authorization = erc3009AuthFromMap(erc3009Map)
+		}
+		if permit2Map, ok := authMap["permit2Authorization"].(map[string]interface{}); ok {
+			payload.Deposit.Authorization.Permit2Authorization = permit2AuthFromMap(permit2Map)
 		}
 	}
 
@@ -528,6 +589,23 @@ func (p *BatchedDepositPayload) ToMap() map[string]interface{} {
 			"signature":   a.Signature,
 		}
 	}
+	if p.Deposit.Authorization.Permit2Authorization != nil {
+		a := p.Deposit.Authorization.Permit2Authorization
+		authMap["permit2Authorization"] = map[string]interface{}{
+			"from": a.From,
+			"permitted": map[string]interface{}{
+				"token":  a.Permitted.Token,
+				"amount": a.Permitted.Amount,
+			},
+			"spender":  a.Spender,
+			"nonce":    a.Nonce,
+			"deadline": a.Deadline,
+			"witness": map[string]interface{}{
+				"channelId": a.Witness.ChannelId,
+			},
+			"signature": a.Signature,
+		}
+	}
 	return map[string]interface{}{
 		"type":          "deposit",
 		"channelConfig": ChannelConfigToMap(p.ChannelConfig),
@@ -623,27 +701,12 @@ func VoucherClaimsToList(claims []BatchedVoucherClaim) []interface{} {
 }
 
 // ToMap converts a BatchedPaymentResponseExtra to its canonical nested wire shape.
-// Legacy flat fields are populated into the nested ChannelState if no nested
-// state is present, ensuring round-tripping of constructions that only set the
-// flat fields.
 func (e *BatchedPaymentResponseExtra) ToMap() map[string]interface{} {
 	out := map[string]interface{}{}
 	if e.ChargedAmount != "" {
 		out["chargedAmount"] = e.ChargedAmount
 	}
-	cs := e.ChannelState
-	if cs == nil && (e.ChannelId != "" || e.Balance != "" || e.TotalClaimed != "" ||
-		e.RefundNonce != "" || e.WithdrawRequestedAt != 0 || e.ChargedCumulativeAmount != "") {
-		cs = &BatchedChannelStateExtra{
-			ChannelId:               e.ChannelId,
-			Balance:                 e.Balance,
-			TotalClaimed:            e.TotalClaimed,
-			WithdrawRequestedAt:     e.WithdrawRequestedAt,
-			RefundNonce:             e.RefundNonce,
-			ChargedCumulativeAmount: e.ChargedCumulativeAmount,
-		}
-	}
-	if cs != nil {
+	if cs := e.ChannelState; cs != nil {
 		csMap := map[string]interface{}{
 			"channelId":           cs.ChannelId,
 			"balance":             cs.Balance,
@@ -671,8 +734,8 @@ func (e *BatchedPaymentResponseExtra) ToMap() map[string]interface{} {
 	return out
 }
 
-// PaymentResponseExtraFromMap parses a BatchedPaymentResponseExtra from a map.
-// Reads the canonical nested shape and falls back to legacy flat keys.
+// PaymentResponseExtraFromMap parses the canonical nested
+// `BatchedPaymentResponseExtra` shape from a map.
 func PaymentResponseExtraFromMap(data map[string]interface{}) (*BatchedPaymentResponseExtra, error) {
 	extra := &BatchedPaymentResponseExtra{}
 	if data == nil {
@@ -681,7 +744,6 @@ func PaymentResponseExtraFromMap(data map[string]interface{}) (*BatchedPaymentRe
 	if v, ok := data["chargedAmount"].(string); ok {
 		extra.ChargedAmount = v
 	}
-
 	if csRaw, ok := data["channelState"].(map[string]interface{}); ok && csRaw != nil {
 		cs := &BatchedChannelStateExtra{}
 		cs.ChannelId, _ = csRaw["channelId"].(string)
@@ -696,28 +758,7 @@ func PaymentResponseExtraFromMap(data map[string]interface{}) (*BatchedPaymentRe
 			cs.WithdrawRequestedAt = v
 		}
 		extra.ChannelState = cs
-		// Mirror into flat fields for legacy callers.
-		extra.ChannelId = cs.ChannelId
-		extra.Balance = cs.Balance
-		extra.TotalClaimed = cs.TotalClaimed
-		extra.WithdrawRequestedAt = cs.WithdrawRequestedAt
-		extra.RefundNonce = cs.RefundNonce
-		extra.ChargedCumulativeAmount = cs.ChargedCumulativeAmount
-	} else {
-		// Legacy flat shape.
-		extra.ChannelId, _ = data["channelId"].(string)
-		extra.ChargedCumulativeAmount, _ = data["chargedCumulativeAmount"].(string)
-		extra.Balance, _ = data["balance"].(string)
-		extra.TotalClaimed, _ = data["totalClaimed"].(string)
-		extra.RefundNonce, _ = data["refundNonce"].(string)
-		switch v := data["withdrawRequestedAt"].(type) {
-		case float64:
-			extra.WithdrawRequestedAt = int(v)
-		case int:
-			extra.WithdrawRequestedAt = v
-		}
 	}
-
 	if vsRaw, ok := data["voucherState"].(map[string]interface{}); ok && vsRaw != nil {
 		vs := &BatchedVoucherStateExtra{}
 		vs.SignedMaxClaimable, _ = vsRaw["signedMaxClaimable"].(string)
@@ -727,39 +768,81 @@ func PaymentResponseExtraFromMap(data map[string]interface{}) (*BatchedPaymentRe
 	return extra, nil
 }
 
-// ChannelStateRequirementsFromMap parses a BatchSettlementRequirementsChannelState
-// from PaymentRequirements.extra["ChannelState"]. Returns nil when absent.
-func ChannelStateRequirementsFromMap(data map[string]interface{}) *BatchSettlementRequirementsChannelState {
+// ChannelStateRequirementsFromMap parses a channelState entry on
+// PaymentRequirements.extra. Returns nil when absent or missing channelId.
+func ChannelStateRequirementsFromMap(data map[string]interface{}) *BatchedChannelStateExtra {
 	if data == nil {
 		return nil
 	}
-	cs := &BatchSettlementRequirementsChannelState{}
+	cs := &BatchedChannelStateExtra{}
 	cs.ChannelId, _ = data["channelId"].(string)
+	cs.Balance, _ = data["balance"].(string)
+	cs.TotalClaimed, _ = data["totalClaimed"].(string)
+	cs.RefundNonce, _ = data["refundNonce"].(string)
 	cs.ChargedCumulativeAmount, _ = data["chargedCumulativeAmount"].(string)
-	cs.SignedMaxClaimable, _ = data["signedMaxClaimable"].(string)
-	cs.Signature, _ = data["signature"].(string)
+	switch v := data["withdrawRequestedAt"].(type) {
+	case float64:
+		cs.WithdrawRequestedAt = int(v)
+	case int:
+		cs.WithdrawRequestedAt = v
+	case int64:
+		cs.WithdrawRequestedAt = int(v)
+	}
 	if cs.ChannelId == "" {
 		return nil
 	}
 	return cs
 }
 
-// ToMap converts a BatchSettlementRequirementsChannelState to a map.
-func (cs *BatchSettlementRequirementsChannelState) ToMap() map[string]interface{} {
+// VoucherStateRequirementsFromMap parses a voucherState entry on
+// PaymentRequirements.extra. Returns nil when absent or empty.
+func VoucherStateRequirementsFromMap(data map[string]interface{}) *BatchedVoucherStateExtra {
+	if data == nil {
+		return nil
+	}
+	vs := &BatchedVoucherStateExtra{}
+	vs.SignedMaxClaimable, _ = data["signedMaxClaimable"].(string)
+	vs.Signature, _ = data["signature"].(string)
+	if vs.SignedMaxClaimable == "" && vs.Signature == "" {
+		return nil
+	}
+	return vs
+}
+
+// ToMap converts a BatchedChannelStateExtra to a map (used for emitting
+// `extra.channelState` on corrective-402 PaymentRequirements).
+func (cs *BatchedChannelStateExtra) ToMap() map[string]interface{} {
 	if cs == nil {
 		return nil
 	}
 	result := map[string]interface{}{
-		"channelId": cs.ChannelId,
+		"channelId":           cs.ChannelId,
+		"balance":             cs.Balance,
+		"totalClaimed":        cs.TotalClaimed,
+		"withdrawRequestedAt": cs.WithdrawRequestedAt,
+		"refundNonce":         cs.RefundNonce,
 	}
 	if cs.ChargedCumulativeAmount != "" {
 		result["chargedCumulativeAmount"] = cs.ChargedCumulativeAmount
 	}
-	if cs.SignedMaxClaimable != "" {
-		result["signedMaxClaimable"] = cs.SignedMaxClaimable
+	return result
+}
+
+// ToMap converts a BatchedVoucherStateExtra to a map (used for emitting
+// `extra.voucherState` on corrective-402 PaymentRequirements).
+func (vs *BatchedVoucherStateExtra) ToMap() map[string]interface{} {
+	if vs == nil {
+		return nil
 	}
-	if cs.Signature != "" {
-		result["signature"] = cs.Signature
+	result := map[string]interface{}{}
+	if vs.SignedMaxClaimable != "" {
+		result["signedMaxClaimable"] = vs.SignedMaxClaimable
+	}
+	if vs.Signature != "" {
+		result["signature"] = vs.Signature
+	}
+	if len(result) == 0 {
+		return nil
 	}
 	return result
 }

@@ -602,3 +602,42 @@ func TestPaymentRoundTripper_NoRecoveryWhenHookDeclines(t *testing.T) {
 		t.Fatalf("expected initial + 1 paid retry, got %d attempts", attempt)
 	}
 }
+
+// TestWrapHTTPClientWithPayment_DoesNotMutateInput is a regression test for
+// the bug where WrapHTTPClientWithPayment mutated the input *http.Client's
+// Transport in place. When called with http.DefaultClient that mutation would
+// turn every subsequent caller of http.DefaultClient — including unrelated
+// refund probes that expect a 402 — into a payment-aware client that auto-pays
+// and returns 200. The wrapper must produce a NEW client and leave the input
+// untouched.
+func TestWrapHTTPClientWithPayment_DoesNotMutateInput(t *testing.T) {
+	originalDefault := http.DefaultClient.Transport
+	defer func() { http.DefaultClient.Transport = originalDefault }()
+
+	x402Client := Newx402HTTPClient(x402.Newx402Client())
+
+	wrapped := WrapHTTPClientWithPayment(http.DefaultClient, x402Client)
+
+	if wrapped == http.DefaultClient {
+		t.Fatal("wrapper returned the same *http.Client as the input — must return a new client")
+	}
+	if http.DefaultClient.Transport != originalDefault {
+		t.Fatal("http.DefaultClient.Transport was mutated by WrapHTTPClientWithPayment")
+	}
+	if _, ok := wrapped.Transport.(*PaymentRoundTripper); !ok {
+		t.Fatalf("returned client should have PaymentRoundTripper transport, got %T", wrapped.Transport)
+	}
+
+	custom := &http.Client{Timeout: 7 * 1e9}
+	customOriginal := custom.Transport
+	wrapped2 := WrapHTTPClientWithPayment(custom, x402Client)
+	if wrapped2 == custom {
+		t.Fatal("wrapper must not return the input *http.Client")
+	}
+	if custom.Transport != customOriginal {
+		t.Fatal("input *http.Client.Transport was mutated")
+	}
+	if wrapped2.Timeout != custom.Timeout {
+		t.Fatalf("wrapped client should preserve Timeout %v, got %v", custom.Timeout, wrapped2.Timeout)
+	}
+}

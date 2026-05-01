@@ -88,6 +88,7 @@ type verifyResponseEnvelope struct {
 	InvalidMessage string                 `json:"invalidMessage,omitempty"`
 	Payer          string                 `json:"payer,omitempty"`
 	Extensions     map[string]interface{} `json:"extensions,omitempty"`
+	Extra          map[string]interface{} `json:"extra,omitempty"`
 }
 
 type settleResponseEnvelope struct {
@@ -97,7 +98,9 @@ type settleResponseEnvelope struct {
 	Payer        string                 `json:"payer,omitempty"`
 	Transaction  *string                `json:"transaction"`
 	Network      *x402.Network          `json:"network"`
+	Amount       string                 `json:"amount,omitempty"`
 	Extensions   map[string]interface{} `json:"extensions,omitempty"`
+	Extra        map[string]interface{} `json:"extra,omitempty"`
 }
 
 type supportedKindEnvelope struct {
@@ -149,6 +152,7 @@ func parseVerifySuccessResponse(body []byte) (*x402.VerifyResponse, error) {
 		InvalidMessage: response.InvalidMessage,
 		Payer:          response.Payer,
 		Extensions:     response.Extensions,
+		Extra:          response.Extra,
 	}, nil
 }
 
@@ -168,7 +172,9 @@ func parseSettleSuccessResponse(body []byte) (*x402.SettleResponse, error) {
 		Payer:        response.Payer,
 		Transaction:  *response.Transaction,
 		Network:      *response.Network,
+		Amount:       response.Amount,
 		Extensions:   response.Extensions,
+		Extra:        response.Extra,
 	}, nil
 }
 

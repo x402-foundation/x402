@@ -163,9 +163,11 @@ func TestUpdateSessionAfterRefund_PartialRefundUpdates(t *testing.T) {
 		Signature:               "0xsig",
 	})
 	err := UpdateSessionAfterRefund(storage, "ch", map[string]interface{}{
-		"balance":                 "500",
-		"chargedCumulativeAmount": "200",
-		"totalClaimed":            "150",
+		"channelState": map[string]interface{}{
+			"balance":                 "500",
+			"chargedCumulativeAmount": "200",
+			"totalClaimed":            "150",
+		},
 	})
 	if err != nil {
 		t.Fatalf("err: %v", err)
@@ -185,8 +187,10 @@ func TestUpdateSessionAfterRefund_PartialRefundUpdates(t *testing.T) {
 func TestUpdateSessionAfterRefund_NoPriorSessionPartial(t *testing.T) {
 	storage := NewInMemoryClientChannelStorage()
 	err := UpdateSessionAfterRefund(storage, "ch", map[string]interface{}{
-		"balance":                 "500",
-		"chargedCumulativeAmount": "10",
+		"channelState": map[string]interface{}{
+			"balance":                 "500",
+			"chargedCumulativeAmount": "10",
+		},
 	})
 	if err != nil {
 		t.Fatalf("err: %v", err)

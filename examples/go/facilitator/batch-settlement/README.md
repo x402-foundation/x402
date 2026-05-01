@@ -7,7 +7,7 @@ Base Sepolia. Exposes the standard x402 endpoints:
 - `POST /verify`
 - `POST /settle`
 
-The facilitator's `evmSigner` submits on-chain transactions for `deposit`,
+The facilitator's `evmSigner` submits onchain transactions for `deposit`,
 `claimWithSignature`, `settle`, and `refundWithSignature`. The `authorizerSigner`
 produces the EIP-712 signatures advertised in `/supported.kinds[].extra.receiverAuthorizer`.
 
@@ -17,7 +17,7 @@ Servers may delegate to the facilitator's authorizer (omit
 ## Run
 
 ```bash
-cp .env.example .env
+cp .env-example .env
 # fill in EVM_PRIVATE_KEY
 
 go run .
@@ -30,7 +30,7 @@ TypeScript facilitator example).
 
 | Variable                                  | Description |
 |-------------------------------------------|-------------|
-| `EVM_PRIVATE_KEY` (required)              | Facilitator wallet — signs and submits on-chain transactions |
+| `EVM_PRIVATE_KEY` (required)              | Facilitator wallet — signs and submits onchain transactions |
 | `EVM_RECEIVER_AUTHORIZER_PRIVATE_KEY`     | Optional dedicated authorizer key. Defaults to `EVM_PRIVATE_KEY`. |
 | `EVM_RPC_URL`                             | Default `https://sepolia.base.org` |
 | `PORT`                                    | Listen port (default `4022`) |

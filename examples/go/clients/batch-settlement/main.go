@@ -32,19 +32,20 @@ func main() {
 	}
 
 	baseURL := envOr("RESOURCE_SERVER_URL", "http://localhost:4021")
-	endpointPath := envOr("ENDPOINT_PATH", "/api/generate")
+	endpointPath := envOr("ENDPOINT_PATH", "/weather")
 	url := baseURL + endpointPath
 
 	rpcURL := envOr("EVM_RPC_URL", "https://sepolia.base.org")
 	channelSalt := envOr("CHANNEL_SALT", batchedclient.DefaultSalt)
 	storageDir := os.Getenv("STORAGE_DIR")
 	numberOfRequests := atoiOr("NUMBER_OF_REQUESTS", 3)
+	depositMultiplier := atoiOr("DEPOSIT_MULTIPLIER", batchedclient.DefaultDepositMultiplier)
 	refundAfterRequests := os.Getenv("REFUND_AFTER_REQUESTS") == "true"
 	refundAmount := os.Getenv("REFUND_AMOUNT")
 
-	// Dial an RPC client so the signer can read on-chain channel state when
+	// Dial an RPC client so the signer can read onchain channel state when
 	// local storage is cold. Without this, a fresh client run against a channel
-	// that already has on-chain totalClaimed would sign vouchers with a stale
+	// that already has onchain totalClaimed would sign vouchers with a stale
 	// cumulative base and the facilitator would reject them.
 	ethClient, err := ethclient.Dial(rpcURL)
 	if err != nil {
@@ -60,8 +61,7 @@ func main() {
 	}
 
 	cfg := &batchedclient.BatchedEvmSchemeConfig{
-		MaxDeposit:        "1000000",
-		DepositMultiplier: 5,
+		DepositMultiplier: depositMultiplier,
 		Salt:              channelSalt,
 	}
 

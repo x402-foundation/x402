@@ -71,7 +71,7 @@ func (f *BatchedEvmScheme) Verify(
 			return nil, x402.NewVerifyError(ErrInvalidDepositPayload, "",
 				fmt.Sprintf("failed to parse deposit payload: %s", err))
 		}
-		return VerifyDeposit(ctx, f.signer, depositPayload, requirements)
+		return VerifyDeposit(ctx, f.signer, depositPayload, requirements, payload.Extensions, fctx)
 	}
 
 	if batched.IsVoucherPayload(data) {
@@ -83,10 +83,22 @@ func (f *BatchedEvmScheme) Verify(
 		return VerifyVoucher(ctx, f.signer, voucherPayload, requirements, voucherPayload.ChannelConfig)
 	}
 
+	// Cooperative refund: client sends a zero-charge voucher with type="refund".
+	// Mirrors TS facilitator scheme.ts which routes refund and voucher payloads
+	// through the same verifyVoucher path with a refund-aware cumulative check.
+	if batched.IsRefundPayload(data) {
+		refundPayload, err := batched.RefundPayloadFromMap(data)
+		if err != nil {
+			return nil, x402.NewVerifyError(ErrInvalidRefundPayload, "",
+				fmt.Sprintf("failed to parse refund payload: %s", err))
+		}
+		return VerifyRefundVoucher(ctx, f.signer, refundPayload, requirements, refundPayload.ChannelConfig)
+	}
+
 	return &x402.VerifyResponse{IsValid: false, InvalidReason: ErrInvalidPayload}, nil
 }
 
-// Settle settles a batched payment on-chain.
+// Settle settles a batched payment onchain.
 // Routes based on payload type or settleAction field.
 func (f *BatchedEvmScheme) Settle(
 	ctx context.Context,
@@ -104,7 +116,7 @@ func (f *BatchedEvmScheme) Settle(
 			return nil, x402.NewSettleError(ErrInvalidDepositPayload, "", network, "",
 				fmt.Sprintf("failed to parse deposit payload: %s", err))
 		}
-		return SettleDeposit(ctx, f.signer, depositPayload, requirements)
+		return SettleDeposit(ctx, f.signer, depositPayload, requirements, payload.Extensions, fctx)
 	}
 
 	// Enriched refund settle-action (must be checked BEFORE plain claim, since both

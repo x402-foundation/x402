@@ -53,7 +53,7 @@ type BatchedEvmSchemeConfig struct {
 	ReceiverAuthorizerSigner AuthorizerSigner
 	// WithdrawDelay is the withdraw delay in seconds. Defaults to 900 (15 min).
 	WithdrawDelay int
-	// OnchainStateTtlMs is the maximum age of cached on-chain state, in
+	// OnchainStateTtlMs is the maximum age of cached onchain state, in
 	// milliseconds, that may be trusted for local voucher verification.
 	// When zero, derived from WithdrawDelay (clamped between 30s and 5min).
 	OnchainStateTtlMs int64
@@ -159,7 +159,7 @@ func NewBatchedEvmScheme(receiverAddress string, config *BatchedEvmSchemeConfig)
 }
 
 // GetOnchainStateTtlMs returns the configured TTL (in ms) for trusting cached
-// on-chain channel state for local voucher verification.
+// onchain channel state for local voucher verification.
 func (s *BatchedEvmScheme) GetOnchainStateTtlMs() int64 {
 	return s.onchainStateTtlMs
 }
@@ -308,6 +308,22 @@ func (s *BatchedEvmScheme) EnrichPaymentRequiredResponse(ctx x402.PaymentRequire
 		session = stored
 	}
 
+	channelStateMap := map[string]interface{}{
+		"channelId":               session.ChannelId,
+		"balance":                 session.Balance,
+		"totalClaimed":            session.TotalClaimed,
+		"withdrawRequestedAt":     session.WithdrawRequestedAt,
+		"refundNonce":             fmt.Sprintf("%d", session.RefundNonce),
+		"chargedCumulativeAmount": session.ChargedCumulativeAmount,
+	}
+	voucherStateMap := map[string]interface{}{}
+	if session.SignedMaxClaimable != "" {
+		voucherStateMap["signedMaxClaimable"] = session.SignedMaxClaimable
+	}
+	if session.Signature != "" {
+		voucherStateMap["signature"] = session.Signature
+	}
+
 	network := ctx.PaymentPayload.Accepted.Network
 	for i := range ctx.Requirements {
 		if ctx.Requirements[i].Scheme != batched.SchemeBatched {
@@ -319,11 +335,9 @@ func (s *BatchedEvmScheme) EnrichPaymentRequiredResponse(ctx x402.PaymentRequire
 		if ctx.Requirements[i].Extra == nil {
 			ctx.Requirements[i].Extra = make(map[string]interface{})
 		}
-		ctx.Requirements[i].Extra["ChannelState"] = map[string]interface{}{
-			"channelId":               session.ChannelId,
-			"chargedCumulativeAmount": session.ChargedCumulativeAmount,
-			"signedMaxClaimable":      session.SignedMaxClaimable,
-			"signature":               session.Signature,
+		ctx.Requirements[i].Extra["channelState"] = channelStateMap
+		if len(voucherStateMap) > 0 {
+			ctx.Requirements[i].Extra["voucherState"] = voucherStateMap
 		}
 	}
 }
@@ -504,7 +518,7 @@ func (s *BatchedEvmScheme) EnhancePaymentRequirements(
 	//
 	// Without step 3 the delegated-authorizer flow produced an empty `receiverAuthorizer`
 	// in the requirements. Clients then fell back to the zero address when building
-	// `channelConfig`, deriving the wrong channelId and causing the on-chain deposit
+	// `channelConfig`, deriving the wrong channelId and causing the onchain deposit
 	// transaction to revert at the contract boundary.
 	if _, ok := requirements.Extra["receiverAuthorizer"]; !ok {
 		receiverAuth := s.GetReceiverAuthorizerAddress()
@@ -634,11 +648,22 @@ func (s *BatchedEvmScheme) SignClaimBatch(ctx context.Context, claims []batched.
 	return s.receiverAuthorizerSigner.SignTypedData(ctx, domain, allTypes, "ClaimBatch", message)
 }
 
-// CreateChannelManager creates a new channel manager for auto-settlement.
+// CreateChannelManager creates a new channel manager for auto-settlement
+// rooted at this scheme's receiver and the network's default settlement asset.
+//
+// Pass a custom token via NewBatchedChannelManager directly when you need a
+// non-default settlement asset for this manager (mirrors TS
+// `BatchSettlementEvmScheme.createChannelManager`).
 func (s *BatchedEvmScheme) CreateChannelManager(facilitator x402.FacilitatorClient, network x402.Network) *BatchedChannelManager {
+	token := ""
+	if cfg, err := evm.GetNetworkConfig(string(network)); err == nil {
+		token = cfg.DefaultAsset.Address
+	}
 	return NewBatchedChannelManager(ChannelManagerConfig{
 		Scheme:      s,
 		Facilitator: facilitator,
+		Receiver:    s.receiverAddress,
+		Token:       token,
 		Network:     network,
 	})
 }

@@ -348,9 +348,9 @@ func TestServerCreatePaymentRequiredResponse(t *testing.T) {
 // stubEnricherScheme records EnrichPaymentRequiredResponse calls and mutates
 // the matching requirement's Extra to verify core wiring.
 type stubEnricherScheme struct {
-	calls          int
+	calls           int
 	lastErrorReason string
-	lastPayload    *types.PaymentPayload
+	lastPayload     *types.PaymentPayload
 }
 
 func (s *stubEnricherScheme) Scheme() string { return "stub-enricher" }

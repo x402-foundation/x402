@@ -56,4 +56,32 @@ const (
 
 	// Settle action errors
 	ErrUnknownSettleAction = "batch_settlement_evm_unknown_settle_action"
+
+	// Permit2 deposit authorization errors. Mirrors TS
+	// `typescript/.../facilitator/errors.ts`.
+	ErrPermit2AuthorizationRequired = "batch_settlement_evm_permit2_authorization_required"
+	ErrPermit2InvalidSpender        = "batch_settlement_evm_permit2_invalid_spender"
+	ErrPermit2AmountMismatch        = "batch_settlement_evm_permit2_amount_mismatch"
+	ErrPermit2DeadlineExpired       = "batch_settlement_evm_permit2_deadline_expired"
+	ErrPermit2InvalidSignature      = "batch_settlement_evm_permit2_invalid_signature"
+	ErrPermit2AllowanceRequired     = "batch_settlement_evm_permit2_allowance_required"
+
+	// EIP-2612 permit segment errors (gas-sponsored Permit2 branch).
+	ErrEip2612AmountMismatch  = "batch_settlement_evm_eip2612_amount_mismatch"
+	ErrEip2612OwnerMismatch   = "batch_settlement_evm_eip2612_owner_mismatch"
+	ErrEip2612AssetMismatch   = "batch_settlement_evm_eip2612_asset_mismatch"
+	ErrEip2612SpenderMismatch = "batch_settlement_evm_eip2612_spender_mismatch"
+	ErrEip2612DeadlineExpired = "batch_settlement_evm_eip2612_deadline_expired"
+	ErrEip2612InvalidFormat   = "batch_settlement_evm_eip2612_invalid_format"
+	ErrEip2612InvalidSignature = "batch_settlement_evm_eip2612_invalid_signature"
+
+	// ERC-20 approval gas-sponsoring errors. The facilitator extension signer
+	// broadcasts a pre-signed `approve(Permit2, max)` then the deposit() tx;
+	// these errors surface format/payer/asset mismatches and missing signers.
+	ErrErc20ApprovalUnavailable    = "batch_settlement_evm_erc20_approval_unavailable"
+	ErrErc20ApprovalInvalidFormat  = "batch_settlement_evm_erc20_approval_invalid_format"
+	ErrErc20ApprovalFromMismatch   = "batch_settlement_evm_erc20_approval_from_mismatch"
+	ErrErc20ApprovalAssetMismatch  = "batch_settlement_evm_erc20_approval_asset_mismatch"
+	ErrErc20ApprovalWrongSpender   = "batch_settlement_evm_erc20_approval_wrong_spender"
+	ErrErc20ApprovalBroadcastFailed = "batch_settlement_evm_erc20_approval_broadcast_failed"
 )

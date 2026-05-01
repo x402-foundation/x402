@@ -200,19 +200,31 @@ func TestValidateChannelConfig_ExtraMatching(t *testing.T) {
 	}
 }
 
-func TestBuildChannelStateExtra_Shape(t *testing.T) {
+// TestBuildVerifyExtra_FlatShape pins the wire shape of the verify response.
+// TS `verifyVoucher` and `verifyDeposit` return a FLAT extra (channelId,
+// balance, totalClaimed, withdrawRequestedAt, refundNonce). The TS server's
+// `handleAfterVerify` reads `result.extra.balance` directly; if the Go
+// facilitator wraps these under `channelState`, the server falls back to "0"
+// for balance/totalClaimed and silently corrupts its tracked channel record.
+// The downstream symptom is `batch_settlement_refund_no_balance` at refund
+// time because `channel.balance == 0 < chargedCumulativeAmount`.
+func TestBuildVerifyExtra_FlatShape(t *testing.T) {
 	state := &batched.ChannelState{
 		Balance:             big.NewInt(900),
 		TotalClaimed:        big.NewInt(100),
 		WithdrawRequestedAt: 42,
 		RefundNonce:         big.NewInt(7),
 	}
-	out := BuildChannelStateExtra("0xabc", "1234", state)
-	if out["channelId"] != "0xabc" {
-		t.Fatalf("channelId")
+	out := BuildVerifyExtra("0xabc", state)
+
+	if _, hasNested := out["channelState"]; hasNested {
+		t.Fatalf("verify extra must NOT wrap fields under `channelState`, got %+v", out)
 	}
-	if out["chargedCumulativeAmount"] != "1234" {
-		t.Fatalf("charged")
+	if _, hasCharged := out["chargedCumulativeAmount"]; hasCharged {
+		t.Fatalf("verify extra must NOT include chargedCumulativeAmount (server-only field), got %+v", out)
+	}
+	if out["channelId"] != "0xabc" {
+		t.Fatalf("channelId = %v", out["channelId"])
 	}
 	if out["balance"] != "900" {
 		t.Fatalf("balance = %v", out["balance"])
@@ -225,6 +237,47 @@ func TestBuildChannelStateExtra_Shape(t *testing.T) {
 	}
 	if out["refundNonce"] != "7" {
 		t.Fatalf("refundNonce = %v", out["refundNonce"])
+	}
+}
+
+// TestBuildSettleExtra_NestedShapeNoChargedCumulative pins the wire shape of
+// the settle response. TS `settleDeposit` and `executeRefundWithSignature`
+// return a NESTED `channelState` containing channelId/balance/totalClaimed/
+// withdrawRequestedAt/refundNonce — but NOT chargedCumulativeAmount, which
+// the resource server's `enrichSettlementResponse` hook adds via additive
+// merge afterwards. Emitting `chargedCumulativeAmount` from the facilitator
+// triggers TS's enrichment policy to throw with "...already exists on the
+// settlement result", which suppresses the merge and breaks downstream state.
+func TestBuildSettleExtra_NestedShapeNoChargedCumulative(t *testing.T) {
+	state := &batched.ChannelState{
+		Balance:             big.NewInt(900),
+		TotalClaimed:        big.NewInt(100),
+		WithdrawRequestedAt: 42,
+		RefundNonce:         big.NewInt(7),
+	}
+	out := BuildSettleExtra("0xabc", state)
+
+	cs, ok := out["channelState"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("settle extra must wrap fields under `channelState`, got %+v", out)
+	}
+	if _, hasCharged := cs["chargedCumulativeAmount"]; hasCharged {
+		t.Fatalf("settle extra MUST NOT include chargedCumulativeAmount (server enrichSettlementResponse adds it), got %+v", cs)
+	}
+	if cs["channelId"] != "0xabc" {
+		t.Fatalf("channelId = %v", cs["channelId"])
+	}
+	if cs["balance"] != "900" {
+		t.Fatalf("balance = %v", cs["balance"])
+	}
+	if cs["totalClaimed"] != "100" {
+		t.Fatalf("totalClaimed = %v", cs["totalClaimed"])
+	}
+	if cs["withdrawRequestedAt"] != 42 {
+		t.Fatalf("withdrawRequestedAt = %v", cs["withdrawRequestedAt"])
+	}
+	if cs["refundNonce"] != "7" {
+		t.Fatalf("refundNonce = %v", cs["refundNonce"])
 	}
 }
 

@@ -12,7 +12,7 @@ import (
 )
 
 // VerifyVoucher verifies a batched voucher-only payload.
-// Checks voucher signature, reads on-chain channel state, validates cumulative ceiling.
+// Checks voucher signature, reads onchain channel state, validates cumulative ceiling.
 func VerifyVoucher(
 	ctx context.Context,
 	signer evm.FacilitatorEvmSigner,
@@ -20,25 +20,47 @@ func VerifyVoucher(
 	requirements types.PaymentRequirements,
 	channelConfig batched.ChannelConfig,
 ) (*x402.VerifyResponse, error) {
-	// Validate channel config
-	if err := ValidateChannelConfig(channelConfig, payload.Voucher.ChannelId, requirements); err != nil {
+	return verifyVoucherFields(ctx, signer, &payload.Voucher, channelConfig, requirements, false)
+}
+
+// VerifyRefundVoucher verifies a cooperative-refund payload's voucher.
+// The voucher is zero-charge: maxClaimableAmount == chargedCumulativeAmount,
+// which on a fresh channel may equal totalClaimed exactly. Mirrors TS
+// `verifyVoucher` with `payload.type === "refund"`.
+func VerifyRefundVoucher(
+	ctx context.Context,
+	signer evm.FacilitatorEvmSigner,
+	payload *batched.BatchedRefundPayload,
+	requirements types.PaymentRequirements,
+	channelConfig batched.ChannelConfig,
+) (*x402.VerifyResponse, error) {
+	return verifyVoucherFields(ctx, signer, &payload.Voucher, channelConfig, requirements, true)
+}
+
+func verifyVoucherFields(
+	ctx context.Context,
+	signer evm.FacilitatorEvmSigner,
+	voucher *batched.BatchedVoucherFields,
+	channelConfig batched.ChannelConfig,
+	requirements types.PaymentRequirements,
+	isRefund bool,
+) (*x402.VerifyResponse, error) {
+	if err := ValidateChannelConfig(channelConfig, voucher.ChannelId, requirements); err != nil {
 		return nil, err
 	}
 
-	// Get chain ID
 	chainId, err := signer.GetChainID(ctx)
 	if err != nil {
 		return nil, x402.NewVerifyError(ErrChannelStateReadFailed, "", fmt.Sprintf("failed to get chain ID: %s", err))
 	}
 
-	// Verify voucher signature
 	valid, err := VerifyBatchedVoucherTypedData(
 		ctx, signer,
-		payload.Voucher.ChannelId,
-		payload.Voucher.MaxClaimableAmount,
+		voucher.ChannelId,
+		voucher.MaxClaimableAmount,
 		channelConfig.PayerAuthorizer,
 		channelConfig.Payer,
-		payload.Voucher.Signature,
+		voucher.Signature,
 		chainId,
 	)
 	if err != nil {
@@ -50,28 +72,31 @@ func VerifyVoucher(
 			"voucher signature is invalid")
 	}
 
-	// Read on-chain channel state
-	state, err := ReadChannelState(ctx, signer, payload.Voucher.ChannelId)
+	state, err := ReadChannelState(ctx, signer, voucher.ChannelId)
 	if err != nil {
 		return nil, x402.NewVerifyError(ErrChannelStateReadFailed, channelConfig.Payer,
 			fmt.Sprintf("failed to read channel state: %s", err))
 	}
 
-	// Check maxClaimableAmount vs totalClaimed.
-	// Normal vouchers must strictly increase claimable above totalClaimed; refund
-	// vouchers are zero-charge and may equal totalClaimed (only `<` fails).
-	maxClaimable, ok := new(big.Int).SetString(payload.Voucher.MaxClaimableAmount, 10)
+	maxClaimable, ok := new(big.Int).SetString(voucher.MaxClaimableAmount, 10)
 	if !ok {
 		return nil, x402.NewVerifyError(ErrInvalidVoucherPayload, channelConfig.Payer,
 			"invalid maxClaimableAmount")
 	}
-	// Voucher payloads are non-refund: maxClaimable must strictly exceed totalClaimed.
-	if maxClaimable.Cmp(state.TotalClaimed) <= 0 {
+
+	// Refund vouchers are zero-charge and may equal totalClaimed; non-refund
+	// vouchers must strictly increase claimable above totalClaimed.
+	belowClaimed := false
+	if isRefund {
+		belowClaimed = maxClaimable.Cmp(state.TotalClaimed) < 0
+	} else {
+		belowClaimed = maxClaimable.Cmp(state.TotalClaimed) <= 0
+	}
+	if belowClaimed {
 		return nil, x402.NewVerifyError(ErrMaxClaimableTooLow, channelConfig.Payer,
 			fmt.Sprintf("maxClaimableAmount %s is below totalClaimed %s", maxClaimable.String(), state.TotalClaimed.String()))
 	}
 
-	// Check maxClaimableAmount <= balance
 	if maxClaimable.Cmp(state.Balance) > 0 {
 		return nil, x402.NewVerifyError(ErrMaxClaimableExceedsBal, channelConfig.Payer,
 			fmt.Sprintf("maxClaimableAmount %s exceeds balance %s", maxClaimable.String(), state.Balance.String()))
@@ -80,6 +105,6 @@ func VerifyVoucher(
 	return &x402.VerifyResponse{
 		IsValid: true,
 		Payer:   channelConfig.Payer,
-		Extra:   BuildChannelStateExtra(payload.Voucher.ChannelId, payload.Voucher.MaxClaimableAmount, state),
+		Extra:   BuildVerifyExtra(voucher.ChannelId, state),
 	}, nil
 }

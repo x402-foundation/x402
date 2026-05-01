@@ -35,8 +35,7 @@
     "optional": [
       "EVM_RPC_URL",
       "CHANNEL_SALT",
-      "MULTI_REQUEST_COUNT",
-      "REFUND_ON_LAST",
+      "BATCH_SETTLEMENT_PHASE",
       "EVM_VOUCHER_SIGNER_PRIVATE_KEY"
     ]
   }

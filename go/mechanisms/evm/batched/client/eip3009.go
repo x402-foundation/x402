@@ -67,7 +67,7 @@ func CreateBatchedEIP3009DepositPayload(
 		return types.PaymentPayload{}, fmt.Errorf("failed to compute channel ID: %w", err)
 	}
 
-	// Derive the on-chain ERC-3009 nonce: keccak256(abi.encode(channelId, salt)).
+	// Derive the onchain ERC-3009 nonce: keccak256(abi.encode(channelId, salt)).
 	erc3009Nonce, err := batched.BuildErc3009DepositNonce(channelId, salt)
 	if err != nil {
 		return types.PaymentPayload{}, fmt.Errorf("failed to build ERC-3009 nonce: %w", err)

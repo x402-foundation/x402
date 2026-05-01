@@ -30,7 +30,7 @@ type ChannelSession struct {
 	RefundNonce             int                   `json:"refundNonce"`
 	LastRequestTimestamp    int64                 `json:"lastRequestTimestamp"`
 	// OnchainSyncedAt is the wall-clock time (unix millis) when balance/totalClaimed/
-	// withdrawRequestedAt/refundNonce were last refreshed from on-chain state.
+	// withdrawRequestedAt/refundNonce were last refreshed from onchain state.
 	// Used by the local voucher verifier to decide whether to skip facilitator verify.
 	OnchainSyncedAt int64 `json:"onchainSyncedAt,omitempty"`
 	// PendingRequest is the in-flight reservation for this channel, if any.

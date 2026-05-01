@@ -526,34 +526,20 @@ func TestPaymentResponseExtra_RoundTrip(t *testing.T) {
 	}
 }
 
-// Legacy flat-shape parsing should still work for backward compatibility.
-func TestPaymentResponseExtra_FromMap_LegacyFlat(t *testing.T) {
-	m := map[string]interface{}{
-		"channelId":               "0xabc",
-		"chargedCumulativeAmount": "100",
-		"balance":                 "900",
-		"totalClaimed":            "50",
-		"withdrawRequestedAt":     1234,
-		"refundNonce":             "1",
-	}
-	parsed, err := PaymentResponseExtraFromMap(m)
-	if err != nil {
-		t.Fatalf("err: %v", err)
-	}
-	if parsed.ChannelId != "0xabc" || parsed.Balance != "900" || parsed.RefundNonce != "1" {
-		t.Fatalf("legacy flat fields not populated: %+v", parsed)
-	}
-}
-
 func TestPaymentResponseExtra_FromMap_NumericWithdrawRequestedAt(t *testing.T) {
 	for _, v := range []interface{}{float64(1234), int(1234)} {
-		m := map[string]interface{}{"withdrawRequestedAt": v}
+		m := map[string]interface{}{
+			"channelState": map[string]interface{}{
+				"channelId":           "0xabc",
+				"withdrawRequestedAt": v,
+			},
+		}
 		parsed, err := PaymentResponseExtraFromMap(m)
 		if err != nil {
 			t.Fatalf("err: %v", err)
 		}
-		if parsed.WithdrawRequestedAt != 1234 {
-			t.Fatalf("withdrawRequestedAt = %d", parsed.WithdrawRequestedAt)
+		if parsed.ChannelState == nil || parsed.ChannelState.WithdrawRequestedAt != 1234 {
+			t.Fatalf("withdrawRequestedAt = %+v", parsed.ChannelState)
 		}
 	}
 }
@@ -654,23 +640,28 @@ func TestEnrichedRefundPayload_ToMap(t *testing.T) {
 	}
 }
 
-// ---------- ChannelState requirements ----------
+// ---------- ChannelState / VoucherState requirements ----------
 
 func TestChannelStateRequirements_FromMapAndToMap(t *testing.T) {
 	in := map[string]interface{}{
 		"channelId":               "0xabc",
-		"chargedCumulativeAmount": "100",
-		"signedMaxClaimable":      "1000",
-		"signature":               "0xsig",
+		"balance":                 "1000",
+		"totalClaimed":            "100",
+		"withdrawRequestedAt":     0,
+		"refundNonce":             "1",
+		"chargedCumulativeAmount": "200",
 	}
 	cs := ChannelStateRequirementsFromMap(in)
-	if cs == nil || cs.ChannelId != "0xabc" || cs.ChargedCumulativeAmount != "100" {
+	if cs == nil || cs.ChannelId != "0xabc" || cs.ChargedCumulativeAmount != "200" {
 		t.Fatalf("parsed = %+v", cs)
 	}
 
 	out := cs.ToMap()
-	if out["channelId"] != "0xabc" || out["chargedCumulativeAmount"] != "100" {
+	if out["channelId"] != "0xabc" || out["chargedCumulativeAmount"] != "200" {
 		t.Fatalf("ToMap = %+v", out)
+	}
+	if out["balance"] != "1000" || out["totalClaimed"] != "100" {
+		t.Fatalf("ToMap missing channel snapshot: %+v", out)
 	}
 
 	// Missing channelId returns nil.
@@ -682,14 +673,42 @@ func TestChannelStateRequirements_FromMapAndToMap(t *testing.T) {
 		t.Fatalf("expected nil for nil map, got %+v", got)
 	}
 	// Receiver-nil ToMap returns nil.
-	var nilCS *BatchSettlementRequirementsChannelState
+	var nilCS *BatchedChannelStateExtra
 	if got := nilCS.ToMap(); got != nil {
 		t.Fatalf("expected nil ToMap for nil receiver, got %+v", got)
 	}
 	// Empty optional fields are omitted.
-	cs2 := &BatchSettlementRequirementsChannelState{ChannelId: "0xabc"}
+	cs2 := &BatchedChannelStateExtra{ChannelId: "0xabc"}
 	out2 := cs2.ToMap()
 	if _, has := out2["chargedCumulativeAmount"]; has {
 		t.Fatalf("expected optional fields omitted, got %+v", out2)
+	}
+}
+
+func TestVoucherStateRequirements_FromMapAndToMap(t *testing.T) {
+	in := map[string]interface{}{
+		"signedMaxClaimable": "1000",
+		"signature":          "0xsig",
+	}
+	vs := VoucherStateRequirementsFromMap(in)
+	if vs == nil || vs.SignedMaxClaimable != "1000" || vs.Signature != "0xsig" {
+		t.Fatalf("parsed = %+v", vs)
+	}
+	out := vs.ToMap()
+	if out["signedMaxClaimable"] != "1000" || out["signature"] != "0xsig" {
+		t.Fatalf("ToMap = %+v", out)
+	}
+	// Empty inputs return nil.
+	if got := VoucherStateRequirementsFromMap(map[string]interface{}{}); got != nil {
+		t.Fatalf("expected nil for empty map, got %+v", got)
+	}
+	// Receiver-nil ToMap returns nil.
+	var nilVS *BatchedVoucherStateExtra
+	if got := nilVS.ToMap(); got != nil {
+		t.Fatalf("expected nil ToMap for nil receiver, got %+v", got)
+	}
+	// Both fields empty produces nil ToMap.
+	if got := (&BatchedVoucherStateExtra{}).ToMap(); got != nil {
+		t.Fatalf("expected nil ToMap when both fields empty, got %+v", got)
 	}
 }

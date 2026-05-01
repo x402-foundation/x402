@@ -14,56 +14,29 @@ import (
 	"github.com/x402-foundation/x402/go/mechanisms/evm"
 )
 
-func toString(v interface{}) string {
-	switch s := v.(type) {
-	case string:
-		return s
-	case *string:
-		if s != nil {
-			return *s
-		}
-	}
-	return ""
-}
-
-func toHexBigInt(v interface{}) *math.HexOrDecimal256 {
-	switch n := v.(type) {
-	case *big.Int:
-		return (*math.HexOrDecimal256)(n)
-	case int64:
-		return (*math.HexOrDecimal256)(big.NewInt(n))
-	case string:
-		b, ok := new(big.Int).SetString(n, 10)
-		if ok {
-			return (*math.HexOrDecimal256)(b)
-		}
-	}
-	return (*math.HexOrDecimal256)(big.NewInt(0))
-}
-
-// receiverAuthorizerSigner implements server.AuthorizerSigner using a local
-// ECDSA key. In production you'd wrap your KMS / HSM here instead.
-type receiverAuthorizerSigner struct {
+// batchedAuthorizerSigner implements server.AuthorizerSigner using a local
+// ECDSA key. Mirrors the example server's `signer.go`. Used when the e2e
+// harness opts into self-managed receiver authorization via
+// EVM_RECEIVER_AUTHORIZER_PRIVATE_KEY.
+type batchedAuthorizerSigner struct {
 	privateKey *ecdsa.PrivateKey
 	address    common.Address
 }
 
-func newReceiverAuthorizerSigner(privateKeyHex string) (*receiverAuthorizerSigner, error) {
+func newBatchedAuthorizerSigner(privateKeyHex string) (*batchedAuthorizerSigner, error) {
 	pk, err := crypto.HexToECDSA(strings.TrimPrefix(privateKeyHex, "0x"))
 	if err != nil {
 		return nil, fmt.Errorf("parse private key: %w", err)
 	}
-	return &receiverAuthorizerSigner{
+	return &batchedAuthorizerSigner{
 		privateKey: pk,
 		address:    crypto.PubkeyToAddress(pk.PublicKey),
 	}, nil
 }
 
-func (s *receiverAuthorizerSigner) Address() string {
-	return s.address.Hex()
-}
+func (s *batchedAuthorizerSigner) Address() string { return s.address.Hex() }
 
-func (s *receiverAuthorizerSigner) SignTypedData(
+func (s *batchedAuthorizerSigner) SignTypedData(
 	_ context.Context,
 	domain evm.TypedDataDomain,
 	types map[string][]evm.TypedDataField,
@@ -74,10 +47,10 @@ func (s *receiverAuthorizerSigner) SignTypedData(
 		Types:       apitypes.Types{},
 		PrimaryType: primaryType,
 		Domain: apitypes.TypedDataDomain{
-			Name:              toString(domain.Name),
-			Version:           toString(domain.Version),
-			ChainId:           toHexBigInt(domain.ChainID),
-			VerifyingContract: toString(domain.VerifyingContract),
+			Name:              toStr(domain.Name),
+			Version:           toStr(domain.Version),
+			ChainId:           (*math.HexOrDecimal256)(toBig(domain.ChainID)),
+			VerifyingContract: toStr(domain.VerifyingContract),
 		},
 		Message: message,
 	}
@@ -96,7 +69,6 @@ func (s *receiverAuthorizerSigner) SignTypedData(
 			{Name: "verifyingContract", Type: "address"},
 		}
 	}
-
 	dataHash, err := td.HashStruct(td.PrimaryType, td.Message)
 	if err != nil {
 		return nil, fmt.Errorf("hash struct: %w", err)
@@ -105,13 +77,38 @@ func (s *receiverAuthorizerSigner) SignTypedData(
 	if err != nil {
 		return nil, fmt.Errorf("hash domain: %w", err)
 	}
-
 	digest := crypto.Keccak256(append([]byte{0x19, 0x01}, append(domainSep, dataHash...)...))
 	sig, err := crypto.Sign(digest, s.privateKey)
 	if err != nil {
 		return nil, fmt.Errorf("sign: %w", err)
 	}
-	// EIP-155 v adjustment.
 	sig[64] += 27
 	return sig, nil
+}
+
+func toStr(v interface{}) string {
+	switch s := v.(type) {
+	case string:
+		return s
+	case *string:
+		if s != nil {
+			return *s
+		}
+	}
+	return ""
+}
+
+func toBig(v interface{}) *big.Int {
+	switch n := v.(type) {
+	case *big.Int:
+		return n
+	case int64:
+		return big.NewInt(n)
+	case string:
+		b, ok := new(big.Int).SetString(n, 10)
+		if ok {
+			return b
+		}
+	}
+	return big.NewInt(0)
 }

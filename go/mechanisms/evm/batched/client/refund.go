@@ -84,24 +84,17 @@ func RefundChannel(ctx context.Context, scheme RefundContext, url string, option
 // UpdateSessionAfterRefund reconciles local session state with the outcome of a
 // cooperative refund. Deletes the session when the post-refund balance is zero
 // (full refund), otherwise updates balance/chargedCumulativeAmount/totalClaimed
-// from the server snapshot (partial refund — channel stays open). Reads the
-// canonical nested wire shape and falls back to legacy flat keys.
+// from the server snapshot (partial refund — channel stays open).
 func UpdateSessionAfterRefund(storage ClientChannelStorage, channelKey string, settleExtra map[string]interface{}) error {
 	parsed, _ := batched.PaymentResponseExtraFromMap(settleExtra)
 
 	balanceStr := ""
 	chargedStr := ""
 	totalClaimedStr := ""
-	if parsed != nil {
-		if cs := parsed.ChannelState; cs != nil {
-			balanceStr = cs.Balance
-			chargedStr = cs.ChargedCumulativeAmount
-			totalClaimedStr = cs.TotalClaimed
-		} else {
-			balanceStr = parsed.Balance
-			chargedStr = parsed.ChargedCumulativeAmount
-			totalClaimedStr = parsed.TotalClaimed
-		}
+	if parsed != nil && parsed.ChannelState != nil {
+		balanceStr = parsed.ChannelState.Balance
+		chargedStr = parsed.ChannelState.ChargedCumulativeAmount
+		totalClaimedStr = parsed.ChannelState.TotalClaimed
 	}
 
 	var balanceAfter *big.Int
@@ -262,10 +255,13 @@ func executeRefund(
 		}
 
 		// Mirror TS: the caller knows it just initiated a refund, so reconcile
-		// directly via UpdateSessionAfterRefund (deletes on full drain).
+		// directly via UpdateSessionAfterRefund (deletes on full drain). The
+		// channelId is read from the canonical nested `channelState` shape.
 		if settle != nil && settle.Extra != nil {
-			if channelId, ok := settle.Extra["channelId"].(string); ok && channelId != "" {
-				_ = UpdateSessionAfterRefund(scheme.Storage(), batched.NormalizeChannelId(channelId), settle.Extra)
+			if cs, ok := settle.Extra["channelState"].(map[string]interface{}); ok {
+				if channelId, ok := cs["channelId"].(string); ok && channelId != "" {
+					_ = UpdateSessionAfterRefund(scheme.Storage(), batched.NormalizeChannelId(channelId), settle.Extra)
+				}
 			}
 		}
 		return settle, nil
@@ -291,7 +287,7 @@ func buildRefundVoucherPayload(
 	storage := scheme.Storage()
 	session, _ := storage.Get(channelId)
 	if session == nil {
-		// Try recovery if the signer supports on-chain reads.
+		// Try recovery if the signer supports onchain reads.
 		if _, ok := scheme.Signer().(evm.ClientEvmSignerWithReadContract); ok {
 			session, err = scheme.RecoverSession(ctx, requirements)
 			if err != nil {
