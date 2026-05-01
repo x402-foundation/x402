@@ -158,7 +158,10 @@ describe("createHttpServer", () => {
   it("does not block when requireCompletion is false (discovery path)", async () => {
     let resolveInit: () => void;
     mockInitialize = vi.fn().mockImplementation(
-      () => new Promise<void>(resolve => { resolveInit = resolve; }),
+      () =>
+        new Promise<void>(resolve => {
+          resolveInit = resolve;
+        }),
     );
     const routes = {
       "/api/*": {

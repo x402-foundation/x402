@@ -524,7 +524,10 @@ describe("paymentMiddleware", () => {
   it("does not block on init for discovery probes (no payment header)", async () => {
     let resolveInit: () => void;
     const initialize = vi.fn().mockImplementation(
-      () => new Promise<void>(resolve => { resolveInit = resolve; }),
+      () =>
+        new Promise<void>(resolve => {
+          resolveInit = resolve;
+        }),
     );
 
     vi.mocked(HTTPResourceServer).mockImplementation(

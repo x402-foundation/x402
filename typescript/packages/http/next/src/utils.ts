@@ -63,6 +63,7 @@ export function prepareHttpServer(
     /**
      * Ensures facilitator initialization succeeds once, while allowing retries after failures.
      *
+     * @param options - Optional configuration for init behaviour.
      * @param options.requireCompletion - When true, awaits init completion (needed for verify/settle).
      *   When false (default), returns immediately if init hasn't completed — allows discovery probes
      *   to generate 402 responses from route config without blocking on the facilitator round-trip.
