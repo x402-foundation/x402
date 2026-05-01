@@ -206,6 +206,7 @@ export class x402ResourceServer {
     new Map();
   private registeredExtensions: Map<string, ResourceServerExtension> = new Map();
   private extensionHookAdapters = new Map<string, ExtensionAdapterHandles>();
+  private _initialized = false;
 
   private beforeVerifyHooks: BeforeVerifyHook[] = [];
   private afterVerifyHooks: AfterVerifyHook[] = [];
@@ -232,6 +233,15 @@ export class x402ResourceServer {
       // Single client provided
       this.facilitatorClients = [facilitatorClients];
     }
+  }
+
+  /**
+   * Whether the server has been initialized (facilitator support fetched).
+   *
+   * @returns True if initialize() has completed successfully at least once
+   */
+  get initialized(): boolean {
+    return this._initialized;
   }
 
   /**
@@ -527,6 +537,8 @@ export class x402ResourceServer {
             "Failed to initialize: no supported payment kinds loaded from any facilitator.",
           );
     }
+
+    this._initialized = true;
   }
 
   /**
@@ -604,12 +616,23 @@ export class x402ResourceServer {
       SchemeNetworkServer.scheme,
     );
 
-    if (!supportedKind) {
+    if (!supportedKind && this._initialized) {
+      // Server has been initialized but facilitator doesn't support this combination
       throw new Error(
         `Facilitator does not support ${SchemeNetworkServer.scheme} on ${resourceConfig.network}. ` +
           `Make sure to call initialize() to fetch supported kinds from facilitators.`,
       );
     }
+
+    // When not yet initialized, use a synthetic kind from route config so 402 responses
+    // can be generated without waiting for the facilitator round-trip.  This is safe
+    // because the 402 metadata comes from the route config; the facilitator-provided
+    // extras (e.g. feePayer, areFeesSponsored) are only needed at verify/settle time.
+    const effectiveKind = supportedKind ?? {
+      x402Version,
+      scheme: SchemeNetworkServer.scheme,
+      network: resourceConfig.network,
+    };
 
     // Get facilitator extensions for this combination
     const facilitatorExtensions = this.getFacilitatorExtensions(
@@ -639,11 +662,10 @@ export class x402ResourceServer {
     };
 
     // Delegate to the implementation for scheme-specific enhancements
-    // Note: enhancePaymentRequirements expects x402Version in the kind, so we add it back
     const requirement = await SchemeNetworkServer.enhancePaymentRequirements(
       baseRequirements,
       {
-        ...supportedKind,
+        ...effectiveKind,
         x402Version,
       },
       facilitatorExtensions,

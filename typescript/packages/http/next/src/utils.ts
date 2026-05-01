@@ -17,7 +17,7 @@ import { NextAdapter } from "./adapter";
  */
 export interface HttpServerInstance {
   httpServer: x402HTTPResourceServer;
-  init: () => Promise<void>;
+  init: (options?: { requireCompletion?: boolean }) => Promise<void>;
 }
 
 export const getFacilitatorResponseError = getCoreFacilitatorResponseError;
@@ -62,14 +62,23 @@ export function prepareHttpServer(
     httpServer,
     /**
      * Ensures facilitator initialization succeeds once, while allowing retries after failures.
+     *
+     * @param options.requireCompletion - When true, awaits init completion (needed for verify/settle).
+     *   When false (default), returns immediately if init hasn't completed — allows discovery probes
+     *   to generate 402 responses from route config without blocking on the facilitator round-trip.
      */
-    async init() {
+    async init(options?: { requireCompletion?: boolean }) {
       if (!syncFacilitatorOnStart || isInitialized) {
         return;
       }
 
       if (!initPromise) {
         initPromise = httpServer.initialize();
+      }
+
+      if (!options?.requireCompletion) {
+        // Don't block — let background init continue while discovery proceeds
+        return;
       }
 
       try {

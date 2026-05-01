@@ -14,6 +14,7 @@ import { PaymentPayload, PaymentRequirements } from "../../../src/types/payments
  */
 export class MockFacilitatorClient implements FacilitatorClient {
   private supportedResponse: SupportedResponse;
+  private supportedError: Error | null = null;
   private verifyResponseOrError: VerifyResponse | Error;
   private settleResponseOrError: SettleResponse | Error;
 
@@ -43,6 +44,9 @@ export class MockFacilitatorClient implements FacilitatorClient {
    */
   async getSupported(): Promise<SupportedResponse> {
     this.getSupportedCalls++;
+    if (this.supportedError) {
+      throw this.supportedError;
+    }
     return this.supportedResponse;
   }
 
@@ -127,6 +131,14 @@ export class MockFacilitatorClient implements FacilitatorClient {
    */
   setSettleResponse(response: SettleResponse | Error): void {
     this.settleResponseOrError = response;
+  }
+
+  /**
+   *
+   * @param error
+   */
+  setSupportedError(error: Error | null): void {
+    this.supportedError = error;
   }
 
   /**

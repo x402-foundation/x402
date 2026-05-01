@@ -88,9 +88,13 @@ export function paymentProxyFromHTTPServer(
       return NextResponse.next();
     }
 
-    // Only initialize when processing a protected route
+    // Only block on init when a payment header is present (verify/settle path).
+    // Discovery probes (no payment header) can generate a 402 from route config
+    // without waiting for the facilitator round-trip, avoiding cold-start timeouts
+    // on serverless/edge runtimes.
+    const hasPaymentHeader = !!context.paymentHeader;
     try {
-      await init();
+      await init({ requireCompletion: hasPaymentHeader });
     } catch (error) {
       const facilitatorError = getFacilitatorResponseError(error);
       if (facilitatorError) {
@@ -281,16 +285,20 @@ export function withX402FromHTTPServer<T = unknown>(
   }
 
   return async (request: NextRequest): Promise<NextResponse<T>> => {
-    // Only initialize when processing a protected route
-    await init();
+    const context = createRequestContext(request);
+
+    // Only block on init when a payment header is present (verify/settle path).
+    // Discovery probes (no payment header) can generate a 402 from route config
+    // without waiting for the facilitator round-trip, avoiding cold-start timeouts
+    // on serverless/edge runtimes.
+    const hasPaymentHeader = !!context.paymentHeader;
+    await init({ requireCompletion: hasPaymentHeader });
 
     // Await bazaar extension loading if needed
     if (bazaarPromise) {
       await bazaarPromise;
       bazaarPromise = null;
     }
-
-    const context = createRequestContext(request);
 
     // Process payment requirement check
     const result = await httpServer.processHTTPRequest(context, paywallConfig);

@@ -403,6 +403,54 @@ describe("x402ResourceServer", () => {
           }),
       ).rejects.toThrow("Facilitator does not support test-scheme on test:network");
     });
+
+    it("should build requirements without initialize() for discovery (cold-start tolerance)", async () => {
+      const mockClient = new MockFacilitatorClient(
+        buildSupportedResponse({
+          kinds: [{ x402Version: 2, scheme: "test-scheme", network: "test:network" as Network }],
+        }),
+      );
+
+      const server = new x402ResourceServer(mockClient);
+      const mockScheme = new MockSchemeNetworkServer("test-scheme");
+      server.register("test:network" as Network, mockScheme);
+
+      // Do NOT call initialize() — simulates cold serverless isolate
+      expect(server.initialized).toBe(false);
+
+      const requirements = await server.buildPaymentRequirements({
+        scheme: "test-scheme",
+        payTo: "recipient",
+        price: 1.0,
+        network: "test:network" as Network,
+      });
+
+      // Should succeed with synthetic kind (no facilitator data)
+      expect(requirements).toHaveLength(1);
+      expect(requirements[0].scheme).toBe("test-scheme");
+      expect(requirements[0].network).toBe("test:network");
+      expect(requirements[0].payTo).toBe("recipient");
+    });
+
+    it("should set initialized to true after successful initialize()", async () => {
+      const mockClient = new MockFacilitatorClient(buildSupportedResponse());
+      const server = new x402ResourceServer(mockClient);
+
+      expect(server.initialized).toBe(false);
+      await server.initialize();
+      expect(server.initialized).toBe(true);
+    });
+
+    it("should not set initialized to true when initialize() fails", async () => {
+      const mockClient = new MockFacilitatorClient(buildSupportedResponse());
+      mockClient.setSupportedError(new Error("Network failure"));
+
+      const server = new x402ResourceServer(mockClient);
+
+      expect(server.initialized).toBe(false);
+      await expect(server.initialize()).rejects.toThrow();
+      expect(server.initialized).toBe(false);
+    });
   });
 
   describe("Lifecycle hooks", () => {

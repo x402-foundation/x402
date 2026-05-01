@@ -316,16 +316,24 @@ export function paymentMiddlewareFromHTTPServer(
       return;
     }
 
+    // Only block on init when a payment header is present (verify/settle path).
+    // Discovery probes (no payment header) can generate a 402 from route config
+    // without waiting for the facilitator round-trip, avoiding cold-start timeouts
+    // on serverless/edge runtimes.
+    const hasPaymentHeader = !!context.paymentHeader;
     if (syncFacilitatorOnStart && !isInitialized) {
-      try {
-        await initializeHttpServer();
-      } catch (error) {
-        const facilitatorError = getFacilitatorResponseError(error);
-        if (facilitatorError) {
-          return sendFacilitatorError(reply, facilitatorError);
+      if (hasPaymentHeader) {
+        try {
+          await initializeHttpServer();
+        } catch (error) {
+          const facilitatorError = getFacilitatorResponseError(error);
+          if (facilitatorError) {
+            return sendFacilitatorError(reply, facilitatorError);
+          }
+          throw error;
         }
-        throw error;
       }
+      // else: no payment header — proceed without init; background init continues
     }
 
     if (bazaarPromise) {
