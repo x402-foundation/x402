@@ -204,7 +204,7 @@ func TestCreatePaymentPayloadWithExtensions_Eip2612SignedWhenAllowanceZero(t *te
 	}
 	// The CRITICAL invariant: amount must equal the DEPOSIT amount, not
 	// requirements.Amount. The Go facilitator's `validateBatchEip2612Permit`
-	// rejects mismatches with batch_settlement_evm_eip2612_amount_mismatch.
+	// rejects mismatches with invalid_batch_settlement_evm_eip2612_amount_mismatch.
 	wantDeposit := "500" // 100 * DefaultDepositMultiplier (5)
 	if info.Amount != wantDeposit {
 		t.Fatalf("info.Amount = %q, want %q (deposit amount, not request amount)", info.Amount, wantDeposit)

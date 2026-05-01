@@ -12,7 +12,7 @@ import (
 //
 //	"provided data '<nil>' doesn't match type 'string'"
 //
-// This propagates as `batch_settlement_evm_permit2_invalid_signature` on the
+// This propagates as `invalid_batch_settlement_evm_permit2_signature` on the
 // facilitator and breaks every Permit2-based batch-settlement flow. The fix
 // dynamically constructs the EIP712Domain type list from which domain fields
 // are actually populated, matching viem's behavior.

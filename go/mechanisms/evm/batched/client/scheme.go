@@ -453,8 +453,14 @@ func (c *BatchedEvmScheme) ProcessCorrectivePaymentRequired(
 	errorReason string,
 	accepts []types.PaymentRequirements,
 ) (bool, error) {
+	// The corrective recovery handshake arrives under two reasons:
+	//   - batched.ErrCumulativeAmountMismatch — resource-server-emitted
+	//     (sibling prefix `batch_settlement_*`)
+	//   - batched.ErrCumulativeBelowClaimed — facilitator-emitted
+	//     (canonical `invalid_batch_settlement_evm_*` form)
+	// Both signal "your client cumulative is stale; refresh and retry".
 	if errorReason != batched.ErrCumulativeAmountMismatch &&
-		errorReason != "batch_settlement_evm_cumulative_below_claimed" {
+		errorReason != batched.ErrCumulativeBelowClaimed {
 		return false, nil
 	}
 

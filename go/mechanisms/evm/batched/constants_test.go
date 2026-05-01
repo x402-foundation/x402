@@ -82,16 +82,32 @@ func TestReceiveAuthorizationTypes(t *testing.T) {
 	}
 }
 
+// TestErrorCodes pins the canonical wire prefix `invalid_batch_settlement_evm_`
+// for the facilitator-mirroring constants exported from this package. The
+// `batch_settlement_*` sibling-prefix constant `ErrCumulativeAmountMismatch`
+// is intentionally excluded — it's resource-server-emitted, see errors.go.
+//
+// Renaming or dropping the prefix here breaks cdp-facilitator's substring
+// classifier and the `x402VerifyInvalidReason` / `x402SettleErrorReason`
+// CDP Accounts API enums.
 func TestErrorCodes(t *testing.T) {
+	const wirePrefix = "invalid_batch_settlement_evm_"
 	for _, code := range []string{
 		ErrInvalidPayload,
 		ErrInvalidAmount,
 		ErrInvalidChannelId,
 		ErrInvalidChannelConf,
 		ErrChannelNotFound,
+		ErrCumulativeBelowClaimed,
 	} {
-		if !strings.HasPrefix(code, "batch_settlement_evm_") {
-			t.Fatalf("error code missing prefix: %q", code)
+		if !strings.HasPrefix(code, wirePrefix) {
+			t.Fatalf("error code missing prefix %q: %q", wirePrefix, code)
 		}
+	}
+
+	// Sibling-prefix constant: server-emitted, on its own namespace.
+	if !strings.HasPrefix(ErrCumulativeAmountMismatch, "batch_settlement_") ||
+		strings.HasPrefix(ErrCumulativeAmountMismatch, "invalid_") {
+		t.Fatalf("ErrCumulativeAmountMismatch must use sibling prefix `batch_settlement_*` (server-emitted), got %q", ErrCumulativeAmountMismatch)
 	}
 }

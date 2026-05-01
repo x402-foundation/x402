@@ -238,9 +238,9 @@ func TestSettle_MalformedClaimPayload(t *testing.T) {
 // TestVerify_MalformedRefundPayload is a regression test for the bug where the
 // Go facilitator's Verify dispatch only handled deposit and voucher payloads,
 // causing cooperative-refund flows from cross-SDK clients (TS axios) to fail
-// with `batch_settlement_evm_invalid_payload_type`. Refund payloads must now
+// with `invalid_batch_settlement_evm_payload_type`. Refund payloads must now
 // route to VerifyRefundVoucher; a malformed refund must surface as
-// `batch_settlement_evm_invalid_refund_payload`, not the generic invalid type.
+// `invalid_batch_settlement_evm_refund_payload`, not the generic invalid type.
 func TestVerify_MalformedRefundPayload(t *testing.T) {
 	s := newScheme()
 	pp := payloadEnvelope("eip155:8453", map[string]interface{}{
