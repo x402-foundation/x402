@@ -1,0 +1,11 @@
+ {                                                                             
+    "name": "402s.shop",                                                        
+    "description": "12 utility endpoints for AI agents — QR codes, OG images,   
+  screenshots, PDF rendering, web scraping, WHOIS, YouTube transcripts, AI      
+  summarization, and more. Two payment rails: pre-paid credits (NowPayments — 
+  card or 100+ cryptos) or x402 USDC pay-per-call on Base mainnet at            
+  /api/x402/<name>. Default 0.001 USDC per call (LLM endpoints 0.01).",
+    "logoUrl": "/logos/402s-shop.png",
+    "websiteUrl": "https://402s.shop",                                          
+    "category": "Services/Endpoints"
+  } 
