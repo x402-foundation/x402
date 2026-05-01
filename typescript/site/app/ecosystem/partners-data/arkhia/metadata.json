@@ -6,7 +6,7 @@
   "category": "Facilitators",
   "facilitator": {
     "baseUrl": "https://starter.arkhia.io/x402",
-    "networks": ["sepolia", "eip155:11155111"],
+    "networks": ["sepolia", "eip155:11155111", "polygon", "eip155:137", "polygon-amoy", "eip155:80002", "ethereum", "eip155:1", "base", "eip155:8453", "base-sepolia", "eip155:84532"],
     "schemes": ["exact"],
     "assets": ["ERC20"],
     "supports": {
