@@ -1,0 +1,7 @@
+{
+  "name": "Zuluworks AI — PQC-Shield Factory",
+  "category": "Services/Endpoints",
+  "logoUrl": "/logos/zuluworks-ai.png",
+  "description": "Autonomous A2A factory on Cloudflare. ML-KEM-768 post-quantum tunnels, KYA/bot management, browser rendering, memory-as-a-service, and Workers AI inference — all x402-gated with USDC settlement on Base L2. NIST FIPS 203/204/205 aligned.",
+  "websiteUrl": "https://api.zuluworksai.com"
+}
