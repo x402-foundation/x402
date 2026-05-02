@@ -452,12 +452,68 @@ describe("paymentMiddleware", () => {
     const middleware = paymentMiddleware(mockRoutes, {} as unknown as x402ResourceServer);
     const next = vi.fn().mockResolvedValue(undefined);
 
-    await middleware(createMockContext(), next);
-    await middleware(createMockContext(), next);
+    // Requests with a payment header block on init and trigger retry on failure
+    const ctxWithPayment = createMockContext({
+      headers: { "payment-signature": "test-sig" },
+    });
+    await middleware(ctxWithPayment, next);
+
+    const ctxWithPayment2 = createMockContext({
+      headers: { "payment-signature": "test-sig" },
+    });
+    await middleware(ctxWithPayment2, next);
 
     expect(initialize).toHaveBeenCalledTimes(2);
     expect(mockProcessHTTPRequest).toHaveBeenCalledTimes(1);
     expect(next).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not block on init for discovery probes (no payment header)", async () => {
+    let resolveInit: () => void;
+    const initialize = vi.fn().mockImplementation(
+      () =>
+        new Promise<void>(resolve => {
+          resolveInit = resolve;
+        }),
+    );
+
+    vi.mocked(HTTPResourceServer).mockImplementation(
+      (server, routes) =>
+        ({
+          initialize,
+          processHTTPRequest: mockProcessHTTPRequest,
+          processSettlement: mockProcessSettlement,
+          registerPaywallProvider: mockRegisterPaywallProvider,
+          requiresPayment: mockRequiresPayment,
+          routes,
+          server: server || {
+            hasExtension: vi.fn().mockReturnValue(false),
+            registerExtension: vi.fn(),
+          },
+        }) as unknown as x402HTTPResourceServer,
+    );
+    mockProcessHTTPRequest.mockResolvedValue({
+      type: "payment-error",
+      response: {
+        status: 402,
+        headers: { "PAYMENT-REQUIRED": "encoded-data" },
+        body: {},
+      },
+    });
+
+    const middleware = paymentMiddleware(mockRoutes, {} as unknown as x402ResourceServer);
+    const next = vi.fn().mockResolvedValue(undefined);
+
+    // Discovery probe (no payment header) should NOT block on init
+    const ctx = createMockContext();
+    await middleware(ctx, next);
+
+    // processHTTPRequest was called even though init hasn't resolved
+    expect(mockProcessHTTPRequest).toHaveBeenCalledTimes(1);
+    expect(next).not.toHaveBeenCalled();
+
+    // Clean up pending promise
+    resolveInit!();
   });
 
   it("returns 402 when settlement returns success: false", async () => {

@@ -368,6 +368,15 @@ export class x402HTTPResourceServer {
   }
 
   /**
+   * Whether the server has been initialized (facilitator support fetched).
+   *
+   * @returns True if initialize() has completed successfully at least once
+   */
+  get initialized(): boolean {
+    return this.ResourceServer.initialized;
+  }
+
+  /**
    * Get the routes configuration.
    *
    * @returns The routes configuration

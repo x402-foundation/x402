@@ -150,9 +150,34 @@ describe("createHttpServer", () => {
 
     const { init } = createHttpServer(routes, server);
 
-    await expect(init()).rejects.toThrow("not-json");
-    await expect(init()).resolves.toBeUndefined();
+    await expect(init({ requireCompletion: true })).rejects.toThrow("not-json");
+    await expect(init({ requireCompletion: true })).resolves.toBeUndefined();
     expect(mockInitialize).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not block when requireCompletion is false (discovery path)", async () => {
+    let resolveInit: () => void;
+    mockInitialize = vi.fn().mockImplementation(
+      () =>
+        new Promise<void>(resolve => {
+          resolveInit = resolve;
+        }),
+    );
+    const routes = {
+      "/api/*": {
+        accepts: { scheme: "exact", payTo: "0x123", price: "$0.01", network: "eip155:84532" },
+      },
+    } as const;
+    const server = createMockResourceServer();
+
+    const { init } = createHttpServer(routes, server);
+
+    // Without requireCompletion, init returns immediately even though promise is pending
+    await expect(init()).resolves.toBeUndefined();
+    expect(mockInitialize).toHaveBeenCalled();
+
+    // Clean up pending promise
+    resolveInit!();
   });
 });
 
