@@ -1,0 +1,7 @@
+{
+  "name": "boring-api / geo",
+  "description": "Pure-library geocoding & spatial math: distance, bearing, point-in-polygon, polygon area & centroid, nearest-neighbor, distance matrices, timezone, country & IP lookup. 10 endpoints, paid per-request via x402 USDC on Base.",
+  "logoUrl": "/logos/boring-api.png",
+  "websiteUrl": "https://geo.boring-api.com",
+  "category": "Services/Endpoints"
+}
