@@ -44,7 +44,6 @@ const (
 	ErrValidAfterInFuture           = "invalid_batch_settlement_evm_payload_authorization_valid_after"
 	ErrErc3009SignatureInvalid      = "invalid_batch_settlement_evm_receive_authorization_signature"
 	ErrErc3009AuthorizationRequired = "invalid_batch_settlement_evm_erc3009_authorization_required"
-	ErrMissingEip712Domain          = "invalid_batch_settlement_evm_missing_eip712_domain"
 
 	// Voucher errors
 	ErrVoucherSignatureInvalid = "invalid_batch_settlement_evm_voucher_signature"

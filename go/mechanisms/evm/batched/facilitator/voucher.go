@@ -78,6 +78,12 @@ func verifyVoucherFields(
 			fmt.Sprintf("failed to read channel state: %s", err))
 	}
 
+	// A non-existent or fully-drained channel reports balance==0 onchain
+	if state.Balance.Sign() == 0 {
+		return nil, x402.NewVerifyError(ErrChannelNotFound, channelConfig.Payer,
+			fmt.Sprintf("channel %s not found or fully drained (balance=0)", voucher.ChannelId))
+	}
+
 	maxClaimable, ok := new(big.Int).SetString(voucher.MaxClaimableAmount, 10)
 	if !ok {
 		return nil, x402.NewVerifyError(ErrInvalidVoucherPayload, channelConfig.Payer,

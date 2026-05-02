@@ -20,11 +20,13 @@ import (
 // nonRecoverableRefundErrors are refund-specific server errors that the client
 // cannot recover from automatically. Seeing any of these means the user should
 // adjust their request (or accept that the channel has nothing left to refund) —
-// retrying will not help.
+// retrying will not help. Sourced from the canonical constants in
+// `batched/errors.go` so a rename there flows through to the client classifier
+// without a separate edit.
 var nonRecoverableRefundErrors = map[string]struct{}{
-	"batch_settlement_refund_no_balance":             {},
-	"batch_settlement_refund_amount_invalid":         {},
-	"batch_settlement_refund_amount_exceeds_balance": {},
+	batched.ErrRefundNoBalance:            {},
+	batched.ErrRefundAmountInvalid:        {},
+	batched.ErrRefundAmountExceedsBalance: {},
 }
 
 // RefundOptions configures a cooperative refund call.

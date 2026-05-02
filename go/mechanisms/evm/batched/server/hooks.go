@@ -165,7 +165,7 @@ func (s *BatchedEvmScheme) BeforeVerifyHook() x402.BeforeVerifyHook {
 		case "busy":
 			return &x402.BeforeHookResult{
 				Abort:   true,
-				Reason:  "batch_settlement_channel_busy",
+				Reason:  batched.ErrChannelBusy,
 				Message: "Channel is already processing a request",
 			}, nil
 		case "mismatch":
@@ -627,7 +627,7 @@ func (s *BatchedEvmScheme) BeforeSettleHook() x402.BeforeSettleHook {
 			if storageErr != nil || session == nil {
 				return &x402.BeforeHookResult{ //nolint:nilerr
 					Abort:   true,
-					Reason:  "missing_batch_settlement_channel",
+					Reason:  batched.ErrMissingChannel,
 					Message: "No session for channel; verify may not have completed",
 				}, nil
 			}
@@ -650,7 +650,7 @@ func (s *BatchedEvmScheme) BeforeSettleHook() x402.BeforeSettleHook {
 		if storageErr != nil || session == nil {
 			return &x402.BeforeHookResult{ //nolint:nilerr // storage error treated as missing session
 				Abort:   true,
-				Reason:  "missing_batch_settlement_channel",
+				Reason:  batched.ErrMissingChannel,
 				Message: "No session for channel; verify may not have completed",
 			}, nil
 		}
@@ -721,14 +721,14 @@ func (s *BatchedEvmScheme) BeforeSettleHook() x402.BeforeSettleHook {
 			s.TakeRequestContext(ctx.Payload)
 			return &x402.BeforeHookResult{
 				Abort:   true,
-				Reason:  "missing_batch_settlement_channel",
+				Reason:  batched.ErrMissingChannel,
 				Message: "No channel record",
 			}, nil
 		case "pending_mismatch":
 			s.TakeRequestContext(ctx.Payload)
 			return &x402.BeforeHookResult{
 				Abort:   true,
-				Reason:  "batch_settlement_channel_busy",
+				Reason:  batched.ErrChannelBusy,
 				Message: "Concurrent request modified channel state",
 			}, nil
 		case "cap_exceeded":
@@ -736,7 +736,7 @@ func (s *BatchedEvmScheme) BeforeSettleHook() x402.BeforeSettleHook {
 			s.TakeRequestContext(ctx.Payload)
 			return &x402.BeforeHookResult{
 				Abort:   true,
-				Reason:  "batch_settlement_charge_exceeds_signed_cumulative",
+				Reason:  batched.ErrChargeExceedsSignedCumulative,
 				Message: fmt.Sprintf("Charged %s exceeds signed max %s", capExceededAmount, capStr),
 			}, nil
 		}
@@ -810,7 +810,7 @@ func (s *BatchedEvmScheme) handleRefundRewrite(
 	if remainder.Sign() <= 0 {
 		return &x402.BeforeHookResult{
 			Abort:   true,
-			Reason:  "batch_settlement_refund_no_balance",
+			Reason:  batched.ErrRefundNoBalance,
 			Message: "Channel has no remaining balance to refund",
 		}, nil
 	}
@@ -821,14 +821,14 @@ func (s *BatchedEvmScheme) handleRefundRewrite(
 		if !ok || requested.Sign() <= 0 {
 			return &x402.BeforeHookResult{
 				Abort:   true,
-				Reason:  "batch_settlement_refund_amount_invalid",
+				Reason:  batched.ErrRefundAmountInvalid,
 				Message: "refundAmount must be a positive integer",
 			}, nil
 		}
 		if requested.Cmp(remainder) > 0 {
 			return &x402.BeforeHookResult{
 				Abort:   true,
-				Reason:  "batch_settlement_refund_amount_exceeds_balance",
+				Reason:  batched.ErrRefundAmountExceedsBalance,
 				Message: fmt.Sprintf("refundAmount %s exceeds remainder %s", requested.String(), remainder.String()),
 			}, nil
 		}

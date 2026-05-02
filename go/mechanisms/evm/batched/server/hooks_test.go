@@ -343,7 +343,7 @@ func TestBeforeSettleHook_VoucherWithoutSessionAborts(t *testing.T) {
 	if err != nil {
 		t.Fatalf("err: %v", err)
 	}
-	if res == nil || !res.Abort || res.Reason != "missing_batch_settlement_channel" {
+	if res == nil || !res.Abort || res.Reason != batched.ErrMissingChannel {
 		t.Fatalf("got %+v", res)
 	}
 }
@@ -394,7 +394,7 @@ func TestBeforeSettleHook_VoucherExceedsSignedCapAborts(t *testing.T) {
 	if err != nil {
 		t.Fatalf("err: %v", err)
 	}
-	if res == nil || !res.Abort || res.Reason != "batch_settlement_charge_exceeds_signed_cumulative" {
+	if res == nil || !res.Abort || res.Reason != batched.ErrChargeExceedsSignedCumulative {
 		t.Fatalf("got %+v", res)
 	}
 }
@@ -434,7 +434,7 @@ func TestBeforeSettleHook_RefundNoBalanceAborts(t *testing.T) {
 	if err != nil {
 		t.Fatalf("err: %v", err)
 	}
-	if res == nil || !res.Abort || res.Reason != "batch_settlement_refund_no_balance" {
+	if res == nil || !res.Abort || res.Reason != batched.ErrRefundNoBalance {
 		t.Fatalf("got %+v", res)
 	}
 }
@@ -455,7 +455,7 @@ func TestBeforeSettleHook_RefundAmountInvalidAborts(t *testing.T) {
 	if err != nil {
 		t.Fatalf("err: %v", err)
 	}
-	if res == nil || !res.Abort || res.Reason != "batch_settlement_refund_amount_invalid" {
+	if res == nil || !res.Abort || res.Reason != batched.ErrRefundAmountInvalid {
 		t.Fatalf("got %+v", res)
 	}
 }
@@ -476,7 +476,7 @@ func TestBeforeSettleHook_RefundAmountExceedsRemainderAborts(t *testing.T) {
 	if err != nil {
 		t.Fatalf("err: %v", err)
 	}
-	if res == nil || !res.Abort || res.Reason != "batch_settlement_refund_amount_exceeds_balance" {
+	if res == nil || !res.Abort || res.Reason != batched.ErrRefundAmountExceedsBalance {
 		t.Fatalf("got %+v", res)
 	}
 }

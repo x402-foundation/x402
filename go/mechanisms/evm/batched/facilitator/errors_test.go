@@ -53,7 +53,6 @@ func TestExportedErrorReasonsAreStable(t *testing.T) {
 		"ErrValidAfterInFuture":           ErrValidAfterInFuture,
 		"ErrErc3009SignatureInvalid":      ErrErc3009SignatureInvalid,
 		"ErrErc3009AuthorizationRequired": ErrErc3009AuthorizationRequired,
-		"ErrMissingEip712Domain":          ErrMissingEip712Domain,
 
 		// Voucher errors
 		"ErrVoucherSignatureInvalid": ErrVoucherSignatureInvalid,
@@ -221,7 +220,7 @@ func TestNoLegacyBatchSettlementEvmPrefix(t *testing.T) {
 		ErrReceiverMismatch, ErrReceiverAuthorizerMismatch, ErrTokenMismatch,
 		ErrWithdrawDelayOutOfRange, ErrWithdrawDelayMismatch, ErrChannelIdMismatch,
 		ErrValidBeforeExpired, ErrValidAfterInFuture, ErrErc3009SignatureInvalid,
-		ErrErc3009AuthorizationRequired, ErrMissingEip712Domain,
+		ErrErc3009AuthorizationRequired,
 		ErrVoucherSignatureInvalid, ErrMaxClaimableTooLow, ErrMaxClaimableExceedsBal,
 		ErrInsufficientBalance,
 		ErrChannelStateReadFailed, ErrChannelNotFound, ErrRpcReadFailed,

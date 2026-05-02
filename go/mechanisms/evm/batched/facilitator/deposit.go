@@ -214,9 +214,20 @@ func VerifyDeposit(
 			collectorData,
 		)
 		if simErr != nil {
+			invalidReason := ErrDepositSimulationFailed //nolint:ineffassign // overwritten on diagnosis
+			if transferMethod == batched.AssetTransferMethodPermit2 &&
+				(permit2Branch == nil || permit2Branch.kind == permit2BranchStandard) {
+				if probedReason := diagnosePermit2AllowanceShortfall(ctx, signer, config, depositAmount); probedReason != "" {
+					invalidReason = probedReason
+				} else {
+					invalidReason = ErrDepositSimulationFailed
+				}
+			} else {
+				invalidReason = ErrDepositSimulationFailed
+			}
 			return &x402.VerifyResponse{ //nolint:nilerr // simulation failure → error encoded in response
 				IsValid:       false,
-				InvalidReason: ErrDepositSimulationFailed,
+				InvalidReason: invalidReason,
 				Payer:         config.Payer,
 			}, nil
 		}
@@ -679,4 +690,41 @@ func verifyPermit2DepositAuthorization(
 		return ErrPermit2InvalidSignature, nil
 	}
 	return "", nil
+}
+
+// diagnosePermit2AllowanceShortfall is called after a standard-path Permit2
+// deposit simulation reverts. It probes the on-chain ERC-20 allowance
+// payer→Permit2 and returns `ErrPermit2AllowanceRequired` when the allowance
+// is strictly less than the deposit amount (the canonical cause of the most
+// common standard-path simulation revert). On any RPC error or sufficient
+// allowance the helper returns "" so the caller falls back to the generic
+// `ErrDepositSimulationFailed` reason. Mirrors exact's
+// `CheckPermit2Prerequisites` diagnosis pattern but kept inline because the
+// batched scheme needs only this single check (other reverts pass through as
+// generic simulation failures).
+func diagnosePermit2AllowanceShortfall(
+	ctx context.Context,
+	signer evm.FacilitatorEvmSigner,
+	config batched.ChannelConfig,
+	depositAmount *big.Int,
+) string {
+	allowanceResult, err := signer.ReadContract(
+		ctx,
+		config.Token,
+		evm.ERC20AllowanceABI,
+		"allowance",
+		common.HexToAddress(config.Payer),
+		common.HexToAddress(evm.PERMIT2Address),
+	)
+	if err != nil {
+		return ""
+	}
+	allowance, ok := allowanceResult.(*big.Int)
+	if !ok || allowance == nil {
+		return ""
+	}
+	if allowance.Cmp(depositAmount) < 0 {
+		return ErrPermit2AllowanceRequired
+	}
+	return ""
 }

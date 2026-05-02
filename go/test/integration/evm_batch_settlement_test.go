@@ -901,7 +901,7 @@ func TestBatchSettlementIntegration_RefundNonRecoverableFastFail(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected non-recoverable refund error")
 	}
-	if !strings.Contains(err.Error(), "batch_settlement_refund_amount_exceeds_balance") {
+	if !strings.Contains(err.Error(), batched.ErrRefundAmountExceedsBalance) {
 		t.Fatalf("expected non-recoverable error code, got: %v", err)
 	}
 	t.Logf("fast-failed in %s with: %v", elapsed, err)

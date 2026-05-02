@@ -563,7 +563,7 @@ func TestExecuteRefund_402WithPaymentResponseFailsFast(t *testing.T) {
 	// Settle-side abort: server returns 402 + PAYMENT-RESPONSE → no retry, fail with formatted reason.
 	settle := x402.SettleResponse{
 		Success:      false,
-		ErrorReason:  "batch_settlement_refund_no_balance",
+		ErrorReason:  batched.ErrRefundNoBalance,
 		ErrorMessage: "Channel drained",
 	}
 	settleBytes, _ := json.Marshal(settle)
@@ -584,7 +584,7 @@ func TestExecuteRefund_402WithPaymentResponseFailsFast(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error")
 	}
-	if !strings.Contains(err.Error(), "batch_settlement_refund_no_balance") {
+	if !strings.Contains(err.Error(), batched.ErrRefundNoBalance) {
 		t.Fatalf("got %v", err)
 	}
 	if !strings.Contains(err.Error(), "Channel drained") {
@@ -612,7 +612,7 @@ func TestExecuteRefund_402WithBadPaymentResponseHeader(t *testing.T) {
 
 func TestExecuteRefund_NonRecoverableErrorFailsFast(t *testing.T) {
 	// Verify-side abort with a known non-recoverable error code: don't retry.
-	pr := x402.PaymentRequired{Error: "batch_settlement_refund_amount_invalid"}
+	pr := x402.PaymentRequired{Error: batched.ErrRefundAmountInvalid}
 	prBytes, _ := json.Marshal(pr)
 	prHeader := base64.StdEncoding.EncodeToString(prBytes)
 
@@ -628,7 +628,7 @@ func TestExecuteRefund_NonRecoverableErrorFailsFast(t *testing.T) {
 	_, err := executeRefund(context.Background(), fctx, srv.URL,
 		types.PaymentRequirements{Scheme: batched.SchemeBatched, Network: "eip155:8453"},
 		"", http.DefaultClient)
-	if err == nil || !strings.Contains(err.Error(), "batch_settlement_refund_amount_invalid") {
+	if err == nil || !strings.Contains(err.Error(), batched.ErrRefundAmountInvalid) {
 		t.Fatalf("got %v", err)
 	}
 	if calls != 1 {
