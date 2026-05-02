@@ -160,53 +160,35 @@ func ValidateChannelConfig(
 			fmt.Sprintf("computed channelId %s does not match provided %s", computed, channelId))
 	}
 
-	// Validate against typed extra fields if present.
-	if extra := parseRequirementsExtra(requirements.Extra); extra != nil {
-		if extra.ReceiverAuthorizer != "" &&
-			!strings.EqualFold(config.ReceiverAuthorizer, extra.ReceiverAuthorizer) {
+	// Validate against the requirement's `extra` map. Only `receiverAuthorizer`
+	// and `withdrawDelay` participate in this check — other fields
+	// (`name` / `version` / `assetTransferMethod`) are consumed elsewhere or
+	// only exist to round-trip to the client, so they don't need to be
+	// decoded here.
+	if requirements.Extra != nil {
+		if expected, ok := requirements.Extra["receiverAuthorizer"].(string); ok && expected != "" &&
+			!strings.EqualFold(config.ReceiverAuthorizer, expected) {
 			return x402.NewVerifyError(ErrReceiverAuthorizerMismatch, "",
 				fmt.Sprintf("channel receiverAuthorizer %s does not match required %s",
-					config.ReceiverAuthorizer, extra.ReceiverAuthorizer))
+					config.ReceiverAuthorizer, expected))
 		}
-		if extra.WithdrawDelay != 0 && config.WithdrawDelay != extra.WithdrawDelay {
+		var expectedDelay int
+		switch v := requirements.Extra["withdrawDelay"].(type) {
+		case float64:
+			expectedDelay = int(v)
+		case int:
+			expectedDelay = v
+		case int64:
+			expectedDelay = int(v)
+		}
+		if expectedDelay != 0 && config.WithdrawDelay != expectedDelay {
 			return x402.NewVerifyError(ErrWithdrawDelayMismatch, "",
 				fmt.Sprintf("channel withdrawDelay %d does not match required %d",
-					config.WithdrawDelay, extra.WithdrawDelay))
+					config.WithdrawDelay, expectedDelay))
 		}
 	}
 
 	return nil
-}
-
-// parseRequirementsExtra best-effort decodes the PaymentRequirements.Extra map
-// into a typed BatchSettlementPaymentRequirementsExtra. Returns nil when extra
-// is nil or unusable.
-func parseRequirementsExtra(extra map[string]interface{}) *batched.BatchSettlementPaymentRequirementsExtra {
-	if extra == nil {
-		return nil
-	}
-	out := &batched.BatchSettlementPaymentRequirementsExtra{}
-	if v, ok := extra["receiverAuthorizer"].(string); ok {
-		out.ReceiverAuthorizer = v
-	}
-	switch v := extra["withdrawDelay"].(type) {
-	case float64:
-		out.WithdrawDelay = int(v)
-	case int:
-		out.WithdrawDelay = v
-	case int64:
-		out.WithdrawDelay = int(v)
-	}
-	if v, ok := extra["name"].(string); ok {
-		out.Name = v
-	}
-	if v, ok := extra["version"].(string); ok {
-		out.Version = v
-	}
-	if v, ok := extra["assetTransferMethod"].(string); ok {
-		out.AssetTransferMethod = v
-	}
-	return out
 }
 
 // VerifyBatchedVoucherTypedData verifies a voucher signature using dual-path verification.

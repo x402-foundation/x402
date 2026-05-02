@@ -116,14 +116,24 @@ func ExecuteRefundWithSignature(
 
 		claimArgs := buildVoucherClaimArgs(payload.Claims)
 
-		// Encode both calls for multicall
-		claimCalldata, err := encodeClaimWithSignatureCalldata(claimArgs, claimSig)
+		// ABI-encode both calls for multicall.
+		claimAbi, err := abi.JSON(strings.NewReader(string(batched.BatchSettlementClaimWithSignatureABI)))
+		if err != nil {
+			return nil, x402.NewSettleError(ErrInvalidRefundPayload, "", network, "",
+				fmt.Sprintf("failed to load claim ABI: %s", err))
+		}
+		claimCalldata, err := claimAbi.Pack("claimWithSignature", claimArgs, claimSig)
 		if err != nil {
 			return nil, x402.NewSettleError(ErrInvalidRefundPayload, "", network, "",
 				fmt.Sprintf("failed to encode claim calldata: %s", err))
 		}
 
-		refundCalldata, err := encodeRefundWithSignatureCalldata(configTuple, refundAmount, nonce, refundSig)
+		refundAbi, err := abi.JSON(strings.NewReader(string(batched.BatchSettlementRefundWithSignatureABI)))
+		if err != nil {
+			return nil, x402.NewSettleError(ErrInvalidRefundPayload, "", network, "",
+				fmt.Sprintf("failed to load refund ABI: %s", err))
+		}
+		refundCalldata, err := refundAbi.Pack("refundWithSignature", configTuple, refundAmount, nonce, refundSig)
 		if err != nil {
 			return nil, x402.NewSettleError(ErrInvalidRefundPayload, "", network, "",
 				fmt.Sprintf("failed to encode refund calldata: %s", err))
@@ -277,12 +287,32 @@ func computeRefundSettlementDetails(
 
 	// If the channel was in pending withdrawal, polling the post-state is
 	// the only way to know the final balance because `refundWithSignature`
-	// also cancels the withdrawal in a single transaction.
+	// also cancels the withdrawal in a single transaction. Mirrors TS
+	// `readPostRefundState` + `buildRefundExtraFromPostState`. On RPC lag
+	// (deadline elapsed without nonce advancement) we fall through to the
+	// analytic path below.
 	if preState != nil && preWithdrawRequestedAt != 0 {
 		expectedNonce := new(big.Int).Add(preRefundNonce, big.NewInt(1))
-		if postState := waitForPostRefundState(ctx, signer, channelId, expectedNonce); postState != nil {
+		var postState *batched.ChannelState
+		deadline := time.Now().Add(refundStatePollDeadline)
+		for {
+			s, err := ReadChannelState(ctx, signer, channelId)
+			if err == nil && s != nil && s.RefundNonce != nil && s.RefundNonce.Cmp(expectedNonce) >= 0 {
+				postState = s
+				break
+			}
+			if !time.Now().Before(deadline) {
+				break
+			}
+			time.Sleep(refundStatePollInterval)
+		}
+		if postState != nil {
+			actualRefund := big.NewInt(0)
+			if preBalance.Cmp(postState.Balance) > 0 {
+				actualRefund = new(big.Int).Sub(preBalance, postState.Balance)
+			}
 			return refundSettlementDetails{
-				amount: actualRefundFromPostState(preBalance, postState.Balance).String(),
+				amount: actualRefund.String(),
 				channelState: batched.BatchedChannelStateExtra{
 					ChannelId:           channelId,
 					Balance:             postState.Balance.String(),
@@ -292,7 +322,6 @@ func computeRefundSettlementDetails(
 				},
 			}
 		}
-		// fall through to analytic path on RPC lag
 	}
 
 	// Analytic path: compute the post-refund snapshot from preState + payload.
@@ -331,37 +360,6 @@ func computeRefundSettlementDetails(
 	}
 }
 
-// actualRefundFromPostState returns max(preBalance - postBalance, 0). Mirrors
-// the TS `buildRefundExtraFromPostState` arithmetic.
-func actualRefundFromPostState(preBalance, postBalance *big.Int) *big.Int {
-	if preBalance == nil || postBalance == nil || preBalance.Cmp(postBalance) <= 0 {
-		return big.NewInt(0)
-	}
-	return new(big.Int).Sub(preBalance, postBalance)
-}
-
-// waitForPostRefundState polls for the channel's post-refund onchain state,
-// returning the first read where `refundNonce >= expectedNonce`. Returns nil
-// if the deadline elapses without observing nonce advancement (RPC lag).
-func waitForPostRefundState(
-	ctx context.Context,
-	signer evm.FacilitatorEvmSigner,
-	channelId string,
-	expectedNonce *big.Int,
-) *batched.ChannelState {
-	deadline := time.Now().Add(refundStatePollDeadline)
-	for {
-		state, err := ReadChannelState(ctx, signer, channelId)
-		if err == nil && state != nil && state.RefundNonce != nil && state.RefundNonce.Cmp(expectedNonce) >= 0 {
-			return state
-		}
-		if !time.Now().Before(deadline) {
-			return nil
-		}
-		time.Sleep(refundStatePollInterval)
-	}
-}
-
 // buildRefundResponse assembles a SettleResponse for a refund mirroring TS
 // `executeRefundWithSignature` return shape: success + tx + payer + amount +
 // extra.channelState (no `refund: true` flag — TS does not emit it). The
@@ -391,20 +389,3 @@ func buildRefundResponse(
 	}
 }
 
-// encodeClaimWithSignatureCalldata ABI-encodes claimWithSignature calldata for multicall.
-func encodeClaimWithSignatureCalldata(claimArgs interface{}, sig []byte) ([]byte, error) {
-	contractABI, err := abi.JSON(strings.NewReader(string(batched.BatchSettlementClaimWithSignatureABI)))
-	if err != nil {
-		return nil, err
-	}
-	return contractABI.Pack("claimWithSignature", claimArgs, sig)
-}
-
-// encodeRefundWithSignatureCalldata ABI-encodes refundWithSignature calldata for multicall.
-func encodeRefundWithSignatureCalldata(configTuple interface{}, amount, nonce *big.Int, sig []byte) ([]byte, error) {
-	contractABI, err := abi.JSON(strings.NewReader(string(batched.BatchSettlementRefundWithSignatureABI)))
-	if err != nil {
-		return nil, err
-	}
-	return contractABI.Pack("refundWithSignature", configTuple, amount, nonce, sig)
-}

@@ -2,7 +2,6 @@ package server
 
 import (
 	"context"
-	"math/big"
 	"testing"
 	"time"
 
@@ -706,19 +705,6 @@ func TestMapIntField(t *testing.T) {
 	}
 	if got := mapIntField(m, "missing", 5); got != 5 {
 		t.Fatalf("missing = %d", got)
-	}
-}
-
-func TestBuildRefundChannelStateSnapshot(t *testing.T) {
-	sess := sampleSession("0xa", "100")
-	sess.Balance = "1000"
-	sess.RefundNonce = 3
-	out := buildRefundChannelStateSnapshot(sess, "0xa", big.NewInt(200))
-	if out.ChannelId != "0xa" || out.Balance != "800" {
-		t.Fatalf("got %+v", out)
-	}
-	if out.RefundNonce != "4" {
-		t.Fatalf("nonce = %s", out.RefundNonce)
 	}
 }
 

@@ -56,45 +56,6 @@ func TestToContractChannelConfig_ShortSaltLeftPads(t *testing.T) {
 	}
 }
 
-func TestParseRequirementsExtra_Nil(t *testing.T) {
-	if got := parseRequirementsExtra(nil); got != nil {
-		t.Fatalf("expected nil, got %+v", got)
-	}
-}
-
-func TestParseRequirementsExtra_Float64WithdrawDelay(t *testing.T) {
-	got := parseRequirementsExtra(map[string]interface{}{
-		"receiverAuthorizer":  "0xabc",
-		"withdrawDelay":       float64(1800),
-		"name":                "x402",
-		"version":             "1",
-		"assetTransferMethod": "eip3009",
-	})
-	if got.ReceiverAuthorizer != "0xabc" || got.WithdrawDelay != 1800 ||
-		got.Name != "x402" || got.Version != "1" || got.AssetTransferMethod != "eip3009" {
-		t.Fatalf("parsed = %+v", got)
-	}
-}
-
-func TestParseRequirementsExtra_IntAndInt64WithdrawDelay(t *testing.T) {
-	if got := parseRequirementsExtra(map[string]interface{}{"withdrawDelay": int(900)}); got.WithdrawDelay != 900 {
-		t.Fatalf("int delay = %d", got.WithdrawDelay)
-	}
-	if got := parseRequirementsExtra(map[string]interface{}{"withdrawDelay": int64(2000)}); got.WithdrawDelay != 2000 {
-		t.Fatalf("int64 delay = %d", got.WithdrawDelay)
-	}
-}
-
-func TestParseRequirementsExtra_IgnoresWrongTypes(t *testing.T) {
-	got := parseRequirementsExtra(map[string]interface{}{
-		"receiverAuthorizer": 42,
-		"withdrawDelay":      "not-a-number",
-	})
-	if got.ReceiverAuthorizer != "" || got.WithdrawDelay != 0 {
-		t.Fatalf("unexpected coercion: %+v", got)
-	}
-}
-
 func reqs(payTo, asset string) types.PaymentRequirements {
 	return types.PaymentRequirements{PayTo: payTo, Asset: asset, Network: "eip155:8453"}
 }
@@ -197,6 +158,46 @@ func TestValidateChannelConfig_ExtraMatching(t *testing.T) {
 	}
 	if err := ValidateChannelConfig(cfg, id, r); err != nil {
 		t.Fatalf("expected ok with matching extra: %v", err)
+	}
+}
+
+// TestValidateChannelConfig_ExtraWithdrawDelayNumberShapes covers the inlined
+// numeric coercion for `withdrawDelay`: JSON decoders surface int/int64/float64
+// depending on source, and the validator must accept all three so callers
+// don't fail on benign type drift.
+func TestValidateChannelConfig_ExtraWithdrawDelayNumberShapes(t *testing.T) {
+	cfg := validConfig()
+	id, _ := batched.ComputeChannelId(cfg, "eip155:8453")
+	for label, value := range map[string]interface{}{
+		"int":     int(cfg.WithdrawDelay),
+		"int64":   int64(cfg.WithdrawDelay),
+		"float64": float64(cfg.WithdrawDelay),
+	} {
+		t.Run(label, func(t *testing.T) {
+			r := reqs(cfg.Receiver, cfg.Token)
+			r.Extra = map[string]interface{}{"withdrawDelay": value}
+			if err := ValidateChannelConfig(cfg, id, r); err != nil {
+				t.Fatalf("delay=%v (%s): expected ok, got %v", value, label, err)
+			}
+		})
+	}
+}
+
+// TestValidateChannelConfig_ExtraIgnoresWrongTypes pins the inlined parsing
+// behavior: receiverAuthorizer that is not a string, or withdrawDelay that is
+// not numeric, must be silently ignored (treated as absent) instead of
+// failing validation. This prevents incidental Extra fields from breaking
+// otherwise-valid channels.
+func TestValidateChannelConfig_ExtraIgnoresWrongTypes(t *testing.T) {
+	cfg := validConfig()
+	id, _ := batched.ComputeChannelId(cfg, "eip155:8453")
+	r := reqs(cfg.Receiver, cfg.Token)
+	r.Extra = map[string]interface{}{
+		"receiverAuthorizer": 42,             // not a string
+		"withdrawDelay":      "not-a-number", // not numeric
+	}
+	if err := ValidateChannelConfig(cfg, id, r); err != nil {
+		t.Fatalf("expected wrong-typed extras to be ignored, got %v", err)
 	}
 }
 

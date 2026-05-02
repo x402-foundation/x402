@@ -70,8 +70,30 @@ func resolvePermit2DepositBranch(
 	// `resolvePermit2DepositBranch` on the facilitator side.
 	eip2612Info, _ := eip2612gassponsor.ExtractEip2612GasSponsoringInfo(extensions)
 	if eip2612Info != nil {
-		if reason := validateBatchEip2612Permit(eip2612Info, payer, tokenAddress, depositAmount); reason != "" {
-			return nil, reason, nil
+		// Wrap the shared evm validator with the batch-specific rule that
+		// `info.amount == deposit.amount`, then translate the shared reason
+		// strings into the batched error codes (mirrors TS
+		// `validateBatchEip2612Permit`).
+		if sharedReason := evm.ValidateEip2612PermitForPayment(eip2612Info, payer, tokenAddress); sharedReason != "" {
+			var batchedReason string
+			switch sharedReason {
+			case "invalid_eip2612_extension_format":
+				batchedReason = ErrEip2612InvalidFormat
+			case "eip2612_from_mismatch":
+				batchedReason = ErrEip2612OwnerMismatch
+			case "eip2612_asset_mismatch":
+				batchedReason = ErrEip2612AssetMismatch
+			case "eip2612_spender_not_permit2":
+				batchedReason = ErrEip2612SpenderMismatch
+			case "eip2612_deadline_expired":
+				batchedReason = ErrEip2612DeadlineExpired
+			default:
+				batchedReason = sharedReason
+			}
+			return nil, batchedReason, nil
+		}
+		if eip2612Info.Amount != depositAmount {
+			return nil, ErrEip2612AmountMismatch, nil
 		}
 		v, r, s, splitErr := evm.SplitEip2612Signature(eip2612Info.Signature)
 		if splitErr != nil {
@@ -110,8 +132,18 @@ func resolvePermit2DepositBranch(
 		if extSigner == nil {
 			return nil, ErrErc20ApprovalUnavailable, nil
 		}
-		if reason, _ := validateErc20ApprovalForBatchPayment(erc20Info, payer, tokenAddress); reason != "" {
-			return nil, reason, nil
+		// Validate the signed approve tx against batch-specific
+		// expectations. Wire format mirrors exact (`approve(Permit2,
+		// MaxUint256)` signed tx).
+		switch {
+		case !erc20approvalgassponsor.ValidateInfo(erc20Info):
+			return nil, ErrErc20ApprovalInvalidFormat, nil
+		case !strings.EqualFold(erc20Info.From, payer):
+			return nil, ErrErc20ApprovalFromMismatch, nil
+		case !strings.EqualFold(erc20Info.Asset, tokenAddress):
+			return nil, ErrErc20ApprovalAssetMismatch, nil
+		case !strings.EqualFold(erc20Info.Spender, evm.PERMIT2Address):
+			return nil, ErrErc20ApprovalWrongSpender, nil
 		}
 		// ERC-20 approval branch: standard Permit2 collectorData (no EIP-2612
 		// segment); the approve() tx is broadcast separately by the extension
@@ -150,71 +182,9 @@ type payerAssetView struct {
 	Token string
 }
 
-// validateBatchEip2612Permit wraps evm.ValidateEip2612PermitForPayment and adds
-// the batch-settlement-specific rule that `info.Amount == deposit.amount`. This
-// mirrors TS `validateBatchEip2612Permit` (deposit-permit2.ts).
-func validateBatchEip2612Permit(
-	info *eip2612gassponsor.Info,
-	payer string,
-	tokenAddress string,
-	depositAmount string,
-) string {
-	if reason := evm.ValidateEip2612PermitForPayment(info, payer, tokenAddress); reason != "" {
-		return mapEip2612SharedReasonToBatched(reason)
-	}
-	if info.Amount != depositAmount {
-		return ErrEip2612AmountMismatch
-	}
-	return ""
-}
-
-// mapEip2612SharedReasonToBatched translates the generic reason strings emitted
-// by evm.ValidateEip2612PermitForPayment into the batch-settlement error codes
-// declared in errors.go. Matches TS error naming.
-func mapEip2612SharedReasonToBatched(reason string) string {
-	switch reason {
-	case "invalid_eip2612_extension_format":
-		return ErrEip2612InvalidFormat
-	case "eip2612_from_mismatch":
-		return ErrEip2612OwnerMismatch
-	case "eip2612_asset_mismatch":
-		return ErrEip2612AssetMismatch
-	case "eip2612_spender_not_permit2":
-		return ErrEip2612SpenderMismatch
-	case "eip2612_deadline_expired":
-		return ErrEip2612DeadlineExpired
-	default:
-		return reason
-	}
-}
-
-// validateErc20ApprovalForBatchPayment validates the signed ERC-20 approve tx
-// against batch-settlement-specific expectations. Reuses the exact mechanism's
-// validator since the wire format is identical (approve(Permit2, MaxUint256)
-// signed tx). Returns ("", "") on success.
-func validateErc20ApprovalForBatchPayment(
-	info *erc20approvalgassponsor.Info,
-	payer string,
-	tokenAddress string,
-) (reason, message string) {
-	if !erc20approvalgassponsor.ValidateInfo(info) {
-		return ErrErc20ApprovalInvalidFormat, "ERC-20 approval extension info failed format validation"
-	}
-	if !strings.EqualFold(info.From, payer) {
-		return ErrErc20ApprovalFromMismatch, "ERC-20 approval `from` does not match payer"
-	}
-	if !strings.EqualFold(info.Asset, tokenAddress) {
-		return ErrErc20ApprovalAssetMismatch, "ERC-20 approval `asset` does not match channel token"
-	}
-	if !strings.EqualFold(info.Spender, evm.PERMIT2Address) {
-		return ErrErc20ApprovalWrongSpender, "ERC-20 approval `spender` is not the canonical Permit2"
-	}
-	return "", ""
-}
-
 // bytes32Hex converts a [32]byte to a 0x-prefixed hex string suitable for
 // `BuildEip2612PermitData`'s R/S inputs (which accept either prefixed or
-// unprefixed hex).
+// unprefixed hex). Used twice (R and S) by `resolvePermit2DepositBranch`.
 func bytes32Hex(b [32]byte) string {
 	return common.BytesToHash(b[:]).Hex()
 }

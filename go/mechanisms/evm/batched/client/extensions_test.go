@@ -290,7 +290,15 @@ func TestCreatePaymentPayloadWithExtensions_Eip2612DeadlineFromPermit2(t *testin
 	}
 	wrapper := out.Extensions[eip2612gassponsor.EIP2612GasSponsoring.Key()].(map[string]interface{})
 	info := wrapper["info"].(*eip2612gassponsor.Info)
-	depDeadline := readPermit2DeadlineFromBatchedDeposit(out)
+	// Read the deadline straight off the deposit payload — the alignment
+	// invariant being tested is that whatever value lands in the Permit2
+	// authorization (`payload.deposit.authorization.permit2Authorization.deadline`)
+	// is reused for the EIP-2612 permit. Inlined here because the helper
+	// was removed (single-call site) and the path is short.
+	dep, _ := out.Payload["deposit"].(map[string]interface{})
+	auth, _ := dep["authorization"].(map[string]interface{})
+	permit2, _ := auth["permit2Authorization"].(map[string]interface{})
+	depDeadline, _ := permit2["deadline"].(string)
 	if depDeadline == "" {
 		t.Fatal("permit2 deadline missing from deposit payload")
 	}

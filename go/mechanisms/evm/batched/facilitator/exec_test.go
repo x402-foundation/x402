@@ -617,13 +617,3 @@ func TestBuildVoucherClaimArgs_Length(t *testing.T) {
 	}
 }
 
-func TestEncodeRefundWithSignatureCalldata(t *testing.T) {
-	configTuple := ToContractChannelConfig(validConfig())
-	calldata, err := encodeRefundWithSignatureCalldata(configTuple, big.NewInt(100), big.NewInt(1), []byte{0xde, 0xad})
-	if err != nil {
-		t.Fatalf("err: %v", err)
-	}
-	if len(calldata) < 4 {
-		t.Fatalf("calldata too short: %d", len(calldata))
-	}
-}

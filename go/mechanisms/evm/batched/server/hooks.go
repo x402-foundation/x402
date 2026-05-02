@@ -25,26 +25,6 @@ const (
 	maxPendingTtlMs = 10 * 60 * 1000 // 10 minutes
 )
 
-// pendingExpiresAt returns now + clamp(maxTimeoutSeconds*1000, [min,max]) ms.
-func pendingExpiresAt(maxTimeoutSeconds int, now int64) int64 {
-	requested := int64(maxTimeoutSeconds) * 1000
-	if requested < 0 {
-		requested = 0
-	}
-	ttl := requested
-	if ttl < minPendingTtlMs {
-		ttl = minPendingTtlMs
-	}
-	if ttl > maxPendingTtlMs {
-		ttl = maxPendingTtlMs
-	}
-	return now + ttl
-}
-
-// isPendingLive reports whether the reservation still blocks same-channel work.
-func isPendingLive(p *PendingRequest, now int64) bool {
-	return p != nil && p.ExpiresAt > now
-}
 
 // BeforeVerifyHook reserves the channel for this request via an atomic
 // UpdateChannel call. Three outcomes are possible:
@@ -105,7 +85,8 @@ func (s *BatchedEvmScheme) BeforeVerifyHook() x402.BeforeVerifyHook {
 		)
 
 		_, updateErr := s.storage.UpdateChannel(channelId, func(current *ChannelSession) *ChannelSession {
-			if current != nil && isPendingLive(current.PendingRequest, now) {
+			// A live (unexpired) reservation already exists → abort.
+			if current != nil && current.PendingRequest != nil && current.PendingRequest.ExpiresAt > now {
 				outcomeStatus = "busy"
 				return current
 			}
@@ -115,7 +96,18 @@ func (s *BatchedEvmScheme) BeforeVerifyHook() x402.BeforeVerifyHook {
 				prevCharged, _ = new(big.Int).SetString(current.ChargedCumulativeAmount, 10)
 			}
 			if prevCharged == nil {
-				prevCharged = inferMissingChargedAmount(signedMax, reqAmount, isPaid)
+				// Mirror TS `inferMissingLocalChargedAmount`: when storage has
+				// no row yet, derive a sensible charged base so the mismatch
+				// check still works for the first request on a brand-new
+				// channel.
+				switch {
+				case !isPaid:
+					prevCharged = new(big.Int).Set(signedMax)
+				case signedMax.Cmp(reqAmount) < 0:
+					prevCharged = big.NewInt(0)
+				default:
+					prevCharged = new(big.Int).Sub(signedMax, reqAmount)
+				}
 			}
 
 			var expectedMax *big.Int
@@ -149,10 +141,18 @@ func (s *BatchedEvmScheme) BeforeVerifyHook() x402.BeforeVerifyHook {
 				)
 				next = prov
 			}
+			// Compute the reservation expiry as now + clamp(maxTimeoutSeconds*1000, [min,max]) ms.
+			ttl := int64(ctx.Requirements.GetMaxTimeoutSeconds()) * 1000
+			if ttl < minPendingTtlMs {
+				ttl = minPendingTtlMs
+			}
+			if ttl > maxPendingTtlMs {
+				ttl = maxPendingTtlMs
+			}
 			next.PendingRequest = &PendingRequest{
 				PendingId:          pendingId,
 				SignedMaxClaimable: signedMaxStr,
-				ExpiresAt:          pendingExpiresAt(ctx.Requirements.GetMaxTimeoutSeconds(), now),
+				ExpiresAt:          now + ttl,
 			}
 			next.LastRequestTimestamp = now
 			return next
@@ -218,7 +218,10 @@ func (s *BatchedEvmScheme) verifyVoucherLocally(
 	if channel == nil {
 		return nil
 	}
-	if !isOnchainStateFresh(channel, s.GetOnchainStateTtlMs(), now) {
+	// Skip the local fast path when the cached onchain fields for this
+	// channel are stale (or never synced) — the dispatcher will fall back
+	// to the remote facilitator verify.
+	if channel.OnchainSyncedAt == 0 || now-channel.OnchainSyncedAt > s.GetOnchainStateTtlMs() {
 		return nil
 	}
 
@@ -244,7 +247,11 @@ func (s *BatchedEvmScheme) verifyVoucherLocally(
 		Extra:             requirements.GetExtra(),
 	}
 	if cfgErr := facilitator.ValidateChannelConfig(vp.ChannelConfig, vp.Voucher.ChannelId, reqs); cfgErr != nil {
-		return invalidLocalVerifyResponse(payer, extractInvalidReason(cfgErr, facilitator.ErrChannelIdMismatch))
+		reason := facilitator.ErrChannelIdMismatch
+		if ve, ok := cfgErr.(*x402.VerifyError); ok && ve.InvalidReason != "" {
+			reason = ve.InvalidReason
+		}
+		return invalidLocalVerifyResponse(payer, reason)
 	}
 
 	computed, err := batched.ComputeChannelId(vp.ChannelConfig, requirements.GetNetwork())
@@ -252,8 +259,37 @@ func (s *BatchedEvmScheme) verifyVoucherLocally(
 		return invalidLocalVerifyResponse(payer, facilitator.ErrChannelIdMismatch)
 	}
 
-	sigOk, err := verifyLocalVoucherSignature(vp, requirements.GetNetwork())
-	if err != nil || !sigOk {
+	// Verify the EIP-712 voucher signature against the channel's
+	// payerAuthorizer using ECDSA. Smart-wallet (ERC-1271) signatures are
+	// intentionally not supported here — the early `vp.ChannelConfig
+	// .PayerAuthorizer == zeroAddress` skip above ensures this path only
+	// runs against EOA payerAuthorizers.
+	sigOk := false
+	chainID, sigErr := evm.GetEvmChainId(requirements.GetNetwork())
+	if sigErr == nil {
+		maxClaimable, ok := new(big.Int).SetString(vp.Voucher.MaxClaimableAmount, 10)
+		if !ok {
+			return invalidLocalVerifyResponse(payer, facilitator.ErrVoucherSignatureInvalid)
+		}
+		hash, hashErr := evm.HashTypedData(
+			batched.GetBatchSettlementEip712Domain(chainID),
+			batched.VoucherTypes,
+			"Voucher",
+			map[string]interface{}{
+				"channelId":          vp.Voucher.ChannelId,
+				"maxClaimableAmount": maxClaimable,
+			},
+		)
+		if hashErr == nil {
+			sigBytes := common.FromHex(vp.Voucher.Signature)
+			sigOk, sigErr = evm.VerifyEOASignature(
+				hash, sigBytes, common.HexToAddress(vp.ChannelConfig.PayerAuthorizer),
+			)
+		} else {
+			sigErr = hashErr
+		}
+	}
+	if sigErr != nil || !sigOk {
 		return invalidLocalVerifyResponse(payer, facilitator.ErrVoucherSignatureInvalid)
 	}
 
@@ -289,44 +325,6 @@ func (s *BatchedEvmScheme) verifyVoucherLocally(
 	}
 }
 
-// isOnchainStateFresh reports whether the cached onchain fields for the
-// channel are still within the configured freshness window.
-func isOnchainStateFresh(channel *ChannelSession, ttlMs, now int64) bool {
-	if channel == nil || channel.OnchainSyncedAt == 0 {
-		return false
-	}
-	return now-channel.OnchainSyncedAt <= ttlMs
-}
-
-// verifyLocalVoucherSignature verifies the EIP-712 voucher signature against
-// the channel's payerAuthorizer using ECDSA. Smart-wallet (ERC-1271) signatures
-// are intentionally not supported — callers must skip the local path when the
-// payerAuthorizer is the zero address.
-func verifyLocalVoucherSignature(vp *batched.BatchedVoucherPayload, network string) (bool, error) {
-	chainID, err := evm.GetEvmChainId(network)
-	if err != nil {
-		return false, err
-	}
-	maxClaimable, ok := new(big.Int).SetString(vp.Voucher.MaxClaimableAmount, 10)
-	if !ok {
-		return false, fmt.Errorf("invalid maxClaimableAmount")
-	}
-	hash, err := evm.HashTypedData(
-		batched.GetBatchSettlementEip712Domain(chainID),
-		batched.VoucherTypes,
-		"Voucher",
-		map[string]interface{}{
-			"channelId":          vp.Voucher.ChannelId,
-			"maxClaimableAmount": maxClaimable,
-		},
-	)
-	if err != nil {
-		return false, err
-	}
-	sig := common.FromHex(vp.Voucher.Signature)
-	return evm.VerifyEOASignature(hash, sig, common.HexToAddress(vp.ChannelConfig.PayerAuthorizer))
-}
-
 // invalidLocalVerifyResponse builds a failed VerifyResponse preserving the
 // payer for client-side reporting.
 func invalidLocalVerifyResponse(payer, invalidReason string) *x402.VerifyResponse {
@@ -335,31 +333,6 @@ func invalidLocalVerifyResponse(payer, invalidReason string) *x402.VerifyRespons
 		Payer:         payer,
 		InvalidReason: invalidReason,
 	}
-}
-
-// extractInvalidReason pulls a x402.VerifyError's InvalidReason out of err,
-// falling back to defaultReason when err is not a VerifyError.
-func extractInvalidReason(err error, defaultReason string) string {
-	if err == nil {
-		return defaultReason
-	}
-	if ve, ok := err.(*x402.VerifyError); ok && ve.InvalidReason != "" {
-		return ve.InvalidReason
-	}
-	return defaultReason
-}
-
-// inferMissingChargedAmount mirrors TS `inferMissingLocalChargedAmount`:
-// when storage has no row yet, derive a sensible charged base so the mismatch
-// check still works for the first request on a brand-new channel.
-func inferMissingChargedAmount(signedMax, price *big.Int, isPaid bool) *big.Int {
-	if !isPaid {
-		return new(big.Int).Set(signedMax)
-	}
-	if signedMax.Cmp(price) < 0 {
-		return big.NewInt(0)
-	}
-	return new(big.Int).Sub(signedMax, price)
 }
 
 // buildProvisionalChannelFromPayload constructs the minimal ChannelSession
@@ -972,13 +945,32 @@ func (s *BatchedEvmScheme) AfterSettleHook() x402.AfterSettleHook {
 			normalizedId := batched.NormalizeChannelId(channelId)
 			prevSession, _ := s.storage.Get(normalizedId)
 
+			// Build the BatchedChannelStateExtra describing channel state
+			// immediately after the cooperative refund is applied to the
+			// existing session (mirrors TS `buildRefundChannelStateSnapshot`).
 			var defaults *batched.BatchedChannelStateExtra
 			if prevSession != nil {
 				amountBig, _ := new(big.Int).SetString(refundPayload.Amount, 10)
 				if amountBig == nil {
 					amountBig = big.NewInt(0)
 				}
-				defaults = buildRefundChannelStateSnapshot(prevSession, normalizedId, amountBig)
+				balance, _ := new(big.Int).SetString(prevSession.Balance, 10)
+				if balance == nil {
+					balance = big.NewInt(0)
+				}
+				postBalance := new(big.Int).Sub(balance, amountBig)
+				if postBalance.Sign() < 0 {
+					postBalance = big.NewInt(0)
+				}
+				finalClaimed := prevSession.ChargedCumulativeAmount
+				defaults = &batched.BatchedChannelStateExtra{
+					ChannelId:               normalizedId,
+					ChargedCumulativeAmount: finalClaimed,
+					Balance:                 postBalance.String(),
+					TotalClaimed:            finalClaimed,
+					WithdrawRequestedAt:     0,
+					RefundNonce:             fmt.Sprintf("%d", prevSession.RefundNonce+1),
+				}
 			}
 			if defaults == nil {
 				defaults = &batched.BatchedChannelStateExtra{
@@ -1066,33 +1058,6 @@ func mergeChannelStateFromResponse(
 		cs.ChargedCumulativeAmount = src.ChargedCumulativeAmount
 	}
 	return cs
-}
-
-// buildRefundChannelStateSnapshot mirrors the TS helper of the same name: it
-// builds the BatchedChannelStateExtra describing channel state immediately
-// after a cooperative refund of `refundAmount` is applied to `session`.
-func buildRefundChannelStateSnapshot(session *ChannelSession, channelId string, refundAmount *big.Int) *batched.BatchedChannelStateExtra {
-	balance, _ := new(big.Int).SetString(session.Balance, 10)
-	if balance == nil {
-		balance = big.NewInt(0)
-	}
-	postBalance := new(big.Int).Sub(balance, refundAmount)
-	if postBalance.Sign() < 0 {
-		postBalance = big.NewInt(0)
-	}
-	finalClaimed := session.ChargedCumulativeAmount
-	totalClaimed := finalClaimed
-	if session.TotalClaimed != "" {
-		totalClaimed = finalClaimed
-	}
-	return &batched.BatchedChannelStateExtra{
-		ChannelId:               channelId,
-		ChargedCumulativeAmount: finalClaimed,
-		Balance:                 postBalance.String(),
-		TotalClaimed:            totalClaimed,
-		WithdrawRequestedAt:     0,
-		RefundNonce:             fmt.Sprintf("%d", session.RefundNonce+1),
-	}
 }
 
 // mapStringField extracts a string field from a map with a default.

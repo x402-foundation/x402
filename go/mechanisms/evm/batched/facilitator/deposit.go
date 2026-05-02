@@ -214,16 +214,30 @@ func VerifyDeposit(
 			collectorData,
 		)
 		if simErr != nil {
-			invalidReason := ErrDepositSimulationFailed //nolint:ineffassign // overwritten on diagnosis
+			// Diagnose the most common standard-Permit2-path simulation
+			// revert: the user hasn't approved Permit2. We probe
+			// `allowance(payer, Permit2)` and surface the dedicated reason
+			// when it's below the deposit amount; any other revert (signature
+			// invalidation, balance, etc.) passes through as the generic
+			// ErrDepositSimulationFailed. Mirrors exact's
+			// `CheckPermit2Prerequisites` diagnosis. RPC failures during the
+			// probe also fall through to the generic reason.
+			invalidReason := ErrDepositSimulationFailed
 			if transferMethod == batched.AssetTransferMethodPermit2 &&
 				(permit2Branch == nil || permit2Branch.kind == permit2BranchStandard) {
-				if probedReason := diagnosePermit2AllowanceShortfall(ctx, signer, config, depositAmount); probedReason != "" {
-					invalidReason = probedReason
-				} else {
-					invalidReason = ErrDepositSimulationFailed
+				if allowanceResult, allowErr := signer.ReadContract(
+					ctx,
+					config.Token,
+					evm.ERC20AllowanceABI,
+					"allowance",
+					common.HexToAddress(config.Payer),
+					common.HexToAddress(evm.PERMIT2Address),
+				); allowErr == nil {
+					if allowance, ok := allowanceResult.(*big.Int); ok && allowance != nil &&
+						allowance.Cmp(depositAmount) < 0 {
+						invalidReason = ErrPermit2AllowanceRequired
+					}
 				}
-			} else {
-				invalidReason = ErrDepositSimulationFailed
 			}
 			return &x402.VerifyResponse{ //nolint:nilerr // simulation failure → error encoded in response
 				IsValid:       false,
@@ -427,95 +441,6 @@ func SettleDeposit(
 	}, nil
 }
 
-// verifyReceiveWithAuthorization verifies an ERC-3009 ReceiveWithAuthorization signature.
-func verifyReceiveWithAuthorization(
-	ctx context.Context,
-	signer evm.FacilitatorEvmSigner,
-	from string,
-	token string,
-	value *big.Int,
-	validAfter *big.Int,
-	validBefore *big.Int,
-	salt string,
-	signature string,
-	chainId *big.Int,
-) (bool, error) {
-	// Get token name and version for EIP-712 domain
-	tokenName, tokenVersion, err := getTokenDomainInfo(ctx, signer, token)
-	if err != nil {
-		return false, fmt.Errorf("failed to get token domain info: %w", err)
-	}
-
-	domain := evm.TypedDataDomain{
-		Name:              tokenName,
-		Version:           tokenVersion,
-		ChainID:           chainId,
-		VerifyingContract: token,
-	}
-
-	saltBytes, err := evm.HexToBytes(salt)
-	if err != nil {
-		return false, fmt.Errorf("invalid salt: %w", err)
-	}
-
-	sigBytes, err := evm.HexToBytes(signature)
-	if err != nil {
-		return false, fmt.Errorf("invalid signature: %w", err)
-	}
-
-	message := map[string]interface{}{
-		"from":        from,
-		"to":          batched.ERC3009DepositCollectorAddress,
-		"value":       value,
-		"validAfter":  validAfter,
-		"validBefore": validBefore,
-		"nonce":       saltBytes,
-	}
-
-	return signer.VerifyTypedData(
-		ctx,
-		from,
-		domain,
-		batched.ReceiveAuthorizationTypes,
-		"ReceiveWithAuthorization",
-		message,
-		sigBytes,
-	)
-}
-
-// getTokenDomainInfo reads the EIP-712 domain name and version from the token contract.
-func getTokenDomainInfo(ctx context.Context, signer evm.FacilitatorEvmSigner, token string) (string, string, error) {
-	nameResult, err := signer.ReadContract(ctx, token, evm.ERC20NameABI, "name")
-	if err != nil {
-		return "", "", fmt.Errorf("failed to read token name: %w", err)
-	}
-	name, ok := nameResult.(string)
-	if !ok {
-		return "", "", fmt.Errorf("token name is not a string")
-	}
-
-	versionResult, versionErr := signer.ReadContract(ctx, token, evm.ERC20VersionABI, "version")
-	if versionErr != nil {
-		return name, "1", nil //nolint:nilerr // version() is optional, default to "1"
-	}
-	version, ok := versionResult.(string)
-	if !ok {
-		return name, "1", nil
-	}
-
-	return name, version, nil
-}
-
-// buildERC3009CollectorData encodes the ERC-3009 authorization data for the collector contract.
-// The collector ABI is (uint256 validAfter, uint256 validBefore, uint256 salt, bytes signature).
-func buildERC3009CollectorData(payload *batched.BatchedDepositPayload) ([]byte, error) {
-	auth := payload.Deposit.Authorization.Erc3009Authorization
-	if auth == nil {
-		return nil, fmt.Errorf("no ERC-3009 authorization provided")
-	}
-	return batched.BuildErc3009CollectorData(auth.ValidAfter, auth.ValidBefore, auth.Salt, auth.Signature)
-}
-
 // buildDepositCollectorCall returns the onchain `(collector, collectorData)`
 // pair needed by the BatchSettlement `deposit` call for the given transfer
 // method. For Permit2, a non-nil `branch` provides the resolved
@@ -530,7 +455,11 @@ func buildDepositCollectorCall(
 ) (common.Address, []byte, error) {
 	switch method {
 	case batched.AssetTransferMethodEip3009:
-		data, err := buildERC3009CollectorData(payload)
+		auth := payload.Deposit.Authorization.Erc3009Authorization
+		if auth == nil {
+			return common.Address{}, nil, fmt.Errorf("no ERC-3009 authorization provided")
+		}
+		data, err := batched.BuildErc3009CollectorData(auth.ValidAfter, auth.ValidBefore, auth.Salt, auth.Signature)
 		if err != nil {
 			return common.Address{}, nil, err
 		}
@@ -556,10 +485,20 @@ func buildDepositCollectorCall(
 	}
 }
 
-// verifyErc3009DepositAuthorization validates the time window and signature on
-// an ERC-3009 ReceiveWithAuthorization. Returns ("invalidReason", nil) when the
-// authorization is well-formed but invalid, ("", err) when an RPC/parse error
-// blocked verification entirely, or ("", nil) when the authorization is valid.
+// verifyErc3009DepositAuthorization validates the time window and EIP-712
+// `ReceiveWithAuthorization` signature for an ERC-3009 deposit. Mirrors TS
+// `verifyEip3009DepositAuthorization` in
+// typescript/packages/mechanisms/evm/src/batch-settlement/facilitator/deposit-eip3009.ts.
+//
+// Unlike TS, the EIP-712 token domain (name / version) is read directly from
+// the token contract instead of being supplied via `requirements.extra`. The
+// `version()` field is optional per ERC-3009; missing or non-string responses
+// fall back to "1", matching the on-chain convention used by USDC and most
+// USD-pegged stablecoins.
+//
+// Returns ("invalidReason", nil) when the authorization is well-formed but
+// invalid, ("", err) when an RPC/parse error blocked verification entirely,
+// or ("", nil) when the authorization is valid.
 func verifyErc3009DepositAuthorization(
 	ctx context.Context,
 	signer evm.FacilitatorEvmSigner,
@@ -585,9 +524,57 @@ func verifyErc3009DepositAuthorization(
 		return "", x402.NewVerifyError(ErrInvalidDepositPayload, config.Payer,
 			fmt.Sprintf("failed to derive ERC-3009 nonce: %s", err))
 	}
-	valid, err := verifyReceiveWithAuthorization(
-		ctx, signer, config.Payer, config.Token, depositAmount,
-		validAfter, validBefore, erc3009Nonce, auth.Signature, chainId,
+
+	// Read the EIP-712 token domain (name + version) from the token contract.
+	// `version()` is optional per ERC-3009; default to "1" on error or non-
+	// string returns to match USDC and most USD-pegged stablecoins.
+	nameResult, err := signer.ReadContract(ctx, config.Token, evm.ERC20NameABI, "name")
+	if err != nil {
+		return "", x402.NewVerifyError(ErrErc3009SignatureInvalid, config.Payer,
+			fmt.Sprintf("failed to read token name: %s", err))
+	}
+	tokenName, ok := nameResult.(string)
+	if !ok {
+		return "", x402.NewVerifyError(ErrErc3009SignatureInvalid, config.Payer, "token name is not a string")
+	}
+	tokenVersion := "1"
+	if vr, vErr := signer.ReadContract(ctx, config.Token, evm.ERC20VersionABI, "version"); vErr == nil {
+		if v, ok := vr.(string); ok {
+			tokenVersion = v
+		}
+	}
+
+	saltBytes, err := evm.HexToBytes(erc3009Nonce)
+	if err != nil {
+		return "", x402.NewVerifyError(ErrInvalidDepositPayload, config.Payer,
+			fmt.Sprintf("invalid erc3009 nonce: %s", err))
+	}
+	sigBytes, err := evm.HexToBytes(auth.Signature)
+	if err != nil {
+		return "", x402.NewVerifyError(ErrErc3009SignatureInvalid, config.Payer,
+			fmt.Sprintf("invalid erc3009 signature: %s", err))
+	}
+
+	valid, err := signer.VerifyTypedData(
+		ctx,
+		config.Payer,
+		evm.TypedDataDomain{
+			Name:              tokenName,
+			Version:           tokenVersion,
+			ChainID:           chainId,
+			VerifyingContract: config.Token,
+		},
+		batched.ReceiveAuthorizationTypes,
+		"ReceiveWithAuthorization",
+		map[string]interface{}{
+			"from":        config.Payer,
+			"to":          batched.ERC3009DepositCollectorAddress,
+			"value":       depositAmount,
+			"validAfter":  validAfter,
+			"validBefore": validBefore,
+			"nonce":       saltBytes,
+		},
+		sigBytes,
 	)
 	if err != nil {
 		return "", x402.NewVerifyError(ErrErc3009SignatureInvalid, config.Payer,
@@ -690,41 +677,4 @@ func verifyPermit2DepositAuthorization(
 		return ErrPermit2InvalidSignature, nil
 	}
 	return "", nil
-}
-
-// diagnosePermit2AllowanceShortfall is called after a standard-path Permit2
-// deposit simulation reverts. It probes the on-chain ERC-20 allowance
-// payer→Permit2 and returns `ErrPermit2AllowanceRequired` when the allowance
-// is strictly less than the deposit amount (the canonical cause of the most
-// common standard-path simulation revert). On any RPC error or sufficient
-// allowance the helper returns "" so the caller falls back to the generic
-// `ErrDepositSimulationFailed` reason. Mirrors exact's
-// `CheckPermit2Prerequisites` diagnosis pattern but kept inline because the
-// batched scheme needs only this single check (other reverts pass through as
-// generic simulation failures).
-func diagnosePermit2AllowanceShortfall(
-	ctx context.Context,
-	signer evm.FacilitatorEvmSigner,
-	config batched.ChannelConfig,
-	depositAmount *big.Int,
-) string {
-	allowanceResult, err := signer.ReadContract(
-		ctx,
-		config.Token,
-		evm.ERC20AllowanceABI,
-		"allowance",
-		common.HexToAddress(config.Payer),
-		common.HexToAddress(evm.PERMIT2Address),
-	)
-	if err != nil {
-		return ""
-	}
-	allowance, ok := allowanceResult.(*big.Int)
-	if !ok || allowance == nil {
-		return ""
-	}
-	if allowance.Cmp(depositAmount) < 0 {
-		return ErrPermit2AllowanceRequired
-	}
-	return ""
 }

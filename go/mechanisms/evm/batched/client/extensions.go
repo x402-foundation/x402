@@ -64,8 +64,26 @@ func (c *BatchedEvmScheme) CreatePaymentPayloadWithExtensions(
 	}
 
 	// Only Permit2 deposits gas-sponsor through these extensions; ERC-3009
-	// deposits authorize the transfer in the same signature.
-	if !isPermit2Deposit(requirements, result) {
+	// deposits authorize the transfer in the same signature. Read
+	// `assetTransferMethod` from requirements.Extra (TS source of truth)
+	// and fall back to inspecting the deposit authorization shape so a
+	// missing wire field still routes correctly.
+	isPermit2 := false
+	if requirements.Extra != nil {
+		if v, ok := requirements.Extra["assetTransferMethod"].(string); ok && v != "" {
+			isPermit2 = v == "permit2"
+		}
+	}
+	if !isPermit2 && result.Payload != nil {
+		if dep, ok := result.Payload["deposit"].(map[string]interface{}); ok {
+			if auth, ok := dep["authorization"].(map[string]interface{}); ok {
+				if _, has := auth["permit2Authorization"]; has {
+					isPermit2 = true
+				}
+			}
+		}
+	}
+	if !isPermit2 {
 		return result, nil
 	}
 
@@ -79,28 +97,6 @@ func (c *BatchedEvmScheme) CreatePaymentPayloadWithExtensions(
 	}
 
 	return result, nil
-}
-
-// isPermit2Deposit reports whether the resolved deposit payload uses the
-// Permit2 transfer method. Reads requirements.Extra first (TS source of
-// truth) and falls back to inspecting the deposit authorization shape, so a
-// missing `assetTransferMethod` field on the wire still routes correctly.
-func isPermit2Deposit(requirements types.PaymentRequirements, payload types.PaymentPayload) bool {
-	if requirements.Extra != nil {
-		if v, ok := requirements.Extra["assetTransferMethod"].(string); ok && v != "" {
-			return v == "permit2"
-		}
-	}
-	if payload.Payload != nil {
-		if dep, ok := payload.Payload["deposit"].(map[string]interface{}); ok {
-			if auth, ok := dep["authorization"].(map[string]interface{}); ok {
-				if _, has := auth["permit2Authorization"]; has {
-					return true
-				}
-			}
-		}
-	}
-	return false
 }
 
 // trySignEip2612Permit attempts to sign an EIP-2612 permit authorizing Permit2
@@ -147,8 +143,19 @@ func (c *BatchedEvmScheme) trySignEip2612Permit(
 
 	tokenAddress := evm.NormalizeAddress(requirements.Asset)
 
-	depositAmount, ok := readDepositAmount(result)
-	if !ok {
+	// Pull `payload.deposit.amount` from the freshly-built batched deposit
+	// payload. The signed EIP-2612 `info.amount` must equal the BATCH
+	// deposit (what the facilitator's `validateBatchEip2612Permit` checks),
+	// not `requirements.Amount` (the per-request charge).
+	var depositAmount string
+	if result.Payload != nil {
+		if dep, ok := result.Payload["deposit"].(map[string]interface{}); ok {
+			if amt, ok := dep["amount"].(string); ok && amt != "" {
+				depositAmount = amt
+			}
+		}
+	}
+	if depositAmount == "" {
 		return nil, nil
 	}
 
@@ -159,7 +166,22 @@ func (c *BatchedEvmScheme) trySignEip2612Permit(
 		return nil, nil
 	}
 
-	deadline := readPermit2DeadlineFromBatchedDeposit(result)
+	// Align EIP-2612 deadline with the just-signed Permit2 authorization
+	// (`payload.deposit.authorization.permit2Authorization.deadline`) so
+	// both signatures expire together. Falls back to
+	// `now + maxTimeoutSeconds` when the field isn't present.
+	deadline := ""
+	if result.Payload != nil {
+		if dep, ok := result.Payload["deposit"].(map[string]interface{}); ok {
+			if auth, ok := dep["authorization"].(map[string]interface{}); ok {
+				if permit2, ok := auth["permit2Authorization"].(map[string]interface{}); ok {
+					if d, ok := permit2["deadline"].(string); ok {
+						deadline = d
+					}
+				}
+			}
+		}
+	}
 	if deadline == "" {
 		deadline = fmt.Sprintf("%d", time.Now().Unix()+int64(requirements.MaxTimeoutSeconds))
 	}
@@ -214,14 +236,12 @@ func (c *BatchedEvmScheme) trySignErc20Approval(
 	tokenAddress := evm.NormalizeAddress(requirements.Asset)
 
 	if readSigner, hasRead := c.signer.(evm.ClientEvmSignerWithReadContract); hasRead {
-		// Use deposit amount, not requirements.Amount, since the deposit is
-		// what the facilitator will pull through Permit2 — that's what needs
-		// to fit under the existing allowance.
-		needed := requirements.Amount
-		if v, ok := readDepositAmountFromAnyPayload(c, requirements); ok {
-			needed = v
-		}
-		if hasSufficientPermit2Allowance(ctx, readSigner, tokenAddress, c.signer.Address(), needed) {
+		// Approximate the deposit amount with the per-request amount —
+		// sufficient for the allowance short-circuit since `deposit ≥
+		// requirements.Amount` always holds for batched flows. Skip the
+		// short-circuit when no per-request amount is available.
+		if requirements.Amount != "" &&
+			hasSufficientPermit2Allowance(ctx, readSigner, tokenAddress, c.signer.Address(), requirements.Amount) {
 			return nil, nil
 		}
 	}
@@ -236,59 +256,6 @@ func (c *BatchedEvmScheme) trySignErc20Approval(
 			"info": info,
 		},
 	}, nil
-}
-
-// readDepositAmount pulls `payload.deposit.amount` from a freshly built
-// batched deposit payload map. Returns ("", false) for non-deposit payloads.
-func readDepositAmount(payload types.PaymentPayload) (string, bool) {
-	if payload.Payload == nil {
-		return "", false
-	}
-	dep, ok := payload.Payload["deposit"].(map[string]interface{})
-	if !ok {
-		return "", false
-	}
-	amt, ok := dep["amount"].(string)
-	if !ok || amt == "" {
-		return "", false
-	}
-	return amt, true
-}
-
-// readDepositAmountFromAnyPayload is a fallback for callers that don't have
-// the just-built payload in hand (e.g. `trySignErc20Approval` running before
-// the deposit payload has been re-resolved). Approximates with the per-request
-// amount — sufficient for the allowance short-circuit since deposit ≥ amount
-// always holds for batched flows.
-func readDepositAmountFromAnyPayload(_ *BatchedEvmScheme, requirements types.PaymentRequirements) (string, bool) {
-	if requirements.Amount == "" {
-		return "", false
-	}
-	return requirements.Amount, true
-}
-
-// readPermit2DeadlineFromBatchedDeposit extracts the deadline from the batched
-// deposit's Permit2 authorization map: payload.deposit.authorization.permit2Authorization.deadline.
-// Mirrors the TS scheme which aligns the EIP-2612 deadline with the Permit2
-// deadline so both expire together.
-func readPermit2DeadlineFromBatchedDeposit(payload types.PaymentPayload) string {
-	if payload.Payload == nil {
-		return ""
-	}
-	dep, ok := payload.Payload["deposit"].(map[string]interface{})
-	if !ok {
-		return ""
-	}
-	auth, ok := dep["authorization"].(map[string]interface{})
-	if !ok {
-		return ""
-	}
-	permit2, ok := auth["permit2Authorization"].(map[string]interface{})
-	if !ok {
-		return ""
-	}
-	d, _ := permit2["deadline"].(string)
-	return d
 }
 
 // hasSufficientPermit2Allowance returns true when `owner` has already
