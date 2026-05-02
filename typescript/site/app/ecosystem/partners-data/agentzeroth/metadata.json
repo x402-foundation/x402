@@ -1,0 +1,8 @@
+{
+  "name": "AgentZeroth",
+  "description": "The reputation compute layer for autonomous agents. Query real-time ERC-8004 agent reputation scores — a 0–100 trust signal — paid via x402 at $0.10/request on Base USDC. No account required.",
+  "logoUrl": "https://agentzeroth.com/logo.svg",
+  "websiteUrl": "https://agentzeroth.com",
+  "category": "Services/Endpoints",
+  "top_section": true
+}
