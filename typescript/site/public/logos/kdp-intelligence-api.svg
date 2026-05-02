@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200" width="200" height="200">
+  <rect width="200" height="200" rx="24" fill="#1a1a2e"/>
+  <text x="100" y="90" text-anchor="middle" font-family="system-ui, sans-serif" font-size="48" font-weight="700" fill="#e94560">KDP</text>
+  <text x="100" y="130" text-anchor="middle" font-family="system-ui, sans-serif" font-size="20" font-weight="500" fill="#0f3460">Intelligence</text>
+  <rect x="40" y="148" width="120" height="3" rx="1.5" fill="#e94560" opacity="0.6"/>
+</svg>

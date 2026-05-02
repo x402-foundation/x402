@@ -1,0 +1,7 @@
+{
+  "name": "KDP Intelligence API",
+  "category": "Services/Endpoints",
+  "logoUrl": "/logos/kdp-intelligence-api.svg",
+  "description": "Niche demand and competition intelligence for Kindle Direct Publishing. AI agents pay $0.03 USDC per query via x402 for real-time BSR, revenue estimates, and competition scores — no API keys needed.",
+  "websiteUrl": "https://kdp-intelligence-api.vercel.app/docs"
+}
