@@ -1,0 +1,7 @@
+{
+  "name": "boring-api / convert",
+  "description": "Document & data format conversion: HTML/Markdown/PDF/DOCX, JSON/YAML/CSV, hash, base64. 15 endpoints (10 edge, 5 forwarded to a Cloud Run pandoc/chromium origin), paid per-request via x402 USDC on Base.",
+  "logoUrl": "/logos/boring-api.png",
+  "websiteUrl": "https://convert.boring-api.com",
+  "category": "Services/Endpoints"
+}
