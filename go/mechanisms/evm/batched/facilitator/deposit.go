@@ -90,7 +90,7 @@ func VerifyDeposit(
 				"erc3009 authorization required for assetTransferMethod=eip3009")
 		}
 		if reason, err := verifyErc3009DepositAuthorization(
-			ctx, signer, config, channelId, depositAmount, auth, chainId,
+			ctx, signer, config, channelId, depositAmount, auth, chainId, requirements.Extra,
 		); err != nil {
 			return nil, err
 		} else if reason != "" {
@@ -490,11 +490,12 @@ func buildDepositCollectorCall(
 // `verifyEip3009DepositAuthorization` in
 // typescript/packages/mechanisms/evm/src/batch-settlement/facilitator/deposit-eip3009.ts.
 //
-// Unlike TS, the EIP-712 token domain (name / version) is read directly from
-// the token contract instead of being supplied via `requirements.extra`. The
-// `version()` field is optional per ERC-3009; missing or non-string responses
-// fall back to "1", matching the on-chain convention used by USDC and most
-// USD-pegged stablecoins.
+// The token's EIP-712 domain (`name` / `version`) is consumed from
+// `extra.name` / `extra.version` exactly as TS does. Resource servers populate
+// these from cached asset metadata when constructing payment requirements
+// (see `BatchedEvmScheme.GetExtra` in the server package); a missing or
+// blank field is reported as `ErrMissingEip712Domain` so callers see the
+// same machine-readable cause TS would emit.
 //
 // Returns ("invalidReason", nil) when the authorization is well-formed but
 // invalid, ("", err) when an RPC/parse error blocked verification entirely,
@@ -507,6 +508,7 @@ func verifyErc3009DepositAuthorization(
 	depositAmount *big.Int,
 	auth *batched.BatchedErc3009Authorization,
 	chainId *big.Int,
+	extra map[string]interface{},
 ) (string, error) {
 	validAfter, ok := new(big.Int).SetString(auth.ValidAfter, 10)
 	if !ok {
@@ -519,31 +521,23 @@ func verifyErc3009DepositAuthorization(
 	if reason := Erc3009AuthorizationTimeInvalidReason(validAfter, validBefore); reason != "" {
 		return reason, nil
 	}
+
+	// Token EIP-712 domain — required to recompute the
+	// `ReceiveWithAuthorization` digest. Read from `requirements.extra`
+	// (populated by the resource server's GetExtra hook); missing fields are
+	// reported as a structured ErrMissingEip712Domain rejection so cross-SDK
+	// clients see the same reason TS would emit.
+	tokenName, _ := extra["name"].(string)
+	tokenVersion, _ := extra["version"].(string)
+	if tokenName == "" || tokenVersion == "" {
+		return ErrMissingEip712Domain, nil
+	}
+
 	erc3009Nonce, err := batched.BuildErc3009DepositNonce(channelId, auth.Salt)
 	if err != nil {
 		return "", x402.NewVerifyError(ErrInvalidDepositPayload, config.Payer,
 			fmt.Sprintf("failed to derive ERC-3009 nonce: %s", err))
 	}
-
-	// Read the EIP-712 token domain (name + version) from the token contract.
-	// `version()` is optional per ERC-3009; default to "1" on error or non-
-	// string returns to match USDC and most USD-pegged stablecoins.
-	nameResult, err := signer.ReadContract(ctx, config.Token, evm.ERC20NameABI, "name")
-	if err != nil {
-		return "", x402.NewVerifyError(ErrErc3009SignatureInvalid, config.Payer,
-			fmt.Sprintf("failed to read token name: %s", err))
-	}
-	tokenName, ok := nameResult.(string)
-	if !ok {
-		return "", x402.NewVerifyError(ErrErc3009SignatureInvalid, config.Payer, "token name is not a string")
-	}
-	tokenVersion := "1"
-	if vr, vErr := signer.ReadContract(ctx, config.Token, evm.ERC20VersionABI, "version"); vErr == nil {
-		if v, ok := vr.(string); ok {
-			tokenVersion = v
-		}
-	}
-
 	saltBytes, err := evm.HexToBytes(erc3009Nonce)
 	if err != nil {
 		return "", x402.NewVerifyError(ErrInvalidDepositPayload, config.Payer,

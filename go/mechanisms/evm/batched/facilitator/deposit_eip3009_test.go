@@ -42,23 +42,22 @@ func goodErc3009Config() batched.ChannelConfig {
 	}
 }
 
-// stubErc3009Signer overrides ReadContract / VerifyTypedData on top of
-// fakeFacilitatorSigner so individual ERC-3009 verify branches can be
-// exercised without a live RPC. Field semantics:
-//   - readContract: when non-nil, replaces the default "no rpc" stub.
-//   - verifyTypedDataResult / verifyTypedDataErr: drive the typed-data path.
-type stubErc3009Signer struct {
-	fakeFacilitatorSigner
-	readContract         func(method string) (interface{}, error)
-	verifyTypedDataResult bool
-	verifyTypedDataErr   error
+// goodErc3009Extra returns the resource-server-populated `requirements.extra`
+// shape the ERC-3009 verifier consumes (see TS server scheme.ts populating
+// `name` / `version` from cached asset metadata).
+func goodErc3009Extra() map[string]interface{} {
+	return map[string]interface{}{
+		"name":    "USD Coin",
+		"version": "2",
+	}
 }
 
-func (s *stubErc3009Signer) ReadContract(_ context.Context, _ string, _ []byte, method string, _ ...interface{}) (interface{}, error) {
-	if s.readContract != nil {
-		return s.readContract(method)
-	}
-	return nil, errors.New("no rpc")
+// stubErc3009Signer overrides VerifyTypedData on top of fakeFacilitatorSigner
+// so individual ERC-3009 verify branches can be exercised without a live RPC.
+type stubErc3009Signer struct {
+	fakeFacilitatorSigner
+	verifyTypedDataResult bool
+	verifyTypedDataErr    error
 }
 
 func (s *stubErc3009Signer) VerifyTypedData(_ context.Context, _ string, _ evm.TypedDataDomain, _ map[string][]evm.TypedDataField, _ string, _ map[string]interface{}, _ []byte) (bool, error) {
@@ -74,7 +73,7 @@ func TestVerifyErc3009_InvalidValidAfter(t *testing.T) {
 	_, err := verifyErc3009DepositAuthorization(
 		context.Background(), &fakeFacilitatorSigner{},
 		goodErc3009Config(), testErc3009ChannelId,
-		big.NewInt(1000), auth, big.NewInt(8453),
+		big.NewInt(1000), auth, big.NewInt(8453), goodErc3009Extra(),
 	)
 	var ve *x402.VerifyError
 	if !errors.As(err, &ve) || ve.InvalidReason != ErrInvalidDepositPayload {
@@ -90,7 +89,7 @@ func TestVerifyErc3009_InvalidValidBefore(t *testing.T) {
 	_, err := verifyErc3009DepositAuthorization(
 		context.Background(), &fakeFacilitatorSigner{},
 		goodErc3009Config(), testErc3009ChannelId,
-		big.NewInt(1000), auth, big.NewInt(8453),
+		big.NewInt(1000), auth, big.NewInt(8453), goodErc3009Extra(),
 	)
 	var ve *x402.VerifyError
 	if !errors.As(err, &ve) || ve.InvalidReason != ErrInvalidDepositPayload {
@@ -109,7 +108,7 @@ func TestVerifyErc3009_ValidBeforeExpired(t *testing.T) {
 	reason, err := verifyErc3009DepositAuthorization(
 		context.Background(), &fakeFacilitatorSigner{},
 		goodErc3009Config(), testErc3009ChannelId,
-		big.NewInt(1000), auth, big.NewInt(8453),
+		big.NewInt(1000), auth, big.NewInt(8453), goodErc3009Extra(),
 	)
 	if err != nil {
 		t.Fatalf("err: %v", err)
@@ -130,7 +129,7 @@ func TestVerifyErc3009_ValidAfterInFuture(t *testing.T) {
 	reason, err := verifyErc3009DepositAuthorization(
 		context.Background(), &fakeFacilitatorSigner{},
 		goodErc3009Config(), testErc3009ChannelId,
-		big.NewInt(1000), auth, big.NewInt(8453),
+		big.NewInt(1000), auth, big.NewInt(8453), goodErc3009Extra(),
 	)
 	if err != nil {
 		t.Fatalf("err: %v", err)
@@ -140,47 +139,77 @@ func TestVerifyErc3009_ValidAfterInFuture(t *testing.T) {
 	}
 }
 
-// TestVerifyErc3009_TokenNameReadFails pins the RPC failure path on the
-// token domain read: the helper must wrap the error as
-// ErrErc3009SignatureInvalid (not silently swallow it) so callers see a
-// clear cross-SDK reason instead of a generic "no rpc" leak.
-func TestVerifyErc3009_TokenNameReadFails(t *testing.T) {
-	signer := &stubErc3009Signer{
-		readContract: func(_ string) (interface{}, error) {
-			return nil, errors.New("rpc disconnected")
-		},
-	}
-	_, err := verifyErc3009DepositAuthorization(
-		context.Background(), signer,
+// TestVerifyErc3009_MissingExtraName pins the structured-rejection branch
+// when the resource server forgot to populate `requirements.extra.name`. The
+// ERC-3009 deposit collector needs the token's EIP-712 domain to recompute
+// the digest, so the facilitator must surface ErrMissingEip712Domain (mirrors
+// TS Errors.ErrMissingEip712Domain in deposit-eip3009.ts) instead of a
+// generic invalid-payload reason.
+func TestVerifyErc3009_MissingExtraName(t *testing.T) {
+	extra := goodErc3009Extra()
+	delete(extra, "name")
+	reason, err := verifyErc3009DepositAuthorization(
+		context.Background(), &fakeFacilitatorSigner{},
 		goodErc3009Config(), testErc3009ChannelId,
-		big.NewInt(1000), goodErc3009Auth(), big.NewInt(8453),
+		big.NewInt(1000), goodErc3009Auth(), big.NewInt(8453), extra,
 	)
-	var ve *x402.VerifyError
-	if !errors.As(err, &ve) || ve.InvalidReason != ErrErc3009SignatureInvalid {
-		t.Fatalf("got %v", err)
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	if reason != ErrMissingEip712Domain {
+		t.Fatalf("reason = %q, want %q", reason, ErrMissingEip712Domain)
+	}
+}
+
+// TestVerifyErc3009_MissingExtraVersion mirrors the missing-name case for the
+// version field — both are required and the facilitator should not assume a
+// silent default like "1" (TS doesn't, and the assumption would mask
+// resource-server misconfiguration cross-SDK).
+func TestVerifyErc3009_MissingExtraVersion(t *testing.T) {
+	extra := goodErc3009Extra()
+	delete(extra, "version")
+	reason, err := verifyErc3009DepositAuthorization(
+		context.Background(), &fakeFacilitatorSigner{},
+		goodErc3009Config(), testErc3009ChannelId,
+		big.NewInt(1000), goodErc3009Auth(), big.NewInt(8453), extra,
+	)
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	if reason != ErrMissingEip712Domain {
+		t.Fatalf("reason = %q, want %q", reason, ErrMissingEip712Domain)
+	}
+}
+
+// TestVerifyErc3009_NilExtra pins the same defensive behavior when the
+// extra map itself is nil (e.g. legacy callers / cached requirements without
+// metadata). Reading a nil map is well-defined in Go and yields the
+// zero-value string, so the missing-domain check still fires.
+func TestVerifyErc3009_NilExtra(t *testing.T) {
+	reason, err := verifyErc3009DepositAuthorization(
+		context.Background(), &fakeFacilitatorSigner{},
+		goodErc3009Config(), testErc3009ChannelId,
+		big.NewInt(1000), goodErc3009Auth(), big.NewInt(8453), nil,
+	)
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	if reason != ErrMissingEip712Domain {
+		t.Fatalf("reason = %q, want %q", reason, ErrMissingEip712Domain)
 	}
 }
 
 // TestVerifyErc3009_VerifyTypedDataFalse pins the signature-rejected branch:
 // when the signer reports the EIP-712 signature as invalid, the helper must
 // surface ErrErc3009SignatureInvalid as a well-formed-but-rejected reason
-// (not as an internal error). This drives the version() fallback to "1"
-// (default for contracts without a `version` getter) by returning a name and
-// then erroring on the version read.
+// (not as an internal error). The valid extra ensures we reach the signer
+// instead of short-circuiting on a missing-domain check.
 func TestVerifyErc3009_VerifyTypedDataFalse(t *testing.T) {
-	signer := &stubErc3009Signer{
-		readContract: func(method string) (interface{}, error) {
-			if method == "name" {
-				return "USD Coin", nil
-			}
-			return nil, errors.New("no version")
-		},
-		verifyTypedDataResult: false,
-	}
+	signer := &stubErc3009Signer{verifyTypedDataResult: false}
 	reason, err := verifyErc3009DepositAuthorization(
 		context.Background(), signer,
 		goodErc3009Config(), testErc3009ChannelId,
-		big.NewInt(1000), goodErc3009Auth(), big.NewInt(8453),
+		big.NewInt(1000), goodErc3009Auth(), big.NewInt(8453), goodErc3009Extra(),
 	)
 	if err != nil {
 		t.Fatalf("err: %v", err)

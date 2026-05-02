@@ -8,9 +8,12 @@
 // Naming discipline:
 //   - Exported symbols stay `Err…` (Go-idiomatic) — only the string values are
 //     part of the wire contract.
-//   - Internal `_invalid_` collapses into the leading `invalid_` envelope so
-//     `batch_settlement_evm_invalid_scheme` becomes `invalid_batch_settlement_evm_scheme`,
-//     not `invalid_batch_settlement_evm_invalid_scheme`.
+//   - The leading `invalid_` envelope replaces the old `batch_settlement_evm_*`
+//     prefix; e.g. `batch_settlement_evm_invalid_scheme` becomes
+//     `invalid_batch_settlement_evm_scheme`. Existing `_invalid_*` suffixes
+//     coming from TS (e.g. `permit2_invalid_spender`) are preserved verbatim
+//     so the wire string round-trips into CDP's OpenAPI enum identity-mapped
+//     (no normalization shim needed downstream).
 //
 // Breaking change notice: prior to this revision these values were prefixed
 // `batch_settlement_evm_*`. Downstream substring-matching consumers
@@ -44,6 +47,15 @@ const (
 	ErrValidAfterInFuture           = "invalid_batch_settlement_evm_payload_authorization_valid_after"
 	ErrErc3009SignatureInvalid      = "invalid_batch_settlement_evm_receive_authorization_signature"
 	ErrErc3009AuthorizationRequired = "invalid_batch_settlement_evm_erc3009_authorization_required"
+
+	// ErrMissingEip712Domain signals that the resource server omitted the
+	// token's EIP-712 domain (`name` / `version`) from
+	// `paymentRequirements.extra`. The ERC-3009 deposit collector verifies the
+	// `ReceiveWithAuthorization` signature against the token's EIP-712 domain,
+	// so the facilitator cannot proceed without these fields. Mirrors TS
+	// `Errors.ErrMissingEip712Domain` (deposit-eip3009.ts) and the exact-EVM
+	// counterpart `invalid_exact_evm_missing_eip712_domain`.
+	ErrMissingEip712Domain = "invalid_batch_settlement_evm_missing_eip712_domain"
 
 	// Voucher errors
 	ErrVoucherSignatureInvalid = "invalid_batch_settlement_evm_voucher_signature"
@@ -80,28 +92,34 @@ const (
 	ErrUnknownSettleAction = "invalid_batch_settlement_evm_unknown_settle_action"
 
 	// Permit2 deposit authorization errors. Mirrors TS
-	// `typescript/.../facilitator/errors.ts`.
+	// `typescript/.../facilitator/errors.ts`. The `_invalid_*` suffixes are
+	// preserved verbatim from TS (rather than collapsed against the leading
+	// `invalid_` envelope) so the wire string identity-maps onto CDP's
+	// OpenAPI enum names — no downstream normalization shim required.
 	ErrPermit2AuthorizationRequired = "invalid_batch_settlement_evm_permit2_authorization_required"
-	ErrPermit2InvalidSpender        = "invalid_batch_settlement_evm_permit2_spender"
+	ErrPermit2InvalidSpender        = "invalid_batch_settlement_evm_permit2_invalid_spender"
 	ErrPermit2AmountMismatch        = "invalid_batch_settlement_evm_permit2_amount_mismatch"
 	ErrPermit2DeadlineExpired       = "invalid_batch_settlement_evm_permit2_deadline_expired"
-	ErrPermit2InvalidSignature      = "invalid_batch_settlement_evm_permit2_signature"
+	ErrPermit2InvalidSignature      = "invalid_batch_settlement_evm_permit2_invalid_signature"
 	ErrPermit2AllowanceRequired     = "invalid_batch_settlement_evm_permit2_allowance_required"
 
-	// EIP-2612 permit segment errors (gas-sponsored Permit2 branch).
+	// EIP-2612 permit segment errors (gas-sponsored Permit2 branch). Same
+	// `_invalid_*`-preservation rule as the Permit2 group above so CDP's
+	// OpenAPI enums consume the SDK strings identity-mapped.
 	ErrEip2612AmountMismatch   = "invalid_batch_settlement_evm_eip2612_amount_mismatch"
 	ErrEip2612OwnerMismatch    = "invalid_batch_settlement_evm_eip2612_owner_mismatch"
 	ErrEip2612AssetMismatch    = "invalid_batch_settlement_evm_eip2612_asset_mismatch"
 	ErrEip2612SpenderMismatch  = "invalid_batch_settlement_evm_eip2612_spender_mismatch"
 	ErrEip2612DeadlineExpired  = "invalid_batch_settlement_evm_eip2612_deadline_expired"
-	ErrEip2612InvalidFormat    = "invalid_batch_settlement_evm_eip2612_format"
-	ErrEip2612InvalidSignature = "invalid_batch_settlement_evm_eip2612_signature"
+	ErrEip2612InvalidFormat    = "invalid_batch_settlement_evm_eip2612_invalid_format"
+	ErrEip2612InvalidSignature = "invalid_batch_settlement_evm_eip2612_invalid_signature"
 
 	// ERC-20 approval gas-sponsoring errors. The facilitator extension signer
 	// broadcasts a pre-signed `approve(Permit2, max)` then the deposit() tx;
 	// these errors surface format/payer/asset mismatches and missing signers.
+	// Same `_invalid_*`-preservation rule as the groups above.
 	ErrErc20ApprovalUnavailable     = "invalid_batch_settlement_evm_erc20_approval_unavailable"
-	ErrErc20ApprovalInvalidFormat   = "invalid_batch_settlement_evm_erc20_approval_format"
+	ErrErc20ApprovalInvalidFormat   = "invalid_batch_settlement_evm_erc20_approval_invalid_format"
 	ErrErc20ApprovalFromMismatch    = "invalid_batch_settlement_evm_erc20_approval_from_mismatch"
 	ErrErc20ApprovalAssetMismatch   = "invalid_batch_settlement_evm_erc20_approval_asset_mismatch"
 	ErrErc20ApprovalWrongSpender    = "invalid_batch_settlement_evm_erc20_approval_wrong_spender"

@@ -53,6 +53,7 @@ func TestExportedErrorReasonsAreStable(t *testing.T) {
 		"ErrValidAfterInFuture":           ErrValidAfterInFuture,
 		"ErrErc3009SignatureInvalid":      ErrErc3009SignatureInvalid,
 		"ErrErc3009AuthorizationRequired": ErrErc3009AuthorizationRequired,
+		"ErrMissingEip712Domain":          ErrMissingEip712Domain,
 
 		// Voucher errors
 		"ErrVoucherSignatureInvalid": ErrVoucherSignatureInvalid,
@@ -139,19 +140,20 @@ func TestExportedErrorReasonsAreStable(t *testing.T) {
 // after this revision does identity passthrough on these tokens, so any drift
 // here surfaces as an undefined-enum error at the API boundary.
 //
-// Inner `_invalid_` collapses into the leading `invalid_` envelope:
-//   - `batch_settlement_evm_permit2_invalid_spender`
-//     becomes `invalid_batch_settlement_evm_permit2_spender`
-//   - `batch_settlement_evm_eip2612_invalid_format`
-//     becomes `invalid_batch_settlement_evm_eip2612_format`
+// `_invalid_*` suffixes coming from TS are preserved verbatim (the leading
+// `invalid_` envelope replaces the old `batch_settlement_evm_*` prefix and
+// does NOT swallow inner `_invalid_*` segments). Earlier revisions collapsed
+// these — that produced abbreviated wire strings (e.g.
+// `…permit2_spender`) that CDP had to denormalize, so we restored the full
+// form here so the SDK can identity-map onto CDP's OpenAPI enum names.
 func TestRequiredCdpFacilitatorContract(t *testing.T) {
 	required := map[string]string{
 		// Permit2
 		"ErrPermit2AuthorizationRequired": "invalid_batch_settlement_evm_permit2_authorization_required",
-		"ErrPermit2InvalidSpender":        "invalid_batch_settlement_evm_permit2_spender",
+		"ErrPermit2InvalidSpender":        "invalid_batch_settlement_evm_permit2_invalid_spender",
 		"ErrPermit2AmountMismatch":        "invalid_batch_settlement_evm_permit2_amount_mismatch",
 		"ErrPermit2DeadlineExpired":       "invalid_batch_settlement_evm_permit2_deadline_expired",
-		"ErrPermit2InvalidSignature":      "invalid_batch_settlement_evm_permit2_signature",
+		"ErrPermit2InvalidSignature":      "invalid_batch_settlement_evm_permit2_invalid_signature",
 		"ErrPermit2AllowanceRequired":     "invalid_batch_settlement_evm_permit2_allowance_required",
 		// EIP-2612
 		"ErrEip2612AmountMismatch":   "invalid_batch_settlement_evm_eip2612_amount_mismatch",
@@ -159,11 +161,11 @@ func TestRequiredCdpFacilitatorContract(t *testing.T) {
 		"ErrEip2612AssetMismatch":    "invalid_batch_settlement_evm_eip2612_asset_mismatch",
 		"ErrEip2612SpenderMismatch":  "invalid_batch_settlement_evm_eip2612_spender_mismatch",
 		"ErrEip2612DeadlineExpired":  "invalid_batch_settlement_evm_eip2612_deadline_expired",
-		"ErrEip2612InvalidFormat":    "invalid_batch_settlement_evm_eip2612_format",
-		"ErrEip2612InvalidSignature": "invalid_batch_settlement_evm_eip2612_signature",
+		"ErrEip2612InvalidFormat":    "invalid_batch_settlement_evm_eip2612_invalid_format",
+		"ErrEip2612InvalidSignature": "invalid_batch_settlement_evm_eip2612_invalid_signature",
 		// ERC-20 approval (gas-sponsored)
 		"ErrErc20ApprovalUnavailable":     "invalid_batch_settlement_evm_erc20_approval_unavailable",
-		"ErrErc20ApprovalInvalidFormat":   "invalid_batch_settlement_evm_erc20_approval_format",
+		"ErrErc20ApprovalInvalidFormat":   "invalid_batch_settlement_evm_erc20_approval_invalid_format",
 		"ErrErc20ApprovalFromMismatch":    "invalid_batch_settlement_evm_erc20_approval_from_mismatch",
 		"ErrErc20ApprovalAssetMismatch":   "invalid_batch_settlement_evm_erc20_approval_asset_mismatch",
 		"ErrErc20ApprovalWrongSpender":    "invalid_batch_settlement_evm_erc20_approval_wrong_spender",
@@ -220,7 +222,7 @@ func TestNoLegacyBatchSettlementEvmPrefix(t *testing.T) {
 		ErrReceiverMismatch, ErrReceiverAuthorizerMismatch, ErrTokenMismatch,
 		ErrWithdrawDelayOutOfRange, ErrWithdrawDelayMismatch, ErrChannelIdMismatch,
 		ErrValidBeforeExpired, ErrValidAfterInFuture, ErrErc3009SignatureInvalid,
-		ErrErc3009AuthorizationRequired,
+		ErrErc3009AuthorizationRequired, ErrMissingEip712Domain,
 		ErrVoucherSignatureInvalid, ErrMaxClaimableTooLow, ErrMaxClaimableExceedsBal,
 		ErrInsufficientBalance,
 		ErrChannelStateReadFailed, ErrChannelNotFound, ErrRpcReadFailed,

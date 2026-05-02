@@ -33,9 +33,6 @@ const (
 	ErrFailedToConvertAmt   = "failed to convert amount"
 	ErrNoAssetSpecified     = "no asset specified for batched scheme"
 	ErrFailedToParseAmount  = "failed to parse amount"
-	ErrInvalidPayToAddress  = "invalid payTo address"
-	ErrAmountRequired       = "amount is required"
-	ErrInvalidAmount        = "invalid amount"
 )
 
 // AuthorizerSigner is the interface for the server-controlled receiverAuthorizer key.
@@ -500,15 +497,19 @@ func (s *BatchedEvmScheme) EnhancePaymentRequirements(
 		requirements.Extra = make(map[string]interface{})
 	}
 
-	// Add token domain info
-	includeEip712Domain := assetInfo.AssetTransferMethod == "" || assetInfo.SupportsEip2612
-	if includeEip712Domain {
-		if _, ok := requirements.Extra["name"]; !ok {
-			requirements.Extra["name"] = assetInfo.Name
-		}
-		if _, ok := requirements.Extra["version"]; !ok {
-			requirements.Extra["version"] = assetInfo.Version
-		}
+	// Token EIP-712 domain (`name` / `version`). Always populated when the
+	// asset metadata provides them — both the ERC-3009 deposit collector and
+	// the gas-sponsored EIP-2612 permit segment recompute the token's EIP-712
+	// digest off-chain, so the facilitator needs these even when the
+	// configured AssetTransferMethod is "eip3009" (the previous restrictive
+	// conditional only included them for the legacy default and the
+	// SupportsEip2612 path, leaving ERC-3009-only assets without a domain).
+	// Mirrors TS server `BatchSettlementEvmScheme.computeRequirementsExtra`.
+	if _, ok := requirements.Extra["name"]; !ok {
+		requirements.Extra["name"] = assetInfo.Name
+	}
+	if _, ok := requirements.Extra["version"]; !ok {
+		requirements.Extra["version"] = assetInfo.Version
 	}
 
 	// Add batched-specific fields. Resolution order (mirrors TS scheme):
@@ -717,11 +718,11 @@ func defaultMoneyConversion(amount float64, network x402.Network) (x402.AssetAmo
 		return x402.AssetAmount{}, fmt.Errorf("no default stablecoin for network %s", networkStr)
 	}
 
-	extra := map[string]interface{}{}
-	includeEip712Domain := config.DefaultAsset.AssetTransferMethod == "" || config.DefaultAsset.SupportsEip2612
-	if includeEip712Domain {
-		extra["name"] = config.DefaultAsset.Name
-		extra["version"] = config.DefaultAsset.Version
+	extra := map[string]interface{}{
+		// Token EIP-712 domain — see comment in GetExtra above for why both
+		// ERC-3009 and Permit2(+EIP-2612) paths need name/version.
+		"name":    config.DefaultAsset.Name,
+		"version": config.DefaultAsset.Version,
 	}
 	if config.DefaultAsset.AssetTransferMethod != "" {
 		extra["assetTransferMethod"] = string(config.DefaultAsset.AssetTransferMethod)

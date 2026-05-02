@@ -83,8 +83,9 @@ func TestReceiveAuthorizationTypes(t *testing.T) {
 }
 
 // TestErrorCodes pins the canonical wire prefix `invalid_batch_settlement_evm_`
-// for the facilitator-mirroring constants exported from this package, and
-// the `batch_settlement_*` / `missing_*` sibling prefixes for the resource
+// for the single facilitator-mirroring constant exported from this package
+// (`ErrCumulativeBelowClaimed` — see comment in errors.go), and the
+// `batch_settlement_*` / `missing_*` sibling prefixes for the resource
 // server's abort reasons. Renaming or dropping a prefix here breaks
 // cdp-facilitator's substring classifier and the
 // `x402VerifyInvalidReason` / `x402SettleErrorReason` CDP Accounts API
@@ -92,18 +93,12 @@ func TestReceiveAuthorizationTypes(t *testing.T) {
 func TestErrorCodes(t *testing.T) {
 	const facilitatorPrefix = "invalid_batch_settlement_evm_"
 
-	// Group 1: facilitator-mirroring constants (canonical CDP enum form).
-	for _, code := range []string{
-		ErrInvalidPayload,
-		ErrInvalidAmount,
-		ErrInvalidChannelId,
-		ErrInvalidChannelConf,
-		ErrChannelNotFound,
-		ErrCumulativeBelowClaimed,
-	} {
-		if !strings.HasPrefix(code, facilitatorPrefix) {
-			t.Fatalf("error code missing prefix %q: %q", facilitatorPrefix, code)
-		}
+	// Group 1: facilitator-mirroring constant (canonical CDP enum form).
+	// Only one constant is shared with the facilitator package because
+	// `client/scheme.go` needs to substring-match it during the corrective
+	// 402 recovery handshake without importing facilitator.
+	if !strings.HasPrefix(ErrCumulativeBelowClaimed, facilitatorPrefix) {
+		t.Fatalf("ErrCumulativeBelowClaimed missing prefix %q: %q", facilitatorPrefix, ErrCumulativeBelowClaimed)
 	}
 
 	// Group 2: resource-server abort reasons. Two acceptable sibling

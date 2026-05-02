@@ -1,32 +1,25 @@
 // Package batched holds shared batch-settlement error constants used across
-// client / facilitator / server. Two prefix categories live here:
+// client / facilitator / server. Only one error string lives in this
+// package — `ErrCumulativeBelowClaimed` — because it must be matched by
+// `client/scheme.go` AND emitted by `facilitator/errors.go`, and the
+// facilitator already imports batched (so the client cannot reach the
+// facilitator's constant without an import cycle). Other facilitator-emitted
+// rejection tokens live exclusively in
+// `go/mechanisms/evm/batched/facilitator/errors.go`; speculative duplicates
+// here would only exist for clients that don't actually consume them.
 //
-//  1. `invalid_batch_settlement_evm_*` — facilitator-emitted rejection tokens.
-//     These mirror values defined in
-//     `go/mechanisms/evm/batched/facilitator/errors.go` (and must stay
-//     bit-identical) so client code and tests can reference them without
-//     importing the facilitator package (which would create a cycle).
-//     Map 1:1 onto CDP Accounts API enums.
-//
-//  2. `batch_settlement_*` (no `_evm_`) — resource-server-emitted abort
-//     reasons that flow back via PAYMENT-REQUIRED 402 corrective handshakes.
-//     These are NOT facilitator output and are intentionally on a sibling
-//     prefix so cdp-facilitator's `MapBatchSDKReasonToCDP` (or its successor)
-//     can route facilitator vs server reasons separately without substring
-//     ambiguity.
+// Resource-server-emitted abort reasons (the second group below) intentionally
+// live on a sibling `batch_settlement_*` / `missing_*` prefix — these are
+// NOT facilitator output, and the prefix difference lets cdp-facilitator's
+// `MapBatchSDKReasonToCDP` (or its successor) route facilitator vs server
+// reasons separately without substring ambiguity.
 //
 // Renaming any of these breaks wire compatibility — update CDP enums + any
 // substring-matching consumers in the same change.
 package batched
 
 const (
-	// ── (1) Facilitator-emitted reasons (mirror facilitator/errors.go) ────
-
-	ErrInvalidPayload     = "invalid_batch_settlement_evm_payload_type"
-	ErrInvalidAmount      = "invalid_batch_settlement_evm_amount"
-	ErrInvalidChannelId   = "invalid_batch_settlement_evm_channel_id_mismatch"
-	ErrInvalidChannelConf = "invalid_batch_settlement_evm_channel_config"
-	ErrChannelNotFound    = "invalid_batch_settlement_evm_channel_not_found"
+	// ── (1) Facilitator-emitted reason shared with the client ─────────────
 
 	// ErrCumulativeBelowClaimed is the canonical value of
 	// `facilitator.ErrMaxClaimableTooLow`. Surfaced both by the facilitator
