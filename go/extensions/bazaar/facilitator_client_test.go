@@ -56,7 +56,7 @@ func TestListDiscoveryResources_Success(t *testing.T) {
 				X402Version: 2,
 				Accepts:     []json.RawMessage{json.RawMessage(`{"scheme":"exact","network":"eip155:1"}`)},
 				LastUpdated: "2026-03-01T00:00:00Z",
-				Metadata:    map[string]any{"category": "data"},
+				Extensions:  map[string]any{"bazaar": map[string]any{"category": "data"}},
 			},
 		},
 		Pagination: Pagination{
@@ -109,8 +109,9 @@ func TestListDiscoveryResources_Success(t *testing.T) {
 	if result.Items[0].LastUpdated != "2026-03-01T00:00:00Z" {
 		t.Errorf("Expected lastUpdated 2026-03-01T00:00:00Z, got %s", result.Items[0].LastUpdated)
 	}
-	if result.Items[0].Metadata["category"] != "data" {
-		t.Errorf("Expected metadata category=data, got %v", result.Items[0].Metadata["category"])
+	bazaarExt, ok := result.Items[0].Extensions["bazaar"].(map[string]any)
+	if !ok || bazaarExt["category"] != "data" {
+		t.Errorf("Expected extensions.bazaar.category=data, got %v", result.Items[0].Extensions)
 	}
 	if result.Pagination.Limit != 20 {
 		t.Errorf("Expected pagination limit 20, got %d", result.Pagination.Limit)
@@ -128,6 +129,18 @@ func TestListDiscoveryResources_WithParams(t *testing.T) {
 
 		if query.Get("type") != "http" {
 			t.Errorf("Expected type=http, got %s", query.Get("type"))
+		}
+		if query.Get("payTo") != "0x1234567890123456789012345678901234567890" {
+			t.Errorf("Expected payTo filter, got %s", query.Get("payTo"))
+		}
+		if query.Get("scheme") != "exact" {
+			t.Errorf("Expected scheme=exact, got %s", query.Get("scheme"))
+		}
+		if query.Get("network") != "eip155:8453" {
+			t.Errorf("Expected network=eip155:8453, got %s", query.Get("network"))
+		}
+		if query.Get("extensions") != "bazaar" {
+			t.Errorf("Expected extensions=bazaar, got %s", query.Get("extensions"))
 		}
 		if query.Get("limit") != "10" {
 			t.Errorf("Expected limit=10, got %s", query.Get("limit"))
@@ -150,9 +163,13 @@ func TestListDiscoveryResources_WithParams(t *testing.T) {
 	}))
 
 	result, err := client.ListDiscoveryResources(ctx, &ListDiscoveryResourcesParams{
-		Type:   "http",
-		Limit:  10,
-		Offset: 5,
+		Type:       "http",
+		PayTo:      "0x1234567890123456789012345678901234567890",
+		Scheme:     "exact",
+		Network:    "eip155:8453",
+		Extensions: "bazaar",
+		Limit:      10,
+		Offset:     5,
 	})
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
@@ -322,7 +339,7 @@ func TestListDiscoveryResources_WithAuthHeaders(t *testing.T) {
 
 	authProvider := &testAuthProvider{
 		headers: x402http.AuthHeaders{
-			Discovery: map[string]string{
+			Bazaar: map[string]string{
 				"Authorization": "Bearer test-token",
 				"X-Api-Key":     "my-key",
 			},
@@ -487,5 +504,232 @@ func TestListDiscoveryResources_ConnectionError(t *testing.T) {
 	_, err := client.ListDiscoveryResources(ctx, nil)
 	if err == nil {
 		t.Fatal("Expected error for connection failure")
+	}
+}
+
+func TestSearchDiscoveryResources_Success(t *testing.T) {
+	ctx := context.Background()
+
+	cursor := "eyJwYWdlIjoyfQ=="
+	expectedResponse := SearchDiscoveryResourcesResponse{
+		X402Version: 2,
+		Resources: []DiscoveryResource{
+			{
+				Resource:    "https://api.example.com/weather",
+				Type:        "http",
+				X402Version: 2,
+				Accepts:     []json.RawMessage{json.RawMessage(`{"scheme":"exact","network":"eip155:1"}`)},
+				LastUpdated: "2026-03-01T00:00:00Z",
+			},
+		},
+		Pagination: &SearchPagination{Limit: 10, Cursor: &cursor},
+	}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/discovery/search" {
+			t.Errorf("Expected path /discovery/search, got %s", r.URL.Path)
+		}
+		if r.Method != "GET" {
+			t.Errorf("Expected GET method, got %s", r.Method)
+		}
+		if r.URL.Query().Get("query") != "weather APIs" {
+			t.Errorf("Expected query=weather APIs, got %s", r.URL.Query().Get("query"))
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(expectedResponse)
+	}))
+	defer server.Close()
+
+	client := WithBazaar(x402http.NewHTTPFacilitatorClient(&x402http.FacilitatorConfig{
+		URL: server.URL,
+	}))
+
+	result, err := client.SearchDiscoveryResources(ctx, &SearchDiscoveryResourcesParams{
+		Query: "weather APIs",
+		Limit: 10,
+	})
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	if result.X402Version != 2 {
+		t.Errorf("Expected x402Version 2, got %d", result.X402Version)
+	}
+	if len(result.Resources) != 1 {
+		t.Fatalf("Expected 1 resource, got %d", len(result.Resources))
+	}
+	if result.Resources[0].Resource != "https://api.example.com/weather" {
+		t.Errorf("Expected resource https://api.example.com/weather, got %s", result.Resources[0].Resource)
+	}
+	if result.Pagination == nil {
+		t.Fatal("Expected pagination to be present")
+	}
+	if result.Pagination.Limit != 10 {
+		t.Errorf("Expected pagination.limit 10, got %d", result.Pagination.Limit)
+	}
+	if result.Pagination.Cursor == nil || *result.Pagination.Cursor != cursor {
+		t.Errorf("Expected pagination.cursor %q, got %v", cursor, result.Pagination.Cursor)
+	}
+}
+
+func TestSearchDiscoveryResources_NoPagination(t *testing.T) {
+	ctx := context.Background()
+
+	expectedResponse := SearchDiscoveryResourcesResponse{
+		X402Version: 2,
+		Resources:   []DiscoveryResource{},
+	}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(expectedResponse)
+	}))
+	defer server.Close()
+
+	client := WithBazaar(x402http.NewHTTPFacilitatorClient(&x402http.FacilitatorConfig{
+		URL: server.URL,
+	}))
+
+	result, err := client.SearchDiscoveryResources(ctx, &SearchDiscoveryResourcesParams{
+		Query: "mcp tools",
+	})
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	if result.Pagination != nil {
+		t.Errorf("Expected nil pagination, got %v", result.Pagination)
+	}
+}
+
+func TestSearchDiscoveryResources_WithTypeFilter(t *testing.T) {
+	ctx := context.Background()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		query := r.URL.Query()
+		if query.Get("query") != "financial" {
+			t.Errorf("Expected query=financial, got %s", query.Get("query"))
+		}
+		if query.Get("type") != "http" {
+			t.Errorf("Expected type=http, got %s", query.Get("type"))
+		}
+		if query.Get("payTo") != "0x1234567890123456789012345678901234567890" {
+			t.Errorf("Expected payTo filter, got %s", query.Get("payTo"))
+		}
+		if query.Get("scheme") != "exact" {
+			t.Errorf("Expected scheme=exact, got %s", query.Get("scheme"))
+		}
+		if query.Get("network") != "eip155:8453" {
+			t.Errorf("Expected network=eip155:8453, got %s", query.Get("network"))
+		}
+		if query.Get("extensions") != "bazaar" {
+			t.Errorf("Expected extensions=bazaar, got %s", query.Get("extensions"))
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(SearchDiscoveryResourcesResponse{
+			X402Version: 2,
+			Resources:   []DiscoveryResource{},
+		})
+	}))
+	defer server.Close()
+
+	client := WithBazaar(x402http.NewHTTPFacilitatorClient(&x402http.FacilitatorConfig{
+		URL: server.URL,
+	}))
+
+	_, err := client.SearchDiscoveryResources(ctx, &SearchDiscoveryResourcesParams{
+		Query:      "financial",
+		Type:       "http",
+		PayTo:      "0x1234567890123456789012345678901234567890",
+		Scheme:     "exact",
+		Network:    "eip155:8453",
+		Extensions: "bazaar",
+	})
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+}
+
+func TestSearchDiscoveryResources_RequiresQuery(t *testing.T) {
+	ctx := context.Background()
+
+	client := WithBazaar(x402http.NewHTTPFacilitatorClient(&x402http.FacilitatorConfig{
+		URL: "http://localhost:9999",
+	}))
+
+	_, err := client.SearchDiscoveryResources(ctx, &SearchDiscoveryResourcesParams{})
+	if err == nil {
+		t.Fatal("Expected error for missing query")
+	}
+
+	_, err = client.SearchDiscoveryResources(ctx, nil)
+	if err == nil {
+		t.Fatal("Expected error for nil params")
+	}
+}
+
+func TestSearchDiscoveryResources_ErrorResponse(t *testing.T) {
+	ctx := context.Background()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = w.Write([]byte("internal server error"))
+	}))
+	defer server.Close()
+
+	client := WithBazaar(x402http.NewHTTPFacilitatorClient(&x402http.FacilitatorConfig{
+		URL: server.URL,
+	}))
+
+	_, err := client.SearchDiscoveryResources(ctx, &SearchDiscoveryResourcesParams{
+		Query: "test",
+	})
+	if err == nil {
+		t.Fatal("Expected error for 500 response")
+	}
+
+	expected := "facilitator searchDiscoveryResources failed (500): internal server error"
+	if err.Error() != expected {
+		t.Errorf("Expected error message %q, got %q", expected, err.Error())
+	}
+}
+
+func TestSearchDiscoveryResources_WithAuthHeaders(t *testing.T) {
+	ctx := context.Background()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		auth := r.Header.Get("Authorization")
+		if auth != "Bearer test-token" {
+			t.Errorf("Expected Authorization header 'Bearer test-token', got %q", auth)
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(SearchDiscoveryResourcesResponse{
+			X402Version: 2,
+			Resources:   []DiscoveryResource{},
+		})
+	}))
+	defer server.Close()
+
+	authProvider := &testAuthProvider{
+		headers: x402http.AuthHeaders{
+			Bazaar: map[string]string{
+				"Authorization": "Bearer test-token",
+			},
+		},
+	}
+
+	client := WithBazaar(x402http.NewHTTPFacilitatorClient(&x402http.FacilitatorConfig{
+		URL:          server.URL,
+		AuthProvider: authProvider,
+	}))
+
+	_, err := client.SearchDiscoveryResources(ctx, &SearchDiscoveryResourcesParams{
+		Query: "test",
+	})
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
 	}
 }

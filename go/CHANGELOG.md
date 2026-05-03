@@ -1,3 +1,7 @@
+## v2.10.0 - 2026-04-27
+### Fixed
+- MCP payload extraction failing with no method set
+
 ## v2.9.0 - 2026-04-13
 ### Added
 - Add optional `extra.memo` support to SVM exact scheme for seller-defined payment references

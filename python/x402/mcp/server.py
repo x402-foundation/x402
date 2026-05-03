@@ -238,17 +238,17 @@ def create_payment_wrapper(
                         resource_server.settle_payment, payload, accepts[0]
                     )
                 if not settle_result.success:
-                    return _create_payment_required_result(
+                    return _create_settlement_failed_result(
                         accepts,
                         tool_resource,
-                        f"Settlement failed: {settle_result.error_reason}",
+                        settle_result.error_reason or "Unknown settlement failure",
                         extensions,
                     )
             except Exception as e:
-                return _create_payment_required_result(
+                return _create_settlement_failed_result(
                     accepts,
                     tool_resource,
-                    f"Settlement error: {e}",
+                    str(e),
                     extensions,
                 )
 
@@ -353,5 +353,36 @@ def _create_payment_required_result(
     return CallToolResult(
         content=[TextContent(type="text", text=json.dumps(payment_required))],
         structuredContent=payment_required,
+        isError=True,
+    )
+
+
+def _create_settlement_failed_result(
+    accepts: list[PaymentRequirements],
+    resource: ResourceInfo,
+    error_message: str,
+    extensions: dict[str, Any] | None = None,
+) -> Any:
+    """Create a settlement failed CallToolResult."""
+    from mcp.types import CallToolResult, TextContent
+
+    accepts_dicts = [req.model_dump(by_alias=True) for req in accepts]
+    error_data: dict[str, Any] = {
+        "x402Version": 2,
+        "accepts": accepts_dicts,
+        "error": f"Payment settlement failed: {error_message}",
+        "resource": resource.model_dump(by_alias=True),
+        MCP_PAYMENT_RESPONSE_META_KEY: {
+            "success": False,
+            "errorReason": error_message,
+            "transaction": "",
+            "network": accepts[0].network,
+        },
+    }
+    if extensions:
+        error_data["extensions"] = extensions
+    return CallToolResult(
+        content=[TextContent(type="text", text=json.dumps(error_data))],
+        structuredContent=error_data,
         isError=True,
     )

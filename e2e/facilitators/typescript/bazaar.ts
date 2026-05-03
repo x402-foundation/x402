@@ -3,13 +3,13 @@ import type { PaymentRequirements } from "@x402/core/types";
 
 export interface DiscoveredResource {
   resource: string;
-  type: "http";
+  type: "http" | "mcp";
   x402Version: number;
   accepts: PaymentRequirements[];
   discoveryInfo?: DiscoveryInfo;
   routeTemplate?: string;
   lastUpdated: string;
-  metadata?: Record<string, unknown>;
+  extensions?: Record<string, unknown>;
 }
 
 export class BazaarCatalog {
@@ -32,13 +32,13 @@ export class BazaarCatalog {
 
     this.discoveredResources.set(resourceUrl, {
       resource: resourceUrl,
-      type: "http",
+      type: discoveryInfo.input.type,
       x402Version,
       accepts: [paymentRequirements],
       discoveryInfo,
       routeTemplate,
       lastUpdated: new Date().toISOString(),
-      metadata: {},
+      extensions: {},
     });
   }
 
@@ -48,7 +48,7 @@ export class BazaarCatalog {
     const items = allResources.slice(offset, offset + limit);
 
     return {
-      x402Version: 1,
+      x402Version: 2,
       items,
       pagination: {
         limit,
@@ -58,8 +58,38 @@ export class BazaarCatalog {
     };
   }
 
+  /**
+   * Search resources using case-insensitive keyword matching against resource URL,
+   * type, and extension values.
+   */
+  searchResources(query: string, type?: string, limit?: number) {
+    const needle = query.toLowerCase();
+    let results = Array.from(this.discoveredResources.values()).filter((r) => {
+      const haystack = [
+        r.resource,
+        r.type,
+        ...Object.values(r.extensions ?? {}),
+      ]
+        .join(" ")
+        .toLowerCase();
+      return haystack.includes(needle);
+    });
+
+    if (type) {
+      results = results.filter((r) => r.type === type);
+    }
+
+    const items = limit !== undefined ? results.slice(0, limit) : results;
+
+    return {
+      x402Version: 2,
+      resources: items,
+      partialResults: false,
+      pagination: null,
+    };
+  }
+
   getCount(): number {
     return this.discoveredResources.size;
   }
 }
-

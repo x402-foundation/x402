@@ -53,6 +53,7 @@ class CatalogResource(BaseModel):
     accepts: list[dict[str, Any]]
     discoveryInfo: dict[str, Any] | None = None
     lastUpdated: str
+    extensions: dict[str, Any] | None = None
 
 
 # BazaarCatalog stores discovered resources
@@ -69,6 +70,38 @@ class BazaarCatalog:
     def get_all(self) -> list[CatalogResource]:
         """Get all resources in the catalog."""
         return list(self.resources.values())
+
+    def search(
+        self,
+        query: str,
+        resource_type: str | None = None,
+        limit: int | None = None,
+    ) -> list[CatalogResource]:
+        """Search resources using case-insensitive keyword matching.
+
+        Matches against resource URL, type, and extension values.
+
+        Args:
+            query: The search query string.
+            resource_type: Optional filter by resource type.
+            limit: Optional advisory maximum results.
+
+        Returns:
+            Matching resources.
+        """
+        needle = query.lower()
+        results = []
+        for r in self.resources.values():
+            haystack = " ".join(
+                [r.resource, r.type] + [str(v) for v in (r.extensions or {}).values()]
+            ).lower()
+            if needle in haystack:
+                results.append(r)
+
+        if resource_type:
+            results = [r for r in results if r.type == resource_type]
+
+        return results[:limit] if limit is not None else results
 
 
 bazaar_catalog = BazaarCatalog()
@@ -131,6 +164,7 @@ def _handle_after_verify(ctx: Any) -> None:
                     ],
                     discoveryInfo=discovery_info_dict,
                     lastUpdated=datetime.now().isoformat(),
+                    extensions={},
                 )
             )
             print("   ✅ Added to bazaar catalog")
@@ -289,6 +323,31 @@ async def discovery_resources():
         }
     except Exception as e:
         print(f"Discovery error: {e}")
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+
+@app.get("/discovery/search")
+async def discovery_search(query: str, type: str | None = None, limit: int | None = None):
+    """Search discovered resources using keyword matching.
+
+    Args:
+        query: The search query string.
+        type: Optional filter by resource type.
+        limit: Optional advisory maximum number of results.
+
+    Returns:
+        Search response with x402Version, items, and optional pagination hints.
+    """
+    try:
+        results = bazaar_catalog.search(query, type, limit)
+        return {
+            "x402Version": 2,
+            "resources": [r.model_dump(by_alias=True) for r in results],
+            "partialResults": False,
+            "pagination": None,
+        }
+    except Exception as e:
+        print(f"Discovery search error: {e}")
         raise HTTPException(status_code=500, detail=str(e)) from e
 
 

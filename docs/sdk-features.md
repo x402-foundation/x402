@@ -49,7 +49,8 @@ This page tracks which features are implemented in each SDK (TypeScript, Go, Pyt
 | Extension | TypeScript | Go | Python |
 |-----------|------------|-----|--------|
 | bazaar (server) | ✅ | ✅ | ✅ |
-| bazaar (facilitator client) | ✅ | ✅ | ✅ |
+| bazaar (facilitator client - list) | ✅ | ✅ | ✅ |
+| bazaar (facilitator client - search) | ✅ | ✅ | ✅ |
 | sign-in-with-x | ✅ | ❌ | ❌ |
 | payment-identifier | ✅ | ✅ | ✅ |
 | offer-receipt | ✅ | ❌ | ❌ |

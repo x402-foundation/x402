@@ -283,10 +283,7 @@ facilitator
   .register(SVM_NETWORK as Network, new ExactSvmScheme(svmSigner))
   .registerV1(SVM_V1_NETWORKS as Network[], new ExactSvmSchemeV1(svmSigner));
 if (avmSigner) {
-  facilitator.register(
-    AVM_NETWORK as Network,
-    new ExactAvmScheme(avmSigner),
-  );
+  facilitator.register(AVM_NETWORK as Network, new ExactAvmScheme(avmSigner));
 }
 if (aptosSigner) {
   facilitator.register(
@@ -398,18 +395,30 @@ facilitator
         context.paymentPayload,
         context.requirements,
       );
-      if (discovered && "method" in discovered && discovered.method) {
+      if (discovered) {
+        const action =
+          "method" in discovered ? discovered.method : discovered.toolName;
+        if (!action) {
+          return;
+        }
+        let resourceUrl = discovered.resourceUrl;
+        if (
+          discovered.discoveryInfo.input.type === "mcp" &&
+          "toolName" in discovered &&
+          discovered.toolName &&
+          (!resourceUrl || resourceUrl.startsWith("null/"))
+        ) {
+          resourceUrl = `mcp://tool/${discovered.toolName}`;
+        }
         bazaarCatalog.catalogResource(
-          discovered.resourceUrl,
-          discovered.method,
+          resourceUrl,
+          action,
           discovered.x402Version,
           discovered.discoveryInfo,
           context.requirements,
           discovered.routeTemplate,
         );
-        console.log(
-          `📦 Discovered resource: ${discovered.method} ${discovered.resourceUrl}`,
-        );
+        console.log(`📦 Discovered resource: ${action} ${resourceUrl}`);
       }
     }
   })
@@ -565,6 +574,27 @@ app.get("/discovery/resources", (req, res) => {
     res.json(response);
   } catch (error) {
     console.error("Discovery resources error:", error);
+    res.status(500).json({
+      error: error instanceof Error ? error.message : "Unknown error",
+    });
+  }
+});
+
+app.get("/discovery/search", (req, res) => {
+  try {
+    const query = req.query.query as string;
+    if (!query) {
+      return res.status(400).json({ error: "query parameter is required" });
+    }
+    const type = req.query.type as string | undefined;
+    const limit = req.query.limit
+      ? parseInt(req.query.limit as string)
+      : undefined;
+
+    const response = bazaarCatalog.searchResources(query, type, limit);
+    res.json(response);
+  } catch (error) {
+    console.error("Discovery search error:", error);
     res.status(500).json({
       error: error instanceof Error ? error.message : "Unknown error",
     });

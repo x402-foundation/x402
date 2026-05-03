@@ -1,5 +1,13 @@
 # @x402/aptos
 
+## 2.11.0
+
+### Minor Changes
+
+- Updated dependencies [a051f48]
+- Updated dependencies [dc04108]
+  - @x402/core@2.11.0
+
 ## 2.10.0
 
 ### Minor Changes

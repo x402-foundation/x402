@@ -65,6 +65,14 @@ export function Footer() {
               >
                 Whitepaper
               </Link>
+              <Link
+                href="https://docs.google.com/forms/d/e/1FAIpQLSc2rlaeH31rZpJ_RFNL7egxi9fYTEUjW9r2kwkhd2pMae2dog/viewform"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-white hover:text-gray-300 text-base focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white focus-visible:ring-offset-2 focus-visible:ring-offset-black"
+              >
+                Contact
+              </Link>
             </div>
           </nav>
         </div>
@@ -97,8 +105,8 @@ export function Footer() {
         {/* Copyright row */}
         <div className="flex justify-between items-center">
           <p className="text-white/40 text-sm">
-            While x402 is an open and neutral standard, this website is maintained by
-            {" "}Coinbase Developer Platform. By using this site, you agree to be bound by the{" "}
+            While x402 is an open and neutral standard, this website is maintained by Coinbase
+            Developer Platform. By using this site, you agree to be bound by the{" "}
             <Link
               href="https://www.coinbase.com/legal/developer-platform/terms-of-service"
               target="_blank"
@@ -128,7 +136,7 @@ export function Footer() {
           alt=""
           aria-hidden="true"
           className="w-full h-auto"
-          style={{ filter: 'brightness(0.75)' }}
+          style={{ filter: "brightness(0.75)" }}
         />
       </div>
     </footer>

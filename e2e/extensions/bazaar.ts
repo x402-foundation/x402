@@ -26,13 +26,27 @@ interface DiscoveryResourcesResponse {
     accepts: any[];
     discoveryInfo?: any;
     lastUpdated: string;
-    metadata?: Record<string, unknown>;
+    extensions?: Record<string, unknown>;
   }>;
   pagination: {
     limit: number;
     offset: number;
     total: number;
   };
+}
+
+/**
+ * Discovery search response structure
+ */
+interface DiscoverySearchResponse {
+  x402Version: number;
+  resources: Array<{
+    resource: string;
+    type: string;
+    [key: string]: unknown;
+  }>;
+  partialResults?: boolean;
+  pagination?: { limit: number; cursor: string | null } | null;
 }
 
 /**
@@ -141,6 +155,62 @@ function getDiscoverableEndpoints(
   }
 
   return discoverableEndpoints;
+}
+
+/**
+ * Validate the search endpoint response structure for a facilitator.
+ * Uses a wildcard query ("") which should match all resources or return an empty set.
+ */
+async function validateSearchEndpoint(
+  facilitatorProxy: FacilitatorProxy,
+  facilitatorName: string,
+): Promise<{ valid: boolean; error?: string }> {
+  const query = "http"; // Generic term likely to match something
+  const url = `${facilitatorProxy.getUrl()}/discovery/search?query=${encodeURIComponent(query)}`;
+  verboseLog(`  🔍 Validating search endpoint: ${url}`);
+
+  try {
+    const response = await fetch(url);
+
+    if (!response.ok) {
+      return {
+        valid: false,
+        error: `Search endpoint returned ${response.status} ${response.statusText}`,
+      };
+    }
+
+    const data = (await response.json()) as DiscoverySearchResponse;
+
+    // Validate required fields
+    if (typeof data.x402Version !== "number") {
+      return { valid: false, error: "search response missing x402Version" };
+    }
+    if (!Array.isArray(data.resources)) {
+      return { valid: false, error: "search response missing resources array" };
+    }
+    if (
+      data.pagination !== undefined &&
+      data.pagination !== null &&
+      (typeof data.pagination !== "object" ||
+        typeof data.pagination.limit !== "number")
+    ) {
+      return { valid: false, error: "pagination.limit must be number when present" };
+    }
+    if (
+      data.partialResults !== undefined &&
+      typeof data.partialResults !== "boolean"
+    ) {
+      return { valid: false, error: "partialResults must be boolean when present" };
+    }
+
+    verboseLog(`  ✅ Search endpoint valid (${data.resources.length} results)`);
+    return { valid: true };
+  } catch (error) {
+    return {
+      valid: false,
+      error: `Search endpoint request failed: ${error instanceof Error ? error.message : String(error)}`,
+    };
+  }
 }
 
 /**
@@ -421,6 +491,18 @@ export async function handleDiscoveryValidation(
     if (facilitatorSupportsBazaar(config)) {
       facilitatorsChecked++;
       totalDiscovered += result.totalDiscovered;
+
+      // Also validate the search endpoint structure
+      const searchResult = await validateSearchEndpoint(proxy, config.name);
+      if (!searchResult.valid) {
+        result.success = false;
+        result.error = result.error
+          ? `${result.error}; Search endpoint validation failed: ${searchResult.error}`
+          : `Search endpoint validation failed: ${searchResult.error}`;
+        errorLog(
+          `  ❌ Search endpoint validation failed for ${config.name}: ${searchResult.error}`,
+        );
+      }
     }
   }
 

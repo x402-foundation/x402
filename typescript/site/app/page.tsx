@@ -1,5 +1,6 @@
 import Link from "next/link";
 import Image from "next/image";
+
 import { NavBar } from "./components/NavBar";
 import { Footer } from "./components/Footer";
 import {
@@ -87,7 +88,13 @@ const x402Steps = [
 ];
 
 const heroCodeSnippet = {
-  code: `app.use(
+  code: `app.use(paymentMiddleware({
+  "GET /weather": {
+    accepts: [...],                 // As many networks / schemes as you want to support
+    description: "Weather data",    // What your endpoint does
+  },
+}));`,
+  copyCode: `app.use(
   paymentMiddleware(
     {
       "GET /weather": {
@@ -98,7 +105,8 @@ const heroCodeSnippet = {
   )
 );`,
   title: "Accept payments with a single line of code",
-  description: "That's it. Add one line of code to require payment for each incoming request. If a request arrives without payment, the server responds with HTTP 402, prompting the client to pay and retry.",
+  description:
+    "That's it. Add one line of code to require payment for each incoming request. If a request arrives without payment, the server responds with HTTP 402, prompting the client to pay and retry.",
 };
 
 export default function HomePage() {
@@ -108,8 +116,10 @@ export default function HomePage() {
 
       <HeroSection codeSnippet={heroCodeSnippet} />
 
-      {/* Stats & Social Proof */}
-      <StatsSection />
+      {/* Stats & Social Proof — hidden on xl where stats live inside HeroSection */}
+      <div className="xl:hidden">
+        <StatsSection />
+      </div>
 
       {/* What's x402? */}
       <WhatsX402Section />
@@ -165,10 +175,7 @@ export default function HomePage() {
             descriptionSize="small"
           />
 
-          <ComparisonTable
-            traditionalSteps={traditionalSteps}
-            x402Steps={x402Steps}
-          />
+          <ComparisonTable traditionalSteps={traditionalSteps} x402Steps={x402Steps} />
         </div>
       </section>
 
@@ -182,7 +189,10 @@ export default function HomePage() {
           />
 
           <div className="mb-12">
-            <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-5 gap-3 sm:gap-4 lg:h-[425px]" aria-label="Community photos">
+            <div
+              className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-5 gap-3 sm:gap-4 lg:h-[425px]"
+              aria-label="Community photos"
+            >
               <div className="col-span-1 relative rounded overflow-hidden">
                 <Image
                   src="/images/homepage_build1.jpeg"
@@ -224,11 +234,11 @@ export default function HomePage() {
 
           <div className="flex flex-col items-center gap-4 sm:gap-6">
             <p className="text-sm sm:text-base font-medium text-center max-w-[491px]">
-              Join a global community of thousands of builders contributing to an
-              open codebase, faster financial system, and freer internet.
+              Join a global community of thousands of builders contributing to an open codebase,
+              faster financial system, and freer internet.
             </p>
             <Link
-              href="https://docs.google.com/forms/d/e/1FAIpQLSc2rlaeH31rZpJ_RFNL7egxi9fYTEUjW9r2kwkhd2pMae2dog/viewform"
+              href="https://docs.x402.org/getting-started/quickstart-for-sellers"
               target="_blank"
               rel="noopener noreferrer"
               className="flex items-center gap-2 px-6 sm:px-10 md:px-16 py-3 bg-black text-white font-medium text-base hover:bg-gray-800 transition-colors focus:outline-none focus:ring-2 focus:ring-black focus:ring-offset-2"

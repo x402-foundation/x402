@@ -5,13 +5,14 @@ from __future__ import annotations
 import pytest
 
 from x402.mcp.constants import MCP_PAYMENT_RESPONSE_META_KEY
+from x402.mcp.server import _create_settlement_failed_result
 from x402.mcp.server_async import (
     PaymentWrapperConfig,
     _create_settlement_failed_result_async,
 )
 from x402.mcp.server_sync import _create_settlement_failed_result_sync
 from x402.mcp.types import SyncPaymentWrapperConfig
-from x402.schemas import PaymentRequirements
+from x402.schemas import PaymentRequirements, ResourceInfo
 
 
 def make_payment_requirements() -> PaymentRequirements:
@@ -137,3 +138,33 @@ def test_sync_settlement_failure_preserves_extensions() -> None:
     assert result.structured_content is not None
     assert result.structured_content["extensions"] == extensions
     assert result.structured_content[MCP_PAYMENT_RESPONSE_META_KEY]["success"] is False
+
+
+def test_fastmcp_settlement_failure_preserves_extensions() -> None:
+    """Settlement failure 402 keeps extensions in FastMCP wrapper path."""
+    extensions = {
+        "bazaar": {
+            "info": {
+                "input": {
+                    "type": "mcp",
+                    "toolName": "get_weather",
+                    "inputSchema": {"type": "object"},
+                }
+            },
+            "schema": {"type": "object"},
+        }
+    }
+    result = _create_settlement_failed_result(
+        accepts=[make_payment_requirements()],
+        resource=ResourceInfo(
+            url="mcp://tool/get_weather",
+            description="Tool: get_weather",
+            mime_type="application/json",
+        ),
+        error_message="settle exploded",
+        extensions=extensions,
+    )
+
+    assert result.structuredContent is not None
+    assert result.structuredContent["extensions"] == extensions
+    assert result.structuredContent[MCP_PAYMENT_RESPONSE_META_KEY]["success"] is False

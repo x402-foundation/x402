@@ -362,6 +362,48 @@ When a facilitator receives a `PaymentPayload` containing the `bazaar` extension
 
 How a facilitator stores, indexes, and exposes discovered resources is an implementation detail. Facilitators may choose to catalog resources in a database, expose them via a discovery API, or process them in any manner they see fit.
 
+### Optional Discovery Endpoints
+
+Facilitators that implement Bazaar discovery may expose discovery APIs to let clients browse and search cataloged resources.
+
+#### `GET /discovery/resources`
+
+Lists discoverable x402 resources.
+
+| Parameter | Type     | Required | Description                                 |
+| --------- | -------- | -------- | ------------------------------------------- |
+| `type`    | `string` | Optional | Filter by resource type (for example, `http` or `mcp`) |
+| `payTo`   | `string` | Optional | Filter by payment recipient address |
+| `scheme`  | `string` | Optional | Filter by payment scheme (for example, `exact`) |
+| `network` | `string` | Optional | Filter by payment network (for example, `eip155:8453`) |
+| `extensions` | `string` | Optional | Filter by extension key present on each resource (for example, `bazaar`) |
+| `limit`   | `number` | Optional | Maximum number of results to return |
+| `offset`  | `number` | Optional | Number of results to skip for pagination |
+
+#### `GET /discovery/search`
+
+Searches discoverable x402 resources using a natural-language query. Response shape mirrors the list endpoint with a `resources` array and optional `pagination`.
+
+| Parameter | Type     | Required | Description                                 |
+| --------- | -------- | -------- | ------------------------------------------- |
+| `query`   | `string` | Yes      | Natural-language search query |
+| `type`    | `string` | Optional | Filter by resource type (for example, `http` or `mcp`) |
+| `payTo`   | `string` | Optional | Filter by payment recipient address |
+| `scheme`  | `string` | Optional | Filter by payment scheme (for example, `exact`) |
+| `network` | `string` | Optional | Filter by payment network (for example, `eip155:8453`) |
+| `extensions` | `string` | Optional | Filter by extension key present on each resource (for example, `bazaar`) |
+| `limit`   | `number` | Optional | Advisory maximum number of results; facilitator may return fewer or ignore |
+| `cursor`  | `string` | Optional | Advisory continuation cursor from a previous page |
+
+Search responses may include:
+
+| Field | Type | Required | Description |
+| ----- | ---- | -------- | ----------- |
+| `partialResults` | `boolean` | No | `true` when additional matches were truncated |
+| `pagination` | `object` or `null` | No | Pagination details for a paginated response |
+| `pagination.limit` | `number` | Yes (when `pagination` is an object) | Number of results in this page |
+| `pagination.cursor` | `string` or `null` | Yes (when `pagination` is an object) | Cursor for the next page, or `null` if unavailable |
+
 ### Verify and Settlement Response Header
 
 After processing a `PaymentPayload`, a facilitator **MAY** append an `EXTENSION-RESPONSES` HTTP header to the verify or settlement response to communicate extension-specific outcomes to the client.

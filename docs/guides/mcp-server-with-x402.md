@@ -168,7 +168,7 @@ async function main() {
   await server.connect(transport);
 }
 
-main().catch(error => {
+main().catch((error) => {
   console.error(error);
   process.exit(1);
 });
@@ -339,7 +339,7 @@ const paid = createPaymentWrapper(resourceServer, {
 When a client pays for the tool, the facilitator extracts the Bazaar extension from the payment payload and indexes the tool in `/discovery/resources` with `type: "mcp"`. Buyers can then discover it by querying a Bazaar-enabled facilitator:
 
 ```typescript
-const mcpTools = await client.extensions.discovery.listResources({ type: "mcp" });
+const mcpTools = await client.extensions.bazaar.listResources({ type: "mcp" });
 ```
 
 See the full [Bazaar documentation](/extensions/bazaar) for details on buyers querying and calling discovered MCP tools.

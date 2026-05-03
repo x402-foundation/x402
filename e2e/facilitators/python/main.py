@@ -23,6 +23,7 @@ logging.basicConfig(level=logging.INFO, format="%(name)s %(levelname)s: %(messag
 logging.getLogger("x402.permit2").setLevel(logging.DEBUG)
 logging.getLogger("x402.signers").setLevel(logging.DEBUG)
 
+from bazaar import BazaarCatalog
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
@@ -38,12 +39,10 @@ from x402.extensions.erc20_approval_gas_sponsoring import (
 from x402.mechanisms.evm import FacilitatorWeb3Signer
 from x402.mechanisms.evm.constants import TX_STATUS_SUCCESS
 from x402.mechanisms.evm.exact import register_exact_evm_facilitator
-from x402.mechanisms.evm.upto import UptoEvmFacilitatorScheme
 from x402.mechanisms.evm.types import TransactionReceipt
+from x402.mechanisms.evm.upto import UptoEvmFacilitatorScheme
 from x402.mechanisms.svm import FacilitatorKeypairSigner
 from x402.mechanisms.svm.exact import register_exact_svm_facilitator
-
-from bazaar import BazaarCatalog
 
 # Load environment variables
 load_dotenv()
@@ -364,6 +363,25 @@ async def discovery_resources(limit: int = 100, offset: int = 0):
     except Exception as e:
         print(f"Discovery error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/discovery/search")
+async def discovery_search(query: str, type: str | None = None, limit: int | None = None):
+    """Search discovered resources using keyword matching.
+
+    Args:
+        query: The search query string (required).
+        type: Optional filter by resource type.
+        limit: Optional advisory maximum number of results.
+
+    Returns:
+        Search response with x402Version, items, and optional pagination hints.
+    """
+    try:
+        return bazaar_catalog.search_resources(query, type, limit)
+    except Exception as e:
+        print(f"Discovery search error: {e}")
+        raise HTTPException(status_code=500, detail=str(e)) from e
 
 
 @app.get("/health")

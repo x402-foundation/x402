@@ -2,6 +2,13 @@
 
 <!-- towncrier release notes start -->
 
+## [2.9.0] - 2026-04-27
+
+### Added
+
+- Added `extensions` parameter to MCP payment wrapper config and `declare_mcp_discovery_extension` helper so paid MCP tools can declare Bazaar discovery metadata and appear in `/discovery/resources`. ([#2087](https://github.com/x402-foundation/x402/pull/2087))
+
+
 ## [2.8.0] - 2026-04-17
 
 ### Added

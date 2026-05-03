@@ -129,8 +129,10 @@ export { extractDiscoveryInfoV1, isDiscoverableV1, extractResourceMetadataV1 } f
 // Export client extension (for facilitator clients querying discovery)
 export {
   withBazaar,
-  BazaarClientExtension,
-  ListDiscoveryResourcesParams,
-  DiscoveryResource,
-  DiscoveryResourcesResponse,
+  type BazaarClientExtension,
+  type ListDiscoveryResourcesParams,
+  type SearchDiscoveryResourcesParams,
+  type DiscoveryResource,
+  type DiscoveryResourcesResponse,
+  type SearchDiscoveryResourcesResponse,
 } from "./facilitatorClient";

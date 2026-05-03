@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -62,6 +63,33 @@ func (c *BazaarCatalog) GetAll() []DiscoveredResource {
 		result = append(result, r)
 	}
 	return result
+}
+
+// Search performs case-insensitive keyword matching across resource URL, type,
+// and metadata values. Pagination is not supported for in-memory keyword search.
+func (c *BazaarCatalog) Search(query, resourceType string, limit int) []DiscoveredResource {
+	c.mutex.RLock()
+	defer c.mutex.RUnlock()
+
+	needle := strings.ToLower(query)
+	var results []DiscoveredResource
+
+	for _, r := range c.resources {
+		haystack := strings.ToLower(r.Resource + " " + r.Type + " " + r.Description)
+		if !strings.Contains(haystack, needle) {
+			continue
+		}
+		if resourceType != "" && r.Type != resourceType {
+			continue
+		}
+		results = append(results, r)
+	}
+
+	if limit > 0 && len(results) > limit {
+		results = results[:limit]
+	}
+
+	return results
 }
 
 func runBazaarExample(evmPrivateKey, svmPrivateKey string) error {
@@ -161,7 +189,7 @@ func runBazaarExample(evmPrivateKey, svmPrivateKey string) error {
 		c.JSON(http.StatusOK, supported)
 	})
 
-	// Discovery endpoint
+	// Discovery list endpoint
 	r.GET("/discovery/resources", func(c *gin.Context) {
 		resources := catalog.GetAll()
 		c.JSON(http.StatusOK, gin.H{
@@ -172,6 +200,32 @@ func runBazaarExample(evmPrivateKey, svmPrivateKey string) error {
 				"offset": 0,
 				"total":  len(resources),
 			},
+		})
+	})
+
+	// Discovery search endpoint
+	r.GET("/discovery/search", func(c *gin.Context) {
+		query := c.Query("query")
+		if query == "" {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "query parameter is required"})
+			return
+		}
+		resourceType := c.Query("type")
+		limit := 0
+		if limitParam := c.Query("limit"); limitParam != "" {
+			fmt.Sscanf(limitParam, "%d", &limit)
+		}
+
+		items := catalog.Search(query, resourceType, limit)
+		if items == nil {
+			items = []DiscoveredResource{}
+		}
+
+		c.JSON(http.StatusOK, gin.H{
+			"x402Version":    2,
+			"resources":      items,
+			"partialResults": false,
+			"pagination":     nil,
 		})
 	})
 

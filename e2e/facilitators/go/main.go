@@ -1104,13 +1104,40 @@ func main() {
 		items, total := bazaarCatalog.GetResources(limit, offset)
 
 		c.JSON(http.StatusOK, gin.H{
-			"x402Version": 1,
+			"x402Version": 2,
 			"items":       items,
 			"pagination": gin.H{
 				"limit":  limit,
 				"offset": offset,
 				"total":  total,
 			},
+		})
+	})
+
+	// GET /discovery/search - Search discovered resources using keyword matching
+	router.GET("/discovery/search", func(c *gin.Context) {
+		query := c.Query("query")
+		if query == "" {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "query parameter is required"})
+			return
+		}
+
+		resourceType := c.Query("type")
+		limit := 0
+		if limitParam := c.Query("limit"); limitParam != "" {
+			fmt.Sscanf(limitParam, "%d", &limit)
+		}
+
+		items, _ := bazaarCatalog.SearchResources(query, resourceType, limit)
+		if items == nil {
+			items = []DiscoveredResource{}
+		}
+
+		c.JSON(http.StatusOK, gin.H{
+			"x402Version":    2,
+			"resources":      items,
+			"partialResults": false,
+			"pagination":     nil,
 		})
 	})
 

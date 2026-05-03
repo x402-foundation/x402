@@ -60,11 +60,15 @@ from .facilitator import (
 )
 from .facilitator_client import (
     BazaarClientExtension,
-    BazaarDiscoveryExtension,
     BazaarExtendedClient,
+    BazaarExtension,
     DiscoveryResource,
     DiscoveryResourcesResponse,
     ListDiscoveryResourcesParams,
+    Pagination,
+    SearchDiscoveryResourcesParams,
+    SearchDiscoveryResourcesResponse,
+    SearchPagination,
     with_bazaar,
 )
 from .resource_service import (
@@ -131,10 +135,14 @@ __all__ = [
     "bazaar_resource_server_extension",
     # Client extension types
     "ListDiscoveryResourcesParams",
+    "SearchDiscoveryResourcesParams",
     "DiscoveryResource",
     "DiscoveryResourcesResponse",
+    "Pagination",
+    "SearchDiscoveryResourcesResponse",
+    "SearchPagination",
     "BazaarClientExtension",
-    "BazaarDiscoveryExtension",
+    "BazaarExtension",
     "BazaarExtendedClient",
     # Functions
     "declare_discovery_extension",

@@ -505,6 +505,10 @@ List discoverable x402 resources from the Bazaar.
 | Parameter | Type     | Required | Description                                 | Default |
 | --------- | -------- | -------- | ------------------------------------------- | ------- |
 | `type`    | `string` | Optional | Filter by resource type (e.g., "http")      | -       |
+| `payTo`   | `string` | Optional | Filter by payment recipient address          | -       |
+| `scheme`  | `string` | Optional | Filter by payment scheme (e.g., "exact")    | -       |
+| `network` | `string` | Optional | Filter by payment network (e.g., "eip155:8453") | -   |
+| `extensions` | `string` | Optional | Filter by extension key present on each resource | -       |
 | `limit`   | `number` | Optional | Maximum number of results to return (1-100) | 20      |
 | `offset`  | `number` | Optional | Number of results to skip for pagination    | 0       |
 
@@ -547,7 +551,12 @@ List discoverable x402 resources from the Bazaar.
 }
 ```
 
-**8.2 Discovered Resource Fields**
+**8.2 GET /discovery/search**
+
+Search semantics and response shape are defined in the Bazaar extension specification at
+`specs/extensions/bazaar.md`, since this endpoint is extension-specific behavior.
+
+**8.3 Discovered Resource Fields**
 
 | Field Name    | Type     | Required | Description                                                     |
 | ------------- | -------- | -------- | --------------------------------------------------------------- |
@@ -556,9 +565,9 @@ List discoverable x402 resources from the Bazaar.
 | `x402Version` | `number` | Required | Protocol version supported by the resource                      |
 | `accepts`     | `array`  | Required | Array of PaymentRequirements objects specifying payment methods |
 | `lastUpdated` | `number` | Required | Unix timestamp of when the resource was last updated            |
-| `metadata`    | `object` | Optional | Additional metadata (category, provider, etc.)                  |
+| `extensions`  | `object` | Optional | Additional extension payloads associated with this discovered resource |
 
-**8.3 Bazaar Concept**
+**8.4 Bazaar Concept**
 
 The Bazaar is a marketplace ecosystem where x402-enabled resources can be discovered and accessed. Key features:
 
@@ -567,14 +576,17 @@ The Bazaar is a marketplace ecosystem where x402-enabled resources can be discov
 - **Provider Information**: Learn about service providers and their offerings
 - **Dynamic Updates**: Resources can be added, updated, or removed dynamically
 
-**8.4 Example Usage**
+**8.5 Example Usage**
 
 ```bash
-# Discover financial data APIs
+# List financial data APIs
 GET /discovery/resources?type=http&limit=10
 
-# Search for specific provider
-GET /discovery/resources?metadata[provider]=Coinbase
+# Search for weather APIs
+GET /discovery/search?query=weather+APIs&type=http&limit=5
+
+# Continue a paginated search (when server supports it)
+GET /discovery/search?query=financial+data&limit=10&cursor=eyJwYWdlIjoyfQ==
 ```
 
 **9. Error Handling**

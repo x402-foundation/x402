@@ -17,6 +17,7 @@ export interface FacilitatorConfig {
     verify: Record<string, string>;
     settle: Record<string, string>;
     supported: Record<string, string>;
+    bazaar?: Record<string, string>;
   }>;
 }
 
