@@ -1,0 +1,40 @@
+{
+  "name": "Dhali",
+  "description": "x402 compatible high-frequency API payment platform using Web3 payment channels and streaming. Monetize APIs using XRPL and EVM-based chains with ETH and all ERC-20 tokens.",
+  "logoUrl": "/logos/dhali.png",
+  "websiteUrl": "https://dhali.io",
+  "category": "Facilitators",
+  "facilitator": {
+    "baseUrl": "https://x402.api.dhali.io/v2/<uuid>",
+    "networks": [
+      "xrpl:0",
+      "xrpl:1",
+      "xrpl:21337",
+      "xrpl:21338",
+      "eip155:1",
+      "eip155:11155111"
+    ],
+    "schemes": [
+      "dhali"
+    ],
+    "assets": [
+      "xrpl:0/native:xrp",
+      "xrpl:1/native:xrp",
+      "xrpl:21337/native:xah",
+      "xrpl:21338/native:xah",
+      "eip155:1/native:eth",
+      "eip155:1/erc20:0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
+      "eip155:1/erc20:0x8292Bb45bf1Ee4d140127049757C2E0fF06317eD",
+      "eip155:11155111/native:eth",
+      "eip155:11155111/erc20:0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238",
+      "eip155:11155111/erc20:0xe101FB315a64cDa9944E570a7bFfaFE60b994b1D"
+    ],
+    "supports": {
+      "verify": true,
+      "settle": true,
+      "supported": true,
+      "list": true
+    }
+  }
+}
+
