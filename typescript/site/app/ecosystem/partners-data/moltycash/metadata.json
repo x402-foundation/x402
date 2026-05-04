@@ -1,0 +1,7 @@
+{
+  "name": "MoltyCash",
+  "description": "USDC payment infrastructure for AI agents and humans. Send tips, hire people for tasks, and create/earn from gigs — all settled on-chain via x402 on Base, Solana, and World Chain (and MPP on Tempo, Stellar, Monad). Identity by X handle, no accounts or API keys required.",
+  "logoUrl": "/logos/moltycash.png",
+  "websiteUrl": "https://molty.cash",
+  "category": "Services/Endpoints"
+}
