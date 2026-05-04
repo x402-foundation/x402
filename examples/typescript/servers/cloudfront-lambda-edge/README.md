@@ -23,6 +23,10 @@ flowchart LR
 
 ## Getting Started
 
+### New to AWS? Start here
+
+Follow the step-by-step [Getting Started guide](./GETTING-STARTED.md) to go from zero to a working x402 payment gate in the AWS Console — no CLI required. It covers IAM setup, Lambda deployment, CloudFront configuration, and end-to-end testing with a real 402 response.
+
 ### Already using CloudFront + Lambda@Edge?
 
 The example files are ready for you to add your business logic:
