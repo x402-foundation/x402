@@ -26,7 +26,12 @@ Three components for handling x402 payments on TVM-compatible networks:
 import os
 
 from x402 import x402Client
-from x402.mechanisms.tvm import TVM_TESTNET, WalletV5R1Config, WalletV5R1MnemonicSigner
+from x402.mechanisms.tvm import (
+    TVM_PROVIDER_TONAPI,
+    TVM_TESTNET,
+    WalletV5R1Config,
+    WalletV5R1MnemonicSigner,
+)
 from x402.mechanisms.tvm.exact import ExactTvmScheme
 
 config = WalletV5R1Config.from_private_key(
@@ -34,6 +39,10 @@ config = WalletV5R1Config.from_private_key(
     os.environ["TVM_CLIENT_PRIVATE_KEY"],
 )
 config.api_key = os.environ.get("TONCENTER_API_KEY")
+# Optional: switch REST + compatible streaming routes to TonAPI.
+# config.provider = TVM_PROVIDER_TONAPI
+# config.api_key = os.environ.get("TONAPI_API_KEY")
+# config.provider_base_url = os.environ.get("TONAPI_BASE_URL")
 
 signer = WalletV5R1MnemonicSigner(config)
 
@@ -43,7 +52,7 @@ client.register(TVM_TESTNET, ExactTvmScheme(signer=signer))
 payload = await client.create_payment_payload(payment_required)
 ```
 
-Call `scheme.close()` when you are done with a long-lived `ExactTvmScheme` so its cached Toncenter HTTP clients are released.
+Call `scheme.close()` when you are done with a long-lived `ExactTvmScheme` so its cached provider HTTP clients are released.
 
 ### Server
 
@@ -61,11 +70,20 @@ server.register("tvm:*", ExactTvmServerScheme())
 import os
 
 from x402 import x402Facilitator
-from x402.mechanisms.tvm import HighloadV3Config, TVM_TESTNET, FacilitatorHighloadV3Signer
+from x402.mechanisms.tvm import (
+    FacilitatorHighloadV3Signer,
+    HighloadV3Config,
+    TVM_PROVIDER_TONAPI,
+    TVM_TESTNET,
+)
 from x402.mechanisms.tvm.exact import ExactTvmFacilitatorScheme
 
 config = HighloadV3Config.from_private_key(os.environ["TVM_FACILITATOR_PRIVATE_KEY"])
 config.api_key = os.environ.get("TONCENTER_API_KEY")
+# Optional: switch REST + compatible streaming routes to TonAPI.
+# config.provider = TVM_PROVIDER_TONAPI
+# config.api_key = os.environ.get("TONAPI_API_KEY")
+# config.provider_base_url = os.environ.get("TONAPI_BASE_URL")
 
 signer = FacilitatorHighloadV3Signer({TVM_TESTNET: config})
 
@@ -93,8 +111,21 @@ facilitator.register([TVM_TESTNET], ExactTvmFacilitatorScheme(signer))
 | `WalletV5R1MnemonicSigner`    | Client signer using a W5R1 wallet           |
 | `FacilitatorHighloadV3Signer` | Facilitator signer using highload-wallet-v3 |
 | `ToncenterRestClient`         | Toncenter provider client                   |
+| `TonapiRestClient`            | TonAPI provider client                      |
+| `create_tvm_provider_client`  | Provider factory                            |
+| `TVM_PROVIDER_TONCENTER`      | Toncenter provider selector                 |
+| `TVM_PROVIDER_TONAPI`         | TonAPI provider selector                    |
 | `TVM_MAINNET`                 | TON mainnet CAIP-2 identifier               |
 | `TVM_TESTNET`                 | TON testnet CAIP-2 identifier               |
+
+## Provider Selection
+
+Toncenter remains the default provider. Set `config.provider = TVM_PROVIDER_TONAPI` on `WalletV5R1Config` or `HighloadV3Config` to switch REST calls and facilitator streaming to TonAPI.
+
+- Toncenter REST defaults: `https://toncenter.com`, `https://testnet.toncenter.com`
+- TonAPI REST defaults: `https://tonapi.io`, `https://testnet.tonapi.io`
+
+`config.api_key` is used as `X-Api-Key` for Toncenter and `Authorization: Bearer <key>` for TonAPI. For custom deployments, set `config.provider_base_url`, `config.provider_timeout_seconds`, and `config.provider_emulation_timeout_seconds`.
 
 ## Supported Networks
 
@@ -137,7 +168,7 @@ The facilitator wallet also needs testnet TON (no USDT required) and must hold *
 The TVM client flow uses Wallet V5R1:
 
 1. Build wallet state init from the configured private key
-2. Read account state and seqno from Toncenter
+2. Read account state and seqno from the configured TVM provider
 3. Derive the payer jetton wallet for the configured asset
 4. Create a signed W5R1 internal message targeting the payer wallet
 5. Wrap the message as a base64 BOC settlement payload
@@ -152,6 +183,6 @@ The facilitator batches relay requests through a highload-wallet-v3 account:
 2. Reserve the settlement in `SettlementCache` to reject duplicate settlements
 3. Batch valid relay requests per network
 4. Send the batched external message through the facilitator wallet
-5. Wait for finalized trace confirmation through Toncenter APIs
+5. Wait for finalized trace confirmation through the configured provider APIs
 
-Call `signer.close()` when you are done with a long-lived facilitator signer so its Toncenter clients and streaming watchers are released.
+Call `signer.close()` when you are done with a long-lived facilitator signer so its provider clients and streaming watchers are released.

@@ -1,7 +1,9 @@
-"""Toncenter Streaming API helpers for the TVM mechanism."""
+"""TVM provider streaming helpers."""
 
 from __future__ import annotations
 
+import base64
+import binascii
 import json
 import queue
 import threading
@@ -11,6 +13,11 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from .codecs.common import normalize_address
+from .constants import (
+    SUPPORTED_TVM_PROVIDERS,
+    TVM_PROVIDER_TONAPI,
+    TVM_PROVIDER_TONCENTER,
+)
 
 try:
     import httpx
@@ -25,6 +32,8 @@ DEFAULT_STREAMING_RECONNECT_BACKOFF_SECONDS = 1.0
 DEFAULT_STREAMING_MAX_CONSECUTIVE_FAILURES = 3
 DEFAULT_RECENT_TRACE_RESULT_TTL_SECONDS = 60.0
 DEFAULT_STREAMING_START_TIMEOUT_SECONDS = 2.0
+_TONAPI_STREAMING_SSE_PATH = "/streaming/v2/sse"
+_TONCENTER_STREAMING_SSE_PATH = "/api/streaming/v2/sse"
 
 
 def _account_stream_subscription(normalized_address: str) -> dict[str, object]:
@@ -124,7 +133,7 @@ class _StartupState:
         self.ready_event.set()
 
 
-class ToncenterStreamingWatcher:
+class TvmStreamingWatcher:
     """Handle for a long-lived facilitator-account streaming watcher."""
 
     def __init__(
@@ -151,26 +160,40 @@ class ToncenterStreamingWatcher:
         return self._thread is threading.current_thread()
 
 
-class ToncenterStreamingSseClient:
-    """Shared SSE client for Toncenter Streaming API v2."""
+class TvmStreamingSseClient:
+    """Shared SSE client for provider account streams."""
 
     def __init__(
         self,
         *,
         base_url: str,
         api_key: str | None = None,
+        provider: str = TVM_PROVIDER_TONCENTER,
+        sse_path: str | None = None,
     ) -> None:
+        self._provider = provider.strip().lower()
+        if self._provider not in SUPPORTED_TVM_PROVIDERS:
+            raise ValueError(f"Unsupported TVM streaming provider: {self._provider}")
+        self._provider_label = "TonAPI" if self._provider == TVM_PROVIDER_TONAPI else "Toncenter"
         self._base_url = base_url.rstrip("/")
+        self._sse_path = sse_path or (
+            _TONAPI_STREAMING_SSE_PATH
+            if self._provider == TVM_PROVIDER_TONAPI
+            else _TONCENTER_STREAMING_SSE_PATH
+        )
         self._headers = {
             "Accept": "text/event-stream",
             "Content-Type": "application/json",
         }
         if api_key:
-            self._headers["X-Api-Key"] = api_key
+            if self._provider == TVM_PROVIDER_TONAPI:
+                self._headers["Authorization"] = f"Bearer {api_key}"
+            else:
+                self._headers["X-Api-Key"] = api_key
 
         self._lock = threading.Lock()
         self._stream_resources = _StreamResources(lock=threading.Lock())
-        self._watcher: ToncenterStreamingWatcher | None = None
+        self._watcher: TvmStreamingWatcher | None = None
         self._watched_address: str | None = None
         self._pending_trace_waiters: dict[str, list[queue.Queue[dict[str, Any] | Exception]]] = {}
         self._recent_trace_results: dict[str, _RecentTraceResult] = {}
@@ -189,7 +212,7 @@ class ToncenterStreamingSseClient:
         if watcher is not None:
             watcher.close()
 
-        error = RuntimeError("Toncenter facilitator account stream closed")
+        error = RuntimeError(f"{self._provider_label} facilitator account stream closed")
         for waiters in pending_waiters.values():
             self._notify_waiters(waiters, error)
 
@@ -198,7 +221,7 @@ class ToncenterStreamingSseClient:
         *,
         address: str,
         on_invalidate: Callable[[], None],
-    ) -> ToncenterStreamingWatcher:
+    ) -> TvmStreamingWatcher:
         """Start one shared stream on the facilitator address."""
         normalized_address = normalize_address(address)
         with self._lock:
@@ -207,9 +230,7 @@ class ToncenterStreamingSseClient:
                 self._watched_address = None
             if self._watcher is not None:
                 if self._watched_address != normalized_address:
-                    raise RuntimeError(
-                        "ToncenterStreamingSseClient already watches a different address"
-                    )
+                    raise RuntimeError("TvmStreamingSseClient already watches a different address")
                 return self._watcher
 
             stop_event = threading.Event()
@@ -217,10 +238,10 @@ class ToncenterStreamingSseClient:
             thread = threading.Thread(
                 target=self._run_account_stream,
                 args=(stop_event, normalized_address, on_invalidate, startup_state),
-                name="toncenter-account-stream",
+                name=f"{self._provider}-account-stream",
                 daemon=True,
             )
-            watcher = ToncenterStreamingWatcher(
+            watcher = TvmStreamingWatcher(
                 thread,
                 stop_event,
                 close_stream=self._stream_resources.close,
@@ -235,7 +256,9 @@ class ToncenterStreamingSseClient:
                 if self._watcher is watcher:
                     self._watcher = None
                     self._watched_address = None
-            raise RuntimeError("Toncenter facilitator account stream did not become ready in time")
+            raise RuntimeError(
+                f"{self._provider_label} facilitator account stream did not become ready in time"
+            )
         if startup_state.error is not None:
             watcher.close()
             with self._lock:
@@ -243,7 +266,7 @@ class ToncenterStreamingSseClient:
                     self._watcher = None
                     self._watched_address = None
             raise RuntimeError(
-                "Toncenter facilitator account stream failed to start"
+                f"{self._provider_label} facilitator account stream failed to start"
             ) from startup_state.error
         return watcher
 
@@ -256,24 +279,32 @@ class ToncenterStreamingSseClient:
         """Block until the shared account stream observes the finalized trace."""
         trace_waiter: queue.Queue[dict[str, Any] | Exception] | None = None
         recent_result: _RecentTraceResult | None = None
+        trace_hash_aliases = _trace_hash_aliases(trace_external_hash_norm)
 
         with self._lock:
             self._prune_recent_trace_results_locked()
             if self._watcher is None:
-                raise RuntimeError("Toncenter facilitator account stream has not been started")
-            recent_result = self._recent_trace_results.get(trace_external_hash_norm)
+                raise RuntimeError(
+                    f"{self._provider_label} facilitator account stream has not been started"
+                )
+            for trace_hash_alias in trace_hash_aliases:
+                recent_result = self._recent_trace_results.get(trace_hash_alias)
+                if recent_result is not None:
+                    break
             if recent_result is None:
                 trace_waiter = queue.Queue(maxsize=1)
-                self._pending_trace_waiters.setdefault(trace_external_hash_norm, []).append(
-                    trace_waiter
-                )
+                for trace_hash_alias in trace_hash_aliases:
+                    self._pending_trace_waiters.setdefault(trace_hash_alias, []).append(
+                        trace_waiter
+                    )
 
         if recent_result is not None:
             if recent_result.error is not None:
                 raise recent_result.error
             if recent_result.payload is None:
                 raise RuntimeError(
-                    f"Toncenter did not cache finalized trace payload for {trace_external_hash_norm}"
+                    f"{self._provider_label} did not cache finalized trace payload for "
+                    f"{trace_external_hash_norm}"
                 )
             return recent_result.payload
 
@@ -359,7 +390,7 @@ class ToncenterStreamingSseClient:
         response: httpx.Response | None = None
         try:
             with client:
-                with client.stream("POST", "/api/streaming/v2/sse", json=subscription) as response:
+                with client.stream("POST", self._sse_path, json=subscription) as response:
                     response.raise_for_status()
                     if resources is not None:
                         resources.attach(client, response)
@@ -373,7 +404,7 @@ class ToncenterStreamingSseClient:
 
             if stop_event.is_set():
                 return
-            raise RuntimeError("Toncenter SSE stream terminated unexpectedly")
+            raise RuntimeError(f"{self._provider_label} SSE stream terminated unexpectedly")
         finally:
             if resources is not None:
                 resources.detach(client, response)
@@ -410,18 +441,21 @@ class ToncenterStreamingSseClient:
     ) -> None:
         with self._lock:
             self._prune_recent_trace_results_locked()
-            self._recent_trace_results[trace_external_hash_norm] = _RecentTraceResult(
-                completed_at=time.monotonic(),
-                payload=payload,
-                error=error,
+            recent_result = _RecentTraceResult(
+                completed_at=time.monotonic(), payload=payload, error=error
             )
-            waiters = self._pending_trace_waiters.pop(trace_external_hash_norm, [])
+            waiters_by_id: dict[int, queue.Queue[dict[str, Any] | Exception]] = {}
+            for trace_hash_alias in _trace_hash_aliases(trace_external_hash_norm):
+                self._recent_trace_results[trace_hash_alias] = recent_result
+                for waiter in self._pending_trace_waiters.pop(trace_hash_alias, []):
+                    waiters_by_id[id(waiter)] = waiter
+            waiters = list(waiters_by_id.values())
 
         self._notify_waiters(waiters, error if error is not None else payload)
 
     def _fail_pending_waiters(self, exc: Exception) -> None:
         error = RuntimeError(
-            f"Toncenter facilitator account stream failed before confirmation: {exc}"
+            f"{self._provider_label} facilitator account stream failed before confirmation: {exc}"
         )
         with self._lock:
             pending_trace_waiters = self._pending_trace_waiters
@@ -436,14 +470,15 @@ class ToncenterStreamingSseClient:
         trace_waiter: queue.Queue[dict[str, Any] | Exception],
     ) -> None:
         with self._lock:
-            waiters = self._pending_trace_waiters.get(trace_external_hash_norm)
-            if waiters is None:
-                return
-            self._pending_trace_waiters[trace_external_hash_norm] = [
-                waiter for waiter in waiters if waiter is not trace_waiter
-            ]
-            if not self._pending_trace_waiters[trace_external_hash_norm]:
-                self._pending_trace_waiters.pop(trace_external_hash_norm, None)
+            for trace_hash_alias in _trace_hash_aliases(trace_external_hash_norm):
+                waiters = self._pending_trace_waiters.get(trace_hash_alias)
+                if waiters is None:
+                    continue
+                self._pending_trace_waiters[trace_hash_alias] = [
+                    waiter for waiter in waiters if waiter is not trace_waiter
+                ]
+                if not self._pending_trace_waiters[trace_hash_alias]:
+                    self._pending_trace_waiters.pop(trace_hash_alias, None)
 
     def _prune_recent_trace_results_locked(self) -> None:
         cutoff = time.monotonic() - DEFAULT_RECENT_TRACE_RESULT_TTL_SECONDS
@@ -482,3 +517,43 @@ class ToncenterStreamingSseClient:
         if event.get("finality") != "finalized":
             return None
         return trace_external_hash_norm, event, None
+
+
+def _trace_hash_aliases(trace_hash: str) -> list[str]:
+    aliases = [trace_hash]
+    normalized = trace_hash.strip()
+
+    raw_hash: bytes | None = None
+    if len(normalized) == 64:
+        try:
+            raw_hash = bytes.fromhex(normalized)
+        except ValueError:
+            raw_hash = None
+    if raw_hash is None:
+        padded = normalized + "=" * (-len(normalized) % 4)
+        for decoder in (base64.b64decode, base64.urlsafe_b64decode):
+            try:
+                candidate = decoder(padded)
+            except (ValueError, binascii.Error):
+                continue
+            if len(candidate) == 32:
+                raw_hash = candidate
+                break
+
+    if raw_hash is not None:
+        aliases.extend(
+            [
+                raw_hash.hex(),
+                base64.b64encode(raw_hash).decode("ascii"),
+                base64.urlsafe_b64encode(raw_hash).decode("ascii").rstrip("="),
+            ]
+        )
+
+    deduped: list[str] = []
+    seen: set[str] = set()
+    for alias in aliases:
+        if alias in seen:
+            continue
+        seen.add(alias)
+        deduped.append(alias)
+    return deduped

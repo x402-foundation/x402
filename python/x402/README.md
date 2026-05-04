@@ -60,7 +60,12 @@ payload = client.create_payment_payload(payment_required)
 import os
 
 from x402 import x402Client
-from x402.mechanisms.tvm import TVM_TESTNET, WalletV5R1Config, WalletV5R1MnemonicSigner
+from x402.mechanisms.tvm import (
+    TVM_PROVIDER_TONAPI,
+    TVM_TESTNET,
+    WalletV5R1Config,
+    WalletV5R1MnemonicSigner,
+)
 from x402.mechanisms.tvm.exact import ExactTvmScheme
 
 tvm_config = WalletV5R1Config.from_private_key(
@@ -68,6 +73,10 @@ tvm_config = WalletV5R1Config.from_private_key(
     os.environ["TVM_PRIVATE_KEY"],
 )
 tvm_config.api_key = os.environ.get("TONCENTER_API_KEY")
+# Optional: use TonAPI instead of Toncenter.
+# tvm_config.provider = TVM_PROVIDER_TONAPI
+# tvm_config.api_key = os.environ.get("TONAPI_API_KEY")
+# tvm_config.provider_base_url = os.environ.get("TONAPI_BASE_URL")
 
 client = x402Client()
 client.register(TVM_TESTNET, ExactTvmScheme(WalletV5R1MnemonicSigner(tvm_config)))

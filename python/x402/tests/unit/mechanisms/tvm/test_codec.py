@@ -11,6 +11,7 @@ pytest.importorskip("pytoniq_core")
 from pytoniq.contract.contract import Contract
 from pytoniq_core import Address, Cell, begin_cell
 
+from x402.mechanisms.tvm.codecs.w5 import serialize_out_list, serialize_send_msg_action
 from x402.mechanisms.tvm.constants import (
     ERR_EXACT_TVM_INVALID_SETTLEMENT_BOC,
     ERR_EXACT_TVM_INVALID_W5_ACTIONS,
@@ -21,7 +22,6 @@ from x402.mechanisms.tvm.constants import (
     W5_INTERNAL_SIGNED_OPCODE,
 )
 from x402.mechanisms.tvm.exact.codec import parse_exact_tvm_payload
-from x402.mechanisms.tvm.codecs.w5 import serialize_out_list, serialize_send_msg_action
 
 PAYER = "0:" + "1" * 64
 SOURCE_WALLET = "0:" + "2" * 64

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 import queue
 import threading
 import time
@@ -11,14 +12,17 @@ import pytest
 
 pytest.importorskip("pytoniq_core")
 
+import x402.mechanisms.tvm as tvm_module
 import x402.mechanisms.tvm.streaming as streaming_module
+from x402.mechanisms.tvm import TVM_PROVIDER_TONAPI
 from x402.mechanisms.tvm.streaming import (
-    ToncenterStreamingWatcher,
-    ToncenterStreamingSseClient,
+    TvmStreamingSseClient,
+    TvmStreamingWatcher,
     _account_stream_subscription,
     _iter_sse_json_events,
     _iter_sse_payloads,
 )
+
 from .helpers import start_captured_thread
 
 TRACE_HASH = "trace-hash-1"
@@ -48,7 +52,7 @@ def _finalized_trace_event(trace_hash: str = TRACE_HASH) -> dict[str, object]:
 
 
 def _start_trace_waiter(
-    client: ToncenterStreamingSseClient,
+    client: TvmStreamingSseClient,
     *,
     trace_hash: str = TRACE_HASH,
     timeout_seconds: float = 1.0,
@@ -109,7 +113,7 @@ def test_iter_sse_json_events_ignores_trailing_partial_event_without_blank_line(
 
 
 def test_streaming_watcher_reports_whether_the_caller_is_the_watcher_thread():
-    watcher = ToncenterStreamingWatcher(
+    watcher = TvmStreamingWatcher(
         threading.current_thread(),
         threading.Event(),
         close_stream=lambda: None,
@@ -127,10 +131,57 @@ def test_streaming_watcher_reports_whether_the_caller_is_the_watcher_thread():
     assert result_holder["is_current_thread"] is False
 
 
+def test_tonapi_streaming_client_uses_compatible_sse_route_and_bearer_auth():
+    client = TvmStreamingSseClient(
+        base_url="https://tonapi.io",
+        api_key="tonapi-key",
+        provider=" TonAPI ",
+    )
+
+    assert client._sse_path == "/streaming/v2/sse"
+    assert client._headers["Authorization"] == "Bearer tonapi-key"
+
+
+def test_streaming_sse_routes_are_internal_provider_details():
+    tvm_client = TvmStreamingSseClient(base_url="https://toncenter.example")
+    tonapi_client = TvmStreamingSseClient(
+        base_url="https://tonapi.io",
+        provider=TVM_PROVIDER_TONAPI,
+    )
+
+    assert tvm_client._sse_path == "/api/streaming/v2/sse"
+    assert tonapi_client._sse_path == "/streaming/v2/sse"
+    assert not hasattr(tvm_module, "TONAPI_STREAMING_SSE_PATH")
+    assert not hasattr(tvm_module, "TONCENTER_STREAMING_SSE_PATH")
+
+
+def test_trace_confirmation_should_match_hex_and_base64_hash_aliases():
+    client = TvmStreamingSseClient(base_url="https://tonapi.io", provider=TVM_PROVIDER_TONAPI)
+    client._watcher = object()  # type: ignore[assignment]
+    raw_hash = b"\x11" * 32
+    trace_hash_hex = raw_hash.hex()
+    trace_hash_base64 = base64.b64encode(raw_hash).decode("ascii")
+    payload = {
+        "type": "transactions",
+        "finality": "finalized",
+        "trace_external_hash_norm": trace_hash_base64,
+    }
+
+    client._publish_trace_result(trace_hash_base64, payload, None)
+
+    assert (
+        client.wait_for_trace_confirmation(
+            trace_external_hash_norm=trace_hash_hex,
+            timeout_seconds=0.01,
+        )
+        == payload
+    )
+
+
 def test_wait_for_trace_confirmation_returns_finalized_trace_payload_from_transactions_event(
     monkeypatch,
 ):
-    client = ToncenterStreamingSseClient(base_url="https://toncenter.example")
+    client = TvmStreamingSseClient(base_url="https://toncenter.example")
     client._watcher = object()  # type: ignore[assignment]
 
     waiter = start_captured_thread(
@@ -151,7 +202,7 @@ def test_wait_for_trace_confirmation_returns_finalized_trace_payload_from_transa
 
 
 def test_start_account_state_watcher_retries_after_failed_start(monkeypatch):
-    client = ToncenterStreamingSseClient(base_url="https://toncenter.example")
+    client = TvmStreamingSseClient(base_url="https://toncenter.example")
     state = {"calls": 0}
 
     def fake_consume_stream(*, subscription, stop_event, on_event, resources=None):
@@ -183,7 +234,7 @@ def test_start_account_state_watcher_retries_after_failed_start(monkeypatch):
 
 
 def test_wait_for_trace_confirmation_survives_stream_reconnect(monkeypatch):
-    client = ToncenterStreamingSseClient(base_url="https://toncenter.example")
+    client = TvmStreamingSseClient(base_url="https://toncenter.example")
     state = {"calls": 0}
     monkeypatch.setattr(streaming_module, "DEFAULT_STREAMING_RECONNECT_BACKOFF_SECONDS", 0.01)
     monkeypatch.setattr(
@@ -219,7 +270,7 @@ def test_wait_for_trace_confirmation_survives_stream_reconnect(monkeypatch):
 
 
 def test_wait_for_trace_confirmation_fails_after_max_consecutive_stream_failures(monkeypatch):
-    client = ToncenterStreamingSseClient(base_url="https://toncenter.example")
+    client = TvmStreamingSseClient(base_url="https://toncenter.example")
     state = {"calls": 0, "invalidations": 0}
     release_first_failure = threading.Event()
 
@@ -261,7 +312,7 @@ def test_wait_for_trace_confirmation_fails_after_max_consecutive_stream_failures
 
 
 def test_close_stops_watcher_and_fails_pending_waiters():
-    client = ToncenterStreamingSseClient(base_url="https://toncenter.example")
+    client = TvmStreamingSseClient(base_url="https://toncenter.example")
     waiter: queue.Queue[dict[str, object] | Exception] = queue.Queue(maxsize=1)
     close_calls: list[str] = []
 

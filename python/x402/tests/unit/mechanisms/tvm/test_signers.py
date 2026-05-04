@@ -9,7 +9,12 @@ import pytest
 
 pytest.importorskip("pytoniq_core")
 
-from x402.mechanisms.tvm import TVM_MAINNET, TVM_TESTNET
+from x402.mechanisms.tvm import (
+    TVM_MAINNET,
+    TVM_PROVIDER_TONAPI,
+    TVM_TESTNET,
+    TonapiRestClient,
+)
 from x402.mechanisms.tvm.constants import (
     DEFAULT_STREAMING_CONFIRMATION_GRACE_SECONDS,
     DEFAULT_TONCENTER_EMULATION_TIMEOUT_SECONDS,
@@ -21,6 +26,7 @@ from x402.mechanisms.tvm.signers import (
     WalletV5R1MnemonicSigner,
 )
 from x402.mechanisms.tvm.types import TvmAccountState
+
 from .builders import TEST_MNEMONIC, derive_test_secret_key
 from .helpers import start_captured_thread
 
@@ -70,10 +76,14 @@ class TestWalletV5R1Config:
 class TestWalletV5R1MnemonicSigner:
     def test_should_expose_network_wallet_id_state_init_and_address(self):
         config = WalletV5R1Config.from_mnemonic(TVM_TESTNET, TEST_MNEMONIC)
+        config.provider = TVM_PROVIDER_TONAPI
+        config.provider_base_url = "https://tonapi.local"
 
         signer = WalletV5R1MnemonicSigner(config)
 
         assert signer.network == TVM_TESTNET
+        assert signer.provider == TVM_PROVIDER_TONAPI
+        assert signer.provider_base_url == "https://tonapi.local"
         assert signer.wallet_id > 0
         assert signer.state_init is not None
         assert signer.address.startswith("0:")
@@ -250,7 +260,7 @@ class TestFacilitatorHighloadV3Signer:
             {
                 TVM_TESTNET: HighloadV3Config(
                     secret_key=secret_key,
-                    toncenter_emulation_timeout_seconds=17.5,
+                    provider_emulation_timeout_seconds=17.5,
                 )
             }
         )
@@ -272,9 +282,32 @@ class TestFacilitatorHighloadV3Signer:
     def test_wallet_config_defaults_emulation_timeout(self):
         config = WalletV5R1Config.from_mnemonic(TVM_TESTNET, TEST_MNEMONIC)
 
-        assert config.toncenter_emulation_timeout_seconds == (
+        assert config.provider_emulation_timeout_seconds == (
             DEFAULT_TONCENTER_EMULATION_TIMEOUT_SECONDS
         )
+
+    def test_client_and_streaming_client_should_use_tonapi_provider(self):
+        secret_key = derive_test_secret_key()
+        signer = FacilitatorHighloadV3Signer(
+            {
+                TVM_TESTNET: HighloadV3Config(
+                    secret_key=secret_key,
+                    provider=" TonAPI ",
+                    provider_base_url="https://tonapi.local",
+                )
+            }
+        )
+
+        try:
+            provider_client = signer._client(TVM_TESTNET)
+            streaming_client = signer._streaming_client(TVM_TESTNET)
+
+            assert isinstance(provider_client, TonapiRestClient)
+            assert str(provider_client._client.base_url).rstrip("/") == "https://tonapi.local"
+            assert streaming_client._base_url == "https://tonapi.local"
+            assert streaming_client._sse_path == "/streaming/v2/sse"
+        finally:
+            signer.close()
 
     def test_select_query_id_fetches_account_state_outside_lock(self, monkeypatch):
         secret_key = derive_test_secret_key()

@@ -5,12 +5,16 @@ These tests perform REAL blockchain transactions on TON testnet using sync class
 Required environment variables:
 - TVM_CLIENT_PRIVATE_KEY: TON private key used for the payer W5 wallet
 - TVM_FACILITATOR_PRIVATE_KEY: TON private key used for the facilitator highload wallet
-- TONCENTER_API_KEY: Toncenter API key for TON
+- TONCENTER_API_KEY: Toncenter API key for TON when TVM_PROVIDER is toncenter
+- TONAPI_API_KEY: TonAPI API key when TVM_PROVIDER is tonapi
 
 For backward compatibility, if the split variables are not set the tests fall back to
 `TVM_PRIVATE_KEY` for both roles.
 
 Optional environment variables:
+- TVM_PROVIDER: TVM RPC provider, "toncenter" by default; set to "tonapi" for TonAPI
+- TONCENTER_BASE_URL: custom Toncenter base URL
+- TONAPI_BASE_URL: custom TonAPI base URL
 - TVM_SECOND_CLIENT_PRIVATE_KEY: second funded W5 client used by the live batch-settlement test
 
 These must correspond to funded testnet wallets with TON and USDT.
@@ -30,20 +34,26 @@ pytest.importorskip("pytoniq_core")
 from x402 import x402ClientSync, x402FacilitatorSync, x402ResourceServerSync
 from x402.mechanisms.tvm import (
     SCHEME_EXACT,
+    TVM_PROVIDER_TONAPI,
+    TVM_PROVIDER_TONCENTER,
     TVM_TESTNET,
     USDT_TESTNET_MINTER,
     ExactTvmPayload,
     FacilitatorHighloadV3Signer,
     HighloadV3Config,
-    ToncenterRestClient,
     WalletV5R1Config,
     WalletV5R1MnemonicSigner,
+    create_tvm_provider_client,
     parse_exact_tvm_payload,
 )
 from x402.mechanisms.tvm.constants import (
     ERR_EXACT_TVM_DUPLICATE_SETTLEMENT as ERR_DUPLICATE_SETTLEMENT,
+)
+from x402.mechanisms.tvm.constants import (
     ERR_EXACT_TVM_INVALID_AMOUNT,
     ERR_EXACT_TVM_INVALID_RECIPIENT,
+)
+from x402.mechanisms.tvm.constants import (
     ERR_EXACT_TVM_INVALID_SEQNO as ERR_INVALID_SEQNO,
 )
 from x402.mechanisms.tvm.exact import (
@@ -51,6 +61,7 @@ from x402.mechanisms.tvm.exact import (
     ExactTvmFacilitatorScheme,
     ExactTvmServerScheme,
 )
+from x402.mechanisms.tvm.provider import TvmProviderClient
 from x402.schemas import (
     PaymentPayload,
     PaymentRequirements,
@@ -67,16 +78,27 @@ TVM_SECOND_CLIENT_PRIVATE_KEY = os.environ.get("TVM_SECOND_CLIENT_PRIVATE_KEY")
 TVM_FACILITATOR_PRIVATE_KEY = os.environ.get("TVM_FACILITATOR_PRIVATE_KEY", TVM_PRIVATE_KEY)
 TONCENTER_API_KEY = os.environ.get("TONCENTER_API_KEY")
 TONCENTER_BASE_URL = os.environ.get("TONCENTER_BASE_URL")
+TONAPI_API_KEY = os.environ.get("TONAPI_API_KEY")
+TONAPI_BASE_URL = os.environ.get("TONAPI_BASE_URL")
+TVM_PROVIDER = os.environ.get("TVM_PROVIDER", TVM_PROVIDER_TONCENTER).lower()
+TVM_PROVIDER_API_KEY = TONAPI_API_KEY if TVM_PROVIDER == TVM_PROVIDER_TONAPI else TONCENTER_API_KEY
+TVM_PROVIDER_BASE_URL = (
+    TONAPI_BASE_URL if TVM_PROVIDER == TVM_PROVIDER_TONAPI else TONCENTER_BASE_URL
+)
 
 TEST_PAYMENT_AMOUNT = "1000"  # 0.001 USDT with 6 decimals
 MIN_FACILITATOR_TON_BALANCE = 1_000_000_000
 MIN_CLIENT_USDT_BALANCE = int(TEST_PAYMENT_AMOUNT)
 
 pytestmark = pytest.mark.skipif(
-    not TVM_CLIENT_PRIVATE_KEY or not TVM_FACILITATOR_PRIVATE_KEY or not TONCENTER_API_KEY,
+    not TVM_CLIENT_PRIVATE_KEY
+    or not TVM_FACILITATOR_PRIVATE_KEY
+    or not TVM_PROVIDER_API_KEY
+    or TVM_PROVIDER not in {TVM_PROVIDER_TONCENTER, TVM_PROVIDER_TONAPI},
     reason=(
         "TVM_CLIENT_PRIVATE_KEY (or TVM_PRIVATE_KEY), TVM_FACILITATOR_PRIVATE_KEY "
-        "(or TVM_PRIVATE_KEY), and TONCENTER_API_KEY are required for TVM integration tests"
+        "(or TVM_PRIVATE_KEY), a supported TVM_PROVIDER, and the provider API key "
+        "(TONCENTER_API_KEY or TONAPI_API_KEY) are required for TVM integration tests"
     ),
 )
 
@@ -131,13 +153,13 @@ def build_tvm_payment_requirements(
 
 
 def _wait_for_jetton_balance_at_least(
-    provider: ToncenterRestClient,
+    provider: TvmProviderClient,
     jetton_wallet: str,
     expected_balance: int,
     *,
     timeout_seconds: float = 20.0,
 ) -> int:
-    """Wait until Toncenter reflects a target jetton balance."""
+    """Wait until the configured provider reflects a target jetton balance."""
     deadline = time.monotonic() + timeout_seconds
     last_balance = 0
     last_error: Exception | None = None
@@ -160,24 +182,35 @@ def _wait_for_jetton_balance_at_least(
     )
 
 
+def _configure_client_provider(config: WalletV5R1Config) -> None:
+    config.provider = TVM_PROVIDER
+    config.api_key = TVM_PROVIDER_API_KEY
+    config.provider_base_url = TVM_PROVIDER_BASE_URL
+
+
+def _configure_facilitator_provider(config: HighloadV3Config) -> None:
+    config.provider = TVM_PROVIDER
+    config.api_key = TVM_PROVIDER_API_KEY
+    config.provider_base_url = TVM_PROVIDER_BASE_URL
+
+
 class TestTvmIntegrationV2:
     """Integration tests for TVM V2 payment flow with REAL blockchain transactions."""
 
     def setup_method(self) -> None:
         client_config = WalletV5R1Config.from_private_key(TVM_TESTNET, TVM_CLIENT_PRIVATE_KEY)
-        client_config.api_key = TONCENTER_API_KEY
-        client_config.base_url = TONCENTER_BASE_URL
+        _configure_client_provider(client_config)
         self.client_signer = WalletV5R1MnemonicSigner(client_config)
 
         facilitator_config = HighloadV3Config.from_private_key(TVM_FACILITATOR_PRIVATE_KEY)
-        facilitator_config.api_key = TONCENTER_API_KEY
-        facilitator_config.toncenter_base_url = TONCENTER_BASE_URL
+        _configure_facilitator_provider(facilitator_config)
         self.facilitator_signer = FacilitatorHighloadV3Signer({TVM_TESTNET: facilitator_config})
 
-        self.provider = ToncenterRestClient(
+        self.provider = create_tvm_provider_client(
             TVM_TESTNET,
-            api_key=TONCENTER_API_KEY,
-            base_url=TONCENTER_BASE_URL,
+            provider=TVM_PROVIDER,
+            api_key=TVM_PROVIDER_API_KEY,
+            base_url=TVM_PROVIDER_BASE_URL,
         )
 
         self.client_address = self.client_signer.address
@@ -316,8 +349,7 @@ class TestTvmIntegrationV2:
             TVM_TESTNET,
             TVM_SECOND_CLIENT_PRIVATE_KEY,
         )
-        second_client_config.api_key = TONCENTER_API_KEY
-        second_client_config.base_url = TONCENTER_BASE_URL
+        _configure_client_provider(second_client_config)
         second_client_signer = WalletV5R1MnemonicSigner(second_client_config)
         second_client = x402ClientSync().register(
             TVM_TESTNET,
@@ -574,8 +606,7 @@ class TestTvmPriceParsing:
 
     def setup_method(self) -> None:
         facilitator_config = HighloadV3Config.from_private_key(TVM_FACILITATOR_PRIVATE_KEY)
-        facilitator_config.api_key = TONCENTER_API_KEY
-        facilitator_config.toncenter_base_url = TONCENTER_BASE_URL
+        _configure_facilitator_provider(facilitator_config)
         self.facilitator_signer = FacilitatorHighloadV3Signer({TVM_TESTNET: facilitator_config})
         self.facilitator_address = self.facilitator_signer.get_addresses()[0]
 

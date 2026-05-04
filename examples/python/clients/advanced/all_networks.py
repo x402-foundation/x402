@@ -22,8 +22,9 @@ from x402.mechanisms.evm.exact.register import register_exact_evm_client
 from x402.mechanisms.svm import KeypairSigner
 from x402.mechanisms.svm.exact.register import register_exact_svm_client
 from x402.mechanisms.tvm import (
-    TVM_TESTNET,
     TVM_MAINNET,
+    TVM_PROVIDER_TONAPI,
+    TVM_TESTNET,
     WalletV5R1Config,
     WalletV5R1MnemonicSigner,
 )
@@ -101,8 +102,18 @@ async def main() -> None:
             sys.exit(1)
 
         tvm_config = WalletV5R1Config.from_private_key(tvm_network, tvm_private_key)
-        tvm_config.api_key = os.getenv("TONCENTER_API_KEY")
-        tvm_config.base_url = os.getenv("TONCENTER_BASE_URL")
+        tvm_provider = (os.getenv("TVM_PROVIDER") or "").strip().lower()
+        tvm_config.provider = tvm_provider or tvm_config.provider
+        tvm_config.api_key = (
+            os.getenv("TONAPI_API_KEY")
+            if tvm_provider == TVM_PROVIDER_TONAPI
+            else os.getenv("TONCENTER_API_KEY")
+        )
+        tvm_config.provider_base_url = (
+            os.getenv("TONAPI_BASE_URL")
+            if tvm_provider == TVM_PROVIDER_TONAPI
+            else os.getenv("TONCENTER_BASE_URL")
+        )
         tvm_signer = WalletV5R1MnemonicSigner(tvm_config)
         client.register(tvm_network, ExactTvmClientScheme(tvm_signer))
         print(f"Initialized TVM account: {tvm_signer.address}")

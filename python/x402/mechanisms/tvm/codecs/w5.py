@@ -7,11 +7,11 @@ from collections.abc import Callable
 from pytoniq_core import TransactionError
 
 from ..constants import (
+    ALLOWED_CLIENT_CODES,
     ERR_EXACT_TVM_INVALID_W5_ACTIONS,
     ERR_EXACT_TVM_INVALID_W5_MESSAGE,
     SEND_MODE_IGNORE_ERRORS,
     SEND_MODE_PAY_FEES_SEPARATELY,
-    ALLOWED_CLIENT_CODES,
     W5R1_CODE_HEX,
 )
 from ..types import TvmAccountState, W5InitData

@@ -52,11 +52,11 @@ class FacilitatorTvmSigner(Protocol):
         ...
 
     def emulate_external_message(self, network: str, external_boc: bytes) -> dict[str, object]:
-        """Emulate a prepared external message through Toncenter."""
+        """Emulate a prepared external message through the configured TVM provider."""
         ...
 
     def send_external_message(self, network: str, external_boc: bytes) -> str:
-        """Broadcast a prepared external message through Toncenter."""
+        """Broadcast a prepared external message through the configured TVM provider."""
         ...
 
     def wait_for_trace_confirmation(

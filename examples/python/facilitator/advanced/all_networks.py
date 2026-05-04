@@ -20,7 +20,12 @@ from x402.mechanisms.evm import FacilitatorWeb3Signer
 from x402.mechanisms.evm.exact.facilitator import ExactEvmScheme, ExactEvmSchemeConfig
 from x402.mechanisms.svm import FacilitatorKeypairSigner
 from x402.mechanisms.svm.exact.facilitator import ExactSvmScheme
-from x402.mechanisms.tvm import TVM_TESTNET, FacilitatorHighloadV3Signer, HighloadV3Config
+from x402.mechanisms.tvm import (
+    TVM_PROVIDER_TONAPI,
+    TVM_TESTNET,
+    FacilitatorHighloadV3Signer,
+    HighloadV3Config,
+)
 from x402.mechanisms.tvm.exact.facilitator import ExactTvmScheme
 
 # Load environment variables
@@ -63,8 +68,18 @@ if svm_private_key:
 
 if tvm_private_key:
     tvm_config = HighloadV3Config.from_private_key(tvm_private_key)
-    tvm_config.api_key = os.environ.get("TONCENTER_API_KEY")
-    tvm_config.toncenter_base_url = os.environ.get("TONCENTER_BASE_URL")
+    tvm_provider = (os.environ.get("TVM_PROVIDER") or "").strip().lower()
+    tvm_config.provider = tvm_provider or tvm_config.provider
+    tvm_config.api_key = (
+        os.environ.get("TONAPI_API_KEY")
+        if tvm_provider == TVM_PROVIDER_TONAPI
+        else os.environ.get("TONCENTER_API_KEY")
+    )
+    tvm_config.provider_base_url = (
+        os.environ.get("TONAPI_BASE_URL")
+        if tvm_provider == TVM_PROVIDER_TONAPI
+        else os.environ.get("TONCENTER_BASE_URL")
+    )
     tvm_signer = FacilitatorHighloadV3Signer({TVM_NETWORK: tvm_config})
     print(f"TVM Facilitator account: {tvm_signer.get_addresses()[0]}")
 

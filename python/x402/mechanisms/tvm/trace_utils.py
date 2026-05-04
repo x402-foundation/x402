@@ -37,8 +37,15 @@ def body_hash_to_base64(raw_hash: bytes) -> str:
 
 
 def trace_transaction_hash_to_hex(encoded_hash: str) -> str:
-    """Convert a Toncenter transaction hash from base64 to lowercase hex."""
-    return base64.b64decode(encoded_hash).hex()
+    """Convert a provider transaction hash to lowercase hex."""
+    normalized = encoded_hash.strip()
+    if len(normalized) == 64:
+        try:
+            bytes.fromhex(normalized)
+            return normalized.lower()
+        except ValueError:
+            pass
+    return base64.b64decode(normalized).hex()
 
 
 def message_body_hash_matches(message: dict[str, object], expected_hash: bytes) -> bool:

@@ -4,31 +4,49 @@ from __future__ import annotations
 
 import base64
 import json
+import logging
 
 import httpx
 import pytest
 
 pytest.importorskip("pytoniq_core")
 
+from pytoniq.contract.contract import Contract
 from pytoniq_core import Address, begin_cell
 
 import x402.mechanisms.tvm.provider as provider_module
 from x402.mechanisms.tvm import (
     DEFAULT_TONCENTER_EMULATION_TIMEOUT_SECONDS,
+    TONAPI_MAINNET_BASE_URL,
+    TONAPI_TESTNET_BASE_URL,
     TVM_MAINNET,
+    TVM_PROVIDER_TONAPI,
     TVM_TESTNET,
 )
-from x402.mechanisms.tvm.provider import ToncenterRestClient, _default_base_url
+from x402.mechanisms.tvm.provider import (
+    TonapiRestClient,
+    ToncenterRestClient,
+    _default_base_url,
+    create_tvm_provider_client,
+)
 
 
 def _cell_b64(value: int) -> str:
     return base64.b64encode(begin_cell().store_uint(value, 8).end_cell().to_boc()).decode("ascii")
 
 
+def _cell_hex(value: int) -> str:
+    return begin_cell().store_uint(value, 8).end_cell().to_boc().hex()
+
+
 def _address_cell_b64(address: str) -> str:
     return base64.b64encode(
         begin_cell().store_address(Address(address)).end_cell().to_boc()
     ).decode("ascii")
+
+
+def _address_cell_hex(address: str) -> str:
+    return begin_cell().store_address(Address(address)).end_cell().to_boc().hex()
 
 
 class _FakeHttpClient:
@@ -54,7 +72,6 @@ def _json_response(
     *,
     path: str = "/api/test",
     headers: dict[str, str] | None = None,
-    text: str = "",
 ):
     request = httpx.Request("GET", f"https://toncenter.example{path}")
     return httpx.Response(
@@ -69,10 +86,35 @@ class TestDefaultBaseUrl:
     def test_should_select_default_base_url_for_supported_networks(self):
         assert _default_base_url(TVM_MAINNET) == "https://toncenter.com"
         assert _default_base_url(TVM_TESTNET) == "https://testnet.toncenter.com"
+        assert _default_base_url(TVM_MAINNET, TVM_PROVIDER_TONAPI) == TONAPI_MAINNET_BASE_URL
+        assert _default_base_url(TVM_TESTNET, TVM_PROVIDER_TONAPI) == TONAPI_TESTNET_BASE_URL
+        assert _default_base_url(TVM_TESTNET, " TonAPI ") == TONAPI_TESTNET_BASE_URL
 
     def test_should_reject_unsupported_network(self):
         with pytest.raises(ValueError, match="Unsupported TVM network"):
             _default_base_url("tvm:123")
+
+    def test_should_reject_unsupported_provider(self):
+        with pytest.raises(ValueError, match="Unsupported TVM provider"):
+            _default_base_url(TVM_TESTNET, "unknown")
+
+
+class TestProviderFactory:
+    def test_should_create_toncenter_client_by_default(self):
+        client = create_tvm_provider_client(TVM_TESTNET)
+
+        try:
+            assert isinstance(client, ToncenterRestClient)
+        finally:
+            client.close()
+
+    def test_should_create_tonapi_client_when_selected(self):
+        client = create_tvm_provider_client(TVM_TESTNET, provider=" TonAPI ")
+
+        try:
+            assert isinstance(client, TonapiRestClient)
+        finally:
+            client.close()
 
 
 class TestToncenterRestClientParsing:
@@ -248,11 +290,23 @@ class TestToncenterRestClientParsing:
 
 
 class TestToncenterRequestRetries:
+    def test_should_debug_log_successful_provider_responses(self, caplog):
+        client = ToncenterRestClient(TVM_TESTNET)
+        client._client = _FakeHttpClient([_json_response(200, {"ok": True}, path="/api/test")])
+
+        with caplog.at_level(logging.DEBUG, logger=provider_module.logger.name):
+            result = client._request("GET", "/api/test")
+
+        assert result == {"ok": True}
+        assert "Toncenter response: method=GET path=/api/test" in caplog.text
+        assert "status=200" in caplog.text
+        assert """body='{"ok": true}'""" in caplog.text
+
     def test_should_retry_retryable_http_statuses(self, monkeypatch):
         client = ToncenterRestClient(TVM_TESTNET)
         fake_client = _FakeHttpClient(
             [
-                _json_response(500, {"error": "boom"}, path="/api/test", text="boom"),
+                _json_response(500, {"error": "boom"}, path="/api/test"),
                 _json_response(200, {"ok": True}, path="/api/test"),
             ]
         )
@@ -275,7 +329,6 @@ class TestToncenterRequestRetries:
                     {"error": "busy"},
                     path="/api/test",
                     headers={"Retry-After": "1.5"},
-                    text="busy",
                 ),
                 _json_response(200, {"ok": True}, path="/api/test"),
             ]
@@ -291,9 +344,7 @@ class TestToncenterRequestRetries:
 
     def test_should_not_retry_non_retryable_http_statuses(self):
         client = ToncenterRestClient(TVM_TESTNET)
-        fake_client = _FakeHttpClient(
-            [_json_response(400, {"error": "bad"}, path="/api/test", text="bad")]
-        )
+        fake_client = _FakeHttpClient([_json_response(400, {"error": "bad"}, path="/api/test")])
         client._client = fake_client
 
         with pytest.raises(httpx.HTTPStatusError):
@@ -327,3 +378,264 @@ class TestToncenterRequestRetries:
 
         with pytest.raises(RuntimeError, match="non-object response"):
             client._request("GET", "/api/test")
+
+
+class TestTonapiRestClient:
+    def test_should_use_bearer_authentication_header(self):
+        client = TonapiRestClient(TVM_TESTNET, api_key="tonapi-key")
+
+        try:
+            assert client._client.headers["authorization"] == "Bearer tonapi-key"
+        finally:
+            client.close()
+
+    def test_get_account_state_should_decode_raw_account_state(self):
+        address = "0:" + "1" * 64
+        client = TonapiRestClient(TVM_TESTNET)
+        client._client = _FakeHttpClient(
+            [
+                _json_response(
+                    200,
+                    {
+                        "address": address,
+                        "balance": 123,
+                        "status": "active",
+                        "code": _cell_hex(1),
+                        "data": _cell_hex(2),
+                        "last_transaction_lt": 1,
+                        "storage": {},
+                    },
+                    path=f"/v2/blockchain/accounts/{address}",
+                )
+            ]
+        )
+
+        account = client.get_account_state(address)
+
+        assert account.address == address
+        assert account.balance == 123
+        assert account.is_active is True
+        assert account.state_init is not None
+
+    def test_get_account_state_should_return_uninitialized_for_404(self):
+        address = "0:" + "2" * 64
+        client = TonapiRestClient(TVM_TESTNET)
+        client._client = _FakeHttpClient(
+            [_json_response(404, {"error": "not found"}, path=f"/v2/blockchain/accounts/{address}")]
+        )
+
+        account = client.get_account_state(address)
+
+        assert account.address == address
+        assert account.is_uninitialized is True
+        assert account.balance == 0
+
+    def test_run_get_method_should_convert_arguments_and_stack_records(self):
+        asset = "0:" + "3" * 64
+        owner = "0:" + "4" * 64
+        wallet = "0:" + "5" * 64
+        client = TonapiRestClient(TVM_TESTNET)
+        client._client = _FakeHttpClient(
+            [
+                _json_response(
+                    200,
+                    {
+                        "success": True,
+                        "exit_code": 0,
+                        "stack": [
+                            {
+                                "type": "cell",
+                                "cell": _address_cell_hex(wallet),
+                            }
+                        ],
+                    },
+                    path=f"/v2/blockchain/accounts/{asset}/methods/get_wallet_address",
+                )
+            ]
+        )
+
+        resolved_wallet = client.get_jetton_wallet(asset, owner)
+
+        assert resolved_wallet == wallet
+        method, path, kwargs = client._client.calls[0]
+        assert method == "POST"
+        assert path == f"/v2/blockchain/accounts/{asset}/methods/get_wallet_address"
+        assert kwargs["json"]["args"] == [{"type": "slice", "value": owner}]
+
+    def test_get_jetton_wallet_data_should_parse_tonapi_stack(self):
+        owner = "0:" + "2" * 64
+        minter = "0:" + "3" * 64
+        address = "0:" + "4" * 64
+        client = TonapiRestClient(TVM_TESTNET)
+        client._client = _FakeHttpClient(
+            [
+                _json_response(
+                    200,
+                    {
+                        "success": True,
+                        "exit_code": 0,
+                        "stack": [
+                            {"type": "num", "num": "123"},
+                            {"type": "cell", "cell": _address_cell_hex(owner)},
+                            {"type": "cell", "cell": _address_cell_hex(minter)},
+                        ],
+                    },
+                    path=f"/v2/blockchain/accounts/{address}/methods/get_wallet_data",
+                )
+            ]
+        )
+
+        data = client.get_jetton_wallet_data(address)
+
+        assert data.balance == 123
+        assert data.owner == owner
+        assert data.jetton_minter == minter
+
+    def test_send_message_should_return_normalized_external_message_hash(self):
+        destination = "0:" + "6" * 64
+        body = begin_cell().store_uint(1, 8).end_cell()
+        external_message = Contract.create_external_msg(dest=Address(destination), body=body)
+        client = TonapiRestClient(TVM_TESTNET)
+        client._client = _FakeHttpClient([_json_response(200, {}, path="/v2/blockchain/message")])
+
+        message_hash = client.send_message(external_message.serialize().to_boc())
+
+        assert len(message_hash) == 64
+        assert bytes.fromhex(message_hash)
+        method, path, kwargs = client._client.calls[0]
+        assert method == "POST"
+        assert path == "/v2/blockchain/message"
+        assert kwargs["json"]["boc"]
+
+    def test_emulate_trace_should_adapt_tonapi_trace_shape(self):
+        account = "0:" + "7" * 64
+        raw_body = begin_cell().store_uint(0x0F8A7EA5, 32).end_cell()
+        client = TonapiRestClient(TVM_TESTNET)
+        client._client = _FakeHttpClient(
+            [
+                _json_response(
+                    200,
+                    {
+                        "transaction": {
+                            "hash": "a" * 64,
+                            "account": {
+                                "address": account,
+                                "is_scam": False,
+                                "is_wallet": True,
+                            },
+                            "end_balance": 1000,
+                            "aborted": False,
+                            "compute_phase": {
+                                "skipped": False,
+                                "success": True,
+                                "gas_fees": 100,
+                            },
+                            "action_phase": {
+                                "success": True,
+                                "fwd_fees": 20,
+                                "total_fees": 30,
+                            },
+                            "storage_phase": {
+                                "fees_collected": 5,
+                                "status_change": "unchanged",
+                            },
+                            "in_msg": {
+                                "hash": "b" * 64,
+                                "source": {
+                                    "address": account,
+                                    "is_scam": False,
+                                    "is_wallet": True,
+                                },
+                                "destination": {
+                                    "address": account,
+                                    "is_scam": False,
+                                    "is_wallet": True,
+                                },
+                                "decoded_op_name": "JettonTransfer",
+                                "raw_body": raw_body.to_boc().hex(),
+                                "fwd_fee": 10,
+                            },
+                            "out_msgs": [],
+                        },
+                        "interfaces": [],
+                    },
+                    path="/v2/traces/emulate",
+                )
+            ]
+        )
+
+        trace = client.emulate_trace(b"boc-bytes", ignore_chksig=True, timeout=7.5)
+
+        transaction = trace["transactions"]["a" * 64]
+        assert transaction["account"] == account
+        assert "balance" not in transaction
+        assert transaction["description"]["compute_ph"]["gas_fees"] == 100
+        assert transaction["description"]["action"]["total_fwd_fees"] == 20
+        assert transaction["in_msg"]["decoded_opcode"] == "jetton_transfer"
+        assert transaction["in_msg"]["message_content"]["hash"] == base64.b64encode(
+            raw_body.hash
+        ).decode("ascii")
+        method, path, kwargs = client._client.calls[0]
+        assert method == "POST"
+        assert path == "/v2/traces/emulate"
+        assert kwargs["params"] == {"ignore_signature_check": True}
+        assert kwargs["timeout"] == 7.5
+
+    def test_emulate_trace_should_recover_parent_out_msgs_from_child_transactions(self):
+        parent_account = "0:" + "7" * 64
+        child_account = "0:" + "8" * 64
+        child_in_body = begin_cell().store_uint(0x0F8A7EA5, 32).end_cell()
+        child_message_hash = "c" * 64
+        client = TonapiRestClient(TVM_TESTNET)
+        client._client = _FakeHttpClient(
+            [
+                _json_response(
+                    200,
+                    {
+                        "transaction": {
+                            "hash": "a" * 64,
+                            "account": {"address": parent_account},
+                            "aborted": False,
+                            "compute_phase": {"skipped": False, "success": True},
+                            "action_phase": {"success": True},
+                            "storage_phase": {},
+                            "in_msg": {"hash": "b" * 64, "destination": parent_account},
+                            "out_msgs": [],
+                        },
+                        "children": [
+                            {
+                                "transaction": {
+                                    "hash": "d" * 64,
+                                    "account": {"address": child_account},
+                                    "aborted": False,
+                                    "compute_phase": {"skipped": False, "success": True},
+                                    "action_phase": {"success": True},
+                                    "storage_phase": {},
+                                    "in_msg": {
+                                        "hash": child_message_hash,
+                                        "source": {"address": parent_account},
+                                        "destination": {"address": child_account},
+                                        "decoded_op_name": "JettonTransfer",
+                                        "raw_body": child_in_body.to_boc().hex(),
+                                    },
+                                    "out_msgs": [],
+                                },
+                                "children": [],
+                            }
+                        ],
+                    },
+                    path="/v2/traces/emulate",
+                )
+            ]
+        )
+
+        trace = client.emulate_trace(b"boc-bytes")
+
+        parent = trace["transactions"]["a" * 64]
+        child = trace["transactions"]["d" * 64]
+        assert parent["out_msgs"] == [child["in_msg"]]
+        assert parent["out_msgs"][0]["hash"] == child_message_hash
+        assert parent["out_msgs"][0]["destination"] == child_account
+        assert parent["out_msgs"][0]["message_content"]["hash"] == base64.b64encode(
+            child_in_body.hash
+        ).decode("ascii")

@@ -34,13 +34,14 @@ from .constants import (
     DEFAULT_W5R1_SUBWALLET_NUMBER,
     HIGHLOAD_V3_CODE_HASH,
     HIGHLOAD_V3_CODE_HEX,
-    TONCENTER_MAINNET_BASE_URL,
-    TONCENTER_TESTNET_BASE_URL,
-    TVM_MAINNET,
-    TVM_TESTNET,
+    TVM_PROVIDER_TONCENTER,
 )
-from .provider import ToncenterRestClient
-from .streaming import ToncenterStreamingSseClient, ToncenterStreamingWatcher
+from .provider import (
+    TvmProviderClient,
+    _default_base_url,
+    create_tvm_provider_client,
+)
+from .streaming import TvmStreamingSseClient, TvmStreamingWatcher
 from .types import TvmAccountState, TvmJettonWalletData, TvmRelayRequest
 
 try:
@@ -97,10 +98,11 @@ class HighloadV3Config:
     subwallet_id: int = DEFAULT_HIGHLOAD_SUBWALLET_ID
     timeout: int = DEFAULT_HIGHLOAD_TIMEOUT
     relay_amount: int = DEFAULT_RELAY_AMOUNT
-    toncenter_base_url: str | None = None
-    toncenter_timeout_seconds: float = DEFAULT_TONCENTER_TIMEOUT_SECONDS
-    toncenter_emulation_timeout_seconds: float = DEFAULT_TONCENTER_EMULATION_TIMEOUT_SECONDS
+    provider_base_url: str | None = None
+    provider_timeout_seconds: float = DEFAULT_TONCENTER_TIMEOUT_SECONDS
+    provider_emulation_timeout_seconds: float = DEFAULT_TONCENTER_EMULATION_TIMEOUT_SECONDS
     workchain: int = 0
+    provider: str = TVM_PROVIDER_TONCENTER
 
     @classmethod
     def from_mnemonic(
@@ -151,11 +153,12 @@ class WalletV5R1Config:
     network: str
     secret_key: bytes
     api_key: str | None = None
-    base_url: str | None = None
+    provider_base_url: str | None = None
     subwallet_number: int = DEFAULT_W5R1_SUBWALLET_NUMBER
-    toncenter_timeout_seconds: float = DEFAULT_TONCENTER_TIMEOUT_SECONDS
-    toncenter_emulation_timeout_seconds: float = DEFAULT_TONCENTER_EMULATION_TIMEOUT_SECONDS
+    provider_timeout_seconds: float = DEFAULT_TONCENTER_TIMEOUT_SECONDS
+    provider_emulation_timeout_seconds: float = DEFAULT_TONCENTER_EMULATION_TIMEOUT_SECONDS
     workchain: int = 0
+    provider: str = TVM_PROVIDER_TONCENTER
 
     @classmethod
     def from_mnemonic(
@@ -222,16 +225,20 @@ class WalletV5R1MnemonicSigner:
         return self._config.api_key
 
     @property
-    def base_url(self) -> str | None:
-        return self._config.base_url
+    def provider(self) -> str:
+        return self._config.provider
 
     @property
-    def toncenter_timeout_seconds(self) -> float:
-        return self._config.toncenter_timeout_seconds
+    def provider_base_url(self) -> str | None:
+        return self._config.provider_base_url
 
     @property
-    def toncenter_emulation_timeout_seconds(self) -> float:
-        return self._config.toncenter_emulation_timeout_seconds
+    def provider_timeout_seconds(self) -> float:
+        return self._config.provider_timeout_seconds
+
+    @property
+    def provider_emulation_timeout_seconds(self) -> float:
+        return self._config.provider_emulation_timeout_seconds
 
     @property
     def wallet_id(self) -> int:
@@ -250,9 +257,9 @@ class FacilitatorHighloadV3Signer:
 
     def __init__(self, configs: dict[str, HighloadV3Config]) -> None:
         self._configs = dict(configs)
-        self._clients: dict[str, ToncenterRestClient] = {}
-        self._streaming_clients: dict[str, ToncenterStreamingSseClient] = {}
-        self._streaming_watchers: dict[str, ToncenterStreamingWatcher] = {}
+        self._clients: dict[str, TvmProviderClient] = {}
+        self._streaming_clients: dict[str, TvmStreamingSseClient] = {}
+        self._streaming_watchers: dict[str, TvmStreamingWatcher] = {}
         self._streaming_watcher_startups: dict[str, threading.Event] = {}
         self._cached_facilitator_states: dict[str, TvmAccountState] = {}
         self._facilitator_state_dirty: dict[str, bool] = {}
@@ -278,7 +285,7 @@ class FacilitatorHighloadV3Signer:
         return [wallet.address]
 
     def close(self) -> None:
-        """Close all Toncenter clients and streaming watchers owned by this signer."""
+        """Close all provider clients and streaming watchers owned by this signer."""
         with self._lock:
             streaming_clients = list(self._streaming_clients.values())
             provider_clients = list(self._clients.values())
@@ -390,14 +397,14 @@ class FacilitatorHighloadV3Signer:
         return external_message.serialize().to_boc()
 
     def emulate_external_message(self, network: str, external_boc: bytes) -> dict[str, object]:
-        """Emulate a prepared external message via Toncenter."""
+        """Emulate a prepared external message via the configured TVM provider."""
         return self._client(network).emulate_trace(
             external_boc,
-            timeout=self._configs[network].toncenter_emulation_timeout_seconds,
+            timeout=self._configs[network].provider_emulation_timeout_seconds,
         )
 
     def send_external_message(self, network: str, external_boc: bytes) -> str:
-        """Broadcast a prepared external message via Toncenter."""
+        """Broadcast a prepared external message via the configured TVM provider."""
         self._ensure_streaming_watcher(network)
         return self._client(network).send_message(external_boc)
 
@@ -442,7 +449,7 @@ class FacilitatorHighloadV3Signer:
         """Read TEP-74 jetton wallet data."""
         return self._client(network).get_jetton_wallet_data(address)
 
-    def _client(self, network: str) -> ToncenterRestClient:
+    def _client(self, network: str) -> TvmProviderClient:
         client = self._clients.get(network)
         if client is not None:
             return client
@@ -451,16 +458,17 @@ class FacilitatorHighloadV3Signer:
             client = self._clients.get(network)
             if client is None:
                 config = self._configs[network]
-                client = ToncenterRestClient(
+                client = create_tvm_provider_client(
                     network,
+                    provider=config.provider,
                     api_key=config.api_key,
-                    base_url=config.toncenter_base_url,
-                    timeout=config.toncenter_timeout_seconds,
+                    base_url=config.provider_base_url,
+                    timeout=config.provider_timeout_seconds,
                 )
                 self._clients[network] = client
             return client
 
-    def _streaming_client(self, network: str) -> ToncenterStreamingSseClient:
+    def _streaming_client(self, network: str) -> TvmStreamingSseClient:
         client = self._streaming_clients.get(network)
         if client is not None:
             return client
@@ -469,9 +477,12 @@ class FacilitatorHighloadV3Signer:
             client = self._streaming_clients.get(network)
             if client is None:
                 config = self._configs[network]
-                client = ToncenterStreamingSseClient(
-                    base_url=(config.toncenter_base_url or _default_streaming_base_url(network)),
+                client = TvmStreamingSseClient(
+                    base_url=(
+                        config.provider_base_url or _default_base_url(network, config.provider)
+                    ),
                     api_key=config.api_key,
+                    provider=config.provider,
                 )
                 self._streaming_clients[network] = client
             return client
@@ -515,7 +526,7 @@ class FacilitatorHighloadV3Signer:
                 existing_watcher = self._streaming_watchers.get(network)
                 return existing_watcher is not None and existing_watcher.is_alive()
 
-        watcher: ToncenterStreamingWatcher | None = None
+        watcher: TvmStreamingWatcher | None = None
         try:
             watcher = self._streaming_client(network).start_account_state_watcher(
                 address=self._wallets[network].address,
@@ -616,11 +627,3 @@ class _WalletContext:
             state_init=state_init,
             deployed=None,
         )
-
-
-def _default_streaming_base_url(network: str) -> str:
-    if network == TVM_MAINNET:
-        return TONCENTER_MAINNET_BASE_URL
-    if network == TVM_TESTNET:
-        return TONCENTER_TESTNET_BASE_URL
-    raise ValueError(f"Unsupported TVM network: {network}")

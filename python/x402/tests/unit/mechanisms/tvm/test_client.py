@@ -16,11 +16,11 @@ from x402.mechanisms.tvm import (
 )
 from x402.mechanisms.tvm.constants import (
     DEFAULT_TONCENTER_EMULATION_TIMEOUT_SECONDS,
-    DEFAULT_TVM_EMULATION_ADDRESS,
     DEFAULT_TVM_INNER_GAS_BUFFER,
 )
 from x402.mechanisms.tvm.exact import ExactTvmClientScheme
 from x402.mechanisms.tvm.exact.codec import parse_exact_tvm_payload
+
 from .builders import (
     ASSET,
     MERCHANT,
@@ -163,7 +163,7 @@ class TestCreatePaymentPayload:
     def test_should_use_signer_emulation_timeout_override(self, monkeypatch):
         class _CustomTimeoutSigner(ClientSignerStub):
             @property
-            def toncenter_emulation_timeout_seconds(self) -> float:
+            def provider_emulation_timeout_seconds(self) -> float:
                 return 14.0
 
         client = ExactTvmClientScheme(_CustomTimeoutSigner())

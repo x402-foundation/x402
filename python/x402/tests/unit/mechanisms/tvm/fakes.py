@@ -43,7 +43,7 @@ class ClientSignerStub:
         return self._state_init
 
     @property
-    def toncenter_emulation_timeout_seconds(self) -> float:
+    def provider_emulation_timeout_seconds(self) -> float:
         return DEFAULT_TONCENTER_EMULATION_TIMEOUT_SECONDS
 
     def sign_message(self, message: bytes) -> bytes:

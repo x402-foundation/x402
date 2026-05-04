@@ -23,10 +23,11 @@ from ..constants import (
     SEND_MODE_IGNORE_ERRORS,
     SEND_MODE_PAY_FEES_SEPARATELY,
     SUPPORTED_NETWORKS,
+    TVM_PROVIDER_TONCENTER,
     W5_EXTERNAL_SIGNED_OPCODE,
     W5_INTERNAL_SIGNED_OPCODE,
 )
-from ..provider import ToncenterRestClient
+from ..provider import TvmProviderClient, create_tvm_provider_client
 from ..signer import ClientTvmSigner
 from ..trace_utils import (
     parse_trace_transactions,
@@ -53,10 +54,10 @@ class ExactTvmScheme:
 
     def __init__(self, signer: ClientTvmSigner) -> None:
         self._signer = signer
-        self._clients: dict[str, ToncenterRestClient] = {}
+        self._clients: dict[str, TvmProviderClient] = {}
 
     def close(self) -> None:
-        """Close any cached Toncenter clients owned by this scheme."""
+        """Close any cached provider clients owned by this scheme."""
         for client in self._clients.values():
             client.close()
         self._clients.clear()
@@ -79,7 +80,7 @@ class ExactTvmScheme:
         client = self._get_client(network)
         payer = normalize_address(self._signer.address)
         asset = normalize_address(requirements.asset)
-        source_wallet = self._get_jetton_wallet(client, asset, payer)
+        source_wallet = client.get_jetton_wallet(asset, payer)
 
         account = client.get_account_state(payer)
         include_state_init = not account.is_active
@@ -114,22 +115,22 @@ class ExactTvmScheme:
             asset=asset,
         ).to_dict()
 
-    def _get_client(self, network: str) -> ToncenterRestClient:
+    def _get_client(self, network: str) -> TvmProviderClient:
         if network not in self._clients:
-            self._clients[network] = ToncenterRestClient(
+            self._clients[network] = create_tvm_provider_client(
                 network,
+                provider=getattr(self._signer, "provider", TVM_PROVIDER_TONCENTER),
                 api_key=getattr(self._signer, "api_key", None),
-                base_url=getattr(self._signer, "base_url", None),
-                timeout=getattr(
-                    self._signer,
-                    "toncenter_timeout_seconds",
-                    DEFAULT_TONCENTER_TIMEOUT_SECONDS,
+                base_url=getattr(self._signer, "provider_base_url", None),
+                timeout=float(
+                    getattr(
+                        self._signer,
+                        "provider_timeout_seconds",
+                        DEFAULT_TONCENTER_TIMEOUT_SECONDS,
+                    )
                 ),
             )
         return self._clients[network]
-
-    def _get_jetton_wallet(self, client: ToncenterRestClient, asset: str, payer: str) -> str:
-        return client.get_jetton_wallet(asset, payer)
 
     def _build_w5_signed_body(
         self,
@@ -196,7 +197,7 @@ class ExactTvmScheme:
     def _estimate_required_inner_value(
         self,
         *,
-        client: ToncenterRestClient,
+        client: TvmProviderClient,
         source_wallet: str,
         requirements: PaymentRequirements,
         seqno: int,
@@ -236,10 +237,12 @@ class ExactTvmScheme:
         trace = client.emulate_trace(
             external_message.serialize().to_boc(),
             ignore_chksig=True,
-            timeout=getattr(
-                self._signer,
-                "toncenter_emulation_timeout_seconds",
-                DEFAULT_TONCENTER_EMULATION_TIMEOUT_SECONDS,
+            timeout=float(
+                getattr(
+                    self._signer,
+                    "provider_emulation_timeout_seconds",
+                    DEFAULT_TONCENTER_EMULATION_TIMEOUT_SECONDS,
+                )
             ),
         )
         transactions = parse_trace_transactions(trace)
