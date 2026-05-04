@@ -1,0 +1,7 @@
+{
+  "name": "AgentStatus",
+  "description": "Heartbeat and cron monitoring API for AI agents. Pay-per-call endpoints for uptime monitoring and cron job tracking, accepting USDC micropayments on Base via x402. No accounts or API keys required.",
+  "logoUrl": "/logos/agentstatus.png",
+  "websiteUrl": "https://agentstatus.tech",
+  "category": "Services/Endpoints"
+}
