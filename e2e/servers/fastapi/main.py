@@ -26,7 +26,9 @@ from x402.extensions.bazaar import (
     declare_discovery_extension,
     OutputConfig,
 )
-from x402.extensions.eip2612_gas_sponsoring import declare_eip2612_gas_sponsoring_extension
+from x402.extensions.eip2612_gas_sponsoring import (
+    declare_eip2612_gas_sponsoring_extension,
+)
 from x402.extensions.erc20_approval_gas_sponsoring import (
     declare_erc20_approval_gas_sponsoring_extension,
 )
@@ -40,18 +42,15 @@ SVM_ADDRESS = os.getenv("SVM_PAYEE_ADDRESS")
 TVM_ADDRESS = os.getenv("TVM_PAYEE_ADDRESS")
 PORT = int(os.getenv("PORT", "4021"))
 FACILITATOR_URL = os.getenv("FACILITATOR_URL")
-EVM_PERMIT2_ASSET = os.getenv("EVM_PERMIT2_ASSET", "0x036CbD53842c5426634e7929541eC2318f3dCF7e")
+EVM_PERMIT2_ASSET = os.getenv(
+    "EVM_PERMIT2_ASSET", "0x036CbD53842c5426634e7929541eC2318f3dCF7e"
+)
 TVM_NETWORK = os.getenv("TVM_NETWORK", TVM_TESTNET)
 
-if not EVM_ADDRESS:
-    print("Error: Missing required environment variable EVM_PAYEE_ADDRESS")
-    sys.exit(1)
-
-if not SVM_ADDRESS:
-    print("Error: Missing required environment variable SVM_PAYEE_ADDRESS")
-    sys.exit(1)
-if not TVM_ADDRESS:
-    print("Error: Missing required environment variable TVM_PAYEE_ADDRESS")
+if not any([EVM_ADDRESS, SVM_ADDRESS, TVM_ADDRESS]):
+    print(
+        "Error: At least one of EVM_PAYEE_ADDRESS, SVM_PAYEE_ADDRESS, or TVM_PAYEE_ADDRESS is required"
+    )
     sys.exit(1)
 
 # Network configurations (CAIP-2 format)
@@ -280,6 +279,12 @@ routes = {
             **declare_erc20_approval_gas_sponsoring_extension(),
         },
     },
+}
+
+routes = {
+    route: requirements
+    for route, requirements in routes.items()
+    if requirements["accepts"].get("payTo")
 }
 
 

@@ -284,6 +284,7 @@ async function drainClientETH(): Promise<boolean> {
 }
 
 // Load environment variables
+config({ path: '.env-local' });
 config();
 
 // Parse command line arguments
@@ -819,6 +820,9 @@ async function runTest() {
     'HEDERA_NODE_URL',
     'STELLAR_RPC_URL',
     'TONCENTER_BASE_URL',
+    'TVM_PROVIDER',
+    'TONAPI_API_KEY',
+    'TONAPI_BASE_URL',
   ]);
 
   for (const [facilitatorName, facilitator] of uniqueFacilitators) {

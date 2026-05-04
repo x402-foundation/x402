@@ -38,8 +38,11 @@
       "EVM_PRIVATE_KEY",
       "SVM_PRIVATE_KEY",
       "TVM_PRIVATE_KEY",
+      "TVM_PROVIDER",
       "TONCENTER_API_KEY",
-      "TONCENTER_BASE_URL"
+      "TONCENTER_BASE_URL",
+      "TONAPI_API_KEY",
+      "TONAPI_BASE_URL"
     ]
   }
 }

@@ -42,6 +42,7 @@ async def main() -> dict:
     from x402.mechanisms.evm.signers import EthAccountSigner
     from x402.mechanisms.tvm import (
         TVM_MAINNET,
+        TVM_PROVIDER_TONAPI,
         TVM_TESTNET,
         WalletV5R1Config,
         WalletV5R1MnemonicSigner,
@@ -60,8 +61,18 @@ async def main() -> dict:
         if tvm_network not in {TVM_TESTNET, TVM_MAINNET}:
             raise ValueError(f"Unsupported TVM network: {tvm_network}")
         tvm_config = WalletV5R1Config.from_private_key(tvm_network, tvm_private_key)
-        tvm_config.api_key = os.getenv("TONCENTER_API_KEY")
-        tvm_config.base_url = os.getenv("TONCENTER_BASE_URL")
+        tvm_provider = (os.getenv("TVM_PROVIDER") or "").strip().lower()
+        tvm_config.provider = tvm_provider or tvm_config.provider
+        tvm_config.api_key = (
+            os.getenv("TONAPI_API_KEY")
+            if tvm_provider == TVM_PROVIDER_TONAPI
+            else os.getenv("TONCENTER_API_KEY")
+        )
+        tvm_config.provider_base_url = (
+            os.getenv("TONAPI_BASE_URL")
+            if tvm_provider == TVM_PROVIDER_TONAPI
+            else os.getenv("TONCENTER_BASE_URL")
+        )
         client.register(
             tvm_network,
             ExactTvmClientScheme(WalletV5R1MnemonicSigner(tvm_config)),

@@ -1,5 +1,5 @@
 import { spawn, ChildProcess } from 'child_process';
-import { readFileSync, existsSync } from 'fs';
+import { existsSync } from 'fs';
 import { join } from 'path';
 import { log, verboseLog, errorLog } from './logger';
 
@@ -35,33 +35,7 @@ export abstract class BaseProxy {
       throw new Error(`run.sh not found in ${this.directory}`);
     }
 
-    const runShContent = readFileSync(runShPath, 'utf-8');
-
-    // Parse the run.sh file to extract the command
-    // Look for lines that start with commands like pnpm, npm, node, python, etc.
-    const lines = runShContent.split('\n');
-
-    for (const line of lines) {
-      const trimmed = line.trim();
-
-      // Skip comments and empty lines
-      if (trimmed.startsWith('#') || trimmed === '') continue;
-
-      // Look for command patterns
-      if (trimmed.startsWith('pnpm ') ||
-        trimmed.startsWith('npm ') ||
-        trimmed.startsWith('node ') ||
-        trimmed.startsWith('python ') ||
-        trimmed.startsWith('uv run ') ||
-        trimmed.startsWith('go run ')) {
-
-        // Split the command into parts
-        const parts = trimmed.split(' ');
-        return parts;
-      }
-    }
-
-    throw new Error(`No valid command found in ${runShPath}`);
+    return ['bash', 'run.sh'];
   }
 
   protected async startProcess(config: RunConfig): Promise<void> {
@@ -218,4 +192,4 @@ export abstract class BaseProxy {
       });
     });
   }
-} 
+}

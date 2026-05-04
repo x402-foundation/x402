@@ -49,8 +49,11 @@ uv run uvicorn main:app --port 4022
 | `EVM_NETWORK`        | No            | EVM network identifier                              |
 | `SVM_NETWORK`        | No            | SVM network identifier                              |
 | `TVM_NETWORK`        | No            | TVM network identifier (default: `tvm:-3`)          |
+| `TVM_PROVIDER`       | No            | TVM provider: `toncenter` (default) or `tonapi`     |
 | `TONCENTER_API_KEY`  | No            | Toncenter API key for TVM testnet                   |
 | `TONCENTER_BASE_URL` | No            | Custom Toncenter base URL for TVM                   |
+| `TONAPI_API_KEY`     | No            | TonAPI API key when `TVM_PROVIDER=tonapi`           |
+| `TONAPI_BASE_URL`    | No            | Custom TonAPI base URL for TVM                      |
 
 ### TVM funding notes
 
@@ -110,7 +113,7 @@ The facilitator uses:
 - **x402 Python SDK**: Core x402 functionality
 - **web3.py**: EVM blockchain interactions
 - **solders**: SVM blockchain interactions
-- **pytoniq + Toncenter**: TVM blockchain interactions
+- **pytoniq + Toncenter/TonAPI**: TVM blockchain interactions
 
 ## E2E Test Integration
 

@@ -42,3 +42,7 @@ TASK.md
 .claude/
 skills/
 REVIEW_PROMPT.md
+.omx/
+.omc/
+/demo/
+/contracts/tvm/

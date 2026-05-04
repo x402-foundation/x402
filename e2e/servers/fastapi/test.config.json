@@ -126,12 +126,11 @@
     }
   ],
   "environment": {
-    "required": [
+    "required": [],
+    "optional": [
       "EVM_PAYEE_ADDRESS",
       "SVM_PAYEE_ADDRESS",
-      "TVM_PAYEE_ADDRESS"
-    ],
-    "optional": [
+      "TVM_PAYEE_ADDRESS",
       "PORT",
       "FACILITATOR_URL",
       "EVM_PERMIT2_ASSET",

@@ -6,7 +6,7 @@ on-chain for the x402 protocol.
 Supports:
 - EVM networks (Base Sepolia) via web3.py
 - SVM networks (Solana Devnet) via solders
-- TVM networks (TON testnet/mainnet) via pytoniq + Toncenter
+- TVM networks (TON testnet/mainnet) via pytoniq + Toncenter/TonAPI
 - Bazaar discovery extension for resource cataloging
 - EIP-2612 gas sponsoring extension (gasless Permit2 approval via permit)
 - ERC-20 approval gas sponsoring extension (gasless Permit2 via signed tx relay)
@@ -46,6 +46,7 @@ from x402.mechanisms.svm import FacilitatorKeypairSigner
 from x402.mechanisms.svm.exact import register_exact_svm_facilitator
 from x402.mechanisms.tvm import (
     TVM_TESTNET,
+    TVM_PROVIDER_TONAPI,
     HighloadV3Config,
     FacilitatorHighloadV3Signer,
 )
@@ -68,7 +69,9 @@ if not any(
         os.environ.get("TVM_PRIVATE_KEY"),
     ]
 ):
-    print("❌ At least one of EVM_PRIVATE_KEY, SVM_PRIVATE_KEY, or TVM_PRIVATE_KEY is required")
+    print(
+        "❌ At least one of EVM_PRIVATE_KEY, SVM_PRIVATE_KEY, or TVM_PRIVATE_KEY is required"
+    )
     sys.exit(1)
 
 # Network configuration
@@ -97,8 +100,18 @@ if os.environ.get("SVM_PRIVATE_KEY"):
 tvm_signer = None
 if os.environ.get("TVM_PRIVATE_KEY"):
     tvm_config = HighloadV3Config.from_private_key(os.environ["TVM_PRIVATE_KEY"])
-    tvm_config.api_key = os.environ.get("TONCENTER_API_KEY")
-    tvm_config.toncenter_base_url = os.environ.get("TONCENTER_BASE_URL")
+    tvm_provider = (os.environ.get("TVM_PROVIDER") or "").strip().lower()
+    tvm_config.provider = tvm_provider or tvm_config.provider
+    tvm_config.api_key = (
+        os.environ.get("TONAPI_API_KEY")
+        if tvm_provider == TVM_PROVIDER_TONAPI
+        else os.environ.get("TONCENTER_API_KEY")
+    )
+    tvm_config.provider_base_url = (
+        os.environ.get("TONAPI_BASE_URL")
+        if tvm_provider == TVM_PROVIDER_TONAPI
+        else os.environ.get("TONCENTER_BASE_URL")
+    )
     tvm_signer = FacilitatorHighloadV3Signer({TVM_NETWORK: tvm_config})
     print(f"TVM Facilitator account: {tvm_signer.get_addresses()[0]}")
 
@@ -129,17 +142,23 @@ class Erc20ApprovalSigner:
                 payer_balance = w3.eth.get_balance(payer_address)
                 if payer_balance < gas_cost:
                     deficit = gas_cost - payer_balance
-                    print(f"⛽ Funding payer {payer_address} with {deficit} wei for gas")
+                    print(
+                        f"⛽ Funding payer {payer_address} with {deficit} wei for gas"
+                    )
                     fund_tx = {
                         "to": payer_address,
                         "value": deficit,
                         "gas": 21000,
                         "gasPrice": w3.eth.gas_price,
-                        "nonce": w3.eth.get_transaction_count(self._signer._account.address),
+                        "nonce": w3.eth.get_transaction_count(
+                            self._signer._account.address
+                        ),
                         "chainId": w3.eth.chain_id,
                     }
                     signed_fund = self._signer._account.sign_transaction(fund_tx)
-                    fund_hash = w3.eth.send_raw_transaction(signed_fund.raw_transaction).hex()
+                    fund_hash = w3.eth.send_raw_transaction(
+                        signed_fund.raw_transaction
+                    ).hex()
                     fund_receipt = w3.eth.wait_for_transaction_receipt(fund_hash)
                     if fund_receipt["status"] != 1:
                         raise RuntimeError(f"gas_funding_failed: {fund_hash}")
@@ -167,7 +186,9 @@ class Erc20ApprovalSigner:
         return self._signer.wait_for_transaction_receipt(tx_hash)
 
 
-erc20_approval_signer = Erc20ApprovalSigner(evm_signer) if evm_signer is not None else None
+erc20_approval_signer = (
+    Erc20ApprovalSigner(evm_signer) if evm_signer is not None else None
+)
 
 
 def _handle_after_verify(ctx: Any) -> None:
@@ -253,7 +274,9 @@ if tvm_signer is not None:
 # Register gas sponsoring extensions
 if evm_signer is not None and erc20_approval_signer is not None:
     facilitator.register_extension(EIP2612_GAS_SPONSORING)
-    facilitator.register_extension(Erc20ApprovalFacilitatorExtension(signer=erc20_approval_signer))
+    facilitator.register_extension(
+        Erc20ApprovalFacilitatorExtension(signer=erc20_approval_signer)
+    )
 
 
 # Pydantic models for request/response
@@ -296,7 +319,9 @@ async def verify(request: VerifyRequest):
 
         # Parse payload (auto-detects V1/V2) and requirements (based on payload version)
         payload = parse_payment_payload(request.paymentPayload)
-        requirements = parse_payment_requirements(payload.x402_version, request.paymentRequirements)
+        requirements = parse_payment_requirements(
+            payload.x402_version, request.paymentRequirements
+        )
 
         # Hooks will automatically:
         # - Track verified payment (on_after_verify)
@@ -304,7 +329,9 @@ async def verify(request: VerifyRequest):
         response = await facilitator.verify(payload, requirements)
 
         if not response.is_valid:
-            print(f"  ❌ Verify rejected: {response.invalid_reason} (payer={response.payer})")
+            print(
+                f"  ❌ Verify rejected: {response.invalid_reason} (payer={response.payer})"
+            )
 
         return response.model_dump(by_alias=True, exclude_none=True)
     except Exception as e:
@@ -332,7 +359,9 @@ async def settle(request: SettleRequest):
 
         # Parse payload (auto-detects V1/V2) and requirements (based on payload version)
         payload = parse_payment_payload(request.paymentPayload)
-        requirements = parse_payment_requirements(payload.x402_version, request.paymentRequirements)
+        requirements = parse_payment_requirements(
+            payload.x402_version, request.paymentRequirements
+        )
 
         # Hooks will automatically:
         # - Validate payment was verified (on_before_settle - will abort if not)
@@ -351,7 +380,9 @@ async def settle(request: SettleRequest):
             abort = SettleResponse(
                 success=False,
                 error_reason=str(e).replace("Settlement aborted: ", ""),
-                network=request.paymentPayload.get("accepted", {}).get("network", "unknown"),
+                network=request.paymentPayload.get("accepted", {}).get(
+                    "network", "unknown"
+                ),
                 transaction="",
             )
             return abort.model_dump(by_alias=True, exclude_none=True)
@@ -370,7 +401,9 @@ async def supported():
         response = facilitator.get_supported()
 
         return {
-            "kinds": [k.model_dump(by_alias=True, exclude_none=True) for k in response.kinds],
+            "kinds": [
+                k.model_dump(by_alias=True, exclude_none=True) for k in response.kinds
+            ],
             "extensions": response.extensions,
             "signers": response.signers,
         }

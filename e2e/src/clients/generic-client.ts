@@ -34,7 +34,10 @@ export class GenericClientProxy extends BaseProxy implements ClientProxy {
         HEDERA_NETWORK: config.hederaNetwork,
         HEDERA_NODE_URL: config.hederaNodeUrl,
         TVM_NETWORK: config.tvmNetwork,
+        TVM_PROVIDER: process.env.TVM_PROVIDER || '',
         TONCENTER_BASE_URL: process.env.TONCENTER_BASE_URL || config.tvmRpcUrl,
+        TONAPI_API_KEY: process.env.TONAPI_API_KEY || '',
+        TONAPI_BASE_URL: process.env.TONAPI_BASE_URL || '',
         ...(config.batchSettlement
           ? {
             CHANNEL_SALT: config.batchSettlement.channelSalt,

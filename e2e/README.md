@@ -138,7 +138,19 @@ FACILITATOR_STELLAR_PRIVATE_KEY=... # Stellar private key for facilitator
 FACILITATOR_TVM_PRIVATE_KEY=...     # TVM private key for facilitator
 
 # TVM support
-TONCENTER_API_KEY=...               # Recommended for TVM client/facilitator access
+TVM_PROVIDER=tonapi                 # Optional: toncenter (default) or tonapi
+TONAPI_API_KEY=...                  # Required when TVM_PROVIDER=tonapi
+TONAPI_BASE_URL=...                 # Optional custom TonAPI base URL
+TONCENTER_API_KEY=...               # Recommended when TVM_PROVIDER=toncenter
+```
+
+To run Python SDK TVM e2e scenarios through TonAPI instead of Toncenter:
+
+```bash
+cd e2e
+TVM_PROVIDER=tonapi \
+TONAPI_API_KEY=<tonapi-key> \
+pnpm test --testnet --families=tvm --facilitators=python --clients=httpx,requests --servers=fastapi,flask --min -v
 ```
 
 Optional environment variables (batch-settlement scheme):
