@@ -1,0 +1,7 @@
+{
+  "name": "CorteX402",
+  "description": "Pay-per-call data products on Base mainnet — sanctions screening, aviation weather, US property dossier. USDC settlement via x402, no accounts or API keys required. Each call returns normalized data plus an on-chain receipt.",
+  "logoUrl": "/logos/cortex402.png",
+  "websiteUrl": "https://innovativeblockchainsolutions.live/CorteX402/",
+  "category": "Services/Endpoints"
+}
