@@ -36,6 +36,8 @@ make test-integration
 ### With Configuration (All Tests + Real Transactions)
 ```bash
 # Set environment variables
+cp .env.example .env
+# Edit .env with testnet-only keys and addresses
 source .env
 
 # Run integration tests
@@ -54,7 +56,7 @@ make test-integration
 
 ## Configuration
 
-Create a `.env` file in the `go/` directory:
+Copy `go/.env.example` to `go/.env`, then fill in testnet-only values:
 
 ```bash
 # EVM Configuration (Base Sepolia)
@@ -189,7 +191,7 @@ spl-token create-account 4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU --url devn
 ## Security Notes
 
 ⚠️ **NEVER commit private keys to git**
-⚠️ Use `.env` file and ensure it's in `.gitignore`
+⚠️ Use `.env` file and ensure it's in `.gitignore`; commit only `.env.example`
 ⚠️ Only use testnet keys with no real value
 ⚠️ These tests use devnet/testnet networks only
 
