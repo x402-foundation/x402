@@ -330,11 +330,28 @@ The path `/get` is not in your `ROUTES` config, so it passes through to httpbin 
 
 **Test 3 — Full payment flow**
 
+Use the [`fetch` client example](../../../../clients/fetch/) from this repo to make a paid request:
+
 ```bash
-npx @x402/cli pay https://[YOUR_DOMAIN].cloudfront.net/api/test
+cd ../../../../clients/fetch
+cp .env-local .env
 ```
 
-This will prompt for a Base Sepolia private key, construct the payment, attach it as a `PAYMENT-SIGNATURE` header, and show you the 200 response from httpbin. Never use a mainnet private key here.
+Edit `.env`:
+```
+EVM_PRIVATE_KEY=0xYourBaseSepoliaPrivateKey
+RESOURCE_SERVER_URL=https://[YOUR_DOMAIN].cloudfront.net
+ENDPOINT_PATH=/api/test
+```
+
+Then run:
+```bash
+pnpm install && pnpm start
+```
+
+The client will automatically detect the `402`, construct and sign the payment, attach it as a `PAYMENT-SIGNATURE` header, and retry — returning the 200 response from httpbin.
+
+> **Never use a mainnet private key here.** Use a throwaway Base Sepolia wallet with test funds only.
 
 ---
 
