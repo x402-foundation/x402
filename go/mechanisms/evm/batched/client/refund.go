@@ -46,7 +46,7 @@ type RefundContext interface {
 	Storage() ClientChannelStorage
 	Signer() evm.ClientEvmSigner
 	VoucherSigner() evm.ClientEvmSigner
-	BuildChannelConfig(requirements types.PaymentRequirements) batched.ChannelConfig
+	BuildChannelConfig(requirements types.PaymentRequirements) (batched.ChannelConfig, error)
 	RecoverSession(ctx context.Context, requirements types.PaymentRequirements) (*BatchedClientContext, error)
 	ProcessCorrectivePaymentRequired(ctx context.Context, errorReason string, accepts []types.PaymentRequirements) (bool, error)
 }
@@ -279,7 +279,10 @@ func buildRefundVoucherPayload(
 	requirements types.PaymentRequirements,
 	refundAmount string,
 ) (*types.PaymentPayload, error) {
-	config := scheme.BuildChannelConfig(requirements)
+	config, err := scheme.BuildChannelConfig(requirements)
+	if err != nil {
+		return nil, fmt.Errorf("refund: build channel config: %w", err)
+	}
 	channelId, err := batched.ComputeChannelId(config, requirements.Network)
 	if err != nil {
 		return nil, fmt.Errorf("refund: compute channel ID: %w", err)

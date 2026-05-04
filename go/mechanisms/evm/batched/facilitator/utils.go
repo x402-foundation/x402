@@ -165,13 +165,18 @@ func ValidateChannelConfig(
 	// (`name` / `version` / `assetTransferMethod`) are consumed elsewhere or
 	// only exist to round-trip to the client, so they don't need to be
 	// decoded here.
+	//
+	// receiverAuthorizer is mandatory. Mirrors TS `validateChannelConfig`
+	// which rejects when extra.receiverAuthorizer is missing, zero, or
+	// disagrees with the channel's bound authorizer.
+	expectedAuthorizer, _ := requirements.Extra["receiverAuthorizer"].(string)
+	if expectedAuthorizer == "" || strings.EqualFold(expectedAuthorizer, zeroAddress) ||
+		!strings.EqualFold(config.ReceiverAuthorizer, expectedAuthorizer) {
+		return x402.NewVerifyError(ErrReceiverAuthorizerMismatch, "",
+			fmt.Sprintf("channel receiverAuthorizer %s does not match required %s",
+				config.ReceiverAuthorizer, expectedAuthorizer))
+	}
 	if requirements.Extra != nil {
-		if expected, ok := requirements.Extra["receiverAuthorizer"].(string); ok && expected != "" &&
-			!strings.EqualFold(config.ReceiverAuthorizer, expected) {
-			return x402.NewVerifyError(ErrReceiverAuthorizerMismatch, "",
-				fmt.Sprintf("channel receiverAuthorizer %s does not match required %s",
-					config.ReceiverAuthorizer, expected))
-		}
 		var expectedDelay int
 		switch v := requirements.Extra["withdrawDelay"].(type) {
 		case float64:

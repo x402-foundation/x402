@@ -20,6 +20,9 @@ func reqsFor(network string) types.PaymentRequirements {
 		PayTo:   "0x3333333333333333333333333333333333333333",
 		Asset:   "0x5555555555555555555555555555555555555555",
 		Amount:  "100",
+		Extra: map[string]interface{}{
+			"receiverAuthorizer": "0x4444444444444444444444444444444444444444",
+		},
 	}
 }
 

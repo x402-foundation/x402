@@ -100,6 +100,7 @@ func extRequirementsPermit2() types.PaymentRequirements {
 			"name":                "USDC",
 			"version":             "2",
 			"assetTransferMethod": "permit2",
+			"receiverAuthorizer":  "0x4444444444444444444444444444444444444444",
 		},
 		MaxTimeoutSeconds: 600,
 	}

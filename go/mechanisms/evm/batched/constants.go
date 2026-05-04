@@ -11,13 +11,13 @@ const (
 	SchemeBatched = "batch-settlement"
 
 	// BatchSettlementAddress is the deployed x402BatchSettlement contract address (CREATE2, all chains).
-	BatchSettlementAddress = "0x8f79473b50d67733349191d7349FE45977d44AF7"
+	BatchSettlementAddress = "0x4020074e9dF2ce1deE5A9C1b5c3f541D02a10003"
 
 	// ERC3009DepositCollectorAddress is the deployed ERC3009DepositCollector contract address.
-	ERC3009DepositCollectorAddress = "0xE9460Cb807D97325E70e41De191430Bea39497f5"
+	ERC3009DepositCollectorAddress = "0x4020806089470a89826cB9fB1f4059150b550004"
 
 	// Permit2DepositCollectorAddress is the deployed Permit2DepositCollector contract address.
-	Permit2DepositCollectorAddress = "0x1D859871C289cB1e28DB38077272244C6343F7B9"
+	Permit2DepositCollectorAddress = "0x4020425FAf3B746C082C2f942b4E5159887B0005"
 
 	// MinWithdrawDelay is the minimum withdraw delay in seconds (15 minutes).
 	MinWithdrawDelay = 900

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"math/big"
+	"strings"
 
 	"github.com/ethereum/go-ethereum/common"
 
@@ -136,7 +137,10 @@ func (c *BatchedEvmScheme) CreatePaymentPayload(
 	ctx context.Context,
 	requirements types.PaymentRequirements,
 ) (types.PaymentPayload, error) {
-	channelConfig := c.BuildChannelConfig(requirements)
+	channelConfig, err := c.BuildChannelConfig(requirements)
+	if err != nil {
+		return types.PaymentPayload{}, err
+	}
 
 	channelId, err := batched.ComputeChannelId(channelConfig, requirements.Network)
 	if err != nil {
@@ -257,12 +261,20 @@ func (c *BatchedEvmScheme) resolveDepositAmount(
 }
 
 // BuildChannelConfig constructs a ChannelConfig from payment requirements and scheme config.
-func (c *BatchedEvmScheme) BuildChannelConfig(requirements types.PaymentRequirements) batched.ChannelConfig {
-	receiverAuthorizer := requirements.PayTo
+//
+// Returns an error when `requirements.Extra["receiverAuthorizer"]` is missing
+// or zero — without it the derived channelId would not match the onchain
+// channel and the deposit transaction would revert. Mirrors TS
+// `buildChannelConfig`, which throws under the same condition.
+func (c *BatchedEvmScheme) BuildChannelConfig(requirements types.PaymentRequirements) (batched.ChannelConfig, error) {
+	var receiverAuthorizer string
 	if requirements.Extra != nil {
-		if ra, ok := requirements.Extra["receiverAuthorizer"].(string); ok && ra != "" {
+		if ra, ok := requirements.Extra["receiverAuthorizer"].(string); ok {
 			receiverAuthorizer = ra
 		}
+	}
+	if receiverAuthorizer == "" || strings.EqualFold(receiverAuthorizer, "0x0000000000000000000000000000000000000000") {
+		return batched.ChannelConfig{}, fmt.Errorf("payment requirements must include a non-zero extra.receiverAuthorizer")
 	}
 
 	withdrawDelay := DefaultWithdrawDelay
@@ -289,7 +301,7 @@ func (c *BatchedEvmScheme) BuildChannelConfig(requirements types.PaymentRequirem
 		Token:              requirements.Asset,
 		WithdrawDelay:      withdrawDelay,
 		Salt:               c.config.Salt,
-	}
+	}, nil
 }
 
 // Refund sends a cooperative refund request to the channel that backs `url`.
@@ -398,7 +410,10 @@ func (c *BatchedEvmScheme) RecoverSession(ctx context.Context, requirements type
 		return nil, fmt.Errorf("recoverSession requires ClientEvmSigner with ReadContract capability")
 	}
 
-	channelConfig := c.BuildChannelConfig(requirements)
+	channelConfig, err := c.BuildChannelConfig(requirements)
+	if err != nil {
+		return nil, err
+	}
 	channelId, err := batched.ComputeChannelId(channelConfig, requirements.Network)
 	if err != nil {
 		return nil, fmt.Errorf("failed to compute channel ID: %w", err)
@@ -540,7 +555,10 @@ func (c *BatchedEvmScheme) recoverFromSignature(
 		return false, nil
 	}
 
-	config := c.BuildChannelConfig(accept)
+	config, err := c.BuildChannelConfig(accept)
+	if err != nil {
+		return false, nil //nolint:nilerr // matches TS catch-all
+	}
 	channelId, err := batched.ComputeChannelId(config, accept.Network)
 	if err != nil {
 		return false, nil //nolint:nilerr // matches TS catch-all
@@ -739,7 +757,7 @@ func (a *refundContextAdapter) Signer() evm.ClientEvmSigner   { return a.scheme.
 func (a *refundContextAdapter) VoucherSigner() evm.ClientEvmSigner {
 	return a.scheme.config.VoucherSigner
 }
-func (a *refundContextAdapter) BuildChannelConfig(requirements types.PaymentRequirements) batched.ChannelConfig {
+func (a *refundContextAdapter) BuildChannelConfig(requirements types.PaymentRequirements) (batched.ChannelConfig, error) {
 	return a.scheme.BuildChannelConfig(requirements)
 }
 func (a *refundContextAdapter) RecoverSession(ctx context.Context, requirements types.PaymentRequirements) (*BatchedClientContext, error) {

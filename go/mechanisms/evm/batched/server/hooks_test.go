@@ -545,7 +545,7 @@ func TestAfterSettleHook_DepositUpdatesBalance(t *testing.T) {
 
 // Regression: after a successful deposit settle, the AfterSettleHook must
 // clear PendingRequest. Otherwise the next voucher hits the 5s pending-TTL
-// guard in BeforeVerifyHook and 402's with `batch_settlement_channel_busy`.
+// guard in BeforeVerifyHook and 402's with `invalid_batch_settlement_evm_channel_busy`.
 func TestAfterSettleHook_DepositClearsPendingRequest(t *testing.T) {
 	s := NewBatchedEvmScheme("0xreceiver", nil)
 	id, _ := batched.ComputeChannelId(testConfig(), "eip155:8453")

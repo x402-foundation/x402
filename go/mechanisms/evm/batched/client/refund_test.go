@@ -304,8 +304,8 @@ func (f *fakeRefundContext) VoucherSigner() evm.ClientEvmSigner {
 	}
 	return f.voucherSigner
 }
-func (f *fakeRefundContext) BuildChannelConfig(_ types.PaymentRequirements) batched.ChannelConfig {
-	return f.config
+func (f *fakeRefundContext) BuildChannelConfig(_ types.PaymentRequirements) (batched.ChannelConfig, error) {
+	return f.config, nil
 }
 func (f *fakeRefundContext) RecoverSession(_ context.Context, _ types.PaymentRequirements) (*BatchedClientContext, error) {
 	if f.recoverErr != nil {

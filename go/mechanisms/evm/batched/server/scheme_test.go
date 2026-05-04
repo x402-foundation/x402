@@ -223,7 +223,10 @@ func TestEnhancePaymentRequirements_PassesThroughAssetTransferMethod(t *testing.
 		Network: "eip155:8453",
 		Asset:   "0x1234567890abcdef1234567890abcdef12345678",
 		Amount:  "1000",
-		Extra:   map[string]interface{}{"assetTransferMethod": "permit2"},
+		Extra: map[string]interface{}{
+			"assetTransferMethod": "permit2",
+			"receiverAuthorizer":  "0x4444444444444444444444444444444444444444",
+		},
 	}
 	out, err := s.EnhancePaymentRequirements(context.Background(), req, types.SupportedKind{}, nil)
 	if err != nil {
@@ -240,6 +243,9 @@ func TestEnhancePaymentRequirements_DecimalAmountNormalized(t *testing.T) {
 		Network: "eip155:8453",
 		Asset:   "0x1234567890abcdef1234567890abcdef12345678",
 		Amount:  "1.5",
+		Extra: map[string]interface{}{
+			"receiverAuthorizer": "0x4444444444444444444444444444444444444444",
+		},
 	}
 	out, err := s.EnhancePaymentRequirements(context.Background(), req, types.SupportedKind{}, nil)
 	if err != nil {
@@ -247,6 +253,19 @@ func TestEnhancePaymentRequirements_DecimalAmountNormalized(t *testing.T) {
 	}
 	if out.Amount == "1.5" {
 		t.Fatalf("amount not normalized: %s", out.Amount)
+	}
+}
+
+// Mirrors TS test "throws when neither server nor facilitator provides receiverAuthorizer".
+func TestEnhancePaymentRequirements_RejectsMissingReceiverAuthorizer(t *testing.T) {
+	s := NewBatchedEvmScheme("0xreceiver", nil)
+	req := types.PaymentRequirements{
+		Network: "eip155:8453",
+		Asset:   "0x1234567890abcdef1234567890abcdef12345678",
+		Amount:  "100",
+	}
+	if _, err := s.EnhancePaymentRequirements(context.Background(), req, types.SupportedKind{}, nil); err == nil {
+		t.Fatalf("expected error when receiverAuthorizer is unavailable")
 	}
 }
 

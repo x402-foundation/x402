@@ -408,7 +408,10 @@ func assertTotalClaimedAtLeast(ctx context.Context, t *testing.T, signer *realFa
 
 // channelIdForRequirements computes the channel ID the client will derive for these requirements.
 func (p *batchedPipeline) channelIdForRequirements(req types.PaymentRequirements) string {
-	cfg := p.clientScheme.BuildChannelConfig(req)
+	cfg, err := p.clientScheme.BuildChannelConfig(req)
+	if err != nil {
+		return ""
+	}
 	id, err := batched.ComputeChannelId(cfg, req.Network)
 	if err != nil {
 		return ""
@@ -893,7 +896,7 @@ func TestBatchSettlementIntegration_RefundNonRecoverableFastFail(t *testing.T) {
 	}
 
 	// Request a refund larger than the on-chain remainder.
-	// Server returns 402 with PAYMENT-REQUIRED Error=batch_settlement_refund_amount_exceeds_balance.
+	// Server returns 402 with PAYMENT-REQUIRED Error=invalid_batch_settlement_evm_refund_amount_exceeds_balance.
 	// Client must fail fast (non-recoverable error) without retry.
 	start := time.Now()
 	_, err := pipe.clientScheme.Refund(ctx, url, &batchedclient.RefundOptions{Amount: "999999999"})

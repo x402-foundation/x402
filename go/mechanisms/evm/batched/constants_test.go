@@ -83,51 +83,25 @@ func TestReceiveAuthorizationTypes(t *testing.T) {
 }
 
 // TestErrorCodes pins the canonical wire prefix `invalid_batch_settlement_evm_`
-// for the single facilitator-mirroring constant exported from this package
-// (`ErrCumulativeBelowClaimed` — see comment in errors.go), and the
-// `batch_settlement_*` / `missing_*` sibling prefixes for the resource
-// server's abort reasons. Renaming or dropping a prefix here breaks
-// cdp-facilitator's substring classifier and the
-// `x402VerifyInvalidReason` / `x402SettleErrorReason` CDP Accounts API
-// enums (or their sibling group, when wired up).
+// for every error reason exported from this package. Both facilitator-mirrored
+// constants and resource-server abort reasons share the same envelope —
+// renaming or dropping the prefix here breaks cdp-facilitator's substring
+// classifier and the `x402VerifyInvalidReason` / `x402SettleErrorReason`
+// CDP Accounts API enums.
 func TestErrorCodes(t *testing.T) {
-	const facilitatorPrefix = "invalid_batch_settlement_evm_"
-
-	// Group 1: facilitator-mirroring constant (canonical CDP enum form).
-	// Only one constant is shared with the facilitator package because
-	// `client/scheme.go` needs to substring-match it during the corrective
-	// 402 recovery handshake without importing facilitator.
-	if !strings.HasPrefix(ErrCumulativeBelowClaimed, facilitatorPrefix) {
-		t.Fatalf("ErrCumulativeBelowClaimed missing prefix %q: %q", facilitatorPrefix, ErrCumulativeBelowClaimed)
-	}
-
-	// Group 2: resource-server abort reasons. Two acceptable sibling
-	// prefixes: `batch_settlement_*` (the family) and `missing_*` (one
-	// special case for missing-channel that mirrors the TS resource server
-	// byte-for-byte). None of these may carry the `invalid_` envelope —
-	// that namespace is exclusively for facilitator output.
+	const wirePrefix = "invalid_batch_settlement_evm_"
 	for _, code := range []string{
+		ErrCumulativeBelowClaimed,
 		ErrCumulativeAmountMismatch,
 		ErrChannelBusy,
+		ErrMissingChannel,
 		ErrChargeExceedsSignedCumulative,
 		ErrRefundNoBalance,
 		ErrRefundAmountInvalid,
 		ErrRefundAmountExceedsBalance,
 	} {
-		if !strings.HasPrefix(code, "batch_settlement_") {
-			t.Fatalf("server abort reason must start with `batch_settlement_`, got %q", code)
+		if !strings.HasPrefix(code, wirePrefix) {
+			t.Fatalf("error reason must start with %q, got %q", wirePrefix, code)
 		}
-		if strings.HasPrefix(code, "invalid_") {
-			t.Fatalf("server abort reason must NOT carry `invalid_` envelope (reserved for facilitator output), got %q", code)
-		}
-	}
-
-	// `missing_batch_settlement_channel` lives on its own envelope shape
-	// for parity with TS; assert it explicitly so the inventory is complete.
-	if !strings.HasPrefix(ErrMissingChannel, "missing_") {
-		t.Fatalf("ErrMissingChannel expected `missing_*` envelope, got %q", ErrMissingChannel)
-	}
-	if strings.HasPrefix(ErrMissingChannel, "invalid_") {
-		t.Fatalf("ErrMissingChannel must NOT carry `invalid_` envelope, got %q", ErrMissingChannel)
 	}
 }

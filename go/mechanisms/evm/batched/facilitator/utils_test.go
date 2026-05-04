@@ -57,7 +57,14 @@ func TestToContractChannelConfig_ShortSaltLeftPads(t *testing.T) {
 }
 
 func reqs(payTo, asset string) types.PaymentRequirements {
-	return types.PaymentRequirements{PayTo: payTo, Asset: asset, Network: "eip155:8453"}
+	return types.PaymentRequirements{
+		PayTo:   payTo,
+		Asset:   asset,
+		Network: "eip155:8453",
+		Extra: map[string]interface{}{
+			"receiverAuthorizer": "0x4444444444444444444444444444444444444444",
+		},
+	}
 }
 
 func TestValidateChannelConfig_OK(t *testing.T) {
@@ -140,7 +147,10 @@ func TestValidateChannelConfig_ExtraWithdrawDelayMismatch(t *testing.T) {
 	cfg := validConfig()
 	id, _ := batched.ComputeChannelId(cfg, "eip155:8453")
 	r := reqs(cfg.Receiver, cfg.Token)
-	r.Extra = map[string]interface{}{"withdrawDelay": float64(2000)}
+	r.Extra = map[string]interface{}{
+		"receiverAuthorizer": cfg.ReceiverAuthorizer,
+		"withdrawDelay":      float64(2000),
+	}
 	err := ValidateChannelConfig(cfg, id, r)
 	var ve *x402.VerifyError
 	if !errors.As(err, &ve) || ve.InvalidReason != ErrWithdrawDelayMismatch {
@@ -175,7 +185,10 @@ func TestValidateChannelConfig_ExtraWithdrawDelayNumberShapes(t *testing.T) {
 	} {
 		t.Run(label, func(t *testing.T) {
 			r := reqs(cfg.Receiver, cfg.Token)
-			r.Extra = map[string]interface{}{"withdrawDelay": value}
+			r.Extra = map[string]interface{}{
+				"receiverAuthorizer": cfg.ReceiverAuthorizer,
+				"withdrawDelay":      value,
+			}
 			if err := ValidateChannelConfig(cfg, id, r); err != nil {
 				t.Fatalf("delay=%v (%s): expected ok, got %v", value, label, err)
 			}
@@ -183,21 +196,30 @@ func TestValidateChannelConfig_ExtraWithdrawDelayNumberShapes(t *testing.T) {
 	}
 }
 
-// TestValidateChannelConfig_ExtraIgnoresWrongTypes pins the inlined parsing
-// behavior: receiverAuthorizer that is not a string, or withdrawDelay that is
-// not numeric, must be silently ignored (treated as absent) instead of
-// failing validation. This prevents incidental Extra fields from breaking
-// otherwise-valid channels.
-func TestValidateChannelConfig_ExtraIgnoresWrongTypes(t *testing.T) {
+// TestValidateChannelConfig_ExtraTypeTolerance pins parser behavior for the
+// two participating Extra fields. `withdrawDelay` is silently ignored when
+// non-numeric (benign type drift in JSON decoders). `receiverAuthorizer` is
+// strictly required: a non-string value is treated as missing and rejected.
+func TestValidateChannelConfig_ExtraTypeTolerance(t *testing.T) {
 	cfg := validConfig()
 	id, _ := batched.ComputeChannelId(cfg, "eip155:8453")
+
+	// Non-numeric withdrawDelay is ignored; receiverAuthorizer is valid.
 	r := reqs(cfg.Receiver, cfg.Token)
 	r.Extra = map[string]interface{}{
-		"receiverAuthorizer": 42,             // not a string
-		"withdrawDelay":      "not-a-number", // not numeric
+		"receiverAuthorizer": cfg.ReceiverAuthorizer,
+		"withdrawDelay":      "not-a-number",
 	}
 	if err := ValidateChannelConfig(cfg, id, r); err != nil {
-		t.Fatalf("expected wrong-typed extras to be ignored, got %v", err)
+		t.Fatalf("expected non-numeric withdrawDelay to be ignored, got %v", err)
+	}
+
+	// Non-string receiverAuthorizer is rejected (the field is mandatory).
+	r.Extra = map[string]interface{}{"receiverAuthorizer": 42}
+	err := ValidateChannelConfig(cfg, id, r)
+	var ve *x402.VerifyError
+	if !errors.As(err, &ve) || ve.InvalidReason != ErrReceiverAuthorizerMismatch {
+		t.Fatalf("expected ErrReceiverAuthorizerMismatch, got %v", err)
 	}
 }
 
@@ -207,7 +229,7 @@ func TestValidateChannelConfig_ExtraIgnoresWrongTypes(t *testing.T) {
 // `handleAfterVerify` reads `result.extra.balance` directly; if the Go
 // facilitator wraps these under `channelState`, the server falls back to "0"
 // for balance/totalClaimed and silently corrupts its tracked channel record.
-// The downstream symptom is `batch_settlement_refund_no_balance` at refund
+// The downstream symptom is `invalid_batch_settlement_evm_refund_no_balance` at refund
 // time because `channel.balance == 0 < chargedCumulativeAmount`.
 func TestBuildVerifyExtra_FlatShape(t *testing.T) {
 	state := &batched.ChannelState{

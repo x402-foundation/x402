@@ -517,20 +517,21 @@ func (s *BatchedEvmScheme) EnhancePaymentRequirements(
 	//   2. Locally-configured ReceiverAuthorizerSigner address.
 	//   3. Facilitator-advertised authorizer from supportedKind.Extra (delegated mode).
 	//
-	// Without step 3 the delegated-authorizer flow produced an empty `receiverAuthorizer`
-	// in the requirements. Clients then fell back to the zero address when building
-	// `channelConfig`, deriving the wrong channelId and causing the onchain deposit
-	// transaction to revert at the contract boundary.
-	if _, ok := requirements.Extra["receiverAuthorizer"]; !ok {
+	// Hard-fails if all three sources are empty/zero — clients would otherwise
+	// derive the wrong channelId, and the onchain deposit transaction would
+	// revert at the contract boundary. Mirrors TS `enhancePaymentRequirements`
+	// which throws when no non-zero authorizer is available.
+	if existing, ok := requirements.Extra["receiverAuthorizer"].(string); !ok || existing == "" || strings.EqualFold(existing, zeroAddress) {
 		receiverAuth := s.GetReceiverAuthorizerAddress()
-		if receiverAuth == "" && supportedKind.Extra != nil {
+		if (receiverAuth == "" || strings.EqualFold(receiverAuth, zeroAddress)) && supportedKind.Extra != nil {
 			if facilitatorAuth, ok := supportedKind.Extra["receiverAuthorizer"].(string); ok {
 				receiverAuth = facilitatorAuth
 			}
 		}
-		if receiverAuth != "" {
-			requirements.Extra["receiverAuthorizer"] = receiverAuth
+		if receiverAuth == "" || strings.EqualFold(receiverAuth, zeroAddress) {
+			return requirements, fmt.Errorf("payment requirements must include a non-zero extra.receiverAuthorizer")
 		}
+		requirements.Extra["receiverAuthorizer"] = receiverAuth
 	}
 	if _, ok := requirements.Extra["withdrawDelay"]; !ok {
 		requirements.Extra["withdrawDelay"] = s.withdrawDelay

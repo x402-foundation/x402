@@ -13,9 +13,10 @@ import (
 )
 
 const (
-	testNetwork = "eip155:8453"
-	testAsset   = "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913"
-	testPayTo   = "0x3333333333333333333333333333333333333333"
+	testNetwork            = "eip155:8453"
+	testAsset              = "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913"
+	testPayTo              = "0x3333333333333333333333333333333333333333"
+	testReceiverAuthorizer = "0x4444444444444444444444444444444444444444"
 )
 
 // readSigner extends mockSigner with ReadContract.
@@ -36,7 +37,11 @@ func defaultRequirements() types.PaymentRequirements {
 		Asset:   testAsset,
 		Amount:  "100",
 		PayTo:   testPayTo,
-		Extra:   map[string]interface{}{"name": "USDC", "version": "2"},
+		Extra: map[string]interface{}{
+			"name":               "USDC",
+			"version":            "2",
+			"receiverAuthorizer": testReceiverAuthorizer,
+		},
 	}
 }
 
@@ -96,13 +101,16 @@ func TestBuildChannelConfig_DefaultsAndOverrides(t *testing.T) {
 	signer := &mockSigner{address: "0xSIGNER"}
 	scheme := NewBatchedEvmScheme(signer, nil)
 	req := defaultRequirements()
-	config := scheme.BuildChannelConfig(req)
+	config, err := scheme.BuildChannelConfig(req)
+	if err != nil {
+		t.Fatalf("BuildChannelConfig: %v", err)
+	}
 
 	if config.Payer != "0xSIGNER" || config.PayerAuthorizer != "0xSIGNER" {
 		t.Fatalf("payer/payerAuthorizer = %s/%s", config.Payer, config.PayerAuthorizer)
 	}
-	if config.Receiver != testPayTo || config.ReceiverAuthorizer != testPayTo {
-		t.Fatalf("receiver default mismatch: %s/%s", config.Receiver, config.ReceiverAuthorizer)
+	if config.Receiver != testPayTo || config.ReceiverAuthorizer != testReceiverAuthorizer {
+		t.Fatalf("receiver/receiverAuthorizer mismatch: %s/%s", config.Receiver, config.ReceiverAuthorizer)
 	}
 	if config.Token != testAsset {
 		t.Fatalf("token = %s", config.Token)
@@ -115,10 +123,29 @@ func TestBuildChannelConfig_DefaultsAndOverrides(t *testing.T) {
 func TestBuildChannelConfig_ReceiverAuthorizerOverride(t *testing.T) {
 	scheme := NewBatchedEvmScheme(&mockSigner{address: "0x1"}, nil)
 	req := defaultRequirements()
-	req.Extra["receiverAuthorizer"] = "0xRA"
-	cfg := scheme.BuildChannelConfig(req)
-	if cfg.ReceiverAuthorizer != "0xRA" {
+	req.Extra["receiverAuthorizer"] = "0x5555555555555555555555555555555555555555"
+	cfg, err := scheme.BuildChannelConfig(req)
+	if err != nil {
+		t.Fatalf("BuildChannelConfig: %v", err)
+	}
+	if cfg.ReceiverAuthorizer != "0x5555555555555555555555555555555555555555" {
 		t.Fatalf("receiverAuthorizer = %s", cfg.ReceiverAuthorizer)
+	}
+}
+
+func TestBuildChannelConfig_RejectsMissingOrZeroReceiverAuthorizer(t *testing.T) {
+	scheme := NewBatchedEvmScheme(&mockSigner{address: "0x1"}, nil)
+
+	req := defaultRequirements()
+	delete(req.Extra, "receiverAuthorizer")
+	if _, err := scheme.BuildChannelConfig(req); err == nil {
+		t.Fatalf("expected error when receiverAuthorizer is missing")
+	}
+
+	req = defaultRequirements()
+	req.Extra["receiverAuthorizer"] = "0x0000000000000000000000000000000000000000"
+	if _, err := scheme.BuildChannelConfig(req); err == nil {
+		t.Fatalf("expected error when receiverAuthorizer is zero")
 	}
 }
 
@@ -128,7 +155,10 @@ func TestBuildChannelConfig_WithdrawDelayOverride(t *testing.T) {
 	for _, v := range []interface{}{float64(1800), int(1800)} {
 		req := defaultRequirements()
 		req.Extra["withdrawDelay"] = v
-		cfg := scheme.BuildChannelConfig(req)
+		cfg, err := scheme.BuildChannelConfig(req)
+		if err != nil {
+			t.Fatalf("%T: %v", v, err)
+		}
 		if cfg.WithdrawDelay != 1800 {
 			t.Fatalf("%T: withdrawDelay = %d", v, cfg.WithdrawDelay)
 		}
@@ -139,7 +169,10 @@ func TestBuildChannelConfig_ExplicitPayerAuthorizer(t *testing.T) {
 	scheme := NewBatchedEvmScheme(&mockSigner{address: "0xSIG"}, &BatchedEvmSchemeConfig{
 		PayerAuthorizer: "0xPA",
 	})
-	cfg := scheme.BuildChannelConfig(defaultRequirements())
+	cfg, err := scheme.BuildChannelConfig(defaultRequirements())
+	if err != nil {
+		t.Fatalf("BuildChannelConfig: %v", err)
+	}
 	if cfg.PayerAuthorizer != "0xPA" {
 		t.Fatalf("payerAuthorizer = %s", cfg.PayerAuthorizer)
 	}
@@ -339,7 +372,10 @@ func TestCreatePaymentPayload_VoucherWhenSessionHasFunds(t *testing.T) {
 	scheme := NewBatchedEvmScheme(signer, &BatchedEvmSchemeConfig{Storage: storage})
 
 	// Pre-seed session with sufficient funds.
-	channelConfig := scheme.BuildChannelConfig(defaultRequirements())
+	channelConfig, err := scheme.BuildChannelConfig(defaultRequirements())
+	if err != nil {
+		t.Fatalf("BuildChannelConfig: %v", err)
+	}
 	channelId, _ := batched.ComputeChannelId(channelConfig, testNetwork)
 	channelId = batched.NormalizeChannelId(channelId)
 	_ = storage.Set(channelId, &BatchedClientContext{Balance: "1000", ChargedCumulativeAmount: "100"})
@@ -358,7 +394,10 @@ func TestCreatePaymentPayload_TopsUpOnInsufficient(t *testing.T) {
 	signer := &mockSigner{address: "0x1111111111111111111111111111111111111111", sig: []byte{0xac}}
 	scheme := NewBatchedEvmScheme(signer, &BatchedEvmSchemeConfig{Storage: storage})
 
-	channelConfig := scheme.BuildChannelConfig(defaultRequirements())
+	channelConfig, err := scheme.BuildChannelConfig(defaultRequirements())
+	if err != nil {
+		t.Fatalf("BuildChannelConfig: %v", err)
+	}
 	channelId, _ := batched.ComputeChannelId(channelConfig, testNetwork)
 	channelId = batched.NormalizeChannelId(channelId)
 	_ = storage.Set(channelId, &BatchedClientContext{Balance: "50", ChargedCumulativeAmount: "0"})
@@ -385,7 +424,10 @@ func TestCreatePaymentPayload_DepositStrategySkipYieldsVoucher(t *testing.T) {
 		},
 	})
 
-	channelConfig := scheme.BuildChannelConfig(defaultRequirements())
+	channelConfig, err := scheme.BuildChannelConfig(defaultRequirements())
+	if err != nil {
+		t.Fatalf("BuildChannelConfig: %v", err)
+	}
 	channelId, _ := batched.ComputeChannelId(channelConfig, testNetwork)
 	channelId = batched.NormalizeChannelId(channelId)
 	_ = storage.Set(channelId, &BatchedClientContext{Balance: "50"})
@@ -706,7 +748,10 @@ func TestRefundContextAdapter(t *testing.T) {
 	if a.VoucherSigner() != evm.ClientEvmSigner(voucherSigner) {
 		t.Fatal("VoucherSigner() mismatch")
 	}
-	cfg := a.BuildChannelConfig(defaultRequirements())
+	cfg, err := a.BuildChannelConfig(defaultRequirements())
+	if err != nil {
+		t.Fatalf("BuildChannelConfig: %v", err)
+	}
 	if cfg.Payer != signer.Address() {
 		t.Fatalf("BuildChannelConfig.Payer = %s", cfg.Payer)
 	}
