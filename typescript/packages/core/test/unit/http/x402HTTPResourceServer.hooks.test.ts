@@ -329,6 +329,60 @@ describe("x402HTTPResourceServer Hooks", () => {
         expect(receivedContext?.transportContext).toEqual(transportContext);
       });
 
+      it("should merge nested scheme settlement response enrichment", async () => {
+        const schemeWithEnrichment = extensionMockScheme as MockSchemeNetworkServer & {
+          enrichSettlementResponse: () => Promise<Record<string, unknown>>;
+        };
+        schemeWithEnrichment.enrichSettlementResponse = async () => ({
+          chargedAmount: "1000",
+          channelState: {
+            chargedCumulativeAmount: "1000",
+          },
+        });
+
+        const routes = {
+          "/api/test": {
+            accepts: {
+              scheme: "exact",
+              payTo: "0xabc",
+              price: "$1.00" as Price,
+              network: "eip155:8453" as Network,
+            },
+          },
+        };
+        const httpServer = new x402HTTPResourceServer(extensionResourceServer, routes);
+        const payload = buildPaymentPayload();
+        const requirements = buildPaymentRequirements({
+          scheme: "exact",
+          network: "eip155:8453" as Network,
+        });
+
+        extensionMockFacilitator.setSettleResponse(
+          buildSettleResponse({
+            success: true,
+            network: "eip155:8453" as Network,
+            extra: {
+              channelState: {
+                channelId: "0xchannel",
+                balance: "10000",
+              },
+            },
+          }),
+        );
+
+        const result = await httpServer.processSettlement(payload, requirements);
+
+        expect(result.success).toBe(true);
+        expect(result.extra).toEqual({
+          chargedAmount: "1000",
+          channelState: {
+            channelId: "0xchannel",
+            balance: "10000",
+            chargedCumulativeAmount: "1000",
+          },
+        });
+      });
+
       it("should have undefined transportContext when not provided", async () => {
         let receivedContext: SettleResultContext | undefined;
 

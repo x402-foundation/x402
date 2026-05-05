@@ -20,7 +20,10 @@
     "erc20ApprovalGasSponsoring"
   ],
   "evm": {
-    "transferMethods": ["eip3009", "permit2", "upto"]
+    "assetTransferMethods": [
+      "eip3009",
+      "permit2"
+    ]
   },
   "environment": {
     "required": [
@@ -40,7 +43,8 @@
       "APTOS_NETWORK",
       "HEDERA_NETWORK",
       "HEDERA_NODE_URL",
-      "STELLAR_NETWORK"
+      "STELLAR_NETWORK",
+      "EVM_RECEIVER_AUTHORIZER_PRIVATE_KEY"
     ]
   }
 }

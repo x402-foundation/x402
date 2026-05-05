@@ -11,16 +11,20 @@ import {
   PaymentRequired,
   ResourceInfo,
 } from "../types/payments";
-import { SchemeNetworkServer } from "../types/mechanisms";
+import { SchemeNetworkServer, SchemePaymentRequiredContext } from "../types/mechanisms";
 import { Price, Network, ResourceServerExtension, ResourceServerExtensionHooks } from "../types";
 import type { DeepReadonly } from "../types/readonly";
 import { deepEqual, findByNetworkAndScheme } from "../utils";
 import {
   assertAcceptsAllowlistedAfterExtensionEnrich,
+  assertAcceptsAdditiveExtraAfterSchemeEnrich,
+  assertAdditivePayloadEnrichment,
+  assertAdditiveSettlementExtra,
   assertSettleResponseCoreUnchanged,
+  mergeAdditiveSettlementExtra,
   snapshotPaymentRequirementsList,
   snapshotSettleResponseCore,
-} from "./extensionResponsePolicy";
+} from "./hookPolicy";
 import { FacilitatorClient, HTTPFacilitatorClient } from "../http/httpFacilitatorClient";
 import { x402Version } from "..";
 
@@ -72,6 +76,20 @@ export interface VerifyResultContext extends VerifyContext {
   result: DeepReadonly<VerifyResponse>;
 }
 
+/**
+ * Optional acknowledgement body returned to the caller when an `AfterVerifyHook`
+ * requests that the resource handler be skipped for a self-contained operation
+ * (e.g. cooperative refund). Travels in-process only — never on the facilitator wire.
+ */
+export interface SkipHandlerDirective {
+  contentType?: string;
+  body?: unknown;
+}
+
+export type ResourceVerifyRespone = VerifyResponse & {
+  skipHandler?: SkipHandlerDirective;
+};
+
 export interface VerifyFailureContext extends VerifyContext {
   error: Error;
 }
@@ -91,11 +109,33 @@ export interface SettleFailureContext extends SettleContext {
   error: Error;
 }
 
+export type VerifiedPaymentCancellationReason = "handler_threw" | "handler_failed";
+
+export interface VerifiedPaymentCanceledContext extends SettleContext {
+  reason: VerifiedPaymentCancellationReason;
+  error?: unknown;
+  responseStatus?: number;
+}
+
+export interface VerifiedPaymentCancelOptions {
+  reason: VerifiedPaymentCancellationReason;
+  error?: unknown;
+  responseStatus?: number;
+}
+
+export interface PaymentCancellationDispatcher {
+  cancel(options: VerifiedPaymentCancelOptions): Promise<void>;
+}
+
 export type BeforeVerifyHook = (
   context: VerifyContext,
-) => Promise<void | { abort: true; reason: string; message?: string }>;
+) => Promise<
+  void | { abort: true; reason: string; message?: string } | { skip: true; result: VerifyResponse }
+>;
 
-export type AfterVerifyHook = (context: VerifyResultContext) => Promise<void>;
+export type AfterVerifyHook = (
+  context: VerifyResultContext,
+) => Promise<void | { skipHandler: true; response?: SkipHandlerDirective }>;
 
 export type OnVerifyFailureHook = (
   context: VerifyFailureContext,
@@ -103,13 +143,19 @@ export type OnVerifyFailureHook = (
 
 export type BeforeSettleHook = (
   context: SettleContext,
-) => Promise<void | { abort: true; reason: string; message?: string }>;
+) => Promise<
+  void | { abort: true; reason: string; message?: string } | { skip: true; result: SettleResponse }
+>;
 
 export type AfterSettleHook = (context: SettleResultContext) => Promise<void>;
 
 export type OnSettleFailureHook = (
   context: SettleFailureContext,
 ) => Promise<void | { recovered: true; result: SettleResponse }>;
+
+export type OnVerifiedPaymentCanceledHook = (
+  context: VerifiedPaymentCanceledContext,
+) => Promise<void>;
 
 /**
  * Optional overrides for settlement parameters.
@@ -179,17 +225,21 @@ export function resolveSettlementOverrideAmount(
   return rawAmount;
 }
 
-type ExtensionAdapterHandles = {
+type HookAdapterHandles = {
   beforeVerify?: BeforeVerifyHook;
   afterVerify?: AfterVerifyHook;
   onVerifyFailure?: OnVerifyFailureHook;
   beforeSettle?: BeforeSettleHook;
   afterSettle?: AfterSettleHook;
   onSettleFailure?: OnSettleFailureHook;
+  onVerifiedPaymentCanceled?: OnVerifiedPaymentCanceledHook;
 };
 
-/** Keys shared by {@link ExtensionAdapterHandles} and manual `*Hooks` arrays on the server. */
-type ResourceServerHookPhase = keyof ExtensionAdapterHandles;
+type ExtensionAdapterHandles = HookAdapterHandles;
+type SchemeAdapterHandles = HookAdapterHandles;
+
+/** Keys shared by adapter handles and manual `*Hooks` arrays on the server. */
+type ResourceServerHookPhase = keyof HookAdapterHandles;
 
 type ResourceServerManualHookArrayKey = `${ResourceServerHookPhase}Hooks`;
 
@@ -200,6 +250,7 @@ type ResourceServerManualHookArrayKey = `${ResourceServerHookPhase}Hooks`;
 export class x402ResourceServer {
   private facilitatorClients: FacilitatorClient[];
   private registeredServerSchemes: Map<string, Map<string, SchemeNetworkServer>> = new Map();
+  private schemeHookAdapters: Map<string, Map<string, SchemeAdapterHandles>> = new Map();
   private supportedResponsesMap: Map<number, Map<string, Map<string, SupportedResponse>>> =
     new Map();
   private facilitatorClientsMap: Map<number, Map<string, Map<string, FacilitatorClient>>> =
@@ -213,6 +264,7 @@ export class x402ResourceServer {
   private beforeSettleHooks: BeforeSettleHook[] = [];
   private afterSettleHooks: AfterSettleHook[] = [];
   private onSettleFailureHooks: OnSettleFailureHook[] = [];
+  private onVerifiedPaymentCanceledHooks: OnVerifiedPaymentCanceledHook[] = [];
 
   /**
    * Creates a new x402ResourceServer instance.
@@ -247,8 +299,34 @@ export class x402ResourceServer {
     }
 
     const serverByScheme = this.registeredServerSchemes.get(network)!;
-    if (!serverByScheme.has(server.scheme)) {
-      serverByScheme.set(server.scheme, server);
+    serverByScheme.set(server.scheme, server);
+
+    if (!this.schemeHookAdapters.has(network)) {
+      this.schemeHookAdapters.set(network, new Map());
+    }
+
+    const hooksByScheme = this.schemeHookAdapters.get(network)!;
+    const hooks = server.schemeHooks;
+    if (!hooks) {
+      hooksByScheme.delete(server.scheme);
+      return this;
+    }
+
+    const handles: SchemeAdapterHandles = {};
+    if (hooks.onBeforeVerify) handles.beforeVerify = hooks.onBeforeVerify;
+    if (hooks.onAfterVerify) handles.afterVerify = hooks.onAfterVerify;
+    if (hooks.onVerifyFailure) handles.onVerifyFailure = hooks.onVerifyFailure;
+    if (hooks.onBeforeSettle) handles.beforeSettle = hooks.onBeforeSettle;
+    if (hooks.onAfterSettle) handles.afterSettle = hooks.onAfterSettle;
+    if (hooks.onSettleFailure) handles.onSettleFailure = hooks.onSettleFailure;
+    if (hooks.onVerifiedPaymentCanceled) {
+      handles.onVerifiedPaymentCanceled = hooks.onVerifiedPaymentCanceled;
+    }
+
+    if (Object.keys(handles).length > 0) {
+      hooksByScheme.set(server.scheme, handles);
+    } else {
+      hooksByScheme.delete(server.scheme);
     }
 
     return this;
@@ -329,6 +407,7 @@ export class x402ResourceServer {
     bindExtensionHookAdapter("onBeforeSettle", "beforeSettle");
     bindExtensionHookAdapter("onAfterSettle", "afterSettle");
     bindExtensionHookAdapter("onSettleFailure", "onSettleFailure");
+    bindExtensionHookAdapter("onVerifiedPaymentCanceled", "onVerifiedPaymentCanceled");
     if (Object.keys(handles).length > 0) {
       this.extensionHookAdapters.set(extensionKey, handles);
     } else {
@@ -454,6 +533,17 @@ export class x402ResourceServer {
    */
   onSettleFailure(hook: OnSettleFailureHook): x402ResourceServer {
     this.onSettleFailureHooks.push(hook);
+    return this;
+  }
+
+  /**
+   * Register a hook to execute when verified payment work is canceled before settlement.
+   *
+   * @param hook - The hook function to register
+   * @returns The x402ResourceServer instance for chaining
+   */
+  onVerifiedPaymentCanceled(hook: OnVerifiedPaymentCanceledHook): x402ResourceServer {
+    this.onVerifiedPaymentCanceledHooks.push(hook);
     return this;
   }
 
@@ -639,13 +729,9 @@ export class x402ResourceServer {
     };
 
     // Delegate to the implementation for scheme-specific enhancements
-    // Note: enhancePaymentRequirements expects x402Version in the kind, so we add it back
     const requirement = await SchemeNetworkServer.enhancePaymentRequirements(
       baseRequirements,
-      {
-        ...supportedKind,
-        x402Version,
-      },
+      supportedKind,
       facilitatorExtensions,
     );
 
@@ -706,6 +792,7 @@ export class x402ResourceServer {
    * @param error - Error message
    * @param extensions - Optional declared extensions (for per-key enrichment)
    * @param transportContext - Optional transport-specific context (e.g., HTTP request, MCP tool context)
+   * @param paymentPayload - Optional failed payment payload for response-time scheme enrichment
    * @returns Payment required response object
    */
   async createPaymentRequiredResponse(
@@ -714,24 +801,59 @@ export class x402ResourceServer {
     error?: string,
     extensions?: Record<string, unknown>,
     transportContext?: unknown,
+    paymentPayload?: PaymentPayload,
   ): Promise<PaymentRequired> {
     const acceptsClone = requirements.map(req => ({
       ...req,
       extra: structuredClone(req.extra),
     }));
-    let baselineAccepts = snapshotPaymentRequirementsList(acceptsClone);
+    let workingAccepts = acceptsClone;
+    let baselineAccepts = snapshotPaymentRequirementsList(workingAccepts);
 
     // V2 response with resource at top level
     let response: PaymentRequired = {
       x402Version: 2,
       error,
       resource: resourceInfo,
-      accepts: acceptsClone,
+      accepts: workingAccepts,
     };
 
     // Add extensions if provided
     if (extensions && Object.keys(extensions).length > 0) {
       response.extensions = extensions;
+    }
+
+    for (let i = 0; i < workingAccepts.length; i++) {
+      const accept = workingAccepts[i];
+      const scheme = findByNetworkAndScheme(
+        this.registeredServerSchemes,
+        accept.scheme,
+        accept.network as Network,
+      );
+      if (!scheme?.enrichPaymentRequiredResponse) {
+        continue;
+      }
+
+      const context: SchemePaymentRequiredContext = {
+        requirements: workingAccepts,
+        paymentPayload,
+        resourceInfo,
+        error,
+        paymentRequiredResponse: response,
+        transportContext,
+      };
+      const enrichedAccepts = await scheme.enrichPaymentRequiredResponse(context);
+      if (enrichedAccepts !== undefined) {
+        workingAccepts = enrichedAccepts;
+        response.accepts = workingAccepts;
+      }
+      assertAcceptsAdditiveExtraAfterSchemeEnrich(
+        baselineAccepts,
+        response.accepts,
+        accept.scheme,
+        accept.network,
+      );
+      baselineAccepts = snapshotPaymentRequirementsList(response.accepts);
     }
 
     // Let declared extensions add data to PaymentRequired response
@@ -741,7 +863,7 @@ export class x402ResourceServer {
         if (extension?.enrichPaymentRequiredResponse) {
           try {
             const context: PaymentRequiredContext = {
-              requirements: acceptsClone,
+              requirements: workingAccepts,
               resourceInfo,
               error,
               paymentRequiredResponse: response,
@@ -760,8 +882,8 @@ export class x402ResourceServer {
           } catch (error) {
             this.warnExtensionHookFailure(key, "enrichPaymentRequiredResponse", error);
           }
-          assertAcceptsAllowlistedAfterExtensionEnrich(baselineAccepts, acceptsClone, key);
-          baselineAccepts = snapshotPaymentRequirementsList(acceptsClone);
+          assertAcceptsAllowlistedAfterExtensionEnrich(baselineAccepts, workingAccepts, key);
+          baselineAccepts = snapshotPaymentRequirementsList(workingAccepts);
         }
       }
     }
@@ -776,16 +898,21 @@ export class x402ResourceServer {
    * @param requirements - Requirements matched to the payload
    * @param declaredExtensions - Optional per-extension declarations for the request
    * @param transportContext - Optional transport-specific context (e.g. HTTP, MCP)
-   * @returns Facilitator verify outcome, or abort/recovery as driven by hooks
+   * @returns Facilitator verify outcome (optionally carrying a `skipHandler` directive),
+   *   or abort/recovery as driven by hooks
    */
   async verifyPayment(
     paymentPayload: PaymentPayload,
     requirements: PaymentRequirements,
     declaredExtensions?: Record<string, unknown>,
     transportContext?: unknown,
-  ): Promise<VerifyResponse> {
+  ): Promise<ResourceVerifyRespone> {
     const resolvedDeclaredExtensions = declaredExtensions ?? {};
     const extensionKeysInUse = Object.keys(resolvedDeclaredExtensions);
+    const matchedScheme = {
+      network: requirements.network as Network,
+      scheme: requirements.scheme,
+    };
 
     const context: VerifyContext = {
       paymentPayload,
@@ -794,7 +921,11 @@ export class x402ResourceServer {
       transportContext,
     };
 
-    for (const { label, hook } of this.getLabeledHooks("beforeVerify", extensionKeysInUse)) {
+    for (const { label, hook } of this.getLabeledHooks(
+      "beforeVerify",
+      extensionKeysInUse,
+      matchedScheme,
+    )) {
       try {
         const result = await hook(context);
         if (result && "abort" in result && result.abort) {
@@ -803,6 +934,14 @@ export class x402ResourceServer {
             invalidReason: result.reason,
             invalidMessage: result.message,
           };
+        }
+        if (result && "skip" in result && result.skip) {
+          return this.runAfterVerifyHooks(
+            result.result,
+            context,
+            extensionKeysInUse,
+            matchedScheme,
+          );
         }
       } catch (error) {
         this.warnResourceServerHookFailure("beforeVerify", label, error);
@@ -845,28 +984,18 @@ export class x402ResourceServer {
         verifyResult = await facilitatorClient.verify(paymentPayload, requirements);
       }
 
-      // Execute afterVerify hooks
-      const resultContext: VerifyResultContext = {
-        ...context,
-        result: verifyResult,
-      };
-
-      for (const { label, hook } of this.getLabeledHooks("afterVerify", extensionKeysInUse)) {
-        try {
-          await hook(resultContext);
-        } catch (error) {
-          this.warnResourceServerHookFailure("afterVerify", label, error);
-        }
-      }
-
-      return verifyResult;
+      return this.runAfterVerifyHooks(verifyResult, context, extensionKeysInUse, matchedScheme);
     } catch (error) {
       const failureContext: VerifyFailureContext = {
         ...context,
         error: error as Error,
       };
 
-      for (const { label, hook } of this.getLabeledHooks("onVerifyFailure", extensionKeysInUse)) {
+      for (const { label, hook } of this.getLabeledHooks(
+        "onVerifyFailure",
+        extensionKeysInUse,
+        matchedScheme,
+      )) {
         try {
           const result = await hook(failureContext);
           if (result && "recovered" in result && result.recovered) {
@@ -879,6 +1008,40 @@ export class x402ResourceServer {
 
       throw error;
     }
+  }
+
+  /**
+   * Create cancellation controls for a verified payment attempt.
+   *
+   * @param paymentPayload - Signed payment payload from the client
+   * @param requirements - Requirements matched to the payload
+   * @param declaredExtensions - Optional per-extension declarations for the request
+   * @param transportContext - Optional transport-specific context
+   * @returns Cancellation controls for the verified payment attempt
+   */
+  createPaymentCancellationDispatcher(
+    paymentPayload: PaymentPayload,
+    requirements: PaymentRequirements,
+    declaredExtensions?: Record<string, unknown>,
+    transportContext?: unknown,
+  ): PaymentCancellationDispatcher {
+    const resolvedDeclaredExtensions = declaredExtensions ?? {};
+    let cancelPromise: Promise<void> | undefined;
+
+    return {
+      cancel: (options: VerifiedPaymentCancelOptions) => {
+        if (!cancelPromise) {
+          cancelPromise = this.dispatchVerifiedPaymentCanceled(
+            paymentPayload,
+            requirements,
+            resolvedDeclaredExtensions,
+            options,
+            transportContext,
+          );
+        }
+        return cancelPromise;
+      },
+    };
   }
 
   /**
@@ -923,8 +1086,16 @@ export class x402ResourceServer {
       declaredExtensions: resolvedDeclaredExtensions,
       transportContext,
     };
+    const matchedScheme = {
+      network: effectiveRequirements.network as Network,
+      scheme: effectiveRequirements.scheme,
+    };
 
-    for (const { label, hook } of this.getLabeledHooks("beforeSettle", extensionKeysInUse)) {
+    for (const { label, hook } of this.getLabeledHooks(
+      "beforeSettle",
+      extensionKeysInUse,
+      matchedScheme,
+    )) {
       try {
         const result = await hook(context);
         if (result && "abort" in result && result.abort) {
@@ -936,6 +1107,32 @@ export class x402ResourceServer {
             network: requirements.network,
           });
         }
+        if (result && "skip" in result && result.skip) {
+          const settleResult = result.result;
+          const skipResultContext: SettleResultContext = {
+            ...context,
+            result: settleResult,
+            transportContext,
+          };
+          for (const { label, hook } of this.getLabeledHooks(
+            "afterSettle",
+            extensionKeysInUse,
+            matchedScheme,
+          )) {
+            try {
+              await hook(skipResultContext);
+            } catch (error) {
+              this.warnResourceServerHookFailure("afterSettle", label, error);
+            }
+          }
+          await this.enrichSettlementResponse(
+            settleResult,
+            skipResultContext,
+            resolvedDeclaredExtensions,
+            matchedScheme,
+          );
+          return settleResult;
+        }
       } catch (error) {
         if (error instanceof SettleError) {
           throw error;
@@ -945,6 +1142,21 @@ export class x402ResourceServer {
     }
 
     try {
+      const scheme = findByNetworkAndScheme(
+        this.registeredServerSchemes,
+        matchedScheme.scheme,
+        matchedScheme.network,
+      );
+      const payloadEnrichmentHook = scheme?.enrichSettlementPayload;
+      if (payloadEnrichmentHook) {
+        const label = `scheme "${matchedScheme.scheme}" enrichSettlementPayload`;
+        const enrichment = await payloadEnrichmentHook(context);
+        if (enrichment !== undefined) {
+          assertAdditivePayloadEnrichment(paymentPayload.payload, enrichment, label);
+          paymentPayload.payload = { ...paymentPayload.payload, ...enrichment };
+        }
+      }
+
       // Find the facilitator that supports this payment type
       const facilitatorClient = this.getFacilitatorClient(
         paymentPayload.x402Version,
@@ -986,7 +1198,11 @@ export class x402ResourceServer {
         result: settleResult,
       };
 
-      for (const { label, hook } of this.getLabeledHooks("afterSettle", extensionKeysInUse)) {
+      for (const { label, hook } of this.getLabeledHooks(
+        "afterSettle",
+        extensionKeysInUse,
+        matchedScheme,
+      )) {
         try {
           await hook(resultContext);
         } catch (error) {
@@ -994,30 +1210,12 @@ export class x402ResourceServer {
         }
       }
 
-      // Let declared extensions add data to settlement response
-      if (Object.keys(resolvedDeclaredExtensions).length > 0) {
-        const settleCoreSnapshot = snapshotSettleResponseCore(settleResult);
-        for (const [key, declaration] of Object.entries(resolvedDeclaredExtensions)) {
-          const extension = this.registeredExtensions.get(key);
-          if (extension?.enrichSettlementResponse) {
-            try {
-              const extensionData = await extension.enrichSettlementResponse(
-                declaration,
-                resultContext,
-              );
-              if (extensionData !== undefined) {
-                if (!settleResult.extensions) {
-                  settleResult.extensions = {};
-                }
-                settleResult.extensions[key] = extensionData;
-              }
-            } catch (error) {
-              this.warnExtensionHookFailure(key, "enrichSettlementResponse", error);
-            }
-            assertSettleResponseCoreUnchanged(settleCoreSnapshot, settleResult, key);
-          }
-        }
-      }
+      await this.enrichSettlementResponse(
+        settleResult,
+        resultContext,
+        resolvedDeclaredExtensions,
+        matchedScheme,
+      );
 
       return settleResult;
     } catch (error) {
@@ -1026,7 +1224,11 @@ export class x402ResourceServer {
         error: error as Error,
       };
 
-      for (const { label, hook } of this.getLabeledHooks("onSettleFailure", extensionKeysInUse)) {
+      for (const { label, hook } of this.getLabeledHooks(
+        "onSettleFailure",
+        extensionKeysInUse,
+        matchedScheme,
+      )) {
         try {
           const result = await hook(failureContext);
           if (result && "recovered" in result && result.recovered) {
@@ -1073,103 +1275,13 @@ export class x402ResourceServer {
   }
 
   /**
-   * Process a payment request
-   *
-   * @param paymentPayload - Optional payment payload if provided
-   * @param resourceConfig - Configuration for the protected resource
-   * @param resourceInfo - Information about the resource being accessed
-   * @param extensions - Optional extensions to include in the response
-   * @param transportContext - Optional transport context for extension hooks and enrichment
-   * @returns Processing result
-   */
-  async processPaymentRequest(
-    paymentPayload: PaymentPayload | null,
-    resourceConfig: ResourceConfig,
-    resourceInfo: ResourceInfo,
-    extensions?: Record<string, unknown>,
-    transportContext?: unknown,
-  ): Promise<{
-    success: boolean;
-    requiresPayment?: PaymentRequired;
-    verificationResult?: VerifyResponse;
-    settlementResult?: SettleResponse;
-    error?: string;
-  }> {
-    const requirements = await this.buildPaymentRequirements(resourceConfig);
-    const resolvedRouteExtensions = extensions ?? {};
-
-    if (!paymentPayload) {
-      return {
-        success: false,
-        requiresPayment: await this.createPaymentRequiredResponse(
-          requirements,
-          resourceInfo,
-          "Payment required",
-          extensions,
-          transportContext,
-        ),
-      };
-    }
-
-    // findMatching must use the same accepts the client saw (extensions may rewrite requirements).
-    const paymentRequired = await this.createPaymentRequiredResponse(
-      requirements,
-      resourceInfo,
-      undefined,
-      extensions,
-      transportContext,
-    );
-    const matchingRequirements = this.findMatchingRequirements(
-      paymentRequired.accepts,
-      paymentPayload,
-    );
-    if (!matchingRequirements) {
-      return {
-        success: false,
-        requiresPayment: await this.createPaymentRequiredResponse(
-          requirements,
-          resourceInfo,
-          "No matching payment requirements found",
-          extensions,
-          transportContext,
-        ),
-      };
-    }
-
-    // Verify payment
-    const verificationResult = await this.verifyPayment(
-      paymentPayload,
-      matchingRequirements,
-      resolvedRouteExtensions,
-      transportContext,
-    );
-    if (!verificationResult.isValid) {
-      return {
-        success: false,
-        error: verificationResult.invalidReason,
-        verificationResult,
-      };
-    }
-
-    // Payment verified, ready for settlement
-    return {
-      success: true,
-      verificationResult,
-    };
-  }
-
-  /**
    * Logs a warning when a manual or extension adapter lifecycle hook throws.
    *
    * @param phase - Lifecycle phase name (e.g. `beforeVerify`)
    * @param label - Hook source label from {@link getLabeledHooks} (manual index or extension key)
    * @param error - Thrown value or rejection reason
    */
-  private warnResourceServerHookFailure(
-    phase: ResourceServerHookPhase,
-    label: string,
-    error: unknown,
-  ): void {
+  private warnResourceServerHookFailure(phase: string, label: string, error: unknown): void {
     const detail = error instanceof Error ? error.message : String(error);
     console.warn(`[x402] Resource server ${phase} hook threw (${label}): ${detail}`);
   }
@@ -1187,16 +1299,162 @@ export class x402ResourceServer {
   }
 
   /**
-   * Manual hooks first, then extension adapters for keys in `extensionKeysInUse`.
+   * Executes after-verify hooks for facilitator and hook-provided verify results.
+   *
+   * @param verifyResult - Verify response passed to after-verify hooks.
+   * @param context - Verify context shared with before-verify hooks.
+   * @param extensionKeysInUse - Declared extension keys for this request.
+   * @param matchedScheme - Scheme/network selected for this payment.
+   * @param matchedScheme.network - Matched payment network.
+   * @param matchedScheme.scheme - Matched payment scheme.
+   * @returns Verify response with any in-process skip handler directive.
+   */
+  private async runAfterVerifyHooks(
+    verifyResult: VerifyResponse,
+    context: VerifyContext,
+    extensionKeysInUse: readonly string[],
+    matchedScheme: { network: Network; scheme: string },
+  ): Promise<ResourceVerifyRespone> {
+    const resultContext: VerifyResultContext = {
+      ...context,
+      result: verifyResult,
+    };
+
+    let skipHandler: SkipHandlerDirective | undefined;
+    for (const { label, hook } of this.getLabeledHooks(
+      "afterVerify",
+      extensionKeysInUse,
+      matchedScheme,
+    )) {
+      try {
+        const directive = await hook(resultContext);
+        if (directive && "skipHandler" in directive && directive.skipHandler) {
+          skipHandler = directive.response ?? {};
+        }
+      } catch (error) {
+        this.warnResourceServerHookFailure("afterVerify", label, error);
+      }
+    }
+
+    return skipHandler ? { ...verifyResult, skipHandler } : verifyResult;
+  }
+
+  /**
+   * Runs response enrichment after settlement lifecycle hooks complete.
+   *
+   * @param settleResult - Mutable settlement result being returned to the caller
+   * @param context - Read-only hook context for enrichment callbacks
+   * @param declaredExtensions - Extension declarations present on this payment
+   * @param matchedScheme - Scheme/network selected for this settlement
+   * @param matchedScheme.network - Matched payment network
+   * @param matchedScheme.scheme - Matched payment scheme
+   */
+  private async enrichSettlementResponse(
+    settleResult: SettleResponse,
+    context: SettleResultContext,
+    declaredExtensions: Record<string, unknown>,
+    matchedScheme: { network: Network; scheme: string },
+  ): Promise<void> {
+    if (Object.keys(declaredExtensions).length > 0) {
+      const settleCoreSnapshot = snapshotSettleResponseCore(settleResult);
+      for (const [key, declaration] of Object.entries(declaredExtensions)) {
+        const extension = this.registeredExtensions.get(key);
+        if (!extension?.enrichSettlementResponse) continue;
+
+        try {
+          const extensionData = await extension.enrichSettlementResponse(declaration, context);
+          if (extensionData !== undefined) {
+            if (!settleResult.extensions) {
+              settleResult.extensions = {};
+            }
+            settleResult.extensions[key] = extensionData;
+          }
+        } catch (error) {
+          this.warnExtensionHookFailure(key, "enrichSettlementResponse", error);
+        }
+        assertSettleResponseCoreUnchanged(settleCoreSnapshot, settleResult, key);
+      }
+    }
+
+    const scheme = findByNetworkAndScheme(
+      this.registeredServerSchemes,
+      matchedScheme.scheme,
+      matchedScheme.network,
+    );
+    const hook = scheme?.enrichSettlementResponse;
+    if (!hook) return;
+
+    const label = `scheme "${matchedScheme.scheme}" enrichSettlementResponse`;
+    try {
+      const enrichment = await hook(context);
+      if (enrichment === undefined) return;
+
+      assertAdditiveSettlementExtra(settleResult.extra ?? {}, enrichment, label);
+      settleResult.extra = mergeAdditiveSettlementExtra(settleResult.extra ?? {}, enrichment);
+    } catch (error) {
+      this.warnResourceServerHookFailure("enrichSettlementResponse", label, error);
+    }
+  }
+
+  /**
+   * Notify hooks that verified work ended before settlement.
+   *
+   * @param paymentPayload - Signed payment payload from the client
+   * @param requirements - Requirements matched to the payload
+   * @param declaredExtensions - Optional per-extension declarations for the request
+   * @param options - Cancellation reason and optional diagnostics
+   * @param fallbackTransportContext - Optional transport-specific context
+   */
+  private async dispatchVerifiedPaymentCanceled(
+    paymentPayload: PaymentPayload,
+    requirements: PaymentRequirements,
+    declaredExtensions: Record<string, unknown>,
+    options: VerifiedPaymentCancelOptions,
+    fallbackTransportContext?: unknown,
+  ): Promise<void> {
+    const extensionKeysInUse = Object.keys(declaredExtensions);
+    const matchedScheme = {
+      network: requirements.network as Network,
+      scheme: requirements.scheme,
+    };
+    const context: VerifiedPaymentCanceledContext = {
+      paymentPayload,
+      requirements,
+      declaredExtensions,
+      transportContext: fallbackTransportContext,
+      reason: options.reason,
+      error: options.error,
+      responseStatus: options.responseStatus,
+    };
+
+    for (const { label, hook } of this.getLabeledHooks(
+      "onVerifiedPaymentCanceled",
+      extensionKeysInUse,
+      matchedScheme,
+    )) {
+      try {
+        await hook(context);
+      } catch (error) {
+        this.warnResourceServerHookFailure("onVerifiedPaymentCanceled", label, error);
+      }
+    }
+  }
+
+  /**
+   * Manual hooks first, then the matched scheme adapter, then extension adapters for keys in use.
    * Each entry carries a stable label for logging when a hook throws.
    *
    * @param phase - Hook slot (e.g. `beforeVerify`)
    * @param extensionKeysInUse - Declared extension keys for this request
+   * @param matchedScheme - Scheme/network selected for this payment
+   * @param matchedScheme.network - Matched payment network
+   * @param matchedScheme.scheme - Matched payment scheme
    * @returns Hooks in invocation order with source labels
    */
   private getLabeledHooks<P extends ResourceServerHookPhase>(
     phase: P,
     extensionKeysInUse: readonly string[],
+    matchedScheme?: { network: Network; scheme: string },
   ): Array<{
     label: string;
     hook: NonNullable<ExtensionAdapterHandles[P]>;
@@ -1209,6 +1467,21 @@ export class x402ResourceServer {
     manual.forEach((hook, index) => {
       out.push({ label: `manual ${phase} hook #${index}`, hook });
     });
+
+    if (matchedScheme) {
+      const schemeHandles = findByNetworkAndScheme(
+        this.schemeHookAdapters,
+        matchedScheme.scheme,
+        matchedScheme.network,
+      );
+      const hook = schemeHandles?.[phase];
+      if (hook !== undefined) {
+        out.push({
+          label: `scheme "${matchedScheme.scheme}" ${phase}`,
+          hook,
+        });
+      }
+    }
 
     const inUse = new Set(extensionKeysInUse);
     for (const [extensionKey, adapterHandles] of this.extensionHookAdapters.entries()) {

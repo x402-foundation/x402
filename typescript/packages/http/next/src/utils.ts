@@ -8,8 +8,9 @@ import {
   RoutesConfig,
   FacilitatorResponseError,
   getFacilitatorResponseError as getCoreFacilitatorResponseError,
+  PaymentCancellationDispatcher,
 } from "@x402/core/server";
-import { PaymentPayload, PaymentRequirements } from "@x402/core/types";
+import type { PaymentPayload, PaymentRequirements } from "@x402/core/types";
 import { NextAdapter } from "./adapter";
 
 /**
@@ -152,6 +153,7 @@ export function handlePaymentError(response: HTTPResponseInstructions): NextResp
  * @param paymentPayload - The payment payload from the client
  * @param paymentRequirements - The payment requirements for the route
  * @param declaredExtensions - Optional declared extensions (for per-key enrichment)
+ * @param cancellationDispatcher - Cancels verified payments that should not settle
  * @param httpContext - Optional HTTP request context for extensions
  * @returns The response with settlement headers or an error response if settlement fails
  */
@@ -160,11 +162,16 @@ export async function handleSettlement(
   response: NextResponse,
   paymentPayload: PaymentPayload,
   paymentRequirements: PaymentRequirements,
-  declaredExtensions?: Record<string, unknown>,
+  declaredExtensions: Record<string, unknown> | undefined,
+  cancellationDispatcher: PaymentCancellationDispatcher,
   httpContext?: HTTPRequestContext,
 ): Promise<NextResponse> {
   // If the response from the protected route is >= 400, do not settle payment
   if (response.status >= 400) {
+    await cancellationDispatcher.cancel({
+      reason: "handler_failed",
+      responseStatus: response.status,
+    });
     return response;
   }
 
@@ -176,7 +183,7 @@ export async function handleSettlement(
       paymentPayload,
       paymentRequirements,
       declaredExtensions,
-      { request: httpContext, responseBody },
+      httpContext ? { request: httpContext, responseBody } : undefined,
     );
 
     if (!result.success) {

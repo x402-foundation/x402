@@ -36,6 +36,52 @@ export { UptoEvmScheme } from "./upto";
 export type { UptoPermit2Payload, UptoPermit2Witness, UptoPermit2Authorization } from "./types";
 export { isUptoPermit2Payload } from "./types";
 
+// Batch-settlement scheme client
+export { BatchSettlementEvmScheme } from "./batch-settlement";
+
+// Batch-settlement types
+export type {
+  AuthorizerSigner,
+  ChannelConfig,
+  ChannelState,
+  BatchSettlementDepositPayload,
+  BatchSettlementVoucherPayload,
+  BatchSettlementRefundPayload,
+  BatchSettlementVoucherFields,
+  BatchSettlementErc3009Authorization,
+  BatchSettlementClaimPayload,
+  BatchSettlementEnrichedRefundPayload,
+  BatchSettlementVoucherClaim,
+  BatchSettlementPayload,
+  BatchSettlementSettlePayload,
+  BatchSettlementFacilitatorSettlePayload,
+  BatchSettlementPaymentRequirementsExtra,
+  BatchSettlementPaymentResponseExtra,
+} from "./types";
+export {
+  isBatchSettlementDepositPayload,
+  isBatchSettlementVoucherPayload,
+  isBatchSettlementRefundPayload,
+  isBatchSettlementClaimPayload,
+  isBatchSettlementSettlePayload,
+  isBatchSettlementEnrichedRefundPayload,
+} from "./types";
+
+// Batch-settlement constants
+export {
+  BATCH_SETTLEMENT_ADDRESS,
+  BATCH_SETTLEMENT_SCHEME,
+  ERC3009_DEPOSIT_COLLECTOR_ADDRESS,
+  BATCH_SETTLEMENT_DOMAIN,
+  voucherTypes,
+  refundTypes,
+  claimBatchTypes,
+} from "./batch-settlement/constants";
+
+// Default stablecoins (USD string pricing → token address per chain)
+export { getDefaultAsset } from "./shared/defaultAssets";
+export type { DefaultAssetInfo, ExactDefaultAssetInfo } from "./shared/defaultAssets";
+
 // Constants
 export {
   PERMIT2_ADDRESS,

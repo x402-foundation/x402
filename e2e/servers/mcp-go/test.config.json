@@ -4,7 +4,9 @@
   "transport": "mcp",
   "language": "go",
   "x402Version": 2,
-  "extensions": ["bazaar"],
+  "extensions": [
+    "bazaar"
+  ],
   "endpoints": [
     {
       "path": "get_weather",
@@ -14,7 +16,8 @@
       "description": "Paid weather tool via MCP transport",
       "requiresPayment": true,
       "protocolFamily": "evm",
-      "transferMethod": "eip3009"
+      "scheme": "exact",
+      "assetTransferMethod": "eip3009"
     },
     {
       "path": "/health",

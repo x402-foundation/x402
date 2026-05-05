@@ -2,6 +2,8 @@ import { paymentProxy } from "@x402/next";
 import { x402ResourceServer, HTTPFacilitatorClient } from "@x402/core/server";
 import { ExactEvmScheme } from "@x402/evm/exact/server";
 import { UptoEvmScheme } from "@x402/evm/upto/server";
+import { BatchSettlementEvmScheme } from "@x402/evm/batch-settlement/server";
+import { privateKeyToAccount } from "viem/accounts";
 import { ExactSvmScheme } from "@x402/svm/exact/server";
 import { ExactAptosScheme } from "@x402/aptos/exact/server";
 import { ExactHederaScheme } from "@x402/hedera/exact/server";
@@ -53,6 +55,21 @@ if (AVM_PAYEE_ADDRESS) {
 }
 server.register("eip155:*", new ExactEvmScheme());
 server.register("eip155:*", new UptoEvmScheme());
+
+// Register batch-settlement scheme for the EVM payee.
+// e2e flow does NOT use ChannelManager — settle actions are handled inline.
+const receiverAuthorizerPrivateKey = process.env.EVM_RECEIVER_AUTHORIZER_PRIVATE_KEY as
+  | `0x${string}`
+  | undefined;
+const receiverAuthorizerSigner = receiverAuthorizerPrivateKey
+  ? privateKeyToAccount(receiverAuthorizerPrivateKey)
+  : undefined;
+server.register(
+  "eip155:*",
+  new BatchSettlementEvmScheme(EVM_PAYEE_ADDRESS, {
+    ...(receiverAuthorizerSigner ? { receiverAuthorizerSigner } : {}),
+  }),
+);
 server.register("solana:*", new ExactSvmScheme());
 if (APTOS_PAYEE_ADDRESS) {
   server.register("aptos:*", new ExactAptosScheme());
@@ -71,6 +88,59 @@ console.log(`Using remote facilitator at: ${facilitatorUrl}`);
 
 export const proxy = paymentProxy(
   {
+    "/api/batch-settlement/evm/eip3009/proxy": {
+      accepts: {
+        payTo: EVM_PAYEE_ADDRESS,
+        scheme: "batch-settlement",
+        price: "$0.001",
+        network: EVM_NETWORK,
+      },
+    },
+    "/api/batch-settlement/evm/permit2/proxy": {
+      accepts: {
+        payTo: EVM_PAYEE_ADDRESS,
+        scheme: "batch-settlement",
+        network: EVM_NETWORK,
+        price: {
+          amount: "1000",
+          asset: EVM_PERMIT2_ASSET,
+          extra: {
+            assetTransferMethod: "permit2",
+            name: EVM_NETWORK == "eip155:84532" ? "USDC" : "USD Coin",
+            version: "2",
+          },
+        },
+      },
+    },
+    "/api/batch-settlement/evm/permit2-eip2612GasSponsoring/proxy": {
+      accepts: {
+        payTo: EVM_PAYEE_ADDRESS,
+        scheme: "batch-settlement",
+        network: EVM_NETWORK,
+        price: "$0.001",
+        extra: { assetTransferMethod: "permit2" },
+      },
+      extensions: {
+        ...declareEip2612GasSponsoringExtension(),
+      },
+    },
+    "/api/batch-settlement/evm/permit2-erc20ApprovalGasSponsoring/proxy": {
+      accepts: {
+        payTo: EVM_PAYEE_ADDRESS,
+        scheme: "batch-settlement",
+        network: EVM_NETWORK,
+        price: {
+          amount: "1000",
+          asset: EVM_PERMIT2_ASSET,
+          extra: {
+            assetTransferMethod: "permit2",
+          },
+        },
+      },
+      extensions: {
+        ...declareErc20ApprovalGasSponsoringExtension(),
+      },
+    },
     "/api/exact/evm/eip3009/proxy": {
       accepts: {
         payTo: EVM_PAYEE_ADDRESS,
@@ -123,61 +193,61 @@ export const proxy = paymentProxy(
     },
     ...(AVM_PAYEE_ADDRESS
       ? {
-          "/api/exact/avm": {
-            accepts: {
-              payTo: AVM_PAYEE_ADDRESS,
-              scheme: "exact",
-              price: "$0.001",
-              network: AVM_NETWORK,
-            },
-            extensions: {
-              ...declareDiscoveryExtension({
-                output: {
-                  example: {
-                    message: "Protected endpoint accessed successfully",
-                    timestamp: "2024-01-01T00:00:00Z",
-                  },
-                  schema: {
-                    properties: {
-                      message: { type: "string" },
-                      timestamp: { type: "string" },
-                    },
-                    required: ["message", "timestamp"],
-                  },
-                },
-              }),
-            },
+        "/api/exact/avm": {
+          accepts: {
+            payTo: AVM_PAYEE_ADDRESS,
+            scheme: "exact",
+            price: "$0.001",
+            network: AVM_NETWORK,
           },
-        }
+          extensions: {
+            ...declareDiscoveryExtension({
+              output: {
+                example: {
+                  message: "Protected endpoint accessed successfully",
+                  timestamp: "2024-01-01T00:00:00Z",
+                },
+                schema: {
+                  properties: {
+                    message: { type: "string" },
+                    timestamp: { type: "string" },
+                  },
+                  required: ["message", "timestamp"],
+                },
+              },
+            }),
+          },
+        },
+      }
       : {}),
     ...(APTOS_PAYEE_ADDRESS
       ? {
-          "/api/exact/aptos": {
-            accepts: {
-              payTo: APTOS_PAYEE_ADDRESS,
-              scheme: "exact",
-              price: "$0.001",
-              network: APTOS_NETWORK,
-            },
-            extensions: {
-              ...declareDiscoveryExtension({
-                output: {
-                  example: {
-                    message: "Protected endpoint accessed successfully",
-                    timestamp: "2024-01-01T00:00:00Z",
-                  },
-                  schema: {
-                    properties: {
-                      message: { type: "string" },
-                      timestamp: { type: "string" },
-                    },
-                    required: ["message", "timestamp"],
-                  },
-                },
-              }),
-            },
+        "/api/exact/aptos": {
+          accepts: {
+            payTo: APTOS_PAYEE_ADDRESS,
+            scheme: "exact",
+            price: "$0.001",
+            network: APTOS_NETWORK,
           },
-        }
+          extensions: {
+            ...declareDiscoveryExtension({
+              output: {
+                example: {
+                  message: "Protected endpoint accessed successfully",
+                  timestamp: "2024-01-01T00:00:00Z",
+                },
+                schema: {
+                  properties: {
+                    message: { type: "string" },
+                    timestamp: { type: "string" },
+                  },
+                  required: ["message", "timestamp"],
+                },
+              },
+            }),
+          },
+        },
+      }
       : {}),
     ...(HEDERA_PAYEE_ADDRESS
       ? {
@@ -213,32 +283,32 @@ export const proxy = paymentProxy(
       : {}),
     ...(STELLAR_PAYEE_ADDRESS
       ? {
-          "/api/exact/stellar": {
-            accepts: {
-              payTo: STELLAR_PAYEE_ADDRESS,
-              scheme: "exact",
-              price: "$0.001",
-              network: STELLAR_NETWORK,
-            },
-            extensions: {
-              ...declareDiscoveryExtension({
-                output: {
-                  example: {
-                    message: "Protected endpoint accessed successfully",
-                    timestamp: "2024-01-01T00:00:00Z",
-                  },
-                  schema: {
-                    properties: {
-                      message: { type: "string" },
-                      timestamp: { type: "string" },
-                    },
-                    required: ["message", "timestamp"],
-                  },
-                },
-              }),
-            },
+        "/api/exact/stellar": {
+          accepts: {
+            payTo: STELLAR_PAYEE_ADDRESS,
+            scheme: "exact",
+            price: "$0.001",
+            network: STELLAR_NETWORK,
           },
-        }
+          extensions: {
+            ...declareDiscoveryExtension({
+              output: {
+                example: {
+                  message: "Protected endpoint accessed successfully",
+                  timestamp: "2024-01-01T00:00:00Z",
+                },
+                schema: {
+                  properties: {
+                    message: { type: "string" },
+                    timestamp: { type: "string" },
+                  },
+                  required: ["message", "timestamp"],
+                },
+              },
+            }),
+          },
+        },
+      }
       : {}),
     "/api/exact/evm/permit2/proxy": {
       accepts: {
@@ -389,5 +459,9 @@ export const config = {
     "/api/upto/evm/permit2",
     "/api/upto/evm/permit2-eip2612GasSponsoring",
     "/api/upto/evm/permit2-erc20ApprovalGasSponsoring",
+    "/api/batch-settlement/evm/eip3009/proxy",
+    "/api/batch-settlement/evm/permit2/proxy",
+    "/api/batch-settlement/evm/permit2-eip2612GasSponsoring/proxy",
+    "/api/batch-settlement/evm/permit2-erc20ApprovalGasSponsoring/proxy",
   ],
 };

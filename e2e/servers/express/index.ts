@@ -4,6 +4,7 @@ import { x402ResourceServer, HTTPFacilitatorClient } from "@x402/core/server";
 import { ExactAvmScheme } from "@x402/avm/exact/server";
 import { ExactEvmScheme } from "@x402/evm/exact/server";
 import { UptoEvmScheme } from "@x402/evm/upto/server";
+import { BatchSettlementEvmScheme } from "@x402/evm/batch-settlement/server";
 import { ExactSvmScheme } from "@x402/svm/exact/server";
 import { ExactAptosScheme } from "@x402/aptos/exact/server";
 import { ExactHederaScheme } from "@x402/hedera/exact/server";
@@ -14,6 +15,7 @@ import {
   declareErc20ApprovalGasSponsoringExtension,
 } from "@x402/extensions";
 import dotenv from "dotenv";
+import { privateKeyToAccount } from "viem/accounts";
 
 dotenv.config();
 
@@ -77,6 +79,21 @@ if (AVM_PAYEE_ADDRESS) {
 }
 server.register("eip155:*", new ExactEvmScheme());
 server.register("eip155:*", new UptoEvmScheme());
+
+// Register batch-settlement scheme for the EVM payee.
+// e2e flow does NOT use ChannelManager — settle actions are handled inline.
+const receiverAuthorizerPrivateKey = process.env.EVM_RECEIVER_AUTHORIZER_PRIVATE_KEY as
+  | `0x${string}`
+  | undefined;
+const receiverAuthorizerSigner = receiverAuthorizerPrivateKey
+  ? privateKeyToAccount(receiverAuthorizerPrivateKey)
+  : undefined;
+server.register(
+  "eip155:*",
+  new BatchSettlementEvmScheme(EVM_PAYEE_ADDRESS, {
+    ...(receiverAuthorizerSigner ? { receiverAuthorizerSigner } : {}),
+  }),
+);
 server.register("solana:*", new ExactSvmScheme());
 if (APTOS_PAYEE_ADDRESS) {
   server.register("aptos:*", new ExactAptosScheme());
@@ -191,6 +208,59 @@ app.use(
           },
         }
         : {}),
+      "GET /batch-settlement/evm/eip3009": {
+        accepts: {
+          payTo: EVM_PAYEE_ADDRESS,
+          scheme: "batch-settlement",
+          price: "$0.001",
+          network: EVM_NETWORK,
+        },
+      },
+      "GET /batch-settlement/evm/permit2": {
+        accepts: {
+          payTo: EVM_PAYEE_ADDRESS,
+          scheme: "batch-settlement",
+          network: EVM_NETWORK,
+          price: {
+            amount: "1000",
+            asset: EVM_PERMIT2_ASSET,
+            extra: {
+              assetTransferMethod: "permit2",
+              name: EVM_NETWORK == "eip155:84532" ? "USDC" : "USD Coin",
+              version: "2",
+            },
+          },
+        },
+      },
+      "GET /batch-settlement/evm/permit2-eip2612GasSponsoring": {
+        accepts: {
+          payTo: EVM_PAYEE_ADDRESS,
+          scheme: "batch-settlement",
+          network: EVM_NETWORK,
+          price: "$0.001",
+          extra: { assetTransferMethod: "permit2" },
+        },
+        extensions: {
+          ...declareEip2612GasSponsoringExtension(),
+        },
+      },
+      "GET /batch-settlement/evm/permit2-erc20ApprovalGasSponsoring": {
+        accepts: {
+          payTo: EVM_PAYEE_ADDRESS,
+          scheme: "batch-settlement",
+          network: EVM_NETWORK,
+          price: {
+            amount: "1000",
+            asset: EVM_PERMIT2_ASSET,
+            extra: {
+              assetTransferMethod: "permit2",
+            },
+          },
+        },
+        extensions: {
+          ...declareErc20ApprovalGasSponsoringExtension(),
+        },
+      },
       "GET /exact/evm/eip3009": {
         accepts: {
           payTo: EVM_PAYEE_ADDRESS,
@@ -493,6 +563,41 @@ app.get("/exact/avm", (req, res) => {
 });
 
 /**
+ * Protected batch-settlement endpoint — exercised by repeated voucher requests
+ * over a single payment channel followed by an optional cooperative refund.
+ */
+app.get("/batch-settlement/evm/eip3009", (req, res) => {
+  res.json({
+    message: "Batch-settlement endpoint accessed successfully",
+    timestamp: new Date().toISOString(),
+  });
+});
+
+app.get("/batch-settlement/evm/permit2", (req, res) => {
+  res.json({
+    message: "Batch-settlement Permit2 endpoint accessed successfully",
+    timestamp: new Date().toISOString(),
+    method: "batch-settlement-permit2",
+  });
+});
+
+app.get("/batch-settlement/evm/permit2-eip2612GasSponsoring", (req, res) => {
+  res.json({
+    message: "Batch-settlement Permit2 EIP-2612 endpoint accessed successfully",
+    timestamp: new Date().toISOString(),
+    method: "batch-settlement-permit2-eip2612",
+  });
+});
+
+app.get("/batch-settlement/evm/permit2-erc20ApprovalGasSponsoring", (req, res) => {
+  res.json({
+    message: "Batch-settlement Permit2 ERC-20 approval endpoint accessed successfully",
+    timestamp: new Date().toISOString(),
+    method: "batch-settlement-permit2-erc20-approval",
+  });
+});
+
+/**
  * Protected endpoint - requires payment to access
  *
  * This endpoint demonstrates a resource protected by x402 payment middleware.
@@ -683,6 +788,10 @@ app.listen(parseInt(PORT), () => {
 ║  Endpoints:                                            ║
 ║  • GET  /exact/avm                            (AVM)           ║
 ║  • GET  /exact/evm/eip3009                    (EVM EIP-3009)  ║
+║  • GET  /batch-settlement/evm/eip3009         (Batch-settlement) ║
+║  • GET  /batch-settlement/evm/permit2         (Batch Permit2)  ║
+║  • GET  /batch-settlement/evm/permit2-eip2612GasSponsoring    ║
+║  • GET  /batch-settlement/evm/permit2-erc20ApprovalGasSponsoring ║
 ║  • GET  /exact/evm/permit2                    (Permit2)       ║
 ║  • GET  /exact/evm/permit2-eip2612GasSponsoring               ║
 ║  • GET  /exact/evm/permit2-erc20ApprovalGasSponsoring         ║

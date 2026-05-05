@@ -8,6 +8,7 @@ import {
   UptoEvmScheme as UptoEvmClientScheme,
   type UptoEvmSchemeOptions,
 } from "@x402/evm/upto/client";
+import { BatchSettlementEvmScheme } from "@x402/evm/batch-settlement/client";
 import { ExactEvmSchemeV1 } from "@x402/evm/v1";
 import { toClientEvmSigner } from "@x402/evm";
 import { ExactSvmScheme } from "@x402/svm/exact/client";
@@ -53,6 +54,23 @@ const uptoSchemeOptions: UptoEvmSchemeOptions | undefined = process.env.EVM_RPC_
   ? { rpcUrl: process.env.EVM_RPC_URL }
   : undefined;
 
+// Batch-settlement scheme uses a per-scenario salt (CHANNEL_SALT) so concurrent
+// e2e runs don't collide on the same on-chain channel id. An optional voucher
+// signer (EVM_VOUCHER_SIGNER_PRIVATE_KEY) exercises the alt-EOA voucher branch
+// while deposits keep using the main client signer.
+const channelSalt = process.env.CHANNEL_SALT as `0x${string}` | undefined;
+const voucherSignerKey = process.env.EVM_VOUCHER_SIGNER_PRIVATE_KEY as
+  | `0x${string}`
+  | undefined;
+const voucherSigner = voucherSignerKey
+  ? toClientEvmSigner(privateKeyToAccount(voucherSignerKey), publicClient)
+  : undefined;
+const batchSettlementOptions =
+  channelSalt || voucherSigner
+    ? { ...(channelSalt ? { salt: channelSalt } : {}), ...(voucherSigner ? { voucherSigner } : {}) }
+    : undefined;
+const batchSettlementScheme = new BatchSettlementEvmScheme(evmSigner, batchSettlementOptions);
+
 // Initialize Aptos signer if key is provided
 let aptosAccount: Account | undefined;
 if (process.env.APTOS_PRIVATE_KEY) {
@@ -92,6 +110,7 @@ if (process.env.AVM_PRIVATE_KEY) {
 const client = new x402Client()
   .register("eip155:*", new ExactEvmScheme(evmSigner, evmSchemeOptions))
   .register("eip155:*", new UptoEvmClientScheme(evmSigner, uptoSchemeOptions))
+  .register("eip155:*", batchSettlementScheme)
   .registerV1("base-sepolia", new ExactEvmSchemeV1(evmSigner))
   .registerV1("base", new ExactEvmSchemeV1(evmSigner))
   .register("solana:*", new ExactSvmScheme(svmSigner))
@@ -111,35 +130,108 @@ if (avmSigner) {
 }
 
 const fetchWithPayment = wrapFetchWithPayment(fetch, client);
+const httpClient = new x402HTTPClient(client);
 
-fetchWithPayment(url, {
-  method: "GET",
-}).then(async response => {
+const batchSettlementPhase = process.env.BATCH_SETTLEMENT_PHASE as
+  | "initial"
+  | "recovery-refund"
+  | "full"
+  | undefined;
+
+/**
+ * Issues a single paid request and returns the parsed result.
+ *
+ * @returns Structured result with response data and decoded payment-response.
+ */
+interface RequestResult {
+  success: boolean;
+  data: unknown;
+  status_code: number;
+  payment_response?: any;
+}
+
+async function issueRequest(): Promise<RequestResult> {
+  const response = await fetchWithPayment(url, { method: "GET" });
   const data = await response.json();
-  const paymentResponse = new x402HTTPClient(client).getPaymentSettleResponse(name =>
-    response.headers.get(name),
-  );
+  const paymentResponse = httpClient.getPaymentSettleResponse(name => response.headers.get(name));
 
   if (!paymentResponse) {
-    // No payment was required
-    const result = {
-      success: true,
-      data: data,
-      status_code: response.status,
-    };
-    console.log(JSON.stringify(result));
-    process.exit(0);
-    return;
+    return { success: true, data, status_code: response.status };
   }
 
-  const result = {
+  return {
     success: paymentResponse.success,
-    data: data,
+    data,
     status_code: response.status,
     payment_response: paymentResponse,
   };
+}
 
-  // Output structured result as JSON for proxy to parse
+function aggregateBatchResult(
+  phase: "initial" | "recovery-refund" | "full",
+  results: RequestResult[],
+  details: Record<string, RequestResult>,
+) {
+  const last = results[results.length - 1]!;
+  return {
+    success: results.every(result => result.success),
+    data: {
+      batchSettlement: {
+        phase,
+        requests: results,
+        ...details,
+      },
+    },
+    status_code: last.status_code,
+    payment_response: last.payment_response,
+  };
+}
+
+if (!batchSettlementPhase) {
+  const result = await issueRequest();
   console.log(JSON.stringify(result));
   process.exit(0);
-});
+}
+
+if (batchSettlementPhase === "initial") {
+  const deposit = await issueRequest();
+  const voucher = await issueRequest();
+  console.log(JSON.stringify(aggregateBatchResult("initial", [deposit, voucher], { deposit, voucher })));
+  process.exit(0);
+}
+
+if (batchSettlementPhase === "recovery-refund") {
+  const recoveryVoucher = await issueRequest();
+  const refundSettle = await batchSettlementScheme.refund(url);
+  const refund = {
+    success: refundSettle.success,
+    data: { refund: true },
+    status_code: 200,
+    payment_response: refundSettle,
+  };
+  console.log(
+    JSON.stringify(
+      aggregateBatchResult("recovery-refund", [recoveryVoucher, refund], {
+        recoveryVoucher,
+        refund,
+      }),
+    ),
+  );
+  process.exit(0);
+}
+
+if (batchSettlementPhase === "full") {
+  const deposit = await issueRequest();
+  const voucher = await issueRequest();
+  const refundSettle = await batchSettlementScheme.refund(url);
+  const refund = {
+    success: refundSettle.success,
+    data: { refund: true },
+    status_code: 200,
+    payment_response: refundSettle,
+  };
+  console.log(JSON.stringify(aggregateBatchResult("full", [deposit, voucher, refund], { deposit, voucher, refund })));
+  process.exit(0);
+}
+
+throw new Error(`Unknown BATCH_SETTLEMENT_PHASE: ${batchSettlementPhase}`);

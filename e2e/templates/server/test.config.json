@@ -15,7 +15,8 @@
       "description": "<endpoint-description>",
       "requiresPayment": true,
       "protocolFamily": "<evm/svm>",
-      "transferMethod": "<eip3009/permit2> (EVM only)"
+      "scheme": "<exact/upto/batch-settlement> (EVM paid endpoints)",
+      "assetTransferMethod": "<eip3009/permit2>"
     },
     {
       "path": "/health",

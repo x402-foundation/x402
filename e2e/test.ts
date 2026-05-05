@@ -2,34 +2,42 @@ import { config } from 'dotenv';
 import { spawn, execSync, ChildProcess } from 'child_process';
 import { writeFileSync } from 'fs';
 import { join } from 'path';
-import { createWalletClient, createPublicClient, http, parseEther, formatEther } from 'viem';
+import { createWalletClient, createPublicClient, http, parseEther, formatEther, toHex } from 'viem';
 import { privateKeyToAccount } from 'viem/accounts';
 import { base, baseSepolia } from 'viem/chains';
 import { TestDiscovery } from './src/discovery';
-import { ClientConfig, ScenarioResult, ServerConfig, TestScenario } from './src/types';
+import { ClientConfig, ScenarioResult, ServerConfig, TestScenario, endpointAssetTransferMethod, endpointPaymentScheme, endpointUsesBatchSettlement } from './src/types';
 import { config as loggerConfig, log, verboseLog, errorLog, close as closeLogger, createComboLogger } from './src/logger';
 import { handleDiscoveryValidation, shouldRunDiscoveryValidation } from './extensions/bazaar';
 import { parseArgs, printHelp } from './src/cli/args';
 import { runInteractiveMode } from './src/cli/interactive';
 import { filterScenarios, TestFilters, shouldShowExtensionOutput } from './src/cli/filters';
 import { minimizeScenarios } from './src/sampling';
-import { getNetworkSet, NetworkMode, NetworkSet, getNetworkModeDescription } from './src/networks/networks';
+import { getNetworkSet, NetworkMode, getNetworkModeDescription, resolveEvmPermit2Asset } from './src/networks/networks';
 import { GenericServerProxy } from './src/servers/generic-server';
 import { Semaphore, FacilitatorLock } from './src/concurrency';
 import { FacilitatorManager } from './src/facilitators/facilitator-manager';
 import { waitForHealth } from './src/health';
 
-// Base Sepolia token addresses used by permit2 E2E tests
-const USDC_BASE_SEPOLIA = '0x036CbD53842c5426634e7929541eC2318f3dCF7e';
-const MOCK_ERC20_BASE_SEPOLIA = '0xeED520980fC7C7B4eB379B96d61CEdea2423005a';
+/**
+ * Generates a fresh 32-byte hex salt for a batch-settlement test scenario so
+ * concurrent runs don't collide on the same on-chain channel id.
+ *
+ * @returns Hex-encoded 32-byte salt prefixed with `0x`.
+ */
+function generateChannelSalt(): `0x${string}` {
+  const bytes = new Uint8Array(32);
+  crypto.getRandomValues(bytes);
+  return toHex(bytes);
+}
 
 /**
  * Approve Permit2 so that the standard/direct settle path can be exercised.
- * Grants unlimited Permit2 allowance for the given token (or USDC by default).
+ * Grants unlimited Permit2 allowance for the given token (permit2-approval script default if omitted).
  */
 async function approvePermit2Approval(tokenAddress?: string): Promise<boolean> {
   return new Promise((resolve) => {
-    const label = tokenAddress ? `token ${tokenAddress}` : 'USDC (default)';
+    const label = tokenAddress ? `token ${tokenAddress}` : '(script default token)';
     verboseLog(`  🔓 Approving Permit2 for ${label}...`);
 
     const args = ['scripts/permit2-approval.ts', 'approve'];
@@ -75,12 +83,11 @@ async function approvePermit2Approval(tokenAddress?: string): Promise<boolean> {
 
 /**
  * Revoke Permit2 approval so that gas sponsoring extensions are exercised.
- * Sets the Permit2 allowance to 0 for the given token (or USDC by default),
- * forcing the client into the EIP-2612 or ERC-20 approval extension path.
+ * Sets the Permit2 allowance to 0 for the given token (permit2-approval script default if omitted).
  */
 async function revokePermit2Approval(tokenAddress?: string): Promise<boolean> {
   return new Promise((resolve) => {
-    const label = tokenAddress ? `token ${tokenAddress}` : 'USDC (default)';
+    const label = tokenAddress ? `token ${tokenAddress}` : '(script default token)';
     verboseLog(`  🔓 Revoking Permit2 approval for ${label}...`);
 
     const args = ['scripts/permit2-approval.ts', 'revoke'];
@@ -295,6 +302,24 @@ async function startServer(
   );
 }
 
+/**
+ * Returns true when the settle response omits the on-chain transaction hash
+ * because the request was settled off-chain (e.g. a batch-settlement voucher
+ * recorded by the receiver but not yet claimed).
+ *
+ * @param paymentResponse - Decoded payment-response payload from the server.
+ * @returns Whether to skip the transaction-hash presence assertion.
+ */
+function isOffchainSettleResponse(paymentResponse: any): boolean {
+  if (!paymentResponse) return false;
+  const extra = paymentResponse.extra ?? {};
+  const channelState = extra.channelState ?? {};
+  const isBatchSettlement =
+    (typeof extra.channelId === 'string' && extra.channelId.length > 0) ||
+    (typeof channelState.channelId === 'string' && channelState.channelId.length > 0);
+  return isBatchSettlement;
+}
+
 async function runClientTest(
   client: any,
   callConfig: ClientConfig
@@ -309,7 +334,6 @@ async function runClientTest(
     bufferLog(`  📞 Running client: ${JSON.stringify(callConfig, null, 2)}`);
     const result = await client.call(callConfig);
     bufferLog(`  📊 Client result: ${JSON.stringify(result, null, 2)}`);
-
     // Check if the client execution succeeded
     if (!result.success) {
       return {
@@ -347,8 +371,10 @@ async function runClientTest(
         };
       }
 
-      // Payment should have a transaction hash
-      if (!paymentResponse.transaction) {
+      // Payment should have a transaction hash, except for off-chain settle
+      // responses (e.g. batch-settlement vouchers that the server records but
+      // does not yet claim on-chain).
+      if (!paymentResponse.transaction && !isOffchainSettleResponse(paymentResponse)) {
         return {
           success: false,
           error: 'Payment succeeded but no transaction hash returned',
@@ -392,6 +418,61 @@ async function runClientTest(
   }
 }
 
+type ClientTestResult = ScenarioResult & { verboseLogs?: string[] };
+
+function getBatchStep(result: ClientTestResult, step: string): any {
+  return (result.data as any)?.batchSettlement?.[step];
+}
+
+function validateBatchPaymentStep(
+  result: ClientTestResult,
+  step: string,
+  label: string,
+  requireTransaction: boolean,
+): string | undefined {
+  const stepResult = getBatchStep(result, step);
+  if (!stepResult) {
+    return `Batch-settlement ${label} result missing`;
+  }
+
+  if (!stepResult.success) {
+    const reason = stepResult.payment_response?.errorReason || stepResult.error || 'unknown error';
+    return `Batch-settlement ${label} failed: ${reason}`;
+  }
+
+  const paymentResponse = stepResult.payment_response;
+  if (!paymentResponse) {
+    return `Batch-settlement ${label} missing payment response`;
+  }
+
+  if (!paymentResponse.success) {
+    return `Batch-settlement ${label} payment failed: ${paymentResponse.errorReason || 'unknown error'}`;
+  }
+
+  if (paymentResponse.errorReason) {
+    return `Batch-settlement ${label} payment has error reason: ${paymentResponse.errorReason}`;
+  }
+
+  if (requireTransaction && !paymentResponse.transaction) {
+    return `Batch-settlement ${label} succeeded but no transaction hash returned`;
+  }
+
+  if (!requireTransaction && !paymentResponse.transaction && !isOffchainSettleResponse(paymentResponse)) {
+    return `Batch-settlement ${label} succeeded but no transaction hash or channel state returned`;
+  }
+
+  return undefined;
+}
+
+function mergeVerboseLogs(...results: ClientTestResult[]): string[] {
+  return results.flatMap(result => result.verboseLogs ?? []);
+}
+
+function envFlagDefaultTrue(value: string | undefined): boolean {
+  if (value === undefined) return true;
+  return !['0', 'false', 'no', 'off'].includes(value.toLowerCase());
+}
+
 async function runTest() {
   // Show help if requested
   if (parsedArgs.showHelp) {
@@ -426,6 +507,7 @@ async function runTest() {
   const facilitatorHederaAccountId = process.env.FACILITATOR_HEDERA_ACCOUNT_ID;
   const facilitatorHederaPrivateKey = process.env.FACILITATOR_HEDERA_PRIVATE_KEY;
   const facilitatorStellarPrivateKey = process.env.FACILITATOR_STELLAR_PRIVATE_KEY;
+  const batchSettlementRecovery = envFlagDefaultTrue(process.env.BATCH_SETTLEMENT_RECOVERY);
   if (!serverEvmAddress || !serverSvmAddress || !clientEvmPrivateKey || !clientSvmPrivateKey || !facilitatorEvmPrivateKey || !facilitatorSvmPrivateKey) {
     errorLog('❌ Missing required environment variables:');
     errorLog(' SERVER_EVM_ADDRESS, SERVER_SVM_ADDRESS, CLIENT_EVM_PRIVATE_KEY, CLIENT_SVM_PRIVATE_KEY, FACILITATOR_EVM_PRIVATE_KEY, and FACILITATOR_SVM_PRIVATE_KEY must be set');
@@ -497,9 +579,17 @@ async function runTest() {
 
   // Get network configuration based on selected mode
   const networks = getNetworkSet(networkMode);
+  const evmPermit2Asset = resolveEvmPermit2Asset(networks);
+
+  const permit2AssetSource = process.env.EVM_PERMIT2_ASSET?.trim()
+    ? 'EVM_PERMIT2_ASSET'
+    : networks.evm.permit2Asset
+      ? 'network default'
+      : 'unset';
 
   log(`\n🌐 Network Mode: ${networkMode.toUpperCase()}`);
   log(`   EVM: ${networks.evm.name} (${networks.evm.caip2})`);
+  log(`   EVM Permit2 asset: ${evmPermit2Asset || '(missing)'} (${permit2AssetSource})`);
   log(`   SVM: ${networks.svm.name} (${networks.svm.caip2})`);
   log(`   APTOS: ${networks.aptos.name} (${networks.aptos.caip2})`);
   log(`   HEDERA: ${networks.hedera.name} (${networks.hedera.caip2})`);
@@ -540,37 +630,108 @@ async function runTest() {
   // Branch coverage assertions for EVM scenarios
   const evmScenarios = filteredScenarios.filter(s => s.protocolFamily === 'evm');
   if (evmScenarios.length > 0) {
-    const hasEip3009 = evmScenarios.some(s => (s.endpoint.transferMethod || 'eip3009') === 'eip3009');
-    const hasPermit2 = evmScenarios.some(s => s.endpoint.transferMethod === 'permit2');
-    const hasPermit2Direct = evmScenarios.some(s => s.endpoint.transferMethod === 'permit2' && s.endpoint.permit2Direct === true);
-    const hasPermit2Eip2612 = evmScenarios.some(s => s.endpoint.transferMethod === 'permit2' && !s.endpoint.extensions?.includes('erc20ApprovalGasSponsoring') && !s.endpoint.permit2Direct);
-    const hasPermit2Erc20 = evmScenarios.some(s => s.endpoint.transferMethod === 'permit2' && s.endpoint.extensions?.includes('erc20ApprovalGasSponsoring'));
+    const hasExactEip3009 = evmScenarios.some(
+      s => endpointPaymentScheme(s.endpoint) === 'exact' && endpointAssetTransferMethod(s.endpoint) === 'eip3009',
+    );
+    const hasExactPermit2 = evmScenarios.some(
+      s => endpointPaymentScheme(s.endpoint) === 'exact' && endpointAssetTransferMethod(s.endpoint) === 'permit2',
+    );
+    const hasPermit2Direct = evmScenarios.some(
+      s =>
+        endpointPaymentScheme(s.endpoint) === 'exact' &&
+        endpointAssetTransferMethod(s.endpoint) === 'permit2' &&
+        s.endpoint.schemeOptions?.permit2Direct === true,
+    );
+    const hasPermit2Eip2612 = evmScenarios.some(
+      s =>
+        endpointPaymentScheme(s.endpoint) === 'exact' &&
+        endpointAssetTransferMethod(s.endpoint) === 'permit2' &&
+        !s.endpoint.extensions?.includes('erc20ApprovalGasSponsoring') &&
+        s.endpoint.schemeOptions?.permit2Direct !== true,
+    );
+    const hasPermit2Erc20 = evmScenarios.some(
+      s =>
+        endpointPaymentScheme(s.endpoint) === 'exact' &&
+        endpointAssetTransferMethod(s.endpoint) === 'permit2' &&
+        s.endpoint.extensions?.includes('erc20ApprovalGasSponsoring'),
+    );
 
-    const hasUpto = evmScenarios.some(s => s.endpoint.transferMethod === 'upto');
-    const hasUptoDirect = evmScenarios.some(s => s.endpoint.transferMethod === 'upto' && s.endpoint.permit2Direct === true);
-    const hasUptoEip2612 = evmScenarios.some(s => s.endpoint.transferMethod === 'upto' && !s.endpoint.extensions?.includes('erc20ApprovalGasSponsoring') && !s.endpoint.permit2Direct);
-    const hasUptoErc20 = evmScenarios.some(s => s.endpoint.transferMethod === 'upto' && s.endpoint.extensions?.includes('erc20ApprovalGasSponsoring'));
+    const hasUpto = evmScenarios.some(s => endpointPaymentScheme(s.endpoint) === 'upto');
+    const hasUptoDirect = evmScenarios.some(
+      s =>
+        endpointPaymentScheme(s.endpoint) === 'upto' && s.endpoint.schemeOptions?.permit2Direct === true,
+    );
+    const hasUptoEip2612 = evmScenarios.some(
+      s =>
+        endpointPaymentScheme(s.endpoint) === 'upto' &&
+        !s.endpoint.extensions?.includes('erc20ApprovalGasSponsoring') &&
+        s.endpoint.schemeOptions?.permit2Direct !== true,
+    );
+    const hasUptoErc20 = evmScenarios.some(
+      s =>
+        endpointPaymentScheme(s.endpoint) === 'upto' &&
+        s.endpoint.extensions?.includes('erc20ApprovalGasSponsoring'),
+    );
+
+    const hasBatchSettlementEip3009 = evmScenarios.some(
+      s =>
+        endpointPaymentScheme(s.endpoint) === 'batch-settlement' &&
+        endpointAssetTransferMethod(s.endpoint) === 'eip3009',
+    );
+    const hasBatchSettlementPermit2 = evmScenarios.some(
+      s =>
+        endpointPaymentScheme(s.endpoint) === 'batch-settlement' &&
+        endpointAssetTransferMethod(s.endpoint) === 'permit2',
+    );
+    const hasBatchSettlementPermit2Direct = evmScenarios.some(
+      s =>
+        endpointPaymentScheme(s.endpoint) === 'batch-settlement' &&
+        endpointAssetTransferMethod(s.endpoint) === 'permit2' &&
+        s.endpoint.schemeOptions?.permit2Direct === true,
+    );
+    const hasBatchSettlementPermit2Eip2612 = evmScenarios.some(
+      s =>
+        endpointPaymentScheme(s.endpoint) === 'batch-settlement' &&
+        endpointAssetTransferMethod(s.endpoint) === 'permit2' &&
+        !s.endpoint.extensions?.includes('erc20ApprovalGasSponsoring') &&
+        s.endpoint.schemeOptions?.permit2Direct !== true,
+    );
+    const hasBatchSettlementPermit2Erc20 = evmScenarios.some(
+      s =>
+        endpointPaymentScheme(s.endpoint) === 'batch-settlement' &&
+        endpointAssetTransferMethod(s.endpoint) === 'permit2' &&
+        s.endpoint.extensions?.includes('erc20ApprovalGasSponsoring'),
+    );
 
     log('🔍 EVM Branch Coverage Check:');
-    log(`   EIP-3009 route:          ${hasEip3009 ? '✅' : '❌ MISSING'}`);
-    log(`   Permit2 route:           ${hasPermit2 ? '✅' : '❌ MISSING'}`);
-    log(`   Permit2+direct settle:   ${hasPermit2Direct ? '✅' : '⚠️  not found'}`);
-    log(`   Permit2+EIP2612 route:   ${hasPermit2Eip2612 ? '✅' : '⚠️  not found (may be covered by permit2 route if eip2612 extension enabled)'}`);
-    log(`   Permit2+ERC20 route:     ${hasPermit2Erc20 ? '✅' : '⚠️  not found'}`);
-    log(`   Upto route:              ${hasUpto ? '✅' : '⚠️  not found'}`);
-    log(`   Upto+direct settle:      ${hasUptoDirect ? '✅' : '⚠️  not found'}`);
-    log(`   Upto+EIP2612 route:      ${hasUptoEip2612 ? '✅' : '⚠️  not found'}`);
-    log(`   Upto+ERC20 route:        ${hasUptoErc20 ? '✅' : '⚠️  not found'}`);
+    log(`   Exact EIP-3009 route:          ${hasExactEip3009 ? '✅' : '⚠️  not found'}`);
+    log(`   Exact Permit2 route:           ${hasExactPermit2 ? '✅' : '⚠️  not found'}`);
+    log(`   Exact Permit2+direct settle:   ${hasPermit2Direct ? '✅' : '⚠️  not found'}`);
+    log(`   Exact Permit2+EIP2612 route:   ${hasPermit2Eip2612 ? '✅' : '⚠️  not found (may be covered by permit2 route if eip2612 extension enabled)'}`);
+    log(`   Exact Permit2+ERC20 route:     ${hasPermit2Erc20 ? '✅' : '⚠️  not found'}`);
+    log(`   Upto route:                    ${hasUpto ? '✅' : '⚠️  not found'}`);
+    log(`   Upto+direct settle:            ${hasUptoDirect ? '✅' : '⚠️  not found'}`);
+    log(`   Upto+EIP2612 route:            ${hasUptoEip2612 ? '✅' : '⚠️  not found'}`);
+    log(`   Upto+ERC20 route:              ${hasUptoErc20 ? '✅' : '⚠️  not found'}`);
+    log(`   Batch-settlement EIP-3009:     ${hasBatchSettlementEip3009 ? '✅' : '⚠️  not found'}`);
+    log(`   Batch-settlement Permit2:      ${hasBatchSettlementPermit2 ? '✅' : '⚠️  not found'}`);
+    log(`   Batch-settlement+direct:       ${hasBatchSettlementPermit2Direct ? '✅' : '⚠️  not found'}`);
+    log(`   Batch-settlement+EIP2612:      ${hasBatchSettlementPermit2Eip2612 ? '✅' : '⚠️  not found'}`);
+    log(`   Batch-settlement+ERC20:        ${hasBatchSettlementPermit2Erc20 ? '✅' : '⚠️  not found'}`);
     log('');
   }
 
   // Auto-detect Permit2 scenarios (upto uses Permit2 under the hood)
-  const hasPermit2Scenarios = filteredScenarios.some(
-    (s) => s.endpoint.transferMethod === 'permit2' || s.endpoint.transferMethod === 'upto'
-  );
+  const hasPermit2Scenarios = filteredScenarios.some(s => endpointAssetTransferMethod(s.endpoint) === 'permit2');
 
   if (hasPermit2Scenarios) {
     log('🔐 Permit2 scenarios detected — revoke before gas-sponsored tests, approve before permit2-direct tests');
+    if (!evmPermit2Asset) {
+      errorLog(
+        '❌ Permit2 scenarios need a token address: set EVM_PERMIT2_ASSET or networks.evm.permit2Asset for this mode.',
+      );
+      process.exit(1);
+    }
   }
 
   // Collect unique facilitators and servers
@@ -660,6 +821,8 @@ async function runTest() {
     passed: boolean;
     error?: string;
     transaction?: string;
+    depositTransaction?: string;
+    refundTransaction?: string;
     network?: string;
   }
 
@@ -803,7 +966,9 @@ async function runTest() {
     const facilitatorLabel = scenario.facilitator ? ` via ${scenario.facilitator.name}` : '';
     const testName = `${scenario.client.name} → ${scenario.server.name} → ${scenario.endpoint.path}${facilitatorLabel}`;
 
-    const clientConfig: ClientConfig = {
+    const isBatchSettlement = endpointUsesBatchSettlement(scenario.endpoint);
+    const voucherSignerPrivateKey = process.env.CLIENT_EVM_VOUCHER_SIGNER_PRIVATE_KEY;
+    const baseClientConfig: ClientConfig = {
       evmPrivateKey: clientEvmPrivateKey!,
       svmPrivateKey: clientSvmPrivateKey!,
       avmPrivateKey: clientAvmPrivateKey || '',
@@ -821,7 +986,155 @@ async function runTest() {
 
     try {
       cLog.log(`🧪 Test #${localTestNumber}: ${testName}`);
-      const result = await runClientTest(scenario.client.proxy, clientConfig);
+
+      if (isBatchSettlement) {
+        const channelSalt = generateChannelSalt();
+        const batchBase = {
+          channelSalt,
+          ...(voucherSignerPrivateKey ? { voucherSignerPrivateKey } : {}),
+        };
+
+        if (!batchSettlementRecovery) {
+          const fullResult = await runClientTest(scenario.client.proxy, {
+            ...baseClientConfig,
+            batchSettlement: { ...batchBase, phase: 'full' },
+          });
+          const fullError = fullResult.success
+            ? validateBatchPaymentStep(fullResult, 'deposit', 'deposit', true) ||
+            validateBatchPaymentStep(fullResult, 'voucher', 'voucher', false) ||
+            validateBatchPaymentStep(fullResult, 'refund', 'refund', true)
+            : fullResult.error || 'Batch-settlement client phase failed';
+
+          const depositTransaction = getBatchStep(fullResult, 'deposit')?.payment_response?.transaction;
+          const refundTransaction = getBatchStep(fullResult, 'refund')?.payment_response?.transaction;
+          const network =
+            getBatchStep(fullResult, 'refund')?.payment_response?.network ||
+            getBatchStep(fullResult, 'deposit')?.payment_response?.network ||
+            fullResult.payment_response?.network;
+
+          const detailedResult: DetailedTestResult = {
+            testNumber: localTestNumber,
+            client: scenario.client.name,
+            server: scenario.server.name,
+            endpoint: scenario.endpoint.path,
+            facilitator: scenario.facilitator?.name || 'none',
+            protocolFamily: scenario.protocolFamily,
+            passed: !fullError,
+            error: fullError,
+            transaction: refundTransaction || depositTransaction,
+            depositTransaction,
+            refundTransaction,
+            network,
+          };
+
+          if (fullError) {
+            cLog.log(`  ❌ Test failed: ${fullError}`);
+            const verboseLogs = fullResult.verboseLogs ?? [];
+            if (verboseLogs.length > 0) {
+              cLog.log(`  🔍 Verbose logs:`);
+              verboseLogs.forEach(logLine => cLog.log(logLine));
+            }
+            cLog.verboseLog(`  🔍 Error details: ${JSON.stringify(fullResult, null, 2)}`);
+          } else {
+            cLog.log(`  ✅ Test passed`);
+          }
+
+          return detailedResult;
+        }
+
+        const initialResult = await runClientTest(scenario.client.proxy, {
+          ...baseClientConfig,
+          batchSettlement: { ...batchBase, phase: 'initial' },
+        });
+        const initialError = initialResult.success
+          ? validateBatchPaymentStep(initialResult, 'deposit', 'deposit', true) ||
+          validateBatchPaymentStep(initialResult, 'voucher', 'voucher', false)
+          : initialResult.error || 'Initial batch-settlement client phase failed';
+
+        if (initialError) {
+          const detailedResult: DetailedTestResult = {
+            testNumber: localTestNumber,
+            client: scenario.client.name,
+            server: scenario.server.name,
+            endpoint: scenario.endpoint.path,
+            facilitator: scenario.facilitator?.name || 'none',
+            protocolFamily: scenario.protocolFamily,
+            passed: false,
+            error: initialError,
+            depositTransaction: getBatchStep(initialResult, 'deposit')?.payment_response?.transaction,
+            network: initialResult.payment_response?.network,
+          };
+          cLog.log(`  ❌ Test failed: ${initialError}`);
+          const verboseLogs = initialResult.verboseLogs ?? [];
+          if (verboseLogs.length > 0) {
+            cLog.log(`  🔍 Verbose logs:`);
+            verboseLogs.forEach(logLine => cLog.log(logLine));
+          }
+          cLog.verboseLog(`  🔍 Error details: ${JSON.stringify(initialResult, null, 2)}`);
+          return detailedResult;
+        }
+
+        const recoveryResult = await runClientTest(scenario.client.proxy, {
+          ...baseClientConfig,
+          batchSettlement: { ...batchBase, phase: 'recovery-refund' },
+        });
+        const recoveryError = recoveryResult.success
+          ? validateBatchPaymentStep(recoveryResult, 'recoveryVoucher', 'recovery voucher', false) ||
+          validateBatchPaymentStep(recoveryResult, 'refund', 'refund', true)
+          : recoveryResult.error || 'Recovery/refund batch-settlement client phase failed';
+
+        const depositTransaction = getBatchStep(initialResult, 'deposit')?.payment_response?.transaction;
+        const refundTransaction = getBatchStep(recoveryResult, 'refund')?.payment_response?.transaction;
+        const network =
+          getBatchStep(recoveryResult, 'refund')?.payment_response?.network ||
+          getBatchStep(initialResult, 'deposit')?.payment_response?.network ||
+          recoveryResult.payment_response?.network ||
+          initialResult.payment_response?.network;
+
+        if (recoveryError) {
+          const detailedResult: DetailedTestResult = {
+            testNumber: localTestNumber,
+            client: scenario.client.name,
+            server: scenario.server.name,
+            endpoint: scenario.endpoint.path,
+            facilitator: scenario.facilitator?.name || 'none',
+            protocolFamily: scenario.protocolFamily,
+            passed: false,
+            error: recoveryError,
+            transaction: refundTransaction || depositTransaction,
+            depositTransaction,
+            refundTransaction,
+            network,
+          };
+          cLog.log(`  ❌ Test failed: ${recoveryError}`);
+          const verboseLogs = mergeVerboseLogs(initialResult, recoveryResult);
+          if (verboseLogs.length > 0) {
+            cLog.log(`  🔍 Verbose logs:`);
+            verboseLogs.forEach(logLine => cLog.log(logLine));
+          }
+          cLog.verboseLog(`  🔍 Error details: ${JSON.stringify({ initialResult, recoveryResult }, null, 2)}`);
+          return detailedResult;
+        }
+
+        const detailedResult: DetailedTestResult = {
+          testNumber: localTestNumber,
+          client: scenario.client.name,
+          server: scenario.server.name,
+          endpoint: scenario.endpoint.path,
+          facilitator: scenario.facilitator?.name || 'none',
+          protocolFamily: scenario.protocolFamily,
+          passed: true,
+          transaction: refundTransaction || depositTransaction,
+          depositTransaction,
+          refundTransaction,
+          network,
+        };
+
+        cLog.log(`  ✅ Test passed`);
+        return detailedResult;
+      }
+
+      const result = await runClientTest(scenario.client.proxy, baseClientConfig);
 
       const detailedResult: DetailedTestResult = {
         testNumber: localTestNumber,
@@ -906,8 +1219,8 @@ async function runTest() {
       aptosPayTo: facilitatorSupportsAptos ? (serverAptosAddress || '') : '',
       hederaPayTo:
         facilitatorSupportsHedera &&
-        facilitatorHederaAccountId &&
-        facilitatorHederaPrivateKey
+          facilitatorHederaAccountId &&
+          facilitatorHederaPrivateKey
           ? (serverHederaAddress || '')
           : '',
       hederaAsset: process.env.HEDERA_ASSET,
@@ -916,6 +1229,16 @@ async function runTest() {
       networks,
       facilitatorUrl,
       mockFacilitatorUrl,
+      // Forward the optional receiver-authorizer EOA key so the server can
+      // self-manage batch-settlement claim/refund signatures when set.
+      ...(process.env.SERVER_EVM_RECEIVER_AUTHORIZER_PRIVATE_KEY
+        ? {
+          batchSettlement: {
+            receiverAuthorizerPrivateKey:
+              process.env.SERVER_EVM_RECEIVER_AUTHORIZER_PRIVATE_KEY,
+          },
+        }
+        : {}),
     };
 
     const started = await startServer(serverProxy, serverConfig);
@@ -944,9 +1267,9 @@ async function runTest() {
         const tn = nextTestNumber();
         const isEvm = scenario.protocolFamily === 'evm';
 
-        if (scenario.endpoint.permit2Direct) {
-          await approvePermit2Approval(USDC_BASE_SEPOLIA);
-        } else if (scenario.endpoint.coldstart) {
+        if (scenario.endpoint.schemeOptions?.permit2Direct === true) {
+          await approvePermit2Approval(evmPermit2Asset);
+        } else if (scenario.endpoint.schemeOptions?.coldstart === true) {
           // Key on (client, path) so each client independently runs its own
           // fund → revoke → drain cycle. Without the client name, the second
           // client in a combo silently skips the coldstart and inherits
@@ -954,14 +1277,10 @@ async function runTest() {
           const endpointKey = `${scenario.client.name}::${scenario.endpoint.path}`;
           if (!coldStartedEndpoints.has(endpointKey)) {
             coldStartedEndpoints.add(endpointKey);
-            const token =
-              scenario.endpoint.extensions?.includes('erc20ApprovalGasSponsoring')
-                ? MOCK_ERC20_BASE_SEPOLIA
-                : USDC_BASE_SEPOLIA;
             await fundClientForRevoke();
             // Give fund tx 1s to propagate before submitting revoke (from client wallet)
             await new Promise(resolve => setTimeout(resolve, 1000));
-            await revokePermit2Approval(token);
+            await revokePermit2Approval(evmPermit2Asset);
             // Give revoke tx 2s to propagate before drain reads pending nonce.
             // Load-balanced RPCs can return a stale pending nonce if queried
             // immediately after the revoke submission, causing the drain to
@@ -1100,7 +1419,13 @@ async function runTest() {
       if (test.network) {
         log(`      Network: ${test.network}`);
       }
-      if (test.transaction) {
+      if (test.depositTransaction) {
+        log(`      Deposit Tx: ${test.depositTransaction}`);
+      }
+      if (test.refundTransaction) {
+        log(`      Refund Tx: ${test.refundTransaction}`);
+      }
+      if (test.transaction && !test.depositTransaction && !test.refundTransaction) {
         log(`      Tx: ${test.transaction}`);
       }
     });

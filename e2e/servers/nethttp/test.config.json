@@ -8,7 +8,12 @@
     "eip2612GasSponsoring",
     "erc20ApprovalGasSponsoring"
   ],
-  "evm": { "transferMethods": ["eip3009", "permit2"] },
+  "evm": {
+    "assetTransferMethods": [
+      "eip3009",
+      "permit2"
+    ]
+  },
   "description": "Go net/http server with x402 v2 payment middleware",
   "endpoints": [
     {
@@ -17,7 +22,8 @@
       "description": "Protected endpoint requiring EIP-3009 payment",
       "requiresPayment": true,
       "protocolFamily": "evm",
-      "transferMethod": "eip3009"
+      "scheme": "exact",
+      "assetTransferMethod": "eip3009"
     },
     {
       "path": "/exact/evm/permit2",
@@ -25,8 +31,11 @@
       "description": "Protected endpoint requiring Permit2 payment (standard settle, no gas sponsoring)",
       "requiresPayment": true,
       "protocolFamily": "evm",
-      "transferMethod": "permit2",
-      "permit2Direct": true
+      "scheme": "exact",
+      "assetTransferMethod": "permit2",
+      "schemeOptions": {
+        "permit2Direct": true
+      }
     },
     {
       "path": "/exact/evm/permit2-eip2612GasSponsoring",
@@ -34,8 +43,11 @@
       "description": "Protected endpoint requiring Permit2 payment with EIP-2612 gas sponsoring",
       "requiresPayment": true,
       "protocolFamily": "evm",
-      "transferMethod": "permit2",
-      "coldstart": true
+      "scheme": "exact",
+      "assetTransferMethod": "permit2",
+      "schemeOptions": {
+        "coldstart": true
+      }
     },
     {
       "path": "/exact/evm/permit2-erc20ApprovalGasSponsoring",
@@ -43,9 +55,14 @@
       "description": "Protected endpoint requiring Permit2 payment with ERC-20 approval gas sponsoring",
       "requiresPayment": true,
       "protocolFamily": "evm",
-      "transferMethod": "permit2",
-      "extensions": ["erc20ApprovalGasSponsoring"],
-      "coldstart": true
+      "extensions": [
+        "erc20ApprovalGasSponsoring"
+      ],
+      "scheme": "exact",
+      "assetTransferMethod": "permit2",
+      "schemeOptions": {
+        "coldstart": true
+      }
     },
     {
       "path": "/upto/evm/permit2",
@@ -53,8 +70,11 @@
       "description": "Protected endpoint requiring upto Permit2 payment (usage-based settlement)",
       "requiresPayment": true,
       "protocolFamily": "evm",
-      "transferMethod": "upto",
-      "permit2Direct": true
+      "scheme": "upto",
+      "assetTransferMethod": "permit2",
+      "schemeOptions": {
+        "permit2Direct": true
+      }
     },
     {
       "path": "/exact/svm",

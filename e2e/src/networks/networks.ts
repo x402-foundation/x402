@@ -107,6 +107,23 @@ export function getNetworkSet(mode: NetworkMode): NetworkSet {
 }
 
 /**
+ * Permit2-priced routes read `process.env.EVM_PERMIT2_ASSET` in server processes.
+ * Use the same resolution here and when spawning resource servers (`generic-server`)
+ * so cold-start revoke/approve targets the token those routes bill.
+ *
+ * Precedence: non-empty `EVM_PERMIT2_ASSET`, then `networks.evm.permit2Asset`.
+ * When the env var is unset, defaults are Base Sepolia USDC (`eip155:84532`) and
+ * Base mainnet USDC (`eip155:8453`) from {@link NETWORK_SETS}.
+ */
+export function resolveEvmPermit2Asset(networks: NetworkSet): string {
+  const fromEnv = process.env.EVM_PERMIT2_ASSET?.trim();
+  if (fromEnv) {
+    return fromEnv;
+  }
+  return (networks.evm.permit2Asset ?? '').trim();
+}
+
+/**
  * Get network config for a protocol family in a given mode
  * 
  * @param mode - 'testnet' or 'mainnet'

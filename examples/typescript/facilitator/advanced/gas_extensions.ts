@@ -117,13 +117,18 @@ facilitator.register(EVM_NETWORK, new UptoEvmScheme(evmSigner));
 const erc20ApprovalSigner = {
   ...evmSigner,
   sendTransactions: async (
-    transactions: (`0x${string}` | { to: `0x${string}`; data: `0x${string}`; gas?: bigint })[],
+    transactions: (
+      | `0x${string}`
+      | { to: `0x${string}`; data: `0x${string}`; gas?: bigint }
+    )[],
   ): Promise<`0x${string}`[]> => {
     const hashes: `0x${string}`[] = [];
     for (const tx of transactions) {
       let hash: `0x${string}`;
       if (typeof tx === "string") {
-        hash = await viemClient.sendRawTransaction({ serializedTransaction: tx });
+        hash = await viemClient.sendRawTransaction({
+          serializedTransaction: tx,
+        });
       } else {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         hash = await viemClient.sendTransaction(tx as any);
@@ -140,7 +145,9 @@ const erc20ApprovalSigner = {
 
 facilitator
   .registerExtension(EIP2612_GAS_SPONSORING)
-  .registerExtension(createErc20ApprovalGasSponsoringExtension(erc20ApprovalSigner));
+  .registerExtension(
+    createErc20ApprovalGasSponsoringExtension(erc20ApprovalSigner),
+  );
 
 const app = express();
 app.use(express.json());

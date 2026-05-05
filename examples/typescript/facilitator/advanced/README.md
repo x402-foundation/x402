@@ -48,10 +48,10 @@ pnpm dev:gas-extensions # exact + upto with EIP-2612 and ERC-20 approval gas spo
 
 Each example demonstrates a specific advanced pattern:
 
-| Example        | Command                 | Description                                              |
-| -------------- | ----------------------- | -------------------------------------------------------- |
-| `all-networks` | `pnpm dev:all-networks` | All supported networks with optional chain configuration |
-| `bazaar`       | `pnpm dev:bazaar`       | Bazaar discovery extension for cataloging x402 resources |
+| Example          | Command                   | Description                                                               |
+| ---------------- | ------------------------- | ------------------------------------------------------------------------- |
+| `all-networks`   | `pnpm dev:all-networks`   | All supported networks with optional chain configuration                  |
+| `bazaar`         | `pnpm dev:bazaar`         | Bazaar discovery extension for cataloging x402 resources                  |
 | `gas_extensions` | `pnpm dev:gas-extensions` | Base Sepolia `exact` + `upto` with both Permit2 gas-sponsoring extensions |
 
 ## API Endpoints

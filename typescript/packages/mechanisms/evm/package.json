@@ -149,6 +149,36 @@
         "types": "./dist/cjs/upto/facilitator/index.d.ts",
         "default": "./dist/cjs/upto/facilitator/index.js"
       }
+    },
+    "./batch-settlement/client": {
+      "import": {
+        "types": "./dist/esm/batch-settlement/client/index.d.mts",
+        "default": "./dist/esm/batch-settlement/client/index.mjs"
+      },
+      "require": {
+        "types": "./dist/cjs/batch-settlement/client/index.d.ts",
+        "default": "./dist/cjs/batch-settlement/client/index.js"
+      }
+    },
+    "./batch-settlement/server": {
+      "import": {
+        "types": "./dist/esm/batch-settlement/server/index.d.mts",
+        "default": "./dist/esm/batch-settlement/server/index.mjs"
+      },
+      "require": {
+        "types": "./dist/cjs/batch-settlement/server/index.d.ts",
+        "default": "./dist/cjs/batch-settlement/server/index.js"
+      }
+    },
+    "./batch-settlement/facilitator": {
+      "import": {
+        "types": "./dist/esm/batch-settlement/facilitator/index.d.mts",
+        "default": "./dist/esm/batch-settlement/facilitator/index.mjs"
+      },
+      "require": {
+        "types": "./dist/cjs/batch-settlement/facilitator/index.d.ts",
+        "default": "./dist/cjs/batch-settlement/facilitator/index.js"
+      }
     }
   },
   "files": [

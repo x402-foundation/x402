@@ -3,8 +3,11 @@
   "type": "server",
   "language": "typescript",
   "x402Version": 2,
-  "extensions": ["bazaar", "eip2612GasSponsoring", "erc20ApprovalGasSponsoring"],
-
+  "extensions": [
+    "bazaar",
+    "eip2612GasSponsoring",
+    "erc20ApprovalGasSponsoring"
+  ],
   "endpoints": [
     {
       "path": "/api/exact/evm/eip3009/proxy",
@@ -12,7 +15,8 @@
       "description": "EVM EIP-3009 endpoint using proxy middleware",
       "requiresPayment": true,
       "protocolFamily": "evm",
-      "transferMethod": "eip3009"
+      "scheme": "exact",
+      "assetTransferMethod": "eip3009"
     },
     {
       "path": "/api/exact/evm/permit2/proxy",
@@ -20,8 +24,11 @@
       "description": "EVM Permit2 direct endpoint (standard settle, no gas sponsoring)",
       "requiresPayment": true,
       "protocolFamily": "evm",
-      "transferMethod": "permit2",
-      "permit2Direct": true
+      "scheme": "exact",
+      "assetTransferMethod": "permit2",
+      "schemeOptions": {
+        "permit2Direct": true
+      }
     },
     {
       "path": "/api/exact/evm/permit2-eip2612GasSponsoring/proxy",
@@ -29,8 +36,11 @@
       "description": "EVM Permit2 endpoint with EIP-2612 gas sponsoring using proxy middleware",
       "requiresPayment": true,
       "protocolFamily": "evm",
-      "transferMethod": "permit2",
-      "coldstart": true
+      "scheme": "exact",
+      "assetTransferMethod": "permit2",
+      "schemeOptions": {
+        "coldstart": true
+      }
     },
     {
       "path": "/api/exact/evm/permit2-erc20ApprovalGasSponsoring/proxy",
@@ -38,9 +48,14 @@
       "description": "EVM Permit2 endpoint with ERC-20 approval gas sponsoring using proxy middleware",
       "requiresPayment": true,
       "protocolFamily": "evm",
-      "transferMethod": "permit2",
-      "extensions": ["erc20ApprovalGasSponsoring"],
-      "coldstart": true
+      "extensions": [
+        "erc20ApprovalGasSponsoring"
+      ],
+      "scheme": "exact",
+      "assetTransferMethod": "permit2",
+      "schemeOptions": {
+        "coldstart": true
+      }
     },
     {
       "path": "/api/upto/evm/permit2",
@@ -48,8 +63,11 @@
       "description": "Protected Upto Permit2 endpoint (direct, client must pre-approve)",
       "requiresPayment": true,
       "protocolFamily": "evm",
-      "transferMethod": "upto",
-      "permit2Direct": true
+      "scheme": "upto",
+      "assetTransferMethod": "permit2",
+      "schemeOptions": {
+        "permit2Direct": true
+      }
     },
     {
       "path": "/api/upto/evm/permit2-eip2612GasSponsoring",
@@ -57,8 +75,11 @@
       "description": "Protected Upto Permit2 endpoint with EIP-2612 gas sponsoring",
       "requiresPayment": true,
       "protocolFamily": "evm",
-      "transferMethod": "upto",
-      "coldstart": true
+      "scheme": "upto",
+      "assetTransferMethod": "permit2",
+      "schemeOptions": {
+        "coldstart": true
+      }
     },
     {
       "path": "/api/upto/evm/permit2-erc20ApprovalGasSponsoring",
@@ -66,9 +87,14 @@
       "description": "Protected Upto Permit2 endpoint with ERC-20 approval gas sponsoring",
       "requiresPayment": true,
       "protocolFamily": "evm",
-      "transferMethod": "upto",
-      "extensions": ["erc20ApprovalGasSponsoring"],
-      "coldstart": true
+      "extensions": [
+        "erc20ApprovalGasSponsoring"
+      ],
+      "scheme": "upto",
+      "assetTransferMethod": "permit2",
+      "schemeOptions": {
+        "coldstart": true
+      }
     },
     {
       "path": "/api/exact/svm",
@@ -111,7 +137,65 @@
       "description": "EVM EIP-3009 endpoint using withX402 wrapper",
       "requiresPayment": true,
       "protocolFamily": "evm",
-      "transferMethod": "eip3009"
+      "scheme": "exact",
+      "assetTransferMethod": "eip3009"
+    },
+    {
+      "path": "/api/batch-settlement/evm/eip3009/proxy",
+      "method": "GET",
+      "description": "Batch-settlement EVM endpoint (proxy middleware): deposit + voucher + recovery voucher + cooperative refund",
+      "requiresPayment": true,
+      "protocolFamily": "evm",
+      "scheme": "batch-settlement",
+      "assetTransferMethod": "eip3009"
+    },
+    {
+      "path": "/api/batch-settlement/evm/permit2/proxy",
+      "method": "GET",
+      "description": "Batch-settlement Permit2 direct endpoint (proxy middleware, pre-approved Permit2)",
+      "requiresPayment": true,
+      "protocolFamily": "evm",
+      "scheme": "batch-settlement",
+      "assetTransferMethod": "permit2",
+      "schemeOptions": {
+        "permit2Direct": true
+      }
+    },
+    {
+      "path": "/api/batch-settlement/evm/permit2-eip2612GasSponsoring/proxy",
+      "method": "GET",
+      "description": "Batch-settlement Permit2 endpoint with EIP-2612 gas sponsoring using proxy middleware",
+      "requiresPayment": true,
+      "protocolFamily": "evm",
+      "scheme": "batch-settlement",
+      "assetTransferMethod": "permit2",
+      "schemeOptions": {
+        "coldstart": true
+      }
+    },
+    {
+      "path": "/api/batch-settlement/evm/permit2-erc20ApprovalGasSponsoring/proxy",
+      "method": "GET",
+      "description": "Batch-settlement Permit2 endpoint with ERC-20 approval gas sponsoring using proxy middleware",
+      "requiresPayment": true,
+      "protocolFamily": "evm",
+      "extensions": [
+        "erc20ApprovalGasSponsoring"
+      ],
+      "scheme": "batch-settlement",
+      "assetTransferMethod": "permit2",
+      "schemeOptions": {
+        "coldstart": true
+      }
+    },
+    {
+      "path": "/api/batch-settlement/evm/eip3009/withx402",
+      "method": "GET",
+      "description": "Batch-settlement EVM endpoint (withX402 wrapper): deposit + voucher + recovery voucher + cooperative refund",
+      "requiresPayment": true,
+      "protocolFamily": "evm",
+      "scheme": "batch-settlement",
+      "assetTransferMethod": "eip3009"
     },
     {
       "path": "/api/exact/svm/withx402",
@@ -148,7 +232,18 @@
     }
   ],
   "environment": {
-    "required": ["PORT", "EVM_PAYEE_ADDRESS", "SVM_PAYEE_ADDRESS", "FACILITATOR_URL"],
-    "optional": ["AVM_PAYEE_ADDRESS", "APTOS_PAYEE_ADDRESS", "HEDERA_PAYEE_ADDRESS", "STELLAR_PAYEE_ADDRESS"]
+    "required": [
+      "PORT",
+      "EVM_PAYEE_ADDRESS",
+      "SVM_PAYEE_ADDRESS",
+      "FACILITATOR_URL"
+    ],
+    "optional": [
+      "AVM_PAYEE_ADDRESS",
+      "APTOS_PAYEE_ADDRESS",
+      "HEDERA_PAYEE_ADDRESS",
+      "STELLAR_PAYEE_ADDRESS",
+      "EVM_RECEIVER_AUTHORIZER_PRIVATE_KEY"
+    ]
   }
 }

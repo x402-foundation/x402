@@ -1,6 +1,7 @@
 import { BaseProxy, RunConfig } from '../proxy-base';
 import { ServerProxy, ServerConfig } from '../types';
 import { verboseLog, errorLog } from '../logger';
+import { resolveEvmPermit2Asset } from '../networks/networks';
 
 export interface ProtectedResponse {
   message: string;
@@ -92,7 +93,7 @@ export class GenericServerProxy extends BaseProxy implements ServerProxy {
         EVM_NETWORK: evmNetwork,
         EVM_RPC_URL: config.networks.evm.rpcUrl,
         EVM_PAYEE_ADDRESS: config.evmPayTo,
-        EVM_PERMIT2_ASSET: config.networks.evm.permit2Asset || '',
+        EVM_PERMIT2_ASSET: resolveEvmPermit2Asset(config.networks),
 
         // SVM network config
         SVM_NETWORK: svmNetwork,
@@ -127,6 +128,13 @@ export class GenericServerProxy extends BaseProxy implements ServerProxy {
         // Facilitator
         FACILITATOR_URL: config.facilitatorUrl || '',
         MOCK_FACILITATOR_URL: config.mockFacilitatorUrl || '',
+
+        ...(config.batchSettlement
+          ? {
+              EVM_RECEIVER_AUTHORIZER_PRIVATE_KEY:
+                config.batchSettlement.receiverAuthorizerPrivateKey,
+            }
+          : {}),
       }
     };
 

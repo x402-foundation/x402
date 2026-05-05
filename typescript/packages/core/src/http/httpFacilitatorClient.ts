@@ -81,6 +81,10 @@ const verifyResponseSchema: z.ZodType<VerifyResponse, z.ZodTypeDef, unknown> = z
     .record(z.string(), z.unknown())
     .nullish()
     .transform(v => v ?? undefined),
+  extra: z
+    .record(z.string(), z.unknown())
+    .nullish()
+    .transform(v => v ?? undefined),
 });
 
 const settleResponseSchema: z.ZodType<SettleResponse, z.ZodTypeDef, unknown> = z.object({
@@ -99,7 +103,15 @@ const settleResponseSchema: z.ZodType<SettleResponse, z.ZodTypeDef, unknown> = z
     .transform(v => v ?? undefined),
   transaction: z.string(),
   network: z.custom<SettleResponse["network"]>(value => typeof value === "string"),
+  amount: z
+    .string()
+    .nullish()
+    .transform(v => v ?? undefined),
   extensions: z
+    .record(z.string(), z.unknown())
+    .nullish()
+    .transform(v => v ?? undefined),
+  extra: z
     .record(z.string(), z.unknown())
     .nullish()
     .transform(v => v ?? undefined),

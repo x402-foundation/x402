@@ -15,10 +15,9 @@
     2
   ],
   "evm": {
-    "transferMethods": [
+    "assetTransferMethods": [
       "eip3009",
-      "permit2",
-      "upto"
+      "permit2"
     ]
   },
   "extensions": [
@@ -39,7 +38,11 @@
       "HEDERA_PRIVATE_KEY",
       "HEDERA_NETWORK",
       "HEDERA_NODE_URL",
-      "STELLAR_PRIVATE_KEY"
+      "STELLAR_PRIVATE_KEY",
+      "CHANNEL_SALT",
+      "BATCH_SETTLEMENT_PHASE",
+      "BATCH_SETTLEMENT_RECOVERY",
+      "EVM_VOUCHER_SIGNER_PRIVATE_KEY"
     ]
   }
 }

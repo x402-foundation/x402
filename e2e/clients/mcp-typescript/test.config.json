@@ -10,7 +10,10 @@
     2
   ],
   "evm": {
-    "transferMethods": ["eip3009", "permit2"]
+    "assetTransferMethods": [
+      "eip3009",
+      "permit2"
+    ]
   },
   "environment": {
     "required": [

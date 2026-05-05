@@ -33,6 +33,15 @@ export class GenericClientProxy extends BaseProxy implements ClientProxy {
           EVM_RPC_URL: config.evmRpcUrl,
           HEDERA_NETWORK: config.hederaNetwork,
           HEDERA_NODE_URL: config.hederaNodeUrl,
+          ...(config.batchSettlement
+            ? {
+              CHANNEL_SALT: config.batchSettlement.channelSalt,
+              BATCH_SETTLEMENT_PHASE: config.batchSettlement.phase,
+              ...(config.batchSettlement.voucherSignerPrivateKey
+                ? { EVM_VOUCHER_SIGNER_PRIVATE_KEY: config.batchSettlement.voucherSignerPrivateKey }
+                : {}),
+            }
+            : {}),
         }
       };
 

@@ -1,15 +1,18 @@
 import { describe, it, expect } from "vitest";
 import {
   assertAcceptsAllowlistedAfterExtensionEnrich,
+  assertAdditivePayloadEnrichment,
+  assertAdditiveSettlementExtra,
   assertSettleResponseCoreUnchanged,
   isVacantStringField,
+  mergeAdditiveSettlementExtra,
   snapshotPaymentRequirementsList,
   snapshotSettleResponseCore,
-} from "../../../src/server/extensionResponsePolicy";
+} from "../../../src/server/hookPolicy";
 import { buildPaymentRequirements, buildSettleResponse } from "../../mocks";
 import type { Network } from "../../../src/types";
 
-describe("extensionResponsePolicy", () => {
+describe("hookPolicy", () => {
   describe("isVacantStringField", () => {
     it("treats empty and whitespace-only strings as vacant", () => {
       expect(isVacantStringField("")).toBe(true);
@@ -122,6 +125,115 @@ describe("extensionResponsePolicy", () => {
       const snap = snapshotSettleResponseCore(base);
       base.transaction = "0xother";
       expect(() => assertSettleResponseCoreUnchanged(snap, base, "ext")).toThrow(/transaction/);
+    });
+  });
+
+  describe("assertAdditivePayloadEnrichment", () => {
+    it("allows adding new payload fields", () => {
+      expect(() =>
+        assertAdditivePayloadEnrichment(
+          { clientField: "client" },
+          { serverField: "server" },
+          "scheme test",
+        ),
+      ).not.toThrow();
+    });
+
+    it("rejects overwriting payload fields", () => {
+      expect(() =>
+        assertAdditivePayloadEnrichment(
+          { clientField: "client" },
+          { clientField: "server" },
+          "scheme test",
+        ),
+      ).toThrow(/clientField/);
+    });
+  });
+
+  describe("assertAdditiveSettlementExtra", () => {
+    it("allows adding new settlement extra fields", () => {
+      expect(() =>
+        assertAdditiveSettlementExtra(
+          { facilitatorField: "facilitator" },
+          { schemeField: "scheme" },
+          "scheme test",
+        ),
+      ).not.toThrow();
+    });
+
+    it("allows adding nested settlement extra fields", () => {
+      expect(() =>
+        assertAdditiveSettlementExtra(
+          {
+            channelState: {
+              channelId: "0xchannel",
+              balance: "1000",
+            },
+          },
+          {
+            channelState: {
+              chargedCumulativeAmount: "200",
+            },
+          },
+          "scheme test",
+        ),
+      ).not.toThrow();
+    });
+
+    it("rejects overwriting settlement extra fields", () => {
+      expect(() =>
+        assertAdditiveSettlementExtra(
+          { facilitatorField: "facilitator" },
+          { facilitatorField: "scheme" },
+          "scheme test",
+        ),
+      ).toThrow(/facilitatorField/);
+    });
+
+    it("rejects overwriting nested settlement extra fields", () => {
+      expect(() =>
+        assertAdditiveSettlementExtra(
+          {
+            channelState: {
+              balance: "1000",
+            },
+          },
+          {
+            channelState: {
+              balance: "2000",
+            },
+          },
+          "scheme test",
+        ),
+      ).toThrow(/channelState.*balance/);
+    });
+  });
+
+  describe("mergeAdditiveSettlementExtra", () => {
+    it("merges nested settlement extra fields", () => {
+      expect(
+        mergeAdditiveSettlementExtra(
+          {
+            channelState: {
+              channelId: "0xchannel",
+              balance: "1000",
+            },
+          },
+          {
+            chargedAmount: "100",
+            channelState: {
+              chargedCumulativeAmount: "200",
+            },
+          },
+        ),
+      ).toEqual({
+        chargedAmount: "100",
+        channelState: {
+          channelId: "0xchannel",
+          balance: "1000",
+          chargedCumulativeAmount: "200",
+        },
+      });
     });
   });
 });

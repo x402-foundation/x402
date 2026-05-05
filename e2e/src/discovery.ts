@@ -10,7 +10,8 @@ import {
   DiscoveredClient,
   DiscoveredFacilitator,
   TestScenario,
-  ProtocolFamily
+  ProtocolFamily,
+  endpointAssetTransferMethod,
 } from './types';
 
 export class TestDiscovery {
@@ -266,10 +267,10 @@ export class TestDiscovery {
 
           // For EVM endpoints, check transfer method compatibility with client
           if (endpointProtocolFamily === 'evm') {
-            const endpointTransferMethod = endpoint.transferMethod || 'eip3009';
-            const clientTransferMethods = client.config.evm?.transferMethods || ['eip3009'];
-            if (!clientTransferMethods.includes(endpointTransferMethod)) {
-              verboseLog(`  ⚠️  Skipping ${client.name} ↔ ${server.name} ${endpoint.path}: Transfer method mismatch (client supports [${clientTransferMethods.join(', ')}], endpoint requires ${endpointTransferMethod})`);
+            const endpointAtm = endpointAssetTransferMethod(endpoint)!;
+            const clientAssetMethods = client.config.evm?.assetTransferMethods || ['eip3009'];
+            if (!clientAssetMethods.includes(endpointAtm)) {
+              verboseLog(`  ⚠️  Skipping ${client.name} ↔ ${server.name} ${endpoint.path}: Asset transfer method mismatch (client supports [${clientAssetMethods.join(', ')}], endpoint requires ${endpointAtm})`);
               continue;
             }
           }
@@ -280,9 +281,9 @@ export class TestDiscovery {
             const supportsVersion = f.config.x402Versions?.includes(serverVersion);
             // For EVM, also check transfer method support
             if (endpointProtocolFamily === 'evm') {
-              const endpointTransferMethod = endpoint.transferMethod || 'eip3009';
-              const facilTransferMethods = f.config.evm?.transferMethods || ['eip3009'];
-              if (!facilTransferMethods.includes(endpointTransferMethod)) return false;
+              const endpointAtm = endpointAssetTransferMethod(endpoint)!;
+              const facilAssetMethods = f.config.evm?.assetTransferMethods || ['eip3009'];
+              if (!facilAssetMethods.includes(endpointAtm)) return false;
             }
             return supportsProtocol && supportsVersion;
           });
@@ -333,8 +334,8 @@ export class TestDiscovery {
       const protocolFamilies = client.config.protocolFamilies || ['evm'];
       const versions = client.config.x402Versions || [1];
       const transport = client.config.transport || 'http';
-      const evmTransferMethods = client.config.evm?.transferMethods || ['eip3009'];
-      const evmInfo = protocolFamilies.includes('evm') ? ` evm:${evmTransferMethods.join(',')}` : '';
+      const evmAssetMethods = client.config.evm?.assetTransferMethods || ['eip3009'];
+      const evmInfo = protocolFamilies.includes('evm') ? ` evm:${evmAssetMethods.join(',')}` : '';
       const extInfo = client.config.extensions ? ` {${client.config.extensions.join(', ')}}` : '';
       verboseLog(`   - ${client.name} (${client.config.language}) [${transport}] v[${versions.join(', ')}] [${protocolFamilies.join(', ')}]${evmInfo}${extInfo}`);
     });
@@ -347,8 +348,8 @@ export class TestDiscovery {
     regularFacilitators.forEach(facilitator => {
       const protocolFamilies = facilitator.config.protocolFamilies || ['evm'];
       const versions = facilitator.config.x402Versions || [2];
-      const evmTransferMethods = facilitator.config.evm?.transferMethods || ['eip3009'];
-      const evmInfo = protocolFamilies.includes('evm') ? ` evm:${evmTransferMethods.join(',')}` : '';
+      const evmAssetMethods = facilitator.config.evm?.assetTransferMethods || ['eip3009'];
+      const evmInfo = protocolFamilies.includes('evm') ? ` evm:${evmAssetMethods.join(',')}` : '';
       verboseLog(`   - ${facilitator.name} (${facilitator.config.language}) v[${versions.join(', ')}] [${protocolFamilies.join(', ')}]${evmInfo}`);
     });
 
@@ -357,8 +358,8 @@ export class TestDiscovery {
       externalFacilitators.forEach(facilitator => {
         const protocolFamilies = facilitator.config.protocolFamilies || ['evm'];
         const versions = facilitator.config.x402Versions || [2];
-        const evmTransferMethods = facilitator.config.evm?.transferMethods || ['eip3009'];
-        const evmInfo = protocolFamilies.includes('evm') ? ` evm:${evmTransferMethods.join(',')}` : '';
+        const evmAssetMethods = facilitator.config.evm?.assetTransferMethods || ['eip3009'];
+        const evmInfo = protocolFamilies.includes('evm') ? ` evm:${evmAssetMethods.join(',')}` : '';
         verboseLog(`     - ${facilitator.name} (${facilitator.config.language}) v[${versions.join(', ')}] [${protocolFamilies.join(', ')}]${evmInfo}`);
       });
     }

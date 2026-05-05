@@ -5,7 +5,8 @@ import { toFacilitatorAptosSigner } from "@x402/aptos";
 import { ExactAptosScheme } from "@x402/aptos/exact/facilitator";
 import { x402Facilitator } from "@x402/core/facilitator";
 import { Network } from "@x402/core/types";
-import { toFacilitatorEvmSigner } from "@x402/evm";
+import { type AuthorizerSigner, toFacilitatorEvmSigner } from "@x402/evm";
+import { BatchSettlementEvmScheme } from "@x402/evm/batch-settlement/facilitator";
 import { ExactEvmScheme } from "@x402/evm/exact/facilitator";
 import { ExactEvmSchemeV1 } from "@x402/evm/exact/v1/facilitator";
 import { UptoEvmScheme } from "@x402/evm/upto/facilitator";
@@ -94,6 +95,12 @@ async function createFacilitator(): Promise<x402Facilitator> {
     getCode: (args: { address: `0x${string}` }) => viemClient.getCode(args),
   });
 
+  const receiverAuthorizerSigner: AuthorizerSigner = {
+    address: evmAccount.address,
+    signTypedData: params =>
+      evmAccount.signTypedData(params as Parameters<typeof evmAccount.signTypedData>[0]),
+  };
+
   // Initialize the SVM account from private key
   const svmAccount = await createKeyPairSignerFromBytes(
     base58.decode(process.env.FACILITATOR_SVM_PRIVATE_KEY as string),
@@ -107,6 +114,7 @@ async function createFacilitator(): Promise<x402Facilitator> {
     .register("eip155:84532", new ExactEvmScheme(evmSigner))
     .registerV1("base-sepolia" as Network, new ExactEvmSchemeV1(evmSigner))
     .register("eip155:84532", new UptoEvmScheme(evmSigner))
+    .register("eip155:84532", new BatchSettlementEvmScheme(evmSigner, receiverAuthorizerSigner))
     .register("solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1", new ExactSvmScheme(svmSigner))
     .registerV1("solana-devnet" as Network, new ExactSvmSchemeV1(svmSigner));
 

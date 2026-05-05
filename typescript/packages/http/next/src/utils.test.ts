@@ -4,6 +4,7 @@ import type {
   x402HTTPResourceServer,
   x402ResourceServer,
   PaywallProvider,
+  PaymentCancellationDispatcher,
 } from "@x402/core/server";
 import type { PaymentPayload, PaymentRequirements } from "@x402/core/types";
 import {
@@ -250,8 +251,13 @@ describe("handleSettlement", () => {
     scheme: "exact",
     network: "eip155:84532",
   } as unknown as PaymentRequirements;
+  const mockDeclaredExtensions = {};
+  let mockPaymentCancellationDispatcher: PaymentCancellationDispatcher;
 
   beforeEach(() => {
+    mockPaymentCancellationDispatcher = {
+      cancel: vi.fn().mockResolvedValue(undefined),
+    } as unknown as PaymentCancellationDispatcher;
     mockHttpServer = {
       processSettlement: vi
         .fn()
@@ -267,10 +273,18 @@ describe("handleSettlement", () => {
       response,
       mockPaymentPayload,
       mockRequirements,
+      mockDeclaredExtensions,
+      mockPaymentCancellationDispatcher,
     );
 
     expect(result.status).toBe(500);
     expect(mockHttpServer.processSettlement).not.toHaveBeenCalled();
+    expect(mockPaymentCancellationDispatcher.cancel).toHaveBeenCalledWith(
+      expect.objectContaining({
+        reason: "handler_failed",
+        responseStatus: 500,
+      }),
+    );
   });
 
   it("returns original response when status is exactly 400", async () => {
@@ -281,6 +295,8 @@ describe("handleSettlement", () => {
       response,
       mockPaymentPayload,
       mockRequirements,
+      mockDeclaredExtensions,
+      mockPaymentCancellationDispatcher,
     );
 
     expect(result.status).toBe(400);
@@ -295,6 +311,8 @@ describe("handleSettlement", () => {
       response,
       mockPaymentPayload,
       mockRequirements,
+      mockDeclaredExtensions,
+      mockPaymentCancellationDispatcher,
     );
 
     expect(result.status).toBe(200);
@@ -302,11 +320,8 @@ describe("handleSettlement", () => {
     expect(mockHttpServer.processSettlement).toHaveBeenCalledWith(
       mockPaymentPayload,
       mockRequirements,
+      mockDeclaredExtensions,
       undefined,
-      expect.objectContaining({
-        request: undefined,
-        responseBody: expect.any(Buffer),
-      }),
     );
   });
 
@@ -333,6 +348,8 @@ describe("handleSettlement", () => {
       response,
       mockPaymentPayload,
       mockRequirements,
+      mockDeclaredExtensions,
+      mockPaymentCancellationDispatcher,
     );
 
     expect(result.status).toBe(402);
@@ -350,6 +367,8 @@ describe("handleSettlement", () => {
       response,
       mockPaymentPayload,
       mockRequirements,
+      mockDeclaredExtensions,
+      mockPaymentCancellationDispatcher,
     );
 
     expect(result.status).toBe(402);

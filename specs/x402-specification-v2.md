@@ -253,6 +253,7 @@ The `VerifyResponse` schema contains the following fields:
 | `isValid`       | `boolean` | Required | Indicates whether the payment authorization is valid    |
 | `invalidReason` | `string`  | Optional | Reason for invalidity (omitted if valid)                |
 | `payer`         | `string`  | Optional | Address of the payer's wallet                           |
+| `extra`         | `object`  | Optional | Scheme-specific additional data                         |
 
 **6. Payment Schemes (The Logic)**
 

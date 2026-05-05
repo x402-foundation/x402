@@ -213,6 +213,69 @@ describe("x402Client", () => {
 
       expect(evmClient.createPaymentPayloadCalls.length).toBe(1);
     });
+
+    it("runs scheme hooks only for the selected network pattern and scheme", async () => {
+      const client = new x402Client();
+      const order: string[] = [];
+
+      client.onBeforePaymentCreation(async () => {
+        order.push("manual");
+      });
+      client.register(
+        "eip155:*" as Network,
+        new MockSchemeNetworkClient("exact", undefined, {
+          onBeforePaymentCreation: async () => {
+            order.push("scheme");
+          },
+        }),
+      );
+      client.register(
+        "eip155:*" as Network,
+        new MockSchemeNetworkClient("other", undefined, {
+          onBeforePaymentCreation: async () => {
+            order.push("other-scheme");
+          },
+        }),
+      );
+      client.register(
+        "solana:*" as Network,
+        new MockSchemeNetworkClient("exact", undefined, {
+          onBeforePaymentCreation: async () => {
+            order.push("other-network");
+          },
+        }),
+      );
+
+      await client.createPaymentPayload(
+        buildPaymentRequired({
+          accepts: [
+            buildPaymentRequirements({ scheme: "exact", network: "eip155:8453" as Network }),
+          ],
+        }),
+      );
+
+      expect(order).toEqual(["manual", "scheme"]);
+    });
+
+    it("removes scheme client hook adapters when a scheme is re-registered without hooks", async () => {
+      const client = new x402Client();
+      let calls = 0;
+
+      client.register(
+        "test:network" as Network,
+        new MockSchemeNetworkClient("test-scheme", undefined, {
+          onBeforePaymentCreation: async () => {
+            calls++;
+          },
+        }),
+      );
+      await client.createPaymentPayload(buildPaymentRequired());
+      expect(calls).toBe(1);
+
+      client.register("test:network" as Network, new MockSchemeNetworkClient("test-scheme"));
+      await client.createPaymentPayload(buildPaymentRequired());
+      expect(calls).toBe(1);
+    });
   });
 
   describe("registerV1", () => {

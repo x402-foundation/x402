@@ -1,0 +1,45 @@
+{
+  "name": "@x402/next-batch-settlement-redis-example",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "cron:claim": "tsx scripts/cron.ts claim",
+    "cron:settle": "tsx scripts/cron.ts settle",
+    "cron:claim-and-settle": "tsx scripts/cron.ts claim-and-settle",
+    "format": "prettier -c .prettierrc --write \"**/*.{ts,js,cjs,json,md}\"",
+    "format:check": "prettier -c .prettierrc --check \"**/*.{ts,js,cjs,json,md}\"",
+    "lint": "eslint . --ext .ts --fix",
+    "lint:check": "eslint . --ext .ts"
+  },
+  "dependencies": {
+    "@x402/core": "workspace:*",
+    "@x402/evm": "workspace:*",
+    "@x402/extensions": "workspace:*",
+    "@x402/next": "workspace:*",
+    "next": "^16.0.10",
+    "react": "^19.2.3",
+    "react-dom": "^19.2.3",
+    "redis": "^5.12.1",
+    "viem": "^2.39.3"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.24.0",
+    "@types/node": "^22.13.4",
+    "@types/react": "^19",
+    "@types/react-dom": "^19",
+    "@typescript-eslint/eslint-plugin": "^8.29.1",
+    "@typescript-eslint/parser": "^8.29.1",
+    "eslint": "^9.24.0",
+    "eslint-config-next": "16.0.6",
+    "eslint-plugin-import": "^2.31.0",
+    "eslint-plugin-jsdoc": "^50.6.9",
+    "eslint-plugin-prettier": "^5.2.6",
+    "prettier": "3.5.2",
+    "tsx": "^4.21.0",
+    "typescript": "^5"
+  }
+}

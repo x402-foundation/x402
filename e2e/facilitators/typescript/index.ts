@@ -31,7 +31,8 @@ import {
   SettleResponse,
   VerifyResponse,
 } from "@x402/core/types";
-import { toFacilitatorEvmSigner } from "@x402/evm";
+import { type AuthorizerSigner, toFacilitatorEvmSigner } from "@x402/evm";
+import { BatchSettlementEvmScheme } from "@x402/evm/batch-settlement/facilitator";
 import { ExactEvmScheme } from "@x402/evm/exact/facilitator";
 import { UptoEvmScheme } from "@x402/evm/upto/facilitator";
 import { ExactEvmSchemeV1 } from "@x402/evm/exact/v1/facilitator";
@@ -66,6 +67,7 @@ import express from "express";
 import {
   createWalletClient,
   http,
+  nonceManager,
   publicActions,
   Chain,
   parseTransaction,
@@ -133,8 +135,24 @@ if (!process.env.SVM_PRIVATE_KEY) {
 // Initialize the EVM account from private key
 const evmAccount = privateKeyToAccount(
   process.env.EVM_PRIVATE_KEY as `0x${string}`,
+  { nonceManager },
 );
 console.info(`EVM Facilitator account: ${evmAccount.address}`);
+
+// Dedicated receiver authorizer for the batch-settlement scheme (falls back to EVM_PRIVATE_KEY)
+const receiverAuthorizerPrivateKey =
+  process.env.EVM_RECEIVER_AUTHORIZER_PRIVATE_KEY ?? process.env.EVM_PRIVATE_KEY;
+const authorizerAccount = privateKeyToAccount(
+  receiverAuthorizerPrivateKey as `0x${string}`,
+);
+const authorizerSigner: AuthorizerSigner = {
+  address: authorizerAccount.address,
+  signTypedData: (params) =>
+    authorizerAccount.signTypedData(
+      params as Parameters<typeof authorizerAccount.signTypedData>[0],
+    ),
+};
+console.info(`EVM Receiver Authorizer: ${authorizerSigner.address}`);
 
 // Initialize the SVM account from private key
 const svmAccount = await createKeyPairSignerFromBytes(
@@ -258,9 +276,9 @@ const svmSigner = toFacilitatorSvmSigner(
 // Pass custom RPC URL if provided
 const aptosSigner = aptosAccount
   ? toFacilitatorAptosSigner(
-      aptosAccount,
-      APTOS_RPC_URL ? { defaultRpcUrl: APTOS_RPC_URL } : undefined,
-    )
+    aptosAccount,
+    APTOS_RPC_URL ? { defaultRpcUrl: APTOS_RPC_URL } : undefined,
+  )
   : undefined;
 
 const verifiedPayments = new Map<string, number>();
@@ -273,12 +291,137 @@ function createPaymentHash(paymentPayload: PaymentPayload): string {
     .digest("hex");
 }
 
+function isBatchSettlementScheme(requirements: PaymentRequirements): boolean {
+  return requirements.scheme === "batch-settlement";
+}
+
+// For batch-settlement payloads the action lives at payload.payload.type
+// (deposit / voucher) or payload.payload.settleAction (claimWithSignature /
+// settle / refundWithSignature). Used by onAfterSettle to detect deposits.
+function extractPayloadAction(paymentPayload: PaymentPayload): string {
+  const inner = paymentPayload.payload as Record<string, unknown> | undefined;
+  if (!inner || typeof inner !== "object") {
+    return "n/a";
+  }
+  if (typeof inner.type === "string") {
+    return inner.type;
+  }
+  if (typeof inner.settleAction === "string") {
+    return inner.settleAction;
+  }
+  return "n/a";
+}
+
+// Minimal ABI fragment for reading channel state from the BatchSettlement contract
+const BATCH_SETTLEMENT_ADDRESS = "0x4020e07E964De72a79367828c9C6140fcaE00003" as const;
+const channelsAbi = [
+  {
+    type: "function",
+    name: "channels",
+    stateMutability: "view",
+    inputs: [{ name: "channelId", type: "bytes32" }],
+    outputs: [
+      { name: "balance", type: "uint256" },
+      { name: "totalClaimed", type: "uint256" },
+    ],
+  },
+] as const;
+
+async function readChannelBalance(channelId: `0x${string}`): Promise<bigint> {
+  const result = (await viemClient.readContract({
+    address: BATCH_SETTLEMENT_ADDRESS,
+    abi: channelsAbi,
+    functionName: "channels",
+    args: [channelId],
+  })) as readonly [bigint, bigint];
+  return result[0];
+}
+
+// Avoid stale state after a deposit is mined
+async function waitForChannelDepositConfirmed(
+  channelId: `0x${string}`,
+  expectedMinBalance: bigint,
+  options: { initialDelayMs?: number; maxDelayMs?: number; timeoutMs?: number } = {},
+): Promise<void> {
+  const initialDelayMs = options.initialDelayMs ?? 250;
+  const maxDelayMs = options.maxDelayMs ?? 4_000;
+  const timeoutMs = options.timeoutMs ?? 30_000;
+
+  const startedAt = Date.now();
+  let delayMs = initialDelayMs;
+  let attempt = 0;
+  let lastBalance = 0n;
+
+  while (Date.now() - startedAt < timeoutMs) {
+    attempt += 1;
+    try {
+      lastBalance = await readChannelBalance(channelId);
+    } catch (err) {
+      console.warn(
+        `⏳ deposit confirm: read failed on attempt ${attempt} for channel ${channelId}: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+
+    if (lastBalance >= expectedMinBalance) {
+      console.log(
+        `⏳ deposit confirm: channel ${channelId} balance=${lastBalance} (>= ${expectedMinBalance}) after ${attempt} attempt(s) in ${Date.now() - startedAt}ms`,
+      );
+      return;
+    }
+
+    await new Promise((resolve) => setTimeout(resolve, delayMs));
+    delayMs = Math.min(delayMs * 2, maxDelayMs);
+  }
+
+  throw new Error(
+    `deposit_confirm_timeout: channel ${channelId} balance=${lastBalance} (< ${expectedMinBalance}) after ${attempt} attempt(s) in ${Date.now() - startedAt}ms`,
+  );
+}
+
+async function waitForBatchSettlementDepositConfirmed(
+  extra: Record<string, unknown> | undefined,
+): Promise<void> {
+  const channelId = typeof extra?.channelId === "string" ? (extra.channelId as `0x${string}`) : undefined;
+  const balanceStr = typeof extra?.balance === "string" ? extra.balance : undefined;
+
+  if (!channelId || !balanceStr) {
+    console.warn(
+      "⏳ deposit confirm: settle response missing channelId/balance, skipping on-chain wait",
+    );
+    return;
+  }
+
+  let expectedMinBalance: bigint;
+  try {
+    expectedMinBalance = BigInt(balanceStr);
+  } catch {
+    console.warn(`⏳ deposit confirm: unparseable balance ${balanceStr}, skipping wait`);
+    return;
+  }
+
+  if (expectedMinBalance === 0n) {
+    return;
+  }
+
+  try {
+    await waitForChannelDepositConfirmed(channelId, expectedMinBalance);
+  } catch (err) {
+    console.error(
+      `⏳ deposit confirm: ${err instanceof Error ? err.message : String(err)} — proceeding anyway`,
+    );
+  }
+}
+
 const facilitator = new x402Facilitator();
 
 // Register EVM, SVM, Aptos, and Hedera schemes (v2 + v1 where applicable)
 facilitator
   .register(EVM_NETWORK as Network, new ExactEvmScheme(evmSigner))
   .register(EVM_NETWORK as Network, new UptoEvmScheme(evmSigner))
+  .register(
+    EVM_NETWORK as Network,
+    new BatchSettlementEvmScheme(evmSigner, authorizerSigner),
+  )
   .registerV1(EVM_V1_NETWORKS as Network[], new ExactEvmSchemeV1(evmSigner))
   .register(SVM_NETWORK as Network, new ExactSvmScheme(svmSigner))
   .registerV1(SVM_V1_NETWORKS as Network[], new ExactSvmSchemeV1(svmSigner));
@@ -304,19 +447,6 @@ if (stellarSigner) {
   );
 }
 
-const PERMIT2_ADDRESS = "0x000000000022D473030F116dDEE9F6B43aC78BA3" as const;
-const erc20AllowanceAbi = [
-  {
-    inputs: [
-      { name: "owner", type: "address" },
-      { name: "spender", type: "address" },
-    ],
-    name: "allowance",
-    outputs: [{ name: "", type: "uint256" }],
-    stateMutability: "view",
-    type: "function",
-  },
-] as const;
 
 const erc20ApprovalSigner = {
   ...evmSigner,
@@ -424,6 +554,10 @@ facilitator
   })
   .onBeforeSettle(async (context) => {
     // Hook 3: Validate payment was previously verified
+    if (isBatchSettlementScheme(context.requirements)) {
+      return;
+    }
+
     const paymentHash = createPaymentHash(context.paymentPayload);
     const verificationTimestamp = verifiedPayments.get(paymentHash);
 
@@ -446,17 +580,30 @@ facilitator
   })
   .onAfterSettle(async (context) => {
     // Hook 4: Clean up verified payment tracking after settlement
-    const paymentHash = createPaymentHash(context.paymentPayload);
-    verifiedPayments.delete(paymentHash);
+    if (!isBatchSettlementScheme(context.requirements)) {
+      const paymentHash = createPaymentHash(context.paymentPayload);
+      verifiedPayments.delete(paymentHash);
+    }
 
     if (context.result.success) {
       console.log(`✅ Settlement completed: ${context.result.transaction}`);
     }
+
+    // For batch-settlement deposits, wait for the deposit to be confirmed onchain
+    if (
+      isBatchSettlementScheme(context.requirements) &&
+      context.result.success &&
+      extractPayloadAction(context.paymentPayload) === "deposit"
+    ) {
+      await waitForBatchSettlementDepositConfirmed(context.result.extra);
+    }
   })
   .onSettleFailure(async (context) => {
     // Hook 5: Clean up on settlement failure too
-    const paymentHash = createPaymentHash(context.paymentPayload);
-    verifiedPayments.delete(paymentHash);
+    if (!isBatchSettlementScheme(context.requirements)) {
+      const paymentHash = createPaymentHash(context.paymentPayload);
+      verifiedPayments.delete(paymentHash);
+    }
 
     console.error(`❌ Settlement failed: ${context.error.message}`);
   });

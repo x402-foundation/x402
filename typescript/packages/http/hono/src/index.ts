@@ -192,16 +192,29 @@ export function paymentMiddlewareFromHTTPServer(
 
       case "payment-verified":
         // Payment is valid, need to wrap response for settlement
-        const { paymentPayload, paymentRequirements, declaredExtensions } = result;
+        const { cancellationDispatcher, paymentPayload, paymentRequirements, declaredExtensions } =
+          result;
 
         // Proceed to the next middleware or route handler
-        await next();
+        try {
+          await next();
+        } catch (error) {
+          await cancellationDispatcher.cancel({
+            reason: "handler_threw",
+            error,
+          });
+          throw error;
+        }
 
         // Get the current response
         let res = c.res;
 
         // If the response from the protected route is >= 400, do not settle payment
         if (res.status >= 400) {
+          await cancellationDispatcher.cancel({
+            reason: "handler_failed",
+            responseStatus: res.status,
+          });
           return;
         }
 

@@ -12,6 +12,7 @@ import {
   SETTLEMENT_OVERRIDES_HEADER,
   SettlementOverrides,
   checkIfBazaarNeeded,
+  PaymentCancellationDispatcher,
 } from "@x402/core/server";
 import {
   SchemeNetworkServer,
@@ -34,6 +35,7 @@ export function setSettlementOverrides(reply: FastifyReply, overrides: Settlemen
 }
 
 interface X402PaymentContext {
+  cancellationDispatcher: PaymentCancellationDispatcher;
   paymentPayload: PaymentPayload;
   paymentRequirements: PaymentRequirements;
   declaredExtensions?: Record<string, unknown>;
@@ -361,6 +363,7 @@ export function paymentMiddlewareFromHTTPServer(
 
       case "payment-verified": {
         request.x402Context = {
+          cancellationDispatcher: result.cancellationDispatcher,
           paymentPayload: result.paymentPayload,
           paymentRequirements: result.paymentRequirements,
           declaredExtensions: result.declaredExtensions,
@@ -411,6 +414,10 @@ export function paymentMiddlewareFromHTTPServer(
     }
 
     if (reply.statusCode >= 400) {
+      await x402Context.cancellationDispatcher.cancel({
+        reason: "handler_failed",
+        responseStatus: reply.statusCode,
+      });
       return effectivePayload;
     }
 
@@ -459,6 +466,17 @@ export function paymentMiddlewareFromHTTPServer(
       reply.type("application/json");
       return JSON.stringify({});
     }
+  });
+
+  app.addHook("onError", async (request: FastifyRequest, _reply: FastifyReply, error: Error) => {
+    const x402Context = request.x402Context;
+    if (!x402Context) {
+      return;
+    }
+    await x402Context.cancellationDispatcher.cancel({
+      reason: "handler_threw",
+      error,
+    });
   });
 }
 

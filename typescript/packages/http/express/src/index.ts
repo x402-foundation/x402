@@ -195,7 +195,8 @@ export function paymentMiddlewareFromHTTPServer(
 
       case "payment-verified":
         // Payment is valid, need to wrap response for settlement
-        const { paymentPayload, paymentRequirements, declaredExtensions } = result;
+        const { cancellationDispatcher, paymentPayload, paymentRequirements, declaredExtensions } =
+          result;
 
         // Intercept and buffer all core methods that can commit response to client
         const originalWriteHead = res.writeHead.bind(res);
@@ -210,6 +211,14 @@ export function paymentMiddlewareFromHTTPServer(
           | ["flushHeaders", []];
         let bufferedCalls: BufferedCall[] = [];
         let settled = false;
+
+        const restoreResponseMethods = () => {
+          settled = true;
+          res.writeHead = originalWriteHead;
+          res.write = originalWrite;
+          res.end = originalEnd;
+          res.flushHeaders = originalFlushHeaders;
+        };
 
         // Create a promise that resolves when the handler finishes and calls res.end()
         let endCalled: () => void;
@@ -252,18 +261,28 @@ export function paymentMiddlewareFromHTTPServer(
         };
 
         // Proceed to the next middleware or route handler
-        next();
+        try {
+          await Promise.resolve(next());
+        } catch (error) {
+          await cancellationDispatcher.cancel({
+            reason: "handler_threw",
+            error,
+          });
+          bufferedCalls = [];
+          restoreResponseMethods();
+          return next(error);
+        }
 
         // Wait for the handler to actually call res.end() before checking status
         await endPromise;
 
         // If the response from the protected route is >= 400, do not settle payment
         if (res.statusCode >= 400) {
-          settled = true;
-          res.writeHead = originalWriteHead;
-          res.write = originalWrite;
-          res.end = originalEnd;
-          res.flushHeaders = originalFlushHeaders;
+          await cancellationDispatcher.cancel({
+            reason: "handler_failed",
+            responseStatus: res.statusCode,
+          });
+          restoreResponseMethods();
           // Replay all buffered calls in order
           for (const [method, args] of bufferedCalls) {
             if (method === "writeHead")
@@ -330,11 +349,7 @@ export function paymentMiddlewareFromHTTPServer(
           res.status(402).json({});
           return;
         } finally {
-          settled = true;
-          res.writeHead = originalWriteHead;
-          res.write = originalWrite;
-          res.end = originalEnd;
-          res.flushHeaders = originalFlushHeaders;
+          restoreResponseMethods();
 
           // Replay all buffered calls in order
           for (const [method, args] of bufferedCalls) {

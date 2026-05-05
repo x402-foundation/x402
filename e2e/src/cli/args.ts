@@ -44,6 +44,7 @@ export function parseArgs(): ParsedArgs {
     arg.startsWith('--extensions=') ||
     arg.startsWith('--versions=') ||
     arg.startsWith('--families=') ||
+    arg.startsWith('--schemes=') ||
     arg.startsWith('--endpoints=')
   );
 
@@ -94,6 +95,7 @@ export function parseArgs(): ParsedArgs {
   const extensions = parseListArg(args, '--extensions');
   const versions = parseListArg(args, '--versions')?.map(v => parseInt(v));
   const families = parseListArg(args, '--families');
+  const schemes = parseListArg(args, '--schemes');
   const endpoints = parseListArg(args, '--endpoints');
 
   return {
@@ -109,6 +111,7 @@ export function parseArgs(): ParsedArgs {
       extensions,
       versions,
       protocolFamilies: families,
+      schemes,
       endpoints,
     },
     showHelp: false,
@@ -147,6 +150,7 @@ export function printHelp(): void {
   console.log('  --extensions=<list>        Comma-separated extensions (e.g., bazaar)');
   console.log('  --versions=<list>          Comma-separated version numbers (e.g., 1,2)');
   console.log('  --families=<list>          Comma-separated protocol families (e.g., evm,svm,hedera)');
+  console.log('  --schemes=<list>           Payment schemes: exact, upto, batch-settlement');
   console.log('  --endpoints=<list>         Comma-separated endpoint paths or regex patterns (auto-anchored)');
   console.log('');
   console.log('Options:');
@@ -168,6 +172,7 @@ export function printHelp(): void {
   console.log('  pnpm test --mainnet --facilitators=go --servers=express  # Mainnet programmatic');
   console.log("  pnpm test --testnet --endpoints='/protected'              # Exact path match");
   console.log("  pnpm test --testnet --endpoints='/protected-permit2.*'   # Regex: all permit2 routes");
+  console.log('  pnpm test --testnet --schemes=exact,batch-settlement     # Only those payment schemes');
   console.log('  pnpm test --testnet --min --parallel -v                   # Parallel mode');
   console.log('  pnpm test --testnet --min --parallel --concurrency=2 -v   # Limited concurrency');
   console.log('');

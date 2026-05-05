@@ -1,0 +1,35 @@
+{
+  "name": "@x402/batch-settlement-facilitator-typescript",
+  "version": "2.0.0",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "start": "tsx index.ts",
+    "dev": "tsx watch index.ts",
+    "build": "tsc",
+    "lint": "eslint .",
+    "format": "prettier --write .",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@x402/core": "workspace:*",
+    "@x402/evm": "workspace:*",
+    "dotenv": "^16.4.5",
+    "express": "^4.19.2",
+    "viem": "^2.21.54"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.24.0",
+    "@types/express": "^4.17.21",
+    "@types/node": "^22.10.1",
+    "@typescript-eslint/eslint-plugin": "^8.29.1",
+    "@typescript-eslint/parser": "^8.29.1",
+    "eslint": "^9.15.0",
+    "eslint-plugin-import": "^2.31.0",
+    "eslint-plugin-jsdoc": "^50.6.9",
+    "eslint-plugin-prettier": "^5.2.6",
+    "prettier": "^3.3.3",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2"
+  }
+}

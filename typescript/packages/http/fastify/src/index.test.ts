@@ -39,6 +39,24 @@ let mockProcessSettlement: ReturnType<typeof vi.fn>;
 let mockRegisterPaywallProvider: ReturnType<typeof vi.fn>;
 let mockRequiresPayment: ReturnType<typeof vi.fn>;
 
+type PaymentVerifiedResult = Extract<HTTPProcessResult, { type: "payment-verified" }>;
+type MockHTTPProcessResult =
+  | Exclude<HTTPProcessResult, PaymentVerifiedResult>
+  | (Omit<PaymentVerifiedResult, "cancellationDispatcher"> & {
+      cancellationDispatcher?: PaymentVerifiedResult["cancellationDispatcher"];
+    });
+
+/**
+ * Creates a mock payment cancellation dispatcher.
+ *
+ * @returns Mock payment cancellation dispatcher.
+ */
+function createMockPaymentCancellationDispatcher(): PaymentVerifiedResult["cancellationDispatcher"] {
+  return {
+    cancel: vi.fn().mockResolvedValue(undefined),
+  } as unknown as PaymentVerifiedResult["cancellationDispatcher"];
+}
+
 vi.mock("@x402/core/server", () => ({
   SETTLEMENT_OVERRIDES_HEADER: "Settlement-Overrides",
   FacilitatorResponseError: class FacilitatorResponseError extends Error {
@@ -92,6 +110,7 @@ type HookHandler = (...args: unknown[]) => Promise<unknown>;
 interface CapturedHooks {
   onRequest: HookHandler[];
   onSend: HookHandler[];
+  onError: HookHandler[];
 }
 
 /**
@@ -100,12 +119,13 @@ interface CapturedHooks {
  * @returns Object containing the mock app and captured hooks.
  */
 function createMockApp(): { app: FastifyInstance; hooks: CapturedHooks } {
-  const hooks: CapturedHooks = { onRequest: [], onSend: [] };
+  const hooks: CapturedHooks = { onRequest: [], onSend: [], onError: [] };
 
   const app = {
     addHook: vi.fn((name: string, handler: HookHandler) => {
       if (name === "onRequest") hooks.onRequest.push(handler);
       if (name === "onSend") hooks.onSend.push(handler);
+      if (name === "onError") hooks.onError.push(handler);
     }),
     decorateRequest: vi.fn(),
   } as unknown as FastifyInstance;
@@ -120,7 +140,7 @@ function createMockApp(): { app: FastifyInstance; hooks: CapturedHooks } {
  * @param settlementResult - Result to return from processSettlement.
  */
 function setupMockHttpServer(
-  processResult: HTTPProcessResult,
+  processResult: MockHTTPProcessResult,
   settlementResult:
     | { success: true; headers: Record<string, string> }
     | {
@@ -138,7 +158,15 @@ function setupMockHttpServer(
     headers: {},
   },
 ): void {
-  mockProcessHTTPRequest.mockResolvedValue(processResult);
+  const normalizedResult =
+    processResult.type === "payment-verified"
+      ? {
+          ...processResult,
+          cancellationDispatcher:
+            processResult.cancellationDispatcher ?? createMockPaymentCancellationDispatcher(),
+        }
+      : processResult;
+  mockProcessHTTPRequest.mockResolvedValue(normalizedResult);
   mockProcessSettlement.mockResolvedValue(settlementResult);
 }
 
@@ -221,7 +249,12 @@ function createMockReply(): FastifyReply & {
     }),
   };
 
-  return reply as unknown as typeof reply;
+  return reply as unknown as FastifyReply & {
+    _status: number;
+    _headers: Record<string, string>;
+    _body: unknown;
+    _type: string | undefined;
+  };
 }
 
 // --- Tests ---
@@ -524,6 +557,12 @@ describe("paymentMiddleware", () => {
     const result = await hooks.onSend[0](request, reply, payload);
 
     expect(mockProcessSettlement).not.toHaveBeenCalled();
+    expect(request.x402Context?.cancellationDispatcher.cancel).toHaveBeenCalledWith(
+      expect.objectContaining({
+        reason: "handler_failed",
+        responseStatus: 500,
+      }),
+    );
     expect(result).toBe(payload);
   });
 
