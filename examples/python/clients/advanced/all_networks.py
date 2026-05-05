@@ -126,7 +126,7 @@ async def main() -> None:
     print(f"\nMaking request to: {url}\n")
 
     # Make request using async context manager
-    async with x402HttpxClient(client) as http:
+    async with x402HttpxClient(client, timeout=10.0) as http:
         response = await http.get(url)
         await response.aread()
 
