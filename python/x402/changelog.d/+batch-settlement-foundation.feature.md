@@ -1,0 +1,1 @@
+Add the foundation for the Python port of the batch-settlement payment scheme: contract addresses, EIP-712 type definitions, and ABI declarations, mirroring the TypeScript SDK introduced in [#2061](https://github.com/x402-foundation/x402/pull/2061). Types, encoding, signer protocol, utilities, and EIP-712 cross-language fixtures land in subsequent stacked PRs.
