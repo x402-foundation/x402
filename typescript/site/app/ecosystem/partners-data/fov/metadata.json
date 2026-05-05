@@ -1,0 +1,7 @@
+{
+  "name": "FOV — Find or Verify",
+  "category": "Services/Endpoints",
+  "logoUrl": "/logos/fov.png",
+  "description": "Email finder and verifier API, paywalled per-call with x402 (USDC on Solana). No account, no subscription. Repeat lookups served from cache.",
+  "websiteUrl": "https://fov.brij.fi"
+}
