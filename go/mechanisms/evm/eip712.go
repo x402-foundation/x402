@@ -259,10 +259,10 @@ func BuildPermit2WitnessMap(to string, validAfter *big.Int) map[string]interface
 	}
 }
 
-// HashReceiveWithAuthorization hashes a ReceiveWithAuthorization message for EIP-3009
+// HashReceiveWithAuthorization hashes a ReceiveWithAuthorization message for EIP-3009.
 //
 // Same structure as TransferWithAuthorization but uses "ReceiveWithAuthorization" as primary type.
-// Used by the commerce scheme where the token collector calls receiveWithAuthorization.
+// Used by the authCapture scheme where the ERC-3009 token collector calls receiveWithAuthorization.
 //
 // Args:
 //
@@ -344,7 +344,7 @@ func HashReceiveWithAuthorization(
 	return HashTypedData(domain, types, "ReceiveWithAuthorization", message)
 }
 
-// ComputeCommerceNonce computes the deterministic nonce for commerce scheme.
+// ComputeAuthCaptureNonce computes the deterministic payer-agnostic nonce for the authCapture scheme.
 // This mirrors the on-chain _getHashPayerAgnostic logic:
 //
 //	paymentInfoZeroPayer = paymentInfo with payer = address(0)
@@ -355,13 +355,13 @@ func HashReceiveWithAuthorization(
 //
 //	chainID: The chain ID
 //	escrowAddress: The AuthCaptureEscrow contract address
-//	paymentInfo: The CommercePaymentInfo struct
+//	paymentInfo: The AuthCapturePaymentInfo struct
 //
 // Returns:
 //
 //	32-byte nonce as hex string with 0x prefix
 //	error if computation fails
-func ComputeCommerceNonce(chainID *big.Int, escrowAddress string, paymentInfo CommercePaymentInfo) (string, error) {
+func ComputeAuthCaptureNonce(chainID *big.Int, escrowAddress string, paymentInfo AuthCapturePaymentInfo) (string, error) {
 	// Compute PaymentInfo typehash
 	typehash := crypto.Keccak256([]byte(PaymentInfoTypehash))
 

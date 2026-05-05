@@ -6,10 +6,16 @@ import (
 
 const (
 	// Scheme identifiers
-	SchemeExact    = "exact"
-	SchemeUpto     = "upto"
-	SchemeBatched  = "batch-settlement"
-	SchemeCommerce = "commerce"
+	SchemeExact       = "exact"
+	SchemeUpto        = "upto"
+	SchemeBatched     = "batch-settlement"
+	SchemeAuthCapture = "authCapture"
+
+	// AuthCapture canonical contract addresses (CREATE2-deployed; same on every supported EVM chain)
+	// Source: base/commerce-payments@v1.0.0
+	AuthCaptureEscrowAddress     = "0xF8211868187974a7Fb9d99b8fFB171AD70665Dc6"
+	EIP3009TokenCollectorAddress = "0x7561DC178D9aD5bc5fb103C01f448A510d2A36D0"
+	PERMIT2TokenCollectorAddress = "0xD8490609d2da0ee626b0e676941b225cbc1A8C08"
 
 	// Default token decimals for USDC
 	DefaultDecimals = 6

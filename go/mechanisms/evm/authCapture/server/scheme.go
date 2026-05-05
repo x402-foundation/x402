@@ -8,30 +8,30 @@ import (
 	"strconv"
 	"strings"
 
-	x402 "github.com/coinbase/x402/go"
-	"github.com/coinbase/x402/go/mechanisms/evm"
-	"github.com/coinbase/x402/go/types"
+	x402 "github.com/x402-foundation/x402/go"
+	"github.com/x402-foundation/x402/go/mechanisms/evm"
+	"github.com/x402-foundation/x402/go/types"
 )
 
-// CommerceEvmScheme implements the SchemeNetworkServer interface for EVM commerce payments
-type CommerceEvmScheme struct {
+// AuthCaptureEvmScheme implements the SchemeNetworkServer interface for EVM authCapture payments.
+type AuthCaptureEvmScheme struct {
 	moneyParsers []x402.MoneyParser
 }
 
-// NewCommerceEvmScheme creates a new CommerceEvmScheme
-func NewCommerceEvmScheme() *CommerceEvmScheme {
-	return &CommerceEvmScheme{
+// NewAuthCaptureEvmScheme creates a new AuthCaptureEvmScheme.
+func NewAuthCaptureEvmScheme() *AuthCaptureEvmScheme {
+	return &AuthCaptureEvmScheme{
 		moneyParsers: []x402.MoneyParser{},
 	}
 }
 
-// Scheme returns the scheme identifier
-func (s *CommerceEvmScheme) Scheme() string {
-	return evm.SchemeCommerce
+// Scheme returns the scheme identifier.
+func (s *AuthCaptureEvmScheme) Scheme() string {
+	return evm.SchemeAuthCapture
 }
 
 // RegisterMoneyParser registers a custom money parser in the parser chain.
-func (s *CommerceEvmScheme) RegisterMoneyParser(parser x402.MoneyParser) *CommerceEvmScheme {
+func (s *AuthCaptureEvmScheme) RegisterMoneyParser(parser x402.MoneyParser) *AuthCaptureEvmScheme {
 	s.moneyParsers = append(s.moneyParsers, parser)
 	return s
 }
@@ -40,7 +40,7 @@ func (s *CommerceEvmScheme) RegisterMoneyParser(parser x402.MoneyParser) *Commer
 // If price is already an AssetAmount, returns it directly.
 // If price is Money (string | number), parses to decimal and tries custom parsers.
 // Falls back to default conversion if all custom parsers return nil.
-func (s *CommerceEvmScheme) ParsePrice(price x402.Price, network x402.Network) (x402.AssetAmount, error) {
+func (s *AuthCaptureEvmScheme) ParsePrice(price x402.Price, network x402.Network) (x402.AssetAmount, error) {
 	// If already an AssetAmount (map with "amount" and "asset"), return it directly
 	if priceMap, ok := price.(map[string]interface{}); ok {
 		if amountVal, hasAmount := priceMap["amount"]; hasAmount {
@@ -92,12 +92,12 @@ func (s *CommerceEvmScheme) ParsePrice(price x402.Price, network x402.Network) (
 		}
 	}
 
-	// All custom parsers returned nil, use default conversion
+	// All custom parsers returned nil; use default conversion
 	return s.defaultMoneyConversion(decimalAmount, network)
 }
 
-// parseMoneyToDecimal converts Money (string | number) to decimal amount
-func (s *CommerceEvmScheme) parseMoneyToDecimal(price x402.Price) (float64, error) {
+// parseMoneyToDecimal converts Money (string | number) to decimal amount.
+func (s *AuthCaptureEvmScheme) parseMoneyToDecimal(price x402.Price) (float64, error) {
 	switch v := price.(type) {
 	case string:
 		cleanPrice := strings.TrimSpace(v)
@@ -126,8 +126,8 @@ func (s *CommerceEvmScheme) parseMoneyToDecimal(price x402.Price) (float64, erro
 	}
 }
 
-// defaultMoneyConversion converts decimal amount to USDC AssetAmount
-func (s *CommerceEvmScheme) defaultMoneyConversion(amount float64, network x402.Network) (x402.AssetAmount, error) {
+// defaultMoneyConversion converts decimal amount to USDC AssetAmount.
+func (s *AuthCaptureEvmScheme) defaultMoneyConversion(amount float64, network x402.Network) (x402.AssetAmount, error) {
 	networkStr := string(network)
 
 	config, err := evm.GetNetworkConfig(networkStr)
@@ -161,9 +161,9 @@ func (s *CommerceEvmScheme) defaultMoneyConversion(amount float64, network x402.
 	}, nil
 }
 
-// EnhancePaymentRequirements adds commerce-specific enhancements to payment requirements.
-// Validates that commerce-specific extra fields (escrowAddress, operatorAddress, tokenCollector) are present.
-func (s *CommerceEvmScheme) EnhancePaymentRequirements(
+// EnhancePaymentRequirements adds authCapture-specific enhancements to payment requirements.
+// Validates that all required authCapture extra fields are present and applies defaults.
+func (s *AuthCaptureEvmScheme) EnhancePaymentRequirements(
 	ctx context.Context,
 	requirements types.PaymentRequirements,
 	supportedKind types.SupportedKind,
@@ -171,7 +171,7 @@ func (s *CommerceEvmScheme) EnhancePaymentRequirements(
 ) (types.PaymentRequirements, error) {
 	networkStr := string(requirements.Network)
 
-	// Get asset info
+	// Resolve asset info
 	var assetInfo *evm.AssetInfo
 	var err error
 	if requirements.Asset != "" {
@@ -187,7 +187,7 @@ func (s *CommerceEvmScheme) EnhancePaymentRequirements(
 		requirements.Asset = assetInfo.Address
 	}
 
-	// Ensure amount is in the correct format (smallest unit)
+	// Normalize amount to smallest unit
 	if requirements.Amount != "" && strings.Contains(requirements.Amount, ".") {
 		amount, err := evm.ParseAmount(requirements.Amount, assetInfo.Decimals)
 		if err != nil {
@@ -196,12 +196,11 @@ func (s *CommerceEvmScheme) EnhancePaymentRequirements(
 		requirements.Amount = amount.String()
 	}
 
-	// Add EIP-3009 specific fields to Extra if not present
 	if requirements.Extra == nil {
 		requirements.Extra = make(map[string]interface{})
 	}
 
-	// Add token name and version for EIP-712 signing
+	// Add EIP-712 domain fields for ERC-3009 signing
 	if _, ok := requirements.Extra["name"]; !ok {
 		requirements.Extra["name"] = assetInfo.Name
 	}
@@ -209,7 +208,7 @@ func (s *CommerceEvmScheme) EnhancePaymentRequirements(
 		requirements.Extra["version"] = assetInfo.Version
 	}
 
-	// Copy extensions from supportedKind if provided
+	// Copy extension keys from supportedKind.Extra
 	if supportedKind.Extra != nil {
 		for _, key := range extensionKeys {
 			if val, ok := supportedKind.Extra[key]; ok {
@@ -218,28 +217,48 @@ func (s *CommerceEvmScheme) EnhancePaymentRequirements(
 		}
 	}
 
-	// Validate commerce-specific required fields
-	if _, ok := requirements.Extra["escrowAddress"]; !ok {
-		return requirements, errors.New(ErrMissingEscrowAddress)
+	// Validate required authCapture extra fields
+	if _, ok := requirements.Extra["captureAuthorizer"]; !ok {
+		return requirements, errors.New(ErrMissingCaptureAuthorizer)
 	}
-	if _, ok := requirements.Extra["operatorAddress"]; !ok {
-		return requirements, errors.New(ErrMissingOperator)
+	if _, ok := requirements.Extra["captureDeadline"]; !ok {
+		return requirements, errors.New(ErrMissingCaptureDeadline)
 	}
-	if _, ok := requirements.Extra["tokenCollector"]; !ok {
-		return requirements, errors.New(ErrMissingTokenCollector)
+	if _, ok := requirements.Extra["refundDeadline"]; !ok {
+		return requirements, errors.New(ErrMissingRefundDeadline)
+	}
+	if _, ok := requirements.Extra["feeRecipient"]; !ok {
+		return requirements, errors.New(ErrMissingFeeRecipient)
+	}
+	if _, ok := requirements.Extra["minFeeBps"]; !ok {
+		return requirements, errors.New(ErrMissingMinFeeBps)
+	}
+	if _, ok := requirements.Extra["maxFeeBps"]; !ok {
+		return requirements, errors.New(ErrMissingMaxFeeBps)
+	}
+
+	// Validate deadline ordering if both are present as numeric types
+	captureDeadline, cErr := toUint48(requirements.Extra["captureDeadline"])
+	refundDeadline, rErr := toUint48(requirements.Extra["refundDeadline"])
+	if cErr != nil {
+		return requirements, errors.New(ErrInvalidCaptureDeadline)
+	}
+	if rErr != nil {
+		return requirements, errors.New(ErrInvalidRefundDeadline)
+	}
+	if refundDeadline < captureDeadline {
+		return requirements, errors.New(ErrInvalidDeadlineOrdering)
 	}
 
 	return requirements, nil
 }
 
 // ValidatePaymentRequirements validates that requirements are valid for this scheme.
-func (s *CommerceEvmScheme) ValidatePaymentRequirements(requirements x402.PaymentRequirements) error {
-	// Check PayTo is a valid address
+func (s *AuthCaptureEvmScheme) ValidatePaymentRequirements(requirements x402.PaymentRequirements) error {
 	if !evm.IsValidAddress(requirements.PayTo) {
 		return fmt.Errorf(ErrInvalidPayToAddress+": %s", requirements.PayTo)
 	}
 
-	// Check amount is valid
 	if requirements.Amount == "" {
 		return errors.New(ErrAmountRequired)
 	}
@@ -249,10 +268,34 @@ func (s *CommerceEvmScheme) ValidatePaymentRequirements(requirements x402.Paymen
 		return fmt.Errorf(ErrInvalidAmount+": %s", requirements.Amount)
 	}
 
-	// Check asset is valid if specified
 	if requirements.Asset != "" && !evm.IsValidAddress(requirements.Asset) {
 		return fmt.Errorf(ErrInvalidAsset+": %s", requirements.Asset)
 	}
 
 	return nil
+}
+
+// toUint48 converts an interface{} extra field value to uint64 (uint48 on-chain).
+func toUint48(v interface{}) (uint64, error) {
+	switch t := v.(type) {
+	case float64:
+		if t < 0 {
+			return 0, fmt.Errorf("negative value")
+		}
+		return uint64(t), nil
+	case int64:
+		if t < 0 {
+			return 0, fmt.Errorf("negative value")
+		}
+		return uint64(t), nil
+	case int:
+		if t < 0 {
+			return 0, fmt.Errorf("negative value")
+		}
+		return uint64(t), nil
+	case uint64:
+		return t, nil
+	default:
+		return 0, fmt.Errorf("unsupported type %T", v)
+	}
 }
