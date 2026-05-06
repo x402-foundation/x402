@@ -447,6 +447,85 @@ This means `/users/123`, `/users/456`, and `/users/789` all map to the same cata
 
 **Note:** Wildcard segments (`*`) are automatically converted to named parameters (`:var1`, `:var2`, etc.) for catalog normalization.
 
+#### Service Metadata
+
+Resource servers can publish provider-level metadata on the **`resource` object** of the 402 response. Facilitators use these fields to enrich Bazaar search results with a human-readable name, topical tags, and an icon — no out-of-band admin step required.
+
+All three fields are optional. Servers that omit them produce byte-identical 402 responses; clients that don't recognize them ignore them.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `serviceName` | string | Human-readable name for the service (≤ 32 printable ASCII characters). |
+| `tags` | string[] | Up to 5 short topical tags (each ≤ 32 printable ASCII characters). Used for facilitator-side filtering and search. |
+| `iconUrl` | string | Absolute `https://` or `http://` URL to an icon image representing the service (≤ 2048 characters). |
+
+These fields are set on the `resource` object in your route configuration, alongside `description` and `mimeType`:
+
+<Tabs>
+  <Tab title="TypeScript">
+    ```typescript
+    const routes = {
+      "GET /weather": {
+        price: "$0.001",
+        network: "eip155:8453",
+        payTo: "0xYourAddress",
+        resource: {
+          url: "https://api.example.com/weather",
+          description: "Get real-time weather data",
+          mimeType: "application/json",
+          serviceName: "Example Weather",
+          tags: ["weather", "forecast"],
+          iconUrl: "https://api.example.com/icon.png",
+        },
+        extensions: { bazaar: { ... } },
+      },
+    };
+    ```
+  </Tab>
+  <Tab title="Python">
+    ```python
+    from x402.schemas.payments import ResourceInfo
+
+    routes: dict[str, RouteConfig] = {
+        "GET /weather": RouteConfig(
+            accepts=[...],
+            resource=ResourceInfo(
+                url="https://api.example.com/weather",
+                description="Get real-time weather data",
+                mime_type="application/json",
+                service_name="Example Weather",
+                tags=["weather", "forecast"],
+                icon_url="https://api.example.com/icon.png",
+            ),
+            extensions={"bazaar": {...}},
+        ),
+    }
+    ```
+  </Tab>
+  <Tab title="Go">
+    ```go
+    routes := x402http.RoutesConfig{
+        "GET /weather": {
+            Accepts: x402http.PaymentOptions{{...}},
+            Resource: &types.ResourceInfo{
+                URL:         "https://api.example.com/weather",
+                Description: "Get real-time weather data",
+                MimeType:    "application/json",
+                ServiceName: "Example Weather",
+                Tags:        []string{"weather", "forecast"},
+                IconURL:     "https://api.example.com/icon.png",
+            },
+            Extensions: map[string]interface{}{
+                types.BAZAAR: discoveryExtension,
+            },
+        },
+    }
+    ```
+  </Tab>
+</Tabs>
+
+**Validation rules:** Facilitators apply soft-drop rules — a field that fails validation is silently discarded while the rest of the metadata is preserved. `serviceName` and `tags` are restricted to printable ASCII (U+0020–U+007E) so that string-length checks are consistent across TypeScript, Python, and Go. `iconUrl` must be an absolute `http://` or `https://` URL with no IP literals or loopback hostnames (SSRF defense).
+
 #### Adding Metadata
 
 To enhance your listing with descriptions and schemas, include them when setting up your x402 middleware. **You should include descriptions for each parameter to make it clear for agents to call your endpoints**:
