@@ -1,0 +1,7 @@
+{
+  "name": "Wayforth",
+  "category": "Infrastructure & Tooling",
+  "logoUrl": "/logos/wayforth.svg",
+  "description": "The search engine AI agents use to find and pay for APIs. 293+ verified APIs indexed with WayforthRank payment-signal scoring. x402 detection and routing built in. MCP native — install with `uvx wayforth-mcp`.",
+  "websiteUrl": "https://wayforth.io"
+}
