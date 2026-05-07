@@ -40,24 +40,6 @@ let mockProcessSettlement: ReturnType<typeof vi.fn>;
 let mockRegisterPaywallProvider: ReturnType<typeof vi.fn>;
 let mockRequiresPayment: ReturnType<typeof vi.fn>;
 
-type PaymentVerifiedResult = Extract<HTTPProcessResult, { type: "payment-verified" }>;
-type MockHTTPProcessResult =
-  | Exclude<HTTPProcessResult, PaymentVerifiedResult>
-  | (Omit<PaymentVerifiedResult, "cancellationDispatcher"> & {
-      cancellationDispatcher?: PaymentVerifiedResult["cancellationDispatcher"];
-    });
-
-/**
- * Creates a mock payment cancellation dispatcher.
- *
- * @returns Mock payment cancellation dispatcher.
- */
-function createMockPaymentCancellationDispatcher(): PaymentVerifiedResult["cancellationDispatcher"] {
-  return {
-    cancel: vi.fn().mockResolvedValue(undefined),
-  } as unknown as PaymentVerifiedResult["cancellationDispatcher"];
-}
-
 vi.mock("@x402/core/server", () => ({
   SETTLEMENT_OVERRIDES_HEADER: "Settlement-Overrides",
   FacilitatorResponseError: class FacilitatorResponseError extends Error {
@@ -99,7 +81,6 @@ vi.mock("@x402/core/server", () => ({
       registerExtension: vi.fn(),
     },
   })),
-  checkIfBazaarNeeded: vi.fn().mockReturnValue(false),
 }));
 
 // --- Mock Factories ---
@@ -110,7 +91,7 @@ vi.mock("@x402/core/server", () => ({
  * @param settlementResult - Result to return from processSettlement.
  */
 function setupMockHttpServer(
-  processResult: MockHTTPProcessResult,
+  processResult: HTTPProcessResult,
   settlementResult:
     | { success: true; headers: Record<string, string> }
     | {
@@ -123,15 +104,7 @@ function setupMockHttpServer(
     headers: {},
   },
 ): void {
-  const normalizedResult =
-    processResult.type === "payment-verified"
-      ? {
-          ...processResult,
-          cancellationDispatcher:
-            processResult.cancellationDispatcher ?? createMockPaymentCancellationDispatcher(),
-        }
-      : processResult;
-  mockProcessHTTPRequest.mockResolvedValue(normalizedResult);
+  mockProcessHTTPRequest.mockResolvedValue(processResult);
   mockProcessSettlement.mockResolvedValue(settlementResult);
 }
 
@@ -475,7 +448,7 @@ describe("paymentMiddleware", () => {
     );
     mockProcessHTTPRequest.mockResolvedValue({ type: "no-payment-required" });
 
-    const middleware = paymentMiddleware(mockRoutes, {} as unknown as x402ResourceServer);
+    const middleware = paymentMiddleware(mockRoutes, {} as unknown as x402ResourceServer, undefined, undefined, true);
     const next = vi.fn().mockResolvedValue(undefined);
 
     await middleware(createMockContext(), next);
