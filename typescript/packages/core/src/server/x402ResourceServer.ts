@@ -688,25 +688,24 @@ export class x402ResourceServer {
     }
 
     // Find the matching supported kind from facilitator
-    const supportedKind = this.getSupportedKind(
-      x402Version,
-      resourceConfig.network,
-      SchemeNetworkServer.scheme,
-    );
+    // If facilitator not yet initialized, skip validation so 402 can be emitted on cold start.
+    // Facilitator validation is only required at verify/settle time.
+    const isInitialized = this.supportedResponsesMap.size > 0;
+    const supportedKind = isInitialized
+      ? this.getSupportedKind(x402Version, resourceConfig.network, SchemeNetworkServer.scheme)
+      : undefined;
 
-    if (!supportedKind) {
+    if (isInitialized && !supportedKind) {
       throw new Error(
         `Facilitator does not support ${SchemeNetworkServer.scheme} on ${resourceConfig.network}. ` +
           `Make sure to call initialize() to fetch supported kinds from facilitators.`,
       );
     }
 
-    // Get facilitator extensions for this combination
-    const facilitatorExtensions = this.getFacilitatorExtensions(
-      x402Version,
-      resourceConfig.network,
-      SchemeNetworkServer.scheme,
-    );
+    // Get facilitator extensions for this combination (empty if not yet initialized)
+    const facilitatorExtensions = isInitialized
+      ? this.getFacilitatorExtensions(x402Version, resourceConfig.network, SchemeNetworkServer.scheme)
+      : undefined;
 
     // Parse the price using the scheme's price parser
     const parsedPrice = await SchemeNetworkServer.parsePrice(
@@ -729,11 +728,14 @@ export class x402ResourceServer {
     };
 
     // Delegate to the implementation for scheme-specific enhancements
-    const requirement = await SchemeNetworkServer.enhancePaymentRequirements(
-      baseRequirements,
-      supportedKind,
-      facilitatorExtensions,
-    );
+    // If facilitator not yet initialized, skip enhancement and use base requirements directly
+    const requirement = isInitialized
+      ? await SchemeNetworkServer.enhancePaymentRequirements(
+          baseRequirements,
+          supportedKind!,
+          facilitatorExtensions,
+        )
+      : baseRequirements;
 
     requirements.push(requirement);
     return requirements;

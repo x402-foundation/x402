@@ -316,6 +316,39 @@ describe("x402ResourceServer", () => {
   });
 
   describe("buildPaymentRequirements", () => {
+    it("should build base requirements without facilitator init (cold start)", async () => {
+      // Test that buildPaymentRequirements works without calling initialize()
+      // This enables 402 responses on cold starts (serverless/edge environments)
+      const mockClient = new MockFacilitatorClient(
+        buildSupportedResponse({
+          kinds: [{ x402Version: 2, scheme: "test-scheme", network: "test:network" as Network }],
+        }),
+      );
+      const server = new x402ResourceServer(mockClient);
+      const mockScheme = new MockSchemeNetworkServer("test-scheme", {
+        amount: "1000000",
+        asset: "USDC",
+        extra: {},
+      });
+      server.register("test:network" as Network, mockScheme);
+      // Do NOT call server.initialize() - simulating cold start
+
+      const requirements = await server.buildPaymentRequirements({
+        scheme: "test-scheme",
+        payTo: "recipient_address",
+        price: "$1.00",
+        network: "test:network" as Network,
+      });
+
+      // Should return base requirements without facilitator-specific enhancements
+      expect(requirements).toHaveLength(1);
+      expect(requirements[0].scheme).toBe("test-scheme");
+      expect(requirements[0].payTo).toBe("recipient_address");
+      expect(requirements[0].amount).toBe("1000000");
+      // enhancePaymentRequirements should NOT have been called (no facilitator init)
+      expect(mockScheme.enhanceCalls).toHaveLength(0);
+    });
+
     it("should build requirements from ResourceConfig", async () => {
       const mockClient = new MockFacilitatorClient(
         buildSupportedResponse({
