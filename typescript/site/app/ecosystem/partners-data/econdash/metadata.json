@@ -1,0 +1,7 @@
+{
+  "name": "EconDash",
+  "description": "EconDash uses x402 to gate access to 753 macroeconomic indicators across 298 countries, enabling AI agents to pay per request for GDP, inflation, employment, and other economic data.",
+  "logoUrl": "/logos/econdash.png",
+  "websiteUrl": "https://econdash.org/docs/agent-payments",
+  "category": "Services/Endpoints"
+}
