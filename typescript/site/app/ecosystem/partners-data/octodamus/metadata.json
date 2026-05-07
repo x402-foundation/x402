@@ -1,0 +1,8 @@
+{
+  "name": "Octodamus Intelligence Oracle",
+  "category": "Services/Endpoints",
+  "logoUrl": "/logos/octodamus.png",
+  "description": "AI market intelligence oracle for crypto and autonomous agents. BTC/ETH/SOL signals, Polymarket edges, macro regime, congressional trading, perp funding rates, and Fear & Greed -- all in one x402 call. Ed25519-signed responses. $0.01/call on Base USDC. Also available on Smithery MCP.",
+  "websiteUrl": "https://octodamus.com",
+  "endpointUrl": "https://api.octodamus.com"
+}
