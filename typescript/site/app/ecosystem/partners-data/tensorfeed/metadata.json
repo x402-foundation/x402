@@ -1,0 +1,7 @@
+{
+  "name": "TensorFeed",
+  "category": "Services/Endpoints",
+  "logoUrl": "/logos/tensorfeed.png",
+  "description": "Real-time AI ecosystem data API. Free tier (news, model pricing, status, MCP registry, GitHub trending, AI papers) plus 14+ premium endpoints (1-3 USDC each on Base) for routing, history series, webhook watches, and provider deep-dives. Ships AFTA: an open standard for fair-trade agent APIs with code-enforced no-charge guarantees and Ed25519-signed receipts.",
+  "websiteUrl": "https://tensorfeed.ai"
+}
