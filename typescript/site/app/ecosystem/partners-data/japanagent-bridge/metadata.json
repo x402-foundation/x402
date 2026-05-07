@@ -1,0 +1,13 @@
+{
+    "name": "JapanAgent Bridge",
+    "description": "Japan-action API for global AI
+   agents — verify Japanese identifiers, search
+  municipal grant forms, query Japanese business
+  data, and queue long-running Japanese research
+  jobs. Physical mail, keigo voice call, and fax
+  dispatch in build. x402-native, no API key, no
+  monthly contract.",
+    "logoUrl": "/logos/japanagent-bridge.svg",
+    "websiteUrl": "https://japanagent.dev",
+    "category": "Services/Endpoints"
+  }
