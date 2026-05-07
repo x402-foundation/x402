@@ -1,0 +1,7 @@
+{
+  "name": "MAKO",
+  "description": "Trust layer for agent commerce on Base. Four callable pillars — pre-spend Verifier ($0.25), per-endpoint Pulse reliability ($0.02), per-category Pricing Index ($0.02), and per-wallet Reputation Score ($0.03, ERC-8004 compatible) — plus DAO Governance Ops endpoints. Every paid Verifier call writes a verification record that feeds the other three pillars. Live Pulse scoreboard at /pulse currently scoring 142+ services across the agentic.market directory. Operated by Pollinate Research.",
+  "logoUrl": "/logos/mako.png",
+  "websiteUrl": "https://mako.pollinateresearch.com",
+  "category": "Services/Endpoints"
+}
