@@ -1,0 +1,7 @@
+{
+  "name": "Agent402 Intel",
+  "description": "Intelligence layer for the x402 ecosystem. Tracks supply across CDP, Agentic Market, PayAI, and MPP; surfaces facilitator activity and builder rollups; cross-references demand signals from 29 sources to surface unmet opportunities.",
+  "logoUrl": "/logos/agent402.png",
+  "websiteUrl": "https://intel.agent402.app",
+  "category": "Infrastructure & Tooling"
+}

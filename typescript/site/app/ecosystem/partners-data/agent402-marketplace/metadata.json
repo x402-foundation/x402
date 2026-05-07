@@ -1,0 +1,7 @@
+{
+  "name": "Agent402 Marketplace",
+  "description": "Chat-based discovery and execution layer for x402. Indexes Bazaar across CDP, Agentic Market, and PayAI; ships an MCP server so AI agents can browse and invoke paid endpoints; supports A2A flows.",
+  "logoUrl": "/logos/agent402.png",
+  "websiteUrl": "https://marketplace.agent402.app",
+  "category": "Infrastructure & Tooling"
+}
