@@ -1,0 +1,7 @@
+{
+  "name": "Mycelium Trails",
+  "description": "Post-execution accountability layer for AI agents. After any x402-authorized action, agents write a signed TrailRecord anchored on Arbitrum One and Base mainnet — payment_hash as the cross-surface key linking payment authorization to on-chain execution proof. Public verify endpoint, no API key required.",
+  "logoUrl": "/logos/mycelium-trails.png",
+  "websiteUrl": "https://argentum.rgiskard.xyz/trails/demo",
+  "category": "Services/Endpoints"
+}
