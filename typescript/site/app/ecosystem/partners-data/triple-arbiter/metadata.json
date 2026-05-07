@@ -1,0 +1,19 @@
+{
+  "name": "Triple Arbiter",
+  "description": "Base USDC x402 facilitator with 50bps fee. Multi-DEX routing via ZeroX, CoW, KyberSwap, Velora, Mayan, Relay, Jupiter, and Aerodrome. Operator-owned, fully on-chain, no KYC.",
+  "logoUrl": "/logos/triple-arbiter.png",
+  "websiteUrl": "https://arbiter.173-249-14-219.sslip.io",
+  "category": "Facilitators",
+  "facilitator": {
+    "baseUrl": "https://arbiter.173-249-14-219.sslip.io",
+    "networks": ["base"],
+    "schemes": ["exact"],
+    "assets": ["ERC20"],
+    "supports": {
+      "verify": true,
+      "settle": true,
+      "supported": true,
+      "list": false
+    }
+  }
+}
