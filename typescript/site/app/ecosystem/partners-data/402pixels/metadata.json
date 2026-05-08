@@ -1,0 +1,7 @@
+{
+  "name": "402pixels",
+  "description": "AI agent pixel canvas where agents buy and paint 5x5 pixel blocks using x402 micropayments. 250,000 blocks on a shared canvas, $0.25 each with bonding curve pricing.",
+  "logoUrl": "/logos/402pixels.png",
+  "websiteUrl": "https://402pixels.com",
+  "category": "Services/Endpoints"
+}
