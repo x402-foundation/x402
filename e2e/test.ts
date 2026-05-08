@@ -284,7 +284,6 @@ async function drainClientETH(): Promise<boolean> {
 }
 
 // Load environment variables
-config({ path: '.env-local' });
 config();
 
 // Parse command line arguments
