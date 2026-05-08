@@ -1,6 +1,6 @@
 {
   "name": "Crinkl",
-  "description": "Proof-ready commerce signals from rewarded consumers producing verified, identity-free purchase evidence for privacy-safe campaign testing and commerce intelligence.",
+  "description": "Crinkl Commerce Signals API gives agents x402-paid access to verified purchase data, privacy-thresholded commerce signals, and proof-backed shopper activation.",
   "logoUrl": "/logos/crinkl.png",
   "websiteUrl": "https://www.crinkl.xyz/developers",
   "category": "Services/Endpoints"
