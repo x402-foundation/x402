@@ -1,0 +1,7 @@
+{
+  "name": "Birdeye Data",
+  "category": "Data Provider",
+  "logoUrl": "/logos/birdeye-data.png",
+  "description": "Real-time token prices, OHLCV charts, DEX pools, trades, trending tokens, smart money tracking, and wallet analyzer. Fully x402 compatible.",
+  "websiteUrl": "https://birdeye.so/data-api"
+}
