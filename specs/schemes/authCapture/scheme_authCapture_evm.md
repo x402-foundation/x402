@@ -4,7 +4,7 @@
 
 The `authCapture` scheme on EVM uses the [base/commerce-payments](https://github.com/base/commerce-payments) contract stack:
 
-- **AuthCaptureEscrow**: Singleton — locks funds, enforces expiries, distributes on capture/refund. Universal canonical address (CREATE2-deployed; same address on every supported chain).
+- **AuthCaptureEscrow**: Singleton — locks funds, enforces expiries, distributes on capture/refund. Universal canonical address (same address on every supported chain).
 - **Token Collectors**: Universal canonical addresses, one per `assetTransferMethod`:
   - `EIP3009_TOKEN_COLLECTOR_ADDRESS` — collects funds via `receiveWithAuthorization` signatures (USDC, EURC, etc.)
   - `PERMIT2_TOKEN_COLLECTOR_ADDRESS` — collects funds via Uniswap Permit2 `permitTransferFrom` (any ERC-20)
@@ -58,17 +58,6 @@ AuthCapture-accepting servers advertise with scheme `authCapture`:
 | `maxFeeBps`           | Yes      | `uint16`                 | Maximum fee in basis points (the cap on the captureAuthorizer's fee).                                                                                                                                         |
 | `autoCapture`         | No       | `bool`                   | `true` → facilitator calls `charge()` (atomic). `false` → `authorize()` (two-phase). Default: `false`.                                                                                                        |
 | `assetTransferMethod` | No       | `"eip3009" \| "permit2"` | Which token collector to use. Default: `"eip3009"`. A server MAY list multiple `accepts[]` entries with different `assetTransferMethod` values so clients can pick the method matching their token approvals. |
-
-**Universal contract addresses** (same on every supported EVM chain via deterministic CREATE2):
-
-| Constant                              | Address                                      |
-| :------------------------------------ | :------------------------------------------- |
-| `AUTH_CAPTURE_ESCROW_ADDRESS`         | `0xF8211868187974a7Fb9d99b8fFB171AD70665Dc6` |
-| `EIP3009_TOKEN_COLLECTOR_ADDRESS`     | `0x7561DC178D9aD5bc5fb103C01f448A510d2A36D0` |
-| `PERMIT2_TOKEN_COLLECTOR_ADDRESS`     | `0xD8490609d2da0ee626b0e676941b225cbc1A8C08` |
-| `PERMIT2_ADDRESS` (Uniswap canonical) | `0x000000000022D473030F116dDEE9F6B43aC78BA3` |
-
-See [Canonical Addresses](#canonical-addresses) for the salt scheme.
 
 ### Spec → on-chain field name mapping
 
@@ -303,15 +292,6 @@ Fees are enforced on-chain by the escrow contract:
 
 ### Canonical Addresses
 
-> **Requirement**: The escrow and token collectors are deployed at the same address across every supported EVM chain via deterministic CREATE2. Bytecode is byte-identical (locked compiler, optimizer, and dependency pins); anyone with the source can reproduce and verify the addresses, and any first-mover deployer who broadcasts the canonical bytecode at the canonical salt lands at the same address.
+The `AUTH_CAPTURE_ESCROW_ADDRESS`, `EIP3009_TOKEN_COLLECTOR_ADDRESS`, and `PERMIT2_TOKEN_COLLECTOR_ADDRESS` constants resolve to the canonical [Base Commerce-Payments contracts](https://github.com/base/commerce-payments/releases/tag/v1.0.0).
 
-**Source**: [base/commerce-payments@v1.0.0](https://github.com/base/commerce-payments/releases/tag/v1.0.0).
-
-**Salt scheme**: `bytes20(0) || 0x00 || bytes11(keccak256(label))`. The leading 21 bytes are constant; the label is the per-contract namespace below.
-
-| Constant                              | Salt label                                        | Canonical Address                            |
-| :------------------------------------ | :------------------------------------------------ | :------------------------------------------- |
-| `AUTH_CAPTURE_ESCROW_ADDRESS`         | `commerce-payments::v1::AuthCaptureEscrow`        | `0xF8211868187974a7Fb9d99b8fFB171AD70665Dc6` |
-| `EIP3009_TOKEN_COLLECTOR_ADDRESS`     | `commerce-payments::v1::ERC3009PaymentCollector`  | `0x7561DC178D9aD5bc5fb103C01f448A510d2A36D0` |
-| `PERMIT2_TOKEN_COLLECTOR_ADDRESS`     | `commerce-payments::v1::Permit2PaymentCollector`  | `0xD8490609d2da0ee626b0e676941b225cbc1A8C08` |
-| `PERMIT2_ADDRESS` (Uniswap canonical) | (Uniswap canonical, not CREATE2'd by this scheme) | `0x000000000022D473030F116dDEE9F6B43aC78BA3` |
+The `PERMIT2_ADDRESS` constant resolves to the canonical [Uniswap Permit2 contract](https://docs.uniswap.org/contracts/v4/deployments).
