@@ -1,0 +1,7 @@
+{
+  "name": "Korea Filings",
+  "description": "Pay-per-call API for AI-summarised Korean DART (전자공시) corporate disclosures. Free company directory and recent-filings feed for discovery; paid English summaries via x402 (USDC on Base mainnet).",
+  "logoUrl": "/logos/korea-filings.svg",
+  "websiteUrl": "https://koreafilings.com",
+  "category": "Services/Endpoints"
+}
