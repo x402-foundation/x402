@@ -1,0 +1,24 @@
+{
+	"name": "x402-spraay-gateway-example",
+	"version": "1.0.0",
+	"private": true,
+	"description": "x402-protected gateway to Spraay's multi-chain batch payment, payroll, AI inference, and Robot Task Protocol (RTP) endpoints",
+	"scripts": {
+		"dev": "tsx src/index.ts",
+		"build": "tsc",
+		"start": "node dist/index.js"
+	},
+	"dependencies": {
+		"@x402/core": "workspace:*",
+		"@x402/evm": "workspace:*",
+		"@x402/express": "workspace:*",
+		"dotenv": "^16.4.7",
+		"express": "^4.21.2"
+	},
+	"devDependencies": {
+		"@types/express": "^5.0.1",
+		"@types/node": "^22.14.0",
+		"tsx": "^4.19.3",
+		"typescript": "^5.7.3"
+	}
+}
