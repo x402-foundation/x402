@@ -1,0 +1,7 @@
+{
+  "name": "NZRT Wiki API",
+  "category": "Services/Endpoints",
+  "logoUrl": "/logos/nzrt-wiki.png",
+  "description": "Pay-per-query knowledge API serving NZRT Network vault content — Blockchain, Infrastructure, Kubernetes, TOGAF/EA, Nextcloud, Dolibarr, WordPress, and GitHub domains. AI agents pay $0.001 USDC via x402 on Base and receive structured wiki notes. Includes a Claude Desktop MCP server that auto-pays on each tool call.",
+  "websiteUrl": "https://api.nzrtnetwork.com"
+}
