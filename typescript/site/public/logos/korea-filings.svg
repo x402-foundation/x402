@@ -1,0 +1,35 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256" role="img" aria-label="Korea Filings">
+  <!--
+    Korea Filings brand mark — geometric "KF" monogram on
+    institutional navy (#0F1F3A), with a single Coinbase Base blue
+    (#0052FF) accent line below referencing the x402-on-Base
+    payment rail. The K and F are drawn geometrically (not pulled
+    from a system font) so the mark is ownable. Sized at 256×256
+    for the agent.market ecosystem listing; the same SVG renders
+    cleanly at 16-px favicon. Selected from a 10-candidate review
+    on 2026-05-08 over a Bloomberg-style records-stack mark and
+    a red/blue Korean-candlestick mark; chosen for the strongest
+    fit with PRD's global-agent-builder ICP, where wordmark logos
+    out-convert chart icons in API directories.
+  -->
+  <rect width="256" height="256" rx="56" fill="#0F1F3A"/>
+
+  <!-- KF monogram, white -->
+  <g fill="#ffffff">
+    <!-- K: vertical stroke -->
+    <rect x="48" y="60" width="22" height="120" rx="4"/>
+    <!-- K: top diagonal -->
+    <polygon points="70,120 110,60 138,60 86,120"/>
+    <!-- K: bottom diagonal -->
+    <polygon points="70,120 110,180 138,180 86,120"/>
+    <!-- F: vertical stroke -->
+    <rect x="156" y="60" width="22" height="120" rx="4"/>
+    <!-- F: top horizontal -->
+    <rect x="156" y="60" width="60" height="20" rx="4"/>
+    <!-- F: middle horizontal (shorter) -->
+    <rect x="156" y="108" width="44" height="20" rx="4"/>
+  </g>
+
+  <!-- Single accent line — record / data motif -->
+  <rect x="48" y="200" width="168" height="6" rx="3" fill="#0052FF"/>
+</svg>
