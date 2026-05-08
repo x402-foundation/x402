@@ -250,7 +250,9 @@ class TestFacilitatorHighloadV3Signer:
         assert stream_calls[0][1] == pytest.approx(
             DEFAULT_STREAMING_CONFIRMATION_GRACE_SECONDS, abs=0.1
         )
-        assert fake_now == pytest.approx(105.0, abs=0.1)
+        assert fake_now == pytest.approx(
+            100.0 + DEFAULT_STREAMING_CONFIRMATION_GRACE_SECONDS, abs=0.1
+        )
         assert trace_calls == ["trace-hash-1"]
         assert result == expected_trace
 

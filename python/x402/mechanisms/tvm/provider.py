@@ -380,12 +380,14 @@ def _default_base_url(network: str, provider: str = TVM_PROVIDER_TONCENTER) -> s
             return TONCENTER_MAINNET_BASE_URL
         if network == TVM_TESTNET:
             return TONCENTER_TESTNET_BASE_URL
+        raise ValueError(f"Unsupported TVM network: {network}")
     if normalized_provider == TVM_PROVIDER_TONAPI:
         if network == TVM_MAINNET:
             return TONAPI_MAINNET_BASE_URL
         if network == TVM_TESTNET:
             return TONAPI_TESTNET_BASE_URL
-    raise ValueError(f"Unsupported TVM network: {network}")
+        raise ValueError(f"Unsupported TVM network: {network}")
+    raise ValueError(f"Unsupported TVM provider: {provider}")
 
 
 def _account_state_from_payload(
