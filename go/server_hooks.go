@@ -38,7 +38,7 @@ type VerifyFailureContext struct {
 
 // SkipHandlerDirective is an optional acknowledgement body returned to the caller
 // when an AfterVerifyHook requests that the resource handler be skipped for a
-// self-contained operation (e.g. cooperative refund). Travels in-process only —
+// self-contained operation. Travels in-process only —
 // never on the facilitator wire.
 type SkipHandlerDirective struct {
 	ContentType string

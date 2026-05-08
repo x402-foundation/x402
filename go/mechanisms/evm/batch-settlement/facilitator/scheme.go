@@ -6,7 +6,7 @@ import (
 
 	x402 "github.com/x402-foundation/x402/go"
 	"github.com/x402-foundation/x402/go/mechanisms/evm"
-	"github.com/x402-foundation/x402/go/mechanisms/evm/batch-settlement"
+	batchsettlement "github.com/x402-foundation/x402/go/mechanisms/evm/batch-settlement"
 	"github.com/x402-foundation/x402/go/types"
 )
 
@@ -55,7 +55,7 @@ func (f *BatchSettlementEvmScheme) Verify(
 	requirements types.PaymentRequirements,
 	fctx *x402.FacilitatorContext,
 ) (*x402.VerifyResponse, error) {
-	// Defensive scheme and network validation (matches TS facilitator)
+	// Defensive scheme and network validation.
 	if payload.Accepted.Scheme != batchsettlement.SchemeBatched || requirements.Scheme != batchsettlement.SchemeBatched {
 		return &x402.VerifyResponse{IsValid: false, InvalidReason: ErrInvalidScheme}, nil
 	}
@@ -84,8 +84,8 @@ func (f *BatchSettlementEvmScheme) Verify(
 	}
 
 	// Cooperative refund: client sends a zero-charge voucher with type="refund".
-	// Mirrors TS facilitator scheme.ts which routes refund and voucher payloads
-	// through the same verifyVoucher path with a refund-aware cumulative check.
+	// Refund and voucher payloads share the same voucher-verification path with
+	// a refund-aware cumulative check.
 	if batchsettlement.IsRefundPayload(data) {
 		refundPayload, err := batchsettlement.RefundPayloadFromMap(data)
 		if err != nil {

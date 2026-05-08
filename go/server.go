@@ -685,8 +685,7 @@ func (s *x402ResourceServer) VerifyPayment(ctx context.Context, payload types.Pa
 // VerifyPaymentWithExtensions verifies a V2 payment, gating extension hooks
 // on the supplied `declaredExtensions` map (keys must be present for the
 // extension's hook to fire). Hook execution order: manual → matched scheme →
-// declared extensions. Mirrors TS `verifyPayment(payload, requirements,
-// declaredExtensions)`.
+// declared extensions.
 func (s *x402ResourceServer) VerifyPaymentWithExtensions(
 	ctx context.Context,
 	payload types.PaymentPayload,
@@ -904,7 +903,7 @@ func (s *x402ResourceServer) SettlePaymentWithExtensions(
 	// framework merges into payload.Payload after the additive policy has
 	// rejected any attempt to overwrite existing keys.
 	s.mu.RLock()
-	matchedSchemeServer, _ := s.schemes[network][scheme]
+	matchedSchemeServer := s.schemes[network][scheme]
 	s.mu.RUnlock()
 	if enricher, ok := matchedSchemeServer.(EnrichSettlementPayloadProvider); ok {
 		enrichment, err := enricher.EnrichSettlementPayload(hookCtx)

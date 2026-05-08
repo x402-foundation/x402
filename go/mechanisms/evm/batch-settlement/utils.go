@@ -13,7 +13,7 @@ import (
 // ComputeChannelId computes the chain-bound channel ID from a ChannelConfig
 // via EIP-712 hashTypedData. The networkOrChainID argument may be either a
 // CAIP-2 network identifier (e.g. "eip155:84532") or a numeric chain id as
-// a *big.Int. Matches TS computeChannelId(config, networkOrChainId).
+// a *big.Int.
 func ComputeChannelId(config ChannelConfig, networkOrChainID interface{}) (string, error) {
 	chainID, err := resolveChainID(networkOrChainID)
 	if err != nil {
@@ -78,7 +78,7 @@ func NormalizeChannelId(channelId string) string {
 }
 
 // GetBatchSettlementEip712Domain returns the EIP-712 domain for the
-// batch-settlement contract on the given chain. Mirrors TS getBatchSettlementEip712Domain.
+// batch-settlement contract on the given chain.
 func GetBatchSettlementEip712Domain(chainID *big.Int) evm.TypedDataDomain {
 	return evm.TypedDataDomain{
 		Name:              BatchSettlementDomain.Name,

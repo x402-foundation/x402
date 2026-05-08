@@ -12,7 +12,6 @@ import (
 )
 
 // IsNotExist returns true when err is a "file does not exist" error.
-// Mirrors TS isNodeEnoent.
 func IsNotExist(err error) bool {
 	return errors.Is(err, fs.ErrNotExist) || errors.Is(err, os.ErrNotExist)
 }

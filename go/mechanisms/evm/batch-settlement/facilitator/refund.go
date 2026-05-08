@@ -11,16 +11,14 @@ import (
 
 	x402 "github.com/x402-foundation/x402/go"
 	"github.com/x402-foundation/x402/go/mechanisms/evm"
-	"github.com/x402-foundation/x402/go/mechanisms/evm/batch-settlement"
+	batchsettlement "github.com/x402-foundation/x402/go/mechanisms/evm/batch-settlement"
 	"github.com/x402-foundation/x402/go/types"
 )
 
-// refundStatePollDeadline / refundStatePollInterval mirror TS
-// REFUND_STATE_POLL_MS / REFUND_STATE_POLL_INTERVAL_MS in
-// `batch-settlement/facilitator/refund.ts`. The post-refund state is only
-// polled when the channel was in pending-withdrawal at refund time, since
-// withdraw cancellation makes a simple `preBalance - actualRefund` formula
-// inaccurate; otherwise the formula is exact and a re-read is unnecessary.
+// The post-refund state is only polled when the channel was in
+// pending-withdrawal at refund time, since withdraw cancellation makes a simple
+// `preBalance - actualRefund` formula inaccurate; otherwise the formula is
+// exact and a re-read is unnecessary.
 const (
 	refundStatePollDeadline = 2 * time.Second
 	refundStatePollInterval = 150 * time.Millisecond
@@ -90,8 +88,8 @@ func ExecuteRefundWithSignature(
 
 	// Read pre-refund onchain state. Errors are non-fatal — without a
 	// pre-state we still execute the refund and synthesize an extra from
-	// the payload alone (matches TS `buildRefundExtra(..., null)`), which
-	// the resource server's afterSettle hook can still parse.
+	// the payload alone, which the resource server's afterSettle hook can
+	// still parse.
 	preState, _ := ReadChannelState(ctx, signer, channelId)
 
 	// Handle claims + refund atomically if claims are present
@@ -237,12 +235,11 @@ func ExecuteRefundWithSignature(
 
 // refundSettlementDetails captures the per-refund response fields the
 // facilitator computes from pre/post onchain state and the enriched payload.
-// Mirrors the TS `RefundSettlementDetails` shape (refund.ts ~27-30).
 type refundSettlementDetails struct {
 	// amount is the actual refund amount in token base units (decimal string).
 	// May differ from `payload.amount` when the requested amount exceeds the
 	// channel's available balance after preceding claims; in that case
-	// available is used (capped). Mirrors TS `actualRefund`.
+	// available is used.
 	amount string
 	// channelState is the post-refund snapshot. balance reflects
 	// `preBalance - actualRefund`; totalClaimed reflects the last claim's
@@ -255,9 +252,8 @@ type refundSettlementDetails struct {
 // computeRefundSettlementDetails builds the response fields after a successful
 // refund onchain. When the pre-state shows an active pending withdrawal, the
 // facilitator polls for confirmation that the refund nonce advanced before
-// computing the snapshot from chain (mirrors TS `readPostRefundState`); in
-// the common case the snapshot is computed analytically from preState +
-// payload, matching TS `buildRefundExtra` / `buildRefundExtraFromPostState`.
+// computing the snapshot from chain; in the common case the snapshot is
+// computed analytically from preState + payload.
 func computeRefundSettlementDetails(
 	ctx context.Context,
 	signer evm.FacilitatorEvmSigner,
@@ -266,8 +262,8 @@ func computeRefundSettlementDetails(
 	preState *batchsettlement.ChannelState,
 	requestedAmount *big.Int,
 ) refundSettlementDetails {
-	// Default zero values when preState is unavailable. TS treats null
-	// preState the same way: skip pre-balance-based capping.
+	// Default zero values when preState is unavailable; skip pre-balance-based
+	// capping in that case.
 	preBalance := big.NewInt(0)
 	preTotalClaimed := big.NewInt(0)
 	preRefundNonce := big.NewInt(0)
@@ -287,10 +283,9 @@ func computeRefundSettlementDetails(
 
 	// If the channel was in pending withdrawal, polling the post-state is
 	// the only way to know the final balance because `refundWithSignature`
-	// also cancels the withdrawal in a single transaction. Mirrors TS
-	// `readPostRefundState` + `buildRefundExtraFromPostState`. On RPC lag
-	// (deadline elapsed without nonce advancement) we fall through to the
-	// analytic path below.
+	// also cancels the withdrawal in a single transaction. On RPC lag (deadline
+	// elapsed without nonce advancement) we fall through to the analytic path
+	// below.
 	if preState != nil && preWithdrawRequestedAt != 0 {
 		expectedNonce := new(big.Int).Add(preRefundNonce, big.NewInt(1))
 		var postState *batchsettlement.ChannelState
@@ -360,11 +355,10 @@ func computeRefundSettlementDetails(
 	}
 }
 
-// buildRefundResponse assembles a SettleResponse for a refund mirroring TS
-// `executeRefundWithSignature` return shape: success + tx + payer + amount +
-// extra.channelState (no `refund: true` flag — TS does not emit it). The
-// resource server's `enrichSettlementResponse` hook adds
-// `chargedCumulativeAmount` on top via additive merge.
+// buildRefundResponse assembles a SettleResponse for a refund: success + tx +
+// payer + amount + extra.channelState. The resource server's
+// `enrichSettlementResponse` hook adds `chargedCumulativeAmount` on top via
+// additive merge.
 func buildRefundResponse(
 	txHash string,
 	network x402.Network,
@@ -388,4 +382,3 @@ func buildRefundResponse(
 		},
 	}
 }
-

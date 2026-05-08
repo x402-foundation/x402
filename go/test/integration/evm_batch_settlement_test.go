@@ -40,7 +40,7 @@ import (
 	x402http "github.com/x402-foundation/x402/go/http"
 	nethttpmw "github.com/x402-foundation/x402/go/http/nethttp"
 	evmmech "github.com/x402-foundation/x402/go/mechanisms/evm"
-	"github.com/x402-foundation/x402/go/mechanisms/evm/batch-settlement"
+	batchsettlement "github.com/x402-foundation/x402/go/mechanisms/evm/batch-settlement"
 	batchedclient "github.com/x402-foundation/x402/go/mechanisms/evm/batch-settlement/client"
 	batchedfacilitator "github.com/x402-foundation/x402/go/mechanisms/evm/batch-settlement/facilitator"
 	batchedserver "github.com/x402-foundation/x402/go/mechanisms/evm/batch-settlement/server"

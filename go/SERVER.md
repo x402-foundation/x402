@@ -152,7 +152,7 @@ settleResult := httpServer.ProcessSettlement(ctx, payload, requirements, nil, &x
     Request:         &reqCtx,
     ResponseBody:    responseBody,
     ResponseHeaders: responseHeaders,
-})
+}, nil)
 ```
 
 ### 4. Facilitator Client

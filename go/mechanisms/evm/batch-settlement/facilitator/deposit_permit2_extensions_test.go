@@ -2,7 +2,6 @@ package facilitator
 
 import (
 	"context"
-	"strings"
 	"testing"
 
 	x402 "github.com/x402-foundation/x402/go"
@@ -301,11 +300,9 @@ func TestResolvePermit2DepositBranch_Erc20ApprovalAssetMismatch(t *testing.T) {
 	}
 }
 
-// TestResolvePermit2DepositBranch_Eip2612TakesPriorityOverErc20 pins the TS
-// behaviour: when both extensions are advertised AND populated by the client,
-// EIP-2612 wins because it executes atomically (single deposit() tx) versus
-// ERC-20 approval (multi-tx). Mirrors the priority in
-// `BatchSettlementEvmScheme.createPaymentPayload`.
+// TestResolvePermit2DepositBranch_Eip2612TakesPriorityOverErc20 ensures that
+// when both extensions are advertised and populated by the client, EIP-2612
+// wins because it executes atomically in a single deposit() transaction.
 func TestResolvePermit2DepositBranch_Eip2612TakesPriorityOverErc20(t *testing.T) {
 	stub := &stubExtensionSigner{fakeFacilitatorSigner: &fakeFacilitatorSigner{}}
 	ext := &erc20approvalgassponsor.Erc20ApprovalFacilitatorExtension{Signer: stub}
@@ -314,7 +311,7 @@ func TestResolvePermit2DepositBranch_Eip2612TakesPriorityOverErc20(t *testing.T)
 	})
 
 	exts := map[string]interface{}{
-		eip2612gassponsor.EIP2612GasSponsoring.Key(): map[string]interface{}{"info": goodEip2612Info()},
+		eip2612gassponsor.EIP2612GasSponsoring.Key():             map[string]interface{}{"info": goodEip2612Info()},
 		erc20approvalgassponsor.ERC20ApprovalGasSponsoring.Key(): map[string]interface{}{"info": goodErc20ApprovalInfo()},
 	}
 
@@ -347,7 +344,3 @@ type stubExtensionSigner struct {
 func (s *stubExtensionSigner) SendTransactions(_ context.Context, _ []erc20approvalgassponsor.TransactionRequest) ([]string, error) {
 	return nil, nil
 }
-
-// satisfy the linter / unused-import rule for `strings` in case future
-// edits remove the only reference; left as a tiny helper.
-var _ = strings.Repeat

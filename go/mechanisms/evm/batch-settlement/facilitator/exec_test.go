@@ -7,7 +7,7 @@ import (
 	"testing"
 
 	x402 "github.com/x402-foundation/x402/go"
-	"github.com/x402-foundation/x402/go/mechanisms/evm/batch-settlement"
+	batchsettlement "github.com/x402-foundation/x402/go/mechanisms/evm/batch-settlement"
 	"github.com/x402-foundation/x402/go/types"
 )
 
@@ -449,12 +449,11 @@ func zeros(n int) string {
 
 // ----- buildRefundResponse -----
 
-// TestBuildRefundResponse pins the canonical TS-aligned shape:
+// TestBuildRefundResponse pins the refund response shape:
 //   - top-level: success, tx, network, payer, amount
 //   - extra.channelState: channelId, balance, totalClaimed, withdrawRequestedAt, refundNonce
-//   - NO `refund: true` flag at any level (TS doesn't emit it; it was a Go-only
-//     legacy that confused the resource server's afterSettle hook into reading
-//     stale fields)
+//   - NO `refund: true` flag at any level; resource hooks use the payload type
+//     and channelState fields instead
 //   - NO `chargedCumulativeAmount` (the resource server's
 //     enrichSettlementResponse hook adds it via additive merge)
 func TestBuildRefundResponse(t *testing.T) {
@@ -504,8 +503,7 @@ func TestBuildRefundResponse(t *testing.T) {
 
 // TestComputeRefundSettlementDetails_AnalyticPathNoClaims covers the common
 // case: no pending withdrawal, no claims accompanying the refund. The
-// snapshot is computed from preState + payload alone (no post-state poll),
-// matching TS `buildRefundExtra(payload, channelId, preState)`.
+// snapshot is computed from preState + payload alone, without a post-state poll.
 func TestComputeRefundSettlementDetails_AnalyticPathNoClaims(t *testing.T) {
 	preState := &batchsettlement.ChannelState{
 		Balance:             big.NewInt(5000),
@@ -538,9 +536,8 @@ func TestComputeRefundSettlementDetails_AnalyticPathNoClaims(t *testing.T) {
 	}
 }
 
-// TestComputeRefundSettlementDetails_CapsAtAvailable mirrors TS:
-// when the requested refund exceeds preBalance - postClaimTotalClaimed,
-// actualRefund must be capped at the available remainder.
+// TestComputeRefundSettlementDetails_CapsAtAvailable ensures a requested refund
+// above preBalance - postClaimTotalClaimed is capped at the available remainder.
 func TestComputeRefundSettlementDetails_CapsAtAvailable(t *testing.T) {
 	preState := &batchsettlement.ChannelState{
 		Balance:             big.NewInt(5000),
@@ -572,9 +569,9 @@ func TestComputeRefundSettlementDetails_CapsAtAvailable(t *testing.T) {
 }
 
 // TestComputeRefundSettlementDetails_NoPreState exercises the RPC-failure
-// fallback (TS treats null preState the same way: zero pre-balance →
-// available zero → actualRefund zero, postBalance zero, refundNonce
-// becomes 1). Ensures the response never panics on a missing chain read.
+// fallback: missing preState means zero available balance, zero actual refund,
+// zero postBalance, and refundNonce advances to 1. Ensures the response never
+// panics on a missing chain read.
 func TestComputeRefundSettlementDetails_NoPreState(t *testing.T) {
 	payload := &batchsettlement.BatchSettlementEnrichedRefundPayload{
 		Type:        "refund",
@@ -619,4 +616,3 @@ func TestBuildVoucherClaimArgs_Length(t *testing.T) {
 		t.Fatal("expected non-nil result")
 	}
 }
-

@@ -362,7 +362,7 @@ func handlePaymentVerified(c echo.Context, next echo.HandlerFunc, server *x402ht
 
 	// SkipHandler directive: bypass downstream handler, settle inline using the
 	// directive body. Used for refund acknowledgements where there is no resource
-	// response to return. Mirrors nethttp middleware behavior.
+	// response to return.
 	var err error
 	if result.SkipHandler != nil {
 		contentType := result.SkipHandler.ContentType
@@ -427,7 +427,7 @@ func handlePaymentVerified(c echo.Context, next echo.HandlerFunc, server *x402ht
 		return nil
 	}
 
-	settleResult := server.ProcessSettlementWithExtensions(
+	settleResult := server.ProcessSettlement(
 		ctx,
 		*result.PaymentPayload,
 		*result.PaymentRequirements,

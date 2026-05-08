@@ -11,7 +11,7 @@ import (
 
 	x402 "github.com/x402-foundation/x402/go"
 	"github.com/x402-foundation/x402/go/mechanisms/evm"
-	"github.com/x402-foundation/x402/go/mechanisms/evm/batch-settlement"
+	batchsettlement "github.com/x402-foundation/x402/go/mechanisms/evm/batch-settlement"
 	"github.com/x402-foundation/x402/go/types"
 )
 
@@ -32,7 +32,7 @@ type ContractChannelConfigTuple struct {
 
 // ToContractChannelConfig normalizes a ChannelConfig into the address-checksummed
 // Solidity tuple expected by the batch-settlement contract's deposit / refund /
-// claim entry points. Mirrors TS toContractChannelConfig.
+// claim entry points.
 func ToContractChannelConfig(config batchsettlement.ChannelConfig) ContractChannelConfigTuple {
 	withdrawDelay := new(big.Int).SetInt64(int64(config.WithdrawDelay))
 
@@ -166,9 +166,8 @@ func ValidateChannelConfig(
 	// only exist to round-trip to the client, so they don't need to be
 	// decoded here.
 	//
-	// receiverAuthorizer is mandatory. Mirrors TS `validateChannelConfig`
-	// which rejects when extra.receiverAuthorizer is missing, zero, or
-	// disagrees with the channel's bound authorizer.
+	// receiverAuthorizer is mandatory and must agree with the channel's bound
+	// authorizer.
 	expectedAuthorizer, _ := requirements.Extra["receiverAuthorizer"].(string)
 	if expectedAuthorizer == "" || strings.EqualFold(expectedAuthorizer, zeroAddress) ||
 		!strings.EqualFold(config.ReceiverAuthorizer, expectedAuthorizer) {
@@ -258,11 +257,10 @@ func VerifyBatchedVoucherTypedData(
 
 // channelStateFields builds the shared field set used by both verify and
 // settle response extras: { channelId, balance, totalClaimed,
-// withdrawRequestedAt, refundNonce }. Mirrors TS facilitator output verbatim;
-// crucially does NOT include `chargedCumulativeAmount` — that field is the
-// SERVER's responsibility to enrich (the resource server's
-// `enrichSettlementResponse` hook adds it, and the additive enrichment policy
-// rejects duplicates emitted by the facilitator).
+// withdrawRequestedAt, refundNonce }. It does not include
+// `chargedCumulativeAmount` because the resource server adds that field during
+// settlement-response enrichment; the additive enrichment policy rejects
+// duplicates emitted by the facilitator.
 func channelStateFields(channelId string, state *batchsettlement.ChannelState) map[string]interface{} {
 	return map[string]interface{}{
 		"channelId":           channelId,
@@ -273,20 +271,18 @@ func channelStateFields(channelId string, state *batchsettlement.ChannelState) m
 	}
 }
 
-// BuildVerifyExtra creates the Extensions map for VERIFY responses in the
-// canonical FLAT TS shape used by `verifyVoucher` / `verifyDeposit`:
+// BuildVerifyExtra creates the Extensions map for VERIFY responses:
 //
 //	{ channelId, balance, totalClaimed, withdrawRequestedAt, refundNonce }
 //
-// Server-side `AfterVerifyHook` (Go and TS) reads these fields directly off
-// `extra` (e.g. `extra["balance"]`); wrapping them in `channelState` like the
-// settle response would silently break state tracking.
+// Server-side `AfterVerifyHook` reads these fields directly off `extra` (e.g.
+// `extra["balance"]`); wrapping them in `channelState` like the settle
+// response would silently break state tracking.
 func BuildVerifyExtra(channelId string, state *batchsettlement.ChannelState) map[string]interface{} {
 	return channelStateFields(channelId, state)
 }
 
-// BuildSettleExtra creates the Extensions map for SETTLE responses in the
-// canonical NESTED TS shape used by `settleDeposit` / `executeRefundWithSignature`:
+// BuildSettleExtra creates the Extensions map for SETTLE responses:
 //
 //	{ "channelState": { channelId, balance, totalClaimed, withdrawRequestedAt,
 //	                    refundNonce } }

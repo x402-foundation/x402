@@ -11,13 +11,13 @@ import (
 
 	x402 "github.com/x402-foundation/x402/go"
 	"github.com/x402-foundation/x402/go/mechanisms/evm"
-	"github.com/x402-foundation/x402/go/mechanisms/evm/batch-settlement"
+	batchsettlement "github.com/x402-foundation/x402/go/mechanisms/evm/batch-settlement"
 	"github.com/x402-foundation/x402/go/types"
 )
 
 const (
 	// DefaultDepositMultiplier is the default multiplier for the initial deposit.
-	// Matches the TS SDK default of 5× the per-request amount.
+	// It is applied to the per-request amount.
 	DefaultDepositMultiplier = 5
 	// DefaultWithdrawDelay is the default withdraw delay in seconds (15 min).
 	DefaultWithdrawDelay = 900
@@ -26,8 +26,7 @@ const (
 )
 
 // DepositStrategyContext is supplied to a DepositStrategy callback before the
-// client signs a deposit authorization. Mirrors TS
-// `BatchSettlementDepositStrategyContext`.
+// client signs a deposit authorization.
 type DepositStrategyContext struct {
 	PaymentRequirements  types.PaymentRequirements
 	ChannelConfig        batchsettlement.ChannelConfig
@@ -47,21 +46,18 @@ type DepositStrategyContext struct {
 //     verify time; the caller is opting out of auto-top-up.
 //   - Amount overrides the computed deposit. Must be a positive integer string
 //     (base units) and at least MinimumDepositAmount, or the call errors.
-//   - Both empty/zero means "use the SDK-computed amount" (equivalent to TS
-//     returning `undefined`).
+//   - Both empty/zero means "use the SDK-computed amount".
 type DepositStrategyResult struct {
 	Skip   bool
 	Amount string
 }
 
 // DepositStrategy is an optional caller hook for per-request deposit sizing.
-// Mirrors the TS `BatchSettlementDepositStrategy` callback.
 type DepositStrategy func(ctx context.Context, c DepositStrategyContext) (DepositStrategyResult, error)
 
 // BatchSettlementEvmSchemeOptions configures the batched client scheme.
 //
-// `MaxDeposit` and `AutoTopUp` were removed in upstream TS parity (commit
-// 2d190b80f). Use `DepositStrategy` for app-specific sizing or skipping.
+// Use `DepositStrategy` for app-specific sizing or skipping.
 type BatchSettlementEvmSchemeOptions struct {
 	// DepositMultiplier is the multiplier applied to the required amount for deposits.
 	// E.g., 5 means deposit 5× the per-request amount. Defaults to 5.
@@ -129,10 +125,8 @@ func (c *BatchSettlementEvmScheme) Scheme() string {
 
 // CreatePaymentPayload creates a batched payment payload.
 //
-// Mirrors the TS scheme's flow: load local session, fall back to onchain
-// recovery when storage is empty (so a cold client picks up the channel's
-// existing chargedCumulativeAmount/balance), then choose deposit vs voucher
-// from the resulting context.
+// The client loads local session state, falls back to onchain recovery when
+// storage is empty, then chooses deposit vs voucher from the resulting context.
 func (c *BatchSettlementEvmScheme) CreatePaymentPayload(
 	ctx context.Context,
 	requirements types.PaymentRequirements,
@@ -228,8 +222,7 @@ type resolveDepositAmountResult struct {
 }
 
 // resolveDepositAmount applies the optional DepositStrategy callback to the
-// SDK-computed deposit amount. Mirrors TS `resolveDepositAmount` /
-// `normalizeStrategyDepositAmount`.
+// computed deposit amount.
 func (c *BatchSettlementEvmScheme) resolveDepositAmount(
 	ctx context.Context,
 	strategyCtx DepositStrategyContext,
@@ -264,8 +257,7 @@ func (c *BatchSettlementEvmScheme) resolveDepositAmount(
 //
 // Returns an error when `requirements.Extra["receiverAuthorizer"]` is missing
 // or zero — without it the derived channelId would not match the onchain
-// channel and the deposit transaction would revert. Mirrors TS
-// `buildChannelConfig`, which throws under the same condition.
+// channel and the deposit transaction would revert.
 func (c *BatchSettlementEvmScheme) BuildChannelConfig(requirements types.PaymentRequirements) (batchsettlement.ChannelConfig, error) {
 	var receiverAuthorizer string
 	if requirements.Extra != nil {
@@ -287,8 +279,8 @@ func (c *BatchSettlementEvmScheme) BuildChannelConfig(requirements types.Payment
 		}
 	}
 
-	// Resolution order mirrors TS `buildChannelConfig`:
-	// explicit `PayerAuthorizer` → `VoucherSigner.Address()` → `signer.Address()`.
+	// Authorizer resolution order:
+	// explicit `PayerAuthorizer` -> `VoucherSigner.Address()` -> `signer.Address()`.
 	// Falling straight through to the signer when a voucher signer is configured
 	// would commit the wrong authorizer into the channel and the facilitator
 	// would later reject vouchers signed by the voucher key.
@@ -320,8 +312,7 @@ func (c *BatchSettlementEvmScheme) Refund(ctx context.Context, url string, optio
 }
 
 // OnPaymentResponse implements x402.PaymentResponseHandler so the transport can
-// auto-sync local session state after every paid response, matching the TS
-// schemeHooks.onPaymentResponse contract.
+// auto-sync local session state after every paid response.
 //
 // On a successful settle (HTTP 200 + PAYMENT-RESPONSE), folds the server-tracked
 // channel snapshot back into the local session so the next request signs a
@@ -359,7 +350,7 @@ func (c *BatchSettlementEvmScheme) OnPaymentResponse(
 }
 
 // ProcessSettleResponse updates local session state from a settle response.
-// Mirrors TS processSettleResponse: merges present fields into existing session.
+// It merges present fields into the existing session.
 // Refund-specific reconciliation is handled at the refund call site via
 // UpdateSessionAfterRefund.
 func (c *BatchSettlementEvmScheme) ProcessSettleResponse(settle map[string]interface{}) error {
@@ -509,7 +500,7 @@ func (c *BatchSettlementEvmScheme) ProcessCorrectivePaymentRequired(
 }
 
 // readChannelStateFromExtra extracts the corrective-402 recovery fields from
-// accept.Extra. Reads the canonical TS shape: extra.channelState.chargedCumulativeAmount
+// accept.Extra: extra.channelState.chargedCumulativeAmount
 // + extra.voucherState.{signedMaxClaimable,signature}.
 func readChannelStateFromExtra(ex map[string]interface{}) (charged, signed, sig string, ok bool) {
 	if ex == nil {
@@ -526,7 +517,7 @@ func readChannelStateFromExtra(ex map[string]interface{}) (charged, signed, sig 
 	c, hasC := cs["chargedCumulativeAmount"]
 	s, hasS := vs["signedMaxClaimable"]
 	g, hasG := vs["signature"]
-	if !(hasC && hasS && hasG) {
+	if !hasC || !hasS || !hasG {
 		return "", "", "", false
 	}
 	return fmt.Sprintf("%v", c), fmt.Sprintf("%v", s), fmt.Sprintf("%v", g), true
@@ -537,8 +528,7 @@ func readChannelStateFromExtra(ex map[string]interface{}) (charged, signed, sig 
 // client's own signing key before accepting.
 //
 // Errors from individual recovery steps are intentionally swallowed (returning
-// false) to match the TypeScript SDK behavior where catch blocks silently return
-// false, allowing the caller to fall back to alternative recovery or retry.
+// false), allowing the caller to fall back to alternative recovery or retry.
 func (c *BatchSettlementEvmScheme) recoverFromSignature(
 	ctx context.Context,
 	accept types.PaymentRequirements,
@@ -548,7 +538,7 @@ func (c *BatchSettlementEvmScheme) recoverFromSignature(
 ) (bool, error) {
 	charged, ok := new(big.Int).SetString(chargedStr, 10)
 	if !ok {
-		return false, nil //nolint:nilerr // parse failure = unrecoverable, matches TS try/catch
+		return false, nil //nolint:nilerr // parse failure = unrecoverable
 	}
 	signed, ok := new(big.Int).SetString(signedStr, 10)
 	if !ok {
@@ -565,11 +555,11 @@ func (c *BatchSettlementEvmScheme) recoverFromSignature(
 
 	config, err := c.BuildChannelConfig(accept)
 	if err != nil {
-		return false, nil //nolint:nilerr // matches TS catch-all
+		return false, nil //nolint:nilerr
 	}
 	channelId, err := batchsettlement.ComputeChannelId(config, accept.Network)
 	if err != nil {
-		return false, nil //nolint:nilerr // matches TS catch-all
+		return false, nil //nolint:nilerr
 	}
 	channelId = batchsettlement.NormalizeChannelId(channelId)
 
@@ -583,7 +573,7 @@ func (c *BatchSettlementEvmScheme) recoverFromSignature(
 		channelIdBytes,
 	)
 	if err != nil {
-		return false, nil //nolint:nilerr // matches TS catch
+		return false, nil //nolint:nilerr
 	}
 
 	var chBalance, chTotalClaimed *big.Int
@@ -603,7 +593,7 @@ func (c *BatchSettlementEvmScheme) recoverFromSignature(
 	// Verify the signature was produced by our key
 	chainId, err := evm.GetEvmChainId(string(accept.Network))
 	if err != nil {
-		return false, nil //nolint:nilerr // matches TS catch
+		return false, nil //nolint:nilerr
 	}
 
 	sigBytes, err := evm.HexToBytes(sig)
@@ -676,7 +666,7 @@ func (c *BatchSettlementEvmScheme) recoverFromOnChainState(
 ) (bool, error) {
 	_, err := c.RecoverSession(ctx, accept)
 	if err != nil {
-		return false, nil //nolint:nilerr // matches TS catch returning false
+		return false, nil //nolint:nilerr // recovery failures are non-fatal
 	}
 	return true, nil
 }
@@ -714,8 +704,7 @@ func (c *BatchSettlementEvmScheme) createVoucherPayload(
 
 // createDepositPayload dispatches the deposit transfer mechanism on
 // `requirements.Extra["assetTransferMethod"]`, falling back to EIP-3009 when
-// the field is omitted or set to the default value. Mirrors the TS dispatch in
-// `BatchSettlementEvmScheme.createPaymentPayload`.
+// the field is omitted or set to the default value.
 func (c *BatchSettlementEvmScheme) createDepositPayload(
 	ctx context.Context,
 	channelConfig batchsettlement.ChannelConfig,
@@ -775,9 +764,8 @@ func (a *refundContextAdapter) ProcessCorrectivePaymentRequired(ctx context.Cont
 	return a.scheme.ProcessCorrectivePaymentRequired(ctx, errorReason, accepts)
 }
 
-// calculateDepositAmount returns `requiredAmount * DepositMultiplier`. Mirrors
-// TS `depositAmountForRequest`. Callers wanting a cap should use a
-// DepositStrategy callback.
+// calculateDepositAmount returns `requiredAmount * DepositMultiplier`. Callers
+// wanting a cap should use a DepositStrategy callback.
 func (c *BatchSettlementEvmScheme) calculateDepositAmount(requiredAmount *big.Int) *big.Int {
 	multiplier := big.NewInt(int64(c.config.DepositMultiplier))
 	return new(big.Int).Mul(requiredAmount, multiplier)

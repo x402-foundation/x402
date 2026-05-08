@@ -339,7 +339,7 @@ func handlePaymentVerified(w http.ResponseWriter, r *http.Request, next http.Han
 		return
 	}
 
-	settleResult := server.ProcessSettlementWithExtensions(
+	settleResult := server.ProcessSettlement(
 		ctx,
 		*result.PaymentPayload,
 		*result.PaymentRequirements,

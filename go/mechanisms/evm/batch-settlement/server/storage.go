@@ -3,13 +3,13 @@ package server
 import (
 	"sync"
 
-	"github.com/x402-foundation/x402/go/mechanisms/evm/batch-settlement"
+	batchsettlement "github.com/x402-foundation/x402/go/mechanisms/evm/batch-settlement"
 )
 
 // PendingRequest reserves a channel against concurrent same-channel requests.
-// Mirrors TS `PendingRequest`: a request is allowed when no live (unexpired)
-// pending entry exists. Cleanup hooks clear the reservation; the bounded TTL
-// guarantees release if cleanup never runs.
+// A request is allowed when no live (unexpired) pending entry exists. Cleanup
+// hooks clear the reservation; the bounded TTL guarantees release if cleanup
+// never runs.
 type PendingRequest struct {
 	PendingId          string `json:"pendingId"`
 	SignedMaxClaimable string `json:"signedMaxClaimable"`
@@ -18,17 +18,16 @@ type PendingRequest struct {
 
 // ChannelSession holds per-channel session state on the server side.
 type ChannelSession struct {
-	ChannelId               string                `json:"channelId"`
+	ChannelId               string                        `json:"channelId"`
 	ChannelConfig           batchsettlement.ChannelConfig `json:"channelConfig"`
-	Payer                   string                `json:"payer"`
-	ChargedCumulativeAmount string                `json:"chargedCumulativeAmount"`
-	SignedMaxClaimable      string                `json:"signedMaxClaimable"`
-	Signature               string                `json:"signature"`
-	Balance                 string                `json:"balance"`
-	TotalClaimed            string                `json:"totalClaimed"`
-	WithdrawRequestedAt     int                   `json:"withdrawRequestedAt"`
-	RefundNonce             int                   `json:"refundNonce"`
-	LastRequestTimestamp    int64                 `json:"lastRequestTimestamp"`
+	ChargedCumulativeAmount string                        `json:"chargedCumulativeAmount"`
+	SignedMaxClaimable      string                        `json:"signedMaxClaimable"`
+	Signature               string                        `json:"signature"`
+	Balance                 string                        `json:"balance"`
+	TotalClaimed            string                        `json:"totalClaimed"`
+	WithdrawRequestedAt     int                           `json:"withdrawRequestedAt"`
+	RefundNonce             int                           `json:"refundNonce"`
+	LastRequestTimestamp    int64                         `json:"lastRequestTimestamp"`
 	// OnchainSyncedAt is the wall-clock time (unix millis) when balance/totalClaimed/
 	// withdrawRequestedAt/refundNonce were last refreshed from onchain state.
 	// Used by the local voucher verifier to decide whether to skip facilitator verify.

@@ -1,6 +1,6 @@
 # Batch-Settlement Client (Go)
 
-Go port of [`examples/typescript/clients/batch-settlement`](../../../typescript/clients/batch-settlement). Sequential batch-settlement payment client. Opens a payment channel on the first request (deposit) and pays subsequent requests with off-chain vouchers that update the cumulative claimable amount.
+Sequential batch-settlement payment client. Opens a payment channel on the first request (deposit) and pays subsequent requests with off-chain vouchers that update the cumulative claimable amount.
 
 ## Run
 
@@ -11,7 +11,7 @@ cp .env-example .env
 go run .
 ```
 
-The companion server is in `examples/go/servers/batch-settlement` and the facilitator is in `examples/go/facilitator/batch-settlement`. The Go and TS clients share the same env keys, default route (`/weather`), and behavior — point the same `.env` at either binary.
+The companion server is in `examples/go/servers/batch-settlement` and the facilitator is in `examples/go/facilitator/batch-settlement`.
 
 ## Voucher Signer Delegation
 

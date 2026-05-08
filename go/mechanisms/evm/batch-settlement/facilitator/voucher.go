@@ -7,7 +7,7 @@ import (
 
 	x402 "github.com/x402-foundation/x402/go"
 	"github.com/x402-foundation/x402/go/mechanisms/evm"
-	"github.com/x402-foundation/x402/go/mechanisms/evm/batch-settlement"
+	batchsettlement "github.com/x402-foundation/x402/go/mechanisms/evm/batch-settlement"
 	"github.com/x402-foundation/x402/go/types"
 )
 
@@ -25,8 +25,7 @@ func VerifyVoucher(
 
 // VerifyRefundVoucher verifies a cooperative-refund payload's voucher.
 // The voucher is zero-charge: maxClaimableAmount == chargedCumulativeAmount,
-// which on a fresh channel may equal totalClaimed exactly. Mirrors TS
-// `verifyVoucher` with `payload.type === "refund"`.
+// which on a fresh channel may equal totalClaimed exactly.
 func VerifyRefundVoucher(
 	ctx context.Context,
 	signer evm.FacilitatorEvmSigner,

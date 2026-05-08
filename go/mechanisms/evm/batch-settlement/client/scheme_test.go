@@ -8,7 +8,7 @@ import (
 
 	x402 "github.com/x402-foundation/x402/go"
 	"github.com/x402-foundation/x402/go/mechanisms/evm"
-	"github.com/x402-foundation/x402/go/mechanisms/evm/batch-settlement"
+	batchsettlement "github.com/x402-foundation/x402/go/mechanisms/evm/batch-settlement"
 	"github.com/x402-foundation/x402/go/types"
 )
 
@@ -327,7 +327,7 @@ func TestProcessSettleResponse_StoresSession(t *testing.T) {
 	}
 }
 
-// ProcessSettleResponse is a pure-merge updater (mirrors TS processSettleResponse).
+// ProcessSettleResponse is a pure-merge updater.
 // It does NOT delete sessions on zero balance — that responsibility belongs to
 // UpdateSessionAfterRefund, called explicitly at the refund call site.
 func TestProcessSettleResponse_DoesNotDeleteOnZeroBalance(t *testing.T) {
@@ -413,7 +413,7 @@ func TestCreatePaymentPayload_TopsUpOnInsufficient(t *testing.T) {
 
 // DepositStrategy returning Skip=true causes an insufficient-balance request to
 // fall through as a voucher (the request will then fail at verify; the caller
-// is opting out of auto top-up). Mirrors TS depositStrategy returning false.
+// is opting out of auto top-up).
 func TestCreatePaymentPayload_DepositStrategySkipYieldsVoucher(t *testing.T) {
 	storage := NewInMemoryClientChannelStorage()
 	signer := &mockSigner{address: "0x1111111111111111111111111111111111111111", sig: []byte{0xad}}
@@ -487,9 +487,8 @@ func TestRecoverSession_ReadError(t *testing.T) {
 
 // ---------- ProcessCorrectivePaymentRequired ----------
 
-// readChannelStateFromExtra accepts the canonical TS shape
-// (extra.channelState + extra.voucherState, camelCase split) emitted by both
-// the Go and TS servers.
+// readChannelStateFromExtra accepts the corrective split shape:
+// extra.channelState + extra.voucherState.
 func TestReadChannelStateFromExtra_CanonicalSplitShape(t *testing.T) {
 	extra := map[string]interface{}{
 		"channelState": map[string]interface{}{
@@ -582,7 +581,7 @@ func TestProcessCorrective_RecoverFromSignatureBadCharged(t *testing.T) {
 	}
 	scheme := NewBatchSettlementEvmScheme(signer, nil)
 	req := defaultRequirements()
-	// Canonical TS shape with bad charged amount.
+	// Corrective split shape with bad charged amount.
 	req.Extra["channelState"] = map[string]interface{}{
 		"chargedCumulativeAmount": "not-a-number",
 	}
@@ -607,7 +606,7 @@ func TestProcessCorrective_RecoverFromSignatureChargedBeyondSigned(t *testing.T)
 	}
 	scheme := NewBatchSettlementEvmScheme(signer, nil)
 	req := defaultRequirements()
-	// Canonical TS shape with charged > signed.
+	// Corrective split shape with charged > signed.
 	req.Extra["channelState"] = map[string]interface{}{
 		"chargedCumulativeAmount": "200",
 	}

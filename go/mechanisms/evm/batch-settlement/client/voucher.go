@@ -6,7 +6,7 @@ import (
 	"math/big"
 
 	"github.com/x402-foundation/x402/go/mechanisms/evm"
-	"github.com/x402-foundation/x402/go/mechanisms/evm/batch-settlement"
+	batchsettlement "github.com/x402-foundation/x402/go/mechanisms/evm/batch-settlement"
 )
 
 // SignVoucher signs a cumulative voucher using EIP-712.

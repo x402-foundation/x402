@@ -8,7 +8,7 @@ import (
 
 	x402 "github.com/x402-foundation/x402/go"
 	"github.com/x402-foundation/x402/go/mechanisms/evm"
-	"github.com/x402-foundation/x402/go/mechanisms/evm/batch-settlement"
+	batchsettlement "github.com/x402-foundation/x402/go/mechanisms/evm/batch-settlement"
 	"github.com/x402-foundation/x402/go/types"
 )
 
@@ -235,11 +235,8 @@ func TestSettle_MalformedClaimPayload(t *testing.T) {
 	}
 }
 
-// TestVerify_MalformedRefundPayload is a regression test for the bug where the
-// Go facilitator's Verify dispatch only handled deposit and voucher payloads,
-// causing cooperative-refund flows from cross-SDK clients (TS axios) to fail
-// with `invalid_batch_settlement_evm_payload_type`. Refund payloads must now
-// route to VerifyRefundVoucher; a malformed refund must surface as
+// TestVerify_MalformedRefundPayload ensures refund payloads route to
+// VerifyRefundVoucher. A malformed refund must surface as
 // `invalid_batch_settlement_evm_refund_payload`, not the generic invalid type.
 func TestVerify_MalformedRefundPayload(t *testing.T) {
 	s := newScheme()

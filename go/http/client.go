@@ -529,11 +529,48 @@ func decodePaymentRequiredHeader(header string) (x402.PaymentRequired, error) {
 
 // encodePaymentResponseHeader encodes a settlement response as base64
 func encodePaymentResponseHeader(response x402.SettleResponse) (string, error) {
+	response = withTypedChannelStateExtra(response)
 	data, err := json.Marshal(response)
 	if err != nil {
 		return "", fmt.Errorf("failed to marshal settle response: %w", err)
 	}
 	return base64.StdEncoding.EncodeToString(data), nil
+}
+
+type paymentResponseChannelStateExtra struct {
+	ChannelId               string      `json:"channelId,omitempty"`
+	Balance                 string      `json:"balance,omitempty"`
+	TotalClaimed            string      `json:"totalClaimed,omitempty"`
+	WithdrawRequestedAt     interface{} `json:"withdrawRequestedAt,omitempty"`
+	RefundNonce             string      `json:"refundNonce,omitempty"`
+	ChargedCumulativeAmount string      `json:"chargedCumulativeAmount,omitempty"`
+}
+
+func withTypedChannelStateExtra(response x402.SettleResponse) x402.SettleResponse {
+	raw, ok := response.Extra["channelState"].(map[string]interface{})
+	if !ok {
+		return response
+	}
+
+	extra := make(map[string]interface{}, len(response.Extra))
+	for key, value := range response.Extra {
+		extra[key] = value
+	}
+	extra["channelState"] = paymentResponseChannelStateExtra{
+		ChannelId:               stringField(raw, "channelId"),
+		Balance:                 stringField(raw, "balance"),
+		TotalClaimed:            stringField(raw, "totalClaimed"),
+		WithdrawRequestedAt:     raw["withdrawRequestedAt"],
+		RefundNonce:             stringField(raw, "refundNonce"),
+		ChargedCumulativeAmount: stringField(raw, "chargedCumulativeAmount"),
+	}
+	response.Extra = extra
+	return response
+}
+
+func stringField(data map[string]interface{}, key string) string {
+	value, _ := data[key].(string)
+	return value
 }
 
 // decodePaymentResponseHeader decodes a base64 payment response header

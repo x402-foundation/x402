@@ -22,9 +22,8 @@ import (
 var _ x402.ExtensionAwareClient = (*BatchSettlementEvmScheme)(nil)
 
 // CreatePaymentPayloadWithExtensions creates a batched payment payload with
-// extension awareness, mirroring TS `BatchSettlementEvmScheme.createPaymentPayload`
-// when `paymentRequired.extensions` advertises EIP-2612 or ERC-20 approval gas
-// sponsoring.
+// extension awareness when `paymentRequired.extensions` advertises EIP-2612 or
+// ERC-20 approval gas sponsoring.
 //
 // Behavior matches the exact / upto schemes:
 //
@@ -65,9 +64,9 @@ func (c *BatchSettlementEvmScheme) CreatePaymentPayloadWithExtensions(
 
 	// Only Permit2 deposits gas-sponsor through these extensions; ERC-3009
 	// deposits authorize the transfer in the same signature. Read
-	// `assetTransferMethod` from requirements.Extra (TS source of truth)
-	// and fall back to inspecting the deposit authorization shape so a
-	// missing wire field still routes correctly.
+	// `assetTransferMethod` from requirements.Extra and fall back to inspecting
+	// the deposit authorization shape so a missing wire field still routes
+	// correctly.
 	isPermit2 := false
 	if requirements.Extra != nil {
 		if v, ok := requirements.Extra["assetTransferMethod"].(string); ok && v != "" {

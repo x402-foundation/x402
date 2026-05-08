@@ -9,7 +9,7 @@ import (
 	"time"
 
 	x402 "github.com/x402-foundation/x402/go"
-	"github.com/x402-foundation/x402/go/mechanisms/evm/batch-settlement"
+	batchsettlement "github.com/x402-foundation/x402/go/mechanisms/evm/batch-settlement"
 )
 
 // fakeFacilitator records Settle/Verify calls and returns canned responses.
@@ -117,7 +117,7 @@ func TestClaim_SingleBatch(t *testing.T) {
 // Regression: a successful claim must advance session.TotalClaimed in storage so
 // that GetClaimableVouchers no longer returns the same channel until a fresh
 // voucher pushes ChargedCumulativeAmount higher. Without this fix, every tick
-// re-submits the same claim transaction. Mirrors TS updateClaimedSessions.
+// re-submits the same claim transaction.
 func TestClaim_AdvancesTotalClaimedInStorageAfterSuccess(t *testing.T) {
 	s := NewBatchSettlementEvmScheme("0xreceiver", nil)
 	// Use a real ChannelConfig so the manager's post-claim storage lookup
@@ -242,7 +242,7 @@ func TestSettle_FacilitatorError(t *testing.T) {
 }
 
 func TestRefund_EmptyChannelIdsRefundsAll(t *testing.T) {
-	// Per upstream parity: passing nil/empty refunds every stored channel.
+	// Passing nil/empty refunds every stored channel.
 	s := NewBatchSettlementEvmScheme("0xreceiver", nil)
 	f := &fakeFacilitator{}
 	m := newManager(s, f)
@@ -625,32 +625,6 @@ func TestRunRefundJob_NoOpWithoutSelectRefundChannels(t *testing.T) {
 	if f.settleCalls != 0 {
 		t.Fatalf("expected no facilitator calls without selector, got %d", f.settleCalls)
 	}
-}
-
-// slowFacilitator sleeps inside Settle so concurrent tick() invocations contend.
-type slowFacilitator struct {
-	mu    sync.Mutex
-	calls int
-	delay time.Duration
-}
-
-func (s *slowFacilitator) Verify(_ context.Context, _ []byte, _ []byte) (*x402.VerifyResponse, error) {
-	return &x402.VerifyResponse{IsValid: true}, nil
-}
-func (s *slowFacilitator) Settle(_ context.Context, _ []byte, _ []byte) (*x402.SettleResponse, error) {
-	time.Sleep(s.delay)
-	s.mu.Lock()
-	s.calls++
-	s.mu.Unlock()
-	return &x402.SettleResponse{Success: true, Transaction: "0xtx"}, nil
-}
-func (s *slowFacilitator) GetSupported(_ context.Context) (x402.SupportedResponse, error) {
-	return x402.SupportedResponse{}, nil
-}
-func (s *slowFacilitator) settleCalls() int {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return s.calls
 }
 
 func TestGetClaimableVouchers_NoSessions(t *testing.T) {

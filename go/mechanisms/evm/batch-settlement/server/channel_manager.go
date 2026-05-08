@@ -12,14 +12,14 @@ import (
 
 	x402 "github.com/x402-foundation/x402/go"
 	"github.com/x402-foundation/x402/go/mechanisms/evm"
-	"github.com/x402-foundation/x402/go/mechanisms/evm/batch-settlement"
+	batchsettlement "github.com/x402-foundation/x402/go/mechanisms/evm/batch-settlement"
 )
 
 // ChannelManagerConfig wires the channel manager to its dependencies.
 //
 // Receiver and Token are required: the manager calls
 // `settle(receiver, token)` directly, so storage may be empty when settle()
-// fires (e.g. immediately after a flush). Mirrors TS `ChannelManagerConfig`.
+// fires, for example immediately after a flush.
 type ChannelManagerConfig struct {
 	Scheme      *BatchSettlementEvmScheme
 	Facilitator x402.FacilitatorClient
@@ -95,8 +95,7 @@ type SettleResult struct {
 
 // RefundResult is one cooperative refund transaction (one channel).
 //
-// The TS API moved from a single `{Channels, Transaction}` to one result per
-// refunded channel; the Go SDK matches that shape.
+// Each refunded channel returns one result.
 type RefundResult struct {
 	Channel     string
 	Transaction string
@@ -111,7 +110,7 @@ const (
 )
 
 // autoJobPriority orders the queue: claim drains before settle drains before
-// refund. Mirrors TS `AUTO_JOB_PRIORITY`.
+// refund.
 var autoJobPriority = []autoJob{autoJobClaim, autoJobSettle, autoJobRefund}
 
 // BatchSettlementChannelManager handles auto-settlement of batched payment channels.
@@ -135,8 +134,6 @@ type BatchSettlementChannelManager struct {
 	pendingSettle    bool
 	pendingJobs      map[autoJob]struct{}
 	pendingJobsCh    chan struct{}
-	drainingJobsDone chan struct{}
-	currentDrainCtx  context.Context
 }
 
 // NewBatchSettlementChannelManager creates a new channel manager.
@@ -151,7 +148,7 @@ func NewBatchSettlementChannelManager(config ChannelManagerConfig) *BatchSettlem
 }
 
 // hasLivePendingRequest returns true when the channel currently has a
-// non-expired payer request reservation. Mirrors TS `hasLivePendingRequest`.
+// non-expired payer request reservation.
 func hasLivePendingRequest(s *ChannelSession, nowMs int64) bool {
 	return s != nil && s.PendingRequest != nil && s.PendingRequest.ExpiresAt > nowMs
 }
@@ -209,7 +206,7 @@ func (m *BatchSettlementChannelManager) GetWithdrawalPendingSessions() ([]*Chann
 // Claim collects claimable vouchers and submits them in batches.
 func (m *BatchSettlementChannelManager) Claim(ctx context.Context, opts *ClaimOptions) ([]ClaimResult, error) {
 	resolved := normalizeClaimOptions(opts)
-	channels, err := m.selectClaimTargets(ctx, resolved.SelectClaimChannels)
+	channels, err := m.selectClaimTargets(resolved.SelectClaimChannels)
 	if err != nil {
 		return nil, err
 	}
@@ -572,7 +569,7 @@ func normalizeClaimOptions(opts *ClaimOptions) resolvedClaimOptions {
 	return out
 }
 
-func (m *BatchSettlementChannelManager) selectClaimTargets(ctx context.Context, selector ClaimChannelSelector) ([]*ChannelSession, error) {
+func (m *BatchSettlementChannelManager) selectClaimTargets(selector ClaimChannelSelector) ([]*ChannelSession, error) {
 	channels, err := m.scheme.storage.List()
 	if err != nil {
 		return nil, err
@@ -606,7 +603,7 @@ func (m *BatchSettlementChannelManager) collectClaimsFromChannels(channels []*Ch
 		out = append(out, batchsettlement.BatchSettlementVoucherClaim{
 			Voucher: struct {
 				Channel            batchsettlement.ChannelConfig `json:"channel"`
-				MaxClaimableAmount string                `json:"maxClaimableAmount"`
+				MaxClaimableAmount string                        `json:"maxClaimableAmount"`
 			}{
 				Channel:            c.ChannelConfig,
 				MaxClaimableAmount: c.SignedMaxClaimable,
@@ -713,7 +710,7 @@ func (m *BatchSettlementChannelManager) refundChannel(ctx context.Context, targe
 		claims = []batchsettlement.BatchSettlementVoucherClaim{{
 			Voucher: struct {
 				Channel            batchsettlement.ChannelConfig `json:"channel"`
-				MaxClaimableAmount string                `json:"maxClaimableAmount"`
+				MaxClaimableAmount string                        `json:"maxClaimableAmount"`
 			}{
 				Channel:            target.ChannelConfig,
 				MaxClaimableAmount: target.SignedMaxClaimable,
@@ -761,7 +758,6 @@ func (m *BatchSettlementChannelManager) refundChannel(ctx context.Context, targe
 	}
 
 	// Drop the session so it doesn't churn through future refund cycles.
-	// Mirrors TS `updateChannel(... => undefined)` which deletes the entry.
 	_, _ = m.scheme.storage.UpdateChannel(normalizedId, func(current *ChannelSession) *ChannelSession {
 		if current == nil {
 			return current
@@ -810,11 +806,10 @@ func (m *BatchSettlementChannelManager) updateClaimedSessions(claims []batchsett
 
 // getIdleChannelsForRefund returns channels that have been idle for at least
 // `idleSecs` seconds and still hold a non-zero balance. Skips channels with a
-// live in-flight request reservation. Mirrors TS
-// `getIdleChannelsForRefundFromChannels` (also private).
+// live in-flight request reservation.
 //
 // Callers wanting "refund all idle channels" should inline this predicate
-// inside their SelectRefundChannels callback (the TS canonical demo does so).
+// inside their SelectRefundChannels callback.
 func getIdleChannelsForRefund(channels []*ChannelSession, idleSecs int) []*ChannelSession {
 	if idleSecs <= 0 {
 		return nil
@@ -870,7 +865,7 @@ func (m *BatchSettlementChannelManager) facilitatorSettle(ctx context.Context, p
 }
 
 // requirementsMap returns the minimal PaymentRequirements shape used for the
-// manager's own facilitator calls. Mirrors TS `buildPaymentRequirements`.
+// manager's own facilitator calls.
 func (m *BatchSettlementChannelManager) requirementsMap() map[string]interface{} {
 	return map[string]interface{}{
 		"scheme":            batchsettlement.SchemeBatched,

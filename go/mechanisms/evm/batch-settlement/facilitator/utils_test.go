@@ -8,7 +8,7 @@ import (
 	"time"
 
 	x402 "github.com/x402-foundation/x402/go"
-	"github.com/x402-foundation/x402/go/mechanisms/evm/batch-settlement"
+	batchsettlement "github.com/x402-foundation/x402/go/mechanisms/evm/batch-settlement"
 	"github.com/x402-foundation/x402/go/types"
 )
 
@@ -224,11 +224,10 @@ func TestValidateChannelConfig_ExtraTypeTolerance(t *testing.T) {
 }
 
 // TestBuildVerifyExtra_FlatShape pins the wire shape of the verify response.
-// TS `verifyVoucher` and `verifyDeposit` return a FLAT extra (channelId,
-// balance, totalClaimed, withdrawRequestedAt, refundNonce). The TS server's
-// `handleAfterVerify` reads `result.extra.balance` directly; if the Go
-// facilitator wraps these under `channelState`, the server falls back to "0"
-// for balance/totalClaimed and silently corrupts its tracked channel record.
+// Verify responses return a flat extra (channelId, balance, totalClaimed,
+// withdrawRequestedAt, refundNonce). If the facilitator wraps these under
+// `channelState`, the server falls back to "0" for balance/totalClaimed and
+// silently corrupts its tracked channel record.
 // The downstream symptom is `invalid_batch_settlement_evm_refund_no_balance` at refund
 // time because `channel.balance == 0 < chargedCumulativeAmount`.
 func TestBuildVerifyExtra_FlatShape(t *testing.T) {
@@ -264,13 +263,13 @@ func TestBuildVerifyExtra_FlatShape(t *testing.T) {
 }
 
 // TestBuildSettleExtra_NestedShapeNoChargedCumulative pins the wire shape of
-// the settle response. TS `settleDeposit` and `executeRefundWithSignature`
-// return a NESTED `channelState` containing channelId/balance/totalClaimed/
-// withdrawRequestedAt/refundNonce — but NOT chargedCumulativeAmount, which
-// the resource server's `enrichSettlementResponse` hook adds via additive
-// merge afterwards. Emitting `chargedCumulativeAmount` from the facilitator
-// triggers TS's enrichment policy to throw with "...already exists on the
-// settlement result", which suppresses the merge and breaks downstream state.
+// the settle response. It returns a nested `channelState` containing
+// channelId/balance/totalClaimed/withdrawRequestedAt/refundNonce, but NOT
+// chargedCumulativeAmount, which the resource server's
+// `enrichSettlementResponse` hook adds via additive merge afterwards. Emitting
+// `chargedCumulativeAmount` from the facilitator triggers the enrichment policy
+// to reject the duplicate field, which suppresses the merge and breaks
+// downstream state.
 func TestBuildSettleExtra_NestedShapeNoChargedCumulative(t *testing.T) {
 	state := &batchsettlement.ChannelState{
 		Balance:             big.NewInt(900),

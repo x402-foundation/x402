@@ -1,6 +1,6 @@
 # Batch-Settlement Server (Go)
 
-Go port of [`examples/typescript/servers/batch-settlement`](../../../typescript/servers/batch-settlement). Demo resource server using the batch-settlement scheme: a client opens a payment channel with a single deposit; subsequent paid requests update an off-chain voucher. The `ChannelManager` periodically claims and settles onchain.
+Demo resource server using the batch-settlement scheme: a client opens a payment channel with a single deposit; subsequent paid requests update an off-chain voucher. The `ChannelManager` periodically claims and settles onchain.
 
 The route demonstrates **dynamic pricing**: the client authorizes up to `$0.01` per request, and the handler bills a random fraction of that via `Settlement-Overrides`.
 
@@ -15,18 +15,6 @@ go run .
 
 The server listens on `http://localhost:4021` and exposes `GET /weather`. Pair with `examples/go/clients/batch-settlement` and `examples/go/facilitator/batch-settlement`.
 
-### Cross-SDK local testing
-
-The Go and TS servers share the same `.env-example` keys, route (`GET /weather`), response shape (`{report: {weather, temperature}}`), and channel-manager cadences, so you can swap one for the other without changing client config:
-
-```bash
-# Go server
-EVM_ADDRESS=0x... FACILITATOR_URL=http://localhost:4022 go run .
-
-# TS server (same .env)
-cd examples/typescript/servers/batch-settlement && pnpm dev
-```
-
 ## Environment
 
 | Variable                              | Required | Description |
@@ -39,7 +27,7 @@ cd examples/typescript/servers/batch-settlement && pnpm dev
 
 ## Auto-settlement
 
-The example wires up a `ChannelManager` with the same triggers as the TS demo:
+The example wires up a `ChannelManager` with simple local-demo triggers:
 
 - **Claim** every 60 s.
 - **Settle** every 120 s (sweeps claimed funds to `payTo`).

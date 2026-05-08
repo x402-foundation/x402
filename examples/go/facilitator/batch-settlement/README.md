@@ -23,8 +23,7 @@ cp .env-example .env
 go run .
 ```
 
-Listens on `http://localhost:4022` by default (`PORT` overrides; same as the
-TypeScript facilitator example).
+Listens on `http://localhost:4022` by default (`PORT` overrides).
 
 ## Environment
 

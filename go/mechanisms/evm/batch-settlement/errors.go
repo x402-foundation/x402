@@ -1,8 +1,7 @@
 // Package batched holds shared batch-settlement error constants used across
 // client / facilitator / server. All reasons share the
 // `invalid_batch_settlement_evm_*` prefix and describe mechanism-level
-// failures only — no policy/business semantics. Mirrors TS
-// `typescript/packages/mechanisms/evm/src/batch-settlement/errors.ts`.
+// failures only — no policy/business semantics.
 //
 // A small subset is duplicated here (and authoritatively defined in
 // `go/mechanisms/evm/batch-settlement/facilitator/errors.go`) so non-facilitator

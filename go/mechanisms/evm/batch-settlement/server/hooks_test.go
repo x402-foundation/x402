@@ -6,7 +6,7 @@ import (
 	"time"
 
 	x402 "github.com/x402-foundation/x402/go"
-	"github.com/x402-foundation/x402/go/mechanisms/evm/batch-settlement"
+	batchsettlement "github.com/x402-foundation/x402/go/mechanisms/evm/batch-settlement"
 	"github.com/x402-foundation/x402/go/types"
 )
 
@@ -214,6 +214,24 @@ func TestBeforeVerifyHook_RefundFreshCumulativePasses(t *testing.T) {
 	}
 }
 
+func TestBeforeVerifyHook_LivePendingRejectsSameChannel(t *testing.T) {
+	s := NewBatchSettlementEvmScheme("0xreceiver", nil)
+	sess := sampleSession("0xabcd", "10")
+	sess.PendingRequest = &PendingRequest{PendingId: "p-live", ExpiresAt: time.Now().Add(time.Minute).UnixMilli()}
+	_ = s.UpdateSession("0xabcd", sess)
+
+	res, err := s.BeforeVerifyHook()(x402.VerifyContext{
+		Payload:      &stubPayload{data: voucherPayload("0xabcd", "20", "0xsig")},
+		Requirements: batchedReqs(),
+	})
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	if res == nil || !res.Abort || res.Reason != batchsettlement.ErrChannelBusy {
+		t.Fatalf("got %+v", res)
+	}
+}
+
 // ----- AfterVerifyHook -----
 
 func TestAfterVerifyHook_NonBatchedIgnored(t *testing.T) {
@@ -309,6 +327,27 @@ func TestAfterVerifyHook_RefundReturnsSkipHandler(t *testing.T) {
 	}
 }
 
+func TestOnVerifyFailureHook_ClearsPendingRequest(t *testing.T) {
+	s := NewBatchSettlementEvmScheme("0xreceiver", nil)
+	id := "0xabcd"
+	sess := sampleSession(id, "10")
+	_ = s.UpdateSession(id, sess)
+	reserveDepositPending(t, s, id, "p-verify")
+	stub := &stubPayload{data: voucherPayload(id, "20", "0xsig")}
+	s.MergeRequestContext(stub, BatchSettlementRequestContext{ChannelId: id, PendingId: "p-verify", ChannelSnapshot: sess})
+
+	res, err := s.OnVerifyFailureHook()(x402.VerifyFailureContext{
+		VerifyContext: x402.VerifyContext{Payload: stub, Requirements: batchedReqs()},
+	})
+	if err != nil || res != nil {
+		t.Fatalf("got res=%+v err=%v", res, err)
+	}
+	got, _ := s.GetSession(id)
+	if got == nil || got.PendingRequest != nil {
+		t.Fatalf("pending not cleared: %+v", got)
+	}
+}
+
 // ----- BeforeSettleHook -----
 
 // TestBeforeSettleHook_DepositPassThrough pins the new BeforeSettleHook
@@ -370,10 +409,7 @@ func TestBeforeSettleHook_VoucherSkipsAndUpdates(t *testing.T) {
 }
 
 func TestBeforeSettleHook_VoucherExceedsSignedCapAborts(t *testing.T) {
-	// Defensive-guard test: simulate a race where chargedCumulativeAmount
-	// is bumped between reservation and settle, making the voucher's signed
-	// cap unreachable. Install a reservation for cap=20 first, then advance
-	// stored charged so 15+10>20 trips the in-tx cap check.
+	// Simulate chargedCumulativeAmount changing after reservation.
 	s := NewBatchSettlementEvmScheme("0xreceiver", nil)
 	_ = s.UpdateSession("0xabcd", sampleSession("0xabcd", "10"))
 	stub := &stubPayload{data: voucherPayload("0xabcd", "20", "0xsig")}
@@ -383,8 +419,6 @@ func TestBeforeSettleHook_VoucherExceedsSignedCapAborts(t *testing.T) {
 	cur, _ := s.GetSession("0xabcd")
 	cur.ChargedCumulativeAmount = "15"
 	_ = s.UpdateSession("0xabcd", cur)
-	// Issue settle against the lower-cap voucher (cap=15) so 15+10>15 trips cap_exceeded.
-	stub.data = voucherPayload("0xabcd", "15", "0xsig")
 	res, err := s.BeforeSettleHook()(x402.SettleContext{
 		Payload:      stub,
 		Requirements: batchedReqs(),
@@ -415,8 +449,7 @@ func reserveRefundPending(t *testing.T, s *BatchSettlementEvmScheme, id, pending
 // TestEnrichSettlementPayload_RefundReturnsAdditiveFields pins the new
 // EnrichSettlementPayload behavior for refund payloads: returns additive
 // `{amount, refundNonce, claims}` (plus signatures when an authorizer signer
-// is configured) — never mutates the input payload. Mirrors TS
-// `handleEnrichSettlementPayload`.
+// is configured) and never mutates the input payload.
 func TestEnrichSettlementPayload_RefundReturnsAdditiveFields(t *testing.T) {
 	s := NewBatchSettlementEvmScheme("0xreceiver", nil)
 	id, _ := batchsettlement.ComputeChannelId(testConfig(), "eip155:8453")
@@ -497,6 +530,27 @@ func TestEnrichSettlementPayload_RefundAmountExceedsRemainderErrors(t *testing.T
 	_, err := s.EnrichSettlementPayload(x402.SettleContext{Payload: stub, Requirements: batchedReqs()})
 	if err == nil || err.Error() != batchsettlement.ErrRefundAmountExceedsBalance {
 		t.Fatalf("got %v", err)
+	}
+}
+
+func TestOnSettleFailureHook_ClearsPendingRequest(t *testing.T) {
+	s := NewBatchSettlementEvmScheme("0xreceiver", nil)
+	id := "0xabcd"
+	sess := sampleSession(id, "10")
+	_ = s.UpdateSession(id, sess)
+	reserveDepositPending(t, s, id, "p-settle")
+	stub := &stubPayload{data: voucherPayload(id, "20", "0xsig")}
+	s.MergeRequestContext(stub, BatchSettlementRequestContext{ChannelId: id, PendingId: "p-settle", ChannelSnapshot: sess})
+
+	res, err := s.OnSettleFailureHook()(x402.SettleFailureContext{
+		SettleContext: x402.SettleContext{Payload: stub, Requirements: batchedReqs()},
+	})
+	if err != nil || res != nil {
+		t.Fatalf("got res=%+v err=%v", res, err)
+	}
+	got, _ := s.GetSession(id)
+	if got == nil || got.PendingRequest != nil {
+		t.Fatalf("pending not cleared: %+v", got)
 	}
 }
 
@@ -666,6 +720,52 @@ func TestAfterSettleHook_RefundFullDeletes(t *testing.T) {
 	}
 }
 
+func TestAfterSettleHook_RefundFullDeletesAfterPayloadEnrichment(t *testing.T) {
+	s := NewBatchSettlementEvmScheme("0xreceiver", nil)
+	id, _ := batchsettlement.ComputeChannelId(testConfig(), "eip155:8453")
+	sess := sampleSession(id, "100")
+	sess.ChannelConfig = testConfig()
+	sess.Balance = "1000"
+	_ = s.UpdateSession(id, sess)
+	pp := &types.PaymentPayload{
+		X402Version: 2,
+		Payload:     refundPayload(id, "100", "0xsig"),
+		Accepted:    types.PaymentRequirements{Scheme: batchsettlement.SchemeBatched, Network: "eip155:8453"},
+	}
+
+	res, err := s.BeforeVerifyHook()(x402.VerifyContext{Payload: pp, Requirements: batchedReqs()})
+	if err != nil || res != nil {
+		t.Fatalf("reserve got %+v / %v", res, err)
+	}
+	pp.Payload["amount"] = "900"
+	pp.Payload["refundNonce"] = "0"
+	pp.Payload["claims"] = []interface{}{}
+
+	err = s.AfterSettleHook()(x402.SettleResultContext{
+		SettleContext: x402.SettleContext{
+			Payload:      pp,
+			Requirements: batchedReqs(),
+		},
+		Result: &x402.SettleResponse{
+			Success: true,
+			Extra: map[string]interface{}{
+				"channelState": map[string]interface{}{
+					"channelId":    id,
+					"balance":      "100",
+					"totalClaimed": "100",
+					"refundNonce":  "1",
+				},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	if got, _ := s.GetSession(id); got != nil {
+		t.Fatalf("expected nil after full refund, got %+v", got)
+	}
+}
+
 func TestAfterSettleHook_RefundPartialUpdates(t *testing.T) {
 	s := NewBatchSettlementEvmScheme("0xreceiver", nil)
 	id, _ := batchsettlement.ComputeChannelId(testConfig(), "eip155:8453")
@@ -718,6 +818,54 @@ func TestAfterSettleHook_RefundPartialUpdates(t *testing.T) {
 	}
 	if got.RefundNonce != 1 {
 		t.Fatalf("nonce = %d", got.RefundNonce)
+	}
+	if got.PendingRequest != nil {
+		t.Fatalf("PendingRequest not cleared after partial refund: %+v", got.PendingRequest)
+	}
+}
+
+func TestAfterSettleHook_RefundPendingMismatchReturnsBusy(t *testing.T) {
+	s := NewBatchSettlementEvmScheme("0xreceiver", nil)
+	id, _ := batchsettlement.ComputeChannelId(testConfig(), "eip155:8453")
+	sess := sampleSession(id, "100")
+	sess.ChannelConfig = testConfig()
+	sess.Balance = "1000"
+	_ = s.UpdateSession(id, sess)
+	reserveDepositPending(t, s, id, "p-current")
+	rp := map[string]interface{}{
+		"type":          "refund",
+		"channelConfig": batchsettlement.ChannelConfigToMap(testConfig()),
+		"voucher": map[string]interface{}{
+			"channelId":          id,
+			"maxClaimableAmount": "100",
+			"signature":          "0xsig",
+		},
+		"amount":      "100",
+		"refundNonce": "0",
+		"claims":      []interface{}{},
+	}
+	stub := &stubPayload{data: rp}
+	s.MergeRequestContext(stub, BatchSettlementRequestContext{ChannelId: id, PendingId: "p-stale"})
+
+	err := s.AfterSettleHook()(x402.SettleResultContext{
+		SettleContext: x402.SettleContext{
+			Payload:      stub,
+			Requirements: batchedReqs(),
+		},
+		Result: &x402.SettleResponse{
+			Success: true,
+			Extra: map[string]interface{}{
+				"channelState": map[string]interface{}{
+					"channelId":    id,
+					"balance":      "900",
+					"totalClaimed": "100",
+					"refundNonce":  "1",
+				},
+			},
+		},
+	})
+	if err == nil || err.Error() != batchsettlement.ErrChannelBusy {
+		t.Fatalf("got %v", err)
 	}
 }
 

@@ -215,6 +215,55 @@ func TestGetPaymentSettleResponse(t *testing.T) {
 	}
 }
 
+func TestEncodePaymentResponseHeader_ChannelStateOrder(t *testing.T) {
+	encoded, err := encodePaymentResponseHeader(x402.SettleResponse{
+		Success:     true,
+		Payer:       "0xpayer",
+		Transaction: "0xtx",
+		Network:     "eip155:1",
+		Amount:      "1000",
+		Extra: map[string]interface{}{
+			"channelState": map[string]interface{}{
+				"balance":                 "5000",
+				"channelId":               "0xchan",
+				"chargedCumulativeAmount": "3000",
+				"refundNonce":             "1",
+				"totalClaimed":            "2000",
+				"withdrawRequestedAt":     0,
+			},
+			"chargedAmount": "1000",
+		},
+	})
+	if err != nil {
+		t.Fatalf("encodePaymentResponseHeader: %v", err)
+	}
+
+	decoded, err := base64.StdEncoding.DecodeString(encoded)
+	if err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	body := string(decoded)
+	fields := []string{
+		`"channelId":"0xchan"`,
+		`"balance":"5000"`,
+		`"totalClaimed":"2000"`,
+		`"withdrawRequestedAt":0`,
+		`"refundNonce":"1"`,
+		`"chargedCumulativeAmount":"3000"`,
+	}
+	last := -1
+	for _, field := range fields {
+		idx := strings.Index(body, field)
+		if idx == -1 {
+			t.Fatalf("missing %s in %s", field, body)
+		}
+		if idx <= last {
+			t.Fatalf("field %s out of order in %s", field, body)
+		}
+		last = idx
+	}
+}
+
 func TestPaymentRoundTripper(t *testing.T) {
 	// Create a test server that returns 402 first, then 200
 	callCount := 0

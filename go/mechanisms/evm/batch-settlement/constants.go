@@ -108,9 +108,6 @@ const Permit2DomainName = "Permit2"
 // the permit2 transfer method. The witness binds the transfer to a specific
 // batch-settlement channel id so the Permit2DepositCollector can route funds
 // on the receiver's behalf.
-//
-// Mirrors TS `batchPermit2WitnessTypes` in
-// `typescript/.../batch-settlement/constants.ts`.
 var BatchPermit2WitnessTypes = map[string][]evm.TypedDataField{
 	"PermitWitnessTransferFrom": {
 		{Name: "permitted", Type: "TokenPermissions"},
@@ -130,7 +127,7 @@ var BatchPermit2WitnessTypes = map[string][]evm.TypedDataField{
 
 // DepositWitnessTypeString is the canonical witness type-string fragment that
 // must be appended (without the leading `,`) when computing the Permit2
-// witness type hash. Mirrors TS `DEPOSIT_WITNESS_TYPE_STRING`.
+// witness type hash.
 const DepositWitnessTypeString = "DepositWitness witness)DepositWitness(bytes32 channelId)TokenPermissions(address token,uint256 amount)"
 
 // ============================================================================

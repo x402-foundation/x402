@@ -10,17 +10,17 @@ import (
 	"github.com/x402-foundation/x402/go/extensions/eip2612gassponsor"
 	"github.com/x402-foundation/x402/go/extensions/erc20approvalgassponsor"
 	"github.com/x402-foundation/x402/go/mechanisms/evm"
-	"github.com/x402-foundation/x402/go/mechanisms/evm/batch-settlement"
+	batchsettlement "github.com/x402-foundation/x402/go/mechanisms/evm/batch-settlement"
 )
 
 // permit2DepositBranchKind enumerates the three Permit2 deposit settlement
-// strategies, mirroring TS `resolvePermit2DepositBranch`.
+// strategies.
 type permit2DepositBranchKind string
 
 const (
-	permit2BranchStandard       permit2DepositBranchKind = "standard"
-	permit2BranchEip2612        permit2DepositBranchKind = "eip2612"
-	permit2BranchErc20Approval  permit2DepositBranchKind = "erc20Approval"
+	permit2BranchStandard      permit2DepositBranchKind = "standard"
+	permit2BranchEip2612       permit2DepositBranchKind = "eip2612"
+	permit2BranchErc20Approval permit2DepositBranchKind = "erc20Approval"
 )
 
 // permit2DepositBranch captures the resolved gas-sponsorship branch for a
@@ -46,9 +46,7 @@ type permit2DepositBranch struct {
 }
 
 // resolvePermit2DepositBranch parses the payment payload's `extensions`
-// envelope and decides which gas-sponsorship branch to take. Mirrors
-// TS `resolvePermit2DepositBranch` in
-// `typescript/.../batch-settlement/facilitator/deposit-permit2.ts`.
+// envelope and decides which gas-sponsorship branch to take.
 //
 // On a well-formed but rejected extension (e.g. payer/asset/amount mismatch)
 // returns ("invalidReason", nil); on a successful branch resolution returns
@@ -65,15 +63,13 @@ func resolvePermit2DepositBranch(
 	tokenAddress := evm.NormalizeAddress(requirements.Token)
 	payer := requirements.Payer
 
-	// EIP-2612 takes priority over ERC-20 approval, matching TS
-	// `trySignEip2612PermitExtension` ordering on the client side and
-	// `resolvePermit2DepositBranch` on the facilitator side.
+	// EIP-2612 takes priority over ERC-20 approval because it keeps settlement
+	// to a single deposit() transaction.
 	eip2612Info, _ := eip2612gassponsor.ExtractEip2612GasSponsoringInfo(extensions)
 	if eip2612Info != nil {
 		// Wrap the shared evm validator with the batch-specific rule that
 		// `info.amount == deposit.amount`, then translate the shared reason
-		// strings into the batched error codes (mirrors TS
-		// `validateBatchEip2612Permit`).
+		// strings into the batched error codes.
 		if sharedReason := evm.ValidateEip2612PermitForPayment(eip2612Info, payer, tokenAddress); sharedReason != "" {
 			var batchedReason string
 			switch sharedReason {
@@ -95,8 +91,8 @@ func resolvePermit2DepositBranch(
 		if eip2612Info.Amount != depositAmount {
 			return nil, ErrEip2612AmountMismatch, nil
 		}
-		v, r, s, splitErr := evm.SplitEip2612Signature(eip2612Info.Signature)
-		if splitErr != nil {
+		v, r, s, signatureOK := splitEip2612Signature(eip2612Info.Signature)
+		if !signatureOK {
 			return nil, ErrEip2612InvalidSignature, nil
 		}
 		eip2612Bytes, encodeErr := batchsettlement.BuildEip2612PermitData(batchsettlement.Eip2612PermitInput{
@@ -180,6 +176,11 @@ func resolvePermit2DepositBranch(
 type payerAssetView struct {
 	Payer string
 	Token string
+}
+
+func splitEip2612Signature(signature string) (uint8, [32]byte, [32]byte, bool) {
+	v, r, s, err := evm.SplitEip2612Signature(signature)
+	return v, r, s, err == nil
 }
 
 // bytes32Hex converts a [32]byte to a 0x-prefixed hex string suitable for

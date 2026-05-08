@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"github.com/x402-foundation/x402/go/mechanisms/evm"
-	"github.com/x402-foundation/x402/go/mechanisms/evm/batch-settlement"
+	batchsettlement "github.com/x402-foundation/x402/go/mechanisms/evm/batch-settlement"
 	"github.com/x402-foundation/x402/go/types"
 )
 
@@ -16,8 +16,6 @@ import (
 // `PermitWitnessTransferFrom` authorization. The witness binds the transfer to
 // the derived channelId so the Permit2DepositCollector can verify which
 // channel the funds belong to.
-//
-// Mirrors TS `createBatchSettlementPermit2DepositPayload`.
 func CreateBatchedPermit2DepositPayload(
 	ctx context.Context,
 	signer evm.ClientEvmSigner,

@@ -117,7 +117,6 @@ type Eip2612PermitInput struct {
 
 // BuildEip2612PermitData ABI-encodes (value, deadline, v, r, s) for the
 // optional EIP-2612 permit segment consumed by Permit2DepositCollector.
-// Mirrors TS `buildEip2612PermitData`.
 func BuildEip2612PermitData(input Eip2612PermitInput) ([]byte, error) {
 	value, ok := new(big.Int).SetString(input.Value, 10)
 	if !ok {
@@ -147,7 +146,7 @@ func BuildEip2612PermitData(input Eip2612PermitInput) ([]byte, error) {
 // eip2612PermitData) as the collectorData passed to deposit(..., collector,
 // collectorData) when using the Permit2 transfer method. Pass an empty
 // `eip2612PermitData` ([]byte{} or `0x`) when no EIP-2612 permit accompanies
-// the Permit2 authorization. Mirrors TS `buildPermit2CollectorData`.
+// the Permit2 authorization.
 func BuildPermit2CollectorData(nonce, deadline, permit2Signature string, eip2612PermitData []byte) ([]byte, error) {
 	n, ok := new(big.Int).SetString(nonce, 10)
 	if !ok {

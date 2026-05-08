@@ -140,11 +140,11 @@ func TestExportedErrorReasonsAreStable(t *testing.T) {
 // after this revision does identity passthrough on these tokens, so any drift
 // here surfaces as an undefined-enum error at the API boundary.
 //
-// `_invalid_*` suffixes coming from TS are preserved verbatim (the leading
-// `invalid_` envelope replaces the old `batch_settlement_evm_*` prefix and
-// does NOT swallow inner `_invalid_*` segments). Earlier revisions collapsed
-// these — that produced abbreviated wire strings (e.g.
-// `…permit2_spender`) that CDP had to denormalize, so we restored the full
+// `_invalid_*` suffixes are preserved verbatim (the leading `invalid_` envelope
+// replaces the old `batch_settlement_evm_*` prefix and does NOT swallow inner
+// `_invalid_*` segments). Earlier revisions collapsed these and produced
+// abbreviated wire strings (e.g. `...permit2_spender`) that CDP had to
+// denormalize, so we restored the full
 // form here so the SDK can identity-map onto CDP's OpenAPI enum names.
 func TestRequiredCdpFacilitatorContract(t *testing.T) {
 	required := map[string]string{

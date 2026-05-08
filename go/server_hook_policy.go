@@ -12,25 +12,22 @@ import (
 // Hook Mutation Policy Guards
 // ============================================================================
 //
-// Mirrors TS `typescript/packages/core/src/server/hookPolicy.ts`. These
-// helpers replace the compile-time `DeepReadonly` enforcement TS uses on hook
-// contexts: extensions and schemes are free to inspect everything but
-// allowed to mutate only specific fields. The framework snapshots the
-// affected structures before invoking a hook and asserts the diff afterwards.
+// These helpers enforce hook-context immutability at runtime: extensions and
+// schemes are free to inspect everything but allowed to mutate only specific
+// fields. The framework snapshots the affected structures before invoking a
+// hook and asserts the diff afterwards.
 //
 // Violations panic-via-error rather than silently corrupting downstream
 // state — catching policy bugs at the point of misuse.
 
 // IsVacantStringField reports whether a string field is treated as unset
-// and may be filled by `enrichPaymentRequiredResponse`. Mirrors TS
-// `isVacantStringField`.
+// and may be filled by `enrichPaymentRequiredResponse`.
 func IsVacantStringField(value string) bool {
 	return strings.TrimSpace(value) == ""
 }
 
 // SnapshotPaymentRequirementsList deep-clones `requirements` so the result
-// can serve as an immutable baseline for policy checks. Mirrors TS
-// `snapshotPaymentRequirementsList`.
+// can serve as an immutable baseline for policy checks.
 func SnapshotPaymentRequirementsList(requirements []types.PaymentRequirements) []types.PaymentRequirements {
 	if requirements == nil {
 		return nil
@@ -47,7 +44,7 @@ func SnapshotPaymentRequirementsList(requirements []types.PaymentRequirements) [
 // AssertAcceptsAllowlistedAfterExtensionEnrich enforces the extension-side
 // `enrichPaymentRequiredResponse` mutation policy: extensions may fill vacant
 // `payTo` / `amount` / `asset` and add new `extra` keys; everything else is
-// immutable. Mirrors TS `assertAcceptsAllowlistedAfterExtensionEnrich`.
+// immutable.
 func AssertAcceptsAllowlistedAfterExtensionEnrich(
 	baseline, current []types.PaymentRequirements,
 	extensionKey string,
@@ -95,7 +92,7 @@ func AssertAcceptsAllowlistedAfterExtensionEnrich(
 // `enrichPaymentRequiredResponse` policy: schemes may only ADD new `extra`
 // keys to the matching accept entry; payment terms (payTo / amount / asset /
 // maxTimeoutSeconds) and scheme/network are immutable; non-matching accepts
-// must be untouched. Mirrors TS `assertAcceptsAdditiveExtraAfterSchemeEnrich`.
+// must be untouched.
 func AssertAcceptsAdditiveExtraAfterSchemeEnrich(
 	baseline, current []types.PaymentRequirements,
 	scheme, network string,
@@ -131,7 +128,7 @@ func AssertAcceptsAdditiveExtraAfterSchemeEnrich(
 }
 
 // SettleResponseCoreSnapshot captures facilitator-settled fields that
-// extensions must not rewrite. Mirrors TS `SettleResponseCoreSnapshot`.
+// extensions must not rewrite.
 type SettleResponseCoreSnapshot struct {
 	Success      bool
 	Transaction  string
@@ -142,8 +139,7 @@ type SettleResponseCoreSnapshot struct {
 	ErrorMessage string
 }
 
-// SnapshotSettleResponseCore captures facilitator-settled fields. Mirrors
-// TS `snapshotSettleResponseCore`.
+// SnapshotSettleResponseCore captures facilitator-settled fields.
 func SnapshotSettleResponseCore(result *SettleResponse) SettleResponseCoreSnapshot {
 	if result == nil {
 		return SettleResponseCoreSnapshot{}
@@ -160,8 +156,7 @@ func SnapshotSettleResponseCore(result *SettleResponse) SettleResponseCoreSnapsh
 }
 
 // AssertSettleResponseCoreUnchanged enforces that an extension did not
-// rewrite facilitator outcome fields. Mirrors TS
-// `assertSettleResponseCoreUnchanged`.
+// rewrite facilitator outcome fields.
 func AssertSettleResponseCoreUnchanged(before SettleResponseCoreSnapshot, after *SettleResponse, extensionKey string) error {
 	if after == nil {
 		return fmt.Errorf(`[x402] extension %q violated settlement mutation policy: settle result became nil`, extensionKey)
@@ -192,7 +187,6 @@ func AssertSettleResponseCoreUnchanged(before SettleResponseCoreSnapshot, after 
 
 // AssertAdditivePayloadEnrichment ensures a scheme's
 // `EnrichSettlementPayload` only ADDS new keys to the existing payload.
-// Mirrors TS `assertAdditivePayloadEnrichment`.
 func AssertAdditivePayloadEnrichment(payload, enrichment map[string]interface{}, callerLabel string) error {
 	for key := range enrichment {
 		if _, exists := payload[key]; exists {
@@ -204,15 +198,13 @@ func AssertAdditivePayloadEnrichment(payload, enrichment map[string]interface{},
 
 // AssertAdditiveSettlementExtra ensures a scheme's
 // `EnrichSettlementResponse` only ADDS new fields to the response extra,
-// recursively for nested plain objects. Mirrors TS
-// `assertAdditiveSettlementExtra`.
+// recursively for nested plain objects.
 func AssertAdditiveSettlementExtra(extra, enrichment map[string]interface{}, callerLabel string) error {
 	return assertAdditiveRecord(extra, enrichment, callerLabel, "extra")
 }
 
 // MergeAdditiveSettlementExtra deep-merges `enrichment` into `extra` after
-// the additive policy has been validated. Mirrors TS
-// `mergeAdditiveSettlementExtra`.
+// the additive policy has been validated.
 func MergeAdditiveSettlementExtra(extra, enrichment map[string]interface{}) map[string]interface{} {
 	return mergeAdditiveRecord(extra, enrichment)
 }

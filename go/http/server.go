@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"html"
 	"log"
@@ -186,7 +187,7 @@ type HTTPProcessResult struct {
 	// `paymentRequiredResponse.extensions` flowing into both calls.
 	DeclaredExtensions map[string]interface{}
 	// SkipHandler is set when an AfterVerifyHook signals that the resource handler
-	// should be bypassed and settlement performed inline (e.g. cooperative refund).
+	// should be bypassed and settlement performed inline.
 	SkipHandler *x402.SkipHandlerDirective
 	// CancellationDispatcher fires onVerifiedPaymentCanceled hooks if the resource
 	// handler errors or returns a non-2xx status before settlement runs. Set when
@@ -615,14 +616,15 @@ func (s *x402HTTPResourceServer) ProcessHTTPRequest(ctx context.Context, reqCtx 
 
 	// Verify payment (type-safe). Pass `extensions` so per-extension hooks
 	// (registered via ResourceServerExtensionHookProvider) gate on declared
-	// extension keys — mirrors TS `verifyPayment(..., declaredExtensions)`.
+	// extension keys.
 	verifyResp, verifyErr := s.VerifyPaymentWithExtensions(ctx, *typedPayload, *matchingReqs, extensions)
 	if verifyErr != nil {
 		err = verifyErr
 		// Prefer InvalidReason (the protocol error code) over the free-form
 		// message so enrichers can match on a stable identifier.
 		errorMsg := err.Error()
-		if ve, ok := verifyErr.(*x402.VerifyError); ok && ve.InvalidReason != "" {
+		var ve *x402.VerifyError
+		if errors.As(verifyErr, &ve) && ve.InvalidReason != "" {
 			errorMsg = ve.InvalidReason
 		}
 
@@ -692,23 +694,15 @@ func MarshalSettlementOverrides(overrides *x402.SettlementOverrides) string {
 	return string(data)
 }
 
-// ProcessSettlement handles settlement after successful response with no
-// declared extensions. Equivalent to ProcessSettlementWithExtensions(...,
-// nil). Kept for transport adapters that don't yet thread extensions
-// through.
-func (s *x402HTTPResourceServer) ProcessSettlement(ctx context.Context, payload types.PaymentPayload, requirements types.PaymentRequirements, overrides *x402.SettlementOverrides, transportContext *HTTPTransportContext) *ProcessSettleResult {
-	return s.ProcessSettlementWithExtensions(ctx, payload, requirements, overrides, transportContext, nil)
-}
-
-// ProcessSettlementWithExtensions handles settlement after successful response.
+// ProcessSettlement handles settlement after successful response.
 // If overrides is non-nil, it takes precedence. Otherwise, falls back to reading
 // the settlement-overrides header from the transport context's ResponseHeaders
 // (set by the route handler via SetSettlementOverrides). The header is deleted
 // from ResponseHeaders to prevent it from being sent to the client.
 //
-// `declaredExtensions` is forwarded to SettlePaymentWithExtensions so per-
-// extension settle hooks fire only when their key is declared on the route.
-func (s *x402HTTPResourceServer) ProcessSettlementWithExtensions(
+// declaredExtensions is forwarded to SettlePaymentWithExtensions so per-extension
+// settle hooks fire only when their key is declared on the route.
+func (s *x402HTTPResourceServer) ProcessSettlement(
 	ctx context.Context,
 	payload types.PaymentPayload,
 	requirements types.PaymentRequirements,

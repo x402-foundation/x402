@@ -11,7 +11,7 @@ import (
 
 	x402 "github.com/x402-foundation/x402/go"
 	"github.com/x402-foundation/x402/go/mechanisms/evm"
-	"github.com/x402-foundation/x402/go/mechanisms/evm/batch-settlement"
+	batchsettlement "github.com/x402-foundation/x402/go/mechanisms/evm/batch-settlement"
 )
 
 const (
@@ -43,8 +43,7 @@ func goodErc3009Config() batchsettlement.ChannelConfig {
 }
 
 // goodErc3009Extra returns the resource-server-populated `requirements.extra`
-// shape the ERC-3009 verifier consumes (see TS server scheme.ts populating
-// `name` / `version` from cached asset metadata).
+// shape the ERC-3009 verifier consumes.
 func goodErc3009Extra() map[string]interface{} {
 	return map[string]interface{}{
 		"name":    "USD Coin",
@@ -139,12 +138,11 @@ func TestVerifyErc3009_ValidAfterInFuture(t *testing.T) {
 	}
 }
 
-// TestVerifyErc3009_MissingExtraName pins the structured-rejection branch
-// when the resource server forgot to populate `requirements.extra.name`. The
-// ERC-3009 deposit collector needs the token's EIP-712 domain to recompute
-// the digest, so the facilitator must surface ErrMissingEip712Domain (mirrors
-// TS Errors.ErrMissingEip712Domain in deposit-eip3009.ts) instead of a
-// generic invalid-payload reason.
+// TestVerifyErc3009_MissingExtraName pins the structured-rejection branch when
+// the resource server forgot to populate `requirements.extra.name`. The ERC-3009
+// deposit collector needs the token's EIP-712 domain to recompute the digest, so
+// the facilitator must surface ErrMissingEip712Domain instead of a generic
+// invalid-payload reason.
 func TestVerifyErc3009_MissingExtraName(t *testing.T) {
 	extra := goodErc3009Extra()
 	delete(extra, "name")
@@ -163,8 +161,7 @@ func TestVerifyErc3009_MissingExtraName(t *testing.T) {
 
 // TestVerifyErc3009_MissingExtraVersion mirrors the missing-name case for the
 // version field — both are required and the facilitator should not assume a
-// silent default like "1" (TS doesn't, and the assumption would mask
-// resource-server misconfiguration cross-SDK).
+// silent default like "1", which would mask resource-server misconfiguration.
 func TestVerifyErc3009_MissingExtraVersion(t *testing.T) {
 	extra := goodErc3009Extra()
 	delete(extra, "version")

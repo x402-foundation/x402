@@ -12,14 +12,14 @@ import (
 	x402 "github.com/x402-foundation/x402/go"
 	"github.com/x402-foundation/x402/go/extensions/erc20approvalgassponsor"
 	"github.com/x402-foundation/x402/go/mechanisms/evm"
-	"github.com/x402-foundation/x402/go/mechanisms/evm/batch-settlement"
+	batchsettlement "github.com/x402-foundation/x402/go/mechanisms/evm/batch-settlement"
 	"github.com/x402-foundation/x402/go/types"
 )
 
 // resolveDepositTransferMethod inspects the payload + requirements to pick the
 // deposit transport. Defaults to ERC-3009 to preserve historical behavior;
 // callers opt into Permit2 by setting `accepts.extra.assetTransferMethod`
-// (matches the TS facilitator's `resolveDepositTransferMethod`).
+// or by sending a Permit2 authorization.
 func resolveDepositTransferMethod(
 	payload *batchsettlement.BatchSettlementDepositPayload,
 	requirements types.PaymentRequirements,
@@ -43,9 +43,8 @@ func resolveDepositTransferMethod(
 //
 // `extensions` is the top-level `payment.extensions` envelope and `fctx` is the
 // facilitator's registered extension context. Together they enable the EIP-2612
-// and ERC-20 approval gas-sponsoring branches for Permit2 deposits (mirrors TS
-// `resolvePermit2DepositBranch`). Both may be nil for the standard Permit2
-// path or for ERC-3009 deposits.
+// and ERC-20 approval gas-sponsoring branches for Permit2 deposits. Both may
+// be nil for the standard Permit2 path or for ERC-3009 deposits.
 func VerifyDeposit(
 	ctx context.Context,
 	signer evm.FacilitatorEvmSigner,
@@ -198,9 +197,7 @@ func VerifyDeposit(
 	// ERC-20 approval branch: the user has not yet approved Permit2, so the
 	// standalone deposit() simulation would always revert with insufficient
 	// allowance. The execution path is multi-tx (approve+deposit handled by the
-	// extension signer in `SettleDeposit`); skip the eth_call here. TS does the
-	// same in `verifyDepositPermit2WithExtensions` when no
-	// `simulateTransactions` capability is present.
+	// extension signer in `SettleDeposit`); skip the eth_call here.
 	skipSimulation := permit2Branch != nil && permit2Branch.kind == permit2BranchErc20Approval
 	if !skipSimulation {
 		_, simErr := signer.ReadContract(
@@ -384,7 +381,7 @@ func SettleDeposit(
 	// Optimistic post-deposit extra (fallback if RPC hasn't caught up to
 	// the just-confirmed tx). The settle response intentionally omits
 	// `chargedCumulativeAmount` — that field is added by the resource
-	// server's `enrichSettlementResponse` hook (matching TS), and emitting
+	// server's `enrichSettlementResponse` hook, and emitting
 	// it from the facilitator violates the additive-enrichment policy.
 	priorState, _ := ReadChannelState(ctx, signer, payload.Voucher.ChannelId)
 	priorBalance := big.NewInt(0)
@@ -447,7 +444,7 @@ func SettleDeposit(
 // gas-sponsorship execution path (standard / EIP-2612 / ERC-20 approval) and
 // its pre-encoded `collectorData` (with EIP-2612 permit bytes appended where
 // applicable). When `branch` is nil for Permit2 (legacy callers), the standard
-// path is used. Mirrors the dispatch in TS `verifyDeposit` / `settleDeposit`.
+// path is used.
 func buildDepositCollectorCall(
 	payload *batchsettlement.BatchSettlementDepositPayload,
 	method batchsettlement.AssetTransferMethod,
@@ -486,16 +483,13 @@ func buildDepositCollectorCall(
 }
 
 // verifyErc3009DepositAuthorization validates the time window and EIP-712
-// `ReceiveWithAuthorization` signature for an ERC-3009 deposit. Mirrors TS
-// `verifyEip3009DepositAuthorization` in
-// typescript/packages/mechanisms/evm/src/batch-settlement/facilitator/deposit-eip3009.ts.
+// `ReceiveWithAuthorization` signature for an ERC-3009 deposit.
 //
 // The token's EIP-712 domain (`name` / `version`) is consumed from
-// `extra.name` / `extra.version` exactly as TS does. Resource servers populate
-// these from cached asset metadata when constructing payment requirements
-// (see `BatchSettlementEvmScheme.GetExtra` in the server package); a missing or
-// blank field is reported as `ErrMissingEip712Domain` so callers see the
-// same machine-readable cause TS would emit.
+// `extra.name` / `extra.version`. Resource servers populate these from cached
+// asset metadata when constructing payment requirements (see
+// `BatchSettlementEvmScheme.GetExtra` in the server package); a missing or
+// blank field is reported as `ErrMissingEip712Domain`.
 //
 // Returns ("invalidReason", nil) when the authorization is well-formed but
 // invalid, ("", err) when an RPC/parse error blocked verification entirely,
@@ -525,8 +519,7 @@ func verifyErc3009DepositAuthorization(
 	// Token EIP-712 domain — required to recompute the
 	// `ReceiveWithAuthorization` digest. Read from `requirements.extra`
 	// (populated by the resource server's GetExtra hook); missing fields are
-	// reported as a structured ErrMissingEip712Domain rejection so cross-SDK
-	// clients see the same reason TS would emit.
+	// reported as a structured ErrMissingEip712Domain rejection.
 	tokenName, _ := extra["name"].(string)
 	tokenVersion, _ := extra["version"].(string)
 	if tokenName == "" || tokenVersion == "" {
@@ -589,9 +582,8 @@ func verifyErc3009DepositAuthorization(
 //   - the EIP-712 signature recovers to channelConfig.payer
 //
 // Returns ("invalidReason", nil) on a well-formed but rejected authorization.
-// Mirrors TS Permit2 reason codes: token mismatch, spender mismatch, deadline
-// expired, amount mismatch, signature invalid each map to a dedicated error
-// string so cross-SDK clients see the same machine-readable failure cause.
+// Token mismatch, spender mismatch, deadline expiry, amount mismatch, and
+// signature failure each map to a dedicated machine-readable error string.
 func verifyPermit2DepositAuthorization(
 	ctx context.Context,
 	signer evm.FacilitatorEvmSigner,

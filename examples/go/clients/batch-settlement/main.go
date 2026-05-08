@@ -65,7 +65,7 @@ func main() {
 		Salt:              channelSalt,
 	}
 
-	// Optional dedicated voucher-signing key (matches TS EVM_VOUCHER_SIGNER_PRIVATE_KEY).
+	// Optional dedicated voucher-signing key.
 	if voucherKey := os.Getenv("EVM_VOUCHER_SIGNER_PRIVATE_KEY"); voucherKey != "" {
 		voucherSigner, err := evmsigners.NewClientSignerFromPrivateKey(voucherKey)
 		if err != nil {
@@ -171,7 +171,7 @@ func readJSON(resp *http.Response) (interface{}, error) {
 	return out, nil
 }
 
-func extractSettleResponse(resp *http.Response) (*map[string]interface{}, error) {
+func extractSettleResponse(resp *http.Response) (*x402.SettleResponse, error) {
 	header := resp.Header.Get("PAYMENT-RESPONSE")
 	if header == "" {
 		header = resp.Header.Get("X-PAYMENT-RESPONSE")
@@ -183,7 +183,7 @@ func extractSettleResponse(resp *http.Response) (*map[string]interface{}, error)
 	if err != nil {
 		return nil, err
 	}
-	var out map[string]interface{}
+	var out x402.SettleResponse
 	if err := json.Unmarshal(decoded, &out); err != nil {
 		return nil, err
 	}

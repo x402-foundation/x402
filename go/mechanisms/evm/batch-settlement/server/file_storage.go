@@ -9,7 +9,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/x402-foundation/x402/go/mechanisms/evm/batch-settlement"
+	batchsettlement "github.com/x402-foundation/x402/go/mechanisms/evm/batch-settlement"
 )
 
 // FileChannelStorage is a file-backed SessionStorage. Each session is stored
@@ -87,8 +87,8 @@ func (s *FileChannelStorage) List() ([]*ChannelSession, error) {
 }
 
 // CompareAndSet uses an exclusive lock file to serialise concurrent writers.
-// The mkdir call mirrors the TS fix in 5a007ae70 — without it, the very first
-// CompareAndSet on a fresh directory fails with ENOENT on the lock file.
+// The mkdir call ensures the very first CompareAndSet on a fresh directory
+// does not fail with ENOENT on the lock file.
 func (s *FileChannelStorage) CompareAndSet(channelId string, expectedCharged string, session *ChannelSession) (bool, error) {
 	path := s.filePath(channelId)
 	lockPath := path + ".lock"

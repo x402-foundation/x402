@@ -467,7 +467,7 @@ func TestProcessSettlement(t *testing.T) {
 	}
 
 	// Test settlement processing
-	result := server.ProcessSettlement(ctx, payload, requirements, nil, nil)
+	result := server.ProcessSettlement(ctx, payload, requirements, nil, nil, nil)
 	if !result.Success {
 		t.Fatalf("Unexpected failure: %v", result.ErrorReason)
 	}
@@ -513,7 +513,7 @@ func TestProcessSettlement_Failure(t *testing.T) {
 		Payload:     map[string]interface{}{},
 	}
 
-	result := server.ProcessSettlement(ctx, payload, requirements, nil, nil)
+	result := server.ProcessSettlement(ctx, payload, requirements, nil, nil, nil)
 	if result.Success {
 		t.Fatal("Expected settlement failure")
 	}
@@ -571,7 +571,7 @@ func TestProcessSettlement_OverridesFromTransportContext(t *testing.T) {
 			ResponseHeaders: h,
 		}
 
-		result := server.ProcessSettlement(ctx, payload, requirements, nil, tc)
+		result := server.ProcessSettlement(ctx, payload, requirements, nil, tc, nil)
 		if !result.Success {
 			t.Fatalf("unexpected failure: %v", result.ErrorReason)
 		}
@@ -594,7 +594,7 @@ func TestProcessSettlement_OverridesFromTransportContext(t *testing.T) {
 		}
 		explicit := &x402.SettlementOverrides{Amount: "200"}
 
-		result := server.ProcessSettlement(ctx, payload, requirements, explicit, tc)
+		result := server.ProcessSettlement(ctx, payload, requirements, explicit, tc, nil)
 		if !result.Success {
 			t.Fatalf("unexpected failure: %v", result.ErrorReason)
 		}
@@ -616,7 +616,7 @@ func TestProcessSettlement_OverridesFromTransportContext(t *testing.T) {
 			ResponseHeaders: h,
 		}
 
-		result := server.ProcessSettlement(ctx, payload, requirements, nil, tc)
+		result := server.ProcessSettlement(ctx, payload, requirements, nil, tc, nil)
 		if !result.Success {
 			t.Fatalf("unexpected failure: %v", result.ErrorReason)
 		}
@@ -638,7 +638,7 @@ func TestProcessSettlement_OverridesFromTransportContext(t *testing.T) {
 			ResponseHeaders: h,
 		}
 
-		server.ProcessSettlement(ctx, payload, requirements, nil, tc)
+		server.ProcessSettlement(ctx, payload, requirements, nil, tc, nil)
 
 		if tc.ResponseHeaders.Get(SettlementOverridesHeader) != "" {
 			t.Error("expected settlement-overrides header to be deleted from transport context")
@@ -649,7 +649,7 @@ func TestProcessSettlement_OverridesFromTransportContext(t *testing.T) {
 	})
 
 	t.Run("nil transport context is safe", func(t *testing.T) {
-		result := server.ProcessSettlement(ctx, payload, requirements, nil, nil)
+		result := server.ProcessSettlement(ctx, payload, requirements, nil, nil, nil)
 		if !result.Success {
 			t.Fatalf("unexpected failure: %v", result.ErrorReason)
 		}
@@ -660,7 +660,7 @@ func TestProcessSettlement_OverridesFromTransportContext(t *testing.T) {
 			Request:         &HTTPRequestContext{Path: "/test", Method: "GET"},
 			ResponseHeaders: nil,
 		}
-		result := server.ProcessSettlement(ctx, payload, requirements, nil, tc)
+		result := server.ProcessSettlement(ctx, payload, requirements, nil, tc, nil)
 		if !result.Success {
 			t.Fatalf("unexpected failure: %v", result.ErrorReason)
 		}
@@ -674,7 +674,7 @@ func TestProcessSettlement_OverridesFromTransportContext(t *testing.T) {
 			ResponseHeaders: h,
 		}
 
-		result := server.ProcessSettlement(ctx, payload, requirements, nil, tc)
+		result := server.ProcessSettlement(ctx, payload, requirements, nil, tc, nil)
 		if !result.Success {
 			t.Fatalf("unexpected failure: %v", result.ErrorReason)
 		}
@@ -697,7 +697,7 @@ func TestProcessSettlement_OverridesFromTransportContext(t *testing.T) {
 			ResponseHeaders: h,
 		}
 
-		result := server.ProcessSettlement(ctx, payload, requirements, nil, tc)
+		result := server.ProcessSettlement(ctx, payload, requirements, nil, tc, nil)
 		if !result.Success {
 			t.Fatalf("unexpected failure: %v", result.ErrorReason)
 		}

@@ -21,7 +21,6 @@ import (
 	batchedserver "github.com/x402-foundation/x402/go/mechanisms/evm/batch-settlement/server"
 )
 
-// Mirrors examples/typescript/servers/batch-settlement/index.ts.
 const (
 	defaultPort = "4021"
 	network     = x402.Network("eip155:84532")
@@ -43,7 +42,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	// TS code default: 86400 (1 day). Falls back to that when env unset.
+	// Default channel withdraw delay is 1 day when the env var is unset.
 	withdrawDelay := 86400
 	if v := os.Getenv("DEFERRED_WITHDRAW_DELAY_SECONDS"); v != "" {
 		if n, err := strconv.Atoi(v); err == nil {
@@ -83,7 +82,7 @@ func main() {
 		SettleIntervalSecs: 120,
 		RefundIntervalSecs: 180,
 		MaxClaimsPerBatch:  100,
-		// Refund channels after 3 minutes of inactivity (mirrors TS demo).
+		// Refund channels after 3 minutes of inactivity.
 		SelectRefundChannels: func(channels []*batchedserver.ChannelSession, ctx batchedserver.AutoSettlementContext) ([]*batchedserver.ChannelSession, error) {
 			out := make([]*batchedserver.ChannelSession, 0, len(channels))
 			for _, c := range channels {
@@ -114,7 +113,7 @@ func main() {
 		},
 	})
 
-	// SIGINT-only graceful shutdown (no SIGTERM), mirroring TS.
+	// Flush pending channel work during interactive shutdown.
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT)
 
@@ -135,8 +134,7 @@ func main() {
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /weather", func(w http.ResponseWriter, r *http.Request) {
-		// Bill a random fraction of maxPrice (1–100%) to demonstrate
-		// usage-based pricing. Mirrors TS demo verbatim.
+		// Bill a random fraction of maxPrice (1-100%) to demonstrate usage-based pricing.
 		chargedPercent := 1 + rand.Intn(100)
 		nethttpmw.SetSettlementOverrides(w, &x402.SettlementOverrides{
 			Amount: fmt.Sprintf("%d%%", chargedPercent),

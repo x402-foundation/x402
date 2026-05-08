@@ -2,7 +2,6 @@ package server
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"math/big"
@@ -12,12 +11,12 @@ import (
 
 	x402 "github.com/x402-foundation/x402/go"
 	"github.com/x402-foundation/x402/go/mechanisms/evm"
-	"github.com/x402-foundation/x402/go/mechanisms/evm/batch-settlement"
+	batchsettlement "github.com/x402-foundation/x402/go/mechanisms/evm/batch-settlement"
 	"github.com/x402-foundation/x402/go/types"
 )
 
-// BatchSettlementRequestContext carries per-request state across the verify→settle
-// lifecycle for a single payment. Mirrors TS `BatchSettlementRequestContext`.
+// BatchSettlementRequestContext carries per-request state across the verify->settle
+// lifecycle for a single payment.
 type BatchSettlementRequestContext struct {
 	ChannelId       string
 	PendingId       string
@@ -65,59 +64,69 @@ type BatchSettlementEvmScheme struct {
 	onchainStateTtlMs        int64
 	moneyParsers             []x402.MoneyParser
 
-	// requestContexts maps a per-request key to its state (channel id, pending
-	// reservation id, snapshot). Mirrors the TS WeakMap<PaymentPayload, ...>
-	// used to thread reservation id from BeforeVerify through AfterVerify and
-	// BeforeSettle.
-	//
-	// Go's sync.Map can't key on types.PaymentPayload directly because the
-	// struct contains a `map[string]interface{}` (unhashable). Instead we key
-	// on a stable string identity derived from the payload — the
-	// JSON-serialized PayloadBytes when available, or a fingerprint computed
-	// from interface methods otherwise. The same payload produces the same
-	// key across verify → settle phases.
-	//
-	// Lifecycle: entries are cleared on the normal happy path via
-	// TakeRequestContext / TakeChannelSnapshot in BeforeSettleHook,
-	// EnrichPaymentRequiredResponse, and ClearPendingRequest (failure paths).
-	// Unlike a JS WeakMap, Go has no GC notification, so a payload verified
-	// successfully but never reaching Settle (and never firing the cancellation
-	// hook) would leak an entry. Resource server lifecycles always fire one of
-	// those terminal hooks today.
+	// requestContexts maps a per-payment key to state carried across verify and
+	// settle hooks.
 	requestContextsMu sync.Mutex
 	requestContexts   map[string]*BatchSettlementRequestContext
 }
 
-// requestContextKey returns a stable identity for the given payload, used as
-// the map key for per-request state. Prefers an explicit fingerprint string
-// when the caller wraps the payload in a (key, view) pair (test usage), then
-// the payload's JSON-marshal output, and finally interface fields.
+// requestContextKey returns a payment identity that stays stable when server
+// enrichment adds settlement-only fields to the payload.
 func requestContextKey(payload any) string {
 	if payload == nil {
 		return ""
 	}
-	if k, ok := payload.(interface{ RequestKey() string }); ok {
-		if rk := k.RequestKey(); rk != "" {
-			return rk
-		}
-	}
-	if v, ok := payload.(types.PaymentPayload); ok {
-		if data, err := json.Marshal(v); err == nil {
-			return string(data)
-		}
-	}
-	if v, ok := payload.(*types.PaymentPayload); ok && v != nil {
-		if data, err := json.Marshal(*v); err == nil {
-			return string(data)
-		}
-	}
 	if view, ok := payload.(x402.PaymentPayloadView); ok {
-		// Fallback for arbitrary view implementations (e.g. test stubs that
-		// embed a non-marshalable payload). Use pointer identity if available.
-		return fmt.Sprintf("%p|%d|%s|%s",
-			view, view.GetVersion(), view.GetScheme(), view.GetNetwork())
+		payloadMap := view.GetPayload()
+		payloadType, _ := payloadMap["type"].(string)
+		voucher, _ := payloadMap["voucher"].(map[string]interface{})
+		channelId, _ := voucher["channelId"].(string)
+		maxClaimable, _ := voucher["maxClaimableAmount"].(string)
+		signature, _ := voucher["signature"].(string)
+		return strings.Join([]string{
+			strconv.Itoa(view.GetVersion()),
+			view.GetScheme(),
+			view.GetNetwork(),
+			payloadType,
+			batchsettlement.NormalizeChannelId(channelId),
+			maxClaimable,
+			signature,
+			channelConfigKey(payloadMap["channelConfig"]),
+		}, "\x00")
 	}
 	return fmt.Sprintf("%p", payload)
+}
+
+func channelConfigKey(raw any) string {
+	switch cfg := raw.(type) {
+	case batchsettlement.ChannelConfig:
+		return formatChannelConfigKey(cfg)
+	case *batchsettlement.ChannelConfig:
+		if cfg == nil {
+			return ""
+		}
+		return formatChannelConfigKey(*cfg)
+	case map[string]interface{}:
+		parsed, err := batchsettlement.ChannelConfigFromMap(cfg)
+		if err != nil {
+			return ""
+		}
+		return formatChannelConfigKey(parsed)
+	default:
+		return ""
+	}
+}
+
+func formatChannelConfigKey(cfg batchsettlement.ChannelConfig) string {
+	return strings.Join([]string{
+		strings.ToLower(cfg.Payer),
+		strings.ToLower(cfg.PayerAuthorizer),
+		strings.ToLower(cfg.Receiver),
+		strings.ToLower(cfg.ReceiverAuthorizer),
+		strings.ToLower(cfg.Token),
+		strconv.Itoa(cfg.WithdrawDelay),
+		cfg.Salt,
+	}, "\x00")
 }
 
 // NewBatchSettlementEvmScheme creates a new batched server scheme.
@@ -162,7 +171,7 @@ func (s *BatchSettlementEvmScheme) GetOnchainStateTtlMs() int64 {
 }
 
 // defaultOnchainStateTtlMs derives a reasonable TTL from the channel withdraw
-// delay: WithdrawDelay/3, clamped to [30s, 5min]. Mirrors TS.
+// delay: WithdrawDelay/3, clamped to [30s, 5min].
 func defaultOnchainStateTtlMs(withdrawDelaySeconds int) int64 {
 	if withdrawDelaySeconds < 0 {
 		withdrawDelaySeconds = 0
@@ -181,7 +190,7 @@ func defaultOnchainStateTtlMs(withdrawDelaySeconds int) int64 {
 }
 
 // MergeRequestContext merges fields into the per-payload request context,
-// creating one if none exists. Mirrors TS `mergeRequestContext`.
+// creating one if none exists.
 func (s *BatchSettlementEvmScheme) MergeRequestContext(payload any, partial BatchSettlementRequestContext) {
 	key := requestContextKey(payload)
 	if key == "" {
@@ -256,7 +265,7 @@ func (s *BatchSettlementEvmScheme) TakeChannelSnapshot(payload any) *ChannelSess
 // ClearPendingRequest clears this request's pending reservation in storage,
 // without affecting any newer reservation that may have replaced it. If the
 // stored channel only existed for this reservation (no snapshot), the channel
-// record is deleted entirely. Mirrors TS `clearPendingRequest`.
+// record is deleted entirely.
 func (s *BatchSettlementEvmScheme) ClearPendingRequest(payload any) error {
 	rc := s.TakeRequestContext(payload)
 	if rc == nil || rc.ChannelId == "" || rc.PendingId == "" {
@@ -341,7 +350,7 @@ func (s *BatchSettlementEvmScheme) EnrichPaymentRequiredResponse(ctx x402.Paymen
 
 // OnVerifiedPaymentCanceledHook returns a hook that releases this request's
 // pending reservation when the resource handler errors or returns a non-2xx
-// response. Mirrors TS `handleVerifiedPaymentCanceled`.
+// response.
 func (s *BatchSettlementEvmScheme) OnVerifiedPaymentCanceledHook() x402.OnVerifiedPaymentCanceledHook {
 	return func(ctx x402.VerifiedPaymentCanceledContext) error {
 		if ctx.Reason != x402.CancellationReasonHandlerThrew &&
@@ -497,14 +506,10 @@ func (s *BatchSettlementEvmScheme) EnhancePaymentRequirements(
 		requirements.Extra = make(map[string]interface{})
 	}
 
-	// Token EIP-712 domain (`name` / `version`). Always populated when the
-	// asset metadata provides them — both the ERC-3009 deposit collector and
-	// the gas-sponsored EIP-2612 permit segment recompute the token's EIP-712
-	// digest off-chain, so the facilitator needs these even when the
-	// configured AssetTransferMethod is "eip3009" (the previous restrictive
-	// conditional only included them for the legacy default and the
-	// SupportsEip2612 path, leaving ERC-3009-only assets without a domain).
-	// Mirrors TS server `BatchSettlementEvmScheme.computeRequirementsExtra`.
+	// Token EIP-712 domain (`name` / `version`). Always populated when the asset
+	// metadata provides them because the ERC-3009 deposit collector and the
+	// gas-sponsored EIP-2612 permit segment recompute the token's EIP-712 digest
+	// off-chain.
 	if _, ok := requirements.Extra["name"]; !ok {
 		requirements.Extra["name"] = assetInfo.Name
 	}
@@ -512,15 +517,14 @@ func (s *BatchSettlementEvmScheme) EnhancePaymentRequirements(
 		requirements.Extra["version"] = assetInfo.Version
 	}
 
-	// Add batched-specific fields. Resolution order (mirrors TS scheme):
+	// Add batched-specific fields. Receiver authorizer resolution order:
 	//   1. Pre-existing requirements.Extra["receiverAuthorizer"] (caller override).
 	//   2. Locally-configured ReceiverAuthorizerSigner address.
 	//   3. Facilitator-advertised authorizer from supportedKind.Extra (delegated mode).
 	//
 	// Hard-fails if all three sources are empty/zero — clients would otherwise
 	// derive the wrong channelId, and the onchain deposit transaction would
-	// revert at the contract boundary. Mirrors TS `enhancePaymentRequirements`
-	// which throws when no non-zero authorizer is available.
+	// revert at the contract boundary.
 	if existing, ok := requirements.Extra["receiverAuthorizer"].(string); !ok || existing == "" || strings.EqualFold(existing, zeroAddress) {
 		receiverAuth := s.GetReceiverAuthorizerAddress()
 		if (receiverAuth == "" || strings.EqualFold(receiverAuth, zeroAddress)) && supportedKind.Extra != nil {
@@ -654,8 +658,7 @@ func (s *BatchSettlementEvmScheme) SignClaimBatch(ctx context.Context, claims []
 // rooted at this scheme's receiver and the network's default settlement asset.
 //
 // Pass a custom token via NewBatchSettlementChannelManager directly when you need a
-// non-default settlement asset for this manager (mirrors TS
-// `BatchSettlementEvmScheme.createChannelManager`).
+// non-default settlement asset for this manager.
 func (s *BatchSettlementEvmScheme) CreateChannelManager(facilitator x402.FacilitatorClient, network x402.Network) *BatchSettlementChannelManager {
 	token := ""
 	if cfg, err := evm.GetNetworkConfig(string(network)); err == nil {

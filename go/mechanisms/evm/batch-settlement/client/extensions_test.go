@@ -12,10 +12,10 @@ import (
 )
 
 const (
-	extTestNetwork  = "eip155:8453"
-	extTestAsset    = "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913" // USDC Base
-	extTestPayTo    = "0x3333333333333333333333333333333333333333"
-	extTestSigner   = "0x4444444444444444444444444444444444444444"
+	extTestNetwork = "eip155:8453"
+	extTestAsset   = "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913" // USDC Base
+	extTestPayTo   = "0x3333333333333333333333333333333333333333"
+	extTestSigner  = "0x4444444444444444444444444444444444444444"
 )
 
 // extReadSigner combines mockSigner with read-contract + tx-signing capabilities
@@ -24,17 +24,17 @@ const (
 // type assertions.
 type extReadSigner struct {
 	*mockSigner
-	allowance     *big.Int
-	allowanceErr  error
-	noncesResult  *big.Int
-	noncesErr     error
-	signTxResult  []byte
-	signTxErr     error
-	feesPriority  *big.Int
-	feesMax       *big.Int
-	feesErr       error
-	txCount       uint64
-	txCountErr    error
+	allowance    *big.Int
+	allowanceErr error
+	noncesResult *big.Int
+	noncesErr    error
+	signTxResult []byte
+	signTxErr    error
+	feesPriority *big.Int
+	feesMax      *big.Int
+	feesErr      error
+	txCount      uint64
+	txCountErr   error
 }
 
 // ReadContract dispatches based on the function name so we can stub both the
@@ -55,12 +55,6 @@ func (r *extReadSigner) ReadContract(_ context.Context, _ string, _ []byte, func
 	}
 	return nil, nil
 }
-
-// signTx-related stubs so the signer satisfies ClientEvmSignerWithTxSigning.
-// The ERC-20 approval branch wires through `exactclient.SignErc20ApprovalTransaction`,
-// which in turn calls these methods to assemble the signed approve tx.
-
-type stubTx struct{}
 
 // SignTransaction satisfies ClientEvmSignerWithSignTransaction. The exact
 // content doesn't matter — we only assert that the extension info ends up
@@ -114,7 +108,7 @@ func eip2612OnlyDeclared() map[string]interface{} {
 
 func bothExtensionsDeclared() map[string]interface{} {
 	return map[string]interface{}{
-		eip2612gassponsor.EIP2612GasSponsoring.Key():            map[string]interface{}{},
+		eip2612gassponsor.EIP2612GasSponsoring.Key():             map[string]interface{}{},
 		erc20approvalgassponsor.ERC20ApprovalGasSponsoring.Key(): map[string]interface{}{},
 	}
 }
@@ -144,7 +138,7 @@ func TestCreatePaymentPayloadWithExtensions_NoExtensionsDeclared(t *testing.T) {
 
 // TestCreatePaymentPayloadWithExtensions_AllowanceShortCircuit confirms the
 // EIP-2612 path is skipped when the user has already approved Permit2 for at
-// least the deposit amount. Mirrors TS `signEip2612Permit` allowance check.
+// least the deposit amount.
 func TestCreatePaymentPayloadWithExtensions_AllowanceShortCircuit(t *testing.T) {
 	// Deposit defaults to amount * DefaultDepositMultiplier (5) = 500.
 	// Allowance of 1e18 is way more than enough → no permit signed.
@@ -213,8 +207,8 @@ func TestCreatePaymentPayloadWithExtensions_Eip2612SignedWhenAllowanceZero(t *te
 }
 
 // TestCreatePaymentPayloadWithExtensions_Eip2612TakesPriorityOverErc20 pins
-// the TS priority: when both extensions are advertised, EIP-2612 is tried
-// first; if it succeeds, the ERC-20 approval branch is NOT exercised.
+// priority: when both extensions are advertised, EIP-2612 is tried first; if it
+// succeeds, the ERC-20 approval branch is NOT exercised.
 func TestCreatePaymentPayloadWithExtensions_Eip2612TakesPriorityOverErc20(t *testing.T) {
 	signer := &extReadSigner{
 		mockSigner:   &mockSigner{address: extTestSigner, sig: make([]byte, 65)},
@@ -240,10 +234,10 @@ func TestCreatePaymentPayloadWithExtensions_Eip2612TakesPriorityOverErc20(t *tes
 }
 
 // TestCreatePaymentPayloadWithExtensions_Eip2612SkippedWithoutNameVersion
-// matches TS: without name/version on requirements.Extra, the token's
-// EIP-712 domain is unknown and the client silently skips signing instead of
-// erroring. The downstream request will then 402 with permit2_allowance_required
-// (the standard Permit2 path's diagnosis).
+// confirms that without name/version on requirements.Extra, the token's EIP-712
+// domain is unknown and the client silently skips signing instead of erroring.
+// The downstream request will then 402 with permit2_allowance_required (the
+// standard Permit2 path's diagnosis).
 func TestCreatePaymentPayloadWithExtensions_Eip2612SkippedWithoutNameVersion(t *testing.T) {
 	signer := &extReadSigner{
 		mockSigner: &mockSigner{address: extTestSigner, sig: []byte{0xab}},
