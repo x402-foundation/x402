@@ -1,0 +1,7 @@
+{
+  "name": "Contract Risk Checker",
+  "description": "AI-powered contract analysis API for autonomous agents. Detects killer clauses, calculates risk score (0-100) with RED/YELLOW/GREEN verdict, generates negotiation scripts and exact fix suggestions. Supports PDF, DOCX, TXT up to 600 pages. Pay $10 USDC per analysis on Base or Solana — no subscription, no account required. Built for AI agents and legal automation.",
+  "logoUrl": "/logos/contract-risk-checker.svg",
+  "websiteUrl": "https://contract-checker-572078894996.us-central1.run.app",
+  "category": "Services/Endpoints"
+}

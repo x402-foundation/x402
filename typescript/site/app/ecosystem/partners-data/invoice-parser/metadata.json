@@ -1,0 +1,7 @@
+{
+  "name": "Invoice Parser",
+  "description": "Structured invoice data extraction API for autonomous agents. Extracts vendor, total, line items, dates, tax, and payment details from PDF and image invoices. Returns clean JSON ready for accounting systems. Pay $0.10 USDC per parse on Base — no subscription, no account required. Ideal for finance automation agents and accounts payable workflows.",
+  "logoUrl": "/logos/invoice-parser.svg",
+  "websiteUrl": "https://invoice-parser-572078894996.us-central1.run.app",
+  "category": "Services/Endpoints"
+}
