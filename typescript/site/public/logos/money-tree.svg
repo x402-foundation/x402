@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64">
+  <title>Money Tree</title>
+  <circle cx="32" cy="22" r="18" fill="#2f9e4f"/>
+  <circle cx="20" cy="18" r="9" fill="#37b35a"/>
+  <circle cx="44" cy="18" r="9" fill="#37b35a"/>
+  <circle cx="32" cy="12" r="8" fill="#3fc466"/>
+  <rect x="29" y="36" width="6" height="20" rx="1" fill="#7a4a1f"/>
+  <text x="32" y="29" text-anchor="middle" font-family="Helvetica, Arial, sans-serif" font-size="18" font-weight="700" fill="#ffd84d">$</text>
+</svg>

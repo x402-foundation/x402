@@ -1,0 +1,7 @@
+{
+  "name": "FPDS MCP",
+  "description": "Decades of US federal contract history (FPDS-NG) over x402. Search by agency, contractor, or NAICS code.",
+  "logoUrl": "/logos/money-tree.svg",
+  "websiteUrl": "https://fpds-mcp.mtree.workers.dev",
+  "category": "Services/Endpoints"
+}

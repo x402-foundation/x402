@@ -1,0 +1,7 @@
+{
+  "name": "EDGAR MCP",
+  "description": "SEC EDGAR full-text filings since 1993 over x402. Search filings, fetch by CIK, retrieve full text.",
+  "logoUrl": "/logos/money-tree.svg",
+  "websiteUrl": "https://edgar-mcp.mtree.workers.dev",
+  "category": "Services/Endpoints"
+}

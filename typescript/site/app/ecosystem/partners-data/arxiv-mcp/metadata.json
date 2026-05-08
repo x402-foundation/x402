@@ -1,0 +1,7 @@
+{
+  "name": "arXiv MCP",
+  "description": "Every arXiv STEM preprint over x402 — search and fetch by paper ID. First knowledge-base x402 MCP.",
+  "logoUrl": "/logos/money-tree.svg",
+  "websiteUrl": "https://arxiv-mcp.mtree.workers.dev",
+  "category": "Services/Endpoints"
+}

@@ -1,0 +1,7 @@
+{
+  "name": "Procure MCP",
+  "description": "US federal procurement data over x402 — SAM.gov opportunities and USASpending awards. No buyer-side keys.",
+  "logoUrl": "/logos/money-tree.svg",
+  "websiteUrl": "https://procure-mcp.mtree.workers.dev",
+  "category": "Services/Endpoints"
+}

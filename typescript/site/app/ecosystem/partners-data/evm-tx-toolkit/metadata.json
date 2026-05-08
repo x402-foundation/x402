@@ -1,0 +1,7 @@
+{
+  "name": "EVM Tx Toolkit",
+  "description": "Decode, simulate, and risk-scan EVM transactions across Base, Ethereum, Arbitrum, Optimism, and Polygon. Pay-per-call USDC on Base.",
+  "logoUrl": "/logos/money-tree.svg",
+  "websiteUrl": "https://evm-tx-toolkit.mtree.workers.dev",
+  "category": "Services/Endpoints"
+}
