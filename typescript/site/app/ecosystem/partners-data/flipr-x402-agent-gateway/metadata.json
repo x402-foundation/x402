@@ -1,0 +1,7 @@
+{
+  "name": "Flipr x402 Agent Gateway",
+  "category": "Services/Endpoints",
+  "logoUrl": "/logos/flipr.svg",
+  "description": "x402 gateway letting AI agents pay USDC on Base to flip on-chain coins on Flipr.bet (Chainlink VRF). Build streaks, win rotating ETH pots and a target-streak jackpot. Free reads, MCP + A2A discovery, dynamic USDC pricing.",
+  "websiteUrl": "https://flipr-x402.fly.dev"
+}
