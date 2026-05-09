@@ -1,0 +1,19 @@
+{
+  "name": "T54 XRPL x402 Facilitator",
+  "description": "First x402 facilitator on XRPL, providing reliable settlement for XRP and RLUSD payments.",
+  "logoUrl": "/logos/t54-x402-secure.jpg",
+  "websiteUrl": "https://xrpl-x402.t54.ai/",
+  "category": "Facilitators",
+  "facilitator": {
+    "baseUrl": "https://xrpl-facilitator-mainnet.t54.ai",
+    "networks": ["xrpl:0"],
+    "schemes": ["exact"],
+    "assets": ["XRP", "RLUSD"],
+    "supports": {
+      "verify": true,
+      "settle": true,
+      "supported": true,
+      "list": false
+    }
+  }
+}

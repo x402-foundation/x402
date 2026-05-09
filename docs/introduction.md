@@ -9,22 +9,22 @@ x402 is the open payment standard that enables services to charge for access to 
 
 With x402, any web service can require payment before serving a response, using crypto-native payments for speed, privacy, and efficiency.
 
-**Want to contribute to our docs?** [The GitBook repo is open to PRs! ](https://github.com/coinbase/x402) Our only ask is that you keep these docs as a neutral resource, with no branded content other than linking out to other resources where appropriate.
+**Want to contribute to our docs?** [The GitBook repo is open to PRs! ](https://github.com/x402-foundation/x402) Our only ask is that you keep these docs as a neutral resource, with no branded content other than linking out to other resources where appropriate.
 
 **Note about the docs:** These docs are the credibly neutral source of truth for x402, as x402 is a completely open standard under the Apache-2.0 license. Coinbase Developer Platform is currently sponsoring [AI-powered docs for users here](https://docs.cdp.coinbase.com/x402/welcome), as we migrate to our own AI-powered solution on the main x402.org domain.
 
 ### Why Use x402?
 
-x402 offers key advantages over traditional payment systems:
+x402 offers:
 
-* **Low fees and minimal friction** compared to traditional credit cards and fiat payment processors
-* **Native support for machine-to-machine payments**, enabling seamless use by AI agents
-* **Built-in micropayment support**, making it easy to monetize usage-based services
+- **No fees and minimal friction** x402 as a standard has 0 fees built in.
+- **Native support for machine-to-machine payments**, enabling seamless use by AI agents
+- **Built-in micropayment support**, making it easy to monetize usage-based services
 
 ### Who is x402 for?
 
-* **Sellers:** Service providers who want to monetize their APIs or content. x402 enables direct, programmatic payments from clients with minimal setup.
-* **Buyers:** Human developers and AI agents seeking to access paid services without accounts or manual payment flows.
+- **Sellers:** Service providers who want to monetize their APIs or content. x402 enables direct, programmatic payments from clients with minimal setup.
+- **Buyers:** Human developers and AI agents seeking to access paid services without accounts or manual payment flows.
 
 Both sellers and buyers interact directly through HTTP requests, with payment handled transparently through the protocol.
 
@@ -32,11 +32,11 @@ Both sellers and buyers interact directly through HTTP requests, with payment ha
 
 x402 enables a range of use cases, including:
 
-* API services paid per request
-* AI agents that autonomously pay for API access
-* [Paywalls](https://x.com/MurrLincoln/status/1935406976881803601) for digital content
-* Microservices and tooling monetized via microtransactions
-* Proxy services that aggregate and resell API capabilities
+- API services paid per request
+- AI agents that autonomously pay for API access
+- [Paywalls](https://x.com/MurrLincoln/status/1935406976881803601) for digital content
+- Microservices and tooling monetized via microtransactions
+- Proxy services that aggregate and resell API capabilities
 
 ### How Does It Work?
 
@@ -50,9 +50,9 @@ At a high level, the flow is simple:
 
 For more detail, see:
 
-* [Client / Server](/core-concepts/client-server)
-* [Facilitator](/core-concepts/facilitator)
-* [HTTP 402](/core-concepts/http-402)
+- [Client / Server](/core-concepts/client-server)
+- [Facilitator](/core-concepts/facilitator)
+- [HTTP 402](/core-concepts/http-402)
 
 The goal is to make programmatic commerce accessible, permissionless, and developer-friendly.
 
@@ -60,7 +60,7 @@ The goal is to make programmatic commerce accessible, permissionless, and develo
 
 Ready to build? Start here:
 
-* [Quickstart for Sellers](/getting-started/quickstart-for-sellers)
-* [Quickstart for Buyers](/getting-started/quickstart-for-buyers)
-* [Explore Core Concepts](/core-concepts/http-402)
-* [Join our community on Discord](https://discord.gg/invite/cdp)
+- [Quickstart for Sellers](/getting-started/quickstart-for-sellers)
+- [Quickstart for Buyers](/getting-started/quickstart-for-buyers)
+- [Explore Core Concepts](/core-concepts/http-402)
+- [Join our community on Discord](https://discord.gg/invite/cdp)

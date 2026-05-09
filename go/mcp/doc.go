@@ -8,7 +8,7 @@
 //
 //	import (
 //	    "context"
-//	    "github.com/coinbase/x402/go/mcp"
+//	    "github.com/x402-foundation/x402/go/mcp"
 //	    mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
 //	)
 //
@@ -30,8 +30,8 @@
 //
 //	import (
 //	    "context"
-//	    x402 "github.com/coinbase/x402/go"
-//	    "github.com/coinbase/x402/go/mcp"
+//	    x402 "github.com/x402-foundation/x402/go"
+//	    "github.com/x402-foundation/x402/go/mcp"
 //	)
 //
 //	// Create resource server
@@ -63,7 +63,7 @@
 //
 // This package re-exports commonly used types from the x402 core package for convenience:
 //
-//	import "github.com/coinbase/x402/go/mcp"
+//	import "github.com/x402-foundation/x402/go/mcp"
 //
 //	// Re-exported types available:
 //	// - x402.X402Client (via x402 package)

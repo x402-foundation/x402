@@ -6,11 +6,13 @@ catalogs discovered x402 resources.
 
 import os
 import sys
+import base64
+import json
 from datetime import datetime
 from typing import Any
 
 from dotenv import load_dotenv
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Response
 from pydantic import BaseModel
 from solders.keypair import Keypair
 
@@ -53,6 +55,7 @@ class CatalogResource(BaseModel):
     accepts: list[dict[str, Any]]
     discoveryInfo: dict[str, Any] | None = None
     lastUpdated: str
+    extensions: dict[str, Any] | None = None
 
 
 # BazaarCatalog stores discovered resources
@@ -70,8 +73,49 @@ class BazaarCatalog:
         """Get all resources in the catalog."""
         return list(self.resources.values())
 
+    def search(
+        self,
+        query: str,
+        resource_type: str | None = None,
+        limit: int | None = None,
+    ) -> list[CatalogResource]:
+        """Search resources using case-insensitive keyword matching.
+
+        Matches against resource URL, type, and extension values.
+
+        Args:
+            query: The search query string.
+            resource_type: Optional filter by resource type.
+            limit: Optional advisory maximum results.
+
+        Returns:
+            Matching resources.
+        """
+        needle = query.lower()
+        results = []
+        for r in self.resources.values():
+            haystack = " ".join(
+                [r.resource, r.type] + [str(v) for v in (r.extensions or {}).values()]
+            ).lower()
+            if needle in haystack:
+                results.append(r)
+
+        if resource_type:
+            results = [r for r in results if r.type == resource_type]
+
+        return results[:limit] if limit is not None else results
+
 
 bazaar_catalog = BazaarCatalog()
+
+EXTENSION_RESPONSES_HEADER = "EXTENSION-RESPONSES"
+
+
+def _set_extension_responses_header(response: Response) -> None:
+    """Attach an example bazaar extension response header for client readback."""
+    extension_responses = {"bazaar": {"status": "success"}}
+    encoded = base64.b64encode(json.dumps(extension_responses).encode("utf-8")).decode("ascii")
+    response.headers[EXTENSION_RESPONSES_HEADER] = encoded
 
 # Initialize signers based on available keys
 evm_signer = None
@@ -131,6 +175,7 @@ def _handle_after_verify(ctx: Any) -> None:
                     ],
                     discoveryInfo=discovery_info_dict,
                     lastUpdated=datetime.now().isoformat(),
+                    extensions={},
                 )
             )
             print("   ✅ Added to bazaar catalog")
@@ -182,7 +227,7 @@ app = FastAPI(
 
 
 @app.post("/verify")
-async def verify(request: VerifyRequest):
+async def verify(request: VerifyRequest, http_response: Response):
     """Verify a payment against requirements.
 
     Note: Payment tracking and bazaar discovery are handled by lifecycle hooks.
@@ -203,20 +248,17 @@ async def verify(request: VerifyRequest):
         # Hooks will automatically:
         # - Track verified payment (on_after_verify)
         # - Extract and catalog discovery info (on_after_verify)
-        response = await facilitator.verify(payload, requirements)
+        verify_result = await facilitator.verify(payload, requirements)
 
-        return {
-            "isValid": response.is_valid,
-            "payer": response.payer,
-            "invalidReason": response.invalid_reason,
-        }
+        _set_extension_responses_header(http_response)
+        return verify_result.model_dump(by_alias=True, exclude_none=True)
     except Exception as e:
         print(f"Verify error: {e}")
         raise HTTPException(status_code=500, detail=str(e)) from e
 
 
 @app.post("/settle")
-async def settle(request: SettleRequest):
+async def settle(request: SettleRequest, http_response: Response):
     """Settle a payment on-chain.
 
     Args:
@@ -232,27 +274,24 @@ async def settle(request: SettleRequest):
         payload = parse_payment_payload(request.paymentPayload)
         requirements = PaymentRequirements.model_validate(request.paymentRequirements)
 
-        response = await facilitator.settle(payload, requirements)
+        settle_result = await facilitator.settle(payload, requirements)
 
-        return {
-            "success": response.success,
-            "transaction": response.transaction,
-            "network": response.network,
-            "payer": response.payer,
-            "errorReason": response.error_reason,
-        }
+        _set_extension_responses_header(http_response)
+        return settle_result.model_dump(by_alias=True, exclude_none=True)
     except Exception as e:
         print(f"Settle error: {e}")
 
         # Check if this was an abort from hook
         if "aborted" in str(e).lower() or "Settlement aborted" in str(e):
-            return {
-                "success": False,
-                "errorReason": str(e).replace("Settlement aborted: ", ""),
-                "network": request.paymentPayload.get("accepted", {}).get("network", "unknown"),
-                "transaction": "",
-                "payer": None,
-            }
+            from x402.schemas import SettleResponse
+
+            abort = SettleResponse(
+                success=False,
+                error_reason=str(e).replace("Settlement aborted: ", ""),
+                network=request.paymentPayload.get("accepted", {}).get("network", "unknown"),
+                transaction="",
+            )
+            return abort.model_dump(by_alias=True, exclude_none=True)
 
         raise HTTPException(status_code=500, detail=str(e)) from e
 
@@ -268,15 +307,7 @@ async def supported():
         response = facilitator.get_supported()
 
         return {
-            "kinds": [
-                {
-                    "x402Version": k.x402_version,
-                    "scheme": k.scheme,
-                    "network": k.network,
-                    "extra": k.extra,
-                }
-                for k in response.kinds
-            ],
+            "kinds": [k.model_dump(by_alias=True, exclude_none=True) for k in response.kinds],
             "extensions": response.extensions,
             "signers": response.signers,
         }
@@ -305,6 +336,31 @@ async def discovery_resources():
         }
     except Exception as e:
         print(f"Discovery error: {e}")
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+
+@app.get("/discovery/search")
+async def discovery_search(query: str, type: str | None = None, limit: int | None = None):
+    """Search discovered resources using keyword matching.
+
+    Args:
+        query: The search query string.
+        type: Optional filter by resource type.
+        limit: Optional advisory maximum number of results.
+
+    Returns:
+        Search response with x402Version, items, and optional pagination hints.
+    """
+    try:
+        results = bazaar_catalog.search(query, type, limit)
+        return {
+            "x402Version": 2,
+            "resources": [r.model_dump(by_alias=True) for r in results],
+            "partialResults": False,
+            "pagination": None,
+        }
+    except Exception as e:
+        print(f"Discovery search error: {e}")
         raise HTTPException(status_code=500, detail=str(e)) from e
 
 

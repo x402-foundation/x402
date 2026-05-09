@@ -82,14 +82,14 @@ async def main() -> None:
 
         print(f"Response ({duration1}ms): {response1.text}")
 
-        if response1.is_success:
-            try:
-                settle_response = http_client.get_payment_settle_response(
-                    lambda name: response1.headers.get(name)
-                )
-                print(f"\nPayment settled on {settle_response.network}")
-            except ValueError:
-                pass
+        # Extract and print payment response if present
+        try:
+            settle_response = http_client.get_payment_settle_response(
+                lambda name: response1.headers.get(name)
+            )
+            print(f"\nPayment response: {settle_response.model_dump_json(indent=2)}")
+        except ValueError:
+            pass
 
         # Second request - same payment ID, should return from cache
         print("\n" + "=" * 52)
@@ -105,14 +105,13 @@ async def main() -> None:
 
         print(f"Response ({duration2}ms): {response2.text}")
 
-        if response2.is_success:
-            try:
-                settle_response = http_client.get_payment_settle_response(
-                    lambda name: response2.headers.get(name)
-                )
-                print("\nPayment settled (unexpected - should have been cached)")
-            except ValueError:
-                print("\nNo payment processed - response served from cache!")
+        try:
+            settle_response = http_client.get_payment_settle_response(
+                lambda name: response2.headers.get(name)
+            )
+            print(f"\nPayment response: {settle_response.model_dump_json(indent=2)}")
+        except ValueError:
+            print("\nNo payment processed - response served from cache!")
 
         # Summary
         print("\n" + "=" * 52)

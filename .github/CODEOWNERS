@@ -1,0 +1,192 @@
+# CODEOWNERS
+#
+# How this file is read by GitHub:
+#   - Last matching pattern wins. Order matters.
+#   - A trailing slash means "this directory and everything under it".
+#   - Paths with no rule require no specific reviewer (any maintainer can approve).
+#     We deliberately leave cross-network e2e and most examples unowned.
+#
+# Teams:
+#   @x402-foundation/core    — Core protocol, shared infra, CI, docs/specs
+#   @x402-foundation/site    — x402.org website
+#   @x402-foundation/java    — Java SDK
+#   @x402-foundation/evm     — EVM network maintainers
+#   @x402-foundation/svm     — SVM (Solana) network maintainers
+#   @x402-foundation/stellar — Stellar network maintainers
+#   @x402-foundation/aptos   — Aptos network maintainers
+#   @x402-foundation/avm     — AVM (Avalanche) network maintainers
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 1. Repo-wide meta
+# ─────────────────────────────────────────────────────────────────────────────
+/LICENSE                                   @x402-foundation/core
+/NOTICE                                    @x402-foundation/core
+/README.md                                 @x402-foundation/core
+/CONTRIBUTING.md                           @x402-foundation/core
+/SECURITY.md                               @x402-foundation/core
+/ROADMAP.md                                @x402-foundation/core
+/PROJECT-IDEAS.md                          @x402-foundation/core
+/.gitignore                                @x402-foundation/core
+/.gitmodules                               @x402-foundation/core
+/.gitbook.yaml                             @x402-foundation/core
+/.vscode/                                  @x402-foundation/core
+/package.json                              @x402-foundation/core
+/package-lock.json                         @x402-foundation/core
+/pnpm-lock.yaml                            @x402-foundation/core
+/static/                                   @x402-foundation/core
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 2. Specs & docs (network scheme files overridden in section 12)
+# ─────────────────────────────────────────────────────────────────────────────
+/specs/                                    @x402-foundation/core
+/docs/                                     @x402-foundation/core
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 3. CI / release infrastructure
+#    Listed BEFORE network sections so per-network publish workflows override.
+# ─────────────────────────────────────────────────────────────────────────────
+/.github/                                  @x402-foundation/core
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 4. TypeScript shared monorepo config
+# ─────────────────────────────────────────────────────────────────────────────
+/typescript/CONTRIBUTING.md                @x402-foundation/core
+/typescript/package.json                   @x402-foundation/core
+/typescript/pnpm-workspace.yaml            @x402-foundation/core
+/typescript/pnpm-lock.yaml                 @x402-foundation/core
+/typescript/turbo.json                     @x402-foundation/core
+/typescript/tsconfig.base.json             @x402-foundation/core
+/typescript/eslint.config.js               @x402-foundation/core
+/typescript/.prettierrc                    @x402-foundation/core
+/typescript/.prettierignore                @x402-foundation/core
+/typescript/.changeset/                    @x402-foundation/core
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 5. TypeScript packages — shared / cross-network
+#    (Per-network mechanism, paywall, and extension subdirs overridden later.)
+# ─────────────────────────────────────────────────────────────────────────────
+/typescript/packages/core/                 @x402-foundation/core
+/typescript/packages/http/                 @x402-foundation/core
+/typescript/packages/extensions/           @x402-foundation/core
+/typescript/packages/mcp/                  @x402-foundation/core
+/typescript/packages/mechanisms/           @x402-foundation/core
+/typescript/packages/legacy/               @x402-foundation/core
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 6. Site (x402.org)
+#    Network partner subdirs overridden in section 12.
+# ─────────────────────────────────────────────────────────────────────────────
+/typescript/site/                          @x402-foundation/site
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 7. Python (shared / cross-network)
+# ─────────────────────────────────────────────────────────────────────────────
+/python/                                   @x402-foundation/core
+/python/CONTRIBUTING.md                    @x402-foundation/core
+/python/x402/                              @x402-foundation/core
+/python/x402/http/                         @x402-foundation/core
+/python/x402/mcp/                          @x402-foundation/core
+/python/x402/extensions/                   @x402-foundation/core
+/python/x402/mechanisms/                   @x402-foundation/core
+/python/x402/tests/                        @x402-foundation/core
+/python/legacy/                            @x402-foundation/core
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 8. Go (shared / cross-network)
+# ─────────────────────────────────────────────────────────────────────────────
+/go/                                       @x402-foundation/core
+/go/http/                                  @x402-foundation/core
+/go/mcp/                                   @x402-foundation/core
+/go/extensions/                            @x402-foundation/core
+/go/mechanisms/                            @x402-foundation/core
+/go/signers/                               @x402-foundation/core
+/go/types/                                 @x402-foundation/core
+/go/test/                                  @x402-foundation/core
+/go/legacy/                                @x402-foundation/core
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 9. Java
+# ─────────────────────────────────────────────────────────────────────────────
+/java/                                     @x402-foundation/java
+/.github/workflows/java.yml                @x402-foundation/java
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 10. Examples (cross-network; no per-network slicing)
+# ─────────────────────────────────────────────────────────────────────────────
+/examples/                                 @x402-foundation/core
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 11. Contracts (only EVM exists today; structured for future chains)
+# ─────────────────────────────────────────────────────────────────────────────
+/contracts/                                @x402-foundation/core
+
+# Note on e2e: intentionally NOT owned in bulk. Most of e2e (echo, gin, hono,
+# fastapi, fastify, flask, nethttp, mcp-*, axios, fetch, requests, httpx,
+# the facilitators, scripts, templates, mock-facilitator) is cross-network
+# infrastructure — anyone closest to the change reviews. Only the per-network
+# Next.js API routes have owners (section 12).
+
+# ╔═══════════════════════════════════════════════════════════════════════════╗
+# ║ 12. Network overrides — placed last so they win last-match precedence.   ║
+# ╚═══════════════════════════════════════════════════════════════════════════╝
+
+# ── EVM ───────────────────────────────────────────────────────────────────────
+/contracts/evm/                                                    @x402-foundation/evm
+/specs/schemes/exact/scheme_exact_evm.md                           @x402-foundation/evm
+/specs/schemes/upto/scheme_upto_evm.md                             @x402-foundation/evm
+/specs/extensions/eip2612_gas_sponsoring.md                        @x402-foundation/evm
+/specs/extensions/erc20_gas_sponsoring.md                          @x402-foundation/evm
+/typescript/packages/mechanisms/evm/                               @x402-foundation/evm
+/typescript/packages/extensions/src/eip2612-gas-sponsoring/        @x402-foundation/evm
+/typescript/packages/extensions/src/erc20-approval-gas-sponsoring/ @x402-foundation/evm
+/typescript/packages/http/paywall/src/evm/                         @x402-foundation/evm
+/go/mechanisms/evm/                                                @x402-foundation/evm
+/go/signers/evm/                                                   @x402-foundation/evm
+/go/extensions/eip2612gassponsor/                                  @x402-foundation/evm
+/go/extensions/erc20approvalgassponsor/                            @x402-foundation/evm
+/go/http/evm_paywall_template.go                                   @x402-foundation/evm
+/python/x402/mechanisms/evm/                                       @x402-foundation/evm
+/python/x402/extensions/eip2612_gas_sponsoring/                    @x402-foundation/evm
+/python/x402/extensions/erc20_approval_gas_sponsoring/             @x402-foundation/evm
+/python/x402/http/paywall/evm_paywall_template.py                  @x402-foundation/evm
+/python/x402/tests/unit/mechanisms/evm/                            @x402-foundation/evm
+/e2e/servers/next/app/api/exact/evm/                               @x402-foundation/evm
+/e2e/servers/next/app/api/upto/evm/                                @x402-foundation/evm
+/.github/workflows/publish_npm_scoped_x402_evm.yml                 @x402-foundation/evm
+
+# ── SVM (Solana) ──────────────────────────────────────────────────────────────
+/specs/schemes/exact/scheme_exact_svm.md                           @x402-foundation/svm
+/typescript/packages/mechanisms/svm/                               @x402-foundation/svm
+/typescript/packages/http/paywall/src/svm/                         @x402-foundation/svm
+/typescript/site/app/ecosystem/partners-data/solana-pay-x402/      @x402-foundation/svm
+/go/mechanisms/svm/                                                @x402-foundation/svm
+/go/signers/svm/                                                   @x402-foundation/svm
+/go/http/svm_paywall_template.go                                   @x402-foundation/svm
+/python/x402/mechanisms/svm/                                       @x402-foundation/svm
+/python/x402/http/paywall/svm_paywall_template.py                  @x402-foundation/svm
+/python/x402/tests/unit/mechanisms/svm/                            @x402-foundation/svm
+/e2e/servers/next/app/api/exact/svm/                               @x402-foundation/svm
+/.github/workflows/publish_npm_scoped_x402_svm.yml                 @x402-foundation/svm
+
+# ── Stellar ───────────────────────────────────────────────────────────────────
+/specs/schemes/exact/scheme_exact_stellar.md                       @x402-foundation/stellar
+/typescript/packages/mechanisms/stellar/                           @x402-foundation/stellar
+/typescript/site/app/ecosystem/partners-data/stellar/              @x402-foundation/stellar
+/typescript/site/app/ecosystem/partners-data/built-on-stellar/     @x402-foundation/stellar
+/e2e/servers/next/app/api/exact/stellar/                           @x402-foundation/stellar
+/.github/workflows/publish_npm_scoped_x402_stellar.yml             @x402-foundation/stellar
+
+# ── Aptos ─────────────────────────────────────────────────────────────────────
+/specs/schemes/exact/scheme_exact_aptos.md                         @x402-foundation/aptos
+/typescript/packages/mechanisms/aptos/                             @x402-foundation/aptos
+/e2e/servers/next/app/api/exact/aptos/                             @x402-foundation/aptos
+/.github/workflows/publish_npm_scoped_x402_aptos.yml               @x402-foundation/aptos
+
+# ── AVM (Avalanche) — placeholders for upcoming network port ─────────────────
+/typescript/packages/mechanisms/avm/                               @x402-foundation/avm
+/typescript/packages/http/paywall/src/avm/                         @x402-foundation/avm
+/go/mechanisms/avm/                                                @x402-foundation/avm
+/go/signers/avm/                                                   @x402-foundation/avm
+/python/x402/mechanisms/avm/                                       @x402-foundation/avm
+/e2e/servers/next/app/api/exact/avm/                               @x402-foundation/avm
+/.github/workflows/publish_npm_scoped_x402_avm.yml                 @x402-foundation/avm

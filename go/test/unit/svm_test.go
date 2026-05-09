@@ -6,9 +6,9 @@ import (
 
 	solana "github.com/gagliardetto/solana-go"
 
-	x402 "github.com/coinbase/x402/go"
-	svm "github.com/coinbase/x402/go/mechanisms/svm"
-	svmserver "github.com/coinbase/x402/go/mechanisms/svm/exact/server"
+	x402 "github.com/x402-foundation/x402/go"
+	svm "github.com/x402-foundation/x402/go/mechanisms/svm"
+	svmserver "github.com/x402-foundation/x402/go/mechanisms/svm/exact/server"
 )
 
 // TestSolanaServerPriceParsing tests V2 server price parsing

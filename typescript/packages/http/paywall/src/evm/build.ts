@@ -2,12 +2,15 @@ import esbuild from "esbuild";
 import { htmlPlugin } from "@craftamap/esbuild-plugin-html";
 import fs from "fs";
 import path from "path";
+import { DEFAULT_STABLECOINS } from "@x402/evm";
 import { getBaseTemplate } from "../baseTemplate";
+import { formatTypeScript, toPythonStringLiteral } from "../genHelpers";
 
 // EVM-specific build - only bundles EVM dependencies
 const DIST_DIR = "src/evm/dist";
 const OUTPUT_HTML = path.join(DIST_DIR, "evm-paywall.html");
 const OUTPUT_TS = path.join("src/evm/gen", "template.ts");
+const OUTPUT_DECIMALS = path.join("src/evm/gen", "decimals.ts");
 
 // Cross-language template output paths (relative to package root where build runs)
 const PYTHON_DIR = path.join("..", "..", "..", "..", "python", "x402", "http", "paywall");
@@ -76,16 +79,17 @@ async function build() {
     if (fs.existsSync(OUTPUT_HTML)) {
       const html = fs.readFileSync(OUTPUT_HTML, "utf8");
 
-      const tsContent = `// THIS FILE IS AUTO-GENERATED - DO NOT EDIT
+      const rawTsContent = `// THIS FILE IS AUTO-GENERATED - DO NOT EDIT
 /**
  * The pre-built EVM paywall template with inlined CSS and JS
  */
 export const EVM_PAYWALL_TEMPLATE = ${JSON.stringify(html)};
 `;
+      const tsContent = await formatTypeScript(OUTPUT_TS, rawTsContent);
 
       // Generate Python template file
       const pyContent = `# THIS FILE IS AUTO-GENERATED - DO NOT EDIT
-EVM_PAYWALL_TEMPLATE = ${JSON.stringify(html)}
+EVM_PAYWALL_TEMPLATE = ${toPythonStringLiteral(html)}
 `;
 
       // Generate Go template file
@@ -98,6 +102,34 @@ const EVMPaywallTemplate = ${JSON.stringify(html)}
 
       fs.writeFileSync(OUTPUT_TS, tsContent);
       console.log(`[EVM] Generated template.ts (${(html.length / 1024 / 1024).toFixed(2)} MB)`);
+
+      // Generate a runtime-dep-free decimals lookup sourced from @x402/evm's
+      // DEFAULT_STABLECOINS. Keeps @x402/evm as a devDependency only while
+      // preserving a single source of truth for per-network decimals (CI drift
+      // check in check_paywall_template.yml covers regen correctness).
+      const decimalsMap: Record<string, number> = Object.fromEntries(
+        Object.entries(DEFAULT_STABLECOINS).map(([network, info]) => [network, info.decimals]),
+      );
+      const decimalsEntries = Object.entries(decimalsMap)
+        .sort(([a], [b]) => a.localeCompare(b))
+        .map(([network, decimals]) => `  ${JSON.stringify(network)}: ${decimals},`)
+        .join("\n");
+      const decimalsContent = `// THIS FILE IS AUTO-GENERATED - DO NOT EDIT
+// Source: @x402/evm DEFAULT_STABLECOINS (decimals only).
+// Regenerate via: pnpm --filter @x402/paywall run build:paywall
+
+/**
+ * Per-network default token decimals, keyed by CAIP-2 network identifier.
+ * Mirrors the \`decimals\` field of \`DEFAULT_STABLECOINS\` from \`@x402/evm\`
+ * and is emitted at build time so the paywall's runtime module graph does
+ * not depend on \`@x402/evm\`.
+ */
+export const NETWORK_DECIMALS: Record<string, number> = {
+${decimalsEntries}
+};
+`;
+      fs.writeFileSync(OUTPUT_DECIMALS, decimalsContent);
+      console.log(`[EVM] Generated decimals.ts (${Object.keys(decimalsMap).length} networks)`);
 
       // Write the Python template file
       if (fs.existsSync(PYTHON_DIR)) {

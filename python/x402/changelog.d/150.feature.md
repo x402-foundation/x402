@@ -1,0 +1,1 @@
+Added Bazaar service metadata fields (`service_name`, `tags`, `icon_url`) on `ResourceInfo`, plus `_is_valid_service_name` / `_sanitize_tags` / `_is_valid_icon_url` / `_sanitize_resource_service_metadata` helpers in `x402.extensions.bazaar.facilitator` that `extract_discovery_info` now applies with soft-drop semantics.

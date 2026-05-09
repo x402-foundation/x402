@@ -14,6 +14,21 @@ These integration tests verify the complete x402 payment flows with real mechani
 - 🔐 **TestSVMIntegrationV2** - Full SVM V2 payment flow (Solana Devnet)
 - 🔐 **TestSVMIntegrationV1** - Full SVM V1 payment flow (Solana Devnet)
 
+### Batch-Settlement (Batched) Integration Tests (Require Configuration)
+EVM batched mechanism tests in `evm_batch_settlement_test.go`. All tests
+issue **real Base Sepolia transactions** and skip when env vars are missing.
+
+- 🔐 **TestBatchSettlementIntegration_DepositThenVoucher** — direct API: deposit + follow-up voucher
+- 🔐 **TestBatchSettlementIntegration_HTTPMiddleware** — full HTTP middleware end-to-end
+- 🔐 **TestBatchSettlementIntegration_MultiVoucherClaimSettle** — 4 requests + manager.Claim + manager.Settle
+- 🔐 **TestBatchSettlementIntegration_RefundPartial** — partial refund leaves channel open
+- 🔐 **TestBatchSettlementIntegration_RefundDrainedChannelShortCircuit** — local short-circuit on drained channel
+- 🔐 **TestBatchSettlementIntegration_RefundNonRecoverableFastFail** — `amount_exceeds_balance` errors immediately
+- 🔐 **TestBatchSettlementIntegration_RefundRecoverableRetryExhaustion** — recoverable 402 → retry → exhaust
+- 🔐 **TestBatchSettlementIntegration_AutoClaimTick** — `ClaimIntervalSecs` triggers OnClaim
+- 🔐 **TestBatchSettlementIntegration_AutoClaimAndSettleTick** — both OnClaim and OnSettle fire
+- 🔐 **TestBatchSettlementIntegration_WithdrawalPendingRefund** — pending-withdraw detection + manager.Refund
+
 Tests marked with 🔐 require environment variables and will **skip** if not configured.
 
 ## Running Tests
@@ -61,6 +76,10 @@ Create a `.env` file in the `go/` directory:
 EVM_CLIENT_PRIVATE_KEY=<hex_private_key_without_0x>
 EVM_FACILITATOR_PRIVATE_KEY=<hex_private_key_without_0x>
 EVM_RESOURCE_SERVER_ADDRESS=<0x_ethereum_address>
+
+# Batch-Settlement reuses the EVM_* keys above (EVM_RESOURCE_SERVER_ADDRESS is the payee)
+EVM_AUTHORIZER_PRIVATE_KEY=<hex_private_key>        # optional, defaults to EVM_FACILITATOR_PRIVATE_KEY
+EVM_RPC_URL=https://sepolia.base.org                # optional, defaults to Base Sepolia public RPC
 
 # SVM Configuration (Solana Devnet)
 SVM_CLIENT_PRIVATE_KEY=<base58_private_key>

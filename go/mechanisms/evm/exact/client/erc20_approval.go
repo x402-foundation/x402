@@ -11,8 +11,8 @@ import (
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/types"
 
-	"github.com/coinbase/x402/go/extensions/erc20approvalgassponsor"
-	"github.com/coinbase/x402/go/mechanisms/evm"
+	"github.com/x402-foundation/x402/go/extensions/erc20approvalgassponsor"
+	"github.com/x402-foundation/x402/go/mechanisms/evm"
 )
 
 // SignErc20ApprovalTransaction creates a signed (but unbroadcast) EIP-1559 transaction
@@ -47,8 +47,12 @@ func SignErc20ApprovalTransaction(
 		return nil, fmt.Errorf("failed to get transaction count: %w", err)
 	}
 
-	// Get fee estimates
-	maxFeePerGas, maxPriorityFeePerGas, _ := signer.EstimateFeesPerGas(ctx)
+	// EstimateFeesPerGas returns usable fallback values even on RPC error,
+	// but guard against nil to avoid panic in DynamicFeeTx construction.
+	maxFeePerGas, maxPriorityFeePerGas, feeErr := signer.EstimateFeesPerGas(ctx)
+	if feeErr != nil && (maxFeePerGas == nil || maxPriorityFeePerGas == nil) {
+		return nil, fmt.Errorf("failed to estimate fees and no fallback available: %w", feeErr)
+	}
 
 	// Build EIP-1559 transaction
 	toAddr := common.HexToAddress(normalizedToken)

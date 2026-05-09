@@ -54,6 +54,7 @@ export const ErrorReasons = [
   "unsupported_scheme",
   "unexpected_settle_error",
   "unexpected_verify_error",
+  "duplicate_settlement",
 ] as const;
 
 // Refiners

@@ -1,0 +1,7 @@
+{
+  "name": "AgentCash",
+  "description": "AgentCash enables AI agents to send and receive payments using x402, providing a simple interface for autonomous agent monetization.",
+  "logoUrl": "/logos/agentcash.png",
+  "websiteUrl": "https://agentcash.dev",
+  "category": "Client-Side Integrations"
+}

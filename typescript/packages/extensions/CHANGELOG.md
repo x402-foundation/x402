@@ -1,5 +1,72 @@
 # @x402/extensions Changelog
 
+## 2.11.0
+
+### Minor Changes
+
+- Updated dependencies [a051f48]
+- Updated dependencies [dc04108]
+  - @x402/core@2.11.0
+
+## 2.10.0
+
+### Minor Changes
+
+- 9424291: chore: bump viem lockfile to 2.47.12
+
+  Updates the resolved viem version across all direct dependencies, adding chain definitions for Mezo Testnet, MegaETH, Stable, and Stable Testnet that were missing from previously locked versions.
+
+- a4e4911: Migrate SIWE dependency from `siwe` (Spruce) to `@signinwithethereum/siwe` (Ethereum Identity Foundation). The new package is the official successor, supports viem natively as a peer dependency, and maintains the same `SiweMessage` API.
+  - @x402/core@2.10.0
+
+## 2.9.0
+
+### Minor Changes
+
+- 2250cae: Migrated project from coinbase/x402 to x402-foundation/x402 organization
+
+### Patch Changes
+
+- Updated dependencies [8cf3fca]
+- Updated dependencies [c0e3969]
+- Updated dependencies [2250cae]
+- Updated dependencies [d352574]
+  - @x402/core@2.9.0
+
+## 2.8.0
+
+### Minor Changes
+
+- 4f2f4f3: Added auth-only route support in createSIWxRequestHook via accepts: [] detection
+- 067f297: Added dynamic route support to the Bazaar discovery extension — servers can now declare `[param]` route segments that consolidate to a single catalog entry per route template, with automatic `pathParams` enrichment and `:param`-style `routeTemplate` in discovery output.
+
+### Patch Changes
+
+- Updated dependencies [067f297]
+- Updated dependencies [4c1e44f]
+- Updated dependencies [5135fab]
+  - @x402/core@2.8.0
+
+## 2.7.0
+
+### Minor Changes
+
+- 8b731cb: Replaced `sendRawApprovalAndSettle` with a generic `sendTransactions` signer method that accepts an array of pre-signed serialized transactions or unsigned call intents. The signer owns execution strategy (sequential, batched, or atomic bundling). Closed fail-open verification paths, aligned Permit2 amount check to exact match, and added `signerForNetwork` to the extensions package.
+- f2bbb5c: Added offer-receipt extension to enable signed offers and receipts in x402 payment flows
+
+### Patch Changes
+
+- 34d2442: Removed dependencie on node’s crypto module
+- Updated dependencies [8931cb3]
+  - @x402/core@2.7.0
+
+## 2.6.0
+
+### Minor Changes
+
+- Updated dependencies
+  - @x402/core@2.6.0
+
 ## 2.5.0
 
 ### Minor Changes

@@ -9,8 +9,6 @@ import (
 	"strings"
 	"time"
 
-	evmmech "github.com/coinbase/x402/go/mechanisms/evm"
-	svmmech "github.com/coinbase/x402/go/mechanisms/svm"
 	"github.com/ethereum/go-ethereum"
 	"github.com/ethereum/go-ethereum/accounts/abi"
 	"github.com/ethereum/go-ethereum/common"
@@ -21,6 +19,9 @@ import (
 	"github.com/ethereum/go-ethereum/signer/core/apitypes"
 	solana "github.com/gagliardetto/solana-go"
 	"github.com/gagliardetto/solana-go/rpc"
+	"github.com/x402-foundation/x402/go/extensions/erc20approvalgassponsor"
+	evmmech "github.com/x402-foundation/x402/go/mechanisms/evm"
+	svmmech "github.com/x402-foundation/x402/go/mechanisms/svm"
 )
 
 const (
@@ -190,6 +191,11 @@ func (s *facilitatorEvmSigner) ReadContract(
 		return nil, fmt.Errorf("failed to parse ABI: %w", err)
 	}
 
+	methodObj, exists := contractABI.Methods[method]
+	if !exists {
+		return nil, fmt.Errorf("method %s not found in ABI", method)
+	}
+
 	// Pack the method call
 	data, err := contractABI.Pack(method, args...)
 	if err != nil {
@@ -209,23 +215,11 @@ func (s *facilitatorEvmSigner) ReadContract(
 		return nil, fmt.Errorf("failed to call contract: %w", err)
 	}
 
-	// Handle empty result
-	if len(result) == 0 {
-		if method == "authorizationState" {
-			return false, nil
-		}
-		if method == "balanceOf" || method == "allowance" {
-			return big.NewInt(0), nil
-		}
-		return nil, fmt.Errorf("empty result from contract call")
+	if len(methodObj.Outputs) == 0 {
+		return nil, nil
 	}
 
 	// Unpack the result
-	methodObj, exists := contractABI.Methods[method]
-	if !exists {
-		return nil, fmt.Errorf("method %s not found in ABI", method)
-	}
-
 	output, err := methodObj.Outputs.Unpack(result)
 	if err != nil {
 		return nil, fmt.Errorf("failed to unpack result: %w", err)
@@ -389,6 +383,53 @@ func (s *facilitatorEvmSigner) GetCode(ctx context.Context, address string) ([]b
 		return nil, fmt.Errorf("failed to get code: %w", err)
 	}
 	return code, nil
+}
+
+// erc20ApprovalGasSponsorSigner wraps facilitatorEvmSigner with SendTransactions for the
+// erc20ApprovalGasSponsoring facilitator extension (see gas_extensions example).
+type erc20ApprovalGasSponsorSigner struct {
+	*facilitatorEvmSigner
+}
+
+func newErc20ApprovalGasSponsorSigner(base *facilitatorEvmSigner) *erc20ApprovalGasSponsorSigner {
+	return &erc20ApprovalGasSponsorSigner{facilitatorEvmSigner: base}
+}
+
+// SendTransactions implements erc20approvalgassponsor.Erc20ApprovalGasSponsoringSigner.
+func (s *erc20ApprovalGasSponsorSigner) SendTransactions(ctx context.Context, txs []erc20approvalgassponsor.TransactionRequest) ([]string, error) {
+	hashes := make([]string, 0, len(txs))
+	for _, req := range txs {
+		var txHash string
+		switch {
+		case req.Serialized != "":
+			raw := common.FromHex(strings.TrimPrefix(req.Serialized, "0x"))
+			var tx types.Transaction
+			if err := tx.UnmarshalBinary(raw); err != nil {
+				return nil, fmt.Errorf("decode signed transaction: %w", err)
+			}
+			if err := s.client.SendTransaction(ctx, &tx); err != nil {
+				return nil, fmt.Errorf("send raw transaction: %w", err)
+			}
+			txHash = tx.Hash().Hex()
+		case req.Call != nil:
+			h, err := s.WriteContract(ctx, req.Call.Address, req.Call.ABI, req.Call.Function, req.Call.Args...)
+			if err != nil {
+				return nil, err
+			}
+			txHash = h
+		default:
+			return nil, fmt.Errorf("empty transaction request")
+		}
+		rec, err := s.WaitForTransactionReceipt(ctx, txHash)
+		if err != nil {
+			return nil, err
+		}
+		if rec.Status != evmmech.TxStatusSuccess {
+			return nil, fmt.Errorf("transaction failed: %s", txHash)
+		}
+		hashes = append(hashes, txHash)
+	}
+	return hashes, nil
 }
 
 // ============================================================================
@@ -606,4 +647,3 @@ func getBigIntFromInterface(v interface{}) *big.Int {
 	}
 	return big.NewInt(0)
 }
-

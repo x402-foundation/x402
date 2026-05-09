@@ -1,0 +1,3 @@
+kind: Added
+body: Bazaar service metadata fields (`serviceName`, `tags`, `iconUrl`) on `types.ResourceInfo`, plus `isValidServiceName` / `sanitizeTags` / `isValidIconUrl` / `sanitizeResourceServiceMetadata` helpers in `extensions/bazaar` that facilitator extraction now applies with soft-drop semantics.
+time: 2026-05-04T12:00:00.000000-07:00

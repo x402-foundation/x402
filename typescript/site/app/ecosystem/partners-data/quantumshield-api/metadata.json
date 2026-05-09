@@ -5,4 +5,3 @@
   "description": "Security-as-a-service API for token risk analysis. Get comprehensive token security scores, honeypot detection, and holder risk analysis powered by x402 micropayments on Base.",
   "websiteUrl": "https://quantumshield-api.vercel.app"
 }
-```

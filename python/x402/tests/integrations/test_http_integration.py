@@ -22,6 +22,7 @@ from x402 import (
 )
 from x402.http import (
     HTTPRequestContext,
+    ProcessSettleResult,
     decode_payment_required_header,
     x402HTTPClient,
     x402HTTPClientSync,
@@ -315,6 +316,46 @@ class TestDynamicPricing:
 
         return Factory  # type: ignore
 
+    def test_route_option_extra_is_preserved(
+        self,
+        components_factory: Any,
+    ) -> None:
+        """Route-level extra should flow into built payment requirements."""
+        routes = {
+            "GET /api/permit2": {
+                "accepts": {
+                    "scheme": "cash",
+                    "payTo": "merchant@example.com",
+                    "price": "$0.10",
+                    "network": "x402:cash",
+                    "extra": {
+                        "assetTransferMethod": "permit2",
+                        "merchantNote": "route-level-extra",
+                    },
+                },
+            },
+        }
+
+        components = components_factory.create(routes)
+        adapter = MockHTTPAdapter(
+            path="/api/permit2",
+            method="GET",
+        )
+        context = HTTPRequestContext(
+            adapter=adapter,
+            path="/api/permit2",
+            method="GET",
+        )
+
+        result = components.process_http_request(context)
+        payment_required = decode_payment_required_header(
+            result.response.headers["PAYMENT-REQUIRED"]
+        )
+
+        assert payment_required.accepts[0].extra is not None
+        assert payment_required.accepts[0].extra["assetTransferMethod"] == "permit2"
+        assert payment_required.accepts[0].extra["merchantNote"] == "route-level-extra"
+
     def test_dynamic_price_from_query_params(
         self,
         components_factory: Any,
@@ -542,3 +583,147 @@ class TestDynamicPricing:
 
         assert payment_required2.accepts[0].pay_to == "market-data-provider@example.com"
         assert payment_required2.accepts[0].amount == "1.50"  # 0.5 * 3
+
+
+class TestSettlementFailureWithContext:
+    """Regression test: _build_settlement_failure_response must unpack the tuple
+    from _get_route_config (which returns tuple[RouteConfig, str] | None).
+
+    Before the fix, passing a context that matched a route would raise
+    AttributeError because the code accessed .settlement_failed_response_body
+    on the tuple instead of unpacking it first.
+    """
+
+    @pytest.fixture(params=["sync", "async"])
+    def components_factory(self, request: pytest.FixtureRequest) -> type[HTTPComponentsFixture]:
+        """Returns factory for creating components with custom routes."""
+
+        class Factory:
+            @staticmethod
+            def create(routes: dict) -> HTTPComponentsFixture:
+                if request.param == "sync":
+                    return _create_sync_http_components(routes)
+                return _create_async_http_components(routes)
+
+        return Factory  # type: ignore
+
+    def test_settlement_failure_with_route_context_does_not_raise(
+        self,
+        components_factory: Any,
+    ) -> None:
+        """_build_settlement_failure_response should not crash when context matches a route."""
+        routes = {
+            "GET /api/protected": {
+                "accepts": {
+                    "scheme": "cash",
+                    "payTo": "merchant@example.com",
+                    "price": "$0.10",
+                    "network": "x402:cash",
+                },
+                "description": "Protected endpoint",
+            },
+        }
+        components = components_factory.create(routes)
+
+        adapter = MockHTTPAdapter(path="/api/protected", method="GET")
+        context = HTTPRequestContext(adapter=adapter, path="/api/protected", method="GET")
+
+        failure = ProcessSettleResult(
+            success=False,
+            error_reason="test failure",
+            headers={"PAYMENT-RESPONSE": "encoded"},
+        )
+
+        # Directly call the internal method to exercise the tuple-unpacking fix.
+        # Before the fix, this would raise AttributeError on the tuple.
+        response = components.http_server._build_settlement_failure_response(failure, context)
+
+        assert response.status == 402
+        assert response.body == {}
+        assert "PAYMENT-RESPONSE" in response.headers
+
+
+class TestColonParamRouteMatching:
+    """Tests that :param (Express-style) route patterns match requests correctly."""
+
+    @pytest.fixture(params=["sync", "async"])
+    def components_factory(self, request: pytest.FixtureRequest) -> type[HTTPComponentsFixture]:
+        class Factory:
+            @staticmethod
+            def create(routes: dict) -> HTTPComponentsFixture:
+                if request.param == "sync":
+                    return _create_sync_http_components(routes)
+                return _create_async_http_components(routes)
+
+        return Factory  # type: ignore
+
+    def test_colon_param_route_matches_request(
+        self,
+        components_factory: Any,
+    ) -> None:
+        """Routes configured with :param syntax should match concrete requests."""
+        routes = {
+            "GET /api/users/:userId": {
+                "accepts": {
+                    "scheme": "cash",
+                    "payTo": "merchant@example.com",
+                    "price": "$0.10",
+                    "network": "x402:cash",
+                },
+            },
+        }
+        components = components_factory.create(routes)
+
+        adapter = MockHTTPAdapter(path="/api/users/123", method="GET")
+        context = HTTPRequestContext(adapter=adapter, path="/api/users/123", method="GET")
+
+        result = components.process_http_request(context)
+        assert result.type == "payment-error"
+        assert result.response.status == 402
+
+    def test_colon_param_multiple_segments(
+        self,
+        components_factory: Any,
+    ) -> None:
+        """Multiple :param segments should all be matched."""
+        routes = {
+            "GET /api/users/:userId/posts/:postId": {
+                "accepts": {
+                    "scheme": "cash",
+                    "payTo": "merchant@example.com",
+                    "price": "$0.10",
+                    "network": "x402:cash",
+                },
+            },
+        }
+        components = components_factory.create(routes)
+
+        adapter = MockHTTPAdapter(path="/api/users/42/posts/7", method="GET")
+        context = HTTPRequestContext(adapter=adapter, path="/api/users/42/posts/7", method="GET")
+
+        result = components.process_http_request(context)
+        assert result.type == "payment-error"
+        assert result.response.status == 402
+
+    def test_colon_param_no_match_for_different_path(
+        self,
+        components_factory: Any,
+    ) -> None:
+        """:param routes should not match structurally different paths."""
+        routes = {
+            "GET /api/users/:userId": {
+                "accepts": {
+                    "scheme": "cash",
+                    "payTo": "merchant@example.com",
+                    "price": "$0.10",
+                    "network": "x402:cash",
+                },
+            },
+        }
+        components = components_factory.create(routes)
+
+        adapter = MockHTTPAdapter(path="/api/posts/123", method="GET")
+        context = HTTPRequestContext(adapter=adapter, path="/api/posts/123", method="GET")
+
+        result = components.process_http_request(context)
+        assert result.type == "no-payment-required"

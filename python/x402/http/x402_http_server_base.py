@@ -5,7 +5,9 @@ Contains shared logic for HTTP server implementations.
 
 from __future__ import annotations
 
+import dataclasses
 import html
+import logging
 import re
 from collections.abc import Generator
 from typing import TYPE_CHECKING, Any, Literal, Protocol
@@ -18,8 +20,14 @@ from ..schemas import (
     ResourceInfo,
     SettleResponse,
 )
+from ..schemas.errors import SettleError
 from ..schemas.v1 import PaymentPayloadV1
-from .constants import PAYMENT_REQUIRED_HEADER, PAYMENT_SIGNATURE_HEADER
+from .constants import (
+    PAYMENT_REQUIRED_HEADER,
+    PAYMENT_RESPONSE_HEADER,
+    PAYMENT_SIGNATURE_HEADER,
+    SETTLEMENT_OVERRIDES_HEADER,
+)
 from .types import (
     RESULT_NO_PAYMENT_REQUIRED,
     RESULT_PAYMENT_ERROR,
@@ -46,6 +54,9 @@ from .utils import (
 
 if TYPE_CHECKING:
     from ..server import x402ResourceServer, x402ResourceServerSync
+
+logger = logging.getLogger("x402")
+
 
 # ============================================================================
 # Paywall Provider Protocol
@@ -136,8 +147,10 @@ class x402HTTPServerBase:
                         raise ValueError(f"Invalid route config for pattern {pattern}")
 
         for pattern, config in normalized.items():
-            verb, regex = self._parse_route_pattern(pattern)
-            self._compiled_routes.append(CompiledRoute(verb=verb, regex=regex, config=config))
+            verb, path, regex = self._parse_route_pattern(pattern)
+            self._compiled_routes.append(
+                CompiledRoute(verb=verb, regex=regex, config=config, pattern=path)
+            )
 
     def _parse_route_config(self, config: dict[str, Any]) -> RouteConfig:
         """Parse a raw dict into a RouteConfig."""
@@ -174,6 +187,10 @@ class x402HTTPServerBase:
             custom_paywall_html=config.get("customPaywallHtml", config.get("custom_paywall_html")),
             unpaid_response_body=config.get(
                 "unpaidResponseBody", config.get("unpaid_response_body")
+            ),
+            settlement_failed_response_body=config.get(
+                "settlementFailedResponseBody",
+                config.get("settlement_failed_response_body"),
             ),
             extensions=config.get("extensions"),
             hook_timeout_seconds=config.get("hook_timeout_seconds"),
@@ -226,17 +243,20 @@ class x402HTTPServerBase:
         Returns:
             True if route requires payment.
         """
-        return self._get_route_config(context.path, context.method) is not None
+        method = context.method or context.adapter.get_method()
+        # _get_route_config returns tuple[RouteConfig, str] | None; 'is not None' is the
+        # correct check for a union-with-None return type and does not rely on tuple truthiness.
+        return self._get_route_config(context.path, method) is not None
 
-    def _get_route_config(self, path: str, method: str) -> RouteConfig | None:
-        """Find matching route configuration."""
+    def _get_route_config(self, path: str, method: str) -> tuple[RouteConfig, str] | None:
+        """Find matching route configuration, returning (config, pattern) or None."""
         normalized_path = self._normalize_path(path)
         upper_method = method.upper()
 
         for route in self._compiled_routes:
             if route.regex.match(normalized_path):
                 if route.verb == "*" or route.verb == upper_method:
-                    return route.config
+                    return route.config, route.pattern
 
         return None
 
@@ -257,10 +277,15 @@ class x402HTTPServerBase:
 
         Returns HTTPProcessResult.
         """
+        if not context.method:
+            context = dataclasses.replace(context, method=context.adapter.get_method())
+
         # Find matching route
-        route_config = self._get_route_config(context.path, context.method)
-        if route_config is None:
+        route_match = self._get_route_config(context.path, context.method)
+        if route_match is None:
             return HTTPProcessResult(type=RESULT_NO_PAYMENT_REQUIRED)
+        route_config, route_pattern = route_match
+        context = dataclasses.replace(context, route_pattern=route_pattern)
 
         # Extract payment from headers
         payment_payload = self._extract_payment(context.adapter)
@@ -398,10 +423,58 @@ class x402HTTPServerBase:
     # Settlement
     # =========================================================================
 
+    @staticmethod
+    def _extract_settlement_overrides(
+        response_headers: dict[str, str] | list[tuple[str, str]] | None,
+    ) -> dict[str, Any] | None:
+        """Extract settlement overrides from response headers.
+
+        Looks for the ``Settlement-Overrides`` header (case-insensitive) and
+        parses it as JSON.  Returns *None* when the header is absent or
+        malformed so callers can fall through to the default behaviour.
+        """
+        if response_headers is None:
+            return None
+
+        key = SETTLEMENT_OVERRIDES_HEADER.lower()
+        raw: str | None = None
+        if isinstance(response_headers, dict):
+            for k, v in response_headers.items():
+                if k.lower() == key:
+                    raw = v
+                    break
+        else:
+            for k, v in response_headers:
+                if k.lower() == key:
+                    raw = v
+                    break
+
+        if raw is None:
+            return None
+
+        try:
+            import json
+
+            return json.loads(raw)
+        except (json.JSONDecodeError, TypeError):
+            return None
+
+    @staticmethod
+    def _apply_settlement_overrides(
+        requirements: PaymentRequirements,
+        overrides: dict[str, Any] | None,
+    ) -> PaymentRequirements:
+        """Return *requirements* with the amount replaced by the override, if any."""
+        if overrides is None or "amount" not in overrides:
+            return requirements
+        return requirements.model_copy(update={"amount": str(overrides["amount"])})
+
     def process_settlement(
         self,
         payment_payload: PaymentPayload | PaymentPayloadV1,
         requirements: PaymentRequirements,
+        context: HTTPRequestContext | None = None,
+        settlement_overrides: dict[str, Any] | None = None,
     ) -> ProcessSettleResult:
         """Process settlement after successful response.
 
@@ -410,21 +483,33 @@ class x402HTTPServerBase:
         Args:
             payment_payload: The verified payment payload.
             requirements: The matching payment requirements.
+            context: Optional HTTP request context for route config lookup and hooks.
+            settlement_overrides: Optional overrides (e.g. ``{"amount": "1000"}``
+                for partial settlement with the *upto* scheme).
 
         Returns:
-            ProcessSettleResult with headers if success.
+            ProcessSettleResult with headers if success, or response if failure.
         """
+        effective_requirements = self._apply_settlement_overrides(
+            requirements, settlement_overrides
+        )
         try:
             settle_response = self._server.settle_payment(
                 payment_payload,
-                requirements,
+                effective_requirements,
             )
 
             if not settle_response.success:
-                return ProcessSettleResult(
+                failure = ProcessSettleResult(
                     success=False,
                     error_reason=settle_response.error_reason or "Settlement failed",
+                    headers=self._create_settlement_headers(settle_response, requirements),
+                    transaction=settle_response.transaction,
+                    network=settle_response.network,
+                    payer=settle_response.payer,
                 )
+                failure.response = self._build_settlement_failure_response(failure, context)
+                return failure
 
             return ProcessSettleResult(
                 success=True,
@@ -434,8 +519,43 @@ class x402HTTPServerBase:
                 payer=settle_response.payer,
             )
 
+        except SettleError as e:
+            settle_response = SettleResponse(
+                success=False,
+                error_reason=e.error_reason,
+                error_message=e.error_message or e.error_reason,
+                transaction=e.transaction or "",
+                network=requirements.network,
+                payer=e.payer,
+            )
+            failure = ProcessSettleResult(
+                success=False,
+                error_reason=e.error_reason,
+                headers=self._create_settlement_headers(settle_response, requirements),
+                transaction=settle_response.transaction,
+                network=settle_response.network,
+                payer=settle_response.payer,
+            )
+            failure.response = self._build_settlement_failure_response(failure, context)
+            return failure
+
         except Exception as e:
-            return ProcessSettleResult(success=False, error_reason=str(e))
+            settle_response = SettleResponse(
+                success=False,
+                error_reason=str(e),
+                error_message=str(e),
+                transaction="",
+                network=requirements.network,
+            )
+            failure = ProcessSettleResult(
+                success=False,
+                error_reason=str(e),
+                headers=self._create_settlement_headers(settle_response, requirements),
+                transaction="",
+                network=requirements.network,
+            )
+            failure.response = self._build_settlement_failure_response(failure, context)
+            return failure
 
     # =========================================================================
     # Internal Methods
@@ -507,11 +627,42 @@ class x402HTTPServerBase:
         requirements: PaymentRequirements,
     ) -> dict[str, str]:
         """Create settlement response headers."""
-        from .constants import PAYMENT_RESPONSE_HEADER
-
         return {
             PAYMENT_RESPONSE_HEADER: encode_payment_response_header(settle_response),
         }
+
+    def _build_settlement_failure_response(
+        self,
+        failure: ProcessSettleResult,
+        context: HTTPRequestContext | None,
+    ) -> HTTPResponseInstructions:
+        """Build HTTPResponseInstructions for settlement failure.
+
+        Uses settlement_failed_response_body hook if configured, otherwise defaults to empty body.
+        Merges settlement headers (including PAYMENT-RESPONSE) into the response.
+        """
+        settlement_headers = failure.headers
+        if context and not context.method:
+            context = dataclasses.replace(context, method=context.adapter.get_method())
+        route_match = self._get_route_config(context.path, context.method) if context else None
+        route_config = route_match[0] if route_match else None
+
+        custom_body = None
+        if route_config and route_config.settlement_failed_response_body:
+            custom_body = route_config.settlement_failed_response_body(context, failure)
+
+        content_type = custom_body.content_type if custom_body else "application/json"
+        body = custom_body.body if custom_body else {}
+
+        return HTTPResponseInstructions(
+            status=402,
+            headers={
+                "Content-Type": content_type,
+                **settlement_headers,
+            },
+            body=body,
+            is_html=content_type.startswith("text/html"),
+        )
 
     def _validate_route_configuration(self) -> list[RouteValidationError]:
         """Validate all payment options have registered schemes."""
@@ -519,6 +670,21 @@ class x402HTTPServerBase:
 
         for route in self._compiled_routes:
             pattern = f"{route.verb} {route.regex.pattern}"
+
+            # Warn if wildcard routes are used with discovery extensions
+            if (
+                "*" in route.pattern
+                and route.config.extensions
+                and "bazaar" in route.config.extensions
+            ):
+                logger.warning(
+                    'Route "%s %s": Wildcard (*) patterns with bazaar discovery extensions '
+                    "will auto-generate parameter names (var1, var2, ...). "
+                    "Consider using named parameters instead (e.g. /weather/:city) "
+                    "for better discovery metadata.",
+                    route.verb,
+                    route.pattern,
+                )
 
             # Get options as list
             options = route.config.accepts
@@ -555,8 +721,8 @@ class x402HTTPServerBase:
         return errors
 
     @staticmethod
-    def _parse_route_pattern(pattern: str) -> tuple[str, re.Pattern[str]]:
-        """Parse route pattern into verb and regex."""
+    def _parse_route_pattern(pattern: str) -> tuple[str, str, re.Pattern[str]]:
+        """Parse route pattern into verb, raw path, and regex."""
         parts = pattern.split(None, 1)  # Split on whitespace
 
         if len(parts) == 2:
@@ -570,9 +736,10 @@ class x402HTTPServerBase:
         regex_pattern = "^" + re.escape(path)
         regex_pattern = regex_pattern.replace(r"\*", ".*?")  # Wildcards
         regex_pattern = re.sub(r"\\\[([^\]]+)\\\]", r"[^/]+", regex_pattern)  # [param]
+        regex_pattern = re.sub(r":([a-zA-Z_]\w*)", r"[^/]+", regex_pattern)  # :param
         regex_pattern += "$"
 
-        return verb, re.compile(regex_pattern, re.IGNORECASE)
+        return verb, path, re.compile(regex_pattern, re.IGNORECASE)
 
     @staticmethod
     def _normalize_path(path: str) -> str:
@@ -669,7 +836,7 @@ class x402HTTPServerBase:
             f"<script>\n    window.x402 = {htmlsafe_json_dumps(x402_config)};\n</script>"
         )
 
-        return template.replace("</body>", config_script + "</body>")
+        return template.replace("</head>", config_script + "\n</head>", 1)
 
     def _generate_fallback_html(
         self,

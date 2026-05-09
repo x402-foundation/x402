@@ -5,14 +5,22 @@
   "protocolFamilies": [
     "evm",
     "svm",
-    "aptos"
+    "avm",
+    "aptos",
+    "hedera",
+    "stellar"
   ],
   "x402Versions": [
     1,
     2
   ],
+  "schemes": [
+    "exact",
+    "upto",
+    "batch-settlement"
+  ],
   "evm": {
-    "transferMethods": [
+    "assetTransferMethods": [
       "eip3009",
       "permit2"
     ]
@@ -29,7 +37,17 @@
       "ENDPOINT_PATH"
     ],
     "optional": [
-      "APTOS_PRIVATE_KEY"
+      "AVM_PRIVATE_KEY",
+      "APTOS_PRIVATE_KEY",
+      "HEDERA_ACCOUNT_ID",
+      "HEDERA_PRIVATE_KEY",
+      "HEDERA_NETWORK",
+      "HEDERA_NODE_URL",
+      "STELLAR_PRIVATE_KEY",
+      "CHANNEL_SALT",
+      "BATCH_SETTLEMENT_PHASE",
+      "BATCH_SETTLEMENT_RECOVERY",
+      "EVM_VOUCHER_SIGNER_PRIVATE_KEY"
     ]
   }
 }

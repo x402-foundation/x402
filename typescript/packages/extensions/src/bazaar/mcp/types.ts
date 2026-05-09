@@ -12,7 +12,7 @@ export interface McpDiscoveryInfo {
     type: "mcp";
     toolName: string;
     description?: string;
-    transport?: "streamable-http" | "sse";
+    transport?: string;
     inputSchema: Record<string, unknown>;
     example?: Record<string, unknown>;
   };
@@ -48,7 +48,7 @@ export interface McpDiscoveryExtension {
           };
           transport?: {
             type: "string";
-            enum: ["streamable-http", "sse"];
+            enum?: string[];
           };
           inputSchema: Record<string, unknown>;
           example?: Record<string, unknown>;
@@ -70,7 +70,7 @@ export interface McpDiscoveryExtension {
 export interface DeclareMcpDiscoveryExtensionConfig {
   toolName: string;
   description?: string;
-  transport?: "streamable-http" | "sse";
+  transport?: string;
   inputSchema: Record<string, unknown>;
   example?: Record<string, unknown>;
   output?: {
@@ -83,6 +83,10 @@ export interface DiscoveredMCPResource {
   resourceUrl: string;
   description?: string;
   mimeType?: string;
+  /** Sanitized service metadata. See `sanitizeResourceServiceMetadata` for rules. */
+  serviceName?: string;
+  tags?: string[];
+  iconUrl?: string;
   toolName: string;
   x402Version: number;
   discoveryInfo: DiscoveryInfo;

@@ -17,7 +17,7 @@
     "next": "^15.5.9",
     "react": "19.2.3",
     "react-dom": "19.2.3",
-    "viem": "^2.21.26",
+    "viem": "^2.48.11",
     "x402-next": "workspace:*"
   },
   "devDependencies": {

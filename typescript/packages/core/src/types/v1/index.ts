@@ -30,11 +30,13 @@ export type PaymentPayloadV1 = {
 
 // Facilitator Requests/Responses
 export type VerifyRequestV1 = {
+  x402Version: number;
   paymentPayload: PaymentPayloadV1;
   paymentRequirements: PaymentRequirementsV1;
 };
 
 export type SettleRequestV1 = {
+  x402Version: number;
   paymentPayload: PaymentPayloadV1;
   paymentRequirements: PaymentRequirementsV1;
 };

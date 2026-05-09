@@ -4,29 +4,45 @@
   "language": "python",
   "protocolFamilies": [
     "evm",
-    "svm"
+    "svm",
+    "tvm"
   ],
   "x402Versions": [
     1,
     2
   ],
   "extensions": [
-    "bazaar"
+    "bazaar",
+    "eip2612GasSponsoring",
+    "erc20ApprovalGasSponsoring"
+  ],
+  "schemes": [
+    "exact",
+    "upto"
   ],
   "evm": {
-    "transferMethods": ["eip3009"]
+    "assetTransferMethods": [
+      "eip3009",
+      "permit2"
+    ]
   },
   "environment": {
     "required": [
-      "PORT",
-      "EVM_PRIVATE_KEY",
-      "SVM_PRIVATE_KEY"
+      "PORT"
     ],
     "optional": [
       "EVM_NETWORK",
       "SVM_NETWORK",
-      "EVM_RPC_URL"
+      "TVM_NETWORK",
+      "EVM_RPC_URL",
+      "EVM_PRIVATE_KEY",
+      "SVM_PRIVATE_KEY",
+      "TVM_PRIVATE_KEY",
+      "TVM_PROVIDER",
+      "TONCENTER_API_KEY",
+      "TONCENTER_BASE_URL",
+      "TONAPI_API_KEY",
+      "TONAPI_BASE_URL"
     ]
   }
 }
-

@@ -1,0 +1,7 @@
+{
+  "name": "solana-pay-x402",
+  "category": "Infrastructure & Tooling",
+  "logoUrl": "/logos/solana-pay-x402.png",
+  "description": "HTTP 402 payment middleware for Solana (Express + Next.js). Supports x402 v2 programmatic flows and Solana Pay QR code transactions from a single integration.",
+  "websiteUrl": "https://www.npmjs.com/package/solana-pay-x402"
+}

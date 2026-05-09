@@ -23,7 +23,7 @@
         {
           "anchor": "GitHub",
           "icon": "github",
-          "href": "https://github.com/coinbase/x402"
+          "href": "https://github.com/x402-foundation/x402"
         },
         {
           "anchor": "Discord",
@@ -65,9 +65,13 @@
       {
         "group": "Extensions",
         "pages": [
+          "extensions/overview",
           "extensions/bazaar",
+          "extensions/payment-identifier",
           "extensions/sign-in-with-x",
-          "extensions/payment-identifier"
+          "extensions/offer-receipt",
+          "extensions/eip2612-gas-sponsoring",
+          "extensions/erc20-approval-gas-sponsoring"
         ]
       },
       {

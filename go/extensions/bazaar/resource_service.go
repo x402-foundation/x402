@@ -2,8 +2,9 @@ package bazaar
 
 import (
 	"fmt"
+	"strings"
 
-	"github.com/coinbase/x402/go/extensions/types"
+	"github.com/x402-foundation/x402/go/extensions/types"
 )
 
 // DeclareDiscoveryExtension creates a discovery extension for any HTTP method
@@ -53,13 +54,25 @@ import (
 //	        Example: map[string]interface{}{"success": true, "id": "123"},
 //	    },
 //	)
+//
+// DeclareDiscoveryExtensionOpts holds optional parameters for DeclareDiscoveryExtension.
+type DeclareDiscoveryExtensionOpts struct {
+	PathParamsSchema types.JSONSchema
+}
+
 func DeclareDiscoveryExtension(
 	method interface{}, // QueryParamMethods or BodyMethods
 	input interface{},
 	inputSchema types.JSONSchema,
 	bodyType types.BodyType,
 	output *types.OutputConfig,
+	opts ...DeclareDiscoveryExtensionOpts,
 ) (types.DiscoveryExtension, error) {
+	var pathParamsSchema types.JSONSchema
+	if len(opts) > 0 {
+		pathParamsSchema = opts[0].PathParamsSchema
+	}
+
 	// Convert method to string
 	var methodStr string
 	switch m := method.(type) {
@@ -74,15 +87,161 @@ func DeclareDiscoveryExtension(
 	}
 
 	if types.IsQueryMethod(methodStr) {
-		return createQueryDiscoveryExtension(types.QueryParamMethods(methodStr), input, inputSchema, output)
+		return createQueryDiscoveryExtension(types.QueryParamMethods(methodStr), input, inputSchema, pathParamsSchema, output)
 	} else if types.IsBodyMethod(methodStr) {
 		if bodyType == "" {
 			bodyType = types.BodyTypeJSON
 		}
-		return createBodyDiscoveryExtension(types.BodyMethods(methodStr), input, inputSchema, bodyType, output)
+		return createBodyDiscoveryExtension(types.BodyMethods(methodStr), input, inputSchema, pathParamsSchema, bodyType, output)
 	}
 
 	return types.DiscoveryExtension{}, fmt.Errorf("unsupported HTTP method: %s", methodStr)
+}
+
+// DeclareMcpDiscoveryExtension creates a discovery extension for an MCP tool.
+//
+// This function helps servers declare how their MCP tool should be discovered,
+// including the tool name, input schema, and optional transport/description/example.
+//
+// Args:
+//   - config: Configuration for the MCP discovery extension
+//
+// Returns:
+//   - DiscoveryExtension with both info and schema
+//   - Error if required fields are missing
+//
+// Example:
+//
+//	extension, err := bazaar.DeclareMcpDiscoveryExtension(bazaar.DeclareMcpDiscoveryConfig{
+//	    ToolName:    "weather_lookup",
+//	    Description: "Look up weather for a city",
+//	    Transport:   bazaar.TransportStreamableHTTP,
+//	    InputSchema: map[string]interface{}{
+//	        "type": "object",
+//	        "properties": map[string]interface{}{
+//	            "city": map[string]interface{}{"type": "string"},
+//	        },
+//	        "required": []string{"city"},
+//	    },
+//	    Example: map[string]interface{}{"city": "San Francisco"},
+//	})
+func DeclareMcpDiscoveryExtension(config types.DeclareMcpDiscoveryConfig) (types.DiscoveryExtension, error) {
+	if strings.TrimSpace(config.ToolName) == "" {
+		return types.DiscoveryExtension{}, fmt.Errorf("toolName is required for MCP discovery extension")
+	}
+	if config.InputSchema == nil {
+		return types.DiscoveryExtension{}, fmt.Errorf("inputSchema is required for MCP discovery extension")
+	}
+
+	// Build the info
+	mcpInput := types.McpInput{
+		Type:        "mcp",
+		ToolName:    config.ToolName,
+		InputSchema: config.InputSchema,
+	}
+	if config.Description != "" {
+		mcpInput.Description = config.Description
+	}
+	if config.Transport != "" {
+		mcpInput.Transport = config.Transport
+	}
+	if config.Example != nil {
+		mcpInput.Example = config.Example
+	}
+
+	mcpInfo := types.McpDiscoveryInfo{
+		Input: mcpInput,
+	}
+
+	if config.Output != nil && config.Output.Example != nil {
+		mcpInfo.Output = &types.OutputInfo{
+			Type:    "json",
+			Example: config.Output.Example,
+		}
+	}
+
+	// Build the schema
+	inputSchemaProperties := map[string]interface{}{
+		"type": map[string]interface{}{
+			"type":  "string",
+			"const": "mcp",
+		},
+		"toolName": map[string]interface{}{
+			"type": "string",
+		},
+		"inputSchema": map[string]interface{}{
+			"type": "object",
+		},
+	}
+	inputRequired := []string{"type", "toolName", "inputSchema"}
+
+	if config.Description != "" {
+		inputSchemaProperties["description"] = map[string]interface{}{
+			"type": "string",
+		}
+	}
+	if config.Transport != "" {
+		transportSchema := map[string]interface{}{
+			"type": "string",
+		}
+		if config.Transport == TransportStreamableHTTP || config.Transport == TransportSSE {
+			transportSchema["enum"] = []string{string(config.Transport)}
+		}
+		inputSchemaProperties["transport"] = transportSchema
+	}
+	if config.Example != nil {
+		inputSchemaProperties["example"] = map[string]interface{}{
+			"type": "object",
+		}
+	}
+
+	schemaProperties := map[string]interface{}{
+		"input": map[string]interface{}{
+			"type":                 "object",
+			"properties":           inputSchemaProperties,
+			"required":             inputRequired,
+			"additionalProperties": false,
+		},
+	}
+
+	// Add output schema if provided
+	if config.Output != nil && config.Output.Example != nil {
+		outputSchema := map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"type": map[string]interface{}{
+					"type": "string",
+				},
+				"example": map[string]interface{}{
+					"type": "object",
+				},
+			},
+			"required": []string{"type"},
+		}
+
+		if config.Output.Schema != nil {
+			for k, v := range config.Output.Schema {
+				outputSchema["properties"].(map[string]interface{})["example"].(map[string]interface{})[k] = v
+			}
+		}
+
+		schemaProperties["output"] = outputSchema
+	}
+
+	schema := types.JSONSchema{
+		"$schema":    "https://json-schema.org/draft/2020-12/schema",
+		"type":       "object",
+		"properties": schemaProperties,
+		"required":   []string{"input"},
+	}
+
+	return types.DiscoveryExtension{
+		Info: types.DiscoveryInfo{
+			Input:  mcpInfo.Input,
+			Output: mcpInfo.Output,
+		},
+		Schema: schema,
+	}, nil
 }
 
 // createQueryDiscoveryExtension creates a query discovery extension
@@ -90,6 +249,7 @@ func createQueryDiscoveryExtension(
 	method types.QueryParamMethods,
 	input interface{},
 	inputSchema types.JSONSchema,
+	pathParamsSchema types.JSONSchema,
 	output *types.OutputConfig,
 ) (types.DiscoveryExtension, error) {
 	// Convert input to map if provided
@@ -135,7 +295,10 @@ func createQueryDiscoveryExtension(
 					"enum": []string{string(method)},
 				},
 			},
-			"required":             []string{"type", "method"},
+			"required": []string{"type", "method"},
+			// pathParams and method are not declared here at schema build time —
+			// the server extension's EnrichDeclaration adds them to both info and schema
+			// atomically at request time, keeping data and schema consistent.
 			"additionalProperties": false,
 		},
 	}
@@ -151,6 +314,16 @@ func createQueryDiscoveryExtension(
 		for k, v := range inputSchema {
 			props["queryParams"].(map[string]interface{})[k] = v
 		}
+	}
+
+	if len(pathParamsSchema) > 0 {
+		inputProps := schemaProperties["input"].(map[string]interface{})
+		props := inputProps["properties"].(map[string]interface{})
+		pp := map[string]interface{}{"type": "object"}
+		for k, v := range pathParamsSchema {
+			pp[k] = v
+		}
+		props["pathParams"] = pp
 	}
 
 	// Add output schema if provided
@@ -199,6 +372,7 @@ func createBodyDiscoveryExtension(
 	method types.BodyMethods,
 	input interface{},
 	inputSchema types.JSONSchema,
+	pathParamsSchema types.JSONSchema,
 	bodyType types.BodyType,
 	output *types.OutputConfig,
 ) (types.DiscoveryExtension, error) {
@@ -243,9 +417,22 @@ func createBodyDiscoveryExtension(
 				},
 				"body": inputSchema,
 			},
-			"required":             []string{"type", "method", "bodyType", "body"},
+			"required": []string{"type", "method", "bodyType", "body"},
+			// pathParams and method are not declared here at schema build time —
+			// the server extension's EnrichDeclaration adds them to both info and schema
+			// atomically at request time, keeping data and schema consistent.
 			"additionalProperties": false,
 		},
+	}
+
+	if len(pathParamsSchema) > 0 {
+		inputProps := schemaProperties["input"].(map[string]interface{})
+		props := inputProps["properties"].(map[string]interface{})
+		pp := map[string]interface{}{"type": "object"}
+		for k, v := range pathParamsSchema {
+			pp[k] = v
+		}
+		props["pathParams"] = pp
 	}
 
 	// Add output schema if provided

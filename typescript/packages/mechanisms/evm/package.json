@@ -1,6 +1,6 @@
 {
   "name": "@x402/evm",
-  "version": "2.5.0",
+  "version": "2.11.0",
   "main": "./dist/cjs/index.js",
   "module": "./dist/esm/index.js",
   "types": "./dist/cjs/index.d.ts",
@@ -24,8 +24,8 @@
     "ethereum"
   ],
   "license": "Apache-2.0",
-  "author": "Coinbase Inc.",
-  "repository": "https://github.com/coinbase/x402",
+  "author": "x402 Foundation",
+  "repository": "https://github.com/x402-foundation/x402",
   "description": "x402 Payment Protocol EVM Implementation",
   "devDependencies": {
     "@eslint/js": "^9.24.0",
@@ -46,8 +46,7 @@
   },
   "dependencies": {
     "@x402/core": "workspace:~",
-    "@x402/extensions": "workspace:~",
-    "viem": "^2.39.3",
+    "viem": "^2.48.11",
     "zod": "^3.24.2"
   },
   "exports": {
@@ -119,6 +118,66 @@
       "require": {
         "types": "./dist/cjs/exact/v1/facilitator/index.d.ts",
         "default": "./dist/cjs/exact/v1/facilitator/index.js"
+      }
+    },
+    "./upto/client": {
+      "import": {
+        "types": "./dist/esm/upto/client/index.d.mts",
+        "default": "./dist/esm/upto/client/index.mjs"
+      },
+      "require": {
+        "types": "./dist/cjs/upto/client/index.d.ts",
+        "default": "./dist/cjs/upto/client/index.js"
+      }
+    },
+    "./upto/server": {
+      "import": {
+        "types": "./dist/esm/upto/server/index.d.mts",
+        "default": "./dist/esm/upto/server/index.mjs"
+      },
+      "require": {
+        "types": "./dist/cjs/upto/server/index.d.ts",
+        "default": "./dist/cjs/upto/server/index.js"
+      }
+    },
+    "./upto/facilitator": {
+      "import": {
+        "types": "./dist/esm/upto/facilitator/index.d.mts",
+        "default": "./dist/esm/upto/facilitator/index.mjs"
+      },
+      "require": {
+        "types": "./dist/cjs/upto/facilitator/index.d.ts",
+        "default": "./dist/cjs/upto/facilitator/index.js"
+      }
+    },
+    "./batch-settlement/client": {
+      "import": {
+        "types": "./dist/esm/batch-settlement/client/index.d.mts",
+        "default": "./dist/esm/batch-settlement/client/index.mjs"
+      },
+      "require": {
+        "types": "./dist/cjs/batch-settlement/client/index.d.ts",
+        "default": "./dist/cjs/batch-settlement/client/index.js"
+      }
+    },
+    "./batch-settlement/server": {
+      "import": {
+        "types": "./dist/esm/batch-settlement/server/index.d.mts",
+        "default": "./dist/esm/batch-settlement/server/index.mjs"
+      },
+      "require": {
+        "types": "./dist/cjs/batch-settlement/server/index.d.ts",
+        "default": "./dist/cjs/batch-settlement/server/index.js"
+      }
+    },
+    "./batch-settlement/facilitator": {
+      "import": {
+        "types": "./dist/esm/batch-settlement/facilitator/index.d.mts",
+        "default": "./dist/esm/batch-settlement/facilitator/index.mjs"
+      },
+      "require": {
+        "types": "./dist/cjs/batch-settlement/facilitator/index.d.ts",
+        "default": "./dist/cjs/batch-settlement/facilitator/index.js"
       }
     }
   },

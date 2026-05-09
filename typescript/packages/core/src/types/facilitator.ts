@@ -2,6 +2,7 @@ import { PaymentPayload, PaymentRequirements } from "./payments";
 import { Network } from "./";
 
 export type VerifyRequest = {
+  x402Version: number;
   paymentPayload: PaymentPayload;
   paymentRequirements: PaymentRequirements;
 };
@@ -12,9 +13,11 @@ export type VerifyResponse = {
   invalidMessage?: string;
   payer?: string;
   extensions?: Record<string, unknown>;
+  extra?: Record<string, unknown>;
 };
 
 export type SettleRequest = {
+  x402Version: number;
   paymentPayload: PaymentPayload;
   paymentRequirements: PaymentRequirements;
 };
@@ -26,7 +29,10 @@ export type SettleResponse = {
   payer?: string;
   transaction: string;
   network: Network;
+  /** Actual amount settled in atomic token units. Present for schemes like `upto` where settlement amount may differ from the authorized maximum. */
+  amount?: string;
   extensions?: Record<string, unknown>;
+  extra?: Record<string, unknown>;
 };
 
 export type SupportedKind = {
@@ -55,7 +61,7 @@ export class VerifyError extends Error {
    * Creates a VerifyError from a failed verification response.
    *
    * @param statusCode - HTTP status code from the facilitator
-   * @param response - The verify response containing error details
+   * @param response - The verify response containing failure details
    */
   constructor(statusCode: number, response: VerifyResponse) {
     const reason = response.invalidReason || "unknown reason";
@@ -98,4 +104,38 @@ export class SettleError extends Error {
     this.transaction = response.transaction;
     this.network = response.network;
   }
+}
+
+/**
+ * Error thrown when a facilitator returns malformed success payload data.
+ */
+export class FacilitatorResponseError extends Error {
+  /**
+   * Creates a FacilitatorResponseError for malformed facilitator responses.
+   *
+   * @param message - The boundary error message
+   */
+  constructor(message: string) {
+    super(message);
+    this.name = "FacilitatorResponseError";
+  }
+}
+
+/**
+ * Walks an error cause chain to find the first facilitator response error.
+ *
+ * @param error - The thrown value to inspect
+ * @returns The nested facilitator response error, if present
+ */
+export function getFacilitatorResponseError(error: unknown): FacilitatorResponseError | null {
+  let current = error;
+
+  while (current instanceof Error) {
+    if (current instanceof FacilitatorResponseError) {
+      return current;
+    }
+    current = current.cause;
+  }
+
+  return null;
 }

@@ -12,9 +12,9 @@ import (
 	"encoding/json"
 	"fmt"
 
-	x402 "github.com/coinbase/x402/go"
-	"github.com/coinbase/x402/go/types"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
+	x402 "github.com/x402-foundation/x402/go"
+	"github.com/x402-foundation/x402/go/types"
 )
 
 // ToolHandler is the function signature for MCP tool handlers.
@@ -138,7 +138,7 @@ func (w *PaymentWrapper) Wrap(handler ToolHandler) ToolHandler {
 		}
 
 		// Settle payment -- return tool error result, NOT Go error
-		settleResp, err := w.server.SettlePayment(ctx, payload, w.config.Accepts[0])
+		settleResp, err := w.server.SettlePayment(ctx, payload, w.config.Accepts[0], nil)
 		if err != nil {
 			return w.settlementFailedResult(
 				fmt.Sprintf("Settlement error: %v", err)), nil
@@ -200,6 +200,7 @@ func (w *PaymentWrapper) paymentRequiredResult(errorMsg string) *mcp.CallToolRes
 		Accepts:     w.config.Accepts,
 		Error:       errorMsg,
 		Resource:    resource,
+		Extensions:  w.config.Extensions,
 	}
 
 	data, _ := json.Marshal(pr)

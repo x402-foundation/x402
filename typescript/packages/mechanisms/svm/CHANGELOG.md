@@ -1,5 +1,64 @@
 # @x402/svm Changelog
 
+## 2.11.0
+
+### Minor Changes
+
+- dc04108: Fixed a bug affecting USD prices with 7+ decimal places of precision (e.g. `$0.0000001` or smaller).
+- Updated dependencies [a051f48]
+- Updated dependencies [dc04108]
+  - @x402/core@2.11.0
+
+## 2.10.0
+
+### Minor Changes
+
+- 077b294: Add optional `extra.memo` support to SVM exact scheme. When a seller provides `extra.memo` in PaymentRequirements, the client uses it as the Memo instruction data instead of a random nonce, and the facilitator verifies the memo content matches. Enables payment reconciliation without unique deposit addresses.
+
+- @x402/core@2.10.0
+
+## 2.9.0
+
+### Minor Changes
+
+- 2250cae: Migrated project from coinbase/x402 to x402-foundation/x402 organization
+
+### Patch Changes
+
+- Updated dependencies [8cf3fca]
+- Updated dependencies [c0e3969]
+- Updated dependencies [2250cae]
+- Updated dependencies [d352574]
+  - @x402/core@2.9.0
+
+## 2.8.0
+
+### Minor Changes
+
+- Updated dependencies [067f297]
+- Updated dependencies [4c1e44f]
+- Updated dependencies [5135fab]
+  - @x402/core@2.8.0
+
+## 2.7.0
+
+### Minor Changes
+
+- Updated dependencies [8931cb3]
+  - @x402/core@2.7.0
+
+## 2.6.0
+
+### Minor Changes
+
+- 7cd93d8: Add in-memory SettlementCache to prevent duplicate SVM transaction settlement during on-chain confirmation window
+- Updated dependencies [f41baed]
+- Updated dependencies [aeef1bf]
+- Updated dependencies [2564781]
+- Updated dependencies [b341973]
+- Updated dependencies [29fe09a]
+  - @x402/core@2.6.0
+
 ## 2.5.0
 
 ### Minor Changes

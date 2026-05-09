@@ -39,6 +39,7 @@
 
 // Export types
 export type {
+  TransactionRequest,
   Erc20ApprovalGasSponsoringInfo,
   Erc20ApprovalGasSponsoringServerInfo,
   Erc20ApprovalGasSponsoringExtension,

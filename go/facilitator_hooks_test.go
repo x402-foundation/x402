@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/coinbase/x402/go/types"
+	"github.com/x402-foundation/x402/go/types"
 )
 
 // Test Facilitator BeforeVerify hook - abort verification
@@ -23,8 +23,6 @@ func TestFacilitatorBeforeVerifyHook_Abort(t *testing.T) {
 	})
 
 	// Try to verify (should be aborted by hook)
-	// Note: Hooks are not fully integrated yet - this test validates hook registration works
-	// TODO: Integrate hooks into Verify execution
 	payload := types.PaymentPayload{X402Version: 2, Payload: map[string]interface{}{}}
 	requirements := types.PaymentRequirements{Scheme: "exact", Network: "eip155:8453"}
 

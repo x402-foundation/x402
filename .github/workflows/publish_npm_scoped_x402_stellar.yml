@@ -1,0 +1,56 @@
+name: Publish @x402/stellar package to NPM
+
+on:
+  workflow_dispatch:
+
+jobs:
+  publish-npm-x402-stellar:
+    runs-on: ubuntu-latest
+    environment: ${{ github.ref == 'refs/heads/main' && 'npm' || '' }}
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@41ff72655975bd51cab0327fa583b6e92b6d3061
+        with:
+          version: 10.7.0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          registry-url: "https://registry.npmjs.org"
+          cache: "pnpm"
+          cache-dependency-path: ./typescript
+
+      - name: Update npm for OIDC trusted publishing
+        run: npm install -g npm@latest
+
+      - name: Configure npm for trusted publishing
+        run: npm config delete always-auth 2>/dev/null || true
+
+      - name: Install and build
+        working-directory: ./typescript
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm -r --filter=@x402/core --filter=@x402/stellar run build
+
+      - name: Publish @x402/stellar package
+        working-directory: ./typescript/packages/mechanisms/stellar
+        run: |
+          # Get package information directly
+          PACKAGE_NAME=$(node -p "require('./package.json').name")
+          PACKAGE_VERSION=$(node -p "require('./package.json').version")
+
+          echo "Package: $PACKAGE_NAME@$PACKAGE_VERSION"
+
+          # Check if running on main branch
+          if [[ "${{ github.ref }}" == "refs/heads/main" ]]; then
+            echo "Publishing to NPM (main branch)"
+            pnpm publish --provenance --access public
+          else
+            echo "Dry run only (non-main branch: ${{ github.ref }})"
+            pnpm publish --dry-run --no-git-checks
+          fi

@@ -27,7 +27,7 @@ No. Any web API or content provider—crypto or web2—can integrate x402 if it 
 
 Typescript, Python, and Go are reference implementations, but x402 is an **open protocol**.
 
-Nothing prevents you from implementing the spec in Rust, Java, or other languages. If you're interested in building support for your favorite language, please [open an issue](https://github.com/coinbase/x402/issues) and let us know, we'd be happy to help!
+Nothing prevents you from implementing the spec in Rust, Java, or other languages. If you're interested in building support for your favorite language, please [open an issue](https://github.com/x402-foundation/x402/issues) and let us know, we'd be happy to help!
 
 ### Facilitators
 
@@ -51,7 +51,7 @@ There is no single answer, but common patterns are:
 
 * **Flat per‑call** (e.g., `$0.001` per request)
 * **Tiered** (`/basic` vs `/pro` endpoints with different prices)
-* **Up‑to** (work in progress): "pay‑up‑to" where the final cost equals usage (tokens, MB, etc.)
+* **Up‑to** (`scheme: "upto"`): The client authorizes a maximum amount but is only charged for actual usage (tokens, compute time, bandwidth, etc.). Available on EVM networks in TypeScript, Go, and Python. See the [Seller Quickstart](/getting-started/quickstart-for-sellers#payment-schemes-exact-vs-upto) for setup.
 
 #### Can I integrate x402 with a usage / plan manager like Metronome?
 
@@ -63,8 +63,8 @@ Yes. x402 handles the _payment execution_. You can still meter usage, aggregate 
 
 | Network        | CAIP-2 ID | Asset | Fees\*   | Status      |
 | -------------- | --------- | ----- | -------- | ----------- |
-| Base           | `eip155:8453` | Any EIP-3009 token  | fee-free | **Mainnet** |
-| Base Sepolia   | `eip155:84532` | Any EIP-3009 token  | fee-free | **Testnet** |
+| Base           | `eip155:8453` | Any ERC-20 token  | fee-free | **Mainnet** |
+| Base Sepolia   | `eip155:84532` | Any ERC-20 token  | fee-free | **Testnet** |
 | Solana         | `solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp` | Any SPL token or Token-2022 token | fee-free | **Mainnet** |
 | Solana Devnet  | `solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1` | Any SPL token or Token-2022 | fee-free | **Testnet** |
 
@@ -111,7 +111,7 @@ Yes. Programmatic wallets (e.g., **CDP Wallet API**, **viem**, **ethers‑v6** H
 
 #### Is there a formal spec or whitepaper?
 
-* **Spec:** [GitHub Specification](https://github.com/coinbase/x402/tree/main/specs)
+* **Spec:** [GitHub Specification](https://github.com/x402-foundation/x402/tree/main/specs)
 * [**Whitepaper**](https://www.x402.org/x402-whitepaper.pdf)
 
 #### How will x402 evolve?
@@ -119,7 +119,7 @@ Yes. Programmatic wallets (e.g., **CDP Wallet API**, **viem**, **ethers‑v6** H
 Tracked in public GitHub issues + community RFCs. Major themes:
 
 * Multi‑asset support
-* Additional schemes (`upto`, `stream`, `permit2`)
+* Additional schemes (`stream`)
 * Discovery layer for service search & reputation
 
 **Why is x402 hosted in the Coinbase GitHub?**
@@ -131,7 +131,7 @@ We acknowledge that the repo is primarily under Coinbase ownership today. This i
 #### I keep getting `402 Payment Required`, even after attaching `PAYMENT-SIGNATURE`. Why?
 
 1. Signature is invalid (wrong chain ID or payload fields).
-2. Payment amount is less than the required `amount` in the payment requirements.
+2. Payment amount does not exactly match the required `amount` in the payment requirements (the exact scheme requires strict equality - no overpayment or underpayment).
 3. Address has insufficient USDC or was flagged by KYT.\
    Check the `error` field in the server's JSON response for details.
 
@@ -144,4 +144,4 @@ We acknowledge that the repo is primarily under Coinbase ownership today. This i
 ### Still have questions?
 
 • Reach out in the [Discord channel](https://discord.gg/invite/cdp)\
-• Open a GitHub Discussion or Issue in the [x402 repo](https://github.com/coinbase/x402)
+• Open a GitHub Discussion or Issue in the [x402 repo](https://github.com/x402-foundation/x402)

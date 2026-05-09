@@ -1,6 +1,6 @@
 # x402 Advanced Facilitator Examples
 
-Express.js facilitator service demonstrating advanced x402 patterns including all-networks support, bazaar discovery, and lifecycle hooks.
+Express.js facilitator service demonstrating advanced x402 patterns including all-networks support, bazaar discovery, Permit2 gas-sponsoring extensions (`gas_extensions`), and lifecycle hooks.
 
 ## Prerequisites
 
@@ -8,6 +8,8 @@ Express.js facilitator service demonstrating advanced x402 patterns including al
 - pnpm v10 (install via [pnpm.io/installation](https://pnpm.io/installation))
 - EVM private key with Base Sepolia ETH for transaction fees
 - SVM private key with Solana Devnet SOL for transaction fees
+- Stellar private key with testnet XLM for transaction fees (fund via [Stellar Laboratory](https://lab.stellar.org/account/create) ➡️ Generate keypair ➡️ Fund account with Friendbot)
+- Hedera account id + private key for Hedera testnet fees (optional)
 
 ## Setup
 
@@ -21,6 +23,9 @@ and fill required environment variables:
 
 - `EVM_PRIVATE_KEY` - Ethereum private key
 - `SVM_PRIVATE_KEY` - Solana private key
+- `STELLAR_PRIVATE_KEY` - Stellar secret key (starts with `S`)
+- `HEDERA_ACCOUNT_ID` - Hedera account id for fee payer (optional)
+- `HEDERA_PRIVATE_KEY` - Hedera **ECDSA** private key (0x-prefixed or DER-encoded) for fee payer (optional)
 - `PORT` - Server port (optional, defaults to 4022)
 
 2. Install and build all packages from the typescript examples root:
@@ -36,16 +41,18 @@ cd facilitator/advanced
 ```bash
 pnpm dev:all-networks   # All supported networks
 pnpm dev:bazaar         # Bazaar discovery extension
+pnpm dev:gas-extensions # exact + upto with EIP-2612 and ERC-20 approval gas sponsoring
 ```
 
 ## Available Examples
 
 Each example demonstrates a specific advanced pattern:
 
-| Example | Command | Description |
-| --- | --- | --- |
-| `all-networks` | `pnpm dev:all-networks` | All supported networks with optional chain configuration |
-| `bazaar` | `pnpm dev:bazaar` | Bazaar discovery extension for cataloging x402 resources |
+| Example          | Command                   | Description                                                               |
+| ---------------- | ------------------------- | ------------------------------------------------------------------------- |
+| `all-networks`   | `pnpm dev:all-networks`   | All supported networks with optional chain configuration                  |
+| `bazaar`         | `pnpm dev:bazaar`         | Bazaar discovery extension for cataloging x402 resources                  |
+| `gas_extensions` | `pnpm dev:gas-extensions` | Base Sepolia `exact` + `upto` with both Permit2 gas-sponsoring extensions |
 
 ## API Endpoints
 
@@ -68,12 +75,21 @@ Returns payment schemes and networks this facilitator supports.
       "extra": {
         "feePayer": "..."
       }
+    },
+    {
+      "x402Version": 2,
+      "scheme": "exact",
+      "network": "stellar:testnet",
+      "extra": {
+        "areFeesSponsored": true
+      }
     }
   ],
   "extensions": [],
   "signers": {
     "eip155": ["0x..."],
-    "solana": ["..."]
+    "solana": ["..."],
+    "stellar": ["G..."]
   }
 }
 ```
@@ -229,3 +245,7 @@ Networks use [CAIP-2](https://github.com/ChainAgnostic/CAIPs/blob/main/CAIPs/cai
 - `eip155:8453` — Base Mainnet
 - `solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1` — Solana Devnet
 - `solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp` — Solana Mainnet
+- `stellar:testnet` — Stellar Testnet
+- `stellar:pubnet` — Stellar Mainnet
+- `hedera:testnet` — Hedera Testnet
+- `hedera:mainnet` — Hedera Mainnet

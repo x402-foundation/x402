@@ -19,7 +19,7 @@
     "@x402/mcp": "workspace:*",
     "dotenv": "^16.5.0",
     "openai": "^4.77.3",
-    "viem": "^2.39.0"
+    "viem": "^2.48.11"
   },
   "devDependencies": {
     "@eslint/js": "^9.24.0",

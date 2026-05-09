@@ -15,8 +15,16 @@
     "eip2612GasSponsoring",
     "erc20ApprovalGasSponsoring"
   ],
+  "schemes": [
+    "exact",
+    "upto",
+    "batch-settlement"
+  ],
   "evm": {
-    "transferMethods": ["eip3009", "permit2"]
+    "assetTransferMethods": [
+      "eip3009",
+      "permit2"
+    ]
   },
   "environment": {
     "required": [
@@ -24,6 +32,8 @@
       "EVM_PRIVATE_KEY",
       "SVM_PRIVATE_KEY"
     ],
-    "optional": []
+    "optional": [
+      "EVM_RECEIVER_AUTHORIZER_PRIVATE_KEY"
+    ]
   }
 }

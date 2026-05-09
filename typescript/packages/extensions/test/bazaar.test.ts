@@ -7,6 +7,11 @@ import {
   BAZAAR,
   declareDiscoveryExtension,
   validateDiscoveryExtension,
+  isValidRouteTemplate,
+  isValidServiceName,
+  sanitizeTags,
+  isValidIconUrl,
+  sanitizeResourceServiceMetadata,
   extractDiscoveryInfo,
   extractDiscoveryInfoFromExtension,
   extractDiscoveryInfoV1,
@@ -177,6 +182,7 @@ describe("Bazaar Discovery Extension", () => {
   describe("validateDiscoveryExtension", () => {
     it("should validate a correct GET extension", () => {
       const declared = declareDiscoveryExtension({
+        method: "GET",
         input: { query: "test" },
         inputSchema: {
           properties: {
@@ -193,6 +199,7 @@ describe("Bazaar Discovery Extension", () => {
 
     it("should validate a correct POST extension", () => {
       const declared = declareDiscoveryExtension({
+        method: "POST",
         input: { name: "John" },
         inputSchema: {
           properties: {
@@ -205,6 +212,19 @@ describe("Bazaar Discovery Extension", () => {
       const extension = declared.bazaar;
       const result = validateDiscoveryExtension(extension);
       expect(result.valid).toBe(true);
+    });
+
+    it("should fail validation when method is absent", () => {
+      // Per spec, method is required. An extension without method (e.g. pre-enrichment)
+      // must be rejected.
+      const declared = declareDiscoveryExtension({
+        input: { query: "test" },
+        inputSchema: { properties: { query: { type: "string" } } },
+      });
+
+      const result = validateDiscoveryExtension(declared.bazaar);
+      expect(result.valid).toBe(false);
+      expect(result.errors?.some(e => e.includes("method"))).toBe(true);
     });
 
     it("should detect invalid extension structure", () => {
@@ -242,6 +262,7 @@ describe("Bazaar Discovery Extension", () => {
   describe("extractDiscoveryInfoFromExtension", () => {
     it("should extract info from a valid extension", () => {
       const declared = declareDiscoveryExtension({
+        method: "GET",
         input: { query: "test" },
         inputSchema: {
           properties: {
@@ -306,6 +327,7 @@ describe("Bazaar Discovery Extension", () => {
   describe("extractDiscoveryInfo (full flow)", () => {
     it("should extract info from v2 PaymentPayload with extensions", () => {
       const declared = declareDiscoveryExtension({
+        method: "POST",
         input: { userId: "123" },
         inputSchema: {
           properties: {
@@ -338,6 +360,7 @@ describe("Bazaar Discovery Extension", () => {
 
     it("should strip query params from v2 resourceUrl", () => {
       const declared = declareDiscoveryExtension({
+        method: "GET",
         input: { city: "NYC" },
         inputSchema: {
           properties: {
@@ -374,6 +397,7 @@ describe("Bazaar Discovery Extension", () => {
 
     it("should strip hash sections from v2 resourceUrl", () => {
       const declared = declareDiscoveryExtension({
+        method: "GET",
         input: {},
         inputSchema: { properties: {} },
       });
@@ -404,6 +428,7 @@ describe("Bazaar Discovery Extension", () => {
 
     it("should strip both query params and hash sections from v2 resourceUrl", () => {
       const declared = declareDiscoveryExtension({
+        method: "GET",
         input: {},
         inputSchema: { properties: {} },
       });
@@ -558,6 +583,7 @@ describe("Bazaar Discovery Extension", () => {
   describe("validateAndExtract", () => {
     it("should return valid result with info for correct extension", () => {
       const declared = declareDiscoveryExtension({
+        method: "GET",
         input: { query: "test" },
         inputSchema: {
           properties: {
@@ -921,6 +947,7 @@ describe("Bazaar Discovery Extension", () => {
   describe("Integration - Full workflow", () => {
     it("should handle GET endpoint with output schema (e2e scenario)", () => {
       const declared = declareDiscoveryExtension({
+        method: "GET",
         input: {},
         inputSchema: {
           properties: {},
@@ -962,6 +989,7 @@ describe("Bazaar Discovery Extension", () => {
 
     it("should handle complete v2 server-to-facilitator workflow", () => {
       const declared = declareDiscoveryExtension({
+        method: "POST",
         input: { userId: "123", action: "create" },
         inputSchema: {
           properties: {
@@ -1067,6 +1095,7 @@ describe("Bazaar Discovery Extension", () => {
 
     it("should handle unified extraction for both v1 and v2", () => {
       const declared = declareDiscoveryExtension({
+        method: "GET",
         input: { limit: 10 },
         inputSchema: {
           properties: {
@@ -1265,6 +1294,57 @@ describe("Bazaar Discovery Extension", () => {
 
       const required = extractRequiredFields(enriched.schema as Record<string, unknown>);
       expect(required).toContain("method");
+    });
+
+    it("should produce a valid extension after enrichment (GET)", () => {
+      const declared = declareDiscoveryExtension({
+        input: { query: "test" },
+        inputSchema: { properties: { query: { type: "string" } } },
+      });
+
+      // Pre-enrichment: method not set, validation should fail
+      const preResult = validateDiscoveryExtension(declared.bazaar);
+      expect(preResult.valid).toBe(false);
+
+      const httpContext: HTTPRequestContext = {
+        method: "GET",
+        path: "/test",
+        adapter: createMockAdapter(),
+      };
+
+      const enriched = bazaarResourceServerExtension.enrichDeclaration!(
+        declared.bazaar,
+        httpContext,
+      ) as DiscoveryExtension;
+
+      // Post-enrichment: validation should pass
+      const postResult = validateDiscoveryExtension(enriched);
+      expect(postResult.valid).toBe(true);
+    });
+
+    it("should produce a valid extension after enrichment (POST)", () => {
+      const declared = declareDiscoveryExtension({
+        input: { data: "test" },
+        inputSchema: { properties: { data: { type: "string" } } },
+        bodyType: "json",
+      });
+
+      const preResult = validateDiscoveryExtension(declared.bazaar);
+      expect(preResult.valid).toBe(false);
+
+      const httpContext: HTTPRequestContext = {
+        method: "POST",
+        path: "/test",
+        adapter: createMockAdapter(),
+      };
+
+      const enriched = bazaarResourceServerExtension.enrichDeclaration!(
+        declared.bazaar,
+        httpContext,
+      ) as DiscoveryExtension;
+
+      const postResult = validateDiscoveryExtension(enriched);
+      expect(postResult.valid).toBe(true);
     });
 
     it("should return unchanged declaration for non-HTTP context", () => {
@@ -1588,6 +1668,632 @@ describe("Bazaar Discovery Extension", () => {
       // MCP extension should remain unchanged
       expect(enriched.info.input.type).toBe("mcp");
       expect((enriched.info as McpDiscoveryInfo).input.toolName).toBe("my_tool");
+    });
+  });
+
+  describe("dynamic routes", () => {
+    const createMockAdapterWithPath = (path: string): HTTPAdapter => ({
+      getHeader: () => undefined,
+      getMethod: () => "GET",
+      getPath: () => path,
+      getUrl: () => `http://example.com${path}`,
+      getAcceptHeader: () => "application/json",
+      getUserAgent: () => "test-agent",
+    });
+
+    it("should leave static routes unchanged", () => {
+      const declared = declareDiscoveryExtension({
+        input: { query: "test" },
+        inputSchema: { properties: { query: { type: "string" } } },
+      });
+      const extension = declared.bazaar;
+
+      const httpContext: HTTPRequestContext = {
+        method: "GET",
+        path: "/users",
+        routePattern: "/users",
+        adapter: createMockAdapterWithPath("/users"),
+      };
+
+      const enriched = bazaarResourceServerExtension.enrichDeclaration!(
+        extension,
+        httpContext,
+      ) as Record<string, unknown>;
+
+      expect(enriched.routeTemplate).toBeUndefined();
+    });
+
+    it("should produce routeTemplate for dynamic routes", () => {
+      const declared = declareDiscoveryExtension({
+        input: {},
+        inputSchema: { properties: {} },
+      });
+      const extension = declared.bazaar;
+
+      const httpContext: HTTPRequestContext = {
+        method: "GET",
+        path: "/users/123",
+        routePattern: "/users/[userId]",
+        adapter: createMockAdapterWithPath("/users/123"),
+      };
+
+      const enriched = bazaarResourceServerExtension.enrichDeclaration!(
+        extension,
+        httpContext,
+      ) as Record<string, unknown>;
+
+      expect(enriched.routeTemplate).toBe("/users/:userId");
+    });
+
+    it("should extract path params from concrete URL", () => {
+      const declared = declareDiscoveryExtension({
+        input: {},
+        inputSchema: { properties: {} },
+      });
+      const extension = declared.bazaar;
+
+      const httpContext: HTTPRequestContext = {
+        method: "GET",
+        path: "/users/123",
+        routePattern: "/users/[userId]",
+        adapter: createMockAdapterWithPath("/users/123"),
+      };
+
+      const enriched = bazaarResourceServerExtension.enrichDeclaration!(
+        extension,
+        httpContext,
+      ) as Record<string, unknown>;
+
+      const info = enriched.info as Record<string, unknown>;
+      const input = info.input as Record<string, unknown>;
+      expect(input.pathParams).toEqual({ userId: "123" });
+    });
+
+    it("should extract multiple path params", () => {
+      const declared = declareDiscoveryExtension({
+        input: {},
+        inputSchema: { properties: {} },
+      });
+      const extension = declared.bazaar;
+
+      const httpContext: HTTPRequestContext = {
+        method: "GET",
+        path: "/users/42/posts/7",
+        routePattern: "/users/[userId]/posts/[postId]",
+        adapter: createMockAdapterWithPath("/users/42/posts/7"),
+      };
+
+      const enriched = bazaarResourceServerExtension.enrichDeclaration!(
+        extension,
+        httpContext,
+      ) as Record<string, unknown>;
+
+      expect(enriched.routeTemplate).toBe("/users/:userId/posts/:postId");
+      const info = enriched.info as Record<string, unknown>;
+      const input = info.input as Record<string, unknown>;
+      expect(input.pathParams).toEqual({ userId: "42", postId: "7" });
+    });
+
+    it("should use routeTemplate for canonical URL in facilitator", () => {
+      const declared = declareDiscoveryExtension({
+        input: {},
+        inputSchema: { properties: {} },
+      });
+      const extension = declared.bazaar;
+      // Simulate enriched extension with routeTemplate
+      const enrichedExtension = {
+        ...extension,
+        routeTemplate: "/users/:userId",
+        info: {
+          ...extension.info,
+          input: { ...extension.info.input, pathParams: { userId: "123" } },
+        },
+      };
+
+      const paymentPayload = {
+        x402Version: 2,
+        scheme: "exact",
+        network: "eip155:8453" as unknown,
+        payload: {},
+        accepted: {} as unknown,
+        resource: { url: "http://example.com/users/123" },
+        extensions: {
+          [BAZAAR.key]: enrichedExtension,
+        },
+      };
+
+      const discovered = extractDiscoveryInfo(paymentPayload, {} as unknown, false);
+
+      expect(discovered).not.toBeNull();
+      expect(discovered!.resourceUrl).toBe("http://example.com/users/:userId");
+      // Narrow to DiscoveredHTTPResource to access routeTemplate (HTTP-only field)
+      expect((discovered as import("./..").DiscoveredHTTPResource).routeTemplate).toBe(
+        "/users/:userId",
+      );
+    });
+
+    it("should return empty pathParams when URL path does not match pattern structure", () => {
+      const declared = declareDiscoveryExtension({
+        input: {},
+        inputSchema: { properties: {} },
+      });
+      const extension = declared.bazaar;
+
+      // Pattern expects /users/[userId] but path is /api/other — structurally mismatched.
+      // This can occur in production if middleware and extension patterns diverge.
+      const httpContext: HTTPRequestContext = {
+        method: "GET",
+        path: "/api/other",
+        routePattern: "/users/[userId]",
+        adapter: createMockAdapterWithPath("/api/other"),
+      };
+
+      const enriched = bazaarResourceServerExtension.enrichDeclaration!(
+        extension,
+        httpContext,
+      ) as Record<string, unknown>;
+
+      const info = enriched.info as Record<string, unknown>;
+      const input = info.input as Record<string, unknown>;
+      // extractPathParams returns {} gracefully when pattern and URL structure don't match
+      expect(input.pathParams).toEqual({});
+    });
+
+    it("should produce routeTemplate for :param style routes", () => {
+      const declared = declareDiscoveryExtension({
+        input: {},
+        inputSchema: { properties: {} },
+      });
+      const extension = declared.bazaar;
+
+      const httpContext: HTTPRequestContext = {
+        method: "GET",
+        path: "/users/123",
+        routePattern: "/users/:userId",
+        adapter: createMockAdapterWithPath("/users/123"),
+      };
+
+      const enriched = bazaarResourceServerExtension.enrichDeclaration!(
+        extension,
+        httpContext,
+      ) as Record<string, unknown>;
+
+      expect(enriched.routeTemplate).toBe("/users/:userId");
+    });
+
+    it("should extract path params from :param style routes", () => {
+      const declared = declareDiscoveryExtension({
+        input: {},
+        inputSchema: { properties: {} },
+      });
+      const extension = declared.bazaar;
+
+      const httpContext: HTTPRequestContext = {
+        method: "GET",
+        path: "/users/42/posts/7",
+        routePattern: "/users/:userId/posts/:postId",
+        adapter: createMockAdapterWithPath("/users/42/posts/7"),
+      };
+
+      const enriched = bazaarResourceServerExtension.enrichDeclaration!(
+        extension,
+        httpContext,
+      ) as Record<string, unknown>;
+
+      expect(enriched.routeTemplate).toBe("/users/:userId/posts/:postId");
+      const info = enriched.info as Record<string, unknown>;
+      const input = info.input as Record<string, unknown>;
+      expect(input.pathParams).toEqual({ userId: "42", postId: "7" });
+    });
+
+    it("should auto-convert wildcard * to :varN for discovery", () => {
+      const declared = declareDiscoveryExtension({
+        input: {},
+        inputSchema: { properties: {} },
+      });
+      const extension = declared.bazaar;
+
+      const httpContext: HTTPRequestContext = {
+        method: "GET",
+        path: "/weather/san-francisco",
+        routePattern: "/weather/*",
+        adapter: createMockAdapterWithPath("/weather/san-francisco"),
+      };
+
+      const enriched = bazaarResourceServerExtension.enrichDeclaration!(
+        extension,
+        httpContext,
+      ) as Record<string, unknown>;
+
+      expect(enriched.routeTemplate).toBe("/weather/:var1");
+      const info = enriched.info as Record<string, unknown>;
+      const input = info.input as Record<string, unknown>;
+      expect(input.pathParams).toEqual({ var1: "san-francisco" });
+    });
+
+    it("should auto-convert multiple wildcards to :var1, :var2, etc.", () => {
+      const declared = declareDiscoveryExtension({
+        input: {},
+        inputSchema: { properties: {} },
+      });
+      const extension = declared.bazaar;
+
+      const httpContext: HTTPRequestContext = {
+        method: "GET",
+        path: "/api/users/42/posts/7",
+        routePattern: "/api/*/*/posts/*",
+        adapter: createMockAdapterWithPath("/api/users/42/posts/7"),
+      };
+
+      const enriched = bazaarResourceServerExtension.enrichDeclaration!(
+        extension,
+        httpContext,
+      ) as Record<string, unknown>;
+
+      expect(enriched.routeTemplate).toBe("/api/:var1/:var2/posts/:var3");
+    });
+
+    it("should handle mixed [param] and :param patterns", () => {
+      const declared = declareDiscoveryExtension({
+        input: {},
+        inputSchema: { properties: {} },
+      });
+      const extension = declared.bazaar;
+
+      const httpContext: HTTPRequestContext = {
+        method: "GET",
+        path: "/users/42/posts/7",
+        routePattern: "/users/[userId]/posts/:postId",
+        adapter: createMockAdapterWithPath("/users/42/posts/7"),
+      };
+
+      const enriched = bazaarResourceServerExtension.enrichDeclaration!(
+        extension,
+        httpContext,
+      ) as Record<string, unknown>;
+
+      expect(enriched.routeTemplate).toBe("/users/:userId/posts/:postId");
+      const info = enriched.info as Record<string, unknown>;
+      const input = info.input as Record<string, unknown>;
+      expect(input.pathParams).toEqual({ userId: "42", postId: "7" });
+    });
+
+    it("should pass schema validation after enrichment with auto-injected pathParams", () => {
+      const declared = declareDiscoveryExtension({
+        input: {},
+        inputSchema: { properties: {} },
+      });
+      const extension = declared.bazaar;
+
+      const httpContext: HTTPRequestContext = {
+        method: "GET",
+        path: "/users/123",
+        routePattern: "/users/:userId",
+        adapter: createMockAdapterWithPath("/users/123"),
+      };
+
+      const enriched = bazaarResourceServerExtension.enrichDeclaration!(
+        extension,
+        httpContext,
+      ) as import("../src/bazaar/http/types").QueryDiscoveryExtension;
+
+      const result = validateDiscoveryExtension(enriched);
+      expect(result.valid).toBe(true);
+    });
+
+    it("should use concrete URL for static routes in facilitator", () => {
+      const declared = declareDiscoveryExtension({
+        input: { query: "test" },
+        inputSchema: { properties: { query: { type: "string" } } },
+      });
+      const extension = declared.bazaar;
+
+      const paymentPayload = {
+        x402Version: 2,
+        scheme: "exact",
+        network: "eip155:8453" as unknown,
+        payload: {},
+        accepted: {} as unknown,
+        resource: { url: "http://example.com/search?q=test" },
+        extensions: {
+          [BAZAAR.key]: extension,
+        },
+      };
+
+      const discovered = extractDiscoveryInfo(paymentPayload, {} as unknown, false);
+
+      expect(discovered).not.toBeNull();
+      expect(discovered!.resourceUrl).toBe("http://example.com/search");
+      // Narrow to DiscoveredHTTPResource to access routeTemplate (HTTP-only field)
+      expect((discovered as import("./..").DiscoveredHTTPResource).routeTemplate).toBeUndefined();
+    });
+  });
+
+  describe("isValidRouteTemplate", () => {
+    it("returns false for empty string", () => {
+      expect(isValidRouteTemplate("")).toBe(false);
+    });
+
+    it("returns false for undefined input", () => {
+      expect(isValidRouteTemplate(undefined)).toBe(false);
+    });
+
+    it("returns false for paths not starting with /", () => {
+      expect(isValidRouteTemplate("users/123")).toBe(false);
+      expect(isValidRouteTemplate("relative/path")).toBe(false);
+      expect(isValidRouteTemplate("no-slash")).toBe(false);
+    });
+
+    it("returns false for paths containing ..", () => {
+      expect(isValidRouteTemplate("/users/../admin")).toBe(false);
+      expect(isValidRouteTemplate("/../etc/passwd")).toBe(false);
+      expect(isValidRouteTemplate("/users/..")).toBe(false);
+    });
+
+    it("returns false for paths containing ://", () => {
+      expect(isValidRouteTemplate("http://evil.com/path")).toBe(false);
+      expect(isValidRouteTemplate("/users/http://evil")).toBe(false);
+      expect(isValidRouteTemplate("javascript://foo")).toBe(false);
+    });
+
+    it("returns true for valid paths", () => {
+      expect(isValidRouteTemplate("/users/:userId")).toBe(true);
+      expect(isValidRouteTemplate("/api/v1/items")).toBe(true);
+      expect(isValidRouteTemplate("/products/:productId/reviews/:reviewId")).toBe(true);
+      expect(isValidRouteTemplate("/weather/:country/:city")).toBe(true);
+    });
+
+    it("rejects paths with spaces or invalid characters", () => {
+      expect(isValidRouteTemplate("/users/ bad")).toBe(false);
+      expect(isValidRouteTemplate("/path with spaces")).toBe(false);
+    });
+
+    it("rejects /users/..hidden because it contains '..' as a substring", () => {
+      expect(isValidRouteTemplate("/users/..hidden")).toBe(false);
+    });
+
+    it("rejects percent-encoded traversal sequences", () => {
+      expect(isValidRouteTemplate("/users/%2e%2e/admin")).toBe(false);
+      expect(isValidRouteTemplate("/users/%2E%2E/admin")).toBe(false);
+    });
+  });
+
+  describe("isValidServiceName", () => {
+    it("accepts non-empty strings up to 32 chars", () => {
+      expect(isValidServiceName("Example Weather")).toBe(true);
+      expect(isValidServiceName("a")).toBe(true);
+      expect(isValidServiceName("a".repeat(32))).toBe(true);
+    });
+
+    it("rejects empty, undefined, and over-cap strings", () => {
+      expect(isValidServiceName(undefined)).toBe(false);
+      expect(isValidServiceName("")).toBe(false);
+      expect(isValidServiceName("a".repeat(33))).toBe(false);
+    });
+
+    it("rejects non-ASCII characters", () => {
+      // Multi-byte chars in UTF-8 — would otherwise diverge across SDKs
+      // (UTF-16 code units in TS, code points in Python, bytes in Go).
+      expect(isValidServiceName("Café Service")).toBe(false);
+      expect(isValidServiceName("東京 Weather")).toBe(false);
+      expect(isValidServiceName("🚀 Service")).toBe(false);
+    });
+
+    it("rejects ASCII control characters", () => {
+      expect(isValidServiceName("Service\x00")).toBe(false);
+      expect(isValidServiceName("Line\nBreak")).toBe(false);
+      expect(isValidServiceName("Tab\there")).toBe(false);
+    });
+
+    it("accepts printable ASCII with spaces and punctuation", () => {
+      expect(isValidServiceName("Example Weather")).toBe(true);
+      expect(isValidServiceName("AT&T")).toBe(true);
+      expect(isValidServiceName("Coinbase, Inc.")).toBe(true);
+      expect(isValidServiceName("Service v2.0!")).toBe(true);
+    });
+  });
+
+  describe("sanitizeTags", () => {
+    it("returns undefined for non-arrays", () => {
+      expect(sanitizeTags(undefined)).toBeUndefined();
+      expect(sanitizeTags("weather")).toBeUndefined();
+      expect(sanitizeTags({ tag: "weather" })).toBeUndefined();
+    });
+
+    it("drops non-string and out-of-range entries", () => {
+      const result = sanitizeTags(["weather", "", "a".repeat(33), 42, null, "forecast"]);
+      expect(result).toEqual(["weather", "forecast"]);
+    });
+
+    it("truncates to 5 valid entries", () => {
+      const result = sanitizeTags(["a", "b", "c", "d", "e", "f", "g"]);
+      expect(result).toEqual(["a", "b", "c", "d", "e"]);
+    });
+
+    it("returns undefined when nothing survives", () => {
+      expect(sanitizeTags(["", "a".repeat(33), 7])).toBeUndefined();
+      expect(sanitizeTags([])).toBeUndefined();
+    });
+
+    it("drops non-ASCII tags but keeps ASCII siblings", () => {
+      const result = sanitizeTags(["weather", "café", "東京", "🚀", "forecast"]);
+      expect(result).toEqual(["weather", "forecast"]);
+    });
+
+    it("dedupes case-insensitively keeping first occurrence", () => {
+      const result = sanitizeTags(["Weather", "weather", "WEATHER", "forecast"]);
+      expect(result).toEqual(["Weather", "forecast"]);
+    });
+  });
+
+  describe("isValidIconUrl", () => {
+    it("accepts plain https and http urls", () => {
+      expect(isValidIconUrl("https://api.example.com/icon.png")).toBe(true);
+      expect(isValidIconUrl("http://api.example.com/icon")).toBe(true);
+    });
+
+    it("rejects empty, undefined, and over-cap strings", () => {
+      expect(isValidIconUrl(undefined)).toBe(false);
+      expect(isValidIconUrl("")).toBe(false);
+      expect(isValidIconUrl("https://example.com/" + "a".repeat(2048))).toBe(false);
+    });
+
+    it("rejects non-http schemes", () => {
+      expect(isValidIconUrl("data:image/png;base64,iVBOR")).toBe(false);
+      expect(isValidIconUrl("file:///etc/passwd")).toBe(false);
+      expect(isValidIconUrl("javascript:alert(1)")).toBe(false);
+      expect(isValidIconUrl("ftp://example.com/icon.png")).toBe(false);
+    });
+
+    it("rejects userinfo in the authority", () => {
+      expect(isValidIconUrl("https://user@example.com/icon.png")).toBe(false);
+      expect(isValidIconUrl("https://user:pass@example.com/icon.png")).toBe(false);
+    });
+
+    it("rejects IP literal hosts", () => {
+      expect(isValidIconUrl("http://10.0.0.1/icon.png")).toBe(false);
+      expect(isValidIconUrl("http://127.0.0.1/icon.png")).toBe(false);
+      expect(isValidIconUrl("http://[::1]/icon.png")).toBe(false);
+      expect(isValidIconUrl("http://[2001:db8::1]/icon.png")).toBe(false);
+    });
+
+    it("rejects decimal-encoded and short-form IP hosts", () => {
+      // 2130706433 == 127.0.0.1; 0 expands to 0.0.0.0 on Linux.
+      expect(isValidIconUrl("http://2130706433/icon.png")).toBe(false);
+      expect(isValidIconUrl("http://0/icon.png")).toBe(false);
+      expect(isValidIconUrl("http://3232235521/icon.png")).toBe(false);
+    });
+
+    it("rejects hex-encoded IP hosts", () => {
+      // 0x7f000001 == 127.0.0.1.
+      expect(isValidIconUrl("http://0x7f000001/icon.png")).toBe(false);
+      expect(isValidIconUrl("http://0X7F000001/icon.png")).toBe(false);
+    });
+
+    it("rejects localhost", () => {
+      expect(isValidIconUrl("http://localhost/icon.png")).toBe(false);
+      expect(isValidIconUrl("http://LOCALHOST/icon.png")).toBe(false);
+    });
+
+    it("rejects loopback aliases from /etc/hosts", () => {
+      expect(isValidIconUrl("http://localhost.localdomain/icon.png")).toBe(false);
+      expect(isValidIconUrl("http://ip6-localhost/icon.png")).toBe(false);
+      expect(isValidIconUrl("http://ip6-loopback/icon.png")).toBe(false);
+    });
+
+    it("rejects IDN / full-width localhost confusables", () => {
+      // Full-width Latin "ｌｏｃａｌｈｏｓｔ" normalizes to "localhost" via UTS #46.
+      expect(isValidIconUrl("http://ｌｏｃａｌｈｏｓｔ/icon.png")).toBe(false);
+    });
+
+    it("rejects control characters", () => {
+      expect(isValidIconUrl("https://example.com/\x00icon.png")).toBe(false);
+      expect(isValidIconUrl("https://example.com/icon\n.png")).toBe(false);
+      expect(isValidIconUrl("https://example.com/icon\x7f.png")).toBe(false);
+    });
+
+    it("rejects relative paths", () => {
+      expect(isValidIconUrl("/icon.png")).toBe(false);
+      expect(isValidIconUrl("icon.png")).toBe(false);
+    });
+  });
+
+  describe("sanitizeResourceServiceMetadata", () => {
+    it("preserves all valid fields", () => {
+      const out = sanitizeResourceServiceMetadata({
+        url: "https://api.example.com/x",
+        serviceName: "Example Weather",
+        tags: ["weather", "forecast"],
+        iconUrl: "https://api.example.com/icon.png",
+      });
+      expect(out).toEqual({
+        serviceName: "Example Weather",
+        tags: ["weather", "forecast"],
+        iconUrl: "https://api.example.com/icon.png",
+      });
+    });
+
+    it("soft-drops only the invalid fields", () => {
+      const out = sanitizeResourceServiceMetadata({
+        url: "https://api.example.com/x",
+        serviceName: "a".repeat(33),
+        tags: ["weather", "forecast"],
+        iconUrl: "data:image/png;base64,iVBOR",
+      });
+      expect(out).toEqual({ tags: ["weather", "forecast"] });
+    });
+
+    it("returns empty object for missing or non-object input", () => {
+      expect(sanitizeResourceServiceMetadata(undefined)).toEqual({});
+      expect(sanitizeResourceServiceMetadata(null)).toEqual({});
+    });
+  });
+
+  describe("extractDiscoveryInfo - service metadata", () => {
+    it("surfaces sanitized serviceName / tags / iconUrl on the discovered resource", () => {
+      const declared = declareDiscoveryExtension({
+        method: "GET",
+        input: { city: "NYC" },
+        inputSchema: { properties: { city: { type: "string" } } },
+      });
+
+      const paymentPayload = {
+        x402Version: 2,
+        scheme: "exact",
+        network: "eip155:8453" as unknown,
+        payload: {},
+        accepted: {} as unknown,
+        resource: {
+          url: "https://api.example.com/weather",
+          description: "Weather API",
+          mimeType: "application/json",
+          serviceName: "Example Weather",
+          tags: ["weather", "forecast"],
+          iconUrl: "https://api.example.com/icon.png",
+        },
+        extensions: {
+          [BAZAAR.key]: declared.bazaar,
+        },
+      };
+
+      const discovered = extractDiscoveryInfo(paymentPayload, {} as unknown);
+
+      expect(discovered).not.toBeNull();
+      expect(discovered!.serviceName).toBe("Example Weather");
+      expect(discovered!.tags).toEqual(["weather", "forecast"]);
+      expect(discovered!.iconUrl).toBe("https://api.example.com/icon.png");
+    });
+
+    it("soft-drops invalid metadata fields independently", () => {
+      const declared = declareDiscoveryExtension({
+        method: "GET",
+        input: {},
+        inputSchema: { properties: {} },
+      });
+
+      const paymentPayload = {
+        x402Version: 2,
+        scheme: "exact",
+        network: "eip155:8453" as unknown,
+        payload: {},
+        accepted: {} as unknown,
+        resource: {
+          url: "https://api.example.com/weather",
+          serviceName: "a".repeat(33),
+          tags: ["weather", "", "forecast"],
+          iconUrl: "http://localhost/icon.png",
+        },
+        extensions: {
+          [BAZAAR.key]: declared.bazaar,
+        },
+      };
+
+      const discovered = extractDiscoveryInfo(paymentPayload, {} as unknown);
+
+      expect(discovered).not.toBeNull();
+      expect(discovered!.serviceName).toBeUndefined();
+      expect(discovered!.tags).toEqual(["weather", "forecast"]);
+      expect(discovered!.iconUrl).toBeUndefined();
     });
   });
 });

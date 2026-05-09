@@ -6,8 +6,12 @@ implementations for communicating with remote facilitator services.
 
 from __future__ import annotations
 
+import base64
 import json
-from typing import TYPE_CHECKING, Any
+import logging
+from typing import TYPE_CHECKING, Any, TypeVar
+
+from pydantic import ValidationError
 
 from ..schemas import (
     PaymentPayload,
@@ -24,6 +28,7 @@ from .facilitator_client_base import (
     FacilitatorClient,
     FacilitatorClientSync,
     FacilitatorConfig,
+    FacilitatorResponseError,
     HTTPFacilitatorClientBase,
 )
 
@@ -35,12 +40,92 @@ __all__ = [
     "HTTPFacilitatorClient",
     "HTTPFacilitatorClientSync",
     "FacilitatorConfig",
+    "FacilitatorResponseError",
     "FacilitatorClient",
     "FacilitatorClientSync",
     "AuthProvider",
     "AuthHeaders",
     "CreateHeadersAuthProvider",
 ]
+
+_ResponseModelT = TypeVar(
+    "_ResponseModelT",
+    VerifyResponse,
+    SettleResponse,
+    SupportedResponse,
+)
+
+
+def _response_excerpt(response: Any, limit: int = 200) -> str:
+    """Build a compact response preview for parse errors."""
+    text = str(getattr(response, "text", "") or "").strip()
+    if not text:
+        return "<empty response>"
+
+    compact = " ".join(text.split())
+    if len(compact) <= limit:
+        return compact
+    return f"{compact[: limit - 3]}..."
+
+
+def _parse_facilitator_response(
+    response: Any,
+    model_cls: type[_ResponseModelT],
+    operation: str,
+) -> _ResponseModelT:
+    """Parse facilitator JSON into a validated response model."""
+    try:
+        response_data = response.json()
+    except (json.JSONDecodeError, ValueError, TypeError) as exc:
+        raise FacilitatorResponseError(
+            f"Facilitator {operation} returned invalid JSON: {_response_excerpt(response)}"
+        ) from exc
+
+    try:
+        return model_cls.model_validate(response_data)
+    except (ValidationError, ValueError, TypeError) as exc:
+        raise FacilitatorResponseError(
+            f"Facilitator {operation} returned invalid data: {_response_excerpt(response)}"
+        ) from exc
+
+
+_logger = logging.getLogger("x402")
+
+_EXTENSION_RESPONSE_LOG_FIELD_ALLOWLIST = ["status", "rejectedReason", "reason", "code"]
+
+
+def _log_extension_responses_header(response: Any) -> None:
+    """Read the EXTENSION-RESPONSES header and log allowlisted fields.
+
+    Silently ignores malformed headers.
+
+    Args:
+        response: The HTTP response object (httpx.Response).
+    """
+    header = response.headers.get("EXTENSION-RESPONSES") or response.headers.get(
+        "extension-responses"
+    )
+    if not header:
+        return
+    try:
+        decoded = base64.b64decode(header).decode("utf-8")
+        header_extensions: dict[str, Any] = json.loads(decoded)
+        if not isinstance(header_extensions, dict):
+            return
+        sanitized: dict[str, dict[str, Any]] = {}
+        for extension_key, payload in header_extensions.items():
+            filtered: dict[str, Any] = {}
+            if isinstance(payload, dict):
+                for field in _EXTENSION_RESPONSE_LOG_FIELD_ALLOWLIST:
+                    if field in payload:
+                        filtered[field] = payload[field]
+            sanitized[extension_key] = filtered
+        _logger.info(
+            "[x402] extension responses: %s",
+            json.dumps(sanitized),
+        )
+    except Exception:
+        pass
 
 
 # ============================================================================
@@ -167,7 +252,7 @@ class HTTPFacilitatorClient(HTTPFacilitatorClientBase):
                     f"Facilitator get_supported failed ({response.status_code}): {response.text}"
                 )
 
-            return SupportedResponse.model_validate(response.json())
+            return _parse_facilitator_response(response, SupportedResponse, "supported")
 
     # =========================================================================
     # Bytes-Based Methods (Network Boundary)
@@ -244,7 +329,9 @@ class HTTPFacilitatorClient(HTTPFacilitatorClientBase):
         if response.status_code != 200:
             raise ValueError(f"Facilitator verify failed ({response.status_code}): {response.text}")
 
-        return VerifyResponse.model_validate(response.json())
+        result = _parse_facilitator_response(response, VerifyResponse, "verify")
+        _log_extension_responses_header(response)
+        return result
 
     async def _settle_http(
         self,
@@ -265,7 +352,9 @@ class HTTPFacilitatorClient(HTTPFacilitatorClientBase):
         if response.status_code != 200:
             raise ValueError(f"Facilitator settle failed ({response.status_code}): {response.text}")
 
-        return SettleResponse.model_validate(response.json())
+        result = _parse_facilitator_response(response, SettleResponse, "settle")
+        _log_extension_responses_header(response)
+        return result
 
 
 # ============================================================================
@@ -383,7 +472,7 @@ class HTTPFacilitatorClientSync(HTTPFacilitatorClientBase):
                 f"Facilitator get_supported failed ({response.status_code}): {response.text}"
             )
 
-        return SupportedResponse.model_validate(response.json())
+        return _parse_facilitator_response(response, SupportedResponse, "supported")
 
     # =========================================================================
     # Bytes-Based Methods (Network Boundary)
@@ -460,7 +549,9 @@ class HTTPFacilitatorClientSync(HTTPFacilitatorClientBase):
         if response.status_code != 200:
             raise ValueError(f"Facilitator verify failed ({response.status_code}): {response.text}")
 
-        return VerifyResponse.model_validate(response.json())
+        result = _parse_facilitator_response(response, VerifyResponse, "verify")
+        _log_extension_responses_header(response)
+        return result
 
     def _settle_http(
         self,
@@ -481,4 +572,6 @@ class HTTPFacilitatorClientSync(HTTPFacilitatorClientBase):
         if response.status_code != 200:
             raise ValueError(f"Facilitator settle failed ({response.status_code}): {response.text}")
 
-        return SettleResponse.model_validate(response.json())
+        result = _parse_facilitator_response(response, SettleResponse, "settle")
+        _log_extension_responses_header(response)
+        return result

@@ -6,14 +6,15 @@ The `exact` scheme on EVM executes a transfer where the Facilitator (server) pay
 
 This is implemented via one of two asset transfer methods, depending on the token's capabilities:
 
-| AssetTransferMethod | Use Case                                                     | Recommendation                                 |
-| :------------------ | :----------------------------------------------------------- | :--------------------------------------------- |
-| **1. EIP-3009**     | Tokens with native `transferWithAuthorization` (e.g., USDC). | **Recommended** (Simplest, truly gasless).     |
-| **2. Permit2**      | Tokens without EIP-3009. Uses a Proxy + Permit2.             | **Universal Fallback** (Works for any ERC-20). |
+| AssetTransferMethod | Use Case                                                     | Recommendation                                 | Usage Semantics                     |
+| :------------------ | :----------------------------------------------------------- | :--------------------------------------------- | :---------------------------------- |
+| **1. EIP-3009**     | Tokens with native `transferWithAuthorization` (e.g., USDC). | **Recommended** (Simplest, truly gasless).     | One-time use                        |
+| **2. Permit2**      | Tokens without EIP-3009. Uses a Proxy + Permit2.             | **Universal Fallback** (Works for any ERC-20). | One-time use                        |
+| **3. ERC-7710**      | Smart accounts with delegation support.                              | **Smart Account Option** (Paid from ERC-7710 compatible account). | One-time use and multi-use |
 
 If no `assetTransferMethod` is specified in the payload, the implementation should prioritize `eip3009` (if compatible) and then `permit2`.
 
-In both cases, the Facilitator cannot modify the amount or destination. They serve only as the transaction broadcaster.
+In all cases, the Facilitator cannot modify the amount or destination. They serve only as the transaction broadcaster.
 
 ---
 
@@ -144,13 +145,12 @@ The `payload` field must contain:
         "amount": "10000"
       },
       "from": "0x857b06519E91e3A54538791bDbb0E22373e36b66",
-      "spender": "0x4020CD856C882D5fb903D99CE35316A085Bb0001", // Canonical x402ExactPermit2Proxy address
-      "nonce": "0xf3746613c2d920b5fdabc0856f2aeb2d4f88ee6037b8cc5d04a71a4462f13480",
+      "spender": "0x402085c248EeA27D92E8b30b2C58ed07f9E20001", // Canonical x402ExactPermit2Proxy address
+      "nonce": "33247007178036348590600198031289925668252061821958005840077069883511451257277",
       "deadline": "1740672154",
       "witness": {
         "to": "0x209693Bc6afc0C5328bA36FaF03C514EF312287C",
-        "validAfter": "1740672089",
-        "extra": {}
+        "validAfter": "1740672089"
       }
     }
   },
@@ -162,8 +162,6 @@ The `payload` field must contain:
 The verifier must execute these checks in order:
 
 1.  **Verify** `payload.signature` is valid and recovers to the `permit2Authorization.from`.
-
-    - Note that `extra` must be converted to its ABI encoded version.
 
 2.  **Verify** that the `client` has enabled the Permit2 approval.
 
@@ -180,7 +178,9 @@ The verifier must execute these checks in order:
 
 6.  **Verify** the Token and Network match the requirement.
 
-7.  **Simulation:**
+7.  **Simulation (Recommended):**
+
+    Simulation is recommended but implementations may defer to re-verify-before-settle.
 
     - _Standard:_ Simulate `x402ExactPermit2Proxy.settle`.
     - _With "Sponsored ERC20 Approval" (Extension):_ Simulate batch `transfer` -> `approve` -> `settle`.
@@ -201,6 +201,114 @@ Settlement is performed by calling the `x402ExactPermit2Proxy`.
 
 ---
 
+## 3. AssetTransferMethod: `ERC-7710`
+
+This asset transfer method uses [ERC-7710](https://eips.ethereum.org/EIPS/eip-7710) smart contract delegation to authorize transfers from accounts that support the standard. It is particularly suited for smart contract accounts (e.g., ERC-4337 accounts, ERC-7579 modular accounts) that have enabled delegation capabilities.
+
+### Prerequisites
+
+For ERC-7710 to work, the following must be true:
+
+1. **Delegator Account**: The payer's account must be a smart contract that supports ERC-7710 delegation (e.g., a modular smart account with delegation capabilities).
+2. **Delegation Manager**: A `DelegationManager` contract implementing the `ERC7710Manager` interface must be deployed on the network.
+3. **Active Delegation**: The payer must have created a delegation authorizing the delegate to execute token transfers on their behalf, with appropriate caveats (amount limits, recipient restrictions, etc.).
+
+### Phase 1: Obtaining a Delegation
+
+The process of obtaining a delegation is outside the scope of x402. Delegations may be obtained through:
+
+- [ERC-7715](https://eips.ethereum.org/EIPS/eip-7715) permission requests
+- Direct wallet interactions
+- Pre-configured session keys
+- Other delegation protocols
+
+The key requirement is that the client is able to issue a delegation to the facilitator that permits the required token transfer.
+
+### Phase 2: `PAYMENT-SIGNATURE` Header Payload
+
+The `payload` field must contain:
+
+- `delegationManager`: The address of the ERC-7710 Delegation Manager contract.
+- `permissionContext`: The delegation proof/context required by the specific Delegation Manager implementation.
+- `delegator`: The address of the account that created the delegation.
+
+**Example PaymentPayload:**
+
+```json
+{
+  "x402Version": 2,
+  "resource": {
+    "url": "https://api.example.com/premium-data",
+    "description": "Access to premium market data",
+    "mimeType": "application/json"
+  },
+  "accepted": {
+    "scheme": "exact",
+    "network": "eip155:84532",
+    "amount": "10000",
+    "asset": "0x036CbD53842c5426634e7929541eC2318f3dCF7e",
+    "payTo": "0x209693Bc6afc0C5328bA36FaF03C514EF312287C",
+    "maxTimeoutSeconds": 60,
+    "extra": {
+      "assetTransferMethod": "erc7710",
+      "name": "USDC",
+      "version": "2"
+    }
+  },
+  "payload": {
+    "delegationManager": "0xDelegationManagerAddress",
+    "permissionContext": "0x...",
+    "delegator": "0x857b06519E91e3A54538791bDbb0E22373e36b66"
+  }
+}
+```
+
+**Note:** The structure of `permissionContext` is determined by the specific Delegation Manager implementation. Common implementations (e.g., MetaMask Delegation Framework) use EIP-712 signed delegation chains.
+
+### Phase 3: Verification Logic
+
+Unlike EIP-3009 and Permit2, ERC-7710 verification is performed entirely through simulation. The `permissionContext` is opaque to the facilitator but verifiable by simulating the intended action.
+
+The facilitator:
+
+1. **Constructs** the `executionCallData` encoding an ERC-20 `transfer(payTo, amount)` call for the required payment.
+
+2. **Constructs** the `mode` appropriate for the execution (typically `0x00...` for single call mode per ERC-7579).
+
+3. **Simulates** `delegationManager.redeemDelegations([permissionContext], [mode], [executionCallData])` to verify:
+   - The delegation is valid and authorizes the intended transfer.
+   - The delegator has sufficient balance of the asset.
+   - The transaction will succeed when executed.
+
+If the simulation succeeds, the payment is considered valid. The simulation serves as the sole verification mechanism—no trusted list of Delegation Manager implementations is required.
+
+**Security Considerations**:
+
+1. **Race Condition Risk**: A facilitator may be vulnerable to a race condition where the client invalidates their delegation between simulation and transaction execution, causing the facilitator to pay gas for a failed transaction. This risk can be mitigated by:
+   - Submitting transactions via a private mempool to reduce the window for front-running.
+   - Building trust signals for client accounts (e.g., reputation systems) that can be used to flag or ban abusive behavior.
+
+2. **Malicious Delegation Manager Gas Consumption**: A malicious or poorly implemented Delegation Manager could attempt to consume excessive gas during execution. To mitigate this risk:
+   - Facilitators should always set an explicit gas limit on their `redeemDelegations` call, as is standard practice for all Ethereum transactions.
+   - Pre-execution simulation helps identify whether a transaction is likely to use a reasonable amount of gas.
+   - If simulation reveals unexpectedly high gas consumption, this may indicate a "trap door" implementation designed to drain facilitator funds, and the transaction should be rejected.
+
+### Phase 4: Settlement Logic
+
+Settlement is performed by calling `redeemDelegations` on the Delegation Manager:
+
+```solidity
+delegationManager.redeemDelegations(
+    [permissionContext],  // bytes[] - delegation proof
+    [mode],               // bytes32[] - execution mode
+    [executionCallData]   // bytes[] - encoded transfer call
+);
+```
+
+The Delegation Manager validates the delegation authority and calls the delegator account to execute the token transfer. The delegator account then performs `token.transfer(payTo, amount)`.
+
+---
+
 ## Implementer Notes
 
 - **Permit2 Dependency:** Both the Permit2 contract and the x402ExactPermit2Proxy are audited, battle-tested contracts. However, integrators inherit their security properties and any future vulnerabilities discovered in either dependency.
@@ -208,6 +316,14 @@ Settlement is performed by calling the `x402ExactPermit2Proxy`.
 ---
 
 ## Annex
+
+### ERC-7710 Delegation Managers
+
+ERC-7710 does not define a canonical Delegation Manager. Implementations may vary in their delegation structure, caveat enforcement, and permission context format. Notable implementations include:
+
+- **MetaMask Delegation Framework**: A full-featured implementation supporting EIP-712 signed delegation chains, caveat enforcement, and batch processing. See [gator.metamask.io](https://gator.metamask.io/) for documentation.
+
+Since verification is performed entirely through simulation, facilitators do not need to maintain a trusted list of Delegation Manager implementations.
 
 ### Canonical Permit2
 
@@ -219,7 +335,7 @@ This contract acts as the authorized Spender. It validates the Witness data to e
 
 > **Requirement**: This contract will be deployed to the same address across all supported EVM chains using `CREATE2` to ensure consistent behavior and simpler integration.
 
-**Canonical Address:** `0x4020CD856C882D5fb903D99CE35316A085Bb0001`
+**Canonical Address:** `0x402085c248EeA27D92E8b30b2C58ed07f9E20001`
 
 ```solidity
 // SPDX-License-Identifier: MIT
@@ -237,20 +353,18 @@ contract x402ExactPermit2Proxy {
 
     event x402PermitTransfer(address from, address to, uint256 amount, address asset);
 
-    // EIP-712 Type Definition
+    // EIP-712 Type Definition (post-audit: extra removed from Witness)
     string public constant WITNESS_TYPE_STRING =
-        "Witness witness)Witness(bytes extra,address to,uint256 validAfter)TokenPermissions(address token,uint256 amount)";
+        "Witness witness)TokenPermissions(address token,uint256 amount)Witness(address to,uint256 validAfter)";
 
     bytes32 public constant WITNESS_TYPEHASH =
-        keccak256("Witness(bytes extra,address to,uint256 validAfter)");
+        keccak256("Witness(address to,uint256 validAfter)");
 
     struct Witness {
         address to;
         uint256 validAfter;
-        bytes extra;
     }
 
-    // New Struct to group EIP-2612 parameters and reduce stack depth
     struct EIP2612Permit {
         uint256 value;
         uint256 deadline;
@@ -268,21 +382,18 @@ contract x402ExactPermit2Proxy {
      */
     function settle(
         ISignatureTransfer.PermitTransferFrom calldata permit,
-        uint256 amount,
         address owner,
         Witness calldata witness,
         bytes calldata signature
     ) external {
-        _settleInternal(permit, amount, owner, witness, signature);
+        _settleInternal(permit, owner, witness, signature);
     }
 
     /**
      * @notice Extension: Settles a transfer using an EIP-2612 Permit for the allowance
-     * @dev Deconstructs the 2612 signature bytes to call the token contract
      */
-    function settleWith2612(
-        EIP2612Permit calldata permit2612, // Deduplicated/Grouped params
-        uint256 amount,
+    function settleWithPermit(
+        EIP2612Permit calldata permit2612,
         ISignatureTransfer.PermitTransferFrom calldata permit,
         address owner,
         Witness calldata witness,
@@ -298,29 +409,25 @@ contract x402ExactPermit2Proxy {
         );
 
         // 2. Execute Permit2 Settlement
-        _settleInternal(permit, amount, owner, witness, signature);
+        _settleInternal(permit, owner, witness, signature);
     }
 
     function _settleInternal(
         ISignatureTransfer.PermitTransferFrom calldata permit,
-        uint256 amount,
         address owner,
         Witness calldata witness,
         bytes calldata signature
     ) internal {
         require(block.timestamp >= witness.validAfter, "Too early");
-        require(amount <= permit.permitted.amount, "Amount higher than permitted");
 
         ISignatureTransfer.SignatureTransferDetails memory transferDetails =
             ISignatureTransfer.SignatureTransferDetails({
                 to: witness.to,
-                requestedAmount: amount
+                requestedAmount: permit.permitted.amount
             });
 
-        // Reconstruct hash to enforce witness integrity
         bytes32 witnessHash = keccak256(abi.encode(
             WITNESS_TYPEHASH,
-            keccak256(witness.extra),
             witness.to,
             witness.validAfter
         ));

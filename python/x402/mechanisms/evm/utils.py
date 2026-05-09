@@ -45,6 +45,9 @@ def get_evm_chain_id(network: str) -> int:
 def get_network_config(network: str) -> NetworkConfig:
     """Get configuration for a CAIP-2 network identifier (eip155:CHAIN_ID).
 
+    Returns a full config for known networks, or a minimal config (chain_id only)
+    for any valid but unknown eip155 network.
+
     Args:
         network: Network identifier in CAIP-2 format.
 
@@ -52,64 +55,60 @@ def get_network_config(network: str) -> NetworkConfig:
         Network configuration.
 
     Raises:
-        ValueError: If network is not configured.
+        ValueError: If the network format is invalid or not an eip155 network.
     """
     if network in NETWORK_CONFIGS:
         return NETWORK_CONFIGS[network]
 
-    raise ValueError(f"No configuration for network: {network} (expected eip155:CHAIN_ID)")
+    if network.startswith("eip155:"):
+        try:
+            chain_id = int(network.split(":")[1])
+            return {"chain_id": chain_id}
+        except (IndexError, ValueError) as e:
+            raise ValueError(f"Invalid CAIP-2 network format: {network}") from e
+
+    raise ValueError(f"Unsupported network format: {network} (expected eip155:CHAIN_ID)")
 
 
-def get_asset_info(network: str, asset_symbol_or_address: str) -> AssetInfo:
-    """Get asset info by symbol or address.
+def get_asset_info(network: str, asset_address: str) -> AssetInfo:
+    """Get asset info by address.
+
+    Returns the full default asset info if the address matches the network's default asset.
 
     Args:
-        network: Network identifier.
-        asset_symbol_or_address: Asset symbol (e.g., "USDC") or address.
+        network: Network identifier in CAIP-2 format.
+        asset_address: Asset contract address (0x...).
 
     Returns:
         Asset information.
 
     Raises:
-        ValueError: If asset is not found.
+        ValueError: If the address does not match any registered asset for the network.
     """
     config = get_network_config(network)
+    default = config.get("default_asset")
 
-    # Check if it's an address
-    if asset_symbol_or_address.startswith("0x"):
-        # Search by address
-        for asset in config["supported_assets"].values():
-            if asset["address"].lower() == asset_symbol_or_address.lower():
-                return asset
-        # Return default with provided address if not found
-        return {
-            "address": asset_symbol_or_address,
-            "name": config["default_asset"]["name"],
-            "version": config["default_asset"]["version"],
-            "decimals": config["default_asset"]["decimals"],
-        }
+    if default and default["address"].lower() == asset_address.lower():
+        return default
 
-    # Search by symbol
-    symbol = asset_symbol_or_address.upper()
-    if symbol in config["supported_assets"]:
-        return config["supported_assets"][symbol]
-
-    raise ValueError(f"Asset {asset_symbol_or_address} not found on {network}")
+    raise ValueError(f"Token {asset_address} is not a registered asset for network {network}.")
 
 
 def is_valid_network(network: str) -> bool:
-    """Check if network is supported.
+    """Check if network is a valid eip155 network identifier.
 
     Args:
         network: Network identifier.
 
     Returns:
-        True if network is supported.
+        True if the network is a valid eip155:CHAIN_ID format.
     """
+    if not network.startswith("eip155:"):
+        return False
     try:
-        get_network_config(network)
+        int(network.split(":")[1])
         return True
-    except ValueError:
+    except (IndexError, ValueError):
         return False
 
 
@@ -120,6 +119,18 @@ def create_nonce() -> str:
         Hex string with 0x prefix.
     """
     return "0x" + os.urandom(32).hex()
+
+
+def create_permit2_nonce() -> str:
+    """Generate random uint256 nonce as decimal string for Permit2.
+
+    Permit2 uses uint256 nonces (not bytes32), so the nonce is returned
+    as a decimal string rather than a hex string.
+
+    Returns:
+        Decimal string representation of a random uint256.
+    """
+    return str(int.from_bytes(os.urandom(32), "big"))
 
 
 def normalize_address(address: str) -> str:

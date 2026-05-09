@@ -24,7 +24,7 @@ The extension helpers facilitate the conversation between:
 Servers use helpers to attach extension metadata to payment requirements:
 
 ```go
-import "github.com/coinbase/x402/go/extensions/bazaar"
+import "github.com/x402-foundation/x402/go/extensions/bazaar"
 
 // Server declares: "This resource supports Bazaar discovery"
 extension, _ := bazaar.DeclareDiscoveryExtension(...)
@@ -72,7 +72,7 @@ PaymentPayload (Client → Server → Facilitator):
 Recipients (clients, facilitators) can extract extension data:
 
 ```go
-import "github.com/coinbase/x402/go/extensions/bazaar"
+import "github.com/x402-foundation/x402/go/extensions/bazaar"
 
 // Facilitator extracts from client payment (in hook context)
 discovered, _ := bazaar.ExtractDiscoveredResourceFromPaymentPayload(
@@ -151,7 +151,7 @@ The **Bazaar** extension is one example of a server-facilitator extension for au
 
 **Import Path:**
 ```
-github.com/coinbase/x402/go/extensions/bazaar
+github.com/x402-foundation/x402/go/extensions/bazaar
 ```
 
 **Purpose:**
@@ -160,11 +160,43 @@ github.com/coinbase/x402/go/extensions/bazaar
 - Enables building API marketplaces and search engines
 
 **What it provides:**
-- `DeclareDiscoveryExtension()` - Server helper to declare discovery metadata
+- `DeclareDiscoveryExtension()` - Server helper to declare discovery metadata for HTTP endpoints
+- `DeclareMcpDiscoveryExtension()` - Server helper to declare discovery metadata for MCP tools
 - `ExtractDiscoveredResourceFromPaymentPayload()` - Facilitator helper to extract discovered resources from client payments
 - `ExtractDiscoveredResourceFromPaymentRequired()` - Client helper to extract discovered resources from 402 responses
 - `ValidateDiscoveryExtension()` - Validation helper
 - JSON Schema types for structure validation
+
+**MCP Tool Example:**
+
+```go
+import (
+    "github.com/x402-foundation/x402/go/extensions/bazaar"
+    mcp402 "github.com/x402-foundation/x402/go/mcp"
+    "github.com/x402-foundation/x402/go/types"
+)
+
+weatherDiscovery, _ := bazaar.DeclareMcpDiscoveryExtension(bazaar.DeclareMcpDiscoveryConfig{
+    ToolName:    "get_weather",
+    Description: "Get current weather for a city",
+    Transport:   bazaar.TransportSSE,
+    InputSchema: bazaar.JSONSchema{
+        "properties": map[string]interface{}{
+            "city": map[string]interface{}{"type": "string", "description": "City name"},
+        },
+        "required": []string{"city"},
+    },
+    Example: map[string]interface{}{"city": "San Francisco"},
+})
+
+paymentWrapper := mcp402.NewPaymentWrapper(resourceServer, mcp402.PaymentWrapperConfig{
+    Accepts: weatherAccepts,
+    Resource: &types.ResourceInfo{URL: "mcp://tool/get_weather"},
+    Extensions: map[string]interface{}{
+        bazaar.BAZAAR.Key(): weatherDiscovery,
+    },
+})
+```
 
 **What it does NOT dictate:**
 - How facilitators should catalog the data
@@ -242,7 +274,7 @@ The `types/` subdirectory contains shared type definitions:
 
 **Import Path:**
 ```
-github.com/coinbase/x402/go/extensions/types
+github.com/x402-foundation/x402/go/extensions/types
 ```
 
 **Exports:**

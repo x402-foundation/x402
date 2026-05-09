@@ -1,15 +1,13 @@
 import { PaymentRequirements, PaymentPayloadResult } from "@x402/core/types";
 import { encodeFunctionData, getAddress } from "viem";
 import {
-  permit2WitnessTypes,
   PERMIT2_ADDRESS,
   x402ExactPermit2ProxyAddress,
   erc20ApproveAbi,
   erc20AllowanceAbi,
 } from "../../constants";
 import { ClientEvmSigner } from "../../signer";
-import { ExactPermit2Payload } from "../../types";
-import { createPermit2Nonce, getEvmChainId } from "../../utils";
+import { createPermit2PayloadForProxy } from "../../shared/permit2";
 
 /** Maximum uint256 value for unlimited approval. */
 const MAX_UINT256 = BigInt("0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff");
@@ -29,88 +27,12 @@ export async function createPermit2Payload(
   x402Version: number,
   paymentRequirements: PaymentRequirements,
 ): Promise<PaymentPayloadResult> {
-  const now = Math.floor(Date.now() / 1000);
-  const nonce = createPermit2Nonce();
-
-  // Lower time bound - allow some clock skew
-  const validAfter = (now - 600).toString();
-  // Upper time bound is enforced by Permit2's deadline field
-  const deadline = (now + paymentRequirements.maxTimeoutSeconds).toString();
-
-  const permit2Authorization: ExactPermit2Payload["permit2Authorization"] = {
-    from: signer.address,
-    permitted: {
-      token: getAddress(paymentRequirements.asset),
-      amount: paymentRequirements.amount,
-    },
-    spender: x402ExactPermit2ProxyAddress,
-    nonce,
-    deadline,
-    witness: {
-      to: getAddress(paymentRequirements.payTo),
-      validAfter,
-    },
-  };
-
-  const signature = await signPermit2Authorization(
+  return createPermit2PayloadForProxy(
+    x402ExactPermit2ProxyAddress,
     signer,
-    permit2Authorization,
+    x402Version,
     paymentRequirements,
   );
-
-  const payload: ExactPermit2Payload = {
-    signature,
-    permit2Authorization,
-  };
-
-  return {
-    x402Version,
-    payload,
-  };
-}
-
-/**
- * Sign the Permit2 authorization using EIP-712 with witness data.
- * The signature authorizes the x402Permit2Proxy to transfer tokens on behalf of the signer.
- *
- * @param signer - The EVM signer
- * @param permit2Authorization - The Permit2 authorization parameters
- * @param requirements - The payment requirements
- * @returns Promise resolving to the signature
- */
-async function signPermit2Authorization(
-  signer: ClientEvmSigner,
-  permit2Authorization: ExactPermit2Payload["permit2Authorization"],
-  requirements: PaymentRequirements,
-): Promise<`0x${string}`> {
-  const chainId = getEvmChainId(requirements.network);
-
-  const domain = {
-    name: "Permit2",
-    chainId,
-    verifyingContract: PERMIT2_ADDRESS,
-  };
-
-  const message = {
-    permitted: {
-      token: getAddress(permit2Authorization.permitted.token),
-      amount: BigInt(permit2Authorization.permitted.amount),
-    },
-    spender: getAddress(permit2Authorization.spender),
-    nonce: BigInt(permit2Authorization.nonce),
-    deadline: BigInt(permit2Authorization.deadline),
-    witness: {
-      to: getAddress(permit2Authorization.witness.to),
-      validAfter: BigInt(permit2Authorization.witness.validAfter),
-    },
-  };
-
-  return await signer.signTypedData({
-    domain,
-    types: permit2WitnessTypes,
-    primaryType: "PermitWitnessTransferFrom",
-    message,
-  });
 }
 
 /**

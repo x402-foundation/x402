@@ -1,6 +1,6 @@
 {
   "name": "@x402/express",
-  "version": "2.5.0",
+  "version": "2.11.0",
   "main": "./dist/cjs/index.js",
   "module": "./dist/esm/index.js",
   "types": "./dist/index.d.ts",
@@ -17,8 +17,8 @@
   },
   "keywords": [],
   "license": "Apache-2.0",
-  "author": "Coinbase Inc.",
-  "repository": "https://github.com/coinbase/x402",
+  "author": "x402 Foundation",
+  "repository": "https://github.com/x402-foundation/x402",
   "description": "x402 Payment Protocol",
   "devDependencies": {
     "@eslint/js": "^9.24.0",
@@ -40,15 +40,13 @@
     "vitest": "^3.0.5"
   },
   "dependencies": {
-    "@coinbase/cdp-sdk": "^1.22.0",
-    "@solana/kit": "^6.1.0",
     "@x402/core": "workspace:~",
     "@x402/extensions": "workspace:~",
-    "viem": "^2.39.3",
+    "viem": "^2.48.11",
     "zod": "^3.24.2"
   },
   "peerDependencies": {
-    "@x402/paywall": "workspace:*",
+    "@x402/paywall": "workspace:^",
     "express": "^4.0.0 || ^5.0.0"
   },
   "peerDependenciesMeta": {

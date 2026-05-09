@@ -111,6 +111,9 @@ def register_exact_svm_facilitator(
     - V2: Specified networks
     - V1: All supported SVM networks
 
+    A single settlement cache is shared across V1 and V2 so that a duplicate
+    transaction submitted through one protocol version is also caught by the other.
+
     Args:
         facilitator: x402Facilitator instance.
         signer: SVM signer for verification/settlement.
@@ -119,17 +122,20 @@ def register_exact_svm_facilitator(
     Returns:
         Facilitator for chaining.
     """
+    from ..settlement_cache import SettlementCache
     from .facilitator import ExactSvmScheme as ExactSvmFacilitatorScheme
     from .v1.facilitator import ExactSvmSchemeV1 as ExactSvmFacilitatorSchemeV1
 
-    scheme = ExactSvmFacilitatorScheme(signer)
+    settlement_cache = SettlementCache()
+
+    scheme = ExactSvmFacilitatorScheme(signer, settlement_cache)
 
     if isinstance(networks, str):
         networks = [networks]
     facilitator.register(networks, scheme)
 
     # Register V1
-    v1_scheme = ExactSvmFacilitatorSchemeV1(signer)
+    v1_scheme = ExactSvmFacilitatorSchemeV1(signer, settlement_cache)
     facilitator.register_v1(V1_NETWORKS, v1_scheme)
 
     return facilitator

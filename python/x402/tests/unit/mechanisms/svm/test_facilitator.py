@@ -1,12 +1,14 @@
 """Tests for ExactSvmScheme facilitator."""
 
+from unittest.mock import patch
+
 from x402.mechanisms.svm import (
     SOLANA_DEVNET_CAIP2,
     SOLANA_MAINNET_CAIP2,
     USDC_DEVNET_ADDRESS,
 )
 from x402.mechanisms.svm.exact import ExactSvmFacilitatorScheme
-from x402.schemas import PaymentPayload, PaymentRequirements, ResourceInfo
+from x402.schemas import PaymentPayload, PaymentRequirements, ResourceInfo, VerifyResponse
 
 
 class MockFacilitatorSigner:
@@ -292,6 +294,154 @@ class TestFacilitatorSchemeAttributes:
         assert result == addresses
 
 
+class TestDuplicateSettlementCache:
+    """Test duplicate settlement cache in settle method."""
+
+    def _make_payload(self, transaction: str) -> PaymentPayload:
+        return PaymentPayload(
+            x402_version=2,
+            resource=ResourceInfo(
+                url="http://example.com/protected",
+                description="Test resource",
+                mime_type="application/json",
+            ),
+            accepted=PaymentRequirements(
+                scheme="exact",
+                network=SOLANA_DEVNET_CAIP2,
+                asset=USDC_DEVNET_ADDRESS,
+                amount="100000",
+                pay_to="PayToAddress11111111111111111111111111",
+                max_timeout_seconds=3600,
+                extra={"feePayer": "FeePayer1111111111111111111111111111"},
+            ),
+            payload={"transaction": transaction},
+        )
+
+    def _make_requirements(self) -> PaymentRequirements:
+        return PaymentRequirements(
+            scheme="exact",
+            network=SOLANA_DEVNET_CAIP2,
+            asset=USDC_DEVNET_ADDRESS,
+            amount="100000",
+            pay_to="PayToAddress11111111111111111111111111",
+            max_timeout_seconds=3600,
+            extra={"feePayer": "FeePayer1111111111111111111111111111"},
+        )
+
+    def test_should_reject_duplicate_settlement(self):
+        """Second settle call with the same transaction should be rejected."""
+        signer = MockFacilitatorSigner()
+        facilitator = ExactSvmFacilitatorScheme(signer)
+        requirements = self._make_requirements()
+        payload = self._make_payload("sameTransactionBase64==")
+
+        with patch.object(
+            facilitator,
+            "verify",
+            return_value=VerifyResponse(is_valid=True, payer="PayerAddress"),
+        ):
+            result1 = facilitator.settle(payload, requirements)
+            assert result1.success is True
+
+            result2 = facilitator.settle(payload, requirements)
+            assert result2.success is False
+            assert result2.error_reason == "duplicate_settlement"
+
+    def test_should_allow_distinct_transactions(self):
+        """Two different transactions should both settle successfully."""
+        signer = MockFacilitatorSigner()
+        facilitator = ExactSvmFacilitatorScheme(signer)
+        requirements = self._make_requirements()
+
+        with patch.object(
+            facilitator,
+            "verify",
+            return_value=VerifyResponse(is_valid=True, payer="PayerAddress"),
+        ):
+            result1 = facilitator.settle(self._make_payload("transactionA=="), requirements)
+            assert result1.success is True
+
+            result2 = facilitator.settle(self._make_payload("transactionB=="), requirements)
+            assert result2.success is True
+
+    def test_should_evict_cache_entries_after_ttl(self):
+        """Cache entries should be pruned after TTL so they no longer block locally.
+
+        NOTE: In production the Solana RPC would still reject a re-submitted
+        transaction that already landed on-chain. This test only verifies that
+        the in-memory cache correctly prunes expired entries.
+        """
+        signer = MockFacilitatorSigner()
+        facilitator = ExactSvmFacilitatorScheme(signer)
+        requirements = self._make_requirements()
+        payload = self._make_payload("expiringTransaction==")
+
+        with patch.object(
+            facilitator,
+            "verify",
+            return_value=VerifyResponse(is_valid=True, payer="PayerAddress"),
+        ):
+            result1 = facilitator.settle(payload, requirements)
+            assert result1.success is True
+
+            # Simulate TTL expiration by backdating the cache entry
+            for key in facilitator._settlement_cache.entries:
+                facilitator._settlement_cache.entries[key] -= 121.0
+
+            result2 = facilitator.settle(payload, requirements)
+            assert result2.success is True
+
+    def test_shared_cache_blocks_cross_version_duplicates(self):
+        """V1 and V2 sharing a cache should catch cross-version duplicates."""
+        from x402.mechanisms.svm.exact.v1.facilitator import (
+            ExactSvmSchemeV1 as ExactSvmFacilitatorSchemeV1,
+        )
+        from x402.mechanisms.svm.settlement_cache import SettlementCache
+        from x402.schemas.v1 import PaymentPayloadV1, PaymentRequirementsV1
+
+        signer = MockFacilitatorSigner()
+        shared_cache = SettlementCache()
+        v2 = ExactSvmFacilitatorScheme(signer, shared_cache)
+        v1 = ExactSvmFacilitatorSchemeV1(signer, shared_cache)
+
+        # Settle via V2 first
+        with patch.object(
+            v2,
+            "verify",
+            return_value=VerifyResponse(is_valid=True, payer="PayerAddress"),
+        ):
+            result1 = v2.settle(
+                self._make_payload("crossVersionTx=="),
+                self._make_requirements(),
+            )
+            assert result1.success is True
+
+        # Same tx via V1 should be rejected by the shared cache
+        v1_payload = PaymentPayloadV1(
+            scheme="exact",
+            network="solana-devnet",
+            payload={"transaction": "crossVersionTx=="},
+        )
+        v1_requirements = PaymentRequirementsV1(
+            scheme="exact",
+            network="solana-devnet",
+            asset=USDC_DEVNET_ADDRESS,
+            max_amount_required="100000",
+            pay_to="PayToAddress11111111111111111111111111",
+            max_timeout_seconds=3600,
+            resource="https://example.com",
+            extra={"feePayer": "FeePayer1111111111111111111111111111"},
+        )
+        with patch.object(
+            v1,
+            "verify",
+            return_value=VerifyResponse(is_valid=True, payer="PayerAddress"),
+        ):
+            result2 = v1.settle(v1_payload, v1_requirements)
+            assert result2.success is False
+            assert result2.error_reason == "duplicate_settlement"
+
+
 class TestVerifyFeePayer:
     """Test fee payer verification in verify method."""
 
@@ -333,3 +483,79 @@ class TestVerifyFeePayer:
 
         assert result.is_valid is False
         assert result.invalid_reason == "fee_payer_not_managed_by_facilitator"
+
+
+class TestSettlementCachePruneOptimization:
+    """Verify the early-break prune optimization preserves insertion-order semantics."""
+
+    def test_prunes_only_expired_entries_preserves_fresh_ones(self):
+        """Entries older than TTL are pruned; newer entries survive."""
+        from x402.mechanisms.svm.settlement_cache import SettlementCache
+
+        cache = SettlementCache()
+
+        cache.is_duplicate("tx-a")
+        cache.is_duplicate("tx-b")
+        cache.is_duplicate("tx-c")
+
+        # Backdate tx-a past TTL (121s), leave tx-b and tx-c fresh
+        base = cache.entries["tx-a"]
+        cache.entries["tx-a"] = base - 121.0
+
+        assert cache.is_duplicate("tx-a") is False, "expired entry should have been pruned"
+        assert cache.is_duplicate("tx-b") is True, "fresh entry should still be cached"
+        assert cache.is_duplicate("tx-c") is True, "fresh entry should still be cached"
+
+    def test_prunes_all_entries_when_all_expired(self):
+        """When every entry is expired, all should be pruned."""
+        from x402.mechanisms.svm.settlement_cache import SettlementCache
+
+        cache = SettlementCache()
+
+        cache.is_duplicate("tx-1")
+        cache.is_duplicate("tx-2")
+        cache.is_duplicate("tx-3")
+
+        for k in list(cache.entries):
+            cache.entries[k] -= 121.0
+
+        assert cache.is_duplicate("tx-1") is False
+        assert cache.is_duplicate("tx-2") is False
+        assert cache.is_duplicate("tx-3") is False
+
+    def test_prunes_nothing_when_all_fresh(self):
+        """When no entries are expired, none should be pruned."""
+        from x402.mechanisms.svm.settlement_cache import SettlementCache
+
+        cache = SettlementCache()
+
+        cache.is_duplicate("tx-x")
+        cache.is_duplicate("tx-y")
+        cache.is_duplicate("tx-z")
+
+        assert cache.is_duplicate("tx-x") is True
+        assert cache.is_duplicate("tx-y") is True
+        assert cache.is_duplicate("tx-z") is True
+
+    def test_early_break_preserves_ordered_entries(self):
+        """Insertion-order iteration means the break fires at the first fresh entry."""
+        from x402.mechanisms.svm.settlement_cache import SettlementCache
+
+        cache = SettlementCache()
+
+        # Insert A, B, C in order with small gaps
+        cache.is_duplicate("tx-old-1")
+        cache.is_duplicate("tx-old-2")
+        cache.is_duplicate("tx-fresh")
+
+        # Expire only the first two
+        for k in ("tx-old-1", "tx-old-2"):
+            cache.entries[k] -= 121.0
+
+        # Trigger prune
+        cache.is_duplicate("tx-new")
+
+        assert "tx-old-1" not in cache.entries, "first expired entry should be pruned"
+        assert "tx-old-2" not in cache.entries, "second expired entry should be pruned"
+        assert "tx-fresh" in cache.entries, "fresh entry after expired ones should survive"
+        assert "tx-new" in cache.entries, "newly inserted entry should be present"

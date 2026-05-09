@@ -48,6 +48,19 @@ Servers can include:
 
 Servers do not need to manage client identities or maintain session state. Verification and settlement are handled per request.
 
+#### Duplicate Settlement on Solana
+
+If your server settles payments directly on Solana (without delegating to a facilitator), be aware of a race condition: the same signed payment transaction can be submitted multiple times before the first submission is confirmed on-chain. Solana's RPC will return "success" for each submission, since the network deduplicates at the consensus level. A malicious client can exploit this to obtain access to multiple resources while only paying once.
+
+To mitigate this, servers that settle Solana payments themselves **must** maintain a short-lived, in-memory cache of transaction payloads currently being settled:
+
+1. After verification succeeds, derive a cache key from the transaction payload (e.g., the base64-encoded transaction string).
+2. If the key is already present in the cache, reject the settlement with a `"duplicate_settlement"` error.
+3. If the key is not present, insert it into the cache and proceed with settlement.
+4. Evict entries older than 120 seconds (approximately twice the Solana blockhash lifetime).
+
+If you are using a facilitator, the x402 SVM libraries already include built-in duplicate settlement protection via a `SettlementCache`. See the [Exact SVM Scheme Specification](https://github.com/x402-foundation/x402/blob/main/specs/schemes/exact/scheme_exact_svm.md) for full details.
+
 ### Communication Flow
 
 The typical flow between a client and a server in the x402 protocol is as follows:

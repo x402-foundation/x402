@@ -166,7 +166,7 @@ class EvmPaywallHandler:
     window.x402 = {htmlsafe_json_dumps(x402_config)};
   </script>"""
 
-        return template.replace("</head>", f"{config_script}\n</head>")
+        return template.replace("</head>", f"{config_script}\n</head>", 1)
 
     def _fallback_html(
         self,
@@ -243,7 +243,7 @@ class SvmPaywallHandler:
     window.x402 = {htmlsafe_json_dumps(x402_config)};
   </script>"""
 
-        return template.replace("</head>", f"{config_script}\n</head>")
+        return template.replace("</head>", f"{config_script}\n</head>", 1)
 
     def _fallback_html(
         self,

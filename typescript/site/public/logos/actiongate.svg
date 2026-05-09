@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" role="img" aria-label="ActionGate logo">
+  <rect width="256" height="256" rx="36" fill="#0f172a"/>
+  <path d="M52 188L102 68h20l50 120h-24l-11-28H87l-11 28H52zm43-49h34l-17-44-17 44z" fill="#22d3ee"/>
+  <path d="M152 122h52v20h-52z" fill="#f8fafc"/>
+  <path d="M179 95l27 37-27 37z" fill="#f8fafc"/>
+</svg>

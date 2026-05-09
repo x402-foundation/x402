@@ -1,0 +1,90 @@
+name: Check Paywall Template
+
+on:
+  pull_request:
+    paths:
+      - "typescript/packages/http/paywall/**"
+      - "typescript/packages/mechanisms/evm/**"
+      - "typescript/pnpm-lock.yaml"
+      - "python/x402/http/paywall/**"
+      - "go/http/evm_paywall_template.go"
+      - "go/http/svm_paywall_template.go"
+      - "go/http/avm_paywall_template.go"
+      - ".github/workflows/check_paywall_template.yml"
+
+jobs:
+  check-paywall-template:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@41ff72655975bd51cab0327fa583b6e92b6d3061
+        with:
+          version: 10.7.0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: "pnpm"
+          cache-dependency-path: ./typescript
+
+      - name: Install dependencies
+        working-directory: ./typescript
+        run: pnpm install --frozen-lockfile
+
+      - name: Build workspace dependencies
+        working-directory: ./typescript
+        run: pnpm -r run build
+
+      - name: Regenerate paywall bundles
+        working-directory: ./typescript/packages/http/paywall
+        run: pnpm run build:paywall
+
+      - name: Verify regenerated templates match committed files
+        run: |
+          git diff --exit-code -- \
+            typescript/packages/http/paywall/src/evm/gen/template.ts \
+            typescript/packages/http/paywall/src/svm/gen/template.ts \
+            typescript/packages/http/paywall/src/avm/gen/template.ts \
+            python/x402/http/paywall/evm_paywall_template.py \
+            python/x402/http/paywall/svm_paywall_template.py \
+            python/x402/http/paywall/avm_paywall_template.py \
+            go/http/evm_paywall_template.go \
+            go/http/svm_paywall_template.go \
+            go/http/avm_paywall_template.go \
+            || {
+              echo ""
+              echo "::error::Paywall bundled templates are stale. Run 'pnpm --filter @x402/paywall run build:paywall' locally and commit the result."
+              exit 1
+            }
+
+      - name: Verify determinism (re-run build, compare to first run)
+        working-directory: ./typescript/packages/http/paywall
+        run: |
+          first_sha=$(sha256sum \
+            src/evm/gen/template.ts \
+            src/svm/gen/template.ts \
+            src/avm/gen/template.ts \
+            ../../../../python/x402/http/paywall/evm_paywall_template.py \
+            ../../../../python/x402/http/paywall/svm_paywall_template.py \
+            ../../../../python/x402/http/paywall/avm_paywall_template.py \
+            ../../../../go/http/evm_paywall_template.go \
+            ../../../../go/http/svm_paywall_template.go \
+            ../../../../go/http/avm_paywall_template.go)
+          pnpm run build:paywall
+          second_sha=$(sha256sum \
+            src/evm/gen/template.ts \
+            src/svm/gen/template.ts \
+            src/avm/gen/template.ts \
+            ../../../../python/x402/http/paywall/evm_paywall_template.py \
+            ../../../../python/x402/http/paywall/svm_paywall_template.py \
+            ../../../../python/x402/http/paywall/avm_paywall_template.py \
+            ../../../../go/http/evm_paywall_template.go \
+            ../../../../go/http/svm_paywall_template.go \
+            ../../../../go/http/avm_paywall_template.go)
+          if [ "$first_sha" != "$second_sha" ]; then
+            echo "::error::build:paywall is non-deterministic across repeat runs. See x4-23b for context."
+            diff <(echo "$first_sha") <(echo "$second_sha")
+            exit 1
+          fi

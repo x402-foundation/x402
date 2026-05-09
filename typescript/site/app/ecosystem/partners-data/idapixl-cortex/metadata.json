@@ -1,0 +1,7 @@
+{
+  "name": "Idapixl Cortex",
+  "category": "Services/Endpoints",
+  "logoUrl": "/logos/idapixl-cortex.jpg",
+  "description": "Cognitive infrastructure for AI agents. Semantic deduplication, novelty detection, and belief consistency checking powered by a persistent memory graph. Pay with USDC via x402 micropayments on Base.",
+  "websiteUrl": "https://idapixl.com/tools"
+}

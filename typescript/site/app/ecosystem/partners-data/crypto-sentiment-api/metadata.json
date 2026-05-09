@@ -2,6 +2,6 @@
   "name": "GenVox Crypto Sentiment API",
   "description": "Real-time crypto sentiment analysis powered by Reddit...",
   "logoUrl": "/logos/crypto-sentiment-api-logo.png",
-  "websiteUrl": "https://api.genvox.io",  // Updated
+  "websiteUrl": "https://api.genvox.io",
   "category": "Services/Endpoints"
 }

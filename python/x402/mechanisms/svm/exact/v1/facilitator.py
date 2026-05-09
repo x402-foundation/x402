@@ -1,5 +1,7 @@
 """SVM facilitator implementation for Exact payment scheme (V1 legacy)."""
 
+from __future__ import annotations
+
 import random
 from typing import Any
 
@@ -15,12 +17,15 @@ from .....schemas.v1 import PaymentPayloadV1, PaymentRequirementsV1
 from ...constants import (
     COMPUTE_BUDGET_PROGRAM_ADDRESS,
     ERR_AMOUNT_INSUFFICIENT,
+    ERR_DUPLICATE_SETTLEMENT,
     ERR_FEE_PAYER_MISSING,
     ERR_FEE_PAYER_NOT_MANAGED,
     ERR_FEE_PAYER_TRANSFERRING,
     ERR_INVALID_COMPUTE_LIMIT,
     ERR_INVALID_COMPUTE_PRICE,
     ERR_INVALID_INSTRUCTION_COUNT,
+    ERR_MEMO_COUNT,
+    ERR_MEMO_MISMATCH,
     ERR_MINT_MISMATCH,
     ERR_NETWORK_MISMATCH,
     ERR_NO_TRANSFER_INSTRUCTION,
@@ -39,6 +44,7 @@ from ...constants import (
     TOKEN_2022_PROGRAM_ADDRESS,
     TOKEN_PROGRAM_ADDRESS,
 )
+from ...settlement_cache import SettlementCache
 from ...signer import FacilitatorSvmSigner
 from ...types import ExactSvmPayload
 from ...utils import (
@@ -64,13 +70,19 @@ class ExactSvmSchemeV1:
     scheme = SCHEME_EXACT
     caip_family = "solana:*"
 
-    def __init__(self, signer: FacilitatorSvmSigner):
+    def __init__(
+        self,
+        signer: FacilitatorSvmSigner,
+        settlement_cache: SettlementCache | None = None,
+    ):
         """Create ExactSvmSchemeV1 facilitator.
 
         Args:
             signer: SVM signer for verification/settlement.
+            settlement_cache: Optional shared settlement cache (one is created if omitted).
         """
         self._signer = signer
+        self._settlement_cache = settlement_cache or SettlementCache()
 
     def get_extra(self, network: Network) -> dict[str, Any] | None:
         """Get mechanism-specific extra data.
@@ -241,6 +253,22 @@ class ExactSvmSchemeV1:
                 )
                 return VerifyResponse(is_valid=False, invalid_reason=reason, payer=payer)
 
+        # Verify memo content matches extra.memo when present
+        extra = requirements.extra or {}
+        expected_memo = extra.get("memo")
+        if expected_memo and isinstance(expected_memo, str):
+            memo_program = Pubkey.from_string(MEMO_PROGRAM_ADDRESS)
+            memo_ixs = [
+                ix
+                for ix in optional_instructions
+                if static_accounts[ix.program_id_index] == memo_program
+            ]
+            if len(memo_ixs) != 1:
+                return VerifyResponse(is_valid=False, invalid_reason=ERR_MEMO_COUNT, payer=payer)
+            actual_memo = bytes(memo_ixs[0].data).decode("utf-8")
+            if actual_memo != expected_memo:
+                return VerifyResponse(is_valid=False, invalid_reason=ERR_MEMO_MISMATCH, payer=payer)
+
         # Parse transfer instruction
         transfer_accounts = list(transfer_ix.accounts)
         transfer_data = bytes(transfer_ix.data)
@@ -337,6 +365,17 @@ class ExactSvmSchemeV1:
                 error_reason=verify_result.invalid_reason,
                 network=network,
                 payer=verify_result.payer,
+                transaction="",
+            )
+
+        # Duplicate settlement check: reject if this transaction is already being settled.
+        tx_key = svm_payload.transaction
+        if self._settlement_cache.is_duplicate(tx_key):
+            return SettleResponse(
+                success=False,
+                error_reason=ERR_DUPLICATE_SETTLEMENT,
+                network=network,
+                payer=verify_result.payer or "",
                 transaction="",
             )
 

@@ -11,20 +11,30 @@ import (
 	computebudget "github.com/gagliardetto/solana-go/programs/compute-budget"
 	"github.com/gagliardetto/solana-go/programs/token"
 
-	x402 "github.com/coinbase/x402/go"
-	"github.com/coinbase/x402/go/mechanisms/svm"
-	"github.com/coinbase/x402/go/types"
+	x402 "github.com/x402-foundation/x402/go"
+	"github.com/x402-foundation/x402/go/mechanisms/svm"
+	"github.com/x402-foundation/x402/go/types"
 )
 
 // ExactSvmScheme implements the SchemeNetworkFacilitator interface for SVM (Solana) exact payments (V2)
 type ExactSvmScheme struct {
-	signer svm.FacilitatorSvmSigner
+	signer          svm.FacilitatorSvmSigner
+	settlementCache *svm.SettlementCache
 }
 
-// NewExactSvmScheme creates a new ExactSvmScheme
-func NewExactSvmScheme(signer svm.FacilitatorSvmSigner) *ExactSvmScheme {
+// NewExactSvmScheme creates a new ExactSvmScheme.
+// An optional SettlementCache may be provided to share deduplication state
+// across V1 and V2 instances; if nil a new cache is created.
+func NewExactSvmScheme(signer svm.FacilitatorSvmSigner, cache ...*svm.SettlementCache) *ExactSvmScheme {
+	var c *svm.SettlementCache
+	if len(cache) > 0 && cache[0] != nil {
+		c = cache[0]
+	} else {
+		c = svm.NewSettlementCache()
+	}
 	return &ExactSvmScheme{
-		signer: signer,
+		signer:          signer,
+		settlementCache: c,
 	}
 }
 
@@ -126,7 +136,7 @@ func (f *ExactSvmScheme) Verify(
 	// - 4 instructions: ComputeLimit + ComputePrice + TransferChecked + Lighthouse or Memo
 	// - 5 instructions: ComputeLimit + ComputePrice + TransferChecked + Lighthouse + Lighthouse or Memo
 	// - 6 instructions: ComputeLimit + ComputePrice + TransferChecked + Lighthouse + Lighthouse + Memo
-	// See: https://github.com/coinbase/x402/issues/828
+	// See: https://github.com/x402-foundation/x402/issues/828
 	numInstructions := len(tx.Message.Instructions)
 	if numInstructions < 3 || numInstructions > 6 {
 		return nil, x402.NewVerifyError(ErrTransactionInstructionsLength, "", fmt.Sprintf("transaction instructions length mismatch: %d < 3 or %d > 6", numInstructions, numInstructions))
@@ -190,6 +200,25 @@ func (f *ExactSvmScheme) Verify(
 
 			return nil, x402.NewVerifyError(reason, payer, fmt.Sprintf("unknown optional instruction: %s", progID.String()))
 		}
+
+		// Step 5b: Verify memo content matches extra.memo when present
+		if expectedMemo, ok := requirements.Extra["memo"].(string); ok && expectedMemo != "" {
+			var memoCount int
+			var actualMemoData []byte
+			for _, instruction := range optionalInstructions {
+				progID := tx.Message.AccountKeys[instruction.ProgramIDIndex]
+				if progID.Equals(memoPubkey) {
+					memoCount++
+					actualMemoData = instruction.Data
+				}
+			}
+			if memoCount != 1 {
+				return nil, x402.NewVerifyError(ErrMemoCount, payer, "expected exactly one memo instruction when extra.memo is present")
+			}
+			if string(actualMemoData) != expectedMemo {
+				return nil, x402.NewVerifyError(ErrMemoMismatch, payer, "memo data does not match extra.memo")
+			}
+		}
 	}
 
 	// Step 6: Sign and Simulate Transaction
@@ -242,6 +271,12 @@ func (f *ExactSvmScheme) Settle(
 	solanaPayload, err := svm.PayloadFromMap(payload.Payload)
 	if err != nil {
 		return nil, x402.NewSettleError(ErrInvalidPayloadTransaction, verifyResp.Payer, network, "", err.Error())
+	}
+
+	// Duplicate settlement check: reject if this transaction is already being settled.
+	txKey := solanaPayload.Transaction
+	if f.settlementCache.IsDuplicate(txKey) {
+		return nil, x402.NewSettleError(ErrDuplicateSettlement, verifyResp.Payer, network, "", "duplicate transaction")
 	}
 
 	// Decode transaction

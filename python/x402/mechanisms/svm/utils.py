@@ -122,19 +122,17 @@ def get_asset_info(network: str, asset_address: str | None = None) -> AssetInfo:
 
     Returns:
         Asset information.
+
+    Raises:
+        ValueError: If the address does not match the registered asset for the network.
     """
     config = get_network_config(network)
     default_asset = config["default_asset"]
 
-    if asset_address and asset_address != default_asset["address"]:
-        # Return with provided address but default metadata
-        return {
-            "address": asset_address,
-            "name": default_asset["name"],
-            "decimals": default_asset["decimals"],
-        }
+    if not asset_address or asset_address == default_asset["address"]:
+        return default_asset
 
-    return default_asset
+    raise ValueError(f"Token {asset_address} is not a registered asset for network {network}.")
 
 
 def convert_to_token_amount(decimal_amount: str, decimals: int) -> str:

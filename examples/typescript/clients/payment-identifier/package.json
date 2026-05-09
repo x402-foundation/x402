@@ -15,7 +15,7 @@
     "@x402/fetch": "workspace:*",
     "@x402/extensions": "workspace:*",
     "dotenv": "^16.4.7",
-    "viem": "^2.39.0"
+    "viem": "^2.48.11"
   },
   "devDependencies": {
     "@eslint/js": "^9.24.0",

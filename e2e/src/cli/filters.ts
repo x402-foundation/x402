@@ -1,4 +1,23 @@
-import { TestScenario } from '../types';
+import { TestScenario, endpointPaymentScheme } from '../types';
+
+/** x402 payment scheme for filtering (non-EVM counts as exact). */
+export type PaymentSchemeKind = 'exact' | 'upto' | 'batch-settlement';
+
+/**
+ * Classify a scenario's payment scheme for filtering (`endpoint.scheme`, default `exact` on EVM).
+ */
+export function getScenarioPaymentScheme(scenario: TestScenario): PaymentSchemeKind {
+  if (scenario.protocolFamily !== 'evm') {
+    return 'exact';
+  }
+  return endpointPaymentScheme(scenario.endpoint) ?? 'exact';
+}
+
+export function getUniquePaymentSchemes(scenarios: TestScenario[]): PaymentSchemeKind[] {
+  const set = new Set<PaymentSchemeKind>();
+  scenarios.forEach(s => set.add(getScenarioPaymentScheme(s)));
+  return Array.from(set).sort();
+}
 
 export interface TestFilters {
   transports?: string[];
@@ -8,6 +27,8 @@ export interface TestFilters {
   extensions?: string[];       // For test output control (doesn't filter scenarios)
   versions?: number[];
   protocolFamilies?: string[];
+  schemes?: string[];
+  endpoints?: string[];        // Regex patterns to filter by endpoint path
 }
 
 /**
@@ -62,6 +83,39 @@ export function filterScenarios(
       if (!filters.protocolFamilies.includes(scenario.protocolFamily)) {
         return false;
       }
+    }
+
+    // Payment scheme filter
+    if (filters.schemes && filters.schemes.length > 0) {
+      const normalized = filters.schemes.map(s => s.trim().toLowerCase());
+      const kind = getScenarioPaymentScheme(scenario);
+      if (!normalized.includes(kind)) {
+        return false;
+      }
+    }
+
+    // Endpoint filter — each entry is treated as a regex pattern.
+    // Patterns are auto-anchored (^...$) so that "/protected" matches only
+    // that exact path. To match a prefix, use "/protected.*"; for a substring
+    // anywhere, use ".*permit2.*" or omit anchors explicitly via ^ / $.
+    if (filters.endpoints && filters.endpoints.length > 0) {
+      const endpointPath = scenario.endpoint.path;
+      const matched = filters.endpoints.some(rawPattern => {
+        // Ensure patterns that look like paths start with /
+        const pattern = (!rawPattern.startsWith('/') && !rawPattern.startsWith('^'))
+          ? `/${rawPattern}`
+          : rawPattern;
+        try {
+          const anchored = (pattern.startsWith('^') || pattern.endsWith('$'))
+            ? pattern
+            : `^${pattern}$`;
+          return new RegExp(anchored).test(endpointPath);
+        } catch {
+          // Fall back to exact match if pattern is not valid regex
+          return endpointPath === pattern;
+        }
+      });
+      if (!matched) return false;
     }
 
     // NOTE: Extensions filter NOT applied - it only controls test output visibility

@@ -85,18 +85,13 @@ async def main() -> None:
         print(f"Response body: {response.text}")
 
         # Extract and print payment response if present
-        if response.is_success:
-            try:
-                settle_response = http_client.get_payment_settle_response(
-                    lambda name: response.headers.get(name)
-                )
-                print(
-                    f"\nPayment response: {settle_response.model_dump_json(indent=2)}"
-                )
-            except ValueError:
-                print("\nNo payment response header found")
-        else:
-            print(f"\nRequest failed (status: {response.status_code})")
+        try:
+            settle_response = http_client.get_payment_settle_response(
+                lambda name: response.headers.get(name)
+            )
+            print(f"\nPayment response: {settle_response.model_dump_json(indent=2)}")
+        except ValueError:
+            print("\nNo payment response header found")
 
 
 if __name__ == "__main__":

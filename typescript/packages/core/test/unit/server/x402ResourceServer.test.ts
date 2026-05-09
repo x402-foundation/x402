@@ -1,5 +1,8 @@
-import { describe, it, expect, beforeEach } from "vitest";
-import { x402ResourceServer } from "../../../src/server/x402ResourceServer";
+import { describe, it, expect, beforeEach, vi } from "vitest";
+import {
+  x402ResourceServer,
+  resolveSettlementOverrideAmount,
+} from "../../../src/server/x402ResourceServer";
 import {
   MockFacilitatorClient,
   MockSchemeNetworkServer,
@@ -10,6 +13,7 @@ import {
   buildSettleResponse,
 } from "../../mocks";
 import { Network } from "../../../src/types";
+import type { SettleResponse } from "../../../src/types/facilitator";
 
 describe("x402ResourceServer", () => {
   describe("Construction", () => {
@@ -95,6 +99,83 @@ describe("x402ResourceServer", () => {
 
       // This is verified implicitly - both registrations succeed without error
       expect(server).toBeDefined();
+    });
+
+    it("runs scheme hooks only for the matched network pattern and scheme", async () => {
+      const mockClient = new MockFacilitatorClient(
+        buildSupportedResponse(),
+        buildVerifyResponse({ isValid: true }),
+      );
+      const server = new x402ResourceServer(mockClient);
+      const order: string[] = [];
+
+      server.onBeforeVerify(async () => {
+        order.push("manual");
+      });
+      server.register(
+        "eip155:*" as Network,
+        new MockSchemeNetworkServer("batch", undefined, {
+          onBeforeVerify: async () => {
+            order.push("scheme");
+          },
+        }),
+      );
+      server.register(
+        "eip155:*" as Network,
+        new MockSchemeNetworkServer("other", undefined, {
+          onBeforeVerify: async () => {
+            order.push("other-scheme");
+          },
+        }),
+      );
+      server.register(
+        "solana:*" as Network,
+        new MockSchemeNetworkServer("batch", undefined, {
+          onBeforeVerify: async () => {
+            order.push("other-network");
+          },
+        }),
+      );
+      server.registerExtension({
+        key: "ext",
+        hooks: {
+          onBeforeVerify: async () => {
+            order.push("extension");
+          },
+        },
+      });
+
+      await server.verifyPayment(
+        buildPaymentPayload(),
+        buildPaymentRequirements({ scheme: "batch", network: "eip155:8453" as Network }),
+        { ext: {} },
+      );
+
+      expect(order).toEqual(["manual", "scheme", "extension"]);
+    });
+
+    it("overwrites scheme hook adapters when a scheme is re-registered", async () => {
+      const mockClient = new MockFacilitatorClient(
+        buildSupportedResponse(),
+        buildVerifyResponse({ isValid: true }),
+      );
+      const server = new x402ResourceServer(mockClient);
+      let calls = 0;
+
+      server.register(
+        "test:network" as Network,
+        new MockSchemeNetworkServer("test-scheme", undefined, {
+          onBeforeVerify: async () => {
+            calls++;
+          },
+        }),
+      );
+      await server.verifyPayment(buildPaymentPayload(), buildPaymentRequirements());
+      expect(calls).toBe(1);
+
+      server.register("test:network" as Network, new MockSchemeNetworkServer("test-scheme"));
+      await server.verifyPayment(buildPaymentPayload(), buildPaymentRequirements());
+      expect(calls).toBe(1);
     });
   });
 
@@ -313,6 +394,11 @@ describe("x402ResourceServer", () => {
       });
 
       expect(mockScheme.enhanceCalls.length).toBe(1);
+      expect(mockScheme.enhanceCalls[0].supportedKind).toEqual({
+        x402Version: 2,
+        scheme: "test-scheme",
+        network: "test:network",
+      });
     });
 
     it("should use default maxTimeoutSeconds of 300", async () => {
@@ -422,6 +508,7 @@ describe("x402ResourceServer", () => {
           hookExecuted = true;
           expect(context.paymentPayload).toBeDefined();
           expect(context.requirements).toBeDefined();
+          expect(context.declaredExtensions).toEqual({});
         });
 
         const payload = buildPaymentPayload();
@@ -445,6 +532,72 @@ describe("x402ResourceServer", () => {
         expect(result.isValid).toBe(false);
         expect(result.invalidReason).toBe("Rate limited");
         expect(mockClient.verifyCalls.length).toBe(0); // Facilitator not called
+      });
+
+      it("should abort verification with the hook reason", async () => {
+        server.onBeforeVerify(async () => {
+          return {
+            abort: true,
+            reason: "stale_state",
+          };
+        });
+
+        const result = await server.verifyPayment(
+          buildPaymentPayload(),
+          buildPaymentRequirements(),
+        );
+
+        expect(result).toMatchObject({
+          isValid: false,
+          invalidReason: "stale_state",
+        });
+      });
+
+      it("should skip facilitator verification when a beforeVerify hook returns a result", async () => {
+        server.onBeforeVerify(async () => {
+          return {
+            skip: true,
+            result: buildVerifyResponse({
+              isValid: true,
+              payer: "0xlocal",
+              extra: { source: "local" },
+            }),
+          };
+        });
+
+        const result = await server.verifyPayment(
+          buildPaymentPayload(),
+          buildPaymentRequirements(),
+        );
+
+        expect(mockClient.verifyCalls.length).toBe(0);
+        expect(result).toMatchObject({
+          isValid: true,
+          payer: "0xlocal",
+          extra: { source: "local" },
+        });
+      });
+
+      it("should run afterVerify hooks when beforeVerify skips facilitator verification", async () => {
+        const executionOrder: string[] = [];
+
+        server
+          .onBeforeVerify(async () => {
+            executionOrder.push("before");
+            return {
+              skip: true,
+              result: buildVerifyResponse({ isValid: true, payer: "0xlocal" }),
+            };
+          })
+          .onAfterVerify(async context => {
+            executionOrder.push("after");
+            expect(context.result.payer).toBe("0xlocal");
+          });
+
+        await server.verifyPayment(buildPaymentPayload(), buildPaymentRequirements());
+
+        expect(mockClient.verifyCalls.length).toBe(0);
+        expect(executionOrder).toEqual(["before", "after"]);
       });
 
       it("should execute multiple hooks in order", async () => {
@@ -485,6 +638,25 @@ describe("x402ResourceServer", () => {
 
         expect(executionOrder).toEqual([1, 2]); // Third hook not executed
       });
+
+      it("should warn and continue verification when a beforeVerify hook throws", async () => {
+        const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+        server.onBeforeVerify(async () => {
+          throw new Error("Hook boom");
+        });
+
+        await server.verifyPayment(buildPaymentPayload(), buildPaymentRequirements());
+
+        expect(mockClient.verifyCalls.length).toBe(1);
+        expect(warnSpy).toHaveBeenCalledWith(
+          expect.stringMatching(
+            /\[x402\] Resource server beforeVerify hook threw \(manual beforeVerify hook #0\): Hook boom/,
+          ),
+        );
+
+        warnSpy.mockRestore();
+      });
     });
 
     describe("onAfterVerify", () => {
@@ -523,6 +695,31 @@ describe("x402ResourceServer", () => {
         await server.verifyPayment(buildPaymentPayload(), buildPaymentRequirements());
 
         expect(executionOrder).toEqual([1, 2, 3]);
+      });
+
+      it("should warn and run later afterVerify hooks when an earlier hook throws", async () => {
+        const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+        const executionOrder: number[] = [];
+
+        server
+          .onAfterVerify(async () => {
+            executionOrder.push(1);
+            throw new Error("after fail");
+          })
+          .onAfterVerify(async () => {
+            executionOrder.push(2);
+          });
+
+        await server.verifyPayment(buildPaymentPayload(), buildPaymentRequirements());
+
+        expect(executionOrder).toEqual([1, 2]);
+        expect(warnSpy).toHaveBeenCalledWith(
+          expect.stringMatching(
+            /\[x402\] Resource server afterVerify hook threw \(manual afterVerify hook #0\): after fail/,
+          ),
+        );
+
+        warnSpy.mockRestore();
       });
 
       it("should not execute afterVerify if verification aborted", async () => {
@@ -605,6 +802,39 @@ describe("x402ResourceServer", () => {
         expect(executionOrder).toEqual([1, 2]); // Stops after recovery
       });
 
+      it("should warn and continue onVerifyFailure hooks when a hook throws", async () => {
+        const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+        const executionOrder: number[] = [];
+
+        mockClient.setVerifyResponse(new Error("Failure"));
+
+        server
+          .onVerifyFailure(async () => {
+            executionOrder.push(1);
+            throw new Error("failure-hook boom");
+          })
+          .onVerifyFailure(async () => {
+            executionOrder.push(2);
+            return { recovered: true, result: { isValid: true, payer: "0xok" } };
+          });
+
+        const result = await server.verifyPayment(
+          buildPaymentPayload(),
+          buildPaymentRequirements(),
+        );
+
+        expect(result.isValid).toBe(true);
+        expect(result.payer).toBe("0xok");
+        expect(executionOrder).toEqual([1, 2]);
+        expect(warnSpy).toHaveBeenCalledWith(
+          expect.stringMatching(
+            /\[x402\] Resource server onVerifyFailure hook threw \(manual onVerifyFailure hook #0\): failure-hook boom/,
+          ),
+        );
+
+        warnSpy.mockRestore();
+      });
+
       it("should re-throw if no recovery", async () => {
         mockClient.setVerifyResponse(new Error("Fatal error"));
 
@@ -660,19 +890,27 @@ describe("x402ResourceServer", () => {
         }
       });
 
-      it("should wrap unexpected hook errors as before_settle_hook_error", async () => {
+      it("should warn and continue settlement when a beforeSettle hook throws", async () => {
+        const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+
         server.onBeforeSettle(async () => {
           throw new Error("Unexpected failure");
         });
 
-        try {
-          await server.settlePayment(buildPaymentPayload(), buildPaymentRequirements());
-          expect.unreachable("Should have thrown");
-        } catch (error: any) {
-          expect(error.name).toBe("SettleError");
-          expect(error.errorReason).toBe("before_settle_hook_error");
-          expect(error.errorMessage).toBe("Unexpected failure");
-        }
+        const result = await server.settlePayment(
+          buildPaymentPayload(),
+          buildPaymentRequirements(),
+        );
+
+        expect(result.success).toBe(true);
+        expect(mockClient.settleCalls.length).toBe(1);
+        expect(warnSpy).toHaveBeenCalledWith(
+          expect.stringMatching(
+            /\[x402\] Resource server beforeSettle hook threw \(manual beforeSettle hook #0\): Unexpected failure/,
+          ),
+        );
+
+        warnSpy.mockRestore();
       });
 
       it("should execute multiple hooks in order", async () => {
@@ -753,6 +991,50 @@ describe("x402ResourceServer", () => {
         expect(result.transaction).toBe("0xRecoveredTx");
       });
     });
+
+    describe("onVerifiedPaymentCanceled", () => {
+      it("executes manual, scheme, and extension hooks once", async () => {
+        const server = new x402ResourceServer(mockClient);
+        const calls: string[] = [];
+
+        server.onVerifiedPaymentCanceled(async context => {
+          calls.push(`manual:${context.reason}:${context.responseStatus}`);
+        });
+        server.register(
+          "eip155:*" as Network,
+          new MockSchemeNetworkServer("exact", undefined, {
+            onVerifiedPaymentCanceled: async context => {
+              calls.push(`scheme:${context.reason}`);
+            },
+          }),
+        );
+        server.registerExtension({
+          key: "ext",
+          hooks: {
+            onVerifiedPaymentCanceled: async (_declaration, context) => {
+              calls.push(`extension:${context.reason}`);
+            },
+          },
+        });
+
+        const transportContext = { requestId: "req-1" };
+        const cancellation = server.createPaymentCancellationDispatcher(
+          buildPaymentPayload(),
+          buildPaymentRequirements({ scheme: "exact", network: "eip155:8453" as Network }),
+          { ext: {} },
+          transportContext,
+        );
+
+        await cancellation.cancel({ reason: "handler_failed", responseStatus: 500 });
+        await cancellation.cancel({ reason: "handler_failed", responseStatus: 500 });
+
+        expect(calls).toEqual([
+          "manual:handler_failed:500",
+          "scheme:handler_failed",
+          "extension:handler_failed",
+        ]);
+      });
+    });
   });
 
   describe("verifyPayment", () => {
@@ -819,6 +1101,436 @@ describe("x402ResourceServer", () => {
 
       expect(result.success).toBe(true);
       expect(mockClient.settleCalls.length).toBe(1);
+    });
+
+    it("should use original amount when no overrides provided", async () => {
+      const mockClient = new MockFacilitatorClient(
+        buildSupportedResponse({
+          kinds: [{ x402Version: 2, scheme: "exact", network: "eip155:8453" as Network }],
+        }),
+        undefined,
+        buildSettleResponse({ success: true }),
+      );
+
+      const server = new x402ResourceServer(mockClient);
+
+      const payload = buildPaymentPayload();
+      const requirements = buildPaymentRequirements({
+        scheme: "exact",
+        network: "eip155:8453" as Network,
+        amount: "1000000",
+      });
+
+      await server.settlePayment(payload, requirements);
+
+      expect(mockClient.settleCalls[0].requirements.amount).toBe("1000000");
+    });
+
+    it("should override amount when settlementOverrides.amount is provided", async () => {
+      const mockClient = new MockFacilitatorClient(
+        buildSupportedResponse({
+          kinds: [{ x402Version: 2, scheme: "exact", network: "eip155:8453" as Network }],
+        }),
+        undefined,
+        buildSettleResponse({ success: true }),
+      );
+
+      const server = new x402ResourceServer(mockClient);
+
+      const payload = buildPaymentPayload();
+      const requirements = buildPaymentRequirements({
+        scheme: "exact",
+        network: "eip155:8453" as Network,
+        amount: "1000000",
+      });
+
+      await server.settlePayment(payload, requirements, undefined, undefined, { amount: "500000" });
+
+      // Facilitator should receive the overridden amount
+      expect(mockClient.settleCalls[0].requirements.amount).toBe("500000");
+    });
+
+    it("should not mutate original requirements when overrides applied", async () => {
+      const mockClient = new MockFacilitatorClient(
+        buildSupportedResponse({
+          kinds: [{ x402Version: 2, scheme: "exact", network: "eip155:8453" as Network }],
+        }),
+        undefined,
+        buildSettleResponse({ success: true }),
+      );
+
+      const server = new x402ResourceServer(mockClient);
+
+      const payload = buildPaymentPayload();
+      const requirements = buildPaymentRequirements({
+        scheme: "exact",
+        network: "eip155:8453" as Network,
+        amount: "1000000",
+      });
+
+      await server.settlePayment(payload, requirements, undefined, undefined, { amount: "250000" });
+
+      // Original requirements must not be mutated
+      expect(requirements.amount).toBe("1000000");
+    });
+
+    it("should use original amount when overrides has undefined amount", async () => {
+      const mockClient = new MockFacilitatorClient(
+        buildSupportedResponse({
+          kinds: [{ x402Version: 2, scheme: "exact", network: "eip155:8453" as Network }],
+        }),
+        undefined,
+        buildSettleResponse({ success: true }),
+      );
+
+      const server = new x402ResourceServer(mockClient);
+
+      const payload = buildPaymentPayload();
+      const requirements = buildPaymentRequirements({
+        scheme: "exact",
+        network: "eip155:8453" as Network,
+        amount: "1000000",
+      });
+
+      await server.settlePayment(payload, requirements, undefined, undefined, {});
+
+      expect(mockClient.settleCalls[0].requirements.amount).toBe("1000000");
+    });
+
+    it("should allow settling for zero amount", async () => {
+      const mockClient = new MockFacilitatorClient(
+        buildSupportedResponse({
+          kinds: [{ x402Version: 2, scheme: "exact", network: "eip155:8453" as Network }],
+        }),
+        undefined,
+        buildSettleResponse({ success: true }),
+      );
+
+      const server = new x402ResourceServer(mockClient);
+
+      const payload = buildPaymentPayload();
+      const requirements = buildPaymentRequirements({
+        scheme: "exact",
+        network: "eip155:8453" as Network,
+        amount: "1000000",
+      });
+
+      await server.settlePayment(payload, requirements, undefined, undefined, { amount: "0" });
+
+      expect(mockClient.settleCalls[0].requirements.amount).toBe("0");
+    });
+
+    it("should resolve percent override through settlePayment", async () => {
+      const mockClient = new MockFacilitatorClient(
+        buildSupportedResponse({
+          kinds: [{ x402Version: 2, scheme: "exact", network: "eip155:8453" as Network }],
+        }),
+        undefined,
+        buildSettleResponse({ success: true }),
+      );
+
+      const server = new x402ResourceServer(mockClient);
+      const payload = buildPaymentPayload();
+      const requirements = buildPaymentRequirements({
+        scheme: "exact",
+        network: "eip155:8453" as Network,
+        amount: "2000",
+      });
+
+      await server.settlePayment(payload, requirements, undefined, undefined, { amount: "50%" });
+
+      expect(mockClient.settleCalls[0].requirements.amount).toBe("1000");
+    });
+
+    it("should resolve dollar override through settlePayment with default decimals", async () => {
+      const mockClient = new MockFacilitatorClient(
+        buildSupportedResponse({
+          kinds: [{ x402Version: 2, scheme: "exact", network: "eip155:8453" as Network }],
+        }),
+        undefined,
+        buildSettleResponse({ success: true }),
+      );
+
+      const server = new x402ResourceServer(mockClient);
+      const payload = buildPaymentPayload();
+      const requirements = buildPaymentRequirements({
+        scheme: "exact",
+        network: "eip155:8453" as Network,
+        amount: "1000000",
+      });
+
+      await server.settlePayment(payload, requirements, undefined, undefined, { amount: "$0.001" });
+
+      expect(mockClient.settleCalls[0].requirements.amount).toBe("1000");
+    });
+
+    it("should resolve dollar override using scheme getAssetDecimals", async () => {
+      const mockClient = new MockFacilitatorClient(
+        buildSupportedResponse({
+          kinds: [{ x402Version: 2, scheme: "exact", network: "eip155:8453" as Network }],
+        }),
+        undefined,
+        buildSettleResponse({ success: true }),
+      );
+
+      const server = new x402ResourceServer(mockClient);
+      const mockScheme = new MockSchemeNetworkServer("exact");
+      mockScheme.setAssetDecimalsResult(8);
+      server.register("eip155:8453" as Network, mockScheme);
+
+      const payload = buildPaymentPayload();
+      const requirements = buildPaymentRequirements({
+        scheme: "exact",
+        network: "eip155:8453" as Network,
+        amount: "1000000",
+      });
+
+      await server.settlePayment(payload, requirements, undefined, undefined, { amount: "$0.05" });
+
+      expect(mockClient.settleCalls[0].requirements.amount).toBe("5000000");
+    });
+
+    it("should not mutate asset when dollar override is used", async () => {
+      const mockClient = new MockFacilitatorClient(
+        buildSupportedResponse({
+          kinds: [{ x402Version: 2, scheme: "exact", network: "eip155:8453" as Network }],
+        }),
+        undefined,
+        buildSettleResponse({ success: true }),
+      );
+
+      const server = new x402ResourceServer(mockClient);
+      const payload = buildPaymentPayload();
+      const requirements = buildPaymentRequirements({
+        scheme: "exact",
+        network: "eip155:8453" as Network,
+        amount: "1000000",
+        asset: "0xOriginalToken",
+      });
+
+      await server.settlePayment(payload, requirements, undefined, undefined, {
+        amount: "$0.10",
+      });
+
+      // Only amount changes, asset stays the same
+      expect(mockClient.settleCalls[0].requirements.amount).toBe("100000");
+      expect(mockClient.settleCalls[0].requirements.asset).toBe("0xOriginalToken");
+    });
+
+    it("should pass overridden requirements to beforeSettle hooks", async () => {
+      const mockClient = new MockFacilitatorClient(
+        buildSupportedResponse(),
+        buildVerifyResponse({ isValid: true }),
+        buildSettleResponse({ success: true }),
+      );
+
+      const server = new x402ResourceServer(mockClient);
+
+      let hookAmount: string | undefined;
+      server.onBeforeSettle(async context => {
+        hookAmount = context.requirements.amount;
+      });
+
+      const payload = buildPaymentPayload();
+      const requirements = buildPaymentRequirements({ amount: "1000000" });
+
+      await server.settlePayment(payload, requirements, undefined, undefined, { amount: "300000" });
+
+      expect(hookAmount).toBe("300000");
+    });
+
+    it("runs labeled afterSettle hooks when beforeSettle returns a skip result", async () => {
+      const mockClient = new MockFacilitatorClient(
+        buildSupportedResponse(),
+        buildVerifyResponse({ isValid: true }),
+        buildSettleResponse({ success: true }),
+      );
+      const server = new x402ResourceServer(mockClient);
+      const order: string[] = [];
+
+      server.onBeforeSettle(async () => ({
+        skip: true,
+        result: buildSettleResponse({ success: true }),
+      }));
+      server.onAfterSettle(async () => {
+        order.push("manual");
+      });
+      server.register(
+        "test:network" as Network,
+        new MockSchemeNetworkServer("test-scheme", undefined, {
+          onAfterSettle: async () => {
+            order.push("scheme");
+          },
+        }),
+      );
+      server.registerExtension({
+        key: "ext",
+        hooks: {
+          onAfterSettle: async () => {
+            order.push("extension");
+          },
+        },
+      });
+
+      const result = await server.settlePayment(buildPaymentPayload(), buildPaymentRequirements(), {
+        ext: {},
+      });
+
+      expect(result.success).toBe(true);
+      expect(mockClient.settleCalls.length).toBe(0);
+      expect(order).toEqual(["manual", "scheme", "extension"]);
+    });
+
+    it("applies scheme payload enrichment before facilitator settlement", async () => {
+      const mockClient = new MockFacilitatorClient(
+        buildSupportedResponse(),
+        buildVerifyResponse({ isValid: true }),
+        buildSettleResponse({ success: true }),
+      );
+      const server = new x402ResourceServer(mockClient);
+      const order: string[] = [];
+
+      server.register(
+        "test:network",
+        Object.assign(new MockSchemeNetworkServer("test-scheme"), {
+          enrichSettlementPayload: async () => {
+            order.push("payload");
+            return { serverField: "server" };
+          },
+        }),
+      );
+
+      await server.settlePayment(
+        buildPaymentPayload({ payload: { clientField: "client" } }),
+        buildPaymentRequirements(),
+      );
+
+      expect(order).toEqual(["payload"]);
+      expect(mockClient.settleCalls[0].payload.payload).toEqual({
+        clientField: "client",
+        serverField: "server",
+      });
+    });
+
+    it("rejects payload enrichment that overwrites client payload fields", async () => {
+      const mockClient = new MockFacilitatorClient(
+        buildSupportedResponse(),
+        buildVerifyResponse({ isValid: true }),
+        buildSettleResponse({ success: true }),
+      );
+      const server = new x402ResourceServer(mockClient);
+
+      server.register(
+        "test:network",
+        Object.assign(new MockSchemeNetworkServer("test-scheme"), {
+          enrichSettlementPayload: async () => ({ clientField: "server" }),
+        }),
+      );
+
+      await expect(
+        server.settlePayment(
+          buildPaymentPayload({ payload: { clientField: "client" } }),
+          buildPaymentRequirements(),
+        ),
+      ).rejects.toThrow(/clientField/);
+      expect(mockClient.settleCalls.length).toBe(0);
+    });
+
+    it("runs settlement response enrichment after afterSettle and extension enrichment", async () => {
+      const mockClient = new MockFacilitatorClient(
+        buildSupportedResponse(),
+        buildVerifyResponse({ isValid: true }),
+        buildSettleResponse({ success: true, extra: { facilitatorField: "facilitator" } }),
+      );
+      const server = new x402ResourceServer(mockClient);
+      const order: string[] = [];
+
+      server.onAfterSettle(async () => {
+        order.push("afterSettle");
+      });
+      server.registerExtension({
+        key: "ext",
+        enrichSettlementResponse: async () => {
+          order.push("extension");
+          return { extensionField: "extension" };
+        },
+      });
+      server.register(
+        "test:network",
+        Object.assign(new MockSchemeNetworkServer("test-scheme"), {
+          enrichSettlementResponse: async () => {
+            order.push("scheme");
+            return { schemeField: "scheme" };
+          },
+        }),
+      );
+
+      const result = await server.settlePayment(buildPaymentPayload(), buildPaymentRequirements(), {
+        ext: {},
+      });
+
+      expect(order).toEqual(["afterSettle", "extension", "scheme"]);
+      expect(result.extensions).toEqual({ ext: { extensionField: "extension" } });
+      expect(result.extra).toEqual({
+        facilitatorField: "facilitator",
+        schemeField: "scheme",
+      });
+    });
+
+    it("skips payload enrichment and still runs response enrichment for skip results", async () => {
+      const mockClient = new MockFacilitatorClient(
+        buildSupportedResponse(),
+        buildVerifyResponse({ isValid: true }),
+        buildSettleResponse({ success: true }),
+      );
+      const server = new x402ResourceServer(mockClient);
+      const enrichSettlementPayload = vi.fn(async () => ({ serverField: "server" }));
+
+      server.onBeforeSettle(async () => ({
+        skip: true,
+        result: buildSettleResponse({ success: true, extra: { skipField: "skip" } }),
+      }));
+      server.register(
+        "test:network",
+        Object.assign(new MockSchemeNetworkServer("test-scheme"), {
+          enrichSettlementPayload,
+          enrichSettlementResponse: async () => ({ schemeField: "scheme" }),
+        }),
+      );
+
+      const result = await server.settlePayment(buildPaymentPayload(), buildPaymentRequirements());
+
+      expect(enrichSettlementPayload).not.toHaveBeenCalled();
+      expect(mockClient.settleCalls.length).toBe(0);
+      expect(result.extra).toEqual({
+        skipField: "skip",
+        schemeField: "scheme",
+      });
+    });
+
+    it("rejects enrichSettlementResponse that mutates facilitator core fields", async () => {
+      const mockClient = new MockFacilitatorClient(
+        buildSupportedResponse(),
+        buildVerifyResponse({ isValid: true }),
+        buildSettleResponse({
+          success: true,
+          transaction: "0xfacilitator_tx",
+          network: "test:network" as Network,
+        }),
+      );
+      const server = new x402ResourceServer(mockClient);
+      server.registerExtension({
+        key: "badSettle",
+        enrichSettlementResponse: async (_d, ctx) => {
+          // Simulate a misbehaving extension: context is typed read-only, but runtime objects are still mutable.
+          (ctx.result as SettleResponse).transaction = "0x_attacker_tx";
+          return { leaked: true };
+        },
+      });
+
+      await expect(
+        server.settlePayment(buildPaymentPayload(), buildPaymentRequirements(), { badSettle: {} }),
+      ).rejects.toThrow(/transaction/);
     });
   });
 
@@ -973,6 +1685,434 @@ describe("x402ResourceServer", () => {
 
       expect(result.extensions).toBeUndefined();
     });
+
+    it("should clone accepts so the caller requirements array is not mutated by reference", async () => {
+      const server = new x402ResourceServer();
+      const requirements = [buildPaymentRequirements({ payTo: "0x_original" })];
+      const resourceInfo = {
+        url: "https://example.com",
+        description: "Test resource",
+        mimeType: "application/json",
+      };
+
+      const result = await server.createPaymentRequiredResponse(requirements, resourceInfo);
+
+      expect(result.accepts).not.toBe(requirements);
+      expect(result.accepts[0]).not.toBe(requirements[0]);
+      expect(requirements[0].payTo).toBe("0x_original");
+    });
+
+    it("allows enrichPaymentRequiredResponse to set payTo only when baseline payTo is vacant", async () => {
+      const server = new x402ResourceServer();
+      server.registerExtension({
+        key: "mut",
+        enrichPaymentRequiredResponse: async (_d, ctx) => {
+          ctx.paymentRequiredResponse.accepts[0]!.payTo = "0x_mutated";
+          return { ok: true };
+        },
+      });
+      const requirements = [buildPaymentRequirements({ payTo: "" })];
+      const result = await server.createPaymentRequiredResponse(
+        requirements,
+        { url: "https://example.com", description: "", mimeType: "" },
+        undefined,
+        { mut: {} },
+      );
+
+      expect(result.accepts[0].payTo).toBe("0x_mutated");
+      expect(requirements[0].payTo).toBe("");
+      expect((result.extensions as Record<string, unknown>).mut).toEqual({ ok: true });
+    });
+
+    it("serializes accepts mutations made by enrichPaymentRequiredResponse on the cloned list", async () => {
+      const server = new x402ResourceServer();
+      server.registerExtension({
+        key: "mut",
+        enrichPaymentRequiredResponse: async (_d, ctx) => {
+          ctx.paymentRequiredResponse.accepts[0]!.extra.corrective = "x";
+          return undefined;
+        },
+      });
+      const requirements = [buildPaymentRequirements({ extra: {} })];
+
+      const result = await server.createPaymentRequiredResponse(
+        requirements,
+        { url: "https://example.com", description: "", mimeType: "" },
+        undefined,
+        { mut: {} },
+      );
+
+      expect(result.accepts[0].extra.corrective).toBe("x");
+      expect(requirements[0].extra.corrective).toBeUndefined();
+    });
+
+    it("lets a scheme enrich matching accepts with additive extra fields", async () => {
+      const server = new x402ResourceServer();
+      const scheme = new MockSchemeNetworkServer("test-scheme") as MockSchemeNetworkServer & {
+        enrichPaymentRequiredResponse: NonNullable<
+          import("../../../src/types").SchemeNetworkServer["enrichPaymentRequiredResponse"]
+        >;
+      };
+      const paymentPayload = buildPaymentPayload();
+      const enrich = vi.fn(async ctx => {
+        expect(ctx.paymentPayload).toBe(paymentPayload);
+        ctx.requirements[0].extra.ChannelState = { channelId: "0x123" };
+      });
+      scheme.enrichPaymentRequiredResponse = enrich;
+      server.register("test:network" as Network, scheme);
+
+      const result = await server.createPaymentRequiredResponse(
+        [buildPaymentRequirements()],
+        { url: "https://example.com", description: "", mimeType: "" },
+        "stale_state",
+        undefined,
+        undefined,
+        paymentPayload,
+      );
+
+      expect(enrich).toHaveBeenCalledTimes(1);
+      expect(result.accepts[0].extra.ChannelState).toEqual({ channelId: "0x123" });
+    });
+
+    it("rejects scheme response enrichment that overwrites baseline terms", async () => {
+      const server = new x402ResourceServer();
+      const scheme = new MockSchemeNetworkServer("test-scheme") as MockSchemeNetworkServer & {
+        enrichPaymentRequiredResponse: NonNullable<
+          import("../../../src/types").SchemeNetworkServer["enrichPaymentRequiredResponse"]
+        >;
+      };
+      scheme.enrichPaymentRequiredResponse = async ctx => {
+        ctx.requirements[0].extra = { ChannelState: { channelId: "0x123" } };
+      };
+      server.register("test:network" as Network, scheme);
+
+      await expect(
+        server.createPaymentRequiredResponse(
+          [buildPaymentRequirements({ extra: { name: "USDC" } })],
+          { url: "https://example.com", description: "", mimeType: "" },
+          "stale_state",
+        ),
+      ).rejects.toThrow(/extra\["name"\] was removed/);
+    });
+
+    it("rejects enrichPaymentRequiredResponse that overwrites a non-vacant payTo", async () => {
+      const server = new x402ResourceServer();
+      server.registerExtension({
+        key: "bad",
+        enrichPaymentRequiredResponse: async (_d, ctx) => {
+          ctx.paymentRequiredResponse.accepts[0]!.payTo = "0x_attacker";
+          return {};
+        },
+      });
+      const requirements = [buildPaymentRequirements({ payTo: "0x_merchant" })];
+
+      await expect(
+        server.createPaymentRequiredResponse(
+          requirements,
+          { url: "https://example.com", description: "", mimeType: "" },
+          undefined,
+          { bad: {} },
+        ),
+      ).rejects.toThrow(/payTo.*vacant/);
+    });
+  });
+
+  describe("registerExtension lifecycle hooks", () => {
+    it("runs extension onBeforeVerify only when extension key is in declaredExtensions", async () => {
+      const mockClient = new MockFacilitatorClient(
+        buildSupportedResponse(),
+        buildVerifyResponse({ isValid: true }),
+      );
+      const server = new x402ResourceServer(mockClient);
+      let extCalls = 0;
+      server.registerExtension({
+        key: "extA",
+        hooks: {
+          onBeforeVerify: async () => {
+            extCalls++;
+          },
+        },
+      });
+
+      await server.verifyPayment(buildPaymentPayload(), buildPaymentRequirements());
+      expect(extCalls).toBe(0);
+
+      await server.verifyPayment(buildPaymentPayload(), buildPaymentRequirements(), { extA: {} });
+      expect(extCalls).toBe(1);
+    });
+
+    it("registerExtension with the same key overwrites extension hook adapters", async () => {
+      const mockClient = new MockFacilitatorClient(
+        buildSupportedResponse(),
+        buildVerifyResponse({ isValid: true }),
+      );
+      const server = new x402ResourceServer(mockClient);
+      let extCalls = 0;
+      server.registerExtension({
+        key: "extB",
+        hooks: {
+          onBeforeVerify: async () => {
+            extCalls++;
+          },
+        },
+      });
+      server.registerExtension({
+        key: "extB",
+        hooks: {
+          onBeforeVerify: async () => {
+            extCalls++;
+          },
+        },
+      });
+
+      await server.verifyPayment(buildPaymentPayload(), buildPaymentRequirements(), { extB: {} });
+      expect(extCalls).toBe(1);
+    });
+
+    it("runs manual onBeforeVerify hooks before extension onBeforeVerify", async () => {
+      const mockClient = new MockFacilitatorClient(
+        buildSupportedResponse(),
+        buildVerifyResponse({ isValid: true }),
+      );
+      const server = new x402ResourceServer(mockClient);
+      const order: string[] = [];
+      server.onBeforeVerify(async () => {
+        order.push("manual");
+      });
+      server.registerExtension({
+        key: "extC",
+        hooks: {
+          onBeforeVerify: async () => {
+            order.push("ext");
+          },
+        },
+      });
+
+      await server.verifyPayment(buildPaymentPayload(), buildPaymentRequirements(), { extC: {} });
+      expect(order).toEqual(["manual", "ext"]);
+    });
+
+    it("runs extension onBeforeVerify only for keys present in declaredExtensions (not all registered)", async () => {
+      const mockClient = new MockFacilitatorClient(
+        buildSupportedResponse(),
+        buildVerifyResponse({ isValid: true }),
+      );
+      const server = new x402ResourceServer(mockClient);
+      let callsA = 0;
+      let callsB = 0;
+      server.registerExtension({
+        key: "extA",
+        hooks: {
+          onBeforeVerify: async () => {
+            callsA++;
+          },
+        },
+      });
+      server.registerExtension({
+        key: "extB",
+        hooks: {
+          onBeforeVerify: async () => {
+            callsB++;
+          },
+        },
+      });
+
+      await server.verifyPayment(buildPaymentPayload(), buildPaymentRequirements(), { extB: {} });
+      expect(callsA).toBe(0);
+      expect(callsB).toBe(1);
+    });
+
+    it("runs extension onAfterVerify only when extension key is declared", async () => {
+      const mockClient = new MockFacilitatorClient(
+        buildSupportedResponse(),
+        buildVerifyResponse({ isValid: true }),
+      );
+      const server = new x402ResourceServer(mockClient);
+      let afterCalls = 0;
+      server.registerExtension({
+        key: "afterExt",
+        hooks: {
+          onAfterVerify: async () => {
+            afterCalls++;
+          },
+        },
+      });
+
+      await server.verifyPayment(buildPaymentPayload(), buildPaymentRequirements());
+      expect(afterCalls).toBe(0);
+
+      await server.verifyPayment(buildPaymentPayload(), buildPaymentRequirements(), {
+        afterExt: {},
+      });
+      expect(afterCalls).toBe(1);
+    });
+
+    it("runs extension onVerifyFailure only when extension key is declared", async () => {
+      const mockClient = new MockFacilitatorClient(
+        buildSupportedResponse(),
+        buildVerifyResponse({ isValid: true }),
+      );
+      const server = new x402ResourceServer(mockClient);
+      mockClient.setVerifyResponse(new Error("verify boom"));
+      let failCalls = 0;
+      server.registerExtension({
+        key: "failExt",
+        hooks: {
+          onVerifyFailure: async () => {
+            failCalls++;
+          },
+        },
+      });
+
+      await expect(
+        server.verifyPayment(buildPaymentPayload(), buildPaymentRequirements()),
+      ).rejects.toThrow("verify boom");
+      expect(failCalls).toBe(0);
+
+      await expect(
+        server.verifyPayment(buildPaymentPayload(), buildPaymentRequirements(), { failExt: {} }),
+      ).rejects.toThrow("verify boom");
+      expect(failCalls).toBe(1);
+    });
+
+    it("runs extension onBeforeSettle and onAfterSettle only when extension key is declared", async () => {
+      const mockClient = new MockFacilitatorClient(
+        buildSupportedResponse(),
+        buildVerifyResponse({ isValid: true }),
+        buildSettleResponse({ success: true }),
+      );
+      const server = new x402ResourceServer(mockClient);
+      let beforeCalls = 0;
+      let afterCalls = 0;
+      server.registerExtension({
+        key: "settleExt",
+        hooks: {
+          onBeforeSettle: async () => {
+            beforeCalls++;
+          },
+          onAfterSettle: async () => {
+            afterCalls++;
+          },
+        },
+      });
+
+      await server.settlePayment(buildPaymentPayload(), buildPaymentRequirements());
+      expect(beforeCalls).toBe(0);
+      expect(afterCalls).toBe(0);
+
+      await server.settlePayment(buildPaymentPayload(), buildPaymentRequirements(), {
+        settleExt: {},
+      });
+      expect(beforeCalls).toBe(1);
+      expect(afterCalls).toBe(1);
+    });
+
+    it("runs extension onSettleFailure only when extension key is declared", async () => {
+      const mockClient = new MockFacilitatorClient(
+        buildSupportedResponse(),
+        buildVerifyResponse({ isValid: true }),
+        buildSettleResponse({ success: true }),
+      );
+      const server = new x402ResourceServer(mockClient);
+      mockClient.setSettleResponse(new Error("settle boom"));
+      let failCalls = 0;
+      server.registerExtension({
+        key: "settleFailExt",
+        hooks: {
+          onSettleFailure: async () => {
+            failCalls++;
+          },
+        },
+      });
+
+      await expect(
+        server.settlePayment(buildPaymentPayload(), buildPaymentRequirements()),
+      ).rejects.toThrow("settle boom");
+      expect(failCalls).toBe(0);
+
+      await expect(
+        server.settlePayment(buildPaymentPayload(), buildPaymentRequirements(), {
+          settleFailExt: {},
+        }),
+      ).rejects.toThrow("settle boom");
+      expect(failCalls).toBe(1);
+    });
+
+    it("still runs manual onVerifyFailure when declaredExtensions is empty", async () => {
+      const mockClient = new MockFacilitatorClient(
+        buildSupportedResponse(),
+        buildVerifyResponse({ isValid: true }),
+      );
+      const server = new x402ResourceServer(mockClient);
+      mockClient.setVerifyResponse(new Error("verify boom"));
+      let manualCalls = 0;
+      server.onVerifyFailure(async () => {
+        manualCalls++;
+      });
+      server.registerExtension({
+        key: "onlyRegistered",
+        hooks: {
+          onVerifyFailure: async () => {
+            manualCalls += 100;
+          },
+        },
+      });
+
+      await expect(
+        server.verifyPayment(buildPaymentPayload(), buildPaymentRequirements()),
+      ).rejects.toThrow("verify boom");
+      expect(manualCalls).toBe(1);
+    });
+
+    it("removes extension lifecycle adapters when re-registering with hooks: {}", async () => {
+      const mockClient = new MockFacilitatorClient(
+        buildSupportedResponse(),
+        buildVerifyResponse({ isValid: true }),
+      );
+      const server = new x402ResourceServer(mockClient);
+      let calls = 0;
+      server.registerExtension({
+        key: "reReg",
+        hooks: {
+          onBeforeVerify: async () => {
+            calls++;
+          },
+        },
+      });
+      await server.verifyPayment(buildPaymentPayload(), buildPaymentRequirements(), { reReg: {} });
+      expect(calls).toBe(1);
+
+      server.registerExtension({ key: "reReg", hooks: {} });
+      await server.verifyPayment(buildPaymentPayload(), buildPaymentRequirements(), { reReg: {} });
+      expect(calls).toBe(1);
+    });
+
+    it("removes extension lifecycle adapters when re-registering without hooks", async () => {
+      const mockClient = new MockFacilitatorClient(
+        buildSupportedResponse(),
+        buildVerifyResponse({ isValid: true }),
+      );
+      const server = new x402ResourceServer(mockClient);
+      let calls = 0;
+      server.registerExtension({
+        key: "noHooks",
+        hooks: {
+          onBeforeVerify: async () => {
+            calls++;
+          },
+        },
+      });
+      await server.verifyPayment(buildPaymentPayload(), buildPaymentRequirements(), {
+        noHooks: {},
+      });
+      expect(calls).toBe(1);
+
+      server.registerExtension({ key: "noHooks" });
+      await server.verifyPayment(buildPaymentPayload(), buildPaymentRequirements(), {
+        noHooks: {},
+      });
+      expect(calls).toBe(1);
+    });
   });
 
   describe("getSupportedKind and getFacilitatorExtensions", () => {
@@ -1044,6 +2184,72 @@ describe("x402ResourceServer", () => {
       const extensions = server.getFacilitatorExtensions(2, "eip155:8453" as Network, "exact");
 
       expect(extensions).toEqual([]);
+    });
+  });
+});
+
+describe("resolveSettlementOverrideAmount", () => {
+  const baseRequirements = buildPaymentRequirements({ amount: "2000" });
+
+  describe("raw atomic units", () => {
+    it("passes through a plain numeric string unchanged", () => {
+      expect(resolveSettlementOverrideAmount("1000", baseRequirements)).toBe("1000");
+    });
+
+    it("passes through '0'", () => {
+      expect(resolveSettlementOverrideAmount("0", baseRequirements)).toBe("0");
+    });
+  });
+
+  describe("percent format", () => {
+    it("resolves '50%' to half of requirements.amount", () => {
+      expect(resolveSettlementOverrideAmount("50%", baseRequirements)).toBe("1000");
+    });
+
+    it("resolves '100%' to the full requirements.amount", () => {
+      expect(resolveSettlementOverrideAmount("100%", baseRequirements)).toBe("2000");
+    });
+
+    it("resolves '0%' to 0", () => {
+      expect(resolveSettlementOverrideAmount("0%", baseRequirements)).toBe("0");
+    });
+
+    it("resolves '25%' correctly", () => {
+      expect(resolveSettlementOverrideAmount("25%", baseRequirements)).toBe("500");
+    });
+
+    it("resolves '33.33%' and floors to nearest atomic unit", () => {
+      const reqs = buildPaymentRequirements({ amount: "3000" });
+      // 3000 * 3333 / 10000 = 999.9 → floored to 999
+      expect(resolveSettlementOverrideAmount("33.33%", reqs)).toBe("999");
+    });
+
+    it("resolves '10.5%' correctly", () => {
+      const reqs = buildPaymentRequirements({ amount: "1000" });
+      // 1000 * 1050 / 10000 = 105
+      expect(resolveSettlementOverrideAmount("10.5%", reqs)).toBe("105");
+    });
+  });
+
+  describe("dollar price format", () => {
+    it("converts '$1.00' using default 6 decimals", () => {
+      expect(resolveSettlementOverrideAmount("$1.00", baseRequirements)).toBe("1000000");
+    });
+
+    it("converts '$0.05' using default 6 decimals", () => {
+      expect(resolveSettlementOverrideAmount("$0.05", baseRequirements)).toBe("50000");
+    });
+
+    it("converts '$0.05' using 8 decimals when provided", () => {
+      expect(resolveSettlementOverrideAmount("$0.05", baseRequirements, 8)).toBe("5000000");
+    });
+
+    it("converts '$0.001' using default 6 decimals", () => {
+      expect(resolveSettlementOverrideAmount("$0.001", baseRequirements)).toBe("1000");
+    });
+
+    it("converts '$0' to '0'", () => {
+      expect(resolveSettlementOverrideAmount("$0", baseRequirements)).toBe("0");
     });
   });
 });

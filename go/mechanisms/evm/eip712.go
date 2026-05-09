@@ -57,14 +57,29 @@ func HashTypedData(
 		typedData.Types[typeName] = typedFields
 	}
 
-	// Add EIP712Domain type if not present
+	// Add EIP712Domain type if not present.
+	// Domains with empty Name/Version/VerifyingContract or nil ChainID are treated
+	// as "absent" — go-ethereum's apitypes.TypedDataDomain.Map() drops empty fields,
+	// so the EIP712Domain type list must match exactly what's in the domain map or
+	// HashStruct fails with "provided data '<nil>' doesn't match type 'string'".
+	// This mirrors viem's getTypesForEIP712Domain which only declares fields whose
+	// domain values are present. Permit2's domain (name + chainId + verifyingContract,
+	// no version) is the canonical case this guards against.
 	if _, exists := typedData.Types["EIP712Domain"]; !exists {
-		typedData.Types["EIP712Domain"] = []apitypes.Type{
-			{Name: "name", Type: "string"},
-			{Name: "version", Type: "string"},
-			{Name: "chainId", Type: "uint256"},
-			{Name: "verifyingContract", Type: "address"},
+		domainFields := make([]apitypes.Type, 0, 4)
+		if domain.Name != "" {
+			domainFields = append(domainFields, apitypes.Type{Name: "name", Type: "string"})
 		}
+		if domain.Version != "" {
+			domainFields = append(domainFields, apitypes.Type{Name: "version", Type: "string"})
+		}
+		if domain.ChainID != nil {
+			domainFields = append(domainFields, apitypes.Type{Name: "chainId", Type: "uint256"})
+		}
+		if domain.VerifyingContract != "" {
+			domainFields = append(domainFields, apitypes.Type{Name: "verifyingContract", Type: "address"})
+		}
+		typedData.Types["EIP712Domain"] = domainFields
 	}
 
 	// Hash the struct data
@@ -171,6 +186,66 @@ func HashEIP3009Authorization(
 	}
 
 	return HashTypedData(domain, types, "TransferWithAuthorization", message)
+}
+
+// BuildUptoPermit2WitnessMap returns the witness map for upto EIP-712 message construction.
+// Includes the facilitator field absent from the exact witness.
+func BuildUptoPermit2WitnessMap(to string, facilitator string, validAfter *big.Int) map[string]interface{} {
+	return map[string]interface{}{
+		"to":          to,
+		"facilitator": facilitator,
+		"validAfter":  validAfter,
+	}
+}
+
+// HashUptoPermit2Authorization hashes a PermitWitnessTransferFrom message for the upto Permit2 scheme.
+// Uses upto-specific witness types that include the facilitator address.
+func HashUptoPermit2Authorization(
+	authorization UptoPermit2Authorization,
+	chainID *big.Int,
+) ([]byte, error) {
+	domain := TypedDataDomain{
+		Name:              "Permit2",
+		ChainID:           chainID,
+		VerifyingContract: PERMIT2Address,
+	}
+
+	types := GetUptoPermit2EIP712Types()
+
+	amount, ok := new(big.Int).SetString(authorization.Permitted.Amount, 10)
+	if !ok {
+		return nil, fmt.Errorf("invalid permitted amount: %s", authorization.Permitted.Amount)
+	}
+	nonce, ok := new(big.Int).SetString(authorization.Nonce, 10)
+	if !ok {
+		return nil, fmt.Errorf("invalid nonce: %s", authorization.Nonce)
+	}
+	deadline, ok := new(big.Int).SetString(authorization.Deadline, 10)
+	if !ok {
+		return nil, fmt.Errorf("invalid deadline: %s", authorization.Deadline)
+	}
+	validAfter, ok := new(big.Int).SetString(authorization.Witness.ValidAfter, 10)
+	if !ok {
+		return nil, fmt.Errorf("invalid validAfter: %s", authorization.Witness.ValidAfter)
+	}
+
+	token := common.HexToAddress(authorization.Permitted.Token).Hex()
+	spender := common.HexToAddress(authorization.Spender).Hex()
+	to := common.HexToAddress(authorization.Witness.To).Hex()
+	facilitator := common.HexToAddress(authorization.Witness.Facilitator).Hex()
+
+	message := map[string]interface{}{
+		"permitted": map[string]interface{}{
+			"token":  token,
+			"amount": amount,
+		},
+		"spender":  spender,
+		"nonce":    nonce,
+		"deadline": deadline,
+		"witness":  BuildUptoPermit2WitnessMap(to, facilitator, validAfter),
+	}
+
+	return HashTypedData(domain, types, "PermitWitnessTransferFrom", message)
 }
 
 // BuildPermit2WitnessMap returns the witness map used in EIP-712 message construction.

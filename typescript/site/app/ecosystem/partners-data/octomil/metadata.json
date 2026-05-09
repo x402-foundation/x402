@@ -1,0 +1,7 @@
+{
+  "name": "Octomil",
+  "description": "On-device ML inference as an x402-gated MCP server. Agents pay per tool call to run LLMs locally — code generation, code review, inference, model benchmarking, and more. Payments are accumulated and batch-settled via settle402.",
+  "logoUrl": "/logos/octomil.svg",
+  "websiteUrl": "https://octomil.com",
+  "category": "Services/Endpoints"
+}

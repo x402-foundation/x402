@@ -17,12 +17,12 @@ import (
 	"net/http"
 	"os"
 
-	x402 "github.com/coinbase/x402/go"
-	x402http "github.com/coinbase/x402/go/http"
-	evm "github.com/coinbase/x402/go/mechanisms/evm/exact/server"
-	"github.com/coinbase/x402/go/mcp"
 	"github.com/joho/godotenv"
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
+	x402 "github.com/x402-foundation/x402/go"
+	x402http "github.com/x402-foundation/x402/go/http"
+	"github.com/x402-foundation/x402/go/mcp"
+	evm "github.com/x402-foundation/x402/go/mechanisms/evm/exact/server"
 )
 
 func runExisting() error {

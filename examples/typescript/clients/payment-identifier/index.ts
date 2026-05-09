@@ -1,6 +1,7 @@
 import { config } from "dotenv";
 import { x402Client, wrapFetchWithPayment, x402HTTPClient } from "@x402/fetch";
 import { ExactEvmScheme } from "@x402/evm/exact/client";
+import { UptoEvmScheme } from "@x402/evm/upto/client";
 import { privateKeyToAccount } from "viem/accounts";
 import {
   appendPaymentIdentifierToExtensions,
@@ -35,6 +36,7 @@ async function main(): Promise<void> {
 
   const client = new x402Client();
   client.register("eip155:*", new ExactEvmScheme(signer));
+  client.register("eip155:*", new UptoEvmScheme(signer));
 
   // Generate a unique payment ID for this request
   const paymentId = generatePaymentId();
@@ -65,13 +67,11 @@ async function main(): Promise<void> {
 
   console.log(`Response (${duration1}ms):`, JSON.stringify(body1, null, 2));
 
-  if (response1.ok) {
-    const paymentResponse = new x402HTTPClient(client).getPaymentSettleResponse(name =>
-      response1.headers.get(name),
-    );
-    if (paymentResponse) {
-      console.log(`\n💰 Payment settled on ${paymentResponse.network}`);
-    }
+  const paymentResponse1 = new x402HTTPClient(client).getPaymentSettleResponse(name =>
+    response1.headers.get(name),
+  );
+  if (paymentResponse1) {
+    console.log(`\n💰 Payment settled on ${paymentResponse1.network}`);
   }
 
   // Second request - same payment ID, should return from cache
@@ -88,15 +88,13 @@ async function main(): Promise<void> {
 
   console.log(`Response (${duration2}ms):`, JSON.stringify(body2, null, 2));
 
-  if (response2.ok) {
-    const paymentResponse = new x402HTTPClient(client).getPaymentSettleResponse(name =>
-      response2.headers.get(name),
-    );
-    if (paymentResponse) {
-      console.log(`\n💰 Payment settled (unexpected - should have been cached)`);
-    } else {
-      console.log(`\n✅ No payment processed - response served from cache!`);
-    }
+  const paymentResponse2 = new x402HTTPClient(client).getPaymentSettleResponse(name =>
+    response2.headers.get(name),
+  );
+  if (paymentResponse2) {
+    console.log(`\n💰 Payment settled (unexpected - should have been cached)`);
+  } else {
+    console.log(`\n✅ No payment processed - response served from cache!`);
   }
 
   // Summary

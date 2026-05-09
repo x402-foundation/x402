@@ -1,0 +1,23 @@
+{
+  "name": "@x402-examples/cloudfront-lambda-edge-cdk",
+  "version": "1.0.0",
+  "private": true,
+  "description": "CDK stack for x402 CloudFront + Lambda@Edge deployment",
+  "scripts": {
+    "build": "tsc",
+    "synth": "npx cdk synth",
+    "deploy": "npx cdk deploy",
+    "destroy": "npx cdk destroy",
+    "diff": "npx cdk diff"
+  },
+  "dependencies": {
+    "aws-cdk-lib": "^2.252.0",
+    "constructs": "^10.6.0"
+  },
+  "devDependencies": {
+    "aws-cdk": "^2.1120.0",
+    "ts-node": "^10.9.0",
+    "typescript": "^5.3.0",
+    "@types/node": "^20.0.0"
+  }
+}

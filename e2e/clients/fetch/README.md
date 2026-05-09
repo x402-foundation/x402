@@ -1,13 +1,13 @@
 # E2E Test Client: TypeScript Fetch
 
-This client demonstrates and tests the `@x402/fetch` package with both EVM and SVM payment support.
+This client demonstrates and tests the `@x402/fetch` package with EVM, SVM, and Stellar payment support.
 
 ## What It Tests
 
 ### Core Functionality
 - ✅ **V2 Protocol** - Modern x402 protocol with CAIP-2 networks
 - ✅ **V1 Protocol** - Legacy x402 protocol with simple network names
-- ✅ **Multi-chain Support** - Both EVM and SVM in a single client
+- ✅ **Multi-chain Support** - EVM, SVM, and (optional) Stellar in a single client
 - ✅ **Automatic Payment Handling** - Transparent 402 response handling
 - ✅ **Payment Response Decoding** - Extracts settlement information from headers
 
@@ -16,6 +16,7 @@ This client demonstrates and tests the `@x402/fetch` package with both EVM and S
 - ✅ **EVM V1** - `base-sepolia` and `base` networks
 - ✅ **SVM V2** - `solana:*` wildcard scheme
 - ✅ **SVM V1** - `solana-devnet` and `solana` networks
+- ✅ **Stellar V2** - `stellar:*` wildcard scheme (optional)
 
 ## What It Demonstrates
 
@@ -28,11 +29,13 @@ import { ExactEvmClient } from "@x402/evm";
 import { ExactEvmClientV1 } from "@x402/evm/v1";
 import { ExactSvmClient } from "@x402/svm";
 import { ExactSvmClientV1 } from "@x402/svm/v1";
+import { ExactStellarClient } from "@x402/stellar";
 
 // Build x402 client with direct registration
 const client = new x402Client()
   .register("eip155:*", new ExactEvmClient(evmAccount))
   .register("solana:*", new ExactSvmClient(svmSigner))
+  .register("stellar:*", new ExactStellarClient(stellarSigner))
   .registerV1("base-sepolia", new ExactEvmClientV1(evmAccount))
   .registerV1("base", new ExactEvmClientV1(evmAccount))
   .registerV1("solana-devnet", new ExactSvmClientV1(svmSigner))
@@ -49,7 +52,7 @@ const response = await fetchWithPayment(url, { method: "GET" });
 
 1. **Builder Pattern** - Fluent API for registering multiple schemes
 2. **Multi-Version Support** - V1 and V2 protocols side-by-side
-3. **Multi-Chain Support** - EVM and SVM in one client
+3. **Multi-Chain Support** - EVM, SVM, and (optional) Stellar in one client
 4. **Network Flexibility** - Wildcards for V2, specific networks for V1
 5. **Transparent Payment** - No manual 402 handling needed
 
@@ -58,8 +61,8 @@ const response = await fetchWithPayment(url, { method: "GET" });
 This client is tested against:
 - **Servers:** Express (TypeScript), Gin (Go)
 - **Facilitators:** TypeScript, Go
-- **Endpoints:** `/protected` (EVM), `/protected-svm` (SVM)
-- **Networks:** Base Sepolia (EVM), Solana Devnet (SVM)
+- **Endpoints:** `/protected` (EVM), `/protected-svm` (SVM), `/protected-stellar` (Stellar)
+- **Networks:** Base Sepolia (EVM), Solana Devnet (SVM), Stellar Testnet (Stellar)
 
 ### Success Criteria
 - ✅ Request succeeds with 200 status
@@ -80,15 +83,20 @@ export RESOURCE_SERVER_URL="http://localhost:4022"
 export ENDPOINT_PATH="/protected"
 export EVM_PRIVATE_KEY="0x..."
 export SVM_PRIVATE_KEY="..."
+export STELLAR_PRIVATE_KEY="S..." # optional
 pnpm start
 ```
 
 ## Environment Variables
 
+### Required
 - `RESOURCE_SERVER_URL` - Server base URL
 - `ENDPOINT_PATH` - Path to protected endpoint
 - `EVM_PRIVATE_KEY` - Ethereum private key (hex with 0x prefix)
 - `SVM_PRIVATE_KEY` - Solana private key (base58 encoded)
+
+### Optional
+- `STELLAR_PRIVATE_KEY` - Stellar private key (S... format) - enables Stellar support
 
 ## Output Format
 
@@ -114,5 +122,6 @@ pnpm start
 - `@x402/evm/v1` - EVM payment mechanisms (V1)
 - `@x402/svm` - SVM payment mechanisms (V2)
 - `@x402/svm/v1` - SVM payment mechanisms (V1)
+- `@x402/stellar` - Stellar payment mechanisms (V2)
 - `viem` - Ethereum library for account creation
 - `@solana/kit` - Solana keypair utilities

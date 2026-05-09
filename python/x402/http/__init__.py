@@ -30,6 +30,7 @@ from .types import (
     HTTPAdapter,
     HTTPProcessResult,
     HTTPRequestContext,
+    HTTPResponseBody,
     HTTPResponseInstructions,
     PaymentOption,
     PaywallConfig,
@@ -38,8 +39,8 @@ from .types import (
     RouteConfigurationError,
     RoutesConfig,
     RouteValidationError,
+    SettlementFailedResponseBody,
     UnpaidResponseBody,
-    UnpaidResponseResult,
 )
 from .utils import (
     decode_payment_required_header,
@@ -115,8 +116,9 @@ __all__ = [
     "CompiledRoute",
     "DynamicPayTo",
     "DynamicPrice",
+    "HTTPResponseBody",
+    "SettlementFailedResponseBody",
     "UnpaidResponseBody",
-    "UnpaidResponseResult",
     "RouteValidationError",
     "RouteConfigurationError",
     # Utils

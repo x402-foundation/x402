@@ -1,0 +1,7 @@
+{
+  "name": "Stellar",
+  "description": "Stellar supports x402 as a payment protocol for AI agents and internet commerce, enabling stablecoin payments on the Stellar network.",
+  "logoUrl": "/logos/stellar.png",
+  "websiteUrl": "https://stellar.org/x402",
+  "category": "Infrastructure & Tooling"
+}

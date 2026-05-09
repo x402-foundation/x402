@@ -1,16 +1,18 @@
 # x402-next Example App
 
-This is a Next.js application that demonstrates how to use the `x402-next` middleware to implement paywall functionality in your Next.js routes.
+This is a Next.js application that demonstrates how to use the `x402-next` middleware to implement paywall functionality in your Next.js routes with EVM, SVM, and optional Stellar payment support.
 
 ## Prerequisites
 
 - Node.js v20+ (install via [nvm](https://github.com/nvm-sh/nvm))
 - pnpm v10 (install via [pnpm.io/installation](https://pnpm.io/installation))
 - A valid Ethereum address for receiving payments
+- A valid Solana address for receiving payments
+- (Optional) A valid Stellar address for receiving payments
 
 ## Setup
 
-1. Copy `.env.local` to `.env` and add your Ethereum address to receive payments:
+1. Copy `.env.local` to `.env` and add your addresses to receive payments:
 
 ```bash
 cp .env.local .env
@@ -125,3 +127,17 @@ export const config = {
   matcher: ["/protected/:path*", "/api/premium/:path*"],
 };
 ```
+
+## Environment Variables
+
+### Required
+- `PORT` - HTTP server port
+- `EVM_PAYEE_ADDRESS` - Ethereum address to receive payments
+- `SVM_PAYEE_ADDRESS` - Solana address to receive payments
+- `FACILITATOR_URL` - Facilitator endpoint URL
+
+### Optional
+- `STELLAR_PAYEE_ADDRESS` - Stellar address to receive payments - enables Stellar endpoints
+- `EVM_NETWORK` - EVM network (default: eip155:84532)
+- `SVM_NETWORK` - SVM network (default: solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1)
+- `STELLAR_NETWORK` - Stellar network (default: stellar:testnet)

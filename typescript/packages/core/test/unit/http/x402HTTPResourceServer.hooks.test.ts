@@ -6,7 +6,7 @@ import {
   RouteConfig,
   ProtectedRequestHook,
 } from "../../../src/http/x402HTTPResourceServer";
-import { x402ResourceServer } from "../../../src/server/x402ResourceServer";
+import { x402ResourceServer, type VerifyContext } from "../../../src/server/x402ResourceServer";
 import {
   MockFacilitatorClient,
   MockSchemeNetworkServer,
@@ -329,6 +329,60 @@ describe("x402HTTPResourceServer Hooks", () => {
         expect(receivedContext?.transportContext).toEqual(transportContext);
       });
 
+      it("should merge nested scheme settlement response enrichment", async () => {
+        const schemeWithEnrichment = extensionMockScheme as MockSchemeNetworkServer & {
+          enrichSettlementResponse: () => Promise<Record<string, unknown>>;
+        };
+        schemeWithEnrichment.enrichSettlementResponse = async () => ({
+          chargedAmount: "1000",
+          channelState: {
+            chargedCumulativeAmount: "1000",
+          },
+        });
+
+        const routes = {
+          "/api/test": {
+            accepts: {
+              scheme: "exact",
+              payTo: "0xabc",
+              price: "$1.00" as Price,
+              network: "eip155:8453" as Network,
+            },
+          },
+        };
+        const httpServer = new x402HTTPResourceServer(extensionResourceServer, routes);
+        const payload = buildPaymentPayload();
+        const requirements = buildPaymentRequirements({
+          scheme: "exact",
+          network: "eip155:8453" as Network,
+        });
+
+        extensionMockFacilitator.setSettleResponse(
+          buildSettleResponse({
+            success: true,
+            network: "eip155:8453" as Network,
+            extra: {
+              channelState: {
+                channelId: "0xchannel",
+                balance: "10000",
+              },
+            },
+          }),
+        );
+
+        const result = await httpServer.processSettlement(payload, requirements);
+
+        expect(result.success).toBe(true);
+        expect(result.extra).toEqual({
+          chargedAmount: "1000",
+          channelState: {
+            channelId: "0xchannel",
+            balance: "10000",
+            chargedCumulativeAmount: "1000",
+          },
+        });
+      });
+
       it("should have undefined transportContext when not provided", async () => {
         let receivedContext: SettleResultContext | undefined;
 
@@ -571,6 +625,63 @@ describe("x402HTTPResourceServer Hooks", () => {
         // Both should have transportContext
         expect(receivedContexts[0].transportContext).toBeDefined();
         expect(receivedContexts[1].transportContext).toBeDefined();
+      });
+    });
+
+    describe("verifyPayment declaredExtensions from HTTP", () => {
+      it("passes route extensions map to manual onBeforeVerify", async () => {
+        extensionMockFacilitator.setVerifyResponse(buildVerifyResponse({ isValid: true }));
+
+        let verifyCtx: VerifyContext | undefined;
+        extensionResourceServer.onBeforeVerify(async ctx => {
+          verifyCtx = ctx;
+        });
+
+        const routes: Record<string, RouteConfig> = {
+          "/api/test": {
+            accepts: {
+              scheme: "exact",
+              payTo: "0xabc",
+              price: "$1.00" as Price,
+              network: "eip155:8453" as Network,
+            },
+            extensions: {
+              bazaar: { tool: "x" },
+            },
+          },
+        };
+
+        const httpServer = new x402HTTPResourceServer(extensionResourceServer, routes);
+
+        const paymentRequired = await extensionResourceServer.createPaymentRequiredResponse(
+          await extensionResourceServer.buildPaymentRequirements({
+            scheme: "exact",
+            payTo: "0xabc",
+            price: "$1.00" as Price,
+            network: "eip155:8453" as Network,
+          }),
+          { url: "/api/test", description: "", mimeType: "" },
+          undefined,
+          routes["/api/test"].extensions,
+        );
+
+        const payload = buildPaymentPayload({
+          accepted: paymentRequired.accepts[0],
+          resource: paymentRequired.resource,
+        });
+        const paymentHeader = encodePaymentSignatureHeader(payload);
+        const adapter = new MockHTTPAdapter({ "payment-signature": paymentHeader });
+        const context: HTTPRequestContext = {
+          adapter,
+          path: "/api/test",
+          method: "GET",
+        };
+
+        const result = await httpServer.processHTTPRequest(context);
+        expect(result.type).toBe("payment-verified");
+        expect(verifyCtx).toBeDefined();
+        expect(verifyCtx!.declaredExtensions).toEqual({ bazaar: { tool: "x" } });
+        expect(verifyCtx!.transportContext).toBeDefined();
       });
     });
 

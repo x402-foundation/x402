@@ -4,6 +4,7 @@ import type {
   x402HTTPResourceServer,
   x402ResourceServer,
   PaywallProvider,
+  PaymentCancellationDispatcher,
 } from "@x402/core/server";
 import type { PaymentPayload, PaymentRequirements } from "@x402/core/types";
 import {
@@ -13,17 +14,41 @@ import {
   handleSettlement,
 } from "./utils";
 
+let mockInitialize: ReturnType<typeof vi.fn>;
+
 // Mock @x402/core/server
 vi.mock("@x402/core/server", () => {
   const MockHTTPResourceServer = vi.fn().mockImplementation(() => ({
-    initialize: vi.fn().mockResolvedValue(undefined),
+    initialize: mockInitialize,
     registerPaywallProvider: vi.fn(),
     processSettlement: vi.fn(),
     requiresPayment: vi.fn().mockReturnValue(true),
   }));
   return {
+    FacilitatorResponseError: class FacilitatorResponseError extends Error {
+      /**
+       * Creates a mock facilitator response error.
+       *
+       * @param message - Error message.
+       */
+      constructor(message: string) {
+        super(message);
+        this.name = "FacilitatorResponseError";
+      }
+    },
+    getFacilitatorResponseError: (error: unknown) => {
+      let current = error;
+      while (current instanceof Error) {
+        if (current.name === "FacilitatorResponseError") {
+          return current;
+        }
+        current = (current as Error & { cause?: unknown }).cause;
+      }
+      return null;
+    },
     x402HTTPResourceServer: MockHTTPResourceServer,
     x402ResourceServer: vi.fn(),
+    checkIfBazaarNeeded: vi.fn().mockReturnValue(false),
   };
 });
 
@@ -62,6 +87,10 @@ function createMockResourceServer(): x402ResourceServer {
 }
 
 describe("createHttpServer", () => {
+  beforeEach(() => {
+    mockInitialize = vi.fn().mockResolvedValue(undefined);
+  });
+
   it("creates server and initializes on start by default", async () => {
     const routes = {
       "/api/*": {
@@ -106,6 +135,25 @@ describe("createHttpServer", () => {
     // Wait for initialization to complete to avoid warnings
     await init();
     expect(httpServer.registerPaywallProvider).toHaveBeenCalledWith(paywall);
+  });
+
+  it("retries initialization after a facilitator init failure", async () => {
+    mockInitialize = vi
+      .fn()
+      .mockRejectedValueOnce(new Error("not-json"))
+      .mockResolvedValueOnce(undefined);
+    const routes = {
+      "/api/*": {
+        accepts: { scheme: "exact", payTo: "0x123", price: "$0.01", network: "eip155:84532" },
+      },
+    } as const;
+    const server = createMockResourceServer();
+
+    const { init } = createHttpServer(routes, server);
+
+    await expect(init()).rejects.toThrow("not-json");
+    await expect(init()).resolves.toBeUndefined();
+    expect(mockInitialize).toHaveBeenCalledTimes(2);
   });
 });
 
@@ -203,8 +251,13 @@ describe("handleSettlement", () => {
     scheme: "exact",
     network: "eip155:84532",
   } as unknown as PaymentRequirements;
+  const mockDeclaredExtensions = {};
+  let mockPaymentCancellationDispatcher: PaymentCancellationDispatcher;
 
   beforeEach(() => {
+    mockPaymentCancellationDispatcher = {
+      cancel: vi.fn().mockResolvedValue(undefined),
+    } as unknown as PaymentCancellationDispatcher;
     mockHttpServer = {
       processSettlement: vi
         .fn()
@@ -220,10 +273,18 @@ describe("handleSettlement", () => {
       response,
       mockPaymentPayload,
       mockRequirements,
+      mockDeclaredExtensions,
+      mockPaymentCancellationDispatcher,
     );
 
     expect(result.status).toBe(500);
     expect(mockHttpServer.processSettlement).not.toHaveBeenCalled();
+    expect(mockPaymentCancellationDispatcher.cancel).toHaveBeenCalledWith(
+      expect.objectContaining({
+        reason: "handler_failed",
+        responseStatus: 500,
+      }),
+    );
   });
 
   it("returns original response when status is exactly 400", async () => {
@@ -234,6 +295,8 @@ describe("handleSettlement", () => {
       response,
       mockPaymentPayload,
       mockRequirements,
+      mockDeclaredExtensions,
+      mockPaymentCancellationDispatcher,
     );
 
     expect(result.status).toBe(400);
@@ -248,6 +311,8 @@ describe("handleSettlement", () => {
       response,
       mockPaymentPayload,
       mockRequirements,
+      mockDeclaredExtensions,
+      mockPaymentCancellationDispatcher,
     );
 
     expect(result.status).toBe(200);
@@ -255,11 +320,8 @@ describe("handleSettlement", () => {
     expect(mockHttpServer.processSettlement).toHaveBeenCalledWith(
       mockPaymentPayload,
       mockRequirements,
+      mockDeclaredExtensions,
       undefined,
-      expect.objectContaining({
-        request: undefined,
-        responseBody: expect.any(Buffer),
-      }),
     );
   });
 
@@ -270,6 +332,14 @@ describe("handleSettlement", () => {
       transaction: "",
       network: "eip155:84532",
       headers: { "PAYMENT-RESPONSE": "settlement-failed-encoded" },
+      response: {
+        status: 402,
+        headers: {
+          "Content-Type": "application/json",
+          "PAYMENT-RESPONSE": "settlement-failed-encoded",
+        },
+        body: {},
+      },
     });
     const response = new NextResponse("OK", { status: 200 });
 
@@ -278,12 +348,13 @@ describe("handleSettlement", () => {
       response,
       mockPaymentPayload,
       mockRequirements,
+      mockDeclaredExtensions,
+      mockPaymentCancellationDispatcher,
     );
 
     expect(result.status).toBe(402);
-    const body = (await result.json()) as { error: string; details: string };
-    expect(body.error).toBe("Settlement failed");
-    expect(body.details).toBe("Insufficient funds");
+    const body = await result.json();
+    expect(body).toEqual({});
     expect(result.headers.get("PAYMENT-RESPONSE")).toBe("settlement-failed-encoded");
   });
 
@@ -296,11 +367,12 @@ describe("handleSettlement", () => {
       response,
       mockPaymentPayload,
       mockRequirements,
+      mockDeclaredExtensions,
+      mockPaymentCancellationDispatcher,
     );
 
     expect(result.status).toBe(402);
-    const body = (await result.json()) as { error: string; details: string };
-    expect(body.error).toBe("Settlement failed");
-    expect(body.details).toBe("Settlement rejected");
+    const body = await result.json();
+    expect(body).toEqual({});
   });
 });

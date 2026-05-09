@@ -5,7 +5,7 @@ description = "Advanced x402 client examples demonstrating hooks, custom selecto
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
-    "x402[evm,svm,httpx]",
+    "x402[evm,svm,tvm,httpx]",
     "python-dotenv>=1.0.0",
 ]
 

@@ -31,7 +31,7 @@ x402 is made up of three core components:
 
 x402 is an open payment standard that enables clients to pay for external resources. The protocol defines standardized message formats and payment flows that can be implemented over various transport layers, providing a standardized mechanism for payments across different payment schemes, networks and transport layers.
 
-This specification is based on the x402 protocol implementation and documentation available in the [Coinbase x402 repository](https://github.com/coinbase/x402). It aims to provide a comprehensive and implementation-agnostic specification for the x402 protocol.
+This specification is based on the x402 protocol implementation and documentation available in the [Coinbase x402 repository](https://github.com/x402-foundation/x402). It aims to provide a comprehensive and implementation-agnostic specification for the x402 protocol.
 
 **2. Core Payment Flow**
 
@@ -78,7 +78,10 @@ When a resource server requires payment, it responds with a payment required sig
   "resource": {
     "url": "https://api.example.com/premium-data",
     "description": "Access to premium market data",
-    "mimeType": "application/json"
+    "mimeType": "application/json",
+    "serviceName": "Example Market Data",
+    "tags": ["market-data", "finance"],
+    "iconUrl": "https://api.example.com/icon.png"
   },
   "accepts": [
     {
@@ -124,11 +127,14 @@ Each `PaymentRequirements` object in the `accepts` array contains:
 
 The `ResourceInfo` object contains:
 
-| Field Name    | Type     | Required | Description                                |
-| ------------- | -------- | -------- | ------------------------------------------ |
-| `url`         | `string` | Required | URL of the protected resource              |
-| `description` | `string` | Optional | Human-readable description of the resource |
-| `mimeType`    | `string` | Optional | MIME type of the expected response         |
+| Field Name      | Type            | Required | Description                                                                                                          |
+| --------------- | --------------- | -------- | -------------------------------------------------------------------------------------------------------------------- |
+| `url`           | `string`        | Required | URL of the protected resource                                                                                        |
+| `description`   | `string`        | Optional | Human-readable description of the resource                                                                           |
+| `mimeType`      | `string`        | Optional | MIME type of the expected response                                                                                   |
+| `serviceName`   | `string`        | Optional | Human-readable name of the service hosting the resource. Printable ASCII, max 32 characters.                         |
+| `tags`          | `array[string]` | Optional | Topical tags for the service, used for discovery filtering. Max 5 entries; each printable ASCII, max 32 characters.  |
+| `iconUrl`       | `string`        | Optional | Absolute `https`/`http` URL to an icon representing the service. Max 2048 characters.                               |
 
 The `Extensions` object is a key-value map where each key is an extension identifier and each value follows a standardized structure:
 
@@ -238,7 +244,8 @@ The `SettleResponse` schema contains the following fields:
 | `payer`       | `string`  | Optional | Address of the payer's wallet                                         |
 | `transaction` | `string`  | Required | Blockchain transaction hash (empty string if settlement failed)       |
 | `network`     | `string`  | Required | Blockchain network identifier in CAIP-2 format                        |
-| `extensions`  | `object`  | Optional | Protocol extensions data          |
+| `amount`      | `string`  | Optional | The actual amount settled in atomic units (omitted if not applicable) |
+| `extensions`  | `object`  | Optional | Protocol extensions data                                              |
 
 **5.4 VerifyResponse Schema**
 
@@ -252,6 +259,7 @@ The `VerifyResponse` schema contains the following fields:
 | `isValid`       | `boolean` | Required | Indicates whether the payment authorization is valid    |
 | `invalidReason` | `string`  | Optional | Reason for invalidity (omitted if valid)                |
 | `payer`         | `string`  | Optional | Address of the payer's wallet                           |
+| `extra`         | `object`  | Optional | Scheme-specific additional data                         |
 
 **6. Payment Schemes (The Logic)**
 
@@ -290,7 +298,7 @@ The facilitator performs the following verification steps:
 
 1. **Signature Validation**: Verify the EIP-712 signature is valid and properly signed by the payer
 2. **Balance Verification**: Confirm the payer has sufficient token balance for the transfer
-3. **Amount Validation**: Ensure the payment amount meets or exceeds the required amount
+3. **Amount Validation**: Ensure the payment amount exactly matches the required amount
 4. **Time Window Check**: Verify the authorization is within its valid time range
 5. **Parameter Matching**: Confirm authorization parameters match the original payment requirements
 6. **Transaction Simulation**: Simulate the `transferWithAuthorization` transaction to ensure it would succeed
@@ -323,6 +331,7 @@ Verifies a payment authorization without executing the transaction on the blockc
 
 ```json
 {
+  "x402Version": 2,
   "paymentPayload": {
     /* PaymentPayload schema */
   },
@@ -336,6 +345,7 @@ Example with actual data:
 
 ```json
 {
+  "x402Version": 2,
   "paymentPayload": {
     "x402Version": 2,
     "resource": {
@@ -405,7 +415,9 @@ Example with actual data:
 
 Executes a verified payment by broadcasting the transaction to the blockchain.
 
-**Request:** Same as `/verify` endpoint
+**Request:** Same structure as `/verify` endpoint (contains `paymentPayload` and `paymentRequirements`).
+
+> **Note**: While the request structure is identical, some payment schemes may assign different semantics to fields at settlement time versus verification time. For example, in the `upto` scheme, the `amount` field in `paymentRequirements` represents the maximum authorized amount at verification time, but the actual amount to settle at settlement time. See individual scheme specifications for details.
 
 **Successful Response:**
 
@@ -500,6 +512,10 @@ List discoverable x402 resources from the Bazaar.
 | Parameter | Type     | Required | Description                                 | Default |
 | --------- | -------- | -------- | ------------------------------------------- | ------- |
 | `type`    | `string` | Optional | Filter by resource type (e.g., "http")      | -       |
+| `payTo`   | `string` | Optional | Filter by payment recipient address          | -       |
+| `scheme`  | `string` | Optional | Filter by payment scheme (e.g., "exact")    | -       |
+| `network` | `string` | Optional | Filter by payment network (e.g., "eip155:8453") | -   |
+| `extensions` | `string` | Optional | Filter by extension key present on each resource | -       |
 | `limit`   | `number` | Optional | Maximum number of results to return (1-100) | 20      |
 | `offset`  | `number` | Optional | Number of results to skip for pagination    | 0       |
 
@@ -542,7 +558,12 @@ List discoverable x402 resources from the Bazaar.
 }
 ```
 
-**8.2 Discovered Resource Fields**
+**8.2 GET /discovery/search**
+
+Search semantics and response shape are defined in the Bazaar extension specification at
+`specs/extensions/bazaar.md`, since this endpoint is extension-specific behavior.
+
+**8.3 Discovered Resource Fields**
 
 | Field Name    | Type     | Required | Description                                                     |
 | ------------- | -------- | -------- | --------------------------------------------------------------- |
@@ -551,9 +572,9 @@ List discoverable x402 resources from the Bazaar.
 | `x402Version` | `number` | Required | Protocol version supported by the resource                      |
 | `accepts`     | `array`  | Required | Array of PaymentRequirements objects specifying payment methods |
 | `lastUpdated` | `number` | Required | Unix timestamp of when the resource was last updated            |
-| `metadata`    | `object` | Optional | Additional metadata (category, provider, etc.)                  |
+| `extensions`  | `object` | Optional | Additional extension payloads associated with this discovered resource |
 
-**8.3 Bazaar Concept**
+**8.4 Bazaar Concept**
 
 The Bazaar is a marketplace ecosystem where x402-enabled resources can be discovered and accessed. Key features:
 
@@ -562,14 +583,17 @@ The Bazaar is a marketplace ecosystem where x402-enabled resources can be discov
 - **Provider Information**: Learn about service providers and their offerings
 - **Dynamic Updates**: Resources can be added, updated, or removed dynamically
 
-**8.4 Example Usage**
+**8.5 Example Usage**
 
 ```bash
-# Discover financial data APIs
+# List financial data APIs
 GET /discovery/resources?type=http&limit=10
 
-# Search for specific provider
-GET /discovery/resources?metadata[provider]=Coinbase
+# Search for weather APIs
+GET /discovery/search?query=weather+APIs&type=http&limit=5
+
+# Continue a paginated search (when server supports it)
+GET /discovery/search?query=financial+data&limit=10&cursor=eyJwYWdlIjoyfQ==
 ```
 
 **9. Error Handling**
@@ -579,7 +603,7 @@ The x402 protocol defines standard error codes that may be returned by facilitat
 - **`insufficient_funds`**: Client does not have enough tokens to complete the payment
 - **`invalid_exact_evm_payload_authorization_valid_after`**: Payment authorization is not yet valid (before validAfter timestamp)
 - **`invalid_exact_evm_payload_authorization_valid_before`**: Payment authorization has expired (after validBefore timestamp)
-- **`invalid_exact_evm_payload_authorization_value`**: Payment amount is insufficient for the required payment
+- **`invalid_exact_evm_payload_authorization_value_mismatch`**: Payment amount does not exactly match the required amount
 - **`invalid_exact_evm_payload_signature`**: Payment authorization signature is invalid or improperly signed
 - **`invalid_exact_evm_payload_recipient_mismatch`**: Recipient address does not match payment requirements
 - **`invalid_network`**: Specified blockchain network is not supported

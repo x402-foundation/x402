@@ -1,4 +1,9 @@
-import { x402ResourceServer } from "../server";
+import {
+  x402ResourceServer,
+  SettlementOverrides,
+  SkipHandlerDirective,
+  PaymentCancellationDispatcher,
+} from "../server";
 import {
   decodePaymentSignatureHeader,
   encodePaymentRequiredHeader,
@@ -9,11 +14,14 @@ import {
   PaymentRequired,
   SettleResponse,
   SettleError,
+  FacilitatorResponseError,
   Price,
   Network,
   PaymentRequirements,
 } from "../types";
 import { x402Version } from "..";
+
+export const SETTLEMENT_OVERRIDES_HEADER = "Settlement-Overrides";
 
 /**
  * Framework-agnostic HTTP adapter interface
@@ -80,9 +88,9 @@ export type DynamicPayTo = (context: HTTPRequestContext) => string | Promise<str
 export type DynamicPrice = (context: HTTPRequestContext) => Price | Promise<Price>;
 
 /**
- * Result of the unpaid response callback containing content type and body.
+ * Result of response body callbacks containing content type and body.
  */
-export interface UnpaidResponseResult {
+export interface HTTPResponseBody {
   /**
    * The content type for the response (e.g., 'application/json', 'text/plain').
    */
@@ -100,7 +108,16 @@ export interface UnpaidResponseResult {
  */
 export type UnpaidResponseBody = (
   context: HTTPRequestContext,
-) => UnpaidResponseResult | Promise<UnpaidResponseResult>;
+) => HTTPResponseBody | Promise<HTTPResponseBody>;
+
+/**
+ * Dynamic function to generate a custom response for settlement failures.
+ * Receives the HTTP request context and settle failure result, returns the content type and body.
+ */
+export type SettlementFailedResponseBody = (
+  context: HTTPRequestContext,
+  settleResult: Omit<ProcessSettleFailureResponse, "response">,
+) => HTTPResponseBody | Promise<HTTPResponseBody>;
 
 /**
  * A single payment option for a route
@@ -146,6 +163,16 @@ export interface RouteConfig {
    */
   unpaidResponseBody?: UnpaidResponseBody;
 
+  /**
+   * Optional callback to generate a custom response for settlement failures.
+   * If not provided, defaults to { contentType: 'application/json', body: {} }.
+   *
+   * @param context - The HTTP request context
+   * @param settleResult - The settlement failure result
+   * @returns An object containing both contentType and body for the 402 response
+   */
+  settlementFailedResponseBody?: SettlementFailedResponseBody;
+
   // Extensions
   extensions?: Record<string, unknown>;
 }
@@ -154,6 +181,22 @@ export interface RouteConfig {
  * Routes configuration - maps path patterns to route configs
  */
 export type RoutesConfig = Record<string, RouteConfig> | RouteConfig;
+
+/**
+ * Check if any routes in the configuration declare bazaar extensions.
+ *
+ * @param routes - Route configuration
+ * @returns True if any route has extensions.bazaar defined
+ */
+export function checkIfBazaarNeeded(routes: RoutesConfig): boolean {
+  if ("accepts" in routes) {
+    return !!(routes.extensions && "bazaar" in routes.extensions);
+  }
+
+  return Object.values(routes).some(routeConfig => {
+    return !!(routeConfig.extensions && "bazaar" in routeConfig.extensions);
+  });
+}
 
 /**
  * Hook that runs on every request to a protected route, before payment processing.
@@ -176,6 +219,7 @@ export interface CompiledRoute {
   verb: string;
   regex: RegExp;
   config: RouteConfig;
+  pattern: string;
 }
 
 /**
@@ -186,6 +230,7 @@ export interface HTTPRequestContext {
   path: string;
   method: string;
   paymentHeader?: string;
+  routePattern?: string;
 }
 
 /**
@@ -196,6 +241,8 @@ export interface HTTPTransportContext {
   request: HTTPRequestContext;
   /** The response body buffer */
   responseBody?: Buffer;
+  /** Response headers set by the route handler (used for settlement overrides) */
+  responseHeaders?: Record<string, string>;
 }
 
 /**
@@ -215,6 +262,7 @@ export type HTTPProcessResult =
   | { type: "no-payment-required" }
   | {
       type: "payment-verified";
+      cancellationDispatcher: PaymentCancellationDispatcher;
       paymentPayload: PaymentPayload;
       paymentRequirements: PaymentRequirements;
       declaredExtensions?: Record<string, unknown>;
@@ -235,6 +283,7 @@ export type ProcessSettleFailureResponse = SettleResponse & {
   errorReason: string;
   errorMessage?: string;
   headers: Record<string, string>;
+  response: HTTPResponseInstructions;
 };
 
 export type ProcessSettleResultResponse =
@@ -310,6 +359,7 @@ export class x402HTTPResourceServer {
         verb: parsed.verb,
         regex: parsed.regex,
         config,
+        pattern: parsed.path,
       });
     }
   }
@@ -394,17 +444,21 @@ export class x402HTTPResourceServer {
     context: HTTPRequestContext,
     paywallConfig?: PaywallConfig,
   ): Promise<HTTPProcessResult> {
-    const { adapter, path, method } = context;
+    const method = context.method || context.adapter.getMethod();
+    context = { ...context, method };
+    const { adapter, path } = context;
 
     // Find matching route
-    const routeConfig = this.getRouteConfig(path, method);
-    if (!routeConfig) {
+    const routeMatch = this.getRouteConfig(path, method);
+    if (!routeMatch) {
       return { type: "no-payment-required" }; // No payment required for this route
     }
+    const { config: routeConfig, pattern: routePattern } = routeMatch;
+    const enrichedContext: HTTPRequestContext = { ...context, routePattern };
 
     // Execute request hooks before any payment processing
     for (const hook of this.protectedRequestHooks) {
-      const result = await hook(context, routeConfig);
+      const result = await hook(enrichedContext, routeConfig);
       if (result && "grantAccess" in result) {
         return { type: "no-payment-required" };
       }
@@ -428,7 +482,7 @@ export class x402HTTPResourceServer {
 
     // Create resource info, using config override if provided
     const resourceInfo = {
-      url: routeConfig.resource || context.adapter.getUrl(),
+      url: routeConfig.resource || enrichedContext.adapter.getUrl(),
       description: routeConfig.description || "",
       mimeType: routeConfig.mimeType || "",
     };
@@ -437,16 +491,16 @@ export class x402HTTPResourceServer {
     // (this method handles resolving dynamic functions internally)
     let requirements = await this.ResourceServer.buildPaymentRequirementsFromOptions(
       paymentOptions,
-      context,
+      enrichedContext,
     );
 
     let extensions = routeConfig.extensions;
     if (extensions) {
-      extensions = this.ResourceServer.enrichExtensions(extensions, context);
+      extensions = this.ResourceServer.enrichExtensions(extensions, enrichedContext);
     }
 
     // createPaymentRequiredResponse already handles extension enrichment in the core layer
-    const transportContext: HTTPTransportContext = { request: context };
+    const transportContext: HTTPTransportContext = { request: enrichedContext };
     const paymentRequired = await this.ResourceServer.createPaymentRequiredResponse(
       requirements,
       resourceInfo,
@@ -459,7 +513,7 @@ export class x402HTTPResourceServer {
     if (!paymentPayload) {
       // Resolve custom unpaid response body if provided
       const unpaidBody = routeConfig.unpaidResponseBody
-        ? await routeConfig.unpaidResponseBody(context)
+        ? await routeConfig.unpaidResponseBody(enrichedContext)
         : undefined;
 
       return {
@@ -486,7 +540,7 @@ export class x402HTTPResourceServer {
           requirements,
           resourceInfo,
           "No matching payment requirements",
-          routeConfig.extensions,
+          extensions ?? {},
           transportContext,
         );
         return {
@@ -498,6 +552,8 @@ export class x402HTTPResourceServer {
       const verifyResult = await this.ResourceServer.verifyPayment(
         paymentPayload,
         matchingRequirements,
+        extensions ?? {},
+        transportContext,
       );
 
       if (!verifyResult.isValid) {
@@ -505,8 +561,9 @@ export class x402HTTPResourceServer {
           requirements,
           resourceInfo,
           verifyResult.invalidReason,
-          routeConfig.extensions,
+          extensions ?? {},
           transportContext,
+          paymentPayload,
         );
         return {
           type: "payment-error",
@@ -514,19 +571,41 @@ export class x402HTTPResourceServer {
         };
       }
 
+      // Bypass the resource handler
+      if (verifyResult.skipHandler) {
+        return await this.processSkipHandlerSettlement(
+          paymentPayload,
+          matchingRequirements,
+          extensions ?? {},
+          transportContext,
+          verifyResult.skipHandler,
+        );
+      }
+
+      const cancellationDispatcher = this.ResourceServer.createPaymentCancellationDispatcher(
+        paymentPayload,
+        matchingRequirements,
+        extensions ?? {},
+        transportContext,
+      );
+
       // Payment is valid, return data needed for settlement
       return {
         type: "payment-verified",
+        cancellationDispatcher,
         paymentPayload,
         paymentRequirements: matchingRequirements,
-        declaredExtensions: routeConfig.extensions,
+        declaredExtensions: extensions ?? {},
       };
     } catch (error) {
+      if (error instanceof FacilitatorResponseError) {
+        throw error;
+      }
       const errorResponse = await this.ResourceServer.createPaymentRequiredResponse(
         requirements,
         resourceInfo,
         error instanceof Error ? error.message : "Payment verification failed",
-        routeConfig.extensions,
+        extensions ?? {},
         transportContext,
       );
       return {
@@ -543,6 +622,7 @@ export class x402HTTPResourceServer {
    * @param requirements - The matching payment requirements
    * @param declaredExtensions - Optional declared extensions (for per-key enrichment)
    * @param transportContext - Optional HTTP transport context
+   * @param settlementOverrides - Optional settlement overrides (e.g., partial settlement amount)
    * @returns ProcessSettleResultResponse - SettleResponse with headers if success or errorReason if failure
    */
   async processSettlement(
@@ -550,24 +630,53 @@ export class x402HTTPResourceServer {
     requirements: PaymentRequirements,
     declaredExtensions?: Record<string, unknown>,
     transportContext?: HTTPTransportContext,
+    settlementOverrides?: SettlementOverrides,
   ): Promise<ProcessSettleResultResponse> {
+    if (transportContext?.request && !transportContext.request.method) {
+      transportContext = {
+        ...transportContext,
+        request: {
+          ...transportContext.request,
+          method: transportContext.request.adapter.getMethod(),
+        },
+      };
+    }
     try {
+      // Resolve overrides: explicit param takes precedence, fall back to response header
+      let resolvedOverrides = settlementOverrides;
+      if (!resolvedOverrides && transportContext?.responseHeaders) {
+        const overridesKey = SETTLEMENT_OVERRIDES_HEADER.toLowerCase();
+        const rawValue = Object.entries(transportContext.responseHeaders).find(
+          ([key]) => key.toLowerCase() === overridesKey,
+        )?.[1];
+        if (rawValue) {
+          try {
+            resolvedOverrides = JSON.parse(rawValue);
+          } catch {
+            // Ignore malformed header
+          }
+        }
+      }
+
       const settleResponse = await this.ResourceServer.settlePayment(
         paymentPayload,
         requirements,
         declaredExtensions,
         transportContext,
+        resolvedOverrides,
       );
 
       if (!settleResponse.success) {
-        return {
+        const failure = {
           ...settleResponse,
-          success: false,
+          success: false as const,
           errorReason: settleResponse.errorReason || "Settlement failed",
           errorMessage:
             settleResponse.errorMessage || settleResponse.errorReason || "Settlement failed",
           headers: this.createSettlementHeaders(settleResponse),
         };
+        const response = await this.buildSettlementFailureResponse(failure, transportContext);
+        return { ...failure, response };
       }
 
       return {
@@ -577,6 +686,9 @@ export class x402HTTPResourceServer {
         requirements,
       };
     } catch (error) {
+      if (error instanceof FacilitatorResponseError) {
+        throw error;
+      }
       if (error instanceof SettleError) {
         const errorReason = error.errorReason || error.message;
         const settleResponse: SettleResponse = {
@@ -587,12 +699,14 @@ export class x402HTTPResourceServer {
           network: error.network,
           transaction: error.transaction,
         };
-        return {
+        const failure = {
           ...settleResponse,
           success: false as const,
           errorReason,
           headers: this.createSettlementHeaders(settleResponse),
         };
+        const response = await this.buildSettlementFailureResponse(failure, transportContext);
+        return { ...failure, response };
       }
       const errorReason = error instanceof Error ? error.message : "Settlement failed";
       const settleResponse: SettleResponse = {
@@ -602,12 +716,14 @@ export class x402HTTPResourceServer {
         network: requirements.network as Network,
         transaction: "",
       };
-      return {
+      const failure = {
         ...settleResponse,
         success: false as const,
         errorReason,
         headers: this.createSettlementHeaders(settleResponse),
       };
+      const response = await this.buildSettlementFailureResponse(failure, transportContext);
+      return { ...failure, response };
     }
   }
 
@@ -618,8 +734,93 @@ export class x402HTTPResourceServer {
    * @returns True if the route requires payment, false otherwise
    */
   requiresPayment(context: HTTPRequestContext): boolean {
-    const routeConfig = this.getRouteConfig(context.path, context.method);
-    return routeConfig !== undefined;
+    const method = context.method || context.adapter.getMethod();
+    return this.getRouteConfig(context.path, method) !== undefined;
+  }
+
+  /**
+   * Settle a verified payment that requested `skipHandler`, packaging the
+   * result as a `payment-error` HTTPProcessResult so framework adapters can
+   * write the response without invoking the route handler.
+   *
+   * - On success: status 200 + PAYMENT-RESPONSE header + configured body.
+   * - On failure: the standard 402 settlement-failure response.
+   *
+   * @param paymentPayload - Verified payment payload.
+   * @param requirements - Matched payment requirements.
+   * @param declaredExtensions - Optional declared extensions for the route.
+   * @param transportContext - Optional HTTP transport context.
+   * @param skipHandlerResponse - Optional content type + body to return on success.
+   * @returns A `payment-error` HTTPProcessResult carrying the final response.
+   */
+  private async processSkipHandlerSettlement(
+    paymentPayload: PaymentPayload,
+    requirements: PaymentRequirements,
+    declaredExtensions: Record<string, unknown> | undefined,
+    transportContext: HTTPTransportContext,
+    skipHandlerResponse: SkipHandlerDirective | undefined,
+  ): Promise<HTTPProcessResult> {
+    const settleResult = await this.processSettlement(
+      paymentPayload,
+      requirements,
+      declaredExtensions,
+      transportContext,
+    );
+
+    if (!settleResult.success) {
+      return { type: "payment-error", response: settleResult.response };
+    }
+
+    const contentType = skipHandlerResponse?.contentType ?? "application/json";
+    const body = skipHandlerResponse?.body ?? {};
+
+    return {
+      type: "payment-error",
+      response: {
+        status: 200,
+        headers: {
+          "Content-Type": contentType,
+          ...settleResult.headers,
+        },
+        body,
+        isHtml: contentType.includes("text/html"),
+      },
+    };
+  }
+
+  /**
+   * Build HTTPResponseInstructions for settlement failure.
+   * Uses settlementFailedResponseBody hook if configured, otherwise defaults to empty body.
+   *
+   * @param failure - Settlement failure result with headers
+   * @param transportContext - Optional HTTP transport context for the request
+   * @returns HTTP response instructions for the 402 settlement failure response
+   */
+  private async buildSettlementFailureResponse(
+    failure: Omit<ProcessSettleFailureResponse, "response">,
+    transportContext?: HTTPTransportContext,
+  ): Promise<HTTPResponseInstructions> {
+    const settlementHeaders = failure.headers;
+    const routeConfig = transportContext
+      ? this.getRouteConfig(transportContext.request.path, transportContext.request.method)
+      : undefined;
+
+    const customBody = routeConfig?.config.settlementFailedResponseBody
+      ? await routeConfig.config.settlementFailedResponseBody(transportContext!.request, failure)
+      : undefined;
+
+    const contentType = customBody ? customBody.contentType : "application/json";
+    const body = customBody ? customBody.body : {};
+
+    return {
+      status: 402,
+      headers: {
+        "Content-Type": contentType,
+        ...settlementHeaders,
+      },
+      body,
+      isHtml: contentType.includes("text/html"),
+    };
   }
 
   /**
@@ -649,6 +850,21 @@ export class x402HTTPResourceServer {
         : [["*", this.routesConfig as RouteConfig] as [string, RouteConfig]];
 
     for (const [pattern, config] of normalizedRoutes) {
+      // Warn if wildcard routes are used with discovery extensions
+      const pathPart = pattern.includes(" ") ? pattern.split(/\s+/)[1] : pattern;
+      if (
+        pathPart &&
+        pathPart.includes("*") &&
+        config.extensions &&
+        "bazaar" in config.extensions
+      ) {
+        console.warn(
+          `[x402] Route "${pattern}": Wildcard (*) patterns with bazaar discovery extensions ` +
+            `will auto-generate parameter names (var1, var2, ...). ` +
+            `Consider using named parameters instead (e.g. /weather/:city) for better discovery metadata.`,
+        );
+      }
+
       const paymentOptions = this.normalizePaymentOptions(config);
 
       for (const option of paymentOptions) {
@@ -692,9 +908,12 @@ export class x402HTTPResourceServer {
    *
    * @param path - Request path
    * @param method - HTTP method
-   * @returns Route configuration or undefined if no match
+   * @returns Route configuration and pattern, or undefined if no match
    */
-  private getRouteConfig(path: string, method: string): RouteConfig | undefined {
+  private getRouteConfig(
+    path: string,
+    method: string,
+  ): { config: RouteConfig; pattern: string } | undefined {
     const normalizedPath = this.normalizePath(path);
     const upperMethod = method.toUpperCase();
 
@@ -703,7 +922,8 @@ export class x402HTTPResourceServer {
         route.regex.test(normalizedPath) && (route.verb === "*" || route.verb === upperMethod),
     );
 
-    return matchingRoute?.config;
+    if (!matchingRoute) return undefined;
+    return { config: matchingRoute.config, pattern: matchingRoute.pattern };
   }
 
   /**
@@ -754,7 +974,7 @@ export class x402HTTPResourceServer {
     isWebBrowser: boolean,
     paywallConfig?: PaywallConfig,
     customHtml?: string,
-    unpaidResponse?: UnpaidResponseResult,
+    unpaidResponse?: HTTPResponseBody,
   ): HTTPResponseInstructions {
     // Use 412 Precondition Failed for permit2_allowance_required error
     // This signals client needs to approve Permit2 before retrying
@@ -816,24 +1036,26 @@ export class x402HTTPResourceServer {
   /**
    * Parse route pattern into verb and regex
    *
-   * @param pattern - Route pattern like "GET /api/*" or "/api/[id]"
+   * @param pattern - Route pattern like "GET /api/*", "/api/[id]", or "/api/:id"
    * @returns Parsed pattern with verb and regex
    */
-  private parseRoutePattern(pattern: string): { verb: string; regex: RegExp } {
+  private parseRoutePattern(pattern: string): { verb: string; regex: RegExp; path: string } {
     const [verb, path] = pattern.includes(" ") ? pattern.split(/\s+/) : ["*", pattern];
 
     const regex = new RegExp(
       `^${
         path
+          .replace(/\\/g, "\\\\") // Escape backslashes first
           .replace(/[$()+.?^{|}]/g, "\\$&") // Escape regex special chars
           .replace(/\*/g, ".*?") // Wildcards
-          .replace(/\[([^\]]+)\]/g, "[^/]+") // Parameters
+          .replace(/\[([^\]]+)\]/g, "[^/]+") // Parameters (Next.js style [param])
+          .replace(/:([a-zA-Z_][a-zA-Z0-9_]*)/g, "[^/]+") // Parameters (Express style :param)
           .replace(/\//g, "\\/") // Escape slashes
       }$`,
       "i",
     );
 
-    return { verb: verb.toUpperCase(), regex };
+    return { verb: verb.toUpperCase(), regex, path };
   }
 
   /**
@@ -903,6 +1125,19 @@ export class x402HTTPResourceServer {
     // Fallback: Basic HTML paywall
     const resource = paymentRequired.resource;
     const displayAmount = this.getDisplayAmount(paymentRequired);
+    const firstAccept = paymentRequired.accepts?.[0];
+    const decimals =
+      firstAccept && "amount" in firstAccept
+        ? this.ResourceServer.getAssetDecimalsForRequirements(firstAccept)
+        : 6;
+    const safeDecimals = Math.min(Math.max(decimals, 0), 100);
+    const displayAmountText = parseFloat(displayAmount.toFixed(safeDecimals)).toString();
+    const assetLabel =
+      typeof firstAccept?.extra?.name === "string"
+        ? firstAccept.extra.name
+        : firstAccept?.asset
+          ? `...${firstAccept.asset.slice(-6)}`
+          : "Token";
 
     return `
       <!DOCTYPE html>
@@ -917,7 +1152,7 @@ export class x402HTTPResourceServer {
             ${paywallConfig?.appLogo ? `<img src="${paywallConfig.appLogo}" alt="${paywallConfig.appName || "App"}" style="max-width: 200px; margin-bottom: 20px;">` : ""}
             <h1>Payment Required</h1>
             ${resource ? `<p><strong>Resource:</strong> ${resource.description || resource.url}</p>` : ""}
-            <p><strong>Amount:</strong> $${displayAmount.toFixed(2)} USDC</p>
+            <p><strong>Amount:</strong> ${displayAmountText} ${assetLabel}</p>
             <div id="payment-widget" 
                  data-requirements='${JSON.stringify(paymentRequired)}'
                  data-app-name="${paywallConfig?.appName || ""}"
@@ -935,6 +1170,7 @@ export class x402HTTPResourceServer {
 
   /**
    * Extract display amount from payment requirements.
+   * Uses the registered scheme's decimal precision for the asset, falling back to 6.
    *
    * @param paymentRequired - The payment required object
    * @returns The display amount in decimal format
@@ -944,8 +1180,8 @@ export class x402HTTPResourceServer {
     if (accepts && accepts.length > 0) {
       const firstReq = accepts[0];
       if ("amount" in firstReq) {
-        // V2 format
-        return parseFloat(firstReq.amount) / 1000000; // Assuming USDC with 6 decimals
+        const decimals = this.ResourceServer.getAssetDecimalsForRequirements(firstReq);
+        return parseFloat(firstReq.amount) / 10 ** decimals;
       }
     }
     return 0;

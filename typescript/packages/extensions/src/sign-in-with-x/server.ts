@@ -6,7 +6,6 @@
  * - Refresh time-based fields per request (nonce, issuedAt, expirationTime)
  */
 
-import { randomBytes } from "crypto";
 import type { ResourceServerExtension, PaymentRequiredContext } from "@x402/core/types";
 import type { SIWxExtension, SIWxExtensionInfo, SupportedChain, DeclareSIWxOptions } from "./types";
 import { SIGN_IN_WITH_X } from "./types";
@@ -62,7 +61,9 @@ export const siwxResourceServerExtension: ResourceServerExtension = {
     }
 
     // Generate fresh time-based fields
-    const nonce = randomBytes(16).toString("hex");
+    const nonce = Array.from(globalThis.crypto.getRandomValues(new Uint8Array(16)))
+      .map(b => b.toString(16).padStart(2, "0"))
+      .join("");
     const issuedAt = new Date().toISOString();
 
     // Calculate expirationTime based on configured duration

@@ -4,11 +4,15 @@ import (
 	"encoding/json"
 	"regexp"
 
-	x402 "github.com/coinbase/x402/go"
+	x402 "github.com/x402-foundation/x402/go"
 )
 
 // BAZAAR is the extension identifier for the Bazaar discovery extension.
 var BAZAAR = x402.NewFacilitatorExtension("bazaar")
+
+// ColonParamRegex matches :paramName route segments (Express style).
+// Shared across http/server.go and extensions/bazaar/server.go to avoid drift.
+var ColonParamRegex = regexp.MustCompile(`:([a-zA-Z_][a-zA-Z0-9_]*)`)
 
 // Extension identifier constant for the Payment Identifier extension
 const PAYMENT_IDENTIFIER = "payment-identifier"
@@ -60,6 +64,7 @@ type QueryInput struct {
 	Type        string                 `json:"type"` // "http"
 	Method      QueryParamMethods      `json:"method"`
 	QueryParams map[string]interface{} `json:"queryParams,omitempty"`
+	PathParams  map[string]interface{} `json:"pathParams,omitempty"`
 	Headers     map[string]string      `json:"headers,omitempty"`
 }
 
@@ -76,6 +81,7 @@ type BodyInput struct {
 	BodyType    BodyType               `json:"bodyType"`
 	Body        interface{}            `json:"body"`
 	QueryParams map[string]interface{} `json:"queryParams,omitempty"`
+	PathParams  map[string]interface{} `json:"pathParams,omitempty"`
 	Headers     map[string]string      `json:"headers,omitempty"`
 }
 
@@ -84,6 +90,46 @@ type OutputInfo struct {
 	Type    string      `json:"type,omitempty"`    // e.g., "json"
 	Format  string      `json:"format,omitempty"`  // e.g., "application/json"
 	Example interface{} `json:"example,omitempty"` // Example response
+}
+
+// McpTransport represents the transport protocol for MCP tools
+type McpTransport string
+
+const (
+	TransportStreamableHTTP McpTransport = "streamable-http"
+	TransportSSE            McpTransport = "sse"
+)
+
+// McpInput represents input information for MCP tool discovery
+type McpInput struct {
+	Type        string       `json:"type"` // "mcp"
+	ToolName    string       `json:"toolName"`
+	Description string       `json:"description,omitempty"`
+	Transport   McpTransport `json:"transport,omitempty"`
+	InputSchema interface{}  `json:"inputSchema"`
+	Example     interface{}  `json:"example,omitempty"`
+}
+
+// McpDiscoveryInfo represents discovery info for MCP tools
+type McpDiscoveryInfo struct {
+	Input  McpInput    `json:"input"`
+	Output *OutputInfo `json:"output,omitempty"`
+}
+
+// McpDiscoveryExtension represents a discovery extension for MCP tools
+type McpDiscoveryExtension struct {
+	Info   McpDiscoveryInfo `json:"info"`
+	Schema JSONSchema       `json:"schema"`
+}
+
+// DeclareMcpDiscoveryConfig is the configuration for declaring an MCP discovery extension
+type DeclareMcpDiscoveryConfig struct {
+	ToolName    string       // MCP tool name
+	Description string       // Human-readable description
+	Transport   McpTransport // Transport protocol (streamable-http, sse)
+	InputSchema interface{}  // JSON Schema for the tool's input
+	Example     interface{}  // Example input
+	Output      *OutputConfig
 }
 
 // DiscoveryInfo is a union type that can be either Query or Body discovery info
@@ -103,20 +149,28 @@ func (d *DiscoveryInfo) UnmarshalJSON(data []byte) error {
 		return err
 	}
 
-	// Try to determine if it's a query or body input by checking for bodyType field
-	var checkType struct {
+	// Check the type field first to discriminate between http and mcp inputs
+	var checkFields struct {
+		Type     string  `json:"type"`
 		BodyType *string `json:"bodyType"`
 	}
 	// Intentionally ignore error - we're just probing for field existence
-	_ = json.Unmarshal(raw.Input, &checkType)
+	_ = json.Unmarshal(raw.Input, &checkFields)
 
-	if checkType.BodyType != nil {
+	switch {
+	case checkFields.Type == "mcp":
+		var mcpInput McpInput
+		if err := json.Unmarshal(raw.Input, &mcpInput); err != nil {
+			return err
+		}
+		d.Input = mcpInput
+	case checkFields.BodyType != nil:
 		var bodyInput BodyInput
 		if err := json.Unmarshal(raw.Input, &bodyInput); err != nil {
 			return err
 		}
 		d.Input = bodyInput
-	} else {
+	default:
 		var queryInput QueryInput
 		if err := json.Unmarshal(raw.Input, &queryInput); err != nil {
 			return err
@@ -145,8 +199,9 @@ type BodyDiscoveryExtension struct {
 
 // DiscoveryExtension is a union type that can be either Query or Body discovery extension
 type DiscoveryExtension struct {
-	Info   DiscoveryInfo `json:"info"`
-	Schema JSONSchema    `json:"schema"`
+	Info          DiscoveryInfo `json:"info"`
+	Schema        JSONSchema    `json:"schema"`
+	RouteTemplate string        `json:"routeTemplate,omitempty"`
 }
 
 // DeclareQueryDiscoveryConfig is the configuration for declaring a query discovery extension

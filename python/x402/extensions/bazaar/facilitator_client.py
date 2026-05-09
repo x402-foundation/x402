@@ -21,9 +21,19 @@ class ListDiscoveryResourcesParams:
     """
 
     type: str | None = None
-    """Filter by protocol type (e.g., "http", "mcp").
-    Currently, the only supported protocol type is "http".
-    """
+    """Filter by protocol type (e.g., "http", "mcp")."""
+
+    pay_to: str | None = None
+    """Filter by payment recipient address."""
+
+    scheme: str | None = None
+    """Filter by payment scheme (e.g., "exact")."""
+
+    network: str | None = None
+    """Filter by payment network (e.g., "eip155:8453")."""
+
+    extensions: str | None = None
+    """Filter by extension key present on the discovered resource."""
 
     limit: int | None = None
     """The number of discovered x402 resources to return per page."""
@@ -33,45 +43,117 @@ class ListDiscoveryResourcesParams:
 
 
 @dataclass
+class SearchDiscoveryResourcesParams:
+    """Parameters for searching discovery resources."""
+
+    query: str = ""
+    """Natural-language search query (required)."""
+
+    type: str | None = None
+    """Filter by protocol type (e.g., "http", "mcp")."""
+
+    pay_to: str | None = None
+    """Filter by payment recipient address."""
+
+    scheme: str | None = None
+    """Filter by payment scheme (e.g., "exact")."""
+
+    network: str | None = None
+    """Filter by payment network (e.g., "eip155:8453")."""
+
+    extensions: str | None = None
+    """Filter by extension key present on the discovered resource."""
+
+    limit: int | None = None
+    """Advisory maximum number of results. The server may return fewer or ignore this."""
+
+    cursor: str | None = None
+    """Advisory continuation token from a previous response. The server may ignore this."""
+
+
+@dataclass
 class DiscoveryResource:
     """A discovered x402 resource from the bazaar."""
 
-    url: str
-    """The URL of the discovered resource."""
+    resource: str
+    """The URL or identifier of the discovered resource."""
 
     type: str
     """The protocol type of the resource."""
 
-    metadata: dict[str, Any] | None = None
-    """Additional metadata about the resource."""
+    x402_version: int = 0
+    """The x402 protocol version supported by this resource."""
+
+    accepts: list[Any] | None = None
+    """Array of accepted payment methods for this resource."""
+
+    last_updated: str | None = None
+    """ISO 8601 timestamp of when the resource was last updated."""
+
+    extensions: dict[str, Any] | None = None
+    """Additional extension payloads attached to this discovered resource."""
+
+
+@dataclass
+class Pagination:
+    """Pagination information for a list response."""
+
+    limit: int = 0
+    offset: int = 0
+    total: int = 0
 
 
 @dataclass
 class DiscoveryResourcesResponse:
     """Response from listing discovery resources."""
 
-    resources: list[DiscoveryResource]
+    x402_version: int
+    """The x402 protocol version of this response."""
+
+    items: list[DiscoveryResource]
     """The list of discovered resources."""
 
-    total: int | None = None
-    """Total count of resources matching the query."""
-
-    limit: int | None = None
-    """The limit used for this query."""
-
-    offset: int | None = None
-    """The offset used for this query."""
+    pagination: Pagination
+    """Pagination information for the response."""
 
 
-class BazaarDiscoveryExtension:
-    """Bazaar discovery extension providing query functionality.
+@dataclass
+class SearchPagination:
+    """Pagination details for a paginated search response."""
+
+    limit: int
+    """Number of results in this page."""
+
+    cursor: str | None
+    """Continuation cursor for the next page; may be None."""
+
+
+@dataclass
+class SearchDiscoveryResourcesResponse:
+    """Response from searching discovery resources."""
+
+    x402_version: int
+    """The x402 protocol version of this response."""
+
+    resources: list[DiscoveryResource]
+    """The list of matching discovered resources."""
+
+    partial_results: bool | None = None
+    """Whether additional matches were truncated by the facilitator."""
+
+    pagination: SearchPagination | None = None
+    """Optional pagination details for paginated responses."""
+
+
+class BazaarExtension:
+    """Bazaar extension providing discovery list and search functionality.
 
     This extension is attached to a facilitator client via `with_bazaar()`
     and provides methods to query discovery resources from the facilitator.
     """
 
     def __init__(self, client: HTTPFacilitatorClient) -> None:
-        """Initialize the discovery extension.
+        """Initialize the bazaar extension.
 
         Args:
             client: The facilitator client to use for requests.
@@ -99,39 +181,40 @@ class BazaarDiscoveryExtension:
             from x402.extensions.bazaar import with_bazaar
 
             client = with_bazaar(HTTPFacilitatorClient())
-            resources = client.extensions.discovery.list_resources(
+            resources = client.extensions.bazaar.list_resources(
                 ListDiscoveryResourcesParams(type="http", limit=10)
             )
-            for resource in resources.resources:
-                print(f"Resource: {resource.url}")
+            for resource in resources.items:
+                print(f"Resource: {resource.resource}")
             ```
         """
-
         params = params or ListDiscoveryResourcesParams()
 
-        # Build headers
         headers: dict[str, str] = {"Content-Type": "application/json"}
 
-        # Add auth headers if available
         if self._client._auth_provider:
-            # Use 'supported' auth as a reasonable default for discovery
             auth = self._client._auth_provider.get_auth_headers()
-            headers.update(auth.supported)
+            headers.update(auth.bazaar)
 
-        # Build query parameters
         query_params: dict[str, str] = {}
         if params.type is not None:
             query_params["type"] = params.type
+        if params.pay_to is not None:
+            query_params["payTo"] = params.pay_to
+        if params.scheme is not None:
+            query_params["scheme"] = params.scheme
+        if params.network is not None:
+            query_params["network"] = params.network
+        if params.extensions is not None:
+            query_params["extensions"] = params.extensions
         if params.limit is not None:
             query_params["limit"] = str(params.limit)
         if params.offset is not None:
             query_params["offset"] = str(params.offset)
 
-        # Build endpoint URL
         endpoint = f"{self._client.url}/discovery/resources"
 
-        # Get or create HTTP client
-        http_client = self._client._get_client()
+        http_client = self._client._get_client()  # type: ignore[attr-defined]
 
         response = http_client.get(
             endpoint,
@@ -145,19 +228,94 @@ class BazaarDiscoveryExtension:
             )
 
         data = response.json()
-        return _parse_discovery_resources_response(data)
+        return _parse_list_response(data)
+
+    def search(
+        self,
+        params: SearchDiscoveryResourcesParams,
+    ) -> SearchDiscoveryResourcesResponse:
+        """Search x402 discovery resources from the bazaar using a natural-language query.
+
+        Pagination is optional: facilitators may ignore `limit` and `cursor`, or include
+        `response.pagination` when pagination is used.
+
+        Args:
+            params: Search parameters including the required query string.
+
+        Returns:
+            A response containing matched discovery resources and optional pagination hints.
+
+        Raises:
+            ValueError: If query is empty or the request fails.
+
+        Example:
+            ```python
+            from x402.http import HTTPFacilitatorClient
+            from x402.extensions.bazaar import with_bazaar, SearchDiscoveryResourcesParams
+
+            client = with_bazaar(HTTPFacilitatorClient())
+            results = client.extensions.bazaar.search(
+                SearchDiscoveryResourcesParams(query="weather APIs", type="http")
+            )
+            if results.cursor is not None:
+                # facilitator returned continuation cursor for the next page
+                pass
+            ```
+        """
+        if not params.query:
+            raise ValueError("search query is required")
+
+        headers: dict[str, str] = {"Content-Type": "application/json"}
+
+        if self._client._auth_provider:
+            auth = self._client._auth_provider.get_auth_headers()
+            headers.update(auth.bazaar)
+
+        query_params: dict[str, str] = {"query": params.query}
+        if params.type is not None:
+            query_params["type"] = params.type
+        if params.pay_to is not None:
+            query_params["payTo"] = params.pay_to
+        if params.scheme is not None:
+            query_params["scheme"] = params.scheme
+        if params.network is not None:
+            query_params["network"] = params.network
+        if params.extensions is not None:
+            query_params["extensions"] = params.extensions
+        if params.limit is not None:
+            query_params["limit"] = str(params.limit)
+        if params.cursor is not None:
+            query_params["cursor"] = params.cursor
+
+        endpoint = f"{self._client.url}/discovery/search"
+
+        http_client = self._client._get_client()  # type: ignore[attr-defined]
+
+        response = http_client.get(
+            endpoint,
+            headers=headers,
+            params=query_params,
+        )
+
+        if response.status_code != 200:
+            raise ValueError(
+                f"Facilitator searchDiscoveryResources failed ({response.status_code}): {response.text}"
+            )
+
+        data = response.json()
+        return _parse_search_response(data)
 
 
 class BazaarClientExtension:
     """Bazaar client extension interface providing discovery query functionality."""
 
     def __init__(self, client: HTTPFacilitatorClient) -> None:
-        """Initialize the bazaar extension.
+        """Initialize the bazaar client extension.
 
         Args:
             client: The facilitator client to use.
         """
-        self.discovery = BazaarDiscoveryExtension(client)
+        self.bazaar = BazaarExtension(client)
 
 
 class BazaarExtendedClient:
@@ -181,11 +339,11 @@ class BazaarExtendedClient:
         return getattr(self._client, name)
 
     def __enter__(self) -> BazaarExtendedClient:
-        self._client.__enter__()
+        self._client.__enter__()  # type: ignore[attr-defined]
         return self
 
     def __exit__(self, *args: Any) -> None:
-        self._client.__exit__(*args)
+        self._client.__exit__(*args)  # type: ignore[attr-defined]
 
 
 def with_bazaar(client: HTTPFacilitatorClient) -> BazaarExtendedClient:
@@ -202,13 +360,13 @@ def with_bazaar(client: HTTPFacilitatorClient) -> BazaarExtendedClient:
         from x402.http import HTTPFacilitatorClient, FacilitatorConfig
         from x402.extensions.bazaar import with_bazaar, ListDiscoveryResourcesParams
 
-        # Basic usage
+        # List resources
         client = with_bazaar(HTTPFacilitatorClient())
-        resources = client.extensions.discovery.list_resources()
+        resources = client.extensions.bazaar.list_resources()
 
-        # With parameters
-        resources = client.extensions.discovery.list_resources(
-            ListDiscoveryResourcesParams(type="http", limit=10, offset=0)
+        # Search resources
+        results = client.extensions.bazaar.search(
+            SearchDiscoveryResourcesParams(query="weather APIs", limit=10)
         )
 
         # Access wrapped client methods
@@ -218,30 +376,67 @@ def with_bazaar(client: HTTPFacilitatorClient) -> BazaarExtendedClient:
     return BazaarExtendedClient(client)
 
 
-def _parse_discovery_resources_response(
+def _parse_list_response(
     data: dict[str, Any],
 ) -> DiscoveryResourcesResponse:
-    """Parse discovery resources response from JSON data.
-
-    Args:
-        data: JSON response data.
-
-    Returns:
-        Parsed DiscoveryResourcesResponse.
-    """
-    resources = []
-    for item in data.get("resources", []):
-        resources.append(
+    """Parse a list discovery resources response from JSON data."""
+    items = []
+    for item in data.get("items", []):
+        items.append(
             DiscoveryResource(
-                url=item.get("url", ""),
+                resource=item.get("resource", ""),
                 type=item.get("type", ""),
-                metadata=item.get("metadata"),
+                x402_version=item.get("x402Version", 0),
+                accepts=item.get("accepts"),
+                last_updated=item.get("lastUpdated"),
+                extensions=item.get("extensions"),
             )
         )
 
+    raw_pagination = data.get("pagination", {})
+    pagination = Pagination(
+        limit=raw_pagination.get("limit", 0),
+        offset=raw_pagination.get("offset", 0),
+        total=raw_pagination.get("total", 0),
+    )
+
     return DiscoveryResourcesResponse(
-        resources=resources,
-        total=data.get("total"),
-        limit=data.get("limit"),
-        offset=data.get("offset"),
+        x402_version=data.get("x402Version", 0),
+        items=items,
+        pagination=pagination,
+    )
+
+
+def _parse_search_response(
+    data: dict[str, Any],
+) -> SearchDiscoveryResourcesResponse:
+    """Parse a search discovery resources response from JSON data."""
+    items = []
+    for item in data.get("resources", []):
+        items.append(
+            DiscoveryResource(
+                resource=item.get("resource", ""),
+                type=item.get("type", ""),
+                x402_version=item.get("x402Version", 0),
+                accepts=item.get("accepts"),
+                last_updated=item.get("lastUpdated"),
+                extensions=item.get("extensions"),
+            )
+        )
+
+    raw_pagination = data.get("pagination")
+    pagination = (
+        SearchPagination(
+            limit=raw_pagination.get("limit", 0),
+            cursor=raw_pagination.get("cursor"),
+        )
+        if raw_pagination is not None
+        else None
+    )
+
+    return SearchDiscoveryResourcesResponse(
+        x402_version=data.get("x402Version", 0),
+        resources=items,
+        partial_results=data.get("partialResults"),
+        pagination=pagination,
     )

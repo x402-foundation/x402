@@ -1,6 +1,6 @@
 {
   "name": "@x402/extensions",
-  "version": "2.5.0",
+  "version": "2.11.0",
   "main": "./dist/cjs/index.js",
   "module": "./dist/esm/index.js",
   "types": "./dist/cjs/index.d.ts",
@@ -22,8 +22,8 @@
     "extensions"
   ],
   "license": "Apache-2.0",
-  "author": "Coinbase Inc.",
-  "repository": "https://github.com/coinbase/x402",
+  "author": "x402 Foundation",
+  "repository": "https://github.com/x402-foundation/x402",
   "description": "x402 Payment Protocol Extensions",
   "devDependencies": {
     "@eslint/js": "^9.24.0",
@@ -43,12 +43,14 @@
     "vitest": "^3.0.5"
   },
   "dependencies": {
+    "@noble/curves": "^1.9.0",
     "@scure/base": "^1.2.6",
     "@x402/core": "workspace:~",
     "ajv": "^8.17.1",
-    "siwe": "^2.3.2",
+    "jose": "^5.9.6",
+    "@signinwithethereum/siwe": "^4.1.0",
     "tweetnacl": "^1.0.3",
-    "viem": "^2.43.5",
+    "viem": "^2.48.11",
     "zod": "^3.24.2"
   },
   "exports": {
@@ -80,6 +82,16 @@
       "require": {
         "types": "./dist/cjs/sign-in-with-x/index.d.ts",
         "default": "./dist/cjs/sign-in-with-x/index.js"
+      }
+    },
+    "./offer-receipt": {
+      "import": {
+        "types": "./dist/esm/offer-receipt/index.d.mts",
+        "default": "./dist/esm/offer-receipt/index.mjs"
+      },
+      "require": {
+        "types": "./dist/cjs/offer-receipt/index.d.ts",
+        "default": "./dist/cjs/offer-receipt/index.js"
       }
     },
     "./payment-identifier": {

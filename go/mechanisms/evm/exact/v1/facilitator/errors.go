@@ -13,7 +13,7 @@ const (
 	ErrRecipientMismatch               = "invalid_exact_evm_payload_recipient_mismatch"
 	ErrInvalidAuthorizationValue       = "invalid_exact_evm_payload_authorization_value"
 	ErrInvalidRequiredAmount           = "invalid_exact_evm_required_amount"
-	ErrAuthorizationValueInsufficient  = "invalid_exact_evm_payload_authorization_value_insufficient"
+	ErrAuthorizationValueMismatch      = "invalid_exact_evm_payload_authorization_value_mismatch"
 	ErrAuthorizationValidBeforeExpired = "invalid_exact_evm_payload_authorization_valid_before"
 	ErrAuthorizationValidAfterInFuture = "invalid_exact_evm_payload_authorization_valid_after"
 	ErrInsufficientFunds               = "invalid_exact_evm_insufficient_funds"

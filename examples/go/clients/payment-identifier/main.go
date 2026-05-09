@@ -11,12 +11,13 @@ import (
 	"strings"
 	"time"
 
-	x402 "github.com/coinbase/x402/go"
-	"github.com/coinbase/x402/go/extensions/paymentidentifier"
-	x402http "github.com/coinbase/x402/go/http"
-	evm "github.com/coinbase/x402/go/mechanisms/evm/exact/client"
-	evmsigners "github.com/coinbase/x402/go/signers/evm"
 	"github.com/joho/godotenv"
+	x402 "github.com/x402-foundation/x402/go"
+	"github.com/x402-foundation/x402/go/extensions/paymentidentifier"
+	x402http "github.com/x402-foundation/x402/go/http"
+	exactevm "github.com/x402-foundation/x402/go/mechanisms/evm/exact/client"
+	uptoevm "github.com/x402-foundation/x402/go/mechanisms/evm/upto/client"
+	evmsigners "github.com/x402-foundation/x402/go/signers/evm"
 )
 
 /**
@@ -44,9 +45,9 @@ import (
 // It then caches the resulting PAYMENT-SIGNATURE header so that subsequent
 // requests replay the exact same signed payload — a true retry.
 type PaymentIdentifierTransport struct {
-	Inner                http.RoundTripper
-	PaymentID            string
-	cachedPaymentHeader  string // PAYMENT-SIGNATURE from the first successful attempt
+	Inner               http.RoundTripper
+	PaymentID           string
+	cachedPaymentHeader string // PAYMENT-SIGNATURE from the first successful attempt
 }
 
 func (t *PaymentIdentifierTransport) RoundTrip(req *http.Request) (*http.Response, error) {
@@ -145,7 +146,8 @@ func main() {
 
 	// Create client with scheme registration
 	client := x402.Newx402Client().
-		Register("eip155:*", evm.NewExactEvmScheme(evmSigner))
+		Register("eip155:*", exactevm.NewExactEvmScheme(evmSigner, nil)).
+		Register("eip155:*", uptoevm.NewUptoEvmScheme(evmSigner, nil))
 
 	// Generate a unique payment ID for this session
 	paymentID := paymentidentifier.GeneratePaymentID("")
@@ -169,27 +171,29 @@ func main() {
 	fmt.Printf("Making request to: %s\n\n", serverURL)
 
 	startTime1 := time.Now()
-	resp1, err := makeRequest(ctx, wrappedClient, serverURL)
+	resp1, httpResp1, err := makeRequest(ctx, wrappedClient, serverURL)
 	duration1 := time.Since(startTime1)
 	if err != nil {
 		fmt.Printf("Request failed: %v\n", err)
 		os.Exit(1)
 	}
-	fmt.Printf("Response (%v): %s\n\n", duration1, resp1)
+	fmt.Printf("Response (%v): %s\n", duration1, resp1)
+	printPaymentDetails(httpResp1)
 
 	// Second request - replay the same signed payment (true retry)
-	fmt.Println("Second Request (retry with cached payment)")
+	fmt.Println("\nSecond Request (retry with cached payment)")
 	fmt.Printf("Making request to: %s\n", serverURL)
 	fmt.Println("Expected: Server returns cached response (same ID, same payload)")
 
 	startTime2 := time.Now()
-	resp2, err := makeRequest(ctx, wrappedClient, serverURL)
+	resp2, httpResp2, err := makeRequest(ctx, wrappedClient, serverURL)
 	duration2 := time.Since(startTime2)
 	if err != nil {
 		fmt.Printf("Request failed: %v\n", err)
 		os.Exit(1)
 	}
-	fmt.Printf("Response (%v): %s\n\n", duration2, resp2)
+	fmt.Printf("Response (%v): %s\n", duration2, resp2)
+	printPaymentDetails(httpResp2)
 
 	// Summary
 	fmt.Println("Summary")
@@ -198,23 +202,52 @@ func main() {
 	fmt.Printf("  Second request: %v\n", duration2)
 }
 
-func makeRequest(ctx context.Context, client *http.Client, url string) (string, error) {
+func makeRequest(ctx context.Context, client *http.Client, url string) (string, *http.Response, error) {
 	req, err := http.NewRequestWithContext(ctx, "POST", url, strings.NewReader(`{"item": "widget"}`))
 	if err != nil {
-		return "", err
+		return "", nil, err
 	}
 	req.Header.Set("Content-Type", "application/json")
 
 	resp, err := client.Do(req)
 	if err != nil {
-		return "", err
+		return "", nil, err
 	}
 	defer resp.Body.Close()
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return "", err
+		return "", resp, err
 	}
 
-	return string(body), nil
+	return string(body), resp, nil
+}
+
+// printPaymentDetails extracts and prints payment settlement from response headers.
+func printPaymentDetails(resp *http.Response) {
+	paymentHeader := resp.Header.Get("PAYMENT-RESPONSE")
+	if paymentHeader == "" {
+		paymentHeader = resp.Header.Get("X-PAYMENT-RESPONSE")
+	}
+	if paymentHeader == "" {
+		return
+	}
+	decoded, err := base64.StdEncoding.DecodeString(paymentHeader)
+	if err != nil {
+		return
+	}
+	var settleResp x402.SettleResponse
+	if err := json.Unmarshal(decoded, &settleResp); err != nil {
+		return
+	}
+	fmt.Println("💰 Payment Details:")
+	fmt.Printf("  Success: %v\n", settleResp.Success)
+	if settleResp.ErrorReason != "" {
+		fmt.Printf("  ErrorReason: %s\n", settleResp.ErrorReason)
+	}
+	if settleResp.Transaction != "" {
+		fmt.Printf("  Transaction: %s\n", settleResp.Transaction)
+	}
+	fmt.Printf("  Network: %s\n", settleResp.Network)
+	fmt.Printf("  Payer: %s\n", settleResp.Payer)
 }

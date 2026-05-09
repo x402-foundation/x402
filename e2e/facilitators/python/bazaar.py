@@ -17,15 +17,17 @@ class DiscoveredResource:
         x402_version: int,
         accepts: list[dict[str, Any]],
         discovery_info: dict[str, Any] | None = None,
-        metadata: dict[str, Any] | None = None,
+        route_template: str | None = None,
+        extensions: dict[str, Any] | None = None,
     ) -> None:
         self.resource = resource
         self.type = resource_type
         self.x402_version = x402_version
         self.accepts = accepts
         self.discovery_info = discovery_info
+        self.route_template = route_template
         self.last_updated = datetime.now().isoformat()
-        self.metadata = metadata or {}
+        self.extensions = extensions or {}
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary for JSON serialization."""
@@ -35,10 +37,12 @@ class DiscoveredResource:
             "x402Version": self.x402_version,
             "accepts": self.accepts,
             "lastUpdated": self.last_updated,
-            "metadata": self.metadata,
+            "extensions": self.extensions,
         }
         if self.discovery_info:
             result["discoveryInfo"] = self.discovery_info
+        if self.route_template:
+            result["routeTemplate"] = self.route_template
         return result
 
 
@@ -55,6 +59,7 @@ class BazaarCatalog:
         x402_version: int,
         discovery_info: dict[str, Any] | None,
         payment_requirements: dict[str, Any],
+        route_template: str | None = None,
     ) -> None:
         """Add a discovered resource to the catalog.
 
@@ -64,10 +69,13 @@ class BazaarCatalog:
             x402_version: The x402 protocol version.
             discovery_info: Optional discovery metadata.
             payment_requirements: The payment requirements for this resource.
+            route_template: Optional route template for dynamic routes.
         """
         print(f"📝 Discovered resource: {resource_url}")
         print(f"   Method: {method}")
         print(f"   x402 Version: {x402_version}")
+        if route_template:
+            print(f"   Route template: {route_template}")
 
         self._resources[resource_url] = DiscoveredResource(
             resource=resource_url,
@@ -75,7 +83,8 @@ class BazaarCatalog:
             x402_version=x402_version,
             accepts=[payment_requirements],
             discovery_info=discovery_info,
-            metadata={},
+            route_template=route_template,
+            extensions={},
         )
 
     def get_resources(self, limit: int = 100, offset: int = 0) -> dict[str, Any]:
@@ -100,6 +109,45 @@ class BazaarCatalog:
                 "offset": offset,
                 "total": total,
             },
+        }
+
+    def search_resources(
+        self,
+        query: str,
+        resource_type: str | None = None,
+        limit: int | None = None,
+    ) -> dict[str, Any]:
+        """Search resources using case-insensitive keyword matching.
+
+        Matches against the resource URL, type, and extension values.
+
+        Args:
+            query: The search query string.
+            resource_type: Optional filter by resource type.
+            limit: Optional advisory maximum number of results.
+
+        Returns:
+            Dictionary with x402Version, items, and optional pagination hints.
+        """
+        needle = query.lower()
+        results = []
+        for r in self._resources.values():
+            haystack = " ".join(
+                [r.resource, r.type] + [str(v) for v in r.extensions.values()]
+            ).lower()
+            if needle in haystack:
+                results.append(r)
+
+        if resource_type:
+            results = [r for r in results if r.type == resource_type]
+
+        items = results[:limit] if limit is not None else results
+
+        return {
+            "x402Version": 2,
+            "resources": [r.to_dict() for r in items],
+            "partialResults": False,
+            "pagination": None,
         }
 
     def get_count(self) -> int:

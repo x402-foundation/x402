@@ -36,6 +36,7 @@ class AuthHeaders:
     verify: dict[str, str] = field(default_factory=dict)
     settle: dict[str, str] = field(default_factory=dict)
     supported: dict[str, str] = field(default_factory=dict)
+    bazaar: dict[str, str] = field(default_factory=dict)
 
 
 class AuthProvider(Protocol):
@@ -63,7 +64,12 @@ class CreateHeadersAuthProvider:
             verify=result.get("verify", {}),
             settle=result.get("settle", {}),
             supported=result.get("supported", result.get("list", {})),
+            bazaar=result.get("bazaar", {}),
         )
+
+
+class FacilitatorResponseError(ValueError):
+    """Facilitator returned malformed or schema-invalid response data."""
 
 
 # ============================================================================

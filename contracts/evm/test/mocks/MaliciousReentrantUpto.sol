@@ -13,7 +13,7 @@ contract MaliciousReentrantUpto is ISignatureTransfer {
     ISignatureTransfer.PermitTransferFrom public storedPermit;
     uint256 public storedAmount;
     address public storedOwner;
-    x402BasePermit2Proxy.Witness public storedWitness;
+    x402UptoPermit2Proxy.Witness public storedWitness;
     bytes public storedSignature;
 
     mapping(address => mapping(uint256 => uint256)) public nonceBitmapStorage;
@@ -34,7 +34,7 @@ contract MaliciousReentrantUpto is ISignatureTransfer {
         ISignatureTransfer.PermitTransferFrom calldata permit,
         uint256 amount,
         address owner,
-        x402BasePermit2Proxy.Witness calldata witness,
+        x402UptoPermit2Proxy.Witness calldata witness,
         bytes calldata signature
     ) external {
         storedPermit = permit;

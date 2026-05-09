@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/coinbase/x402/go/types"
+	"github.com/x402-foundation/x402/go/types"
 )
 
 // Network represents a blockchain network identifier in CAIP-2 format
@@ -81,30 +81,52 @@ type (
 // VerifyResponse contains the verification result
 // If verification fails, an error (typically *VerifyError) is returned and this will be nil
 type VerifyResponse struct {
-	IsValid        bool   `json:"isValid"`
-	InvalidReason  string `json:"invalidReason,omitempty"`
-	InvalidMessage string `json:"invalidMessage,omitempty"`
-	Payer          string `json:"payer,omitempty"`
+	IsValid        bool                   `json:"isValid"`
+	InvalidReason  string                 `json:"invalidReason,omitempty"`
+	InvalidMessage string                 `json:"invalidMessage,omitempty"`
+	Payer          string                 `json:"payer,omitempty"`
+	Extensions     map[string]interface{} `json:"extensions,omitempty"`
+	Extra          map[string]interface{} `json:"extra,omitempty"`
+
+	// SkipHandler is an in-process directive set by an AfterVerifyHook that wants
+	// the HTTP layer to bypass the resource handler and settle inline. It is never
+	// serialized to the facilitator wire.
+	SkipHandler *SkipHandlerDirective `json:"-"`
 }
 
 // SettleResponse contains the settlement result
 // If settlement fails, an error (typically *SettleError) is returned and this will be nil
 type SettleResponse struct {
-	Success      bool    `json:"success"`
-	ErrorReason  string  `json:"errorReason,omitempty"`
-	ErrorMessage string  `json:"errorMessage,omitempty"`
-	Payer        string  `json:"payer,omitempty"`
-	Transaction  string  `json:"transaction"`
-	Network      Network `json:"network"`
+	Success      bool                   `json:"success"`
+	ErrorReason  string                 `json:"errorReason,omitempty"`
+	ErrorMessage string                 `json:"errorMessage,omitempty"`
+	Payer        string                 `json:"payer,omitempty"`
+	Transaction  string                 `json:"transaction"`
+	Network      Network                `json:"network"`
+	Amount       string                 `json:"amount,omitempty"`
+	Extensions   map[string]interface{} `json:"extensions,omitempty"`
+	Extra        map[string]interface{} `json:"extra,omitempty"`
+}
+
+// SettlementOverrides allows overriding settlement parameters.
+// Used to support partial settlement (e.g., upto scheme billing by actual usage).
+type SettlementOverrides struct {
+	// Amount to settle. Supports three formats:
+	//   - Raw atomic units: "1000" settles exactly 1000 atomic units.
+	//   - Percent: "50%" settles 50% of PaymentRequirements.Amount (up to 2 decimal places, floored).
+	//   - Dollar price: "$0.05" converts to atomic units using Extra["decimals"] (default 6).
+	// The resolved amount must be <= the authorized maximum in PaymentRequirements.
+	Amount string `json:"amount,omitempty"`
 }
 
 // ResourceConfig defines payment configuration for a protected resource
 type ResourceConfig struct {
-	Scheme            string  `json:"scheme"`
-	PayTo             string  `json:"payTo"`
-	Price             Price   `json:"price"`
-	Network           Network `json:"network"`
-	MaxTimeoutSeconds int     `json:"maxTimeoutSeconds,omitempty"`
+	Scheme            string                 `json:"scheme"`
+	PayTo             string                 `json:"payTo"`
+	Price             Price                  `json:"price"`
+	Network           Network                `json:"network"`
+	MaxTimeoutSeconds int                    `json:"maxTimeoutSeconds,omitempty"`
+	Extra             map[string]interface{} `json:"extra,omitempty"`
 }
 
 // ============================================================================

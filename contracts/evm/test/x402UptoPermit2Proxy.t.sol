@@ -60,8 +60,8 @@ contract X402UptoPermit2ProxyTest is Test {
         address to,
         address facilitator,
         uint256 validAfter
-    ) internal pure returns (x402BasePermit2Proxy.Witness memory) {
-        return x402BasePermit2Proxy.Witness({to: to, facilitator: facilitator, validAfter: validAfter});
+    ) internal pure returns (x402UptoPermit2Proxy.Witness memory) {
+        return x402UptoPermit2Proxy.Witness({to: to, facilitator: facilitator, validAfter: validAfter});
     }
 
     function _sig() internal pure returns (bytes memory) {
@@ -131,7 +131,7 @@ contract X402UptoPermit2ProxyTest is Test {
         uint256 t = block.timestamp;
         address attacker = makeAddr("attacker");
         vm.prank(attacker);
-        vm.expectRevert(x402BasePermit2Proxy.UnauthorizedFacilitator.selector);
+        vm.expectRevert(x402UptoPermit2Proxy.UnauthorizedFacilitator.selector);
         proxy.settle(
             _permit(TRANSFER_AMOUNT, 0, t + 3600),
             TRANSFER_AMOUNT,

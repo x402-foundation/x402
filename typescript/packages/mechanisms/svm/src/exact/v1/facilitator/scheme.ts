@@ -30,6 +30,7 @@ import {
   MAX_COMPUTE_UNIT_PRICE_MICROLAMPORTS,
   MEMO_PROGRAM_ADDRESS,
 } from "../../../constants";
+import { SettlementCache } from "../../../settlement-cache";
 import type { FacilitatorSvmSigner } from "../../../signer";
 import type { ExactSvmPayloadV1 } from "../../../types";
 import { decodeTransactionFromPayload, getTokenPayerFromTransaction } from "../../../utils";
@@ -41,13 +42,21 @@ export class ExactSvmSchemeV1 implements SchemeNetworkFacilitator {
   readonly scheme = "exact";
   readonly caipFamily = "solana:*";
 
+  private readonly settlementCache: SettlementCache;
+
   /**
    * Creates a new ExactSvmFacilitatorV1 instance.
    *
    * @param signer - The SVM RPC client for facilitator operations
+   * @param settlementCache - Optional shared settlement cache (one is created if omitted)
    * @returns ExactSvmFacilitatorV1 instance
    */
-  constructor(private readonly signer: FacilitatorSvmSigner) {}
+  constructor(
+    private readonly signer: FacilitatorSvmSigner,
+    settlementCache?: SettlementCache,
+  ) {
+    this.settlementCache = settlementCache ?? new SettlementCache();
+  }
 
   /**
    * Get mechanism-specific extra data for the supported kinds endpoint.
@@ -149,7 +158,7 @@ export class ExactSvmSchemeV1 implements SchemeNetworkFacilitator {
     // - 4 instructions: ComputeLimit + ComputePrice + TransferChecked + Lighthouse or Memo
     // - 5 instructions: ComputeLimit + ComputePrice + TransferChecked + Lighthouse + Lighthouse or Memo
     // - 6 instructions: ComputeLimit + ComputePrice + TransferChecked + Lighthouse + Lighthouse + Memo
-    // See: https://github.com/coinbase/x402/issues/828
+    // See: https://github.com/x402-foundation/x402/issues/828
     if (instructions.length < 3 || instructions.length > 6) {
       return {
         isValid: false,
@@ -259,12 +268,12 @@ export class ExactSvmSchemeV1 implements SchemeNetworkFacilitator {
       };
     }
 
-    // Verify transfer amount meets requirements
+    // Verify transfer amount exactly matches requirements
     const amount = parsedTransfer.data.amount;
-    if (amount < BigInt(requirementsV1.maxAmountRequired)) {
+    if (amount !== BigInt(requirementsV1.maxAmountRequired)) {
       return {
         isValid: false,
-        invalidReason: "invalid_exact_svm_payload_amount_insufficient",
+        invalidReason: "invalid_exact_svm_payload_amount_mismatch",
         payer,
       };
     }
@@ -293,6 +302,30 @@ export class ExactSvmSchemeV1 implements SchemeNetworkFacilitator {
           invalidReasonByIndex[i] ?? "invalid_exact_svm_payload_unknown_optional_instruction",
         payer,
       };
+    }
+
+    // Step 5b: Verify memo content matches extra.memo when present
+    const expectedMemo = requirementsV1.extra?.memo as string | undefined;
+    if (expectedMemo) {
+      const memoInstructions = optionalInstructions.filter(
+        ix => ix.programAddress.toString() === MEMO_PROGRAM_ADDRESS,
+      );
+      if (memoInstructions.length !== 1) {
+        return {
+          isValid: false,
+          invalidReason: "invalid_exact_svm_payload_memo_count",
+          payer,
+        };
+      }
+      const memoData = memoInstructions[0].data;
+      const actualMemo = memoData ? new TextDecoder().decode(new Uint8Array(memoData)) : "";
+      if (actualMemo !== expectedMemo) {
+        return {
+          isValid: false,
+          invalidReason: "invalid_exact_svm_payload_memo_mismatch",
+          payer,
+        };
+      }
     }
 
     // Step 6: Sign and Simulate Transaction
@@ -348,6 +381,19 @@ export class ExactSvmSchemeV1 implements SchemeNetworkFacilitator {
         network: payloadV1.network,
         transaction: "",
         errorReason: valid.invalidReason ?? "verification_failed",
+        payer: valid.payer || "",
+      };
+    }
+
+    // Duplicate settlement check: reject if this transaction is already being settled.
+    // Must occur before any async work so concurrent calls for the same tx are caught.
+    const txKey = exactSvmPayload.transaction;
+    if (this.settlementCache.isDuplicate(txKey)) {
+      return {
+        success: false,
+        network: payloadV1.network,
+        transaction: "",
+        errorReason: "duplicate_settlement",
         payer: valid.payer || "",
       };
     }

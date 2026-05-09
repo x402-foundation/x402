@@ -1,5 +1,6 @@
 import { x402Facilitator } from "@x402/core/facilitator";
 import { Network } from "@x402/core/types";
+import { SettlementCache } from "../../settlement-cache";
 import { FacilitatorSvmSigner } from "../../signer";
 import { ExactSvmScheme } from "./scheme";
 import { ExactSvmSchemeV1 } from "../v1/facilitator/scheme";
@@ -47,11 +48,18 @@ export function registerExactSvmScheme(
   facilitator: x402Facilitator,
   config: SvmFacilitatorConfig,
 ): x402Facilitator {
+  // Share a single settlement cache across V1 and V2 so that a duplicate
+  // transaction submitted through one protocol version is also caught by the other.
+  const settlementCache = new SettlementCache();
+
   // Register V2 scheme with specified networks
-  facilitator.register(config.networks, new ExactSvmScheme(config.signer));
+  facilitator.register(config.networks, new ExactSvmScheme(config.signer, settlementCache));
 
   // Register all V1 networks
-  facilitator.registerV1(NETWORKS as Network[], new ExactSvmSchemeV1(config.signer));
+  facilitator.registerV1(
+    NETWORKS as Network[],
+    new ExactSvmSchemeV1(config.signer, settlementCache),
+  );
 
   return facilitator;
 }

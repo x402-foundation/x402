@@ -20,6 +20,9 @@ export type {
 // Export payload types
 export type { ExactSvmPayloadV1, ExactSvmPayloadV2 } from "./types";
 
+// Export settlement cache (shared across V1/V2 facilitator instances)
+export { SettlementCache } from "./settlement-cache";
+
 // Export constants
 export * from "./constants";
 

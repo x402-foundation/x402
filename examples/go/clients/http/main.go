@@ -8,8 +8,8 @@ import (
 	"os"
 	"time"
 
-	x402 "github.com/coinbase/x402/go"
 	"github.com/joho/godotenv"
+	x402 "github.com/x402-foundation/x402/go"
 )
 
 /**
@@ -48,6 +48,7 @@ func main() {
 	}
 
 	svmPrivateKey := os.Getenv("SVM_PRIVATE_KEY")
+	evmRpcURL := os.Getenv("EVM_RPC_URL")
 
 	url := os.Getenv("SERVER_URL")
 	if url == "" {
@@ -60,9 +61,9 @@ func main() {
 
 	switch pattern {
 	case "builder-pattern":
-		client, err = createBuilderPatternClient(evmPrivateKey, svmPrivateKey)
+		client, err = createBuilderPatternClient(evmPrivateKey, svmPrivateKey, evmRpcURL)
 	case "mechanism-helper-registration":
-		client, err = createMechanismHelperRegistrationClient(evmPrivateKey, svmPrivateKey)
+		client, err = createMechanismHelperRegistrationClient(evmPrivateKey, svmPrivateKey, evmRpcURL)
 	default:
 		fmt.Printf("❌ Unknown pattern: %s\n", pattern)
 		fmt.Println("Available patterns: builder-pattern, mechanism-helper-registration")
@@ -121,7 +122,13 @@ func makeRequest(client *x402.X402Client, url string) error {
 		fmt.Println("\n💰 Payment Details:")
 		settleResp, err := extractPaymentResponse(resp.Header)
 		if err == nil {
-			fmt.Printf("  Transaction: %s\n", settleResp.Transaction)
+			fmt.Printf("  Success: %v\n", settleResp.Success)
+			if settleResp.ErrorReason != "" {
+				fmt.Printf("  ErrorReason: %s\n", settleResp.ErrorReason)
+			}
+			if settleResp.Transaction != "" {
+				fmt.Printf("  Transaction: %s\n", settleResp.Transaction)
+			}
 			fmt.Printf("  Network: %s\n", settleResp.Network)
 			fmt.Printf("  Payer: %s\n", settleResp.Payer)
 		}
@@ -129,4 +136,3 @@ func makeRequest(client *x402.X402Client, url string) error {
 
 	return nil
 }
-

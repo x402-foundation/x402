@@ -1,3 +1,58 @@
+## v2.10.0 - 2026-04-27
+### Fixed
+- MCP payload extraction failing with no method set
+
+## v2.9.0 - 2026-04-13
+### Added
+- Add optional `extra.memo` support to SVM exact scheme for seller-defined payment references
+
+## v2.8.0 - 2026-04-02
+### Added
+- Add Arbitrum One (chain ID 42161) and Arbitrum Sepolid (chain ID 421614) support with USDC as the default stablecoin
+- Add Mezo Testnet (chain ID 31611) support with mUSD as the default stablecoin
+- Add Polygon mainnet (chain ID 137) support with USDC as the default stablecoin
+- Add Stable mainnet (chain ID 988) support with USDT0 as the default stablecoin
+- Add Stable testnet (chain ID 2201) support with USDT0 as the default stablecoin
+- Add net/http standard library adapter for x402 payment middleware (http/nethttp package)
+- Add Echo framework middleware adapter for x402 payment handling in go/http/echo package
+- Add upto EVM payment scheme with client, facilitator, and server support for permit2-based partial settlement on EVM chains
+### Changed
+- Updated x402UptoPermit2Proxy canonical address to 0x4020A4f3b7b90ccA423B9fabCc0CE57C6C240002, deployed with deterministic bytecode for reproducible cross-chain CREATE2 addresses
+- Migrated project from coinbase/x402 to x402-foundation/x402 organization
+### Fixed
+- Fix gin streaming content leak and echo panic on flush 
+
+## v2.7.0 - 2026-03-23
+### Changed
+- Changed Bazaar discovery extension to support dynamic route patterns. EnrichDeclaration now
+translates [param] route segments to :param-style routeTemplate and populates pathParams with
+concrete values from each request. The EnrichExtensions call in go/http/server.go, previously
+disabled (commented out) in all prior Go releases, is now active: ALL existing Go routes that
+declare extensions will have their extensions enriched at request time. Added RouteTemplate field
+to DiscoveryExtension so callers can read it without a type assertion.
+
+## v2.6.0 - 2026-03-17
+### Added
+- Added simulation to permit2 verify and (optional) settle
+### Changed
+- Replaced SendRawApprovalAndSettle with a generic SendTransactions signer method that accepts an array of transaction requests (pre-signed or unsigned intents). Closed fail-open verification paths, aligned Permit2 amount check to exact match, and improved client extension fallback error handling
+- Simulate transaction in verify and (optional) settle; Added multicall utility for efficient rpc calls; Fixed undeployed smart wallet handling
+### Fixed
+- Fixed paywall config injection targeting `</body>` causing SVG parse errors in the browser
+
+## v2.5.0 - 2026-03-06
+### Added
+- Add route configuration validation during Initialize() to catch scheme/facilitator mismatches at startup
+- Added assetTransferMethod and supportsEip2612 flag to defaultAssets
+- Added `onProtectedRequest` hook to HTTP resource server
+- Add WithBazaar facilitator client decorator for querying /discovery/resources endpoint from bazaar in go
+- Added dynamic function for servers to generate custom response for settlement failures defaulting to empty
+- Add in-memory SettlementCache to prevent duplicate SVM transaction settlement during on-chain confirmation window
+### Changed
+- Separated v1 legacy network name resolution from v2 CAIP-2 resolution; v1 code now uses evm/v1 package, shared utils only accept eip155:CHAIN_ID format
+- GetSupported retries up to 3 times with exponential backoff on 429 rate limit responses
+- Add pluggable PaywallProvider interface for custom paywall HTML generation with PaywallBuilder pattern
+
 ## 2.4.1 - 2026-02-25
 ### Fixed
 - Fixed changelog generation to include version extension and eliminate trailing dots which prevent go from importing

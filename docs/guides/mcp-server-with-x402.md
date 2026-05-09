@@ -19,7 +19,7 @@ This lets you (or your agent) access paid APIs programmatically, with no manual 
 
 * Node.js v20+ (install via [nvm](https://github.com/nvm-sh/nvm))
 * pnpm v10 (install via [pnpm.io/installation](https://pnpm.io/installation))
-* An x402-compatible server to connect to (for this demo, we'll use the [sample express server with weather data](https://github.com/coinbase/x402/tree/main/examples/typescript/servers/express) from the x402 repo, or any external x402 API)
+* An x402-compatible server to connect to (for this demo, we'll use the [sample express server with weather data](https://github.com/x402-foundation/x402/tree/main/examples/typescript/servers/express) from the x402 repo, or any external x402 API)
 * An Ethereum wallet with USDC (on Base Sepolia or Base Mainnet) and/or a Solana wallet with USDC (on Devnet or Mainnet)
 * [Claude Desktop with MCP support](https://claude.ai/download)
 
@@ -31,7 +31,7 @@ This lets you (or your agent) access paid APIs programmatically, with no manual 
 
 ```bash
 # Clone the x402 repository
-git clone https://github.com/coinbase/x402.git
+git clone https://github.com/x402-foundation/x402.git
 cd x402/examples/typescript
 
 # Install dependencies and build packages
@@ -168,7 +168,7 @@ async function main() {
   await server.connect(transport);
 }
 
-main().catch(error => {
+main().catch((error) => {
   console.error(error);
   process.exit(1);
 });
@@ -304,9 +304,52 @@ The example uses these x402 v2 packages:
 
 ***
 
+***
+
+### Making Your MCP Tools Discoverable via Bazaar
+
+If you are building an MCP **server** (not just a client bridge), you can make your paid tools visible in the [x402 Bazaar](/extensions/bazaar) so AI agents and other buyers can discover them without prior knowledge of your server.
+
+Pass `extensions` in the payment wrapper config with the Bazaar discovery metadata:
+
+```typescript
+import { createPaymentWrapper } from "@x402/mcp";
+import { declareDiscoveryExtension } from "@x402/extensions/bazaar";
+
+const paid = createPaymentWrapper(resourceServer, {
+  accepts,
+  resource: {
+    url: "mcp://tool/get_weather",
+    description: "Get current weather for a city",
+  },
+  // Bazaar discovery metadata — facilitators will catalog this tool
+  extensions: declareDiscoveryExtension({
+    toolName: "get_weather",
+    description: "Get current weather for a city",
+    transport: "sse",
+    inputSchema: {
+      properties: { city: { type: "string", description: "City name" } },
+      required: ["city"],
+    },
+    example: { city: "San Francisco" },
+  }),
+});
+```
+
+When a client pays for the tool, the facilitator extracts the Bazaar extension from the payment payload and indexes the tool in `/discovery/resources` with `type: "mcp"`. Buyers can then discover it by querying a Bazaar-enabled facilitator:
+
+```typescript
+const mcpTools = await client.extensions.bazaar.listResources({ type: "mcp" });
+```
+
+See the full [Bazaar documentation](/extensions/bazaar) for details on buyers querying and calling discovered MCP tools.
+
+***
+
 ### Next Steps
 
-* [See the full example in the repo](https://github.com/coinbase/x402/tree/main/examples/typescript/clients/mcp)
+* [See the full example in the repo](https://github.com/x402-foundation/x402/tree/main/examples/typescript/clients/mcp)
 * Try integrating with your own x402-compatible APIs
 * Extend the MCP server with more tools or custom logic as needed
 * [Learn about building x402 servers](/getting-started/quickstart-for-sellers)
+* [Explore the Bazaar discovery layer](/extensions/bazaar)

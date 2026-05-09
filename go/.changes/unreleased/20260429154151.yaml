@@ -1,0 +1,3 @@
+kind: Added
+body: Log the EXTENSION-RESPONSES header from facilitator verify/settle responses; the HTTP facilitator client decodes the header and logs allowlisted fields (status, rejectedReason, reason, code) without attaching data to VerifyResponse or SettleResponse
+time: 2026-04-29T15:41:51Z

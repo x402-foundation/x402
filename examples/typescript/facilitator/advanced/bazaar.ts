@@ -16,6 +16,7 @@ import {
 } from "@x402/core/types";
 import { toFacilitatorEvmSigner } from "@x402/evm";
 import { ExactEvmScheme } from "@x402/evm/exact/facilitator";
+import { UptoEvmScheme } from "@x402/evm/upto/facilitator";
 import { toFacilitatorSvmSigner } from "@x402/svm";
 import { ExactSvmScheme } from "@x402/svm/exact/facilitator";
 import { extractDiscoveryInfo, DiscoveryInfo } from "@x402/extensions/bazaar";
@@ -56,29 +57,92 @@ interface DiscoveredResource {
   accepts: PaymentRequirements[];
   discoveryInfo?: DiscoveryInfo;
   lastUpdated: string;
+  extensions?: Record<string, unknown>;
 }
 
 // BazaarCatalog stores discovered resources
+/**
+ * Catalog of discovered resources from bazaar discovery extension.
+ */
 class BazaarCatalog {
   private resources: Map<string, DiscoveredResource> = new Map();
 
+  /**
+   * Adds a discovered resource to the catalog.
+   *
+   * @param res - The discovered resource to add
+   */
   add(res: DiscoveredResource): void {
     this.resources.set(res.resource, res);
   }
 
+  /**
+   * Returns all discovered resources in the catalog.
+   *
+   * @returns Array of all discovered resources
+   */
   getAll(): DiscoveredResource[] {
     return Array.from(this.resources.values());
+  }
+
+  /**
+   * Search resources using case-insensitive keyword matching.
+   * Matches against resource URL, type, and extension values.
+   *
+   * @param query - Search query string
+   * @param type - Optional filter by resource type
+   * @param limit - Optional advisory maximum results
+   * @returns Matching resources with optional pagination hints
+   */
+  search(query: string, type?: string, limit?: number): DiscoveredResource[] {
+    const needle = query.toLowerCase();
+    let results = Array.from(this.resources.values()).filter((r) => {
+      const haystack = [
+        r.resource,
+        r.type,
+        r.description ?? "",
+        ...Object.values(r.extensions ?? {}),
+      ]
+        .join(" ")
+        .toLowerCase();
+      return haystack.includes(needle);
+    });
+
+    if (type) {
+      results = results.filter((r) => r.type === type);
+    }
+
+    return limit !== undefined ? results.slice(0, limit) : results;
   }
 }
 
 const bazaarCatalog = new BazaarCatalog();
 
+const EXTENSION_RESPONSES_HEADER = "EXTENSION-RESPONSES";
+
+/**
+ * Attach an example bazaar extension response header for clients to read back.
+ *
+ * @param res - Express response
+ */
+function setExtensionResponsesHeader(res: express.Response): void {
+  const extensionResponses = {
+    bazaar: {
+      status: "success",
+    },
+  };
+  res.setHeader(
+    EXTENSION_RESPONSES_HEADER,
+    Buffer.from(JSON.stringify(extensionResponses), "utf8").toString("base64"),
+  );
+}
+
 // Initialize the x402 Facilitator with discovery hooks
 const facilitator = new x402Facilitator()
-  .onBeforeVerify(async context => {
+  .onBeforeVerify(async (context) => {
     console.log("Before verify", context);
   })
-  .onAfterVerify(async context => {
+  .onAfterVerify(async (context) => {
     console.log("✅ Payment verified");
 
     // Extract discovered resource from payment for bazaar catalog
@@ -93,18 +157,23 @@ const facilitator = new x402Facilitator()
         console.log(`   📝 Discovered resource: ${discovered.resourceUrl}`);
         console.log(`   📝 Description: ${discovered.description}`);
         console.log(`   📝 MimeType: ${discovered.mimeType}`);
-        console.log(`   📝 Method: ${discovered.method}`);
+        if ("method" in discovered && discovered.method !== undefined) {
+          console.log(`   📝 Method: ${discovered.method}`);
+        } else if ("toolName" in discovered) {
+          console.log(`   📝 Tool: ${discovered.toolName}`);
+        }
         console.log(`   📝 X402Version: ${discovered.x402Version}`);
 
         bazaarCatalog.add({
           resource: discovered.resourceUrl,
           description: discovered.description,
           mimeType: discovered.mimeType,
-          type: "http",
+          type: discovered.discoveryInfo.input.type,
           x402Version: discovered.x402Version,
           accepts: [context.requirements],
           discoveryInfo: discovered.discoveryInfo,
           lastUpdated: new Date().toISOString(),
+          extensions: {},
         });
         console.log("   ✅ Added to bazaar catalog");
       }
@@ -112,16 +181,16 @@ const facilitator = new x402Facilitator()
       console.log(`   ⚠️  Failed to extract discovery info: ${err}`);
     }
   })
-  .onVerifyFailure(async context => {
+  .onVerifyFailure(async (context) => {
     console.log("Verify failure", context);
   })
-  .onBeforeSettle(async context => {
+  .onBeforeSettle(async (context) => {
     console.log("Before settle", context);
   })
-  .onAfterSettle(async context => {
+  .onAfterSettle(async (context) => {
     console.log(`🎉 Payment settled: ${context.result.transaction}`);
   })
-  .onSettleFailure(async context => {
+  .onSettleFailure(async (context) => {
     console.log("Settle failure", context);
   });
 
@@ -179,6 +248,7 @@ if (evmPrivateKey) {
     EVM_NETWORK,
     new ExactEvmScheme(evmSigner, { deployERC4337WithEIP6492: true }),
   );
+  facilitator.register(EVM_NETWORK, new UptoEvmScheme(evmSigner));
 }
 
 // Register SVM scheme if private key is provided
@@ -224,6 +294,7 @@ app.post("/verify", async (req, res) => {
       paymentRequirements,
     );
 
+    setExtensionResponsesHeader(res);
     res.json(response);
   } catch (error) {
     console.error("Verify error:", error);
@@ -252,6 +323,7 @@ app.post("/settle", async (req, res) => {
       paymentRequirements as PaymentRequirements,
     );
 
+    setExtensionResponsesHeader(res);
     res.json(response);
   } catch (error) {
     console.error("Settle error:", error);
@@ -315,6 +387,37 @@ app.get("/discovery/resources", async (req, res) => {
 });
 
 /**
+ * GET /discovery/search
+ * Search discovered resources using keyword matching
+ */
+app.get("/discovery/search", async (req, res) => {
+  try {
+    const query = req.query.query as string;
+    if (!query) {
+      return res.status(400).json({ error: "query parameter is required" });
+    }
+    const type = req.query.type as string | undefined;
+    const limit = req.query.limit
+      ? parseInt(req.query.limit as string)
+      : undefined;
+
+    const items = bazaarCatalog.search(query, type, limit);
+
+    res.json({
+      x402Version: 2,
+      resources: items,
+      partialResults: false,
+      pagination: null,
+    });
+  } catch (error) {
+    console.error("Discovery search error:", error);
+    res.status(500).json({
+      error: error instanceof Error ? error.message : "Unknown error",
+    });
+  }
+});
+
+/**
  * GET /health
  * Health check endpoint
  */
@@ -325,7 +428,12 @@ app.get("/health", (req, res) => {
 // Start the server
 app.listen(parseInt(PORT), () => {
   console.log(`🚀 Discovery Facilitator listening on http://localhost:${PORT}`);
-  console.log(`   Supported networks: ${facilitator.getSupported().kinds.map(k => k.network).join(", ")}`);
+  console.log(
+    `   Supported networks: ${facilitator
+      .getSupported()
+      .kinds.map((k) => k.network)
+      .join(", ")}`,
+  );
   console.log(`   Discovery endpoint: GET /discovery/resources`);
   console.log();
 });

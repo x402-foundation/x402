@@ -2,9 +2,10 @@
 
 import { useCallback } from "react";
 import type { PaymentRequired } from "@x402/core/types";
-import { isEvmNetwork, isSvmNetwork } from "./paywallUtils";
+import { isEvmNetwork, isSvmNetwork, isAvmNetwork } from "./paywallUtils";
 import { EvmPaywall } from "./evm/EvmPaywall";
 import { SolanaPaywall } from "./svm/SolanaPaywall";
+import { AvmPaywall } from "./avm/AvmPaywall";
 
 /**
  * Main Paywall App Component
@@ -52,6 +53,15 @@ export function PaywallApp() {
   if (isSvmNetwork(network)) {
     return (
       <SolanaPaywall
+        paymentRequired={paymentRequired}
+        onSuccessfulResponse={handleSuccessfulResponse}
+      />
+    );
+  }
+
+  if (isAvmNetwork(network)) {
+    return (
+      <AvmPaywall
         paymentRequired={paymentRequired}
         onSuccessfulResponse={handleSuccessfulResponse}
       />

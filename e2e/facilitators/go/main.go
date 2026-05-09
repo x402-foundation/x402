@@ -16,18 +16,6 @@ import (
 	"sync"
 	"time"
 
-	x402 "github.com/coinbase/x402/go"
-	"github.com/coinbase/x402/go/extensions/bazaar"
-	"github.com/coinbase/x402/go/extensions/eip2612gassponsor"
-	"github.com/coinbase/x402/go/extensions/erc20approvalgassponsor"
-	exttypes "github.com/coinbase/x402/go/extensions/types"
-	evmmech "github.com/coinbase/x402/go/mechanisms/evm"
-	evm "github.com/coinbase/x402/go/mechanisms/evm/exact/facilitator"
-	evmv1 "github.com/coinbase/x402/go/mechanisms/evm/exact/v1/facilitator"
-	svmmech "github.com/coinbase/x402/go/mechanisms/svm"
-	svm "github.com/coinbase/x402/go/mechanisms/svm/exact/facilitator"
-	svmv1 "github.com/coinbase/x402/go/mechanisms/svm/exact/v1/facilitator"
-	x402types "github.com/coinbase/x402/go/types"
 	"github.com/ethereum/go-ethereum"
 	"github.com/ethereum/go-ethereum/accounts/abi"
 	"github.com/ethereum/go-ethereum/common"
@@ -40,12 +28,22 @@ import (
 	solana "github.com/gagliardetto/solana-go"
 	"github.com/gagliardetto/solana-go/rpc"
 	"github.com/gin-gonic/gin"
+	x402 "github.com/x402-foundation/x402/go"
+	"github.com/x402-foundation/x402/go/extensions/bazaar"
+	"github.com/x402-foundation/x402/go/extensions/eip2612gassponsor"
+	"github.com/x402-foundation/x402/go/extensions/erc20approvalgassponsor"
+	exttypes "github.com/x402-foundation/x402/go/extensions/types"
+	evmmech "github.com/x402-foundation/x402/go/mechanisms/evm"
+	"github.com/x402-foundation/x402/go/mechanisms/evm/batch-settlement"
+	batchedevm "github.com/x402-foundation/x402/go/mechanisms/evm/batch-settlement/facilitator"
+	exactevm "github.com/x402-foundation/x402/go/mechanisms/evm/exact/facilitator"
+	exactevmv1 "github.com/x402-foundation/x402/go/mechanisms/evm/exact/v1/facilitator"
+	uptoevm "github.com/x402-foundation/x402/go/mechanisms/evm/upto/facilitator"
+	svmmech "github.com/x402-foundation/x402/go/mechanisms/svm"
+	svm "github.com/x402-foundation/x402/go/mechanisms/svm/exact/facilitator"
+	svmv1 "github.com/x402-foundation/x402/go/mechanisms/svm/exact/v1/facilitator"
+	x402types "github.com/x402-foundation/x402/go/types"
 )
-
-// NOTE: Facilitator signer helpers (go/signers/evm and go/signers/svm) are not yet implemented.
-// When available, this will reduce 300+ lines of facilitator signer code to just a few lines.
-// For now, facilitator signers still require manual implementation.
-// See PROPOSAL_SIGNER_HELPERS.md for the planned facilitator signer helpers.
 
 const (
 	DefaultPort = "4022"
@@ -147,14 +145,30 @@ func (s *realFacilitatorEvmSigner) VerifyTypedData(
 		typedData.Types[typeName] = typedFields
 	}
 
-	// Add EIP712Domain if not present
+	// Add EIP712Domain type if not present.
+	//
+	// Domain fields are conditionally declared based on which TypedDataDomain
+	// fields are populated. go-ethereum's `apitypes.TypedDataDomain.Map()`
+	// drops empty Name/Version/VerifyingContract and nil ChainID; if the type
+	// list still names them, `HashStruct("EIP712Domain", ...)` errors with
+	// "provided data '<nil>' doesn't match type 'string'" (Permit2's no-version
+	// domain is the canonical case). Mirrors viem's `getTypesForEIP712Domain`
+	// and the same fix applied to `go/mechanisms/evm/eip712.go`.
 	if _, exists := typedData.Types["EIP712Domain"]; !exists {
-		typedData.Types["EIP712Domain"] = []apitypes.Type{
-			{Name: "name", Type: "string"},
-			{Name: "version", Type: "string"},
-			{Name: "chainId", Type: "uint256"},
-			{Name: "verifyingContract", Type: "address"},
+		domainFields := make([]apitypes.Type, 0, 4)
+		if typedData.Domain.Name != "" {
+			domainFields = append(domainFields, apitypes.Type{Name: "name", Type: "string"})
 		}
+		if typedData.Domain.Version != "" {
+			domainFields = append(domainFields, apitypes.Type{Name: "version", Type: "string"})
+		}
+		if typedData.Domain.ChainId != nil {
+			domainFields = append(domainFields, apitypes.Type{Name: "chainId", Type: "uint256"})
+		}
+		if typedData.Domain.VerifyingContract != "" {
+			domainFields = append(domainFields, apitypes.Type{Name: "verifyingContract", Type: "address"})
+		}
+		typedData.Types["EIP712Domain"] = domainFields
 	}
 
 	// Hash the data
@@ -212,56 +226,37 @@ func (s *realFacilitatorEvmSigner) ReadContract(
 		return nil, fmt.Errorf("failed to parse ABI: %w", err)
 	}
 
+	methodObj, exists := contractABI.Methods[method]
+	if !exists {
+		return nil, fmt.Errorf("method %s not found in ABI", method)
+	}
+
 	// Pack the method call
 	data, err := contractABI.Pack(method, args...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to pack method call: %w", err)
 	}
 
-	// Make the call
+	// Set From to the facilitator address — required by the upto proxy which enforces
+	// msg.sender == witness.facilitator in settle().
 	to := common.HexToAddress(contractAddress)
-
-	// Check if contract exists at this address
-	code, err := s.client.CodeAt(ctx, to, nil)
-	if err != nil {
-		log.Printf("Failed to check contract code: contract=%s, error=%v", contractAddress, err)
-	} else if len(code) == 0 {
-		log.Printf("WARNING: No contract code at address %s", contractAddress)
-	}
-
 	msg := ethereum.CallMsg{
+		From: s.address,
 		To:   &to,
 		Data: data,
 	}
 
 	result, err := s.client.CallContract(ctx, msg, nil)
 	if err != nil {
-		log.Printf("Contract call failed: method=%s, contract=%s, error=%v", method, contractAddress, err)
 		return nil, fmt.Errorf("failed to call contract: %w", err)
 	}
 
-	log.Printf("Contract call: method=%s, contract=%s, dataLen=%d, resultLen=%d, result=%x", method, contractAddress, len(data), len(result), result)
-
-	// Handle empty result (some contract calls return nothing or revert)
-	if len(result) == 0 {
-		// For authorizationState, empty means false (nonce not used)
-		if method == "authorizationState" {
-			return false, nil
-		}
-		// For balanceOf or allowance, empty might mean 0
-		if method == "balanceOf" || method == "allowance" {
-			return big.NewInt(0), nil
-		}
-		return nil, fmt.Errorf("empty result from contract call")
+	if len(methodObj.Outputs) == 0 {
+		return nil, nil
 	}
 
 	// Unpack the result based on method
-	method_obj, exists := contractABI.Methods[method]
-	if !exists {
-		return nil, fmt.Errorf("method %s not found in ABI", method)
-	}
-
-	output, err := method_obj.Outputs.Unpack(result)
+	output, err := methodObj.Outputs.Unpack(result)
 	if err != nil {
 		return nil, fmt.Errorf("failed to unpack result: %w", err)
 	}
@@ -429,22 +424,104 @@ func (s *realFacilitatorEvmSigner) GetCode(ctx context.Context, address string) 
 	return code, nil
 }
 
-func (s *realFacilitatorEvmSigner) SendRawTransaction(ctx context.Context, signedTx string) (string, error) {
-	txBytes, err := hexutil.Decode(signedTx)
+func (s *realFacilitatorEvmSigner) decodeRawTransaction(serialized string) (*types.Transaction, error) {
+	txBytes, err := hexutil.Decode(serialized)
 	if err != nil {
-		return "", fmt.Errorf("failed to decode signed transaction: %w", err)
+		return nil, fmt.Errorf("failed to decode signed transaction: %w", err)
 	}
-
 	tx := new(types.Transaction)
 	if err := tx.UnmarshalBinary(txBytes); err != nil {
-		return "", fmt.Errorf("failed to unmarshal transaction: %w", err)
+		return nil, fmt.Errorf("failed to unmarshal transaction: %w", err)
 	}
+	return tx, nil
+}
 
+func (s *realFacilitatorEvmSigner) sendRawTransaction(ctx context.Context, tx *types.Transaction) (string, error) {
 	if err := s.client.SendTransaction(ctx, tx); err != nil {
 		return "", fmt.Errorf("failed to send raw transaction: %w", err)
 	}
-
 	return tx.Hash().Hex(), nil
+}
+
+func (s *realFacilitatorEvmSigner) fundPayerGasIfNeeded(ctx context.Context, decodedTx *types.Transaction) error {
+	chainSigner := types.LatestSignerForChainID(s.chainID)
+	payerAddr, err := types.Sender(chainSigner, decodedTx)
+	if err != nil {
+		return fmt.Errorf("failed to recover sender: %w", err)
+	}
+
+	gasFeeCap := decodedTx.GasFeeCap()
+	if gasFeeCap == nil {
+		gasFeeCap = decodedTx.GasPrice()
+	}
+	gasCost := new(big.Int).Mul(new(big.Int).SetUint64(decodedTx.Gas()), gasFeeCap)
+
+	payerBalance, err := s.client.BalanceAt(ctx, payerAddr, nil)
+	if err != nil {
+		return fmt.Errorf("failed to get payer balance: %w", err)
+	}
+	if payerBalance.Cmp(gasCost) >= 0 {
+		return nil
+	}
+
+	deficit := new(big.Int).Sub(gasCost, payerBalance)
+	log.Printf("⛽ Funding payer %s with %s wei for gas", payerAddr.Hex(), deficit.String())
+
+	fundNonce, err := s.client.PendingNonceAt(ctx, s.address)
+	if err != nil {
+		return fmt.Errorf("failed to get funding nonce: %w", err)
+	}
+	fundGasPrice, err := s.client.SuggestGasPrice(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to get gas price: %w", err)
+	}
+
+	fundTx := types.NewTransaction(fundNonce, payerAddr, deficit, 21000, fundGasPrice, nil)
+	signedFundTx, err := types.SignTx(fundTx, chainSigner, s.privateKey)
+	if err != nil {
+		return fmt.Errorf("failed to sign funding tx: %w", err)
+	}
+	if err := s.client.SendTransaction(ctx, signedFundTx); err != nil {
+		return fmt.Errorf("failed to send funding tx: %w", err)
+	}
+
+	fundReceipt, err := s.WaitForTransactionReceipt(ctx, signedFundTx.Hash().Hex())
+	if err != nil || fundReceipt.Status != evmmech.TxStatusSuccess {
+		return fmt.Errorf("gas funding failed: %s", signedFundTx.Hash().Hex())
+	}
+	log.Printf("⛽ Gas funding confirmed: %s", signedFundTx.Hash().Hex())
+	return nil
+}
+
+func (s *realFacilitatorEvmSigner) SendTransactions(ctx context.Context, transactions []erc20approvalgassponsor.TransactionRequest) ([]string, error) {
+	var hashes []string
+	for _, tx := range transactions {
+		var hash string
+		var err error
+		if tx.Serialized != "" {
+			decodedTx, decErr := s.decodeRawTransaction(tx.Serialized)
+			if decErr != nil {
+				return hashes, fmt.Errorf("transaction_failed: %w", decErr)
+			}
+			if fundErr := s.fundPayerGasIfNeeded(ctx, decodedTx); fundErr != nil {
+				return hashes, fmt.Errorf("transaction_failed: %w", fundErr)
+			}
+			hash, err = s.sendRawTransaction(ctx, decodedTx)
+		} else if tx.Call != nil {
+			hash, err = s.WriteContract(ctx, tx.Call.Address, tx.Call.ABI, tx.Call.Function, tx.Call.Args...)
+		} else {
+			return hashes, fmt.Errorf("transaction_failed: empty transaction request")
+		}
+		if err != nil {
+			return hashes, fmt.Errorf("transaction_failed: %w", err)
+		}
+		receipt, err := s.WaitForTransactionReceipt(ctx, hash)
+		if err != nil || receipt.Status != evmmech.TxStatusSuccess {
+			return hashes, fmt.Errorf("transaction_failed: %s", hash)
+		}
+		hashes = append(hashes, hash)
+	}
+	return hashes, nil
 }
 
 // Helper functions for type conversion
@@ -489,6 +566,23 @@ func createPaymentHash(paymentPayload x402.PaymentPayload) string {
 	data, _ := json.Marshal(paymentPayload)
 	hash := sha256.Sum256(data)
 	return hex.EncodeToString(hash[:])
+}
+
+func hashBytes(data []byte) string {
+	hash := sha256.Sum256(data)
+	return hex.EncodeToString(hash[:])
+}
+
+// isBatchSettlementRequirements reports whether the payment requirements use
+// the batch-settlement scheme. Used by the verify-hash cache hooks to exempt
+// batch-settlement flows: the resource server rewrites refund and voucher
+// payloads between /verify and /settle, so the verify-time payload hash never
+// matches the settle-time hash for those flows. Mirrors the TS e2e facilitator.
+func isBatchSettlementRequirements(req x402.PaymentRequirementsView) bool {
+	if req == nil {
+		return false
+	}
+	return req.GetScheme() == batchsettlement.SchemeBatched
 }
 
 // Real SVM facilitator signer
@@ -773,16 +867,36 @@ func main() {
 
 	// Register EVM schemes with dynamic network
 	// Enable smart wallet deployment via EIP-6492
-	evmConfig := &evm.ExactEvmSchemeConfig{
+	evmConfig := &exactevm.ExactEvmSchemeConfig{
 		DeployERC4337WithEIP6492: true,
 	}
-	evmFacilitatorScheme := evm.NewExactEvmScheme(evmSigner, evmConfig)
+	evmFacilitatorScheme := exactevm.NewExactEvmScheme(evmSigner, evmConfig)
 	facilitator.Register([]x402.Network{x402.Network(evmNetwork)}, evmFacilitatorScheme)
 
-	evmV1Config := &evmv1.ExactEvmSchemeV1Config{
+	// Register upto EVM scheme
+	uptoEvmFacilitatorScheme := uptoevm.NewUptoEvmScheme(evmSigner, nil)
+	facilitator.Register([]x402.Network{x402.Network(evmNetwork)}, uptoEvmFacilitatorScheme)
+
+	// Register batch-settlement EVM scheme. Mirrors TS:
+	// `new BatchSettlementEvmScheme(evmSigner, authorizerSigner)` where the
+	// authorizer key falls back to EVM_PRIVATE_KEY when
+	// EVM_RECEIVER_AUTHORIZER_PRIVATE_KEY is not set.
+	authorizerKey := os.Getenv("EVM_RECEIVER_AUTHORIZER_PRIVATE_KEY")
+	if authorizerKey == "" {
+		authorizerKey = evmPrivateKey
+	}
+	batchedAuthorizer, err := newBatchedAuthorizerSigner(authorizerKey)
+	if err != nil {
+		log.Fatalf("Failed to create batch-settlement authorizer: %v", err)
+	}
+	log.Printf("EVM Receiver Authorizer (batch-settlement): %s", batchedAuthorizer.Address())
+	batchedScheme := batchedevm.NewBatchSettlementEvmScheme(evmSigner, batchedAuthorizer)
+	facilitator.Register([]x402.Network{x402.Network(evmNetwork)}, batchedScheme)
+
+	evmV1Config := &exactevmv1.ExactEvmSchemeV1Config{
 		DeployERC4337WithEIP6492: true,
 	}
-	evmFacilitatorV1Scheme := evmv1.NewExactEvmSchemeV1(evmSigner, evmV1Config)
+	evmFacilitatorV1Scheme := exactevmv1.NewExactEvmSchemeV1(evmSigner, evmV1Config)
 	facilitator.RegisterV1([]x402.Network{x402.Network(getV1EvmNetwork(evmNetwork))}, evmFacilitatorV1Scheme)
 
 	// Register SVM schemes with dynamic network
@@ -807,11 +921,7 @@ func main() {
 		OnAfterVerify(func(ctx x402.FacilitatorVerifyResultContext) error {
 			// Hook 1: Track verified payment for verify→settle flow validation
 			if ctx.Result.IsValid {
-				// Hooks now use view interfaces - create hash from payload view
-				paymentHash := fmt.Sprintf("v%d-%s-%s",
-					ctx.Payload.GetVersion(),
-					ctx.Payload.GetScheme(),
-					ctx.Payload.GetNetwork())
+				paymentHash := hashBytes(ctx.PayloadBytes)
 				verificationMutex.Lock()
 				verifiedPayments[paymentHash] = time.Now().Unix()
 				verificationMutex.Unlock()
@@ -840,6 +950,7 @@ func main() {
 								version,
 								discovered.DiscoveryInfo,
 								requirements,
+								discovered.RouteTemplate,
 							)
 						}
 					} else if version == 1 {
@@ -861,6 +972,7 @@ func main() {
 								version,
 								discovered.DiscoveryInfo,
 								requirements,
+								discovered.RouteTemplate,
 							)
 						}
 					}
@@ -869,11 +981,19 @@ func main() {
 			return nil
 		}).
 		OnBeforeSettle(func(ctx x402.FacilitatorSettleContext) (*x402.FacilitatorBeforeHookResult, error) {
-			// Hook 3: Validate payment was previously verified
-			paymentHash := fmt.Sprintf("v%d-%s-%s",
-				ctx.Payload.GetVersion(),
-				ctx.Payload.GetScheme(),
-				ctx.Payload.GetNetwork())
+			// Hook 3: Validate payment was previously verified.
+			//
+			// Batch-settlement is exempt: the resource server's `BeforeSettleHook`
+			// rewrites refund payloads (adds claims/amount/refundNonce) and rewrites
+			// voucher commits before /settle, so the payload bytes seen at settle
+			// time differ from the verify-time bytes. Mirrors the TS e2e fac
+			// (e2e/facilitators/typescript/index.ts ~548) which skips the cache
+			// check for `requirements.scheme === "batch-settlement"`.
+			if isBatchSettlementRequirements(ctx.Requirements) {
+				return nil, nil
+			}
+
+			paymentHash := hashBytes(ctx.PayloadBytes)
 			verificationMutex.RLock()
 			verificationTimestamp, verified := verifiedPayments[paymentHash]
 			verificationMutex.RUnlock()
@@ -901,14 +1021,17 @@ func main() {
 			return nil, nil
 		}).
 		OnAfterSettle(func(ctx x402.FacilitatorSettleResultContext) error {
-			// Hook 4: Clean up verified payment tracking after successful settlement
-			paymentHash := fmt.Sprintf("v%d-%s-%s",
-				ctx.Payload.GetVersion(),
-				ctx.Payload.GetScheme(),
-				ctx.Payload.GetNetwork())
-			verificationMutex.Lock()
-			delete(verifiedPayments, paymentHash)
-			verificationMutex.Unlock()
+			// Hook 4: Clean up verified payment tracking after successful settlement.
+			// Skip cleanup for batch-settlement: the verify-time entry was keyed by
+			// a different payload (see OnBeforeSettle comment) so there's nothing
+			// to delete here, and the cache entry naturally ages out via the 5-min
+			// TTL check above. Mirrors TS e2e fac.
+			if !isBatchSettlementRequirements(ctx.Requirements) {
+				paymentHash := hashBytes(ctx.PayloadBytes)
+				verificationMutex.Lock()
+				delete(verifiedPayments, paymentHash)
+				verificationMutex.Unlock()
+			}
 
 			if ctx.Result.Success {
 				log.Printf("✅ Settlement completed: %s", ctx.Result.Transaction)
@@ -916,14 +1039,14 @@ func main() {
 			return nil
 		}).
 		OnSettleFailure(func(ctx x402.FacilitatorSettleFailureContext) (*x402.FacilitatorSettleFailureHookResult, error) {
-			// Hook 5: Clean up verified payment tracking on failure too
-			paymentHash := fmt.Sprintf("v%d-%s-%s",
-				ctx.Payload.GetVersion(),
-				ctx.Payload.GetScheme(),
-				ctx.Payload.GetNetwork())
-			verificationMutex.Lock()
-			delete(verifiedPayments, paymentHash)
-			verificationMutex.Unlock()
+			// Hook 5: Clean up verified payment tracking on failure too. Same
+			// batch-settlement exemption as OnAfterSettle.
+			if !isBatchSettlementRequirements(ctx.Requirements) {
+				paymentHash := hashBytes(ctx.PayloadBytes)
+				verificationMutex.Lock()
+				delete(verifiedPayments, paymentHash)
+				verificationMutex.Unlock()
+			}
 
 			log.Printf("❌ Settlement failed: %v", ctx.Error)
 			return nil, nil
@@ -937,24 +1060,10 @@ func main() {
 	// POST /verify - Verify a payment against requirements
 	// Note: Payment tracking and bazaar discovery are handled by lifecycle hooks
 	router.POST("/verify", func(c *gin.Context) {
-		// First, peek at the version to determine which struct to use
-		var versionCheck struct {
-			X402Version int `json:"x402Version"`
-		}
-
-		// Read body into buffer so we can parse it twice
 		bodyBytes, err := c.GetRawData()
 		if err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{
 				"error": fmt.Sprintf("Failed to read request body: %v", err),
-			})
-			return
-		}
-
-		// Parse version
-		if err := json.Unmarshal(bodyBytes, &versionCheck); err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{
-				"error": fmt.Sprintf("Failed to parse version: %v", err),
 			})
 			return
 		}
@@ -992,27 +1101,10 @@ func main() {
 	// POST /settle - Settle a payment on-chain
 	// Note: Verification validation and cleanup are handled by lifecycle hooks
 	router.POST("/settle", func(c *gin.Context) {
-		// First, peek at the version to determine which struct to use
-		var versionCheck struct {
-			X402Version int `json:"x402Version"`
-		}
-
-		// Read body into buffer so we can parse it twice
 		bodyBytes, err := c.GetRawData()
 		if err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{
 				"error": fmt.Sprintf("Failed to read request body: %v", err),
-			})
-			return
-		}
-
-		// Debug: Log raw request body
-		log.Printf("🔍 [FACILITATOR SETTLE] Received raw body: %s", string(bodyBytes))
-
-		// Parse version
-		if err := json.Unmarshal(bodyBytes, &versionCheck); err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{
-				"error": fmt.Sprintf("Failed to parse version: %v", err),
 			})
 			return
 		}
@@ -1033,9 +1125,6 @@ func main() {
 			[]byte(req.PaymentRequirements),
 		)
 
-		// Debug: Log response
-		log.Printf("🔍 [FACILITATOR SETTLE] Response: %+v", response)
-		log.Printf("🔍 [FACILITATOR SETTLE] Error: %v", err)
 		if err != nil {
 			log.Printf("Settle error: %v", err)
 
@@ -1081,13 +1170,40 @@ func main() {
 		items, total := bazaarCatalog.GetResources(limit, offset)
 
 		c.JSON(http.StatusOK, gin.H{
-			"x402Version": 1,
+			"x402Version": 2,
 			"items":       items,
 			"pagination": gin.H{
 				"limit":  limit,
 				"offset": offset,
 				"total":  total,
 			},
+		})
+	})
+
+	// GET /discovery/search - Search discovered resources using keyword matching
+	router.GET("/discovery/search", func(c *gin.Context) {
+		query := c.Query("query")
+		if query == "" {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "query parameter is required"})
+			return
+		}
+
+		resourceType := c.Query("type")
+		limit := 0
+		if limitParam := c.Query("limit"); limitParam != "" {
+			fmt.Sscanf(limitParam, "%d", &limit)
+		}
+
+		items, _ := bazaarCatalog.SearchResources(query, resourceType, limit)
+		if items == nil {
+			items = []DiscoveredResource{}
+		}
+
+		c.JSON(http.StatusOK, gin.H{
+			"x402Version":    2,
+			"resources":      items,
+			"partialResults": false,
+			"pagination":     nil,
 		})
 	})
 

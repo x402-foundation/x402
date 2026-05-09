@@ -7,10 +7,10 @@ import (
 	"strings"
 	"testing"
 
-	x402 "github.com/coinbase/x402/go"
-	x402http "github.com/coinbase/x402/go/http"
-	"github.com/coinbase/x402/go/test/mocks/cash"
-	"github.com/coinbase/x402/go/types"
+	x402 "github.com/x402-foundation/x402/go"
+	x402http "github.com/x402-foundation/x402/go/http"
+	"github.com/x402-foundation/x402/go/test/mocks/cash"
+	"github.com/x402-foundation/x402/go/types"
 )
 
 // mockHTTPAdapter implements the HTTPAdapter interface for testing
@@ -216,6 +216,9 @@ func TestHTTPIntegration(t *testing.T) {
 			ctx,
 			*httpProcessResult2.PaymentPayload,
 			*httpProcessResult2.PaymentRequirements,
+			nil,
+			nil,
+			nil,
 		)
 		if !settlementResult.Success {
 			t.Fatalf("Failed to process settlement: %v", settlementResult.ErrorReason)

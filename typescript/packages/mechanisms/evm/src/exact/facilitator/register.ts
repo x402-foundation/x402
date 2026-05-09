@@ -27,6 +27,13 @@ export interface EvmFacilitatorConfig {
    * @default false
    */
   deployERC4337WithEIP6492?: boolean;
+
+  /**
+   * If enabled, reruns on-chain simulation during settle's re-verify.
+   *
+   * @default false
+   */
+  simulateInSettle?: boolean;
 }
 
 /**
@@ -70,6 +77,7 @@ export function registerExactEvmScheme(
     config.networks,
     new ExactEvmScheme(config.signer, {
       deployERC4337WithEIP6492: config.deployERC4337WithEIP6492,
+      simulateInSettle: config.simulateInSettle,
     }),
   );
 
@@ -78,6 +86,7 @@ export function registerExactEvmScheme(
     NETWORKS as Network[],
     new ExactEvmSchemeV1(config.signer, {
       deployERC4337WithEIP6492: config.deployERC4337WithEIP6492,
+      simulateInSettle: config.simulateInSettle,
     }),
   );
 

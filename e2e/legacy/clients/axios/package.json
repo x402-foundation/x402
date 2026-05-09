@@ -12,7 +12,7 @@
   "dependencies": {
     "axios": "^1.7.9",
     "dotenv": "^16.5.0",
-    "viem": "^2.21.26",
+    "viem": "^2.48.11",
     "x402-axios": "workspace:*"
   },
   "devDependencies": {

@@ -17,7 +17,7 @@ An **x402 server** is an application that protects HTTP resources with payment r
 ### Installation
 
 ```bash
-go get github.com/coinbase/x402/go
+go get github.com/x402-foundation/x402/go
 ```
 
 ### Basic Gin Server
@@ -27,10 +27,10 @@ package main
 
 import (
     "github.com/gin-gonic/gin"
-    x402 "github.com/coinbase/x402/go"
-    x402http "github.com/coinbase/x402/go/http"
-    ginmw "github.com/coinbase/x402/go/http/gin"
-    evm "github.com/coinbase/x402/go/mechanisms/evm/exact/server"
+    x402 "github.com/x402-foundation/x402/go"
+    x402http "github.com/x402-foundation/x402/go/http"
+    ginmw "github.com/x402-foundation/x402/go/http/gin"
+    evm "github.com/x402-foundation/x402/go/mechanisms/evm/exact/server"
 )
 
 func main() {
@@ -147,8 +147,12 @@ httpServer := x402http.Newx402HTTPResourceServer(
 // Process HTTP requests
 result := httpServer.ProcessHTTPRequest(ctx, reqCtx, nil)
 
-// Handle settlement
-headers, _ := httpServer.ProcessSettlement(ctx, payload, requirements, statusCode)
+// Handle settlement with transport context
+settleResult := httpServer.ProcessSettlement(ctx, payload, requirements, nil, &x402http.HTTPTransportContext{
+    Request:         &reqCtx,
+    ResponseBody:    responseBody,
+    ResponseHeaders: responseHeaders,
+}, nil)
 ```
 
 ### 4. Facilitator Client
@@ -172,7 +176,7 @@ settleResp, err := facilitator.Settle(ctx, payloadBytes, requirementsBytes)
 ### Gin Middleware
 
 ```go
-import ginmw "github.com/coinbase/x402/go/http/gin"
+import ginmw "github.com/x402-foundation/x402/go/http/gin"
 
 r.Use(ginmw.X402Payment(ginmw.Config{
     Routes:      routes,
@@ -318,8 +322,8 @@ Add protocol extensions like Bazaar discovery:
 
 ```go
 import (
-    "github.com/coinbase/x402/go/extensions/bazaar"
-    "github.com/coinbase/x402/go/extensions/types"
+    "github.com/x402-foundation/x402/go/extensions/bazaar"
+    "github.com/x402-foundation/x402/go/extensions/types"
 )
 
 discoveryExt, _ := bazaar.DeclareDiscoveryExtension(
@@ -761,12 +765,12 @@ routes := x402http.RoutesConfig{
 
 **V1:**
 ```go
-import "github.com/coinbase/x402/go/middleware/gin"
+import "github.com/x402-foundation/x402/go/middleware/gin"
 ```
 
 **V2:**
 ```go
-import ginmw "github.com/coinbase/x402/go/http/gin"
+import ginmw "github.com/x402-foundation/x402/go/http/gin"
 ```
 
 ## Related Documentation

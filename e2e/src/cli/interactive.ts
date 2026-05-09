@@ -1,6 +1,14 @@
 import prompts from 'prompts';
 import { DiscoveredClient, DiscoveredServer, DiscoveredFacilitator, TestScenario } from '../types';
-import { TestFilters, getUniqueVersions, getUniqueProtocolFamilies } from './filters';
+import {
+  TestFilters,
+  filterScenarios,
+  getUniqueVersions,
+  getUniqueProtocolFamilies,
+  getUniquePaymentSchemes,
+  getScenarioPaymentScheme,
+  PaymentSchemeKind,
+} from './filters';
 import { log } from '../logger';
 import { NetworkMode, getNetworkModeDescription } from '../networks/networks';
 
@@ -27,16 +35,13 @@ export async function runInteractiveMode(
   preselectedNetworkMode?: NetworkMode
 ): Promise<InteractiveSelections | null> {
 
-  log('\n🎯 Interactive Mode');
-  log('==================\n');
-
   // Question 1: Select facilitators (multi-select)
   // Sort facilitators: regular ones first, external ones at the bottom
   const regularFacilitators = allFacilitators.filter(f => !f.isExternal);
   const externalFacilitators = allFacilitators.filter(f => f.isExternal);
-  
+
   const facilitatorChoices: any[] = [];
-  
+
   // Add regular facilitators
   regularFacilitators.forEach(f => {
     facilitatorChoices.push({
@@ -45,7 +50,7 @@ export async function runInteractiveMode(
       selected: minimize // With --min: all selected. Without --min: none selected
     });
   });
-  
+
   // Add external facilitators section if any exist
   if (externalFacilitators.length > 0) {
     // Add separator/header for external facilitators
@@ -54,7 +59,7 @@ export async function runInteractiveMode(
       value: '__external_separator__',
       disabled: true
     });
-    
+
     externalFacilitators.forEach(f => {
       facilitatorChoices.push({
         title: `${f.name} (${formatVersions(f.config.x402Versions)}) [${f.config.protocolFamilies?.join(', ') || ''}]${f.config.extensions ? ' {' + f.config.extensions.join(', ') + '}' : ''}`,
@@ -283,7 +288,61 @@ export async function runInteractiveMode(
     selectedFamilies = availableFamilies;
   }
 
-  // Question 8: Select network mode (testnet/mainnet) - LAST question
+  // Question 8 (CONDITIONAL): Payment scheme — exact vs upto vs batch-settlement (EVM transfer semantics)
+  const scenariosForScheme = filterScenarios(preliminaryScenarios, {
+    versions: selectedVersions,
+    protocolFamilies: selectedFamilies,
+  });
+  const availableSchemes = getUniquePaymentSchemes(scenariosForScheme);
+  let selectedSchemes: string[] | undefined;
+
+  if (availableSchemes.length > 1) {
+    const schemeChoices = availableSchemes.map((k: PaymentSchemeKind) => {
+      const count = scenariosForScheme.filter(s => getScenarioPaymentScheme(s) === k).length;
+      return {
+        title: `${k} (${count} scenarios)`,
+        value: k,
+        selected: true,
+      };
+    });
+
+    const schemesResponse = await prompts({
+      type: 'multiselect',
+      name: 'schemes',
+      message: 'Select payment schemes',
+      choices: schemeChoices,
+      min: 1,
+      hint: 'exact = eip3009/permit2-style; upto = usage-based; batch-settlement = voucher channel',
+      instructions: false,
+    });
+
+    if (!schemesResponse.schemes || schemesResponse.schemes.length === 0) {
+      return null;
+    }
+
+    selectedSchemes = schemesResponse.schemes;
+  } else if (availableSchemes.length === 1) {
+    selectedSchemes = availableSchemes;
+  }
+
+  // Question 9: Endpoint filter (optional free-text, comma-separated regex patterns)
+  const endpointsResponse = await prompts({
+    type: 'text',
+    name: 'endpoints',
+    message: 'Filter endpoints (comma-separated patterns, blank = all)',
+    initial: '',
+    hint: 'e.g. /protected, permit2.* — supports regex',
+  });
+
+  // null means Ctrl-C; empty string means "all"
+  if (endpointsResponse.endpoints === undefined) {
+    return null;
+  }
+  const selectedEndpoints: string[] | undefined = endpointsResponse.endpoints
+    ? (endpointsResponse.endpoints as string).split(',').map((p: string) => p.trim()).filter((p: string) => p.length > 0)
+    : undefined;
+
+  // Question 10: Select network mode (testnet/mainnet) - LAST question
   // Skip if preselected via CLI flag
   let networkMode: NetworkMode;
 
@@ -332,6 +391,8 @@ export async function runInteractiveMode(
     extensions: selectedExtensions,
     versions: selectedVersions,
     protocolFamilies: selectedFamilies,
+    schemes: selectedSchemes,
+    endpoints: selectedEndpoints,
     networkMode,
   };
 }
