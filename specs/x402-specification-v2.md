@@ -160,7 +160,7 @@ The client includes payment authorization as JSON in the payment payload field:
     "mimeType": "application/json"
   },
   "accepted": {
-  "scheme": "exact",
+    "scheme": "exact",
     "network": "eip155:84532",
     "amount": "10000",
     "asset": "0x036CbD53842c5426634e7929541eC2318f3dCF7e",
@@ -354,7 +354,7 @@ Example with actual data:
       "mimeType": "application/json"
     },
     "accepted": {
-    "scheme": "exact",
+      "scheme": "exact",
       "network": "eip155:84532",
       "amount": "10000",
       "asset": "0x036CbD53842c5426634e7929541eC2318f3dCF7e",
