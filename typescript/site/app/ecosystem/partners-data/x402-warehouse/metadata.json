@@ -1,0 +1,7 @@
+{
+  "name": "x402 Warehouse",
+  "category": "Services/Endpoints",
+  "logoUrl": "/logos/x402-warehouse.png",
+  "description": "Solo-dev warehouse of four x402-paid utility APIs on Base mainnet — tzapi (timezone + business hours), md-api (URL → markdown for RAG), holidays-api (100+ country public holidays + business-day calculator), and langdetect-api (75-language detection via Lingua). All settle via Coinbase CDP facilitator, $0.001–$0.005 per call, with bazaar discovery extension for AgentCore. Open template, no API keys, no signup.",
+  "websiteUrl": "https://tzapi.vercel.app"
+}
