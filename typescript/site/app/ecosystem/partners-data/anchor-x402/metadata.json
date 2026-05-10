@@ -1,0 +1,7 @@
+{
+    "name": "anchor-x402",
+    "description": "Nine x402-paid commodity services for AI agents on Base + Solana mainnet. Dual-chain hash anchoring, OFAC sanctions screening, signed decision attestation, tx decode, ENS/SNS resolution, USD price, calldata decode, datetime parser, and bundled wallet intelligence. Pay per call in USDC — no API keys, no accounts.",
+    "logoUrl": "/logos/anchor-x402.svg",
+    "websiteUrl": "https://anchor-x402.com",
+    "category": "Services/Endpoints"
+}
