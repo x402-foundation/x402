@@ -2,6 +2,6 @@
   "name": "x402 Warehouse",
   "category": "Services/Endpoints",
   "logoUrl": "/logos/x402-warehouse.png",
-  "description": "Solo-dev warehouse of four x402-paid utility APIs on Base mainnet — tzapi (timezone + business hours), md-api (URL → markdown for RAG), holidays-api (100+ country public holidays + business-day calculator), and langdetect-api (75-language detection via Lingua). All settle via Coinbase CDP facilitator, $0.001–$0.005 per call, with bazaar discovery extension for AgentCore. Open template, no API keys, no signup.",
+  "description": "Solo-dev warehouse of eight x402-paid APIs on Base + Solana mainnet. Utility (Base): tzapi (timezone + business hours), md-api (URL → markdown for RAG), holidays-api (100+ country public holidays + business-day calculator), langdetect-api (75-language detection via Lingua). Datetime (Base + Solana): calparse-api (natural-language → ISO 8601). Solana agent toolkit: x402rugproof (bundle/sniper/funder-cluster scoring), x402rent (empty-ATA rent recovery, no key custody), x402sniper (SNIPE/WATCH/SKIP verdict for post-graduation mints). Base via Coinbase CDP facilitator with bazaar discovery extension; Solana via PayAI (gasless for buyers). $0.001–$0.05 per call. Open templates, MIT-licensed Solana endpoints, no API keys, no signup.",
   "websiteUrl": "https://tzapi.vercel.app"
 }
