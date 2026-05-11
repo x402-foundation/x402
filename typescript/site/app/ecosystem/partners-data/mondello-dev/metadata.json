@@ -1,0 +1,7 @@
+{
+  "name": "mondello.dev",
+  "description": "Agent-discoverable Astro + Cloudflare Workers blog with 17 paid x402 endpoints on Base mainnet (USDC) — Claude Code skill downloads, image/audio generation, agent-SEO data, llms.txt packs, and paid consults. Ships OpenAPI 3.1 with x-x402-payment extensions, an MCP server, and a skills manifest as source patterns for shipping agent-discoverable surfaces.",
+  "logoUrl": "/logos/mondello-dev.png",
+  "websiteUrl": "https://mondello.dev",
+  "category": "Services/Endpoints"
+}
