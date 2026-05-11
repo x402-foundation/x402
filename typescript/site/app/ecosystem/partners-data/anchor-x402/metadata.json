@@ -1,0 +1,7 @@
+{
+  "name": "anchor-x402",
+  "description": "15 x402-paid services for AI agents on Base + Solana — sanctions screening, wallet intelligence, dual-chain hash anchoring, signed attestations, tx + calldata decode, ENS/SNS resolution, USD prices, datetime parsing, async wallet due-diligence investigator ($7.77), plus 5 universal LLM endpoints (roast, oracle with on-chain anchored verdict, tldr, aura, grade). Hosted chatbot at chat.anchor-x402.com lets anyone use any service with a passkey or browser wallet — chat free, pay only when you approve.",
+  "logoUrl": "/logos/anchor-x402.png",
+  "websiteUrl": "https://anchor-x402.com",
+  "category": "Services/Endpoints"
+}
