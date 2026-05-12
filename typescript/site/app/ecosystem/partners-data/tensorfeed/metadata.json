@@ -1,0 +1,7 @@
+{
+  "name": "TensorFeed.ai",
+  "category": "Services/Endpoints",
+  "logoUrl": "/logos/tensorfeed.png",
+  "description": "Real-time AI ecosystem data API for AI agents with x402-paid premium endpoints on Base mainnet. Free tier covers AI news (50+ sources), model pricing, AI service status (2-min polling across 20 providers), MCP registry growth, GitHub/npm/PyPI trending, AI papers, and public-domain US-government feeds (MITRE CVE, CISA KEV, EPSS, OSV, NASA POWER, OpenFDA, EIA, SEC EDGAR). Premium tier (1-3 credits per call in USDC on Base) unlocks routing recommendations, multi-day time series, leaderboard rankings, agents directory, news search, cost projection, and webhook watches. AFTA-certified: Ed25519-signed receipts on every paid call, code-enforced no-charge on upstream errors, schema validation failures, and stale data. First canonical Coinbase x402 V2 settlement on April 27, 2026 (tx 0xe20c57d8aa6df63f75ce7a4e4c0cab492eb7fa672a23cd8fd59967eb6b66bd67).",
+  "websiteUrl": "https://tensorfeed.ai/developers/agent-payments"
+}
