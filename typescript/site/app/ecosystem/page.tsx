@@ -35,7 +35,7 @@ async function getPartners(): Promise<Partner[]> {
       return {
         ...metadata,
         slug: folder,
-        logoUrl: metadata.logoUrl || `/images/ecosystem/logos/${folder}.png`,
+        logoUrl: metadata.logoUrl ?? `/images/ecosystem/logos/${folder}.png`,
       };
     } catch (error) {
       console.error(`Error reading or parsing metadata.json for ${folder}:`, error);
