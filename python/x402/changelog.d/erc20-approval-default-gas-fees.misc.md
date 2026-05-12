@@ -1,0 +1,1 @@
+Expose `DEFAULT_MAX_FEE_PER_GAS` and `DEFAULT_MAX_PRIORITY_FEE_PER_GAS` from `x402.mechanisms.evm.constants` and use them as the fallback when fee estimation is unavailable in `sign_erc20_approval_transaction`. Mirrors the TypeScript SDK's named constants; numeric defaults (1 gwei / 0.1 gwei) are unchanged.

@@ -193,6 +193,12 @@ EIP2612_PERMIT_TYPES: dict[str, list[dict[str, str]]] = {
 # Gas limit for a standard ERC-20 approve() transaction
 ERC20_APPROVE_GAS_LIMIT = 70_000
 
+# Fallback max fee per gas (1 gwei) when fee estimation fails
+DEFAULT_MAX_FEE_PER_GAS = 1_000_000_000
+
+# Fallback max priority fee per gas (0.1 gwei) when fee estimation fails
+DEFAULT_MAX_PRIORITY_FEE_PER_GAS = 100_000_000
+
 # Permit2 deadline buffer (seconds) for verification
 PERMIT2_DEADLINE_BUFFER = 6
 
