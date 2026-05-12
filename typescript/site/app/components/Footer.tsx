@@ -105,24 +105,16 @@ export function Footer() {
         {/* Copyright row */}
         <div className="flex justify-between items-center">
           <p className="text-white/40 text-sm">
-            While x402 is an open and neutral standard, this website is maintained by Coinbase
-            Developer Platform. By using this site, you agree to be bound by the{" "}
+            Copyright © x402 a Series of LF Projects, LLC
+            <br />
+            For web site terms of use, trademark policy and other project policies please see{" "}
             <Link
-              href="https://www.coinbase.com/legal/developer-platform/terms-of-service"
+              href="https://lfprojects.org"
               target="_blank"
               rel="noopener noreferrer"
               className="text-blue-500 hover:text-blue-400"
             >
-              CDP Terms of Service
-            </Link>{" "}
-            and{" "}
-            <Link
-              href="https://www.coinbase.com/legal/privacy"
-              target="_blank"
-              rel="noopener noreferrer"
-              className="text-blue-500 hover:text-blue-400"
-            >
-              Global Privacy Policy
+              https://lfprojects.org
             </Link>
             .
           </p>
