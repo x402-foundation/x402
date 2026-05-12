@@ -1,6 +1,6 @@
 {
   "name": "naxytra",
-  "description": "Naxytra's xytara runtime exposes x402 payment lanes for agentic execution, discovery, and settlement-aware workflows.",
+  "description": "naxytra's xytara runtime exposes x402 payment lanes for agentic execution, discovery, and settlement-aware workflows.",
   "logoUrl": "",
   "websiteUrl": "https://www.naxytra.com/v1/agent-discovery-index",
   "category": "Infrastructure & Tooling"
