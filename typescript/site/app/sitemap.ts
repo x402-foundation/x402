@@ -20,18 +20,6 @@ export default function sitemap(): MetadataRoute.Sitemap {
       priority: 0.8,
     },
     {
-      url: "https://x402.org/writing",
-      lastModified: new Date("2026-05-11"),
-      changeFrequency: "weekly",
-      priority: 0.75,
-    },
-    {
-      url: "https://x402.org/writing/x402-batch-settlement",
-      lastModified: new Date("2026-05-11"),
-      changeFrequency: "monthly",
-      priority: 0.7,
-    },
-    {
       url: "https://x402.org/writing/x402-v2-launch",
       lastModified: new Date("2026-04-23"),
       changeFrequency: "monthly",

@@ -52,7 +52,7 @@ export function Footer() {
                 Ecosystem
               </Link>
               <Link
-                href="/writing"
+                href="/writing/x402-v2-launch"
                 className="text-white hover:text-gray-300 text-base focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white focus-visible:ring-offset-2 focus-visible:ring-offset-black"
               >
                 Writing

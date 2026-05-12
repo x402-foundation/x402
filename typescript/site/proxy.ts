@@ -165,7 +165,7 @@ x402 uses the HTTP 402 status code — a status code reserved since the beginnin
 
 - [Ecosystem](https://x402.org/ecosystem) — Explore the x402 ecosystem of partners and integrations
 - [GitHub](https://github.com/coinbase/x402) — Open source repository
-- [Writing](https://x402.org/writing) — Articles and protocol updates
+- [x402 v2 Launch](https://x402.org/writing/x402-v2-launch) — Read about the latest release
 - [Whitepaper](https://x402.org/x402-whitepaper.pdf) — Technical specification
 `;
 

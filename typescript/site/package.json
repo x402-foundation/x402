@@ -5,11 +5,8 @@
   "type": "module",
   "packageManager": "pnpm@10.7.0",
   "scripts": {
-    "dev": "next dev --webpack",
-    "dev:turbo": "next dev --turbopack",
-    "build": "next build --webpack",
-    "build:turbo": "next build --turbopack",
-    "build:deps": "cd .. && pnpm exec turbo run build --filter='!./site' --filter='./site^...'",
+    "dev": "next dev",
+    "build": "next build",
     "build:vercel": "cd .. && pnpm install && cd site && pnpm -r --filter=site... run build",
     "start": "next start",
     "format": "prettier -c .prettierrc --write \"**/*.{ts,js,cjs,json,md}\"",
