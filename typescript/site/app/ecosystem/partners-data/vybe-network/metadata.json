@@ -1,0 +1,7 @@
+{
+  "name": "Vybe Network",
+  "category": "Services/Endpoints",
+  "logoUrl": "/logos/vybe-network.png",
+  "description": "Pay-per-call Solana on-chain data via x402 USDC micropayments. Live token prices, OHLC candles, wallet PnL, top holders, transfers, trades, NFT balances, and real-time WebSocket streams — from $0.001 per call on Solana mainnet. No API key, no subscription. AI-agent-ready with open-source TypeScript SDK at @vybenetwork/x402-client.",
+  "websiteUrl": "https://docs.vybenetwork.com/docs/x402-payment-protocol"
+}
