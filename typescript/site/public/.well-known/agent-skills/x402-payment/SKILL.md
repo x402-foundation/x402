@@ -51,5 +51,5 @@ app.use(
 ## Resources
 
 - [GitHub Repository](https://github.com/coinbase/x402)
-- [Writing](https://x402.org/writing)
+- [Documentation](https://x402.org/writing/x402-v2-launch)
 - [Ecosystem](https://x402.org/ecosystem)

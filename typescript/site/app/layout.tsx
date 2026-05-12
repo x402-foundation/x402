@@ -114,7 +114,7 @@ export default function RootLayout({
         required: ["page"]
       },
       execute: function(inputs) {
-        var urls = { home: "/", ecosystem: "/ecosystem", blog: "/writing" };
+        var urls = { home: "/", ecosystem: "/ecosystem", blog: "/writing/x402-v2-launch" };
         window.location.href = urls[inputs.page] || "/";
         return Promise.resolve({ navigated: inputs.page });
       }
