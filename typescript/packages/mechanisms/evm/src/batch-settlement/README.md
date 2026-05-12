@@ -214,7 +214,6 @@ Deposits are sponsored by the facilitator (gasless for the client).
 - [Server example](https://github.com/x402-foundation/x402/tree/main/examples/typescript/servers/batch-settlement)
 - [Client example](https://github.com/x402-foundation/x402/tree/main/examples/typescript/clients/batch-settlement)
 - [Facilitator example](https://github.com/x402-foundation/x402/tree/main/examples/typescript/facilitator/batch-settlement)
-- [Streaming server (SSE, mid-stream voucher renewal)](https://github.com/x402-foundation/x402/tree/main/examples/typescript/servers/batch-settlement-streaming)
 
 ## See Also
 
