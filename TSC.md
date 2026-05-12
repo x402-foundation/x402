@@ -5,5 +5,5 @@ The following are the Participating Organizations of the Technical Steering Comm
 |Participating Organization | Representative|
 |--------------|---------------|
 |Coinbase, Inc. | Erik Reppel |
-|Cloudflare, Inc. | Rohin Lowe |
+|Cloudflare, Inc. | Rohin Lohe |
 |Stripe, Inc. | Steve Kaliski |
