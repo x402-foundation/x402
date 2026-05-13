@@ -1,0 +1,7 @@
+{
+  "name": "@powforge/x402-lightning",
+  "description": "x402 Lightning facilitator with self-custodial NWC (Nostr Wallet Connect, NIP-47) support. Any NIP-47 wallet (Alby Hub, Mutiny, Zeus, Phoenixd) or LNBits instance plugs in as the settlement backend — no custodial intermediary. Implements SchemeNetworkFacilitator + SchemeNetworkClient for bip122:000000000019d6689c085ae165831e93/exact/lightning. Pairs with the forgesworn/402-mcp agent client.",
+  "logoUrl": "/logos/x402-lightning.svg",
+  "websiteUrl": "https://www.npmjs.com/package/@powforge/x402-lightning",
+  "category": "Infrastructure & Tooling"
+}

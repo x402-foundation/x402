@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" role="img" aria-label="x402 Lightning">
+  <rect width="100" height="100" rx="18" fill="#0B0B0B"/>
+  <path d="M55 12 L25 56 L46 56 L40 88 L75 40 L54 40 L60 12 Z" fill="#F7931A"/>
+  <text x="50" y="98" text-anchor="middle" font-family="ui-monospace,monospace" font-size="9" fill="#F7931A" opacity="0.85">x402</text>
+</svg>
