@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/x402-foundation/x402/go/mechanisms/evm"
+	"github.com/x402-foundation/x402/go/mechanisms/evm/authCapture/core"
 	"github.com/x402-foundation/x402/go/types"
 )
 
@@ -131,7 +132,7 @@ func (c *AuthCaptureEvmScheme) CreatePaymentPayload(
 	salt := "0x" + hex.EncodeToString(saltBytes)
 
 	// 7. Build PaymentInfo for nonce computation.
-	// Payer is set to the actual payer here; ComputeAuthCaptureNonce zeroes it internally.
+	// Payer is set to the actual payer here; core.ComputeAuthCaptureNonce zeroes it internally.
 	paymentInfo := evm.AuthCapturePaymentInfo{
 		Operator:            captureAuthorizer,
 		Payer:               c.signer.Address(),
@@ -147,8 +148,8 @@ func (c *AuthCaptureEvmScheme) CreatePaymentPayload(
 		Salt:                salt,
 	}
 
-	// 8. Compute payer-agnostic nonce (payer is zeroed inside ComputeAuthCaptureNonce)
-	nonce, err := evm.ComputeAuthCaptureNonce(chainID, evm.AuthCaptureEscrowAddress, paymentInfo)
+	// 8. Compute payer-agnostic nonce (payer is zeroed inside core.ComputeAuthCaptureNonce)
+	nonce, err := core.ComputeAuthCaptureNonce(chainID, evm.AuthCaptureEscrowAddress, paymentInfo)
 	if err != nil {
 		return types.PaymentPayload{}, fmt.Errorf(ErrFailedToComputeNonce+": %w", err)
 	}
@@ -215,7 +216,7 @@ func (c *AuthCaptureEvmScheme) createPermit2Payload(
 	now int64,
 ) (types.PaymentPayload, error) {
 	// Permit2 nonce is uint256(payerAgnosticPaymentInfoHash); we re-derive it as a decimal.
-	// ComputeAuthCaptureNonce returns a hex-encoded bytes32; convert to decimal for Permit2.
+	// core.ComputeAuthCaptureNonce returns a hex-encoded bytes32; convert to decimal for Permit2.
 	nonceBytes, err := evm.HexToBytes(nonce)
 	if err != nil {
 		return types.PaymentPayload{}, fmt.Errorf("failed to parse nonce hex: %w", err)

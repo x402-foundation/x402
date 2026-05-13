@@ -12,6 +12,7 @@ import (
 
 	x402 "github.com/x402-foundation/x402/go"
 	"github.com/x402-foundation/x402/go/mechanisms/evm"
+	"github.com/x402-foundation/x402/go/mechanisms/evm/authCapture/core"
 	"github.com/x402-foundation/x402/go/types"
 )
 
@@ -279,7 +280,7 @@ func (f *AuthCaptureEvmScheme) verifyEip3009(
 		FeeReceiver:         feeRecipient,
 		Salt:                p.Salt,
 	}
-	expectedNonce, err := evm.ComputeAuthCaptureNonce(chainID, evm.AuthCaptureEscrowAddress, reconstructed)
+	expectedNonce, err := core.ComputeAuthCaptureNonce(chainID, evm.AuthCaptureEscrowAddress, reconstructed)
 	if err != nil {
 		return nil, x402.NewVerifyError(ErrNonceMismatch, p.Authorization.From, fmt.Sprintf("failed to compute nonce: %s", err))
 	}
@@ -407,7 +408,7 @@ func (f *AuthCaptureEvmScheme) verifyPermit2(
 		FeeReceiver:         feeRecipient,
 		Salt:                p.Salt,
 	}
-	expectedNonce, err := evm.ComputeAuthCaptureNonce(chainID, evm.AuthCaptureEscrowAddress, reconstructed)
+	expectedNonce, err := core.ComputeAuthCaptureNonce(chainID, evm.AuthCaptureEscrowAddress, reconstructed)
 	if err != nil {
 		return nil, x402.NewVerifyError(ErrNonceMismatch, p.Permit2Authorization.From,
 			fmt.Sprintf("failed to compute nonce: %s", err))
@@ -572,7 +573,7 @@ func (f *AuthCaptureEvmScheme) Settle(
 		txHash, err = f.signer.WriteContract(
 			ctx,
 			evm.AuthCaptureEscrowAddress,
-			evm.EscrowAuthorizeABI,
+			core.EscrowAuthorizeABI,
 			"authorize",
 			paymentInfoTuple,
 			amount,
@@ -583,7 +584,7 @@ func (f *AuthCaptureEvmScheme) Settle(
 		txHash, err = f.signer.WriteContract(
 			ctx,
 			evm.AuthCaptureEscrowAddress,
-			evm.EscrowChargeABI,
+			core.EscrowChargeABI,
 			"charge",
 			paymentInfoTuple,
 			amount,
