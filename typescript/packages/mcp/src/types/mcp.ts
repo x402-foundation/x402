@@ -304,16 +304,30 @@ export interface MCPResultWithMeta {
 }
 
 /**
- * MCP JSON-RPC error with payment required data
+ * MCP JSON-RPC error with payment required data.
+ *
+ * Discriminated by `code`:
+ * - `402` (legacy x402): PaymentRequired directly in `data`
+ * - `-32042` (SEP-1036 UrlElicitationRequired): PaymentRequired in `data`, or
+ *   namespaced under `data.x402` when servers carry additional payment-method
+ *   data alongside x402 requirements.
  */
-export interface MCPPaymentRequiredError {
-  /** JSON-RPC error code (402) */
-  code: typeof MCP_PAYMENT_REQUIRED_CODE;
-  /** Error message */
-  message: string;
-  /** PaymentRequired data */
-  data: PaymentRequired;
-}
+export type MCPPaymentRequiredError =
+  | {
+      code: typeof MCP_PAYMENT_REQUIRED_CODE;
+      message: string;
+      data: PaymentRequired;
+    }
+  | {
+      code: typeof JSONRPC_PAYMENT_REQUIRED_CODE;
+      message: string;
+      data: PaymentRequired;
+    }
+  | {
+      code: typeof JSONRPC_PAYMENT_REQUIRED_CODE;
+      message: string;
+      data: { x402: PaymentRequired } & Record<string, unknown>;
+    };
 
 /**
  * Type guard to check if an error is a payment required error.

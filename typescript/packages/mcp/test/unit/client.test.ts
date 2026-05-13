@@ -947,12 +947,11 @@ describe("x402MCPClient McpError(-32042) handling", () => {
       expect(result).toEqual(mockPaymentRequired);
     });
 
-    it("should return null for non-payment thrown errors", async () => {
-      mockMcpClient.callTool.mockRejectedValueOnce(new Error("Network error"));
+    it("should re-throw non-payment errors instead of swallowing them", async () => {
+      const networkError = new Error("Network error");
+      mockMcpClient.callTool.mockRejectedValueOnce(networkError);
 
-      const result = await client.getToolPaymentRequirements("tool");
-
-      expect(result).toBeNull();
+      await expect(client.getToolPaymentRequirements("tool")).rejects.toThrow(networkError);
     });
   });
 });

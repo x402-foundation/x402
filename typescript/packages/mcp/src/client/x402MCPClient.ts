@@ -673,8 +673,14 @@ export class x402MCPClient {
 
       return this.extractPaymentRequiredFromResult(result);
     } catch (error: unknown) {
-      // Handle McpError(-32042) payment challenges
-      return this.extractPaymentRequiredFromError(error);
+      // Handle McpError(-32042) payment challenges; re-throw anything else
+      // so non-payment failures aren't indistinguishable from "free tool"
+      // (mirrors callTool's catch above).
+      const extracted = this.extractPaymentRequiredFromError(error);
+      if (extracted) {
+        return extracted;
+      }
+      throw error;
     }
   }
 
@@ -763,17 +769,7 @@ export class x402MCPClient {
       return null;
     }
 
-    // isPaymentRequiredError validated that PaymentRequired exists in error.data
-    // (directly or namespaced under .x402 for -32042 errors).
-    const data = error.data as unknown as Record<string, unknown>;
-    if ("x402Version" in data) {
-      return error.data;
-    }
-    if (typeof data.x402 === "object" && data.x402 !== null) {
-      return data.x402 as PaymentRequired;
-    }
-
-    return null;
+    return "x402" in error.data ? error.data.x402 : error.data;
   }
 
 }
