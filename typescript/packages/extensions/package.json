@@ -6,14 +6,17 @@
   "types": "./dist/cjs/index.d.ts",
   "scripts": {
     "start": "tsx --env-file=.env index.ts",
-    "build": "tsup",
+    "build": "tsup && node -e \"const{cpSync}=require('fs');cpSync('src/bazaar/facilitator-service/postgres/migrations','dist/esm/bazaar/postgres/migrations',{recursive:true});cpSync('src/bazaar/facilitator-service/postgres/migrations','dist/cjs/bazaar/postgres/migrations',{recursive:true})\"",
     "test": "vitest run",
+    "test:db": "RUN_DB_TESTS=1 vitest run",
     "test:watch": "vitest",
     "watch": "tsc --watch",
     "format": "prettier -c .prettierrc --write \"**/*.{ts,js,cjs,json,md}\"",
     "format:check": "prettier -c .prettierrc --check \"**/*.{ts,js,cjs,json,md}\"",
     "lint": "eslint . --ext .ts --fix",
-    "lint:check": "eslint . --ext .ts"
+    "lint:check": "eslint . --ext .ts",
+    "db:generate": "drizzle-kit generate",
+    "db:migrate": "drizzle-kit migrate"
   },
   "keywords": [
     "x402",
@@ -27,13 +30,17 @@
   "description": "x402 Payment Protocol Extensions",
   "devDependencies": {
     "@eslint/js": "^9.24.0",
+    "@testcontainers/postgresql": "^10.16.0",
     "@types/node": "^22.13.4",
+    "@types/pg": "^8.11.10",
     "@typescript-eslint/eslint-plugin": "^8.29.1",
     "@typescript-eslint/parser": "^8.29.1",
+    "drizzle-kit": "^0.30.0",
     "eslint": "^9.24.0",
     "eslint-plugin-import": "^2.31.0",
     "eslint-plugin-jsdoc": "^50.6.9",
     "eslint-plugin-prettier": "^5.2.6",
+    "pg": "^8.13.1",
     "prettier": "3.5.2",
     "tsup": "^8.4.0",
     "tsx": "^4.19.2",
@@ -47,11 +54,24 @@
     "@scure/base": "^1.2.6",
     "@x402/core": "workspace:~",
     "ajv": "^8.17.1",
+    "drizzle-orm": "^0.36.4",
     "jose": "^5.9.6",
     "@signinwithethereum/siwe": "^4.1.0",
     "tweetnacl": "^1.0.3",
     "viem": "^2.48.11",
     "zod": "^3.24.2"
+  },
+  "peerDependencies": {
+    "pg": "^8.13.0",
+    "@neondatabase/serverless": "^0.10.0"
+  },
+  "peerDependenciesMeta": {
+    "pg": {
+      "optional": true
+    },
+    "@neondatabase/serverless": {
+      "optional": true
+    }
   },
   "exports": {
     ".": {
@@ -72,6 +92,16 @@
       "require": {
         "types": "./dist/cjs/bazaar/index.d.ts",
         "default": "./dist/cjs/bazaar/index.js"
+      }
+    },
+    "./bazaar/postgres": {
+      "import": {
+        "types": "./dist/esm/bazaar/postgres/index.d.mts",
+        "default": "./dist/esm/bazaar/postgres/index.mjs"
+      },
+      "require": {
+        "types": "./dist/cjs/bazaar/postgres/index.d.ts",
+        "default": "./dist/cjs/bazaar/postgres/index.js"
       }
     },
     "./sign-in-with-x": {

@@ -141,3 +141,12 @@ export {
   type DiscoveryResourcesResponse,
   type SearchDiscoveryResourcesResponse,
 } from "./facilitatorClient";
+
+// Export facilitator service (for facilitators hosting discovery endpoints)
+export {
+  installBazaarFacilitator,
+  InMemoryBazaarCatalog,
+  type BazaarCatalog,
+  type CatalogUpsertInput,
+  type InstallBazaarFacilitatorOptions,
+} from "./facilitator-service";

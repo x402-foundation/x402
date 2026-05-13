@@ -4,6 +4,7 @@ const baseConfig = {
   entry: {
     index: "src/index.ts",
     "bazaar/index": "src/bazaar/index.ts",
+    "bazaar/postgres/index": "src/bazaar/facilitator-service/postgres/index.ts",
     "sign-in-with-x/index": "src/sign-in-with-x/index.ts",
     "offer-receipt/index": "src/offer-receipt/index.ts",
     "payment-identifier/index": "src/payment-identifier/index.ts",

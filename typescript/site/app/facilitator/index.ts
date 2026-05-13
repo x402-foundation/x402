@@ -13,7 +13,9 @@ import { UptoEvmScheme } from "@x402/evm/upto/facilitator";
 import {
   EIP2612_GAS_SPONSORING,
   createErc20ApprovalGasSponsoringExtension,
+  installBazaarFacilitator,
 } from "@x402/extensions";
+import { getBazaarCatalog } from "./discovery/catalog";
 import { createEd25519Signer } from "@x402/stellar";
 import { ExactStellarScheme } from "@x402/stellar/exact/facilitator";
 import { toFacilitatorSvmSigner } from "@x402/svm";
@@ -185,6 +187,12 @@ async function createFacilitator(): Promise<x402Facilitator> {
   facilitator
     .registerExtension(EIP2612_GAS_SPONSORING)
     .registerExtension(createErc20ApprovalGasSponsoringExtension(erc20ApprovalSigner));
+
+  // Install bazaar discovery: registers the extension marker and an
+  // onAfterVerify hook that catalogs each verified payment that carries a
+  // bazaar declaration. Cataloging is best-effort — failures are logged but
+  // never propagate to the verify response.
+  installBazaarFacilitator(facilitator, await getBazaarCatalog());
 
   return facilitator;
 }
