@@ -1,7 +1,7 @@
 {
   "name": "CardZero",
-  "description": "Payment wallet for AI agents on Base L2. Each agent gets an ERC-4337 smart contract wallet with owner-controlled spending rules. x402 buyer support via POST /v1/x402/pay.",
-  "logoUrl": "/logos/cardzero.svg",
+  "description": "Payment + identity + escrow infrastructure for AI agents. ERC-4337 wallets on Base mainnet with owner-controlled spending rules. First non-token reference implementation of ERC-8004 (identity/reputation) and ERC-8183 (job escrow). x402 buyer support, MCP server, OpenAPI.",
+  "logoUrl": "/logos/cardzero.png",
   "websiteUrl": "https://cardzero.ai",
-  "category": "Client-Side Integrations"
+  "category": "Infrastructure & Tooling"
 }
