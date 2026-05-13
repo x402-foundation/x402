@@ -4,13 +4,14 @@
 
 The `exact` scheme on EVM executes a transfer where the Facilitator (server) pays the gas, but the Client (user) controls the exact flow of funds via cryptographic signatures.
 
-This is implemented via one of two asset transfer methods, depending on the token's capabilities:
+This is implemented via one of several asset transfer methods, depending on the token's and wallet's capabilities:
 
 | AssetTransferMethod | Use Case                                                     | Recommendation                                 | Usage Semantics                     |
 | :------------------ | :----------------------------------------------------------- | :--------------------------------------------- | :---------------------------------- |
 | **1. EIP-3009**     | Tokens with native `transferWithAuthorization` (e.g., USDC). | **Recommended** (Simplest, truly gasless).     | One-time use                        |
 | **2. Permit2**      | Tokens without EIP-3009. Uses a Proxy + Permit2.             | **Universal Fallback** (Works for any ERC-20). | One-time use                        |
-| **3. ERC-7710**      | Smart accounts with delegation support.                              | **Smart Account Option** (Paid from ERC-7710 compatible account). | One-time use and multi-use |
+| **3. ERC-7710**     | Smart accounts with delegation support.                      | **Smart Account Option** (Paid from ERC-7710 compatible account). | One-time use and multi-use |
+| **4. ERC-4337 UserOp** | Smart wallets using ERC-4337 bundler infrastructure.      | **Smart Wallet Option** (P256/WebAuthn/Passkey signing, on-chain policies). | One-time use |
 
 If no `assetTransferMethod` is specified in the payload, the implementation should prioritize `eip3009` (if compatible) and then `permit2`.
 
@@ -306,6 +307,129 @@ delegationManager.redeemDelegations(
 ```
 
 The Delegation Manager validates the delegation authority and calls the delegator account to execute the token transfer. The delegator account then performs `token.transfer(payTo, amount)`.
+
+---
+
+## 4. AssetTransferMethod: `ERC-4337 UserOp`
+
+This asset transfer method uses [ERC-4337](https://eips.ethereum.org/EIPS/eip-4337) UserOperations to execute token transfers from smart contract wallets (e.g., Safe, Coinbase Smart Wallet) via bundler infrastructure. It enables payments from wallets that cannot produce secp256k1 ECDSA signatures required by EIP-3009 and Permit2, including wallets using P256/Secure Enclave, WebAuthn/Passkey, or on-chain authorization policies.
+
+### When to Use UserOperations
+
+- The client wallet is a smart contract account that signs with P256 or WebAuthn credentials
+- The client requires on-chain spending limits or multi-signature authorization enforced by the smart contract
+- The client cannot produce secp256k1 ECDSA signatures required by EIP-3009 / Permit2
+
+### Phase 1: `PAYMENT-SIGNATURE` Header Payload
+
+The `payload` field must contain:
+
+- `entryPoint`: The canonical EntryPoint contract address the client is using (e.g., v0.6, v0.7, v0.8).
+- `userOperation`: A signed UserOperation whose `callData` encodes an ERC-20 `transfer(to, amount)` call from the smart wallet to the `payTo` address.
+
+The `payload` field may optionally contain:
+
+- `bundlerRpcUrl`: A bundler endpoint the facilitator should use for this specific operation.
+
+**Example PaymentPayload:**
+
+```json
+{
+  "x402Version": 2,
+  "accepted": {
+    "scheme": "exact",
+    "network": "eip155:8453",
+    "amount": "10000",
+    "asset": "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+    "payTo": "0x209693Bc6afc0C5328bA36FaF03C514EF312287C",
+    "maxTimeoutSeconds": 60,
+    "extra": {
+      "assetTransferMethod": "userOp",
+      "name": "USDC",
+      "version": "2"
+    }
+  },
+  "payload": {
+    "entryPoint": "0x0000000071727De22E5E9d8BAf0edAc6f37da032",
+    "userOperation": {
+      "sender": "0x857b06519E91e3A54538791bDbb0E22373e36b66",
+      "nonce": "0x0",
+      "callData": "0xa9059cbb000000000000000000000000209693bc6afc0c5328ba36faf03c514ef312287c0000000000000000000000000000000000000000000000000000000000002710",
+      "callGasLimit": "0x186A0",
+      "verificationGasLimit": "0x249F0",
+      "preVerificationGas": "0xC350",
+      "maxFeePerGas": "0x2FAF080",
+      "maxPriorityFeePerGas": "0x1E8480",
+      "signature": "0x..."
+    }
+  }
+}
+```
+
+### Phase 2: Verification Logic
+
+The verifier must execute these checks in order:
+
+1. **Decode `callData`**: Verify that `userOperation.callData` encodes exactly one `ERC20.transfer(to, amount)` call where:
+   - `to` matches the `PaymentRequirements.payTo` address
+   - `amount` matches the `PaymentRequirements.amount`
+   - The target of the call is the `PaymentRequirements.asset` token contract
+
+2. **Verify `sender`**: Confirm that `userOperation.sender` is a deployed smart contract (or has a valid `initCode` / `factory` for counterfactual deployment).
+
+3. **Verify balance**: Confirm the `sender` smart wallet holds sufficient balance of the `asset`.
+
+4. **Verify EntryPoint**: Confirm the `entryPoint` address is a canonical EntryPoint contract supported by the facilitator for the given network (e.g., v0.6, v0.7, v0.8).
+
+5. **Simulate**: Call the bundler's `eth_estimateUserOperationGas` with the UserOperation. This validates the signature (the EntryPoint calls `validateUserOp` on the smart wallet during simulation), confirms gas sufficiency, and ensures the operation will succeed. If simulation fails, the UserOperation is invalid.
+
+### Phase 3: Settlement Logic
+
+Settlement is performed by submitting the signed UserOperation to an ERC-4337 bundler via `eth_sendUserOperation(userOperation, entryPoint)`.
+
+> **Note:** Unlike EIP-3009 and Permit2 where the facilitator submits a transaction directly to the network, UserOperations are submitted to the bundler's mempool. The bundler packages the operation into an on-chain transaction via the EntryPoint contract. Facilitators poll for the receipt via `eth_getUserOperationReceipt(userOpHash)` rather than standard `eth_getTransactionReceipt`.
+
+### Bundler URL Resolution
+
+The facilitator resolves the bundler endpoint using a 3-level fallback:
+
+1. `payload.bundlerRpcUrl` — client-specified override for this operation
+2. `extra.bundlerUrl` — advertised in PaymentRequirements
+3. Facilitator's default configured bundler URL
+
+This allows clients to specify a preferred bundler while ensuring the facilitator always has a fallback.
+
+### Gas Sponsorship (Paymaster)
+
+The specification supports two gas payment modes:
+
+#### Option A: Self-Funded (Default)
+
+The smart wallet pays its own gas via its EntryPoint deposit. No additional fields are required in the UserOperation.
+
+#### Option B: Paymaster-Sponsored
+
+A [Paymaster](https://eips.ethereum.org/EIPS/eip-4337#paymasters) contract pays gas on behalf of the smart wallet, enabling a fully gasless experience.
+
+Paymaster fields are optional fields within the UserOperation itself — no separate extension is needed. The facilitator passes them transparently to the bundler RPC:
+
+- `paymaster`: Paymaster contract address
+- `paymasterData`: Paymaster-specific authorization data
+- `paymasterVerificationGasLimit`: Gas limit for paymaster verification
+- `paymasterPostOpGasLimit`: Gas limit for paymaster post-operation
+
+When a Paymaster is used, the facilitator should verify that:
+1. The `paymaster` in the UserOperation matches the expected Paymaster contract.
+2. The Paymaster has sufficient deposit in the EntryPoint to cover gas costs.
+3. Simulation via `eth_estimateUserOperationGas` validates both the smart wallet signature and the Paymaster's `validatePaymasterUserOp`.
+
+**Security Considerations**:
+
+1. **Race Condition Risk**: Similar to ERC-7710, a client could invalidate a UserOperation between simulation and settlement (e.g., by spending the nonce or draining the wallet). Mitigations include private mempool submission and client reputation tracking.
+
+2. **callData Integrity**: The facilitator MUST decode and verify the `callData` to ensure it encodes only the expected `ERC20.transfer(payTo, amount)`. Arbitrary callData could execute unintended operations on the smart wallet.
+
+3. **Bundler Trust**: The facilitator depends on the bundler to honestly submit the UserOperation. When using a client-specified `bundlerRpcUrl`, the facilitator should consider whether it trusts that endpoint, or prefer its own configured bundler.
 
 ---
 
