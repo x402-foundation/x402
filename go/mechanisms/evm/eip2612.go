@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/coinbase/x402/go/extensions/eip2612gassponsor"
+	"github.com/x402-foundation/x402/go/extensions/eip2612gassponsor"
 )
 
 // ValidateEip2612PermitForPayment validates EIP-2612 extension data for a Permit2 payment.

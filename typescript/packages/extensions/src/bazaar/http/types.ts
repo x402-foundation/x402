@@ -176,6 +176,10 @@ export interface DiscoveredHTTPResource {
   resourceUrl: string;
   description?: string;
   mimeType?: string;
+  /** Sanitized service metadata. See `sanitizeResourceServiceMetadata` for rules. */
+  serviceName?: string;
+  tags?: string[];
+  iconUrl?: string;
   /** Present after server extension enrichment; may be absent for pre-enrichment data */
   method?: string;
   routeTemplate?: string;

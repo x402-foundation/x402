@@ -9,6 +9,7 @@ import {
 } from "@x402/core/types";
 import { toFacilitatorEvmSigner } from "@x402/evm";
 import { ExactEvmScheme } from "@x402/evm/exact/facilitator";
+import { UptoEvmScheme } from "@x402/evm/upto/facilitator";
 import { toFacilitatorSvmSigner } from "@x402/svm";
 import { ExactSvmScheme } from "@x402/svm/exact/facilitator";
 import dotenv from "dotenv";
@@ -120,6 +121,7 @@ facilitator.register(
   "eip155:84532",
   new ExactEvmScheme(evmSigner, { deployERC4337WithEIP6492: true }),
 ); // Base Sepolia
+facilitator.register("eip155:84532", new UptoEvmScheme(evmSigner));
 facilitator.register(
   "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1",
   new ExactSvmScheme(svmSigner),

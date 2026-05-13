@@ -1,5 +1,63 @@
 # @x402/express Changelog
 
+## 2.12.0
+
+### Minor Changes
+
+- 45d7d19: Added cancellationDispatcher for failed route handlers
+- ee7c156: chore: tighten viem dependency floor to ^2.48.11
+
+  Raises the viem floor in every `@x402/*` package.json that lists viem as a direct dep so future `pnpm install` re-resolutions cannot regress below this version. Fixes the incomplete tightening from #2013.
+
+- Updated dependencies [608034f]
+- Updated dependencies [d235050]
+- Updated dependencies [45d7d19]
+- Updated dependencies [ee7c156]
+  - @x402/core@2.12.0
+  - @x402/extensions@2.12.0
+  - @x402/paywall@2.12.0
+
+## 2.11.0
+
+### Minor Changes
+
+- Updated dependencies [a051f48]
+- Updated dependencies [032295b]
+- Updated dependencies [dc04108]
+- Updated dependencies [484030b]
+  - @x402/core@2.11.0
+  - @x402/paywall@2.11.0
+  - @x402/extensions@2.11.0
+
+## 2.10.0
+
+### Minor Changes
+
+- Updated dependencies [a25800e]
+- Updated dependencies [9424291]
+- Updated dependencies [37b8347]
+- Updated dependencies [a4e4911]
+  - @x402/paywall@2.10.0
+  - @x402/extensions@2.10.0
+  - @x402/core@2.10.0
+
+## 2.9.0
+
+### Minor Changes
+
+- 2250cae: Migrated project from coinbase/x402 to x402-foundation/x402 organization
+- d352574: Add SettlementOverrides support for partial settlement (upto scheme). Route handlers can call setSettlementOverrides() to settle less than the authorized maximum, enabling usage-based billing.
+
+### Patch Changes
+
+- Updated dependencies [8cf3fca]
+- Updated dependencies [c0e3969]
+- Updated dependencies [2250cae]
+- Updated dependencies [d352574]
+  - @x402/core@2.9.0
+  - @x402/paywall@2.9.0
+  - @x402/extensions@2.9.0
+
 ## 2.8.0
 
 ### Minor Changes

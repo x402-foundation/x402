@@ -7,8 +7,14 @@
  * Supports both v2 (extensions in PaymentRequired) and v1 (outputSchema in PaymentRequirements).
  */
 
+import { domainToASCII } from "node:url";
 import Ajv from "ajv/dist/2020.js";
-import type { PaymentPayload, PaymentRequirements, PaymentRequirementsV1 } from "@x402/core/types";
+import type {
+  PaymentPayload,
+  PaymentRequirements,
+  PaymentRequirementsV1,
+  ResourceInfo,
+} from "@x402/core/types";
 import type { DiscoveryExtension, DiscoveryInfo } from "./types";
 import type { McpDiscoveryInfo } from "./mcp/types";
 import type { DiscoveredHTTPResource } from "./http/types";
@@ -68,6 +74,212 @@ export function isValidRouteTemplate(value: string | undefined): value is string
  */
 export function validateRouteTemplate(value: string | undefined): string | undefined {
   return isValidRouteTemplate(value) ? value : undefined;
+}
+
+/**
+ * Maximum lengths for resource service metadata fields. Spec: see
+ * `specs/extensions/bazaar.md` "Service Metadata on `resource`".
+ */
+const MAX_SERVICE_NAME_LEN = 32;
+const MAX_TAG_LEN = 32;
+const MAX_TAGS = 5;
+const MAX_ICON_URL_LEN = 2048;
+// Matches ASCII control characters (C0 + DEL).
+const CONTROL_CHAR_REGEX = /[\x00-\x1f\x7f]/;
+// Printable ASCII range (U+0020–U+007E). `serviceName` and `tags` are
+// constrained to this range so that String.length (UTF-16 code units),
+// len() in Python (code points), and len() in Go (UTF-8 bytes) all agree
+// on the character count. Same convention as paymentidentifier.id.
+const PRINTABLE_ASCII_REGEX = /^[\x20-\x7e]+$/;
+// Unicode control characters (category Cc). Defense-in-depth: the printable
+// ASCII regex already rejects every control character, but this explicit
+// check documents intent and would survive any future relaxation of the
+// ASCII restriction. Mirrors `unicode.IsControl` (Go).
+const UNICODE_CONTROL_REGEX = /\p{Cc}/u;
+
+// Loopback hostnames that must be rejected for SSRF defense. Includes the
+// common /etc/hosts aliases on Linux/macOS (`localhost.localdomain`,
+// `ip6-localhost`, `ip6-loopback`) — without these, a hostile provider could
+// route the facilitator's image fetcher to its own loopback interface.
+const LOOPBACK_HOSTNAMES = new Set([
+  "localhost",
+  "localhost.localdomain",
+  "ip6-localhost",
+  "ip6-loopback",
+]);
+// Matches a bare IPv4 dotted-quad. IPv6 literals are detected via hostname brackets.
+const IPV4_REGEX = /^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$/;
+// SSRF defense: any all-digit hostname is suspect because no legitimate DNS name
+// is purely numeric. Catches decimal-encoded IPs (`http://2130706433/` → 127.0.0.1)
+// and short-form IPs (`http://0/` → 0.0.0.0, treated as loopback on Linux).
+const ALL_DIGITS_REGEX = /^\d+$/;
+// SSRF defense: hex-encoded IPs (`http://0x7f000001/` → 127.0.0.1) — same family
+// of bypasses as the decimal form above.
+const HEX_LITERAL_REGEX = /^0x[0-9a-f]+$/i;
+
+/**
+ * Checks whether a serviceName value is structurally valid for the bazaar
+ * `resource.serviceName` field. Non-empty string of printable ASCII
+ * (U+0020–U+007E), length ≤ 32.
+ *
+ * The ASCII restriction matches the `paymentidentifier.id` convention and
+ * keeps `len()` semantics identical across TS / Python / Go.
+ *
+ * Mirrors `_is_valid_service_name` (Python) and `isValidServiceName` (Go).
+ * All three implementations must stay in sync.
+ *
+ * @param value - The raw serviceName string from the resource object
+ * @returns true if the value is a valid serviceName, false otherwise
+ *
+ * @internal Exported for facilitator use.
+ */
+export function isValidServiceName(value: string | undefined): value is string {
+  if (typeof value !== "string") return false;
+  if (value.length === 0 || value.length > MAX_SERVICE_NAME_LEN) return false;
+  if (UNICODE_CONTROL_REGEX.test(value)) return false;
+  if (!PRINTABLE_ASCII_REGEX.test(value)) return false;
+  return true;
+}
+
+/**
+ * Sanitizes a tags array for the bazaar `resource.tags` field. Drops entries
+ * that are not non-empty printable-ASCII strings of at most 32 characters,
+ * then truncates to the first 5 valid entries. Returns undefined when no
+ * entries survive (so the field can be omitted from the catalog).
+ *
+ * The ASCII restriction matches the `paymentidentifier.id` convention and
+ * keeps `len()` semantics identical across TS / Python / Go.
+ *
+ * Mirrors `_sanitize_tags` (Python) and `sanitizeTags` (Go).
+ * All three implementations must stay in sync.
+ *
+ * @param value - The raw tags value from the resource object (typed as unknown
+ *   because callers pass it directly from a parsed JSON payload)
+ * @returns The sanitized tags array, or undefined if no entries survive
+ *
+ * @internal Exported for facilitator use.
+ */
+export function sanitizeTags(value: unknown): string[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const out: string[] = [];
+  // Case-insensitive dedup: keeps the first occurrence's casing.
+  // Prevents catalog noise like ["Weather", "weather", "WEATHER"].
+  const seen = new Set<string>();
+  for (const entry of value) {
+    if (typeof entry !== "string") continue;
+    if (entry.length === 0 || entry.length > MAX_TAG_LEN) continue;
+    if (UNICODE_CONTROL_REGEX.test(entry)) continue;
+    if (!PRINTABLE_ASCII_REGEX.test(entry)) continue;
+    const key = entry.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(entry);
+    if (out.length === MAX_TAGS) break;
+  }
+  return out.length > 0 ? out : undefined;
+}
+
+/**
+ * Checks whether an iconUrl value is structurally safe for the bazaar
+ * `resource.iconUrl` field.
+ *
+ * Rules (see `specs/extensions/bazaar.md` "Service Metadata on `resource`"):
+ *   - String of length ≤ 2048
+ *   - No ASCII control characters
+ *   - Parses as an absolute http:// or https:// URL
+ *   - No userinfo (user@host)
+ *   - Host is IDN-normalized (UTS #46) before checks, so confusable
+ *     full-width / Unicode forms (e.g. `ｌｏｃａｌｈｏｓｔ`) collapse to their
+ *     ASCII canonical and get caught by the loopback check
+ *   - Host is not an IP literal (v4 or v6), not in the loopback set
+ *     (`localhost`, `localhost.localdomain`, `ip6-localhost`, `ip6-loopback`)
+ *   - Host is not a decimal IP encoding (e.g. `2130706433` → 127.0.0.1) or
+ *     hex literal (e.g. `0x7f000001`) — common SSRF bypass forms
+ *
+ * Percent-decoding is applied to the hostname before IDN normalization, and
+ * IDN normalization runs before the IP / loopback checks (parallel to the
+ * routeTemplate decoder).
+ *
+ * Mirrors `_is_valid_icon_url` (Python) and `isValidIconUrl` (Go).
+ * All three implementations must stay in sync.
+ *
+ * @param value - The raw iconUrl string from the resource object
+ * @returns true if the value is a structurally safe iconUrl, false otherwise
+ *
+ * @internal Exported for facilitator use.
+ */
+export function isValidIconUrl(value: string | undefined): value is string {
+  if (typeof value !== "string") return false;
+  if (value.length === 0 || value.length > MAX_ICON_URL_LEN) return false;
+  if (CONTROL_CHAR_REGEX.test(value)) return false;
+  let parsed: URL;
+  try {
+    parsed = new URL(value);
+  } catch {
+    return false;
+  }
+  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return false;
+  if (parsed.username !== "" || parsed.password !== "") return false;
+  // URL.hostname strips IPv6 brackets, so detect IPv6 from the bracketed host instead.
+  if (parsed.host.startsWith("[")) return false;
+  let hostname: string;
+  try {
+    hostname = decodeURIComponent(parsed.hostname);
+  } catch {
+    return false;
+  }
+  // IDN/full-width normalization: e.g. "ｌｏｃａｌｈｏｓｔ" (full-width Latin)
+  // → "localhost". Without this the loopback alias check would miss
+  // confusable Unicode hostnames. domainToASCII applies the same WHATWG /
+  // UTS #46 mapping that idna.Lookup.ToASCII (Go) and idna.encode (Python)
+  // use; returns "" on failure.
+  const asciiHost = domainToASCII(hostname);
+  if (asciiHost === "") return false;
+  hostname = asciiHost.toLowerCase();
+  if (hostname === "") return false;
+  if (LOOPBACK_HOSTNAMES.has(hostname)) return false;
+  if (IPV4_REGEX.test(hostname)) return false;
+  if (ALL_DIGITS_REGEX.test(hostname)) return false;
+  if (HEX_LITERAL_REGEX.test(hostname)) return false;
+  return true;
+}
+
+/**
+ * Sanitized service metadata extracted from a `resource` object.
+ */
+export interface SanitizedResourceServiceMetadata {
+  serviceName?: string;
+  tags?: string[];
+  iconUrl?: string;
+}
+
+/**
+ * Applies the bazaar service-metadata validation rules to a `resource` object
+ * and returns only the fields that survive. Missing or invalid fields are
+ * dropped silently (soft-drop semantics — see spec).
+ *
+ * @param resource - The raw `resource` object from a PaymentRequired or
+ *   PaymentPayload, or undefined.
+ * @returns An object containing only the valid serviceName / tags / iconUrl.
+ *
+ * @internal Exported for facilitator use.
+ */
+export function sanitizeResourceServiceMetadata(
+  resource: ResourceInfo | undefined | null,
+): SanitizedResourceServiceMetadata {
+  if (!resource) return {};
+  const out: SanitizedResourceServiceMetadata = {};
+  if (isValidServiceName(resource.serviceName)) {
+    out.serviceName = resource.serviceName;
+  }
+  const tags = sanitizeTags(resource.tags);
+  if (tags) {
+    out.tags = tags;
+  }
+  if (isValidIconUrl(resource.iconUrl)) {
+    out.iconUrl = resource.iconUrl;
+  }
+  return out;
 }
 
 /**
@@ -238,10 +450,13 @@ export function extractDiscoveryInfo(
   // Extract description and mimeType from resource info (v2) or requirements (v1)
   let description: string | undefined;
   let mimeType: string | undefined;
+  let serviceMetadata: SanitizedResourceServiceMetadata = {};
 
   if (paymentPayload.x402Version === 2) {
     description = paymentPayload.resource?.description;
     mimeType = paymentPayload.resource?.mimeType;
+    // Service metadata only exists in v2; v1 had no equivalent.
+    serviceMetadata = sanitizeResourceServiceMetadata(paymentPayload.resource);
   } else if (paymentPayload.x402Version === 1) {
     const requirementsV1 = paymentRequirements as PaymentRequirementsV1;
     description = requirementsV1.description;
@@ -252,6 +467,7 @@ export function extractDiscoveryInfo(
     resourceUrl: canonicalUrl,
     description,
     mimeType,
+    ...serviceMetadata,
     x402Version: paymentPayload.x402Version,
     discoveryInfo,
   };

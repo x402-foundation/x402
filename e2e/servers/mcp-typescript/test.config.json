@@ -4,14 +4,20 @@
   "transport": "mcp",
   "language": "typescript",
   "x402Version": 2,
+  "extensions": [
+    "bazaar"
+  ],
   "endpoints": [
     {
       "path": "get_weather",
       "method": "tool",
+      "toolName": "get_weather",
+      "mcpTransport": "sse",
       "description": "Paid weather tool via MCP transport",
       "requiresPayment": true,
       "protocolFamily": "evm",
-      "transferMethod": "eip3009"
+      "scheme": "exact",
+      "assetTransferMethod": "eip3009"
     },
     {
       "path": "/health",

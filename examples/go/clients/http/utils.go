@@ -5,8 +5,8 @@ import (
 	"encoding/json"
 	"net/http"
 
-	x402 "github.com/coinbase/x402/go"
-	x402http "github.com/coinbase/x402/go/http"
+	x402 "github.com/x402-foundation/x402/go"
+	x402http "github.com/x402-foundation/x402/go/http"
 )
 
 // wrapHTTPClient wraps a standard HTTP client with x402 payment handling
@@ -45,4 +45,3 @@ func extractPaymentResponse(headers http.Header) (*x402.SettleResponse, error) {
 
 	return &settleResp, nil
 }
-

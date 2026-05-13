@@ -6,7 +6,7 @@ requires-python = ">=3.10"
 dependencies = [
     "uvicorn>=0.24.0",
     "python-dotenv>=1.0.0",
-    "x402[evm,svm,fastapi,extensions]"
+    "x402[evm,svm,tvm,fastapi,extensions]"
 ]
 
 [build-system]

@@ -12,7 +12,7 @@ import (
 	"testing"
 	"time"
 
-	x402 "github.com/coinbase/x402/go"
+	x402 "github.com/x402-foundation/x402/go"
 )
 
 // Test helper functions

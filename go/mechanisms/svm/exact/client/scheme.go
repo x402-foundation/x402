@@ -14,8 +14,8 @@ import (
 	"github.com/gagliardetto/solana-go/programs/token"
 	"github.com/gagliardetto/solana-go/rpc"
 
-	"github.com/coinbase/x402/go/mechanisms/svm"
-	"github.com/coinbase/x402/go/types"
+	"github.com/x402-foundation/x402/go/mechanisms/svm"
+	"github.com/x402-foundation/x402/go/types"
 )
 
 // ExactSvmScheme implements the SchemeNetworkClient interface for SVM (Solana) exact payments (V2)
@@ -163,15 +163,24 @@ func (c *ExactSvmScheme) CreatePaymentPayload(
 		return types.PaymentPayload{}, fmt.Errorf(ErrFailedToBuildTransferIx+": %w", err)
 	}
 
-	// Memo with random nonce for transaction uniqueness (empty accounts - SPL Memo doesn't require signers)
-	memoBytes := make([]byte, 16)
-	if _, err := rand.Read(memoBytes); err != nil {
-		return types.PaymentPayload{}, fmt.Errorf(ErrFailedToBuildMemoIx+": %w", err)
+	// Memo instruction: use seller-defined memo from extra.memo, or random nonce for uniqueness
+	var memoPayload []byte
+	if memoStr, ok := requirements.Extra["memo"].(string); ok && memoStr != "" {
+		memoPayload = []byte(memoStr)
+		if len(memoPayload) > svm.MaxMemoBytes {
+			return types.PaymentPayload{}, errors.New(ErrMemoExceedsMaxSize)
+		}
+	} else {
+		memoBytes := make([]byte, 16)
+		if _, err := rand.Read(memoBytes); err != nil {
+			return types.PaymentPayload{}, fmt.Errorf(ErrFailedToBuildMemoIx+": %w", err)
+		}
+		memoPayload = []byte(hex.EncodeToString(memoBytes))
 	}
 	memoIx := solana.NewInstruction(
 		solana.MustPublicKeyFromBase58(svm.MemoProgramAddress),
 		solana.AccountMetaSlice{},
-		[]byte(hex.EncodeToString(memoBytes)),
+		memoPayload,
 	)
 
 	// Create final transaction

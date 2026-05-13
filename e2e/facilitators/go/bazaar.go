@@ -1,12 +1,14 @@
 package main
 
 import (
+	"fmt"
 	"log"
+	"strings"
 	"sync"
 	"time"
 
-	x402 "github.com/coinbase/x402/go"
-	exttypes "github.com/coinbase/x402/go/extensions/types"
+	x402 "github.com/x402-foundation/x402/go"
+	exttypes "github.com/x402-foundation/x402/go/extensions/types"
 )
 
 type DiscoveredResource struct {
@@ -17,7 +19,7 @@ type DiscoveredResource struct {
 	DiscoveryInfo *exttypes.DiscoveryInfo    `json:"discoveryInfo,omitempty"`
 	RouteTemplate string                     `json:"routeTemplate,omitempty"`
 	LastUpdated   string                     `json:"lastUpdated"`
-	Metadata      map[string]interface{}     `json:"metadata,omitempty"`
+	Extensions    map[string]interface{}     `json:"extensions,omitempty"`
 }
 
 type BazaarCatalog struct {
@@ -47,18 +49,26 @@ func (c *BazaarCatalog) CatalogResource(
 		log.Printf("   Route template: %s", routeTemplate)
 	}
 
+	// Derive type from discovery info input type
+	resourceType := "http"
+	if discoveryInfo != nil {
+		if _, ok := discoveryInfo.Input.(exttypes.McpInput); ok {
+			resourceType = "mcp"
+		}
+	}
+
 	c.mutex.Lock()
 	defer c.mutex.Unlock()
 
 	c.discoveredResources[resourceURL] = DiscoveredResource{
 		Resource:      resourceURL,
-		Type:          "http",
+		Type:          resourceType,
 		X402Version:   x402Version,
 		Accepts:       []x402.PaymentRequirements{paymentRequirements},
 		DiscoveryInfo: discoveryInfo,
 		RouteTemplate: routeTemplate,
 		LastUpdated:   time.Now().Format(time.RFC3339),
-		Metadata:      make(map[string]interface{}),
+		Extensions:    make(map[string]interface{}),
 	}
 }
 
@@ -82,6 +92,36 @@ func (c *BazaarCatalog) GetResources(limit, offset int) ([]DiscoveredResource, i
 	}
 
 	return all[offset:end], total
+}
+
+// SearchResources performs case-insensitive keyword search across resource URL,
+// type, and extension values.
+func (c *BazaarCatalog) SearchResources(query, resourceType string, limit int) ([]DiscoveredResource, string) {
+	c.mutex.RLock()
+	defer c.mutex.RUnlock()
+
+	needle := strings.ToLower(query)
+	var results []DiscoveredResource
+
+	for _, r := range c.discoveredResources {
+		haystack := strings.ToLower(r.Resource + " " + r.Type)
+		for _, v := range r.Extensions {
+			haystack += " " + strings.ToLower(fmt.Sprintf("%v", v))
+		}
+		if !strings.Contains(haystack, needle) {
+			continue
+		}
+		if resourceType != "" && r.Type != resourceType {
+			continue
+		}
+		results = append(results, r)
+	}
+
+	if limit > 0 && len(results) > limit {
+		results = results[:limit]
+	}
+
+	return results, query
 }
 
 func (c *BazaarCatalog) GetCount() int {

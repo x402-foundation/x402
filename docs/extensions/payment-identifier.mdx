@@ -135,7 +135,7 @@ async with x402HttpxClient(client) as http:
 Use the `GeneratePaymentID()` utility to create a unique identifier:
 
 ```go
-import "github.com/coinbase/x402/go/extensions/paymentidentifier"
+import "github.com/x402-foundation/x402/go/extensions/paymentidentifier"
 
 // Generate with default prefix "pay_"
 paymentID := paymentidentifier.GeneratePaymentID("")
@@ -152,8 +152,8 @@ Hook into the payment flow to add the payment ID before payload creation:
 
 ```go
 import (
-    x402 "github.com/coinbase/x402/go"
-    "github.com/coinbase/x402/go/extensions/paymentidentifier"
+    x402 "github.com/x402-foundation/x402/go"
+    "github.com/x402-foundation/x402/go/extensions/paymentidentifier"
 )
 
 client := x402.Newx402Client()
@@ -412,8 +412,8 @@ Declare the payment-identifier extension in your route configuration:
 
 ```go
 import (
-    x402http "github.com/coinbase/x402/go/http"
-    "github.com/coinbase/x402/go/extensions/paymentidentifier"
+    x402http "github.com/x402-foundation/x402/go/http"
+    "github.com/x402-foundation/x402/go/extensions/paymentidentifier"
 )
 
 // Optional or required payment identifier (pick one)
@@ -442,7 +442,7 @@ routes := x402http.RoutesConfig{
 Use the `ExtractPaymentIdentifier()` utility to get the payment ID from the payload:
 
 ```go
-import "github.com/coinbase/x402/go/extensions/paymentidentifier"
+import "github.com/x402-foundation/x402/go/extensions/paymentidentifier"
 
 // In your handler
 payload := c.MustGet("x402_payload").(x402.PaymentPayload)
@@ -705,7 +705,7 @@ from x402.extensions.payment_identifier import (
 Generates a cryptographically secure unique payment identifier.
 
 ```go
-import "github.com/coinbase/x402/go/extensions/paymentidentifier"
+import "github.com/x402-foundation/x402/go/extensions/paymentidentifier"
 
 // Generate with default prefix "pay_"
 paymentID := paymentidentifier.GeneratePaymentID("")
@@ -721,7 +721,7 @@ paymentID = paymentidentifier.GeneratePaymentID("order_")
 Adds a payment identifier to the extensions object. Only modifies extensions if the server declared support for the extension. Pass an empty string to auto-generate an ID.
 
 ```go
-import "github.com/coinbase/x402/go/extensions/paymentidentifier"
+import "github.com/x402-foundation/x402/go/extensions/paymentidentifier"
 
 extensions := make(map[string]interface{})
 err := paymentidentifier.AppendPaymentIdentifierToExtensions(extensions, "pay_custom_id_1234567890abcdef")
@@ -733,7 +733,7 @@ err := paymentidentifier.AppendPaymentIdentifierToExtensions(extensions, "pay_cu
 Validates a payment identifier format.
 
 ```go
-import "github.com/coinbase/x402/go/extensions/paymentidentifier"
+import "github.com/x402-foundation/x402/go/extensions/paymentidentifier"
 
 valid := paymentidentifier.IsValidPaymentID("pay_7d5d747be160e280504c099d984bcfe0") // true
 valid = paymentidentifier.IsValidPaymentID("invalid") // false (too short)
@@ -746,7 +746,7 @@ valid = paymentidentifier.IsValidPaymentID("invalid") // false (too short)
 Creates a payment-identifier extension declaration for resource servers.
 
 ```go
-import "github.com/coinbase/x402/go/extensions/paymentidentifier"
+import "github.com/x402-foundation/x402/go/extensions/paymentidentifier"
 
 // Optional payment ID
 extension := paymentidentifier.DeclarePaymentIdentifierExtension(false)
@@ -760,7 +760,7 @@ extensionRequired := paymentidentifier.DeclarePaymentIdentifierExtension(true)
 Extracts the payment identifier from a payment payload.
 
 ```go
-import "github.com/coinbase/x402/go/extensions/paymentidentifier"
+import "github.com/x402-foundation/x402/go/extensions/paymentidentifier"
 
 paymentID, err := paymentidentifier.ExtractPaymentIdentifier(payload, true)
 if err != nil {
@@ -776,7 +776,7 @@ if paymentID != "" {
 Validates the payment identifier extension object structure and ID format.
 
 ```go
-import "github.com/coinbase/x402/go/extensions/paymentidentifier"
+import "github.com/x402-foundation/x402/go/extensions/paymentidentifier"
 
 extension := payload.Extensions[paymentidentifier.PAYMENT_IDENTIFIER]
 result := paymentidentifier.ValidatePaymentIdentifier(extension)
@@ -789,7 +789,7 @@ if !result.Valid {
 ### Constants
 
 ```go
-import "github.com/coinbase/x402/go/extensions/paymentidentifier"
+import "github.com/x402-foundation/x402/go/extensions/paymentidentifier"
 
 const (
     PAYMENT_IDENTIFIER    = "payment-identifier"
@@ -808,16 +808,16 @@ var PAYMENT_ID_PATTERN = regexp.MustCompile(`^[a-zA-Z0-9_-]+$`)
 Full working examples are available in the x402 repository:
 
 **TypeScript:**
-- [TypeScript Client Example](https://github.com/coinbase/x402/tree/main/examples/typescript/clients/payment-identifier)
-- [TypeScript Server Example](https://github.com/coinbase/x402/tree/main/examples/typescript/servers/payment-identifier)
+- [TypeScript Client Example](https://github.com/x402-foundation/x402/tree/main/examples/typescript/clients/payment-identifier)
+- [TypeScript Server Example](https://github.com/x402-foundation/x402/tree/main/examples/typescript/servers/payment-identifier)
 
 **Python:**
-- [Python Client Example](https://github.com/coinbase/x402/tree/main/examples/python/clients/payment-identifier)
-- [Python Server Example](https://github.com/coinbase/x402/tree/main/examples/python/servers/payment-identifier)
+- [Python Client Example](https://github.com/x402-foundation/x402/tree/main/examples/python/clients/payment-identifier)
+- [Python Server Example](https://github.com/x402-foundation/x402/tree/main/examples/python/servers/payment-identifier)
 
 **Go:**
-- [Go Client Example](https://github.com/coinbase/x402/tree/main/examples/go/clients/payment-identifier)
-- [Go Server Example](https://github.com/coinbase/x402/tree/main/examples/go/servers/payment-identifier)
+- [Go Client Example](https://github.com/x402-foundation/x402/tree/main/examples/go/clients/payment-identifier)
+- [Go Server Example](https://github.com/x402-foundation/x402/tree/main/examples/go/servers/payment-identifier)
 
 ## FAQ
 

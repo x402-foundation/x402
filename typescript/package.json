@@ -1,36 +1,33 @@
 {
   "name": "x402_monorepo",
   "engines": {
-    "node": ">=18.0.0",
-    "pnpm": ">=10.7.0"
+    "node": ">=22.0.0",
+    "pnpm": ">=11.1.1"
   },
-  "packageManager": "pnpm@10.7.0",
+  "packageManager": "pnpm@11.1.1",
   "private": "true",
   "version": "0.0.2",
   "description": "x402 Payment Protocol Monorepo",
   "main": "index.js",
-  "pnpm": {
-    "overrides": {
-      "cssstyle": "5.3.6"
-    }
-  },
   "scripts": {
     "build": "turbo run build",
+    "build:paywall-deps": "turbo run build --filter='@x402/paywall^...'",
     "lint": "turbo run lint",
     "format": "turbo run format",
     "lint:check": "turbo run lint:check",
     "format:check": "turbo run format:check",
     "test": "turbo run test",
-    "test:integration": "pnpm --filter @x402/core --filter @x402/evm --filter @x402/svm --filter @x402/aptos --filter @x402/stellar test:integration",
+    "test:integration": "pnpm --filter @x402/core --filter @x402/evm --filter @x402/svm --filter @x402/avm --filter @x402/aptos --filter @x402/hedera --filter @x402/stellar test:integration",
     "test:all": "pnpm test && pnpm test:integration"
   },
   "keywords": [],
   "author": "",
   "license": "ISC",
   "devDependencies": {
+    "tsx": "^4.21.0",
     "tsup": "^8.4.0",
     "turbo": "^2.5.0",
-    "typescript": "^5.8.3",
+    "typescript": "^5.7.3",
     "@changesets/cli": "^2.28.1",
     "@changesets/changelog-github": "^0.5.1"
   }

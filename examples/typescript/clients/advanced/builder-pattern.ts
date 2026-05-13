@@ -1,6 +1,7 @@
 import { privateKeyToAccount } from "viem/accounts";
 import { x402Client, wrapFetchWithPayment, x402HTTPClient } from "@x402/fetch";
 import { ExactEvmScheme } from "@x402/evm/exact/client";
+import { UptoEvmScheme } from "@x402/evm/upto/client";
 import { ExactSvmScheme } from "@x402/svm/exact/client";
 import { createKeyPairSignerFromBytes } from "@solana/kit";
 import { base58 } from "@scure/base";
@@ -35,7 +36,8 @@ export async function runBuilderPatternExample(
   // Builder pattern allows fine-grained control over network registration
   // More specific patterns (e.g., "eip155:1") take precedence over wildcards (e.g., "eip155:*")
   const client = new x402Client()
-    .register("eip155:*", new ExactEvmScheme(evmSigner)) // All EVM networks
+    .register("eip155:*", new ExactEvmScheme(evmSigner)) // All EVM networks (exact)
+    .register("eip155:*", new UptoEvmScheme(evmSigner)) // All EVM networks (upto)
     .register("eip155:1", new ExactEvmScheme(ethereumMainnetSigner)) // Ethereum mainnet override
     .register("solana:*", new ExactSvmScheme(svmSigner)) // All Solana networks
     .register("solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1", new ExactSvmScheme(solanaDevnetSigner)); // Devnet override

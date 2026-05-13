@@ -23,7 +23,7 @@
         {
           "anchor": "GitHub",
           "icon": "github",
-          "href": "https://github.com/coinbase/x402"
+          "href": "https://github.com/x402-foundation/x402"
         },
         {
           "anchor": "Discord",
@@ -60,6 +60,15 @@
           "core-concepts/facilitator",
           "core-concepts/wallet",
           "core-concepts/network-and-token-support"
+        ]
+      },
+      {
+        "group": "Payment Schemes",
+        "pages": [
+          "schemes/overview",
+          "schemes/exact",
+          "schemes/upto",
+          "schemes/batch-settlement"
         ]
       },
       {

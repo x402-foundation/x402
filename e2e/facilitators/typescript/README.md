@@ -1,6 +1,6 @@
 # E2E Test Facilitator: TypeScript
 
-This facilitator demonstrates and tests the TypeScript x402 facilitator implementation with EVM, SVM, and optional Stellar payment verification and settlement.
+This facilitator demonstrates and tests the TypeScript x402 facilitator implementation with EVM, SVM, optional Aptos, optional Hedera, and optional Stellar payment verification and settlement.
 
 ## What It Tests
 
@@ -9,7 +9,7 @@ This facilitator demonstrates and tests the TypeScript x402 facilitator implemen
 - ✅ **V1 Protocol** - Legacy x402 facilitator protocol
 - ✅ **Payment Verification** - Validates payment payloads off-chain
 - ✅ **Payment Settlement** - Executes transactions on-chain
-- ✅ **Multi-chain Support** - EVM, SVM, and (optional) Stellar mechanisms
+- ✅ **Multi-chain Support** - EVM, SVM, and optional Aptos/Hedera/Stellar mechanisms
 - ✅ **HTTP API** - Express.js server exposing facilitator endpoints
 
 ### Facilitator Endpoints
@@ -171,8 +171,12 @@ pnpm start
 
 ### Optional
 - `STELLAR_PRIVATE_KEY` - Stellar private key (S... format) - enables Stellar support
+- `HEDERA_ACCOUNT_ID` - Hedera fee payer account id - enables Hedera support with `HEDERA_PRIVATE_KEY`
+- `HEDERA_PRIVATE_KEY` - Hedera ECDSA private key (0x-prefixed or DER-encoded)
 - `EVM_NETWORK` - EVM network (default: eip155:84532)
 - `SVM_NETWORK` - SVM network (default: solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1)
+- `HEDERA_NETWORK` - Hedera network (default: hedera:testnet)
+- `HEDERA_NODE_URL` - Optional custom Hedera node URL
 - `STELLAR_NETWORK` - Stellar network (default: stellar:testnet)
 
 ## Package Dependencies

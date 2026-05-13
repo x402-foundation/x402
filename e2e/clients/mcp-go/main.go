@@ -6,11 +6,11 @@ import (
 	"fmt"
 	"os"
 
-	x402 "github.com/coinbase/x402/go"
-	mcp402 "github.com/coinbase/x402/go/mcp"
-	evm "github.com/coinbase/x402/go/mechanisms/evm/exact/client"
-	evmsigners "github.com/coinbase/x402/go/signers/evm"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
+	x402 "github.com/x402-foundation/x402/go"
+	mcp402 "github.com/x402-foundation/x402/go/mcp"
+	evm "github.com/x402-foundation/x402/go/mechanisms/evm/exact/client"
+	evmsigners "github.com/x402-foundation/x402/go/signers/evm"
 )
 
 // Result structure for e2e test output

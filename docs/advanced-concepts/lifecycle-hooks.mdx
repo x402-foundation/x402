@@ -11,12 +11,15 @@ Hooks allow you to intercept and modify payment lifecycle events on clients, ser
 
 Register hooks on the core resource server for verification and settlement lifecycle events. Use cases include logging payments, recording analytics, implementing custom access control or recovering from transient failures.
 
-* **onBeforeVerify** — Runs before payment verification. Return `{ abort: true, reason }` to reject.
-* **onAfterVerify** — Runs after successful verification.
+* **onBeforeVerify** — Runs before payment verification. Return `{ abort: true, reason }` to reject, or `{ skip: true, result }` to use a locally produced verification result.
+* **onAfterVerify** — Runs after successful verification. Return `{ skipHandler: true, response? }` to settle without invoking the resource handler.
 * **onVerifyFailure** — Runs on verification failure. Return `{ recovered: true, result }` to override.
-* **onBeforeSettle** — Runs before settlement. Return `{ abort: true, reason }` to reject.
+* **onBeforeSettle** — Runs before settlement. Return `{ abort: true, reason }` to reject, or `{ skip: true, result }` to use a locally produced settlement result.
 * **onAfterSettle** — Runs after successful settlement.
 * **onSettleFailure** — Runs on settlement failure. Return `{ recovered: true, result }` to override.
+* **onVerifiedPaymentCanceled** — Runs when a verified payment is not settled because the protected handler throws or returns an error response.
+
+These server-level hooks run for every payment regardless of which extensions are active. Extensions and schemes can also contribute lifecycle hook adapters that run only when their extension key or scheme/network is used. See [Extensions Overview](/extensions/overview) for extension-level behavior.
 
 <Tabs>
   <Tab title="TypeScript">
@@ -70,7 +73,7 @@ Register hooks on the core resource server for verification and settlement lifec
   </Tab>
   <Tab title="Go">
     ```go
-    import x402 "github.com/coinbase/x402/go"
+    import x402 "github.com/x402-foundation/x402/go"
 
     server := x402.Newx402ResourceServer(facilitatorClient)
 
@@ -121,8 +124,8 @@ Register hooks for HTTP-specific request handling before payment processing. Use
     ```go
     import (
         "context"
-        x402 "github.com/coinbase/x402/go"
-        x402http "github.com/coinbase/x402/go/http"
+        x402 "github.com/x402-foundation/x402/go"
+        x402http "github.com/x402-foundation/x402/go/http"
     )
 
     // Create resource server
@@ -155,6 +158,7 @@ Register hooks on the core client for payment payload creation lifecycle events.
 * **onBeforePaymentCreation** — Runs before creating a payment payload. Return `{ abort: true, reason }` to cancel.
 * **onAfterPaymentCreation** — Runs after successful payload creation.
 * **onPaymentCreationFailure** — Runs on failure. Return `{ recovered: true, payload }` to provide fallback.
+* **onPaymentResponse** — Runs after a paid request completes. Return `{ recovered: true }` to tell the transport to retry with a fresh payload.
 
 <Tabs>
   <Tab title="TypeScript">
@@ -210,7 +214,7 @@ Register hooks on the core client for payment payload creation lifecycle events.
   </Tab>
   <Tab title="Go">
     ```go
-    import x402 "github.com/coinbase/x402/go"
+    import x402 "github.com/x402-foundation/x402/go"
 
     client := x402.Newx402Client()
 
@@ -342,7 +346,7 @@ Register hooks on the facilitator for verification and settlement lifecycle even
   </Tab>
   <Tab title="Go">
     ```go
-    import x402 "github.com/coinbase/x402/go"
+    import x402 "github.com/x402-foundation/x402/go"
 
     facilitator := x402.Newx402Facilitator()
 
@@ -365,7 +369,7 @@ Register hooks on the facilitator for verification and settlement lifecycle even
 
 ## Hook Chaining
 
-All SDKs support method chaining for registering multiple hooks:
+Hooks can be chained when registering multiple handlers:
 
 <Tabs>
   <Tab title="TypeScript">

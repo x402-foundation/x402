@@ -177,6 +177,98 @@ def is_permit2_payload(payload: dict[str, Any]) -> bool:
     return "permit2Authorization" in payload
 
 
+@dataclass
+class UptoPermit2Witness:
+    """Witness data for upto Permit2 PermitWitnessTransferFrom.
+
+    Includes facilitator field for access control (vs exact which has only to + validAfter).
+    """
+
+    to: str
+    facilitator: str
+    valid_after: str
+
+
+@dataclass
+class UptoPermit2Authorization:
+    """Upto Permit2 PermitWitnessTransferFrom data."""
+
+    from_address: str
+    permitted: ExactPermit2TokenPermissions
+    spender: str
+    nonce: str
+    deadline: str
+    witness: UptoPermit2Witness
+
+
+@dataclass
+class UptoPermit2Payload:
+    """Upto payment payload for Permit2 flow."""
+
+    permit2_authorization: UptoPermit2Authorization
+    signature: str | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        result: dict[str, Any] = {
+            "permit2Authorization": {
+                "from": self.permit2_authorization.from_address,
+                "permitted": {
+                    "token": self.permit2_authorization.permitted.token,
+                    "amount": self.permit2_authorization.permitted.amount,
+                },
+                "spender": self.permit2_authorization.spender,
+                "nonce": self.permit2_authorization.nonce,
+                "deadline": self.permit2_authorization.deadline,
+                "witness": {
+                    "to": self.permit2_authorization.witness.to,
+                    "facilitator": self.permit2_authorization.witness.facilitator,
+                    "validAfter": self.permit2_authorization.witness.valid_after,
+                },
+            }
+        }
+        if self.signature:
+            result["signature"] = self.signature
+        return result
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "UptoPermit2Payload":
+        auth = data.get("permit2Authorization", {})
+        permitted = auth.get("permitted", {})
+        witness = auth.get("witness", {})
+        return cls(
+            permit2_authorization=UptoPermit2Authorization(
+                from_address=auth.get("from", ""),
+                permitted=ExactPermit2TokenPermissions(
+                    token=permitted.get("token", ""),
+                    amount=permitted.get("amount", ""),
+                ),
+                spender=auth.get("spender", ""),
+                nonce=auth.get("nonce", ""),
+                deadline=auth.get("deadline", ""),
+                witness=UptoPermit2Witness(
+                    to=witness.get("to", ""),
+                    facilitator=witness.get("facilitator", ""),
+                    valid_after=witness.get("validAfter", ""),
+                ),
+            ),
+            signature=data.get("signature"),
+        )
+
+
+def is_upto_permit2_payload(payload: dict[str, Any]) -> bool:
+    """Check if a raw payload dict is an upto Permit2 payload.
+
+    Distinguishes from exact Permit2 by checking for the facilitator field in witness.
+    """
+    auth = payload.get("permit2Authorization")
+    if not isinstance(auth, dict):
+        return False
+    witness = auth.get("witness")
+    if not isinstance(witness, dict):
+        return False
+    return "facilitator" in witness
+
+
 def is_eip3009_payload(payload: dict[str, Any]) -> bool:
     """Check if a raw payload dict is an EIP-3009 payload.
 

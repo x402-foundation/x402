@@ -6,7 +6,7 @@ readme = "README.md"
 license = { text = "Apache-2.0" }
 authors = [
     { name = "erik", email = "erik.reppel@coinbase.com" },
-    { name = "Coinbase Developer Platform", email = "" }
+    { name = "x402 Foundation", email = "" }
 ]
 requires-python = ">=3.10"
 keywords = ["x402", "sdk", "crypto", "cdp", "payments", "web3"]

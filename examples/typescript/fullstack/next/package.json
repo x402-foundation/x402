@@ -13,7 +13,6 @@
     "lint:check": "eslint . --ext .ts"
   },
   "dependencies": {
-    "@heroicons/react": "^2.2.0",
     "@x402/core": "workspace:*",
     "@x402/evm": "workspace:*",
     "@x402/svm": "workspace:*",
@@ -26,8 +25,8 @@
   },
   "devDependencies": {
     "@eslint/js": "^9.24.0",
-    "@tailwindcss/postcss": "^4.0.0",
     "@types/node": "^22.13.4",
+    "@tailwindcss/postcss": "^4.0.0",
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "@typescript-eslint/eslint-plugin": "^8.29.1",
@@ -39,6 +38,6 @@
     "eslint-plugin-prettier": "^5.2.6",
     "prettier": "3.5.2",
     "tailwindcss": "^4.0.0",
-    "typescript": "^5"
+    "typescript": "^5.7.3"
   }
 }

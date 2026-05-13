@@ -13,7 +13,7 @@ export const MEMO_PROGRAM_ADDRESS = "MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr
  * - Phantom adds 1 Lighthouse instruction (4th instruction)
  * - Solflare adds 2 Lighthouse instructions (4th and 5th instructions)
  * We allow these as optional instructions to support these wallets.
- * See: https://github.com/coinbase/x402/issues/828
+ * See: https://github.com/x402-foundation/x402/issues/828
  */
 export const LIGHTHOUSE_PROGRAM_ADDRESS = "L2TExMFKdjpN9kozasaurPirfHy9P8sbXoAN1qA3S95";
 
@@ -41,6 +41,7 @@ export const USDC_TESTNET_ADDRESS = "4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncD
 export const DEFAULT_COMPUTE_UNIT_PRICE_MICROLAMPORTS = 1;
 export const MAX_COMPUTE_UNIT_PRICE_MICROLAMPORTS = 5_000_000; // 5 lamports
 export const DEFAULT_COMPUTE_UNIT_LIMIT = 20_000;
+export const MAX_MEMO_BYTES = 256;
 
 /**
  * How long a transaction is held in the duplicate settlement cache (ms).

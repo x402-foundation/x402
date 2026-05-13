@@ -6,16 +6,15 @@ title: "FAQ"
 
 #### What _is_ x402 in a single sentence?
 
-x402 is an open‑source protocol that turns the dormant HTTP `402 Payment Required` status code into a fully‑featured, on‑chain payment layer for APIs, websites, and autonomous agents.
+x402 is an open‑source protocol that turns the dormant HTTP `402 Payment Required` status code into a fully‑featured, onchain payment layer for APIs, websites, and autonomous agents.
 
 **Is x402 a CDP Product?**
 
-_No._ While Coinbase Developer Platform provides tooling and are the creators of the standard, it is an open protocol (Apache-2.0 license) and you don't need any Coinbase products to use it. We look forward to further clarifying this distinction and making x402 a credibly neutral payment standard.
+_No._ While Coinbase Developer Platform provides tooling and are the creators of the standard, it is an open protocol (Apache-2.0 license) and a credibly neutral payment standard, and you don't need any Coinbase products to use it.
 
-#### Why not use traditional payment rails or API keys?
+#### Why not just use API keys?
 
-Traditional rails require credit‑card networks, user accounts, and multi‑step UI flows.\
-x402 removes those dependencies, enabling programmatic, HTTP-native payments (perfect for AI agents) while dropping fees to near‑zero and settling in \~1 second.
+API key registration requires multi-step UI flows to set up accounts, add payment methods, and plug API keys into your agent. x402 removes those dependencies, enabling programmatic, HTTP-native payments (perfect for AI agents) while dropping fees to near‑zero and settling in ~1 second.
 
 #### Is x402 only for crypto‑native projects?
 
@@ -27,7 +26,7 @@ No. Any web API or content provider—crypto or web2—can integrate x402 if it 
 
 Typescript, Python, and Go are reference implementations, but x402 is an **open protocol**.
 
-Nothing prevents you from implementing the spec in Rust, Java, or other languages. If you're interested in building support for your favorite language, please [open an issue](https://github.com/coinbase/x402/issues) and let us know, we'd be happy to help!
+Nothing prevents you from implementing the spec in Rust, Java, or other languages. If you're interested in building support for your favorite language, please [open an issue](https://github.com/x402-foundation/x402/issues) and let us know, we'd be happy to help!
 
 ### Facilitators
 
@@ -40,7 +39,7 @@ Multiple organizations operate production facilitators. The protocol is **permis
 
 #### What stops a malicious facilitator from stealing funds or lying about settlement?
 
-Every x402 `PaymentPayload` is **signed by the buyer** and settled **directly on‑chain**.\
+Every x402 `PaymentPayload` is **signed by the buyer** and settled **directly onchain**.\
 A facilitator that tampers with the transaction would fail signature checks and would **not be able to** settle the transaction.
 
 ### Pricing & Schemes
@@ -51,7 +50,8 @@ There is no single answer, but common patterns are:
 
 * **Flat per‑call** (e.g., `$0.001` per request)
 * **Tiered** (`/basic` vs `/pro` endpoints with different prices)
-* **Up‑to** (work in progress): "pay‑up‑to" where the final cost equals usage (tokens, MB, etc.)
+* **Up‑to** (`scheme: "upto"`): The client authorizes a maximum amount but is only charged for actual usage (tokens, compute time, bandwidth, etc.). Available on EVM networks in TypeScript, Go, and Python. See the [Seller Quickstart](/getting-started/quickstart-for-sellers#payment-schemes-exact-upto-and-batch-settlement) for setup.
+* **Batch settlement** (`scheme: "batch-settlement"`): For many small payments on EVM, the buyer deposits into escrow once and pays with off-chain vouchers; settlement is batched onchain. Still uses a per-request maximum; actual charges can vary within that limit. TypeScript and Go SDKs today; Python planned. See [Batch settlement](/schemes/batch-settlement).
 
 #### Can I integrate x402 with a usage / plan manager like Metronome?
 
@@ -68,7 +68,7 @@ Yes. x402 handles the _payment execution_. You can still meter usage, aggregate 
 | Solana         | `solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp` | Any SPL token or Token-2022 token | fee-free | **Mainnet** |
 | Solana Devnet  | `solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1` | Any SPL token or Token-2022 | fee-free | **Testnet** |
 
-\* Gas paid on chain; many facilitators offer **zero** facilitator fees (see [ecosystem](https://www.x402.org/ecosystem?filter=facilitators) for details).
+\* Gas paid onchain; many facilitators offer **zero** facilitator fees (see [ecosystem](https://www.x402.org/ecosystem?filter=facilitators) for details).
 
 _Support for additional chains and assets is on the roadmap and community‑driven._
 
@@ -87,10 +87,10 @@ No. The recommended pattern is:
 
 #### How do refunds work?
 
-The current `exact` scheme is a _push payment_—irreversible once executed. Two options:
+The **`exact`** scheme is a _push payment_—irreversible once executed. Options:
 
-1. **Business‑logic refunds:** Seller sends a new USDC transfer back to the buyer.
-2. **Escrow schemes:** Future spec could add conditional transfers (e.g., HTLCs or hold invoices).
+1. **Business‑logic refunds:** Seller sends a new token transfer back to the buyer.
+2. **`batch-settlement` on EVM:** Cooperative refunds and timed withdrawals from channel escrow are defined in the scheme—see [Batch settlement](/schemes/batch-settlement).
 
 ### Usage by AI Agents
 
@@ -111,20 +111,8 @@ Yes. Programmatic wallets (e.g., **CDP Wallet API**, **viem**, **ethers‑v6** H
 
 #### Is there a formal spec or whitepaper?
 
-* **Spec:** [GitHub Specification](https://github.com/coinbase/x402/tree/main/specs)
+* **Spec:** [GitHub Specification](https://github.com/x402-foundation/x402/tree/main/specs)
 * [**Whitepaper**](https://www.x402.org/x402-whitepaper.pdf)
-
-#### How will x402 evolve?
-
-Tracked in public GitHub issues + community RFCs. Major themes:
-
-* Multi‑asset support
-* Additional schemes (`upto`, `stream`)
-* Discovery layer for service search & reputation
-
-**Why is x402 hosted in the Coinbase GitHub?**
-
-We acknowledge that the repo is primarily under Coinbase ownership today. This is primarily to leverage our best-in-house security and auditing team to ensure the spec is safe and nobody accidentally creates legally ambiguous payment flows. We intend to eventually transfer ownership of the repo to a steering group or open-source committee.
 
 ### Troubleshooting
 
@@ -143,5 +131,4 @@ We acknowledge that the repo is primarily under Coinbase ownership today. This i
 
 ### Still have questions?
 
-• Reach out in the [Discord channel](https://discord.gg/invite/cdp)\
-• Open a GitHub Discussion or Issue in the [x402 repo](https://github.com/coinbase/x402)
+• Open a GitHub Discussion or Issue in the [x402 repo](https://github.com/x402-foundation/x402)

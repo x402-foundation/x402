@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { evmPaywall } from "./evm";
+import { DEFAULT_STABLECOINS } from "@x402/evm";
+import { evmPaywall, getDefaultTokenDecimals } from "./evm";
+import { NETWORK_DECIMALS } from "./evm/gen/decimals";
 import { svmPaywall } from "./svm";
 import type { PaymentRequired, PaymentRequirements } from "./types";
 
@@ -54,6 +56,114 @@ describe("Network Handlers", () => {
 
       expect(html).toContain("<!DOCTYPE html>");
       expect(html).toMatch(/Test App|EVM Paywall/);
+    });
+
+    it("renders 1e15-atomic Mezo mUSD as 0.001 (18-decimal end-to-end)", () => {
+      // Mezo Testnet mUSD is 18-decimal in DEFAULT_STABLECOINS.
+      // 1e15 atomic = 0.001 mUSD. A regression to the old `parseFloat / 1e6`
+      // path would render this as 1_000_000_000 (the order-of-magnitude bug
+      // this PR fixes).
+      const req: PaymentRequirements = {
+        scheme: "exact",
+        network: "eip155:31611",
+        asset: "0x118917a40FAF1CD7a13dB0Ef56C86De7973Ac503",
+        amount: "1000000000000000",
+        payTo: "0x209693Bc6afc0C5328bA36FaF04C514EF312287C",
+        maxTimeoutSeconds: 60,
+      };
+      const html = evmPaywall.generateHtml(
+        req,
+        { ...mockPaymentRequired, accepts: [req] },
+        { appName: "Mezo Test", testnet: true },
+      );
+      expect(html).toContain("amount: 0.001,");
+      expect(html).not.toMatch(/amount: 1000000000(?!\.)/);
+    });
+
+    it("rejects non-integer atomic amount strings (BigInt strictness)", () => {
+      // The spec defines `amount` as an atomic integer string. The previous
+      // parseFloat-based implementation silently coerced non-integer inputs
+      // (e.g. "1.5", "1e15"); the BigInt-based implementation throws.
+      // This test pins that strictness so a future revert to parseFloat fails.
+      const req: PaymentRequirements = {
+        ...evmRequirement,
+        network: "eip155:8453",
+        amount: "1.5",
+      };
+      expect(() =>
+        evmPaywall.generateHtml(
+          req,
+          { ...mockPaymentRequired, accepts: [req] },
+          {
+            appName: "Strictness Test",
+            testnet: true,
+          },
+        ),
+      ).toThrow();
+    });
+
+    it("renders 1e6-atomic Base USDC as 1 (6-decimal end-to-end)", () => {
+      // Base mainnet USDC is 6-decimal in DEFAULT_STABLECOINS.
+      // 1e6 atomic = 1.00 USDC. Asserts the same dispatch behaves correctly
+      // for the canonical 6-decimal case alongside the 18-decimal case above.
+      const req: PaymentRequirements = {
+        scheme: "exact",
+        network: "eip155:8453",
+        asset: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+        amount: "1000000",
+        payTo: "0x209693Bc6afc0C5328bA36FaF04C514EF312287C",
+        maxTimeoutSeconds: 60,
+      };
+      const html = evmPaywall.generateHtml(
+        req,
+        { ...mockPaymentRequired, accepts: [req] },
+        { appName: "Base Test", testnet: false },
+      );
+      expect(html).toContain("amount: 1,");
+    });
+  });
+
+  describe("getDefaultTokenDecimals", () => {
+    it("reads non-default decimals from the @x402/evm registry", () => {
+      // Mezo Testnet mUSD is 18-decimal in DEFAULT_STABLECOINS
+      const req: PaymentRequirements = {
+        ...evmRequirement,
+        network: "eip155:31611",
+        asset: "0x118917a40FAF1CD7a13dB0Ef56C86De7973Ac503",
+      };
+      expect(getDefaultTokenDecimals(req)).toBe(18);
+    });
+
+    it("reads the registry value (not the fallback) for a known 6-decimal chain", () => {
+      // Base mainnet USDC is in the registry at 6 decimals. Asserting
+      // alongside DEFAULT_STABLECOINS catches the case where the registry is
+      // empty: the function would still return 6 via fallback, but the second
+      // assertion would fail.
+      const req: PaymentRequirements = { ...evmRequirement, network: "eip155:8453" };
+      expect(getDefaultTokenDecimals(req)).toBe(6);
+      expect(DEFAULT_STABLECOINS["eip155:8453"]?.decimals).toBe(6);
+    });
+
+    it("falls back to 6 (USDC default) for networks not in the registry", () => {
+      const req: PaymentRequirements = {
+        ...evmRequirement,
+        network: "eip155:9999999", // unknown network
+      };
+      expect(getDefaultTokenDecimals(req)).toBe(6);
+    });
+
+    it("NETWORK_DECIMALS stays in sync with DEFAULT_STABLECOINS", () => {
+      // The generated `src/evm/gen/decimals.ts` file is emitted by
+      // `src/evm/build.ts` from `@x402/evm`'s `DEFAULT_STABLECOINS`. This
+      // test pins the drift invariant in-process so a forgotten
+      // `pnpm run build:paywall` after a `DEFAULT_STABLECOINS` change is
+      // caught here (complements the CI regen-diff guard in #2054).
+      for (const [network, info] of Object.entries(DEFAULT_STABLECOINS)) {
+        expect(NETWORK_DECIMALS[network], `drift on ${network}`).toBe(info.decimals);
+      }
+      expect(Object.keys(NETWORK_DECIMALS).sort()).toStrictEqual(
+        Object.keys(DEFAULT_STABLECOINS).sort(),
+      );
     });
   });
 

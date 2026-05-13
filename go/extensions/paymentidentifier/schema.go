@@ -1,7 +1,7 @@
 package paymentidentifier
 
 import (
-	"github.com/coinbase/x402/go/extensions/types"
+	"github.com/x402-foundation/x402/go/extensions/types"
 )
 
 // PaymentIdentifierSchema returns the JSON Schema for validating payment identifier info.

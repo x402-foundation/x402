@@ -5,7 +5,7 @@ MCP (Model Context Protocol) integration for the x402 payment protocol. This pac
 ## Installation
 
 ```bash
-go get github.com/coinbase/x402/go/mcp
+go get github.com/x402-foundation/x402/go/mcp
 ```
 
 ## Quick Start
@@ -17,7 +17,7 @@ package main
 
 import (
     "context"
-    "github.com/coinbase/x402/go/mcp"
+    "github.com/x402-foundation/x402/go/mcp"
     mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
@@ -55,7 +55,7 @@ import (
     "context"
     "fmt"
     "log"
-    "github.com/coinbase/x402/go/mcp"
+    "github.com/x402-foundation/x402/go/mcp"
     mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
 )
 

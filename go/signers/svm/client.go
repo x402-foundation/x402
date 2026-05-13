@@ -6,7 +6,7 @@ import (
 
 	solana "github.com/gagliardetto/solana-go"
 
-	x402svm "github.com/coinbase/x402/go/mechanisms/svm"
+	x402svm "github.com/x402-foundation/x402/go/mechanisms/svm"
 )
 
 // ClientSigner implements x402svm.ClientSvmSigner using an Ed25519 private key.

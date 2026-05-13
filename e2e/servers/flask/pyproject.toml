@@ -5,7 +5,7 @@ description = "Python Flask server for x402 e2e tests"
 requires-python = ">=3.10"
 dependencies = [
     "python-dotenv>=1.0.0",
-    "x402[flask,evm,svm,extensions]"
+    "x402[flask,evm,svm,tvm,extensions]"
 ]
 
 [build-system]

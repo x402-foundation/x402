@@ -4,6 +4,7 @@ export type {
   SettleRequest,
   SettleResponse,
   SupportedResponse,
+  SupportedKind,
 } from "./facilitator";
 export {
   VerifyError,
@@ -19,20 +20,33 @@ export type {
 } from "./payments";
 export type {
   SchemeNetworkClient,
+  SchemeClientHooks,
   SchemeNetworkFacilitator,
   SchemeNetworkServer,
+  SchemeServerHooks,
   MoneyParser,
   PaymentPayloadResult,
   PaymentPayloadContext,
   FacilitatorContext,
+  SchemePaymentRequiredContext,
+  SchemeEnrichPaymentRequiredResponseHook,
 } from "./mechanisms";
 export type { PaymentRequirementsV1, PaymentRequiredV1, PaymentPayloadV1 } from "./v1";
 export type {
   FacilitatorExtension,
   ResourceServerExtension,
+  ResourceServerExtensionHooks,
   PaymentRequiredContext,
   SettleResultContext,
+  VerifyContext,
+  VerifyResultContext,
+  VerifyFailureContext,
+  SettleContext,
+  SettleFailureContext,
+  VerifiedPaymentCanceledContext,
 } from "./extensions";
+
+export type { DeepReadonly } from "./readonly";
 
 export type Network = `${string}:${string}`;
 

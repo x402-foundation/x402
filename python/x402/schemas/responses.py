@@ -62,6 +62,7 @@ class SettleResponse(BaseX402Model):
         payer: The payer's address.
         transaction: Transaction hash/identifier.
         network: Network where settlement occurred.
+        amount: Settled amount in atomic units.
     """
 
     success: bool
@@ -70,6 +71,7 @@ class SettleResponse(BaseX402Model):
     payer: str | None = None
     transaction: str
     network: Network
+    amount: str | None = None
 
 
 class SupportedKind(BaseX402Model):

@@ -1,7 +1,7 @@
 {
   "name": "Vercel",
   "description": "Vercel supports x402 as an open protocol for payments in MCP tools, enabling developers to monetize AI-powered applications and serverless functions.",
-  "logoUrl": "/logos/vercel.png",
+  "logoUrl": "/logos/vercel-l.svg",
   "websiteUrl": "https://vercel.com/blog/introducing-x402-mcp-open-protocol-payments-for-mcp-tools",
   "category": "Infrastructure & Tooling",
   "top_section": true

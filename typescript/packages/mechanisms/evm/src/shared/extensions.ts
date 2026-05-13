@@ -16,6 +16,7 @@ import { resolveExtensionRpcCapabilities, type ExactEvmSchemeOptions } from "./r
  * @param requirements - The payment requirements from the server
  * @param result - The payment payload result from the scheme
  * @param context - Optional context containing server extensions and metadata
+ * @param approvalAmount - Optional amount to approve instead of `requirements.amount`
  * @returns Extension data for EIP-2612 gas sponsoring, or undefined if not applicable
  */
 export async function trySignEip2612PermitExtension(
@@ -24,6 +25,7 @@ export async function trySignEip2612PermitExtension(
   requirements: PaymentRequirements,
   result: PaymentPayloadResult,
   context?: PaymentPayloadContext,
+  approvalAmount?: string,
 ): Promise<Record<string, unknown> | undefined> {
   const capabilities = resolveExtensionRpcCapabilities(requirements.network, signer, options);
 
@@ -43,6 +45,7 @@ export async function trySignEip2612PermitExtension(
 
   const chainId = getEvmChainId(requirements.network);
   const tokenAddress = getAddress(requirements.asset) as `0x${string}`;
+  const requiredAllowance = approvalAmount ?? requirements.amount;
 
   try {
     const allowance = (await capabilities.readContract({
@@ -52,7 +55,7 @@ export async function trySignEip2612PermitExtension(
       args: [signer.address, PERMIT2_ADDRESS],
     })) as bigint;
 
-    if (allowance >= BigInt(requirements.amount)) {
+    if (allowance >= BigInt(requiredAllowance)) {
       return undefined;
     }
   } catch {
@@ -75,7 +78,7 @@ export async function trySignEip2612PermitExtension(
     tokenVersion,
     chainId,
     deadline,
-    requirements.amount,
+    requiredAllowance,
   );
 
   return {
@@ -90,6 +93,7 @@ export async function trySignEip2612PermitExtension(
  * @param options - Optional RPC configuration for backfilling capabilities
  * @param requirements - The payment requirements from the server
  * @param context - Optional context containing server extensions and metadata
+ * @param approvalAmount - Optional amount to check for Permit2 allowance
  * @returns Extension data for ERC-20 approval gas sponsoring, or undefined if not applicable
  */
 export async function trySignErc20ApprovalExtension(
@@ -97,6 +101,7 @@ export async function trySignErc20ApprovalExtension(
   options: ExactEvmSchemeOptions | undefined,
   requirements: PaymentRequirements,
   context?: PaymentPayloadContext,
+  approvalAmount?: string,
 ): Promise<Record<string, unknown> | undefined> {
   const capabilities = resolveExtensionRpcCapabilities(requirements.network, signer, options);
 
@@ -114,6 +119,7 @@ export async function trySignErc20ApprovalExtension(
 
   const chainId = getEvmChainId(requirements.network);
   const tokenAddress = getAddress(requirements.asset) as `0x${string}`;
+  const requiredAllowance = approvalAmount ?? requirements.amount;
 
   try {
     const allowance = (await capabilities.readContract({
@@ -123,7 +129,7 @@ export async function trySignErc20ApprovalExtension(
       args: [signer.address, PERMIT2_ADDRESS],
     })) as bigint;
 
-    if (allowance >= BigInt(requirements.amount)) {
+    if (allowance >= BigInt(requiredAllowance)) {
       return undefined;
     }
   } catch {

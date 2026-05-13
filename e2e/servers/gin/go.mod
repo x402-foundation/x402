@@ -1,13 +1,14 @@
-module github.com/coinbase/x402/e2e/servers/gin
+module github.com/x402-foundation/x402/e2e/servers/gin
 
 go 1.24.0
 
 toolchain go1.24.1
 
 require (
-	github.com/coinbase/x402/go v0.0.0
+	github.com/ethereum/go-ethereum v1.16.7
 	github.com/gin-gonic/gin v1.11.0
 	github.com/joho/godotenv v1.5.1
+	github.com/x402-foundation/x402/go v0.0.0
 )
 
 require (
@@ -28,7 +29,6 @@ require (
 	github.com/deckarep/golang-set/v2 v2.6.0 // indirect
 	github.com/decred/dcrd/dcrec/secp256k1/v4 v4.0.1 // indirect
 	github.com/ethereum/c-kzg-4844/v2 v2.1.5 // indirect
-	github.com/ethereum/go-ethereum v1.16.7 // indirect
 	github.com/ethereum/go-verkle v0.2.2 // indirect
 	github.com/fatih/color v1.16.0 // indirect
 	github.com/gabriel-vasile/mimetype v1.4.8 // indirect
@@ -88,4 +88,4 @@ require (
 	google.golang.org/protobuf v1.36.9 // indirect
 )
 
-replace github.com/coinbase/x402/go => ../../../go
+replace github.com/x402-foundation/x402/go => ../../../go

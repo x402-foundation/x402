@@ -1,0 +1,241 @@
+---
+title: "Exact"
+description: "Fixed-price x402 payments where the buyer authorizes exactly the advertised amount."
+---
+
+The `exact` scheme is a fixed-price payment scheme. The seller advertises one amount, the buyer signs for that exact amount, and the facilitator settles that payment for the request.
+
+Use `exact` when the final charge is known before the response is generated, such as a fixed-price API call, file download, or gated page.
+
+### Server Setup
+
+<Tabs>
+  <Tab title="TypeScript">
+    ```typescript
+    import { HTTPFacilitatorClient } from "@x402/core/server";
+    import { paymentMiddleware, x402ResourceServer } from "@x402/express";
+    import { ExactEvmScheme } from "@x402/evm/exact/server";
+    import { ExactSvmScheme } from "@x402/svm/exact/server";
+
+    const facilitatorClient = new HTTPFacilitatorClient({
+      url: "https://x402.org/facilitator",
+    });
+
+    const resourceServer = new x402ResourceServer(facilitatorClient)
+      .register("eip155:84532", new ExactEvmScheme())
+      .register("solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1", new ExactSvmScheme());
+
+    app.use(
+      paymentMiddleware(
+        {
+          "GET /weather": {
+            accepts: [
+              {
+                scheme: "exact",
+                price: "$0.001",
+                network: "eip155:84532",
+                payTo: "0xYourAddress",
+              },
+              {
+                scheme: "exact",
+                price: "$0.001",
+                network: "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1",
+                payTo: "YourSolanaAddress",
+              },
+            ],
+            description: "Weather data",
+            mimeType: "application/json",
+          },
+        },
+        resourceServer,
+      ),
+    );
+    ```
+  </Tab>
+  <Tab title="Go">
+    ```go
+    routes := x402http.RoutesConfig{
+        "GET /weather": {
+            Accepts: x402http.PaymentOptions{
+                {
+                    Scheme:  "exact",
+                    Price:   "$0.001",
+                    Network: "eip155:84532",
+                    PayTo:   "0xYourAddress",
+                },
+                {
+                    Scheme:  "exact",
+                    Price:   "$0.001",
+                    Network: "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1",
+                    PayTo:   "YourSolanaAddress",
+                },
+            },
+            Description: "Weather data",
+            MimeType:    "application/json",
+        },
+    }
+
+    handler := nethttpmw.X402Payment(nethttpmw.Config{
+        Routes:      routes,
+        Facilitator: facilitatorClient,
+        Schemes: []nethttpmw.SchemeConfig{
+            {Network: x402.Network("eip155:84532"), Server: exactevm.NewExactEvmScheme()},
+            {Network: x402.Network("solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1"), Server: exactsvm.NewExactSvmScheme()},
+        },
+    })(mux)
+    ```
+  </Tab>
+  <Tab title="Python">
+    ```python
+    from fastapi import FastAPI
+
+    from x402.http import FacilitatorConfig, HTTPFacilitatorClient, PaymentOption
+    from x402.http.middleware.fastapi import PaymentMiddlewareASGI
+    from x402.http.types import RouteConfig
+    from x402.mechanisms.evm.exact import ExactEvmServerScheme
+    from x402.mechanisms.svm.exact import ExactSvmServerScheme
+    from x402.server import x402ResourceServer
+
+    app = FastAPI()
+    facilitator = HTTPFacilitatorClient(FacilitatorConfig(url="https://x402.org/facilitator"))
+
+    server = x402ResourceServer(facilitator)
+    server.register("eip155:84532", ExactEvmServerScheme())
+    server.register("solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1", ExactSvmServerScheme())
+
+    routes = {
+        "GET /weather": RouteConfig(
+            accepts=[
+                PaymentOption(
+                    scheme="exact",
+                    price="$0.001",
+                    network="eip155:84532",
+                    pay_to="0xYourAddress",
+                ),
+                PaymentOption(
+                    scheme="exact",
+                    price="$0.001",
+                    network="solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1",
+                    pay_to="YourSolanaAddress",
+                ),
+            ],
+            description="Weather data",
+            mime_type="application/json",
+        ),
+    }
+
+    app.add_middleware(PaymentMiddlewareASGI, routes=routes, server=server)
+    ```
+  </Tab>
+</Tabs>
+
+### Client Setup
+
+<Tabs>
+  <Tab title="TypeScript">
+    ```typescript
+    import { x402Client } from "@x402/core/client";
+    import { ExactEvmScheme } from "@x402/evm/exact/client";
+    import { ExactSvmScheme } from "@x402/svm/exact/client";
+    import { createKeyPairSignerFromBytes } from "@solana/kit";
+    import { base58 } from "@scure/base";
+    import { privateKeyToAccount } from "viem/accounts";
+
+    const evmSigner = privateKeyToAccount(process.env.EVM_PRIVATE_KEY as `0x${string}`);
+    const svmSigner = await createKeyPairSignerFromBytes(
+      base58.decode(process.env.SVM_PRIVATE_KEY!),
+    );
+
+    const client = new x402Client();
+    client.register("eip155:*", new ExactEvmScheme(evmSigner));
+    client.register("solana:*", new ExactSvmScheme(svmSigner));
+    ```
+  </Tab>
+  <Tab title="Go">
+    ```go
+    import (
+        x402 "github.com/x402-foundation/x402/go"
+        exactevm "github.com/x402-foundation/x402/go/mechanisms/evm/exact/client"
+        exactsvm "github.com/x402-foundation/x402/go/mechanisms/svm/exact/client"
+        evmsigners "github.com/x402-foundation/x402/go/signers/evm"
+        svmsigners "github.com/x402-foundation/x402/go/signers/svm"
+    )
+
+    evmSigner, err := evmsigners.NewClientSignerFromPrivateKey(os.Getenv("EVM_PRIVATE_KEY"))
+    if err != nil {
+        log.Fatal(err)
+    }
+
+    svmSigner, err := svmsigners.NewClientSignerFromPrivateKey(os.Getenv("SVM_PRIVATE_KEY"))
+    if err != nil {
+        log.Fatal(err)
+    }
+
+    x402Client := x402.Newx402Client().
+        Register("eip155:*", exactevm.NewExactEvmScheme(evmSigner, nil)).
+        Register("solana:*", exactsvm.NewExactSvmScheme(svmSigner))
+    ```
+  </Tab>
+  <Tab title="Python">
+    ```python
+    import os
+
+    from eth_account import Account
+
+    from x402 import x402Client
+    from x402.mechanisms.evm import EthAccountSigner
+    from x402.mechanisms.evm.exact.register import register_exact_evm_client
+    from x402.mechanisms.svm import KeypairSigner
+    from x402.mechanisms.svm.exact.register import register_exact_svm_client
+
+    client = x402Client()
+
+    account = Account.from_key(os.getenv("EVM_PRIVATE_KEY"))
+    register_exact_evm_client(client, EthAccountSigner(account))
+
+    svm_signer = KeypairSigner.from_base58(os.getenv("SVM_PRIVATE_KEY"))
+    register_exact_svm_client(client, svm_signer)
+    ```
+  </Tab>
+</Tabs>
+
+### Network Implementations
+
+The `exact` scheme has network specifications for EVM, SVM, AVM, Stellar, Aptos, Hedera, TON, Cardano, Keeta, and Sui.
+
+### EVM Transfer Methods
+
+The EVM implementation supports two transfer methods:
+
+| Method | Description |
+|--------|-------------|
+| `eip3009` | Uses token-native `transferWithAuthorization`, commonly for USDC. This is the default when supported. |
+| `permit2` | Uses Uniswap Permit2 plus the x402 exact proxy, so it can support ERC-20 tokens without EIP-3009. |
+
+Permit2 may require a one-time approval. The gas sponsoring extensions can let the facilitator handle that approval path for compatible tokens.
+
+### Examples
+
+* [TypeScript server example](https://github.com/x402-foundation/x402/tree/main/examples/typescript/servers/express)
+* [TypeScript client example](https://github.com/x402-foundation/x402/tree/main/examples/typescript/clients/fetch)
+* [Go server example](https://github.com/x402-foundation/x402/tree/main/examples/go/servers/nethttp)
+* [Go client example](https://github.com/x402-foundation/x402/tree/main/examples/go/clients/http)
+* [Python server example](https://github.com/x402-foundation/x402/tree/main/examples/python/servers/fastapi)
+* [Python client example](https://github.com/x402-foundation/x402/tree/main/examples/python/clients/requests)
+
+### Specs
+
+* [`exact` spec](https://github.com/x402-foundation/x402/blob/main/specs/schemes/exact/scheme_exact.md)
+* [`exact` EVM spec](https://github.com/x402-foundation/x402/blob/main/specs/schemes/exact/scheme_exact_evm.md)
+* [`exact` SVM spec](https://github.com/x402-foundation/x402/blob/main/specs/schemes/exact/scheme_exact_svm.md)
+* [`exact` AVM spec](https://github.com/x402-foundation/x402/blob/main/specs/schemes/exact/scheme_exact_algo.md)
+* [`exact` Stellar spec](https://github.com/x402-foundation/x402/blob/main/specs/schemes/exact/scheme_exact_stellar.md)
+* [`exact` Aptos spec](https://github.com/x402-foundation/x402/blob/main/specs/schemes/exact/scheme_exact_aptos.md)
+* [`exact` Hedera spec](https://github.com/x402-foundation/x402/blob/main/specs/schemes/exact/scheme_exact_hedera.md)
+* [`exact` TON spec](https://github.com/x402-foundation/x402/blob/main/specs/schemes/exact/scheme_exact_ton.md)
+
+### See Also
+
+* [Payment schemes overview](/schemes/overview)
+* [Upto](/schemes/upto)
+* [Batch settlement](/schemes/batch-settlement)

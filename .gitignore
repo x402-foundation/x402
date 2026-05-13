@@ -12,6 +12,7 @@ e2e/facilitators/external-proxies/*
 !e2e/facilitators/external-proxies/README.md
 typescript/package-lock.json
 .pnpm-store/
+cdk.out/
 
 # e2e Go build artifacts (compiled binaries)
 e2e/clients/go-http/client
@@ -27,13 +28,21 @@ e2e/servers/gin/server
 e2e/servers/nethttp/nethttp
 e2e/servers/mcp-go/mcp-go
 e2e/servers/mcp-go/mcp-server
+e2e/servers/nethttp/nethttp
 e2e/legacy/servers/gin/gin
 
 # Example build artifacts
 examples/go/servers/upto/upto
+examples/go/clients/batch-settlement/batch-settlement
+examples/go/servers/batch-settlement/batch-settlement
+examples/go/facilitator/batch-settlement/batch-settlement
 
 # Agent artifacts
 TASK.md
 .claude/
 skills/
 REVIEW_PROMPT.md
+.omx/
+.omc/
+/demo/
+/contracts/tvm/

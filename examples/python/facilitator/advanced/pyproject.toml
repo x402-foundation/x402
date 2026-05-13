@@ -6,7 +6,7 @@ readme = "README.md"
 requires-python = ">=3.10"
 keywords = ["x402", "payment", "protocol", "facilitator", "402"]
 dependencies = [
-    "x402[fastapi,evm,svm,extensions]",
+    "x402[fastapi,evm,svm,tvm,extensions]",
     "python-dotenv>=1.2.1",
     "uvicorn[standard]>=0.40.0",
 ]
@@ -55,4 +55,3 @@ warn_unused_configs = true
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-

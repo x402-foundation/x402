@@ -1,4 +1,4 @@
-# @x402/next
+# `@x402/next` [![npm version](https://img.shields.io/npm/v/%40x402%2Fnext.svg)](https://www.npmjs.com/package/@x402/next)
 
 Next.js integration for the x402 Payment Protocol. This package allows you to easily add paywall functionality to your Next.js applications using the x402 protocol.
 

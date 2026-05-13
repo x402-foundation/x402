@@ -5,9 +5,11 @@ import { toFacilitatorAptosSigner } from "@x402/aptos";
 import { ExactAptosScheme } from "@x402/aptos/exact/facilitator";
 import { x402Facilitator } from "@x402/core/facilitator";
 import { Network } from "@x402/core/types";
-import { toFacilitatorEvmSigner } from "@x402/evm";
+import { type AuthorizerSigner, toFacilitatorEvmSigner } from "@x402/evm";
+import { BatchSettlementEvmScheme } from "@x402/evm/batch-settlement/facilitator";
 import { ExactEvmScheme } from "@x402/evm/exact/facilitator";
 import { ExactEvmSchemeV1 } from "@x402/evm/exact/v1/facilitator";
+import { UptoEvmScheme } from "@x402/evm/upto/facilitator";
 import {
   EIP2612_GAS_SPONSORING,
   createErc20ApprovalGasSponsoringExtension,
@@ -17,12 +19,14 @@ import { ExactStellarScheme } from "@x402/stellar/exact/facilitator";
 import { toFacilitatorSvmSigner } from "@x402/svm";
 import { ExactSvmScheme } from "@x402/svm/exact/facilitator";
 import { ExactSvmSchemeV1 } from "@x402/svm/exact/v1/facilitator";
+import { toFacilitatorAvmSigner } from "@x402/avm";
+import { ExactAvmScheme } from "@x402/avm/exact/facilitator";
 import { createWalletClient, http, publicActions } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import { baseSepolia } from "viem/chains";
 
 /**
- * Initialize and configure the x402 facilitator with EVM, SVM, Aptos, and Stellar support
+ * Initialize and configure the x402 facilitator with EVM, SVM, AVM, Aptos, and Stellar support
  * This is called lazily on first use to support Next.js module loading
  *
  * @returns A configured x402Facilitator instance
@@ -36,6 +40,8 @@ async function createFacilitator(): Promise<x402Facilitator> {
   if (!process.env.FACILITATOR_SVM_PRIVATE_KEY) {
     throw new Error("❌ FACILITATOR_SVM_PRIVATE_KEY environment variable is required");
   }
+
+  const avmPrivateKey = process.env.FACILITATOR_AVM_PRIVATE_KEY;
 
   // Initialize the EVM account from private key
   const evmAccount = privateKeyToAccount(process.env.FACILITATOR_EVM_PRIVATE_KEY as `0x${string}`);
@@ -89,6 +95,12 @@ async function createFacilitator(): Promise<x402Facilitator> {
     getCode: (args: { address: `0x${string}` }) => viemClient.getCode(args),
   });
 
+  const receiverAuthorizerSigner: AuthorizerSigner = {
+    address: evmAccount.address,
+    signTypedData: params =>
+      evmAccount.signTypedData(params as Parameters<typeof evmAccount.signTypedData>[0]),
+  };
+
   // Initialize the SVM account from private key
   const svmAccount = await createKeyPairSignerFromBytes(
     base58.decode(process.env.FACILITATOR_SVM_PRIVATE_KEY as string),
@@ -97,12 +109,23 @@ async function createFacilitator(): Promise<x402Facilitator> {
   // Initialize SVM signer - handles all Solana networks with automatic RPC creation
   const svmSigner = toFacilitatorSvmSigner(svmAccount);
 
-  // Create and configure the facilitator with EVM and SVM
+  // Create and configure the facilitator with all networks
   const facilitator = new x402Facilitator()
     .register("eip155:84532", new ExactEvmScheme(evmSigner))
     .registerV1("base-sepolia" as Network, new ExactEvmSchemeV1(evmSigner))
+    .register("eip155:84532", new UptoEvmScheme(evmSigner))
+    .register("eip155:84532", new BatchSettlementEvmScheme(evmSigner, receiverAuthorizerSigner))
     .register("solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1", new ExactSvmScheme(svmSigner))
     .registerV1("solana-devnet" as Network, new ExactSvmSchemeV1(svmSigner));
+
+  // Optionally register Algorand if configured
+  if (avmPrivateKey) {
+    const avmSigner = toFacilitatorAvmSigner(avmPrivateKey);
+    facilitator.register(
+      "algorand:SGO1GKSzyE7IEPItTxCByw9x8FmnrCDexi9/cOUJOiI=",
+      new ExactAvmScheme(avmSigner),
+    );
+  }
 
   // Optionally register Aptos if configured
   if (process.env.FACILITATOR_APTOS_PRIVATE_KEY) {

@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/coinbase/x402/go/types"
+	"github.com/x402-foundation/x402/go/types"
 )
 
 // Mock server for testing
@@ -345,6 +345,80 @@ func TestServerCreatePaymentRequiredResponse(t *testing.T) {
 	}
 }
 
+// stubEnricherScheme records EnrichPaymentRequiredResponse calls and mutates
+// the matching requirement's Extra to verify core wiring.
+type stubEnricherScheme struct {
+	calls           int
+	lastErrorReason string
+	lastPayload     *types.PaymentPayload
+}
+
+func (s *stubEnricherScheme) Scheme() string { return "stub-enricher" }
+func (s *stubEnricherScheme) ParsePrice(_ Price, _ Network) (AssetAmount, error) {
+	return AssetAmount{}, nil
+}
+func (s *stubEnricherScheme) EnhancePaymentRequirements(
+	_ context.Context,
+	r types.PaymentRequirements,
+	_ types.SupportedKind,
+	_ []string,
+) (types.PaymentRequirements, error) {
+	return r, nil
+}
+func (s *stubEnricherScheme) EnrichPaymentRequiredResponse(ctx PaymentRequiredContext) {
+	s.calls++
+	s.lastErrorReason = ctx.Error
+	s.lastPayload = ctx.PaymentPayload
+	for i := range ctx.Requirements {
+		if ctx.Requirements[i].Scheme != "stub-enricher" {
+			continue
+		}
+		if ctx.Requirements[i].Extra == nil {
+			ctx.Requirements[i].Extra = map[string]interface{}{}
+		}
+		ctx.Requirements[i].Extra["EnrichedBy"] = "stub-enricher"
+	}
+}
+
+func TestCreatePaymentRequiredResponse_InvokesEnricher(t *testing.T) {
+	server := Newx402ResourceServer()
+	enricher := &stubEnricherScheme{}
+	server.Register(Network("eip155:1"), enricher)
+
+	pp := &types.PaymentPayload{X402Version: 2}
+	requirements := []types.PaymentRequirements{
+		{Scheme: "stub-enricher", Network: "eip155:1", Asset: "USDC", Amount: "1"},
+	}
+	resp := server.CreatePaymentRequiredResponseWithPayload(
+		requirements, &types.ResourceInfo{URL: "https://x"}, "some_error", nil, pp,
+	)
+
+	if enricher.calls != 1 {
+		t.Fatalf("expected 1 enricher call, got %d", enricher.calls)
+	}
+	if enricher.lastErrorReason != "some_error" {
+		t.Fatalf("unexpected error reason: %q", enricher.lastErrorReason)
+	}
+	if enricher.lastPayload != pp {
+		t.Fatalf("expected payload to flow through")
+	}
+	if resp.Accepts[0].Extra["EnrichedBy"] != "stub-enricher" {
+		t.Fatalf("expected enrichment mutation, got %+v", resp.Accepts[0].Extra)
+	}
+}
+
+func TestCreatePaymentRequiredResponse_NoEnricherForUnknownScheme(t *testing.T) {
+	server := Newx402ResourceServer()
+	requirements := []types.PaymentRequirements{
+		{Scheme: "unknown", Network: "eip155:1"},
+	}
+	// Must not panic and must return baseline response.
+	resp := server.CreatePaymentRequiredResponse(requirements, nil, "err", nil)
+	if len(resp.Accepts) != 1 {
+		t.Fatalf("expected requirements untouched")
+	}
+}
+
 func TestServerVerifyPayment(t *testing.T) {
 	ctx := context.Background()
 
@@ -571,8 +645,6 @@ func TestServerProcessPaymentRequest(t *testing.T) {
 }
 */
 
-// TestSupportedCache - SKIPPED: Cache.Clear method not implemented
-/*
 func TestSupportedCache(t *testing.T) {
 	cache := &SupportedCache{
 		data:   make(map[string]SupportedResponse),
@@ -588,16 +660,22 @@ func TestSupportedCache(t *testing.T) {
 		Signers:    make(map[string][]string),
 	}
 
-	// Set and verify
+	// Set stores the value.
 	cache.Set("test", response)
 	if len(cache.data) != 1 {
 		t.Fatal("Expected item in cache")
 	}
 
-	// Wait for expiry
-	time.Sleep(150 * time.Millisecond)
+	// Get returns the stored value before expiry.
+	cached, ok := cache.Get("test")
+	if !ok {
+		t.Fatal("Expected cached item to be found")
+	}
+	if len(cached.Kinds) != 1 || cached.Kinds[0].Scheme != "exact" || cached.Kinds[0].Network != "eip155:1" {
+		t.Fatalf("Expected cached response to match stored value, got %+v", cached)
+	}
 
-	// Clear cache
+	// Clear removes all data and expiry state.
 	cache.Clear()
 	if len(cache.data) != 0 {
 		t.Fatal("Expected cache to be cleared")
@@ -605,8 +683,12 @@ func TestSupportedCache(t *testing.T) {
 	if len(cache.expiry) != 0 {
 		t.Fatal("Expected expiry map to be cleared")
 	}
+
+	// Get returns false after the cache is cleared.
+	if _, ok := cache.Get("test"); ok {
+		t.Fatal("Expected cache miss after Clear")
+	}
 }
-*/
 
 func TestResolveSettlementOverrideAmount(t *testing.T) {
 	baseReqs := types.PaymentRequirements{

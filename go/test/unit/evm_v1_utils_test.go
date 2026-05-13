@@ -3,7 +3,7 @@ package unit_test
 import (
 	"testing"
 
-	evmv1 "github.com/coinbase/x402/go/mechanisms/evm/v1"
+	evmv1 "github.com/x402-foundation/x402/go/mechanisms/evm/v1"
 )
 
 func TestV1GetEvmChainId(t *testing.T) {

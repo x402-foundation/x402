@@ -1,4 +1,4 @@
-# @x402/paywall
+# `@x402/paywall` [![npm version](https://img.shields.io/npm/v/%40x402%2Fpaywall.svg)](https://www.npmjs.com/package/@x402/paywall)
 
 Modular paywall UI for the x402 payment protocol with support for EVM and Solana networks.
 

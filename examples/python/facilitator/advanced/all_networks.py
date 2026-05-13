@@ -4,7 +4,7 @@ Demonstrates how to create a facilitator that supports all available networks wi
 optional chain configuration via environment variables.
 
 New chain support should be added here in alphabetic order by network prefix
-(e.g., "eip155" before "solana").
+(e.g., "eip155" before "solana" before "tvm").
 """
 
 import os
@@ -20,6 +20,13 @@ from x402.mechanisms.evm import FacilitatorWeb3Signer
 from x402.mechanisms.evm.exact.facilitator import ExactEvmScheme, ExactEvmSchemeConfig
 from x402.mechanisms.svm import FacilitatorKeypairSigner
 from x402.mechanisms.svm.exact.facilitator import ExactSvmScheme
+from x402.mechanisms.tvm import (
+    TVM_PROVIDER_TONAPI,
+    TVM_TESTNET,
+    FacilitatorHighloadV3Signer,
+    HighloadV3Config,
+)
+from x402.mechanisms.tvm.exact.facilitator import ExactTvmScheme
 
 # Load environment variables
 load_dotenv()
@@ -30,19 +37,22 @@ PORT = int(os.environ.get("PORT", "4022"))
 # Configuration - optional per network
 evm_private_key = os.environ.get("EVM_PRIVATE_KEY")
 svm_private_key = os.environ.get("SVM_PRIVATE_KEY")
+tvm_private_key = os.environ.get("TVM_PRIVATE_KEY")
 
 # Validate at least one private key is provided
-if not evm_private_key and not svm_private_key:
-    print("❌ At least one of EVM_PRIVATE_KEY or SVM_PRIVATE_KEY is required")
+if not evm_private_key and not svm_private_key and not tvm_private_key:
+    print("❌ At least one of EVM_PRIVATE_KEY, SVM_PRIVATE_KEY, or TVM_PRIVATE_KEY is required")
     sys.exit(1)
 
 # Network configuration
-EVM_NETWORK = "eip155:84532"  # Base Sepolia
-SVM_NETWORK = "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1"  # Solana Devnet
+EVM_NETWORK = os.environ.get("EVM_NETWORK", "eip155:84532")  # Base Sepolia
+SVM_NETWORK = os.environ.get("SVM_NETWORK", "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1")
+TVM_NETWORK = os.environ.get("TVM_NETWORK", TVM_TESTNET)
 
 # Initialize signers based on available keys
 evm_signer = None
 svm_signer = None
+tvm_signer = None
 
 if evm_private_key:
     evm_signer = FacilitatorWeb3Signer(
@@ -55,6 +65,23 @@ if svm_private_key:
     svm_keypair = Keypair.from_base58_string(svm_private_key)
     svm_signer = FacilitatorKeypairSigner(svm_keypair)
     print(f"SVM Facilitator account: {svm_signer.get_addresses()[0]}")
+
+if tvm_private_key:
+    tvm_config = HighloadV3Config.from_private_key(tvm_private_key)
+    tvm_provider = (os.environ.get("TVM_PROVIDER") or "").strip().lower()
+    tvm_config.provider = tvm_provider or tvm_config.provider
+    tvm_config.api_key = (
+        os.environ.get("TONAPI_API_KEY")
+        if tvm_provider == TVM_PROVIDER_TONAPI
+        else os.environ.get("TONCENTER_API_KEY")
+    )
+    tvm_config.provider_base_url = (
+        os.environ.get("TONAPI_BASE_URL")
+        if tvm_provider == TVM_PROVIDER_TONAPI
+        else os.environ.get("TONCENTER_BASE_URL")
+    )
+    tvm_signer = FacilitatorHighloadV3Signer({TVM_NETWORK: tvm_config})
+    print(f"TVM Facilitator account: {tvm_signer.get_addresses()[0]}")
 
 
 # Async hook functions for the facilitator
@@ -100,6 +127,11 @@ if evm_signer:
 
 if svm_signer:
     facilitator.register([SVM_NETWORK], ExactSvmScheme(svm_signer))
+if tvm_signer:
+    facilitator.register(
+        [TVM_NETWORK],
+        ExactTvmScheme(tvm_signer),
+    )
 
 
 # Pydantic models for request/response
@@ -120,7 +152,7 @@ class SettleRequest(BaseModel):
 # Initialize FastAPI app
 app = FastAPI(
     title="All Networks Facilitator",
-    description="Verifies and settles x402 payments on-chain with optional EVM/SVM support",
+    description="Verifies and settles x402 payments on-chain with optional EVM/SVM/TVM support",
     version="2.0.0",
 )
 

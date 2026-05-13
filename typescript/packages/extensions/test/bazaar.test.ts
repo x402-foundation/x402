@@ -8,6 +8,10 @@ import {
   declareDiscoveryExtension,
   validateDiscoveryExtension,
   isValidRouteTemplate,
+  isValidServiceName,
+  sanitizeTags,
+  isValidIconUrl,
+  sanitizeResourceServiceMetadata,
   extractDiscoveryInfo,
   extractDiscoveryInfoFromExtension,
   extractDiscoveryInfoV1,
@@ -2051,6 +2055,245 @@ describe("Bazaar Discovery Extension", () => {
     it("rejects percent-encoded traversal sequences", () => {
       expect(isValidRouteTemplate("/users/%2e%2e/admin")).toBe(false);
       expect(isValidRouteTemplate("/users/%2E%2E/admin")).toBe(false);
+    });
+  });
+
+  describe("isValidServiceName", () => {
+    it("accepts non-empty strings up to 32 chars", () => {
+      expect(isValidServiceName("Example Weather")).toBe(true);
+      expect(isValidServiceName("a")).toBe(true);
+      expect(isValidServiceName("a".repeat(32))).toBe(true);
+    });
+
+    it("rejects empty, undefined, and over-cap strings", () => {
+      expect(isValidServiceName(undefined)).toBe(false);
+      expect(isValidServiceName("")).toBe(false);
+      expect(isValidServiceName("a".repeat(33))).toBe(false);
+    });
+
+    it("rejects non-ASCII characters", () => {
+      // Multi-byte chars in UTF-8 — would otherwise diverge across SDKs
+      // (UTF-16 code units in TS, code points in Python, bytes in Go).
+      expect(isValidServiceName("Café Service")).toBe(false);
+      expect(isValidServiceName("東京 Weather")).toBe(false);
+      expect(isValidServiceName("🚀 Service")).toBe(false);
+    });
+
+    it("rejects ASCII control characters", () => {
+      expect(isValidServiceName("Service\x00")).toBe(false);
+      expect(isValidServiceName("Line\nBreak")).toBe(false);
+      expect(isValidServiceName("Tab\there")).toBe(false);
+    });
+
+    it("accepts printable ASCII with spaces and punctuation", () => {
+      expect(isValidServiceName("Example Weather")).toBe(true);
+      expect(isValidServiceName("AT&T")).toBe(true);
+      expect(isValidServiceName("Coinbase, Inc.")).toBe(true);
+      expect(isValidServiceName("Service v2.0!")).toBe(true);
+    });
+  });
+
+  describe("sanitizeTags", () => {
+    it("returns undefined for non-arrays", () => {
+      expect(sanitizeTags(undefined)).toBeUndefined();
+      expect(sanitizeTags("weather")).toBeUndefined();
+      expect(sanitizeTags({ tag: "weather" })).toBeUndefined();
+    });
+
+    it("drops non-string and out-of-range entries", () => {
+      const result = sanitizeTags(["weather", "", "a".repeat(33), 42, null, "forecast"]);
+      expect(result).toEqual(["weather", "forecast"]);
+    });
+
+    it("truncates to 5 valid entries", () => {
+      const result = sanitizeTags(["a", "b", "c", "d", "e", "f", "g"]);
+      expect(result).toEqual(["a", "b", "c", "d", "e"]);
+    });
+
+    it("returns undefined when nothing survives", () => {
+      expect(sanitizeTags(["", "a".repeat(33), 7])).toBeUndefined();
+      expect(sanitizeTags([])).toBeUndefined();
+    });
+
+    it("drops non-ASCII tags but keeps ASCII siblings", () => {
+      const result = sanitizeTags(["weather", "café", "東京", "🚀", "forecast"]);
+      expect(result).toEqual(["weather", "forecast"]);
+    });
+
+    it("dedupes case-insensitively keeping first occurrence", () => {
+      const result = sanitizeTags(["Weather", "weather", "WEATHER", "forecast"]);
+      expect(result).toEqual(["Weather", "forecast"]);
+    });
+  });
+
+  describe("isValidIconUrl", () => {
+    it("accepts plain https and http urls", () => {
+      expect(isValidIconUrl("https://api.example.com/icon.png")).toBe(true);
+      expect(isValidIconUrl("http://api.example.com/icon")).toBe(true);
+    });
+
+    it("rejects empty, undefined, and over-cap strings", () => {
+      expect(isValidIconUrl(undefined)).toBe(false);
+      expect(isValidIconUrl("")).toBe(false);
+      expect(isValidIconUrl("https://example.com/" + "a".repeat(2048))).toBe(false);
+    });
+
+    it("rejects non-http schemes", () => {
+      expect(isValidIconUrl("data:image/png;base64,iVBOR")).toBe(false);
+      expect(isValidIconUrl("file:///etc/passwd")).toBe(false);
+      expect(isValidIconUrl("javascript:alert(1)")).toBe(false);
+      expect(isValidIconUrl("ftp://example.com/icon.png")).toBe(false);
+    });
+
+    it("rejects userinfo in the authority", () => {
+      expect(isValidIconUrl("https://user@example.com/icon.png")).toBe(false);
+      expect(isValidIconUrl("https://user:pass@example.com/icon.png")).toBe(false);
+    });
+
+    it("rejects IP literal hosts", () => {
+      expect(isValidIconUrl("http://10.0.0.1/icon.png")).toBe(false);
+      expect(isValidIconUrl("http://127.0.0.1/icon.png")).toBe(false);
+      expect(isValidIconUrl("http://[::1]/icon.png")).toBe(false);
+      expect(isValidIconUrl("http://[2001:db8::1]/icon.png")).toBe(false);
+    });
+
+    it("rejects decimal-encoded and short-form IP hosts", () => {
+      // 2130706433 == 127.0.0.1; 0 expands to 0.0.0.0 on Linux.
+      expect(isValidIconUrl("http://2130706433/icon.png")).toBe(false);
+      expect(isValidIconUrl("http://0/icon.png")).toBe(false);
+      expect(isValidIconUrl("http://3232235521/icon.png")).toBe(false);
+    });
+
+    it("rejects hex-encoded IP hosts", () => {
+      // 0x7f000001 == 127.0.0.1.
+      expect(isValidIconUrl("http://0x7f000001/icon.png")).toBe(false);
+      expect(isValidIconUrl("http://0X7F000001/icon.png")).toBe(false);
+    });
+
+    it("rejects localhost", () => {
+      expect(isValidIconUrl("http://localhost/icon.png")).toBe(false);
+      expect(isValidIconUrl("http://LOCALHOST/icon.png")).toBe(false);
+    });
+
+    it("rejects loopback aliases from /etc/hosts", () => {
+      expect(isValidIconUrl("http://localhost.localdomain/icon.png")).toBe(false);
+      expect(isValidIconUrl("http://ip6-localhost/icon.png")).toBe(false);
+      expect(isValidIconUrl("http://ip6-loopback/icon.png")).toBe(false);
+    });
+
+    it("rejects IDN / full-width localhost confusables", () => {
+      // Full-width Latin "ｌｏｃａｌｈｏｓｔ" normalizes to "localhost" via UTS #46.
+      expect(isValidIconUrl("http://ｌｏｃａｌｈｏｓｔ/icon.png")).toBe(false);
+    });
+
+    it("rejects control characters", () => {
+      expect(isValidIconUrl("https://example.com/\x00icon.png")).toBe(false);
+      expect(isValidIconUrl("https://example.com/icon\n.png")).toBe(false);
+      expect(isValidIconUrl("https://example.com/icon\x7f.png")).toBe(false);
+    });
+
+    it("rejects relative paths", () => {
+      expect(isValidIconUrl("/icon.png")).toBe(false);
+      expect(isValidIconUrl("icon.png")).toBe(false);
+    });
+  });
+
+  describe("sanitizeResourceServiceMetadata", () => {
+    it("preserves all valid fields", () => {
+      const out = sanitizeResourceServiceMetadata({
+        url: "https://api.example.com/x",
+        serviceName: "Example Weather",
+        tags: ["weather", "forecast"],
+        iconUrl: "https://api.example.com/icon.png",
+      });
+      expect(out).toEqual({
+        serviceName: "Example Weather",
+        tags: ["weather", "forecast"],
+        iconUrl: "https://api.example.com/icon.png",
+      });
+    });
+
+    it("soft-drops only the invalid fields", () => {
+      const out = sanitizeResourceServiceMetadata({
+        url: "https://api.example.com/x",
+        serviceName: "a".repeat(33),
+        tags: ["weather", "forecast"],
+        iconUrl: "data:image/png;base64,iVBOR",
+      });
+      expect(out).toEqual({ tags: ["weather", "forecast"] });
+    });
+
+    it("returns empty object for missing or non-object input", () => {
+      expect(sanitizeResourceServiceMetadata(undefined)).toEqual({});
+      expect(sanitizeResourceServiceMetadata(null)).toEqual({});
+    });
+  });
+
+  describe("extractDiscoveryInfo - service metadata", () => {
+    it("surfaces sanitized serviceName / tags / iconUrl on the discovered resource", () => {
+      const declared = declareDiscoveryExtension({
+        method: "GET",
+        input: { city: "NYC" },
+        inputSchema: { properties: { city: { type: "string" } } },
+      });
+
+      const paymentPayload = {
+        x402Version: 2,
+        scheme: "exact",
+        network: "eip155:8453" as unknown,
+        payload: {},
+        accepted: {} as unknown,
+        resource: {
+          url: "https://api.example.com/weather",
+          description: "Weather API",
+          mimeType: "application/json",
+          serviceName: "Example Weather",
+          tags: ["weather", "forecast"],
+          iconUrl: "https://api.example.com/icon.png",
+        },
+        extensions: {
+          [BAZAAR.key]: declared.bazaar,
+        },
+      };
+
+      const discovered = extractDiscoveryInfo(paymentPayload, {} as unknown);
+
+      expect(discovered).not.toBeNull();
+      expect(discovered!.serviceName).toBe("Example Weather");
+      expect(discovered!.tags).toEqual(["weather", "forecast"]);
+      expect(discovered!.iconUrl).toBe("https://api.example.com/icon.png");
+    });
+
+    it("soft-drops invalid metadata fields independently", () => {
+      const declared = declareDiscoveryExtension({
+        method: "GET",
+        input: {},
+        inputSchema: { properties: {} },
+      });
+
+      const paymentPayload = {
+        x402Version: 2,
+        scheme: "exact",
+        network: "eip155:8453" as unknown,
+        payload: {},
+        accepted: {} as unknown,
+        resource: {
+          url: "https://api.example.com/weather",
+          serviceName: "a".repeat(33),
+          tags: ["weather", "", "forecast"],
+          iconUrl: "http://localhost/icon.png",
+        },
+        extensions: {
+          [BAZAAR.key]: declared.bazaar,
+        },
+      };
+
+      const discovered = extractDiscoveryInfo(paymentPayload, {} as unknown);
+
+      expect(discovered).not.toBeNull();
+      expect(discovered!.serviceName).toBeUndefined();
+      expect(discovered!.tags).toEqual(["weather", "forecast"]);
+      expect(discovered!.iconUrl).toBeUndefined();
     });
   });
 });

@@ -189,6 +189,33 @@ export async function diagnoseEip3009SimulationFailure(
 }
 
 /**
+ * Maps an EIP-3009 contract revert error to a specific error code.
+ * Falls back to ErrTransactionFailed when the revert reason is unknown.
+ *
+ * @param error - The error thrown during transfer execution
+ * @returns A specific error reason string
+ */
+export function parseEip3009TransferError(error: unknown): string {
+  const msg = error instanceof Error ? error.message : String(error);
+  if (/authorization.*(expired|valid before)/i.test(msg) || /AuthorizationExpired/i.test(msg)) {
+    return Errors.ErrValidBeforeExpired;
+  }
+  if (/authorization.*not.*valid|AuthorizationNotYetValid/i.test(msg)) {
+    return Errors.ErrValidAfterInFuture;
+  }
+  if (/authorization.*used|AuthorizationAlreadyUsed|AuthorizationUsedOrCanceled/i.test(msg)) {
+    return Errors.ErrEip3009NonceAlreadyUsed;
+  }
+  if (/transfer.*exceeds.*balance|insufficient.*balance|ERC20InsufficientBalance/i.test(msg)) {
+    return Errors.ErrEip3009InsufficientBalance;
+  }
+  if (/invalid.*signature|SignerMismatch|InvalidSignatureV|InvalidSignatureS/i.test(msg)) {
+    return Errors.ErrInvalidSignature;
+  }
+  return Errors.ErrTransactionFailed;
+}
+
+/**
  * Executes transferWithAuthorization onchain.
  *
  * @param signer - EVM signer for contract writes

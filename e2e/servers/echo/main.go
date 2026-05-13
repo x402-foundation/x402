@@ -8,18 +8,18 @@ import (
 	"syscall"
 	"time"
 
-	x402 "github.com/coinbase/x402/go"
-	"github.com/coinbase/x402/go/extensions/bazaar"
-	"github.com/coinbase/x402/go/extensions/eip2612gassponsor"
-	"github.com/coinbase/x402/go/extensions/erc20approvalgassponsor"
-	"github.com/coinbase/x402/go/extensions/types"
-	x402http "github.com/coinbase/x402/go/http"
-	echomw "github.com/coinbase/x402/go/http/echo"
-	exactevm "github.com/coinbase/x402/go/mechanisms/evm/exact/server"
-	uptoevm "github.com/coinbase/x402/go/mechanisms/evm/upto/server"
-	svm "github.com/coinbase/x402/go/mechanisms/svm/exact/server"
 	"github.com/joho/godotenv"
 	"github.com/labstack/echo/v4"
+	x402 "github.com/x402-foundation/x402/go"
+	"github.com/x402-foundation/x402/go/extensions/bazaar"
+	"github.com/x402-foundation/x402/go/extensions/eip2612gassponsor"
+	"github.com/x402-foundation/x402/go/extensions/erc20approvalgassponsor"
+	"github.com/x402-foundation/x402/go/extensions/types"
+	x402http "github.com/x402-foundation/x402/go/http"
+	echomw "github.com/x402-foundation/x402/go/http/echo"
+	exactevm "github.com/x402-foundation/x402/go/mechanisms/evm/exact/server"
+	uptoevm "github.com/x402-foundation/x402/go/mechanisms/evm/upto/server"
+	svm "github.com/x402-foundation/x402/go/mechanisms/svm/exact/server"
 )
 
 var shutdownRequested bool

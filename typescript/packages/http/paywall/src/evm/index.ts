@@ -1,3 +1,4 @@
+import { formatUnits } from "viem";
 import type {
   PaywallNetworkHandler,
   PaymentRequirements,
@@ -5,6 +6,22 @@ import type {
   PaywallConfig,
 } from "../types";
 import { getEvmPaywallHtml } from "./paywall";
+import { NETWORK_DECIMALS } from "./gen/decimals";
+
+/**
+ * Resolves the token decimals for a payment requirement by looking up the
+ * network in the build-time-generated `NETWORK_DECIMALS` map. That map is
+ * derived from `@x402/evm`'s `DEFAULT_STABLECOINS` (the same source the
+ * scheme `getAssetDecimals` methods read from) and is regenerated via
+ * `pnpm --filter @x402/paywall run build:paywall`. Falls back to 6 (USDC
+ * default) when the network is unknown.
+ *
+ * @param requirement - The payment requirement
+ * @returns The number of decimals for the payment token
+ */
+export function getDefaultTokenDecimals(requirement: PaymentRequirements): number {
+  return NETWORK_DECIMALS[requirement.network] ?? 6;
+}
 
 /**
  * EVM paywall handler that supports EVM-based networks (CAIP-2 format only)
@@ -33,11 +50,11 @@ export const evmPaywall: PaywallNetworkHandler = {
     paymentRequired: PaymentRequired,
     config: PaywallConfig,
   ): string {
-    const amount = requirement.amount
-      ? parseFloat(requirement.amount) / 1000000
-      : requirement.maxAmountRequired
-        ? parseFloat(requirement.maxAmountRequired) / 1000000
-        : 0;
+    const decimals = getDefaultTokenDecimals(requirement);
+    const atomic = requirement.amount ?? requirement.maxAmountRequired;
+    // BigInt + formatUnits preserves precision through the conversion;
+    // parseFloat collapses sub-cent digits on real 18-decimal amounts.
+    const amount = atomic ? Number(formatUnits(BigInt(atomic), decimals)) : 0;
 
     return getEvmPaywallHtml({
       amount,

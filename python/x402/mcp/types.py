@@ -182,6 +182,7 @@ class SyncPaymentWrapperConfig:
         accepts: list[PaymentRequirements],
         resource: ResourceInfo | None = None,
         hooks: Optional["SyncPaymentWrapperHooks"] = None,  # type: ignore
+        extensions: dict[str, Any] | None = None,
     ):
         """Initialize payment wrapper config.
 
@@ -189,12 +190,16 @@ class SyncPaymentWrapperConfig:
             accepts: List of payment requirements
             resource: Optional resource info
             hooks: Optional server-side hooks
+            extensions: Optional x402 extensions to include in PaymentRequired responses.
+                Use this to attach Bazaar discovery metadata so facilitators can index
+                the tool. Example: ``declare_mcp_discovery_extension(config)``
         """
         if not accepts:
             raise ValueError("accepts must have at least one payment requirement")
         self.accepts = accepts
         self.resource = resource
         self.hooks = hooks
+        self.extensions = extensions
 
 
 class ServerHookContext:

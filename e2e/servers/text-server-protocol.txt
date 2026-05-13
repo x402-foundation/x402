@@ -21,17 +21,18 @@ Servers may declare which protocol extensions they support using the `extensions
 ## Coldstart Tests
 Some endpoints require special pre-test state setup before they can be exercised (e.g., revoking a Permit2 approval so that the gas-sponsoring extension path is triggered). This setup is expensive: it involves funding the client wallet, submitting on-chain transactions, and draining ETH back.
 
-Endpoints that require this setup declare `"coldstart": true` in their test config. The test runner treats the **first** test for a given endpoint path within a combo as the "coldstart" test — it performs the full setup. Subsequent tests for the same endpoint path within the same combo skip the setup and run directly, exercising the "warm" (already-approved) code path.
+Endpoints that require this setup set **`"coldstart": true`** inside **`schemeOptions`** on that endpoint. The test runner treats the **first** test for a given endpoint path within a combo as the "coldstart" test — it performs the full setup. Subsequent tests for the same endpoint path within the same combo skip the setup and run directly, exercising the "warm" (already-approved) code path.
 
-All explicit gas sponsorship extension endpoints (EIP-2612 and ERC-20 approval) should have `coldstart` enabled, as they must succeed without the user having gas or approval ahead of time.
+All explicit gas sponsorship extension endpoints (EIP-2612 and ERC-20 approval) should have **`coldstart`** enabled under **`schemeOptions`**, as they must succeed without the user having gas or approval ahead of time.
 
-## EVM Transfer Method
-For EVM endpoints, servers must declare the `transferMethod` used for the payment transfer:
-- **eip3009**: EIP-3009 transferWithAuthorization (default if omitted)
-- **permit2**: Uniswap Permit2 approval-based transfer
+## EVM scheme and asset transfer method
+For EVM paid endpoints, servers must declare:
+- **`scheme`**: Payment scheme — **`exact`** (single settle), **`upto`** (usage-based settle), or **`batch-settlement`** (deposit + vouchers + refund). If omitted, the harness defaults to **`exact`**.
+- **`assetTransferMethod`**: **`eip3009`** vs **`permit2`**. If omitted: **`upto`** endpoints default to **`permit2`** (no EIP-3009 path); **`exact`** and **`batch-settlement`** default to **`eip3009`**.
+- **`schemeOptions`** (optional): Harness knobs as **`SchemeOptions`** — **`Permit2SchemeOptions`** (`permit2Direct`, `coldstart`) for exact/upto and the same optional Permit2 knobs for batch-settlement.
+- **`BATCH_SETTLEMENT_RECOVERY`** (optional env): Defaults to enabled. Set to `false`, `0`, `no`, or `off` to run batch-settlement as deposit + voucher + refund without a fresh client process recovery step.
 
-The `transferMethod` field is only applicable to endpoints with `"protocolFamily": "evm"`.
-The test suite uses this field to ensure the client and facilitator both support the required transfer method before generating a test scenario.
+These fields apply only when `"protocolFamily": "evm"`. Discovery matches **`assetTransferMethod`** against each client/facilitator’s `evm.assetTransferMethods`; **`scheme`** is used for filters such as `--schemes=`.
 
 Example configuration:
 ```json
@@ -48,7 +49,8 @@ Example configuration:
       "description": "Protected endpoint requiring EIP-3009 payment",
       "requiresPayment": true,
       "protocolFamily": "evm",
-      "transferMethod": "eip3009"
+      "scheme": "exact",
+      "assetTransferMethod": "eip3009"
     },
     {
       "path": "/protected-permit2",
@@ -56,7 +58,11 @@ Example configuration:
       "description": "Protected endpoint requiring Permit2 payment",
       "requiresPayment": true,
       "protocolFamily": "evm",
-      "transferMethod": "permit2"
+      "scheme": "exact",
+      "assetTransferMethod": "permit2",
+      "schemeOptions": {
+        "permit2Direct": true
+      }
     },
     {
       "path": "/health",
@@ -82,7 +88,8 @@ Multi-protocol server example:
       "description": "Protected endpoint requiring EVM payment",
       "requiresPayment": true,
       "protocolFamily": "evm",
-      "transferMethod": "eip3009"
+      "scheme": "exact",
+      "assetTransferMethod": "eip3009"
     },
     {
       "path": "/svm-protected", 

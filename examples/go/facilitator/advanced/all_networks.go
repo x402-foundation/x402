@@ -7,10 +7,11 @@ import (
 	"net/http"
 	"time"
 
-	x402 "github.com/coinbase/x402/go"
-	evm "github.com/coinbase/x402/go/mechanisms/evm/exact/facilitator"
-	svm "github.com/coinbase/x402/go/mechanisms/svm/exact/facilitator"
 	"github.com/gin-gonic/gin"
+	x402 "github.com/x402-foundation/x402/go"
+	evm "github.com/x402-foundation/x402/go/mechanisms/evm/exact/facilitator"
+	uptoevm "github.com/x402-foundation/x402/go/mechanisms/evm/upto/facilitator"
+	svm "github.com/x402-foundation/x402/go/mechanisms/svm/exact/facilitator"
 )
 
 /**
@@ -60,6 +61,7 @@ func runAllNetworksExample(evmPrivateKey, svmPrivateKey string) error {
 			DeployERC4337WithEIP6492: true,
 		}
 		facilitator.Register([]x402.Network{evmNetwork}, evm.NewExactEvmScheme(evmSigner, evmConfig))
+		facilitator.Register([]x402.Network{evmNetwork}, uptoevm.NewUptoEvmScheme(evmSigner, nil))
 	}
 
 	// Register SVM scheme if signer is available (only explicitly specified networks)

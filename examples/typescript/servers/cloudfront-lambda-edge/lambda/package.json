@@ -13,12 +13,13 @@
     "clean": "rm -rf dist"
   },
   "dependencies": {
-    "@x402/core": "workspace:*",
-    "@x402/evm": "workspace:*"
+    "@x402/core": "^2.11.0",
+    "@x402/evm": "^2.11.0"
   },
   "devDependencies": {
     "@types/aws-lambda": "^8.10.159",
+    "@types/node": "^22.13.4",
     "esbuild": "^0.27.2",
-    "typescript": "^5.9.3"
+    "typescript": "^5.7.3"
   }
 }

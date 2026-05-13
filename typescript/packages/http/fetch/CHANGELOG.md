@@ -1,5 +1,47 @@
 # @x402/fetch Changelog
 
+## 2.12.0
+
+### Minor Changes
+
+- 45d7d19: Added processPaymentResult utility and recovery hook
+- ee7c156: chore: tighten viem dependency floor to ^2.48.11
+
+  Raises the viem floor in every `@x402/*` package.json that lists viem as a direct dep so future `pnpm install` re-resolutions cannot regress below this version. Fixes the incomplete tightening from #2013.
+
+- Updated dependencies [608034f]
+- Updated dependencies [d235050]
+- Updated dependencies [45d7d19]
+  - @x402/core@2.12.0
+
+## 2.11.0
+
+### Minor Changes
+
+- Updated dependencies [a051f48]
+- Updated dependencies [dc04108]
+  - @x402/core@2.11.0
+
+## 2.10.0
+
+### Minor Changes
+
+- @x402/core@2.10.0
+
+## 2.9.0
+
+### Minor Changes
+
+- 2250cae: Migrated project from coinbase/x402 to x402-foundation/x402 organization
+
+### Patch Changes
+
+- Updated dependencies [8cf3fca]
+- Updated dependencies [c0e3969]
+- Updated dependencies [2250cae]
+- Updated dependencies [d352574]
+  - @x402/core@2.9.0
+
 ## 2.8.0
 
 ### Minor Changes

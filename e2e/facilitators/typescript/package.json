@@ -16,21 +16,23 @@
     "@scure/base": "^1.2.6",
     "@solana/kit": "^6.1.0",
     "@x402/aptos": "workspace:*",
+    "@x402/avm": "workspace:*",
     "@x402/core": "workspace:*",
     "@x402/evm": "workspace:*",
     "@x402/extensions": "workspace:*",
+    "@x402/hedera": "workspace:*",
     "@x402/stellar": "workspace:*",
     "@x402/svm": "workspace:*",
     "dotenv": "^16.4.5",
     "express": "^4.19.2",
-    "viem": "^2.21.54"
+    "viem": "^2.48.11"
   },
   "devDependencies": {
     "@types/express": "^4.17.21",
-    "@types/node": "^22.10.1",
-    "eslint": "^9.15.0",
-    "prettier": "^3.3.3",
-    "tsx": "^4.19.2",
-    "typescript": "^5.7.2"
+    "@types/node": "^22.13.4",
+    "eslint": "^9.24.0",
+    "prettier": "3.5.2",
+    "tsx": "^4.21.0",
+    "typescript": "^5.7.3"
   }
 }

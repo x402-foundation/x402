@@ -4,8 +4,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/coinbase/x402/go/mechanisms/svm"
 	"github.com/stretchr/testify/assert"
+	"github.com/x402-foundation/x402/go/mechanisms/svm"
 )
 
 func TestFacilitatorInstructionConstraints(t *testing.T) {

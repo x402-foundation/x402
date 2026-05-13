@@ -21,6 +21,8 @@ import { base58 } from "@scure/base";
 import { createKeyPairSignerFromBytes } from "@solana/kit";
 import { toFacilitatorAptosSigner } from "@x402/aptos";
 import { ExactAptosScheme } from "@x402/aptos/exact/facilitator";
+import { toFacilitatorAvmSigner } from "@x402/avm";
+import { ExactAvmScheme } from "@x402/avm/exact/facilitator";
 import { x402Facilitator } from "@x402/core/facilitator";
 import {
   Network,
@@ -29,7 +31,8 @@ import {
   SettleResponse,
   VerifyResponse,
 } from "@x402/core/types";
-import { toFacilitatorEvmSigner } from "@x402/evm";
+import { type AuthorizerSigner, toFacilitatorEvmSigner } from "@x402/evm";
+import { BatchSettlementEvmScheme } from "@x402/evm/batch-settlement/facilitator";
 import { ExactEvmScheme } from "@x402/evm/exact/facilitator";
 import { UptoEvmScheme } from "@x402/evm/upto/facilitator";
 import { ExactEvmSchemeV1 } from "@x402/evm/exact/v1/facilitator";
@@ -39,16 +42,37 @@ import {
   EIP2612_GAS_SPONSORING,
   createErc20ApprovalGasSponsoringExtension,
 } from "@x402/extensions";
+import {
+  AccountId,
+  Client as HederaClient,
+  PrivateKey as HederaPrivateKey,
+  createHederaClient,
+  createHederaPreflightTransfer,
+  createHederaSignAndSubmitTransaction,
+  toFacilitatorHederaSigner,
+} from "@x402/hedera";
+import { ExactHederaScheme } from "@x402/hedera/exact/facilitator";
 import { toFacilitatorSvmSigner } from "@x402/svm";
 import { ExactSvmScheme } from "@x402/svm/exact/facilitator";
 import { ExactSvmSchemeV1 } from "@x402/svm/exact/v1/facilitator";
 import { NETWORKS as SVM_V1_NETWORKS } from "@x402/svm/v1";
-import { createEd25519Signer, type FacilitatorStellarSigner } from "@x402/stellar";
+import {
+  createEd25519Signer,
+  type FacilitatorStellarSigner,
+} from "@x402/stellar";
 import { ExactStellarScheme } from "@x402/stellar/exact/facilitator";
 import crypto from "crypto";
 import dotenv from "dotenv";
 import express from "express";
-import { createWalletClient, http, publicActions, Chain, parseTransaction, recoverTransactionAddress } from "viem";
+import {
+  createWalletClient,
+  http,
+  nonceManager,
+  publicActions,
+  Chain,
+  parseTransaction,
+  recoverTransactionAddress,
+} from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import { baseSepolia, base } from "viem/chains";
 import { BazaarCatalog } from "./bazaar.js";
@@ -61,10 +85,16 @@ const EVM_NETWORK = process.env.EVM_NETWORK || "eip155:84532";
 const SVM_NETWORK =
   process.env.SVM_NETWORK || "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1";
 const APTOS_NETWORK = process.env.APTOS_NETWORK || "aptos:2";
+const AVM_NETWORK =
+  process.env.AVM_NETWORK ||
+  "algorand:SGO1GKSzyE7IEPItTxCByw9x8FmnrCDexi9/cOUJOiI=";
+const HEDERA_NETWORK = process.env.HEDERA_NETWORK || "hedera:testnet";
 const STELLAR_NETWORK = process.env.STELLAR_NETWORK || "stellar:testnet";
 const EVM_RPC_URL = process.env.EVM_RPC_URL;
 const SVM_RPC_URL = process.env.SVM_RPC_URL;
+const AVM_RPC_URL = process.env.AVM_RPC_URL;
 const APTOS_RPC_URL = process.env.APTOS_RPC_URL;
+const HEDERA_NODE_URL = process.env.HEDERA_NODE_URL;
 const STELLAR_RPC_URL = process.env.STELLAR_RPC_URL;
 
 // Map CAIP-2 network IDs to viem chains
@@ -81,10 +111,14 @@ function getEvmChain(network: string): Chain {
 console.log(`🌐 EVM Network: ${EVM_NETWORK}`);
 console.log(`🌐 SVM Network: ${SVM_NETWORK}`);
 console.log(`🌐 Aptos Network: ${APTOS_NETWORK}`);
+console.log(`🌐 AVM Network: ${AVM_NETWORK}`);
+console.log(`🌐 Hedera Network: ${HEDERA_NETWORK}`);
 console.log(`🌐 Stellar Network: ${STELLAR_NETWORK}`);
 if (EVM_RPC_URL) console.log(`🌐 EVM RPC URL: ${EVM_RPC_URL}`);
 if (SVM_RPC_URL) console.log(`🌐 SVM RPC URL: ${SVM_RPC_URL}`);
+if (AVM_RPC_URL) console.log(`🌐 AVM RPC URL: ${AVM_RPC_URL}`);
 if (APTOS_RPC_URL) console.log(`🌐 Aptos RPC URL: ${APTOS_RPC_URL}`);
+if (HEDERA_NODE_URL) console.log(`🌐 Hedera Node URL: ${HEDERA_NODE_URL}`);
 if (STELLAR_RPC_URL) console.log(`🌐 Stellar RPC URL: ${STELLAR_RPC_URL}`);
 
 // Validate required environment variables
@@ -101,8 +135,24 @@ if (!process.env.SVM_PRIVATE_KEY) {
 // Initialize the EVM account from private key
 const evmAccount = privateKeyToAccount(
   process.env.EVM_PRIVATE_KEY as `0x${string}`,
+  { nonceManager },
 );
 console.info(`EVM Facilitator account: ${evmAccount.address}`);
+
+// Dedicated receiver authorizer for the batch-settlement scheme (falls back to EVM_PRIVATE_KEY)
+const receiverAuthorizerPrivateKey =
+  process.env.EVM_RECEIVER_AUTHORIZER_PRIVATE_KEY ?? process.env.EVM_PRIVATE_KEY;
+const authorizerAccount = privateKeyToAccount(
+  receiverAuthorizerPrivateKey as `0x${string}`,
+);
+const authorizerSigner: AuthorizerSigner = {
+  address: authorizerAccount.address,
+  signTypedData: (params) =>
+    authorizerAccount.signTypedData(
+      params as Parameters<typeof authorizerAccount.signTypedData>[0],
+    ),
+};
+console.info(`EVM Receiver Authorizer: ${authorizerSigner.address}`);
 
 // Initialize the SVM account from private key
 const svmAccount = await createKeyPairSignerFromBytes(
@@ -124,10 +174,45 @@ if (process.env.APTOS_PRIVATE_KEY) {
   );
 }
 
+// Initialize the AVM signer from private key (optional)
+let avmSigner: ReturnType<typeof toFacilitatorAvmSigner> | undefined;
+if (process.env.AVM_PRIVATE_KEY) {
+  avmSigner = toFacilitatorAvmSigner(process.env.AVM_PRIVATE_KEY as string);
+  console.info(`AVM Facilitator account: ${avmSigner.getAddresses()[0]}`);
+}
+
+// Initialize the Hedera signer from account + private key (optional)
+let hederaSigner: ReturnType<typeof toFacilitatorHederaSigner> | undefined;
+if (process.env.HEDERA_ACCOUNT_ID && process.env.HEDERA_PRIVATE_KEY) {
+  const hederaAccountId = process.env.HEDERA_ACCOUNT_ID;
+  const hederaKey = HederaPrivateKey.fromStringECDSA(
+    process.env.HEDERA_PRIVATE_KEY,
+  );
+
+  const buildHederaClient = (network: string): HederaClient => {
+    const client = createHederaClient(network, HEDERA_NODE_URL);
+    client.setOperator(AccountId.fromString(hederaAccountId), hederaKey);
+    return client;
+  };
+
+  hederaSigner = toFacilitatorHederaSigner({
+    getAddresses: () => [hederaAccountId],
+    signAndSubmitTransaction: createHederaSignAndSubmitTransaction(
+      buildHederaClient,
+      hederaKey,
+    ),
+    preflightTransfer: createHederaPreflightTransfer(buildHederaClient),
+  });
+  console.info(`Hedera Facilitator account: ${hederaAccountId}`);
+}
+
 // Initialize the Stellar signer from private key (optional)
 let stellarSigner: FacilitatorStellarSigner | undefined;
 if (process.env.STELLAR_PRIVATE_KEY) {
-  stellarSigner = createEd25519Signer(process.env.STELLAR_PRIVATE_KEY as string, STELLAR_NETWORK as Network);
+  stellarSigner = createEd25519Signer(
+    process.env.STELLAR_PRIVATE_KEY as string,
+    STELLAR_NETWORK as Network,
+  );
   console.info(`Stellar Facilitator account: ${stellarSigner.address}`);
 }
 
@@ -139,7 +224,7 @@ const viemClient = createWalletClient({
   transport: http(EVM_RPC_URL),
 }).extend(publicActions);
 
-// Initialize the x402 Facilitator with EVM, SVM, and Aptos support
+// Initialize the x402 Facilitator with EVM, SVM, Aptos, and optional Hedera support
 
 const evmSigner = toFacilitatorEvmSigner({
   address: evmAccount.address,
@@ -191,9 +276,9 @@ const svmSigner = toFacilitatorSvmSigner(
 // Pass custom RPC URL if provided
 const aptosSigner = aptosAccount
   ? toFacilitatorAptosSigner(
-      aptosAccount,
-      APTOS_RPC_URL ? { defaultRpcUrl: APTOS_RPC_URL } : undefined,
-    )
+    aptosAccount,
+    APTOS_RPC_URL ? { defaultRpcUrl: APTOS_RPC_URL } : undefined,
+  )
   : undefined;
 
 const verifiedPayments = new Map<string, number>();
@@ -206,43 +291,170 @@ function createPaymentHash(paymentPayload: PaymentPayload): string {
     .digest("hex");
 }
 
+function isBatchSettlementScheme(requirements: PaymentRequirements): boolean {
+  return requirements.scheme === "batch-settlement";
+}
+
+// For batch-settlement payloads the action lives at payload.payload.type
+// (deposit / voucher) or payload.payload.settleAction (claimWithSignature /
+// settle / refundWithSignature). Used by onAfterSettle to detect deposits.
+function extractPayloadAction(paymentPayload: PaymentPayload): string {
+  const inner = paymentPayload.payload as Record<string, unknown> | undefined;
+  if (!inner || typeof inner !== "object") {
+    return "n/a";
+  }
+  if (typeof inner.type === "string") {
+    return inner.type;
+  }
+  if (typeof inner.settleAction === "string") {
+    return inner.settleAction;
+  }
+  return "n/a";
+}
+
+// Minimal ABI fragment for reading channel state from the BatchSettlement contract
+const BATCH_SETTLEMENT_ADDRESS = "0x4020e07E964De72a79367828c9C6140fcaE00003" as const;
+const channelsAbi = [
+  {
+    type: "function",
+    name: "channels",
+    stateMutability: "view",
+    inputs: [{ name: "channelId", type: "bytes32" }],
+    outputs: [
+      { name: "balance", type: "uint256" },
+      { name: "totalClaimed", type: "uint256" },
+    ],
+  },
+] as const;
+
+async function readChannelBalance(channelId: `0x${string}`): Promise<bigint> {
+  const result = (await viemClient.readContract({
+    address: BATCH_SETTLEMENT_ADDRESS,
+    abi: channelsAbi,
+    functionName: "channels",
+    args: [channelId],
+  })) as readonly [bigint, bigint];
+  return result[0];
+}
+
+// Avoid stale state after a deposit is mined
+async function waitForChannelDepositConfirmed(
+  channelId: `0x${string}`,
+  expectedMinBalance: bigint,
+  options: { initialDelayMs?: number; maxDelayMs?: number; timeoutMs?: number } = {},
+): Promise<void> {
+  const initialDelayMs = options.initialDelayMs ?? 250;
+  const maxDelayMs = options.maxDelayMs ?? 4_000;
+  const timeoutMs = options.timeoutMs ?? 30_000;
+
+  const startedAt = Date.now();
+  let delayMs = initialDelayMs;
+  let attempt = 0;
+  let lastBalance = 0n;
+
+  while (Date.now() - startedAt < timeoutMs) {
+    attempt += 1;
+    try {
+      lastBalance = await readChannelBalance(channelId);
+    } catch (err) {
+      console.warn(
+        `⏳ deposit confirm: read failed on attempt ${attempt} for channel ${channelId}: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+
+    if (lastBalance >= expectedMinBalance) {
+      console.log(
+        `⏳ deposit confirm: channel ${channelId} balance=${lastBalance} (>= ${expectedMinBalance}) after ${attempt} attempt(s) in ${Date.now() - startedAt}ms`,
+      );
+      return;
+    }
+
+    await new Promise((resolve) => setTimeout(resolve, delayMs));
+    delayMs = Math.min(delayMs * 2, maxDelayMs);
+  }
+
+  throw new Error(
+    `deposit_confirm_timeout: channel ${channelId} balance=${lastBalance} (< ${expectedMinBalance}) after ${attempt} attempt(s) in ${Date.now() - startedAt}ms`,
+  );
+}
+
+async function waitForBatchSettlementDepositConfirmed(
+  extra: Record<string, unknown> | undefined,
+): Promise<void> {
+  const channelId = typeof extra?.channelId === "string" ? (extra.channelId as `0x${string}`) : undefined;
+  const balanceStr = typeof extra?.balance === "string" ? extra.balance : undefined;
+
+  if (!channelId || !balanceStr) {
+    console.warn(
+      "⏳ deposit confirm: settle response missing channelId/balance, skipping on-chain wait",
+    );
+    return;
+  }
+
+  let expectedMinBalance: bigint;
+  try {
+    expectedMinBalance = BigInt(balanceStr);
+  } catch {
+    console.warn(`⏳ deposit confirm: unparseable balance ${balanceStr}, skipping wait`);
+    return;
+  }
+
+  if (expectedMinBalance === 0n) {
+    return;
+  }
+
+  try {
+    await waitForChannelDepositConfirmed(channelId, expectedMinBalance);
+  } catch (err) {
+    console.error(
+      `⏳ deposit confirm: ${err instanceof Error ? err.message : String(err)} — proceeding anyway`,
+    );
+  }
+}
+
 const facilitator = new x402Facilitator();
 
-// Register EVM, SVM, and Aptos schemes (v2 + v1)
+// Register EVM, SVM, Aptos, and Hedera schemes (v2 + v1 where applicable)
 facilitator
   .register(EVM_NETWORK as Network, new ExactEvmScheme(evmSigner))
   .register(EVM_NETWORK as Network, new UptoEvmScheme(evmSigner))
+  .register(
+    EVM_NETWORK as Network,
+    new BatchSettlementEvmScheme(evmSigner, authorizerSigner),
+  )
   .registerV1(EVM_V1_NETWORKS as Network[], new ExactEvmSchemeV1(evmSigner))
   .register(SVM_NETWORK as Network, new ExactSvmScheme(svmSigner))
   .registerV1(SVM_V1_NETWORKS as Network[], new ExactSvmSchemeV1(svmSigner));
+if (avmSigner) {
+  facilitator.register(AVM_NETWORK as Network, new ExactAvmScheme(avmSigner));
+}
 if (aptosSigner) {
   facilitator.register(
     APTOS_NETWORK as Network,
     new ExactAptosScheme(aptosSigner),
   );
 }
+if (hederaSigner) {
+  facilitator.register(
+    HEDERA_NETWORK as Network,
+    new ExactHederaScheme(hederaSigner),
+  );
+}
 if (stellarSigner) {
-  facilitator.register(STELLAR_NETWORK as Network, new ExactStellarScheme([stellarSigner]));
+  facilitator.register(
+    STELLAR_NETWORK as Network,
+    new ExactStellarScheme([stellarSigner]),
+  );
 }
 
-const PERMIT2_ADDRESS = "0x000000000022D473030F116dDEE9F6B43aC78BA3" as const;
-const erc20AllowanceAbi = [
-  {
-    inputs: [
-      { name: "owner", type: "address" },
-      { name: "spender", type: "address" },
-    ],
-    name: "allowance",
-    outputs: [{ name: "", type: "uint256" }],
-    stateMutability: "view",
-    type: "function",
-  },
-] as const;
 
 const erc20ApprovalSigner = {
   ...evmSigner,
   sendTransactions: async (
-    transactions: (`0x${string}` | { to: `0x${string}`; data: `0x${string}`; gas?: bigint })[],
+    transactions: (
+      | `0x${string}`
+      | { to: `0x${string}`; data: `0x${string}`; gas?: bigint }
+    )[],
   ): Promise<`0x${string}`[]> => {
     const hashes: `0x${string}`[] = [];
     for (const tx of transactions) {
@@ -250,28 +462,38 @@ const erc20ApprovalSigner = {
       if (typeof tx === "string") {
         // Parse the raw tx to extract sender and gas params for potential gas funding
         const parsed = parseTransaction(tx);
-        const payerAddress = await recoverTransactionAddress({ serializedTransaction: tx });
+        const payerAddress = await recoverTransactionAddress({
+          serializedTransaction: tx,
+        });
         const gas = parsed.gas ?? 70_000n;
         const maxFeePerGas = parsed.maxFeePerGas ?? 1_000_000_000n;
         const gasCost = gas * maxFeePerGas;
 
         // Check if the payer has enough ETH for gas
-        const payerBalance = await viemClient.getBalance({ address: payerAddress });
+        const payerBalance = await viemClient.getBalance({
+          address: payerAddress,
+        });
         if (payerBalance < gasCost) {
           const deficit = gasCost - payerBalance;
-          console.log(`⛽ Funding payer ${payerAddress} with ${deficit} wei for gas`);
+          console.log(
+            `⛽ Funding payer ${payerAddress} with ${deficit} wei for gas`,
+          );
           const fundHash = await viemClient.sendTransaction({
             to: payerAddress,
             value: deficit,
           });
-          const fundReceipt = await viemClient.waitForTransactionReceipt({ hash: fundHash });
+          const fundReceipt = await viemClient.waitForTransactionReceipt({
+            hash: fundHash,
+          });
           if (fundReceipt.status !== "success") {
             throw new Error(`gas_funding_failed: ${fundHash}`);
           }
           console.log(`⛽ Gas funding confirmed: ${fundHash}`);
         }
 
-        hash = await viemClient.sendRawTransaction({ serializedTransaction: tx });
+        hash = await viemClient.sendRawTransaction({
+          serializedTransaction: tx,
+        });
       } else {
         hash = await viemClient.sendTransaction(tx);
       }
@@ -288,7 +510,9 @@ const erc20ApprovalSigner = {
 facilitator
   .registerExtension(BAZAAR)
   .registerExtension(EIP2612_GAS_SPONSORING)
-  .registerExtension(createErc20ApprovalGasSponsoringExtension(erc20ApprovalSigner))
+  .registerExtension(
+    createErc20ApprovalGasSponsoringExtension(erc20ApprovalSigner),
+  )
   // Lifecycle hooks for payment tracking and discovery
   .onAfterVerify(async (context) => {
     // Hook 1: Track verified payment for verify→settle flow validation
@@ -301,23 +525,39 @@ facilitator
         context.paymentPayload,
         context.requirements,
       );
-      if (discovered && "method" in discovered && discovered.method) {
+      if (discovered) {
+        const action =
+          "method" in discovered ? discovered.method : discovered.toolName;
+        if (!action) {
+          return;
+        }
+        let resourceUrl = discovered.resourceUrl;
+        if (
+          discovered.discoveryInfo.input.type === "mcp" &&
+          "toolName" in discovered &&
+          discovered.toolName &&
+          (!resourceUrl || resourceUrl.startsWith("null/"))
+        ) {
+          resourceUrl = `mcp://tool/${discovered.toolName}`;
+        }
         bazaarCatalog.catalogResource(
-          discovered.resourceUrl,
-          discovered.method,
+          resourceUrl,
+          action,
           discovered.x402Version,
           discovered.discoveryInfo,
           context.requirements,
           discovered.routeTemplate,
         );
-        console.log(
-          `📦 Discovered resource: ${discovered.method} ${discovered.resourceUrl}`,
-        );
+        console.log(`📦 Discovered resource: ${action} ${resourceUrl}`);
       }
     }
   })
   .onBeforeSettle(async (context) => {
     // Hook 3: Validate payment was previously verified
+    if (isBatchSettlementScheme(context.requirements)) {
+      return;
+    }
+
     const paymentHash = createPaymentHash(context.paymentPayload);
     const verificationTimestamp = verifiedPayments.get(paymentHash);
 
@@ -340,17 +580,30 @@ facilitator
   })
   .onAfterSettle(async (context) => {
     // Hook 4: Clean up verified payment tracking after settlement
-    const paymentHash = createPaymentHash(context.paymentPayload);
-    verifiedPayments.delete(paymentHash);
+    if (!isBatchSettlementScheme(context.requirements)) {
+      const paymentHash = createPaymentHash(context.paymentPayload);
+      verifiedPayments.delete(paymentHash);
+    }
 
     if (context.result.success) {
       console.log(`✅ Settlement completed: ${context.result.transaction}`);
     }
+
+    // For batch-settlement deposits, wait for the deposit to be confirmed onchain
+    if (
+      isBatchSettlementScheme(context.requirements) &&
+      context.result.success &&
+      extractPayloadAction(context.paymentPayload) === "deposit"
+    ) {
+      await waitForBatchSettlementDepositConfirmed(context.result.extra);
+    }
   })
   .onSettleFailure(async (context) => {
     // Hook 5: Clean up on settlement failure too
-    const paymentHash = createPaymentHash(context.paymentPayload);
-    verifiedPayments.delete(paymentHash);
+    if (!isBatchSettlementScheme(context.requirements)) {
+      const paymentHash = createPaymentHash(context.paymentPayload);
+      verifiedPayments.delete(paymentHash);
+    }
 
     console.error(`❌ Settlement failed: ${context.error.message}`);
   });
@@ -474,6 +727,27 @@ app.get("/discovery/resources", (req, res) => {
   }
 });
 
+app.get("/discovery/search", (req, res) => {
+  try {
+    const query = req.query.query as string;
+    if (!query) {
+      return res.status(400).json({ error: "query parameter is required" });
+    }
+    const type = req.query.type as string | undefined;
+    const limit = req.query.limit
+      ? parseInt(req.query.limit as string)
+      : undefined;
+
+    const response = bazaarCatalog.searchResources(query, type, limit);
+    res.json(response);
+  } catch (error) {
+    console.error("Discovery search error:", error);
+    res.status(500).json({
+      error: error instanceof Error ? error.message : "Unknown error",
+    });
+  }
+});
+
 /**
  * GET /health
  * Health check endpoint
@@ -483,7 +757,9 @@ app.get("/health", (req, res) => {
     status: "ok",
     evmNetwork: EVM_NETWORK,
     svmNetwork: SVM_NETWORK,
+    avmNetwork: avmSigner ? AVM_NETWORK : "(not configured)",
     aptosNetwork: aptosAccount ? APTOS_NETWORK : "(not configured)",
+    hederaNetwork: hederaSigner ? HEDERA_NETWORK : "(not configured)",
     stellarNetwork: stellarSigner ? STELLAR_NETWORK : "(not configured)",
     facilitator: "typescript",
     version: "2.0.0",
@@ -515,9 +791,13 @@ app.listen(parseInt(PORT), () => {
 ║  Server:       http://localhost:${PORT}                ║
 ║  EVM Network:  ${EVM_NETWORK}                          ║
 ║  SVM Network:  ${SVM_NETWORK}                          ║
+║  AVM Network:  ${AVM_NETWORK}                          ║
 ║  Aptos Network: ${APTOS_NETWORK}                       ║
+║  Hedera Network: ${HEDERA_NETWORK}                     ║
 ║  EVM Address:  ${evmAccount.address}                   ║
+║  AVM Address:  ${avmSigner ? avmSigner.getAddresses()[0] : "(not configured)"}
 ║  Aptos Address: ${aptosAccount ? aptosAccount.accountAddress.toStringLong().slice(0, 20) + "..." : "(not configured)"}
+║  Hedera Address: ${process.env.HEDERA_ACCOUNT_ID || "(not configured)"} ║
 ║  Stellar Address: ${stellarSigner ? stellarSigner.address : "(not configured)"} ║
 ║  Extensions:   bazaar                                  ║
 ║                                                        ║

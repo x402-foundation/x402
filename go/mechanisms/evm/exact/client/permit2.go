@@ -6,8 +6,8 @@ import (
 	"math/big"
 	"time"
 
-	"github.com/coinbase/x402/go/mechanisms/evm"
-	"github.com/coinbase/x402/go/types"
+	"github.com/x402-foundation/x402/go/mechanisms/evm"
+	"github.com/x402-foundation/x402/go/types"
 )
 
 // CreatePermit2Payload creates a Permit2 payload using the x402Permit2Proxy witness pattern.

@@ -1,8 +1,8 @@
 package mcp
 
 import (
-	x402 "github.com/coinbase/x402/go"
-	"github.com/coinbase/x402/go/types"
+	x402 "github.com/x402-foundation/x402/go"
+	"github.com/x402-foundation/x402/go/types"
 )
 
 // Protocol constants for MCP x402 payment integration.
@@ -99,9 +99,10 @@ type MCPToolCallResult struct {
 
 // PaymentWrapperConfig configures payment wrapper behavior
 type PaymentWrapperConfig struct {
-	Accepts  []types.PaymentRequirements
-	Resource *ResourceInfo
-	Hooks    *PaymentWrapperHooks
+	Accepts    []types.PaymentRequirements
+	Resource   *ResourceInfo
+	Hooks      *PaymentWrapperHooks
+	Extensions map[string]interface{}
 }
 
 // ResourceInfo provides resource metadata. Alias for types.ResourceInfo for compatibility.

@@ -1,3 +1,5 @@
+import type { Log } from "viem";
+
 /**
  * ClientEvmSigner - Used by x402 clients to sign payment authorizations.
  *
@@ -92,7 +94,10 @@ export type FacilitatorEvmSigner = {
     gas?: bigint;
   }): Promise<`0x${string}`>;
   sendTransaction(args: { to: `0x${string}`; data: `0x${string}` }): Promise<`0x${string}`>;
-  waitForTransactionReceipt(args: { hash: `0x${string}` }): Promise<{ status: string }>;
+  waitForTransactionReceipt(args: { hash: `0x${string}` }): Promise<{
+    status: string;
+    logs?: readonly Log[];
+  }>;
   getCode(args: { address: `0x${string}` }): Promise<`0x${string}` | undefined>;
 };
 

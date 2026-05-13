@@ -10,12 +10,15 @@
     1,
     2
   ],
-  "schemes": ["exact", "upto"],
+  "schemes": [
+    "exact",
+    "upto",
+    "batch-settlement"
+  ],
   "evm": {
-    "transferMethods": [
+    "assetTransferMethods": [
       "eip3009",
-      "permit2",
-      "upto"
+      "permit2"
     ]
   },
   "extensions": [
@@ -30,7 +33,10 @@
       "ENDPOINT_PATH"
     ],
     "optional": [
-      "EVM_RPC_URL"
+      "EVM_RPC_URL",
+      "CHANNEL_SALT",
+      "BATCH_SETTLEMENT_PHASE",
+      "EVM_VOUCHER_SIGNER_PRIVATE_KEY"
     ]
   }
 }

@@ -15,13 +15,15 @@ Clients must declare which protocol families they support in their test.config.j
 Clients must declare which x402 protocol versions they support using the `x402Versions` field:
 - **x402Versions**: Array of supported x402 protocol versions (e.g., [1, 2])
 
-## EVM Transfer Method Support
-Clients that support the EVM protocol family must declare which transfer methods they support using the `evm.transferMethods` field:
-- **eip3009**: EIP-3009 transferWithAuthorization
-- **permit2**: Uniswap Permit2 approval-based transfer
+## EVM asset transfer method support
+Clients that support the EVM protocol family must declare which **asset authorization** paths they implement using **`evm.assetTransferMethods`**:
+- **eip3009**: EIP-3009 `transferWithAuthorization`
+- **permit2**: Uniswap Permit2
+
+Payment **schemes** (exact / upto / batch-settlement) are chosen per server endpoint; the client is matched only on **`assetTransferMethod`**.
 
 If the `evm` field is omitted, the client is assumed to only support `["eip3009"]`.
-The test suite uses this to skip scenarios where a server endpoint requires a transfer method the client does not support.
+The test suite uses this to skip scenarios where a server endpoint requires an asset transfer method the client does not support.
 
 Example configuration:
 ```json
@@ -32,7 +34,7 @@ Example configuration:
   "protocolFamilies": ["evm"],
   "x402Versions": [1, 2],
   "evm": {
-    "transferMethods": ["eip3009", "permit2"]
+    "assetTransferMethods": ["eip3009", "permit2"]
   },
   "environment": {
     "required": ["EVM_PRIVATE_KEY", "RESOURCE_SERVER_URL", "ENDPOINT_PATH"],
@@ -50,7 +52,7 @@ Multi-protocol client example:
   "protocolFamilies": ["evm", "svm"],
   "x402Versions": [1, 2],
   "evm": {
-    "transferMethods": ["eip3009", "permit2"]
+    "assetTransferMethods": ["eip3009", "permit2"]
   },
   "environment": {
     "required": ["EVM_PRIVATE_KEY", "SVM_PRIVATE_KEY", "RESOURCE_SERVER_URL", "ENDPOINT_PATH"],
@@ -68,7 +70,7 @@ Python client example (eip3009 only):
   "protocolFamilies": ["evm"],
   "x402Versions": [1, 2],
   "evm": {
-    "transferMethods": ["eip3009"]
+    "assetTransferMethods": ["eip3009"]
   },
   "environment": {
     "required": ["EVM_PRIVATE_KEY", "RESOURCE_SERVER_URL", "ENDPOINT_PATH"],

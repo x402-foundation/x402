@@ -1,4 +1,4 @@
-import { TestScenario } from './types';
+import { TestScenario, endpointAssetTransferMethod, endpointPaymentScheme } from './types';
 import { log, verboseLog } from './logger';
 
 /**
@@ -31,13 +31,22 @@ export class CoverageTracker {
 
   /**
    * Generate a coverage key for an endpoint
-   * Format: "server-name-endpoint-path-protocolFamily-transferMethod-vVersion"
-   * 
+   * Format: "server-name-endpoint-path-protocolFamily-scheme-assetMethod-vVersion"
+   *
    * This ensures each unique endpoint on a server is tested separately,
-   * including different EVM transfer methods (eip3009 vs permit2).
+   * including different EVM schemes and asset transfer methods.
    */
-  private getEndpointCoverageKey(serverName: string, endpointPath: string, protocolFamily: string, version: number, transferMethod?: string): string {
-    const method = protocolFamily === 'evm' ? (transferMethod || 'eip3009') : '';
+  private getEndpointCoverageKey(
+    serverName: string,
+    endpointPath: string,
+    protocolFamily: string,
+    version: number,
+    scenario: TestScenario,
+  ): string {
+    const method =
+      protocolFamily === 'evm'
+        ? `${endpointPaymentScheme(scenario.endpoint) ?? 'exact'}-${endpointAssetTransferMethod(scenario.endpoint) ?? 'eip3009'}`
+        : '';
     return `${serverName}-${endpointPath}-${protocolFamily}${method ? `-${method}` : ''}-v${version}`;
   }
 
@@ -77,7 +86,7 @@ export class CoverageTracker {
       scenario.endpoint.path,
       protocolFamily,
       version,
-      scenario.endpoint.transferMethod
+      scenario,
     );
 
     // Check if ANY component hasn't been covered yet
@@ -125,7 +134,7 @@ export class CoverageTracker {
       scenario.endpoint.path,
       protocolFamily,
       version,
-      scenario.endpoint.transferMethod
+      scenario,
     );
 
     this.clientsCovered.add(clientKey);

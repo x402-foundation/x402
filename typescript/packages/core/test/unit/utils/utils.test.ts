@@ -5,6 +5,8 @@ import {
   deepEqual,
   safeBase64Encode,
   safeBase64Decode,
+  numberToDecimalString,
+  convertToTokenAmount,
 } from "../../../src/utils";
 import { Network } from "../../../src/types";
 
@@ -287,6 +289,136 @@ describe("Utils", () => {
       it("should handle empty objects", () => {
         expect(deepEqual({}, {})).toBe(true);
         expect(deepEqual({}, { a: 1 })).toBe(false);
+      });
+    });
+  });
+
+  describe("numberToDecimalString", () => {
+    it("should pass through plain integers", () => {
+      expect(numberToDecimalString(0)).toBe("0");
+      expect(numberToDecimalString(1)).toBe("1");
+      expect(numberToDecimalString(42)).toBe("42");
+      expect(numberToDecimalString(-5)).toBe("-5");
+    });
+
+    it("should pass through plain decimals", () => {
+      expect(numberToDecimalString(1.5)).toBe("1.5");
+      expect(numberToDecimalString(4.02)).toBe("4.02");
+      expect(numberToDecimalString(0.123)).toBe("0.123");
+      expect(numberToDecimalString(-3.14)).toBe("-3.14");
+    });
+
+    it("should expand small negative exponents", () => {
+      expect(numberToDecimalString(1e-7)).toBe("0.0000001");
+      expect(numberToDecimalString(1e-8)).toBe("0.00000001");
+      expect(numberToDecimalString(1.5e-6)).toBe("0.0000015");
+      expect(numberToDecimalString(1e-18)).toBe("0.000000000000000001");
+    });
+
+    it("should expand negative numbers with negative exponents", () => {
+      expect(numberToDecimalString(-1e-7)).toBe("-0.0000001");
+      expect(numberToDecimalString(-2.5e-10)).toBe("-0.00000000025");
+    });
+
+    it("should expand large positive exponents", () => {
+      expect(numberToDecimalString(1e20)).toBe("100000000000000000000");
+      expect(numberToDecimalString(1.5e10)).toBe("15000000000");
+    });
+  });
+
+  describe("convertToTokenAmount", () => {
+    describe("basic conversions", () => {
+      it("should convert decimal amounts to token units", () => {
+        expect(convertToTokenAmount("4.02", 6)).toBe("4020000");
+        expect(convertToTokenAmount("0.10", 6)).toBe("100000");
+        expect(convertToTokenAmount("1.00", 6)).toBe("1000000");
+        expect(convertToTokenAmount("0.01", 6)).toBe("10000");
+        expect(convertToTokenAmount("123.456789", 6)).toBe("123456789");
+      });
+
+      it("should handle whole numbers", () => {
+        expect(convertToTokenAmount("1", 6)).toBe("1000000");
+        expect(convertToTokenAmount("100", 6)).toBe("100000000");
+        expect(convertToTokenAmount("0", 6)).toBe("0");
+      });
+
+      it("should handle different decimal precisions", () => {
+        expect(convertToTokenAmount("1", 0)).toBe("1");
+        expect(convertToTokenAmount("1", 2)).toBe("100");
+        expect(convertToTokenAmount("1", 7)).toBe("10000000");
+        expect(convertToTokenAmount("1", 9)).toBe("1000000000");
+        expect(convertToTokenAmount("1.0", 18)).toBe("1000000000000000000");
+      });
+
+      it("should truncate excess decimal places", () => {
+        expect(convertToTokenAmount("1.12345678", 7)).toBe("11234567");
+        expect(convertToTokenAmount("1.5", 0)).toBe("1");
+        expect(convertToTokenAmount("2.9", 0)).toBe("2");
+      });
+
+      it("should handle trailing zeros", () => {
+        expect(convertToTokenAmount("1.0", 6)).toBe("1000000");
+        expect(convertToTokenAmount("0.1000000", 7)).toBe("1000000");
+      });
+
+      it("should handle negative numbers", () => {
+        expect(convertToTokenAmount("-1.5", 6)).toBe("-1500000");
+      });
+
+      it("should handle very large numbers", () => {
+        expect(convertToTokenAmount("999999999.9999999", 7)).toBe("9999999999999999");
+      });
+    });
+
+    describe("small amounts with sufficient precision", () => {
+      it("should convert tiny amounts when token has enough decimals", () => {
+        // 0.0000001 with 9 decimals = 100 atomic units
+        expect(convertToTokenAmount("0.0000001", 9)).toBe("100");
+        // 0.000000001 with 9 decimals = 1 atomic unit
+        expect(convertToTokenAmount("0.000000001", 9)).toBe("1");
+        // 0.0000015 with 9 decimals = 1500 atomic units
+        expect(convertToTokenAmount("0.0000015", 9)).toBe("1500");
+      });
+
+      it("should handle the smallest representable amount", () => {
+        expect(convertToTokenAmount("0.0000001", 7)).toBe("1");
+        expect(convertToTokenAmount("0.000001", 6)).toBe("1");
+        expect(convertToTokenAmount("0.000000000000000001", 18)).toBe("1");
+      });
+    });
+
+    describe("too-small errors", () => {
+      it("should throw when a non-zero amount rounds down to 0", () => {
+        // 0.0000001 with 6 decimals: truncates to 0 atomic units
+        expect(() => convertToTokenAmount("0.0000001", 6)).toThrow("too small");
+        // 0.00000001 with 7 decimals: truncates to 0
+        expect(() => convertToTokenAmount("0.00000001", 7)).toThrow("too small");
+        // 0.0000000001 with 6 decimals: also too small
+        expect(() => convertToTokenAmount("0.0000000001", 6)).toThrow("too small");
+      });
+
+      it("should not throw for zero itself", () => {
+        expect(convertToTokenAmount("0", 6)).toBe("0");
+        expect(convertToTokenAmount("0.0", 6)).toBe("0");
+        expect(convertToTokenAmount("0.000000", 6)).toBe("0");
+      });
+    });
+
+    describe("scientific notation rejection", () => {
+      it("should throw for scientific notation input", () => {
+        expect(() => convertToTokenAmount("1e-7", 9)).toThrow("scientific notation");
+        expect(() => convertToTokenAmount("1e-6", 6)).toThrow("scientific notation");
+        expect(() => convertToTokenAmount("1.5e-6", 9)).toThrow("scientific notation");
+        expect(() => convertToTokenAmount("1E10", 6)).toThrow("scientific notation");
+      });
+    });
+
+    describe("invalid input", () => {
+      it("should throw for non-numeric strings", () => {
+        expect(() => convertToTokenAmount("invalid", 6)).toThrow("Invalid amount");
+        expect(() => convertToTokenAmount("abc", 6)).toThrow("Invalid amount");
+        expect(() => convertToTokenAmount("", 6)).toThrow("Invalid amount");
+        expect(() => convertToTokenAmount("NaN", 6)).toThrow("Invalid amount");
       });
     });
   });

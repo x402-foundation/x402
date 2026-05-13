@@ -18,7 +18,7 @@ export function HeroIllustration() {
         href="https://www.x402.org/protected"
         target="_blank"
         rel="noopener noreferrer"
-        className="absolute bottom-[260px] right-[190px] z-10"
+        className="absolute bottom-[300px] right-[190px] z-10"
       >
         <Image
           src="/images/phone.svg"

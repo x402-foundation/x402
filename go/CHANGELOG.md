@@ -1,3 +1,34 @@
+## v2.11.0 - 2026-05-11
+### Added
+- Add Radius Network (chain ID 723487) and Radius Testnet (chain ID 72344) support with SBC as the default stablecoin
+- Log the EXTENSION-RESPONSES header from facilitator verify/settle responses; the HTTP facilitator client decodes the header and logs allowlisted fields (status, rejectedReason, reason, code) without attaching data to VerifyResponse or SettleResponse
+- Bazaar service metadata fields (`serviceName`, `tags`, `iconUrl`) on `types.ResourceInfo`, plus `isValidServiceName` / `sanitizeTags` / `isValidIconUrl` / `sanitizeResourceServiceMetadata` helpers in `extensions/bazaar` that facilitator extraction now applies with soft-drop semantics.
+- Added batch-settlement evm mechanism
+
+## v2.10.0 - 2026-04-27
+### Fixed
+- MCP payload extraction failing with no method set
+
+## v2.9.0 - 2026-04-13
+### Added
+- Add optional `extra.memo` support to SVM exact scheme for seller-defined payment references
+
+## v2.8.0 - 2026-04-02
+### Added
+- Add Arbitrum One (chain ID 42161) and Arbitrum Sepolid (chain ID 421614) support with USDC as the default stablecoin
+- Add Mezo Testnet (chain ID 31611) support with mUSD as the default stablecoin
+- Add Polygon mainnet (chain ID 137) support with USDC as the default stablecoin
+- Add Stable mainnet (chain ID 988) support with USDT0 as the default stablecoin
+- Add Stable testnet (chain ID 2201) support with USDT0 as the default stablecoin
+- Add net/http standard library adapter for x402 payment middleware (http/nethttp package)
+- Add Echo framework middleware adapter for x402 payment handling in go/http/echo package
+- Add upto EVM payment scheme with client, facilitator, and server support for permit2-based partial settlement on EVM chains
+### Changed
+- Updated x402UptoPermit2Proxy canonical address to 0x4020A4f3b7b90ccA423B9fabCc0CE57C6C240002, deployed with deterministic bytecode for reproducible cross-chain CREATE2 addresses
+- Migrated project from coinbase/x402 to x402-foundation/x402 organization
+### Fixed
+- Fix gin streaming content leak and echo panic on flush 
+
 ## v2.7.0 - 2026-03-23
 ### Changed
 - Changed Bazaar discovery extension to support dynamic route patterns. EnrichDeclaration now

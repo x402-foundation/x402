@@ -4,15 +4,18 @@ import { useState } from "react";
 
 interface CodeSnippetProps {
   code: string;
+  /** If provided, this value is copied to clipboard instead of `code`. Use to
+   *  show a compact display version while preserving properly-formatted copy. */
+  copyCode?: string;
   title?: string;
   description?: string;
 }
 
-export function CodeSnippet({ code, title, description }: CodeSnippetProps) {
+export function CodeSnippet({ code, copyCode, title, description }: CodeSnippetProps) {
   const [copied, setCopied] = useState(false);
 
   const handleCopy = () => {
-    navigator.clipboard.writeText(code);
+    navigator.clipboard.writeText(copyCode ?? code);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
   };
@@ -39,26 +42,58 @@ export function CodeSnippet({ code, title, description }: CodeSnippetProps) {
                 fill="black"
               />
             </svg>
-            <h3 className="font-mono text-lg font-medium tracking-tight">
-              {title}
-            </h3>
+            <h3 className="font-mono text-lg font-medium tracking-tight">{title}</h3>
           </div>
         )}
 
-        <div className="relative bg-[#F1F1F1] px-3 py-2 mb-4">
+        <div className="relative bg-[#F1F1F1] px-3 py-2 pb-2 mb-4">
           <button
             onClick={handleCopy}
             className="absolute top-2 right-2 p-1.5 bg-black text-white hover:bg-gray-800 transition-colors focus:outline-none focus:ring-2 focus:ring-black focus:ring-offset-2"
             aria-label={copied ? "Copied to clipboard" : "Copy code"}
           >
             {copied ? (
-              <svg width="14" height="14" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
-                <path d="M4 10L8 14L16 6" stroke="white" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"/>
+              <svg
+                width="14"
+                height="14"
+                viewBox="0 0 20 20"
+                fill="none"
+                xmlns="http://www.w3.org/2000/svg"
+                aria-hidden="true"
+              >
+                <path
+                  d="M4 10L8 14L16 6"
+                  stroke="white"
+                  strokeWidth="2.5"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                />
               </svg>
             ) : (
-              <svg width="14" height="14" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
-                <rect x="6" y="6" width="10" height="12" rx="1" stroke="white" strokeWidth="2" fill="none"/>
-                <path d="M4 14V3C4 2.44772 4.44772 2 5 2H12" stroke="white" strokeWidth="2" strokeLinecap="round"/>
+              <svg
+                width="14"
+                height="14"
+                viewBox="0 0 20 20"
+                fill="none"
+                xmlns="http://www.w3.org/2000/svg"
+                aria-hidden="true"
+              >
+                <rect
+                  x="6"
+                  y="6"
+                  width="10"
+                  height="12"
+                  rx="1"
+                  stroke="white"
+                  strokeWidth="2"
+                  fill="none"
+                />
+                <path
+                  d="M4 14V3C4 2.44772 4.44772 2 5 2H12"
+                  stroke="white"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                />
               </svg>
             )}
           </button>
@@ -69,7 +104,7 @@ export function CodeSnippet({ code, title, description }: CodeSnippetProps) {
                 fontFamily: '"DM Mono", monospace',
                 fontStyle: "normal",
                 fontWeight: 400,
-                lineHeight: "20px",
+                lineHeight: "18px",
                 letterSpacing: "-0.7px",
               }}
             >
@@ -79,9 +114,7 @@ export function CodeSnippet({ code, title, description }: CodeSnippetProps) {
         </div>
 
         {description && (
-          <p className="text-sm text-gray-60 font-mono leading-normal">
-            {description}
-          </p>
+          <p className="text-sm text-gray-60 font-mono leading-normal">{description}</p>
         )}
       </div>
     </div>

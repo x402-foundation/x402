@@ -144,7 +144,7 @@ signers/
 ### EVM Client Signer
 
 ```go
-import evmsigners "github.com/coinbase/x402/go/signers/evm"
+import evmsigners "github.com/x402-foundation/x402/go/signers/evm"
 
 signer, _ := evmsigners.NewClientSignerFromPrivateKey("0x...")
 // Returns: mechanisms/evm.ClientEvmSigner implementation
@@ -153,7 +153,7 @@ signer, _ := evmsigners.NewClientSignerFromPrivateKey("0x...")
 ### SVM Client Signer
 
 ```go
-import svmsigners "github.com/coinbase/x402/go/signers/svm"
+import svmsigners "github.com/x402-foundation/x402/go/signers/svm"
 
 signer, _ := svmsigners.NewClientSignerFromPrivateKey("5J...")
 // Returns: mechanisms/svm.ClientSvmSigner implementation

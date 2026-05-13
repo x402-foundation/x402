@@ -6,8 +6,8 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/coinbase/x402/go/extensions/types"
-	"github.com/coinbase/x402/go/http"
+	"github.com/x402-foundation/x402/go/extensions/types"
+	"github.com/x402-foundation/x402/go/http"
 )
 
 // bracketParamRegex matches [paramName] route segments (Next.js style).
@@ -137,6 +137,12 @@ func (e *bazaarResourceServerExtension) EnrichDeclaration(
 
 	extension, ok := declaration.(types.DiscoveryExtension)
 	if !ok {
+		return declaration
+	}
+
+	// MCP extensions pass through unchanged — they don't need HTTP method narrowing
+	// or dynamic route extraction.
+	if _, ok := extension.Info.Input.(types.McpInput); ok {
 		return declaration
 	}
 

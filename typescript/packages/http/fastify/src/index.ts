@@ -11,6 +11,8 @@ import {
   getFacilitatorResponseError,
   SETTLEMENT_OVERRIDES_HEADER,
   SettlementOverrides,
+  checkIfBazaarNeeded,
+  PaymentCancellationDispatcher,
 } from "@x402/core/server";
 import {
   SchemeNetworkServer,
@@ -33,6 +35,7 @@ export function setSettlementOverrides(reply: FastifyReply, overrides: Settlemen
 }
 
 interface X402PaymentContext {
+  cancellationDispatcher: PaymentCancellationDispatcher;
   paymentPayload: PaymentPayload;
   paymentRequirements: PaymentRequirements;
   declaredExtensions?: Record<string, unknown>;
@@ -114,22 +117,6 @@ function getResponseBodyBuffer(payload: unknown): Buffer | undefined {
   }
 
   return Buffer.from(JSON.stringify(payload ?? {}));
-}
-
-/**
- * Check if any routes in the configuration declare bazaar extensions.
- *
- * @param routes - Route configuration
- * @returns True if any route has extensions.bazaar defined
- */
-function checkIfBazaarNeeded(routes: RoutesConfig): boolean {
-  if ("accepts" in routes) {
-    return !!(routes.extensions && "bazaar" in routes.extensions);
-  }
-
-  return Object.values(routes).some(routeConfig => {
-    return !!(routeConfig.extensions && "bazaar" in routeConfig.extensions);
-  });
 }
 
 /**
@@ -376,6 +363,7 @@ export function paymentMiddlewareFromHTTPServer(
 
       case "payment-verified": {
         request.x402Context = {
+          cancellationDispatcher: result.cancellationDispatcher,
           paymentPayload: result.paymentPayload,
           paymentRequirements: result.paymentRequirements,
           declaredExtensions: result.declaredExtensions,
@@ -426,6 +414,10 @@ export function paymentMiddlewareFromHTTPServer(
     }
 
     if (reply.statusCode >= 400) {
+      await x402Context.cancellationDispatcher.cancel({
+        reason: "handler_failed",
+        responseStatus: reply.statusCode,
+      });
       return effectivePayload;
     }
 
@@ -474,6 +466,17 @@ export function paymentMiddlewareFromHTTPServer(
       reply.type("application/json");
       return JSON.stringify({});
     }
+  });
+
+  app.addHook("onError", async (request: FastifyRequest, _reply: FastifyReply, error: Error) => {
+    const x402Context = request.x402Context;
+    if (!x402Context) {
+      return;
+    }
+    await x402Context.cancellationDispatcher.cancel({
+      reason: "handler_threw",
+      error,
+    });
   });
 }
 

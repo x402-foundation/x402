@@ -5,7 +5,7 @@ Echo middleware integration for the x402 Payment Protocol. This package provides
 ## Installation
 
 ```bash
-go get github.com/coinbase/x402/go
+go get github.com/x402-foundation/x402/go
 ```
 
 ## Quick Start
@@ -14,9 +14,9 @@ go get github.com/coinbase/x402/go
 package main
 
 import (
-	x402http "github.com/coinbase/x402/go/http"
-	echomw "github.com/coinbase/x402/go/http/echo"
-	evm "github.com/coinbase/x402/go/mechanisms/evm/exact/server"
+	x402http "github.com/x402-foundation/x402/go/http"
+	echomw "github.com/x402-foundation/x402/go/http/echo"
+	evm "github.com/x402-foundation/x402/go/mechanisms/evm/exact/server"
 	"github.com/labstack/echo/v4"
 )
 
@@ -165,8 +165,8 @@ Register schemes for different networks:
 
 ```go
 import (
-	evm "github.com/coinbase/x402/go/mechanisms/evm/exact/server"
-	svm "github.com/coinbase/x402/go/mechanisms/svm/exact/server"
+	evm "github.com/x402-foundation/x402/go/mechanisms/evm/exact/server"
+	svm "github.com/x402-foundation/x402/go/mechanisms/svm/exact/server"
 )
 
 e.Use(echomw.PaymentMiddlewareFromConfig(routes,
@@ -278,10 +278,10 @@ import (
 	"net/http"
 	"time"
 
-	x402 "github.com/coinbase/x402/go"
-	x402http "github.com/coinbase/x402/go/http"
-	echomw "github.com/coinbase/x402/go/http/echo"
-	evm "github.com/coinbase/x402/go/mechanisms/evm/exact/server"
+	x402 "github.com/x402-foundation/x402/go"
+	x402http "github.com/x402-foundation/x402/go/http"
+	echomw "github.com/x402-foundation/x402/go/http/echo"
+	evm "github.com/x402-foundation/x402/go/mechanisms/evm/exact/server"
 	"github.com/labstack/echo/v4"
 )
 
