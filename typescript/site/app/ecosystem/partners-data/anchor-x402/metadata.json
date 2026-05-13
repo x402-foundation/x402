@@ -1,6 +1,6 @@
 {
     "name": "anchor-x402",
-    "description": "Nine x402-paid commodity services for AI agents on Base + Solana mainnet. Dual-chain hash anchoring, OFAC sanctions screening, signed decision attestation, tx decode, ENS/SNS resolution, USD price, calldata decode, datetime parser, and bundled wallet intelligence. Pay per call in USDC — no API keys, no accounts.",
+    "description": "Sixteen x402-paid services for AI agents on Base + Solana mainnet — nine commodity primitives (dual-chain hash anchoring, OFAC sanctions screening, signed decision attestation, tx decode, ENS/SNS resolution, USD price, calldata decode, datetime parser, bundled wallet intel), one async due-diligence investigator ($7.77, multi-step signed report, dual-chain anchored), one verifiable RNG (signed by treasury key), and five universal LLM endpoints (roast, oracle with anchored verdict, tldr, aura, grade). Plus a hosted chatbot at chat.anchor-x402.com. Pay per call in USDC, no API keys, no accounts.",
     "logoUrl": "/logos/anchor-x402.svg",
     "websiteUrl": "https://anchor-x402.com",
     "category": "Services/Endpoints"
