@@ -42,7 +42,7 @@
       "algorand",
       "algorand-testnet"
     ],
-    "schemes": ["exact", "authCapture", "upto"],
+    "schemes": ["exact", "commerce", "upto"],
     "assets": ["EIP-3009", "SPL", "Sui::Coin", "NEAR", "Stellar", "Algorand"],
     "supports": {
       "verify": true,
