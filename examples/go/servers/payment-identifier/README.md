@@ -83,6 +83,13 @@ if existingOrder, found := processedPayments[paymentID]; found {
 }
 ```
 
+In production, store the payment ID together with a normalized fingerprint of
+the paid operation, for example the HTTP method, route, selected payment
+requirements, and application order ID. A retry with the same payment ID and the
+same fingerprint can return the cached response. A request with the same payment
+ID but a different fingerprint should return `409 Conflict` instead of creating
+or charging for a different order.
+
 ## API
 
 ### POST /order
@@ -114,6 +121,9 @@ Creates an order with payment. Requires a payment identifier.
 - Replace the in-memory `processedPayments` map with Redis or a database
 - Set appropriate TTL for payment ID records
 - Consider distributed locking for high-concurrency scenarios
+- Scope idempotency records by tenant, merchant, or route if the same storage
+  layer is shared across paid resources
+- Bind each payment ID to a request fingerprint and reject conflicting replays
 
 ## Related Examples
 

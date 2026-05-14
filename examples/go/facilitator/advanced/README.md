@@ -296,6 +296,12 @@ if existing, found := store.Get(paymentID); found && existing.Status == "settled
 }
 ```
 
+For production use, bind the payment ID to a normalized fingerprint of the
+settlement request, such as network, scheme, asset, amount, payer, payee, and
+the application operation ID when available. If the same payment ID is replayed
+with a different fingerprint, reject it with a conflict instead of returning a
+cached transaction or settling a different payment.
+
 **Use case:** Prevent duplicate settlements, provide exactly-once semantics, track payment lifecycle.
 
 ### Lifecycle Hooks
