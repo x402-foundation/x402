@@ -13,9 +13,9 @@ const (
 
 	// AuthCapture canonical contract addresses (CREATE2-deployed; same on every supported EVM chain)
 	// Source: base/commerce-payments@v1.0.0
-	AuthCaptureEscrowAddress     = "0xF8211868187974a7Fb9d99b8fFB171AD70665Dc6"
-	EIP3009TokenCollectorAddress = "0x7561DC178D9aD5bc5fb103C01f448A510d2A36D0"
-	PERMIT2TokenCollectorAddress = "0xD8490609d2da0ee626b0e676941b225cbc1A8C08"
+	AuthCaptureEscrowAddress     = "0xBdEA0D1bcC5966192B070Fdf62aB4EF5b4420cff"
+	EIP3009TokenCollectorAddress = "0x0E3dF9510de65469C4518D7843919c0b8C7A7757"
+	PERMIT2TokenCollectorAddress = "0x992476B9Ee81d52a5BdA0622C333938D0Af0aB26"
 
 	// Default token decimals for USDC
 	DefaultDecimals = 6

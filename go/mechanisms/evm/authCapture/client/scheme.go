@@ -118,10 +118,10 @@ func (c *AuthCaptureEvmScheme) CreatePaymentPayload(
 		return types.PaymentPayload{}, fmt.Errorf(ErrFailedToGetChainID+": %w", err)
 	}
 
-	// 4. Validate amount
-	_, ok = new(big.Int).SetString(requirements.Amount, 10)
-	if !ok {
-		return types.PaymentPayload{}, fmt.Errorf(ErrInvalidAmount+": %s", requirements.Amount)
+	// 4. Validate amount. PaymentInfo.maxAmount is uint120 on-chain; match ABI bounds
+	// before constructing the payer-agnostic nonce.
+	if _, err := parseUint120Amount(requirements.Amount); err != nil {
+		return types.PaymentPayload{}, fmt.Errorf(ErrInvalidAmount+": %w", err)
 	}
 
 	// 5. Compute timestamps
@@ -440,4 +440,18 @@ func toFeeBps(v interface{}) (uint16, error) {
 	default:
 		return 0, fmt.Errorf("unsupported type %T", v)
 	}
+}
+
+func parseUint120Amount(amount string) (*big.Int, error) {
+	value, ok := new(big.Int).SetString(amount, 10)
+	if !ok {
+		return nil, fmt.Errorf("amount must be a base-10 integer: %s", amount)
+	}
+	if value.Sign() < 0 {
+		return nil, fmt.Errorf("amount must be a uint120: %s", amount)
+	}
+	if value.BitLen() > 120 {
+		return nil, fmt.Errorf("amount exceeds uint120 max: %s", amount)
+	}
+	return value, nil
 }

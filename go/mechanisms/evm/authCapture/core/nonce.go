@@ -29,6 +29,9 @@ func ComputeAuthCaptureNonce(chainID *big.Int, escrowAddress string, paymentInfo
 	if !ok {
 		return "", fmt.Errorf("invalid maxAmount: %s", paymentInfo.MaxAmount)
 	}
+	if maxAmount.Sign() < 0 || maxAmount.BitLen() > 120 {
+		return "", fmt.Errorf("maxAmount must be a uint120: %s", paymentInfo.MaxAmount)
+	}
 
 	preApprovalExpiry := new(big.Int).SetUint64(paymentInfo.PreApprovalExpiry)
 	authorizationExpiry := new(big.Int).SetUint64(paymentInfo.AuthorizationExpiry)
