@@ -1,0 +1,110 @@
+{
+  "@context": "https://schema.org",
+  "@graph": [
+    {
+      "@type": "Organization",
+      "@id": "https://x402-agent-pay.com/#organization",
+      "name": "AgentPay",
+      "alternateName": "x402-agentpay",
+      "url": "https://x402-agent-pay.com",
+      "description": "Payment infrastructure for AI agents. Escrow, reputation, capability registry, and batch settlement on top of the x402 protocol.",
+      "sameAs": [
+        "https://github.com/shawnhvac/x402",
+        "https://pypi.org/project/x402-agentpay/",
+        "https://www.producthunt.com/posts/x402agentpay"
+      ],
+      "foundingDate": "2025",
+      "founder": {
+        "@type": "Person",
+        "name": "Shawn Lippert"
+      },
+      "address": {
+        "@type": "PostalAddress",
+        "streetAddress": "95b Havasupai St",
+        "addressLocality": "Grand Canyon",
+        "addressRegion": "AZ",
+        "postalCode": "86023",
+        "addressCountry": "US"
+      }
+    },
+    {
+      "@type": "SoftwareApplication",
+      "@id": "https://x402-agent-pay.com/#software",
+      "name": "x402-agentpay",
+      "applicationCategory": "DeveloperApplication",
+      "operatingSystem": "Web, Linux, macOS, Windows",
+      "url": "https://x402-agent-pay.com",
+      "downloadUrl": "https://pypi.org/project/x402-agentpay/",
+      "description": "Commerce layer for autonomous AI agent payments. Adds escrow, reputation scoring, capability registry, permission grants, and batch settlement on top of the x402 HTTP payment protocol.",
+      "offers": {
+        "@type": "Offer",
+        "price": "0",
+        "priceCurrency": "USD",
+        "description": "0.1% fee for AI agent transactions"
+      },
+      "featureList": [
+        "x402 protocol commerce layer",
+        "Escrow until service delivery confirmed",
+        "Agent reputation scoring",
+        "Capability registry",
+        "Permission grants and delegated spend",
+        "Batch settlement for micropayments",
+        "Python SDK (pip install x402-agentpay)",
+        "Base L2 USDC settlement"
+      ],
+      "softwareVersion": "1.0.0",
+      "releaseNotes": "https://github.com/shawnhvac/x402/releases",
+      "publisher": {
+        "@id": "https://x402-agent-pay.com/#organization"
+      }
+    },
+    {
+      "@type": "WebSite",
+      "@id": "https://x402-agent-pay.com/#website",
+      "url": "https://x402-agent-pay.com",
+      "name": "AgentPay — Payment Infrastructure for AI Agents",
+      "description": "The commerce layer for autonomous AI agent payments. Built on x402 + Base L2. Patent pending.",
+      "publisher": {
+        "@id": "https://x402-agent-pay.com/#organization"
+      }
+    },
+    {
+      "@type": "FAQPage",
+      "@id": "https://x402-agent-pay.com/#faq",
+      "mainEntity": [
+        {
+          "@type": "Question",
+          "name": "What is x402-agentpay?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "x402-agentpay is a commerce layer built on top of the x402 HTTP payment protocol. It adds escrow, reputation scoring, capability registry, permission grants, and batch settlement for autonomous AI agent transactions on Base L2."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "How does AgentPay differ from AgentCore payments?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "AWS Bedrock AgentCore handles payment signing and wallet management (transport layer). AgentPay adds commerce logic: escrow ensures funds lock until delivery is confirmed, reputation scoring tracks agent track records, and batch settlement processes thousands of micropayments in one on-chain transaction."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "What fees does AgentPay charge?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "AgentPay charges 0.1% for AI agent transactions — compared to Stripe's 2.9% + $0.30 per transaction. For micropayments, this represents up to 29x savings."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "How do I install the AgentPay Python SDK?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "Install with: pip install x402-agentpay. Full documentation at x402-agent-pay.com/sdk-docs."
+          }
+        }
+      ]
+    }
+  ]
+}
