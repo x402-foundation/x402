@@ -1,0 +1,15 @@
+{
+  "name": "x402-reputation-subgraph",
+  "version": "1.0.0",
+  "description": "The Graph subgraph for x402 reputation scoring — Base L2",
+  "scripts": {
+    "codegen": "graph codegen",
+    "build":   "graph build",
+    "deploy":  "graph deploy --product hosted-service shawnhvac/x402-reputation-base",
+    "deploy:studio": "graph deploy --studio x402-reputation-base"
+  },
+  "dependencies": {
+    "@graphprotocol/graph-cli":  "0.79.2",
+    "@graphprotocol/graph-ts":   "0.35.1"
+  }
+}
