@@ -2,7 +2,7 @@ import type { NetworkSet } from './networks/networks';
 
 export type ProtocolFamily = 'evm' | 'svm' | 'avm' | 'aptos' | 'hedera' | 'stellar' | 'tvm';
 export type Transport = 'http' | 'mcp';
-export type PaymentScheme = 'exact' | 'upto' | 'batch-settlement';
+export type PaymentScheme = 'exact' | 'upto' | 'batch-settlement' | 'authCapture';
 export type AssetTransferMethod = 'eip3009' | 'permit2';
 
 /**

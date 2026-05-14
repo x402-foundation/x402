@@ -15,6 +15,9 @@ const baseConfig = {
     "batch-settlement/client/index": "src/batch-settlement/client/index.ts",
     "batch-settlement/server/index": "src/batch-settlement/server/index.ts",
     "batch-settlement/facilitator/index": "src/batch-settlement/facilitator/index.ts",
+    "authCapture/client/index": "src/authCapture/client/index.ts",
+    "authCapture/server/index": "src/authCapture/server/index.ts",
+    "authCapture/facilitator/index": "src/authCapture/facilitator/index.ts",
   },
   dts: {
     resolve: true,

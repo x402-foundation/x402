@@ -179,6 +179,36 @@
         "types": "./dist/cjs/batch-settlement/facilitator/index.d.ts",
         "default": "./dist/cjs/batch-settlement/facilitator/index.js"
       }
+    },
+    "./authCapture/client": {
+      "import": {
+        "types": "./dist/esm/authCapture/client/index.d.mts",
+        "default": "./dist/esm/authCapture/client/index.mjs"
+      },
+      "require": {
+        "types": "./dist/cjs/authCapture/client/index.d.ts",
+        "default": "./dist/cjs/authCapture/client/index.js"
+      }
+    },
+    "./authCapture/server": {
+      "import": {
+        "types": "./dist/esm/authCapture/server/index.d.mts",
+        "default": "./dist/esm/authCapture/server/index.mjs"
+      },
+      "require": {
+        "types": "./dist/cjs/authCapture/server/index.d.ts",
+        "default": "./dist/cjs/authCapture/server/index.js"
+      }
+    },
+    "./authCapture/facilitator": {
+      "import": {
+        "types": "./dist/esm/authCapture/facilitator/index.d.mts",
+        "default": "./dist/esm/authCapture/facilitator/index.mjs"
+      },
+      "require": {
+        "types": "./dist/cjs/authCapture/facilitator/index.d.ts",
+        "default": "./dist/cjs/authCapture/facilitator/index.js"
+      }
     }
   },
   "files": [

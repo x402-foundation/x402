@@ -17,7 +17,8 @@
   "schemes": [
     "exact",
     "upto",
-    "batch-settlement"
+    "batch-settlement",
+    "authCapture"
   ],
   "evm": {
     "assetTransferMethods": [

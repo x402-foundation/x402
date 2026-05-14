@@ -10,6 +10,7 @@ import {
   type UptoEvmSchemeOptions,
 } from "@x402/evm/upto/client";
 import { BatchSettlementEvmScheme } from "@x402/evm/batch-settlement/client";
+import { AuthCaptureEvmScheme } from "@x402/evm/authCapture/client";
 import { ExactEvmSchemeV1 } from "@x402/evm/v1";
 import { toClientEvmSigner } from "@x402/evm";
 import { ExactSvmScheme } from "@x402/svm/exact/client";
@@ -112,6 +113,7 @@ const client = new x402Client()
   .register("eip155:*", new ExactEvmScheme(evmSigner, evmSchemeOptions))
   .register("eip155:*", new UptoEvmClientScheme(evmSigner, uptoSchemeOptions))
   .register("eip155:*", batchSettlementScheme)
+  .register("eip155:*", new AuthCaptureEvmScheme(evmSigner))
   .registerV1("base-sepolia", new ExactEvmSchemeV1(evmSigner))
   .registerV1("base", new ExactEvmSchemeV1(evmSigner))
   .register("solana:*", new ExactSvmScheme(svmSigner))

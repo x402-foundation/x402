@@ -1,7 +1,7 @@
 import { TestScenario, endpointPaymentScheme } from '../types';
 
 /** x402 payment scheme for filtering (non-EVM counts as exact). */
-export type PaymentSchemeKind = 'exact' | 'upto' | 'batch-settlement';
+export type PaymentSchemeKind = 'exact' | 'upto' | 'batch-settlement' | 'authCapture';
 
 /**
  * Classify a scenario's payment scheme for filtering (`endpoint.scheme`, default `exact` on EVM).
@@ -85,10 +85,11 @@ export function filterScenarios(
       }
     }
 
-    // Payment scheme filter
+    // Payment scheme filter (case-insensitive — scheme names are mixed case,
+    // e.g., camelCase `authCapture` and lowercase `exact` / `upto`).
     if (filters.schemes && filters.schemes.length > 0) {
       const normalized = filters.schemes.map(s => s.trim().toLowerCase());
-      const kind = getScenarioPaymentScheme(scenario);
+      const kind = getScenarioPaymentScheme(scenario).toLowerCase();
       if (!normalized.includes(kind)) {
         return false;
       }

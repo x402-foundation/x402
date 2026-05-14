@@ -150,7 +150,7 @@ export function printHelp(): void {
   console.log('  --extensions=<list>        Comma-separated extensions (e.g., bazaar)');
   console.log('  --versions=<list>          Comma-separated version numbers (e.g., 1,2)');
   console.log('  --families=<list>          Comma-separated protocol families (e.g., evm,svm,hedera,tvm)');
-  console.log('  --schemes=<list>           Payment schemes: exact, upto, batch-settlement');
+  console.log('  --schemes=<list>           Payment schemes: exact, upto, batch-settlement, authCapture');
   console.log('  --endpoints=<list>         Comma-separated endpoint paths or regex patterns (auto-anchored)');
   console.log('');
   console.log('Options:');

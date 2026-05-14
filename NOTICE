@@ -13,3 +13,17 @@ distributed under the License is distributed on an "AS IS" BASIS,
 WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
+
+---
+
+authCapture scheme:
+
+The authCapture payment scheme and its TypeScript implementation in
+@x402/evm were contributed by the x402r team. See proposal issue
+#1011 and specification PR #1425. The implementation was developed
+in https://github.com/BackTrackCo/x402r-scheme prior to upstreaming.
+
+The implementation originated from the "x402-escrow" proposal by
+Agentokratia in issue #834, published as @agentokratia/x402-escrow
+on npm under the MIT License, and incorporates code from that
+package.

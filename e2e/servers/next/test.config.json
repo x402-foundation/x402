@@ -198,6 +198,48 @@
       "assetTransferMethod": "eip3009"
     },
     {
+      "path": "/api/authCapture/evm/eip3009/proxy",
+      "method": "GET",
+      "description": "authCapture EVM endpoint (proxy middleware, EIP-3009 transfer, autoCapture)",
+      "requiresPayment": true,
+      "protocolFamily": "evm",
+      "scheme": "authCapture",
+      "assetTransferMethod": "eip3009"
+    },
+    {
+      "path": "/api/authCapture/evm/permit2/proxy",
+      "method": "GET",
+      "description": "authCapture EVM endpoint (proxy middleware, Permit2 transfer, autoCapture)",
+      "requiresPayment": true,
+      "protocolFamily": "evm",
+      "scheme": "authCapture",
+      "assetTransferMethod": "permit2",
+      "schemeOptions": {
+        "permit2Direct": true
+      }
+    },
+    {
+      "path": "/api/authCapture/evm/eip3009/withx402",
+      "method": "GET",
+      "description": "authCapture EVM endpoint (withX402 wrapper, EIP-3009 transfer, autoCapture)",
+      "requiresPayment": true,
+      "protocolFamily": "evm",
+      "scheme": "authCapture",
+      "assetTransferMethod": "eip3009"
+    },
+    {
+      "path": "/api/authCapture/evm/permit2/withx402",
+      "method": "GET",
+      "description": "authCapture EVM endpoint (withX402 wrapper, Permit2 transfer, autoCapture)",
+      "requiresPayment": true,
+      "protocolFamily": "evm",
+      "scheme": "authCapture",
+      "assetTransferMethod": "permit2",
+      "schemeOptions": {
+        "permit2Direct": true
+      }
+    },
+    {
       "path": "/api/exact/svm/withx402",
       "method": "GET",
       "description": "SVM endpoint using withX402 wrapper",

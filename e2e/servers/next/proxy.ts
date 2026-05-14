@@ -3,6 +3,7 @@ import { x402ResourceServer, HTTPFacilitatorClient } from "@x402/core/server";
 import { ExactEvmScheme } from "@x402/evm/exact/server";
 import { UptoEvmScheme } from "@x402/evm/upto/server";
 import { BatchSettlementEvmScheme } from "@x402/evm/batch-settlement/server";
+import { AuthCaptureEvmScheme } from "@x402/evm/authCapture/server";
 import { privateKeyToAccount } from "viem/accounts";
 import { ExactSvmScheme } from "@x402/svm/exact/server";
 import { ExactAptosScheme } from "@x402/aptos/exact/server";
@@ -32,6 +33,14 @@ export const HEDERA_AMOUNT = process.env.HEDERA_AMOUNT ?? "100000"; // price in 
 export const STELLAR_NETWORK = (process.env.STELLAR_NETWORK ||
   "stellar:testnet") as `${string}:${string}`;
 const EVM_PERMIT2_ASSET = process.env.EVM_PERMIT2_ASSET as `0x${string}`;
+// captureAuthorizer for the authCapture scheme. Address allowed to call
+// authorize/capture/void/refund/charge on AuthCaptureEscrow: either the
+// facilitator's submitter EOA, or a smart contract that ultimately calls
+// escrow as msg.sender (e.g., a refund-arbiter). Optional — when unset,
+// authCapture routes are skipped (analogous to how
+// EVM_RECEIVER_AUTHORIZER_PRIVATE_KEY gates batch-settlement features).
+export const EVM_AUTHCAPTURE_CAPTURE_AUTHORIZER = process.env
+  .EVM_AUTHCAPTURE_CAPTURE_AUTHORIZER as `0x${string}` | undefined;
 const facilitatorUrl = process.env.FACILITATOR_URL;
 
 if (!facilitatorUrl) {
@@ -70,6 +79,7 @@ server.register(
     ...(receiverAuthorizerSigner ? { receiverAuthorizerSigner } : {}),
   }),
 );
+server.register("eip155:*", new AuthCaptureEvmScheme());
 server.register("solana:*", new ExactSvmScheme());
 if (APTOS_PAYEE_ADDRESS) {
   server.register("aptos:*", new ExactAptosScheme());
@@ -141,6 +151,50 @@ export const proxy = paymentProxy(
         ...declareErc20ApprovalGasSponsoringExtension(),
       },
     },
+    ...(EVM_AUTHCAPTURE_CAPTURE_AUTHORIZER
+      ? {
+        "/api/authCapture/evm/eip3009/proxy": {
+          accepts: {
+            payTo: EVM_PAYEE_ADDRESS,
+            scheme: "authCapture",
+            price: "$0.001",
+            network: EVM_NETWORK,
+            extra: {
+              captureAuthorizer: EVM_AUTHCAPTURE_CAPTURE_AUTHORIZER,
+              captureDeadline: Math.floor(Date.now() / 1000) + 3600,
+              refundDeadline: Math.floor(Date.now() / 1000) + 7200,
+              feeRecipient: EVM_PAYEE_ADDRESS,
+              minFeeBps: 0,
+              maxFeeBps: 100,
+              name: "USDC",
+              version: "2",
+              assetTransferMethod: "eip3009",
+              autoCapture: true,
+            },
+          },
+        },
+        "/api/authCapture/evm/permit2/proxy": {
+          accepts: {
+            payTo: EVM_PAYEE_ADDRESS,
+            scheme: "authCapture",
+            price: "$0.001",
+            network: EVM_NETWORK,
+            extra: {
+              captureAuthorizer: EVM_AUTHCAPTURE_CAPTURE_AUTHORIZER,
+              captureDeadline: Math.floor(Date.now() / 1000) + 3600,
+              refundDeadline: Math.floor(Date.now() / 1000) + 7200,
+              feeRecipient: EVM_PAYEE_ADDRESS,
+              minFeeBps: 0,
+              maxFeeBps: 100,
+              name: "USDC",
+              version: "2",
+              assetTransferMethod: "permit2",
+              autoCapture: true,
+            },
+          },
+        },
+      }
+      : {}),
     "/api/exact/evm/eip3009/proxy": {
       accepts: {
         payTo: EVM_PAYEE_ADDRESS,
@@ -463,5 +517,7 @@ export const config = {
     "/api/batch-settlement/evm/permit2/proxy",
     "/api/batch-settlement/evm/permit2-eip2612GasSponsoring/proxy",
     "/api/batch-settlement/evm/permit2-erc20ApprovalGasSponsoring/proxy",
+    "/api/authCapture/evm/eip3009/proxy",
+    "/api/authCapture/evm/permit2/proxy",
   ],
 };

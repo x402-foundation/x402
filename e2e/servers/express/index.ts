@@ -5,6 +5,7 @@ import { ExactAvmScheme } from "@x402/avm/exact/server";
 import { ExactEvmScheme } from "@x402/evm/exact/server";
 import { UptoEvmScheme } from "@x402/evm/upto/server";
 import { BatchSettlementEvmScheme } from "@x402/evm/batch-settlement/server";
+import { AuthCaptureEvmScheme } from "@x402/evm/authCapture/server";
 import { ExactSvmScheme } from "@x402/svm/exact/server";
 import { ExactAptosScheme } from "@x402/aptos/exact/server";
 import { ExactHederaScheme } from "@x402/hedera/exact/server";
@@ -94,6 +95,16 @@ server.register(
     ...(receiverAuthorizerSigner ? { receiverAuthorizerSigner } : {}),
   }),
 );
+server.register("eip155:*", new AuthCaptureEvmScheme());
+
+// captureAuthorizer for the authCapture scheme. Address allowed to call
+// authorize/capture/void/refund/charge on AuthCaptureEscrow: either the
+// facilitator's submitter EOA, or a smart contract that ultimately calls
+// escrow as msg.sender (e.g., a refund-arbiter). Optional — when unset,
+// authCapture routes are skipped.
+const EVM_AUTHCAPTURE_CAPTURE_AUTHORIZER = process.env.EVM_AUTHCAPTURE_CAPTURE_AUTHORIZER as
+  | `0x${string}`
+  | undefined;
 server.register("solana:*", new ExactSvmScheme());
 if (APTOS_PAYEE_ADDRESS) {
   server.register("aptos:*", new ExactAptosScheme());
@@ -261,6 +272,50 @@ app.use(
           ...declareErc20ApprovalGasSponsoringExtension(),
         },
       },
+      ...(EVM_AUTHCAPTURE_CAPTURE_AUTHORIZER
+        ? {
+          "GET /authCapture/evm/eip3009": {
+            accepts: {
+              payTo: EVM_PAYEE_ADDRESS,
+              scheme: "authCapture",
+              price: "$0.001",
+              network: EVM_NETWORK,
+              extra: {
+                captureAuthorizer: EVM_AUTHCAPTURE_CAPTURE_AUTHORIZER,
+                captureDeadline: Math.floor(Date.now() / 1000) + 3600,
+                refundDeadline: Math.floor(Date.now() / 1000) + 7200,
+                feeRecipient: EVM_PAYEE_ADDRESS,
+                minFeeBps: 0,
+                maxFeeBps: 100,
+                name: "USDC",
+                version: "2",
+                assetTransferMethod: "eip3009",
+                autoCapture: true,
+              },
+            },
+          },
+          "GET /authCapture/evm/permit2": {
+            accepts: {
+              payTo: EVM_PAYEE_ADDRESS,
+              scheme: "authCapture",
+              price: "$0.001",
+              network: EVM_NETWORK,
+              extra: {
+                captureAuthorizer: EVM_AUTHCAPTURE_CAPTURE_AUTHORIZER,
+                captureDeadline: Math.floor(Date.now() / 1000) + 3600,
+                refundDeadline: Math.floor(Date.now() / 1000) + 7200,
+                feeRecipient: EVM_PAYEE_ADDRESS,
+                minFeeBps: 0,
+                maxFeeBps: 100,
+                name: "USDC",
+                version: "2",
+                assetTransferMethod: "permit2",
+                autoCapture: true,
+              },
+            },
+          },
+        }
+        : {}),
       "GET /exact/evm/eip3009": {
         accepts: {
           payTo: EVM_PAYEE_ADDRESS,
@@ -594,6 +649,22 @@ app.get("/batch-settlement/evm/permit2-erc20ApprovalGasSponsoring", (req, res) =
     message: "Batch-settlement Permit2 ERC-20 approval endpoint accessed successfully",
     timestamp: new Date().toISOString(),
     method: "batch-settlement-permit2-erc20-approval",
+  });
+});
+
+app.get("/authCapture/evm/eip3009", (req, res) => {
+  res.json({
+    message: "authCapture EIP-3009 endpoint accessed successfully",
+    timestamp: new Date().toISOString(),
+    method: "authCapture-eip3009",
+  });
+});
+
+app.get("/authCapture/evm/permit2", (req, res) => {
+  res.json({
+    message: "authCapture Permit2 endpoint accessed successfully",
+    timestamp: new Date().toISOString(),
+    method: "authCapture-permit2",
   });
 });
 

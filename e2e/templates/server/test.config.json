@@ -15,7 +15,7 @@
       "description": "<endpoint-description>",
       "requiresPayment": true,
       "protocolFamily": "<evm/svm>",
-      "scheme": "<exact/upto/batch-settlement> (EVM paid endpoints)",
+      "scheme": "<exact/upto/batch-settlement/authCapture> (EVM paid endpoints)",
       "assetTransferMethod": "<eip3009/permit2>"
     },
     {

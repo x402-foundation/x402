@@ -76,6 +76,10 @@ export type FacilitatorEvmSigner = {
     abi: readonly unknown[];
     functionName: string;
     args?: readonly unknown[];
+    /** Optional `from` address for the underlying `eth_call`. Lets schemes
+     * whose contracts gate on `msg.sender` (e.g., authCapture escrow's
+     * `onlySender(operator)`) simulate from the correct caller. */
+    account?: `0x${string}`;
   }): Promise<unknown>;
   verifyTypedData(args: {
     address: `0x${string}`;

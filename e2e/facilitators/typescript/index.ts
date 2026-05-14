@@ -32,6 +32,7 @@ import {
   VerifyResponse,
 } from "@x402/core/types";
 import { type AuthorizerSigner, toFacilitatorEvmSigner } from "@x402/evm";
+import { AuthCaptureEvmScheme } from "@x402/evm/authCapture/facilitator";
 import { BatchSettlementEvmScheme } from "@x402/evm/batch-settlement/facilitator";
 import { ExactEvmScheme } from "@x402/evm/exact/facilitator";
 import { UptoEvmScheme } from "@x402/evm/upto/facilitator";
@@ -422,6 +423,7 @@ facilitator
     EVM_NETWORK as Network,
     new BatchSettlementEvmScheme(evmSigner, authorizerSigner),
   )
+  .register(EVM_NETWORK as Network, new AuthCaptureEvmScheme(evmSigner))
   .registerV1(EVM_V1_NETWORKS as Network[], new ExactEvmSchemeV1(evmSigner))
   .register(SVM_NETWORK as Network, new ExactSvmScheme(svmSigner))
   .registerV1(SVM_V1_NETWORKS as Network[], new ExactSvmSchemeV1(svmSigner));
