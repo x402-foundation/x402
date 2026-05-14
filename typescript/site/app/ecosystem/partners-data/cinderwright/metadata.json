@@ -1,7 +1,7 @@
 {
   "name": "Cinderwright Discovery Hub",
   "category": "Infrastructure & Tooling",
-  "logoUrl": "/logos/cinderwright.png",
-  "description": "Cross-protocol discovery hub for AI agent payment services. Indexes 2,771+ services across x402, MPP, and L402/Lightning. Includes quality grades (A-F), intent-based search, price intelligence, and a payment proxy that lets agents call any x402 service without implementing payment signing \u2014 deposit USDC once, get an API key, call any service.",
+  "logoUrl": "/logos/cinderwright.svg",
+  "description": "Cross-protocol discovery hub indexing 2,771+ AI agent payment services across x402, MPP, and L402/Lightning. Features quality grades (A-F tested weekly), intent-based search, price intelligence, and a payment proxy \u2014 agents deposit USDC once and call any x402 service without implementing payment signing.",
   "websiteUrl": "https://api.ideafactorylab.org"
 }
