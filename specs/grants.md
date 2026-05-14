@@ -265,7 +265,7 @@ export function shouldCheckRevocation(
 
 ## 9. Conformance & Test Vectors
 
-> TBD — will be published in `spec/test-vectors/grants.json` with full JSON test vectors and expected verification outcomes.
+> See [test-vectors.md](./test-vectors.md) for the full set of verifiable EIP-712 test vectors (real signatures using the standard Hardhat test key). A raw JSON version is available at [test-vectors.json](./test-vectors.json) for programmatic use.
 
 ---
 
