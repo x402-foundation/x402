@@ -630,6 +630,118 @@ describe("x402HTTPResourceServer", () => {
         expect(httpServer.requiresPayment(context)).toBe(true);
       });
     });
+
+    describe("encoded path separators", () => {
+      it("should require payment when an encoded slash hides inside a :param segment", async () => {
+        const routes = {
+          "/api/report/:id": {
+            accepts: {
+              scheme: "exact",
+              payTo: "0xabc",
+              price: "$1.00" as Price,
+              network: "eip155:8453" as Network,
+            },
+          },
+        };
+
+        const httpServer = new x402HTTPResourceServer(ResourceServer, routes);
+
+        const adapter = new MockHTTPAdapter();
+        const context: HTTPRequestContext = {
+          adapter,
+          path: "/api/report/a%2Fb",
+          method: "GET",
+        };
+
+        const result = await httpServer.processHTTPRequest(context);
+
+        expect(result.type).toBe("payment-error");
+      });
+
+      it("should require payment for lowercase %2f as well", async () => {
+        const routes = {
+          "/api/report/:id": {
+            accepts: {
+              scheme: "exact",
+              payTo: "0xabc",
+              price: "$1.00" as Price,
+              network: "eip155:8453" as Network,
+            },
+          },
+        };
+
+        const httpServer = new x402HTTPResourceServer(ResourceServer, routes);
+
+        const adapter = new MockHTTPAdapter();
+        const context: HTTPRequestContext = {
+          adapter,
+          path: "/api/report/a%2fb",
+          method: "GET",
+        };
+
+        const result = await httpServer.processHTTPRequest(context);
+
+        expect(result.type).toBe("payment-error");
+      });
+
+      it.each([
+        ["uppercase %5C", "/api/report/a%5Cb"],
+        ["lowercase %5c", "/api/report/a%5cb"],
+      ])(
+        "should require payment when an encoded backslash hides inside a :param segment (%s)",
+        async (_, path) => {
+          const routes = {
+            "/api/report/:id": {
+              accepts: {
+                scheme: "exact",
+                payTo: "0xabc",
+                price: "$1.00" as Price,
+                network: "eip155:8453" as Network,
+              },
+            },
+          };
+
+          const httpServer = new x402HTTPResourceServer(ResourceServer, routes);
+
+          const adapter = new MockHTTPAdapter();
+          const context: HTTPRequestContext = {
+            adapter,
+            path,
+            method: "GET",
+          };
+
+          const result = await httpServer.processHTTPRequest(context);
+
+          expect(result.type).toBe("payment-error");
+        },
+      );
+
+      it("should still decode non-separator percent-escapes for non-ASCII route patterns", async () => {
+        const routes = {
+          "/api/categoría/:id": {
+            accepts: {
+              scheme: "exact",
+              payTo: "0xabc",
+              price: "$1.00" as Price,
+              network: "eip155:8453" as Network,
+            },
+          },
+        };
+
+        const httpServer = new x402HTTPResourceServer(ResourceServer, routes);
+
+        const adapter = new MockHTTPAdapter();
+        const context: HTTPRequestContext = {
+          adapter,
+          path: "/api/categor%C3%ADa/42",
+          method: "GET",
+        };
+
+        const result = await httpServer.processHTTPRequest(context);
+
+        expect(result.type).toBe("payment-error");
+      });
+    });
   });
 
   describe("Payment processing", () => {

@@ -1102,14 +1102,24 @@ export class x402HTTPResourceServer {
   private normalizePath(path: string): string {
     const pathWithoutQuery = path.split(/[?#]/)[0];
 
-    let decodedOrRawPath: string;
-    try {
-      decodedOrRawPath = decodeURIComponent(pathWithoutQuery);
-    } catch {
-      decodedOrRawPath = pathWithoutQuery;
-    }
+    // Decode percent-escapes per segment, preserving encoded path separators
+    // (%2F, %5C) as their literal escaped form. Otherwise an attacker could
+    // hide a "/" inside a single segment (e.g. /api/report/a%2Fb), bypassing
+    // a :param route whose regex compiles to [^/]+ while the framework still
+    // dispatches the request as a single-segment match.
+    const parts = pathWithoutQuery.split(/(%2[fF]|%5[cC])/);
+    const decoded = parts
+      .map((part, i) => {
+        if (i % 2 === 1) return part;
+        try {
+          return decodeURIComponent(part);
+        } catch {
+          return part;
+        }
+      })
+      .join("");
 
-    return decodedOrRawPath
+    return decoded
       .replace(/\\/g, "/")
       .replace(/\/+/g, "/")
       .replace(/(.+?)\/+$/, "$1");
