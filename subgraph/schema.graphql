@@ -1,0 +1,59 @@
+"""
+x402 Reputation Subgraph — GraphQL Schema
+Companion: specs/reputation.md, specs/subgraph.md
+"""
+
+type AgentReputation @entity {
+  "Agent wallet address (lowercase hex)"
+  id:                   ID!
+  agent:                Bytes!
+  totalPayments:        BigInt!
+  successfulPayments:   BigInt!
+  refundedPayments:     BigInt!
+  uniqueCounterparties: BigInt!
+  "Unix timestamp of most recent payment (settled or refunded)"
+  lastPaymentAt:        BigInt!
+  "Composite score: 0.0 (unreliable) to 1.0 (excellent)"
+  score:                BigDecimal!
+  "successfulPayments / (successfulPayments + refundedPayments)"
+  successRate:          BigDecimal!
+  "min(1.0, uniqueCounterparties / 10)"
+  diversityScore:       BigDecimal!
+  "exp(-0.01 × daysSinceLastPayment)"
+  recencyScore:         BigDecimal!
+}
+
+type Payment @entity {
+  "transactionHash-logIndex"
+  id:           ID!
+  grantId:      BigInt!
+  principal:    Bytes!
+  agent:        Bytes!
+  "Empty for refunded payments"
+  counterparty: Bytes!
+  amount:       BigInt!
+  "true = settled, false = refunded"
+  settled:      Boolean!
+  timestamp:    BigInt!
+}
+
+type GrantRevocation @entity {
+  "grantId as decimal string"
+  id:               ID!
+  grantId:          BigInt!
+  principal:        Bytes!
+  blockNumber:      BigInt!
+  timestamp:        BigInt!
+  transactionHash:  Bytes!
+}
+
+"""
+Internal entity — tracks unique (agent, counterparty) pairs for diversity scoring.
+Not queryable externally (use AgentReputation.uniqueCounterparties instead).
+"""
+type CounterpartyRecord @entity {
+  "agentAddress-counterpartyAddress"
+  id:           ID!
+  agent:        Bytes!
+  counterparty: Bytes!
+}
