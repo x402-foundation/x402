@@ -8,9 +8,11 @@ The x402 standard separates transport (how data is exchanged), from the logical 
 
 ## Extensions & Agent Protocols
 
-| Document | Description | Status |
-|----------|-------------|--------|
-| [grants.md](./grants.md) | x402 Agent Grant System - EIP-712 signed spend delegation for AI agents | Draft v1.0 |
+| File | Description | Status |
+|------|-------------|--------|
+| [grants.md](./grants.md) | x402 Agent Grant System — EIP-712 signed spend delegation for AI agents | Live |
+| [test-vectors.md](./test-vectors.md) / [.json](./test-vectors.json) | Verifiable test data with real Hardhat signatures | Live |
+| [conformance.md](./conformance.md) | One-command conformance test suite | Live |
 | payment-flow.md | End-to-end payment flow specification | Planned |
 | reputation.md | Agent reputation & trust scoring | Planned |
 | subgraph.md | The Graph subgraph for revocation indexing | Planned |
