@@ -80,3 +80,13 @@ Uses the **test private key** from `specs/test-vectors.json` — so you can run 
 ---
 
 *Part of the x402 Agent Grant System — built by [AgentPay](https://x402-agent-pay.com)*
+
+---
+
+## Go further
+
+| Guide | What it adds |
+|-------|-------------|
+| [BASE_SEPOLIA.md](./BASE_SEPOLIA.md) | Real on-chain USDC settlement on Base Sepolia — same code, real tx hashes |
+| [specs/payment-flow.md](../../specs/payment-flow.md) | Full lifecycle reference with Mermaid sequence diagram |
+| [specs/conformance.md](../../specs/conformance.md) | Validate any verifier implementation in 30 seconds |
