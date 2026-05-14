@@ -533,7 +533,7 @@ type ERC6492SignatureData struct {
 
 // AuthCapturePaymentInfo represents the on-chain PaymentInfo struct for the authCapture scheme.
 type AuthCapturePaymentInfo struct {
-	Operator            string `json:"operator"`            // Operator address (facilitator's signer)
+	Operator            string `json:"operator"`            // Capture authorizer address
 	Payer               string `json:"payer"`               // Payer address (== authorization.from, set by client)
 	Receiver            string `json:"receiver"`            // Receiver address (== requirements.payTo)
 	Token               string `json:"token"`               // Token address (== requirements.asset)

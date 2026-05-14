@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"math/big"
 	"strings"
@@ -46,12 +47,12 @@ func (c *AuthCaptureEvmScheme) CreatePaymentPayload(
 	// 1. Extract required extra fields
 	captureAuthorizer, ok := requirements.Extra["captureAuthorizer"].(string)
 	if !ok || captureAuthorizer == "" {
-		return types.PaymentPayload{}, fmt.Errorf(ErrMissingCaptureAuthorizer)
+		return types.PaymentPayload{}, errors.New(ErrMissingCaptureAuthorizer)
 	}
 
 	captureDeadlineRaw, ok := requirements.Extra["captureDeadline"]
 	if !ok {
-		return types.PaymentPayload{}, fmt.Errorf(ErrMissingCaptureDeadline)
+		return types.PaymentPayload{}, errors.New(ErrMissingCaptureDeadline)
 	}
 	captureDeadline, err := toUint48(captureDeadlineRaw)
 	if err != nil {
@@ -60,7 +61,7 @@ func (c *AuthCaptureEvmScheme) CreatePaymentPayload(
 
 	refundDeadlineRaw, ok := requirements.Extra["refundDeadline"]
 	if !ok {
-		return types.PaymentPayload{}, fmt.Errorf(ErrMissingRefundDeadline)
+		return types.PaymentPayload{}, errors.New(ErrMissingRefundDeadline)
 	}
 	refundDeadline, err := toUint48(refundDeadlineRaw)
 	if err != nil {
@@ -69,26 +70,38 @@ func (c *AuthCaptureEvmScheme) CreatePaymentPayload(
 
 	feeRecipient, ok := requirements.Extra["feeRecipient"].(string)
 	if !ok {
-		return types.PaymentPayload{}, fmt.Errorf(ErrMissingFeeRecipient)
+		return types.PaymentPayload{}, errors.New(ErrMissingFeeRecipient)
 	}
 
 	tokenName, ok := requirements.Extra["name"].(string)
 	if !ok || tokenName == "" {
-		return types.PaymentPayload{}, fmt.Errorf(ErrMissingTokenName)
+		return types.PaymentPayload{}, errors.New(ErrMissingTokenName)
 	}
 	tokenVersion, ok := requirements.Extra["version"].(string)
 	if !ok || tokenVersion == "" {
-		return types.PaymentPayload{}, fmt.Errorf(ErrMissingTokenVersion)
+		return types.PaymentPayload{}, errors.New(ErrMissingTokenVersion)
 	}
 
-	// 2. Extract optional extra fields with defaults
-	minFeeBps := uint16(0)
-	if v, ok := requirements.Extra["minFeeBps"].(float64); ok {
-		minFeeBps = uint16(v)
+	// 2. Extract required fee bounds
+	minFeeBpsRaw, ok := requirements.Extra["minFeeBps"]
+	if !ok {
+		return types.PaymentPayload{}, errors.New(ErrMissingMinFeeBps)
 	}
-	maxFeeBps := uint16(0)
-	if v, ok := requirements.Extra["maxFeeBps"].(float64); ok {
-		maxFeeBps = uint16(v)
+	minFeeBps, err := toFeeBps(minFeeBpsRaw)
+	if err != nil {
+		return types.PaymentPayload{}, fmt.Errorf(ErrInvalidFeeBps+": %w", err)
+	}
+
+	maxFeeBpsRaw, ok := requirements.Extra["maxFeeBps"]
+	if !ok {
+		return types.PaymentPayload{}, errors.New(ErrMissingMaxFeeBps)
+	}
+	maxFeeBps, err := toFeeBps(maxFeeBpsRaw)
+	if err != nil {
+		return types.PaymentPayload{}, fmt.Errorf(ErrInvalidFeeBps+": %w", err)
+	}
+	if minFeeBps > maxFeeBps {
+		return types.PaymentPayload{}, fmt.Errorf(ErrInvalidFeeBpsRange+": minFeeBps (%d) must be <= maxFeeBps (%d)", minFeeBps, maxFeeBps)
 	}
 
 	assetTransferMethod := "eip3009"
@@ -156,9 +169,9 @@ func (c *AuthCaptureEvmScheme) CreatePaymentPayload(
 
 	switch strings.ToLower(assetTransferMethod) {
 	case "permit2":
-		return c.createPermit2Payload(ctx, requirements, chainID, paymentInfo, nonce, salt, now)
+		return c.createPermit2Payload(ctx, requirements, chainID, paymentInfo, nonce, salt)
 	default:
-		return c.createEip3009Payload(ctx, requirements, chainID, paymentInfo, nonce, salt, now)
+		return c.createEip3009Payload(ctx, requirements, chainID, paymentInfo, nonce, salt)
 	}
 }
 
@@ -170,7 +183,6 @@ func (c *AuthCaptureEvmScheme) createEip3009Payload(
 	paymentInfo evm.AuthCapturePaymentInfo,
 	nonce string,
 	salt string,
-	now int64,
 ) (types.PaymentPayload, error) {
 	tokenName, _ := requirements.Extra["name"].(string)
 	tokenVersion, _ := requirements.Extra["version"].(string)
@@ -213,7 +225,6 @@ func (c *AuthCaptureEvmScheme) createPermit2Payload(
 	paymentInfo evm.AuthCapturePaymentInfo,
 	nonce string,
 	salt string,
-	now int64,
 ) (types.PaymentPayload, error) {
 	// Permit2 nonce is uint256(payerAgnosticPaymentInfoHash); we re-derive it as a decimal.
 	// core.ComputeAuthCaptureNonce returns a hex-encoded bytes32; convert to decimal for Permit2.
@@ -379,22 +390,53 @@ func (c *AuthCaptureEvmScheme) signPermit2(
 func toUint48(v interface{}) (uint64, error) {
 	switch t := v.(type) {
 	case float64:
-		if t < 0 {
-			return 0, fmt.Errorf("negative value")
+		if t < 0 || t > (1<<48)-1 || t != float64(uint64(t)) {
+			return 0, fmt.Errorf("value must be an integer uint48")
 		}
 		return uint64(t), nil
 	case int64:
-		if t < 0 {
-			return 0, fmt.Errorf("negative value")
+		if t < 0 || t > (1<<48)-1 {
+			return 0, fmt.Errorf("value must be an integer uint48")
 		}
 		return uint64(t), nil
 	case int:
-		if t < 0 {
-			return 0, fmt.Errorf("negative value")
+		if t < 0 || t > (1<<48)-1 {
+			return 0, fmt.Errorf("value must be an integer uint48")
 		}
 		return uint64(t), nil
 	case uint64:
+		if t > (1<<48)-1 {
+			return 0, fmt.Errorf("value must be an integer uint48")
+		}
 		return t, nil
+	default:
+		return 0, fmt.Errorf("unsupported type %T", v)
+	}
+}
+
+// toFeeBps converts an interface{} extra field value to uint16 basis points.
+func toFeeBps(v interface{}) (uint16, error) {
+	switch t := v.(type) {
+	case float64:
+		if t < 0 || t > 10000 || t != float64(uint16(t)) {
+			return 0, fmt.Errorf("value must be an integer between 0 and 10000")
+		}
+		return uint16(t), nil
+	case int64:
+		if t < 0 || t > 10000 {
+			return 0, fmt.Errorf("value must be an integer between 0 and 10000")
+		}
+		return uint16(t), nil
+	case int:
+		if t < 0 || t > 10000 {
+			return 0, fmt.Errorf("value must be an integer between 0 and 10000")
+		}
+		return uint16(t), nil
+	case uint64:
+		if t > 10000 {
+			return 0, fmt.Errorf("value must be an integer between 0 and 10000")
+		}
+		return uint16(t), nil
 	default:
 		return 0, fmt.Errorf("unsupported type %T", v)
 	}

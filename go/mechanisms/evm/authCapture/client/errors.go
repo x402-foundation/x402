@@ -17,5 +17,7 @@ const (
 	ErrFailedToGenerateSalt      = "invalid_authcapture_evm_client_failed_to_generate_salt"
 	ErrInvalidCaptureDeadline    = "invalid_authcapture_evm_client_invalid_capture_deadline"
 	ErrInvalidRefundDeadline     = "invalid_authcapture_evm_client_invalid_refund_deadline"
+	ErrInvalidFeeBps             = "invalid_authcapture_evm_client_invalid_fee_bps"
+	ErrInvalidFeeBpsRange        = "invalid_authcapture_evm_client_invalid_fee_bps_range"
 	ErrInvalidDeadlineOrdering   = "invalid_authcapture_evm_client_invalid_deadline_ordering"
 )
