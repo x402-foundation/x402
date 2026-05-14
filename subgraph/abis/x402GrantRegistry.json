@@ -1,0 +1,11 @@
+[
+  {
+    "anonymous": false,
+    "name": "GrantRevoked",
+    "type": "event",
+    "inputs": [
+      { "indexed": true,  "name": "principal", "type": "address" },
+      { "indexed": true,  "name": "grantId",   "type": "uint256" }
+    ]
+  }
+]
