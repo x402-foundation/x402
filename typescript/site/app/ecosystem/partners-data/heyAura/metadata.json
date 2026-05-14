@@ -1,0 +1,7 @@
+{
+  "name": "heyAura  API",
+  "description": "heyAura API with x402 micropayments. Access porfolio data, tokens and defi positions, yield strategies, transaction payloads",
+  "logoUrl": "/logos/heyAura.png",
+  "websiteUrl": "https://guide.heyaura.com/en/",
+  "category": "Services/Endpoints"
+}
