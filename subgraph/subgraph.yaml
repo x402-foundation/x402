@@ -1,0 +1,60 @@
+specVersion: 1.0.0
+description: "x402 Agent Grant Reputation — indexes PaymentSettled, PaymentRefunded, and GrantRevoked events on Base L2"
+repository: https://github.com/shawnhvac/x402
+
+schema:
+  file: ./schema.graphql
+
+dataSources:
+  # ── x402GrantRegistry ───────────────────────────────────────────────────────
+  # Indexes GrantRevoked events for cross-referencing revocations in reputation scoring.
+  # Update `address` and `startBlock` after deployment.
+  - kind: ethereum
+    name: x402GrantRegistry
+    network: base
+    source:
+      address: "0x0000000000000000000000000000000000000000"  # TODO: replace with deployed address
+      abi: x402GrantRegistry
+      startBlock: 0  # TODO: replace with contract deployment block number
+    mapping:
+      kind: ethereum/events
+      apiVersion: 0.0.7
+      language: wasm/assemblyscript
+      entities:
+        - GrantRevocation
+      abis:
+        - name: x402GrantRegistry
+          file: ./abis/x402GrantRegistry.json
+      eventHandlers:
+        - event: GrantRevoked(address indexed principal, uint256 indexed grantId)
+          handler: handleGrantRevoked
+      file: ./src/mapping.ts
+
+  # ── SettlementListener ──────────────────────────────────────────────────────
+  # Indexes PaymentSettled and PaymentRefunded events emitted by the AgentPay
+  # settlement daemon (settlement_listener.py on the receiving agent server).
+  # Update `address` and `startBlock` after deployment.
+  - kind: ethereum
+    name: SettlementListener
+    network: base
+    source:
+      address: "0x0000000000000000000000000000000000000000"  # TODO: replace with deployed address
+      abi: SettlementListener
+      startBlock: 0  # TODO: replace with contract deployment block number
+    mapping:
+      kind: ethereum/events
+      apiVersion: 0.0.7
+      language: wasm/assemblyscript
+      entities:
+        - Payment
+        - AgentReputation
+        - CounterpartyRecord
+      abis:
+        - name: SettlementListener
+          file: ./abis/SettlementListener.json
+      eventHandlers:
+        - event: PaymentSettled(uint256 indexed grantId, address indexed principal, address indexed agent, address counterparty, uint256 amount, uint256 timestamp)
+          handler: handlePaymentSettled
+        - event: PaymentRefunded(uint256 indexed grantId, address indexed principal, address indexed agent, uint256 amount, uint256 timestamp)
+          handler: handlePaymentRefunded
+      file: ./src/mapping.ts
