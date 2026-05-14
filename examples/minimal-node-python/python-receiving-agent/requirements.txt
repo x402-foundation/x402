@@ -1,0 +1,4 @@
+flask==3.0.3
+eth-abi==4.2.1
+eth-keys==0.6.1
+pycryptodome==3.20.0
