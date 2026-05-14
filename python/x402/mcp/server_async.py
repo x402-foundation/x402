@@ -272,6 +272,14 @@ def create_payment_wrapper(
                     resource_server, tool_name, config, str(e)
                 )
 
+            if not settle_result.success:
+                return await _create_settlement_failed_result_async(
+                    resource_server,
+                    tool_name,
+                    config,
+                    settle_result.error_reason or "Unknown settlement failure",
+                )
+
             # Run onAfterSettlement hook if present
             if config.hooks and config.hooks.on_after_settlement:
                 settlement_context = SettlementContext(
