@@ -1,6 +1,6 @@
 {
-  "name": "agent-oracle",
-  "description": "x402-native sports oracle for Nippon Professional Baseball (NPB). Win-probability predictions (XGBoost), Asian Handicap daily snapshots, post-game results and box scores, and per-season pitcher/batter/fielder stats — paid per call in USDC on Solana mainnet, with Bazaar discovery metadata on every paymentRequirements response.",
+  "name": "npb-win-probability-oracle",
+  "description": "x402-native sports-prediction oracle for Nippon Professional Baseball (NPB). Win-probability predictions (XGBoost AUC 0.5622, 28,968 games), Asian Handicap daily snapshots, post-game results and box scores, and per-season pitcher/batter/fielder stats — paid per call in USDC on Solana mainnet, with v2 Bazaar discovery metadata on every paymentRequirements response. Renamed from 'agent-oracle' for AI-agent semantic clarity (3-party namespace congestion with TKCollective/AgentOracle and aiagentoracle.ai).",
   "logoUrl": "/logos/agent-oracle.svg",
   "websiteUrl": "https://oracle-api-production-766f.up.railway.app",
   "category": "Services/Endpoints"
