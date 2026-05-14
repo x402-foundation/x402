@@ -2,6 +2,8 @@
 
 x402 is an open standard for internet native payments. It aims to support all networks (both crypto & fiat) and forms of value (stablecoins, tokens, fiat).
 
+> **[→ COMMUNITY.md](./COMMUNITY.md)** — Implementations, conformance instructions, and the full x402 Agent Grant spec suite (grants · test-vectors · payment-flow · reputation · subgraph)
+
 ```typescript
 app.use(
   paymentMiddleware(
