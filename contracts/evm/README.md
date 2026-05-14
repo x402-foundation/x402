@@ -29,8 +29,11 @@ Both contracts:
 
 | Chain | Exact | Upto |
 |-------|-------|------|
+| Ethereum Mainnet | — | [Deployed](https://etherscan.io/tx/0x2799bad3d0ee237f13de0138357ff04fc3f7d8a71c9d04fa6922171a980efe3d) |
+| BNB Smart Chain | — | [Deployed](https://bscscan.com/tx/0x58bdaf2d8d1393d584bbe824d2f7db3c4bf9c16788b6965f8d30e255c68d7132) |
 | Base Mainnet | [Deployed](https://basescan.org/address/0x402085c248EeA27D92E8b30b2C58ed07f9E20001) | — |
 | Base Sepolia | [Deployed](https://sepolia.basescan.org/address/0x402085c248EeA27D92E8b30b2C58ed07f9E20001) | [Legacy\*](https://sepolia.basescan.org/address/0x402039b3d6E6BEC5A02c2C9fd937ac17A6940002) |
+| GateLayer Mainnet | — | [Deployed](https://www.gatescan.org/gatelayer/tx/0x861d63a1e18369585db46f5baaa945041e104fb0ed5910729831747370235e93) |
 
 > \*The Base Sepolia Upto deployment at `0x4020...0002` predates the deterministic build fix
 > and uses a different bytecode (with CBOR metadata). The canonical Upto address for all
