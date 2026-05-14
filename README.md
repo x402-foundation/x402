@@ -1,46 +1,100 @@
-# x402
+# x402 — Agent Grants for HTTP 402 Payments
 
-x402 is an open standard for internet native payments. It aims to support all networks (both crypto & fiat) and forms of value (stablecoins, tokens, fiat).
+**The open protocol for AI agents to pay for tools, APIs, and each other.**
 
-> **[→ COMMUNITY.md](./COMMUNITY.md)** — Implementations, conformance instructions, and the full x402 Agent Grant spec suite (grants · test-vectors · payment-flow · reputation · subgraph)
+[![GitHub stars](https://img.shields.io/github/stars/shawnhvac/x402?style=flat-square)](https://github.com/shawnhvac/x402/stargazers)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue?style=flat-square)](LICENSE)
+[![Network: Base L2](https://img.shields.io/badge/network-Base%20L2-0052FF?style=flat-square)](https://base.org)
+[![Settlement: USDC](https://img.shields.io/badge/settlement-USDC-2775CA?style=flat-square)](https://www.circle.com/usdc)
+[![Conformance: 6/6](https://img.shields.io/badge/conformance-6%2F6%20passing-brightgreen?style=flat-square)](./test/)
 
-```typescript
-app.use(
-  paymentMiddleware(
-    {
-      "GET /weather": {
-        accepts: [...],                 // As many networks / schemes as you want to support
-        description: "Weather data",    // what your endpoint does
-      },
-    },
-  ),
-);
-// That's it! See examples/ for full details
+x402 extends the HTTP 402 Payment Required standard with **signed EIP-712 grant objects** — short-lived, programmable spend policies that let AI agents pay autonomously without sharing keys. Automatic refunds. Optional reputation layer. Fully open spec — implement without AgentPay.
+
+> **[→ COMMUNITY.md](./COMMUNITY.md)** — See who's building with x402 and add your implementation
+
+---
+
+## Get Started in 60 Seconds
+
+```bash
+git clone https://github.com/shawnhvac/x402.git
+cd x402/examples/minimal-node-python
+
+# Terminal 1 — start the receiving agent
+cd python-receiving-agent && pip install -r requirements.txt && python app.py
+
+# Terminal 2 — run a payment
+cd node-paying-agent && npm install && npm start
 ```
+
+You'll see a full payment cycle — grant → verify → settle → receipt — in your terminal. No wallet, no gas, no setup.
+
+**Ready to go on-chain?** See [BASE_SEPOLIA.md](./examples/minimal-node-python/BASE_SEPOLIA.md) for real USDC settlement on Base Sepolia in one `.env` file.
+
+---
+
+## Why x402?
+
+- **Agents pay autonomously** — no shared keys, no human in the loop
+- **Offline verification** — receivers verify grants without an RPC call in the happy path
+- **Programmable budgets** — `perRequestCap` + `totalBudget` + scopes (IAM for agents)
+- **Automatic refunds** — 60-second timeout triggers a refund; revert = instant refund
+- **Reputation layer** — optional Sybil-resistant scoring via The Graph subgraph
+- **Open spec** — six live documents, conformance suite, anyone can implement
+
+---
+
+## What's in This Repo
+
+| Path | What it is |
+|---|---|
+| [`specs/grants.md`](./specs/grants.md) | EIP-712 grant schema, security rules, revocation |
+| [`specs/payment-flow.md`](./specs/payment-flow.md) | End-to-end lifecycle with Mermaid sequence diagram |
+| [`specs/conformance.md`](./specs/conformance.md) | One-command conformance suite (`npm test`) |
+| [`specs/reputation.md`](./specs/reputation.md) | Optional Sybil-resistant reputation scoring |
+| [`specs/subgraph.md`](./specs/subgraph.md) | The Graph subgraph deployment guide |
+| [`subgraph/`](./subgraph/) | Production-ready AssemblyScript subgraph workspace |
+| [`examples/minimal-node-python/`](./examples/minimal-node-python/) | Node.js paying agent + Python receiving agent |
+| [`test/`](./test/) | Conformance tests — 6 vectors, real Hardhat signatures |
+| [`COMMUNITY.md`](./COMMUNITY.md) | Implementations table — add yours via PR |
+
+---
+
+## Status
+
+| Layer | Status |
+|---|---|
+| Core spec & EIP-712 grants | ✅ Live — conformance-tested |
+| Local example (60-second quickstart) | ✅ Live |
+| Base Sepolia example (real USDC, EIP-3009) | ✅ Live |
+| Reputation spec | ✅ Live |
+| Subgraph workspace (AssemblyScript, schema, ABIs) | ✅ Ready to deploy |
+| Hosted subgraph endpoint | 🔜 Pending contract deployment |
+| Community implementations | 🟢 Open — [submit a PR](./COMMUNITY.md) |
+
+---
 
 ## Installation
 
+x402 is a standard, not a library — but SDKs are available:
+
 <details>
-<summary><b>Typescript</b></summary>
+<summary><b>TypeScript</b></summary>
 
-<br/> 
+<br/>
 
-> See all the packages available in the [**Typescript SDK**](./typescript/), including chain implementations of x402, code examples and integration guides.
+> See all packages in the [**TypeScript SDK**](./typescript/), including chain implementations, examples, and integration guides.
 
 ```shell
-# All available reference sdks
+# Full SDK
 npm install @x402/core \
-  @x402/evm @x402/svm @x402/stellar @x402/svm \
+  @x402/evm @x402/svm @x402/stellar \
   @x402/axios @x402/fastify @x402/fetch @x402/express @x402/hono @x402/next @x402/paywall @x402/extensions
-```
 
-```shell
-# Minimal Fetch client
+# Minimal fetch client
 npm install @x402/core @x402/evm @x402/svm @x402/fetch
-```
 
-```shell
-# Minimal express Server
+# Minimal Express server
 npm install @x402/core @x402/evm @x402/svm @x402/express
 ```
 
@@ -49,9 +103,9 @@ npm install @x402/core @x402/evm @x402/svm @x402/express
 <details>
 <summary><b>Python</b></summary>
 
-<br/> 
+<br/>
 
-> See the [**`python/x402`**](./python/) folder for code examples and integration guides.
+> See the [**`python/x402`**](./python/) folder for examples and integration guides.
 
 ```shell
 pip install x402
@@ -62,9 +116,9 @@ pip install x402
 <details>
 <summary><b>Go</b></summary>
 
-<br/> 
+<br/>
 
-> See the [**`go/`**](./go/) folder for code examples and integration guides.
+> See the [**`go/`**](./go/) folder for examples and integration guides.
 
 ```shell
 go get github.com/x402-foundation/x402/go
@@ -72,94 +126,90 @@ go get github.com/x402-foundation/x402/go
 
 </details>
 
+---
+
+## Conformance
+
+Any implementation can verify correctness in one command:
+
+```bash
+cd test && npm install && npm test
+```
+
+Expected:
+```
+x402 Grant Conformance Suite
+  ✓ valid-grant
+  ✓ expired-grant
+  ✓ wrong-agent
+  ✓ near-expiry-revocation-check
+  ✓ clock-skew-grace
+  ✓ zero-per-request-cap
+
+  6 passing
+```
+
+---
 
 ## Principles
 
-- **Open standard:** x402 is an open standard, freely accessible and usable by anyone. It will never force reliance on a single party.
-- **HTTP / Transport Native:** x402 is meant to seamlessly complement existing data transportation. It should whenever possible not mandate additional requests outside the scope of a typical client / server flow.
-- **Network, token, and currency agnostic:** we welcome contributions that add support for new networks (both crypto and fiat), signing standards, or schemes, so long as they meet our acceptance criteria laid out in [CONTRIBUTING.md](https://github.com/x402-foundation/x402/blob/main/CONTRIBUTING.md). x402 may extend support to fiat based networks, but will never deprioritize onchain payments in favor of fiat payments.
-- **Backwards Compatible:** x402 will not deprecate support for any existing networks unless such removal is deemed necessary for the security of the standard. Whenever possible, x402 will aim for backwards compatibility for non-major version changes.
-- **Trust minimizing:** all payment schemes must not allow for the facilitator or resource server to move funds, other than in accordance with client intentions
-- **Easy to use:** It is the goal of the x402 community to improve ease of use relative to other forms of payment on the Internet. This means abstracting as many details of crypto as possible away from the client and resource server, and into the facilitator. This means the client/server should not need to think about gas, rpc, etc.
+- **Open standard** — freely accessible, no reliance on a single party
+- **HTTP / Transport Native** — complements existing infrastructure, no extra round trips
+- **Network & currency agnostic** — crypto and fiat, EVM and SVM, Base L2 and beyond
+- **Backwards compatible** — no deprecations without security necessity
+- **Trust minimizing** — facilitators and resource servers cannot move funds against client intentions
+- **Easy to use** — gas, RPC, and signing complexity are abstracted away
 
-## Ecosystem
+---
 
-The x402 ecosystem is growing! Check out our [ecosystem page](https://x402.org/ecosystem) to see projects building with x402, including:
+## How x402 Works
 
-- Client-side integrations
-- Services and endpoints
-- Ecosystem infrastructure and tooling
-- Learning and community resources
+x402 follows the standard HTTP 402 flow with a grant-based extension for agent payments:
 
-Want to add your project to the ecosystem? See our [demo site README](https://github.com/x402-foundation/x402/tree/main/typescript/site#adding-your-project-to-the-ecosystem) for detailed instructions on how to submit your project.
+![x402 payment flow](./static/flow.png)
 
-**Roadmap:** see [ROADMAP.md](https://github.com/x402-foundation/x402/blob/main/ROADMAP.md)
+1. **Client** makes an HTTP request to a resource server
+2. **Resource server** returns `402 Payment Required` + a `PaymentRequired` header
+3. **Client** selects a payment scheme and creates a signed `PaymentPayload` (or presents a pre-signed grant)
+4. **Client** resends the request with `X-402-Payment` header
+5. **Resource server** verifies — locally (offline for grants) or via facilitator
+6. **Resource server** settles the payment via facilitator or directly on-chain
+7. **Resource server** returns `200 OK` + `X-402-Receipt` header with the settlement response
 
-**Documentation:** see [docs/](./docs/) for the GitBook documentation source
-
-## Terms:
-
-- `resource`: Something on the internet. This could be a webpage, file server, RPC service, API, any resource on the internet that accepts HTTP / HTTPS requests.
-- `client`: An entity wanting to pay for a resource.
-- `facilitator`: A server that facilitates verification and execution of payments for one or many networks.
-- `resource server`: An HTTP server that provides an API or other resource for a client.
-
-## Technical Goals:
-
-- Permissionless and secure for clients, servers, and facilitators
-- Minimal friction to adopt for both client and resource servers
-- Minimal integration for the resource server and client (1 line for the server, 1 function for the client)
-- Ability to trade off speed of response for guarantee of payment
-- Extensible to different payment flows and networks
-
-## Specification
-
-See `specs/` for full documentation of the x402 standard/
-
-### Typical x402 flow
-
-x402 payments typically adhere to the following flow, but servers have a lot of flexibility. See `advanced` folders in `examples/`.
-![](./static/flow.png)
-
-The following outlines the flow of a payment using the `x402` protocol. Note that steps (1) and (2) are optional if the client already knows the payment details accepted for a resource.
-
-1. `Client` makes an HTTP request to a `resource server`.
-
-2. `Resource server` responds with a `402 Payment Required` status and a `PaymentRequired` b64 object return as a `PAYMENT-REQUIRED` header.
-
-3. `Client` selects one of the `PaymentRequirements` returned by the server response and creates a `PaymentPayload` based on the `scheme` & `network` of the `PaymentRequirements` they have selected.
-
-4. `Client` sends the HTTP request with the `PAYMENT-SIGNATURE` header containing the `PaymentPayload` to the resource server.
-
-5. `Resource server` verifies the `PaymentPayload` is valid either via local verification or by POSTing the `PaymentPayload` and `PaymentRequirements` to the `/verify` endpoint of a `facilitator`.
-
-6. `Facilitator` performs verification of the object based on the `scheme` and `network` of the `PaymentPayload` and returns a `Verification Response`.
-
-7. If the `Verification Response` is valid, the resource server performs the work to fulfill the request. If the `Verification Response` is invalid, the resource server returns a `402 Payment Required` status and a `Payment Required Response` JSON object in the response body.
-
-8. `Resource server` either settles the payment by interacting with a blockchain directly, or by POSTing the `Payment Payload` and `Payment PaymentRequirements` to the `/settle` endpoint of a `facilitator server`.
-
-9. `Facilitator server` submits the payment to the blockchain based on the `scheme` and `network` of the `Payment Payload`.
-
-10. `Facilitator server` waits for the payment to be confirmed on the blockchain.
-
-11. `Facilitator server` returns a `Payment Execution Response` to the resource server.
-
-12. `Resource server` returns a `200 OK` response to the `Client` with the resource they requested as the body of the HTTP response, and a `PAYMENT-RESPONSE` header containing the `Settlement Response` as Base64 encoded JSON if the payment was executed successfully.
+See [specs/payment-flow.md](./specs/payment-flow.md) for the full lifecycle with sequence diagram.
 
 ### Schemes
 
-A scheme is a logical way of moving money.
+A scheme defines the *logical* way money moves. The first scheme (`exact`) transfers a precise amount per request. A theoretical `upto` scheme would transfer up to a cap based on resources consumed.
 
-Blockchains allow for a large number of flexible ways to move money. To help facilitate an expanding number of payment use cases, the `x402` protocol is extensible to different ways of settling payments via its `scheme` field.
+See [`specs/schemes/`](./specs/schemes/) for all scheme specifications.
 
-Each payment scheme may have different operational functionality depending on what actions are necessary to fulfill the payment.
-For example `exact`, the first scheme shipping as part of the protocol, would have different behavior than `upto`. `exact` transfers a specific amount (ex: pay $1 to read an article), while a theoretical `upto` would transfer up to an amount, based on the resources consumed during a request (ex: generating tokens from an LLM).
+---
 
-See `specs/schemes` for more details on schemes, and see `specs/schemes/exact/scheme_exact_evm.md` to see the first proposed scheme for exact payment on EVM chains.
+## Ecosystem
 
-### Schemes vs Networks
+The x402 ecosystem is growing. Check out the [ecosystem page](https://x402.org/ecosystem) for projects building with x402, or see [COMMUNITY.md](./COMMUNITY.md) for implementations of the Agent Grant system specifically.
 
-Because a scheme is a logical way of moving money, the way a scheme is implemented can be different for different blockchains. (ex: the way you need to implement `exact` on Ethereum is very different from the way you need to implement `exact` on Solana).
+Want to add your project? See [COMMUNITY.md → How to Add Yours](./COMMUNITY.md#how-to-add-yours).
 
-Clients and facilitators must explicitly support different `(scheme, network)` pairs in order to be able to create proper payloads and verify / settle payments.
+**Roadmap:** [ROADMAP.md](https://github.com/x402-foundation/x402/blob/main/ROADMAP.md)  
+**Documentation:** [docs/](./docs/)
+
+---
+
+## Terms
+
+| Term | Definition |
+|---|---|
+| `resource` | Any internet-accessible endpoint — API, file server, RPC, webpage |
+| `client` | An entity (human or agent) wanting to pay for a resource |
+| `facilitator` | A server that verifies and settles payments across networks |
+| `resource server` | The HTTP server providing the resource |
+| `grant` | A signed EIP-712 object delegating a spend budget from principal to agent |
+| `principal` | The human or orchestrator who signed the grant |
+| `agent` | The AI agent presenting the grant to pay for services |
+
+---
+
+*Built for the agent economy. Come help make x402 the OAuth of agent payments.*  
+*Reference implementation: [AgentPay](https://x402-agent-pay.com)*
