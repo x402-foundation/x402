@@ -1,0 +1,14 @@
+{
+  "name": "x402-node-paying-agent",
+  "version": "1.0.0",
+  "description": "x402 Node.js paying agent — reference implementation",
+  "type": "module",
+  "scripts": {
+    "start": "tsx index.ts"
+  },
+  "dependencies": {
+    "ethers": "^6.13.0",
+    "node-fetch": "^3.3.2",
+    "tsx": "^4.0.0"
+  }
+}
