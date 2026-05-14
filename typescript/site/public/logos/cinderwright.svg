@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="200" height="200" viewBox="0 0 200 200">
+  <rect width="200" height="200" rx="24" fill="#0a0a0a"/>
+  <text x="100" y="120" font-family="monospace" font-size="80" text-anchor="middle" fill="#ff6b35">🔧</text>
+  <text x="100" y="180" font-family="monospace" font-size="16" text-anchor="middle" fill="#ff6b35">CINDERWRIGHT</text>
+</svg>
