@@ -1,0 +1,27 @@
+[
+  {
+    "anonymous": false,
+    "name": "PaymentSettled",
+    "type": "event",
+    "inputs": [
+      { "indexed": true,  "name": "grantId",      "type": "uint256" },
+      { "indexed": true,  "name": "principal",    "type": "address" },
+      { "indexed": true,  "name": "agent",        "type": "address" },
+      { "indexed": false, "name": "counterparty", "type": "address" },
+      { "indexed": false, "name": "amount",       "type": "uint256" },
+      { "indexed": false, "name": "timestamp",    "type": "uint256" }
+    ]
+  },
+  {
+    "anonymous": false,
+    "name": "PaymentRefunded",
+    "type": "event",
+    "inputs": [
+      { "indexed": true,  "name": "grantId",   "type": "uint256" },
+      { "indexed": true,  "name": "principal", "type": "address" },
+      { "indexed": true,  "name": "agent",     "type": "address" },
+      { "indexed": false, "name": "amount",    "type": "uint256" },
+      { "indexed": false, "name": "timestamp", "type": "uint256" }
+    ]
+  }
+]
