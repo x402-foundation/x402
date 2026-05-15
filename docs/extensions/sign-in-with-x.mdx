@@ -477,12 +477,17 @@ Implement `SIWxStorage` to track which wallets have paid:
 
 ```typescript
 interface SIWxStorage {
-  hasPaid(address: string, resourceUri: string): Promise<boolean>;
-  recordPayment(address: string, resourceUri: string): Promise<void>;
+  hasPaid(resource: string, address: string): boolean | Promise<boolean>;
+  recordPayment(resource: string, address: string): void | Promise<void>;
+  // Optional: nonce tracking to prevent signature replay attacks
+  hasUsedNonce?(nonce: string): boolean | Promise<boolean>;
+  recordNonce?(nonce: string): void | Promise<void>;
 }
 ```
 
 The package includes `InMemorySIWxStorage` for development. For production, implement persistent storage (database, Redis, etc.).
+
+Optionally implement `hasUsedNonce` and `recordNonce` to prevent replay attacks where an intercepted SIWX header could be reused. Both methods must be implemented together — implementing only one will throw an error at startup.
 
 ## Security Considerations
 
