@@ -383,11 +383,45 @@ declareSIWxExtension({
 
 ### `createSIWxResourceServerExtension(options)`
 
-Creates the server extension that enriches SIWX challenges, records successful payments, and verifies HTTP SIWX proofs for declared routes.
+Creates the server extension that enriches SIWX challenges, records successful payments, and verifies HTTP SIWX proofs for declared routes. Internally uses `createSIWxSettleHook` and `createSIWxRequestHook`.
+
+### `createSIWxSettleHook(options)`
+
+Creates an `onAfterSettle` hook that records payments for SIWX. Use this when you want to attach SIWX payment recording to an existing `x402ResourceServer` without registering the full extension.
+
+```typescript
+createSIWxSettleHook({
+  storage: SIWxStorage;          // Storage for tracking paid addresses
+  onEvent?: (event) => void;     // Optional callback for logging/debugging
+})
+// Returns: hook function for x402ResourceServer.onAfterSettle()
+```
+
+### `createSIWxRequestHook(options)`
+
+Creates an `onProtectedRequest` hook that validates SIWX proofs on incoming HTTP requests. For paid routes, grants access when the signature is valid and the address has paid. For auth-only routes (`accepts: []`), grants access on a valid signature alone.
+
+```typescript
+createSIWxRequestHook({
+  storage: SIWxStorage;                  // Storage for tracking paid addresses
+  verifyOptions?: SIWxVerifyOptions;     // Optional smart wallet verification settings
+  onEvent?: (event) => void;             // Optional callback for logging/debugging
+})
+// Returns: hook function for x402HTTPResourceServer.onProtectedRequest()
+```
+
+### `createSIWxClientHook(signer)`
+
+Creates an `onPaymentRequired` hook for a single wallet signer. Matches the signer type (EVM or Solana) to a compatible chain in the server's `supportedChains` and signs the SIWX challenge.
+
+```typescript
+createSIWxClientHook(signer: SIWxSigner)
+// Returns: hook function for x402HTTPClient.onPaymentRequired()
+```
 
 ### `createSIWxClientExtension({ signers })`
 
-Creates the client extension that signs compatible SIWX challenges before falling back to payment.
+Creates the client extension that signs compatible SIWX challenges before falling back to payment. Accepts multiple signers (tried in order until one succeeds).
 
 ### `parseSIWxHeader(header)`
 
