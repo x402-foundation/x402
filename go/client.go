@@ -270,10 +270,18 @@ func (c *x402Client) CreatePaymentPayloadV1(
 	payload, err := client.CreatePaymentPayload(ctx, requirements)
 	if err != nil {
 		for _, hook := range c.onPaymentCreationFailureHooks {
-			_ = hook(PaymentCreationFailureContext{
+			result, hookErr := hook(PaymentCreationFailureContext{
 				PaymentCreationContext: creationCtxV1,
 				Error:                  err,
 			})
+			if hookErr != nil {
+				return types.PaymentPayloadV1{}, hookErr
+			}
+			if result != nil && result.Recovered {
+				if recovered, ok := result.Payload.(types.PaymentPayloadV1); ok {
+					return recovered, nil
+				}
+			}
 		}
 		return types.PaymentPayloadV1{}, err
 	}
@@ -347,10 +355,18 @@ func (c *x402Client) CreatePaymentPayload(
 	}
 	if err != nil {
 		for _, hook := range c.onPaymentCreationFailureHooks {
-			_ = hook(PaymentCreationFailureContext{
+			result, hookErr := hook(PaymentCreationFailureContext{
 				PaymentCreationContext: creationCtxV2,
 				Error:                  err,
 			})
+			if hookErr != nil {
+				return types.PaymentPayload{}, hookErr
+			}
+			if result != nil && result.Recovered {
+				if recovered, ok := result.Payload.(types.PaymentPayload); ok {
+					return recovered, nil
+				}
+			}
 		}
 		return types.PaymentPayload{}, err
 	}
@@ -370,10 +386,18 @@ func (c *x402Client) CreatePaymentPayload(
 	})
 	if err != nil {
 		for _, hook := range c.onPaymentCreationFailureHooks {
-			_ = hook(PaymentCreationFailureContext{
+			result, hookErr := hook(PaymentCreationFailureContext{
 				PaymentCreationContext: creationCtxV2,
 				Error:                  err,
 			})
+			if hookErr != nil {
+				return types.PaymentPayload{}, hookErr
+			}
+			if result != nil && result.Recovered {
+				if recovered, ok := result.Payload.(types.PaymentPayload); ok {
+					return recovered, nil
+				}
+			}
 		}
 		return types.PaymentPayload{}, err
 	}
