@@ -69,7 +69,9 @@ This section defines the core data structures used in the x402 protocol. These a
 
 **5.1.1 JSON Payload**
 
-When a resource server requires payment, it responds with a payment required signal and a JSON payload containing payment requirements. Example:
+When a resource server requires payment, it responds with a payment required signal containing the `PaymentRequired` object. The transport defines where this object is carried. For HTTP, the canonical wire location is the base64-encoded `PAYMENT-REQUIRED` response header, not only the response body. See [HTTP Payment Required Signaling](./transports-v2/http.md#payment-required-signaling).
+
+Example `PaymentRequired` object:
 
 ```json
 {
