@@ -124,6 +124,52 @@ This enables:
 
 Note: Smart wallet verification requires RPC calls, while EOA verification is purely local.
 
+### Using Hook Adapters Directly
+
+If you need more control over the integration, you can use the individual hook adapter functions instead of `createSIWxResourceServerExtension`. This is useful when you want to attach SIWX behavior to an existing server setup:
+
+<Tabs>
+  <Tab title="TypeScript">
+    ```typescript
+    import {
+      createSIWxSettleHook,
+      createSIWxRequestHook,
+      InMemorySIWxStorage,
+    } from '@x402/extensions/sign-in-with-x';
+    import { x402ResourceServer } from '@x402/core/server';
+    import { x402HTTPResourceServer } from '@x402/core/http';
+
+    const storage = new InMemorySIWxStorage();
+
+    // Attach settle hook to record payments after settlement
+    const resourceServer = new x402ResourceServer(facilitatorClient)
+      .register(NETWORK, new ExactEvmScheme())
+      .onAfterSettle(createSIWxSettleHook({ storage }));
+
+    // Attach request hook to validate SIWX proofs on incoming requests
+    const httpServer = new x402HTTPResourceServer(resourceServer, routes)
+      .onProtectedRequest(createSIWxRequestHook({ storage }));
+    ```
+  </Tab>
+</Tabs>
+
+Similarly, on the client side you can use `createSIWxClientHook` for a single signer, or attach it directly to an HTTP client:
+
+<Tabs>
+  <Tab title="TypeScript">
+    ```typescript
+    import { createSIWxClientHook } from '@x402/extensions/sign-in-with-x';
+    import { x402HTTPClient } from '@x402/fetch';
+    import { privateKeyToAccount } from 'viem/accounts';
+
+    const signer = privateKeyToAccount(process.env.EVM_PRIVATE_KEY as `0x${string}`);
+
+    const httpClient = new x402HTTPClient(client)
+      .onPaymentRequired(createSIWxClientHook(signer));
+    ```
+  </Tab>
+</Tabs>
+
 ### Manual Usage (Advanced)
 
 For custom implementations, you can use the low-level functions directly:
