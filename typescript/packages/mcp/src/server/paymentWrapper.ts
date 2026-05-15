@@ -418,7 +418,10 @@ async function settlePaymentResult(
 
     return {
       ...result,
-      _meta: { [MCP_PAYMENT_RESPONSE_META_KEY]: settleResult },
+      _meta: {
+        ...(result._meta as Record<string, unknown> | undefined),
+        [MCP_PAYMENT_RESPONSE_META_KEY]: settleResult,
+      },
     };
   } catch (settleError) {
     return createSettlementFailedResult(
