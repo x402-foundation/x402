@@ -458,6 +458,19 @@ Client helper that creates and signs a complete payload.
 
 Encodes a payload as base64 for the SIGN-IN-WITH-X header.
 
+### `SIWxHookEvent`
+
+Event type emitted by SIWX hooks when `onEvent` is configured. Useful for logging and debugging:
+
+```typescript
+type SIWxHookEvent =
+  | { type: "payment_recorded"; resource: string; address: string }
+  | { type: "access_granted"; resource: string; address: string }
+  | { type: "validation_failed"; resource: string; error?: string }
+  | { type: "nonce_reused"; resource: string; nonce: string }
+  | { type: "siwx_header_sent"; resource: string };
+```
+
 ### Storage Interface
 
 Implement `SIWxStorage` to track which wallets have paid:
