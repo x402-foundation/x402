@@ -94,6 +94,7 @@ export function decodeTransactionFromPayload(svmPayload: ExactSvmPayloadV1): Tra
 export function getTokenPayerFromTransaction(transaction: Transaction): string {
   const compiled = getCompiledTransactionMessageDecoder().decode(transaction.messageBytes);
   const staticAccounts = compiled.staticAccounts ?? [];
+  if (!("instructions" in compiled)) return "";
   const instructions = compiled.instructions ?? [];
 
   for (const ix of instructions) {
