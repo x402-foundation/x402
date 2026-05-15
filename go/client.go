@@ -270,7 +270,7 @@ func (c *x402Client) CreatePaymentPayloadV1(
 	payload, err := client.CreatePaymentPayload(ctx, requirements)
 	if err != nil {
 		for _, hook := range c.onPaymentCreationFailureHooks {
-			hook(PaymentCreationFailureContext{
+			_ = hook(PaymentCreationFailureContext{
 				PaymentCreationContext: creationCtxV1,
 				Error:                  err,
 			})
@@ -279,7 +279,7 @@ func (c *x402Client) CreatePaymentPayloadV1(
 	}
 
 	for _, hook := range c.afterPaymentCreationHooks {
-		hook(PaymentCreatedContext{
+		_ = hook(PaymentCreatedContext{
 			PaymentCreationContext: creationCtxV1,
 			Payload:                payload,
 		})
@@ -347,7 +347,7 @@ func (c *x402Client) CreatePaymentPayload(
 	}
 	if err != nil {
 		for _, hook := range c.onPaymentCreationFailureHooks {
-			hook(PaymentCreationFailureContext{
+			_ = hook(PaymentCreationFailureContext{
 				PaymentCreationContext: creationCtxV2,
 				Error:                  err,
 			})
@@ -370,7 +370,7 @@ func (c *x402Client) CreatePaymentPayload(
 	})
 	if err != nil {
 		for _, hook := range c.onPaymentCreationFailureHooks {
-			hook(PaymentCreationFailureContext{
+			_ = hook(PaymentCreationFailureContext{
 				PaymentCreationContext: creationCtxV2,
 				Error:                  err,
 			})
@@ -379,7 +379,7 @@ func (c *x402Client) CreatePaymentPayload(
 	}
 
 	for _, hook := range c.afterPaymentCreationHooks {
-		hook(PaymentCreatedContext{
+		_ = hook(PaymentCreatedContext{
 			PaymentCreationContext: creationCtxV2,
 			Payload:                partial,
 		})
