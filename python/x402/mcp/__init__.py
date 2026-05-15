@@ -48,6 +48,9 @@ __all__ = [
     "SyncPaymentWrapperConfig",
     # Client
     "create_x402_mcp_client",
+    "create_x402_mcp_client_from_config",
+    "wrap_mcp_client_with_payment",
+    "wrap_mcp_client_with_payment_from_config",
     "x402MCPSession",
     "x402MCPClient",
     "x402MCPClientSync",
@@ -90,6 +93,14 @@ def __getattr__(name: str):
         from . import client as _client
 
         return getattr(_client, name)
+    if name in (
+        "create_x402_mcp_client_from_config",
+        "wrap_mcp_client_with_payment",
+        "wrap_mcp_client_with_payment_from_config",
+    ):
+        from . import client_async as _client_async
+
+        return getattr(_client_async, name)
     if name == "MCPToolResult":
         from .types import MCPToolResult
 
