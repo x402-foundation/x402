@@ -1,0 +1,19 @@
+{
+  "name": "AgentPay x402 Facilitator",
+  "description": "Multi-chain x402 facilitator for AI agent commerce. Supports Base (primary), Ethereum, Optimism, Arbitrum One, and Polygon. Free verification, 0.5% settlement fee. Built on AgentPay escrow infrastructure powering 93+ live NPCs in AgentWorld. EIP-3009 transferWithAuthorization native.",
+  "logoUrl": "/logos/agentpay.png",
+  "websiteUrl": "https://x402-agent-pay.com/facilitator",
+  "category": "Facilitators",
+  "facilitator": {
+    "baseUrl": "https://x402-agent-pay.com",
+    "networks": ["base", "ethereum", "optimism", "arbitrum", "polygon"],
+    "schemes": ["exact"],
+    "assets": ["ERC20"],
+    "supports": {
+      "verify": true,
+      "settle": true,
+      "supported": true,
+      "list": false
+    }
+  }
+}
