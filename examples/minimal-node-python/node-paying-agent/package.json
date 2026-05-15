@@ -1,16 +1,13 @@
 {
   "name": "x402-node-paying-agent",
   "version": "1.0.0",
-  "description": "x402 Node.js paying agent — reference implementation (local + Base Sepolia)",
   "type": "module",
   "scripts": {
-    "start":         "tsx index.ts",
-    "start:sepolia": "tsx index-sepolia.ts"
+    "start": "tsx index.ts"
   },
   "dependencies": {
-    "dotenv":      "^16.4.5",
-    "ethers":      "^6.13.0",
-    "node-fetch":  "^3.3.2",
-    "tsx":         "^4.0.0"
+    "ethers": "^6.13.0",
+    "tsx": "^4.0.0",
+    "node-fetch": "^3.3.2"
   }
 }
