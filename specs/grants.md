@@ -1,208 +1,49 @@
-# x402 Agent Grant System
+# x402 Agent Grants — EIP-712 Specification
 
-**Version:** 1.0  
-**Status:** Draft  
-**Date:** May 2026  
-**Repository:** https://github.com/shawnhvac/x402-agent-network
+**Status:** V1 Reference Implementation  
+**Last Updated:** May 2026
 
-## Abstract
+## Overview
 
-The x402 Grant System provides a cryptographically secure, short-lived delegation mechanism for AI agents to spend on behalf of a principal using the [HTTP 402 Payment Required](https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/402) pattern.
+An x402 grant is a **signed permission** that authorizes one agent (the "agent") to spend money on behalf of another (the "principal").
 
-Grants are signed EIP-712 typed data structures that embed spend limits, scope, expiration, and revocation metadata. Receivers can verify grants **completely offline** in the happy path. A minimal on-chain revocation registry (checked only in the final 30 % of grant lifetime) gives principals an instant kill-switch without adding latency to normal requests.
+Grants are:
+- **Signed with EIP-712** — using the principal's private key
+- **Time-bounded** — expire after a specified timestamp
+- **Budget-capped** — per-request and total limits
+- **Revocable** — via on-chain registry (checked only in final 30% of lifetime)
+- **Cryptographically verifiable** — any receiver can validate offline
 
-This document is deliberately self-contained so any developer can implement full grant creation, verification, and revocation checking without depending on AgentPay or any hosted service.
+## Grant Structure
 
----
-
-## 1. Introduction & Motivation
-
-AI agents need to make autonomous micropayments for tools, APIs, and other agents. Traditional OAuth-style tokens are too heavy and lack native on-chain settlement. x402 Grants combine:
-
-- EIP-712 signatures for verifiable delegation
-- Short-lived lifetimes (10–60 minutes default)
-- Programmable spend policies (total budget + per-request cap + scopes)
-- Optional on-chain revocation with minimal overhead
-- Full compatibility with the base x402 payment header
-
-The design prioritizes **simplicity for receivers** while giving principals strong controls.
-
----
-
-## 2. Terminology
-
-| Term | Definition |
-|------|------------|
-| **Principal** | The entity (user or organization) that owns the budget and signs grants. |
-| **Agent** | The autonomous entity authorized to spend (the `msg.sender` in requests). |
-| **Grant** | A signed EIP-712 structure authorizing spend. |
-| **Grant ID** | Unique identifier per principal (ledger reference). |
-| **Receipt Hash** | `keccak256` of the payment request body or a unique receipt identifier (prevents replay). |
-
----
-
-## 3. EIP-712 Grant Schema
-
-### 3.1 Domain Separator
-
-```json
-{
-  "name": "x402-AgentGrant",
-  "version": "1",
-  "chainId": 8453,
-  "verifyingContract": "0x0000000000000000000000000000000000000000"
-}
-```
-
-### 3.2 Primary Type: `x402Grant`
-
-```solidity
+```typescript
 struct x402Grant {
-    uint256 grantId;          // Unique per principal (ledger reference)
-    address principal;        // Signer / budget owner
-    address agent;            // Authorized spender
-    uint256 issuedAt;         // Unix timestamp (seconds) — mandatory
-    uint256 expiration;       // Unix timestamp (seconds)
-    uint256 totalBudget;      // USDC subunits (6 decimals)
-    uint256 perRequestCap;    // USDC subunits (0 = no per-request limit)
-    bytes32[] scopes;         // keccak256("pay:domain.com/tool") etc.
-    bytes32 salt;             // Anti-collision
+  uint256 grantId;           // Unique grant identifier
+  address principal;         // Who is authorizing the spend (signer)
+  address agent;             // Who is authorized to spend
+  uint256 issuedAt;          // Unix timestamp when grant was signed
+  uint256 expiration;        // Unix timestamp when grant expires
+  uint256 totalBudget;       // Total USDC available (in wei, 6 decimals)
+  uint256 perRequestCap;     // Max USDC per single request (in wei)
+  bytes32[] scopes;          // Tool scopes authorized (e.g., keccak256("trade"))
+  bytes32 salt;              // Replay attack prevention
 }
 ```
 
-### 3.3 Notes
-
-- All fields are required.
-- `issuedAt` enables precise lifetime calculations and anomaly detection.
-- `scopes` are hashed for on-chain efficiency (example: `keccak256("pay:api.example.com/search")`).
-- Default lifetime in AgentPay dashboard: **15 minutes**.
-
----
-
-## 4. Revocation Registry (Minimal On-Chain Contract)
-
-A single lightweight contract deployed on Base L2:
-
-```solidity
-// SPDX-License-Identifier: MIT
-pragma solidity ^0.8.24;
-
-contract x402GrantRegistry {
-    mapping(address => mapping(uint256 => bool)) public revoked;
-
-    event GrantRevoked(address indexed principal, uint256 indexed grantId);
-
-    function revoke(uint256 grantId) external {
-        revoked[msg.sender][grantId] = true;
-        emit GrantRevoked(msg.sender, grantId);
-    }
-
-    function batchRevoke(uint256[] calldata grantIds) external {
-        for (uint256 i = 0; i < grantIds.length; i++) {
-            revoked[msg.sender][grantIds[i]] = true;
-            emit GrantRevoked(msg.sender, grantIds[i]);
-        }
-    }
-
-    function isRevoked(address principal, uint256 grantId) external view returns (bool) {
-        return revoked[principal][grantId];
-    }
-}
-```
-
-> The `verifyingContract` field in the domain may optionally be set to this contract's address for stronger binding.
-
-**Subgraph Integration:** The Graph on Base indexes the `GrantRevoked` event for fast off-chain queries — see `spec/subgraph.md` (forthcoming).
-
----
-
-## 5. x402 HTTP Payment Header Format
-
-```http
-X-402-Payment: <base64-encoded JSON>
-```
-
-Decoded JSON structure:
-
-```json
-{
-  "grant": {
-    "grantId": "123456789",
-    "principal": "0x...",
-    "agent": "0x...",
-    "issuedAt": 1747257600,
-    "expiration": 1747258500,
-    "totalBudget": "1000000000",
-    "perRequestCap": "5000000",
-    "scopes": ["0x...", "0x..."],
-    "salt": "0x..."
-  },
-  "signature": "0x<65-byte EIP-712 signature>",
-  "ledgerId": "agentpay-ledger-abc123",
-  "receiptHash": "0x<keccak256(request body or unique receipt)>"
-}
-```
-
-> `ledgerId` is optional. `receiptHash` is required for replay protection.
-
----
-
-## 6. Validation Flow
-
-```mermaid
-flowchart TD
-    A[Receive HTTP request with X-402-Payment] --> B[Base64 decode + parse JSON]
-    B --> C[Verify EIP-712 signature\nprincipal matches recovered signer?]
-    C -->|No| Reject
-    C -->|Yes| D[Check expiration + agent address match]
-    D -->|Expired or wrong agent| Reject
-    D --> E[Check shouldCheckRevocation\nissuedAt / expiration window]
-    E -->|No| F[Accept & proceed to settlement]
-    E -->|Yes| G[Query registry.isRevoked or subgraph]
-    G -->|Revoked| Reject
-    G -->|Not revoked| F
-    F --> H[Validate receiptHash against request\nprevent replay]
-    H -->|Valid| I[Proceed with payment settlement]
-```
-
----
-
-## 7. Security Considerations
-
-### 7.1 Clock Skew Grace Window
-
-Implement a ±30-second grace window on both issuance and expiration checks:
+## EIP-712 Domain
 
 ```typescript
-const now = Math.floor(Date.now() / 1000);
-if (grant.expiration < now - 30 || grant.issuedAt > now + 30) return false;
+const DOMAIN = {
+  name: "x402-AgentGrant",
+  version: "1",
+  chainId: 8453,              // Base L2
+  verifyingContract: "0x0000000000000000000000000000000000000000",
+};
 ```
 
-### 7.2 30 % Lifetime Revocation Check Rule
+## TypeScript Implementation
 
-Receivers **MUST** only query the revocation registry or subgraph when the grant is in its final 30 % of lifetime:
-
-```typescript
-const lifetime = Number(grant.expiration - grant.issuedAt);
-const remaining = Number(grant.expiration - BigInt(now));
-if (remaining < lifetime * 0.3) {
-  // perform revocation check
-}
-```
-
-This keeps the happy path **100 % offline** while still giving principals a near-instant kill-switch.
-
-### 7.3 Replay Protection via `receiptHash`
-
-The `receiptHash` field **MUST** be checked by the receiver against the current request body (or a unique per-request receipt). This prevents an attacker from replaying a previously valid payment header.
-
-### 7.4 Sybil Resistance & Reputation
-
-Pure on-chain payment volume is gameable. Reputation scoring (counterparty diversity, settlement success rate, time-decay weighting) is intentionally deferred to the separate subgraph layer and is not part of the grant verification protocol. Implementers may query reputation only after a grant passes cryptographic checks.
-
----
-
-## 8. Reference Implementation (TypeScript – ethers v6)
+### Signing a Grant
 
 ```typescript
 import { ethers } from "ethers";
@@ -212,73 +53,176 @@ const DOMAIN = {
   version: "1",
   chainId: 8453,
   verifyingContract: "0x0000000000000000000000000000000000000000",
-} as const;
+};
 
 const TYPES = {
   x402Grant: [
-    { name: "grantId",       type: "uint256"   },
-    { name: "principal",     type: "address"   },
-    { name: "agent",         type: "address"   },
-    { name: "issuedAt",      type: "uint256"   },
-    { name: "expiration",    type: "uint256"   },
-    { name: "totalBudget",   type: "uint256"   },
-    { name: "perRequestCap", type: "uint256"   },
-    { name: "scopes",        type: "bytes32[]" },
-    { name: "salt",          type: "bytes32"   },
+    { name: "grantId", type: "uint256" },
+    { name: "principal", type: "address" },
+    { name: "agent", type: "address" },
+    { name: "issuedAt", type: "uint256" },
+    { name: "expiration", type: "uint256" },
+    { name: "totalBudget", type: "uint256" },
+    { name: "perRequestCap", type: "uint256" },
+    { name: "scopes", type: "bytes32[]" },
+    { name: "salt", type: "bytes32" },
   ],
-} as const;
+};
 
-export async function signGrant(
-  signer: ethers.Signer,
-  grant: any
-): Promise<string> {
-  return await signer.signTypedData(DOMAIN, TYPES, grant);
+async function signGrant(wallet, grant) {
+  const signature = await wallet.signTypedData(DOMAIN, TYPES, grant);
+  return signature;
 }
+```
 
-export function verifyGrant(
-  grant: any,
-  signature: string,
-  currentAgent: string,
-  now = Math.floor(Date.now() / 1000)
-): boolean {
-  // Expiration + clock skew check
-  if (grant.expiration <= now + 30 || grant.issuedAt > now - 30) return false;
-  // Agent must match
-  if (grant.agent.toLowerCase() !== currentAgent.toLowerCase()) return false;
+### Verifying a Grant (Reference Implementation)
 
-  const digest = ethers.TypedDataEncoder.hash(DOMAIN, TYPES, grant);
-  const recovered = ethers.recoverAddress(digest, signature);
-  return recovered.toLowerCase() === grant.principal.toLowerCase();
+```typescript
+import { ethers } from "ethers";
+
+function verifyGrant(grant, signature, expectedAgent, now = Math.floor(Date.now() / 1000)) {
+  // 1. Check expiration (with 30-second grace period)
+  if (grant.expiration < now - 30 || grant.issuedAt > now + 30) {
+    return false; // Grant is expired or not yet valid
+  }
+
+  // 2. Recover signer from signature
+  const DOMAIN = {
+    name: "x402-AgentGrant",
+    version: "1",
+    chainId: 8453,
+    verifyingContract: "0x0000000000000000000000000000000000000000",
+  };
+
+  const TYPES = {
+    x402Grant: [
+      { name: "grantId", type: "uint256" },
+      { name: "principal", type: "address" },
+      { name: "agent", type: "address" },
+      { name: "issuedAt", type: "uint256" },
+      { name: "expiration", type: "uint256" },
+      { name: "totalBudget", type: "uint256" },
+      { name: "perRequestCap", type: "uint256" },
+      { name: "scopes", type: "bytes32[]" },
+      { name: "salt", type: "bytes32" },
+    ],
+  };
+
+  let recoveredSigner;
+  try {
+    recoveredSigner = ethers.verifyTypedData(DOMAIN, TYPES, grant, signature);
+  } catch {
+    return false; // Signature is invalid
+  }
+
+  // 3. Verify the recovered signer matches the principal
+  if (recoveredSigner.toLowerCase() !== grant.principal.toLowerCase()) {
+    return false;
+  }
+
+  // 4. Verify the agent matches what we expect
+  if (grant.agent.toLowerCase() !== expectedAgent.toLowerCase()) {
+    return false;
+  }
+
+  // 5. Verify grant has non-zero budget
+  if (grant.totalBudget <= 0n) {
+    return false;
+  }
+
+  return true;
 }
+```
 
-export function shouldCheckRevocation(
-  grant: any,
-  now = Math.floor(Date.now() / 1000)
-): boolean {
-  const lifetime  = Number(grant.expiration - grant.issuedAt);
+### Python Equivalent (eth-keys)
+
+```python
+from eth_keys import keys
+from eth_account.messages import encode_defunct
+import json
+
+def verify_grant_python(grant, signature_hex, expected_agent):
+    # Reconstruct the EIP-712 hash (simplified for readability)
+    # In production, use eth_account.messages.encode_structured_data()
+    
+    # For test vectors, raw ECDSA recovery:
+    sig_bytes = bytes.fromhex(signature_hex[2:])
+    v, r, s = sig_bytes[-1], sig_bytes[:32], sig_bytes[32:64]
+    
+    message_hash = compute_eip712_hash(grant)
+    recovered_pubkey = keys.PublicKey.from_signature_and_message(
+        signature=keys.Signature(vrs=(v, int.from_bytes(r, 'big'), int.from_bytes(s, 'big'))),
+        message_hash=message_hash
+    )
+    recovered_address = recovered_pubkey.to_checksum_address()
+    
+    # Verify
+    return (
+        recovered_address.lower() == grant['principal'].lower() and
+        grant['agent'].lower() == expected_agent.lower() and
+        grant['expiration'] > int(time.time()) and
+        grant['totalBudget'] > 0
+    )
+```
+
+## Revocation Check
+
+Grants can be revoked on-chain. However, to optimize for latency, receivers only check the revocation registry during the **final 30% of the grant's lifetime**.
+
+```typescript
+function shouldCheckRevocation(grant, now = Math.floor(Date.now() / 1000)) {
+  const lifetime = Number(grant.expiration - grant.issuedAt);
   const remaining = Number(grant.expiration - BigInt(now));
   return remaining < lifetime * 0.3;
 }
 ```
 
+**Example:**
+- Grant issued at t=0, expires at t=900 (15 minutes)
+- Lifetime = 900 seconds
+- Revocation only checked when remaining time < 270 seconds (last 4.5 minutes)
+
+This balances security (grants can still be revoked) with performance (no registry query on every request).
+
+## Test Vectors
+
+All conformance tests are in [specs/test-vectors.json](specs/test-vectors.json).
+
+### Conformance Test Cases
+
+1. **Valid Grant** — correctly signed, not expired, agent matches
+2. **Expired Grant** — issuedAt or expiration is in the past
+3. **Invalid Signature** — modified grant, signature doesn't verify
+4. **Wrong Agent** — grant is for a different agent address
+5. **Zero Budget** — totalBudget is 0
+6. **Signature Not Recovered** — malformed signature bytes
+
+Each test vector provides:
+- The full grant struct
+- The expected signature
+- The test's expected outcome (pass/fail)
+
+## Integration Notes
+
+### When Building a Receiving Agent
+
+1. **Receive the grant** — extract from `X-402-Payment` header (base64-decoded)
+2. **Verify immediately** — call `verifyGrant()` before executing any tool
+3. **Check revocation (if needed)** — only if `shouldCheckRevocation()` returns true
+4. **Verify budget** — ensure `perRequestCap >= toolCost` and `totalBudget >= toolCost`
+5. **Deduct from budget** — after tool execution succeeds, record the deduction
+6. **Return receipt** — include `X-402-Receipt` header with settlement proof
+
+### When Building a Paying Agent
+
+1. **Create the grant** — populate all fields, set appropriate expiration (15 min typical)
+2. **Sign with principal's key** — use `signGrant(wallet, grant)`
+3. **Encode for HTTP** — base64(JSON.stringify({ grant, signature, receiptHash }))
+4. **Send request** — include `X-402-Payment` header in every tool request
+5. **Handle 402 responses** — if receiver returns 402, the grant was invalid or revoked
+6. **Handle receipts** — extract `X-402-Receipt` header, verify settlement on-chain
+
 ---
 
-## 9. Conformance & Test Vectors
-
-> See [test-vectors.md](./test-vectors.md) for the full set of verifiable EIP-712 test vectors (real signatures using the standard Hardhat test key). A raw JSON version is available at [test-vectors.json](./test-vectors.json) for programmatic use.
-
----
-
-## Roadmap
-
-| Spec | Status |
-|------|--------|
-| `spec/grants.md` (this document) | ✅ Draft v1.0 |
-| `spec/payment-flow.md` | 🔜 Next |
-| `spec/reputation.md` | 🔜 Planned |
-| `spec/subgraph.md` | 🔜 Planned |
-| `spec/test-vectors/` | 🔜 Planned |
-
----
-
-*Built by [AgentPay](https://x402-agent-pay.com) — the OAuth of agent payments.*
+**Maintained by:** AgentPay Team  
+**License:** MIT
