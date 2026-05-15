@@ -82,6 +82,8 @@ var (
 	ChainIDArbSepolia    = big.NewInt(421614)
 	ChainIDRadius        = big.NewInt(723487)
 	ChainIDRadiusTestnet = big.NewInt(72344)
+	ChainIDHPP           = big.NewInt(190415)
+	ChainIDHPPSepolia    = big.NewInt(181228)
 
 	// Network configurations
 	// See DEFAULT_ASSET.md for guidelines on adding new chains
@@ -221,6 +223,26 @@ var (
 				Decimals:            DefaultDecimals,
 				AssetTransferMethod: AssetTransferMethodPermit2,
 				SupportsEip2612:     true,
+			},
+		},
+		// HPP Mainnet
+		"eip155:190415": {
+			ChainID: ChainIDHPP,
+			DefaultAsset: AssetInfo{
+				Address:  "0x401eCb1D350407f13ba348573E5630B83638E30D", // USDC.e (Bridged USDC) on HPP
+				Name:     "Bridged USDC",
+				Version:  "2",
+				Decimals: DefaultDecimals,
+			},
+		},
+		// HPP Sepolia
+		"eip155:181228": {
+			ChainID: ChainIDHPPSepolia,
+			DefaultAsset: AssetInfo{
+				Address:  "0x401eCb1D350407f13ba348573E5630B83638E30D", // USDC.e (Bridged USDC) on HPP Sepolia
+				Name:     "Bridged USDC",
+				Version:  "2",
+				Decimals: DefaultDecimals,
 			},
 		},
 	}

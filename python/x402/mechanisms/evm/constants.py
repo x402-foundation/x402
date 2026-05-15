@@ -534,6 +534,26 @@ NETWORK_CONFIGS: dict[str, NetworkConfig] = {
             "supports_eip2612": True,
         },
     },
+    # HPP Mainnet
+    "eip155:190415": {
+        "chain_id": 190415,
+        "default_asset": {
+            "address": "0x401eCb1D350407f13ba348573E5630B83638E30D",
+            "name": "Bridged USDC",
+            "version": "2",
+            "decimals": 6,
+        },
+    },
+    # HPP Sepolia
+    "eip155:181228": {
+        "chain_id": 181228,
+        "default_asset": {
+            "address": "0x401eCb1D350407f13ba348573E5630B83638E30D",
+            "name": "Bridged USDC",
+            "version": "2",
+            "decimals": 6,
+        },
+    },
 }
 
 # V1 legacy constants are in x402.mechanisms.evm.v1.constants
