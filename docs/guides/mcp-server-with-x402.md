@@ -200,6 +200,42 @@ The MCP server exposes a tool that, when called, fetches data from a paid API en
 
 ***
 
+### Policy Checks Before Payment
+
+This example auto-approves payments for local testing. In production, the MCP
+bridge should check the payment requirements before creating or signing a
+payment payload. The client hooks are the right place to enforce those rules.
+
+At minimum, compare the selected requirement against your expected tool call:
+
+* maximum amount and currency
+* expected `network` and `scheme`
+* expected resource server or facilitator
+* tool name and user-requested operation
+* per-user, per-agent, or per-session spend limits
+
+For example, reject unexpected payment requirements in `onPaymentRequested`:
+
+```typescript
+const x402Mcp = new x402MCPClient(mcpClient, paymentClient, {
+  onPaymentRequested: async ({ toolName, paymentRequired }) => {
+    const requirement = paymentRequired.accepts[0];
+
+    if (toolName !== "get_weather") return false;
+    if (requirement.network !== "eip155:84532") return false;
+    if (BigInt(requirement.amount) > 1_000n) return false;
+
+    return true;
+  },
+});
+```
+
+If a payment requirement does not match the intended tool call, deny it before
+the wallet signs. Avoid relying only on model prompts for spend controls; keep
+the policy check in code near the payment client.
+
+***
+
 ### Multi-Network Support
 
 The example supports both EVM (Base, Ethereum) and Solana networks. The x402 client automatically selects the appropriate scheme based on the payment requirements:
