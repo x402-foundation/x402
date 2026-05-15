@@ -101,6 +101,10 @@ When a resource server requires payment, it responds with a payment required sig
 }
 ```
 
+The example's `accepts[].extra` uses only token EIP-712 domain metadata. Scheme-specific
+selectors such as EVM `exact`'s `assetTransferMethod` are optional unless the scheme
+document explicitly requires them for a selected payload shape.
+
 **5.1.2 Field Descriptions**
 
 The `PaymentRequired` schema contains the following fields:

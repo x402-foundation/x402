@@ -12,7 +12,7 @@ This is implemented via one of three asset transfer methods, depending on the to
 | **2. Permit2**      | Tokens without EIP-3009. Uses a Proxy + Permit2.             | **Universal Fallback** (Works for any ERC-20). | One-time use                        |
 | **3. ERC-7710**      | Smart accounts with delegation support.                              | **Smart Account Option** (Paid from ERC-7710 compatible account). | One-time use and multi-use |
 
-If no `assetTransferMethod` is specified in the payload, the implementation should prioritize `eip3009` (if compatible) and then `permit2`.
+If no `assetTransferMethod` is specified in `PaymentRequirements.extra`, the implementation should prioritize `eip3009` (if compatible) and then `permit2`. Resource servers MAY omit `extra.assetTransferMethod` in `PaymentRequired` when they are offering this default selection behavior; clients and facilitators MUST NOT treat the field as required unless a concrete payment payload has selected a method-specific shape.
 
 In all cases, the Facilitator cannot modify the amount or destination. They serve only as the transaction broadcaster.
 
@@ -68,7 +68,7 @@ The `payload` field must contain:
 
 **`extra` field definitions specific to `eip3009`:**
 
-- `extra.assetTransferMethod` (required): MUST be `"eip3009"`.
+- `extra.assetTransferMethod` (conditional): MUST be `"eip3009"` when the payment payload uses the EIP-3009 shape. It MAY be omitted from `PaymentRequired` to request default method selection.
 - `extra.name` (required): The EIP-712 domain name of the token contract. Used for `transferWithAuthorization` signature construction.
 - `extra.version` (required): The EIP-712 domain version of the token contract. Used for `transferWithAuthorization` signature construction.
 
@@ -165,7 +165,7 @@ The `payload` field must contain:
 
 **`extra` field definitions specific to `permit2`:**
 
-- `extra.assetTransferMethod` (required): MUST be `"permit2"`.
+- `extra.assetTransferMethod` (conditional): MUST be `"permit2"` when the payment payload uses the Permit2 shape. It MAY be omitted from `PaymentRequired` to request default method selection.
 - `extra.name` (conditional): The EIP-712 domain name of the token contract. Required when the token supports EIP-2612 for gasless Permit2 approval.
 - `extra.version` (conditional): The EIP-712 domain version of the token contract. Required when the token supports EIP-2612 for gasless Permit2 approval.
 

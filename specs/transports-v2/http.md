@@ -49,6 +49,10 @@ The base64 header decodes to:
 }
 ```
 
+This example intentionally omits `accepts[].extra.assetTransferMethod`. For EVM `exact`
+payments, that field is optional in `PaymentRequired`; omitting it asks compatible
+clients to use the scheme's default method selection.
+
 ## Payment Payload Transmission
 
 Clients send payment data using the `PAYMENT-SIGNATURE` HTTP header.
