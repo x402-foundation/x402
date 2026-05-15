@@ -1,6 +1,4 @@
-flask==3.0.3
-eth-abi==4.2.1
-eth-keys==0.6.1
-pycryptodome==3.20.0
-# Required for Sepolia real-settlement mode only:
+flask==3.0.0
 web3==6.20.0
+eth-keys==0.6.1
+eth-typing==4.1.0
