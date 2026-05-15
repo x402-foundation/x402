@@ -49,6 +49,11 @@ The base64 header decodes to:
 }
 ```
 
+For the EVM `exact` scheme, omitting `extra.assetTransferMethod` in
+`PaymentRequired` indicates the default `"eip3009"` method. Servers should set
+`extra.assetTransferMethod` when advertising a non-default method such as
+`"permit2"` or `"erc7710"`.
+
 ## Payment Payload Transmission
 
 Clients send payment data using the `PAYMENT-SIGNATURE` HTTP header.
