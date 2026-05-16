@@ -7,90 +7,9 @@
 
 ## Overview
 
-The x402 payment lifecycle is identical for EVM and Solana — only the signing scheme and settlement mechanism differ. The `chainType` field in the grant determines which path is taken. For Solana, an on-chain PDA escrow is used instead of EIP-3009 authorization.
+The x402 payment lifecycle is identical for EVM and Solana — only the signing scheme and settlement mechanism differ. The `chainType` field in the grant determines which path is taken. For an on-chain PDA escrow is used instead of EIP-3009 authorization.
 
 ---
-
-## Sequence Diagram — Full Flow (EVM + Solana)
-
-```mermaid
-sequenceDiagram
-    participant Principal
-    participant PayingAgent
-    participant ReceivingAgent
-    participant Chain as Chain (Base/USDC or Solana/USDC + Escrow)
-
-    Principal->>PayingAgent: Issue grant (totalBudget, perRequestCap, chainType)
-    PayingAgent->>PayingAgent: Build x402Grant struct (incl. escrowId for Solana)
-
-    alt EVM (chainType = "eip155")
-        PayingAgent->>PayingAgent: Sign with EIP-712 (signTypedData)
-        PayingAgent->>PayingAgent: Sign EIP-3009 Authorization
-    else Solana (chainType = "solana")
-        PayingAgent->>PayingAgent: Sign with ed25519 (nacl.sign.detached)
-        PayingAgent->>Chain: initialize_escrow() — lock USDC in PDA vault
-    end
-
-    PayingAgent->>ReceivingAgent: POST /api/tool<br/>X-402-Payment: base64({grant, signature, chainType, chainId, authorization/escrow})
-    ReceivingAgent->>ReceivingAgent: verifyGrant() — routes by chainType
-
-    alt EVM verification
-        ReceivingAgent->>ReceivingAgent: EIP-712 recover_signer()
-        ReceivingAgent->>Chain: transferWithAuthorization (EIP-3009)
-        Chain-->>ReceivingAgent: Confirmed (2-6s on Base)
-    else Solana verification
-        ReceivingAgent->>ReceivingAgent: nacl.sign.detached.verify() (ed25519)
-        Note over ReceivingAgent,Chain: USDC already locked in vault PDA
-        ReceivingAgent->>ReceivingAgent: Deliver service
-        ReceivingAgent->>Chain: release() — unlock USDC to receiver ATA
-        Chain-->>ReceivingAgent: Confirmed (<1s on Solana)
-    end
-
-    alt Success
-        ReceivingAgent-->>PayingAgent: HTTP 200 + X-402-Receipt: {txHash, network, amount, escrowId?}
-    else Failure / Timeout
-        ReceivingAgent-->>PayingAgent: HTTP 402 + reason
-        Note over PayingAgent,Chain: After deadline: anyone calls refund()<br/>USDC returns to principal ATA
-    end
-```
-
----
-
-## Solana Escrow Detail
-
-**Program ID (Devnet):** `CNwRWLCUL7jgk3xEgvMCeUFyt73LNEPtvucwxm3YqsFb`
-
-**Network:** Solana Devnet → Mainnet after audit
-
-```mermaid
-sequenceDiagram
-    participant PayingAgent
-    participant Facilitator
-    participant SolanaChain as Solana (USDC + x402_escrow Program)
-    participant ReceivingAgent
-
-    PayingAgent->>PayingAgent: Generate 32-byte escrowId
-    PayingAgent->>SolanaChain: initialize_escrow(escrowId, amount, deadline)
-    SolanaChain-->>PayingAgent: Escrow PDA + vault PDA created, USDC locked
-
-    PayingAgent->>ReceivingAgent: X-402-Payment (grant + sig + escrow.pda + escrow.vault)
-    ReceivingAgent->>Facilitator: POST /x402/verify-grant (ed25519 check)
-    Facilitator-->>ReceivingAgent: isValid: true
-
-    ReceivingAgent->>ReceivingAgent: Deliver service
-    ReceivingAgent->>SolanaChain: release(escrowPda, vaultPda, receiverAta)
-    SolanaChain-->>ReceivingAgent: USDC transferred (<1s)
-    ReceivingAgent-->>PayingAgent: HTTP 200 + X-402-Receipt
-
-    alt Timeout (deadline passed, not released)
-        Facilitator->>SolanaChain: refund(escrowPda, vaultPda, principalAta)
-        SolanaChain-->>PayingAgent: USDC returned to principal
-    end
-```
-
----
-
-## Step-by-Step (Solana Path)
 
 ### Step 1 — Principal Issues Grant
 
@@ -184,7 +103,7 @@ The AgentPay facilitator spawns a watcher for every Solana escrow. After `grant.
 |----------|--------|---------|
 | `/x402/verify-grant` | POST | Verify EIP-712 or ed25519 grant |
 | `/x402/verify` | POST | Verify EIP-3009 payment payload |
-| `/x402/settle` | POST | Settle EVM (EIP-3009) or Solana (SPL) |
+| `/x402/settle` | POST | Settle EVM (EIP-3009) (SPL) |
 | `/x402/supported-networks` | GET | All 6 chains with CAIP-2 IDs |
 | `/x402/conformance` | GET | Run all 7 test vectors |
 | `/x402/info` | GET | Facilitator metadata |
