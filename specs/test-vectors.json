@@ -1,6 +1,6 @@
 {
-  "version": "1.1.0",
-  "description": "x402 Agent Grant conformance test vectors \u2014 EVM (EIP-712) + Solana (ed25519)",
+  "version": "1.2.0",
+  "description": "x402 Agent Grant conformance test vectors \u2014 EVM (EIP-712) + Solana (ed25519 + PDA escrow)",
   "vectors": [
     {
       "id": 1,
@@ -11,34 +11,36 @@
         "grantId": "1",
         "principal": "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
         "agent": "0x70997970C51812dc3A010C7d01b50e0d17dc79C8",
-        "issuedAt": 1778893467,
-        "expiration": 1778897127,
+        "issuedAt": 1778894108,
+        "expiration": 1778897768,
         "totalBudget": 1000000,
         "perRequestCap": 5000,
         "scopes": [],
         "salt": "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
         "chainType": "eip155",
-        "chainId": "8453"
+        "chainId": "8453",
+        "escrowId": "0x0000000000000000000000000000000000000000000000000000000000000000"
       },
       "expected": "pass"
     },
     {
       "id": 2,
       "name": "expired_grant",
-      "description": "Grant past its expiration timestamp",
+      "description": "Grant past its expiration",
       "chainType": "eip155",
       "grant": {
         "grantId": "2",
         "principal": "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
         "agent": "0x70997970C51812dc3A010C7d01b50e0d17dc79C8",
-        "issuedAt": 1778886327,
-        "expiration": 1778889927,
+        "issuedAt": 1778886968,
+        "expiration": 1778890568,
         "totalBudget": 1000000,
         "perRequestCap": 5000,
         "scopes": [],
         "salt": "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
         "chainType": "eip155",
-        "chainId": "8453"
+        "chainId": "8453",
+        "escrowId": "0x0000000000000000000000000000000000000000000000000000000000000000"
       },
       "expected": "fail",
       "failReason": "Grant expired"
@@ -46,41 +48,43 @@
     {
       "id": 3,
       "name": "future_grant",
-      "description": "issuedAt is in the future \u2014 clock skew violation",
+      "description": "issuedAt in the future",
       "chainType": "eip155",
       "grant": {
         "grantId": "3",
         "principal": "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
         "agent": "0x70997970C51812dc3A010C7d01b50e0d17dc79C8",
-        "issuedAt": 1778903526,
-        "expiration": 1778993526,
+        "issuedAt": 1778904167,
+        "expiration": 1778994167,
         "totalBudget": 1000000,
         "perRequestCap": 5000,
         "scopes": [],
         "salt": "0xcccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
         "chainType": "eip155",
-        "chainId": "8453"
+        "chainId": "8453",
+        "escrowId": "0x0000000000000000000000000000000000000000000000000000000000000000"
       },
       "expected": "fail",
-      "failReason": "issuedAt in future \u2014 clock skew"
+      "failReason": "issuedAt in future"
     },
     {
       "id": 4,
       "name": "zero_budget",
-      "description": "totalBudget is zero \u2014 must reject",
+      "description": "totalBudget is zero",
       "chainType": "eip155",
       "grant": {
         "grantId": "4",
         "principal": "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
         "agent": "0x70997970C51812dc3A010C7d01b50e0d17dc79C8",
-        "issuedAt": 1778893467,
-        "expiration": 1778897127,
+        "issuedAt": 1778894108,
+        "expiration": 1778897768,
         "totalBudget": 0,
         "perRequestCap": 5000,
         "scopes": [],
         "salt": "0xdddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
         "chainType": "eip155",
-        "chainId": "8453"
+        "chainId": "8453",
+        "escrowId": "0x0000000000000000000000000000000000000000000000000000000000000000"
       },
       "expected": "fail",
       "failReason": "totalBudget must be > 0"
@@ -88,13 +92,13 @@
     {
       "id": 5,
       "name": "missing_agent_field",
-      "description": "Required 'agent' field is absent",
+      "description": "Required agent field absent",
       "chainType": "eip155",
       "grant": {
         "grantId": "5",
         "principal": "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
-        "issuedAt": 1778893467,
-        "expiration": 1778897127,
+        "issuedAt": 1778894108,
+        "expiration": 1778897768,
         "totalBudget": 1000000,
         "perRequestCap": 5000,
         "scopes": [],
@@ -103,29 +107,56 @@
         "chainId": "8453"
       },
       "expected": "fail",
-      "failReason": "Missing required field: agent"
+      "failReason": "Missing field: agent"
     },
     {
       "id": 6,
       "name": "solana_grant_valid",
-      "description": "Valid Solana grant \u2014 chainType=solana accepted, ed25519 signing path",
+      "description": "Valid Solana grant \u2014 chainType=solana, ed25519 path",
       "chainType": "solana",
       "grant": {
         "grantId": "6",
         "principal": "6aCEuwH3PYx99cEmRz45otfxk39uF7ewGhqmvxfXisSG",
         "agent": "DRpbCBMxVnDK7maPM5tGv6MvB3v1sRMC86PZ8okm21hy",
-        "issuedAt": 1778893467,
-        "expiration": 1778897127,
+        "issuedAt": 1778894108,
+        "expiration": 1778897768,
+        "totalBudget": 1000000,
+        "perRequestCap": 5000,
+        "scopes": [],
+        "chainType": "solana",
+        "chainId": "solana-mainnet",
+        "escrowId": "0xdeadbeef00000000000000000000000000000000000000000000000000000000"
+      },
+      "expected": "pass",
+      "notes": "Solana grants use ed25519. escrowId seeds the PDA vault."
+    },
+    {
+      "id": 7,
+      "name": "solana_grant_missing_escrow_id",
+      "description": "Solana grant missing required escrowId",
+      "chainType": "solana",
+      "grant": {
+        "grantId": "7",
+        "principal": "6aCEuwH3PYx99cEmRz45otfxk39uF7ewGhqmvxfXisSG",
+        "agent": "DRpbCBMxVnDK7maPM5tGv6MvB3v1sRMC86PZ8okm21hy",
+        "issuedAt": 1778894108,
+        "expiration": 1778897768,
         "totalBudget": 1000000,
         "perRequestCap": 5000,
         "scopes": [],
         "chainType": "solana",
         "chainId": "solana-mainnet"
       },
-      "expected": "pass",
-      "notes": "Solana grants use ed25519 (nacl.sign.detached) instead of EIP-712. Struct fields are identical \u2014 only signing scheme differs."
+      "expected": "fail",
+      "failReason": "Solana grants require escrowId field"
     }
   ],
+  "program": {
+    "anchor_program": "programs/solana-escrow/src/lib.rs",
+    "client": "clients/solana-escrow-client.ts",
+    "usdc_mint_mainnet": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+    "usdc_mint_devnet": "4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU"
+  },
   "facilitator": {
     "conformance_endpoint": "GET https://www.x402-agent-pay.com/x402/conformance",
     "verify_grant_endpoint": "POST https://www.x402-agent-pay.com/x402/verify-grant",
