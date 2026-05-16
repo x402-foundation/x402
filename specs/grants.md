@@ -59,6 +59,8 @@ For `chainType === "eip155"`, grants are signed with EIP-712:
 ```
 
 > For Solana grants, the EIP-712 domain is not used — see Section 10.
+>
+> **Live Program ID (Devnet):** `CNwRWLCUL7jgk3xEgvMCeUFyt73LNEPtvucwxm3YqsFb`
 
 ---
 
