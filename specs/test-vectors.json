@@ -1,6 +1,6 @@
 {
   "version": "1.2.0",
-  "description": "x402 Agent Grant conformance test vectors \u2014 EVM (EIP-712) + Solana (ed25519 + PDA escrow)",
+  "description": "x402 Agent Grant conformance test vectors \u2014 EVM (EIP-712 + EIP-3009)",
   "vectors": [
     {
       "id": 1,
@@ -108,47 +108,6 @@
       },
       "expected": "fail",
       "failReason": "Missing field: agent"
-    },
-    {
-      "id": 6,
-      "name": "solana_grant_valid",
-      "description": "Valid Solana grant \u2014 chainType=solana, ed25519 path",
-      "chainType": "solana",
-      "grant": {
-        "grantId": "6",
-        "principal": "6aCEuwH3PYx99cEmRz45otfxk39uF7ewGhqmvxfXisSG",
-        "agent": "DRpbCBMxVnDK7maPM5tGv6MvB3v1sRMC86PZ8okm21hy",
-        "issuedAt": 1778894108,
-        "expiration": 1778897768,
-        "totalBudget": 1000000,
-        "perRequestCap": 5000,
-        "scopes": [],
-        "chainType": "solana",
-        "chainId": "solana-mainnet",
-        "escrowId": "0xdeadbeef00000000000000000000000000000000000000000000000000000000"
-      },
-      "expected": "pass",
-      "notes": "Solana grants use ed25519. escrowId seeds the PDA vault."
-    },
-    {
-      "id": 7,
-      "name": "solana_grant_missing_escrow_id",
-      "description": "Solana grant missing required escrowId",
-      "chainType": "solana",
-      "grant": {
-        "grantId": "7",
-        "principal": "6aCEuwH3PYx99cEmRz45otfxk39uF7ewGhqmvxfXisSG",
-        "agent": "DRpbCBMxVnDK7maPM5tGv6MvB3v1sRMC86PZ8okm21hy",
-        "issuedAt": 1778894108,
-        "expiration": 1778897768,
-        "totalBudget": 1000000,
-        "perRequestCap": 5000,
-        "scopes": [],
-        "chainType": "solana",
-        "chainId": "solana-mainnet"
-      },
-      "expected": "fail",
-      "failReason": "Solana grants require escrowId field"
     }
   ],
   "program": {
