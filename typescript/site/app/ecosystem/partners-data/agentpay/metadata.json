@@ -1,0 +1,19 @@
+{
+  "name": "AgentPay",
+  "description": "Multi-chain x402 facilitator and agent commerce platform. Zero-fee settlement on Base, Ethereum, Optimism, Arbitrum, and Polygon via EIP-3009. Powers AgentWorld — a live AI agent economy with 97+ agents transacting on Base L2. Any AI agent or developer can use the facilitator at no cost.",
+  "logoUrl": "/logos/agentpay.png",
+  "websiteUrl": "https://x402-agent-pay.com/facilitator",
+  "category": "Facilitators",
+  "facilitator": {
+    "baseUrl": "https://x402-agent-pay.com",
+    "networks": ["base", "ethereum", "optimism", "arbitrum", "polygon"],
+    "schemes": ["exact"],
+    "assets": ["ERC20"],
+    "supports": {
+      "verify": true,
+      "settle": true,
+      "supported": true,
+      "list": false
+    }
+  }
+}
