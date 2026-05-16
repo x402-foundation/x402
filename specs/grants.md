@@ -1,6 +1,6 @@
 # x402 Agent Grant Specification
 
-**Version:** 1.1.0 (Solana Multi-Chain Support)
+**Version:** 1.2.0 (Solana Escrow + Multi-Chain)
 **Status:** Production
 **Repo:** https://github.com/shawnhvac/x402
 
@@ -8,9 +8,9 @@
 
 ## 1. Overview
 
-An **x402 Agent Grant** is a signed authorization that lets a principal (human or orchestrating agent) delegate spending power to a sub-agent. The grant is encoded in the `X-402-Payment` header on every API request.
+An **x402 Agent Grant** is a signed authorization that delegates spending power from a principal to a sub-agent. It is encoded in the `X-402-Payment` header on every API request.
 
-The same grant struct works across **EVM chains** (signed with EIP-712) and **Solana** (signed with ed25519). The `chainType` field routes verification.
+The same grant struct works across **EVM chains** (EIP-712 signed) and **Solana** (ed25519 signed). The `chainType` field routes verification. For Solana, an `escrowId` field seeds the PDA vault — enabling true escrow-until-delivery on Solana, identical to the EVM model.
 
 ---
 
@@ -28,16 +28,20 @@ struct x402Grant {
     bytes32[] scopes;       // Allowed action namespaces (optional)
     bytes32 salt;           // Replay protection nonce
 
-    // MULTI-CHAIN FIELDS
+    // MULTI-CHAIN FIELDS (added v1.1.0)
     string chainType;       // "eip155" (default) or "solana"
-    string chainId;         // e.g. "8453" (Base) or "solana-mainnet"
+    string chainId;         // CAIP-2: "8453" or "solana-mainnet"
+
+    // SOLANA ESCROW FIELD (added v1.2.0)
+    bytes32 escrowId;       // 32-byte PDA seed for Solana escrow vault
+                            // (ignored on EVM — set to bytes32(0) if unused)
 }
 ```
 
 **Field notes:**
 - `totalBudget` and `perRequestCap` are in USDC micro-units (1 USDC = 1,000,000)
 - `chainType` defaults to `"eip155"` if omitted — fully backward compatible
-- `chainId` uses the CAIP-2 chain identifier for EVM, or `"solana-mainnet"` / `"solana-devnet"` for Solana
+- `escrowId` is only required when `chainType === "solana"` — seeds the PDA vault
 
 ---
 
@@ -54,7 +58,7 @@ For `chainType === "eip155"`, grants are signed with EIP-712:
 }
 ```
 
-> **Note:** `chainId` matches the target chain. For Solana grants, the EIP-712 domain is not used — see Section 10.
+> For Solana grants, the EIP-712 domain is not used — see Section 10.
 
 ---
 
@@ -83,6 +87,7 @@ const types = {
     { name: "salt",          type: "bytes32"   },
     { name: "chainType",     type: "string"    },
     { name: "chainId",       type: "string"    },
+    { name: "escrowId",      type: "bytes32"   },
   ],
 };
 
@@ -96,12 +101,11 @@ const signature = await signer.signTypedData(domain, types, grant);
 ```python
 from eth_account import Account
 from eth_account.messages import encode_defunct
-import json
 
 grant_json = json.dumps(grant, sort_keys=True, separators=(",", ":"))
 msg_hash   = Web3.keccak(text=grant_json)
 recovered  = Account.recover_message(encode_defunct(msg_hash), signature=signature)
-assert recovered.lower() == grant["principal"].lower(), "Signature mismatch"
+assert recovered.lower() == grant["principal"].lower()
 ```
 
 ---
@@ -112,8 +116,7 @@ assert recovered.lower() == grant["principal"].lower(), "Signature mismatch"
 X-402-Payment: <base64(JSON({ grant, signature, chainType, chainId, authorization }))>
 ```
 
-**JSON payload structure:**
-
+**EVM payload:**
 ```json
 {
   "grant": { "...x402Grant fields..." },
@@ -121,26 +124,32 @@ X-402-Payment: <base64(JSON({ grant, signature, chainType, chainId, authorizatio
   "chainType": "eip155",
   "chainId": "8453",
   "authorization": {
-    "from": "0x...",
-    "to": "0x...",
-    "value": "1000",
-    "validAfter": 1700000000,
-    "validBefore": 1700003600,
-    "nonce": "0x...",
-    "signature": "0x..."
+    "from": "0x...", "to": "0x...", "value": "1000",
+    "validAfter": 1700000000, "validBefore": 1700003600,
+    "nonce": "0x...", "signature": "0x..."
   }
 }
 ```
 
-For Solana, `authorization` contains the SPL transfer authorization instead of EIP-3009 fields.
+**Solana payload:**
+```json
+{
+  "grant": { "...x402Grant fields...", "chainType": "solana", "escrowId": "0x..." },
+  "signature": "<base64(ed25519 sig)>",
+  "chainType": "solana",
+  "chainId": "solana-mainnet",
+  "escrow": {
+    "pda":   "<base58 escrow PDA>",
+    "vault": "<base58 vault PDA>"
+  }
+}
+```
 
 ---
 
 ## 7. Revocation
 
-Grants can be revoked on-chain when the **cumulative spend** exceeds **30% of the total lifetime budget**. This threshold triggers an on-chain revocation check via the `GrantRegistry` contract.
-
-Receivers SHOULD check revocation status for grants where `currentSpend / totalBudget >= 0.30`.
+Grants can be revoked on-chain when cumulative spend exceeds **30% of `totalBudget`**. Receivers SHOULD check revocation status at this threshold.
 
 ---
 
@@ -149,86 +158,57 @@ Receivers SHOULD check revocation status for grants where `currentSpend / totalB
 | Rule | Requirement |
 |------|-------------|
 | Clock skew tolerance | ±30 seconds |
-| Minimum `expiration` window | 30 seconds |
-| Replay protection | `salt` must be unique per request |
+| Minimum expiration window | 30 seconds |
+| Replay protection | `salt` unique per request; `escrowId` unique per Solana escrow |
 | Revocation threshold | Check on-chain when spend ≥ 30% of budget |
 | `perRequestCap` enforcement | Reject if `paymentAmount > perRequestCap` |
 | `chainType` mismatch | Reject if grant `chainType` ≠ verifier's expected chain |
+| Solana deadline | `escrow.deadline` = `grant.expiration` — auto-refund after |
 
 ---
 
 ## 9. Test Vectors
 
-See [`test-vectors.json`](./test-vectors.json) and the [conformance suite](./conformance.md) for 6 verified test vectors including a Solana grant vector.
+See [`test-vectors.json`](./test-vectors.json) — 7 vectors including Solana escrow.
 
-Live conformance endpoint: `GET https://www.x402-agent-pay.com/x402/conformance`
+Live conformance: `GET https://www.x402-agent-pay.com/x402/conformance`
 
 ---
 
 ## 10. Solana Support (`chainType = "solana"`)
 
-When `chainType === "solana"`, use the same grant struct but sign with Solana's native **ed25519** signature (no EIP-712).
+Solana grants use the same struct but signed with ed25519. An `escrowId` seeds a PDA vault — USDC is locked until delivery or deadline.
 
-### Signing (Solana / ed25519)
+### Signing (TypeScript / ed25519)
 
 ```typescript
 import { Keypair } from "@solana/web3.js";
 import nacl from "tweetnacl";
 
-export function signSolanaGrant(grant: any, signer: Keypair): Uint8Array {
-  const message = new TextEncoder().encode(
-    JSON.stringify(grant, Object.keys(grant).sort())
-  );
-  return nacl.sign.detached(message, signer.secretKey);
+function signSolanaGrant(grant: any, signer: Keypair): string {
+  const sorted  = JSON.stringify(grant, Object.keys(grant).sort());
+  const message = new TextEncoder().encode(sorted);
+  const sig     = nacl.sign.detached(message, signer.secretKey);
+  return Buffer.from(sig).toString("base64");
 }
 
-export function verifySolanaGrant(
-  grant: any,
-  signature: Uint8Array,
-  publicKey: Uint8Array
-): boolean {
-  const message = new TextEncoder().encode(
-    JSON.stringify(grant, Object.keys(grant).sort())
-  );
-  return nacl.sign.detached.verify(message, signature, publicKey);
+function verifySolanaGrant(grant: any, signatureB64: string, publicKeyBase58: string): boolean {
+  const sorted    = JSON.stringify(grant, Object.keys(grant).sort());
+  const message   = new TextEncoder().encode(sorted);
+  const signature = Buffer.from(signatureB64, "base64");
+  const pubKey    = new PublicKey(publicKeyBase58).toBytes();
+  return nacl.sign.detached.verify(message, signature, pubKey);
 }
 ```
 
-### Payment Header (Solana)
-
-```json
-{
-  "grant": {
-    "grantId": "42",
-    "principal": "6aCEuwH3PYx99cEmRz45otfxk39uF7ewGhqmvxfXisSG",
-    "agent": "DRpbCBMxVnDK7maPM5tGv6MvB3v1sRMC86PZ8okm21hy",
-    "issuedAt": 1700000000,
-    "expiration": 1700003600,
-    "totalBudget": 1000000,
-    "perRequestCap": 5000,
-    "chainType": "solana",
-    "chainId": "solana-mainnet"
-  },
-  "signature": "<base64(ed25519 signature)>",
-  "chainType": "solana",
-  "chainId": "solana-mainnet",
-  "authorization": {
-    "from": "6aCEuwH3PYx99cEmRz45otfxk39uF7ewGhqmvxfXisSG",
-    "to": "DRpbCBMxVnDK7maPM5tGv6MvB3v1sRMC86PZ8okm21hy",
-    "value": "1000",
-    "mint": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
-    "signature": "<base64(ed25519 transfer auth)>"
-  }
-}
-```
-
-### Verification (Facilitator — Python)
+### Verification (Python / facilitator)
 
 ```python
 import nacl.signing, base58, json, base64
 
 def verify_solana_grant(grant: dict, signature_b64: str, public_key_b58: str) -> bool:
-    message  = json.dumps(grant, sort_keys=True, separators=(",", ":")).encode()
+    sorted_grant = json.dumps(grant, sort_keys=True, separators=(",", ":"))
+    message  = sorted_grant.encode()
     sig      = base64.b64decode(signature_b64)
     pk_bytes = base58.b58decode(public_key_b58)
     try:
@@ -238,30 +218,50 @@ def verify_solana_grant(grant: dict, signature_b64: str, public_key_b58: str) ->
         return False
 ```
 
+### Escrow PDA Seeds
+
+```
+escrow PDA = findProgramAddressSync([b"escrow", escrowId], PROGRAM_ID)
+vault PDA  = findProgramAddressSync([b"vault",  escrowId], PROGRAM_ID)
+```
+
+### Escrow Lifecycle
+
+| Step | Who | Action |
+|------|-----|--------|
+| 1 | Paying agent | Sign grant + call `initialize_escrow()` — USDC locked in vault PDA |
+| 2 | Paying agent | Send `X-402-Payment` header with grant + escrow PDA addresses |
+| 3 | Receiving agent | Verify ed25519 signature, call `release()` on delivery |
+| 4 (timeout) | Anyone | Call `refund()` after deadline — principal gets USDC back |
+
 ### USDC Mint (Solana Mainnet)
 
 ```
 EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v
 ```
 
-### Notes
+### Program
 
-- Existing EVM grants remain **fully unchanged** — `chainType` defaults to `"eip155"` if omitted
-- Settlement on Solana uses native SPL token transfer (not EIP-3009)
-- The AgentPay facilitator routes automatically based on `chainType`
-- Solana grants settle in **< 1 second** vs 2–6s on Base
+See [`programs/solana-escrow/`](../programs/solana-escrow/) — Anchor 0.30 program.
+Client: [`clients/solana-escrow-client.ts`](../clients/solana-escrow-client.ts)
+
+Deploy command:
+```bash
+anchor build
+anchor deploy --provider.cluster mainnet
+```
 
 ---
 
-## 11. Supported Chains (AgentPay Facilitator)
+## 11. Supported Chains (AgentPay Facilitator v2.0)
 
-| Chain | CAIP-2 | Signing | Settlement | USDC |
-|-------|--------|---------|-----------|------|
-| Base | eip155:8453 | EIP-712 | EIP-3009 | 0x833589... |
-| Ethereum | eip155:1 | EIP-712 | EIP-3009 | 0xA0b869... |
-| Optimism | eip155:10 | EIP-712 | EIP-3009 | 0x0b2C63... |
-| Arbitrum | eip155:42161 | EIP-712 | EIP-3009 | 0xaf88d0... |
-| Polygon | eip155:137 | EIP-712 | EIP-3009 | 0x3c499c... |
-| Solana | solana:mainnet | ed25519 | SPL transfer | EPjFWdd... |
+| Chain | CAIP-2 | Signing | Settlement | Escrow |
+|-------|--------|---------|-----------|--------|
+| Base | eip155:8453 | EIP-712 | EIP-3009 | EVM contract |
+| Ethereum | eip155:1 | EIP-712 | EIP-3009 | EVM contract |
+| Optimism | eip155:10 | EIP-712 | EIP-3009 | EVM contract |
+| Arbitrum | eip155:42161 | EIP-712 | EIP-3009 | EVM contract |
+| Polygon | eip155:137 | EIP-712 | EIP-3009 | EVM contract |
+| **Solana** | **solana:mainnet** | **ed25519** | **SPL transfer** | **PDA vault** |
 
-**Fee model:** Free verification · 0.5% on successful settlement (all chains)
+Fee model: free verification · 0.5% on settlement · auto-refund on timeout
