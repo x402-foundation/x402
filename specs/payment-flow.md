@@ -1,6 +1,6 @@
 # x402 Payment Flow
 
-**Version:** 1.2.0 (Solana Escrow)
+**Version:** 1.3.0
 **Status:** Production
 
 ---
@@ -14,7 +14,6 @@ The x402 payment lifecycle is identical for EVM and Solana — only the signing 
 ### Step 1 — Principal Issues Grant
 
 ```typescript
-const grant: X402SolanaGrant = {
   grantId:       "42",
   principal:     "6aCEuwH3PYx99cEmRz45otfxk39uF7ewGhqmvxfXisSG",
   agent:         "DRpbCBMxVnDK7maPM5tGv6MvB3v1sRMC86PZ8okm21hy",
@@ -31,7 +30,6 @@ const grant: X402SolanaGrant = {
 ### Step 2 — Lock USDC in PDA Vault
 
 ```typescript
-import { initializeEscrow } from "../clients/solana-escrow-client";
 
 const { escrowPda, vaultPda, txSignature } = await initializeEscrow(
   connection,
@@ -46,10 +44,7 @@ const { escrowPda, vaultPda, txSignature } = await initializeEscrow(
 ### Step 3 — Sign Grant + Build Header
 
 ```typescript
-import { signSolanaGrant, buildSolanaPaymentHeader } from "../clients/solana-escrow-client";
 
-const signature = signSolanaGrant(grant, principalKeypair);
-const header    = buildSolanaPaymentHeader(grant, signature, escrowPda, vaultPda);
 // → set X-402-Payment: <header> on all requests
 ```
 
@@ -57,7 +52,6 @@ const header    = buildSolanaPaymentHeader(grant, signature, escrowPda, vaultPda
 
 ```typescript
 // On receiving agent:
-const isValid = verifySolanaGrant(grant, signature, grant.principal);
 if (!isValid) return res.status(401).json({ error: "invalid signature" });
 
 // Deliver service...
@@ -81,7 +75,6 @@ The AgentPay facilitator spawns a watcher for every Solana escrow. After `grant.
 | Optimism | EIP-3009 auth | 2–6s | N/A |
 | Arbitrum | EIP-3009 auth | 1–3s | N/A |
 | Polygon | EIP-3009 auth | 2–5s | N/A |
-| **Solana** | **PDA vault lock** | **< 1s** | **After deadline** |
 
 ---
 
