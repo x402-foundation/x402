@@ -1,0 +1,7 @@
+{
+  "name": "PowForge x402-Lightning",
+  "description": "Lightning facilitator for x402 with both LNBits and NWC (Nostr Wallet Connect) backends. Self-custodial: operator keeps custody, no hosted endpoints required. Works with Alby Hub, Mutiny, Zeus, Coinos, and any NIP-47 wallet.",
+  "logoUrl": "/logos/powforge-x402-lightning.png",
+  "websiteUrl": "https://www.npmjs.com/package/@powforge/x402-lightning",
+  "category": "Infrastructure & Tooling"
+}
