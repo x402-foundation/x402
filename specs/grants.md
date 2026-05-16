@@ -10,7 +10,7 @@
 
 An **x402 Agent Grant** is a signed authorization that delegates spending power from a principal to a sub-agent. It is encoded in the `X-402-Payment` header on every API request.
 
-The grant struct works across **EVM chains** (EIP-712 signed). The `chainType` field routes verification. For Solana, an `escrowId` field seeds the PDA vault — enabling true escrow-until-delivery on Solana, identical to the EVM model.
+The grant struct works across **EVM chains** (EIP-712 signed). The `chainType` field defaults to `eip155` for all EVM chains.
 
 ---
 
