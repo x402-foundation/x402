@@ -21,8 +21,8 @@ The x402 payment lifecycle is defined for EVM chains using EIP-712 signing and E
   expiration:    Math.floor(Date.now() / 1000) + 3600,
   totalBudget:   1_000_000,    // $1.00 USDC
   perRequestCap: 5_000,        // $0.005 USDC per call
-  chainType:     "solana",
-  chainId:       "solana-mainnet",
+  chainType:     "evm",
+  chainId:       "evm-mainnet",
   escrowId:      crypto.randomBytes(32).toString("hex"),
 };
 ```
