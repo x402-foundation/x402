@@ -1,7 +1,7 @@
 use anchor_lang::prelude::*;
 use anchor_spl::token::{self, Token, TokenAccount, Transfer};
 
-declare_id!("x402EscrowProgramIdReplaceAfterDeploy1111111");
+declare_id!("CNwRWLCUL7jgk3xEgvMCeUFyt73LNEPtvucwxm3YqsFb");
 
 /// x402 Solana Escrow Program
 /// Mirrors the EVM escrow pattern — USDC locked in PDA vault,
