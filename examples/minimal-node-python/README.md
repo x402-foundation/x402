@@ -32,3 +32,15 @@ Total time: ~100ms (no blockchain involved in this local demo).
 ---
 
 **See specs/ for full documentation**
+
+---
+
+## Solana Support
+
+The x402-escrow program is now live on Solana Devnet.
+
+**Program ID:** `CNwRWLCUL7jgk3xEgvMCeUFyt73LNEPtvucwxm3YqsFb`
+**Explorer:** https://explorer.solana.com/address/CNwRWLCUL7jgk3xEgvMCeUFyt73LNEPtvucwxm3YqsFb?cluster=devnet
+
+For Solana grants, set `chainType: "solana"` and include `escrowId` in the grant struct. The escrow PDA vault uses ed25519 signing instead of EIP-712.
+
