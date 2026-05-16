@@ -58,6 +58,10 @@ sequenceDiagram
 
 ## Solana Escrow Detail
 
+**Program ID (Devnet):** `CNwRWLCUL7jgk3xEgvMCeUFyt73LNEPtvucwxm3YqsFb`
+
+**Network:** Solana Devnet → Mainnet after audit
+
 ```mermaid
 sequenceDiagram
     participant PayingAgent
