@@ -143,7 +143,7 @@ Grants can be revoked on-chain when cumulative spend exceeds **30% of `totalBudg
 |------|-------------|
 | Clock skew tolerance | ±30 seconds |
 | Minimum expiration window | 30 seconds |
-| Replay protection | `salt` unique per request; `escrowId` unique per Solana escrow |
+| Replay protection | `salt` unique per request |
 | Revocation threshold | Check on-chain when spend ≥ 30% of budget |
 | `perRequestCap` enforcement | Reject if `paymentAmount > perRequestCap` |
 | `chainType` mismatch | Reject if grant `chainType` ≠ verifier's expected chain |
