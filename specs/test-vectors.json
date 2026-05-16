@@ -110,12 +110,6 @@
       "failReason": "Missing field: agent"
     }
   ],
-  "program": {
-    "anchor_program": "programs/solana-escrow/src/lib.rs",
-    "client": "clients/solana-escrow-client.ts",
-    "usdc_mint_mainnet": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
-    "usdc_mint_devnet": "4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU"
-  },
   "facilitator": {
     "conformance_endpoint": "GET https://www.x402-agent-pay.com/x402/conformance",
     "verify_grant_endpoint": "POST https://www.x402-agent-pay.com/x402/verify-grant",
