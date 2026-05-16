@@ -7,7 +7,7 @@
 
 ## Overview
 
-The x402 payment lifecycle is identical for EVM and Solana — only the signing scheme and settlement mechanism differ. The `chainType` field in the grant determines which path is taken. For an on-chain PDA escrow is used instead of EIP-3009 authorization.
+The x402 payment lifecycle is defined for EVM chains using EIP-712 signing and EIP-3009 settlement.
 
 ---
 
@@ -62,7 +62,7 @@ await releaseEscrow(connection, receiverKeypair, escrowPda, vaultPda, receiverAt
 
 ### Step 5 — Auto-Refund (Timeout)
 
-The AgentPay facilitator spawns a watcher for every Solana escrow. After `grant.expiration + 5s`, if the escrow hasn't been released, `refund()` is called automatically — USDC returns to the principal.
+The AgentPay facilitator monitors each grant. After `grant.expiration + 5s`, if payment hasn't been released, `refund()` is called automatically — USDC returns to the principal.
 
 ---
 
