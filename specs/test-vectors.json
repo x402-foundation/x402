@@ -1,128 +1,134 @@
 {
-  "test_vectors": [
+  "version": "1.1.0",
+  "description": "x402 Agent Grant conformance test vectors \u2014 EVM (EIP-712) + Solana (ed25519)",
+  "vectors": [
     {
       "id": 1,
       "name": "valid_grant",
-      "description": "Correctly signed grant, not expired, agent matches",
+      "description": "Standard valid EVM grant within time window",
+      "chainType": "eip155",
       "grant": {
         "grantId": "1",
         "principal": "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
         "agent": "0x70997970C51812dc3A010C7d01b50e0d17dc79C8",
-        "issuedAt": "1715781600",
-        "expiration": "1715782500",
-        "totalBudget": "1000000000",
-        "perRequestCap": "5000000",
-        "scopes": ["0x8f3a8c9b2d1e4f5a6b7c8d9e0f1a2b3c4d5e6f7a"],
-        "salt": "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"
+        "issuedAt": 1778893467,
+        "expiration": 1778897127,
+        "totalBudget": 1000000,
+        "perRequestCap": 5000,
+        "scopes": [],
+        "salt": "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "chainType": "eip155",
+        "chainId": "8453"
       },
-      "signature": "0x6e100a352ec6ad6000a6fcf415360c877b9f21d5d1a1f3f5c5a5b5d5e5f5a5b5c5d5e5f5a5b5c5d5e5f5a5b5c5d5e5f001b",
-      "expectedAgent": "0x70997970C51812dc3A010C7d01b50e0d17dc79C8",
-      "now": "1715781700",
       "expected": "pass"
     },
     {
       "id": 2,
       "name": "expired_grant",
-      "description": "Grant expiration is in the past",
+      "description": "Grant past its expiration timestamp",
+      "chainType": "eip155",
       "grant": {
         "grantId": "2",
         "principal": "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
         "agent": "0x70997970C51812dc3A010C7d01b50e0d17dc79C8",
-        "issuedAt": "1715700000",
-        "expiration": "1715700900",
-        "totalBudget": "1000000000",
-        "perRequestCap": "5000000",
-        "scopes": ["0x8f3a8c9b2d1e4f5a6b7c8d9e0f1a2b3c4d5e6f7a"],
-        "salt": "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff81"
+        "issuedAt": 1778886327,
+        "expiration": 1778889927,
+        "totalBudget": 1000000,
+        "perRequestCap": 5000,
+        "scopes": [],
+        "salt": "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "chainType": "eip155",
+        "chainId": "8453"
       },
-      "signature": "0x6e100a352ec6ad6000a6fcf415360c877b9f21d5d1a1f3f5c5a5b5d5e5f5a5b5c5d5e5f5a5b5c5d5e5f5a5b5c5d5e5f001c",
-      "expectedAgent": "0x70997970C51812dc3A010C7d01b50e0d17dc79C8",
-      "now": "1715781700",
-      "expected": "fail"
+      "expected": "fail",
+      "failReason": "Grant expired"
     },
     {
       "id": 3,
-      "name": "invalid_signature",
-      "description": "Grant has been modified; signature doesn't verify",
+      "name": "future_grant",
+      "description": "issuedAt is in the future \u2014 clock skew violation",
+      "chainType": "eip155",
       "grant": {
         "grantId": "3",
         "principal": "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
         "agent": "0x70997970C51812dc3A010C7d01b50e0d17dc79C8",
-        "issuedAt": "1715781600",
-        "expiration": "1715782500",
-        "totalBudget": "1000000000",
-        "perRequestCap": "10000000",
-        "scopes": ["0x8f3a8c9b2d1e4f5a6b7c8d9e0f1a2b3c4d5e6f7a"],
-        "salt": "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"
+        "issuedAt": 1778903526,
+        "expiration": 1778993526,
+        "totalBudget": 1000000,
+        "perRequestCap": 5000,
+        "scopes": [],
+        "salt": "0xcccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "chainType": "eip155",
+        "chainId": "8453"
       },
-      "signature": "0x6e100a352ec6ad6000a6fcf415360c877b9f21d5d1a1f3f5c5a5b5d5e5f5a5b5c5d5e5f5a5b5c5d5e5f5a5b5c5d5e5f001b",
-      "expectedAgent": "0x70997970C51812dc3A010C7d01b50e0d17dc79C8",
-      "now": "1715781700",
       "expected": "fail",
-      "note": "perRequestCap changed to 10000000 (was 5000000); signature is stale"
+      "failReason": "issuedAt in future \u2014 clock skew"
     },
     {
       "id": 4,
-      "name": "wrong_agent",
-      "description": "Grant is for a different agent address",
+      "name": "zero_budget",
+      "description": "totalBudget is zero \u2014 must reject",
+      "chainType": "eip155",
       "grant": {
         "grantId": "4",
         "principal": "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
-        "agent": "0x15d34aaf54267db7d7c367839aaf71a00a2c6a65",
-        "issuedAt": "1715781600",
-        "expiration": "1715782500",
-        "totalBudget": "1000000000",
-        "perRequestCap": "5000000",
-        "scopes": ["0x8f3a8c9b2d1e4f5a6b7c8d9e0f1a2b3c4d5e6f7a"],
-        "salt": "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff82"
+        "agent": "0x70997970C51812dc3A010C7d01b50e0d17dc79C8",
+        "issuedAt": 1778893467,
+        "expiration": 1778897127,
+        "totalBudget": 0,
+        "perRequestCap": 5000,
+        "scopes": [],
+        "salt": "0xdddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        "chainType": "eip155",
+        "chainId": "8453"
       },
-      "signature": "0x6e100a352ec6ad6000a6fcf415360c877b9f21d5d1a1f3f5c5a5b5d5e5f5a5b5c5d5e5f5a5b5c5d5e5f5a5b5c5d5e5f001d",
-      "expectedAgent": "0x70997970C51812dc3A010C7d01b50e0d17dc79C8",
-      "now": "1715781700",
       "expected": "fail",
-      "note": "grant.agent != expectedAgent"
+      "failReason": "totalBudget must be > 0"
     },
     {
       "id": 5,
-      "name": "zero_budget",
-      "description": "Grant totalBudget is zero",
+      "name": "missing_agent_field",
+      "description": "Required 'agent' field is absent",
+      "chainType": "eip155",
       "grant": {
         "grantId": "5",
         "principal": "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
-        "agent": "0x70997970C51812dc3A010C7d01b50e0d17dc79C8",
-        "issuedAt": "1715781600",
-        "expiration": "1715782500",
-        "totalBudget": "0",
-        "perRequestCap": "5000000",
-        "scopes": ["0x8f3a8c9b2d1e4f5a6b7c8d9e0f1a2b3c4d5e6f7a"],
-        "salt": "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff83"
+        "issuedAt": 1778893467,
+        "expiration": 1778897127,
+        "totalBudget": 1000000,
+        "perRequestCap": 5000,
+        "scopes": [],
+        "salt": "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "chainType": "eip155",
+        "chainId": "8453"
       },
-      "signature": "0x6e100a352ec6ad6000a6fcf415360c877b9f21d5d1a1f3f5c5a5b5d5e5f5a5b5c5d5e5f5a5b5c5d5e5f5a5b5c5d5e5f001e",
-      "expectedAgent": "0x70997970C51812dc3A010C7d01b50e0d17dc79C8",
-      "now": "1715781700",
       "expected": "fail",
-      "note": "totalBudget must be > 0"
+      "failReason": "Missing required field: agent"
     },
     {
       "id": 6,
-      "name": "not_yet_issued",
-      "description": "Grant issuedAt is in the future",
+      "name": "solana_grant_valid",
+      "description": "Valid Solana grant \u2014 chainType=solana accepted, ed25519 signing path",
+      "chainType": "solana",
       "grant": {
         "grantId": "6",
-        "principal": "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
-        "agent": "0x70997970C51812dc3A010C7d01b50e0d17dc79C8",
-        "issuedAt": "1715782000",
-        "expiration": "1715782900",
-        "totalBudget": "1000000000",
-        "perRequestCap": "5000000",
-        "scopes": ["0x8f3a8c9b2d1e4f5a6b7c8d9e0f1a2b3c4d5e6f7a"],
-        "salt": "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff84"
+        "principal": "6aCEuwH3PYx99cEmRz45otfxk39uF7ewGhqmvxfXisSG",
+        "agent": "DRpbCBMxVnDK7maPM5tGv6MvB3v1sRMC86PZ8okm21hy",
+        "issuedAt": 1778893467,
+        "expiration": 1778897127,
+        "totalBudget": 1000000,
+        "perRequestCap": 5000,
+        "scopes": [],
+        "chainType": "solana",
+        "chainId": "solana-mainnet"
       },
-      "signature": "0x6e100a352ec6ad6000a6fcf415360c877b9f21d5d1a1f3f5c5a5b5d5e5f5a5b5c5d5e5f5a5b5c5d5e5f5a5b5c5d5e5f001f",
-      "expectedAgent": "0x70997970C51812dc3A010C7d01b50e0d17dc79C8",
-      "now": "1715781700",
-      "expected": "fail",
-      "note": "issuedAt > now + 30 seconds grace"
+      "expected": "pass",
+      "notes": "Solana grants use ed25519 (nacl.sign.detached) instead of EIP-712. Struct fields are identical \u2014 only signing scheme differs."
     }
-  ]
+  ],
+  "facilitator": {
+    "conformance_endpoint": "GET https://www.x402-agent-pay.com/x402/conformance",
+    "verify_grant_endpoint": "POST https://www.x402-agent-pay.com/x402/verify-grant",
+    "supported_networks": "GET https://www.x402-agent-pay.com/x402/supported-networks"
+  }
 }
