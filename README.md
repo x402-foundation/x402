@@ -78,7 +78,6 @@ See [specs/BASE_SEPOLIA.md](specs/BASE_SEPOLIA.md) for registry deployment and e
 Registry contract address: `0x...` (to be deployed — awaiting x402GrantRegistry deploy)
 
 x402-escrow Program ID: `CNwRWLCUL7jgk3xEgvMCeUFyt73LNEPtvucwxm3YqsFb`
-[View on Explorer](https://explorer.solana.com/address/CNwRWLCUL7jgk3xEgvMCeUFyt73LNEPtvucwxm3YqsFb?cluster=devnet)
 
 ## Architecture
 
