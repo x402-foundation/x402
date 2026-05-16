@@ -297,6 +297,30 @@ class TestHTTPIntegration:
         result = components.process_http_request(context)
         assert result.type == "no-payment-required"
 
+    def test_malformed_payment_signature_returns_400(
+        self,
+        components: HTTPComponentsFixture,
+    ) -> None:
+        """Malformed PAYMENT-SIGNATURE headers should return 400 instead of 402."""
+        mock_adapter = MockHTTPAdapter(
+            path="/api/protected",
+            method="GET",
+            headers={"PAYMENT-SIGNATURE": "not-valid-base64"},
+        )
+        context = HTTPRequestContext(
+            adapter=mock_adapter,
+            path="/api/protected",
+            method="GET",
+        )
+
+        result = components.process_http_request(context)
+
+        assert result.type == "payment-error"
+        assert result.response is not None
+        assert result.response.status == 400
+        assert result.response.body == {"error": "Invalid payment"}
+        assert result.response.headers == {"Content-Type": "application/json"}
+
 
 class TestDynamicPricing:
     """Tests for dynamic pricing - run against both sync and async implementations."""

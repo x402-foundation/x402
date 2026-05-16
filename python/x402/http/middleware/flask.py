@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import threading
 from collections.abc import Callable, Iterator
+from http import HTTPStatus
 from typing import TYPE_CHECKING, Any
 
 try:
@@ -36,6 +37,15 @@ if TYPE_CHECKING:
 # ============================================================================
 # Extension Auto-Registration
 # ============================================================================
+
+
+def _status_line(status_code: int) -> str:
+    """Build a WSGI status line using the standard HTTP reason phrase when possible."""
+    try:
+        phrase = HTTPStatus(status_code).phrase
+    except ValueError:
+        phrase = "Payment Required"
+    return f"{status_code} {phrase}"
 
 
 def _check_if_bazaar_needed(routes: RoutesConfig) -> bool:
@@ -404,18 +414,21 @@ class PaymentMiddleware:
                     start_response(status, headers)
                     return [body]
 
-                status = f"{response.status} Payment Required"
+                status = _status_line(response.status)
                 headers = list(response.headers.items())
+                has_content_type = any(key.lower() == "content-type" for key, _ in headers)
 
                 if response.is_html:
-                    headers.append(("Content-Type", "text/html; charset=utf-8"))
+                    if not has_content_type:
+                        headers.append(("Content-Type", "text/html; charset=utf-8"))
                     body = (
                         response.body.encode("utf-8")
                         if isinstance(response.body, str)
                         else response.body
                     )
                 else:
-                    headers.append(("Content-Type", "application/json"))
+                    if not has_content_type:
+                        headers.append(("Content-Type", "application/json"))
                     body = json.dumps(response.body or {}).encode("utf-8")
 
                 start_response(status, headers)
@@ -470,7 +483,7 @@ class PaymentMiddleware:
                                 headers = [("Content-Type", "application/json")]
                                 body = json.dumps({}).encode("utf-8")
                             else:
-                                status = f"{response.status} Payment Required"
+                                status = _status_line(response.status)
                                 headers = list(response.headers.items())
                                 if response.is_html:
                                     body = (
