@@ -1,228 +1,267 @@
-# x402 Agent Grants — EIP-712 Specification
+# x402 Agent Grant Specification
 
-**Status:** V1 Reference Implementation  
-**Last Updated:** May 2026
+**Version:** 1.1.0 (Solana Multi-Chain Support)
+**Status:** Production
+**Repo:** https://github.com/shawnhvac/x402
 
-## Overview
+---
 
-An x402 grant is a **signed permission** that authorizes one agent (the "agent") to spend money on behalf of another (the "principal").
+## 1. Overview
 
-Grants are:
-- **Signed with EIP-712** — using the principal's private key
-- **Time-bounded** — expire after a specified timestamp
-- **Budget-capped** — per-request and total limits
-- **Revocable** — via on-chain registry (checked only in final 30% of lifetime)
-- **Cryptographically verifiable** — any receiver can validate offline
+An **x402 Agent Grant** is a signed authorization that lets a principal (human or orchestrating agent) delegate spending power to a sub-agent. The grant is encoded in the `X-402-Payment` header on every API request.
 
-## Grant Structure
+The same grant struct works across **EVM chains** (signed with EIP-712) and **Solana** (signed with ed25519). The `chainType` field routes verification.
 
-```typescript
+---
+
+## 2. Grant Struct
+
+```solidity
 struct x402Grant {
-  uint256 grantId;           // Unique grant identifier
-  address principal;         // Who is authorizing the spend (signer)
-  address agent;             // Who is authorized to spend
-  uint256 issuedAt;          // Unix timestamp when grant was signed
-  uint256 expiration;        // Unix timestamp when grant expires
-  uint256 totalBudget;       // Total USDC available (in wei, 6 decimals)
-  uint256 perRequestCap;     // Max USDC per single request (in wei)
-  bytes32[] scopes;          // Tool scopes authorized (e.g., keccak256("trade"))
-  bytes32 salt;              // Replay attack prevention
+    uint256 grantId;        // Unique grant identifier
+    address principal;      // Who issued the grant (payer)
+    address agent;          // Who is authorized to spend
+    uint256 issuedAt;       // Unix timestamp — grant creation
+    uint256 expiration;     // Unix timestamp — grant expiry
+    uint256 totalBudget;    // Max lifetime spend (USDC micro-units, 6 decimals)
+    uint256 perRequestCap;  // Max spend per single API call
+    bytes32[] scopes;       // Allowed action namespaces (optional)
+    bytes32 salt;           // Replay protection nonce
+
+    // MULTI-CHAIN FIELDS
+    string chainType;       // "eip155" (default) or "solana"
+    string chainId;         // e.g. "8453" (Base) or "solana-mainnet"
 }
 ```
 
-## EIP-712 Domain
+**Field notes:**
+- `totalBudget` and `perRequestCap` are in USDC micro-units (1 USDC = 1,000,000)
+- `chainType` defaults to `"eip155"` if omitted — fully backward compatible
+- `chainId` uses the CAIP-2 chain identifier for EVM, or `"solana-mainnet"` / `"solana-devnet"` for Solana
 
-```typescript
-const DOMAIN = {
-  name: "x402-AgentGrant",
-  version: "1",
-  chainId: 8453,              // Base L2
-  verifyingContract: "0x0000000000000000000000000000000000000000",
-};
+---
+
+## 3. EIP-712 Domain (EVM)
+
+For `chainType === "eip155"`, grants are signed with EIP-712:
+
+```json
+{
+  "name": "x402-AgentGrant",
+  "version": "1",
+  "chainId": 8453,
+  "verifyingContract": "0x0000000000000000000000000000000000000000"
+}
 ```
 
-## TypeScript Implementation
+> **Note:** `chainId` matches the target chain. For Solana grants, the EIP-712 domain is not used — see Section 10.
 
-### Signing a Grant
+---
+
+## 4. Signing (EVM / EIP-712)
 
 ```typescript
 import { ethers } from "ethers";
 
-const DOMAIN = {
+const domain = {
   name: "x402-AgentGrant",
   version: "1",
   chainId: 8453,
   verifyingContract: "0x0000000000000000000000000000000000000000",
 };
 
-const TYPES = {
+const types = {
   x402Grant: [
-    { name: "grantId", type: "uint256" },
-    { name: "principal", type: "address" },
-    { name: "agent", type: "address" },
-    { name: "issuedAt", type: "uint256" },
-    { name: "expiration", type: "uint256" },
-    { name: "totalBudget", type: "uint256" },
-    { name: "perRequestCap", type: "uint256" },
-    { name: "scopes", type: "bytes32[]" },
-    { name: "salt", type: "bytes32" },
+    { name: "grantId",       type: "uint256"   },
+    { name: "principal",     type: "address"   },
+    { name: "agent",         type: "address"   },
+    { name: "issuedAt",      type: "uint256"   },
+    { name: "expiration",    type: "uint256"   },
+    { name: "totalBudget",   type: "uint256"   },
+    { name: "perRequestCap", type: "uint256"   },
+    { name: "scopes",        type: "bytes32[]" },
+    { name: "salt",          type: "bytes32"   },
+    { name: "chainType",     type: "string"    },
+    { name: "chainId",       type: "string"    },
   ],
 };
 
-async function signGrant(wallet, grant) {
-  const signature = await wallet.signTypedData(DOMAIN, TYPES, grant);
-  return signature;
-}
+const signature = await signer.signTypedData(domain, types, grant);
 ```
-
-### Verifying a Grant (Reference Implementation)
-
-```typescript
-import { ethers } from "ethers";
-
-function verifyGrant(grant, signature, expectedAgent, now = Math.floor(Date.now() / 1000)) {
-  // 1. Check expiration (with 30-second grace period)
-  if (grant.expiration < now - 30 || grant.issuedAt > now + 30) {
-    return false; // Grant is expired or not yet valid
-  }
-
-  // 2. Recover signer from signature
-  const DOMAIN = {
-    name: "x402-AgentGrant",
-    version: "1",
-    chainId: 8453,
-    verifyingContract: "0x0000000000000000000000000000000000000000",
-  };
-
-  const TYPES = {
-    x402Grant: [
-      { name: "grantId", type: "uint256" },
-      { name: "principal", type: "address" },
-      { name: "agent", type: "address" },
-      { name: "issuedAt", type: "uint256" },
-      { name: "expiration", type: "uint256" },
-      { name: "totalBudget", type: "uint256" },
-      { name: "perRequestCap", type: "uint256" },
-      { name: "scopes", type: "bytes32[]" },
-      { name: "salt", type: "bytes32" },
-    ],
-  };
-
-  let recoveredSigner;
-  try {
-    recoveredSigner = ethers.verifyTypedData(DOMAIN, TYPES, grant, signature);
-  } catch {
-    return false; // Signature is invalid
-  }
-
-  // 3. Verify the recovered signer matches the principal
-  if (recoveredSigner.toLowerCase() !== grant.principal.toLowerCase()) {
-    return false;
-  }
-
-  // 4. Verify the agent matches what we expect
-  if (grant.agent.toLowerCase() !== expectedAgent.toLowerCase()) {
-    return false;
-  }
-
-  // 5. Verify grant has non-zero budget
-  if (grant.totalBudget <= 0n) {
-    return false;
-  }
-
-  return true;
-}
-```
-
-### Python Equivalent (eth-keys)
-
-```python
-from eth_keys import keys
-from eth_account.messages import encode_defunct
-import json
-
-def verify_grant_python(grant, signature_hex, expected_agent):
-    # Reconstruct the EIP-712 hash (simplified for readability)
-    # In production, use eth_account.messages.encode_structured_data()
-    
-    # For test vectors, raw ECDSA recovery:
-    sig_bytes = bytes.fromhex(signature_hex[2:])
-    v, r, s = sig_bytes[-1], sig_bytes[:32], sig_bytes[32:64]
-    
-    message_hash = compute_eip712_hash(grant)
-    recovered_pubkey = keys.PublicKey.from_signature_and_message(
-        signature=keys.Signature(vrs=(v, int.from_bytes(r, 'big'), int.from_bytes(s, 'big'))),
-        message_hash=message_hash
-    )
-    recovered_address = recovered_pubkey.to_checksum_address()
-    
-    # Verify
-    return (
-        recovered_address.lower() == grant['principal'].lower() and
-        grant['agent'].lower() == expected_agent.lower() and
-        grant['expiration'] > int(time.time()) and
-        grant['totalBudget'] > 0
-    )
-```
-
-## Revocation Check
-
-Grants can be revoked on-chain. However, to optimize for latency, receivers only check the revocation registry during the **final 30% of the grant's lifetime**.
-
-```typescript
-function shouldCheckRevocation(grant, now = Math.floor(Date.now() / 1000)) {
-  const lifetime = Number(grant.expiration - grant.issuedAt);
-  const remaining = Number(grant.expiration - BigInt(now));
-  return remaining < lifetime * 0.3;
-}
-```
-
-**Example:**
-- Grant issued at t=0, expires at t=900 (15 minutes)
-- Lifetime = 900 seconds
-- Revocation only checked when remaining time < 270 seconds (last 4.5 minutes)
-
-This balances security (grants can still be revoked) with performance (no registry query on every request).
-
-## Test Vectors
-
-All conformance tests are in [specs/test-vectors.json](specs/test-vectors.json).
-
-### Conformance Test Cases
-
-1. **Valid Grant** — correctly signed, not expired, agent matches
-2. **Expired Grant** — issuedAt or expiration is in the past
-3. **Invalid Signature** — modified grant, signature doesn't verify
-4. **Wrong Agent** — grant is for a different agent address
-5. **Zero Budget** — totalBudget is 0
-6. **Signature Not Recovered** — malformed signature bytes
-
-Each test vector provides:
-- The full grant struct
-- The expected signature
-- The test's expected outcome (pass/fail)
-
-## Integration Notes
-
-### When Building a Receiving Agent
-
-1. **Receive the grant** — extract from `X-402-Payment` header (base64-decoded)
-2. **Verify immediately** — call `verifyGrant()` before executing any tool
-3. **Check revocation (if needed)** — only if `shouldCheckRevocation()` returns true
-4. **Verify budget** — ensure `perRequestCap >= toolCost` and `totalBudget >= toolCost`
-5. **Deduct from budget** — after tool execution succeeds, record the deduction
-6. **Return receipt** — include `X-402-Receipt` header with settlement proof
-
-### When Building a Paying Agent
-
-1. **Create the grant** — populate all fields, set appropriate expiration (15 min typical)
-2. **Sign with principal's key** — use `signGrant(wallet, grant)`
-3. **Encode for HTTP** — base64(JSON.stringify({ grant, signature, receiptHash }))
-4. **Send request** — include `X-402-Payment` header in every tool request
-5. **Handle 402 responses** — if receiver returns 402, the grant was invalid or revoked
-6. **Handle receipts** — extract `X-402-Receipt` header, verify settlement on-chain
 
 ---
 
-**Maintained by:** AgentPay Team  
-**License:** MIT
+## 5. Verification (EVM / EIP-712)
+
+```python
+from eth_account import Account
+from eth_account.messages import encode_defunct
+import json
+
+grant_json = json.dumps(grant, sort_keys=True, separators=(",", ":"))
+msg_hash   = Web3.keccak(text=grant_json)
+recovered  = Account.recover_message(encode_defunct(msg_hash), signature=signature)
+assert recovered.lower() == grant["principal"].lower(), "Signature mismatch"
+```
+
+---
+
+## 6. Payment Header Format
+
+```
+X-402-Payment: <base64(JSON({ grant, signature, chainType, chainId, authorization }))>
+```
+
+**JSON payload structure:**
+
+```json
+{
+  "grant": { "...x402Grant fields..." },
+  "signature": "0x...",
+  "chainType": "eip155",
+  "chainId": "8453",
+  "authorization": {
+    "from": "0x...",
+    "to": "0x...",
+    "value": "1000",
+    "validAfter": 1700000000,
+    "validBefore": 1700003600,
+    "nonce": "0x...",
+    "signature": "0x..."
+  }
+}
+```
+
+For Solana, `authorization` contains the SPL transfer authorization instead of EIP-3009 fields.
+
+---
+
+## 7. Revocation
+
+Grants can be revoked on-chain when the **cumulative spend** exceeds **30% of the total lifetime budget**. This threshold triggers an on-chain revocation check via the `GrantRegistry` contract.
+
+Receivers SHOULD check revocation status for grants where `currentSpend / totalBudget >= 0.30`.
+
+---
+
+## 8. Security Rules
+
+| Rule | Requirement |
+|------|-------------|
+| Clock skew tolerance | ±30 seconds |
+| Minimum `expiration` window | 30 seconds |
+| Replay protection | `salt` must be unique per request |
+| Revocation threshold | Check on-chain when spend ≥ 30% of budget |
+| `perRequestCap` enforcement | Reject if `paymentAmount > perRequestCap` |
+| `chainType` mismatch | Reject if grant `chainType` ≠ verifier's expected chain |
+
+---
+
+## 9. Test Vectors
+
+See [`test-vectors.json`](./test-vectors.json) and the [conformance suite](./conformance.md) for 6 verified test vectors including a Solana grant vector.
+
+Live conformance endpoint: `GET https://www.x402-agent-pay.com/x402/conformance`
+
+---
+
+## 10. Solana Support (`chainType = "solana"`)
+
+When `chainType === "solana"`, use the same grant struct but sign with Solana's native **ed25519** signature (no EIP-712).
+
+### Signing (Solana / ed25519)
+
+```typescript
+import { Keypair } from "@solana/web3.js";
+import nacl from "tweetnacl";
+
+export function signSolanaGrant(grant: any, signer: Keypair): Uint8Array {
+  const message = new TextEncoder().encode(
+    JSON.stringify(grant, Object.keys(grant).sort())
+  );
+  return nacl.sign.detached(message, signer.secretKey);
+}
+
+export function verifySolanaGrant(
+  grant: any,
+  signature: Uint8Array,
+  publicKey: Uint8Array
+): boolean {
+  const message = new TextEncoder().encode(
+    JSON.stringify(grant, Object.keys(grant).sort())
+  );
+  return nacl.sign.detached.verify(message, signature, publicKey);
+}
+```
+
+### Payment Header (Solana)
+
+```json
+{
+  "grant": {
+    "grantId": "42",
+    "principal": "6aCEuwH3PYx99cEmRz45otfxk39uF7ewGhqmvxfXisSG",
+    "agent": "DRpbCBMxVnDK7maPM5tGv6MvB3v1sRMC86PZ8okm21hy",
+    "issuedAt": 1700000000,
+    "expiration": 1700003600,
+    "totalBudget": 1000000,
+    "perRequestCap": 5000,
+    "chainType": "solana",
+    "chainId": "solana-mainnet"
+  },
+  "signature": "<base64(ed25519 signature)>",
+  "chainType": "solana",
+  "chainId": "solana-mainnet",
+  "authorization": {
+    "from": "6aCEuwH3PYx99cEmRz45otfxk39uF7ewGhqmvxfXisSG",
+    "to": "DRpbCBMxVnDK7maPM5tGv6MvB3v1sRMC86PZ8okm21hy",
+    "value": "1000",
+    "mint": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+    "signature": "<base64(ed25519 transfer auth)>"
+  }
+}
+```
+
+### Verification (Facilitator — Python)
+
+```python
+import nacl.signing, base58, json, base64
+
+def verify_solana_grant(grant: dict, signature_b64: str, public_key_b58: str) -> bool:
+    message  = json.dumps(grant, sort_keys=True, separators=(",", ":")).encode()
+    sig      = base64.b64decode(signature_b64)
+    pk_bytes = base58.b58decode(public_key_b58)
+    try:
+        nacl.signing.VerifyKey(pk_bytes).verify(message, sig)
+        return True
+    except Exception:
+        return False
+```
+
+### USDC Mint (Solana Mainnet)
+
+```
+EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v
+```
+
+### Notes
+
+- Existing EVM grants remain **fully unchanged** — `chainType` defaults to `"eip155"` if omitted
+- Settlement on Solana uses native SPL token transfer (not EIP-3009)
+- The AgentPay facilitator routes automatically based on `chainType`
+- Solana grants settle in **< 1 second** vs 2–6s on Base
+
+---
+
+## 11. Supported Chains (AgentPay Facilitator)
+
+| Chain | CAIP-2 | Signing | Settlement | USDC |
+|-------|--------|---------|-----------|------|
+| Base | eip155:8453 | EIP-712 | EIP-3009 | 0x833589... |
+| Ethereum | eip155:1 | EIP-712 | EIP-3009 | 0xA0b869... |
+| Optimism | eip155:10 | EIP-712 | EIP-3009 | 0x0b2C63... |
+| Arbitrum | eip155:42161 | EIP-712 | EIP-3009 | 0xaf88d0... |
+| Polygon | eip155:137 | EIP-712 | EIP-3009 | 0x3c499c... |
+| Solana | solana:mainnet | ed25519 | SPL transfer | EPjFWdd... |
+
+**Fee model:** Free verification · 0.5% on successful settlement (all chains)
