@@ -1,0 +1,7 @@
+{
+  "name": "EZ Path",
+  "description": "Best-execution DEX aggregator on Base mainnet built for AI agents. Races 0x, ParaSwap, Aerodrome, and Uniswap V3 simultaneously and returns the highest buyAmount for $0.03 USDC per call.",
+  "logoUrl": "/logos/ez-path.svg",
+  "websiteUrl": "https://ezpath.myezverse.xyz",
+  "category": "Services/Endpoints"
+}

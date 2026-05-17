@@ -1,0 +1,19 @@
+{
+  "name": "EZ Path Facilitator",
+  "description": "Self-hosted x402 facilitator on Base mainnet (eip155:8453). Supports verify, settle, and supported endpoints for autonomous agent payments in USDC.",
+  "logoUrl": "/logos/ez-path.svg",
+  "websiteUrl": "https://ezpath.myezverse.xyz",
+  "category": "Facilitators",
+  "facilitator": {
+    "baseUrl": "https://ezpath.myezverse.xyz/facilitator",
+    "networks": ["base"],
+    "schemes": ["exact"],
+    "assets": ["USDC"],
+    "supports": {
+      "verify": true,
+      "settle": true,
+      "supported": true,
+      "list": false
+    }
+  }
+}
