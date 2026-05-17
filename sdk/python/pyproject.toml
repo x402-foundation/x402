@@ -1,0 +1,32 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "x402-agentpay"
+version = "1.1.0"
+description = "Machine-to-machine payments for AI agents — x402 protocol on Base L2"
+readme = "README.md"
+license = {text = "MIT"}
+requires-python = ">=3.9"
+keywords = ["x402", "ai-agents", "payments", "base", "usdc", "eip3009", "micropayments", "agentpay"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+]
+dependencies = [
+    "httpx>=0.27.0",
+    "web3>=6.0.0",
+    "eth-account>=0.10.0",
+]
+
+[project.urls]
+Homepage = "https://agentpay.x402.com"
+Repository = "https://github.com/shawnhvac/x402"
+Documentation = "https://agentpay.x402.com/docs"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["agentpay*"]
