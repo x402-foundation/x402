@@ -1,0 +1,7 @@
+{
+  "name": "Crypto ETF Sentinel",
+  "category": "Services/Endpoints",
+  "logoUrl": "/logos/crypto-etf-sentinel.png",
+  "description": "US spot crypto ETF regulatory intelligence oracle. Curates 3,100+ SEC filings across 105 issuers and 34 cryptocurrencies, with approval-pipeline tracking, XBRL financials, POS AM operational data, and fee-war monitoring. 22 routes priced $0.05–$1.00 USDC on Base mainnet.",
+  "websiteUrl": "https://cryptoetfsentinel.com"
+}
