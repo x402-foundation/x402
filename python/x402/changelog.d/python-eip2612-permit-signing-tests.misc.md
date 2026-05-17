@@ -1,0 +1,1 @@
+Add unit tests for `sign_eip2612_permit` in the EIP-2612 gas sponsoring extension covering nonce read, EIP-712 domain/types/message construction, and return shape (mirrors the `sign_erc20_approval_transaction` test pattern).
