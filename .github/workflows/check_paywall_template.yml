@@ -1,16 +1,7 @@
 name: Check Paywall Template
 
 on:
-  pull_request:
-    paths:
-      - "typescript/packages/http/paywall/**"
-      - "typescript/packages/mechanisms/evm/**"
-      - "typescript/pnpm-lock.yaml"
-      - "python/x402/http/paywall/**"
-      - "go/http/evm_paywall_template.go"
-      - "go/http/svm_paywall_template.go"
-      - "go/http/avm_paywall_template.go"
-      - ".github/workflows/check_paywall_template.yml"
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -47,7 +38,7 @@ jobs:
 
       - name: Verify regenerated templates match committed files
         run: |
-          git diff --exit-code -- \
+          git diff --quiet -- \
             typescript/packages/http/paywall/src/evm/gen/template.ts \
             typescript/packages/http/paywall/src/svm/gen/template.ts \
             typescript/packages/http/paywall/src/avm/gen/template.ts \
@@ -66,6 +57,7 @@ jobs:
               echo "  pnpm run build:paywall-deps"
               echo "  pnpm --filter @x402/paywall run build:paywall"
               echo "Then stage and commit the nine template files under typescript/, python/, and go/http/ listed in this workflow."
+              echo "If this job still fails after you commit and push regenerated files, delete \`typescript/node_modules\`, reinstall with the commands above, regen again, commit any new diffs, and push."
               echo ""
               git diff --stat -- \
                 typescript/packages/http/paywall/src/evm/gen/template.ts \

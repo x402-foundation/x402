@@ -994,6 +994,100 @@ describe("x402HTTPResourceServer Hooks", () => {
       });
     });
 
+    describe("extension transport hooks", () => {
+      it("runs declared extension hooks after manual hooks", async () => {
+        const order: string[] = [];
+        const routes = {
+          "/api/protected": {
+            ...testRoutes["/api/protected"],
+            extensions: {
+              "http-extension": { enabled: true },
+            },
+          },
+        };
+        ResourceServer.registerExtension({
+          key: "http-extension",
+          transportHooks: {
+            http: {
+              onProtectedRequest: async declaration => {
+                order.push("extension");
+                expect(declaration).toEqual({ enabled: true });
+                return { grantAccess: true };
+              },
+            },
+          },
+        });
+
+        const httpServer = new x402HTTPResourceServer(ResourceServer, routes);
+        httpServer.onProtectedRequest(async () => {
+          order.push("manual");
+        });
+
+        const result = await httpServer.processHTTPRequest({
+          adapter: new MockHTTPAdapter(),
+          path: "/api/protected",
+          method: "GET",
+        });
+
+        expect(result.type).toBe("no-payment-required");
+        expect(order).toEqual(["manual", "extension"]);
+      });
+
+      it("skips extension hooks when the route does not declare the extension", async () => {
+        const hook = vi.fn();
+        ResourceServer.registerExtension({
+          key: "http-extension",
+          transportHooks: {
+            http: {
+              onProtectedRequest: hook,
+            },
+          },
+        });
+
+        const httpServer = new x402HTTPResourceServer(ResourceServer, testRoutes);
+        const result = await httpServer.processHTTPRequest({
+          adapter: new MockHTTPAdapter(),
+          path: "/api/protected",
+          method: "GET",
+        });
+
+        expect(hook).not.toHaveBeenCalled();
+        expect(result.type).toBe("payment-error");
+      });
+
+      it("returns 403 when a declared extension hook aborts", async () => {
+        const routes = {
+          "/api/protected": {
+            ...testRoutes["/api/protected"],
+            extensions: {
+              "http-extension": {},
+            },
+          },
+        };
+        ResourceServer.registerExtension({
+          key: "http-extension",
+          transportHooks: {
+            http: {
+              onProtectedRequest: async () => ({ abort: true, reason: "blocked by extension" }),
+            },
+          },
+        });
+
+        const httpServer = new x402HTTPResourceServer(ResourceServer, routes);
+        const result = await httpServer.processHTTPRequest({
+          adapter: new MockHTTPAdapter(),
+          path: "/api/protected",
+          method: "GET",
+        });
+
+        expect(result.type).toBe("payment-error");
+        if (result.type === "payment-error") {
+          expect(result.response.status).toBe(403);
+          expect(result.response.body).toEqual({ error: "blocked by extension" });
+        }
+      });
+    });
+
     describe("hook arguments", () => {
       it("should receive HTTPRequestContext", async () => {
         const httpServer = new x402HTTPResourceServer(ResourceServer, testRoutes);

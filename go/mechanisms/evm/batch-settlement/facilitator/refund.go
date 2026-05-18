@@ -24,6 +24,46 @@ const (
 	refundStatePollInterval = 150 * time.Millisecond
 )
 
+func getRefundableAmount(
+	payload *batchsettlement.BatchSettlementEnrichedRefundPayload,
+	preState *batchsettlement.ChannelState,
+	channelId string,
+	network string,
+	requestedAmount *big.Int,
+) (*big.Int, bool) {
+	if preState == nil || preState.Balance == nil || preState.TotalClaimed == nil {
+		return nil, false
+	}
+	if requestedAmount.Sign() == 0 {
+		return nil, false
+	}
+
+	postClaimTotalClaimed := new(big.Int).Set(preState.TotalClaimed)
+	for _, claim := range payload.Claims {
+		claimChannelId, err := batchsettlement.ComputeChannelId(claim.Voucher.Channel, network)
+		if err != nil || !strings.EqualFold(claimChannelId, channelId) {
+			continue
+		}
+
+		totalClaimed, ok := new(big.Int).SetString(claim.TotalClaimed, 10)
+		if !ok {
+			return nil, false
+		}
+		if totalClaimed.Cmp(postClaimTotalClaimed) > 0 {
+			postClaimTotalClaimed = totalClaimed
+		}
+	}
+	if postClaimTotalClaimed.Cmp(preState.Balance) > 0 {
+		return nil, false
+	}
+
+	available := new(big.Int).Sub(preState.Balance, postClaimTotalClaimed)
+	if requestedAmount.Cmp(available) > 0 {
+		return available, true
+	}
+	return new(big.Int).Set(requestedAmount), true
+}
+
 // ExecuteRefundWithSignature executes a cooperative refund using receiverAuthorizer signature.
 // If RefundAuthorizerSignature or ClaimAuthorizerSignature are absent, the
 // authorizerSigner auto-signs them.
@@ -91,6 +131,15 @@ func ExecuteRefundWithSignature(
 	// the payload alone, which the resource server's afterSettle hook can
 	// still parse.
 	preState, _ := ReadChannelState(ctx, signer, channelId)
+	if refundableAmount, ok := getRefundableAmount(payload, preState, channelId, string(network), refundAmount); ok && refundableAmount.Sign() == 0 {
+		return &x402.SettleResponse{ //nolint:nilerr // no-op refund -> error encoded in response
+			Success:      false,
+			ErrorReason:  ErrRefundNoBalance,
+			ErrorMessage: "Nothing to refund",
+			Transaction:  "",
+			Network:      network,
+		}, nil
+	}
 
 	// Handle claims + refund atomically if claims are present
 	if len(payload.Claims) > 0 {

@@ -82,6 +82,9 @@ var (
 	ChainIDArbSepolia    = big.NewInt(421614)
 	ChainIDRadius        = big.NewInt(723487)
 	ChainIDRadiusTestnet = big.NewInt(72344)
+	ChainIDADI           = big.NewInt(36900)
+	ChainIDHPP           = big.NewInt(190415)
+	ChainIDHPPSepolia    = big.NewInt(181228)
 
 	// Network configurations
 	// See DEFAULT_ASSET.md for guidelines on adding new chains
@@ -221,6 +224,36 @@ var (
 				Decimals:            DefaultDecimals,
 				AssetTransferMethod: AssetTransferMethodPermit2,
 				SupportsEip2612:     true,
+			},
+		},
+		// ADI Chain
+		"eip155:36900": {
+			ChainID: ChainIDADI,
+			DefaultAsset: AssetInfo{
+				Address:  "0x9cb8142aEBBcdc60AF7c97Af897A67A8f3CA71C2", // USDC.e on ADI Chain
+				Name:     "USDC.e",
+				Version:  "2",
+				Decimals: DefaultDecimals,
+			},
+		},
+		// HPP Mainnet
+		"eip155:190415": {
+			ChainID: ChainIDHPP,
+			DefaultAsset: AssetInfo{
+				Address:  "0x401eCb1D350407f13ba348573E5630B83638E30D", // USDC.e (Bridged USDC) on HPP
+				Name:     "Bridged USDC",
+				Version:  "2",
+				Decimals: DefaultDecimals,
+			},
+		},
+		// HPP Sepolia
+		"eip155:181228": {
+			ChainID: ChainIDHPPSepolia,
+			DefaultAsset: AssetInfo{
+				Address:  "0x401eCb1D350407f13ba348573E5630B83638E30D", // USDC.e (Bridged USDC) on HPP Sepolia
+				Name:     "Bridged USDC",
+				Version:  "2",
+				Decimals: DefaultDecimals,
 			},
 		},
 	}

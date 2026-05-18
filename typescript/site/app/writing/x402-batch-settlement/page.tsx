@@ -51,7 +51,8 @@ export default function X402BatchSettlementPage() {
             </h1>
             <p className="text-base text-gray-60 mb-2">May 11, 2026</p>
             <p className="text-base text-gray-60 mb-8">
-              By: Philippe d&apos;Argent, Carson Roscoe, Conner Swenberg, Josh Nickerson
+              By: Cam Whiteside (Cloudflare), Carson Roscoe (Coinbase), Conner Swenberg (Coinbase), Josh Nickerson
+              (Coinbase), Philippe d&apos;Argent (Coinbase)
             </p>
           </header>
 

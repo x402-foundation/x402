@@ -1256,9 +1256,10 @@ export class x402ResourceServer {
   ): PaymentRequirements | undefined {
     switch (paymentPayload.x402Version) {
       case 2:
-        // For v2, match by accepted requirements
+        // For v2, all server-declared requirements must match.
+        // The client may include additive scheme-specific metadata under `accepted.extra`.
         return availableRequirements.find(paymentRequirements =>
-          deepEqual(paymentRequirements, paymentPayload.accepted),
+          paymentRequirementsMatchAccepted(paymentRequirements, paymentPayload.accepted),
         );
       case 1:
         // For v1, match by scheme and network
@@ -1514,6 +1515,61 @@ export class x402ResourceServer {
     // Use findByNetworkAndScheme for pattern matching
     return findByNetworkAndScheme(versionMap, scheme, network);
   }
+}
+
+/**
+ * Returns whether a client-selected requirement satisfies a server-advertised requirement.
+ *
+ * Core payment terms and all server-declared `extra` fields must match exactly,
+ * but clients may include additive scheme-specific metadata under `accepted.extra`.
+ *
+ * @param required - Server-advertised payment requirement.
+ * @param accepted - Client-selected payment requirement from the payment payload.
+ * @returns True when `accepted` preserves every server-declared requirement.
+ */
+function paymentRequirementsMatchAccepted(
+  required: PaymentRequirements,
+  accepted: PaymentRequirements,
+): boolean {
+  const { extra: requiredExtra, ...requiredCore } = required;
+  const { extra: acceptedExtra, ...acceptedCore } = accepted;
+
+  if (!deepEqual(requiredCore, acceptedCore)) {
+    return false;
+  }
+
+  if (requiredExtra === undefined) {
+    return true;
+  }
+
+  return objectContainsSubset(requiredExtra, acceptedExtra);
+}
+
+/**
+ * Recursively checks that `actual` contains every field and value from `expected`.
+ * Object values may contain additional fields; arrays and primitives must match exactly.
+ *
+ * @param expected - Required subset.
+ * @param actual - Candidate object.
+ * @returns True when `actual` contains `expected`.
+ */
+function objectContainsSubset(expected: unknown, actual: unknown): boolean {
+  if (expected === null || typeof expected !== "object" || Array.isArray(expected)) {
+    return deepEqual(expected, actual);
+  }
+
+  if (actual === null || typeof actual !== "object" || Array.isArray(actual)) {
+    return false;
+  }
+
+  const actualRecord = actual as Record<string, unknown>;
+  return Object.entries(expected as Record<string, unknown>).every(([key, value]) => {
+    const hasActualKey = Object.prototype.hasOwnProperty.call(actualRecord, key);
+    if (!hasActualKey) {
+      return value === undefined;
+    }
+    return objectContainsSubset(value, actualRecord[key]);
+  });
 }
 
 export default x402ResourceServer;

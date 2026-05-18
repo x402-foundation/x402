@@ -1,14 +1,13 @@
 import { NextResponse } from "next/server";
 
-/**
- * Graceful shutdown endpoint
- */
 export const runtime = "nodejs";
 
 /**
- * Graceful shutdown endpoint
+ * Graceful shutdown endpoint.
+ *
+ * @returns JSON body confirming shutdown was requested
  */
-export async function POST() {
+export async function POST(): Promise<NextResponse> {
   console.log("Received shutdown request");
 
   // Simple approach: exit after a short delay to allow response to be sent
@@ -20,4 +19,4 @@ export async function POST() {
   return NextResponse.json({
     message: "Shutting down gracefully",
   });
-} 
+}

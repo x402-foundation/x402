@@ -8,7 +8,8 @@ import { encodePaymentSignatureHeader } from "@x402/core/http";
 import type { PaymentRequired } from "@x402/core/types";
 
 import { Spinner } from "./Spinner";
-import { getNetworkDisplayName, SOLANA_NETWORK_REFS } from "../paywallUtils";
+import { getNetworkDisplayName, isTestnetNetwork, SOLANA_NETWORK_REFS } from "../paywallUtils";
+import { resolveFaucetUrl } from "../faucetUrls";
 import { getStandardConnectFeature, getStandardDisconnectFeature } from "./solana/features";
 import { useSolanaBalance } from "./solana/useSolanaBalance";
 import { useSolanaSigner } from "./solana/useSolanaSigner";
@@ -50,6 +51,8 @@ export function SolanaPaywall({ paymentRequired, onSuccessfulResponse }: SolanaP
 
   const network = firstRequirement.network;
   const chainName = getNetworkDisplayName(network);
+  const tokenName = (firstRequirement.extra?.name as string) || "USDC";
+  const testnet = isTestnetNetwork(network);
 
   const isMainnet = network.includes(SOLANA_NETWORK_REFS.MAINNET);
   const targetChain = isMainnet ? ("solana:mainnet" as const) : ("solana:devnet" as const);
@@ -223,16 +226,24 @@ export function SolanaPaywall({ paymentRequired, onSuccessfulResponse }: SolanaP
         <h1 className="title">Payment Required</h1>
         <p>
           {paymentRequired.resource?.description && `${paymentRequired.resource.description}.`} To
-          access this content, please pay ${amount} {chainName} USDC.
+          access this content, please pay ${amount} {chainName} {tokenName}.
         </p>
-        {String(network).includes("devnet") && (
-          <p className="instructions">
-            Need Solana Devnet USDC?{" "}
-            <a href="https://faucet.circle.com/" target="_blank" rel="noopener noreferrer">
-              Request some <u>here</u>.
-            </a>
-          </p>
-        )}
+        {testnet &&
+          (() => {
+            const faucetUrl = resolveFaucetUrl(network, x402);
+            return (
+              <p className="instructions">
+                Need {tokenName} on {chainName}?{" "}
+                {faucetUrl ? (
+                  <a href={faucetUrl} target="_blank" rel="noopener noreferrer">
+                    Request some <u>here</u>.
+                  </a>
+                ) : (
+                  <span>No faucet configured.</span>
+                )}
+              </p>
+            );
+          })()}
       </div>
 
       <div className="content w-full">

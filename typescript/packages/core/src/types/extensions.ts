@@ -9,6 +9,11 @@ import type {
   SettleFailureContext,
   VerifiedPaymentCanceledContext,
 } from "../server/x402ResourceServer";
+import type { ResourceServerTransportExtensionHooks } from "../http/x402HTTPResourceServer";
+export type {
+  HTTPResourceServerExtensionHooks,
+  ResourceServerTransportExtensionHooks,
+} from "../http/x402HTTPResourceServer";
 
 export type {
   PaymentRequiredContext,
@@ -85,4 +90,6 @@ export interface ResourceServerExtension {
   ) => Promise<unknown>;
   /** Installed on `registerExtension`; runs only when `declaredExtensions[key]` is defined. */
   hooks?: ResourceServerExtensionHooks;
+  /** Transport-specific hooks scoped to declared extension keys. */
+  transportHooks?: ResourceServerTransportExtensionHooks;
 }

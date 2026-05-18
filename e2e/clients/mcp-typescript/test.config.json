@@ -10,7 +10,8 @@
     2
   ],
   "schemes": [
-    "exact"
+    "exact",
+    "batch-settlement"
   ],
   "evm": {
     "assetTransferMethods": [
@@ -24,6 +25,10 @@
       "RESOURCE_SERVER_URL",
       "ENDPOINT_PATH"
     ],
-    "optional": []
+    "optional": [
+      "CHANNEL_SALT",
+      "BATCH_SETTLEMENT_PHASE",
+      "EVM_VOUCHER_SIGNER_PRIVATE_KEY"
+    ]
   }
 }

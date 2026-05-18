@@ -367,6 +367,68 @@ Register hooks on the facilitator for verification and settlement lifecycle even
   </Tab>
 </Tabs>
 
+## MCP Hooks
+
+### x402MCPClient (MCP client)
+
+Register hooks on the MCP client for payment lifecycle events specific to tool calls. Use cases include logging payments, enforcing per-tool spending limits or auditing payment receipts.
+
+* **onPaymentRequired** — Runs when a 402 payment required response is received from a tool call. First hook to return a result wins. Return `{ abort: true }` to cancel, `{ payment }` to supply a pre-built payload, or `void` to proceed with normal payment flow.
+* **onBeforePayment** — Runs after payment approval but before the payment payload is created.
+* **onAfterPayment** — Runs after the payment payload is submitted and the tool result is received.
+
+```typescript
+import { x402MCPClient } from "@x402/mcp";
+
+const client = new x402MCPClient(mcpClient, paymentClient);
+
+client
+  .onPaymentRequired(async ({ toolName, paymentRequired }) => {
+    if (blocklist.has(toolName)) {
+      return { abort: true };
+    }
+    // Return undefined to proceed with normal payment flow
+  })
+  .onBeforePayment(async ({ toolName, paymentRequired }) => {
+    console.log(`Creating payment for tool: ${toolName}`);
+  })
+  .onAfterPayment(async ({ toolName, paymentPayload, result, settleResponse }) => {
+    await auditLog.record({
+      tool: toolName,
+      transaction: settleResponse?.transaction,
+    });
+  });
+```
+
+### x402MCPServer payment wrapper (MCP server)
+
+Register hooks in the `PaymentWrapperConfig.hooks` object when creating a payment wrapper. Use cases include rate limiting, logging tool executions or sending payment receipts.
+
+* **onBeforeExecution** — Runs after payment verification, before the tool handler executes. Return `false` to abort execution.
+* **onAfterExecution** — Runs after the tool handler returns, before settlement.
+* **onAfterSettlement** — Runs after successful payment settlement.
+
+```typescript
+import { createPaymentWrapper } from "@x402/mcp";
+
+const paid = createPaymentWrapper(resourceServer, {
+  accepts,
+  hooks: {
+    onBeforeExecution: async ({ toolName, paymentPayload }) => {
+      if (await isRateLimited(paymentPayload.payer)) {
+        return false; // Abort execution
+      }
+    },
+    onAfterExecution: async ({ toolName, result }) => {
+      console.log(`Tool ${toolName} executed successfully`);
+    },
+    onAfterSettlement: async ({ settlement }) => {
+      await sendReceipt({ transaction: settlement.transaction });
+    },
+  },
+});
+```
+
 ## Hook Chaining
 
 Hooks can be chained when registering multiple handlers:

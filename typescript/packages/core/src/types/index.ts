@@ -37,6 +37,8 @@ export type {
   ResourceServerExtension,
   ResourceServerExtensionHooks,
   PaymentRequiredContext,
+  ResourceServerTransportExtensionHooks,
+  HTTPResourceServerExtensionHooks,
   SettleResultContext,
   VerifyContext,
   VerifyResultContext,

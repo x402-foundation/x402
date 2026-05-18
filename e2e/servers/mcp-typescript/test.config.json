@@ -20,6 +20,28 @@
       "assetTransferMethod": "eip3009"
     },
     {
+      "path": "batch_settlement_eip3009",
+      "method": "tool",
+      "toolName": "batch_settlement_eip3009",
+      "mcpTransport": "sse",
+      "description": "Batch-settlement EIP-3009 tool via MCP transport",
+      "requiresPayment": true,
+      "protocolFamily": "evm",
+      "scheme": "batch-settlement",
+      "assetTransferMethod": "eip3009"
+    },
+    {
+      "path": "batch_settlement_permit2",
+      "method": "tool",
+      "toolName": "batch_settlement_permit2",
+      "mcpTransport": "sse",
+      "description": "Batch-settlement Permit2 tool via MCP transport",
+      "requiresPayment": true,
+      "protocolFamily": "evm",
+      "scheme": "batch-settlement",
+      "assetTransferMethod": "permit2"
+    },
+    {
       "path": "/health",
       "method": "GET",
       "description": "Health check endpoint",
@@ -38,6 +60,9 @@
       "EVM_PAYEE_ADDRESS",
       "FACILITATOR_URL"
     ],
-    "optional": []
+    "optional": [
+      "EVM_RECEIVER_AUTHORIZER_PRIVATE_KEY",
+      "EVM_PERMIT2_ASSET"
+    ]
   }
 }

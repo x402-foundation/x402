@@ -2,6 +2,10 @@ version = 1
 revision = 3
 requires-python = ">=3.10"
 
+[options]
+exclude-newer = "0001-01-01T00:00:00Z" # This has no effect and is included for backwards compatibility when using relative exclude-newer values.
+exclude-newer-span = "P3D"
+
 [[package]]
 name = "aiohappyeyeballs"
 version = "2.6.1"
@@ -2282,7 +2286,7 @@ wheels = [
 
 [[package]]
 name = "x402"
-version = "2.6.0"
+version = "2.10.0"
 source = { editable = "../../../python/x402" }
 dependencies = [
     { name = "nest-asyncio" },
@@ -2299,6 +2303,7 @@ evm = [
     { name = "web3" },
 ]
 extensions = [
+    { name = "idna" },
     { name = "jsonschema" },
 ]
 flask = [
@@ -2325,6 +2330,7 @@ requires-dist = [
     { name = "flask", marker = "extra == 'flask'", specifier = ">=3.0.0" },
     { name = "httpx", marker = "extra == 'httpx'", specifier = ">=0.28.1" },
     { name = "httpx", marker = "extra == 'tvm'", specifier = ">=0.28.1" },
+    { name = "idna", marker = "extra == 'extensions'", specifier = ">=3.4" },
     { name = "jsonschema", marker = "extra == 'extensions'", specifier = ">=4.0.0" },
     { name = "mcp", marker = "extra == 'mcp'", specifier = ">=1.0.0" },
     { name = "nest-asyncio", specifier = ">=1.6.0" },
@@ -2355,6 +2361,7 @@ dev = [
     { name = "fastapi", extras = ["standard"], specifier = ">=0.115.0" },
     { name = "flask", specifier = ">=3.0.0" },
     { name = "httpx", specifier = ">=0.28.1" },
+    { name = "idna", specifier = ">=3.4" },
     { name = "jsonschema", specifier = ">=4.0.0" },
     { name = "mcp", specifier = ">=1.26.0" },
     { name = "mypy", specifier = ">=1.0.0" },

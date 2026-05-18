@@ -7,6 +7,8 @@
 import type { SIWxStorage } from "./storage";
 import type { SIWxExtension, SIWxVerifyOptions, SignatureType } from "./types";
 import type { SIWxSigner } from "./sign";
+import type { ClientExtension } from "@x402/core/client";
+import type { PaymentRequiredContext } from "@x402/core/http";
 import { SIGN_IN_WITH_X } from "./types";
 import { parseSIWxHeader } from "./parse";
 import { validateSIWxMessage } from "./validate";
@@ -25,6 +27,14 @@ export interface CreateSIWxHookOptions {
   verifyOptions?: SIWxVerifyOptions;
   /** Optional callback for logging/debugging */
   onEvent?: (event: SIWxHookEvent) => void;
+}
+
+/**
+ * Options for creating the SIWX client extension.
+ */
+export interface CreateSIWxClientExtensionOptions {
+  /** Wallet signers to try against the server's supported SIWX chains */
+  signers: SIWxSigner[];
 }
 
 /**
@@ -221,5 +231,31 @@ export function createSIWxClientHook(signer: SIWxSigner) {
     } catch {
       // Failed to create SIWX payload, continue to payment
     }
+  };
+}
+
+/**
+ * Creates a SIWX client extension that signs HTTP SIWX challenges for compatible wallets.
+ *
+ * @param options - Client extension configuration (signers tried in order until one succeeds)
+ * @returns x402 client extension registering HTTP transport hooks for SIWX
+ */
+export function createSIWxClientExtension(
+  options: CreateSIWxClientExtensionOptions,
+): ClientExtension {
+  const hooks = options.signers.map(createSIWxClientHook);
+
+  return {
+    key: SIGN_IN_WITH_X,
+    transportHooks: {
+      http: {
+        onPaymentRequired: async (_declaration: unknown, context: PaymentRequiredContext) => {
+          for (const hook of hooks) {
+            const result = await hook(context);
+            if (result?.headers) return result;
+          }
+        },
+      },
+    },
   };
 }

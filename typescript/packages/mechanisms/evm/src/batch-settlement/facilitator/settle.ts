@@ -27,6 +27,35 @@ export async function executeSettle(
   const receiver = getAddress(payload.receiver);
   const token = getAddress(payload.token);
 
+  // Check if there is anything to settle
+  try {
+    const [totalClaimed, totalSettled] = (await signer.readContract({
+      address: contractAddr,
+      abi: batchSettlementABI,
+      functionName: "receivers",
+      args: [receiver, token],
+    })) as readonly [bigint, bigint];
+
+    if (totalClaimed <= totalSettled) {
+      return {
+        success: false,
+        errorReason: Errors.ErrNothingToSettle,
+        errorMessage: "nothing to settle for receiver and token",
+        transaction: "",
+        network,
+      };
+    }
+  } catch (e) {
+    return {
+      success: false,
+      errorReason: Errors.ErrRpcReadFailed,
+      errorMessage: e instanceof Error ? e.message : String(e),
+      transaction: "",
+      network,
+    };
+  }
+
+  // Simulate the settle transaction
   try {
     await signer.readContract({
       address: contractAddr,

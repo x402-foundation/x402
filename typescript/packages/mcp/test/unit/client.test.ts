@@ -21,6 +21,7 @@ interface MockMCPClient {
 
 interface MockPaymentClient {
   createPaymentPayload: ReturnType<typeof vi.fn>;
+  handlePaymentResponse: ReturnType<typeof vi.fn>;
   register: ReturnType<typeof vi.fn>;
   registerV1: ReturnType<typeof vi.fn>;
 }
@@ -52,6 +53,7 @@ const mockPaymentRequired: PaymentRequired = {
 
 const mockPaymentPayload: PaymentPayload = {
   x402Version: 2,
+  accepted: mockPaymentRequired.accepts[0],
   payload: {
     signature: "0x123",
     authorization: {
@@ -180,6 +182,7 @@ function createMockMCPClient(): MockMCPClient {
 function createMockPaymentClient(): MockPaymentClient {
   return {
     createPaymentPayload: vi.fn().mockResolvedValue(mockPaymentPayload),
+    handlePaymentResponse: vi.fn().mockResolvedValue(undefined),
     register: vi.fn().mockReturnThis(),
     registerV1: vi.fn().mockReturnThis(),
   };
@@ -401,6 +404,73 @@ describe("x402MCPClient", () => {
           settleResponse: mockSettleResponse,
         }),
       );
+    });
+
+    it("should call core payment response hooks with settlement metadata", async () => {
+      mockMcpClient.callTool
+        .mockResolvedValueOnce(createEmbeddedPaymentError(mockPaymentRequired))
+        .mockResolvedValueOnce({
+          content: [{ type: "text", text: "result" }],
+          _meta: { "x402/payment-response": mockSettleResponse },
+        });
+
+      await client.callTool("paid_tool");
+
+      expect(mockPaymentClient.handlePaymentResponse).toHaveBeenCalledWith({
+        paymentPayload: mockPaymentPayload,
+        requirements: mockPaymentPayload.accepted,
+        settleResponse: mockSettleResponse,
+      });
+    });
+
+    it("should retry once with a fresh payload when core hook recovers", async () => {
+      const correctivePaymentRequired: PaymentRequired = {
+        ...mockPaymentRequired,
+        accepts: [
+          {
+            ...mockPaymentRequired.accepts[0],
+            extra: {
+              ...mockPaymentRequired.accepts[0].extra,
+              channelState: { chargedCumulativeAmount: "2000" },
+            },
+          },
+        ],
+      };
+      const freshPayload: PaymentPayload = {
+        ...mockPaymentPayload,
+        payload: { ...mockPaymentPayload.payload, signature: "0xfresh" },
+      };
+      mockPaymentClient.createPaymentPayload
+        .mockResolvedValueOnce(mockPaymentPayload)
+        .mockResolvedValueOnce(freshPayload);
+      mockPaymentClient.handlePaymentResponse
+        .mockResolvedValueOnce({ recovered: true })
+        .mockResolvedValueOnce(undefined);
+      mockMcpClient.callTool
+        .mockResolvedValueOnce(createEmbeddedPaymentError(mockPaymentRequired))
+        .mockResolvedValueOnce(createEmbeddedPaymentError(correctivePaymentRequired))
+        .mockResolvedValueOnce({
+          content: [{ type: "text", text: "recovered result" }],
+          _meta: { "x402/payment-response": mockSettleResponse },
+        });
+
+      const result = await client.callTool("paid_tool");
+
+      expect(result.content[0]?.text).toBe("recovered result");
+      expect(mockMcpClient.callTool).toHaveBeenCalledTimes(3);
+      expect(mockPaymentClient.createPaymentPayload).toHaveBeenCalledTimes(2);
+      expect(mockPaymentClient.createPaymentPayload).toHaveBeenNthCalledWith(
+        2,
+        correctivePaymentRequired,
+      );
+      expect(mockPaymentClient.handlePaymentResponse).toHaveBeenCalledTimes(2);
+      expect(mockPaymentClient.handlePaymentResponse).toHaveBeenNthCalledWith(1, {
+        paymentPayload: mockPaymentPayload,
+        requirements: mockPaymentPayload.accepted,
+        paymentRequired: correctivePaymentRequired,
+      });
+      const retryCall = mockMcpClient.callTool.mock.calls[2][0];
+      expect(retryCall._meta?.[MCP_PAYMENT_META_KEY]).toEqual(freshPayload);
     });
 
     it("should support chaining hooks", () => {

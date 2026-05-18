@@ -33,6 +33,45 @@ const REFUND_STATE_POLL_MS = 2_000;
 const REFUND_STATE_POLL_INTERVAL_MS = 150;
 
 /**
+ * Computes the token amount that `refundWithSignature` would transfer after any
+ * bundled claims are applied.
+ *
+ * @param payload - Refund payload containing requested refund amount and claims.
+ * @param preState - Onchain channel state before the refund transaction.
+ * @param channelId - Channel being refunded.
+ * @param network - Network identifier used to compute claim channel ids.
+ * @returns Refund amount if it can be determined, or `null` when claim data should be left to simulation.
+ */
+function getRefundableAmount(
+  payload: BatchSettlementEnrichedRefundPayload,
+  preState: ChannelState,
+  channelId: `0x${string}`,
+  network: string,
+): bigint | null {
+  const postClaimTotalClaimed = payload.claims.reduce((max, claim) => {
+    const claimChannelId = computeChannelId(claim.voucher.channel, network);
+    if (claimChannelId.toLowerCase() !== channelId.toLowerCase()) {
+      return max;
+    }
+
+    const totalClaimed = BigInt(claim.totalClaimed);
+    return totalClaimed > max ? totalClaimed : max;
+  }, preState.totalClaimed);
+
+  if (postClaimTotalClaimed > preState.balance) {
+    return null;
+  }
+
+  const requestedAmount = BigInt(payload.amount);
+  if (requestedAmount === 0n) {
+    return null;
+  }
+
+  const available = preState.balance - postClaimTotalClaimed;
+  return requestedAmount > available ? available : requestedAmount;
+}
+
+/**
  * Builds facilitator-owned response details for a refund settlement after applying the refund amount.
  *
  * @param payload - Refund payload containing claims and amount.
@@ -163,6 +202,17 @@ export async function executeRefundWithSignature(
     const channelId = computeChannelId(payload.channelConfig, network);
     const preState = await readChannelState(signer, channelId);
     const contractAddr = getAddress(BATCH_SETTLEMENT_ADDRESS);
+    const refundableAmount = getRefundableAmount(payload, preState, channelId, network);
+
+    if (refundableAmount === 0n) {
+      return {
+        success: false,
+        errorReason: Errors.ErrRefundNoBalance,
+        errorMessage: "Nothing to refund",
+        transaction: "",
+        network,
+      };
+    }
 
     const hasClientSig = payload.refundAuthorizerSignature !== undefined;
     const authorizerMismatch =

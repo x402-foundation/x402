@@ -3,6 +3,7 @@ package facilitator
 import (
 	"context"
 	"fmt"
+	"math/big"
 
 	"github.com/ethereum/go-ethereum/common"
 
@@ -21,6 +22,28 @@ func ExecuteSettle(
 	requirements types.PaymentRequirements,
 ) (*x402.SettleResponse, error) {
 	network := x402.Network(requirements.Network)
+	receiver := common.HexToAddress(payload.Receiver)
+	token := common.HexToAddress(payload.Token)
+
+	totalClaimed, totalSettled, readErr := readReceiverSettlementTotals(ctx, signer, receiver, token)
+	if readErr != nil {
+		return &x402.SettleResponse{ //nolint:nilerr // RPC read failure -> error encoded in response
+			Success:      false,
+			ErrorReason:  ErrRpcReadFailed,
+			ErrorMessage: readErr.Error(),
+			Transaction:  "",
+			Network:      network,
+		}, nil
+	}
+	if totalClaimed.Cmp(totalSettled) <= 0 {
+		return &x402.SettleResponse{ //nolint:nilerr // no-op settle -> error encoded in response
+			Success:      false,
+			ErrorReason:  ErrNothingToSettle,
+			ErrorMessage: "nothing to settle for receiver and token",
+			Transaction:  "",
+			Network:      network,
+		}, nil
+	}
 
 	// Simulate before submitting
 	_, simErr := signer.ReadContract(
@@ -28,8 +51,8 @@ func ExecuteSettle(
 		batchsettlement.BatchSettlementAddress,
 		batchsettlement.BatchSettlementSettleABI,
 		"settle",
-		common.HexToAddress(payload.Receiver),
-		common.HexToAddress(payload.Token),
+		receiver,
+		token,
 	)
 	if simErr != nil {
 		return &x402.SettleResponse{ //nolint:nilerr // simulation failure → error encoded in response
@@ -45,8 +68,8 @@ func ExecuteSettle(
 		batchsettlement.BatchSettlementAddress,
 		batchsettlement.BatchSettlementSettleABI,
 		"settle",
-		common.HexToAddress(payload.Receiver),
-		common.HexToAddress(payload.Token),
+		receiver,
+		token,
 	)
 	if err != nil {
 		return nil, x402.NewSettleError(ErrSettleTransactionFailed, "", network, "",
@@ -68,4 +91,39 @@ func ExecuteSettle(
 		Transaction: txHash,
 		Network:     network,
 	}, nil
+}
+
+func readReceiverSettlementTotals(
+	ctx context.Context,
+	signer evm.FacilitatorEvmSigner,
+	receiver common.Address,
+	token common.Address,
+) (*big.Int, *big.Int, error) {
+	raw, err := signer.ReadContract(
+		ctx,
+		batchsettlement.BatchSettlementAddress,
+		batchsettlement.BatchSettlementReceiversABI,
+		"receivers",
+		receiver,
+		token,
+	)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	outputs, ok := raw.([]interface{})
+	if !ok || len(outputs) < 2 {
+		return nil, nil, fmt.Errorf("receivers returned %T, want two uint128 values", raw)
+	}
+
+	totalClaimed, ok := outputs[0].(*big.Int)
+	if !ok {
+		return nil, nil, fmt.Errorf("receivers totalClaimed returned %T, want *big.Int", outputs[0])
+	}
+	totalSettled, ok := outputs[1].(*big.Int)
+	if !ok {
+		return nil, nil, fmt.Errorf("receivers totalSettled returned %T, want *big.Int", outputs[1])
+	}
+
+	return totalClaimed, totalSettled, nil
 }

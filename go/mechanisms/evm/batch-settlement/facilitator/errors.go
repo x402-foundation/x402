@@ -101,4 +101,6 @@ const (
 
 	// Settle action errors
 	ErrUnknownSettleAction = "invalid_batch_settlement_evm_unknown_settle_action"
+	ErrNothingToSettle     = "invalid_batch_settlement_evm_nothing_to_settle"
+	ErrRefundNoBalance     = batchsettlement.ErrRefundNoBalance
 )

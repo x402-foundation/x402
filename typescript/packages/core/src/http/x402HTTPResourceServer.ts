@@ -212,6 +212,18 @@ export type ProtectedRequestHook = (
   routeConfig: RouteConfig,
 ) => Promise<void | { grantAccess: true } | { abort: true; reason: string }>;
 
+export interface HTTPResourceServerExtensionHooks {
+  onProtectedRequest?: (
+    declaration: unknown,
+    context: HTTPRequestContext,
+    routeConfig: RouteConfig,
+  ) => Promise<void | { grantAccess: true } | { abort: true; reason: string }>;
+}
+
+export interface ResourceServerTransportExtensionHooks {
+  http?: HTTPResourceServerExtensionHooks;
+}
+
 /**
  * Compiled route for efficient matching
  */
@@ -457,7 +469,7 @@ export class x402HTTPResourceServer {
     const enrichedContext: HTTPRequestContext = { ...context, routePattern };
 
     // Execute request hooks before any payment processing
-    for (const hook of this.protectedRequestHooks) {
+    for (const hook of this.getProtectedRequestHooks(routeConfig)) {
       const result = await hook(enrichedContext, routeConfig);
       if (result && "grantAccess" in result) {
         return { type: "no-payment-required" };
@@ -540,7 +552,7 @@ export class x402HTTPResourceServer {
           requirements,
           resourceInfo,
           "No matching payment requirements",
-          extensions ?? {},
+          extensions,
           transportContext,
         );
         return {
@@ -552,7 +564,7 @@ export class x402HTTPResourceServer {
       const verifyResult = await this.ResourceServer.verifyPayment(
         paymentPayload,
         matchingRequirements,
-        extensions ?? {},
+        extensions,
         transportContext,
       );
 
@@ -561,7 +573,7 @@ export class x402HTTPResourceServer {
           requirements,
           resourceInfo,
           verifyResult.invalidReason,
-          extensions ?? {},
+          extensions,
           transportContext,
           paymentPayload,
         );
@@ -576,7 +588,7 @@ export class x402HTTPResourceServer {
         return await this.processSkipHandlerSettlement(
           paymentPayload,
           matchingRequirements,
-          extensions ?? {},
+          extensions,
           transportContext,
           verifyResult.skipHandler,
         );
@@ -585,7 +597,7 @@ export class x402HTTPResourceServer {
       const cancellationDispatcher = this.ResourceServer.createPaymentCancellationDispatcher(
         paymentPayload,
         matchingRequirements,
-        extensions ?? {},
+        extensions,
         transportContext,
       );
 
@@ -595,7 +607,7 @@ export class x402HTTPResourceServer {
         cancellationDispatcher,
         paymentPayload,
         paymentRequirements: matchingRequirements,
-        declaredExtensions: extensions ?? {},
+        declaredExtensions: extensions,
       };
     } catch (error) {
       if (error instanceof FacilitatorResponseError) {
@@ -605,7 +617,7 @@ export class x402HTTPResourceServer {
         requirements,
         resourceInfo,
         error instanceof Error ? error.message : "Payment verification failed",
-        extensions ?? {},
+        extensions,
         transportContext,
       );
       return {
@@ -832,6 +844,29 @@ export class x402HTTPResourceServer {
    */
   private normalizePaymentOptions(routeConfig: RouteConfig): PaymentOption[] {
     return Array.isArray(routeConfig.accepts) ? routeConfig.accepts : [routeConfig.accepts];
+  }
+
+  /**
+   * Manual request hooks run before extension transport hooks for declared extensions.
+   *
+   * @param routeConfig - Route configuration for the matched request
+   * @returns Hooks in invocation order
+   */
+  private getProtectedRequestHooks(routeConfig: RouteConfig): ProtectedRequestHook[] {
+    const hooks = [...this.protectedRequestHooks];
+    const declaredExtensions = routeConfig.extensions;
+    if (!declaredExtensions) return hooks;
+
+    for (const extension of this.ResourceServer.getExtensions()) {
+      const hook = extension.transportHooks?.http?.onProtectedRequest;
+      if (!hook || !(extension.key in declaredExtensions)) continue;
+
+      hooks.push((context, routeConfig) =>
+        hook(declaredExtensions[extension.key], context, routeConfig),
+      );
+    }
+
+    return hooks;
   }
 
   /**

@@ -107,29 +107,34 @@ const EVMPaywallTemplate = ${JSON.stringify(html)}
       // DEFAULT_STABLECOINS. Keeps @x402/evm as a devDependency only while
       // preserving a single source of truth for per-network decimals (CI drift
       // check in check_paywall_template.yml covers regen correctness).
+      const paywallDefaultTokenDecimals = 6;
       const decimalsMap: Record<string, number> = Object.fromEntries(
-        Object.entries(DEFAULT_STABLECOINS).map(([network, info]) => [network, info.decimals]),
+        Object.entries(DEFAULT_STABLECOINS)
+          .filter(([, info]) => info.decimals !== paywallDefaultTokenDecimals)
+          .map(([network, info]) => [network, info.decimals]),
       );
       const decimalsEntries = Object.entries(decimalsMap)
         .sort(([a], [b]) => a.localeCompare(b))
         .map(([network, decimals]) => `  ${JSON.stringify(network)}: ${decimals},`)
         .join("\n");
       const decimalsContent = `// THIS FILE IS AUTO-GENERATED - DO NOT EDIT
-// Source: @x402/evm DEFAULT_STABLECOINS (decimals only).
+// Source: @x402/evm DEFAULT_STABLECOINS (decimals !== ${paywallDefaultTokenDecimals} only).
 // Regenerate via: pnpm --filter @x402/paywall run build:paywall
 
 /**
- * Per-network default token decimals, keyed by CAIP-2 network identifier.
- * Mirrors the \`decimals\` field of \`DEFAULT_STABLECOINS\` from \`@x402/evm\`
- * and is emitted at build time so the paywall's runtime module graph does
- * not depend on \`@x402/evm\`.
+ * Per-network default token decimals that differ from the paywall fallback (${paywallDefaultTokenDecimals}),
+ * keyed by CAIP-2 network identifier. Chains whose default stablecoin uses ${paywallDefaultTokenDecimals}
+ * decimals are omitted; \`getDefaultTokenDecimals\` treats a missing key as ${paywallDefaultTokenDecimals}.
+ * Emitted at build time so the paywall's runtime module graph does not depend on \`@x402/evm\`.
  */
 export const NETWORK_DECIMALS: Record<string, number> = {
 ${decimalsEntries}
 };
 `;
       fs.writeFileSync(OUTPUT_DECIMALS, decimalsContent);
-      console.log(`[EVM] Generated decimals.ts (${Object.keys(decimalsMap).length} networks)`);
+      console.log(
+        `[EVM] Generated decimals.ts (${Object.keys(decimalsMap).length} non-${paywallDefaultTokenDecimals}-decimal networks)`,
+      );
 
       // Write the Python template file
       if (fs.existsSync(PYTHON_DIR)) {

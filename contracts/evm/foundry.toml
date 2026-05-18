@@ -5,6 +5,7 @@ libs = ["lib"]
 test = "test"
 script = "script"
 solc = "0.8.28"
+evm_version = "cancun"
 optimizer = true
 optimizer_runs = 200
 via_ir = false
@@ -12,7 +13,7 @@ cbor_metadata = false
 bytecode_hash = "none"
 ffi = false
 fs_permissions = [{ access = "read", path = "./" }]
-gas_reports = ["x402ExactPermit2Proxy", "x402UptoPermit2Proxy"]
+gas_reports = ["x402ExactPermit2Proxy", "x402UptoPermit2Proxy", "x402BatchSettlement"]
 
 [profile.default.fuzz]
 runs = 256
@@ -29,6 +30,8 @@ base = "${BASE_RPC_URL}"
 optimism = "${OPTIMISM_RPC_URL}"
 arbitrum = "${ARBITRUM_RPC_URL}"
 polygon = "${POLYGON_RPC_URL}"
+world_chain = "https://worldchain-mainnet.g.alchemy.com/public"
+world_chain_sepolia = "https://worldchain-sepolia.g.alchemy.com/public"
 sepolia = "${SEPOLIA_RPC_URL}"
 base_sepolia = "${BASE_SEPOLIA_RPC_URL}"
 optimism_sepolia = "${OPTIMISM_SEPOLIA_RPC_URL}"
@@ -43,6 +46,9 @@ optimism_sepolia = { key = "${ETHERSCAN_API_KEY}" }
 arbitrum = { key = "${ETHERSCAN_API_KEY}" }
 arbitrum_sepolia = { key = "${ETHERSCAN_API_KEY}" }
 sepolia = { key = "${ETHERSCAN_API_KEY}" }
+polygon = { key = "${POLYGONSCAN_API_KEY}", url = "https://api.polygonscan.com/api" }
+world_chain = { key = "${ETHERSCAN_API_KEY}", url = "https://api.worldscan.org/api" }
+world_chain_sepolia = { key = "${ETHERSCAN_API_KEY}", url = "https://api-sepolia.worldscan.org/api" }
 
 [fmt]
 line_length = 120

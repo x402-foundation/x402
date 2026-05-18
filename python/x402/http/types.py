@@ -126,13 +126,20 @@ class ProcessSettleResult:
 
 @dataclass
 class PaywallConfig:
-    """Configuration for paywall UI customization."""
+    """Configuration for paywall UI customization.
+
+    ``faucet_urls`` is a per-chain override keyed by CAIP-2 network identifier
+    (e.g. ``"eip155:84532"``). Wins over the paywall's curated default map for
+    the matching chain. Unmapped chains render "No faucet configured." rather
+    than a fallback link.
+    """
 
     app_name: str | None = None
     app_logo: str | None = None
     session_token_endpoint: str | None = None
     current_url: str | None = None
     testnet: bool = False
+    faucet_urls: dict[str, str] | None = None
 
 
 # Dynamic function types (supports both sync and async callbacks)
