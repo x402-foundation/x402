@@ -145,3 +145,26 @@ We acknowledge that the repo is primarily under Coinbase ownership today. This i
 
 • Reach out in the [Discord channel](https://discord.gg/invite/cdp)\
 • Open a GitHub Discussion or Issue in the [x402 repo](https://github.com/x402-foundation/x402)
+
+### Revenue Share & Partner Program
+
+#### How does the AgentPay facilitator revenue share work?
+
+Every `$0.02` flat fee is split automatically on settlement:
+
+| Recipient | Share |
+|---|---|
+| Platform owner | 30% |
+| Partner pool (dynamic) | 20-30% |
+| AgentWorld | 1% |
+| Reserve (gas/ops/growth) | 39-49% |
+
+The partner pool scales with volume — 20% at low volume, up to 30% at 200k+ tx/day.
+
+#### How do partners earn from the pool?
+
+Pass a `partner_id` field in your payment requests. Your referred volume is tracked automatically. Earnings are proportional to your share of monthly referred volume and auto-paid on the 1st of each month to your Base L2 wallet.
+
+#### Is there a guaranteed % per partner?
+
+No. The pool is shared proportionally — sustainable regardless of how many partners join. See [PARTNER_REVENUE.md](../PARTNER_REVENUE.md) for full details.
