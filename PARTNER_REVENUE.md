@@ -1,39 +1,37 @@
 ---
 title: "AgentPay Partner Revenue Model"
-description: "How revenue is split across every x402 settlement routed through the AgentPay facilitator."
+description: "How partners earn from every x402 settlement routed through the AgentPay facilitator."
 ---
 
 # AgentPay Partner Revenue Model
 
-Every `$0.02` flat fee collected by the AgentPay x402 facilitator is automatically split on settlement — no manual claims, no invoicing.
+Every `$0.02` flat fee collected by the AgentPay x402 facilitator includes an automatic partner revenue allocation — no manual claims, no invoicing.
 
-## Fee Split (per $0.02 settlement)
+## Partner Earnings (per $0.02 settlement)
 
 | Recipient | Share | Per Tx | Notes |
 |-----------|-------|--------|-------|
-| **Platform Owner** | **30%** | $0.006 | Auto-swept monthly to owner wallet |
 | **Partner Pool** | **20-30%** (dynamic) | $0.004-$0.006 | Proportional to referred volume |
 | **AgentWorld** | **1%** | $0.0002 | Auto-credited on all AW-routed payments |
-| **Hot Wallet Reserve** | **39-49%** | $0.008-$0.0098 | Gas, ops, promotions, growth |
 
 ## Dynamic Partner Pool Tiers
 
-| Daily Volume | Partner Pool | Reserve |
-|---|---|---|
-| 0 - 50,000 tx/day | 20% | 49% |
-| 50,000 - 200,000 tx/day | 25% | 44% |
-| 200,000+ tx/day | 30% | 39% |
+Partner pool percentage scales with daily transaction volume:
 
-Owner (30%) and AgentWorld (1%) remain constant at all tiers.
+| Daily Volume | Partner Pool Share |
+|---|---|
+| 0 - 50,000 tx/day | 20% |
+| 50,000 - 200,000 tx/day | 25% |
+| 200,000+ tx/day | 30% |
 
 ## Scale Projections
 
-| Daily Tx | Monthly Fees | Owner (30%) | Partner Pool | Reserve |
-|---|---|---|---|---|
-| 1,000 | $600 | $180 | $120 | $294 |
-| 10,000 | $6,000 | $1,800 | $1,200 | $2,940 |
-| 100,000 | $60,000 | $18,000 | $12,000 | $29,400 |
-| 1,000,000 | $600,000 | $180,000 | $120,000 | $294,000 |
+| Daily Tx | Monthly Fees | Partner Pool (at 20%) | Partner Pool (at 30%) |
+|---|---|---|---|
+| 1,000 | $600 | $120 | $180 |
+| 10,000 | $6,000 | $1,200 | $1,800 |
+| 100,000 | $60,000 | $12,000 | $18,000 |
+| 1,000,000 | $600,000 | $120,000 | $180,000 |
 
 ## Partner Pool Mechanics
 
@@ -44,7 +42,7 @@ Owner (30%) and AgentWorld (1%) remain constant at all tiers.
 
 ### Example
 
-Partner A referred 60% of monthly volume, Partner B referred 40%.
+Partner A referred 60% of monthly volume, Partner B referred 40%.  
 If the pool totals $1,200 that month: Partner A gets $720, Partner B gets $480.
 
 ## How to Become a Partner
@@ -70,7 +68,7 @@ If the pool totals $1,200 that month: Partner A gets $720, Partner B gets $480.
 GET https://x402-agent-pay.com/revenue-summary
 ```
 
-Returns monthly breakdowns, partner pool allocations, and current-month earnings per partner ID.
+Returns monthly breakdowns and current-month earnings per partner ID.
 
 ---
 
