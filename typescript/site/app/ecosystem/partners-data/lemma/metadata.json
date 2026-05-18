@@ -1,0 +1,7 @@
+{
+  "name": "Lemma",
+  "category": "Infrastructure & Tooling",
+  "logoUrl": "/logos/lemma.png",
+  "description": "Turns every x402 payment into a verifiable trust event. @lemmaoracle/x402 binds each settlement to a ZK proof of agent identity, data provenance, and payment validity — independently verifiable, no raw data exposed.",
+  "websiteUrl": "https://github.com/lemmaoracle/example-x402"
+}
