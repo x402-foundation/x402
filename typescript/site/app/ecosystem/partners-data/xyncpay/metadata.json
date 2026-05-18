@@ -1,0 +1,7 @@
+{
+  "name": "XyncPay",
+  "category": "Infrastructure & Tooling",
+  "logoUrl": "/logos/xyncpay.png",
+  "description": "Non-custodial protocol translation layer for AI agent payments. Bridges x402, MPP, and AP2 into USDC settlement on Base. Open-source ElizaOS plugin lets autonomous agents register wallets, manage spending sessions, and execute on-chain payments through a unified interface.",
+  "websiteUrl": "https://www.xyncpay.com"
+}
