@@ -534,6 +534,16 @@ NETWORK_CONFIGS: dict[str, NetworkConfig] = {
             "supports_eip2612": True,
         },
     },
+    # ADI Chain
+    "eip155:36900": {
+        "chain_id": 36900,
+        "default_asset": {
+            "address": "0x9cb8142aEBBcdc60AF7c97Af897A67A8f3CA71C2",
+            "name": "USDC.e",
+            "version": "2",
+            "decimals": 6,
+        },
+    },
     # HPP Mainnet
     "eip155:190415": {
         "chain_id": 190415,
