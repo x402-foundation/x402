@@ -110,7 +110,10 @@ This page tracks which features are implemented in each SDK (TypeScript, Go, Pyt
 | Feature | TypeScript | Go | Python |
 |---------|------------|-----|--------|
 | Scheme-level lifecycle hook adapters | ✅ | ✅ | ❌ |
-| Extension-level lifecycle hook adapters | ✅ | ✅ | ❌ |
+| Extension-level server lifecycle hook adapters | ✅ | ✅ | ❌ |
+| Extension-level server HTTP transport hook adapters | ✅ | ❌ | ❌ |
+| Extension-level client lifecycle hook adapters | ✅ | ❌ | ❌ |
+| Extension-level client HTTP transport hook adapters | ✅ | ❌ | ❌ |
 
 ## MCP (Model Context Protocol)
 
@@ -119,6 +122,22 @@ This page tracks which features are implemented in each SDK (TypeScript, Go, Pyt
 | MCP server payment wrapper | ✅ | ✅ | ✅ |
 | MCP client (auto-pay tools) | ✅ | ✅ | ✅ |
 | Bazaar discovery for MCP tools | ✅ | ✅ | ✅ |
+
+### MCP Client Hooks
+
+| Hook | TypeScript | Go | Python |
+|------|------------|-----|--------|
+| onPaymentRequired | ✅ | ❌ | ❌ |
+| onBeforePayment | ✅ | ❌ | ❌ |
+| onAfterPayment | ✅ | ❌ | ❌ |
+
+### MCP Server Hooks (payment wrapper)
+
+| Hook | TypeScript | Go | Python |
+|------|------------|-----|--------|
+| onBeforeExecution | ✅ | ❌ | ❌ |
+| onAfterExecution | ✅ | ❌ | ❌ |
+| onAfterSettlement | ✅ | ❌ | ❌ |
 
 ## HTTP Server Features
 

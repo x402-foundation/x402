@@ -1535,7 +1535,7 @@ describe("x402ResourceServer", () => {
   });
 
   describe("findMatchingRequirements", () => {
-    it("should match v2 requirements by deep equality", () => {
+    it("should match v2 requirements when server-declared terms are unchanged", () => {
       const server = new x402ResourceServer();
 
       const req1 = buildPaymentRequirements({
@@ -1560,6 +1560,128 @@ describe("x402ResourceServer", () => {
       const result = server.findMatchingRequirements([req1, req2], payload);
 
       expect(result).toEqual(req1);
+    });
+
+    it("should match v2 requirements with additive accepted.extra fields", () => {
+      const server = new x402ResourceServer();
+
+      const req = buildPaymentRequirements({
+        scheme: "batch-settlement",
+        network: "eip155:8453" as Network,
+        amount: "1000000",
+        asset: "USDC",
+        extra: {
+          name: "USDC",
+          version: "2",
+          nested: { required: true },
+        },
+      });
+
+      const payload = buildPaymentPayload({
+        x402Version: 2,
+        accepted: {
+          ...req,
+          extra: {
+            ...req.extra,
+            nested: { required: true, clientOnly: "ok" },
+            channelState: { chargedCumulativeAmount: "2000" },
+          },
+        },
+      });
+
+      const result = server.findMatchingRequirements([req], payload);
+
+      expect(result).toEqual(req);
+    });
+
+    it("should match v2 requirements when server extra has undefined fields omitted by transport", () => {
+      const server = new x402ResourceServer();
+
+      const req = buildPaymentRequirements({
+        scheme: "batch-settlement",
+        network: "eip155:8453" as Network,
+        amount: "1000000",
+        asset: "USDC",
+        extra: {
+          name: "USDC",
+          version: "2",
+          assetTransferMethod: undefined,
+        },
+      });
+
+      const payload = buildPaymentPayload({
+        x402Version: 2,
+        accepted: {
+          ...req,
+          extra: {
+            name: "USDC",
+            version: "2",
+          },
+        },
+      });
+
+      const result = server.findMatchingRequirements([req], payload);
+
+      expect(result).toEqual(req);
+    });
+
+    it("should not match v2 requirements when accepted.extra overwrites server fields", () => {
+      const server = new x402ResourceServer();
+
+      const req = buildPaymentRequirements({
+        scheme: "batch-settlement",
+        network: "eip155:8453" as Network,
+        amount: "1000000",
+        asset: "USDC",
+        extra: {
+          name: "USDC",
+          version: "2",
+        },
+      });
+
+      const payload = buildPaymentPayload({
+        x402Version: 2,
+        accepted: {
+          ...req,
+          extra: {
+            ...req.extra,
+            version: "3",
+          },
+        },
+      });
+
+      const result = server.findMatchingRequirements([req], payload);
+
+      expect(result).toBeUndefined();
+    });
+
+    it("should not match v2 requirements when accepted.extra omits server fields", () => {
+      const server = new x402ResourceServer();
+
+      const req = buildPaymentRequirements({
+        scheme: "batch-settlement",
+        network: "eip155:8453" as Network,
+        amount: "1000000",
+        asset: "USDC",
+        extra: {
+          name: "USDC",
+          version: "2",
+        },
+      });
+
+      const payload = buildPaymentPayload({
+        x402Version: 2,
+        accepted: {
+          ...req,
+          extra: {
+            name: "USDC",
+          },
+        },
+      });
+
+      const result = server.findMatchingRequirements([req], payload);
+
+      expect(result).toBeUndefined();
     });
 
     it("should match v1 requirements by scheme and network", () => {

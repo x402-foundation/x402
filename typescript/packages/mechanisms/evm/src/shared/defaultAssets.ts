@@ -121,6 +121,18 @@ export const DEFAULT_STABLECOINS: Record<string, ExactDefaultAssetInfo> = {
     assetTransferMethod: "permit2",
     supportsEip2612: true,
   }, // Radius Testnet SBC (no EIP-3009, supports EIP-2612)
+  "eip155:190415": {
+    address: "0x401eCb1D350407f13ba348573E5630B83638E30D",
+    name: "Bridged USDC",
+    version: "2",
+    decimals: 6,
+  }, // HPP mainnet USDC.e
+  "eip155:181228": {
+    address: "0x401eCb1D350407f13ba348573E5630B83638E30D",
+    name: "Bridged USDC",
+    version: "2",
+    decimals: 6,
+  }, // HPP Sepolia USDC.e
 };
 
 /**

@@ -18,14 +18,20 @@ type fakeFacilitatorSigner struct {
 	addresses []string
 	chainId   *big.Int
 
-	// Optional overrides for VerifyTypedData and ReadContract.
+	// Optional overrides for signer behavior used by focused execution tests.
 	verifyTypedData func(address string) (bool, error)
+	readContract    func(functionName string, args ...interface{}) (interface{}, error)
+	writeContract   func(functionName string, args ...interface{}) (string, error)
 	verifyCalls     int
 	verifyAddrs     []string
+	writeCalls      int
 }
 
 func (f *fakeFacilitatorSigner) GetAddresses() []string { return f.addresses }
-func (f *fakeFacilitatorSigner) ReadContract(_ context.Context, _ string, _ []byte, _ string, _ ...interface{}) (interface{}, error) {
+func (f *fakeFacilitatorSigner) ReadContract(_ context.Context, _ string, _ []byte, functionName string, args ...interface{}) (interface{}, error) {
+	if f.readContract != nil {
+		return f.readContract(functionName, args...)
+	}
 	return nil, errors.New("no rpc")
 }
 func (f *fakeFacilitatorSigner) VerifyTypedData(_ context.Context, address string, _ evm.TypedDataDomain, _ map[string][]evm.TypedDataField, _ string, _ map[string]interface{}, _ []byte) (bool, error) {
@@ -36,7 +42,11 @@ func (f *fakeFacilitatorSigner) VerifyTypedData(_ context.Context, address strin
 	}
 	return false, errors.New("no rpc")
 }
-func (f *fakeFacilitatorSigner) WriteContract(_ context.Context, _ string, _ []byte, _ string, _ ...interface{}) (string, error) {
+func (f *fakeFacilitatorSigner) WriteContract(_ context.Context, _ string, _ []byte, functionName string, args ...interface{}) (string, error) {
+	f.writeCalls++
+	if f.writeContract != nil {
+		return f.writeContract(functionName, args...)
+	}
 	return "", errors.New("no rpc")
 }
 func (f *fakeFacilitatorSigner) SendTransaction(_ context.Context, _ string, _ []byte) (string, error) {

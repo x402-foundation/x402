@@ -5,7 +5,7 @@
  * Use createPaymentWrapper to wrap tool handlers with payment verification and settlement.
  */
 
-import type { PaymentRequirements } from "@x402/core/types";
+import type { PaymentPayload, PaymentRequirements } from "@x402/core/types";
 import { x402ResourceServer } from "@x402/core/server";
 
 import type {
@@ -102,6 +102,13 @@ export interface ToolResult {
   isError?: boolean;
 }
 
+interface MCPPaymentTransportContext {
+  toolName: string;
+  arguments: Record<string, unknown>;
+  meta?: Record<string, unknown>;
+  result?: ToolResult | WrappedToolResult;
+}
+
 /**
  * Handler function type for tools to be wrapped with payment.
  */
@@ -187,6 +194,11 @@ export function createPaymentWrapper(
         arguments: args,
         meta: _meta,
       };
+      const transportContext: MCPPaymentTransportContext = {
+        toolName,
+        arguments: args,
+        meta: _meta,
+      };
 
       // Extract payment from _meta if present
       const paymentPayload = extractPaymentFromMeta({
@@ -202,6 +214,7 @@ export function createPaymentWrapper(
           toolName,
           config,
           "Payment required to access this tool",
+          transportContext,
         );
       }
 
@@ -216,6 +229,7 @@ export function createPaymentWrapper(
         resourceInfoForMatch,
         undefined,
         config.extensions,
+        transportContext,
       );
       const paymentRequirements = resourceServer.findMatchingRequirements(
         paymentRequiredForMatch.accepts,
@@ -228,6 +242,7 @@ export function createPaymentWrapper(
           toolName,
           config,
           "No matching payment requirements found",
+          transportContext,
         );
       }
 
@@ -236,6 +251,7 @@ export function createPaymentWrapper(
         paymentPayload,
         paymentRequirements,
         extMap,
+        transportContext,
       );
 
       if (!verifyResult.isValid) {
@@ -244,6 +260,8 @@ export function createPaymentWrapper(
           toolName,
           config,
           verifyResult.invalidReason || "Payment verification failed",
+          transportContext,
+          paymentPayload,
         );
       }
 
@@ -254,6 +272,26 @@ export function createPaymentWrapper(
         paymentRequirements,
         paymentPayload,
       };
+      const cancellationDispatcher = resourceServer.createPaymentCancellationDispatcher(
+        paymentPayload,
+        paymentRequirements,
+        extMap,
+        transportContext,
+      );
+
+      if (verifyResult.skipHandler) {
+        return settlePaymentResult(
+          resourceServer,
+          toolName,
+          config,
+          hookContext,
+          paymentPayload,
+          paymentRequirements,
+          extMap,
+          transportContext,
+          createSkipHandlerResult(verifyResult.skipHandler.body),
+        );
+      }
 
       // Run onBeforeExecution hook if present
       if (config.hooks?.onBeforeExecution) {
@@ -264,12 +302,23 @@ export function createPaymentWrapper(
             toolName,
             config,
             "Execution blocked by hook",
+            transportContext,
           );
         }
       }
 
       // Execute the tool handler
-      const result = await handler(args, context);
+      let result: ToolResult;
+      try {
+        result = await handler(args, context);
+      } catch (error) {
+        await cancellationDispatcher.cancel({
+          reason: "handler_threw",
+          error: error instanceof Error ? error : new Error(String(error)),
+        });
+        throw error;
+      }
+      transportContext.result = result;
 
       // Build after execution context
       const afterExecContext: AfterExecutionContext = {
@@ -284,42 +333,102 @@ export function createPaymentWrapper(
 
       // If the tool handler returned an error, don't proceed to settlement
       if (result.isError) {
+        await cancellationDispatcher.cancel({ reason: "handler_failed" });
         return result;
       }
 
-      // Settle the payment
-      try {
-        const settleResult = await resourceServer.settlePayment(
-          paymentPayload,
-          paymentRequirements,
-          extMap,
-        );
-
-        // Run onAfterSettlement hook if present
-        if (config.hooks?.onAfterSettlement) {
-          const settlementContext: SettlementContext = {
-            ...hookContext,
-            settlement: settleResult,
-          };
-          await config.hooks.onAfterSettlement(settlementContext);
-        }
-
-        // Return full result (preserving structuredContent, etc.) with payment response in _meta
-        return {
-          ...result,
-          _meta: { [MCP_PAYMENT_RESPONSE_META_KEY]: settleResult },
-        };
-      } catch (settleError) {
-        // Settlement failed after execution - return 402 error
-        return createSettlementFailedResult(
-          resourceServer,
-          toolName,
-          config,
-          settleError instanceof Error ? settleError.message : "Settlement failed",
-        );
-      }
+      return settlePaymentResult(
+        resourceServer,
+        toolName,
+        config,
+        hookContext,
+        paymentPayload,
+        paymentRequirements,
+        extMap,
+        transportContext,
+        result,
+      );
     };
   };
+}
+
+/**
+ * Builds a tool result from the verifier's `skipHandler` body when the handler is skipped but settlement still runs.
+ *
+ * @param body - Verifier-supplied body to expose as text; objects become JSON text and optional structured content.
+ * @returns MCP-compatible wrapped result with text content and optional structured content.
+ */
+function createSkipHandlerResult(body: unknown): WrappedToolResult {
+  const result: WrappedToolResult = {
+    content: [
+      {
+        type: "text",
+        text: typeof body === "string" ? body : JSON.stringify(body ?? {}),
+      },
+    ],
+  };
+
+  if (typeof body === "object" && body !== null && !Array.isArray(body)) {
+    result.structuredContent = body as Record<string, unknown>;
+  }
+
+  return result;
+}
+
+/**
+ * Settles payment after tool execution and attaches settlement metadata to the tool result.
+ *
+ * @param resourceServer - x402 resource server used to perform settlement.
+ * @param toolName - Name of the MCP tool that produced the result.
+ * @param config - Payment wrapper configuration (e.g. settlement hooks).
+ * @param hookContext - Hook context for the current server invocation.
+ * @param paymentPayload - Verified payment payload from the client.
+ * @param paymentRequirements - Payment requirements satisfied for this call.
+ * @param extMap - Extension map forwarded to the settlement call.
+ * @param transportContext - MCP payment transport context for this invocation.
+ * @param result - Successful tool result to merge settlement metadata into.
+ * @returns Tool result including `_meta` with settlement details, or a settlement-failure error result.
+ */
+async function settlePaymentResult(
+  resourceServer: x402ResourceServer,
+  toolName: string,
+  config: PaymentWrapperConfig,
+  hookContext: ServerHookContext,
+  paymentPayload: PaymentPayload,
+  paymentRequirements: PaymentRequirements,
+  extMap: Record<string, unknown>,
+  transportContext: MCPPaymentTransportContext,
+  result: WrappedToolResult | ToolResult,
+): Promise<WrappedToolResult> {
+  try {
+    const settleResult = await resourceServer.settlePayment(
+      paymentPayload,
+      paymentRequirements,
+      extMap,
+      transportContext,
+    );
+
+    if (config.hooks?.onAfterSettlement) {
+      const settlementContext: SettlementContext = {
+        ...hookContext,
+        settlement: settleResult,
+      };
+      await config.hooks.onAfterSettlement(settlementContext);
+    }
+
+    return {
+      ...result,
+      _meta: { [MCP_PAYMENT_RESPONSE_META_KEY]: settleResult },
+    };
+  } catch (settleError) {
+    return createSettlementFailedResult(
+      resourceServer,
+      toolName,
+      config,
+      settleError instanceof Error ? settleError.message : "Settlement failed",
+      transportContext,
+    );
+  }
 }
 
 /**
@@ -329,6 +438,8 @@ export function createPaymentWrapper(
  * @param toolName - Name of the tool for resource URL
  * @param config - Payment wrapper configuration
  * @param errorMessage - Error message describing why payment is required
+ * @param transportContext - Optional MCP payment transport context for the current tool call.
+ * @param paymentPayload - Optional client payment payload to include when building the 402 response.
  * @returns Promise resolving to structured 402 error result with payment requirements
  */
 async function createPaymentRequiredResult(
@@ -336,6 +447,8 @@ async function createPaymentRequiredResult(
   toolName: string,
   config: PaymentWrapperConfig,
   errorMessage: string,
+  transportContext?: MCPPaymentTransportContext,
+  paymentPayload?: PaymentPayload,
 ): Promise<WrappedToolResult> {
   const resourceInfo = {
     url: createToolResourceUrl(toolName, config.resource?.url),
@@ -348,6 +461,8 @@ async function createPaymentRequiredResult(
     resourceInfo,
     errorMessage,
     config.extensions,
+    transportContext,
+    paymentPayload,
   );
 
   return {
@@ -369,6 +484,7 @@ async function createPaymentRequiredResult(
  * @param toolName - Name of the tool for resource URL
  * @param config - Payment wrapper configuration
  * @param errorMessage - Error message describing the settlement failure
+ * @param transportContext - Optional MCP payment transport context forwarded into the error result.
  * @returns Promise resolving to structured 402 error result with settlement failure info
  */
 async function createSettlementFailedResult(
@@ -376,6 +492,7 @@ async function createSettlementFailedResult(
   toolName: string,
   config: PaymentWrapperConfig,
   errorMessage: string,
+  transportContext?: MCPPaymentTransportContext,
 ): Promise<WrappedToolResult> {
   // Per spec R5, settlement failure follows the same format as payment required
   // (structuredContent + content[0].text + isError: true) with the error message
@@ -387,5 +504,6 @@ async function createSettlementFailedResult(
     toolName,
     config,
     `Payment settlement failed: ${errorMessage}`,
+    transportContext,
   );
 }

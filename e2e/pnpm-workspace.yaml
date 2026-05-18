@@ -12,8 +12,9 @@ packages:
   - "../typescript/packages/mechanisms/*"
   - "../typescript/packages/legacy/*"
 minimumReleaseAge: 4320 # Only install package versions that have been published for at least 3 days.
-minimumReleaseAgeStrict: true
+minimumReleaseAgeStrict: false
 allowBuilds:
+  '@coinbase/x402': true # Required for /external-proxies/* CDP testing due to post-install script that prints TOS
   bufferutil: true
   esbuild: true
   keccak: true

@@ -4,9 +4,13 @@ import (
 	"context"
 	"errors"
 	"math/big"
+	"strings"
 	"testing"
 
+	"github.com/ethereum/go-ethereum/accounts/abi"
+
 	x402 "github.com/x402-foundation/x402/go"
+	"github.com/x402-foundation/x402/go/mechanisms/evm"
 	batchsettlement "github.com/x402-foundation/x402/go/mechanisms/evm/batch-settlement"
 	"github.com/x402-foundation/x402/go/types"
 )
@@ -169,6 +173,37 @@ func TestExecuteRefundWithSignature_SimulationFailed_DirectPath(t *testing.T) {
 	}
 }
 
+func TestExecuteRefundWithSignature_NoBalance(t *testing.T) {
+	cfg := validConfig()
+	cfg.ReceiverAuthorizer = "0xauthorizer"
+	signer := &fakeFacilitatorSigner{
+		addresses: []string{"0xfacilitator"},
+		readContract: func(functionName string, _ ...interface{}) (interface{}, error) {
+			if functionName == evm.FunctionTryAggregate {
+				return multicallChannelStateResult(t, big.NewInt(10000), big.NewInt(10000), 0, big.NewInt(0)), nil
+			}
+			return nil, errors.New("unexpected rpc")
+		},
+	}
+	payload := &batchsettlement.BatchSettlementEnrichedRefundPayload{
+		Type:          "refund",
+		ChannelConfig: cfg,
+		Amount:        "9000",
+		RefundNonce:   "0",
+	}
+
+	resp, err := ExecuteRefundWithSignature(context.Background(), signer, payload, reqsFor(testNetwork), &fakeAuthorizerSigner{addr: "0xauthorizer"})
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	if resp.Success || resp.ErrorReason != ErrRefundNoBalance {
+		t.Fatalf("got %+v", resp)
+	}
+	if signer.writeCalls != 0 {
+		t.Fatalf("writeCalls = %d, want 0", signer.writeCalls)
+	}
+}
+
 func TestExecuteRefundWithSignature_BadProvidedClaimSig(t *testing.T) {
 	scheme := newScheme()
 	cfg := validConfig()
@@ -192,18 +227,54 @@ func TestExecuteRefundWithSignature_BadProvidedClaimSig(t *testing.T) {
 // ----- ExecuteSettle -----
 
 func TestExecuteSettle_SimulationFailed(t *testing.T) {
-	scheme := newScheme()
+	signer := &fakeFacilitatorSigner{
+		addresses: []string{"0xfacilitator"},
+		readContract: func(functionName string, _ ...interface{}) (interface{}, error) {
+			if functionName == "receivers" {
+				return []interface{}{big.NewInt(2500), big.NewInt(0)}, nil
+			}
+			return nil, errors.New("revert")
+		},
+	}
 	payload := &batchsettlement.BatchSettlementSettlePayload{
 		Type:     "settle",
 		Receiver: "0x3333333333333333333333333333333333333333",
 		Token:    "0x5555555555555555555555555555555555555555",
 	}
-	resp, err := ExecuteSettle(context.Background(), scheme.signer, payload, reqsFor(testNetwork))
+	resp, err := ExecuteSettle(context.Background(), signer, payload, reqsFor(testNetwork))
 	if err != nil {
 		t.Fatalf("err: %v", err)
 	}
 	if resp.Success || resp.ErrorReason != ErrSettleSimulationFailed {
 		t.Fatalf("got %+v", resp)
+	}
+}
+
+func TestExecuteSettle_NothingToSettle(t *testing.T) {
+	signer := &fakeFacilitatorSigner{
+		addresses: []string{"0xfacilitator"},
+		readContract: func(functionName string, _ ...interface{}) (interface{}, error) {
+			if functionName == "receivers" {
+				return []interface{}{big.NewInt(2500), big.NewInt(2500)}, nil
+			}
+			return nil, errors.New("unexpected rpc")
+		},
+	}
+	payload := &batchsettlement.BatchSettlementSettlePayload{
+		Type:     "settle",
+		Receiver: "0x3333333333333333333333333333333333333333",
+		Token:    "0x5555555555555555555555555555555555555555",
+	}
+
+	resp, err := ExecuteSettle(context.Background(), signer, payload, reqsFor(testNetwork))
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	if resp.Success || resp.ErrorReason != ErrNothingToSettle {
+		t.Fatalf("got %+v", resp)
+	}
+	if signer.writeCalls != 0 {
+		t.Fatalf("writeCalls = %d, want 0", signer.writeCalls)
 	}
 }
 
@@ -445,6 +516,53 @@ func zeros(n int) string {
 		out[i] = '0'
 	}
 	return string(out)
+}
+
+type testMulticallResult struct {
+	Success    bool
+	ReturnData []byte
+}
+
+func multicallChannelStateResult(
+	t *testing.T,
+	balance *big.Int,
+	totalClaimed *big.Int,
+	withdrawRequestedAt int64,
+	refundNonce *big.Int,
+) []testMulticallResult {
+	t.Helper()
+
+	channelsABI, err := abi.JSON(strings.NewReader(string(batchsettlement.BatchSettlementChannelsABI)))
+	if err != nil {
+		t.Fatalf("channels abi: %v", err)
+	}
+	pendingWithdrawalsABI, err := abi.JSON(strings.NewReader(string(batchsettlement.BatchSettlementPendingWithdrawalsABI)))
+	if err != nil {
+		t.Fatalf("pending withdrawals abi: %v", err)
+	}
+	refundNonceABI, err := abi.JSON(strings.NewReader(string(batchsettlement.BatchSettlementRefundNonceABI)))
+	if err != nil {
+		t.Fatalf("refund nonce abi: %v", err)
+	}
+
+	channelData, err := channelsABI.Methods["channels"].Outputs.Pack(balance, totalClaimed)
+	if err != nil {
+		t.Fatalf("pack channels: %v", err)
+	}
+	pendingData, err := pendingWithdrawalsABI.Methods["pendingWithdrawals"].Outputs.Pack(big.NewInt(0), big.NewInt(withdrawRequestedAt))
+	if err != nil {
+		t.Fatalf("pack pending withdrawals: %v", err)
+	}
+	nonceData, err := refundNonceABI.Methods["refundNonce"].Outputs.Pack(refundNonce)
+	if err != nil {
+		t.Fatalf("pack refund nonce: %v", err)
+	}
+
+	return []testMulticallResult{
+		{Success: true, ReturnData: channelData},
+		{Success: true, ReturnData: pendingData},
+		{Success: true, ReturnData: nonceData},
+	}
 }
 
 // ----- buildRefundResponse -----

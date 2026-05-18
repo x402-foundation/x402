@@ -42,7 +42,7 @@
     "@x402/extensions": "workspace:~"
   },
   "peerDependencies": {
-    "next": ">=16.0.10 <16.1.0",
+    "next": ">=16.2.6",
     "@x402/paywall": "workspace:^"
   },
   "peerDependenciesMeta": {

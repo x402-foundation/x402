@@ -15,7 +15,8 @@ export const writingPosts: WritingPost[] = [
     title: "Introducing x402 Batch Settlement: High-velocity Agentic Commerce",
     displayDate: "May 11, 2026",
     sortDate: "2026-05-11",
-    authors: "Philippe d'Argent, Carson Roscoe, Conner Swenberg, Josh Nickerson",
+    authors:
+      "Cam Whiteside (Cloudflare), Carson Roscoe (Coinbase), Conner Swenberg (Coinbase), Josh Nickerson (Coinbase), Philippe d'Argent (Coinbase)",
     heroSrc: "/images/x402-batch-settlement-hero.png",
     excerpt:
       "Batch settlement enables agents to transact at extremely low latency and fractions of a cent, with cryptographic vouchers and bulk onchain redemption.",

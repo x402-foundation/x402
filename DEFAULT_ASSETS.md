@@ -89,9 +89,33 @@ Add to the `NETWORK_CONFIGS` dict:
 ```
 </details>
 
-### 3. Submit a PR
+### 3. Regenerate the paywall when decimals ≠ 6
+
+The HTTP paywall formats human-readable amounts using each chain's default stablecoin decimals. The generated map (`typescript/packages/http/paywall/src/evm/gen/decimals.ts`) only includes chains whose default asset **does not** use 6 decimals; everything else assumes 6.
+
+If your new or updated default uses **any value other than 6** for `decimals`, run the paywall build from `typescript/` and commit the generated artifacts (including `decimals.ts`):
+
+```bash
+cd typescript && pnpm --filter @x402/paywall build:paywall
+```
+
+See [CONTRIBUTING.md — Paywall Changes](CONTRIBUTING.md#paywall-changes) for the full list of files this command updates. Skip this step when the default asset stays at 6 decimals.
+
+### 4. Submit a PR
 
 Include the chain name and rationale for the asset selection. If the chain team has officially endorsed a stablecoin, mention that.
+
+## Paywall faucet link (recommended for testnets)
+
+The paywall renders a "Need {token} on {chain}? Request some here." link on testnet payment requirements. Without a configured faucet URL, the paywall renders "No faucet configured." instead.
+
+To provide a working faucet link for your testnet, add one line to `typescript/packages/http/paywall/src/faucetUrls.ts`:
+
+```typescript
+"eip155:YOUR_TESTNET_CHAIN_ID": "https://your-faucet-url",
+```
+
+Paywall-only file; recommended for testnet entries; N/A for mainnet (paywall faucet UI is testnet-gated). No cross-SDK lockstep required — the map is rendered exclusively by the TypeScript paywall bundle and is read by the Python and Go paywall handlers through the bundled template.
 
 ## Asset Selection Policy
 

@@ -599,6 +599,69 @@ export class x402MCPClient {
       });
     }
 
+    const paymentRequired = this.extractPaymentRequiredFromResult(result);
+    const recoveryResult = paymentPayload.accepted
+      ? await this._paymentClient.handlePaymentResponse({
+          paymentPayload,
+          requirements: paymentPayload.accepted,
+          ...(paymentResponse ? { settleResponse: paymentResponse } : {}),
+          ...(paymentRequired ? { paymentRequired } : {}),
+        })
+      : undefined;
+
+    // A paid attempt can return a corrective 402. Scheme hooks recover local
+    // state from it, then we retry once with a fresh payload from that response.
+    if (recoveryResult?.recovered && paymentRequired) {
+      const freshPayload = await this._paymentClient.createPaymentPayload(paymentRequired);
+      const retryCallParams = {
+        name,
+        arguments: args,
+        _meta: {
+          [MCP_PAYMENT_META_KEY]: freshPayload,
+        },
+      };
+      const retryResult = await this.mcpClient.callTool(retryCallParams, undefined, options);
+
+      if (!isMCPCallToolResult(retryResult)) {
+        throw new Error("Invalid MCP tool result: missing content array");
+      }
+
+      const retryResultWithMeta: MCPResultWithMeta = {
+        content: retryResult.content,
+        isError: retryResult.isError,
+        _meta: retryResult._meta,
+      };
+      const retryPaymentResponse = extractPaymentResponseFromMeta(retryResultWithMeta);
+
+      for (const hook of this.afterPaymentHooks) {
+        await hook({
+          toolName: name,
+          paymentPayload: freshPayload,
+          result: retryResultWithMeta,
+          settleResponse: retryPaymentResponse,
+        });
+      }
+
+      const retryCorrectivePaymentRequired = this.extractPaymentRequiredFromResult(retryResult);
+      if (freshPayload.accepted) {
+        await this._paymentClient.handlePaymentResponse({
+          paymentPayload: freshPayload,
+          requirements: freshPayload.accepted,
+          ...(retryPaymentResponse ? { settleResponse: retryPaymentResponse } : {}),
+          ...(retryCorrectivePaymentRequired
+            ? { paymentRequired: retryCorrectivePaymentRequired }
+            : {}),
+        });
+      }
+
+      return {
+        content: retryResult.content,
+        isError: retryResult.isError,
+        paymentResponse: retryPaymentResponse ?? undefined,
+        paymentMade: true,
+      };
+    }
+
     // Forward original MCP response content as-is
     return {
       content: result.content,

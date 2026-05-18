@@ -298,7 +298,51 @@ func (c *x402Client) CreatePaymentPayloadV1(
 		}
 	}
 
-	return client.CreatePaymentPayload(ctx, requirements)
+	// Before hooks
+	creationCtxV1 := PaymentCreationContext{
+		Ctx:                  ctx,
+		Version:              1,
+		SelectedRequirements: requirements,
+	}
+	for _, hook := range c.beforePaymentCreationHooks {
+		result, err := hook(creationCtxV1)
+		if err != nil {
+			return types.PaymentPayloadV1{}, err
+		}
+		if result != nil && result.Abort {
+			return types.PaymentPayloadV1{}, &PaymentError{
+				Code:    ErrCodeUnsupportedScheme,
+				Message: result.Reason,
+			}
+		}
+	}
+
+	payload, err := client.CreatePaymentPayload(ctx, requirements)
+	if err != nil {
+		for _, hook := range c.onPaymentCreationFailureHooks {
+			result, hookErr := hook(PaymentCreationFailureContext{
+				PaymentCreationContext: creationCtxV1,
+				Error:                  err,
+			})
+			if hookErr != nil {
+				return types.PaymentPayloadV1{}, hookErr
+			}
+			if result != nil && result.Recovered {
+				if recovered, ok := result.Payload.(types.PaymentPayloadV1); ok {
+					return recovered, nil
+				}
+			}
+		}
+		return types.PaymentPayloadV1{}, err
+	}
+
+	for _, hook := range c.afterPaymentCreationHooks {
+		_ = hook(PaymentCreatedContext{
+			PaymentCreationContext: creationCtxV1,
+			Payload:                payload,
+		})
+	}
+	return payload, nil
 }
 
 // CreatePaymentPayload creates a payment payload (V2, default)
@@ -331,6 +375,25 @@ func (c *x402Client) CreatePaymentPayload(
 		}
 	}
 
+	// Before hooks
+	creationCtxV2 := PaymentCreationContext{
+		Ctx:                  ctx,
+		Version:              2,
+		SelectedRequirements: requirements,
+	}
+	for _, hook := range c.beforePaymentCreationHooks {
+		result, err := hook(creationCtxV2)
+		if err != nil {
+			return types.PaymentPayload{}, err
+		}
+		if result != nil && result.Abort {
+			return types.PaymentPayload{}, &PaymentError{
+				Code:    ErrCodeUnsupportedScheme,
+				Message: result.Reason,
+			}
+		}
+	}
+
 	// Get partial payload from mechanism.
 	// If the scheme supports extensions (e.g., EIP-2612), pass them for enrichment.
 	var partial types.PaymentPayload
@@ -341,6 +404,20 @@ func (c *x402Client) CreatePaymentPayload(
 		partial, err = client.CreatePaymentPayload(ctx, requirements)
 	}
 	if err != nil {
+		for _, hook := range c.onPaymentCreationFailureHooks {
+			result, hookErr := hook(PaymentCreationFailureContext{
+				PaymentCreationContext: creationCtxV2,
+				Error:                  err,
+			})
+			if hookErr != nil {
+				return types.PaymentPayload{}, hookErr
+			}
+			if result != nil && result.Recovered {
+				if recovered, ok := result.Payload.(types.PaymentPayload); ok {
+					return recovered, nil
+				}
+			}
+		}
 		return types.PaymentPayload{}, err
 	}
 
@@ -358,9 +435,29 @@ func (c *x402Client) CreatePaymentPayload(
 		Resource:    resource,
 	})
 	if err != nil {
+		for _, hook := range c.onPaymentCreationFailureHooks {
+			result, hookErr := hook(PaymentCreationFailureContext{
+				PaymentCreationContext: creationCtxV2,
+				Error:                  err,
+			})
+			if hookErr != nil {
+				return types.PaymentPayload{}, hookErr
+			}
+			if result != nil && result.Recovered {
+				if recovered, ok := result.Payload.(types.PaymentPayload); ok {
+					return recovered, nil
+				}
+			}
+		}
 		return types.PaymentPayload{}, err
 	}
 
+	for _, hook := range c.afterPaymentCreationHooks {
+		_ = hook(PaymentCreatedContext{
+			PaymentCreationContext: creationCtxV2,
+			Payload:                partial,
+		})
+	}
 	return partial, nil
 }
 

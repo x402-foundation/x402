@@ -35,7 +35,10 @@ export type { CompleteSIWxInfo } from "./client";
 
 // Server
 export { declareSIWxExtension } from "./declare";
-export { siwxResourceServerExtension } from "./server";
+export {
+  createSIWxResourceServerExtension,
+  type CreateSIWxResourceServerExtensionOptions,
+} from "./server";
 export { parseSIWxHeader } from "./parse";
 export { validateSIWxMessage } from "./validate";
 export { verifySIWxSignature } from "./verify";
@@ -77,6 +80,8 @@ export {
   createSIWxSettleHook,
   createSIWxRequestHook,
   createSIWxClientHook,
+  createSIWxClientExtension,
   type CreateSIWxHookOptions,
+  type CreateSIWxClientExtensionOptions,
   type SIWxHookEvent,
 } from "./hooks";

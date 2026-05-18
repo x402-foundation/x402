@@ -22,9 +22,9 @@
     "@x402/next": "workspace:*",
     "@x402/stellar": "workspace:*",
     "@x402/svm": "workspace:*",
-    "next": "^16.0.10",
-    "react": "^19.2.3",
-    "react-dom": "^19.2.3",
+    "next": "^16.2.6",
+    "react": "^19.2.6",
+    "react-dom": "^19.2.6",
     "viem": "^2.48.11"
   },
   "devDependencies": {
@@ -37,7 +37,7 @@
     "buffer": "^6.0.3",
     "crypto-browserify": "^3.12.1",
     "eslint": "^9.24.0",
-    "eslint-config-next": "16.0.7",
+    "eslint-config-next": "16.2.6",
     "eslint-plugin-import": "^2.31.0",
     "eslint-plugin-jsdoc": "^50.6.9",
     "eslint-plugin-prettier": "^5.2.6",

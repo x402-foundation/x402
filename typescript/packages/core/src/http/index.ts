@@ -102,6 +102,8 @@ export {
   RouteValidationError,
   RouteConfigurationError,
   ProtectedRequestHook,
+  HTTPResourceServerExtensionHooks,
+  ResourceServerTransportExtensionHooks,
 } from "./x402HTTPResourceServer";
 export {
   HTTPFacilitatorClient,
@@ -109,4 +111,9 @@ export {
   FacilitatorConfig,
 } from "./httpFacilitatorClient";
 export { FacilitatorResponseError, getFacilitatorResponseError } from "../types";
-export { x402HTTPClient, PaymentRequiredContext, PaymentRequiredHook } from "./x402HTTPClient";
+export {
+  x402HTTPClient,
+  PaymentRequiredContext,
+  PaymentRequiredHook,
+  HTTPClientExtensionHooks,
+} from "./x402HTTPClient";

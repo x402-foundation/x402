@@ -629,13 +629,14 @@ The recovery baseline is:
 | `invalid_batch_settlement_evm_receiver_authorizer_mismatch`              | Channel receiver authorizer does not match `extra.receiverAuthorizer`        |
 | `invalid_batch_settlement_evm_receiver_mismatch`                         | Channel receiver does not match `payTo`                                      |                         |
 | `invalid_batch_settlement_evm_refund_amount_invalid`                     | Refund `amount` is non-numeric or non-positive                               |
-| `invalid_batch_settlement_evm_refund_no_balance`                         | Cooperative refund requested but no refundable balance remains             |
+| `invalid_batch_settlement_evm_refund_no_balance`                         | Cooperative refund requested but no refundable balance remains |
 | `invalid_batch_settlement_evm_refund_payload`                            | Refund payload is malformed                                                  |
 | `invalid_batch_settlement_evm_refund_simulation_failed`                  | Refund simulation failed                                                     |
 | `invalid_batch_settlement_evm_refund_transaction_failed`                 | Onchain refund transaction failed                                            |
 | `invalid_batch_settlement_evm_rpc_read_failed`                           | Facilitator failed to read required onchain data                             |
 | `invalid_batch_settlement_evm_scheme`                                    | `scheme` is not `batch-settlement`                                           |
 | `invalid_batch_settlement_evm_settle_payload`                            | Settle payload is malformed                                                  |
+| `invalid_batch_settlement_evm_nothing_to_settle`                         | Receiver/token pair has no claimed-but-unsettled funds |
 | `invalid_batch_settlement_evm_settle_simulation_failed`                  | Settle simulation failed                                                     |
 | `invalid_batch_settlement_evm_settle_transaction_failed`                 | Onchain settle transaction failed                                            |
 | `invalid_batch_settlement_evm_token_mismatch`                            | Channel token does not match the payment requirements asset                  |
