@@ -154,12 +154,10 @@ Every `$0.02` flat fee is split automatically on settlement:
 
 | Recipient | Share |
 |---|---|
-| Platform owner | 30% |
 | Partner pool (dynamic) | 20-30% |
 | AgentWorld | 1% |
-| Reserve (gas/ops/growth) | 39-49% |
 
-The partner pool scales with volume — 20% at low volume, up to 30% at 200k+ tx/day.
+The partner pool scales with volume — 20% at under 50k tx/day, up to 30% at 200k+ tx/day.
 
 #### How do partners earn from the pool?
 
