@@ -116,4 +116,10 @@ x402 Grant Conformance Suite
 
 *The goal: x402 becomes the OAuth of agent payments — a real, battle-tested standard that any team can implement and interoperate with.*
 
+
+## Partner Revenue Program
+
+Integration partners earn from the AgentPay facilitator fee pool. Pass your `partner_id` on each request — earnings accumulate and auto-pay monthly to your Base L2 wallet.
+See [PARTNER_REVENUE.md](./PARTNER_REVENUE.md) for the full model, tiers, and projections.
+
 *Built by [AgentPay](https://x402-agent-pay.com) — the commerce middleware for AI agents.*
