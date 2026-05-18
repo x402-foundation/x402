@@ -1,0 +1,7 @@
+{
+  "name": "Tropical Autonome Caribbean Data",
+  "category": "Services/Endpoints",
+  "logoUrl": "/logos/tropical-autonome.png",
+  "description": "Caribbean structured data marketplace with native x402 payments. 22 MCP tools covering solar energy (EDF OA ZNI), biodiversity credits, fiscal incentives (Art. 244 quater W), import/export, tourism, and fisheries for French Caribbean DOM territories. USDC on Base.",
+  "websiteUrl": "https://tropical-data-api.tropicalautonome.workers.dev"
+}
