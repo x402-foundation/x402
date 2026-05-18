@@ -2,7 +2,7 @@
 
 ## Summary
 
-`authCapture` is a payment scheme where funds can be held and settled later. The client authorizes a maximum amount, and the facilitator submits it — either locking funds in escrow for later settlement (two-phase) or sending them directly to the receiver with refund capability (single-shot).
+`authCapture` is a payment scheme where funds can be held and settled later. The client authorizes a maximum amount, and the server or facilitator submits it — either locking funds in escrow for later settlement (two-phase) or sending them directly to the receiver with refund capability (single-shot).
 
 The **captureAuthorizer** is the entity authorized to authorize, capture, void, refund, or charge a payment. In a facilitator-submits flow, that's either the facilitator itself or any smart contract that ends up calling the underlying escrow.
 
@@ -16,14 +16,14 @@ Unlike `exact`, which has no built-in mechanism for returning funds, `authCaptur
 
 ## Settlement Paths
 
-The scheme supports two settlement paths, selected via `extra.autoCapture`:
+The scheme supports two settlement paths, selected by the operation `type` passed to the facilitator:
 
-| `autoCapture`     | Behavior                                                                                                                     |
-| :---------------- | :--------------------------------------------------------------------------------------------------------------------------- |
-| `false` (default) | Two-phase. Funds held in escrow. CaptureAuthorizer can capture, void, refund. Client can reclaim if capture deadline passes. |
-| `true`            | Single-shot. Funds sent directly to receiver. CaptureAuthorizer can refund post-settlement.                                  |
+| `type`                | Behavior                                                                                                                     |
+| :-------------------- | :--------------------------------------------------------------------------------------------------------------------------- |
+| `authorization`       | Two-phase. Funds held in escrow. CaptureAuthorizer can capture, void, refund. Client can reclaim if capture deadline passes. |
+| `authorizeAndCapture` | Single-shot. Funds sent directly to receiver. CaptureAuthorizer can refund post-settlement.                                  |
 
-### Two-phase (`autoCapture: false`, default)
+### Two-phase (`type: "authorization"`)
 
 ```
 AUTHORIZE → RESOURCE DELIVERED → CAPTURE / VOID → (REFUND)
@@ -35,7 +35,7 @@ AUTHORIZE → RESOURCE DELIVERED → CAPTURE / VOID → (REFUND)
 4. **Reclaim**: If the capture deadline passes without action, the client can reclaim directly.
 5. **Refund**: After capture, the captureAuthorizer can refund within the refund window.
 
-### Single-shot (`autoCapture: true`)
+### Single-shot (`type: "authorizeAndCapture"`)
 
 ```
 CHARGE → RESOURCE DELIVERED → (REFUND)
@@ -46,6 +46,14 @@ CHARGE → RESOURCE DELIVERED → (REFUND)
 3. **Refund**: The captureAuthorizer can refund within the refund window.
 
 No capture, void, or reclaim — funds are never held in escrow.
+
+## Server Operations
+
+Facilitators MUST provide a mechanism for servers to perform `authorization`, `authorizeAndCapture`, `capture`, `void`, and `refund` operations. Servers select the operation by passing a `type` field to the facilitator's `verify` and `settle` endpoints. Network bindings define the payload fields required for each operation.
+
+Servers MAY self-facilitate by interacting with the escrow contract or network-specific settlement mechanism directly instead of using a third-party facilitator.
+
+Facilitators MAY require proof that the server controls the signed authorization's `payTo` address before performing server-initiated operations. Network bindings may define a `serverAuthorization` field for this purpose. For EVM, `serverAuthorization` is an identity proof over the payment's derived nonce signed by `payTo`.
 
 ## Core Properties
 
