@@ -39,14 +39,12 @@ Facilitator: `https://x402-agent-pay.com` (self-hosted, Base L2)
 
 ## Facilitator Fee
 
-A flat `$0.02 USDC` fee is collected per settlement on Base L2. The fee is automatically split on every transaction:
+A flat `$0.02 USDC` fee is collected per settlement on Base L2. Partners who integrate the x402 protocol earn a share of every transaction they refer:
 
 | Recipient | Share | Per Tx |
 |---|---|---|
-| Platform Owner | 30% | $0.006 |
 | Partner Pool | 20–30% dynamic | $0.004–$0.006 |
 | AgentWorld | 1% | $0.0002 |
-| Reserve (gas/ops/growth) | 39–49% | $0.008–$0.0098 |
 
 The partner pool scales with daily volume — 20% at under 50k tx/day, up to 30% at 200k+/day. See [PARTNER_REVENUE.md](https://github.com/shawnhvac/x402/blob/main/PARTNER_REVENUE.md) for full details.
 
