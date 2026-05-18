@@ -20,10 +20,10 @@ The scheme supports two settlement paths, selected by the operation `type` passe
 
 | `type`                | Behavior                                                                                                                     |
 | :-------------------- | :--------------------------------------------------------------------------------------------------------------------------- |
-| `authorization`       | Two-phase. Funds held in escrow. CaptureAuthorizer can capture, void, refund. Client can reclaim if capture deadline passes. |
+| `authorize`           | Two-phase. Funds held in escrow. CaptureAuthorizer can capture, void, refund. Client can reclaim if capture deadline passes. |
 | `authorizeAndCapture` | Single-shot. Funds sent directly to receiver. CaptureAuthorizer can refund post-settlement.                                  |
 
-### Two-phase (`type: "authorization"`)
+### Two-phase (`type: "authorize"`)
 
 ```
 AUTHORIZE → RESOURCE DELIVERED → CAPTURE / VOID → (REFUND)
@@ -49,7 +49,7 @@ No capture, void, or reclaim — funds are never held in escrow.
 
 ## Server Operations
 
-Facilitators MUST provide a mechanism for servers to perform `authorization`, `authorizeAndCapture`, `capture`, `void`, and `refund` operations. Servers select the operation by passing a `type` field to the facilitator's `verify` and `settle` endpoints. Network bindings define the payload fields required for each operation.
+Facilitators MUST provide a mechanism for servers to perform `authorize`, `authorizeAndCapture`, `capture`, `void`, and `refund` operations. Servers select the operation by passing a `type` field to the facilitator's `verify` and `settle` endpoints. Network bindings define the payload fields required for each operation.
 
 Servers MAY self-facilitate by interacting with the escrow contract or network-specific settlement mechanism directly instead of using a third-party facilitator.
 

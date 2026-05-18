@@ -10,7 +10,7 @@ The `authCapture` scheme on EVM uses the [base/commerce-payments](https://github
   - `PERMIT2_TOKEN_COLLECTOR_ADDRESS` — collects funds via Uniswap Permit2 `permitTransferFrom` (any ERC-20)
 - **`captureAuthorizer`**: Address authorized to authorize, capture, void, refund, or charge a payment. The escrow contract gates those operations on `msg.sender` matching this address. In x402's facilitator-submits flow that means either **the facilitator's EOA**, or **any smart contract** that ends up calling the escrow (e.g., an arbiter contract with dispute logic, a multisig, etc.).
 
-The client signs a single signature (ERC-3009 or Permit2). The server chooses the operation by passing a payload `type` to the facilitator's `verify` and `settle` endpoints. The facilitator calls `AuthCaptureEscrow.authorize()` for `authorization`, `AuthCaptureEscrow.charge()` for `authorizeAndCapture`, or the matching follow-up function for `capture`, `void`, and `refund`, either directly or through a smart contract set as the captureAuthorizer.
+The client signs a single signature (ERC-3009 or Permit2). The server chooses the operation by passing a payload `type` to the facilitator's `verify` and `settle` endpoints. The facilitator calls `AuthCaptureEscrow.authorize()` for `authorize`, `AuthCaptureEscrow.charge()` for `authorizeAndCapture`, or the matching follow-up function for `capture`, `void`, and `refund`, either directly or through a smart contract set as the captureAuthorizer.
 
 ## PaymentRequirements
 
@@ -71,17 +71,17 @@ The wire-format extra uses spec-level field names. The on-chain `PaymentInfo` st
 
 ## PaymentPayload
 
-The server-to-facilitator payload carries a `type` discriminator. For `authorization` and `authorizeAndCapture`, it also carries the client token authorization signature and client-generated `salt`. The facilitator reconstructs or validates the full `PaymentInfo` from `extra` + `salt` + payer + top-level requirements (`payTo`, `asset`, `amount`).
+The server-to-facilitator payload carries a `type` discriminator. For `authorize` and `authorizeAndCapture`, it also carries the client token authorization signature and client-generated `salt`. The facilitator reconstructs or validates the full `PaymentInfo` from `extra` + `salt` + payer + top-level requirements (`payTo`, `asset`, `amount`).
 
 | `payload.type`        | Required fields                                                                                                                                      | Escrow call                         |
 | :-------------------- | :--------------------------------------------------------------------------------------------------------------------------------------------------- | :---------------------------------- |
-| `authorization`       | token authorization payload, `signature`, `salt`, `paymentInfo`, optional `serverAuthorization`                                                      | `authorize()`                       |
+| `authorize`           | token authorization payload, `signature`, `salt`, `paymentInfo`, optional `serverAuthorization`                                                      | `authorize()`                       |
 | `authorizeAndCapture` | token authorization payload, `signature`, `salt`, `paymentInfo`, `capture.amount`, `capture.feeBps`, `capture.feeRecipient`, optional `serverAuthorization` | `charge()`                          |
 | `capture`             | `paymentInfo`, `amount`, `feeBps`, `feeRecipient`, optional `serverAuthorization`                                                                     | `capture()`                         |
 | `void`                | `paymentInfo`, optional `serverAuthorization`                                                                                                        | `void()`                            |
 | `refund`              | `paymentInfo`, `amount`, optional `serverAuthorization`                                                                                              | `refund()`                          |
 
-`authorization` is the two-phase path: funds are held in escrow and can later be captured, voided, reclaimed, or refunded. `authorizeAndCapture` is the single-shot path: funds are sent directly to the receiver with refund capability.
+`authorize` is the two-phase path: funds are held in escrow and can later be captured, voided, reclaimed, or refunded. `authorizeAndCapture` is the single-shot path: funds are sent directly to the receiver with refund capability.
 
 ### EIP-3009 (default)
 
@@ -91,7 +91,7 @@ The server-to-facilitator payload carries a `type` discriminator. For `authoriza
   "resource": { "url": "https://api.example.com/resource", "method": "GET" },
   "accepted": { "scheme": "authCapture", "...": "..." },
   "payload": {
-    "type": "authorization",
+    "type": "authorize",
     "authorization": {
       "from": "0xPayerAddress",
       "to": "0xEIP3009TokenCollectorAddress",
@@ -128,7 +128,7 @@ The server-to-facilitator payload carries a `type` discriminator. For `authoriza
   "resource": { "url": "https://api.example.com/resource", "method": "GET" },
   "accepted": { "scheme": "authCapture", "...": "..." },
   "payload": {
-    "type": "authorization",
+    "type": "authorize",
     "permit2Authorization": {
       "from": "0xPayerAddress",
       "permitted": {
@@ -202,20 +202,20 @@ Facilitators verify EOA `payTo` addresses with ECDSA recovery and contract `payT
 
 The facilitator performs these checks in order:
 
-1. **Type guard**: Verify `payload.type` is one of `authorization`, `authorizeAndCapture`, `capture`, `void`, or `refund`, and that the payload includes the fields required for that operation.
+1. **Type guard**: Verify `payload.type` is one of `authorize`, `authorizeAndCapture`, `capture`, `void`, or `refund`, and that the payload includes the fields required for that operation.
 2. **Scheme match**: `requirements.scheme === "authCapture"` and `payload.accepted.scheme === "authCapture"`.
 3. **Network match**: `payload.accepted.network === requirements.network` and format is `eip155:<chainId>`.
 4. **Extra validation**: `requirements.extra` contains all required fields (`captureAuthorizer`, `captureDeadline`, `refundDeadline`, `feeRecipient`, `minFeeBps`, `maxFeeBps`, `name`, `version`).
 5. **PaymentInfo match**: Verify `paymentInfo.operator === extra.captureAuthorizer`, `paymentInfo.receiver === requirements.payTo`, `paymentInfo.token === requirements.asset`, `paymentInfo.maxAmount === requirements.amount`, deadlines and fee fields match `extra`, and `paymentInfo.preApprovalExpiry` is derived from `maxTimeoutSeconds`.
 6. **Server authorization**: If required by the facilitator, verify `payload.serverAuthorization` as an EIP-712 identity proof from `requirements.payTo` / `paymentInfo.receiver`.
-7. **Method routing** (`authorization`, `authorizeAndCapture` only): `extra.assetTransferMethod` (default `"eip3009"`) matches the token authorization payload shape.
-8. **Deadline ordering**: `refundDeadline >= captureDeadline`, `captureDeadline > now + 6s`, and for `authorization` / `authorizeAndCapture`, `authorization.validBefore` (EIP-3009) / `permit2Authorization.deadline` (Permit2) `<= captureDeadline`.
-9. **Time window** (`authorization`, `authorizeAndCapture` only): `authorization.validBefore` / `permit2Authorization.deadline > now + 6s` (not expired) and `authorization.validAfter <= now` (active, EIP-3009 only).
-10. **Spender / collector match** (`authorization`, `authorizeAndCapture` only): `authorization.to === EIP3009_TOKEN_COLLECTOR_ADDRESS` (EIP-3009) or `permit2Authorization.spender === PERMIT2_TOKEN_COLLECTOR_ADDRESS` (Permit2).
-11. **Token match** (`authorization`, `authorizeAndCapture` only): `permit2Authorization.permitted.token === requirements.asset` (Permit2 only — EIP-3009 binds via signing domain).
-12. **Signature verify** (`authorization`, `authorizeAndCapture` only): Recover signer from EIP-712 (`ReceiveWithAuthorization` or `PermitTransferFrom`); must match `paymentInfo.payer`.
-13. **Amount** (`authorization`, `authorizeAndCapture` only): `authorization.value` (EIP-3009) or `permit2Authorization.permitted.amount` (Permit2) matches `requirements.amount`.
-14. **Nonce match** (`authorization`, `authorizeAndCapture` only): Recompute the payer-agnostic hash from `paymentInfo` with payer zeroed; assert it matches the wire nonce. This transitively enforces equality on every field encoded in `PaymentInfo` (receiver, token, deadlines, fee bounds, feeRecipient), so individual field-by-field checks for those values are unnecessary.
+7. **Method routing** (`authorize`, `authorizeAndCapture` only): `extra.assetTransferMethod` (default `"eip3009"`) matches the token authorization payload shape.
+8. **Deadline ordering**: `refundDeadline >= captureDeadline`, `captureDeadline > now + 6s`, and for `authorize` / `authorizeAndCapture`, `authorization.validBefore` (EIP-3009) / `permit2Authorization.deadline` (Permit2) `<= captureDeadline`.
+9. **Time window** (`authorize`, `authorizeAndCapture` only): `authorization.validBefore` / `permit2Authorization.deadline > now + 6s` (not expired) and `authorization.validAfter <= now` (active, EIP-3009 only).
+10. **Spender / collector match** (`authorize`, `authorizeAndCapture` only): `authorization.to === EIP3009_TOKEN_COLLECTOR_ADDRESS` (EIP-3009) or `permit2Authorization.spender === PERMIT2_TOKEN_COLLECTOR_ADDRESS` (Permit2).
+11. **Token match** (`authorize`, `authorizeAndCapture` only): `permit2Authorization.permitted.token === requirements.asset` (Permit2 only — EIP-3009 binds via signing domain).
+12. **Signature verify** (`authorize`, `authorizeAndCapture` only): Recover signer from EIP-712 (`ReceiveWithAuthorization` or `PermitTransferFrom`); must match `paymentInfo.payer`.
+13. **Amount** (`authorize`, `authorizeAndCapture` only): `authorization.value` (EIP-3009) or `permit2Authorization.permitted.amount` (Permit2) matches `requirements.amount`.
+14. **Nonce match** (`authorize`, `authorizeAndCapture` only): Recompute the payer-agnostic hash from `paymentInfo` with payer zeroed; assert it matches the wire nonce. This transitively enforces equality on every field encoded in `PaymentInfo` (receiver, token, deadlines, fee bounds, feeRecipient), so individual field-by-field checks for those values are unnecessary.
 15. **Operation validity**: Verify the requested operation is valid for the current on-chain payment state. `capture` and `void` require an existing authorization. `refund` requires an existing captured or charged payment within the refund window.
 16. **Simulate** the mapped escrow call to ensure success.
 
@@ -230,14 +230,14 @@ For smart wallet clients, the signature may be EIP-6492 wrapped (containing depl
 
 | `payload.type`        | Function                         | Notes                                                                 |
 | :-------------------- | :------------------------------- | :-------------------------------------------------------------------- |
-| `authorization`       | `AuthCaptureEscrow.authorize()`  | Collects tokens into escrow for later capture or void.                |
+| `authorize`           | `AuthCaptureEscrow.authorize()`  | Collects tokens into escrow for later capture or void.                |
 | `authorizeAndCapture` | `AuthCaptureEscrow.charge()`     | Collects tokens and transfers the captured amount in one transaction. |
 | `capture`             | `AuthCaptureEscrow.capture()`    | Captures an existing authorization.                                   |
 | `void`                | `AuthCaptureEscrow.void()`       | Releases an existing authorization back to the payer.                 |
 | `refund`              | `AuthCaptureEscrow.refund()`     | Refunds a captured or charged payment.                                |
 
-3. **Resolve collector** (`authorization`, `authorizeAndCapture` only): `EIP3009_TOKEN_COLLECTOR_ADDRESS` or `PERMIT2_TOKEN_COLLECTOR_ADDRESS` (per `assetTransferMethod`).
-4. **Encode `collectorData`** (`authorization`, `authorizeAndCapture` only): raw ERC-3009 signature, or ABI-encoded Permit2 signature.
+3. **Resolve collector** (`authorize`, `authorizeAndCapture` only): `EIP3009_TOKEN_COLLECTOR_ADDRESS` or `PERMIT2_TOKEN_COLLECTOR_ADDRESS` (per `assetTransferMethod`).
+4. **Encode `collectorData`** (`authorize`, `authorizeAndCapture` only): raw ERC-3009 signature, or ABI-encoded Permit2 signature.
 5. **Call escrow** with the operation-specific fields from the payload.
 6. **Wait for receipt**: 60s timeout.
 7. **Return result**: tx hash, network, payer, and settled or refunded amount where applicable.
