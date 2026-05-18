@@ -36,6 +36,7 @@ AuthCapture-accepting servers advertise with scheme `authCapture`:
         "minFeeBps": 0,
         "maxFeeBps": 1000,
         "feeRecipient": "0xFeeRecipientAddress",
+        "serverAuthorizationRequired": true,
         "assetTransferMethod": "eip3009"
       }
     }
@@ -55,6 +56,7 @@ AuthCapture-accepting servers advertise with scheme `authCapture`:
 | `feeRecipient`        | Yes      | `address`                | Fee recipient (committed on-chain as `PaymentInfo.feeReceiver`). Set to `address(0)` to let the captureAuthorizer specify any non-zero recipient at capture/charge time.                                      |
 | `minFeeBps`           | Yes      | `uint16`                 | Minimum fee in basis points (the fee floor the captureAuthorizer must take). `0` = no minimum.                                                                                                                |
 | `maxFeeBps`           | Yes      | `uint16`                 | Maximum fee in basis points (the cap on the captureAuthorizer's fee).                                                                                                                                         |
+| `serverAuthorizationRequired` | No | `bool`                   | Whether the facilitator requires `payload.serverAuthorization` before accepting server-initiated operations. Default: `false`.                                                                                  |
 | `assetTransferMethod` | No       | `"eip3009" \| "permit2"` | Which token collector to use. Default: `"eip3009"`. A server MAY list multiple `accepts[]` entries with different `assetTransferMethod` values so clients can pick the method matching their token approvals. |
 
 ### Spec → on-chain field name mapping
@@ -174,7 +176,7 @@ Freshness is enforced by `salt`: each signing call generates a fresh `bytes32` s
 
 ### Server Authorization
 
-A facilitator MAY require `payload.serverAuthorization` before accepting a server-initiated operation. `serverAuthorization` is an identity proof that the server controls `requirements.payTo` / `paymentInfo.receiver`; it does not authorize a specific operation or amount.
+A facilitator MAY require `payload.serverAuthorization` before accepting a server-initiated operation. Facilitators that require it MUST set `extra.serverAuthorizationRequired: true` in the payment requirements. `serverAuthorization` is an identity proof that the server controls `requirements.payTo` / `paymentInfo.receiver`; it does not authorize a specific operation or amount.
 
 ```json
 {
@@ -196,7 +198,7 @@ The EIP-712 domain is `{ name: "x402 AuthCapture", version: "1", chainId, verify
 nonce = keccak256(abi.encode(chainId, AUTH_CAPTURE_ESCROW_ADDRESS, paymentInfoHash))
 ```
 
-Facilitators verify EOA `payTo` addresses with ECDSA recovery and contract `payTo` addresses with EIP-1271. If a facilitator requires server identity proof, it MUST reject the request when `serverAuthorization` is missing or does not verify against `requirements.payTo` / `paymentInfo.receiver`.
+Facilitators verify EOA `payTo` addresses with ECDSA recovery and contract `payTo` addresses with EIP-1271. If `extra.serverAuthorizationRequired` is `true`, the facilitator MUST reject the request when `serverAuthorization` is missing or does not verify against `requirements.payTo` / `paymentInfo.receiver`.
 
 ## Verification Logic
 
@@ -207,7 +209,7 @@ The facilitator performs these checks in order:
 3. **Network match**: `payload.accepted.network === requirements.network` and format is `eip155:<chainId>`.
 4. **Extra validation**: `requirements.extra` contains all required fields (`captureAuthorizer`, `captureDeadline`, `refundDeadline`, `feeRecipient`, `minFeeBps`, `maxFeeBps`, `name`, `version`).
 5. **PaymentInfo match**: Verify `paymentInfo.operator === extra.captureAuthorizer`, `paymentInfo.receiver === requirements.payTo`, `paymentInfo.token === requirements.asset`, `paymentInfo.maxAmount === requirements.amount`, deadlines and fee fields match `extra`, and `paymentInfo.preApprovalExpiry` is derived from `maxTimeoutSeconds`.
-6. **Server authorization**: If required by the facilitator, verify `payload.serverAuthorization` as an EIP-712 identity proof from `requirements.payTo` / `paymentInfo.receiver`.
+6. **Server authorization**: If `extra.serverAuthorizationRequired` is `true`, verify `payload.serverAuthorization` as an EIP-712 identity proof from `requirements.payTo` / `paymentInfo.receiver`.
 7. **Method routing** (`authorize`, `authorizeAndCapture` only): `extra.assetTransferMethod` (default `"eip3009"`) matches the token authorization payload shape.
 8. **Deadline ordering**: `refundDeadline >= captureDeadline`, `captureDeadline > now + 6s`, and for `authorize` / `authorizeAndCapture`, `authorization.validBefore` (EIP-3009) / `permit2Authorization.deadline` (Permit2) `<= captureDeadline`.
 9. **Time window** (`authorize`, `authorizeAndCapture` only): `authorization.validBefore` / `permit2Authorization.deadline > now + 6s` (not expired) and `authorization.validAfter <= now` (active, EIP-3009 only).

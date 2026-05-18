@@ -53,7 +53,7 @@ Facilitators MUST provide a mechanism for servers to perform `authorize`, `autho
 
 Servers MAY self-facilitate by interacting with the escrow contract or network-specific settlement mechanism directly instead of using a third-party facilitator.
 
-Facilitators MAY require proof that the server controls the signed authorization's `payTo` address before performing server-initiated operations. Network bindings may define a `serverAuthorization` field for this purpose. For EVM, `serverAuthorization` is an identity proof over the payment's derived nonce signed by `payTo`.
+Facilitators MAY require proof that the server controls the signed authorization's `payTo` address before performing server-initiated operations. Facilitators that require this proof MUST signal it with `extra.serverAuthorizationRequired` in the payment requirements. Network bindings may define a `serverAuthorization` field for this purpose. For EVM, `serverAuthorization` is an identity proof over the payment's derived nonce signed by `payTo`.
 
 ## Core Properties
 
