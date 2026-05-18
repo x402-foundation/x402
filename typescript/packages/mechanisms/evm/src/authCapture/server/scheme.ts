@@ -14,164 +14,95 @@ import type {
   Price,
   SchemeNetworkServer,
 } from "@x402/core/types";
+import { convertToTokenAmount, numberToDecimalString } from "@x402/core/utils";
+import { getDefaultAsset } from "../../shared/defaultAssets";
 import { AUTH_CAPTURE_SCHEME } from "../constants";
 
 /**
- * Asset info including EIP-712 domain parameters per network. Each entry is the
- * default stablecoin used by `defaultMoneyConversion` when the merchant gives a
- * decimal price like "$1.50".
+ * Validate a relative-offset extras key and resolve it to an absolute Unix
+ * second. Returns `undefined` when the key is absent. Throws on a present-
+ * but-invalid value so the merchant gets a clear error at the layer they
+ * configured it, rather than a downstream facilitator rejection with a
+ * cryptic reason.
  *
- * `name` / `version` are the EIP-712 domain used by the ERC-3009
- * `assetTransferMethod`. Whether a token supports ERC-3009 is a token-level
- * capability, not a chain property; merchants whose chosen token lacks
- * `receiveWithAuthorization` (e.g., BSC's Binance-Peg USDC, Tempo's pathUSD)
- * MUST set `assetTransferMethod: "permit2"` in `extra` themselves. The server
- * does not auto-pick a method based on chain. If the wrong method is paired
- * with an incompatible token, the failure surfaces at facilitator simulation.
+ * @param extras - Merged `extra` map being assembled for publication.
+ * @param key - The relative-offset key to read (e.g. `"captureDeadlineSeconds"`).
+ * @param now - Unix-second clock value used for the conversion.
+ * @returns Absolute Unix-second deadline, or `undefined` if the key wasn't set.
+ * @throws If `extras[key]` is present but not a finite positive number.
  */
-const ASSET_INFO: Record<
-  string,
-  {
-    address: string;
-    name: string;
-    version: string;
-    decimals: number;
+function resolveOffsetToDeadline(
+  extras: Record<string, unknown>,
+  key: string,
+  now: number,
+): number | undefined {
+  const raw = extras[key];
+  if (raw === undefined) return undefined;
+  if (typeof raw !== "number" || !Number.isFinite(raw) || raw <= 0) {
+    throw new Error(
+      `extra.${key} must be a positive finite number of seconds-from-now (got ${String(raw)})`,
+    );
   }
-> = {
-  // ----- Mainnets -----
-  // Ethereum
-  "eip155:1": {
-    address: "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
-    name: "USD Coin",
-    version: "2",
-    decimals: 6,
-  },
-  // Base
-  "eip155:8453": {
-    address: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
-    name: "USD Coin",
-    version: "2",
-    decimals: 6,
-  },
-  // Optimism
-  "eip155:10": {
-    address: "0x0b2C639c533813f4Aa9D7837CAf62653d097Ff85",
-    name: "USD Coin",
-    version: "2",
-    decimals: 6,
-  },
-  // Arbitrum One
-  "eip155:42161": {
-    address: "0xaf88d065e77c8cC2239327C5EDb3A432268e5831",
-    name: "USD Coin",
-    version: "2",
-    decimals: 6,
-  },
-  // Polygon
-  "eip155:137": {
-    address: "0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359",
-    name: "USD Coin",
-    version: "2",
-    decimals: 6,
-  },
-  // Celo
-  "eip155:42220": {
-    address: "0xcebA9300f2b948710d2653dD7B07f33A8B32118C",
-    name: "USD Coin",
-    version: "2",
-    decimals: 6,
-  },
-  // Avalanche C-Chain
-  "eip155:43114": {
-    address: "0xB97EF9Ef8734C71904D8002F8b6Bc66Dd9c48a6E",
-    name: "USD Coin",
-    version: "2",
-    decimals: 6,
-  },
-  // Linea
-  "eip155:59144": {
-    address: "0x176211869cA2b568f2A7D4EE941E073a821EE1ff",
-    name: "USD Coin",
-    version: "2",
-    decimals: 6,
-  },
-  // Monad
-  "eip155:143": {
-    address: "0x754704Bc059F8C67012fEd69BC8A327a5aafb603",
-    name: "USD Coin",
-    version: "2",
-    decimals: 6,
-  },
+  return now + raw;
+}
 
-  // ----- Testnets -----
-  // Ethereum Sepolia
-  "eip155:11155111": {
-    address: "0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238",
-    name: "USDC",
-    version: "2",
-    decimals: 6,
-  },
-  // Base Sepolia
-  "eip155:84532": {
-    address: "0x036CbD53842c5426634e7929541eC2318f3dCF7e",
-    name: "USDC",
-    version: "2",
-    decimals: 6,
-  },
-  // Arbitrum Sepolia
-  "eip155:421614": {
-    address: "0x75faf114eafb1BDbe2F0316DF893fd58CE46AA4d",
-    name: "USDC",
-    version: "2",
-    decimals: 6,
-  },
-
-  // ----- Mainnets where the canonical stable lacks ERC-3009 -----
-  // Merchants on these chains MUST set `assetTransferMethod: "permit2"` themselves.
-  // BNB Smart Chain — Binance-Peg USDC (18 decimals; no `receiveWithAuthorization`).
-  "eip155:56": {
-    address: "0x8AC76a51cc950d9822D68b83fE1Ad97B32Cd580d",
-    name: "USDC",
-    version: "1",
-    decimals: 18,
-  },
-  // Tempo — pathUSD (TIP-20 predeploy, 6 decimals; no `receiveWithAuthorization`).
-  "eip155:4217": {
-    address: "0x20c0000000000000000000000000000000000000",
-    name: "pathUSD",
-    version: "1",
-    decimals: 6,
-  },
+/**
+ * Field-specific hint appended to the missing-field error message for
+ * fields whose configuration path is non-obvious. Keeps the merchant from
+ * having to dig through docs to find out where the value comes from.
+ */
+const AUTH_CAPTURE_MERCHANT_FIELD_HINTS: Record<string, string> = {
+  captureDeadline:
+    " Set extra.captureDeadlineSeconds (relative, recommended) or extra.captureDeadline (absolute).",
+  refundDeadline:
+    " Set extra.refundDeadlineSeconds (relative, recommended) or extra.refundDeadline (absolute).",
 };
 
 /**
- * Convert a decimal amount string to its base-units token representation via
- * string manipulation. Avoids the floating-point rounding errors that arise
- * from `BigInt(Math.round(amount * 10 ** decimals))` on large or precise
- * inputs. Example: `"0.10"` with `decimals=6` → `"100000"`.
+ * Assert that the merged `extra` carries every field that comes from the
+ * merchant's route config, so a missing or wrongly-typed value surfaces as
+ * a server-side error the merchant will see in their own logs rather than
+ * as a downstream `invalid_authCapture_extra` rejection from the facilitator.
  *
- * @param decimalAmount - Decimal amount expressed as a string (e.g. `"0.10"`).
- * @param decimals - Token decimals (USDC = 6, most ERC-20s = 18).
- * @returns The amount in base units as a string.
- * @throws If `decimalAmount` does not parse as a number.
+ * Asymmetric on purpose, matching upstream `batch-settlement`'s split: this
+ * asserter covers fields the merchant directly sets in `accepts.extra`
+ * (`captureAuthorizer`, deadlines, `feeRecipient`, fee bands), and skips
+ * fields that `parsePrice` auto-populates from `getDefaultAsset` (`name`,
+ * `version`). Those are handled separately:
+ *  - For decimal pricing they're populated automatically and never missing.
+ *  - For custom-AssetAmount pricing the merchant must set them on
+ *    `AssetAmount.extra`; if they forget, the facilitator's
+ *    `isAuthCaptureExtra` guard still rejects at verify time with
+ *    `invalid_authCapture_extra`. That's the right escalation point because
+ *    the merchant has taken explicit control of the asset domain.
+ *
+ * @param extra - The merged `extra` map about to be returned by `enhancePaymentRequirements`.
+ * @throws With a message naming the first missing or wrongly-typed merchant field, plus a path-to-fix hint where relevant.
  */
-function convertToTokenAmount(decimalAmount: string, decimals: number): string {
-  const amount = parseFloat(decimalAmount);
-  if (isNaN(amount)) {
-    throw new Error(`Invalid amount: ${decimalAmount}`);
+function assertAuthCaptureMerchantExtraComplete(extra: Record<string, unknown>): void {
+  const required: Array<[string, "string" | "number"]> = [
+    ["captureAuthorizer", "string"],
+    ["captureDeadline", "number"],
+    ["refundDeadline", "number"],
+    ["feeRecipient", "string"],
+    ["minFeeBps", "number"],
+    ["maxFeeBps", "number"],
+  ];
+  for (const [key, expectedType] of required) {
+    if (typeof extra[key] !== expectedType) {
+      const hint = AUTH_CAPTURE_MERCHANT_FIELD_HINTS[key] ?? "";
+      throw new Error(`AuthCapture requires extra.${key} (${expectedType}).${hint}`);
+    }
   }
-  const [intPart, decPart = ""] = String(amount).split(".");
-  const paddedDec = decPart.padEnd(decimals, "0").slice(0, decimals);
-  const tokenAmount = (intPart + paddedDec).replace(/^0+/, "") || "0";
-  return tokenAmount;
 }
 
 /**
  * Server-side implementation of the authCapture scheme: maps merchant-friendly
  * prices (`"$0.01"`, decimal numbers, or pre-built `AssetAmount`) to the
- * stablecoin asset + base-unit amount needed in `PaymentRequirements`, and
- * merges facilitator-advertised `extra` fields into the published
- * requirements. Implements `SchemeNetworkServer`.
+ * stablecoin asset + base-unit amount needed in `PaymentRequirements`, resolves
+ * merchant-supplied `*DeadlineSeconds` offsets into per-request absolute
+ * deadlines, and merges facilitator-advertised `extra` fields into the
+ * published requirements. Implements `SchemeNetworkServer`.
  */
 export class AuthCaptureEvmScheme implements SchemeNetworkServer {
   readonly scheme = AUTH_CAPTURE_SCHEME;
@@ -201,7 +132,6 @@ export class AuthCaptureEvmScheme implements SchemeNetworkServer {
    * @returns The resolved `AssetAmount` containing token address and base units.
    */
   async parsePrice(price: Price, network: Network): Promise<AssetAmount> {
-    // If already an AssetAmount, pass through with validation
     if (typeof price === "object" && price !== null && "amount" in price) {
       if (!price.asset) {
         throw new Error(`Asset address must be specified for AssetAmount on network ${network}`);
@@ -213,10 +143,8 @@ export class AuthCaptureEvmScheme implements SchemeNetworkServer {
       };
     }
 
-    // Parse Money to decimal number
     const numericAmount = this.parseMoneyToDecimal(price);
 
-    // Try each custom money parser in order
     for (const parser of this.moneyParsers) {
       const result = await parser(numericAmount, network);
       if (result !== null) {
@@ -224,16 +152,44 @@ export class AuthCaptureEvmScheme implements SchemeNetworkServer {
       }
     }
 
-    // All custom parsers returned null (or none registered), use default conversion
     return this.defaultMoneyConversion(numericAmount, network);
   }
 
   /**
    * Merge facilitator-advertised `extra` (from `/supported`) into the
-   * merchant's payment requirements, with the merchant's own `extra` taking
-   * precedence on collisions. Lets authCapture wire-level fields (e.g., a
-   * facilitator-injected `captureAuthorizer` default) flow into requirements
-   * automatically while still allowing the merchant to override.
+   * merchant's payment requirements and resolve relative deadline offsets
+   * into per-request absolute deadlines.
+   *
+   * authCapture's wire format commits the payer to absolute Unix-second
+   * `captureDeadline` and `refundDeadline` values in the on-chain
+   * `PaymentInfo`. Merchants almost always think in policy terms
+   * ("capture within 30 days, refund within 60 days"), so the server-side
+   * convention is:
+   *
+   * - Merchant sets `extra.captureDeadlineSeconds` / `extra.refundDeadlineSeconds`
+   *   (seconds-from-now relative offsets, matching x402's `maxTimeoutSeconds`
+   *   suffix convention). These are server-side inputs only.
+   * - `enhancePaymentRequirements` runs per request, computes
+   *   `now + offset`, and publishes absolute `captureDeadline` /
+   *   `refundDeadline` (the values the wire-format spec defines). The
+   *   `*Seconds` keys are stripped from the published `extra`.
+   * - Merchants who already have absolute timestamps (e.g., tied to an
+   *   external commitment) can set `extra.captureDeadline` / `refundDeadline`
+   *   directly; those values win over offset-derived ones.
+   * - After offset conversion the merged `extra` is validated against the
+   *   merchant-set subset of `isAuthCaptureExtra`: `captureAuthorizer`,
+   *   `captureDeadline`, `refundDeadline`, `feeRecipient`, `minFeeBps`,
+   *   `maxFeeBps`. Missing or wrongly-typed fields throw here so the
+   *   merchant sees the error in their own logs rather than as a 402
+   *   `invalid_authCapture_extra` to a payer. `name` / `version` are
+   *   excluded because `parsePrice` auto-populates them from
+   *   `getDefaultAsset` for decimal pricing; the only path that bypasses
+   *   that is a custom `AssetAmount` where the merchant has explicitly
+   *   taken control of the asset domain, and the facilitator-side
+   *   `isAuthCaptureExtra` rejection at verify time is the right
+   *   escalation point for that case. Matches the asymmetric split
+   *   `batch-settlement` uses (fail-fast on merchant-set fields, leave
+   *   scheme-auto-populated fields to the wire).
    *
    * @param requirements - The merchant-authored payment requirements.
    * @param supportedKind - The facilitator's advertised support entry for this scheme/network.
@@ -242,7 +198,7 @@ export class AuthCaptureEvmScheme implements SchemeNetworkServer {
    * @param supportedKind.network - CAIP-2 network identifier.
    * @param supportedKind.extra - Facilitator-injected `extra` fields (lowest priority on collision).
    * @param _ - Unused list of facilitator extensions (interface compatibility).
-   * @returns Enhanced `PaymentRequirements` with merged `extra`.
+   * @returns Enhanced `PaymentRequirements` with merged `extra` and resolved deadlines.
    */
   async enhancePaymentRequirements(
     requirements: PaymentRequirements,
@@ -254,13 +210,30 @@ export class AuthCaptureEvmScheme implements SchemeNetworkServer {
     },
     _: string[],
   ): Promise<PaymentRequirements> {
-    return {
-      ...requirements,
-      extra: {
-        ...supportedKind.extra,
-        ...requirements.extra,
-      },
+    const merged: Record<string, unknown> = {
+      ...supportedKind.extra,
+      ...requirements.extra,
     };
+
+    const now = Math.floor(Date.now() / 1000);
+    const captureFromOffset = resolveOffsetToDeadline(merged, "captureDeadlineSeconds", now);
+    const refundFromOffset = resolveOffsetToDeadline(merged, "refundDeadlineSeconds", now);
+
+    // Strip the server-side-only offset inputs; the wire format only carries absolute deadlines.
+    delete merged.captureDeadlineSeconds;
+    delete merged.refundDeadlineSeconds;
+
+    // Absolute values (if the merchant supplied them directly) win over offset-derived ones.
+    if (captureFromOffset !== undefined && typeof merged.captureDeadline !== "number") {
+      merged.captureDeadline = captureFromOffset;
+    }
+    if (refundFromOffset !== undefined && typeof merged.refundDeadline !== "number") {
+      merged.refundDeadline = refundFromOffset;
+    }
+
+    assertAuthCaptureMerchantExtraComplete(merged);
+
+    return { ...requirements, extra: merged };
   }
 
   /**
@@ -285,10 +258,11 @@ export class AuthCaptureEvmScheme implements SchemeNetworkServer {
 
   /**
    * Fall-through converter: resolves a decimal amount against the default
-   * stablecoin registered for the network in `ASSET_INFO`. Returns only the
-   * EIP-712 token-domain fields (`name` / `version`) in `extra`; the merchant
-   * is responsible for selecting `assetTransferMethod` when the chosen token
-   * does not support the spec default (`"eip3009"`).
+   * stablecoin registered for the network in `getDefaultAsset` (shared with
+   * the `exact` and `upto` schemes via `../../shared/defaultAssets`).
+   * The EIP-712 token-domain fields (`name` / `version`) are included for
+   * tokens used via ERC-3009 or EIP-2612 paths, and `assetTransferMethod` is
+   * propagated for chains whose default token does not support ERC-3009.
    *
    * @param amount - Decimal amount in the token's display units.
    * @param network - CAIP-2 network identifier.
@@ -296,19 +270,20 @@ export class AuthCaptureEvmScheme implements SchemeNetworkServer {
    * @throws If no default stablecoin is configured for `network`.
    */
   private defaultMoneyConversion(amount: number, network: Network): AssetAmount {
-    const assetInfo = ASSET_INFO[network];
-    if (!assetInfo) {
-      throw new Error(`No USDC address configured for network: ${network}`);
-    }
-
-    const tokenAmount = convertToTokenAmount(String(amount), assetInfo.decimals);
-
+    const assetInfo = getDefaultAsset(network);
+    const tokenAmount = convertToTokenAmount(numberToDecimalString(amount), assetInfo.decimals);
+    const includeEip712Domain = !assetInfo.assetTransferMethod || assetInfo.supportsEip2612;
     return {
       asset: assetInfo.address,
       amount: tokenAmount,
       extra: {
-        name: assetInfo.name,
-        version: assetInfo.version,
+        ...(includeEip712Domain && {
+          name: assetInfo.name,
+          version: assetInfo.version,
+        }),
+        ...(assetInfo.assetTransferMethod && {
+          assetTransferMethod: assetInfo.assetTransferMethod,
+        }),
       },
     };
   }

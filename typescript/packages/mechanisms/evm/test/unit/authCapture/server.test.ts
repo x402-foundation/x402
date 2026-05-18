@@ -100,35 +100,22 @@ describe("AuthCaptureEvmScheme", () => {
     it("should throw for unsupported network", async () => {
       const scheme = new AuthCaptureEvmScheme();
       await expect(scheme.parsePrice("$1.00", "eip155:99999")).rejects.toThrow(
-        "No USDC address configured for network",
+        "No default asset configured for network",
       );
     });
 
-    it("should resolve BSC default to Binance-Peg USDC without setting assetTransferMethod", async () => {
+    it("should propagate assetTransferMethod from default-asset table for permit2 chains", async () => {
+      // Mezo testnet defaults to mUSD which uses permit2 and supports EIP-2612,
+      // so name/version remain (for the EIP-2612 sig) and assetTransferMethod is propagated.
       const scheme = new AuthCaptureEvmScheme();
-      const result = await scheme.parsePrice("$1.00", "eip155:56");
+      const result = await scheme.parsePrice("$1.00", "eip155:31611");
 
-      expect(result.asset).toBe("0x8AC76a51cc950d9822D68b83fE1Ad97B32Cd580d");
-      // BSC's Binance-Peg USDC has 18 decimals, so $1.00 = 1e18 base units.
-      expect(result.amount).toBe("1000000000000000000");
-      expect(result.extra).toEqual({ name: "USDC", version: "1" });
-    });
-
-    it("should resolve Tempo default to pathUSD without setting assetTransferMethod", async () => {
-      const scheme = new AuthCaptureEvmScheme();
-      const result = await scheme.parsePrice("$1.00", "eip155:4217");
-
-      expect(result.asset).toBe("0x20c0000000000000000000000000000000000000");
-      expect(result.amount).toBe("1000000");
-      expect(result.extra).toEqual({ name: "pathUSD", version: "1" });
-    });
-
-    it("should never inject assetTransferMethod (merchant decides)", async () => {
-      const scheme = new AuthCaptureEvmScheme();
-      for (const network of ["eip155:8453", "eip155:56", "eip155:4217"] as const) {
-        const result = await scheme.parsePrice("$1.00", network);
-        expect(result.extra).not.toHaveProperty("assetTransferMethod");
-      }
+      expect(result.asset).toBe("0x118917a40FAF1CD7a13dB0Ef56C86De7973Ac503");
+      expect(result.extra).toMatchObject({
+        assetTransferMethod: "permit2",
+        name: "Mezo USD",
+        version: "1",
+      });
     });
   });
 
@@ -161,11 +148,7 @@ describe("AuthCaptureEvmScheme", () => {
 
     it("should try parsers in registration order", async () => {
       const scheme = new AuthCaptureEvmScheme();
-
-      // First parser returns null
       scheme.registerMoneyParser(async () => null);
-
-      // Second parser returns a result
       scheme.registerMoneyParser(async (amount, _network) => ({
         asset: "0xSecondParser",
         amount: String(amount * 100),
@@ -180,19 +163,42 @@ describe("AuthCaptureEvmScheme", () => {
   });
 
   describe("enhancePaymentRequirements", () => {
+    // A complete `extra` carrying every field `isAuthCaptureExtra` requires.
+    // Use this in tests that aren't exercising the fail-fast validation path,
+    // so the assertion against missing-field rejection doesn't fire and the
+    // test can focus on whatever behavior it's actually trying to cover.
+    // Passing `undefined` for a key removes it (vs. spreading, which would
+    // leave a `key: undefined` entry that overrides supportedKind on merge).
+    const completeExtra = (overrides: Record<string, unknown> = {}) => {
+      const out: Record<string, unknown> = {
+        captureAuthorizer: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        captureDeadlineSeconds: 30 * 86400,
+        refundDeadlineSeconds: 60 * 86400,
+        feeRecipient: "0x0000000000000000000000000000000000000000",
+        minFeeBps: 0,
+        maxFeeBps: 100,
+        name: "USDC",
+        version: "2",
+      };
+      for (const [k, v] of Object.entries(overrides)) {
+        if (v === undefined) delete out[k];
+        else out[k] = v;
+      }
+      return out;
+    };
+
+    const baseRequirements = {
+      scheme: "authCapture",
+      network: "eip155:84532" as const,
+      amount: "1000000",
+      asset: BASE_SEPOLIA_USDC,
+      payTo: "0x1234567890123456789012345678901234567890",
+      maxTimeoutSeconds: 300,
+      extra: completeExtra(),
+    };
+
     it("should merge extra fields from supportedKind", async () => {
       const scheme = new AuthCaptureEvmScheme();
-
-      const requirements = {
-        scheme: "authCapture",
-        network: "eip155:84532" as const,
-        amount: "1000000",
-        asset: BASE_SEPOLIA_USDC,
-        payTo: "0x1234567890123456789012345678901234567890",
-        maxTimeoutSeconds: 300,
-        extra: {},
-      };
-
       const supportedKind = {
         x402Version: 2,
         scheme: "authCapture",
@@ -203,9 +209,9 @@ describe("AuthCaptureEvmScheme", () => {
         },
       };
 
-      const result = await scheme.enhancePaymentRequirements(requirements, supportedKind, []);
+      const result = await scheme.enhancePaymentRequirements(baseRequirements, supportedKind, []);
 
-      expect(result.extra).toEqual({
+      expect(result.extra).toMatchObject({
         fromSupported1: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
         fromSupported2: "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
       });
@@ -213,31 +219,20 @@ describe("AuthCaptureEvmScheme", () => {
 
     it("should preserve existing extra fields from requirements", async () => {
       const scheme = new AuthCaptureEvmScheme();
-
       const requirements = {
-        scheme: "authCapture",
-        network: "eip155:84532" as const,
-        amount: "1000000",
-        asset: BASE_SEPOLIA_USDC,
-        payTo: "0x1234567890123456789012345678901234567890",
-        maxTimeoutSeconds: 300,
-        extra: {
-          customField: "custom-value",
-        },
+        ...baseRequirements,
+        extra: completeExtra({ customField: "custom-value" }),
       };
-
       const supportedKind = {
         x402Version: 2,
         scheme: "authCapture",
         network: "eip155:84532" as const,
-        extra: {
-          fromSupported: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-        },
+        extra: { fromSupported: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" },
       };
 
       const result = await scheme.enhancePaymentRequirements(requirements, supportedKind, []);
 
-      expect(result.extra).toEqual({
+      expect(result.extra).toMatchObject({
         fromSupported: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
         customField: "custom-value",
       });
@@ -245,60 +240,391 @@ describe("AuthCaptureEvmScheme", () => {
 
     it("should let requirements extra override supportedKind extra", async () => {
       const scheme = new AuthCaptureEvmScheme();
-
       const requirements = {
-        scheme: "authCapture",
-        network: "eip155:84532" as const,
-        amount: "1000000",
-        asset: BASE_SEPOLIA_USDC,
-        payTo: "0x1234567890123456789012345678901234567890",
-        maxTimeoutSeconds: 300,
-        extra: {
-          sharedKey: "0xcccccccccccccccccccccccccccccccccccccccc",
-        },
+        ...baseRequirements,
+        extra: completeExtra({ sharedKey: "0xcccccccccccccccccccccccccccccccccccccccc" }),
       };
-
       const supportedKind = {
         x402Version: 2,
         scheme: "authCapture",
         network: "eip155:84532" as const,
-        extra: {
-          sharedKey: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-        },
+        extra: { sharedKey: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" },
       };
 
       const result = await scheme.enhancePaymentRequirements(requirements, supportedKind, []);
 
-      // Requirements extra should override supportedKind extra
       expect(result.extra?.sharedKey).toBe("0xcccccccccccccccccccccccccccccccccccccccc");
     });
 
     it("should preserve all original requirement fields", async () => {
       const scheme = new AuthCaptureEvmScheme();
-
-      const requirements = {
-        scheme: "authCapture",
-        network: "eip155:84532" as const,
-        amount: "1000000",
-        asset: BASE_SEPOLIA_USDC,
-        payTo: "0x1234567890123456789012345678901234567890",
-        maxTimeoutSeconds: 300,
-        extra: {},
-      };
-
       const supportedKind = {
         x402Version: 2,
         scheme: "authCapture",
         network: "eip155:84532" as const,
       };
 
-      const result = await scheme.enhancePaymentRequirements(requirements, supportedKind, []);
+      const result = await scheme.enhancePaymentRequirements(baseRequirements, supportedKind, []);
 
       expect(result.scheme).toBe("authCapture");
       expect(result.network).toBe("eip155:84532");
       expect(result.amount).toBe("1000000");
       expect(result.asset).toBe(BASE_SEPOLIA_USDC);
       expect(result.payTo).toBe("0x1234567890123456789012345678901234567890");
+    });
+
+    it("should convert captureDeadlineSeconds and refundDeadlineSeconds to absolute deadlines, stripping the offset keys", async () => {
+      const scheme = new AuthCaptureEvmScheme();
+      const requirements = {
+        ...baseRequirements,
+        extra: completeExtra({
+          captureDeadlineSeconds: 600,
+          refundDeadlineSeconds: 1200,
+        }),
+      };
+      const supportedKind = {
+        x402Version: 2,
+        scheme: "authCapture",
+        network: "eip155:84532" as const,
+      };
+
+      const before = Math.floor(Date.now() / 1000);
+      const result = await scheme.enhancePaymentRequirements(requirements, supportedKind, []);
+      const after = Math.floor(Date.now() / 1000);
+
+      const captureDeadline = result.extra?.captureDeadline as number;
+      const refundDeadline = result.extra?.refundDeadline as number;
+
+      expect(captureDeadline).toBeGreaterThanOrEqual(before + 600);
+      expect(captureDeadline).toBeLessThanOrEqual(after + 600);
+      expect(refundDeadline).toBeGreaterThanOrEqual(before + 1200);
+      expect(refundDeadline).toBeLessThanOrEqual(after + 1200);
+
+      expect(result.extra).not.toHaveProperty("captureDeadlineSeconds");
+      expect(result.extra).not.toHaveProperty("refundDeadlineSeconds");
+    });
+
+    it("should process the capture/refund pair independently when one half is absolute and the other is an offset", async () => {
+      // Asymmetric mix: capture is pinned to an absolute timestamp (e.g., a delivery commit),
+      // refund is a relative window. Each half is converted on its own. If the merchant pairs
+      // an absolute capture in the far future with a tiny refund offset (or vice-versa), the
+      // resulting `(captureDeadline, refundDeadline)` can violate the spec's ordering invariant;
+      // the facilitator rejects with `invalid_deadline_ordering` at verify time, covered by
+      // facilitator.test.ts at "should reject when refundDeadline is not after captureDeadline".
+      const scheme = new AuthCaptureEvmScheme();
+      const supportedKind = {
+        x402Version: 2,
+        scheme: "authCapture",
+        network: "eip155:84532" as const,
+      };
+
+      // Case 1: absolute capture + relative refund.
+      const reqs1 = {
+        ...baseRequirements,
+        extra: completeExtra({
+          captureDeadline: 1700000000,
+          captureDeadlineSeconds: undefined,
+          refundDeadlineSeconds: 60,
+        }),
+      };
+      const before1 = Math.floor(Date.now() / 1000);
+      const out1 = await scheme.enhancePaymentRequirements(reqs1, supportedKind, []);
+      const after1 = Math.floor(Date.now() / 1000);
+
+      expect(out1.extra?.captureDeadline).toBe(1700000000);
+      expect(out1.extra?.refundDeadline).toBeGreaterThanOrEqual(before1 + 60);
+      expect(out1.extra?.refundDeadline).toBeLessThanOrEqual(after1 + 60);
+      expect(out1.extra).not.toHaveProperty("captureDeadlineSeconds");
+      expect(out1.extra).not.toHaveProperty("refundDeadlineSeconds");
+
+      // Case 2: relative capture + absolute refund.
+      const reqs2 = {
+        ...baseRequirements,
+        extra: completeExtra({
+          captureDeadlineSeconds: 60,
+          refundDeadlineSeconds: undefined,
+          refundDeadline: 1800000000,
+        }),
+      };
+      const before2 = Math.floor(Date.now() / 1000);
+      const out2 = await scheme.enhancePaymentRequirements(reqs2, supportedKind, []);
+      const after2 = Math.floor(Date.now() / 1000);
+
+      expect(out2.extra?.refundDeadline).toBe(1800000000);
+      expect(out2.extra?.captureDeadline).toBeGreaterThanOrEqual(before2 + 60);
+      expect(out2.extra?.captureDeadline).toBeLessThanOrEqual(after2 + 60);
+      expect(out2.extra).not.toHaveProperty("captureDeadlineSeconds");
+      expect(out2.extra).not.toHaveProperty("refundDeadlineSeconds");
+    });
+
+    it("should let absolute captureDeadline / refundDeadline win over offsets", async () => {
+      const scheme = new AuthCaptureEvmScheme();
+      const requirements = {
+        ...baseRequirements,
+        extra: completeExtra({
+          captureDeadlineSeconds: 600,
+          refundDeadlineSeconds: 1200,
+          captureDeadline: 1700000000,
+          refundDeadline: 1800000000,
+        }),
+      };
+      const supportedKind = {
+        x402Version: 2,
+        scheme: "authCapture",
+        network: "eip155:84532" as const,
+      };
+
+      const result = await scheme.enhancePaymentRequirements(requirements, supportedKind, []);
+
+      expect(result.extra?.captureDeadline).toBe(1700000000);
+      expect(result.extra?.refundDeadline).toBe(1800000000);
+      expect(result.extra).not.toHaveProperty("captureDeadlineSeconds");
+      expect(result.extra).not.toHaveProperty("refundDeadlineSeconds");
+    });
+
+    it("should produce distinct deadlines across two calls separated in time", async () => {
+      const scheme = new AuthCaptureEvmScheme();
+      const requirements = {
+        ...baseRequirements,
+        extra: completeExtra({
+          captureDeadlineSeconds: 1,
+          refundDeadlineSeconds: 2,
+        }),
+      };
+      const supportedKind = {
+        x402Version: 2,
+        scheme: "authCapture",
+        network: "eip155:84532" as const,
+      };
+
+      const first = await scheme.enhancePaymentRequirements(requirements, supportedKind, []);
+      await new Promise(resolve => setTimeout(resolve, 1100));
+      const second = await scheme.enhancePaymentRequirements(requirements, supportedKind, []);
+
+      expect(second.extra?.captureDeadline).toBeGreaterThan(first.extra?.captureDeadline as number);
+      expect(second.extra?.refundDeadline).toBeGreaterThan(first.extra?.refundDeadline as number);
+    });
+
+    it("should throw on non-positive captureDeadlineSeconds", async () => {
+      const scheme = new AuthCaptureEvmScheme();
+      const requirements = {
+        ...baseRequirements,
+        extra: completeExtra({ captureDeadlineSeconds: 0 }),
+      };
+      const supportedKind = {
+        x402Version: 2,
+        scheme: "authCapture",
+        network: "eip155:84532" as const,
+      };
+
+      await expect(
+        scheme.enhancePaymentRequirements(requirements, supportedKind, []),
+      ).rejects.toThrow(/captureDeadlineSeconds/);
+    });
+
+    it("should throw on non-positive refundDeadlineSeconds", async () => {
+      const scheme = new AuthCaptureEvmScheme();
+      const requirements = {
+        ...baseRequirements,
+        extra: completeExtra({ refundDeadlineSeconds: -1 }),
+      };
+      const supportedKind = {
+        x402Version: 2,
+        scheme: "authCapture",
+        network: "eip155:84532" as const,
+      };
+
+      await expect(
+        scheme.enhancePaymentRequirements(requirements, supportedKind, []),
+      ).rejects.toThrow(/refundDeadlineSeconds/);
+    });
+
+    it("should throw on non-finite offset", async () => {
+      const scheme = new AuthCaptureEvmScheme();
+      const requirements = {
+        ...baseRequirements,
+        extra: completeExtra({ captureDeadlineSeconds: Number.NaN }),
+      };
+      const supportedKind = {
+        x402Version: 2,
+        scheme: "authCapture",
+        network: "eip155:84532" as const,
+      };
+
+      await expect(
+        scheme.enhancePaymentRequirements(requirements, supportedKind, []),
+      ).rejects.toThrow(/captureDeadlineSeconds/);
+    });
+
+    it("should throw on non-number offset", async () => {
+      const scheme = new AuthCaptureEvmScheme();
+      const requirements = {
+        ...baseRequirements,
+        extra: completeExtra({ captureDeadlineSeconds: "30d" }),
+      };
+      const supportedKind = {
+        x402Version: 2,
+        scheme: "authCapture",
+        network: "eip155:84532" as const,
+      };
+
+      await expect(
+        scheme.enhancePaymentRequirements(requirements, supportedKind, []),
+      ).rejects.toThrow(/captureDeadlineSeconds/);
+    });
+
+    it("should accept offsets from supportedKind.extra (facilitator-injected) when not set in requirements", async () => {
+      const scheme = new AuthCaptureEvmScheme();
+      const requirements = {
+        ...baseRequirements,
+        // Drop the offsets from requirements so supportedKind's offsets are what gets used.
+        extra: completeExtra({
+          captureDeadlineSeconds: undefined,
+          refundDeadlineSeconds: undefined,
+        }),
+      };
+      const supportedKind = {
+        x402Version: 2,
+        scheme: "authCapture",
+        network: "eip155:84532" as const,
+        extra: {
+          captureDeadlineSeconds: 600,
+          refundDeadlineSeconds: 1200,
+        },
+      };
+
+      const before = Math.floor(Date.now() / 1000);
+      const result = await scheme.enhancePaymentRequirements(requirements, supportedKind, []);
+      const after = Math.floor(Date.now() / 1000);
+
+      const captureDeadline = result.extra?.captureDeadline as number;
+      const refundDeadline = result.extra?.refundDeadline as number;
+
+      expect(captureDeadline).toBeGreaterThanOrEqual(before + 600);
+      expect(captureDeadline).toBeLessThanOrEqual(after + 600);
+      expect(refundDeadline).toBeGreaterThanOrEqual(before + 1200);
+      expect(refundDeadline).toBeLessThanOrEqual(after + 1200);
+    });
+  });
+
+  describe("enhancePaymentRequirements - fail-fast field validation", () => {
+    const completeExtra = (overrides: Record<string, unknown> = {}) => {
+      const out: Record<string, unknown> = {
+        captureAuthorizer: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        captureDeadlineSeconds: 30 * 86400,
+        refundDeadlineSeconds: 60 * 86400,
+        feeRecipient: "0x0000000000000000000000000000000000000000",
+        minFeeBps: 0,
+        maxFeeBps: 100,
+        name: "USDC",
+        version: "2",
+      };
+      for (const [k, v] of Object.entries(overrides)) {
+        if (v === undefined) delete out[k];
+        else out[k] = v;
+      }
+      return out;
+    };
+
+    const baseRequirements = {
+      scheme: "authCapture",
+      network: "eip155:84532" as const,
+      amount: "1000000",
+      asset: BASE_SEPOLIA_USDC,
+      payTo: "0x1234567890123456789012345678901234567890",
+      maxTimeoutSeconds: 300,
+    };
+
+    const supportedKind = {
+      x402Version: 2,
+      scheme: "authCapture",
+      network: "eip155:84532" as const,
+    };
+
+    for (const field of ["captureAuthorizer", "feeRecipient", "minFeeBps", "maxFeeBps"] as const) {
+      it(`should throw when extra.${field} is missing`, async () => {
+        const scheme = new AuthCaptureEvmScheme();
+        const requirements = {
+          ...baseRequirements,
+          extra: completeExtra({ [field]: undefined }),
+        };
+        await expect(
+          scheme.enhancePaymentRequirements(requirements, supportedKind, []),
+        ).rejects.toThrow(new RegExp(`extra\\.${field}`));
+      });
+    }
+
+    it("should throw when neither captureDeadlineSeconds nor captureDeadline is provided", async () => {
+      const scheme = new AuthCaptureEvmScheme();
+      const requirements = {
+        ...baseRequirements,
+        extra: completeExtra({
+          captureDeadlineSeconds: undefined,
+        }),
+      };
+      await expect(
+        scheme.enhancePaymentRequirements(requirements, supportedKind, []),
+      ).rejects.toThrow(/extra\.captureDeadline/);
+    });
+
+    it("should throw when neither refundDeadlineSeconds nor refundDeadline is provided", async () => {
+      const scheme = new AuthCaptureEvmScheme();
+      const requirements = {
+        ...baseRequirements,
+        extra: completeExtra({
+          refundDeadlineSeconds: undefined,
+        }),
+      };
+      await expect(
+        scheme.enhancePaymentRequirements(requirements, supportedKind, []),
+      ).rejects.toThrow(/extra\.refundDeadline/);
+    });
+
+    it("should throw when captureAuthorizer is the wrong type", async () => {
+      const scheme = new AuthCaptureEvmScheme();
+      const requirements = {
+        ...baseRequirements,
+        extra: completeExtra({ captureAuthorizer: 42 }),
+      };
+      await expect(
+        scheme.enhancePaymentRequirements(requirements, supportedKind, []),
+      ).rejects.toThrow(/captureAuthorizer/);
+    });
+
+    it("should include the path-to-fix hint in the deadline error message", async () => {
+      const scheme = new AuthCaptureEvmScheme();
+      const requirements = {
+        ...baseRequirements,
+        extra: completeExtra({ captureDeadlineSeconds: undefined }),
+      };
+      await expect(
+        scheme.enhancePaymentRequirements(requirements, supportedKind, []),
+      ).rejects.toThrow(/captureDeadlineSeconds.*captureDeadline/);
+    });
+
+    it("should not fail-fast on missing name (auto-populated by parsePrice for decimal pricing; wire-side rejection for AssetAmount path)", async () => {
+      const scheme = new AuthCaptureEvmScheme();
+      const requirements = {
+        ...baseRequirements,
+        extra: completeExtra({ name: undefined }),
+      };
+      // Merchant uses decimal pricing → name is auto-populated by parsePrice → no need to throw here.
+      // Merchant uses a custom AssetAmount and forgets name → facilitator catches with invalid_authCapture_extra.
+      // Either way enhance does not throw on missing name.
+      await expect(
+        scheme.enhancePaymentRequirements(requirements, supportedKind, []),
+      ).resolves.not.toThrow();
+    });
+
+    it("should not fail-fast on missing version (same rationale as name)", async () => {
+      const scheme = new AuthCaptureEvmScheme();
+      const requirements = {
+        ...baseRequirements,
+        extra: completeExtra({ version: undefined }),
+      };
+      await expect(
+        scheme.enhancePaymentRequirements(requirements, supportedKind, []),
+      ).resolves.not.toThrow();
     });
   });
 

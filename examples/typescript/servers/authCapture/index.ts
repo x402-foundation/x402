@@ -27,13 +27,6 @@ if (!facilitatorUrl) {
   process.exit(1);
 }
 
-// Static deadlines: every authorization created by this server expires at
-// the same absolute Unix second. Production servers typically compute these
-// per request via custom middleware; static deadlines suffice for the demo.
-const now = Math.floor(Date.now() / 1000);
-const captureDeadline = now + 30 * 86400;
-const refundDeadline = now + 60 * 86400;
-
 const facilitatorClient = new HTTPFacilitatorClient({ url: facilitatorUrl });
 const resourceServer = new x402ResourceServer(facilitatorClient).register(
   NETWORK,
@@ -53,16 +46,19 @@ app.use(
           payTo: evmAddress,
           extra: {
             captureAuthorizer,
-            captureDeadline,
-            refundDeadline,
+            // Capture / refund windows are seconds-from-now relative offsets.
+            // The scheme converts them to absolute Unix-second deadlines per
+            // request inside `enhancePaymentRequirements`, so each
+            // authorization carries a fresh window. The values are arbiter
+            // policy: pick what your captureAuthorizer actually supports.
+            captureDeadlineSeconds: 30 * 86400,
+            refundDeadlineSeconds: 60 * 86400,
             // address(0) lets the captureAuthorizer pick any non-zero fee
             // recipient at capture/charge time (deferred selection, per spec).
             // Production setups can pin a specific receiver instead.
             feeRecipient: zeroAddress,
             minFeeBps: 0,
             maxFeeBps: 100,
-            name: "USDC",
-            version: "2",
           },
         },
         description: "Weather data",
@@ -87,6 +83,4 @@ app.listen(PORT, () => {
   console.log("  GET /weather");
   console.log(`  Pay-to:            ${evmAddress}`);
   console.log(`  captureAuthorizer: ${captureAuthorizer}`);
-  console.log(`  captureDeadline:   ${new Date(captureDeadline * 1000).toISOString()}`);
-  console.log(`  refundDeadline:    ${new Date(refundDeadline * 1000).toISOString()}`);
 });
