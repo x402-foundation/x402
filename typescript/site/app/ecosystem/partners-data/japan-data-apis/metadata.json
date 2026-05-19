@@ -1,0 +1,7 @@
+{
+  "name": "Japan Data APIs",
+  "description": "Seven x402-paid APIs for Japan-specific data: address normalization & geocoding, furigana/kana readings, real-time rail delays & routing, National Diet proceedings, public holidays, JMA weather, and the corporate-number registry. Also available as one MCP server (npx @mameta/japan-data-mcp).",
+  "logoUrl": "/logos/japan-data-apis.svg",
+  "websiteUrl": "https://www.npmjs.com/package/@mameta/japan-data-mcp",
+  "category": "Services/Endpoints"
+}

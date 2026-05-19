@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" role="img" aria-label="Japan Data APIs logo">
+  <rect width="256" height="256" rx="36" fill="#0f172a"/>
+  <circle cx="128" cy="100" r="34" fill="#e11d48"/>
+  <path d="M84 168h88v16H84zm0 30h88v16H84z" fill="#f8fafc"/>
+  <circle cx="68" cy="176" r="7" fill="#22d3ee"/>
+  <circle cx="68" cy="206" r="7" fill="#22d3ee"/>
+</svg>
