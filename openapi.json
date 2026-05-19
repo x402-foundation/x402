@@ -1,0 +1,178 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "AgentPay x402 Facilitator",
+    "version": "1.0.0",
+    "description": "Production x402 payment facilitator for AI agents. Handles atomic USDC settlements, escrow, and agent identity on Base L2. ERC-8183 compliant. No API keys required — agents pay per call.",
+    "x-guidance": "Use POST /pay to settle a USDC payment between two agents. Use POST /escrow to hold funds in escrow pending job completion. Use POST /escrow/release to release escrowed funds. Use GET /metrics for live platform stats. All payments settle on Base L2 in USDC. Flat fee: $0.02 per settlement."
+  },
+  "x-discovery": {
+    "ownershipProofs": []
+  },
+  "servers": [
+    {
+      "url": "https://x402-agent-pay.com",
+      "description": "AgentPay Production Facilitator"
+    }
+  ],
+  "paths": {
+    "/pay": {
+      "post": {
+        "operationId": "settlePayment",
+        "summary": "Settle Payment — Atomic USDC transfer between agents on Base L2",
+        "description": "Initiates an atomic x402 USDC payment from payer to payee on Base L2. Settlement is on-chain. Flat fee of $0.02 deducted per transaction. Supports optional partner_id for revenue sharing.",
+        "tags": ["Payments"],
+        "x-payment-info": {
+          "price": {
+            "mode": "fixed",
+            "currency": "USD",
+            "amount": "0.020000"
+          },
+          "protocols": [
+            { "x402": {} }
+          ]
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "payer": {
+                    "type": "string",
+                    "description": "Base L2 wallet address of the paying agent (0x...)"
+                  },
+                  "payee": {
+                    "type": "string",
+                    "description": "Base L2 wallet address of the receiving agent (0x...)"
+                  },
+                  "amount_usdc": {
+                    "type": "number",
+                    "description": "Amount in USDC to transfer"
+                  },
+                  "partner_id": {
+                    "type": "string",
+                    "description": "Optional partner identifier for revenue share tracking"
+                  },
+                  "memo": {
+                    "type": "string",
+                    "description": "Optional memo or job reference ID"
+                  }
+                },
+                "required": ["payer", "payee", "amount_usdc"]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Payment settled successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "tx_hash": { "type": "string", "description": "On-chain transaction hash" },
+                    "amount_usdc": { "type": "number" },
+                    "fee_usdc": { "type": "number" },
+                    "status": { "type": "string" }
+                  }
+                }
+              }
+            }
+          },
+          "402": {
+            "description": "Payment Required — include x402 payment header"
+          }
+        }
+      }
+    },
+    "/escrow": {
+      "post": {
+        "operationId": "createEscrow",
+        "summary": "Create Escrow — Hold USDC pending job completion",
+        "description": "Locks USDC in escrow between a payer and payee, tied to a job ID. Funds are released only when the job is marked complete or via dispute resolution. Ideal for agent-to-agent service agreements.",
+        "tags": ["Escrow"],
+        "x-payment-info": {
+          "price": {
+            "mode": "fixed",
+            "currency": "USD",
+            "amount": "0.020000"
+          },
+          "protocols": [
+            { "x402": {} }
+          ]
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "payer": { "type": "string", "description": "Base L2 wallet of payer" },
+                  "payee": { "type": "string", "description": "Base L2 wallet of payee" },
+                  "amount_usdc": { "type": "number", "description": "USDC to lock in escrow" },
+                  "job_id": { "type": "string", "description": "Unique job or task reference ID" },
+                  "timeout_hours": { "type": "integer", "description": "Hours until escrow auto-expires (default: 72)" }
+                },
+                "required": ["payer", "payee", "amount_usdc", "job_id"]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Escrow created successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "escrow_id": { "type": "string" },
+                    "job_id": { "type": "string" },
+                    "amount_usdc": { "type": "number" },
+                    "status": { "type": "string" },
+                    "expires_at": { "type": "string" }
+                  }
+                }
+              }
+            }
+          },
+          "402": { "description": "Payment Required" }
+        }
+      }
+    },
+    "/metrics": {
+      "get": {
+        "operationId": "getMetrics",
+        "summary": "Platform Metrics — Live facilitator stats",
+        "description": "Returns live platform statistics including total payment volume, active escrows, fee totals, and treasury balance. Free to call — no payment required.",
+        "tags": ["Info"],
+        "responses": {
+          "200": {
+            "description": "Live platform metrics",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "total_payments": { "type": "integer" },
+                    "total_volume_usdc": { "type": "number" },
+                    "total_fees_usdc": { "type": "number" },
+                    "active_escrows": { "type": "integer" },
+                    "escrow_held_usdc": { "type": "number" },
+                    "unique_payers": { "type": "integer" },
+                    "flat_fee_usdc": { "type": "number" },
+                    "treasury": { "type": "string" }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
