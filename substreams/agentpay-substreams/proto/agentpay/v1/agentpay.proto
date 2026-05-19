@@ -1,0 +1,82 @@
+syntax = "proto3";
+package agentpay.v1;
+
+// ── TransferWithAuthorization (EIP-3009) ─────────────────────────────────────
+// Emitted by Base USDC contract on every authorized transfer.
+// This is the primary hot-path trigger for AgentPay settlement.
+
+message TransferEvent {
+  string from        = 1;  // payer wallet
+  string to          = 2;  // facilitator / receiver wallet
+  string value       = 3;  // USDC amount (6 decimals, as string to avoid overflow)
+  bytes  nonce       = 4;  // EIP-3009 nonce — ties to payment_id for idempotency
+  uint64 block_num   = 5;
+  uint64 timestamp   = 6;
+  string tx_hash     = 7;
+  uint32 log_index   = 8;
+}
+
+message TransferEvents {
+  repeated TransferEvent transfers = 1;
+}
+
+// ── Confirmed Settlement ──────────────────────────────────────────────────────
+// A USDC transfer matched to a tracked AgentPay payment_id.
+// Facilitator subscribes to this stream and releases service immediately.
+
+message SettlementEvent {
+  string payment_id      = 1;  // AgentPay UUID — derived from EIP-3009 nonce
+  string agent_wallet    = 2;  // agent who initiated payment
+  string service_wallet  = 3;  // service provider receiving USDC
+  string amount_usdc     = 4;  // settled amount (string, 6 decimals)
+  bool   settled         = 5;  // true = confirmed, false = refunded
+  uint64 block_num       = 6;
+  uint64 timestamp       = 7;
+  string tx_hash         = 8;
+  // Idempotency proof — agents can verify on-chain without trusting facilitator
+  bytes  nonce           = 9;
+  string facilitator_id  = 10; // which facilitator processed this
+}
+
+message SettlementEvents {
+  repeated SettlementEvent settlements = 1;
+}
+
+// ── Agent Reputation ─────────────────────────────────────────────────────────
+// Running reputation state per agent, maintained in the store module.
+// Synced to subgraph for external GraphQL queries.
+
+message AgentReputation {
+  string agent                 = 1;
+  uint64 total_payments        = 2;
+  uint64 successful_payments   = 3;
+  uint64 refunded_payments     = 4;
+  uint64 unique_counterparties = 5;
+  uint64 last_payment_at       = 6;
+  // Composite score components (stored as millionths for integer math)
+  uint64 success_rate_ppm      = 7;  // successfulPayments / total × 1_000_000
+  uint64 diversity_score_ppm   = 8;  // min(1.0, counterparties/10) × 1_000_000
+  uint64 recency_score_ppm     = 9;  // exp(-0.01 × daysSinceLast) × 1_000_000
+  uint64 composite_score_ppm   = 10; // 0.6×success + 0.25×diversity + 0.15×recency
+}
+
+// ── Analytics Event ───────────────────────────────────────────────────────────
+// Row destined for Clickhouse sink (streamingfast/substreams-sink-clickhouse).
+// Schema mirrors James's Uniswap pipeline pattern.
+
+message AnalyticsEvent {
+  string agent           = 1;
+  string counterparty    = 2;
+  string amount_usdc     = 3;
+  uint64 block_num       = 4;
+  uint64 timestamp       = 5;
+  string tx_hash         = 6;
+  bool   settled         = 7;
+  uint64 score_ppm       = 8;  // reputation score at time of payment
+  string city            = 9;  // AgentWorld city tag (if agent is an NPC)
+  string facilitator_id  = 10;
+}
+
+message AnalyticsEvents {
+  repeated AnalyticsEvent events = 1;
+}
