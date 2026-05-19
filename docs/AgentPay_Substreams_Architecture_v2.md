@@ -1,99 +1,81 @@
 # AgentPay × Substreams — Architecture Update for James
 
 **From:** Shawn Lippert, AgentPay  
-**Re:** Substreams integration status + architecture questions  
+**Re:** Substreams integration status + questions  
 **Context:** Following up on our Discord thread re: The Graph × AgentPay collaboration
 
 ---
 
 ## What We Shipped
 
-We just crossed a major milestone: the AgentPay Substreams package is **compiled, packed, and streaming live on Base mainnet** as of today.
-
-Here's what's running:
+The AgentPay Substreams package is **compiled, packed, and streaming live on Base mainnet** as of today.
 
 **Package:** `agentpay-substreams-v0.1.0.spkg`  
 **Network:** `base-mainnet` via `mainnet.eth.streamingfast.io:443`  
-**Status:** ✅ Live — 8+ blocks processed, usage confirmed via StreamingFast dashboard
+**Status:** ✅ Live — streaming confirmed on mainnet today, cursor-based, auto-reconnects on drop
 
 ---
 
-## Pipeline Architecture
+## Current Pipeline (What's Running Now)
 
 ```
-Base L2 Blocks
+Base L2 Blocks (via Firehose, --final-blocks-only)
       │
       ▼
 [map_usdc_transfers]
-  - Watches Base USDC contract: 0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913
-  - Filters on TransferWithAuthorization topic (EIP-3009)
-  - Topic: 0x98de503528...
+  - USDC contract: 0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913
+  - Filters on TransferWithAuthorization (EIP-3009)
+  - Full topic: 0x98de503528ee59b575ef0c0a2576a82112635b28b9da4cae03c8b0b0ec06b8e3
   - Extracts: from, to, value, nonce, block_num, timestamp, tx_hash
       │
       ▼
-[map_confirmed_settlements]
+[map_confirmed_settlements]  ← final blocks only, all modules below inherit finality
   - Filters to transfers TO AgentPay facilitator wallet
-  - Emits SettlementEvent with payment_id derived from EIP-3009 nonce
-  - This is the hot path: facilitator subscribes and releases service instantly
+  - Emits SettlementEvent (payment_id from EIP-3009 nonce)
+  - Facilitator client acts on this stream — service release happens
+    after finality is confirmed, not on first-seen
       │
-      ├──▶ [store_agent_counters]  ← StoreAddInt64, accumulates across blocks
-      │         total, success, refunded, diversity per agent
-      │
-      ├──▶ [store_agent_reputation] ← StoreSetProto<AgentReputation>
-      │         Composite score: 60% success + 25% diversity + 15% recency
-      │
-      └──▶ [map_analytics_events]
-                AnalyticsEvent rows → Clickhouse sink (James's pattern)
-                Fields: agent, counterparty, amount_usdc, score_ppm, city, tx_hash
+      └──▶ [store_agent_stats]   StoreAddInt64 with deltas
+                Single store, keyed by agent wallet
+                Tracks: total, success, refunded, unique_counterparties
 ```
 
----
-
-## Why This Matters for The Graph Integration
-
-The core problem we were solving: our old facilitator used a polling loop — `eth_getLogs` every 2 seconds. At scale this means:
-
-- **Latency:** 2–4 second confirmation lag on every payment
-- **Cost:** ~$0.002/req × high frequency = real money
-- **Fragility:** RPC provider outages = missed settlements
-
-With Substreams streaming directly from Firehose:
-- **Latency:** Sub-block (confirmed within the same block the tx lands)
-- **Cost:** One persistent gRPC stream, no polling
-- **Reliability:** StreamingFast's infrastructure, not a single RPC node
-
-This is also why the Substreams → subgraph path is interesting — GraphQL queries from external agents/integrators hit the subgraph, not our facilitator, which keeps our server load flat regardless of query volume.
+The reputation scoring and analytics sink are the **next phase** — not shipped yet. That's where we need your input (below).
 
 ---
 
-## Questions for You
+## Why Substreams vs. Our Old Polling Loop
 
-**1. x402GrantRegistry**  
-Do you have the contract address + `startBlock` for the grant registry on Base? We want to index it as a fifth module so grant-funded settlements are distinguishable from standard payments in the analytics stream.
+Old approach: `eth_getLogs` every 2 seconds.
 
-**2. Clickhouse Sink**  
-You mentioned the Uniswap pipeline uses `substreams-sink-clickhouse`. We've built the `AnalyticsEvent` proto to match that schema pattern. Is there a recommended sink version for Base mainnet, or are you running a custom fork?
+- 2–4 second lag per payment, reorg handling was manual
+- ~$0.002/req × high frequency = real ongoing cost
+- Single RPC provider = single point of failure
 
-**3. Subgraph Deployment**  
-Once we have the grant registry address, the plan is:
-- Deploy the subgraph to The Graph Network (decentralized)
-- Expose a GraphQL endpoint so external agents can query `agentReputation(wallet: "0x...")`
-- Wire that back into our facilitator's credit scoring
+With Firehose-backed Substreams, all modules run with `--final-blocks-only`:
 
-Is there a preferred path for getting an AgentPay subgraph onto the decentralized network, or should we start on the hosted service?
+- Reorg-safe by design — finality propagates through the entire module graph
+- One persistent gRPC stream, no per-request cost
+- Server load stays flat — integrators query the subgraph, not our facilitator
 
 ---
 
-## What We Need from You
+## Three Things We Need from You
 
-Just two things to unblock the next phase:
+**1. x402GrantRegistry — address + startBlock on Base**  
+A registry contract tracking grant-funded x402 payments on Base. We want to add it as a module so grant-funded settlements are distinguishable from standard ones. Without the address we can't build it.
 
-1. **x402GrantRegistry address + startBlock on Base**
-2. **Your preferred Clickhouse sink version / config for Base mainnet**
+**2. Reputation → subgraph or Clickhouse — what's the right pattern?**  
+We want external agents to be able to query `agentReputation(wallet: "0x...")`. We were leaning toward a subgraph for the GraphQL interface, with `store_agent_stats` deltas feeding into a subgraph handler. But we haven't deployed a subgraph before — is that the right shape for this use case, or would you structure it differently?
 
-Everything else is ready to go on our end. The `.spkg` is packed, the pipeline is streaming, and the facilitator client is wired up to consume the gRPC stream.
+**3. Subgraph deployment path**  
+Starting fresh, no existing subgraph. Hosted service first or straight to the decentralized network?
 
-Happy to share the repo directly or hop into a PR review whenever works for you.
+---
+
+## What We're Ready to Share
+
+The `.spkg` is packed and streaming. Happy to drop the repo link, walk through the module code, or coordinate a PR review whenever works.
 
 — Shawn / AgentPay Team  
-x402-agent-pay.com | @shawnhvac
+x402-agent-pay.com | @shawnhvac | github.com/shawnhvac/x402
