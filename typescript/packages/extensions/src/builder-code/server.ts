@@ -40,13 +40,9 @@ export interface BuilderCodeRequiredExtension {
  * Declares the builder-code extension for inclusion in PaymentRequired.extensions.
  *
  * @param appCode - The service's builder code (e.g., "bc_weather_svc")
- * @param serviceCodes - Optional array of related service builder codes
  * @returns Extension declaration with info and schema for PaymentRequired.extensions
  */
-export function declareBuilderCodeExtension(
-  appCode: string,
-  serviceCodes?: string[],
-): BuilderCodeRequiredExtension {
+export function declareBuilderCodeExtension(appCode: string): BuilderCodeRequiredExtension {
   if (!BUILDER_CODE_PATTERN.test(appCode)) {
     throw new Error(
       `Invalid builder code: "${appCode}". ` +
@@ -54,27 +50,8 @@ export function declareBuilderCodeExtension(
     );
   }
 
-  if (serviceCodes) {
-    for (const code of serviceCodes) {
-      if (!BUILDER_CODE_PATTERN.test(code)) {
-        throw new Error(
-          `Invalid service builder code: "${code}". ` +
-            `Must be 1-32 characters, lowercase alphanumeric and underscores only.`,
-        );
-      }
-    }
-  }
-
-  const info: BuilderCodeRequiredExtension["info"] = {
-    a: appCode,
-  };
-
-  if (serviceCodes && serviceCodes.length > 0) {
-    info.s = serviceCodes;
-  }
-
   return {
-    info,
+    info: { a: appCode },
     schema: BUILDER_CODE_SCHEMA,
   };
 }

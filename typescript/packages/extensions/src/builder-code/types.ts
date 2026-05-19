@@ -51,12 +51,10 @@ export interface BuilderCodeExtensionData {
   w?: string;
 
   /**
-   * Service builder codes — related on-chain services the app depends on.
-   * Maps to the "s" field in ERC-8021 Schema 2.
-   * Optionally set by the service to attribute protocols it interacts with
-   * (e.g., Morpho for lending, Aerodrome for swaps).
+   * Service builder code — client-provided attribution code.
+   * Maps to the "s" field in ERC-8021 Schema 2 (wrapped in a single-element array on wire).
    */
-  s?: string[];
+  s?: string;
 }
 
 /**

@@ -42,10 +42,10 @@ function encodeCborMap(data: BuilderCodeExtensionData): Uint8Array {
     entries.push(encodeCborString(data.w));
   }
 
-  if (data.s && data.s.length > 0) {
+  if (data.s) {
     mapSize++;
     entries.push(encodeCborString("s"));
-    entries.push(encodeCborArray(data.s));
+    entries.push(encodeCborArray([data.s]));
   }
 
   // CBOR map header
@@ -280,7 +280,7 @@ export function parseBuilderCodeSuffixFromCalldata(
         return undefined;
       }
 
-      const serviceCodes: string[] = [];
+      let firstCode: string | undefined;
       for (let i = 0; i < arraySize; i++) {
         if (bytes[o] >> 5 !== 3) {
           return undefined;
@@ -292,11 +292,15 @@ export function parseBuilderCodeSuffixFromCalldata(
           return undefined;
         }
 
-        serviceCodes.push(new TextDecoder().decode(bytes.subarray(o, o + itemLen)));
+        if (i === 0) {
+          firstCode = new TextDecoder().decode(bytes.subarray(o, o + itemLen));
+        }
         o += itemLen;
       }
 
-      result.s = serviceCodes;
+      if (firstCode) {
+        result.s = firstCode;
+      }
       continue;
     }
 

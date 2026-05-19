@@ -1,7 +1,10 @@
 import { config } from "dotenv";
 import { x402Client, wrapFetchWithPayment, x402HTTPClient } from "@x402/fetch";
 import { ExactEvmScheme } from "@x402/evm/exact/client";
-import { parseBuilderCodeSuffixFromCalldata } from "@x402/extensions/builder-code";
+import {
+  BuilderCodeClientExtension,
+  parseBuilderCodeSuffixFromCalldata,
+} from "@x402/extensions/builder-code";
 import { privateKeyToAccount } from "viem/accounts";
 import { createPublicClient, http, type Hex } from "viem";
 import { baseSepolia } from "viem/chains";
@@ -10,6 +13,7 @@ config();
 
 const evmPrivateKey = process.env.EVM_PRIVATE_KEY as `0x${string}`;
 const evmRpcUrl = process.env.EVM_RPC_URL ?? "https://sepolia.base.org";
+const clientBuilderCode = process.env.CLIENT_BUILDER_CODE || "bc_example_client";
 const baseURL = process.env.RESOURCE_SERVER_URL || "http://localhost:4021";
 const endpointPath = process.env.ENDPOINT_PATH || "/weather";
 const url = `${baseURL}${endpointPath}`;
@@ -22,6 +26,7 @@ const url = `${baseURL}${endpointPath}`;
  *
  * Optional environment variables:
  * - EVM_RPC_URL: JSON-RPC endpoint for onchain verification (defaults to Base Sepolia)
+ * - CLIENT_BUILDER_CODE: Builder code for client attribution (defaults to "bc_example_client")
  * - RESOURCE_SERVER_URL: Resource server base URL
  * - ENDPOINT_PATH: Paid endpoint path
  */
@@ -31,6 +36,7 @@ async function main(): Promise<void> {
 
   const client = new x402Client();
   client.register("eip155:*", new ExactEvmScheme(evmSigner, rpcOptions));
+  client.registerExtension(new BuilderCodeClientExtension(clientBuilderCode));
 
   const fetchWithPayment = wrapFetchWithPayment(fetch, client);
 

@@ -4,12 +4,10 @@
  * Enables attribution tracking for x402 payments by appending ERC-8021
  * Schema 2 builder codes to settlement transaction calldata.
  *
- * Two parties attach their builder code:
- * - Service (server): Declares as "a" (app) in 402 response via declareBuilderCodeExtension()
- * - Facilitator: Adds as "w" (wallet) at settlement via BuilderCodeFacilitatorExtension
- *
- * The service can optionally include related on-chain services in the "s" array
- * (e.g., Morpho, Aerodrome) to attribute protocols it depends on.
+ * Three parties attach their builder code:
+ * - Server: Declares `a` (app) in 402 response via declareBuilderCodeExtension()
+ * - Client: Echoes `a` and adds `s` (service) via BuilderCodeClientExtension
+ * - Facilitator: Adds `w` (wallet) at settlement via BuilderCodeFacilitatorExtension
  *
  * ## Usage
  *
@@ -18,15 +16,17 @@
  * ```typescript
  * import { declareBuilderCodeExtension, BUILDER_CODE } from '@x402/extensions/builder-code';
  *
- * // In paywall config extensions
  * extensions: {
  *   [BUILDER_CODE]: declareBuilderCodeExtension("bc_my_service"),
  * }
+ * ```
  *
- * // With related on-chain services
- * extensions: {
- *   [BUILDER_CODE]: declareBuilderCodeExtension("bc_my_service", ["bc_morpho", "bc_aerodrome"]),
- * }
+ * ### For Clients
+ *
+ * ```typescript
+ * import { BuilderCodeClientExtension } from '@x402/extensions/builder-code';
+ *
+ * client.registerExtension(new BuilderCodeClientExtension("bc_my_client"));
  * ```
  *
  * ### For Facilitators
@@ -34,16 +34,10 @@
  * ```typescript
  * import { BuilderCodeFacilitatorExtension } from '@x402/extensions/builder-code';
  *
- * const facilitator = new x402Facilitator();
  * facilitator.registerExtension(new BuilderCodeFacilitatorExtension({
  *   builderCode: "bc_my_facilitator",
  * }));
  * ```
- *
- * Facilitator HTTP handlers must forward `paymentRequiredExtensions` from the
- * resource server on `/verify` and `/settle`. The client echoes the server
- * declaration in `paymentPayload.extensions`; the facilitator validates that
- * echo against the independent server source before encoding on-chain attribution.
  */
 
 // Types
@@ -65,6 +59,9 @@ export {
   declareBuilderCodeExtension,
   builderCodeResourceServerExtension,
 } from "./server";
+
+// Client
+export { BuilderCodeClientExtension } from "./client";
 
 // Facilitator
 export { BuilderCodeFacilitatorExtension } from "./facilitator";

@@ -2,7 +2,9 @@
  * Facilitator-side extension for the Builder Code Extension.
  *
  * At settlement time, the facilitator always encodes its wallet code into the
- * ERC-8021 suffix and includes server-declared app/service codes when present.
+ * ERC-8021 suffix. App code (`a`) comes from the server declaration (with soft
+ * echo validation against the client payload). Service code (`s`) is
+ * client-provided via the payment payload.
  */
 
 import type { FacilitatorExtension } from "@x402/core/types";
@@ -16,39 +18,41 @@ import {
   type SettlementCalldataContext,
 } from "./types";
 
-/**
- * Extracts normalized builder-code fields from an extension object.
- *
- * Accepts either a top-level extension record or one nested under `info`.
- *
- * @param extension - Raw extension payload from payment headers
- * @returns Parsed app code and service codes, omitting invalid entries
- */
-function readBuilderCodeExtensionFields(
-  extension: Record<string, unknown>,
-): BuilderCodeExtensionData {
-  const rawInfo = extension.info;
-  const fields =
-    typeof rawInfo === "object" && rawInfo !== null && !Array.isArray(rawInfo)
-      ? (rawInfo as Record<string, unknown>)
-      : extension;
+function extractServerAppCode(
+  extensions?: Record<string, unknown>,
+): string | undefined {
+  const raw = extensions?.[BUILDER_CODE];
+  if (typeof raw !== "object" || raw === null || Array.isArray(raw)) return undefined;
 
-  const result: BuilderCodeExtensionData = {};
+  const ext = raw as Record<string, unknown>;
+  const info =
+    typeof ext.info === "object" && ext.info !== null && !Array.isArray(ext.info)
+      ? (ext.info as Record<string, unknown>)
+      : ext;
 
-  if (typeof fields.a === "string" && BUILDER_CODE_PATTERN.test(fields.a)) {
-    result.a = fields.a;
-  }
+  return typeof info.a === "string" && BUILDER_CODE_PATTERN.test(info.a)
+    ? info.a
+    : undefined;
+}
 
-  if (Array.isArray(fields.s)) {
-    const serviceCodes = fields.s.filter(
-      (code): code is string => typeof code === "string" && BUILDER_CODE_PATTERN.test(code),
+function extractClientExtension(
+  extensions?: Record<string, unknown>,
+): Record<string, unknown> | undefined {
+  const raw = extensions?.[BUILDER_CODE];
+  if (typeof raw !== "object" || raw === null || Array.isArray(raw)) return undefined;
+  return raw as Record<string, unknown>;
+}
+
+/** Normalizes `s` from the client payload — accepts a string or first-valid-entry from an array. */
+function resolveServiceCode(raw: unknown): string | undefined {
+  if (typeof raw === "string" && BUILDER_CODE_PATTERN.test(raw)) return raw;
+  if (Array.isArray(raw)) {
+    const first = raw.find(
+      (v): v is string => typeof v === "string" && BUILDER_CODE_PATTERN.test(v),
     );
-    if (serviceCodes.length > 0) {
-      result.s = serviceCodes;
-    }
+    return first;
   }
-
-  return result;
+  return undefined;
 }
 
 /**
@@ -68,11 +72,6 @@ export class BuilderCodeFacilitatorExtension implements FacilitatorExtension {
   readonly key = BUILDER_CODE;
   private readonly config: BuilderCodeFacilitatorConfig;
 
-  /**
-   * Creates a facilitator extension with the given wallet builder code.
-   *
-   * @param config - Facilitator configuration including the builder code
-   */
   constructor(config: BuilderCodeFacilitatorConfig) {
     if (!BUILDER_CODE_PATTERN.test(config.builderCode)) {
       throw new Error(
@@ -86,26 +85,33 @@ export class BuilderCodeFacilitatorExtension implements FacilitatorExtension {
   /**
    * Builds the ERC-8021 Schema 2 calldata suffix for a settlement transaction.
    *
-   * App and service codes come only from paymentRequiredExtensions when present.
-   * The facilitator wallet code is always included.
-   *
-   * @param ctx - Settlement context with payment payload and required extensions
-   * @returns Hex-encoded suffix bytes with at least the facilitator wallet code
+   * - `a` comes from the server declaration; the client echo is validated softly.
+   * - `s` is read from the client's payment payload.
+   * - `w` is always the facilitator's own code.
    */
   buildSettlementCalldataSuffix(ctx: SettlementCalldataContext): Hex {
-    const rawServerExt = ctx.paymentRequiredExtensions?.[BUILDER_CODE];
-    const serverExtIsRecord =
-      typeof rawServerExt === "object" && rawServerExt !== null && !Array.isArray(rawServerExt);
-    const serverFields = serverExtIsRecord
-      ? readBuilderCodeExtensionFields(rawServerExt as Record<string, unknown>)
-      : {};
+    const serverA = extractServerAppCode(ctx.paymentRequiredExtensions);
+    const clientExt = extractClientExtension(ctx.paymentPayload.extensions);
 
-    const suffix: BuilderCodeExtensionData = {
+    let a = serverA;
+    if (clientExt?.a && typeof clientExt.a === "string") {
+      if (serverA && clientExt.a !== serverA) {
+        console.warn(
+          `[builder-code] client "a" mismatch: "${clientExt.a}" vs server "${serverA}". Using server value.`,
+        );
+      } else {
+        a = clientExt.a as string;
+      }
+    }
+
+    const s = resolveServiceCode(clientExt?.s);
+
+    const data: BuilderCodeExtensionData = {
       w: this.config.builderCode,
-      ...(serverFields.a !== undefined && { a: serverFields.a }),
-      ...(serverFields.s !== undefined && { s: serverFields.s }),
+      ...(a && { a }),
+      ...(s && { s }),
     };
 
-    return encodeBuilderCodeSuffix(suffix);
+    return encodeBuilderCodeSuffix(data);
   }
 }
