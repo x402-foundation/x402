@@ -1,0 +1,20 @@
+[package]
+name = "agentpay-substreams"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+substreams          = "0.5"
+substreams-ethereum = "0.9"
+prost               = "0.11"
+prost-types         = "0.11"
+hex-literal         = "0.4"
+ethabi              = "18"
+
+[profile.release]
+lto        = true
+opt-level  = "s"
+codegen-units = 1
