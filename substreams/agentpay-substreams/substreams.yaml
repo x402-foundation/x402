@@ -1,0 +1,79 @@
+specVersion: v0.1.0
+package:
+  name: agentpay_substreams
+  version: v0.1.0
+  url: https://github.com/shawnhvac/x402
+  doc: |
+    AgentPay Substreams — streaming-first settlement confirmation for x402 agent payments.
+    Replaces RPC polling with event-driven confirmation on Base L2.
+    Streams: TransferWithAuthorization (USDC), PaymentSettled, PaymentRefunded, GrantRevoked.
+
+imports:
+  ethereum: https://github.com/streamingfast/sf-ethereum/releases/download/v0.10.4/ethereum-v0.10.4.spkg
+
+protobuf:
+  files:
+    - agentpay/v1/agentpay.proto
+  importPaths:
+    - proto
+
+binaries:
+  default:
+    type: wasm/rust-v1
+    file: target/wasm32-unknown-unknown/release/agentpay_substreams.wasm
+
+network: base-mainnet
+
+modules:
+  # ── HOT PATH: USDC TransferWithAuthorization ─────────────────────────────
+  # Streams every EIP-3009 transferWithAuthorization on Base USDC.
+  # Facilitator subscribes here — replaces eth_getTransactionReceipt polling.
+  - name: map_usdc_transfers
+    kind: map
+    inputs:
+      - source: sf.ethereum.type.v2.Block
+    output:
+      type: proto:agentpay.v1.TransferEvents
+    doc: |
+      Emits TransferWithAuthorization events from Base USDC contract.
+      Hot-path: facilitator subscribes and releases service within the same block.
+
+  # ── SETTLEMENT CONFIRMATION ──────────────────────────────────────────────
+  # Filters USDC transfers that match a pending AgentPay payment_id.
+  # Outputs confirmed settlements with payment metadata.
+  - name: map_confirmed_settlements
+    kind: map
+    inputs:
+      - map: map_usdc_transfers
+    output:
+      type: proto:agentpay.v1.SettlementEvents
+    doc: |
+      Filters raw USDC transfers to only those matching tracked payment_ids.
+      Output drives immediate service release — no polling, no timeout loop.
+
+  # ── REPUTATION STORE ─────────────────────────────────────────────────────
+  # Indexes agent scores from confirmed settlements + refunds.
+  # Feeds the subgraph sink for queryable reputation state.
+  - name: store_agent_reputation
+    kind: store
+    updatePolicy: set
+    valueType: proto:agentpay.v1.AgentReputation
+    inputs:
+      - map: map_confirmed_settlements
+    doc: |
+      Maintains running reputation state per agent wallet.
+      Score = 0.6×successRate + 0.25×diversityScore + 0.15×recencyScore.
+
+  # ── ANALYTICS SINK ───────────────────────────────────────────────────────
+  # Aggregates volume, revenue, and activity for Clickhouse sink.
+  - name: map_analytics_events
+    kind: map
+    inputs:
+      - map: map_confirmed_settlements
+      - store: store_agent_reputation
+    output:
+      type: proto:agentpay.v1.AnalyticsEvents
+    doc: |
+      Prepares analytics rows for Clickhouse sink.
+      Fields: agent, amount_usdc, city, counterparty, block_number, timestamp.
+      Compatible with streamingfast/substreams-sink-clickhouse.
