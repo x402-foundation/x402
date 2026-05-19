@@ -76,13 +76,13 @@ export async function verifyDeposit(
   const methodErr =
     transferMethod === "permit2"
       ? await verifyPermit2DepositAuthorization(
-        signer,
-        payment,
-        payload,
-        requirements,
-        chainId,
-        context,
-      )
+          signer,
+          payment,
+          payload,
+          requirements,
+          chainId,
+          context,
+        )
       : await verifyEip3009DepositAuthorization(signer, payload, requirements, chainId);
 
   if (methodErr) {
@@ -151,15 +151,15 @@ async function verifySharedDepositState(
   requirements: PaymentRequirements,
 ): Promise<
   | {
-    ok: true;
-    chainId: number;
-    depositAmount: bigint;
-    payer: `0x${string}`;
-    chBalance: bigint;
-    chTotalClaimed: bigint;
-    wdInitiatedAt: bigint;
-    refundNonceVal: bigint;
-  }
+      ok: true;
+      chainId: number;
+      depositAmount: bigint;
+      payer: `0x${string}`;
+      chBalance: bigint;
+      chTotalClaimed: bigint;
+      wdInitiatedAt: bigint;
+      refundNonceVal: bigint;
+    }
   | { ok: false; response: VerifyResponse }
 > {
   const { deposit, voucher } = payload;
@@ -333,22 +333,22 @@ export async function settleDeposit(
     const tx =
       execution.kind === "erc20Approval"
         ? (
-          await execution.extensionSigner.sendTransactions([
-            execution.signedTransaction,
-            depositTx,
-          ])
-        )[1]
+            await execution.extensionSigner.sendTransactions([
+              execution.signedTransaction,
+              depositTx,
+            ])
+          )[1]
         : await signer.writeContract({
-          address: getAddress(BATCH_SETTLEMENT_ADDRESS),
-          abi: batchSettlementABI,
-          functionName: "deposit",
-          args: [
-            toContractChannelConfig(config),
-            BigInt(deposit.amount),
-            execution.collector,
-            execution.collectorData,
-          ],
-        });
+            address: getAddress(BATCH_SETTLEMENT_ADDRESS),
+            abi: batchSettlementABI,
+            functionName: "deposit",
+            args: [
+              toContractChannelConfig(config),
+              BigInt(deposit.amount),
+              execution.collector,
+              execution.collectorData,
+            ],
+          });
 
     const receipt = await signer.waitForTransactionReceipt({ hash: tx });
 
@@ -394,15 +394,15 @@ export async function settleDeposit(
       amount: deposit.amount,
       extra: rpcCaughtUp
         ? {
-          ...optimisticExtra,
-          channelState: {
-            channelId: voucher.channelId,
-            balance: postState.balance.toString(),
-            totalClaimed: postState.totalClaimed.toString(),
-            withdrawRequestedAt: postState.withdrawRequestedAt,
-            refundNonce: postState.refundNonce.toString(),
-          },
-        }
+            ...optimisticExtra,
+            channelState: {
+              channelId: voucher.channelId,
+              balance: postState.balance.toString(),
+              totalClaimed: postState.totalClaimed.toString(),
+              withdrawRequestedAt: postState.withdrawRequestedAt,
+              refundNonce: postState.refundNonce.toString(),
+            },
+          }
         : optimisticExtra,
     };
   } catch (e) {
@@ -419,21 +419,21 @@ export async function settleDeposit(
 
 type DepositExecution =
   | {
-    kind: "direct";
-    collector: `0x${string}`;
-    collectorData: `0x${string}`;
-    skipDirectSimulation?: false;
-  }
+      kind: "direct";
+      collector: `0x${string}`;
+      collectorData: `0x${string}`;
+      skipDirectSimulation?: false;
+    }
   | {
-    kind: "erc20Approval";
-    collector: `0x${string}`;
-    collectorData: `0x${string}`;
-    signedTransaction: `0x${string}`;
-    extensionSigner: {
-      sendTransactions(transactions: TransactionRequest[]): Promise<`0x${string}`[]>;
+      kind: "erc20Approval";
+      collector: `0x${string}`;
+      collectorData: `0x${string}`;
+      signedTransaction: `0x${string}`;
+      extensionSigner: {
+        sendTransactions(transactions: TransactionRequest[]): Promise<`0x${string}`[]>;
+      };
+      skipDirectSimulation: true;
     };
-    skipDirectSimulation: true;
-  };
 
 /**
  * Resolves the collector address and collector data for a deposit payload.

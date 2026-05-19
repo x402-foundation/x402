@@ -222,6 +222,49 @@ describe("HTTPFacilitatorClient", () => {
       );
     });
 
+    it("includes paymentRequiredExtensions in verify request body when provided", async () => {
+      const mockFetch = vi
+        .fn()
+        .mockResolvedValue(new Response(JSON.stringify({ isValid: true }), { status: 200 }));
+      vi.stubGlobal("fetch", mockFetch);
+
+      const paymentRequiredExtensions = {
+        "builder-code": { info: { a: "bc_myapp" }, schema: {} },
+      };
+
+      const client = new HTTPFacilitatorClient({ url: "https://facilitator.test" });
+      await client.verify(paymentPayload, paymentRequirements, paymentRequiredExtensions);
+
+      const [, init] = mockFetch.mock.calls[0] as [string, RequestInit];
+      const body = JSON.parse(init.body as string);
+      expect(body.paymentRequiredExtensions).toEqual(paymentRequiredExtensions);
+    });
+
+    it("includes paymentRequiredExtensions in settle request body when provided", async () => {
+      const mockFetch = vi.fn().mockResolvedValue(
+        new Response(
+          JSON.stringify({
+            success: true,
+            transaction: "0xabc",
+            network: "eip155:8453",
+          }),
+          { status: 200 },
+        ),
+      );
+      vi.stubGlobal("fetch", mockFetch);
+
+      const paymentRequiredExtensions = {
+        "builder-code": { info: { a: "bc_myapp" }, schema: {} },
+      };
+
+      const client = new HTTPFacilitatorClient({ url: "https://facilitator.test" });
+      await client.settle(paymentPayload, paymentRequirements, paymentRequiredExtensions);
+
+      const [, init] = mockFetch.mock.calls[0] as [string, RequestInit];
+      const body = JSON.parse(init.body as string);
+      expect(body.paymentRequiredExtensions).toEqual(paymentRequiredExtensions);
+    });
+
     it("passes redirect: follow to fetch on settle", async () => {
       const mockFetch = vi.fn().mockResolvedValue(
         new Response(

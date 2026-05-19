@@ -380,6 +380,8 @@ describe("paymentMiddleware", () => {
         }),
         responseBody: expect.any(Buffer),
       }),
+      undefined,
+      undefined,
     );
     expect(responseHeaders.get("PAYMENT-RESPONSE")).toBe("settled");
   });

@@ -48,21 +48,18 @@ export type {
   SettlementCalldataContext,
 } from "./types";
 
-export {
-  BUILDER_CODE,
-  BUILDER_CODE_PATTERN,
-  ERC_8021_MARKER,
-  SCHEMA_2_ID,
-} from "./types";
+export { BUILDER_CODE, BUILDER_CODE_PATTERN, ERC_8021_MARKER, SCHEMA_2_ID } from "./types";
 
 // CBOR encoding
 export { encodeBuilderCodeSuffix } from "./cbor";
 
 // Resource Server
 export {
+  BUILDER_CODE_SCHEMA,
+  type BuilderCodeRequiredExtension,
   declareBuilderCodeExtension,
   builderCodeResourceServerExtension,
-} from "./resourceServer";
+} from "./server";
 
 // Facilitator
 export { BuilderCodeFacilitatorExtension } from "./facilitator";

@@ -45,7 +45,7 @@ export class BatchSettlementEvmScheme implements SchemeNetworkFacilitator {
   constructor(
     private readonly signer: FacilitatorEvmSigner,
     private readonly authorizerSigner: AuthorizerSigner,
-  ) { }
+  ) {}
 
   /**
    * Returns facilitator-specific extra fields to be merged into payment requirements.
@@ -76,12 +76,14 @@ export class BatchSettlementEvmScheme implements SchemeNetworkFacilitator {
    * @param payload - The x402 payment payload envelope.
    * @param requirements - Server payment requirements (scheme, network, asset, amount).
    * @param context - Optional facilitator extension context.
+   * @param _ - Payment required extensions (unused; reserved for interface parity)
    * @returns A {@link VerifyResponse} indicating validity with payer and channel state in `extra`.
    */
   async verify(
     payload: PaymentPayload,
     requirements: PaymentRequirements,
     context?: FacilitatorContext,
+    _?: Record<string, unknown>,
   ): Promise<VerifyResponse> {
     const rawPayload = payload.payload;
 
@@ -123,12 +125,14 @@ export class BatchSettlementEvmScheme implements SchemeNetworkFacilitator {
    * @param payload - The x402 payment payload envelope.
    * @param requirements - Server payment requirements.
    * @param context - Optional facilitator extension context.
+   * @param _ - Payment required extensions (unused; reserved for interface parity)
    * @returns A {@link SettleResponse} with the transaction hash on success.
    */
   async settle(
     payload: PaymentPayload,
     requirements: PaymentRequirements,
     context?: FacilitatorContext,
+    _?: Record<string, unknown>,
   ): Promise<SettleResponse> {
     const rawPayload = payload.payload;
 

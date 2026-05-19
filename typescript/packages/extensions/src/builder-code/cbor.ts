@@ -22,6 +22,9 @@ import { ERC_8021_MARKER, SCHEMA_2_ID, type BuilderCodeExtensionData } from "./t
  * - "s" key (major type 3, length 1) → array of strings (related services)
  *
  * Uses hand-rolled CBOR to avoid adding a dependency.
+ *
+ * @param data - Builder code extension fields to encode
+ * @returns CBOR-encoded map bytes
  */
 function encodeCborMap(data: BuilderCodeExtensionData): Uint8Array {
   const entries: Uint8Array[] = [];
@@ -65,6 +68,9 @@ function encodeCborMap(data: BuilderCodeExtensionData): Uint8Array {
 
 /**
  * Encodes a CBOR text string (major type 3).
+ *
+ * @param value - UTF-8 text to encode
+ * @returns CBOR-encoded text string bytes
  */
 function encodeCborString(value: string): Uint8Array {
   const encoded = new TextEncoder().encode(value);
@@ -77,6 +83,9 @@ function encodeCborString(value: string): Uint8Array {
 
 /**
  * Encodes a CBOR array of strings (major type 4).
+ *
+ * @param values - UTF-8 strings to encode as array elements
+ * @returns CBOR-encoded array bytes
  */
 function encodeCborArray(values: string[]): Uint8Array {
   const header = encodeCborMajorType(4, values.length); // major type 4 = array
@@ -104,6 +113,10 @@ function encodeCborArray(values: string[]): Uint8Array {
  * - 0-23: single byte (major type << 5 | value)
  * - 24-255: two bytes (major type << 5 | 24, value)
  * - 256-65535: three bytes (major type << 5 | 25, value high, value low)
+ *
+ * @param majorType - CBOR major type (0–7)
+ * @param value - Argument length or inline value for the header
+ * @returns CBOR header bytes
  */
 function encodeCborMajorType(majorType: number, value: number): Uint8Array {
   const mt = majorType << 5;
@@ -161,6 +174,12 @@ export function encodeBuilderCodeSuffix(data: BuilderCodeExtensionData): Hex {
   return `0x${bytesToHex(suffixBytes)}`;
 }
 
+/**
+ * Converts a hex string (without 0x prefix) to bytes.
+ *
+ * @param hex - Hex-encoded string (two characters per byte)
+ * @returns Decoded byte array
+ */
 function hexToBytes(hex: string): Uint8Array {
   const bytes = new Uint8Array(hex.length / 2);
   for (let i = 0; i < hex.length; i += 2) {
@@ -169,8 +188,14 @@ function hexToBytes(hex: string): Uint8Array {
   return bytes;
 }
 
+/**
+ * Converts bytes to a lowercase hex string (without 0x prefix).
+ *
+ * @param bytes - Raw bytes to encode
+ * @returns Lowercase hex string
+ */
 function bytesToHex(bytes: Uint8Array): string {
   return Array.from(bytes)
-    .map((b) => b.toString(16).padStart(2, "0"))
+    .map(b => b.toString(16).padStart(2, "0"))
     .join("");
 }

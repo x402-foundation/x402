@@ -285,6 +285,8 @@ describe("paymentProxy", () => {
         }),
         responseBody: expect.any(Buffer),
       }),
+      undefined,
+      undefined,
     );
   });
 

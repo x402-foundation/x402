@@ -37,6 +37,7 @@ export interface FacilitatorClient {
   verify(
     paymentPayload: PaymentPayload,
     paymentRequirements: PaymentRequirements,
+    paymentRequiredExtensions?: Record<string, unknown>,
   ): Promise<VerifyResponse>;
 
   /**
@@ -44,11 +45,13 @@ export interface FacilitatorClient {
    *
    * @param paymentPayload - The payment to settle
    * @param paymentRequirements - The requirements for settlement
+   * @param paymentRequiredExtensions - Server-declared extensions from PaymentRequired
    * @returns Settlement response
    */
   settle(
     paymentPayload: PaymentPayload,
     paymentRequirements: PaymentRequirements,
+    paymentRequiredExtensions?: Record<string, unknown>,
   ): Promise<SettleResponse>;
 
   /**
@@ -286,11 +289,13 @@ export class HTTPFacilitatorClient implements FacilitatorClient {
    *
    * @param paymentPayload - The payment to verify
    * @param paymentRequirements - The requirements to verify against
+   * @param paymentRequiredExtensions - Server-declared extensions from PaymentRequired
    * @returns Verification response
    */
   async verify(
     paymentPayload: PaymentPayload,
     paymentRequirements: PaymentRequirements,
+    paymentRequiredExtensions?: Record<string, unknown>,
   ): Promise<VerifyResponse> {
     let headers: Record<string, string> = {
       "Content-Type": "application/json",
@@ -309,6 +314,9 @@ export class HTTPFacilitatorClient implements FacilitatorClient {
         x402Version: paymentPayload.x402Version,
         paymentPayload: this.toJsonSafe(paymentPayload),
         paymentRequirements: this.toJsonSafe(paymentRequirements),
+        ...(paymentRequiredExtensions !== undefined
+          ? { paymentRequiredExtensions: this.toJsonSafe(paymentRequiredExtensions) }
+          : {}),
       }),
     });
 
@@ -340,11 +348,13 @@ export class HTTPFacilitatorClient implements FacilitatorClient {
    *
    * @param paymentPayload - The payment to settle
    * @param paymentRequirements - The requirements for settlement
+   * @param paymentRequiredExtensions - Server-declared extensions from PaymentRequired
    * @returns Settlement response
    */
   async settle(
     paymentPayload: PaymentPayload,
     paymentRequirements: PaymentRequirements,
+    paymentRequiredExtensions?: Record<string, unknown>,
   ): Promise<SettleResponse> {
     let headers: Record<string, string> = {
       "Content-Type": "application/json",
@@ -363,6 +373,9 @@ export class HTTPFacilitatorClient implements FacilitatorClient {
         x402Version: paymentPayload.x402Version,
         paymentPayload: this.toJsonSafe(paymentPayload),
         paymentRequirements: this.toJsonSafe(paymentRequirements),
+        ...(paymentRequiredExtensions !== undefined
+          ? { paymentRequiredExtensions: this.toJsonSafe(paymentRequiredExtensions) }
+          : {}),
       }),
     });
 

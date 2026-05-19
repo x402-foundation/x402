@@ -83,12 +83,14 @@ export class ExactEvmScheme implements SchemeNetworkFacilitator {
    * @param payload - The payment payload to verify
    * @param requirements - The payment requirements
    * @param context - Optional facilitator context for extension capabilities
+   * @param _ - Payment required extensions (unused; reserved for interface parity)
    * @returns Promise resolving to verification response
    */
   async verify(
     payload: PaymentPayload,
     requirements: PaymentRequirements,
     context?: FacilitatorContext,
+    _?: Record<string, unknown>,
   ): Promise<VerifyResponse> {
     const rawPayload = payload.payload as ExactEvmPayloadV2;
     const isPermit2 = isPermit2Payload(rawPayload);
@@ -107,23 +109,39 @@ export class ExactEvmScheme implements SchemeNetworkFacilitator {
    * @param payload - The payment payload to settle
    * @param requirements - The payment requirements
    * @param context - Optional facilitator context for extension capabilities
+   * @param paymentRequiredExtensions - Server-declared extensions from PaymentRequired
    * @returns Promise resolving to settlement response
    */
   async settle(
     payload: PaymentPayload,
     requirements: PaymentRequirements,
     context?: FacilitatorContext,
+    paymentRequiredExtensions?: Record<string, unknown>,
   ): Promise<SettleResponse> {
     const rawPayload = payload.payload as ExactEvmPayloadV2;
     const isPermit2 = isPermit2Payload(rawPayload);
 
     if (isPermit2) {
-      return settlePermit2(this.signer, payload, requirements, rawPayload, context, {
-        simulateInSettle: this.config.simulateInSettle,
-      });
+      return settlePermit2(
+        this.signer,
+        payload,
+        requirements,
+        rawPayload,
+        context,
+        { simulateInSettle: this.config.simulateInSettle },
+        paymentRequiredExtensions,
+      );
     }
 
     const eip3009Payload: ExactEIP3009Payload = rawPayload;
-    return settleEIP3009(this.signer, payload, requirements, eip3009Payload, this.config, context);
+    return settleEIP3009(
+      this.signer,
+      payload,
+      requirements,
+      eip3009Payload,
+      this.config,
+      context,
+      paymentRequiredExtensions,
+    );
   }
 }

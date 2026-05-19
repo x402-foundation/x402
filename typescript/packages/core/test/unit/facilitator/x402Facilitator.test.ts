@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { x402Facilitator } from "../../../src/facilitator/x402Facilitator";
-import { SchemeNetworkFacilitator } from "../../../src/types/mechanisms";
+import { FacilitatorContext, SchemeNetworkFacilitator } from "../../../src/types/mechanisms";
 import { PaymentPayload, PaymentRequirements } from "../../../src/types/payments";
 import { VerifyResponse, SettleResponse } from "../../../src/types/facilitator";
 import { Network } from "../../../src/types";
@@ -45,6 +45,8 @@ class TestFacilitator implements SchemeNetworkFacilitator {
   async verify(
     payload: PaymentPayload,
     requirements: PaymentRequirements,
+    _context?: FacilitatorContext,
+    _paymentRequiredExtensions?: Record<string, unknown>,
   ): Promise<VerifyResponse> {
     this.verifyCalls.push({ payload, requirements });
     if (this.verifyResponse instanceof Error) {
@@ -61,6 +63,8 @@ class TestFacilitator implements SchemeNetworkFacilitator {
   async settle(
     payload: PaymentPayload,
     requirements: PaymentRequirements,
+    _context?: FacilitatorContext,
+    _paymentRequiredExtensions?: Record<string, unknown>,
   ): Promise<SettleResponse> {
     this.settleCalls.push({ payload, requirements });
     if (this.settleResponse instanceof Error) {

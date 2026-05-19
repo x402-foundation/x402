@@ -72,4 +72,5 @@ export interface BuilderCodeFacilitatorConfig {
 export interface SettlementCalldataContext {
   paymentPayload: PaymentPayload;
   paymentRequirements: PaymentRequirements;
+  paymentRequiredExtensions: Record<string, unknown>;
 }

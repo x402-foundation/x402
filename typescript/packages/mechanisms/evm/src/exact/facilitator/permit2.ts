@@ -329,6 +329,7 @@ export async function verifyPermit2(
  * @param permit2Payload - The Permit2 specific payload
  * @param context - Optional facilitator context for extension-provided capabilities
  * @param config - Optional facilitator config (simulateInSettle)
+ * @param paymentRequiredExtensions - Server-declared extensions from PaymentRequired
  * @returns Promise resolving to settlement response
  */
 export async function settlePermit2(
@@ -338,6 +339,7 @@ export async function settlePermit2(
   permit2Payload: ExactPermit2Payload,
   context?: FacilitatorContext,
   config?: Permit2FacilitatorConfig,
+  paymentRequiredExtensions?: Record<string, unknown>,
 ): Promise<SettleResponse> {
   const payer = permit2Payload.permit2Authorization.from;
 
@@ -357,6 +359,7 @@ export async function settlePermit2(
   const calldataSuffix = await resolveSettlementCalldataSuffix(context, {
     paymentPayload: payload,
     paymentRequirements: requirements,
+    paymentRequiredExtensions,
   });
 
   // Branch: EIP-2612 gas sponsoring (atomic settleWithPermit via contract)
@@ -411,6 +414,7 @@ export async function settlePermit2(
  * @param payload - The payment payload for network info
  * @param permit2Payload - The Permit2 payload with authorization and signature
  * @param eip2612Info - The EIP-2612 gas sponsoring info from the payload extension
+ * @param calldataSuffix - Optional hex suffix appended to the settlement transaction
  * @returns Promise resolving to a settlement response
  */
 async function settlePermit2WithEIP2612(
@@ -457,6 +461,7 @@ async function settlePermit2WithEIP2612(
  * @param permit2Payload - The Permit2 payload with authorization and signature
  * @param erc20Info - Object containing the signed approval transaction
  * @param erc20Info.signedTransaction - The RLP-encoded signed ERC-20 approve transaction
+ * @param calldataSuffix - Optional hex suffix appended to the settlement transaction
  * @returns Promise resolving to a settlement response
  */
 async function settlePermit2WithERC20Approval(
@@ -498,6 +503,7 @@ async function settlePermit2WithERC20Approval(
  * @param signer - The facilitator signer for contract writes
  * @param payload - The payment payload for network info
  * @param permit2Payload - The Permit2 payload with authorization and signature
+ * @param calldataSuffix - Optional hex suffix appended to the settlement transaction
  * @returns Promise resolving to a settlement response
  */
 async function settlePermit2Direct(

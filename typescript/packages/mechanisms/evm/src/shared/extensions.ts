@@ -164,6 +164,7 @@ export const BUILDER_CODE_KEY = "builder-code" as const;
 export interface SettlementCalldataContext {
   paymentPayload: PaymentPayload;
   paymentRequirements: PaymentRequirements;
+  paymentRequiredExtensions?: Record<string, unknown>;
 }
 
 export interface BuilderCodeFacilitatorExtension extends FacilitatorExtension {
@@ -193,6 +194,13 @@ const BUILDER_CODE_RESOLVER: CalldataContributorResolver = async (context, ctx) 
 
 const CALDATA_RESOLVERS: CalldataContributorResolver[] = [BUILDER_CODE_RESOLVER];
 
+/**
+ * Resolves and concatenates settlement calldata suffixes from registered extensions.
+ *
+ * @param context - Facilitator context with registered extensions
+ * @param ctx - Settlement calldata context passed to extension resolvers
+ * @returns Hex-encoded suffix to append to settlement calldata, or undefined if none
+ */
 export async function resolveSettlementCalldataSuffix(
   context: FacilitatorContext | undefined,
   ctx: SettlementCalldataContext,
@@ -226,6 +234,13 @@ export async function resolveSettlementCalldataSuffix(
   });
 }
 
+/**
+ * Appends a hex suffix to encoded contract calldata.
+ *
+ * @param calldata - Base encoded function calldata
+ * @param suffix - Optional hex suffix (with or without 0x prefix)
+ * @returns Calldata with suffix appended, or the original calldata when suffix is empty
+ */
 export function appendCalldataSuffix(calldata: Hex, suffix?: Hex): Hex {
   if (!suffix || suffix === "0x" || suffix.length <= 2) {
     return calldata;

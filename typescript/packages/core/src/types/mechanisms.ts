@@ -145,11 +145,13 @@ export interface SchemeNetworkFacilitator {
     payload: PaymentPayload,
     requirements: PaymentRequirements,
     context?: FacilitatorContext,
+    paymentRequiredExtensions?: Record<string, unknown>,
   ): Promise<VerifyResponse>;
   settle(
     payload: PaymentPayload,
     requirements: PaymentRequirements,
     context?: FacilitatorContext,
+    paymentRequiredExtensions?: Record<string, unknown>,
   ): Promise<SettleResponse>;
 }
 

@@ -6,7 +6,7 @@ import {
   VerifyResponse,
   SettleResponse,
 } from "../../../src/types";
-import { SchemeNetworkFacilitator } from "../../../src/types/mechanisms";
+import { FacilitatorContext, SchemeNetworkFacilitator } from "../../../src/types/mechanisms";
 
 // Mock scheme facilitator
 class MockSchemeFacilitator implements SchemeNetworkFacilitator {
@@ -30,6 +30,8 @@ class MockSchemeFacilitator implements SchemeNetworkFacilitator {
   async verify(
     payload: PaymentPayload,
     requirements: PaymentRequirements,
+    _context?: FacilitatorContext,
+    _paymentRequiredExtensions?: Record<string, unknown>,
   ): Promise<VerifyResponse> {
     if (this.verifyFn) {
       return this.verifyFn(payload, requirements);
@@ -40,6 +42,8 @@ class MockSchemeFacilitator implements SchemeNetworkFacilitator {
   async settle(
     payload: PaymentPayload,
     requirements: PaymentRequirements,
+    _context?: FacilitatorContext,
+    _paymentRequiredExtensions?: Record<string, unknown>,
   ): Promise<SettleResponse> {
     if (this.settleFn) {
       return this.settleFn(payload, requirements);

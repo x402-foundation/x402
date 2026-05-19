@@ -18,8 +18,16 @@ export class MockFacilitatorClient implements FacilitatorClient {
   private settleResponseOrError: SettleResponse | Error;
 
   // Call tracking
-  public verifyCalls: Array<{ payload: PaymentPayload; requirements: PaymentRequirements }> = [];
-  public settleCalls: Array<{ payload: PaymentPayload; requirements: PaymentRequirements }> = [];
+  public verifyCalls: Array<{
+    payload: PaymentPayload;
+    requirements: PaymentRequirements;
+    paymentRequiredExtensions?: Record<string, unknown>;
+  }> = [];
+  public settleCalls: Array<{
+    payload: PaymentPayload;
+    requirements: PaymentRequirements;
+    paymentRequiredExtensions?: Record<string, unknown>;
+  }> = [];
   public getSupportedCalls: number = 0;
 
   /**
@@ -53,15 +61,21 @@ export class MockFacilitatorClient implements FacilitatorClient {
   /**
    *
    */
-  async verify(payload: PaymentPayload, requirements: PaymentRequirements): Promise<VerifyResponse>;
+  async verify(
+    payload: PaymentPayload,
+    requirements: PaymentRequirements,
+    paymentRequiredExtensions?: Record<string, unknown>,
+  ): Promise<VerifyResponse>;
   /**
    *
    * @param payloadOrRequest
    * @param requirements
+   * @param paymentRequiredExtensions
    */
   async verify(
     payloadOrRequest: PaymentPayload | VerifyRequest,
     requirements?: PaymentRequirements,
+    paymentRequiredExtensions?: Record<string, unknown>,
   ): Promise<VerifyResponse> {
     const payload =
       "paymentPayload" in payloadOrRequest ? payloadOrRequest.paymentPayload : payloadOrRequest;
@@ -70,8 +84,17 @@ export class MockFacilitatorClient implements FacilitatorClient {
       ("paymentRequirements" in payloadOrRequest
         ? payloadOrRequest.paymentRequirements
         : undefined)!;
+    const extensions =
+      paymentRequiredExtensions ??
+      ("paymentRequiredExtensions" in payloadOrRequest
+        ? payloadOrRequest.paymentRequiredExtensions
+        : undefined);
 
-    this.verifyCalls.push({ payload, requirements: reqs });
+    this.verifyCalls.push({
+      payload,
+      requirements: reqs,
+      paymentRequiredExtensions: extensions,
+    });
 
     if (this.verifyResponseOrError instanceof Error) {
       throw this.verifyResponseOrError;
@@ -86,15 +109,21 @@ export class MockFacilitatorClient implements FacilitatorClient {
   /**
    *
    */
-  async settle(payload: PaymentPayload, requirements: PaymentRequirements): Promise<SettleResponse>;
+  async settle(
+    payload: PaymentPayload,
+    requirements: PaymentRequirements,
+    paymentRequiredExtensions?: Record<string, unknown>,
+  ): Promise<SettleResponse>;
   /**
    *
    * @param payloadOrRequest
    * @param requirements
+   * @param paymentRequiredExtensions
    */
   async settle(
     payloadOrRequest: PaymentPayload | SettleRequest,
     requirements?: PaymentRequirements,
+    paymentRequiredExtensions?: Record<string, unknown>,
   ): Promise<SettleResponse> {
     const payload =
       "paymentPayload" in payloadOrRequest ? payloadOrRequest.paymentPayload : payloadOrRequest;
@@ -103,8 +132,17 @@ export class MockFacilitatorClient implements FacilitatorClient {
       ("paymentRequirements" in payloadOrRequest
         ? payloadOrRequest.paymentRequirements
         : undefined)!;
+    const extensions =
+      paymentRequiredExtensions ??
+      ("paymentRequiredExtensions" in payloadOrRequest
+        ? payloadOrRequest.paymentRequiredExtensions
+        : undefined);
 
-    this.settleCalls.push({ payload, requirements: reqs });
+    this.settleCalls.push({
+      payload,
+      requirements: reqs,
+      paymentRequiredExtensions: extensions,
+    });
 
     if (this.settleResponseOrError instanceof Error) {
       throw this.settleResponseOrError;
