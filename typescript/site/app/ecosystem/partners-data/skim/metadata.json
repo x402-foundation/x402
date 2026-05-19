@@ -1,0 +1,1 @@
+{"name":"Skim","category":"Services/Endpoints","logoUrl":"/logos/skim.svg","description":"Clean web reader API for AI agents. POST a URL, get back agent-ready markdown plus structured metadata. $0.002 per call in USDC on Base, settled via x402 — no signup, no API keys. Ships an MCP server (npm: skim-mcp) for Claude/Cursor/Cline.","websiteUrl":"https://skim402.com"}
