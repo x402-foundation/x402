@@ -39,6 +39,11 @@
  *   builderCode: "bc_my_facilitator",
  * }));
  * ```
+ *
+ * Facilitator HTTP handlers must forward `paymentRequiredExtensions` from the
+ * resource server on `/verify` and `/settle`. The client echoes the server
+ * declaration in `paymentPayload.extensions`; the facilitator validates that
+ * echo against the independent server source before encoding on-chain attribution.
  */
 
 // Types
@@ -51,7 +56,7 @@ export type {
 export { BUILDER_CODE, BUILDER_CODE_PATTERN, ERC_8021_MARKER, SCHEMA_2_ID } from "./types";
 
 // CBOR encoding
-export { encodeBuilderCodeSuffix } from "./cbor";
+export { encodeBuilderCodeSuffix, parseBuilderCodeSuffixFromCalldata } from "./cbor";
 
 // Resource Server
 export {

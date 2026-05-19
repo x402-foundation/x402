@@ -1,8 +1,8 @@
 /**
  * Facilitator-side extension for the Builder Code Extension.
  *
- * At settlement time, the facilitator best-effort adds wallet attribution and
- * encodes validated builder-code fields into the ERC-8021 suffix.
+ * At settlement time, the facilitator always encodes its wallet code into the
+ * ERC-8021 suffix and includes server-declared app/service codes when present.
  */
 
 import type { FacilitatorExtension } from "@x402/core/types";
@@ -15,6 +15,41 @@ import {
   type BuilderCodeFacilitatorConfig,
   type SettlementCalldataContext,
 } from "./types";
+
+/**
+ * Extracts normalized builder-code fields from an extension object.
+ *
+ * Accepts either a top-level extension record or one nested under `info`.
+ *
+ * @param extension - Raw extension payload from payment headers
+ * @returns Parsed app code and service codes, omitting invalid entries
+ */
+function readBuilderCodeExtensionFields(
+  extension: Record<string, unknown>,
+): BuilderCodeExtensionData {
+  const rawInfo = extension.info;
+  const fields =
+    typeof rawInfo === "object" && rawInfo !== null && !Array.isArray(rawInfo)
+      ? (rawInfo as Record<string, unknown>)
+      : extension;
+
+  const result: BuilderCodeExtensionData = {};
+
+  if (typeof fields.a === "string" && BUILDER_CODE_PATTERN.test(fields.a)) {
+    result.a = fields.a;
+  }
+
+  if (Array.isArray(fields.s)) {
+    const serviceCodes = fields.s.filter(
+      (code): code is string => typeof code === "string" && BUILDER_CODE_PATTERN.test(code),
+    );
+    if (serviceCodes.length > 0) {
+      result.s = serviceCodes;
+    }
+  }
+
+  return result;
+}
 
 /**
  * Facilitator extension that manages builder code attribution at settlement time.
@@ -50,55 +85,25 @@ export class BuilderCodeFacilitatorExtension implements FacilitatorExtension {
 
   /**
    * Builds the ERC-8021 Schema 2 calldata suffix for a settlement transaction.
-   * Best-effort: includes validated fields only; never fails settlement.
+   *
+   * App and service codes come only from paymentRequiredExtensions when present.
+   * The facilitator wallet code is always included.
    *
    * @param ctx - Settlement context with payment payload and required extensions
-   * @returns Hex-encoded suffix bytes, or undefined when no suffix should be appended
+   * @returns Hex-encoded suffix bytes with at least the facilitator wallet code
    */
-  buildSettlementCalldataSuffix(ctx: SettlementCalldataContext): Hex | undefined {
-    const rawClientExt = ctx.paymentPayload.extensions?.[BUILDER_CODE];
-    const clientExtIsRecord =
-      typeof rawClientExt === "object" && rawClientExt !== null && !Array.isArray(rawClientExt);
-    if (!clientExtIsRecord) {
-      return undefined;
-    }
-    const clientExt = rawClientExt as Record<string, unknown>;
-
+  buildSettlementCalldataSuffix(ctx: SettlementCalldataContext): Hex {
     const rawServerExt = ctx.paymentRequiredExtensions?.[BUILDER_CODE];
     const serverExtIsRecord =
       typeof rawServerExt === "object" && rawServerExt !== null && !Array.isArray(rawServerExt);
-    const serverExt = serverExtIsRecord ? (rawServerExt as Record<string, unknown>) : undefined;
-
-    const rawInfo = serverExt?.info;
-    const infoIsRecord = typeof rawInfo === "object" && rawInfo !== null && !Array.isArray(rawInfo);
-    const info = infoIsRecord ? (rawInfo as Record<string, unknown>) : undefined;
-
-    const serverCandidate = typeof info?.a === "string" ? info.a : undefined;
-    const serverAppCode =
-      serverCandidate && BUILDER_CODE_PATTERN.test(serverCandidate) ? serverCandidate : undefined;
-
-    const rawClientAppCode = clientExt.a;
-    const clientAppCode =
-      typeof rawClientAppCode === "string" && BUILDER_CODE_PATTERN.test(rawClientAppCode)
-        ? rawClientAppCode
-        : undefined;
-
-    const clientMatchesServer =
-      clientAppCode !== undefined &&
-      (serverAppCode === undefined || clientAppCode === serverAppCode);
-    const appCode = clientMatchesServer ? clientAppCode : serverAppCode;
-
-    const validServiceCodes = Array.isArray(clientExt.s)
-      ? clientExt.s.filter(
-          (code): code is string => typeof code === "string" && BUILDER_CODE_PATTERN.test(code),
-        )
-      : [];
-    const serviceCodes = validServiceCodes.length > 0 ? validServiceCodes : undefined;
+    const serverFields = serverExtIsRecord
+      ? readBuilderCodeExtensionFields(rawServerExt as Record<string, unknown>)
+      : {};
 
     const suffix: BuilderCodeExtensionData = {
       w: this.config.builderCode,
-      ...(appCode !== undefined && { a: appCode }),
-      ...(serviceCodes !== undefined && { s: serviceCodes }),
+      ...(serverFields.a !== undefined && { a: serverFields.a }),
+      ...(serverFields.s !== undefined && { s: serverFields.s }),
     };
 
     return encodeBuilderCodeSuffix(suffix);

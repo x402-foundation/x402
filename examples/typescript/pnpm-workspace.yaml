@@ -11,7 +11,7 @@ packages:
   - "../../typescript/packages/http/*"
   - "../../typescript/packages/mechanisms/*"
 minimumReleaseAge: 4320 # Only install package versions that have been published for at least 3 days.
-minimumReleaseAgeStrict: true
+minimumReleaseAgeStrict: false
 allowBuilds:
   bufferutil: true
   esbuild: true

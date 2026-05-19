@@ -199,3 +199,109 @@ function bytesToHex(bytes: Uint8Array): string {
     .map(b => b.toString(16).padStart(2, "0"))
     .join("");
 }
+
+/**
+ * Parses ERC-8021 Schema 2 builder code attribution from settlement calldata.
+ *
+ * @param calldata - Full transaction input data
+ * @returns Decoded builder code fields, or undefined if no valid suffix is present
+ */
+export function parseBuilderCodeSuffixFromCalldata(
+  calldata: Hex,
+): BuilderCodeExtensionData | undefined {
+  const hex = calldata.startsWith("0x") ? calldata.slice(2) : calldata;
+  const markerPos = hex.lastIndexOf(ERC_8021_MARKER.toLowerCase());
+  if (markerPos < 6) {
+    return undefined;
+  }
+
+  if (parseInt(hex.slice(markerPos - 2, markerPos), 16) !== SCHEMA_2_ID) {
+    return undefined;
+  }
+
+  const cborLength = parseInt(hex.slice(markerPos - 6, markerPos - 2), 16);
+  const suffixStart = markerPos - 6 - cborLength * 2;
+  if (suffixStart < 0 || suffixStart + (cborLength + 19) * 2 !== hex.length) {
+    return undefined;
+  }
+
+  const bytes = hexToBytes(hex.slice(suffixStart, markerPos - 6));
+  let o = 0;
+
+  if (bytes[o] >> 5 !== 5) {
+    return undefined;
+  }
+
+  const mapInfo = bytes[o++] & 0x1f;
+  const mapSize = mapInfo <= 23 ? mapInfo : mapInfo === 24 ? bytes[o++] : undefined;
+  if (mapSize === undefined) {
+    return undefined;
+  }
+
+  const result: BuilderCodeExtensionData = {};
+  for (let entry = 0; entry < mapSize; entry++) {
+    if (bytes[o] >> 5 !== 3) {
+      return undefined;
+    }
+
+    const keyInfo = bytes[o++] & 0x1f;
+    const keyLen = keyInfo <= 23 ? keyInfo : keyInfo === 24 ? bytes[o++] : undefined;
+    if (keyLen === undefined) {
+      return undefined;
+    }
+
+    const key = new TextDecoder().decode(bytes.subarray(o, o + keyLen));
+    o += keyLen;
+
+    if (key === "a" || key === "w") {
+      if (bytes[o] >> 5 !== 3) {
+        return undefined;
+      }
+
+      const valueInfo = bytes[o++] & 0x1f;
+      const valueLen = valueInfo <= 23 ? valueInfo : valueInfo === 24 ? bytes[o++] : undefined;
+      if (valueLen === undefined) {
+        return undefined;
+      }
+
+      result[key] = new TextDecoder().decode(bytes.subarray(o, o + valueLen));
+      o += valueLen;
+      continue;
+    }
+
+    if (key === "s") {
+      if (bytes[o] >> 5 !== 4) {
+        return undefined;
+      }
+
+      const arrayInfo = bytes[o++] & 0x1f;
+      const arraySize = arrayInfo <= 23 ? arrayInfo : arrayInfo === 24 ? bytes[o++] : undefined;
+      if (arraySize === undefined) {
+        return undefined;
+      }
+
+      const serviceCodes: string[] = [];
+      for (let i = 0; i < arraySize; i++) {
+        if (bytes[o] >> 5 !== 3) {
+          return undefined;
+        }
+
+        const itemInfo = bytes[o++] & 0x1f;
+        const itemLen = itemInfo <= 23 ? itemInfo : itemInfo === 24 ? bytes[o++] : undefined;
+        if (itemLen === undefined) {
+          return undefined;
+        }
+
+        serviceCodes.push(new TextDecoder().decode(bytes.subarray(o, o + itemLen)));
+        o += itemLen;
+      }
+
+      result.s = serviceCodes;
+      continue;
+    }
+
+    return undefined;
+  }
+
+  return result;
+}

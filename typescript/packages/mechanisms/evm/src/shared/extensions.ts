@@ -180,10 +180,6 @@ type CalldataContributorResolver = (
 ) => Promise<Hex | undefined>;
 
 const BUILDER_CODE_RESOLVER: CalldataContributorResolver = async (context, ctx) => {
-  if (!ctx.paymentPayload.extensions?.[BUILDER_CODE_KEY]) {
-    return undefined;
-  }
-
   const ext = context.getExtension<BuilderCodeFacilitatorExtension>(BUILDER_CODE_KEY);
   if (!ext?.buildSettlementCalldataSuffix) {
     return undefined;
