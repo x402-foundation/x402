@@ -260,7 +260,7 @@ Client channel state is stored in memory by default. Persistent client storage i
 <Tabs>
   <Tab title="TypeScript">
     ```typescript
-    import { FileClientChannelStorage } from "@x402/evm/batch-settlement/client";
+    import { FileClientChannelStorage } from "@x402/evm/batch-settlement/client/file-storage";
 
     const batchScheme = new BatchSettlementEvmScheme(signer, {
       storage: new FileClientChannelStorage({ directory: "./channels" }),
