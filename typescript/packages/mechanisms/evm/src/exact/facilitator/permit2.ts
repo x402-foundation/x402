@@ -15,7 +15,7 @@ import {
   type Erc20ApprovalGasSponsoringSigner,
 } from "../extensions";
 import { getAddress, encodeFunctionData } from "viem";
-import { appendCalldataSuffix, resolveSettlementCalldataSuffix } from "../../shared/extensions";
+import { appendDataSuffix, resolveDataSuffix } from "../../shared/extensions";
 import {
   PERMIT2_ADDRESS,
   permit2WitnessTypes,
@@ -356,7 +356,7 @@ export async function settlePermit2(
     };
   }
 
-  const calldataSuffix = await resolveSettlementCalldataSuffix(context, {
+  const calldataSuffix = await resolveDataSuffix(context, {
     paymentPayload: payload,
     paymentRequirements: requirements,
     paymentRequiredExtensions,
@@ -475,7 +475,7 @@ async function settlePermit2WithERC20Approval(
   const payer = permit2Payload.permit2Authorization.from;
 
   try {
-    const settleData = appendCalldataSuffix(
+    const settleData = appendDataSuffix(
       encodeFunctionData({
         abi: config.proxyABI,
         functionName: "settle",

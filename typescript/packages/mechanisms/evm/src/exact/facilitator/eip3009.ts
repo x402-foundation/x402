@@ -11,7 +11,7 @@ import { FacilitatorEvmSigner } from "../../signer";
 import { getEvmChainId } from "../../utils";
 import { ExactEIP3009Payload } from "../../types";
 import * as Errors from "./errors";
-import { resolveSettlementCalldataSuffix } from "../../shared/extensions";
+import { resolveDataSuffix } from "../../shared/extensions";
 import {
   diagnoseEip3009SimulationFailure,
   executeTransferWithAuthorization,
@@ -318,7 +318,7 @@ export async function settleEIP3009(
       }
     }
 
-    const calldataSuffix = await resolveSettlementCalldataSuffix(context, {
+    const calldataSuffix = await resolveDataSuffix(context, {
       paymentPayload: payload,
       paymentRequirements: requirements,
       paymentRequiredExtensions,

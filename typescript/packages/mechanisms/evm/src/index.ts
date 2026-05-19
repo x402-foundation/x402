@@ -85,11 +85,11 @@ export type { DefaultAssetInfo, ExactDefaultAssetInfo } from "./shared/defaultAs
 // Extension helpers (client + facilitator)
 export {
   BUILDER_CODE_KEY,
-  resolveSettlementCalldataSuffix,
-  appendCalldataSuffix,
+  resolveDataSuffix,
+  appendDataSuffix,
 } from "./shared/extensions";
 export type {
-  SettlementCalldataContext,
+  DataSuffixContext,
   BuilderCodeFacilitatorExtension,
 } from "./shared/extensions";
 

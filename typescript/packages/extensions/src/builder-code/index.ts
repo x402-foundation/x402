@@ -44,7 +44,7 @@
 export type {
   BuilderCodeExtensionData,
   BuilderCodeFacilitatorConfig,
-  SettlementCalldataContext,
+  DataSuffixContext,
 } from "./types";
 
 export { BUILDER_CODE, BUILDER_CODE_PATTERN, ERC_8021_MARKER, SCHEMA_2_ID } from "./types";

@@ -15,7 +15,7 @@ import {
   BUILDER_CODE_PATTERN,
   type BuilderCodeExtensionData,
   type BuilderCodeFacilitatorConfig,
-  type SettlementCalldataContext,
+  type DataSuffixContext,
 } from "./types";
 
 function extractServerAppCode(
@@ -89,7 +89,7 @@ export class BuilderCodeFacilitatorExtension implements FacilitatorExtension {
    * - `s` is read from the client's payment payload.
    * - `w` is always the facilitator's own code.
    */
-  buildSettlementCalldataSuffix(ctx: SettlementCalldataContext): Hex {
+  buildDataSuffix(ctx: DataSuffixContext): Hex {
     const serverA = extractServerAppCode(ctx.paymentRequiredExtensions);
     const clientExt = extractClientExtension(ctx.paymentPayload.extensions);
 

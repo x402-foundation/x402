@@ -67,7 +67,7 @@ export interface BuilderCodeFacilitatorConfig {
   builderCode: string;
 }
 
-export interface SettlementCalldataContext {
+export interface DataSuffixContext {
   paymentPayload: PaymentPayload;
   paymentRequirements: PaymentRequirements;
   paymentRequiredExtensions?: Record<string, unknown>;
