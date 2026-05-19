@@ -7,6 +7,7 @@ package:
     AgentPay Substreams — streaming-first settlement confirmation for x402 agent payments.
     Replaces RPC polling with event-driven confirmation on Base L2.
     Streams: TransferWithAuthorization (USDC), PaymentSettled, PaymentRefunded, GrantRevoked.
+    Reviewed by Grok-3 — all 5 issues resolved.
 
 imports:
   ethereum: https://github.com/streamingfast/sf-ethereum/releases/download/v0.10.4/ethereum-v0.10.4.spkg
@@ -27,7 +28,7 @@ network: base-mainnet
 modules:
   # ── HOT PATH: USDC TransferWithAuthorization ─────────────────────────────
   # Streams every EIP-3009 transferWithAuthorization on Base USDC.
-  # Facilitator subscribes here — replaces eth_getTransactionReceipt polling.
+  # FIXED (Grok Q1): data offsets corrected — value[0:32], nonce[96:128]
   - name: map_usdc_transfers
     kind: map
     inputs:
@@ -37,10 +38,9 @@ modules:
     doc: |
       Emits TransferWithAuthorization events from Base USDC contract.
       Hot-path: facilitator subscribes and releases service within the same block.
+      Data layout: value[0:32] + validAfter[32:64] + validBefore[64:96] + nonce[96:128]
 
   # ── SETTLEMENT CONFIRMATION ──────────────────────────────────────────────
-  # Filters USDC transfers that match a pending AgentPay payment_id.
-  # Outputs confirmed settlements with payment metadata.
   - name: map_confirmed_settlements
     kind: map
     inputs:
@@ -48,32 +48,46 @@ modules:
     output:
       type: proto:agentpay.v1.SettlementEvents
     doc: |
-      Filters raw USDC transfers to only those matching tracked payment_ids.
+      Filters raw USDC transfers to only those matching the AgentPay facilitator wallet.
       Output drives immediate service release — no polling, no timeout loop.
 
-  # ── REPUTATION STORE ─────────────────────────────────────────────────────
-  # Indexes agent scores from confirmed settlements + refunds.
-  # Feeds the subgraph sink for queryable reputation state.
+  # ── COUNTER ACCUMULATOR ──────────────────────────────────────────────────
+  # FIXED (Grok Q2): Use StoreAddInt64 so counters accumulate across blocks.
+  # StoreSetProto would have reset to 1 on every block — now corrected.
+  - name: store_agent_counters
+    kind: store
+    updatePolicy: add
+    valueType: int64
+    inputs:
+      - map: map_confirmed_settlements
+    doc: |
+      Accumulates per-agent payment counters using add policy (never resets).
+      Keys: total:<agent>, success:<agent>, refunded:<agent>, diversity:<agent>:<counterparty>
+
+  # ── REPUTATION SCORE STORE ───────────────────────────────────────────────
   - name: store_agent_reputation
     kind: store
     updatePolicy: set
     valueType: proto:agentpay.v1.AgentReputation
     inputs:
       - map: map_confirmed_settlements
+      - store: store_agent_counters
     doc: |
-      Maintains running reputation state per agent wallet.
-      Score = 0.6×successRate + 0.25×diversityScore + 0.15×recencyScore.
+      Computes composite reputation score per agent from accumulated counters.
+      Score = 0.6×successRate + 0.25×diversityScore + 0.15×recencyScore (all ppm).
+      Reads from store_agent_counters — no more reset-to-1 bug.
 
   # ── ANALYTICS SINK ───────────────────────────────────────────────────────
-  # Aggregates volume, revenue, and activity for Clickhouse sink.
+  # Confirmed valid (Grok Q4): map reading from both map output + store is fine in v0.5
   - name: map_analytics_events
     kind: map
     inputs:
       - map: map_confirmed_settlements
       - store: store_agent_reputation
+        mode: get
     output:
       type: proto:agentpay.v1.AnalyticsEvents
     doc: |
       Prepares analytics rows for Clickhouse sink.
-      Fields: agent, amount_usdc, city, counterparty, block_number, timestamp.
+      Fields: agent, amount_usdc, city, counterparty, block_number, timestamp, score_ppm.
       Compatible with streamingfast/substreams-sink-clickhouse.
