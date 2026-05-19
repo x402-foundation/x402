@@ -1,0 +1,7 @@
+{
+  "name": "krewe",
+  "description": "Decentralized AI inference network on Base. Each /v1/inference call is fanned out to 3 independent miners; 2-of-3 byte-equal consensus settles the result. Agents pay per call in USDC via x402 EIP-3009 — no API keys, no signup. Open source.",
+  "logoUrl": "/logos/krewe.png",
+  "websiteUrl": "https://www.krewe.world",
+  "category": "Services/Endpoints"
+}
