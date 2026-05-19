@@ -1,0 +1,24 @@
+<svg width="800" height="300" viewBox="0 0 800 300" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <style>@import url('https://fonts.googleapis.com/css2?family=Mulish:ital,wght@1,800&amp;display=swap');</style>
+  </defs>
+  <path d="M 678 195
+           C 612 222, 500 240, 398 240
+           C 332 240, 278 228, 246 195
+           C 222 165, 224 120, 252 96
+           C 276 76, 314 71, 330 88
+           C 306 106, 286 134, 286 160
+           C 286 194, 312 214, 358 220
+           C 428 226, 528 222, 602 213
+           C 642 208, 666 200, 678 195 Z"
+        fill="#236CFF"/>
+  <text x="465" y="148"
+        text-anchor="middle"
+        dominant-baseline="central"
+        font-family="'Mulish', ui-sans-serif, system-ui, sans-serif"
+        font-style="italic"
+        font-weight="800"
+        font-size="120"
+        letter-spacing="-2"
+        fill="#236CFF">SKIM</text>
+</svg>
