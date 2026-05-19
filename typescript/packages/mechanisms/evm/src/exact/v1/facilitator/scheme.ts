@@ -3,9 +3,11 @@ import {
   PaymentPayloadV1,
   PaymentRequirements,
   SchemeNetworkFacilitator,
+  FacilitatorContext,
   SettleResponse,
   VerifyResponse,
 } from "@x402/core/types";
+import { resolveDataSuffix } from "../../../shared/extensions";
 import { PaymentRequirementsV1 } from "@x402/core/types/v1";
 import { getAddress, Hex, isAddressEqual, parseErc6492Signature } from "viem";
 import { authorizationTypes } from "../../../constants";
@@ -110,11 +112,15 @@ export class ExactEvmSchemeV1 implements SchemeNetworkFacilitator {
    *
    * @param payload - The payment payload to settle
    * @param requirements - The payment requirements
+   * @param context - Optional facilitator context for extension capabilities
+   * @param paymentRequiredExtensions - Server-declared extensions from PaymentRequired
    * @returns Promise resolving to settlement response
    */
   async settle(
     payload: PaymentPayload,
     requirements: PaymentRequirements,
+    context?: FacilitatorContext,
+    paymentRequiredExtensions?: Record<string, unknown>,
   ): Promise<SettleResponse> {
     const payloadV1 = payload as unknown as PaymentPayloadV1;
     const exactEvmPayload = payload.payload as ExactEvmPayloadV1;
@@ -176,10 +182,17 @@ export class ExactEvmSchemeV1 implements SchemeNetworkFacilitator {
         }
       }
 
+      const calldataSuffix = await resolveDataSuffix(context, {
+        paymentPayload: payload,
+        paymentRequirements: requirements,
+        paymentRequiredExtensions,
+      });
+
       const tx = await executeTransferWithAuthorization(
         this.signer,
         getAddress(requirements.asset),
         exactEvmPayload,
+        calldataSuffix,
       );
 
       // Wait for transaction confirmation

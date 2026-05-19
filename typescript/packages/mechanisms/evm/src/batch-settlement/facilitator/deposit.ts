@@ -283,6 +283,7 @@ async function verifySharedDepositState(
  * @param payload - The deposit payload (channelConfig, amount, authorization, voucher).
  * @param requirements - Server payment requirements.
  * @param context - Optional facilitator extension context.
+ * @param calldataSuffix - Optional hex suffix appended to the deposit transaction.
  * @returns A {@link SettleResponse} with the transaction hash and updated channel state in `extra`.
  */
 export async function settleDeposit(
@@ -291,6 +292,7 @@ export async function settleDeposit(
   payload: BatchSettlementDepositPayload,
   requirements: PaymentRequirements,
   context?: FacilitatorContext,
+  calldataSuffix?: `0x${string}`,
 ): Promise<SettleResponse> {
   const { deposit, voucher } = payload;
   const config = payload.channelConfig;
@@ -329,7 +331,8 @@ export async function settleDeposit(
       };
     }
 
-    const depositTx = buildDepositTransaction(payload, execution.collectorData);
+    const depositTx = buildDepositTransaction(payload, execution.collectorData, calldataSuffix);
+
     const tx =
       execution.kind === "erc20Approval"
         ? (
@@ -348,6 +351,7 @@ export async function settleDeposit(
               execution.collector,
               execution.collectorData,
             ],
+            ...(calldataSuffix ? { dataSuffix: calldataSuffix } : {}),
           });
 
     const receipt = await signer.waitForTransactionReceipt({ hash: tx });

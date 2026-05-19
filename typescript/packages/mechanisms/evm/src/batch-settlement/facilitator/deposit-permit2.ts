@@ -14,6 +14,7 @@ import {
   type Erc20ApprovalGasSponsoringFacilitatorExtension,
   type Erc20ApprovalGasSponsoringSigner,
 } from "../../exact/extensions";
+import { appendDataSuffix } from "../../shared/extensions";
 import { validateErc20ApprovalForPayment } from "../../shared/erc20approval";
 import { validateEip2612PermitForPayment, splitEip2612Signature } from "../../shared/permit2";
 import { PERMIT2_ADDRESS, erc20AllowanceAbi } from "../../constants";
@@ -231,24 +232,28 @@ export async function resolvePermit2DepositBranch(
  *
  * @param payload - Batch deposit payload.
  * @param collectorData - Encoded Permit2 collector data.
+ * @param calldataSuffix - Optional hex suffix appended to the deposit calldata.
  * @returns Transaction request for the extension signer.
  */
 export function buildDepositTransaction(
   payload: BatchSettlementDepositPayload,
   collectorData: `0x${string}`,
+  calldataSuffix?: `0x${string}`,
 ): { to: `0x${string}`; data: `0x${string}`; gas: bigint } {
+  const data = encodeFunctionData({
+    abi: batchSettlementABI,
+    functionName: "deposit",
+    args: [
+      toContractChannelConfig(payload.channelConfig),
+      BigInt(payload.deposit.amount),
+      getPermit2DepositCollectorAddress(),
+      collectorData,
+    ],
+  });
+
   return {
     to: getAddress(BATCH_SETTLEMENT_ADDRESS),
-    data: encodeFunctionData({
-      abi: batchSettlementABI,
-      functionName: "deposit",
-      args: [
-        toContractChannelConfig(payload.channelConfig),
-        BigInt(payload.deposit.amount),
-        getPermit2DepositCollectorAddress(),
-        collectorData,
-      ],
-    }),
+    data: appendDataSuffix(data, calldataSuffix),
     gas: 300_000n,
   };
 }
