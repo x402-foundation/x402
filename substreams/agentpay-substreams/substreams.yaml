@@ -3,14 +3,9 @@ package:
   name: agentpay_substreams
   version: v0.1.0
   url: https://github.com/shawnhvac/x402
-  doc: |
-    AgentPay Substreams — streaming-first settlement confirmation for x402 agent payments.
-    Replaces RPC polling with event-driven confirmation on Base L2.
-    Streams: TransferWithAuthorization (USDC), PaymentSettled, PaymentRefunded, GrantRevoked.
-    Reviewed by Grok-3 — all 5 issues resolved.
 
 imports:
-  ethereum: https://github.com/streamingfast/sf-ethereum/releases/download/v0.10.4/ethereum-v0.10.4.spkg
+  ethereum: https://github.com/streamingfast/substreams-ethereum/releases/download/v0.11.1/substreams-ethereum-v0.11.1.spkg
 
 protobuf:
   files:
