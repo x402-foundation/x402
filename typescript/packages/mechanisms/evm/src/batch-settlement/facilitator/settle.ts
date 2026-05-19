@@ -7,6 +7,24 @@ import { BATCH_SETTLEMENT_ADDRESS } from "../constants";
 import * as Errors from "../errors";
 
 /**
+ * Explicit gas limit for the `settle` transaction.
+ *
+ * `settle` auto-estimation is unsafe: the on-chain `settle` is bimodal — it
+ * early-returns (~25.5k gas) when `totalClaimed == totalSettled`, and performs
+ * an SSTORE plus an ERC-20 transfer (~57k gas) otherwise. The `eth_estimateGas`
+ * viem runs for `writeContract` is an independent RPC call that can resolve
+ * against a node whose state has not yet caught up to the just-mined `claim`;
+ * it then estimates the early-return path and the transaction is broadcast
+ * under-gassed, reverting out of gas once the claim is visible.
+ *
+ * `settle`'s cost is bounded (one SSTORE + one transfer, no loop — it does not
+ * scale with voucher or channel count), so a fixed limit is correct here. This
+ * value leaves roughly a 2x margin over the observed transfer-path cost.
+ * `deposit-permit2.ts` uses the same explicit-gas pattern.
+ */
+const SETTLE_GAS_LIMIT = 120_000n;
+
+/**
  * Transfers claimed funds from the contract.
  *
  * This should be called after one or more `claim()` transactions have updated the
@@ -79,6 +97,7 @@ export async function executeSettle(
       abi: batchSettlementABI,
       functionName: "settle",
       args: [receiver, token],
+      gas: SETTLE_GAS_LIMIT,
     });
 
     const receipt = await signer.waitForTransactionReceipt({ hash: tx });

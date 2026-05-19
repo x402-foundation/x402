@@ -896,6 +896,36 @@ describe("BatchSettlementEvmScheme (Facilitator) — settle routing", () => {
     );
   });
 
+  it("submits settle with an explicit gas limit (not an auto-estimate)", async () => {
+    // `settle` is bimodal on-chain — a no-op early-return when nothing is
+    // claimed, an ERC-20 transfer otherwise. An auto-estimate that races a
+    // node lagging the just-mined `claim` budgets the no-op path and reverts
+    // out of gas. executeSettle must pass an explicit `gas`.
+    const signer = buildSigner({
+      waitForTransactionReceipt: vi.fn().mockResolvedValue({
+        status: "success",
+        logs: [buildSettledLog({ amount: "4321" })],
+      }),
+    });
+    const scheme = new BatchSettlementEvmScheme(signer, authorizer);
+    const sp: BatchSettlementSettlePayload = {
+      type: "settle",
+      receiver: RECEIVER,
+      token: ASSET,
+    };
+    const result = await scheme.settle(
+      envelopeSettle(sp as unknown as Record<string, unknown>),
+      makeRequirements(),
+    );
+    expect(result.success).toBe(true);
+    const settleCall = (signer.writeContract as ReturnType<typeof vi.fn>).mock.calls.find(
+      ([arg]) => arg?.functionName === "settle",
+    );
+    expect(settleCall).toBeDefined();
+    expect(typeof settleCall?.[0].gas).toBe("bigint");
+    expect(settleCall?.[0].gas).toBeGreaterThan(0n);
+  });
+
   it("returns zero amount for no-op settle receipts without a Settled event", async () => {
     const signer = buildSigner({
       waitForTransactionReceipt: vi.fn().mockResolvedValue({ status: "success", logs: [] }),
