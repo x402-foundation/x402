@@ -18,9 +18,13 @@ import {
   type DataSuffixContext,
 } from "./types";
 
-function extractServerAppCode(
-  extensions?: Record<string, unknown>,
-): string | undefined {
+/**
+ * Reads the server-declared app code (`a`) from payment-required extensions.
+ *
+ * @param extensions - Extensions map from PaymentRequired
+ * @returns Valid app code, or undefined if missing or invalid
+ */
+function extractServerAppCode(extensions?: Record<string, unknown>): string | undefined {
   const raw = extensions?.[BUILDER_CODE];
   if (typeof raw !== "object" || raw === null || Array.isArray(raw)) return undefined;
 
@@ -30,11 +34,15 @@ function extractServerAppCode(
       ? (ext.info as Record<string, unknown>)
       : ext;
 
-  return typeof info.a === "string" && BUILDER_CODE_PATTERN.test(info.a)
-    ? info.a
-    : undefined;
+  return typeof info.a === "string" && BUILDER_CODE_PATTERN.test(info.a) ? info.a : undefined;
 }
 
+/**
+ * Reads the client builder-code extension object from payment-payload extensions.
+ *
+ * @param extensions - Extensions map from PaymentPayload
+ * @returns Raw builder-code extension object, or undefined if absent
+ */
 function extractClientExtension(
   extensions?: Record<string, unknown>,
 ): Record<string, unknown> | undefined {
@@ -43,7 +51,12 @@ function extractClientExtension(
   return raw as Record<string, unknown>;
 }
 
-/** Normalizes `s` from the client payload — accepts a string or first-valid-entry from an array. */
+/**
+ * Normalizes `s` from the client payload — accepts a string or first-valid-entry from an array.
+ *
+ * @param raw - Client-provided service code value (string or array of strings)
+ * @returns Valid service code, or undefined if missing or invalid
+ */
 function resolveServiceCode(raw: unknown): string | undefined {
   if (typeof raw === "string" && BUILDER_CODE_PATTERN.test(raw)) return raw;
   if (Array.isArray(raw)) {
@@ -72,6 +85,11 @@ export class BuilderCodeFacilitatorExtension implements FacilitatorExtension {
   readonly key = BUILDER_CODE;
   private readonly config: BuilderCodeFacilitatorConfig;
 
+  /**
+   * Creates a facilitator extension that encodes the facilitator wallet code at settlement.
+   *
+   * @param config - Facilitator builder-code configuration (wallet code `w`)
+   */
   constructor(config: BuilderCodeFacilitatorConfig) {
     if (!BUILDER_CODE_PATTERN.test(config.builderCode)) {
       throw new Error(
@@ -88,6 +106,9 @@ export class BuilderCodeFacilitatorExtension implements FacilitatorExtension {
    * - `a` comes from the server declaration; the client echo is validated softly.
    * - `s` is read from the client's payment payload.
    * - `w` is always the facilitator's own code.
+   *
+   * @param ctx - Settlement context with payment-required and payment-payload extensions
+   * @returns Hex-encoded ERC-8021 builder-code calldata suffix
    */
   buildDataSuffix(ctx: DataSuffixContext): Hex {
     const serverA = extractServerAppCode(ctx.paymentRequiredExtensions);

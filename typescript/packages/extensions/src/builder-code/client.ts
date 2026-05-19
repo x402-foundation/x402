@@ -24,6 +24,11 @@ export class BuilderCodeClientExtension implements ClientExtension {
   readonly key = BUILDER_CODE;
   private readonly serviceCode: string;
 
+  /**
+   * Creates a client extension that attaches the given service code to payments.
+   *
+   * @param serviceCode - Client service code (`s`), 1-32 lowercase alphanumeric/underscore characters
+   */
   constructor(serviceCode: string) {
     if (!BUILDER_CODE_PATTERN.test(serviceCode)) {
       throw new Error(
@@ -34,6 +39,13 @@ export class BuilderCodeClientExtension implements ClientExtension {
     this.serviceCode = serviceCode;
   }
 
+  /**
+   * Echoes the server app code (`a`) and attaches this client's service code (`s`).
+   *
+   * @param payload - Payment payload to enrich
+   * @param paymentRequired - Server payment requirements (source of app code `a`)
+   * @returns Payment payload with builder-code extension data
+   */
   async enrichPaymentPayload(
     payload: PaymentPayload,
     paymentRequired: PaymentRequired,

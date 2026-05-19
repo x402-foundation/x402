@@ -83,15 +83,8 @@ export { getDefaultAsset } from "./shared/defaultAssets";
 export type { DefaultAssetInfo, ExactDefaultAssetInfo } from "./shared/defaultAssets";
 
 // Extension helpers (client + facilitator)
-export {
-  BUILDER_CODE_KEY,
-  resolveDataSuffix,
-  appendDataSuffix,
-} from "./shared/extensions";
-export type {
-  DataSuffixContext,
-  BuilderCodeFacilitatorExtension,
-} from "./shared/extensions";
+export { BUILDER_CODE_KEY, resolveDataSuffix, appendDataSuffix } from "./shared/extensions";
+export type { DataSuffixContext, BuilderCodeFacilitatorExtension } from "./shared/extensions";
 
 // Constants
 export {
