@@ -218,11 +218,6 @@ export function parseEip3009TransferError(error: unknown): string {
 /**
  * Executes transferWithAuthorization onchain.
  *
- * When a calldataSuffix is provided (e.g., ERC-8021 builder code attribution),
- * the function manually encodes the calldata, appends the suffix, and uses
- * sendTransaction instead of writeContract. The EVM ignores trailing calldata
- * bytes, so the transfer executes normally while indexers can read the suffix.
- *
  * @param signer - EVM signer for contract writes
  * @param erc20Address - ERC-20 token contract address
  * @param payload - EIP-3009 transfer authorization payload
@@ -250,59 +245,23 @@ export async function executeTransferWithAuthorization(
     auth.nonce,
   ] as const;
 
-  // If no suffix, use the standard writeContract path (unchanged behavior)
-  if (!calldataSuffix) {
-    if (isECDSA) {
-      const parsedSig = parseSignature(signature);
-      return signer.writeContract({
-        address: erc20Address,
-        abi: eip3009ABI,
-        functionName: "transferWithAuthorization",
-        args: [
-          ...baseArgs,
-          (parsedSig.v as number | undefined) || parsedSig.yParity,
-          parsedSig.r,
-          parsedSig.s,
-        ],
-      });
-    }
-
-    return signer.writeContract({
-      address: erc20Address,
-      abi: eip3009ABI,
-      functionName: "transferWithAuthorization",
-      args: [...baseArgs, signature],
-    });
-  }
-
-  // With suffix: encode calldata manually, append suffix, use sendTransaction
-  let calldata: Hex;
+  let signatureArgs: readonly unknown[];
   if (isECDSA) {
     const parsedSig = parseSignature(signature);
-    calldata = encodeFunctionData({
-      abi: eip3009ABI,
-      functionName: "transferWithAuthorization",
-      args: [
-        ...baseArgs,
-        (parsedSig.v as number | undefined) || parsedSig.yParity,
-        parsedSig.r,
-        parsedSig.s,
-      ],
-    });
+    signatureArgs = [
+      (parsedSig.v as number | undefined) || parsedSig.yParity,
+      parsedSig.r,
+      parsedSig.s,
+    ];
   } else {
-    calldata = encodeFunctionData({
-      abi: eip3009ABI,
-      functionName: "transferWithAuthorization",
-      args: [...baseArgs, signature],
-    });
+    signatureArgs = [signature];
   }
 
-  // Append the suffix (strip 0x prefix from suffix before concatenating)
-  const suffixHex = calldataSuffix.startsWith("0x") ? calldataSuffix.slice(2) : calldataSuffix;
-  const calldataWithSuffix = `${calldata}${suffixHex}` as Hex;
-
-  return signer.sendTransaction({
-    to: erc20Address,
-    data: calldataWithSuffix,
+  return signer.writeContract({
+    address: erc20Address,
+    abi: eip3009ABI,
+    functionName: "transferWithAuthorization",
+    args: [...baseArgs, ...signatureArgs],
+    ...(calldataSuffix ? { dataSuffix: calldataSuffix } : {}),
   });
 }

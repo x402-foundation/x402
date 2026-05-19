@@ -45,7 +45,7 @@ export class BatchSettlementEvmScheme implements SchemeNetworkFacilitator {
   constructor(
     private readonly signer: FacilitatorEvmSigner,
     private readonly authorizerSigner: AuthorizerSigner,
-  ) {}
+  ) { }
 
   /**
    * Returns facilitator-specific extra fields to be merged into payment requirements.

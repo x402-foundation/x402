@@ -2,7 +2,7 @@
  * Facilitator-side extension for the Builder Code Extension.
  *
  * At settlement time, the facilitator:
- * 1. Reads builder code data from the payment payload extensions
+ * 1. Validates declared and payload builder codes; omits invalid or tampered fields
  * 2. Adds its own builder code as the "w" (wallet) field
  * 3. Encodes the combined data as an ERC-8021 Schema 2 CBOR suffix
  * 4. The suffix is appended to the settlement transaction calldata
@@ -16,6 +16,7 @@ import {
   BUILDER_CODE_PATTERN,
   type BuilderCodeExtensionData,
   type BuilderCodeFacilitatorConfig,
+  type SettlementCalldataContext,
 } from "./types";
 
 /**
@@ -50,26 +51,62 @@ export class BuilderCodeFacilitatorExtension implements FacilitatorExtension {
   }
 
   /**
-   * Builds the ERC-8021 Schema 2 calldata suffix from payment payload extensions.
-   *
-   * Reads "a" (app/service code) and "s" (related service codes) from the
-   * payment payload, adds the facilitator's own code as "w" (wallet), and
-   * encodes as Schema 2 CBOR.
-   *
-   * @param payloadExtensions - The extensions from the payment payload
-   * @returns Hex-encoded suffix to append to settlement calldata, or undefined if no builder codes
+   * Builds the ERC-8021 Schema 2 calldata suffix for a settlement transaction.
+   * Invalid or tampered fields are omitted; settlement is never blocked.
    */
-  buildCalldataSuffix(payloadExtensions?: Record<string, unknown>): Hex | undefined {
-    const extData = payloadExtensions?.[BUILDER_CODE] as
-      | BuilderCodeExtensionData
-      | undefined;
+  buildSettlementCalldataSuffix(ctx: SettlementCalldataContext): Hex | undefined {
+    const rawExt = ctx.paymentPayload.extensions?.[BUILDER_CODE];
+    if (rawExt === undefined) {
+      return undefined;
+    }
 
-    const suffixData: BuilderCodeExtensionData = {
-      a: extData?.a,
+    // Declared app code: PaymentRequired `info.a`, merged onto the payload at payment creation.
+    let declaredA: string | undefined;
+    if (rawExt && typeof rawExt === "object") {
+      const record = rawExt as Record<string, unknown>;
+      const info =
+        "info" in record && record.info && typeof record.info === "object"
+          ? (record.info as Record<string, unknown>)
+          : undefined;
+      const candidate = info && typeof info.a === "string" ? info.a : undefined;
+      if (candidate && BUILDER_CODE_PATTERN.test(candidate)) {
+        declaredA = candidate;
+      }
+    }
+
+    // Client fields: top-level `a` and `s` on the payload extension.
+    let clientA: string | undefined;
+    let s: string[] | undefined;
+    if (rawExt && typeof rawExt === "object") {
+      const record = rawExt as Record<string, unknown>;
+      if (typeof record.a === "string") {
+        clientA = record.a;
+      }
+      if (Array.isArray(record.s)) {
+        const valid = record.s.filter(
+          (code): code is string => typeof code === "string" && BUILDER_CODE_PATTERN.test(code),
+        );
+        if (valid.length > 0) {
+          s = valid;
+        }
+      }
+    }
+
+    let a: string | undefined;
+    if (declaredA) {
+      if (clientA !== undefined) {
+        if (BUILDER_CODE_PATTERN.test(clientA) && clientA === declaredA) {
+          a = clientA;
+        }
+      } else {
+        a = declaredA;
+      }
+    }
+
+    return encodeBuilderCodeSuffix({
+      a,
       w: this.config.builderCode,
-      s: extData?.s ? [...extData.s] : undefined,
-    };
-
-    return encodeBuilderCodeSuffix(suffixData);
+      s,
+    } satisfies BuilderCodeExtensionData);
   }
 }

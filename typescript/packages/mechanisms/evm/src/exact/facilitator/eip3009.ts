@@ -11,6 +11,7 @@ import { FacilitatorEvmSigner } from "../../signer";
 import { getEvmChainId } from "../../utils";
 import { ExactEIP3009Payload } from "../../types";
 import * as Errors from "./errors";
+import { resolveSettlementCalldataSuffix } from "../../shared/extensions";
 import {
   diagnoseEip3009SimulationFailure,
   executeTransferWithAuthorization,
@@ -242,10 +243,6 @@ export async function verifyEIP3009(
 /**
  * Settles an EIP-3009 payment by executing transferWithAuthorization.
  *
- * If a BuilderCodeFacilitatorExtension is registered, the facilitator will
- * append an ERC-8021 Schema 2 suffix to the settlement transaction calldata
- * containing builder codes from the agent, service, and facilitator.
- *
  * @param signer - The facilitator signer for contract writes
  * @param payload - The payment payload to settle
  * @param requirements - The payment requirements
@@ -319,16 +316,10 @@ export async function settleEIP3009(
       }
     }
 
-    // Build ERC-8021 calldata suffix if builder code extension is registered
-    let calldataSuffix: Hex | undefined;
-    if (context) {
-      const builderCodeExt = context.getExtension("builder-code");
-      if (builderCodeExt && "buildCalldataSuffix" in builderCodeExt) {
-        calldataSuffix = (builderCodeExt as { buildCalldataSuffix: (ext?: Record<string, unknown>) => Hex | undefined }).buildCalldataSuffix(
-          payload.extensions as Record<string, unknown> | undefined,
-        );
-      }
-    }
+    const calldataSuffix = await resolveSettlementCalldataSuffix(context, {
+      paymentPayload: payload,
+      paymentRequirements: requirements,
+    });
 
     const tx = await executeTransferWithAuthorization(
       signer,

@@ -5,6 +5,8 @@
  * ERC-8021 Schema 2 builder codes to settlement transaction calldata.
  */
 
+import type { PaymentPayload, PaymentRequirements } from "@x402/core/types";
+
 /**
  * Extension identifier constant
  */
@@ -65,4 +67,9 @@ export interface BuilderCodeFacilitatorConfig {
    * The facilitator's own builder code, set as the "w" field at settlement.
    */
   builderCode: string;
+}
+
+export interface SettlementCalldataContext {
+  paymentPayload: PaymentPayload;
+  paymentRequirements: PaymentRequirements;
 }

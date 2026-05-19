@@ -82,6 +82,17 @@ export {
 export { getDefaultAsset } from "./shared/defaultAssets";
 export type { DefaultAssetInfo, ExactDefaultAssetInfo } from "./shared/defaultAssets";
 
+// Extension helpers (client + facilitator)
+export {
+  BUILDER_CODE_KEY,
+  resolveSettlementCalldataSuffix,
+  appendCalldataSuffix,
+} from "./shared/extensions";
+export type {
+  SettlementCalldataContext,
+  BuilderCodeFacilitatorExtension,
+} from "./shared/extensions";
+
 // Constants
 export {
   PERMIT2_ADDRESS,

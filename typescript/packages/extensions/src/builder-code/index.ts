@@ -45,6 +45,7 @@
 export type {
   BuilderCodeExtensionData,
   BuilderCodeFacilitatorConfig,
+  SettlementCalldataContext,
 } from "./types";
 
 export {
