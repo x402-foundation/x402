@@ -85,11 +85,10 @@ export function filterScenarios(
       }
     }
 
-    // Payment scheme filter (case-insensitive — scheme names are mixed case,
-    // e.g., camelCase `auth-capture` and lowercase `exact` / `upto`).
+    // Payment scheme filter
     if (filters.schemes && filters.schemes.length > 0) {
       const normalized = filters.schemes.map(s => s.trim().toLowerCase());
-      const kind = getScenarioPaymentScheme(scenario).toLowerCase();
+      const kind = getScenarioPaymentScheme(scenario);
       if (!normalized.includes(kind)) {
         return false;
       }

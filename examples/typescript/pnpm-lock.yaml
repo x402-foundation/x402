@@ -1127,7 +1127,7 @@ importers:
         specifier: ^5.7.3
         version: 5.9.3
 
-  clients/authCapture:
+  clients/auth-capture:
     dependencies:
       '@x402/core':
         specifier: workspace:*
@@ -1771,7 +1771,7 @@ importers:
         specifier: ^5.7.3
         version: 5.9.3
 
-  facilitator/authCapture:
+  facilitator/auth-capture:
     dependencies:
       '@x402/core':
         specifier: workspace:*
@@ -2249,7 +2249,7 @@ importers:
         specifier: ^5.7.3
         version: 5.9.3
 
-  servers/authCapture:
+  servers/auth-capture:
     dependencies:
       '@x402/core':
         specifier: workspace:*
