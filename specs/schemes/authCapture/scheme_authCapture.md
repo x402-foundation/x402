@@ -1,12 +1,12 @@
-# Scheme: `authCapture`
+# Scheme: `auth-capture`
 
 ## Summary
 
-`authCapture` is a payment scheme where funds can be held and settled later. The client authorizes a maximum amount, and the server or facilitator submits it — either locking funds in escrow for later settlement (two-phase) or sending them directly to the receiver with refund capability (single-shot).
+`auth-capture` is a payment scheme where funds can be held and settled later. The client authorizes a maximum amount, and the server or facilitator submits it — either locking funds in escrow for later settlement (two-phase) or sending them directly to the receiver with refund capability (single-shot).
 
 The **captureAuthorizer** is provided by the server and is the entity authorized to authorize, capture, void, refund, or charge a payment. In a facilitator-submits flow, that's either the facilitator itself or any smart contract that ends up calling the underlying escrow.
 
-Unlike `exact`, which has no built-in mechanism for returning funds, `authCapture` supports returning funds to the client through void, refund, and reclaim.
+Unlike `exact`, which has no built-in mechanism for returning funds, `auth-capture` supports returning funds to the client through void, refund, and reclaim.
 
 ## Example Use Cases
 
@@ -75,7 +75,7 @@ Two absolute-timestamp deadlines govern the payment lifecycle (network-specific 
 
 ## Relationship to `exact`
 
-| Aspect     | `exact`            | `authCapture`                                                         |
+| Aspect     | `exact`            | `auth-capture`                                                        |
 | :--------- | :----------------- | :-------------------------------------------------------------------- |
 | Settlement | Immediate transfer | Via escrow (two-phase) or direct with refund capability (single-shot) |
 | Refundable | No                 | Yes (both paths)                                                      |
