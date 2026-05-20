@@ -18,10 +18,10 @@ Unlike `exact`, which has no built-in mechanism for returning funds, `authCaptur
 
 The scheme supports two settlement paths, selected by the operation `type` passed to the facilitator:
 
-| `type`                | Behavior                                                                                                                     |
-| :-------------------- | :--------------------------------------------------------------------------------------------------------------------------- |
-| `authorize`           | Two-phase. Funds held in escrow. CaptureAuthorizer can capture, void, refund. Client can reclaim if capture deadline passes. |
-| `charge`              | Single-shot. Funds sent directly to receiver. CaptureAuthorizer can refund post-settlement.                                  |
+| `type`      | Behavior                                                                                                                     |
+| :---------- | :--------------------------------------------------------------------------------------------------------------------------- |
+| `authorize` | Two-phase. Funds held in escrow. CaptureAuthorizer can capture, void, refund. Client can reclaim if capture deadline passes. |
+| `charge`    | Single-shot. Funds sent directly to receiver. CaptureAuthorizer can refund post-settlement.                                  |
 
 ### Two-phase (`type: "authorize"`)
 
@@ -51,9 +51,7 @@ No capture, void, or reclaim — funds are never held in escrow.
 
 Facilitators MUST provide a mechanism for servers to perform `authorize`, `charge`, `capture`, `void`, and `refund` operations. Servers select the operation by passing a `type` field to the facilitator's `verify` and `settle` endpoints. Network bindings define the payload fields required for each operation.
 
-Servers MAY self-facilitate by interacting with the escrow contract or network-specific settlement mechanism directly instead of using a third-party facilitator.
-
-Facilitators MAY require proof that the server controls the signed authorization's `payTo` address before performing server-initiated operations. Facilitators that require this proof MUST signal it with `extra.serverAuthorizationRequired` in the payment requirements. Network bindings may define a `serverAuthorization` field for this purpose. For EVM, `serverAuthorization` is an identity proof over the payment's derived nonce signed by `payTo`.
+Facilitators MAY require proof that the server controls the signed authorization's `payTo` address before performing server-initiated operations. Facilitators that require this proof MUST signal it with `extra.serverAuthorizationRequired` in the payment requirements. Network bindings may define a `serverAuthorization` field for this purpose.
 
 ## Core Properties
 
@@ -85,7 +83,7 @@ Two absolute-timestamp deadlines govern the payment lifecycle (network-specific 
 
 ## Appendix
 
-Network-specific implementation details (contracts, signature formats, verification logic) are in per-network documents: `scheme_authCapture_evm.md` (EVM).
+Network-specific implementation details include contracts, signature formats, and verification logic in per-network documents.
 
 ### References
 

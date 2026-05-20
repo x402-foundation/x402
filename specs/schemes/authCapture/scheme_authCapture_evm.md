@@ -176,7 +176,7 @@ Freshness is enforced by `salt`: each signing call generates a fresh `bytes32` s
 
 ### Server Authorization
 
-A facilitator MAY require `payload.serverAuthorization` before accepting a server-initiated operation. Facilitators that require it MUST set `extra.serverAuthorizationRequired: true` in the payment requirements. `serverAuthorization` is an identity proof that the server controls `requirements.payTo` / `paymentInfo.receiver`; it does not authorize a specific operation or amount.
+On EVM, `serverAuthorization` is an identity proof over the payment's derived nonce signed by `requirements.payTo` / `paymentInfo.receiver`. A facilitator MAY require `payload.serverAuthorization` before accepting a server-initiated operation. Facilitators that require it MUST set `extra.serverAuthorizationRequired: true` in the payment requirements. `serverAuthorization` does not authorize a specific operation or amount.
 
 ```json
 {
