@@ -11,6 +11,7 @@ from ..constants import (
     ERR_INSUFFICIENT_BALANCE,
     ERR_INVALID_SIGNATURE,
     ERR_NONCE_ALREADY_USED,
+    ERR_RELAYER_INSUFFICIENT_FUNDS,
     ERR_TOKEN_NAME_MISMATCH,
     ERR_TOKEN_VERSION_MISMATCH,
     ERR_TRANSACTION_FAILED,
@@ -277,6 +278,13 @@ def parse_eip3009_transfer_error(error: Exception) -> str:
     Falls back to ERR_TRANSACTION_FAILED when the revert reason is unknown.
     """
     msg = str(error).lower()
+    if (
+        "insufficient funds for gas" in msg
+        or "insufficient funds for transfer" in msg
+        or "exceeds the balance of the account" in msg
+        or "insufficient balance for transaction" in msg
+    ):
+        return ERR_RELAYER_INSUFFICIENT_FUNDS
     if "authorization is expired" in msg or "authorizationexpired" in msg:
         return ERR_VALID_BEFORE_EXPIRED
     if "authorization is not yet valid" in msg or "authorizationnotyetvalid" in msg:

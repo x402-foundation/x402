@@ -197,6 +197,13 @@ export async function diagnoseEip3009SimulationFailure(
  */
 export function parseEip3009TransferError(error: unknown): string {
   const msg = error instanceof Error ? error.message : String(error);
+  if (
+    /insufficient funds for gas|insufficient funds for transfer|exceeds the balance of the account|insufficient balance for transaction/i.test(
+      msg,
+    )
+  ) {
+    return Errors.ErrRelayerInsufficientFunds;
+  }
   if (/authorization.*(expired|valid before)/i.test(msg) || /AuthorizationExpired/i.test(msg)) {
     return Errors.ErrValidBeforeExpired;
   }
