@@ -74,21 +74,21 @@
       }
     },
     {
-      "path": "/authCapture/evm/eip3009",
+      "path": "/auth-capture/evm/eip3009",
       "method": "GET",
-      "description": "authCapture EIP-3009 endpoint (autoCapture single-shot)",
+      "description": "auth-capture EIP-3009 endpoint (autoCapture single-shot)",
       "requiresPayment": true,
       "protocolFamily": "evm",
-      "scheme": "authCapture",
+      "scheme": "auth-capture",
       "assetTransferMethod": "eip3009"
     },
     {
-      "path": "/authCapture/evm/permit2",
+      "path": "/auth-capture/evm/permit2",
       "method": "GET",
-      "description": "authCapture Permit2 endpoint (autoCapture single-shot, pre-approved Permit2)",
+      "description": "auth-capture Permit2 endpoint (autoCapture single-shot, pre-approved Permit2)",
       "requiresPayment": true,
       "protocolFamily": "evm",
-      "scheme": "authCapture",
+      "scheme": "auth-capture",
       "assetTransferMethod": "permit2",
       "schemeOptions": {
         "permit2Direct": true

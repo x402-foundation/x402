@@ -10,7 +10,7 @@ import {
   type UptoEvmSchemeOptions,
 } from "@x402/evm/upto/client";
 import { BatchSettlementEvmScheme } from "@x402/evm/batch-settlement/client";
-import { AuthCaptureEvmScheme } from "@x402/evm/authCapture/client";
+import { AuthCaptureEvmScheme } from "@x402/evm/auth-capture/client";
 import { ExactEvmSchemeV1 } from "@x402/evm/v1";
 import { toClientEvmSigner } from "@x402/evm";
 import { ExactSvmScheme } from "@x402/svm/exact/client";

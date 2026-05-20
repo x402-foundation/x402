@@ -3,7 +3,7 @@ import { x402ResourceServer, HTTPFacilitatorClient } from "@x402/core/server";
 import { ExactEvmScheme } from "@x402/evm/exact/server";
 import { UptoEvmScheme } from "@x402/evm/upto/server";
 import { BatchSettlementEvmScheme } from "@x402/evm/batch-settlement/server";
-import { AuthCaptureEvmScheme } from "@x402/evm/authCapture/server";
+import { AuthCaptureEvmScheme } from "@x402/evm/auth-capture/server";
 import { privateKeyToAccount } from "viem/accounts";
 import { ExactSvmScheme } from "@x402/svm/exact/server";
 import { ExactAptosScheme } from "@x402/aptos/exact/server";
@@ -33,14 +33,14 @@ export const HEDERA_AMOUNT = process.env.HEDERA_AMOUNT ?? "100000"; // price in 
 export const STELLAR_NETWORK = (process.env.STELLAR_NETWORK ||
   "stellar:testnet") as `${string}:${string}`;
 const EVM_PERMIT2_ASSET = process.env.EVM_PERMIT2_ASSET as `0x${string}`;
-// captureAuthorizer for the authCapture scheme. Address allowed to call
+// captureAuthorizer for the auth-capture scheme. Address allowed to call
 // authorize/capture/void/refund/charge on AuthCaptureEscrow: either the
 // facilitator's submitter EOA, or a smart contract that ultimately calls
 // escrow as msg.sender (e.g., a refund-arbiter). Optional — when unset,
-// authCapture routes are skipped (analogous to how
+// auth-capture routes are skipped (analogous to how
 // EVM_RECEIVER_AUTHORIZER_PRIVATE_KEY gates batch-settlement features).
-export const EVM_AUTHCAPTURE_CAPTURE_AUTHORIZER = process.env
-  .EVM_AUTHCAPTURE_CAPTURE_AUTHORIZER as `0x${string}` | undefined;
+export const EVM_AUTH_CAPTURE_CAPTURE_AUTHORIZER = process.env
+  .EVM_AUTH_CAPTURE_CAPTURE_AUTHORIZER as `0x${string}` | undefined;
 const facilitatorUrl = process.env.FACILITATOR_URL;
 
 if (!facilitatorUrl) {
@@ -151,16 +151,16 @@ export const proxy = paymentProxy(
         ...declareErc20ApprovalGasSponsoringExtension(),
       },
     },
-    ...(EVM_AUTHCAPTURE_CAPTURE_AUTHORIZER
+    ...(EVM_AUTH_CAPTURE_CAPTURE_AUTHORIZER
       ? {
-        "/api/authCapture/evm/eip3009/proxy": {
+        "/api/auth-capture/evm/eip3009/proxy": {
           accepts: {
             payTo: EVM_PAYEE_ADDRESS,
-            scheme: "authCapture",
+            scheme: "auth-capture",
             price: "$0.001",
             network: EVM_NETWORK,
             extra: {
-              captureAuthorizer: EVM_AUTHCAPTURE_CAPTURE_AUTHORIZER,
+              captureAuthorizer: EVM_AUTH_CAPTURE_CAPTURE_AUTHORIZER,
               captureDeadlineSeconds: 3600,
               refundDeadlineSeconds: 7200,
               feeRecipient: EVM_PAYEE_ADDRESS,
@@ -171,14 +171,14 @@ export const proxy = paymentProxy(
             },
           },
         },
-        "/api/authCapture/evm/permit2/proxy": {
+        "/api/auth-capture/evm/permit2/proxy": {
           accepts: {
             payTo: EVM_PAYEE_ADDRESS,
-            scheme: "authCapture",
+            scheme: "auth-capture",
             price: "$0.001",
             network: EVM_NETWORK,
             extra: {
-              captureAuthorizer: EVM_AUTHCAPTURE_CAPTURE_AUTHORIZER,
+              captureAuthorizer: EVM_AUTH_CAPTURE_CAPTURE_AUTHORIZER,
               captureDeadlineSeconds: 3600,
               refundDeadlineSeconds: 7200,
               feeRecipient: EVM_PAYEE_ADDRESS,
@@ -513,7 +513,7 @@ export const config = {
     "/api/batch-settlement/evm/permit2/proxy",
     "/api/batch-settlement/evm/permit2-eip2612GasSponsoring/proxy",
     "/api/batch-settlement/evm/permit2-erc20ApprovalGasSponsoring/proxy",
-    "/api/authCapture/evm/eip3009/proxy",
-    "/api/authCapture/evm/permit2/proxy",
+    "/api/auth-capture/evm/eip3009/proxy",
+    "/api/auth-capture/evm/permit2/proxy",
   ],
 };

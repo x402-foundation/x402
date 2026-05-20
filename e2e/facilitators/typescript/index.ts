@@ -32,7 +32,7 @@ import {
   VerifyResponse,
 } from "@x402/core/types";
 import { type AuthorizerSigner, toFacilitatorEvmSigner } from "@x402/evm";
-import { AuthCaptureEvmScheme } from "@x402/evm/authCapture/facilitator";
+import { AuthCaptureEvmScheme } from "@x402/evm/auth-capture/facilitator";
 import { BatchSettlementEvmScheme } from "@x402/evm/batch-settlement/facilitator";
 import { ExactEvmScheme } from "@x402/evm/exact/facilitator";
 import { UptoEvmScheme } from "@x402/evm/upto/facilitator";

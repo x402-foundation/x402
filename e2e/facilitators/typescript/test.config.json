@@ -18,7 +18,7 @@
     "exact",
     "upto",
     "batch-settlement",
-    "authCapture"
+    "auth-capture"
   ],
   "extensions": [
     "bazaar",
@@ -51,7 +51,7 @@
       "HEDERA_NODE_URL",
       "STELLAR_NETWORK",
       "EVM_RECEIVER_AUTHORIZER_PRIVATE_KEY",
-      "EVM_AUTHCAPTURE_CAPTURE_AUTHORIZER"
+      "EVM_AUTH_CAPTURE_CAPTURE_AUTHORIZER"
     ]
   }
 }

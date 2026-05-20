@@ -210,34 +210,34 @@
         "default": "./dist/cjs/batch-settlement/facilitator/index.js"
       }
     },
-    "./authCapture/client": {
+    "./auth-capture/client": {
       "import": {
-        "types": "./dist/esm/authCapture/client/index.d.mts",
-        "default": "./dist/esm/authCapture/client/index.mjs"
+        "types": "./dist/esm/auth-capture/client/index.d.mts",
+        "default": "./dist/esm/auth-capture/client/index.mjs"
       },
       "require": {
-        "types": "./dist/cjs/authCapture/client/index.d.ts",
-        "default": "./dist/cjs/authCapture/client/index.js"
+        "types": "./dist/cjs/auth-capture/client/index.d.ts",
+        "default": "./dist/cjs/auth-capture/client/index.js"
       }
     },
-    "./authCapture/server": {
+    "./auth-capture/server": {
       "import": {
-        "types": "./dist/esm/authCapture/server/index.d.mts",
-        "default": "./dist/esm/authCapture/server/index.mjs"
+        "types": "./dist/esm/auth-capture/server/index.d.mts",
+        "default": "./dist/esm/auth-capture/server/index.mjs"
       },
       "require": {
-        "types": "./dist/cjs/authCapture/server/index.d.ts",
-        "default": "./dist/cjs/authCapture/server/index.js"
+        "types": "./dist/cjs/auth-capture/server/index.d.ts",
+        "default": "./dist/cjs/auth-capture/server/index.js"
       }
     },
-    "./authCapture/facilitator": {
+    "./auth-capture/facilitator": {
       "import": {
-        "types": "./dist/esm/authCapture/facilitator/index.d.mts",
-        "default": "./dist/esm/authCapture/facilitator/index.mjs"
+        "types": "./dist/esm/auth-capture/facilitator/index.d.mts",
+        "default": "./dist/esm/auth-capture/facilitator/index.mjs"
       },
       "require": {
-        "types": "./dist/cjs/authCapture/facilitator/index.d.ts",
-        "default": "./dist/cjs/authCapture/facilitator/index.js"
+        "types": "./dist/cjs/auth-capture/facilitator/index.d.ts",
+        "default": "./dist/cjs/auth-capture/facilitator/index.js"
       }
     }
   },

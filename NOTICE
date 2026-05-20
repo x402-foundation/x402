@@ -16,9 +16,9 @@ limitations under the License.
 
 ---
 
-authCapture scheme:
+auth-capture scheme:
 
-The authCapture payment scheme and its TypeScript implementation in
+The auth-capture payment scheme and its TypeScript implementation in
 @x402/evm were contributed by the x402r team. See proposal issue
 #1011 and specification PR #1425. The implementation was developed
 in https://github.com/BackTrackCo/x402r-scheme prior to upstreaming.

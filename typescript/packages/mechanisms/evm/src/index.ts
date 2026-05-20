@@ -99,7 +99,7 @@ export {
 export { DEFAULT_STABLECOINS } from "./shared/defaultAssets";
 
 // AuthCapture scheme
-export { AuthCaptureEvmScheme } from "./authCapture";
+export { AuthCaptureEvmScheme } from "./auth-capture";
 
 // AuthCapture types
 export type {
@@ -108,8 +108,8 @@ export type {
   Eip3009Payload as AuthCaptureEip3009Payload,
   PaymentInfoStruct as AuthCapturePaymentInfo,
   Permit2Payload as AuthCapturePermit2Payload,
-} from "./authCapture/types";
-export { isAuthCaptureExtra, isAuthCapturePayload } from "./authCapture/types";
+} from "./auth-capture/types";
+export { isAuthCaptureExtra, isAuthCapturePayload } from "./auth-capture/types";
 
 // AuthCapture constants
 export {
@@ -117,4 +117,4 @@ export {
   AUTH_CAPTURE_SCHEME,
   EIP3009_TOKEN_COLLECTOR_ADDRESS,
   PERMIT2_TOKEN_COLLECTOR_ADDRESS,
-} from "./authCapture/constants";
+} from "./auth-capture/constants";
