@@ -193,8 +193,7 @@ Register hooks on the core client for payment payload creation lifecycle events.
   </Tab>
   <Tab title="Python">
     ```python
-    from x402 import x402Client
-    from x402.types import AbortResult
+    from x402 import x402Client, AbortResult
 
     client = x402Client()
 
@@ -203,7 +202,7 @@ Register hooks on the core client for payment payload creation lifecycle events.
         requested_amount = int(context.selected_requirements.amount)
 
         if requested_amount > max_amount:
-            return AbortResult(abort=True, reason="Payment exceeds spending limit")
+            return AbortResult(reason="Payment exceeds spending limit")
 
     client.on_before_payment_creation(enforce_spending_limit)
     ```
@@ -211,8 +210,7 @@ Register hooks on the core client for payment payload creation lifecycle events.
     For synchronous applications, use `x402ClientSync`:
 
     ```python
-    from x402 import x402ClientSync
-    from x402.types import AbortResult
+    from x402 import x402ClientSync, AbortResult
 
     client = x402ClientSync()
 
@@ -221,7 +219,7 @@ Register hooks on the core client for payment payload creation lifecycle events.
         requested_amount = int(context.selected_requirements.amount)
 
         if requested_amount > max_amount:
-            return AbortResult(abort=True, reason="Payment exceeds spending limit")
+            return AbortResult(reason="Payment exceeds spending limit")
 
     client.on_before_payment_creation(enforce_spending_limit)
     ```
