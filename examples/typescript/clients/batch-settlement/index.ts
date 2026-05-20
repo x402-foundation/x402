@@ -1,8 +1,6 @@
 import { toClientEvmSigner } from "@x402/evm";
-import {
-  BatchSettlementEvmScheme,
-  FileClientChannelStorage,
-} from "@x402/evm/batch-settlement/client";
+import { BatchSettlementEvmScheme } from "@x402/evm/batch-settlement/client";
+import { FileClientChannelStorage } from "@x402/evm/batch-settlement/client/file-storage";
 import { x402Client, wrapFetchWithPayment, x402HTTPClient } from "@x402/fetch";
 import { config } from "dotenv";
 import { createPublicClient, http } from "viem";

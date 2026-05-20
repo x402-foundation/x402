@@ -26,7 +26,8 @@ Register the scheme with a resource server, protect routes with `scheme: "batch-
   <Tab title="TypeScript">
     ```typescript
     import { HTTPFacilitatorClient } from "@x402/core/server";
-    import { BatchSettlementEvmScheme, FileChannelStorage } from "@x402/evm/batch-settlement/server";
+    import { BatchSettlementEvmScheme } from "@x402/evm/batch-settlement/server";
+    import { FileChannelStorage } from "@x402/evm/batch-settlement/server/file-storage";
     import { paymentMiddleware, setSettlementOverrides, x402ResourceServer } from "@x402/express";
 
     const network = "eip155:84532" as const;
@@ -259,7 +260,7 @@ Client channel state is stored in memory by default. Persistent client storage i
 <Tabs>
   <Tab title="TypeScript">
     ```typescript
-    import { FileClientChannelStorage } from "@x402/evm/batch-settlement/client";
+    import { FileClientChannelStorage } from "@x402/evm/batch-settlement/client/file-storage";
 
     const batchScheme = new BatchSettlementEvmScheme(signer, {
       storage: new FileClientChannelStorage({ directory: "./channels" }),

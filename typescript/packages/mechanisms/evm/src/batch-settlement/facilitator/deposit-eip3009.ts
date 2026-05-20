@@ -1,5 +1,5 @@
 import { PaymentRequirements, VerifyResponse } from "@x402/core/types";
-import { getAddress } from "viem";
+import { getAddress, parseErc6492Signature } from "viem";
 import { FacilitatorEvmSigner } from "../../signer";
 import { BatchSettlementDepositPayload } from "../types";
 import { ERC3009_DEPOSIT_COLLECTOR_ADDRESS, receiveAuthorizationTypes } from "../constants";
@@ -30,7 +30,8 @@ export function buildEip3009DepositCollectorData(
     throw new Error(Errors.ErrErc3009AuthorizationRequired);
   }
 
-  return buildErc3009CollectorData(auth.validAfter, auth.validBefore, auth.salt, auth.signature);
+  const { signature } = parseErc6492Signature(auth.signature);
+  return buildErc3009CollectorData(auth.validAfter, auth.validBefore, auth.salt, signature);
 }
 
 /**

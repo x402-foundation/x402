@@ -45,6 +45,7 @@ from ..constants import (  # noqa: E402
     X402_EXACT_PERMIT2_PROXY_ADDRESS,
     X402_EXACT_PERMIT2_PROXY_SETTLE_WITH_PERMIT_ABI,
 )
+from ..erc6492 import parse_erc6492_signature  # noqa: E402
 from ..signer import ClientEvmSigner, FacilitatorEvmSigner  # noqa: E402
 from ..types import (  # noqa: E402
     ExactPermit2Authorization,
@@ -458,7 +459,9 @@ def _build_permit2_settle_args(
 
     Returns (permit_tuple, owner_addr, witness_tuple, sig_bytes).
     """
-    sig_bytes = hex_to_bytes(permit2_payload.signature or "")
+    sig_bytes = parse_erc6492_signature(
+        hex_to_bytes(permit2_payload.signature or "")
+    ).inner_signature
     permit_tuple = (
         (
             to_checksum_address(permit2_payload.permit2_authorization.permitted.token),

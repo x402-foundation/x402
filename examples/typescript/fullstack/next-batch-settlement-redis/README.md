@@ -1,6 +1,6 @@
 # Next.js batch-settlement (Redis storage)
 
-Next.js demo that exposes **`GET /api/weather`** behind `withX402` with the **batch-settlement** scheme. Channel state uses **`RedisChannelStorage`** (`@x402/evm/batch-settlement/server`), backed by the **`redis`** npm client via `lib/redisChannelClient.ts`.
+Next.js demo that exposes **`GET /api/weather`** behind `withX402` with the **batch-settlement** scheme. Channel state uses **`RedisChannelStorage`** (`@x402/evm/batch-settlement/server/redis-storage`), backed by the **`redis`** npm client via `lib/redisChannelClient.ts`.
 
 Parallels:
 
@@ -68,7 +68,7 @@ With a daily cron, `DEFERRED_WITHDRAW_DELAY_SECONDS` must exceed the daily caden
 
 ## Files
 
-- `lib/server.ts` — facilitator client, `BatchSettlementEvmScheme` + `RedisChannelStorage`
+- `lib/server.ts` — facilitator client, `BatchSettlementEvmScheme` (`/server`) + `RedisChannelStorage` (`/server/redis-storage`)
 - `lib/cron.ts` — shared claim, settle, and claim-and-settle cron implementations
 - `lib/cronAuth.ts` — optional bearer-token check for cron routes
 - `lib/redisChannelClient.ts` — lazy `redis` adapter implementing `RedisChannelStorageClient`

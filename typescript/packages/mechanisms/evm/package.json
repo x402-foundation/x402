@@ -160,6 +160,16 @@
         "default": "./dist/cjs/batch-settlement/client/index.js"
       }
     },
+    "./batch-settlement/client/file-storage": {
+      "import": {
+        "types": "./dist/esm/batch-settlement/client/file-storage.d.mts",
+        "default": "./dist/esm/batch-settlement/client/file-storage.mjs"
+      },
+      "require": {
+        "types": "./dist/cjs/batch-settlement/client/file-storage.d.ts",
+        "default": "./dist/cjs/batch-settlement/client/file-storage.js"
+      }
+    },
     "./batch-settlement/server": {
       "import": {
         "types": "./dist/esm/batch-settlement/server/index.d.mts",
@@ -168,6 +178,26 @@
       "require": {
         "types": "./dist/cjs/batch-settlement/server/index.d.ts",
         "default": "./dist/cjs/batch-settlement/server/index.js"
+      }
+    },
+    "./batch-settlement/server/file-storage": {
+      "import": {
+        "types": "./dist/esm/batch-settlement/server/file-storage.d.mts",
+        "default": "./dist/esm/batch-settlement/server/file-storage.mjs"
+      },
+      "require": {
+        "types": "./dist/cjs/batch-settlement/server/file-storage.d.ts",
+        "default": "./dist/cjs/batch-settlement/server/file-storage.js"
+      }
+    },
+    "./batch-settlement/server/redis-storage": {
+      "import": {
+        "types": "./dist/esm/batch-settlement/server/redis-storage.d.mts",
+        "default": "./dist/esm/batch-settlement/server/redis-storage.mjs"
+      },
+      "require": {
+        "types": "./dist/cjs/batch-settlement/server/redis-storage.d.ts",
+        "default": "./dist/cjs/batch-settlement/server/redis-storage.js"
       }
     },
     "./batch-settlement/facilitator": {

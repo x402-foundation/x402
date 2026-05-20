@@ -1,5 +1,6 @@
 import { HTTPFacilitatorClient, x402ResourceServer } from "@x402/core/server";
-import { BatchSettlementEvmScheme, RedisChannelStorage } from "@x402/evm/batch-settlement/server";
+import { BatchSettlementEvmScheme } from "@x402/evm/batch-settlement/server";
+import { RedisChannelStorage } from "@x402/evm/batch-settlement/server/redis-storage";
 import { privateKeyToAccount } from "viem/accounts";
 
 import { createLazyRedisChannelStorageClient } from "./redisChannelClient";

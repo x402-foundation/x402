@@ -118,7 +118,21 @@ Register hooks for HTTP-specific request handling before payment processing. Use
     ```
   </Tab>
   <Tab title="Python">
-    *Coming soon.*
+    ```python
+    from x402 import x402ResourceServer
+    from x402.http import x402HTTPResourceServer
+    from x402.schemas.hooks import GrantAccessResult
+
+    server = x402ResourceServer(facilitator_client)
+    http_server = x402HTTPResourceServer(server, routes)
+
+    async def allow_subscribers(context, route_config):
+        api_key = context.adapter.get_header("X-API-Key")
+        if api_key and await is_valid_api_key(api_key):
+            return GrantAccessResult()
+
+    http_server.on_protected_request(allow_subscribers)
+    ```
   </Tab>
   <Tab title="Go">
     ```go
@@ -179,8 +193,7 @@ Register hooks on the core client for payment payload creation lifecycle events.
   </Tab>
   <Tab title="Python">
     ```python
-    from x402 import x402Client
-    from x402.types import AbortResult
+    from x402 import x402Client, AbortResult
 
     client = x402Client()
 
@@ -189,7 +202,7 @@ Register hooks on the core client for payment payload creation lifecycle events.
         requested_amount = int(context.selected_requirements.amount)
 
         if requested_amount > max_amount:
-            return AbortResult(abort=True, reason="Payment exceeds spending limit")
+            return AbortResult(reason="Payment exceeds spending limit")
 
     client.on_before_payment_creation(enforce_spending_limit)
     ```
@@ -197,8 +210,7 @@ Register hooks on the core client for payment payload creation lifecycle events.
     For synchronous applications, use `x402ClientSync`:
 
     ```python
-    from x402 import x402ClientSync
-    from x402.types import AbortResult
+    from x402 import x402ClientSync, AbortResult
 
     client = x402ClientSync()
 
@@ -207,7 +219,7 @@ Register hooks on the core client for payment payload creation lifecycle events.
         requested_amount = int(context.selected_requirements.amount)
 
         if requested_amount > max_amount:
-            return AbortResult(abort=True, reason="Payment exceeds spending limit")
+            return AbortResult(reason="Payment exceeds spending limit")
 
     client.on_before_payment_creation(enforce_spending_limit)
     ```
@@ -262,7 +274,25 @@ Register hooks for HTTP-specific payment required handling. Use cases include tr
     ```
   </Tab>
   <Tab title="Python">
-    *Coming soon.*
+    ```python
+    import os
+
+    from x402 import x402Client
+    from x402.http import x402HTTPClient
+    from x402.schemas.hooks import PaymentRequiredHeadersResult
+
+    client = x402Client()
+    http_client = x402HTTPClient(client)
+
+    async def try_api_key(context):
+        api_key = os.environ.get("API_KEY")
+        if api_key:
+            return PaymentRequiredHeadersResult(
+                headers={"Authorization": f"Bearer {api_key}"}
+            )
+
+    http_client.on_payment_required(try_api_key)
+    ```
   </Tab>
   <Tab title="Go">
     *Coming soon.*

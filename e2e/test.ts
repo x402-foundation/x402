@@ -1268,6 +1268,7 @@ async function runTest() {
     const facilitatorSupportsAptos = facilitatorConfig?.protocolFamilies?.includes('aptos') ?? false;
     const facilitatorSupportsHedera = facilitatorConfig?.protocolFamilies?.includes('hedera') ?? false;
     const facilitatorSupportsStellar = facilitatorConfig?.protocolFamilies?.includes('stellar') ?? false;
+    const facilitatorSupportsTvm = facilitatorConfig?.protocolFamilies?.includes('tvm') ?? false;
 
     const serverConfig: ServerConfig = {
       port,
@@ -1284,7 +1285,7 @@ async function runTest() {
       hederaAsset: process.env.HEDERA_ASSET,
       hederaAmount: process.env.HEDERA_AMOUNT,
       stellarPayTo: facilitatorSupportsStellar ? (serverStellarAddress || '') : '',
-      tvmPayTo: serverTvmAddress || '',
+      tvmPayTo: facilitatorSupportsTvm ? (serverTvmAddress || '') : '',
       networks,
       facilitatorUrl,
       mockFacilitatorUrl,

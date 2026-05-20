@@ -3,7 +3,7 @@ import type {
   RedisEvalOptions,
   RedisScanOptions,
   RedisSetOptions,
-} from "@x402/evm/batch-settlement/server";
+} from "@x402/evm/batch-settlement/server/redis-storage";
 import { createClient } from "redis";
 
 export type LazyRedisChannelStorageClient = RedisChannelStorageClient & {

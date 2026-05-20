@@ -1,0 +1,3 @@
+kind: fixed
+body: unwrap ERC-6492 signatures for exact/upto permit2 flows and batch-settlement
+time: 2026-05-18T15:35:27.136946+02:00

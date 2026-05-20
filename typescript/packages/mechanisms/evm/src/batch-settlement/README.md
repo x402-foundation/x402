@@ -92,7 +92,7 @@ The server claims any outstanding vouchers and then executes `refundWithSignatur
 By default, channel state is stored in memory. For long-lived clients, use `FileClientChannelStorage`:
 
 ```typescript
-import { FileClientChannelStorage } from "@x402/evm/batch-settlement/client";
+import { FileClientChannelStorage } from "@x402/evm/batch-settlement/client/file-storage";
 
 const scheme = new BatchSettlementEvmScheme(signer, {
   storage: new FileClientChannelStorage({ directory: "./channels" }),
@@ -107,11 +107,9 @@ Register the scheme with an `x402ResourceServer` and pair it with a `ChannelMana
 
 ```typescript
 import { x402ResourceServer } from "@x402/core/server";
-import {
-  BatchSettlementEvmScheme,
-  FileChannelStorage,
-  RedisChannelStorage,
-} from "@x402/evm/batch-settlement/server";
+import { BatchSettlementEvmScheme } from "@x402/evm/batch-settlement/server";
+import { FileChannelStorage } from "@x402/evm/batch-settlement/server/file-storage";
+import { RedisChannelStorage } from "@x402/evm/batch-settlement/server/redis-storage";
 
 const scheme = new BatchSettlementEvmScheme(receiverAddress, {
   receiverAuthorizerSigner,        // optional: self-managed authorizer (recommended)

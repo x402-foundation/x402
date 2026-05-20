@@ -7,6 +7,8 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Literal, Protocol
 
+from ..schemas.hooks import PaymentCancellationDispatcher, ProtectedRequestHookResult
+
 if TYPE_CHECKING:
     from ..schemas import (
         Network,
@@ -81,6 +83,15 @@ class HTTPRequestContext:
 
 
 @dataclass
+class HTTPTransportContext:
+    """HTTP transport context for verify/settle hooks."""
+
+    request: HTTPRequestContext
+    response_body: Any = None
+    response_headers: dict[str, str] | None = None
+
+
+@dataclass
 class HTTPResponseInstructions:
     """Instructions for building HTTP response."""
 
@@ -104,6 +115,8 @@ class HTTPProcessResult:
     response: HTTPResponseInstructions | None = None
     payment_payload: PaymentPayload | None = None
     payment_requirements: PaymentRequirements | None = None
+    declared_extensions: dict[str, Any] | None = None
+    cancellation_dispatcher: PaymentCancellationDispatcher | None = None
 
 
 @dataclass
@@ -190,6 +203,12 @@ class RouteConfig:
     settlement_failed_response_body: SettlementFailedResponseBody | None = None
     extensions: dict[str, Any] | None = None
     hook_timeout_seconds: float | None = None
+
+
+ProtectedRequestHook = Callable[
+    [HTTPRequestContext, RouteConfig],
+    ProtectedRequestHookResult | None | Awaitable[ProtectedRequestHookResult | None],
+]
 
 
 RoutesConfig = dict[str, RouteConfig] | RouteConfig

@@ -158,6 +158,14 @@ def create_payment_wrapper_sync(
                     resource_server, tool_name, config, str(e)
                 )
 
+            if not settle_result.success:
+                return _create_settlement_failed_result_sync(
+                    resource_server,
+                    tool_name,
+                    config,
+                    settle_result.error_reason or "Unknown settlement failure",
+                )
+
             if config.hooks and config.hooks.on_after_settlement:
                 settlement_context = SettlementContext(
                     tool_name=tool_name,

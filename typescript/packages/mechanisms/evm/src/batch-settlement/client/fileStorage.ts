@@ -5,6 +5,8 @@ import { isNodeEnoent, readJsonFile, writeJsonAtomic } from "../storage-utils";
 import type { FileChannelStorageOptions } from "../types";
 import type { ClientChannelStorage, BatchSettlementClientContext } from "./storage";
 
+export type { FileChannelStorageOptions };
+
 /**
  * Node.js file-backed {@link ClientChannelStorage} for the batched client scheme.
  * Each channel's context is persisted as `{root}/client/{channelId}.json` so that channel

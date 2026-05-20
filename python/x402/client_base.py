@@ -5,6 +5,7 @@ Contains shared logic for client implementations.
 
 from __future__ import annotations
 
+import asyncio
 import inspect
 from collections.abc import Awaitable, Callable, Generator
 from dataclasses import dataclass, field
@@ -12,6 +13,7 @@ from typing import Any, Literal
 
 from typing_extensions import Self
 
+from .hook_adapters import collect_client_scheme_hook_handles, get_labeled_client_hooks
 from .interfaces import SchemeNetworkClient, SchemeNetworkClientV1
 from .schemas import (
     AbortResult,
@@ -26,11 +28,14 @@ from .schemas import (
     PaymentRequiredV1,
     PaymentRequirements,
     PaymentRequirementsV1,
+    PaymentResponseContext,
     RecoveredPayloadResult,
+    RecoveredResponseResult,
     ResourceInfo,
     SchemeNotFoundError,
     find_schemes_by_network,
 )
+from .schemas.extensions import ClientExtension
 
 # ============================================================================
 # Type Aliases
@@ -86,6 +91,12 @@ SyncAfterPaymentCreationHook = Callable[[PaymentCreatedContext], None]
 SyncOnPaymentCreationFailureHook = Callable[
     [PaymentCreationFailureContext], RecoveredPayloadResult | None
 ]
+
+OnPaymentResponseHook = Callable[
+    [PaymentResponseContext],
+    Awaitable[RecoveredResponseResult | None] | RecoveredResponseResult | None,
+]
+SyncOnPaymentResponseHook = Callable[[PaymentResponseContext], RecoveredResponseResult | None]
 
 # Hook command type for generator-based implementation
 HookPhase = Literal["before", "after", "failure"]
@@ -162,11 +173,14 @@ class x402ClientBase:
         self._schemes: dict[Network, dict[str, SchemeNetworkClient]] = {}
         self._schemes_v1: dict[Network, dict[str, SchemeNetworkClientV1]] = {}
         self._policies: list[PaymentPolicy] = []
+        self._registered_extensions: dict[str, ClientExtension] = {}
+        self._scheme_client_hook_adapters: dict[int, dict[Network, dict[str, Any]]] = {}
 
         # Hooks (typed in subclasses)
         self._before_payment_creation_hooks: list[Any] = []
         self._after_payment_creation_hooks: list[Any] = []
         self._on_payment_creation_failure_hooks: list[Any] = []
+        self._payment_response_hooks: list[Any] = []
 
     # ========================================================================
     # Registration
@@ -177,6 +191,20 @@ class x402ClientBase:
         if network not in self._schemes:
             self._schemes[network] = {}
         self._schemes[network][client.scheme] = client
+
+        handles = collect_client_scheme_hook_handles(client)
+        if handles.is_empty():
+            by_scheme = self._scheme_client_hook_adapters.get(2, {}).get(network)
+            if by_scheme is not None:
+                by_scheme.pop(client.scheme, None)
+                if not by_scheme:
+                    self._scheme_client_hook_adapters.get(2, {}).pop(network, None)
+        else:
+            if 2 not in self._scheme_client_hook_adapters:
+                self._scheme_client_hook_adapters[2] = {}
+            if network not in self._scheme_client_hook_adapters[2]:
+                self._scheme_client_hook_adapters[2][network] = {}
+            self._scheme_client_hook_adapters[2][network][client.scheme] = handles
         return self
 
     def register_v1(self, network: Network, client: SchemeNetworkClientV1) -> Self:
@@ -184,7 +212,30 @@ class x402ClientBase:
         if network not in self._schemes_v1:
             self._schemes_v1[network] = {}
         self._schemes_v1[network][client.scheme] = client
+
+        handles = collect_client_scheme_hook_handles(client)  # type: ignore[arg-type]
+        if handles.is_empty():
+            by_scheme = self._scheme_client_hook_adapters.get(1, {}).get(network)
+            if by_scheme is not None:
+                by_scheme.pop(client.scheme, None)
+                if not by_scheme:
+                    self._scheme_client_hook_adapters.get(1, {}).pop(network, None)
+        else:
+            if 1 not in self._scheme_client_hook_adapters:
+                self._scheme_client_hook_adapters[1] = {}
+            if network not in self._scheme_client_hook_adapters[1]:
+                self._scheme_client_hook_adapters[1][network] = {}
+            self._scheme_client_hook_adapters[1][network][client.scheme] = handles
         return self
+
+    def register_extension(self, extension: ClientExtension) -> Self:
+        """Register a client extension."""
+        self._registered_extensions[extension.key] = extension
+        return self
+
+    def get_extensions(self) -> list[ClientExtension]:
+        """Return all registered client extensions."""
+        return list(self._registered_extensions.values())
 
     def register_policy(self, policy: PaymentPolicy) -> Self:
         """Add a requirement filter policy."""
@@ -265,6 +316,48 @@ class x402ClientBase:
 
         return result
 
+    def _enrich_payment_payload_with_extensions(
+        self,
+        payment_payload: PaymentPayload,
+        payment_required: PaymentRequired,
+    ) -> PaymentPayload:
+        extensions = payment_required.extensions
+        if not extensions or not self._registered_extensions:
+            return payment_payload
+
+        enriched = payment_payload
+        for key, extension in self._registered_extensions.items():
+            if key not in extensions:
+                continue
+            enrich = getattr(extension, "enrich_payment_payload", None)
+            if enrich is None:
+                continue
+            enriched = enrich(enriched, payment_required)
+        return enriched
+
+    async def _enrich_payment_payload_with_extensions_async(
+        self,
+        payment_payload: PaymentPayload,
+        payment_required: PaymentRequired,
+    ) -> PaymentPayload:
+        extensions = payment_required.extensions
+        if not extensions or not self._registered_extensions:
+            return payment_payload
+
+        enriched = payment_payload
+        for key, extension in self._registered_extensions.items():
+            if key not in extensions:
+                continue
+            enrich = getattr(extension, "enrich_payment_payload", None)
+            if enrich is None:
+                continue
+            result = enrich(enriched, payment_required)
+            if asyncio.iscoroutine(result) or asyncio.isfuture(result):
+                enriched = await result
+            else:
+                enriched = result
+        return enriched
+
     # ========================================================================
     # Core Logic Generators (shared between async/sync)
     # ========================================================================
@@ -287,9 +380,16 @@ class x402ClientBase:
             payment_required=payment_required,
             selected_requirements=selected,
         )
+        declared_extensions = payment_required.extensions or {}
 
         # 3. Execute before hooks
-        for hook in self._before_payment_creation_hooks:
+        for _label, hook in get_labeled_client_hooks(
+            "before_payment_creation",
+            self,
+            2,
+            selected,
+            declared_extensions,
+        ):
             result = yield ("before", hook, context)
             if isinstance(result, AbortResult):
                 from .schemas import PaymentAbortedError
@@ -335,7 +435,13 @@ class x402ClientBase:
                 selected_requirements=selected,
                 payment_payload=payload,
             )
-            for hook in self._after_payment_creation_hooks:
+            for _label, hook in get_labeled_client_hooks(
+                "after_payment_creation",
+                self,
+                2,
+                selected,
+                declared_extensions,
+            ):
                 yield ("after", hook, result_context)
 
             return payload
@@ -347,7 +453,13 @@ class x402ClientBase:
                 selected_requirements=selected,
                 error=e,
             )
-            for hook in self._on_payment_creation_failure_hooks:
+            for _label, hook in get_labeled_client_hooks(
+                "on_payment_creation_failure",
+                self,
+                2,
+                selected,
+                declared_extensions,
+            ):
                 result = yield ("failure", hook, failure_context)
                 if isinstance(result, RecoveredPayloadResult):
                     return result.payload  # type: ignore[return-value]
@@ -370,9 +482,16 @@ class x402ClientBase:
             payment_required=payment_required,
             selected_requirements=selected,
         )
+        declared_extensions = getattr(payment_required, "extensions", None) or {}
 
         # 3. Execute before hooks
-        for hook in self._before_payment_creation_hooks:
+        for _label, hook in get_labeled_client_hooks(
+            "before_payment_creation",
+            self,
+            1,
+            selected,
+            declared_extensions,
+        ):
             result = yield ("before", hook, context)
             if isinstance(result, AbortResult):
                 from .schemas import PaymentAbortedError
@@ -404,7 +523,13 @@ class x402ClientBase:
                 selected_requirements=selected,
                 payment_payload=payload,
             )
-            for hook in self._after_payment_creation_hooks:
+            for _label, hook in get_labeled_client_hooks(
+                "after_payment_creation",
+                self,
+                1,
+                selected,
+                declared_extensions,
+            ):
                 yield ("after", hook, result_context)
 
             return payload
@@ -416,7 +541,13 @@ class x402ClientBase:
                 selected_requirements=selected,
                 error=e,
             )
-            for hook in self._on_payment_creation_failure_hooks:
+            for _label, hook in get_labeled_client_hooks(
+                "on_payment_creation_failure",
+                self,
+                1,
+                selected,
+                declared_extensions,
+            ):
                 result = yield ("failure", hook, failure_context)
                 if isinstance(result, RecoveredPayloadResult):
                     return result.payload  # type: ignore[return-value]

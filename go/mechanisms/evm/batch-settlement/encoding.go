@@ -8,6 +8,8 @@ import (
 	"github.com/ethereum/go-ethereum/accounts/abi"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/crypto"
+
+	"github.com/x402-foundation/x402/go/mechanisms/evm"
 )
 
 // erc3009DepositNonceABI is the ABI tuple (bytes32, uint256) used to derive
@@ -95,7 +97,10 @@ func BuildErc3009CollectorData(validAfter, validBefore, salt, signature string) 
 	if !ok {
 		return nil, fmt.Errorf("invalid salt: %s", salt)
 	}
-	sigBytes := common.FromHex(signature)
+	sigBytes, err := unwrapERC6492HexSignature(signature)
+	if err != nil {
+		return nil, err
+	}
 
 	encoded, err := erc3009CollectorDataABI.Pack(va, vb, saltBig, sigBytes)
 	if err != nil {
@@ -156,7 +161,10 @@ func BuildPermit2CollectorData(nonce, deadline, permit2Signature string, eip2612
 	if !ok {
 		return nil, fmt.Errorf("invalid permit2 deadline: %s", deadline)
 	}
-	sigBytes := common.FromHex(permit2Signature)
+	sigBytes, err := unwrapERC6492HexSignature(permit2Signature)
+	if err != nil {
+		return nil, err
+	}
 	if eip2612PermitData == nil {
 		eip2612PermitData = []byte{}
 	}
@@ -166,4 +174,13 @@ func BuildPermit2CollectorData(nonce, deadline, permit2Signature string, eip2612
 		return nil, fmt.Errorf("failed to ABI-encode permit2 collector data: %w", err)
 	}
 	return encoded, nil
+}
+
+func unwrapERC6492HexSignature(signature string) ([]byte, error) {
+	sigBytes := common.FromHex(signature)
+	sigData, err := evm.ParseERC6492Signature(sigBytes)
+	if err != nil {
+		return nil, fmt.Errorf("invalid ERC-6492 signature: %w", err)
+	}
+	return sigData.InnerSignature, nil
 }

@@ -15,7 +15,7 @@ import {
   type Erc20ApprovalGasSponsoringFacilitatorExtension,
   type Erc20ApprovalGasSponsoringSigner,
 } from "../exact/extensions";
-import { getAddress, encodeFunctionData } from "viem";
+import { getAddress, encodeFunctionData, parseErc6492Signature } from "viem";
 import { PERMIT2_ADDRESS, eip3009ABI, erc20AllowanceAbi, permit2WitnessTypes } from "../constants";
 import { multicall, ContractCall } from "../multicall";
 import { createPermit2Nonce, getEvmChainId } from "../utils";
@@ -524,6 +524,8 @@ export async function checkPermit2Prerequisites(
  * @returns Tuple of contract call arguments for the exact settle function
  */
 export function buildExactPermit2SettleArgs(permit2Payload: Permit2PayloadBase) {
+  const { signature } = parseErc6492Signature(permit2Payload.signature);
+
   return [
     {
       permitted: {
@@ -538,7 +540,7 @@ export function buildExactPermit2SettleArgs(permit2Payload: Permit2PayloadBase) 
       to: getAddress(permit2Payload.permit2Authorization.witness.to),
       validAfter: BigInt(permit2Payload.permit2Authorization.witness.validAfter),
     },
-    permit2Payload.signature,
+    signature,
   ] as const;
 }
 
@@ -557,6 +559,8 @@ export function buildUptoPermit2SettleArgs(
   settlementAmount: bigint,
   facilitatorAddress: `0x${string}`,
 ) {
+  const { signature } = parseErc6492Signature(permit2Payload.signature);
+
   return [
     {
       permitted: {
@@ -573,7 +577,7 @@ export function buildUptoPermit2SettleArgs(
       facilitator: getAddress(facilitatorAddress),
       validAfter: BigInt(permit2Payload.permit2Authorization.witness.validAfter),
     },
-    permit2Payload.signature,
+    signature,
   ] as const;
 }
 
