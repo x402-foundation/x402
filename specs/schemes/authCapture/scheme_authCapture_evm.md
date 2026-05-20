@@ -252,6 +252,8 @@ Facilitators MAY detect when `extra.captureAuthorizer` / `paymentInfo.operator` 
 
 The operator contract is then responsible for calling the underlying escrow contract with `msg.sender` equal to the committed `captureAuthorizer`. Facilitators that use this path MUST still apply the same payload verification, payment state checks, collector selection, and receipt handling described above.
 
+Facilitators MAY support smart contract operators, but SHOULD treat them as untrusted. Facilitators SHOULD NOT send native value. Facilitators SHOULD use a gas-only hot wallet with no token balances or approvals. Facilitators SHOULD cap gas and simulate the exact call before broadcast.
+
 ## Error Codes
 
 The authCapture scheme uses the standard x402 error codes plus these scheme-specific codes:
