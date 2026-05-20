@@ -21,7 +21,7 @@ The scheme supports two settlement paths, selected by the operation `type` passe
 | `type`                | Behavior                                                                                                                     |
 | :-------------------- | :--------------------------------------------------------------------------------------------------------------------------- |
 | `authorize`           | Two-phase. Funds held in escrow. CaptureAuthorizer can capture, void, refund. Client can reclaim if capture deadline passes. |
-| `authorizeAndCapture` | Single-shot. Funds sent directly to receiver. CaptureAuthorizer can refund post-settlement.                                  |
+| `charge`              | Single-shot. Funds sent directly to receiver. CaptureAuthorizer can refund post-settlement.                                  |
 
 ### Two-phase (`type: "authorize"`)
 
@@ -35,7 +35,7 @@ AUTHORIZE → RESOURCE DELIVERED → CAPTURE / VOID → (REFUND)
 4. **Reclaim**: If the capture deadline passes without action, the client can reclaim directly.
 5. **Refund**: After capture, the captureAuthorizer can refund within the refund window.
 
-### Single-shot (`type: "authorizeAndCapture"`)
+### Single-shot (`type: "charge"`)
 
 ```
 CHARGE → RESOURCE DELIVERED → (REFUND)
@@ -49,7 +49,7 @@ No capture, void, or reclaim — funds are never held in escrow.
 
 ## Server Operations
 
-Facilitators MUST provide a mechanism for servers to perform `authorize`, `authorizeAndCapture`, `capture`, `void`, and `refund` operations. Servers select the operation by passing a `type` field to the facilitator's `verify` and `settle` endpoints. Network bindings define the payload fields required for each operation.
+Facilitators MUST provide a mechanism for servers to perform `authorize`, `charge`, `capture`, `void`, and `refund` operations. Servers select the operation by passing a `type` field to the facilitator's `verify` and `settle` endpoints. Network bindings define the payload fields required for each operation.
 
 Servers MAY self-facilitate by interacting with the escrow contract or network-specific settlement mechanism directly instead of using a third-party facilitator.
 
