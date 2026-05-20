@@ -246,6 +246,12 @@ For smart wallet clients, the signature may be EIP-6492 wrapped (containing depl
 
 Servers that self-facilitate perform the same escrow calls directly instead of relaying the operation through a third-party facilitator. In that mode, the server is responsible for the same verification rules, payment state checks, and transaction submission behavior described above.
 
+### Smart Contract Operators
+
+Facilitators MAY detect when `extra.captureAuthorizer` / `paymentInfo.operator` is a smart contract that exposes the same operation interface as `AuthCaptureEscrow`. In that case, the facilitator MAY forward the mapped operation call to the operator contract instead of calling `AUTH_CAPTURE_ESCROW_ADDRESS` directly.
+
+The operator contract is then responsible for calling the underlying escrow contract with `msg.sender` equal to the committed `captureAuthorizer`. Facilitators that use this path MUST still apply the same payload verification, payment state checks, collector selection, and receipt handling described above.
+
 ## Error Codes
 
 The authCapture scheme uses the standard x402 error codes plus these scheme-specific codes:
