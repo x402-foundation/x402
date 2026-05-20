@@ -1,0 +1,7 @@
+{
+  "name": "vaults.fyi",
+  "description": "DeFi yield data and transactions via x402. 1,000+ vaults across 80+ protocols on 20+ chains, standardized to one schema. Endpoints cover vault discovery, transaction payloads, position tracking, and PnL, all calculated from onchain data.",
+  "logoUrl": "/logos/vaults-fyi.png",
+  "websiteUrl": "https://docs.vaults.fyi/ai-agents/x402",
+  "category": "Services/Endpoints"
+}
