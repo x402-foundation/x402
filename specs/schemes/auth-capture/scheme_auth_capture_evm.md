@@ -1,8 +1,8 @@
-# Scheme: `authCapture` on `EVM`
+# Scheme: `auth-capture` on `EVM`
 
 ## Summary
 
-The `authCapture` scheme on EVM uses the [base/commerce-payments](https://github.com/base/commerce-payments) contract stack:
+The `auth-capture` scheme on EVM uses the [base/commerce-payments](https://github.com/base/commerce-payments) contract stack:
 
 - **AuthCaptureEscrow**: Singleton — locks funds, enforces expiries, distributes on capture/refund. Universal canonical address (same address on every supported chain).
 - **Token Collectors**: Universal canonical addresses, one per `assetTransferMethod`:
@@ -14,14 +14,14 @@ The client signs a single signature (ERC-3009 or Permit2). The facilitator calls
 
 ## PaymentRequirements
 
-AuthCapture-accepting servers advertise with scheme `authCapture`:
+Servers accepting auth-capture payments advertise with scheme `auth-capture`:
 
 ```json
 {
   "x402Version": 2,
   "accepts": [
     {
-      "scheme": "authCapture",
+      "scheme": "auth-capture",
       "network": "eip155:8453",
       "amount": "1000000",
       "asset": "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
@@ -81,7 +81,7 @@ The payload carries the signature and the client-generated `salt`. The facilitat
 {
   "x402Version": 2,
   "resource": { "url": "https://api.example.com/resource", "method": "GET" },
-  "accepted": { "scheme": "authCapture", "...": "..." },
+  "accepted": { "scheme": "auth-capture", "...": "..." },
   "payload": {
     "authorization": {
       "from": "0xPayerAddress",
@@ -116,7 +116,7 @@ The payload carries the signature and the client-generated `salt`. The facilitat
 {
   "x402Version": 2,
   "resource": { "url": "https://api.example.com/resource", "method": "GET" },
-  "accepted": { "scheme": "authCapture", "...": "..." },
+  "accepted": { "scheme": "auth-capture", "...": "..." },
   "payload": {
     "permit2Authorization": {
       "from": "0xPayerAddress",
@@ -165,7 +165,7 @@ Freshness is enforced by `salt`: each signing call generates a fresh `bytes32` s
 The facilitator performs these checks in order:
 
 1. **Type guard**: Verify payload matches one of `Eip3009Payload` or `Permit2Payload` (must include `signature` and `salt`).
-2. **Scheme match**: `requirements.scheme === "authCapture"` and `payload.accepted.scheme === "authCapture"`.
+2. **Scheme match**: `requirements.scheme === "auth-capture"` and `payload.accepted.scheme === "auth-capture"`.
 3. **Network match**: `payload.accepted.network === requirements.network` and format is `eip155:<chainId>`.
 4. **Extra validation**: `requirements.extra` contains all required fields (`captureAuthorizer`, `captureDeadline`, `refundDeadline`, `feeRecipient`, `minFeeBps`, `maxFeeBps`, `name`, `version`).
 5. **Method routing**: `extra.assetTransferMethod` (default `"eip3009"`) matches the payload shape.
@@ -194,24 +194,24 @@ For smart wallet clients, the signature may be EIP-6492 wrapped (containing depl
 
 ## Error Codes
 
-The authCapture scheme uses the standard x402 error codes plus these scheme-specific codes:
+The auth-capture scheme uses the standard x402 error codes plus these scheme-specific codes:
 
 ### Verification Errors
 
 | Error Code                          | Description                                                                       |
 | :---------------------------------- | :-------------------------------------------------------------------------------- |
 | `invalid_payload_format`            | Payload doesn't match `Eip3009Payload` or `Permit2Payload`.                       |
-| `unsupported_scheme`                | Scheme is not `authCapture`.                                                      |
+| `unsupported_scheme`                | Scheme is not `auth-capture`.                                                     |
 | `network_mismatch`                  | Payload network doesn't match requirements.                                       |
 | `invalid_network`                   | Network format is not `eip155:<chainId>`.                                         |
-| `invalid_authCapture_extra`         | Extra is missing required fields.                                                 |
+| `invalid_auth_capture_extra`        | Extra is missing required fields.                                                 |
 | `unsupported_asset_transfer_method` | `assetTransferMethod` is not `"eip3009"` or `"permit2"`.                          |
 | `payload_method_mismatch`           | Payload shape doesn't match `assetTransferMethod`.                                |
 | `capture_deadline_expired`          | `captureDeadline <= now + 6s`.                                                    |
 | `invalid_deadline_ordering`         | Deadlines violate `now + maxTimeoutSeconds <= captureDeadline <= refundDeadline`. |
 | `authorization_expired`             | EIP-3009 `validBefore` (or Permit2 `deadline`) `<= now + 6s`.                     |
 | `authorization_not_yet_valid`       | EIP-3009 `validAfter > now`.                                                      |
-| `invalid_authCapture_signature`     | Signature verification failed.                                                    |
+| `invalid_auth_capture_signature`    | Signature verification failed.                                                    |
 | `amount_mismatch`                   | Authorization value doesn't match `requirements.amount`.                          |
 | `token_collector_mismatch`          | `to` / `spender` doesn't match the canonical collector for the method.            |
 | `token_mismatch`                    | Permit2 `permitted.token` doesn't match `requirements.asset`.                     |
