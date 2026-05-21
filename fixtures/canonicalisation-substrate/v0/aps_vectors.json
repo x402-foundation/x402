@@ -1,0 +1,234 @@
+{
+  "version": "v1",
+  "spec": "JCS — RFC 8785",
+  "canonicalization": "APS SDK canonicalizeJCS (src/core/canonical-jcs.ts)",
+  "seed_input": "aps-canonicalize-fixture-v1",
+  "seed_sha256_hex": "4f3d8defea1e82c1705c35d97ee4db046c6313ba83855a7d0de04a44f04c834a",
+  "keypair": {
+    "publicKeyHex": "16bd0f3e8181e93d58c23268ee0d5f4d5b70b3ce66fc246c0f5d7ec3dda9ab80"
+  },
+  "generated_at": "2026-04-22",
+  "vectors": [
+    {
+      "name": "nested-null-preservation",
+      "description": "JCS preserves null values at every nesting depth (legacy canonicalize strips them).",
+      "input": {
+        "a": null,
+        "b": {
+          "c": null
+        }
+      },
+      "canonical_bytes_hex": "7b2261223a6e756c6c2c2262223a7b2263223a6e756c6c7d7d",
+      "canonical_sha256": "0068ba9653f5819a9a3187269491e8fa88d864813fffe7e1fa539f34821de836",
+      "ed25519_pubkey_hex": "16bd0f3e8181e93d58c23268ee0d5f4d5b70b3ce66fc246c0f5d7ec3dda9ab80",
+      "ed25519_signature_over_canonical_hex": "e506de6c2da28d2eca639afbf9219dbc0eede8cf0078bbbc10bb352f9b94e2c148f4cf7fd4e2483c10c0197e6d2c5f9d530fdb0c24503f19ba0a8e0b7b7b5c01",
+      "expected_verification": true
+    },
+    {
+      "name": "key-ordering-unicode",
+      "description": "Keys sort by Unicode code point: a(0x61) < m(0x6D) < z(0x7A) < é(0xE9).",
+      "input": {
+        "z": 1,
+        "a": 2,
+        "é": 3,
+        "m": {
+          "z": 1,
+          "a": 2
+        }
+      },
+      "canonical_bytes_hex": "7b2261223a322c226d223a7b2261223a322c227a223a317d2c227a223a312c22c3a9223a337d",
+      "canonical_sha256": "b5f85e399a8319e62bf2a0571270a709f3ba6b28ed6d916ec7b65b5c5c555997",
+      "ed25519_pubkey_hex": "16bd0f3e8181e93d58c23268ee0d5f4d5b70b3ce66fc246c0f5d7ec3dda9ab80",
+      "ed25519_signature_over_canonical_hex": "801459e66cb2245765f810d97500f65b0d9a8e6d11a4141ead62c416a011c0c5ffc38fecccd9ed34167849e4c837d1dfd20eba53d420712cf0a669b7cd6f4c06",
+      "expected_verification": true
+    },
+    {
+      "name": "empty-containers",
+      "description": "Empty object and empty array serialize as {} and [] respectively; both are valid.",
+      "input": {
+        "a": {},
+        "b": [],
+        "c": {
+          "d": []
+        }
+      },
+      "canonical_bytes_hex": "7b2261223a7b7d2c2262223a5b5d2c2263223a7b2264223a5b5d7d7d",
+      "canonical_sha256": "bd34079e7743a3158d64c6bc3bec920aea455b231d8a6fce91ef295664db5cb2",
+      "ed25519_pubkey_hex": "16bd0f3e8181e93d58c23268ee0d5f4d5b70b3ce66fc246c0f5d7ec3dda9ab80",
+      "ed25519_signature_over_canonical_hex": "f7c493f5bbde8864e524606368ecd13c0c30a160c971261978f16a4e60b646d16969e0d9ca5b7d001ab6d05d82a9a37af5c681d2fa41467e3b8ace1b677b980d",
+      "expected_verification": true
+    },
+    {
+      "name": "deeply-nested",
+      "description": "Five levels of mixed object/array nesting. Tests recursive canonicalization and key ordering at depth.",
+      "input": {
+        "l1": {
+          "l2": {
+            "l3": [
+              {
+                "l4": {
+                  "l5": {
+                    "value": 42,
+                    "tag": "leaf"
+                  }
+                }
+              },
+              {
+                "l4": {
+                  "l5": {
+                    "value": 7,
+                    "tag": "leaf-sibling"
+                  }
+                }
+              }
+            ]
+          }
+        }
+      },
+      "canonical_bytes_hex": "7b226c31223a7b226c32223a7b226c33223a5b7b226c34223a7b226c35223a7b22746167223a226c656166222c2276616c7565223a34327d7d7d2c7b226c34223a7b226c35223a7b22746167223a226c6561662d7369626c696e67222c2276616c7565223a377d7d7d5d7d7d7d",
+      "canonical_sha256": "0e6b8f643adc41567058c219c4406132055694225bb615ebe54269d51017ae4e",
+      "ed25519_pubkey_hex": "16bd0f3e8181e93d58c23268ee0d5f4d5b70b3ce66fc246c0f5d7ec3dda9ab80",
+      "ed25519_signature_over_canonical_hex": "8502541cdf13ba352314d67f98988c2b6b6e114e453407e51621d20414b77b50a6c38efda67f0bafccf16fb47ad45073cefb235f8b87c3bc533b848acf78050b",
+      "expected_verification": true
+    },
+    {
+      "name": "string-escape-tab",
+      "description": "Tab (U+0009) and newline (U+000A) must be escaped as \\t and \\n per RFC 8785 §3.2.2.2.",
+      "input": {
+        "tab": "a\tb",
+        "nl": "a\nb"
+      },
+      "canonical_bytes_hex": "7b226e6c223a22615c6e62222c22746162223a22615c7462227d",
+      "canonical_sha256": "b87613c0c86656b675eb888f97d872351fb632619217739bc867a4238db011b4",
+      "ed25519_pubkey_hex": "16bd0f3e8181e93d58c23268ee0d5f4d5b70b3ce66fc246c0f5d7ec3dda9ab80",
+      "ed25519_signature_over_canonical_hex": "e4519fc1617d9d20922a547cd3d48581dc09103663dd6eab2c38f729f7458375963d98f4cb5607bf52a50a996dd59a07840daeb4e72b0842be893f4d8312450c",
+      "expected_verification": true
+    },
+    {
+      "name": "string-escape-unicode",
+      "description": "Non-ASCII characters above U+001F emit as literal UTF-8 bytes (snowman U+2603, thumbs-up U+1F44D).",
+      "input": {
+        "snowman": "☃",
+        "emoji": "👍"
+      },
+      "canonical_bytes_hex": "7b22656d6f6a69223a22f09f918d222c22736e6f776d616e223a22e29883227d",
+      "canonical_sha256": "8c784567b42bda490a02fed73f681a172e42d16c41ef2e1a8edec14fa51807ce",
+      "ed25519_pubkey_hex": "16bd0f3e8181e93d58c23268ee0d5f4d5b70b3ce66fc246c0f5d7ec3dda9ab80",
+      "ed25519_signature_over_canonical_hex": "e717999b3549031de204c0a95def48d129d0043882b27c842fc56b620539e56475304659b94de7f060051d000a7031d1d1e4a8f88db5c89ead2d0031c790630c",
+      "expected_verification": true
+    },
+    {
+      "name": "numeric-edge-cases",
+      "description": "Number formatting per ECMA-262: -0 serializes as \"0\"; integers have no fractional part; floats round-trip.",
+      "input": {
+        "neg_zero": 0,
+        "int": 42,
+        "float": 3.14
+      },
+      "canonical_bytes_hex": "7b22666c6f6174223a332e31342c22696e74223a34322c226e65675f7a65726f223a307d",
+      "canonical_sha256": "384d8f19c4d8044580edfe7ec03e853c8c6e210fde6cae650efd44c7ec55e5fd",
+      "ed25519_pubkey_hex": "16bd0f3e8181e93d58c23268ee0d5f4d5b70b3ce66fc246c0f5d7ec3dda9ab80",
+      "ed25519_signature_over_canonical_hex": "770b9b096709eb6888f9ed646c2e4589629fffb94ed073c37391ae5c7caa31e98a786e885e72f2892ad93a72ae51802c27b6cad71470773f623208e75e6a3208",
+      "expected_verification": true
+    },
+    {
+      "name": "array-of-objects",
+      "description": "Array preserves element order; each object inside is independently canonicalized with sorted keys.",
+      "input": [
+        {
+          "a": 1
+        },
+        {
+          "a": 2,
+          "b": 3
+        },
+        {}
+      ],
+      "canonical_bytes_hex": "5b7b2261223a317d2c7b2261223a322c2262223a337d2c7b7d5d",
+      "canonical_sha256": "dd3ae163142fee085062eacd52ef3958cc4cb483c4c974c3aa579d556636a497",
+      "ed25519_pubkey_hex": "16bd0f3e8181e93d58c23268ee0d5f4d5b70b3ce66fc246c0f5d7ec3dda9ab80",
+      "ed25519_signature_over_canonical_hex": "921660eae2250730437c60ff9d66eb89e33adb501381ae4e547ca02f5c4037b4527f160870968f2e251a4491a040d2e55df4ef1021c0be3413740a63588c5000",
+      "expected_verification": true
+    },
+    {
+      "name": "bilateral-receipt-shape",
+      "description": "Realistic in-toto Statement v1 envelope wrapping an AEOESS bilateral delegation receipt predicate (v0.1). Tracks in-toto/attestation#549.",
+      "input": {
+        "_type": "https://in-toto.io/Statement/v1",
+        "predicateType": "https://aeoess.com/predicates/bilateral-delegation-receipt/v0.1",
+        "subject": [
+          {
+            "name": "delegation:del_abc123",
+            "digest": {
+              "sha256": "2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae"
+            }
+          }
+        ],
+        "predicate": {
+          "delegation_chain_root": "4f3d8defea1e82c1705c35d97ee4db046c6313ba83855a7d0de04a44f04c834a",
+          "delegated_by": "did:aps:principal-001",
+          "delegated_to": "did:aps:agent-002",
+          "scope": [
+            "data:read",
+            "commerce:checkout"
+          ],
+          "spend_limit": 500,
+          "issued_at": "2026-04-22T12:00:00Z",
+          "expires_at": "2026-04-29T12:00:00Z",
+          "max_depth": 3,
+          "current_depth": 1,
+          "obligation_bundle_hash": null,
+          "revoked_at": null
+        }
+      },
+      "canonical_bytes_hex": "7b225f74797065223a2268747470733a2f2f696e2d746f746f2e696f2f53746174656d656e742f7631222c22707265646963617465223a7b2263757272656e745f6465707468223a312c2264656c6567617465645f6279223a226469643a6170733a7072696e636970616c2d303031222c2264656c6567617465645f746f223a226469643a6170733a6167656e742d303032222c2264656c65676174696f6e5f636861696e5f726f6f74223a2234663364386465666561316538326331373035633335643937656534646230343663363331336261383338353561376430646530346134346630346338333461222c22657870697265735f6174223a22323032362d30342d32395431323a30303a30305a222c226973737565645f6174223a22323032362d30342d32325431323a30303a30305a222c226d61785f6465707468223a332c226f626c69676174696f6e5f62756e646c655f68617368223a6e756c6c2c227265766f6b65645f6174223a6e756c6c2c2273636f7065223a5b22646174613a72656164222c22636f6d6d657263653a636865636b6f7574225d2c227370656e645f6c696d6974223a3530307d2c2270726564696361746554797065223a2268747470733a2f2f61656f6573732e636f6d2f707265646963617465732f62696c61746572616c2d64656c65676174696f6e2d726563656970742f76302e31222c227375626a656374223a5b7b22646967657374223a7b22736861323536223a2232633236623436623638666663363866663939623435336331643330343133343133343232643730363438336266613066393861356538383632363665376165227d2c226e616d65223a2264656c65676174696f6e3a64656c5f616263313233227d5d7d",
+      "canonical_sha256": "95c4831aa0bd48556b924f30a48300dec9cc415d389e1994744791ac4a717ce7",
+      "ed25519_pubkey_hex": "16bd0f3e8181e93d58c23268ee0d5f4d5b70b3ce66fc246c0f5d7ec3dda9ab80",
+      "ed25519_signature_over_canonical_hex": "36324faa6cbb22fd07b08e1dd5ff6eda40495350484e8e6087004c4445f4df8f131513f58523c979d2bb40c146de8fb199a1e46d56bfbbd5e53a660ae5f36e00",
+      "expected_verification": true
+    },
+    {
+      "name": "migration-attestation-shape",
+      "description": "Realistic SINT migrationAttestation envelope (reference sint-ai/sint-protocol PR #178). Tests bilateral interop on a non-APS predicate shape.",
+      "input": {
+        "_type": "https://in-toto.io/Statement/v1",
+        "predicateType": "https://sint.ai/predicates/migration-attestation/v0.1",
+        "subject": [
+          {
+            "name": "migration:mig_789",
+            "digest": {
+              "sha256": "5e884898da28047151d0e56f8dc6292773603d0d6aabbdd62a11ef721d1542d8"
+            }
+          }
+        ],
+        "predicate": {
+          "migration_id": "mig_789",
+          "source_chain": "ethereum",
+          "target_chain": "polygon",
+          "asset_locator": "erc20:0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
+          "amount": "1000000000",
+          "recipient": "0x742d35Cc6634C0532925a3b844Bc9e7595f0bEb7",
+          "attested_by": "did:sint:attestor-001",
+          "attested_at": "2026-04-22T12:00:00Z",
+          "proof_refs": [
+            {
+              "type": "merkle",
+              "root": "abc123"
+            },
+            {
+              "type": "signature",
+              "alg": "ed25519"
+            }
+          ],
+          "recovery_hint": null
+        }
+      },
+      "canonical_bytes_hex": "7b225f74797065223a2268747470733a2f2f696e2d746f746f2e696f2f53746174656d656e742f7631222c22707265646963617465223a7b22616d6f756e74223a2231303030303030303030222c2261737365745f6c6f6361746f72223a2265726332303a307841306238363939316336323138623336633164313944346132653945623063453336303665423438222c2261747465737465645f6174223a22323032362d30342d32325431323a30303a30305a222c2261747465737465645f6279223a226469643a73696e743a6174746573746f722d303031222c226d6967726174696f6e5f6964223a226d69675f373839222c2270726f6f665f72656673223a5b7b22726f6f74223a22616263313233222c2274797065223a226d65726b6c65227d2c7b22616c67223a2265643235353139222c2274797065223a227369676e6174757265227d5d2c22726563697069656e74223a22307837343264333543633636333443303533323932356133623834344263396537353935663062456237222c227265636f766572795f68696e74223a6e756c6c2c22736f757263655f636861696e223a22657468657265756d222c227461726765745f636861696e223a22706f6c79676f6e227d2c2270726564696361746554797065223a2268747470733a2f2f73696e742e61692f707265646963617465732f6d6967726174696f6e2d6174746573746174696f6e2f76302e31222c227375626a656374223a5b7b22646967657374223a7b22736861323536223a2235653838343839386461323830343731353164306535366638646336323932373733363033643064366161626264643632613131656637323164313534326438227d2c226e616d65223a226d6967726174696f6e3a6d69675f373839227d5d7d",
+      "canonical_sha256": "446b5431790e8afb201b2e19790268ae3d4c39b94a10923ef3e43cc92958bbfd",
+      "ed25519_pubkey_hex": "16bd0f3e8181e93d58c23268ee0d5f4d5b70b3ce66fc246c0f5d7ec3dda9ab80",
+      "ed25519_signature_over_canonical_hex": "c4875b0dff3e7ca91afe5c2c994830fc5768cd3cc5a7bfd47e5853b4ed5963c9d6e33255053e30604dd1e277da93a360bbe5b7fa611eb40f86c56a6f3407160a",
+      "expected_verification": true
+    }
+  ]
+}
+

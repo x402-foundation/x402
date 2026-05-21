@@ -1,0 +1,394 @@
+{
+  "schema_version": "1.0",
+  "artefact_id": "ap2-open-mandate-hash-conformance-v0",
+  "published_at": "2026-05-19T13:30:00Z",
+  "canonicalizer": "rfc8785@0.1.4",
+  "hash": "SHA-256, lowercase hex, prefixed sha256:",
+  "anchored_to": {
+    "schema": "google-agentic-commerce/AP2 code/sdk/schemas/ap2/open_checkout_mandate.json",
+    "vct": "mandate.checkout.open.1",
+    "spec_section": "AP2 specification, Open Checkout Mandate"
+  },
+  "derivation": "open_mandate_hash = SHA-256(JCS_RFC8785(unsigned_open_checkout_mandate_body)). Hash input is the mandate claims object, NOT the JWS compact form. Re-encoding the JWS envelope MUST NOT change open_mandate_hash.",
+  "context": {
+    "thread": "https://github.com/google-agentic-commerce/AP2/discussions/262",
+    "purpose": "Move open_mandate_hash interop from independent-convergence to spec-anchored. Two implementers agreeing is not an anchor; a deterministic vector set is. Seeded by AlgoVoi; AP2 community to own the canonical set long-term.",
+    "verification_recipe": [
+      "1. For each vector, take mandate_body verbatim.",
+      "2. Canonicalise with RFC 8785 (rfc8785@0.1.4 or any conformant impl).",
+      "3. base64-encode the JCS bytes; it MUST equal expected_jcs_bytes_b64.",
+      "4. SHA-256 the JCS bytes, lowercase hex; MUST equal expected_open_mandate_hash.",
+      "5. Honour the pair expectations: same_hash_as / different_hash_from MUST hold."
+    ],
+    "pair_semantics": {
+      "object_key_order": "MUST be hash-identical (JCS sorts object keys)",
+      "array_order": "MUST differ (JCS preserves array order; do not sort arrays)",
+      "optional_fields": "MUST differ (presence != absence; not collapsed to default)",
+      "currency_minor_unit": "canonical integer-minor-unit form; no decimal/float",
+      "unicode_normalisation": "MUST differ (RFC 8785 does no Unicode normalisation)"
+    }
+  },
+  "vectors": [
+    {
+      "vector_id": "ap2-omh-v0-baseline-001",
+      "description": "Canonical reference Open Checkout Mandate, all required fields present.",
+      "pair_group": "baseline",
+      "expectation": "reference",
+      "mandate_body": {
+        "vct": "mandate.checkout.open.1",
+        "constraints": [
+          {
+            "type": "checkout.allowed_merchants",
+            "allowed": [
+              {
+                "id": "merch_acme",
+                "name": "Acme Tools",
+                "website": "https://acme.example"
+              }
+            ]
+          },
+          {
+            "type": "checkout.line_items",
+            "items": [
+              {
+                "id": "req_drill",
+                "acceptable_items": [
+                  {
+                    "id": "SKU-DRILL-18V",
+                    "title": "18V Cordless Drill",
+                    "price": 8999
+                  },
+                  {
+                    "id": "SKU-DRILL-12V",
+                    "title": "12V Cordless Drill",
+                    "price": 5999
+                  }
+                ],
+                "quantity": 1
+              }
+            ]
+          }
+        ],
+        "cnf": {
+          "jwk": {
+            "kty": "OKP",
+            "crv": "Ed25519",
+            "x": "11qYAYKxCrfVS_7TyWQHOg7hcvPapiMlrwIaaPcHURo"
+          }
+        }
+      },
+      "expected_jcs_bytes_b64": "eyJjbmYiOnsiandrIjp7ImNydiI6IkVkMjU1MTkiLCJrdHkiOiJPS1AiLCJ4IjoiMTFxWUFZS3hDcmZWU183VHlXUUhPZzdoY3ZQYXBpTWxyd0lhYVBjSFVSbyJ9fSwiY29uc3RyYWludHMiOlt7ImFsbG93ZWQiOlt7ImlkIjoibWVyY2hfYWNtZSIsIm5hbWUiOiJBY21lIFRvb2xzIiwid2Vic2l0ZSI6Imh0dHBzOi8vYWNtZS5leGFtcGxlIn1dLCJ0eXBlIjoiY2hlY2tvdXQuYWxsb3dlZF9tZXJjaGFudHMifSx7Iml0ZW1zIjpbeyJhY2NlcHRhYmxlX2l0ZW1zIjpbeyJpZCI6IlNLVS1EUklMTC0xOFYiLCJwcmljZSI6ODk5OSwidGl0bGUiOiIxOFYgQ29yZGxlc3MgRHJpbGwifSx7ImlkIjoiU0tVLURSSUxMLTEyViIsInByaWNlIjo1OTk5LCJ0aXRsZSI6IjEyViBDb3JkbGVzcyBEcmlsbCJ9XSwiaWQiOiJyZXFfZHJpbGwiLCJxdWFudGl0eSI6MX1dLCJ0eXBlIjoiY2hlY2tvdXQubGluZV9pdGVtcyJ9XSwidmN0IjoibWFuZGF0ZS5jaGVja291dC5vcGVuLjEifQ==",
+      "expected_open_mandate_hash": "sha256:4a407c36ab0619a9086756abb3f5c6cae8f80dff721dd3746cc0fa9256616683",
+      "notes": "The anchor. All other vectors are deltas against this body."
+    },
+    {
+      "vector_id": "ap2-omh-v0-object-key-order-002",
+      "description": "Identical mandate with every object's keys in different source order.",
+      "pair_group": "object_key_order",
+      "expectation": "same_hash_as:ap2-omh-v0-baseline-001",
+      "mandate_body": {
+        "cnf": {
+          "jwk": {
+            "kty": "OKP",
+            "crv": "Ed25519",
+            "x": "11qYAYKxCrfVS_7TyWQHOg7hcvPapiMlrwIaaPcHURo"
+          }
+        },
+        "constraints": [
+          {
+            "allowed": [
+              {
+                "website": "https://acme.example",
+                "name": "Acme Tools",
+                "id": "merch_acme"
+              }
+            ],
+            "type": "checkout.allowed_merchants"
+          },
+          {
+            "items": [
+              {
+                "quantity": 1,
+                "acceptable_items": [
+                  {
+                    "price": 8999,
+                    "title": "18V Cordless Drill",
+                    "id": "SKU-DRILL-18V"
+                  },
+                  {
+                    "price": 5999,
+                    "title": "12V Cordless Drill",
+                    "id": "SKU-DRILL-12V"
+                  }
+                ],
+                "id": "req_drill"
+              }
+            ],
+            "type": "checkout.line_items"
+          }
+        ],
+        "vct": "mandate.checkout.open.1"
+      },
+      "expected_jcs_bytes_b64": "eyJjbmYiOnsiandrIjp7ImNydiI6IkVkMjU1MTkiLCJrdHkiOiJPS1AiLCJ4IjoiMTFxWUFZS3hDcmZWU183VHlXUUhPZzdoY3ZQYXBpTWxyd0lhYVBjSFVSbyJ9fSwiY29uc3RyYWludHMiOlt7ImFsbG93ZWQiOlt7ImlkIjoibWVyY2hfYWNtZSIsIm5hbWUiOiJBY21lIFRvb2xzIiwid2Vic2l0ZSI6Imh0dHBzOi8vYWNtZS5leGFtcGxlIn1dLCJ0eXBlIjoiY2hlY2tvdXQuYWxsb3dlZF9tZXJjaGFudHMifSx7Iml0ZW1zIjpbeyJhY2NlcHRhYmxlX2l0ZW1zIjpbeyJpZCI6IlNLVS1EUklMTC0xOFYiLCJwcmljZSI6ODk5OSwidGl0bGUiOiIxOFYgQ29yZGxlc3MgRHJpbGwifSx7ImlkIjoiU0tVLURSSUxMLTEyViIsInByaWNlIjo1OTk5LCJ0aXRsZSI6IjEyViBDb3JkbGVzcyBEcmlsbCJ9XSwiaWQiOiJyZXFfZHJpbGwiLCJxdWFudGl0eSI6MX1dLCJ0eXBlIjoiY2hlY2tvdXQubGluZV9pdGVtcyJ9XSwidmN0IjoibWFuZGF0ZS5jaGVja291dC5vcGVuLjEifQ==",
+      "expected_open_mandate_hash": "sha256:4a407c36ab0619a9086756abb3f5c6cae8f80dff721dd3746cc0fa9256616683",
+      "notes": "JCS (RFC 8785 sec 3.2.3) sorts object members by code unit. Object key order in the source MUST NOT affect open_mandate_hash. This vector MUST produce the byte-identical JCS output and hash as baseline-001."
+    },
+    {
+      "vector_id": "ap2-omh-v0-array-order-003",
+      "description": "Baseline with acceptable_items[] order swapped.",
+      "pair_group": "array_order",
+      "expectation": "different_hash_from:ap2-omh-v0-baseline-001",
+      "mandate_body": {
+        "vct": "mandate.checkout.open.1",
+        "constraints": [
+          {
+            "type": "checkout.allowed_merchants",
+            "allowed": [
+              {
+                "id": "merch_acme",
+                "name": "Acme Tools",
+                "website": "https://acme.example"
+              }
+            ]
+          },
+          {
+            "type": "checkout.line_items",
+            "items": [
+              {
+                "id": "req_drill",
+                "acceptable_items": [
+                  {
+                    "id": "SKU-DRILL-12V",
+                    "title": "12V Cordless Drill",
+                    "price": 5999
+                  },
+                  {
+                    "id": "SKU-DRILL-18V",
+                    "title": "18V Cordless Drill",
+                    "price": 8999
+                  }
+                ],
+                "quantity": 1
+              }
+            ]
+          }
+        ],
+        "cnf": {
+          "jwk": {
+            "kty": "OKP",
+            "crv": "Ed25519",
+            "x": "11qYAYKxCrfVS_7TyWQHOg7hcvPapiMlrwIaaPcHURo"
+          }
+        }
+      },
+      "expected_jcs_bytes_b64": "eyJjbmYiOnsiandrIjp7ImNydiI6IkVkMjU1MTkiLCJrdHkiOiJPS1AiLCJ4IjoiMTFxWUFZS3hDcmZWU183VHlXUUhPZzdoY3ZQYXBpTWxyd0lhYVBjSFVSbyJ9fSwiY29uc3RyYWludHMiOlt7ImFsbG93ZWQiOlt7ImlkIjoibWVyY2hfYWNtZSIsIm5hbWUiOiJBY21lIFRvb2xzIiwid2Vic2l0ZSI6Imh0dHBzOi8vYWNtZS5leGFtcGxlIn1dLCJ0eXBlIjoiY2hlY2tvdXQuYWxsb3dlZF9tZXJjaGFudHMifSx7Iml0ZW1zIjpbeyJhY2NlcHRhYmxlX2l0ZW1zIjpbeyJpZCI6IlNLVS1EUklMTC0xMlYiLCJwcmljZSI6NTk5OSwidGl0bGUiOiIxMlYgQ29yZGxlc3MgRHJpbGwifSx7ImlkIjoiU0tVLURSSUxMLTE4ViIsInByaWNlIjo4OTk5LCJ0aXRsZSI6IjE4ViBDb3JkbGVzcyBEcmlsbCJ9XSwiaWQiOiJyZXFfZHJpbGwiLCJxdWFudGl0eSI6MX1dLCJ0eXBlIjoiY2hlY2tvdXQubGluZV9pdGVtcyJ9XSwidmN0IjoibWFuZGF0ZS5jaGVja291dC5vcGVuLjEifQ==",
+      "expected_open_mandate_hash": "sha256:754fc15813c3ca16bf23f09d4ccedb74d727f5d9226947e8a63c1518133c9ed9",
+      "notes": "JSON arrays are order-significant; JCS preserves array element order. An implementer that sorts arrays for 'canonicalisation' WILL diverge. This vector MUST produce a DIFFERENT hash from baseline-001. If yours matches baseline-001, your canonicaliser is incorrectly reordering arrays."
+    },
+    {
+      "vector_id": "ap2-omh-v0-optional-fields-004",
+      "description": "Baseline plus optional iat and exp (Unix epoch integers).",
+      "pair_group": "optional_fields",
+      "expectation": "different_hash_from:ap2-omh-v0-baseline-001",
+      "mandate_body": {
+        "vct": "mandate.checkout.open.1",
+        "constraints": [
+          {
+            "type": "checkout.allowed_merchants",
+            "allowed": [
+              {
+                "id": "merch_acme",
+                "name": "Acme Tools",
+                "website": "https://acme.example"
+              }
+            ]
+          },
+          {
+            "type": "checkout.line_items",
+            "items": [
+              {
+                "id": "req_drill",
+                "acceptable_items": [
+                  {
+                    "id": "SKU-DRILL-18V",
+                    "title": "18V Cordless Drill",
+                    "price": 8999
+                  },
+                  {
+                    "id": "SKU-DRILL-12V",
+                    "title": "12V Cordless Drill",
+                    "price": 5999
+                  }
+                ],
+                "quantity": 1
+              }
+            ]
+          }
+        ],
+        "cnf": {
+          "jwk": {
+            "kty": "OKP",
+            "crv": "Ed25519",
+            "x": "11qYAYKxCrfVS_7TyWQHOg7hcvPapiMlrwIaaPcHURo"
+          }
+        },
+        "iat": 1747400000,
+        "exp": 1747403600
+      },
+      "expected_jcs_bytes_b64": "eyJjbmYiOnsiandrIjp7ImNydiI6IkVkMjU1MTkiLCJrdHkiOiJPS1AiLCJ4IjoiMTFxWUFZS3hDcmZWU183VHlXUUhPZzdoY3ZQYXBpTWxyd0lhYVBjSFVSbyJ9fSwiY29uc3RyYWludHMiOlt7ImFsbG93ZWQiOlt7ImlkIjoibWVyY2hfYWNtZSIsIm5hbWUiOiJBY21lIFRvb2xzIiwid2Vic2l0ZSI6Imh0dHBzOi8vYWNtZS5leGFtcGxlIn1dLCJ0eXBlIjoiY2hlY2tvdXQuYWxsb3dlZF9tZXJjaGFudHMifSx7Iml0ZW1zIjpbeyJhY2NlcHRhYmxlX2l0ZW1zIjpbeyJpZCI6IlNLVS1EUklMTC0xOFYiLCJwcmljZSI6ODk5OSwidGl0bGUiOiIxOFYgQ29yZGxlc3MgRHJpbGwifSx7ImlkIjoiU0tVLURSSUxMLTEyViIsInByaWNlIjo1OTk5LCJ0aXRsZSI6IjEyViBDb3JkbGVzcyBEcmlsbCJ9XSwiaWQiOiJyZXFfZHJpbGwiLCJxdWFudGl0eSI6MX1dLCJ0eXBlIjoiY2hlY2tvdXQubGluZV9pdGVtcyJ9XSwiZXhwIjoxNzQ3NDAzNjAwLCJpYXQiOjE3NDc0MDAwMDAsInZjdCI6Im1hbmRhdGUuY2hlY2tvdXQub3Blbi4xIn0=",
+      "expected_open_mandate_hash": "sha256:6368fcf2c7d7aa63453ba310043b6a284f845cf48eef31eb1660aec36bce8052",
+      "notes": "Optional fields present vs absent are different mandates with different hashes; absence is not normalised to a default. iat/exp MUST be integers (Unix epoch), never strings or floats."
+    },
+    {
+      "vector_id": "ap2-omh-v0-currency-minor-unit-005",
+      "description": "Price expressed as ISO-4217 integer minor units (1050 == 10.50 in a cent currency).",
+      "pair_group": "currency_minor_unit",
+      "expectation": "canonical_form",
+      "mandate_body": {
+        "vct": "mandate.checkout.open.1",
+        "constraints": [
+          {
+            "type": "checkout.allowed_merchants",
+            "allowed": [
+              {
+                "id": "merch_acme",
+                "name": "Acme Tools",
+                "website": "https://acme.example"
+              }
+            ]
+          },
+          {
+            "type": "checkout.line_items",
+            "items": [
+              {
+                "id": "req_drill",
+                "acceptable_items": [
+                  {
+                    "id": "SKU-WIDGET",
+                    "title": "Widget",
+                    "price": 1050
+                  }
+                ],
+                "quantity": 1
+              }
+            ]
+          }
+        ],
+        "cnf": {
+          "jwk": {
+            "kty": "OKP",
+            "crv": "Ed25519",
+            "x": "11qYAYKxCrfVS_7TyWQHOg7hcvPapiMlrwIaaPcHURo"
+          }
+        }
+      },
+      "expected_jcs_bytes_b64": "eyJjbmYiOnsiandrIjp7ImNydiI6IkVkMjU1MTkiLCJrdHkiOiJPS1AiLCJ4IjoiMTFxWUFZS3hDcmZWU183VHlXUUhPZzdoY3ZQYXBpTWxyd0lhYVBjSFVSbyJ9fSwiY29uc3RyYWludHMiOlt7ImFsbG93ZWQiOlt7ImlkIjoibWVyY2hfYWNtZSIsIm5hbWUiOiJBY21lIFRvb2xzIiwid2Vic2l0ZSI6Imh0dHBzOi8vYWNtZS5leGFtcGxlIn1dLCJ0eXBlIjoiY2hlY2tvdXQuYWxsb3dlZF9tZXJjaGFudHMifSx7Iml0ZW1zIjpbeyJhY2NlcHRhYmxlX2l0ZW1zIjpbeyJpZCI6IlNLVS1XSURHRVQiLCJwcmljZSI6MTA1MCwidGl0bGUiOiJXaWRnZXQifV0sImlkIjoicmVxX2RyaWxsIiwicXVhbnRpdHkiOjF9XSwidHlwZSI6ImNoZWNrb3V0LmxpbmVfaXRlbXMifV0sInZjdCI6Im1hbmRhdGUuY2hlY2tvdXQub3Blbi4xIn0=",
+      "expected_open_mandate_hash": "sha256:cd294f91a53366dbf8d50e5850605c2fec30d6eb3378df7e1192944f4284f9dc",
+      "notes": "AP2 item.price and amount.amount are integers in the currency minor unit (amount.json / item.json). 10.50 MUST be encoded 1050, never 10.50, \"10.50\", or 10.5. A float/decimal encoding is non-conformant and will not match this vector's hash."
+    },
+    {
+      "vector_id": "ap2-omh-v0-unicode-nfc-006a",
+      "description": "merchant.name in Unicode NFC (composed) form.",
+      "pair_group": "unicode_normalisation",
+      "expectation": "different_hash_from:ap2-omh-v0-unicode-nfd-006b",
+      "mandate_body": {
+        "vct": "mandate.checkout.open.1",
+        "constraints": [
+          {
+            "type": "checkout.allowed_merchants",
+            "allowed": [
+              {
+                "id": "merch_acme",
+                "name": "Café Solé",
+                "website": "https://acme.example"
+              }
+            ]
+          },
+          {
+            "type": "checkout.line_items",
+            "items": [
+              {
+                "id": "req_drill",
+                "acceptable_items": [
+                  {
+                    "id": "SKU-DRILL-18V",
+                    "title": "18V Cordless Drill",
+                    "price": 8999
+                  },
+                  {
+                    "id": "SKU-DRILL-12V",
+                    "title": "12V Cordless Drill",
+                    "price": 5999
+                  }
+                ],
+                "quantity": 1
+              }
+            ]
+          }
+        ],
+        "cnf": {
+          "jwk": {
+            "kty": "OKP",
+            "crv": "Ed25519",
+            "x": "11qYAYKxCrfVS_7TyWQHOg7hcvPapiMlrwIaaPcHURo"
+          }
+        }
+      },
+      "expected_jcs_bytes_b64": "eyJjbmYiOnsiandrIjp7ImNydiI6IkVkMjU1MTkiLCJrdHkiOiJPS1AiLCJ4IjoiMTFxWUFZS3hDcmZWU183VHlXUUhPZzdoY3ZQYXBpTWxyd0lhYVBjSFVSbyJ9fSwiY29uc3RyYWludHMiOlt7ImFsbG93ZWQiOlt7ImlkIjoibWVyY2hfYWNtZSIsIm5hbWUiOiJDYWbDqSBTb2zDqSIsIndlYnNpdGUiOiJodHRwczovL2FjbWUuZXhhbXBsZSJ9XSwidHlwZSI6ImNoZWNrb3V0LmFsbG93ZWRfbWVyY2hhbnRzIn0seyJpdGVtcyI6W3siYWNjZXB0YWJsZV9pdGVtcyI6W3siaWQiOiJTS1UtRFJJTEwtMThWIiwicHJpY2UiOjg5OTksInRpdGxlIjoiMThWIENvcmRsZXNzIERyaWxsIn0seyJpZCI6IlNLVS1EUklMTC0xMlYiLCJwcmljZSI6NTk5OSwidGl0bGUiOiIxMlYgQ29yZGxlc3MgRHJpbGwifV0sImlkIjoicmVxX2RyaWxsIiwicXVhbnRpdHkiOjF9XSwidHlwZSI6ImNoZWNrb3V0LmxpbmVfaXRlbXMifV0sInZjdCI6Im1hbmRhdGUuY2hlY2tvdXQub3Blbi4xIn0=",
+      "expected_open_mandate_hash": "sha256:dd0330b1d02b1f83ade5821d64f9f5abf75d1af00575e8fa39d68a8bdeadfb31",
+      "notes": "RFC 8785 performs NO Unicode normalisation. The serialised string is the exact code points supplied. NFC and NFD forms of the same glyph produce DIFFERENT open_mandate_hash. Implementers MUST NOT normalise merchant strings before hashing; the signed bytes are authoritative."
+    },
+    {
+      "vector_id": "ap2-omh-v0-unicode-nfd-006b",
+      "description": "Same mandate, merchant.name in Unicode NFD (decomposed) form.",
+      "pair_group": "unicode_normalisation",
+      "expectation": "different_hash_from:ap2-omh-v0-unicode-nfc-006a",
+      "mandate_body": {
+        "vct": "mandate.checkout.open.1",
+        "constraints": [
+          {
+            "type": "checkout.allowed_merchants",
+            "allowed": [
+              {
+                "id": "merch_acme",
+                "name": "Café Solé",
+                "website": "https://acme.example"
+              }
+            ]
+          },
+          {
+            "type": "checkout.line_items",
+            "items": [
+              {
+                "id": "req_drill",
+                "acceptable_items": [
+                  {
+                    "id": "SKU-DRILL-18V",
+                    "title": "18V Cordless Drill",
+                    "price": 8999
+                  },
+                  {
+                    "id": "SKU-DRILL-12V",
+                    "title": "12V Cordless Drill",
+                    "price": 5999
+                  }
+                ],
+                "quantity": 1
+              }
+            ]
+          }
+        ],
+        "cnf": {
+          "jwk": {
+            "kty": "OKP",
+            "crv": "Ed25519",
+            "x": "11qYAYKxCrfVS_7TyWQHOg7hcvPapiMlrwIaaPcHURo"
+          }
+        }
+      },
+      "expected_jcs_bytes_b64": "eyJjbmYiOnsiandrIjp7ImNydiI6IkVkMjU1MTkiLCJrdHkiOiJPS1AiLCJ4IjoiMTFxWUFZS3hDcmZWU183VHlXUUhPZzdoY3ZQYXBpTWxyd0lhYVBjSFVSbyJ9fSwiY29uc3RyYWludHMiOlt7ImFsbG93ZWQiOlt7ImlkIjoibWVyY2hfYWNtZSIsIm5hbWUiOiJDYWZlzIEgU29sZcyBIiwid2Vic2l0ZSI6Imh0dHBzOi8vYWNtZS5leGFtcGxlIn1dLCJ0eXBlIjoiY2hlY2tvdXQuYWxsb3dlZF9tZXJjaGFudHMifSx7Iml0ZW1zIjpbeyJhY2NlcHRhYmxlX2l0ZW1zIjpbeyJpZCI6IlNLVS1EUklMTC0xOFYiLCJwcmljZSI6ODk5OSwidGl0bGUiOiIxOFYgQ29yZGxlc3MgRHJpbGwifSx7ImlkIjoiU0tVLURSSUxMLTEyViIsInByaWNlIjo1OTk5LCJ0aXRsZSI6IjEyViBDb3JkbGVzcyBEcmlsbCJ9XSwiaWQiOiJyZXFfZHJpbGwiLCJxdWFudGl0eSI6MX1dLCJ0eXBlIjoiY2hlY2tvdXQubGluZV9pdGVtcyJ9XSwidmN0IjoibWFuZGF0ZS5jaGVja291dC5vcGVuLjEifQ==",
+      "expected_open_mandate_hash": "sha256:f8ae25428c8f1eb7ffaf49da13366c5e76db95de76f237e01f98b6ec8e4247e9",
+      "notes": "Pair of 006a. If 006a and 006b produce the same hash, your pipeline is Unicode-normalising and is non-conformant with RFC 8785."
+    }
+  ]
+}

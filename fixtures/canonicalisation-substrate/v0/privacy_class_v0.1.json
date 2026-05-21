@@ -1,0 +1,571 @@
+{
+  "schema_version": "1.0",
+  "artefact_id": "x402-privacy-class-attestation-conformance-v0.1",
+  "supersedes": "x402-privacy-class-attestation-conformance-v0",
+  "published_at": "2026-05-21T04:15:00Z",
+  "canonicalizer": "rfc8785@0.1.4",
+  "hash": "SHA-256, lowercase hex, prefixed sha256:",
+  "anchored_to": {
+    "thread": "https://github.com/x402-foundation/x402/issues/2326",
+    "related": [
+      "https://github.com/x402-foundation/x402/pull/2334",
+      "https://github.com/x402-foundation/x402/issues/2357",
+      "https://github.com/x402-foundation/x402/pull/2398"
+    ],
+    "schema": "x402.bazaar.privacy_class.v0"
+  },
+  "v01_additions": {
+    "purpose": "v0.1 adds three vectors targeting field-name canonicalisation discipline — the gap @Ilya0527 identified on x402#2326 (2026-05-21). v0's 007a/007b/007c pair conflates field-name and value-form differences; v0.1 isolates field-name discipline alone via 007d, and generalises it to a second field (block_height) via the 008a/008b pair. Two pairs documenting one rule matches the AP2 #265 structural discipline.",
+    "new_invariant": "field_name_canonicalisation",
+    "new_vectors": [
+      "privacy-class-v0.1-timestamp-007d-renamed-field",
+      "privacy-class-v0.1-block-height-008a-canonical-name",
+      "privacy-class-v0.1-block-height-008b-legacy-name"
+    ],
+    "new_pair_invariants": [
+      "007d-renamed-field MUST differ from 007a (value identical, field name different)",
+      "008a-canonical-name MUST differ from 008b-legacy-name (value identical, field name different)"
+    ],
+    "compatibility": "Additive only. The 10 v0 vectors stay byte-identical with the same expected hashes. Implementations passing v0 also pass v0.1 for those 10 vectors; the 3 new v0.1 vectors test the new invariant. v0 artefact remains published unchanged."
+  },
+  "context": {
+    "verification_recipe": [
+      "1. For each vector, take attestation_body verbatim.",
+      "2. Canonicalise with RFC 8785 (any conformant impl).",
+      "3. base64-encode the JCS bytes; MUST equal expected_jcs_bytes_b64.",
+      "4. SHA-256 the JCS bytes, lowercase hex; MUST equal expected_privacy_class_hash.",
+      "5. Honour pair expectations: same_hash_as / different_hash_from MUST hold."
+    ],
+    "pair_semantics": {
+      "object_key_order": "MUST be hash-identical (JCS sorts object keys)",
+      "array_order": "MUST differ (JCS preserves array order)",
+      "optional_fields": "MUST differ (presence != absence)",
+      "scalar_form": "MUST differ (string '12345678' != integer 12345678)",
+      "unicode_normalisation": "MUST differ (RFC 8785 does no Unicode normalisation)",
+      "timestamp_lexical": "MUST differ (timestamp_ms int / RFC3339 string / RFC3339-ms string all distinct under JCS)",
+      "field_name_canonicalisation": "MUST differ (same value, different field name produces different JCS bytes; JCS treats field names as opaque)"
+    }
+  },
+  "pair_invariants": {
+    "total": 12,
+    "passed": 12,
+    "failed": 0,
+    "details": [
+      {
+        "a": "privacy-class-v0-object-key-order-002",
+        "rel": "==",
+        "b": "privacy-class-v0-baseline-001",
+        "ok": true
+      },
+      {
+        "a": "privacy-class-v0-array-order-003",
+        "rel": "!=",
+        "b": "privacy-class-v0-baseline-001",
+        "ok": true
+      },
+      {
+        "a": "privacy-class-v0-optional-fields-004",
+        "rel": "!=",
+        "b": "privacy-class-v0-baseline-001",
+        "ok": true
+      },
+      {
+        "a": "privacy-class-v0-block-height-form-005",
+        "rel": "!=",
+        "b": "privacy-class-v0-baseline-001",
+        "ok": true
+      },
+      {
+        "a": "privacy-class-v0-unicode-nfc-006a",
+        "rel": "!=",
+        "b": "privacy-class-v0-unicode-nfd-006b",
+        "ok": true
+      },
+      {
+        "a": "privacy-class-v0-unicode-nfd-006b",
+        "rel": "!=",
+        "b": "privacy-class-v0-unicode-nfc-006a",
+        "ok": true
+      },
+      {
+        "a": "privacy-class-v0-timestamp-007a-epoch-ms",
+        "rel": "!=",
+        "b": "privacy-class-v0-timestamp-007b-rfc3339",
+        "ok": true
+      },
+      {
+        "a": "privacy-class-v0-timestamp-007b-rfc3339",
+        "rel": "!=",
+        "b": "privacy-class-v0-timestamp-007a-epoch-ms",
+        "ok": true
+      },
+      {
+        "a": "privacy-class-v0-timestamp-007c-rfc3339-ms",
+        "rel": "!=",
+        "b": "privacy-class-v0-timestamp-007b-rfc3339",
+        "ok": true
+      },
+      {
+        "a": "privacy-class-v0.1-timestamp-007d-renamed-field",
+        "rel": "!=",
+        "b": "privacy-class-v0-timestamp-007a-epoch-ms",
+        "ok": true
+      },
+      {
+        "a": "privacy-class-v0.1-block-height-008a-canonical-name",
+        "rel": "!=",
+        "b": "privacy-class-v0.1-block-height-008b-legacy-name",
+        "ok": true
+      },
+      {
+        "a": "privacy-class-v0.1-block-height-008b-legacy-name",
+        "rel": "!=",
+        "b": "privacy-class-v0.1-block-height-008a-canonical-name",
+        "ok": true
+      }
+    ]
+  },
+  "vectors": [
+    {
+      "vector_id": "privacy-class-v0-baseline-001",
+      "invariant": "baseline",
+      "expectation": "reference",
+      "note": "Canonical reference attestation: timestamp_ms (epoch integer), effective_block_height integer, sorted keys, claims array order pinned.",
+      "attestation_body": {
+        "schema": "x402.bazaar.privacy_class.v0",
+        "version": 1,
+        "service_id": "did:web:facilitator.example.com#service-123",
+        "privacy_class": "attested-private",
+        "effective_block_height": 12345678,
+        "timestamp_ms": 1747843200000,
+        "attester": {
+          "id": "did:web:auditor.example.org",
+          "method": "did:web"
+        },
+        "claims": [
+          {
+            "axis": "settlement_visibility",
+            "value": "private"
+          },
+          {
+            "axis": "audit_path",
+            "value": "regulator-only"
+          },
+          {
+            "axis": "retention_window_days",
+            "value": 2557
+          }
+        ]
+      },
+      "expected_jcs_bytes_b64": "eyJhdHRlc3RlciI6eyJpZCI6ImRpZDp3ZWI6YXVkaXRvci5leGFtcGxlLm9yZyIsIm1ldGhvZCI6ImRpZDp3ZWIifSwiY2xhaW1zIjpbeyJheGlzIjoic2V0dGxlbWVudF92aXNpYmlsaXR5IiwidmFsdWUiOiJwcml2YXRlIn0seyJheGlzIjoiYXVkaXRfcGF0aCIsInZhbHVlIjoicmVndWxhdG9yLW9ubHkifSx7ImF4aXMiOiJyZXRlbnRpb25fd2luZG93X2RheXMiLCJ2YWx1ZSI6MjU1N31dLCJlZmZlY3RpdmVfYmxvY2tfaGVpZ2h0IjoxMjM0NTY3OCwicHJpdmFjeV9jbGFzcyI6ImF0dGVzdGVkLXByaXZhdGUiLCJzY2hlbWEiOiJ4NDAyLmJhemFhci5wcml2YWN5X2NsYXNzLnYwIiwic2VydmljZV9pZCI6ImRpZDp3ZWI6ZmFjaWxpdGF0b3IuZXhhbXBsZS5jb20jc2VydmljZS0xMjMiLCJ0aW1lc3RhbXBfbXMiOjE3NDc4NDMyMDAwMDAsInZlcnNpb24iOjF9",
+      "expected_privacy_class_hash": "sha256:4d6ff16f6ba3433eefcc71ed1fd3e6a60d5f2abda723e0bd553e14cf77793719"
+    },
+    {
+      "vector_id": "privacy-class-v0-object-key-order-002",
+      "invariant": "object_key_order",
+      "expectation": "same_hash_as:privacy-class-v0-baseline-001",
+      "note": "Source keys deliberately unsorted. JCS sorts object keys, so the canonical bytes and hash MUST be identical to baseline-001.",
+      "attestation_body": {
+        "claims": [
+          {
+            "axis": "settlement_visibility",
+            "value": "private"
+          },
+          {
+            "axis": "audit_path",
+            "value": "regulator-only"
+          },
+          {
+            "axis": "retention_window_days",
+            "value": 2557
+          }
+        ],
+        "attester": {
+          "id": "did:web:auditor.example.org",
+          "method": "did:web"
+        },
+        "timestamp_ms": 1747843200000,
+        "effective_block_height": 12345678,
+        "privacy_class": "attested-private",
+        "service_id": "did:web:facilitator.example.com#service-123",
+        "version": 1,
+        "schema": "x402.bazaar.privacy_class.v0"
+      },
+      "expected_jcs_bytes_b64": "eyJhdHRlc3RlciI6eyJpZCI6ImRpZDp3ZWI6YXVkaXRvci5leGFtcGxlLm9yZyIsIm1ldGhvZCI6ImRpZDp3ZWIifSwiY2xhaW1zIjpbeyJheGlzIjoic2V0dGxlbWVudF92aXNpYmlsaXR5IiwidmFsdWUiOiJwcml2YXRlIn0seyJheGlzIjoiYXVkaXRfcGF0aCIsInZhbHVlIjoicmVndWxhdG9yLW9ubHkifSx7ImF4aXMiOiJyZXRlbnRpb25fd2luZG93X2RheXMiLCJ2YWx1ZSI6MjU1N31dLCJlZmZlY3RpdmVfYmxvY2tfaGVpZ2h0IjoxMjM0NTY3OCwicHJpdmFjeV9jbGFzcyI6ImF0dGVzdGVkLXByaXZhdGUiLCJzY2hlbWEiOiJ4NDAyLmJhemFhci5wcml2YWN5X2NsYXNzLnYwIiwic2VydmljZV9pZCI6ImRpZDp3ZWI6ZmFjaWxpdGF0b3IuZXhhbXBsZS5jb20jc2VydmljZS0xMjMiLCJ0aW1lc3RhbXBfbXMiOjE3NDc4NDMyMDAwMDAsInZlcnNpb24iOjF9",
+      "expected_privacy_class_hash": "sha256:4d6ff16f6ba3433eefcc71ed1fd3e6a60d5f2abda723e0bd553e14cf77793719"
+    },
+    {
+      "vector_id": "privacy-class-v0-array-order-003",
+      "invariant": "array_order",
+      "expectation": "different_hash_from:privacy-class-v0-baseline-001",
+      "note": "claims array reversed. JCS preserves array order, so canonical bytes differ even though claim set is semantically identical.",
+      "attestation_body": {
+        "schema": "x402.bazaar.privacy_class.v0",
+        "version": 1,
+        "service_id": "did:web:facilitator.example.com#service-123",
+        "privacy_class": "attested-private",
+        "effective_block_height": 12345678,
+        "timestamp_ms": 1747843200000,
+        "attester": {
+          "id": "did:web:auditor.example.org",
+          "method": "did:web"
+        },
+        "claims": [
+          {
+            "axis": "retention_window_days",
+            "value": 2557
+          },
+          {
+            "axis": "audit_path",
+            "value": "regulator-only"
+          },
+          {
+            "axis": "settlement_visibility",
+            "value": "private"
+          }
+        ]
+      },
+      "expected_jcs_bytes_b64": "eyJhdHRlc3RlciI6eyJpZCI6ImRpZDp3ZWI6YXVkaXRvci5leGFtcGxlLm9yZyIsIm1ldGhvZCI6ImRpZDp3ZWIifSwiY2xhaW1zIjpbeyJheGlzIjoicmV0ZW50aW9uX3dpbmRvd19kYXlzIiwidmFsdWUiOjI1NTd9LHsiYXhpcyI6ImF1ZGl0X3BhdGgiLCJ2YWx1ZSI6InJlZ3VsYXRvci1vbmx5In0seyJheGlzIjoic2V0dGxlbWVudF92aXNpYmlsaXR5IiwidmFsdWUiOiJwcml2YXRlIn1dLCJlZmZlY3RpdmVfYmxvY2tfaGVpZ2h0IjoxMjM0NTY3OCwicHJpdmFjeV9jbGFzcyI6ImF0dGVzdGVkLXByaXZhdGUiLCJzY2hlbWEiOiJ4NDAyLmJhemFhci5wcml2YWN5X2NsYXNzLnYwIiwic2VydmljZV9pZCI6ImRpZDp3ZWI6ZmFjaWxpdGF0b3IuZXhhbXBsZS5jb20jc2VydmljZS0xMjMiLCJ0aW1lc3RhbXBfbXMiOjE3NDc4NDMyMDAwMDAsInZlcnNpb24iOjF9",
+      "expected_privacy_class_hash": "sha256:1bead82997aab2a26d0959c4285bb8f6ad815b7be878bb9f78210e96c579a8ae"
+    },
+    {
+      "vector_id": "privacy-class-v0-optional-fields-004",
+      "invariant": "optional_fields",
+      "expectation": "different_hash_from:privacy-class-v0-baseline-001",
+      "note": "attester.method omitted (vs present in baseline). Presence and absence are NOT collapsed.",
+      "attestation_body": {
+        "schema": "x402.bazaar.privacy_class.v0",
+        "version": 1,
+        "service_id": "did:web:facilitator.example.com#service-123",
+        "privacy_class": "attested-private",
+        "effective_block_height": 12345678,
+        "timestamp_ms": 1747843200000,
+        "attester": {
+          "id": "did:web:auditor.example.org"
+        },
+        "claims": [
+          {
+            "axis": "settlement_visibility",
+            "value": "private"
+          },
+          {
+            "axis": "audit_path",
+            "value": "regulator-only"
+          },
+          {
+            "axis": "retention_window_days",
+            "value": 2557
+          }
+        ]
+      },
+      "expected_jcs_bytes_b64": "eyJhdHRlc3RlciI6eyJpZCI6ImRpZDp3ZWI6YXVkaXRvci5leGFtcGxlLm9yZyJ9LCJjbGFpbXMiOlt7ImF4aXMiOiJzZXR0bGVtZW50X3Zpc2liaWxpdHkiLCJ2YWx1ZSI6InByaXZhdGUifSx7ImF4aXMiOiJhdWRpdF9wYXRoIiwidmFsdWUiOiJyZWd1bGF0b3Itb25seSJ9LHsiYXhpcyI6InJldGVudGlvbl93aW5kb3dfZGF5cyIsInZhbHVlIjoyNTU3fV0sImVmZmVjdGl2ZV9ibG9ja19oZWlnaHQiOjEyMzQ1Njc4LCJwcml2YWN5X2NsYXNzIjoiYXR0ZXN0ZWQtcHJpdmF0ZSIsInNjaGVtYSI6Ing0MDIuYmF6YWFyLnByaXZhY3lfY2xhc3MudjAiLCJzZXJ2aWNlX2lkIjoiZGlkOndlYjpmYWNpbGl0YXRvci5leGFtcGxlLmNvbSNzZXJ2aWNlLTEyMyIsInRpbWVzdGFtcF9tcyI6MTc0Nzg0MzIwMDAwMCwidmVyc2lvbiI6MX0=",
+      "expected_privacy_class_hash": "sha256:8fda4617c8a56297015e92dceb27a1ed0c31642ecd8400557c1d506383a1d62e"
+    },
+    {
+      "vector_id": "privacy-class-v0-block-height-form-005",
+      "invariant": "scalar_form",
+      "expectation": "different_hash_from:privacy-class-v0-baseline-001",
+      "note": "effective_block_height as JSON string instead of integer. JCS preserves scalar type; schema MUST pin the type.",
+      "attestation_body": {
+        "schema": "x402.bazaar.privacy_class.v0",
+        "version": 1,
+        "service_id": "did:web:facilitator.example.com#service-123",
+        "privacy_class": "attested-private",
+        "effective_block_height": "12345678",
+        "timestamp_ms": 1747843200000,
+        "attester": {
+          "id": "did:web:auditor.example.org",
+          "method": "did:web"
+        },
+        "claims": [
+          {
+            "axis": "settlement_visibility",
+            "value": "private"
+          },
+          {
+            "axis": "audit_path",
+            "value": "regulator-only"
+          },
+          {
+            "axis": "retention_window_days",
+            "value": 2557
+          }
+        ]
+      },
+      "expected_jcs_bytes_b64": "eyJhdHRlc3RlciI6eyJpZCI6ImRpZDp3ZWI6YXVkaXRvci5leGFtcGxlLm9yZyIsIm1ldGhvZCI6ImRpZDp3ZWIifSwiY2xhaW1zIjpbeyJheGlzIjoic2V0dGxlbWVudF92aXNpYmlsaXR5IiwidmFsdWUiOiJwcml2YXRlIn0seyJheGlzIjoiYXVkaXRfcGF0aCIsInZhbHVlIjoicmVndWxhdG9yLW9ubHkifSx7ImF4aXMiOiJyZXRlbnRpb25fd2luZG93X2RheXMiLCJ2YWx1ZSI6MjU1N31dLCJlZmZlY3RpdmVfYmxvY2tfaGVpZ2h0IjoiMTIzNDU2NzgiLCJwcml2YWN5X2NsYXNzIjoiYXR0ZXN0ZWQtcHJpdmF0ZSIsInNjaGVtYSI6Ing0MDIuYmF6YWFyLnByaXZhY3lfY2xhc3MudjAiLCJzZXJ2aWNlX2lkIjoiZGlkOndlYjpmYWNpbGl0YXRvci5leGFtcGxlLmNvbSNzZXJ2aWNlLTEyMyIsInRpbWVzdGFtcF9tcyI6MTc0Nzg0MzIwMDAwMCwidmVyc2lvbiI6MX0=",
+      "expected_privacy_class_hash": "sha256:8c9be07cffba719e6a04077b2ece0c7348bacb22073a0ab5a4328ca1a08712e6"
+    },
+    {
+      "vector_id": "privacy-class-v0-unicode-nfc-006a",
+      "invariant": "unicode_normalisation",
+      "expectation": "different_hash_from:privacy-class-v0-unicode-nfd-006b",
+      "note": "attester.id NFC form (composed). RFC 8785 performs NO Unicode normalisation.",
+      "attestation_body": {
+        "schema": "x402.bazaar.privacy_class.v0",
+        "version": 1,
+        "service_id": "did:web:facilitator.example.com#service-123",
+        "privacy_class": "attested-private",
+        "effective_block_height": 12345678,
+        "timestamp_ms": 1747843200000,
+        "attester": {
+          "id": "did:web:café-audité.example.org",
+          "method": "did:web"
+        },
+        "claims": [
+          {
+            "axis": "settlement_visibility",
+            "value": "private"
+          },
+          {
+            "axis": "audit_path",
+            "value": "regulator-only"
+          },
+          {
+            "axis": "retention_window_days",
+            "value": 2557
+          }
+        ]
+      },
+      "expected_jcs_bytes_b64": "eyJhdHRlc3RlciI6eyJpZCI6ImRpZDp3ZWI6Y2Fmw6ktYXVkaXTDqS5leGFtcGxlLm9yZyIsIm1ldGhvZCI6ImRpZDp3ZWIifSwiY2xhaW1zIjpbeyJheGlzIjoic2V0dGxlbWVudF92aXNpYmlsaXR5IiwidmFsdWUiOiJwcml2YXRlIn0seyJheGlzIjoiYXVkaXRfcGF0aCIsInZhbHVlIjoicmVndWxhdG9yLW9ubHkifSx7ImF4aXMiOiJyZXRlbnRpb25fd2luZG93X2RheXMiLCJ2YWx1ZSI6MjU1N31dLCJlZmZlY3RpdmVfYmxvY2tfaGVpZ2h0IjoxMjM0NTY3OCwicHJpdmFjeV9jbGFzcyI6ImF0dGVzdGVkLXByaXZhdGUiLCJzY2hlbWEiOiJ4NDAyLmJhemFhci5wcml2YWN5X2NsYXNzLnYwIiwic2VydmljZV9pZCI6ImRpZDp3ZWI6ZmFjaWxpdGF0b3IuZXhhbXBsZS5jb20jc2VydmljZS0xMjMiLCJ0aW1lc3RhbXBfbXMiOjE3NDc4NDMyMDAwMDAsInZlcnNpb24iOjF9",
+      "expected_privacy_class_hash": "sha256:e5fdeddc408c2e55c8128478dfabba30bd37c0fef09333c9317cb724602365a2"
+    },
+    {
+      "vector_id": "privacy-class-v0-unicode-nfd-006b",
+      "invariant": "unicode_normalisation",
+      "expectation": "different_hash_from:privacy-class-v0-unicode-nfc-006a",
+      "note": "Same string as 006a in NFD (decomposed). Bytes differ; hash differs.",
+      "attestation_body": {
+        "schema": "x402.bazaar.privacy_class.v0",
+        "version": 1,
+        "service_id": "did:web:facilitator.example.com#service-123",
+        "privacy_class": "attested-private",
+        "effective_block_height": 12345678,
+        "timestamp_ms": 1747843200000,
+        "attester": {
+          "id": "did:web:café-audité.example.org",
+          "method": "did:web"
+        },
+        "claims": [
+          {
+            "axis": "settlement_visibility",
+            "value": "private"
+          },
+          {
+            "axis": "audit_path",
+            "value": "regulator-only"
+          },
+          {
+            "axis": "retention_window_days",
+            "value": 2557
+          }
+        ]
+      },
+      "expected_jcs_bytes_b64": "eyJhdHRlc3RlciI6eyJpZCI6ImRpZDp3ZWI6Y2FmZcyBLWF1ZGl0ZcyBLmV4YW1wbGUub3JnIiwibWV0aG9kIjoiZGlkOndlYiJ9LCJjbGFpbXMiOlt7ImF4aXMiOiJzZXR0bGVtZW50X3Zpc2liaWxpdHkiLCJ2YWx1ZSI6InByaXZhdGUifSx7ImF4aXMiOiJhdWRpdF9wYXRoIiwidmFsdWUiOiJyZWd1bGF0b3Itb25seSJ9LHsiYXhpcyI6InJldGVudGlvbl93aW5kb3dfZGF5cyIsInZhbHVlIjoyNTU3fV0sImVmZmVjdGl2ZV9ibG9ja19oZWlnaHQiOjEyMzQ1Njc4LCJwcml2YWN5X2NsYXNzIjoiYXR0ZXN0ZWQtcHJpdmF0ZSIsInNjaGVtYSI6Ing0MDIuYmF6YWFyLnByaXZhY3lfY2xhc3MudjAiLCJzZXJ2aWNlX2lkIjoiZGlkOndlYjpmYWNpbGl0YXRvci5leGFtcGxlLmNvbSNzZXJ2aWNlLTEyMyIsInRpbWVzdGFtcF9tcyI6MTc0Nzg0MzIwMDAwMCwidmVyc2lvbiI6MX0=",
+      "expected_privacy_class_hash": "sha256:75cc1deac9b6db6c0248579053c64d766f6930a0bdf293eb2df3c31d6568435d"
+    },
+    {
+      "vector_id": "privacy-class-v0-timestamp-007a-epoch-ms",
+      "invariant": "timestamp_lexical",
+      "expectation": "different_hash_from:privacy-class-v0-timestamp-007b-rfc3339",
+      "note": "Canonical form: timestamp_ms as JSON integer. Per #2357 convergence, the recommended canonical preimage form.",
+      "attestation_body": {
+        "schema": "x402.bazaar.privacy_class.v0",
+        "version": 1,
+        "service_id": "did:web:facilitator.example.com#service-123",
+        "privacy_class": "attested-private",
+        "effective_block_height": 12345678,
+        "timestamp_ms": 1747843200000,
+        "attester": {
+          "id": "did:web:auditor.example.org",
+          "method": "did:web"
+        },
+        "claims": [
+          {
+            "axis": "settlement_visibility",
+            "value": "private"
+          },
+          {
+            "axis": "audit_path",
+            "value": "regulator-only"
+          },
+          {
+            "axis": "retention_window_days",
+            "value": 2557
+          }
+        ]
+      },
+      "expected_jcs_bytes_b64": "eyJhdHRlc3RlciI6eyJpZCI6ImRpZDp3ZWI6YXVkaXRvci5leGFtcGxlLm9yZyIsIm1ldGhvZCI6ImRpZDp3ZWIifSwiY2xhaW1zIjpbeyJheGlzIjoic2V0dGxlbWVudF92aXNpYmlsaXR5IiwidmFsdWUiOiJwcml2YXRlIn0seyJheGlzIjoiYXVkaXRfcGF0aCIsInZhbHVlIjoicmVndWxhdG9yLW9ubHkifSx7ImF4aXMiOiJyZXRlbnRpb25fd2luZG93X2RheXMiLCJ2YWx1ZSI6MjU1N31dLCJlZmZlY3RpdmVfYmxvY2tfaGVpZ2h0IjoxMjM0NTY3OCwicHJpdmFjeV9jbGFzcyI6ImF0dGVzdGVkLXByaXZhdGUiLCJzY2hlbWEiOiJ4NDAyLmJhemFhci5wcml2YWN5X2NsYXNzLnYwIiwic2VydmljZV9pZCI6ImRpZDp3ZWI6ZmFjaWxpdGF0b3IuZXhhbXBsZS5jb20jc2VydmljZS0xMjMiLCJ0aW1lc3RhbXBfbXMiOjE3NDc4NDMyMDAwMDAsInZlcnNpb24iOjF9",
+      "expected_privacy_class_hash": "sha256:4d6ff16f6ba3433eefcc71ed1fd3e6a60d5f2abda723e0bd553e14cf77793719"
+    },
+    {
+      "vector_id": "privacy-class-v0-timestamp-007b-rfc3339",
+      "invariant": "timestamp_lexical",
+      "expectation": "different_hash_from:privacy-class-v0-timestamp-007a-epoch-ms",
+      "note": "Same instant as 007a, encoded as RFC 3339 string under field name `timestamp` (not `timestamp_ms`). Different field name AND different scalar type. NOTE: this pair conflates two divergences; 007d-renamed-field (v0.1) isolates field-name discipline alone.",
+      "attestation_body": {
+        "schema": "x402.bazaar.privacy_class.v0",
+        "version": 1,
+        "service_id": "did:web:facilitator.example.com#service-123",
+        "privacy_class": "attested-private",
+        "effective_block_height": 12345678,
+        "attester": {
+          "id": "did:web:auditor.example.org",
+          "method": "did:web"
+        },
+        "claims": [
+          {
+            "axis": "settlement_visibility",
+            "value": "private"
+          },
+          {
+            "axis": "audit_path",
+            "value": "regulator-only"
+          },
+          {
+            "axis": "retention_window_days",
+            "value": 2557
+          }
+        ],
+        "timestamp": "2026-05-21T13:20:00Z"
+      },
+      "expected_jcs_bytes_b64": "eyJhdHRlc3RlciI6eyJpZCI6ImRpZDp3ZWI6YXVkaXRvci5leGFtcGxlLm9yZyIsIm1ldGhvZCI6ImRpZDp3ZWIifSwiY2xhaW1zIjpbeyJheGlzIjoic2V0dGxlbWVudF92aXNpYmlsaXR5IiwidmFsdWUiOiJwcml2YXRlIn0seyJheGlzIjoiYXVkaXRfcGF0aCIsInZhbHVlIjoicmVndWxhdG9yLW9ubHkifSx7ImF4aXMiOiJyZXRlbnRpb25fd2luZG93X2RheXMiLCJ2YWx1ZSI6MjU1N31dLCJlZmZlY3RpdmVfYmxvY2tfaGVpZ2h0IjoxMjM0NTY3OCwicHJpdmFjeV9jbGFzcyI6ImF0dGVzdGVkLXByaXZhdGUiLCJzY2hlbWEiOiJ4NDAyLmJhemFhci5wcml2YWN5X2NsYXNzLnYwIiwic2VydmljZV9pZCI6ImRpZDp3ZWI6ZmFjaWxpdGF0b3IuZXhhbXBsZS5jb20jc2VydmljZS0xMjMiLCJ0aW1lc3RhbXAiOiIyMDI2LTA1LTIxVDEzOjIwOjAwWiIsInZlcnNpb24iOjF9",
+      "expected_privacy_class_hash": "sha256:5b9961a244c0fed33c56dc1c84daa9517d31ef2aefc0fbbdbd47f75ad4097709"
+    },
+    {
+      "vector_id": "privacy-class-v0-timestamp-007c-rfc3339-ms",
+      "invariant": "timestamp_lexical",
+      "expectation": "different_hash_from:privacy-class-v0-timestamp-007b-rfc3339",
+      "note": "Same RFC 3339 instant as 007b but with \".000\" fractional present. Two semantically identical RFC 3339 lexical forms produce different JCS bytes — the failure mode that drove `timestamp_ms` canonicalisation.",
+      "attestation_body": {
+        "schema": "x402.bazaar.privacy_class.v0",
+        "version": 1,
+        "service_id": "did:web:facilitator.example.com#service-123",
+        "privacy_class": "attested-private",
+        "effective_block_height": 12345678,
+        "attester": {
+          "id": "did:web:auditor.example.org",
+          "method": "did:web"
+        },
+        "claims": [
+          {
+            "axis": "settlement_visibility",
+            "value": "private"
+          },
+          {
+            "axis": "audit_path",
+            "value": "regulator-only"
+          },
+          {
+            "axis": "retention_window_days",
+            "value": 2557
+          }
+        ],
+        "timestamp": "2026-05-21T13:20:00.000Z"
+      },
+      "expected_jcs_bytes_b64": "eyJhdHRlc3RlciI6eyJpZCI6ImRpZDp3ZWI6YXVkaXRvci5leGFtcGxlLm9yZyIsIm1ldGhvZCI6ImRpZDp3ZWIifSwiY2xhaW1zIjpbeyJheGlzIjoic2V0dGxlbWVudF92aXNpYmlsaXR5IiwidmFsdWUiOiJwcml2YXRlIn0seyJheGlzIjoiYXVkaXRfcGF0aCIsInZhbHVlIjoicmVndWxhdG9yLW9ubHkifSx7ImF4aXMiOiJyZXRlbnRpb25fd2luZG93X2RheXMiLCJ2YWx1ZSI6MjU1N31dLCJlZmZlY3RpdmVfYmxvY2tfaGVpZ2h0IjoxMjM0NTY3OCwicHJpdmFjeV9jbGFzcyI6ImF0dGVzdGVkLXByaXZhdGUiLCJzY2hlbWEiOiJ4NDAyLmJhemFhci5wcml2YWN5X2NsYXNzLnYwIiwic2VydmljZV9pZCI6ImRpZDp3ZWI6ZmFjaWxpdGF0b3IuZXhhbXBsZS5jb20jc2VydmljZS0xMjMiLCJ0aW1lc3RhbXAiOiIyMDI2LTA1LTIxVDEzOjIwOjAwLjAwMFoiLCJ2ZXJzaW9uIjoxfQ==",
+      "expected_privacy_class_hash": "sha256:daf2204eefdc75fbd43b2149cefe6f1dda9af0c05617cf5414abf81b80fbcbeb"
+    },
+    {
+      "vector_id": "privacy-class-v0.1-timestamp-007d-renamed-field",
+      "invariant": "field_name_canonicalisation",
+      "expectation": "different_hash_from:privacy-class-v0-timestamp-007a-epoch-ms",
+      "note": "Field `timestamp_ms` renamed to `ts_ms`, integer value identical to 007a (1747843200000). JCS preserves field names as opaque bytes; hash MUST differ from 007a even though the semantic value is identical. Isolates field-name discipline from value-form discipline tested by 007a/007b/007c. Falsifier suggested by @Ilya0527 on #2326.",
+      "attestation_body": {
+        "schema": "x402.bazaar.privacy_class.v0",
+        "version": 1,
+        "service_id": "did:web:facilitator.example.com#service-123",
+        "privacy_class": "attested-private",
+        "effective_block_height": 12345678,
+        "attester": {
+          "id": "did:web:auditor.example.org",
+          "method": "did:web"
+        },
+        "claims": [
+          {
+            "axis": "settlement_visibility",
+            "value": "private"
+          },
+          {
+            "axis": "audit_path",
+            "value": "regulator-only"
+          },
+          {
+            "axis": "retention_window_days",
+            "value": 2557
+          }
+        ],
+        "ts_ms": 1747843200000
+      },
+      "expected_jcs_bytes_b64": "eyJhdHRlc3RlciI6eyJpZCI6ImRpZDp3ZWI6YXVkaXRvci5leGFtcGxlLm9yZyIsIm1ldGhvZCI6ImRpZDp3ZWIifSwiY2xhaW1zIjpbeyJheGlzIjoic2V0dGxlbWVudF92aXNpYmlsaXR5IiwidmFsdWUiOiJwcml2YXRlIn0seyJheGlzIjoiYXVkaXRfcGF0aCIsInZhbHVlIjoicmVndWxhdG9yLW9ubHkifSx7ImF4aXMiOiJyZXRlbnRpb25fd2luZG93X2RheXMiLCJ2YWx1ZSI6MjU1N31dLCJlZmZlY3RpdmVfYmxvY2tfaGVpZ2h0IjoxMjM0NTY3OCwicHJpdmFjeV9jbGFzcyI6ImF0dGVzdGVkLXByaXZhdGUiLCJzY2hlbWEiOiJ4NDAyLmJhemFhci5wcml2YWN5X2NsYXNzLnYwIiwic2VydmljZV9pZCI6ImRpZDp3ZWI6ZmFjaWxpdGF0b3IuZXhhbXBsZS5jb20jc2VydmljZS0xMjMiLCJ0c19tcyI6MTc0Nzg0MzIwMDAwMCwidmVyc2lvbiI6MX0=",
+      "expected_privacy_class_hash": "sha256:7e44f641dd10a4e154d642cd36a98080fa8770ff9b38e3a776b88767d9346e04"
+    },
+    {
+      "vector_id": "privacy-class-v0.1-block-height-008a-canonical-name",
+      "invariant": "field_name_canonicalisation",
+      "expectation": "different_hash_from:privacy-class-v0.1-block-height-008b-legacy-name",
+      "note": "Canonical block-height field name `effective_block_height` (integer). Baseline for the field-name divergence pair.",
+      "attestation_body": {
+        "schema": "x402.bazaar.privacy_class.v0",
+        "version": 1,
+        "service_id": "did:web:facilitator.example.com#service-123",
+        "privacy_class": "attested-private",
+        "effective_block_height": 12345678,
+        "timestamp_ms": 1747843200000,
+        "attester": {
+          "id": "did:web:auditor.example.org",
+          "method": "did:web"
+        },
+        "claims": [
+          {
+            "axis": "settlement_visibility",
+            "value": "private"
+          },
+          {
+            "axis": "audit_path",
+            "value": "regulator-only"
+          },
+          {
+            "axis": "retention_window_days",
+            "value": 2557
+          }
+        ]
+      },
+      "expected_jcs_bytes_b64": "eyJhdHRlc3RlciI6eyJpZCI6ImRpZDp3ZWI6YXVkaXRvci5leGFtcGxlLm9yZyIsIm1ldGhvZCI6ImRpZDp3ZWIifSwiY2xhaW1zIjpbeyJheGlzIjoic2V0dGxlbWVudF92aXNpYmlsaXR5IiwidmFsdWUiOiJwcml2YXRlIn0seyJheGlzIjoiYXVkaXRfcGF0aCIsInZhbHVlIjoicmVndWxhdG9yLW9ubHkifSx7ImF4aXMiOiJyZXRlbnRpb25fd2luZG93X2RheXMiLCJ2YWx1ZSI6MjU1N31dLCJlZmZlY3RpdmVfYmxvY2tfaGVpZ2h0IjoxMjM0NTY3OCwicHJpdmFjeV9jbGFzcyI6ImF0dGVzdGVkLXByaXZhdGUiLCJzY2hlbWEiOiJ4NDAyLmJhemFhci5wcml2YWN5X2NsYXNzLnYwIiwic2VydmljZV9pZCI6ImRpZDp3ZWI6ZmFjaWxpdGF0b3IuZXhhbXBsZS5jb20jc2VydmljZS0xMjMiLCJ0aW1lc3RhbXBfbXMiOjE3NDc4NDMyMDAwMDAsInZlcnNpb24iOjF9",
+      "expected_privacy_class_hash": "sha256:4d6ff16f6ba3433eefcc71ed1fd3e6a60d5f2abda723e0bd553e14cf77793719"
+    },
+    {
+      "vector_id": "privacy-class-v0.1-block-height-008b-legacy-name",
+      "invariant": "field_name_canonicalisation",
+      "expectation": "different_hash_from:privacy-class-v0.1-block-height-008a-canonical-name",
+      "note": "Field `effective_block_height` renamed to `block_no` (legacy L1 ecosystem convention), integer value identical. Hash MUST differ from 008a. Generalises the same field-name canonicalisation rule to a second field — two pairs documenting one invariant matches the AP2 #265 structural discipline @Ilya0527 referenced.",
+      "attestation_body": {
+        "schema": "x402.bazaar.privacy_class.v0",
+        "version": 1,
+        "service_id": "did:web:facilitator.example.com#service-123",
+        "privacy_class": "attested-private",
+        "timestamp_ms": 1747843200000,
+        "attester": {
+          "id": "did:web:auditor.example.org",
+          "method": "did:web"
+        },
+        "claims": [
+          {
+            "axis": "settlement_visibility",
+            "value": "private"
+          },
+          {
+            "axis": "audit_path",
+            "value": "regulator-only"
+          },
+          {
+            "axis": "retention_window_days",
+            "value": 2557
+          }
+        ],
+        "block_no": 12345678
+      },
+      "expected_jcs_bytes_b64": "eyJhdHRlc3RlciI6eyJpZCI6ImRpZDp3ZWI6YXVkaXRvci5leGFtcGxlLm9yZyIsIm1ldGhvZCI6ImRpZDp3ZWIifSwiYmxvY2tfbm8iOjEyMzQ1Njc4LCJjbGFpbXMiOlt7ImF4aXMiOiJzZXR0bGVtZW50X3Zpc2liaWxpdHkiLCJ2YWx1ZSI6InByaXZhdGUifSx7ImF4aXMiOiJhdWRpdF9wYXRoIiwidmFsdWUiOiJyZWd1bGF0b3Itb25seSJ9LHsiYXhpcyI6InJldGVudGlvbl93aW5kb3dfZGF5cyIsInZhbHVlIjoyNTU3fV0sInByaXZhY3lfY2xhc3MiOiJhdHRlc3RlZC1wcml2YXRlIiwic2NoZW1hIjoieDQwMi5iYXphYXIucHJpdmFjeV9jbGFzcy52MCIsInNlcnZpY2VfaWQiOiJkaWQ6d2ViOmZhY2lsaXRhdG9yLmV4YW1wbGUuY29tI3NlcnZpY2UtMTIzIiwidGltZXN0YW1wX21zIjoxNzQ3ODQzMjAwMDAwLCJ2ZXJzaW9uIjoxfQ==",
+      "expected_privacy_class_hash": "sha256:c29e9d43eb32807e4c2cef6f3c2243e07a291f77792099d3ce124a78f6a26633"
+    }
+  ]
+}

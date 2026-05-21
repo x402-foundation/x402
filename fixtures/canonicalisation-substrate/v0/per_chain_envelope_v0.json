@@ -1,0 +1,437 @@
+{
+  "schema_version": "1.0",
+  "artefact_id": "per-chain-envelope-conformance-v0",
+  "published_at": "2026-05-21T11:30:00Z",
+  "canonicalizer": "rfc8785@0.1.4",
+  "hash": "SHA-256, lowercase hex, prefixed sha256:",
+  "chains_covered": [
+    "algorand",
+    "voi",
+    "hedera",
+    "stellar",
+    "base",
+    "solana",
+    "tempo"
+  ],
+  "anchored_to": {
+    "purpose": "Per-chain envelope conformance vectors covering canonicalisation edge cases that surface at the chain-identifier and chain-native-value layers, distinct from the application-mandate layer (AP2 OMH v0) or attestation layer (privacy_class). 19 vectors across 7 chain families test the chain-specific JCS interactions an implementation needs to handle correctly to produce byte-identical canonical output across the multi-chain agentic-payment surface.",
+    "related": [
+      "https://gist.github.com/chopmob-cloud/1dca25fd6107db4b7a30bed5dbf2ded8",
+      "https://gist.github.com/chopmob-cloud/30bcbc717c86493f737feb92c415ba07",
+      "https://gist.github.com/chopmob-cloud/5f35eaa527d292bf3ddc52f8725a85c9"
+    ],
+    "shared_canonicalisation_thread": "https://github.com/x402-foundation/x402/issues/2326"
+  },
+  "derivation": "per_chain_envelope_hash = SHA-256(JCS_RFC8785(mandate_body)). Same JCS+SHA-256 substrate as the AP2 OMH v0, privacy_class, and CTEF/APS vector sets; the per-chain dimension stresses chain-specific scalar shapes, address-form canonicalisation, and chain-native amount precision rather than top-level mandate structure.",
+  "context": {
+    "verification_recipe": [
+      "1. For each vector, take mandate_body verbatim.",
+      "2. Canonicalise with RFC 8785 (any conformant impl).",
+      "3. base64-encode the JCS bytes; MUST equal expected_jcs_bytes_b64.",
+      "4. SHA-256 the JCS bytes, lowercase hex; MUST equal expected_per_chain_envelope_hash.",
+      "5. Honour pair invariant relations; the 9 declared pair invariants are summarised in the pair_invariants block below."
+    ],
+    "per_chain_invariants_tested": {
+      "algorand": "ASA-id type (integer vs string-coerced); address canonical form",
+      "voi": "amount type (microunits int vs string)",
+      "hedera": "account/token-id lexical form (no leading zeros); HTS allowance key-order",
+      "stellar": "SAC contract-id case sensitivity; 7-dp amount precision (trailing zero vs no trailing)",
+      "base": "EIP-55 checksum vs lowercase EVM addresses",
+      "solana": "mint base58 case sensitivity; ATA vs wallet address distinction",
+      "tempo": "EIP-55 checksum vs lowercase (EVM-derived L1)"
+    }
+  },
+  "pair_invariants": {
+    "total": 9,
+    "passed": 9,
+    "failed": 0,
+    "details": [
+      {
+        "a": "algorand-001-asa-int",
+        "rel": "!=",
+        "b": "algorand-002-asa-string",
+        "ok": true,
+        "description": "ASA-id type (int vs string) — JCS preserves scalar type"
+      },
+      {
+        "a": "voi-001-amount-int",
+        "rel": "!=",
+        "b": "voi-002-amount-string",
+        "ok": true,
+        "description": "amount type (int vs string) — JCS preserves scalar type"
+      },
+      {
+        "a": "hedera-002-hts-allowance-key-order",
+        "rel": "==",
+        "b": "hedera-003-hts-allowance-key-order-sorted",
+        "ok": true,
+        "description": "HTS allowance key-order — JCS sorts object keys"
+      },
+      {
+        "a": "stellar-001-sac-uppercase",
+        "rel": "!=",
+        "b": "stellar-002-sac-lowercase-issuer",
+        "ok": true,
+        "description": "Stellar SAC contract-id case sensitivity"
+      },
+      {
+        "a": "stellar-003-7dp-trailing-zero",
+        "rel": "!=",
+        "b": "stellar-004-7dp-no-trailing",
+        "ok": true,
+        "description": "Stellar 7-dp amount precision — lexical form preserved"
+      },
+      {
+        "a": "base-001-checksum-address",
+        "rel": "!=",
+        "b": "base-002-lowercase-address",
+        "ok": true,
+        "description": "Base EIP-55 checksum vs lowercase"
+      },
+      {
+        "a": "solana-001-mint-canonical",
+        "rel": "!=",
+        "b": "solana-002-mint-lowercase",
+        "ok": true,
+        "description": "Solana mint base58 case sensitivity"
+      },
+      {
+        "a": "solana-001-mint-canonical",
+        "rel": "!=",
+        "b": "solana-003-ata-vs-wallet",
+        "ok": true,
+        "description": "Solana ATA vs wallet address distinction"
+      },
+      {
+        "a": "tempo-001-checksum-address",
+        "rel": "!=",
+        "b": "tempo-002-fully-lowercase",
+        "ok": true,
+        "description": "Tempo EIP-55 checksum vs lowercase"
+      }
+    ]
+  },
+  "vectors": [
+    {
+      "vector_id": "algorand-001-asa-int",
+      "chain": "algorand",
+      "invariant": "asa_id_type",
+      "expectation": "baseline (ASA as integer)",
+      "mandate_body": {
+        "version": 1,
+        "chain": "algorand_mainnet",
+        "amount_microunits": 100000,
+        "recipient": "GHSRL2SAY247LWE7HLUGEYKHC5JMDOGWECW5TMN6PTP73FT2Z5AWMADMWI",
+        "asset_id": 31566704
+      },
+      "expected_jcs_bytes_b64": "eyJhbW91bnRfbWljcm91bml0cyI6MTAwMDAwLCJhc3NldF9pZCI6MzE1NjY3MDQsImNoYWluIjoiYWxnb3JhbmRfbWFpbm5ldCIsInJlY2lwaWVudCI6IkdIU1JMMlNBWTI0N0xXRTdITFVHRVlLSEM1Sk1ET0dXRUNXNVRNTjZQVFA3M0ZUMlo1QVdNQURNV0kiLCJ2ZXJzaW9uIjoxfQ==",
+      "expected_per_chain_envelope_hash": "sha256:03012928cd8e8162ee78dbfa85f0b3a861ffc10c29272c8928264c15cfb9fdf7",
+      "note": "Algorand USDC ASA as JSON integer — preferred form per algod API"
+    },
+    {
+      "vector_id": "algorand-002-asa-string",
+      "chain": "algorand",
+      "invariant": "asa_id_type",
+      "expectation": "differs from 001 (ASA as string)",
+      "mandate_body": {
+        "version": 1,
+        "chain": "algorand_mainnet",
+        "amount_microunits": 100000,
+        "recipient": "GHSRL2SAY247LWE7HLUGEYKHC5JMDOGWECW5TMN6PTP73FT2Z5AWMADMWI",
+        "asset_id": "31566704"
+      },
+      "expected_jcs_bytes_b64": "eyJhbW91bnRfbWljcm91bml0cyI6MTAwMDAwLCJhc3NldF9pZCI6IjMxNTY2NzA0IiwiY2hhaW4iOiJhbGdvcmFuZF9tYWlubmV0IiwicmVjaXBpZW50IjoiR0hTUkwyU0FZMjQ3TFdFN0hMVUdFWUtIQzVKTURPR1dFQ1c1VE1ONlBUUDczRlQyWjVBV01BRE1XSSIsInZlcnNpb24iOjF9",
+      "expected_per_chain_envelope_hash": "sha256:7d4bb033c85f19329397250bb02986446324cd5fded3d8d292167deb77472409",
+      "note": "Same ASA ID as 001 but typed as JSON string. JCS preserves the type distinction; hash MUST differ from 001"
+    },
+    {
+      "vector_id": "algorand-003-checksum-address",
+      "chain": "algorand",
+      "invariant": "address_canonical",
+      "expectation": "baseline (Algorand 58-char base32 with 4-byte checksum)",
+      "mandate_body": {
+        "version": 1,
+        "chain": "algorand_mainnet",
+        "amount_microunits": 100000,
+        "recipient": "GHSRL2SAY247LWE7HLUGEYKHC5JMDOGWECW5TMN6PTP73FT2Z5AWMADMWI",
+        "asset_id": 31566704
+      },
+      "expected_jcs_bytes_b64": "eyJhbW91bnRfbWljcm91bml0cyI6MTAwMDAwLCJhc3NldF9pZCI6MzE1NjY3MDQsImNoYWluIjoiYWxnb3JhbmRfbWFpbm5ldCIsInJlY2lwaWVudCI6IkdIU1JMMlNBWTI0N0xXRTdITFVHRVlLSEM1Sk1ET0dXRUNXNVRNTjZQVFA3M0ZUMlo1QVdNQURNV0kiLCJ2ZXJzaW9uIjoxfQ==",
+      "expected_per_chain_envelope_hash": "sha256:03012928cd8e8162ee78dbfa85f0b3a861ffc10c29272c8928264c15cfb9fdf7",
+      "note": "Algorand addresses are case-sensitive base32 with embedded checksum; no normalization needed — JCS treats string as-is"
+    },
+    {
+      "vector_id": "voi-001-amount-int",
+      "chain": "voi",
+      "invariant": "amount_type",
+      "expectation": "baseline (amount as integer)",
+      "mandate_body": {
+        "version": 1,
+        "chain": "voi_mainnet",
+        "asset_id": 302190,
+        "recipient": "THDLWTJ7RB4OJWFZCLL5IME7FHBSJ3SONBRWHIVQE3BEGTY2BWUEUVEOQY",
+        "amount_microunits": 1000000
+      },
+      "expected_jcs_bytes_b64": "eyJhbW91bnRfbWljcm91bml0cyI6MTAwMDAwMCwiYXNzZXRfaWQiOjMwMjE5MCwiY2hhaW4iOiJ2b2lfbWFpbm5ldCIsInJlY2lwaWVudCI6IlRIRExXVEo3UkI0T0pXRlpDTEw1SU1FN0ZIQlNKM1NPTkJSV0hJVlFFM0JFR1RZMkJXVUVVVkVPUVkiLCJ2ZXJzaW9uIjoxfQ==",
+      "expected_per_chain_envelope_hash": "sha256:c525f347aa983d3947515821ba3507a3d5e2c5289511ffb1bff3ef3ae0504f02",
+      "note": "VOI native amount as JSON integer (microVOI). Preferred form"
+    },
+    {
+      "vector_id": "voi-002-amount-string",
+      "chain": "voi",
+      "invariant": "amount_type",
+      "expectation": "differs from 001 (amount as string)",
+      "mandate_body": {
+        "version": 1,
+        "chain": "voi_mainnet",
+        "asset_id": 302190,
+        "recipient": "THDLWTJ7RB4OJWFZCLL5IME7FHBSJ3SONBRWHIVQE3BEGTY2BWUEUVEOQY",
+        "amount_microunits": "1000000"
+      },
+      "expected_jcs_bytes_b64": "eyJhbW91bnRfbWljcm91bml0cyI6IjEwMDAwMDAiLCJhc3NldF9pZCI6MzAyMTkwLCJjaGFpbiI6InZvaV9tYWlubmV0IiwicmVjaXBpZW50IjoiVEhETFdUSjdSQjRPSldGWkNMTDVJTUU3RkhCU0ozU09OQlJXSElWUUUzQkVHVFkyQldVRVVWRU9RWSIsInZlcnNpb24iOjF9",
+      "expected_per_chain_envelope_hash": "sha256:0724e24acbaccf359ef35bfad10a88c4b56070a0bd8041437405a3fa6c5382a1",
+      "note": "Same amount as 001 but typed as JSON string. Hash MUST differ"
+    },
+    {
+      "vector_id": "hedera-001-id-lexical",
+      "chain": "hedera",
+      "invariant": "id_lexical",
+      "expectation": "baseline (Hedera shard.realm.account)",
+      "mandate_body": {
+        "version": 1,
+        "chain": "hedera_mainnet",
+        "amount_microunits": 100000,
+        "token_id": "0.0.456858",
+        "recipient": "0.0.1317927"
+      },
+      "expected_jcs_bytes_b64": "eyJhbW91bnRfbWljcm91bml0cyI6MTAwMDAwLCJjaGFpbiI6ImhlZGVyYV9tYWlubmV0IiwicmVjaXBpZW50IjoiMC4wLjEzMTc5MjciLCJ0b2tlbl9pZCI6IjAuMC40NTY4NTgiLCJ2ZXJzaW9uIjoxfQ==",
+      "expected_per_chain_envelope_hash": "sha256:f2f5c73d0ac3836cf3e78adbb753fc39e654ee741a1c3d26e5557bfd76b9497e",
+      "note": "Hedera account/token IDs are strings of form shard.realm.num. No leading zeros, no padding. JCS preserves as-is"
+    },
+    {
+      "vector_id": "hedera-002-hts-allowance-key-order",
+      "chain": "hedera",
+      "invariant": "key_order",
+      "expectation": "byte-identical to 003 (JCS sorts object keys)",
+      "mandate_body": {
+        "version": 1,
+        "chain": "hedera_mainnet",
+        "amount_microunits": 100000,
+        "token_id": "0.0.456858",
+        "recipient": "0.0.1317927",
+        "allowance": {
+          "spender": "0.0.999999",
+          "amount": 100000,
+          "owner": "0.0.1234567"
+        }
+      },
+      "expected_jcs_bytes_b64": "eyJhbGxvd2FuY2UiOnsiYW1vdW50IjoxMDAwMDAsIm93bmVyIjoiMC4wLjEyMzQ1NjciLCJzcGVuZGVyIjoiMC4wLjk5OTk5OSJ9LCJhbW91bnRfbWljcm91bml0cyI6MTAwMDAwLCJjaGFpbiI6ImhlZGVyYV9tYWlubmV0IiwicmVjaXBpZW50IjoiMC4wLjEzMTc5MjciLCJ0b2tlbl9pZCI6IjAuMC40NTY4NTgiLCJ2ZXJzaW9uIjoxfQ==",
+      "expected_per_chain_envelope_hash": "sha256:a2dc1eda1ea5ce13b468c62b181a7e6a374dffa7ecc472fc15a6154a29efe261",
+      "note": "HTS allowance struct with keys in arbitrary order"
+    },
+    {
+      "vector_id": "hedera-003-hts-allowance-key-order-sorted",
+      "chain": "hedera",
+      "invariant": "key_order",
+      "expectation": "byte-identical to 002 (JCS sorts)",
+      "mandate_body": {
+        "version": 1,
+        "chain": "hedera_mainnet",
+        "amount_microunits": 100000,
+        "token_id": "0.0.456858",
+        "recipient": "0.0.1317927",
+        "allowance": {
+          "amount": 100000,
+          "owner": "0.0.1234567",
+          "spender": "0.0.999999"
+        }
+      },
+      "expected_jcs_bytes_b64": "eyJhbGxvd2FuY2UiOnsiYW1vdW50IjoxMDAwMDAsIm93bmVyIjoiMC4wLjEyMzQ1NjciLCJzcGVuZGVyIjoiMC4wLjk5OTk5OSJ9LCJhbW91bnRfbWljcm91bml0cyI6MTAwMDAwLCJjaGFpbiI6ImhlZGVyYV9tYWlubmV0IiwicmVjaXBpZW50IjoiMC4wLjEzMTc5MjciLCJ0b2tlbl9pZCI6IjAuMC40NTY4NTgiLCJ2ZXJzaW9uIjoxfQ==",
+      "expected_per_chain_envelope_hash": "sha256:a2dc1eda1ea5ce13b468c62b181a7e6a374dffa7ecc472fc15a6154a29efe261",
+      "note": "Same HTS allowance struct but keys pre-sorted alphabetically. JCS canonicalizes both to identical bytes"
+    },
+    {
+      "vector_id": "stellar-001-sac-uppercase",
+      "chain": "stellar",
+      "invariant": "sac_case",
+      "expectation": "baseline (USDC SAC contract id uppercase)",
+      "mandate_body": {
+        "version": 1,
+        "chain": "stellar_mainnet",
+        "recipient": "GD45SH4TC4TMJOJWJJSLGAXODAIO36POCACT2MWS7I6CTJORMFKEP3HR",
+        "asset_id": "USDC:GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN",
+        "amount_stroops": 10000000
+      },
+      "expected_jcs_bytes_b64": "eyJhbW91bnRfc3Ryb29wcyI6MTAwMDAwMDAsImFzc2V0X2lkIjoiVVNEQzpHQTVaU0VKWUIzN0pSQzVBVkNJQTVNT1A0UkhUTTMzNVgyS0dYM0lIT0pBUFA1UkUzNEs0S1pWTiIsImNoYWluIjoic3RlbGxhcl9tYWlubmV0IiwicmVjaXBpZW50IjoiR0Q0NVNINFRDNFRNSk9KV0pKU0xHQVhPREFJTzM2UE9DQUNUMk1XUzdJNkNUSk9STUZLRVAzSFIiLCJ2ZXJzaW9uIjoxfQ==",
+      "expected_per_chain_envelope_hash": "sha256:531c0be99903a8267b4f6c79fcb73f7de6f68c924e8b05ac0c7029edbd285178",
+      "note": "Stellar classic USDC asset descriptor with uppercase issuer key"
+    },
+    {
+      "vector_id": "stellar-002-sac-lowercase-issuer",
+      "chain": "stellar",
+      "invariant": "sac_case",
+      "expectation": "differs from 001 (issuer lowercased)",
+      "mandate_body": {
+        "version": 1,
+        "chain": "stellar_mainnet",
+        "recipient": "GD45SH4TC4TMJOJWJJSLGAXODAIO36POCACT2MWS7I6CTJORMFKEP3HR",
+        "asset_id": "USDC:ga5zsejyb37jrc5avcia5mop4rhtm335x2kgx3ihojapp5re34k4kzvn",
+        "amount_stroops": 10000000
+      },
+      "expected_jcs_bytes_b64": "eyJhbW91bnRfc3Ryb29wcyI6MTAwMDAwMDAsImFzc2V0X2lkIjoiVVNEQzpnYTV6c2VqeWIzN2pyYzVhdmNpYTVtb3A0cmh0bTMzNXgya2d4M2lob2phcHA1cmUzNGs0a3p2biIsImNoYWluIjoic3RlbGxhcl9tYWlubmV0IiwicmVjaXBpZW50IjoiR0Q0NVNINFRDNFRNSk9KV0pKU0xHQVhPREFJTzM2UE9DQUNUMk1XUzdJNkNUSk9STUZLRVAzSFIiLCJ2ZXJzaW9uIjoxfQ==",
+      "expected_per_chain_envelope_hash": "sha256:70faadc717379781dc0caee02c5609d037736cf5a76c656be8530ed1078c90b1",
+      "note": "Same USDC SAC but issuer key lowercased. Stellar addresses are case-sensitive base32 — hash MUST differ. (lowercase is INVALID as an address but JCS doesn't know that)"
+    },
+    {
+      "vector_id": "stellar-003-7dp-trailing-zero",
+      "chain": "stellar",
+      "invariant": "amount_precision",
+      "expectation": "differs from 004 (7-dp with trailing zeros)",
+      "mandate_body": {
+        "version": 1,
+        "chain": "stellar_mainnet",
+        "recipient": "GD45SH4TC4TMJOJWJJSLGAXODAIO36POCACT2MWS7I6CTJORMFKEP3HR",
+        "asset_id": "USDC:GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN",
+        "amount_decimal": "1.0000000"
+      },
+      "expected_jcs_bytes_b64": "eyJhbW91bnRfZGVjaW1hbCI6IjEuMDAwMDAwMCIsImFzc2V0X2lkIjoiVVNEQzpHQTVaU0VKWUIzN0pSQzVBVkNJQTVNT1A0UkhUTTMzNVgyS0dYM0lIT0pBUFA1UkUzNEs0S1pWTiIsImNoYWluIjoic3RlbGxhcl9tYWlubmV0IiwicmVjaXBpZW50IjoiR0Q0NVNINFRDNFRNSk9KV0pKU0xHQVhPREFJTzM2UE9DQUNUMk1XUzdJNkNUSk9STUZLRVAzSFIiLCJ2ZXJzaW9uIjoxfQ==",
+      "expected_per_chain_envelope_hash": "sha256:c9b3b4e1dc310bfbbc36487360d18ffc21620e01ef67dd4d779b28bc27c2644b",
+      "note": "Stellar USDC stored in 7-dp; '1.0000000' as decimal string"
+    },
+    {
+      "vector_id": "stellar-004-7dp-no-trailing",
+      "chain": "stellar",
+      "invariant": "amount_precision",
+      "expectation": "differs from 003 (no trailing zeros)",
+      "mandate_body": {
+        "version": 1,
+        "chain": "stellar_mainnet",
+        "recipient": "GD45SH4TC4TMJOJWJJSLGAXODAIO36POCACT2MWS7I6CTJORMFKEP3HR",
+        "asset_id": "USDC:GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN",
+        "amount_decimal": "1"
+      },
+      "expected_jcs_bytes_b64": "eyJhbW91bnRfZGVjaW1hbCI6IjEiLCJhc3NldF9pZCI6IlVTREM6R0E1WlNFSllCMzdKUkM1QVZDSUE1TU9QNFJIVE0zMzVYMktHWDNJSE9KQVBQNVJFMzRLNEtaVk4iLCJjaGFpbiI6InN0ZWxsYXJfbWFpbm5ldCIsInJlY2lwaWVudCI6IkdENDVTSDRUQzRUTUpPSldKSlNMR0FYT0RBSU8zNlBPQ0FDVDJNV1M3STZDVEpPUk1GS0VQM0hSIiwidmVyc2lvbiI6MX0=",
+      "expected_per_chain_envelope_hash": "sha256:3b8bbb220e99a02afb1aaa1d364c6b58fe1273205cd27dd71f2f8c7e53a3303a",
+      "note": "Same amount as 003 (1 XLM/USDC) but as bare '1'. Lexically different string → different JCS bytes → different hash"
+    },
+    {
+      "vector_id": "base-001-checksum-address",
+      "chain": "base",
+      "invariant": "address_case",
+      "expectation": "baseline (EIP-55 checksummed address)",
+      "mandate_body": {
+        "version": 1,
+        "chain": "base_mainnet",
+        "amount_microunits": 100000,
+        "asset_id_decimals": 6,
+        "asset_id": "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+        "recipient": "0x7D01d268636c835d9E56164A24A9587D82B8B186"
+      },
+      "expected_jcs_bytes_b64": "eyJhbW91bnRfbWljcm91bml0cyI6MTAwMDAwLCJhc3NldF9pZCI6IjB4ODMzNTg5ZkNENmVEYjZFMDhmNGM3QzMyRDRmNzFiNTRiZEEwMjkxMyIsImFzc2V0X2lkX2RlY2ltYWxzIjo2LCJjaGFpbiI6ImJhc2VfbWFpbm5ldCIsInJlY2lwaWVudCI6IjB4N0QwMWQyNjg2MzZjODM1ZDlFNTYxNjRBMjRBOTU4N0Q4MkI4QjE4NiIsInZlcnNpb24iOjF9",
+      "expected_per_chain_envelope_hash": "sha256:7d62c625b943794239b0dcf6226285b655ed12ce22e5ac163b5684d934f9875c",
+      "note": "Base USDC contract + recipient in EIP-55 mixed-case checksum form"
+    },
+    {
+      "vector_id": "base-002-lowercase-address",
+      "chain": "base",
+      "invariant": "address_case",
+      "expectation": "differs from 001 (lowercase, no checksum)",
+      "mandate_body": {
+        "version": 1,
+        "chain": "base_mainnet",
+        "amount_microunits": 100000,
+        "asset_id_decimals": 6,
+        "asset_id": "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913",
+        "recipient": "0x7d01d268636c835d9e56164a24a9587d82b8b186"
+      },
+      "expected_jcs_bytes_b64": "eyJhbW91bnRfbWljcm91bml0cyI6MTAwMDAwLCJhc3NldF9pZCI6IjB4ODMzNTg5ZmNkNmVkYjZlMDhmNGM3YzMyZDRmNzFiNTRiZGEwMjkxMyIsImFzc2V0X2lkX2RlY2ltYWxzIjo2LCJjaGFpbiI6ImJhc2VfbWFpbm5ldCIsInJlY2lwaWVudCI6IjB4N2QwMWQyNjg2MzZjODM1ZDllNTYxNjRhMjRhOTU4N2Q4MmI4YjE4NiIsInZlcnNpb24iOjF9",
+      "expected_per_chain_envelope_hash": "sha256:b4a7317d272b2b977817c8cf008568bbc5e9f066854775a43e54d9d5b3179e5e",
+      "note": "Same addresses as 001 but lowercased. EVM treats both as the same 20-byte address — but JCS treats them as different STRINGS, so hash MUST differ. This is the load-bearing case for x402 attestation receipts: receipts MUST pin a single case form before hashing or two correct implementations diverge"
+    },
+    {
+      "vector_id": "solana-001-mint-canonical",
+      "chain": "solana",
+      "invariant": "base58_case",
+      "expectation": "baseline (USDC mint mixed-case base58)",
+      "mandate_body": {
+        "version": 1,
+        "chain": "solana_mainnet",
+        "amount_microunits": 100000,
+        "asset_id_decimals": 6,
+        "recipient": "GFir5uY6Rrgk3MRSUKSXp2Z5v7x8pum9vn7xjpr8TAGy",
+        "asset_id": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"
+      },
+      "expected_jcs_bytes_b64": "eyJhbW91bnRfbWljcm91bml0cyI6MTAwMDAwLCJhc3NldF9pZCI6IkVQakZXZGQ1QXVmcVNTcWVNMnFOMXh6eWJhcEM4RzR3RUdHa1p3eVREdDF2IiwiYXNzZXRfaWRfZGVjaW1hbHMiOjYsImNoYWluIjoic29sYW5hX21haW5uZXQiLCJyZWNpcGllbnQiOiJHRmlyNXVZNlJyZ2szTVJTVUtTWHAyWjV2N3g4cHVtOXZuN3hqcHI4VEFHeSIsInZlcnNpb24iOjF9",
+      "expected_per_chain_envelope_hash": "sha256:b74fd64c9e0e483af62a8772ed5f083b18fe363c4c2255fc8d199ccd794eb8e1",
+      "note": "Solana USDC mint in canonical base58 (case-sensitive)"
+    },
+    {
+      "vector_id": "solana-002-mint-lowercase",
+      "chain": "solana",
+      "invariant": "base58_case",
+      "expectation": "differs from 001 (lowercased base58 — INVALID but JCS doesn't know)",
+      "mandate_body": {
+        "version": 1,
+        "chain": "solana_mainnet",
+        "amount_microunits": 100000,
+        "asset_id_decimals": 6,
+        "recipient": "GFir5uY6Rrgk3MRSUKSXp2Z5v7x8pum9vn7xjpr8TAGy",
+        "asset_id": "epjfwdd5aufqssqem2qn1xzybapc8g4wegggkzwytdt1v"
+      },
+      "expected_jcs_bytes_b64": "eyJhbW91bnRfbWljcm91bml0cyI6MTAwMDAwLCJhc3NldF9pZCI6ImVwamZ3ZGQ1YXVmcXNzcWVtMnFuMXh6eWJhcGM4ZzR3ZWdnZ2t6d3l0ZHQxdiIsImFzc2V0X2lkX2RlY2ltYWxzIjo2LCJjaGFpbiI6InNvbGFuYV9tYWlubmV0IiwicmVjaXBpZW50IjoiR0ZpcjV1WTZScmdrM01SU1VLU1hwMlo1djd4OHB1bTl2bjd4anByOFRBR3kiLCJ2ZXJzaW9uIjoxfQ==",
+      "expected_per_chain_envelope_hash": "sha256:efca31fd6981671fa89a8b854551a5121466aabe6dcb2f773ebb0b7956359966",
+      "note": "Same string as 001 if you ignore case. But base58 IS case-sensitive and the lowercased form is not a valid mint. JCS sees them as distinct strings; hash MUST differ. Solana payment envelopes MUST normalize to canonical case before hashing"
+    },
+    {
+      "vector_id": "solana-003-ata-vs-wallet",
+      "chain": "solana",
+      "invariant": "ata_vs_wallet",
+      "expectation": "differs from 001 (recipient as wallet vs ATA)",
+      "mandate_body": {
+        "version": 1,
+        "chain": "solana_mainnet",
+        "amount_microunits": 100000,
+        "asset_id_decimals": 6,
+        "recipient": "3pF8Kg2aHbNvJkLMwEqR7YtDxZ5sGhJn4UV6mWcXrT9A",
+        "asset_id": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"
+      },
+      "expected_jcs_bytes_b64": "eyJhbW91bnRfbWljcm91bml0cyI6MTAwMDAwLCJhc3NldF9pZCI6IkVQakZXZGQ1QXVmcVNTcWVNMnFOMXh6eWJhcEM4RzR3RUdHa1p3eVREdDF2IiwiYXNzZXRfaWRfZGVjaW1hbHMiOjYsImNoYWluIjoic29sYW5hX21haW5uZXQiLCJyZWNpcGllbnQiOiIzcEY4S2cyYUhiTnZKa0xNd0VxUjdZdER4WjVzR2hKbjRVVjZtV2NYclQ5QSIsInZlcnNpb24iOjF9",
+      "expected_per_chain_envelope_hash": "sha256:9d287f371ea3db819328d7a9d0c2e76b73cc54b69d44e24ef0bcc4469cf408b8",
+      "note": "Different recipient pubkey vs 001. Critical: 001's recipient is the wallet pubkey; this one is the ATA PDA. They MUST hash differently (the silent-failure mode mpp-specs#262 prevents)"
+    },
+    {
+      "vector_id": "tempo-001-checksum-address",
+      "chain": "tempo",
+      "invariant": "address_case",
+      "expectation": "baseline (EIP-55 checksum)",
+      "mandate_body": {
+        "version": 1,
+        "chain": "tempo_mainnet",
+        "amount_microunits": 100000,
+        "asset_id_decimals": 6,
+        "asset_id": "0x20c000000000000000000000b9537d11c60e8b50",
+        "recipient": "0x7D01d268636c835d9E56164A24A9587D82B8B186"
+      },
+      "expected_jcs_bytes_b64": "eyJhbW91bnRfbWljcm91bml0cyI6MTAwMDAwLCJhc3NldF9pZCI6IjB4MjBjMDAwMDAwMDAwMDAwMDAwMDAwMDAwYjk1MzdkMTFjNjBlOGI1MCIsImFzc2V0X2lkX2RlY2ltYWxzIjo2LCJjaGFpbiI6InRlbXBvX21haW5uZXQiLCJyZWNpcGllbnQiOiIweDdEMDFkMjY4NjM2YzgzNWQ5RTU2MTY0QTI0QTk1ODdEODJCOEIxODYiLCJ2ZXJzaW9uIjoxfQ==",
+      "expected_per_chain_envelope_hash": "sha256:06aa2a39ade4cfd176a57aa85a8565e89b01b17175e2674bf41382cfe4496095",
+      "note": "Tempo USDC contract + recipient in mixed case (asset is all-lower naturally because Tempo USDC contract has no mixed-case version)"
+    },
+    {
+      "vector_id": "tempo-002-fully-lowercase",
+      "chain": "tempo",
+      "invariant": "address_case",
+      "expectation": "differs from 001 (recipient lowercased)",
+      "mandate_body": {
+        "version": 1,
+        "chain": "tempo_mainnet",
+        "amount_microunits": 100000,
+        "asset_id_decimals": 6,
+        "asset_id": "0x20c000000000000000000000b9537d11c60e8b50",
+        "recipient": "0x7d01d268636c835d9e56164a24a9587d82b8b186"
+      },
+      "expected_jcs_bytes_b64": "eyJhbW91bnRfbWljcm91bml0cyI6MTAwMDAwLCJhc3NldF9pZCI6IjB4MjBjMDAwMDAwMDAwMDAwMDAwMDAwMDAwYjk1MzdkMTFjNjBlOGI1MCIsImFzc2V0X2lkX2RlY2ltYWxzIjo2LCJjaGFpbiI6InRlbXBvX21haW5uZXQiLCJyZWNpcGllbnQiOiIweDdkMDFkMjY4NjM2YzgzNWQ5ZTU2MTY0YTI0YTk1ODdkODJiOGIxODYiLCJ2ZXJzaW9uIjoxfQ==",
+      "expected_per_chain_envelope_hash": "sha256:f8484f16d8b202d63d5b20e678f8bda805c9238b7999c7decdb9644eb9a182e0",
+      "note": "Recipient lowercased; same chain canonicalization concern as Base. EVM-style: chain interprets both as same address, JCS doesn't"
+    }
+  ]
+}
