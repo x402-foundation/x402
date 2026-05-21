@@ -168,6 +168,7 @@ export function wrapAxiosWithPayment(
           return Promise.reject(
             new Error(
               `Failed to create payment payload: ${paymentError instanceof Error ? paymentError.message : "Unknown error"}`,
+              { cause: paymentError },
             ),
           );
         }

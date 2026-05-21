@@ -240,9 +240,10 @@ describe("wrapAxiosWithPayment()", () => {
     (mockClient.createPaymentPayload as ReturnType<typeof vi.fn>).mockRejectedValue(paymentError);
 
     const error = createAxiosError(402, createErrorConfig(), validPaymentRequired);
-    await expect(interceptor(error)).rejects.toThrow(
-      "Failed to create payment payload: Insufficient funds",
-    );
+    const thrown = await interceptor(error).catch((e: unknown) => e);
+    expect(thrown).toBeInstanceOf(Error);
+    expect((thrown as Error).message).toBe("Failed to create payment payload: Insufficient funds");
+    expect((thrown as Error).cause).toBe(paymentError);
   });
 
   it("should reject with generic error message for unknown parsing errors", async () => {

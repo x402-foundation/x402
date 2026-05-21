@@ -98,6 +98,7 @@ export function wrapFetchWithPayment(
     } catch (error) {
       throw new Error(
         `Failed to create payment payload: ${error instanceof Error ? error.message : "Unknown error"}`,
+        { cause: error },
       );
     }
 
