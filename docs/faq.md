@@ -129,6 +129,15 @@ Yes. Programmatic wallets (e.g., **CDP Wallet API**, **viem**, **ethers‑v6** H
 * Confirm your wallet has _mainnet_ USDC.
 * Gas fees are higher on mainnet; fund the wallet with a small amount of ETH for gas.
 
+#### My paid routes settle but don't appear in CDP Bazaar discovery — why?
+
+Bazaar indexing kicks in only after a route's first settled payment AND when the route's payment-middleware config carries Bazaar discovery metadata. Two common gotchas:
+
+1. **Facilitator choice.** Credential-free facilitators (e.g. `https://x402.org/facilitator`) settle payments but do NOT publish to Bazaar. Use the CDP facilitator (`https://api.cdp.coinbase.com/platform/v2/x402` with `CDP_API_KEY_ID`/`CDP_API_KEY_SECRET`) for auto-listing.
+2. **Per-route extension metadata.** Each route must declare its Bazaar metadata via `declareDiscoveryExtension` from `@x402/extensions`, and the resource server must register `bazaarResourceServerExtension`. Without these, the facilitator forwards no Bazaar payload to the indexer even on a successful settlement.
+
+See also: [issue #2156](https://github.com/x402-foundation/x402/issues/2156) tracks specific reports of post-settlement indexing latency on Base mainnet.
+
 ### Still have questions?
 
 • Open a GitHub Discussion or Issue in the [x402 repo](https://github.com/x402-foundation/x402)
