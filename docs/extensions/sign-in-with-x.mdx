@@ -327,6 +327,31 @@ The easiest way to use SIWX as a client is with the provided client extension:
     const response = await httpClient.fetch('https://api.example.com/data');
     ```
   </Tab>
+  <Tab title="Python">
+    ```python
+    from eth_account import Account
+    from x402 import x402Client
+    from x402.extensions.sign_in_with_x import (
+        CreateSIWxClientExtensionOptions,
+        create_siwx_client_extension,
+    )
+    from x402.http.clients import x402HttpxClient
+    from x402.mechanisms.evm import EthAccountSigner
+    from x402.mechanisms.evm.exact.register import register_exact_evm_client
+
+    account = Account.from_key("0xYourPrivateKey")
+    client = x402Client()
+    register_exact_evm_client(client, EthAccountSigner(account))
+
+    client.register_extension(
+        create_siwx_client_extension(CreateSIWxClientExtensionOptions(signers=[account]))
+    )
+
+    async with x402HttpxClient(client) as http:
+        # Requests automatically use SIWX auth when server supports it
+        response = await http.get("https://api.example.com/data")
+    ```
+  </Tab>
 </Tabs>
 
 The client extension automatically:
