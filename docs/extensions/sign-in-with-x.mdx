@@ -147,7 +147,7 @@ The server extension derives `network` from `accepts`, derives `domain`/`uri` fr
 
 ### Smart Wallet Support (EIP-1271 / EIP-6492)
 
-By default, only EOA (Externally Owned Account) signatures are verified. To support smart contract wallets (like Coinbase Smart Wallet, Safe, etc.), pass `publicClient.verifyMessage` from viem:
+By default, only EOA (Externally Owned Account) signatures are verified. To support smart contract wallets (like Coinbase Smart Wallet, Safe, etc.), pass a verifier via `verifyOptions`:
 
 <Tabs>
   <Tab title="TypeScript">
@@ -166,6 +166,27 @@ By default, only EOA (Externally Owned Account) signatures are verified. To supp
         storage,
         verifyOptions: { evmVerifier: publicClient.verifyMessage },
       }));
+    ```
+  </Tab>
+  <Tab title="Python">
+    ```python
+    from web3 import Web3
+    from x402.extensions.sign_in_with_x import (
+        CreateSIWxHookOptions,
+        SIWxVerifyOptions,
+        create_siwx_resource_server_extension,
+    )
+
+    provider = Web3(Web3.HTTPProvider("https://mainnet.base.org")).provider
+
+    server.register_extension(
+        create_siwx_resource_server_extension(
+            CreateSIWxHookOptions(
+                storage=storage,
+                verify_options=SIWxVerifyOptions(provider=provider),
+            )
+        )
+    )
     ```
   </Tab>
 </Tabs>
