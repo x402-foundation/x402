@@ -9,10 +9,32 @@ interface EcosystemCardProps {
   variant?: "top_section" | "standard";
 }
 
+interface EcosystemLogoDisplayOverride {
+  scale?: number;
+  containerClassName?: string;
+}
+
+const ecosystemLogoDisplayOverrides: Record<string, EcosystemLogoDisplayOverride> = {
+  aws: { scale: 0.7 },
+  nansen: { scale: 0.7 },
+  stripe: { scale: 0.5 },
+  world: { scale: 0.7 },
+  AWS: { scale: 0.7 },
+  Nansen: { scale: 0.7 },
+  Stripe: { scale: 0.5 },
+  World: { scale: 0.7 },
+};
+
 export function EcosystemCard({ partner, variant = "standard" }: EcosystemCardProps) {
   const isExternal = partner.websiteUrl.startsWith("http");
   const isFeatured = variant === "top_section";
   const tagLabel = partner.typeLabel ?? partner.category;
+  const logoDisplayOverride =
+    ecosystemLogoDisplayOverrides[partner.slug ?? ""] ?? ecosystemLogoDisplayOverrides[partner.name];
+  const logoScale = logoDisplayOverride?.scale ?? 1;
+  const logoContainerClassName =
+    logoDisplayOverride?.containerClassName ??
+    `relative overflow-hidden ${isFeatured ? "h-[60px] w-[140px]" : "h-[56px] w-[140px]"}`;
 
   return (
     <article
@@ -36,17 +58,18 @@ export function EcosystemCard({ partner, variant = "standard" }: EcosystemCardPr
         }`}
       >
         {partner.logoUrl ? (
-          <div
-            className={`overflow-hidden ${
-              isFeatured ? "h-[60px] w-[60px]" : "h-[56px] w-[56px]"
-            }`}
-          >
+          <div className={logoContainerClassName}>
             <Image
               src={partner.logoUrl}
               alt={`${partner.name} logo`}
-              width={120}
-              height={120}
-              className="h-full w-full object-contain"
+              fill
+              sizes="140px"
+              style={{
+                objectFit: "contain",
+                objectPosition: "left center",
+                transform: `scale(${logoScale})`,
+                transformOrigin: "left center",
+              }}
             />
           </div>
         ) : (
