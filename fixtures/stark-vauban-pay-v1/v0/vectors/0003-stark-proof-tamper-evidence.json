@@ -1,0 +1,20 @@
+{
+  "name": "stark-proof-tamper-evidence",
+  "spec": "stark-vauban-pay-v1-jcs-stark-receipt",
+  "expected_result": "FAIL",
+  "receipt_core": {
+    "payment_hash": "2ed186ebc66947eaac6a05a88c7bc096ee07ac11a2c44bb5580bd72b3670f580",
+    "action_ref": "10d8a38c01d8672176aa6e5209a368fde3e1831640d69e15283142b35880c2c1",
+    "amount": 50000,
+    "currency": "USDC",
+    "payer_pseudonym": "a3f2c1d4e5b6a7890123456789abcdef0123456789abcdef0123456789abcdef01",
+    "merchant_id": "b4e5d6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c2d3e4f5a6b7c8d9e0f1a2b3c4d5",
+    "timestamp_ms": 1747843200000,
+    "proof_scheme": "stark-vauban-pay-v1",
+    "proof_blob_b64": "BAECBAUGB",
+    "canon_version": "1.0"
+  },
+  "expected_core_digest": null,
+  "expected_divergent_digest": "sha256:c9641d87a5043dfb07f739e09a2c0c049937262ebc4ffb8db539d374aa353832",
+  "notes": "proof_blob_b64 mutated by one byte: first byte changed from A (0x00 decoded) to B (0x04 decoded). All other fields are byte-for-byte identical to 0001. The JCS canonical bytes differ at the proof_blob_b64 field value position. A STARK receipt verifier must detect this: (1) the expected_core_digest of the claimed receipt does not match the digest recomputed from these canonical bytes, and (2) even if a verifier skipped the digest check, the STARK proof bytes themselves would fail the Stwo Circle STARK M31 verifier because the polynomial commitments are inconsistent with the mutated first byte. expected_core_digest is null because there is no valid core digest for a tampered receipt. expected_divergent_digest is the actual SHA-256 of JCS(this receipt_core). This vector demonstrates that proof_blob_b64 is a load-bearing field in the canonical preimage, not an opaque attachment."
+}

@@ -1,0 +1,27 @@
+{
+  "name": "interop-shared-payment-hash",
+  "spec": "stark-vauban-pay-v1-jcs-stark-receipt",
+  "expected_result": "PASS",
+  "receipt_core": {
+    "currency": "USDC",
+    "timestamp_ms": 1747843200000,
+    "payment_hash": "2ed186ebc66947eaac6a05a88c7bc096ee07ac11a2c44bb5580bd72b3670f580",
+    "proof_blob_b64": "AAECBAUGB",
+    "canon_version": "1.0",
+    "action_ref": "10d8a38c01d8672176aa6e5209a368fde3e1831640d69e15283142b35880c2c1",
+    "merchant_id": "b4e5d6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c2d3e4f5a6b7c8d9e0f1a2b3c4d5",
+    "proof_scheme": "stark-vauban-pay-v1",
+    "amount": 50000,
+    "payer_pseudonym": "a3f2c1d4e5b6a7890123456789abcdef0123456789abcdef0123456789abcdef01"
+  },
+  "expected_jcs_bytes_b64": "eyJhY3Rpb25fcmVmIjoiMTBkOGEzOGMwMWQ4NjcyMTc2YWE2ZTUyMDlhMzY4ZmRlM2UxODMxNjQwZDY5ZTE1MjgzMTQyYjM1ODgwYzJjMSIsImFtb3VudCI6NTAwMDAsImNhbm9uX3ZlcnNpb24iOiIxLjAiLCJjdXJyZW5jeSI6IlVTREMiLCJtZXJjaGFudF9pZCI6ImI0ZTVkNmY3YThiOWMwZDFlMmYzYTRiNWM2ZDdlOGY5YTBiMWMyZDNlNGY1YTZiN2M4ZDllMGYxYTJiM2M0ZDUiLCJwYXllcl9wc2V1ZG9ueW0iOiJhM2YyYzFkNGU1YjZhNzg5MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWYwMTIzNDU2Nzg5YWJjZGVmMDEiLCJwYXltZW50X2hhc2giOiIyZWQxODZlYmM2Njk0N2VhYWM2YTA1YTg4YzdiYzA5NmVlMDdhYzExYTJjNDRiYjU1ODBiZDcyYjM2NzBmNTgwIiwicHJvb2ZfYmxvYl9iNjQiOiJBQUVDQkFVR0IiLCJwcm9vZl9zY2hlbWUiOiJzdGFyay12YXViYW4tcGF5LXYxIiwidGltZXN0YW1wX21zIjoxNzQ3ODQzMjAwMDAwfQ==",
+  "expected_core_digest": "sha256:89e01af0770494243e7ba6d003332688ca7107dd05c52cc8c73f470b13d5767f",
+  "interop_bind": {
+    "axis_2_payment_hash": "2ed186ebc66947eaac6a05a88c7bc096ee07ac11a2c44bb5580bd72b3670f580",
+    "axis_2_source": "FeedOracle hybrid-PQC fixture PR #2411; same payment_hash field verbatim",
+    "axis_3_action_ref": "10d8a38c01d8672176aa6e5209a368fde3e1831640d69e15283142b35880c2c1",
+    "axis_3_source": "andysalvo TrailRecord PR #2398; action_ref_preimage SHA-256(JCS({action_type,agent_id,scope,timestamp_ms}))",
+    "digest_equality_assertion": "expected_core_digest MUST equal 0001-baseline expected_core_digest: sha256:89e01af0770494243e7ba6d003332688ca7107dd05c52cc8c73f470b13d5767f"
+  },
+  "notes": "Source object keys are in a different order than 0001-baseline (currency first, then timestamp_ms, payment_hash, etc.). JCS sorts all object keys lexicographically before serialising; the canonical bytes are byte-for-byte identical to 0001-baseline. expected_core_digest MUST equal the 0001 digest, demonstrating JCS key-sorting independence: an implementation that hashes the unsorted source bytes would produce a different digest and fail to interoperate with any conformant implementation. The shared payment_hash and action_ref bind this STARK receipt to FeedOracle Axis 2 (PR #2411) and andysalvo Axis 3 (PR #2398) respectively."
+}

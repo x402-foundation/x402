@@ -1,0 +1,20 @@
+{
+  "name": "field-name-load-bearing",
+  "spec": "stark-vauban-pay-v1-jcs-stark-receipt",
+  "expected_result": "FAIL",
+  "receipt_core": {
+    "paymentHash": "2ed186ebc66947eaac6a05a88c7bc096ee07ac11a2c44bb5580bd72b3670f580",
+    "action_ref": "10d8a38c01d8672176aa6e5209a368fde3e1831640d69e15283142b35880c2c1",
+    "amount": 50000,
+    "currency": "USDC",
+    "payer_pseudonym": "a3f2c1d4e5b6a7890123456789abcdef0123456789abcdef0123456789abcdef01",
+    "merchant_id": "b4e5d6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c2d3e4f5a6b7c8d9e0f1a2b3c4d5",
+    "timestamp_ms": 1747843200000,
+    "proof_scheme": "stark-vauban-pay-v1",
+    "proof_blob_b64": "AAECBAUGB",
+    "canon_version": "1.0"
+  },
+  "expected_core_digest": null,
+  "expected_divergent_digest": "sha256:5c80351f61a9a1d85d9cb055b8a54500d104d74caf2188a714f615fa6eabb053",
+  "notes": "payment_hash renamed to paymentHash (camelCase). Value is byte-for-byte identical to 0001. JCS treats field names as opaque UTF-8 byte sequences; `p-a-y-m-e-n-t-_-h-a-s-h` and `p-a-y-m-e-n-t-H-a-s-h` differ at byte 8 (underscore vs uppercase H), and camelCase sorts before snake_case in lexicographic order (H=0x48 < _=0x5F). The canonical bytes differ from 0001 even though the semantic value is identical. A receipt verifier that normalises field names before hashing would silently accept this receipt as equivalent to 0001, which would allow receipt substitution across implementations. expected_core_digest is null because there is no valid core digest for a non-conformant receipt. expected_divergent_digest is the actual SHA-256 of JCS(this receipt_core) for pinning purposes per cross-axis convention on PR #2398."
+}

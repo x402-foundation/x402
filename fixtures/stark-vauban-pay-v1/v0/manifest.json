@@ -1,0 +1,47 @@
+{
+  "schema_version": "1.0",
+  "artefact_id": "x402-stark-vauban-pay-v1-axis1-conformance-v0",
+  "published_at": "2026-05-21T00:00:00Z",
+  "canonicalizer": "rfc8785@0.1.4",
+  "proof_scheme": "stark-vauban-pay-v1",
+  "proof_system": "Stwo Circle STARK M31 (FRI-based, post-quantum)",
+  "anchor_chains": ["starknet"],
+  "contributing_chains": ["starknet"],
+  "axis": "1 - STARK receipt canonicalisation (payment conditions proof)",
+  "digest_algorithm": "SHA-256",
+  "canonicalization": "RFC 8785 (JCS)",
+  "derivation": "digest covers SHA-256(JCS(receipt_core)); proof_blob_b64 is stripped before digest computation in production — for these fixtures the blob is present in receipt_core and IS included in the canonical bytes (the blob is a fixture placeholder, not a live proof commitment; production provers strip before hashing per x402-foundation/x402#2357 open item)",
+  "anchored_to": {
+    "thread": "https://github.com/x402-foundation/x402/issues/2357",
+    "canonicalisation_discipline": "https://github.com/x402-foundation/x402/issues/2326",
+    "related": [
+      "https://github.com/x402-foundation/x402/pull/2411",
+      "https://github.com/x402-foundation/x402/pull/2398",
+      "https://github.com/x402-foundation/x402/issues/2332"
+    ]
+  },
+  "interop_bindings": {
+    "axis_0_substrate": {
+      "description": "AlgoVoi privacy_class attestation substrate (x402#2326 v3 canonicalisation discipline). This axis 1 fixture set adopts the same canon_version field discipline.",
+      "source": "x402-foundation/x402 fixtures/substrate/privacy-class-v0/"
+    },
+    "axis_2_hybrid_pqc": {
+      "description": "FeedOracle hybrid-PQC receipt (PR #2411). Shared payment_hash field: `2ed186ebc66947eaac6a05a88c7bc096ee07ac11a2c44bb5580bd72b3670f580`. The same JCS key-sorting and SHA-256 digest discipline applies to both axes.",
+      "source": "https://gist.github.com/feedoracle/704ab891170e2b43050f6f0ae00e6923"
+    },
+    "axis_3_work_receipt": {
+      "description": "andysalvo TrailRecord work-receipt (PR #2398). Shared action_ref field: `10d8a38c01d8672176aa6e5209a368fde3e1831640d69e15283142b35880c2c1`. The cross-layer binding is a pure hash reference; each layer is independently verifiable.",
+      "source": "https://github.com/andysalvo/action-ref-verify"
+    }
+  },
+  "vectors": [
+    {"file": "vectors/0001-baseline.json", "expected_result": "PASS"},
+    {"file": "vectors/0002-field-name-load-bearing.json", "expected_result": "FAIL"},
+    {"file": "vectors/0003-stark-proof-tamper-evidence.json", "expected_result": "FAIL"},
+    {"file": "vectors/0008-interop-shared-payment-hash.json", "expected_result": "PASS"}
+  ],
+  "digest_pinning_convention": "FAIL vectors pin the actual divergent digest (expected_divergent_digest field). PASS vectors pin the canonical digest (expected_core_digest field). Cross-axis interop vectors pin the same expected_core_digest as the baseline to prove digest equality across implementations.",
+  "conformance_runner": "runner-stark-axis-1 (TBD; contribution welcome). Expected result: 4/4 vectors pass, 1/1 interop bind (0008 digest equals 0001 digest).",
+  "source": "https://github.com/vauban-org/vauban-zkpay",
+  "license": "Apache-2.0"
+}

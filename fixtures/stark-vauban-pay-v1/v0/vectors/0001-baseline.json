@@ -1,0 +1,20 @@
+{
+  "name": "baseline-stark-vauban-pay",
+  "spec": "stark-vauban-pay-v1-jcs-stark-receipt",
+  "expected_result": "PASS",
+  "receipt_core": {
+    "payment_hash": "2ed186ebc66947eaac6a05a88c7bc096ee07ac11a2c44bb5580bd72b3670f580",
+    "action_ref": "10d8a38c01d8672176aa6e5209a368fde3e1831640d69e15283142b35880c2c1",
+    "amount": 50000,
+    "currency": "USDC",
+    "payer_pseudonym": "a3f2c1d4e5b6a7890123456789abcdef0123456789abcdef0123456789abcdef01",
+    "merchant_id": "b4e5d6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c2d3e4f5a6b7c8d9e0f1a2b3c4d5",
+    "timestamp_ms": 1747843200000,
+    "proof_scheme": "stark-vauban-pay-v1",
+    "proof_blob_b64": "AAECBAUGB",
+    "canon_version": "1.0"
+  },
+  "expected_jcs_bytes_b64": "eyJhY3Rpb25fcmVmIjoiMTBkOGEzOGMwMWQ4NjcyMTc2YWE2ZTUyMDlhMzY4ZmRlM2UxODMxNjQwZDY5ZTE1MjgzMTQyYjM1ODgwYzJjMSIsImFtb3VudCI6NTAwMDAsImNhbm9uX3ZlcnNpb24iOiIxLjAiLCJjdXJyZW5jeSI6IlVTREMiLCJtZXJjaGFudF9pZCI6ImI0ZTVkNmY3YThiOWMwZDFlMmYzYTRiNWM2ZDdlOGY5YTBiMWMyZDNlNGY1YTZiN2M4ZDllMGYxYTJiM2M0ZDUiLCJwYXllcl9wc2V1ZG9ueW0iOiJhM2YyYzFkNGU1YjZhNzg5MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWYwMTIzNDU2Nzg5YWJjZGVmMDEiLCJwYXltZW50X2hhc2giOiIyZWQxODZlYmM2Njk0N2VhYWM2YTA1YTg4YzdiYzA5NmVlMDdhYzExYTJjNDRiYjU1ODBiZDcyYjM2NzBmNTgwIiwicHJvb2ZfYmxvYl9iNjQiOiJBQUVDQkFVR0IiLCJwcm9vZl9zY2hlbWUiOiJzdGFyay12YXViYW4tcGF5LXYxIiwidGltZXN0YW1wX21zIjoxNzQ3ODQzMjAwMDAwfQ==",
+  "expected_core_digest": "sha256:89e01af0770494243e7ba6d003332688ca7107dd05c52cc8c73f470b13d5767f",
+  "notes": "Canonical STARK receipt core. Ten fields in source-object order; JCS sorts to alphabetical key order (action_ref, amount, canon_version, currency, merchant_id, payer_pseudonym, payment_hash, proof_blob_b64, proof_scheme, timestamp_ms). SHA-256 of the JCS bytes produces the expected_core_digest. payment_hash and action_ref are shared verbatim with FeedOracle Axis 2 (PR #2411) and andysalvo Axis 3 (PR #2398). amount is in microunits (1 USDC = 1 000 000 microunits; 50000 = 0.05 USDC). payer_pseudonym is Poseidon(payer_secret, app_domain, salt) per spec v0.3 §4.2, Hidden RevelationMask — the fixture value is synthetic. proof_blob_b64 is a synthetic 6-byte placeholder; production provers emit real Stwo Circle STARK M31 serialised proof bytes here. canon_version follows x402#2326 v3 MUST-when-retention-obligated discipline; stark-vauban-pay-v1 receipts are not under MiCA Art. 80 by default but the field is present for cross-ecosystem interop discipline."
+}
