@@ -9,11 +9,13 @@
 
 ## Overview
 
+Hive Nanopay is the v1.0 software stack of the Hive NanoVerse — five primitives (AGENT-WALLET, OFFCHAIN-AUTH, FACILITATOR-SWITCH, ENTROPY-RECEIPT, RATE-NEGOTIATOR) on three handshake protocols (SILICON-X402, THERMAL-ATTEST, ELECTRON-X402). This document covers the software extension to x402; hardware-attested protocols ship in v1.1.
+
 Hive Nanopay is a two-tier extension to the x402 payment protocol. It adds post-quantum signatures and cross-rail receipts to the standard x402 negotiation flow.
 
-**Tier 1 — PQ (default):** Ed25519 + ML-DSA-65 (FIPS 204) + SLH-DSA-PURE-SHAKE-256F (FIPS 205) under an all-of-three EUF-CMA combiner. Floor: $0.0003 per receipt.
+**Tier 1 — PQ (default):** Ed25519 + ML-DSA-65 (FIPS 204) + SLH-DSA-PURE-SHAKE-256F (FIPS 205) under an all-of-three EUF-CMA combiner. Floor: $0.0003 per receipt. Authorization via OFFCHAIN-AUTH primitive. Receipt emitted by ENTROPY-RECEIPT primitive.
 
-**Tier 2 — Lite (opt-in):** EIP-3009 + Ed25519 + Merkle batch root. One PQ signature amortized over up to 10,000,000 positions per Merkle root. Floor: $0.000001 per receipt.
+**Tier 2 — Lite (opt-in):** EIP-3009 + Ed25519 + Merkle batch root. One PQ signature amortized over up to 10,000,000 positions per Merkle root. Floor: $0.000001 per receipt. Tier selection via RATE-NEGOTIATOR primitive.
 
 Both tiers issue receipts that are structurally compatible with x402. The PQ tier is the default for all x402-compatible requests that do not carry the tier opt-in header.
 
