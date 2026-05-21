@@ -1,0 +1,7 @@
+{
+  "name": "Wisely Enterprises",
+  "description": "Agent-payment infrastructure for MCP and x402 workflows: paid AI/API invocation, external x402 seller quote handoffs, hosted endpoint creation, receipts, logs, and builder spend governance.",
+  "logoUrl": "/logos/wisely-enterprises.png",
+  "websiteUrl": "https://payments.wiselyenterprisesllc.com/ai/manifest",
+  "category": "Infrastructure & Tooling"
+}
