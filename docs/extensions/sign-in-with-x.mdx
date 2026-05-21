@@ -87,6 +87,58 @@ The easiest way to implement SIWX is registering the provided extension factorie
 
     ```
   </Tab>
+  <Tab title="Python">
+    ```python
+    from x402.extensions.sign_in_with_x import (
+        CreateSIWxHookOptions,
+        DeclareSIWxOptions,
+        InMemorySIWxStorage,
+        create_siwx_resource_server_extension,
+        declare_siwx_extension,
+    )
+    from x402.http import FacilitatorConfig, HTTPFacilitatorClient
+    from x402.http.middleware.fastapi import PaymentMiddlewareASGI
+    from x402.http.types import PaymentOption, RouteConfig
+    from x402.mechanisms.evm.exact import ExactEvmServerScheme
+    from x402.server import x402ResourceServer
+
+    NETWORK = "eip155:8453"  # Base mainnet
+    PAY_TO = "0xYourAddress"
+
+    # Storage for tracking paid addresses
+    storage = InMemorySIWxStorage()
+
+    facilitator = HTTPFacilitatorClient(FacilitatorConfig(url="https://x402.org/facilitator"))
+
+    # 1. Register extension
+    server = x402ResourceServer(facilitator)
+    server.register(NETWORK, ExactEvmServerScheme())
+    server.register_extension(
+        create_siwx_resource_server_extension(CreateSIWxHookOptions(storage=storage))
+    )
+
+    # 2. Declare SIWX support in routes
+    routes = {
+        "GET /data": RouteConfig(
+            accepts=[PaymentOption(scheme="exact", price="$0.01", network=NETWORK, pay_to=PAY_TO)],
+            extensions=declare_siwx_extension(),
+        ),
+        "GET /profile": RouteConfig(
+            accepts=[],  # Auth-only route: no payment required
+            extensions=declare_siwx_extension(
+                DeclareSIWxOptions(
+                    network=[NETWORK],  # Required for auth-only routes
+                    statement="Sign in to view your profile",
+                    expiration_seconds=300,
+                )
+            ),
+        ),
+    }
+
+    # 3. Add middleware to your FastAPI app
+    app.add_middleware(PaymentMiddlewareASGI, routes=routes, server=server)
+    ```
+  </Tab>
 </Tabs>
 
 The server extension derives `network` from `accepts`, derives `domain`/`uri` from the request URL, refreshes nonce/timestamps per request, records successful payments, and validates SIWX proofs for declared HTTP routes.
