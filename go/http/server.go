@@ -897,12 +897,18 @@ func (s *x402HTTPResourceServer) isWebBrowser(adapter HTTPAdapter) bool {
 //	customHTML: Optional custom HTML for the paywall
 //	unpaidResponse: Optional custom response for API clients (ignored for browser requests)
 func (s *x402HTTPResourceServer) createHTTPResponseV2(paymentRequired types.PaymentRequired, isWebBrowser bool, paywallConfig *PaywallConfig, customHTML string, unpaidResponse *UnpaidResponse) (*HTTPResponseInstructions, error) {
+	encodedHeader, err := encodePaymentRequiredHeader(paymentRequired)
+	if err != nil {
+		return nil, fmt.Errorf("failed to encode payment required header: %w", err)
+	}
+
 	if isWebBrowser {
 		html := s.generatePaywallHTMLV2(paymentRequired, paywallConfig, customHTML)
 		return &HTTPResponseInstructions{
 			Status: 402,
 			Headers: map[string]string{
-				"Content-Type": "text/html",
+				"Content-Type":     "text/html",
+				"PAYMENT-REQUIRED": encodedHeader,
 			},
 			Body:   html,
 			IsHTML: true,
@@ -916,11 +922,6 @@ func (s *x402HTTPResourceServer) createHTTPResponseV2(paymentRequired types.Paym
 	if unpaidResponse != nil {
 		contentType = unpaidResponse.ContentType
 		body = unpaidResponse.Body
-	}
-
-	encodedHeader, err := encodePaymentRequiredHeader(paymentRequired)
-	if err != nil {
-		return nil, fmt.Errorf("failed to encode payment required header: %w", err)
 	}
 
 	return &HTTPResponseInstructions{

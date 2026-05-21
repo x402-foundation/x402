@@ -1270,10 +1270,12 @@ describe("x402HTTPResourceServer", () => {
 
       const result = await httpServer.processHTTPRequest(context);
 
-      // Should return HTML paywall for browsers
-      if (result.type === "payment-error") {
-        expect(result.response.isHtml).toBe(true);
+      expect(result.type).toBe("payment-error");
+      if (result.type !== "payment-error") {
+        throw new Error("Expected payment-error result");
       }
+      expect(result.response.isHtml).toBe(true);
+      expect(result.response.headers["PAYMENT-REQUIRED"]).toBeDefined();
     });
 
     it("should bypass the resource handler when an AfterVerifyHook returns skipHandler", async () => {

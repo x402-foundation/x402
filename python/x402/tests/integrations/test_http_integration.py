@@ -297,6 +297,37 @@ class TestHTTPIntegration:
         result = components.process_http_request(context)
         assert result.type == "no-payment-required"
 
+    def test_browser_paywall_includes_payment_required_header(
+        self,
+        components: HTTPComponentsFixture,
+    ) -> None:
+        """Test browser HTML paywalls keep the protocol payment header."""
+        mock_adapter = MockHTTPAdapter(
+            path="/api/protected",
+            method="GET",
+            headers={
+                "Accept": "text/html,application/xhtml+xml",
+                "User-Agent": "Mozilla/5.0",
+            },
+        )
+        context = HTTPRequestContext(
+            adapter=mock_adapter,
+            path="/api/protected",
+            method="GET",
+        )
+
+        result = components.process_http_request(context)
+
+        assert result.type == "payment-error"
+        assert result.response is not None
+        assert result.response.status == 402
+        assert result.response.is_html is True
+        assert result.response.headers["Content-Type"] == "text/html"
+        payment_required = decode_payment_required_header(
+            result.response.headers["PAYMENT-REQUIRED"]
+        )
+        assert payment_required.accepts[0].network == "x402:cash"
+
 
 class TestDynamicPricing:
     """Tests for dynamic pricing - run against both sync and async implementations."""

@@ -743,7 +743,10 @@ class x402HTTPServerBase:
             )
             return HTTPResponseInstructions(
                 status=402,
-                headers={"Content-Type": "text/html"},
+                headers={
+                    "Content-Type": "text/html",
+                    PAYMENT_REQUIRED_HEADER: encode_payment_required_header(payment_required),
+                },
                 body=html_content,
                 is_html=True,
             )

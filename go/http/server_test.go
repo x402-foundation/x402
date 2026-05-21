@@ -311,6 +311,9 @@ func TestProcessHTTPRequestWithBrowser(t *testing.T) {
 	if result.Response.Headers["Content-Type"] != "text/html" {
 		t.Error("Expected text/html content type")
 	}
+	if result.Response.Headers["PAYMENT-REQUIRED"] == "" {
+		t.Error("Expected PAYMENT-REQUIRED header")
+	}
 
 	// Check HTML contains expected elements
 	html := result.Response.Body.(string)
