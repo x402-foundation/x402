@@ -113,4 +113,47 @@ describe("x402HTTPResourceServer facilitator response errors", () => {
       httpServer.processSettlement(buildPaymentPayload({ x402Version: 2, accepted }), accepted),
     ).rejects.toThrow(FacilitatorResponseError);
   });
+
+  it("returns payment-error when client extension echo mismatches before facilitator verify", async () => {
+    const httpServerWithExtensions = new x402HTTPResourceServer(resourceServer, {
+      "/api/test": {
+        accepts: {
+          scheme: "exact",
+          payTo: "0xabc",
+          price: "$1.00",
+          network,
+        },
+        extensions: {
+          bazaar: { info: { tool: "search" } },
+        },
+      },
+    });
+
+    const accepted = buildPaymentRequirements({
+      scheme: "exact",
+      network,
+      payTo: "0xabc",
+      asset: "USDC",
+      amount: "1000000",
+    });
+    const payload = buildPaymentPayload({
+      x402Version: 2,
+      accepted,
+      extensions: {
+        bazaar: { info: { tool: "modified" } },
+      },
+    });
+
+    const result = await httpServerWithExtensions.processHTTPRequest({
+      adapter: new MockHTTPAdapter({
+        "payment-signature": encodePaymentSignatureHeader(payload),
+      }),
+      path: "/api/test",
+      method: "GET",
+      paymentHeader: encodePaymentSignatureHeader(payload),
+    });
+
+    expect(result.type).toBe("payment-error");
+    expect(facilitator.verifyCalls).toHaveLength(0);
+  });
 });

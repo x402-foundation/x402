@@ -13,6 +13,7 @@ export type {
   VerifiedPaymentCancelOptions,
   PaymentCancellationDispatcher,
   SettlementOverrides,
+  ExtensionValidationResult,
   SkipHandlerDirective,
   ResourceVerifyRespone,
   BeforeVerifyHook,

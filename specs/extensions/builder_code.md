@@ -123,12 +123,11 @@ The `w` (wallet) field is **not** set by the client. It is added by the facilita
 
 When a facilitator settles a payment containing the `builder-code` extension, it:
 
-1. Reads `a` from `PaymentRequired.extensions["builder-code"].info.a` (server truth)
-2. Performs **soft echo validation**: if the client's `a` differs from the server's, logs a warning and uses the server value. Settlement never fails due to attribution metadata.
-3. Reads `s` from `PaymentPayload.extensions["builder-code"].s` (client-provided). If `s` is an array (legacy), takes the first valid entry.
-4. Adds its own builder code as the `w` (wallet) field
-5. Encodes the combined data as an ERC-8021 Schema 2 CBOR suffix
-6. Appends the suffix to the settlement transaction calldata
+1. Verifies that `PaymentPayload.extensions["builder-code"].a` matches `PaymentRequired.extensions["builder-code"].info.a`
+2. Reads `a` (app code) and `s` (service codes) from the payment payload extensions
+3. Adds its own builder code as the `w` (wallet) field
+4. Encodes the combined data as an ERC-8021 Schema 2 CBOR suffix
+5. Appends the suffix to the settlement transaction calldata
 
 The facilitator's builder code is configured at initialization and validated against the same `^[a-z0-9_]{1,32}$` pattern.
 
@@ -239,11 +238,12 @@ All builder codes (`a`, `w`, and each entry in `s`) must:
 - Be 1-32 characters long
 - Contain only lowercase letters, digits, and underscores
 
-Invalid codes must be rejected at declaration time (application) and at construction time (facilitator/client). The facilitator validates `s` for format only — it is client self-reported and cannot be verified against any authoritative source.
+Invalid codes must be rejected at declaration time (application) and at construction time (facilitator). The facilitator validates each entry in `s` for format only — `s` is client self-reported and cannot be verified against any authoritative source.
 
 ### App Code Echo Validation
 
-The facilitator performs **soft** echo validation: if the client's `a` differs from the server-declared `a`, the facilitator logs a warning and falls back to the server-provided value. Settlement must never fail due to attribution metadata.
+The facilitator MUST verify that the `a` field echoed by the client in `PaymentPayload.extensions["builder-code"]` exactly matches the `a` field declared by the application in `PaymentRequired.extensions["builder-code"].info`. A mismatch indicates the client tampered with the attribution and the payment MUST be rejected.
+
 
 ### Schema Validation
 

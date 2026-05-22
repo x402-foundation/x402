@@ -17,6 +17,7 @@ import type {
 
 interface MockResourceServer {
   findMatchingRequirements: ReturnType<typeof vi.fn>;
+  validateExtensions: ReturnType<typeof vi.fn>;
   verifyPayment: ReturnType<typeof vi.fn>;
   settlePayment: ReturnType<typeof vi.fn>;
   createPaymentRequiredResponse: ReturnType<typeof vi.fn>;
@@ -87,6 +88,7 @@ function createMockResourceServer(): MockResourceServer {
   const cancel = vi.fn().mockResolvedValue(undefined);
   return {
     findMatchingRequirements: vi.fn().mockReturnValue(mockPaymentRequirements),
+    validateExtensions: vi.fn().mockReturnValue({ valid: true }),
     verifyPayment: vi.fn().mockResolvedValue(mockVerifyResponse),
     settlePayment: vi.fn().mockResolvedValue(mockSettleResponse),
     createPaymentRequiredResponse: vi.fn().mockResolvedValue(mockPaymentRequired),

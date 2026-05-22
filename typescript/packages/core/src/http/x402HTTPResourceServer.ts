@@ -593,6 +593,25 @@ export class x402HTTPResourceServer {
         };
       }
 
+      const extensionResult = this.ResourceServer.validateExtensions(
+        paymentRequired,
+        paymentPayload,
+      );
+      if (!extensionResult.valid) {
+        const errorResponse = await this.ResourceServer.createPaymentRequiredResponse(
+          requirements,
+          resourceInfo,
+          extensionResult.invalidReason,
+          extensions,
+          transportContext,
+          paymentPayload,
+        );
+        return {
+          type: "payment-error",
+          response: this.createHTTPResponse(errorResponse, false, paywallConfig),
+        };
+      }
+
       const verifyResult = await this.ResourceServer.verifyPayment(
         paymentPayload,
         matchingRequirements,
