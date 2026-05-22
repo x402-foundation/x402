@@ -1,0 +1,64 @@
+{
+  "resource": {
+    "provider_id": "vauban-pay",
+    "resource_id": "bounded-spend-authorization-sample-v0-0001-baseline",
+    "resource_url": "https://pay.vauban.tech"
+  },
+  "price": {
+    "status": "PASS",
+    "discovery_ceiling": {
+      "max_amount": "1000000",
+      "asset": "urn:eip3009:USDC:starknet-sepolia",
+      "network": "starknet-sepolia"
+    },
+    "receipt_amount_field": "settlement_receipt.predicate.amount"
+  },
+  "authority": {
+    "status": "PASS",
+    "approval_source": {
+      "kind": "human_principal",
+      "principal_id": "0xa3f2c1d4e5b6a7890123456789abcdef0123456789abcdef0123456789abcdef",
+      "policy_ref": null,
+      "policy_version": null,
+      "controller_id": null,
+      "snapshot_hash": null
+    }
+  },
+  "cap": {
+    "status": "PASS",
+    "enforcement": "cryptographic",
+    "max_per_tx": "1000000",
+    "max_per_period": "100000000",
+    "period": "86400",
+    "grant_hash": "sha256:ff558f21b26c5045fb6997fef185b9993e33a29a7907dbcf349e49b9019c1fd2"
+  },
+  "charge_evidence": {
+    "status": "PASS",
+    "type": "receipt",
+    "reference_url": "https://github.com/x402-foundation/x402/tree/main/fixtures/bounded-spend-authorization-sample/v0/vectors/0001-baseline.json",
+    "hash": "sha256:0adc9aece973486e8c49fc1613225d629d71bdd7e3b2fe50576f55d6db68a5b5",
+    "attestation_manifest_root": null
+  },
+  "canonicalisation": {
+    "status": "PARTIAL",
+    "canon_version": "1.0",
+    "algorithm": "JCS-RFC8785",
+    "hash_algorithm": "SHA-256",
+    "test_vectors_url": "https://github.com/x402-foundation/x402/tree/main/fixtures/bounded-spend-authorization-sample/v0/vectors/0001-baseline.json"
+  },
+  "revocation": {
+    "status": "PARTIAL",
+    "check_url": "https://pay.vauban.tech/.well-known/revocation/v0/",
+    "dispute_url": null,
+    "last_checked_ms": null
+  },
+  "preflight_verdict": {
+    "status": "PARTIAL",
+    "buyer_agent_can_spend_without_human": true,
+    "missing_fields": [
+      "revocation.last_checked_ms",
+      "canonicalisation.canon_version (pending jcs-rfc8785-v1 normalisation; tracked under PR #2436)"
+    ],
+    "next_safe_step": "Resolve the revocation check_url at preflight before each spend; treat canon_version normalisation as tracked under PR #2436 and re-evaluate once that PR merges."
+  }
+}
