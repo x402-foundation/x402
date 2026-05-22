@@ -1,0 +1,56 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/x402-foundation/x402/fixtures/risk-check-attestation-sample/v0/schema/risk-check-receipt.schema.json",
+  "title": "RiskCheckReceipt",
+  "description": "Canonical receipt schema for x402 risk-check attestation (Axis 4 composite trust-query). JCS-canonicalisable; all expected_hash values are SHA-256(JCS(receipt_object_without_expected_hash)).",
+  "type": "object",
+  "required": [
+    "payer_ref",
+    "screen_result",
+    "screen_timestamp_ms",
+    "screen_provider_did",
+    "jurisdiction_flags",
+    "canon_version"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "payer_ref": {
+      "type": "string",
+      "description": "sha256: prefixed hex digest of SHA-256(JCS(payer_identity_object)). Content-addressable reference to the payer identity; no raw PII stored in receipt (GDPR/CCPA compatible).",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "screen_result": {
+      "type": "string",
+      "description": "Screening outcome. REFER triggers SAR obligation under UK POCA 2002 s.330; it is not merely enhanced due diligence.",
+      "enum": ["ALLOW", "REFER", "DENY"]
+    },
+    "screen_timestamp_ms": {
+      "type": "integer",
+      "description": "Screen timestamp as epoch milliseconds (integer). NOT RFC 3339; RFC 3339 admits multiple encodings of the same instant and produces divergent digests at year-5 re-verification.",
+      "minimum": 0
+    },
+    "screen_provider_did": {
+      "type": "string",
+      "description": "DID of the screening provider. did:web: or did:key: forms accepted.",
+      "pattern": "^did:(web|key):.+"
+    },
+    "jurisdiction_flags": {
+      "type": "array",
+      "description": "ISO 3166-1 alpha-2 jurisdiction codes observed during screening, or BLOCKED for jurisdictions under active sanction.",
+      "items": {
+        "type": "string"
+      },
+      "minItems": 1
+    },
+    "canon_version": {
+      "type": "string",
+      "description": "Canonicalization version marker. jcs-rfc8785-v1 indicates RFC 8785 JCS canonicalization.",
+      "enum": ["jcs-rfc8785-v1"]
+    },
+    "expected_hash": {
+      "type": "string",
+      "description": "sha256: prefixed hex digest of SHA-256(JCS(receipt_object_without_expected_hash)). Present in test vectors only; absent in live receipts.",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    }
+  }
+}
