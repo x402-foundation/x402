@@ -1,6 +1,6 @@
 {
   "name": "Lithium Research Vault",
-  "description": "Structured lithium mine + operator data from primary regulator filings (SEC, ASX, TSX, cninfo, IR). Production, AISC, reserves, ownership, royalties, offtakes. Every value cited to its source filing.",
+  "description": "Primary-source data on lithium mining operators and battery-metal producers worldwide. Production, AISC, reserves, ownership, royalties, offtakes, SEC/ASX/TSX filings. Mine-level (Greenbushes, Pilgangoora, Atacama, Grota do Cirilo) or company-level (ALB, SGML, PILBF, IGO). Every value cited to its source filing.",
   "websiteUrl": "https://clink-lithium-vault.fly.dev",
   "category": "Services/Endpoints",
   "top_section": false
