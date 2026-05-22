@@ -407,6 +407,29 @@ Client channel state is stored in memory by default. Persistent client storage i
     })
     ```
   </Tab>
+  <Tab title="Python">
+    ```python
+    from x402.mechanisms.evm.batch_settlement.client import (
+        BatchSettlementEvmScheme,
+        BatchSettlementEvmSchemeOptions,
+        FileChannelStorageOptions,
+        FileClientChannelStorage,
+        RefundOptions,
+    )
+
+    batch_scheme = BatchSettlementEvmScheme(
+        signer,
+        BatchSettlementEvmSchemeOptions(
+            storage=FileClientChannelStorage(FileChannelStorageOptions(directory="./channels")),
+        ),
+    )
+
+    # Full refund
+    result = batch_scheme.refund("https://api.example.com/weather")
+    # Partial refund
+    result = batch_scheme.refund("https://api.example.com/weather", RefundOptions(amount="1000000"))
+    ```
+  </Tab>
 </Tabs>
 
 ### Receiver Authorizer
