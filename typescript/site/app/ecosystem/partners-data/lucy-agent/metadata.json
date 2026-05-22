@@ -1,0 +1,7 @@
+{
+  "name": "Lucy",
+  "description": "Open-source pay-per-task AI agent for writing, research, code review, and DeFi/blockchain tasks. Pay in USDC on Base L2 or Solana via x402. No subscriptions — only pay for what you use. Supports MCP, A2A, x402, Agentmail, and Telegram.",
+  "logoUrl": "/logos/lucy.png",
+  "websiteUrl": "https://github.com/Woodman97/lucy-agent",
+  "category": "Services/Endpoints"
+}
