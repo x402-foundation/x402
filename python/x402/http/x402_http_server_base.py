@@ -739,6 +739,8 @@ class x402HTTPServerBase:
         unpaid_response: Any = None,
     ) -> HTTPResponseInstructions:
         """Create HTTP response instructions."""
+        payment_required_header = encode_payment_required_header(payment_required)
+
         if is_web_browser:
             html_content = self._generate_paywall_html(
                 payment_required,
@@ -747,7 +749,10 @@ class x402HTTPServerBase:
             )
             return HTTPResponseInstructions(
                 status=402,
-                headers={"Content-Type": "text/html"},
+                headers={
+                    "Content-Type": "text/html",
+                    PAYMENT_REQUIRED_HEADER: payment_required_header,
+                },
                 body=html_content,
                 is_html=True,
             )
@@ -764,7 +769,7 @@ class x402HTTPServerBase:
             status=402,
             headers={
                 "Content-Type": content_type,
-                PAYMENT_REQUIRED_HEADER: encode_payment_required_header(payment_required),
+                PAYMENT_REQUIRED_HEADER: payment_required_header,
             },
             body=body,
         )

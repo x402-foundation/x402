@@ -14,6 +14,7 @@ import {
   buildPaymentRequirements,
 } from "../../mocks";
 import { Network, Price } from "../../../src/types";
+import { decodePaymentRequiredHeader } from "../../../src/http";
 
 // Mock HTTP Adapter
 /**
@@ -1273,6 +1274,41 @@ describe("x402HTTPResourceServer", () => {
       // Should return HTML paywall for browsers
       if (result.type === "payment-error") {
         expect(result.response.isHtml).toBe(true);
+      }
+    });
+
+    it("should include PAYMENT-REQUIRED on browser HTML paywall responses", async () => {
+      const routes = {
+        "/api/test": {
+          accepts: {
+            scheme: "exact",
+            payTo: "0xabc",
+            price: "$1.00" as Price,
+            network: "eip155:8453" as Network,
+          },
+        },
+      };
+
+      const httpServer = new x402HTTPResourceServer(ResourceServer, routes);
+
+      const adapter = new MockHTTPAdapter();
+      adapter.getAcceptHeader = () => "text/html,application/xhtml+xml";
+      adapter.getUserAgent = () => "Mozilla/5.0 (Windows NT 10.0; Win64; x64)";
+
+      const result = await httpServer.processHTTPRequest({
+        adapter,
+        path: "/api/test",
+        method: "GET",
+      });
+
+      expect(result.type).toBe("payment-error");
+      if (result.type === "payment-error") {
+        expect(result.response.isHtml).toBe(true);
+        expect(result.response.headers["Content-Type"]).toBe("text/html");
+        expect(result.response.headers["PAYMENT-REQUIRED"]).toBeDefined();
+        expect(
+          decodePaymentRequiredHeader(result.response.headers["PAYMENT-REQUIRED"]).accepts,
+        ).toHaveLength(1);
       }
     });
 

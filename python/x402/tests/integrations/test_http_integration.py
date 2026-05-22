@@ -279,6 +279,38 @@ class TestHTTPIntegration:
         assert settlement.success is True
         assert "PAYMENT-RESPONSE" in settlement.headers
 
+    def test_browser_html_paywall_includes_payment_required_header(
+        self,
+        components: HTTPComponentsFixture,
+    ) -> None:
+        """Browser HTML 402 responses still expose protocol payment requirements."""
+        mock_adapter = MockHTTPAdapter(
+            path="/api/protected",
+            method="GET",
+            headers={
+                "Accept": "text/html,application/xhtml+xml",
+                "User-Agent": "Mozilla/5.0",
+            },
+        )
+        context = HTTPRequestContext(
+            adapter=mock_adapter,
+            path="/api/protected",
+            method="GET",
+        )
+
+        result = components.process_http_request(context)
+
+        assert result.type == "payment-error"
+        assert result.response is not None
+        assert result.response.status == 402
+        assert result.response.is_html is True
+        assert result.response.headers["Content-Type"] == "text/html"
+        assert "PAYMENT-REQUIRED" in result.response.headers
+        payment_required = decode_payment_required_header(
+            result.response.headers["PAYMENT-REQUIRED"]
+        )
+        assert len(payment_required.accepts) == 1
+
     def test_no_payment_required_for_unprotected_route(
         self,
         components: HTTPComponentsFixture,

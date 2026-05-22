@@ -1041,17 +1041,17 @@ export class x402HTTPResourceServer {
     // This signals client needs to approve Permit2 before retrying
     const status = paymentRequired.error === "permit2_allowance_required" ? 412 : 402;
 
+    const response = this.createHTTPPaymentRequiredResponse(paymentRequired);
+
     if (isWebBrowser) {
       const html = this.generatePaywallHTML(paymentRequired, paywallConfig, customHtml);
       return {
         status,
-        headers: { "Content-Type": "text/html" },
+        headers: { "Content-Type": "text/html", ...response.headers },
         body: html,
         isHtml: true,
       };
     }
-
-    const response = this.createHTTPPaymentRequiredResponse(paymentRequired);
 
     // Use callback result if provided, otherwise default to JSON with empty object
     const contentType = unpaidResponse ? unpaidResponse.contentType : "application/json";
