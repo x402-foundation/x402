@@ -111,6 +111,62 @@ Register the scheme with a resource server, protect routes with `scheme: "batch-
     })
     ```
   </Tab>
+  <Tab title="Python">
+    ```python
+    from x402 import x402ResourceServer
+    from x402.http import FacilitatorConfig, HTTPFacilitatorClient
+    from x402.http.middleware.fastapi import payment_middleware, set_settlement_overrides
+    from x402.mechanisms.evm.batch_settlement import SCHEME_BATCH_SETTLEMENT
+    from x402.mechanisms.evm.batch_settlement.authorizer_signer import LocalAuthorizerSigner
+    from x402.mechanisms.evm.batch_settlement.server import (
+        AutoSettlementConfig,
+        BatchSettlementEvmScheme,
+        BatchSettlementEvmSchemeServerConfig,
+        FileChannelStorage,
+    )
+
+    network = "eip155:84532"
+    facilitator = HTTPFacilitatorClient(FacilitatorConfig(url=FACILITATOR_URL))
+
+    scheme_config = BatchSettlementEvmSchemeServerConfig(
+        withdraw_delay=86400,
+        receiver_authorizer_signer=LocalAuthorizerSigner(RECEIVER_AUTH_KEY),
+        storage=FileChannelStorage("./channels"),
+    )
+    scheme = BatchSettlementEvmScheme(receiver_address, scheme_config)
+
+    server = x402ResourceServer(facilitator)
+    server.register(network, scheme)
+
+    manager = scheme.create_channel_manager(facilitator, network)
+    manager.start(AutoSettlementConfig(
+        claim_interval_secs=60,
+        settle_interval_secs=300,
+        refund_interval_secs=3600,
+        max_claims_per_batch=100,
+    ))
+
+    routes = {
+        "GET /weather": {
+            "accepts": {
+                "scheme": SCHEME_BATCH_SETTLEMENT,
+                "payTo": receiver_address,
+                "price": "$0.01",
+                "network": network,
+            },
+        },
+    }
+
+    @app.middleware("http")
+    async def x402_payment_middleware(request, call_next):
+        return await payment_middleware(routes, server)(request, call_next)
+
+    @app.get("/weather")
+    async def weather(response):
+        set_settlement_overrides(response, {"amount": "50%"})
+        return {"report": {"weather": "sunny", "temperature": 70}}
+    ```
+  </Tab>
 </Tabs>
 
 ### Server Storage
