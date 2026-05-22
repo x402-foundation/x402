@@ -83,14 +83,12 @@ export class UptoEvmScheme implements SchemeNetworkFacilitator {
    * @param payload - The payment payload to settle
    * @param requirements - The payment requirements
    * @param context - Optional facilitator context
-   * @param paymentRequiredExtensions - Server-declared extensions from PaymentRequired
    * @returns Promise resolving to a settlement response
    */
   async settle(
     payload: PaymentPayload,
     requirements: PaymentRequirements,
     context?: FacilitatorContext,
-    paymentRequiredExtensions?: Record<string, unknown>,
   ): Promise<SettleResponse> {
     const rawPayload = payload.payload as Record<string, unknown>;
     if (!isUptoPermit2Payload(rawPayload)) {
@@ -108,8 +106,6 @@ export class UptoEvmScheme implements SchemeNetworkFacilitator {
       requirements,
       rawPayload as UptoPermit2Payload,
       context,
-      undefined,
-      paymentRequiredExtensions,
     );
   }
 }

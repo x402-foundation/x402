@@ -39,7 +39,6 @@ interface X402PaymentContext {
   paymentPayload: PaymentPayload;
   paymentRequirements: PaymentRequirements;
   declaredExtensions?: Record<string, unknown>;
-  paymentRequiredExtensions?: Record<string, unknown>;
   requestContext: HTTPRequestContext;
 }
 
@@ -376,7 +375,6 @@ export function paymentMiddlewareFromHTTPServer(
           paymentPayload: result.paymentPayload,
           paymentRequirements: result.paymentRequirements,
           declaredExtensions: result.declaredExtensions,
-          paymentRequiredExtensions: result.paymentRequiredExtensions,
           requestContext: context,
         };
         request.x402RawGuard = guardReplyRaw(reply);
@@ -446,8 +444,6 @@ export function paymentMiddlewareFromHTTPServer(
         x402Context.paymentRequirements,
         x402Context.declaredExtensions,
         { request: x402Context.requestContext, responseBody, responseHeaders },
-        undefined,
-        x402Context.paymentRequiredExtensions,
       );
 
       if (!settleResult.success) {

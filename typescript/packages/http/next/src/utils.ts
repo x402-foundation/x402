@@ -155,7 +155,6 @@ export function handlePaymentError(response: HTTPResponseInstructions): NextResp
  * @param declaredExtensions - Optional declared extensions (for per-key enrichment)
  * @param cancellationDispatcher - Cancels verified payments that should not settle
  * @param httpContext - Optional HTTP request context for extensions
- * @param paymentRequiredExtensions - Server-declared extensions from PaymentRequired
  * @returns The response with settlement headers or an error response if settlement fails
  */
 export async function handleSettlement(
@@ -166,7 +165,6 @@ export async function handleSettlement(
   declaredExtensions: Record<string, unknown> | undefined,
   cancellationDispatcher: PaymentCancellationDispatcher,
   httpContext?: HTTPRequestContext,
-  paymentRequiredExtensions?: Record<string, unknown>,
 ): Promise<NextResponse> {
   // If the response from the protected route is >= 400, do not settle payment
   if (response.status >= 400) {
@@ -186,8 +184,6 @@ export async function handleSettlement(
       paymentRequirements,
       declaredExtensions,
       httpContext ? { request: httpContext, responseBody } : undefined,
-      undefined,
-      paymentRequiredExtensions,
     );
 
     if (!result.success) {

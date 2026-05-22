@@ -103,17 +103,9 @@ Request:
       "name": "USDC",
       "version": "2"
     }
-  },
-  "paymentRequiredExtensions": {
-    "builder-code": {
-      "info": { "a": "app" },
-      "schema": {...}
-    }
   }
 }
 ```
-
-`paymentRequiredExtensions` carries the server-declared builder-code app attribution (`a`) from the original 402 response. Forward it on both `/verify` and `/settle` so the facilitator can verify it against the client's payload.
 
 Response (success):
 

@@ -467,8 +467,6 @@ describe("paymentMiddleware", () => {
         }),
         responseBody: expect.any(Buffer),
       }),
-      undefined,
-      undefined,
     );
     expect(reply.header).toHaveBeenCalledWith("PAYMENT-RESPONSE", "settled");
     expect(result).toBe(payload);

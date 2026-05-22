@@ -95,7 +95,6 @@ describe("Builder Code Integration Tests", () => {
     const suffix = builderExt.buildDataSuffix!({
       paymentPayload,
       paymentRequirements: paymentPayload.accepted,
-      paymentRequiredExtensions: paymentRequired.extensions,
     });
 
     const parsed = parseBuilderCodeSuffixFromCalldata(`0x${"00".repeat(4)}${suffix.slice(2)}`);
@@ -118,7 +117,6 @@ describe("Builder Code Integration Tests", () => {
     const suffix = builderExt.buildDataSuffix!({
       paymentPayload,
       paymentRequirements: paymentPayload.accepted,
-      paymentRequiredExtensions: paymentRequired.extensions,
     });
 
     const parsed = parseBuilderCodeSuffixFromCalldata(`0x${"00".repeat(4)}${suffix.slice(2)}`);

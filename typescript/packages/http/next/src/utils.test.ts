@@ -322,8 +322,6 @@ describe("handleSettlement", () => {
       mockRequirements,
       mockDeclaredExtensions,
       undefined,
-      undefined,
-      undefined,
     );
   });
 

@@ -33,14 +33,14 @@ const SETTLE_GAS_LIMIT = 120_000n;
  * @param signer - Facilitator signer used to submit the settlement transaction.
  * @param payload - Settle payload containing the receiver address and token address.
  * @param requirements - Payment requirements for network identification.
- * @param calldataSuffix - Optional hex suffix appended to the settlement transaction.
+ * @param dataSuffix - Optional hex suffix appended to the settlement transaction.
  * @returns A {@link SettleResponse} with the transaction hash on success.
  */
 export async function executeSettle(
   signer: FacilitatorEvmSigner,
   payload: BatchSettlementSettlePayload,
   requirements: PaymentRequirements,
-  calldataSuffix?: `0x${string}`,
+  dataSuffix?: `0x${string}`,
 ): Promise<SettleResponse> {
   const network = requirements.network;
   const contractAddr = getAddress(BATCH_SETTLEMENT_ADDRESS);
@@ -100,7 +100,7 @@ export async function executeSettle(
       functionName: "settle",
       args: [receiver, token],
       gas: SETTLE_GAS_LIMIT,
-      ...(calldataSuffix ? { dataSuffix: calldataSuffix } : {}),
+      dataSuffix,
     });
 
     const receipt = await signer.waitForTransactionReceipt({ hash: tx });

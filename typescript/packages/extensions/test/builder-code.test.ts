@@ -2,7 +2,7 @@
  * Tests for Builder Code Extension (ERC-8021)
  */
 
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect } from "vitest";
 import type { PaymentPayload, PaymentRequired } from "@x402/core/types";
 import {
   BUILDER_CODE,
@@ -55,13 +55,11 @@ function basePayload(): PaymentPayload {
 /**
  * Builds facilitator data-suffix context from optional extension maps.
  *
- * @param overrides - Extension maps for payment required and payment payload
- * @param overrides.paymentRequiredExtensions - Server-side builder-code declaration
+ * @param overrides - Extension maps for payment payload
  * @param overrides.paymentPayloadExtensions - Client-side builder-code payload
  * @returns Context passed to BuilderCodeFacilitatorExtension.buildDataSuffix
  */
 function suffixContext(overrides: {
-  paymentRequiredExtensions?: Record<string, unknown>;
   paymentPayloadExtensions?: Record<string, unknown>;
 }): DataSuffixContext {
   return {
@@ -76,7 +74,6 @@ function suffixContext(overrides: {
       asset: "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913",
       payTo: "0x0000000000000000000000000000000000000001",
     },
-    paymentRequiredExtensions: overrides.paymentRequiredExtensions,
   };
 }
 
@@ -163,12 +160,9 @@ describe("Builder Code Extension", () => {
       expect(parsed).toEqual({ w: WALLET });
     });
 
-    it("uses server app code and client service code", () => {
+    it("uses client app code and service code", () => {
       const parsed = parsedFromFacilitator(
         suffixContext({
-          paymentRequiredExtensions: {
-            [BUILDER_CODE]: declareBuilderCodeExtension(APP),
-          },
           paymentPayloadExtensions: {
             [BUILDER_CODE]: { a: APP, s: SERVICE },
           },
@@ -178,26 +172,7 @@ describe("Builder Code Extension", () => {
       expect(parsed).toEqual({ w: WALLET, a: APP, s: SERVICE });
     });
 
-    it("prefers server app code when client echoes a different value", () => {
-      const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
-
-      const parsed = parsedFromFacilitator(
-        suffixContext({
-          paymentRequiredExtensions: {
-            [BUILDER_CODE]: declareBuilderCodeExtension(APP),
-          },
-          paymentPayloadExtensions: {
-            [BUILDER_CODE]: { a: "bc_wrong_echo", s: SERVICE },
-          },
-        }),
-      );
-
-      expect(parsed?.a).toBe(APP);
-      expect(warnSpy).toHaveBeenCalled();
-      warnSpy.mockRestore();
-    });
-
-    it("accepts client app code when server did not declare one", () => {
+    it("accepts client app code when present in the payload", () => {
       const parsed = parsedFromFacilitator(
         suffixContext({
           paymentPayloadExtensions: {
@@ -221,12 +196,9 @@ describe("Builder Code Extension", () => {
       expect(parsed).toEqual({ w: WALLET, s: SERVICE });
     });
 
-    it("ignores invalid server app and service codes", () => {
+    it("ignores invalid client service codes", () => {
       const parsed = parsedFromFacilitator(
         suffixContext({
-          paymentRequiredExtensions: {
-            [BUILDER_CODE]: { info: { a: "NOT-VALID" }, schema: {} },
-          },
           paymentPayloadExtensions: {
             [BUILDER_CODE]: { s: "Also_Invalid" },
           },
@@ -236,10 +208,10 @@ describe("Builder Code Extension", () => {
       expect(parsed).toEqual({ w: WALLET });
     });
 
-    it("reads app code from a flat extension object without info wrapper", () => {
+    it("reads app code from the client payload extension", () => {
       const parsed = parsedFromFacilitator(
         suffixContext({
-          paymentRequiredExtensions: {
+          paymentPayloadExtensions: {
             [BUILDER_CODE]: { a: APP },
           },
         }),

@@ -2,9 +2,8 @@
  * Facilitator-side extension for the Builder Code Extension.
  *
  * At settlement time, the facilitator always encodes its wallet code into the
- * ERC-8021 suffix. App code (`a`) comes from the server declaration (with soft
- * echo validation against the client payload). Service code (`s`) is
- * client-provided via the payment payload.
+ * ERC-8021 suffix. App code (`a`) and service code (`s`) are read from the
+ * client payment payload extensions.
  */
 
 import type { FacilitatorExtension } from "@x402/core/types";
@@ -17,25 +16,6 @@ import {
   type BuilderCodeFacilitatorConfig,
   type DataSuffixContext,
 } from "./types";
-
-/**
- * Reads the server-declared app code (`a`) from payment-required extensions.
- *
- * @param extensions - Extensions map from PaymentRequired
- * @returns Valid app code, or undefined if missing or invalid
- */
-function extractServerAppCode(extensions?: Record<string, unknown>): string | undefined {
-  const raw = extensions?.[BUILDER_CODE];
-  if (typeof raw !== "object" || raw === null || Array.isArray(raw)) return undefined;
-
-  const ext = raw as Record<string, unknown>;
-  const info =
-    typeof ext.info === "object" && ext.info !== null && !Array.isArray(ext.info)
-      ? (ext.info as Record<string, unknown>)
-      : ext;
-
-  return typeof info.a === "string" && BUILDER_CODE_PATTERN.test(info.a) ? info.a : undefined;
-}
 
 /**
  * Reads the client builder-code extension object from payment-payload extensions.
@@ -103,28 +83,19 @@ export class BuilderCodeFacilitatorExtension implements FacilitatorExtension {
   /**
    * Builds the ERC-8021 Schema 2 calldata suffix for a settlement transaction.
    *
-   * - `a` comes from the server declaration; the client echo is validated softly.
-   * - `s` is read from the client's payment payload.
+   * - `a` and `s` are read from the client's payment payload extensions.
    * - `w` is always the facilitator's own code.
    *
-   * @param ctx - Settlement context with payment-required and payment-payload extensions
+   * @param ctx - Settlement context with payment-payload extensions
    * @returns Hex-encoded ERC-8021 builder-code calldata suffix
    */
   buildDataSuffix(ctx: DataSuffixContext): Hex {
-    const serverA = extractServerAppCode(ctx.paymentRequiredExtensions);
     const clientExt = extractClientExtension(ctx.paymentPayload.extensions);
 
-    let a = serverA;
-    if (clientExt?.a && typeof clientExt.a === "string") {
-      if (serverA && clientExt.a !== serverA) {
-        console.warn(
-          `[builder-code] client "a" mismatch: "${clientExt.a}" vs server "${serverA}". Using server value.`,
-        );
-      } else {
-        a = clientExt.a as string;
-      }
-    }
-
+    const a =
+      typeof clientExt?.a === "string" && BUILDER_CODE_PATTERN.test(clientExt.a)
+        ? clientExt.a
+        : undefined;
     const s = resolveServiceCode(clientExt?.s);
 
     const data: BuilderCodeExtensionData = {

@@ -126,25 +126,22 @@ export class BatchSettlementEvmScheme implements SchemeNetworkFacilitator {
    * @param payload - The x402 payment payload envelope.
    * @param requirements - Server payment requirements.
    * @param context - Optional facilitator extension context.
-   * @param paymentRequiredExtensions - Server-declared extensions from PaymentRequired
    * @returns A {@link SettleResponse} with the transaction hash on success.
    */
   async settle(
     payload: PaymentPayload,
     requirements: PaymentRequirements,
     context?: FacilitatorContext,
-    paymentRequiredExtensions?: Record<string, unknown>,
   ): Promise<SettleResponse> {
     const rawPayload = payload.payload;
 
-    const calldataSuffix = await resolveDataSuffix(context, {
+    const dataSuffix = await resolveDataSuffix(context, {
       paymentPayload: payload,
       paymentRequirements: requirements,
-      paymentRequiredExtensions,
     });
 
     if (isBatchSettlementDepositPayload(rawPayload)) {
-      return settleDeposit(this.signer, payload, rawPayload, requirements, context, calldataSuffix);
+      return settleDeposit(this.signer, payload, rawPayload, requirements, context, dataSuffix);
     }
 
     if (isBatchSettlementClaimPayload(rawPayload)) {
@@ -153,7 +150,7 @@ export class BatchSettlementEvmScheme implements SchemeNetworkFacilitator {
         rawPayload,
         requirements,
         this.authorizerSigner,
-        calldataSuffix,
+        dataSuffix,
       );
     }
 
@@ -163,12 +160,12 @@ export class BatchSettlementEvmScheme implements SchemeNetworkFacilitator {
         rawPayload,
         requirements,
         this.authorizerSigner,
-        calldataSuffix,
+        dataSuffix,
       );
     }
 
     if (isBatchSettlementSettlePayload(rawPayload)) {
-      return executeSettle(this.signer, rawPayload, requirements, calldataSuffix);
+      return executeSettle(this.signer, rawPayload, requirements, dataSuffix);
     }
 
     return {

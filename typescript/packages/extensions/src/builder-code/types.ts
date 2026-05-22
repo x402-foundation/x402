@@ -70,5 +70,4 @@ export interface BuilderCodeFacilitatorConfig {
 export interface DataSuffixContext {
   paymentPayload: PaymentPayload;
   paymentRequirements: PaymentRequirements;
-  paymentRequiredExtensions?: Record<string, unknown>;
 }

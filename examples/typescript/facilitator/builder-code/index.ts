@@ -116,12 +116,10 @@ app.use(express.json());
 
 app.post("/verify", async (req, res) => {
   try {
-    const { paymentPayload, paymentRequirements, paymentRequiredExtensions } =
-      req.body as {
-        paymentPayload: PaymentPayload;
-        paymentRequirements: PaymentRequirements;
-        paymentRequiredExtensions?: Record<string, unknown>;
-      };
+    const { paymentPayload, paymentRequirements } = req.body as {
+      paymentPayload: PaymentPayload;
+      paymentRequirements: PaymentRequirements;
+    };
 
     if (!paymentPayload || !paymentRequirements) {
       return res.status(400).json({
@@ -132,7 +130,6 @@ app.post("/verify", async (req, res) => {
     const response: VerifyResponse = await facilitator.verify(
       paymentPayload,
       paymentRequirements,
-      paymentRequiredExtensions,
     );
 
     res.json(response);
@@ -146,12 +143,10 @@ app.post("/verify", async (req, res) => {
 
 app.post("/settle", async (req, res) => {
   try {
-    const { paymentPayload, paymentRequirements, paymentRequiredExtensions } =
-      req.body as {
-        paymentPayload: PaymentPayload;
-        paymentRequirements: PaymentRequirements;
-        paymentRequiredExtensions?: Record<string, unknown>;
-      };
+    const { paymentPayload, paymentRequirements } = req.body as {
+      paymentPayload: PaymentPayload;
+      paymentRequirements: PaymentRequirements;
+    };
 
     if (!paymentPayload || !paymentRequirements) {
       return res.status(400).json({
@@ -162,7 +157,6 @@ app.post("/settle", async (req, res) => {
     const response: SettleResponse = await facilitator.settle(
       paymentPayload,
       paymentRequirements,
-      paymentRequiredExtensions,
     );
 
     res.json(response);

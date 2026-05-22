@@ -198,13 +198,8 @@ export function paymentMiddlewareFromHTTPServer(
 
       case "payment-verified":
         // Payment is valid, need to wrap response for settlement
-        const {
-          cancellationDispatcher,
-          paymentPayload,
-          paymentRequirements,
-          declaredExtensions,
-          paymentRequiredExtensions,
-        } = result;
+        const { cancellationDispatcher, paymentPayload, paymentRequirements, declaredExtensions } =
+          result;
 
         // Proceed to the next middleware or route handler
         try {
@@ -246,8 +241,6 @@ export function paymentMiddlewareFromHTTPServer(
             paymentRequirements,
             declaredExtensions,
             { request: context, responseBody, responseHeaders },
-            undefined,
-            paymentRequiredExtensions,
           );
 
           if (!settleResult.success) {

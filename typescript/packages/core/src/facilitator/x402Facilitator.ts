@@ -278,13 +278,11 @@ export class x402Facilitator {
    *
    * @param paymentPayload - The payment payload to verify
    * @param paymentRequirements - The payment requirements to verify against
-   * @param paymentRequiredExtensions - Server-declared extensions from PaymentRequired
    * @returns Promise resolving to the verification response
    */
   async verify(
     paymentPayload: PaymentPayload,
     paymentRequirements: PaymentRequirements,
-    paymentRequiredExtensions?: Record<string, unknown>,
   ): Promise<VerifyResponse> {
     const context: FacilitatorVerifyContext = {
       paymentPayload,
@@ -338,7 +336,6 @@ export class x402Facilitator {
         paymentPayload,
         paymentRequirements,
         facilitatorContext,
-        paymentRequiredExtensions,
       );
 
       // Check if verification failed (isValid: false)
@@ -401,13 +398,11 @@ export class x402Facilitator {
    *
    * @param paymentPayload - The payment payload to settle
    * @param paymentRequirements - The payment requirements for settlement
-   * @param paymentRequiredExtensions - Server-declared extensions from PaymentRequired
    * @returns Promise resolving to the settlement response
    */
   async settle(
     paymentPayload: PaymentPayload,
     paymentRequirements: PaymentRequirements,
-    paymentRequiredExtensions?: Record<string, unknown>,
   ): Promise<SettleResponse> {
     const context: FacilitatorSettleContext = {
       paymentPayload,
@@ -458,7 +453,6 @@ export class x402Facilitator {
         paymentPayload,
         paymentRequirements,
         facilitatorContext,
-        paymentRequiredExtensions,
       );
 
       // Execute afterSettle hooks

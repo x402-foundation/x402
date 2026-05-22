@@ -5,7 +5,6 @@ export type VerifyRequest = {
   x402Version: number;
   paymentPayload: PaymentPayload;
   paymentRequirements: PaymentRequirements;
-  paymentRequiredExtensions?: Record<string, unknown>;
 };
 
 export type VerifyResponse = {
@@ -21,7 +20,6 @@ export type SettleRequest = {
   x402Version: number;
   paymentPayload: PaymentPayload;
   paymentRequirements: PaymentRequirements;
-  paymentRequiredExtensions?: Record<string, unknown>;
 };
 
 export type SettleResponse = {

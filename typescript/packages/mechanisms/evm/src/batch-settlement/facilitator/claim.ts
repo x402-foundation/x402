@@ -38,7 +38,7 @@ export function buildVoucherClaimArgs(claims: BatchSettlementClaimPayload["claim
  * @param payload - Claim payload containing voucher claims and optional authorizer signature.
  * @param requirements - Payment requirements for network identification.
  * @param authorizerSigner - Dedicated key for producing `ClaimBatch` EIP-712 signatures.
- * @param calldataSuffix - Optional hex suffix appended to the claim transaction.
+ * @param dataSuffix - Optional hex suffix appended to the claim transaction.
  * @returns A {@link SettleResponse} with the transaction hash on success.
  */
 export async function executeClaimWithSignature(
@@ -46,7 +46,7 @@ export async function executeClaimWithSignature(
   payload: BatchSettlementClaimPayload,
   requirements: PaymentRequirements,
   authorizerSigner: AuthorizerSigner,
-  calldataSuffix?: `0x${string}`,
+  dataSuffix?: `0x${string}`,
 ): Promise<SettleResponse> {
   const network = requirements.network;
   const claimArgs = buildVoucherClaimArgs(payload.claims);
@@ -93,7 +93,7 @@ export async function executeClaimWithSignature(
       abi: batchSettlementABI,
       functionName: "claimWithSignature",
       args: [claimArgs, sig],
-      ...(calldataSuffix ? { dataSuffix: calldataSuffix } : {}),
+      dataSuffix,
     });
 
     const receipt = await signer.waitForTransactionReceipt({ hash: tx });

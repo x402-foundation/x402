@@ -898,7 +898,6 @@ export class x402ResourceServer {
    * @param requirements - Requirements matched to the payload
    * @param declaredExtensions - Optional per-extension declarations for the request
    * @param transportContext - Optional transport-specific context (e.g. HTTP, MCP)
-   * @param paymentRequiredExtensions - Server-declared extensions from PaymentRequired
    * @returns Facilitator verify outcome (optionally carrying a `skipHandler` directive),
    *   or abort/recovery as driven by hooks
    */
@@ -907,7 +906,6 @@ export class x402ResourceServer {
     requirements: PaymentRequirements,
     declaredExtensions?: Record<string, unknown>,
     transportContext?: unknown,
-    paymentRequiredExtensions?: Record<string, unknown>,
   ): Promise<ResourceVerifyRespone> {
     const resolvedDeclaredExtensions = declaredExtensions ?? {};
     const extensionKeysInUse = Object.keys(resolvedDeclaredExtensions);
@@ -966,11 +964,7 @@ export class x402ResourceServer {
 
         for (const client of this.facilitatorClients) {
           try {
-            verifyResult = await client.verify(
-              paymentPayload,
-              requirements,
-              paymentRequiredExtensions,
-            );
+            verifyResult = await client.verify(paymentPayload, requirements);
             break;
           } catch (error) {
             lastError = error as Error;
@@ -987,11 +981,7 @@ export class x402ResourceServer {
         }
       } else {
         // Use the specific facilitator that supports this payment
-        verifyResult = await facilitatorClient.verify(
-          paymentPayload,
-          requirements,
-          paymentRequiredExtensions,
-        );
+        verifyResult = await facilitatorClient.verify(paymentPayload, requirements);
       }
 
       return this.runAfterVerifyHooks(verifyResult, context, extensionKeysInUse, matchedScheme);
@@ -1062,7 +1052,6 @@ export class x402ResourceServer {
    * @param declaredExtensions - Optional declared extensions (for per-key enrichment)
    * @param transportContext - Optional transport-specific context (e.g., HTTP request/response, MCP tool context)
    * @param settlementOverrides - Optional overrides for settlement parameters (e.g., partial settlement amount)
-   * @param paymentRequiredExtensions - Server-declared extensions from PaymentRequired
    * @returns Settlement response
    */
   async settlePayment(
@@ -1071,7 +1060,6 @@ export class x402ResourceServer {
     declaredExtensions?: Record<string, unknown>,
     transportContext?: unknown,
     settlementOverrides?: SettlementOverrides,
-    paymentRequiredExtensions?: Record<string, unknown>,
   ): Promise<SettleResponse> {
     const resolvedDeclaredExtensions = declaredExtensions ?? {};
     const extensionKeysInUse = Object.keys(resolvedDeclaredExtensions);
@@ -1184,11 +1172,7 @@ export class x402ResourceServer {
 
         for (const client of this.facilitatorClients) {
           try {
-            settleResult = await client.settle(
-              paymentPayload,
-              effectiveRequirements,
-              paymentRequiredExtensions,
-            );
+            settleResult = await client.settle(paymentPayload, effectiveRequirements);
             break;
           } catch (error) {
             lastError = error as Error;
@@ -1205,11 +1189,7 @@ export class x402ResourceServer {
         }
       } else {
         // Use the specific facilitator that supports this payment
-        settleResult = await facilitatorClient.settle(
-          paymentPayload,
-          effectiveRequirements,
-          paymentRequiredExtensions,
-        );
+        settleResult = await facilitatorClient.settle(paymentPayload, effectiveRequirements);
       }
 
       // Execute afterSettle hooks

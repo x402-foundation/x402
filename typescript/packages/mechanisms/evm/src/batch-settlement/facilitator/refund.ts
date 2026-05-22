@@ -188,7 +188,7 @@ function buildRefundExtraFromPostState(
  * @param payload - Refund payload with optional signatures, amount, and nonce.
  * @param requirements - Payment requirements for network identification.
  * @param authorizerSigner - Dedicated key for producing EIP-712 signatures.
- * @param calldataSuffix - Optional hex suffix appended to the refund transaction.
+ * @param dataSuffix - Optional hex suffix appended to the refund transaction.
  * @returns A {@link SettleResponse} with the transaction hash on success.
  */
 export async function executeRefundWithSignature(
@@ -196,7 +196,7 @@ export async function executeRefundWithSignature(
   payload: BatchSettlementEnrichedRefundPayload,
   requirements: PaymentRequirements,
   authorizerSigner: AuthorizerSigner,
-  calldataSuffix?: `0x${string}`,
+  dataSuffix?: `0x${string}`,
 ): Promise<SettleResponse> {
   const network = requirements.network;
 
@@ -280,7 +280,7 @@ export async function executeRefundWithSignature(
         abi: batchSettlementABI,
         functionName: "multicall",
         args: [[claimCalldata, refundCalldata]],
-        ...(calldataSuffix ? { dataSuffix: calldataSuffix } : {}),
+        dataSuffix,
       });
     } else {
       try {
@@ -315,7 +315,7 @@ export async function executeRefundWithSignature(
           BigInt(payload.refundNonce),
           refundSig,
         ],
-        ...(calldataSuffix ? { dataSuffix: calldataSuffix } : {}),
+        dataSuffix,
       });
     }
 

@@ -11,7 +11,6 @@ export const BUILDER_CODE_KEY = "builder-code" as const;
 export interface DataSuffixContext {
   paymentPayload: PaymentPayload;
   paymentRequirements: PaymentRequirements;
-  paymentRequiredExtensions?: Record<string, unknown>;
 }
 
 export interface BuilderCodeFacilitatorExtension extends FacilitatorExtension {

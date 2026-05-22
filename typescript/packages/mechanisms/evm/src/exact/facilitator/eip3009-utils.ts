@@ -221,7 +221,7 @@ export function parseEip3009TransferError(error: unknown): string {
  * @param signer - EVM signer for contract writes
  * @param erc20Address - ERC-20 token contract address
  * @param payload - EIP-3009 transfer authorization payload
- * @param calldataSuffix - Optional hex bytes to append after the ABI-encoded calldata
+ * @param dataSuffix - Optional hex bytes to append after the ABI-encoded calldata
  *
  * @returns Transaction hash
  */
@@ -229,7 +229,7 @@ export async function executeTransferWithAuthorization(
   signer: FacilitatorEvmSigner,
   erc20Address: `0x${string}`,
   payload: ExactEIP3009Payload,
-  calldataSuffix?: Hex,
+  dataSuffix?: Hex,
 ): Promise<Hex> {
   const { signature } = parseErc6492Signature(payload.signature!);
   const signatureLength = signature.startsWith("0x") ? signature.length - 2 : signature.length;
@@ -262,6 +262,6 @@ export async function executeTransferWithAuthorization(
     abi: eip3009ABI,
     functionName: "transferWithAuthorization",
     args: [...baseArgs, ...signatureArgs],
-    ...(calldataSuffix ? { dataSuffix: calldataSuffix } : {}),
+    dataSuffix,
   });
 }

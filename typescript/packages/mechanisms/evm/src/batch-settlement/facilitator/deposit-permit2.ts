@@ -232,13 +232,13 @@ export async function resolvePermit2DepositBranch(
  *
  * @param payload - Batch deposit payload.
  * @param collectorData - Encoded Permit2 collector data.
- * @param calldataSuffix - Optional hex suffix appended to the deposit calldata.
+ * @param dataSuffix - Optional hex suffix appended to the deposit calldata.
  * @returns Transaction request for the extension signer.
  */
 export function buildDepositTransaction(
   payload: BatchSettlementDepositPayload,
   collectorData: `0x${string}`,
-  calldataSuffix?: `0x${string}`,
+  dataSuffix?: `0x${string}`,
 ): { to: `0x${string}`; data: `0x${string}`; gas: bigint } {
   const data = encodeFunctionData({
     abi: batchSettlementABI,
@@ -253,7 +253,7 @@ export function buildDepositTransaction(
 
   return {
     to: getAddress(BATCH_SETTLEMENT_ADDRESS),
-    data: appendDataSuffix(data, calldataSuffix),
+    data: appendDataSuffix(data, dataSuffix),
     gas: 300_000n,
   };
 }
