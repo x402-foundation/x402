@@ -123,7 +123,7 @@ null-placeholder row for an emitter that has not produced evidence.
 
 `composite_hash` is computed over the rows that ARE present. The
 `(payment_hash, action_ref)` anchor binds the partial composite cleanly: a
-two-row composite is as well-anchored as a four-row composite.
+two-row composite is as well-anchored as a three-row composite.
 
 A composite policy evaluator receiving a partial response MUST classify each
 declared-but-absent emitter as `PENDING` or `UNKNOWN` at the evaluator layer.
@@ -156,32 +156,29 @@ this repository:
 
 | Vector | Rows | Demonstrates |
 |---|---|---|
-| `0001-tetra-full` | 4 | Full four-row composite; canonical `composite_hash` |
-| `0002-tetra-rotated` | 4 | Same rows, rotated transmission order; identical `composite_hash` (set semantics) |
-| `0003-partial-absent-row` | 3 | Cryptographic row absent; anchor still binds the partial composite |
+| `0001-tri-full` | 3 | Full three-row composite; canonical `composite_hash` |
+| `0002-tri-rotated` | 3 | Same rows, rotated transmission order; identical `composite_hash` (set semantics) |
+| `0003-partial-absent-row` | 2 | Cryptographic row absent; anchor still binds the partial composite |
 
-The four emitter surfaces exercised by the v0 vectors:
+The three emitter surfaces exercised by the v0 vectors:
 
 | `source_id` | `evidence_type` | Underlying fixture |
 |---|---|---|
-| `algovoi.compliance-screening` | behavioral | `fixtures/canonicalisation-substrate/v0/` (PR #2412) |
-| `algovoi.risk-check-attestation` | behavioral | `fixtures/risk-check-attestation-sample/v0/` (PR #2434) |
+| `algovoi.compliance-screening` | regulatory | `fixtures/risk-check-attestation-sample/v0/` (PR #2434) |
 | `nobulex.verascore-evidence-schema-v0.1` | observational | nobulex `fixtures/bilateral-receipt/v0/` |
 | `vauban.stark-proof-of-payment-conditions` | cryptographic | `fixtures/bounded-spend-authorization-sample/v0/` (PR #2432) |
 
+The AlgoVoi compliance screen is a single emitter surface. The
+`/compliance/screen` endpoint and the risk-check attestation are one
+production service and its receipt format, not two emitters; the composite is
+tri-party. A sanctions and AML compliance screen is `regulatory` evidence: its
+frameworks are statute (`UK MLR 2017`, `UK POCA 2002 s.330`) and sanctions
+regimes (`OFSI`, `OFAC`, `EU/UN`). It is NOT `behavioral`; the
+`anchor_chains ⊆ contributing_chains` rule does not apply to a screen that
+checks a payer identity against sanctions lists rather than observing chains.
+
 `composite_hash` values are reproducible with any RFC 8785 implementation
 listed in `specs/canonicalisation.md`.
-
-## Open question for coalition co-sign-off
-
-One identifier convention is left for coalition confirmation: the `source_id`
-of the risk-check row. This draft uses `algovoi.risk-check-attestation` on the
-ground that `source_id` names the emitter SURFACE and the production screening
-service is operated by AlgoVoi (`did:web:api.algovoi.co.uk`). If the coalition
-prefers the receipt-format origin (the risk-check fixture and the IETF I-D
-track are Vauban-hosted), the value becomes `vauban.risk-check-attestation` and
-the lexicographic sort order of vectors `0001`/`0002` changes accordingly. The
-fixture is regenerated deterministically once the convention is fixed.
 
 ## Cross-protocol applicability
 

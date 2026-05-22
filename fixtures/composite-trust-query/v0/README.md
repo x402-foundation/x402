@@ -29,18 +29,18 @@ algorithm is the contribution of AlgoVoi (x402 issue #2322).
 
 | Vector | Rows | composite_hash | Demonstrates |
 |---|---|---|---|
-| `0001-tetra-full` | 4 | `sha256:54ab9c64...042f649e` | Full four-row composite in canonical order |
-| `0002-tetra-rotated` | 4 | `sha256:54ab9c64...042f649e` | Same rows, rotated transmission order ; identical digest |
-| `0003-partial-absent-row` | 3 | `sha256:98b03e76...6ff53d6b` | Cryptographic row absent ; anchor still binds |
+| `0001-tri-full` | 3 | `sha256:5598d3a8...3dbb664e` | Full three-row composite in canonical order |
+| `0002-tri-rotated` | 3 | `sha256:5598d3a8...3dbb664e` | Same rows, rotated transmission order ; identical digest |
+| `0003-partial-absent-row` | 2 | `sha256:39f4a94a...1c1ddc46` | Cryptographic row absent ; anchor still binds |
 
-`0001` and `0002` carry the same four rows in different `emitter_rows` array
+`0001` and `0002` carry the same three rows in different `emitter_rows` array
 order and produce the SAME `composite_hash`. Emitter rows are a set, not a
 sequence ; the preimage algorithm sorts by `source_id` before
 canonicalisation. This is the set-semantics property contributed by nobulex
 (x402 issue #2322).
 
 `0003` omits the `vauban.stark-proof-of-payment-conditions` row entirely (no
-null placeholder). The `composite_hash` is computed over the three rows that
+null placeholder). The `composite_hash` is computed over the two rows that
 are present. The `(payment_hash, action_ref)` anchor binds the partial
 composite cleanly. Absent-row partial-response semantics contributed by
 nobulex (x402 issue #2322).
@@ -49,10 +49,15 @@ nobulex (x402 issue #2322).
 
 | `source_id` | `evidence_type` | Underlying fixture |
 |---|---|---|
-| `algovoi.compliance-screening` | behavioral | `fixtures/canonicalisation-substrate/v0/` (PR #2412) |
-| `algovoi.risk-check-attestation` | behavioral | `fixtures/risk-check-attestation-sample/v0/` (PR #2434) |
+| `algovoi.compliance-screening` | regulatory | `fixtures/risk-check-attestation-sample/v0/` (PR #2434) |
 | `nobulex.verascore-evidence-schema-v0.1` | observational | nobulex `fixtures/bilateral-receipt/v0/` |
 | `vauban.stark-proof-of-payment-conditions` | cryptographic | `fixtures/bounded-spend-authorization-sample/v0/` (PR #2432) |
+
+The composite is tri-party. The AlgoVoi `/compliance/screen` endpoint and the
+risk-check attestation are one production service and its receipt format, one
+emitter surface, not two. The compliance screen is `regulatory` evidence
+(statute and sanctions frameworks), so the `anchor_chains ⊆ contributing_chains`
+rule for behavioral emitters does not apply to it.
 
 ## On the `sig` placeholders
 
@@ -84,15 +89,15 @@ Compatible RFC 8785 implementations: `canonicalize` (JS), `gowebpki/jcs` (Go),
 `cyberphone/json-canonicalization` (Java), `serde_jcs` (Rust), `rfc8785`
 (Python).
 
-## Open question for coalition co-sign-off
+## Revision note
 
-The `source_id` of the risk-check row is `algovoi.risk-check-attestation` in
-this draft (the production screening service is AlgoVoi-operated,
-`did:web:api.algovoi.co.uk`). If the coalition prefers the receipt-format
-origin (Vauban-hosted fixture and IETF I-D track), the value becomes
-`vauban.risk-check-attestation` and the lexicographic order of `0001`/`0002`
-shifts. The fixture regenerates deterministically once the convention is
-fixed. See `specs/composite-trust-query.md` for the full statement.
+The v0 draft initially modelled the AlgoVoi compliance screen and the
+risk-check attestation as two separate emitter rows (a four-row composite).
+AlgoVoi clarified on x402 PR #2440 that these are one emitter surface: the
+`/compliance/screen` endpoint and the receipt format it emits. The vectors
+were regenerated as a three-row tri-party composite, and the AlgoVoi row was
+retyped from `behavioral` to `regulatory`. Both changes alter `row_preimage`
+content, so all three `composite_hash` values were recomputed.
 
 ## IETF track
 

@@ -7,6 +7,18 @@
   },
   "emitter_rows": [
     {
+      "source_id": "algovoi.compliance-screening",
+      "evidence_type": "regulatory",
+      "framework": ["UK MLR 2017", "UK POCA 2002 s.330", "OFSI", "OFAC", "EU/UN sanctions"],
+      "anchor": {
+        "payment_hash": "sha256:2ed186ebc66947eaac6a05a88c7bc096ee07ac11a2c44bb5580bd72b3670f580",
+        "action_ref": "10d8a38c01d8672176aa6e5209a368fde3e1831640d69e15283142b35880c2c1"
+      },
+      "verdict": "ALLOW",
+      "evidence_ref": "https://github.com/x402-foundation/x402/tree/main/fixtures/risk-check-attestation-sample/v0",
+      "sig": "ed25519:PLACEHOLDER-algovoi-compliance-screening-demonstration-only"
+    },
+    {
       "source_id": "nobulex.verascore-evidence-schema-v0.1",
       "evidence_type": "observational",
       "framework": ["verascore-evidence-schema-v0.1"],
@@ -29,31 +41,7 @@
       "verdict": "VALID",
       "evidence_ref": "https://github.com/x402-foundation/x402/tree/main/fixtures/bounded-spend-authorization-sample/v0",
       "sig": "stark:PLACEHOLDER-vauban-stark-proof-demonstration-only"
-    },
-    {
-      "source_id": "algovoi.compliance-screening",
-      "evidence_type": "behavioral",
-      "framework": ["UK MLR 2017", "OFSI", "OFAC"],
-      "anchor": {
-        "payment_hash": "sha256:2ed186ebc66947eaac6a05a88c7bc096ee07ac11a2c44bb5580bd72b3670f580",
-        "action_ref": "10d8a38c01d8672176aa6e5209a368fde3e1831640d69e15283142b35880c2c1"
-      },
-      "verdict": "ALLOW",
-      "evidence_ref": "https://github.com/x402-foundation/x402/tree/main/fixtures/canonicalisation-substrate/v0",
-      "sig": "ed25519:PLACEHOLDER-algovoi-compliance-screening-demonstration-only"
-    },
-    {
-      "source_id": "algovoi.risk-check-attestation",
-      "evidence_type": "behavioral",
-      "framework": ["UK POCA 2002 s.330", "OFSI", "OFAC", "EU/UN sanctions"],
-      "anchor": {
-        "payment_hash": "sha256:2ed186ebc66947eaac6a05a88c7bc096ee07ac11a2c44bb5580bd72b3670f580",
-        "action_ref": "10d8a38c01d8672176aa6e5209a368fde3e1831640d69e15283142b35880c2c1"
-      },
-      "verdict": "ALLOW",
-      "evidence_ref": "https://github.com/x402-foundation/x402/tree/main/fixtures/risk-check-attestation-sample/v0",
-      "sig": "ed25519:PLACEHOLDER-algovoi-risk-check-attestation-demonstration-only"
     }
   ],
-  "composite_hash": "sha256:54ab9c647e09db2d6361212211aaf127d5ea93832bcf77f32ce6179e042f649e"
+  "composite_hash": "sha256:5598d3a81ed6ea79ee526df8c43a726059da0175fa385d09438d65cb3dbb664e"
 }
