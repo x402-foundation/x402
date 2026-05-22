@@ -119,6 +119,29 @@ type SettlementOverrides struct {
 	Amount string `json:"amount,omitempty"`
 }
 
+// RiskCheckExtensionInfo represents the risk-check extension info
+// advertised by a resource server in PaymentRequired.extensions["risk-check"].info
+type RiskCheckExtensionInfo struct {
+	Required     bool     `json:"required"`
+	RiskCheckURL string   `json:"risk_check_url,omitempty"`
+	MinScore     int      `json:"min_score,omitempty"`
+	Categories   []string `json:"categories,omitempty"`
+}
+
+// RiskCheckResult represents the risk-check result included in
+// VerifyResponse and SettleResponse extensions["risk-check"]
+type RiskCheckResult struct {
+	Checked    bool     `json:"checked"`
+	Score      int      `json:"score,omitempty"`
+	Tier       string   `json:"tier,omitempty"`
+	Provider   string   `json:"provider,omitempty"`
+	Categories []string `json:"categories,omitempty"`
+	JWS        string   `json:"jws,omitempty"`
+	JWKSURL    string   `json:"jwks_url,omitempty"`
+	CheckedAt  string   `json:"checked_at,omitempty"`
+	ExpiresAt  string   `json:"expires_at,omitempty"`
+}
+
 // ResourceConfig defines payment configuration for a protected resource
 type ResourceConfig struct {
 	Scheme            string                 `json:"scheme"`
