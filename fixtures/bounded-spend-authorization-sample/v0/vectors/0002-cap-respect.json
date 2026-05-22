@@ -1,0 +1,105 @@
+{
+  "case": "cap-respect-edge",
+  "cross_axis_binding": {
+    "binds_to_axis_1_pr_2413": "fixtures/stark-vauban-pay-v1/v0/vectors/0001-baseline.json (same payment_hash family)",
+    "differs_from_0001_baseline_in": "SettlementReceipt.predicate.amount (999999 vs 50000), SettlementReceipt.predicate.nullifier (different value, anti-double-spend across receipts), SettlementReceipt.predicate.settlement_index (2 vs 1)",
+    "shared_action_ref": "10d8a38c01d8672176aa6e5209a368fde3e1831640d69e15283142b35880c2c1",
+    "shared_payment_hash": "2ed186ebc66947eaac6a05a88c7bc096ee07ac11a2c44bb5580bd72b3670f580"
+  },
+  "delegation_grant": {
+    "anchor": {
+      "chain_id": "0x534e5f5345504f4c4941",
+      "delegation_commitment": "0x73d8e2f1c0b9a8978675645342310fedcba98765432101fedcba98765432101f",
+      "kind": "StarknetDelegation",
+      "revocation_authority": "https://pay.vauban.tech/.well-known/revocation/v0/"
+    },
+    "canon_version": "1.0",
+    "evidence": {
+      "grantor_signature": "0xaabbccddeeff00112233445566778899aabbccddeeff00112233445566778899",
+      "scheme": "HmacPhaseMvp"
+    },
+    "predicate": {
+      "allowed_currencies": [
+        "urn:eip3009:USDC:starknet-sepolia"
+      ],
+      "allowed_merchants": [
+        "0xb4e5d6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c2d3e4f5a6b7c8d9e0f1a2b3c4d5"
+      ],
+      "cap_per_period": "100000000",
+      "cap_per_tx": "1000000",
+      "delegate_pseudonym": "0xc1a2e3f4b5c6d7e8f9a0b1c2d3e4f5a6b7c8d9e0f1a2b3c4d5e6f7a8b9c0d1e2",
+      "delegation_nonce": "0xdeadbeef00112233445566778899aabbccddeeff0123456789abcdef01234567",
+      "kind": "DelegationAuth",
+      "max_chain_length": 8,
+      "period_seconds": 86400
+    },
+    "revelation_mask": {
+      "allowed_merchants": "Open",
+      "cap_per_period": "Open",
+      "cap_per_tx": "Open",
+      "delegate_pseudonym": "Open",
+      "delegation_nonce": "Committed",
+      "period_seconds": "Open"
+    },
+    "subject": {
+      "kind": "UserPseudonym",
+      "value": "0xa3f2c1d4e5b6a7890123456789abcdef0123456789abcdef0123456789abcdef"
+    },
+    "temporal_frame": {
+      "kind": "ValidityWindow",
+      "t_end": 1747929600,
+      "t_start": 1747843200
+    }
+  },
+  "expected_delegation_grant_hash": "sha256:ff558f21b26c5045fb6997fef185b9993e33a29a7907dbcf349e49b9019c1fd2",
+  "expected_delegation_grant_jcs_bytes_b64": "eyJhbmNob3IiOnsiY2hhaW5faWQiOiIweDUzNGU1ZjUzNDU1MDRmNGM0OTQxIiwiZGVsZWdhdGlvbl9jb21taXRtZW50IjoiMHg3M2Q4ZTJmMWMwYjlhODk3ODY3NTY0NTM0MjMxMGZlZGNiYTk4NzY1NDMyMTAxZmVkY2JhOTg3NjU0MzIxMDFmIiwia2luZCI6IlN0YXJrbmV0RGVsZWdhdGlvbiIsInJldm9jYXRpb25fYXV0aG9yaXR5IjoiaHR0cHM6Ly9wYXkudmF1YmFuLnRlY2gvLndlbGwta25vd24vcmV2b2NhdGlvbi92MC8ifSwiY2Fub25fdmVyc2lvbiI6IjEuMCIsImV2aWRlbmNlIjp7ImdyYW50b3Jfc2lnbmF0dXJlIjoiMHhhYWJiY2NkZGVlZmYwMDExMjIzMzQ0NTU2Njc3ODg5OWFhYmJjY2RkZWVmZjAwMTEyMjMzNDQ1NTY2Nzc4ODk5Iiwic2NoZW1lIjoiSG1hY1BoYXNlTXZwIn0sInByZWRpY2F0ZSI6eyJhbGxvd2VkX2N1cnJlbmNpZXMiOlsidXJuOmVpcDMwMDk6VVNEQzpzdGFya25ldC1zZXBvbGlhIl0sImFsbG93ZWRfbWVyY2hhbnRzIjpbIjB4YjRlNWQ2ZjdhOGI5YzBkMWUyZjNhNGI1YzZkN2U4ZjlhMGIxYzJkM2U0ZjVhNmI3YzhkOWUwZjFhMmIzYzRkNSJdLCJjYXBfcGVyX3BlcmlvZCI6IjEwMDAwMDAwMCIsImNhcF9wZXJfdHgiOiIxMDAwMDAwIiwiZGVsZWdhdGVfcHNldWRvbnltIjoiMHhjMWEyZTNmNGI1YzZkN2U4ZjlhMGIxYzJkM2U0ZjVhNmI3YzhkOWUwZjFhMmIzYzRkNWU2ZjdhOGI5YzBkMWUyIiwiZGVsZWdhdGlvbl9ub25jZSI6IjB4ZGVhZGJlZWYwMDExMjIzMzQ0NTU2Njc3ODg5OWFhYmJjY2RkZWVmZjAxMjM0NTY3ODlhYmNkZWYwMTIzNDU2NyIsImtpbmQiOiJEZWxlZ2F0aW9uQXV0aCIsIm1heF9jaGFpbl9sZW5ndGgiOjgsInBlcmlvZF9zZWNvbmRzIjo4NjQwMH0sInJldmVsYXRpb25fbWFzayI6eyJhbGxvd2VkX21lcmNoYW50cyI6Ik9wZW4iLCJjYXBfcGVyX3BlcmlvZCI6Ik9wZW4iLCJjYXBfcGVyX3R4IjoiT3BlbiIsImRlbGVnYXRlX3BzZXVkb255bSI6Ik9wZW4iLCJkZWxlZ2F0aW9uX25vbmNlIjoiQ29tbWl0dGVkIiwicGVyaW9kX3NlY29uZHMiOiJPcGVuIn0sInN1YmplY3QiOnsia2luZCI6IlVzZXJQc2V1ZG9ueW0iLCJ2YWx1ZSI6IjB4YTNmMmMxZDRlNWI2YTc4OTAxMjM0NTY3ODlhYmNkZWYwMTIzNDU2Nzg5YWJjZGVmMDEyMzQ1Njc4OWFiY2RlZiJ9LCJ0ZW1wb3JhbF9mcmFtZSI6eyJraW5kIjoiVmFsaWRpdHlXaW5kb3ciLCJ0X2VuZCI6MTc0NzkyOTYwMCwidF9zdGFydCI6MTc0Nzg0MzIwMH19",
+  "expected_result": "PASS",
+  "expected_settlement_receipt_hash": "sha256:1fac253840f5e48d2e5864a5edc7e652dc2bd5deb24cce20cc7f900625fbcb67",
+  "expected_settlement_receipt_jcs_bytes_b64": "eyJhbmNob3IiOnsiY2hhaW5faWQiOiIweDUzNGU1ZjUzNDU1MDRmNGM0OTQxIiwiZXZlbnRfaW5kZXgiOjAsImtpbmQiOiJTdGFya25ldFNldHRsZW1lbnQiLCJ0eF9oYXNoIjoiMHgwMjU1OTMxODRkYjc1ZDJmNjIyNGYxZTgwMjJkNzZmNTgxMTY3MTU0MThiODM2NDUyYzMyNWI0ODM4Y2ZiZWU0In0sImNhbm9uX3ZlcnNpb24iOiIxLjAiLCJldmlkZW5jZSI6eyJpbnRlbnRfcHJvb2ZfcmVmIjp7ImNsYWltX2hhc2giOiJzaGEyNTY6ODllMDFhZjA3NzA0OTQyNDNlN2JhNmQwMDMzMzI2ODhjYTcxMDdkZDA1YzUyY2M4YzczZjQ3MGIxM2Q1NzY3ZiJ9LCJzY2hlbWUiOiJWZXJpZmllZEF0dGVzdGF0aW9uIiwic2lnbmF0dXJlIjoiMHhhMWIyYzNkNGU1ZjYwNzg5YTFiMmMzZDRlNWY2MDc4OWExYjJjM2Q0ZTVmNjA3ODlhMWIyYzNkNGU1ZjYwNzg5IiwidmVyaWZpZXJfcHVia2V5IjoiMHgwNGQ0ZTVmNmE3YjhjOWQwZTFmMmEzYjRjNWQ2ZTdmOGE5YjBjMWQyZTNmNGE1YjZjN2Q4ZTlmMGExYjJjM2Q0In0sInByZWRpY2F0ZSI6eyJhbW91bnQiOiI5OTk5OTkiLCJjdXJyZW5jeSI6InVybjplaXAzMDA5OlVTREM6c3RhcmtuZXQtc2Vwb2xpYSIsImludGVudF9yZWYiOnsiY2xhaW1faGFzaCI6InNoYTI1Njo4OWUwMWFmMDc3MDQ5NDI0M2U3YmE2ZDAwMzMzMjY4OGNhNzEwN2RkMDVjNTJjYzhjNzNmNDcwYjEzZDU3NjdmIn0sImtpbmQiOiJTZXR0bGVtZW50IiwibnVsbGlmaWVyIjoiMHhlZWRkMDAzMzg4Nzc2NjU1NDQzMzIyMTEwMDk5ODg3NzY2NTU0NDMzMjIxMTAwOTk4ODc3NjY1NTQ0MzMyMjExIiwic2V0dGxlbWVudF9pbmRleCI6Mn0sInJldmVsYXRpb25fbWFzayI6eyJhbW91bnQiOiJPcGVuIiwiY3VycmVuY3kiOiJPcGVuIiwiaW50ZW50X3JlZiI6Ik9wZW4iLCJtZXJjaGFudCI6Ik9wZW4iLCJudWxsaWZpZXIiOiJPcGVuIiwicGF5ZXJfcHNldWRvbnltIjoiSGlkZGVuIn0sInN1YmplY3QiOnsia2luZCI6Ik1lcmNoYW50UHNldWRvbnltIiwidmFsdWUiOiIweGI0ZTVkNmY3YThiOWMwZDFlMmYzYTRiNWM2ZDdlOGY5YTBiMWMyZDNlNGY1YTZiN2M4ZDllMGYxYTJiM2M0ZDUifSwidGVtcG9yYWxfZnJhbWUiOnsiaXNzdWVkX2F0IjoxNzQ3ODQzMzIwLCJraW5kIjoiSW5zdGFudCJ9fQ==",
+  "invariant": "Edge case PASS. SettlementReceipt.amount (999999 micro-USDC) is exactly cap_per_tx (1000000 micro-USDC) minus 1. Demonstrates the bounded-spend authorization is enforced strictly less-than-or-equal at the verifier.",
+  "notes": "Cap-respect edge case. amount (999999) is exactly cap_per_tx (1000000) minus 1, demonstrating the verifier's strict less-than-or-equal cap enforcement. DelegationGrant payload identical to 0001-baseline (same grantor, same caps, same nonce ; in practice a single grant authorises multiple receipts, each with distinct settlement_index and nullifier). SettlementReceipt differs in amount, nullifier, settlement_index, issued_at, tx_hash. JCS-canonical hash of the DelegationGrant is therefore identical to 0001 (same canonical preimage); JCS-canonical hash of the SettlementReceipt differs (different predicate amount + nullifier).",
+  "settlement_receipt": {
+    "anchor": {
+      "chain_id": "0x534e5f5345504f4c4941",
+      "event_index": 0,
+      "kind": "StarknetSettlement",
+      "tx_hash": "0x025593184db75d2f6224f1e8022d76f58116715418b836452c325b4838cfbee4"
+    },
+    "canon_version": "1.0",
+    "evidence": {
+      "intent_proof_ref": {
+        "claim_hash": "sha256:89e01af0770494243e7ba6d003332688ca7107dd05c52cc8c73f470b13d5767f"
+      },
+      "scheme": "VerifiedAttestation",
+      "signature": "0xa1b2c3d4e5f60789a1b2c3d4e5f60789a1b2c3d4e5f60789a1b2c3d4e5f60789",
+      "verifier_pubkey": "0x04d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1b2c3d4"
+    },
+    "predicate": {
+      "amount": "999999",
+      "currency": "urn:eip3009:USDC:starknet-sepolia",
+      "intent_ref": {
+        "claim_hash": "sha256:89e01af0770494243e7ba6d003332688ca7107dd05c52cc8c73f470b13d5767f"
+      },
+      "kind": "Settlement",
+      "nullifier": "0xeedd003388776655443322110099887766554433221100998877665544332211",
+      "settlement_index": 2
+    },
+    "revelation_mask": {
+      "amount": "Open",
+      "currency": "Open",
+      "intent_ref": "Open",
+      "merchant": "Open",
+      "nullifier": "Open",
+      "payer_pseudonym": "Hidden"
+    },
+    "subject": {
+      "kind": "MerchantPseudonym",
+      "value": "0xb4e5d6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c2d3e4f5a6b7c8d9e0f1a2b3c4d5"
+    },
+    "temporal_frame": {
+      "issued_at": 1747843320,
+      "kind": "Instant"
+    }
+  },
+  "vector_id": "0002-cap-respect"
+}

@@ -1,0 +1,197 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://pay.vauban.tech/schemas/bounded-spend-authorization-sample/v0/settlement-receipt.schema.json",
+  "title": "SettlementReceipt (Vauban Pay spec v0.3 §4.3, Phase 2a target shape)",
+  "description": "Phase 2a target shape for the SettlementReceipt Claim, mapping to fiscal_authority (issue #2405) seven-field qualification surface and to the charge_evidence reference value the metadata block points at. The SettlementReceipt is a VPSF Claim sextuplet (Subject, Predicate, Evidence, TemporalFrame, RevelationMask, Anchor). Canonical preimage discipline: JSON Canonicalization Scheme (JCS) per RFC 8785, hashed with SHA-256 (lowercase hex), per x402-foundation/x402 issue #2326 v3 canonicalisation discipline section. The receipt_hash = SHA-256(JCS(receipt_object)) is the audit-time-re-verifiable digest a regulator pins for retention windows of 4-6 years (MiCA Art. 80, DORA Art. 14, AMLR Art. 56).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "canon_version",
+    "subject",
+    "predicate",
+    "evidence",
+    "temporal_frame",
+    "revelation_mask",
+    "anchor"
+  ],
+  "properties": {
+    "canon_version": {
+      "type": "string",
+      "pattern": "^(x402-jcs-v[0-9]+\\.[0-9]+\\.[0-9]+|[0-9]+\\.[0-9]+(\\.[0-9]+)?)$",
+      "description": "Canonicalisation discipline revision per x402#2326 v3. Two accepted forms : (a) `x402-jcs-v1.0.0` (Phase 2a explicit prefix, recommended for new emitters), (b) `1.0` or `1.0.0` (compact form, backward-compatible with `stark-vauban-pay-v1` Axis 1 fixtures on PR #2413). Maps to fiscal_authority field 6 (audit/canonicalisation version)."
+    },
+    "subject": {
+      "type": "object",
+      "description": "VPSF sextuplet element 1: who is the Claim about. For SettlementReceipt, the Subject is the merchant who received the payment.",
+      "additionalProperties": false,
+      "required": ["kind", "value"],
+      "properties": {
+        "kind": {
+          "type": "string",
+          "enum": ["MerchantPseudonym"],
+          "description": "Subject kind. MerchantPseudonym = Poseidon(merchant_secret, app_domain, recipient_salt) per spec §2.3. Maps to fiscal_authority field 1 (provider/resource identity)."
+        },
+        "value": {
+          "type": "string",
+          "pattern": "^0x[0-9a-f]{1,64}$",
+          "description": "felt252 hex encoding."
+        }
+      }
+    },
+    "predicate": {
+      "type": "object",
+      "description": "VPSF sextuplet element 2: what is asserted about the Subject. For SettlementReceipt, the Settlement predicate carries the verified charge.",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "amount",
+        "currency",
+        "nullifier",
+        "intent_ref",
+        "settlement_index"
+      ],
+      "properties": {
+        "kind": {
+          "type": "string",
+          "enum": ["Settlement"]
+        },
+        "amount": {
+          "type": "string",
+          "pattern": "^[0-9]+$",
+          "description": "Amount in smallest indivisible unit of currency, u256 as decimal string (integer base units, no float). Maps to fiscal_authority field 2 (exact charge amount)."
+        },
+        "currency": {
+          "type": "string",
+          "pattern": "^urn:[a-zA-Z][a-zA-Z0-9+.-]*:[A-Z0-9_-]+(:[a-z0-9-]+)?$",
+          "description": "Currency identifier URN (e.g. urn:eip3009:USDC:starknet-sepolia). Maps to fiscal_authority field 2 (asset + network)."
+        },
+        "nullifier": {
+          "type": "string",
+          "pattern": "^0x[0-9a-f]{1,64}$",
+          "description": "felt252 nullifier consumed from the originating PaymentIntent. Anti-double-spend primitive."
+        },
+        "intent_ref": {
+          "type": "object",
+          "description": "ClaimRef pointing to the originating PaymentIntent. Maps to fiscal_authority field 5 (receipt/charge_evidence reference, via parent intent linkage).",
+          "additionalProperties": false,
+          "required": ["claim_hash"],
+          "properties": {
+            "claim_hash": {
+              "type": "string",
+              "pattern": "^sha256:[0-9a-f]{64}$",
+              "description": "SHA-256(JCS(PaymentIntent)) of the originating intent."
+            }
+          }
+        },
+        "settlement_index": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Monotonic index within the merchant settlement stream. Anti-replay + audit ordering primitive."
+        }
+      }
+    },
+    "evidence": {
+      "type": "object",
+      "description": "VPSF sextuplet element 3: proof that the Predicate holds. For SettlementReceipt, evidence is a VerifiedAttestation referencing the proven PaymentIntent + verifier signature.",
+      "additionalProperties": false,
+      "required": ["scheme", "intent_proof_ref", "verifier_pubkey", "signature"],
+      "properties": {
+        "scheme": {
+          "type": "string",
+          "enum": ["VerifiedAttestation"]
+        },
+        "intent_proof_ref": {
+          "type": "object",
+          "description": "ClaimRef pointing to the STARK proof of the originating PaymentIntent (payment_circuit, spec §5.1).",
+          "additionalProperties": false,
+          "required": ["claim_hash"],
+          "properties": {
+            "claim_hash": {
+              "type": "string",
+              "pattern": "^sha256:[0-9a-f]{64}$"
+            }
+          }
+        },
+        "verifier_pubkey": {
+          "type": "string",
+          "pattern": "^0x[0-9a-f]{1,64}$",
+          "description": "felt252 verifier public key (the verifier that signed off on the intent proof)."
+        },
+        "signature": {
+          "type": "string",
+          "pattern": "^0x[0-9a-f]+$",
+          "description": "SNIP-12 signature over the canonical Predicate preimage. Variable length depending on scheme."
+        },
+        "batch_proof_ref": {
+          "type": ["object", "null"],
+          "description": "Optional ClaimRef to the aggregation circuit proof if this receipt is part of a batched settlement (spec §5.2 aggregation_circuit).",
+          "additionalProperties": false,
+          "properties": {
+            "claim_hash": {
+              "type": "string",
+              "pattern": "^sha256:[0-9a-f]{64}$"
+            }
+          }
+        }
+      }
+    },
+    "temporal_frame": {
+      "type": "object",
+      "description": "VPSF sextuplet element 4: time validity. For SettlementReceipt, Instant marks the settlement moment (single point, not a window).",
+      "additionalProperties": false,
+      "required": ["kind", "issued_at"],
+      "properties": {
+        "kind": {
+          "type": "string",
+          "enum": ["Instant"]
+        },
+        "issued_at": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Unix timestamp when the receipt was issued by the verifier."
+        }
+      }
+    },
+    "revelation_mask": {
+      "type": "object",
+      "description": "VPSF sextuplet element 5: per-field disclosure policy. Per spec §4.3 default mask: amount/currency/nullifier/merchant/intent_ref Open, payer_pseudonym Hidden (privacy preservation).",
+      "additionalProperties": false,
+      "required": ["amount", "currency", "nullifier", "merchant", "intent_ref", "payer_pseudonym"],
+      "properties": {
+        "amount": {"type": "string", "enum": ["Open", "Committed", "Hidden"]},
+        "currency": {"type": "string", "enum": ["Open", "Committed", "Hidden"]},
+        "nullifier": {"type": "string", "enum": ["Open", "Committed", "Hidden"]},
+        "merchant": {"type": "string", "enum": ["Open", "Committed", "Hidden"]},
+        "intent_ref": {"type": "string", "enum": ["Open", "Committed", "Hidden"]},
+        "payer_pseudonym": {"type": "string", "enum": ["Open", "Committed", "Hidden"]}
+      }
+    },
+    "anchor": {
+      "type": "object",
+      "description": "VPSF sextuplet element 6: on-chain commitment. For SettlementReceipt, StarknetSettlement records the on-chain settlement event.",
+      "additionalProperties": false,
+      "required": ["kind", "chain_id", "tx_hash", "event_index"],
+      "properties": {
+        "kind": {
+          "type": "string",
+          "enum": ["StarknetSettlement"]
+        },
+        "chain_id": {
+          "type": "string",
+          "pattern": "^0x[0-9a-f]+$",
+          "description": "Starknet chain identifier as felt252 hex. Sepolia: 0x534e5f5345504f4c4941 (ASCII SN_SEPOLIA). Maps to fiscal_authority field 2 (network)."
+        },
+        "tx_hash": {
+          "type": "string",
+          "pattern": "^0x[0-9a-f]{1,64}$",
+          "description": "felt252 Starknet transaction hash of the settlement event."
+        },
+        "event_index": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Index of the PaymentReceiptEmitted event within the transaction."
+        }
+      }
+    }
+  }
+}

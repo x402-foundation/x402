@@ -1,0 +1,105 @@
+{
+  "case": "cap-violation-pinned-divergent",
+  "cross_axis_binding": {
+    "binds_to_axis_1_pr_2413": "fixtures/stark-vauban-pay-v1/v0/vectors/0001-baseline.json (same payment_hash family)",
+    "differs_from_0001_baseline_in": "SettlementReceipt.predicate.amount (1500000 vs 50000, exceeds cap), SettlementReceipt.predicate.nullifier (different), SettlementReceipt.predicate.settlement_index (3 vs 1), expected_result (FAIL_AT_VERIFIER vs PASS)",
+    "shared_action_ref": "10d8a38c01d8672176aa6e5209a368fde3e1831640d69e15283142b35880c2c1",
+    "shared_payment_hash": "2ed186ebc66947eaac6a05a88c7bc096ee07ac11a2c44bb5580bd72b3670f580"
+  },
+  "delegation_grant": {
+    "anchor": {
+      "chain_id": "0x534e5f5345504f4c4941",
+      "delegation_commitment": "0x73d8e2f1c0b9a8978675645342310fedcba98765432101fedcba98765432101f",
+      "kind": "StarknetDelegation",
+      "revocation_authority": "https://pay.vauban.tech/.well-known/revocation/v0/"
+    },
+    "canon_version": "1.0",
+    "evidence": {
+      "grantor_signature": "0xaabbccddeeff00112233445566778899aabbccddeeff00112233445566778899",
+      "scheme": "HmacPhaseMvp"
+    },
+    "predicate": {
+      "allowed_currencies": [
+        "urn:eip3009:USDC:starknet-sepolia"
+      ],
+      "allowed_merchants": [
+        "0xb4e5d6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c2d3e4f5a6b7c8d9e0f1a2b3c4d5"
+      ],
+      "cap_per_period": "100000000",
+      "cap_per_tx": "1000000",
+      "delegate_pseudonym": "0xc1a2e3f4b5c6d7e8f9a0b1c2d3e4f5a6b7c8d9e0f1a2b3c4d5e6f7a8b9c0d1e2",
+      "delegation_nonce": "0xdeadbeef00112233445566778899aabbccddeeff0123456789abcdef01234567",
+      "kind": "DelegationAuth",
+      "max_chain_length": 8,
+      "period_seconds": 86400
+    },
+    "revelation_mask": {
+      "allowed_merchants": "Open",
+      "cap_per_period": "Open",
+      "cap_per_tx": "Open",
+      "delegate_pseudonym": "Open",
+      "delegation_nonce": "Committed",
+      "period_seconds": "Open"
+    },
+    "subject": {
+      "kind": "UserPseudonym",
+      "value": "0xa3f2c1d4e5b6a7890123456789abcdef0123456789abcdef0123456789abcdef"
+    },
+    "temporal_frame": {
+      "kind": "ValidityWindow",
+      "t_end": 1747929600,
+      "t_start": 1747843200
+    }
+  },
+  "expected_delegation_grant_hash": "sha256:ff558f21b26c5045fb6997fef185b9993e33a29a7907dbcf349e49b9019c1fd2",
+  "expected_delegation_grant_jcs_bytes_b64": "eyJhbmNob3IiOnsiY2hhaW5faWQiOiIweDUzNGU1ZjUzNDU1MDRmNGM0OTQxIiwiZGVsZWdhdGlvbl9jb21taXRtZW50IjoiMHg3M2Q4ZTJmMWMwYjlhODk3ODY3NTY0NTM0MjMxMGZlZGNiYTk4NzY1NDMyMTAxZmVkY2JhOTg3NjU0MzIxMDFmIiwia2luZCI6IlN0YXJrbmV0RGVsZWdhdGlvbiIsInJldm9jYXRpb25fYXV0aG9yaXR5IjoiaHR0cHM6Ly9wYXkudmF1YmFuLnRlY2gvLndlbGwta25vd24vcmV2b2NhdGlvbi92MC8ifSwiY2Fub25fdmVyc2lvbiI6IjEuMCIsImV2aWRlbmNlIjp7ImdyYW50b3Jfc2lnbmF0dXJlIjoiMHhhYWJiY2NkZGVlZmYwMDExMjIzMzQ0NTU2Njc3ODg5OWFhYmJjY2RkZWVmZjAwMTEyMjMzNDQ1NTY2Nzc4ODk5Iiwic2NoZW1lIjoiSG1hY1BoYXNlTXZwIn0sInByZWRpY2F0ZSI6eyJhbGxvd2VkX2N1cnJlbmNpZXMiOlsidXJuOmVpcDMwMDk6VVNEQzpzdGFya25ldC1zZXBvbGlhIl0sImFsbG93ZWRfbWVyY2hhbnRzIjpbIjB4YjRlNWQ2ZjdhOGI5YzBkMWUyZjNhNGI1YzZkN2U4ZjlhMGIxYzJkM2U0ZjVhNmI3YzhkOWUwZjFhMmIzYzRkNSJdLCJjYXBfcGVyX3BlcmlvZCI6IjEwMDAwMDAwMCIsImNhcF9wZXJfdHgiOiIxMDAwMDAwIiwiZGVsZWdhdGVfcHNldWRvbnltIjoiMHhjMWEyZTNmNGI1YzZkN2U4ZjlhMGIxYzJkM2U0ZjVhNmI3YzhkOWUwZjFhMmIzYzRkNWU2ZjdhOGI5YzBkMWUyIiwiZGVsZWdhdGlvbl9ub25jZSI6IjB4ZGVhZGJlZWYwMDExMjIzMzQ0NTU2Njc3ODg5OWFhYmJjY2RkZWVmZjAxMjM0NTY3ODlhYmNkZWYwMTIzNDU2NyIsImtpbmQiOiJEZWxlZ2F0aW9uQXV0aCIsIm1heF9jaGFpbl9sZW5ndGgiOjgsInBlcmlvZF9zZWNvbmRzIjo4NjQwMH0sInJldmVsYXRpb25fbWFzayI6eyJhbGxvd2VkX21lcmNoYW50cyI6Ik9wZW4iLCJjYXBfcGVyX3BlcmlvZCI6Ik9wZW4iLCJjYXBfcGVyX3R4IjoiT3BlbiIsImRlbGVnYXRlX3BzZXVkb255bSI6Ik9wZW4iLCJkZWxlZ2F0aW9uX25vbmNlIjoiQ29tbWl0dGVkIiwicGVyaW9kX3NlY29uZHMiOiJPcGVuIn0sInN1YmplY3QiOnsia2luZCI6IlVzZXJQc2V1ZG9ueW0iLCJ2YWx1ZSI6IjB4YTNmMmMxZDRlNWI2YTc4OTAxMjM0NTY3ODlhYmNkZWYwMTIzNDU2Nzg5YWJjZGVmMDEyMzQ1Njc4OWFiY2RlZiJ9LCJ0ZW1wb3JhbF9mcmFtZSI6eyJraW5kIjoiVmFsaWRpdHlXaW5kb3ciLCJ0X2VuZCI6MTc0NzkyOTYwMCwidF9zdGFydCI6MTc0Nzg0MzIwMH19",
+  "expected_result": "FAIL_AT_VERIFIER",
+  "expected_settlement_receipt_hash": "sha256:85fd02d27787b82409a13d3c420670603f319e44a88e44456f2274fdcf66b393",
+  "expected_settlement_receipt_jcs_bytes_b64": "eyJhbmNob3IiOnsiY2hhaW5faWQiOiIweDUzNGU1ZjUzNDU1MDRmNGM0OTQxIiwiZXZlbnRfaW5kZXgiOjAsImtpbmQiOiJTdGFya25ldFNldHRsZW1lbnQiLCJ0eF9oYXNoIjoiMHgwMzZhNjQyOWNlODVlMzQwODMzNWEyZjkwMzRmODcwNjcyMjc4MjY1MjljOTQ3NTYzZjQzN2M1OTVkZGZkZjA1In0sImNhbm9uX3ZlcnNpb24iOiIxLjAiLCJldmlkZW5jZSI6eyJpbnRlbnRfcHJvb2ZfcmVmIjp7ImNsYWltX2hhc2giOiJzaGEyNTY6ODllMDFhZjA3NzA0OTQyNDNlN2JhNmQwMDMzMzI2ODhjYTcxMDdkZDA1YzUyY2M4YzczZjQ3MGIxM2Q1NzY3ZiJ9LCJzY2hlbWUiOiJWZXJpZmllZEF0dGVzdGF0aW9uIiwic2lnbmF0dXJlIjoiMHhhMWIyYzNkNGU1ZjYwNzg5YTFiMmMzZDRlNWY2MDc4OWExYjJjM2Q0ZTVmNjA3ODlhMWIyYzNkNGU1ZjYwNzg5IiwidmVyaWZpZXJfcHVia2V5IjoiMHgwNGQ0ZTVmNmE3YjhjOWQwZTFmMmEzYjRjNWQ2ZTdmOGE5YjBjMWQyZTNmNGE1YjZjN2Q4ZTlmMGExYjJjM2Q0In0sInByZWRpY2F0ZSI6eyJhbW91bnQiOiIxNTAwMDAwIiwiY3VycmVuY3kiOiJ1cm46ZWlwMzAwOTpVU0RDOnN0YXJrbmV0LXNlcG9saWEiLCJpbnRlbnRfcmVmIjp7ImNsYWltX2hhc2giOiJzaGEyNTY6ODllMDFhZjA3NzA0OTQyNDNlN2JhNmQwMDMzMzI2ODhjYTcxMDdkZDA1YzUyY2M4YzczZjQ3MGIxM2Q1NzY3ZiJ9LCJraW5kIjoiU2V0dGxlbWVudCIsIm51bGxpZmllciI6IjB4Nzc4ODk5YWFiYmNjZGRlZWZmMDAxMTIyMzM0NDU1NjY3Nzg4OTkwMGFhYmJjY2RkZWVmZjAwMTEyMjMzNDQ1NSIsInNldHRsZW1lbnRfaW5kZXgiOjN9LCJyZXZlbGF0aW9uX21hc2siOnsiYW1vdW50IjoiT3BlbiIsImN1cnJlbmN5IjoiT3BlbiIsImludGVudF9yZWYiOiJPcGVuIiwibWVyY2hhbnQiOiJPcGVuIiwibnVsbGlmaWVyIjoiT3BlbiIsInBheWVyX3BzZXVkb255bSI6IkhpZGRlbiJ9LCJzdWJqZWN0Ijp7ImtpbmQiOiJNZXJjaGFudFBzZXVkb255bSIsInZhbHVlIjoiMHhiNGU1ZDZmN2E4YjljMGQxZTJmM2E0YjVjNmQ3ZThmOWEwYjFjMmQzZTRmNWE2YjdjOGQ5ZTBmMWEyYjNjNGQ1In0sInRlbXBvcmFsX2ZyYW1lIjp7Imlzc3VlZF9hdCI6MTc0Nzg0MzM4MCwia2luZCI6Ikluc3RhbnQifX0=",
+  "invariant": "Pinned-divergent-digest case per AlgoVoi substrate convention. The JSON is well-formed and JCS-canonicalisable, but the SettlementReceipt.predicate.amount (1500000 micro-USDC) exceeds DelegationGrant.predicate.cap_per_tx (1000000 micro-USDC) by 50%. A protocol verifier MUST reject this receipt at the cap-respect check (spec §4.9 step CapPerTxCheck). The expected JCS hash is deterministic ; auditors and conformance harnesses pin this hash as the canonical failure case digest. Reproducing this digest from a different implementation proves cross-implementation determinism even on failure paths.",
+  "notes": "Pinned-divergent-digest discipline per the AlgoVoi substrate convention (see PR #2412 for the substrate analog). The SettlementReceipt is well-formed JSON, JCS-canonicalisable to deterministic bytes, and hashes to a deterministic SHA-256. But the protocol-level cap-respect check (spec §4.9 step CapPerTxCheck) MUST reject this receipt: 1500000 > 1000000 = cap_per_tx. The receipt is included as a fixture so conformance harnesses can verify that (a) the canonicalisation discipline is deterministic on the failure path, and (b) the verifier correctly rejects when cap is exceeded. A buyer-agent caching the bounded-spend authorization context MUST refuse to forward this receipt to a settlement venue. tx_hash here is synthetic ; this receipt would never be emitted on-chain by a compliant verifier.",
+  "settlement_receipt": {
+    "anchor": {
+      "chain_id": "0x534e5f5345504f4c4941",
+      "event_index": 0,
+      "kind": "StarknetSettlement",
+      "tx_hash": "0x036a6429ce85e3408335a2f9034f87067227826529c947563f437c595ddfdf05"
+    },
+    "canon_version": "1.0",
+    "evidence": {
+      "intent_proof_ref": {
+        "claim_hash": "sha256:89e01af0770494243e7ba6d003332688ca7107dd05c52cc8c73f470b13d5767f"
+      },
+      "scheme": "VerifiedAttestation",
+      "signature": "0xa1b2c3d4e5f60789a1b2c3d4e5f60789a1b2c3d4e5f60789a1b2c3d4e5f60789",
+      "verifier_pubkey": "0x04d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1b2c3d4"
+    },
+    "predicate": {
+      "amount": "1500000",
+      "currency": "urn:eip3009:USDC:starknet-sepolia",
+      "intent_ref": {
+        "claim_hash": "sha256:89e01af0770494243e7ba6d003332688ca7107dd05c52cc8c73f470b13d5767f"
+      },
+      "kind": "Settlement",
+      "nullifier": "0x778899aabbccddeeff0011223344556677889900aabbccddeeff001122334455",
+      "settlement_index": 3
+    },
+    "revelation_mask": {
+      "amount": "Open",
+      "currency": "Open",
+      "intent_ref": "Open",
+      "merchant": "Open",
+      "nullifier": "Open",
+      "payer_pseudonym": "Hidden"
+    },
+    "subject": {
+      "kind": "MerchantPseudonym",
+      "value": "0xb4e5d6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c2d3e4f5a6b7c8d9e0f1a2b3c4d5"
+    },
+    "temporal_frame": {
+      "issued_at": 1747843380,
+      "kind": "Instant"
+    }
+  },
+  "vector_id": "0003-cap-violation"
+}

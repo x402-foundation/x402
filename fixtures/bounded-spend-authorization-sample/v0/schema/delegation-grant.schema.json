@@ -1,0 +1,217 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://pay.vauban.tech/schemas/bounded-spend-authorization-sample/v0/delegation-grant.schema.json",
+  "title": "DelegationGrant (Vauban Pay spec v0.3 §4.5, Phase 2a target shape)",
+  "description": "Phase 2a target shape for the DelegationGrant Claim, mapping to fiscal_authority (issue #2405) seven-field qualification surface. The DelegationGrant is a VPSF (Vauban Proof Stack Framework) Claim sextuplet: (Subject, Predicate, Evidence, TemporalFrame, RevelationMask, Anchor). The Phase 2a shape extends the Phase-MVP minimal struct (delegator, delegatee, scope, expires_at) with the cryptographic primitives that back bounded-spend authorization with cryptographic enforcement at use time. Canonical preimage discipline: JSON Canonicalization Scheme (JCS) per RFC 8785, hashed with SHA-256 (lowercase hex), per x402-foundation/x402 issue #2326 v3 canonicalisation discipline section.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "canon_version",
+    "subject",
+    "predicate",
+    "evidence",
+    "temporal_frame",
+    "revelation_mask",
+    "anchor"
+  ],
+  "properties": {
+    "canon_version": {
+      "type": "string",
+      "pattern": "^(x402-jcs-v[0-9]+\\.[0-9]+\\.[0-9]+|[0-9]+\\.[0-9]+(\\.[0-9]+)?)$",
+      "description": "Canonicalisation discipline revision per x402#2326 v3. Two accepted forms : (a) `x402-jcs-v1.0.0` (Phase 2a explicit prefix, recommended for new emitters), (b) `1.0` or `1.0.0` (compact form, backward-compatible with `stark-vauban-pay-v1` Axis 1 fixtures on PR #2413)."
+    },
+    "subject": {
+      "type": "object",
+      "description": "VPSF sextuplet element 1: who is the Claim about. For DelegationGrant, the Subject is the user (delegator) who issues the grant.",
+      "additionalProperties": false,
+      "required": ["kind", "value"],
+      "properties": {
+        "kind": {
+          "type": "string",
+          "enum": ["UserPseudonym"],
+          "description": "Subject kind. UserPseudonym = Poseidon(user_secret, app_domain, fresh_salt) per spec §2.3."
+        },
+        "value": {
+          "type": "string",
+          "pattern": "^0x[0-9a-f]{1,64}$",
+          "description": "felt252 hex encoding (Starknet field element, 252-bit unsigned integer)."
+        }
+      }
+    },
+    "predicate": {
+      "type": "object",
+      "description": "VPSF sextuplet element 2: what is asserted about the Subject. For DelegationGrant, the DelegationAuth predicate carries cryptographic spend bounds.",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "delegate_pseudonym",
+        "cap_per_tx",
+        "cap_per_period",
+        "period_seconds",
+        "allowed_merchants",
+        "allowed_currencies",
+        "delegation_nonce",
+        "max_chain_length"
+      ],
+      "properties": {
+        "kind": {
+          "type": "string",
+          "enum": ["DelegationAuth"]
+        },
+        "delegate_pseudonym": {
+          "type": "string",
+          "pattern": "^0x[0-9a-f]{1,64}$",
+          "description": "felt252 pseudonym of the agent receiving delegation."
+        },
+        "cap_per_tx": {
+          "type": "string",
+          "pattern": "^[0-9]+$",
+          "description": "Maximum amount per single transaction, u256 as decimal string (integer base units, no float). Maps to fiscal_authority field 4 (spend cap)."
+        },
+        "cap_per_period": {
+          "type": "string",
+          "pattern": "^[0-9]+$",
+          "description": "Maximum cumulative amount per rolling period_seconds window, u256 as decimal string."
+        },
+        "period_seconds": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 31536000,
+          "description": "Rolling window for cap_per_period enforcement, in seconds. Max 1 year."
+        },
+        "allowed_merchants": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^0x[0-9a-f]{1,64}$"
+          },
+          "minItems": 1,
+          "description": "Allowlist of merchant felt252 pseudonyms or addresses. Empty disallowed; use a wildcard sentinel if open-set semantics needed."
+        },
+        "allowed_currencies": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^urn:[a-zA-Z][a-zA-Z0-9+.-]*:[A-Z0-9_-]+(:[a-z0-9-]+)?$"
+          },
+          "minItems": 1,
+          "description": "Currency identifiers using URN pattern (e.g. urn:eip3009:USDC:starknet-sepolia). Maps to fiscal_authority field 2 (asset + network)."
+        },
+        "delegation_nonce": {
+          "type": "string",
+          "pattern": "^0x[0-9a-f]{1,64}$",
+          "description": "felt252 anti-replay nonce. Committed (not Open) in RevelationMask per spec §4.5."
+        },
+        "max_chain_length": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 32,
+          "description": "Maximum depth of grant chain (anti-inflation per spec §3.3.6 Delegation Chain Inflation threat)."
+        }
+      }
+    },
+    "evidence": {
+      "type": "object",
+      "description": "VPSF sextuplet element 3: proof that the Predicate holds. For DelegationGrant, evidence is a StarkProofEnvelope over DelegationStatement (see spec §5.3 delegation_circuit.cairo).",
+      "additionalProperties": false,
+      "required": ["scheme"],
+      "properties": {
+        "scheme": {
+          "type": "string",
+          "enum": ["StarkProofEnvelope", "HmacPhaseMvp", "SnipSignature"],
+          "description": "Evidence scheme discriminator. Phase 2a: StarkProofEnvelope. Phase MVP fallbacks: HmacPhaseMvp (facilitator-internal), SnipSignature (Starknet wallet typed-data signing)."
+        },
+        "statement_kind": {
+          "type": "string",
+          "enum": ["DelegationStatement"],
+          "description": "Required when scheme = StarkProofEnvelope. Identifies the circuit family that produced the proof (spec §5.3)."
+        },
+        "proof_bytes": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]+={0,2}$",
+          "description": "Base64url-encoded proof bytes. Length depends on circuit (delegation_circuit ~120-200 KB Phase 2a estimate)."
+        },
+        "vk_commitment": {
+          "type": "string",
+          "pattern": "^0x[0-9a-f]{1,64}$",
+          "description": "felt252 commitment to the verifying key (anti-VK-substitution per spec §3.3.5)."
+        },
+        "grantor_signature": {
+          "type": "string",
+          "pattern": "^0x[0-9a-f]+$",
+          "description": "Phase MVP fallback: hex-encoded signature over the JCS canonical preimage of (subject || predicate || temporal_frame || delegation_nonce). Required when scheme = HmacPhaseMvp or SnipSignature."
+        }
+      }
+    },
+    "temporal_frame": {
+      "type": "object",
+      "description": "VPSF sextuplet element 4: time validity. ValidityWindow with explicit t_start and t_end.",
+      "additionalProperties": false,
+      "required": ["kind", "t_start", "t_end"],
+      "properties": {
+        "kind": {
+          "type": "string",
+          "enum": ["ValidityWindow"]
+        },
+        "t_start": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Validity start, Unix seconds. Maps to fiscal_authority field 4 (expiry start)."
+        },
+        "t_end": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Validity end, Unix seconds. t_end = t_start + period_seconds. Maps to fiscal_authority field 4 (expiry end)."
+        }
+      }
+    },
+    "revelation_mask": {
+      "type": "object",
+      "description": "VPSF sextuplet element 5: per-field disclosure policy (Open = plaintext on-chain, Committed = hash-only on-chain, Hidden = neither). Per spec §4.5 default mask: delegation_nonce Committed, rest Open.",
+      "additionalProperties": false,
+      "required": [
+        "delegate_pseudonym",
+        "cap_per_tx",
+        "cap_per_period",
+        "period_seconds",
+        "delegation_nonce",
+        "allowed_merchants"
+      ],
+      "properties": {
+        "delegate_pseudonym": {"type": "string", "enum": ["Open", "Committed", "Hidden"]},
+        "cap_per_tx": {"type": "string", "enum": ["Open", "Committed", "Hidden"]},
+        "cap_per_period": {"type": "string", "enum": ["Open", "Committed", "Hidden"]},
+        "period_seconds": {"type": "string", "enum": ["Open", "Committed", "Hidden"]},
+        "delegation_nonce": {"type": "string", "enum": ["Open", "Committed", "Hidden"]},
+        "allowed_merchants": {"type": "string", "enum": ["Open", "Committed", "Hidden"]}
+      }
+    },
+    "anchor": {
+      "type": "object",
+      "description": "VPSF sextuplet element 6: on-chain commitment. For DelegationGrant, the StarknetDelegation anchor publishes the delegation_commitment to the chain.",
+      "additionalProperties": false,
+      "required": ["kind", "chain_id", "delegation_commitment"],
+      "properties": {
+        "kind": {
+          "type": "string",
+          "enum": ["StarknetDelegation"]
+        },
+        "chain_id": {
+          "type": "string",
+          "pattern": "^0x[0-9a-f]+$",
+          "description": "Starknet chain identifier as felt252 hex. Sepolia: 0x534e5f5345504f4c4941 (ASCII SN_SEPOLIA)."
+        },
+        "delegation_commitment": {
+          "type": "string",
+          "pattern": "^0x[0-9a-f]{1,64}$",
+          "description": "felt252 commitment over (delegate_pseudonym || cap_per_tx || cap_per_period || delegation_nonce). Maps to fiscal_authority field 3 (approval source binding)."
+        },
+        "revocation_authority": {
+          "type": "string",
+          "pattern": "^(https?://|did:)",
+          "description": "URL or DID that publishes the revocation list for this delegation. Maps to fiscal_authority field 7 (revocation or dispute path)."
+        }
+      }
+    }
+  }
+}
