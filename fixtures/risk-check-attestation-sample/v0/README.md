@@ -46,6 +46,7 @@ Implications for emitters:
 |---|---|---|---|
 | `0001-allow-uk-eu` | `ALLOW` | `["UK", "EU"]` | Nominal UK+EU jurisdiction pass ; demonstrates array order significance |
 | `0002-deny-jurisdiction` | `DENY` | `["BLOCKED"]` | Sanctioned jurisdiction ; payment rejected |
+| `0003-refer-sar` | `REFER` | `["UK", "EU"]` | Match triggers SAR obligation (UK POCA 2002 s.330) |
 
 ## JCS reproduction
 

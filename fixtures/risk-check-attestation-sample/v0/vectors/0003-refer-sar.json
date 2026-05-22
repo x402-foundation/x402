@@ -1,0 +1,9 @@
+{
+  "payer_ref": "sha256:c8e2f4a6b9d1e3f5a7c9b1d3e5f7a9c1b3d5e7f9a1c3b5d7e9f1a3c5b7d9e1f3",
+  "screen_result": "REFER",
+  "screen_timestamp_ms": 1748000200000,
+  "screen_provider_did": "did:web:api.algovoi.co.uk",
+  "jurisdiction_flags": ["UK", "EU"],
+  "canon_version": "jcs-rfc8785-v1",
+  "expected_hash": "sha256:10779e0ae2df6715a9c5b61c6a48ebd3e4e414d6e75a23b2a6ba4917275c3e43"
+}
