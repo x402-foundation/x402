@@ -1,0 +1,88 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/x402-foundation/x402/fixtures/composite-trust-query/v0/schema/composite-trust-query.schema.json",
+  "title": "CompositeTrustQuery",
+  "description": "Axis 4 composite trust-query envelope. Assembles N independently-signed emitter rows under one (payment_hash, action_ref) anchor. composite_hash is derived per specs/composite-trust-query.md.",
+  "type": "object",
+  "required": ["composite_schema", "canon_version", "anchor", "emitter_rows", "composite_hash"],
+  "additionalProperties": false,
+  "properties": {
+    "composite_schema": {
+      "type": "string",
+      "const": "axis4-composite-trust-query-v0"
+    },
+    "canon_version": {
+      "type": "string",
+      "const": "jcs-rfc8785-v1",
+      "description": "Canonicalisation discipline marker; see specs/canonicalisation.md."
+    },
+    "anchor": { "$ref": "#/$defs/anchor" },
+    "emitter_rows": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/emitter_row" },
+      "description": "Set of emitter rows. Transmission order is NOT significant; the composite preimage sorts by source_id."
+    },
+    "composite_hash": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "description": "SHA-256(JCS([row_preimages sorted by source_id])); per-row sig fields excluded from the preimage."
+    }
+  },
+  "$defs": {
+    "anchor": {
+      "type": "object",
+      "required": ["payment_hash", "action_ref"],
+      "additionalProperties": false,
+      "properties": {
+        "payment_hash": {
+          "type": "string",
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "description": "Digest of the settled payment."
+        },
+        "action_ref": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$",
+          "description": "32-byte SHA-256 work-receipt digest; raw lowercase hex, no prefix (per draft-vauban-x402-stark-receipts-00)."
+        }
+      }
+    },
+    "emitter_row": {
+      "type": "object",
+      "required": ["source_id", "evidence_type", "framework", "anchor", "verdict", "evidence_ref", "sig"],
+      "additionalProperties": false,
+      "properties": {
+        "source_id": {
+          "type": "string",
+          "pattern": "^[a-z0-9-]+\\.[a-z0-9.-]+$",
+          "description": "Emitter surface identifier, form <org>.<surface>. Canonical sort key for the composite preimage."
+        },
+        "evidence_type": {
+          "type": "string",
+          "enum": ["behavioral", "cryptographic", "observational", "regulatory"]
+        },
+        "framework": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Declared regulatory or technical frameworks; MAY be empty."
+        },
+        "anchor": {
+          "$ref": "#/$defs/anchor",
+          "description": "MUST equal the envelope anchor field-for-field."
+        },
+        "verdict": {
+          "type": "string",
+          "description": "Evidence-class verdict (ALLOW / DENY / REFER / VALID / ...)."
+        },
+        "evidence_ref": {
+          "type": "string",
+          "description": "Resolvable pointer to the underlying attestation or fixture."
+        },
+        "sig": {
+          "type": "string",
+          "description": "Per-row signature. EXCLUDED from the composite preimage; verification metadata, not content."
+        }
+      }
+    }
+  }
+}
