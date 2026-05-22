@@ -3,7 +3,7 @@
   "screen_result": "ALLOW",
   "screen_timestamp_ms": 1748000000000,
   "screen_provider_did": "did:web:api.algovoi.co.uk",
-  "jurisdiction_flags": ["EU", "UK"],
+  "jurisdiction_flags": ["UK", "EU"],
   "canon_version": "jcs-rfc8785-v1",
   "expected_hash": "sha256:f4e8d652c6cf6c903adf08a0b0b77a3de099e5e0a4b3b01f78fd16cd2fa4da54"
 }
