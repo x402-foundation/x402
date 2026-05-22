@@ -1,0 +1,15 @@
+<svg width="256" height="256" viewBox="0 0 256 256" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="title desc">
+  <title id="title">GoldBean logo</title>
+  <desc id="desc">A gold bean mark for the GoldBean x402 API marketplace.</desc>
+  <rect width="256" height="256" rx="64" fill="#1A1208"/>
+  <path d="M73.9 183.1c-25.8-25.8-22.4-73.9 7.5-103.9 29.9-29.9 78.1-33.3 103.9-7.5 25.8 25.8 22.4 73.9-7.5 103.9-29.9 29.9-78 33.3-103.9 7.5Z" fill="url(#bean)"/>
+  <path d="M88.5 166.8c27.4-3.3 75.2-34.3 83.4-76.8" stroke="#6C3F00" stroke-width="13" stroke-linecap="round" opacity="0.7"/>
+  <path d="M88.7 99.2c15.4-18.2 46.6-28.7 70.3-20.9" stroke="#FFE6A0" stroke-width="9" stroke-linecap="round" opacity="0.8"/>
+  <defs>
+    <linearGradient id="bean" x1="67.3" y1="188.8" x2="190.5" y2="65.6" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#C77700"/>
+      <stop offset="0.45" stop-color="#F8B737"/>
+      <stop offset="1" stop-color="#FFE08A"/>
+    </linearGradient>
+  </defs>
+</svg>
