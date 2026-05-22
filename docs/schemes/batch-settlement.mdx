@@ -237,6 +237,36 @@ Register `BatchSettlementEvmScheme` for `eip155:*`. The client SDK handles depos
     )
     ```
   </Tab>
+  <Tab title="Python">
+    ```python
+    import httpx
+    from eth_account import Account
+    from x402 import x402Client
+    from x402.http.clients import x402_httpx_transport
+    from x402.mechanisms.evm import EthAccountSignerWithRPC
+    from x402.mechanisms.evm.batch_settlement.client import (
+        BatchSettlementDepositPolicy,
+        BatchSettlementEvmScheme,
+        BatchSettlementEvmSchemeOptions,
+        InMemoryClientChannelStorage,
+    )
+
+    account = Account.from_key(EVM_PRIVATE_KEY)
+    signer = EthAccountSignerWithRPC(account, rpc_url="https://sepolia.base.org")
+
+    batch_scheme = BatchSettlementEvmScheme(
+        signer,
+        BatchSettlementEvmSchemeOptions(
+            deposit_policy=BatchSettlementDepositPolicy(deposit_multiplier=5),
+            storage=InMemoryClientChannelStorage(),
+        ),
+    )
+    client = x402Client().register("eip155:*", batch_scheme)
+
+    async with httpx.AsyncClient(transport=x402_httpx_transport(client)) as http:
+        response = await http.get("https://api.example.com/weather")
+    ```
+  </Tab>
 </Tabs>
 
 ### Deposit Policy
