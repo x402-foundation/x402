@@ -307,6 +307,25 @@ The deposit policy controls how much the client deposits when a channel needs fu
     })
     ```
   </Tab>
+  <Tab title="Python">
+    ```python
+    from x402.mechanisms.evm.batch_settlement.client import (
+        BatchSettlementDepositPolicy,
+        BatchSettlementEvmScheme,
+        BatchSettlementEvmSchemeOptions,
+    )
+
+    max_deposit = 1_000_000
+
+    batch_scheme = BatchSettlementEvmScheme(
+        signer,
+        BatchSettlementEvmSchemeOptions(
+            deposit_policy=BatchSettlementDepositPolicy(deposit_multiplier=5),
+            deposit_strategy=lambda ctx: str(max_deposit) if int(ctx.deposit_amount) > max_deposit else None,
+        ),
+    )
+    ```
+  </Tab>
 </Tabs>
 
 ### Voucher Signer Delegation
