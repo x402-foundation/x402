@@ -356,6 +356,23 @@ By default, vouchers are signed by the payer key. For higher-throughput clients,
     })
     ```
   </Tab>
+  <Tab title="Python">
+    ```python
+    from eth_account import Account
+    from x402.mechanisms.evm.signers import EthAccountSigner
+    from x402.mechanisms.evm.batch_settlement.client import (
+        BatchSettlementEvmScheme,
+        BatchSettlementEvmSchemeOptions,
+    )
+
+    voucher_signer = EthAccountSigner(Account.from_key(EVM_VOUCHER_SIGNER_PRIVATE_KEY))
+
+    batch_scheme = BatchSettlementEvmScheme(
+        signer,
+        BatchSettlementEvmSchemeOptions(voucher_signer=voucher_signer),
+    )
+    ```
+  </Tab>
 </Tabs>
 
 ### Client Persistence and Refunds
