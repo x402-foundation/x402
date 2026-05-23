@@ -356,6 +356,43 @@ class TestDynamicPricing:
         assert payment_required.accepts[0].extra["assetTransferMethod"] == "permit2"
         assert payment_required.accepts[0].extra["merchantNote"] == "route-level-extra"
 
+    def test_route_config_service_metadata_flows_to_resource(
+        self,
+        components_factory: Any,
+    ) -> None:
+        """service_name/tags/icon_url on RouteConfig should populate resource."""
+        routes = {
+            "GET /api/weather": {
+                "accepts": {
+                    "scheme": "cash",
+                    "payTo": "merchant@example.com",
+                    "price": "$0.10",
+                    "network": "x402:cash",
+                },
+                "serviceName": "Weather API",
+                "tags": ["weather", "forecast"],
+                "iconUrl": "https://example.com/icon.png",
+            },
+        }
+
+        components = components_factory.create(routes)
+        adapter = MockHTTPAdapter(path="/api/weather", method="GET")
+        context = HTTPRequestContext(
+            adapter=adapter,
+            path="/api/weather",
+            method="GET",
+        )
+
+        result = components.process_http_request(context)
+        payment_required = decode_payment_required_header(
+            result.response.headers["PAYMENT-REQUIRED"]
+        )
+
+        assert payment_required.resource is not None
+        assert payment_required.resource.service_name == "Weather API"
+        assert payment_required.resource.tags == ["weather", "forecast"]
+        assert payment_required.resource.icon_url == "https://example.com/icon.png"
+
     def test_dynamic_price_from_query_params(
         self,
         components_factory: Any,

@@ -1,0 +1,1 @@
+Thread bazaar service metadata fields (`service_name`, `tags`, `icon_url`) from `RouteConfig` through to `ResourceInfo`. The wire-format schema fields landed in #2200 but the server-side `RouteConfig` had no way to populate them — servers wanting rich Bazaar listings had to bypass the SDK. This wires the missing plumbing.

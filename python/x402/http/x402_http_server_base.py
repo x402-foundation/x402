@@ -194,6 +194,9 @@ class x402HTTPServerBase:
             resource=config.get("resource"),
             description=config.get("description"),
             mime_type=config.get("mimeType", config.get("mime_type")),
+            service_name=config.get("serviceName", config.get("service_name")),
+            tags=config.get("tags"),
+            icon_url=config.get("iconUrl", config.get("icon_url")),
             custom_paywall_html=config.get("customPaywallHtml", config.get("custom_paywall_html")),
             unpaid_response_body=config.get(
                 "unpaidResponseBody", config.get("unpaid_response_body")
@@ -362,6 +365,9 @@ class x402HTTPServerBase:
             url=route_config.resource or context.adapter.get_url(),
             description=route_config.description or "",
             mime_type=route_config.mime_type or "",
+            service_name=route_config.service_name,
+            tags=route_config.tags,
+            icon_url=route_config.icon_url,
         )
 
         # Yield for option resolution (handles async/sync dynamic values)

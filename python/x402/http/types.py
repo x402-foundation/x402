@@ -198,6 +198,9 @@ class RouteConfig:
     resource: str | None = None
     description: str | None = None
     mime_type: str | None = None
+    service_name: str | None = None
+    tags: list[str] | None = None
+    icon_url: str | None = None
     custom_paywall_html: str | None = None
     unpaid_response_body: UnpaidResponseBody | None = None
     settlement_failed_response_body: SettlementFailedResponseBody | None = None
