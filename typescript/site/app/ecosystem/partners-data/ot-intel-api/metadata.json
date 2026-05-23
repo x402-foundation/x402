@@ -1,0 +1,7 @@
+{
+  "name": "OT/ICS Threat Intelligence API",
+  "description": "Hardware-aware threat intel for ICS/SCADA environments. Six pay-per-call endpoints: CVE triage with OT-adjusted severity and CISA KEV status, AI-powered patch feasibility with estimated downtime, internet-exposed OT device lookup, ICS threat actor profiles (VOLTZITE, SANDWORM, XENOTIME), IOC enrichment via AlienVault OTX, and live CISA ICS advisory feed. DeepSeek-enriched. No API keys — pure USDC micropayments on Base.",
+  "logoUrl": "/logos/ot-intel-api.png",
+  "websiteUrl": "https://ot-intel-api.onrender.com",
+  "category": "Services/Endpoints"
+}
