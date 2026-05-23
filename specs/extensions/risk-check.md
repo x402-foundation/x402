@@ -293,7 +293,9 @@ Facilitators that do not support the extension MUST ignore it and proceed with n
 
 ## Server Enforcement
 
-When `required` is `true`, the resource server MUST check `VerifyResponse.extensions["risk-check"]` or `SettleResponse.extensions["risk-check"]`:
+When `required` is `true`, the resource server MUST enforce the risk check **before serving the resource**. In the standard verify-then-settle flow, this means checking `VerifyResponse.extensions["risk-check"]`; the resource MUST NOT be served if verification does not include a passing risk check. `SettleResponse.extensions["risk-check"]` carries the same attestation and is used as confirmation for settlement-time auditing and for batch or deferred-settlement flows where enforcement is delegated to settle.
+
+The server MUST apply the following checks against the chosen response:
 
 1. If `checked` is `false` or the `risk-check` key is absent, the server MUST reject the request (the facilitator did not support the extension or did not perform the check).
 2. If `score` is below `min_score`, the server MUST reject the request with an appropriate error.
