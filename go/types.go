@@ -124,7 +124,7 @@ type SettlementOverrides struct {
 type RiskCheckExtensionInfo struct {
 	Required     bool     `json:"required"`
 	RiskCheckURL string   `json:"risk_check_url,omitempty"`
-	MinScore     int      `json:"min_score,omitempty"`
+	MinScore     int      `json:"min_score,omitempty"` // Valid range: 0-100 inclusive
 	Categories   []string `json:"categories,omitempty"`
 }
 

@@ -25,7 +25,8 @@ Risk-check providers publish a discovery document at `/.well-known/risk-check.js
   "name": "Example Risk Provider",
   "version": "0.1.0",
   "description": "Counterparty risk scoring for x402 agent commerce",
-  "endpoint": "/v1/score",
+  "endpoint": "/v1/risk-check",
+  "batch_endpoint": "/v1/risk-check/batch",
   "method": "POST",
   "pricing": {
     "amount": "10000",
@@ -44,6 +45,22 @@ Risk-check providers publish a discovery document at `/.well-known/risk-check.js
   }
 }
 ```
+
+### Discovery Fields
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `name` | `string` | Yes | Provider display name |
+| `version` | `string` | Yes | Discovery document version |
+| `description` | `string` | No | Human-readable provider description |
+| `endpoint` | `string` | Yes | Scoring endpoint path (returns `RiskCheckResult`) |
+| `batch_endpoint` | `string` | No | Batch scoring endpoint for multiple payers in one request |
+| `method` | `string` | Yes | HTTP method (`POST` or `GET`) |
+| `pricing` | `object` | No | x402 pricing info for paid risk checks |
+| `signals` | `string[]` | No | Scoring signal types supported (e.g., `wallet`, `domain`, `ip`) |
+| `chains_supported` | `string[]` | No | Blockchain networks supported |
+| `response_time_ms` | `string` | No | Expected response time |
+| `attestation` | `object` | No | JWS attestation configuration (`jwks_url`, `algorithm`, `kid`, `ttl`) |
 
 Facilitators SHOULD cache discovery documents with a TTL of no more than 24 hours.
 
@@ -164,6 +181,8 @@ The client MAY append `payer_wallet` and `payer_domain` to the `info` object to 
 | `payer_wallet` | `string` | No | The payer's wallet address for risk scoring |
 | `payer_domain` | `string` | No | The payer's domain for domain-level risk signals |
 
+> **Identity derivation:** Facilitators MUST derive the payer wallet address from the validated payment payload (e.g., the signing address of the payment authorization). Client-supplied `payer_wallet` and `payer_domain` are supplementary hints for additional scoring signals (e.g., domain reputation) and MUST NOT be used as the primary payer identity when calling the risk-check provider.
+
 ---
 
 ## `VerifyResponse`
@@ -232,6 +251,24 @@ After settlement, the facilitator includes the full risk attestation with a veri
 | `checked_at` | `string` (ISO 8601) | If checked | Timestamp when the risk check was performed |
 | `expires_at` | `string` (ISO 8601) | If checked | Expiry timestamp for the attestation (typically 1 hour) |
 
+### JWS Claims
+
+When a risk-check provider signs an attestation as a compact JWS (RFC 7515), the JWT payload MUST include:
+
+| Claim | Required | Description |
+|-------|----------|-------------|
+| `iss` | Yes | Provider DID (e.g., `did:web:provider.example`) |
+| `sub` | Yes | Payer wallet address (facilitator-derived, not client-asserted) |
+| `score` | Yes | Risk score 0-100 |
+| `tier` | Yes | Risk tier (`low`, `medium`, `high`, `critical`) |
+| `iat` | Yes | Issued-at timestamp (Unix epoch) |
+| `exp` | Yes | Expiry timestamp (Unix epoch) |
+| `aud` | Recommended | Resource server URL for context binding |
+| `categories` | If applicable | Categories covered by this attestation |
+| `input_hash` | Recommended | Hash of scoring inputs for audit trail |
+
+Servers verifying the JWS SHOULD check that `sub` matches the payer from the payment payload and that `aud` (if present) matches the resource URL. This prevents replay of attestations across different payment contexts.
+
 ---
 
 ## Facilitator Behavior
@@ -243,22 +280,23 @@ Facilitators that support the `risk-check` extension SHOULD:
 3. **Call** the provider's scoring endpoint with the payer's wallet address (and optionally domain/IP).
 4. **Include** the result in `VerifyResponse.extensions["risk-check"]` and `SettleResponse.extensions["risk-check"]`.
 5. **Reject** verification if `required` is `true` and the score is below `min_score`, returning `isValid: false` with `invalidReason: "risk-check-failed"`.
+6. **Reject** verification if `required` is `true` and the facilitator does not support the `risk-check` extension, returning `isValid: false` with `invalidReason: "risk-check-unsupported"`. This prevents the charge-then-deny case where settlement succeeds but the server discovers the risk check was skipped after the fact.
 
 Facilitators MAY choose to:
 - Cache risk-check results per payer wallet (respecting `expires_at`)
 - Amortize a single risk check across multiple batched voucher settlements for the same payer
 - Support multiple risk-check providers and select based on `categories`
 
-Facilitators that do not support the extension MUST ignore it and proceed with normal verification/settlement. The extension is always optional at the facilitator level.
+Facilitators that do not support the extension MUST ignore it and proceed with normal verification/settlement when `required` is `false`. When `required` is `true`, the facilitator MUST return `isValid: false` with `invalidReason: "risk-check-unsupported"` rather than proceeding without a risk check.
 
 ---
 
 ## Server Enforcement
 
-When `required` is `true`, the resource server SHOULD check `SettleResponse.extensions["risk-check"]` after receiving a successful settlement:
+When `required` is `true`, the resource server MUST check `VerifyResponse.extensions["risk-check"]` or `SettleResponse.extensions["risk-check"]`:
 
-1. If `checked` is `false` or the `risk-check` key is absent, the server MAY reject the request (the facilitator did not support the extension).
-2. If `score` is below `min_score`, the server SHOULD reject the request with an appropriate error.
+1. If `checked` is `false` or the `risk-check` key is absent, the server MUST reject the request (the facilitator did not support the extension or did not perform the check).
+2. If `score` is below `min_score`, the server MUST reject the request with an appropriate error.
 3. If `jws` is present, the server MAY verify the signature against `jwks_url` for independent attestation verification.
 
 When `required` is `false`, the risk-check result is informational. The server MAY use the score for logging, analytics, or adaptive behavior without blocking the request.

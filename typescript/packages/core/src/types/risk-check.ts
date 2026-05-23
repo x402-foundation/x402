@@ -18,7 +18,10 @@ export type RiskCheckExtensionInfo = {
   required: boolean;
   /** URL to the provider's /.well-known/risk-check.json discovery document */
   risk_check_url?: string;
-  /** Minimum acceptable score (0 = highest risk, 100 = safest) */
+  /**
+   * Minimum acceptable score (0 = highest risk, 100 = safest).
+   * Valid range: 0-100 inclusive. Values outside this range MUST be rejected.
+   */
   min_score?: number;
   /** Required attestation categories (e.g., "compliance_risk", "behavioral") */
   categories?: string[];
@@ -68,6 +71,8 @@ export type RiskCheckDiscovery = {
   version: string;
   description?: string;
   endpoint: string;
+  /** Optional batch scoring endpoint for multiple payers in one request */
+  batch_endpoint?: string;
   method: "POST" | "GET";
   pricing?: {
     amount: string;
