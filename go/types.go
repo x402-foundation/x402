@@ -124,7 +124,7 @@ type SettlementOverrides struct {
 type RiskCheckExtensionInfo struct {
 	Required     bool     `json:"required"`
 	RiskCheckURL string   `json:"risk_check_url,omitempty"`
-	MinScore     int      `json:"min_score,omitempty"` // Valid range: 0-100 inclusive
+	MinScore     *int     `json:"min_score,omitempty"` // Pointer type: 0 is valid (no minimum threshold). Valid range: 0-100 inclusive
 	Categories   []string `json:"categories,omitempty"`
 }
 
@@ -132,7 +132,7 @@ type RiskCheckExtensionInfo struct {
 // VerifyResponse and SettleResponse extensions["risk-check"]
 type RiskCheckResult struct {
 	Checked    bool     `json:"checked"`
-	Score      int      `json:"score,omitempty"`
+	Score      *int     `json:"score,omitempty"` // Pointer type: 0 is a valid score (highest risk), nil means unchecked
 	Tier       string   `json:"tier,omitempty"`
 	Provider   string   `json:"provider,omitempty"`
 	Categories []string `json:"categories,omitempty"`

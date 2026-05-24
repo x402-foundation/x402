@@ -320,7 +320,7 @@ When `required` is `false`, the risk-check result is informational. The server M
 - **Provider**: [Revettr](https://revettr.com) — counterparty risk scoring for x402 agent commerce
   - Discovery: `https://revettr.com/.well-known/risk-check.json`
   - JWKS: `https://revettr.com/.well-known/jwks.json`
-  - Scoring: `POST https://revettr.com/v1/score`
+  - Risk Check: `POST https://revettr.com/v1/risk-check`
   - Attestation: `POST https://revettr.com/v1/attest` (free tier)
   - SDK: `pip install revettr` ([PyPI](https://pypi.org/project/revettr/))
 
