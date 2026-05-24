@@ -1,6 +1,6 @@
 {
   "name": "@x402/hono",
-  "version": "2.11.0",
+  "version": "2.13.0",
   "main": "./dist/cjs/index.js",
   "module": "./dist/esm/index.js",
   "types": "./dist/index.d.ts",
@@ -32,7 +32,7 @@
     "hono": "^4.7.1",
     "prettier": "3.5.2",
     "tsup": "^8.4.0",
-    "tsx": "^4.19.2",
+    "tsx": "^4.21.0",
     "typescript": "^5.7.3",
     "vite": "^6.2.6",
     "vite-tsconfig-paths": "^5.1.4",
@@ -40,8 +40,7 @@
   },
   "dependencies": {
     "@x402/core": "workspace:~",
-    "@x402/extensions": "workspace:~",
-    "zod": "^3.24.2"
+    "@x402/extensions": "workspace:~"
   },
   "peerDependencies": {
     "hono": "^4.0.0",

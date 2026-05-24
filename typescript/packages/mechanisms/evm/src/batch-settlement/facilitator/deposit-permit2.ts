@@ -4,7 +4,7 @@ import {
   PaymentRequirements,
   VerifyResponse,
 } from "@x402/core/types";
-import { encodeFunctionData, getAddress } from "viem";
+import { encodeFunctionData, getAddress, parseErc6492Signature } from "viem";
 import {
   extractEip2612GasSponsoringInfo,
   extractErc20ApprovalGasSponsoringInfo,
@@ -70,7 +70,8 @@ export function buildPermit2DepositCollectorData(
     throw new Error(Errors.ErrPermit2AuthorizationRequired);
   }
 
-  return buildPermit2CollectorData(auth.nonce, auth.deadline, auth.signature, eip2612PermitData);
+  const { signature } = parseErc6492Signature(auth.signature);
+  return buildPermit2CollectorData(auth.nonce, auth.deadline, signature, eip2612PermitData);
 }
 
 /**

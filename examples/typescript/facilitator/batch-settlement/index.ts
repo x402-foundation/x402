@@ -24,10 +24,11 @@ if (!process.env.EVM_PRIVATE_KEY) {
   process.exit(1);
 }
 
-const evmRpcUrl = process.env.EVM_RPC_URL;
+const evmRpcUrl = process.env.EVM_RPC_URL ?? "https://sepolia.base.org";
 
+// Treat unset or blank like Go's envOr: `.env` often has `KEY=` which is "" not undefined.
 const receiverAuthorizerPrivateKey =
-  process.env.EVM_RECEIVER_AUTHORIZER_PRIVATE_KEY ??
+  process.env.EVM_RECEIVER_AUTHORIZER_PRIVATE_KEY?.trim() ||
   process.env.EVM_PRIVATE_KEY;
 
 // Initialize the EVM account from private key (submits transactions)

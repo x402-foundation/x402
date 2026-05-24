@@ -11,15 +11,15 @@
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.12.1",
-    "@x402/core": "workspace:*",
     "@x402/evm": "workspace:*",
     "@x402/mcp": "workspace:*",
     "dotenv": "^16.5.0",
     "openai": "^4.77.3",
-    "viem": "^2.39.0"
+    "viem": "^2.48.11"
   },
   "devDependencies": {
     "@eslint/js": "^9.24.0",
+    "@types/node": "^22.13.4",
     "@typescript-eslint/eslint-plugin": "^8.29.1",
     "@typescript-eslint/parser": "^8.29.1",
     "eslint": "^9.24.0",
@@ -27,7 +27,7 @@
     "eslint-plugin-jsdoc": "^50.6.9",
     "eslint-plugin-prettier": "^5.2.6",
     "prettier": "3.5.2",
-    "tsx": "^4.20.4",
-    "typescript": "^5.9.2"
+    "tsx": "^4.21.0",
+    "typescript": "^5.7.3"
   }
 }

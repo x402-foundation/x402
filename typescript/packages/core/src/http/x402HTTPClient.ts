@@ -22,6 +22,19 @@ export type PaymentRequiredHook = (
   context: PaymentRequiredContext,
 ) => Promise<{ headers: Record<string, string> } | void>;
 
+export interface HTTPClientExtensionHooks {
+  onPaymentRequired?: (
+    declaration: unknown,
+    context: PaymentRequiredContext,
+  ) => Promise<{ headers: Record<string, string> } | void>;
+}
+
+type HTTPClientTransportExtension = {
+  transportHooks?: {
+    http?: HTTPClientExtensionHooks;
+  };
+};
+
 /**
  * HTTP-specific client for handling x402 payment protocol over HTTP.
  *
@@ -59,7 +72,7 @@ export class x402HTTPClient {
   async handlePaymentRequired(
     paymentRequired: PaymentRequired,
   ): Promise<Record<string, string> | null> {
-    for (const hook of this.paymentRequiredHooks) {
+    for (const hook of this.getPaymentRequiredHooks(paymentRequired)) {
       const result = await hook({ paymentRequired });
       if (result?.headers) {
         return result.headers;
@@ -155,7 +168,7 @@ export class x402HTTPClient {
   }
 
   /**
-   * Parses response headers into protocol types, fires payment response hooks,
+   * Parses response headers into protocol types, fires payment response hooks (v2 only),
    * and returns whether a hook signaled recovery.
    *
    * Called by transport wrappers (fetch, axios) after the paid request completes.
@@ -170,13 +183,15 @@ export class x402HTTPClient {
     getHeader: (name: string) => string | null | undefined,
     status: number,
   ): Promise<{ recovered: boolean; settleResponse?: SettleResponse }> {
-    const requirements = paymentPayload.accepted;
-
     let settleResponse: SettleResponse | undefined;
     try {
       settleResponse = this.getPaymentSettleResponse(getHeader);
     } catch {
       /* no header */
+    }
+
+    if (paymentPayload.x402Version === 1) {
+      return { recovered: false, settleResponse };
     }
 
     let paymentRequired: PaymentRequired | undefined;
@@ -188,9 +203,14 @@ export class x402HTTPClient {
       }
     }
 
+    const requirements = paymentPayload.accepted;
+    if (!requirements) {
+      throw new Error("Invalid x402 v2 payment payload: missing `accepted`");
+    }
+
     const ctx: PaymentResponseContext = {
       paymentPayload,
-      requirements: requirements!,
+      requirements,
       ...(settleResponse ? { settleResponse } : {}),
       ...(paymentRequired ? { paymentRequired } : {}),
     };
@@ -242,6 +262,28 @@ export class x402HTTPClient {
     }
 
     return { kind: "error", response, status: response.status, body };
+  }
+
+  /**
+   * Manual HTTP hooks run before extension hooks scoped to the 402 response.
+   *
+   * @param paymentRequired - The payment required response from the server
+   * @returns Hooks in invocation order
+   */
+  private getPaymentRequiredHooks(paymentRequired: PaymentRequired): PaymentRequiredHook[] {
+    const hooks = [...this.paymentRequiredHooks];
+    const declaredExtensions = paymentRequired.extensions;
+    if (!declaredExtensions) return hooks;
+
+    for (const extension of this.client.getExtensions()) {
+      const httpExtension = extension as HTTPClientTransportExtension;
+      const hook = httpExtension.transportHooks?.http?.onPaymentRequired;
+      if (!hook || !(extension.key in declaredExtensions)) continue;
+
+      hooks.push(context => hook(declaredExtensions[extension.key], context));
+    }
+
+    return hooks;
   }
 }
 

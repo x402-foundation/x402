@@ -467,7 +467,7 @@ func TestProcessSettlement(t *testing.T) {
 	}
 
 	// Test settlement processing
-	result := server.ProcessSettlement(ctx, payload, requirements, nil, nil)
+	result := server.ProcessSettlement(ctx, payload, requirements, nil, nil, nil)
 	if !result.Success {
 		t.Fatalf("Unexpected failure: %v", result.ErrorReason)
 	}
@@ -513,7 +513,7 @@ func TestProcessSettlement_Failure(t *testing.T) {
 		Payload:     map[string]interface{}{},
 	}
 
-	result := server.ProcessSettlement(ctx, payload, requirements, nil, nil)
+	result := server.ProcessSettlement(ctx, payload, requirements, nil, nil, nil)
 	if result.Success {
 		t.Fatal("Expected settlement failure")
 	}
@@ -571,7 +571,7 @@ func TestProcessSettlement_OverridesFromTransportContext(t *testing.T) {
 			ResponseHeaders: h,
 		}
 
-		result := server.ProcessSettlement(ctx, payload, requirements, nil, tc)
+		result := server.ProcessSettlement(ctx, payload, requirements, nil, tc, nil)
 		if !result.Success {
 			t.Fatalf("unexpected failure: %v", result.ErrorReason)
 		}
@@ -594,7 +594,7 @@ func TestProcessSettlement_OverridesFromTransportContext(t *testing.T) {
 		}
 		explicit := &x402.SettlementOverrides{Amount: "200"}
 
-		result := server.ProcessSettlement(ctx, payload, requirements, explicit, tc)
+		result := server.ProcessSettlement(ctx, payload, requirements, explicit, tc, nil)
 		if !result.Success {
 			t.Fatalf("unexpected failure: %v", result.ErrorReason)
 		}
@@ -616,7 +616,7 @@ func TestProcessSettlement_OverridesFromTransportContext(t *testing.T) {
 			ResponseHeaders: h,
 		}
 
-		result := server.ProcessSettlement(ctx, payload, requirements, nil, tc)
+		result := server.ProcessSettlement(ctx, payload, requirements, nil, tc, nil)
 		if !result.Success {
 			t.Fatalf("unexpected failure: %v", result.ErrorReason)
 		}
@@ -638,7 +638,7 @@ func TestProcessSettlement_OverridesFromTransportContext(t *testing.T) {
 			ResponseHeaders: h,
 		}
 
-		server.ProcessSettlement(ctx, payload, requirements, nil, tc)
+		server.ProcessSettlement(ctx, payload, requirements, nil, tc, nil)
 
 		if tc.ResponseHeaders.Get(SettlementOverridesHeader) != "" {
 			t.Error("expected settlement-overrides header to be deleted from transport context")
@@ -649,7 +649,7 @@ func TestProcessSettlement_OverridesFromTransportContext(t *testing.T) {
 	})
 
 	t.Run("nil transport context is safe", func(t *testing.T) {
-		result := server.ProcessSettlement(ctx, payload, requirements, nil, nil)
+		result := server.ProcessSettlement(ctx, payload, requirements, nil, nil, nil)
 		if !result.Success {
 			t.Fatalf("unexpected failure: %v", result.ErrorReason)
 		}
@@ -660,7 +660,7 @@ func TestProcessSettlement_OverridesFromTransportContext(t *testing.T) {
 			Request:         &HTTPRequestContext{Path: "/test", Method: "GET"},
 			ResponseHeaders: nil,
 		}
-		result := server.ProcessSettlement(ctx, payload, requirements, nil, tc)
+		result := server.ProcessSettlement(ctx, payload, requirements, nil, tc, nil)
 		if !result.Success {
 			t.Fatalf("unexpected failure: %v", result.ErrorReason)
 		}
@@ -674,7 +674,7 @@ func TestProcessSettlement_OverridesFromTransportContext(t *testing.T) {
 			ResponseHeaders: h,
 		}
 
-		result := server.ProcessSettlement(ctx, payload, requirements, nil, tc)
+		result := server.ProcessSettlement(ctx, payload, requirements, nil, tc, nil)
 		if !result.Success {
 			t.Fatalf("unexpected failure: %v", result.ErrorReason)
 		}
@@ -697,7 +697,7 @@ func TestProcessSettlement_OverridesFromTransportContext(t *testing.T) {
 			ResponseHeaders: h,
 		}
 
-		result := server.ProcessSettlement(ctx, payload, requirements, nil, tc)
+		result := server.ProcessSettlement(ctx, payload, requirements, nil, tc, nil)
 		if !result.Success {
 			t.Fatalf("unexpected failure: %v", result.ErrorReason)
 		}
@@ -1121,6 +1121,99 @@ func (m *mockSchemeServer) ParsePrice(price x402.Price, network x402.Network) (x
 
 func (m *mockSchemeServer) EnhancePaymentRequirements(ctx context.Context, base types.PaymentRequirements, supported types.SupportedKind, extensions []string) (types.PaymentRequirements, error) {
 	return base, nil
+}
+
+// mockEnricherSchemeServer extends mockSchemeServer with PaymentRequiredEnricher
+// to exercise the verify-failure → enrichment wire-up in ProcessHTTPRequest.
+type mockEnricherSchemeServer struct {
+	mockSchemeServer
+	calls           int
+	lastErrorReason string
+	lastPayloadSeen bool
+}
+
+func (m *mockEnricherSchemeServer) EnrichPaymentRequiredResponse(ctx x402.PaymentRequiredContext) {
+	m.calls++
+	m.lastErrorReason = ctx.Error
+	m.lastPayloadSeen = ctx.PaymentPayload != nil
+	for i := range ctx.Requirements {
+		if ctx.Requirements[i].Extra == nil {
+			ctx.Requirements[i].Extra = map[string]interface{}{}
+		}
+		ctx.Requirements[i].Extra["EnrichedBy"] = "mock-enricher"
+	}
+}
+
+func TestProcessHTTPRequest_VerifyFailureRunsEnricherWithPayload(t *testing.T) {
+	ctx := context.Background()
+
+	routes := RoutesConfig{
+		"POST /api": {
+			Accepts: PaymentOptions{
+				{Scheme: "exact", PayTo: "0xtest", Price: "$1.00", Network: "eip155:1"},
+			},
+		},
+	}
+
+	enricher := &mockEnricherSchemeServer{mockSchemeServer: mockSchemeServer{scheme: "exact"}}
+	mockClient := &mockFacilitatorClient{
+		verify: func(_ context.Context, _ []byte, _ []byte) (*x402.VerifyResponse, error) {
+			return nil, x402.NewVerifyError("custom_failure_reason", "0xpayer", "human-readable detail")
+		},
+		supported: func(_ context.Context) (x402.SupportedResponse, error) {
+			return x402.SupportedResponse{
+				Kinds:   []x402.SupportedKind{{X402Version: 2, Scheme: "exact", Network: "eip155:1"}},
+				Signers: map[string][]string{},
+			}, nil
+		},
+	}
+
+	server := Newx402HTTPResourceServer(
+		routes,
+		x402.WithFacilitatorClient(mockClient),
+		x402.WithSchemeServer("eip155:1", enricher),
+	)
+	_ = server.Initialize(ctx)
+
+	pp := x402.PaymentPayload{
+		X402Version: 2,
+		Payload:     map[string]interface{}{"sig": "test"},
+		Accepted: x402.PaymentRequirements{
+			Scheme: "exact", Network: "eip155:1", Asset: "USDC",
+			Amount: "1000000", PayTo: "0xtest", MaxTimeoutSeconds: 300,
+		},
+	}
+	encoded := base64.StdEncoding.EncodeToString(mustMarshal(t, pp))
+
+	adapter := &mockHTTPAdapter{
+		method:  "POST",
+		path:    "/api",
+		url:     "http://example.com/api",
+		headers: map[string]string{"PAYMENT-SIGNATURE": encoded},
+	}
+	result := server.ProcessHTTPRequest(ctx, HTTPRequestContext{Adapter: adapter, Path: "/api", Method: "POST"}, nil)
+
+	if result.Type != ResultPaymentError {
+		t.Fatalf("expected ResultPaymentError, got %v", result.Type)
+	}
+	if enricher.calls != 1 {
+		t.Fatalf("expected 1 enricher call, got %d", enricher.calls)
+	}
+	if enricher.lastErrorReason != "custom_failure_reason" {
+		t.Fatalf("expected InvalidReason as error, got %q", enricher.lastErrorReason)
+	}
+	if !enricher.lastPayloadSeen {
+		t.Fatal("expected enricher to receive non-nil PaymentPayload")
+	}
+}
+
+func mustMarshal(t *testing.T, v interface{}) []byte {
+	t.Helper()
+	b, err := json.Marshal(v)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	return b
 }
 
 // Mock facilitator client

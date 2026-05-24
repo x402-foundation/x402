@@ -57,7 +57,7 @@ export function NavBar({ animateLogo = false }: NavBarProps): React.ReactElement
               Ecosystem
             </Link>
             <Link
-              href="/writing/x402-v2-launch"
+              href="/writing"
               className="text-sm font-medium text-black hover:text-gray-600 transition-colors"
             >
               Writing
@@ -169,7 +169,7 @@ export function NavBar({ animateLogo = false }: NavBarProps): React.ReactElement
                 Ecosystem
               </Link>
               <Link
-                href="/writing/x402-v2-launch"
+                href="/writing"
                 className="block py-2 text-black font-medium text-sm hover:text-gray-60 transition-colors"
                 onClick={() => setMobileMenuOpen(false)}
               >

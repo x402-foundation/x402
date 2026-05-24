@@ -58,6 +58,7 @@ export interface FacilitatorConfig {
   hederaAccountId?: string;
   hederaPrivateKey?: string;
   stellarPrivateKey?: string;
+  tvmPrivateKey?: string;
   networks: NetworkSet;
 }
 
@@ -122,6 +123,7 @@ export class GenericFacilitatorProxy extends BaseProxy implements FacilitatorPro
       HEDERA_ACCOUNT_ID: config.hederaAccountId || '',
       HEDERA_PRIVATE_KEY: config.hederaPrivateKey || '',
       STELLAR_PRIVATE_KEY: config.stellarPrivateKey || '',
+      TVM_PRIVATE_KEY: config.tvmPrivateKey || '',
 
       // Network configs from NetworkSet
       EVM_NETWORK: config.networks.evm.caip2,
@@ -136,6 +138,11 @@ export class GenericFacilitatorProxy extends BaseProxy implements FacilitatorPro
       HEDERA_NODE_URL: config.networks.hedera.rpcUrl,
       STELLAR_NETWORK: config.networks.stellar.caip2,
       STELLAR_RPC_URL: config.networks.stellar.rpcUrl,
+      TVM_NETWORK: config.networks.tvm.caip2,
+      TVM_PROVIDER: process.env.TVM_PROVIDER || '',
+      TONCENTER_BASE_URL: process.env.TONCENTER_BASE_URL || config.networks.tvm.rpcUrl,
+      TONAPI_API_KEY: process.env.TONAPI_API_KEY || '',
+      TONAPI_BASE_URL: process.env.TONAPI_BASE_URL || '',
     };
 
     // Pass through any additional environment variables required by the facilitator

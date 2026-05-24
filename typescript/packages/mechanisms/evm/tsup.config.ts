@@ -13,7 +13,10 @@ const baseConfig = {
     "upto/server/index": "src/upto/server/index.ts",
     "upto/facilitator/index": "src/upto/facilitator/index.ts",
     "batch-settlement/client/index": "src/batch-settlement/client/index.ts",
+    "batch-settlement/client/file-storage": "src/batch-settlement/client/fileStorage.ts",
     "batch-settlement/server/index": "src/batch-settlement/server/index.ts",
+    "batch-settlement/server/file-storage": "src/batch-settlement/server/fileStorage.ts",
+    "batch-settlement/server/redis-storage": "src/batch-settlement/server/redisStorage.ts",
     "batch-settlement/facilitator/index": "src/batch-settlement/facilitator/index.ts",
   },
   dts: {

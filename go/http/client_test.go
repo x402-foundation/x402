@@ -215,6 +215,55 @@ func TestGetPaymentSettleResponse(t *testing.T) {
 	}
 }
 
+func TestEncodePaymentResponseHeader_ChannelStateOrder(t *testing.T) {
+	encoded, err := encodePaymentResponseHeader(x402.SettleResponse{
+		Success:     true,
+		Payer:       "0xpayer",
+		Transaction: "0xtx",
+		Network:     "eip155:1",
+		Amount:      "1000",
+		Extra: map[string]interface{}{
+			"channelState": map[string]interface{}{
+				"balance":                 "5000",
+				"channelId":               "0xchan",
+				"chargedCumulativeAmount": "3000",
+				"refundNonce":             "1",
+				"totalClaimed":            "2000",
+				"withdrawRequestedAt":     0,
+			},
+			"chargedAmount": "1000",
+		},
+	})
+	if err != nil {
+		t.Fatalf("encodePaymentResponseHeader: %v", err)
+	}
+
+	decoded, err := base64.StdEncoding.DecodeString(encoded)
+	if err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	body := string(decoded)
+	fields := []string{
+		`"channelId":"0xchan"`,
+		`"balance":"5000"`,
+		`"totalClaimed":"2000"`,
+		`"withdrawRequestedAt":0`,
+		`"refundNonce":"1"`,
+		`"chargedCumulativeAmount":"3000"`,
+	}
+	last := -1
+	for _, field := range fields {
+		idx := strings.Index(body, field)
+		if idx == -1 {
+			t.Fatalf("missing %s in %s", field, body)
+		}
+		if idx <= last {
+			t.Fatalf("field %s out of order in %s", field, body)
+		}
+		last = idx
+	}
+}
+
 func TestPaymentRoundTripper(t *testing.T) {
 	// Create a test server that returns 402 first, then 200
 	callCount := 0
@@ -391,4 +440,253 @@ func (m *mockSchemeClient) CreatePaymentPayload(ctx context.Context, requirement
 		X402Version: 2,
 		Payload:     map[string]interface{}{"mock": "payload"},
 	}, nil
+}
+
+// hookSchemeClient implements both SchemeNetworkClient and PaymentResponseHandler so we
+// can drive the round-tripper's auto-dispatch path end-to-end.
+type hookSchemeClient struct {
+	scheme           string
+	settleCalls      int
+	correctiveCalls  int
+	signalRecover    bool
+	createPayloadCnt int
+}
+
+func (m *hookSchemeClient) Scheme() string { return m.scheme }
+
+func (m *hookSchemeClient) CreatePaymentPayload(ctx context.Context, requirements types.PaymentRequirements) (types.PaymentPayload, error) {
+	m.createPayloadCnt++
+	return types.PaymentPayload{
+		X402Version: 2,
+		Payload:     map[string]interface{}{"voucher": m.createPayloadCnt},
+	}, nil
+}
+
+func (m *hookSchemeClient) OnPaymentResponse(ctx context.Context, prCtx x402.PaymentResponseContext) (x402.PaymentResponseResult, error) {
+	if prCtx.SettleResponse != nil {
+		m.settleCalls++
+		return x402.PaymentResponseResult{}, nil
+	}
+	if prCtx.PaymentRequired != nil {
+		m.correctiveCalls++
+		return x402.PaymentResponseResult{Recovered: m.signalRecover}, nil
+	}
+	return x402.PaymentResponseResult{}, nil
+}
+
+func paymentRequiredHeader(t *testing.T, accepts []types.PaymentRequirements) string {
+	t.Helper()
+	pr := types.PaymentRequired{X402Version: 2, Accepts: accepts}
+	encoded, err := encodePaymentRequiredHeader(pr)
+	if err != nil {
+		t.Fatalf("encodePaymentRequired: %v", err)
+	}
+	return encoded
+}
+
+func paymentResponseHeader(t *testing.T, settle x402.SettleResponse) string {
+	t.Helper()
+	encoded, err := encodePaymentResponseHeader(settle)
+	if err != nil {
+		t.Fatalf("encodePaymentResponse: %v", err)
+	}
+	return encoded
+}
+
+// TestPaymentRoundTripper_DispatchesOnPaymentResponseOnSuccess verifies that a
+// successful retry (200 + PAYMENT-RESPONSE) auto-fires the scheme's hook. User
+// code should not need to call ProcessSettleResponse manually.
+func TestPaymentRoundTripper_DispatchesOnPaymentResponseOnSuccess(t *testing.T) {
+	scheme := &hookSchemeClient{scheme: "test-scheme"}
+	x402Client := x402.Newx402Client()
+	x402Client.Register("eip155:1", scheme)
+
+	accepts := []types.PaymentRequirements{{
+		Scheme:  "test-scheme",
+		Network: "eip155:1",
+		Asset:   "USDC",
+		Amount:  "100",
+		PayTo:   "0xrecipient",
+	}}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("PAYMENT-SIGNATURE") == "" {
+			w.Header().Set("PAYMENT-REQUIRED", paymentRequiredHeader(t, accepts))
+			w.WriteHeader(http.StatusPaymentRequired)
+			return
+		}
+		w.Header().Set("PAYMENT-RESPONSE", paymentResponseHeader(t, x402.SettleResponse{
+			Success:     true,
+			Transaction: "0xtx",
+			Network:     "eip155:1",
+			Extra:       map[string]interface{}{"channelId": "0xabc", "balance": "999"},
+		}))
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	httpClient := WrapHTTPClientWithPayment(&http.Client{}, Newx402HTTPClient(x402Client))
+	req, _ := http.NewRequestWithContext(context.Background(), "GET", server.URL, nil)
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		t.Fatalf("Do: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200, got %d", resp.StatusCode)
+	}
+	if scheme.settleCalls != 1 {
+		t.Fatalf("expected OnPaymentResponse(settle) once, got %d", scheme.settleCalls)
+	}
+	if scheme.correctiveCalls != 0 {
+		t.Fatalf("did not expect corrective dispatch, got %d", scheme.correctiveCalls)
+	}
+}
+
+// TestPaymentRoundTripper_RetriesOnceWhenHookSignalsRecovered verifies the
+// corrective-recovery path: scheme returns Recovered=true on a 402 + PAYMENT-REQUIRED,
+// transport rebuilds the payload and retries one more time.
+func TestPaymentRoundTripper_RetriesOnceWhenHookSignalsRecovered(t *testing.T) {
+	scheme := &hookSchemeClient{scheme: "test-scheme", signalRecover: true}
+	x402Client := x402.Newx402Client()
+	x402Client.Register("eip155:1", scheme)
+
+	accepts := []types.PaymentRequirements{{
+		Scheme:  "test-scheme",
+		Network: "eip155:1",
+		Asset:   "USDC",
+		Amount:  "100",
+		PayTo:   "0xrecipient",
+	}}
+
+	var attempt int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		attempt++
+		paymentSig := r.Header.Get("PAYMENT-SIGNATURE")
+		switch {
+		case paymentSig == "":
+			// Initial 402 — no payment yet.
+			w.Header().Set("PAYMENT-REQUIRED", paymentRequiredHeader(t, accepts))
+			w.WriteHeader(http.StatusPaymentRequired)
+		case attempt == 2:
+			// First paid attempt — corrective 402 carrying PAYMENT-REQUIRED.
+			w.Header().Set("PAYMENT-REQUIRED", paymentRequiredHeader(t, accepts))
+			w.WriteHeader(http.StatusPaymentRequired)
+		default:
+			// Recovery retry — succeed.
+			w.Header().Set("PAYMENT-RESPONSE", paymentResponseHeader(t, x402.SettleResponse{
+				Success:     true,
+				Transaction: "0xtx",
+				Network:     "eip155:1",
+			}))
+			w.WriteHeader(http.StatusOK)
+		}
+	}))
+	defer server.Close()
+
+	httpClient := WrapHTTPClientWithPayment(&http.Client{}, Newx402HTTPClient(x402Client))
+	req, _ := http.NewRequestWithContext(context.Background(), "GET", server.URL, nil)
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		t.Fatalf("Do: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected final 200, got %d", resp.StatusCode)
+	}
+	if scheme.correctiveCalls != 1 {
+		t.Fatalf("expected one corrective dispatch, got %d", scheme.correctiveCalls)
+	}
+	if scheme.settleCalls != 1 {
+		t.Fatalf("expected one settle dispatch on recovery retry, got %d", scheme.settleCalls)
+	}
+	if scheme.createPayloadCnt < 2 {
+		t.Fatalf("expected payload to be rebuilt at least twice (retry + recovery), got %d", scheme.createPayloadCnt)
+	}
+	if attempt != 3 {
+		t.Fatalf("expected exactly 3 server attempts (initial + retry + recovery), got %d", attempt)
+	}
+}
+
+// TestPaymentRoundTripper_NoRecoveryWhenHookDeclines ensures that a corrective 402
+// without recovery propagates as-is — no extra retries, no infinite loops.
+func TestPaymentRoundTripper_NoRecoveryWhenHookDeclines(t *testing.T) {
+	scheme := &hookSchemeClient{scheme: "test-scheme", signalRecover: false}
+	x402Client := x402.Newx402Client()
+	x402Client.Register("eip155:1", scheme)
+
+	accepts := []types.PaymentRequirements{{
+		Scheme:  "test-scheme",
+		Network: "eip155:1",
+		Asset:   "USDC",
+		Amount:  "100",
+		PayTo:   "0xrecipient",
+	}}
+
+	var attempt int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		attempt++
+		w.Header().Set("PAYMENT-REQUIRED", paymentRequiredHeader(t, accepts))
+		w.WriteHeader(http.StatusPaymentRequired)
+	}))
+	defer server.Close()
+
+	httpClient := WrapHTTPClientWithPayment(&http.Client{}, Newx402HTTPClient(x402Client))
+	req, _ := http.NewRequestWithContext(context.Background(), "GET", server.URL, nil)
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		t.Fatalf("Do: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusPaymentRequired {
+		t.Fatalf("expected 402, got %d", resp.StatusCode)
+	}
+	if scheme.correctiveCalls != 1 {
+		t.Fatalf("expected corrective hook fire once, got %d", scheme.correctiveCalls)
+	}
+	if attempt != 2 {
+		t.Fatalf("expected initial + 1 paid retry, got %d attempts", attempt)
+	}
+}
+
+// TestWrapHTTPClientWithPayment_DoesNotMutateInput is a regression test for
+// the bug where WrapHTTPClientWithPayment mutated the input *http.Client's
+// Transport in place. When called with http.DefaultClient that mutation would
+// turn every subsequent caller of http.DefaultClient — including unrelated
+// refund probes that expect a 402 — into a payment-aware client that auto-pays
+// and returns 200. The wrapper must produce a NEW client and leave the input
+// untouched.
+func TestWrapHTTPClientWithPayment_DoesNotMutateInput(t *testing.T) {
+	originalDefault := http.DefaultClient.Transport
+	defer func() { http.DefaultClient.Transport = originalDefault }()
+
+	x402Client := Newx402HTTPClient(x402.Newx402Client())
+
+	wrapped := WrapHTTPClientWithPayment(http.DefaultClient, x402Client)
+
+	if wrapped == http.DefaultClient {
+		t.Fatal("wrapper returned the same *http.Client as the input — must return a new client")
+	}
+	if http.DefaultClient.Transport != originalDefault {
+		t.Fatal("http.DefaultClient.Transport was mutated by WrapHTTPClientWithPayment")
+	}
+	if _, ok := wrapped.Transport.(*PaymentRoundTripper); !ok {
+		t.Fatalf("returned client should have PaymentRoundTripper transport, got %T", wrapped.Transport)
+	}
+
+	custom := &http.Client{Timeout: 7 * 1e9}
+	customOriginal := custom.Transport
+	wrapped2 := WrapHTTPClientWithPayment(custom, x402Client)
+	if wrapped2 == custom {
+		t.Fatal("wrapper must not return the input *http.Client")
+	}
+	if custom.Transport != customOriginal {
+		t.Fatal("input *http.Client.Transport was mutated")
+	}
+	if wrapped2.Timeout != custom.Timeout {
+		t.Fatalf("wrapped client should preserve Timeout %v, got %v", custom.Timeout, wrapped2.Timeout)
+	}
 }

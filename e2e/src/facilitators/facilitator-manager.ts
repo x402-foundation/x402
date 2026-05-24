@@ -40,6 +40,7 @@ export class FacilitatorManager {
       hederaAccountId: process.env.FACILITATOR_HEDERA_ACCOUNT_ID,
       hederaPrivateKey: process.env.FACILITATOR_HEDERA_PRIVATE_KEY,
       stellarPrivateKey: process.env.FACILITATOR_STELLAR_PRIVATE_KEY,
+      tvmPrivateKey: process.env.FACILITATOR_TVM_PRIVATE_KEY,
       networks,
     });
 

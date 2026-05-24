@@ -74,8 +74,8 @@ export class GenericServerProxy extends BaseProxy implements ServerProxy {
     verboseLog(`  📂 Server directory: ${this.directory}, isV1: ${isV1Server}`);
 
     // For legacy servers, translate CAIP-2 to v1 network names
-    let evmNetwork = config.networks.evm.caip2;
-    let svmNetwork = config.networks.svm.caip2;
+    let evmNetwork: string = config.networks.evm.caip2;
+    let svmNetwork: string = config.networks.svm.caip2;
 
     if (isV1Server) {
       evmNetwork = translateNetworkForV1(config.networks.evm.caip2);
@@ -124,6 +124,10 @@ export class GenericServerProxy extends BaseProxy implements ServerProxy {
         STELLAR_NETWORK: config.networks.stellar.caip2,
         STELLAR_RPC_URL: config.networks.stellar.rpcUrl,
         STELLAR_PAYEE_ADDRESS: config.stellarPayTo,
+
+        // TVM network config
+        TVM_NETWORK: config.networks.tvm.caip2,
+        TVM_PAYEE_ADDRESS: config.tvmPayTo,
 
         // Facilitator
         FACILITATOR_URL: config.facilitatorUrl || '',

@@ -1,5 +1,30 @@
 # @x402/paywall Changelog
 
+## 2.13.0
+
+### Minor Changes
+
+- e35becf: Add `faucetUrls?: Record<network, string>` to `PaywallConfig` plus a curated testnet faucet map in `@x402/paywall`. Server overrides win over the curated map; unmapped chains render "No faucet configured." rather than a fallback link.
+- f3deb60: decimals.ts now only lists EVM networks whose default stablecoin is not 6 decimals, so new 6-decimal chains in DEFAULT_STABLECOINS no longer need a paywall regen for amount display
+- Updated dependencies [ad08a9a]
+- Updated dependencies [5fca9f3]
+- Updated dependencies [95f2094]
+- Updated dependencies [49ea054]
+  - @x402/core@2.13.0
+
+## 2.12.0
+
+### Minor Changes
+
+- ee7c156: chore: tighten viem dependency floor to ^2.48.11
+
+  Raises the viem floor in every `@x402/*` package.json that lists viem as a direct dep so future `pnpm install` re-resolutions cannot regress below this version. Fixes the incomplete tightening from #2013.
+
+- Updated dependencies [608034f]
+- Updated dependencies [d235050]
+- Updated dependencies [45d7d19]
+  - @x402/core@2.12.0
+
 ## 2.11.0
 
 ### Minor Changes

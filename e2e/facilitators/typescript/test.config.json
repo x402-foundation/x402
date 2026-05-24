@@ -14,6 +14,11 @@
     1,
     2
   ],
+  "schemes": [
+    "exact",
+    "upto",
+    "batch-settlement"
+  ],
   "extensions": [
     "bazaar",
     "eip2612GasSponsoring",

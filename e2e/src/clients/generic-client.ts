@@ -18,31 +18,55 @@ export class GenericClientProxy extends BaseProxy implements ClientProxy {
 
   async call(config: ClientConfig): Promise<ClientCallResult> {
     try {
-      const runConfig: RunConfig = {
-        env: {
-          EVM_PRIVATE_KEY: config.evmPrivateKey,
-          SVM_PRIVATE_KEY: config.svmPrivateKey,
-          AVM_PRIVATE_KEY: config.avmPrivateKey,
-          APTOS_PRIVATE_KEY: config.aptosPrivateKey,
-          HEDERA_ACCOUNT_ID: config.hederaAccountId,
-          HEDERA_PRIVATE_KEY: config.hederaPrivateKey,
-          STELLAR_PRIVATE_KEY: config.stellarPrivateKey,
-          RESOURCE_SERVER_URL: config.serverUrl,
-          ENDPOINT_PATH: config.endpointPath,
-          EVM_NETWORK: config.evmNetwork,
-          EVM_RPC_URL: config.evmRpcUrl,
-          HEDERA_NETWORK: config.hederaNetwork,
-          HEDERA_NODE_URL: config.hederaNodeUrl,
-          ...(config.batchSettlement
-            ? {
-              CHANNEL_SALT: config.batchSettlement.channelSalt,
-              BATCH_SETTLEMENT_PHASE: config.batchSettlement.phase,
-              ...(config.batchSettlement.voucherSignerPrivateKey
-                ? { EVM_VOUCHER_SIGNER_PRIVATE_KEY: config.batchSettlement.voucherSignerPrivateKey }
-                : {}),
-            }
-            : {}),
+      const baseEnv: Record<string, string> = {
+        EVM_PRIVATE_KEY: config.evmPrivateKey,
+        SVM_PRIVATE_KEY: config.svmPrivateKey,
+        AVM_PRIVATE_KEY: config.avmPrivateKey,
+        APTOS_PRIVATE_KEY: config.aptosPrivateKey,
+        HEDERA_ACCOUNT_ID: config.hederaAccountId,
+        HEDERA_PRIVATE_KEY: config.hederaPrivateKey,
+        STELLAR_PRIVATE_KEY: config.stellarPrivateKey,
+        TVM_PRIVATE_KEY: config.tvmPrivateKey,
+        RESOURCE_SERVER_URL: config.serverUrl,
+        ENDPOINT_PATH: config.endpointPath,
+        EVM_NETWORK: config.evmNetwork,
+        EVM_RPC_URL: config.evmRpcUrl,
+        HEDERA_NETWORK: config.hederaNetwork,
+        HEDERA_NODE_URL: config.hederaNodeUrl,
+        TVM_NETWORK: config.tvmNetwork,
+        TVM_PROVIDER: process.env.TVM_PROVIDER || '',
+        TONCENTER_BASE_URL: process.env.TONCENTER_BASE_URL || config.tvmRpcUrl,
+        TONAPI_API_KEY: process.env.TONAPI_API_KEY || '',
+        TONAPI_BASE_URL: process.env.TONAPI_BASE_URL || '',
+        ...(config.batchSettlement
+          ? {
+            CHANNEL_SALT: config.batchSettlement.channelSalt,
+            BATCH_SETTLEMENT_PHASE: config.batchSettlement.phase,
+            ...(config.batchSettlement.voucherSignerPrivateKey
+              ? { EVM_VOUCHER_SIGNER_PRIVATE_KEY: config.batchSettlement.voucherSignerPrivateKey }
+              : {}),
+          }
+          : {}),
+      };
+
+      const clientConfig = this.loadConfig();
+      if (clientConfig?.environment?.required) {
+        for (const envVar of clientConfig.environment.required) {
+          if (process.env[envVar] && !baseEnv[envVar]) {
+            baseEnv[envVar] = process.env[envVar]!;
+          }
         }
+      }
+      if (clientConfig?.environment?.optional) {
+        for (const envVar of clientConfig.environment.optional) {
+          if (process.env[envVar] && !baseEnv[envVar]) {
+            baseEnv[envVar] = process.env[envVar]!;
+          }
+        }
+      }
+
+      const runConfig: RunConfig = {
+        env: baseEnv
       };
 
       // For clients, we run the process and wait for it to complete
@@ -85,4 +109,20 @@ export class GenericClientProxy extends BaseProxy implements ClientProxy {
   async forceStop(): Promise<void> {
     await this.stopProcess();
   }
-} 
+
+  private loadConfig(): any {
+    try {
+      const { readFileSync, existsSync } = require('fs');
+      const { join } = require('path');
+      const configPath = join(this.directory, 'test.config.json');
+
+      if (existsSync(configPath)) {
+        const configContent = readFileSync(configPath, 'utf-8');
+        return JSON.parse(configContent);
+      }
+    } catch {
+      // Fall back to the explicitly provided env set when config loading fails.
+    }
+    return null;
+  }
+}

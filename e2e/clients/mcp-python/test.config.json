@@ -4,10 +4,14 @@
   "transport": "mcp",
   "language": "python",
   "protocolFamilies": [
-    "evm"
+    "evm",
+    "tvm"
   ],
   "x402Versions": [
     2
+  ],
+  "schemes": [
+    "exact"
   ],
   "evm": {
     "assetTransferMethods": [
@@ -16,10 +20,18 @@
   },
   "environment": {
     "required": [
-      "EVM_PRIVATE_KEY",
       "RESOURCE_SERVER_URL",
       "ENDPOINT_PATH"
     ],
-    "optional": []
+    "optional": [
+      "EVM_PRIVATE_KEY",
+      "TVM_PRIVATE_KEY",
+      "TVM_NETWORK",
+      "TVM_PROVIDER",
+      "TONCENTER_API_KEY",
+      "TONCENTER_BASE_URL",
+      "TONAPI_API_KEY",
+      "TONAPI_BASE_URL"
+    ]
   }
 }

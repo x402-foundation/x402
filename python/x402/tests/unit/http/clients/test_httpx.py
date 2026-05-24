@@ -15,9 +15,10 @@ from x402.http.clients.httpx import (
     x402AsyncTransport,
     x402HttpxClient,
 )
-from x402.http.utils import encode_payment_required_header
+from x402.http.utils import encode_payment_required_header, encode_payment_response_header
 from x402.http.x402_http_client import x402HTTPClient
-from x402.schemas import PaymentPayload, PaymentRequired, PaymentRequirements
+from x402.schemas import PaymentPayload, PaymentRequired, PaymentRequirements, SettleResponse
+from x402.schemas.hooks import PaymentRequiredHeadersResult, RecoveredResponseResult
 
 # Skip tests if httpx not installed
 pytest.importorskip("httpx")
@@ -64,6 +65,14 @@ class MockX402Client:
     async def create_payment_payload(self, payment_required):
         self.create_calls.append(payment_required)
         return self.payload
+
+    async def handle_payment_response(self, ctx):
+        return None
+
+
+class MockRecoveringClient(MockX402Client):
+    async def handle_payment_response(self, ctx):
+        return RecoveredResponseResult()
 
 
 # =============================================================================
@@ -245,6 +254,88 @@ class TestX402AsyncTransport:
         await transport.aclose()
 
         mock_transport.aclose.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_hook_header_retry_bypasses_payment(self):
+        """Hook-provided headers that succeed skip payment creation."""
+        mock_client = MockX402Client()
+        http_client = x402HTTPClient(mock_client)
+        http_client.on_payment_required(
+            lambda ctx: PaymentRequiredHeadersResult(headers={"Authorization": "Bearer x"})
+        )
+
+        payment_required = PaymentRequired(
+            x402_version=2,
+            accepts=[make_payment_requirements()],
+        )
+        encoded = encode_payment_required_header(payment_required)
+
+        mock_402 = MagicMock()
+        mock_402.status_code = 402
+        mock_402.headers = {"PAYMENT-REQUIRED": encoded}
+        mock_402.json.return_value = None
+        mock_402.aread = AsyncMock()
+
+        mock_200 = MagicMock()
+        mock_200.status_code = 200
+
+        mock_transport = AsyncMock()
+        mock_transport.handle_async_request = AsyncMock(side_effect=[mock_402, mock_200])
+
+        transport = x402AsyncTransport(http_client, mock_transport)
+        response = await transport.handle_async_request(
+            httpx.Request("GET", "https://example.com/api")
+        )
+
+        assert response == mock_200
+        assert len(mock_client.create_calls) == 0
+        assert mock_transport.handle_async_request.call_count == 2
+
+    @pytest.mark.asyncio
+    async def test_recovery_calls_create_payment_payload_twice(self):
+        """Recovery retry creates a fresh payload after hook signals recovered."""
+        mock_client = MockRecoveringClient()
+        payment_required = PaymentRequired(
+            x402_version=2,
+            accepts=[make_payment_requirements()],
+        )
+        encoded_required = encode_payment_required_header(payment_required)
+        settle = SettleResponse(
+            success=False,
+            error_reason="failed",
+            transaction="0x0",
+            network="eip155:8453",
+        )
+        encoded_response = encode_payment_response_header(settle)
+
+        mock_initial_402 = MagicMock()
+        mock_initial_402.status_code = 402
+        mock_initial_402.headers = {"PAYMENT-REQUIRED": encoded_required}
+        mock_initial_402.json.return_value = None
+        mock_initial_402.aread = AsyncMock()
+
+        mock_paid_402 = MagicMock()
+        mock_paid_402.status_code = 402
+        mock_paid_402.headers = {"PAYMENT-RESPONSE": encoded_response}
+        mock_paid_402.aread = AsyncMock()
+
+        mock_success = MagicMock()
+        mock_success.status_code = 200
+        mock_success.headers = httpx.Headers()
+
+        mock_transport = AsyncMock()
+        mock_transport.handle_async_request = AsyncMock(
+            side_effect=[mock_initial_402, mock_paid_402, mock_success]
+        )
+
+        transport = x402AsyncTransport(mock_client, mock_transport)
+        response = await transport.handle_async_request(
+            httpx.Request("GET", "https://example.com/api")
+        )
+
+        assert response.status_code == 200
+        assert len(mock_client.create_calls) == 2
+        assert mock_transport.handle_async_request.call_count == 3
 
 
 # =============================================================================

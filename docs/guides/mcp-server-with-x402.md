@@ -105,6 +105,10 @@ import axios from "axios";
 import { x402Client, wrapAxiosWithPayment } from "@x402/axios";
 import { ExactEvmScheme } from "@x402/evm/exact/client";
 import { ExactSvmScheme } from "@x402/svm/exact/client";
+import { BatchSettlementEvmScheme } from "@x402/evm/batch-settlement/client";
+import { toClientEvmSigner } from "@x402/evm";
+import { createPublicClient, http } from "viem";
+import { baseSepolia } from "viem/chains";
 import { privateKeyToAccount } from "viem/accounts";
 import { createKeyPairSignerFromBytes } from "@solana/kit";
 import { base58 } from "@scure/base";
@@ -129,8 +133,16 @@ async function createClient() {
 
   // Register EVM scheme if private key is provided
   if (evmPrivateKey) {
-    const evmSigner = privateKeyToAccount(evmPrivateKey);
-    client.register("eip155:*", new ExactEvmScheme(evmSigner));
+    const account = privateKeyToAccount(evmPrivateKey);
+    client.register("eip155:*", new ExactEvmScheme(account));
+    const publicClient = createPublicClient({ chain: baseSepolia, transport: http() });
+    const batchSigner = toClientEvmSigner(account, publicClient);
+    client.register(
+      "eip155:*",
+      new BatchSettlementEvmScheme(batchSigner, {
+        depositPolicy: { depositMultiplier: 5 },
+      }),
+    );
   }
 
   // Register SVM scheme if private key is provided
@@ -196,11 +208,25 @@ The example supports both EVM (Base, Ethereum) and Solana networks. The x402 cli
 import { x402Client, wrapAxiosWithPayment } from "@x402/axios";
 import { ExactEvmScheme } from "@x402/evm/exact/client";
 import { ExactSvmScheme } from "@x402/svm/exact/client";
+import { BatchSettlementEvmScheme } from "@x402/evm/batch-settlement/client";
+import { toClientEvmSigner } from "@x402/evm";
+import { createPublicClient, http } from "viem";
+import { baseSepolia } from "viem/chains";
+import { privateKeyToAccount } from "viem/accounts";
 
 const client = new x402Client();
 
-// Register EVM scheme for Base/Ethereum payments
-client.register("eip155:*", new ExactEvmScheme(evmSigner));
+const account = privateKeyToAccount(evmPrivateKey);
+const publicClient = createPublicClient({ chain: baseSepolia, transport: http() });
+
+// Register EVM schemes for Base/Ethereum payments (exact + batch-settlement)
+client.register("eip155:*", new ExactEvmScheme(account));
+client.register(
+  "eip155:*",
+  new BatchSettlementEvmScheme(toClientEvmSigner(account, publicClient), {
+    depositPolicy: { depositMultiplier: 5 },
+  }),
+);
 
 // Register SVM scheme for Solana payments
 client.register("solana:*", new ExactSvmScheme(svmSigner));
@@ -210,8 +236,10 @@ const httpClient = wrapAxiosWithPayment(axios.create({ baseURL }), client);
 ```
 
 When the server returns a 402 response, the client checks the `network` field in the payment requirements:
-- `eip155:*` networks use the EVM scheme
+- `eip155:*` networks use the registered EVM schemes (`exact`, `upto`, **`batch-settlement`**, etc.)
 - `solana:*` networks use the SVM scheme
+
+**Batch settlement:** Paid APIs that advertise **`scheme: "batch-settlement"`** require **`BatchSettlementEvmScheme`** on **`eip155:*`** (in addition to `ExactEvmScheme`). The **Implementation** section and the snippet above register both so tools work against **`exact`** servers and **batch-settlement** APIs. See **[Batch settlement](/schemes/batch-settlement)**.
 
 ***
 

@@ -171,10 +171,16 @@ cd typescript && pnpm --filter @x402/paywall build:paywall
 This generates template files in:
 - `typescript/packages/http/paywall/src/evm/gen/template.ts`
 - `typescript/packages/http/paywall/src/svm/gen/template.ts`
+- `typescript/packages/http/paywall/src/avm/gen/template.ts`
+- `typescript/packages/http/paywall/src/evm/gen/decimals.ts` (EVM only; see below)
 - `go/http/evm_paywall_template.go`
 - `go/http/svm_paywall_template.go`
-- `python/x402/src/x402/evm_paywall_template.py`
-- `python/x402/src/x402/svm_paywall_template.py`
+- `go/http/avm_paywall_template.go`
+- `python/x402/http/paywall/evm_paywall_template.py`
+- `python/x402/http/paywall/svm_paywall_template.py`
+- `python/x402/http/paywall/avm_paywall_template.py`
+
+**EVM `decimals.ts`:** The paywall assumes **6** decimals for EVM chains (the usual USDC-style default). The generated map only lists chains where `DEFAULT_STABLECOINS` uses a different `decimals` value. If you add or change one of those entries, run `build:paywall` and commit the updated `decimals.ts` with the template files above. For a plain 6-decimal default, nothing new is added to the map.
 
 Commit the generated files with your PR.
 
@@ -200,7 +206,9 @@ Because different chains have different best practices, a scheme may have a diff
 
 If your chain is EVM-compatible and you want to add a default stablecoin for
 dollar-string pricing (`"$0.10"`), you don't need the full 3-PR workflow below. See
-[DEFAULT_ASSETS.md](DEFAULT_ASSETS.md) for instructions.
+[DEFAULT_ASSETS.md](DEFAULT_ASSETS.md) for instructions. If that default asset uses
+**decimals other than 6**, also regenerate the paywall as described in
+[Paywall Changes](#paywall-changes) so the bundled UI formats amounts correctly.
 
 ### Adding a New Chain Family
 

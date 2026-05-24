@@ -10,13 +10,13 @@
     "lint:check": "eslint . --ext .ts"
   },
   "dependencies": {
-    "axios": "^1.7.9",
     "dotenv": "^16.4.7",
-    "viem": "^2.21.26",
+    "viem": "^2.48.11",
     "x402-fetch": "workspace:*"
   },
   "devDependencies": {
     "@eslint/js": "^9.24.0",
+    "@types/node": "^22.13.4",
     "eslint": "^9.24.0",
     "eslint-plugin-jsdoc": "^50.6.9",
     "eslint-plugin-prettier": "^5.2.6",
@@ -24,7 +24,7 @@
     "@typescript-eslint/parser": "^8.29.1",
     "eslint-plugin-import": "^2.31.0",
     "prettier": "3.5.2",
-    "tsx": "^4.7.0",
-    "typescript": "^5.3.0"
+    "tsx": "^4.21.0",
+    "typescript": "^5.7.3"
   }
 }

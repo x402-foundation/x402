@@ -71,6 +71,29 @@ type ClientHookAdapterHandles = {
 
 type ClientHookPhase = keyof ClientHookAdapterHandles;
 
+export interface ClientExtensionHooks {
+  onBeforePaymentCreation?: (
+    declaration: unknown,
+    context: PaymentCreationContext,
+  ) => Promise<void | { abort: true; reason: string }>;
+  onAfterPaymentCreation?: (
+    declaration: unknown,
+    context: PaymentCreatedContext,
+  ) => Promise<void>;
+  onPaymentCreationFailure?: (
+    declaration: unknown,
+    context: PaymentCreationFailureContext,
+  ) => Promise<void | { recovered: true; payload: PaymentPayload }>;
+  onPaymentResponse?: (
+    declaration: unknown,
+    context: PaymentResponseContext,
+  ) => Promise<void | { recovered: true }>;
+}
+
+export interface ClientTransportExtensionHooks {
+  [transport: string]: unknown;
+}
+
 /**
  * Extension that can enrich payment payloads on the client side.
  *
@@ -98,6 +121,9 @@ export interface ClientExtension {
     paymentPayload: PaymentPayload,
     paymentRequired: PaymentRequired,
   ) => Promise<PaymentPayload>;
+
+  hooks?: ClientExtensionHooks;
+  transportHooks?: ClientTransportExtensionHooks;
 }
 
 /**
@@ -268,6 +294,15 @@ export class x402Client {
   }
 
   /**
+   * Get all registered client extensions.
+   *
+   * @returns Array of registered extensions
+   */
+  getExtensions(): ClientExtension[] {
+    return Array.from(this.registeredExtensions.values());
+  }
+
+  /**
    * Register a hook to execute before payment payload creation.
    * Can abort creation by returning { abort: true, reason: string }
    *
@@ -328,6 +363,7 @@ export class x402Client {
       "onPaymentResponse",
       ctx.paymentPayload.x402Version,
       ctx.requirements,
+      ctx.paymentRequired?.extensions ?? ctx.paymentPayload.extensions,
     )) {
       const result = await hook(ctx);
       if (result && "recovered" in result && result.recovered) {
@@ -365,6 +401,7 @@ export class x402Client {
       "beforePaymentCreation",
       paymentRequired.x402Version,
       requirements,
+      paymentRequired.extensions,
     )) {
       const result = await hook(context);
       if (result && "abort" in result && result.abort) {
@@ -416,6 +453,7 @@ export class x402Client {
         "afterPaymentCreation",
         paymentRequired.x402Version,
         requirements,
+        paymentRequired.extensions,
       )) {
         await hook(createdContext);
       }
@@ -431,6 +469,7 @@ export class x402Client {
         "onPaymentCreationFailure",
         paymentRequired.x402Version,
         requirements,
+        paymentRequired.extensions,
       )) {
         const result = await hook(failureContext);
         if (result && "recovered" in result && result.recovered) {
@@ -616,17 +655,19 @@ export class x402Client {
   }
 
   /**
-   * Returns manual hooks followed by the hook for the selected scheme, if present.
+   * Returns manual hooks followed by the selected scheme hook and declared extension hooks.
    *
    * @param phase - Hook slot to collect
    * @param x402Version - Protocol version for the selected requirement
    * @param requirements - Selected payment requirement
+   * @param declaredExtensions - Extension declarations that scope extension hooks
    * @returns Hooks in invocation order
    */
   private getLabeledHooks<P extends ClientHookPhase>(
     phase: P,
     x402Version: number,
     requirements: PaymentRequirements,
+    declaredExtensions?: Record<string, unknown>,
   ): Array<NonNullable<ClientHookAdapterHandles[P]>> {
     let manual: Array<NonNullable<ClientHookAdapterHandles[P]>>;
     switch (phase) {
@@ -659,6 +700,49 @@ export class x402Client {
     if (hook !== undefined) {
       out.push(hook);
     }
+    if (!declaredExtensions) {
+      return out;
+    }
+
+    const extensionHookKey = this.getClientExtensionHookKey(phase);
+    for (const [extensionKey, extension] of this.registeredExtensions) {
+      if (!(extensionKey in declaredExtensions)) continue;
+
+      const extensionHook = extension.hooks?.[extensionHookKey];
+      if (!extensionHook) continue;
+
+      type HookFn = NonNullable<ClientHookAdapterHandles[P]>;
+      type HookContext = Parameters<HookFn>[0];
+      out.push((async (ctx: HookContext) => {
+        return (
+          extensionHook as (
+            declaration: unknown,
+            context: HookContext,
+          ) => ReturnType<HookFn>
+        )(declaredExtensions[extensionKey], ctx);
+      }) as HookFn);
+    }
     return out;
+  }
+
+  /**
+   * Maps internal hook phases to extension hook names.
+   *
+   * @param phase - Internal hook phase
+   * @returns Extension hook key for the phase
+   */
+  private getClientExtensionHookKey<P extends ClientHookPhase>(
+    phase: P,
+  ): keyof ClientExtensionHooks {
+    switch (phase) {
+      case "beforePaymentCreation":
+        return "onBeforePaymentCreation";
+      case "afterPaymentCreation":
+        return "onAfterPaymentCreation";
+      case "onPaymentCreationFailure":
+        return "onPaymentCreationFailure";
+      case "onPaymentResponse":
+        return "onPaymentResponse";
+    }
   }
 }

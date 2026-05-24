@@ -34,6 +34,8 @@ import (
 	"github.com/x402-foundation/x402/go/extensions/erc20approvalgassponsor"
 	exttypes "github.com/x402-foundation/x402/go/extensions/types"
 	evmmech "github.com/x402-foundation/x402/go/mechanisms/evm"
+	"github.com/x402-foundation/x402/go/mechanisms/evm/batch-settlement"
+	batchedevm "github.com/x402-foundation/x402/go/mechanisms/evm/batch-settlement/facilitator"
 	exactevm "github.com/x402-foundation/x402/go/mechanisms/evm/exact/facilitator"
 	exactevmv1 "github.com/x402-foundation/x402/go/mechanisms/evm/exact/v1/facilitator"
 	uptoevm "github.com/x402-foundation/x402/go/mechanisms/evm/upto/facilitator"
@@ -143,14 +145,30 @@ func (s *realFacilitatorEvmSigner) VerifyTypedData(
 		typedData.Types[typeName] = typedFields
 	}
 
-	// Add EIP712Domain if not present
+	// Add EIP712Domain type if not present.
+	//
+	// Domain fields are conditionally declared based on which TypedDataDomain
+	// fields are populated. go-ethereum's `apitypes.TypedDataDomain.Map()`
+	// drops empty Name/Version/VerifyingContract and nil ChainID; if the type
+	// list still names them, `HashStruct("EIP712Domain", ...)` errors with
+	// "provided data '<nil>' doesn't match type 'string'" (Permit2's no-version
+	// domain is the canonical case). Mirrors viem's `getTypesForEIP712Domain`
+	// and the same fix applied to `go/mechanisms/evm/eip712.go`.
 	if _, exists := typedData.Types["EIP712Domain"]; !exists {
-		typedData.Types["EIP712Domain"] = []apitypes.Type{
-			{Name: "name", Type: "string"},
-			{Name: "version", Type: "string"},
-			{Name: "chainId", Type: "uint256"},
-			{Name: "verifyingContract", Type: "address"},
+		domainFields := make([]apitypes.Type, 0, 4)
+		if typedData.Domain.Name != "" {
+			domainFields = append(domainFields, apitypes.Type{Name: "name", Type: "string"})
 		}
+		if typedData.Domain.Version != "" {
+			domainFields = append(domainFields, apitypes.Type{Name: "version", Type: "string"})
+		}
+		if typedData.Domain.ChainId != nil {
+			domainFields = append(domainFields, apitypes.Type{Name: "chainId", Type: "uint256"})
+		}
+		if typedData.Domain.VerifyingContract != "" {
+			domainFields = append(domainFields, apitypes.Type{Name: "verifyingContract", Type: "address"})
+		}
+		typedData.Types["EIP712Domain"] = domainFields
 	}
 
 	// Hash the data
@@ -555,6 +573,18 @@ func hashBytes(data []byte) string {
 	return hex.EncodeToString(hash[:])
 }
 
+// isBatchSettlementRequirements reports whether the payment requirements use
+// the batch-settlement scheme. Used by the verify-hash cache hooks to exempt
+// batch-settlement flows: the resource server rewrites refund and voucher
+// payloads between /verify and /settle, so the verify-time payload hash never
+// matches the settle-time hash for those flows. Mirrors the TS e2e facilitator.
+func isBatchSettlementRequirements(req x402.PaymentRequirementsView) bool {
+	if req == nil {
+		return false
+	}
+	return req.GetScheme() == batchsettlement.SchemeBatched
+}
+
 // Real SVM facilitator signer
 type realFacilitatorSvmSigner struct {
 	privateKey solana.PrivateKey
@@ -847,6 +877,22 @@ func main() {
 	uptoEvmFacilitatorScheme := uptoevm.NewUptoEvmScheme(evmSigner, nil)
 	facilitator.Register([]x402.Network{x402.Network(evmNetwork)}, uptoEvmFacilitatorScheme)
 
+	// Register batch-settlement EVM scheme. Mirrors TS:
+	// `new BatchSettlementEvmScheme(evmSigner, authorizerSigner)` where the
+	// authorizer key falls back to EVM_PRIVATE_KEY when
+	// EVM_RECEIVER_AUTHORIZER_PRIVATE_KEY is not set.
+	authorizerKey := os.Getenv("EVM_RECEIVER_AUTHORIZER_PRIVATE_KEY")
+	if authorizerKey == "" {
+		authorizerKey = evmPrivateKey
+	}
+	batchedAuthorizer, err := newBatchedAuthorizerSigner(authorizerKey)
+	if err != nil {
+		log.Fatalf("Failed to create batch-settlement authorizer: %v", err)
+	}
+	log.Printf("EVM Receiver Authorizer (batch-settlement): %s", batchedAuthorizer.Address())
+	batchedScheme := batchedevm.NewBatchSettlementEvmScheme(evmSigner, batchedAuthorizer)
+	facilitator.Register([]x402.Network{x402.Network(evmNetwork)}, batchedScheme)
+
 	evmV1Config := &exactevmv1.ExactEvmSchemeV1Config{
 		DeployERC4337WithEIP6492: true,
 	}
@@ -935,7 +981,18 @@ func main() {
 			return nil
 		}).
 		OnBeforeSettle(func(ctx x402.FacilitatorSettleContext) (*x402.FacilitatorBeforeHookResult, error) {
-			// Hook 3: Validate payment was previously verified
+			// Hook 3: Validate payment was previously verified.
+			//
+			// Batch-settlement is exempt: the resource server's `BeforeSettleHook`
+			// rewrites refund payloads (adds claims/amount/refundNonce) and rewrites
+			// voucher commits before /settle, so the payload bytes seen at settle
+			// time differ from the verify-time bytes. Mirrors the TS e2e fac
+			// (e2e/facilitators/typescript/index.ts ~548) which skips the cache
+			// check for `requirements.scheme === "batch-settlement"`.
+			if isBatchSettlementRequirements(ctx.Requirements) {
+				return nil, nil
+			}
+
 			paymentHash := hashBytes(ctx.PayloadBytes)
 			verificationMutex.RLock()
 			verificationTimestamp, verified := verifiedPayments[paymentHash]
@@ -964,11 +1021,17 @@ func main() {
 			return nil, nil
 		}).
 		OnAfterSettle(func(ctx x402.FacilitatorSettleResultContext) error {
-			// Hook 4: Clean up verified payment tracking after successful settlement
-			paymentHash := hashBytes(ctx.PayloadBytes)
-			verificationMutex.Lock()
-			delete(verifiedPayments, paymentHash)
-			verificationMutex.Unlock()
+			// Hook 4: Clean up verified payment tracking after successful settlement.
+			// Skip cleanup for batch-settlement: the verify-time entry was keyed by
+			// a different payload (see OnBeforeSettle comment) so there's nothing
+			// to delete here, and the cache entry naturally ages out via the 5-min
+			// TTL check above. Mirrors TS e2e fac.
+			if !isBatchSettlementRequirements(ctx.Requirements) {
+				paymentHash := hashBytes(ctx.PayloadBytes)
+				verificationMutex.Lock()
+				delete(verifiedPayments, paymentHash)
+				verificationMutex.Unlock()
+			}
 
 			if ctx.Result.Success {
 				log.Printf("✅ Settlement completed: %s", ctx.Result.Transaction)
@@ -976,11 +1039,14 @@ func main() {
 			return nil
 		}).
 		OnSettleFailure(func(ctx x402.FacilitatorSettleFailureContext) (*x402.FacilitatorSettleFailureHookResult, error) {
-			// Hook 5: Clean up verified payment tracking on failure too
-			paymentHash := hashBytes(ctx.PayloadBytes)
-			verificationMutex.Lock()
-			delete(verifiedPayments, paymentHash)
-			verificationMutex.Unlock()
+			// Hook 5: Clean up verified payment tracking on failure too. Same
+			// batch-settlement exemption as OnAfterSettle.
+			if !isBatchSettlementRequirements(ctx.Requirements) {
+				paymentHash := hashBytes(ctx.PayloadBytes)
+				verificationMutex.Lock()
+				delete(verifiedPayments, paymentHash)
+				verificationMutex.Unlock()
+			}
 
 			log.Printf("❌ Settlement failed: %v", ctx.Error)
 			return nil, nil

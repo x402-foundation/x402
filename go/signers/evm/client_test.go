@@ -198,6 +198,65 @@ func TestClientSigner_SignTypedData_WithEIP712DomainInTypes(t *testing.T) {
 	}
 }
 
+// TestClientSigner_SignTypedData_Permit2NoVersionDomain is a regression test
+// for the EIP-712 domain hashing bug where the auto-injected EIP712Domain
+// type unconditionally declared `version: string`. Permit2's domain has no
+// version, so the typed-data domain map omits "version" and HashStruct then
+// fails with "provided data '<nil>' doesn't match type 'string'". The fix
+// dynamically constructs the EIP712Domain type list from the populated
+// domain fields (matching viem's behavior). Mirrors the test in
+// `go/mechanisms/evm/eip712_test.go`.
+func TestClientSigner_SignTypedData_Permit2NoVersionDomain(t *testing.T) {
+	signer, err := NewClientSignerFromPrivateKey(testPrivateKeyHex)
+	if err != nil {
+		t.Fatalf("NewClientSignerFromPrivateKey() failed: %v", err)
+	}
+
+	domain := x402evm.TypedDataDomain{
+		Name:              "Permit2",
+		ChainID:           big.NewInt(84532),
+		VerifyingContract: "0x000000000022D473030F116dDEE9F6B43aC78BA3",
+	}
+	types := map[string][]x402evm.TypedDataField{
+		"PermitWitnessTransferFrom": {
+			{Name: "permitted", Type: "TokenPermissions"},
+			{Name: "spender", Type: "address"},
+			{Name: "nonce", Type: "uint256"},
+			{Name: "deadline", Type: "uint256"},
+			{Name: "witness", Type: "Witness"},
+		},
+		"TokenPermissions": {
+			{Name: "token", Type: "address"},
+			{Name: "amount", Type: "uint256"},
+		},
+		"Witness": {
+			{Name: "channelId", Type: "bytes32"},
+		},
+	}
+	channelId := make([]byte, 32)
+	channelId[31] = 0x01
+	message := map[string]interface{}{
+		"permitted": map[string]interface{}{
+			"token":  "0x036CbD53842c5426634e7929541eC2318f3dCF7e",
+			"amount": big.NewInt(1_000_000),
+		},
+		"spender":  "0x0000000000000000000000000000000000000001",
+		"nonce":    big.NewInt(1),
+		"deadline": big.NewInt(1_000_000_000_000),
+		"witness": map[string]interface{}{
+			"channelId": channelId,
+		},
+	}
+
+	signature, err := signer.SignTypedData(context.Background(), domain, types, "PermitWitnessTransferFrom", message)
+	if err != nil {
+		t.Fatalf("SignTypedData() with no-version domain failed: %v", err)
+	}
+	if len(signature) != 65 {
+		t.Errorf("signature length = %d, want 65", len(signature))
+	}
+}
+
 // testRecovery verifies that a signature can be recovered to the expected address
 func testRecovery(t *testing.T, signature []byte, _ string, _ x402evm.TypedDataDomain, _ map[string][]x402evm.TypedDataField, _ map[string]interface{}) {
 	// This would require implementing the full recovery logic

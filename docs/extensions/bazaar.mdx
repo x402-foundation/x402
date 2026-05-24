@@ -69,20 +69,14 @@ Clients that understand the `bazaar` extension should read the `bazaar` key of t
 
 #### List Endpoint
 
-Retrieve all available x402-compatible endpoints and MCP tools:
+Retrieve all available x402-compatible endpoints and MCP tools from a facilitator that supports Bazaar discovery:
 
-##### Coinbase
 ```bash
-GET https://api.cdp.coinbase.com/platform/v2/x402/discovery/resources
-```
-
-##### PayAI
-```bash
-GET https://facilitator.payai.network/discovery/resources
+GET {facilitator_url}/discovery/resources
 ```
 
 
-**Note**: The recommended way to use this endpoint is to use the `useFacilitator` hook as described below.
+**Note**: The recommended way to use this endpoint is through the Bazaar facilitator client extension shown below.
 
 **Response Schema**
 
@@ -93,29 +87,39 @@ Each resource in the list contains the following fields:
   "accepts": [
     {
       "asset": "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
-      "description": "",
       "extra": {
         "name": "USD Coin",
         "version": "2"
       },
-      "maxAmountRequired": "200",
+      "amount": "200",
       "maxTimeoutSeconds": 60,
-      "mimeType": "",
       "network": "eip155:8453",
-      "outputSchema": {
-        "input": {
-          "method": "GET",
-          "type": "http"
-        },
-        "output": null
-      },
       "payTo": "0xa2477E16dCB42E2AD80f03FE97D7F1a1646cd1c0",
-      "resource": "https://api.example.com/x402/weather",
       "scheme": "exact"
     }
   ],
+  "extensions": {
+    "bazaar": {
+      "info": {
+        "input": {
+          "type": "http",
+          "method": "GET",
+          "queryParams": {
+            "city": "San Francisco"
+          }
+        },
+        "output": {
+          "type": "json",
+          "example": {
+            "city": "San Francisco",
+            "weather": "foggy",
+            "temperature": 60
+          }
+        }
+      }
+    }
+  },
   "lastUpdated": "2025-08-09T01:07:04.005Z",
-  "metadata": {},
   "resource": "https://api.example.com/x402/weather",
   "type": "http",
   "x402Version": 2
@@ -128,7 +132,7 @@ The `type` field indicates the resource type:
 - `"http"` - HTTP endpoints (GET, POST, PUT, PATCH, DELETE, HEAD)
 - `"mcp"` - MCP (Model Context Protocol) tools
 
-For MCP tools, the `outputSchema.input` object will contain:
+For MCP tools, the `extensions.bazaar.info.input` object will contain:
 - `type: "mcp"` - Identifies this as an MCP tool
 - `toolName` - The MCP tool name (used in `tools/call` requests)
 - `inputSchema` - JSON Schema for the tool's arguments (follows MCP `Tool.inputSchema` format)
@@ -136,7 +140,7 @@ For MCP tools, the `outputSchema.input` object will contain:
 - `transport` - MCP transport protocol: `"streamable-http"` (default) or `"sse"` (optional)
 - `example` - Example arguments object (optional)
 
-**Note:** For MCP tools, the unique resource identifier is the tuple (`resource`, `input.toolName`) since MCP multiplexes multiple tools over a single server endpoint.
+**Note:** For MCP tools, the unique resource identifier is the tuple (`resource`, `extensions.bazaar.info.input.toolName`) since MCP multiplexes multiple tools over a single server endpoint.
 
 ### Quickstart for Buyers
 
@@ -165,7 +169,7 @@ Fetch the list of available x402 services using the facilitator client:
     const affordableServices = response.items.filter(item =>
       item.accepts.find(paymentRequirements =>
         paymentRequirements.asset === usdcAsset &&
-        Number(paymentRequirements.maxAmountRequired) < maxPrice
+        Number(paymentRequirements.amount) < maxPrice
       )
     );
     ```
@@ -176,7 +180,9 @@ Fetch the list of available x402 services using the facilitator client:
 
     import (
         "context"
+        "encoding/json"
         "fmt"
+        "strconv"
 
         "github.com/x402-foundation/x402/go/extensions/bazaar"
         x402http "github.com/x402-foundation/x402/go/http"
@@ -204,16 +210,22 @@ Fetch the list of available x402 services using the facilitator client:
         // Filter services under $0.10
         usdcAsset := "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913"
         maxPrice := 100000 // $0.10 in USDC atomic units (6 decimals)
+        type paymentRequirement struct {
+            Asset  string `json:"asset"`
+            Amount string `json:"amount"`
+        }
 
         for _, item := range response.Items {
-            for _, paymentReq := range item.Accepts {
-                // Parse asset and maxAmountRequired from payment requirements
-                if asset, ok := paymentReq["asset"].(string); ok && asset == usdcAsset {
-                    if maxAmount, ok := paymentReq["maxAmountRequired"].(string); ok {
-                        // Convert and compare price
-                        fmt.Printf("Found service: %s\n", item.Resource)
-                    }
+            for _, rawPaymentReq := range item.Accepts {
+                var paymentReq paymentRequirement
+                if err := json.Unmarshal(rawPaymentReq, &paymentReq); err != nil {
+                    continue
                 }
+                amount, err := strconv.ParseInt(paymentReq.Amount, 10, 64)
+                if err != nil || paymentReq.Asset != usdcAsset || amount >= int64(maxPrice) {
+                    continue
+                }
+                fmt.Printf("Found service: %s\n", item.Resource)
             }
         }
     }
@@ -332,15 +344,17 @@ Once you've found a suitable service, use an x402 client to call it:
       client
     );
 
-    // Select the payment method of your choice
-    const selectedPaymentRequirements = selectedService.accepts[0];
-    const inputSchema = selectedPaymentRequirements.outputSchema.input;
+    // Read the Bazaar call metadata for the selected service
+    const bazaar = selectedService.extensions?.bazaar as {
+      info?: { input?: { method?: string; queryParams?: Record<string, unknown> } }
+    } | undefined;
+    const input = bazaar?.info?.input;
 
     // Build the request using the service's schema
     const response = await api.request({
-      method: inputSchema.method,
-      url: inputSchema.resource,
-      params: { location: "San Francisco" } // Based on inputSchema
+      method: input?.method ?? "GET",
+      url: selectedService.resource,
+      params: input?.queryParams ?? { city: "San Francisco" }
     });
 
     console.log("Response data:", response.data);
@@ -366,16 +380,16 @@ Once you've found a suitable service, use an x402 client to call it:
         # Select a service from discovery (from Step 1)
         selected_service = affordable_services[0]
 
-        # Select the payment method of your choice
-        selected_payment_requirements = selected_service.accepts[0]
-        input_schema = selected_payment_requirements.output_schema.input
+        # Read the Bazaar call metadata for the selected service
+        bazaar = (selected_service.extensions or {}).get("bazaar", {})
+        input_info = bazaar.get("info", {}).get("input", {})
 
         # Make the request using httpx client
         async with x402HttpxClient(client) as http:
             response = await http.request(
-                method=input_schema.method,
-                url=input_schema.resource,
-                params={"location": "San Francisco"}  # Based on input_schema
+                method=input_info.get("method", "GET"),
+                url=selected_service.resource,
+                params=input_info.get("queryParams", {"city": "San Francisco"})
             )
             await response.aread()
             print(f"Response data: {response.json()}")
@@ -403,7 +417,11 @@ For discovered MCP tools, use the x402 MCP client to call the tool after paying:
     // Discover MCP tools from the Bazaar
     const mcpItems = await client.extensions.bazaar.listResources({ type: "mcp" });
     const selectedTool = mcpItems.items[0];
-    const { toolName } = selectedTool.discoveryInfo.input;
+    const bazaar = selectedTool.extensions?.bazaar as {
+      info?: { input?: { toolName?: string } }
+    } | undefined;
+    const toolName = bazaar?.info?.input?.toolName;
+    if (!toolName) throw new Error("Selected MCP resource is missing a toolName");
 
     // Connect the x402 MCP client to the tool's server
     const x402Mcp = createx402MCPClient({
@@ -447,6 +465,85 @@ This means `/users/123`, `/users/456`, and `/users/789` all map to the same cata
 
 **Note:** Wildcard segments (`*`) are automatically converted to named parameters (`:var1`, `:var2`, etc.) for catalog normalization.
 
+#### Service Metadata
+
+Resource servers can publish provider-level metadata on the **`resource` object** of the 402 response. Facilitators use these fields to enrich Bazaar search results with a human-readable name, topical tags, and an icon — no out-of-band admin step required.
+
+All three fields are optional. Servers that omit them produce byte-identical 402 responses; clients that don't recognize them ignore them.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `serviceName` | string | Human-readable name for the service (≤ 32 printable ASCII characters). |
+| `tags` | string[] | Up to 5 short topical tags (each ≤ 32 printable ASCII characters). Used for facilitator-side filtering and search. |
+| `iconUrl` | string | Absolute `https://` or `http://` URL to an icon image representing the service (≤ 2048 characters). |
+
+These fields are set on the `resource` object in your route configuration, alongside `description` and `mimeType`:
+
+<Tabs>
+  <Tab title="TypeScript">
+    ```typescript
+    const routes = {
+      "GET /weather": {
+        price: "$0.001",
+        network: "eip155:8453",
+        payTo: "0xYourAddress",
+        resource: {
+          url: "https://api.example.com/weather",
+          description: "Get real-time weather data",
+          mimeType: "application/json",
+          serviceName: "Example Weather",
+          tags: ["weather", "forecast"],
+          iconUrl: "https://api.example.com/icon.png",
+        },
+        extensions: { bazaar: { ... } },
+      },
+    };
+    ```
+  </Tab>
+  <Tab title="Python">
+    ```python
+    from x402.schemas.payments import ResourceInfo
+
+    routes: dict[str, RouteConfig] = {
+        "GET /weather": RouteConfig(
+            accepts=[...],
+            resource=ResourceInfo(
+                url="https://api.example.com/weather",
+                description="Get real-time weather data",
+                mime_type="application/json",
+                service_name="Example Weather",
+                tags=["weather", "forecast"],
+                icon_url="https://api.example.com/icon.png",
+            ),
+            extensions={"bazaar": {...}},
+        ),
+    }
+    ```
+  </Tab>
+  <Tab title="Go">
+    ```go
+    routes := x402http.RoutesConfig{
+        "GET /weather": {
+            Accepts: x402http.PaymentOptions{{...}},
+            Resource: &types.ResourceInfo{
+                URL:         "https://api.example.com/weather",
+                Description: "Get real-time weather data",
+                MimeType:    "application/json",
+                ServiceName: "Example Weather",
+                Tags:        []string{"weather", "forecast"},
+                IconURL:     "https://api.example.com/icon.png",
+            },
+            Extensions: map[string]interface{}{
+                types.BAZAAR: discoveryExtension,
+            },
+        },
+    }
+    ```
+  </Tab>
+</Tabs>
+
+**Validation rules:** Facilitators apply soft-drop rules — a field that fails validation is silently discarded while the rest of the metadata is preserved. `serviceName` and `tags` are restricted to printable ASCII (U+0020–U+007E) so that string-length checks are consistent across TypeScript, Python, and Go. `iconUrl` must be an absolute `http://` or `https://` URL with no IP literals or loopback hostnames (SSRF defense).
+
 #### Adding Metadata
 
 To enhance your listing with descriptions and schemas, include them when setting up your x402 middleware. **You should include descriptions for each parameter to make it clear for agents to call your endpoints**:
@@ -457,7 +554,7 @@ To enhance your listing with descriptions and schemas, include them when setting
     import { paymentMiddleware } from "@x402/express";
     import { x402ResourceServer, HTTPFacilitatorClient } from "@x402/core/server";
     import { ExactEvmScheme } from "@x402/evm/exact/server";
-    import { bazaarResourceServerExtension } from "@x402/extensions";
+    import { declareDiscoveryExtension } from "@x402/extensions/bazaar";
 
     const facilitatorClient = new HTTPFacilitatorClient({
       url: "https://x402.org/facilitator"
@@ -467,31 +564,44 @@ To enhance your listing with descriptions and schemas, include them when setting
 
     const routes = {
       "GET /weather": {
-        price: "$0.001",
-        network: "eip155:8453",
-        resource: "0xYourAddress",
+        accepts: {
+          scheme: "exact",
+          price: "$0.001",
+          network: "eip155:8453",
+          payTo: "0xYourAddress",
+        },
         description: "Get current weather data for any location",
+        mimeType: "application/json",
         extensions: {
-          bazaar: {
-            discoverable: true,
+          ...declareDiscoveryExtension({
+            input: { location: "San Francisco" },
             inputSchema: {
-              queryParams: {
+              properties: {
                 location: {
                   type: "string",
-                  description: "City name or coordinates",
-                  required: true
+                  description: "City name or coordinates"
+                }
+              },
+              required: ["location"]
+            },
+            output: {
+              example: {
+                location: "San Francisco",
+                temperature: 70,
+                conditions: "sunny",
+                humidity: 45
+              },
+              schema: {
+                type: "object",
+                properties: {
+                  location: { type: "string" },
+                  temperature: { type: "number" },
+                  conditions: { type: "string" },
+                  humidity: { type: "number" }
                 }
               }
-            },
-            outputSchema: {
-              type: "object",
-              properties: {
-                temperature: { type: "number" },
-                conditions: { type: "string" },
-                humidity: { type: "number" }
-              }
             }
-          }
+          })
         }
       }
     };
@@ -503,6 +613,7 @@ To enhance your listing with descriptions and schemas, include them when setting
     ```python
     from fastapi import FastAPI
 
+    from x402.extensions.bazaar import OutputConfig, declare_discovery_extension
     from x402.http import FacilitatorConfig, HTTPFacilitatorClient, PaymentOption
     from x402.http.middleware.fastapi import PaymentMiddlewareASGI
     from x402.http.types import RouteConfig
@@ -511,7 +622,6 @@ To enhance your listing with descriptions and schemas, include them when setting
 
     app = FastAPI()
 
-    # Create facilitator client (CDP mainnet)
     facilitator = HTTPFacilitatorClient(
         FacilitatorConfig(url="https://x402.org/facilitator")
     )
@@ -533,28 +643,35 @@ To enhance your listing with descriptions and schemas, include them when setting
             ],
             mime_type="application/json",
             description="Get current weather data for any location",
-            extensions={
-                "bazaar": {
-                    "discoverable": True,
-                    "inputSchema": {
-                        "queryParams": {
-                            "location": {
-                                "type": "string",
-                                "description": "City name or coordinates",
-                                "required": True,
-                            }
+            extensions=declare_discovery_extension(
+                input={"location": "San Francisco"},
+                input_schema={
+                    "properties": {
+                        "location": {
+                            "type": "string",
+                            "description": "City name or coordinates",
                         }
                     },
-                    "outputSchema": {
+                    "required": ["location"],
+                },
+                output=OutputConfig(
+                    example={
+                        "location": "San Francisco",
+                        "temperature": 70,
+                        "conditions": "sunny",
+                        "humidity": 45,
+                    },
+                    schema={
                         "type": "object",
                         "properties": {
+                            "location": {"type": "string"},
                             "temperature": {"type": "number"},
                             "conditions": {"type": "string"},
                             "humidity": {"type": "number"},
                         },
                     },
-                }
-            },
+                ),
+            ),
         ),
     }
 
@@ -597,8 +714,16 @@ To enhance your listing with descriptions and schemas, include them when setting
             },
             "",
             &types.OutputConfig{
+                Example: map[string]interface{}{
+                    "location":    "San Francisco",
+                    "temperature": 70,
+                    "conditions":  "sunny",
+                    "humidity":    45,
+                },
                 Schema: types.JSONSchema{
+                    "type": "object",
                     "properties": map[string]interface{}{
+                        "location":    map[string]interface{}{"type": "string"},
                         "temperature": map[string]interface{}{"type": "number"},
                         "conditions":  map[string]interface{}{"type": "string"},
                         "humidity":    map[string]interface{}{"type": "number"},
@@ -752,10 +877,6 @@ To make paid MCP tools discoverable, pass the discovery extension in your paymen
   </Tab>
 </Tabs>
 
-### Coming Soon
-
-The x402 Bazaar is rapidly evolving, and your feedback helps us prioritize features.
-
 ### Support
 
 * **GitHub**: [github.com/x402-foundation/x402](https://github.com/x402-foundation/x402)
@@ -779,4 +900,4 @@ A: Currently Base (`eip155:8453`), Base Sepolia (`eip155:84532`), Solana (`solan
 A: No, only x402-compatible endpoints can be listed. See our [Quickstart for Sellers](/getting-started/quickstart-for-sellers) to make your API x402-compatible.
 
 **Q: What are MCP tools and how do they work with Bazaar?**
-A: MCP (Model Context Protocol) tools are AI-agent-friendly interfaces that can be discovered and paid for through x402. When listing an MCP tool, include `type: "mcp"` in the bazaar extension along with the tool name and input schema. The unique identifier for MCP tools is the combination of the resource URL and tool name, since multiple tools can be served from a single MCP endpoint.
+A: MCP (Model Context Protocol) tools are AI-agent-friendly interfaces that can be discovered and paid for through x402. When listing an MCP tool, use the MCP Bazaar discovery helper and include the tool name (`toolName`) and input schema. The unique identifier for MCP tools is the combination of the resource URL and tool name, since multiple tools can be served from a single MCP endpoint.

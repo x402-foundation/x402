@@ -1,4 +1,5 @@
 import type { MetadataRoute } from "next";
+import { writingPosts } from "./writing/posts";
 
 /**
  * Generates the sitemap.xml for x402.org.
@@ -20,11 +21,17 @@ export default function sitemap(): MetadataRoute.Sitemap {
       priority: 0.8,
     },
     {
-      url: "https://x402.org/writing/x402-v2-launch",
-      lastModified: new Date("2026-04-23"),
-      changeFrequency: "monthly",
-      priority: 0.7,
+      url: "https://x402.org/writing",
+      lastModified: new Date("2026-05-11"),
+      changeFrequency: "weekly",
+      priority: 0.75,
     },
+    ...writingPosts.map(post => ({
+      url: `https://x402.org/writing/${post.slug}`,
+      lastModified: new Date(post.sortDate),
+      changeFrequency: "monthly" as const,
+      priority: 0.7,
+    })),
     {
       url: "https://x402.org/protected",
       lastModified: new Date("2026-04-23"),

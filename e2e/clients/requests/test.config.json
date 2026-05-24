@@ -4,7 +4,8 @@
   "language": "python",
   "protocolFamilies": [
     "evm",
-    "svm"
+    "svm",
+    "tvm"
   ],
   "x402Versions": [
     1,
@@ -12,7 +13,8 @@
   ],
   "schemes": [
     "exact",
-    "upto"
+    "upto",
+    "batch-settlement"
   ],
   "evm": {
     "assetTransferMethods": [
@@ -33,7 +35,17 @@
     "optional": [
       "EVM_PRIVATE_KEY",
       "SVM_PRIVATE_KEY",
-      "EVM_RPC_URL"
+      "TVM_PRIVATE_KEY",
+      "EVM_RPC_URL",
+      "TVM_NETWORK",
+      "TVM_PROVIDER",
+      "TONCENTER_API_KEY",
+      "TONCENTER_BASE_URL",
+      "TONAPI_API_KEY",
+      "TONAPI_BASE_URL",
+      "CHANNEL_SALT",
+      "EVM_VOUCHER_SIGNER_PRIVATE_KEY",
+      "BATCH_SETTLEMENT_PHASE"
     ]
   }
 }

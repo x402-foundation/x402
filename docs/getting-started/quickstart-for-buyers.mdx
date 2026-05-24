@@ -500,73 +500,14 @@ You can register multiple payment schemes to handle different networks:
   </Tab>
 </Tabs>
 
-### Supporting the Upto Scheme
+### Payment Schemes
 
-If you need to interact with services that use the `upto` payment scheme (usage-based billing), register the `UptoEvmScheme` alongside your existing exact schemes. The upto scheme is transparent to the buyer -- the SDK handles the max-authorization signing automatically, and you are only charged the actual settled amount (which may be less than the authorized maximum).
+The examples above use the simplest fixed-price scheme. If a resource advertises a different scheme in its 402 response, register that scheme for the same network namespace:
 
-<Tabs>
-  <Tab title="TypeScript">
-    ```typescript
-    import { x402Client } from "@x402/core/client";
-    import { ExactEvmScheme } from "@x402/evm/exact/client";
-    import { UptoEvmScheme } from "@x402/evm/upto/client";
-    import { privateKeyToAccount } from "viem/accounts";
+* [`exact`](/schemes/exact): fixed-price payments.
+* [`upto`](/schemes/upto): usage-based payments where you authorize a maximum and the seller charges actual usage.
+* [`batch-settlement`](/schemes/batch-settlement): high-volume payments where the client deposits into escrow, signs off-chain vouchers, and the seller claims value onchain in batches.
 
-    const signer = privateKeyToAccount(process.env.EVM_PRIVATE_KEY as `0x${string}`);
-
-    const client = new x402Client();
-    client.register("eip155:*", new ExactEvmScheme(signer));
-    client.register("eip155:*", new UptoEvmScheme(signer));
-    ```
-  </Tab>
-  <Tab title="Go">
-    ```go
-    import (
-        x402 "github.com/x402-foundation/x402/go"
-        exactevm "github.com/x402-foundation/x402/go/mechanisms/evm/exact/client"
-        uptoevm "github.com/x402-foundation/x402/go/mechanisms/evm/upto/client"
-        evmsigners "github.com/x402-foundation/x402/go/signers/evm"
-    )
-
-    evmSigner, _ := evmsigners.NewClientSignerFromPrivateKey(os.Getenv("EVM_PRIVATE_KEY"))
-
-    x402Client := x402.Newx402Client().
-        Register("eip155:*", exactevm.NewExactEvmScheme(evmSigner)).
-        Register("eip155:*", uptoevm.NewUptoEvmScheme(evmSigner))
-    ```
-  </Tab>
-  <Tab title="Python">
-    ```python
-    import asyncio
-    import os
-    from eth_account import Account
-
-    from x402 import x402Client
-    from x402.http.clients import x402HttpxClient
-    from x402.mechanisms.evm import EthAccountSigner
-    from x402.mechanisms.evm.exact.register import register_exact_evm_client
-    from x402.mechanisms.evm.upto.client import UptoEvmScheme
-
-
-    async def main() -> None:
-        account = Account.from_key(os.getenv("EVM_PRIVATE_KEY"))
-        signer = EthAccountSigner(account)
-
-        client = x402Client()
-        register_exact_evm_client(client, signer)
-        client.register("eip155:*", UptoEvmScheme(signer))
-
-        async with x402HttpxClient(client) as http:
-            response = await http.get("https://api.example.com/paid-endpoint")
-            print(f"Response: {response.text}")
-
-
-    asyncio.run(main())
-    ```
-  </Tab>
-</Tabs>
-
-**Note:** The `upto` scheme is currently available on EVM networks only. When registered, the SDK automatically selects the correct scheme based on what the server advertises in its 402 response.
 
 ### 4. Discover Available Services (Optional)
 
@@ -620,7 +561,7 @@ try {
 
 * Install x402 client packages (`@x402/fetch` or `@x402/axios`) and mechanism packages (`@x402/evm`, `@x402/svm`, `@x402/aptos`)
 * Create a wallet signer
-* Create an `x402Client` and register payment schemes (`exact` for fixed-price, `upto` for usage-based billing)
+* Create an `x402Client` and register payment schemes (`exact` for fixed-price, `upto` for usage-based billing, `batch-settlement` for batched EVM micropayments when the server advertises it)
 * Use the provided wrapper/interceptor to make paid API requests
 * (Optional) Use the x402 Bazaar to discover services dynamically
 * Payment flows are handled automatically for you -- including `upto` where you only pay the actual usage

@@ -323,8 +323,59 @@ describe("wrapAxiosWithPayment()", () => {
     await interceptor(error);
 
     const retryConfig = (mockAxiosClient.request as ReturnType<typeof vi.fn>).mock.calls[0][0];
-    expect(retryConfig.headers.get("Access-Control-Expose-Headers")).toBe(
+    expect(retryConfig.headers["Access-Control-Expose-Headers"]).toBe(
       "PAYMENT-RESPONSE,X-PAYMENT-RESPONSE",
+    );
+  });
+
+  it("should clone retry headers into a serializable record", async () => {
+    /**
+     * Minimal axios-like headers object with a Map-backed set and JSON serialization.
+     */
+    class CallerAxiosHeaders {
+      private readonly values = new Map<string, string>();
+
+      /**
+       * Stores a header name/value pair.
+       *
+       * @param key - Header name
+       * @param value - Header value
+       */
+      set(key: string, value: string): void {
+        this.values.set(key, value);
+      }
+
+      /**
+       * Returns headers as a plain object for JSON-style cloning.
+       *
+       * @returns Header entries as a string record
+       */
+      toJSON(): Record<string, string> {
+        return Object.fromEntries(this.values);
+      }
+    }
+
+    const successResponse = { data: "success" } as AxiosResponse;
+    const config = createErrorConfig();
+    const callerHeaders = new CallerAxiosHeaders();
+    callerHeaders.set("Accept", "application/json");
+    config.headers = callerHeaders as unknown as InternalAxiosRequestConfig["headers"];
+    (mockAxiosClient.request as ReturnType<typeof vi.fn>).mockResolvedValue(successResponse);
+
+    const error = createAxiosError(402, config, validPaymentRequired);
+    await interceptor(error);
+
+    const retryConfig = (mockAxiosClient.request as ReturnType<typeof vi.fn>).mock.calls[0][0];
+    expect(retryConfig.headers).not.toBeInstanceOf(CallerAxiosHeaders);
+    expect(retryConfig.headers).not.toBe(callerHeaders);
+    expect(retryConfig.headers).toEqual(
+      expect.objectContaining({
+        Accept: "application/json",
+        "PAYMENT-SIGNATURE": "encoded-payment-header",
+      }),
+    );
+    expect(Object.values(retryConfig.headers).some(value => typeof value === "function")).toBe(
+      false,
     );
   });
 
@@ -436,8 +487,8 @@ describe("wrapAxiosWithPayment()", () => {
     const hookConfig = (mockAxiosClient.request as ReturnType<typeof vi.fn>).mock.calls[0][0];
     const paidConfig = (mockAxiosClient.request as ReturnType<typeof vi.fn>).mock.calls[1][0];
     expect(hookConfig.validateStatus(402)).toBe(true);
-    expect(hookConfig.headers.get("X-HOOK")).toBe("handled");
-    expect(paidConfig.headers.get("PAYMENT-SIGNATURE")).toBe("encoded-payment-header");
+    expect(hookConfig.headers["X-HOOK"]).toBe("handled");
+    expect(paidConfig.headers["PAYMENT-SIGNATURE"]).toBe("encoded-payment-header");
     expect(mockClient.createPaymentPayload).toHaveBeenCalledWith(validPaymentRequired);
   });
 });

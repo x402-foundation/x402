@@ -15,9 +15,10 @@ uv add x402[requests]   # requests client
 uv add x402[fastapi]    # FastAPI middleware
 uv add x402[flask]      # Flask middleware
 
-# Blockchain mechanisms (pick one or both)
+# Blockchain mechanisms (pick one or more)
 uv add x402[evm]        # EVM/Ethereum
 uv add x402[svm]        # Solana
+uv add x402[tvm]        # TON/TVM
 
 # Multiple extras
 uv add x402[fastapi,httpx,evm]
@@ -51,6 +52,34 @@ client = x402ClientSync()
 client.register("eip155:*", ExactEvmScheme(signer=my_signer))
 
 payload = client.create_payment_payload(payment_required)
+```
+
+### TVM Client (Async)
+
+```python
+import os
+
+from x402 import x402Client
+from x402.mechanisms.tvm import (
+    TVM_PROVIDER_TONAPI,
+    TVM_TESTNET,
+    WalletV5R1Config,
+    WalletV5R1MnemonicSigner,
+)
+from x402.mechanisms.tvm.exact import ExactTvmScheme
+
+tvm_config = WalletV5R1Config.from_private_key(
+    TVM_TESTNET,
+    os.environ["TVM_PRIVATE_KEY"],
+)
+tvm_config.api_key = os.environ.get("TONCENTER_API_KEY")
+# Optional: use TonAPI instead of Toncenter.
+# tvm_config.provider = TVM_PROVIDER_TONAPI
+# tvm_config.api_key = os.environ.get("TONAPI_API_KEY")
+# tvm_config.provider_base_url = os.environ.get("TONAPI_BASE_URL")
+
+client = x402Client()
+client.register(TVM_TESTNET, ExactTvmScheme(WalletV5R1MnemonicSigner(tvm_config)))
 ```
 
 ### Server (Async)
@@ -153,11 +182,16 @@ Use `from_config()` for declarative setup:
 
 ```python
 from x402 import x402Client, x402ClientConfig, SchemeRegistration
+from x402 import prefer_network
+from x402.mechanisms.evm.exact import ExactEvmScheme
+from x402.mechanisms.svm.exact import ExactSvmScheme
+from x402.mechanisms.tvm.exact import ExactTvmScheme
 
 config = x402ClientConfig(
     schemes=[
         SchemeRegistration(network="eip155:*", client=ExactEvmScheme(signer)),
         SchemeRegistration(network="solana:*", client=ExactSvmScheme(signer)),
+        SchemeRegistration(network="tvm:*", client=ExactTvmScheme(tvm_signer)),
     ],
     policies=[prefer_network("eip155:8453")],
 )
@@ -256,6 +290,7 @@ client.register("eip155:8453", CustomScheme())
 - `x402.http` - HTTP clients, middleware, and facilitator client
 - `x402.mechanisms.evm` - EVM/Ethereum implementation
 - `x402.mechanisms.svm` - Solana implementation
+- `x402.mechanisms.tvm` - TON/TVM implementation
 - `x402.extensions` - Protocol extensions (Bazaar discovery)
 
 ## Examples

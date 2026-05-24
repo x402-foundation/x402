@@ -48,11 +48,11 @@ pnpm test
 ```
 
 Launches an interactive CLI where you can select:
-- **Facilitators** - Payment verification/settlement services (Go, TypeScript)
+- **Facilitators** - Payment verification/settlement services (Go, TypeScript, Python)
 - **Servers** - Protected endpoints requiring payment (Express, Gin, Hono, Next.js, FastAPI, Flask, etc.)
 - **Clients** - Payment-capable HTTP clients (axios, fetch, httpx, requests, etc.)
 - **Extensions** - Additional features like Bazaar discovery
-- **Protocols** - EVM, SVM, Aptos, and/or Hedera networks
+- **Protocols** - EVM, SVM, Aptos, Hedera, Stellar, and/or TVM networks
 - **Payment schemes** (when multiple apply) - `exact`, `upto`, or `batch-settlement`
 
 Every valid combination of your selections will be tested. For example, selecting 2 facilitators, 3 servers, and 2 clients will generate and run all compatible test scenarios.
@@ -118,6 +118,7 @@ CLIENT_APTOS_PRIVATE_KEY=...        # Aptos private key for client payments (hex
 CLIENT_HEDERA_ACCOUNT_ID=0.0....    # Hedera account id for client payments
 CLIENT_HEDERA_PRIVATE_KEY=0x...     # Hedera ECDSA private key for client payments
 CLIENT_STELLAR_PRIVATE_KEY=...      # Stellar private key for client payments
+CLIENT_TVM_PRIVATE_KEY=...          # TVM private key for client payments
 
 # Server payment addresses
 SERVER_EVM_ADDRESS=0x...            # Where servers receive EVM payments
@@ -125,6 +126,7 @@ SERVER_SVM_ADDRESS=...              # Where servers receive Solana payments
 SERVER_APTOS_ADDRESS=0x...          # Where servers receive Aptos payments
 SERVER_HEDERA_ADDRESS=0.0....       # Where servers receive Hedera payments
 SERVER_STELLAR_ADDRESS=...          # Where servers receive Stellar payments
+SERVER_TVM_ADDRESS=...              # Where servers receive TVM payments
 
 # Facilitator wallets (⚠️ TEST WALLETS ONLY — used to fund/drain client between tests)
 FACILITATOR_EVM_PRIVATE_KEY=0x...   # EVM private key for facilitator
@@ -133,6 +135,22 @@ FACILITATOR_APTOS_PRIVATE_KEY=...   # Aptos private key for facilitator (hex str
 FACILITATOR_HEDERA_ACCOUNT_ID=0.0... # Hedera fee payer account id for facilitator
 FACILITATOR_HEDERA_PRIVATE_KEY=0x... # Hedera ECDSA private key for facilitator
 FACILITATOR_STELLAR_PRIVATE_KEY=... # Stellar private key for facilitator
+FACILITATOR_TVM_PRIVATE_KEY=...     # TVM private key for facilitator
+
+# TVM support
+TVM_PROVIDER=tonapi                 # Optional: toncenter (default) or tonapi
+TONAPI_API_KEY=...                  # Required when TVM_PROVIDER=tonapi
+TONAPI_BASE_URL=...                 # Optional custom TonAPI base URL
+TONCENTER_API_KEY=...               # Recommended when TVM_PROVIDER=toncenter
+```
+
+To run Python SDK TVM e2e scenarios through TonAPI instead of Toncenter:
+
+```bash
+cd e2e
+TVM_PROVIDER=tonapi \
+TONAPI_API_KEY=<tonapi-key> \
+pnpm test --testnet --families=tvm --facilitators=python --clients=httpx,requests --servers=fastapi,flask --min -v
 ```
 
 Optional environment variables (batch-settlement scheme):
@@ -154,6 +172,12 @@ You need **three separate Stellar accounts** for e2e tests (client, server, faci
 3. Get testnet USDC from [Circle Faucet](https://faucet.circle.com/) (select Stellar network).
 
 > **Note:** The facilitator account only needs XLM (step 1). Client and server accounts need all three steps.
+##### TON testnet funding for TVM e2e and examples
+
+- **Testnet TON**: use [@testgiver_ton_bot](https://t.me/testgiver_ton_bot) to fund the facilitator and payer wallets with TON for relay fees. The facilitator wallet must hold **at least 1.1 TON** before running tests.
+- **Testnet USDT**: the payer wallet also needs testnet USDT. Open the [TON transfer link](https://app.tonkeeper.com/transfer/kQDNUDJC0iQvJoZp0ml-YteL1NtTXKphU03CTI5v4VtBhGYs?amount=49000000&bin=te6cckEBAQEAFgAAKClXdJkAAAAAAAAAAAAAAAAAmJaAhDUekg) or scan the QR code below to get them. The facilitator wallet only needs TON.
+- **Note:** the facilitator uses a highload-wallet-v3 account, so the facilitator's wallet address differs from your W5 address — fund the highload-v3 address, not the W5 one derived from the same key.
+  <img width="228" height="228" alt="QR code for the testnet USDT transfer link" src="https://github.com/user-attachments/assets/da09ad03-388d-4960-88bf-afbacf4a7c65" />
 
 ## Example Session
 
@@ -167,7 +191,7 @@ $ pnpm test --min
 ✔ Select servers › express, hono, legacy-express
 ✔ Select clients › axios, fetch, httpx
 ✔ Select extensions › bazaar
-✔ Select protocol families › EVM, SVM, Aptos, Hedera, Stellar
+✔ Select protocol families › EVM, SVM, Aptos, Hedera, Stellar, TVM
 
 📊 Coverage-Based Minimization
 Total scenarios: 156

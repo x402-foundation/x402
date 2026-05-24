@@ -30,7 +30,7 @@ const nextConfig: NextConfig = {
           {
             key: "Link",
             value:
-              '</.well-known/api-catalog>; rel="api-catalog", </writing/x402-v2-launch>; rel="service-doc", </protected>; rel="payment-required"',
+              '</.well-known/api-catalog>; rel="api-catalog", </writing>; rel="service-doc", </protected>; rel="payment-required"',
           },
           {
             key: "X-X402-Supported",

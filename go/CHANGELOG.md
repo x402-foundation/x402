@@ -1,3 +1,19 @@
+## v2.12.0 - 2026-05-22
+### Added
+- Add HPP mainnet (chain ID 190415) and HPP Sepolia (chain ID 181228) support with USDC.e (Bridged USDC) as the default stablecoin
+- Add ADI Chain (chain ID 36900) support with USDC.e as the default stablecoin
+- Add a curated testnet faucet map to the paywall plus PaywallConfig.FaucetURLs (per-chain override keyed by CAIP-2). Unmapped chains render "No faucet configured." instead of a fallback link.
+- Added checks for 0 amount to settle/refund for batch-settlement
+### Fixed
+- unwrap ERC-6492 signatures for exact/upto permit2 flows and batch-settlement
+
+## v2.11.0 - 2026-05-11
+### Added
+- Add Radius Network (chain ID 723487) and Radius Testnet (chain ID 72344) support with SBC as the default stablecoin
+- Log the EXTENSION-RESPONSES header from facilitator verify/settle responses; the HTTP facilitator client decodes the header and logs allowlisted fields (status, rejectedReason, reason, code) without attaching data to VerifyResponse or SettleResponse
+- Bazaar service metadata fields (`serviceName`, `tags`, `iconUrl`) on `types.ResourceInfo`, plus `isValidServiceName` / `sanitizeTags` / `isValidIconUrl` / `sanitizeResourceServiceMetadata` helpers in `extensions/bazaar` that facilitator extraction now applies with soft-drop semantics.
+- Added batch-settlement evm mechanism
+
 ## v2.10.0 - 2026-04-27
 ### Fixed
 - MCP payload extraction failing with no method set

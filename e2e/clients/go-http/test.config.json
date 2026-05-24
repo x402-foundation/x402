@@ -12,7 +12,8 @@
   ],
   "schemes": [
     "exact",
-    "upto"
+    "upto",
+    "batch-settlement"
   ],
   "evm": {
     "assetTransferMethods": [
@@ -32,7 +33,10 @@
       "ENDPOINT_PATH"
     ],
     "optional": [
-      "EVM_RPC_URL"
+      "EVM_RPC_URL",
+      "CHANNEL_SALT",
+      "BATCH_SETTLEMENT_PHASE",
+      "EVM_VOUCHER_SIGNER_PRIVATE_KEY"
     ]
   }
 }

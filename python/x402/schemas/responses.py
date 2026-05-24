@@ -36,6 +36,8 @@ class VerifyResponse(BaseX402Model):
     invalid_reason: str | None = None
     invalid_message: str | None = None
     payer: str | None = None
+    extensions: dict[str, Any] | None = None
+    extra: dict[str, Any] | None = None
 
 
 class SettleRequest(BaseX402Model):
@@ -62,6 +64,7 @@ class SettleResponse(BaseX402Model):
         payer: The payer's address.
         transaction: Transaction hash/identifier.
         network: Network where settlement occurred.
+        amount: Settled amount in atomic units.
     """
 
     success: bool
@@ -71,6 +74,8 @@ class SettleResponse(BaseX402Model):
     transaction: str
     network: Network
     amount: str | None = None
+    extensions: dict[str, Any] | None = None
+    extra: dict[str, Any] | None = None
 
 
 class SupportedKind(BaseX402Model):

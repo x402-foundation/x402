@@ -289,11 +289,51 @@ func handlePaymentVerified(w http.ResponseWriter, r *http.Request, next http.Han
 		r = r.WithContext(context.WithValue(r.Context(), requirementsContextKey, result.PaymentRequirements)) //nolint:contextcheck // context is derived from r.Context()
 	}
 
-	// Call downstream handler with captured writer
-	next.ServeHTTP(capture, r)
+	// SkipHandler directive: bypass downstream handler, settle inline using the
+	// directive body. Used for refund acknowledgements where there is no resource
+	// response to return.
+	if result.SkipHandler != nil {
+		contentType := result.SkipHandler.ContentType
+		if contentType == "" {
+			contentType = "application/json"
+		}
+		bodyBytes, err := json.Marshal(result.SkipHandler.Body)
+		if err != nil {
+			bodyBytes = []byte("{}")
+		}
+		capture.Header().Set("Content-Type", contentType)
+		capture.statusCode = http.StatusOK
+		capture.written = true
+		_, _ = capture.body.Write(bodyBytes)
+	} else {
+		func() {
+			defer func() {
+				if rec := recover(); rec != nil {
+					if result.CancellationDispatcher != nil {
+						err, ok := rec.(error)
+						if !ok {
+							err = fmt.Errorf("%v", rec)
+						}
+						result.CancellationDispatcher.Cancel(x402.VerifiedPaymentCancelOptions{
+							Reason: x402.CancellationReasonHandlerThrew,
+							Err:    err,
+						})
+					}
+					panic(rec)
+				}
+			}()
+			next.ServeHTTP(capture, r)
+		}()
+	}
 
 	// Don't settle if response failed
 	if capture.statusCode >= 400 {
+		if result.CancellationDispatcher != nil {
+			result.CancellationDispatcher.Cancel(x402.VerifiedPaymentCancelOptions{
+				Reason:         x402.CancellationReasonHandlerFailed,
+				ResponseStatus: capture.statusCode,
+			})
+		}
 		w.WriteHeader(capture.statusCode)
 		_, _ = w.Write(capture.body.Bytes())
 		return
@@ -309,6 +349,7 @@ func handlePaymentVerified(w http.ResponseWriter, r *http.Request, next http.Han
 			ResponseBody:    capture.body.Bytes(),
 			ResponseHeaders: capture.Header(),
 		},
+		result.DeclaredExtensions,
 	)
 
 	if !settleResult.Success {

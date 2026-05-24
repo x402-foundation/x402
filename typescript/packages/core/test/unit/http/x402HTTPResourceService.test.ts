@@ -630,6 +630,118 @@ describe("x402HTTPResourceServer", () => {
         expect(httpServer.requiresPayment(context)).toBe(true);
       });
     });
+
+    describe("encoded path separators", () => {
+      it("should require payment when an encoded slash hides inside a :param segment", async () => {
+        const routes = {
+          "/api/report/:id": {
+            accepts: {
+              scheme: "exact",
+              payTo: "0xabc",
+              price: "$1.00" as Price,
+              network: "eip155:8453" as Network,
+            },
+          },
+        };
+
+        const httpServer = new x402HTTPResourceServer(ResourceServer, routes);
+
+        const adapter = new MockHTTPAdapter();
+        const context: HTTPRequestContext = {
+          adapter,
+          path: "/api/report/a%2Fb",
+          method: "GET",
+        };
+
+        const result = await httpServer.processHTTPRequest(context);
+
+        expect(result.type).toBe("payment-error");
+      });
+
+      it("should require payment for lowercase %2f as well", async () => {
+        const routes = {
+          "/api/report/:id": {
+            accepts: {
+              scheme: "exact",
+              payTo: "0xabc",
+              price: "$1.00" as Price,
+              network: "eip155:8453" as Network,
+            },
+          },
+        };
+
+        const httpServer = new x402HTTPResourceServer(ResourceServer, routes);
+
+        const adapter = new MockHTTPAdapter();
+        const context: HTTPRequestContext = {
+          adapter,
+          path: "/api/report/a%2fb",
+          method: "GET",
+        };
+
+        const result = await httpServer.processHTTPRequest(context);
+
+        expect(result.type).toBe("payment-error");
+      });
+
+      it.each([
+        ["uppercase %5C", "/api/report/a%5Cb"],
+        ["lowercase %5c", "/api/report/a%5cb"],
+      ])(
+        "should require payment when an encoded backslash hides inside a :param segment (%s)",
+        async (_, path) => {
+          const routes = {
+            "/api/report/:id": {
+              accepts: {
+                scheme: "exact",
+                payTo: "0xabc",
+                price: "$1.00" as Price,
+                network: "eip155:8453" as Network,
+              },
+            },
+          };
+
+          const httpServer = new x402HTTPResourceServer(ResourceServer, routes);
+
+          const adapter = new MockHTTPAdapter();
+          const context: HTTPRequestContext = {
+            adapter,
+            path,
+            method: "GET",
+          };
+
+          const result = await httpServer.processHTTPRequest(context);
+
+          expect(result.type).toBe("payment-error");
+        },
+      );
+
+      it("should still decode non-separator percent-escapes for non-ASCII route patterns", async () => {
+        const routes = {
+          "/api/categoría/:id": {
+            accepts: {
+              scheme: "exact",
+              payTo: "0xabc",
+              price: "$1.00" as Price,
+              network: "eip155:8453" as Network,
+            },
+          },
+        };
+
+        const httpServer = new x402HTTPResourceServer(ResourceServer, routes);
+
+        const adapter = new MockHTTPAdapter();
+        const context: HTTPRequestContext = {
+          adapter,
+          path: "/api/categor%C3%ADa/42",
+          method: "GET",
+        };
+
+        const result = await httpServer.processHTTPRequest(context);
+
+        expect(result.type).toBe("payment-error");
+      });
+    });
   });
 
   describe("Payment processing", () => {
@@ -1048,6 +1160,86 @@ describe("x402HTTPResourceServer", () => {
 
       expect(result.success).toBe(true);
       expect(mockFacilitator.settleCalls[0].requirements.amount).toBe("100000");
+    });
+  });
+
+  describe("Fallback paywall HTML", () => {
+    /**
+     * Render the fallback paywall HTML for a request whose URL contains the
+     * given attacker-controlled tail. Returns the raw response body string.
+     *
+     * @param attackerTail - Attacker-controlled portion of the URL/query string
+     * @param appName - Optional appName from paywall config (developer-controlled,
+     *   but treated as untrusted in multi-tenant deployments).
+     * @returns The HTML body returned by the fallback paywall
+     */
+    async function renderFallbackPaywallFor(
+      attackerTail: string,
+      appName?: string,
+    ): Promise<string> {
+      const routes = {
+        "/api/protected": {
+          accepts: {
+            scheme: "exact",
+            payTo: "0xabc",
+            price: "$1.00" as Price,
+            network: "eip155:8453" as Network,
+          },
+        },
+      };
+
+      const httpServer = new x402HTTPResourceServer(ResourceServer, routes);
+
+      const adapter = new MockHTTPAdapter();
+      adapter.getAcceptHeader = () => "text/html,application/xhtml+xml";
+      adapter.getUserAgent = () => "Mozilla/5.0";
+      adapter.getUrl = () => `https://example.com/api/protected${attackerTail}`;
+
+      const context: HTTPRequestContext = {
+        adapter,
+        path: "/api/protected",
+        method: "GET",
+      };
+
+      const result = await httpServer.processHTTPRequest(
+        context,
+        appName !== undefined ? { appName } : undefined,
+      );
+      if (result.type !== "payment-error" || !result.response.isHtml) {
+        throw new Error(`expected HTML payment-error, got ${JSON.stringify(result)}`);
+      }
+      return String(result.response.body);
+    }
+
+    it("does not reflect any portion of the request URL into the HTML", async () => {
+      const html = await renderFallbackPaywallFor(
+        "?token=ATTACKER_SENTINEL_8a7b6c&x='%3Cscript%3Ealert(1)%3C/script%3E",
+      );
+
+      expect(html).not.toContain("ATTACKER_SENTINEL_8a7b6c");
+      expect(html).not.toContain("<script>");
+      expect(html).not.toContain("alert(1)");
+      expect(html).not.toMatch(/'\s*onfocus/i);
+    });
+
+    it("does not reflect paywallConfig.appName into the HTML", async () => {
+      const html = await renderFallbackPaywallFor("", "TENANT_SENTINEL_x9y8z7\"' onerror=alert(1)");
+
+      expect(html).not.toContain("TENANT_SENTINEL_x9y8z7");
+      expect(html).not.toContain("onerror=alert");
+    });
+
+    it("does not emit a data-requirements attribute (no JSON reflection surface)", async () => {
+      const html = await renderFallbackPaywallFor("?q=anything");
+
+      expect(html).not.toContain("data-requirements");
+    });
+
+    it("still tells the developer to install @x402/paywall", async () => {
+      const html = await renderFallbackPaywallFor("");
+
+      expect(html).toContain("@x402/paywall");
+      expect(html).toMatch(/Payment Required/);
     });
   });
 

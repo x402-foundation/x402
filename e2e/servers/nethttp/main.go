@@ -17,6 +17,8 @@ import (
 	"github.com/x402-foundation/x402/go/extensions/types"
 	x402http "github.com/x402-foundation/x402/go/http"
 	nethttpmw "github.com/x402-foundation/x402/go/http/nethttp"
+	"github.com/x402-foundation/x402/go/mechanisms/evm/batch-settlement"
+	batchedserver "github.com/x402-foundation/x402/go/mechanisms/evm/batch-settlement/server"
 	exactevm "github.com/x402-foundation/x402/go/mechanisms/evm/exact/server"
 	uptoevm "github.com/x402-foundation/x402/go/mechanisms/evm/upto/server"
 	svm "github.com/x402-foundation/x402/go/mechanisms/svm/exact/server"
@@ -114,6 +116,24 @@ func main() {
 		fmt.Printf("Warning: Failed to create bazaar extension: %v\n", err)
 	}
 
+	// Batch-settlement scheme registration. Mirrors the TS express e2e server
+	// (no ChannelManager — settle actions are driven inline by the harness's
+	// BATCH_SETTLEMENT_PHASE flow). Optional self-managed receiver authorizer
+	// is wired through EVM_RECEIVER_AUTHORIZER_PRIVATE_KEY.
+	batchedCfg := &batchedserver.BatchSettlementEvmSchemeServerConfig{}
+	if authKey := os.Getenv("EVM_RECEIVER_AUTHORIZER_PRIVATE_KEY"); authKey != "" {
+		auth, err := newBatchedAuthorizerSigner(authKey)
+		if err != nil {
+			fmt.Printf("Failed to parse EVM_RECEIVER_AUTHORIZER_PRIVATE_KEY: %v\n", err)
+			os.Exit(1)
+		}
+		batchedCfg.ReceiverAuthorizerSigner = auth
+		fmt.Printf("Batch-settlement receiver authorizer (self-managed): %s\n", auth.Address())
+	} else {
+		fmt.Println("Batch-settlement receiver authorizer: facilitator-delegated")
+	}
+	batchedScheme := batchedserver.NewBatchSettlementEvmScheme(evmPayeeAddress, batchedCfg)
+
 	routes := x402http.RoutesConfig{
 		"GET /exact/evm/eip3009": {
 			Accepts: x402http.PaymentOptions{
@@ -127,6 +147,65 @@ func main() {
 			Extensions: map[string]interface{}{
 				types.BAZAAR.Key(): discoveryExtension,
 			},
+		},
+		"GET /batch-settlement/evm/eip3009": {
+			Accepts: x402http.PaymentOptions{
+				{
+					Scheme:  batchsettlement.SchemeBatched,
+					PayTo:   evmPayeeAddress,
+					Price:   "$0.001",
+					Network: evmNetwork,
+				},
+			},
+		},
+		"GET /batch-settlement/evm/permit2": {
+			Accepts: x402http.PaymentOptions{
+				{
+					Scheme:  batchsettlement.SchemeBatched,
+					PayTo:   evmPayeeAddress,
+					Network: evmNetwork,
+					Price: map[string]interface{}{
+						"amount": "1000",
+						"asset":  evmPermit2Asset,
+						"extra": map[string]interface{}{
+							"assetTransferMethod": "permit2",
+							"name":                "USDC",
+							"version":             "2",
+						},
+					},
+				},
+			},
+		},
+		"GET /batch-settlement/evm/permit2-eip2612GasSponsoring": {
+			Accepts: x402http.PaymentOptions{
+				{
+					Scheme:  batchsettlement.SchemeBatched,
+					PayTo:   evmPayeeAddress,
+					Network: evmNetwork,
+					Price:   "$0.001",
+					Extra: map[string]interface{}{
+						"assetTransferMethod": "permit2",
+					},
+				},
+			},
+			Extensions: eip2612gassponsor.DeclareEip2612GasSponsoringExtension(),
+		},
+		"GET /batch-settlement/evm/permit2-erc20ApprovalGasSponsoring": {
+			Accepts: x402http.PaymentOptions{
+				{
+					Scheme:  batchsettlement.SchemeBatched,
+					PayTo:   evmPayeeAddress,
+					Network: evmNetwork,
+					Price: map[string]interface{}{
+						"amount": "1000",
+						"asset":  evmPermit2Asset,
+						"extra": map[string]interface{}{
+							"assetTransferMethod": "permit2",
+						},
+					},
+				},
+			},
+			Extensions: erc20approvalgassponsor.DeclareExtension(),
 		},
 		"GET /exact/svm": {
 			Accepts: x402http.PaymentOptions{
@@ -347,6 +426,28 @@ func main() {
 		})
 	})
 
+	// Batch-settlement endpoints. Mirror express's batch-settlement routes:
+	// the harness drives deposit + voucher + recovery + refund inline via
+	// BATCH_SETTLEMENT_PHASE; the server only needs to register the scheme
+	// and respond once payment is verified.
+	batchHandler := func(method string) http.HandlerFunc {
+		return func(w http.ResponseWriter, r *http.Request) {
+			if shutdownRequested {
+				writeJSON(w, http.StatusServiceUnavailable, map[string]interface{}{"error": "Server shutting down"})
+				return
+			}
+			writeJSON(w, http.StatusOK, map[string]interface{}{
+				"message":   "Batch-settlement endpoint accessed successfully",
+				"timestamp": time.Now().Format(time.RFC3339),
+				"method":    method,
+			})
+		}
+	}
+	mux.HandleFunc("GET /batch-settlement/evm/eip3009", batchHandler("batch-settlement-eip3009"))
+	mux.HandleFunc("GET /batch-settlement/evm/permit2", batchHandler("batch-settlement-permit2"))
+	mux.HandleFunc("GET /batch-settlement/evm/permit2-eip2612GasSponsoring", batchHandler("batch-settlement-permit2-eip2612"))
+	mux.HandleFunc("GET /batch-settlement/evm/permit2-erc20ApprovalGasSponsoring", batchHandler("batch-settlement-permit2-erc20-approval"))
+
 	// Health check endpoint - no payment required
 	mux.HandleFunc("GET /health", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]interface{}{
@@ -382,6 +483,7 @@ func main() {
 		Schemes: []nethttpmw.SchemeConfig{
 			{Network: evmNetwork, Server: exactevm.NewExactEvmScheme()},
 			{Network: evmNetwork, Server: uptoevm.NewUptoEvmScheme()},
+			{Network: evmNetwork, Server: batchedScheme},
 			{Network: svmNetwork, Server: svm.NewExactSvmScheme()},
 		},
 		SyncFacilitatorOnStart: true,

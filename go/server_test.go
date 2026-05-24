@@ -345,6 +345,80 @@ func TestServerCreatePaymentRequiredResponse(t *testing.T) {
 	}
 }
 
+// stubEnricherScheme records EnrichPaymentRequiredResponse calls and mutates
+// the matching requirement's Extra to verify core wiring.
+type stubEnricherScheme struct {
+	calls           int
+	lastErrorReason string
+	lastPayload     *types.PaymentPayload
+}
+
+func (s *stubEnricherScheme) Scheme() string { return "stub-enricher" }
+func (s *stubEnricherScheme) ParsePrice(_ Price, _ Network) (AssetAmount, error) {
+	return AssetAmount{}, nil
+}
+func (s *stubEnricherScheme) EnhancePaymentRequirements(
+	_ context.Context,
+	r types.PaymentRequirements,
+	_ types.SupportedKind,
+	_ []string,
+) (types.PaymentRequirements, error) {
+	return r, nil
+}
+func (s *stubEnricherScheme) EnrichPaymentRequiredResponse(ctx PaymentRequiredContext) {
+	s.calls++
+	s.lastErrorReason = ctx.Error
+	s.lastPayload = ctx.PaymentPayload
+	for i := range ctx.Requirements {
+		if ctx.Requirements[i].Scheme != "stub-enricher" {
+			continue
+		}
+		if ctx.Requirements[i].Extra == nil {
+			ctx.Requirements[i].Extra = map[string]interface{}{}
+		}
+		ctx.Requirements[i].Extra["EnrichedBy"] = "stub-enricher"
+	}
+}
+
+func TestCreatePaymentRequiredResponse_InvokesEnricher(t *testing.T) {
+	server := Newx402ResourceServer()
+	enricher := &stubEnricherScheme{}
+	server.Register(Network("eip155:1"), enricher)
+
+	pp := &types.PaymentPayload{X402Version: 2}
+	requirements := []types.PaymentRequirements{
+		{Scheme: "stub-enricher", Network: "eip155:1", Asset: "USDC", Amount: "1"},
+	}
+	resp := server.CreatePaymentRequiredResponseWithPayload(
+		requirements, &types.ResourceInfo{URL: "https://x"}, "some_error", nil, pp,
+	)
+
+	if enricher.calls != 1 {
+		t.Fatalf("expected 1 enricher call, got %d", enricher.calls)
+	}
+	if enricher.lastErrorReason != "some_error" {
+		t.Fatalf("unexpected error reason: %q", enricher.lastErrorReason)
+	}
+	if enricher.lastPayload != pp {
+		t.Fatalf("expected payload to flow through")
+	}
+	if resp.Accepts[0].Extra["EnrichedBy"] != "stub-enricher" {
+		t.Fatalf("expected enrichment mutation, got %+v", resp.Accepts[0].Extra)
+	}
+}
+
+func TestCreatePaymentRequiredResponse_NoEnricherForUnknownScheme(t *testing.T) {
+	server := Newx402ResourceServer()
+	requirements := []types.PaymentRequirements{
+		{Scheme: "unknown", Network: "eip155:1"},
+	}
+	// Must not panic and must return baseline response.
+	resp := server.CreatePaymentRequiredResponse(requirements, nil, "err", nil)
+	if len(resp.Accepts) != 1 {
+		t.Fatalf("expected requirements untouched")
+	}
+}
+
 func TestServerVerifyPayment(t *testing.T) {
 	ctx := context.Background()
 

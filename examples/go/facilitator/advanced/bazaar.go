@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -41,6 +42,23 @@ type DiscoveredResource struct {
 type BazaarCatalog struct {
 	resources map[string]DiscoveredResource
 	mutex     sync.RWMutex
+}
+
+const extensionResponsesHeader = "EXTENSION-RESPONSES"
+
+func setExtensionResponsesHeader(c *gin.Context) {
+	extensionResponses := map[string]map[string]string{
+		"bazaar": {
+			"status": "success",
+		},
+	}
+
+	body, err := json.Marshal(extensionResponses)
+	if err != nil {
+		return
+	}
+
+	c.Header(extensionResponsesHeader, base64.StdEncoding.EncodeToString(body))
 }
 
 func NewBazaarCatalog() *BazaarCatalog {
@@ -255,6 +273,7 @@ func runBazaarExample(evmPrivateKey, svmPrivateKey string) error {
 			return
 		}
 
+		setExtensionResponsesHeader(c)
 		c.JSON(http.StatusOK, result)
 	})
 
@@ -279,6 +298,7 @@ func runBazaarExample(evmPrivateKey, svmPrivateKey string) error {
 			return
 		}
 
+		setExtensionResponsesHeader(c)
 		c.JSON(http.StatusOK, result)
 	})
 

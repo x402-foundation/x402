@@ -1,6 +1,10 @@
 name: Check Python
 on: [pull_request]
 
+permissions:
+  contents: read
+  id-token: none
+
 jobs:
   test-python:
     runs-on: ubuntu-latest
@@ -8,10 +12,10 @@ jobs:
       run:
         working-directory: ./python/x402
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v5
+        uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86 # v5.4.2
         with:
           enable-cache: true
           cache-dependency-glob: "python/x402/uv.lock"
@@ -31,10 +35,10 @@ jobs:
       run:
         working-directory: ./python/x402
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v5
+        uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86 # v5.4.2
         with:
           enable-cache: true
           cache-dependency-glob: "python/x402/uv.lock"

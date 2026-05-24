@@ -15,7 +15,7 @@ export function GET() {
           },
           {
             rel: "service-doc",
-            href: "https://x402.org/writing/x402-v2-launch",
+            href: "https://x402.org/writing",
           },
         ],
       },

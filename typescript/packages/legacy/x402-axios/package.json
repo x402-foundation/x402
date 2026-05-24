@@ -31,7 +31,7 @@
     "eslint-plugin-prettier": "^5.2.6",
     "prettier": "3.5.2",
     "tsup": "^8.4.0",
-    "tsx": "^4.19.2",
+    "tsx": "^4.21.0",
     "typescript": "^5.7.3",
     "vite-tsconfig-paths": "^5.1.4",
     "vitest": "^3.0.5",
@@ -39,7 +39,7 @@
   },
   "dependencies": {
     "axios": "^1.7.9",
-    "viem": "^2.21.26",
+    "viem": "^2.48.11",
     "x402": "workspace:^",
     "zod": "^3.24.2"
   },

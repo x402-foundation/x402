@@ -248,6 +248,35 @@ contract X402UptoPermit2ProxyTest is Test {
 
     // --- settleWithPermit() ---
 
+    function test_settleWithPermit_revertsOnUnauthorizedFacilitator() public {
+        MockERC20Permit permitToken = new MockERC20Permit("USDC", "USDC", 6);
+        permitToken.mint(payer, MINT_AMOUNT);
+        vm.prank(payer);
+        permitToken.approve(address(mockPermit2), type(uint256).max);
+
+        uint256 t = block.timestamp;
+        ISignatureTransfer.PermitTransferFrom memory permit = ISignatureTransfer.PermitTransferFrom({
+            permitted: ISignatureTransfer.TokenPermissions({token: address(permitToken), amount: TRANSFER_AMOUNT}),
+            nonce: 0,
+            deadline: t + 3600
+        });
+
+        x402BasePermit2Proxy.EIP2612Permit memory permit2612 = x402BasePermit2Proxy.EIP2612Permit({
+            value: TRANSFER_AMOUNT,
+            deadline: t + 3600,
+            v: 27,
+            r: bytes32(uint256(1)),
+            s: bytes32(uint256(2))
+        });
+
+        address attacker = makeAddr("attacker");
+        vm.prank(attacker);
+        vm.expectRevert(x402UptoPermit2Proxy.UnauthorizedFacilitator.selector);
+        proxy.settleWithPermit(
+            permit2612, permit, TRANSFER_AMOUNT, payer, _witness(recipient, address(this), t - 60), _sig()
+        );
+    }
+
     function test_settleWithPermit_transfersTokens() public {
         MockERC20Permit permitToken = new MockERC20Permit("USDC", "USDC", 6);
         permitToken.mint(payer, MINT_AMOUNT);

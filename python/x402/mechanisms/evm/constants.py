@@ -193,6 +193,12 @@ EIP2612_PERMIT_TYPES: dict[str, list[dict[str, str]]] = {
 # Gas limit for a standard ERC-20 approve() transaction
 ERC20_APPROVE_GAS_LIMIT = 70_000
 
+# Fallback max fee per gas (1 gwei) when fee estimation fails
+DEFAULT_MAX_FEE_PER_GAS = 1_000_000_000
+
+# Fallback max priority fee per gas (0.1 gwei) when fee estimation fails
+DEFAULT_MAX_PRIORITY_FEE_PER_GAS = 100_000_000
+
 # Permit2 deadline buffer (seconds) for verification
 PERMIT2_DEADLINE_BUFFER = 6
 
@@ -500,6 +506,60 @@ NETWORK_CONFIGS: dict[str, NetworkConfig] = {
         "default_asset": {
             "address": "0x75faf114eafb1BDbe2F0316DF893fd58CE46AA4d",
             "name": "USD Coin",
+            "version": "2",
+            "decimals": 6,
+        },
+    },
+    # Radius Network (uses Permit2 instead of EIP-3009, supports EIP-2612)
+    "eip155:723487": {
+        "chain_id": 723487,
+        "default_asset": {
+            "address": "0x33ad9e4BD16B69B5BFdED37D8B5D9fF9aba014Fb",
+            "name": "Stable Coin",
+            "version": "1",
+            "decimals": 6,
+            "asset_transfer_method": "permit2",
+            "supports_eip2612": True,
+        },
+    },
+    # Radius Testnet (uses Permit2 instead of EIP-3009, supports EIP-2612)
+    "eip155:72344": {
+        "chain_id": 72344,
+        "default_asset": {
+            "address": "0x33ad9e4BD16B69B5BFdED37D8B5D9fF9aba014Fb",
+            "name": "Stable Coin",
+            "version": "1",
+            "decimals": 6,
+            "asset_transfer_method": "permit2",
+            "supports_eip2612": True,
+        },
+    },
+    # ADI Chain
+    "eip155:36900": {
+        "chain_id": 36900,
+        "default_asset": {
+            "address": "0x9cb8142aEBBcdc60AF7c97Af897A67A8f3CA71C2",
+            "name": "USDC.e",
+            "version": "2",
+            "decimals": 6,
+        },
+    },
+    # HPP Mainnet
+    "eip155:190415": {
+        "chain_id": 190415,
+        "default_asset": {
+            "address": "0x401eCb1D350407f13ba348573E5630B83638E30D",
+            "name": "Bridged USDC",
+            "version": "2",
+            "decimals": 6,
+        },
+    },
+    # HPP Sepolia
+    "eip155:181228": {
+        "chain_id": 181228,
+        "default_asset": {
+            "address": "0x401eCb1D350407f13ba348573E5630B83638E30D",
+            "name": "Bridged USDC",
             "version": "2",
             "decimals": 6,
         },

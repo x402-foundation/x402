@@ -754,8 +754,8 @@ Integrate the payment middleware into your application. You will need to provide
 ```typescript
 interface RouteConfig {
   accepts: Array<{
-    scheme: string;           // Payment scheme: "exact" or "upto"
-    price: string;            // For "exact": the fixed price. For "upto": the maximum authorized amount.
+    scheme: string;           // Payment scheme: "exact", "upto", or "batch-settlement"
+    price: string;            // For "exact": the fixed price. For "upto" / "batch-settlement": the per-request maximum authorized amount.
     network: string;          // Network in CAIP-2 format (e.g., "eip155:84532" or "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1")
     payTo: string;            // Your wallet address
   }>;
@@ -767,13 +767,15 @@ interface RouteConfig {
 
 When a request is made to these routes without payment, your server will respond with the HTTP 402 Payment Required code and payment instructions.
 
-### Payment Schemes: Exact vs Upto
+### Payment Schemes: Exact, Upto, and Batch Settlement
 
-x402 supports two payment schemes that control how charges are calculated:
+x402 supports several payment schemes that control how charges are calculated:
 
 **`exact`** (default) — The client pays the exact advertised price. This is the simplest scheme and works across all networks (EVM, SVM, Stellar, Aptos) and all SDKs (TypeScript, Go, Python). Best for fixed-price endpoints where the cost is known upfront.
 
 **`upto`** — The client authorizes a **maximum** amount, but the server settles **only what was actually used**. This enables usage-based billing where the final charge depends on work performed (LLM token count, compute time, bytes served, etc.). Currently available on EVM networks only (Permit2), in TypeScript, Go, and Python SDKs.
+
+**`batch-settlement`** — For high-frequency or repeated micropayment traffic, the buyer funds a channel once, signs off-chain vouchers per request, and the seller settles onchain in batches (not every request). Each call still advertises a per-request maximum (`price`); you can charge actual usage up to that cap using the same **`setSettlementOverrides`** pattern as `upto`. See **[Batch settlement](/schemes/batch-settlement)** and the [Payment Schemes overview](/schemes/overview).
 
 The examples in step 2 above all use the `exact` scheme. To use `upto` instead, there are two key differences:
 
@@ -994,7 +996,7 @@ The `setSettlementOverrides` amount supports three formats:
 * **Percentage of authorized maximum** — e.g., `"50%"` settles 50% of `PaymentRequirements.amount`. Supports up to two decimal places (e.g., `"33.33%"`). The result is floored to the nearest atomic unit.
 * **Dollar price** — e.g., `"$0.05"` converts a USD-denominated price to atomic units. This format works when you configured your route with `$`-prefixed pricing (e.g., `price: "$0.10"`). Token decimals are determined from the registered scheme. The result is rounded to the nearest atomic unit.
 
-The resolved amount must always be &lt;= the authorized maximum. If the amount is `"0"`, no on-chain transaction occurs and the client is not charged.
+The resolved amount must always be &lt;= the authorized maximum. If the amount is `"0"`, no onchain transaction occurs and the client is not charged.
 
 ### 3. Test Your Integration
 
@@ -1269,7 +1271,7 @@ This quickstart covered:
 
 * Installing the x402 SDK and relevant middleware
 * Adding payment middleware to your API and configuring it
-* Choosing between `exact` (fixed-price) and `upto` (usage-based) payment schemes
+* Choosing between `exact` (fixed-price), `upto` (usage-based per settlement), and `batch-settlement` (EVM micropayments with batched redemption) payment schemes
 * Testing your integration
 * Deploying to mainnet with CAIP-2 network identifiers
 

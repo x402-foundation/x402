@@ -1,13 +1,42 @@
 import { x402Client, x402ClientConfig, x402HTTPClient } from "@x402/core/client";
 import { type PaymentRequired } from "@x402/core/types";
-import {
-  AxiosHeaders,
-  type AxiosInstance,
-  type AxiosError,
-  type InternalAxiosRequestConfig,
-} from "axios";
+import { type AxiosInstance, type AxiosError, type InternalAxiosRequestConfig } from "axios";
 
 type X402RetryConfig = InternalAxiosRequestConfig & { __is402Retry?: boolean };
+type AxiosHeaderRecord = Record<string, string>;
+
+/**
+ * Clones Axios headers into a plain record so the caller's Axios instance can
+ * normalize them for the retry request.
+ *
+ * @param headers - Headers from the caller's original Axios request config.
+ * @returns Serializable headers for Axios to normalize in the caller's instance.
+ */
+function cloneAxiosHeaders(headers: InternalAxiosRequestConfig["headers"]): AxiosHeaderRecord {
+  const source =
+    typeof headers.toJSON === "function"
+      ? (headers.toJSON() as Record<string, unknown>)
+      : (headers as unknown as Record<string, unknown>);
+
+  return Object.entries(source).reduce<AxiosHeaderRecord>((acc, [key, value]) => {
+    if (value !== undefined && value !== null && typeof value !== "function") {
+      acc[key] = String(value);
+    }
+
+    return acc;
+  }, {});
+}
+
+/**
+ * Sets a header on a retry header record.
+ *
+ * @param headers - Headers object to update.
+ * @param key - Header name.
+ * @param value - Header value.
+ */
+function setAxiosHeader(headers: AxiosHeaderRecord, key: string, value: string): void {
+  headers[key] = value;
+}
 
 /**
  * Clones an Axios internal request config so a retry can treat HTTP 402 as a successful
@@ -21,7 +50,7 @@ function createX402RetryConfig(config: InternalAxiosRequestConfig): X402RetryCon
 
   return {
     ...config,
-    headers: AxiosHeaders.from(config.headers),
+    headers: cloneAxiosHeaders(config.headers) as InternalAxiosRequestConfig["headers"],
     validateStatus: status => {
       if (status === 402) {
         return true;
@@ -122,7 +151,7 @@ export function wrapAxiosWithPayment(
         if (hookHeaders) {
           const hookConfig = createX402RetryConfig(originalConfig);
           Object.entries(hookHeaders).forEach(([key, value]) => {
-            hookConfig.headers.set(key, value);
+            setAxiosHeader(hookConfig.headers, key, value);
           });
           const hookResponse = await axiosInstance.request(hookConfig);
           if (hookResponse.status !== 402) {
@@ -151,11 +180,12 @@ export function wrapAxiosWithPayment(
 
         // Add payment headers to the request
         Object.entries(paymentHeaders).forEach(([key, value]) => {
-          paidConfig.headers.set(key, value);
+          setAxiosHeader(paidConfig.headers, key, value);
         });
 
         // Add CORS header to expose payment response
-        paidConfig.headers.set(
+        setAxiosHeader(
+          paidConfig.headers,
           "Access-Control-Expose-Headers",
           "PAYMENT-RESPONSE,X-PAYMENT-RESPONSE",
         );
@@ -180,9 +210,10 @@ export function wrapAxiosWithPayment(
           const retryHeaders = httpClient.encodePaymentSignatureHeader(freshPayload);
           const retryConfig = createX402RetryConfig(originalConfig);
           Object.entries(retryHeaders).forEach(([key, value]) => {
-            retryConfig.headers.set(key, value);
+            setAxiosHeader(retryConfig.headers, key, value);
           });
-          retryConfig.headers.set(
+          setAxiosHeader(
+            retryConfig.headers,
             "Access-Control-Expose-Headers",
             "PAYMENT-RESPONSE,X-PAYMENT-RESPONSE",
           );

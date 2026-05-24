@@ -2,6 +2,7 @@ package bazaar_test
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -2887,4 +2888,83 @@ func TestDynamicRoutesCatalogConsolidation(t *testing.T) {
 	assert.Equal(t, "http://api.example.com/users/:userId", discovered2.ResourceURL)
 	assert.Equal(t, discovered1.ResourceURL, discovered2.ResourceURL,
 		"requests to the same parameterized route should consolidate to one catalog entry")
+}
+
+func TestExtractDiscoveredResource_ServiceMetadata(t *testing.T) {
+	declared, _ := bazaar.DeclareDiscoveryExtension(
+		bazaar.MethodGET,
+		map[string]interface{}{"city": "NYC"},
+		bazaar.JSONSchema{
+			"properties": map[string]interface{}{
+				"city": map[string]interface{}{"type": "string"},
+			},
+		},
+		"",
+		nil,
+	)
+
+	build := func(resource *x402.ResourceInfo) []byte {
+		payload := x402.PaymentPayload{
+			X402Version: 2,
+			Accepted:    x402.PaymentRequirements{Scheme: "exact", Network: "eip155:8453"},
+			Payload:     map[string]interface{}{},
+			Resource:    resource,
+			Extensions:  map[string]interface{}{bazaar.BAZAAR.Key(): declared},
+		}
+		b, _ := json.Marshal(payload)
+		return b
+	}
+
+	t.Run("surfaces sanitized serviceName / tags / iconUrl from PaymentPayload", func(t *testing.T) {
+		bytes := build(&x402.ResourceInfo{
+			URL:         "https://api.example.com/weather",
+			Description: "Weather API",
+			MimeType:    "application/json",
+			ServiceName: "Example Weather",
+			Tags:        []string{"weather", "forecast"},
+			IconUrl:     "https://api.example.com/icon.png",
+		})
+		discovered, err := bazaar.ExtractDiscoveredResourceFromPaymentPayload(bytes, nil, false)
+		require.NoError(t, err)
+		require.NotNil(t, discovered)
+		assert.Equal(t, "Example Weather", discovered.ServiceName)
+		assert.Equal(t, []string{"weather", "forecast"}, discovered.Tags)
+		assert.Equal(t, "https://api.example.com/icon.png", discovered.IconUrl)
+	})
+
+	t.Run("soft-drops invalid metadata fields independently from PaymentPayload", func(t *testing.T) {
+		bytes := build(&x402.ResourceInfo{
+			URL:         "https://api.example.com/weather",
+			ServiceName: strings.Repeat("a", 33),
+			Tags:        []string{"weather", "", "forecast"},
+			IconUrl:     "http://localhost/icon.png",
+		})
+		discovered, err := bazaar.ExtractDiscoveredResourceFromPaymentPayload(bytes, nil, false)
+		require.NoError(t, err)
+		require.NotNil(t, discovered)
+		assert.Equal(t, "", discovered.ServiceName)
+		assert.Equal(t, []string{"weather", "forecast"}, discovered.Tags)
+		assert.Equal(t, "", discovered.IconUrl)
+	})
+
+	t.Run("surfaces sanitized metadata from PaymentRequired", func(t *testing.T) {
+		paymentRequired := x402.PaymentRequired{
+			X402Version: 2,
+			Resource: &x402.ResourceInfo{
+				URL:         "https://api.example.com/weather",
+				ServiceName: "Example Weather",
+				Tags:        []string{"weather"},
+				IconUrl:     "https://api.example.com/icon.png",
+			},
+			Accepts:    []x402.PaymentRequirements{{Scheme: "exact", Network: "eip155:8453"}},
+			Extensions: map[string]interface{}{bazaar.BAZAAR.Key(): declared},
+		}
+		b, _ := json.Marshal(paymentRequired)
+		discovered, err := bazaar.ExtractDiscoveredResourceFromPaymentRequired(b, false)
+		require.NoError(t, err)
+		require.NotNil(t, discovered)
+		assert.Equal(t, "Example Weather", discovered.ServiceName)
+		assert.Equal(t, []string{"weather"}, discovered.Tags)
+		assert.Equal(t, "https://api.example.com/icon.png", discovered.IconUrl)
+	})
 }

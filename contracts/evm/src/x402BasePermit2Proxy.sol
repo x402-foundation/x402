@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.20;
 
-import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
+import {ReentrancyGuardTransient} from "@openzeppelin/contracts/utils/ReentrancyGuardTransient.sol";
 import {IERC20Permit} from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Permit.sol";
 
 import {ISignatureTransfer} from "./interfaces/ISignatureTransfer.sol";
@@ -22,9 +22,11 @@ import {ISignatureTransfer} from "./interfaces/ISignatureTransfer.sol";
  *      every chain keeps the initCode identical, preserving a uniform CREATE2
  *      address for these proxies across all chains.
  *
+ *      Uses {ReentrancyGuardTransient} (EIP-1153); deploy only on chains with transient storage support.
+ *
  * @author x402 Protocol
  */
-abstract contract x402BasePermit2Proxy is ReentrancyGuard {
+abstract contract x402BasePermit2Proxy is ReentrancyGuardTransient {
     /// @notice The Permit2 contract address (set once at construction, immutable)
     ISignatureTransfer public immutable PERMIT2;
 

@@ -7,6 +7,7 @@
 ## Directory Structure
 - `advanced-concepts/` — Advanced topics (lifecycle hooks, etc.)
 - `core-concepts/` — Protocol explanations (HTTP 402, client-server, facilitator, wallet)
+- `schemes/` — Payment scheme documentation with end-user server/client setup
 - `extensions/` — x402 extension documentation (Bazaar discovery, and future extensions)
 - `getting-started/` — Quickstart guides for buyers and sellers (MDX files with tabs)
 - `guides/` — How-to guides (MCP server, v1→v2 migration)
@@ -17,6 +18,7 @@
 
 ## Code-to-Doc Mapping
 - Changes to `typescript/packages/core/src/` affect Core Concepts docs
+- Changes to `typescript/packages/mechanisms/`, `go/mechanisms/`, or `python/x402/mechanisms/` affect Payment Schemes docs and `sdk-features.md`
 - Changes to `typescript/packages/extensions/src/` affect Extensions docs (Bazaar, etc.)
 - Changes to `typescript/packages/*/src/` affect SDK references and quickstart guides
 - Changes to `python/x402/` affect Python SDK references
@@ -24,10 +26,13 @@
 - Changes to `go/` affect Go SDK references
 - Changes to `go/extensions/` affect Extensions docs
 - Changes to facilitator endpoints affect quickstart guides
-- Changes to `specs/` may require updates to core-concepts docs
+- Changes to `specs/schemes/` may require updates to Payment Schemes docs
+- Changes to other `specs/` files may require updates to Core Concepts docs
 
 ## Style Guidelines
 - Use TypeScript for primary code examples (it's the reference SDK)
+- For scheme pages, lead with server setup before client setup
+- Keep scheme overviews network-agnostic; put network-specific behavior in the relevant scheme page section and link to specs for protocol details
 - Include error handling in all API examples
 - Write for developers with 2-5 years experience
 - Use MDX components (`<Tabs>`, `<Tab>`, `<Callout>`, `<Card>`) for interactive content
@@ -40,6 +45,7 @@
 - DO: Link to relevant specs in `specs/` for protocol details
 - DO: Use `<Tabs>` for multi-language code examples
 - DO: Add frontmatter (title, description) to all pages
+- DO: Link scheme pages to relevant server/client examples
 - DON'T: Duplicate protocol details from `specs/` — link instead
 - DON'T: Add pages without updating `docs.json`
 - **Git: Create PRs for review; NEVER commit directly to main**
@@ -49,6 +55,7 @@
 - `faq.md` — Frequently asked questions
 - `docs.json` — Navigation and configuration (MUST update when adding pages)
 - `core-concepts/*.md` — Conceptual documentation
+- `schemes/*.mdx` — Payment scheme docs. Keep `overview` network-agnostic; individual scheme pages may include network-specific SDK setup and spec links
 - `extensions/*.mdx` — Extension documentation (Bazaar, future extensions)
 - `advanced-concepts/*.mdx` — Advanced topics (lifecycle hooks for custom workflows, etc.)
 - `getting-started/*.mdx` — Quickstart guides (MDX for tab components)
@@ -96,13 +103,17 @@ When triggered by GitHub Actions or other automated workflows:
 |-------------|---------------------|
 | `typescript/packages/core/src/*.ts` API changes | Core Concepts, quickstart guides |
 | `typescript/packages/extensions/src/*.ts` Extensions changes | Extensions docs (Bazaar, etc.) |
+| `typescript/packages/mechanisms/**/*.ts` API changes | Payment Schemes docs, SDK Features |
 | `typescript/packages/*/src/*.ts` API changes | SDK reference, quickstart guides |
 | `python/x402/*.py` API changes | Python SDK reference |
+| `python/x402/mechanisms/**/*.py` API changes | Payment Schemes docs, SDK Features |
 | `python/x402/extensions/*.py` Extensions changes | Extensions docs |
 | `go/*.go` API changes | Go SDK reference |
+| `go/mechanisms/**/*.go` API changes | Payment Schemes docs, SDK Features |
 | `go/extensions/*.go` Extensions changes | Extensions docs |
 | `java/src/**/*.java` API changes | Java SDK reference |
-| `specs/*.md` protocol changes | core-concepts docs |
+| `specs/schemes/*.md` protocol changes | Payment Schemes docs |
+| `specs/*.md` protocol changes | Core Concepts docs |
 | `specs/extensions/*.md` Extensions changes | Extensions docs (only if SDK implementation exists) |
 | Comment removal, formatting | NO update needed |
 | Test file changes | NO update needed |

@@ -1,6 +1,6 @@
 import type { NetworkSet } from './networks/networks';
 
-export type ProtocolFamily = 'evm' | 'svm' | 'avm' | 'aptos' | 'hedera' | 'stellar';
+export type ProtocolFamily = 'evm' | 'svm' | 'avm' | 'aptos' | 'hedera' | 'stellar' | 'tvm';
 export type Transport = 'http' | 'mcp';
 export type PaymentScheme = 'exact' | 'upto' | 'batch-settlement';
 export type AssetTransferMethod = 'eip3009' | 'permit2';
@@ -81,12 +81,15 @@ export interface ClientConfig {
   hederaAccountId: string;
   hederaPrivateKey: string;
   stellarPrivateKey: string;
+  tvmPrivateKey: string;
   serverUrl: string;
   endpointPath: string;
   evmNetwork: string;
   evmRpcUrl: string;
   hederaNetwork: string;
   hederaNodeUrl: string;
+  tvmNetwork: string;
+  tvmRpcUrl: string;
   batchSettlement?: BatchSettlementClientConfig;
 }
 
@@ -100,6 +103,7 @@ export interface ServerConfig {
   hederaAsset?: string;
   hederaAmount?: string;
   stellarPayTo: string;
+  tvmPayTo: string;
   networks: NetworkSet;
   facilitatorUrl?: string;
   mockFacilitatorUrl?: string;
@@ -145,6 +149,12 @@ export interface TestConfig {
   x402Version?: number;
   x402Versions?: number[];
   extensions?: string[];
+  /**
+   * Payment schemes the component supports. Required on clients and
+   * facilitators that participate in EVM scenarios; the discovery filter
+   * skips pairings whose endpoint scheme is not in this list.
+   */
+  schemes?: PaymentScheme[];
   evm?: {
     assetTransferMethods?: AssetTransferMethod[];
   };

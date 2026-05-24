@@ -19,11 +19,13 @@ except ImportError as e:
         "FastAPI middleware requires fastapi and starlette. Install with: uv add x402[fastapi]"
     ) from e
 
+from ...schemas import VerifiedPaymentCancelOptions
 from ..constants import SETTLEMENT_OVERRIDES_HEADER
 from ..facilitator_client_base import FacilitatorResponseError
 from ..types import (
     HTTPAdapter,
     HTTPRequestContext,
+    HTTPTransportContext,
     PaywallConfig,
     RouteConfig,
     RoutesConfig,
@@ -329,12 +331,27 @@ def payment_middleware(
             # Store payment info in request state
             request.state.payment_payload = result.payment_payload
             request.state.payment_requirements = result.payment_requirements
+            dispatcher = result.cancellation_dispatcher
+            transport_context = HTTPTransportContext(request=context)
 
-            # Call protected route
-            response = await call_next(request)
+            try:
+                response = await call_next(request)
+            except Exception as error:
+                if dispatcher is not None:
+                    await dispatcher.cancel(
+                        VerifiedPaymentCancelOptions(reason="handler_threw", error=error)
+                    )
+                raise
 
             # Don't settle on error responses
             if response.status_code >= 400:
+                if dispatcher is not None:
+                    await dispatcher.cancel(
+                        VerifiedPaymentCancelOptions(
+                            reason="handler_failed",
+                            response_status=response.status_code,
+                        )
+                    )
                 return response
 
             # Read response body for potential buffering
@@ -351,6 +368,8 @@ def payment_middleware(
                     if k.lower() == SETTLEMENT_OVERRIDES_HEADER.lower():
                         del response.headers[k]
 
+            transport_context.response_headers = dict(response.headers)
+
             # Process settlement (await async method)
             try:
                 settle_result = await http_server.process_settlement(
@@ -358,6 +377,8 @@ def payment_middleware(
                     result.payment_requirements,
                     context=context,
                     settlement_overrides=overrides,
+                    declared_extensions=result.declared_extensions,
+                    transport_context=transport_context,
                 )
 
                 if not settle_result.success:

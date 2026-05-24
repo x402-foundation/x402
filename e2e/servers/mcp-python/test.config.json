@@ -20,6 +20,13 @@
       "assetTransferMethod": "eip3009"
     },
     {
+      "path": "get_weather",
+      "method": "tool",
+      "description": "Paid weather tool via MCP transport",
+      "requiresPayment": true,
+      "protocolFamily": "tvm"
+    },
+    {
       "path": "/health",
       "method": "GET",
       "description": "Health check endpoint",
@@ -35,9 +42,13 @@
   "environment": {
     "required": [
       "PORT",
-      "EVM_PAYEE_ADDRESS",
       "FACILITATOR_URL"
     ],
-    "optional": []
+    "optional": [
+      "EVM_PAYEE_ADDRESS",
+      "EVM_NETWORK",
+      "TVM_PAYEE_ADDRESS",
+      "TVM_NETWORK"
+    ]
   }
 }

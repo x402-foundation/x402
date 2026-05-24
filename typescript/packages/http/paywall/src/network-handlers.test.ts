@@ -3,6 +3,8 @@ import { DEFAULT_STABLECOINS } from "@x402/evm";
 import { evmPaywall, getDefaultTokenDecimals } from "./evm";
 import { NETWORK_DECIMALS } from "./evm/gen/decimals";
 import { svmPaywall } from "./svm";
+import { FAUCET_URLS, resolveFaucetUrl } from "./faucetUrls";
+import { isTestnetNetwork, SOLANA_NETWORK_REFS } from "./paywallUtils";
 import type { PaymentRequired, PaymentRequirements } from "./types";
 
 const evmRequirement: PaymentRequirements = {
@@ -152,18 +154,63 @@ describe("Network Handlers", () => {
       expect(getDefaultTokenDecimals(req)).toBe(6);
     });
 
-    it("NETWORK_DECIMALS stays in sync with DEFAULT_STABLECOINS", () => {
+    it("NETWORK_DECIMALS overrides stay in sync with DEFAULT_STABLECOINS", () => {
       // The generated `src/evm/gen/decimals.ts` file is emitted by
-      // `src/evm/build.ts` from `@x402/evm`'s `DEFAULT_STABLECOINS`. This
-      // test pins the drift invariant in-process so a forgotten
-      // `pnpm run build:paywall` after a `DEFAULT_STABLECOINS` change is
-      // caught here (complements the CI regen-diff guard in #2054).
+      // `src/evm/build.ts` from `@x402/evm`'s `DEFAULT_STABLECOINS`. Only
+      // networks whose decimals !== 6 are listed; others rely on the fallback
+      // in `getDefaultTokenDecimals`. This pins the drift invariant in-process
+      // (complements the CI regen-diff guard in #2054).
+      const fallbackDecimals = 6;
       for (const [network, info] of Object.entries(DEFAULT_STABLECOINS)) {
-        expect(NETWORK_DECIMALS[network], `drift on ${network}`).toBe(info.decimals);
+        expect(
+          NETWORK_DECIMALS[network] ?? fallbackDecimals,
+          `effective decimals drift on ${network}`,
+        ).toBe(info.decimals);
       }
-      expect(Object.keys(NETWORK_DECIMALS).sort()).toStrictEqual(
-        Object.keys(DEFAULT_STABLECOINS).sort(),
-      );
+      const stablecoinKeys = new Set(Object.keys(DEFAULT_STABLECOINS));
+      for (const network of Object.keys(NETWORK_DECIMALS)) {
+        expect(stablecoinKeys.has(network)).toBe(true);
+        const info = DEFAULT_STABLECOINS[network];
+        expect(NETWORK_DECIMALS[network]).toBe(info!.decimals);
+        expect(
+          info!.decimals,
+          `${network} should be omitted when decimals are ${fallbackDecimals}`,
+        ).not.toBe(fallbackDecimals);
+      }
+    });
+  });
+
+  describe("resolveFaucetUrl", () => {
+    it("returns the curated map URL for a known testnet", () => {
+      expect(resolveFaucetUrl("eip155:84532", {})).toBe(FAUCET_URLS["eip155:84532"]);
+    });
+
+    it("returns undefined for unmapped chains so the paywall renders fallback text", () => {
+      expect(resolveFaucetUrl("eip155:9999999", {})).toBeUndefined();
+    });
+
+    it("server faucetUrls override wins over the curated map", () => {
+      const url = resolveFaucetUrl("eip155:84532", {
+        faucetUrls: { "eip155:84532": "https://custom.example/faucet" },
+      });
+      expect(url).toBe("https://custom.example/faucet");
+    });
+
+    it("falls back to the curated map when faucetUrls has no entry for the chain", () => {
+      const url = resolveFaucetUrl("eip155:84532", {
+        faucetUrls: { "eip155:421614": "https://other-chain.example/faucet" },
+      });
+      expect(url).toBe(FAUCET_URLS["eip155:84532"]);
+    });
+  });
+
+  describe("isTestnetNetwork", () => {
+    it("recognizes Solana Devnet as a testnet", () => {
+      expect(isTestnetNetwork(`solana:${SOLANA_NETWORK_REFS.DEVNET}`)).toBe(true);
+    });
+
+    it("rejects Solana Mainnet", () => {
+      expect(isTestnetNetwork(`solana:${SOLANA_NETWORK_REFS.MAINNET}`)).toBe(false);
     });
   });
 

@@ -11,6 +11,7 @@ import { getTokenBalance, getTokenDecimals } from "./utils";
 
 import { Spinner } from "./Spinner";
 import { getNetworkDisplayName, isTestnetNetwork } from "../paywallUtils";
+import { resolveFaucetUrl } from "../faucetUrls";
 import { wagmiToClientSigner } from "./browserAdapter";
 
 type EvmPaywallProps = {
@@ -202,14 +203,22 @@ export function EvmPaywall({ paymentRequired, onSuccessfulResponse }: EvmPaywall
           {paymentRequired.resource?.description && `${paymentRequired.resource.description}.`} To
           access this content, please pay ${amount} {tokenName}.
         </p>
-        {testnet && (
-          <p className="instructions">
-            Need {tokenName} on {chainName}?{" "}
-            <a href="https://faucet.circle.com/" target="_blank" rel="noopener noreferrer">
-              Get some <u>here</u>.
-            </a>
-          </p>
-        )}
+        {testnet &&
+          (() => {
+            const faucetUrl = resolveFaucetUrl(network, x402);
+            return (
+              <p className="instructions">
+                Need {tokenName} on {chainName}?{" "}
+                {faucetUrl ? (
+                  <a href={faucetUrl} target="_blank" rel="noopener noreferrer">
+                    Request some <u>here</u>.
+                  </a>
+                ) : (
+                  <span>No faucet configured.</span>
+                )}
+              </p>
+            );
+          })()}
       </div>
 
       <div className="content w-full">

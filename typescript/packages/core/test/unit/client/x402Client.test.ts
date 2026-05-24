@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import { x402Client } from "../../../src/client/x402Client";
 import { PaymentPolicy } from "../../../src/client/x402Client";
 import { MockSchemeNetworkClient } from "../../mocks";
-import { buildPaymentRequired, buildPaymentRequirements } from "../../mocks";
+import { buildPaymentPayload, buildPaymentRequired, buildPaymentRequirements } from "../../mocks";
 import { Network, PaymentRequirements } from "../../../src/types";
 
 describe("x402Client", () => {
@@ -731,6 +731,177 @@ describe("x402Client", () => {
       const result = client.registerExtension({ key: "ext1" }).registerExtension({ key: "ext2" });
 
       expect(result).toBe(client);
+    });
+
+    it("should expose registered extensions", () => {
+      const client = new x402Client();
+      const extension = { key: "ext1" };
+
+      client.registerExtension(extension);
+
+      expect(client.getExtensions()).toEqual([extension]);
+    });
+
+    it("should run declared lifecycle hooks after manual and scheme hooks", async () => {
+      const client = new x402Client();
+      const order: string[] = [];
+
+      client.onBeforePaymentCreation(async () => {
+        order.push("manual-before");
+      });
+      client.onAfterPaymentCreation(async () => {
+        order.push("manual-after");
+      });
+      client.register(
+        "eip155:*" as Network,
+        new MockSchemeNetworkClient("exact", undefined, {
+          onBeforePaymentCreation: async () => {
+            order.push("scheme-before");
+          },
+          onAfterPaymentCreation: async () => {
+            order.push("scheme-after");
+          },
+        }),
+      );
+      client.registerExtension({
+        key: "clientExtension",
+        hooks: {
+          onBeforePaymentCreation: async declaration => {
+            order.push("extension-before");
+            expect(declaration).toEqual({ enabled: true });
+          },
+          onAfterPaymentCreation: async declaration => {
+            order.push("extension-after");
+            expect(declaration).toEqual({ enabled: true });
+          },
+        },
+      });
+
+      await client.createPaymentPayload(
+        buildPaymentRequired({
+          accepts: [
+            buildPaymentRequirements({ scheme: "exact", network: "eip155:8453" as Network }),
+          ],
+          extensions: { clientExtension: { enabled: true } },
+        }),
+      );
+
+      expect(order).toEqual([
+        "manual-before",
+        "scheme-before",
+        "extension-before",
+        "manual-after",
+        "scheme-after",
+        "extension-after",
+      ]);
+    });
+
+    it("should skip lifecycle hooks for undeclared extensions", async () => {
+      const client = new x402Client();
+      let extensionCalled = false;
+
+      client.register("eip155:*" as Network, new MockSchemeNetworkClient("exact"));
+      client.registerExtension({
+        key: "clientExtension",
+        hooks: {
+          onBeforePaymentCreation: async () => {
+            extensionCalled = true;
+          },
+          onAfterPaymentCreation: async () => {
+            extensionCalled = true;
+          },
+        },
+      });
+
+      await client.createPaymentPayload(
+        buildPaymentRequired({
+          accepts: [
+            buildPaymentRequirements({ scheme: "exact", network: "eip155:8453" as Network }),
+          ],
+        }),
+      );
+
+      expect(extensionCalled).toBe(false);
+    });
+
+    it("should let declared extension failure hooks recover after manual and scheme hooks", async () => {
+      const client = new x402Client();
+      const order: string[] = [];
+      const recoveredPayload = buildPaymentPayload();
+
+      client.onPaymentCreationFailure(async () => {
+        order.push("manual-failure");
+      });
+      client.register(
+        "eip155:*" as Network,
+        new MockSchemeNetworkClient("exact", new Error("scheme failed"), {
+          onPaymentCreationFailure: async () => {
+            order.push("scheme-failure");
+          },
+        }),
+      );
+      client.registerExtension({
+        key: "clientExtension",
+        hooks: {
+          onPaymentCreationFailure: async declaration => {
+            order.push("extension-failure");
+            expect(declaration).toEqual({ enabled: true });
+            return { recovered: true, payload: recoveredPayload };
+          },
+        },
+      });
+
+      const result = await client.createPaymentPayload(
+        buildPaymentRequired({
+          accepts: [
+            buildPaymentRequirements({ scheme: "exact", network: "eip155:8453" as Network }),
+          ],
+          extensions: { clientExtension: { enabled: true } },
+        }),
+      );
+
+      expect(result).toBe(recoveredPayload);
+      expect(order).toEqual(["manual-failure", "scheme-failure", "extension-failure"]);
+    });
+
+    it("should run declared payment response hooks after manual and scheme hooks", async () => {
+      const client = new x402Client();
+      const order: string[] = [];
+      const requirements = buildPaymentRequirements({
+        scheme: "exact",
+        network: "eip155:8453" as Network,
+      });
+
+      client.onPaymentResponse(async () => {
+        order.push("manual-response");
+      });
+      client.register(
+        "eip155:*" as Network,
+        new MockSchemeNetworkClient("exact", undefined, {
+          onPaymentResponse: async () => {
+            order.push("scheme-response");
+          },
+        }),
+      );
+      client.registerExtension({
+        key: "clientExtension",
+        hooks: {
+          onPaymentResponse: async declaration => {
+            order.push("extension-response");
+            expect(declaration).toEqual({ enabled: true });
+          },
+        },
+      });
+
+      await client.handlePaymentResponse({
+        paymentPayload: buildPaymentPayload({
+          accepted: requirements,
+          extensions: { clientExtension: { enabled: true } },
+        }),
+        requirements,
+      });
+
+      expect(order).toEqual(["manual-response", "scheme-response", "extension-response"]);
     });
   });
 });

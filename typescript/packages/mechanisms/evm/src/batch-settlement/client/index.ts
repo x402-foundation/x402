@@ -9,7 +9,6 @@ export type {
 } from "./scheme";
 export type { ClientChannelStorage } from "./storage";
 export { InMemoryClientChannelStorage } from "./storage";
-export { FileClientChannelStorage } from "./fileStorage";
 export { createBatchSettlementEIP3009DepositPayload } from "./eip3009";
 export { signVoucher } from "./voucher";
 export { refundChannel } from "./refund";

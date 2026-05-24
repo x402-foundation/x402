@@ -7,7 +7,7 @@ import {
   HEDERA_NETWORK,
   HEDERA_ASSET,
   HEDERA_AMOUNT,
-} from "../../../../../proxy";
+} from "@/proxy";
 
 /**
  * Handler for the protected endpoint
@@ -25,40 +25,40 @@ const handler = async (_: NextRequest) => {
  */
 export const GET = HEDERA_PAYEE_ADDRESS
   ? withX402(
-      handler,
-      {
-        accepts: {
-          payTo: HEDERA_PAYEE_ADDRESS,
-          scheme: "exact",
-          price: {
-            amount: HEDERA_AMOUNT,
-            asset: HEDERA_ASSET,
-          },
-          network: HEDERA_NETWORK,
+    handler,
+    {
+      accepts: {
+        payTo: HEDERA_PAYEE_ADDRESS,
+        scheme: "exact",
+        price: {
+          amount: HEDERA_AMOUNT,
+          asset: HEDERA_ASSET,
         },
-        extensions: {
-          ...declareDiscoveryExtension({
-            output: {
-              example: {
-                message: "Protected Hedera endpoint accessed successfully (withX402)",
-                timestamp: "2024-01-01T00:00:00Z",
-              },
-              schema: {
-                properties: {
-                  message: { type: "string" },
-                  timestamp: { type: "string" },
-                },
-                required: ["message", "timestamp"],
-              },
-            },
-          }),
-        },
+        network: HEDERA_NETWORK,
       },
-      server,
-    )
+      extensions: {
+        ...declareDiscoveryExtension({
+          output: {
+            example: {
+              message: "Protected Hedera endpoint accessed successfully (withX402)",
+              timestamp: "2024-01-01T00:00:00Z",
+            },
+            schema: {
+              properties: {
+                message: { type: "string" },
+                timestamp: { type: "string" },
+              },
+              required: ["message", "timestamp"],
+            },
+          },
+        }),
+      },
+    },
+    server,
+  )
   : async () => {
-      return NextResponse.json(
-        { error: "Hedera not configured" },
-        { status: 503 },
-      );
-    };
+    return NextResponse.json(
+      { error: "Hedera not configured" },
+      { status: 503 },
+    );
+  };

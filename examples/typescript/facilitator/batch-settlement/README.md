@@ -27,7 +27,7 @@ If `EVM_RECEIVER_AUTHORIZER_PRIVATE_KEY` is omitted, the relayer key is reused f
 
 ```bash
 cp .env-local .env
-# fill EVM_PRIVATE_KEY (and optionally EVM_RECEIVER_AUTHORIZER_PRIVATE_KEY, EVM_RPC_URL)
+# fill EVM_PRIVATE_KEY (and optionally EVM_RECEIVER_AUTHORIZER_PRIVATE_KEY, EVM_RPC_URL, PORT)
 
 cd ../../
 pnpm install && pnpm build
@@ -36,7 +36,7 @@ cd facilitator/batch-settlement
 pnpm dev
 ```
 
-The facilitator listens on `http://localhost:4022` by default (`PORT` env var to override).
+The facilitator listens on `http://localhost:4022` by default (`PORT` env var to override). Env keys match `examples/go/facilitator/batch-settlement/.env-example` (TS uses `.env-local`; Go uses `.env-example`, per each ecosystem's convention).
 
 ## API Surface
 

@@ -3,6 +3,7 @@ package echo
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"sync"
@@ -359,8 +360,43 @@ func handlePaymentVerified(c echo.Context, next echo.HandlerFunc, server *x402ht
 		c.Set("x402_requirements", *result.PaymentRequirements)
 	}
 
-	// Continue to protected handler
-	err := next(c)
+	// SkipHandler directive: bypass downstream handler, settle inline using the
+	// directive body. Used for refund acknowledgements where there is no resource
+	// response to return.
+	var err error
+	if result.SkipHandler != nil {
+		contentType := result.SkipHandler.ContentType
+		if contentType == "" {
+			contentType = "application/json"
+		}
+		bodyBytes, jerr := json.Marshal(result.SkipHandler.Body)
+		if jerr != nil {
+			bodyBytes = []byte("{}")
+		}
+		capture.Header().Set("Content-Type", contentType)
+		capture.statusCode = http.StatusOK
+		_, _ = capture.body.Write(bodyBytes)
+	} else {
+		// Continue to protected handler
+		func() {
+			defer func() {
+				if rec := recover(); rec != nil {
+					if result.CancellationDispatcher != nil {
+						perr, ok := rec.(error)
+						if !ok {
+							perr = fmt.Errorf("%v", rec)
+						}
+						result.CancellationDispatcher.Cancel(x402.VerifiedPaymentCancelOptions{
+							Reason: x402.CancellationReasonHandlerThrew,
+							Err:    perr,
+						})
+					}
+					panic(rec)
+				}
+			}()
+			err = next(c)
+		}()
+	}
 
 	// Restore original writer
 	c.Response().Writer = origWriter
@@ -368,11 +404,23 @@ func handlePaymentVerified(c echo.Context, next echo.HandlerFunc, server *x402ht
 
 	// If handler returned error, propagate it
 	if err != nil {
+		if result.CancellationDispatcher != nil {
+			result.CancellationDispatcher.Cancel(x402.VerifiedPaymentCancelOptions{
+				Reason: x402.CancellationReasonHandlerThrew,
+				Err:    err,
+			})
+		}
 		return err
 	}
 
 	// Don't settle if response failed
 	if capture.statusCode >= 400 {
+		if result.CancellationDispatcher != nil {
+			result.CancellationDispatcher.Cancel(x402.VerifiedPaymentCancelOptions{
+				Reason:         x402.CancellationReasonHandlerFailed,
+				ResponseStatus: capture.statusCode,
+			})
+		}
 		// Write captured error response
 		origWriter.WriteHeader(capture.statusCode)
 		_, _ = origWriter.Write(capture.body.Bytes())
@@ -389,6 +437,7 @@ func handlePaymentVerified(c echo.Context, next echo.HandlerFunc, server *x402ht
 			ResponseBody:    capture.body.Bytes(),
 			ResponseHeaders: capture.Header(),
 		},
+		result.DeclaredExtensions,
 	)
 
 	// Check settlement success

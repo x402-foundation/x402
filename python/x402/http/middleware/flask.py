@@ -18,11 +18,13 @@ except ImportError as e:
         "Flask middleware requires the flask package. Install with: uv add x402[flask]"
     ) from e
 
+from ...schemas import VerifiedPaymentCancelOptions
 from ..constants import SETTLEMENT_OVERRIDES_HEADER
 from ..facilitator_client_base import FacilitatorResponseError
 from ..types import (
     HTTPAdapter,
     HTTPRequestContext,
+    HTTPTransportContext,
     PaywallConfig,
     RouteConfig,
     RoutesConfig,
@@ -425,13 +427,33 @@ class PaymentMiddleware:
                 # Store in Flask g object
                 g.payment_payload = result.payment_payload
                 g.payment_requirements = result.payment_requirements
+                dispatcher = result.cancellation_dispatcher
+                transport_context = HTTPTransportContext(request=context)
 
                 # Capture response
                 response_wrapper = ResponseWrapper(start_response)
                 body_chunks: list[bytes] = []
 
-                for chunk in self._original_wsgi(environ, response_wrapper):
-                    body_chunks.append(chunk)
+                try:
+                    for chunk in self._original_wsgi(environ, response_wrapper):
+                        body_chunks.append(chunk)
+                except BaseException as error:
+                    if dispatcher is not None:
+                        dispatcher.cancel_sync(
+                            VerifiedPaymentCancelOptions(reason="handler_threw", error=error)
+                        )
+                    raise
+
+                if response_wrapper.status_code is not None and response_wrapper.status_code >= 400:
+                    if dispatcher is not None:
+                        dispatcher.cancel_sync(
+                            VerifiedPaymentCancelOptions(
+                                reason="handler_failed",
+                                response_status=response_wrapper.status_code,
+                            )
+                        )
+                    response_wrapper.send_response(body_chunks)
+                    return []
 
                 # Check if successful response
                 if (
@@ -447,6 +469,7 @@ class PaymentMiddleware:
                         for k, v in response_wrapper.headers
                         if k.lower() != SETTLEMENT_OVERRIDES_HEADER.lower()
                     ]
+                    transport_context.response_headers = dict(response_wrapper.headers)
 
                     # Settle payment
                     try:
@@ -455,6 +478,8 @@ class PaymentMiddleware:
                             result.payment_requirements,
                             context=context,
                             settlement_overrides=overrides,
+                            declared_extensions=result.declared_extensions,
+                            transport_context=transport_context,
                         )
 
                         if settle_result.success:

@@ -1,5 +1,29 @@
 # @x402/mcp Changelog
 
+## 2.13.0
+
+### Minor Changes
+
+- 5fca9f3: Implemented missing hook primitives needed for batch-settlement aligning with http transport
+- Updated dependencies [ad08a9a]
+- Updated dependencies [5fca9f3]
+- Updated dependencies [95f2094]
+- Updated dependencies [49ea054]
+  - @x402/core@2.13.0
+
+## 2.12.0
+
+### Minor Changes
+
+- ee7c156: chore: tighten viem dependency floor to ^2.48.11
+
+  Raises the viem floor in every `@x402/*` package.json that lists viem as a direct dep so future `pnpm install` re-resolutions cannot regress below this version. Fixes the incomplete tightening from #2013.
+
+- Updated dependencies [608034f]
+- Updated dependencies [d235050]
+- Updated dependencies [45d7d19]
+  - @x402/core@2.12.0
+
 ## 2.11.0
 
 ### Minor Changes

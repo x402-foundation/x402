@@ -41,6 +41,11 @@ export default function X402V2LaunchPage() {
         <article className="pb-20">
           {/* Header */}
           <header className="max-w-4xl mx-auto px-4 sm:px-6 md:px-10 lg:px-16 pt-12 sm:pt-16 md:pt-20">
+            <p className="text-sm mb-4">
+              <Link href="/writing" className="text-blue-600 hover:underline">
+                Back to Writing
+              </Link>
+            </p>
             <h1 className="text-3xl sm:text-4xl lg:text-5xl font-semibold leading-tight mb-4">
               Introducing x402 V2: Evolving the Standard for Internet-native Payments
             </h1>

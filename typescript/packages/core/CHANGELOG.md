@@ -1,5 +1,25 @@
 # @x402/core Changelog
 
+## 2.13.0
+
+### Minor Changes
+
+- 49ea054: Add extension hook adapters for client and HTTP flows
+- ad08a9a: Preserve %2F/%5C in normalizePath so encoded path separators can no longer hide segment boundaries from :param route regexes, closing a paywall bypass on requests like /api/report/a%2Fb.
+- 5fca9f3: Allow paymentPayload.accepted.extra to include additive client fields, while all server-declared fields still have to match
+- 95f2094: Replace the dynamic fallback paywall HTML (used when @x402/paywall is not installed) with a static template, eliminating reflected XSS surface from interpolated request URLs and config values.
+
+## 2.12.0
+
+### Minor Changes
+
+- 608034f: Added Bazaar service metadata fields (`serviceName`, `tags`, `iconUrl`) on `ResourceInfo`, plus `isValidServiceName` / `sanitizeTags` / `isValidIconUrl` / `sanitizeResourceServiceMetadata` helpers in `@x402/extensions/bazaar` that `extractDiscoveryInfo` now applies with soft-drop semantics. Fields are optional and additive — providers that omit them produce byte-identical 402 bodies.
+- 45d7d19: - Extended scheme surface with optional schemeHooks
+  - Added skip primitives to verify/route/settle for custom flows
+  - Added VerifyResponse / SettleResponse extra
+  - Added onPaymentResponse client hook and processPaymentResult utility
+- d235050: Log the `EXTENSION-RESPONSES` header from facilitator verify/settle responses. The HTTP facilitator client decodes the header and logs allowlisted fields (`status`, `rejectedReason`, `reason`, `code`) without attaching data to `VerifyResponse` or `SettleResponse`.
+
 ## 2.11.0
 
 ### Minor Changes

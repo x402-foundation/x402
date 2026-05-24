@@ -9,20 +9,24 @@ x402 uses [CAIP-2](https://chainagnostic.org/CAIPs/caip-2) standard network iden
 
 - **EVM networks**: `eip155:<chainId>` — any EVM chain is supported (e.g., `eip155:8453` for Base)
 - **Solana**: `solana:<genesisHash>` (first 32 bytes of the genesis block hash)
+- **TON (TVM)**: `tvm:<workchain>` (e.g., `tvm:-239` for mainnet, `tvm:-3` for testnet)
 - **Algorand**: `algorand:<genesisHash>` (base64-encoded genesis hash)
 - **Stellar**: `stellar:<network>` (`pubnet` or `testnet`)
 - **Aptos**: `aptos:<chainId>` (e.g., `aptos:1` for mainnet)
+- **Hedera**: `hedera:<network>` (`mainnet` or `testnet`)
 
 ## Token Support
 
-x402 supports tokens on EVM, Solana, Stellar, and Aptos networks:
+x402 supports tokens on EVM, Solana, TON, Stellar, Aptos, and Hedera networks:
 
 | Ecosystem | Supported Tokens | Transfer Method |
 |-----------|------------------|-----------------|
 | **EVM** | Any ERC-20 token | EIP-3009 or Permit2 |
 | **Solana** | Any SPL or Token-2022 token | SPL Transfer |
+| **TON (TVM)** | Any TEP-74 jetton (e.g., USDT) | Signed W5R1 internal message |
 | **Stellar** | Any Soroban token implementing SEP-41 | `transfer(from, to, amount)` |
 | **Aptos** | Any fungible asset | `primary_fungible_store::transfer` |
+| **Hedera** | HBAR or any HTS fungible token | Hedera Transfer Transaction |
 
 Facilitators support **networks**, not specific tokens — any compatible token works on any facilitator that supports that network.
 
@@ -37,7 +41,11 @@ x402 supports two asset transfer methods on EVM, selected automatically based on
 
 Both methods provide gasless transfers (facilitator sponsors gas), signature-based authorization, and secure payments. EIP-3009 is preferred when available (simpler, no approval step). Permit2 serves as the universal fallback.
 
-**Permit2 approval**: Requires a one-time on-chain approval. x402 supports two gas sponsoring extensions that make this step gasless — see [EIP-2612 Gas Sponsoring](/extensions/eip2612-gas-sponsoring) and [ERC-20 Approval Gas Sponsoring](/extensions/erc20-approval-gas-sponsoring).
+**Permit2 approval**: Requires a one-time onchain approval. x402 supports two gas sponsoring extensions that make this step gasless — see [EIP-2612 Gas Sponsoring](/extensions/eip2612-gas-sponsoring) and [ERC-20 Approval Gas Sponsoring](/extensions/erc20-approval-gas-sponsoring).
+
+### EVM: Batch settlement (`batch-settlement`)
+
+For high-frequency or repeated micropayment flows where settling every request onchain is too costly, x402 supports the **`batch-settlement`** scheme on EVM: the buyer deposits once into an escrow contract, signs off-chain vouchers per request, and sellers redeem in batches onchain. Per-request pricing still uses an **up-to** ceiling (`PaymentRequirements.amount`); actual charges can vary per request within that limit—see **[Batch settlement](/schemes/batch-settlement)**.
 
 ### Specifying Payment Amounts
 
@@ -88,6 +96,11 @@ When you use `"$0.01"` syntax, x402 needs to know which stablecoin to use. The f
 | Stable Testnet | `eip155:2201` | `0x78Cf24370174180738C5B8E352B6D14c83a6c9A9` | USDT0 | 6 | EIP-3009 |
 | MegaETH | `eip155:4326` | `0xFAfDdbb3FC7688494971a79cc65DCa3EF82079E7` | MegaUSD | 18 | Permit2 + EIP-2612 |
 | Mezo Testnet | `eip155:31611` | `0x118917a40FAf1CD7a13dB0Ef56C86De7973Ac503` | Mezo USD | 18 | Permit2 + EIP-2612 |
+| Radius | `eip155:723487` | `0x33ad9e4BD16B69B5BFdED37D8B5D9fF9aba014Fb` | Stable Coin | 6 | Permit2 + EIP-2612 |
+| Radius Testnet | `eip155:72344` | `0x33ad9e4BD16B69B5BFdED37D8B5D9fF9aba014Fb` | Stable Coin | 6 | Permit2 + EIP-2612 |
+| ADI Chain | `eip155:36900` | `0x9cb8142aEBBcdc60AF7c97Af897A67A8f3CA71C2` | USDC.e | 6 | EIP-3009 |
+| HPP | `eip155:190415` | `0x401eCb1D350407f13ba348573E5630B83638E30D` | Bridged USDC | 6 | EIP-3009 |
+| HPP Sepolia | `eip155:181228` | `0x401eCb1D350407f13ba348573E5630B83638E30D` | Bridged USDC | 6 | EIP-3009 |
 
 
 
@@ -97,6 +110,13 @@ When you use `"$0.01"` syntax, x402 needs to know which stablecoin to use. The f
 |-------|--------|------------|----------|
 | Solana Mainnet | `solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp` | `EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v` (USDC) | 6 |
 | Solana Devnet | `solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1` | `4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU` (USDC) | 6 |
+
+### TON (TVM)
+
+| Chain | CAIP-2 | Jetton Minter | Decimals |
+|-------|----------|---------------|----------|
+| TON Mainnet | `tvm:-239` | `EQCxE6mUtQJKFnGfaROTKOt1lZbDiiX1kCixRv7Nw2Id_sDs` (USDT) | 6 |
+| TON Testnet | `tvm:-3` | `kQDNUDJC0iQvJoZp0ml-YteL1NtTXKphU03CTI5v4VtBhGYs` (USDT) | 6 |
 
 ### Algorand (AVM)
 
@@ -118,6 +138,15 @@ When you use `"$0.01"` syntax, x402 needs to know which stablecoin to use. The f
 |-------|--------|----------------------|----------|
 | Aptos Mainnet | `aptos:1` | `0xbae207659db88bea0cbead6da0ed00aac12edcdda169e591cd41c94180b46f3b` (USDC) | 6 |
 | Aptos Testnet | `aptos:2` | `0x69091fbab5f7d635ee7ac5098cf0c1efbe31d68fec0f2cd565e8d168daf52832` (USDC) | 6 |
+
+### Hedera
+
+| Chain | CAIP-2 | Token ID | Decimals |
+|-------|--------|----------|----------|
+| Hedera Mainnet | `hedera:mainnet` | `0.0.456858` (USDC) | 6 |
+| Hedera Testnet | `hedera:testnet` | `0.0.429274` (USDC) | 6 |
+
+HBAR (native token) is also supported using asset ID `0.0.0`, with amounts in tinybars (1 HBAR = 10⁸ tinybars).
 
 ## Adding Support for New Networks
 
@@ -251,7 +280,7 @@ Video Guide: [Adding EVM Chains to x402](https://x.com/jaycoolh/status/192085155
 
 Key takeaways:
 
-* **Any EVM chain** is supported via `eip155:<chainId>` — plus Solana, Stellar, and Aptos
+* **Any EVM chain** is supported via `eip155:<chainId>` — plus Solana, TON (TVM), Algorand, Stellar, Aptos, and Hedera
 * [Default assets](#default-assets-for-dollar-string-pricing) are a convenience for `"$0.01"` dollar-string pricing; explicit `TokenAmount` works on any chain
 * Any ERC-20 token works on any EVM facilitator (via EIP-3009 or Permit2)
 * CAIP-2 identifiers provide unambiguous cross-chain support

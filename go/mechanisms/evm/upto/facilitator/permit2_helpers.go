@@ -62,6 +62,10 @@ func BuildUptoPermit2SettleArgs(permit2Payload *evm.UptoPermit2Payload, settleme
 	if err != nil {
 		return nil, err
 	}
+	sigData, err := evm.ParseERC6492Signature(signatureBytes)
+	if err != nil {
+		return nil, err
+	}
 
 	args := &UptoPermit2SettleArgs{}
 	args.Permit.Permitted.Token = common.HexToAddress(permit2Payload.Permit2Authorization.Permitted.Token)
@@ -73,7 +77,7 @@ func BuildUptoPermit2SettleArgs(permit2Payload *evm.UptoPermit2Payload, settleme
 	args.Witness.To = common.HexToAddress(permit2Payload.Permit2Authorization.Witness.To)
 	args.Witness.Facilitator = common.HexToAddress(permit2Payload.Permit2Authorization.Witness.Facilitator)
 	args.Witness.ValidAfter = validAfter
-	args.Signature = signatureBytes
+	args.Signature = sigData.InnerSignature
 	return args, nil
 }
 

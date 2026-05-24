@@ -6,11 +6,13 @@ catalogs discovered x402 resources.
 
 import os
 import sys
+import base64
+import json
 from datetime import datetime
 from typing import Any
 
 from dotenv import load_dotenv
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Response
 from pydantic import BaseModel
 from solders.keypair import Keypair
 
@@ -105,6 +107,15 @@ class BazaarCatalog:
 
 
 bazaar_catalog = BazaarCatalog()
+
+EXTENSION_RESPONSES_HEADER = "EXTENSION-RESPONSES"
+
+
+def _set_extension_responses_header(response: Response) -> None:
+    """Attach an example bazaar extension response header for client readback."""
+    extension_responses = {"bazaar": {"status": "success"}}
+    encoded = base64.b64encode(json.dumps(extension_responses).encode("utf-8")).decode("ascii")
+    response.headers[EXTENSION_RESPONSES_HEADER] = encoded
 
 # Initialize signers based on available keys
 evm_signer = None
@@ -216,7 +227,7 @@ app = FastAPI(
 
 
 @app.post("/verify")
-async def verify(request: VerifyRequest):
+async def verify(request: VerifyRequest, http_response: Response):
     """Verify a payment against requirements.
 
     Note: Payment tracking and bazaar discovery are handled by lifecycle hooks.
@@ -237,16 +248,17 @@ async def verify(request: VerifyRequest):
         # Hooks will automatically:
         # - Track verified payment (on_after_verify)
         # - Extract and catalog discovery info (on_after_verify)
-        response = await facilitator.verify(payload, requirements)
+        verify_result = await facilitator.verify(payload, requirements)
 
-        return response.model_dump(by_alias=True, exclude_none=True)
+        _set_extension_responses_header(http_response)
+        return verify_result.model_dump(by_alias=True, exclude_none=True)
     except Exception as e:
         print(f"Verify error: {e}")
         raise HTTPException(status_code=500, detail=str(e)) from e
 
 
 @app.post("/settle")
-async def settle(request: SettleRequest):
+async def settle(request: SettleRequest, http_response: Response):
     """Settle a payment on-chain.
 
     Args:
@@ -262,9 +274,10 @@ async def settle(request: SettleRequest):
         payload = parse_payment_payload(request.paymentPayload)
         requirements = PaymentRequirements.model_validate(request.paymentRequirements)
 
-        response = await facilitator.settle(payload, requirements)
+        settle_result = await facilitator.settle(payload, requirements)
 
-        return response.model_dump(by_alias=True, exclude_none=True)
+        _set_extension_responses_header(http_response)
+        return settle_result.model_dump(by_alias=True, exclude_none=True)
     except Exception as e:
         print(f"Settle error: {e}")
 

@@ -23,9 +23,14 @@ flowchart LR
 
 ## Getting Started
 
-### New to AWS? Start here
+### New to AWS? Choose your path
 
-Follow the step-by-step [Getting Started guide](./GETTING-STARTED.md) to go from zero to a working x402 payment gate in the AWS Console — no CLI required. It covers IAM setup, Lambda deployment, CloudFront configuration, and end-to-end testing with a real 402 response.
+| Guide | Best for | What you'll use |
+|---|---|---|
+| [Console Guide](./GETTING-STARTED-CONSOLE.md) | Learning the architecture, first-time AWS setup | AWS Console (browser only, no CLI) |
+| [CDK Guide](./GETTING-STARTED-CDK.md) | Repeatable deployments, taking this to production | AWS CLI + `cdk deploy` |
+
+Both guides deploy the same architecture. Start with the Console guide if you want to understand what each AWS resource does. Use the CDK guide if you want a single command to deploy and destroy everything.
 
 ### Already using CloudFront + Lambda@Edge?
 
@@ -74,11 +79,6 @@ See [Lambda@Edge quotas](https://docs.aws.amazon.com/AmazonCloudFront/latest/Dev
 
 Copy `lambda/src/` into your project and adapt the build to your tooling.
 
-> **Note**: Replace `workspace:*` dependencies with specific versions:
-> ```json
-> "@x402/core": "^2.2.0",
-> "@x402/evm": "^2.2.0"
-> ```
 
 ### 2. Configure Payment Settings
 

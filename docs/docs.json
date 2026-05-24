@@ -63,6 +63,15 @@
         ]
       },
       {
+        "group": "Payment Schemes",
+        "pages": [
+          "schemes/overview",
+          "schemes/exact",
+          "schemes/upto",
+          "schemes/batch-settlement"
+        ]
+      },
+      {
         "group": "Extensions",
         "pages": [
           "extensions/overview",

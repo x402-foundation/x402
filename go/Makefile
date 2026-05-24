@@ -40,10 +40,10 @@ test-integration:
 	@echo "Running integration tests..."
 	@if [ -f .env ]; then \
 		echo "Loading environment variables from .env..."; \
-		export $$(grep -v '^#' .env | xargs) && go test -v -race -tags="integration,mcp" ./test/integration/...; \
+		export $$(grep -v '^#' .env | xargs) && go test -v -race -count=1 -tags="integration,mcp" ./test/integration/...; \
 	else \
 		echo "No .env file found, running without environment variables..."; \
-		go test -v -race -tags="integration,mcp" ./test/integration/...; \
+		go test -v -race -count=1 -tags="integration,mcp" ./test/integration/...; \
 	fi
 
 ## test-integration-no-mcp: Run integration tests without MCP tests
@@ -51,10 +51,10 @@ test-integration-no-mcp:
 	@echo "Running integration tests (excluding MCP tests)..."
 	@if [ -f .env ]; then \
 		echo "Loading environment variables from .env..."; \
-		export $$(grep -v '^#' .env | xargs) && go test -v -race -tags=integration ./test/integration/...; \
+		export $$(grep -v '^#' .env | xargs) && go test -v -race -count=1 -tags=integration ./test/integration/...; \
 	else \
 		echo "No .env file found, running without environment variables..."; \
-		go test -v -race -tags=integration ./test/integration/...; \
+		go test -v -race -count=1 -tags=integration ./test/integration/...; \
 	fi
 
 ## test-e2e: Run end-to-end tests

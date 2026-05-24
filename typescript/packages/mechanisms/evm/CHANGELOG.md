@@ -1,5 +1,35 @@
 # @x402/evm Changelog
 
+## 2.13.0
+
+### Minor Changes
+
+- 114b6b1: Add HPP mainnet (chain ID 190415) and HPP Sepolia (chain ID 181228) support with USDC.e (Bridged USDC) as the default stablecoin
+- 581e55e: Add ADI Chain (chain ID 36900) support with USDC.e as the default stablecoin
+- 3ba5d2e: add optional batch-settlement client/file-storage and server/file-storage (and server/redis-storage) exports to avoid pulling Node-fs/Redis helpers into default bundles
+- a242149: unwrap ERC-6492 signatures for exact/upto permit2 flows and batch-settlement
+- abbd40e: Added checks for 0 amount to settle/refund for batch-settlement
+- Updated dependencies [ad08a9a]
+- Updated dependencies [5fca9f3]
+- Updated dependencies [95f2094]
+- Updated dependencies [49ea054]
+  - @x402/core@2.13.0
+
+## 2.12.0
+
+### Minor Changes
+
+- 45d7d19: Implemented batch-settlement mechanism
+- e7150b3: Add Radius Network (chain ID 723487) and Radius Testnet (chain ID 72344) support with SBC as the default stablecoin
+- ee7c156: chore: tighten viem dependency floor to ^2.48.11
+
+  Raises the viem floor in every `@x402/*` package.json that lists viem as a direct dep so future `pnpm install` re-resolutions cannot regress below this version. Fixes the incomplete tightening from #2013.
+
+- Updated dependencies [608034f]
+- Updated dependencies [d235050]
+- Updated dependencies [45d7d19]
+  - @x402/core@2.12.0
+
 ## 2.11.0
 
 ### Minor Changes

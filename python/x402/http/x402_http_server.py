@@ -18,12 +18,17 @@ from .types import (
     HTTPProcessResult,
     HTTPRequestContext,
     HTTPResponseInstructions,
+    HTTPTransportContext,
     PaymentOption,
     PaywallConfig,
     ProcessSettleResult,
+    ProtectedRequestHook,
     RoutesConfig,
 )
-from .x402_http_server_base import PaywallProvider, x402HTTPServerBase
+from .x402_http_server_base import (
+    PaywallProvider,
+    x402HTTPServerBase,
+)
 
 if TYPE_CHECKING:
     from ..server import x402ResourceServerSync
@@ -67,6 +72,11 @@ class x402HTTPResourceServer(x402HTTPServerBase):
             Self for chaining.
         """
         self._paywall_provider = provider
+        return self
+
+    def on_protected_request(self, hook: ProtectedRequestHook) -> x402HTTPResourceServer:
+        """Register hook before payment processing on protected routes."""
+        super().on_protected_request(hook)
         return self
 
     async def process_http_request(
@@ -114,10 +124,63 @@ class x402HTTPResourceServer(x402HTTPServerBase):
                     except Exception as e:
                         exception = e
                         result = None
+                elif phase == "protected_request":
+                    hook = target
+                    request_context, route_config = ctx
+                    hook_result = hook(request_context, route_config)
+                    if asyncio.iscoroutine(hook_result) or asyncio.isfuture(hook_result):
+                        result = await hook_result
+                    else:
+                        result = hook_result
+                elif phase == "create_payment_required":
+                    (
+                        requirements,
+                        resource_info,
+                        error_msg,
+                        extensions,
+                        transport_context,
+                        *_rest,
+                    ) = target
+                    req_payment_payload = _rest[0] if _rest else None
+                    result = await self._server.create_payment_required_response(
+                        requirements,
+                        resource_info,
+                        error_msg,
+                        extensions,
+                        transport_context=transport_context,
+                        payment_payload=req_payment_payload,
+                    )
                 elif phase == "verify_payment":
-                    # Verify payment (await async method)
-                    payload, reqs = target
-                    result = await self._server.verify_payment(payload, reqs)
+                    payload, reqs, declared_extensions, transport_context = target
+                    try:
+                        result = await self._server.verify_payment(
+                            payload,
+                            reqs,
+                            declared_extensions=declared_extensions,
+                            transport_context=transport_context,
+                        )
+                    except Exception as e:
+                        exception = e
+                        result = None
+                elif phase == "skip_handler_settlement":
+                    (
+                        payload,
+                        reqs,
+                        declared_extensions,
+                        transport_context,
+                        skip_handler,
+                    ) = target
+                    settle_result = await self.process_settlement(
+                        payload,
+                        reqs,
+                        context=transport_context.request,
+                        declared_extensions=declared_extensions,
+                        transport_context=transport_context,
+                    )
+                    result = self._process_skip_handler_settlement(
+                        settle_result,
+                        skip_handler,
+                    )
                 else:
                     result = None
         except StopIteration as e:
@@ -129,6 +192,8 @@ class x402HTTPResourceServer(x402HTTPServerBase):
         requirements: PaymentRequirements,
         context: HTTPRequestContext | None = None,
         settlement_overrides: dict[str, Any] | None = None,
+        declared_extensions: dict[str, Any] | None = None,
+        transport_context: HTTPTransportContext | None = None,
     ) -> ProcessSettleResult:
         """Process settlement after successful response (async).
 
@@ -151,6 +216,8 @@ class x402HTTPResourceServer(x402HTTPServerBase):
             settle_response = await self._server.settle_payment(
                 payment_payload,
                 effective_requirements,
+                declared_extensions=declared_extensions,
+                transport_context=transport_context,
             )
 
             if not settle_response.success:
@@ -223,7 +290,8 @@ class x402HTTPResourceServer(x402HTTPServerBase):
         Awaits settlement_failed_response_body hook if it returns a coroutine.
         """
         settlement_headers = failure.headers
-        route_config = self._get_route_config(context.path, context.method) if context else None
+        route_match = self._get_route_config(context.path, context.method) if context else None
+        route_config = route_match[0] if route_match else None
 
         custom_body = None
         if route_config and route_config.settlement_failed_response_body:
@@ -372,6 +440,11 @@ class x402HTTPResourceServerSync(x402HTTPServerBase):
         self._paywall_provider = provider
         return self
 
+    def on_protected_request(self, hook: ProtectedRequestHook) -> x402HTTPResourceServerSync:
+        """Register hook before payment processing on protected routes."""
+        super().on_protected_request(hook)
+        return self
+
     def process_http_request(
         self,
         context: HTTPRequestContext,
@@ -393,19 +466,80 @@ class x402HTTPResourceServerSync(x402HTTPServerBase):
         """
         gen = self._process_request_core(context, paywall_config)
         result = None
+        exception = None
         try:
             while True:
-                phase, target, ctx = gen.send(result)
+                if exception is not None:
+                    phase, target, ctx = gen.throw(exception)
+                    exception = None
+                else:
+                    phase, target, ctx = gen.send(result)
                 if phase == "resolve_options":
                     # Build requirements from payment options (Resolves dynamic price/pay_to)
                     route_config = target
                     result = self._build_payment_requirements_from_options_sync(
                         route_config.accepts, ctx
                     )
+                elif phase == "protected_request":
+                    hook = target
+                    request_context, route_config = ctx
+                    hook_result = hook(request_context, route_config)
+                    if asyncio.iscoroutine(hook_result):
+                        hook_result.close()
+                        raise TypeError(
+                            "Async on_protected_request hooks are not supported in "
+                            "x402HTTPResourceServerSync."
+                        )
+                    result = hook_result
+                elif phase == "create_payment_required":
+                    (
+                        requirements,
+                        resource_info,
+                        error_msg,
+                        extensions,
+                        transport_context,
+                        *_rest,
+                    ) = target
+                    req_payment_payload = _rest[0] if _rest else None
+                    result = self._server.create_payment_required_response(
+                        requirements,
+                        resource_info,
+                        error_msg,
+                        extensions,
+                        transport_context=transport_context,
+                        payment_payload=req_payment_payload,
+                    )
                 elif phase == "verify_payment":
-                    # Verify payment
-                    payload, reqs = target
-                    result = self._server.verify_payment(payload, reqs)
+                    payload, reqs, declared_extensions, transport_context = target
+                    try:
+                        result = self._server.verify_payment(
+                            payload,
+                            reqs,
+                            declared_extensions=declared_extensions,
+                            transport_context=transport_context,
+                        )
+                    except Exception as e:
+                        exception = e
+                        result = None
+                elif phase == "skip_handler_settlement":
+                    (
+                        payload,
+                        reqs,
+                        declared_extensions,
+                        transport_context,
+                        skip_handler,
+                    ) = target
+                    settle_result = self.process_settlement(
+                        payload,
+                        reqs,
+                        context=transport_context.request,
+                        declared_extensions=declared_extensions,
+                        transport_context=transport_context,
+                    )
+                    result = self._process_skip_handler_settlement(
+                        settle_result,
+                        skip_handler,
+                    )
                 else:
                     result = None
         except StopIteration as e:

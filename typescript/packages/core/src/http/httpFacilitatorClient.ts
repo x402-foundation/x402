@@ -8,6 +8,7 @@ import {
   FacilitatorResponseError,
 } from "../types/facilitator";
 import { z } from "../schemas";
+import { safeBase64Decode } from "../utils";
 
 const DEFAULT_FACILITATOR_URL = "https://x402.org/facilitator";
 
@@ -156,6 +157,40 @@ function responseExcerpt(text: string, limit: number = 200): string {
   return `${compact.slice(0, limit - 3)}...`;
 }
 
+const EXTENSION_RESPONSE_LOG_FIELD_ALLOWLIST = ["status", "rejectedReason", "reason", "code"];
+
+/**
+ * Reads the `EXTENSION-RESPONSES` header from a facilitator HTTP response and logs
+ * allowlisted fields. Silently ignores malformed headers.
+ *
+ * @param response - The HTTP response from the facilitator
+ */
+function logExtensionResponsesHeader(response: Response): void {
+  const header = response.headers.get("EXTENSION-RESPONSES");
+  if (!header) return;
+  try {
+    const decoded = JSON.parse(safeBase64Decode(header));
+    if (!decoded || typeof decoded !== "object" || Array.isArray(decoded)) return;
+    const sanitized: Record<string, Record<string, unknown>> = {};
+    for (const [extensionKey, payload] of Object.entries(decoded as Record<string, unknown>)) {
+      const source =
+        payload && typeof payload === "object" && !Array.isArray(payload)
+          ? (payload as Record<string, unknown>)
+          : {};
+      const filtered: Record<string, unknown> = {};
+      for (const key of EXTENSION_RESPONSE_LOG_FIELD_ALLOWLIST) {
+        if (source[key] !== undefined) {
+          filtered[key] = source[key];
+        }
+      }
+      sanitized[extensionKey] = filtered;
+    }
+    console.log(`[x402] extension responses: ${JSON.stringify(sanitized)}`);
+  } catch {
+    // Ignore malformed header
+  }
+}
+
 /**
  * Parses and validates a successful facilitator response body.
  *
@@ -259,7 +294,9 @@ export class HTTPFacilitatorClient implements FacilitatorClient {
       );
     }
 
-    return parseSuccessResponse(response, verifyResponseSchema, "verify");
+    const verifyResult = await parseSuccessResponse(response, verifyResponseSchema, "verify");
+    logExtensionResponsesHeader(response);
+    return verifyResult;
   }
 
   /**
@@ -311,7 +348,9 @@ export class HTTPFacilitatorClient implements FacilitatorClient {
       );
     }
 
-    return parseSuccessResponse(response, settleResponseSchema, "settle");
+    const settleResult = await parseSuccessResponse(response, settleResponseSchema, "settle");
+    logExtensionResponsesHeader(response);
+    return settleResult;
   }
 
   /**

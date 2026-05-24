@@ -4,7 +4,7 @@ Demonstrates how to create a client that supports all available networks with
 optional chain configuration via environment variables.
 
 New chain support should be added here in alphabetic order by network prefix
-(e.g., "eip155" before "solana").
+(e.g., "eip155" before "solana" before "tvm").
 """
 
 import asyncio
@@ -21,28 +21,37 @@ from x402.mechanisms.evm import EthAccountSigner
 from x402.mechanisms.evm.exact.register import register_exact_evm_client
 from x402.mechanisms.svm import KeypairSigner
 from x402.mechanisms.svm.exact.register import register_exact_svm_client
+from x402.mechanisms.tvm import (
+    TVM_MAINNET,
+    TVM_PROVIDER_TONAPI,
+    TVM_TESTNET,
+    WalletV5R1Config,
+    WalletV5R1MnemonicSigner,
+)
+from x402.mechanisms.tvm.exact import ExactTvmClientScheme
 
 # Load environment variables
 load_dotenv()
 
 
-def validate_environment() -> tuple[str | None, str | None, str, str]:
+def validate_environment() -> tuple[str | None, str | None, str | None, str, str]:
     """Validate required environment variables.
 
     Returns:
-        Tuple of (evm_private_key, svm_private_key, base_url, endpoint_path).
+        Tuple of (evm_private_key, svm_private_key, tvm_private_key, base_url, endpoint_path).
 
     Raises:
         SystemExit: If required environment variables are missing.
     """
     evm_private_key = os.getenv("EVM_PRIVATE_KEY")
     svm_private_key = os.getenv("SVM_PRIVATE_KEY")
+    tvm_private_key = os.getenv("TVM_PRIVATE_KEY")
     base_url = os.getenv("RESOURCE_SERVER_URL")
     endpoint_path = os.getenv("ENDPOINT_PATH")
 
-    # Validate at least one private key is provided
-    if not evm_private_key and not svm_private_key:
-        print("❌ At least one of EVM_PRIVATE_KEY or SVM_PRIVATE_KEY is required")
+    # Validate at least one signer credential is provided
+    if not evm_private_key and not svm_private_key and not tvm_private_key:
+        print("❌ At least one of EVM_PRIVATE_KEY, SVM_PRIVATE_KEY, or TVM_PRIVATE_KEY is required")
         print("Please copy .env-local to .env and fill in the values.")
         sys.exit(1)
 
@@ -54,13 +63,21 @@ def validate_environment() -> tuple[str | None, str | None, str, str]:
         print("❌ ENDPOINT_PATH is required")
         sys.exit(1)
 
-    return evm_private_key, svm_private_key, base_url, endpoint_path
+    return (
+        evm_private_key,
+        svm_private_key,
+        tvm_private_key,
+        base_url,
+        endpoint_path,
+    )
 
 
 async def main() -> None:
     """Main entry point demonstrating httpx with x402 payments."""
     # Validate environment
-    evm_private_key, svm_private_key, base_url, endpoint_path = validate_environment()
+    evm_private_key, svm_private_key, tvm_private_key, base_url, endpoint_path = (
+        validate_environment()
+    )
 
     # Create x402 client
     client = x402Client()
@@ -77,6 +94,30 @@ async def main() -> None:
         register_exact_svm_client(client, svm_signer)
         print(f"Initialized SVM account: {svm_signer.address}")
 
+    # Register TVM payment scheme if private key provided
+    if tvm_private_key:
+        tvm_network = os.getenv("TVM_NETWORK", TVM_TESTNET)
+        if tvm_network not in {TVM_TESTNET, TVM_MAINNET}:
+            print(f"❌ Unsupported TVM network: {tvm_network}")
+            sys.exit(1)
+
+        tvm_config = WalletV5R1Config.from_private_key(tvm_network, tvm_private_key)
+        tvm_provider = (os.getenv("TVM_PROVIDER") or "").strip().lower()
+        tvm_config.provider = tvm_provider or tvm_config.provider
+        tvm_config.api_key = (
+            os.getenv("TONAPI_API_KEY")
+            if tvm_provider == TVM_PROVIDER_TONAPI
+            else os.getenv("TONCENTER_API_KEY")
+        )
+        tvm_config.provider_base_url = (
+            os.getenv("TONAPI_BASE_URL")
+            if tvm_provider == TVM_PROVIDER_TONAPI
+            else os.getenv("TONCENTER_BASE_URL")
+        )
+        tvm_signer = WalletV5R1MnemonicSigner(tvm_config)
+        client.register(tvm_network, ExactTvmClientScheme(tvm_signer))
+        print(f"Initialized TVM account: {tvm_signer.address}")
+
     # Create HTTP client helper for payment response extraction
     http_client = x402HTTPClient(client)
 
@@ -85,7 +126,7 @@ async def main() -> None:
     print(f"\nMaking request to: {url}\n")
 
     # Make request using async context manager
-    async with x402HttpxClient(client) as http:
+    async with x402HttpxClient(client, timeout=30.0) as http:
         response = await http.get(url)
         await response.aread()
 

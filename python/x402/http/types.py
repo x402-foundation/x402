@@ -7,6 +7,8 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Literal, Protocol
 
+from ..schemas.hooks import PaymentCancellationDispatcher, ProtectedRequestHookResult
+
 if TYPE_CHECKING:
     from ..schemas import (
         Network,
@@ -81,6 +83,15 @@ class HTTPRequestContext:
 
 
 @dataclass
+class HTTPTransportContext:
+    """HTTP transport context for verify/settle hooks."""
+
+    request: HTTPRequestContext
+    response_body: Any = None
+    response_headers: dict[str, str] | None = None
+
+
+@dataclass
 class HTTPResponseInstructions:
     """Instructions for building HTTP response."""
 
@@ -104,6 +115,8 @@ class HTTPProcessResult:
     response: HTTPResponseInstructions | None = None
     payment_payload: PaymentPayload | None = None
     payment_requirements: PaymentRequirements | None = None
+    declared_extensions: dict[str, Any] | None = None
+    cancellation_dispatcher: PaymentCancellationDispatcher | None = None
 
 
 @dataclass
@@ -126,13 +139,20 @@ class ProcessSettleResult:
 
 @dataclass
 class PaywallConfig:
-    """Configuration for paywall UI customization."""
+    """Configuration for paywall UI customization.
+
+    ``faucet_urls`` is a per-chain override keyed by CAIP-2 network identifier
+    (e.g. ``"eip155:84532"``). Wins over the paywall's curated default map for
+    the matching chain. Unmapped chains render "No faucet configured." rather
+    than a fallback link.
+    """
 
     app_name: str | None = None
     app_logo: str | None = None
     session_token_endpoint: str | None = None
     current_url: str | None = None
     testnet: bool = False
+    faucet_urls: dict[str, str] | None = None
 
 
 # Dynamic function types (supports both sync and async callbacks)
@@ -183,6 +203,12 @@ class RouteConfig:
     settlement_failed_response_body: SettlementFailedResponseBody | None = None
     extensions: dict[str, Any] | None = None
     hook_timeout_seconds: float | None = None
+
+
+ProtectedRequestHook = Callable[
+    [HTTPRequestContext, RouteConfig],
+    ProtectedRequestHookResult | None | Awaitable[ProtectedRequestHookResult | None],
+]
 
 
 RoutesConfig = dict[str, RouteConfig] | RouteConfig

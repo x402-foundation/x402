@@ -1,7 +1,7 @@
 import fs from "fs";
 import path from "path";
 import { Suspense } from "react";
-import { categories, type Partner } from "./data";
+import type { Partner } from "./data";
 import EcosystemClient from "./EcosystemClient";
 import { NavBar } from "../components/NavBar";
 import { Footer } from "../components/Footer";
@@ -9,7 +9,7 @@ import { Footer } from "../components/Footer";
 export const metadata = {
   title: "Ecosystem | x402",
   description:
-    "Discover innovative projects, tools, and applications built by our growing community of partners and developers leveraging x402 technology.",
+    "Explore the foundation members, featured integrations, and implementation paths showing x402 adoption across payments, cloud, crypto, and developer infrastructure.",
 };
 
 export const revalidate = 3600;
@@ -21,13 +21,13 @@ async function getPartners(): Promise<Partner[]> {
   try {
     partnerFolders = fs
       .readdirSync(partnersDirectory)
-      .filter((file) => fs.statSync(path.join(partnersDirectory, file)).isDirectory());
+      .filter(file => fs.statSync(path.join(partnersDirectory, file)).isDirectory());
   } catch (error) {
     console.error("Error reading partners directory:", error);
     return [];
   }
 
-  const allPartnersData = partnerFolders.map((folder) => {
+  const allPartnersData = partnerFolders.map(folder => {
     const metadataFilePath = path.join(partnersDirectory, folder, "metadata.json");
     try {
       const fileContents = fs.readFileSync(metadataFilePath, "utf8");
@@ -43,7 +43,7 @@ async function getPartners(): Promise<Partner[]> {
     }
   });
 
-  return allPartnersData.filter((partner) => partner !== null) as Partner[];
+  return allPartnersData.filter(partner => partner !== null) as Partner[];
 }
 
 function EcosystemLoading() {
@@ -52,7 +52,7 @@ function EcosystemLoading() {
       <div className="animate-pulse space-y-8">
         <div className="h-20 w-64 bg-gray-10" />
         <div className="grid grid-cols-4 gap-3">
-          {[1, 2, 3, 4].map((i) => (
+          {[1, 2, 3, 4].map(i => (
             <div key={i} className="h-48 bg-gray-10" />
           ))}
         </div>
@@ -61,35 +61,18 @@ function EcosystemLoading() {
   );
 }
 
-async function EcosystemPageContent({
-  searchParams,
-}: {
-  searchParams?: Promise<{ [key: string]: string | string[] | undefined }>;
-}) {
+async function EcosystemPageContent() {
   const partners = await getPartners();
-  const resolvedParams = await searchParams;
-  const selectedCategory =
-    typeof resolvedParams?.filter === "string" ? resolvedParams.filter : null;
 
-  return (
-    <EcosystemClient
-      initialPartners={partners}
-      categories={categories}
-      initialSelectedCategory={selectedCategory}
-    />
-  );
+  return <EcosystemClient initialPartners={partners} />;
 }
 
-export default function EcosystemPage({
-  searchParams,
-}: {
-  searchParams?: Promise<{ [key: string]: string | string[] | undefined }>;
-}) {
+export default function EcosystemPage() {
   return (
     <div className="min-h-screen bg-background text-foreground">
       <NavBar />
       <Suspense fallback={<EcosystemLoading />}>
-        <EcosystemPageContent searchParams={searchParams} />
+        <EcosystemPageContent />
       </Suspense>
       <Footer />
     </div>

@@ -9,7 +9,7 @@ x402 is the open payment standard that enables services to charge for access to 
 
 With x402, any web service can require payment before serving a response, using crypto-native payments for speed, privacy, and efficiency.
 
-**Want to contribute to our docs?** [The GitBook repo is open to PRs! ](https://github.com/x402-foundation/x402) Our only ask is that you keep these docs as a neutral resource, with no branded content other than linking out to other resources where appropriate.
+**Want to contribute to our docs?** [The documentation source in this repository is open to PRs.](https://github.com/x402-foundation/x402) Our only ask is that you keep these docs as a neutral resource, with no branded content other than linking out to other resources where appropriate.
 
 **Note about the docs:** These docs are the credibly neutral source of truth for x402, as x402 is a completely open standard under the Apache-2.0 license. Coinbase Developer Platform is currently sponsoring [AI-powered docs for users here](https://docs.cdp.coinbase.com/x402/welcome), as we migrate to our own AI-powered solution on the main x402.org domain.
 
@@ -19,7 +19,7 @@ x402 offers:
 
 - **No fees and minimal friction** x402 as a standard has 0 fees built in.
 - **Native support for machine-to-machine payments**, enabling seamless use by AI agents
-- **Built-in micropayment support**, making it easy to monetize usage-based services
+- **Built-in micropayment support**, making it easy to monetize usage-based services (including **[batch settlement](/schemes/batch-settlement)** on EVM for high-volume, batched **onchain** redemption)
 
 ### Who is x402 for?
 
@@ -53,6 +53,7 @@ For more detail, see:
 - [Client / Server](/core-concepts/client-server)
 - [Facilitator](/core-concepts/facilitator)
 - [HTTP 402](/core-concepts/http-402)
+- [Batch settlement](/schemes/batch-settlement)
 
 The goal is to make programmatic commerce accessible, permissionless, and developer-friendly.
 
@@ -63,4 +64,5 @@ Ready to build? Start here:
 - [Quickstart for Sellers](/getting-started/quickstart-for-sellers)
 - [Quickstart for Buyers](/getting-started/quickstart-for-buyers)
 - [Explore Core Concepts](/core-concepts/http-402)
+- [Batch settlement](/schemes/batch-settlement) (EVM micropayments / batched redemption)
 - [Join our community on Discord](https://discord.gg/invite/cdp)

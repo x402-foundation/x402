@@ -8,11 +8,20 @@ Supports both v2 (extensions in PaymentRequired) and v1 (output_schema in Paymen
 
 from __future__ import annotations
 
+import ipaddress
 import logging
 import re
+import unicodedata
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 from urllib.parse import unquote, urlparse, urlunparse
+
+try:
+    import idna
+except ImportError as e:
+    raise ImportError(
+        "Extensions validation requires idna. Install with: pip install x402[extensions]"
+    ) from e
 
 from .types import (
     BAZAAR,
@@ -43,6 +52,55 @@ logger = logging.getLogger(__name__)
 # Valid routeTemplate pattern: must start with "/", contain only safe URL path characters
 # and :param identifiers. Expected format: "/users/:userId", "/weather/:country/:city".
 _ROUTE_TEMPLATE_RE = re.compile(r"^/[a-zA-Z0-9_/:.\-~%]+$")
+
+
+# Maximum lengths for resource service metadata fields. Spec: see
+# specs/extensions/bazaar.md "Service Metadata on `resource`".
+_MAX_SERVICE_NAME_LEN = 32
+_MAX_TAG_LEN = 32
+_MAX_TAGS = 5
+_MAX_ICON_URL_LEN = 2048
+
+# Matches ASCII control characters: C0 range (U+0000–U+001F) plus DEL (U+007F).
+_CONTROL_CHAR_RE = re.compile(r"[\x00-\x1f\x7f]")
+# Printable ASCII range (U+0020–U+007E). `service_name` and `tags` are
+# constrained to this range so that String.length (UTF-16 code units) in TS,
+# len() (code points) here, and len() (UTF-8 bytes) in Go all agree on the
+# character count. Same convention as paymentidentifier.id.
+_PRINTABLE_ASCII_RE = re.compile(r"^[\x20-\x7e]+$")
+
+# Loopback hostnames that must be rejected for SSRF defense. Includes the
+# common /etc/hosts aliases on Linux/macOS (`localhost.localdomain`,
+# `ip6-localhost`, `ip6-loopback`) — without these, a hostile provider could
+# route the facilitator's image fetcher to its own loopback interface.
+_LOOPBACK_HOSTNAMES = frozenset(
+    {
+        "localhost",
+        "localhost.localdomain",
+        "ip6-localhost",
+        "ip6-loopback",
+    }
+)
+
+
+def _contains_control_char(s: str) -> bool:
+    """Report whether s contains any Unicode control character (category Cc).
+
+    Defense-in-depth: the printable-ASCII regex used by
+    ``_is_valid_service_name`` / ``_sanitize_tags`` already rejects every
+    control character, but this explicit check documents intent and would
+    survive any future relaxation of the ASCII restriction.
+    """
+    return any(unicodedata.category(c) == "Cc" for c in s)
+
+
+# SSRF defense: any all-digit hostname is suspect because no legitimate DNS name
+# is purely numeric. Catches decimal-encoded IPs (`http://2130706433/` → 127.0.0.1)
+# and short-form IPs (`http://0/` → 0.0.0.0, treated as loopback on Linux).
+_ALL_DIGITS_RE = re.compile(r"^\d+$")
+# SSRF defense: hex-encoded IPs (`http://0x7f000001/` → 127.0.0.1) — same family
+# of bypasses as the decimal form above.
+_HEX_LITERAL_RE = re.compile(r"^0x[0-9a-f]+$", re.IGNORECASE)
 
 
 def _is_valid_route_template(value: str | None) -> bool:
@@ -80,6 +138,179 @@ def _is_valid_route_template(value: str | None) -> bool:
     return True
 
 
+def _is_valid_service_name(value: Any) -> bool:
+    """Check whether a serviceName value is structurally valid.
+
+    Non-empty string of printable ASCII (U+0020–U+007E), length ≤ 32.
+
+    The ASCII restriction matches the ``paymentidentifier.id`` convention
+    and keeps ``len()`` semantics identical across TS / Python / Go.
+
+    Mirrors `isValidServiceName` (TypeScript, Go).
+    All three implementations must stay in sync.
+    """
+    if not isinstance(value, str):
+        return False
+    if len(value) == 0 or len(value) > _MAX_SERVICE_NAME_LEN:
+        return False
+    if _contains_control_char(value):
+        return False
+    if not _PRINTABLE_ASCII_RE.match(value):
+        return False
+    return True
+
+
+def _sanitize_tags(value: Any) -> list[str] | None:
+    """Sanitize a tags array.
+
+    Drops entries that are not non-empty printable-ASCII strings of at most
+    32 characters, then truncates to the first 5 valid entries. Returns None
+    when nothing survives so the field can be omitted from the catalog.
+
+    The ASCII restriction matches the ``paymentidentifier.id`` convention
+    and keeps ``len()`` semantics identical across TS / Python / Go.
+
+    Mirrors `sanitizeTags` (TypeScript, Go).
+    All three implementations must stay in sync.
+    """
+    if not isinstance(value, list):
+        return None
+    out: list[str] = []
+    # Case-insensitive dedup: keeps the first occurrence's casing.
+    # Prevents catalog noise like ["Weather", "weather", "WEATHER"].
+    seen: set[str] = set()
+    for entry in value:
+        if not isinstance(entry, str):
+            continue
+        if len(entry) == 0 or len(entry) > _MAX_TAG_LEN:
+            continue
+        if _contains_control_char(entry):
+            continue
+        if not _PRINTABLE_ASCII_RE.match(entry):
+            continue
+        key = entry.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(entry)
+        if len(out) == _MAX_TAGS:
+            break
+    return out if out else None
+
+
+def _is_valid_icon_url(value: Any) -> bool:
+    """Check whether an iconUrl value is structurally safe.
+
+    Rules (see specs/extensions/bazaar.md "Service Metadata on `resource`"):
+      - String of length ≤ 2048
+      - No ASCII control characters
+      - Parses as an absolute http:// or https:// URL
+      - No userinfo (user@host)
+      - Host is IDN-normalized (UTS #46) before checks, so confusable
+        full-width / Unicode forms (e.g. ``ｌｏｃａｌｈｏｓｔ``) collapse to
+        their ASCII canonical and get caught by the loopback check
+      - Host is not an IP literal (v4 or v6), not in the loopback set
+        (``localhost``, ``localhost.localdomain``, ``ip6-localhost``,
+        ``ip6-loopback``)
+      - Host is not a decimal IP encoding (e.g. ``2130706433`` → 127.0.0.1) or
+        hex literal (e.g. ``0x7f000001``) — common SSRF bypass forms
+
+    Percent-decoding is applied to the hostname before IDN normalization, and
+    IDN normalization runs before the IP / loopback checks (parallel to the
+    routeTemplate decoder).
+
+    Mirrors `isValidIconUrl` (TypeScript, Go).
+    All three implementations must stay in sync.
+    """
+    if not isinstance(value, str):
+        return False
+    if len(value) == 0 or len(value) > _MAX_ICON_URL_LEN:
+        return False
+    if _CONTROL_CHAR_RE.search(value):
+        return False
+    try:
+        parsed = urlparse(value)
+    except ValueError:
+        return False
+    if parsed.scheme not in ("http", "https"):
+        return False
+    if parsed.username or parsed.password:
+        return False
+    raw_host = parsed.hostname
+    if not raw_host:
+        return False
+    try:
+        decoded = unquote(raw_host)
+    except ValueError:
+        return False
+    # IDN/full-width normalization: e.g. "ｌｏｃａｌｈｏｓｔ" (full-width Latin)
+    # → "localhost". Without this the loopback alias check would miss
+    # confusable Unicode hostnames. uts46=True applies the same UTS #46
+    # mapping that idna.Lookup.ToASCII (Go) and domainToASCII (Node) use.
+    try:
+        host = idna.encode(decoded, uts46=True).decode("ascii").lower()
+    except idna.IDNAError:
+        return False
+    if host == "":
+        return False
+    if host in _LOOPBACK_HOSTNAMES:
+        return False
+    try:
+        ipaddress.ip_address(host)
+    except ValueError:
+        pass
+    else:
+        return False
+    # urlparse strips IPv6 brackets from .hostname; if the original netloc had
+    # brackets but the bare host failed ip_address parsing (e.g. "::1"), still
+    # reject any colon-bearing host as an IPv6 literal candidate.
+    if ":" in host:
+        return False
+    if _ALL_DIGITS_RE.match(host):
+        return False
+    if _HEX_LITERAL_RE.match(host):
+        return False
+    return True
+
+
+@dataclass
+class SanitizedResourceServiceMetadata:
+    """Sanitized service metadata extracted from a ``resource`` object."""
+
+    service_name: str | None = None
+    tags: list[str] | None = None
+    icon_url: str | None = None
+
+
+def _sanitize_resource_service_metadata(
+    resource: dict[str, Any] | None,
+) -> SanitizedResourceServiceMetadata:
+    """Apply the bazaar service-metadata validation rules to a ``resource`` object.
+
+    Returns only the fields that survive. Missing or invalid fields are dropped
+    silently (soft-drop semantics — see spec).
+
+    Accepts both camelCase (``serviceName`` / ``iconUrl``) and snake_case
+    (``service_name`` / ``icon_url``) keys, matching the dual-naming convention
+    used elsewhere when extracting from raw payload dicts.
+    """
+    out = SanitizedResourceServiceMetadata()
+    if not isinstance(resource, dict):
+        return out
+    raw_name = resource.get("serviceName")
+    if raw_name is None:
+        raw_name = resource.get("service_name")
+    if _is_valid_service_name(raw_name):
+        out.service_name = raw_name
+    out.tags = _sanitize_tags(resource.get("tags"))
+    raw_icon = resource.get("iconUrl")
+    if raw_icon is None:
+        raw_icon = resource.get("icon_url")
+    if _is_valid_icon_url(raw_icon):
+        out.icon_url = raw_icon
+    return out
+
+
 @dataclass
 class ValidationResult:
     """Result of validating a discovery extension."""
@@ -100,6 +331,10 @@ class DiscoveredResource:
     description: str | None = None
     mime_type: str | None = None
     route_template: str | None = None
+    # Sanitized service metadata. See `_sanitize_resource_service_metadata`.
+    service_name: str | None = None
+    tags: list[str] | None = None
+    icon_url: str | None = None
 
 
 @dataclass
@@ -288,15 +523,17 @@ def extract_discovery_info(
     # Extract description and mime_type from resource info (V2) or requirements (V1)
     description: str | None = None
     mime_type: str | None = None
+    service_metadata = SanitizedResourceServiceMetadata()
 
     if version == 2:
-        # V2: description and mime_type are in PaymentPayload.resource
+        # V2: description, mime_type, and service metadata are in PaymentPayload.resource
         resource = payload_dict.get("resource", {})
         if isinstance(resource, dict):
             description = resource.get("description") or None
             mime_type = resource.get("mimeType") or resource.get("mime_type") or None
+            service_metadata = _sanitize_resource_service_metadata(resource)
     else:
-        # V1: description and mime_type are in PaymentRequirements
+        # V1: description and mime_type are in PaymentRequirements; no service metadata.
         description = requirements_dict.get("description") or None
         mime_type = requirements_dict.get("mimeType") or requirements_dict.get("mime_type") or None
 
@@ -309,6 +546,9 @@ def extract_discovery_info(
         description=description,
         mime_type=mime_type,
         route_template=route_template,
+        service_name=service_metadata.service_name,
+        tags=service_metadata.tags,
+        icon_url=service_metadata.icon_url,
     )
 
 

@@ -16,10 +16,12 @@ load_dotenv()
 PORT = int(os.getenv("PORT", "4022"))
 EVM_NETWORK = os.getenv("EVM_NETWORK", "eip155:84532")
 EVM_PAYEE_ADDRESS = os.getenv("EVM_PAYEE_ADDRESS", "")
+TVM_NETWORK = os.getenv("TVM_NETWORK", "tvm:-3")
+TVM_PAYEE_ADDRESS = os.getenv("TVM_PAYEE_ADDRESS", "")
 FACILITATOR_URL = os.getenv("FACILITATOR_URL", "")
 
-if not EVM_PAYEE_ADDRESS:
-    print("EVM_PAYEE_ADDRESS environment variable is required")
+if not EVM_PAYEE_ADDRESS and not TVM_PAYEE_ADDRESS:
+    print("At least one of EVM_PAYEE_ADDRESS or TVM_PAYEE_ADDRESS is required")
     exit(1)
 
 if not FACILITATOR_URL:
@@ -44,6 +46,7 @@ def main() -> None:
     from x402.http import FacilitatorConfig, HTTPFacilitatorClient
     from x402.mcp import create_payment_wrapper
     from x402.mechanisms.evm.exact import register_exact_evm_server
+    from x402.mechanisms.tvm.exact import ExactTvmServerScheme
 
     # Create FastMCP server
     mcp = FastMCP("x402 MCP E2E Server")
@@ -51,19 +54,37 @@ def main() -> None:
     # Set up x402 resource server
     facilitator_client = HTTPFacilitatorClient(FacilitatorConfig(url=FACILITATOR_URL))
     resource_server = x402ResourceServer(facilitator_client)
-    register_exact_evm_server(resource_server, EVM_NETWORK)
+    if EVM_PAYEE_ADDRESS:
+        register_exact_evm_server(resource_server, EVM_NETWORK)
+    if TVM_PAYEE_ADDRESS:
+        resource_server.register(TVM_NETWORK, ExactTvmServerScheme())
 
     # Initialize (fetches supported kinds from facilitator)
     resource_server.initialize()
 
-    # Build payment requirements for the weather tool
-    weather_config = ResourceConfig(
-        scheme="exact",
-        network=EVM_NETWORK,
-        pay_to=EVM_PAYEE_ADDRESS,
-        price="$0.001",
-    )
-    weather_accepts = resource_server.build_payment_requirements(weather_config)
+    weather_accepts = []
+    if EVM_PAYEE_ADDRESS:
+        weather_accepts.extend(
+            resource_server.build_payment_requirements(
+                ResourceConfig(
+                    scheme="exact",
+                    network=EVM_NETWORK,
+                    pay_to=EVM_PAYEE_ADDRESS,
+                    price="$0.001",
+                )
+            )
+        )
+    if TVM_PAYEE_ADDRESS:
+        weather_accepts.extend(
+            resource_server.build_payment_requirements(
+                ResourceConfig(
+                    scheme="exact",
+                    network=TVM_NETWORK,
+                    pay_to=TVM_PAYEE_ADDRESS,
+                    price="$0.001",
+                )
+            )
+        )
 
     # Declare Bazaar discovery metadata for the weather tool
     weather_discovery = declare_mcp_discovery_extension(
@@ -112,7 +133,18 @@ def main() -> None:
 
     async def health(request):
         return JSONResponse(
-            {"status": "ok", "tools": ["get_weather (paid: $0.001)", "ping (free)"]}
+            {
+                "status": "ok",
+                "tools": ["get_weather (paid: $0.001)", "ping (free)"],
+                "protocols": [
+                    protocol
+                    for protocol, enabled in {
+                        "evm": bool(EVM_PAYEE_ADDRESS),
+                        "tvm": bool(TVM_PAYEE_ADDRESS),
+                    }.items()
+                    if enabled
+                ],
+            }
         )
 
     async def close(request):
@@ -144,6 +176,10 @@ def main() -> None:
     print(f"Server listening on port {PORT}")
     print(f"SSE endpoint: http://localhost:{PORT}/sse")
     print(f"Health: http://localhost:{PORT}/health")
+    if EVM_PAYEE_ADDRESS:
+        print(f"EVM payments enabled on {EVM_NETWORK}")
+    if TVM_PAYEE_ADDRESS:
+        print(f"TVM payments enabled on {TVM_NETWORK}")
 
     uvicorn.run(app, host="0.0.0.0", port=PORT, log_level="warning")
 

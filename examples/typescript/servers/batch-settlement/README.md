@@ -92,6 +92,13 @@ pnpm dev
 
 The server listens on `http://localhost:4021`. Hit it with the [client example](../../clients/batch-settlement).
 
+### Cross-SDK local testing
+
+For local interop, set `FACILITATOR_URL=http://localhost:4022` (same as
+`examples/go/servers/batch-settlement/.env.example`). Env keys match the Go
+server example; `GET /api/generate` returns the same `usage` fields as the Go
+demo for stable assertions across stacks.
+
 ## Environment
 
 | Variable | Required | Description |

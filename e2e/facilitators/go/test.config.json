@@ -17,7 +17,8 @@
   ],
   "schemes": [
     "exact",
-    "upto"
+    "upto",
+    "batch-settlement"
   ],
   "evm": {
     "assetTransferMethods": [
@@ -31,6 +32,8 @@
       "EVM_PRIVATE_KEY",
       "SVM_PRIVATE_KEY"
     ],
-    "optional": []
+    "optional": [
+      "EVM_RECEIVER_AUTHORIZER_PRIVATE_KEY"
+    ]
   }
 }

@@ -1,5 +1,6 @@
 import { HTTPFacilitatorClient } from "@x402/core/server";
-import { BatchSettlementEvmScheme, FileChannelStorage } from "@x402/evm/batch-settlement/server";
+import { BatchSettlementEvmScheme } from "@x402/evm/batch-settlement/server";
+import { FileChannelStorage } from "@x402/evm/batch-settlement/server/file-storage";
 import { paymentMiddleware, setSettlementOverrides, x402ResourceServer } from "@x402/express";
 import { config } from "dotenv";
 import express from "express";

@@ -1,6 +1,6 @@
 ---
 title: "EIP-2612 Gas Sponsoring"
-description: "Gasless Permit2 approval for ERC-20 tokens that implement EIP-2612. The facilitator submits the permit on-chain, so the client never pays gas for the approval step."
+description: "Gasless Permit2 approval for ERC-20 tokens that implement EIP-2612. The facilitator submits the permit onchain, so the client never pays gas for the approval step."
 ---
 
 The EIP-2612 gas sponsoring extension enables gasless Permit2 approval for tokens that implement the [EIP-2612](https://eips.ethereum.org/EIPS/eip-2612) `permit()` function (e.g., USDC). The client signs an off-chain permit authorizing the Permit2 contract, and the facilitator submits it atomically during settlement via `x402ExactPermit2Proxy.settleWithPermit`.

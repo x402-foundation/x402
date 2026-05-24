@@ -325,7 +325,15 @@ func (s *realFacilitatorEvmSigner) VerifyTypedData(
 		typedData.Types[typeName] = typedFields
 	}
 
-	// Hash the data
+	if _, exists := typedData.Types["EIP712Domain"]; !exists {
+		typedData.Types["EIP712Domain"] = []apitypes.Type{
+			{Name: "name", Type: "string"},
+			{Name: "version", Type: "string"},
+			{Name: "chainId", Type: "uint256"},
+			{Name: "verifyingContract", Type: "address"},
+		}
+	}
+
 	dataHash, err := typedData.HashStruct(typedData.PrimaryType, typedData.Message)
 	if err != nil {
 		return false, err
@@ -341,12 +349,10 @@ func (s *realFacilitatorEvmSigner) VerifyTypedData(
 	rawData = append(rawData, dataHash...)
 	digest := crypto.Keccak256(rawData)
 
-	// Recover the public key from the signature
 	if len(signature) != 65 {
 		return false, fmt.Errorf("invalid signature length: %d", len(signature))
 	}
 
-	// Adjust v value back for recovery
 	v := signature[64]
 	if v >= 27 {
 		v -= 27
@@ -1018,7 +1024,15 @@ func (s *permit2FacilitatorEvmSigner) VerifyTypedData(
 		typedData.Types[typeName] = typedFields
 	}
 
-	// Hash the data
+	if _, exists := typedData.Types["EIP712Domain"]; !exists {
+		typedData.Types["EIP712Domain"] = []apitypes.Type{
+			{Name: "name", Type: "string"},
+			{Name: "version", Type: "string"},
+			{Name: "chainId", Type: "uint256"},
+			{Name: "verifyingContract", Type: "address"},
+		}
+	}
+
 	dataHash, err := typedData.HashStruct(typedData.PrimaryType, typedData.Message)
 	if err != nil {
 		return false, err
@@ -1034,12 +1048,10 @@ func (s *permit2FacilitatorEvmSigner) VerifyTypedData(
 	rawData = append(rawData, dataHash...)
 	digest := crypto.Keccak256(rawData)
 
-	// Recover the public key from the signature
 	if len(signature) != 65 {
 		return false, fmt.Errorf("invalid signature length: %d", len(signature))
 	}
 
-	// Adjust v value back for recovery
 	v := signature[64]
 	if v >= 27 {
 		v -= 27
