@@ -47,10 +47,9 @@ buyer-agent needs before spend:
 
 | File | Status | Variant |
 | --- | --- | --- |
-| 0001-vauban-bounded-spend.json | pending contributor-owned reference | cryptographic cap / receipt |
+| 0001-vauban-bounded-spend.json | committed contributor-owned reference | cryptographic cap / receipt |
 | 0002-algovoi-signed-attestation.json | ready contributor-owned reference | facilitator policy cap / signed attestation |
 
 Future examples, such as a CREST urn:crest:trust-check-v1 independent
 observation envelope, can be added as separate reference stubs when a public
 no-secret URL and content hash are available.
-
