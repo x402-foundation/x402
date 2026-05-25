@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"strconv"
 
-	bin "github.com/gagliardetto/binary"
 	solana "github.com/gagliardetto/solana-go"
 	computebudget "github.com/gagliardetto/solana-go/programs/compute-budget"
 	"github.com/gagliardetto/solana-go/programs/token"
@@ -20,8 +19,9 @@ import (
 
 // ExactSvmScheme implements the SchemeNetworkClient interface for SVM (Solana) exact payments (V2)
 type ExactSvmScheme struct {
-	signer svm.ClientSvmSigner
-	config *svm.ClientConfig // Optional custom RPC configuration
+	signer    svm.ClientSvmSigner
+	config    *svm.ClientConfig // Optional custom RPC configuration
+	mintCache *svm.MintMetadataCache
 }
 
 // NewExactSvmScheme creates a new ExactSvmScheme
@@ -32,8 +32,9 @@ func NewExactSvmScheme(signer svm.ClientSvmSigner, config ...*svm.ClientConfig) 
 		cfg = config[0]
 	}
 	return &ExactSvmScheme{
-		signer: signer,
-		config: cfg,
+		signer:    signer,
+		config:    cfg,
+		mintCache: svm.NewMintMetadataCache(),
 	}
 }
 
@@ -74,14 +75,19 @@ func (c *ExactSvmScheme) CreatePaymentPayload(
 		return types.PaymentPayload{}, fmt.Errorf(ErrInvalidAssetAddress+": %w", err)
 	}
 
-	// Get mint account to determine token program
-	mintAccount, err := rpcClient.GetAccountInfo(ctx, mintPubkey)
+	mintMetadata, err := c.mintCache.GetOrFetch(ctx, rpcClient, networkStr, mintPubkey)
 	if err != nil {
+		if errors.Is(err, svm.ErrUnknownMintTokenProgram) {
+			return types.PaymentPayload{}, errors.New(ErrUnknownTokenProgram)
+		}
+		if errors.Is(err, svm.ErrFailedToDecodeMintData) {
+			return types.PaymentPayload{}, fmt.Errorf(ErrFailedToDecodeMintData+": %w", err)
+		}
 		return types.PaymentPayload{}, fmt.Errorf(ErrFailedToGetMintAccount+": %w", err)
 	}
 
 	// Determine token program (Token or Token-2022)
-	tokenProgramID := mintAccount.Value.Owner
+	tokenProgramID := mintMetadata.TokenProgramID
 	if tokenProgramID != solana.TokenProgramID && tokenProgramID != solana.Token2022ProgramID {
 		return types.PaymentPayload{}, errors.New(ErrUnknownTokenProgram)
 	}
@@ -121,13 +127,6 @@ func (c *ExactSvmScheme) CreatePaymentPayload(
 		return types.PaymentPayload{}, fmt.Errorf(ErrInvalidFeePayerAddress+": %w", err)
 	}
 
-	// Get mint account data to get decimals
-	var mintData token.Mint
-	err = bin.NewBinDecoder(mintAccount.Value.Data.GetBinary()).Decode(&mintData)
-	if err != nil {
-		return types.PaymentPayload{}, fmt.Errorf(ErrFailedToDecodeMintData+": %w", err)
-	}
-
 	// Get latest blockhash
 	latestBlockhash, err := rpcClient.GetLatestBlockhash(ctx, rpc.CommitmentFinalized)
 	if err != nil {
@@ -153,7 +152,7 @@ func (c *ExactSvmScheme) CreatePaymentPayload(
 	// Build final transfer instruction
 	transferIx, err := token.NewTransferCheckedInstructionBuilder().
 		SetAmount(amount).
-		SetDecimals(mintData.Decimals).
+		SetDecimals(mintMetadata.Decimals).
 		SetSourceAccount(sourceATA).
 		SetMintAccount(mintPubkey).
 		SetDestinationAccount(destinationATA).
