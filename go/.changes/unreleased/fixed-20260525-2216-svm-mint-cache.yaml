@@ -1,0 +1,3 @@
+kind: fixed
+body: Cache SVM mint metadata in exact clients to avoid repeated mint account RPC lookups.
+time: 2026-05-25T15:50:14+09:00
