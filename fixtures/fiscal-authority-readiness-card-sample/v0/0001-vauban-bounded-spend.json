@@ -1,0 +1,34 @@
+{
+  "schema": "x402.fiscal_authority.readiness_card_reference.v0",
+  "id": "0001-vauban-bounded-spend",
+  "status": "pending_contributor_owned_reference",
+  "variant": {
+    "cap_enforcement": "cryptographic",
+    "charge_evidence_type": "receipt"
+  },
+  "contributor": {
+    "name": "Vauban Pay",
+    "public_site": "https://pay.vauban.tech"
+  },
+  "expected_reference_fields": {
+    "card_url": null,
+    "content_hash": null,
+    "content_hash_algorithm": "sha256 over JCS-canonicalized bytes",
+    "canon_version": "jcs-rfc8785-v1",
+    "grant_hash_field": "grant_hash",
+    "receipt_hash_field": null,
+    "cap_unit_or_currency_field": null,
+    "revocation_or_dispute_ref_field": null
+  },
+  "notes": [
+    "This stub reserves the cryptographic-cap / receipt example slot.",
+    "The filled card should remain in a Vauban-owned public location once available.",
+    "The x402 sample should reference the contributor-owned card by URL and hash rather than copying authoritative bytes."
+  ],
+  "safe_public_boundary": {
+    "requires_secrets": false,
+    "requires_wallet_access": false,
+    "requires_private_dashboard": false,
+    "requires_customer_data": false
+  }
+}
