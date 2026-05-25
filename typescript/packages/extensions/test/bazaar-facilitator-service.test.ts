@@ -234,6 +234,26 @@ describe("InMemoryBazaarCatalog", () => {
     expect((await catalog.list({ payTo: "SolanaMerchant" })).pagination.total).toBe(1);
     expect((await catalog.list({ network: "eip155:8453" })).pagination.total).toBe(1);
     expect((await catalog.list({ scheme: "exact" })).pagination.total).toBe(2);
+    // scheme filter rejects rows that don't match
+    expect((await catalog.list({ scheme: "upto" })).pagination.total).toBe(0);
+  });
+
+  it("list filters by extensions key presence on the row", async () => {
+    const catalog = new InMemoryBazaarCatalog();
+    // Upsert directly so we control the extensions field.
+    const { extractDiscoveryInfo } = await import("../src/bazaar/facilitator");
+    const payloadWithExt = makeHttpPayload({ url: "https://ext.com/x", method: "GET" });
+    const discovered = extractDiscoveryInfo(payloadWithExt, {} as never);
+    if (!discovered) throw new Error("extractDiscoveryInfo returned null");
+    await catalog.upsert({
+      discovered,
+      paymentRequirements: REQ_BASE_EVM,
+      extensions: { bazaar: true },
+    });
+    await ingest(catalog, makeHttpPayload({ url: "https://noext.com/x", method: "GET" }));
+
+    expect((await catalog.list({ extensions: "bazaar" })).pagination.total).toBe(1);
+    expect((await catalog.list({ extensions: "other" })).pagination.total).toBe(0);
   });
 
   it("list paginates with limit/offset", async () => {
@@ -248,6 +268,30 @@ describe("InMemoryBazaarCatalog", () => {
     expect(page2.items).toHaveLength(2);
     expect(page3.items).toHaveLength(1);
     expect(page1.pagination.total).toBe(5);
+  });
+
+  it("clear() empties the catalog", async () => {
+    const catalog = new InMemoryBazaarCatalog();
+    await ingest(catalog, makeHttpPayload({ url: "https://a.com/x", method: "GET" }));
+    expect(catalog.size).toBe(1);
+    catalog.clear();
+    expect(catalog.size).toBe(0);
+    const { items } = await catalog.list();
+    expect(items).toHaveLength(0);
+  });
+
+  it("upsert merges extensions into an existing row", async () => {
+    const catalog = new InMemoryBazaarCatalog();
+    const { extractDiscoveryInfo } = await import("../src/bazaar/facilitator");
+    const payload = makeHttpPayload({ url: "https://a.com/x", method: "GET" });
+    const discovered = extractDiscoveryInfo(payload, {} as never);
+    if (!discovered) throw new Error("extractDiscoveryInfo returned null");
+
+    await catalog.upsert({ discovered, paymentRequirements: REQ_BASE_EVM, extensions: { foo: 1 } });
+    await catalog.upsert({ discovered, paymentRequirements: REQ_BASE_EVM, extensions: { bar: 2 } });
+
+    const { items } = await catalog.list();
+    expect(items[0].extensions).toMatchObject({ foo: 1, bar: 2 });
   });
 
   it("clamps invalid limit/offset to safe values", async () => {
@@ -485,5 +529,27 @@ describe("installBazaarFacilitator", () => {
     const payload = makeHttpPayload({ url: "https://api.example.com/x", method: "GET" });
     await expect(state.afterVerifyHook!(makeVerifyContext(payload))).resolves.toBeUndefined();
     expect(onError).toHaveBeenCalledOnce();
+  });
+
+  it("uses console.warn as default onError when no handler is provided", async () => {
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const catalog: import("../src/bazaar/facilitator-service").BazaarCatalog = {
+      upsert: async () => {
+        throw new Error("default-handler-test");
+      },
+      list: async () => ({
+        x402Version: 2,
+        items: [],
+        pagination: { limit: 0, offset: 0, total: 0 },
+      }),
+      search: async () => ({ x402Version: 2, resources: [] }),
+    };
+    const { mock, state } = makeMockFacilitator();
+    installBazaarFacilitator(mock, catalog); // no onError option
+
+    const payload = makeHttpPayload({ url: "https://api.example.com/x", method: "GET" });
+    await expect(state.afterVerifyHook!(makeVerifyContext(payload))).resolves.toBeUndefined();
+    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining("default-handler-test"));
+    warnSpy.mockRestore();
   });
 });

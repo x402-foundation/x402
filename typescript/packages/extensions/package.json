@@ -9,6 +9,8 @@
     "build": "tsup && node -e \"const{cpSync}=require('fs');cpSync('src/bazaar/facilitator-service/postgres/migrations','dist/esm/bazaar/postgres/migrations',{recursive:true});cpSync('src/bazaar/facilitator-service/postgres/migrations','dist/cjs/bazaar/postgres/migrations',{recursive:true})\"",
     "test": "vitest run",
     "test:db": "RUN_DB_TESTS=1 vitest run",
+    "test:coverage": "vitest run --coverage",
+    "test:coverage:db": "RUN_DB_TESTS=1 vitest run --coverage --coverage.include='src/**/*.ts'",
     "test:watch": "vitest",
     "watch": "tsc --watch",
     "format": "prettier -c .prettierrc --write \"**/*.{ts,js,cjs,json,md}\"",
@@ -35,6 +37,7 @@
     "@types/pg": "^8.11.10",
     "@typescript-eslint/eslint-plugin": "^8.29.1",
     "@typescript-eslint/parser": "^8.29.1",
+    "@vitest/coverage-v8": "^3.2.4",
     "drizzle-kit": "^0.30.0",
     "eslint": "^9.24.0",
     "eslint-plugin-import": "^2.31.0",
@@ -52,18 +55,18 @@
   "dependencies": {
     "@noble/curves": "^1.9.0",
     "@scure/base": "^1.2.6",
+    "@signinwithethereum/siwe": "^4.1.0",
     "@x402/core": "workspace:~",
     "ajv": "^8.17.1",
     "drizzle-orm": "^0.36.4",
     "jose": "^5.9.6",
-    "@signinwithethereum/siwe": "^4.1.0",
     "tweetnacl": "^1.0.3",
     "viem": "^2.48.11",
     "zod": "^3.24.2"
   },
   "peerDependencies": {
-    "pg": "^8.13.0",
-    "@neondatabase/serverless": "^0.10.0"
+    "@neondatabase/serverless": "^0.10.0",
+    "pg": "^8.13.0"
   },
   "peerDependenciesMeta": {
     "pg": {
