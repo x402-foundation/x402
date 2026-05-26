@@ -96,9 +96,10 @@ export function wrapFetchWithPayment(
     try {
       paymentPayload = await client.createPaymentPayload(paymentRequired);
     } catch (error) {
-      throw new Error(
-        `Failed to create payment payload: ${error instanceof Error ? error.message : "Unknown error"}`,
-      );
+      // Re-throw the original error to preserve its type and structured fields.
+      // Callers (e.g. policy/guardrail hooks) may throw typed errors that convey
+      // actionable detail; wrapping them in a generic Error discards that signal.
+      throw error;
     }
 
     // Encode payment header

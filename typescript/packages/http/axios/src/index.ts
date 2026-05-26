@@ -165,11 +165,10 @@ export function wrapAxiosWithPayment(
         try {
           paymentPayload = await client.createPaymentPayload(paymentRequired);
         } catch (paymentError) {
-          return Promise.reject(
-            new Error(
-              `Failed to create payment payload: ${paymentError instanceof Error ? paymentError.message : "Unknown error"}`,
-            ),
-          );
+          // Re-throw the original error to preserve its type and structured fields.
+          // Callers (e.g. policy/guardrail hooks) may throw typed errors that convey
+          // actionable detail; wrapping them in a generic Error discards that signal.
+          return Promise.reject(paymentError);
         }
 
         // Encode payment header

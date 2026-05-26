@@ -194,40 +194,42 @@ describe("wrapFetchWithPayment()", () => {
     );
   });
 
-  it("should reject with descriptive error if payment payload creation fails", async () => {
-    const paymentError = new Error("Insufficient funds");
+  it("should re-throw the original error if payment payload creation fails (preserves type)", async () => {
+    /** Typed error used to verify that the original error is re-thrown unchanged. */
+    class InsufficientFundsError extends Error {
+      /**
+       * Creates an InsufficientFundsError.
+       *
+       * @param message - Error description.
+       * @param required - Amount required to pay.
+       * @param available - Amount available in the wallet.
+       */
+      constructor(
+        message: string,
+        public readonly required: bigint,
+        public readonly available: bigint,
+      ) {
+        super(message);
+        this.name = "InsufficientFundsError";
+      }
+    }
+    const paymentError = new InsufficientFundsError("Insufficient funds", 100n, 50n);
     (mockClient.createPaymentPayload as ReturnType<typeof vi.fn>).mockRejectedValue(paymentError);
 
     mockFetch.mockResolvedValue(createResponse(402, validPaymentRequired));
 
     await expect(wrappedFetch("https://api.example.com", { method: "GET" })).rejects.toThrow(
-      "Failed to create payment payload: Insufficient funds",
+      paymentError,
     );
   });
 
-  it("should reject with generic error message for unknown parsing errors", async () => {
-    const { x402HTTPClient: MockX402HTTPClient } = await import("@x402/core/client");
-    (
-      MockX402HTTPClient.prototype.getPaymentRequiredResponse as ReturnType<typeof vi.fn>
-    ).mockImplementation(() => {
-      throw "String error"; // Non-Error thrown
-    });
-
-    mockFetch.mockResolvedValue(createResponse(402, undefined));
-
-    await expect(wrappedFetch("https://api.example.com", { method: "GET" })).rejects.toThrow(
-      "Failed to parse payment requirements: Unknown error",
-    );
-  });
-
-  it("should reject with generic error message for unknown payment creation errors", async () => {
-    (mockClient.createPaymentPayload as ReturnType<typeof vi.fn>).mockRejectedValue("String error");
+  it("should re-throw non-Error values thrown by payment payload creation", async () => {
+    const thrown = "String error";
+    (mockClient.createPaymentPayload as ReturnType<typeof vi.fn>).mockRejectedValue(thrown);
 
     mockFetch.mockResolvedValue(createResponse(402, validPaymentRequired));
 
-    await expect(wrappedFetch("https://api.example.com", { method: "GET" })).rejects.toThrow(
-      "Failed to create payment payload: Unknown error",
-    );
+    await expect(wrappedFetch("https://api.example.com", { method: "GET" })).rejects.toBe(thrown);
   });
 
   it("should handle v1 payment responses from body", async () => {
