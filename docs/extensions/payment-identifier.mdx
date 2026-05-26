@@ -478,14 +478,28 @@ processedPayments[paymentID] = responseData
 </Tabs>
 
 
+### Request Binding
+
+Servers should bind each payment ID to a normalized fingerprint of the request before returning a cached result. The fingerprint should cover the parts of the request that make the paid operation unique:
+
+- `scheme`, `network`, `asset`, `amount`, `payTo`
+- Resource path and HTTP method
+- Application-level operation or order identifier (when available)
+
+Store the first observed fingerprint with the payment ID. Later requests with the same ID and the same fingerprint can return the cached response. Later requests with the same ID but a different fingerprint should return `409 Conflict` — not a cached response or a second execution.
+
+When the same backend handles multiple paid resources, scope the storage key by tenant, merchant, route, or facilitator account to avoid cross-resource collisions.
+
 ### Idempotency Behavior
 
 | Scenario | Server Response |
 |----------|-----------------|
 | New payment ID | Process payment normally, cache response |
-| Same payment ID (within TTL) | Return cached response, skip payment |
+| Same payment ID, same request fingerprint (within TTL) | Return cached response, skip payment |
+| Same payment ID, different request fingerprint | Return 409 Conflict |
 | Same payment ID (after TTL) | Process payment normally, update cache |
 | No payment ID | Process payment normally (no caching) |
+| `required: true`, no payment ID provided | Return 400 Bad Request |
 
 ### Configuration Options
 
@@ -499,7 +513,7 @@ Adjust `CACHE_TTL_MS` (TypeScript/Go) or `CACHE_TTL_SECONDS` (Python) based on y
 
 1. **Use Redis or similar** instead of in-memory cache for distributed systems
 2. **Handle cache failures gracefully** - if cache is unavailable, process payment normally
-3. **Consider payload hashing** - for additional safety, hash the full payload and reject if same ID but different payload (409 Conflict)
+3. **Bind payment IDs to request fingerprints** - store the fingerprint (scheme, network, asset, amount, payTo, route, and application operation ID) alongside the payment ID and return `409 Conflict` if the same ID is replayed with a different fingerprint
 4. **Monitor cache hit rates** to tune TTL and detect abuse
 
 ## API Reference
@@ -822,7 +836,7 @@ Full working examples are available in the x402 repository:
 ## FAQ
 
 **Q: What happens if I reuse a payment ID for a different request?**
-A: The server will return the cached response from the first request. Don't reuse payment IDs across different logical requests.
+A: If the request fingerprint differs from the original (different scheme, network, asset, amount, route, etc.), the server should return `409 Conflict`. Don't reuse payment IDs across different logical requests.
 
 **Q: How long are payment IDs cached?**
 A: This is configurable by the server. Typical TTLs range from 5 minutes to 24 hours depending on the use case.
