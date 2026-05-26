@@ -1,0 +1,7 @@
+{
+  "name": "BYTE Library",
+  "description": "Per-byte USDC data feeds and oracles for AI agents on Arbitrum. Pay-per-call x402 gateway delivers signed payloads from a 15+ feed catalog (markets, weather, threat-intel, legal, scientific, fact oracles). Every settlement emits an EIP-712 PayloadAttestation so subscribers can verify received bytes against the on-chain hash. No API keys, no token. MCP server live in Anthropic's Official Registry.",
+  "logoUrl": "/logos/byte-library.svg",
+  "websiteUrl": "https://www.payperbyte.io",
+  "category": "Services/Endpoints"
+}
