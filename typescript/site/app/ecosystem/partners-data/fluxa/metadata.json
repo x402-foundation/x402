@@ -1,0 +1,7 @@
+{
+  "name": "FluxA",
+  "description": "FluxA provides permissionless deferred payment rails for x402. It enables fast, parallel stablecoin micropayments with on-chain batch settlement, bringing internet-native payments to scale.",
+  "logoUrl": "/logos/fluxa.png",
+  "websiteUrl": "https://fluxapay.xyz",
+  "category": "Infrastructure & Tooling"
+}

@@ -1,0 +1,7 @@
+{
+  "name": "Daydreams Router",
+  "category": "Infrastructure & Tooling",
+  "logoUrl": "/logos/router-logo.png",
+  "description": "Daydreams router provides x402 enabled LLM inference for agents and applications. All major providers are supported. Build the future of nanoservices.",
+  "websiteUrl": "https://router.daydreams.systems"
+}

@@ -1,0 +1,7 @@
+{
+  "name": "Kevros",
+  "description": "AI governance gateway with cryptographic enforcement. Five x402-paid endpoints: action verification ($0.01), provenance attestation ($0.02), intent-command binding ($0.02), outcome verification (free), and compliance evidence bundles ($0.25). Every decision issues a signed release token. Every action is hash-chained. ML-DSA-87 post-quantum signatures for long-term non-repudiation. USDC on Base.",
+  "logoUrl": "/logos/kevros.png",
+  "websiteUrl": "https://governance.taskhawktech.com",
+  "category": "Services/Endpoints"
+}

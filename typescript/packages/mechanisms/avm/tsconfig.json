@@ -1,0 +1,9 @@
+{
+  "extends": "../../../tsconfig.base.json",
+  "compilerOptions": {
+    "lib": ["ES2020"],
+    "allowJs": false,
+    "checkJs": false
+  },
+  "include": ["src", "test/index.test.ts"]
+}

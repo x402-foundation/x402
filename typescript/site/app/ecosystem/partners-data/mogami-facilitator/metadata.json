@@ -1,0 +1,14 @@
+{
+  "name": "Mogami facilitator",
+  "description": "A free, developer-focused, production-ready facilitator for x402 payments. Use it instantly online, or launch your own Docker image in seconds.",
+  "logoUrl": "/logos/logo_mogami_vertical_small.png",
+  "websiteUrl": "https://facilitator.mogami.tech",
+  "category": "Facilitators",
+  "facilitator": {
+    "baseUrl": "https://facilitator.mogami.tech",
+    "networks": ["base", "base-sepolia"],
+    "schemes": ["exact"],
+    "assets": ["EIP-3009", "SPL", "Token-2022"],
+    "supports": { "verify": true, "settle": true, "supported": true, "list": false }
+  }
+}

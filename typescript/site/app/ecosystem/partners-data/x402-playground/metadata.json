@@ -1,0 +1,7 @@
+{
+  "name": "x402 Playground",
+  "category": "Infrastructure & Tooling",
+  "logoUrl": "/logos/x402-playground.png",
+  "description": "An interactive testing environment for the x402 payment protocol. Connect to any x402-enabled endpoint, test local paywalls, search the Bazaar discovery layer, and explore HTTP 402 payment flows. Built by Quicknode.",
+  "websiteUrl": "https://www.x402playground.com/"
+}

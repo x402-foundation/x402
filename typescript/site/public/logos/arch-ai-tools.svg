@@ -1,0 +1,36 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="180" height="180" viewBox="0 0 180 180">
+  <defs>
+    <linearGradient id="g" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%"   stop-color="#FF9010"/>
+      <stop offset="60%"  stop-color="#FF2896"/>
+      <stop offset="100%" stop-color="#8844FF"/>
+    </linearGradient>
+    <filter id="neon" x="-40%" y="-40%" width="180%" height="180%">
+      <feGaussianBlur stdDeviation="3" result="b"/>
+      <feMerge><feMergeNode in="b"/><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+    <!-- rounded rect clip for icon shape -->
+    <clipPath id="clip">
+      <rect width="180" height="180" rx="40" ry="40"/>
+    </clipPath>
+  </defs>
+
+  <!-- bg -->
+  <rect width="180" height="180" rx="40" ry="40" fill="#07061A"/>
+
+  <!-- subtle radial glow behind arch -->
+  <radialGradient id="bg-glow" cx="50%" cy="55%" r="45%">
+    <stop offset="0%" stop-color="#FF2896" stop-opacity="0.18"/>
+    <stop offset="100%" stop-color="#07061A" stop-opacity="0"/>
+  </radialGradient>
+  <rect width="180" height="180" rx="40" fill="url(#bg-glow)"/>
+
+  <!-- arch mark, scaled and centered -->
+  <!-- original viewBox 0 10 100 90, path fills from y=10 to y=100 (90 units tall, 70 wide) -->
+  <!-- scale to ~96px tall, center in 180x180 -->
+  <g transform="translate(90,90) scale(1.06) translate(-50,-55)" filter="url(#neon)">
+    <path fill="url(#g)"
+      d="M15,100L15,55A35,35,0,0,1,85,55L85,100L74,100L74,55A24,24,0,0,0,26,55L26,100Z
+         M34,100L34,55A16,16,0,0,1,66,55L66,100L58,100L58,55A8,8,0,0,0,42,55L42,100Z"/>
+  </g>
+</svg>

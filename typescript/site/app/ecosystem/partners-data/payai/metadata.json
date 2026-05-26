@@ -1,0 +1,91 @@
+{
+  "name": "PayAI Facilitator",
+  "description": "Accept x402 payments on all networks including Avalanche, Base, Polygon, Sei, Solana, and more! Get started in less than 1 minute. Supports all tokens. No API Keys required.",
+  "logoUrl": "/logos/payai.svg",
+  "websiteUrl": "https://facilitator.payai.network",
+  "category": "Facilitators",
+  "facilitator": {
+      "baseUrl": "https://facilitator.payai.network",
+      "networks": [
+        "solana",
+        "solana-devnet",
+        "base",
+        "base-sepolia",
+        "polygon",
+        "polygon-amoy",
+        "avalanche",
+        "avalanche-fuji",
+        "sei",
+        "sei-testnet",
+        "peaq",
+        "iotex",
+        "xlayer",
+        "xlayer-testnet",
+        "skale-base",
+        "skale-base-sepolia"
+      ],
+      "addresses": {
+        "solana": ["2wKupLR9q6wXYppw8Gr2NvWxKBUqm4PPJKkQfoxHDBg4"],
+        "solana-devnet": ["2wKupLR9q6wXYppw8Gr2NvWxKBUqm4PPJKkQfoxHDBg4"],
+        "base": [
+          "0xc6699d2aadA6c36Dfea5C248DD70f9CB0235cB63",
+          "0xB2Bd29925CBbCEA7628279c91945Ca5B98bf371B"
+        ],
+        "base-sepolia": [
+          "0xc6699d2aadA6c36Dfea5C248DD70f9CB0235cB63",
+          "0xB2Bd29925CBbCEA7628279c91945Ca5B98bf371B"
+        ],
+        "polygon": [
+          "0xc6699d2aadA6c36Dfea5C248DD70f9CB0235cB63",
+          "0xB2Bd29925CBbCEA7628279c91945Ca5B98bf371B"
+        ],
+        "polygon-amoy": [
+          "0xc6699d2aadA6c36Dfea5C248DD70f9CB0235cB63",
+          "0xB2Bd29925CBbCEA7628279c91945Ca5B98bf371B"
+        ],
+        "avalanche": [
+          "0xc6699d2aadA6c36Dfea5C248DD70f9CB0235cB63",
+          "0xB2Bd29925CBbCEA7628279c91945Ca5B98bf371B"
+        ],
+        "avalanche-fuji": [
+          "0xc6699d2aadA6c36Dfea5C248DD70f9CB0235cB63",
+          "0xB2Bd29925CBbCEA7628279c91945Ca5B98bf371B"
+        ],
+        "sei": [
+          "0xc6699d2aadA6c36Dfea5C248DD70f9CB0235cB63",
+          "0xB2Bd29925CBbCEA7628279c91945Ca5B98bf371B"
+        ],
+        "sei-testnet": [
+          "0xc6699d2aadA6c36Dfea5C248DD70f9CB0235cB63",
+          "0xB2Bd29925CBbCEA7628279c91945Ca5B98bf371B"
+        ],
+        "peaq": [
+          "0xc6699d2aadA6c36Dfea5C248DD70f9CB0235cB63",
+          "0xB2Bd29925CBbCEA7628279c91945Ca5B98bf371B"
+        ],
+        "iotex": [
+          "0xc6699d2aadA6c36Dfea5C248DD70f9CB0235cB63",
+          "0xB2Bd29925CBbCEA7628279c91945Ca5B98bf371B"
+        ],
+        "xlayer": [
+          "0xc6699d2aadA6c36Dfea5C248DD70f9CB0235cB63",
+          "0xB2Bd29925CBbCEA7628279c91945Ca5B98bf371B"
+        ],
+        "xlayer-testnet": [
+          "0xc6699d2aadA6c36Dfea5C248DD70f9CB0235cB63",
+          "0xB2Bd29925CBbCEA7628279c91945Ca5B98bf371B"
+        ],
+        "skale-base": [
+          "0xc6699d2aadA6c36Dfea5C248DD70f9CB0235cB63",
+          "0xB2Bd29925CBbCEA7628279c91945Ca5B98bf371B"
+        ],
+        "skale-base-sepolia": [
+          "0xc6699d2aadA6c36Dfea5C248DD70f9CB0235cB63",
+          "0xB2Bd29925CBbCEA7628279c91945Ca5B98bf371B"
+        ]
+      },
+      "schemes": ["exact"],
+      "assets": ["EIP-3009", "SPL", "Token-2022"],
+      "supports": { "verify": true, "settle": true, "supported": true, "list": true }
+  }
+}

@@ -1,0 +1,7 @@
+{
+  "name": "AIsa",
+  "description": "A resource marketplace aggregating core assets such as LLMs, data APIs based on the HTTP 402 standard.",
+  "logoUrl": "/logos/aisa.png",
+  "websiteUrl": "https://aisa.one",
+  "category": "Services/Endpoints"
+}

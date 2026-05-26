@@ -1,0 +1,7 @@
+{
+  "name": "Foldset",
+  "category": "Infrastructure & Tooling",
+  "logoUrl": "/logos/foldset.png",
+  "description": "Foldset lets anyone gate any API, MCP, URL, and more behind x402 micropayments. We provide the infrastructure layer for free: wallet provisioning, reverse proxy SDKs, AI-only blocking, analytics, and fiat off-ramps. Just add a middleware or reverse proxy and configure everything from our dashboard.",
+  "websiteUrl": "https://foldset.com"
+}

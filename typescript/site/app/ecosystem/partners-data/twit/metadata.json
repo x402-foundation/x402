@@ -1,0 +1,7 @@
+{
+  "name": "twit.sh",
+  "category": "Services/Endpoints",
+  "logoUrl": "/logos/twit.png",
+  "description": "Real-time Twitter/X data for AI agents. No sign-up, no API keys. Pay per request in USDC on Base via x402. Fully autonomous.",
+  "websiteUrl": "https://twit.sh"
+}

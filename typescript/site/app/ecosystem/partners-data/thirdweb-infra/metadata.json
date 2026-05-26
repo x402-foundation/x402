@@ -1,0 +1,7 @@
+{
+    "name": "thirdweb",
+    "category": "Infrastructure & Tooling",
+    "logoUrl": "/logos/thirdweb-logo.png",
+    "description": "Server side TypeScript SDK and facilitator HTTP API supporting 170+ chains and 4000+ tokens.",
+    "websiteUrl": "https://portal.thirdweb.com/payments/x402/facilitator"
+}

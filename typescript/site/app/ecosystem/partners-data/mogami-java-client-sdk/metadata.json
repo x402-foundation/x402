@@ -1,0 +1,7 @@
+{
+  "name": "Mogami java client SDK",
+  "description": "The Mogami Java Client SDK makes it easy to bring x402 payments into your Java application.",
+  "logoUrl": "/logos/logo_mogami_vertical_small.png",
+  "websiteUrl": "https://mogami.tech/#clientSDK",
+  "category": "Client-Side Integrations"
+}

@@ -1,0 +1,7 @@
+{
+  "name": "1Shot API",
+  "category": "Infrastructure & Tooling",
+  "logoUrl": "/logos/1shot-api.png",
+  "description": "A general purpose fascilitator to monetize any n8n workflow with your favorite ERC-20 token.",
+  "websiteUrl": "https://docs.1shotapi.com/automation/n8n.html#monetize-n8n-workflows-with-x402"
+}

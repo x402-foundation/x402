@@ -1,0 +1,7 @@
+{
+  "name": "Grove API",
+  "description": "A unified API you can /fund using x402 to /tip anyone on the internet.",
+  "logoUrl": "/logos/grove-api-logo.png",
+  "websiteUrl": "https://grove.city/api",
+  "category": "Services/Endpoints"
+}

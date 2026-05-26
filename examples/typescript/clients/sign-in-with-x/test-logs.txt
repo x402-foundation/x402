@@ -1,0 +1,51 @@
+================================================================================
+SIWX Example Test Logs
+================================================================================
+
+--------------------------------------------------------------------------------
+SERVER OUTPUT (examples/typescript/servers/sign-in-with-x/)
+--------------------------------------------------------------------------------
+
+> @x402/sign-in-with-x-server-example@ dev /Users/samragsdale/Documents/Code/coinbase/x402/examples/typescript/servers/sign-in-with-x
+> tsx index.ts
+
+Server running at http://localhost:4021
+Routes: GET /weather, GET /joke
+Payment recorded: 0x6d157C00d034541020fF73A989960D22b299d8e1 for /weather
+Test mode: Pre-seeded payment for 0x6d157C00d034541020fF73A989960D22b299d8e1 on /weather
+SIWX auth: 0x6d157C00d034541020fF73A989960D22b299d8e1 for /weather
+
+--------------------------------------------------------------------------------
+CLIENT OUTPUT (examples/typescript/clients/sign-in-with-x/)
+--------------------------------------------------------------------------------
+
+> @x402/sign-in-with-x-client-example@ dev /Users/samragsdale/Documents/Code/coinbase/x402/examples/typescript/clients/sign-in-with-x
+> tsx index.ts
+
+Client address: 0x6d157C00d034541020fF73A989960D22b299d8e1
+Server: http://localhost:4021
+
+--- Testing SIWX auth for /weather ---
+1. Request without auth (expect 402)...
+   Status: 402
+2. Request with SIWX auth...
+   Response: { weather: 'sunny', temperature: 72 }
+
+SIWX auth test complete.
+
+================================================================================
+Test Configuration
+================================================================================
+
+Server environment variables:
+  EVM_ADDRESS=0x6d157C00d034541020fF73A989960D22b299d8e1
+  FACILITATOR_URL=https://x402.org/facilitator
+  TEST_ADDRESS=0x6d157C00d034541020fF73A989960D22b299d8e1
+
+Client environment variables:
+  EVM_PRIVATE_KEY=0x08d1901112ed174fb2832786b926fd926370da1040d0f0b92608bfab953449ba
+  TEST_SIWX_ONLY=true
+
+Note: Full payment flow (demonstrateResource) cannot be tested locally because
+the x402.org facilitator rejects localhost URLs. The SIWX auth flow is tested
+using the TEST_ADDRESS pre-seeding mechanism.

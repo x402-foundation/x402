@@ -1,0 +1,128 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg id="Ebene_1" xmlns="http://www.w3.org/2000/svg" version="1.1" viewBox="0 0 500 500">
+  <!-- Generator: Adobe Illustrator 29.8.2, SVG Export Plug-In . SVG Version: 2.1.1 Build 3)  -->
+  <defs>
+    <style>
+      .st0 {
+        fill: #ec665f;
+      }
+
+      .st1 {
+        fill: #65b981;
+      }
+
+      .st2 {
+        fill: #2ea25e;
+      }
+
+      .st3 {
+        fill: #e54341;
+      }
+
+      .st4 {
+        fill: #68ba81;
+      }
+
+      .st5 {
+        fill: #e74341;
+      }
+
+      .st6 {
+        fill: #fccf4c;
+      }
+
+      .st7 {
+        fill: #3181bf;
+      }
+
+      .st8 {
+        fill: #f6b325;
+      }
+
+      .st9 {
+        fill: #67ba80;
+      }
+
+      .st10 {
+        fill: #331818;
+        opacity: .5;
+      }
+
+      .st11 {
+        fill: #3080bc;
+      }
+
+      .st12 {
+        fill: #47aadc;
+      }
+
+      .st13 {
+        fill: #46abdc;
+      }
+
+      .st14 {
+        fill: #ed6762;
+      }
+    </style>
+  </defs>
+  <g>
+    <g>
+      <rect class="st10" x="406.3" y="13.1" width="80.6" height="80.6"/>
+      <rect class="st10" x="406.3" y="406.3" width="80.6" height="80.6"/>
+      <rect class="st10" x="13.1" y="406.3" width="80.6" height="80.6"/>
+      <rect class="st10" x="13.1" y="13.1" width="80.6" height="80.6"/>
+    </g>
+    <g>
+      <rect class="st6" x="406.3" y="13.1" width="80.6" height="80.6"/>
+      <path class="st13" d="M237.8,193.8v-100.1h-120.9v23.2h-23.2v120.9h99.9c4.7-22,22.1-39.4,44.2-44Z"/>
+      <path class="st2" d="M193.8,262.2h-100.1s0,120.9,0,120.9h23.2s0,23.2,0,23.2h120.9s0-99.9,0-99.9c-22-4.7-39.4-22.1-44-44.2Z"/>
+      <path class="st3" d="M304.8,262.2h100.1s0,120.9,0,120.9h-23.2s0,23.2,0,23.2h-120.9s0-99.9,0-99.9c22-4.7,39.4-22.1,44-44.2Z"/>
+      <path class="st6" d="M260.8,193.8v-100.1h120.9v23.2s23.2,0,23.2,0v120.9h-99.9c-4.7-22-22.1-39.4-44.2-44Z"/>
+      <rect class="st6" x="421" y="116.9" width="65.9" height="121.6"/>
+      <rect class="st7" x="13.1" y="116.9" width="65.9" height="121.6"/>
+      <rect class="st9" x="13.1" y="262.2" width="65.9" height="121.6"/>
+      <rect class="st14" x="421" y="262.2" width="65.9" height="121.6"/>
+      <rect class="st0" x="288.6" y="393.2" width="65.9" height="121.6" transform="translate(775.6 132.4) rotate(90)"/>
+      <rect class="st1" x="144.7" y="393.2" width="65.9" height="121.6" transform="translate(631.7 276.3) rotate(90)"/>
+      <rect class="st8" x="288.6" y="-14.8" width="65.9" height="121.6" transform="translate(367.6 -275.6) rotate(90)"/>
+      <rect class="st11" x="144.7" y="-14.8" width="65.9" height="121.6" transform="translate(223.7 -131.7) rotate(90)"/>
+      <rect class="st5" x="406.3" y="406.3" width="80.6" height="80.6"/>
+      <rect class="st9" x="13.1" y="406.3" width="80.6" height="80.6"/>
+      <rect class="st12" x="13.1" y="13.1" width="80.6" height="80.6"/>
+    </g>
+    <circle class="st4" cx="249.5" cy="249.8" r="36.6"/>
+  </g>
+  <rect class="st9" x="93.7" y="262.2" width="30.6" height="30.6"/>
+  <rect class="st9" x="150.4" y="319" width="30.6" height="30.6"/>
+  <rect class="st2" x="116.9" y="421" width="30.6" height="30.6"/>
+  <rect class="st2" x="207.9" y="456.4" width="30.6" height="30.6"/>
+  <rect class="st13" x="207.9" y="13.1" width="30.6" height="30.6" transform="translate(446.5 56.7) rotate(-180)"/>
+  <rect class="st13" x="116.9" y="48.4" width="30.6" height="30.6" transform="translate(264.4 127.4) rotate(-180)"/>
+  <rect class="st7" x="13.1" y="13.1" width="30.6" height="30.6" transform="translate(56.7 56.7) rotate(-180)"/>
+  <rect class="st8" x="456.4" y="13.1" width="30.6" height="30.6" transform="translate(943.3 56.7) rotate(-180)"/>
+  <rect class="st0" x="456.4" y="456.4" width="30.6" height="30.6" transform="translate(943.3 943.3) rotate(-180)"/>
+  <rect class="st2" x="13.1" y="456.4" width="30.6" height="30.6" transform="translate(56.7 943.3) rotate(-180)"/>
+  <rect class="st2" x="30.7" y="262.2" width="30.6" height="30.6" transform="translate(92.1 555.1) rotate(-180)"/>
+  <rect class="st2" x="30.7" y="353.3" width="30.6" height="30.6" transform="translate(92.1 737.2) rotate(-180)"/>
+  <rect class="st3" x="438.7" y="262.2" width="30.6" height="30.6" transform="translate(907.9 555.1) rotate(-180)"/>
+  <rect class="st3" x="438.7" y="353.3" width="30.6" height="30.6" transform="translate(907.9 737.2) rotate(-180)"/>
+  <rect class="st8" x="438.7" y="116.9" width="30.6" height="30.6" transform="translate(907.9 264.4) rotate(-180)"/>
+  <rect class="st8" x="438.7" y="208" width="30.6" height="30.6" transform="translate(907.9 446.5) rotate(-180)"/>
+  <rect class="st13" x="28.4" y="116.9" width="30.6" height="30.6" transform="translate(87.3 264.4) rotate(-180)"/>
+  <rect class="st13" x="28.4" y="208" width="30.6" height="30.6" transform="translate(87.3 446.5) rotate(-180)"/>
+  <rect class="st6" x="260.8" y="13.1" width="30.6" height="30.6"/>
+  <rect class="st6" x="351.8" y="48.4" width="30.6" height="30.6"/>
+  <rect class="st3" x="351.8" y="421" width="30.6" height="30.6" transform="translate(734.2 872.6) rotate(-180)"/>
+  <rect class="st3" x="260.8" y="456.4" width="30.6" height="30.6" transform="translate(552.1 943.3) rotate(-180)"/>
+  <rect class="st9" x="207.2" y="375.7" width="30.6" height="30.6"/>
+  <rect class="st0" x="374.2" y="262.2" width="30.6" height="30.6" transform="translate(779.1 555.1) rotate(-180)"/>
+  <rect class="st0" x="317.5" y="319" width="30.6" height="30.6" transform="translate(665.6 668.5) rotate(-180)"/>
+  <rect class="st0" x="260.8" y="375.7" width="30.6" height="30.6" transform="translate(552.1 782) rotate(-180)"/>
+  <rect class="st7" x="207.2" y="93.7" width="30.6" height="30.6" transform="translate(444.9 218) rotate(-180)"/>
+  <rect class="st7" x="150.4" y="150.4" width="30.6" height="30.6" transform="translate(331.5 331.5) rotate(-180)"/>
+  <rect class="st7" x="93.7" y="207.2" width="30.6" height="30.6" transform="translate(218 444.9) rotate(-180)"/>
+  <rect class="st8" x="260.8" y="93.7" width="30.6" height="30.6"/>
+  <rect class="st8" x="317.5" y="150.4" width="30.6" height="30.6"/>
+  <rect class="st8" x="374.2" y="207.2" width="30.6" height="30.6"/>
+</svg>
+

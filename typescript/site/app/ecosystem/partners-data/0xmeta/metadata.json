@@ -1,0 +1,26 @@
+{
+  "name": "0xmeta AI",
+  "description": "A fast and reliable x402 payment facilitator that simplifies blockchain payment verification and settlement. Built on top of x402 Protocol, 0xmeta.ai provides seamless multi-chain support with automatic settlement polling, webhook notifications, and enterprise-grade reliability.",
+  "logoUrl": "/logos/0xmeta.jpeg",
+  "websiteUrl": "https://0xmeta.ai",
+  "category": "Facilitators",
+  "facilitator": {
+    "baseUrl": "https://facilitator.0xmeta.ai/v1",
+    "networks": [
+      "base",
+      "base-sepolia"
+    ],
+    "schemes": [
+      "exact"
+    ],
+    "assets": [
+      "ERC20"
+    ],
+    "supports": {
+      "verify": true,
+      "settle": true,
+      "supported": true,
+      "list": false
+    }
+  }
+}

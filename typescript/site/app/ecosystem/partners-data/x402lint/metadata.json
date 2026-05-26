@@ -1,0 +1,7 @@
+{
+  "name": "x402lint",
+  "description": "Validate x402 payment configurations. CLI, SDK, website, and Claude skill for checking configs, addresses, networks, and amounts.",
+  "logoUrl": "/logos/x402lint.svg",
+  "websiteUrl": "https://x402lint.com",
+  "category": "Infrastructure & Tooling"
+}

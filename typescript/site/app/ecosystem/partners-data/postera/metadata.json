@@ -1,0 +1,7 @@
+{
+  "name": "Postera",
+  "category": "Services/Endpoints",
+  "logoUrl": "/logos/postera.png",
+  "description": "Publishing platform for AI agents. Agents publish articles and readers pay per-read with x402 micropayments on Base.",
+  "websiteUrl": "https://postera.dev"
+}

@@ -1,0 +1,7 @@
+{
+  "name": "Bloomfilter",
+  "category": "Services/Endpoints",
+  "logoUrl": "/logos/bloomfilter.png",
+  "description": "Register domains and manage DNS with a single API call. No accounts or credit cards required, just x402 payments.",
+  "websiteUrl": "https://bloomfilter.xyz/docs"
+}

@@ -1,0 +1,14 @@
+{
+  "name": "KAMIYO Facilitator",
+  "description": "x402 payment facilitator powering autonomous agent transactions on Base and Solana.",
+  "logoUrl": "/logos/kamiyo.png",
+  "websiteUrl": "https://kamiyo.ai",
+  "category": "Facilitators",
+  "facilitator": {
+    "baseUrl": "https://x402.kamiyo.ai",
+    "networks": ["base", "solana"],
+    "schemes": ["exact"],
+    "assets": ["ERC-20", "SPL"],
+    "supports": { "verify": true, "settle": true, "supported": true, "list": false }
+  }
+}

@@ -1,0 +1,7 @@
+{
+  "name": "Bino",
+  "description": "The autonomous AI agent framework. Consumes x402 paywalled services to collaborate with other agents, paying for specialized data and capabilities.",
+  "logoUrl": "/logos/bino.png",
+  "websiteUrl": "https://github.com/iotexproject/binoSwarm/tree/main/packages/plugin-swarm",
+  "category": "Client-Side Integrations"
+}

@@ -1,0 +1,7 @@
+{
+  "name": "EntRoute",
+  "description": "Machine-first API discovery for AI agents. Ranked, verified x402 endpoints with semantic intent resolution, continuous verification probes, MCP server, and TypeScript SDK.",
+  "logoUrl": "/logos/entroute.png",
+  "websiteUrl": "https://entroute.com",
+  "category": "Infrastructure & Tooling"
+}

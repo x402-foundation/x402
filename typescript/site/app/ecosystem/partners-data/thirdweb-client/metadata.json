@@ -1,0 +1,7 @@
+{
+    "name": "thirdweb",
+    "category": "Client-Side Integrations",
+    "logoUrl": "/logos/thirdweb-logo.png",
+    "description": "Client side TypeScript SDK and HTTP API to pay for any x402 compatible endpoint from your apps or agents.",
+    "websiteUrl": "https://portal.thirdweb.com/payments/x402/client"
+}

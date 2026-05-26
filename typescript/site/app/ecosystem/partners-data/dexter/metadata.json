@@ -1,0 +1,19 @@
+{
+  "name": "Dexter",
+  "description": "Solana and Base x402 facilitator with an integrated marketplace and cross-chain bridge. Agents discover tools via MCP, pay via x402, and get results in one flow. Access from ChatGPT, Claude, Telegram, or any MCP client - same agent, same wallet, infinite interfaces.",
+  "logoUrl": "/logos/dexter.svg",
+  "websiteUrl": "https://dexter.cash",
+  "category": "Facilitators",
+  "facilitator": {
+    "baseUrl": "https://x402.dexter.cash",
+    "networks": ["solana", "solana-devnet", "base", "base-sepolia"],
+    "schemes": ["exact", "bridge"],
+    "assets": ["SPL", "EIP-3009", "Token-2022"],
+    "supports": {
+      "verify": true,
+      "settle": true,
+      "supported": true,
+      "list": false
+    }
+  }
+}

@@ -1,0 +1,583 @@
+---
+title: "Quickstart for Buyers"
+description: "This guide walks you through how to use **x402** to interact with services that require payment. By the end of this guide, you will be able to programmatically discover payment requirements, complete a payment, and access a paid resource."
+---
+
+### Prerequisites
+
+Before you begin, ensure you have:
+
+* A crypto wallet with USDC (any EVM or SVM compatible wallet)
+* [Node.js](https://nodejs.org/en) and npm, [Go](https://go.dev/), or [Python](https://www.python.org/) and pip
+* A service that requires payment via x402
+
+**Note**\
+There are pre-configured [examples available in the x402 repo](https://github.com/x402-foundation/x402/tree/main/examples), including examples for [fetch](https://github.com/x402-foundation/x402/tree/main/examples/typescript/clients/fetch), [Axios](https://github.com/x402-foundation/x402/tree/main/examples/typescript/clients/axios), [Go](https://github.com/x402-foundation/x402/tree/main/examples/go/clients), and [MCP](https://github.com/x402-foundation/x402/tree/main/examples/typescript/clients/mcp).
+
+### 1. Install Dependencies
+
+<Tabs>
+  <Tab title="Node.js">
+    Install the x402 client packages:
+
+    ```bash
+    # For fetch-based clients
+    npm install @x402/fetch @x402/evm
+
+    # For axios-based clients
+    npm install @x402/axios @x402/evm
+
+    # For Solana support, also add:
+    npm install @x402/svm
+
+    # For Algorand support, also add:
+    npm install @x402/avm
+
+    # For Aptos support, also add:
+    npm install @x402/aptos
+
+    # For Stellar support, also add:
+    npm install @x402/stellar
+    ```
+  </Tab>
+  <Tab title="Go">
+    Add the x402 Go module to your project:
+
+    ```bash
+    go get github.com/x402-foundation/x402/go
+    ```
+  </Tab>
+  <Tab title="Python">
+    Install the [x402 package](https://pypi.org/project/x402/) with your preferred HTTP client:
+
+    ```bash
+    # For httpx (async) - recommended
+    pip install "x402[httpx]"
+
+    # For requests (sync)
+    pip install "x402[requests]"
+
+    # For Solana support, also add:
+    pip install "x402[svm]"
+    ```
+  </Tab>
+</Tabs>
+
+### 2. Create a Wallet Signer
+
+<Tabs>
+  <Tab title="Node.js (viem)">
+    Install the required package:
+
+    ```bash
+    npm install viem
+    ```
+
+    Then instantiate the wallet signer:
+
+    ```typescript
+    import { privateKeyToAccount } from "viem/accounts";
+
+    // Create a signer from private key (use environment variable)
+    const signer = privateKeyToAccount(process.env.EVM_PRIVATE_KEY as `0x${string}`);
+    ```
+  </Tab>
+  <Tab title="Go">
+    ```go
+    import (
+        evmsigners "github.com/x402-foundation/x402/go/signers/evm"
+    )
+
+    // Load private key from environment
+    evmSigner, err := evmsigners.NewClientSignerFromPrivateKey(os.Getenv("EVM_PRIVATE_KEY"))
+    if err != nil {
+        log.Fatal(err)
+    }
+    ```
+  </Tab>
+  <Tab title="Python (eth-account)">
+    Install the required package:
+
+    ```bash
+    pip install eth_account
+    ```
+
+    Then instantiate the wallet signer:
+
+    ```python
+    import os
+    from eth_account import Account
+    from x402.mechanisms.evm import EthAccountSigner
+
+    account = Account.from_key(os.getenv("EVM_PRIVATE_KEY"))
+    signer = EthAccountSigner(account)
+    ```
+  </Tab>
+</Tabs>
+
+#### Solana (SVM)
+
+Use [SolanaKit](https://www.solanakit.com/) to instantiate a signer:
+
+```typescript
+import { createKeyPairSignerFromBytes } from "@solana/kit";
+import { base58 } from "@scure/base";
+
+// 64-byte base58 secret key (private + public)
+const svmSigner = await createKeyPairSignerFromBytes(
+  base58.decode(process.env.SVM_PRIVATE_KEY!)
+);
+```
+
+#### Aptos
+
+Use the Aptos TypeScript SDK to instantiate a signer:
+
+```typescript
+import { Account, Ed25519PrivateKey } from "@aptos-labs/ts-sdk";
+
+// Create account from private key
+const privateKey = new Ed25519PrivateKey(process.env.APTOS_PRIVATE_KEY!);
+const aptosSigner = Account.fromPrivateKey({ privateKey });
+```
+
+#### Algorand (AVM)
+
+Use the `@x402/avm` package to instantiate a signer:
+
+```typescript
+import { toClientAvmSigner } from "@x402/avm";
+
+// Create signer from Base64-encoded private key (64-byte: seed + pubkey)
+const avmSigner = toClientAvmSigner(process.env.AVM_PRIVATE_KEY!);
+```
+
+#### Stellar
+
+Use the Stellar SDK to instantiate a signer:
+
+```typescript
+import { createEd25519Signer } from "@x402/stellar";
+
+// Create signer from private key (S... format)
+const stellarSigner = createEd25519Signer(
+  process.env.STELLAR_PRIVATE_KEY!,
+  "stellar:testnet"
+);
+```
+
+### 3. Make Paid Requests Automatically
+
+<Tabs>
+  <Tab title="Fetch">
+    **@x402/fetch** extends the native `fetch` API to handle 402 responses and payment headers for you. [Full example here](https://github.com/x402-foundation/x402/tree/main/examples/typescript/clients/fetch)
+
+    ```typescript
+    import { wrapFetchWithPayment } from "@x402/fetch";
+    import { x402Client, x402HTTPClient } from "@x402/core/client";
+    import { ExactEvmScheme } from "@x402/evm/exact/client";
+    import { privateKeyToAccount } from "viem/accounts";
+
+    // Create signer
+    const signer = privateKeyToAccount(process.env.EVM_PRIVATE_KEY as `0x${string}`);
+
+    // Create x402 client and register EVM scheme
+    const client = new x402Client();
+    client.register("eip155:*", new ExactEvmScheme(signer));
+
+    // Wrap fetch with payment handling
+    const fetchWithPayment = wrapFetchWithPayment(fetch, client);
+
+    // Make request - payment is handled automatically
+    const response = await fetchWithPayment("https://api.example.com/paid-endpoint", {
+      method: "GET",
+    });
+
+    const data = await response.json();
+    console.log("Response:", data);
+
+    // Get payment receipt from response headers
+    if (response.ok) {
+      const httpClient = new x402HTTPClient(client);
+      const paymentResponse = httpClient.getPaymentSettleResponse(
+        (name) => response.headers.get(name)
+      );
+      console.log("Payment settled:", paymentResponse);
+    }
+    ```
+  </Tab>
+  <Tab title="Axios">
+    **@x402/axios** adds a payment interceptor to Axios, so your requests are retried with payment headers automatically. [Full example here](https://github.com/x402-foundation/x402/tree/main/examples/typescript/clients/axios)
+
+    ```typescript
+    import { x402Client, wrapAxiosWithPayment, x402HTTPClient } from "@x402/axios";
+    import { ExactEvmScheme } from "@x402/evm/exact/client";
+    import { privateKeyToAccount } from "viem/accounts";
+    import axios from "axios";
+
+    // Create signer
+    const signer = privateKeyToAccount(process.env.EVM_PRIVATE_KEY as `0x${string}`);
+
+    // Create x402 client and register EVM scheme
+    const client = new x402Client();
+    client.register("eip155:*", new ExactEvmScheme(signer));
+
+    // Create an Axios instance with payment handling
+    const api = wrapAxiosWithPayment(
+      axios.create({ baseURL: "https://api.example.com" }),
+      client,
+    );
+
+    // Make request - payment is handled automatically
+    const response = await api.get("/paid-endpoint");
+    console.log("Response:", response.data);
+
+    // Get payment receipt
+    const httpClient = new x402HTTPClient(client);
+    const paymentResponse = httpClient.getPaymentSettleResponse(
+      (name) => response.headers[name.toLowerCase()]
+    );
+    console.log("Payment settled:", paymentResponse);
+    ```
+  </Tab>
+  <Tab title="Go">
+    [Full example here](https://github.com/x402-foundation/x402/tree/main/examples/go/clients/http)
+
+    ```go
+    package main
+
+    import (
+        "context"
+        "encoding/json"
+        "fmt"
+        "net/http"
+        "os"
+        "time"
+
+        x402 "github.com/x402-foundation/x402/go"
+        x402http "github.com/x402-foundation/x402/go/http"
+        evm "github.com/x402-foundation/x402/go/mechanisms/evm/exact/client"
+        evmsigners "github.com/x402-foundation/x402/go/signers/evm"
+    )
+
+    func main() {
+        url := "http://localhost:4021/weather"
+
+        // Create EVM signer
+        evmSigner, _ := evmsigners.NewClientSignerFromPrivateKey(os.Getenv("EVM_PRIVATE_KEY"))
+
+        // Create x402 client and register EVM scheme
+        x402Client := x402.Newx402Client().
+            Register("eip155:*", evm.NewExactEvmScheme(evmSigner))
+
+        // Wrap HTTP client with payment handling
+        httpClient := x402http.WrapHTTPClientWithPayment(
+            http.DefaultClient,
+            x402http.Newx402HTTPClient(x402Client),
+        )
+
+        // Make request - payment is handled automatically
+        ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+        defer cancel()
+
+        req, _ := http.NewRequestWithContext(ctx, "GET", url, nil)
+        resp, err := httpClient.Do(req)
+        if err != nil {
+            fmt.Printf("Request failed: %v\n", err)
+            return
+        }
+        defer resp.Body.Close()
+
+        // Read response
+        var data map[string]interface{}
+        json.NewDecoder(resp.Body).Decode(&data)
+        fmt.Printf("Response: %+v\n", data)
+
+        // Check payment response header
+        paymentHeader := resp.Header.Get("PAYMENT-RESPONSE")
+        if paymentHeader != "" {
+            fmt.Println("Payment settled successfully!")
+        }
+    }
+    ```
+  </Tab>
+  <Tab title="Python (httpx)">
+    **httpx** provides async HTTP client support with automatic 402 payment handling.
+
+    [Full HTTPX example](https://github.com/x402-foundation/x402/tree/main/examples/python/clients/httpx) | [Full Requests example](https://github.com/x402-foundation/x402/tree/main/examples/python/clients/requests)
+
+    ```python
+    import asyncio
+    import os
+    from eth_account import Account
+
+    from x402 import x402Client
+    from x402.http import x402HTTPClient
+    from x402.http.clients import x402HttpxClient
+    from x402.mechanisms.evm import EthAccountSigner
+    from x402.mechanisms.evm.exact.register import register_exact_evm_client
+
+
+    async def main() -> None:
+        client = x402Client()
+        account = Account.from_key(os.getenv("EVM_PRIVATE_KEY"))
+        register_exact_evm_client(client, EthAccountSigner(account))
+
+        http_client = x402HTTPClient(client)
+
+        async with x402HttpxClient(client) as http:
+            response = await http.get("https://api.example.com/paid-endpoint")
+            await response.aread()
+
+            print(f"Response: {response.text}")
+
+            if response.is_success:
+                settle_response = http_client.get_payment_settle_response(
+                    lambda name: response.headers.get(name)
+                )
+                print(f"Payment settled: {settle_response}")
+
+
+    asyncio.run(main())
+    ```
+  </Tab>
+  <Tab title="Python (requests)">
+    **requests** provides sync HTTP client support with automatic 402 payment handling.
+
+    [Full Requests example](https://github.com/x402-foundation/x402/tree/main/examples/python/clients/requests)
+
+    ```python
+    import os
+    from eth_account import Account
+
+    from x402 import x402ClientSync
+    from x402.http import x402HTTPClientSync
+    from x402.http.clients import x402_requests
+    from x402.mechanisms.evm import EthAccountSigner
+    from x402.mechanisms.evm.exact.register import register_exact_evm_client
+
+
+    def main() -> None:
+        client = x402ClientSync()
+        account = Account.from_key(os.getenv("EVM_PRIVATE_KEY"))
+        register_exact_evm_client(client, EthAccountSigner(account))
+
+        http_client = x402HTTPClientSync(client)
+
+        with x402_requests(client) as session:
+            response = session.get("https://api.example.com/paid-endpoint")
+
+            print(f"Response: {response.text}")
+
+            if response.ok:
+                settle_response = http_client.get_payment_settle_response(
+                    lambda name: response.headers.get(name)
+                )
+                print(f"Payment settled: {settle_response}")
+
+
+    main()
+    ```
+  </Tab>
+</Tabs>
+
+### Multi-Network Client Setup
+
+You can register multiple payment schemes to handle different networks:
+
+<Tabs>
+  <Tab title="TypeScript">
+    ```typescript
+    import { wrapFetchWithPayment } from "@x402/fetch";
+    import { x402Client } from "@x402/core/client";
+    import { ExactEvmScheme } from "@x402/evm/exact/client";
+    import { ExactSvmScheme } from "@x402/svm/exact/client";
+    import { privateKeyToAccount } from "viem/accounts";
+    import { createKeyPairSignerFromBytes } from "@solana/kit";
+    import { base58 } from "@scure/base";
+
+    // Create signers
+    const evmSigner = privateKeyToAccount(process.env.EVM_PRIVATE_KEY as `0x${string}`);
+    const svmSigner = await createKeyPairSignerFromBytes(
+      base58.decode(process.env.SVM_PRIVATE_KEY!)
+    );
+
+    // Create client with multiple schemes
+    const client = new x402Client();
+    client.register("eip155:*", new ExactEvmScheme(evmSigner));
+    client.register("solana:*", new ExactSvmScheme(svmSigner));
+
+    const fetchWithPayment = wrapFetchWithPayment(fetch, client);
+
+    // Now handles both EVM and Solana networks automatically!
+
+    // For Aptos support, also add:
+    import { ExactAptosScheme } from "@x402/aptos/exact/client";
+    import { Account, Ed25519PrivateKey } from "@aptos-labs/ts-sdk";
+
+    const aptosPrivateKey = new Ed25519PrivateKey(process.env.APTOS_PRIVATE_KEY!);
+    const aptosSigner = Account.fromPrivateKey({ privateKey: aptosPrivateKey });
+    client.register("aptos:*", new ExactAptosScheme(aptosSigner));
+
+    // For Algorand support, also add:
+    import { ExactAvmScheme, toClientAvmSigner } from "@x402/avm";
+
+    const avmSigner = toClientAvmSigner(process.env.AVM_PRIVATE_KEY!);
+    client.register("algorand:*", new ExactAvmScheme(avmSigner));
+
+    // For Stellar support, also add:
+    import { ExactStellarScheme, createEd25519Signer } from "@x402/stellar";
+
+    const stellarSigner = createEd25519Signer(
+      process.env.STELLAR_PRIVATE_KEY!,
+      "stellar:testnet"
+    );
+    client.register("stellar:*", new ExactStellarScheme(stellarSigner));
+    ```
+  </Tab>
+  <Tab title="Go">
+    ```go
+    import (
+        x402 "github.com/x402-foundation/x402/go"
+        x402http "github.com/x402-foundation/x402/go/http"
+        evm "github.com/x402-foundation/x402/go/mechanisms/evm/exact/client"
+        svm "github.com/x402-foundation/x402/go/mechanisms/svm/exact/client"
+        evmsigners "github.com/x402-foundation/x402/go/signers/evm"
+        svmsigners "github.com/x402-foundation/x402/go/signers/svm"
+    )
+
+    // Create signers
+    evmSigner, _ := evmsigners.NewClientSignerFromPrivateKey(os.Getenv("EVM_PRIVATE_KEY"))
+    svmSigner, _ := svmsigners.NewClientSignerFromPrivateKey(os.Getenv("SVM_PRIVATE_KEY"))
+
+    // Create client with multiple schemes
+    x402Client := x402.Newx402Client().
+        Register("eip155:*", evm.NewExactEvmScheme(evmSigner)).
+        Register("solana:*", svm.NewExactSvmScheme(svmSigner))
+
+    // Wrap HTTP client with payment handling
+    httpClient := x402http.WrapHTTPClientWithPayment(
+        http.DefaultClient,
+        x402http.Newx402HTTPClient(x402Client),
+    )
+
+    // Now handles both EVM and Solana networks automatically!
+    ```
+  </Tab>
+  <Tab title="Python">
+    ```python
+    import asyncio
+    import os
+
+    from eth_account import Account
+
+    from x402 import x402Client
+    from x402.http.clients import x402HttpxClient
+    from x402.mechanisms.evm import EthAccountSigner
+    from x402.mechanisms.evm.exact.register import register_exact_evm_client
+    from x402.mechanisms.svm import KeypairSigner
+    from x402.mechanisms.svm.exact.register import register_exact_svm_client
+
+
+    async def main() -> None:
+        client = x402Client()
+
+        # Register EVM scheme
+        account = Account.from_key(os.getenv("EVM_PRIVATE_KEY"))
+        register_exact_evm_client(client, EthAccountSigner(account))
+
+        # Register SVM scheme
+        svm_signer = KeypairSigner.from_base58(os.getenv("SVM_PRIVATE_KEY"))
+        register_exact_svm_client(client, svm_signer)
+
+        async with x402HttpxClient(client) as http:
+            response = await http.get("https://api.example.com/paid-endpoint")
+            print(f"Response: {response.text}")
+
+
+    asyncio.run(main())
+    ```
+  </Tab>
+</Tabs>
+
+### Payment Schemes
+
+The examples above use the simplest fixed-price scheme. If a resource advertises a different scheme in its 402 response, register that scheme for the same network namespace:
+
+* [`exact`](/schemes/exact): fixed-price payments.
+* [`upto`](/schemes/upto): usage-based payments where you authorize a maximum and the seller charges actual usage.
+* [`batch-settlement`](/schemes/batch-settlement): high-volume payments where the client deposits into escrow, signs off-chain vouchers, and the seller claims value onchain in batches.
+
+
+### 4. Discover Available Services (Optional)
+
+Instead of hardcoding endpoints, you can use the x402 Bazaar to dynamically discover available services. This is especially powerful for building autonomous agents.
+
+```typescript
+// Fetch available services from the Bazaar API
+const response = await fetch(
+  "https://api.cdp.coinbase.com/platform/v2/x402/discovery/resources"
+  // "https://facilitator.payai.network/discovery/resources"  // Bazaar from another facilitator
+);
+const services = await response.json();
+
+// Filter services by criteria
+const affordableServices = services.items.filter((item) =>
+  item.accepts.some((req) => Number(req.amount) < 100000) // Under $0.10
+);
+
+console.log("Available services:", affordableServices);
+```
+
+Learn more about service discovery in the [Bazaar documentation](/extensions/bazaar).
+
+### 5. Error Handling
+
+Clients will throw errors if:
+
+* No scheme is registered for the required network
+* The request configuration is missing
+* A payment has already been attempted for the request
+* There is an error creating the payment header
+
+Common error handling:
+
+```typescript
+try {
+  const response = await fetchWithPayment(url, { method: "GET" });
+  // Handle success
+} catch (error) {
+  if (error.message.includes("No scheme registered")) {
+    console.error("Network not supported - register the appropriate scheme");
+  } else if (error.message.includes("Payment already attempted")) {
+    console.error("Payment failed on retry");
+  } else {
+    console.error("Request failed:", error);
+  }
+}
+```
+
+### Summary
+
+* Install x402 client packages (`@x402/fetch` or `@x402/axios`) and mechanism packages (`@x402/evm`, `@x402/svm`, `@x402/aptos`)
+* Create a wallet signer
+* Create an `x402Client` and register payment schemes (`exact` for fixed-price, `upto` for usage-based billing, `batch-settlement` for batched EVM micropayments when the server advertises it)
+* Use the provided wrapper/interceptor to make paid API requests
+* (Optional) Use the x402 Bazaar to discover services dynamically
+* Payment flows are handled automatically for you -- including `upto` where you only pay the actual usage
+
+***
+
+**Next Steps:**
+
+* Explore [Advanced Concepts](/advanced-concepts/lifecycle-hooks) like lifecycle hooks for custom logic before/after verification/settlement
+* Explore [Extensions](/extensions/bazaar) like Bazaar for service discovery
+
+**References:**
+
+* [@x402/fetch on npm](https://www.npmjs.com/package/@x402/fetch)
+* [@x402/axios on npm](https://www.npmjs.com/package/@x402/axios)
+* [@x402/evm on npm](https://www.npmjs.com/package/@x402/evm)
+* [x402 Go module](https://github.com/x402-foundation/x402/tree/main/go)
+
+For questions or support, join our [Discord](https://discord.gg/cdp).

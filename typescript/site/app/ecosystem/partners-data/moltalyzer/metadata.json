@@ -1,0 +1,7 @@
+{
+  "name": "Moltalyzer",
+  "description": "AI intelligence APIs for agents. Three feeds: hourly Moltbook community digests (trending topics, sentiment, narratives), daily GitHub trending repos (emerging tools, language trends), and daily Polymarket insider detection (markets with insider-knowledge signals). x402 micropayments on Base.",
+  "logoUrl": "/logos/moltalyzer.png",
+  "websiteUrl": "https://moltalyzer.xyz",
+  "category": "Services/Endpoints"
+}

@@ -1,0 +1,7 @@
+{
+  "name": "Einstein AI",
+  "category": "Services/Endpoints",
+  "logoUrl": "/logos/einstein-ai.png",
+  "description": "AI-powered blockchain intelligence API. Access whale tracking, smart money signals, DEX analytics, MEV detection, and investment reports via USDC micropayments on Base and Solana.",
+  "websiteUrl": "https://emc2ai.io"
+}

@@ -1,0 +1,7 @@
+{
+  "name": "AI Security Guard",
+  "category": "Services/Endpoints",
+  "logoUrl": "/logos/ai-security-guard.png",
+  "description": "When your AI agent calls an MCP tool, fetches a URL, or processes a document, it trusts whatever comes back. That's the problem. A malicious API response can hijack your agent's behavior or tell it to run malicious code. AI Security Guard is a firewall that sits between your agent and untrusted content. Before your agent processes anything external, we scan it. Five specialized analyzers — not LLMs, but deterministic detection systems — examine inputs and provide verdicts with context. When something looks wrong, agents get an explanation of what it might be and why it matters. Operators get visibility into what's flowing through their systems. x402 micropayments. Pay per scan, no subscriptions.",
+  "websiteUrl": "https://aisecurityguard.io"
+}

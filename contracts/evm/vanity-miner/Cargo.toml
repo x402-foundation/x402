@@ -1,0 +1,15 @@
+[package]
+name = "vanity-miner"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+tiny-keccak = { version = "2.0", features = ["keccak"] }
+rayon = "1.8"
+hex = "0.4"
+rand = "0.8"
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1

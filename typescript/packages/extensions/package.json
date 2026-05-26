@@ -1,0 +1,111 @@
+{
+  "name": "@x402/extensions",
+  "version": "2.13.0",
+  "main": "./dist/cjs/index.js",
+  "module": "./dist/esm/index.js",
+  "types": "./dist/cjs/index.d.ts",
+  "scripts": {
+    "start": "tsx --env-file=.env index.ts",
+    "build": "tsup",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "watch": "tsc --watch",
+    "format": "prettier -c .prettierrc --write \"**/*.{ts,js,cjs,json,md}\"",
+    "format:check": "prettier -c .prettierrc --check \"**/*.{ts,js,cjs,json,md}\"",
+    "lint": "eslint . --ext .ts --fix",
+    "lint:check": "eslint . --ext .ts"
+  },
+  "keywords": [
+    "x402",
+    "payment",
+    "protocol",
+    "extensions"
+  ],
+  "license": "Apache-2.0",
+  "author": "x402 Foundation",
+  "repository": "https://github.com/x402-foundation/x402",
+  "description": "x402 Payment Protocol Extensions",
+  "devDependencies": {
+    "@eslint/js": "^9.24.0",
+    "@types/node": "^22.13.4",
+    "@typescript-eslint/eslint-plugin": "^8.29.1",
+    "@typescript-eslint/parser": "^8.29.1",
+    "eslint": "^9.24.0",
+    "eslint-plugin-import": "^2.31.0",
+    "eslint-plugin-jsdoc": "^50.6.9",
+    "eslint-plugin-prettier": "^5.2.6",
+    "prettier": "3.5.2",
+    "tsup": "^8.4.0",
+    "tsx": "^4.21.0",
+    "typescript": "^5.7.3",
+    "vite": "^6.2.6",
+    "vite-tsconfig-paths": "^5.1.4",
+    "vitest": "^3.0.5"
+  },
+  "dependencies": {
+    "@noble/curves": "^1.9.0",
+    "@scure/base": "^1.2.6",
+    "@x402/core": "workspace:~",
+    "ajv": "^8.17.1",
+    "jose": "^5.9.6",
+    "@signinwithethereum/siwe": "^4.1.0",
+    "tweetnacl": "^1.0.3",
+    "viem": "^2.48.11",
+    "zod": "^3.24.2"
+  },
+  "exports": {
+    ".": {
+      "import": {
+        "types": "./dist/esm/index.d.mts",
+        "default": "./dist/esm/index.mjs"
+      },
+      "require": {
+        "types": "./dist/cjs/index.d.ts",
+        "default": "./dist/cjs/index.js"
+      }
+    },
+    "./bazaar": {
+      "import": {
+        "types": "./dist/esm/bazaar/index.d.mts",
+        "default": "./dist/esm/bazaar/index.mjs"
+      },
+      "require": {
+        "types": "./dist/cjs/bazaar/index.d.ts",
+        "default": "./dist/cjs/bazaar/index.js"
+      }
+    },
+    "./sign-in-with-x": {
+      "import": {
+        "types": "./dist/esm/sign-in-with-x/index.d.mts",
+        "default": "./dist/esm/sign-in-with-x/index.mjs"
+      },
+      "require": {
+        "types": "./dist/cjs/sign-in-with-x/index.d.ts",
+        "default": "./dist/cjs/sign-in-with-x/index.js"
+      }
+    },
+    "./offer-receipt": {
+      "import": {
+        "types": "./dist/esm/offer-receipt/index.d.mts",
+        "default": "./dist/esm/offer-receipt/index.mjs"
+      },
+      "require": {
+        "types": "./dist/cjs/offer-receipt/index.d.ts",
+        "default": "./dist/cjs/offer-receipt/index.js"
+      }
+    },
+    "./payment-identifier": {
+      "import": {
+        "types": "./dist/esm/payment-identifier/index.d.mts",
+        "default": "./dist/esm/payment-identifier/index.mjs"
+      },
+      "require": {
+        "types": "./dist/cjs/payment-identifier/index.d.ts",
+        "default": "./dist/cjs/payment-identifier/index.js"
+      }
+    }
+  },
+  "files": [
+    "dist"
+  ]
+}

@@ -1,0 +1,7 @@
+{
+  "name": "SocioLogic",
+  "description": "x402-enabled RNG API providing cryptographically secure, verifiable randomness for AI agents, smart contracts, and applications requiring pay-per-use entropy.",
+  "logoUrl": "/logos/sociologic-ai.png",
+  "websiteUrl": "https://www.sociologic.ai/x402-rng",
+  "category": "Services/Endpoints"
+}

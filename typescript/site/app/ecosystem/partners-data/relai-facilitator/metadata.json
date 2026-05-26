@@ -1,0 +1,29 @@
+{
+  "name": "RelAI Facilitator",
+  "description": "Multi-chain x402 facilitator with gas-sponsored USDC payments on Ethereum, Polygon, Base, Avalanche, SKALE, and Solana. Zero gas fees for users.",
+  "logoUrl": "/logos/relai.png",
+  "websiteUrl": "https://relai.fi",
+  "category": "Facilitators",
+  "facilitator": {
+    "baseUrl": "https://facilitator.x402.fi",
+    "networks": [
+      "ethereum",
+      "polygon",
+      "base",
+      "avalanche",
+      "skale-base",
+      "solana"
+    ],
+    "addresses": {
+      "ethereum": ["0x1892f72fdB3A966b2AD8595aA5f7741Ef72d6085"],
+      "polygon": ["0x1892f72fdB3A966b2AD8595aA5f7741Ef72d6085"],
+      "base": ["0x1892f72fdB3A966b2AD8595aA5f7741Ef72d6085"],
+      "avalanche": ["0x1892f72fdB3A966b2AD8595aA5f7741Ef72d6085"],
+      "skale-base": ["0x1892f72fdB3A966b2AD8595aA5f7741Ef72d6085"],
+      "solana": ["4x4ZhcqiT1FnirM8Ne97iVupkN4NcQgc2YYbE2jDZbZn"]
+    },
+    "schemes": ["exact"],
+    "assets": ["EIP-3009", "SPL"],
+    "supports": { "verify": true, "settle": true, "supported": true, "list": true }
+  }
+}

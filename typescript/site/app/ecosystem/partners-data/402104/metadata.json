@@ -1,0 +1,7 @@
+{
+  "name": "402104",
+  "category": "Infrastructure & Tooling",
+  "logoUrl": "/logos/402104.png",
+  "description": "Generate expirable, paywalled links to private ANS-104 DataItems on Arweave. Compatible with both S3 and ANS-104 data standards.",
+  "websiteUrl": "https://402.load.network"
+}

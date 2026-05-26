@@ -1,0 +1,7 @@
+{
+  "name": "ouchanip x402 APIs",
+  "description": "10 pay-per-request utility APIs including QR code generation, email validation, PDF invoice, image resize, DNS lookup, and more. No accounts, no API keys — just USDC on Base L2.",
+  "logoUrl": "/logos/ouchanip.png",
+  "websiteUrl": "https://ouchanip.github.io/x402-docs/",
+  "category": "Services/Endpoints"
+}

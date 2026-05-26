@@ -1,0 +1,25 @@
+{
+  "name": "@x402-examples/cloudfront-lambda-edge-handler",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Lambda@Edge handler for x402 payment verification",
+  "main": "dist/index.js",
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "scripts": {
+    "build": "esbuild src/index.ts --bundle --platform=node --target=node20 --format=cjs --outfile=dist/index.js --external:@aws-sdk/*",
+    "build:prod": "esbuild src/index.ts --bundle --platform=node --target=node20 --format=cjs --outfile=dist/index.js --external:@aws-sdk/* --minify",
+    "clean": "rm -rf dist"
+  },
+  "dependencies": {
+    "@x402/core": "^2.11.0",
+    "@x402/evm": "^2.11.0"
+  },
+  "devDependencies": {
+    "@types/aws-lambda": "^8.10.159",
+    "@types/node": "^22.13.4",
+    "esbuild": "^0.27.2",
+    "typescript": "^5.7.3"
+  }
+}

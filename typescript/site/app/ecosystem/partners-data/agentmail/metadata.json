@@ -1,0 +1,7 @@
+{
+  "name": "AgentMail",
+  "description": "AgentMail integrates x402 to enable AI agents to send and receive emails with native payment flows, monetizing agent-powered communication services.",
+  "logoUrl": "/logos/agentmail.png",
+  "websiteUrl": "https://docs.agentmail.to/integrations/x402",
+  "category": "Client-Side Integrations"
+}

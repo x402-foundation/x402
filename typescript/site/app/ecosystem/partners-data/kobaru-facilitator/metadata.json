@@ -1,0 +1,19 @@
+{
+  "name": "Kobaru",
+  "description": "x402 Facilitator built from scratch by payment veterans who understand what payment systems demand. Kobaru is a purpose-built payment engine designed for developers who need institutional-grade reliability, complete visibility into their revenue operations, and the freedom to focus on building their business instead of managing payment complexity. Whether you are an Enterprise or Independent Developer, Kobaru has the right features for you.",
+  "logoUrl": "/logos/kobaru.png",
+  "websiteUrl": "https://www.kobaru.io",
+  "category": "Facilitators",
+  "facilitator": {
+    "baseUrl": "https://gateway.kobaru.io",
+    "networks": ["solana", "solana-devnet", "base", "base-sepolia", "skale", "skale-sepolia"],
+    "schemes": ["exact"],
+    "assets": ["SPL", "EIP-3009"],
+    "supports": {
+      "verify": true,
+      "settle": true,
+      "supported": true,
+      "list": true
+    }
+  }
+}

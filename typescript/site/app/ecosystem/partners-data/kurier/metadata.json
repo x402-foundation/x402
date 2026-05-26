@@ -1,0 +1,7 @@
+{
+  "name": "Kurier",
+  "description": "Kurier by Horizen Labs is a high-performance REST API that turns complex zero-knowledge proof workflows into a simple, pay-as-you-go service. Designed for AI agents and high-scale apps; and fully optimized for the x402 ecosystem. Submit, verify, and settle zk proofs in seconds.",
+  "logoUrl": "/logos/kurier.svg",
+  "websiteUrl": "https://kurier.xyz/docs/x402_payments",
+  "category": "Services/Endpoints"
+}

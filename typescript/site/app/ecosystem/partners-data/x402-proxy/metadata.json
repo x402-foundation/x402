@@ -1,0 +1,7 @@
+{
+  "name": "x402-proxy",
+  "description": "curl for x402 paid APIs. CLI and library that auto-pays HTTP 402 responses with USDC on Base and Solana, with MCP stdio proxy for AI agents. npx x402-proxy.",
+  "logoUrl": "/logos/cascade.png",
+  "websiteUrl": "https://github.com/cascade-protocol/x402-proxy",
+  "category": "Client-Side Integrations"
+}

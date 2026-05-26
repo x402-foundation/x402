@@ -1,0 +1,7 @@
+{
+  "name": "x402-watch",
+  "description": "A lightweight health monitoring tool for public x402-enabled APIs. It validates 402 responses, PAYMENT-REQUIRED headers, and optionally performs full payment lifecycle verification (402 → signing → 200 OK) using testnet USDC on Base Sepolia.",
+  "logoUrl": "/logos/x402-watch.png",
+  "websiteUrl": "https://github.com/logiccrafterdz/x402-watch",
+  "category": "Infrastructure & Tooling"
+}

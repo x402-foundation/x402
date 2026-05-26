@@ -1,0 +1,19 @@
+{
+  "name": "0xArchive Facilitator",
+  "description": "First HyperEVM-native x402 facilitator. Fee-free USDC settlement on HyperEVM and Base Mainnet.",
+  "logoUrl": "/logos/0xarchive.png",
+  "websiteUrl": "https://0xarchive.io",
+  "category": "Facilitators",
+  "facilitator": {
+    "baseUrl": "https://facilitator.0xarchive.io",
+    "networks": ["hyperevm", "base"],
+    "schemes": ["exact"],
+    "assets": ["EIP-3009"],
+    "supports": {
+      "verify": true,
+      "settle": true,
+      "supported": true,
+      "list": false
+    }
+  }
+}

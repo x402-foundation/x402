@@ -1,0 +1,14 @@
+{
+  "name": "Heurist Facilitator",
+  "description": "Enterprise-grade x402 facilitator on EVM chains. Supporting both V1 and V2. OFAC-Compliant.",
+  "logoUrl": "/logos/heurist-x402-logo.png",
+  "websiteUrl": "https://facilitator.heurist.ai",
+  "category": "Facilitators",
+  "facilitator": {
+      "baseUrl": "https://facilitator.heurist.xyz",
+      "networks": ["base"],
+      "schemes": ["exact"],
+      "assets": ["EIP-3009"],
+      "supports": { "verify": true, "settle": true, "supported": true, "list": false }
+  }
+}

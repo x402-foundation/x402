@@ -1,0 +1,7 @@
+{
+  "name": "Rug Munch Intelligence",
+  "description": "The only AI-powered crypto risk intelligence on x402. Agents check any token for rug pulls, honeypots, and scams before transacting — 19 paid endpoints from $0.02 to $2.00, powered by 240K+ historical scans and LLM forensic analysis (Claude Sonnet/Opus). Supports Solana, Ethereum, Base, Arbitrum, Polygon, and more.",
+  "logoUrl": "/logos/rug-munch-intelligence.png",
+  "websiteUrl": "https://cryptorugmunch.app/api/agent/v1/status",
+  "category": "Services/Endpoints"
+}

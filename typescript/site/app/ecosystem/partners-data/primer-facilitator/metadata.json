@@ -1,0 +1,14 @@
+{
+  "name": "Primer Facilitator",
+  "description": "x402 v1 & v2 facilitator on Base, with full ERC-20 support - not just EIP-3009.",
+  "logoUrl": "/logos/primer.png",
+  "websiteUrl": "https://primer.systems",
+  "category": "Facilitators",
+  "facilitator": {
+    "baseUrl": "https://x402.primer.systems",
+    "networks": ["base"],
+    "schemes": ["exact"],
+    "assets": ["ERC-20", "EIP-3009"],
+    "supports": { "verify": true, "settle": true, "supported": true, "list": false }
+  }
+}

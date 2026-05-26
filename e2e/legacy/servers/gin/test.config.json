@@ -1,0 +1,38 @@
+{
+  "name": "gin",
+  "type": "server",
+  "language": "go",
+  "x402Version": 1,
+  "description": "Go Gin server with x402 payment middleware",
+  "endpoints": [
+    {
+      "path": "/protected",
+      "method": "GET",
+      "description": "Protected endpoint requiring payment",
+      "requiresPayment": true,
+      "protocolFamily": "evm"
+    },
+    {
+      "path": "/health",
+      "method": "GET",
+      "description": "Health check endpoint",
+      "health": true
+    },
+    {
+      "path": "/close",
+      "method": "POST",
+      "description": "Graceful shutdown endpoint",
+      "close": true
+    }
+  ],
+  "environment": {
+    "required": [
+      "EVM_PAYEE_ADDRESS"
+    ],
+    "optional": [
+      "PORT",
+      "EVM_NETWORK",
+      "FACILITATOR_URL"
+    ]
+  }
+}

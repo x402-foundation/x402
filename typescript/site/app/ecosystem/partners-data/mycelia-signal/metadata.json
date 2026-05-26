@@ -1,0 +1,7 @@
+{
+  "name": "Mycelia Signal",
+  "description": "Cryptographically signed price oracle for AI agents and DeFi. 7 real-time price feeds (BTC, ETH, SOL, EUR, XAU, BTC/EUR, VWAP) via x402 micropayments on Base. Ed25519-signed attestations, multi-source median pricing. $0.001/query USDC.",
+  "logoUrl": "/logos/mycelia-signal.png",
+  "websiteUrl": "https://myceliasignal.com",
+  "category": "Services/Endpoints"
+}

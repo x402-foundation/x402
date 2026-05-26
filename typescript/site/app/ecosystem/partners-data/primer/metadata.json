@@ -1,0 +1,7 @@
+{
+  "name": "Primer",
+  "description": "A browser wallet (Primer Pay) for seamless interaction with x402 paywalls across the web, plus TypeScript & Python SDKs for payers and payees, with Full ERC-20 support.",
+  "logoUrl": "/logos/primer.png",
+  "websiteUrl": "https://primer.systems",
+  "category": "Client-Side Integrations"
+}

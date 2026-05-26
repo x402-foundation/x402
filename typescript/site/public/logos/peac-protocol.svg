@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 160 56" role="img" aria-label="PEAC Protocol">
+  <title>PEAC Protocol</title>
+  <defs>
+    <style>
+      @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600&amp;display=swap');
+      .logo { font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif; }
+    </style>
+  </defs>
+  <text x="80" y="32" class="logo" font-size="36" font-weight="600" letter-spacing="-1" text-anchor="middle" fill="#000">PEAC</text>
+  <text x="80" y="46" class="logo" font-size="9" font-weight="400" letter-spacing="3.5" text-anchor="middle" fill="#666">PROTOCOL</text>
+</svg>

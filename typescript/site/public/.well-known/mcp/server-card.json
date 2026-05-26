@@ -1,0 +1,11 @@
+{
+  "serverInfo": {
+    "name": "x402",
+    "version": "2.0.0"
+  },
+  "capabilities": {
+    "tools": false,
+    "resources": true,
+    "prompts": false
+  }
+}

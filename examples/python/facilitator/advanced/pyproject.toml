@@ -1,0 +1,59 @@
+[project]
+name = "x402-facilitator-advanced-example"
+version = "0.1.0"
+description = "Example of an x402 facilitator service in Python"
+readme = "README.md"
+requires-python = ">=3.10"
+keywords = ["x402", "payment", "protocol", "facilitator", "402"]
+dependencies = [
+    "x402[fastapi,evm,svm,tvm,extensions]",
+    "python-dotenv>=1.2.1",
+    "uvicorn[standard]>=0.40.0",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=7.0.0",
+    "pytest-asyncio>=0.21.0",
+    "mypy>=1.0.0",
+    "ruff>=0.1.0",
+    "black>=23.0.0",
+]
+
+[tool.uv]
+required-version = ">=0.11.0"
+exclude-newer = "3 days"
+package = false
+
+[tool.uv.sources]
+x402 = { path = "../../../../python/x402", editable = true }
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = [
+    "E",   # pycodestyle errors
+    "W",   # pycodestyle warnings
+    "F",   # pyflakes
+    "I",   # isort
+    "B",   # flake8-bugbear
+    "C4",  # flake8-comprehensions
+    "UP",  # pyupgrade
+]
+ignore = [
+    "E501",  # line too long (handled by black)
+]
+
+[tool.ruff.lint.isort]
+known-first-party = ["x402"]
+
+[tool.mypy]
+python_version = "3.10"
+strict = true
+warn_return_any = true
+warn_unused_configs = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

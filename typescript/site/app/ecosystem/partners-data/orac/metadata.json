@@ -1,0 +1,7 @@
+{
+  "name": "Orac",
+  "description": "AI agent security and trust infrastructure. Three x402-paid APIs: prompt injection scanning, code security auditing, and agent trust scoring powered by a 265-entity knowledge graph with PageRank reputation.",
+  "logoUrl": "/logos/orac.jpg",
+  "websiteUrl": "https://orac-safety.orac.workers.dev",
+  "category": "Services/Endpoints"
+}

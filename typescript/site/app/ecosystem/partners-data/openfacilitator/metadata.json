@@ -1,0 +1,19 @@
+{
+  "name": "OpenFacilitator",
+  "description": "Free, open-source x402 facilitator. Or become your own facilitator for $5/month.",
+  "logoUrl": "/logos/openfacilitator.svg",
+  "websiteUrl": "https://www.openfacilitator.io",
+  "category": "Facilitators",
+  "facilitator": {
+    "baseUrl": "https://pay.openfacilitator.io",
+    "networks": ["base", "solana"],
+    "schemes": ["exact"],
+    "assets": ["USDC"],
+    "supports": {
+      "verify": true,
+      "settle": true,
+      "supported": true,
+      "list": true
+    }
+  }
+}

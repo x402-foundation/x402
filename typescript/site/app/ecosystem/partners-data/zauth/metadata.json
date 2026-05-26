@@ -1,0 +1,7 @@
+{
+  "name": "zauth",
+  "description": "Trust infrastructure for autonomous commerce. Continuous endpoint verification, AI-powered code analysis (RepoScan), real-time monitoring dashboards, automatic refund execution, and a developer SDK. Ensures agents can safely discover and pay for x402 services.",
+  "logoUrl": "/logos/zauth.png",
+  "websiteUrl": "https://zauthx402.com",
+  "category": "Infrastructure & Tooling"
+}

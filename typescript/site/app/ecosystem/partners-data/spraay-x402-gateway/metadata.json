@@ -1,0 +1,7 @@
+{
+  "name": "Spraay x402 Gateway",
+  "description": "Full-stack x402 infrastructure platform with 62 paid endpoints across 11 categories. AI chat (200+ models), batch payments (200 recipients/tx), token swaps (Uniswap V3), price oracle, cross-chain bridge (11 chains), payroll, invoicing, escrow, wallet analytics, AI inference, GPU/Compute (image/video/LLM/audio via Replicate), web search & RAG (Tavily), email/SMS, webhooks, XMTP messaging, multi-chain RPC, IPFS storage, cron scheduling, logging, KYC/KYB, auth/SSO, audit trails, and crypto tax. 63-tool MCP server on Smithery. USDC on Base. No API keys, no accounts.",
+  "logoUrl": "/logos/spraay.png",
+  "websiteUrl": "https://docs.spraay.app",
+  "category": "Services/Endpoints"
+}

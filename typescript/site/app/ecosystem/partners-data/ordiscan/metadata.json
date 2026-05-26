@@ -1,0 +1,8 @@
+{
+  "name": "Ordiscan",
+  "description": "Bitcoin Ordinals explorer and API with x402 support. Query ordinals data or inscribe content on Bitcoin — pay per request with USDC on Base, no API key required.",
+  "logoUrl": "/logos/ordiscan.png",
+  "websiteUrl": "https://ordiscan.com",
+  "category": "Services/Endpoints"
+}
+

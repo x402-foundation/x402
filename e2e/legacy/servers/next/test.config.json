@@ -1,0 +1,37 @@
+{
+  "name": "next",
+  "type": "server",
+  "language": "typescript",
+  "x402Version": 1,
+  "endpoints": [
+    {
+      "path": "/api/protected",
+      "method": "GET",
+      "description": "Protected API endpoint requiring payment",
+      "requiresPayment": true,
+      "protocolFamily": "evm"
+    },
+    {
+      "path": "/api/health",
+      "method": "GET",
+      "description": "Health check endpoint",
+      "health": true
+    },
+    {
+      "path": "/api/close",
+      "method": "POST",
+      "description": "Graceful shutdown endpoint",
+      "close": true
+    }
+  ],
+  "environment": {
+    "required": [
+      "PORT",
+      "EVM_NETWORK",
+      "EVM_PAYEE_ADDRESS"
+    ],
+    "optional": [
+      "FACILITATOR_URL"
+    ]
+  }
+}

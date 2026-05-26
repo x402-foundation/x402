@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
+  <rect width="512" height="512" rx="64" fill="#0f172a"/>
+  <text x="256" y="220" text-anchor="middle" font-family="Arial,sans-serif" font-weight="bold" font-size="120" fill="#60a5fa">Claw</text>
+  <text x="256" y="340" text-anchor="middle" font-family="Arial,sans-serif" font-weight="bold" font-size="120" fill="#10b981">Pay</text>
+  <text x="256" y="420" text-anchor="middle" font-family="Arial,sans-serif" font-size="48" fill="#94a3b8">MCP</text>
+</svg>

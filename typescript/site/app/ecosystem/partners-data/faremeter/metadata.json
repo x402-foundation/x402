@@ -1,0 +1,7 @@
+{
+  "name": "Faremeter",
+  "description": "A lightweight OSS x402 framework powered by client-, middleware-, and server-side plugins ensuring maximum composability and extensibility.",
+  "logoUrl": "/logos/faremeter.png",
+  "websiteUrl": "https://faremeter.xyz",
+  "category": "Infrastructure & Tooling"
+}

@@ -1,0 +1,7 @@
+{
+  "name": "Firecrawl",
+  "description": "Firecrawl is a web scraping API that allows you to turn websites into LLM-ready data.",
+  "logoUrl": "/logos/firecrawl.png",
+  "websiteUrl": "https://firecrawl.dev",
+  "category": "Services/Endpoints"
+}

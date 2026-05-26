@@ -1,0 +1,7 @@
+{
+  "name": "Mogami java server SDK (Spring boot)",
+  "description": "The Mogami Java Server SDK lets you turn any endpoint of your spring application into a pay-per-call API using the x402 protocol.",
+  "logoUrl": "/logos/logo_mogami_vertical_small.png",
+  "websiteUrl": "https://mogami.tech/#serverSDK",
+  "category": "Infrastructure & Tooling"
+}

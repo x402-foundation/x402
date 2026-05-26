@@ -1,0 +1,6 @@
+{
+  "name": "Atomic Rail",
+  "description": "A Web3 toolkit for building paid APIs that you actually own. It uses the x402 protocol to send payments directly to your wallet—no middlemen or banks. You can change your prices or manage your endpoints from a dashboard and see the updates in production instantly, without ever redeploying your code.",
+  "logoUrl": "/logos/atomic-rail.png",
+  "websiteUrl": "https://www.atomicrail.com", 
+  "category": "Infrastructure & Tooling" }

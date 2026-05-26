@@ -1,0 +1,7 @@
+{
+  "name": "Trusta.AI",
+  "description": "The traditional way of Trusta Attestation involves users obtaining a signature on the website and then interacting with the contract to pay ETH for publishing an attestation. After the upgrade, Trusta Attestation integrates the x402 API to support users/agents publishing attestations by paying USDC on the Base chain via an API interface.",
+  "logoUrl": "/logos/trustalabs.svg",
+  "websiteUrl": "https://app.trustalabs.ai/attest",
+  "category": "Services/Endpoints"
+}

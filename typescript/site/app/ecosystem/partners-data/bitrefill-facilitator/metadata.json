@@ -1,0 +1,28 @@
+{
+  "name": "Bitrefill Facilitator",
+  "description": "Free x402 facilitator for EVM and Solana",
+  "logoUrl": "/logos/bitrefill.png",
+  "websiteUrl": "https://www.bitrefill.com",
+  "category": "Facilitators",
+  "facilitator": {
+    "baseUrl": "https://api.bitrefill.com/x402",
+    "networks": [
+      "base",
+      "solana",
+      "polygon"
+    ],
+    "schemes": [
+      "exact"
+    ],
+    "assets": [
+      "EIP-3009",
+      "SPL"
+    ],
+    "supports": {
+      "verify": true,
+      "settle": true,
+      "supported": true,
+      "list": false
+    }
+  }
+}

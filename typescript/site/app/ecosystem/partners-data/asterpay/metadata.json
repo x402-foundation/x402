@@ -1,0 +1,7 @@
+{
+  "name": "AsterPay",
+  "description": "Multichain EUR settlement for x402. Converts USDC, EURC & EURCV from Base, Ethereum, Solana, XRPL to EUR via SEPA Instant — MiCA-compliant, for AI agents and API providers in Europe.",
+  "logoUrl": "/logos/asterpay.png",
+  "websiteUrl": "https://asterpay.io",
+  "category": "Services/Endpoints"
+}

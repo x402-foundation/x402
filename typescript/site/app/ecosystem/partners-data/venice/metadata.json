@@ -1,0 +1,8 @@
+{
+  "name": "Venice",
+  "description": "Venice is a private and permissionless AI platform that provides access to open-source AI models, enabling uncensored inference, image generation, and code assistance without data retention.",
+  "logoUrl": "/logos/venice.svg",
+  "websiteUrl": "https://venice.ai/",
+  "category": "Services/Endpoints",
+  "top_section": true
+}

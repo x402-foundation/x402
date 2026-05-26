@@ -1,0 +1,7 @@
+{
+  "name": "KAMIYO",
+  "category": "Infrastructure & Tooling",
+  "logoUrl": "/logos/kamiyo.png",
+  "description": "AI agent orchestration platform with native x402 payment protocol support via ShadowWire, enabling autonomous agent-to-agent and agent-to-service micropayments on Solana.",
+  "websiteUrl": "https://kamiyo.ai"
+}

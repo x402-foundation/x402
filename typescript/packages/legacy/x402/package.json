@@ -1,0 +1,152 @@
+{
+  "name": "x402",
+  "version": "1.2.0",
+  "main": "./dist/cjs/index.js",
+  "module": "./dist/esm/index.js",
+  "types": "./dist/cjs/index.d.ts",
+  "scripts": {
+    "start": "tsx --env-file=.env index.ts",
+    "build": "tsup",
+    "build:paywall": "tsx src/paywall/build.ts",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "watch": "tsc --watch",
+    "format": "prettier -c .prettierrc --write \"**/*.{ts,js,cjs,json,md}\"",
+    "format:check": "prettier -c .prettierrc --check \"**/*.{ts,js,cjs,json,md}\"",
+    "lint": "eslint . --ext .ts --fix",
+    "lint:check": "eslint . --ext .ts"
+  },
+  "keywords": [],
+  "license": "Apache-2.0",
+  "author": "x402 Foundation",
+  "repository": "https://github.com/x402-foundation/x402",
+  "description": "x402 Payment Protocol",
+  "devDependencies": {
+    "@coinbase/onchainkit": "^0.38.14",
+    "@craftamap/esbuild-plugin-html": "^0.9.0",
+    "@eslint/js": "^9.24.0",
+    "@types/node": "^22.13.4",
+    "@types/react": "^19",
+    "@types/react-dom": "^19",
+    "@typescript-eslint/eslint-plugin": "^8.29.1",
+    "@typescript-eslint/parser": "^8.29.1",
+    "@wagmi/connectors": "^5.8.1",
+    "@wagmi/core": "^2.17.1",
+    "buffer": "^6.0.3",
+    "esbuild": "^0.27.2",
+    "eslint": "^9.24.0",
+    "eslint-plugin-import": "^2.31.0",
+    "eslint-plugin-jsdoc": "^50.6.9",
+    "eslint-plugin-prettier": "^5.2.6",
+    "prettier": "3.5.2",
+    "react": "19.2.1",
+    "react-dom": "19.2.1",
+    "tsup": "^8.4.0",
+    "tsx": "^4.21.0",
+    "typescript": "^5.7.3",
+    "viem": "^2.48.11",
+    "vite": "^6.2.6",
+    "vite-tsconfig-paths": "^5.1.4",
+    "vitest": "^3.0.5"
+  },
+  "dependencies": {
+    "@scure/base": "^1.2.6",
+    "@solana-program/compute-budget": "^0.11.0",
+    "@solana-program/token": "^0.9.0",
+    "@solana-program/token-2022": "^0.6.1",
+    "@solana/kit": "^5.0.0",
+    "@solana/transaction-confirmation": "^5.0.0",
+    "@solana/wallet-standard-features": "^1.3.0",
+    "@wallet-standard/app": "^1.1.0",
+    "@wallet-standard/base": "^1.1.0",
+    "@wallet-standard/features": "^1.1.0",
+    "viem": "^2.48.11",
+    "wagmi": "^2.15.6",
+    "zod": "^3.24.2"
+  },
+  "exports": {
+    "./shared": {
+      "import": {
+        "types": "./dist/esm/shared/index.d.mts",
+        "default": "./dist/esm/shared/index.mjs"
+      },
+      "require": {
+        "types": "./dist/cjs/shared/index.d.ts",
+        "default": "./dist/cjs/shared/index.js"
+      }
+    },
+    "./shared/evm": {
+      "import": {
+        "types": "./dist/esm/shared/evm/index.d.mts",
+        "default": "./dist/esm/shared/evm/index.mjs"
+      },
+      "require": {
+        "types": "./dist/cjs/shared/evm/index.d.ts",
+        "default": "./dist/cjs/shared/evm/index.js"
+      }
+    },
+    "./schemes": {
+      "import": {
+        "types": "./dist/esm/schemes/index.d.mts",
+        "default": "./dist/esm/schemes/index.mjs"
+      },
+      "require": {
+        "types": "./dist/cjs/schemes/index.d.ts",
+        "default": "./dist/cjs/schemes/index.js"
+      }
+    },
+    "./client": {
+      "import": {
+        "types": "./dist/esm/client/index.d.mts",
+        "default": "./dist/esm/client/index.mjs"
+      },
+      "require": {
+        "types": "./dist/cjs/client/index.d.ts",
+        "default": "./dist/cjs/client/index.js"
+      }
+    },
+    "./verify": {
+      "import": {
+        "types": "./dist/esm/verify/index.d.mts",
+        "default": "./dist/esm/verify/index.mjs"
+      },
+      "require": {
+        "types": "./dist/cjs/verify/index.d.ts",
+        "default": "./dist/cjs/verify/index.js"
+      }
+    },
+    "./facilitator": {
+      "import": {
+        "types": "./dist/esm/facilitator/index.d.mts",
+        "default": "./dist/esm/facilitator/index.mjs"
+      },
+      "require": {
+        "types": "./dist/cjs/facilitator/index.d.ts",
+        "default": "./dist/cjs/facilitator/index.js"
+      }
+    },
+    "./paywall": {
+      "import": {
+        "types": "./dist/esm/paywall/index.d.mts",
+        "default": "./dist/esm/paywall/index.mjs"
+      },
+      "require": {
+        "types": "./dist/cjs/paywall/index.d.ts",
+        "default": "./dist/cjs/paywall/index.js"
+      }
+    },
+    "./types": {
+      "import": {
+        "types": "./dist/esm/types/index.d.mts",
+        "default": "./dist/esm/types/index.mjs"
+      },
+      "require": {
+        "types": "./dist/cjs/types/index.d.ts",
+        "default": "./dist/cjs/types/index.js"
+      }
+    }
+  },
+  "files": [
+    "dist"
+  ]
+}

@@ -1,0 +1,7 @@
+{
+  "name": "x402-go",
+  "description": "Go implementation of the x402 protocol for building payment-gated APIs and services",
+  "logoUrl": "/logos/x402-go.png",
+  "websiteUrl": "https://github.com/mark3labs/x402-go",
+  "category": "Infrastructure & Tooling"
+}

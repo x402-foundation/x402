@@ -1,0 +1,28 @@
+{
+    "name": "GoPlausible",
+    "category": "Facilitators",
+    "logoUrl": "/logos/goplausible.png",
+    "description": "Facilitator dedicated to Algorand and supporting Base and Solana networks (main & test networks). Provides reference implementation, Typescript and Python packages, examples, and comprehensive documentation for x402 on Algorand.",
+    "websiteUrl": "https://x402.goplausible.xyz/",
+    "facilitator": {
+        "baseUrl": "https://facilitator.goplausible.xyz",
+        "networks": [
+            "algorand",
+            "base",
+            "solana"
+        ],
+        "schemes": [
+            "exact"
+        ],
+        "assets": [
+            "EIP-3009",
+            "USDC"
+        ],
+        "supports": {
+            "verify": true,
+            "settle": true,
+            "supported": true,
+            "list": true
+        }
+    }
+}

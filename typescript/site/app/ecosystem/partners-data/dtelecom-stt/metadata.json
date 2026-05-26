@@ -1,0 +1,7 @@
+{
+  "name": "dTelecom STT",
+  "description": "Production-grade real-time speech-to-text for AI agents. Full audio intelligence pipeline with VAD, noise reduction, speech validation, and hallucination filtering. Dual-engine architecture (Parakeet-TDT + Whisper) with smart routing, 99+ languages, usage-based billing. Built on dTelecom DePIN.",
+  "logoUrl": "/logos/dtelecom-stt.png",
+  "websiteUrl": "https://x402stt.dtelecom.org",
+  "category": "Services/Endpoints"
+}

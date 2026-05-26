@@ -1,0 +1,18 @@
+changelogPath: CHANGELOG.md
+changesDir: .changes
+unreleasedDir: unreleased
+versionExt: md
+versionFormat: '## {{.Version}} - {{.Time.Format "2006-01-02"}}'
+kindFormat: "### {{.Kind}}"
+changeFormat: "- {{.Body}}"
+newlines:
+  afterChangelogVersion: 2
+kinds:
+  - label: Added
+    key: added
+  - label: Changed
+    key: changed
+  - label: Fixed
+    key: fixed
+  - label: Removed
+    key: removed

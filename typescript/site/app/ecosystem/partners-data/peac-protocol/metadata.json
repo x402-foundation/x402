@@ -1,0 +1,7 @@
+{
+  "name": "PEAC Protocol",
+  "description": "Cryptographic receipt layer for x402 payments. On success, return a signed PEAC-Receipt header that binds payment proof to the delivered response and policy, verifiable offline.",
+  "logoUrl": "/logos/peac-protocol.svg",
+  "websiteUrl": "https://x402.peacprotocol.org",
+  "category": "Infrastructure & Tooling"
+}

@@ -1,0 +1,7 @@
+{
+  "name": "QuickNode",
+  "category": "Infrastructure & Tooling",
+  "logoUrl": "/logos/quicknode.png",
+  "description": "A Ruby gem that simplifies the process of adding paywalls to API routes in Ruby on Rails applications.",
+  "websiteUrl": "https://github.com/quiknode-labs/x402-rails"
+}

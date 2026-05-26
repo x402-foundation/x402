@@ -1,0 +1,7 @@
+{
+  "name": "PredictOS",
+  "description": "The leading open-source framework for deploying AI agents and trading bots for prediction markets. Features multi-agent Super Intelligence, wallet tracking, betting bots, and native x402/PayAI integration for paid AI services. Bring your own data, models, and strategies.",
+  "logoUrl": "/logos/predictos.png",
+  "websiteUrl": "https://github.com/PredictionXBT/PredictOS/blob/main/docs/features/x402-integration.md",
+  "category": "Infrastructure & Tooling"
+}

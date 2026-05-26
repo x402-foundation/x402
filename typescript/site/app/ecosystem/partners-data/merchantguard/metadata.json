@@ -1,0 +1,7 @@
+{
+  "name": "MerchantGuard",
+  "description": "AI-powered compliance infrastructure for the agent economy. x402-gated APIs: GuardScore (merchant risk scoring), GuardScan (3-layer security scanner), and Mystery Shopper (10-probe agent certification). USDC on Base.",
+  "logoUrl": "/logos/merchantguard.png",
+  "websiteUrl": "https://www.merchantguard.ai",
+  "category": "Services/Endpoints"
+}

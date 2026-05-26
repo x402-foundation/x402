@@ -1,0 +1,7 @@
+{
+  "name": "SerenAI x402 Gateway",
+  "description": "Production payment gateway enabling AI agents to pay for database queries and API access using USDC on Base via the x402 protocol.",
+  "logoUrl": "/logos/serenai.png",
+  "websiteUrl": "https://serendb.com",
+  "category": "Services/Endpoints"
+}

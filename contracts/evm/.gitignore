@@ -1,0 +1,32 @@
+# Compiler output
+out/
+cache/
+
+# Environment
+.env
+.env.local
+
+# Coverage
+lcov.info
+coverage/
+
+# Gas snapshots (optional - can commit for tracking)
+# .gas-snapshot
+
+# IDE
+.idea/
+.vscode/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Broadcast files (deployment artifacts)
+broadcast/
+
+# Debug
+debug/
+
+
+# Rust vanity-miner build artifacts
+vanity-miner/target/

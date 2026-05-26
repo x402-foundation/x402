@@ -1,0 +1,7 @@
+{
+  "name": "Rencom",
+  "description": "Search for x402 resources. Ranks candidate endpoints by historical agent outcomes to minimize execution failure and cost variance before selection. Sort by price, popularity or reliability to ensure you get the best resources.",
+  "logoUrl": "/logos/rencom.png",
+  "websiteUrl": "https://x402.rencom.ai",
+  "category": "Services/Endpoints"
+}

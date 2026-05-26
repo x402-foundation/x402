@@ -1,0 +1,19 @@
+{
+  "name": "fretchen.eu Facilitator",
+  "description": "Production x402 v2 Facilitator on Optimism and Base with EIP-3009 USDC payment verification and settlement.",
+  "logoUrl": "/logos/fretchen-facilitator.png",
+  "websiteUrl": "https://www.fretchen.eu/x402/",
+  "category": "Facilitators",
+  "facilitator": {
+    "baseUrl": "https://facilitator.fretchen.eu",
+    "networks": ["optimism", "base"],
+    "schemes": ["exact"],
+    "assets": ["EIP-3009"],
+    "supports": {
+      "verify": true,
+      "settle": true,
+      "supported": true,
+      "list": false
+    }
+  }
+}

@@ -1,0 +1,78 @@
+# Language labels
+typescript:
+  - changed-files:
+      - any-glob-to-any-file:
+          - 'typescript/**/*.ts'
+          - 'typescript/**/*.tsx'
+
+python:
+  - changed-files:
+      - any-glob-to-any-file: 'python/**/*.py'
+
+go:
+  - changed-files:
+      - any-glob-to-any-file: 'go/**/*.go'
+
+java:
+  - changed-files:
+      - any-glob-to-any-file: 'java/**/*.java'
+
+# SDK - v2 core packages only
+sdk:
+  - changed-files:
+      - any-glob-to-any-file:
+          - 'typescript/packages/core/**'
+          - 'typescript/packages/extensions/**'
+          - 'typescript/packages/http/**'
+          - 'typescript/packages/mechanisms/**'
+          - 'python/x402/**'
+          - 'go/*.go'
+          - 'go/http/**'
+          - 'go/mechanisms/**'
+          - 'go/signers/**'
+          - 'go/extensions/**'
+          - 'go/types/**'
+          - 'go/test/**'
+
+# Legacy packages and examples
+legacy:
+  - changed-files:
+      - any-glob-to-any-file:
+          - 'typescript/packages/legacy/**'
+          - 'python/legacy/**'
+          - 'go/legacy/**'
+          - 'java/**'
+          - 'examples/typescript/legacy/**'
+          - 'examples/python/legacy/**'
+
+# Examples
+examples:
+  - changed-files:
+      - any-glob-to-any-file: 'examples/**'
+
+# Protocol specifications
+specs:
+  - changed-files:
+      - any-glob-to-any-file: 'specs/**'
+
+# Documentation
+docs:
+  - changed-files:
+      - any-glob-to-any-file: 'docs/**'
+
+# Website
+website:
+  - changed-files:
+      - any-glob-to-any-file: 'typescript/site/**'
+
+# CI/CD workflows
+ci:
+  - changed-files:
+      - any-glob-to-any-file: '.github/**'
+
+# Ecosystem partner additions
+ecosystem:
+  - changed-files:
+      - any-glob-to-any-file:
+          - 'typescript/site/app/ecosystem/partners-data/**'
+          - 'typescript/site/public/logos/**'

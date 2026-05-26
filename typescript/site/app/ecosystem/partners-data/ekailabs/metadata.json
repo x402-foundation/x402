@@ -1,0 +1,7 @@
+{
+  "name": "Ekai Labs",
+  "description": "Ekai is the universal context layer for your AI. Keep your context portable, persistent and yours, even when you switch between LLM models. Pay for inference using x402",
+  "logoUrl": "/logos/ekailabs.png",
+  "websiteUrl": "https://ekailabs.xyz",
+  "category": "Client-Side Integrations"
+}

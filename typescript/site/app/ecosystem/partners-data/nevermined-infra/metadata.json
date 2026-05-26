@@ -1,0 +1,7 @@
+{
+  "name": "Nevermined",
+  "category": "Infrastructure & Tooling",
+  "logoUrl": "/logos/nevermined.png",
+  "description": "Infrastructure for AI agent payment processing and settlement. Handles payment validation, cost tracking, and multi-model support.",
+  "websiteUrl": "https://nevermined.ai"
+}

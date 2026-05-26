@@ -1,0 +1,14 @@
+{
+  "name": "Treasure Facilitator",
+  "description": "Treasure x402 Facilitator available on Base and Base Sepolia. Supports EIP-3009 compliant tokens including USDC, MAGIC, SMOL, MIO, AI Frens tokens, and more.",
+  "logoUrl": "/logos/treasure.png",
+  "websiteUrl": "https://x402.treasure.lol",
+  "category": "Facilitators",
+  "facilitator": {
+    "baseUrl": "https://x402.treasure.lol/facilitator",
+    "networks": ["base", "base-sepolia"],
+    "schemes": ["exact"],
+    "assets": ["EIP-3009"],
+    "supports": { "verify": true, "settle": true, "supported": true, "list": false }
+  }
+}

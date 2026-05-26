@@ -1,0 +1,7 @@
+{
+  "name": "RelAI",
+  "category": "Services/Endpoints",
+  "logoUrl": "/logos/relai.png",
+  "description": "Monetize APIs with x402 micropayments across multiple networks. RelAI provides a marketplace and SDK to pay per request without API keys.",
+  "websiteUrl": "https://relai.fi"
+}

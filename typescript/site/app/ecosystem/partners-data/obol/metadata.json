@@ -1,0 +1,7 @@
+{
+  "name": "Obol",
+  "description": "AI code generation via x402. Describe what you want — Obol generates production-ready code and opens a GitHub PR. 7 endpoints ($5 USDC/call on Base): site cloning, Farcaster mini apps, APIs, tests, docs, CI/CD, and refactoring.",
+  "logoUrl": "/logos/obol.png",
+  "websiteUrl": "https://obol.sh",
+  "category": "Services/Endpoints"
+}

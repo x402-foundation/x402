@@ -1,0 +1,27 @@
+{
+  "name": "Hydra Protocol Facilitator",
+  "logoUrl": "/logos/hydra-protocol.png",
+  "description": "A permissionless network of independent nodes that collectively perform the facilitator's role. Nodes collaborate to fulfill requests in exchange for fees.",
+  "websiteUrl": "https://hydraprotocol.org/",
+  "category": "Facilitators",
+  "facilitator": {
+    "baseUrl": "https://api.hydraprotocol.org",
+    "networks": [
+      "base",
+      "solana"
+    ],
+    "schemes": [
+      "exact"
+    ],
+    "assets": [
+      "EIP-3009",
+      "SPL"
+    ],
+    "supports": {
+      "verify": true,
+      "settle": true,
+      "supported": true,
+      "list": true
+    }
+  }
+}

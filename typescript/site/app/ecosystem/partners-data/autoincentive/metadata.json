@@ -1,0 +1,14 @@
+{
+  "name": "AutoIncentive Facilitator",
+  "description": "Free, public x402 facilitator for Base and Solana. Full verify + settle flow with on-chain USDC transfers. No API keys required.",
+  "logoUrl": "/logos/autoincentive.png",
+  "websiteUrl": "https://autoincentive.online",
+  "category": "Facilitators",
+  "facilitator": {
+    "baseUrl": "https://facilitator.x402endpoints.online",
+    "networks": ["solana", "solana-devnet", "base", "base-sepolia"],
+    "schemes": ["exact"],
+    "assets": ["EIP-3009", "SPL"],
+    "supports": { "verify": true, "settle": true, "supported": true, "list": false }
+  }
+}

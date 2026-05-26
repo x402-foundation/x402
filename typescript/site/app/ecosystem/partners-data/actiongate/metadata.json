@@ -1,0 +1,7 @@
+{
+  "name": "ActionGate",
+  "description": "Pre-execution decision API for autonomous agents with paid risk scoring, simulation, and policy-gate endpoints using x402 V2.",
+  "logoUrl": "/logos/actiongate.svg",
+  "websiteUrl": "https://api.actiongate.xyz/docs",
+  "category": "Services/Endpoints"
+}

@@ -1,0 +1,14 @@
+{
+  "name": "Nevermined Facilitator",
+  "description": "Nevermined x402 Facilitator for AI agent payment verification and settlement on Base networks.",
+  "logoUrl": "/logos/nevermined.png",
+  "websiteUrl": "https://api.live.nevermined.app/api/v1/rest/docs",
+  "category": "Facilitators",
+  "facilitator": {
+    "baseUrl": "https://api.live.nevermined.app/api/v1/",
+    "networks": ["base", "base-sepolia"],
+    "schemes": ["contract"],
+    "assets": ["ERC-20", "ERC-1155"],
+    "supports": { "verify": true, "settle": true, "supported": false, "list": false }
+  }
+}

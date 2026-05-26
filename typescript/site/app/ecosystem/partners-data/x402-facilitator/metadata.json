@@ -1,0 +1,14 @@
+{
+  "name": "x402.org Facilitator",
+  "logoUrl": "/logos/x402-logo.png",
+  "description": "Default testnet facilitator for x402",
+  "websiteUrl": "https://x402.org",
+  "category": "Facilitators",
+  "facilitator": {
+      "baseUrl": "https://www.x402.org/facilitator",
+      "networks": ["base-sepolia", "solana-devnet"],
+      "schemes": ["exact"],
+      "assets": ["EIP-3009", "SPL"],
+      "supports": { "verify": true, "settle": true, "supported": true, "list": false }
+  }
+}

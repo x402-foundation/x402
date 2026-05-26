@@ -1,0 +1,19 @@
+{
+  "name": "Corbits",
+  "description": "A production grade facilitator which supports multi-network, multi-token, multi-payment schemes.",
+  "logoUrl": "/logos/corbits.png",
+  "websiteUrl": "https://corbits.dev",
+  "category": "Facilitators",
+  "facilitator": {
+    "baseUrl": "https://facilitator.corbits.dev",
+    "networks": ["solana", "solana-devnet", "base", "base-sepolia", "monad", "monad-testnet", "polygon", "polygon-amoy", "CAIP-2 EVM", "CAIP-2 SVM"],
+    "schemes": ["exact", "@faremeter/x-solana-settlement"],
+    "assets": ["EIP-3009", "SPL", "Token-2022"],
+    "supports": {
+      "verify": true,
+      "settle": true,
+      "supported": true,
+      "list": false
+    }
+  }
+}

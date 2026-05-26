@@ -1,0 +1,7 @@
+{
+  "name": "BlockRun.AI",
+  "category": "Services/Endpoints",
+  "logoUrl": "/logos/blockrun.png",
+  "description": "Pay-as-you-go AI gateway providing ChatGPT and all major LLMs (Anthropic, Google, DeepSeek, xAI) via x402 on Base. Also features a catalog to discover all x402 services available on the market.",
+  "websiteUrl": "https://blockrun.ai"
+}

@@ -1,0 +1,7 @@
+{
+    "name": "Kobaru",
+    "description": "Kobaru provides a transparent proxy layer that allows vendors to add an x402 paywall to any existing API without changing a single line of code. It acts as a critical infrastructure bridge, offering high-throughput processing and a unique settlement layer that supports both crypto (Solana) and fiat currency.",
+    "logoUrl": "/logos/kobaru.png",
+    "websiteUrl": "https://www.kobaru.io/",
+    "category": "Infrastructure & Tooling"
+}

@@ -1,0 +1,114 @@
+{
+  "$schema": "https://mintlify.com/docs.json",
+  "theme": "maple",
+  "name": "x402",
+  "colors": {
+    "primary": "#0052FF",
+    "light": "#4D7CFF",
+    "dark": "#0039B3"
+  },
+  "seo": {
+    "metatags": {
+      "canonical": "https://docs.x402.org"
+    }
+  },
+  "navigation": {
+    "global": {
+      "anchors": [
+        {
+          "anchor": "x402.org",
+          "icon": "globe",
+          "href": "https://x402.org"
+        },
+        {
+          "anchor": "GitHub",
+          "icon": "github",
+          "href": "https://github.com/x402-foundation/x402"
+        },
+        {
+          "anchor": "Discord",
+          "icon": "discord",
+          "href": "https://discord.gg/cdp"
+        },
+        {
+          "anchor": "Vercel Starter",
+          "icon": "triangle",
+          "href": "https://vercel.com/templates/ai/x402-ai-starter"
+        }
+      ]
+    },
+    "groups": [
+      {
+        "group": "Welcome",
+        "pages": [
+          "introduction",
+          "faq"
+        ]
+      },
+      {
+        "group": "Getting Started",
+        "pages": [
+          "getting-started/quickstart-for-buyers",
+          "getting-started/quickstart-for-sellers"
+        ]
+      },
+      {
+        "group": "Core Concepts",
+        "pages": [
+          "core-concepts/http-402",
+          "core-concepts/client-server",
+          "core-concepts/facilitator",
+          "core-concepts/wallet",
+          "core-concepts/network-and-token-support"
+        ]
+      },
+      {
+        "group": "Payment Schemes",
+        "pages": [
+          "schemes/overview",
+          "schemes/exact",
+          "schemes/upto",
+          "schemes/batch-settlement"
+        ]
+      },
+      {
+        "group": "Extensions",
+        "pages": [
+          "extensions/overview",
+          "extensions/bazaar",
+          "extensions/payment-identifier",
+          "extensions/sign-in-with-x",
+          "extensions/offer-receipt",
+          "extensions/eip2612-gas-sponsoring",
+          "extensions/erc20-approval-gas-sponsoring"
+        ]
+      },
+      {
+        "group": "Advanced Concepts",
+        "pages": [
+          "advanced-concepts/lifecycle-hooks"
+        ]
+      },
+      {
+        "group": "Guides",
+        "pages": [
+          "guides/mcp-server-with-x402",
+          "guides/migration-v1-to-v2"
+        ]
+      },
+      {
+        "group": "SDK Features",
+        "pages": [
+          "sdk-features"
+        ]
+      }
+    ]
+  },
+  "feedback": {
+    "thumbsRating": true,
+    "suggestEdit": true
+  },
+  "search": {
+    "prompt": "Search x402 docs..."
+  }
+}

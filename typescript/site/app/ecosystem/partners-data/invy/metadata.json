@@ -1,0 +1,7 @@
+{
+  "name": "invy",
+  "category": "Services/Endpoints",
+  "logoUrl": "/logos/invy.png",
+  "description": "Returns any wallet's token holdings (including values, prices, and NFTs) across Ethereum and Solana.",
+  "websiteUrl": "https://invy.bot"
+}

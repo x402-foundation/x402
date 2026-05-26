@@ -1,0 +1,13 @@
+{
+  "targetURL": "https://httpbin.org",
+  "amount": 0.01,
+  "payTo": "0x0000000000000000000000000000000000000000",
+  "facilitatorURL": "https://x402.org/facilitator",
+  "testnet": true,
+  "description": "Example paywall",
+  "mimeType": "application/json",
+  "maxTimeoutSeconds": 60,
+  "headers": {
+    "X-Example-Header": "example-value"
+  }
+}

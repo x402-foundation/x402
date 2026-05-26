@@ -1,0 +1,7 @@
+{
+  "name": "x402-secure",
+  "category": "Infrastructure & Tooling",
+  "logoUrl": "/logos/t54-x402-secure.jpg",
+  "description": "Real-time risk control for AI-driven x402 payments. x402-secure is specifically designed for transactions involving autonomous AI agents. It transparently integrates pre-payment AI agent risk checks and comprehensive signal collection into the standard x402 flow to prevent disputes and fraud.",
+  "websiteUrl": "https://x402-secure.t54.ai/"
+}

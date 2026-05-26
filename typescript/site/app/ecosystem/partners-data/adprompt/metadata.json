@@ -1,0 +1,7 @@
+{
+  "name": "AdPrompt x402 Marketing & Advertising APIs",
+  "description": "x402-enabled endpoints from AdPrompt.Ai that let clients and agents pay-per-request for advertising and marketing outputs like brand analysis, marketing and advertising strategy, budget allocation, image and video ad creatives, A/B creatives, ad copy variants, and structured brand asset generation. Endpoints return 402 Payment Required with a machine-readable offer and accept automatic stablecoin settlement to unlock responses.",
+  "logoUrl": "/logos/adprompt.png",
+  "websiteUrl": "https://www.adprompt.ai/x402-api",
+  "category": "Services/Endpoints"
+}

@@ -1,0 +1,55 @@
+{
+  "name": "typescript",
+  "type": "facilitator",
+  "language": "typescript",
+  "protocolFamilies": [
+    "evm",
+    "svm",
+    "avm",
+    "aptos",
+    "hedera",
+    "stellar"
+  ],
+  "x402Versions": [
+    1,
+    2
+  ],
+  "schemes": [
+    "exact",
+    "upto",
+    "batch-settlement"
+  ],
+  "extensions": [
+    "bazaar",
+    "eip2612GasSponsoring",
+    "erc20ApprovalGasSponsoring"
+  ],
+  "evm": {
+    "assetTransferMethods": [
+      "eip3009",
+      "permit2"
+    ]
+  },
+  "environment": {
+    "required": [
+      "PORT",
+      "EVM_PRIVATE_KEY",
+      "SVM_PRIVATE_KEY"
+    ],
+    "optional": [
+      "AVM_PRIVATE_KEY",
+      "APTOS_PRIVATE_KEY",
+      "HEDERA_ACCOUNT_ID",
+      "HEDERA_PRIVATE_KEY",
+      "STELLAR_PRIVATE_KEY",
+      "EVM_NETWORK",
+      "SVM_NETWORK",
+      "AVM_NETWORK",
+      "APTOS_NETWORK",
+      "HEDERA_NETWORK",
+      "HEDERA_NODE_URL",
+      "STELLAR_NETWORK",
+      "EVM_RECEIVER_AUTHORIZER_PRIVATE_KEY"
+    ]
+  }
+}

@@ -1,0 +1,7 @@
+{
+  "name": "Soundside",
+  "description": "MCP-native AI media generation with x402 pay-per-call. Create images, videos, audio, and music from 5 providers — composable via resource IDs. 22 tool/provider combinations on Base mainnet.",
+  "logoUrl": "/logos/soundside.png",
+  "websiteUrl": "https://soundside.ai/docs/x402",
+  "category": "Services/Endpoints"
+}

@@ -1,0 +1,7 @@
+{
+  "name": "Heurist Mesh",
+  "category": "Infrastructure & Tooling",
+  "logoUrl": "/logos/heurist-mesh.png",
+  "description": "Heurist Mesh provides a library of composable crypto skills for any AI agent. Equip your AI with expert crypto analysis abilities, from tracking whale wallets to spotting trending new tokens to analyzing onchain markets with full support for MCP and the X402 payment standard.",
+  "websiteUrl": "https://mesh.heurist.ai/"
+}

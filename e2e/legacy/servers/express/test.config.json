@@ -1,0 +1,46 @@
+{
+  "name": "express",
+  "type": "server",
+  "language": "typescript",
+  "x402Version": 1,
+  "endpoints": [
+    {
+      "path": "/protected",
+      "method": "GET",
+      "description": "Protected endpoint requiring payment",
+      "requiresPayment": true,
+      "protocolFamily": "evm"
+    },
+    {
+      "path": "/protected-svm",
+      "method": "GET",
+      "description": "Protected endpoint requiring payment on SVM network",
+      "requiresPayment": true,
+      "protocolFamily": "svm"
+    },
+    {
+      "path": "/health",
+      "method": "GET",
+      "description": "Health check endpoint",
+      "health": true
+    },
+    {
+      "path": "/close",
+      "method": "POST",
+      "description": "Graceful shutdown endpoint",
+      "close": true
+    }
+  ],
+  "environment": {
+    "required": [
+      "PORT",
+      "EVM_NETWORK",
+      "SVM_NETWORK",
+      "EVM_PAYEE_ADDRESS",
+      "SVM_PAYEE_ADDRESS"
+    ],
+    "optional": [
+      "FACILITATOR_URL"
+    ]
+  }
+}

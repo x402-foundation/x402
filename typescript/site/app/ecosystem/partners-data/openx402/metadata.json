@@ -1,0 +1,33 @@
+{
+  "name": "OpenX402.ai Facilitator",
+  "description": "The first permissionless, gasless and omnichain x402 facilitator that any x402 server can use without login",
+  "logoUrl": "/logos/openx402.png",
+  "websiteUrl": "https://openx402.ai",
+  "category": "Facilitators",
+  "facilitator": {
+    "baseUrl": "https://openx402.ai",
+    "networks": [
+      "base",
+      "base-sepolia",
+      "solana",
+      "solana-devnet",
+      "avalanche",
+      "avalanche-fuji",
+      "polygon",
+      "polygon-amoy"
+    ],
+    "schemes": [
+      "exact"
+    ],
+    "assets": [
+      "EIP-3009",
+      "SPL"
+    ],
+    "supports": {
+      "verify": true,
+      "settle": true,
+      "supported": true,
+      "list": false
+    }
+  }
+}

@@ -1,0 +1,7 @@
+{
+  "name": "tip.md",
+  "description": "A crypto tipping service that enables AI assistants to help users send cryptocurrency tips to content creators directly from their chat interface. USDC tips via MCP are powered by x402. The MCP service allows for checking wallet types and preparing cryptocurrency tips for users/agents to complete.",
+  "logoUrl": "/logos/tipdotmd.png",
+  "websiteUrl": "https://www.tip.md/documentation?tab=mcp-server",
+  "category": "Services/Endpoints"
+}

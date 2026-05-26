@@ -1,0 +1,7 @@
+{
+  "name": "AdEx AURA API",
+  "description": "AdEx AURA API with x402 micropayments. Access porfolio data, tokens and defi positions, yield strategies, transaction payloads",
+  "logoUrl": "/logos/adex.png",
+  "websiteUrl": "https://guide.adex.network/",
+  "category": "Services/Endpoints"
+}
