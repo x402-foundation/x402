@@ -1,0 +1,48 @@
+{
+  "vector": "L2.3",
+  "description": "ClaimBatch EIP-712 digest (array of ClaimEntry struct; single-entry baseline).",
+  "domain": {
+    "name": "x402 Batch Settlement",
+    "version": "1",
+    "chainId": 84532,
+    "verifyingContract": "0x4020074e9dF2ce1deE5A9C1b5c3f541D02a10003"
+  },
+  "primaryType": "ClaimBatch",
+  "types": {
+    "ClaimBatch": [
+      {
+        "name": "claims",
+        "type": "ClaimEntry[]"
+      }
+    ],
+    "ClaimEntry": [
+      {
+        "name": "channelId",
+        "type": "bytes32"
+      },
+      {
+        "name": "maxClaimableAmount",
+        "type": "uint128"
+      },
+      {
+        "name": "totalClaimed",
+        "type": "uint128"
+      }
+    ]
+  },
+  "input": {
+    "claims": [
+      {
+        "channelId": "0x5aa0c653042e33ac01a3e944daa7f9a9db4153a203423551757927bca6a8fc93",
+        "maxClaimableAmount": "1000",
+        "totalClaimed": "500"
+      }
+    ]
+  },
+  "expected_digest": "0xfecd0b3504fb3b63b76003ba280d5303975ed18f1e0332b42b2428389b3569e4",
+  "meta": {
+    "generator": "_generator.ts",
+    "generator_version": "1",
+    "viem_version": "2.48.11"
+  }
+}
