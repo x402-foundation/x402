@@ -97,3 +97,24 @@ export {
 
 // Default-asset registry (network → token metadata)
 export { DEFAULT_STABLECOINS } from "./shared/defaultAssets";
+
+// AuthCapture scheme
+export { AuthCaptureEvmScheme } from "./auth-capture";
+
+// AuthCapture types
+export type {
+  AuthCaptureExtra,
+  AuthCapturePayload,
+  Eip3009Payload as AuthCaptureEip3009Payload,
+  PaymentInfoStruct as AuthCapturePaymentInfo,
+  Permit2Payload as AuthCapturePermit2Payload,
+} from "./auth-capture/types";
+export { isAuthCaptureExtra, isAuthCapturePayload } from "./auth-capture/types";
+
+// AuthCapture constants
+export {
+  AUTH_CAPTURE_ESCROW_ADDRESS,
+  AUTH_CAPTURE_SCHEME,
+  EIP3009_TOKEN_COLLECTOR_ADDRESS,
+  PERMIT2_TOKEN_COLLECTOR_ADDRESS,
+} from "./auth-capture/constants";

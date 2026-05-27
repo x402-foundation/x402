@@ -18,6 +18,7 @@ const baseConfig = {
     "batch-settlement/server/file-storage": "src/batch-settlement/server/fileStorage.ts",
     "batch-settlement/server/redis-storage": "src/batch-settlement/server/redisStorage.ts",
     "batch-settlement/facilitator/index": "src/batch-settlement/facilitator/index.ts",
+    "auth-capture/client/index": "src/auth-capture/client/index.ts",
   },
   dts: {
     resolve: true,

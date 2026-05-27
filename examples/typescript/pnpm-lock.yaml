@@ -1127,6 +1127,58 @@ importers:
         specifier: ^5.7.3
         version: 5.9.3
 
+  clients/auth-capture:
+    dependencies:
+      '@x402/core':
+        specifier: workspace:*
+        version: link:../../../../typescript/packages/core
+      '@x402/evm':
+        specifier: workspace:*
+        version: link:../../../../typescript/packages/mechanisms/evm
+      '@x402/fetch':
+        specifier: workspace:*
+        version: link:../../../../typescript/packages/http/fetch
+      dotenv:
+        specifier: ^16.4.7
+        version: 16.6.1
+      viem:
+        specifier: ^2.48.11
+        version: 2.48.11(bufferutil@4.0.9)(typescript@5.9.3)(utf-8-validate@5.0.10)(zod@4.1.13)
+    devDependencies:
+      '@eslint/js':
+        specifier: ^9.24.0
+        version: 9.33.0
+      '@types/node':
+        specifier: ^22.13.4
+        version: 22.17.2
+      '@typescript-eslint/eslint-plugin':
+        specifier: ^8.29.1
+        version: 8.48.0(@typescript-eslint/parser@8.48.0(eslint@9.33.0(jiti@2.6.1))(typescript@5.9.3))(eslint@9.33.0(jiti@2.6.1))(typescript@5.9.3)
+      '@typescript-eslint/parser':
+        specifier: ^8.29.1
+        version: 8.48.0(eslint@9.33.0(jiti@2.6.1))(typescript@5.9.3)
+      eslint:
+        specifier: ^9.24.0
+        version: 9.33.0(jiti@2.6.1)
+      eslint-plugin-import:
+        specifier: ^2.31.0
+        version: 2.32.0(@typescript-eslint/parser@8.48.0(eslint@9.33.0(jiti@2.6.1))(typescript@5.9.3))(eslint-import-resolver-typescript@3.10.1)(eslint@9.33.0(jiti@2.6.1))
+      eslint-plugin-jsdoc:
+        specifier: ^50.6.9
+        version: 50.8.0(eslint@9.33.0(jiti@2.6.1))
+      eslint-plugin-prettier:
+        specifier: ^5.2.6
+        version: 5.5.4(eslint@9.33.0(jiti@2.6.1))(prettier@3.5.2)
+      prettier:
+        specifier: 3.5.2
+        version: 3.5.2
+      tsx:
+        specifier: ^4.21.0
+        version: 4.21.0
+      typescript:
+        specifier: ^5.7.3
+        version: 5.9.3
+
   clients/axios:
     dependencies:
       '@scure/base':
