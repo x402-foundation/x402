@@ -1,0 +1,3 @@
+kind: added
+body: Add Go sign-in-with-x extension helpers for declaration, header parsing, SIWE message validation, and EVM EIP-191 verification
+time: 2026-05-27T09:59:40.638384+09:00
