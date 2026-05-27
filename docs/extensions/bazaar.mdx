@@ -502,19 +502,15 @@ These fields are set on the `resource` object in your route configuration, along
   </Tab>
   <Tab title="Python">
     ```python
-    from x402.schemas.payments import ResourceInfo
-
     routes: dict[str, RouteConfig] = {
         "GET /weather": RouteConfig(
             accepts=[...],
-            resource=ResourceInfo(
-                url="https://api.example.com/weather",
-                description="Get real-time weather data",
-                mime_type="application/json",
-                service_name="Example Weather",
-                tags=["weather", "forecast"],
-                icon_url="https://api.example.com/icon.png",
-            ),
+            resource="https://api.example.com/weather",
+            description="Get real-time weather data",
+            mime_type="application/json",
+            service_name="Example Weather",
+            tags=["weather", "forecast"],
+            icon_url="https://api.example.com/icon.png",
             extensions={"bazaar": {...}},
         ),
     }
