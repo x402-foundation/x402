@@ -1,0 +1,7 @@
+{
+  "name": "Tessera",
+  "category": "Services/Endpoints",
+  "logoUrl": "/logos/tessera.png",
+  "description": "Credit identity layer for AI agents on Base. Public deterministic Tessera Score (0-100) over on-chain activity, plus paid x402 endpoints: GET /api/x402/score/[address] ($0.001 USDC) returns the full score breakdown for any wallet; GET /api/x402/agent/[address] ($0.002 USDC) returns the combined Score + verified Agent Directory profile. Settlement via Coinbase facilitator on Base mainnet, EIP-3009 transferWithAuthorization.",
+  "websiteUrl": "https://www.tesseracredit.com"
+}
