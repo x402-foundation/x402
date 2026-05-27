@@ -477,7 +477,7 @@ All three fields are optional. Servers that omit them produce byte-identical 402
 | `tags` | string[] | Up to 5 short topical tags (each ≤ 32 printable ASCII characters). Used for facilitator-side filtering and search. |
 | `iconUrl` | string | Absolute `https://` or `http://` URL to an icon image representing the service (≤ 2048 characters). |
 
-These fields are set on the `resource` object in your route configuration, alongside `description` and `mimeType`:
+These fields are set directly on your route configuration, alongside `description` and `mimeType`:
 
 <Tabs>
   <Tab title="TypeScript">
