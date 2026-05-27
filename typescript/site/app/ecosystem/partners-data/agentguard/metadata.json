@@ -1,0 +1,7 @@
+{
+  "name": "AgentGuard",
+  "description": "Local-runtime spend governance and signed audit receipts for AI agents. Wraps OpenAI, Anthropic, and Bedrock SDKs with pre-dispatch dollar caps (tenant / team / user / agent / task), capability-gated routing, and Ed25519-signed hash-chained receipts. Extends natively to x402 USDC outflows. Six US provisional patents on the runtime architecture. AGENTGUARD US trademark Serial 99462472. Live on npm + PyPI.",
+  "logoUrl": "/logos/agentguard.png",
+  "websiteUrl": "https://agentguard.run",
+  "category": "Infrastructure & Tooling"
+}
