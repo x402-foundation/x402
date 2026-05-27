@@ -1,0 +1,9 @@
+[project]
+name = "trustboost-pii-sanitizer-example"
+version = "1.0.0"
+description = "TrustBoost PII sanitization example for x402 agent pipelines"
+requires-python = ">=3.11"
+dependencies = [
+    "requests>=2.31.0",
+    "python-dotenv>=1.0.0",
+]
