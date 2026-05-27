@@ -3,12 +3,9 @@ export const AUTH_CAPTURE_SCHEME = "auth-capture" as const;
 
 // Canonical AuthCaptureEscrow + token collector deployments from
 // base/commerce-payments (https://github.com/base/commerce-payments). These are
-// the audited, live addresses listed in the upstream README — the source of
-// truth for this scheme. Universal constants — not configurable per merchant.
-//
-// Currently live on: Base (8453) and Base Sepolia (84532). Additional EVM chains
-// will land at the same addresses as the upstream extends coverage; expand the
-// supported-chain list here as those deployments ship.
+// the audited, live addresses listed in the upstream README and are the source
+// of truth for this scheme. They are universal constants, not configurable per
+// merchant.
 export const AUTH_CAPTURE_ESCROW_ADDRESS =
   "0xBdEA0D1bcC5966192B070Fdf62aB4EF5b4420cff" as const satisfies `0x${string}`;
 export const EIP3009_TOKEN_COLLECTOR_ADDRESS =
