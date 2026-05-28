@@ -5,18 +5,16 @@ import {
   FacilitatorContext,
   SettleResponse,
   VerifyResponse,
-} from "@x402/core/types";
-import { TvmPaymentPayload } from "../../types";
-import {
-  ERR_SETTLEMENT_FAILED,
-} from "./errors";
+} from '@x402/core/types'
+import { SUPPORTED_NETWORKS } from '../../constants'
+import { ERR_SETTLEMENT_FAILED } from './errors'
 
 /**
  * Configuration for ExactTvmScheme facilitator.
  */
 export interface ExactTvmSchemeConfig {
   /** Facilitator URL for delegating verify/settle */
-  facilitatorUrl?: string;
+  facilitatorUrl?: string
 }
 
 /**
@@ -27,25 +25,32 @@ export interface ExactTvmSchemeConfig {
  * from the settlementBoc itself.
  */
 export class ExactTvmScheme implements SchemeNetworkFacilitator {
-  readonly scheme = "exact";
-  readonly caipFamily = "tvm:*";
-  private readonly facilitatorUrl?: string;
+  readonly scheme = 'exact'
+  readonly caipFamily = 'tvm:*'
+  private readonly facilitatorUrl?: string
 
   constructor(config?: ExactTvmSchemeConfig) {
-    this.facilitatorUrl = config?.facilitatorUrl;
+    this.facilitatorUrl = config?.facilitatorUrl
   }
 
-  getExtra(_network: string): Record<string, unknown> | undefined {
-    return undefined;
+  getExtra(network: string): Record<string, unknown> | undefined {
+    if (!SUPPORTED_NETWORKS.has(network)) {
+      return undefined
+    }
+    return { areFeesSponsored: true }
   }
 
   getSigners(_network: string): string[] {
-    return [];
+    return []
   }
 
   private resolveFacilitatorUrl(requirements: PaymentRequirements): string | undefined {
-    return this.facilitatorUrl
-      ?? (requirements.extra as Record<string, unknown> | undefined)?.facilitatorUrl as string | undefined;
+    return (
+      this.facilitatorUrl ??
+      ((requirements.extra as Record<string, unknown> | undefined)?.facilitatorUrl as
+        | string
+        | undefined)
+    )
   }
 
   async verify(
@@ -53,50 +58,50 @@ export class ExactTvmScheme implements SchemeNetworkFacilitator {
     requirements: PaymentRequirements,
     _context?: FacilitatorContext,
   ): Promise<VerifyResponse> {
-    const tvmPayload = payload.payload as unknown as TvmPaymentPayload;
-
-    const url = this.resolveFacilitatorUrl(requirements);
+    const url = this.resolveFacilitatorUrl(requirements)
     if (!url) {
-      return { isValid: false, invalidReason: "missing_facilitator_url", invalidMessage: "Missing facilitatorUrl", payer: "" };
+      return {
+        isValid: false,
+        invalidReason: 'missing_facilitator_url',
+        invalidMessage: 'Missing facilitatorUrl',
+        payer: '',
+      }
     }
 
     try {
       const resp = await fetch(`${url}/verify`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          x402Version: 2,
-          paymentPayload: { payload: tvmPayload },
-          paymentRequirements: {
-            scheme: requirements.scheme,
-            network: requirements.network,
-            amount: requirements.amount,
-            payTo: requirements.payTo,
-            asset: requirements.asset,
-            maxTimeoutSeconds: requirements.maxTimeoutSeconds,
-          },
+          paymentPayload: payload,
+          paymentRequirements: requirements,
         }),
-      });
+      })
 
-      const data = await resp.json() as Record<string, unknown>;
+      const data = (await resp.json()) as Record<string, unknown>
 
-      const isValid = (data.isValid ?? data.is_valid) as boolean;
-      const invalidReason = (data.invalidReason ?? data.invalid_reason) as string | undefined;
-      const payer = (data.payer as string) ?? "";
+      const isValid = (data.isValid ?? data.is_valid) as boolean
+      const invalidReason = (data.invalidReason ?? data.invalid_reason) as string | undefined
+      const payer = (data.payer as string) ?? ''
 
       if (!isValid) {
         return {
           isValid: false,
-          invalidReason: invalidReason ?? "verification_failed",
-          invalidMessage: invalidReason ?? "Facilitator verification failed",
+          invalidReason: invalidReason ?? 'verification_failed',
+          invalidMessage: invalidReason ?? 'Facilitator verification failed',
           payer,
-        };
+        }
       }
 
-      return { isValid: true, payer };
+      return { isValid: true, payer }
     } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : String(err);
-      return { isValid: false, invalidReason: "verification_error", invalidMessage: `Verification error: ${message}`, payer: "" };
+      const message = err instanceof Error ? err.message : String(err)
+      return {
+        isValid: false,
+        invalidReason: 'verification_error',
+        invalidMessage: `Verification error: ${message}`,
+        payer: '',
+      }
     }
   }
 
@@ -105,73 +110,65 @@ export class ExactTvmScheme implements SchemeNetworkFacilitator {
     requirements: PaymentRequirements,
     context?: FacilitatorContext,
   ): Promise<SettleResponse> {
-    const verification = await this.verify(payload, requirements, context);
+    const verification = await this.verify(payload, requirements, context)
     if (!verification.isValid) {
       return {
         success: false,
         errorReason: verification.invalidReason,
         errorMessage: verification.invalidMessage,
         payer: verification.payer,
-        transaction: "",
+        transaction: '',
         network: requirements.network,
-      };
+      }
     }
 
-    const tvmPayload = payload.payload as unknown as TvmPaymentPayload;
-
-    const url = this.resolveFacilitatorUrl(requirements);
+    const url = this.resolveFacilitatorUrl(requirements)
     if (!url) {
       return {
         success: false,
         errorReason: ERR_SETTLEMENT_FAILED,
-        errorMessage: "Missing facilitatorUrl for settlement",
+        errorMessage: 'Missing facilitatorUrl for settlement',
         payer: verification.payer,
-        transaction: "",
+        transaction: '',
         network: requirements.network,
-      };
+      }
     }
 
     try {
       const settleResponse = await fetch(`${url}/settle`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          x402Version: 2,
-          paymentPayload: { payload: tvmPayload },
-          paymentRequirements: {
-            scheme: requirements.scheme,
-            network: requirements.network,
-            amount: requirements.amount,
-            payTo: requirements.payTo,
-            asset: requirements.asset,
-            maxTimeoutSeconds: requirements.maxTimeoutSeconds,
-          },
+          paymentPayload: payload,
+          paymentRequirements: requirements,
         }),
-      });
+      })
 
-      const settleData = await settleResponse.json() as Record<string, unknown>;
+      const settleData = (await settleResponse.json()) as Record<string, unknown>
 
       if (!settleData.success) {
-        const errorReason = (settleData.errorReason ?? settleData.error_reason) as string | undefined;
-        throw new Error(errorReason ?? `Facilitator /settle failed: ${settleResponse.status}`);
+        const errorReason = (settleData.errorReason ?? settleData.error_reason) as
+          | string
+          | undefined
+        throw new Error(errorReason ?? `Facilitator /settle failed: ${settleResponse.status}`)
       }
 
       return {
         success: true,
         payer: (settleData.payer as string) ?? verification.payer,
-        transaction: (settleData.transaction as string) ?? "",
+        transaction: (settleData.transaction as string) ?? '',
         network: ((settleData.network as string) ?? requirements.network) as `${string}:${string}`,
-      };
+      }
     } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : String(err);
+      const message = err instanceof Error ? err.message : String(err)
       return {
         success: false,
         errorReason: ERR_SETTLEMENT_FAILED,
         errorMessage: `Settlement failed: ${message}`,
         payer: verification.payer,
-        transaction: "",
+        transaction: '',
         network: requirements.network,
-      };
+      }
     }
   }
 }

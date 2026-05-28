@@ -19,6 +19,7 @@
     "@x402/hedera": "workspace:*",
     "@x402/stellar": "workspace:*",
     "@x402/svm": "workspace:*",
+    "@x402/tvm": "workspace:*",
     "dotenv": "^16.6.1",
     "fastify": "^5.3.3"
   },

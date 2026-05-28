@@ -13,6 +13,7 @@
     "@aptos-labs/ts-sdk": "^5.2.1",
     "@scure/base": "^1.2.6",
     "@solana/kit": "^6.1.0",
+    "@ton/crypto": "^3.3.0",
     "@x402/aptos": "workspace:*",
     "@x402/avm": "workspace:*",
     "@x402/core": "workspace:*",
@@ -21,6 +22,7 @@
     "@x402/hedera": "workspace:*",
     "@x402/stellar": "workspace:*",
     "@x402/svm": "workspace:*",
+    "@x402/tvm": "workspace:*",
     "dotenv": "^16.4.7",
     "viem": "^2.48.11"
   },

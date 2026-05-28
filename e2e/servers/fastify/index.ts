@@ -8,6 +8,7 @@ import { ExactSvmScheme } from "@x402/svm/exact/server";
 import { ExactAptosScheme } from "@x402/aptos/exact/server";
 import { ExactHederaScheme } from "@x402/hedera/exact/server";
 import { ExactStellarScheme } from "@x402/stellar/exact/server";
+import { ExactTvmScheme } from "@x402/tvm/exact/server";
 import { ExactAvmScheme } from "@x402/avm/exact/server";
 import { bazaarResourceServerExtension, declareDiscoveryExtension } from "@x402/extensions/bazaar";
 import {
@@ -32,8 +33,10 @@ const SVM_NETWORK = (process.env.SVM_NETWORK ||
   "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1") as `${string}:${string}`;
 const APTOS_NETWORK = (process.env.APTOS_NETWORK || "aptos:2") as `${string}:${string}`;
 const HEDERA_NETWORK = (process.env.HEDERA_NETWORK || "hedera:testnet") as `${string}:${string}`;
-const AVM_NETWORK = (process.env.AVM_NETWORK || "algorand:SGO1GKSzyE7IEPItTxCByw9x8FmnrCDexi9/cOUJOiI=") as `${string}:${string}`;
+const AVM_NETWORK = (process.env.AVM_NETWORK ||
+  "algorand:SGO1GKSzyE7IEPItTxCByw9x8FmnrCDexi9/cOUJOiI=") as `${string}:${string}`;
 const STELLAR_NETWORK = (process.env.STELLAR_NETWORK || "stellar:testnet") as `${string}:${string}`;
+const TVM_NETWORK = (process.env.TVM_NETWORK || "tvm:-3") as `${string}:${string}`;
 const EVM_PAYEE_ADDRESS = process.env.EVM_PAYEE_ADDRESS as `0x${string}`;
 const SVM_PAYEE_ADDRESS = process.env.SVM_PAYEE_ADDRESS as string;
 const EVM_PERMIT2_ASSET = process.env.EVM_PERMIT2_ASSET as `0x${string}`;
@@ -41,6 +44,7 @@ const AVM_PAYEE_ADDRESS = process.env.AVM_PAYEE_ADDRESS as string;
 const APTOS_PAYEE_ADDRESS = process.env.APTOS_PAYEE_ADDRESS as string;
 const HEDERA_PAYEE_ADDRESS = process.env.HEDERA_PAYEE_ADDRESS as string | undefined;
 const STELLAR_PAYEE_ADDRESS = process.env.STELLAR_PAYEE_ADDRESS as string | undefined;
+const TVM_PAYEE_ADDRESS = process.env.TVM_PAYEE_ADDRESS as string | undefined;
 const HEDERA_ASSET = process.env.HEDERA_ASSET ?? "0.0.0"; // 0.0.0 = HBAR or 0.0.429274 for USDC testnet
 const HEDERA_AMOUNT = process.env.HEDERA_AMOUNT ?? "100000"; // price in smallest units (tinybars or token decimals), defaults to 0.001 HBAR or 0.1 USDC
 const facilitatorUrl = process.env.FACILITATOR_URL;
@@ -100,6 +104,9 @@ if (HEDERA_PAYEE_ADDRESS) {
 if (STELLAR_PAYEE_ADDRESS) {
   server.register("stellar:*", new ExactStellarScheme());
 }
+if (TVM_PAYEE_ADDRESS) {
+  server.register("tvm:*", new ExactTvmScheme());
+}
 
 // Register Bazaar discovery extension
 server.registerExtension(bazaarResourceServerExtension);
@@ -139,6 +146,12 @@ app.addHook("onRequest", async (request, reply) => {
       message: "STELLAR_PAYEE_ADDRESS environment variable is not set",
     });
   }
+  if (path.startsWith("/exact/tvm") && !TVM_PAYEE_ADDRESS) {
+    return reply.status(501).send({
+      error: "TVM payments not configured",
+      message: "TVM_PAYEE_ADDRESS environment variable is not set",
+    });
+  }
 });
 
 /**
@@ -153,32 +166,32 @@ paymentMiddleware(
     // Route-specific payment configuration
     ...(AVM_PAYEE_ADDRESS
       ? {
-        "GET /exact/avm": {
-          accepts: {
-            payTo: AVM_PAYEE_ADDRESS,
-            scheme: "exact",
-            price: "$0.001",
-            network: AVM_NETWORK,
-          },
-          extensions: {
-            ...declareDiscoveryExtension({
-              output: {
-                example: {
-                  message: "Protected endpoint accessed successfully",
-                  timestamp: "2024-01-01T00:00:00Z",
-                },
-                schema: {
-                  properties: {
-                    message: { type: "string" },
-                    timestamp: { type: "string" },
+          "GET /exact/avm": {
+            accepts: {
+              payTo: AVM_PAYEE_ADDRESS,
+              scheme: "exact",
+              price: "$0.001",
+              network: AVM_NETWORK,
+            },
+            extensions: {
+              ...declareDiscoveryExtension({
+                output: {
+                  example: {
+                    message: "Protected endpoint accessed successfully",
+                    timestamp: "2024-01-01T00:00:00Z",
                   },
-                  required: ["message", "timestamp"],
+                  schema: {
+                    properties: {
+                      message: { type: "string" },
+                      timestamp: { type: "string" },
+                    },
+                    required: ["message", "timestamp"],
+                  },
                 },
-              },
-            }),
+              }),
+            },
           },
-        },
-      }
+        }
       : {}),
     "GET /batch-settlement/evm/eip3009": {
       accepts: {
@@ -317,32 +330,32 @@ paymentMiddleware(
       : {}),
     ...(APTOS_PAYEE_ADDRESS
       ? {
-        "GET /exact/aptos": {
-          accepts: {
-            payTo: APTOS_PAYEE_ADDRESS,
-            scheme: "exact",
-            price: "$0.001",
-            network: APTOS_NETWORK,
-          },
-          extensions: {
-            ...declareDiscoveryExtension({
-              output: {
-                example: {
-                  message: "Protected endpoint accessed successfully",
-                  timestamp: "2024-01-01T00:00:00Z",
-                },
-                schema: {
-                  properties: {
-                    message: { type: "string" },
-                    timestamp: { type: "string" },
+          "GET /exact/aptos": {
+            accepts: {
+              payTo: APTOS_PAYEE_ADDRESS,
+              scheme: "exact",
+              price: "$0.001",
+              network: APTOS_NETWORK,
+            },
+            extensions: {
+              ...declareDiscoveryExtension({
+                output: {
+                  example: {
+                    message: "Protected endpoint accessed successfully",
+                    timestamp: "2024-01-01T00:00:00Z",
                   },
-                  required: ["message", "timestamp"],
+                  schema: {
+                    properties: {
+                      message: { type: "string" },
+                      timestamp: { type: "string" },
+                    },
+                    required: ["message", "timestamp"],
+                  },
                 },
-              },
-            }),
+              }),
+            },
           },
-        },
-      }
+        }
       : {}),
     // Permit2 standard/direct endpoint - no gas sponsoring, client must pre-approve Permit2
     "GET /exact/evm/permit2": {
@@ -485,32 +498,61 @@ paymentMiddleware(
     },
     ...(STELLAR_PAYEE_ADDRESS
       ? {
-        "GET /exact/stellar": {
-          accepts: {
-            payTo: STELLAR_PAYEE_ADDRESS!,
-            scheme: "exact",
-            price: "$0.001",
-            network: STELLAR_NETWORK,
-          },
-          extensions: {
-            ...declareDiscoveryExtension({
-              output: {
-                example: {
-                  message: "Protected Stellar endpoint accessed successfully",
-                  timestamp: "2024-01-01T00:00:00Z",
-                },
-                schema: {
-                  properties: {
-                    message: { type: "string" },
-                    timestamp: { type: "string" },
+          "GET /exact/stellar": {
+            accepts: {
+              payTo: STELLAR_PAYEE_ADDRESS!,
+              scheme: "exact",
+              price: "$0.001",
+              network: STELLAR_NETWORK,
+            },
+            extensions: {
+              ...declareDiscoveryExtension({
+                output: {
+                  example: {
+                    message: "Protected Stellar endpoint accessed successfully",
+                    timestamp: "2024-01-01T00:00:00Z",
                   },
-                  required: ["message", "timestamp"],
+                  schema: {
+                    properties: {
+                      message: { type: "string" },
+                      timestamp: { type: "string" },
+                    },
+                    required: ["message", "timestamp"],
+                  },
                 },
-              },
-            }),
+              }),
+            },
           },
-        },
-      }
+        }
+      : {}),
+    ...(TVM_PAYEE_ADDRESS
+      ? {
+          "GET /exact/tvm": {
+            accepts: {
+              payTo: TVM_PAYEE_ADDRESS,
+              scheme: "exact",
+              price: "$0.001",
+              network: TVM_NETWORK,
+            },
+            extensions: {
+              ...declareDiscoveryExtension({
+                output: {
+                  example: {
+                    message: "Protected TVM endpoint accessed successfully",
+                    timestamp: "2024-01-01T00:00:00Z",
+                  },
+                  schema: {
+                    properties: {
+                      message: { type: "string" },
+                      timestamp: { type: "string" },
+                    },
+                    required: ["message", "timestamp"],
+                  },
+                },
+              }),
+            },
+          },
+        }
       : {}),
   },
   server, // Pass pre-configured server instance
@@ -703,6 +745,15 @@ if (STELLAR_PAYEE_ADDRESS) {
   });
 }
 
+if (TVM_PAYEE_ADDRESS) {
+  app.get("/exact/tvm", async () => {
+    return {
+      message: "Protected TVM endpoint accessed successfully",
+      timestamp: new Date().toISOString(),
+    };
+  });
+}
+
 /**
  * Health check endpoint - no payment required
  *
@@ -749,12 +800,14 @@ app.listen({ port: parseInt(PORT) }, (err, address) => {
 ║  Aptos Network: ${APTOS_NETWORK}                       ║
 ║  Hedera Network: ${HEDERA_NETWORK}                     ║
 ║  Stellar Network: ${STELLAR_NETWORK}║
+║  TVM Network: ${TVM_NETWORK}║
 ║  AVM Payee:    ${AVM_PAYEE_ADDRESS || "(not configured)"}
 ║  EVM Payee:    ${EVM_PAYEE_ADDRESS}                    ║
 ║  SVM Payee:    ${SVM_PAYEE_ADDRESS}                    ║
 ║  Aptos Payee:  ${APTOS_PAYEE_ADDRESS || "(not configured)"}
 ║  Hedera Payee: ${HEDERA_PAYEE_ADDRESS || "(not configured)"}
 ║  Stellar Payee: ${STELLAR_PAYEE_ADDRESS || "(not configured)"}
+║  TVM Payee: ${TVM_PAYEE_ADDRESS || "(not configured)"}
 ║                                                        ║
 ║  Endpoints:                                            ║
 ║  • GET  /exact/avm                            (AVM)           ║
@@ -766,6 +819,7 @@ app.listen({ port: parseInt(PORT) }, (err, address) => {
 ║  • GET  /exact/aptos                          (Aptos)         ║
 ║  • GET  /exact/hedera                         (Hedera)        ║
 ║  • GET  /exact/stellar                        (Stellar)       ║
+║  • GET  /exact/tvm                            (TVM)           ║
 ║  • GET  /health                (no payment required)       ║
 ║  • POST /close                 (shutdown server)           ║
 ╚════════════════════════════════════════════════════════╝

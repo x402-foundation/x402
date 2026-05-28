@@ -2,40 +2,15 @@
   "name": "fetch",
   "type": "client",
   "language": "typescript",
-  "protocolFamilies": [
-    "evm",
-    "svm",
-    "avm",
-    "aptos",
-    "hedera",
-    "stellar"
-  ],
-  "x402Versions": [
-    1,
-    2
-  ],
-  "schemes": [
-    "exact",
-    "upto",
-    "batch-settlement"
-  ],
+  "protocolFamilies": ["evm", "svm", "avm", "aptos", "hedera", "stellar", "tvm"],
+  "x402Versions": [1, 2],
+  "schemes": ["exact", "upto", "batch-settlement"],
   "evm": {
-    "assetTransferMethods": [
-      "eip3009",
-      "permit2"
-    ]
+    "assetTransferMethods": ["eip3009", "permit2"]
   },
-  "extensions": [
-    "eip2612GasSponsoring",
-    "erc20ApprovalGasSponsoring"
-  ],
+  "extensions": ["eip2612GasSponsoring", "erc20ApprovalGasSponsoring"],
   "environment": {
-    "required": [
-      "EVM_PRIVATE_KEY",
-      "SVM_PRIVATE_KEY",
-      "RESOURCE_SERVER_URL",
-      "ENDPOINT_PATH"
-    ],
+    "required": ["EVM_PRIVATE_KEY", "SVM_PRIVATE_KEY", "RESOURCE_SERVER_URL", "ENDPOINT_PATH"],
     "optional": [
       "AVM_PRIVATE_KEY",
       "APTOS_PRIVATE_KEY",
@@ -44,6 +19,10 @@
       "HEDERA_NETWORK",
       "HEDERA_NODE_URL",
       "STELLAR_PRIVATE_KEY",
+      "TVM_PRIVATE_KEY",
+      "TVM_NETWORK",
+      "TONCENTER_API_KEY",
+      "TONCENTER_BASE_URL",
       "CHANNEL_SALT",
       "BATCH_SETTLEMENT_PHASE",
       "BATCH_SETTLEMENT_RECOVERY",

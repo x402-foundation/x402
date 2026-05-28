@@ -19,10 +19,13 @@ import { createClientHederaSigner, PrivateKey as HederaPrivateKey } from "@x402/
 import { ExactHederaScheme } from "@x402/hedera/exact/client";
 import { ExactStellarScheme } from "@x402/stellar/exact/client";
 import { createEd25519Signer, Ed25519Signer } from "@x402/stellar";
+import { ExactTvmScheme } from "@x402/tvm/exact/client";
+import { toClientTvmSigner } from "@x402/tvm";
 import { ExactAvmScheme as ExactAvmClientScheme } from "@x402/avm/exact/client";
 import { toClientAvmSigner } from "@x402/avm";
 import { base58 } from "@scure/base";
 import { createKeyPairSignerFromBytes } from "@solana/kit";
+import { keyPairFromSeed, type KeyPair } from "@ton/crypto";
 import { x402Client, x402HTTPClient } from "@x402/core/client";
 
 config();
@@ -55,14 +58,34 @@ const uptoSchemeOptions: UptoEvmSchemeOptions | undefined = process.env.EVM_RPC_
   : undefined;
 const svmSchemeOptions = process.env.SVM_RPC_URL ? { rpcUrl: process.env.SVM_RPC_URL } : undefined;
 
+function parseTvmKeyPair(privateKey: string): KeyPair {
+  const value = privateKey.trim().replace(/^0x/, "");
+  let bytes: Buffer;
+  if (/^[0-9a-fA-F]+$/.test(value) && value.length % 2 === 0) {
+    bytes = Buffer.from(value, "hex");
+  } else {
+    bytes = Buffer.from(value, "base64");
+  }
+  if (bytes.length !== 32 && bytes.length !== 64) {
+    throw new Error("TVM_PRIVATE_KEY must be a 32-byte seed or 64-byte secret key");
+  }
+  return keyPairFromSeed(bytes.subarray(0, 32));
+}
+
+function toncenterJsonRpcUrl(): string | undefined {
+  const baseUrl = process.env.TONCENTER_BASE_URL;
+  if (!baseUrl) return undefined;
+  return baseUrl.endsWith("/api/v2/jsonRPC")
+    ? baseUrl
+    : `${baseUrl.replace(/\/$/, "")}/api/v2/jsonRPC`;
+}
+
 // Batch-settlement scheme uses a per-scenario salt (CHANNEL_SALT) so concurrent
 // e2e runs don't collide on the same on-chain channel id. An optional voucher
 // signer (EVM_VOUCHER_SIGNER_PRIVATE_KEY) exercises the alt-EOA voucher branch
 // while deposits keep using the main client signer.
 const channelSalt = process.env.CHANNEL_SALT as `0x${string}` | undefined;
-const voucherSignerKey = process.env.EVM_VOUCHER_SIGNER_PRIVATE_KEY as
-  | `0x${string}`
-  | undefined;
+const voucherSignerKey = process.env.EVM_VOUCHER_SIGNER_PRIVATE_KEY as `0x${string}` | undefined;
 const voucherSigner = voucherSignerKey
   ? toClientEvmSigner(privateKeyToAccount(voucherSignerKey), publicClient)
   : undefined;
@@ -108,6 +131,15 @@ if (process.env.AVM_PRIVATE_KEY) {
   avmSigner = toClientAvmSigner(process.env.AVM_PRIVATE_KEY);
 }
 
+const tvmNetwork = process.env.TVM_NETWORK || "tvm:-3";
+const tvmPrivateKey = process.env.TVM_PRIVATE_KEY;
+const tvmScheme = tvmPrivateKey
+  ? new ExactTvmScheme(toClientTvmSigner(parseTvmKeyPair(tvmPrivateKey), { network: tvmNetwork }), {
+      rpcUrl: toncenterJsonRpcUrl(),
+      apiKey: process.env.TONCENTER_API_KEY,
+    })
+  : undefined;
+
 const client = new x402Client()
   .register("eip155:*", new ExactEvmScheme(evmSigner, evmSchemeOptions))
   .register("eip155:*", new UptoEvmClientScheme(evmSigner, uptoSchemeOptions))
@@ -128,6 +160,9 @@ if (stellarSigner) {
 }
 if (avmSigner) {
   client.register("algorand:*", new ExactAvmClientScheme(avmSigner));
+}
+if (tvmScheme) {
+  client.register("tvm:*", tvmScheme);
 }
 
 const fetchWithPayment = wrapFetchWithPayment(fetch, client);
@@ -197,7 +232,9 @@ if (!batchSettlementPhase) {
 if (batchSettlementPhase === "initial") {
   const deposit = await issueRequest();
   const voucher = await issueRequest();
-  console.log(JSON.stringify(aggregateBatchResult("initial", [deposit, voucher], { deposit, voucher })));
+  console.log(
+    JSON.stringify(aggregateBatchResult("initial", [deposit, voucher], { deposit, voucher })),
+  );
   process.exit(0);
 }
 
@@ -231,7 +268,11 @@ if (batchSettlementPhase === "full") {
     status_code: 200,
     payment_response: refundSettle,
   };
-  console.log(JSON.stringify(aggregateBatchResult("full", [deposit, voucher, refund], { deposit, voucher, refund })));
+  console.log(
+    JSON.stringify(
+      aggregateBatchResult("full", [deposit, voucher, refund], { deposit, voucher, refund }),
+    ),
+  );
   process.exit(0);
 }
 

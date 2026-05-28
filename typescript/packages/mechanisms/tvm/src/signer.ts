@@ -1,13 +1,7 @@
-import { WalletContractV5R1 } from "@ton/ton";
-import { KeyPair } from "@ton/crypto";
-import {
-  Address,
-  beginCell,
-  internal,
-  SendMode,
-  storeMessageRelaxed,
-  Cell,
-} from "@ton/core";
+import { WalletContractV5R1 } from '@ton/ton'
+import { KeyPair } from '@ton/crypto'
+import { Address, beginCell, internal, SendMode, storeMessageRelaxed, Cell } from '@ton/core'
+import { TVM_MAINNET, TVM_TESTNET } from './constants'
 
 /**
  * ClientTvmSigner — Used by x402 clients to sign TON payment authorizations.
@@ -18,9 +12,11 @@ import {
  */
 export type ClientTvmSigner = {
   /** Wallet address in raw format (0:hex) */
-  address: string;
+  address: string
+  /** CAIP-2 TVM network this signer is bound to. */
+  network: string
   /** Public key as hex string */
-  publicKey: string;
+  publicKey: string
   /**
    * Sign a W5R1 transfer with the given messages and produce a settlement BOC.
    * Returns a base64-encoded internal message BoC (not external).
@@ -29,8 +25,13 @@ export type ClientTvmSigner = {
     seqno: number,
     validUntil: number,
     messages: { address: string; amount: bigint; body: Cell | null }[],
-  ) => Promise<string>; // base64 BOC
-};
+    options?: { includeStateInit?: boolean },
+  ) => Promise<string> // base64 BOC
+}
+
+export interface ClientTvmSignerOptions {
+  network?: string
+}
 
 /**
  * Creates a ClientTvmSigner from a TON keypair.
@@ -41,36 +42,45 @@ export type ClientTvmSigner = {
  */
 export function toClientTvmSigner(
   keyPair: KeyPair,
-  testnet?: boolean,
+  options?: boolean | ClientTvmSignerOptions,
 ): ClientTvmSigner {
+  const network =
+    typeof options === 'boolean'
+      ? options
+        ? TVM_TESTNET
+        : TVM_MAINNET
+      : (options?.network ?? TVM_MAINNET)
   const wallet = WalletContractV5R1.create({
     workchain: 0,
     publicKey: keyPair.publicKey,
-  });
+  })
 
   return {
     address: wallet.address.toRawString(),
-    publicKey: keyPair.publicKey.toString("hex"),
+    network,
+    publicKey: keyPair.publicKey.toString('hex'),
 
     async signTransfer(
       seqno: number,
       validUntil: number,
       messages: { address: string; amount: bigint; body: Cell | null }[],
+      transferOptions?: { includeStateInit?: boolean },
     ): Promise<string> {
       const transferBody = wallet.createTransfer({
         seqno,
-        authType: "internal",
+        authType: 'internal',
         timeout: validUntil,
         secretKey: keyPair.secretKey,
-        sendMode: SendMode.PAY_GAS_SEPARATELY + SendMode.IGNORE_ERRORS,
+        sendMode: SendMode.PAY_GAS_SEPARATELY,
         messages: messages.map((m) =>
           internal({
             to: Address.parseRaw(m.address),
             value: m.amount,
+            bounce: true,
             body: m.body ?? undefined,
           }),
         ),
-      });
+      })
 
       // Encode as internal message (not external).
       // The facilitator will extract body + stateInit and re-wrap with gas.
@@ -81,14 +91,14 @@ export function toClientTvmSigner(
               to: wallet.address,
               value: 0n,
               bounce: true,
-              init: seqno === 0 ? wallet.init : undefined,
+              init: transferOptions?.includeStateInit ? wallet.init : undefined,
               body: transferBody,
             }),
           ),
         )
-        .endCell();
+        .endCell()
 
-      return intMessage.toBoc().toString("base64");
+      return intMessage.toBoc().toString('base64')
     },
-  };
+  }
 }

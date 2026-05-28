@@ -20,6 +20,7 @@
     "@x402/hono": "workspace:*",
     "@x402/stellar": "workspace:*",
     "@x402/svm": "workspace:*",
+    "@x402/tvm": "workspace:*",
     "dotenv": "^16.6.1",
     "hono": "^4.7.1"
   },

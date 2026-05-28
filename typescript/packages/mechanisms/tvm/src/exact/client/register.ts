@@ -1,8 +1,7 @@
-import { x402Client, SelectPaymentRequirements, PaymentPolicy } from "@x402/core/client";
-import { Network } from "@x402/core/types";
-import { ClientTvmSigner } from "../../signer";
-import { ExactTvmScheme } from "./scheme";
-import { TVM_MAINNET, TVM_TESTNET } from "../../constants";
+import { x402Client, SelectPaymentRequirements, PaymentPolicy } from '@x402/core/client'
+import { Network } from '@x402/core/types'
+import { ClientTvmSigner } from '../../signer'
+import { ExactTvmScheme } from './scheme'
 
 /**
  * Configuration options for registering TVM schemes to an x402Client
@@ -11,33 +10,33 @@ export interface TvmClientConfig {
   /**
    * The TVM signer to use for creating payment payloads
    */
-  signer: ClientTvmSigner;
+  signer: ClientTvmSigner
 
   /**
    * TON RPC endpoint URL (default: toncenter.com free tier)
    */
-  rpcUrl?: string;
+  rpcUrl?: string
 
   /**
    * Optional API key for higher RPC rate limits
    */
-  apiKey?: string;
+  apiKey?: string
 
   /**
    * Optional payment requirements selector function
    */
-  paymentRequirementsSelector?: SelectPaymentRequirements;
+  paymentRequirementsSelector?: SelectPaymentRequirements
 
   /**
    * Optional policies to apply to the client
    */
-  policies?: PaymentPolicy[];
+  policies?: PaymentPolicy[]
 
   /**
    * Optional specific networks to register.
-   * If not provided, registers both tvm:-239 (mainnet) and tvm:-3 (testnet).
+   * If not provided, registers the signer's configured network.
    */
-  networks?: Network[];
+  networks?: Network[]
 }
 
 /**
@@ -55,36 +54,32 @@ export interface TvmClientConfig {
  * import { toClientTvmSigner } from "@x402/tvm";
  *
  * const keyPair = await mnemonicToPrivateKey(mnemonic.split(" "));
- * const signer = toClientTvmSigner(keyPair, tonapiKey);
+ * const signer = toClientTvmSigner(keyPair, { network: "tvm:-3" });
  * const client = new x402Client();
  * registerExactTvmScheme(client, { signer });
  * ```
  */
-export function registerExactTvmScheme(
-  client: x402Client,
-  config: TvmClientConfig,
-): x402Client {
+export function registerExactTvmScheme(client: x402Client, config: TvmClientConfig): x402Client {
   const tvmScheme = new ExactTvmScheme(config.signer, {
     rpcUrl: config.rpcUrl,
     apiKey: config.apiKey,
-  });
+  })
 
   if (config.networks && config.networks.length > 0) {
     config.networks.forEach((network) => {
-      client.register(network, tvmScheme);
-    });
+      client.register(network, tvmScheme)
+    })
   } else {
-    client.register(TVM_MAINNET as Network, tvmScheme);
-    client.register(TVM_TESTNET as Network, tvmScheme);
+    client.register(config.signer.network as Network, tvmScheme)
   }
 
   if (config.policies) {
     config.policies.forEach((policy) => {
-      client.registerPolicy(policy);
-    });
+      client.registerPolicy(policy)
+    })
   }
 
-  return client;
+  return client
 }
 
 /**
@@ -94,6 +89,6 @@ export function registerExactTvmScheme(
  * @returns A configured x402Client instance
  */
 export function createTvmClient(config: TvmClientConfig): x402Client {
-  const client = new x402Client(config.paymentRequirementsSelector);
-  return registerExactTvmScheme(client, config);
+  const client = new x402Client(config.paymentRequirementsSelector)
+  return registerExactTvmScheme(client, config)
 }

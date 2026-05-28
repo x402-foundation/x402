@@ -6,20 +6,22 @@
  */
 
 // Exact scheme client
-export { ExactTvmScheme } from "./exact";
+export { ExactTvmScheme } from './exact'
 
 // Signers
-export { toClientTvmSigner } from "./signer";
-export type { ClientTvmSigner } from "./signer";
+export { toClientTvmSigner } from './signer'
+export type { ClientTvmSigner, ClientTvmSignerOptions } from './signer'
 
 // Types
-export type { TvmPaymentPayload } from "./types";
+export type { TvmPaymentPayload } from './types'
 
 // Constants
 export {
   TVM_MAINNET,
   TVM_TESTNET,
   USDT_MASTER,
+  USDT_MAINNET_MINTER,
+  USDT_TESTNET_MINTER,
   SCHEME_EXACT,
   JETTON_TRANSFER_OP,
   W5R1_CODE_HASH,
@@ -27,7 +29,7 @@ export {
   INTERNAL_SIGNED_OP,
   EXTERNAL_SIGNED_OP,
   SEND_MSG_OP,
-} from "./constants";
+} from './constants'
 
 // Utils
-export { normalizeTonAddress, priceToNano } from "./utils";
+export { getDefaultAsset, normalizeTonAddress, priceToNano } from './utils'
