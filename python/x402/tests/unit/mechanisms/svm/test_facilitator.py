@@ -22,12 +22,7 @@ from x402.schemas import (
 
 def load_wrapped_payment_fixtures() -> list[dict[str, str]]:
     fixture_path = (
-        Path(__file__).resolve().parents[6]
-        / "go"
-        / "mechanisms"
-        / "svm"
-        / "testdata"
-        / "swig_wrapped_payments.json"
+        Path(__file__).resolve().parent / "fixtures" / "swig_wrapped_payments.json"
     )
     return json.loads(fixture_path.read_text())
 

@@ -258,6 +258,30 @@ def decode_transaction_from_payload(payload: ExactSvmPayload) -> VersionedTransa
         raise ValueError("invalid_exact_svm_payload_transaction") from e
 
 
+def transaction_uses_address_lookup_tables(tx: VersionedTransaction) -> bool:
+    """Return True when a versioned transaction depends on address lookup tables."""
+    lookups = getattr(tx.message, "address_table_lookups", None)
+    return bool(lookups)
+
+
+def _account_at(accounts: list[Pubkey], index: int) -> Pubkey | None:
+    if index < 0 or index >= len(accounts):
+        return None
+    return accounts[index]
+
+
+def _resolve_accounts(
+    accounts: list[Pubkey], indexes: list[int]
+) -> list[Pubkey] | None:
+    resolved: list[Pubkey] = []
+    for index in indexes:
+        account = _account_at(accounts, int(index))
+        if account is None:
+            return None
+        resolved.append(account)
+    return resolved
+
+
 def get_token_payer_from_transaction(tx: VersionedTransaction) -> str:
     """Extract the token sender (owner of source token account) from a TransferChecked instruction.
 
@@ -301,7 +325,9 @@ def get_transfer_details_from_instruction(
 def _extract_direct_transfer_details(
     static_accounts: list[Pubkey], ix: Any
 ) -> TransferDetails | None:
-    program_address = static_accounts[ix.program_id_index]
+    program_address = _account_at(static_accounts, int(ix.program_id_index))
+    if program_address is None:
+        return None
     token_program = Pubkey.from_string(TOKEN_PROGRAM_ADDRESS)
     token_2022_program = Pubkey.from_string(TOKEN_2022_PROGRAM_ADDRESS)
 
@@ -317,12 +343,17 @@ def _extract_direct_transfer_details(
     ):
         return None
 
+    resolved_accounts = _resolve_accounts(static_accounts, account_indices[:4])
+    if resolved_accounts is None:
+        return None
+    source, mint, destination, authority = resolved_accounts
+
     return TransferDetails(
         token_program=str(program_address),
-        source=str(static_accounts[account_indices[0]]),
-        mint=str(static_accounts[account_indices[1]]),
-        destination=str(static_accounts[account_indices[2]]),
-        authority=str(static_accounts[account_indices[3]]),
+        source=str(source),
+        mint=str(mint),
+        destination=str(destination),
+        authority=str(authority),
         amount=int.from_bytes(ix_data[1:9], "little"),
     )
 
@@ -331,10 +362,15 @@ def _extract_swig_transfer_details(
     static_accounts: list[Pubkey], ix: Any
 ) -> TransferDetails | None:
     swig_program = Pubkey.from_string(SWIG_PROGRAM_ADDRESS)
-    if static_accounts[ix.program_id_index] != swig_program:
+    program_address = _account_at(static_accounts, int(ix.program_id_index))
+    if program_address != swig_program:
         return None
 
-    outer_accounts = [static_accounts[index] for index in ix.accounts]
+    outer_accounts = _resolve_accounts(
+        static_accounts, [int(index) for index in ix.accounts]
+    )
+    if outer_accounts is None:
+        return None
     compact_instructions = _decode_swig_compact_instructions(bytes(ix.data))
     if compact_instructions is None:
         return None
@@ -393,7 +429,7 @@ def _decode_swig_compact_instructions(data: bytes) -> list[dict[str, Any]] | Non
 
     instruction_count = compact_data[0]
     offset = 1
-    instructions: list[dict[str, object]] = []
+    instructions: list[dict[str, Any]] = []
 
     for _ in range(instruction_count):
         if offset + 4 > len(compact_data):
@@ -439,7 +475,7 @@ def _decode_transfer_details_from_indexes(
     ):
         return None
 
-    if any(index >= len(accounts) for index in account_indexes[:4]):
+    if any(index < 0 or index >= len(accounts) for index in account_indexes[:4]):
         return None
 
     return TransferDetails(

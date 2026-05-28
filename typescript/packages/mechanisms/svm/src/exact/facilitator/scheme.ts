@@ -26,6 +26,7 @@ import { SettlementCache } from "../../settlement-cache";
 import type { FacilitatorSvmSigner } from "../../signer";
 import type { ExactSvmPayloadV2 } from "../../types";
 import {
+  compiledMessageUsesAddressLookupTables,
   decodeTransactionFromPayload,
   getTransferDetailsFromCompiledInstruction,
   transactionMessageHash,
@@ -144,6 +145,13 @@ export class ExactSvmScheme implements SchemeNetworkFacilitator {
     }
 
     const compiled = getCompiledTransactionMessageDecoder().decode(transaction.messageBytes);
+    if (compiledMessageUsesAddressLookupTables(compiled)) {
+      return {
+        isValid: false,
+        invalidReason: "invalid_exact_svm_payload_address_lookup_tables_unsupported",
+        payer: "",
+      };
+    }
     const decompiled = decompileTransactionMessage(compiled);
     const instructions = decompiled.instructions ?? [];
 

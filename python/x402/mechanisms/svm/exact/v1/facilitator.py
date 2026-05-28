@@ -16,6 +16,7 @@ from .....schemas import Network, SettleResponse, VerifyResponse
 from .....schemas.v1 import PaymentPayloadV1, PaymentRequirementsV1
 from ...constants import (
     COMPUTE_BUDGET_PROGRAM_ADDRESS,
+    ERR_ADDRESS_LOOKUP_TABLES_UNSUPPORTED,
     ERR_AMOUNT_INSUFFICIENT,
     ERR_DUPLICATE_SETTLEMENT,
     ERR_FEE_PAYER_MISSING,
@@ -52,6 +53,7 @@ from ...utils import (
     derive_ata,
     get_transfer_details_from_instruction,
     transaction_message_hash,
+    transaction_uses_address_lookup_tables,
 )
 
 
@@ -168,6 +170,12 @@ class ExactSvmSchemeV1:
             )
 
         message = tx.message
+        if transaction_uses_address_lookup_tables(tx):
+            return VerifyResponse(
+                is_valid=False,
+                invalid_reason=ERR_ADDRESS_LOOKUP_TABLES_UNSUPPORTED,
+                payer="",
+            )
         instructions = message.instructions
         static_accounts = list(message.account_keys)
 
@@ -182,7 +190,12 @@ class ExactSvmSchemeV1:
 
         # Verify compute unit limit instruction (index 0)
         cu_limit_ix = instructions[0]
-        cu_limit_program = static_accounts[cu_limit_ix.program_id_index]
+        try:
+            cu_limit_program = static_accounts[cu_limit_ix.program_id_index]
+        except IndexError:
+            return VerifyResponse(
+                is_valid=False, invalid_reason=ERR_INVALID_COMPUTE_LIMIT, payer=""
+            )
         cu_limit_data = bytes(cu_limit_ix.data)
 
         if cu_limit_program != compute_budget_program or len(cu_limit_data) < 1:
@@ -196,7 +209,12 @@ class ExactSvmSchemeV1:
 
         # Verify compute unit price instruction (index 1)
         cu_price_ix = instructions[1]
-        cu_price_program = static_accounts[cu_price_ix.program_id_index]
+        try:
+            cu_price_program = static_accounts[cu_price_ix.program_id_index]
+        except IndexError:
+            return VerifyResponse(
+                is_valid=False, invalid_reason=ERR_INVALID_COMPUTE_PRICE, payer=""
+            )
         cu_price_data = bytes(cu_price_ix.data)
 
         if cu_price_program != compute_budget_program or len(cu_price_data) < 9:
@@ -250,16 +268,23 @@ class ExactSvmSchemeV1:
             ]
 
             for idx, optional_ix in enumerate(optional_instructions):
-                optional_program = static_accounts[optional_ix.program_id_index]
-                if optional_program in (lighthouse_program, memo_program):
-                    continue
-
                 reason = (
                     invalid_reasons[idx]
                     if idx < len(invalid_reasons)
                     else ERR_UNKNOWN_SIXTH_INSTRUCTION
                 )
-                return VerifyResponse(is_valid=False, invalid_reason=reason, payer=payer)
+                try:
+                    optional_program = static_accounts[optional_ix.program_id_index]
+                except IndexError:
+                    return VerifyResponse(
+                        is_valid=False, invalid_reason=reason, payer=payer
+                    )
+                if optional_program in (lighthouse_program, memo_program):
+                    continue
+
+                return VerifyResponse(
+                    is_valid=False, invalid_reason=reason, payer=payer
+                )
 
         # Verify memo content matches extra.memo when present
         extra = requirements.extra or {}
@@ -269,13 +294,18 @@ class ExactSvmSchemeV1:
             memo_ixs = [
                 ix
                 for ix in optional_instructions
+                if ix.program_id_index < len(static_accounts)
                 if static_accounts[ix.program_id_index] == memo_program
             ]
             if len(memo_ixs) != 1:
-                return VerifyResponse(is_valid=False, invalid_reason=ERR_MEMO_COUNT, payer=payer)
+                return VerifyResponse(
+                    is_valid=False, invalid_reason=ERR_MEMO_COUNT, payer=payer
+                )
             actual_memo = bytes(memo_ixs[0].data).decode("utf-8")
             if actual_memo != expected_memo:
-                return VerifyResponse(is_valid=False, invalid_reason=ERR_MEMO_MISMATCH, payer=payer)
+                return VerifyResponse(
+                    is_valid=False, invalid_reason=ERR_MEMO_MISMATCH, payer=payer
+                )
 
         # Verify facilitator's signers are not transferring their own funds
         if transfer_details.authority in signer_addresses:

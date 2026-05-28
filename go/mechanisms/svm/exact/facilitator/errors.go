@@ -16,6 +16,7 @@ const (
 	ErrComputeLimitInstruction        = "invalid_exact_solana_payload_transaction_instructions_compute_limit_instruction"
 	ErrComputePriceInstruction        = "invalid_exact_solana_payload_transaction_instructions_compute_price_instruction"
 	ErrComputePriceInstructionTooHigh = "invalid_exact_solana_payload_transaction_instructions_compute_price_instruction_too_high"
+	ErrAddressLookupTablesUnsupported = "invalid_exact_solana_payload_address_lookup_tables_unsupported"
 	ErrNoTransferInstruction          = "invalid_exact_solana_payload_no_transfer_instruction"
 	ErrFeePayerTransferringFunds      = "invalid_exact_solana_payload_transaction_fee_payer_transferring_funds"
 	ErrMintMismatch                   = "invalid_exact_solana_payload_mint_mismatch"

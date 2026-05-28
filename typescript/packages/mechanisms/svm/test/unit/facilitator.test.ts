@@ -35,13 +35,7 @@ type WrappedPaymentFixture = {
 };
 
 const wrappedPaymentFixtures = JSON.parse(
-  readFileSync(
-    new URL(
-      "../../../../../../go/mechanisms/svm/testdata/swig_wrapped_payments.json",
-      import.meta.url,
-    ),
-    "utf8",
-  ),
+  readFileSync(new URL("../fixtures/swig_wrapped_payments.json", import.meta.url), "utf8"),
 ) as WrappedPaymentFixture[];
 
 describe("ExactSvmScheme", () => {

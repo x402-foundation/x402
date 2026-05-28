@@ -80,6 +80,9 @@ ERR_INVALID_COMPUTE_PRICE = (
     "invalid_exact_svm_payload_transaction_instructions_compute_price_instruction"
 )
 ERR_COMPUTE_PRICE_TOO_HIGH = "invalid_exact_svm_payload_transaction_instructions_compute_price_instruction_too_high"
+ERR_ADDRESS_LOOKUP_TABLES_UNSUPPORTED = (
+    "invalid_exact_svm_payload_address_lookup_tables_unsupported"
+)
 ERR_NO_TRANSFER_INSTRUCTION = "invalid_exact_svm_payload_no_transfer_instruction"
 ERR_MINT_MISMATCH = "invalid_exact_svm_payload_mint_mismatch"
 ERR_RECIPIENT_MISMATCH = "invalid_exact_svm_payload_recipient_mismatch"

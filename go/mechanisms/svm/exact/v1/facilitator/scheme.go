@@ -139,6 +139,9 @@ func (f *ExactSvmSchemeV1) Verify(
 	if err != nil {
 		return nil, x402.NewVerifyError(ErrTransactionCouldNotBeDecoded, "", err.Error())
 	}
+	if svm.TransactionUsesAddressLookupTables(tx) {
+		return nil, x402.NewVerifyError(ErrAddressLookupTablesUnsupported, "", "address lookup tables are not supported for exact SVM verification")
+	}
 
 	// Allow 3-6 instructions:
 	// - 3 instructions: ComputeLimit + ComputePrice + TransferChecked
@@ -188,14 +191,16 @@ func (f *ExactSvmSchemeV1) Verify(
 		}
 
 		for i, instruction := range optionalInstructions {
-			progID := tx.Message.AccountKeys[instruction.ProgramIDIndex]
-			if progID.Equals(lighthousePubkey) || progID.Equals(memoPubkey) {
-				continue
-			}
-
 			reason := ErrUnknownSixthInstruction
 			if i < len(invalidReasons) {
 				reason = invalidReasons[i]
+			}
+			progID, ok := svm.MessageAccountKey(tx, int(instruction.ProgramIDIndex))
+			if !ok {
+				return nil, x402.NewVerifyError(reason, payer, "optional instruction program id index out of bounds")
+			}
+			if progID.Equals(lighthousePubkey) || progID.Equals(memoPubkey) {
+				continue
 			}
 
 			return nil, x402.NewVerifyError(reason, payer, fmt.Sprintf("unknown optional instruction: %s", progID.String()))
@@ -206,7 +211,10 @@ func (f *ExactSvmSchemeV1) Verify(
 			var memoCount int
 			var actualMemoData []byte
 			for _, instruction := range optionalInstructions {
-				progID := tx.Message.AccountKeys[instruction.ProgramIDIndex]
+				progID, ok := svm.MessageAccountKey(tx, int(instruction.ProgramIDIndex))
+				if !ok {
+					continue
+				}
 				if progID.Equals(memoPubkey) {
 					memoCount++
 					actualMemoData = instruction.Data
@@ -340,7 +348,10 @@ func (f *ExactSvmSchemeV1) Settle(
 
 // verifyComputeLimitInstruction verifies the compute unit limit instruction
 func (f *ExactSvmSchemeV1) verifyComputeLimitInstruction(tx *solana.Transaction, inst solana.CompiledInstruction) error {
-	progID := tx.Message.AccountKeys[inst.ProgramIDIndex]
+	progID, ok := svm.MessageAccountKey(tx, int(inst.ProgramIDIndex))
+	if !ok {
+		return errors.New(ErrComputeLimitInstruction)
+	}
 
 	if !progID.Equals(solana.ComputeBudget) {
 		return errors.New(ErrComputeLimitInstruction)
@@ -367,7 +378,10 @@ func (f *ExactSvmSchemeV1) verifyComputeLimitInstruction(tx *solana.Transaction,
 
 // verifyComputePriceInstruction verifies the compute unit price instruction
 func (f *ExactSvmSchemeV1) verifyComputePriceInstruction(tx *solana.Transaction, inst solana.CompiledInstruction) error {
-	progID := tx.Message.AccountKeys[inst.ProgramIDIndex]
+	progID, ok := svm.MessageAccountKey(tx, int(inst.ProgramIDIndex))
+	if !ok {
+		return errors.New(ErrComputePriceInstruction)
+	}
 
 	if !progID.Equals(solana.ComputeBudget) {
 		return errors.New(ErrComputePriceInstruction)

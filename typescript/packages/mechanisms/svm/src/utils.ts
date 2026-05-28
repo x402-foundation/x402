@@ -39,15 +39,22 @@ const TOKEN_TRANSFER_CHECKED_DISCRIMINATOR = 12;
 const SWIG_SIGN_V2_DISCRIMINATOR = 11;
 const SWIG_SUBACCOUNT_SIGN_V1_DISCRIMINATOR = 9;
 
-type CompiledInstructionLike = {
-  programAddressIndex: number;
-  accountIndices?: readonly number[];
-  data: Uint8Array;
+export type ByteArrayLike = {
+  readonly [index: number]: number;
+  readonly length: number;
+  slice(start?: number, end?: number): ByteArrayLike;
 };
 
-type CompiledMessageLike = {
+export type CompiledInstructionLike = {
+  programAddressIndex: number;
+  accountIndices?: readonly number[];
+  data?: ByteArrayLike;
+};
+
+export type CompiledMessageLike = {
   staticAccounts?: readonly { toString(): string }[];
   instructions?: readonly CompiledInstructionLike[];
+  addressTableLookups?: readonly unknown[];
 };
 
 export type TransferDetails = {
@@ -127,6 +134,20 @@ export function decodeTransactionFromPayload(svmPayload: ExactSvmPayloadV1): Tra
 }
 
 /**
+ * Return true when a compiled v0 message depends on address lookup tables.
+ *
+ * Exact SVM verification currently validates instruction account indexes
+ * against the static account list only, so lookup-table-backed payments are
+ * rejected explicitly instead of failing differently per runtime.
+ *
+ * @param compiled - Compiled transaction message to inspect.
+ * @returns true when the message contains at least one address lookup table.
+ */
+export function compiledMessageUsesAddressLookupTables(compiled: CompiledMessageLike): boolean {
+  return (compiled.addressTableLookups?.length ?? 0) > 0;
+}
+
+/**
  * Extract the token sender (owner of the source token account) from a TransferChecked instruction
  *
  * @param transaction - The decoded transaction
@@ -149,7 +170,7 @@ export function getTransferDetailsFromTransaction(
 ): TransferDetails | null {
   const compiled = getCompiledTransactionMessageDecoder().decode(
     transaction.messageBytes,
-  ) as CompiledMessageLike;
+  ) as unknown as CompiledMessageLike;
 
   for (const ix of compiled.instructions ?? []) {
     const transferDetails = getTransferDetailsFromCompiledInstruction(compiled, ix);
@@ -203,10 +224,12 @@ function extractDirectTransferDetails(
   }
 
   const accountIndices = instruction.accountIndices ?? [];
+  const data = instruction.data;
   if (
     accountIndices.length < 4 ||
-    instruction.data.length < 10 ||
-    instruction.data[0] !== TOKEN_TRANSFER_CHECKED_DISCRIMINATOR
+    !data ||
+    data.length < 10 ||
+    data[0] !== TOKEN_TRANSFER_CHECKED_DISCRIMINATOR
   ) {
     return null;
   }
@@ -225,7 +248,7 @@ function extractDirectTransferDetails(
     mint,
     destination,
     authority,
-    amount: readU64LE(instruction.data, 1),
+    amount: readU64LE(data, 1),
   };
 }
 
@@ -244,11 +267,12 @@ function extractSwigTransferDetails(
     return null;
   }
 
-  const outerAccounts = Array.from(
-    instruction.accountIndices ?? [],
-    index => staticAccounts[index],
-  );
-  if (outerAccounts.length === 0) {
+  const outerAccounts = resolveAccounts(staticAccounts, instruction.accountIndices ?? []);
+  if (!outerAccounts || outerAccounts.length === 0) {
+    return null;
+  }
+
+  if (!instruction.data) {
     return null;
   }
 
@@ -274,7 +298,7 @@ function extractSwigTransferDetails(
       transferDetails = decodeTransferDetailsFromIndexes(
         outerAccounts,
         innerProgramAddress,
-        compactInstruction.accountIndices,
+        compactInstruction.accountIndices ?? [],
         compactInstruction.data,
       );
       if (!transferDetails) {
@@ -307,10 +331,11 @@ function decodeTransferDetailsFromIndexes(
   accounts: readonly { toString(): string }[],
   programAddress: string,
   accountIndices: readonly number[],
-  data: Uint8Array,
+  data: ByteArrayLike | undefined,
 ): TransferDetails | null {
   if (
     accountIndices.length < 4 ||
+    !data ||
     data.length < 10 ||
     data[0] !== TOKEN_TRANSFER_CHECKED_DISCRIMINATOR
   ) {
@@ -336,12 +361,35 @@ function decodeTransferDetailsFromIndexes(
 }
 
 /**
+ * Resolve compiled account indexes to account keys without allowing undefined
+ * entries through to wrapped transfer decoding.
+ *
+ * @param accounts - Static account list from the compiled message.
+ * @param accountIndices - Account indexes to resolve.
+ * @returns Resolved account keys, or null when any index is out of bounds.
+ */
+function resolveAccounts(
+  accounts: readonly { toString(): string }[],
+  accountIndices: readonly number[],
+): readonly { toString(): string }[] | null {
+  const resolved: { toString(): string }[] = [];
+  for (const index of accountIndices) {
+    const account = accounts[index];
+    if (!account) {
+      return null;
+    }
+    resolved.push(account);
+  }
+  return resolved;
+}
+
+/**
  * Decode SWIG compact instruction bytes from SignV2 or SubAccountSignV1.
  *
  * @param data - Raw SWIG instruction data.
  * @returns Decoded compact instructions when the payload matches a supported SWIG wrapper.
  */
-function decodeSwigCompactInstructions(data: Uint8Array): CompiledInstructionLike[] | null {
+function decodeSwigCompactInstructions(data: ByteArrayLike): CompiledInstructionLike[] | null {
   if (data.length < 4) {
     return null;
   }
@@ -415,7 +463,7 @@ function decodeSwigCompactInstructions(data: Uint8Array): CompiledInstructionLik
  * @param offset - Start offset.
  * @returns Parsed unsigned 16-bit integer.
  */
-function readU16LE(data: Uint8Array, offset: number): number {
+function readU16LE(data: ByteArrayLike, offset: number): number {
   return data[offset] | (data[offset + 1] << 8);
 }
 
@@ -426,7 +474,7 @@ function readU16LE(data: Uint8Array, offset: number): number {
  * @param offset - Start offset.
  * @returns Parsed unsigned 64-bit integer as bigint.
  */
-function readU64LE(data: Uint8Array, offset: number): bigint {
+function readU64LE(data: ByteArrayLike, offset: number): bigint {
   let result = 0n;
   for (let i = 0; i < 8; i += 1) {
     result |= BigInt(data[offset + i]) << BigInt(i * 8);

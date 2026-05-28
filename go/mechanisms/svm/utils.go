@@ -185,6 +185,22 @@ func DecodeTransaction(base64Tx string) (*solana.Transaction, error) {
 	return tx, nil
 }
 
+// TransactionUsesAddressLookupTables reports whether a decoded transaction
+// depends on v0 address lookup tables. Exact SVM verification currently only
+// validates account indexes against the static transaction account list.
+func TransactionUsesAddressLookupTables(tx *solana.Transaction) bool {
+	return tx != nil && tx.Message.AddressTableLookups.NumLookups() > 0
+}
+
+// MessageAccountKey returns a message account key by index without panicking on
+// malformed instructions.
+func MessageAccountKey(tx *solana.Transaction, index int) (solana.PublicKey, bool) {
+	if tx == nil || index < 0 || index >= len(tx.Message.AccountKeys) {
+		return solana.PublicKey{}, false
+	}
+	return tx.Message.AccountKeys[index], true
+}
+
 // GetTokenPayerFromTransaction extracts the token payer (owner) address from a
 // transaction using the built-in exact SVM payment decoders supported by x402.
 func GetTokenPayerFromTransaction(tx *solana.Transaction) (string, error) {

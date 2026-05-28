@@ -100,7 +100,10 @@ func extractDirectTransferDetails(
 		return nil, fmt.Errorf("invalid transaction: nil transaction or instructions")
 	}
 
-	programID := tx.Message.AccountKeys[inst.ProgramIDIndex]
+	programID, ok := MessageAccountKey(tx, int(inst.ProgramIDIndex))
+	if !ok {
+		return nil, ErrTransferNotRecognized
+	}
 	if programID != solana.TokenProgramID && programID != solana.Token2022ProgramID {
 		return nil, ErrTransferNotRecognized
 	}
@@ -109,8 +112,10 @@ func extractDirectTransferDetails(
 		return nil, ErrTransferNotRecognized
 	}
 
-	if int(inst.Accounts[3]) >= len(tx.Message.AccountKeys) {
-		return nil, ErrTransferNotRecognized
+	for _, accountIndex := range inst.Accounts[:4] {
+		if _, ok := MessageAccountKey(tx, int(accountIndex)); !ok {
+			return nil, ErrTransferNotRecognized
+		}
 	}
 
 	return &TransferDetails{
@@ -127,7 +132,10 @@ func extractSwigTransferDetails(
 	tx *solana.Transaction,
 	inst solana.CompiledInstruction,
 ) (*TransferDetails, error) {
-	programID := tx.Message.AccountKeys[inst.ProgramIDIndex]
+	programID, ok := MessageAccountKey(tx, int(inst.ProgramIDIndex))
+	if !ok {
+		return nil, ErrTransferNotRecognized
+	}
 	if !programID.Equals(swigProgramID) {
 		return nil, ErrTransferNotRecognized
 	}
