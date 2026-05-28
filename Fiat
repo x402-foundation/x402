@@ -1,0 +1,11 @@
+app.use(
+  paymentMiddleware(
+    {
+      "GET /weather": {
+        accepts: [...],                 // As many networks / schemes as you want to support
+        description: "Weather data",    // what your endpoint does
+      },
+    },
+  ),
+);
+// That's it! See examples/ for full details
