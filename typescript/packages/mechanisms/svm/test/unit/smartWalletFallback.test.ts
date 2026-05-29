@@ -20,6 +20,7 @@ import {
 } from "../../src/constants";
 
 const COMPUTE_BUDGET_PROGRAM = "ComputeBudget111111111111111111111111111111" as Address;
+const SWIG_PROGRAM = "swigypWHEksbC64pWKwah1WTeh9JXwx8H1rJHLdbQMB" as Address;
 const TOKEN_PROGRAM = TOKEN_PROGRAM_ADDRESS.toString();
 
 const FAKE_BLOCKHASH = {
@@ -232,6 +233,80 @@ describe("ExactSvmScheme smart wallet fallback path", () => {
     const scheme = new ExactSvmScheme(mockSigner as never, undefined, {
       enableSmartWalletVerification: true,
       smartWalletAllowedPrograms: [unknownProgram.address],
+    });
+
+    const result = await scheme.verify(
+      {
+        x402Version: 2,
+        resource: { url: "http://test.com", description: "test", mimeType: "application/json" },
+        accepted: {
+          scheme: "exact",
+          network: SOLANA_DEVNET_CAIP2,
+          asset: USDC_DEVNET_ADDRESS,
+          amount: "100000",
+          payTo: payTo.address,
+          maxTimeoutSeconds: 3600,
+          extra: { feePayer: feePayer.address },
+        },
+        payload: { transaction: txBase64 },
+      } as never,
+      {
+        scheme: "exact",
+        network: SOLANA_DEVNET_CAIP2,
+        asset: USDC_DEVNET_ADDRESS,
+        amount: "100000",
+        payTo: payTo.address,
+        maxTimeoutSeconds: 3600,
+        extra: { feePayer: feePayer.address },
+      } as never,
+    );
+
+    expect(result.isValid).toBe(true);
+    expect(result.payer).toBe(payer.address);
+    expect(mockSigner.simulateTransactionWithInnerInstructions).toHaveBeenCalled();
+  });
+
+  it("verify allows Swig through the default smart wallet allowlist", async () => {
+    const { ExactSvmScheme } = await import("../../src/exact/facilitator/scheme");
+
+    const feePayer = await generateKeyPairSigner();
+    const payTo = await generateKeyPairSigner();
+    const payer = await generateKeyPairSigner();
+
+    const expectedAta = payTo.address;
+    mockAtaMap[payTo.address] = expectedAta;
+
+    const txBase64 = await buildSmartWalletPayload(feePayer.address, SWIG_PROGRAM, payer.address);
+
+    const mockSigner = {
+      getAddresses: vi.fn().mockReturnValue([feePayer.address]),
+      signTransaction: vi.fn().mockResolvedValue(txBase64),
+      simulateTransaction: vi.fn().mockResolvedValue(undefined),
+      sendTransaction: vi.fn(),
+      confirmTransaction: vi.fn(),
+      getConfirmedTransactionInnerInstructions: vi.fn().mockResolvedValue(null),
+      getTokenAccountBalance: vi.fn().mockResolvedValue(null),
+      fetchAddressLookupTables: vi.fn().mockResolvedValue({}),
+      simulateTransactionWithInnerInstructions: vi.fn().mockResolvedValue({
+        innerInstructions: [
+          {
+            index: 0,
+            instructions: [
+              buildMockInnerTransfer(
+                TOKEN_PROGRAM,
+                USDC_DEVNET_ADDRESS,
+                expectedAta,
+                payer.address as string,
+                "100000",
+              ),
+            ],
+          },
+        ],
+      }),
+    };
+
+    const scheme = new ExactSvmScheme(mockSigner as never, undefined, {
+      enableSmartWalletVerification: true,
     });
 
     const result = await scheme.verify(

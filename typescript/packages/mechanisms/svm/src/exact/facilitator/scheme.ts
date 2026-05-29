@@ -47,7 +47,7 @@ import { verifySmartWalletTransaction, verifyPostSettlement } from "./smartWalle
 const DEFAULT_SMART_WALLET_ALLOWED_PROGRAMS = [
   "SQDS4ep65T869zMMBKyuUq6aD6EgTu8psMjkvj52pCf", // Squads Multisig v4
   "SMRTzfY6DfH5ik3TKiyLFfXexV8uSG3d2UksSCYdunG", // Squads Smart Account
-  "SWiGmQedKzMz1tiTqoJCWeGDnGXfNBp2PkXLkpCAtQo", // Swig
+  "swigypWHEksbC64pWKwah1WTeh9JXwx8H1rJHLdbQMB", // Swig
   "GovER5Lthms3bLBqWub97yVrMmEogzX7xNjdXpPPCVZw", // SPL Governance
   "CoREENxT6tW1HoK8ypY1SxRMZTcVPm7R94rH4PZNhX7d", // Metaplex Core
   LIGHTHOUSE_PROGRAM_ADDRESS, // Phantom's wallet-protection assertions (see #2097)
