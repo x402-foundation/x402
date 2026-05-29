@@ -1,0 +1,7 @@
+{
+  "name": "GoCreative Agent API",
+  "category": "Services/Endpoints",
+  "logoUrl": "/logos/gocreative-agent-api.png",
+  "description": "Pay-per-call social profile enrichment for AI agents — Instagram, TikTok, and X/Twitter returned in one unified ProfileResponse schema. 145+ endpoints across enrichment, search, scraping, and lookups. $0.005–$0.05 USDC per call on Base mainnet, no API key or signup.",
+  "websiteUrl": "https://api.gocreativeai.com/v1/"
+}
