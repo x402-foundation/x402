@@ -841,6 +841,30 @@ func TestV1Transformation(t *testing.T) {
 		assert.Equal(t, "integer parameter", queryInput.QueryParams["offset"])
 	})
 
+	t.Run("should extract discovery info from v1 GET with pathParams", func(t *testing.T) {
+		v1Requirements := map[string]interface{}{
+			"outputSchema": map[string]interface{}{
+				"input": map[string]interface{}{
+					"discoverable": true,
+					"method":       "GET",
+					"pathParams": map[string]interface{}{
+						"resourceId": "string parameter",
+					},
+					"type": "http",
+				},
+				"output": map[string]interface{}{"type": "object"},
+			},
+		}
+
+		info, err := v1.ExtractDiscoveryInfoV1(v1Requirements)
+		require.NoError(t, err)
+		require.NotNil(t, info)
+
+		queryInput, ok := info.Input.(bazaar.QueryInput)
+		require.True(t, ok)
+		assert.Equal(t, "string parameter", queryInput.PathParams["resourceId"])
+	})
+
 	t.Run("should extract discovery info from v1 POST with bodyFields", func(t *testing.T) {
 		v1Requirements := map[string]interface{}{
 			"outputSchema": map[string]interface{}{
@@ -936,6 +960,34 @@ func TestV1Transformation(t *testing.T) {
 		bodyMap, ok := bodyInput.Body.(map[string]interface{})
 		require.True(t, ok)
 		assert.NotNil(t, bodyMap["question"])
+	})
+
+	t.Run("should extract discovery info from v1 POST with pathParams", func(t *testing.T) {
+		v1Requirements := map[string]interface{}{
+			"outputSchema": map[string]interface{}{
+				"input": map[string]interface{}{
+					"bodyFields": map[string]interface{}{
+						"name": map[string]interface{}{
+							"type": "string",
+						},
+					},
+					"discoverable": true,
+					"method":       "POST",
+					"pathParams": map[string]interface{}{
+						"resourceId": "string parameter",
+					},
+					"type": "http",
+				},
+			},
+		}
+
+		info, err := v1.ExtractDiscoveryInfoV1(v1Requirements)
+		require.NoError(t, err)
+		require.NotNil(t, info)
+
+		bodyInput, ok := info.Input.(bazaar.BodyInput)
+		require.True(t, ok)
+		assert.Equal(t, "string parameter", bodyInput.PathParams["resourceId"])
 	})
 
 	t.Run("should extract discovery info from v1 POST with properties field", func(t *testing.T) {
