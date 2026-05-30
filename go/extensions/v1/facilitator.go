@@ -158,11 +158,13 @@ func ExtractDiscoveryInfoV1(paymentRequirements interface{}) (*types.DiscoveryIn
 	if types.IsQueryMethod(method) {
 		// Query parameter method (GET, HEAD, DELETE)
 		queryParams := extractQueryParams(v1Input)
+		pathParams := extractPathParams(v1Input)
 
 		queryInput := types.QueryInput{
 			Type:        "http",
 			Method:      types.QueryParamMethods(method),
 			QueryParams: queryParams,
+			PathParams:  pathParams,
 			Headers:     headers,
 		}
 
@@ -174,6 +176,7 @@ func ExtractDiscoveryInfoV1(paymentRequirements interface{}) (*types.DiscoveryIn
 		// Body method (POST, PUT, PATCH)
 		body, bodyType := extractBodyInfo(v1Input)
 		queryParams := extractQueryParams(v1Input) // Some POST requests also have query params
+		pathParams := extractPathParams(v1Input)   // Dynamic routes may carry path params too
 
 		bodyInput := types.BodyInput{
 			Type:        "http",
@@ -181,6 +184,7 @@ func ExtractDiscoveryInfoV1(paymentRequirements interface{}) (*types.DiscoveryIn
 			BodyType:    bodyType,
 			Body:        body,
 			QueryParams: queryParams,
+			PathParams:  pathParams,
 			Headers:     headers,
 		}
 
@@ -208,6 +212,20 @@ func extractQueryParams(v1Input map[string]interface{}) map[string]interface{} {
 	}
 	if params, ok := v1Input["params"].(map[string]interface{}); ok {
 		return params
+	}
+	return nil
+}
+
+// extractPathParams extracts path parameters from v1 input.
+// v1 dynamic-route metadata carries these so they must be preserved when
+// converting to extensions.bazaar.info (see ExtractDiscoveryInfoV1).
+func extractPathParams(v1Input map[string]interface{}) map[string]interface{} {
+	// Check both camelCase and snake_case field names used in v1.
+	if pathParams, ok := v1Input["pathParams"].(map[string]interface{}); ok {
+		return pathParams
+	}
+	if pathParams, ok := v1Input["path_params"].(map[string]interface{}); ok {
+		return pathParams
 	}
 	return nil
 }

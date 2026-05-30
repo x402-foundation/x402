@@ -1,0 +1,3 @@
+kind: Fixed
+body: Preserve `pathParams` from v1 `outputSchema.input` in `ExtractDiscoveryInfoV1` for both query and body methods, so v1 dynamic-route metadata is no longer dropped when converting to `extensions.bazaar.info`.
+time: 2026-05-30T01:15:00Z
