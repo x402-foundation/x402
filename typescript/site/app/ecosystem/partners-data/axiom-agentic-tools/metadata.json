@@ -1,0 +1,7 @@
+{
+  "name": "Axiom Agentic Tools",
+  "category": "Infrastructure & Tooling",
+  "logoUrl": "/logos/axiom-agentic-tools.png",
+  "description": "Five JSON-output tools for builders shipping agentic services on Base. Pay-per-call USDC on Base via the CDP facilitator: agent-revenue-optimizer, agent-token-strategy, multi-agent-workflow-designer, repo-health-for-agents (free), base-builder-grant-finder. No API keys, no accounts. MCP, OpenAPI, 402index verified.",
+  "websiteUrl": "https://agentic.clawbots.org"
+}
