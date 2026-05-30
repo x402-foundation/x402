@@ -86,6 +86,26 @@ Add the `-v` flag to any command for verbose output:
 
 Useful for debugging test failures or understanding the payment flow.
 
+### Targeting a Specific EVM Chain
+
+The harness defaults to Base Sepolia (`eip155:84532`) on `--testnet`. Pass
+`--evm-network=<caip2>` to target any chain in the SDK's `DEFAULT_STABLECOINS`
+catalog (`typescript/packages/mechanisms/evm/src/shared/defaultAssets.ts`).
+Combine with `--families=evm` to skip non-EVM credential requirements.
+
+```bash
+# Run EVM-only against Mezo Testnet
+pnpm test --testnet --families=evm --evm-network=eip155:31611
+```
+
+The harness derives its chain registry from `DEFAULT_STABLECOINS` at module load.
+Adding a new chain to the SDK propagates here after `pnpm install` — no harness
+source edit. Display names come from viem's chain database.
+
+EVM-only runs (`--families=evm`) do NOT require Solana, Aptos, Hedera, or
+Stellar credentials — the corresponding env vars are only consulted when their
+family is selected.
+
 ## Wallet Safety Warning
 
 **Use dedicated test wallets only. Do NOT use wallets that hold real funds.**
@@ -151,6 +171,14 @@ cd e2e
 TVM_PROVIDER=tonapi \
 TONAPI_API_KEY=<tonapi-key> \
 pnpm test --testnet --families=tvm --facilitators=python --clients=httpx,requests --servers=fastapi,flask --min -v
+```
+
+Optional environment variables (chain selection):
+
+```bash
+EVM_RPC_URL=https://...              # Override the EVM RPC URL for the selected
+                                      # chain. When unset, the harness uses
+                                      # viem's default RPC for the chain.
 ```
 
 Optional environment variables (batch-settlement scheme):

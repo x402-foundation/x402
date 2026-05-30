@@ -8,6 +8,9 @@ importers:
 
   .:
     dependencies:
+      '@x402/evm':
+        specifier: workspace:*
+        version: link:../typescript/packages/mechanisms/evm
       dotenv:
         specifier: ^17.0.1
         version: 17.0.1

@@ -18,13 +18,16 @@ import { config } from 'dotenv';
 import {
   createWalletClient,
   createPublicClient,
+  defineChain,
   http,
   parseAbi,
   formatUnits,
   getAddress,
+  type Chain,
 } from 'viem';
 import { privateKeyToAccount } from 'viem/accounts';
-import { base, baseSepolia } from 'viem/chains';
+import * as allViemChains from 'viem/chains';
+import { DEFAULT_STABLECOINS } from '@x402/evm';
 
 config();
 
@@ -33,41 +36,58 @@ const PERMIT2_ADDRESS = '0x000000000022D473030F116dDEE9F6B43aC78BA3';
 
 const evmNetwork = process.env.EVM_NETWORK || 'eip155:84532';
 const evmRpcUrl = process.env.EVM_RPC_URL;
-const evmChain = evmNetwork === 'eip155:8453' ? base : baseSepolia;
-const isMainnet = evmNetwork === 'eip155:8453';
 
-const TOKENS_BY_NETWORK: Record<string, Record<string, { address: `0x${string}`; decimals: number; name: string }>> = {
-  'eip155:84532': {
-    USDC: {
-      address: '0x036CbD53842c5426634e7929541eC2318f3dCF7e',
-      decimals: 6,
-      name: 'USDC',
-    },
-    MockERC20: {
-      address: '0xeED520980fC7C7B4eB379B96d61CEdea2423005a',
-      decimals: 6,
-      name: 'MockERC20',
-    },
-  },
-  'eip155:8453': {
-    USDC: {
-      address: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913',
-      decimals: 6,
-      name: 'USDC',
-    },
-  },
-};
+// Resolve any CAIP-2 EVM chain — viem's chain database first, with a
+// minimal defineChain fallback for any SDK chain that viem hasn't packaged yet.
+function resolveEvmChain(network: string): Chain {
+  const [namespace, ref] = network.split(':');
+  if (namespace !== 'eip155') {
+    throw new Error(`resolveEvmChain: not an EVM network: ${network}`);
+  }
+  const chainId = Number(ref);
+  if (!Number.isInteger(chainId) || chainId <= 0) {
+    throw new Error(`resolveEvmChain: invalid EVM chain id in ${network}`);
+  }
+  const known = (Object.values(allViemChains) as Chain[]).find(
+    (c) => c && typeof c === 'object' && c.id === chainId,
+  );
+  if (known) return known;
+  return defineChain({
+    id: chainId,
+    name: `EVM ${chainId}`,
+    nativeCurrency: { name: 'Ether', symbol: 'ETH', decimals: 18 },
+    rpcUrls: { default: { http: [] } },
+  });
+}
+const evmChain = resolveEvmChain(evmNetwork);
 
-const TOKENS = TOKENS_BY_NETWORK[evmNetwork] || TOKENS_BY_NETWORK['eip155:84532'];
+// Token list is driven by EVM_PERMIT2_ASSET (canonical Permit2 target for the
+// configured chain). Pass an explicit `[tokenAddress]` CLI arg to operate on a
+// non-default token (e.g. MockERC20 on Base Sepolia).
+//
+// Decimals + display name flow from `DEFAULT_STABLECOINS[evmNetwork]` when the
+// chain is in the SDK's catalog (the canonical case). Custom tokens supplied
+// via the CLI override read decimals from the contract's `decimals()` view.
+const permit2AssetEnv = process.env.EVM_PERMIT2_ASSET;
+const sdkAsset = DEFAULT_STABLECOINS[evmNetwork];
+const TOKENS: Record<string, { address: `0x${string}`; decimals: number; name: string }> = {};
+if (permit2AssetEnv) {
+  TOKENS.PRIMARY = {
+    address: getAddress(permit2AssetEnv) as `0x${string}`,
+    decimals: sdkAsset?.decimals ?? 6,
+    name: sdkAsset?.name ?? 'TOKEN',
+  };
+}
 
 // Maximum uint256 for unlimited approval
 const MAX_UINT256 = 2n ** 256n - 1n;
 
-// ERC20 ABI for approve and allowance
+// ERC20 ABI for approve, allowance, balanceOf, and decimals
 const erc20Abi = parseAbi([
   'function approve(address spender, uint256 amount) returns (bool)',
   'function allowance(address owner, address spender) view returns (uint256)',
   'function balanceOf(address account) view returns (uint256)',
+  'function decimals() view returns (uint8)',
 ]);
 
 async function main() {
@@ -83,10 +103,15 @@ Usage:
   pnpm tsx scripts/permit2-approval.ts approve [tokenAddress]
   pnpm tsx scripts/permit2-approval.ts revoke  [tokenAddress]
 
-If tokenAddress is not provided, processes all known tokens (USDC and MockERC20).
+If tokenAddress is not provided, processes the chain's primary Permit2 asset
+(EVM_PERMIT2_ASSET). Pass an explicit address to operate on a different token.
 
 Environment variables required:
   CLIENT_EVM_PRIVATE_KEY - Private key of the client wallet
+  EVM_NETWORK            - CAIP-2 EVM chain id (e.g. eip155:84532)
+  EVM_PERMIT2_ASSET      - Permit2 target token address for EVM_NETWORK
+                           (optional when [tokenAddress] is provided)
+  EVM_RPC_URL            - Optional RPC override; falls back to viem chain default
 `);
     process.exit(1);
   }
@@ -94,6 +119,13 @@ Environment variables required:
   const privateKey = process.env.CLIENT_EVM_PRIVATE_KEY;
   if (!privateKey) {
     console.error('❌ CLIENT_EVM_PRIVATE_KEY environment variable is required');
+    process.exit(1);
+  }
+
+  if (!filterAddress && Object.keys(TOKENS).length === 0) {
+    console.error(
+      '❌ EVM_PERMIT2_ASSET environment variable is required when no tokenAddress is provided',
+    );
     process.exit(1);
   }
 
@@ -109,6 +141,23 @@ Environment variables required:
     chain: evmChain,
     transport: http(evmRpcUrl),
   });
+
+  // For a CLI-override token not already in TOKENS, read its decimals on-chain.
+  if (
+    filterAddress &&
+    !Object.values(TOKENS).some((t) => getAddress(t.address) === filterAddress)
+  ) {
+    const decimals = await publicClient.readContract({
+      address: filterAddress,
+      abi: erc20Abi,
+      functionName: 'decimals',
+    });
+    TOKENS[filterAddress] = {
+      address: filterAddress,
+      decimals: Number(decimals),
+      name: filterAddress,
+    };
+  }
 
   console.log(`\n🔑 Wallet: ${account.address}`);
   console.log(`📍 Network: ${evmChain.name} (${evmNetwork})`);

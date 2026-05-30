@@ -39,7 +39,7 @@ interface RequestResult {
 const serverUrl = process.env.RESOURCE_SERVER_URL as string;
 const endpointPath = process.env.ENDPOINT_PATH as string; // tool name, e.g. "get_weather"
 const evmPrivateKey = process.env.EVM_PRIVATE_KEY as `0x${string}`;
-const evmNetwork = process.env.EVM_NETWORK || "eip155:84532";
+const evmNetwork = (process.env.EVM_NETWORK || "eip155:84532") as `${string}:${string}`;
 const evmChain = evmNetwork === "eip155:8453" ? base : baseSepolia;
 const channelSalt = process.env.CHANNEL_SALT as `0x${string}` | undefined;
 const batchSettlementPhase = process.env.BATCH_SETTLEMENT_PHASE as

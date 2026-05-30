@@ -12,9 +12,9 @@ import http from "node:http";
 
 const PORT = parseInt(process.env.PORT || "4099", 10);
 const EVM_NETWORK = process.env.EVM_NETWORK || "eip155:84532";
-const SVM_NETWORK = process.env.SVM_NETWORK || "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1";
-const APTOS_NETWORK = process.env.APTOS_NETWORK || "aptos:2";
-const STELLAR_NETWORK = process.env.STELLAR_NETWORK || "stellar:testnet";
+const SVM_NETWORK = process.env.SVM_NETWORK;
+const APTOS_NETWORK = process.env.APTOS_NETWORK;
+const STELLAR_NETWORK = process.env.STELLAR_NETWORK;
 
 const DUMMY_EVM_SIGNER = "0x0000000000000000000000000000000000000001";
 const DUMMY_SVM_SIGNER = "11111111111111111111111111111111";
@@ -23,7 +23,7 @@ const DUMMY_APTOS_SIGNER =
 const DUMMY_STELLAR_SIGNER = "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF";
 
 function buildSupportedResponse() {
-  const evmSchemes = ["exact", "upto"];
+  const evmSchemes = ["exact", "upto", "batch-settlement"];
   const otherSchemes = ["exact"];
   const versions = [1, 2];
 
@@ -37,8 +37,10 @@ function buildSupportedResponse() {
     for (const scheme of evmSchemes) {
       kinds.push({ x402Version: version, scheme, network: EVM_NETWORK });
     }
-    for (const scheme of otherSchemes) {
-      kinds.push({ x402Version: version, scheme, network: SVM_NETWORK });
+    if (SVM_NETWORK) {
+      for (const scheme of otherSchemes) {
+        kinds.push({ x402Version: version, scheme, network: SVM_NETWORK });
+      }
     }
     if (APTOS_NETWORK) {
       for (const scheme of otherSchemes) {
@@ -54,8 +56,10 @@ function buildSupportedResponse() {
 
   const signers: Record<string, string[]> = {
     "eip155:*": [DUMMY_EVM_SIGNER],
-    "solana:*": [DUMMY_SVM_SIGNER],
   };
+  if (SVM_NETWORK) {
+    signers["solana:*"] = [DUMMY_SVM_SIGNER];
+  }
   if (APTOS_NETWORK) {
     signers["aptos:*"] = [DUMMY_APTOS_SIGNER];
   }

@@ -258,10 +258,20 @@ export class GenericServerProxy extends BaseProxy implements ServerProxy {
 }
 
 /**
- * Translates v2 CAIP-2 network format to v1 simple format for legacy servers
- * 
+ * Translates v2 CAIP-2 network format to v1 simple format for legacy servers.
+ *
+ * Activated only when {@link this.directory} contains `legacy/` (see
+ * `isV1Server` gate in this file). For v2 (non-legacy) servers this function
+ * is dead code: callers pass the v2 CAIP-2 string straight through unchanged.
+ *
+ * The hardcoded map covers the v1 chains the legacy harness was built around
+ * (Base / Base Sepolia, Solana mainnet / devnet); any other CAIP-2 input
+ * falls through unchanged. When `e2e/legacy/*` is retired this entire
+ * translator can be deleted.
+ *
  * @param network - Network in CAIP-2 format (e.g., "eip155:84532")
- * @returns Network in v1 format (e.g., "base-sepolia")
+ * @returns Network in v1 format (e.g., "base-sepolia") for known mappings,
+ *   otherwise the input is returned unchanged.
  */
 function translateNetworkForV1(network: string): string {
   const networkMap: Record<string, string> = {

@@ -35,8 +35,17 @@ const HEDERA_NETWORK = (process.env.HEDERA_NETWORK || "hedera:testnet") as `${st
 const AVM_NETWORK = (process.env.AVM_NETWORK || "algorand:SGO1GKSzyE7IEPItTxCByw9x8FmnrCDexi9/cOUJOiI=") as `${string}:${string}`;
 const STELLAR_NETWORK = (process.env.STELLAR_NETWORK || "stellar:testnet") as `${string}:${string}`;
 const EVM_PAYEE_ADDRESS = process.env.EVM_PAYEE_ADDRESS as `0x${string}`;
-const SVM_PAYEE_ADDRESS = process.env.SVM_PAYEE_ADDRESS as string;
+const SVM_PAYEE_ADDRESS = process.env.SVM_PAYEE_ADDRESS as string | undefined;
 const EVM_PERMIT2_ASSET = process.env.EVM_PERMIT2_ASSET as `0x${string}`;
+
+// Token name/version for permit2 EIP-712 domain. Defaults are sourced from the
+// canonical USDC issuance per chain; falls back to "USDC"/"2" for chains we
+// haven't yet enumerated. Add entries when new chains land in EVM_NETWORK_CONFIGS.
+const EVM_PERMIT2_ASSET_NAMES: Record<string, string> = {
+  "eip155:84532": "USDC",
+  "eip155:8453": "USD Coin",
+};
+const evmPermit2AssetName = EVM_PERMIT2_ASSET_NAMES[EVM_NETWORK] ?? "USDC";
 const AVM_PAYEE_ADDRESS = process.env.AVM_PAYEE_ADDRESS as string;
 const APTOS_PAYEE_ADDRESS = process.env.APTOS_PAYEE_ADDRESS as string;
 const HEDERA_PAYEE_ADDRESS = process.env.HEDERA_PAYEE_ADDRESS as string | undefined;
@@ -47,11 +56,6 @@ const facilitatorUrl = process.env.FACILITATOR_URL;
 
 if (!EVM_PAYEE_ADDRESS) {
   console.error("❌ EVM_PAYEE_ADDRESS environment variable is required");
-  process.exit(1);
-}
-
-if (!SVM_PAYEE_ADDRESS) {
-  console.error("❌ SVM_PAYEE_ADDRESS environment variable is required");
   process.exit(1);
 }
 
@@ -90,7 +94,9 @@ server.register(
     ...(receiverAuthorizerSigner ? { receiverAuthorizerSigner } : {}),
   }),
 );
-server.register("solana:*", new ExactSvmScheme());
+if (SVM_PAYEE_ADDRESS) {
+  server.register("solana:*", new ExactSvmScheme());
+}
 if (APTOS_PAYEE_ADDRESS) {
   server.register("aptos:*", new ExactAptosScheme());
 }
@@ -119,6 +125,12 @@ app.addHook("onRequest", async (request, reply) => {
     return reply.status(501).send({
       error: "AVM payments not configured",
       message: "AVM_PAYEE_ADDRESS environment variable is not set",
+    });
+  }
+  if (path === "/exact/svm" && !SVM_PAYEE_ADDRESS) {
+    return reply.status(501).send({
+      error: "SVM payments not configured",
+      message: "SVM_PAYEE_ADDRESS environment variable is not set",
     });
   }
   if (path === "/exact/aptos" && !APTOS_PAYEE_ADDRESS) {
@@ -198,7 +210,7 @@ paymentMiddleware(
           asset: EVM_PERMIT2_ASSET,
           extra: {
             assetTransferMethod: "permit2",
-            name: EVM_NETWORK == "eip155:84532" ? "USDC" : "USD Coin",
+            name: evmPermit2AssetName,
             version: "2",
           },
         },
@@ -258,31 +270,35 @@ paymentMiddleware(
         }),
       },
     },
-    "GET /exact/svm": {
-      accepts: {
-        payTo: SVM_PAYEE_ADDRESS,
-        scheme: "exact",
-        price: "$0.001",
-        network: SVM_NETWORK,
-      },
-      extensions: {
-        ...declareDiscoveryExtension({
-          output: {
-            example: {
-              message: "Protected endpoint accessed successfully",
-              timestamp: "2024-01-01T00:00:00Z",
-            },
-            schema: {
-              properties: {
-                message: { type: "string" },
-                timestamp: { type: "string" },
-              },
-              required: ["message", "timestamp"],
-            },
+    ...(SVM_PAYEE_ADDRESS
+      ? {
+        "GET /exact/svm": {
+          accepts: {
+            payTo: SVM_PAYEE_ADDRESS,
+            scheme: "exact",
+            price: "$0.001",
+            network: SVM_NETWORK,
           },
-        }),
-      },
-    },
+          extensions: {
+            ...declareDiscoveryExtension({
+              output: {
+                example: {
+                  message: "Protected endpoint accessed successfully",
+                  timestamp: "2024-01-01T00:00:00Z",
+                },
+                schema: {
+                  properties: {
+                    message: { type: "string" },
+                    timestamp: { type: "string" },
+                  },
+                  required: ["message", "timestamp"],
+                },
+              },
+            }),
+          },
+        },
+      }
+      : {}),
     ...(HEDERA_PAYEE_ADDRESS
       ? {
           "GET /exact/hedera": {
@@ -355,7 +371,7 @@ paymentMiddleware(
           asset: EVM_PERMIT2_ASSET,
           extra: {
             assetTransferMethod: "permit2",
-            name: EVM_NETWORK == "eip155:84532" ? "USDC" : "USD Coin",
+            name: evmPermit2AssetName,
             version: "2",
           },
         },
@@ -439,7 +455,7 @@ paymentMiddleware(
           asset: EVM_PERMIT2_ASSET,
           extra: {
             assetTransferMethod: "permit2",
-            name: EVM_NETWORK == "eip155:84532" ? "USDC" : "USD Coin",
+            name: evmPermit2AssetName,
             version: "2",
           },
         },
@@ -456,7 +472,7 @@ paymentMiddleware(
           asset: EVM_PERMIT2_ASSET,
           extra: {
             assetTransferMethod: "permit2",
-            name: EVM_NETWORK == "eip155:84532" ? "USDC" : "USD Coin",
+            name: evmPermit2AssetName,
             version: "2",
           },
         },
@@ -751,7 +767,7 @@ app.listen({ port: parseInt(PORT) }, (err, address) => {
 ║  Stellar Network: ${STELLAR_NETWORK}║
 ║  AVM Payee:    ${AVM_PAYEE_ADDRESS || "(not configured)"}
 ║  EVM Payee:    ${EVM_PAYEE_ADDRESS}                    ║
-║  SVM Payee:    ${SVM_PAYEE_ADDRESS}                    ║
+║  SVM Payee:    ${SVM_PAYEE_ADDRESS || "(not configured)"}
 ║  Aptos Payee:  ${APTOS_PAYEE_ADDRESS || "(not configured)"}
 ║  Hedera Payee: ${HEDERA_PAYEE_ADDRESS || "(not configured)"}
 ║  Stellar Payee: ${STELLAR_PAYEE_ADDRESS || "(not configured)"}

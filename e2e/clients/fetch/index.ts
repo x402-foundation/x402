@@ -1,8 +1,8 @@
 import { config } from "dotenv";
 import { wrapFetchWithPayment } from "@x402/fetch";
-import { createPublicClient, http } from "viem";
+import { createPublicClient, defineChain, http, type Chain } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
-import { base, baseSepolia } from "viem/chains";
+import * as allViemChains from "viem/chains";
 import { ExactEvmScheme, type ExactEvmSchemeOptions } from "@x402/evm/exact/client";
 import {
   UptoEvmScheme as UptoEvmClientScheme,
@@ -31,13 +31,39 @@ const baseURL = process.env.RESOURCE_SERVER_URL as string;
 const endpointPath = process.env.ENDPOINT_PATH as string;
 const url = `${baseURL}${endpointPath}`;
 const evmAccount = privateKeyToAccount(process.env.EVM_PRIVATE_KEY as `0x${string}`);
-const svmSigner = await createKeyPairSignerFromBytes(
-  base58.decode(process.env.SVM_PRIVATE_KEY as string),
-);
+// Lazy SVM signer: only decoded when SVM_PRIVATE_KEY is set so EVM-only runs
+// (e.g. --families=evm) don't require a Solana key.
+const svmSigner = process.env.SVM_PRIVATE_KEY
+  ? await createKeyPairSignerFromBytes(
+      base58.decode(process.env.SVM_PRIVATE_KEY),
+    )
+  : undefined;
 
 const evmNetwork = process.env.EVM_NETWORK || "eip155:84532";
 const evmRpcUrl = process.env.EVM_RPC_URL;
-const evmChain = evmNetwork === "eip155:8453" ? base : baseSepolia;
+// Resolve any CAIP-2 EVM chain — viem's chain database first, with a
+// minimal defineChain fallback for any SDK chain that viem hasn't packaged yet.
+function resolveEvmChain(network: string): Chain {
+  const [namespace, ref] = network.split(":");
+  if (namespace !== "eip155") {
+    throw new Error(`resolveEvmChain: not an EVM network: ${network}`);
+  }
+  const chainId = Number(ref);
+  if (!Number.isInteger(chainId) || chainId <= 0) {
+    throw new Error(`resolveEvmChain: invalid EVM chain id in ${network}`);
+  }
+  const known = (Object.values(allViemChains) as Chain[]).find(
+    (c) => c && typeof c === "object" && c.id === chainId,
+  );
+  if (known) return known;
+  return defineChain({
+    id: chainId,
+    name: `EVM ${chainId}`,
+    nativeCurrency: { name: "Ether", symbol: "ETH", decimals: 18 },
+    rpcUrls: { default: { http: [] } },
+  });
+}
+const evmChain = resolveEvmChain(evmNetwork);
 
 const publicClient = createPublicClient({
   chain: evmChain,
@@ -112,10 +138,13 @@ const client = new x402Client()
   .register("eip155:*", new UptoEvmClientScheme(evmSigner, uptoSchemeOptions))
   .register("eip155:*", batchSettlementScheme)
   .registerV1("base-sepolia", new ExactEvmSchemeV1(evmSigner))
-  .registerV1("base", new ExactEvmSchemeV1(evmSigner))
-  .register("solana:*", new ExactSvmScheme(svmSigner))
-  .registerV1("solana-devnet", new ExactSvmSchemeV1(svmSigner))
-  .registerV1("solana", new ExactSvmSchemeV1(svmSigner));
+  .registerV1("base", new ExactEvmSchemeV1(evmSigner));
+if (svmSigner) {
+  client
+    .register("solana:*", new ExactSvmScheme(svmSigner))
+    .registerV1("solana-devnet", new ExactSvmSchemeV1(svmSigner))
+    .registerV1("solana", new ExactSvmSchemeV1(svmSigner));
+}
 if (aptosAccount) {
   client.register("aptos:*", new ExactAptosScheme(aptosAccount));
 }

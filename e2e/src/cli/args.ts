@@ -14,6 +14,7 @@ export interface ParsedArgs {
   showHelp: boolean;
   minimize: boolean;
   networkMode?: NetworkMode;  // undefined = prompt user, set = skip prompt
+  evmNetwork?: string;  // CAIP-2 EVM override (e.g. eip155:31611), overlays mode default
   parallel: boolean;
   concurrency: number;
   endpoints?: string[];
@@ -87,6 +88,9 @@ export function parseArgs(): ParsedArgs {
     networkMode = 'testnet';
   }
 
+  // Parse EVM network override (CAIP-2, e.g. eip155:31611 for Mezo Testnet)
+  const evmNetwork = args.find(arg => arg.startsWith('--evm-network='))?.split('=')[1];
+
   // Parse filters (comma-separated lists)
   const transports = parseListArg(args, '--transport');
   const facilitators = parseListArg(args, '--facilitators');
@@ -117,6 +121,7 @@ export function parseArgs(): ParsedArgs {
     showHelp: false,
     minimize,
     networkMode,
+    evmNetwork,
     parallel,
     concurrency,
     endpoints,
@@ -140,6 +145,7 @@ export function printHelp(): void {
   console.log('Network Selection:');
   console.log('  --testnet                  Use testnet networks');
   console.log('  --mainnet                  Use mainnet networks ⚠️  Real funds!');
+  console.log('  --evm-network=<caip2>      Override EVM slot (e.g. eip155:31611 for Mezo Testnet)');
   console.log('  (If not specified, will prompt in interactive mode)');
   console.log('');
   console.log('Programmatic Mode (for CI/workflows):');

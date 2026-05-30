@@ -16,7 +16,7 @@ import {
 } from "@x402/extensions";
 
 export const EVM_PAYEE_ADDRESS = process.env.EVM_PAYEE_ADDRESS as `0x${string}`;
-export const SVM_PAYEE_ADDRESS = process.env.SVM_PAYEE_ADDRESS as string;
+export const SVM_PAYEE_ADDRESS = process.env.SVM_PAYEE_ADDRESS as string | undefined;
 export const AVM_PAYEE_ADDRESS = process.env.AVM_PAYEE_ADDRESS as string;
 export const APTOS_PAYEE_ADDRESS = process.env.APTOS_PAYEE_ADDRESS as string;
 export const HEDERA_PAYEE_ADDRESS = process.env.HEDERA_PAYEE_ADDRESS as string | undefined;
@@ -33,6 +33,14 @@ export const STELLAR_NETWORK = (process.env.STELLAR_NETWORK ||
   "stellar:testnet") as `${string}:${string}`;
 const EVM_PERMIT2_ASSET = process.env.EVM_PERMIT2_ASSET as `0x${string}`;
 const facilitatorUrl = process.env.FACILITATOR_URL;
+
+// Token name/version for permit2 EIP-712 domain. Defaults sourced from canonical
+// USDC issuance per chain; falls back to "USDC" for chains we haven't enumerated.
+const EVM_PERMIT2_ASSET_NAMES: Record<string, string> = {
+  "eip155:84532": "USDC",
+  "eip155:8453": "USD Coin",
+};
+const evmPermit2AssetName = EVM_PERMIT2_ASSET_NAMES[EVM_NETWORK] ?? "USDC";
 
 if (!facilitatorUrl) {
   console.error("❌ FACILITATOR_URL environment variable is required");
@@ -70,7 +78,9 @@ server.register(
     ...(receiverAuthorizerSigner ? { receiverAuthorizerSigner } : {}),
   }),
 );
-server.register("solana:*", new ExactSvmScheme());
+if (SVM_PAYEE_ADDRESS) {
+  server.register("solana:*", new ExactSvmScheme());
+}
 if (APTOS_PAYEE_ADDRESS) {
   server.register("aptos:*", new ExactAptosScheme());
 }
@@ -106,7 +116,7 @@ export const proxy = paymentProxy(
           asset: EVM_PERMIT2_ASSET,
           extra: {
             assetTransferMethod: "permit2",
-            name: EVM_NETWORK == "eip155:84532" ? "USDC" : "USD Coin",
+            name: evmPermit2AssetName,
             version: "2",
           },
         },
@@ -166,31 +176,35 @@ export const proxy = paymentProxy(
         }),
       },
     },
-    "/api/exact/svm": {
-      accepts: {
-        payTo: SVM_PAYEE_ADDRESS,
-        scheme: "exact",
-        price: "$0.001",
-        network: SVM_NETWORK,
-      },
-      extensions: {
-        ...declareDiscoveryExtension({
-          output: {
-            example: {
-              message: "Protected endpoint accessed successfully",
-              timestamp: "2024-01-01T00:00:00Z",
-            },
-            schema: {
-              properties: {
-                message: { type: "string" },
-                timestamp: { type: "string" },
-              },
-              required: ["message", "timestamp"],
-            },
+    ...(SVM_PAYEE_ADDRESS
+      ? {
+        "/api/exact/svm": {
+          accepts: {
+            payTo: SVM_PAYEE_ADDRESS,
+            scheme: "exact",
+            price: "$0.001",
+            network: SVM_NETWORK,
           },
-        }),
-      },
-    },
+          extensions: {
+            ...declareDiscoveryExtension({
+              output: {
+                example: {
+                  message: "Protected endpoint accessed successfully",
+                  timestamp: "2024-01-01T00:00:00Z",
+                },
+                schema: {
+                  properties: {
+                    message: { type: "string" },
+                    timestamp: { type: "string" },
+                  },
+                  required: ["message", "timestamp"],
+                },
+              },
+            }),
+          },
+        },
+      }
+      : {}),
     ...(AVM_PAYEE_ADDRESS
       ? {
         "/api/exact/avm": {
@@ -399,7 +413,7 @@ export const proxy = paymentProxy(
           asset: EVM_PERMIT2_ASSET,
           extra: {
             assetTransferMethod: "permit2",
-            name: EVM_NETWORK == "eip155:84532" ? "USDC" : "USD Coin",
+            name: evmPermit2AssetName,
             version: "2",
           },
         },
@@ -415,7 +429,7 @@ export const proxy = paymentProxy(
           asset: EVM_PERMIT2_ASSET,
           extra: {
             assetTransferMethod: "permit2",
-            name: EVM_NETWORK == "eip155:84532" ? "USDC" : "USD Coin",
+            name: evmPermit2AssetName,
             version: "2",
           },
         },

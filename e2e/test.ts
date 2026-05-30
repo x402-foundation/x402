@@ -4,7 +4,6 @@ import { writeFileSync } from 'fs';
 import { join } from 'path';
 import { createWalletClient, createPublicClient, http, parseEther, formatEther, toHex } from 'viem';
 import { privateKeyToAccount } from 'viem/accounts';
-import { base, baseSepolia } from 'viem/chains';
 import { TestDiscovery } from './src/discovery';
 import { ClientConfig, ScenarioResult, ServerConfig, TestScenario, endpointAssetTransferMethod, endpointPaymentScheme, endpointUsesBatchSettlement } from './src/types';
 import { config as loggerConfig, log, verboseLog, errorLog, close as closeLogger, createComboLogger } from './src/logger';
@@ -13,7 +12,7 @@ import { parseArgs, printHelp } from './src/cli/args';
 import { runInteractiveMode } from './src/cli/interactive';
 import { filterScenarios, TestFilters, shouldShowExtensionOutput } from './src/cli/filters';
 import { minimizeScenarios } from './src/sampling';
-import { getNetworkSet, NetworkMode, getNetworkModeDescription, resolveEvmPermit2Asset } from './src/networks/networks';
+import { getNetworkSet, NetworkMode, getNetworkModeDescription, resolveEvmPermit2Asset, resolveViemChain } from './src/networks/networks';
 import { GenericServerProxy } from './src/servers/generic-server';
 import { Semaphore, FacilitatorLock } from './src/concurrency';
 import { FacilitatorManager } from './src/facilitators/facilitator-manager';
@@ -139,7 +138,7 @@ async function revokePermit2Approval(tokenAddress?: string): Promise<boolean> {
 function getEvmClients() {
   const evmNetwork = process.env.EVM_NETWORK || 'eip155:84532';
   const evmRpcUrl = process.env.EVM_RPC_URL;
-  const evmChain = evmNetwork === 'eip155:8453' ? base : baseSepolia;
+  const evmChain = resolveViemChain(evmNetwork);
 
   const facilitatorKey = process.env.FACILITATOR_EVM_PRIVATE_KEY;
   const clientKey = process.env.CLIENT_EVM_PRIVATE_KEY;
@@ -511,11 +510,6 @@ async function runTest() {
   const facilitatorStellarPrivateKey = process.env.FACILITATOR_STELLAR_PRIVATE_KEY;
   const facilitatorTvmPrivateKey = process.env.FACILITATOR_TVM_PRIVATE_KEY;
   const batchSettlementRecovery = envFlagDefaultTrue(process.env.BATCH_SETTLEMENT_RECOVERY);
-  if (!serverEvmAddress || !serverSvmAddress || !clientEvmPrivateKey || !clientSvmPrivateKey || !facilitatorEvmPrivateKey || !facilitatorSvmPrivateKey) {
-    errorLog('❌ Missing required environment variables:');
-    errorLog(' SERVER_EVM_ADDRESS, SERVER_SVM_ADDRESS, CLIENT_EVM_PRIVATE_KEY, CLIENT_SVM_PRIVATE_KEY, FACILITATOR_EVM_PRIVATE_KEY, and FACILITATOR_SVM_PRIVATE_KEY must be set');
-    process.exit(1);
-  }
 
   // Discover all servers, clients, and facilitators (always include legacy)
   const discovery = new TestDiscovery('.', true); // Always discover legacy
@@ -580,8 +574,8 @@ async function runTest() {
     }
   }
 
-  // Get network configuration based on selected mode
-  const networks = getNetworkSet(networkMode);
+  // Get network configuration based on selected mode, with optional CLI EVM override
+  const networks = getNetworkSet(networkMode, parsedArgs.evmNetwork);
   const evmPermit2Asset = resolveEvmPermit2Asset(networks);
 
   const permit2AssetSource = process.env.EVM_PERMIT2_ASSET?.trim()

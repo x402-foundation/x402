@@ -66,6 +66,7 @@ import dotenv from "dotenv";
 import express from "express";
 import {
   createWalletClient,
+  defineChain,
   http,
   nonceManager,
   publicActions,
@@ -74,7 +75,7 @@ import {
   recoverTransactionAddress,
 } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
-import { baseSepolia, base } from "viem/chains";
+import * as allViemChains from "viem/chains";
 import { BazaarCatalog } from "./bazaar.js";
 
 dotenv.config();
@@ -97,15 +98,29 @@ const APTOS_RPC_URL = process.env.APTOS_RPC_URL;
 const HEDERA_NODE_URL = process.env.HEDERA_NODE_URL;
 const STELLAR_RPC_URL = process.env.STELLAR_RPC_URL;
 
-// Map CAIP-2 network IDs to viem chains
+// Resolve a CAIP-2 EVM network id to a viem `Chain`.
+// Uses viem's chain database when available; falls back to a minimal
+// defineChain so any SDK chain viem hasn't packaged yet still works
+// when the caller supplies their own RPC URL.
 function getEvmChain(network: string): Chain {
-  switch (network) {
-    case "eip155:8453":
-      return base;
-    case "eip155:84532":
-    default:
-      return baseSepolia;
+  const [namespace, ref] = network.split(":");
+  if (namespace !== "eip155") {
+    throw new Error(`getEvmChain: not an EVM network: ${network}`);
   }
+  const chainId = Number(ref);
+  if (!Number.isInteger(chainId) || chainId <= 0) {
+    throw new Error(`getEvmChain: invalid EVM chain id in ${network}`);
+  }
+  const known = (Object.values(allViemChains) as Chain[]).find(
+    (c) => c && typeof c === "object" && c.id === chainId,
+  );
+  if (known) return known;
+  return defineChain({
+    id: chainId,
+    name: `EVM ${chainId}`,
+    nativeCurrency: { name: "Ether", symbol: "ETH", decimals: 18 },
+    rpcUrls: { default: { http: [] } },
+  });
 }
 
 console.log(`🌐 EVM Network: ${EVM_NETWORK}`);
@@ -124,11 +139,6 @@ if (STELLAR_RPC_URL) console.log(`🌐 Stellar RPC URL: ${STELLAR_RPC_URL}`);
 // Validate required environment variables
 if (!process.env.EVM_PRIVATE_KEY) {
   console.error("❌ EVM_PRIVATE_KEY environment variable is required");
-  process.exit(1);
-}
-
-if (!process.env.SVM_PRIVATE_KEY) {
-  console.error("❌ SVM_PRIVATE_KEY environment variable is required");
   process.exit(1);
 }
 
@@ -154,11 +164,17 @@ const authorizerSigner: AuthorizerSigner = {
 };
 console.info(`EVM Receiver Authorizer: ${authorizerSigner.address}`);
 
-// Initialize the SVM account from private key
-const svmAccount = await createKeyPairSignerFromBytes(
-  base58.decode(process.env.SVM_PRIVATE_KEY as string),
-);
-console.info(`SVM Facilitator account: ${svmAccount.address}`);
+// Initialize the SVM account from private key (optional)
+// Lazy-decoded so EVM-only runs (e.g. --families=evm) don't require an SVM key.
+let svmAccount:
+  | Awaited<ReturnType<typeof createKeyPairSignerFromBytes>>
+  | undefined;
+if (process.env.SVM_PRIVATE_KEY) {
+  svmAccount = await createKeyPairSignerFromBytes(
+    base58.decode(process.env.SVM_PRIVATE_KEY as string),
+  );
+  console.info(`SVM Facilitator account: ${svmAccount.address}`);
+}
 
 // Initialize the Aptos account from private key (format to AIP-80 compliant format) if provided
 let aptosAccount: Account | undefined;
@@ -266,11 +282,13 @@ const evmSigner = toFacilitatorEvmSigner({
 });
 
 // Facilitator can now handle all Solana networks with automatic RPC creation
-// Pass custom RPC URL if provided
-const svmSigner = toFacilitatorSvmSigner(
-  svmAccount,
-  SVM_RPC_URL ? { defaultRpcUrl: SVM_RPC_URL } : undefined,
-);
+// Pass custom RPC URL if provided. Skipped when no SVM key is configured.
+const svmSigner = svmAccount
+  ? toFacilitatorSvmSigner(
+      svmAccount,
+      SVM_RPC_URL ? { defaultRpcUrl: SVM_RPC_URL } : undefined,
+    )
+  : undefined;
 
 // Facilitator can handle all Aptos networks with automatic RPC creation
 // Pass custom RPC URL if provided
@@ -422,9 +440,12 @@ facilitator
     EVM_NETWORK as Network,
     new BatchSettlementEvmScheme(evmSigner, authorizerSigner),
   )
-  .registerV1(EVM_V1_NETWORKS as Network[], new ExactEvmSchemeV1(evmSigner))
-  .register(SVM_NETWORK as Network, new ExactSvmScheme(svmSigner))
-  .registerV1(SVM_V1_NETWORKS as Network[], new ExactSvmSchemeV1(svmSigner));
+  .registerV1(EVM_V1_NETWORKS as Network[], new ExactEvmSchemeV1(evmSigner));
+if (svmSigner) {
+  facilitator
+    .register(SVM_NETWORK as Network, new ExactSvmScheme(svmSigner))
+    .registerV1(SVM_V1_NETWORKS as Network[], new ExactSvmSchemeV1(svmSigner));
+}
 if (avmSigner) {
   facilitator.register(AVM_NETWORK as Network, new ExactAvmScheme(avmSigner));
 }
@@ -762,7 +783,7 @@ app.get("/health", (req, res) => {
   res.json({
     status: "ok",
     evmNetwork: EVM_NETWORK,
-    svmNetwork: SVM_NETWORK,
+    svmNetwork: svmSigner ? SVM_NETWORK : "(not configured)",
     avmNetwork: avmSigner ? AVM_NETWORK : "(not configured)",
     aptosNetwork: aptosAccount ? APTOS_NETWORK : "(not configured)",
     hederaNetwork: hederaSigner ? HEDERA_NETWORK : "(not configured)",

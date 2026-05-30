@@ -1,9 +1,14 @@
 /**
  * Network configuration for E2E tests
- * 
+ *
  * This is the single source of truth for all network configs.
- * Use getNetworkSet() to get configs for testnet or mainnet mode.
+ * Use getNetworkSet() to get configs for testnet or mainnet mode (Base-only shortcut).
+ * Use getEvmNetworkConfig() for any EVM chain in DEFAULT_STABLECOINS by CAIP-2 id.
  */
+
+import { DEFAULT_STABLECOINS } from '@x402/evm';
+import { type Chain, defineChain } from 'viem';
+import * as allChains from 'viem/chains';
 
 export type NetworkMode = 'testnet' | 'mainnet';
 export type ProtocolFamily = 'evm' | 'svm' | 'avm' | 'aptos' | 'hedera' | 'stellar' | 'tvm';
@@ -26,6 +31,20 @@ export type NetworkSet = {
 };
 
 /**
+ * Resolve the EVM RPC URL for a chain. Single-knob configuration:
+ *   1. `EVM_RPC_URL` override (matches the harness-wide convention used by
+ *      e2e/test.ts, e2e/facilitators/*, and e2e/clients/*).
+ *   2. viem's chain default (covers public chains shipped by viem).
+ *   3. Empty string when neither applies — preserves the prior
+ *      `process.env.X || ''` semantics so module load never throws.
+ */
+function evmRpcUrl(caip2: string): string {
+  const override = process.env.EVM_RPC_URL?.trim();
+  if (override) return override;
+  return resolveViemChain(caip2).rpcUrls.default?.http?.[0] ?? '';
+}
+
+/**
  * All supported networks, organized by mode and protocol family
  */
 const NETWORK_SETS: Record<NetworkMode, NetworkSet> = {
@@ -33,7 +52,7 @@ const NETWORK_SETS: Record<NetworkMode, NetworkSet> = {
     evm: {
       name: 'Base Sepolia',
       caip2: 'eip155:84532',
-      rpcUrl: process.env.BASE_SEPOLIA_RPC_URL || 'https://sepolia.base.org',
+      rpcUrl: evmRpcUrl('eip155:84532'),
       permit2Asset: '0x036CbD53842c5426634e7929541eC2318f3dCF7e',
     },
     svm: {
@@ -71,7 +90,7 @@ const NETWORK_SETS: Record<NetworkMode, NetworkSet> = {
     evm: {
       name: 'Base',
       caip2: 'eip155:8453',
-      rpcUrl: process.env.BASE_RPC_URL || 'https://mainnet.base.org',
+      rpcUrl: evmRpcUrl('eip155:8453'),
       permit2Asset: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913',
     },
     svm: {
@@ -108,13 +127,20 @@ const NETWORK_SETS: Record<NetworkMode, NetworkSet> = {
 };
 
 /**
- * Get the network set for a given mode
- * 
+ * Get the network set for a given mode, optionally overriding the EVM slot.
+ *
  * @param mode - 'testnet' or 'mainnet'
+ * @param evmCaip2 - Optional CAIP-2 EVM identifier; when provided the `evm`
+ *   slot is overlaid from {@link EVM_NETWORK_CONFIGS} so the harness can
+ *   target chains beyond the mode's default (e.g. Mezo Testnet on a `--testnet` run).
  * @returns NetworkSet containing configured protocol network configs
  */
-export function getNetworkSet(mode: NetworkMode): NetworkSet {
-  return NETWORK_SETS[mode];
+export function getNetworkSet(mode: NetworkMode, evmCaip2?: string): NetworkSet {
+  const base = NETWORK_SETS[mode];
+  if (!evmCaip2 || evmCaip2 === base.evm.caip2) {
+    return base;
+  }
+  return { ...base, evm: getEvmNetworkConfig(evmCaip2) };
 }
 
 /**
@@ -150,7 +176,7 @@ export function getNetworkForProtocol(
 
 /**
  * Get display string for a network mode
- * 
+ *
  * @param mode - 'testnet' or 'mainnet'
  * @returns Human-readable description of the networks
  */
@@ -158,4 +184,77 @@ export function getNetworkModeDescription(mode: NetworkMode): string {
   const set = NETWORK_SETS[mode];
   const networks = [set.evm.name, set.svm.name, set.avm.name, set.aptos.name, set.hedera.name, set.stellar.name, set.tvm.name];
   return networks.join(' + ');
+}
+
+/**
+ * Per-chain EVM network configurations indexed by CAIP-2 identifier.
+ * Derived at module load from {@link DEFAULT_STABLECOINS} (the SDK's
+ * canonical chain catalog) so adding a chain there propagates here
+ * automatically — no parallel hand-curated table to keep in sync.
+ *
+ * Display name comes from viem's chain database, falling back to
+ * `EVM ${chainId}` for chains viem hasn't shipped.
+ *
+ * RPC URLs resolve via {@link evmRpcUrl}: `EVM_RPC_URL` overrides everything,
+ * otherwise viem's chain default is used (empty string when viem ships no
+ * default).
+ * `permit2Asset` is the chain's default stablecoin (also the Permit2 target for
+ * tests that exercise the permit2 / EIP-2612 path).
+ */
+export const EVM_NETWORK_CONFIGS: Record<string, NetworkConfig> = Object.fromEntries(
+  Object.keys(DEFAULT_STABLECOINS).map(caip2 => [
+    caip2,
+    {
+      name: resolveViemChain(caip2).name,
+      caip2: caip2 as `${string}:${string}`,
+      rpcUrl: evmRpcUrl(caip2),
+      permit2Asset: DEFAULT_STABLECOINS[caip2].address,
+    },
+  ]),
+);
+
+/**
+ * Get NetworkConfig for an EVM chain by CAIP-2 identifier.
+ *
+ * @param caip2 - CAIP-2 EVM identifier (e.g. "eip155:84532")
+ * @returns NetworkConfig for the chain
+ * @throws If the network is not in the configured list
+ */
+export function getEvmNetworkConfig(caip2: string): NetworkConfig {
+  const config = EVM_NETWORK_CONFIGS[caip2];
+  if (!config) {
+    throw new Error(
+      `No EVM network config for ${caip2}. Supported: ${Object.keys(EVM_NETWORK_CONFIGS).join(', ')}`,
+    );
+  }
+  return config;
+}
+
+/**
+ * Map a CAIP-2 EVM identifier to a viem `Chain`.
+ *
+ * Looks up viem's chain database; falls back to a minimal `defineChain` so
+ * that EVM networks viem hasn't yet packaged still work for callers supplying
+ * their own `EVM_RPC_URL`.
+ *
+ * @param caip2 - CAIP-2 EVM identifier (e.g. "eip155:84532")
+ * @returns viem Chain object suitable for createPublicClient/createWalletClient
+ */
+export function resolveViemChain(caip2: string): Chain {
+  const [namespace, ref] = caip2.split(':');
+  if (namespace !== 'eip155') {
+    throw new Error(`resolveViemChain: not an EVM network: ${caip2}`);
+  }
+  const chainId = Number(ref);
+  if (!Number.isInteger(chainId) || chainId <= 0) {
+    throw new Error(`resolveViemChain: invalid EVM chain id in ${caip2}`);
+  }
+  const known = (Object.values(allChains) as Chain[]).find(c => c.id === chainId);
+  if (known) return known;
+  return defineChain({
+    id: chainId,
+    name: `EVM ${chainId}`,
+    nativeCurrency: { name: 'Ether', symbol: 'ETH', decimals: 18 },
+    rpcUrls: { default: { http: [] } },
+  });
 }

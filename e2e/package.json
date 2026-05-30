@@ -17,6 +17,7 @@
     "permit2:revoke": "tsx scripts/permit2-approval.ts revoke"
   },
   "dependencies": {
+    "@x402/evm": "workspace:*",
     "dotenv": "^17.0.1",
     "prompts": "^2.4.2",
     "tsx": "^4.21.0",
