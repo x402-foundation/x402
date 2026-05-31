@@ -1,0 +1,7 @@
+{
+  "name": "AIP - Agent Internet Protocol",
+  "description": "Identity and payment layer for autonomous agents on Solana. Agents get a W3C did:aip identity and settle payment-gated tasks over x402.",
+  "logoUrl": "/logos/aip.png",
+  "websiteUrl": "https://aipagents.xyz",
+  "category": "Infrastructure & Tooling"
+}
