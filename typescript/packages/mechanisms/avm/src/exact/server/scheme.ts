@@ -12,7 +12,7 @@ import type {
   SchemeNetworkServer,
   MoneyParser,
 } from "@x402/core/types";
-import { convertToTokenAmount, numberToDecimalString } from "@x402/core/utils";
+import { convertToTokenAmount, numberToDecimalString, parseMoneyString } from "@x402/core/utils";
 import { USDC_CONFIG, USDC_DECIMALS } from "../../constants";
 
 /**
@@ -149,15 +149,7 @@ export class ExactAvmScheme implements SchemeNetworkServer {
       return money;
     }
 
-    // Remove $ sign and whitespace, then parse
-    const cleanMoney = money.replace(/^\$/, "").trim();
-    const amount = parseFloat(cleanMoney);
-
-    if (isNaN(amount)) {
-      throw new Error(`Invalid money format: ${money}`);
-    }
-
-    return amount;
+    return parseMoneyString(money);
   }
 
   /**

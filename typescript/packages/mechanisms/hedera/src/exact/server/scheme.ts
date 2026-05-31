@@ -7,7 +7,7 @@ import type {
   Price,
   SchemeNetworkServer,
 } from "@x402/core/types";
-import { convertToTokenAmount } from "@x402/core/utils";
+import { convertToTokenAmount, parseMoneyString } from "@x402/core/utils";
 import { assertSupportedHederaNetwork, isValidHederaAsset } from "../../utils";
 import {
   HEDERA_MAINNET_CAIP2,
@@ -130,12 +130,8 @@ export class ExactHederaScheme implements SchemeNetworkServer {
     if (typeof money === "number") {
       return money;
     }
-    const cleanMoney = money.replace(/^\$/, "").trim();
-    const amount = parseFloat(cleanMoney);
-    if (isNaN(amount)) {
-      throw new Error(`Invalid money format: ${money}`);
-    }
-    return amount;
+
+    return parseMoneyString(money);
   }
 
   /**

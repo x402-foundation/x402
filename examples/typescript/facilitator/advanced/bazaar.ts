@@ -19,7 +19,10 @@ import { ExactEvmScheme } from "@x402/evm/exact/facilitator";
 import { UptoEvmScheme } from "@x402/evm/upto/facilitator";
 import { toFacilitatorSvmSigner } from "@x402/svm";
 import { ExactSvmScheme } from "@x402/svm/exact/facilitator";
-import { extractDiscoveryInfo, type DiscoveryResource } from "@x402/extensions/bazaar";
+import {
+  extractDiscoveryInfo,
+  type DiscoveryResource,
+} from "@x402/extensions/bazaar";
 import dotenv from "dotenv";
 import express from "express";
 import { createWalletClient, http, publicActions } from "viem";

@@ -7,6 +7,7 @@ import type {
   Price,
   SchemeNetworkServer,
 } from "@x402/core/types";
+import { parseMoneyString } from "@x402/core/utils";
 import { APTOS_ADDRESS_REGEX, USDC_MAINNET_FA, USDC_TESTNET_FA } from "../../constants";
 
 /**
@@ -99,12 +100,8 @@ export class ExactAptosScheme implements SchemeNetworkServer {
     if (typeof money === "number") {
       return money;
     }
-    const cleanMoney = money.replace(/^\$/, "").trim();
-    const amount = parseFloat(cleanMoney);
-    if (isNaN(amount)) {
-      throw new Error(`Invalid money format: ${money}`);
-    }
-    return amount;
+
+    return parseMoneyString(money);
   }
 
   /**

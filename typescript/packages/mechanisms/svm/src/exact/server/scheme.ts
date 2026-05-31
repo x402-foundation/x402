@@ -6,6 +6,7 @@ import type {
   SchemeNetworkServer,
   MoneyParser,
 } from "@x402/core/types";
+import { parseMoneyString } from "@x402/core/utils";
 import { convertToTokenAmount, getUsdcAddress, numberToDecimalString } from "../../utils";
 
 /**
@@ -116,15 +117,7 @@ export class ExactSvmScheme implements SchemeNetworkServer {
       return money;
     }
 
-    // Remove $ sign and whitespace, then parse
-    const cleanMoney = money.replace(/^\$/, "").trim();
-    const amount = parseFloat(cleanMoney);
-
-    if (isNaN(amount)) {
-      throw new Error(`Invalid money format: ${money}`);
-    }
-
-    return amount;
+    return parseMoneyString(money.replace(/\s+(?:USD|USDC)$/i, ""));
   }
 
   /**

@@ -33,6 +33,26 @@ export function numberToDecimalString(n: number): string {
 }
 
 /**
+ * Parses a money string into a finite, non-negative decimal number.
+ * Accepts plain decimal strings with an optional leading dollar sign.
+ *
+ * @param money - The money string to parse
+ * @returns Decimal number
+ */
+export function parseMoneyString(money: string): number {
+  const cleaned = money.replace(/^\$/, "").trim();
+  if (!/^-?\d+(?:\.\d+)?$/.test(cleaned) || /[eE]/.test(cleaned)) {
+    throw new Error(`Invalid money format: ${money}`);
+  }
+
+  const amount = Number(cleaned);
+  if (!Number.isFinite(amount) || amount < 0) {
+    throw new Error(`Invalid money format: ${money}`);
+  }
+  return amount;
+}
+
+/**
  * Convert a decimal amount to token smallest units.
  * Accepts only plain decimal strings — scientific notation is not allowed.
  * Throws if the amount is non-zero but too small to represent with the given decimal precision.
