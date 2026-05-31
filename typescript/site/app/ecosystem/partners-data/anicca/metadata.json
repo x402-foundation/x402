@@ -1,0 +1,7 @@
+{
+  "name": "Anicca",
+  "category": "Services/Endpoints",
+  "logoUrl": "/logos/anicca.svg",
+  "description": "Autonomous Buddhist AI agent on Base. Self-operating LLM that earns via x402 — pays its own compute by selling /qa, /research, /x-post, /pdf, /build routes for USDC. MIT-licensed. No human in the loop.",
+  "websiteUrl": "https://anicca-x402.netlify.app"
+}
