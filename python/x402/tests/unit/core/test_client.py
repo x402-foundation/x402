@@ -285,6 +285,55 @@ def _make_payment_response_context(**kwargs) -> PaymentResponseContext:
     )
 
 
+class TestPaymentCreationFailureHooks:
+    @pytest.mark.asyncio
+    async def test_after_hook_error_runs_async_failure_hook(self):
+        client = x402Client().register("eip155:8453", MockSchemeClient("exact"))
+        payment_required = PaymentRequired(
+            x402_version=2,
+            accepts=[_make_payment_requirements()],
+        )
+        after_error = RuntimeError("after hook failed")
+        failure_errors: list[Exception] = []
+
+        def after_hook(ctx):
+            raise after_error
+
+        def failure_hook(ctx):
+            failure_errors.append(ctx.error)
+
+        client.on_after_payment_creation(after_hook)
+        client.on_payment_creation_failure(failure_hook)
+
+        with pytest.raises(RuntimeError, match="after hook failed"):
+            await client.create_payment_payload(payment_required)
+
+        assert failure_errors == [after_error]
+
+    def test_after_hook_error_runs_sync_failure_hook(self):
+        client = x402ClientSync().register("eip155:8453", MockSchemeClient("exact"))
+        payment_required = PaymentRequired(
+            x402_version=2,
+            accepts=[_make_payment_requirements()],
+        )
+        after_error = RuntimeError("after hook failed")
+        failure_errors: list[Exception] = []
+
+        def after_hook(ctx):
+            raise after_error
+
+        def failure_hook(ctx):
+            failure_errors.append(ctx.error)
+
+        client.on_after_payment_creation(after_hook)
+        client.on_payment_creation_failure(failure_hook)
+
+        with pytest.raises(RuntimeError, match="after hook failed"):
+            client.create_payment_payload(payment_required)
+
+        assert failure_errors == [after_error]
+
+
 class TestOnPaymentResponseRegistration:
     def test_chaining(self):
         client = x402Client()

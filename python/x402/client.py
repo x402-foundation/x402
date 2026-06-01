@@ -7,13 +7,15 @@ Async is the default with full async hook support.
 from __future__ import annotations
 
 import asyncio
-from typing import Any
+from collections.abc import Generator
+from typing import Any, TypeVar
 
 from typing_extensions import Self
 
 from .client_base import (
     AfterPaymentCreationHook,
     BeforePaymentCreationHook,
+    HookCommand,
     OnPaymentCreationFailureHook,
     OnPaymentResponseHook,
     PaymentRequirementsSelector,
@@ -41,6 +43,8 @@ from .schemas import (
     RecoveredResponseResult,
     ResourceInfo,
 )
+
+PaymentPayloadT = TypeVar("PaymentPayloadT", PaymentPayload, PaymentPayloadV1)
 
 __all__ = [
     "x402Client",
@@ -200,16 +204,11 @@ class x402Client(x402ClientBase):
     ) -> PaymentPayload:
         """Create V2 payment payload using generator."""
         gen = self._create_payment_payload_v2_core(payment_required, resource, extensions)
-        result = None
-        try:
-            while True:
-                _, hook, ctx = gen.send(result)
-                result = await self._execute_hook(hook, ctx)
-        except StopIteration as e:
-            return await self._enrich_payment_payload_with_extensions_async(
-                e.value,
-                payment_required,
-            )
+        payload = await self._run_payment_creation_generator(gen)
+        return await self._enrich_payment_payload_with_extensions_async(
+            payload,
+            payment_required,
+        )
 
     async def _create_payment_payload_v1(
         self,
@@ -217,13 +216,28 @@ class x402Client(x402ClientBase):
     ) -> PaymentPayloadV1:
         """Create V1 payment payload using generator."""
         gen = self._create_payment_payload_v1_core(payment_required)
+        return await self._run_payment_creation_generator(gen)
+
+    async def _run_payment_creation_generator(
+        self,
+        gen: Generator[HookCommand, Any, PaymentPayloadT],
+    ) -> PaymentPayloadT:
+        """Drive payment creation hooks, routing hook errors back through the generator."""
         result = None
         try:
+            command = gen.send(result)
             while True:
-                _, hook, ctx = gen.send(result)
-                result = await self._execute_hook(hook, ctx)
+                _, hook, ctx = command
+                try:
+                    result = await self._execute_hook(hook, ctx)
+                except Exception as hook_error:
+                    result = None
+                    command = gen.throw(hook_error)
+                else:
+                    command = gen.send(result)
         except StopIteration as e:
-            return e.value
+            value: PaymentPayloadT = e.value
+            return value
 
     async def _execute_hook(self, hook: Any, context: Any) -> Any:
         """Execute hook, auto-detecting sync/async."""
@@ -376,13 +390,8 @@ class x402ClientSync(x402ClientBase):
     ) -> PaymentPayload:
         """Create V2 payment payload using generator."""
         gen = self._create_payment_payload_v2_core(payment_required, resource, extensions)
-        result = None
-        try:
-            while True:
-                _, hook, ctx = gen.send(result)
-                result = self._execute_hook_sync(hook, ctx)
-        except StopIteration as e:
-            return self._enrich_payment_payload_with_extensions(e.value, payment_required)
+        payload = self._run_payment_creation_generator(gen)
+        return self._enrich_payment_payload_with_extensions(payload, payment_required)
 
     def _create_payment_payload_v1(
         self,
@@ -390,13 +399,28 @@ class x402ClientSync(x402ClientBase):
     ) -> PaymentPayloadV1:
         """Create V1 payment payload using generator."""
         gen = self._create_payment_payload_v1_core(payment_required)
+        return self._run_payment_creation_generator(gen)
+
+    def _run_payment_creation_generator(
+        self,
+        gen: Generator[HookCommand, Any, PaymentPayloadT],
+    ) -> PaymentPayloadT:
+        """Drive payment creation hooks, routing hook errors back through the generator."""
         result = None
         try:
+            command = gen.send(result)
             while True:
-                _, hook, ctx = gen.send(result)
-                result = self._execute_hook_sync(hook, ctx)
+                _, hook, ctx = command
+                try:
+                    result = self._execute_hook_sync(hook, ctx)
+                except Exception as hook_error:
+                    result = None
+                    command = gen.throw(hook_error)
+                else:
+                    command = gen.send(result)
         except StopIteration as e:
-            return e.value
+            value: PaymentPayloadT = e.value
+            return value
 
     def _execute_hook_sync(self, hook: Any, context: Any) -> Any:
         """Execute hook synchronously. Raises if async hook detected."""
