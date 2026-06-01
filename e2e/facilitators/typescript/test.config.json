@@ -8,7 +8,8 @@
     "avm",
     "aptos",
     "hedera",
-    "stellar"
+    "stellar",
+    "tvm"
   ],
   "x402Versions": [
     1,
@@ -42,6 +43,7 @@
       "HEDERA_ACCOUNT_ID",
       "HEDERA_PRIVATE_KEY",
       "STELLAR_PRIVATE_KEY",
+      "TVM_PRIVATE_KEY",
       "EVM_NETWORK",
       "SVM_NETWORK",
       "AVM_NETWORK",
@@ -49,6 +51,12 @@
       "HEDERA_NETWORK",
       "HEDERA_NODE_URL",
       "STELLAR_NETWORK",
+      "TVM_NETWORK",
+      "TVM_PROVIDER",
+      "TONCENTER_API_KEY",
+      "TONCENTER_BASE_URL",
+      "TONAPI_API_KEY",
+      "TONAPI_BASE_URL",
       "EVM_RECEIVER_AUTHORIZER_PRIVATE_KEY"
     ]
   }

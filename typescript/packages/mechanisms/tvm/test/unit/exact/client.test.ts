@@ -1,161 +1,230 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest'
-import { ExactTvmScheme } from '../../../src/exact/client/scheme'
-import type { ClientTvmSigner } from '../../../src/signer'
-import { PaymentRequirements } from '@x402/core/types'
-import { USDT_MASTER, TVM_MAINNET } from '../../../src/constants'
+import { describe, it, expect, beforeEach, vi } from "vitest";
+import { beginCell, Cell } from "@ton/core";
+import type { PaymentRequirements } from "@x402/core/types";
+import { ExactTvmScheme } from "../../../src/exact/client/scheme";
+import type { ClientTvmSigner } from "../../../src/signer";
+import {
+  DEFAULT_TVM_INNER_GAS_BUFFER,
+  TVM_MAINNET,
+  TVM_PROVIDER_TONAPI,
+  USDT_MASTER,
+  W5R1_CODE_HEX,
+} from "../../../src/constants";
 
-// Mock @ton/ton TonClient
-const mockGetSeqno = vi.fn().mockResolvedValue(5)
-const mockGetWalletAddress = vi.fn()
-const mockGetContractState = vi.fn().mockResolvedValue({ state: 'active' })
+const SOURCE_JETTON_WALLET = "0:aabbccdd1234567890abcdef1234567890abcdef1234567890abcdef12345678";
 
-vi.mock('@ton/ton', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('@ton/ton')>()
+const { mockCreateTvmProviderClient, mockProvider } = vi.hoisted(() => {
+  const provider = {
+    getAccountState: vi.fn(),
+    close: vi.fn(),
+    getJettonWallet: vi.fn(),
+    getJettonWalletData: vi.fn(),
+    sendMessage: vi.fn(),
+    emulateTrace: vi.fn(),
+    getTraceByMessageHash: vi.fn(),
+    runGetMethod: vi.fn(),
+  };
   return {
-    ...actual,
-    TonClient: vi.fn().mockImplementation(() => ({
-      getContractState: mockGetContractState,
-      open: vi.fn().mockImplementation((contract: unknown) => {
-        // Check if it's a WalletContractV5R1 (has getSeqno)
-        if (
-          contract &&
-          typeof contract === 'object' &&
-          'address' in contract &&
-          'init' in contract
-        ) {
-          return { getSeqno: mockGetSeqno }
-        }
-        // Otherwise it's a JettonMaster
-        return { getWalletAddress: mockGetWalletAddress }
-      }),
-    })),
-  }
-})
+    mockProvider: provider,
+    mockCreateTvmProviderClient: vi.fn(() => provider),
+  };
+});
 
-describe('ExactTvmScheme (Client)', () => {
-  let client: ExactTvmScheme
-  let mockSigner: ClientTvmSigner
+vi.mock("../../../src/provider", () => ({
+  createTvmProviderClient: mockCreateTvmProviderClient,
+}));
+
+describe("ExactTvmScheme (Client)", () => {
+  let client: ExactTvmScheme;
+  let mockSigner: ClientTvmSigner;
 
   const mockRequirements: PaymentRequirements = {
-    scheme: 'exact',
+    scheme: "exact",
     network: TVM_MAINNET,
-    amount: '10000',
+    amount: "10000",
     asset: USDT_MASTER,
-    payTo: '0:abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890',
+    payTo: "0:abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890",
     maxTimeoutSeconds: 300,
     extra: { areFeesSponsored: true },
-  }
+  };
 
-  beforeEach(async () => {
-    vi.clearAllMocks()
-
-    const { Address } = await import('@ton/core')
-    mockGetWalletAddress.mockResolvedValue(
-      Address.parseRaw('0:aabbccdd1234567890abcdef1234567890abcdef1234567890abcdef12345678'),
-    )
+  beforeEach(() => {
+    vi.clearAllMocks();
 
     mockSigner = {
-      address: '0:1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef',
+      address: "0:1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef",
       network: TVM_MAINNET,
-      publicKey: 'abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890',
-      signTransfer: vi.fn().mockResolvedValue('te6cckEBAgEA...base64boc'),
-    }
-    client = new ExactTvmScheme(mockSigner)
-  })
+      walletId: 1,
+      stateInit: { code: beginCell().endCell(), data: beginCell().endCell() },
+      publicKey: "abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890",
+      signMessage: vi.fn().mockReturnValue(Buffer.alloc(64)),
+      signTransfer: vi.fn().mockResolvedValue("te6cckEBAgEA...base64boc"),
+    };
+    mockProvider.getJettonWallet.mockResolvedValue(SOURCE_JETTON_WALLET);
+    mockProvider.getAccountState.mockResolvedValue(activeW5Account(mockSigner, 5));
+    mockProvider.emulateTrace.mockResolvedValue(
+      emulationTrace(mockSigner.address, SOURCE_JETTON_WALLET),
+    );
+    client = new ExactTvmScheme(mockSigner);
+  });
 
-  describe('Construction', () => {
-    it('should create instance with signer', () => {
-      expect(client).toBeDefined()
-      expect(client.scheme).toBe('exact')
-    })
+  describe("Construction", () => {
+    it("should create instance with signer", () => {
+      expect(client).toBeDefined();
+      expect(client.scheme).toBe("exact");
+    });
 
-    it('should accept custom RPC config', () => {
+    it("should accept provider config", async () => {
       const customClient = new ExactTvmScheme(mockSigner, {
-        rpcUrl: 'https://custom-rpc.example.com',
-        apiKey: 'test-key',
-      })
-      expect(customClient).toBeDefined()
-    })
-  })
+        provider: TVM_PROVIDER_TONAPI,
+        providerBaseUrl: "https://tonapi.example.com",
+        apiKey: "test-key",
+        providerTimeoutSeconds: 7,
+      });
 
-  describe('createPaymentPayload', () => {
-    it('should resolve jetton wallet via RPC', async () => {
-      await client.createPaymentPayload(2, mockRequirements)
-      expect(mockGetWalletAddress).toHaveBeenCalled()
-    })
+      await customClient.createPaymentPayload(2, mockRequirements);
 
-    it('should get wallet seqno via RPC', async () => {
-      await client.createPaymentPayload(2, mockRequirements)
-      expect(mockGetSeqno).toHaveBeenCalled()
-    })
+      expect(mockCreateTvmProviderClient).toHaveBeenCalledWith(
+        TVM_MAINNET,
+        expect.objectContaining({
+          provider: TVM_PROVIDER_TONAPI,
+          baseUrl: "https://tonapi.example.com",
+          apiKey: "test-key",
+          timeout: 7,
+        }),
+      );
+    });
+  });
 
-    it('should sign transfer with seqno from RPC', async () => {
-      await client.createPaymentPayload(2, mockRequirements)
-      expect(mockSigner.signTransfer).toHaveBeenCalled()
-      const signCall = (mockSigner.signTransfer as ReturnType<typeof vi.fn>).mock.calls[0]
-      expect(signCall[0]).toBe(5) // seqno from mock
-    })
+  describe("createPaymentPayload", () => {
+    it("should resolve jetton wallet through the provider", async () => {
+      await client.createPaymentPayload(2, mockRequirements);
+      expect(mockProvider.getJettonWallet).toHaveBeenCalledWith(
+        mockRequirements.asset,
+        mockSigner.address,
+      );
+    });
 
-    it('should include only the minimal TVM payload fields', async () => {
-      const result = await client.createPaymentPayload(2, mockRequirements)
+    it("should get wallet seqno from provider account state", async () => {
+      await client.createPaymentPayload(2, mockRequirements);
+      const signCall = (mockSigner.signTransfer as ReturnType<typeof vi.fn>).mock.calls[0];
+      expect(signCall[0]).toBe(5);
+    });
+
+    it("should estimate the required inner TON amount by emulating the relay", async () => {
+      await client.createPaymentPayload(2, mockRequirements);
+      expect(mockProvider.emulateTrace).toHaveBeenCalledWith(
+        expect.any(Buffer),
+        expect.objectContaining({ ignoreChksig: true, timeout: 10 }),
+      );
+      const signCall = (mockSigner.signTransfer as ReturnType<typeof vi.fn>).mock.calls[0];
+      const messages = signCall[2];
+      expect(messages[0].amount).toBe(DEFAULT_TVM_INNER_GAS_BUFFER + 6400n);
+    });
+
+    it("should include only the minimal TVM payload fields", async () => {
+      const result = await client.createPaymentPayload(2, mockRequirements);
       expect(result.payload).toEqual({
-        settlementBoc: 'te6cckEBAgEA...base64boc',
+        settlementBoc: "te6cckEBAgEA...base64boc",
         asset: mockRequirements.asset,
-      })
-    })
+      });
+    });
 
-    it('should include settlement BOC in payload', async () => {
-      const result = await client.createPaymentPayload(2, mockRequirements)
-      expect(result.payload.settlementBoc).toBe('te6cckEBAgEA...base64boc')
-    })
+    it("should set x402Version from argument", async () => {
+      const result = await client.createPaymentPayload(2, mockRequirements);
+      expect(result.x402Version).toBe(2);
+    });
 
-    it('should not include nonce in payload', async () => {
-      const result = await client.createPaymentPayload(2, mockRequirements)
-      expect(result.payload.nonce).toBeUndefined()
-    })
+    it("should pass exactly 1 message to signTransfer", async () => {
+      await client.createPaymentPayload(2, mockRequirements);
+      const signCall = (mockSigner.signTransfer as ReturnType<typeof vi.fn>).mock.calls[0];
+      expect(signCall[2]).toHaveLength(1);
+    });
 
-    it('should set x402Version from argument', async () => {
-      const result = await client.createPaymentPayload(2, mockRequirements)
-      expect(result.x402Version).toBe(2)
-    })
-
-    it('should pass exactly 1 message to signTransfer', async () => {
-      await client.createPaymentPayload(2, mockRequirements)
-      const signCall = (mockSigner.signTransfer as ReturnType<typeof vi.fn>).mock.calls[0]
-      const messages = signCall[2]
-      expect(messages).toHaveLength(1)
-    })
-
-    it('should reject unsupported networks', async () => {
+    it("should reject unsupported networks", async () => {
       await expect(
         client.createPaymentPayload(2, {
           ...mockRequirements,
-          network: 'tvm:999' as `${string}:${string}`,
+          network: "tvm:999" as `${string}:${string}`,
         }),
-      ).rejects.toThrow('Unsupported TVM network')
-    })
+      ).rejects.toThrow("Unsupported TVM network");
+    });
 
-    it('should reject signer network mismatches', async () => {
+    it("should reject signer network mismatches", async () => {
       await expect(
-        client.createPaymentPayload(2, { ...mockRequirements, network: 'tvm:-3' }),
-      ).rejects.toThrow('Signer network')
-    })
+        client.createPaymentPayload(2, { ...mockRequirements, network: "tvm:-3" }),
+      ).rejects.toThrow("Signer network");
+    });
 
-    it('should require sponsored fees', async () => {
+    it("should require sponsored fees", async () => {
       await expect(
         client.createPaymentPayload(2, { ...mockRequirements, extra: {} }),
-      ).rejects.toThrow('areFeesSponsored')
-    })
+      ).rejects.toThrow("areFeesSponsored");
+    });
 
-    it('should build jetton transfer body with correct opcode', async () => {
-      await client.createPaymentPayload(2, mockRequirements)
-      const signCall = (mockSigner.signTransfer as ReturnType<typeof vi.fn>).mock.calls[0]
-      const messages = signCall[2]
-      // The body should be a Cell with jetton_transfer opcode
-      expect(messages[0].body).toBeDefined()
-      const slice = messages[0].body.beginParse()
-      const opcode = slice.loadUint(32)
-      expect(opcode).toBe(0x0f8a7ea5)
-    })
-  })
-})
+    it("should reject relay emulation traces without a jetton transfer", async () => {
+      mockProvider.emulateTrace.mockResolvedValue({ transactions: {} });
+
+      await expect(client.createPaymentPayload(2, mockRequirements)).rejects.toThrow(
+        "expected source jetton wallet transaction",
+      );
+    });
+  });
+});
+
+function activeW5Account(signer: ClientTvmSigner, seqno: number) {
+  return {
+    address: signer.address,
+    balance: 0n,
+    isActive: true,
+    isUninitialized: false,
+    isFrozen: false,
+    stateInit: {
+      code: Cell.fromBoc(Buffer.from(W5R1_CODE_HEX, "hex"))[0],
+      data: beginCell()
+        .storeUint(1, 1)
+        .storeUint(seqno, 32)
+        .storeUint(signer.walletId, 32)
+        .storeBuffer(Buffer.from(signer.publicKey, "hex"), 32)
+        .storeBit(false)
+        .endCell(),
+    },
+  };
+}
+
+function emulationTrace(payer: string, sourceWallet: string): Record<string, unknown> {
+  return {
+    transactions: {
+      sourceWallet: {
+        account: sourceWallet,
+        hash: "a".repeat(64),
+        description: successDescription("2000", "400"),
+        in_msg: {
+          decoded_opcode: "jetton_transfer",
+          source: payer,
+        },
+        out_msgs: [{ fwd_fee: "1000" }],
+      },
+      receiverWallet: {
+        account: "0:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        hash: "b".repeat(64),
+        description: successDescription("3000", "0"),
+        in_msg: {
+          decoded_opcode: "jetton_internal_transfer",
+          source: sourceWallet,
+        },
+        out_msgs: [],
+      },
+    },
+    is_incomplete: false,
+  };
+}
+
+function successDescription(gasFees: string, storageFees: string) {
+  return {
+    aborted: false,
+    compute_ph: { skipped: false, success: true, gas_fees: gasFees },
+    action: { success: true, total_fwd_fees: "0" },
+    storage_ph: { storage_fees_collected: storageFees, storage_fees_due: "0" },
+  };
+}

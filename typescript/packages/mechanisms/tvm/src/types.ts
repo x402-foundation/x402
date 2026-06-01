@@ -1,13 +1,64 @@
-/**
- * TVM payment payload — the scheme-specific data inside PaymentPayload.payload.
- *
- * Minimal: only settlementBoc (internal message BoC) and asset (token master).
- * All other fields (from, to, amount, publicKey) are derived from the BoC
- * by the facilitator, per TON Core team review.
- */
-export interface TvmPaymentPayload {
-  /** Internal message BoC (base64) containing signed W5 body + optional stateInit */
+import type { Cell, StateInit } from "@ton/core";
+
+export interface ExactTvmPayload {
   settlementBoc: string;
-  /** Jetton master contract address (raw format: 0:hex) */
   asset: string;
+}
+
+export type TvmPaymentPayload = ExactTvmPayload;
+
+export interface ParsedJettonTransfer {
+  sourceWallet: string;
+  destination: string;
+  responseDestination: string | null;
+  jettonAmount: bigint;
+  attachedTonAmount: bigint;
+  forwardTonAmount: bigint;
+  forwardPayload: Cell;
+  bodyHash: Buffer;
+}
+
+export interface ParsedTvmSettlement {
+  payer: string;
+  walletId: number;
+  validUntil: number;
+  seqno: number;
+  settlementHash: string;
+  body: Cell;
+  signedSliceHash: Buffer;
+  signature: Buffer;
+  stateInit: StateInit | null;
+  transfer: ParsedJettonTransfer;
+}
+
+export interface TvmAccountState {
+  address: string;
+  balance: bigint;
+  isActive: boolean;
+  isUninitialized: boolean;
+  isFrozen: boolean;
+  stateInit: StateInit | null;
+}
+
+export interface TvmJettonWalletData {
+  address: string;
+  balance: bigint;
+  owner: string;
+  jettonMinter: string;
+}
+
+export interface TvmRelayRequest {
+  destination: string;
+  body: Cell;
+  stateInit: StateInit | null;
+  forwardTonAmount?: bigint;
+  relayAmount?: bigint;
+}
+
+export interface W5InitData {
+  signatureAllowed: boolean;
+  seqno: number;
+  walletId: number;
+  publicKey: Buffer;
+  extensionsDict: Cell | null;
 }

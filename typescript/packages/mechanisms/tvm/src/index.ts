@@ -2,18 +2,41 @@
  * @module @x402/tvm - x402 Payment Protocol TVM (TON) Implementation
  *
  * This module provides the TVM-specific implementation of the x402 payment protocol,
- * using self-relay USDT transfers on TON via facilitator service.
+ * using W5R1 signed Jetton transfers relayed by a native facilitator.
  */
 
 // Exact scheme client
-export { ExactTvmScheme } from './exact'
+export { ExactTvmScheme } from "./exact";
 
 // Signers
-export { toClientTvmSigner } from './signer'
-export type { ClientTvmSigner, ClientTvmSignerOptions } from './signer'
+export {
+  FacilitatorHighloadV3Signer,
+  HighloadV3Config,
+  toClientTvmSigner,
+  toFacilitatorTvmSigner,
+} from "./signer";
+export type {
+  ClientTvmSigner,
+  ClientTvmSignerOptions,
+  FacilitatorTvmSigner,
+  HighloadV3ConfigOptions,
+} from "./signer";
 
 // Types
-export type { TvmPaymentPayload } from './types'
+export type {
+  ExactTvmPayload,
+  ParsedJettonTransfer,
+  ParsedTvmSettlement,
+  TvmAccountState,
+  TvmJettonWalletData,
+  TvmPaymentPayload,
+  TvmRelayRequest,
+  W5InitData,
+} from "./types";
+
+export { SettlementCache } from "./settlement-cache";
+export { createTvmProviderClient, TonapiRestClient, ToncenterRestClient } from "./provider";
+export type { TvmProviderClient, TvmProviderName } from "./provider";
 
 // Constants
 export {
@@ -29,7 +52,9 @@ export {
   INTERNAL_SIGNED_OP,
   EXTERNAL_SIGNED_OP,
   SEND_MSG_OP,
-} from './constants'
+  TVM_PROVIDER_TONAPI,
+  TVM_PROVIDER_TONCENTER,
+} from "./constants";
 
 // Utils
-export { getDefaultAsset, normalizeTonAddress, priceToNano } from './utils'
+export { getDefaultAsset, normalizeTonAddress, priceToNano } from "./utils";

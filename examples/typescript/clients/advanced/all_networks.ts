@@ -20,7 +20,7 @@ import { ExactTvmScheme } from "@x402/tvm/exact/client";
 import { createEd25519Signer } from "@x402/stellar";
 import { ExactHederaScheme } from "@x402/hedera/exact/client";
 import { createClientHederaSigner, PrivateKey } from "@x402/hedera";
-import { toClientTvmSigner } from "@x402/tvm";
+import { toClientTvmSigner, TVM_PROVIDER_TONAPI, TVM_PROVIDER_TONCENTER } from "@x402/tvm";
 import { mnemonicToPrivateKey } from "@ton/crypto";
 import { base58 } from "@scure/base";
 import { createKeyPairSignerFromBytes } from "@solana/kit";
@@ -38,6 +38,8 @@ const hederaAccountId = process.env.HEDERA_ACCOUNT_ID;
 const hederaPrivateKey = process.env.HEDERA_PRIVATE_KEY;
 const hederaNetwork = process.env.HEDERA_NETWORK || "hedera:testnet";
 const tvmMnemonic = process.env.TVM_MNEMONIC as string | undefined;
+const tvmNetwork = process.env.TVM_NETWORK || "tvm:-3";
+const tvmProvider = (process.env.TVM_PROVIDER || TVM_PROVIDER_TONCENTER).toLowerCase();
 const baseURL = process.env.RESOURCE_SERVER_URL || "http://localhost:4021";
 const endpointPath = process.env.ENDPOINT_PATH || "/weather";
 const url = `${baseURL}${endpointPath}`;
@@ -108,7 +110,18 @@ async function main(): Promise<void> {
   // Register TVM scheme if mnemonic is provided
   if (tvmMnemonic) {
     const keyPair = await mnemonicToPrivateKey(tvmMnemonic.split(" "));
-    const tvmSigner = toClientTvmSigner(keyPair);
+    const tvmSigner = toClientTvmSigner(keyPair, {
+      network: tvmNetwork,
+      provider: tvmProvider,
+      apiKey:
+        tvmProvider === TVM_PROVIDER_TONAPI
+          ? process.env.TONAPI_API_KEY
+          : process.env.TONCENTER_API_KEY,
+      providerBaseUrl:
+        tvmProvider === TVM_PROVIDER_TONAPI
+          ? process.env.TONAPI_BASE_URL
+          : process.env.TONCENTER_BASE_URL,
+    });
     client.register("tvm:*", new ExactTvmScheme(tvmSigner));
     console.log(`Initialized TVM account: ${tvmSigner.address}`);
   }

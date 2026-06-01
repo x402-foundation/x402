@@ -17,6 +17,15 @@ importers:
       '@changesets/cli':
         specifier: ^2.28.1
         version: 2.29.8(@types/node@22.19.17)
+      '@eslint/js':
+        specifier: ^9.24.0
+        version: 9.34.0
+      '@typescript-eslint/eslint-plugin':
+        specifier: ^8.29.1
+        version: 8.49.0(@typescript-eslint/parser@8.49.0(eslint@9.34.0(jiti@2.6.1))(typescript@5.9.2))(eslint@9.34.0(jiti@2.6.1))(typescript@5.9.2)
+      '@typescript-eslint/parser':
+        specifier: ^8.29.1
+        version: 8.49.0(eslint@9.34.0(jiti@2.6.1))(typescript@5.9.2)
       tsup:
         specifier: ^8.4.0
         version: 8.5.0(jiti@2.6.1)(postcss@8.5.6)(tsx@4.21.0)(typescript@5.9.2)(yaml@2.8.1)
@@ -1518,16 +1527,37 @@ importers:
       '@ton/crypto':
         specifier: ^3.3.0
         version: 3.3.0
-      '@ton/ton':
-        specifier: ^16.2.2
-        version: 16.2.4(@ton/core@0.63.1(@ton/crypto@3.3.0))(@ton/crypto@3.3.0)
       '@x402/core':
         specifier: workspace:~
         version: link:../../core
     devDependencies:
+      '@eslint/js':
+        specifier: ^9.24.0
+        version: 9.34.0
       '@types/node':
         specifier: ^22.13.1
         version: 22.19.17
+      '@typescript-eslint/eslint-plugin':
+        specifier: ^8.29.1
+        version: 8.49.0(@typescript-eslint/parser@8.49.0(eslint@9.34.0(jiti@2.6.1))(typescript@5.9.2))(eslint@9.34.0(jiti@2.6.1))(typescript@5.9.2)
+      '@typescript-eslint/parser':
+        specifier: ^8.29.1
+        version: 8.49.0(eslint@9.34.0(jiti@2.6.1))(typescript@5.9.2)
+      eslint:
+        specifier: ^9.24.0
+        version: 9.34.0(jiti@2.6.1)
+      eslint-plugin-import:
+        specifier: ^2.31.0
+        version: 2.32.0(@typescript-eslint/parser@8.49.0(eslint@9.34.0(jiti@2.6.1))(typescript@5.9.2))(eslint@9.34.0(jiti@2.6.1))
+      eslint-plugin-jsdoc:
+        specifier: ^50.6.9
+        version: 50.8.0(eslint@9.34.0(jiti@2.6.1))
+      eslint-plugin-prettier:
+        specifier: ^5.2.6
+        version: 5.5.4(eslint@9.34.0(jiti@2.6.1))(prettier@3.5.2)
+      prettier:
+        specifier: 3.5.2
+        version: 3.5.2
       tsup:
         specifier: ^8.4.0
         version: 8.5.0(jiti@2.6.1)(postcss@8.5.6)(tsx@4.21.0)(typescript@5.9.2)(yaml@2.8.1)
@@ -5153,12 +5183,6 @@ packages:
   '@ton/crypto@3.3.0':
     resolution: {integrity: sha512-/A6CYGgA/H36OZ9BbTaGerKtzWp50rg67ZCH2oIjV1NcrBaCK9Z343M+CxedvM7Haf3f/Ee9EhxyeTp0GKMUpA==}
 
-  '@ton/ton@16.2.4':
-    resolution: {integrity: sha512-GWCNKizQm7MM99XNQGr+zWWdSfbFu/WLeQYm7tMIQDNKpAYEpLDKJUKuK/yrz763DBbnTDAFeq1NWAEy8rAOaQ==}
-    peerDependencies:
-      '@ton/core': '>=0.63.0 <1.0.0'
-      '@ton/crypto': '>=3.2.0'
-
   '@trysound/sax@0.2.0':
     resolution: {integrity: sha512-L7z9BgrNEcYyUYtF+HaEfiS5ebkh9jXqbszz7pC0hRBPaatV0XjSD3+eHrpqFemQfgwiFF0QPIarnIihIDn7OA==}
     engines: {node: '>=10.13.0'}
@@ -6021,9 +6045,6 @@ packages:
   axios@1.13.4:
     resolution: {integrity: sha512-1wVkUaAO6WyaYtCkcYCOx12ZgpGf9Zif+qXa4n+oYzK558YryKqiL6UWwd5DqiH3VRW0GYhTZQ/vlgJrCoNQlg==}
 
-  axios@1.15.0:
-    resolution: {integrity: sha512-wWyJDlAatxk30ZJer+GeCWS209sA42X+N5jU2jy6oHTp7ufw8uzUTVFBX9+wTfAlhiJXGS0Bq7X6efruWjuK9Q==}
-
   axobject-query@4.1.0:
     resolution: {integrity: sha512-qIj0G9wZbMGNLjLmg1PT6v2mE9AH2zlnADJD/2tC6E00hgmhUOfEB6greHPAfLRSufHqROIUTkw6E+M3lH0PTQ==}
     engines: {node: '>= 0.4'}
@@ -6459,9 +6480,6 @@ packages:
 
   dataloader@1.4.0:
     resolution: {integrity: sha512-68s5jYdlvasItOJnCuI2Q9s4q98g0pCyL3HrcKJu8KNugUl8ahgmZYg38ysLTgQjjXX3H8CJLkAvWrclWfcalw==}
-
-  dataloader@2.2.3:
-    resolution: {integrity: sha512-y2krtASINtPFS1rSDjacrFgn1dcUuoREVabwlOGOe4SdxenREqwjwjElAdwvbGM7kgZz9a3KVicWR7vcz8rnzA==}
 
   date-fns@2.30.0:
     resolution: {integrity: sha512-fnULvOpxnC5/Vg3NCiWelDsLiUc9bRwAPs/+LfTLNvetFCtCTN+yQz15C/fs4AwX1R9K5GLtLfn8QW+dWisaAw==}
@@ -7161,10 +7179,6 @@ packages:
 
   form-data@4.0.4:
     resolution: {integrity: sha512-KrGhL9Q4zjj0kiUt5OO4Mr/A/jlI2jDYs5eHBpYHPcBEVSiipAvn2Ko2HnPe20rmcuuvMHNdZFp+4IlGTMF0Ow==}
-    engines: {node: '>= 6'}
-
-  form-data@4.0.5:
-    resolution: {integrity: sha512-8RipRLol37bNs2bhoV67fiTEvdTrbMUYcFTiy3+wuuOnUog2QBHCZWXDRijWQfAkhBj2Uf5UnVaiWwA5vdd82w==}
     engines: {node: '>= 6'}
 
   forwarded@0.2.0:
@@ -8755,10 +8769,6 @@ packages:
 
   proxy-from-env@1.1.0:
     resolution: {integrity: sha512-D+zkORCbA9f1tdWRK0RaCR3GPv50cMxcrz4X8k5LTSUD1Dkw47mKJEZQNunItRTkWwgtaUSo1RVFRIG9ZXiFYg==}
-
-  proxy-from-env@2.1.0:
-    resolution: {integrity: sha512-cJ+oHTW1VAEa8cJslgmUZrc+sjRKgAKl3Zyse6+PV38hZe/V6Z14TbCuXcan9F9ghlz4QrFr2c92TNF82UkYHA==}
-    engines: {node: '>=10'}
 
   pump@3.0.3:
     resolution: {integrity: sha512-todwxLMY7/heScKmntwQG8CXVkWUOdYxIvY2s0VWAAMh/nd8SoYiRaKjlr7+iCs984f2P8zvrfWcDDYVb73NfA==}
@@ -15512,16 +15522,6 @@ snapshots:
       jssha: 3.2.0
       tweetnacl: 1.0.3
 
-  '@ton/ton@16.2.4(@ton/core@0.63.1(@ton/crypto@3.3.0))(@ton/crypto@3.3.0)':
-    dependencies:
-      '@ton/core': 0.63.1(@ton/crypto@3.3.0)
-      '@ton/crypto': 3.3.0
-      axios: 1.15.0
-      dataloader: 2.2.3
-      zod: 3.25.76
-    transitivePeerDependencies:
-      - debug
-
   '@trysound/sax@0.2.0': {}
 
   '@txnlab/use-wallet@4.6.0(@blockshake/defly-connect@1.2.1(algosdk@3.5.2)(bufferutil@4.0.9)(utf-8-validate@5.0.10))(@perawallet/connect@1.5.2(algosdk@3.5.2)(bufferutil@4.0.9)(utf-8-validate@5.0.10))(@walletconnect/sign-client@2.23.9(@vercel/functions@2.2.13)(bufferutil@4.0.9)(typescript@5.9.2)(utf-8-validate@5.0.10)(zod@4.1.13))(algosdk@3.5.2)(lute-connect@1.7.0)':
@@ -15723,7 +15723,7 @@ snapshots:
   '@typescript-eslint/project-service@8.42.0(typescript@5.9.2)':
     dependencies:
       '@typescript-eslint/tsconfig-utils': 8.42.0(typescript@5.9.2)
-      '@typescript-eslint/types': 8.42.0
+      '@typescript-eslint/types': 8.49.0
       debug: 4.4.3
       typescript: 5.9.2
     transitivePeerDependencies:
@@ -15808,7 +15808,7 @@ snapshots:
       '@typescript-eslint/visitor-keys': 8.49.0
       debug: 4.4.3
       minimatch: 9.0.5
-      semver: 7.7.3
+      semver: 7.7.4
       tinyglobby: 0.2.15
       ts-api-utils: 2.1.0(typescript@5.9.2)
       typescript: 5.9.2
@@ -17732,14 +17732,6 @@ snapshots:
     transitivePeerDependencies:
       - debug
 
-  axios@1.15.0:
-    dependencies:
-      follow-redirects: 1.15.11
-      form-data: 4.0.5
-      proxy-from-env: 2.1.0
-    transitivePeerDependencies:
-      - debug
-
   axobject-query@4.1.0: {}
 
   babel-plugin-polyfill-corejs2@0.4.14(@babel/core@7.28.3):
@@ -18193,8 +18185,6 @@ snapshots:
       is-data-view: 1.0.2
 
   dataloader@1.4.0: {}
-
-  dataloader@2.2.3: {}
 
   date-fns@2.30.0:
     dependencies:
@@ -19182,14 +19172,6 @@ snapshots:
   forge-light@1.1.4: {}
 
   form-data@4.0.4:
-    dependencies:
-      asynckit: 0.4.0
-      combined-stream: 1.0.8
-      es-set-tostringtag: 2.1.0
-      hasown: 2.0.2
-      mime-types: 2.1.35
-
-  form-data@4.0.5:
     dependencies:
       asynckit: 0.4.0
       combined-stream: 1.0.8
@@ -20977,8 +20959,6 @@ snapshots:
   proxy-compare@2.6.0: {}
 
   proxy-from-env@1.1.0: {}
-
-  proxy-from-env@2.1.0: {}
 
   pump@3.0.3:
     dependencies:

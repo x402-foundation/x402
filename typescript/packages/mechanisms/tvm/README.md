@@ -1,8 +1,10 @@
 # @x402/tvm
 
-TVM (TON) mechanism for the [x402 payment protocol](https://github.com/coinbase/x402).
+TVM (TON) mechanism for the [x402 payment protocol](https://github.com/x402-foundation/x402).
 
-Supports sponsored USDT payments on TON via W5R1 wallets. The client resolves its seqno and Jetton wallet through TON RPC, signs a W5R1 `internal_signed` message, and the facilitator sponsors relay gas.
+Supports sponsored TEP-74 Jetton payments on TON. Clients sign W5R1
+`internal_signed` messages, and the native facilitator relays them through a
+Highload V3 wallet while sponsoring TON gas.
 
 ## Installation
 
@@ -10,47 +12,90 @@ Supports sponsored USDT payments on TON via W5R1 wallets. The client resolves it
 npm install @x402/tvm @x402/core
 ```
 
-## Quick Start
-
-### Client (Buyer)
+## Client
 
 ```typescript
-import { createTvmClient } from "@x402/tvm/exact/client";
-import { toClientTvmSigner } from "@x402/tvm";
+import { x402Client } from "@x402/core/client";
+import { ExactTvmScheme } from "@x402/tvm/exact/client";
+import { toClientTvmSigner, TVM_PROVIDER_TONAPI } from "@x402/tvm";
 import { mnemonicToPrivateKey } from "@ton/crypto";
 
 const keyPair = await mnemonicToPrivateKey(mnemonic.split(" "));
-const signer = toClientTvmSigner(keyPair, { network: "tvm:-3" });
-const client = createTvmClient({ signer, rpcUrl: "https://testnet.toncenter.com/api/v2/jsonRPC" });
-```
-
-### Server (Seller)
-
-```typescript
-import { registerExactTvmScheme } from "@x402/tvm/exact/server";
-
-registerExactTvmScheme(server, { networks: ["tvm:-239"] });
-```
-
-### Facilitator
-
-```typescript
-import { registerExactTvmScheme } from "@x402/tvm/exact/facilitator";
-
-registerExactTvmScheme(facilitator, {
-  facilitatorUrl: "https://ton-facilitator.okhlopkov.com",
-  networks: ["tvm:-239"],
+const signer = toClientTvmSigner(keyPair, {
+  network: "tvm:-3",
+  apiKey: process.env.TONCENTER_API_KEY,
 });
+
+// Optional: use TonAPI instead of Toncenter.
+// const signer = toClientTvmSigner(keyPair, {
+//   network: "tvm:-3",
+//   provider: TVM_PROVIDER_TONAPI,
+//   apiKey: process.env.TONAPI_API_KEY,
+//   providerBaseUrl: process.env.TONAPI_BASE_URL,
+// });
+
+const client = new x402Client().register("tvm:*", new ExactTvmScheme(signer));
 ```
+
+## Server
+
+```typescript
+import { x402ResourceServer } from "@x402/core/server";
+import { ExactTvmScheme } from "@x402/tvm/exact/server";
+
+const server = new x402ResourceServer(facilitatorClient).register(
+  "tvm:*",
+  new ExactTvmScheme(),
+);
+```
+
+## Facilitator
+
+```typescript
+import { x402Facilitator } from "@x402/core/facilitator";
+import { ExactTvmScheme } from "@x402/tvm/exact/facilitator";
+import { HighloadV3Config, toFacilitatorTvmSigner } from "@x402/tvm";
+
+const signer = toFacilitatorTvmSigner({
+  "tvm:-3": HighloadV3Config.fromPrivateKey(process.env.TVM_PRIVATE_KEY!, {
+    provider: "toncenter",
+    apiKey: process.env.TONCENTER_API_KEY,
+  }),
+});
+
+const facilitator = new x402Facilitator().register(
+  "tvm:-3",
+  new ExactTvmScheme(signer),
+);
+```
+
+Call `scheme.close()` when you are done with a long-lived client scheme so its
+cached provider clients are released.
+
+## Provider Selection
+
+Toncenter is the default provider. Set `provider: TVM_PROVIDER_TONAPI` on the
+client signer or `HighloadV3Config` to switch REST calls to TonAPI.
+
+- Toncenter REST defaults: `https://toncenter.com`, `https://testnet.toncenter.com`
+- TonAPI REST defaults: `https://tonapi.io`, `https://testnet.tonapi.io`
+
+`apiKey` is sent as `X-Api-Key` for Toncenter and `Authorization: Bearer <key>`
+for TonAPI. For custom deployments, set `providerBaseUrl`,
+`providerTimeoutSeconds`, and `providerEmulationTimeoutSeconds`.
 
 ## Architecture
 
-The TON mechanism uses **self-relay**: the facilitator sponsors relay gas while the client-signed message carries the TON value needed by the Jetton transfer.
+The TON mechanism follows the `exact` TON spec:
 
-1. Client resolves seqno, account state, and Jetton wallet through TON RPC
-2. Client signs a W5R1 `internal_signed` Jetton transfer
-3. Merchant calls facilitator `/verify` + `/settle`
-4. Facilitator relays the signed transfer on-chain, sponsoring gas
+1. The client resolves its W5R1 seqno and source Jetton wallet through TON RPC.
+2. The client signs one W5R1 `internal_signed` Jetton transfer.
+3. The facilitator verifies the BoC locally, including signature, wallet state,
+   Jetton wallet ownership, amount, asset, recipient, timeout, seqno, and trace
+   emulation.
+4. Settlement re-runs verification, deduplicates the BoC hash, batches relay
+   requests, broadcasts a Highload V3 external message, and verifies the
+   finalized trace.
 
 ## Networks
 
@@ -58,6 +103,17 @@ The TON mechanism uses **self-relay**: the facilitator sponsors relay gas while 
 |---------|-----------|-------------|
 | TON Mainnet | `tvm:-239` | Production network |
 | TON Testnet | `tvm:-3` | Test network |
+
+## Testnet Funding
+
+To fund a TVM payer wallet, request testnet TON from
+[@testgiver_ton_bot](https://t.me/testgiver_ton_bot) for fees. Then open the
+[testnet USDT transfer link](https://app.tonkeeper.com/transfer/kQDNUDJC0iQvJoZp0ml-YteL1NtTXKphU03CTI5v4VtBhGYs?amount=49000000&bin=te6cckEBAQEAFgAAKClXdJkAAAAAAAAAAAAAAAAAmJaAhDUekg)
+to obtain testnet USDT.
+
+The facilitator wallet also needs testnet TON and must hold at least 1.1 TON
+before running tests. The facilitator uses a Highload V3 wallet, so fund the
+Highload V3 address, not the W5 address derived from the same key.
 
 ## License
 

@@ -20,7 +20,7 @@ import { ExactHederaScheme } from "@x402/hedera/exact/client";
 import { ExactStellarScheme } from "@x402/stellar/exact/client";
 import { createEd25519Signer, Ed25519Signer } from "@x402/stellar";
 import { ExactTvmScheme } from "@x402/tvm/exact/client";
-import { toClientTvmSigner } from "@x402/tvm";
+import { toClientTvmSigner, TVM_PROVIDER_TONAPI, TVM_PROVIDER_TONCENTER } from "@x402/tvm";
 import { ExactAvmScheme as ExactAvmClientScheme } from "@x402/avm/exact/client";
 import { toClientAvmSigner } from "@x402/avm";
 import { base58 } from "@scure/base";
@@ -58,6 +58,12 @@ const uptoSchemeOptions: UptoEvmSchemeOptions | undefined = process.env.EVM_RPC_
   : undefined;
 const svmSchemeOptions = process.env.SVM_RPC_URL ? { rpcUrl: process.env.SVM_RPC_URL } : undefined;
 
+/**
+ * Parses the TVM private key accepted by e2e env fixtures.
+ *
+ * @param privateKey - Hex or base64 seed/secret key.
+ * @returns Key pair derived from the first 32 seed bytes.
+ */
 function parseTvmKeyPair(privateKey: string): KeyPair {
   const value = privateKey.trim().replace(/^0x/, "");
   let bytes: Buffer;
@@ -70,14 +76,6 @@ function parseTvmKeyPair(privateKey: string): KeyPair {
     throw new Error("TVM_PRIVATE_KEY must be a 32-byte seed or 64-byte secret key");
   }
   return keyPairFromSeed(bytes.subarray(0, 32));
-}
-
-function toncenterJsonRpcUrl(): string | undefined {
-  const baseUrl = process.env.TONCENTER_BASE_URL;
-  if (!baseUrl) return undefined;
-  return baseUrl.endsWith("/api/v2/jsonRPC")
-    ? baseUrl
-    : `${baseUrl.replace(/\/$/, "")}/api/v2/jsonRPC`;
 }
 
 // Batch-settlement scheme uses a per-scenario salt (CHANNEL_SALT) so concurrent
@@ -133,11 +131,22 @@ if (process.env.AVM_PRIVATE_KEY) {
 
 const tvmNetwork = process.env.TVM_NETWORK || "tvm:-3";
 const tvmPrivateKey = process.env.TVM_PRIVATE_KEY;
+const tvmProvider = (process.env.TVM_PROVIDER || TVM_PROVIDER_TONCENTER).toLowerCase();
 const tvmScheme = tvmPrivateKey
-  ? new ExactTvmScheme(toClientTvmSigner(parseTvmKeyPair(tvmPrivateKey), { network: tvmNetwork }), {
-      rpcUrl: toncenterJsonRpcUrl(),
-      apiKey: process.env.TONCENTER_API_KEY,
-    })
+  ? new ExactTvmScheme(
+      toClientTvmSigner(parseTvmKeyPair(tvmPrivateKey), {
+        network: tvmNetwork,
+        provider: tvmProvider,
+        apiKey:
+          tvmProvider === TVM_PROVIDER_TONAPI
+            ? process.env.TONAPI_API_KEY
+            : process.env.TONCENTER_API_KEY,
+        providerBaseUrl:
+          tvmProvider === TVM_PROVIDER_TONAPI
+            ? process.env.TONAPI_BASE_URL
+            : process.env.TONCENTER_BASE_URL,
+      }),
+    )
   : undefined;
 
 const client = new x402Client()
@@ -183,9 +192,14 @@ interface RequestResult {
   success: boolean;
   data: unknown;
   status_code: number;
-  payment_response?: any;
+  payment_response?: unknown;
 }
 
+/**
+ * Issues a single paid request and returns the parsed result.
+ *
+ * @returns Structured result with response data and decoded payment-response.
+ */
 async function issueRequest(): Promise<RequestResult> {
   const response = await fetchWithPayment(url, { method: "GET" });
   const data = await response.json();
@@ -203,6 +217,14 @@ async function issueRequest(): Promise<RequestResult> {
   };
 }
 
+/**
+ * Combines the multi-request batch-settlement phases into one e2e result.
+ *
+ * @param phase - Current batch-settlement scenario phase.
+ * @param results - Ordered request results included in the aggregate.
+ * @param details - Named request results for easier test assertions.
+ * @returns Aggregated e2e client result.
+ */
 function aggregateBatchResult(
   phase: "initial" | "recovery-refund" | "full",
   results: RequestResult[],

@@ -61,6 +61,14 @@ import {
   type FacilitatorStellarSigner,
 } from "@x402/stellar";
 import { ExactStellarScheme } from "@x402/stellar/exact/facilitator";
+import {
+  HighloadV3Config,
+  toFacilitatorTvmSigner,
+  TVM_PROVIDER_TONAPI,
+  TVM_PROVIDER_TONCENTER,
+  type FacilitatorHighloadV3Signer,
+} from "@x402/tvm";
+import { ExactTvmScheme } from "@x402/tvm/exact/facilitator";
 import crypto from "crypto";
 import dotenv from "dotenv";
 import express from "express";
@@ -72,6 +80,7 @@ import {
   Chain,
   parseTransaction,
   recoverTransactionAddress,
+  type TransactionSerialized,
 } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import { baseSepolia, base } from "viem/chains";
@@ -90,12 +99,14 @@ const AVM_NETWORK =
   "algorand:SGO1GKSzyE7IEPItTxCByw9x8FmnrCDexi9/cOUJOiI=";
 const HEDERA_NETWORK = process.env.HEDERA_NETWORK || "hedera:testnet";
 const STELLAR_NETWORK = process.env.STELLAR_NETWORK || "stellar:testnet";
+const TVM_NETWORK = process.env.TVM_NETWORK || "tvm:-3";
 const EVM_RPC_URL = process.env.EVM_RPC_URL;
 const SVM_RPC_URL = process.env.SVM_RPC_URL;
 const AVM_RPC_URL = process.env.AVM_RPC_URL;
 const APTOS_RPC_URL = process.env.APTOS_RPC_URL;
 const HEDERA_NODE_URL = process.env.HEDERA_NODE_URL;
 const STELLAR_RPC_URL = process.env.STELLAR_RPC_URL;
+const TVM_PROVIDER = (process.env.TVM_PROVIDER || TVM_PROVIDER_TONCENTER).toLowerCase();
 
 // Map CAIP-2 network IDs to viem chains
 function getEvmChain(network: string): Chain {
@@ -114,12 +125,14 @@ console.log(`🌐 Aptos Network: ${APTOS_NETWORK}`);
 console.log(`🌐 AVM Network: ${AVM_NETWORK}`);
 console.log(`🌐 Hedera Network: ${HEDERA_NETWORK}`);
 console.log(`🌐 Stellar Network: ${STELLAR_NETWORK}`);
+console.log(`🌐 TVM Network: ${TVM_NETWORK}`);
 if (EVM_RPC_URL) console.log(`🌐 EVM RPC URL: ${EVM_RPC_URL}`);
 if (SVM_RPC_URL) console.log(`🌐 SVM RPC URL: ${SVM_RPC_URL}`);
 if (AVM_RPC_URL) console.log(`🌐 AVM RPC URL: ${AVM_RPC_URL}`);
 if (APTOS_RPC_URL) console.log(`🌐 Aptos RPC URL: ${APTOS_RPC_URL}`);
 if (HEDERA_NODE_URL) console.log(`🌐 Hedera Node URL: ${HEDERA_NODE_URL}`);
 if (STELLAR_RPC_URL) console.log(`🌐 Stellar RPC URL: ${STELLAR_RPC_URL}`);
+console.log(`🌐 TVM Provider: ${TVM_PROVIDER}`);
 
 // Validate required environment variables
 if (!process.env.EVM_PRIVATE_KEY) {
@@ -214,6 +227,24 @@ if (process.env.STELLAR_PRIVATE_KEY) {
     STELLAR_NETWORK as Network,
   );
   console.info(`Stellar Facilitator account: ${stellarSigner.address}`);
+}
+
+// Initialize the TVM highload signer from private key (optional)
+let tvmSigner: FacilitatorHighloadV3Signer | undefined;
+if (process.env.TVM_PRIVATE_KEY) {
+  const tvmConfig = HighloadV3Config.fromPrivateKey(process.env.TVM_PRIVATE_KEY, {
+    provider: TVM_PROVIDER,
+    apiKey:
+      TVM_PROVIDER === TVM_PROVIDER_TONAPI
+        ? process.env.TONAPI_API_KEY
+        : process.env.TONCENTER_API_KEY,
+    providerBaseUrl:
+      TVM_PROVIDER === TVM_PROVIDER_TONAPI
+        ? process.env.TONAPI_BASE_URL
+        : process.env.TONCENTER_BASE_URL,
+  });
+  tvmSigner = toFacilitatorTvmSigner({ [TVM_NETWORK]: tvmConfig });
+  console.info(`TVM Facilitator account: ${tvmSigner.getAddressesForNetwork(TVM_NETWORK)[0]}`);
 }
 
 // Create a Viem client with both wallet and public capabilities
@@ -451,6 +482,9 @@ if (stellarSigner) {
     new ExactStellarScheme([stellarSigner]),
   );
 }
+if (tvmSigner) {
+  facilitator.register(TVM_NETWORK as Network, new ExactTvmScheme(tvmSigner));
+}
 
 
 const erc20ApprovalSigner = {
@@ -468,7 +502,7 @@ const erc20ApprovalSigner = {
         // Parse the raw tx to extract sender and gas params for potential gas funding
         const parsed = parseTransaction(tx);
         const payerAddress = await recoverTransactionAddress({
-          serializedTransaction: tx,
+          serializedTransaction: tx as TransactionSerialized,
         });
         const gas = parsed.gas ?? 70_000n;
         const maxFeePerGas = parsed.maxFeePerGas ?? 1_000_000_000n;
@@ -526,13 +560,13 @@ facilitator
       verifiedPayments.set(paymentHash, Date.now());
 
       // Hook 2: Extract and catalog bazaar discovery info
-      const discovered = extractDiscoveryInfo(
-        context.paymentPayload,
-        context.requirements,
-      );
-      if (discovered) {
-        const action =
-          "method" in discovered ? discovered.method : discovered.toolName;
+        const discovered = extractDiscoveryInfo(
+          context.paymentPayload,
+          context.requirements,
+        );
+        if (discovered) {
+          const action =
+            "toolName" in discovered ? discovered.toolName : discovered.method;
         if (!action) {
           return;
         }

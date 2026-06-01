@@ -14,6 +14,7 @@ import { x402Facilitator } from "@x402/core/facilitator";
 import {
   PaymentPayload,
   PaymentRequirements,
+  Network,
   SettleResponse,
   VerifyResponse,
 } from "@x402/core/types";
@@ -36,6 +37,13 @@ import { base58 } from "@scure/base";
 import { createKeyPairSignerFromBytes } from "@solana/kit";
 import { createEd25519Signer } from "@x402/stellar";
 import { ExactStellarScheme } from "@x402/stellar/exact/facilitator";
+import {
+  HighloadV3Config,
+  toFacilitatorTvmSigner,
+  TVM_PROVIDER_TONAPI,
+  TVM_PROVIDER_TONCENTER,
+} from "@x402/tvm";
+import { ExactTvmScheme } from "@x402/tvm/exact/facilitator";
 import dotenv from "dotenv";
 import express from "express";
 import { createWalletClient, http, publicActions } from "viem";
@@ -52,6 +60,7 @@ const avmPrivateKey = process.env.AVM_PRIVATE_KEY as string | undefined;
 const evmPrivateKey = process.env.EVM_PRIVATE_KEY as `0x${string}` | undefined;
 const svmPrivateKey = process.env.SVM_PRIVATE_KEY as string | undefined;
 const stellarPrivateKey = process.env.STELLAR_PRIVATE_KEY as string | undefined;
+const tvmPrivateKey = process.env.TVM_PRIVATE_KEY as string | undefined;
 const hederaAccountId = process.env.HEDERA_ACCOUNT_ID;
 // Hedera private key should be an ECDSA key string (0x-prefixed or DER-encoded).
 const hederaPrivateKey = process.env.HEDERA_PRIVATE_KEY;
@@ -62,10 +71,11 @@ if (
   !evmPrivateKey &&
   !svmPrivateKey &&
   !stellarPrivateKey &&
+  !tvmPrivateKey &&
   !(hederaAccountId && hederaPrivateKey)
 ) {
   console.error(
-    "❌ At least one of AVM_PRIVATE_KEY, EVM_PRIVATE_KEY, SVM_PRIVATE_KEY, STELLAR_PRIVATE_KEY, or HEDERA_ACCOUNT_ID + HEDERA_PRIVATE_KEY is required",
+    "❌ At least one of AVM_PRIVATE_KEY, EVM_PRIVATE_KEY, SVM_PRIVATE_KEY, STELLAR_PRIVATE_KEY, TVM_PRIVATE_KEY, or HEDERA_ACCOUNT_ID + HEDERA_PRIVATE_KEY is required",
   );
   process.exit(1);
 }
@@ -76,6 +86,7 @@ const EVM_NETWORK = "eip155:84532"; // Base Sepolia
 const HEDERA_NETWORK = "hedera:testnet"; // Hedera Testnet
 const SVM_NETWORK = "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1"; // Solana Devnet
 const STELLAR_NETWORK = "stellar:testnet"; // Stellar Testnet
+const TVM_NETWORK = (process.env.TVM_NETWORK || "tvm:-3") as Network; // TON Testnet
 
 // Initialize the x402 Facilitator
 const facilitator = new x402Facilitator()
@@ -166,6 +177,27 @@ if (evmPrivateKey) {
   facilitator.register(EVM_NETWORK, new UptoEvmScheme(evmSigner));
 }
 
+// Register Hedera scheme if account and private key are provided
+if (hederaAccountId && hederaPrivateKey) {
+  const hederaKey = PrivateKey.fromStringECDSA(hederaPrivateKey);
+  const buildHederaClient = (network: string): Client => {
+    const client = createHederaClient(network);
+    client.setOperator(AccountId.fromString(hederaAccountId), hederaKey);
+    return client;
+  };
+
+  const hederaSigner = toFacilitatorHederaSigner({
+    getAddresses: () => [hederaAccountId],
+    signAndSubmitTransaction: createHederaSignAndSubmitTransaction(
+      buildHederaClient,
+      hederaKey,
+    ),
+    preflightTransfer: createHederaPreflightTransfer(buildHederaClient),
+  });
+  facilitator.register(HEDERA_NETWORK, new ExactHederaScheme(hederaSigner));
+  console.info(`Hedera Facilitator account: ${hederaAccountId}`);
+}
+
 // Register SVM scheme if private key is provided
 if (svmPrivateKey) {
   const svmAccount = await createKeyPairSignerFromBytes(
@@ -189,25 +221,24 @@ if (stellarPrivateKey) {
   );
 }
 
-// Register Hedera scheme if account and private key are provided
-if (hederaAccountId && hederaPrivateKey) {
-  const hederaKey = PrivateKey.fromStringECDSA(hederaPrivateKey);
-  const buildHederaClient = (network: string): Client => {
-    const client = createHederaClient(network);
-    client.setOperator(AccountId.fromString(hederaAccountId), hederaKey);
-    return client;
-  };
-
-  const hederaSigner = toFacilitatorHederaSigner({
-    getAddresses: () => [hederaAccountId],
-    signAndSubmitTransaction: createHederaSignAndSubmitTransaction(
-      buildHederaClient,
-      hederaKey,
-    ),
-    preflightTransfer: createHederaPreflightTransfer(buildHederaClient),
+// Register TVM scheme if private key is provided
+if (tvmPrivateKey) {
+  const tvmProvider = (process.env.TVM_PROVIDER || TVM_PROVIDER_TONCENTER).toLowerCase();
+  const tvmConfig = HighloadV3Config.fromPrivateKey(tvmPrivateKey, {
+    provider: tvmProvider,
+    apiKey:
+      tvmProvider === TVM_PROVIDER_TONAPI
+        ? process.env.TONAPI_API_KEY
+        : process.env.TONCENTER_API_KEY,
+    providerBaseUrl:
+      tvmProvider === TVM_PROVIDER_TONAPI
+        ? process.env.TONAPI_BASE_URL
+        : process.env.TONCENTER_BASE_URL,
   });
-  facilitator.register(HEDERA_NETWORK, new ExactHederaScheme(hederaSigner));
-  console.info(`Hedera Facilitator account: ${hederaAccountId}`);
+  const tvmSigner = toFacilitatorTvmSigner({ [TVM_NETWORK]: tvmConfig });
+  console.info(`TVM Facilitator account: ${tvmSigner.getAddressesForNetwork(TVM_NETWORK)[0]}`);
+
+  facilitator.register(TVM_NETWORK, new ExactTvmScheme(tvmSigner));
 }
 
 // Initialize Express app
