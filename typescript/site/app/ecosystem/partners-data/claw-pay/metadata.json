@@ -1,0 +1,19 @@
+{
+  "name": "claw-pay",
+  "description": "x402 payment facilitator for OpenClaw agents — autonomous USDC micropayments on Base L2. No registration, no monthly fee. 3% per settled transaction (covers gas + infrastructure). Open source (BSL-1.1).",
+  "logoUrl": "/logos/claw-pay.png",
+  "websiteUrl": "https://clawpay.eu",
+  "category": "Facilitators",
+  "facilitator": {
+    "baseUrl": "https://claw-pay.org",
+    "networks": ["base"],
+    "schemes": ["exact"],
+    "assets": ["EIP-3009"],
+    "supports": {
+      "verify": true,
+      "settle": true,
+      "supported": true,
+      "list": false
+    }
+  }
+}
