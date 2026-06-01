@@ -132,11 +132,19 @@ This hash names the *job* the client is paying for.</div>
                     <td>Yes — stored on ticket at mint</td>
                 </tr>
                 <tr>
-                    <td><code>settlementTxHash</code></td>
-                    <td>Chain</td>
+                    <td><code>ticketId</code></td>
+                    <td>Chain (minter)</td>
                     <td>Mint tx mined</td>
-                    <td>Not a client hash — the tx hash of <code>settleAndMintTicket</code>. Used for dedup and recovery (<code>ticketIdByTxHash</code>).</td>
-                    <td>Yes</td>
+                    <td>
+                        <div class="pre">Auto-increment id assigned in settleAndMintTicket.
+Emitted in TicketMinted(ticketId, payer, agentId, ...).
+
+Recovery if HTTP omits ticketId:
+  PAYMENT-RESPONSE.transaction (standard x402)
+  → eth_getTransactionReceipt
+  → parse TicketMinted → ticketId</div>
+                    </td>
+                    <td>Not a hash — primary on-chain key for feedback</td>
                 </tr>
                 <tr>
                     <td><code>responseDigests</code> / receipt</td>
@@ -147,7 +155,7 @@ This hash names the *job* the client is paying for.</div>
 { "status": 200, "bodyHash": "0x..." }
 
 Optional agent attestation (NOT the same as interactionHash):
-  digest = keccak256("x402-erc8004-receipt" || chainId || settlementTxHash || interactionHash)
+  digest = keccak256("x402-erc8004-receipt" || chainId || ticketId || interactionHash)
   agent signs digest via personal_sign → X-X402-Interaction-Receipt</div>
                     </td>
                     <td>No extra mint/finalize tx — header + optional feedbackURI only</td>
@@ -175,13 +183,12 @@ Binds stars/rating text to the same job. feedbackURI optional.</div>
     <dl class="contracts">
         <dt>TicketMinter <span class="badge new">new</span></dt>
         <dd>
-            <code>settleAndMintTicket(payer, agentId, requestHash, interactionHash, endpoint)</code> — facilitator submits with payment auth in the same tx (EIP-3009 / Permit2 / ERC-20 calldata appended or read from facilitator context). On success: transfer + <strong>MINTED</strong> ticket. Revert ⇒ no ticket.
-            <br><code>ticketIdByTxHash</code> — recovery if HTTP response omits <code>ticketId</code>.
-            <br><em>Removed:</em> <code>finalizeTicket</code> / <code>FINALIZED</code> state (extra latency).
+            <code>settleAndMintTicket(payer, agentId, requestHash, interactionHash, endpoint)</code> — facilitator submits with payment auth in the same tx. On success: transfer + <strong>MINTED</strong> ticket + <code>TicketMinted</code> event. Revert ⇒ no ticket.
+            <br><strong>Recovery:</strong> <code>ticketId</code> from <code>PAYMENT-RESPONSE</code> extension, or from mint tx receipt via <code>TicketMinted</code> (standard x402 tx hash).
         </dd>
         <dt>ReputationRegistryUpgradeable <span class="badge new">upgrade</span></dt>
         <dd>
-            <code>giveFeedbackWithTicket</code> — requires <strong>MINTED</strong>, unconsumed ticket; <code>msg.sender == payer</code> (or sponsored path below); dedup <code>(agentId, payer, settlementTxHash)</code> and <code>(agentId, payer, feedbackHash)</code>; consumes ticket.
+            <code>giveFeedbackWithTicket</code> — requires <strong>MINTED</strong> ticket; <code>msg.sender == payer</code> (or sponsored path); dedup <code>(agentId, payer, feedbackHash)</code>; consumes ticket (one feedback per <code>ticketId</code>).
             <br><code>giveFeedbackWithTicketFor(payer, …, payerAuth)</code> — optional: facilitator relays when <code>payer</code> signed an ERC-712 / EIP-712 intent; registry checks auth and attributes feedback to <code>payer</code>.
             <br><code>disputeFeedback</code> — agent owner/operator only.
             <br><code>giveFeedback</code> — revert (no bypass).
@@ -206,8 +213,9 @@ Binds stars/rating text to the same job. feedbackURI optional.</div>
     <ul class="consider">
         <li><strong>No finalize tx.</strong> Job binding is complete at mint (<code>requestHash</code> + <code>interactionHash</code> + <code>endpoint</code>). Response proof stays off-chain (HTTP body + optional <code>X-X402-Interaction-Receipt</code>) unless the client embeds it in <code>feedbackHash</code> / <code>feedbackURI</code>.</li>
         <li><strong>No IPFS required.</strong> Composable contracts read the ticket; rich text is optional via <code>feedbackURI</code>.</li>
-        <li><strong>interactionHash vs agent receipt.</strong> <code>interactionHash</code> is a content commitment computed by the client (table above). The agent receipt is a separate optional signature over <code>receipt_digest(chainId, settlementTxHash, interactionHash)</code> — it attests “I served this job,” not the same bytes as <code>interactionHash</code>.</li>
-        <li><strong>Singleton choke point.</strong> One successful settle ⇒ one ticket per <code>(agentId, payer, settlementTxHash)</code>. Buyer still submits (or signs for) feedback; registry gates on ticket.</li>
+        <li><strong>interactionHash vs agent receipt.</strong> <code>interactionHash</code> is a content commitment computed by the client (table above). The agent receipt is a separate optional signature over <code>receipt_digest(chainId, ticketId, interactionHash)</code> — it attests “I served this job,” not the same bytes as <code>interactionHash</code>.</li>
+        <li><strong>Singleton choke point.</strong> One successful settle ⇒ one <code>ticketId</code>. Buyer still submits (or signs for) feedback; registry gates on ticket consume.</li>
+        <li><strong>No tx hash on ticket.</strong> Settlement tx hash stays in standard x402 <code>PAYMENT-RESPONSE</code> and off-chain artifacts only; use it to recover <code>ticketId</code> from the mint receipt when needed.</li>
     </ul>
 
     <h2>Phases (one paid HTTP request)</h2>
@@ -312,8 +320,7 @@ Binds stars/rating text to the same job. feedbackURI optional.</div>
                               |                  |                   |   payer, agentId, requestHash,             |
                               |                  |                   |   interactionHash, endpoint) + paymentAuth |
                               |                  |                   | ---------------------------------------->|
-                              |                  |                   |                    | transfer + MINTED    |
-                              |                  |                   |                    | settlementTxHash set |
+                              |                  |                   |                    | emit TicketMinted    |
                               |                  |                   |<- txHash, ticketId-|                         |
                               |                  |<- settle ok -------|                    |                         |
                               |                  | (abort handler if mint failed)         |                         |
@@ -325,7 +332,8 @@ Binds stars/rating text to the same job. feedbackURI optional.</div>
                               |                  |                   |                    |                         |
 </span><span class="dim"> 5  HTTP RESPONSE            |                  |                   |                    |                         |
                               |<- 200 + body -----|                   |                    |                         |
-                              |    PAYMENT-RESPONSE + ticketId (erc8004)                   |                         |
+                              |    PAYMENT-RESPONSE: txHash (x402) + ticketId (erc8004 ext, optional)      |
+                              |    recover ticketId from receipt TicketMinted if extension omitted       |
                               |                  |                   |                    |                         |
 </span><span class="new"> 6a FEEDBACK (client gas)    |                  |                   |                    |                         |
                               | giveFeedbackWithTicket(ticketId, ...) ------------------>| MINTED → CONSUMED    |
