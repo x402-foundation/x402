@@ -89,6 +89,27 @@ describe("computeRoutePatterns", () => {
     });
   });
 
+  it("should escape regex metacharacters in route paths", () => {
+    const routes: RoutesConfig = {
+      "/api/v1.0/*": "$0.01",
+    };
+
+    const patterns = computeRoutePatterns(routes);
+
+    expect(findMatchingRoute(patterns, "/api/v1.0/users", "GET")).toEqual(patterns[0]);
+    expect(findMatchingRoute(patterns, "/api/v1x0/users", "GET")).toBeUndefined();
+  });
+
+  it("should handle multiple wildcards in one route path", () => {
+    const routes: RoutesConfig = {
+      "/api/*/files/*": "$0.01",
+    };
+
+    const patterns = computeRoutePatterns(routes);
+
+    expect(findMatchingRoute(patterns, "/api/alice/files/report", "GET")).toEqual(patterns[0]);
+  });
+
   it("should handle route parameters", () => {
     const routes: RoutesConfig = {
       "/api/users/[id]": "$0.01",
@@ -100,7 +121,7 @@ describe("computeRoutePatterns", () => {
     expect(patterns).toHaveLength(2);
     expect(patterns[0]).toEqual({
       verb: "*",
-      pattern: /^\/api\/users\/[^\/]+$/i,
+      pattern: /^\/api\/users\/[^/]+$/i,
       config: {
         price: "$0.01",
         network: "base-sepolia",
@@ -108,7 +129,7 @@ describe("computeRoutePatterns", () => {
     });
     expect(patterns[1]).toEqual({
       verb: "GET",
-      pattern: /^\/api\/posts\/[^\/]+$/i,
+      pattern: /^\/api\/posts\/[^/]+$/i,
       config: {
         price: "$0.02",
         network: "base-sepolia",
