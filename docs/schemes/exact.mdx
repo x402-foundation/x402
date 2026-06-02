@@ -203,6 +203,39 @@ Use `exact` when the final charge is known before the response is generated, suc
 
 The `exact` scheme has network specifications for EVM, SVM, AVM, Stellar, Aptos, Hedera, TON, Cardano, Keeta, and Sui.
 
+### SVM Smart Wallet Support
+
+By default, the SVM facilitator only accepts transactions from standard (EOA) wallets using static instruction-layout validation. To also accept payments from Solana smart wallets (Squads, Swig, SPL Governance, etc.), enable simulation-based verification when constructing `ExactSvmScheme` on your facilitator:
+
+```typescript
+import { ExactSvmScheme } from "@x402/svm/exact/facilitator";
+import { toFacilitatorSvmSigner } from "@x402/svm";
+
+const svmSigner = toFacilitatorSvmSigner(svmAccount);
+
+facilitator.register(
+  "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1",
+  new ExactSvmScheme(svmSigner, undefined, {
+    enableSmartWalletVerification: true,
+  }),
+);
+```
+
+When `enableSmartWalletVerification` is enabled, transactions that fail static validation (because they contain smart wallet program instructions) are re-verified by simulating the transaction and inspecting CPI inner instructions for a valid `TransferChecked`. Only programs in the built-in allowlist (Squads Multisig v4, Squads Smart Account, Swig, SPL Governance, Metaplex Core, Lighthouse) can reach this path.
+
+<Note>
+`toFacilitatorSvmSigner()` is required when enabling smart wallet verification — it provides the `simulateTransactionWithInnerInstructions`, `getConfirmedTransactionInnerInstructions`, `getTokenAccountBalance`, and `fetchAddressLookupTables` methods needed for simulation-based verification.
+</Note>
+
+Additional options:
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `enableSmartWalletVerification` | `boolean` | `false` | Enable simulation-based verification for smart wallet transactions. |
+| `smartWalletMaxComputeUnits` | `number` | `400000` | Maximum compute units allowed for smart wallet transactions. |
+| `smartWalletMaxPriorityFeeMicroLamports` | `number` | `50000` | Maximum priority fee in microlamports for smart wallet transactions. |
+| `smartWalletAllowedPrograms` | `string[]` | Built-in list | Allowed smart wallet program addresses. Only transactions invoking a program in this list reach simulation-based verification. |
+
 ### EVM Transfer Methods
 
 The EVM implementation supports two transfer methods:
