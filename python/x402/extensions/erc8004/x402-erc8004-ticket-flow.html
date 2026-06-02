@@ -64,14 +64,14 @@
 </head>
 <body>
     <h1>x402 × ERC-8004 — ticket flow</h1>
-    <p class="sub">1-step x402 (same URL). Proposed — not implemented. Updated: no finalize tx; simplified mint args.</p>
+    <p class="sub">1-step x402 (same URL). <strong>Implemented</strong> on branch <code>feat/erc8004-extension</code> (Phases 1–5 done). No finalize tx; simplified mint args.</p>
 
-    <h2>Summary — what to build</h2>
+    <h2>Summary — what's built</h2>
     <div class="summary">
         <ul>
-            <li><strong>New:</strong> <code>TicketMinter</code> — one tx: settle payment + mint ticket; recover by <code>txHash</code>. No separate finalize tx.</li>
-            <li><strong>Upgrade:</strong> <code>ReputationRegistry</code> — <code>giveFeedbackWithTicket</code> on <strong>MINTED</strong> tickets; on-chain dedup; agent disputes; legacy <code>giveFeedback</code> disabled.</li>
-            <li><strong>SDK:</strong> facilitator settle → minter; agent handler after mint; feedback via client gas <em>or</em> facilitator-sponsored relay.</li>
+            <li><strong>Contracts:</strong> <code>TicketMinter</code> — one tx: settle payment + mint ticket. Three settle modes: <code>settleAndMintTicket</code> (transferFrom), <code>settleAndMintTicketEIP3009</code> (USDC-style <code>transferWithAuthorization</code>), <code>settleAndMintTicketPermit2</code>. <code>ReputationRegistryV3</code> — <code>giveFeedbackWithTicket{,For}</code> on <strong>MINTED</strong> tickets; on-chain dedup; agent disputes; legacy <code>giveFeedback</code> reverts.</li>
+            <li><strong>Python SDK:</strong> facilitator extension routes <code>ExactEvmScheme.settle</code> through TicketMinter when registered; resource-server extension rejects payloads without a bind (mint-required gate); client extension echoes the bind into <code>PaymentPayload.extensions.erc8004</code>; <code>ERCFeedbackClient.submit_feedback_with_ticket</code> (Path A) + <code>submit_feedback_sponsored</code> (Path B).</li>
+            <li><strong>Verified:</strong> 14 Foundry tests + 63 Python unit tests + an end-to-end demo (<code>run_ticket_demo.py</code>) that forks mainnet, impersonates Circle / DAI-bridge whales for real USDC + DAI funding, registers an agent on the canonical IdentityRegistry, and runs 4 tickets through MINTED → CONSUMED.</li>
         </ul>
     </div>
 
@@ -260,7 +260,8 @@ Binds stars/rating text to the same job. feedbackURI optional.</div>
             <span class="badge actor chain">chain</span>
             <span class="badge new">on-chain</span>
         </h3>
-        <p>Facilitator: <code>settleAndMintTicket(payer, agentId, requestHash, interactionHash, endpoint)</code> + payment auth. Ticket <strong>MINTED</strong>. Facilitator pays gas. Abort handler if mint fails.</p>
+        <p>Facilitator: <code>settleAndMintTicket{,EIP3009,Permit2}(payer, agentId, requestHash, interactionHash, endpoint, …)</code>. Ticket <strong>MINTED</strong>. Facilitator pays gas. If mint reverts, settle returns <code>success=false</code> and the framework surfaces it as a settle failure to the caller (no <code>ticketId</code> on PAYMENT-RESPONSE).</p>
+        <p class="sub" style="margin-top:0.3rem;"><strong>Pre-handler gate:</strong> the resource-server extension's <code>after_verify</code> hook refuses payloads that don't carry the bind fields (<code>requestHash</code>, <code>interactionHash</code>, <code>endpoint</code>, <code>agentId</code>) — without a bind the ticket can't be pinned, so the paid handler is skipped before any tokens move.</p>
     </div>
 
     <div class="phase">
@@ -348,6 +349,6 @@ Binds stars/rating text to the same job. feedbackURI optional.</div>
 
 <span class="dim">  --- x402 paid request ends at step 5; feedback 6a/6b is async ---</span></div>
 
-    <footer>Proposed design — May 2026. Not implemented.</footer>
+    <footer>Implemented — May–June 2026. Branch <code>feat/erc8004-extension</code>. See <a href="../../../../specs/extensions/erc8004_ticket.md">erc8004_ticket.md</a> for the locked design and <a href="../../../../examples/python/clients/erc8004/README.md">examples/python/clients/erc8004/README.md</a> for the runnable demo.</footer>
 </body>
 </html>
