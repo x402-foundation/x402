@@ -31,7 +31,7 @@ contract ReputationRegistryV3Test is Test {
     function setUp() public {
         payer = vm.addr(payerPrivateKey);
 
-        minter = new TicketMinter(owner);
+        minter = new TicketMinter(owner, address(0));
         identity = new MockIdentityRegistry();
         registry = new ReputationRegistryV3(address(identity), address(minter));
         token = new MockERC20("USDC", "USDC", 6);

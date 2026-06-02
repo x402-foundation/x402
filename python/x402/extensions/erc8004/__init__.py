@@ -9,6 +9,13 @@ from x402.extensions.erc8004.artifact import (
     sign_interaction_receipt,
     verify_interaction_receipt,
 )
+from x402.extensions.erc8004.facilitator import (
+    ERC8004TicketFacilitatorExtension,
+    TicketBind,
+    extract_ticket_bind,
+    settle_via_ticket_minter,
+    ticket_id_from_receipt,
+)
 from x402.extensions.erc8004.client import (
     ArtifactUploader,
     ERC8004ClientExtension,
@@ -45,6 +52,11 @@ from x402.extensions.erc8004.verify import (
 __all__ = [
     "create_erc8004_resource_server_extension",
     "create_interaction_receipt",
+    "ERC8004TicketFacilitatorExtension",
+    "TicketBind",
+    "extract_ticket_bind",
+    "settle_via_ticket_minter",
+    "ticket_id_from_receipt",
     "ERCFeedbackClient",
     "ERC8004ClientExtension",
     "ArtifactUploader",

@@ -33,4 +33,16 @@ contract MockERC3009Token is ERC20 {
     ) external {
         _transfer(from, to, value);
     }
+
+    function transferWithAuthorization(
+        address from,
+        address to,
+        uint256 value,
+        uint256,
+        uint256,
+        bytes32,
+        bytes memory
+    ) external {
+        _transfer(from, to, value);
+    }
 }
