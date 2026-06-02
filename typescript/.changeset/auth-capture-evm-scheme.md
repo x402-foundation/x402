@@ -2,4 +2,4 @@
 "@x402/evm": minor
 ---
 
-Implemented auth-capture scheme
+Added auth-capture server and facilitator implementations
