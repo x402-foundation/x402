@@ -57,6 +57,11 @@ from web3 import Web3
 from x402.extensions.erc8004 import ERC8004Config, ERCFeedbackClient, FeedbackParams
 from x402.extensions.erc8004.constants import get_ticket_minted_topic
 
+# Local helpers — share the legacy demo's register_agent / fund_gas logic so we
+# don't duplicate the IdentityRegistry calldata variants.
+sys.path.insert(0, str(Path(__file__).parent))
+from utils import fund_gas_if_low, register_agent  # noqa: E402
+
 # Anvil dev account #0 — used as the deployer + facilitator. The other actors
 # (payer, agent, relayer) are generated fresh each run because the well-known
 # anvil dev addresses may be EIP-7702-delegated on mainnet, which causes
@@ -70,6 +75,9 @@ FOUNDRY_DIR = REPO_ROOT / "contracts" / "evm"
 # Canonical mainnet tokens (override with real addresses on other chains).
 MAINNET_USDC = "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"
 MAINNET_DAI = "0x6B175474E89094C44Da98b954Eedeac495271d0F"
+
+# Canonical ERC-8004 IdentityRegistry on mainnet.
+MAINNET_IDENTITY_REGISTRY = "0x8004A169FB4a3325136EB29fA0ceB6D2e539a432"
 
 # USDC EIP-712 domain (real USDC uses these). Verified against the
 # `transferWithAuthorization` typed-data verifier on the deployed contract.
@@ -601,59 +609,54 @@ def main() -> int:
         _fund_erc20_from_whale(w3, usdc_addr, payer.address, amount_usdc * 10, usdc_whale)
         _fund_erc20_from_whale(w3, dai_addr, payer.address, amount_dai * 10, dai_whale)
 
-        # ---- Deploy MockIdentityRegistry + TicketMinter + ReputationRegistryV3 ----
-        print("\nDeploying ticket-flow contracts onto the fork...")
-        identity_env = os.getenv("IDENTITY_REGISTRY")
-        if identity_env:
-            identity_addr = Web3.to_checksum_address(identity_env)
-            print(f"  IdentityRegistry (existing) = {identity_addr}")
-            identity = None  # we won't be calling setOwner on a real registry
-        else:
-            identity_addr = _deploy(w3, deployer, "MockIdentityRegistry")
-            identity = w3.eth.contract(
-                address=identity_addr, abi=_load_artifact("MockIdentityRegistry")["abi"]
+        # ---- Use the canonical ERC-8004 IdentityRegistry on the fork ----
+        identity_addr = Web3.to_checksum_address(
+            os.getenv("IDENTITY_REGISTRY", MAINNET_IDENTITY_REGISTRY)
+        )
+        identity_code = w3.eth.get_code(identity_addr)
+        if not identity_code or identity_code == b"\x00":
+            print(
+                f"ERROR: no IdentityRegistry at {identity_addr} on the fork. "
+                "Set IDENTITY_REGISTRY=<addr> if you're on a non-mainnet fork."
             )
-            print(f"  MockIdentityRegistry        = {identity_addr}")
+            return 1
+        print(f"\nIdentityRegistry (canonical, on-chain) = {identity_addr}")
 
+        # Register a fresh agent (owned by `agent`). The ReputationRegistry
+        # forbids self-feedback, so the agent owner MUST differ from the payer
+        # — which is why we generate distinct random keys.
+        fund_gas_if_low(w3, payer, agent.address)
+        print(f"Registering a fresh agent (owner = {agent.address})...")
+        agent_id = register_agent(w3, agent, identity_addr)
+        print(f"  agentId = {agent_id}  (owner = ownerOf({agent_id}) = {agent.address})")
+
+        # ---- Deploy TicketMinter + ReputationRegistryV3 onto the fork ----
+        print("\nDeploying ticket-flow contracts onto the fork...")
         # TicketMinter(owner=deployer, permit2=address(0))
         minter_addr = _deploy(
             w3, deployer, "TicketMinter", deployer.address, "0x" + "00" * 20
         )
-        print(f"  TicketMinter                = {minter_addr}")
-
+        print(f"  TicketMinter         = {minter_addr}")
         registry_addr = _deploy(
             w3, deployer, "ReputationRegistryV3", identity_addr, minter_addr
         )
-        print(f"  ReputationRegistryV3        = {registry_addr}")
+        print(f"  ReputationRegistryV3 = {registry_addr}  (uses canonical IdentityRegistry)")
 
         minter = w3.eth.contract(address=minter_addr, abi=_load_artifact("TicketMinter")["abi"])
         registry = w3.eth.contract(
             address=registry_addr, abi=_load_artifact("ReputationRegistryV3")["abi"]
         )
 
-        # ---- Wire minter: facilitator + registry; point identity at agent (mock only) ----
+        # ---- Wire minter: facilitator + registry ----
         print("\nWiring contracts...")
-        wirings = [
+        for fn, label in (
             (minter.functions.setFacilitator(facilitator.address, True), "setFacilitator"),
             (minter.functions.setReputationRegistry(registry_addr), "setReputationRegistry"),
-        ]
-        agent_id = 7
-        if identity is not None:
-            wirings.append(
-                (identity.functions.setOwner(agent_id, agent.address), f"MockIdentity.setOwner({agent_id}, agent)")
-            )
-        for fn, label in wirings:
+        ):
             tx = fn.build_transaction({"from": deployer.address})
             tx.pop("chainId", None); tx.pop("nonce", None); tx.pop("from", None)
             _send(w3, deployer, {**tx, "gas": 200_000})
             print(f"  {label}")
-
-        if identity is None:
-            print(
-                "  NOTE: using an existing IdentityRegistry — agent registration is your "
-                "responsibility (the ReputationRegistry forbids self-feedback, so the "
-                "payer must not be the agent owner)."
-            )
 
         # ====================================================================
         # Scenario 1: USDC via EIP-3009 transferWithAuthorization
@@ -727,15 +730,9 @@ def main() -> int:
         states = [minter.functions.tickets(tid).call()[5] for tid in ticket_ids]
         assert all(s == 2 for s in states), f"some tickets not CONSUMED: {dict(zip(ticket_ids, states))}"
 
-        if identity is not None:
-            # The mock allows us to assert NewFeedback bookkeeping; on a real
-            # IdentityRegistry the agent registration would have given us a
-            # different agentId and we'd need to look up that index instead.
-            idx = registry.functions.getLastIndex(agent_id, payer.address).call()
-            assert idx == 4, f"expected 4 feedbacks recorded under payer, got {idx}"
-            idx_msg = f"  ReputationRegistryV3.getLastIndex(agentId={agent_id}, payer) = {idx}"
-        else:
-            idx_msg = "  (skipping getLastIndex assertion — agentId depends on the real IdentityRegistry)"
+        idx = registry.functions.getLastIndex(agent_id, payer.address).call()
+        assert idx == 4, f"expected 4 feedbacks recorded under payer, got {idx}"
+        idx_msg = f"  ReputationRegistryV3.getLastIndex(agentId={agent_id}, payer) = {idx}"
 
         # Confirm payer's balances dropped by exactly the payments and the
         # agent received them — proves the transfers actually happened on the

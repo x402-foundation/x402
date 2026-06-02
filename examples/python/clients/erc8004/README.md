@@ -22,11 +22,13 @@ Two flavors of the extension live side by side:
    subprocess — the fork is ephemeral, nothing touches the real chain,
 2. impersonates known whales to fund a fresh payer EOA with **real USDC and
    real DAI**,
-3. deploys `MockIdentityRegistry` + `TicketMinter` + `ReputationRegistryV3`
-   from the Foundry build artifacts onto the fork,
-4. wires the minter (facilitator allowlist + registry reference) and points
-   the mock identity registry at the agent,
-5. exercises each token's natural settlement mode, both with both feedback paths:
+3. registers a fresh agent on the **canonical mainnet ERC-8004
+   `IdentityRegistry`** (`0x8004A169FB4a3325136EB29fA0ceB6D2e539a432`); the
+   resulting `agentId` is whatever the live registry assigns,
+4. deploys `TicketMinter` + `ReputationRegistryV3` onto the fork
+   (`ReputationRegistryV3` references the canonical IdentityRegistry directly),
+5. wires the minter (facilitator allowlist + registry reference),
+6. exercises each token's natural settlement mode, both with both feedback paths:
 
    **Scenario 1 — USDC via EIP-3009 (`settleAndMintTicketEIP3009`):**
 
@@ -77,8 +79,12 @@ DONE — both scenarios, both feedback paths green.
     ticket #3: MINTED -> CONSUMED  (Path A direct)
     ticket #4: MINTED -> CONSUMED  (Path B sponsored)
   agent received: USDC 2000000 (2.0 USDC), DAI 2000000000000000000 (2.0 DAI)
-  ReputationRegistryV3.getLastIndex(agentId=7, payer) = 4
+  ReputationRegistryV3.getLastIndex(agentId=<live-assigned-id>, payer) = 4
 ```
+
+(The `agentId` is whatever the live canonical IdentityRegistry assigns at
+register-time — e.g. ~34,000+ on current mainnet — so it'll differ from run
+to run.)
 
 No external services required — no Pinata, no real chain. The demo focuses on
 the on-chain ticket lifecycle; the off-chain artifact pipeline (IPFS upload,
