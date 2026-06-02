@@ -1,42 +1,42 @@
-"""End-to-end demo for the ERC-8004 *ticket* flow on a local Anvil.
+"""End-to-end demo for the ERC-8004 *ticket* flow against a mainnet fork.
 
-Spins up Anvil, deploys TicketMinter + ReputationRegistryV3, exercises both
-settlement modes (plain ERC-20 transferFrom AND EIP-3009 USDC-style
-transferWithAuthorization) and both feedback paths (direct + sponsored),
-and verifies the tickets are consumed.
+Forks Ethereum mainnet (or any RPC you point ``RPC_URL`` at) into a local
+Anvil, impersonates known whales to fund the payer with **real USDC and DAI**
+(no mocks), deploys ``TicketMinter`` + ``ReputationRegistryV3`` onto the fork,
+and exercises both feedback paths against each token's natural settlement
+mode:
 
-No Pinata, no external IPFS. The artifact stays in-memory because the demo's
-goal is the on-chain ticket lifecycle, not the off-chain artifact pipeline
-(``main.py`` covers that).
+  Scenario 1 — USDC via EIP-3009 ``transferWithAuthorization``:
+    Ticket #1 — Path A (direct ``giveFeedbackWithTicket``)
+    Ticket #2 — Path B (payer signs ``FeedbackIntent``, relayer broadcasts)
+
+  Scenario 2 — DAI via ``transferFrom`` (``TicketMinter.settleAndMintTicket``):
+    Ticket #3 — Path A
+    Ticket #4 — Path B
+
+USDC supports EIP-3009 natively — the payer signs an off-chain authorization,
+no on-chain approval needed. DAI doesn't expose ``transferWithAuthorization``
+(it has its own non-standard ``permit``), so the ``transferFrom`` path of
+``TicketMinter.settleAndMintTicket`` is the natural fit there.
 
 Requirements:
   - Foundry (``anvil``, ``forge`` on PATH)
   - The x402 Python SDK installed in editable mode (``uv pip install -e .``
     from ``python/x402``).
+  - Internet access (to talk to the upstream mainnet RPC). Defaults to a
+    public RPC; override with ``RPC_URL=<your-rpc>``.
 
 Run:
     cd python/x402
     uv run python ../../examples/python/clients/erc8004/run_ticket_demo.py
 
-What the demo proves:
-
-  Scenario 1 — plain ERC-20 (transferFrom path)
-  1. payer approves the minter,
-  2. facilitator calls ``TicketMinter.settleAndMintTicket`` → one tx,
-     ``transferFrom`` + ticket mint, ``TicketMinted`` log emitted,
-  3. Path A: payer calls ``giveFeedbackWithTicket(ticketId, …)`` →
-     ticket consumed, ``NewFeedback`` emitted with ``ticketId`` field set.
-  4. Path B (sponsored): payer signs an EIP-712 ``FeedbackIntent``; a
-     relayer submits ``giveFeedbackWithTicketFor(submission, nonce,
-     deadline, sig)`` → ticket consumed, no payer-paid gas.
-
-  Scenario 2 — USDC-style EIP-3009 (transferWithAuthorization path)
-  5. payer signs an EIP-3009 ``TransferWithAuthorization`` (no on-chain
-     approval needed),
-  6. facilitator calls ``TicketMinter.settleAndMintTicketEIP3009`` → one
-     tx, token-level ``transferWithAuthorization`` + ticket mint,
-  7. Path A: same as #3 against the new ticket.
-  8. Path B (sponsored): same as #4 against the new ticket.
+Optional overrides (with sane defaults):
+  RPC_URL          mainnet RPC to fork from
+  ANVIL_PORT       local fork port (default 8545)
+  USDC_WHALE       account to impersonate for USDC funding
+  DAI_WHALE        account to impersonate for DAI funding
+  IDENTITY_REGISTRY  if set, use this real IdentityRegistry on the fork
+                     instead of deploying a MockIdentityRegistry.
 """
 
 from __future__ import annotations
@@ -57,18 +57,50 @@ from web3 import Web3
 from x402.extensions.erc8004 import ERC8004Config, ERCFeedbackClient, FeedbackParams
 from x402.extensions.erc8004.constants import get_ticket_minted_topic
 
-# Anvil dev accounts (well-known pre-funded keys — NOT secrets).
+# Anvil dev account #0 — used as the deployer + facilitator. The other actors
+# (payer, agent, relayer) are generated fresh each run because the well-known
+# anvil dev addresses may be EIP-7702-delegated on mainnet, which causes
+# USDC's EIP-3009 SignatureChecker to route through EIP-1271 and fail.
 ANVIL_KEY_DEPLOYER = "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"  # acct 0
-ANVIL_KEY_PAYER = "0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d"     # acct 1
-ANVIL_KEY_AGENT = "0x5de4111afa1a4b94908f83103eb1f1706367c2e68ca870fc3fb9a804cdab365a"     # acct 2
-ANVIL_KEY_RELAYER = "0x7c852118294e51e653712a81e05800f419141751be58f605c371e15141b007a6"   # acct 3
 
-# Trivial ERC-20 with public `mint(address,uint256)` and `approve`. Compiled
-# from a minimal contract; constants here are the SAME bytecode forge produces
-# from `MockERC20.sol`. Loaded at runtime from the foundry build artifacts.
 REPO_ROOT = Path(__file__).resolve().parents[4]
 FOUNDRY_OUT = REPO_ROOT / "contracts" / "evm" / "out"
 FOUNDRY_DIR = REPO_ROOT / "contracts" / "evm"
+
+# Canonical mainnet tokens (override with real addresses on other chains).
+MAINNET_USDC = "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"
+MAINNET_DAI = "0x6B175474E89094C44Da98b954Eedeac495271d0F"
+
+# USDC EIP-712 domain (real USDC uses these). Verified against the
+# `transferWithAuthorization` typed-data verifier on the deployed contract.
+USDC_DOMAIN_NAME = "USD Coin"
+USDC_DOMAIN_VERSION = "2"
+
+# Default public RPCs. Free, no API key. The demo tries each in order until
+# one responds. Override with ``RPC_URL=<your-rpc>`` to skip the probe.
+DEFAULT_PUBLIC_RPCS = (
+    "https://eth.merkle.io",
+    "https://ethereum-rpc.publicnode.com",
+    "https://eth.drpc.org",
+)
+
+# Known whale addresses for funding the payer on the fork.
+DEFAULT_USDC_WHALE = "0x55FE002aefF02F77364de339a1292923A15844B8"  # Circle
+DEFAULT_DAI_WHALE = "0x40ec5B33f54e0E8A33A975908C5BA1c14e5BbbDf"   # Polygon bridge
+
+# Minimal ABI for whale impersonation + balance/allowance checks.
+ERC20_ABI = [
+    {"name": "transfer", "type": "function", "stateMutability": "nonpayable",
+     "inputs": [{"name": "to", "type": "address"}, {"name": "amount", "type": "uint256"}],
+     "outputs": [{"name": "", "type": "bool"}]},
+    {"name": "balanceOf", "type": "function", "stateMutability": "view",
+     "inputs": [{"name": "a", "type": "address"}], "outputs": [{"name": "", "type": "uint256"}]},
+    {"name": "decimals", "type": "function", "stateMutability": "view",
+     "inputs": [], "outputs": [{"name": "", "type": "uint8"}]},
+    {"name": "approve", "type": "function", "stateMutability": "nonpayable",
+     "inputs": [{"name": "spender", "type": "address"}, {"name": "amount", "type": "uint256"}],
+     "outputs": [{"name": "", "type": "bool"}]},
+]
 
 
 def _load_artifact(name: str) -> dict[str, Any]:
@@ -111,13 +143,88 @@ def _deploy(w3: Web3, signer: Account, artifact_name: str, *args: Any) -> str:
     return Web3.to_checksum_address(rcpt["contractAddress"])
 
 
-def _start_anvil(port: int) -> subprocess.Popen:
-    proc = subprocess.Popen(
-        ["anvil", "--hardfork", "Prague", "--chain-id", "31337", "--port", str(port)],
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
+def _try_fork(port: int, candidates: tuple[str, ...]) -> tuple[str, subprocess.Popen] | None:
+    """Try each candidate RPC by actually launching ``anvil --fork-url`` against
+    it. Returns ``(rpc_url, anvil_process)`` for the first one that comes up,
+    or ``None`` if none work.
+
+    We skip an HTTP probe because most public RPCs gate against bare ``curl``
+    / ``urllib`` headers (403) but happily accept Anvil's own User-Agent.
+    """
+    for url in candidates:
+        print(f"  trying fork from {url} ...")
+        proc = _start_anvil_fork(port, url)
+        w3 = Web3(Web3.HTTPProvider(f"http://127.0.0.1:{port}"))
+        if _wait_for_rpc(w3, timeout_s=15.0):
+            try:
+                # Anvil RPC came up — verify it actually forked (chain_id readable).
+                _ = w3.eth.chain_id
+                _ = w3.eth.block_number
+                print(f"  OK: {url}")
+                return url, proc
+            except Exception as e:
+                print(f"  fork didn't initialize ({url}): {e}")
+        proc.terminate(); proc.wait()
+    return None
+
+
+def _start_anvil_fork(port: int, fork_url: str) -> subprocess.Popen:
+    """Spawn an Anvil that forks ``fork_url``. The fork is ephemeral."""
+    cmd = ["anvil", "--fork-url", fork_url, "--port", str(port)]
+    return subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+
+
+def _fund_eth(w3: Web3, address: str, eth: float) -> None:
+    """Use anvil_setBalance to give ``address`` ``eth`` worth of ETH."""
+    w3.provider.make_request(
+        "anvil_setBalance",
+        [Web3.to_checksum_address(address), hex(w3.to_wei(eth, "ether"))],
     )
-    return proc
+
+
+def _fund_erc20_from_whale(
+    w3: Web3, token: str, recipient: str, needed: int, whale: str
+) -> None:
+    """Top up ``recipient`` with ``needed`` of ``token`` by impersonating ``whale``.
+
+    No-op if the recipient already holds at least ``needed``. Uses
+    ``anvil_setBalance`` + ``anvil_impersonateAccount`` so the whale can pay
+    for its own gas to transfer the token.
+    """
+    token_cs = Web3.to_checksum_address(token)
+    recipient_cs = Web3.to_checksum_address(recipient)
+    whale_cs = Web3.to_checksum_address(whale)
+    erc20 = w3.eth.contract(address=token_cs, abi=ERC20_ABI)
+
+    cur = int(erc20.functions.balanceOf(recipient_cs).call())
+    if cur >= needed:
+        print(f"  recipient already holds {cur} of {token_cs}; no funding needed")
+        return
+
+    whale_bal = int(erc20.functions.balanceOf(whale_cs).call())
+    if whale_bal < needed:
+        raise RuntimeError(
+            f"whale {whale_cs} holds {whale_bal} of {token_cs}, < needed {needed}. "
+            "Set USDC_WHALE / DAI_WHALE to an address with a larger balance."
+        )
+
+    _fund_eth(w3, whale_cs, 10.0)
+    w3.provider.make_request("anvil_impersonateAccount", [whale_cs])
+    try:
+        # Build transfer(recipient, needed) calldata.
+        sel = bytes.fromhex("a9059cbb")  # keccak("transfer(address,uint256)")[:4]
+        addr_padded = bytes.fromhex(recipient_cs[2:]).rjust(32, b"\x00")
+        amt_padded = needed.to_bytes(32, "big")
+        data = "0x" + (sel + addr_padded + amt_padded).hex()
+        tx_hash = w3.eth.send_transaction(
+            {"from": whale_cs, "to": token_cs, "data": data, "value": 0, "gas": 200000}
+        )
+        rcpt = w3.eth.wait_for_transaction_receipt(tx_hash)
+        if rcpt["status"] != 1:
+            raise RuntimeError("whale ERC-20 transfer reverted")
+    finally:
+        w3.provider.make_request("anvil_stopImpersonatingAccount", [whale_cs])
+    print(f"  whale {whale_cs[:10]}... → recipient {recipient_cs[:10]}...: {needed} of {token_cs}")
 
 
 def _wait_for_rpc(w3: Web3, timeout_s: float = 10.0) -> bool:
@@ -174,8 +281,9 @@ def _settle_and_mint(
     endpoint: str,
 ) -> tuple[int, str]:
     """Approve + settleAndMintTicket. Returns (ticketId, settlement_tx_hash)."""
-    # 1) payer approves the minter to pull tokens.
-    erc20 = w3.eth.contract(address=Web3.to_checksum_address(token_addr), abi=_load_artifact("MockERC20")["abi"])
+    # 1) payer approves the minter to pull tokens. Uses the generic ERC-20 ABI
+    # so this works against real USDC / DAI / etc. without per-token artifacts.
+    erc20 = w3.eth.contract(address=Web3.to_checksum_address(token_addr), abi=ERC20_ABI)
     approve_tx = erc20.functions.approve(minter.address, 2**256 - 1).build_transaction({"from": payer.address})
     approve_tx.pop("chainId", None)
     approve_tx.pop("nonce", None)
@@ -235,40 +343,36 @@ def _sign_eip3009_authorization(
     what a production payer does (and the bytes are accepted by both the
     mock and a real EIP-3009 token).
     """
-    typed_data = {
-        "types": {
-            "EIP712Domain": [
-                {"name": "name", "type": "string"},
-                {"name": "version", "type": "string"},
-                {"name": "chainId", "type": "uint256"},
-                {"name": "verifyingContract", "type": "address"},
-            ],
-            "TransferWithAuthorization": [
-                {"name": "from", "type": "address"},
-                {"name": "to", "type": "address"},
-                {"name": "value", "type": "uint256"},
-                {"name": "validAfter", "type": "uint256"},
-                {"name": "validBefore", "type": "uint256"},
-                {"name": "nonce", "type": "bytes32"},
-            ],
-        },
-        "primaryType": "TransferWithAuthorization",
-        "domain": {
-            "name": token_name,
-            "version": token_version,
-            "chainId": chain_id,
-            "verifyingContract": Web3.to_checksum_address(token_addr),
-        },
-        "message": {
-            "from": payer.address,
-            "to": Web3.to_checksum_address(to),
-            "value": value,
-            "validAfter": valid_after,
-            "validBefore": valid_before,
-            "nonce": nonce,
-        },
+    domain = {
+        "name": token_name,
+        "version": token_version,
+        "chainId": int(chain_id),
+        "verifyingContract": Web3.to_checksum_address(token_addr),
     }
-    signed = Account.sign_typed_data(payer.key, full_message=typed_data)
+    types = {
+        "TransferWithAuthorization": [
+            {"name": "from", "type": "address"},
+            {"name": "to", "type": "address"},
+            {"name": "value", "type": "uint256"},
+            {"name": "validAfter", "type": "uint256"},
+            {"name": "validBefore", "type": "uint256"},
+            {"name": "nonce", "type": "bytes32"},
+        ],
+    }
+    message = {
+        "from": payer.address,
+        "to": Web3.to_checksum_address(to),
+        "value": int(value),
+        "validAfter": int(valid_after),
+        "validBefore": int(valid_before),
+        "nonce": nonce,
+    }
+    signed = Account.sign_typed_data(
+        payer.key,
+        domain_data=domain,
+        message_types=types,
+        message_data=message,
+    )
     return bytes(signed.signature)
 
 
@@ -431,113 +535,156 @@ def main() -> int:
     _ensure_built()
 
     port = int(os.getenv("ANVIL_PORT", "8545"))
-    proc = _start_anvil(port)
+    usdc_addr = Web3.to_checksum_address(os.getenv("USDC_ASSET", MAINNET_USDC))
+    dai_addr = Web3.to_checksum_address(os.getenv("DAI_ASSET", MAINNET_DAI))
+    usdc_whale = Web3.to_checksum_address(os.getenv("USDC_WHALE", DEFAULT_USDC_WHALE))
+    dai_whale = Web3.to_checksum_address(os.getenv("DAI_WHALE", DEFAULT_DAI_WHALE))
+
+    if os.getenv("RPC_URL"):
+        candidates: tuple[str, ...] = (os.environ["RPC_URL"],)
+    else:
+        candidates = DEFAULT_PUBLIC_RPCS
+
+    print("Bringing up a local mainnet fork...")
+    forked = _try_fork(port, candidates)
+    if forked is None:
+        print(
+            "ERROR: no upstream mainnet RPC could be forked. Set RPC_URL=<your-rpc> "
+            "(an Alchemy / Infura / private RPC works reliably; the public RPCs in "
+            "DEFAULT_PUBLIC_RPCS rate-limit or 403 sporadically)."
+        )
+        return 1
+    rpc_url, proc = forked
     try:
         url = f"http://127.0.0.1:{port}"
         w3 = Web3(Web3.HTTPProvider(url))
-        if not _wait_for_rpc(w3):
-            print("ERROR: Anvil did not come up.")
-            err = (proc.stderr.read() if proc.stderr else b"").decode(errors="replace")[:2000]
-            print(err)
-            return 1
+
+        # Sanity-check we're actually forked from mainnet, not running stand-alone.
+        if w3.eth.chain_id != 1:
+            print(f"WARN: forked chainId = {w3.eth.chain_id} (expected 1 for mainnet)")
+        else:
+            print(f"  fork is live (chainId={w3.eth.chain_id}, head block={w3.eth.block_number})")
 
         deployer = Account.from_key(ANVIL_KEY_DEPLOYER)
-        payer = Account.from_key(ANVIL_KEY_PAYER)
-        agent = Account.from_key(ANVIL_KEY_AGENT)
-        relayer = Account.from_key(ANVIL_KEY_RELAYER)
+        # Fresh random keys for payer / agent / relayer — see ANVIL_KEY_DEPLOYER
+        # comment for why we don't reuse the public anvil dev keys here.
+        payer = Account.create()
+        agent = Account.create()
+        relayer = Account.create()
         facilitator = deployer  # in this demo, the facilitator key == deployer
 
-        print(f"chainId           = {w3.eth.chain_id}")
+        # Fund all our accounts with ETH on the fork (gas).
+        for acct, label in ((deployer, "deployer"), (payer, "payer"), (agent, "agent"), (relayer, "relayer")):
+            _fund_eth(w3, acct.address, 100.0)
+        print(f"\n  funded deployer/payer/agent/relayer with 100 ETH each on the fork")
+
+        print(f"\nchainId           = {w3.eth.chain_id}")
         print(f"deployer/fac      = {deployer.address}")
         print(f"payer (client)    = {payer.address}")
         print(f"agent owner       = {agent.address}")
         print(f"relayer           = {relayer.address}")
         print(f"payTo             = {agent.address} (agent receives the payment)")
+        print(f"USDC              = {usdc_addr}")
+        print(f"DAI               = {dai_addr}")
 
-        # ---- Deploy MockERC20 + MockERC3009Token + MockIdentityRegistry + TicketMinter + RegistryV3 ----
-        print("\nDeploying contracts via forge artifacts...")
-        token_addr = _deploy(w3, deployer, "MockERC20", "MockERC20", "MERC", 6)
-        print(f"  MockERC20             = {token_addr}")
-        usdc_name, usdc_version = "USD Coin", "2"
-        usdc_addr = _deploy(w3, deployer, "MockERC3009Token", usdc_name, "USDC", 6)
-        print(f"  MockERC3009Token      = {usdc_addr}  (name=\"{usdc_name}\", version={usdc_version})")
+        # ---- Sanity-check USDC + DAI are actually deployed on the fork ----
+        for addr, label in ((usdc_addr, "USDC"), (dai_addr, "DAI")):
+            code = w3.eth.get_code(addr)
+            if not code or code == b"\x00":
+                print(f"ERROR: {label} has no code at {addr} on the fork. Wrong RPC?")
+                return 1
 
-        identity_addr = _deploy(w3, deployer, "MockIdentityRegistry")
-        print(f"  MockIdentityRegistry  = {identity_addr}")
+        # ---- Fund payer with USDC + DAI by impersonating whales ----
+        amount_usdc = 1_000_000  # 1 USDC (6 decimals)
+        amount_dai = 1 * 10**18  # 1 DAI (18 decimals)
+        print("\nFunding payer with USDC + DAI from whales...")
+        _fund_erc20_from_whale(w3, usdc_addr, payer.address, amount_usdc * 10, usdc_whale)
+        _fund_erc20_from_whale(w3, dai_addr, payer.address, amount_dai * 10, dai_whale)
+
+        # ---- Deploy MockIdentityRegistry + TicketMinter + ReputationRegistryV3 ----
+        print("\nDeploying ticket-flow contracts onto the fork...")
+        identity_env = os.getenv("IDENTITY_REGISTRY")
+        if identity_env:
+            identity_addr = Web3.to_checksum_address(identity_env)
+            print(f"  IdentityRegistry (existing) = {identity_addr}")
+            identity = None  # we won't be calling setOwner on a real registry
+        else:
+            identity_addr = _deploy(w3, deployer, "MockIdentityRegistry")
+            identity = w3.eth.contract(
+                address=identity_addr, abi=_load_artifact("MockIdentityRegistry")["abi"]
+            )
+            print(f"  MockIdentityRegistry        = {identity_addr}")
 
         # TicketMinter(owner=deployer, permit2=address(0))
         minter_addr = _deploy(
             w3, deployer, "TicketMinter", deployer.address, "0x" + "00" * 20
         )
-        print(f"  TicketMinter          = {minter_addr}")
+        print(f"  TicketMinter                = {minter_addr}")
 
         registry_addr = _deploy(
             w3, deployer, "ReputationRegistryV3", identity_addr, minter_addr
         )
-        print(f"  ReputationRegistryV3  = {registry_addr}")
+        print(f"  ReputationRegistryV3        = {registry_addr}")
 
-        # Use the full forge ABI here (it includes admin setters like
-        # setFacilitator + setReputationRegistry that TICKET_MINTER_ABI omits
-        # because clients shouldn't need them).
         minter = w3.eth.contract(address=minter_addr, abi=_load_artifact("TicketMinter")["abi"])
-        registry_abi = _load_artifact("ReputationRegistryV3")["abi"]
-        registry = w3.eth.contract(address=registry_addr, abi=registry_abi)
-        identity_abi = _load_artifact("MockIdentityRegistry")["abi"]
-        identity = w3.eth.contract(address=identity_addr, abi=identity_abi)
-        token_abi = _load_artifact("MockERC20")["abi"]
-        token = w3.eth.contract(address=token_addr, abi=token_abi)
-        usdc_abi = _load_artifact("MockERC3009Token")["abi"]
-        usdc = w3.eth.contract(address=usdc_addr, abi=usdc_abi)
+        registry = w3.eth.contract(
+            address=registry_addr, abi=_load_artifact("ReputationRegistryV3")["abi"]
+        )
 
-        # ---- Wire minter: facilitator + registry, then point identity at agent ----
+        # ---- Wire minter: facilitator + registry; point identity at agent (mock only) ----
         print("\nWiring contracts...")
-        for fn, label in (
+        wirings = [
             (minter.functions.setFacilitator(facilitator.address, True), "setFacilitator"),
             (minter.functions.setReputationRegistry(registry_addr), "setReputationRegistry"),
-            (identity.functions.setOwner(7, agent.address), "MockIdentity.setOwner(7, agent)"),
-        ):
+        ]
+        agent_id = 7
+        if identity is not None:
+            wirings.append(
+                (identity.functions.setOwner(agent_id, agent.address), f"MockIdentity.setOwner({agent_id}, agent)")
+            )
+        for fn, label in wirings:
             tx = fn.build_transaction({"from": deployer.address})
             tx.pop("chainId", None); tx.pop("nonce", None); tx.pop("from", None)
             _send(w3, deployer, {**tx, "gas": 200_000})
             print(f"  {label}")
 
-        agent_id = 7
-
-        # ---- Mint both tokens to payer ----
-        amount = 1_000_000  # 1 unit (6 decimals)
-        for tok, label in ((token, "MockERC20"), (usdc, "MockERC3009Token")):
-            mint_tx = tok.functions.mint(payer.address, amount * 10).build_transaction(
-                {"from": deployer.address}
+        if identity is None:
+            print(
+                "  NOTE: using an existing IdentityRegistry — agent registration is your "
+                "responsibility (the ReputationRegistry forbids self-feedback, so the "
+                "payer must not be the agent owner)."
             )
-            mint_tx.pop("chainId", None); mint_tx.pop("nonce", None); mint_tx.pop("from", None)
-            _send(w3, deployer, {**mint_tx, "gas": 120_000})
-            print(f"\nMinted {amount * 10} of {label} to payer.")
 
         # ====================================================================
-        # Scenario 1: plain ERC-20 (transferFrom path)
+        # Scenario 1: USDC via EIP-3009 transferWithAuthorization
         # ====================================================================
-        print("\n\n=== Scenario 1 — plain ERC-20 (settleAndMintTicket / transferFrom) ===")
+        print("\n\n=== Scenario 1 — USDC via EIP-3009 (settleAndMintTicketEIP3009) ===")
 
-        # Ticket #1 — Path A (direct)
-        print("\n--- mint ticket #1 via transferFrom ---")
-        ticket_id_1, tx_1 = _settle_and_mint(
-            w3, minter, token_addr, payer, facilitator,
-            pay_to=agent.address, amount=amount, agent_id=agent_id,
+        # Ticket #1 — Path A
+        print("\n--- mint ticket #1 (USDC EIP-3009, then Path A direct feedback) ---")
+        ticket_id_1, tx_1 = _settle_and_mint_eip3009(
+            w3, minter, usdc_addr, USDC_DOMAIN_NAME, USDC_DOMAIN_VERSION,
+            payer, facilitator,
+            pay_to=agent.address, amount=amount_usdc, agent_id=agent_id,
             request_hash=keccak(b"req-1"), interaction_hash=keccak(b"int-1"),
             endpoint="https://agent.example/r",
+            nonce_seed=b"usdc-nonce-1",
         )
+        print(f"  payer signed USDC TransferWithAuthorization (no on-chain approval)")
         print(f"  settle+mint tx = {tx_1}  ticketId = {ticket_id_1}")
         _print_ticket(w3, minter, ticket_id_1, "mint")
         _path_a_direct(w3, registry_addr, payer, ticket_id_1, agent_id)
         _print_ticket(w3, minter, ticket_id_1, "feedback")
 
-        # Ticket #2 — Path B (sponsored)
-        print("\n--- mint ticket #2 via transferFrom (then sponsored feedback) ---")
-        ticket_id_2, tx_2 = _settle_and_mint(
-            w3, minter, token_addr, payer, facilitator,
-            pay_to=agent.address, amount=amount, agent_id=agent_id,
+        # Ticket #2 — Path B
+        print("\n--- mint ticket #2 (USDC EIP-3009, then Path B sponsored feedback) ---")
+        ticket_id_2, tx_2 = _settle_and_mint_eip3009(
+            w3, minter, usdc_addr, USDC_DOMAIN_NAME, USDC_DOMAIN_VERSION,
+            payer, facilitator,
+            pay_to=agent.address, amount=amount_usdc, agent_id=agent_id,
             request_hash=keccak(b"req-2"), interaction_hash=keccak(b"int-2"),
             endpoint="https://agent.example/r",
+            nonce_seed=b"usdc-nonce-2",
         )
         print(f"  settle+mint tx = {tx_2}  ticketId = {ticket_id_2}")
         _print_ticket(w3, minter, ticket_id_2, "mint")
@@ -545,35 +692,30 @@ def main() -> int:
         _print_ticket(w3, minter, ticket_id_2, "feedback")
 
         # ====================================================================
-        # Scenario 2: USDC-style EIP-3009 (transferWithAuthorization path)
+        # Scenario 2: DAI via ERC-20 transferFrom (DAI lacks transferWithAuthorization)
         # ====================================================================
-        print("\n\n=== Scenario 2 — USDC EIP-3009 (settleAndMintTicketEIP3009) ===")
+        print("\n\n=== Scenario 2 — DAI via transferFrom (settleAndMintTicket) ===")
 
         # Ticket #3 — Path A
-        print("\n--- mint ticket #3 via EIP-3009 transferWithAuthorization ---")
-        ticket_id_3, tx_3 = _settle_and_mint_eip3009(
-            w3, minter, usdc_addr, usdc_name, usdc_version,
-            payer, facilitator,
-            pay_to=agent.address, amount=amount, agent_id=agent_id,
+        print("\n--- mint ticket #3 (DAI transferFrom, then Path A direct feedback) ---")
+        ticket_id_3, tx_3 = _settle_and_mint(
+            w3, minter, dai_addr, payer, facilitator,
+            pay_to=agent.address, amount=amount_dai, agent_id=agent_id,
             request_hash=keccak(b"req-3"), interaction_hash=keccak(b"int-3"),
             endpoint="https://agent.example/r",
-            nonce_seed=b"eip3009-demo-nonce-3",
         )
-        print(f"  payer signed EIP-3009 TransferWithAuthorization (no on-chain approval)")
         print(f"  settle+mint tx = {tx_3}  ticketId = {ticket_id_3}")
         _print_ticket(w3, minter, ticket_id_3, "mint")
         _path_a_direct(w3, registry_addr, payer, ticket_id_3, agent_id)
         _print_ticket(w3, minter, ticket_id_3, "feedback")
 
         # Ticket #4 — Path B
-        print("\n--- mint ticket #4 via EIP-3009 (then sponsored feedback) ---")
-        ticket_id_4, tx_4 = _settle_and_mint_eip3009(
-            w3, minter, usdc_addr, usdc_name, usdc_version,
-            payer, facilitator,
-            pay_to=agent.address, amount=amount, agent_id=agent_id,
+        print("\n--- mint ticket #4 (DAI transferFrom, then Path B sponsored feedback) ---")
+        ticket_id_4, tx_4 = _settle_and_mint(
+            w3, minter, dai_addr, payer, facilitator,
+            pay_to=agent.address, amount=amount_dai, agent_id=agent_id,
             request_hash=keccak(b"req-4"), interaction_hash=keccak(b"int-4"),
             endpoint="https://agent.example/r",
-            nonce_seed=b"eip3009-demo-nonce-4",
         )
         print(f"  settle+mint tx = {tx_4}  ticketId = {ticket_id_4}")
         _print_ticket(w3, minter, ticket_id_4, "mint")
@@ -585,22 +727,35 @@ def main() -> int:
         states = [minter.functions.tickets(tid).call()[5] for tid in ticket_ids]
         assert all(s == 2 for s in states), f"some tickets not CONSUMED: {dict(zip(ticket_ids, states))}"
 
-        # NewFeedback is recorded per (agent, payer, feedbackHash); the demo
-        # uses 4 distinct feedback hashes, but Path B feedbacks come from the
-        # relayer in the registry's eyes via giveFeedbackWithTicketFor (which
-        # records the *payer* as clientAddress). So getLastIndex(agent, payer)
-        # should hit 4.
-        idx = registry.functions.getLastIndex(agent_id, payer.address).call()
-        assert idx == 4, f"expected 4 feedbacks recorded under payer, got {idx}"
+        if identity is not None:
+            # The mock allows us to assert NewFeedback bookkeeping; on a real
+            # IdentityRegistry the agent registration would have given us a
+            # different agentId and we'd need to look up that index instead.
+            idx = registry.functions.getLastIndex(agent_id, payer.address).call()
+            assert idx == 4, f"expected 4 feedbacks recorded under payer, got {idx}"
+            idx_msg = f"  ReputationRegistryV3.getLastIndex(agentId={agent_id}, payer) = {idx}"
+        else:
+            idx_msg = "  (skipping getLastIndex assertion — agentId depends on the real IdentityRegistry)"
+
+        # Confirm payer's balances dropped by exactly the payments and the
+        # agent received them — proves the transfers actually happened on the
+        # real token contracts, not on a mock.
+        usdc = w3.eth.contract(address=usdc_addr, abi=ERC20_ABI)
+        dai = w3.eth.contract(address=dai_addr, abi=ERC20_ABI)
+        agent_usdc = int(usdc.functions.balanceOf(agent.address).call())
+        agent_dai = int(dai.functions.balanceOf(agent.address).call())
+        assert agent_usdc == 2 * amount_usdc, f"agent USDC balance = {agent_usdc}, expected {2 * amount_usdc}"
+        assert agent_dai == 2 * amount_dai, f"agent DAI balance = {agent_dai}, expected {2 * amount_dai}"
 
         print("\n\nDONE — both scenarios, both feedback paths green.")
-        print(f"  Scenario 1 (ERC-20 transferFrom):")
+        print(f"  Scenario 1 (USDC EIP-3009):")
         print(f"    ticket #{ticket_id_1}: MINTED -> CONSUMED  (Path A direct)")
         print(f"    ticket #{ticket_id_2}: MINTED -> CONSUMED  (Path B sponsored)")
-        print(f"  Scenario 2 (USDC EIP-3009):")
+        print(f"  Scenario 2 (DAI transferFrom):")
         print(f"    ticket #{ticket_id_3}: MINTED -> CONSUMED  (Path A direct)")
         print(f"    ticket #{ticket_id_4}: MINTED -> CONSUMED  (Path B sponsored)")
-        print(f"  ReputationRegistryV3.getLastIndex(agentId={agent_id}, payer) = {idx}")
+        print(f"  agent received: USDC {agent_usdc} ({agent_usdc / 10**6} USDC), DAI {agent_dai} ({agent_dai / 10**18} DAI)")
+        print(idx_msg)
         return 0
 
     finally:

@@ -18,33 +18,35 @@ Two flavors of the extension live side by side:
 
 [`run_ticket_demo.py`](./run_ticket_demo.py) is a one-command demo that:
 
-1. spins up a local Anvil,
-2. deploys `MockERC20` + `MockERC3009Token` (USDC-style) +
-   `MockIdentityRegistry` + `TicketMinter` + `ReputationRegistryV3` from the
-   Foundry build artifacts,
-3. wires the minter (facilitator allowlist + registry reference) and registers
-   one agent,
-4. mints both tokens to the payer,
-5. exercises **two settlement modes**, each with both feedback paths:
+1. forks Ethereum **mainnet** (real USDC + DAI, no mocks) into a local Anvil
+   subprocess — the fork is ephemeral, nothing touches the real chain,
+2. impersonates known whales to fund a fresh payer EOA with **real USDC and
+   real DAI**,
+3. deploys `MockIdentityRegistry` + `TicketMinter` + `ReputationRegistryV3`
+   from the Foundry build artifacts onto the fork,
+4. wires the minter (facilitator allowlist + registry reference) and points
+   the mock identity registry at the agent,
+5. exercises each token's natural settlement mode, both with both feedback paths:
 
-   **Scenario 1 — plain ERC-20 (`settleAndMintTicket` / `transferFrom`):**
+   **Scenario 1 — USDC via EIP-3009 (`settleAndMintTicketEIP3009`):**
 
-   - Ticket #1 — payer approves the minter, facilitator calls
-     `TicketMinter.settleAndMintTicket` (one tx: `transferFrom` + ticket mint),
-     payer submits `giveFeedbackWithTicket` (Path A, direct).
-   - Ticket #2 — same settle + mint, payer signs an EIP-712 `FeedbackIntent`,
-     a relayer EOA broadcasts `giveFeedbackWithTicketFor(...)` (Path B,
-     sponsored — payer pays no gas for the feedback step).
-
-   **Scenario 2 — USDC-style EIP-3009 (`settleAndMintTicketEIP3009` /
-   `transferWithAuthorization`):**
-
-   - Ticket #3 — payer signs an EIP-3009 `TransferWithAuthorization`
-     (no on-chain approval needed); facilitator calls
-     `TicketMinter.settleAndMintTicketEIP3009` (one tx: token-level
+   - Ticket #1 — payer signs an EIP-3009 `TransferWithAuthorization` (no
+     on-chain approval needed); facilitator calls
+     `TicketMinter.settleAndMintTicketEIP3009` (one tx: real-USDC
      `transferWithAuthorization` + ticket mint); payer submits
-     `giveFeedbackWithTicket` (Path A).
-   - Ticket #4 — same EIP-3009 settle + mint, sponsored feedback (Path B).
+     `giveFeedbackWithTicket` (Path A, direct).
+   - Ticket #2 — same EIP-3009 settle + mint, sponsored feedback: payer signs
+     an EIP-712 `FeedbackIntent`, a relayer EOA broadcasts
+     `giveFeedbackWithTicketFor(...)` (Path B — payer pays no gas for the
+     feedback step).
+
+   **Scenario 2 — DAI via `transferFrom` (`settleAndMintTicket`):**
+   DAI doesn't expose `transferWithAuthorization`, so the payer approves the
+   minter and the facilitator pulls the DAI via `transferFrom`.
+
+   - Ticket #3 — `transferFrom` + ticket mint in one tx, then Path A direct
+     feedback.
+   - Ticket #4 — same settle + mint, Path B sponsored feedback.
 
 ### Run
 
@@ -53,21 +55,28 @@ Two flavors of the extension live side by side:
 cd contracts/evm && FOUNDRY_PROFILE=erc8004 forge build
 cd ../../python/x402 && uv pip install -e .
 
-# Run the demo
+# Run the demo. RPC_URL defaults to a public mainnet RPC (auto-fallback
+# across a couple of free ones); override with a private RPC if you hit
+# rate limits.
 uv run python ../../examples/python/clients/erc8004/run_ticket_demo.py
+# or
+RPC_URL=https://eth-mainnet.g.alchemy.com/v2/<your-key> \
+  uv run python ../../examples/python/clients/erc8004/run_ticket_demo.py
 ```
 
-On success you'll see all four tickets transition `MINTED → CONSUMED` and the
+On success you'll see all four tickets transition `MINTED → CONSUMED`, the
+agent receive 2 USDC + 2 DAI from the real on-chain token contracts, and the
 registry's `getLastIndex(agentId, payer)` increment to 4:
 
 ```
 DONE — both scenarios, both feedback paths green.
-  Scenario 1 (ERC-20 transferFrom):
+  Scenario 1 (USDC EIP-3009):
     ticket #1: MINTED -> CONSUMED  (Path A direct)
     ticket #2: MINTED -> CONSUMED  (Path B sponsored)
-  Scenario 2 (USDC EIP-3009):
+  Scenario 2 (DAI transferFrom):
     ticket #3: MINTED -> CONSUMED  (Path A direct)
     ticket #4: MINTED -> CONSUMED  (Path B sponsored)
+  agent received: USDC 2000000 (2.0 USDC), DAI 2000000000000000000 (2.0 DAI)
   ReputationRegistryV3.getLastIndex(agentId=7, payer) = 4
 ```
 
