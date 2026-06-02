@@ -23,3 +23,10 @@ export * from "./erc20-approval-gas-sponsoring";
 
 // Builder Code extension (ERC-8021)
 export * from "./builder-code";
+
+// VCX (Verifiable Credential Exchange) extension — spec: specs/extensions/vcx.md
+export * from "./vcx";
+export {
+  createVCXResourceServerExtension,
+  createVCXClientExtension,
+} from "./vcx";
