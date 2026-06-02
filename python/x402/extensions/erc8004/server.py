@@ -22,8 +22,6 @@ from .types import ERC8004Config, EXTENSION_KEY, InteractionReceipt
 
 def create_erc8004_resource_server_extension(
     config: ERC8004Config,
-    *,
-    require_ticket_bind: bool = False,
 ) -> ResourceServerExtension:
     """Create ERC-8004 server extension.
 
@@ -31,21 +29,15 @@ def create_erc8004_resource_server_extension(
     settle time into ``PAYMENT-RESPONSE.extensions.erc8004.ticketId`` so the
     client can recover the ticket without re-parsing the settlement receipt.
 
+    The ticket bind is **mandatory**: if the client's payment payload does
+    not include ``requestHash``, ``interactionHash``, ``endpoint``, and
+    ``agentId`` under ``extensions.erc8004.info``, the after-verify hook
+    short-circuits the paid handler. ``ReputationRegistryV3.giveFeedback``
+    has been disabled on-chain, so without a ticket the payer can never give
+    feedback — there is no working "ticketless" mode for this extension.
+
     Args:
         config: ERC-8004 configuration (must include ``agent_id``).
-        require_ticket_bind: When True, the after-verify hook rejects payment
-            payloads that do not carry the ticket-bind fields
-            (``requestHash``, ``interactionHash``, ``endpoint``, ``agentId``).
-            Defaults to False to remain compatible with the gateway-less
-            baseline; flip on once clients populate the bind (Phase 4).
-
-    Note on the mint gate: in x402 v2 the resource handler runs *before*
-    settlement, so the actual mint-failure → no-handler invariant is enforced
-    by the facilitator extension (it returns ``success=False`` when the
-    TicketMinted log is missing). The optional ``require_ticket_bind`` hook
-    here is a pre-handler defence: if the client did not bind a ticket, we
-    short-circuit instead of running the handler for a payment that cannot
-    produce a ticket downstream.
     """
     agent_id = config.agent_id
     if agent_id is None:
@@ -67,19 +59,24 @@ def create_erc8004_resource_server_extension(
         def after_verify(
             self, context: VerifyResultContext
         ) -> SkipHandlerResult | None:
-            """Optionally skip the handler when ticket bind is missing.
+            """Refuse to run the paid handler when the client didn't bind a ticket.
 
-            Active only when ``require_ticket_bind`` was set at construction.
+            Enabling this extension is an opt-in to the ticket model; a
+            ticketless payment can't produce feedback downstream, so the
+            handler is skipped before the user is charged for nothing.
             """
-            if not require_ticket_bind:
-                return None
             payload = context.payment_payload
             if not isinstance(payload, PaymentPayload):
-                # V1 payloads cannot carry the bind; defer to caller policy.
-                return None
+                # V1 payloads predate the ticket bind shape — block them
+                # outright to fail loudly rather than silently allow a no-op
+                # paid call.
+                return SkipHandlerResult(
+                    response=SkipHandlerDirective(
+                        content_type="application/json",
+                        body={"error": "erc8004_ticket_bind_required"},
+                    )
+                )
             if extract_ticket_bind(payload) is None:
-                # Refuse to run the paid handler when there's no bind — the
-                # client wouldn't be able to obtain a usable ticket anyway.
                 return SkipHandlerResult(
                     response=SkipHandlerDirective(
                         content_type="application/json",

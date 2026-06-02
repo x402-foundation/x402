@@ -183,7 +183,7 @@ When routed, the call lands at `TicketMinter.settleAndMintTicketEIP3009` /
 
 | Side | Must do | Without it |
 |------|---------|------------|
-| Resource server | `server.register_extension(create_erc8004_resource_server_extension(config, ...))` | 402 never advertises `erc8004`; clients can't bind |
+| Resource server | `server.register_extension(create_erc8004_resource_server_extension(config))` | 402 never advertises `erc8004`; clients can't bind. The bind is mandatory once the extension is registered — payloads without bind are rejected (`giveFeedback` is on-chain disabled, so a ticketless payment can never produce feedback) |
 | Client | `client.register_extension(ERC8004ClientExtension())` (Phase 4 populates bind) | `payload.extensions.erc8004` is empty → guard #3 fails |
 | Facilitator | `facilitator.register_extension(ERC8004TicketFacilitatorExtension(minters={...}))` | `context.get_extension("erc8004") is None` → guard #1 fails |
 

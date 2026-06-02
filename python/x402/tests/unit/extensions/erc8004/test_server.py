@@ -89,11 +89,11 @@ def test_settlement_hook_surfaces_ticket_id() -> None:
 
 
 def test_after_verify_skips_handler_when_bind_missing() -> None:
-    """With require_ticket_bind=True, a payload lacking ticket bind skips the handler."""
+    """The bind is mandatory: a payload lacking ticket bind skips the handler."""
     from x402.schemas.hooks import VerifyResultContext
     from x402.schemas.responses import VerifyResponse
 
-    ext = create_erc8004_resource_server_extension(_config(), require_ticket_bind=True)
+    ext = create_erc8004_resource_server_extension(_config())
     payload = PaymentPayload(payload={}, accepted=_requirements())  # no extensions
     ctx = VerifyResultContext(
         payment_payload=payload,
@@ -111,7 +111,7 @@ def test_after_verify_allows_handler_when_bind_present() -> None:
     from x402.schemas.hooks import VerifyResultContext
     from x402.schemas.responses import VerifyResponse
 
-    ext = create_erc8004_resource_server_extension(_config(), require_ticket_bind=True)
+    ext = create_erc8004_resource_server_extension(_config())
     payload = PaymentPayload(
         payload={},
         accepted=_requirements(),
@@ -134,19 +134,24 @@ def test_after_verify_allows_handler_when_bind_present() -> None:
     assert ext.after_verify(ctx) is None
 
 
-def test_after_verify_noop_when_gate_disabled() -> None:
-    """Default (require_ticket_bind=False) preserves prior behavior — handler always runs."""
+def test_after_verify_rejects_v1_payload() -> None:
+    """V1 payloads predate the bind shape — fail loud rather than silent no-op."""
     from x402.schemas.hooks import VerifyResultContext
     from x402.schemas.responses import VerifyResponse
+    from x402.schemas.v1 import PaymentPayloadV1
 
     ext = create_erc8004_resource_server_extension(_config())
-    payload = PaymentPayload(payload={}, accepted=_requirements())
+    v1_payload = PaymentPayloadV1(
+        x402_version=1, scheme="exact", network="eip155:8453", payload={}
+    )
     ctx = VerifyResultContext(
-        payment_payload=payload,
+        payment_payload=v1_payload,
         requirements=_requirements(),
         result=VerifyResponse(is_valid=True, payer="0x" + "02" * 20),
     )
-    assert ext.after_verify(ctx) is None
+    result = ext.after_verify(ctx)
+    assert result is not None
+    assert result.response.body == {"error": "erc8004_ticket_bind_required"}
 
 
 def test_create_interaction_receipt_signs_over_ticket_id() -> None:
