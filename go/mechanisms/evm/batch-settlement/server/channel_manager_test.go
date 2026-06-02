@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	x402 "github.com/x402-foundation/x402/go"
-	batchsettlement "github.com/x402-foundation/x402/go/mechanisms/evm/batch-settlement"
+	x402 "github.com/x402-foundation/x402/go/v2"
+	batchsettlement "github.com/x402-foundation/x402/go/v2/mechanisms/evm/batch-settlement"
 )
 
 // fakeFacilitator records Settle/Verify calls and returns canned responses.

@@ -17,7 +17,11 @@ import type {
   PaymentRequiredHook,
   PaymentRequiredContext,
 } from "../types";
-import { MCP_PAYMENT_REQUIRED_CODE, MCP_PAYMENT_META_KEY } from "../types";
+import {
+  MCP_PAYMENT_REQUIRED_CODE,
+  MCP_PAYMENT_META_KEY,
+  isPaymentRequiredError,
+} from "../types";
 import { extractPaymentResponseFromMeta } from "../utils";
 
 // ============================================================================
@@ -463,15 +467,33 @@ export class x402MCPClient {
     options?: { timeout?: number; signal?: AbortSignal; resetTimeoutOnProgress?: boolean },
   ): Promise<x402MCPToolCallResult> {
     // First attempt without payment
-    const result = await this.mcpClient.callTool({ name, arguments: args }, undefined, options);
+    let result: MCPCallToolResult;
+    let paymentRequired: PaymentRequired | null = null;
 
-    // Validate result structure
-    if (!isMCPCallToolResult(result)) {
-      throw new Error("Invalid MCP tool result: missing content array");
+    try {
+      const rawResult = await this.mcpClient.callTool(
+        { name, arguments: args },
+        undefined,
+        options,
+      );
+
+      if (!isMCPCallToolResult(rawResult)) {
+        throw new Error("Invalid MCP tool result: missing content array");
+      }
+
+      result = rawResult;
+      paymentRequired = this.extractPaymentRequiredFromResult(result);
+    } catch (error: unknown) {
+      // Handle MCP UrlElicitationRequired (-32042) used for payment flows (SEP-1036).
+      // The MCP SDK throws McpError for -32042 with error.data preserved.
+      const extracted = this.extractPaymentRequiredFromError(error);
+      if (extracted) {
+        paymentRequired = extracted;
+        result = { content: [], isError: true };
+      } else {
+        throw error;
+      }
     }
-
-    // Check if this is a payment required response (isError with payment_required in content)
-    const paymentRequired = this.extractPaymentRequiredFromResult(result);
 
     if (!paymentRequired) {
       // Not a payment required response, forward original MCP response as-is
@@ -705,15 +727,24 @@ export class x402MCPClient {
   ): Promise<PaymentRequired | null> {
     // Note: This actually calls the tool to trigger 402 if paid.
     // If the tool is free, it will execute as a side effect.
-    const result = await this.mcpClient.callTool({ name, arguments: args });
+    try {
+      const result = await this.mcpClient.callTool({ name, arguments: args });
 
-    // Validate result structure
-    if (!isMCPCallToolResult(result)) {
-      return null;
+      if (!isMCPCallToolResult(result)) {
+        return null;
+      }
+
+      return this.extractPaymentRequiredFromResult(result);
+    } catch (error: unknown) {
+      // Handle McpError(-32042) payment challenges; re-throw anything else
+      // so non-payment failures aren't indistinguishable from "free tool"
+      // (mirrors callTool's catch above).
+      const extracted = this.extractPaymentRequiredFromError(error);
+      if (extracted) {
+        return extracted;
+      }
+      throw error;
     }
-
-    // Check if this is a payment required response
-    return this.extractPaymentRequiredFromResult(result);
   }
 
   // ============================================================================
@@ -783,6 +814,25 @@ export class x402MCPClient {
     }
 
     return null;
+  }
+
+  /**
+   * Extracts PaymentRequired from a thrown MCP error.
+   *
+   * Uses isPaymentRequiredError() to validate the error structure (supports
+   * both 402 and -32042 codes), then extracts PaymentRequired from the
+   * correct location (error.data directly or error.data.x402 for namespaced
+   * -32042 errors).
+   *
+   * @param error - The caught error
+   * @returns PaymentRequired if this is a payment error, null otherwise
+   */
+  private extractPaymentRequiredFromError(error: unknown): PaymentRequired | null {
+    if (!isPaymentRequiredError(error)) {
+      return null;
+    }
+
+    return "x402" in error.data ? error.data.x402 : error.data;
   }
 
 }

@@ -6,7 +6,7 @@ toolchain go1.24.1
 
 require (
 	github.com/modelcontextprotocol/go-sdk v1.3.0
-	github.com/x402-foundation/x402/go v0.0.0
+	github.com/x402-foundation/x402/go/v2 v2.14.0
 )
 
 require (
@@ -42,4 +42,4 @@ require (
 	golang.org/x/text v0.32.0 // indirect
 )
 
-replace github.com/x402-foundation/x402/go => ../../../go
+replace github.com/x402-foundation/x402/go/v2 => ../../../go

@@ -3,7 +3,11 @@
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { x402MCPClient, createx402MCPClient, wrapMCPClientWithPayment } from "../../src/client";
-import { MCP_PAYMENT_REQUIRED_CODE, MCP_PAYMENT_META_KEY } from "../../src/types";
+import {
+  MCP_PAYMENT_REQUIRED_CODE,
+  MCP_PAYMENT_META_KEY,
+  JSONRPC_PAYMENT_REQUIRED_CODE,
+} from "../../src/types";
 import type { PaymentPayload, PaymentRequired, SettleResponse } from "@x402/core/types";
 
 // ============================================================================
@@ -783,5 +787,241 @@ describe("x402MCPClient onPaymentRequired hook", () => {
   it("should return this for method chaining", () => {
     const result = client.onPaymentRequired(() => {});
     expect(result).toBe(client);
+  });
+});
+
+// ============================================================================
+// McpError(-32042) Payment Error Tests
+// ============================================================================
+
+/**
+ * Creates a mock McpError(-32042) with PaymentRequired in error.data
+ *
+ * @param data - The error data payload
+ * @returns A mock McpError with code -32042
+ */
+function createMcpError32042(
+  data: Record<string, unknown>,
+): Error & { code: number; data: Record<string, unknown> } {
+  const err = new Error("Payment Required") as Error & {
+    code: number;
+    data: Record<string, unknown>;
+  };
+  err.code = JSONRPC_PAYMENT_REQUIRED_CODE;
+  err.data = data;
+  return err;
+}
+
+describe("x402MCPClient McpError(-32042) handling", () => {
+  let mockMcpClient: MockMCPClient;
+  let mockPaymentClient: MockPaymentClient;
+  let client: x402MCPClient;
+
+  beforeEach(() => {
+    mockMcpClient = createMockMCPClient();
+    mockPaymentClient = createMockPaymentClient();
+    client = new x402MCPClient(
+      mockMcpClient as unknown as Parameters<typeof wrapMCPClientWithPayment>[0],
+      mockPaymentClient as unknown as Parameters<typeof wrapMCPClientWithPayment>[1],
+    );
+  });
+
+  describe("callTool with thrown -32042 errors", () => {
+    it("should handle -32042 with direct PaymentRequired in error.data", async () => {
+      mockMcpClient.callTool
+        .mockRejectedValueOnce(
+          createMcpError32042(mockPaymentRequired as unknown as Record<string, unknown>),
+        )
+        .mockResolvedValueOnce({
+          content: [{ type: "text", text: "paid result" }],
+          _meta: { "x402/payment-response": mockSettleResponse },
+        });
+
+      const result = await client.callTool("paid_tool", { arg: "value" });
+
+      expect(result.paymentMade).toBe(true);
+      expect(result.content[0]?.text).toBe("paid result");
+      expect(result.paymentResponse).toEqual(mockSettleResponse);
+      expect(mockMcpClient.callTool).toHaveBeenCalledTimes(2);
+      expect(mockPaymentClient.createPaymentPayload).toHaveBeenCalledWith(mockPaymentRequired);
+    });
+
+    it("should handle -32042 with PaymentRequired namespaced under error.data.x402", async () => {
+      const namespacedData = {
+        challenges: [{ method: "tempo", intent: "charge" }],
+        x402: mockPaymentRequired,
+      };
+      mockMcpClient.callTool
+        .mockRejectedValueOnce(
+          createMcpError32042(namespacedData as unknown as Record<string, unknown>),
+        )
+        .mockResolvedValueOnce({
+          content: [{ type: "text", text: "paid result" }],
+          _meta: { "x402/payment-response": mockSettleResponse },
+        });
+
+      const result = await client.callTool("paid_tool");
+
+      expect(result.paymentMade).toBe(true);
+      expect(mockPaymentClient.createPaymentPayload).toHaveBeenCalledWith(mockPaymentRequired);
+    });
+
+    it("should re-throw non-payment errors", async () => {
+      const genericError = new Error("Some other error");
+      mockMcpClient.callTool.mockRejectedValueOnce(genericError);
+
+      await expect(client.callTool("tool")).rejects.toThrow("Some other error");
+    });
+
+    it("should re-throw -32042 errors without valid PaymentRequired data", async () => {
+      const err = createMcpError32042({ unrelated: "data" });
+      mockMcpClient.callTool.mockRejectedValueOnce(err);
+
+      await expect(client.callTool("tool")).rejects.toBe(err);
+    });
+
+    it("should include payment in _meta on retry after -32042", async () => {
+      mockMcpClient.callTool
+        .mockRejectedValueOnce(
+          createMcpError32042(mockPaymentRequired as unknown as Record<string, unknown>),
+        )
+        .mockResolvedValueOnce({
+          content: [{ type: "text", text: "result" }],
+        });
+
+      await client.callTool("paid_tool");
+
+      const secondCall = mockMcpClient.callTool.mock.calls[1][0];
+      expect(secondCall._meta?.[MCP_PAYMENT_META_KEY]).toEqual(mockPaymentPayload);
+    });
+  });
+
+  describe("callTool -32042 with autoPayment disabled", () => {
+    beforeEach(() => {
+      client = new x402MCPClient(
+        mockMcpClient as unknown as Parameters<typeof wrapMCPClientWithPayment>[0],
+        mockPaymentClient as unknown as Parameters<typeof wrapMCPClientWithPayment>[1],
+        { autoPayment: false },
+      );
+    });
+
+    it("should throw with payment info when autoPayment is disabled", async () => {
+      mockMcpClient.callTool.mockRejectedValueOnce(
+        createMcpError32042(mockPaymentRequired as unknown as Record<string, unknown>),
+      );
+
+      await expect(client.callTool("paid_tool")).rejects.toMatchObject({
+        message: "Payment required",
+        code: MCP_PAYMENT_REQUIRED_CODE,
+        paymentRequired: mockPaymentRequired,
+      });
+    });
+  });
+
+  describe("callTool -32042 with approval flow", () => {
+    it("should call onPaymentRequested hook for -32042 errors", async () => {
+      const approvalHook = vi.fn().mockResolvedValue(true);
+      client = new x402MCPClient(
+        mockMcpClient as unknown as Parameters<typeof wrapMCPClientWithPayment>[0],
+        mockPaymentClient as unknown as Parameters<typeof wrapMCPClientWithPayment>[1],
+        { autoPayment: true, onPaymentRequested: approvalHook },
+      );
+
+      mockMcpClient.callTool
+        .mockRejectedValueOnce(
+          createMcpError32042(mockPaymentRequired as unknown as Record<string, unknown>),
+        )
+        .mockResolvedValueOnce({ content: [{ type: "text", text: "result" }] });
+
+      await client.callTool("paid_tool", { arg: "value" });
+
+      expect(approvalHook).toHaveBeenCalledWith({
+        toolName: "paid_tool",
+        arguments: { arg: "value" },
+        paymentRequired: mockPaymentRequired,
+      });
+    });
+
+    it("should throw if payment request is denied for -32042 error", async () => {
+      const approvalHook = vi.fn().mockResolvedValue(false);
+      client = new x402MCPClient(
+        mockMcpClient as unknown as Parameters<typeof wrapMCPClientWithPayment>[0],
+        mockPaymentClient as unknown as Parameters<typeof wrapMCPClientWithPayment>[1],
+        { autoPayment: true, onPaymentRequested: approvalHook },
+      );
+
+      mockMcpClient.callTool.mockRejectedValueOnce(
+        createMcpError32042(mockPaymentRequired as unknown as Record<string, unknown>),
+      );
+
+      await expect(client.callTool("paid_tool")).rejects.toThrow("Payment request denied");
+    });
+  });
+
+  describe("callTool -32042 with hooks", () => {
+    it("should call onPaymentRequired hook for -32042 errors", async () => {
+      const customPayment = {
+        ...mockPaymentPayload,
+        payload: { ...mockPaymentPayload.payload, signature: "0xcustom" },
+      };
+      client.onPaymentRequired(() => ({ payment: customPayment }));
+
+      mockMcpClient.callTool
+        .mockRejectedValueOnce(
+          createMcpError32042(mockPaymentRequired as unknown as Record<string, unknown>),
+        )
+        .mockResolvedValueOnce({
+          content: [{ type: "text", text: "result" }],
+          _meta: { "x402/payment-response": mockSettleResponse },
+        });
+
+      await client.callTool("tool", {});
+
+      expect(mockPaymentClient.createPaymentPayload).not.toHaveBeenCalled();
+      const callArgs = mockMcpClient.callTool.mock.calls[1][0];
+      expect(callArgs._meta?.[MCP_PAYMENT_META_KEY]).toEqual(customPayment);
+    });
+
+    it("should abort payment from hook for -32042 errors", async () => {
+      client.onPaymentRequired(() => ({ abort: true }));
+
+      mockMcpClient.callTool.mockRejectedValueOnce(
+        createMcpError32042(mockPaymentRequired as unknown as Record<string, unknown>),
+      );
+
+      await expect(client.callTool("tool", {})).rejects.toThrow("Payment aborted by hook");
+    });
+  });
+
+  describe("getToolPaymentRequirements with -32042 errors", () => {
+    it("should extract requirements from thrown -32042 error", async () => {
+      mockMcpClient.callTool.mockRejectedValueOnce(
+        createMcpError32042(mockPaymentRequired as unknown as Record<string, unknown>),
+      );
+
+      const result = await client.getToolPaymentRequirements("paid_tool");
+
+      expect(result).toEqual(mockPaymentRequired);
+    });
+
+    it("should extract requirements from namespaced -32042 error", async () => {
+      mockMcpClient.callTool.mockRejectedValueOnce(
+        createMcpError32042({ challenges: [], x402: mockPaymentRequired } as unknown as Record<
+          string,
+          unknown
+        >),
+      );
+
+      const result = await client.getToolPaymentRequirements("paid_tool");
+
+      expect(result).toEqual(mockPaymentRequired);
+    });
+
+    it("should re-throw non-payment errors instead of swallowing them", async () => {
+      const networkError = new Error("Network error");
+      mockMcpClient.callTool.mockRejectedValueOnce(networkError);
+
+      await expect(client.getToolPaymentRequirements("tool")).rejects.toThrow(networkError);
+    });
   });
 });

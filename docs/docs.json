@@ -97,6 +97,15 @@
         ]
       },
       {
+        "group": "Developer Tools",
+        "pages": [
+          "dev-tools/overview",
+          "dev-tools/third-party-sdks",
+          "dev-tools/third-party-extensions",
+          "dev-tools/facilitators"
+        ]
+      },
+      {
         "group": "SDK Features",
         "pages": [
           "sdk-features"

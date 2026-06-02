@@ -110,9 +110,19 @@ async function createFacilitator(): Promise<x402Facilitator> {
   const svmSigner = toFacilitatorSvmSigner(svmAccount);
 
   // Create and configure the facilitator with all networks
+  // EIP6492 allowed factory addresses for x402.org testnet facilitator
+  // To extend support for new factories, add more factory addresses to the array.
+  const eip6492AllowedFactories = [
+    "0x0BA5ED0c6AA8c49038F819E587E2633c4A9F428a", // CoinbaseSmartWalletFactory v1
+    "0xBA5ED110eFDBa3D005bfC882d75358ACBbB85842", // CoinbaseSmartWalletFactory v1.1
+  ];
+
   const facilitator = new x402Facilitator()
-    .register("eip155:84532", new ExactEvmScheme(evmSigner))
-    .registerV1("base-sepolia" as Network, new ExactEvmSchemeV1(evmSigner))
+    .register("eip155:84532", new ExactEvmScheme(evmSigner, { eip6492AllowedFactories }))
+    .registerV1(
+      "base-sepolia" as Network,
+      new ExactEvmSchemeV1(evmSigner, { eip6492AllowedFactories }),
+    )
     .register("eip155:84532", new UptoEvmScheme(evmSigner))
     .register("eip155:84532", new BatchSettlementEvmScheme(evmSigner, receiverAuthorizerSigner))
     .register("solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1", new ExactSvmScheme(svmSigner))

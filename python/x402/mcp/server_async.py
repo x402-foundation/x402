@@ -18,7 +18,7 @@ from .types import (
     SettlementContext,
 )
 from .utils import (
-    create_tool_resource_url,
+    build_tool_resource_info,
     extract_payment_from_meta,
 )
 
@@ -330,13 +330,7 @@ async def _create_payment_required_result_async(
     Returns:
         Structured 402 error result with payment requirements
     """
-    from ..schemas import ResourceInfo as CoreResourceInfo
-
-    resource_info = CoreResourceInfo(
-        url=create_tool_resource_url(tool_name, config.resource.url if config.resource else None),
-        description=(config.resource.description if config.resource else f"Tool: {tool_name}"),
-        mime_type=config.resource.mime_type if config.resource else "application/json",
-    )
+    resource_info = build_tool_resource_info(tool_name, config.resource)
 
     payment_required = await resource_server.create_payment_required_response(
         config.accepts,
@@ -379,13 +373,7 @@ async def _create_settlement_failed_result_async(
     Returns:
         Structured 402 error result with settlement failure details
     """
-    from ..schemas import ResourceInfo as CoreResourceInfo
-
-    resource_info = CoreResourceInfo(
-        url=create_tool_resource_url(tool_name, config.resource.url if config.resource else None),
-        description=(config.resource.description if config.resource else f"Tool: {tool_name}"),
-        mime_type=config.resource.mime_type if config.resource else "application/json",
-    )
+    resource_info = build_tool_resource_info(tool_name, config.resource)
 
     payment_required = await resource_server.create_payment_required_response(
         config.accepts,

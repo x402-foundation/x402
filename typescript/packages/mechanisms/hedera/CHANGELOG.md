@@ -1,5 +1,29 @@
 # Changelog
 
+## 2.13.2
+
+### Minor Changes
+
+- Updated dependencies [be788e0]
+- Updated dependencies [0af31dd]
+  - @x402/core@2.14.0
+
+## 2.13.1
+
+### Patch Changes
+
+- Fix `@x402/core` workspace resolution.
+
+## 2.13.0
+
+### Minor Changes
+
+- Updated dependencies [ad08a9a]
+- Updated dependencies [5fca9f3]
+- Updated dependencies [95f2094]
+- Updated dependencies [49ea054]
+  - @x402/core@2.13.0
+
 ## 2.12.0
 
 ### Minor Changes

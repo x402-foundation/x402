@@ -1,7 +1,7 @@
 {
   "name": "ampersend",
-  "description": "A wallet for agents and a dashboard for humans. ampersend is a management platform for agent payments and operations, it abstracts crypto complexities while giving automation, control, and observability for agent-to-agent interactions.",
+  "description": "Browse pay-per-use API services available to use with your agent's wallet.",
   "logoUrl": "/logos/ampersend.png",
-  "websiteUrl": "https://ampersend.ai",
-  "category": "Infrastructure & Tooling"
+  "websiteUrl": "https://app.ampersend.ai/discover",
+  "category": "Services/Endpoints"
 }

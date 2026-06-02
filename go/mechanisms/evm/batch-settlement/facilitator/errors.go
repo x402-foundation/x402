@@ -7,7 +7,7 @@
 // carry no policy/business semantics.
 package facilitator
 
-import batchsettlement "github.com/x402-foundation/x402/go/mechanisms/evm/batch-settlement"
+import batchsettlement "github.com/x402-foundation/x402/go/v2/mechanisms/evm/batch-settlement"
 
 const (
 	// Payload parsing errors

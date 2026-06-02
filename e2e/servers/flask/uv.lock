@@ -7,6 +7,15 @@ exclude-newer = "0001-01-01T00:00:00Z" # This has no effect and is included for 
 exclude-newer-span = "P3D"
 
 [[package]]
+name = "abnf"
+version = "2.5.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/a1/77/997a5894d7bd4e0c0daf65845deb35d0cf168af9d3edc06dda0c6087c511/abnf-2.5.0.tar.gz", hash = "sha256:c5dae6d142d7af855080f4b9750fc1b74df8730343a95b3078f4ffc9d09d8690", size = 419615, upload-time = "2026-05-13T11:58:53.344Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/c9/1e/c798e6ef98c7987df4012743abd38b3e32dc697133185cf11bca888e459f/abnf-2.5.0-py3-none-any.whl", hash = "sha256:4106e00dffadc7c531fb18c24ea61f949dd9ecbf41f773e971229d9b239603cd", size = 56876, upload-time = "2026-05-13T11:58:51.979Z" },
+]
+
+[[package]]
 name = "aiohappyeyeballs"
 version = "2.6.1"
 source = { registry = "https://pypi.org/simple" }
@@ -2093,6 +2102,24 @@ wheels = [
 ]
 
 [[package]]
+name = "signinwithethereum"
+version = "5.0.1"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "abnf" },
+    { name = "eth-account" },
+    { name = "eth-utils" },
+    { name = "pydantic" },
+    { name = "pydantic-core" },
+    { name = "typing-extensions" },
+    { name = "web3" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/c6/9c/5bca1085418726e08c333b4b97891c2d03f12b99973418acf7357dd76a54/signinwithethereum-5.0.1.tar.gz", hash = "sha256:9661ac2020cb659cc7c3fc1f9b8a9ff59f2018e259f7a4e1ae641f126a475fa3", size = 165980, upload-time = "2026-04-24T12:16:09.533Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/83/22/ac218e503a9634757c09ab66e50a6dc3c9bfaaa877163a744516d33c85ce/signinwithethereum-5.0.1-py3-none-any.whl", hash = "sha256:53551a1073209f4f011589a957efb8603650af7be24433f966bf897405c0ebd3", size = 19342, upload-time = "2026-04-24T12:16:08.072Z" },
+]
+
+[[package]]
 name = "solana"
 version = "0.36.11"
 source = { registry = "https://pypi.org/simple" }
@@ -2286,7 +2313,7 @@ wheels = [
 
 [[package]]
 name = "x402"
-version = "2.10.0"
+version = "2.11.0"
 source = { editable = "../../../python/x402" }
 dependencies = [
     { name = "nest-asyncio" },
@@ -2305,6 +2332,8 @@ evm = [
 extensions = [
     { name = "idna" },
     { name = "jsonschema" },
+    { name = "pynacl" },
+    { name = "signinwithethereum" },
 ]
 flask = [
     { name = "flask" },
@@ -2335,10 +2364,12 @@ requires-dist = [
     { name = "mcp", marker = "extra == 'mcp'", specifier = ">=1.0.0" },
     { name = "nest-asyncio", specifier = ">=1.6.0" },
     { name = "pydantic", specifier = ">=2.0.0" },
+    { name = "pynacl", marker = "extra == 'extensions'", specifier = ">=1.5.0" },
     { name = "pynacl", marker = "extra == 'tvm'", specifier = ">=1.5.0" },
     { name = "pytoniq", marker = "extra == 'tvm'", specifier = ">=0.1.39" },
     { name = "pytoniq-core", marker = "extra == 'tvm'", specifier = ">=0.1.36" },
     { name = "requests", marker = "extra == 'requests'", specifier = ">=2.31.0" },
+    { name = "signinwithethereum", marker = "extra == 'extensions'", specifier = ">=5.0.1" },
     { name = "solana", marker = "extra == 'svm'", specifier = ">=0.36.0" },
     { name = "solders", marker = "extra == 'svm'", specifier = ">=0.27.0" },
     { name = "starlette", marker = "extra == 'fastapi'", specifier = ">=0.27.0" },
@@ -2373,6 +2404,7 @@ dev = [
     { name = "pytoniq-core", specifier = ">=0.1.36" },
     { name = "requests", specifier = ">=2.31.0" },
     { name = "ruff", specifier = ">=0.1.0" },
+    { name = "signinwithethereum", specifier = "==5.0.1" },
     { name = "solana", specifier = ">=0.36.0" },
     { name = "solders", specifier = ">=0.27.0" },
     { name = "starlette", specifier = ">=0.27.0" },

@@ -10,7 +10,8 @@
   ],
   "schemes": [
     "exact",
-    "upto"
+    "upto",
+    "batch-settlement"
   ],
   "evm": {
     "assetTransferMethods": [
@@ -68,6 +69,54 @@
         "erc20ApprovalGasSponsoring"
       ],
       "scheme": "exact",
+      "assetTransferMethod": "permit2",
+      "schemeOptions": {
+        "coldstart": true
+      }
+    },
+    {
+      "path": "/batch-settlement/evm/eip3009",
+      "method": "GET",
+      "description": "Protected endpoint exercised by deposit + voucher + recovery voucher + cooperative refund",
+      "requiresPayment": true,
+      "protocolFamily": "evm",
+      "scheme": "batch-settlement",
+      "assetTransferMethod": "eip3009"
+    },
+    {
+      "path": "/batch-settlement/evm/permit2",
+      "method": "GET",
+      "description": "Batch-settlement Permit2 direct endpoint (pre-approved Permit2)",
+      "requiresPayment": true,
+      "protocolFamily": "evm",
+      "scheme": "batch-settlement",
+      "assetTransferMethod": "permit2",
+      "schemeOptions": {
+        "permit2Direct": true
+      }
+    },
+    {
+      "path": "/batch-settlement/evm/permit2-eip2612GasSponsoring",
+      "method": "GET",
+      "description": "Batch-settlement Permit2 endpoint with EIP-2612 gas sponsoring",
+      "requiresPayment": true,
+      "protocolFamily": "evm",
+      "scheme": "batch-settlement",
+      "assetTransferMethod": "permit2",
+      "schemeOptions": {
+        "coldstart": true
+      }
+    },
+    {
+      "path": "/batch-settlement/evm/permit2-erc20ApprovalGasSponsoring",
+      "method": "GET",
+      "description": "Batch-settlement Permit2 endpoint with ERC-20 approval gas sponsoring",
+      "requiresPayment": true,
+      "protocolFamily": "evm",
+      "extensions": [
+        "erc20ApprovalGasSponsoring"
+      ],
+      "scheme": "batch-settlement",
       "assetTransferMethod": "permit2",
       "schemeOptions": {
         "coldstart": true
@@ -134,7 +183,8 @@
       "PORT",
       "FACILITATOR_URL",
       "EVM_PERMIT2_ASSET",
-      "TVM_NETWORK"
+      "TVM_NETWORK",
+      "EVM_RECEIVER_AUTHORIZER_PRIVATE_KEY"
     ]
   }
 }

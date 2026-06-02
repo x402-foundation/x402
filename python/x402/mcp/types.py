@@ -23,6 +23,9 @@ class ResourceInfo:
         url: str,
         description: str | None = None,
         mime_type: str | None = None,
+        service_name: str | None = None,
+        tags: list[str] | None = None,
+        icon_url: str | None = None,
     ):
         """Initialize resource info.
 
@@ -30,10 +33,16 @@ class ResourceInfo:
             url: Resource URL
             description: Optional description
             mime_type: Optional MIME type
+            service_name: Optional human-readable service name for bazaar discovery
+            tags: Optional topical tags for bazaar discovery search
+            icon_url: Optional absolute http(s) URL to a service icon
         """
         self.url = url
         self.description = description
         self.mime_type = mime_type
+        self.service_name = service_name
+        self.tags = tags
+        self.icon_url = icon_url
 
 
 class PaymentRequiredContext:

@@ -22,16 +22,16 @@ import (
 	"github.com/ethereum/go-ethereum/ethclient"
 	"github.com/ethereum/go-ethereum/signer/core/apitypes"
 
-	x402 "github.com/x402-foundation/x402/go"
-	"github.com/x402-foundation/x402/go/mechanisms/evm"
-	exactevmclient "github.com/x402-foundation/x402/go/mechanisms/evm/exact/client"
-	exactevmfacilitator "github.com/x402-foundation/x402/go/mechanisms/evm/exact/facilitator"
-	exactevmserver "github.com/x402-foundation/x402/go/mechanisms/evm/exact/server"
-	uptoevmclient "github.com/x402-foundation/x402/go/mechanisms/evm/upto/client"
-	uptoevmfacilitator "github.com/x402-foundation/x402/go/mechanisms/evm/upto/facilitator"
-	uptoevmserver "github.com/x402-foundation/x402/go/mechanisms/evm/upto/server"
-	evmsigners "github.com/x402-foundation/x402/go/signers/evm"
-	"github.com/x402-foundation/x402/go/types"
+	x402 "github.com/x402-foundation/x402/go/v2"
+	"github.com/x402-foundation/x402/go/v2/mechanisms/evm"
+	exactevmclient "github.com/x402-foundation/x402/go/v2/mechanisms/evm/exact/client"
+	exactevmfacilitator "github.com/x402-foundation/x402/go/v2/mechanisms/evm/exact/facilitator"
+	exactevmserver "github.com/x402-foundation/x402/go/v2/mechanisms/evm/exact/server"
+	uptoevmclient "github.com/x402-foundation/x402/go/v2/mechanisms/evm/upto/client"
+	uptoevmfacilitator "github.com/x402-foundation/x402/go/v2/mechanisms/evm/upto/facilitator"
+	uptoevmserver "github.com/x402-foundation/x402/go/v2/mechanisms/evm/upto/server"
+	evmsigners "github.com/x402-foundation/x402/go/v2/signers/evm"
+	"github.com/x402-foundation/x402/go/v2/types"
 )
 
 // newRealClientEvmSigner creates a client signer using the helper
@@ -434,10 +434,7 @@ func TestEVMIntegrationV2(t *testing.T) {
 
 		// Setup facilitator with EVM v2 scheme
 		facilitator := x402.Newx402Facilitator()
-		// Enable smart wallet deployment via EIP-6492
-		evmConfig := &exactevmfacilitator.ExactEvmSchemeConfig{
-			DeployERC4337WithEIP6492: true,
-		}
+		evmConfig := &exactevmfacilitator.ExactEvmSchemeConfig{}
 		evmFacilitator := exactevmfacilitator.NewExactEvmScheme(facilitatorSigner, evmConfig)
 		// Register for Base Sepolia
 		facilitator.Register([]x402.Network{"eip155:84532"}, evmFacilitator)
@@ -617,9 +614,7 @@ func TestEVMIntegrationV2Permit2(t *testing.T) {
 
 		// Setup facilitator with EVM v2 scheme
 		facilitator := x402.Newx402Facilitator()
-		evmConfig := &exactevmfacilitator.ExactEvmSchemeConfig{
-			DeployERC4337WithEIP6492: true,
-		}
+		evmConfig := &exactevmfacilitator.ExactEvmSchemeConfig{}
 		evmFacilitator := exactevmfacilitator.NewExactEvmScheme(facilitatorSigner, evmConfig)
 		facilitator.Register([]x402.Network{"eip155:84532"}, evmFacilitator)
 

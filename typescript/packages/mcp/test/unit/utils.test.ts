@@ -166,6 +166,22 @@ describe("attachPaymentToMeta", () => {
 
     expect(result._meta?.[MCP_PAYMENT_META_KEY]).toEqual(mockPaymentPayload);
   });
+
+  it("should preserve existing metadata when attaching payment", () => {
+    const params = {
+      name: "test_tool",
+      _meta: {
+        traceId: "trace_123",
+        authHint: { subject: "agent_1" },
+      },
+    };
+
+    const result = attachPaymentToMeta(params, mockPaymentPayload);
+
+    expect(result._meta?.traceId).toBe("trace_123");
+    expect(result._meta?.authHint).toEqual({ subject: "agent_1" });
+    expect(result._meta?.[MCP_PAYMENT_META_KEY]).toEqual(mockPaymentPayload);
+  });
 });
 
 // ============================================================================
@@ -224,6 +240,22 @@ describe("attachPaymentResponseToMeta", () => {
 
     expect(withMeta.content).toEqual(result.content);
     expect(withMeta.isError).toBe(false);
+    expect(withMeta._meta?.[MCP_PAYMENT_RESPONSE_META_KEY]).toEqual(mockSettleResponse);
+  });
+
+  it("should preserve existing metadata when attaching settle response", () => {
+    const result = {
+      content: [{ type: "text" as const, text: "result" }],
+      _meta: {
+        traceId: "trace_123",
+        evidence: { ledgerId: "ledger_1" },
+      },
+    };
+
+    const withMeta = attachPaymentResponseToMeta(result, mockSettleResponse);
+
+    expect(withMeta._meta?.traceId).toBe("trace_123");
+    expect(withMeta._meta?.evidence).toEqual({ ledgerId: "ledger_1" });
     expect(withMeta._meta?.[MCP_PAYMENT_RESPONSE_META_KEY]).toEqual(mockSettleResponse);
   });
 });

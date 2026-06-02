@@ -1,6 +1,6 @@
 package facilitator
 
-import "github.com/x402-foundation/x402/go/mechanisms/evm"
+import "github.com/x402-foundation/x402/go/v2/mechanisms/evm"
 
 // Upto-specific error constants.
 const (

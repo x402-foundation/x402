@@ -192,12 +192,24 @@ class PaymentOption:
 
 @dataclass
 class RouteConfig:
-    """Configuration for a payment-protected route."""
+    """Configuration for a payment-protected route.
+
+    ``service_name``, ``tags``, and ``icon_url`` are forwarded as-is to
+    ``ResourceInfo`` for Bazaar discovery. ``RouteConfig`` itself does not
+    enforce indexer-side limits — the stricter ``resource_info`` helper path
+    soft-drops values that exceed Bazaar's caps (service_name ≤ 32 chars,
+    ≤ 5 tags of ≤ 32 chars each, absolute http(s) icon URLs ≤ 2048 chars).
+    Server authors should keep names short, tag sets small, and icon URLs
+    absolute http(s) to ensure listings are accepted by indexers.
+    """
 
     accepts: PaymentOption | list[PaymentOption]
     resource: str | None = None
     description: str | None = None
     mime_type: str | None = None
+    service_name: str | None = None
+    tags: list[str] | None = None
+    icon_url: str | None = None
     custom_paywall_html: str | None = None
     unpaid_response_body: UnpaidResponseBody | None = None
     settlement_failed_response_body: SettlementFailedResponseBody | None = None

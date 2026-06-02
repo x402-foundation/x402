@@ -2,6 +2,8 @@
 
 from unittest.mock import patch
 
+import pytest
+
 from x402.mechanisms.svm import (
     SOLANA_DEVNET_CAIP2,
     SOLANA_MAINNET_CAIP2,
@@ -294,8 +296,46 @@ class TestFacilitatorSchemeAttributes:
         assert result == addresses
 
 
+class _FakeMsg:
+    """Fake Solana message whose bytes() are derived from the transaction string."""
+
+    def __init__(self, data: bytes) -> None:
+        self._data = data
+
+    def __bytes__(self) -> bytes:
+        return self._data
+
+
+class _FakeTx:
+    """Fake VersionedTransaction for cache-key tests that don't need real binary."""
+
+    def __init__(self, transaction_str: str) -> None:
+        self.message = _FakeMsg(transaction_str.encode())
+
+
 class TestDuplicateSettlementCache:
     """Test duplicate settlement cache in settle method."""
+
+    @pytest.fixture(autouse=True)
+    def mock_decode(self):
+        """Patch decode_transaction_from_payload in both V1 and V2 facilitator modules.
+
+        The settle method now decodes the transaction to compute its message hash before
+        the cache check. These tests use arbitrary strings, not real Solana binaries, so
+        we return a fake transaction whose message bytes are deterministically derived
+        from the transaction string. Same string → same hash → cache hit; different
+        strings → different hashes → cache miss.
+        """
+        fake = lambda payload: _FakeTx(payload.transaction)  # noqa: E731
+        with patch(
+            "x402.mechanisms.svm.exact.facilitator.decode_transaction_from_payload",
+            side_effect=fake,
+        ):
+            with patch(
+                "x402.mechanisms.svm.exact.v1.facilitator.decode_transaction_from_payload",
+                side_effect=fake,
+            ):
+                yield
 
     def _make_payload(self, transaction: str) -> PaymentPayload:
         return PaymentPayload(

@@ -9,8 +9,8 @@ import (
 	"time"
 
 	"github.com/joho/godotenv"
-	x402 "github.com/x402-foundation/x402/go"
-	batchedfac "github.com/x402-foundation/x402/go/mechanisms/evm/batch-settlement/facilitator"
+	x402 "github.com/x402-foundation/x402/go/v2"
+	batchedfac "github.com/x402-foundation/x402/go/v2/mechanisms/evm/batch-settlement/facilitator"
 )
 
 const defaultPort = "4022"

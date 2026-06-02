@@ -122,7 +122,11 @@ facilitator = (
 
 # Register schemes based on available signers
 if evm_signer:
-    config = ExactEvmSchemeConfig(deploy_erc4337_with_eip6492=True)
+    config = ExactEvmSchemeConfig(
+        # Add trusted ERC-6492 factory addresses here (e.g. your chosen ERC-4337 smart wallet factory).
+        # A non-empty list enables smart wallet deployment; an empty list denies all factory calls.
+        eip6492_allowed_factories=[],
+    )
     facilitator.register([EVM_NETWORK], ExactEvmScheme(evm_signer, config))
 
 if svm_signer:

@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/x402-foundation/x402/go/types"
+	"github.com/x402-foundation/x402/go/v2/types"
 )
 
 // Mock server for testing
@@ -463,6 +463,71 @@ func TestServerVerifyPayment(t *testing.T) {
 	}
 	if response.Payer != "0xverifiedpayer" {
 		t.Fatalf("Expected payer '0xverifiedpayer', got %s", response.Payer)
+	}
+}
+
+// TestServerVerifyPayment_InvalidFacilitatorResponse is a regression test for the security
+// bug where a facilitator HTTP-200 response with isValid:false was not treated as an error,
+// allowing any structurally well-formed payment header to pass the gate.
+func TestServerVerifyPayment_InvalidFacilitatorResponse(t *testing.T) {
+	ctx := context.Background()
+
+	for _, tc := range []struct {
+		name           string
+		verifyResponse *VerifyResponse
+		wantReason     string
+	}{
+		{
+			name:           "isValid false with reason",
+			verifyResponse: &VerifyResponse{IsValid: false, InvalidReason: "insufficient_balance", Payer: "0xpayer"},
+			wantReason:     "insufficient_balance",
+		},
+		{
+			name:           "isValid false without reason",
+			verifyResponse: &VerifyResponse{IsValid: false},
+			wantReason:     ErrCodeInvalidPayment,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			mockClient := &mockFacilitatorClient{
+				kinds: []SupportedKind{
+					{X402Version: 2, Scheme: "exact", Network: "eip155:1"},
+				},
+				verify: func(ctx context.Context, payloadBytes []byte, requirementsBytes []byte) (*VerifyResponse, error) {
+					return tc.verifyResponse, nil // HTTP-200 but isValid:false
+				},
+			}
+
+			server := Newx402ResourceServer(WithFacilitatorClient(mockClient))
+			if err := server.Initialize(ctx); err != nil {
+				t.Fatalf("Failed to initialize server: %v", err)
+			}
+
+			requirements := types.PaymentRequirements{
+				Scheme:  "exact",
+				Network: "eip155:1",
+				Asset:   "USDC",
+				Amount:  "1000000",
+				PayTo:   "0xrecipient",
+			}
+			payload := types.PaymentPayload{
+				X402Version: 2,
+				Accepted:    requirements,
+				Payload:     map[string]interface{}{},
+			}
+
+			_, err := server.VerifyPayment(ctx, payload, requirements)
+			if err == nil {
+				t.Fatal("Expected error for isValid:false facilitator response, got nil — payment gate bypass")
+			}
+			var ve *VerifyError
+			if !errors.As(err, &ve) {
+				t.Fatalf("Expected *VerifyError, got %T: %v", err, err)
+			}
+			if ve.InvalidReason != tc.wantReason {
+				t.Fatalf("Expected reason %q, got %q", tc.wantReason, ve.InvalidReason)
+			}
+		})
 	}
 }
 

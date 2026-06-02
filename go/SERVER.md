@@ -17,7 +17,7 @@ An **x402 server** is an application that protects HTTP resources with payment r
 ### Installation
 
 ```bash
-go get github.com/x402-foundation/x402/go
+go get github.com/x402-foundation/x402/go/v2
 ```
 
 ### Basic Gin Server
@@ -27,10 +27,10 @@ package main
 
 import (
     "github.com/gin-gonic/gin"
-    x402 "github.com/x402-foundation/x402/go"
-    x402http "github.com/x402-foundation/x402/go/http"
-    ginmw "github.com/x402-foundation/x402/go/http/gin"
-    evm "github.com/x402-foundation/x402/go/mechanisms/evm/exact/server"
+    x402 "github.com/x402-foundation/x402/go/v2"
+    x402http "github.com/x402-foundation/x402/go/v2/http"
+    ginmw "github.com/x402-foundation/x402/go/v2/http/gin"
+    evm "github.com/x402-foundation/x402/go/v2/mechanisms/evm/exact/server"
 )
 
 func main() {
@@ -176,7 +176,7 @@ settleResp, err := facilitator.Settle(ctx, payloadBytes, requirementsBytes)
 ### Gin Middleware
 
 ```go
-import ginmw "github.com/x402-foundation/x402/go/http/gin"
+import ginmw "github.com/x402-foundation/x402/go/v2/http/gin"
 
 r.Use(ginmw.X402Payment(ginmw.Config{
     Routes:      routes,
@@ -322,8 +322,8 @@ Add protocol extensions like Bazaar discovery:
 
 ```go
 import (
-    "github.com/x402-foundation/x402/go/extensions/bazaar"
-    "github.com/x402-foundation/x402/go/extensions/types"
+    "github.com/x402-foundation/x402/go/v2/extensions/bazaar"
+    "github.com/x402-foundation/x402/go/v2/extensions/types"
 )
 
 discoveryExt, _ := bazaar.DeclareDiscoveryExtension(
@@ -770,7 +770,7 @@ import "github.com/x402-foundation/x402/go/middleware/gin"
 
 **V2:**
 ```go
-import ginmw "github.com/x402-foundation/x402/go/http/gin"
+import ginmw "github.com/x402-foundation/x402/go/v2/http/gin"
 ```
 
 ## Related Documentation

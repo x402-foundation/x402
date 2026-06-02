@@ -5,16 +5,16 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"math/rand"
+	"math/rand/v2"
 	"strconv"
 
 	solana "github.com/gagliardetto/solana-go"
 	computebudget "github.com/gagliardetto/solana-go/programs/compute-budget"
 	"github.com/gagliardetto/solana-go/programs/token"
 
-	x402 "github.com/x402-foundation/x402/go"
-	svm "github.com/x402-foundation/x402/go/mechanisms/svm"
-	"github.com/x402-foundation/x402/go/types"
+	x402 "github.com/x402-foundation/x402/go/v2"
+	svm "github.com/x402-foundation/x402/go/v2/mechanisms/svm"
+	"github.com/x402-foundation/x402/go/v2/types"
 )
 
 // ExactSvmSchemeV1 implements the SchemeNetworkFacilitator interface for SVM (Solana) exact payments (V1)
@@ -56,7 +56,7 @@ func (f *ExactSvmSchemeV1) GetExtra(network x402.Network) map[string]interface{}
 	addresses := f.signer.GetAddresses(context.Background(), string(network))
 
 	// Randomly select from available addresses to distribute load
-	randomIndex := rand.Intn(len(addresses))
+	randomIndex := rand.IntN(len(addresses))
 
 	return map[string]interface{}{
 		"feePayer": addresses[randomIndex].String(),
@@ -270,16 +270,19 @@ func (f *ExactSvmSchemeV1) Settle(
 		return nil, x402.NewSettleError(ErrInvalidPayloadTransaction, verifyResp.Payer, network, "", err.Error())
 	}
 
-	// Duplicate settlement check: reject if this transaction is already being settled.
-	txKey := svmPayload.Transaction
-	if f.settlementCache.IsDuplicate(txKey) {
-		return nil, x402.NewSettleError(ErrDuplicateSettlement, verifyResp.Payer, network, "", "duplicate transaction")
-	}
-
-	// Decode transaction
+	// Decode transaction before the cache check so we can key on the message hash.
 	tx, err := svm.DecodeTransaction(svmPayload.Transaction)
 	if err != nil {
 		return nil, x402.NewSettleError(ErrInvalidPayloadTransaction, verifyResp.Payer, network, "", err.Error())
+	}
+
+	// Duplicate settlement check keyed on message hash (immune to mutable fee-payer sig at slot 0).
+	txKey, err := svm.MessageHash(tx)
+	if err != nil {
+		return nil, x402.NewSettleError(ErrInvalidPayloadTransaction, verifyResp.Payer, network, "", err.Error())
+	}
+	if f.settlementCache.IsDuplicate(txKey) {
+		return nil, x402.NewSettleError(ErrDuplicateSettlement, verifyResp.Payer, network, "", "duplicate transaction")
 	}
 
 	// Parse extra field for feePayer (V1 uses *json.RawMessage)

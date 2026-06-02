@@ -28,21 +28,21 @@ import (
 	solana "github.com/gagliardetto/solana-go"
 	"github.com/gagliardetto/solana-go/rpc"
 	"github.com/gin-gonic/gin"
-	x402 "github.com/x402-foundation/x402/go"
-	"github.com/x402-foundation/x402/go/extensions/bazaar"
-	"github.com/x402-foundation/x402/go/extensions/eip2612gassponsor"
-	"github.com/x402-foundation/x402/go/extensions/erc20approvalgassponsor"
-	exttypes "github.com/x402-foundation/x402/go/extensions/types"
-	evmmech "github.com/x402-foundation/x402/go/mechanisms/evm"
-	"github.com/x402-foundation/x402/go/mechanisms/evm/batch-settlement"
-	batchedevm "github.com/x402-foundation/x402/go/mechanisms/evm/batch-settlement/facilitator"
-	exactevm "github.com/x402-foundation/x402/go/mechanisms/evm/exact/facilitator"
-	exactevmv1 "github.com/x402-foundation/x402/go/mechanisms/evm/exact/v1/facilitator"
-	uptoevm "github.com/x402-foundation/x402/go/mechanisms/evm/upto/facilitator"
-	svmmech "github.com/x402-foundation/x402/go/mechanisms/svm"
-	svm "github.com/x402-foundation/x402/go/mechanisms/svm/exact/facilitator"
-	svmv1 "github.com/x402-foundation/x402/go/mechanisms/svm/exact/v1/facilitator"
-	x402types "github.com/x402-foundation/x402/go/types"
+	x402 "github.com/x402-foundation/x402/go/v2"
+	"github.com/x402-foundation/x402/go/v2/extensions/bazaar"
+	"github.com/x402-foundation/x402/go/v2/extensions/eip2612gassponsor"
+	"github.com/x402-foundation/x402/go/v2/extensions/erc20approvalgassponsor"
+	exttypes "github.com/x402-foundation/x402/go/v2/extensions/types"
+	evmmech "github.com/x402-foundation/x402/go/v2/mechanisms/evm"
+	"github.com/x402-foundation/x402/go/v2/mechanisms/evm/batch-settlement"
+	batchedevm "github.com/x402-foundation/x402/go/v2/mechanisms/evm/batch-settlement/facilitator"
+	exactevm "github.com/x402-foundation/x402/go/v2/mechanisms/evm/exact/facilitator"
+	exactevmv1 "github.com/x402-foundation/x402/go/v2/mechanisms/evm/exact/v1/facilitator"
+	uptoevm "github.com/x402-foundation/x402/go/v2/mechanisms/evm/upto/facilitator"
+	svmmech "github.com/x402-foundation/x402/go/v2/mechanisms/svm"
+	svm "github.com/x402-foundation/x402/go/v2/mechanisms/svm/exact/facilitator"
+	svmv1 "github.com/x402-foundation/x402/go/v2/mechanisms/svm/exact/v1/facilitator"
+	x402types "github.com/x402-foundation/x402/go/v2/types"
 )
 
 const (
@@ -866,10 +866,7 @@ func main() {
 	facilitator := x402.Newx402Facilitator()
 
 	// Register EVM schemes with dynamic network
-	// Enable smart wallet deployment via EIP-6492
-	evmConfig := &exactevm.ExactEvmSchemeConfig{
-		DeployERC4337WithEIP6492: true,
-	}
+	evmConfig := &exactevm.ExactEvmSchemeConfig{}
 	evmFacilitatorScheme := exactevm.NewExactEvmScheme(evmSigner, evmConfig)
 	facilitator.Register([]x402.Network{x402.Network(evmNetwork)}, evmFacilitatorScheme)
 
@@ -893,9 +890,7 @@ func main() {
 	batchedScheme := batchedevm.NewBatchSettlementEvmScheme(evmSigner, batchedAuthorizer)
 	facilitator.Register([]x402.Network{x402.Network(evmNetwork)}, batchedScheme)
 
-	evmV1Config := &exactevmv1.ExactEvmSchemeV1Config{
-		DeployERC4337WithEIP6492: true,
-	}
+	evmV1Config := &exactevmv1.ExactEvmSchemeV1Config{}
 	evmFacilitatorV1Scheme := exactevmv1.NewExactEvmSchemeV1(evmSigner, evmV1Config)
 	facilitator.RegisterV1([]x402.Network{x402.Network(getV1EvmNetwork(evmNetwork))}, evmFacilitatorV1Scheme)
 
@@ -938,20 +933,34 @@ func main() {
 					log.Printf("Warning: Failed to extract discovery info: %v", err)
 				} else if discovered != nil {
 					log.Printf("📝 Cataloging discovered resource: %s %s", discovered.Method, discovered.ResourceURL)
+					if discovered.ServiceName != "" {
+						log.Printf("   Service: %s", discovered.ServiceName)
+					}
+					if len(discovered.Tags) > 0 {
+						log.Printf("   Tags: %s", strings.Join(discovered.Tags, ", "))
+					}
 
 					// Unmarshal requirements for cataloging based on version
 					version := ctx.Payload.GetVersion()
 					if version == 2 {
 						var requirements x402.PaymentRequirements
 						if err := json.Unmarshal(ctx.RequirementsBytes, &requirements); err == nil {
-							bazaarCatalog.CatalogResource(
-								discovered.ResourceURL,
-								discovered.Method,
-								version,
-								discovered.DiscoveryInfo,
-								requirements,
-								discovered.RouteTemplate,
-							)
+							reqJSON, marshalErr := json.Marshal(requirements)
+							if marshalErr == nil {
+								bazaarCatalog.Add(bazaar.DiscoveryResource{
+									Resource:    discovered.ResourceURL,
+									Type:        discovered.InputType(),
+									X402Version: version,
+									Accepts:     []json.RawMessage{reqJSON},
+									LastUpdated: time.Now().UTC().Format(time.RFC3339),
+									Description: discovered.Description,
+									MimeType:    discovered.MimeType,
+									ServiceName: discovered.ServiceName,
+									Tags:        discovered.Tags,
+									IconUrl:     discovered.IconUrl,
+									Extensions:  discovered.Extensions,
+								})
+							}
 						}
 					} else if version == 1 {
 						var requirementsV1 x402types.PaymentRequirementsV1
@@ -966,14 +975,22 @@ func main() {
 								PayTo:             requirementsV1.PayTo,
 								MaxTimeoutSeconds: requirementsV1.MaxTimeoutSeconds,
 							}
-							bazaarCatalog.CatalogResource(
-								discovered.ResourceURL,
-								discovered.Method,
-								version,
-								discovered.DiscoveryInfo,
-								requirements,
-								discovered.RouteTemplate,
-							)
+							reqJSON, marshalErr := json.Marshal(requirements)
+							if marshalErr == nil {
+								bazaarCatalog.Add(bazaar.DiscoveryResource{
+									Resource:    discovered.ResourceURL,
+									Type:        discovered.InputType(),
+									X402Version: version,
+									Accepts:     []json.RawMessage{reqJSON},
+									LastUpdated: time.Now().UTC().Format(time.RFC3339),
+									Description: discovered.Description,
+									MimeType:    discovered.MimeType,
+									ServiceName: discovered.ServiceName,
+									Tags:        discovered.Tags,
+									IconUrl:     discovered.IconUrl,
+									Extensions:  discovered.Extensions,
+								})
+							}
 						}
 					}
 				}
@@ -1196,7 +1213,7 @@ func main() {
 
 		items, _ := bazaarCatalog.SearchResources(query, resourceType, limit)
 		if items == nil {
-			items = []DiscoveredResource{}
+			items = []bazaar.DiscoveryResource{}
 		}
 
 		c.JSON(http.StatusOK, gin.H{

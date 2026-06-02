@@ -194,6 +194,9 @@ class x402HTTPServerBase:
             resource=config.get("resource"),
             description=config.get("description"),
             mime_type=config.get("mimeType", config.get("mime_type")),
+            service_name=config.get("serviceName", config.get("service_name")),
+            tags=config.get("tags"),
+            icon_url=config.get("iconUrl", config.get("icon_url")),
             custom_paywall_html=config.get("customPaywallHtml", config.get("custom_paywall_html")),
             unpaid_response_body=config.get(
                 "unpaidResponseBody", config.get("unpaid_response_body")
@@ -273,7 +276,11 @@ class x402HTTPServerBase:
                 _declaration: Any = declaration,
                 _hook: Any = ext_hook,
             ) -> Any:
-                return _hook(_declaration, HTTPTransportContext(request=context))
+                return _hook(
+                    _declaration,
+                    HTTPTransportContext(request=context),
+                    route_cfg,
+                )
 
             hooks.append(extension_hook)
         return hooks
@@ -358,6 +365,9 @@ class x402HTTPServerBase:
             url=route_config.resource or context.adapter.get_url(),
             description=route_config.description or "",
             mime_type=route_config.mime_type or "",
+            service_name=route_config.service_name,
+            tags=route_config.tags,
+            icon_url=route_config.icon_url,
         )
 
         # Yield for option resolution (handles async/sync dynamic values)
@@ -507,14 +517,18 @@ class x402HTTPServerBase:
             )
 
         except Exception as e:
+            from ..schemas.errors import PaymentAbortedError
+
+            error_msg = e.reason if isinstance(e, PaymentAbortedError) else str(e)
             error_required = yield (
                 "create_payment_required",
                 (
                     requirements,
                     resource_info,
-                    str(e),
+                    error_msg,
                     extensions,
                     transport_context,
+                    payment_payload,
                 ),
                 None,
             )
@@ -568,14 +582,50 @@ class x402HTTPServerBase:
             return None
 
     @staticmethod
+    def resolve_settlement_override_amount(
+        raw_amount: str,
+        requirements: PaymentRequirements,
+        decimals: int = 6,
+    ) -> str:
+        """Resolve a settlement override amount to atomic units."""
+        percent_match = re.match(r"^(\d+(?:\.\d{0,2})?)%$", raw_amount)
+        if percent_match:
+            parts = percent_match.group(1).split(".")
+            int_part = parts[0]
+            dec_part = (parts[1] if len(parts) > 1 else "").ljust(2, "0")[:2]
+            scaled_percent = int(int_part) * 100 + int(dec_part)
+            base = int(requirements.amount)
+            return str(base * scaled_percent // 10000)
+
+        dollar_match = re.match(r"^\$(\d+(?:\.\d+)?)$", raw_amount)
+        if dollar_match:
+            dollars = float(dollar_match.group(1))
+            return str(round(dollars * (10**decimals)))
+
+        return raw_amount
+
     def _apply_settlement_overrides(
+        self,
         requirements: PaymentRequirements,
         overrides: dict[str, Any] | None,
     ) -> PaymentRequirements:
         """Return *requirements* with the amount replaced by the override, if any."""
         if overrides is None or "amount" not in overrides:
             return requirements
-        return requirements.model_copy(update={"amount": str(overrides["amount"])})
+
+        scheme = self._server._find_registered_scheme(requirements.scheme, requirements.network)
+        decimals = 6
+        if scheme is not None:
+            get_decimals = getattr(scheme, "get_asset_decimals", None)
+            if callable(get_decimals):
+                decimals = get_decimals(requirements.asset or "", requirements.network)
+
+        resolved = self.resolve_settlement_override_amount(
+            str(overrides["amount"]),
+            requirements,
+            decimals,
+        )
+        return requirements.model_copy(update={"amount": resolved})
 
     def _process_skip_handler_settlement(
         self,
@@ -739,7 +789,10 @@ class x402HTTPServerBase:
             )
             return HTTPResponseInstructions(
                 status=402,
-                headers={"Content-Type": "text/html"},
+                headers={
+                    "Content-Type": "text/html",
+                    PAYMENT_REQUIRED_HEADER: encode_payment_required_header(payment_required),
+                },
                 body=html_content,
                 is_html=True,
             )

@@ -1,12 +1,12 @@
 package main
 
 import (
-	x402 "github.com/x402-foundation/x402/go"
-	exactevm "github.com/x402-foundation/x402/go/mechanisms/evm/exact/client"
-	uptoevm "github.com/x402-foundation/x402/go/mechanisms/evm/upto/client"
-	exactsvm "github.com/x402-foundation/x402/go/mechanisms/svm/exact/client"
-	evmsigners "github.com/x402-foundation/x402/go/signers/evm"
-	svmsigners "github.com/x402-foundation/x402/go/signers/svm"
+	x402 "github.com/x402-foundation/x402/go/v2"
+	exactevm "github.com/x402-foundation/x402/go/v2/mechanisms/evm/exact/client"
+	uptoevm "github.com/x402-foundation/x402/go/v2/mechanisms/evm/upto/client"
+	exactsvm "github.com/x402-foundation/x402/go/v2/mechanisms/svm/exact/client"
+	evmsigners "github.com/x402-foundation/x402/go/v2/signers/evm"
+	svmsigners "github.com/x402-foundation/x402/go/v2/signers/svm"
 )
 
 /**

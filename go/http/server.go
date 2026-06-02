@@ -14,9 +14,9 @@ import (
 	"strconv"
 	"strings"
 
-	x402 "github.com/x402-foundation/x402/go"
-	exttypes "github.com/x402-foundation/x402/go/extensions/types"
-	"github.com/x402-foundation/x402/go/types"
+	x402 "github.com/x402-foundation/x402/go/v2"
+	exttypes "github.com/x402-foundation/x402/go/v2/extensions/types"
+	"github.com/x402-foundation/x402/go/v2/types"
 )
 
 // Pre-compiled regex patterns to avoid recompilation on every call.
@@ -116,6 +116,9 @@ type RouteConfig struct {
 	Resource          string                 `json:"resource,omitempty"`
 	Description       string                 `json:"description,omitempty"`
 	MimeType          string                 `json:"mimeType,omitempty"`
+	ServiceName       string                 `json:"serviceName,omitempty"`
+	Tags              []string               `json:"tags,omitempty"`
+	IconUrl           string                 `json:"iconUrl,omitempty"`
 	CustomPaywallHTML string                 `json:"customPaywallHtml,omitempty"`
 	Extensions        map[string]interface{} `json:"extensions,omitempty"`
 
@@ -304,6 +307,11 @@ func Wrappedx402HTTPResourceServer(routes RoutesConfig, resourceServer *x402.X40
 	return server
 }
 
+// GetCompiledRoutes returns the compiled routes for inspection (e.g., extension validation).
+func (s *x402HTTPResourceServer) GetCompiledRoutes() []CompiledRoute {
+	return s.compiledRoutes
+}
+
 // RegisterPaywallProvider registers a custom PaywallProvider for generating paywall HTML.
 // The provider takes precedence over the built-in EVM/SVM templates but is overridden
 // by per-route CustomPaywallHTML. Returns the server for method chaining.
@@ -375,6 +383,7 @@ func (s *x402HTTPResourceServer) validateRouteConfiguration() error {
 				})
 			}
 		}
+
 	}
 
 	if len(errors) > 0 {
@@ -533,6 +542,15 @@ func (s *x402HTTPResourceServer) ProcessHTTPRequest(ctx context.Context, reqCtx 
 		URL:         resourceURL,
 		Description: routeConfig.Description,
 		MimeType:    routeConfig.MimeType,
+	}
+	if routeConfig.ServiceName != "" {
+		resourceInfo.ServiceName = routeConfig.ServiceName
+	}
+	if len(routeConfig.Tags) > 0 {
+		resourceInfo.Tags = routeConfig.Tags
+	}
+	if routeConfig.IconUrl != "" {
+		resourceInfo.IconUrl = routeConfig.IconUrl
 	}
 
 	for i := range requirements {
@@ -856,25 +874,6 @@ func (s *x402HTTPResourceServer) extractPaymentV2(adapter HTTPAdapter) (*types.P
 	return payload, nil
 }
 
-// extractPayment extracts payment from headers (legacy method, now calls extractPaymentV2)
-//
-//nolint:unused // Legacy method kept for API compatibility
-func (s *x402HTTPResourceServer) extractPayment(adapter HTTPAdapter) *x402.PaymentPayload {
-	payload, err := s.extractPaymentV2(adapter)
-	if err != nil || payload == nil {
-		return nil
-	}
-
-	// Convert V2 to generic PaymentPayload for compatibility
-	return &x402.PaymentPayload{
-		X402Version: payload.X402Version,
-		Payload:     payload.Payload,
-		Accepted:    x402.PaymentRequirements{}, // TODO: Convert
-		Resource:    nil,
-		Extensions:  payload.Extensions,
-	}
-}
-
 // decodeBase64Header decodes a base64 header to JSON bytes
 func decodeBase64Header(header string) ([]byte, error) {
 	return base64.StdEncoding.DecodeString(header)
@@ -897,12 +896,18 @@ func (s *x402HTTPResourceServer) isWebBrowser(adapter HTTPAdapter) bool {
 //	customHTML: Optional custom HTML for the paywall
 //	unpaidResponse: Optional custom response for API clients (ignored for browser requests)
 func (s *x402HTTPResourceServer) createHTTPResponseV2(paymentRequired types.PaymentRequired, isWebBrowser bool, paywallConfig *PaywallConfig, customHTML string, unpaidResponse *UnpaidResponse) (*HTTPResponseInstructions, error) {
+	encodedHeader, err := encodePaymentRequiredHeader(paymentRequired)
+	if err != nil {
+		return nil, fmt.Errorf("failed to encode payment required header: %w", err)
+	}
+
 	if isWebBrowser {
 		html := s.generatePaywallHTMLV2(paymentRequired, paywallConfig, customHTML)
 		return &HTTPResponseInstructions{
 			Status: 402,
 			Headers: map[string]string{
-				"Content-Type": "text/html",
+				"Content-Type":     "text/html",
+				"PAYMENT-REQUIRED": encodedHeader,
 			},
 			Body:   html,
 			IsHTML: true,
@@ -918,11 +923,6 @@ func (s *x402HTTPResourceServer) createHTTPResponseV2(paymentRequired types.Paym
 		body = unpaidResponse.Body
 	}
 
-	encodedHeader, err := encodePaymentRequiredHeader(paymentRequired)
-	if err != nil {
-		return nil, fmt.Errorf("failed to encode payment required header: %w", err)
-	}
-
 	return &HTTPResponseInstructions{
 		Status: 402,
 		Headers: map[string]string{
@@ -931,20 +931,6 @@ func (s *x402HTTPResourceServer) createHTTPResponseV2(paymentRequired types.Paym
 		},
 		Body: body,
 	}, nil
-}
-
-// createHTTPResponse creates response instructions (legacy method)
-//
-//nolint:unused // Legacy method kept for API compatibility
-func (s *x402HTTPResourceServer) createHTTPResponse(paymentRequired x402.PaymentRequired, isWebBrowser bool, paywallConfig *PaywallConfig, customHTML string) (*HTTPResponseInstructions, error) {
-	// Convert to V2 and call V2 method
-	v2Required := types.PaymentRequired{
-		X402Version: 2,
-		Error:       paymentRequired.Error,
-		Resource:    nil, // TODO: convert
-		Extensions:  paymentRequired.Extensions,
-	}
-	return s.createHTTPResponseV2(v2Required, isWebBrowser, paywallConfig, customHTML, nil)
 }
 
 // createSettlementHeaders creates settlement response headers

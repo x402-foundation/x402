@@ -9,7 +9,7 @@ import type {
   SolanaRpcApiMainnet,
   Address,
 } from "@solana/kit";
-import { getBase64EncodedWireTransaction } from "@solana/kit";
+import { fetchAddressesForLookupTables, getBase64EncodedWireTransaction } from "@solana/kit";
 import { createRpcClient, decodeTransactionFromPayload } from "./utils";
 
 /**
@@ -163,6 +163,87 @@ export type FacilitatorSvmSigner = {
    * @throws Error if confirmation fails or times out
    */
   confirmTransaction(signature: string, network: string): Promise<void>;
+
+  /**
+   * Simulate a transaction and return inner instructions (CPI calls).
+   * Used by smart wallet verification to find TransferChecked instructions
+   * executed via CPI by smart wallet programs (Squads, Swig, etc.).
+   *
+   * Optional — if not implemented, smart wallet verification is unavailable.
+   * The default toFacilitatorSvmSigner() factory provides an implementation.
+   *
+   * @param transaction - Base64 encoded transaction (may be partially signed)
+   * @param feePayer - Fee payer address to sign with before simulation
+   * @param network - CAIP-2 network identifier
+   * @returns Inner instructions from simulation, or null if unavailable
+   * @throws Error if simulation fails (transaction would revert on-chain)
+   */
+  simulateTransactionWithInnerInstructions?(
+    transaction: string,
+    feePayer: Address,
+    network: string,
+  ): Promise<SvmInnerInstructionsResult>;
+
+  /**
+   * Fetch inner instructions from a confirmed transaction.
+   * Used for post-settlement verification to confirm that the TransferChecked
+   * actually executed on-chain (defends against TOCTOU in simulation path).
+   *
+   * Optional — if not implemented, post-settlement verification falls back
+   * to balance-delta checking only.
+   *
+   * @param signature - Transaction signature to fetch
+   * @param network - CAIP-2 network identifier
+   * @returns Inner instructions from the confirmed transaction, or null if not yet indexed
+   */
+  getConfirmedTransactionInnerInstructions?(
+    signature: string,
+    network: string,
+  ): Promise<SvmInnerInstructionsResult | null>;
+
+  /**
+   * Get the token balance of a specific token account.
+   * Used for balance-delta fallback in post-settlement verification.
+   *
+   * Optional — if not implemented, balance-delta fallback is unavailable.
+   *
+   * @param tokenAccountAddress - Base58 encoded token account (ATA) address
+   * @param network - CAIP-2 network identifier
+   * @returns Token balance in atomic units, or null if account not found
+   */
+  getTokenAccountBalance?(tokenAccountAddress: string, network: string): Promise<bigint | null>;
+
+  /**
+   * Resolve Address Lookup Tables for v0 transactions.
+   * Returns a map of ALT address to resolved account address arrays.
+   * Used by fee payer isolation check to inspect ALT-resolved accounts.
+   *
+   * Optional — if not implemented, transactions with ALTs are rejected
+   * conservatively (safe, but limits smart wallet coverage for wallets
+   * that use ALTs like Crossmint/Swig).
+   *
+   * @param lookupTableAddresses - Base58 encoded ALT addresses to resolve
+   * @param network - CAIP-2 network identifier
+   * @returns Map of ALT address to ordered array of resolved account addresses
+   */
+  fetchAddressLookupTables?(
+    lookupTableAddresses: string[],
+    network: string,
+  ): Promise<Record<string, string[]>>;
+};
+
+/**
+ * Result from simulation with inner instruction inspection.
+ */
+export type SvmInnerInstructionsResult = {
+  innerInstructions: Array<{
+    index: number;
+    instructions: Array<{
+      programIdIndex: number;
+      accounts: number[];
+      data: string;
+    }>;
+  }> | null;
 };
 
 /**
@@ -396,6 +477,151 @@ export function toFacilitatorSvmSigner(
       const rpc = getRpcForNetwork(network);
       const rpcCapabilities = createRpcCapabilitiesFromRpc(rpc);
       await rpcCapabilities.confirmTransaction(signature);
+    },
+
+    simulateTransactionWithInnerInstructions: async (
+      transaction: string,
+      feePayer: Address,
+      network: string,
+    ) => {
+      if (feePayer !== signer.address) {
+        throw new Error(`No signer for feePayer ${feePayer}. Available: ${signer.address}`);
+      }
+
+      const tx = decodeTransactionFromPayload({ transaction });
+      const signableMessage = {
+        content: tx.messageBytes,
+        signatures: tx.signatures,
+      };
+      const [facilitatorSignatureDictionary] = await signer.signMessages([
+        signableMessage as never,
+      ]);
+      const signedTx = {
+        ...tx,
+        signatures: { ...tx.signatures, ...facilitatorSignatureDictionary },
+      };
+      const signedBase64 = getBase64EncodedWireTransaction(signedTx);
+
+      // Signature and blockhash verification during simulation.
+      //
+      // sigVerify: true — matches the existing Path 1 simulation behavior. Ensures all
+      // transaction signatures are valid, preventing an attacker from passing verify()
+      // with forged signatures and getting free resource access before on-chain failure.
+      //
+      // replaceRecentBlockhash: false — preserves the original blockhash so signatures
+      // remain valid (they cover the full message including blockhash). Also required for
+      // durable nonce transactions (AdvanceNonceAccount), which use a nonce instead of a
+      // recent blockhash and are valid indefinitely until the nonce is advanced.
+      // See RFC #646 for the durable nonce handling specification.
+      //
+      // Blockhash expiry (~60-90s) is not a concern: the x402 flow (payer signs → HTTP
+      // request → facilitator verifies) completes well within this window. If the
+      // blockhash has expired, the transaction can't land on-chain regardless, so
+      // rejecting at verify-time is the correct behavior.
+      const rpc = getRpcForNetwork(network);
+      const result = await rpc
+        .simulateTransaction(
+          signedBase64 as never,
+          {
+            sigVerify: true,
+            replaceRecentBlockhash: false,
+            commitment: "confirmed",
+            encoding: "base64",
+            innerInstructions: true,
+          } as never,
+        )
+        .send();
+
+      const value = result.value as unknown as {
+        err: unknown;
+        innerInstructions?: Array<{
+          index: number;
+          instructions: Array<{ programIdIndex: number; accounts: number[]; data: string }>;
+        }>;
+      };
+
+      if (value.err) {
+        const errorStr = JSON.stringify(value.err, (_, v) =>
+          typeof v === "bigint" ? v.toString() : v,
+        );
+        throw new Error(`Smart wallet simulation failed: ${errorStr}`);
+      }
+
+      return { innerInstructions: value.innerInstructions ?? null };
+    },
+
+    getConfirmedTransactionInnerInstructions: async (
+      signature: string,
+      network: string,
+    ): Promise<SvmInnerInstructionsResult | null> => {
+      const rpc = getRpcForNetwork(network);
+      const result = await rpc
+        .getTransaction(
+          signature as never,
+          {
+            commitment: "confirmed",
+            maxSupportedTransactionVersion: 0,
+            encoding: "jsonParsed",
+          } as never,
+        )
+        .send();
+
+      if (!result) {
+        return null;
+      }
+
+      const meta = (
+        result as unknown as {
+          meta?: { innerInstructions?: SvmInnerInstructionsResult["innerInstructions"] };
+        }
+      ).meta;
+      return { innerInstructions: meta?.innerInstructions ?? null };
+    },
+
+    getTokenAccountBalance: async (
+      tokenAccountAddress: string,
+      network: string,
+    ): Promise<bigint | null> => {
+      const rpc = getRpcForNetwork(network);
+      try {
+        const result = await rpc
+          .getTokenAccountBalance(
+            tokenAccountAddress as never,
+            { commitment: "confirmed" } as never,
+          )
+          .send();
+        const amount = (result as unknown as { value?: { amount?: string } }).value?.amount;
+        return amount ? BigInt(amount) : null;
+      } catch {
+        return null;
+      }
+    },
+
+    fetchAddressLookupTables: async (
+      lookupTableAddresses: string[],
+      network: string,
+    ): Promise<Record<string, string[]>> => {
+      const rpc = getRpcForNetwork(network);
+      try {
+        const resolved = await fetchAddressesForLookupTables(
+          lookupTableAddresses.map(a => a as Address),
+          rpc,
+        );
+        const result: Record<string, string[]> = {};
+        for (const [key, addresses] of Object.entries(resolved)) {
+          result[key] = addresses.map((a: Address) => a.toString());
+        }
+        return result;
+      } catch (error) {
+        // Surface resolution failures rather than returning an empty map.
+        // An empty map would be indistinguishable from "no ALTs", silently
+        // weakening the fee-payer isolation check that depends on resolved
+        // accounts. The caller (assertFeePayerIsolated) converts this into a
+        // verify failure so a transient RPC blip fails the payment safely.
+        throw new Error(
+          `smart_wallet_alt_resolution_failed: ${error instanceof Error ? error.message : String(error)}`,
+        );
+      }
     },
   };
 }

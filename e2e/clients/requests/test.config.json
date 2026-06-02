@@ -13,7 +13,8 @@
   ],
   "schemes": [
     "exact",
-    "upto"
+    "upto",
+    "batch-settlement"
   ],
   "evm": {
     "assetTransferMethods": [
@@ -41,7 +42,10 @@
       "TONCENTER_API_KEY",
       "TONCENTER_BASE_URL",
       "TONAPI_API_KEY",
-      "TONAPI_BASE_URL"
+      "TONAPI_BASE_URL",
+      "CHANNEL_SALT",
+      "EVM_VOUCHER_SIGNER_PRIVATE_KEY",
+      "BATCH_SETTLEMENT_PHASE"
     ]
   }
 }

@@ -54,7 +54,7 @@ class _ServerExtension:
     def transport_hooks(self) -> _TransportHooks:
         return _TransportHooks(
             http=_HTTPExtensionHooks(
-                on_protected_request=lambda _decl, _ctx: GrantAccessResult(),
+                on_protected_request=lambda _decl, _ctx, _route=None: GrantAccessResult(),
             )
         )
 
@@ -118,6 +118,35 @@ def test_server_extension_on_protected_request_gated_by_declared_key():
     http_server = x402HTTPServerBase(server, {"*": route})
     hooks = http_server._collect_protected_request_hooks(route)
     assert len(hooks) == 0
+
+
+def test_server_extension_on_protected_request_forwards_route_config():
+    received: list[RouteConfig] = []
+
+    class _RouteAwareExtension:
+        key = "route-ext"
+
+        def enrich_declaration(self, declared: Any, _transport_context: Any) -> Any:
+            return declared
+
+        @property
+        def transport_hooks(self) -> _TransportHooks:
+            return _TransportHooks(
+                http=_HTTPExtensionHooks(
+                    on_protected_request=lambda _decl, _ctx, route_cfg: (
+                        received.append(route_cfg) or GrantAccessResult()
+                    ),
+                )
+            )
+
+    server = x402ResourceServer()
+    server.register_extension(_RouteAwareExtension())
+    route = _route_config({"route-ext": {}})
+    http_server = x402HTTPServerBase(server, {"*": route})
+    hooks = http_server._collect_protected_request_hooks(route)
+    context = HTTPRequestContext(adapter=_Adapter(), method="GET", path="/test")
+    hooks[0](context, route)
+    assert received == [route]
 
 
 @pytest.mark.asyncio

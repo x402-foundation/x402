@@ -1,215 +1,244 @@
 "use client";
 
-import { useMemo, useRef, useState, useEffect } from "react";
+import { useMemo } from "react";
 import Image from "next/image";
-import { useRouter, useSearchParams } from "next/navigation";
-import { AnimatePresence, motion } from "motion/react";
 
 import { AnimatedGrid, AnimatedCard } from "@/lib/animations";
 import { EcosystemCard } from "../components/EcosystemCard";
-import FacilitatorCard from "./facilitator-card";
-import type { Partner, CategoryInfo } from "./data";
+import { discoveryDirectorySlugs, foundationMembers, highlightedIntegrationSlugs } from "./data";
+import type { Partner, FoundationMember } from "./data";
 
-function SearchIcon({ className }: { className?: string }) {
-  return (
-    <svg className={className} viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
-      <path d="M9 3.5a5.5 5.5 0 100 11 5.5 5.5 0 000-11zM2 9a7 7 0 1112.452 4.391l3.328 3.329a.75.75 0 11-1.06 1.06l-3.329-3.328A7 7 0 012 9z" fill="currentColor" />
-    </svg>
-  );
+const highlightedLogoOverrides: Record<string, string> = {
+  alchemy: "/logos/alchemy-dark.svg",
+  aws: "/logos/aws.svg",
+  cloudflare: "/logos/cloudflare-mono.svg",
+  exa: "/logos/exa-ai.svg",
+  nansen: "/logos/nansen-dark.svg",
+  vercel: "/logos/vercel-l.svg",
+  world: "/logos/world-mono.svg",
+};
+
+const foundationPartnerAliases: Record<string, string> = {
+  Amazon: "AWS",
+  Coinbase: "CDP Facilitator",
+  "Polygon Labs Services": "Polygon Facilitator",
+  "t54 labs": "x402-secure",
+};
+
+interface FoundationLogoDisplayOverride {
+  scale?: number;
+  containerClassName?: string;
+  imageClassName?: string;
 }
 
-function EcosystemSearch({ partners, onQueryChange, onSelect }: { partners: Partner[]; onQueryChange: (q: string) => void; onSelect: (name: string) => void }) {
-  const [query, setQuery] = useState("");
-  const [isOpen, setIsOpen] = useState(false);
-  const ref = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    function handleClickOutside(e: MouseEvent) {
-      if (ref.current && !ref.current.contains(e.target as Node)) {
-        setIsOpen(false);
-      }
-    }
-    document.addEventListener("mousedown", handleClickOutside);
-    return () => document.removeEventListener("mousedown", handleClickOutside);
-  }, []);
-
-  const results = useMemo(() => {
-    if (!query.trim()) return [];
-    const q = query.toLowerCase();
-    return partners.filter((p) => p.name.toLowerCase().includes(q)).slice(0, 8);
-  }, [query, partners]);
-
-  return (
-    <div ref={ref} className="relative z-40 w-full max-w-md">
-      <div className="relative">
-        <SearchIcon className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-40" />
-        <input
-          type="text"
-          value={query}
-          onChange={(e) => {
-            setQuery(e.target.value);
-            onQueryChange(e.target.value);
-            onSelect("");
-            setIsOpen(true);
-          }}
-          onFocus={() => query.trim() && setIsOpen(true)}
-          placeholder="Search ecosystem..."
-          className="w-full border border-foreground bg-background pl-10 pr-4 py-2.5 text-sm font-mono placeholder:text-gray-40 focus:outline-none focus:border-accent-orange transition-colors"
-        />
-      </div>
-      {isOpen && results.length > 0 && (
-        <div className="absolute z-30 mt-1 w-full border border-foreground bg-background shadow-lg max-h-80 overflow-y-auto">
-          {results.map((partner) => (
-            <button
-              key={partner.slug ?? partner.name}
-              type="button"
-              className="flex w-full items-center gap-3 px-4 py-3 hover:bg-gray-10 transition-colors border-b border-gray-10 last:border-b-0 cursor-pointer text-left"
-              onClick={() => {
-                setIsOpen(false);
-                setQuery(partner.name);
-                onQueryChange(partner.name);
-                onSelect(partner.name);
-              }}
-            >
-              {partner.logoUrl && (
-                <Image
-                  src={partner.logoUrl}
-                  alt=""
-                  width={28}
-                  height={28}
-                  className="h-7 w-7 object-contain shrink-0"
-                />
-              )}
-              <div className="min-w-0">
-                <p className="text-sm font-medium truncate">{partner.name}</p>
-                <p className="text-xs text-gray-40 truncate">{partner.category}</p>
-              </div>
-            </button>
-          ))}
-        </div>
-      )}
-      {isOpen && query.trim() && results.length === 0 && (
-        <div className="absolute z-30 mt-1 w-full border border-foreground bg-background shadow-lg px-4 py-3">
-          <p className="text-sm text-gray-40">No results found</p>
-        </div>
-      )}
-    </div>
-  );
-}
+const foundationLogoDisplayOverrides: Record<string, FoundationLogoDisplayOverride> = {
+  Adyen: { scale: 0.6 },
+  Amazon: { scale: 0.7 },
+  "American Express": { scale: 0.9 },
+  Circle: { scale: 0.7 },
+  Fiserv: { scale: 0.7 },
+  Google: {
+    scale: 0.7,
+    containerClassName: "flex h-[60px] w-[60px] items-center justify-start overflow-hidden",
+  },
+  MasterCard: { scale: 0.7 },
+  Shopify: { scale: 0.7 },
+  Solana: { scale: 0.5 },
+  Stripe: { scale: 0.5 },
+  "Visa Inc.": { scale: 0.5 },
+  Aleo: { scale: 0.7 },
+  Fireblocks: { scale: 0.7 },
+  "Kakaopay inc.": { scale: 0.7 },
+  Nansen: { scale: 0.7 },
+  "Polygon Labs Services": { scale: 0.7 },
+  "t54 labs": { scale: 0.7 },
+  "x402-secure": { scale: 0.7 },
+  World: { scale: 0.7 },
+  utexo: { scale: 0.7 },
+  "Quant Network": { scale: 0.7 },
+  "Kite AI": { scale: 0.7 },
+  "LayerZero Labs": { scale: 0.7 },
+  "Merit Systems": { scale: 0.7 },
+};
 
 interface EcosystemClientProps {
   initialPartners: Partner[];
-  categories: CategoryInfo[];
-  initialSelectedCategory?: string | null;
 }
 
-type PartitionResult = {
-  topSection: Partner[];
-  byCategory: Record<string, Partner[]>;
-};
-
-function FolderIcon({ className }: { className?: string }) {
+function SectionLabel({ children }: { children: string }) {
   return (
-    <Image
-      src="/images/icons/folder.svg"
-      alt=""
-      width={20}
-      height={20}
-      className={className}
-    />
+    <p className="font-mono text-xs font-medium uppercase tracking-[0.18em] text-gray-40">
+      {children}
+    </p>
   );
 }
 
-function IndentArrowIcon({ className }: { className?: string }) {
+function getMemberInitials(name: string) {
+  return name
+    .replace(" Inc.", "")
+    .replace(" inc.", "")
+    .replace(" Services", "")
+    .split(" ")
+    .filter(Boolean)
+    .map(part => part[0])
+    .join("")
+    .slice(0, 3)
+    .toUpperCase();
+}
+
+function FoundationMemberCard({
+  member,
+  partner,
+}: {
+  member: FoundationMember;
+  partner?: Partner;
+}) {
+  const description =
+    member.description ?? partner?.description ?? `${member.name} is a member of the x402 Foundation.`;
+  const websiteUrl = partner?.websiteUrl ?? member.websiteUrl;
+  const logoUrl = partner?.logoUrl ?? member.logoUrl;
+  const logoDisplayOverride = foundationLogoDisplayOverrides[member.name];
+  const logoScale = logoDisplayOverride?.scale ?? 1;
+  const logoContainerClassName =
+    logoDisplayOverride?.containerClassName ??
+    "flex h-[60px] w-[140px] items-center justify-start overflow-hidden";
+  const logoClassName = logoDisplayOverride?.imageClassName;
+
   return (
-    <Image
-      src="/images/icons/indent_group5.svg"
-      alt=""
-      width={20}
-      height={20}
-      className={className}
-    />
+    <article className="group relative flex h-full min-h-[280px] w-full flex-col border border-foreground bg-background px-3 pt-4 pb-5 transition-all duration-200 hover:border-accent-orange hover:bg-gray-10 hover:shadow-lg">
+      <div
+        className="absolute inset-x-0 top-0 h-[7px] bg-black transition-colors duration-200 group-hover:bg-accent-orange"
+        aria-hidden="true"
+      />
+
+      <a
+        href={websiteUrl}
+        target="_blank"
+        rel="noopener noreferrer"
+        className="absolute inset-0 z-20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-foreground focus-visible:ring-offset-2 focus-visible:ring-offset-background"
+        aria-label={`Learn more about ${member.name}`}
+      />
+
+      <div className="relative z-10 pointer-events-none mb-3 flex items-start justify-between">
+        <div className={`relative ${logoContainerClassName}`}>
+          {logoUrl ? (
+            <Image
+              src={logoUrl}
+              alt={`${member.name} logo`}
+              fill
+              sizes="140px"
+              className={logoClassName}
+              style={{
+                objectFit: "contain",
+                objectPosition: "left center",
+                transform: `scale(${logoScale})`,
+                transformOrigin: "left center",
+              }}
+            />
+          ) : (
+            <div className="flex h-[60px] w-[60px] items-center justify-center border border-gray-20 bg-gray-10">
+              <span className="font-mono text-sm font-medium tracking-[-0.28px] text-gray-60">
+                {getMemberInitials(member.name)}
+              </span>
+            </div>
+          )}
+        </div>
+      </div>
+
+      <div className="relative z-10 pointer-events-none flex-1 space-y-2">
+        <h3 className="text-sm font-semibold uppercase leading-snug">{member.name}</h3>
+        <p className="text-xs leading-relaxed text-gray-60">{description}</p>
+      </div>
+
+      <div className="relative z-10 pointer-events-none mt-3 text-xs font-medium">
+        <span className="inline-flex items-center gap-1 text-accent-orange">
+          Visit website &rarr;
+        </span>
+      </div>
+    </article>
   );
 }
 
-function partitionPartners(partners: Partner[], categories: CategoryInfo[]): PartitionResult {
-  const byCategory: Record<string, Partner[]> = { everything: [...partners] };
+function FoundationMemberGrid({
+  title,
+  members,
+  partnersByName,
+}: {
+  title: string;
+  members: FoundationMember[];
+  partnersByName: Map<string, Partner>;
+}) {
+  return (
+    <section className="space-y-4" aria-labelledby={`${title.toLowerCase()}-members-heading`}>
+      <div className="flex items-end justify-between gap-4 border-b border-foreground pb-3">
+        <h2
+          id={`${title.toLowerCase()}-members-heading`}
+          className="font-['Helvetica_Neue',sans-serif] text-xl font-medium"
+        >
+          {title} Members
+        </h2>
+        <span className="font-mono text-xs text-gray-40">{members.length} members</span>
+      </div>
 
-  // Initialize empty arrays for each category id
-  for (const category of categories) {
-    byCategory[category.id] = [];
-  }
+      <div className="grid grid-cols-1 gap-[10px] sm:grid-cols-2 lg:grid-cols-4">
+        {members.map(member => {
+          const partnerName = foundationPartnerAliases[member.name] ?? member.name;
+          const partner = partnersByName.get(partnerName);
 
-  // Create a map from category name to category id for lookup
-  const nameToId = new Map(categories.map((c) => [c.name, c.id]));
-
-  for (const partner of partners) {
-    // Partner.category contains the display name (e.g., "Facilitators")
-    // We need to map it to the category id (e.g., "facilitators")
-    const categoryId = nameToId.get(partner.category);
-    if (categoryId && byCategory[categoryId]) {
-      byCategory[categoryId].push(partner);
-    }
-  }
-
-  const topSection = partners.filter((partner) => partner.top_section);
-
-  return { topSection, byCategory };
+          return (
+            <div key={member.name} className="h-full">
+              <FoundationMemberCard member={member} partner={partner} />
+            </div>
+          );
+        })}
+      </div>
+    </section>
+  );
 }
 
 export default function EcosystemClient({
   initialPartners,
-  categories,
-  initialSelectedCategory,
 }: EcosystemClientProps) {
-  const searchParams = useSearchParams();
-  const router = useRouter();
-
-  const [isExpanded, setIsExpanded] = useState(true);
-  const [isSearching, setIsSearching] = useState(false);
-  const [searchQuery, setSearchQuery] = useState("");
-  const [selectedPartner, setSelectedPartner] = useState("");
-
-  const activeFilter =
-    (searchParams.get("filter") ?? initialSelectedCategory ?? "everything") || "everything";
-
-  const { topSection, byCategory } = useMemo(
-    () => partitionPartners(initialPartners, categories),
-    [initialPartners, categories],
+  const partnersByName = useMemo(
+    () => new Map(initialPartners.map(partner => [partner.name, partner])),
+    [initialPartners],
   );
 
-  const handleFilterChange = (categoryId: string) => {
-    const params = new URLSearchParams(searchParams.toString());
-    if (categoryId === "everything") {
-      params.delete("filter");
-    } else {
-      params.set("filter", categoryId);
-    }
-    router.push(`/ecosystem${params.toString() ? `?${params.toString()}` : ""}`, {
-      scroll: false,
-    });
-  };
+  const foundationByTier = useMemo(
+    () => ({
+      premier: foundationMembers.filter(member => member.tier === "Premier"),
+      general: foundationMembers.filter(member => member.tier === "General"),
+    }),
+    [],
+  );
 
-  const basePartners =
-    activeFilter === "everything"
-      ? initialPartners.filter((partner) => !partner.top_section)
-      : (byCategory[activeFilter] ?? []).filter((partner) => !partner.top_section);
+  const highlightedIntegrations = useMemo(() => {
+    const bySlug = new Map(initialPartners.map(partner => [partner.slug, partner]));
 
-  const filteredPartners = useMemo(() => {
-    if (selectedPartner) {
-      return initialPartners.filter((p) => p.name === selectedPartner);
-    }
-    if (searchQuery.trim()) {
-      const q = searchQuery.toLowerCase();
-      return initialPartners.filter((p) => p.name.toLowerCase().includes(q));
-    }
-    return basePartners;
-  }, [selectedPartner, searchQuery, basePartners, initialPartners]);
+    return highlightedIntegrationSlugs
+      .map(slug => {
+        const partner = bySlug.get(slug);
+        if (!partner) return null;
+
+        return {
+          ...partner,
+          logoUrl: highlightedLogoOverrides[slug] ?? partner.logoUrl,
+        };
+      })
+      .filter((partner): partner is Partner => partner !== null);
+  }, [initialPartners]);
+
+  const discoveryDirectories = useMemo(() => {
+    const bySlug = new Map(initialPartners.map(partner => [partner.slug, partner]));
+
+    return discoveryDirectorySlugs
+      .map(slug => bySlug.get(slug) ?? null)
+      .filter((partner): partner is Partner => partner !== null);
+  }, [initialPartners]);
 
   return (
     <div className="mx-auto max-w-container px-6 py-16 sm:px-10">
-      {/* Hero */}
-      <section className="relative mb-16">
+      <section className="relative mb-20">
         <div className="pointer-events-none absolute left-[350px] top-[25px] z-0 h-[509px] w-[514px] opacity-30">
           <Image
             src="/images/ecosystem-halftone.svg"
@@ -222,209 +251,111 @@ export default function EcosystemClient({
         </div>
 
         <div className="relative z-10">
-          <div className="flex flex-col gap-6 sm:flex-row sm:items-end sm:justify-between">
-            <div className="space-y-4">
-              <h1 className="font-display text-7xl tracking-tight">Ecosystem</h1>
+          <div className="flex flex-col gap-10 lg:flex-row lg:items-end lg:justify-between">
+            <div className="max-w-[760px] space-y-5">
+              <h1 className="font-display text-6xl tracking-tight sm:text-7xl lg:text-8xl">
+                The x402 ecosystem is already taking shape.
+              </h1>
+              <p className="max-w-[760px] text-base leading-relaxed text-gray-60 sm:text-lg">
+                x402 is backed by payment networks, cloud platforms, developer infrastructure, and
+                crypto-native teams building the next payment layer for the internet.
+              </p>
             </div>
-            <p className="max-w-[400px] text-right font-code-ui text-base leading-relaxed text-gray-60 sm:text-lg">
-              Discover innovative projects, tools, and applications built by our growing community
-              of partners and developers leveraging x402 technology.
+          </div>
+        </div>
+      </section>
+
+      <section className="mb-20 space-y-8" aria-labelledby="foundation-members-heading">
+        <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
+          <div className="space-y-3">
+            <SectionLabel>Foundation members</SectionLabel>
+            <h2
+              id="foundation-members-heading"
+              className="font-display text-4xl tracking-tight sm:text-5xl"
+            >
+              Big names, clear signal.
+            </h2>
+          </div>
+          <p className="max-w-[460px] text-sm leading-relaxed text-gray-60 sm:text-base">
+            Premier and general members span payments, cloud, crypto infrastructure, and developer
+            platforms.
+          </p>
+        </div>
+
+        <div className="grid gap-10">
+          <FoundationMemberGrid
+            title="Premier"
+            members={foundationByTier.premier}
+            partnersByName={partnersByName}
+          />
+          <FoundationMemberGrid
+            title="General"
+            members={foundationByTier.general}
+            partnersByName={partnersByName}
+          />
+        </div>
+      </section>
+
+      {highlightedIntegrations.length > 0 && (
+        <section className="mb-20 space-y-6" aria-labelledby="highlighted-integrations-heading">
+          <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
+            <div className="space-y-3">
+              <h2
+                id="highlighted-integrations-heading"
+                className="font-display text-4xl tracking-tight sm:text-5xl"
+              >
+                The fastest paths from interest to implementation.
+              </h2>
+            </div>
+            <p className="max-w-[440px] text-sm leading-relaxed text-gray-60 sm:text-base">
+              Selected examples from teams making x402 easier to adopt across payments, AI, cloud,
+              and developer infrastructure.
             </p>
           </div>
-        </div>
 
-        <div className="relative z-30 mt-12">
-          <EcosystemSearch
-              partners={initialPartners}
-              onQueryChange={(q) => {
-                setSearchQuery(q);
-                setIsSearching(q.trim().length > 0);
-                if (!q.trim()) setSelectedPartner("");
-              }}
-              onSelect={(name) => setSelectedPartner(name)}
-            />
+          <AnimatedGrid className="grid grid-cols-1 gap-[10px] sm:grid-cols-2 lg:grid-cols-3">
+            {highlightedIntegrations.map(partner => (
+              <AnimatedCard
+                key={partner.slug ?? partner.name}
+                layoutId={`highlighted-${partner.slug ?? partner.name}`}
+                className="h-full"
+              >
+                <EcosystemCard partner={partner} />
+              </AnimatedCard>
+            ))}
+          </AnimatedGrid>
+        </section>
+      )}
+
+      {discoveryDirectories.length > 0 && (
+        <section className="mb-20 space-y-6" aria-labelledby="project-discovery-heading">
+          <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
+            <div className="space-y-3">
+              <h2
+                id="project-discovery-heading"
+                className="font-display text-4xl tracking-tight sm:text-5xl"
+              >
+                Explore x402 services.
+              </h2>
+            </div>
+            <p className="max-w-[440px] text-sm leading-relaxed text-gray-60 sm:text-base">
+              Community-maintained x402 directories.
+            </p>
           </div>
 
-          {!isSearching && topSection.length > 0 && (
-            <div className="mt-12 space-y-3">
-              <AnimatedGrid className="grid grid-cols-1 gap-[10px] sm:grid-cols-2 lg:grid-cols-4">
-                {topSection.map((partner) => (
-                  <AnimatedCard
-                    key={partner.slug ?? partner.name}
-                    layoutId={`topSection-${partner.slug ?? partner.name}`}
-                    className="h-full"
-                  >
-                    {partner.facilitator ? (
-                      <FacilitatorCard partner={partner} variant="top_section" />
-                    ) : (
-                      <EcosystemCard partner={partner} variant="top_section" />
-                    )}
-                  </AnimatedCard>
-                ))}
-              </AnimatedGrid>
-            </div>
-          )}
-      </section>
-
-      {/* Sidebar + main content */}
-      <section className="flex flex-col gap-12 lg:flex-row">
-        <aside
-          className="w-full text-sm lg:w-48 xl:w-56"
-          aria-label="Ecosystem categories"
-        >
-          <button
-            onClick={() => setIsExpanded(!isExpanded)}
-            className="mb-2 flex w-full cursor-pointer items-center gap-2 py-1 text-left"
-            aria-expanded={isExpanded}
-          >
-            <FolderIcon className="h-7 w-7 shrink-0" />
-            <span className="font-mono text-sm font-medium tracking-[-0.28px]">Ecosystem</span>
-          </button>
-
-          <AnimatePresence initial={false}>
-            {isExpanded && (
-              <motion.nav
-                initial={{ height: 0, opacity: 0 }}
-                animate={{ height: "auto", opacity: 1 }}
-                exit={{ height: 0, opacity: 0 }}
-                transition={{ duration: 0.2, ease: "easeInOut" }}
-                className="flex flex-col gap-0.5 overflow-hidden pl-2"
+          <AnimatedGrid className="grid grid-cols-1 gap-[10px] sm:grid-cols-2">
+            {discoveryDirectories.map(partner => (
+              <AnimatedCard
+                key={partner.slug ?? partner.name}
+                layoutId={`discovery-${partner.slug ?? partner.name}`}
+                className="h-full"
               >
-                {[
-                  { id: "everything", name: "Everything" },
-                  ...categories.map((category) => ({ id: category.id, name: category.name })),
-                ].map((category) => {
-                  const isActive = activeFilter === category.id;
-                  return (
-                    <button
-                      key={category.id}
-                      onClick={() => handleFilterChange(category.id)}
-                      className={`relative flex w-full cursor-pointer items-center gap-1.5 py-1.5 text-left font-mono text-sm font-medium tracking-[-0.28px] transition-colors ${
-                        isActive ? "text-foreground" : "text-foreground/30 hover:text-foreground/60"
-                      }`}
-                    >
-                      <IndentArrowIcon className="h-4 w-4 shrink-0" />
-                      <span>{category.name}</span>
-                    </button>
-                  );
-                })}
-              </motion.nav>
-            )}
-          </AnimatePresence>
-        </aside>
-
-        <div className="flex-1 space-y-16">
-          {isSearching ? (
-            <div className="space-y-4">
-              <h2 className="font-['Helvetica_Neue',sans-serif] text-lg font-medium">
-                {selectedPartner ? selectedPartner : `Results for "${searchQuery}"`}
-              </h2>
-              {filteredPartners.length > 0 ? (
-                <AnimatedGrid className="grid gap-[10px] sm:grid-cols-2 lg:grid-cols-4">
-                  {filteredPartners.map((partner) => (
-                    <AnimatedCard
-                      key={partner.slug ?? partner.name}
-                      layoutId={`${partner.slug ?? partner.name}-search`}
-                      className="h-full"
-                    >
-                      {partner.facilitator ? (
-                        <FacilitatorCard partner={partner} />
-                      ) : (
-                        <EcosystemCard partner={partner} />
-                      )}
-                    </AnimatedCard>
-                  ))}
-                </AnimatedGrid>
-              ) : (
-                <p className="text-sm text-gray-60">No results found.</p>
-              )}
-            </div>
-          ) : (
-          <AnimatePresence mode="wait">
-            {activeFilter === "everything" ? (
-              <motion.div
-                key="everything"
-                initial={{ opacity: 0, y: 10 }}
-                animate={{ opacity: 1, y: 0 }}
-                exit={{ opacity: 0, y: -10 }}
-                transition={{ duration: 0.2, ease: "easeInOut" }}
-                className="space-y-16"
-              >
-                {categories.map((category) => {
-                  const partners = (byCategory[category.id] ?? []).filter(
-                    (partner) => !partner.top_section,
-                  );
-                  if (!partners.length) return null;
-
-                  return (
-                    <section
-                      key={category.id}
-                      id={category.id}
-                      aria-labelledby={`${category.id}-heading`}
-                      className="scroll-mt-24 space-y-4"
-                    >
-                      <h2 id={`${category.id}-heading`} className="font-['Helvetica_Neue',sans-serif] text-lg font-medium">
-                        {category.name}
-                      </h2>
-
-                      <AnimatedGrid className="grid gap-[10px] sm:grid-cols-2 lg:grid-cols-4">
-                        {partners.map((partner) => (
-                          <AnimatedCard
-                            key={partner.slug ?? partner.name}
-                            layoutId={`${partner.slug ?? partner.name}-${category.id}`}
-                            className="h-full"
-                          >
-                            {partner.facilitator ? (
-                              <FacilitatorCard partner={partner} />
-                            ) : (
-                              <EcosystemCard partner={partner} />
-                            )}
-                          </AnimatedCard>
-                        ))}
-                      </AnimatedGrid>
-                    </section>
-                  );
-                })}
-              </motion.div>
-            ) : (
-              <motion.div
-                key={activeFilter}
-                initial={{ opacity: 0, y: 10 }}
-                animate={{ opacity: 1, y: 0 }}
-                exit={{ opacity: 0, y: -10 }}
-                transition={{ duration: 0.2, ease: "easeInOut" }}
-              >
-                <section className="scroll-mt-24 space-y-4">
-                  <h2 className="font-['Helvetica_Neue',sans-serif] text-lg font-medium">
-                    {categories.find((category) => category.id === activeFilter)?.name ??
-                      "Ecosystem"}
-                  </h2>
-                  {filteredPartners.length > 0 ? (
-                    <AnimatedGrid className="grid gap-[10px] sm:grid-cols-2 lg:grid-cols-4">
-                      {filteredPartners.map((partner) => (
-                        <AnimatedCard
-                          key={partner.slug ?? partner.name}
-                          layoutId={`${partner.slug ?? partner.name}-${activeFilter}`}
-                          className="h-full"
-                        >
-                          {partner.facilitator ? (
-                            <FacilitatorCard partner={partner} />
-                          ) : (
-                            <EcosystemCard partner={partner} />
-                          )}
-                        </AnimatedCard>
-                      ))}
-                    </AnimatedGrid>
-                  ) : (
-                    <p className="text-sm text-gray-60">No projects in this category yet.</p>
-                  )}
-                </section>
-              </motion.div>
-            )}
-          </AnimatePresence>
-          )}
-        </div>
-      </section>
+                <EcosystemCard partner={partner} />
+              </AnimatedCard>
+            ))}
+          </AnimatedGrid>
+        </section>
+      )}
     </div>
   );
 }

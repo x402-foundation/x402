@@ -7,7 +7,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	x402http "github.com/x402-foundation/x402/go/http"
+	x402http "github.com/x402-foundation/x402/go/v2/http"
 )
 
 // testAuthProvider is a test helper that returns fixed auth headers.

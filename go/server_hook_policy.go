@@ -5,7 +5,7 @@ import (
 	"reflect"
 	"strings"
 
-	"github.com/x402-foundation/x402/go/types"
+	"github.com/x402-foundation/x402/go/v2/types"
 )
 
 // ============================================================================

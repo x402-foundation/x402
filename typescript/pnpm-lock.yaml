@@ -1339,7 +1339,7 @@ importers:
         specifier: 2.80.0
         version: 2.80.0(bn.js@5.2.1)(react-native@0.85.0(@babel/core@7.28.3)(bufferutil@4.0.9)(react@19.2.6)(utf-8-validate@5.0.10))
       '@x402/core':
-        specifier: workspace:*
+        specifier: workspace:~
         version: link:../../core
     devDependencies:
       '@eslint/js':

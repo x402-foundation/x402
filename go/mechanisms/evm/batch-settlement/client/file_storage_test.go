@@ -6,7 +6,7 @@ import (
 	"reflect"
 	"testing"
 
-	batchsettlement "github.com/x402-foundation/x402/go/mechanisms/evm/batch-settlement"
+	batchsettlement "github.com/x402-foundation/x402/go/v2/mechanisms/evm/batch-settlement"
 )
 
 func newFileStore(t *testing.T) (*FileClientChannelStorage, string) {

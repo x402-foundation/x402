@@ -4,10 +4,10 @@
  * Mirrors the upstream x402 mechanisms/evm pattern (see exact/upto/batch-settlement
  * facilitator/errors.ts). The string values are wire-level identifiers locked
  * by the merged auth-capture-EVM spec (specs/schemes/auth-capture/scheme_auth-capture_evm.md,
- * "Error Codes" section) — do not rename them without a corresponding spec PR.
+ * "Error Codes" section); do not rename them without a corresponding spec PR.
  */
 
-// Verify errors — pre-simulation
+// Verify errors: pre-simulation
 export const ErrInvalidPayloadFormat = "invalid_payload_format";
 export const ErrUnsupportedScheme = "unsupported_scheme";
 export const ErrNetworkMismatch = "network_mismatch";
@@ -27,7 +27,7 @@ export const ErrNonceMismatch = "nonce_mismatch";
 export const ErrInsufficientBalance = "insufficient_balance";
 export const ErrSimulationFailed = "simulation_failed";
 
-// Typed simulation reverts — surfaced when the on-chain simulate call reverts
+// Typed simulation reverts: surfaced when the on-chain simulate call reverts
 // with a known AuthCaptureEscrow custom error.
 export const ErrPaymentAlreadyCollected = "payment_already_collected";
 export const ErrTokenCollectionFailed = "token_collection_failed";

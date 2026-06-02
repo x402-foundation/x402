@@ -9,7 +9,7 @@ import (
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/crypto"
 
-	"github.com/x402-foundation/x402/go/mechanisms/evm"
+	"github.com/x402-foundation/x402/go/v2/mechanisms/evm"
 )
 
 // erc3009DepositNonceABI is the ABI tuple (bytes32, uint256) used to derive

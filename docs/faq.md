@@ -32,7 +32,7 @@ Nothing prevents you from implementing the spec in Rust, Java, or other language
 
 #### Who runs facilitators today?
 
-Multiple organizations operate production facilitators. The protocol is **permissionless**—anyone can run a facilitator. See the [x402 Ecosystem](https://www.x402.org/ecosystem?filter=facilitators) for available options, including:
+Multiple organizations operate production facilitators. The protocol is **permissionless**—anyone can run a facilitator. See [Facilitators](/dev-tools/facilitators) for selected options, including:
 
 * Community‑run facilitators for various networks and assets
 * Private facilitators for enterprises that need custom KYT / KYC flows.
@@ -68,7 +68,7 @@ Yes. x402 handles the _payment execution_. You can still meter usage, aggregate 
 | Solana         | `solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp` | Any SPL token or Token-2022 token | fee-free | **Mainnet** |
 | Solana Devnet  | `solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1` | Any SPL token or Token-2022 | fee-free | **Testnet** |
 
-\* Gas paid onchain; many facilitators offer **zero** facilitator fees (see [ecosystem](https://www.x402.org/ecosystem?filter=facilitators) for details).
+\* Gas paid onchain; many facilitators offer **zero** facilitator fees (see [Facilitators](/dev-tools/facilitators) for details).
 
 _Support for additional chains and assets is on the roadmap and community‑driven._
 

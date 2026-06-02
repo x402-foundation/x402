@@ -34,7 +34,7 @@ While it is possible to implement verification and settlement locally, using a f
 
 ### Live Facilitators
 
-Multiple facilitators are live in production, supporting various networks including Base, Solana, Polygon, Avalanche, and more. For a complete and up-to-date list, see the [x402 Ecosystem](https://www.x402.org/ecosystem?filter=facilitators).
+Multiple facilitators are live in production, supporting various networks including Base, Solana, Polygon, Avalanche, and more. See [Facilitators](/dev-tools/facilitators) for selected production options.
 
 ### Interaction Flow
 
@@ -67,5 +67,5 @@ The facilitator acts as an independent verification and settlement layer within 
 
 Next, explore:
 
-* [Client / Server](/docs/core-concepts/client-server.md) — understand the roles and responsibilities of clients and servers
-* [HTTP 402](/docs/core-concepts/http-402.md) — understand how payment requirements are communicated to clients
+* [Client / Server](/core-concepts/client-server) — understand the roles and responsibilities of clients and servers
+* [HTTP 402](/core-concepts/http-402) — understand how payment requirements are communicated to clients

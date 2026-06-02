@@ -335,6 +335,7 @@ class DiscoveredResource:
     service_name: str | None = None
     tags: list[str] | None = None
     icon_url: str | None = None
+    extensions: dict[str, Any] | None = None
 
 
 @dataclass
@@ -391,6 +392,128 @@ def validate_discovery_extension(extension: DiscoveryExtension) -> ValidationRes
 
     except Exception as e:
         return ValidationResult(valid=False, errors=[f"Schema validation failed: {e!s}"])
+
+
+_VALID_QUERY_METHODS = frozenset({"GET", "HEAD", "DELETE"})
+_VALID_BODY_METHODS = frozenset({"POST", "PUT", "PATCH"})
+_VALID_METHODS = _VALID_QUERY_METHODS | _VALID_BODY_METHODS
+_VALID_BODY_TYPES = frozenset({"json", "form-data", "text"})
+_VALID_MCP_TRANSPORTS = frozenset({"streamable-http", "sse"})
+
+
+def validate_discovery_extension_spec(extension: dict[str, Any] | object) -> ValidationResult:
+    """Validate a discovery extension against the Bazaar protocol specification.
+
+    Unlike ``validate_discovery_extension`` which checks internal consistency
+    (info vs schema), this function enforces protocol-level invariants:
+
+    - ``info.input.type`` must be ``"http"`` or ``"mcp"``
+    - HTTP: if ``method`` is present it must be GET/POST/PUT/PATCH/DELETE/HEAD
+    - HTTP body methods: ``bodyType`` must be ``"json"`` | ``"form-data"`` | ``"text"``
+    - MCP: ``toolName`` (string) and ``inputSchema`` (object) are required
+    - MCP: if ``transport`` is present it must be ``"streamable-http"`` | ``"sse"``
+
+    Safe for pre-enrichment HTTP extensions where ``method`` may be absent.
+
+    Args:
+        extension: The discovery extension to validate (dict or object).
+
+    Returns:
+        ValidationResult with spec-level errors.
+    """
+    errors: list[str] = []
+
+    if isinstance(extension, dict):
+        info = extension.get("info")
+    elif hasattr(extension, "info"):
+        info = extension.info  # type: ignore[union-attr]
+    else:
+        return ValidationResult(valid=False, errors=["Missing or invalid 'info' field"])
+
+    if not info or not isinstance(info, dict | object):
+        return ValidationResult(valid=False, errors=["Missing or invalid 'info' field"])
+
+    if isinstance(info, dict):
+        input_data = info.get("input")
+    elif hasattr(info, "input"):
+        input_data = info.input  # type: ignore[union-attr]
+    else:
+        return ValidationResult(valid=False, errors=["Missing or invalid 'info.input' field"])
+
+    if not input_data:
+        return ValidationResult(valid=False, errors=["Missing or invalid 'info.input' field"])
+
+    if isinstance(input_data, dict):
+        input_type = input_data.get("type")
+    elif hasattr(input_data, "type"):
+        input_type = input_data.type  # type: ignore[union-attr]
+    else:
+        input_type = None
+
+    if input_type not in ("http", "mcp"):
+        errors.append(f'info.input.type must be "http" or "mcp", got "{input_type}"')
+        return ValidationResult(valid=False, errors=errors)
+
+    if input_type == "http":
+        method = (
+            input_data.get("method")
+            if isinstance(input_data, dict)
+            else getattr(input_data, "method", None)
+        )
+        if method is not None and method not in _VALID_METHODS:
+            errors.append(
+                f'info.input.method must be one of {", ".join(sorted(_VALID_METHODS))}, got "{method}"'
+            )
+
+        body_type = (
+            input_data.get("bodyType")
+            if isinstance(input_data, dict)
+            else getattr(input_data, "body_type", None)
+        )
+        if body_type is not None:
+            if body_type not in _VALID_BODY_TYPES:
+                errors.append(
+                    f'info.input.bodyType must be one of {", ".join(sorted(_VALID_BODY_TYPES))}, got "{body_type}"'
+                )
+            if method is not None and method not in _VALID_BODY_METHODS:
+                errors.append(
+                    f'info.input.bodyType is set but method "{method}" is not a body method (POST, PUT, PATCH)'
+                )
+
+    if input_type == "mcp":
+        tool_name = (
+            input_data.get("toolName")
+            if isinstance(input_data, dict)
+            else getattr(input_data, "tool_name", None)
+        )
+        if not isinstance(tool_name, str) or len(tool_name) == 0:
+            errors.append(
+                "info.input.toolName is required and must be a non-empty string for MCP extensions"
+            )
+
+        input_schema = (
+            input_data.get("inputSchema")
+            if isinstance(input_data, dict)
+            else getattr(input_data, "input_schema", None)
+        )
+        if not input_schema or not isinstance(input_schema, dict):
+            errors.append(
+                "info.input.inputSchema is required and must be an object for MCP extensions"
+            )
+
+        transport = (
+            input_data.get("transport")
+            if isinstance(input_data, dict)
+            else getattr(input_data, "transport", None)
+        )
+        if transport is not None and transport not in _VALID_MCP_TRANSPORTS:
+            errors.append(
+                f'info.input.transport must be one of {", ".join(sorted(_VALID_MCP_TRANSPORTS))}, got "{transport}"'
+            )
+
+    return (
+        ValidationResult(valid=True) if not errors else ValidationResult(valid=False, errors=errors)
+    )
 
 
 def _get_method_from_info(info: DiscoveryInfo | dict[str, Any]) -> str:
@@ -492,7 +615,7 @@ def extract_discovery_info(
 
     elif version == 1:
         # V1: Extract from requirements.output_schema
-        from .v1 import extract_discovery_info_v1
+        from .v1 import build_v1_catalog_extensions, extract_discovery_info_v1
 
         resource_url = requirements_dict.get("resource", "")
         discovery_info = extract_discovery_info_v1(requirements_dict)
@@ -537,6 +660,16 @@ def extract_discovery_info(
         description = requirements_dict.get("description") or None
         mime_type = requirements_dict.get("mimeType") or requirements_dict.get("mime_type") or None
 
+    extensions: dict[str, Any] | None = None
+    if version == 2:
+        raw_extensions = payload_dict.get("extensions")
+        if isinstance(raw_extensions, dict):
+            extensions = raw_extensions
+    elif discovery_info is not None:
+        payload_extensions = payload_dict.get("extensions")
+        existing_extensions = payload_extensions if isinstance(payload_extensions, dict) else None
+        extensions = build_v1_catalog_extensions(existing_extensions, discovery_info)
+
     return DiscoveredResource(
         resource_url=normalized_url,
         x402_version=version,
@@ -549,6 +682,7 @@ def extract_discovery_info(
         service_name=service_metadata.service_name,
         tags=service_metadata.tags,
         icon_url=service_metadata.icon_url,
+        extensions=extensions,
     )
 
 

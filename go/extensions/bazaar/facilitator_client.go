@@ -9,7 +9,7 @@ import (
 	"net/url"
 	"strconv"
 
-	x402http "github.com/x402-foundation/x402/go/http"
+	x402http "github.com/x402-foundation/x402/go/v2/http"
 )
 
 // ListDiscoveryResourcesParams contains optional filtering and pagination parameters
@@ -81,7 +81,22 @@ type DiscoveryResource struct {
 	// LastUpdated is an ISO 8601 timestamp of when the resource was last updated.
 	LastUpdated string `json:"lastUpdated"`
 
-	// Extensions contains additional extension payloads for this discovered resource.
+	// Description is a human-readable description of the resource.
+	Description string `json:"description,omitempty"`
+
+	// MimeType is the MIME type of the resource response.
+	MimeType string `json:"mimeType,omitempty"`
+
+	// ServiceName is a human-readable name for the service hosting the resource.
+	ServiceName string `json:"serviceName,omitempty"`
+
+	// Tags are short topical tags for discovery search.
+	Tags []string `json:"tags,omitempty"`
+
+	// IconUrl is an absolute http(s) URL to a service icon.
+	IconUrl string `json:"iconUrl,omitempty"`
+
+	// Extensions contains extension payloads echoed from discovery (e.g. bazaar info/schema).
 	Extensions map[string]any `json:"extensions,omitempty"`
 }
 

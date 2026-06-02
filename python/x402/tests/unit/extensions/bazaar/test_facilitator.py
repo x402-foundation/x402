@@ -817,3 +817,82 @@ class TestExtractDiscoveryInfoServiceMetadata:
         assert discovered.service_name is None
         assert discovered.tags == ["weather", "forecast"]
         assert discovered.icon_url is None
+
+
+class TestExtractDiscoveryInfoV1Extensions:
+    """Tests that v1 discovery echoes synthesized bazaar extensions."""
+
+    def test_synthesizes_bazaar_extension_when_payload_has_no_extensions(self) -> None:
+        v1_requirements = {
+            "scheme": "exact",
+            "network": "eip155:8453",
+            "maxAmountRequired": "10000",
+            "resource": "https://mesh.heurist.xyz/x402/agents/TokenResolverAgent/search",
+            "description": "Find tokens",
+            "mimeType": "application/json",
+            "outputSchema": {
+                "input": {
+                    "bodyFields": {"query": {"type": "string"}},
+                    "bodyType": "json",
+                    "discoverable": True,
+                    "method": "POST",
+                    "type": "http",
+                },
+            },
+            "payTo": "0x7d9d1821d15B9e0b8Ab98A058361233E255E405D",
+            "maxTimeoutSeconds": 120,
+            "asset": "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+            "extra": {},
+        }
+        v1_payload = {
+            "x402Version": 1,
+            "scheme": "exact",
+            "network": "eip155:8453",
+            "payload": {},
+        }
+
+        discovered = extract_discovery_info(v1_payload, v1_requirements)
+
+        assert discovered is not None
+        assert discovered.extensions is not None
+        assert "outputSchema" not in discovered.extensions
+        assert BAZAAR.key in discovered.extensions
+        assert discovered.extensions[BAZAAR.key]["info"] == discovered.discovery_info
+        assert validate_discovery_extension(discovered.extensions[BAZAAR.key]).valid is True
+
+    def test_maps_output_schema_payload_extensions_to_bazaar_format(self) -> None:
+        v1_requirements = {
+            "scheme": "exact",
+            "network": "eip155:8453",
+            "maxAmountRequired": "10000",
+            "resource": "https://api.example.com/jwt-verify",
+            "description": "Verify JWT",
+            "mimeType": "application/json",
+            "outputSchema": {
+                "input": {
+                    "discoverable": True,
+                    "method": "GET",
+                    "queryParams": {"token": "JWT token string"},
+                    "type": "http",
+                },
+                "output": {"type": "object"},
+            },
+            "payTo": "0x1234567890123456789012345678901234567890",
+            "maxTimeoutSeconds": 60,
+            "asset": "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+            "extra": {},
+        }
+        v1_payload = {
+            "x402Version": 1,
+            "scheme": "exact",
+            "network": "eip155:8453",
+            "payload": {},
+            "extensions": {"outputSchema": v1_requirements["outputSchema"]},
+        }
+
+        discovered = extract_discovery_info(v1_payload, v1_requirements)
+
+        assert discovered is not None
+        assert discovered.extensions is not None
+        assert "outputSchema" not in discovered.extensions
+        assert discovered.extensions[BAZAAR.key]["info"] == discovered.discovery_info

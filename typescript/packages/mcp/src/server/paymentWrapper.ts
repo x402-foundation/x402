@@ -5,7 +5,7 @@
  * Use createPaymentWrapper to wrap tool handlers with payment verification and settlement.
  */
 
-import type { PaymentPayload, PaymentRequirements } from "@x402/core/types";
+import type { PaymentPayload, PaymentRequirements, ResourceInfo } from "@x402/core/types";
 import { x402ResourceServer } from "@x402/core/server";
 
 import type {
@@ -47,6 +47,12 @@ export interface PaymentWrapperConfig {
     description?: string;
     /** MIME type of the tool response */
     mimeType?: string;
+    /** Human-readable name for the service hosting the tool */
+    serviceName?: string;
+    /** Short topical tags for discovery search */
+    tags?: string[];
+    /** Absolute http(s) URL to a service icon */
+    iconUrl?: string;
   };
 
   /** Hooks for payment lifecycle events */
@@ -218,11 +224,7 @@ export function createPaymentWrapper(
         );
       }
 
-      const resourceInfoForMatch = {
-        url: createToolResourceUrl(toolName, config.resource?.url),
-        description: config.resource?.description || `Tool: ${toolName}`,
-        mimeType: config.resource?.mimeType || "application/json",
-      };
+      const resourceInfoForMatch = buildToolResourceInfo(toolName, config);
       // Match on post-enrichment accepts (same as HTTP): extensions may change payTo etc.
       const paymentRequiredForMatch = await resourceServer.createPaymentRequiredResponse(
         config.accepts,
@@ -418,7 +420,10 @@ async function settlePaymentResult(
 
     return {
       ...result,
-      _meta: { [MCP_PAYMENT_RESPONSE_META_KEY]: settleResult },
+      _meta: {
+        ...(result._meta as Record<string, unknown> | undefined),
+        [MCP_PAYMENT_RESPONSE_META_KEY]: settleResult,
+      },
     };
   } catch (settleError) {
     return createSettlementFailedResult(
@@ -429,6 +434,31 @@ async function settlePaymentResult(
       transportContext,
     );
   }
+}
+
+/**
+ * Builds ResourceInfo for an MCP tool from wrapper config.
+ *
+ * @param toolName - Name of the MCP tool
+ * @param config - Payment wrapper configuration
+ * @returns Resource metadata for PaymentRequired / matching
+ */
+function buildToolResourceInfo(toolName: string, config: PaymentWrapperConfig): ResourceInfo {
+  const resourceInfo: ResourceInfo = {
+    url: createToolResourceUrl(toolName, config.resource?.url),
+    description: config.resource?.description || `Tool: ${toolName}`,
+    mimeType: config.resource?.mimeType || "application/json",
+  };
+  if (config.resource?.serviceName !== undefined) {
+    resourceInfo.serviceName = config.resource.serviceName;
+  }
+  if (config.resource?.tags !== undefined) {
+    resourceInfo.tags = config.resource.tags;
+  }
+  if (config.resource?.iconUrl !== undefined) {
+    resourceInfo.iconUrl = config.resource.iconUrl;
+  }
+  return resourceInfo;
 }
 
 /**
@@ -450,11 +480,7 @@ async function createPaymentRequiredResult(
   transportContext?: MCPPaymentTransportContext,
   paymentPayload?: PaymentPayload,
 ): Promise<WrappedToolResult> {
-  const resourceInfo = {
-    url: createToolResourceUrl(toolName, config.resource?.url),
-    description: config.resource?.description || `Tool: ${toolName}`,
-    mimeType: config.resource?.mimeType || "application/json",
-  };
+  const resourceInfo = buildToolResourceInfo(toolName, config);
 
   const paymentRequired = await resourceServer.createPaymentRequiredResponse(
     config.accepts,

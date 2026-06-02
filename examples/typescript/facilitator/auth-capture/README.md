@@ -26,7 +26,7 @@ pnpm start
 
 | Variable          | Required | Default                    | Notes                                                      |
 | :---------------- | :------- | :------------------------- | :--------------------------------------------------------- |
-| `EVM_PRIVATE_KEY` | Yes      | —                          | Submits `authorize` / `charge` transactions to the escrow. |
+| `EVM_PRIVATE_KEY` | Yes      | (none)                     | Submits `authorize` / `charge` transactions to the escrow. |
 | `EVM_RPC_URL`     | No       | `https://sepolia.base.org` | Base Sepolia RPC endpoint.                                 |
 | `PORT`            | No       | `4022`                     | Local listen port.                                         |
 

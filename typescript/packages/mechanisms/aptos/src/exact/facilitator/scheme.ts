@@ -9,7 +9,7 @@ import type {
 import type { FacilitatorAptosSigner } from "../../signer";
 import type { ExactAptosPayload } from "../../types";
 import { createAptosClient, deserializeAptosPayment } from "../../utils";
-import { getAptosChainId, MAX_GAS_AMOUNT } from "../../constants";
+import { getAptosChainId, MAX_GAS_AMOUNT, MAX_GAS_UNIT_PRICE } from "../../constants";
 
 /**
  * Aptos facilitator implementation for the Exact payment scheme.
@@ -124,13 +124,22 @@ export class ExactAptosScheme implements SchemeNetworkFacilitator {
         }
       }
 
-      // For sponsored transactions, verify max gas to prevent gas draining
+      // For sponsored transactions, verify max gas and gas unit price to prevent gas draining
       if (isSponsored) {
         const maxGasAmount = BigInt(transaction.rawTransaction.max_gas_amount);
         if (maxGasAmount > MAX_GAS_AMOUNT) {
           return {
             isValid: false,
             invalidReason: `invalid_exact_aptos_payload_gas_too_high: ${maxGasAmount} > ${MAX_GAS_AMOUNT}`,
+            payer: senderAddress,
+          };
+        }
+
+        const gasUnitPrice = BigInt(transaction.rawTransaction.gas_unit_price);
+        if (gasUnitPrice > MAX_GAS_UNIT_PRICE) {
+          return {
+            isValid: false,
+            invalidReason: `invalid_exact_aptos_payload_gas_unit_price_too_high: ${gasUnitPrice} > ${MAX_GAS_UNIT_PRICE}`,
             payer: senderAddress,
           };
         }

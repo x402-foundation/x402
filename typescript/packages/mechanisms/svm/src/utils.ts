@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import {
   getBase64Encoder,
   getTransactionDecoder,
@@ -65,6 +66,20 @@ export function normalizeNetwork(network: Network): string {
  */
 export function validateSvmAddress(address: string): boolean {
   return SVM_ADDRESS_REGEX.test(address);
+}
+
+/**
+ * Compute a stable, immutable cache key for a decoded transaction by hashing its
+ * message bytes. The fee-payer signature (slot 0) is overwritten by the facilitator
+ * before broadcast, so an attacker can randomize those bytes to bypass a wire-bytes
+ * cache key. The message is what every signer commits to, making its hash a reliable
+ * payment identity.
+ *
+ * @param transaction - Decoded transaction whose message bytes to hash
+ * @returns Base64-encoded SHA-256 hash of the transaction message bytes
+ */
+export function transactionMessageHash(transaction: Transaction): string {
+  return createHash("sha256").update(Buffer.from(transaction.messageBytes)).digest("base64");
 }
 
 /**

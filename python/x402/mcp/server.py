@@ -191,6 +191,7 @@ def create_payment_wrapper(
                 )
 
             # Convert handler result to text content
+            result_meta: dict[str, Any] = {}
             if isinstance(result, dict):
                 result_text = json.dumps(result)
             elif isinstance(result, str):
@@ -199,6 +200,8 @@ def create_payment_wrapper(
                 if result.isError:
                     return result
                 result_text = result.content[0].text if result.content else ""
+                if isinstance(result.meta, dict):
+                    result_meta = result.meta.copy()
             else:
                 result_text = str(result)
 
@@ -210,7 +213,7 @@ def create_payment_wrapper(
                     [{"type": "text", "text": result_text}] if isinstance(result_text, str) else []
                 ),
                 is_error=False,
-                meta={},
+                meta=result_meta.copy(),
                 structured_content=None,
             )
 
@@ -270,10 +273,12 @@ def create_payment_wrapper(
 
             # Return result with payment response in _meta
             payment_response = settle_result.model_dump(by_alias=True)
+            response_meta = result_meta.copy()
+            response_meta[MCP_PAYMENT_RESPONSE_META_KEY] = payment_response
             return CallToolResult(
                 content=[TextContent(type="text", text=result_text)],
                 isError=False,
-                _meta={MCP_PAYMENT_RESPONSE_META_KEY: payment_response},
+                _meta=response_meta,
             )
 
         # --- Signature manipulation for FastMCP context injection ---

@@ -1,11 +1,11 @@
-# AuthCapture EVM Scheme (`@x402r/evm/auth-capture`)
+# Auth-Capture EVM Scheme (`@x402/evm/auth-capture`)
 
-The **auth-capture** scheme adds refundable payments to x402, built on Base's audited [Commerce Payments Protocol](https://github.com/base/commerce-payments). The client signs a single payload (ERC-3009 or Permit2). The facilitator submits to `AuthCaptureEscrow`, where funds are escrowed under a `captureAuthorizer` role rather than transferred straight to the merchant — enabling capture, void, and refund flows before settlement is final.
+The **auth-capture** scheme adds refundable payments to x402, built on Base's audited [Commerce Payments Protocol](https://github.com/base/commerce-payments). The client signs a single payload (ERC-3009 or Permit2). The facilitator submits to `AuthCaptureEscrow`, where funds are escrowed under a `captureAuthorizer` role rather than transferred straight to the merchant, enabling capture, void, and refund flows before settlement is final.
 
 Two settle paths:
 
-- **Two-phase** (`autoCapture: false`, default) — funds are authorized into escrow; the captureAuthorizer captures (or voids) later.
-- **Single-shot** (`autoCapture: true`) — `authorize` and `capture` collapse into one transaction, with a refund window until `refundDeadline`.
+- **Two-phase** (`autoCapture: false`, default): funds are authorized into escrow; the captureAuthorizer captures (or voids) later.
+- **Single-shot** (`autoCapture: true`): `authorize` and `capture` collapse into one transaction, with a refund window until `refundDeadline`.
 
 See the [scheme specification](https://github.com/x402-foundation/x402/blob/main/specs/schemes/auth-capture/scheme_auth-capture_evm.md) for full protocol details.
 
@@ -13,9 +13,9 @@ See the [scheme specification](https://github.com/x402-foundation/x402/blob/main
 
 | Role        | Import                               |
 | ----------- | ------------------------------------ |
-| Client      | `@x402r/evm/auth-capture/client`      |
-| Server      | `@x402r/evm/auth-capture/server`      |
-| Facilitator | `@x402r/evm/auth-capture/facilitator` |
+| Client      | `@x402/evm/auth-capture/client`      |
+| Server      | `@x402/evm/auth-capture/server`      |
+| Facilitator | `@x402/evm/auth-capture/facilitator` |
 
 ## Client Usage
 
@@ -23,7 +23,7 @@ Register `AuthCaptureEvmScheme` with an `x402Client`. The client signs the payer
 
 ```typescript
 import { x402Client } from "@x402/core/client";
-import { AuthCaptureEvmScheme } from "@x402r/evm/auth-capture/client";
+import { AuthCaptureEvmScheme } from "@x402/evm/auth-capture/client";
 import { privateKeyToAccount } from "viem/accounts";
 
 const account = privateKeyToAccount(process.env.EVM_PRIVATE_KEY as `0x${string}`);
@@ -40,7 +40,7 @@ Register `AuthCaptureEvmScheme` with an `x402ResourceServer` and publish payment
 
 ```typescript
 import { HTTPFacilitatorClient } from "@x402/core/server";
-import { AuthCaptureEvmScheme } from "@x402r/evm/auth-capture/server";
+import { AuthCaptureEvmScheme } from "@x402/evm/auth-capture/server";
 import { paymentMiddleware, x402ResourceServer } from "@x402/express";
 import { zeroAddress } from "viem";
 
@@ -117,7 +117,7 @@ Register the scheme with an `x402Facilitator` instance:
 ```typescript
 import { x402Facilitator } from "@x402/core/facilitator";
 import { toFacilitatorEvmSigner } from "@x402/evm";
-import { AuthCaptureEvmScheme } from "@x402r/evm/auth-capture/facilitator";
+import { AuthCaptureEvmScheme } from "@x402/evm/auth-capture/facilitator";
 import { createWalletClient, http, publicActions, nonceManager } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import { baseSepolia } from "viem/chains";
@@ -145,7 +145,7 @@ facilitator.register("eip155:84532", new AuthCaptureEvmScheme(evmSigner));
 
 `verify` performs envelope shape checks, scheme/network agreement, `extra` validation, deadline-ordering invariants, per-method field checks, signature verification (with EIP-6492 unwrap), nonce binding to the payer-agnostic PaymentInfo hash, and an on-chain `simulateContract` of `authorize` / `charge` so typed escrow reverts surface as stable `invalidReason` strings.
 
-`settle` re-verifies then submits `authorize` (two-phase) or `charge` (single-shot) to the escrow contract, or — if the `captureAuthorizer` is a smart contract — routes the call through that contract (auto-detected, see below).
+`settle` re-verifies then submits `authorize` (two-phase) or `charge` (single-shot) to the escrow contract, or, if the `captureAuthorizer` is a smart contract, routes the call through that contract (auto-detected, see below).
 
 ## Supported Networks
 
@@ -178,8 +178,8 @@ A server MAY advertise multiple `accepts[]` entries with different `assetTransfe
 
 `extra.captureAuthorizer` is the address authorized to call `authorize`, `capture`, `void`, `refund`, and `charge` against the escrow. The escrow gates those operations on `msg.sender == paymentInfo.operator`, so in the facilitator-submits flow the value must satisfy one of:
 
-- An **EOA** — must equal the facilitator's submitter address (its tx `msg.sender` equals `paymentInfo.operator`).
-- A **smart contract** that forwards calls to the escrow — the contract becomes `msg.sender` at the escrow.
+- An **EOA**: must equal the facilitator's submitter address (its tx `msg.sender` equals `paymentInfo.operator`).
+- A **smart contract** that forwards calls to the escrow: the contract becomes `msg.sender` at the escrow.
 
 The SDK auto-detects which path applies via `getCode(captureAuthorizer)`: empty bytecode routes the settle call directly to escrow; non-empty bytecode routes through the captureAuthorizer contract using the same ABI selectors. See the spec for protocol-level detail.
 

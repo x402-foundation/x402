@@ -187,8 +187,8 @@ x402 uses dynamic network registration — you can support any EVM network witho
   <Tab title="Go">
     ```go
     import (
-        x402http "github.com/x402-foundation/x402/go/http"
-        evm "github.com/x402-foundation/x402/go/mechanisms/evm/exact/server"
+        x402http "github.com/x402-foundation/x402/go/v2/http"
+        evm "github.com/x402-foundation/x402/go/v2/mechanisms/evm/exact/server"
     )
 
     facilitatorClient := x402http.NewHTTPFacilitatorClient(&x402http.FacilitatorConfig{
@@ -240,7 +240,7 @@ To add a chain to the [default-asset tables above](#default-assets-for-dollar-st
 
 ## Facilitators
 
-Network support in x402 depends on which facilitator you use. For a complete list, see the [x402 Ecosystem](https://www.x402.org/ecosystem?filter=facilitators).
+Network support in x402 depends on which facilitator you use. See [Facilitators](/dev-tools/facilitators) for recommended production options.
 
 ### x402.org Facilitator
 
@@ -249,14 +249,14 @@ Network support in x402 depends on which facilitator you use. For a complete lis
 
 ### Production Facilitators
 
-Multiple production-ready facilitators are available supporting various networks including Base, Solana, Polygon, Avalanche, and more. See the [x402 Ecosystem](https://www.x402.org/ecosystem?filter=facilitators) for available options.
+Multiple production-ready facilitators are available supporting various networks including Base, Solana, Polygon, Avalanche, and more. See [Facilitators](/dev-tools/facilitators) for available options.
 
 ### Quick Reference
 
 | Facilitator Type | Networks Supported | Production Ready | Requirements |
 | ---------------- | ------------------ | ---------------- | ------------ |
 | x402.org (Default) | `eip155:84532`, `solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1`, `stellar:testnet`, `aptos:2` | Testnet only | None |
-| [Production Facilitators](https://www.x402.org/ecosystem?filter=facilitators) | Various (Base, Solana, Polygon, Avalanche, etc.) | Yes | Varies |
+| [Production Facilitators](/dev-tools/facilitators) | Various (Base, Solana, Polygon, Avalanche, etc.) | Yes | Varies |
 | Self-hosted | Any network  | Yes | Technical setup |
 
 ### Running Your Own Facilitator

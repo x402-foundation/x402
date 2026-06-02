@@ -17,7 +17,7 @@ import (
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/ethclient"
 	"github.com/ethereum/go-ethereum/signer/core/apitypes"
-	evmmech "github.com/x402-foundation/x402/go/mechanisms/evm"
+	evmmech "github.com/x402-foundation/x402/go/v2/mechanisms/evm"
 )
 
 // facilitatorEvmSigner implements evmmech.FacilitatorEvmSigner.

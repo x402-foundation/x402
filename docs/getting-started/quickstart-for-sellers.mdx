@@ -51,14 +51,14 @@ There are pre-configured examples available in the x402 repo for both [Node.js](
     Add the x402 Go module to your project:
 
     ```bash
-    go get github.com/x402-foundation/x402/go
+    go get github.com/x402-foundation/x402/go/v2
     ```
   </Tab>
   <Tab title="Go (Echo)">
     Add the x402 Go module to your project:
 
     ```bash
-    go get github.com/x402-foundation/x402/go
+    go get github.com/x402-foundation/x402/go/v2
     ```
   </Tab>
   <Tab title="FastAPI">
@@ -389,11 +389,11 @@ Integrate the payment middleware into your application. You will need to provide
         "net/http"
         "time"
 
-        x402 "github.com/x402-foundation/x402/go"
-        x402http "github.com/x402-foundation/x402/go/http"
-        ginmw "github.com/x402-foundation/x402/go/http/gin"
-        evm "github.com/x402-foundation/x402/go/mechanisms/evm/exact/server"
-        svm "github.com/x402-foundation/x402/go/mechanisms/svm/exact/server"
+        x402 "github.com/x402-foundation/x402/go/v2"
+        x402http "github.com/x402-foundation/x402/go/v2/http"
+        ginmw "github.com/x402-foundation/x402/go/v2/http/gin"
+        evm "github.com/x402-foundation/x402/go/v2/mechanisms/evm/exact/server"
+        svm "github.com/x402-foundation/x402/go/v2/mechanisms/svm/exact/server"
         "github.com/gin-gonic/gin"
     )
 
@@ -463,11 +463,11 @@ Integrate the payment middleware into your application. You will need to provide
         "net/http"
         "time"
 
-        x402 "github.com/x402-foundation/x402/go"
-        x402http "github.com/x402-foundation/x402/go/http"
-        nethttpmw "github.com/x402-foundation/x402/go/http/nethttp"
-        evm "github.com/x402-foundation/x402/go/mechanisms/evm/exact/server"
-        svm "github.com/x402-foundation/x402/go/mechanisms/svm/exact/server"
+        x402 "github.com/x402-foundation/x402/go/v2"
+        x402http "github.com/x402-foundation/x402/go/v2/http"
+        nethttpmw "github.com/x402-foundation/x402/go/v2/http/nethttp"
+        evm "github.com/x402-foundation/x402/go/v2/mechanisms/evm/exact/server"
+        svm "github.com/x402-foundation/x402/go/v2/mechanisms/svm/exact/server"
     )
 
     func main() {
@@ -541,11 +541,11 @@ Integrate the payment middleware into your application. You will need to provide
         "net/http"
         "time"
 
-        x402 "github.com/x402-foundation/x402/go"
-        x402http "github.com/x402-foundation/x402/go/http"
-        echomw "github.com/x402-foundation/x402/go/http/echo"
-        evm "github.com/x402-foundation/x402/go/mechanisms/evm/exact/server"
-        svm "github.com/x402-foundation/x402/go/mechanisms/svm/exact/server"
+        x402 "github.com/x402-foundation/x402/go/v2"
+        x402http "github.com/x402-foundation/x402/go/v2/http"
+        echomw "github.com/x402-foundation/x402/go/v2/http/echo"
+        evm "github.com/x402-foundation/x402/go/v2/mechanisms/evm/exact/server"
+        svm "github.com/x402-foundation/x402/go/v2/mechanisms/svm/exact/server"
         "github.com/labstack/echo/v4"
     )
 
@@ -854,10 +854,10 @@ The examples in step 2 above all use the `exact` scheme. To use `upto` instead, 
         "net/http"
         "time"
 
-        x402 "github.com/x402-foundation/x402/go"
-        x402http "github.com/x402-foundation/x402/go/http"
-        ginmw "github.com/x402-foundation/x402/go/http/gin"
-        uptoevm "github.com/x402-foundation/x402/go/mechanisms/evm/upto/server"
+        x402 "github.com/x402-foundation/x402/go/v2"
+        x402http "github.com/x402-foundation/x402/go/v2/http"
+        ginmw "github.com/x402-foundation/x402/go/v2/http/gin"
+        uptoevm "github.com/x402-foundation/x402/go/v2/mechanisms/evm/upto/server"
         "github.com/gin-gonic/gin"
     )
 
@@ -1071,7 +1071,7 @@ Once you've tested your integration on testnet, you're ready to accept real paym
 
 ### 1. Update the Facilitator URL
 
-For mainnet, use a production facilitator. See the [x402 Ecosystem](https://www.x402.org/ecosystem?filter=facilitators) for available options. Example using one facilitator:
+For mainnet, use a production facilitator. See [Facilitators](/dev-tools/facilitators) for selected options. Example using one facilitator:
 
 <Tabs>
   <Tab title="Node.js">
@@ -1184,8 +1184,8 @@ For multi-network support, register both EVM and SVM schemes:
   <Tab title="Go (Gin)">
     ```go
     import (
-        evm "github.com/x402-foundation/x402/go/mechanisms/evm/exact/server"
-        svm "github.com/x402-foundation/x402/go/mechanisms/svm/exact/server"
+        evm "github.com/x402-foundation/x402/go/v2/mechanisms/evm/exact/server"
+        svm "github.com/x402-foundation/x402/go/v2/mechanisms/svm/exact/server"
     )
 
     r.Use(ginmw.X402Payment(ginmw.Config{
@@ -1200,8 +1200,8 @@ For multi-network support, register both EVM and SVM schemes:
   <Tab title="Go (Echo)">
     ```go
     import (
-        evm "github.com/x402-foundation/x402/go/mechanisms/evm/exact/server"
-        svm "github.com/x402-foundation/x402/go/mechanisms/svm/exact/server"
+        evm "github.com/x402-foundation/x402/go/v2/mechanisms/evm/exact/server"
+        svm "github.com/x402-foundation/x402/go/v2/mechanisms/svm/exact/server"
     )
 
     e.Use(echomw.X402Payment(echomw.Config{

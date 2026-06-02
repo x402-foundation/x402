@@ -2,7 +2,7 @@
  * Tests for Bazaar Discovery Extension
  */
 
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import {
   BAZAAR,
   declareDiscoveryExtension,
@@ -12,11 +12,14 @@ import {
   sanitizeTags,
   isValidIconUrl,
   sanitizeResourceServiceMetadata,
+  validateDiscoveryExtensionSpec,
   extractDiscoveryInfo,
   extractDiscoveryInfoFromExtension,
   extractDiscoveryInfoV1,
   validateAndExtract,
   bazaarResourceServerExtension,
+  checkIfBazaarNeeded,
+  validateBazaarRouteExtensions,
 } from "../src/bazaar/index";
 import type { BodyDiscoveryInfo, McpDiscoveryInfo, DiscoveryExtension } from "../src/bazaar/types";
 import type { DiscoveredMCPResource } from "../src/bazaar/facilitator";
@@ -1091,6 +1094,64 @@ describe("Bazaar Discovery Extension", () => {
       expect((discovered!.discoveryInfo as BodyDiscoveryInfo).input.body).toHaveProperty(
         "type_hint",
       );
+      expect(discovered!.extensions?.[BAZAAR.key]).toBeDefined();
+      expect(discovered!.extensions?.outputSchema).toBeUndefined();
+      expect(discovered!.extensions?.[BAZAAR.key]).toEqual({
+        info: discovered!.discoveryInfo,
+        schema: expect.objectContaining({
+          type: "object",
+          required: ["input"],
+        }),
+      });
+      expect(
+        validateDiscoveryExtension(discovered!.extensions?.[BAZAAR.key] as DiscoveryExtension)
+          .valid,
+      ).toBe(true);
+    });
+
+    it("should map v1 outputSchema payload extensions to bazaar format", () => {
+      const v1Requirements = {
+        scheme: "exact",
+        network: "eip155:8453" as unknown,
+        maxAmountRequired: "10000",
+        resource: "https://api.example.com/jwt-verify",
+        description: "Verify JWT",
+        mimeType: "application/json",
+        outputSchema: {
+          input: {
+            discoverable: true,
+            method: "GET",
+            queryParams: { token: "JWT token string" },
+            type: "http",
+          },
+          output: { type: "object", properties: { header: { type: "object" } } },
+        },
+        payTo: "0x1234567890123456789012345678901234567890",
+        maxTimeoutSeconds: 60,
+        asset: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+        extra: {},
+      };
+
+      const payloadExtensions = { outputSchema: v1Requirements.outputSchema };
+      const v1Payload = {
+        x402Version: 1,
+        scheme: "exact",
+        network: "eip155:8453" as unknown,
+        payload: {},
+        extensions: payloadExtensions,
+      };
+
+      const discovered = extractDiscoveryInfo(v1Payload as unknown, v1Requirements as unknown);
+
+      expect(discovered).not.toBeNull();
+      expect(discovered!.extensions?.outputSchema).toBeUndefined();
+      expect(discovered!.extensions?.[BAZAAR.key]).toEqual({
+        info: discovered!.discoveryInfo,
+        schema: expect.objectContaining({
+          type: "object",
+          required: ["input"],
+        }),
+      });
     });
 
     it("should handle unified extraction for both v1 and v2", () => {
@@ -2294,6 +2355,224 @@ describe("Bazaar Discovery Extension", () => {
       expect(discovered!.serviceName).toBeUndefined();
       expect(discovered!.tags).toEqual(["weather", "forecast"]);
       expect(discovered!.iconUrl).toBeUndefined();
+    });
+  });
+
+  describe("validateDiscoveryExtensionSpec", () => {
+    it("should pass for a valid HTTP GET extension", () => {
+      const ext = declareDiscoveryExtension({
+        input: { q: "test" },
+        inputSchema: { properties: { q: { type: "string" } } },
+      });
+      const result = validateDiscoveryExtensionSpec(
+        ext.bazaar as unknown as Record<string, unknown>,
+      );
+      expect(result.valid).toBe(true);
+    });
+
+    it("should pass for a valid HTTP POST extension", () => {
+      const ext = declareDiscoveryExtension({
+        input: { name: "foo" },
+        inputSchema: { properties: { name: { type: "string" } } },
+        bodyType: "json",
+      });
+      const result = validateDiscoveryExtensionSpec(
+        ext.bazaar as unknown as Record<string, unknown>,
+      );
+      expect(result.valid).toBe(true);
+    });
+
+    it("should pass for a valid MCP extension", () => {
+      const ext = declareDiscoveryExtension({
+        toolName: "my_tool",
+        inputSchema: { type: "object", properties: { q: { type: "string" } } },
+      });
+      const result = validateDiscoveryExtensionSpec(
+        ext.bazaar as unknown as Record<string, unknown>,
+      );
+      expect(result.valid).toBe(true);
+    });
+
+    it("should pass for a pre-enrichment HTTP extension (no method)", () => {
+      const result = validateDiscoveryExtensionSpec({
+        info: { input: { type: "http" } },
+        schema: {},
+      });
+      expect(result.valid).toBe(true);
+    });
+
+    it("should fail for invalid input.type", () => {
+      const result = validateDiscoveryExtensionSpec({
+        info: { input: { type: "grpc" } },
+        schema: {},
+      });
+      expect(result.valid).toBe(false);
+      expect(result.errors?.[0]).toContain("input.type");
+    });
+
+    it("should fail for invalid HTTP method", () => {
+      const result = validateDiscoveryExtensionSpec({
+        info: { input: { type: "http", method: "DESTROY" } },
+        schema: {},
+      });
+      expect(result.valid).toBe(false);
+      expect(result.errors?.[0]).toContain("method");
+    });
+
+    it("should fail for invalid bodyType", () => {
+      const result = validateDiscoveryExtensionSpec({
+        info: { input: { type: "http", method: "POST", bodyType: "xml" } },
+        schema: {},
+      });
+      expect(result.valid).toBe(false);
+      expect(result.errors?.[0]).toContain("bodyType");
+    });
+
+    it("should fail when bodyType is set with a non-body method", () => {
+      const result = validateDiscoveryExtensionSpec({
+        info: { input: { type: "http", method: "GET", bodyType: "json" } },
+        schema: {},
+      });
+      expect(result.valid).toBe(false);
+      expect(result.errors?.some(e => e.includes("not a body method"))).toBe(true);
+    });
+
+    it("should fail for MCP extension missing toolName", () => {
+      const result = validateDiscoveryExtensionSpec({
+        info: { input: { type: "mcp", inputSchema: { type: "object" } } },
+        schema: {},
+      });
+      expect(result.valid).toBe(false);
+      expect(result.errors?.[0]).toContain("toolName");
+    });
+
+    it("should fail for MCP extension missing inputSchema", () => {
+      const result = validateDiscoveryExtensionSpec({
+        info: { input: { type: "mcp", toolName: "t" } },
+        schema: {},
+      });
+      expect(result.valid).toBe(false);
+      expect(result.errors?.[0]).toContain("inputSchema");
+    });
+
+    it("should fail for MCP extension with invalid transport", () => {
+      const result = validateDiscoveryExtensionSpec({
+        info: {
+          input: {
+            type: "mcp",
+            toolName: "t",
+            inputSchema: { type: "object" },
+            transport: "websocket",
+          },
+        },
+        schema: {},
+      });
+      expect(result.valid).toBe(false);
+      expect(result.errors?.[0]).toContain("transport");
+    });
+
+    it("should fail when info is missing", () => {
+      const result = validateDiscoveryExtensionSpec({ schema: {} });
+      expect(result.valid).toBe(false);
+    });
+
+    it("should fail when info.input is missing", () => {
+      const result = validateDiscoveryExtensionSpec({ info: {}, schema: {} });
+      expect(result.valid).toBe(false);
+    });
+  });
+
+  describe("checkIfBazaarNeeded", () => {
+    it("should return true when single route config has bazaar extension", () => {
+      const routes = {
+        accepts: [{ scheme: "exact", payTo: "0x1", price: "$0.01", network: "eip155:1" as const }],
+        extensions: { bazaar: {} },
+      };
+      expect(checkIfBazaarNeeded(routes)).toBe(true);
+    });
+
+    it("should return false when no routes have bazaar extensions", () => {
+      const routes = {
+        "/api": {
+          accepts: [
+            { scheme: "exact", payTo: "0x1", price: "$0.01", network: "eip155:1" as const },
+          ],
+        },
+      };
+      expect(checkIfBazaarNeeded(routes)).toBe(false);
+    });
+
+    it("should return true when any route in multi-route config has bazaar", () => {
+      const routes = {
+        "/a": {
+          accepts: [
+            { scheme: "exact", payTo: "0x1", price: "$0.01", network: "eip155:1" as const },
+          ],
+        },
+        "/b": {
+          accepts: [
+            { scheme: "exact", payTo: "0x1", price: "$0.01", network: "eip155:1" as const },
+          ],
+          extensions: { bazaar: {} },
+        },
+      };
+      expect(checkIfBazaarNeeded(routes)).toBe(true);
+    });
+  });
+
+  describe("validateBazaarRouteExtensions", () => {
+    it("should not warn for routes without bazaar extensions", () => {
+      const spy = vi.spyOn(console, "warn").mockImplementation(() => {});
+      const routes = {
+        "/api": {
+          accepts: [
+            { scheme: "exact", payTo: "0x1", price: "$0.01", network: "eip155:1" as const },
+          ],
+        },
+      };
+      validateBazaarRouteExtensions(routes);
+      expect(spy).not.toHaveBeenCalled();
+      spy.mockRestore();
+    });
+
+    it("should not warn for a valid bazaar extension", () => {
+      const spy = vi.spyOn(console, "warn").mockImplementation(() => {});
+      const ext = declareDiscoveryExtension({
+        input: { q: "test" },
+        inputSchema: { properties: { q: { type: "string" } } },
+      });
+      const routes = {
+        "/api": {
+          accepts: [
+            { scheme: "exact", payTo: "0x1", price: "$0.01", network: "eip155:1" as const },
+          ],
+          extensions: ext,
+        },
+      };
+      validateBazaarRouteExtensions(routes);
+      expect(spy).not.toHaveBeenCalled();
+      spy.mockRestore();
+    });
+
+    it("should warn for an extension with invalid input.type", () => {
+      const spy = vi.spyOn(console, "warn").mockImplementation(() => {});
+      const routes = {
+        "/api": {
+          accepts: [
+            { scheme: "exact", payTo: "0x1", price: "$0.01", network: "eip155:1" as const },
+          ],
+          extensions: {
+            bazaar: {
+              info: { input: { type: "grpc" } },
+              schema: {},
+            },
+          },
+        },
+      };
+      validateBazaarRouteExtensions(routes);
+      expect(spy).toHaveBeenCalledTimes(1);
+      expect(spy.mock.calls[0][0]).toContain("invalid bazaar extension");
+      spy.mockRestore();
     });
   });
 });

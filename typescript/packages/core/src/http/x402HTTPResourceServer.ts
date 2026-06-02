@@ -146,6 +146,9 @@ export interface RouteConfig {
   resource?: string;
   description?: string;
   mimeType?: string;
+  serviceName?: string;
+  tags?: string[];
+  iconUrl?: string;
   customPaywallHtml?: string;
 
   /**
@@ -338,6 +341,32 @@ export class RouteConfigurationError extends Error {
   }
 }
 
+// Static fallback paywall served when @x402/paywall is not installed.
+// Intentionally contains zero request- or config-derived interpolation:
+// the protocol-level payment requirements still ship in response headers
+// and the JSON 402 body for non-browser clients, so any agent or SDK can
+// read them without us reflecting attacker-controlled bytes into HTML.
+// Browser-end-user payment requires installing @x402/paywall.
+const FALLBACK_PAYWALL_HTML = `<!DOCTYPE html>
+<html>
+  <head>
+    <title>Payment Required</title>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  </head>
+  <body>
+    <div style="max-width: 600px; margin: 50px auto; padding: 20px; font-family: system-ui, -apple-system, sans-serif;">
+      <h1>Payment Required</h1>
+      <p>This resource is protected by the x402 payment protocol.</p>
+      <p style="margin-top: 2rem; padding: 1rem; background: #fef3c7; border-radius: 0.5rem;">
+        <strong>Note to developers:</strong> install <code>@x402/paywall</code> to enable
+        the in-browser wallet connection and payment UI. Programmatic clients should read
+        the payment requirements from the 402 response headers and JSON body.
+      </p>
+    </div>
+  </body>
+</html>`;
+
 /**
  * HTTP-enhanced x402 resource server
  * Provides framework-agnostic HTTP protocol handling
@@ -497,6 +526,9 @@ export class x402HTTPResourceServer {
       url: routeConfig.resource || enrichedContext.adapter.getUrl(),
       description: routeConfig.description || "",
       mimeType: routeConfig.mimeType || "",
+      ...(routeConfig.serviceName !== undefined && { serviceName: routeConfig.serviceName }),
+      ...(routeConfig.tags !== undefined && { tags: routeConfig.tags }),
+      ...(routeConfig.iconUrl !== undefined && { iconUrl: routeConfig.iconUrl }),
     };
 
     // Build requirements from all payment options
@@ -1014,18 +1046,20 @@ export class x402HTTPResourceServer {
     // Use 412 Precondition Failed for permit2_allowance_required error
     // This signals client needs to approve Permit2 before retrying
     const status = paymentRequired.error === "permit2_allowance_required" ? 412 : 402;
+    const response = this.createHTTPPaymentRequiredResponse(paymentRequired);
 
     if (isWebBrowser) {
       const html = this.generatePaywallHTML(paymentRequired, paywallConfig, customHtml);
       return {
         status,
-        headers: { "Content-Type": "text/html" },
+        headers: {
+          "Content-Type": "text/html",
+          ...response.headers,
+        },
         body: html,
         isHtml: true,
       };
     }
-
-    const response = this.createHTTPPaymentRequiredResponse(paymentRequired);
 
     // Use callback result if provided, otherwise default to JSON with empty object
     const contentType = unpaidResponse ? unpaidResponse.contentType : "application/json";
@@ -1102,14 +1136,24 @@ export class x402HTTPResourceServer {
   private normalizePath(path: string): string {
     const pathWithoutQuery = path.split(/[?#]/)[0];
 
-    let decodedOrRawPath: string;
-    try {
-      decodedOrRawPath = decodeURIComponent(pathWithoutQuery);
-    } catch {
-      decodedOrRawPath = pathWithoutQuery;
-    }
+    // Decode percent-escapes per segment, preserving encoded path separators
+    // (%2F, %5C) as their literal escaped form. Otherwise an attacker could
+    // hide a "/" inside a single segment (e.g. /api/report/a%2Fb), bypassing
+    // a :param route whose regex compiles to [^/]+ while the framework still
+    // dispatches the request as a single-segment match.
+    const parts = pathWithoutQuery.split(/(%2[fF]|%5[cC])/);
+    const decoded = parts
+      .map((part, i) => {
+        if (i % 2 === 1) return part;
+        try {
+          return decodeURIComponent(part);
+        } catch {
+          return part;
+        }
+      })
+      .join("");
 
-    return decodedOrRawPath
+    return decoded
       .replace(/\\/g, "/")
       .replace(/\/+/g, "/")
       .replace(/(.+?)\/+$/, "$1");
@@ -1157,50 +1201,7 @@ export class x402HTTPResourceServer {
       // @x402/paywall not installed, fall back to basic HTML
     }
 
-    // Fallback: Basic HTML paywall
-    const resource = paymentRequired.resource;
-    const displayAmount = this.getDisplayAmount(paymentRequired);
-    const firstAccept = paymentRequired.accepts?.[0];
-    const decimals =
-      firstAccept && "amount" in firstAccept
-        ? this.ResourceServer.getAssetDecimalsForRequirements(firstAccept)
-        : 6;
-    const safeDecimals = Math.min(Math.max(decimals, 0), 100);
-    const displayAmountText = parseFloat(displayAmount.toFixed(safeDecimals)).toString();
-    const assetLabel =
-      typeof firstAccept?.extra?.name === "string"
-        ? firstAccept.extra.name
-        : firstAccept?.asset
-          ? `...${firstAccept.asset.slice(-6)}`
-          : "Token";
-
-    return `
-      <!DOCTYPE html>
-      <html>
-        <head>
-          <title>Payment Required</title>
-          <meta charset="UTF-8">
-          <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        </head>
-        <body>
-          <div style="max-width: 600px; margin: 50px auto; padding: 20px; font-family: system-ui, -apple-system, sans-serif;">
-            ${paywallConfig?.appLogo ? `<img src="${paywallConfig.appLogo}" alt="${paywallConfig.appName || "App"}" style="max-width: 200px; margin-bottom: 20px;">` : ""}
-            <h1>Payment Required</h1>
-            ${resource ? `<p><strong>Resource:</strong> ${resource.description || resource.url}</p>` : ""}
-            <p><strong>Amount:</strong> ${displayAmountText} ${assetLabel}</p>
-            <div id="payment-widget" 
-                 data-requirements='${JSON.stringify(paymentRequired)}'
-                 data-app-name="${paywallConfig?.appName || ""}"
-                 data-testnet="${paywallConfig?.testnet || false}">
-              <!-- Install @x402/paywall for full wallet integration -->
-              <p style="margin-top: 2rem; padding: 1rem; background: #fef3c7; border-radius: 0.5rem;">
-                <strong>Note:</strong> Install <code>@x402/paywall</code> for full wallet connection and payment UI.
-              </p>
-            </div>
-          </div>
-        </body>
-      </html>
-    `;
+    return FALLBACK_PAYWALL_HTML;
   }
 
   /**

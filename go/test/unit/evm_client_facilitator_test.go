@@ -12,11 +12,11 @@ import (
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/crypto"
 
-	"github.com/x402-foundation/x402/go/mechanisms/evm"
-	evmclient "github.com/x402-foundation/x402/go/mechanisms/evm/exact/client"
-	evmfacilitator "github.com/x402-foundation/x402/go/mechanisms/evm/exact/facilitator"
-	evmv1facilitator "github.com/x402-foundation/x402/go/mechanisms/evm/exact/v1/facilitator"
-	"github.com/x402-foundation/x402/go/types"
+	"github.com/x402-foundation/x402/go/v2/mechanisms/evm"
+	evmclient "github.com/x402-foundation/x402/go/v2/mechanisms/evm/exact/client"
+	evmfacilitator "github.com/x402-foundation/x402/go/v2/mechanisms/evm/exact/facilitator"
+	evmv1facilitator "github.com/x402-foundation/x402/go/v2/mechanisms/evm/exact/v1/facilitator"
+	"github.com/x402-foundation/x402/go/v2/types"
 )
 
 // =========================================================================
@@ -1249,7 +1249,7 @@ func TestExactEvmFacilitatorScheme(t *testing.T) {
 
 	t.Run("Creates scheme with config", func(t *testing.T) {
 		config := &evmfacilitator.ExactEvmSchemeConfig{
-			DeployERC4337WithEIP6492: true,
+			EIP6492AllowedFactories: []string{"0x1111111111111111111111111111111111111111"},
 		}
 		scheme := evmfacilitator.NewExactEvmScheme(signer, config)
 		if scheme == nil {

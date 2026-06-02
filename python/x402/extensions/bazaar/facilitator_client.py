@@ -90,8 +90,46 @@ class DiscoveryResource:
     last_updated: str | None = None
     """ISO 8601 timestamp of when the resource was last updated."""
 
+    description: str | None = None
+    """Human-readable description of the resource."""
+
+    mime_type: str | None = None
+    """MIME type of the resource response."""
+
+    service_name: str | None = None
+    """Human-readable name for the service hosting the resource."""
+
+    tags: list[str] | None = None
+    """Short topical tags for discovery search."""
+
+    icon_url: str | None = None
+    """Absolute http(s) URL to a service icon."""
+
     extensions: dict[str, Any] | None = None
-    """Additional extension payloads attached to this discovered resource."""
+    """Extension payloads echoed from discovery (e.g. bazaar info/schema)."""
+
+    def to_dict(self) -> dict[str, Any]:
+        """Serialize to the bazaar discovery API wire format (camelCase keys)."""
+        result: dict[str, Any] = {
+            "resource": self.resource,
+            "type": self.type,
+            "x402Version": self.x402_version,
+            "accepts": self.accepts or [],
+            "lastUpdated": self.last_updated or "",
+        }
+        if self.description is not None:
+            result["description"] = self.description
+        if self.mime_type is not None:
+            result["mimeType"] = self.mime_type
+        if self.service_name is not None:
+            result["serviceName"] = self.service_name
+        if self.tags is not None:
+            result["tags"] = self.tags
+        if self.icon_url is not None:
+            result["iconUrl"] = self.icon_url
+        if self.extensions is not None:
+            result["extensions"] = self.extensions
+        return result
 
 
 @dataclass
@@ -376,22 +414,28 @@ def with_bazaar(client: HTTPFacilitatorClient) -> BazaarExtendedClient:
     return BazaarExtendedClient(client)
 
 
+def _parse_discovery_resource_item(item: dict[str, Any]) -> DiscoveryResource:
+    """Parse a single discovery resource from facilitator JSON."""
+    return DiscoveryResource(
+        resource=item.get("resource", ""),
+        type=item.get("type", ""),
+        x402_version=item.get("x402Version", 0),
+        accepts=item.get("accepts"),
+        last_updated=item.get("lastUpdated"),
+        description=item.get("description"),
+        mime_type=item.get("mimeType"),
+        service_name=item.get("serviceName"),
+        tags=item.get("tags"),
+        icon_url=item.get("iconUrl"),
+        extensions=item.get("extensions"),
+    )
+
+
 def _parse_list_response(
     data: dict[str, Any],
 ) -> DiscoveryResourcesResponse:
     """Parse a list discovery resources response from JSON data."""
-    items = []
-    for item in data.get("items", []):
-        items.append(
-            DiscoveryResource(
-                resource=item.get("resource", ""),
-                type=item.get("type", ""),
-                x402_version=item.get("x402Version", 0),
-                accepts=item.get("accepts"),
-                last_updated=item.get("lastUpdated"),
-                extensions=item.get("extensions"),
-            )
-        )
+    items = [_parse_discovery_resource_item(item) for item in data.get("items", [])]
 
     raw_pagination = data.get("pagination", {})
     pagination = Pagination(
@@ -411,18 +455,7 @@ def _parse_search_response(
     data: dict[str, Any],
 ) -> SearchDiscoveryResourcesResponse:
     """Parse a search discovery resources response from JSON data."""
-    items = []
-    for item in data.get("resources", []):
-        items.append(
-            DiscoveryResource(
-                resource=item.get("resource", ""),
-                type=item.get("type", ""),
-                x402_version=item.get("x402Version", 0),
-                accepts=item.get("accepts"),
-                last_updated=item.get("lastUpdated"),
-                extensions=item.get("extensions"),
-            )
-        )
+    items = [_parse_discovery_resource_item(item) for item in data.get("resources", [])]
 
     raw_pagination = data.get("pagination")
     pagination = (

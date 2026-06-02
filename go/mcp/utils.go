@@ -5,8 +5,8 @@ import (
 	"errors"
 	"fmt"
 
-	x402 "github.com/x402-foundation/x402/go"
-	"github.com/x402-foundation/x402/go/types"
+	x402 "github.com/x402-foundation/x402/go/v2"
+	"github.com/x402-foundation/x402/go/v2/types"
 )
 
 // ExtractPaymentFromMeta extracts payment payload from MCP request _meta field

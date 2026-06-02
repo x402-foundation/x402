@@ -7,7 +7,7 @@ toolchain go1.24.1
 require (
 	github.com/joho/godotenv v1.5.1
 	github.com/labstack/echo/v4 v4.15.1
-	github.com/x402-foundation/x402/go v0.0.0
+	github.com/x402-foundation/x402/go/v2 v2.14.0
 )
 
 require (
@@ -70,4 +70,4 @@ require (
 	golang.org/x/time v0.14.0 // indirect
 )
 
-replace github.com/x402-foundation/x402/go => ../../../go
+replace github.com/x402-foundation/x402/go/v2 => ../../../go

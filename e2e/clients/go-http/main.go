@@ -10,16 +10,16 @@ import (
 
 	"github.com/ethereum/go-ethereum/ethclient"
 
-	x402 "github.com/x402-foundation/x402/go"
-	x402http "github.com/x402-foundation/x402/go/http"
-	batchedclient "github.com/x402-foundation/x402/go/mechanisms/evm/batch-settlement/client"
-	exactevm "github.com/x402-foundation/x402/go/mechanisms/evm/exact/client"
-	exactevmv1 "github.com/x402-foundation/x402/go/mechanisms/evm/exact/v1/client"
-	uptoevm "github.com/x402-foundation/x402/go/mechanisms/evm/upto/client"
-	svm "github.com/x402-foundation/x402/go/mechanisms/svm/exact/client"
-	svmv1 "github.com/x402-foundation/x402/go/mechanisms/svm/exact/v1/client"
-	evmsigners "github.com/x402-foundation/x402/go/signers/evm"
-	svmsigners "github.com/x402-foundation/x402/go/signers/svm"
+	x402 "github.com/x402-foundation/x402/go/v2"
+	x402http "github.com/x402-foundation/x402/go/v2/http"
+	batchedclient "github.com/x402-foundation/x402/go/v2/mechanisms/evm/batch-settlement/client"
+	exactevm "github.com/x402-foundation/x402/go/v2/mechanisms/evm/exact/client"
+	exactevmv1 "github.com/x402-foundation/x402/go/v2/mechanisms/evm/exact/v1/client"
+	uptoevm "github.com/x402-foundation/x402/go/v2/mechanisms/evm/upto/client"
+	svm "github.com/x402-foundation/x402/go/v2/mechanisms/svm/exact/client"
+	svmv1 "github.com/x402-foundation/x402/go/v2/mechanisms/svm/exact/v1/client"
+	evmsigners "github.com/x402-foundation/x402/go/v2/signers/evm"
+	svmsigners "github.com/x402-foundation/x402/go/v2/signers/svm"
 )
 
 // stepResult is the JSON shape the harness expects per request step. Matches

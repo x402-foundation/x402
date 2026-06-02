@@ -5,7 +5,7 @@ import (
 	"math/big"
 	"testing"
 
-	evm "github.com/x402-foundation/x402/go/mechanisms/evm"
+	evm "github.com/x402-foundation/x402/go/v2/mechanisms/evm"
 )
 
 type mockApprovalSigner struct {

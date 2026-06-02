@@ -8,7 +8,7 @@ import { base, baseSepolia } from 'viem/chains';
 import { TestDiscovery } from './src/discovery';
 import { ClientConfig, ScenarioResult, ServerConfig, TestScenario, endpointAssetTransferMethod, endpointPaymentScheme, endpointUsesBatchSettlement } from './src/types';
 import { config as loggerConfig, log, verboseLog, errorLog, close as closeLogger, createComboLogger } from './src/logger';
-import { handleDiscoveryValidation, shouldRunDiscoveryValidation } from './extensions/bazaar';
+import { handleDiscoveryValidation, shouldRunDiscoveryValidation, type TestedDiscoveryScenario } from './extensions/bazaar';
 import { parseArgs, printHelp } from './src/cli/args';
 import { runInteractiveMode } from './src/cli/interactive';
 import { filterScenarios, TestFilters, shouldShowExtensionOutput } from './src/cli/filters';
@@ -1008,7 +1008,7 @@ async function runTest() {
   }
   log('');
 
-  // Track which facilitators processed which servers (for discovery validation)
+  // Track which facilitators processed which servers (legacy discovery fallback)
   const facilitatorServerMap = new Map<string, Set<string>>(); // facilitatorName -> Set<serverName>
 
   // ── Helper: run a single test scenario ────────────────────────────────
@@ -1412,11 +1412,31 @@ async function runTest() {
 
   const serversArray = Array.from(uniqueServers.values());
 
-  // Build a serverName→port map for discovery validation (first combo per server).
+  // Build a serverName→port map for legacy discovery validation fallback.
   const discoveryServerPorts = new Map<string, number>();
   for (const combo of serverFacilitatorCombos) {
     if (!discoveryServerPorts.has(combo.serverName)) {
       discoveryServerPorts.set(combo.serverName, combo.port);
+    }
+  }
+
+  // Expected discovery entries must use the port from each facilitator+server combo.
+  const testedDiscoveryScenarios: TestedDiscoveryScenario[] = [];
+  for (const combo of serverFacilitatorCombos) {
+    if (!combo.facilitatorName) {
+      continue;
+    }
+    const server = uniqueServers.get(combo.serverName);
+    if (!server) {
+      continue;
+    }
+    for (const scenario of combo.scenarios) {
+      testedDiscoveryScenarios.push({
+        facilitatorName: combo.facilitatorName,
+        server,
+        serverPort: combo.port,
+        endpoint: scenario.endpoint,
+      });
     }
   }
 
@@ -1429,7 +1449,8 @@ async function runTest() {
       facilitatorsWithConfig,
       serversArray,
       discoveryServerPorts,
-      facilitatorServerMap
+      facilitatorServerMap,
+      testedDiscoveryScenarios,
     );
     discoveryFailed = !discoveryResult.success;
   }

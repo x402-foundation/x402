@@ -14,6 +14,7 @@ except ImportError:
 from x402.mechanisms.evm import ERC6492_MAGIC_VALUE, get_network_config
 from x402.mechanisms.evm.constants import (
     ERR_AUTHORIZATION_VALUE_MISMATCH,
+    ERR_FACTORY_NOT_ALLOWED,
     ERR_INSUFFICIENT_BALANCE,
     ERR_INVALID_SIGNATURE,
     ERR_NONCE_ALREADY_USED,
@@ -252,14 +253,16 @@ class TestExactEvmSchemeConstructor:
     def test_creates_instance_with_config(self):
         signer = MockFacilitatorSigner()
         config = ExactEvmSchemeConfig(
-            deploy_erc4337_with_eip6492=True,
+            eip6492_allowed_factories=["0x1111111111111111111111111111111111111111"],
             simulate_in_settle=True,
         )
 
         facilitator = ExactEvmFacilitatorScheme(signer, config)
 
         assert facilitator.scheme == "exact"
-        assert facilitator._config.deploy_erc4337_with_eip6492 is True
+        assert facilitator._config.eip6492_allowed_factories == [
+            "0x1111111111111111111111111111111111111111"
+        ]
         assert facilitator._config.simulate_in_settle is True
 
 
@@ -509,6 +512,106 @@ class TestSettle:
         assert result.success is True
         assert signer.transfer_simulation_calls == 1
         assert signer.write_calls == 1
+
+
+class TestSettleFactoryAllowlist:
+    """ERC-6492 factory allowlist enforcement during settle."""
+
+    def _erc6492_payload(self):
+        return make_payment_payload(signature=make_erc6492_signature(b"\x33" * 66))
+
+    def test_empty_allowlist_blocks_factory_deployment(self):
+        signer = MockFacilitatorSigner(typed_data_valid=True, code=b"")
+        facilitator = ExactEvmFacilitatorScheme(
+            signer,
+            ExactEvmSchemeConfig(
+                eip6492_allowed_factories=[],
+            ),
+        )
+
+        result = facilitator.settle(self._erc6492_payload(), make_requirements())
+
+        assert result.success is False
+        assert result.error_reason == ERR_FACTORY_NOT_ALLOWED
+        assert signer.send_calls == 0
+
+    def test_matching_factory_in_allowlist_deploys_and_settles(self):
+        signer = MockFacilitatorSigner(typed_data_valid=True, code=b"")
+        facilitator = ExactEvmFacilitatorScheme(
+            signer,
+            ExactEvmSchemeConfig(
+                eip6492_allowed_factories=[FACTORY],
+            ),
+        )
+
+        result = facilitator.settle(self._erc6492_payload(), make_requirements())
+
+        assert result.success is True
+        assert signer.send_calls == 1  # factory deployment
+        assert signer.write_calls == 1  # transferWithAuthorization
+
+    def test_case_insensitive_factory_match(self):
+        signer = MockFacilitatorSigner(typed_data_valid=True, code=b"")
+        facilitator = ExactEvmFacilitatorScheme(
+            signer,
+            ExactEvmSchemeConfig(
+                eip6492_allowed_factories=[FACTORY.upper()],
+            ),
+        )
+
+        result = facilitator.settle(self._erc6492_payload(), make_requirements())
+
+        assert result.success is True
+        assert signer.send_calls == 1
+
+    def test_non_matching_factory_is_blocked(self):
+        signer = MockFacilitatorSigner(typed_data_valid=True, code=b"")
+        facilitator = ExactEvmFacilitatorScheme(
+            signer,
+            ExactEvmSchemeConfig(
+                eip6492_allowed_factories=["0x3333333333333333333333333333333333333333"],
+            ),
+        )
+
+        result = facilitator.settle(self._erc6492_payload(), make_requirements())
+
+        assert result.success is False
+        assert result.error_reason == ERR_FACTORY_NOT_ALLOWED
+        assert signer.send_calls == 0
+
+    def test_already_deployed_wallet_skips_allowlist_check(self):
+        # Wallet already has code: deployment path is skipped entirely.
+        signer = MockFacilitatorSigner(typed_data_valid=True, code=b"\x60\x80")
+        facilitator = ExactEvmFacilitatorScheme(
+            signer,
+            ExactEvmSchemeConfig(
+                eip6492_allowed_factories=[],  # empty — would block if deployment were attempted
+            ),
+        )
+
+        result = facilitator.settle(self._erc6492_payload(), make_requirements())
+
+        assert result.success is True
+        assert signer.send_calls == 0  # no deployment needed
+        assert signer.write_calls == 1
+
+    def test_eoa_payer_unaffected_by_allowlist(self):
+        # EOA signature — no ERC-6492 wrapper, allowlist irrelevant.
+        signer = MockFacilitatorSigner(typed_data_valid=True, code=b"")
+        facilitator = ExactEvmFacilitatorScheme(
+            signer,
+            ExactEvmSchemeConfig(
+                eip6492_allowed_factories=[],
+            ),
+        )
+
+        result = facilitator.settle(
+            make_payment_payload(signature="0x" + "00" * 65),
+            make_requirements(),
+        )
+
+        assert result.success is True
+        assert signer.send_calls == 0
 
 
 class TestVerifyV1:

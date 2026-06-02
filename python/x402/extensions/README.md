@@ -175,3 +175,57 @@ Validates extension schema.
 
 V1 discovery info is stored in `PaymentRequirements.output_schema`. The `extract_discovery_info` function handles both V1 and V2 formats automatically.
 
+## Sign-In-With-X Extension
+
+CAIP-122 wallet authentication for payment-protected resources. Clients prove control of a wallet that may have previously paid, so servers can grant access without repurchase. Auth-only routes (`accepts: []`) grant access on a valid signature alone.
+
+### Server
+
+```python
+from x402.extensions.sign_in_with_x import (
+    declare_siwx_extension,
+    create_siwx_resource_server_extension,
+    InMemorySIWxStorage,
+)
+
+storage = InMemorySIWxStorage()
+server.register_extension(create_siwx_resource_server_extension(storage=storage))
+
+routes = {
+    "GET /weather": {
+        "accepts": {"scheme": "exact", "price": "$0.001", "network": "eip155:84532", "payTo": "0x..."},
+        "extensions": declare_siwx_extension(),
+    },
+    "GET /profile": {
+        "accepts": [],
+        "extensions": declare_siwx_extension(
+            network=["eip155:84532"],
+            statement="Sign in to view your profile",
+            expiration_seconds=300,
+        ),
+    },
+}
+```
+
+For EIP-1271 / EIP-6492 smart wallet verification, pass a Web3 `HTTPProvider` via `verify_options`:
+
+```python
+from web3 import Web3
+
+provider = Web3(Web3.HTTPProvider("https://...")).provider
+create_siwx_resource_server_extension(
+    storage=storage,
+    verify_options=SIWxVerifyOptions(provider=provider),
+)
+```
+
+### Client
+
+```python
+from x402.extensions.sign_in_with_x import create_siwx_client_extension
+
+client.register_extension(create_siwx_client_extension(signers=[evm_signer]))
+```
+
+Requires `x402[extensions]` (signinwithethereum, PyNaCl). EVM signing uses `x402[evm]`; Solana signing uses `x402[svm]`.
+

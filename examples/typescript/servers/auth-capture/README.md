@@ -2,7 +2,7 @@
 
 Express resource server protected by the [auth-capture](../../../specs/schemes/auth-capture/scheme_auth-capture_evm.md) scheme. The server publishes payment requirements with all spec-mandated `extra` fields and delegates verify/settle to a configured facilitator.
 
-`autoCapture` is omitted (defaults to `false`), so the facilitator calls `AuthCaptureEscrow.authorize(...)` — the canonical two-phase flow. Funds are locked in the escrow under the captureAuthorizer's control. Capture, void, and refund happen separately, decided by whichever entity holds the captureAuthorizer role.
+`autoCapture` is omitted (defaults to `false`), so the facilitator calls `AuthCaptureEscrow.authorize(...)`, the canonical two-phase flow. Funds are locked in the escrow under the captureAuthorizer's control. Capture, void, and refund happen separately, decided by whichever entity holds the captureAuthorizer role.
 
 ## Prerequisites
 
@@ -28,14 +28,14 @@ pnpm start
 
 | Variable             | Required | Default | Notes                                                                                                                                                              |
 | :------------------- | :------- | :------ | :----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `EVM_ADDRESS`        | Yes      | —       | Pay-to address (the merchant's receiver).                                                                                                                          |
-| `CAPTURE_AUTHORIZER` | Yes      | —       | Committed on-chain as `PaymentInfo.operator`. EOA path: must equal the facilitator's submitter EOA. Contract path: any contract that forwards calls to the escrow. |
-| `FACILITATOR_URL`    | Yes      | —       | Base URL of the auth-capture facilitator (POST `/verify`, POST `/settle`).                                                                                          |
+| `EVM_ADDRESS`        | Yes      | (none)  | Pay-to address (the merchant's receiver).                                                                                                                          |
+| `CAPTURE_AUTHORIZER` | Yes      | (none)  | Committed on-chain as `PaymentInfo.operator`. EOA path: must equal the facilitator's submitter EOA. Contract path: any contract that forwards calls to the escrow. |
+| `FACILITATOR_URL`    | Yes      | (none)  | Base URL of the auth-capture facilitator (POST `/verify`, POST `/settle`).                                                                                          |
 | `PORT`               | No       | `4021`  | Local listen port.                                                                                                                                                 |
 
 ## Deadlines
 
-The example sets `captureDeadline` and `refundDeadline` once at boot, as absolute Unix seconds 30 / 60 days into the future. Every authorization the server hands out shares the same absolute deadline. Production servers commonly compute these per request via custom middleware so each authorization has a fresh window — out of scope for this minimal demo.
+The example sets `captureDeadline` and `refundDeadline` once at boot, as absolute Unix seconds 30 / 60 days into the future. Every authorization the server hands out shares the same absolute deadline. Production servers commonly compute these per request via custom middleware so each authorization has a fresh window, out of scope for this minimal demo.
 
 ## Lifecycle beyond authorize
 

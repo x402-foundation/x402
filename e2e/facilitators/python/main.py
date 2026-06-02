@@ -31,7 +31,9 @@ from pydantic import BaseModel
 from solders.keypair import Keypair
 
 from x402 import x402Facilitator
-from x402.extensions.bazaar import extract_discovery_info
+from datetime import UTC, datetime
+
+from x402.extensions.bazaar import DiscoveryResource, extract_discovery_info
 from x402.extensions.eip2612_gas_sponsoring import EIP2612_GAS_SPONSORING
 from x402.extensions.erc20_approval_gas_sponsoring import (
     Erc20ApprovalFacilitatorExtension,
@@ -42,6 +44,10 @@ from x402.mechanisms.evm.constants import TX_STATUS_SUCCESS
 from x402.mechanisms.evm.exact import register_exact_evm_facilitator
 from x402.mechanisms.evm.types import TransactionReceipt
 from x402.mechanisms.evm.upto import UptoEvmFacilitatorScheme
+from x402.mechanisms.evm.batch_settlement.authorizer_signer import LocalAuthorizerSigner
+from x402.mechanisms.evm.batch_settlement.facilitator import (
+    BatchSettlementEvmFacilitator,
+)
 from x402.mechanisms.svm import FacilitatorKeypairSigner
 from x402.mechanisms.svm.exact import register_exact_svm_facilitator
 from x402.mechanisms.tvm import (
@@ -207,26 +213,29 @@ def _handle_after_verify(ctx: Any) -> None:
             print(f"   📝 Discovered resource: {discovered.resource_url}")
             print(f"   📝 Method: {discovered.method}")
             print(f"   📝 X402Version: {discovered.x402_version}")
+            if discovered.service_name is not None:
+                print(f"   📝 Service: {discovered.service_name}")
+            if discovered.tags is not None:
+                print(f"   📝 Tags: {', '.join(discovered.tags)}")
 
-            # Convert discovery_info to dict for serialization
-            discovery_info_dict = None
-            if discovered.discovery_info:
-                if hasattr(discovered.discovery_info, "model_dump"):
-                    discovery_info_dict = discovered.discovery_info.model_dump(
-                        by_alias=True, exclude_none=True
-                    )
-                else:
-                    discovery_info_dict = discovered.discovery_info
-
-            bazaar_catalog.catalog_resource(
-                resource_url=discovered.resource_url,
-                method=discovered.method,
-                x402_version=discovered.x402_version,
-                discovery_info=discovery_info_dict,
-                payment_requirements=ctx.requirements.model_dump(by_alias=True)
-                if hasattr(ctx.requirements, "model_dump")
-                else ctx.requirements,
-                route_template=getattr(discovered, "route_template", None),
+            bazaar_catalog.add(
+                DiscoveryResource(
+                    resource=discovered.resource_url,
+                    type=discovered.discovery_info.input.type,
+                    x402_version=discovered.x402_version,
+                    accepts=[
+                        ctx.requirements.model_dump(by_alias=True)
+                        if hasattr(ctx.requirements, "model_dump")
+                        else ctx.requirements
+                    ],
+                    last_updated=datetime.now(UTC).isoformat().replace("+00:00", "Z"),
+                    description=discovered.description,
+                    mime_type=discovered.mime_type,
+                    service_name=discovered.service_name,
+                    tags=discovered.tags,
+                    icon_url=discovered.icon_url,
+                    extensions=discovered.extensions,
+                )
             )
             print("   ✅ Added to bazaar catalog")
     except Exception as err:
@@ -250,11 +259,25 @@ if evm_signer is not None:
         facilitator,
         evm_signer,
         networks=EVM_NETWORK,
-        deploy_erc4337_with_eip6492=True,
     )
 
     # Register upto EVM scheme (V2 only)
     facilitator.register([EVM_NETWORK], UptoEvmFacilitatorScheme(evm_signer))
+
+    # Register batch-settlement EVM scheme (V2 only). Receiver-authorizer key
+    # falls back to the facilitator key, matching the TS e2e facilitator.
+    receiver_authorizer_pk = (
+        os.environ.get("EVM_RECEIVER_AUTHORIZER_PRIVATE_KEY")
+        or os.environ["EVM_PRIVATE_KEY"]
+    )
+    batch_settlement_authorizer = LocalAuthorizerSigner(receiver_authorizer_pk)
+    print(
+        f"EVM Receiver Authorizer (batch-settlement): {batch_settlement_authorizer.address}"
+    )
+    facilitator.register(
+        [EVM_NETWORK],
+        BatchSettlementEvmFacilitator(evm_signer, batch_settlement_authorizer),
+    )
 
 # Register SVM schemes (V1 and V2)
 if svm_signer is not None:

@@ -9,10 +9,10 @@ import (
 	"strings"
 	"unicode"
 
-	x402 "github.com/x402-foundation/x402/go"
-	"github.com/x402-foundation/x402/go/extensions/types"
-	v1 "github.com/x402-foundation/x402/go/extensions/v1"
-	x402types "github.com/x402-foundation/x402/go/types"
+	x402 "github.com/x402-foundation/x402/go/v2"
+	"github.com/x402-foundation/x402/go/v2/extensions/types"
+	v1 "github.com/x402-foundation/x402/go/v2/extensions/v1"
+	x402types "github.com/x402-foundation/x402/go/v2/types"
 	"github.com/xeipuuv/gojsonschema"
 	"golang.org/x/net/idna"
 )
@@ -91,6 +91,90 @@ func ValidateDiscoveryExtension(extension types.DiscoveryExtension) ValidationRe
 	}
 }
 
+// ValidateDiscoveryExtensionSpec validates a discovery extension against the Bazaar protocol
+// specification. Unlike ValidateDiscoveryExtension which checks internal consistency (info vs
+// schema), this function enforces protocol-level invariants:
+//   - info.input.type must be "http" or "mcp"
+//   - HTTP: if method is present it must be GET/POST/PUT/PATCH/DELETE/HEAD
+//   - HTTP body methods: bodyType must be "json", "form-data", or "text"
+//   - MCP: toolName (string) and inputSchema (object) are required
+//   - MCP: if transport is present it must be "streamable-http" or "sse"
+//
+// Safe for pre-enrichment HTTP extensions where method may be absent.
+func ValidateDiscoveryExtensionSpec(extension types.DiscoveryExtension) ValidationResult {
+	infoJSON, err := json.Marshal(extension.Info)
+	if err != nil {
+		return ValidationResult{Valid: false, Errors: []string{"Failed to marshal info"}}
+	}
+
+	var raw struct {
+		Input map[string]interface{} `json:"input"`
+	}
+	if err := json.Unmarshal(infoJSON, &raw); err != nil || raw.Input == nil {
+		return ValidationResult{Valid: false, Errors: []string{"Missing or invalid 'info.input' field"}}
+	}
+
+	inputType, _ := raw.Input["type"].(string)
+	if inputType != "http" && inputType != "mcp" {
+		return ValidationResult{
+			Valid:  false,
+			Errors: []string{fmt.Sprintf(`info.input.type must be "http" or "mcp", got %q`, inputType)},
+		}
+	}
+
+	var errors []string
+
+	if inputType == "http" {
+		if method, ok := raw.Input["method"]; ok {
+			methodStr, _ := method.(string)
+			// Empty string means pre-enrichment (method not yet set); skip validation.
+			if methodStr != "" && !types.IsQueryMethod(methodStr) && !types.IsBodyMethod(methodStr) {
+				errors = append(errors, fmt.Sprintf(
+					"info.input.method must be one of DELETE, GET, HEAD, PATCH, POST, PUT, got %q", methodStr))
+			}
+		}
+
+		if bt, ok := raw.Input["bodyType"]; ok {
+			btStr, _ := bt.(string)
+			if btStr != "json" && btStr != "form-data" && btStr != "text" {
+				errors = append(errors, fmt.Sprintf(
+					`info.input.bodyType must be one of json, form-data, text, got %q`, btStr))
+			}
+			if method, ok2 := raw.Input["method"]; ok2 {
+				methodStr, _ := method.(string)
+				if methodStr != "" && !types.IsBodyMethod(methodStr) {
+					errors = append(errors, fmt.Sprintf(
+						`info.input.bodyType is set but method %q is not a body method (POST, PUT, PATCH)`, methodStr))
+				}
+			}
+		}
+	}
+
+	if inputType == "mcp" {
+		toolName, _ := raw.Input["toolName"].(string)
+		if toolName == "" {
+			errors = append(errors, "info.input.toolName is required and must be a non-empty string for MCP extensions")
+		}
+		if is, ok := raw.Input["inputSchema"]; !ok || is == nil {
+			errors = append(errors, "info.input.inputSchema is required and must be an object for MCP extensions")
+		} else if _, isMap := is.(map[string]interface{}); !isMap {
+			errors = append(errors, "info.input.inputSchema is required and must be an object for MCP extensions")
+		}
+		if transport, ok := raw.Input["transport"]; ok {
+			tStr, _ := transport.(string)
+			if tStr != "streamable-http" && tStr != "sse" {
+				errors = append(errors, fmt.Sprintf(
+					`info.input.transport must be one of streamable-http, sse, got %q`, tStr))
+			}
+		}
+	}
+
+	if len(errors) > 0 {
+		return ValidationResult{Valid: false, Errors: errors}
+	}
+	return ValidationResult{Valid: true}
+}
+
 type DiscoveredResource struct {
 	ResourceURL   string
 	Method        string
@@ -104,6 +188,24 @@ type DiscoveredResource struct {
 	ServiceName string
 	Tags        []string
 	IconUrl     string
+	Extensions  map[string]any
+}
+
+// InputType returns the protocol type from discovery info (e.g. "http", "mcp").
+func (d DiscoveredResource) InputType() string {
+	if d.DiscoveryInfo == nil {
+		return ""
+	}
+	switch input := d.DiscoveryInfo.Input.(type) {
+	case types.QueryInput:
+		return input.Type
+	case types.BodyInput:
+		return input.Type
+	case types.McpInput:
+		return input.Type
+	default:
+		return ""
+	}
 }
 
 // ExtractDiscoveredResourceFromPaymentPayload extracts a discovered resource from a client's payment payload and requirements.
@@ -156,6 +258,7 @@ func ExtractDiscoveredResourceFromPaymentPayload(
 	var routeTemplate string
 	var rawInput map[string]interface{}
 	var serviceMetadata SanitizedResourceServiceMetadata
+	var extensions map[string]any
 	version := versionCheck.X402Version
 
 	switch version {
@@ -165,6 +268,7 @@ func ExtractDiscoveredResourceFromPaymentPayload(
 		if err := json.Unmarshal(payloadBytes, &payload); err != nil {
 			return nil, fmt.Errorf("failed to unmarshal v2 payload: %w", err)
 		}
+		extensions = payload.Extensions
 
 		// Extract resource URL
 		if payload.Resource != nil {
@@ -231,6 +335,7 @@ func ExtractDiscoveredResourceFromPaymentPayload(
 			return nil, fmt.Errorf("v1 discovery extraction failed: %w", err)
 		}
 		discoveryInfo = infoV1
+		extensions = buildV1CatalogExtensionsFromPayload(payloadBytes, *discoveryInfo)
 	default:
 		return nil, fmt.Errorf("unsupported version: %d", version)
 	}
@@ -262,6 +367,7 @@ func ExtractDiscoveredResourceFromPaymentPayload(
 		ServiceName:   serviceMetadata.ServiceName,
 		Tags:          serviceMetadata.Tags,
 		IconUrl:       serviceMetadata.IconUrl,
+		Extensions:    extensions,
 	}, nil
 }
 
@@ -626,6 +732,7 @@ func ExtractDiscoveredResourceFromPaymentRequired(
 	var routeTemplate string
 	var rawInput map[string]interface{}
 	var serviceMetadata SanitizedResourceServiceMetadata
+	var extensions map[string]any
 	version := versionCheck.X402Version
 
 	switch version {
@@ -635,6 +742,7 @@ func ExtractDiscoveredResourceFromPaymentRequired(
 		if err := json.Unmarshal(paymentRequiredBytes, &paymentRequired); err != nil {
 			return nil, fmt.Errorf("failed to unmarshal v2 payment required: %w", err)
 		}
+		extensions = paymentRequired.Extensions
 
 		// Extract resource URL
 		if paymentRequired.Resource != nil {
@@ -707,6 +815,7 @@ func ExtractDiscoveredResourceFromPaymentRequired(
 			return nil, fmt.Errorf("v1 discovery extraction failed: %w", err)
 		}
 		discoveryInfo = infoV1
+		extensions = v1.BuildV1CatalogExtensions(nil, *discoveryInfo)
 	default:
 		return nil, fmt.Errorf("unsupported version: %d", version)
 	}
@@ -738,7 +847,22 @@ func ExtractDiscoveredResourceFromPaymentRequired(
 		ServiceName:   serviceMetadata.ServiceName,
 		Tags:          serviceMetadata.Tags,
 		IconUrl:       serviceMetadata.IconUrl,
+		Extensions:    extensions,
 	}, nil
+}
+
+func buildV1CatalogExtensionsFromPayload(
+	payloadBytes []byte,
+	discoveryInfo types.DiscoveryInfo,
+) map[string]any {
+	var payload struct {
+		Extensions map[string]any `json:"extensions"`
+	}
+	var existingExtensions map[string]any
+	if err := json.Unmarshal(payloadBytes, &payload); err == nil && len(payload.Extensions) > 0 {
+		existingExtensions = payload.Extensions
+	}
+	return v1.BuildV1CatalogExtensions(existingExtensions, discoveryInfo)
 }
 
 func extractMethodAndToolName(

@@ -157,7 +157,7 @@ export class AuthCaptureEvmScheme implements SchemeNetworkFacilitator {
 
   /**
    * Facilitator-injected `extra` fields for `/supported`. auth-capture injects
-   * none — every wire-format address is a universal canonical constant, and
+   * none; every wire-format address is a universal canonical constant, and
    * `captureAuthorizer`, `feeRecipient`, and the deadlines are merchant-set
    * per request.
    *
@@ -357,7 +357,7 @@ export class AuthCaptureEvmScheme implements SchemeNetworkFacilitator {
           return { isValid: false, invalidReason: ErrInsufficientBalance, payer };
         }
       } catch {
-        /* ignore — fall through */
+        /* ignore: fall through */
       }
       return { isValid: false, invalidReason: settleResult, payer };
     }
@@ -618,7 +618,7 @@ function unpackForSettle(
   const p = wirePayload as Permit2Payload;
   // Permit2 collector expects the raw 65-byte signature; the collector itself
   // reconstructs the PermitTransferFrom struct from PaymentInfo (deterministic
-  // nonce + payer). Don't ABI-wrap — Permit2 checks `signature.length == 65`
+  // nonce + payer). Don't ABI-wrap; Permit2 checks `signature.length == 65`
   // directly and rejects a wrapped blob with `InvalidSignatureLength()`.
   return {
     preApprovalExpiry: Number(p.permit2Authorization.deadline),

@@ -59,6 +59,23 @@ describe("Bazaar Client Extension - facilitatorClient", () => {
       expect(resource.extensions).toBeUndefined();
     });
 
+    it("DiscoveryResource should allow bazaar service metadata fields", () => {
+      const resource: DiscoveryResource = {
+        resource: "https://api.example.com/weather",
+        type: "http",
+        x402Version: 2,
+        accepts: [],
+        lastUpdated: "2024-01-01T00:00:00.000Z",
+        description: "Weather data",
+        mimeType: "application/json",
+        serviceName: "Weather API",
+        tags: ["weather", "api"],
+      };
+
+      expect(resource.serviceName).toBe("Weather API");
+      expect(resource.tags).toEqual(["weather", "api"]);
+    });
+
     it("DiscoveryResourcesResponse should have correct shape with pagination", () => {
       const response: DiscoveryResourcesResponse = {
         x402Version: 2,

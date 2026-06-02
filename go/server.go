@@ -11,7 +11,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/x402-foundation/x402/go/types"
+	"github.com/x402-foundation/x402/go/v2/types"
 )
 
 var (
@@ -770,7 +770,7 @@ func (s *x402ResourceServer) VerifyPaymentWithExtensions(
 	// Use already marshaled bytes for network call
 	verifyResult, verifyErr := facilitator.Verify(ctx, payloadBytes, requirementsBytes)
 
-	// Handle failure
+	// Handle failure (network/protocol error from facilitator)
 	if verifyErr != nil {
 		failureCtx := VerifyFailureContext{VerifyContext: hookCtx, Error: verifyErr}
 		for _, lh := range verifyFailureHooks {
@@ -780,6 +780,30 @@ func (s *x402ResourceServer) VerifyPaymentWithExtensions(
 			}
 		}
 		return verifyResult, verifyErr
+	}
+
+	// Handle IsValid: false — facilitator reachable but explicitly rejected the payment.
+	// Conflating "no network error" with "payment valid" is a security bug: an HTTP-200
+	// response carrying {"isValid":false} must be treated as a hard gate failure.
+	if verifyResult == nil || !verifyResult.IsValid {
+		reason := ErrCodeInvalidPayment
+		var payer, message string
+		if verifyResult != nil {
+			if verifyResult.InvalidReason != "" {
+				reason = verifyResult.InvalidReason
+			}
+			payer = verifyResult.Payer
+			message = verifyResult.InvalidMessage
+		}
+		ve := NewVerifyError(reason, payer, message)
+		failureCtx := VerifyFailureContext{VerifyContext: hookCtx, Error: ve}
+		for _, lh := range verifyFailureHooks {
+			result, _ := lh.Hook(failureCtx)
+			if result != nil && result.Recovered {
+				return result.Result, nil
+			}
+		}
+		return verifyResult, ve
 	}
 
 	// Execute afterVerify hooks. The last hook to return a SkipHandler directive

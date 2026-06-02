@@ -19,6 +19,7 @@ from x402.extensions.bazaar import (
     with_bazaar,
 )
 from x402.extensions.bazaar.facilitator_client import (
+    _parse_discovery_resource_item,
     _parse_list_response,
     _parse_search_response,
 )
@@ -518,3 +519,63 @@ class TestSearch:
         assert result.pagination is not None
         assert result.pagination.limit == 10
         assert result.pagination.cursor == cursor
+
+
+class TestParseDiscoveryResourceItem:
+    def test_parses_service_metadata_fields(self) -> None:
+        item = {
+            "resource": "https://api.example.com/weather",
+            "type": "http",
+            "x402Version": 2,
+            "accepts": [],
+            "lastUpdated": "2024-01-01T00:00:00.000Z",
+            "description": "Weather data",
+            "mimeType": "application/json",
+            "serviceName": "Weather API",
+            "tags": ["weather", "api"],
+            "iconUrl": "https://api.example.com/icon.png",
+            "extensions": {
+                "bazaar": {
+                    "info": {"input": {"type": "http", "method": "GET"}},
+                    "schema": {},
+                }
+            },
+        }
+
+        resource = _parse_discovery_resource_item(item)
+
+        assert resource.description == "Weather data"
+        assert resource.mime_type == "application/json"
+        assert resource.service_name == "Weather API"
+        assert resource.tags == ["weather", "api"]
+        assert resource.icon_url == "https://api.example.com/icon.png"
+        assert resource.extensions == item["extensions"]
+
+
+class TestDiscoveryResourceSerialization:
+    def test_to_dict_includes_service_metadata(self) -> None:
+        from x402.extensions.bazaar import DiscoveryResource
+
+        resource = DiscoveryResource(
+            resource="https://api.example.com/weather",
+            type="http",
+            x402_version=2,
+            accepts=[],
+            last_updated="2024-01-01T00:00:00.000Z",
+            description="Weather data",
+            mime_type="application/json",
+            service_name="Weather API",
+            tags=["weather", "api"],
+        )
+
+        assert resource.to_dict() == {
+            "resource": "https://api.example.com/weather",
+            "type": "http",
+            "x402Version": 2,
+            "accepts": [],
+            "lastUpdated": "2024-01-01T00:00:00.000Z",
+            "description": "Weather data",
+            "mimeType": "application/json",
+            "serviceName": "Weather API",
+            "tags": ["weather", "api"],
+        }

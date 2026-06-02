@@ -3,6 +3,7 @@
 import { useState } from "react";
 import Link from "next/link";
 import Image from "next/image";
+import { BookOpenIcon } from "@heroicons/react/24/outline";
 import { NavBarLogo } from "./NavBarLogo";
 import { AnimatedLogo } from "./AnimatedLogo";
 
@@ -83,6 +84,15 @@ export function NavBar({ animateLogo = false }: NavBarProps): React.ReactElement
           <div className="hidden lg:flex flex-1 items-center gap-6 justify-end">
             {/* Social icons */}
             <div className="flex items-center gap-6">
+              <Link
+                href="https://docs.x402.org"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="hover:opacity-60 transition-opacity focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-black focus-visible:ring-offset-2"
+                aria-label="Docs"
+              >
+                <BookOpenIcon className="w-5 h-5" aria-hidden="true" />
+              </Link>
               <Link
                 href="https://github.com/x402-foundation/x402"
                 target="_blank"
@@ -183,6 +193,16 @@ export function NavBar({ animateLogo = false }: NavBarProps): React.ReactElement
                 onClick={() => setMobileMenuOpen(false)}
               >
                 Whitepaper
+              </Link>
+              <Link
+                href="https://docs.x402.org"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="flex items-center gap-2 py-2 text-black font-medium text-sm hover:text-gray-60 transition-colors"
+                onClick={() => setMobileMenuOpen(false)}
+              >
+                <BookOpenIcon className="w-5 h-5" aria-hidden="true" />
+                Docs
               </Link>
             </div>
 

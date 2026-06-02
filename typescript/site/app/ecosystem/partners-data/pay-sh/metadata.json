@@ -1,0 +1,7 @@
+{
+  "name": "Pay.sh",
+  "category": "Services/Endpoints",
+  "logoUrl": "/logos/pay-sh.png",
+  "description": "Pay-per-use APIs your agent can call now.",
+  "websiteUrl": "https://pay.sh"
+}

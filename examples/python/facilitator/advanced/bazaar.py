@@ -8,7 +8,7 @@ import os
 import sys
 import base64
 import json
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any
 
 from dotenv import load_dotenv
@@ -17,7 +17,10 @@ from pydantic import BaseModel
 from solders.keypair import Keypair
 
 from x402 import x402Facilitator
-from x402.extensions.bazaar import extract_discovery_info
+from x402.extensions.bazaar import (
+    DiscoveryResource,
+    extract_discovery_info,
+)
 from x402.mechanisms.evm import FacilitatorWeb3Signer
 from x402.mechanisms.evm.exact.facilitator import ExactEvmScheme, ExactEvmSchemeConfig
 from x402.mechanisms.svm import FacilitatorKeypairSigner
@@ -43,33 +46,18 @@ EVM_NETWORK = "eip155:84532"  # Base Sepolia
 SVM_NETWORK = "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1"  # Solana Devnet
 
 
-# CatalogResource represents a discovered x402 resource for the bazaar catalog
-class CatalogResource(BaseModel):
-    """A discovered resource entry in the bazaar catalog."""
-
-    resource: str
-    description: str | None = None
-    mimeType: str | None = None
-    type: str
-    x402Version: int
-    accepts: list[dict[str, Any]]
-    discoveryInfo: dict[str, Any] | None = None
-    lastUpdated: str
-    extensions: dict[str, Any] | None = None
-
-
 # BazaarCatalog stores discovered resources
 class BazaarCatalog:
     """Catalog for storing discovered x402 resources."""
 
     def __init__(self) -> None:
-        self.resources: dict[str, CatalogResource] = {}
+        self.resources: dict[str, DiscoveryResource] = {}
 
-    def add(self, resource: CatalogResource) -> None:
+    def add(self, resource: DiscoveryResource) -> None:
         """Add a resource to the catalog."""
         self.resources[resource.resource] = resource
 
-    def get_all(self) -> list[CatalogResource]:
+    def get_all(self) -> list[DiscoveryResource]:
         """Get all resources in the catalog."""
         return list(self.resources.values())
 
@@ -78,10 +66,10 @@ class BazaarCatalog:
         query: str,
         resource_type: str | None = None,
         limit: int | None = None,
-    ) -> list[CatalogResource]:
+    ) -> list[DiscoveryResource]:
         """Search resources using case-insensitive keyword matching.
 
-        Matches against resource URL, type, and extension values.
+        Matches against resource URL, type, description, service metadata, and extensions.
 
         Args:
             query: The search query string.
@@ -95,7 +83,14 @@ class BazaarCatalog:
         results = []
         for r in self.resources.values():
             haystack = " ".join(
-                [r.resource, r.type] + [str(v) for v in (r.extensions or {}).values()]
+                [
+                    r.resource,
+                    r.type,
+                    r.description or "",
+                    r.service_name or "",
+                    *(r.tags or []),
+                    *[str(v) for v in (r.extensions or {}).values()],
+                ]
             ).lower()
             if needle in haystack:
                 results.append(r)
@@ -150,32 +145,28 @@ def _handle_after_verify(ctx: Any) -> None:
             print(f"   📝 Discovered resource: {discovered.resource_url}")
             print(f"   📝 Method: {discovered.method}")
             print(f"   📝 X402Version: {discovered.x402_version}")
-
-            # Convert discovery_info to dict for serialization
-            discovery_info_dict = None
-            if discovered.discovery_info:
-                if hasattr(discovered.discovery_info, "model_dump"):
-                    discovery_info_dict = discovered.discovery_info.model_dump(
-                        by_alias=True, exclude_none=True
-                    )
-                else:
-                    discovery_info_dict = discovered.discovery_info
+            if discovered.service_name is not None:
+                print(f"   📝 Service: {discovered.service_name}")
+            if discovered.tags is not None:
+                print(f"   📝 Tags: {', '.join(discovered.tags)}")
 
             bazaar_catalog.add(
-                CatalogResource(
+                DiscoveryResource(
                     resource=discovered.resource_url,
-                    description=discovered.description,
-                    mimeType=discovered.mime_type,
-                    type="http",
-                    x402Version=discovered.x402_version,
+                    type=discovered.discovery_info.input.type,
+                    x402_version=discovered.x402_version,
                     accepts=[
                         ctx.requirements.model_dump(by_alias=True)
                         if hasattr(ctx.requirements, "model_dump")
                         else ctx.requirements
                     ],
-                    discoveryInfo=discovery_info_dict,
-                    lastUpdated=datetime.now().isoformat(),
-                    extensions={},
+                    last_updated=datetime.now(UTC).isoformat().replace("+00:00", "Z"),
+                    description=discovered.description,
+                    mime_type=discovered.mime_type,
+                    service_name=discovered.service_name,
+                    tags=discovered.tags,
+                    icon_url=discovered.icon_url,
+                    extensions=discovered.extensions,
                 )
             )
             print("   ✅ Added to bazaar catalog")
@@ -196,7 +187,11 @@ facilitator = (
 
 # Register schemes based on available signers
 if evm_signer:
-    config = ExactEvmSchemeConfig(deploy_erc4337_with_eip6492=True)
+    config = ExactEvmSchemeConfig(
+        # Add trusted ERC-6492 factory addresses here (e.g. your chosen ERC-4337 smart wallet factory).
+        # A non-empty list enables smart wallet deployment; an empty list denies all factory calls.
+        eip6492_allowed_factories=[],
+    )
     facilitator.register([EVM_NETWORK], ExactEvmScheme(evm_signer, config))
 
 if svm_signer:
@@ -327,7 +322,7 @@ async def discovery_resources():
         resources = bazaar_catalog.get_all()
         return {
             "x402Version": 2,
-            "items": [r.model_dump(by_alias=True) for r in resources],
+            "items": [r.to_dict() for r in resources],
             "pagination": {
                 "limit": 100,
                 "offset": 0,
@@ -355,7 +350,7 @@ async def discovery_search(query: str, type: str | None = None, limit: int | Non
         results = bazaar_catalog.search(query, type, limit)
         return {
             "x402Version": 2,
-            "resources": [r.model_dump(by_alias=True) for r in results],
+            "resources": [r.to_dict() for r in results],
             "partialResults": False,
             "pagination": None,
         }

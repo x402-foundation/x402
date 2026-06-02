@@ -24,12 +24,17 @@ export interface VerifyEIP3009Options {
 
 export interface EIP3009FacilitatorConfig {
   /**
-   * If enabled, the facilitator will deploy ERC-4337 smart wallets
-   * via EIP-6492 when encountering undeployed contract signatures.
+   * Allowlist of factory contract addresses (hex strings, case-insensitive) that the facilitator
+   * will call when deploying an undeployed smart wallet via ERC-6492.
    *
-   * @default false
+   * A non-empty list enables ERC-4337 smart wallet deployment via EIP-6492. Facilitators must
+   * explicitly list every factory they trust to prevent arbitrary transaction injection via
+   * attacker-controlled ERC-6492 signature wrappers. An empty or omitted list denies all factory
+   * deployment calls.
+   *
+   * @default []
    */
-  deployERC4337WithEIP6492: boolean;
+  eip6492AllowedFactories?: string[];
   /**
    * If enabled, simulates transaction before settling. Defaults to false, ie only simulate during verify.
    *
@@ -272,9 +277,8 @@ export async function settleEIP3009(
       eip3009Payload.signature!,
     );
 
-    // Deploy ERC-4337 smart wallet via EIP-6492 if configured and needed
+    // Deploy ERC-4337 smart wallet via EIP-6492 if factory is in the allowlist
     if (
-      config.deployERC4337WithEIP6492 &&
       factoryAddress &&
       factoryCalldata &&
       !isAddressEqual(factoryAddress, "0x0000000000000000000000000000000000000000")
@@ -283,6 +287,20 @@ export async function settleEIP3009(
       const bytecode = await signer.getCode({ address: payer });
 
       if (!bytecode || bytecode === "0x") {
+        const normalizedFactory = factoryAddress.toLowerCase();
+        const isAllowed = (config.eip6492AllowedFactories ?? []).some(
+          allowed => allowed.toLowerCase() === normalizedFactory,
+        );
+        if (!isAllowed) {
+          return {
+            success: false,
+            errorReason: Errors.ErrFactoryNotAllowed,
+            transaction: "",
+            network: payload.accepted.network,
+            payer,
+          };
+        }
+
         // Wallet not deployed - attempt deployment
         const deployTx = await signer.sendTransaction({
           to: factoryAddress as Hex,

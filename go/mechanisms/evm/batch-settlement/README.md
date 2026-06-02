@@ -10,9 +10,9 @@ See the [scheme specification](https://github.com/x402-foundation/x402/blob/main
 
 | Role        | Import                                                                       |
 |-------------|------------------------------------------------------------------------------|
-| Client      | `github.com/x402-foundation/x402/go/mechanisms/evm/batch-settlement/client`           |
-| Server      | `github.com/x402-foundation/x402/go/mechanisms/evm/batch-settlement/server`           |
-| Facilitator | `github.com/x402-foundation/x402/go/mechanisms/evm/batch-settlement/facilitator`      |
+| Client      | `github.com/x402-foundation/x402/go/v2/mechanisms/evm/batch-settlement/client`           |
+| Server      | `github.com/x402-foundation/x402/go/v2/mechanisms/evm/batch-settlement/server`           |
+| Facilitator | `github.com/x402-foundation/x402/go/v2/mechanisms/evm/batch-settlement/facilitator`      |
 
 ## Client Usage
 
@@ -20,9 +20,9 @@ Register `BatchSettlementEvmScheme` with an `x402Client`. The client handles dep
 
 ```go
 import (
-    x402 "github.com/x402-foundation/x402/go"
-    "github.com/x402-foundation/x402/go/mechanisms/evm/batch-settlement/client"
-    evmsigners "github.com/x402-foundation/x402/go/signers/evm"
+    x402 "github.com/x402-foundation/x402/go/v2"
+    "github.com/x402-foundation/x402/go/v2/mechanisms/evm/batch-settlement/client"
+    evmsigners "github.com/x402-foundation/x402/go/v2/signers/evm"
 )
 
 signer, _ := evmsigners.NewClientSignerFromPrivateKey(os.Getenv("EVM_PRIVATE_KEY"))
@@ -84,7 +84,7 @@ The server claims any outstanding vouchers and then executes `refundWithSignatur
 By default, channel state is stored in memory. For long-lived clients, use `FileClientChannelStorage`:
 
 ```go
-import "github.com/x402-foundation/x402/go/mechanisms/evm/batch-settlement"
+import "github.com/x402-foundation/x402/go/v2/mechanisms/evm/batch-settlement"
 
 scheme := client.NewBatchSettlementEvmScheme(signer, &client.BatchSettlementEvmSchemeOptions{
     Storage: client.NewFileClientChannelStorage(batchsettlement.FileChannelStorageOptions{
@@ -101,9 +101,9 @@ Register the scheme with an `x402ResourceServer` and pair it with a `ChannelMana
 
 ```go
 import (
-    x402 "github.com/x402-foundation/x402/go"
-    "github.com/x402-foundation/x402/go/mechanisms/evm/batch-settlement"
-    "github.com/x402-foundation/x402/go/mechanisms/evm/batch-settlement/server"
+    x402 "github.com/x402-foundation/x402/go/v2"
+    "github.com/x402-foundation/x402/go/v2/mechanisms/evm/batch-settlement"
+    "github.com/x402-foundation/x402/go/v2/mechanisms/evm/batch-settlement/server"
 )
 
 scheme := server.NewBatchSettlementEvmScheme(receiverAddress, &server.BatchSettlementEvmSchemeServerConfig{
@@ -161,8 +161,8 @@ Set the route `price` to the per-request maximum. To bill less than the max, use
 
 ```go
 import (
-    x402 "github.com/x402-foundation/x402/go"
-    "github.com/x402-foundation/x402/go/mechanisms/evm/batch-settlement/facilitator"
+    x402 "github.com/x402-foundation/x402/go/v2"
+    "github.com/x402-foundation/x402/go/v2/mechanisms/evm/batch-settlement/facilitator"
 )
 
 f := x402.Newx402Facilitator()

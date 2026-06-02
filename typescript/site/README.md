@@ -67,86 +67,16 @@ Open [http://localhost:3000](http://localhost:3000) with your browser to see the
 3. The client can then make a payment and retry the request
 4. The facilitator backend verifies the payment and allows access
 
-## Adding Your Project to the Ecosystem
+## Project discovery
 
-We welcome projects that are building with x402! To add your project to our ecosystem page, follow these steps:
+Ecosystem page submissions are closed. To list or discover x402 services, use these community-maintained directories:
 
-1. Fork the repository
-2. Create a new directory in `app/ecosystem/partners-data/[your-project-slug]`
-3. Add your logo to `public/logos/`
-4. Add your project's metadata in `metadata.json`:
+- [x402scan.com](https://x402scan.com)
+- [Agentic.Market](https://agentic.market)
+- [Pay.sh](https://pay.sh)
+- [app.ampersend.ai/discover](https://app.ampersend.ai/discover)
 
-```json
-{
-  "name": "Your Project Name",
-  "description": "A brief description of your project and how it uses x402",
-  "logoUrl": "/logos/your-logo.png",
-  "websiteUrl": "https://your-project.com", // ideally pointing to somehwere to learn more about the x402 integration
-  "category": "Client-Side Integrations" // Must match one of our categories: - `Client-Side Integrations`, `Services/Endpoints`, `Infrastructure & Tooling`, `Learning & Community Resources`
-}
-```
-
-**For Facilitators, use this JSON template:**
-
-```json
-{
-  "name": "Your Facilitator Name",
-  "description": "A brief description of your facilitator service and supported networks",
-  "logoUrl": "/logos/your-logo.png",
-  "websiteUrl": "https://your-facilitator.com",
-  "category": "Facilitators",
-  "facilitator": {
-    "baseUrl": "https://your-facilitator.com",
-    "networks": ["base", "base-sepolia", "polygon", "solana"],
-    "schemes": ["exact"],
-    "assets": ["ERC20"],
-    "supports": {
-      "verify": true,
-      "settle": true,
-      "supported": true,
-      "list": false
-    }
-  }
-}
-```
-
-
-5. Submit a pull request
-
-### Requirements by Category
-
-#### Client-Side Integrations
-- Must demonstrate a working integration with x402
-- Should include a link to documentation, quickstart, or code examples
-- Must be actively maintained
-
-#### Services/Endpoints
-- Must have a working mainnet integration
-- Should include API documentation
-- Should maintain 99% uptime
-
-#### Infrastructure & Tooling
-- Should include comprehensive documentation
-- Should demonstrate clear value to the x402 ecosystem
-
-#### Learning & Community Resources
-- Must include a GitHub template or starter kit
-- Should be shared on social media (Twitter/X, Discord, etc.)
-- Must include clear setup instructions
-- Should demonstrate a practical use case
-
-#### Facilitators
-- Must implement the x402 facilitator API specification
-- Should support at least one payment scheme (e.g., "exact")
-- Must provide working verify and/or settle endpoints
-- Should maintain high uptime and reliability
-- Must include comprehensive API documentation
-
-### Review Process
-
-1. Our team will review your submission within 5 business days
-2. We may request additional information or changes
-3. Once approved, your project will be added to the ecosystem page, and we'd love to do some co-marketing around your use case! 
+Curated developer tools (third-party SDKs, extensions, and facilitators) are listed in the [Developer Tools docs](https://docs.x402.org/dev-tools/overview).
 
 ## Learn More
 

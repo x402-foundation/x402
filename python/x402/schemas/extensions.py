@@ -23,6 +23,7 @@ class HTTPResourceServerExtensionHooks(Protocol):
         self,
         declaration: Any,
         transport_context: Any,
+        route_config: Any | None = None,
     ) -> ProtectedRequestHookResult | None | Awaitable[ProtectedRequestHookResult | None]: ...
 
 

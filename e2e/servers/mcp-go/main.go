@@ -10,12 +10,12 @@ import (
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
-	x402 "github.com/x402-foundation/x402/go"
-	"github.com/x402-foundation/x402/go/extensions/bazaar"
-	x402http "github.com/x402-foundation/x402/go/http"
-	mcp402 "github.com/x402-foundation/x402/go/mcp"
-	evm "github.com/x402-foundation/x402/go/mechanisms/evm/exact/server"
-	"github.com/x402-foundation/x402/go/types"
+	x402 "github.com/x402-foundation/x402/go/v2"
+	"github.com/x402-foundation/x402/go/v2/extensions/bazaar"
+	x402http "github.com/x402-foundation/x402/go/v2/http"
+	mcp402 "github.com/x402-foundation/x402/go/v2/mcp"
+	evm "github.com/x402-foundation/x402/go/v2/mechanisms/evm/exact/server"
+	"github.com/x402-foundation/x402/go/v2/types"
 )
 
 // getWeatherData simulates fetching weather data for a city.

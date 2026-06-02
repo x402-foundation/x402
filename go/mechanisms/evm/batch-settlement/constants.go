@@ -3,7 +3,7 @@ package batchsettlement
 import (
 	"github.com/ethereum/go-ethereum/crypto"
 
-	"github.com/x402-foundation/x402/go/mechanisms/evm"
+	"github.com/x402-foundation/x402/go/v2/mechanisms/evm"
 )
 
 const (

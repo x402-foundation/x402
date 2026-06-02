@@ -5,6 +5,8 @@ import {
   decompileTransactionMessage,
   generateKeyPairSigner,
   getCompiledTransactionMessageDecoder,
+  getBase64Encoder,
+  getTransactionDecoder,
 } from "@solana/kit";
 import { TOKEN_PROGRAM_ADDRESS } from "@solana-program/token";
 import {
@@ -12,6 +14,7 @@ import {
   SOLANA_DEVNET_CAIP2,
   USDC_DEVNET_ADDRESS,
 } from "../../src/constants";
+import { transactionMessageHash } from "../../src/utils";
 
 const FIXED_BLOCKHASH = "5Tx8F3jgSHx21CbtjwmdaKPLM5tWmreWAnPrbqHomSJF";
 const FIXED_BLOCKHASH_ALT = "7ZCxc2SDhzV2bYgEQqdxTpweYJkpwshVSDtXuY7uPtjf";
@@ -499,5 +502,100 @@ describe("Memo Uniqueness", () => {
     );
     expect(memoIx).toBeDefined();
     expect(memoIx!.accounts ?? []).toHaveLength(0);
+  });
+});
+
+// Verify that randomizing the fee-payer signature bytes (slot 0) — which the
+// facilitator overwrites before broadcast — does not change the cache key.
+describe("transactionMessageHash malleability resistance", () => {
+  it("produces identical hash when fee-payer signature bytes are changed", async () => {
+    blockhashes = [FIXED_BLOCKHASH];
+
+    const { ExactSvmScheme } = await import("../../src/exact/client/scheme");
+
+    const clientSigner = await generateKeyPairSigner();
+    const feePayer = await generateKeyPairSigner();
+    const payTo = await generateKeyPairSigner();
+
+    const client = new ExactSvmScheme(clientSigner);
+    mockAtaMap = {
+      [clientSigner.address]: clientSigner.address as Address,
+      [payTo.address]: payTo.address as Address,
+    };
+
+    const requirements: PaymentRequirements = {
+      scheme: "exact",
+      network: SOLANA_DEVNET_CAIP2,
+      asset: USDC_DEVNET_ADDRESS,
+      amount: "100000",
+      payTo: payTo.address,
+      maxTimeoutSeconds: 3600,
+      extra: { feePayer: feePayer.address },
+    };
+
+    const payload = await client.createPaymentPayload(2, requirements);
+    const txBase64 = (payload.payload as { transaction: string }).transaction;
+
+    // Decode the transaction to get its binary representation.
+    const base64Encoder = getBase64Encoder();
+    const txDecoder = getTransactionDecoder();
+    const txBytes = base64Encoder.encode(txBase64);
+    const tx = txDecoder.decode(txBytes);
+
+    const hashBefore = transactionMessageHash(tx);
+
+    // Flip every bit in the fee-payer signature slot (first 64 bytes after the
+    // compact-u16 signature-count prefix). This simulates an attacker submitting
+    // the same payment with different garbage bytes at slot 0.
+    const mutated = new Uint8Array(txBytes);
+    // byte 0 is the compact-u16 num_signatures prefix (value < 128 → 1 byte)
+    for (let i = 1; i <= 64; i++) {
+      mutated[i] = mutated[i] ^ 0xff;
+    }
+    const mutatedTx = txDecoder.decode(mutated);
+
+    const hashAfter = transactionMessageHash(mutatedTx);
+
+    expect(hashBefore).toBe(hashAfter);
+  });
+
+  it("produces different hashes for transactions with different messages", async () => {
+    blockhashes = [FIXED_BLOCKHASH, FIXED_BLOCKHASH_ALT];
+
+    const { ExactSvmScheme } = await import("../../src/exact/client/scheme");
+
+    const clientSigner = await generateKeyPairSigner();
+    const feePayer = await generateKeyPairSigner();
+    const payTo = await generateKeyPairSigner();
+
+    const client = new ExactSvmScheme(clientSigner);
+    mockAtaMap = {
+      [clientSigner.address]: clientSigner.address as Address,
+      [payTo.address]: payTo.address as Address,
+    };
+
+    const requirements: PaymentRequirements = {
+      scheme: "exact",
+      network: SOLANA_DEVNET_CAIP2,
+      asset: USDC_DEVNET_ADDRESS,
+      amount: "100000",
+      payTo: payTo.address,
+      maxTimeoutSeconds: 3600,
+      extra: { feePayer: feePayer.address },
+    };
+
+    const payload1 = await client.createPaymentPayload(2, requirements);
+    const payload2 = await client.createPaymentPayload(2, requirements);
+
+    const decode = (b64: string) => {
+      const bytes = getBase64Encoder().encode(b64);
+      return getTransactionDecoder().decode(bytes);
+    };
+
+    const tx1 = decode((payload1.payload as { transaction: string }).transaction);
+    const tx2 = decode((payload2.payload as { transaction: string }).transaction);
+
+    // Different blockhashes → different messages → different hashes
+    expect(transactionMessageHash(tx1)).not.toBe(transactionMessageHash(tx2));
   });
 });

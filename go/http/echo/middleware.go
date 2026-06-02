@@ -6,13 +6,15 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/labstack/echo/v4"
-	x402 "github.com/x402-foundation/x402/go"
-	"github.com/x402-foundation/x402/go/extensions/bazaar"
-	x402http "github.com/x402-foundation/x402/go/http"
+	x402 "github.com/x402-foundation/x402/go/v2"
+	"github.com/x402-foundation/x402/go/v2/extensions/bazaar"
+	extypes "github.com/x402-foundation/x402/go/v2/extensions/types"
+	x402http "github.com/x402-foundation/x402/go/v2/http"
 )
 
 // SetSettlementOverrides sets settlement overrides on the Echo response for partial settlement.
@@ -187,6 +189,7 @@ func PaymentMiddleware(routes x402http.RoutesConfig, server *x402.X402ResourceSe
 	httpServer := x402http.Wrappedx402HTTPResourceServer(routes, server)
 
 	httpServer.RegisterExtension(bazaar.BazaarResourceServerExtension)
+	validateBazaarExtensions(routes)
 
 	// Initialize if requested - queries facilitator /supported to populate facilitatorClients map
 	if config.SyncFacilitatorOnStart {
@@ -226,6 +229,7 @@ func PaymentMiddlewareFromHTTPServer(httpServer *x402http.HTTPServer, opts ...Mi
 	}
 
 	httpServer.RegisterExtension(bazaar.BazaarResourceServerExtension)
+	validateBazaarExtensionsFromServer(httpServer)
 
 	// Initialize if requested - queries facilitator /supported to populate facilitatorClients map
 	if config.SyncFacilitatorOnStart {
@@ -264,6 +268,7 @@ func PaymentMiddlewareFromConfig(routes x402http.RoutesConfig, opts ...Middlewar
 	httpServer := x402http.Newx402HTTPResourceServer(config.Routes, serverOpts...)
 
 	httpServer.RegisterExtension(bazaar.BazaarResourceServerExtension)
+	validateBazaarExtensions(config.Routes)
 
 	// Register schemes
 	for _, scheme := range config.Schemes {
@@ -530,3 +535,51 @@ func (w *responseCapture) WriteString(s string) (int, error) {
 
 // Flush is a no-op to prevent premature flushing to the wire before settlement.
 func (w *responseCapture) Flush() {}
+
+// validateBazaarExtensions validates all bazaar extensions declared on routes using
+// the bazaar package's JSON-schema validator. Emits warnings but does not block startup.
+func validateBazaarExtensions(routes x402http.RoutesConfig) {
+	for pattern, config := range routes {
+		validateSingleBazaarExtension(pattern, config.Extensions)
+	}
+}
+
+// validateBazaarExtensionsFromServer validates bazaar extensions from pre-compiled routes.
+func validateBazaarExtensionsFromServer(server *x402http.HTTPServer) {
+	for _, route := range server.GetCompiledRoutes() {
+		pattern := route.Verb + " " + route.Regex.String()
+		validateSingleBazaarExtension(pattern, route.Config.Extensions)
+	}
+}
+
+func validateSingleBazaarExtension(pattern string, extensions map[string]interface{}) {
+	extVal, ok := extensions[extypes.BAZAAR.Key()]
+	if !ok || extVal == nil {
+		return
+	}
+	extMap, isMap := extVal.(map[string]interface{})
+	if !isMap || extMap["info"] == nil || extMap["schema"] == nil {
+		fmt.Printf("x402 Warning: Route %q declares a bazaar extension but it is malformed "+
+			"(expected an object with \"info\" and \"schema\" fields)\n", pattern)
+		return
+	}
+	extJSON, err := json.Marshal(extVal)
+	if err != nil {
+		return
+	}
+	var ext extypes.DiscoveryExtension
+	if err := json.Unmarshal(extJSON, &ext); err != nil {
+		return
+	}
+	specResult := bazaar.ValidateDiscoveryExtensionSpec(ext)
+	if !specResult.Valid {
+		fmt.Printf("x402 Warning: Route %q has invalid bazaar extension: %s\n",
+			pattern, strings.Join(specResult.Errors, ", "))
+		return
+	}
+	result := bazaar.ValidateDiscoveryExtension(ext)
+	if !result.Valid {
+		fmt.Printf("x402 Warning: Route %q has invalid bazaar extension: %s\n",
+			pattern, strings.Join(result.Errors, ", "))
+	}
+}

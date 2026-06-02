@@ -19,7 +19,7 @@ import { ExactEvmScheme } from "@x402/evm/exact/facilitator";
 import { UptoEvmScheme } from "@x402/evm/upto/facilitator";
 import { toFacilitatorSvmSigner } from "@x402/svm";
 import { ExactSvmScheme } from "@x402/svm/exact/facilitator";
-import { extractDiscoveryInfo, DiscoveryInfo } from "@x402/extensions/bazaar";
+import { extractDiscoveryInfo, type DiscoveryResource } from "@x402/extensions/bazaar";
 import dotenv from "dotenv";
 import express from "express";
 import { createWalletClient, http, publicActions } from "viem";
@@ -47,32 +47,19 @@ if (!evmPrivateKey && !svmPrivateKey) {
 const EVM_NETWORK = "eip155:84532"; // Base Sepolia
 const SVM_NETWORK = "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1"; // Solana Devnet
 
-// DiscoveredResource represents a discovered x402 resource for the bazaar catalog
-interface DiscoveredResource {
-  resource: string;
-  description?: string;
-  mimeType?: string;
-  type: string;
-  x402Version: number;
-  accepts: PaymentRequirements[];
-  discoveryInfo?: DiscoveryInfo;
-  lastUpdated: string;
-  extensions?: Record<string, unknown>;
-}
-
 // BazaarCatalog stores discovered resources
 /**
  * Catalog of discovered resources from bazaar discovery extension.
  */
 class BazaarCatalog {
-  private resources: Map<string, DiscoveredResource> = new Map();
+  private resources: Map<string, DiscoveryResource> = new Map();
 
   /**
    * Adds a discovered resource to the catalog.
    *
    * @param res - The discovered resource to add
    */
-  add(res: DiscoveredResource): void {
+  add(res: DiscoveryResource): void {
     this.resources.set(res.resource, res);
   }
 
@@ -81,7 +68,7 @@ class BazaarCatalog {
    *
    * @returns Array of all discovered resources
    */
-  getAll(): DiscoveredResource[] {
+  getAll(): DiscoveryResource[] {
     return Array.from(this.resources.values());
   }
 
@@ -94,13 +81,15 @@ class BazaarCatalog {
    * @param limit - Optional advisory maximum results
    * @returns Matching resources with optional pagination hints
    */
-  search(query: string, type?: string, limit?: number): DiscoveredResource[] {
+  search(query: string, type?: string, limit?: number): DiscoveryResource[] {
     const needle = query.toLowerCase();
     let results = Array.from(this.resources.values()).filter((r) => {
       const haystack = [
         r.resource,
         r.type,
         r.description ?? "",
+        r.serviceName ?? "",
+        ...(r.tags ?? []),
         ...Object.values(r.extensions ?? {}),
       ]
         .join(" ")
@@ -163,17 +152,25 @@ const facilitator = new x402Facilitator()
           console.log(`   📝 Tool: ${discovered.toolName}`);
         }
         console.log(`   📝 X402Version: ${discovered.x402Version}`);
+        if (discovered.serviceName !== undefined) {
+          console.log(`   📝 Service: ${discovered.serviceName}`);
+        }
+        if (discovered.tags !== undefined) {
+          console.log(`   📝 Tags: ${discovered.tags.join(", ")}`);
+        }
 
         bazaarCatalog.add({
           resource: discovered.resourceUrl,
-          description: discovered.description,
-          mimeType: discovered.mimeType,
           type: discovered.discoveryInfo.input.type,
           x402Version: discovered.x402Version,
           accepts: [context.requirements],
-          discoveryInfo: discovered.discoveryInfo,
           lastUpdated: new Date().toISOString(),
-          extensions: {},
+          description: discovered.description,
+          mimeType: discovered.mimeType,
+          serviceName: discovered.serviceName,
+          tags: discovered.tags,
+          iconUrl: discovered.iconUrl,
+          extensions: discovered.extensions,
         });
         console.log("   ✅ Added to bazaar catalog");
       }
@@ -246,7 +243,11 @@ if (evmPrivateKey) {
 
   facilitator.register(
     EVM_NETWORK,
-    new ExactEvmScheme(evmSigner, { deployERC4337WithEIP6492: true }),
+    new ExactEvmScheme(evmSigner, {
+      // Add trusted ERC-6492 factory addresses here (e.g. your chosen ERC-4337 smart wallet factory).
+      // A non-empty array enables smart wallet deployment; an empty array denies all factory calls.
+      eip6492AllowedFactories: [],
+    }),
   );
   facilitator.register(EVM_NETWORK, new UptoEvmScheme(evmSigner));
 }

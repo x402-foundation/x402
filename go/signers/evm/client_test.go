@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	x402evm "github.com/x402-foundation/x402/go/mechanisms/evm"
+	x402evm "github.com/x402-foundation/x402/go/v2/mechanisms/evm"
 )
 
 // Test private key (deterministic for testing)

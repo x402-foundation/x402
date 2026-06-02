@@ -87,6 +87,58 @@ The easiest way to implement SIWX is registering the provided extension factorie
 
     ```
   </Tab>
+  <Tab title="Python">
+    ```python
+    from x402.extensions.sign_in_with_x import (
+        CreateSIWxHookOptions,
+        DeclareSIWxOptions,
+        InMemorySIWxStorage,
+        create_siwx_resource_server_extension,
+        declare_siwx_extension,
+    )
+    from x402.http import FacilitatorConfig, HTTPFacilitatorClient
+    from x402.http.middleware.fastapi import PaymentMiddlewareASGI
+    from x402.http.types import PaymentOption, RouteConfig
+    from x402.mechanisms.evm.exact import ExactEvmServerScheme
+    from x402.server import x402ResourceServer
+
+    NETWORK = "eip155:8453"  # Base mainnet
+    PAY_TO = "0xYourAddress"
+
+    # Storage for tracking paid addresses
+    storage = InMemorySIWxStorage()
+
+    facilitator = HTTPFacilitatorClient(FacilitatorConfig(url="https://x402.org/facilitator"))
+
+    # 1. Register extension
+    server = x402ResourceServer(facilitator)
+    server.register(NETWORK, ExactEvmServerScheme())
+    server.register_extension(
+        create_siwx_resource_server_extension(CreateSIWxHookOptions(storage=storage))
+    )
+
+    # 2. Declare SIWX support in routes
+    routes = {
+        "GET /data": RouteConfig(
+            accepts=[PaymentOption(scheme="exact", price="$0.01", network=NETWORK, pay_to=PAY_TO)],
+            extensions=declare_siwx_extension(),
+        ),
+        "GET /profile": RouteConfig(
+            accepts=[],  # Auth-only route: no payment required
+            extensions=declare_siwx_extension(
+                DeclareSIWxOptions(
+                    network=[NETWORK],  # Required for auth-only routes
+                    statement="Sign in to view your profile",
+                    expiration_seconds=300,
+                )
+            ),
+        ),
+    }
+
+    # 3. Add middleware to your FastAPI app
+    app.add_middleware(PaymentMiddlewareASGI, routes=routes, server=server)
+    ```
+  </Tab>
 </Tabs>
 
 The server extension derives `network` from `accepts`, derives `domain`/`uri` from the request URL, refreshes nonce/timestamps per request, records successful payments, and validates SIWX proofs for declared HTTP routes.
@@ -95,7 +147,7 @@ The server extension derives `network` from `accepts`, derives `domain`/`uri` fr
 
 ### Smart Wallet Support (EIP-1271 / EIP-6492)
 
-By default, only EOA (Externally Owned Account) signatures are verified. To support smart contract wallets (like Coinbase Smart Wallet, Safe, etc.), pass `publicClient.verifyMessage` from viem:
+By default, only EOA (Externally Owned Account) signatures are verified. To support smart contract wallets (like Coinbase Smart Wallet, Safe, etc.), pass a verifier via `verifyOptions`:
 
 <Tabs>
   <Tab title="TypeScript">
@@ -114,6 +166,27 @@ By default, only EOA (Externally Owned Account) signatures are verified. To supp
         storage,
         verifyOptions: { evmVerifier: publicClient.verifyMessage },
       }));
+    ```
+  </Tab>
+  <Tab title="Python">
+    ```python
+    from web3 import Web3
+    from x402.extensions.sign_in_with_x import (
+        CreateSIWxHookOptions,
+        SIWxVerifyOptions,
+        create_siwx_resource_server_extension,
+    )
+
+    provider = Web3(Web3.HTTPProvider("https://mainnet.base.org")).provider
+
+    server.register_extension(
+        create_siwx_resource_server_extension(
+            CreateSIWxHookOptions(
+                storage=storage,
+                verify_options=SIWxVerifyOptions(provider=provider),
+            )
+        )
+    )
     ```
   </Tab>
 </Tabs>
@@ -252,6 +325,31 @@ The easiest way to use SIWX as a client is with the provided client extension:
 
     // Requests automatically use SIWX auth when server supports it
     const response = await httpClient.fetch('https://api.example.com/data');
+    ```
+  </Tab>
+  <Tab title="Python">
+    ```python
+    from eth_account import Account
+    from x402 import x402Client
+    from x402.extensions.sign_in_with_x import (
+        CreateSIWxClientExtensionOptions,
+        create_siwx_client_extension,
+    )
+    from x402.http.clients import x402HttpxClient
+    from x402.mechanisms.evm import EthAccountSigner
+    from x402.mechanisms.evm.exact.register import register_exact_evm_client
+
+    account = Account.from_key("0xYourPrivateKey")
+    client = x402Client()
+    register_exact_evm_client(client, EthAccountSigner(account))
+
+    client.register_extension(
+        create_siwx_client_extension(CreateSIWxClientExtensionOptions(signers=[account]))
+    )
+
+    async with x402HttpxClient(client) as http:
+        # Requests automatically use SIWX auth when server supports it
+        response = await http.get("https://api.example.com/data")
     ```
   </Tab>
 </Tabs>

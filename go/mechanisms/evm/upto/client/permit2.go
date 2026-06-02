@@ -6,8 +6,8 @@ import (
 	"math/big"
 	"time"
 
-	"github.com/x402-foundation/x402/go/mechanisms/evm"
-	"github.com/x402-foundation/x402/go/types"
+	"github.com/x402-foundation/x402/go/v2/mechanisms/evm"
+	"github.com/x402-foundation/x402/go/v2/types"
 )
 
 // CreateUptoPermit2Payload creates a Permit2 payload using the x402UptoPermit2Proxy witness pattern.

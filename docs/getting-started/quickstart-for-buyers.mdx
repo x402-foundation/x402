@@ -44,7 +44,7 @@ There are pre-configured [examples available in the x402 repo](https://github.co
     Add the x402 Go module to your project:
 
     ```bash
-    go get github.com/x402-foundation/x402/go
+    go get github.com/x402-foundation/x402/go/v2
     ```
   </Tab>
   <Tab title="Python">
@@ -85,7 +85,7 @@ There are pre-configured [examples available in the x402 repo](https://github.co
   <Tab title="Go">
     ```go
     import (
-        evmsigners "github.com/x402-foundation/x402/go/signers/evm"
+        evmsigners "github.com/x402-foundation/x402/go/v2/signers/evm"
     )
 
     // Load private key from environment
@@ -254,10 +254,10 @@ const stellarSigner = createEd25519Signer(
         "os"
         "time"
 
-        x402 "github.com/x402-foundation/x402/go"
-        x402http "github.com/x402-foundation/x402/go/http"
-        evm "github.com/x402-foundation/x402/go/mechanisms/evm/exact/client"
-        evmsigners "github.com/x402-foundation/x402/go/signers/evm"
+        x402 "github.com/x402-foundation/x402/go/v2"
+        x402http "github.com/x402-foundation/x402/go/v2/http"
+        evm "github.com/x402-foundation/x402/go/v2/mechanisms/evm/exact/client"
+        evmsigners "github.com/x402-foundation/x402/go/v2/signers/evm"
     )
 
     func main() {
@@ -438,12 +438,12 @@ You can register multiple payment schemes to handle different networks:
   <Tab title="Go">
     ```go
     import (
-        x402 "github.com/x402-foundation/x402/go"
-        x402http "github.com/x402-foundation/x402/go/http"
-        evm "github.com/x402-foundation/x402/go/mechanisms/evm/exact/client"
-        svm "github.com/x402-foundation/x402/go/mechanisms/svm/exact/client"
-        evmsigners "github.com/x402-foundation/x402/go/signers/evm"
-        svmsigners "github.com/x402-foundation/x402/go/signers/svm"
+        x402 "github.com/x402-foundation/x402/go/v2"
+        x402http "github.com/x402-foundation/x402/go/v2/http"
+        evm "github.com/x402-foundation/x402/go/v2/mechanisms/evm/exact/client"
+        svm "github.com/x402-foundation/x402/go/v2/mechanisms/svm/exact/client"
+        evmsigners "github.com/x402-foundation/x402/go/v2/signers/evm"
+        svmsigners "github.com/x402-foundation/x402/go/v2/signers/svm"
     )
 
     // Create signers

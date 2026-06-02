@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"sync"
 
-	"github.com/x402-foundation/x402/go/types"
+	"github.com/x402-foundation/x402/go/v2/types"
 )
 
 // x402Client manages payment mechanisms and creates payment payloads

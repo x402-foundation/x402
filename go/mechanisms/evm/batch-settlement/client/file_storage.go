@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	batchsettlement "github.com/x402-foundation/x402/go/mechanisms/evm/batch-settlement"
+	batchsettlement "github.com/x402-foundation/x402/go/v2/mechanisms/evm/batch-settlement"
 )
 
 // FileClientChannelStorage persists each channel's client context as

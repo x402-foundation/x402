@@ -1,6 +1,6 @@
 {
   "name": "@x402/hedera",
-  "version": "2.12.0",
+  "version": "2.13.2",
   "main": "./dist/cjs/index.js",
   "module": "./dist/esm/index.js",
   "types": "./dist/cjs/index.d.ts",
@@ -22,8 +22,8 @@
     "hedera"
   ],
   "license": "Apache-2.0",
-  "author": "Coinbase Inc.",
-  "repository": "https://github.com/coinbase/x402",
+  "author": "x402 Foundation",
+  "repository": "https://github.com/x402-foundation/x402",
   "description": "x402 Payment Protocol Hedera Implementation",
   "devDependencies": {
     "@eslint/js": "^9.24.0",
@@ -43,7 +43,7 @@
     "vitest": "^3.0.5"
   },
   "dependencies": {
-    "@x402/core": "workspace:*",
+    "@x402/core": "workspace:~",
     "@hiero-ledger/sdk": "2.80.0"
   },
   "exports": {

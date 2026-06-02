@@ -1,5 +1,24 @@
 # @x402/aptos
 
+## 2.14.0
+
+### Minor Changes
+
+- 5bc2c72: Fixed a security vulnerability where an attacker could submit a sponsored transaction with an unbounded `gas_unit_price`, draining the facilitator's APT balance. Added a `MAX_GAS_UNIT_PRICE` ceiling (1,000 Octas, 10× the Aptos protocol minimum) checked in `verify()` before the fee-payer signature step.
+- Updated dependencies [be788e0]
+- Updated dependencies [0af31dd]
+  - @x402/core@2.14.0
+
+## 2.13.0
+
+### Minor Changes
+
+- Updated dependencies [ad08a9a]
+- Updated dependencies [5fca9f3]
+- Updated dependencies [95f2094]
+- Updated dependencies [49ea054]
+  - @x402/core@2.13.0
+
 ## 2.12.0
 
 ### Minor Changes

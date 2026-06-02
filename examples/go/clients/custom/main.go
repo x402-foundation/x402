@@ -12,11 +12,11 @@ import (
 	"time"
 
 	"github.com/joho/godotenv"
-	x402 "github.com/x402-foundation/x402/go"
-	exactevm "github.com/x402-foundation/x402/go/mechanisms/evm/exact/client"
-	uptoevm "github.com/x402-foundation/x402/go/mechanisms/evm/upto/client"
-	evmsigners "github.com/x402-foundation/x402/go/signers/evm"
-	"github.com/x402-foundation/x402/go/types"
+	x402 "github.com/x402-foundation/x402/go/v2"
+	exactevm "github.com/x402-foundation/x402/go/v2/mechanisms/evm/exact/client"
+	uptoevm "github.com/x402-foundation/x402/go/v2/mechanisms/evm/upto/client"
+	evmsigners "github.com/x402-foundation/x402/go/v2/signers/evm"
+	"github.com/x402-foundation/x402/go/v2/types"
 )
 
 /**

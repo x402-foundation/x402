@@ -69,3 +69,4 @@ export const ErrEip2612DeadlineExpired = "eip2612_deadline_expired";
 // Shared settle errors
 export const ErrUnsupportedPayloadType = "unsupported_payload_type";
 export const ErrInvalidTransactionState = "invalid_transaction_state";
+export const ErrFactoryNotAllowed = "eip6492_factory_not_allowed";

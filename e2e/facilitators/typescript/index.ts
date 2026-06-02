@@ -38,7 +38,7 @@ import { ExactEvmScheme } from "@x402/evm/exact/facilitator";
 import { UptoEvmScheme } from "@x402/evm/upto/facilitator";
 import { ExactEvmSchemeV1 } from "@x402/evm/exact/v1/facilitator";
 import { NETWORKS as EVM_V1_NETWORKS } from "@x402/evm/v1";
-import { BAZAAR, extractDiscoveryInfo } from "@x402/extensions/bazaar";
+import { BAZAAR, extractDiscoveryInfo, type DiscoveryResource } from "@x402/extensions/bazaar";
 import {
   EIP2612_GAS_SPONSORING,
   createErc20ApprovalGasSponsoringExtension,
@@ -542,14 +542,20 @@ facilitator
         ) {
           resourceUrl = `mcp://tool/${discovered.toolName}`;
         }
-        bazaarCatalog.catalogResource(
-          resourceUrl,
-          action,
-          discovered.x402Version,
-          discovered.discoveryInfo,
-          context.requirements,
-          discovered.routeTemplate,
-        );
+        const catalogEntry: DiscoveryResource = {
+          resource: resourceUrl,
+          type: discovered.discoveryInfo.input.type,
+          x402Version: discovered.x402Version,
+          accepts: [context.requirements],
+          lastUpdated: new Date().toISOString(),
+          description: discovered.description,
+          mimeType: discovered.mimeType,
+          serviceName: discovered.serviceName,
+          tags: discovered.tags,
+          iconUrl: discovered.iconUrl,
+          extensions: discovered.extensions,
+        };
+        bazaarCatalog.add(catalogEntry);
         console.log(`📦 Discovered resource: ${action} ${resourceUrl}`);
       }
     }

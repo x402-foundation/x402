@@ -19,9 +19,9 @@ import (
 	"github.com/ethereum/go-ethereum/signer/core/apitypes"
 	solana "github.com/gagliardetto/solana-go"
 	"github.com/gagliardetto/solana-go/rpc"
-	"github.com/x402-foundation/x402/go/extensions/erc20approvalgassponsor"
-	evmmech "github.com/x402-foundation/x402/go/mechanisms/evm"
-	svmmech "github.com/x402-foundation/x402/go/mechanisms/svm"
+	"github.com/x402-foundation/x402/go/v2/extensions/erc20approvalgassponsor"
+	evmmech "github.com/x402-foundation/x402/go/v2/mechanisms/evm"
+	svmmech "github.com/x402-foundation/x402/go/v2/mechanisms/svm"
 )
 
 const (

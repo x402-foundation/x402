@@ -1,5 +1,26 @@
 # @x402/svm Changelog
 
+## 2.14.0
+
+### Minor Changes
+
+- ba2eb68: Added simulation-based smart wallet verification (Path 2) to the SVM exact facilitator. When `enableSmartWalletVerification` is set, transactions that the static positional path rejects (smart-wallet-wrapped layouts, extra instructions) are re-verified by simulating the transaction and inspecting CPI inner instructions for a matching `TransferChecked` — so a facilitator can accept payments from any allowlisted smart-wallet program (Squads, Swig, SPL Governance, Metaplex Core, Lighthouse) without a per-wallet parser. Includes fee-payer isolation with Address Lookup Table resolution, operator-configurable compute-budget caps, post-settlement transfer verification (TOCTOU defense), and seller-required memo enforcement at parity with the static path. The static path's instruction-count ceiling was raised from 6 to 7 so wallets that inject multiple Lighthouse assertions (e.g. Phantom) verify without falling back to simulation.
+- 3ba526c: Fixed SVM exact facilitator deduplication to key on the transaction message hash rather than the full signed-transaction bytes, preventing an attacker from bypassing the cache by randomizing the mutable fee-payer signature slot.
+- 588e038: Fixed a security issue in the SVM exact facilitator where the compute unit price cap was silently bypassed. `verifyComputePriceInstruction` read `parsedInstruction.microLamports` (always `undefined`) instead of the correct `parsedInstruction.data.microLamports`, causing the comparison against the 5 µLamport/CU maximum to always evaluate to false. An attacker could include an arbitrarily large `SetComputeUnitPrice` instruction and the facilitator would sign as fee payer, paying the inflated priority fee.
+- Updated dependencies [be788e0]
+- Updated dependencies [0af31dd]
+  - @x402/core@2.14.0
+
+## 2.13.0
+
+### Minor Changes
+
+- Updated dependencies [ad08a9a]
+- Updated dependencies [5fca9f3]
+- Updated dependencies [95f2094]
+- Updated dependencies [49ea054]
+  - @x402/core@2.13.0
+
 ## 2.12.0
 
 ### Minor Changes

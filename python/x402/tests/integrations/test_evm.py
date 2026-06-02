@@ -218,7 +218,7 @@ class TestEvmIntegrationV2:
             ["eip155:84532"],
             ExactEvmFacilitatorScheme(
                 self.facilitator_signer,
-                ExactEvmSchemeConfig(deploy_erc4337_with_eip6492=True),
+                ExactEvmSchemeConfig(),
             ),
         )
 

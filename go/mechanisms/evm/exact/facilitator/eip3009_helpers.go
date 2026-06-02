@@ -9,7 +9,7 @@ import (
 	"github.com/ethereum/go-ethereum/accounts/abi"
 	"github.com/ethereum/go-ethereum/common"
 
-	"github.com/x402-foundation/x402/go/mechanisms/evm"
+	"github.com/x402-foundation/x402/go/v2/mechanisms/evm"
 )
 
 // ParsedEIP3009Authorization contains the parsed transfer arguments used by verify and settle.
@@ -427,6 +427,18 @@ func HasEIP6492Deployment(sigData *evm.ERC6492SignatureData) bool {
 
 	var zeroFactory [20]byte
 	return sigData.Factory != zeroFactory && len(sigData.FactoryCalldata) > 0
+}
+
+// IsFactoryAllowed reports whether factory is present in allowedFactories (case-insensitive).
+// An empty allowlist denies all factories, preventing unconstrained arbitrary call injection.
+func IsFactoryAllowed(factory [20]byte, allowedFactories []string) bool {
+	factoryHex := strings.ToLower(common.BytesToAddress(factory[:]).Hex())
+	for _, allowed := range allowedFactories {
+		if strings.ToLower(allowed) == factoryHex {
+			return true
+		}
+	}
+	return false
 }
 
 func mustNonce(nonce string) [32]byte {

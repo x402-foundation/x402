@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { ExactSvmPayload } from "../../types/verify/x402Specs";
 import {
   getBase64EncodedWireTransaction,
@@ -19,6 +20,20 @@ import {
 } from "@solana/kit";
 import { TOKEN_PROGRAM_ADDRESS } from "@solana-program/token";
 import { TOKEN_2022_PROGRAM_ADDRESS } from "@solana-program/token-2022";
+
+/**
+ * Compute a stable, immutable cache key for a decoded transaction by hashing its
+ * message bytes. The fee-payer signature (slot 0) is overwritten by the facilitator
+ * before broadcast, so an attacker can randomize those bytes to bypass a wire-bytes
+ * cache key. The message is what every signer commits to, making its hash a reliable
+ * payment identity.
+ *
+ * @param transaction - Decoded transaction whose message bytes to hash
+ * @returns Base64-encoded SHA-256 hash of the transaction message bytes
+ */
+export function transactionMessageHash(transaction: Transaction): string {
+  return createHash("sha256").update(Buffer.from(transaction.messageBytes)).digest("base64");
+}
 
 /**
  * Given an object with a base64 encoded transaction, decode the

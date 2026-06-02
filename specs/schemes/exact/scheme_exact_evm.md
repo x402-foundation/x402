@@ -12,7 +12,7 @@ This is implemented via one of three asset transfer methods, depending on the to
 | **2. Permit2**      | Tokens without EIP-3009. Uses a Proxy + Permit2.             | **Universal Fallback** (Works for any ERC-20). | One-time use                        |
 | **3. ERC-7710**      | Smart accounts with delegation support.                              | **Smart Account Option** (Paid from ERC-7710 compatible account). | One-time use and multi-use |
 
-If no `assetTransferMethod` is specified in the payload, the implementation should prioritize `eip3009` (if compatible) and then `permit2`.
+If no `assetTransferMethod` is specified in `PaymentRequired.extra`, clients should default to `"eip3009"`. Payment payloads that use a non-default transfer method should echo the selected `assetTransferMethod` in `accepted.extra`.
 
 In all cases, the Facilitator cannot modify the amount or destination. They serve only as the transaction broadcaster.
 
@@ -68,7 +68,7 @@ The `payload` field must contain:
 
 **`extra` field definitions specific to `eip3009`:**
 
-- `extra.assetTransferMethod` (required): MUST be `"eip3009"`.
+- `extra.assetTransferMethod` (optional in `PaymentRequired`, default `"eip3009"`): if present, MUST be `"eip3009"`.
 - `extra.name` (required): The EIP-712 domain name of the token contract. Used for `transferWithAuthorization` signature construction.
 - `extra.version` (required): The EIP-712 domain version of the token contract. Used for `transferWithAuthorization` signature construction.
 

@@ -1,3 +1,25 @@
+## v2.14.0 - 2026-05-29
+### Fixed
+- Update module path to `github.com/x402-foundation/x402/go/v2` so consumers can resolve tagged releases (e.g. `go get github.com/x402-foundation/x402/go/v2@latest`) instead of pseudo-versions.
+
+## v2.13.0 - 2026-05-29
+### Added
+- Added startup-time bazaar extension validation in Gin, Echo, and net/http middleware using JSON-schema validation from the bazaar extension package
+### Fixed
+- Fix security bug where a facilitator HTTP-200 response with `isValid:false` was not treated as a hard gate failure — `VerifyPaymentWithExtensions` now returns a `*VerifyError` when the facilitator explicitly rejects a payment, preventing any structurally well-formed payment header from bypassing the protected handler
+- **[Breaking for facilitator implementers using ERC-4337 smart wallet deployment]** Fixed ERC-6492 factory call injection vulnerability in EVM exact settlement (v1 and v2) and simplified the configuration API. The `DeployERC4337WithEIP6492` bool field has been removed from `ExactEvmSchemeConfig` and `ExactEvmSchemeV1Config`. `EIP6492AllowedFactories []string` is now the sole gate: settlement deploys an undeployed smart wallet if and only if its factory address is present in the allowlist (case-insensitive). An empty or nil list disables the feature entirely and returns `eip6492_factory_not_allowed`. Facilitators previously using `DeployERC4337WithEIP6492: true` must remove that field and populate `EIP6492AllowedFactories` with every factory address they trust.
+- Fixed SVM exact facilitator deduplication to key on the transaction message hash rather than the full signed-transaction bytes, preventing an attacker from bypassing the cache by randomizing the mutable fee-payer signature slot.
+- Thread Bazaar service metadata from HTTP `RouteConfig` and MCP `PaymentWrapperConfig` into `PaymentRequired.resource`, and extend bazaar facilitator discovery
+
+## v2.12.0 - 2026-05-22
+### Added
+- Add HPP mainnet (chain ID 190415) and HPP Sepolia (chain ID 181228) support with USDC.e (Bridged USDC) as the default stablecoin
+- Add ADI Chain (chain ID 36900) support with USDC.e as the default stablecoin
+- Add a curated testnet faucet map to the paywall plus PaywallConfig.FaucetURLs (per-chain override keyed by CAIP-2). Unmapped chains render "No faucet configured." instead of a fallback link.
+- Added checks for 0 amount to settle/refund for batch-settlement
+### Fixed
+- unwrap ERC-6492 signatures for exact/upto permit2 flows and batch-settlement
+
 ## v2.11.0 - 2026-05-11
 ### Added
 - Add Radius Network (chain ID 723487) and Radius Testnet (chain ID 72344) support with SBC as the default stablecoin

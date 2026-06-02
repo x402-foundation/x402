@@ -19,6 +19,7 @@ from .hook_adapters import (
 from .hook_policy import (
     assert_accepts_additive_extra_after_scheme_enrich,
     assert_accepts_allowlisted_after_extension_enrich,
+    assert_additive_payload_enrichment,
     assert_additive_settlement_extra,
     assert_settle_response_core_unchanged,
     merge_additive_settlement_extra,
@@ -1189,6 +1190,21 @@ class x402ResourceServerBase:
             scheme = payload.get_scheme()
             network = payload.get_network()
 
+            # Enrich the settlement payload before sending to facilitator (e.g. refund enrichment).
+            # Use a separate facilitator_payload so hooks always operate on the original payload
+            # (they key request contexts by id(payload), which model_copy changes).
+            facilitator_payload = payload
+            scheme_server = self._find_registered_scheme(scheme, network)
+            enrich_payload = getattr(scheme_server, "enrich_settlement_payload", None)
+            if enrich_payload is not None:
+                enrichment = enrich_payload(context)
+                if enrichment is not None:
+                    label = f'scheme "{scheme}" enrich_settlement_payload'
+                    assert_additive_payload_enrichment(payload.payload, enrichment, label)
+                    facilitator_payload = payload.model_copy(
+                        update={"payload": {**payload.payload, **enrichment}}
+                    )
+
             # Find facilitator client
             client = self._facilitator_clients_map.get(network, {}).get(scheme)
             if client is None:
@@ -1198,7 +1214,7 @@ class x402ResourceServerBase:
             settle_result: SettleResponse = yield (
                 "call_facilitator",
                 client,
-                ("settle", payload, requirements),
+                ("settle", facilitator_payload, requirements),
             )
 
             # Check if settlement failed

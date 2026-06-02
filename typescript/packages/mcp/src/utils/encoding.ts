@@ -103,16 +103,18 @@ export function extractPaymentFromMeta(
  * @param params - Original request params containing name and optional arguments
  * @param params.name - The tool name
  * @param params.arguments - Optional tool arguments
+ * @param params._meta - Optional existing metadata to preserve
  * @param paymentPayload - Payment payload to attach
  * @returns New params object with payment in _meta
  */
 export function attachPaymentToMeta(
-  params: { name: string; arguments?: Record<string, unknown> },
+  params: { name: string; arguments?: Record<string, unknown>; _meta?: Record<string, unknown> },
   paymentPayload: PaymentPayload,
 ): MCPRequestParamsWithMeta {
   return {
     ...params,
     _meta: {
+      ...params._meta,
       [MCP_PAYMENT_META_KEY]: paymentPayload,
     },
   };
@@ -155,16 +157,18 @@ interface ResultContentItem {
  * @param result - Original result object containing content and optional isError flag
  * @param result.content - The tool result content array
  * @param result.isError - Optional flag indicating if the result is an error
+ * @param result._meta - Optional existing metadata to preserve
  * @param settleResponse - Settlement response to attach
  * @returns New result object with payment response in _meta
  */
 export function attachPaymentResponseToMeta(
-  result: { content: ResultContentItem[]; isError?: boolean },
+  result: { content: ResultContentItem[]; isError?: boolean; _meta?: Record<string, unknown> },
   settleResponse: SettleResponse,
 ): MCPResultWithMeta {
   return {
     ...result,
     _meta: {
+      ...result._meta,
       [MCP_PAYMENT_RESPONSE_META_KEY]: settleResponse,
     },
   };

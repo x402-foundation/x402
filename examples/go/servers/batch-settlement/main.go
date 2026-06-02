@@ -14,11 +14,11 @@ import (
 	"time"
 
 	"github.com/joho/godotenv"
-	x402 "github.com/x402-foundation/x402/go"
-	x402http "github.com/x402-foundation/x402/go/http"
-	nethttpmw "github.com/x402-foundation/x402/go/http/nethttp"
-	"github.com/x402-foundation/x402/go/mechanisms/evm/batch-settlement"
-	batchedserver "github.com/x402-foundation/x402/go/mechanisms/evm/batch-settlement/server"
+	x402 "github.com/x402-foundation/x402/go/v2"
+	x402http "github.com/x402-foundation/x402/go/v2/http"
+	nethttpmw "github.com/x402-foundation/x402/go/v2/http/nethttp"
+	"github.com/x402-foundation/x402/go/v2/mechanisms/evm/batch-settlement"
+	batchedserver "github.com/x402-foundation/x402/go/v2/mechanisms/evm/batch-settlement/server"
 )
 
 const (

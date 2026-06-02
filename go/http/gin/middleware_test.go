@@ -7,16 +7,19 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/gin-gonic/gin"
-	x402 "github.com/x402-foundation/x402/go"
-	x402http "github.com/x402-foundation/x402/go/http"
-	"github.com/x402-foundation/x402/go/types"
+	x402 "github.com/x402-foundation/x402/go/v2"
+	x402http "github.com/x402-foundation/x402/go/v2/http"
+	"github.com/x402-foundation/x402/go/v2/types"
 )
 
 // ============================================================================
@@ -1590,5 +1593,138 @@ func TestPaymentMiddleware_StreamingDoesNotLeakHeaders(t *testing.T) {
 		if !bytes.Contains([]byte(body), []byte(expected)) {
 			t.Errorf("Expected body to contain chunk %d (%q), got: %s", i, expected, body)
 		}
+	}
+}
+
+// ============================================================================
+// Bazaar Extension Validation Tests
+// ============================================================================
+
+func captureStdout(f func()) string {
+	old := os.Stdout
+	r, w, _ := os.Pipe()
+	os.Stdout = w
+	f()
+	w.Close()
+	os.Stdout = old
+	var buf bytes.Buffer
+	io.Copy(&buf, r) //nolint:errcheck
+	return buf.String()
+}
+
+func TestValidateBazaarExtensions_NoBazaar(t *testing.T) {
+	routes := x402http.RoutesConfig{
+		"GET /api": {
+			Accepts: x402http.PaymentOptions{
+				{Scheme: "exact", PayTo: "0xtest", Price: "$1.00", Network: "eip155:8453"},
+			},
+		},
+	}
+
+	output := captureStdout(func() {
+		validateBazaarExtensions(routes)
+	})
+
+	if strings.Contains(output, "Warning") || strings.Contains(output, "bazaar") {
+		t.Errorf("Expected no bazaar warning, got: %s", output)
+	}
+}
+
+func TestValidateBazaarExtensions_ValidExtension(t *testing.T) {
+	routes := x402http.RoutesConfig{
+		"GET /api": {
+			Accepts: x402http.PaymentOptions{
+				{Scheme: "exact", PayTo: "0xtest", Price: "$1.00", Network: "eip155:8453"},
+			},
+			Extensions: map[string]interface{}{
+				"bazaar": map[string]interface{}{
+					"info": map[string]interface{}{
+						"input": map[string]interface{}{
+							"type":   "http",
+							"method": "GET",
+						},
+					},
+					"schema": map[string]interface{}{
+						"type": "object",
+						"properties": map[string]interface{}{
+							"input": map[string]interface{}{"type": "object"},
+						},
+						"required": []interface{}{"input"},
+					},
+				},
+			},
+		},
+	}
+
+	output := captureStdout(func() {
+		validateBazaarExtensions(routes)
+	})
+
+	if strings.Contains(output, "Warning") || strings.Contains(output, "invalid") {
+		t.Errorf("Expected no warning for valid bazaar extension, got: %s", output)
+	}
+}
+
+func TestValidateBazaarExtensions_InvalidExtension(t *testing.T) {
+	routes := x402http.RoutesConfig{
+		"GET /api": {
+			Accepts: x402http.PaymentOptions{
+				{Scheme: "exact", PayTo: "0xtest", Price: "$1.00", Network: "eip155:8453"},
+			},
+			Extensions: map[string]interface{}{
+				"bazaar": map[string]interface{}{
+					"info": map[string]interface{}{
+						"input": map[string]interface{}{
+							"type":   "http",
+							"method": "GET",
+						},
+					},
+					"schema": map[string]interface{}{
+						"type": "object",
+						"properties": map[string]interface{}{
+							"input": map[string]interface{}{"type": "object"},
+							"jobs":  map[string]interface{}{"type": "array"},
+							"count": map[string]interface{}{"type": "integer"},
+						},
+						"required": []interface{}{"input", "jobs", "count"},
+					},
+				},
+			},
+		},
+	}
+
+	output := captureStdout(func() {
+		validateBazaarExtensions(routes)
+	})
+
+	if !strings.Contains(output, "Warning") {
+		t.Errorf("Expected warning for invalid bazaar extension, got: %q", output)
+	}
+	if !strings.Contains(output, "bazaar") {
+		t.Errorf("Expected 'bazaar' in warning output, got: %q", output)
+	}
+}
+
+func TestValidateBazaarExtensions_MalformedExtension(t *testing.T) {
+	routes := x402http.RoutesConfig{
+		"GET /api": {
+			Accepts: x402http.PaymentOptions{
+				{Scheme: "exact", PayTo: "0xtest", Price: "$1.00", Network: "eip155:8453"},
+			},
+			Extensions: map[string]interface{}{
+				"bazaar": "not-an-object",
+			},
+		},
+	}
+
+	output := captureStdout(func() {
+		validateBazaarExtensions(routes)
+	})
+
+	if !strings.Contains(output, "Warning") {
+		t.Errorf("Expected warning for malformed bazaar extension, got: %q", output)
+	}
+	if !strings.Contains(output, "malformed") {
+		t.Errorf("Expected 'malformed' in warning output, got: %q", output)
 	}
 }

@@ -1,5 +1,25 @@
 # @x402/paywall Changelog
 
+## 2.14.0
+
+### Minor Changes
+
+- Updated dependencies [be788e0]
+- Updated dependencies [0af31dd]
+  - @x402/core@2.14.0
+
+## 2.13.0
+
+### Minor Changes
+
+- e35becf: Add `faucetUrls?: Record<network, string>` to `PaywallConfig` plus a curated testnet faucet map in `@x402/paywall`. Server overrides win over the curated map; unmapped chains render "No faucet configured." rather than a fallback link.
+- f3deb60: decimals.ts now only lists EVM networks whose default stablecoin is not 6 decimals, so new 6-decimal chains in DEFAULT_STABLECOINS no longer need a paywall regen for amount display
+- Updated dependencies [ad08a9a]
+- Updated dependencies [5fca9f3]
+- Updated dependencies [95f2094]
+- Updated dependencies [49ea054]
+  - @x402/core@2.13.0
+
 ## 2.12.0
 
 ### Minor Changes

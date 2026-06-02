@@ -1,5 +1,5 @@
 // PaymentInfo struct for AuthCaptureEscrow (matches base/commerce-payments contract).
-// Field names are canonical Solidity — do not rename. Spec-level field renames
+// Field names are canonical Solidity; do not rename. Spec-level field renames
 // (captureAuthorizer, captureDeadline, refundDeadline, feeRecipient) live at the
 // extra/wire layer; this struct preserves the canonical EIP-712 typehash.
 export const PAYMENT_INFO_COMPONENTS = [

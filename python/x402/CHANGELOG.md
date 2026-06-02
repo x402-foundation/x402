@@ -2,6 +2,42 @@
 
 <!-- towncrier release notes start -->
 
+## [2.12.0] - 2026-05-29
+
+### Fixed
+
+- Export documented Python MCP client factory helpers from ``x402.mcp``. ([#export-mcp-client-factories](https://github.com/x402-foundation/x402/pull/export-mcp-client-factories))
+- Preserve existing FastMCP ``CallToolResult`` metadata when attaching x402 payment responses. ([#preserve-fastmcp-result-meta](https://github.com/x402-foundation/x402/pull/preserve-fastmcp-result-meta))
+- Fixed SVM exact facilitator deduplication to key on the transaction message hash rather than the full signed-transaction bytes, preventing an attacker from bypassing the cache by randomizing the mutable fee-payer signature slot. ([#2482](https://github.com/x402-foundation/x402/pull/2482))
+- Thread Bazaar service metadata from HTTP `RouteConfig` and MCP `PaymentWrapperConfig` into `PaymentRequired.resource`, and extend bazaar facilitator discovery/catalog types so verified payments persist description, MIME type, service metadata, and echoed extension payloads. ([#2496](https://github.com/x402-foundation/x402/pull/2496))
+- **[Breaking for facilitator implementers using ERC-4337 smart wallet deployment]** Fixed ERC-6492 factory call injection vulnerability in EVM exact settlement (v1 and v2) and simplified the configuration API. The `deploy_erc4337_with_eip6492` boolean field has been removed from `ExactEvmSchemeConfig` and `ExactEvmSchemeV1Config`. `eip6492_allowed_factories: list[str]` is now the sole gate: settlement deploys an undeployed smart wallet if and only if its factory address is present in the allowlist (case-insensitive). An empty or omitted list disables the feature entirely and returns `eip6492_factory_not_allowed`. Facilitators previously using `deploy_erc4337_with_eip6492=True` must remove that parameter and populate `eip6492_allowed_factories` with every factory address they trust.
+
+### Added
+
+- Thread bazaar service metadata fields (`service_name`, `tags`, `icon_url`) from `RouteConfig` through to `ResourceInfo`. The wire-format schema fields landed in #2200 but the server-side `RouteConfig` had no way to populate them — servers wanting rich Bazaar listings had to bypass the SDK. This wires the missing plumbing. ([#route-config-service-metadata](https://github.com/x402-foundation/x402/pull/route-config-service-metadata))
+- Added startup-time JSON-schema validation for bazaar discovery extensions in FastAPI and Flask middleware ([#671](https://github.com/x402-foundation/x402/pull/671))
+
+### Misc
+
+- Add unit tests for `sign_eip2612_permit` in the EIP-2612 gas sponsoring extension covering nonce read, EIP-712 domain/types/message construction, and return shape (mirrors the `sign_erc20_approval_transaction` test pattern). ([#python-eip2612-permit-signing-tests](https://github.com/x402-foundation/x402/pull/python-eip2612-permit-signing-tests))
+
+
+## [2.11.0] - 2026-05-22
+
+### Fixed
+
+- unwrap ERC-6492 signatures for permit2 flows ([#2352](https://github.com/x402-foundation/x402/pull/2352))
+
+### Added
+
+- Add HPP mainnet (chain ID 190415) and HPP Sepolia (chain ID 181228) support with USDC.e (Bridged USDC) as the default stablecoin ([#add-hpp-chains-default-stablecoin](https://github.com/x402-foundation/x402/pull/add-hpp-chains-default-stablecoin))
+- Add ADI Chain (chain ID 36900) support with USDC.e as the default stablecoin ([#adi-chain](https://github.com/x402-foundation/x402/pull/adi-chain))
+- Added `batch-settlement-evm` scheme: an EVM payment-channel mechanism that batches multiple requests off-chain using cumulative vouchers and submits a single on-chain claim instead of one transaction per payment. Includes `BatchSettlementEvmScheme` for client and server, `BatchSettlementEvmFacilitator` for on-chain deposit, claim, and cooperative refund execution, and `BatchSettlementChannelManager` with auto-claim/settle scheduling and `FileChannelStorage` for persistent server-side channel state. ([#batch-settlement-evm](https://github.com/x402-foundation/x402/pull/batch-settlement-evm))
+- Added a curated testnet faucet map to the paywall plus `PaywallConfig.faucet_urls` (per-chain override keyed by CAIP-2). Unmapped chains render "No faucet configured." instead of a fallback link. Available via `PaywallBuilder.with_config(faucet_urls=...)`. ([#2160](https://github.com/x402-foundation/x402/pull/2160))
+- Added missing lifecycle hooks and extension/scheme-level adapter pattern ([#2388](https://github.com/x402-foundation/x402/pull/2388))
+- Added siwx extension ([#2393](https://github.com/x402-foundation/x402/pull/2393))
+
+
 ## [2.10.0] - 2026-05-13
 
 ### Added

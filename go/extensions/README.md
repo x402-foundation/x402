@@ -24,7 +24,7 @@ The extension helpers facilitate the conversation between:
 Servers use helpers to attach extension metadata to payment requirements:
 
 ```go
-import "github.com/x402-foundation/x402/go/extensions/bazaar"
+import "github.com/x402-foundation/x402/go/v2/extensions/bazaar"
 
 // Server declares: "This resource supports Bazaar discovery"
 extension, _ := bazaar.DeclareDiscoveryExtension(...)
@@ -72,7 +72,7 @@ PaymentPayload (Client → Server → Facilitator):
 Recipients (clients, facilitators) can extract extension data:
 
 ```go
-import "github.com/x402-foundation/x402/go/extensions/bazaar"
+import "github.com/x402-foundation/x402/go/v2/extensions/bazaar"
 
 // Facilitator extracts from client payment (in hook context)
 discovered, _ := bazaar.ExtractDiscoveredResourceFromPaymentPayload(
@@ -151,7 +151,7 @@ The **Bazaar** extension is one example of a server-facilitator extension for au
 
 **Import Path:**
 ```
-github.com/x402-foundation/x402/go/extensions/bazaar
+github.com/x402-foundation/x402/go/v2/extensions/bazaar
 ```
 
 **Purpose:**
@@ -171,9 +171,9 @@ github.com/x402-foundation/x402/go/extensions/bazaar
 
 ```go
 import (
-    "github.com/x402-foundation/x402/go/extensions/bazaar"
-    mcp402 "github.com/x402-foundation/x402/go/mcp"
-    "github.com/x402-foundation/x402/go/types"
+    "github.com/x402-foundation/x402/go/v2/extensions/bazaar"
+    mcp402 "github.com/x402-foundation/x402/go/v2/mcp"
+    "github.com/x402-foundation/x402/go/v2/types"
 )
 
 weatherDiscovery, _ := bazaar.DeclareMcpDiscoveryExtension(bazaar.DeclareMcpDiscoveryConfig{
@@ -274,7 +274,7 @@ The `types/` subdirectory contains shared type definitions:
 
 **Import Path:**
 ```
-github.com/x402-foundation/x402/go/extensions/types
+github.com/x402-foundation/x402/go/v2/extensions/types
 ```
 
 **Exports:**

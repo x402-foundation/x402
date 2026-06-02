@@ -5,7 +5,7 @@
 The `batch-settlement` scheme on the Cloudflare network `cloudflare:402` enables access to resources through cryptographically signed payment commitments that are settled later through the network's infrastructure.
 
 **Network Identifier**: `cloudflare:402`
-**Trust Model**: Credit-backed (see [batch_settlement.md](./batch_settlement.md#credit-backed))
+**Trust Model**: Credit-backed (see [scheme_batch_settlement.md](./scheme_batch_settlement.md#credit-backed))
 
 **Authentication Method**: This implementation uses **HTTP Message Signatures (RFC 9421)** to authenticate payment commitments. The network acts as a trusted intermediary to provide immediate resource access while settlement is batched and handled later.
 

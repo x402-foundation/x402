@@ -1,5 +1,26 @@
 # @x402/mcp Changelog
 
+## 2.14.0
+
+### Minor Changes
+
+- 4a5fd5b: Preserve existing MCP response metadata when adding x402 payment metadata.
+- be788e0: Thread Bazaar service metadata from HTTP `RouteConfig` and MCP `PaymentWrapperConfig` into `PaymentRequired.resource`, and extend bazaar facilitator discovery/catalog types so verified payments persist description, MIME type, service metadata, and echoed extension payloads.
+- Updated dependencies [be788e0]
+- Updated dependencies [0af31dd]
+  - @x402/core@2.14.0
+
+## 2.13.0
+
+### Minor Changes
+
+- 5fca9f3: Implemented missing hook primitives needed for batch-settlement aligning with http transport
+- Updated dependencies [ad08a9a]
+- Updated dependencies [5fca9f3]
+- Updated dependencies [95f2094]
+- Updated dependencies [49ea054]
+  - @x402/core@2.13.0
+
 ## 2.12.0
 
 ### Minor Changes

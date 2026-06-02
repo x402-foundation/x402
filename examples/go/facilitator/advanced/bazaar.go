@@ -11,12 +11,11 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	x402 "github.com/x402-foundation/x402/go"
-	"github.com/x402-foundation/x402/go/extensions/bazaar"
-	exttypes "github.com/x402-foundation/x402/go/extensions/types"
-	evm "github.com/x402-foundation/x402/go/mechanisms/evm/exact/facilitator"
-	uptoevm "github.com/x402-foundation/x402/go/mechanisms/evm/upto/facilitator"
-	svm "github.com/x402-foundation/x402/go/mechanisms/svm/exact/facilitator"
+	x402 "github.com/x402-foundation/x402/go/v2"
+	"github.com/x402-foundation/x402/go/v2/extensions/bazaar"
+	evm "github.com/x402-foundation/x402/go/v2/mechanisms/evm/exact/facilitator"
+	uptoevm "github.com/x402-foundation/x402/go/v2/mechanisms/evm/upto/facilitator"
+	svm "github.com/x402-foundation/x402/go/v2/mechanisms/svm/exact/facilitator"
 )
 
 /**
@@ -26,21 +25,9 @@ import (
  * catalogs discovered x402 resources.
  */
 
-// DiscoveredResource represents a discovered x402 resource for the bazaar catalog
-type DiscoveredResource struct {
-	Resource      string                     `json:"resource"`
-	Description   string                     `json:"description,omitempty"`
-	MimeType      string                     `json:"mimeType,omitempty"`
-	Type          string                     `json:"type"`
-	X402Version   int                        `json:"x402Version"`
-	Accepts       []x402.PaymentRequirements `json:"accepts"`
-	DiscoveryInfo *exttypes.DiscoveryInfo    `json:"discoveryInfo,omitempty"`
-	LastUpdated   string                     `json:"lastUpdated"`
-}
-
 // BazaarCatalog stores discovered resources
 type BazaarCatalog struct {
-	resources map[string]DiscoveredResource
+	resources map[string]bazaar.DiscoveryResource
 	mutex     sync.RWMutex
 }
 
@@ -63,20 +50,20 @@ func setExtensionResponsesHeader(c *gin.Context) {
 
 func NewBazaarCatalog() *BazaarCatalog {
 	return &BazaarCatalog{
-		resources: make(map[string]DiscoveredResource),
+		resources: make(map[string]bazaar.DiscoveryResource),
 	}
 }
 
-func (c *BazaarCatalog) Add(res DiscoveredResource) {
+func (c *BazaarCatalog) Add(res bazaar.DiscoveryResource) {
 	c.mutex.Lock()
 	defer c.mutex.Unlock()
 	c.resources[res.Resource] = res
 }
 
-func (c *BazaarCatalog) GetAll() []DiscoveredResource {
+func (c *BazaarCatalog) GetAll() []bazaar.DiscoveryResource {
 	c.mutex.RLock()
 	defer c.mutex.RUnlock()
-	result := make([]DiscoveredResource, 0, len(c.resources))
+	result := make([]bazaar.DiscoveryResource, 0, len(c.resources))
 	for _, r := range c.resources {
 		result = append(result, r)
 	}
@@ -84,16 +71,25 @@ func (c *BazaarCatalog) GetAll() []DiscoveredResource {
 }
 
 // Search performs case-insensitive keyword matching across resource URL, type,
-// and metadata values. Pagination is not supported for in-memory keyword search.
-func (c *BazaarCatalog) Search(query, resourceType string, limit int) []DiscoveredResource {
+// description, service metadata, and extension values.
+func (c *BazaarCatalog) Search(query, resourceType string, limit int) []bazaar.DiscoveryResource {
 	c.mutex.RLock()
 	defer c.mutex.RUnlock()
 
 	needle := strings.ToLower(query)
-	var results []DiscoveredResource
+	var results []bazaar.DiscoveryResource
 
 	for _, r := range c.resources {
-		haystack := strings.ToLower(r.Resource + " " + r.Type + " " + r.Description)
+		haystack := strings.ToLower(strings.Join([]string{
+			r.Resource,
+			r.Type,
+			r.Description,
+			r.ServiceName,
+			strings.Join(r.Tags, " "),
+		}, " "))
+		for _, v := range r.Extensions {
+			haystack += " " + strings.ToLower(fmt.Sprintf("%v", v))
+		}
 		if !strings.Contains(haystack, needle) {
 			continue
 		}
@@ -134,13 +130,18 @@ func runBazaarExample(evmPrivateKey, svmPrivateKey string) error {
 		}
 	}
 
-	// Create facilitator
+	if evmSigner == nil && svmSigner == nil {
+		return fmt.Errorf("at least one of EVM_PRIVATE_KEY or SVM_PRIVATE_KEY must be set")
+	}
+
 	facilitator := x402.Newx402Facilitator()
 
 	// Register EVM scheme if signer is available
 	if evmSigner != nil {
 		evmConfig := &evm.ExactEvmSchemeConfig{
-			DeployERC4337WithEIP6492: true,
+			// Add trusted ERC-6492 factory addresses here (e.g. your chosen ERC-4337 smart wallet factory).
+			// A non-empty slice enables smart wallet deployment; an empty slice denies all factory calls.
+			EIP6492AllowedFactories: []string{},
 		}
 		facilitator.Register([]x402.Network{evmNetwork}, evm.NewExactEvmScheme(evmSigner, evmConfig))
 		facilitator.Register([]x402.Network{evmNetwork}, uptoevm.NewUptoEvmScheme(evmSigner, nil))
@@ -170,21 +171,32 @@ func runBazaarExample(evmPrivateKey, svmPrivateKey string) error {
 			fmt.Printf("   📝 Discovered resource: %s\n", discovered.ResourceURL)
 			fmt.Printf("   📝 Method: %s\n", discovered.Method)
 			fmt.Printf("   📝 X402Version: %d\n", discovered.X402Version)
+			if discovered.ServiceName != "" {
+				fmt.Printf("   📝 Service: %s\n", discovered.ServiceName)
+			}
+			if len(discovered.Tags) > 0 {
+				fmt.Printf("   📝 Tags: %s\n", strings.Join(discovered.Tags, ", "))
+			}
 
-			// Get requirements for the catalog
 			var requirements x402.PaymentRequirements
 			if err := json.Unmarshal(ctx.RequirementsBytes, &requirements); err == nil {
-				catalog.Add(DiscoveredResource{
-					Resource:      discovered.ResourceURL,
-					Description:   discovered.Description,
-					MimeType:      discovered.MimeType,
-					Type:          "http",
-					X402Version:   discovered.X402Version,
-					Accepts:       []x402.PaymentRequirements{requirements},
-					DiscoveryInfo: discovered.DiscoveryInfo,
-					LastUpdated:   time.Now().Format(time.RFC3339),
-				})
-				fmt.Printf("   ✅ Added to bazaar catalog\n")
+				reqJSON, marshalErr := json.Marshal(requirements)
+				if marshalErr == nil {
+					catalog.Add(bazaar.DiscoveryResource{
+						Resource:    discovered.ResourceURL,
+						Type:        discovered.InputType(),
+						X402Version: discovered.X402Version,
+						Accepts:     []json.RawMessage{reqJSON},
+						LastUpdated: time.Now().UTC().Format(time.RFC3339),
+						Description: discovered.Description,
+						MimeType:    discovered.MimeType,
+						ServiceName: discovered.ServiceName,
+						Tags:        discovered.Tags,
+						IconUrl:     discovered.IconUrl,
+						Extensions:  discovered.Extensions,
+					})
+					fmt.Printf("   ✅ Added to bazaar catalog\n")
+				}
 			}
 		}
 
@@ -236,7 +248,7 @@ func runBazaarExample(evmPrivateKey, svmPrivateKey string) error {
 
 		items := catalog.Search(query, resourceType, limit)
 		if items == nil {
-			items = []DiscoveredResource{}
+			items = []bazaar.DiscoveryResource{}
 		}
 
 		c.JSON(http.StatusOK, gin.H{

@@ -9,8 +9,8 @@ import (
 	"strings"
 	"testing"
 
-	x402 "github.com/x402-foundation/x402/go"
-	"github.com/x402-foundation/x402/go/types"
+	x402 "github.com/x402-foundation/x402/go/v2"
+	"github.com/x402-foundation/x402/go/v2/types"
 )
 
 // Mock HTTP adapter for testing
@@ -190,6 +190,77 @@ func TestProcessHTTPRequestPaymentRequired(t *testing.T) {
 	}
 }
 
+func TestProcessHTTPRequestServiceMetadataOnResource(t *testing.T) {
+	ctx := context.Background()
+
+	routes := RoutesConfig{
+		"GET /api/weather": {
+			Accepts: PaymentOptions{
+				{
+					Scheme:  "exact",
+					PayTo:   "0xabc",
+					Price:   "$1.00",
+					Network: "eip155:8453",
+				},
+			},
+			Description: "Weather data",
+			MimeType:    "application/json",
+			ServiceName: "Weather API",
+			Tags:        []string{"weather", "api"},
+		},
+	}
+
+	mockServer := &mockSchemeServer{scheme: "exact"}
+	mockClient := &mockFacilitatorClient{
+		supported: func(ctx context.Context) (x402.SupportedResponse, error) {
+			return x402.SupportedResponse{
+				Kinds: []x402.SupportedKind{
+					{X402Version: 2, Scheme: "exact", Network: "eip155:8453"},
+				},
+			}, nil
+		},
+	}
+
+	server := Newx402HTTPResourceServer(
+		routes,
+		x402.WithFacilitatorClient(mockClient),
+		x402.WithSchemeServer("eip155:8453", mockServer),
+	)
+	_ = server.Initialize(ctx)
+
+	adapter := &mockHTTPAdapter{
+		method: "GET",
+		path:   "/api/weather",
+		url:    "http://example.com/api/weather",
+		accept: "application/json",
+	}
+
+	result := server.ProcessHTTPRequest(ctx, HTTPRequestContext{
+		Adapter: adapter,
+		Path:    "/api/weather",
+		Method:  "GET",
+	}, nil)
+
+	if result.Type != ResultPaymentError {
+		t.Fatalf("Expected payment error, got %s", result.Type)
+	}
+
+	client := Newx402HTTPClient(x402.Newx402Client())
+	paymentRequired, err := client.GetPaymentRequiredResponse(result.Response.Headers, nil)
+	if err != nil {
+		t.Fatalf("Failed to decode PAYMENT-REQUIRED: %v", err)
+	}
+	if paymentRequired.Resource == nil {
+		t.Fatal("Expected resource on PaymentRequired")
+	}
+	if paymentRequired.Resource.ServiceName != "Weather API" {
+		t.Errorf("Expected serviceName Weather API, got %q", paymentRequired.Resource.ServiceName)
+	}
+	if len(paymentRequired.Resource.Tags) != 2 || paymentRequired.Resource.Tags[0] != "weather" || paymentRequired.Resource.Tags[1] != "api" {
+		t.Errorf("Expected tags [weather api], got %v", paymentRequired.Resource.Tags)
+	}
+}
+
 func TestBuildPaymentRequirementsFromOptionsPreservesOptionExtra(t *testing.T) {
 	ctx := context.Background()
 
@@ -310,6 +381,9 @@ func TestProcessHTTPRequestWithBrowser(t *testing.T) {
 	}
 	if result.Response.Headers["Content-Type"] != "text/html" {
 		t.Error("Expected text/html content type")
+	}
+	if result.Response.Headers["PAYMENT-REQUIRED"] == "" {
+		t.Error("Expected PAYMENT-REQUIRED header")
 	}
 
 	// Check HTML contains expected elements

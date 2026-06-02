@@ -69,7 +69,9 @@ This section defines the core data structures used in the x402 protocol. These a
 
 **5.1.1 JSON Payload**
 
-When a resource server requires payment, it responds with a payment required signal and a JSON payload containing payment requirements. Example:
+When a resource server requires payment, it responds with a payment required signal containing the `PaymentRequired` object. The transport defines where this object is carried. For HTTP, the canonical wire location is the base64-encoded `PAYMENT-REQUIRED` response header, see [HTTP Payment Required Signaling](./transports-v2/http.md#payment-required-signaling).
+
+Example `PaymentRequired` object:
 
 ```json
 {
@@ -115,15 +117,15 @@ The `PaymentRequired` schema contains the following fields:
 
 Each `PaymentRequirements` object in the `accepts` array contains:
 
-| Field Name          | Type     | Required | Description                                                                   |
-| ------------------- | -------- | -------- | ----------------------------------------------------------------------------- |
-| `scheme`            | `string` | Required | Payment scheme identifier (e.g., "exact")                                     |
-| `network`           | `string` | Required | Blockchain network identifier in CAIP-2 format (e.g., "eip155:84532")         |
-| `amount`            | `string` | Required | Required payment amount in atomic token units                                 |
+| Field Name          | Type     | Required | Description                                                                                                               |
+| ------------------- | -------- | -------- |---------------------------------------------------------------------------------------------------------------------------|
+| `scheme`            | `string` | Required | Payment scheme identifier (e.g., "exact")                                                                                 |
+| `network`           | `string` | Required | Blockchain network identifier in CAIP-2 format (e.g., "eip155:84532")                                                     |
+| `amount`            | `string` | Required | Required payment amount in atomic token units                                                                             |
 | `asset`             | `string` | Required | Token contract address or ISO 4217 currency code for fiat     |
-| `payTo`             | `string` | Required | Recipient wallet address or role constant (e.g., "merchant")                  |
-| `maxTimeoutSeconds` | `number` | Required | Maximum time allowed for payment completion                                   |
-| `extra`             | `object` | Optional | Scheme-specific additional information                                        |
+| `payTo`             | `string` | Required | Recipient wallet address or role constant (e.g., "merchant")                                                              |
+| `maxTimeoutSeconds` | `number` | Required | Maximum time allowed for payment completion                                                                               |
+| `extra`             | `object` | Optional | Scheme-specific additional information                                                                                    |
 
 The `ResourceInfo` object contains:
 

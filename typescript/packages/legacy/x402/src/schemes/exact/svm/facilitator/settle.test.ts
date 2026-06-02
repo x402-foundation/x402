@@ -15,7 +15,20 @@ import * as settleModule from "./settle";
 import { SettlementCache } from "./settlement-cache";
 
 // Mocking dependencies
-vi.mock("../../../../shared/svm");
+vi.mock("../../../../shared/svm", async importOriginal => {
+  const actual = await importOriginal<typeof import("../../../../shared/svm")>();
+  return {
+    ...actual, // real transactionMessageHash so cache keys are meaningful
+    decodeTransactionFromPayload: vi
+      .fn()
+      .mockImplementation((payload: { transaction: string }) => ({
+        messageBytes: new TextEncoder().encode(payload.transaction),
+        signatures: {},
+      })),
+    getTokenPayerFromTransaction: vi.fn(),
+    signTransactionWithSigner: vi.fn(),
+  };
+});
 vi.mock("../../../../shared/svm/rpc");
 vi.mock("./verify");
 vi.mock("@solana/kit", async importOriginal => {
@@ -121,6 +134,7 @@ describe("SVM Settle", () => {
 
   afterEach(() => {
     vi.clearAllMocks();
+    settleModule.settlementCache.clear();
   });
 
   describe("settle", () => {
@@ -716,7 +730,13 @@ describe("SVM Settle", () => {
     function setupMocksForSettle() {
       const mockVerifyResponse = { isValid: true, invalidReason: undefined };
       vi.mocked(verify).mockResolvedValue(mockVerifyResponse);
-      vi.mocked(decodeTransactionFromPayload).mockReturnValue(mockSignedTransaction);
+      // Use mockImplementation so distinct transaction strings produce distinct cache keys.
+      vi.mocked(decodeTransactionFromPayload).mockImplementation(
+        (payload: { transaction: string }) => ({
+          ...mockSignedTransaction,
+          messageBytes: new TextEncoder().encode(payload.transaction),
+        }),
+      );
       vi.mocked(getRpcClient).mockReturnValue(mockRpcClient);
       vi.mocked(getRpcSubscriptions).mockReturnValue(mockRpcSubscriptions);
       vi.mocked(mockRpcClient.sendTransaction).mockReturnValue({

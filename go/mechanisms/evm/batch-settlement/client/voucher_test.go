@@ -6,7 +6,7 @@ import (
 	"math/big"
 	"testing"
 
-	"github.com/x402-foundation/x402/go/mechanisms/evm"
+	"github.com/x402-foundation/x402/go/v2/mechanisms/evm"
 )
 
 // mockSigner records the last SignTypedData call and returns a canned signature/error.

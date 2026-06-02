@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/x402-foundation/x402/go/types"
+	"github.com/x402-foundation/x402/go/v2/types"
 )
 
 // Test Facilitator BeforeVerify hook - abort verification

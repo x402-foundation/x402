@@ -12,11 +12,11 @@ import (
 
 	"github.com/ethereum/go-ethereum/ethclient"
 	"github.com/joho/godotenv"
-	x402 "github.com/x402-foundation/x402/go"
-	x402http "github.com/x402-foundation/x402/go/http"
-	"github.com/x402-foundation/x402/go/mechanisms/evm/batch-settlement"
-	batchedclient "github.com/x402-foundation/x402/go/mechanisms/evm/batch-settlement/client"
-	evmsigners "github.com/x402-foundation/x402/go/signers/evm"
+	x402 "github.com/x402-foundation/x402/go/v2"
+	x402http "github.com/x402-foundation/x402/go/v2/http"
+	"github.com/x402-foundation/x402/go/v2/mechanisms/evm/batch-settlement"
+	batchedclient "github.com/x402-foundation/x402/go/v2/mechanisms/evm/batch-settlement/client"
+	evmsigners "github.com/x402-foundation/x402/go/v2/signers/evm"
 )
 
 // Sequential batch-settlement client demo. Sends N requests against the same

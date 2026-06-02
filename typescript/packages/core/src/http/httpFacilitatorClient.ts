@@ -63,6 +63,42 @@ export interface FacilitatorClient {
 const GET_SUPPORTED_RETRIES = 3;
 /** Base delay in ms for exponential backoff on retries */
 const GET_SUPPORTED_RETRY_DELAY_MS = 1000;
+/** Upper bound on retry delay to prevent pathological waits from a misbehaving server */
+const MAX_RETRY_DELAY_MS = 30_000;
+
+/**
+ * Resolves the delay before the next 429 retry. Parses Retry-After per RFC 7231 §7.1.3
+ * (delta-seconds or HTTP-date) and falls back to exponential backoff when the header
+ * is absent, unparseable, or non-positive. The result is clamped to MAX_RETRY_DELAY_MS.
+ *
+ * @param retryAfter - Raw `Retry-After` header value, or null if not present
+ * @param attempt - Zero-based retry attempt index used for exponential backoff
+ * @returns Delay in milliseconds to wait before the next attempt
+ */
+export function computeRetryDelay(retryAfter: string | null, attempt: number): number {
+  let delay: number | null = null;
+
+  if (retryAfter !== null) {
+    const seconds = Number(retryAfter);
+    if (!isNaN(seconds)) {
+      // delta-seconds form
+      delay = seconds * 1000;
+    } else {
+      // HTTP-date form
+      const retryDate = Date.parse(retryAfter);
+      if (!isNaN(retryDate)) {
+        delay = retryDate - Date.now();
+      }
+    }
+  }
+
+  // Fall back to exponential backoff for missing, invalid, or non-positive values
+  if (delay === null || delay <= 0) {
+    delay = GET_SUPPORTED_RETRY_DELAY_MS * Math.pow(2, attempt);
+  }
+
+  return Math.min(delay, MAX_RETRY_DELAY_MS);
+}
 
 const verifyResponseSchema: z.ZodType<VerifyResponse, z.ZodTypeDef, unknown> = z.object({
   isValid: z.boolean(),
@@ -386,9 +422,9 @@ export class HTTPFacilitatorClient implements FacilitatorClient {
         `Facilitator getSupported failed (${response.status}): ${responseExcerpt(errorText)}`,
       );
 
-      // Retry on 429 rate limit errors with exponential backoff
+      // Retry on 429, honoring the server's Retry-After when available.
       if (response.status === 429 && attempt < GET_SUPPORTED_RETRIES - 1) {
-        const delay = GET_SUPPORTED_RETRY_DELAY_MS * Math.pow(2, attempt);
+        const delay = computeRetryDelay(response.headers.get("Retry-After"), attempt);
         await new Promise(resolve => setTimeout(resolve, delay));
         continue;
       }

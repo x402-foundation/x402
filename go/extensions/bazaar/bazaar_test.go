@@ -7,10 +7,10 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	x402 "github.com/x402-foundation/x402/go"
-	"github.com/x402-foundation/x402/go/extensions/bazaar"
-	v1 "github.com/x402-foundation/x402/go/extensions/v1"
-	x402http "github.com/x402-foundation/x402/go/http"
+	x402 "github.com/x402-foundation/x402/go/v2"
+	"github.com/x402-foundation/x402/go/v2/extensions/bazaar"
+	v1 "github.com/x402-foundation/x402/go/v2/extensions/v1"
+	x402http "github.com/x402-foundation/x402/go/v2/http"
 )
 
 func TestBazaarConstant(t *testing.T) {
@@ -278,6 +278,133 @@ func TestValidateDiscoveryExtension(t *testing.T) {
 
 		result := bazaar.ValidateDiscoveryExtension(extension)
 		assert.True(t, result.Valid)
+	})
+}
+
+func TestValidateDiscoveryExtensionSpec(t *testing.T) {
+	t.Run("should pass for valid HTTP GET extension", func(t *testing.T) {
+		ext, _ := bazaar.DeclareDiscoveryExtension(
+			bazaar.MethodGET,
+			map[string]interface{}{"q": "test"},
+			bazaar.JSONSchema{"properties": map[string]interface{}{"q": map[string]interface{}{"type": "string"}}},
+			"",
+			nil,
+		)
+		result := bazaar.ValidateDiscoveryExtensionSpec(ext)
+		assert.True(t, result.Valid)
+	})
+
+	t.Run("should pass for valid HTTP POST extension", func(t *testing.T) {
+		ext, _ := bazaar.DeclareDiscoveryExtension(
+			bazaar.MethodPOST,
+			map[string]interface{}{"name": "foo"},
+			bazaar.JSONSchema{"properties": map[string]interface{}{"name": map[string]interface{}{"type": "string"}}},
+			bazaar.BodyTypeJSON,
+			nil,
+		)
+		result := bazaar.ValidateDiscoveryExtensionSpec(ext)
+		assert.True(t, result.Valid)
+	})
+
+	t.Run("should pass for pre-enrichment HTTP extension (no method)", func(t *testing.T) {
+		ext := bazaar.DiscoveryExtension{
+			Info: bazaar.DiscoveryInfo{
+				Input: bazaar.QueryInput{Type: "http"},
+			},
+			Schema: bazaar.JSONSchema{},
+		}
+		result := bazaar.ValidateDiscoveryExtensionSpec(ext)
+		assert.True(t, result.Valid)
+	})
+
+	t.Run("should fail for invalid input.type", func(t *testing.T) {
+		ext := bazaar.DiscoveryExtension{
+			Info: bazaar.DiscoveryInfo{
+				Input: bazaar.QueryInput{Type: "grpc"},
+			},
+			Schema: bazaar.JSONSchema{},
+		}
+		result := bazaar.ValidateDiscoveryExtensionSpec(ext)
+		assert.False(t, result.Valid)
+		assert.Contains(t, result.Errors[0], "input.type")
+	})
+
+	t.Run("should fail for invalid HTTP method", func(t *testing.T) {
+		ext := bazaar.DiscoveryExtension{
+			Info: bazaar.DiscoveryInfo{
+				Input: bazaar.QueryInput{Type: "http", Method: "DESTROY"},
+			},
+			Schema: bazaar.JSONSchema{},
+		}
+		result := bazaar.ValidateDiscoveryExtensionSpec(ext)
+		assert.False(t, result.Valid)
+		assert.Contains(t, result.Errors[0], "method")
+	})
+
+	t.Run("should fail for invalid bodyType", func(t *testing.T) {
+		ext := bazaar.DiscoveryExtension{
+			Info: bazaar.DiscoveryInfo{
+				Input: bazaar.BodyInput{Type: "http", Method: "POST", BodyType: "xml"},
+			},
+			Schema: bazaar.JSONSchema{},
+		}
+		result := bazaar.ValidateDiscoveryExtensionSpec(ext)
+		assert.False(t, result.Valid)
+		assert.Contains(t, result.Errors[0], "bodyType")
+	})
+
+	t.Run("should fail when bodyType set with non-body method", func(t *testing.T) {
+		ext := bazaar.DiscoveryExtension{
+			Info: bazaar.DiscoveryInfo{
+				Input: bazaar.BodyInput{Type: "http", Method: "GET", BodyType: "json"},
+			},
+			Schema: bazaar.JSONSchema{},
+		}
+		result := bazaar.ValidateDiscoveryExtensionSpec(ext)
+		assert.False(t, result.Valid)
+		hasBodyMethodErr := false
+		for _, e := range result.Errors {
+			if strings.Contains(e, "not a body method") {
+				hasBodyMethodErr = true
+			}
+		}
+		assert.True(t, hasBodyMethodErr)
+	})
+
+	t.Run("should fail for MCP missing toolName", func(t *testing.T) {
+		ext := bazaar.DiscoveryExtension{
+			Info:   bazaar.DiscoveryInfo{},
+			Schema: bazaar.JSONSchema{},
+		}
+		extJSON := `{"info":{"input":{"type":"mcp","inputSchema":{"type":"object"}}},"schema":{}}`
+		_ = json.Unmarshal([]byte(extJSON), &ext)
+		result := bazaar.ValidateDiscoveryExtensionSpec(ext)
+		assert.False(t, result.Valid)
+		assert.Contains(t, result.Errors[0], "toolName")
+	})
+
+	t.Run("should fail for MCP missing inputSchema", func(t *testing.T) {
+		ext := bazaar.DiscoveryExtension{
+			Info:   bazaar.DiscoveryInfo{},
+			Schema: bazaar.JSONSchema{},
+		}
+		extJSON := `{"info":{"input":{"type":"mcp","toolName":"t"}},"schema":{}}`
+		_ = json.Unmarshal([]byte(extJSON), &ext)
+		result := bazaar.ValidateDiscoveryExtensionSpec(ext)
+		assert.False(t, result.Valid)
+		assert.Contains(t, result.Errors[0], "inputSchema")
+	})
+
+	t.Run("should fail for MCP invalid transport", func(t *testing.T) {
+		ext := bazaar.DiscoveryExtension{
+			Info:   bazaar.DiscoveryInfo{},
+			Schema: bazaar.JSONSchema{},
+		}
+		extJSON := `{"info":{"input":{"type":"mcp","toolName":"t","inputSchema":{"type":"object"},"transport":"websocket"}},"schema":{}}`
+		_ = json.Unmarshal([]byte(extJSON), &ext)
+		result := bazaar.ValidateDiscoveryExtensionSpec(ext)
+		assert.False(t, result.Valid)
+		assert.Contains(t, result.Errors[0], "transport")
 	})
 }
 
@@ -1090,6 +1217,15 @@ func TestIntegration_FullWorkflow(t *testing.T) {
 		assert.Equal(t, "Find tokens by address, ticker/symbol, or token name", info.Description)
 		assert.Equal(t, "application/json", info.MimeType)
 		assert.Equal(t, 1, info.X402Version)
+		require.NotNil(t, info.Extensions)
+		assert.NotContains(t, info.Extensions, "outputSchema")
+		bazaarExtRaw, ok := info.Extensions[bazaar.BAZAAR.Key()]
+		require.True(t, ok)
+		bazaarExtJSON, _ := json.Marshal(bazaarExtRaw)
+		var bazaarExt bazaar.DiscoveryExtension
+		require.NoError(t, json.Unmarshal(bazaarExtJSON, &bazaarExt))
+		validation := bazaar.ValidateDiscoveryExtension(bazaarExt)
+		assert.True(t, validation.Valid)
 	})
 
 	t.Run("should handle unified extraction for both v1 and v2", func(t *testing.T) {
@@ -1504,6 +1640,10 @@ func TestExtractDiscoveredResourceFromPaymentRequired(t *testing.T) {
 		queryInput, ok := info.DiscoveryInfo.Input.(bazaar.QueryInput)
 		require.True(t, ok)
 		assert.Equal(t, bazaar.MethodGET, queryInput.Method)
+		require.NotNil(t, info.Extensions)
+		assert.NotContains(t, info.Extensions, "outputSchema")
+		_, ok = info.Extensions[bazaar.BAZAAR.Key()]
+		assert.True(t, ok)
 	})
 
 	t.Run("v1: should return nil when accepts array is empty", func(t *testing.T) {

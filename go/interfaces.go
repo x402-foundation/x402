@@ -3,7 +3,7 @@ package x402
 import (
 	"context"
 
-	"github.com/x402-foundation/x402/go/types"
+	"github.com/x402-foundation/x402/go/v2/types"
 )
 
 // MoneyParser is a function that converts a decimal amount to an AssetAmount

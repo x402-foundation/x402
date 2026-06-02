@@ -139,22 +139,29 @@ class x402HTTPResourceServer(x402HTTPServerBase):
                         error_msg,
                         extensions,
                         transport_context,
+                        *_rest,
                     ) = target
+                    req_payment_payload = _rest[0] if _rest else None
                     result = await self._server.create_payment_required_response(
                         requirements,
                         resource_info,
                         error_msg,
                         extensions,
                         transport_context=transport_context,
+                        payment_payload=req_payment_payload,
                     )
                 elif phase == "verify_payment":
                     payload, reqs, declared_extensions, transport_context = target
-                    result = await self._server.verify_payment(
-                        payload,
-                        reqs,
-                        declared_extensions=declared_extensions,
-                        transport_context=transport_context,
-                    )
+                    try:
+                        result = await self._server.verify_payment(
+                            payload,
+                            reqs,
+                            declared_extensions=declared_extensions,
+                            transport_context=transport_context,
+                        )
+                    except Exception as e:
+                        exception = e
+                        result = None
                 elif phase == "skip_handler_settlement":
                     (
                         payload,
@@ -283,7 +290,8 @@ class x402HTTPResourceServer(x402HTTPServerBase):
         Awaits settlement_failed_response_body hook if it returns a coroutine.
         """
         settlement_headers = failure.headers
-        route_config = self._get_route_config(context.path, context.method) if context else None
+        route_match = self._get_route_config(context.path, context.method) if context else None
+        route_config = route_match[0] if route_match else None
 
         custom_body = None
         if route_config and route_config.settlement_failed_response_body:
@@ -458,9 +466,14 @@ class x402HTTPResourceServerSync(x402HTTPServerBase):
         """
         gen = self._process_request_core(context, paywall_config)
         result = None
+        exception = None
         try:
             while True:
-                phase, target, ctx = gen.send(result)
+                if exception is not None:
+                    phase, target, ctx = gen.throw(exception)
+                    exception = None
+                else:
+                    phase, target, ctx = gen.send(result)
                 if phase == "resolve_options":
                     # Build requirements from payment options (Resolves dynamic price/pay_to)
                     route_config = target
@@ -485,22 +498,29 @@ class x402HTTPResourceServerSync(x402HTTPServerBase):
                         error_msg,
                         extensions,
                         transport_context,
+                        *_rest,
                     ) = target
+                    req_payment_payload = _rest[0] if _rest else None
                     result = self._server.create_payment_required_response(
                         requirements,
                         resource_info,
                         error_msg,
                         extensions,
                         transport_context=transport_context,
+                        payment_payload=req_payment_payload,
                     )
                 elif phase == "verify_payment":
                     payload, reqs, declared_extensions, transport_context = target
-                    result = self._server.verify_payment(
-                        payload,
-                        reqs,
-                        declared_extensions=declared_extensions,
-                        transport_context=transport_context,
-                    )
+                    try:
+                        result = self._server.verify_payment(
+                            payload,
+                            reqs,
+                            declared_extensions=declared_extensions,
+                            transport_context=transport_context,
+                        )
+                    except Exception as e:
+                        exception = e
+                        result = None
                 elif phase == "skip_handler_settlement":
                     (
                         payload,

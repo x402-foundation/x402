@@ -1,5 +1,31 @@
 # @x402/express Changelog
 
+## 2.14.0
+
+### Minor Changes
+
+- 0af31dd: Added startup-time JSON-schema validation for bazaar discovery extensions in middleware packages; Removed shallow bazaar validation from core in favor of full schema validation using the extensions package validator
+- Updated dependencies [be788e0]
+- Updated dependencies [0af31dd]
+  - @x402/extensions@2.14.0
+  - @x402/core@2.14.0
+  - @x402/paywall@2.14.0
+
+## 2.13.0
+
+### Minor Changes
+
+- Updated dependencies [49ea054]
+- Updated dependencies [e35becf]
+- Updated dependencies [ad08a9a]
+- Updated dependencies [f3deb60]
+- Updated dependencies [5fca9f3]
+- Updated dependencies [95f2094]
+- Updated dependencies [49ea054]
+  - @x402/extensions@2.13.0
+  - @x402/paywall@2.13.0
+  - @x402/core@2.13.0
+
 ## 2.12.0
 
 ### Minor Changes

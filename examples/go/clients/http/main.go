@@ -9,7 +9,7 @@ import (
 	"time"
 
 	"github.com/joho/godotenv"
-	x402 "github.com/x402-foundation/x402/go"
+	x402 "github.com/x402-foundation/x402/go/v2"
 )
 
 /**
