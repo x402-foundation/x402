@@ -76,6 +76,7 @@
         "pages": [
           "extensions/overview",
           "extensions/bazaar",
+          "extensions/builder-code",
           "extensions/payment-identifier",
           "extensions/sign-in-with-x",
           "extensions/offer-receipt",
