@@ -1,11 +1,71 @@
 # ERC-8004 Feedback Extension — Examples
 
-Submit verified, request-bound feedback to the standard ERC-8004
-`ReputationRegistry` after an x402 payment. **No custom contracts** — the binding
+Two flavors of the extension live side by side:
+
+- **Ticket flow** (`run_ticket_demo.py`) — settlement and ticket mint share one
+  on-chain transaction via `TicketMinter`. Feedback is ticket-gated through
+  `ReputationRegistryV3.giveFeedbackWithTicket`. **This is the path Phase 2–4
+  added; it's the supported flow going forward.** See [Ticket demo](#ticket-demo-anvil-end-to-end) below.
+
+- **Gateway-less baseline** (`main.py`, `run_on_*.py`) — original flow that
+  posts feedback via the canonical ERC-8004 `ReputationRegistry.giveFeedback`
+  on a chain where the registries are already deployed (e.g. mainnet, fork).
+  Note: that on-chain function is disabled in `ReputationRegistryV3`
+  (`LegacyGiveFeedbackDisabled`); the baseline demo only works against the
+  legacy canonical `ReputationRegistry` deployment.
+
+## Ticket demo (Anvil, end-to-end)
+
+[`run_ticket_demo.py`](./run_ticket_demo.py) is a one-command demo that:
+
+1. spins up a local Anvil,
+2. deploys `MockERC20` + `MockIdentityRegistry` + `TicketMinter` +
+   `ReputationRegistryV3` from the Foundry build artifacts,
+3. wires the minter (facilitator allowlist + registry reference) and registers
+   one agent,
+4. mints `MockUSDC` to the payer,
+5. runs **Path A** (direct): payer approves the minter, the facilitator calls
+   `TicketMinter.settleAndMintTicket` (one tx — `transferFrom` + ticket mint),
+   ticketId is recovered from the `TicketMinted` log, payer calls
+   `giveFeedbackWithTicket` → ticket goes `MINTED → CONSUMED`,
+6. runs **Path B** (sponsored): same settle + mint, but the payer signs an
+   EIP-712 `FeedbackIntent` and a separate **relayer** EOA broadcasts
+   `giveFeedbackWithTicketFor(submission, nonce, deadline, signature)` — the
+   payer pays no gas for the feedback step.
+
+### Run
+
+```bash
+# One-time: build contracts + install SDK
+cd contracts/evm && FOUNDRY_PROFILE=erc8004 forge build
+cd ../../python/x402 && uv pip install -e .
+
+# Run the demo
+uv run python ../../examples/python/clients/erc8004/run_ticket_demo.py
+```
+
+On success you'll see both tickets transition `MINTED → CONSUMED` and the
+registry's `getLastIndex(agentId, payer)` increment to 2:
+
+```
+DONE — both paths green.
+  ticket #1: MINTED -> CONSUMED (Path A direct)
+  ticket #2: MINTED -> CONSUMED (Path B sponsored)
+  ReputationRegistryV3.getLastIndex(agentId=7, payer) = 2
+```
+
+No external services required — no Pinata, no real chain. The demo focuses on
+the on-chain ticket lifecycle; the off-chain artifact pipeline (IPFS upload,
+canonical hashing) is covered by the gateway-less demo below.
+
+## Gateway-less baseline (legacy)
+
+The original example that submits feedback via `ReputationRegistry.giveFeedback`
+on a chain with the canonical ERC-8004 contracts already deployed. The binding
 between the payment and the feedback lives in an off-chain canonical artifact
 (uploaded to IPFS) and is committed on-chain via `feedbackHash` / `feedbackURI`.
 
-## How it works (gateway-less)
+### How the gateway-less baseline works
 
 1. Client pays for the resource via the normal x402 flow → gets a settlement `txHash`.
 2. (Optional) Server signs an `InteractionReceipt` over `{settlement, request, response}`
