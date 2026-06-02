@@ -19,19 +19,32 @@ Two flavors of the extension live side by side:
 [`run_ticket_demo.py`](./run_ticket_demo.py) is a one-command demo that:
 
 1. spins up a local Anvil,
-2. deploys `MockERC20` + `MockIdentityRegistry` + `TicketMinter` +
-   `ReputationRegistryV3` from the Foundry build artifacts,
+2. deploys `MockERC20` + `MockERC3009Token` (USDC-style) +
+   `MockIdentityRegistry` + `TicketMinter` + `ReputationRegistryV3` from the
+   Foundry build artifacts,
 3. wires the minter (facilitator allowlist + registry reference) and registers
    one agent,
-4. mints `MockUSDC` to the payer,
-5. runs **Path A** (direct): payer approves the minter, the facilitator calls
-   `TicketMinter.settleAndMintTicket` (one tx — `transferFrom` + ticket mint),
-   ticketId is recovered from the `TicketMinted` log, payer calls
-   `giveFeedbackWithTicket` → ticket goes `MINTED → CONSUMED`,
-6. runs **Path B** (sponsored): same settle + mint, but the payer signs an
-   EIP-712 `FeedbackIntent` and a separate **relayer** EOA broadcasts
-   `giveFeedbackWithTicketFor(submission, nonce, deadline, signature)` — the
-   payer pays no gas for the feedback step.
+4. mints both tokens to the payer,
+5. exercises **two settlement modes**, each with both feedback paths:
+
+   **Scenario 1 — plain ERC-20 (`settleAndMintTicket` / `transferFrom`):**
+
+   - Ticket #1 — payer approves the minter, facilitator calls
+     `TicketMinter.settleAndMintTicket` (one tx: `transferFrom` + ticket mint),
+     payer submits `giveFeedbackWithTicket` (Path A, direct).
+   - Ticket #2 — same settle + mint, payer signs an EIP-712 `FeedbackIntent`,
+     a relayer EOA broadcasts `giveFeedbackWithTicketFor(...)` (Path B,
+     sponsored — payer pays no gas for the feedback step).
+
+   **Scenario 2 — USDC-style EIP-3009 (`settleAndMintTicketEIP3009` /
+   `transferWithAuthorization`):**
+
+   - Ticket #3 — payer signs an EIP-3009 `TransferWithAuthorization`
+     (no on-chain approval needed); facilitator calls
+     `TicketMinter.settleAndMintTicketEIP3009` (one tx: token-level
+     `transferWithAuthorization` + ticket mint); payer submits
+     `giveFeedbackWithTicket` (Path A).
+   - Ticket #4 — same EIP-3009 settle + mint, sponsored feedback (Path B).
 
 ### Run
 
@@ -44,14 +57,18 @@ cd ../../python/x402 && uv pip install -e .
 uv run python ../../examples/python/clients/erc8004/run_ticket_demo.py
 ```
 
-On success you'll see both tickets transition `MINTED → CONSUMED` and the
-registry's `getLastIndex(agentId, payer)` increment to 2:
+On success you'll see all four tickets transition `MINTED → CONSUMED` and the
+registry's `getLastIndex(agentId, payer)` increment to 4:
 
 ```
-DONE — both paths green.
-  ticket #1: MINTED -> CONSUMED (Path A direct)
-  ticket #2: MINTED -> CONSUMED (Path B sponsored)
-  ReputationRegistryV3.getLastIndex(agentId=7, payer) = 2
+DONE — both scenarios, both feedback paths green.
+  Scenario 1 (ERC-20 transferFrom):
+    ticket #1: MINTED -> CONSUMED  (Path A direct)
+    ticket #2: MINTED -> CONSUMED  (Path B sponsored)
+  Scenario 2 (USDC EIP-3009):
+    ticket #3: MINTED -> CONSUMED  (Path A direct)
+    ticket #4: MINTED -> CONSUMED  (Path B sponsored)
+  ReputationRegistryV3.getLastIndex(agentId=7, payer) = 4
 ```
 
 No external services required — no Pinata, no real chain. The demo focuses on
