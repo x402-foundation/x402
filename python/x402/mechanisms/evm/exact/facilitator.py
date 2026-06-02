@@ -291,6 +291,18 @@ class ExactEvmScheme:
         Returns:
             SettleResponse with success, transaction, and payer.
         """
+        # ERC-8004 ticket routing: if the facilitator has the ticket extension
+        # registered AND the client provided a ticket bind, route settlement
+        # through TicketMinter so the token transfer and the ticket mint land
+        # atomically in one tx. Falls through to the standard path on any miss
+        # so non-erc8004 traffic is untouched.
+        if context is not None:
+            ticket_response = _maybe_route_to_ticket_minter(
+                self._signer, payload, requirements, context
+            )
+            if ticket_response is not None:
+                return ticket_response
+
         if is_permit2_payload(payload.payload):
             return settle_permit2(self._signer, payload, requirements, context)
 
@@ -401,3 +413,48 @@ class ExactEvmScheme:
         receipt = self._signer.wait_for_transaction_receipt(tx_hash)
         if receipt.status != TX_STATUS_SUCCESS:
             raise RuntimeError(ERR_SMART_WALLET_DEPLOYMENT_FAILED)
+
+
+def _maybe_route_to_ticket_minter(
+    signer: FacilitatorEvmSigner,
+    payload: PaymentPayload,
+    requirements: PaymentRequirements,
+    context: Any,
+) -> SettleResponse | None:
+    """Route settle through TicketMinter when the erc8004 extension is active.
+
+    Returns the SettleResponse from `settle_via_ticket_minter` when all three
+    activation guards hold; returns None otherwise so the caller falls through
+    to the standard transfer/proxy path.
+
+    Guards:
+      1. Facilitator registered `ERC8004TicketFacilitatorExtension`
+      2. Extension resolves a minter address for the request network
+      3. Client populated `payload.extensions.erc8004` with ticket-bind fields
+    """
+    # Imports are local to avoid the extensions package paying the import cost
+    # for every non-erc8004 settle, and to dodge a hypothetical circular import
+    # via x402.extensions.erc8004 → ...mechanisms.evm.types.
+    try:
+        from ....extensions.erc8004 import (
+            ERC8004TicketFacilitatorExtension,
+            extract_ticket_bind,
+            settle_via_ticket_minter,
+        )
+        from ....extensions.erc8004.types import EXTENSION_KEY
+    except ImportError:
+        return None
+
+    ticket_ext = context.get_extension(EXTENSION_KEY)
+    if not isinstance(ticket_ext, ERC8004TicketFacilitatorExtension):
+        return None
+
+    minter_address = ticket_ext.resolve_minter(str(requirements.network))
+    if not minter_address:
+        return None
+
+    bind = extract_ticket_bind(payload)
+    if bind is None:
+        return None
+
+    return settle_via_ticket_minter(signer, minter_address, payload, requirements, bind)

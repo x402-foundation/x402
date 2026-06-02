@@ -155,7 +155,44 @@ In resource server settle path (`python/x402/server_base.py` settle flow):
 
 Update `create_interaction_receipt` in `server.py` to sign digest with **ticketId** (uint256 → 32-byte big-endian) once Phase 4 updates `receipt_digest`.
 
-**Phase 3 done when:** paid request returns `ticketId`; handler skipped if mint fails.
+### 3.4 Wire settle routing into `ExactEvmScheme`
+
+The Phase 2 facilitator extension (`ERC8004TicketFacilitatorExtension`,
+`settle_via_ticket_minter`) is dead code until the scheme settle path looks it
+up. Mirror the `Erc20ApprovalFacilitatorExtension` interception pattern in
+`permit2_utils.py::settle_permit2`.
+
+Hook point: top of `ExactEvmScheme.settle()` in
+`python/x402/mechanisms/evm/exact/facilitator.py`, **before** the existing
+`is_permit2_payload` branch.
+
+Three guards — if all hold, route to TicketMinter; otherwise fall through to
+the existing transfer/proxy path so non-erc8004 traffic is untouched:
+
+1. `context.get_extension(EXTENSION_KEY)` returns an `ERC8004TicketFacilitatorExtension`
+2. `ext.resolve_minter(str(requirements.network))` returns a non-None address
+3. `extract_ticket_bind(payload)` returns a `TicketBind` (client populated the
+   bind fields in `payload.extensions.erc8004`)
+
+When routed, the call lands at `TicketMinter.settleAndMintTicketEIP3009` /
+`settleAndMintTicketPermit2`. Settlement and mint share one tx; the
+`TicketMinted` log on the receipt yields `ticketId`, surfaced on
+`SettleResponse.extensions.erc8004.ticketId` (Phase 2 work).
+
+**Activation contract — what each side must do for the extension to fire:**
+
+| Side | Must do | Without it |
+|------|---------|------------|
+| Resource server | `server.register_extension(create_erc8004_resource_server_extension(config, ...))` | 402 never advertises `erc8004`; clients can't bind |
+| Client | `client.register_extension(ERC8004ClientExtension())` (Phase 4 populates bind) | `payload.extensions.erc8004` is empty → guard #3 fails |
+| Facilitator | `facilitator.register_extension(ERC8004TicketFacilitatorExtension(minters={...}))` | `context.get_extension("erc8004") is None` → guard #1 fails |
+
+If any side opts out the routing branch short-circuits and the original
+transfer/proxy path runs — backwards compat preserved for callers that don't
+want ticketed settlement.
+
+**Phase 3 done when:** paid request returns `ticketId`; handler skipped if mint fails;
+`ExactEvmScheme.settle()` routes through `TicketMinter` whenever the three guards hold.
 
 ---
 
