@@ -59,8 +59,8 @@ def test_enrich_payment_required_response() -> None:
     assert "schema" in result
 
 
-def test_settlement_hook_returns_none() -> None:
-    """The settle hook no longer signs; the receipt is made at the HTTP layer."""
+def test_settlement_hook_returns_none_when_no_ticket() -> None:
+    """The settle hook returns None when no ticket id is present on the settle result."""
     ext = create_erc8004_resource_server_extension(_config())
     ctx = SettleResultContext(
         payment_payload=PaymentPayload(payload={}, accepted=_requirements()),
@@ -68,6 +68,106 @@ def test_settlement_hook_returns_none() -> None:
         result=SettleResponse(success=True, transaction="0x" + "ab" * 32, network="eip155:8453", payer="0x" + "02" * 20),
     )
     assert ext.enrich_settlement_response({}, ctx) is None
+
+
+def test_settlement_hook_surfaces_ticket_id() -> None:
+    """When the facilitator returns extensions.erc8004.ticketId, it appears in PAYMENT-RESPONSE."""
+    ext = create_erc8004_resource_server_extension(_config())
+    settle = SettleResponse(
+        success=True,
+        transaction="0x" + "ab" * 32,
+        network="eip155:8453",
+        payer="0x" + "02" * 20,
+        extensions={"erc8004": {"ticketId": "7"}},
+    )
+    ctx = SettleResultContext(
+        payment_payload=PaymentPayload(payload={}, accepted=_requirements()),
+        requirements=_requirements(),
+        result=settle,
+    )
+    assert ext.enrich_settlement_response({}, ctx) == {"ticketId": "7"}
+
+
+def test_after_verify_skips_handler_when_bind_missing() -> None:
+    """With require_ticket_bind=True, a payload lacking ticket bind skips the handler."""
+    from x402.schemas.hooks import VerifyResultContext
+    from x402.schemas.responses import VerifyResponse
+
+    ext = create_erc8004_resource_server_extension(_config(), require_ticket_bind=True)
+    payload = PaymentPayload(payload={}, accepted=_requirements())  # no extensions
+    ctx = VerifyResultContext(
+        payment_payload=payload,
+        requirements=_requirements(),
+        result=VerifyResponse(is_valid=True, payer="0x" + "02" * 20),
+    )
+    result = ext.after_verify(ctx)
+    assert result is not None
+    assert result.response is not None
+    assert result.response.body == {"error": "erc8004_ticket_bind_required"}
+
+
+def test_after_verify_allows_handler_when_bind_present() -> None:
+    """A payload carrying ticket bind passes through after_verify."""
+    from x402.schemas.hooks import VerifyResultContext
+    from x402.schemas.responses import VerifyResponse
+
+    ext = create_erc8004_resource_server_extension(_config(), require_ticket_bind=True)
+    payload = PaymentPayload(
+        payload={},
+        accepted=_requirements(),
+        extensions={
+            "erc8004": {
+                "info": {
+                    "agentId": 42,
+                    "requestHash": "0x" + "11" * 32,
+                    "interactionHash": "0x" + "22" * 32,
+                    "endpoint": "https://agent.example/r",
+                }
+            }
+        },
+    )
+    ctx = VerifyResultContext(
+        payment_payload=payload,
+        requirements=_requirements(),
+        result=VerifyResponse(is_valid=True, payer="0x" + "02" * 20),
+    )
+    assert ext.after_verify(ctx) is None
+
+
+def test_after_verify_noop_when_gate_disabled() -> None:
+    """Default (require_ticket_bind=False) preserves prior behavior — handler always runs."""
+    from x402.schemas.hooks import VerifyResultContext
+    from x402.schemas.responses import VerifyResponse
+
+    ext = create_erc8004_resource_server_extension(_config())
+    payload = PaymentPayload(payload={}, accepted=_requirements())
+    ctx = VerifyResultContext(
+        payment_payload=payload,
+        requirements=_requirements(),
+        result=VerifyResponse(is_valid=True, payer="0x" + "02" * 20),
+    )
+    assert ext.after_verify(ctx) is None
+
+
+def test_create_interaction_receipt_attaches_ticket_id() -> None:
+    """Phase 3.3 forward-compat: receipt carries ticket_id alongside the (Phase 4) digest swap."""
+    agent = Account.create()
+    payload = PaymentPayload(payload={"sig": "0xdead"}, accepted=_requirements())
+    receipt = create_interaction_receipt(
+        agent,
+        agent_id=42,
+        requirements=_requirements(),
+        payment_payload=payload,
+        tx_hash="0x" + "ab" * 32,
+        payer="0x" + "02" * 20,
+        request=_REQUEST,
+        response=_RESPONSE,
+        payment_method="eip3009",
+        ticket_id=99,
+    )
+    assert getattr(receipt, "ticket_id", None) == 99
+    # Receipt remains verifiable under the current tx_hash-based digest scheme.
+    assert verify_interaction_receipt(receipt, agent.address) is True
 
 
 def test_create_interaction_receipt_covers_request_response() -> None:
