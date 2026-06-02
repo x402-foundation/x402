@@ -16,6 +16,12 @@ from x402.extensions.erc8004.facilitator import (
     settle_via_ticket_minter,
     ticket_id_from_receipt,
 )
+from x402.extensions.erc8004.ticket_hashes import (
+    TicketBind as ClientTicketBind,
+    compute_request_hash,
+    compute_ticket_bind,
+    echo_ticket_bind_in_payment_payload,
+)
 from x402.extensions.erc8004.client import (
     ArtifactUploader,
     ERC8004ClientExtension,
@@ -57,6 +63,10 @@ __all__ = [
     "extract_ticket_bind",
     "settle_via_ticket_minter",
     "ticket_id_from_receipt",
+    "ClientTicketBind",
+    "compute_request_hash",
+    "compute_ticket_bind",
+    "echo_ticket_bind_in_payment_payload",
     "ERCFeedbackClient",
     "ERC8004ClientExtension",
     "ArtifactUploader",

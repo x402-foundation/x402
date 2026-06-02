@@ -61,9 +61,12 @@ class InteractionReceipt(BaseModel):
     Signed by IdentityRegistry.ownerOf(agentId). Returned by the server in the
     X-X402-Interaction-Receipt header and embedded by the client into the
     artifact at interaction.response.agentSignature.
+
+    Phase 4.4: anchors to the ticket id (was: settlement tx hash). The ticket
+    id is the canonical identifier in the new model.
     """
 
-    tx_hash: bytes
+    ticket_id: int
     interaction_hash: bytes
     chain_id: int
     signature: bytes
@@ -72,7 +75,7 @@ class InteractionReceipt(BaseModel):
 
     def to_dict(self) -> dict[str, Any]:
         return {
-            "txHash": "0x" + self.tx_hash.hex(),
+            "ticketId": str(self.ticket_id),
             "interactionHash": "0x" + self.interaction_hash.hex(),
             "chainId": self.chain_id,
             "signature": "0x" + self.signature.hex(),
@@ -81,7 +84,7 @@ class InteractionReceipt(BaseModel):
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> InteractionReceipt:
         return cls(
-            tx_hash=bytes.fromhex(data["txHash"].removeprefix("0x")),
+            ticket_id=int(data["ticketId"]),
             interaction_hash=bytes.fromhex(data["interactionHash"].removeprefix("0x")),
             chain_id=int(data["chainId"]),
             signature=bytes.fromhex(data["signature"].removeprefix("0x")),

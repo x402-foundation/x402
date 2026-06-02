@@ -116,12 +116,12 @@ def create_interaction_receipt(
     agent_id: int,
     requirements: PaymentRequirements,
     payment_payload: PaymentPayload,
+    ticket_id: int,
     tx_hash: str,
     payer: str,
     request: dict[str, Any],
     response: dict[str, Any],
     payment_method: str | None = None,
-    ticket_id: int | None = None,
 ) -> InteractionReceipt:
     """Sign an InteractionReceipt over {version, settlement, request, response}.
 
@@ -132,11 +132,10 @@ def create_interaction_receipt(
 
     The signer must be the agent owner key (``IdentityRegistry.ownerOf(agentId)``).
 
-    ``ticket_id`` is accepted for forward compatibility with Phase 4's receipt
-    digest migration (which signs over ticketId instead of tx_hash). For now
-    the digest still uses tx_hash — the ticket id is stored on the receipt as
-    metadata so callers can attach it to artifact.interaction without changing
-    the on-chain receipt verifier.
+    The signed digest covers ``(chainId, ticketId, interactionHash)`` — see
+    ``artifact.receipt_digest``. ``tx_hash`` is still used to fill the
+    artifact's ``settlement.txHash`` field (so the artifact reads naturally)
+    but does not appear in the signed preimage.
     """
     pm = payment_method or _payment_method(requirements)
     artifact = build_artifact(
@@ -152,15 +151,7 @@ def create_interaction_receipt(
     )
     interaction_hash = compute_interaction_hash(artifact.to_dict())
     chain_id = int(requirements.network.split(":")[1])
-    tx_bytes = bytes.fromhex(tx_hash.removeprefix("0x"))
-    receipt = sign_interaction_receipt(signer, chain_id, tx_bytes, interaction_hash)
-    if ticket_id is not None:
-        # Stash the ticket id on the receipt object so the HTTP layer can
-        # include it in the artifact without an extra round-trip. Phase 4
-        # will move the signed digest itself to (chainId, ticketId,
-        # interactionHash); until then keep ticket_id as a parallel field.
-        object.__setattr__(receipt, "ticket_id", int(ticket_id))
-    return receipt
+    return sign_interaction_receipt(signer, chain_id, int(ticket_id), interaction_hash)
 
 
 def _payment_method(requirements: Any) -> str:

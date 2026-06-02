@@ -95,22 +95,31 @@ def compute_feedback_hash(artifact: dict[str, Any]) -> bytes:
     return keccak(canonical_bytes(artifact))
 
 
-def receipt_digest(chain_id: int, tx_hash: bytes, interaction_hash: bytes) -> bytes:
-    """Digest the agent signs to attest to the interaction."""
+def receipt_digest(chain_id: int, ticket_id: int, interaction_hash: bytes) -> bytes:
+    """Digest the agent signs to attest to the interaction.
+
+    Phase 4.4: anchors to the ticket id (not the settlement tx hash). The
+    ticketId is the canonical identifier in the new model — one per paid
+    call, consumed atomically on feedback — and is recoverable from
+    PAYMENT-RESPONSE without a tx-hash → ticketId index.
+    """
     return keccak(
-        RECEIPT_PREFIX + chain_id.to_bytes(32, "big") + tx_hash + interaction_hash
+        RECEIPT_PREFIX
+        + chain_id.to_bytes(32, "big")
+        + int(ticket_id).to_bytes(32, "big")
+        + interaction_hash
     )
 
 
 def sign_interaction_receipt(
-    signer: Any, chain_id: int, tx_hash: bytes, interaction_hash: bytes
+    signer: Any, chain_id: int, ticket_id: int, interaction_hash: bytes
 ) -> InteractionReceipt:
     """Sign the interaction digest with the agent owner key (personal_sign)."""
-    digest = receipt_digest(chain_id, tx_hash, interaction_hash)
+    digest = receipt_digest(chain_id, ticket_id, interaction_hash)
     signed = signer.sign_message(encode_defunct(digest))
     sig = signed.signature if hasattr(signed, "signature") else signed
     return InteractionReceipt(
-        tx_hash=tx_hash,
+        ticket_id=int(ticket_id),
         interaction_hash=interaction_hash,
         chain_id=chain_id,
         signature=bytes(sig),
@@ -119,7 +128,7 @@ def sign_interaction_receipt(
 
 def verify_interaction_receipt(receipt: InteractionReceipt, expected_owner: str) -> bool:
     """Recover the receipt signer and compare to the expected agent owner."""
-    digest = receipt_digest(receipt.chain_id, receipt.tx_hash, receipt.interaction_hash)
+    digest = receipt_digest(receipt.chain_id, receipt.ticket_id, receipt.interaction_hash)
     try:
         recovered = Account.recover_message(encode_defunct(digest), signature=receipt.signature)
     except Exception:

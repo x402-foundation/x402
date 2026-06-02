@@ -149,8 +149,8 @@ def test_after_verify_noop_when_gate_disabled() -> None:
     assert ext.after_verify(ctx) is None
 
 
-def test_create_interaction_receipt_attaches_ticket_id() -> None:
-    """Phase 3.3 forward-compat: receipt carries ticket_id alongside the (Phase 4) digest swap."""
+def test_create_interaction_receipt_signs_over_ticket_id() -> None:
+    """Phase 4.4: digest is keccak(prefix ‖ chainId ‖ ticketId ‖ interactionHash)."""
     agent = Account.create()
     payload = PaymentPayload(payload={"sig": "0xdead"}, accepted=_requirements())
     receipt = create_interaction_receipt(
@@ -158,16 +158,31 @@ def test_create_interaction_receipt_attaches_ticket_id() -> None:
         agent_id=42,
         requirements=_requirements(),
         payment_payload=payload,
+        ticket_id=99,
         tx_hash="0x" + "ab" * 32,
         payer="0x" + "02" * 20,
         request=_REQUEST,
         response=_RESPONSE,
         payment_method="eip3009",
-        ticket_id=99,
     )
-    assert getattr(receipt, "ticket_id", None) == 99
-    # Receipt remains verifiable under the current tx_hash-based digest scheme.
+    assert receipt.ticket_id == 99
     assert verify_interaction_receipt(receipt, agent.address) is True
+
+    # Changing ticket_id changes the signed digest → verification with the old
+    # signature against a different ticket fails.
+    other = create_interaction_receipt(
+        agent,
+        agent_id=42,
+        requirements=_requirements(),
+        payment_payload=payload,
+        ticket_id=100,
+        tx_hash="0x" + "ab" * 32,
+        payer="0x" + "02" * 20,
+        request=_REQUEST,
+        response=_RESPONSE,
+        payment_method="eip3009",
+    )
+    assert other.signature != receipt.signature
 
 
 def test_create_interaction_receipt_covers_request_response() -> None:
@@ -179,6 +194,7 @@ def test_create_interaction_receipt_covers_request_response() -> None:
         agent_id=42,
         requirements=_requirements(),
         payment_payload=payload,
+        ticket_id=1,
         tx_hash="0x" + "ab" * 32,
         payer="0x" + "02" * 20,
         request=_REQUEST,
@@ -214,6 +230,7 @@ def test_create_interaction_receipt_uses_asset_transfer_method_extra() -> None:
         agent_id=42,
         requirements=reqs,
         payment_payload=payload,
+        ticket_id=1,
         tx_hash="0x" + "ab" * 32,
         payer="0x" + "02" * 20,
         request=_REQUEST,
@@ -242,6 +259,7 @@ def test_receipt_changes_when_response_changes() -> None:
         agent_id=42,
         requirements=_requirements(),
         payment_payload=payload,
+        ticket_id=1,
         tx_hash="0x" + "ab" * 32,
         payer="0x" + "02" * 20,
         request=_REQUEST,

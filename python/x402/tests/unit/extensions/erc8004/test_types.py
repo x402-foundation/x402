@@ -35,13 +35,13 @@ def test_extension_info_accepts_wire_agent_id_alias() -> None:
 
 def test_interaction_receipt_roundtrip() -> None:
     r = InteractionReceipt(
-        tx_hash=b"\x11" * 32,
+        ticket_id=42,
         interaction_hash=b"\x22" * 32,
         chain_id=8453,
         signature=b"\x33" * 65,
     )
     d = r.to_dict()
-    assert d["txHash"] == "0x" + "11" * 32
+    assert d["ticketId"] == "42"
     assert d["interactionHash"] == "0x" + "22" * 32
     assert d["chainId"] == 8453
     assert d["signature"] == "0x" + "33" * 65

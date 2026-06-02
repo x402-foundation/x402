@@ -119,17 +119,25 @@ def test_interaction_hash_ignores_embedded_agent_signature() -> None:
 
 def test_receipt_sign_and_verify() -> None:
     agent = Account.create()
-    tx_hash = b"\xab" * 32
+    ticket_id = 7
     interaction_hash = b"\xcd" * 32
     chain_id = 8453
-    receipt = sign_interaction_receipt(agent, chain_id, tx_hash, interaction_hash)
+    receipt = sign_interaction_receipt(agent, chain_id, ticket_id, interaction_hash)
     assert receipt.chain_id == chain_id
+    assert receipt.ticket_id == ticket_id
     assert verify_interaction_receipt(receipt, agent.address) is True
     assert verify_interaction_receipt(receipt, "0x" + "00" * 20) is False
 
 
 def test_receipt_digest_binds_all_fields() -> None:
-    d1 = receipt_digest(8453, b"\xab" * 32, b"\xcd" * 32)
-    d2 = receipt_digest(1, b"\xab" * 32, b"\xcd" * 32)
+    d1 = receipt_digest(8453, 7, b"\xcd" * 32)
+    d2 = receipt_digest(1, 7, b"\xcd" * 32)
+    d3 = receipt_digest(8453, 8, b"\xcd" * 32)
     assert d1 != d2
-    assert d1 == keccak(b"x402-erc8004-receipt" + (8453).to_bytes(32, "big") + b"\xab" * 32 + b"\xcd" * 32)
+    assert d1 != d3  # ticket id is part of the preimage
+    assert d1 == keccak(
+        b"x402-erc8004-receipt"
+        + (8453).to_bytes(32, "big")
+        + (7).to_bytes(32, "big")
+        + b"\xcd" * 32
+    )
