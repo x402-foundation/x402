@@ -1,0 +1,256 @@
+---
+title: "Builder Code (ERC-8021)"
+description: "The builder-code extension enables on-chain attribution tracking for x402 payments by appending ERC-8021 Schema 2 builder codes to settlement transaction calldata."
+---
+
+The builder-code extension enables **on-chain attribution tracking** for x402 payments. It appends [ERC-8021](https://eip.tools/eip/8021) Schema 2 builder codes to settlement transaction calldata, identifying which application exposed the paid endpoint, which facilitator settled the payment, and which client participated.
+
+## How It Works
+
+Three parties each contribute an attribution code:
+
+| Field | Set by | Description |
+|-------|--------|-------------|
+| `a` | Resource server | App code — identifies the application exposing the paid endpoint |
+| `w` | Facilitator | Wallet code — identifies the facilitator settling the payment on-chain |
+| `s` | Client | Service code — client-provided attribution |
+
+These codes are CBOR-encoded as an [ERC-8021](https://eip.tools/eip/8021) Schema 2 suffix and appended to the settlement transaction calldata. Off-chain tools can parse the calldata to verify attribution.
+
+### Builder Code Format
+
+All codes must match `^[a-z0-9_]{1,32}$`:
+- 1–32 characters
+- Lowercase letters, digits, and underscores only
+
+## Quickstart for Sellers (Servers)
+
+Declare your app builder code per-route in the payment middleware configuration:
+
+```typescript
+import { paymentMiddleware, x402ResourceServer } from "@x402/express";
+import { ExactEvmScheme } from "@x402/evm/exact/server";
+import { HTTPFacilitatorClient } from "@x402/core/server";
+import { BUILDER_CODE, declareBuilderCodeExtension } from "@x402/extensions/builder-code";
+
+const facilitatorClient = new HTTPFacilitatorClient({ url: process.env.FACILITATOR_URL });
+
+const resourceServer = new x402ResourceServer(facilitatorClient).register(
+  "eip155:84532",
+  new ExactEvmScheme(),
+);
+
+app.use(
+  paymentMiddleware(
+    {
+      "GET /weather": {
+        accepts: {
+          scheme: "exact",
+          price: "$0.001",
+          network: "eip155:84532",
+          payTo: evmAddress,
+        },
+        extensions: {
+          [BUILDER_CODE]: declareBuilderCodeExtension("bc_my_app"),
+        },
+      },
+    },
+    resourceServer,
+  ),
+);
+```
+
+`declareBuilderCodeExtension` validates the code format and returns the extension declaration (including the JSON Schema) for inclusion in the `PaymentRequired` response.
+
+## Quickstart for Buyers (Clients)
+
+Register the `BuilderCodeClientExtension` on your x402 client. It automatically echoes the server's app code (`a`) and attaches your service code (`s`) to every payment payload:
+
+```typescript
+import { x402Client, wrapFetchWithPayment } from "@x402/fetch";
+import { ExactEvmScheme } from "@x402/evm/exact/client";
+import { BuilderCodeClientExtension } from "@x402/extensions/builder-code";
+import { privateKeyToAccount } from "viem/accounts";
+
+const evmSigner = privateKeyToAccount(process.env.EVM_PRIVATE_KEY as `0x${string}`);
+
+const client = new x402Client();
+client.register("eip155:*", new ExactEvmScheme(evmSigner, { rpcUrl: process.env.EVM_RPC_URL }));
+client.registerExtension(new BuilderCodeClientExtension("bc_my_client"));
+
+const fetchWithPayment = wrapFetchWithPayment(fetch, client);
+const response = await fetchWithPayment("https://api.example.com/weather");
+```
+
+## Quickstart for Facilitators
+
+Register the `BuilderCodeFacilitatorExtension` on your facilitator. At settlement time it reads `a` and `s` from the payment payload, adds its own `w` code, and appends the ERC-8021 CBOR suffix to the transaction calldata:
+
+```typescript
+import { x402Facilitator } from "@x402/core/facilitator";
+import { BuilderCodeFacilitatorExtension } from "@x402/extensions/builder-code";
+
+const facilitator = new x402Facilitator()
+  .registerExtension(
+    new BuilderCodeFacilitatorExtension({
+      builderCode: "bc_my_facilitator",
+    }),
+  );
+```
+
+## Protocol Flow
+
+```
+Client                         Resource Server                Facilitator
+  |                                  |                              |
+  |--- GET /weather ---------------->|                              |
+  |                                  |                              |
+  |<-- 402 PaymentRequired ----------|                              |
+  |    extensions.builder-code:      |                              |
+  |      { a: "bc_my_app" }         |                              |
+  |                                  |                              |
+  | (sign payment, echo a, attach s) |                              |
+  |                                  |                              |
+  |--- GET /weather + payment ------>|                              |
+  |    extensions.builder-code:      |                              |
+  |      { a: "bc_my_app",          |                              |
+  |        s: "bc_my_client" }      |                              |
+  |                                  |                              |
+  |                                  |--- settle ------------------>|
+  |                                  |    extensions.builder-code:  |
+  |                                  |      { a: "bc_my_app",      |
+  |                                  |        s: "bc_my_client" }  |
+  |                                  |                              |
+  |                                  |    Facilitator adds w,       |
+  |                                  |    encodes CBOR suffix,      |
+  |                                  |    appends to calldata       |
+  |                                  |                              |
+  |<-- 200 OK + resource data -------|                              |
+```
+
+## Verifying Attribution On-Chain
+
+After settlement, you can parse the ERC-8021 suffix from the transaction calldata to verify attribution:
+
+```typescript
+import { parseBuilderCodeSuffixFromCalldata } from "@x402/extensions/builder-code";
+import { createPublicClient, http } from "viem";
+import { baseSepolia } from "viem/chains";
+
+const publicClient = createPublicClient({
+  chain: baseSepolia,
+  transport: http(),
+});
+
+const tx = await publicClient.getTransaction({ hash: txHash });
+const attribution = parseBuilderCodeSuffixFromCalldata(tx.input);
+
+console.log(attribution);
+// { a: "bc_my_app", s: "bc_my_client", w: "bc_my_facilitator" }
+```
+
+## ERC-8021 Schema 2 Calldata Format
+
+The suffix appended to settlement calldata (reading from the end backwards):
+
+| Component | Size | Description |
+|-----------|------|-------------|
+| `ercMarker` | 16 bytes | Constant: `80218021802180218021802180218021` |
+| `schemaId` | 1 byte | `0x02` for Schema 2 |
+| `cborLength` | 2 bytes | Length of CBOR data (big-endian) |
+| `cborData` | variable | CBOR-encoded map with `a`, `w`, and/or `s` fields |
+
+Wire order: `[cborData][cborLength (2B)][schemaId (1B)][ercMarker (16B)]`
+
+## API Reference
+
+### Server
+
+#### `declareBuilderCodeExtension(appCode)`
+
+Validates `appCode` and returns the extension declaration for `PaymentRequired.extensions`.
+
+```typescript
+import { BUILDER_CODE, declareBuilderCodeExtension } from "@x402/extensions/builder-code";
+
+extensions: {
+  [BUILDER_CODE]: declareBuilderCodeExtension("bc_my_app"),
+}
+```
+
+Throws if `appCode` does not match `^[a-z0-9_]{1,32}$`.
+
+### Client
+
+#### `BuilderCodeClientExtension`
+
+```typescript
+import { BuilderCodeClientExtension } from "@x402/extensions/builder-code";
+
+client.registerExtension(new BuilderCodeClientExtension("bc_my_client"));
+```
+
+Automatically echoes the server's `a` code and attaches the client's `s` code to every payment payload.
+
+### Facilitator
+
+#### `BuilderCodeFacilitatorExtension`
+
+```typescript
+import { BuilderCodeFacilitatorExtension } from "@x402/extensions/builder-code";
+
+facilitator.registerExtension(
+  new BuilderCodeFacilitatorExtension({ builderCode: "bc_my_facilitator" }),
+);
+```
+
+Reads `a` and `s` from the payment payload at settlement time, adds `w`, and encodes the ERC-8021 CBOR suffix.
+
+### Utilities
+
+#### `encodeBuilderCodeSuffix(data)`
+
+Encodes builder code fields as an ERC-8021 Schema 2 hex suffix.
+
+```typescript
+import { encodeBuilderCodeSuffix } from "@x402/extensions/builder-code";
+
+const suffix = encodeBuilderCodeSuffix({ a: "bc_my_app", w: "bc_my_fac", s: "bc_my_client" });
+// Returns hex string to append to calldata
+```
+
+#### `parseBuilderCodeSuffixFromCalldata(calldata)`
+
+Parses ERC-8021 Schema 2 attribution from settlement transaction calldata.
+
+```typescript
+import { parseBuilderCodeSuffixFromCalldata } from "@x402/extensions/builder-code";
+
+const attribution = parseBuilderCodeSuffixFromCalldata(tx.input);
+// Returns { a?, w?, s? } or null if no valid suffix found
+```
+
+### Constants
+
+```typescript
+import {
+  BUILDER_CODE,          // "builder-code"
+  BUILDER_CODE_PATTERN,  // /^[a-z0-9_]{1,32}$/
+  ERC_8021_MARKER,       // "80218021802180218021802180218021"
+  SCHEMA_2_ID,           // 0x02
+} from "@x402/extensions/builder-code";
+```
+
+## Examples
+
+Full working examples are available in the x402 repository:
+
+- [TypeScript Server Example](https://github.com/x402-foundation/x402/tree/main/examples/typescript/servers/builder-code)
+- [TypeScript Client Example](https://github.com/x402-foundation/x402/tree/main/examples/typescript/clients/builder-code)
+- [TypeScript Facilitator Example](https://github.com/x402-foundation/x402/tree/main/examples/typescript/facilitator/builder-code)
+
+## Further Reading
+
+- [ERC-8021 Specification](https://eip.tools/eip/8021)
+- [Builder Code Extension Spec](https://github.com/x402-foundation/x402/blob/main/specs/extensions/builder_code.md)
+- [@x402/extensions source](https://github.com/x402-foundation/x402/tree/main/typescript/packages/extensions/src/builder-code)
