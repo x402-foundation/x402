@@ -6,6 +6,7 @@ import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol
 import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 
 import {ISignatureTransfer} from "../interfaces/ISignatureTransfer.sol";
+import {IIdentityRegistry} from "./interfaces/IIdentityRegistry.sol";
 import {ITicketMinter} from "./interfaces/ITicketMinter.sol";
 
 /// @notice Minimal EIP-3009 view used by TicketMinter. USDC and similar tokens implement the
@@ -42,21 +43,24 @@ contract TicketMinter is ITicketMinter, Ownable {
     );
 
     ISignatureTransfer public immutable PERMIT2;
+    IIdentityRegistry public immutable identityRegistry;
 
     mapping(uint256 => Ticket) private _tickets;
     mapping(address => bool) public facilitators;
 
-    address public reputationRegistry;
+    address public immutable reputationRegistry;
 
     uint256 private _nextTicketId = 1;
 
     error NotFacilitator();
     error NotReputationRegistry();
+    error InvalidRegistry();
     error InvalidPayment();
     error TicketNotMinted();
     error PayerMismatch();
     error PaymentTooEarly();
     error InvalidPermit2();
+    error InvalidAgent();
 
     modifier onlyFacilitator() {
         if (!facilitators[msg.sender]) revert NotFacilitator();
@@ -68,18 +72,22 @@ contract TicketMinter is ITicketMinter, Ownable {
         _;
     }
 
-    /// @param owner_ Owner of the minter (controls facilitator/registry setters).
+    /// @param owner_ Owner of the minter (controls facilitator allowlist).
     /// @param permit2_ Canonical Permit2 address. Pass `address(0)` if Permit2 is not used on this chain.
-    constructor(address owner_, address permit2_) Ownable(owner_) {
+    /// @param reputationRegistry_ `ReputationRegistryV3` allowed to call `consumeTicket` (immutable).
+    /// @param identityRegistry_ ERC-8004 identity registry; `agentId` must exist at mint time.
+    constructor(address owner_, address permit2_, address reputationRegistry_, address identityRegistry_)
+        Ownable(owner_)
+    {
+        if (reputationRegistry_ == address(0)) revert InvalidRegistry();
+        if (identityRegistry_ == address(0)) revert InvalidRegistry();
+        reputationRegistry = reputationRegistry_;
+        identityRegistry = IIdentityRegistry(identityRegistry_);
         PERMIT2 = ISignatureTransfer(permit2_);
     }
 
     function setFacilitator(address facilitator, bool enabled) external onlyOwner {
         facilitators[facilitator] = enabled;
-    }
-
-    function setReputationRegistry(address registry) external onlyOwner {
-        reputationRegistry = registry;
     }
 
     function settleAndMintTicket(
@@ -135,7 +143,10 @@ contract TicketMinter is ITicketMinter, Ownable {
         Permit2Settlement calldata settlement
     ) external onlyFacilitator returns (uint256 ticketId) {
         if (address(PERMIT2) == address(0)) revert InvalidPermit2();
-        if (payer == address(0) || settlement.payTo == address(0) || settlement.permit.permitted.amount == 0) {
+        if (
+            payer == address(0) || settlement.payTo == address(0) || settlement.permit.permitted.token == address(0)
+                || settlement.permit.permitted.amount == 0
+        ) {
             revert InvalidPayment();
         }
         if (block.timestamp < settlement.validAfter) revert PaymentTooEarly();
@@ -194,6 +205,8 @@ contract TicketMinter is ITicketMinter, Ownable {
         bytes32 interactionHash,
         string calldata endpoint
     ) internal returns (uint256 ticketId) {
+        _requireAgentExists(agentId);
+
         ticketId = _nextTicketId++;
         _tickets[ticketId] = Ticket({
             payer: payer,
@@ -205,5 +218,13 @@ contract TicketMinter is ITicketMinter, Ownable {
         });
 
         emit TicketMinted(ticketId, payer, agentId, requestHash, interactionHash);
+    }
+
+    function _requireAgentExists(uint256 agentId) internal view {
+        try identityRegistry.ownerOf(agentId) returns (address owner) {
+            if (owner == address(0)) revert InvalidAgent();
+        } catch {
+            revert InvalidAgent();
+        }
     }
 }

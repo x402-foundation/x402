@@ -9,12 +9,15 @@ import {ISignatureTransfer} from "../../src/interfaces/ISignatureTransfer.sol";
 import {MockERC20} from "../mocks/MockERC20.sol";
 import {MockERC3009Token} from "../mocks/MockERC3009Token.sol";
 import {MockPermit2} from "../mocks/MockPermit2.sol";
+import {MockIdentityRegistry} from "./mocks/MockIdentityRegistry.sol";
 
 contract TicketMinterTest is Test {
     TicketMinter public minter;
     MockERC20 public token;
+    MockIdentityRegistry public identity;
 
     address public owner = makeAddr("owner");
+    address public agentOwner = makeAddr("agentOwner");
     address public facilitator = makeAddr("facilitator");
     address public payer = makeAddr("payer");
     address public payTo = makeAddr("payTo");
@@ -23,7 +26,12 @@ contract TicketMinterTest is Test {
     bytes32 public constant INTERACTION_HASH = keccak256("interaction");
 
     function setUp() public {
-        minter = new TicketMinter(owner, address(0));
+        identity = new MockIdentityRegistry();
+        for (uint256 id = 1; id <= 123; id++) {
+            identity.setOwner(id, agentOwner);
+        }
+
+        minter = new TicketMinter(owner, address(0), makeAddr("registry"), address(identity));
         token = new MockERC20("USDC", "USDC", 6);
 
         vm.startPrank(owner);
@@ -64,6 +72,17 @@ contract TicketMinterTest is Test {
 
         vm.prank(facilitator);
         minter.settleAndMintTicket(payer, 1, REQUEST_HASH, INTERACTION_HASH, "/r", payment);
+    }
+
+    function test_revertWhen_invalidAgent() public {
+        ITicketMinter.SettlePayment memory payment =
+            ITicketMinter.SettlePayment({token: address(token), payTo: payTo, amount: 1});
+
+        vm.prank(facilitator);
+        vm.expectRevert(TicketMinter.InvalidAgent.selector);
+        minter.settleAndMintTicket(
+            payer, 9999, REQUEST_HASH, INTERACTION_HASH, "/r", payment
+        );
     }
 
     function test_revertWhen_notFacilitator() public {
@@ -123,7 +142,7 @@ contract TicketMinterTest is Test {
         MockPermit2 permit2 = new MockPermit2();
         permit2.setShouldActuallyTransfer(true);
 
-        TicketMinter mp = new TicketMinter(owner, address(permit2));
+        TicketMinter mp = new TicketMinter(owner, address(permit2), makeAddr("registry-permit2"), address(identity));
         vm.prank(owner);
         mp.setFacilitator(facilitator, true);
 
@@ -175,21 +194,24 @@ contract TicketMinterTest is Test {
     }
 
     function test_consumeTicket_onlyRegistry() public {
-        address registry = makeAddr("registry");
+        address registryAddr = makeAddr("registry");
+        TicketMinter wiredMinter = new TicketMinter(owner, address(0), registryAddr, address(identity));
         vm.prank(owner);
-        minter.setReputationRegistry(registry);
+        wiredMinter.setFacilitator(facilitator, true);
+        vm.prank(payer);
+        token.approve(address(wiredMinter), type(uint256).max);
 
         ITicketMinter.SettlePayment memory payment =
             ITicketMinter.SettlePayment({token: address(token), payTo: payTo, amount: 1});
 
         vm.prank(facilitator);
-        uint256 ticketId = minter.settleAndMintTicket(
+        uint256 ticketId = wiredMinter.settleAndMintTicket(
             payer, 1, REQUEST_HASH, INTERACTION_HASH, "/r", payment
         );
 
-        vm.prank(registry);
-        minter.consumeTicket(ticketId, payer);
+        vm.prank(registryAddr);
+        wiredMinter.consumeTicket(ticketId, payer);
 
-        assertEq(uint256(minter.tickets(ticketId).status), uint256(ITicketMinter.TicketStatus.CONSUMED));
+        assertEq(uint256(wiredMinter.tickets(ticketId).status), uint256(ITicketMinter.TicketStatus.CONSUMED));
     }
 }

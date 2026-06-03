@@ -4,6 +4,7 @@ pragma solidity ^0.8.20;
 import {ECDSA} from "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
 import {EIP712} from "@openzeppelin/contracts/utils/cryptography/EIP712.sol";
 
+import {TicketMinter} from "./TicketMinter.sol";
 import {IIdentityRegistry} from "./interfaces/IIdentityRegistry.sol";
 import {ITicketMinter} from "./interfaces/ITicketMinter.sol";
 
@@ -15,7 +16,7 @@ contract ReputationRegistryV3 is EIP712 {
     int128 private constant MAX_ABS_VALUE = 1e38;
 
     bytes32 private constant FEEDBACK_INTENT_TYPEHASH = keccak256(
-        "FeedbackIntent(uint256 ticketId,int128 value,uint8 valueDecimals,bytes32 tag1Hash,bytes32 tag2Hash,bytes32 endpointHash,bytes32 feedbackURIHash,bytes32 feedbackHash,uint256 nonce,uint256 deadline)"
+        "FeedbackIntent(uint256 ticketId,bytes32 interactionHash,int128 value,uint8 valueDecimals,bytes32 tag1Hash,bytes32 tag2Hash,bytes32 endpointHash,bytes32 feedbackURIHash,bytes32 feedbackHash,uint256 nonce,uint256 deadline)"
     );
 
     IIdentityRegistry public immutable identityRegistry;
@@ -27,6 +28,7 @@ contract ReputationRegistryV3 is EIP712 {
     struct FeedbackSubmission {
         address payer;
         uint256 ticketId;
+        bytes32 interactionHash;
         int128 value;
         uint8 valueDecimals;
         string tag1;
@@ -39,7 +41,6 @@ contract ReputationRegistryV3 is EIP712 {
     struct StoredFeedback {
         int128 value;
         uint8 valueDecimals;
-        bool isRevoked;
         bool isDisputed;
         string tag1;
         string tag2;
@@ -77,10 +78,20 @@ contract ReputationRegistryV3 is EIP712 {
     error NotAgentAuthorized();
     error TooManyDecimals();
     error ValueTooLarge();
+    error ZeroAddress();
+    error InteractionHashMismatch();
 
-    constructor(address identityRegistry_, address ticketMinter_) EIP712("ERC8004ReputationV3", "1") {
+    /// @param identityRegistry_ ERC-8004 identity registry.
+    /// @param ticketMinterOwner_ Owner of the paired `TicketMinter` (facilitator allowlist).
+    /// @param permit2_ Permit2 for the paired minter; `address(0)` disables Permit2 settlement.
+    constructor(address identityRegistry_, address ticketMinterOwner_, address permit2_)
+        EIP712("ERC8004ReputationV3", "2")
+    {
+        if (identityRegistry_ == address(0)) revert ZeroAddress();
         identityRegistry = IIdentityRegistry(identityRegistry_);
-        ticketMinter = ITicketMinter(ticketMinter_);
+        ticketMinter = ITicketMinter(
+            address(new TicketMinter(ticketMinterOwner_, permit2_, address(this), identityRegistry_))
+        );
     }
 
     function giveFeedback(
@@ -104,10 +115,12 @@ contract ReputationRegistryV3 is EIP712 {
         string calldata tag2,
         string calldata endpoint,
         string calldata feedbackURI,
+        bytes32 interactionHash,
         bytes32 feedbackHash
     ) external {
-        uint256 agentId = _consumeTicketForFeedback(msg.sender, ticketId, feedbackHash);
-        _recordFeedback(
+        _validateFeedbackValue(value, valueDecimals);
+        uint256 agentId = _consumeTicketForFeedback(msg.sender, ticketId, interactionHash, feedbackHash);
+        _storeFeedback(
             agentId, msg.sender, ticketId, value, valueDecimals, tag1, tag2, endpoint, feedbackURI, feedbackHash
         );
     }
@@ -119,8 +132,10 @@ contract ReputationRegistryV3 is EIP712 {
         bytes calldata signature
     ) external {
         _verifyFeedbackIntent(submission, nonce, deadline, signature);
-        uint256 agentId = _consumeTicketForFeedback(submission.payer, submission.ticketId, submission.feedbackHash);
-        _recordFeedbackFromSubmission(agentId, submission);
+        _validateFeedbackValue(submission.value, submission.valueDecimals);
+        uint256 agentId =
+            _consumeTicketForFeedback(submission.payer, submission.ticketId, submission.interactionHash, submission.feedbackHash);
+        _storeFeedbackFromSubmission(agentId, submission);
     }
 
     function disputeFeedback(uint256 agentId, address clientAddress, uint64 feedbackIndex) external {
@@ -137,10 +152,11 @@ contract ReputationRegistryV3 is EIP712 {
     function readFeedback(uint256 agentId, address clientAddress, uint64 feedbackIndex)
         external
         view
-        returns (int128 value, uint8 valueDecimals, string memory tag1, string memory tag2, bool isRevoked, bool isDisputed)
+        returns (int128 value, uint8 valueDecimals, string memory tag1, string memory tag2, bool isDisputed)
     {
+        if (feedbackIndex == 0 || feedbackIndex > _lastIndex[agentId][clientAddress]) revert FeedbackNotFound();
         StoredFeedback storage fb = _feedback[agentId][clientAddress][feedbackIndex];
-        return (fb.value, fb.valueDecimals, fb.tag1, fb.tag2, fb.isRevoked, fb.isDisputed);
+        return (fb.value, fb.valueDecimals, fb.tag1, fb.tag2, fb.isDisputed);
     }
 
     function domainSeparator() external view returns (bytes32) {
@@ -164,6 +180,7 @@ contract ReputationRegistryV3 is EIP712 {
             abi.encode(
                 FEEDBACK_INTENT_TYPEHASH,
                 submission.ticketId,
+                submission.interactionHash,
                 submission.value,
                 submission.valueDecimals,
                 keccak256(bytes(submission.tag1)),
@@ -181,17 +198,18 @@ contract ReputationRegistryV3 is EIP712 {
         _feedbackNonces[submission.payer][nonce] = true;
     }
 
-    function _recordFeedbackFromSubmission(uint256 agentId, FeedbackSubmission calldata submission) internal {
-        if (submission.valueDecimals > 18) revert TooManyDecimals();
-        if (submission.value < -MAX_ABS_VALUE || submission.value > MAX_ABS_VALUE) revert ValueTooLarge();
+    function _validateFeedbackValue(int128 value, uint8 valueDecimals) internal pure {
+        if (valueDecimals > 18) revert TooManyDecimals();
+        if (value < -MAX_ABS_VALUE || value > MAX_ABS_VALUE) revert ValueTooLarge();
+    }
 
+    function _storeFeedbackFromSubmission(uint256 agentId, FeedbackSubmission calldata submission) internal {
         uint64 feedbackIndex = ++_lastIndex[agentId][submission.payer];
         _feedback[agentId][submission.payer][feedbackIndex] = StoredFeedback({
             value: submission.value,
             valueDecimals: submission.valueDecimals,
             tag1: submission.tag1,
             tag2: submission.tag2,
-            isRevoked: false,
             isDisputed: false
         });
 
@@ -211,13 +229,14 @@ contract ReputationRegistryV3 is EIP712 {
         );
     }
 
-    function _consumeTicketForFeedback(address payer, uint256 ticketId, bytes32 feedbackHash)
+    function _consumeTicketForFeedback(address payer, uint256 ticketId, bytes32 interactionHash, bytes32 feedbackHash)
         internal
         returns (uint256 agentId)
     {
         ITicketMinter.Ticket memory ticket = ticketMinter.tickets(ticketId);
         if (ticket.status != ITicketMinter.TicketStatus.MINTED) revert InvalidTicket();
         if (ticket.payer != payer) revert InvalidTicket();
+        if (ticket.interactionHash != interactionHash) revert InteractionHashMismatch();
         if (identityRegistry.isAuthorizedOrOwner(payer, ticket.agentId)) revert SelfFeedbackNotAllowed();
         if (_usedFeedbackHash[ticket.agentId][payer][feedbackHash]) revert FeedbackHashAlreadyUsed();
 
@@ -226,7 +245,7 @@ contract ReputationRegistryV3 is EIP712 {
         return ticket.agentId;
     }
 
-    function _recordFeedback(
+    function _storeFeedback(
         uint256 agentId,
         address payer,
         uint256 ticketId,
@@ -238,12 +257,9 @@ contract ReputationRegistryV3 is EIP712 {
         string calldata feedbackURI,
         bytes32 feedbackHash
     ) internal {
-        if (valueDecimals > 18) revert TooManyDecimals();
-        if (value < -MAX_ABS_VALUE || value > MAX_ABS_VALUE) revert ValueTooLarge();
-
         uint64 feedbackIndex = ++_lastIndex[agentId][payer];
         _feedback[agentId][payer][feedbackIndex] =
-            StoredFeedback({value: value, valueDecimals: valueDecimals, tag1: tag1, tag2: tag2, isRevoked: false, isDisputed: false});
+            StoredFeedback({value: value, valueDecimals: valueDecimals, tag1: tag1, tag2: tag2, isDisputed: false});
 
         emit NewFeedback(agentId, payer, feedbackIndex, value, valueDecimals, tag1, tag1, tag2, endpoint, feedbackURI, feedbackHash, ticketId);
     }

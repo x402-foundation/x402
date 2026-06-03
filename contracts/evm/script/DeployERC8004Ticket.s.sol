@@ -51,24 +51,19 @@ contract DeployERC8004Ticket is Script {
             console2.log("Deployed MockIdentityRegistry:", identityRegistry);
         }
 
-        TicketMinter minter = new TicketMinter(owner, permit2);
+        ReputationRegistryV3 registry = new ReputationRegistryV3(identityRegistry, owner, permit2);
+        TicketMinter minter = TicketMinter(address(registry.ticketMinter()));
+        console2.log("Deployed ReputationRegistryV3:", address(registry));
         console2.log("Deployed TicketMinter        :", address(minter));
 
-        ReputationRegistryV3 registry = new ReputationRegistryV3(identityRegistry, address(minter));
-        console2.log("Deployed ReputationRegistryV3:", address(registry));
-
-        // setFacilitator + setReputationRegistry require msg.sender == owner.
-        // If broadcaster is the owner, wire it inline. Otherwise the owner must run
-        // these calls in a separate tx; we log the expected calldata for clarity.
+        // setFacilitator requires msg.sender == minter owner.
         if (broadcaster == owner) {
             minter.setFacilitator(facilitator, true);
-            minter.setReputationRegistry(address(registry));
-            console2.log("Wired facilitator + registry on the minter.");
+            console2.log("Wired facilitator on the minter.");
         } else {
             console2.log("");
-            console2.log("Owner is not the broadcaster. Run these as owner:");
+            console2.log("Owner is not the broadcaster. Run this as owner:");
             console2.log("  minter.setFacilitator(", facilitator, ", true)");
-            console2.log("  minter.setReputationRegistry(", address(registry), ")");
         }
 
         vm.stopBroadcast();

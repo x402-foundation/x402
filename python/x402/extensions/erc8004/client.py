@@ -51,6 +51,7 @@ REPUTATION_ABI = [
             {"name": "tag2", "type": "string"},
             {"name": "endpoint", "type": "string"},
             {"name": "feedbackURI", "type": "string"},
+            {"name": "interactionHash", "type": "bytes32"},
             {"name": "feedbackHash", "type": "bytes32"},
         ],
         "name": "giveFeedbackWithTicket",
@@ -66,6 +67,7 @@ REPUTATION_ABI = [
                 "components": [
                     {"name": "payer", "type": "address"},
                     {"name": "ticketId", "type": "uint256"},
+                    {"name": "interactionHash", "type": "bytes32"},
                     {"name": "value", "type": "int128"},
                     {"name": "valueDecimals", "type": "uint8"},
                     {"name": "tag1", "type": "string"},
@@ -88,7 +90,7 @@ REPUTATION_ABI = [
 
 
 # EIP-712 typed data for the sponsored feedback path (matches
-# ReputationRegistryV3.FEEDBACK_INTENT_TYPEHASH and EIP712("ERC8004ReputationV3","1")).
+# ReputationRegistryV3.FEEDBACK_INTENT_TYPEHASH and EIP712("ERC8004ReputationV3","2")).
 FEEDBACK_INTENT_TYPES: dict[str, list[dict[str, str]]] = {
     "EIP712Domain": [
         {"name": "name", "type": "string"},
@@ -98,6 +100,7 @@ FEEDBACK_INTENT_TYPES: dict[str, list[dict[str, str]]] = {
     ],
     "FeedbackIntent": [
         {"name": "ticketId", "type": "uint256"},
+        {"name": "interactionHash", "type": "bytes32"},
         {"name": "value", "type": "int128"},
         {"name": "valueDecimals", "type": "uint8"},
         {"name": "tag1Hash", "type": "bytes32"},
@@ -111,7 +114,7 @@ FEEDBACK_INTENT_TYPES: dict[str, list[dict[str, str]]] = {
 }
 
 FEEDBACK_DOMAIN_NAME = "ERC8004ReputationV3"
-FEEDBACK_DOMAIN_VERSION = "1"
+FEEDBACK_DOMAIN_VERSION = "2"
 
 
 def extract_erc8004_info(payment_required: PaymentRequired) -> dict[str, Any] | None:
@@ -387,6 +390,7 @@ class ERCFeedbackClient:
             params.tag2,
             params.endpoint,
             params.feedback_uri,
+            params.interaction_hash,
             params.feedback_hash,
         )
         return self._send_registry_tx(func, gas_limit)
@@ -415,6 +419,7 @@ class ERCFeedbackClient:
         }
         message = {
             "ticketId": int(ticket_id),
+            "interactionHash": params.interaction_hash,
             "value": int(params.value),
             "valueDecimals": int(params.value_decimals),
             "tag1Hash": keccak_text(params.tag1),
@@ -449,6 +454,7 @@ class ERCFeedbackClient:
         submission = (
             to_checksum_address(payer),
             int(ticket_id),
+            params.interaction_hash,
             int(params.value),
             int(params.value_decimals),
             params.tag1,

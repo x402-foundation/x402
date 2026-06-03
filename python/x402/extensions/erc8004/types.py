@@ -51,6 +51,7 @@ class FeedbackParams(BaseModel):
     endpoint: str = ""
     feedback_uri: str = ""
     feedback_hash: bytes = Field(default=b"\x00" * 32)
+    interaction_hash: bytes = Field(default=b"\x00" * 32)
 
     model_config = {"extra": "allow"}
 

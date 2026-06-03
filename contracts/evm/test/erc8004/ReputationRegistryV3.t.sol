@@ -31,17 +31,15 @@ contract ReputationRegistryV3Test is Test {
     function setUp() public {
         payer = vm.addr(payerPrivateKey);
 
-        minter = new TicketMinter(owner, address(0));
         identity = new MockIdentityRegistry();
-        registry = new ReputationRegistryV3(address(identity), address(minter));
+        registry = new ReputationRegistryV3(address(identity), owner, address(0));
+        minter = TicketMinter(address(registry.ticketMinter()));
         token = new MockERC20("USDC", "USDC", 6);
 
         identity.setOwner(AGENT_ID, agentOwner);
 
-        vm.startPrank(owner);
+        vm.prank(owner);
         minter.setFacilitator(facilitator, true);
-        minter.setReputationRegistry(address(registry));
-        vm.stopPrank();
 
         token.mint(payer, 1_000e6);
         vm.prank(payer);
@@ -62,7 +60,9 @@ contract ReputationRegistryV3Test is Test {
         uint256 ticketId = _mintTicket();
 
         vm.prank(payer);
-        registry.giveFeedbackWithTicket(ticketId, 100, 0, "quality", "", "https://agent.example/r", "", FEEDBACK_HASH);
+        registry.giveFeedbackWithTicket(
+            ticketId, 100, 0, "quality", "", "https://agent.example/r", "", INTERACTION_HASH, FEEDBACK_HASH
+        );
 
         assertEq(uint256(minter.tickets(ticketId).status), uint256(ITicketMinter.TicketStatus.CONSUMED));
         assertEq(registry.getLastIndex(AGENT_ID, payer), 1);
@@ -77,9 +77,9 @@ contract ReputationRegistryV3Test is Test {
         uint256 ticketId = _mintTicket();
 
         vm.startPrank(payer);
-        registry.giveFeedbackWithTicket(ticketId, 100, 0, "q", "", "/r", "", FEEDBACK_HASH);
+        registry.giveFeedbackWithTicket(ticketId, 100, 0, "q", "", "/r", "", INTERACTION_HASH, FEEDBACK_HASH);
         vm.expectRevert(ReputationRegistryV3.InvalidTicket.selector);
-        registry.giveFeedbackWithTicket(ticketId, 50, 0, "q", "", "/r", "", keccak256("other"));
+        registry.giveFeedbackWithTicket(ticketId, 50, 0, "q", "", "/r", "", INTERACTION_HASH, keccak256("other"));
         vm.stopPrank();
     }
 
@@ -87,14 +87,14 @@ contract ReputationRegistryV3Test is Test {
         uint256 ticketId = _mintTicket();
 
         vm.startPrank(payer);
-        registry.giveFeedbackWithTicket(ticketId, 100, 0, "q", "", "/r", "", FEEDBACK_HASH);
+        registry.giveFeedbackWithTicket(ticketId, 100, 0, "q", "", "/r", "", INTERACTION_HASH, FEEDBACK_HASH);
         vm.stopPrank();
 
         uint256 ticketId2 = _mintTicket();
 
         vm.prank(payer);
         vm.expectRevert(ReputationRegistryV3.FeedbackHashAlreadyUsed.selector);
-        registry.giveFeedbackWithTicket(ticketId2, 50, 0, "q", "", "/r", "", FEEDBACK_HASH);
+        registry.giveFeedbackWithTicket(ticketId2, 50, 0, "q", "", "/r", "", INTERACTION_HASH, FEEDBACK_HASH);
     }
 
     function test_giveFeedbackWithTicketFor_sponsored() public {
@@ -106,9 +106,10 @@ contract ReputationRegistryV3Test is Test {
         bytes32 structHash = keccak256(
             abi.encode(
                 keccak256(
-                    "FeedbackIntent(uint256 ticketId,int128 value,uint8 valueDecimals,bytes32 tag1Hash,bytes32 tag2Hash,bytes32 endpointHash,bytes32 feedbackURIHash,bytes32 feedbackHash,uint256 nonce,uint256 deadline)"
+                    "FeedbackIntent(uint256 ticketId,bytes32 interactionHash,int128 value,uint8 valueDecimals,bytes32 tag1Hash,bytes32 tag2Hash,bytes32 endpointHash,bytes32 feedbackURIHash,bytes32 feedbackHash,uint256 nonce,uint256 deadline)"
                 ),
                 ticketId,
+                INTERACTION_HASH,
                 int128(80),
                 uint8(0),
                 keccak256(bytes("quality")),
@@ -129,6 +130,7 @@ contract ReputationRegistryV3Test is Test {
             ReputationRegistryV3.FeedbackSubmission({
                 payer: payer,
                 ticketId: ticketId,
+                interactionHash: INTERACTION_HASH,
                 value: 80,
                 valueDecimals: 0,
                 tag1: "quality",
@@ -145,16 +147,26 @@ contract ReputationRegistryV3Test is Test {
         assertEq(uint256(minter.tickets(ticketId).status), uint256(ITicketMinter.TicketStatus.CONSUMED));
     }
 
+    function test_revertWhen_interactionHashMismatch() public {
+        uint256 ticketId = _mintTicket();
+
+        vm.prank(payer);
+        vm.expectRevert(ReputationRegistryV3.InteractionHashMismatch.selector);
+        registry.giveFeedbackWithTicket(
+            ticketId, 100, 0, "q", "", "/r", "", keccak256("wrong-interaction"), FEEDBACK_HASH
+        );
+    }
+
     function test_disputeFeedback_agentOnly() public {
         uint256 ticketId = _mintTicket();
 
         vm.prank(payer);
-        registry.giveFeedbackWithTicket(ticketId, 100, 0, "q", "", "/r", "", FEEDBACK_HASH);
+        registry.giveFeedbackWithTicket(ticketId, 100, 0, "q", "", "/r", "", INTERACTION_HASH, FEEDBACK_HASH);
 
         vm.prank(agentOwner);
         registry.disputeFeedback(AGENT_ID, payer, 1);
 
-        (,,,,, bool isDisputed) = registry.readFeedback(AGENT_ID, payer, 1);
+        (,,,, bool isDisputed) = registry.readFeedback(AGENT_ID, payer, 1);
         assertTrue(isDisputed);
     }
 }

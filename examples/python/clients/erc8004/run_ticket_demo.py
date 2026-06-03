@@ -441,7 +441,12 @@ def _settle_and_mint_eip3009(
 
 
 def _path_a_direct(
-    w3: Web3, registry_addr: str, payer: Account, ticket_id: int, agent_id: int
+    w3: Web3,
+    registry_addr: str,
+    payer: Account,
+    ticket_id: int,
+    agent_id: int,
+    interaction_hash: bytes,
 ) -> None:
     """Path A: payer submits giveFeedbackWithTicket directly (pays own gas).
 
@@ -466,6 +471,7 @@ def _path_a_direct(
         endpoint="https://agent.example/r",
         feedback_uri=f"mem://demo-path-a/ticket-{ticket_id}",
         feedback_hash=keccak(f"demo-artifact-path-a/ticket-{ticket_id}".encode()),
+        interaction_hash=interaction_hash,
     )
     tx_hash = client.submit_feedback_with_ticket(ticket_id, params)
     rcpt = w3.eth.wait_for_transaction_receipt(tx_hash)
@@ -481,6 +487,7 @@ def _path_b_sponsored(
     relayer: Account,
     ticket_id: int,
     agent_id: int,
+    interaction_hash: bytes,
 ) -> None:
     """Path B: payer signs an EIP-712 FeedbackIntent; relayer broadcasts."""
     print("\n--- Path B: sponsored giveFeedbackWithTicketFor ---")
@@ -504,6 +511,7 @@ def _path_b_sponsored(
         endpoint="https://agent.example/r",
         feedback_uri=f"mem://demo-path-b/ticket-{ticket_id}",
         feedback_hash=keccak(f"demo-artifact-path-b/ticket-{ticket_id}".encode()),
+        interaction_hash=interaction_hash,
     )
     # The relayer-replay nonce is scoped per payer in the registry, so different
     # tickets need different nonces (or the second sponsored submission reverts
@@ -630,33 +638,36 @@ def main() -> int:
         agent_id = register_agent(w3, agent, identity_addr)
         print(f"  agentId = {agent_id}  (owner = ownerOf({agent_id}) = {agent.address})")
 
-        # ---- Deploy TicketMinter + ReputationRegistryV3 onto the fork ----
+        # ---- Deploy ReputationRegistryV3 (deploys paired TicketMinter) ----
         print("\nDeploying ticket-flow contracts onto the fork...")
-        # TicketMinter(owner=deployer, permit2=address(0))
-        minter_addr = _deploy(
-            w3, deployer, "TicketMinter", deployer.address, "0x" + "00" * 20
-        )
-        print(f"  TicketMinter         = {minter_addr}")
         registry_addr = _deploy(
-            w3, deployer, "ReputationRegistryV3", identity_addr, minter_addr
+            w3,
+            deployer,
+            "ReputationRegistryV3",
+            identity_addr,
+            deployer.address,
+            "0x" + "00" * 20,
         )
         print(f"  ReputationRegistryV3 = {registry_addr}  (uses canonical IdentityRegistry)")
 
-        minter = w3.eth.contract(address=minter_addr, abi=_load_artifact("TicketMinter")["abi"])
         registry = w3.eth.contract(
             address=registry_addr, abi=_load_artifact("ReputationRegistryV3")["abi"]
         )
+        minter_addr = registry.functions.ticketMinter().call()
+        print(f"  TicketMinter         = {minter_addr}")
 
-        # ---- Wire minter: facilitator + registry ----
+        minter = w3.eth.contract(address=minter_addr, abi=_load_artifact("TicketMinter")["abi"])
+
+        # ---- Wire minter: facilitator allowlist ----
         print("\nWiring contracts...")
-        for fn, label in (
-            (minter.functions.setFacilitator(facilitator.address, True), "setFacilitator"),
-            (minter.functions.setReputationRegistry(registry_addr), "setReputationRegistry"),
-        ):
-            tx = fn.build_transaction({"from": deployer.address})
-            tx.pop("chainId", None); tx.pop("nonce", None); tx.pop("from", None)
-            _send(w3, deployer, {**tx, "gas": 200_000})
-            print(f"  {label}")
+        tx = minter.functions.setFacilitator(facilitator.address, True).build_transaction(
+            {"from": deployer.address}
+        )
+        tx.pop("chainId", None)
+        tx.pop("nonce", None)
+        tx.pop("from", None)
+        _send(w3, deployer, {**tx, "gas": 200_000})
+        print("  setFacilitator")
 
         # ====================================================================
         # Scenario 1: USDC via EIP-3009 transferWithAuthorization
@@ -676,7 +687,7 @@ def main() -> int:
         print(f"  payer signed USDC TransferWithAuthorization (no on-chain approval)")
         print(f"  settle+mint tx = {tx_1}  ticketId = {ticket_id_1}")
         _print_ticket(w3, minter, ticket_id_1, "mint")
-        _path_a_direct(w3, registry_addr, payer, ticket_id_1, agent_id)
+        _path_a_direct(w3, registry_addr, payer, ticket_id_1, agent_id, keccak(b"int-1"))
         _print_ticket(w3, minter, ticket_id_1, "feedback")
 
         # Ticket #2 — Path B
@@ -691,7 +702,7 @@ def main() -> int:
         )
         print(f"  settle+mint tx = {tx_2}  ticketId = {ticket_id_2}")
         _print_ticket(w3, minter, ticket_id_2, "mint")
-        _path_b_sponsored(w3, registry_addr, payer, relayer, ticket_id_2, agent_id)
+        _path_b_sponsored(w3, registry_addr, payer, relayer, ticket_id_2, agent_id, keccak(b"int-2"))
         _print_ticket(w3, minter, ticket_id_2, "feedback")
 
         # ====================================================================
@@ -709,7 +720,7 @@ def main() -> int:
         )
         print(f"  settle+mint tx = {tx_3}  ticketId = {ticket_id_3}")
         _print_ticket(w3, minter, ticket_id_3, "mint")
-        _path_a_direct(w3, registry_addr, payer, ticket_id_3, agent_id)
+        _path_a_direct(w3, registry_addr, payer, ticket_id_3, agent_id, keccak(b"int-3"))
         _print_ticket(w3, minter, ticket_id_3, "feedback")
 
         # Ticket #4 — Path B
@@ -722,7 +733,7 @@ def main() -> int:
         )
         print(f"  settle+mint tx = {tx_4}  ticketId = {ticket_id_4}")
         _print_ticket(w3, minter, ticket_id_4, "mint")
-        _path_b_sponsored(w3, registry_addr, payer, relayer, ticket_id_4, agent_id)
+        _path_b_sponsored(w3, registry_addr, payer, relayer, ticket_id_4, agent_id, keccak(b"int-4"))
         _print_ticket(w3, minter, ticket_id_4, "feedback")
 
         # ---- Final assertions ----
