@@ -1,0 +1,7 @@
+{
+  "name": "x402-anthropic (Python)",
+  "category": "Client-Side Integrations",
+  "logoUrl": "/logos/x402-anthropic.svg",
+  "description": "x402 payment transport for the Anthropic Python SDK. Wraps the Anthropic client so HTTP 402 responses are automatically paid with USDC on EVM (Base, Ethereum) or SVM (Solana) — no code changes needed.",
+  "websiteUrl": "https://github.com/kinance/x402-anthropic-python"
+}
