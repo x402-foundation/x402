@@ -2,8 +2,7 @@
 
 from __future__ import annotations
 
-import secrets
-from typing import Any, Protocol
+from typing import Any
 
 from eth_utils import keccak, to_checksum_address
 from web3 import Web3
@@ -13,16 +12,14 @@ def keccak_text(value: str) -> bytes:
     """keccak256(utf-8 bytes) for empty-string-safe text hashing in EIP-712 fields."""
     return keccak((value or "").encode("utf-8"))
 from x402.schemas.extensions import ClientExtension
-from x402.schemas.payments import PaymentPayload, PaymentRequired, PaymentRequirements
+from x402.schemas.payments import PaymentPayload, PaymentRequired
 
-from .artifact import build_artifact, canonical_bytes, compute_feedback_hash
 from .schema import erc8004_schema
 from .ticket_hashes import TicketBind, echo_ticket_bind_in_payment_payload
 from .types import (
     ERC8004Config,
     EXTENSION_KEY,
     FeedbackParams,
-    InteractionReceipt,
 )
 
 REPUTATION_ABI = [
@@ -173,68 +170,6 @@ class ERC8004ClientExtension(ClientExtension):
         return payment_payload
 
 
-class ArtifactUploader(Protocol):
-    """Pluggable storage backend for the feedback artifact.
-
-    Production implementations should use content-addressed storage
-    (IPFS/Arweave) so the URI itself commits to the content.
-    """
-
-    def upload(self, content: bytes) -> str:
-        """Upload bytes, return a resolvable URI."""
-        ...
-
-
-class InMemoryUploader:
-    """Test/dev uploader. Returns a mem:// URI and retains bytes in memory."""
-
-    def __init__(self) -> None:
-        self.store: dict[str, bytes] = {}
-
-    def upload(self, content: bytes) -> str:
-        uri = "mem://" + secrets.token_hex(16)
-        self.store[uri] = content
-        return uri
-
-
-class PinataUploader:
-    """Content-addressed uploader backed by the Pinata V3 file API.
-
-    Posts to POST https://uploads.pinata.cloud/v3/files with Bearer auth.
-    Returns an ipfs:// URI; the resulting CID is also kept on `last_cid`.
-    """
-
-    UPLOAD_URL = "https://uploads.pinata.cloud/v3/files"
-
-    def __init__(
-        self,
-        jwt: str,
-        network: str = "public",
-        name: str = "x402-erc8004-feedback.json",
-        timeout: float = 60.0,
-    ) -> None:
-        self._jwt = jwt
-        self._network = network
-        self._name = name
-        self._timeout = timeout
-        self.last_cid: str | None = None
-
-    def upload(self, content: bytes) -> str:
-        import httpx
-
-        resp = httpx.post(
-            self.UPLOAD_URL,
-            headers={"Authorization": f"Bearer {self._jwt}"},
-            files={"file": (self._name, content, "application/json")},
-            data={"network": self._network, "name": self._name},
-            timeout=self._timeout,
-        )
-        resp.raise_for_status()
-        cid = resp.json()["data"]["cid"]
-        self.last_cid = cid
-        return f"ipfs://{cid}"
-
-
 class ERCFeedbackClient:
     """Client-side helper for building, publishing, and submitting feedback."""
 
@@ -275,52 +210,6 @@ class ERCFeedbackClient:
                 tid_hex = tid.hex() if isinstance(tid, (bytes, bytearray)) else str(tid)
                 return int(tid_hex, 16)
         return None
-
-    def build_and_publish_artifact(
-        self,
-        requirements: PaymentRequirements,
-        payment_payload: PaymentPayload,
-        tx_hash: str,
-        payer: str,
-        payment_method: str,
-        request: dict[str, Any],
-        response: dict[str, Any],
-        params: FeedbackParams,
-        uploader: ArtifactUploader,
-        receipt: InteractionReceipt | None = None,
-    ) -> tuple[str, bytes, FeedbackParams]:
-        """Build the canonical artifact, embed the optional receipt, publish it.
-
-        Returns (feedbackURI, feedbackHash, updated FeedbackParams).
-        """
-        feedback = {
-            "agentId": params.agent_id,
-            "value": params.value,
-            "valueDecimals": params.value_decimals,
-            "tag1": params.tag1,
-            "tag2": params.tag2,
-            "endpoint": params.endpoint,
-            "comment": getattr(params, "comment", ""),
-        }
-        artifact = build_artifact(
-            requirements=requirements,
-            payment_payload=payment_payload,
-            tx_hash=tx_hash,
-            payer=payer,
-            payment_method=payment_method,
-            agent_id=params.agent_id,
-            request=request,
-            response=response,
-            feedback=feedback,
-        )
-        art_dict = artifact.to_dict()
-        if receipt is not None:
-            art_dict["interaction"]["response"]["agentSignature"] = receipt.to_dict()
-
-        feedback_hash = compute_feedback_hash(art_dict)
-        uri = uploader.upload(canonical_bytes(art_dict))
-        updated = params.model_copy(update={"feedback_uri": uri, "feedback_hash": feedback_hash})
-        return uri, feedback_hash, updated
 
     def submit_feedback_to_registry(
         self, params: FeedbackParams, gas_limit: int | None = None

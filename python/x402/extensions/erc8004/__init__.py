@@ -23,11 +23,8 @@ from x402.extensions.erc8004.ticket_hashes import (
     echo_ticket_bind_in_payment_payload,
 )
 from x402.extensions.erc8004.client import (
-    ArtifactUploader,
     ERC8004ClientExtension,
     ERCFeedbackClient,
-    InMemoryUploader,
-    PinataUploader,
     echo_erc8004_in_payment_payload,
     extract_erc8004_info,
 )
@@ -69,9 +66,6 @@ __all__ = [
     "echo_ticket_bind_in_payment_payload",
     "ERCFeedbackClient",
     "ERC8004ClientExtension",
-    "ArtifactUploader",
-    "InMemoryUploader",
-    "PinataUploader",
     "echo_erc8004_in_payment_payload",
     "extract_erc8004_info",
     "declare_erc8004_extension",

@@ -128,7 +128,7 @@ ticket_id = int(payment_response.extensions["erc8004"]["ticketId"])
 params = FeedbackParams(
     agent_id=42, value=95, tag1="x402", tag2="weather",
     endpoint="https://agent.example/r",
-    feedback_uri="ipfs://...",
+    feedback_uri="",  # optional; any URI scheme works (or leave empty)
     feedback_hash=feedback_hash,
 )
 
