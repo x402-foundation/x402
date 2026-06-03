@@ -1,5 +1,97 @@
 # @x402/evm Changelog
 
+## 2.14.0
+
+### Minor Changes
+
+- 10e59e1: Add auth-capture client scheme for detecting and signing payment payloads
+- 51f889b: **[Breaking for facilitator implementers using ERC-4337 smart wallet deployment]** Fixed ERC-6492 factory call injection vulnerability in EVM exact settlement (v1 and v2) and simplified the configuration API. The `deployERC4337WithEIP6492` boolean has been removed; `eip6492AllowedFactories?: string[]` is now the sole gate for enabling smart wallet deployment. Settlement deploys an undeployed smart wallet if and only if its factory address is present in `eip6492AllowedFactories` (case-insensitive). An empty or omitted list disables the feature entirely and rejects factory deployment calls with `eip6492_factory_not_allowed`. Facilitators previously using `deployERC4337WithEIP6492: true` must remove that field and populate `eip6492AllowedFactories` with every factory address they trust.
+- d4bdfa7: Clarify exact EVM channel asset semantics and align voucher asset selection with the transfer method.
+- Updated dependencies [be788e0]
+- Updated dependencies [0af31dd]
+  - @x402/core@2.14.0
+
+## 2.13.0
+
+### Minor Changes
+
+- 114b6b1: Add HPP mainnet (chain ID 190415) and HPP Sepolia (chain ID 181228) support with USDC.e (Bridged USDC) as the default stablecoin
+- 581e55e: Add ADI Chain (chain ID 36900) support with USDC.e as the default stablecoin
+- 3ba5d2e: add optional batch-settlement client/file-storage and server/file-storage (and server/redis-storage) exports to avoid pulling Node-fs/Redis helpers into default bundles
+- a242149: unwrap ERC-6492 signatures for exact/upto permit2 flows and batch-settlement
+- abbd40e: Added checks for 0 amount to settle/refund for batch-settlement
+- Updated dependencies [ad08a9a]
+- Updated dependencies [5fca9f3]
+- Updated dependencies [95f2094]
+- Updated dependencies [49ea054]
+  - @x402/core@2.13.0
+
+## 2.12.0
+
+### Minor Changes
+
+- 45d7d19: Implemented batch-settlement mechanism
+- e7150b3: Add Radius Network (chain ID 723487) and Radius Testnet (chain ID 72344) support with SBC as the default stablecoin
+- ee7c156: chore: tighten viem dependency floor to ^2.48.11
+
+  Raises the viem floor in every `@x402/*` package.json that lists viem as a direct dep so future `pnpm install` re-resolutions cannot regress below this version. Fixes the incomplete tightening from #2013.
+
+- Updated dependencies [608034f]
+- Updated dependencies [d235050]
+- Updated dependencies [45d7d19]
+  - @x402/core@2.12.0
+
+## 2.11.0
+
+### Minor Changes
+
+- 032295b: fix(paywall): use dynamic token decimals instead of hardcoding 6
+
+  The EVM paywall no longer assumes all tokens have 6 decimal places. Server-side amount conversion in `evmPaywall.generateHtml`:
+
+  - Resolves the token's decimal precision via a new `getDefaultTokenDecimals` helper that looks up the network in `@x402/evm`'s `DEFAULT_STABLECOINS` registry — the same source the scheme `getAssetDecimals` methods read from and the inline scheme dispatch in `@x402/core`'s `x402ResourceServer` uses. Falls back to 6 (USDC default) when the network is unknown.
+  - Replaces the lossy `parseFloat(amount) / 10**decimals` math with `Number(formatUnits(BigInt(amount), decimals))`, preserving precision through the atomic-to-display conversion.
+
+  `@x402/evm` now publicly re-exports `DEFAULT_STABLECOINS` from `./shared/defaultAssets` so consumers can read the canonical default-asset registry directly.
+
+### Patch Changes
+
+- dc04108: Fixed a bug affecting USD prices with 7+ decimal places of precision (e.g. `$0.0000001` or smaller).
+- Updated dependencies [a051f48]
+- Updated dependencies [dc04108]
+  - @x402/core@2.11.0
+
+## 2.10.0
+
+### Minor Changes
+
+- 9424291: chore: bump viem lockfile to 2.47.12
+
+  Updates the resolved viem version across all direct dependencies, adding chain definitions for Mezo Testnet, MegaETH, Stable, and Stable Testnet that were missing from previously locked versions.
+
+  - @x402/core@2.10.0
+
+## 2.9.0
+
+### Minor Changes
+
+- 8c80edd: Add Polygon mainnet (chain ID 137) support with USDC as the default stablecoin
+- bbe45f5: Add Stable mainnet (chain ID 988) support with USDT0 as the default stablecoin
+- bff876d: Add Stable testnet (chain ID 2201) support with USDT0 as the default stablecoin
+- 2250cae: Migrated project from coinbase/x402 to x402-foundation/x402 organization
+- d352574: Add upto payment scheme TypeScript SDK with client, facilitator, and server support for permit2-based "up to" payments on EVM chains.
+
+### Patch Changes
+
+- 9f52f9c: Add Arbitrum One (chain ID 42161) and Arbitrum Sepolid (chain ID 421614) support with USDC as the default stablecoin
+- 011e680: Add Mezo Testnet (chain ID 31611) support with mUSD as the default stablecoin
+- ad2658a: Updated x402UptoPermit2Proxy canonical address to 0x4020A4f3b7b90ccA423B9fabCc0CE57C6C240002, deployed with deterministic bytecode for reproducible cross-chain CREATE2 addresses
+- Updated dependencies [8cf3fca]
+- Updated dependencies [c0e3969]
+- Updated dependencies [2250cae]
+- Updated dependencies [d352574]
+  - @x402/core@2.9.0
+
 ## 2.8.0
 
 ### Minor Changes

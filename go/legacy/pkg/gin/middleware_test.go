@@ -11,8 +11,8 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
 
-	x402gin "github.com/coinbase/x402/go/pkg/gin"
-	"github.com/coinbase/x402/go/pkg/types"
+	x402gin "github.com/x402-foundation/x402/go/pkg/gin"
+	"github.com/x402-foundation/x402/go/pkg/types"
 )
 
 // TestServerConfig configures how the test facilitator server responds.

@@ -6,8 +6,8 @@ Express.js facilitator service that verifies and settles payments on-chain for t
 
 - Node.js v20+ (install via [nvm](https://github.com/nvm-sh/nvm))
 - pnpm v10 (install via [pnpm.io/installation](https://pnpm.io/installation))
-- EVM private key with Base Sepolia ETH for transaction fees
-- SVM private key with Solana Devnet SOL for transaction fees
+- Dedicated EVM facilitator private key with Base Sepolia ETH for transaction fees
+- Dedicated SVM facilitator private key with Solana Devnet SOL for transaction fees
 
 ## Setup
 
@@ -19,9 +19,11 @@ cp .env-local .env
 
 and fill required environment variables:
 
-- `EVM_PRIVATE_KEY` - Ethereum private key
-- `SVM_PRIVATE_KEY` - Solana private key
+- `EVM_PRIVATE_KEY` - Ethereum facilitator private key
+- `SVM_PRIVATE_KEY` - Solana facilitator private key
 - `PORT` - Server port (optional, defaults to 4022)
+
+**⚠️ Security Note:** The facilitator key is the signer used to settle payments on-chain. Keep it separate from your seller `payTo` wallet and buyer test wallets, and make sure it is funded only for facilitator gas/fees.
 
 2. Install and build all packages from the typescript examples root:
 

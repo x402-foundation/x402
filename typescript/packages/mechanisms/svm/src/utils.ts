@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import {
   getBase64Encoder,
   getTransactionDecoder,
@@ -65,6 +66,20 @@ export function normalizeNetwork(network: Network): string {
  */
 export function validateSvmAddress(address: string): boolean {
   return SVM_ADDRESS_REGEX.test(address);
+}
+
+/**
+ * Compute a stable, immutable cache key for a decoded transaction by hashing its
+ * message bytes. The fee-payer signature (slot 0) is overwritten by the facilitator
+ * before broadcast, so an attacker can randomize those bytes to bypass a wire-bytes
+ * cache key. The message is what every signer commits to, making its hash a reliable
+ * payment identity.
+ *
+ * @param transaction - Decoded transaction whose message bytes to hash
+ * @returns Base64-encoded SHA-256 hash of the transaction message bytes
+ */
+export function transactionMessageHash(transaction: Transaction): string {
+  return createHash("sha256").update(Buffer.from(transaction.messageBytes)).digest("base64");
 }
 
 /**
@@ -173,21 +188,5 @@ export function getUsdcAddress(network: Network): string {
   }
 }
 
-/**
- * Convert a decimal amount to token smallest units
- *
- * @param decimalAmount - The decimal amount (e.g., "0.10")
- * @param decimals - The number of decimals for the token (e.g., 6 for USDC)
- * @returns The amount in smallest units as a string
- */
-export function convertToTokenAmount(decimalAmount: string, decimals: number): string {
-  const amount = parseFloat(decimalAmount);
-  if (isNaN(amount)) {
-    throw new Error(`Invalid amount: ${decimalAmount}`);
-  }
-  // Convert to smallest unit (e.g., for USDC with 6 decimals: 0.10 * 10^6 = 100000)
-  const [intPart, decPart = ""] = String(amount).split(".");
-  const paddedDec = decPart.padEnd(decimals, "0").slice(0, decimals);
-  const tokenAmount = (intPart + paddedDec).replace(/^0+/, "") || "0";
-  return tokenAmount;
-}
+// Re-export from core for backward compatibility
+export { convertToTokenAmount, numberToDecimalString } from "@x402/core/utils";

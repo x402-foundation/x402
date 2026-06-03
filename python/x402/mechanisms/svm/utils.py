@@ -1,6 +1,7 @@
 """SVM utility functions for network, address, and amount handling."""
 
 import base64
+import hashlib
 import re
 from decimal import Decimal
 
@@ -209,6 +210,23 @@ def parse_money_to_decimal(money: str | float | int) -> float:
     clean = clean.strip()
 
     return float(clean)
+
+
+def transaction_message_hash(tx: VersionedTransaction) -> str:
+    """Return a stable, immutable cache key for a transaction.
+
+    The fee-payer signature (slot 0) is overwritten by the facilitator before
+    broadcast, so an attacker can randomize those bytes to bypass a wire-bytes
+    cache key. The message is what every signer commits to, so its SHA-256 hash
+    uniquely and immutably identifies a payment.
+
+    Args:
+        tx: Decoded versioned transaction.
+
+    Returns:
+        Base64-encoded SHA-256 hash of the serialized transaction message.
+    """
+    return base64.b64encode(hashlib.sha256(bytes(tx.message)).digest()).decode()
 
 
 def decode_transaction_from_payload(payload: ExactSvmPayload) -> VersionedTransaction:

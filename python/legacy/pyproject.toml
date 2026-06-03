@@ -6,7 +6,7 @@ readme = "README.md"
 license = { text = "Apache-2.0" }
 authors = [
     { name = "erik", email = "erik.reppel@coinbase.com" },
-    { name = "Coinbase Developer Platform", email = "" }
+    { name = "x402 Foundation", email = "" }
 ]
 requires-python = ">=3.10"
 keywords = ["x402", "sdk", "crypto", "cdp", "payments", "web3"]
@@ -44,3 +44,7 @@ packages = ["src/x402"]
 
 [tool.hatch.metadata]
 allow-direct-references = true
+
+[tool.uv]
+required-version = ">=0.11.0"
+exclude-newer = "3 days"

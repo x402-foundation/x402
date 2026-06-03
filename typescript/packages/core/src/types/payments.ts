@@ -4,6 +4,9 @@ export interface ResourceInfo {
   url: string;
   description?: string;
   mimeType?: string;
+  serviceName?: string;
+  tags?: string[];
+  iconUrl?: string;
 }
 
 export type PaymentRequirements = {

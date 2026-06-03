@@ -64,6 +64,15 @@ type AfterPaymentCreationHook func(PaymentCreatedContext) error
 // will be returned instead of the error
 type OnPaymentCreationFailureHook func(PaymentCreationFailureContext) (*PaymentCreationFailureHookResult, error)
 
+// OnPaymentResponseHook is called by the transport after each paid response
+// (HTTP 200 with PAYMENT-RESPONSE, or corrective HTTP 402 with PAYMENT-REQUIRED).
+// Mirrors the TS x402Client.onPaymentResponse user-level hook.
+//
+// Returning Recovered=true on a corrective 402 instructs the transport to retry
+// once with a freshly built payment payload. The first hook to return Recovered
+// wins; subsequent hooks still run for instrumentation.
+type OnPaymentResponseHook func(context.Context, PaymentResponseContext) (PaymentResponseResult, error)
+
 // ============================================================================
 // Client Hook Registration Options
 // ============================================================================
@@ -86,5 +95,12 @@ func WithAfterPaymentCreationHook(hook AfterPaymentCreationHook) ClientOption {
 func WithOnPaymentCreationFailureHook(hook OnPaymentCreationFailureHook) ClientOption {
 	return func(c *x402Client) {
 		c.onPaymentCreationFailureHooks = append(c.onPaymentCreationFailureHooks, hook)
+	}
+}
+
+// WithOnPaymentResponseHook registers a hook to execute after each paid response.
+func WithOnPaymentResponseHook(hook OnPaymentResponseHook) ClientOption {
+	return func(c *x402Client) {
+		c.onPaymentResponseHooks = append(c.onPaymentResponseHooks, hook)
 	}
 }

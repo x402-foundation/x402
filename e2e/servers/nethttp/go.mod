@@ -1,12 +1,13 @@
-module github.com/coinbase/x402/e2e/servers/nethttp
+module github.com/x402-foundation/x402/e2e/servers/nethttp
 
 go 1.24.0
 
 toolchain go1.24.1
 
 require (
-	github.com/coinbase/x402/go v0.0.0
+	github.com/ethereum/go-ethereum v1.16.7
 	github.com/joho/godotenv v1.5.1
+	github.com/x402-foundation/x402/go/v2 v2.14.0
 )
 
 require (
@@ -24,7 +25,6 @@ require (
 	github.com/deckarep/golang-set/v2 v2.6.0 // indirect
 	github.com/decred/dcrd/dcrec/secp256k1/v4 v4.0.1 // indirect
 	github.com/ethereum/c-kzg-4844/v2 v2.1.5 // indirect
-	github.com/ethereum/go-ethereum v1.16.7 // indirect
 	github.com/ethereum/go-verkle v0.2.2 // indirect
 	github.com/fatih/color v1.16.0 // indirect
 	github.com/gagliardetto/binary v0.8.0 // indirect
@@ -58,10 +58,12 @@ require (
 	go.uber.org/ratelimit v0.2.0 // indirect
 	go.uber.org/zap v1.21.0 // indirect
 	golang.org/x/crypto v0.46.0 // indirect
+	golang.org/x/net v0.48.0 // indirect
 	golang.org/x/sync v0.19.0 // indirect
 	golang.org/x/sys v0.39.0 // indirect
 	golang.org/x/term v0.38.0 // indirect
+	golang.org/x/text v0.32.0 // indirect
 	golang.org/x/time v0.14.0 // indirect
 )
 
-replace github.com/coinbase/x402/go => ../../../go
+replace github.com/x402-foundation/x402/go/v2 => ../../../go

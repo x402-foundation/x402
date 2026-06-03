@@ -1,0 +1,12 @@
+{
+  "name": "svm-smart-wallet",
+  "type": "client",
+  "language": "typescript",
+  "protocolFamilies": ["svm"],
+  "x402Versions": [2],
+  "schemes": ["exact"],
+  "environment": {
+    "required": ["SVM_PRIVATE_KEY", "SWIG_ACCOUNT_ADDRESS", "RESOURCE_SERVER_URL", "ENDPOINT_PATH"],
+    "optional": ["SVM_RPC_URL", "SWIG_ID_BASE58"]
+  }
+}

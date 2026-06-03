@@ -1,4 +1,4 @@
-# x402-axios
+# `@x402/axios` [![npm version](https://img.shields.io/npm/v/%40x402%2Faxios.svg)](https://www.npmjs.com/package/@x402/axios)
 
 A utility package that extends Axios to automatically handle 402 Payment Required responses using the x402 payment protocol v2. This package enables seamless integration of payment functionality into your applications when making HTTP requests.
 

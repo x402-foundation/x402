@@ -49,11 +49,18 @@ type PaymentRequired struct {
 	Extensions  map[string]interface{} `json:"extensions,omitempty"`
 }
 
-// ResourceInfo describes the resource being accessed
+// ResourceInfo describes the resource being accessed.
+//
+// ServiceName, Tags, and IconUrl are bazaar service metadata fields. See
+// specs/extensions/bazaar.md "Service Metadata on `resource`" for the
+// soft-drop validation rules facilitators apply during extraction.
 type ResourceInfo struct {
-	URL         string `json:"url"`
-	Description string `json:"description,omitempty"`
-	MimeType    string `json:"mimeType,omitempty"`
+	URL         string   `json:"url"`
+	Description string   `json:"description,omitempty"`
+	MimeType    string   `json:"mimeType,omitempty"`
+	ServiceName string   `json:"serviceName,omitempty"`
+	Tags        []string `json:"tags,omitempty"`
+	IconUrl     string   `json:"iconUrl,omitempty"`
 }
 
 // SupportedKind represents a supported payment configuration

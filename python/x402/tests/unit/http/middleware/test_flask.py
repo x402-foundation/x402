@@ -30,6 +30,7 @@ from x402.http.types import (
     RouteConfig,
 )
 from x402.schemas import PaymentPayload, PaymentRequirements
+from x402.schemas.hooks import PaymentCancellationDispatcher, VerifiedPaymentCancelOptions
 
 # =============================================================================
 # Helpers
@@ -678,6 +679,108 @@ class TestFlaskMiddlewareIntegration:
                 data = json.loads(response.data)
                 assert data == {}
                 assert "PAYMENT-RESPONSE" in response.headers
+
+    def test_cancels_on_handler_error_status(self):
+        """Test that handler 4xx/5xx triggers cancellation without settlement."""
+        app = Flask(__name__)
+
+        @app.route("/api/protected")
+        def protected_route():
+            return "failed", 500
+
+        mock_server = MagicMock()
+        routes = {
+            "GET /api/protected": RouteConfig(
+                accepts=PaymentOption(
+                    scheme="exact",
+                    pay_to="0x1234567890123456789012345678901234567890",
+                    price="$0.01",
+                    network="eip155:8453",
+                ),
+            )
+        }
+
+        payment_payload = make_v2_payload()
+        payment_requirements = make_payment_requirements()
+        dispatcher = MagicMock(spec=PaymentCancellationDispatcher)
+        dispatcher.cancel_sync = MagicMock()
+
+        with patch("x402.http.middleware.flask.x402HTTPResourceServerSync") as mock_http_server:
+            mock_http_server_instance = MagicMock()
+            mock_http_server_instance.requires_payment.return_value = True
+            mock_http_server_instance.process_http_request.return_value = HTTPProcessResult(
+                type="payment-verified",
+                payment_payload=payment_payload,
+                payment_requirements=payment_requirements,
+                cancellation_dispatcher=dispatcher,
+            )
+            mock_http_server.return_value = mock_http_server_instance
+
+            PaymentMiddleware(app, routes, mock_server, sync_facilitator_on_start=False)
+
+            with app.test_client() as client:
+                response = client.get("/api/protected")
+
+            assert response.status_code == 500
+            dispatcher.cancel_sync.assert_called_once_with(
+                VerifiedPaymentCancelOptions(reason="handler_failed", response_status=500)
+            )
+            mock_http_server_instance.process_settlement.assert_not_called()
+
+    def test_cancels_when_handler_throws(self):
+        """Test that WSGI handler exceptions trigger cancellation without settlement."""
+        app = Flask(__name__)
+
+        @app.route("/api/protected")
+        def protected_route():
+            return "Protected content"
+
+        mock_server = MagicMock()
+        routes = {
+            "GET /api/protected": RouteConfig(
+                accepts=PaymentOption(
+                    scheme="exact",
+                    pay_to="0x1234567890123456789012345678901234567890",
+                    price="$0.01",
+                    network="eip155:8453",
+                ),
+            )
+        }
+
+        payment_payload = make_v2_payload()
+        payment_requirements = make_payment_requirements()
+        dispatcher = MagicMock(spec=PaymentCancellationDispatcher)
+        dispatcher.cancel_sync = MagicMock()
+
+        with patch("x402.http.middleware.flask.x402HTTPResourceServerSync") as mock_http_server:
+            mock_http_server_instance = MagicMock()
+            mock_http_server_instance.requires_payment.return_value = True
+            mock_http_server_instance.process_http_request.return_value = HTTPProcessResult(
+                type="payment-verified",
+                payment_payload=payment_payload,
+                payment_requirements=payment_requirements,
+                cancellation_dispatcher=dispatcher,
+            )
+            mock_http_server.return_value = mock_http_server_instance
+
+            middleware = PaymentMiddleware(
+                app, routes, mock_server, sync_facilitator_on_start=False
+            )
+
+            def raising_wsgi(_environ, _start_response):
+                raise RuntimeError("handler failed")
+
+            middleware._original_wsgi = raising_wsgi
+
+            with app.test_client() as client:
+                with pytest.raises(RuntimeError, match="handler failed"):
+                    client.get("/api/protected")
+
+            dispatcher.cancel_sync.assert_called_once()
+            cancel_options = dispatcher.cancel_sync.call_args.args[0]
+            assert cancel_options.reason == "handler_threw"
+            assert isinstance(cancel_options.error, RuntimeError)
+            mock_http_server_instance.process_settlement.assert_not_called()
 
     def test_invalid_facilitator_verify_response_returns_502(self):
         """Test that invalid facilitator data during verify returns 502 instead of 500."""

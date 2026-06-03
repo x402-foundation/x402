@@ -53,8 +53,12 @@ export interface FacilitatorConfig {
   port: number;
   evmPrivateKey?: string;
   svmPrivateKey?: string;
+  avmPrivateKey?: string;
   aptosPrivateKey?: string;
+  hederaAccountId?: string;
+  hederaPrivateKey?: string;
   stellarPrivateKey?: string;
+  tvmPrivateKey?: string;
   networks: NetworkSet;
 }
 
@@ -114,18 +118,31 @@ export class GenericFacilitatorProxy extends BaseProxy implements FacilitatorPro
       PORT: config.port.toString(),
       EVM_PRIVATE_KEY: config.evmPrivateKey || '',
       SVM_PRIVATE_KEY: config.svmPrivateKey || '',
+      AVM_PRIVATE_KEY: config.avmPrivateKey || '',
       APTOS_PRIVATE_KEY: config.aptosPrivateKey || '',
+      HEDERA_ACCOUNT_ID: config.hederaAccountId || '',
+      HEDERA_PRIVATE_KEY: config.hederaPrivateKey || '',
       STELLAR_PRIVATE_KEY: config.stellarPrivateKey || '',
+      TVM_PRIVATE_KEY: config.tvmPrivateKey || '',
 
       // Network configs from NetworkSet
       EVM_NETWORK: config.networks.evm.caip2,
       EVM_RPC_URL: config.networks.evm.rpcUrl,
       SVM_NETWORK: config.networks.svm.caip2,
       SVM_RPC_URL: config.networks.svm.rpcUrl,
+      AVM_NETWORK: config.networks.avm.caip2,
+      AVM_RPC_URL: config.networks.avm.rpcUrl,
       APTOS_NETWORK: config.networks.aptos.caip2,
       APTOS_RPC_URL: config.networks.aptos.rpcUrl,
+      HEDERA_NETWORK: config.networks.hedera.caip2,
+      HEDERA_NODE_URL: config.networks.hedera.rpcUrl,
       STELLAR_NETWORK: config.networks.stellar.caip2,
       STELLAR_RPC_URL: config.networks.stellar.rpcUrl,
+      TVM_NETWORK: config.networks.tvm.caip2,
+      TVM_PROVIDER: process.env.TVM_PROVIDER || '',
+      TONCENTER_BASE_URL: process.env.TONCENTER_BASE_URL || config.networks.tvm.rpcUrl,
+      TONAPI_API_KEY: process.env.TONAPI_API_KEY || '',
+      TONAPI_BASE_URL: process.env.TONAPI_BASE_URL || '',
     };
 
     // Pass through any additional environment variables required by the facilitator

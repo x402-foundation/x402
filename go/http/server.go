@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"html"
 	"log"
@@ -13,9 +14,9 @@ import (
 	"strconv"
 	"strings"
 
-	x402 "github.com/coinbase/x402/go"
-	exttypes "github.com/coinbase/x402/go/extensions/types"
-	"github.com/coinbase/x402/go/types"
+	x402 "github.com/x402-foundation/x402/go/v2"
+	exttypes "github.com/x402-foundation/x402/go/v2/extensions/types"
+	"github.com/x402-foundation/x402/go/v2/types"
 )
 
 // Pre-compiled regex patterns to avoid recompilation on every call.
@@ -44,12 +45,19 @@ type HTTPAdapter interface {
 // Configuration Types
 // ============================================================================
 
-// PaywallConfig configures the HTML paywall for browser requests
+// PaywallConfig configures the HTML paywall for browser requests.
+//
+// FaucetURLs is a per-chain override map keyed by CAIP-2 identifier (e.g.
+// "eip155:84532"). When set, the entry for the rendered chain wins over the
+// paywall's curated default. Unmapped chains render "No faucet configured."
+// rather than a fallback link.
 type PaywallConfig struct {
 	AppName    string `json:"appName,omitempty"`
 	AppLogo    string `json:"appLogo,omitempty"`
 	CurrentURL string `json:"currentUrl,omitempty"`
 	Testnet    bool   `json:"testnet,omitempty"`
+	// FaucetURLs is a per-chain override keyed by CAIP-2 identifier.
+	FaucetURLs map[string]string `json:"faucetUrls,omitempty"`
 }
 
 // DynamicPayToFunc is a function that resolves payTo address dynamically based on request context
@@ -108,6 +116,9 @@ type RouteConfig struct {
 	Resource          string                 `json:"resource,omitempty"`
 	Description       string                 `json:"description,omitempty"`
 	MimeType          string                 `json:"mimeType,omitempty"`
+	ServiceName       string                 `json:"serviceName,omitempty"`
+	Tags              []string               `json:"tags,omitempty"`
+	IconUrl           string                 `json:"iconUrl,omitempty"`
 	CustomPaywallHTML string                 `json:"customPaywallHtml,omitempty"`
 	Extensions        map[string]interface{} `json:"extensions,omitempty"`
 
@@ -180,6 +191,18 @@ type HTTPProcessResult struct {
 	Response            *HTTPResponseInstructions
 	PaymentPayload      *types.PaymentPayload      // V2 only
 	PaymentRequirements *types.PaymentRequirements // V2 only
+	// DeclaredExtensions is the route's enriched extension declaration map.
+	// Carried through verify → settle so per-extension hooks gate on declared
+	// keys both in the verify and settle phases. Mirrors TS
+	// `paymentRequiredResponse.extensions` flowing into both calls.
+	DeclaredExtensions map[string]interface{}
+	// SkipHandler is set when an AfterVerifyHook signals that the resource handler
+	// should be bypassed and settlement performed inline.
+	SkipHandler *x402.SkipHandlerDirective
+	// CancellationDispatcher fires onVerifiedPaymentCanceled hooks if the resource
+	// handler errors or returns a non-2xx status before settlement runs. Set when
+	// Type is ResultPaymentVerified.
+	CancellationDispatcher *x402.PaymentCancellationDispatcher
 }
 
 // Result type constants
@@ -284,6 +307,11 @@ func Wrappedx402HTTPResourceServer(routes RoutesConfig, resourceServer *x402.X40
 	return server
 }
 
+// GetCompiledRoutes returns the compiled routes for inspection (e.g., extension validation).
+func (s *x402HTTPResourceServer) GetCompiledRoutes() []CompiledRoute {
+	return s.compiledRoutes
+}
+
 // RegisterPaywallProvider registers a custom PaywallProvider for generating paywall HTML.
 // The provider takes precedence over the built-in EVM/SVM templates but is overridden
 // by per-route CustomPaywallHTML. Returns the server for method chaining.
@@ -355,6 +383,7 @@ func (s *x402HTTPResourceServer) validateRouteConfiguration() error {
 				})
 			}
 		}
+
 	}
 
 	if len(errors) > 0 {
@@ -514,6 +543,15 @@ func (s *x402HTTPResourceServer) ProcessHTTPRequest(ctx context.Context, reqCtx 
 		Description: routeConfig.Description,
 		MimeType:    routeConfig.MimeType,
 	}
+	if routeConfig.ServiceName != "" {
+		resourceInfo.ServiceName = routeConfig.ServiceName
+	}
+	if len(routeConfig.Tags) > 0 {
+		resourceInfo.Tags = routeConfig.Tags
+	}
+	if routeConfig.IconUrl != "" {
+		resourceInfo.IconUrl = routeConfig.IconUrl
+	}
 
 	for i := range requirements {
 		if requirements[i].Extra == nil {
@@ -601,17 +639,26 @@ func (s *x402HTTPResourceServer) ProcessHTTPRequest(ctx context.Context, reqCtx 
 		}
 	}
 
-	// Verify payment (type-safe)
-	_, verifyErr := s.VerifyPayment(ctx, *typedPayload, *matchingReqs)
+	// Verify payment (type-safe). Pass `extensions` so per-extension hooks
+	// (registered via ResourceServerExtensionHookProvider) gate on declared
+	// extension keys.
+	verifyResp, verifyErr := s.VerifyPaymentWithExtensions(ctx, *typedPayload, *matchingReqs, extensions)
 	if verifyErr != nil {
 		err = verifyErr
+		// Prefer InvalidReason (the protocol error code) over the free-form
+		// message so enrichers can match on a stable identifier.
 		errorMsg := err.Error()
+		var ve *x402.VerifyError
+		if errors.As(verifyErr, &ve) && ve.InvalidReason != "" {
+			errorMsg = ve.InvalidReason
+		}
 
-		paymentRequired := s.CreatePaymentRequiredResponse(
+		paymentRequired := s.CreatePaymentRequiredResponseWithPayload(
 			requirements,
 			resourceInfo,
 			errorMsg,
 			extensions,
+			typedPayload,
 		)
 
 		response, err := s.createHTTPResponseV2(paymentRequired, false, paywallConfig, "", nil)
@@ -632,11 +679,21 @@ func (s *x402HTTPResourceServer) ProcessHTTPRequest(ctx context.Context, reqCtx 
 	}
 
 	// Payment verified
-	return HTTPProcessResult{
+	result := HTTPProcessResult{
 		Type:                ResultPaymentVerified,
 		PaymentPayload:      typedPayload,
 		PaymentRequirements: matchingReqs,
+		DeclaredExtensions:  extensions,
 	}
+	if verifyResp != nil {
+		result.SkipHandler = verifyResp.SkipHandler
+	}
+	// Skip-handler runs inline; only attach a cancellation dispatcher when there
+	// is a downstream resource handler whose outcome can fail.
+	if result.SkipHandler == nil {
+		result.CancellationDispatcher = s.CreatePaymentCancellationDispatcherWithExtensions(ctx, *typedPayload, *matchingReqs, extensions)
+	}
+	return result
 }
 
 // RequiresPayment checks if a request requires payment based on route configuration
@@ -667,7 +724,17 @@ func MarshalSettlementOverrides(overrides *x402.SettlementOverrides) string {
 // the settlement-overrides header from the transport context's ResponseHeaders
 // (set by the route handler via SetSettlementOverrides). The header is deleted
 // from ResponseHeaders to prevent it from being sent to the client.
-func (s *x402HTTPResourceServer) ProcessSettlement(ctx context.Context, payload types.PaymentPayload, requirements types.PaymentRequirements, overrides *x402.SettlementOverrides, transportContext *HTTPTransportContext) *ProcessSettleResult {
+//
+// declaredExtensions is forwarded to SettlePaymentWithExtensions so per-extension
+// settle hooks fire only when their key is declared on the route.
+func (s *x402HTTPResourceServer) ProcessSettlement(
+	ctx context.Context,
+	payload types.PaymentPayload,
+	requirements types.PaymentRequirements,
+	overrides *x402.SettlementOverrides,
+	transportContext *HTTPTransportContext,
+	declaredExtensions map[string]interface{},
+) *ProcessSettleResult {
 	resolved := overrides
 	if resolved == nil && transportContext != nil && transportContext.ResponseHeaders != nil {
 		if val := transportContext.ResponseHeaders.Get(SettlementOverridesHeader); val != "" {
@@ -679,7 +746,7 @@ func (s *x402HTTPResourceServer) ProcessSettlement(ctx context.Context, payload 
 		}
 	}
 
-	settleResult, err := s.SettlePayment(ctx, payload, requirements, resolved)
+	settleResult, err := s.SettlePaymentWithExtensions(ctx, payload, requirements, resolved, declaredExtensions)
 	if err != nil {
 		return s.buildSettlementFailureResult(err.Error(), x402.Network(requirements.Network), "", nil)
 	}
@@ -720,6 +787,7 @@ func (s *x402HTTPResourceServer) buildSettlementFailureResult(errorReason string
 	if settleResult != nil {
 		failureResponse.Network = settleResult.Network
 		failureResponse.Payer = settleResult.Payer
+		failureResponse.ErrorMessage = settleResult.ErrorMessage
 	}
 
 	headers, err := s.createSettlementHeaders(&failureResponse)
@@ -806,25 +874,6 @@ func (s *x402HTTPResourceServer) extractPaymentV2(adapter HTTPAdapter) (*types.P
 	return payload, nil
 }
 
-// extractPayment extracts payment from headers (legacy method, now calls extractPaymentV2)
-//
-//nolint:unused // Legacy method kept for API compatibility
-func (s *x402HTTPResourceServer) extractPayment(adapter HTTPAdapter) *x402.PaymentPayload {
-	payload, err := s.extractPaymentV2(adapter)
-	if err != nil || payload == nil {
-		return nil
-	}
-
-	// Convert V2 to generic PaymentPayload for compatibility
-	return &x402.PaymentPayload{
-		X402Version: payload.X402Version,
-		Payload:     payload.Payload,
-		Accepted:    x402.PaymentRequirements{}, // TODO: Convert
-		Resource:    nil,
-		Extensions:  payload.Extensions,
-	}
-}
-
 // decodeBase64Header decodes a base64 header to JSON bytes
 func decodeBase64Header(header string) ([]byte, error) {
 	return base64.StdEncoding.DecodeString(header)
@@ -847,12 +896,18 @@ func (s *x402HTTPResourceServer) isWebBrowser(adapter HTTPAdapter) bool {
 //	customHTML: Optional custom HTML for the paywall
 //	unpaidResponse: Optional custom response for API clients (ignored for browser requests)
 func (s *x402HTTPResourceServer) createHTTPResponseV2(paymentRequired types.PaymentRequired, isWebBrowser bool, paywallConfig *PaywallConfig, customHTML string, unpaidResponse *UnpaidResponse) (*HTTPResponseInstructions, error) {
+	encodedHeader, err := encodePaymentRequiredHeader(paymentRequired)
+	if err != nil {
+		return nil, fmt.Errorf("failed to encode payment required header: %w", err)
+	}
+
 	if isWebBrowser {
 		html := s.generatePaywallHTMLV2(paymentRequired, paywallConfig, customHTML)
 		return &HTTPResponseInstructions{
 			Status: 402,
 			Headers: map[string]string{
-				"Content-Type": "text/html",
+				"Content-Type":     "text/html",
+				"PAYMENT-REQUIRED": encodedHeader,
 			},
 			Body:   html,
 			IsHTML: true,
@@ -868,11 +923,6 @@ func (s *x402HTTPResourceServer) createHTTPResponseV2(paymentRequired types.Paym
 		body = unpaidResponse.Body
 	}
 
-	encodedHeader, err := encodePaymentRequiredHeader(paymentRequired)
-	if err != nil {
-		return nil, fmt.Errorf("failed to encode payment required header: %w", err)
-	}
-
 	return &HTTPResponseInstructions{
 		Status: 402,
 		Headers: map[string]string{
@@ -881,20 +931,6 @@ func (s *x402HTTPResourceServer) createHTTPResponseV2(paymentRequired types.Paym
 		},
 		Body: body,
 	}, nil
-}
-
-// createHTTPResponse creates response instructions (legacy method)
-//
-//nolint:unused // Legacy method kept for API compatibility
-func (s *x402HTTPResourceServer) createHTTPResponse(paymentRequired x402.PaymentRequired, isWebBrowser bool, paywallConfig *PaywallConfig, customHTML string) (*HTTPResponseInstructions, error) {
-	// Convert to V2 and call V2 method
-	v2Required := types.PaymentRequired{
-		X402Version: 2,
-		Error:       paymentRequired.Error,
-		Resource:    nil, // TODO: convert
-		Extensions:  paymentRequired.Extensions,
-	}
-	return s.createHTTPResponseV2(v2Required, isWebBrowser, paywallConfig, customHTML, nil)
 }
 
 // createSettlementHeaders creates settlement response headers
@@ -962,12 +998,14 @@ func (s *x402HTTPResourceServer) generatePaywallHTML(paymentRequired x402.Paymen
 	appLogo := ""
 	testnet := false
 	currentURL := ""
+	var faucetURLs map[string]string
 
 	if config != nil {
 		appName = config.AppName
 		appLogo = config.AppLogo
 		testnet = config.Testnet
 		currentURL = config.CurrentURL
+		faucetURLs = config.FaucetURLs
 	}
 
 	// Use resource URL as currentUrl if not explicitly configured
@@ -986,7 +1024,8 @@ func (s *x402HTTPResourceServer) generatePaywallHTML(paymentRequired x402.Paymen
 			amount: %.6f,
 			testnet: %t,
 			displayAmount: %.2f,
-			currentUrl: "%s"
+			currentUrl: "%s",
+			faucetUrls: %s
 		};
 	</script>`,
 		string(requirementsJSON),
@@ -996,6 +1035,7 @@ func (s *x402HTTPResourceServer) generatePaywallHTML(paymentRequired x402.Paymen
 		testnet,
 		displayAmount,
 		html.EscapeString(currentURL),
+		marshalFaucetURLs(faucetURLs),
 	)
 
 	// Select template based on network
@@ -1050,12 +1090,14 @@ func injectPaywallConfig(template string, paymentRequired types.PaymentRequired,
 	appLogo := ""
 	testnet := false
 	currentURL := ""
+	var faucetURLs map[string]string
 
 	if config != nil {
 		appName = config.AppName
 		appLogo = config.AppLogo
 		testnet = config.Testnet
 		currentURL = config.CurrentURL
+		faucetURLs = config.FaucetURLs
 	}
 
 	if currentURL == "" && paymentRequired.Resource != nil {
@@ -1072,7 +1114,8 @@ func injectPaywallConfig(template string, paymentRequired types.PaymentRequired,
 			amount: %.6f,
 			testnet: %t,
 			displayAmount: %.2f,
-			currentUrl: "%s"
+			currentUrl: "%s",
+			faucetUrls: %s
 		};
 	</script>`,
 		string(requirementsJSON),
@@ -1082,9 +1125,22 @@ func injectPaywallConfig(template string, paymentRequired types.PaymentRequired,
 		testnet,
 		displayAmount,
 		html.EscapeString(currentURL),
+		marshalFaucetURLs(faucetURLs),
 	)
 
 	return strings.Replace(template, "</head>", configScript+"\n</head>", 1)
+}
+
+// marshalFaucetURLs renders FaucetURLs as a JS literal: a JSON object or `undefined`.
+func marshalFaucetURLs(urls map[string]string) string {
+	if len(urls) == 0 {
+		return "undefined"
+	}
+	encoded, err := json.Marshal(urls)
+	if err != nil {
+		return "undefined"
+	}
+	return string(encoded)
 }
 
 // ============================================================================

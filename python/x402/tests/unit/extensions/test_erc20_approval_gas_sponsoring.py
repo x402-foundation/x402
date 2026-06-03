@@ -11,7 +11,14 @@ from x402.extensions.erc20_approval_gas_sponsoring import (
     extract_erc20_approval_gas_sponsoring_info,
     validate_erc20_approval_gas_sponsoring_info,
 )
-from x402.mechanisms.evm.constants import PERMIT2_ADDRESS
+from x402.extensions.erc20_approval_gas_sponsoring.client import (
+    sign_erc20_approval_transaction,
+)
+from x402.mechanisms.evm.constants import (
+    DEFAULT_MAX_FEE_PER_GAS,
+    DEFAULT_MAX_PRIORITY_FEE_PER_GAS,
+    PERMIT2_ADDRESS,
+)
 from x402.schemas import PaymentPayload, PaymentRequirements, ResourceInfo
 
 TOKEN_ADDRESS = "0x036CbD53842c5426634e7929541eC2318f3dCF7e"
@@ -109,3 +116,56 @@ class TestValidation:
     def test_invalid_signed_transaction(self):
         info = _make_info(signed_transaction="not-hex")
         assert validate_erc20_approval_gas_sponsoring_info(info) is False
+
+
+class _StubSigner:
+    """Minimal signer that records the transaction it was asked to sign."""
+
+    def __init__(self, fees: tuple[int, int] | None = None, raise_on_estimate: bool = False):
+        self.address = PAYER
+        self._fees = fees
+        self._raise = raise_on_estimate
+        self.signed_tx: dict[str, Any] | None = None
+        if fees is not None or raise_on_estimate:
+
+            def estimate_fees_per_gas() -> tuple[int, int]:
+                if self._raise:
+                    raise RuntimeError("rpc unavailable")
+                assert self._fees is not None
+                return self._fees
+
+            self.estimate_fees_per_gas = estimate_fees_per_gas
+
+    def get_transaction_count(self, address: str) -> int:
+        return 0
+
+    def sign_transaction(self, tx: dict[str, Any]) -> str:
+        self.signed_tx = tx
+        return "0x" + "ab" * 100
+
+
+class TestGasFeeFallback:
+    def test_constants_exported_with_expected_values(self):
+        assert DEFAULT_MAX_FEE_PER_GAS == 1_000_000_000
+        assert DEFAULT_MAX_PRIORITY_FEE_PER_GAS == 100_000_000
+
+    def test_uses_defaults_when_signer_has_no_estimator(self):
+        signer = _StubSigner()
+        sign_erc20_approval_transaction(signer, TOKEN_ADDRESS, chain_id=84532)
+        assert signer.signed_tx is not None
+        assert signer.signed_tx["maxFeePerGas"] == DEFAULT_MAX_FEE_PER_GAS
+        assert signer.signed_tx["maxPriorityFeePerGas"] == DEFAULT_MAX_PRIORITY_FEE_PER_GAS
+
+    def test_uses_defaults_when_estimator_raises(self):
+        signer = _StubSigner(raise_on_estimate=True)
+        sign_erc20_approval_transaction(signer, TOKEN_ADDRESS, chain_id=84532)
+        assert signer.signed_tx is not None
+        assert signer.signed_tx["maxFeePerGas"] == DEFAULT_MAX_FEE_PER_GAS
+        assert signer.signed_tx["maxPriorityFeePerGas"] == DEFAULT_MAX_PRIORITY_FEE_PER_GAS
+
+    def test_uses_estimated_fees_when_available(self):
+        signer = _StubSigner(fees=(5_000_000_000, 250_000_000))
+        sign_erc20_approval_transaction(signer, TOKEN_ADDRESS, chain_id=84532)
+        assert signer.signed_tx is not None
+        assert signer.signed_tx["maxFeePerGas"] == 5_000_000_000
+        assert signer.signed_tx["maxPriorityFeePerGas"] == 250_000_000

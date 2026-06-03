@@ -23,7 +23,7 @@
         {
           "anchor": "GitHub",
           "icon": "github",
-          "href": "https://github.com/coinbase/x402"
+          "href": "https://github.com/x402-foundation/x402"
         },
         {
           "anchor": "Discord",
@@ -63,6 +63,15 @@
         ]
       },
       {
+        "group": "Payment Schemes",
+        "pages": [
+          "schemes/overview",
+          "schemes/exact",
+          "schemes/upto",
+          "schemes/batch-settlement"
+        ]
+      },
+      {
         "group": "Extensions",
         "pages": [
           "extensions/overview",
@@ -85,6 +94,15 @@
         "pages": [
           "guides/mcp-server-with-x402",
           "guides/migration-v1-to-v2"
+        ]
+      },
+      {
+        "group": "Developer Tools",
+        "pages": [
+          "dev-tools/overview",
+          "dev-tools/third-party-sdks",
+          "dev-tools/third-party-extensions",
+          "dev-tools/facilitators"
         ]
       },
       {

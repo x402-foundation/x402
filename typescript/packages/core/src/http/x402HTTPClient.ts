@@ -5,7 +5,7 @@ import {
 } from ".";
 import { SettleResponse } from "../types";
 import { PaymentPayload, PaymentRequired } from "../types/payments";
-import { x402Client } from "../client/x402Client";
+import { x402Client, type PaymentResponseContext } from "../client/x402Client";
 
 /**
  * Context provided to onPaymentRequired hooks.
@@ -21,6 +21,19 @@ export interface PaymentRequiredContext {
 export type PaymentRequiredHook = (
   context: PaymentRequiredContext,
 ) => Promise<{ headers: Record<string, string> } | void>;
+
+export interface HTTPClientExtensionHooks {
+  onPaymentRequired?: (
+    declaration: unknown,
+    context: PaymentRequiredContext,
+  ) => Promise<{ headers: Record<string, string> } | void>;
+}
+
+type HTTPClientTransportExtension = {
+  transportHooks?: {
+    http?: HTTPClientExtensionHooks;
+  };
+};
 
 /**
  * HTTP-specific client for handling x402 payment protocol over HTTP.
@@ -59,7 +72,7 @@ export class x402HTTPClient {
   async handlePaymentRequired(
     paymentRequired: PaymentRequired,
   ): Promise<Record<string, string> | null> {
-    for (const hook of this.paymentRequiredHooks) {
+    for (const hook of this.getPaymentRequiredHooks(paymentRequired)) {
       const result = await hook({ paymentRequired });
       if (result?.headers) {
         return result.headers;
@@ -153,4 +166,133 @@ export class x402HTTPClient {
   async createPaymentPayload(paymentRequired: PaymentRequired): Promise<PaymentPayload> {
     return this.client.createPaymentPayload(paymentRequired);
   }
+
+  /**
+   * Parses response headers into protocol types, fires payment response hooks (v2 only),
+   * and returns whether a hook signaled recovery.
+   *
+   * Called by transport wrappers (fetch, axios) after the paid request completes.
+   *
+   * @param paymentPayload - The payload that was sent with the request
+   * @param getHeader - Function to retrieve a response header by name
+   * @param status - The HTTP status code of the response
+   * @returns Whether a hook recovered and the parsed settle response (if any)
+   */
+  async processPaymentResult(
+    paymentPayload: PaymentPayload,
+    getHeader: (name: string) => string | null | undefined,
+    status: number,
+  ): Promise<{ recovered: boolean; settleResponse?: SettleResponse }> {
+    let settleResponse: SettleResponse | undefined;
+    try {
+      settleResponse = this.getPaymentSettleResponse(getHeader);
+    } catch {
+      /* no header */
+    }
+
+    if (paymentPayload.x402Version === 1) {
+      return { recovered: false, settleResponse };
+    }
+
+    let paymentRequired: PaymentRequired | undefined;
+    if (!settleResponse && status === 402) {
+      try {
+        paymentRequired = this.getPaymentRequiredResponse(getHeader);
+      } catch {
+        /* no header */
+      }
+    }
+
+    const requirements = paymentPayload.accepted;
+    if (!requirements) {
+      throw new Error("Invalid x402 v2 payment payload: missing `accepted`");
+    }
+
+    const ctx: PaymentResponseContext = {
+      paymentPayload,
+      requirements,
+      ...(settleResponse ? { settleResponse } : {}),
+      ...(paymentRequired ? { paymentRequired } : {}),
+    };
+
+    const result = await this.client.handlePaymentResponse(ctx);
+    return { recovered: result?.recovered === true, settleResponse };
+  }
+
+  /**
+   * Parses a fetch Response into a discriminated `x402PaymentResult` for app-level convenience.
+   *
+   * @param response - The fetch Response to process
+   * @returns A discriminated union describing the payment outcome
+   */
+  async processResponse(response: Response): Promise<x402PaymentResult> {
+    const getHeader = (name: string) => response.headers.get(name);
+
+    let settleResponse: SettleResponse | undefined;
+    try {
+      settleResponse = this.getPaymentSettleResponse(getHeader);
+    } catch {
+      /* no header */
+    }
+
+    const contentType = response.headers.get("content-type") ?? "";
+    const body = contentType.includes("application/json")
+      ? await response.json()
+      : await response.text();
+
+    if (settleResponse && settleResponse.success) {
+      return { kind: "success", response, body, settleResponse };
+    }
+
+    if (settleResponse && !settleResponse.success) {
+      return { kind: "settle_failed", response, body, settleResponse };
+    }
+
+    if (response.status === 402) {
+      try {
+        const paymentRequired = this.getPaymentRequiredResponse(getHeader, body);
+        return { kind: "payment_required", response, paymentRequired };
+      } catch {
+        /* no payment-required header */
+      }
+    }
+
+    if (response.ok) {
+      return { kind: "passthrough", response, body };
+    }
+
+    return { kind: "error", response, status: response.status, body };
+  }
+
+  /**
+   * Manual HTTP hooks run before extension hooks scoped to the 402 response.
+   *
+   * @param paymentRequired - The payment required response from the server
+   * @returns Hooks in invocation order
+   */
+  private getPaymentRequiredHooks(paymentRequired: PaymentRequired): PaymentRequiredHook[] {
+    const hooks = [...this.paymentRequiredHooks];
+    const declaredExtensions = paymentRequired.extensions;
+    if (!declaredExtensions) return hooks;
+
+    for (const extension of this.client.getExtensions()) {
+      const httpExtension = extension as HTTPClientTransportExtension;
+      const hook = httpExtension.transportHooks?.http?.onPaymentRequired;
+      if (!hook || !(extension.key in declaredExtensions)) continue;
+
+      hooks.push(context => hook(declaredExtensions[extension.key], context));
+    }
+
+    return hooks;
+  }
 }
+
+/**
+ * Discriminated union describing the outcome of a payment-enabled request.
+ */
+export type x402PaymentResult =
+  | { kind: "success"; response: Response; body: unknown; settleResponse: SettleResponse }
+  | { kind: "settle_failed"; response: Response; body: unknown; settleResponse: SettleResponse }
+  | { kind: "payment_required"; response: Response; paymentRequired: PaymentRequired }
+  | { kind: "error"; response: Response; status: number; body: unknown }
+  | { kind: "passthrough"; response: Response; body: unknown };

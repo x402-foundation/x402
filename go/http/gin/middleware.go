@@ -3,15 +3,18 @@ package gin
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
-	x402 "github.com/coinbase/x402/go"
-	"github.com/coinbase/x402/go/extensions/bazaar"
-	x402http "github.com/coinbase/x402/go/http"
 	"github.com/gin-gonic/gin"
+	x402 "github.com/x402-foundation/x402/go/v2"
+	"github.com/x402-foundation/x402/go/v2/extensions/bazaar"
+	extypes "github.com/x402-foundation/x402/go/v2/extensions/types"
+	x402http "github.com/x402-foundation/x402/go/v2/http"
 )
 
 // SetSettlementOverrides sets settlement overrides on the Gin response for partial settlement.
@@ -195,6 +198,8 @@ func PaymentMiddleware(routes x402http.RoutesConfig, server *x402.X402ResourceSe
 		}
 	}
 
+	validateBazaarExtensions(routes)
+
 	// Create middleware handler using shared logic
 	return createMiddlewareHandler(httpServer, config)
 }
@@ -233,6 +238,8 @@ func PaymentMiddlewareFromHTTPServer(httpServer *x402http.HTTPServer, opts ...Mi
 			fmt.Printf("Warning: failed to initialize x402 server: %v\n", err)
 		}
 	}
+
+	validateBazaarExtensionsFromServer(httpServer)
 
 	// Create middleware handler using shared logic
 	return createMiddlewareHandler(httpServer, config)
@@ -277,8 +284,58 @@ func PaymentMiddlewareFromConfig(routes x402http.RoutesConfig, opts ...Middlewar
 		}
 	}
 
+	validateBazaarExtensions(config.Routes)
+
 	// Create middleware handler
 	return createMiddlewareHandler(httpServer, config)
+}
+
+// validateBazaarExtensions validates all bazaar extensions declared on routes using
+// the bazaar package's JSON-schema validator. Emits warnings but does not block startup.
+func validateBazaarExtensions(routes x402http.RoutesConfig) {
+	for pattern, config := range routes {
+		validateSingleBazaarExtension(pattern, config.Extensions)
+	}
+}
+
+// validateBazaarExtensionsFromServer validates bazaar extensions from pre-compiled routes.
+func validateBazaarExtensionsFromServer(server *x402http.HTTPServer) {
+	for _, route := range server.GetCompiledRoutes() {
+		pattern := route.Verb + " " + route.Regex.String()
+		validateSingleBazaarExtension(pattern, route.Config.Extensions)
+	}
+}
+
+func validateSingleBazaarExtension(pattern string, extensions map[string]interface{}) {
+	extVal, ok := extensions[extypes.BAZAAR.Key()]
+	if !ok || extVal == nil {
+		return
+	}
+	extMap, isMap := extVal.(map[string]interface{})
+	if !isMap || extMap["info"] == nil || extMap["schema"] == nil {
+		fmt.Printf("x402 Warning: Route %q declares a bazaar extension but it is malformed "+
+			"(expected an object with \"info\" and \"schema\" fields)\n", pattern)
+		return
+	}
+	extJSON, err := json.Marshal(extVal)
+	if err != nil {
+		return
+	}
+	var ext extypes.DiscoveryExtension
+	if err := json.Unmarshal(extJSON, &ext); err != nil {
+		return
+	}
+	specResult := bazaar.ValidateDiscoveryExtensionSpec(ext)
+	if !specResult.Valid {
+		fmt.Printf("x402 Warning: Route %q has invalid bazaar extension: %s\n",
+			pattern, strings.Join(specResult.Errors, ", "))
+		return
+	}
+	result := bazaar.ValidateDiscoveryExtension(ext)
+	if !result.Valid {
+		fmt.Printf("x402 Warning: Route %q has invalid bazaar extension: %s\n",
+			pattern, strings.Join(result.Errors, ", "))
+	}
 }
 
 // createMiddlewareHandler creates the actual Gin handler function.
@@ -360,11 +417,55 @@ func handlePaymentVerified(c *gin.Context, server *x402http.HTTPServer, ctx cont
 		c.Set("x402_requirements", *result.PaymentRequirements)
 	}
 
-	// Continue to protected handler
-	c.Next()
+	// SkipHandler directive: bypass downstream handler, settle inline using the
+	// directive body. Used for refund acknowledgements where there is no resource
+	// response to return.
+	skipHandler := result.SkipHandler != nil
+	if skipHandler {
+		contentType := result.SkipHandler.ContentType
+		if contentType == "" {
+			contentType = "application/json"
+		}
+		bodyBytes, err := json.Marshal(result.SkipHandler.Body)
+		if err != nil {
+			bodyBytes = []byte("{}")
+		}
+		writer.Header().Set("Content-Type", contentType)
+		writer.statusCode = http.StatusOK
+		_, _ = writer.body.Write(bodyBytes)
+		// Prevent gin from invoking the protected route handler. Settlement still
+		// runs below using the canned body in the writer.
+		c.Abort()
+	} else {
+		// Continue to protected handler
+		func() {
+			defer func() {
+				if rec := recover(); rec != nil {
+					if result.CancellationDispatcher != nil {
+						err, ok := rec.(error)
+						if !ok {
+							err = fmt.Errorf("%v", rec)
+						}
+						result.CancellationDispatcher.Cancel(x402.VerifiedPaymentCancelOptions{
+							Reason: x402.CancellationReasonHandlerThrew,
+							Err:    err,
+						})
+					}
+					panic(rec)
+				}
+			}()
+			c.Next()
+		}()
+	}
 
-	// Check if aborted
-	if c.IsAborted() {
+	// Check if aborted by the handler (SkipHandler is an intentional bypass, not a failure).
+	if !skipHandler && c.IsAborted() {
+		if result.CancellationDispatcher != nil {
+			result.CancellationDispatcher.Cancel(x402.VerifiedPaymentCancelOptions{
+				Reason:         x402.CancellationReasonHandlerFailed,
+				ResponseStatus: writer.statusCode,
+			})
+		}
 		return
 	}
 
@@ -373,6 +474,12 @@ func handlePaymentVerified(c *gin.Context, server *x402http.HTTPServer, ctx cont
 
 	// Don't settle if response failed
 	if writer.statusCode >= 400 {
+		if result.CancellationDispatcher != nil {
+			result.CancellationDispatcher.Cancel(x402.VerifiedPaymentCancelOptions{
+				Reason:         x402.CancellationReasonHandlerFailed,
+				ResponseStatus: writer.statusCode,
+			})
+		}
 		// Write captured response
 		c.Writer.WriteHeader(writer.statusCode)
 		_, _ = c.Writer.Write(writer.body.Bytes())
@@ -389,6 +496,7 @@ func handlePaymentVerified(c *gin.Context, server *x402http.HTTPServer, ctx cont
 			ResponseBody:    writer.body.Bytes(),
 			ResponseHeaders: writer.Header(),
 		},
+		result.DeclaredExtensions,
 	)
 
 	// Check settlement success

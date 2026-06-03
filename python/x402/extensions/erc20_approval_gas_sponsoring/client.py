@@ -5,6 +5,8 @@ from __future__ import annotations
 from typing import Any
 
 from ...mechanisms.evm.constants import (
+    DEFAULT_MAX_FEE_PER_GAS,
+    DEFAULT_MAX_PRIORITY_FEE_PER_GAS,
     ERC20_APPROVE_ABI,
     ERC20_APPROVE_GAS_LIMIT,
     PERMIT2_ADDRESS,
@@ -54,8 +56,8 @@ def sign_erc20_approval_transaction(
 
     nonce = signer.get_transaction_count(signer.address)
 
-    max_fee = 1_000_000_000
-    max_priority_fee = 100_000_000
+    max_fee = DEFAULT_MAX_FEE_PER_GAS
+    max_priority_fee = DEFAULT_MAX_PRIORITY_FEE_PER_GAS
     if hasattr(signer, "estimate_fees_per_gas"):
         try:
             fees = signer.estimate_fees_per_gas()

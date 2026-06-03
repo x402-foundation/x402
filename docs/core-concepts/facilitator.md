@@ -34,7 +34,7 @@ While it is possible to implement verification and settlement locally, using a f
 
 ### Live Facilitators
 
-Multiple facilitators are live in production, supporting various networks including Base, Solana, Polygon, Avalanche, and more. For a complete and up-to-date list, see the [x402 Ecosystem](https://www.x402.org/ecosystem?filter=facilitators).
+Multiple facilitators are live in production, supporting various networks including Base, Solana, Polygon, Avalanche, and more. See [Facilitators](/dev-tools/facilitators) for selected production options.
 
 ### Interaction Flow
 
@@ -53,13 +53,13 @@ Multiple facilitators are live in production, supporting various networks includ
 
 ### Duplicate Settlement (Solana)
 
-On Solana, a race condition can occur when the same payment transaction is submitted to a facilitator's `/settle` endpoint multiple times before the first submission is confirmed on-chain. Because Solana's RPC returns "success" for duplicate submissions (the network deduplicates at the consensus level), the facilitator may return a successful settlement response for each call. A malicious client could exploit this to access multiple resources while only paying once.
+On Solana, a race condition can occur when the same payment transaction is submitted to a facilitator's `/settle` endpoint multiple times before the first submission is confirmed onchain. Because Solana's RPC returns "success" for duplicate submissions (the network deduplicates at the consensus level), the facilitator may return a successful settlement response for each call. A malicious client could exploit this to access multiple resources while only paying once.
 
 To mitigate this, the x402 SVM mechanism packages include a built-in `SettlementCache` — a short-lived, in-memory cache that detects and rejects duplicate settlement attempts for the same transaction payload. The cache requires no external storage and entries are automatically evicted after 120 seconds (approximately twice the Solana blockhash lifetime).
 
 This protection is enabled by default when using the standard SVM facilitator registration helpers in TypeScript and Python. In Go, a shared `SettlementCache` instance should be passed to both V1 and V2 SVM facilitator schemes during registration.
 
-**If you are a merchant settling payments directly (without a facilitator), you must implement equivalent duplicate detection yourself.** See the [Exact SVM Scheme Specification](https://github.com/coinbase/x402/blob/main/specs/schemes/exact/scheme_exact_svm.md) for the full specification.
+**If you are a merchant settling payments directly (without a facilitator), you must implement equivalent duplicate detection yourself.** See the [Exact SVM Scheme Specification](https://github.com/x402-foundation/x402/blob/main/specs/schemes/exact/scheme_exact_svm.md) for the full specification.
 
 ### Summary
 
@@ -67,5 +67,5 @@ The facilitator acts as an independent verification and settlement layer within 
 
 Next, explore:
 
-* [Client / Server](/docs/core-concepts/client-server.md) — understand the roles and responsibilities of clients and servers
-* [HTTP 402](/docs/core-concepts/http-402.md) — understand how payment requirements are communicated to clients
+* [Client / Server](/core-concepts/client-server) — understand the roles and responsibilities of clients and servers
+* [HTTP 402](/core-concepts/http-402) — understand how payment requirements are communicated to clients

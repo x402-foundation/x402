@@ -6,7 +6,8 @@ import type {
   SchemeNetworkServer,
   MoneyParser,
 } from "@x402/core/types";
-import { convertToTokenAmount, getUsdcAddress } from "../../utils";
+import { parseMoneyString } from "@x402/core/utils";
+import { convertToTokenAmount, getUsdcAddress, numberToDecimalString } from "../../utils";
 
 /**
  * SVM server implementation for the Exact payment scheme.
@@ -116,15 +117,7 @@ export class ExactSvmScheme implements SchemeNetworkServer {
       return money;
     }
 
-    // Remove $ sign and whitespace, then parse
-    const cleanMoney = money.replace(/^\$/, "").trim();
-    const amount = parseFloat(cleanMoney);
-
-    if (isNaN(amount)) {
-      throw new Error(`Invalid money format: ${money}`);
-    }
-
-    return amount;
+    return parseMoneyString(money.replace(/\s+(?:USD|USDC)$/i, ""));
   }
 
   /**
@@ -137,7 +130,7 @@ export class ExactSvmScheme implements SchemeNetworkServer {
    */
   private defaultMoneyConversion(amount: number, network: Network): AssetAmount {
     // Convert decimal amount to token amount (USDC has 6 decimals)
-    const tokenAmount = convertToTokenAmount(amount.toString(), 6);
+    const tokenAmount = convertToTokenAmount(numberToDecimalString(amount), 6);
 
     return {
       amount: tokenAmount,

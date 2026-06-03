@@ -10,6 +10,7 @@ import {
   getFacilitatorResponseError,
   SETTLEMENT_OVERRIDES_HEADER,
   SettlementOverrides,
+  checkIfBazaarNeeded,
 } from "@x402/core/server";
 import { SchemeNetworkServer, Network } from "@x402/core/types";
 import { Context, MiddlewareHandler } from "hono";
@@ -24,24 +25,6 @@ import { HonoAdapter } from "./adapter";
  */
 export function setSettlementOverrides(c: Context, overrides: SettlementOverrides): void {
   c.header(SETTLEMENT_OVERRIDES_HEADER, JSON.stringify(overrides));
-}
-
-/**
- * Check if any routes in the configuration declare bazaar extensions
- *
- * @param routes - Route configuration
- * @returns True if any route has extensions.bazaar defined
- */
-function checkIfBazaarNeeded(routes: RoutesConfig): boolean {
-  // Handle single route config
-  if ("accepts" in routes) {
-    return !!(routes.extensions && "bazaar" in routes.extensions);
-  }
-
-  // Handle multiple routes
-  return Object.values(routes).some(routeConfig => {
-    return !!(routeConfig.extensions && "bazaar" in routeConfig.extensions);
-  });
 }
 
 /**
@@ -131,13 +114,19 @@ export function paymentMiddlewareFromHTTPServer(
     }
   }
 
-  // Dynamically register bazaar extension if routes declare it and not already registered
-  // Skip if pre-registered (e.g., in serverless environments where static imports are used)
   let bazaarPromise: Promise<void> | null = null;
-  if (checkIfBazaarNeeded(httpServer.routes) && !httpServer.server.hasExtension("bazaar")) {
-    bazaarPromise = import("@x402/extensions/bazaar")
-      .then(({ bazaarResourceServerExtension }) => {
-        httpServer.server.registerExtension(bazaarResourceServerExtension);
+  if (checkIfBazaarNeeded(httpServer.routes)) {
+    if (!httpServer.server.hasExtension("bazaar")) {
+      bazaarPromise = import("@x402/extensions/bazaar").then(
+        ({ bazaarResourceServerExtension }) => {
+          httpServer.server.registerExtension(bazaarResourceServerExtension);
+        },
+      );
+    }
+    bazaarPromise = (bazaarPromise ?? Promise.resolve())
+      .then(() => import("@x402/extensions/bazaar"))
+      .then(({ validateBazaarRouteExtensions }) => {
+        validateBazaarRouteExtensions(httpServer.routes);
       })
       .catch(err => {
         console.error("Failed to load bazaar extension:", err);
@@ -209,16 +198,29 @@ export function paymentMiddlewareFromHTTPServer(
 
       case "payment-verified":
         // Payment is valid, need to wrap response for settlement
-        const { paymentPayload, paymentRequirements, declaredExtensions } = result;
+        const { cancellationDispatcher, paymentPayload, paymentRequirements, declaredExtensions } =
+          result;
 
         // Proceed to the next middleware or route handler
-        await next();
+        try {
+          await next();
+        } catch (error) {
+          await cancellationDispatcher.cancel({
+            reason: "handler_threw",
+            error,
+          });
+          throw error;
+        }
 
         // Get the current response
         let res = c.res;
 
         // If the response from the protected route is >= 400, do not settle payment
         if (res.status >= 400) {
+          await cancellationDispatcher.cancel({
+            reason: "handler_failed",
+            responseStatus: res.status,
+          });
           return;
         }
 

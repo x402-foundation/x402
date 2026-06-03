@@ -16,6 +16,38 @@ import { getUsdcChainConfigForChain } from "./evm";
 import { getNetworkId } from "./network";
 
 /**
+ * Converts a route path pattern to a regex source.
+ *
+ * @param path - Route path pattern using "*" and "[param]" syntax
+ * @returns Escaped regex source for the route path
+ */
+function routePathToRegexSource(path: string): string {
+  let source = "";
+
+  for (let i = 0; i < path.length; i++) {
+    const char = path[i];
+
+    if (char === "*") {
+      source += ".*?";
+      continue;
+    }
+
+    if (char === "[") {
+      const end = path.indexOf("]", i + 1);
+      if (end > i + 1) {
+        source += "[^/]+";
+        i = end;
+        continue;
+      }
+    }
+
+    source += char.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  }
+
+  return source;
+}
+
+/**
  * Computes the route patterns for the given routes config
  *
  * @param routes - The routes config to compute the patterns for
@@ -39,18 +71,7 @@ export function computeRoutePatterns(routes: RoutesConfig): RoutePattern[] {
     }
     return {
       verb: verb.toUpperCase(),
-      pattern: new RegExp(
-        `^${
-          path
-            // First escape all special regex characters except * and []
-            .replace(/[$()+.?^{|}]/g, "\\$&")
-            // Then handle our special pattern characters
-            .replace(/\*/g, ".*?") // Make wildcard non-greedy and optional
-            .replace(/\[([^\]]+)\]/g, "[^/]+") // Convert [param] to regex capture
-            .replace(/\//g, "\\/") // Escape slashes
-        }$`,
-        "i",
-      ),
+      pattern: new RegExp(`^${routePathToRegexSource(path)}$`, "i"),
       config: routeConfig,
     };
   });

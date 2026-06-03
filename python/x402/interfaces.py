@@ -8,6 +8,7 @@ Note: All protocols are sync-first (matching legacy SDK pattern).
 
 from __future__ import annotations
 
+from collections.abc import Awaitable
 from dataclasses import dataclass
 from typing import Any, Protocol
 
@@ -15,12 +16,29 @@ from .schemas import (
     AssetAmount,
     Network,
     PaymentPayload,
+    PaymentRequired,
     PaymentRequirements,
     PaymentRequirementsV1,
     Price,
+    ResourceInfo,
     SettleResponse,
+    SettleResultContext,
     SupportedKind,
     VerifyResponse,
+)
+from .schemas.hooks import (
+    AbortResult,
+    RecoveredSettleResult,
+    RecoveredVerifyResult,
+    SettleContext,
+    SettleFailureContext,
+    SkipHandlerResult,
+    SkipSettleResult,
+    SkipVerifyResult,
+    VerifiedPaymentCanceledContext,
+    VerifyContext,
+    VerifyFailureContext,
+    VerifyResultContext,
 )
 
 # ============================================================================
@@ -141,6 +159,90 @@ class SchemeNetworkClientV1(Protocol):
 # ============================================================================
 # Server-Side Protocols
 # ============================================================================
+
+
+@dataclass(frozen=True)
+class SchemePaymentRequiredContext:
+    """Context for scheme enrich_payment_required_response hooks."""
+
+    requirements: list[PaymentRequirements]
+    resource_info: ResourceInfo | None
+    error: str | None
+    payment_required_response: PaymentRequired
+    transport_context: Any = None
+    payment_payload: PaymentPayload | None = None
+
+
+class EnrichPaymentRequiredProvider(Protocol):
+    """Optional scheme hook to enrich 402 accepts."""
+
+    def enrich_payment_required_response(
+        self,
+        context: SchemePaymentRequiredContext,
+    ) -> list[PaymentRequirements] | None | Awaitable[list[PaymentRequirements] | None]: ...
+
+
+class EnrichSettlementPayloadProvider(Protocol):
+    """Optional scheme hook to enrich settlement payload before facilitator settle."""
+
+    def enrich_settlement_payload(
+        self,
+        context: SettleContext,
+    ) -> dict[str, Any] | None | Awaitable[dict[str, Any] | None]: ...
+
+
+class EnrichSettlementResponseProvider(Protocol):
+    """Optional scheme hook to enrich settlement response extra fields."""
+
+    def enrich_settlement_response(
+        self,
+        context: SettleResultContext,
+    ) -> dict[str, Any] | None | Awaitable[dict[str, Any] | None]: ...
+
+
+class BeforeVerifyHookProvider(Protocol):
+    def before_verify(
+        self, context: VerifyContext
+    ) -> (
+        AbortResult | SkipVerifyResult | None | Awaitable[AbortResult | SkipVerifyResult | None]
+    ): ...
+
+
+class AfterVerifyHookProvider(Protocol):
+    def after_verify(
+        self, context: VerifyResultContext
+    ) -> SkipHandlerResult | None | Awaitable[SkipHandlerResult | None]: ...
+
+
+class OnVerifyFailureHookProvider(Protocol):
+    def on_verify_failure(
+        self, context: VerifyFailureContext
+    ) -> RecoveredVerifyResult | None | Awaitable[RecoveredVerifyResult | None]: ...
+
+
+class BeforeSettleHookProvider(Protocol):
+    def before_settle(
+        self, context: SettleContext
+    ) -> (
+        AbortResult | SkipSettleResult | None | Awaitable[AbortResult | SkipSettleResult | None]
+    ): ...
+
+
+class AfterSettleHookProvider(Protocol):
+    def after_settle(self, context: SettleResultContext) -> None | Awaitable[None]: ...
+
+
+class OnSettleFailureHookProvider(Protocol):
+    def on_settle_failure(
+        self,
+        context: SettleFailureContext,
+    ) -> RecoveredSettleResult | None | Awaitable[RecoveredSettleResult | None]: ...
+
+
+class OnVerifiedPaymentCanceledHookProvider(Protocol):
+    def on_verified_payment_canceled(
+        self, context: VerifiedPaymentCanceledContext
+    ) -> None | Awaitable[None]: ...
 
 
 class SchemeNetworkServer(Protocol):

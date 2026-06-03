@@ -14,11 +14,20 @@ class ResourceInfo(BaseX402Model):
         url: The URL of the resource.
         description: Optional human-readable description.
         mime_type: Optional MIME type of the resource.
+        service_name: Optional human-readable service name (≤ 32 chars).
+        tags: Optional topical tags for the service (≤ 5 entries, each ≤ 32 chars).
+        icon_url: Optional absolute http(s) URL to a service icon (≤ 2048 chars).
+
+    See `specs/extensions/bazaar.md` "Service Metadata on `resource`" for
+    facilitator-side validation rules applied to service_name / tags / icon_url.
     """
 
     url: str
     description: str | None = None
     mime_type: str | None = None
+    service_name: str | None = None
+    tags: list[str] | None = None
+    icon_url: str | None = None
 
 
 class PaymentRequirements(BaseX402Model):

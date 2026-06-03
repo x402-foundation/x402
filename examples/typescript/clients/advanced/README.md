@@ -41,6 +41,9 @@ and fill required environment variables:
 - `EVM_PRIVATE_KEY` - Ethereum private key for EVM payments
 - `SVM_PRIVATE_KEY` - Solana private key for SVM payments
 - `STELLAR_PRIVATE_KEY` - Stellar secret key (starts with `S`) for signing Stellar payments
+- `HEDERA_ACCOUNT_ID` - Hedera account id for Hedera payments (optional)
+- `HEDERA_PRIVATE_KEY` - Hedera **ECDSA** private key (0x-prefixed or DER-encoded) for Hedera payments (optional)
+- `HEDERA_NETWORK` - Hedera network (optional, defaults to `hedera:testnet`)
 
 2. Install and build all packages from the typescript examples root:
 

@@ -194,6 +194,36 @@ def create_tool_resource_url(tool_name: str, custom_url: str | None = None) -> s
     return f"mcp://tool/{tool_name}"
 
 
+def build_tool_resource_info(
+    tool_name: str,
+    config_resource: Any | None,
+) -> Any:
+    """Build ResourceInfo for an MCP tool from wrapper config.
+
+    Args:
+        tool_name: Name of the MCP tool
+        config_resource: Optional MCP wrapper resource metadata
+
+    Returns:
+        Schema ResourceInfo for PaymentRequired / matching
+    """
+    from ..schemas import ResourceInfo as SchemaResourceInfo
+
+    resource_info = SchemaResourceInfo(
+        url=create_tool_resource_url(tool_name, config_resource.url if config_resource else None),
+        description=(config_resource.description if config_resource else f"Tool: {tool_name}"),
+        mime_type=(config_resource.mime_type if config_resource else "application/json"),
+    )
+    if config_resource is not None:
+        if config_resource.service_name is not None:
+            resource_info.service_name = config_resource.service_name
+        if config_resource.tags is not None:
+            resource_info.tags = config_resource.tags
+        if config_resource.icon_url is not None:
+            resource_info.icon_url = config_resource.icon_url
+    return resource_info
+
+
 def is_object(value: Any) -> bool:
     """Type guard to check if a value is a non-null object (dict).
 

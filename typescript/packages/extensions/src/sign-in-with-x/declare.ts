@@ -37,7 +37,7 @@ export interface SIWxDeclaration extends SIWxExtension {
  * Create SIWX extension declaration for PaymentRequired.extensions
  *
  * Most fields are derived automatically from request context when using
- * siwxResourceServerExtension:
+ * createSIWxResourceServerExtension:
  * - `network`: From payment requirements (accepts[].network)
  * - `resourceUri`: From request URL
  * - `domain`: Parsed from resourceUri
@@ -73,9 +73,7 @@ export interface SIWxDeclaration extends SIWxExtension {
 export function declareSIWxExtension(
   options: DeclareSIWxOptions = {},
 ): Record<string, SIWxDeclaration> {
-  // Build partial info with static fields only
-  // Time-based fields (nonce, issuedAt, expirationTime) are generated
-  // per-request by enrichPaymentRequiredResponse in siwxResourceServerExtension
+  // Time-based challenge fields are generated per request by the server extension.
   const info: Partial<SIWxExtensionInfo> & { version: string } = {
     version: options.version ?? "1",
   };

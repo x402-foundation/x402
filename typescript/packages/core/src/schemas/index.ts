@@ -61,10 +61,19 @@ export type Network = z.infer<typeof NetworkSchema>;
 /**
  * ResourceInfo schema for V2 - describes the protected resource.
  */
+// Printable ASCII (U+0020–U+007E) — matches the bazaar-facilitator
+// `isValidServiceName` / `sanitizeTags` regex. Constraining to ASCII keeps
+// the length cap consistent across TS / Python / Go (where String.length /
+// len() / len() otherwise diverge for multi-byte input).
+const PRINTABLE_ASCII_REGEX = /^[\x20-\x7e]+$/;
+
 export const ResourceInfoSchema = z.object({
   url: NonEmptyString,
   description: z.string().optional(),
   mimeType: z.string().optional(),
+  serviceName: z.string().min(1).max(32).regex(PRINTABLE_ASCII_REGEX).optional(),
+  tags: z.array(z.string().min(1).max(32).regex(PRINTABLE_ASCII_REGEX)).max(5).optional(),
+  iconUrl: z.string().max(2048).optional(),
 });
 export type ResourceInfo = z.infer<typeof ResourceInfoSchema>;
 

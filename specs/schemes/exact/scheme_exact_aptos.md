@@ -115,7 +115,8 @@ Steps to verify a payment for the `exact` scheme:
 8. Verify the transfer amount matches `requirements.amount`.
 9. Verify the transfer recipient matches `requirements.payTo`.
 10. Verify the transaction sender has sufficient balance of the `asset` to cover the required amount.
-11. Simulate the transaction using the Aptos REST API to ensure it would succeed and has not already been executed/committed to the chain. This also validates the sequence number to prevent replay attacks.
+11. Verify `gas_unit_price` is within an acceptable upper bound (e.g., no greater than a configured maximum such as 100 octas). This MUST be enforced to prevent a malicious client from setting an arbitrarily high gas price that drains the fee payer's account. Transactions with `gas_unit_price` exceeding the bound MUST be rejected.
+12. Simulate the transaction using the Aptos REST API to ensure it would succeed and has not already been executed/committed to the chain. This also validates the sequence number to prevent replay attacks.
 
 ## Settlement
 
@@ -179,6 +180,8 @@ The facilitator operates (or integrates with) a gas station service that handles
 - Abuse prevention policies
 
 Both approaches are transparent to the client - they simply check for `extra.feePayer` and construct their transaction accordingly.
+
+**Gas Price Bounding:** Because the fee payer covers gas costs, the facilitator MUST enforce an upper bound on `gas_unit_price` during verification. A client that sets an arbitrarily high gas price can cause the fee payer to spend far more APT than the payment is worth. Facilitators SHOULD publish their maximum accepted `gas_unit_price` (e.g., via `extra` fields in payment requirements) so well-behaved clients can set an appropriate value.
 
 ### Non-Sponsored Transactions
 

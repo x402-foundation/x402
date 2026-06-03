@@ -15,6 +15,7 @@ import {
   type Erc20ApprovalGasSponsoringSigner,
 } from "../extensions";
 import { getAddress, encodeFunctionData } from "viem";
+import { appendDataSuffix, resolveDataSuffix } from "../../shared/extensions";
 import {
   PERMIT2_ADDRESS,
   permit2WitnessTypes,
@@ -353,10 +354,22 @@ export async function settlePermit2(
     };
   }
 
+  const dataSuffix = await resolveDataSuffix(context, {
+    paymentPayload: payload,
+    paymentRequirements: requirements,
+  });
+
   // Branch: EIP-2612 gas sponsoring (atomic settleWithPermit via contract)
   const eip2612Info = extractEip2612GasSponsoringInfo(payload);
   if (eip2612Info) {
-    return settlePermit2WithEIP2612(exactProxyConfig, signer, payload, permit2Payload, eip2612Info);
+    return settlePermit2WithEIP2612(
+      exactProxyConfig,
+      signer,
+      payload,
+      permit2Payload,
+      eip2612Info,
+      dataSuffix,
+    );
   }
 
   // Branch: ERC-20 approval gas sponsoring (broadcast approval + settle via extension signer)
@@ -377,12 +390,13 @@ export async function settlePermit2(
         payload,
         permit2Payload,
         erc20Info,
+        dataSuffix,
       );
     }
   }
 
   // Branch: standard settle (allowance already on-chain)
-  return settlePermit2Direct(exactProxyConfig, signer, payload, permit2Payload);
+  return settlePermit2Direct(exactProxyConfig, signer, payload, permit2Payload, dataSuffix);
 }
 
 // ---------------------------------------------------------------------------
@@ -397,6 +411,7 @@ export async function settlePermit2(
  * @param payload - The payment payload for network info
  * @param permit2Payload - The Permit2 payload with authorization and signature
  * @param eip2612Info - The EIP-2612 gas sponsoring info from the payload extension
+ * @param dataSuffix - Optional hex suffix appended to the settlement transaction
  * @returns Promise resolving to a settlement response
  */
 async function settlePermit2WithEIP2612(
@@ -405,6 +420,7 @@ async function settlePermit2WithEIP2612(
   payload: PaymentPayload,
   permit2Payload: ExactPermit2Payload,
   eip2612Info: Eip2612GasSponsoringInfo,
+  dataSuffix?: `0x${string}`,
 ): Promise<SettleResponse> {
   const payer = permit2Payload.permit2Authorization.from;
   try {
@@ -424,6 +440,7 @@ async function settlePermit2WithEIP2612(
         },
         ...buildExactPermit2SettleArgs(permit2Payload),
       ],
+      dataSuffix,
     });
 
     return waitAndReturnSettleResponse(signer, tx, payload, payer);
@@ -441,6 +458,7 @@ async function settlePermit2WithEIP2612(
  * @param permit2Payload - The Permit2 payload with authorization and signature
  * @param erc20Info - Object containing the signed approval transaction
  * @param erc20Info.signedTransaction - The RLP-encoded signed ERC-20 approve transaction
+ * @param dataSuffix - Optional hex suffix appended to the settlement transaction
  * @returns Promise resolving to a settlement response
  */
 async function settlePermit2WithERC20Approval(
@@ -449,15 +467,19 @@ async function settlePermit2WithERC20Approval(
   payload: PaymentPayload,
   permit2Payload: ExactPermit2Payload,
   erc20Info: { signedTransaction: string },
+  dataSuffix?: `0x${string}`,
 ): Promise<SettleResponse> {
   const payer = permit2Payload.permit2Authorization.from;
 
   try {
-    const settleData = encodeFunctionData({
-      abi: config.proxyABI,
-      functionName: "settle",
-      args: buildExactPermit2SettleArgs(permit2Payload),
-    });
+    const settleData = appendDataSuffix(
+      encodeFunctionData({
+        abi: config.proxyABI,
+        functionName: "settle",
+        args: buildExactPermit2SettleArgs(permit2Payload),
+      }),
+      dataSuffix,
+    );
 
     const txHashes = await extensionSigner.sendTransactions([
       erc20Info.signedTransaction as `0x${string}`,
@@ -478,6 +500,7 @@ async function settlePermit2WithERC20Approval(
  * @param signer - The facilitator signer for contract writes
  * @param payload - The payment payload for network info
  * @param permit2Payload - The Permit2 payload with authorization and signature
+ * @param dataSuffix - Optional hex suffix appended to the settlement transaction
  * @returns Promise resolving to a settlement response
  */
 async function settlePermit2Direct(
@@ -485,6 +508,7 @@ async function settlePermit2Direct(
   signer: FacilitatorEvmSigner,
   payload: PaymentPayload,
   permit2Payload: ExactPermit2Payload,
+  dataSuffix?: `0x${string}`,
 ): Promise<SettleResponse> {
   const payer = permit2Payload.permit2Authorization.from;
   try {
@@ -493,6 +517,7 @@ async function settlePermit2Direct(
       abi: config.proxyABI,
       functionName: "settle",
       args: buildExactPermit2SettleArgs(permit2Payload),
+      dataSuffix,
     });
 
     return waitAndReturnSettleResponse(signer, tx, payload, payer);

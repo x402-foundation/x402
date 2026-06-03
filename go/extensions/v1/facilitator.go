@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"strings"
 
-	"github.com/coinbase/x402/go/extensions/types"
+	"github.com/x402-foundation/x402/go/v2/extensions/types"
 )
 
 // V1OutputSchema represents the v1 outputSchema structure
@@ -321,4 +321,45 @@ func ExtractResourceMetadataV1(paymentRequirements interface{}) map[string]strin
 	}
 
 	return result
+}
+
+// BuildBazaarExtensionFromDiscoveryInfo builds a v2 bazaar extension from extracted v1 discovery info.
+//
+// V1 had no formal schema validation, so the synthesized schema is permissive.
+func BuildBazaarExtensionFromDiscoveryInfo(discoveryInfo types.DiscoveryInfo) types.DiscoveryExtension {
+	return types.DiscoveryExtension{
+		Info: discoveryInfo,
+		Schema: types.JSONSchema{
+			"$schema": "https://json-schema.org/draft/2020-12/schema",
+			"type":    "object",
+			"properties": map[string]interface{}{
+				"input":  map[string]interface{}{"type": "object"},
+				"output": map[string]interface{}{"type": "object"},
+			},
+			"required": []interface{}{"input"},
+		},
+	}
+}
+
+// BuildV1CatalogExtensions normalizes v1 catalog extension payloads to v2 bazaar format.
+//
+// Preserves non-bazaar extensions from the payment payload. Replaces legacy
+// outputSchema entries with a synthesized bazaar extension.
+func BuildV1CatalogExtensions(
+	existingExtensions map[string]any,
+	discoveryInfo types.DiscoveryInfo,
+) map[string]any {
+	if existingExtensions != nil {
+		if _, ok := existingExtensions[types.BAZAAR.Key()]; ok {
+			return existingExtensions
+		}
+	}
+
+	extensions := map[string]any{}
+	for k, v := range existingExtensions {
+		extensions[k] = v
+	}
+	delete(extensions, "outputSchema")
+	extensions[types.BAZAAR.Key()] = BuildBazaarExtensionFromDiscoveryInfo(discoveryInfo)
+	return extensions
 }

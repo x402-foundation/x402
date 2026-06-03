@@ -18,7 +18,7 @@ from .types import (
     SettlementContext,
 )
 from .utils import (
-    create_tool_resource_url,
+    build_tool_resource_info,
     extract_payment_from_meta,
 )
 
@@ -37,6 +37,7 @@ class PaymentWrapperConfig:
         accepts: list[PaymentRequirements],
         resource: ResourceInfo | None = None,
         hooks: PaymentWrapperHooks | None = None,
+        extensions: dict[str, Any] | None = None,
     ):
         """Initialize async payment wrapper config.
 
@@ -44,12 +45,16 @@ class PaymentWrapperConfig:
             accepts: List of payment requirements
             resource: Optional resource info
             hooks: Optional async server-side hooks
+            extensions: Optional x402 extensions to include in PaymentRequired responses.
+                Use this to attach Bazaar discovery metadata so facilitators can index
+                the tool. Example: ``declare_mcp_discovery_extension(config)``
         """
         if not accepts:
             raise ValueError("accepts must have at least one payment requirement")
         self.accepts = accepts
         self.resource = resource
         self.hooks = hooks
+        self.extensions = extensions
 
 
 def wrap_fastmcp_tool(
@@ -267,6 +272,14 @@ def create_payment_wrapper(
                     resource_server, tool_name, config, str(e)
                 )
 
+            if not settle_result.success:
+                return await _create_settlement_failed_result_async(
+                    resource_server,
+                    tool_name,
+                    config,
+                    settle_result.error_reason or "Unknown settlement failure",
+                )
+
             # Run onAfterSettlement hook if present
             if config.hooks and config.hooks.on_after_settlement:
                 settlement_context = SettlementContext(
@@ -317,18 +330,13 @@ async def _create_payment_required_result_async(
     Returns:
         Structured 402 error result with payment requirements
     """
-    from ..schemas import ResourceInfo as CoreResourceInfo
-
-    resource_info = CoreResourceInfo(
-        url=create_tool_resource_url(tool_name, config.resource.url if config.resource else None),
-        description=(config.resource.description if config.resource else f"Tool: {tool_name}"),
-        mime_type=config.resource.mime_type if config.resource else "application/json",
-    )
+    resource_info = build_tool_resource_info(tool_name, config.resource)
 
     payment_required = await resource_server.create_payment_required_response(
         config.accepts,
         resource_info,
         error_message,
+        config.extensions,
     )
 
     # Convert to dict for structuredContent
@@ -365,18 +373,13 @@ async def _create_settlement_failed_result_async(
     Returns:
         Structured 402 error result with settlement failure details
     """
-    from ..schemas import ResourceInfo as CoreResourceInfo
-
-    resource_info = CoreResourceInfo(
-        url=create_tool_resource_url(tool_name, config.resource.url if config.resource else None),
-        description=(config.resource.description if config.resource else f"Tool: {tool_name}"),
-        mime_type=config.resource.mime_type if config.resource else "application/json",
-    )
+    resource_info = build_tool_resource_info(tool_name, config.resource)
 
     payment_required = await resource_server.create_payment_required_response(
         config.accepts,
         resource_info,
         f"Payment settlement failed: {error_message}",
+        config.extensions,
     )
 
     settlement_failure = {

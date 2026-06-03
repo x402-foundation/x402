@@ -1,6 +1,87 @@
 import { Network } from "../types";
 
 /**
+ * Converts a JavaScript number to a plain decimal string, expanding scientific notation
+ * via string manipulation rather than parseFloat round-tripping.
+ *
+ * e.g. 1e-7 → "0.0000001", 4.02 → "4.02"
+ *
+ * @param n - The number to convert
+ * @returns A plain decimal string representation with no scientific notation
+ */
+export function numberToDecimalString(n: number): string {
+  const str = n.toString();
+  if (!/[eE]/.test(str)) return str;
+
+  const [significand, exponentStr] = str.split(/[eE]/);
+  const exp = parseInt(exponentStr, 10);
+  const negative = significand.startsWith("-");
+  const abs = negative ? significand.slice(1) : significand;
+  const [intDigits, fracDigits = ""] = abs.split(".");
+  const allDigits = intDigits + fracDigits;
+  const decimalPos = intDigits.length + exp;
+
+  let result: string;
+  if (decimalPos <= 0) {
+    result = "0." + "0".repeat(-decimalPos) + allDigits;
+  } else if (decimalPos >= allDigits.length) {
+    result = allDigits + "0".repeat(decimalPos - allDigits.length);
+  } else {
+    result = allDigits.slice(0, decimalPos) + "." + allDigits.slice(decimalPos);
+  }
+  return (negative ? "-" : "") + result;
+}
+
+/**
+ * Parses a money string into a finite, non-negative decimal number.
+ * Accepts plain decimal strings with an optional leading dollar sign.
+ *
+ * @param money - The money string to parse
+ * @returns Decimal number
+ */
+export function parseMoneyString(money: string): number {
+  const cleaned = money.replace(/^\$/, "").trim();
+  if (!/^-?\d+(?:\.\d+)?$/.test(cleaned) || /[eE]/.test(cleaned)) {
+    throw new Error(`Invalid money format: ${money}`);
+  }
+
+  const amount = Number(cleaned);
+  if (!Number.isFinite(amount) || amount < 0) {
+    throw new Error(`Invalid money format: ${money}`);
+  }
+  return amount;
+}
+
+/**
+ * Convert a decimal amount to token smallest units.
+ * Accepts only plain decimal strings — scientific notation is not allowed.
+ * Throws if the amount is non-zero but too small to represent with the given decimal precision.
+ *
+ * @param decimalAmount - The decimal amount as a plain string (e.g., "0.10")
+ * @param decimals - The number of decimals for the token (e.g., 6 for USDC)
+ * @returns The amount in smallest units as a string
+ */
+export function convertToTokenAmount(decimalAmount: string, decimals: number): string {
+  if (/[eE]/.test(decimalAmount)) {
+    throw new Error(
+      `Invalid amount: ${decimalAmount} — use decimal notation, not scientific notation`,
+    );
+  }
+  if (!/^-?\d+\.?\d*$/.test(decimalAmount)) {
+    throw new Error(`Invalid amount: ${decimalAmount}`);
+  }
+  const [intPart, decPart = ""] = decimalAmount.split(".");
+  const paddedDec = decPart.padEnd(decimals, "0").slice(0, decimals);
+  const tokenAmount = (intPart + paddedDec).replace(/^0+/, "") || "0";
+  if (tokenAmount === "0" && /[1-9]/.test(decimalAmount)) {
+    throw new Error(
+      `Amount ${decimalAmount} is too small to represent with ${decimals} decimal places`,
+    );
+  }
+  return tokenAmount;
+}
+
+/**
  * Scheme data structure for facilitator storage
  */
 export interface SchemeData<T> {
@@ -8,6 +89,17 @@ export interface SchemeData<T> {
   networks: Set<Network>;
   pattern: Network;
 }
+
+const escapeRegExp = (value: string): string => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+const networkPatternToRegExp = (pattern: Network): RegExp => {
+  const source = escapeRegExp(pattern).replace(/\\\*/g, ".*");
+  return new RegExp(`^${source}$`);
+};
+
+export const networkMatchesPattern = (pattern: Network, network: Network): boolean => {
+  return networkPatternToRegExp(pattern).test(network);
+};
 
 export const findSchemesByNetwork = <T>(
   map: Map<string, Map<string, T>>,
@@ -19,15 +111,7 @@ export const findSchemesByNetwork = <T>(
   if (!implementationsByScheme) {
     // Try pattern matching for registered network patterns
     for (const [registeredNetworkPattern, implementations] of map.entries()) {
-      // Convert the registered network pattern to a regex
-      // e.g., "eip155:*" becomes /^eip155:.*$/
-      const pattern = registeredNetworkPattern
-        .replace(/[.*+?^${}()|[\]\\]/g, "\\$&") // Escape special regex chars except *
-        .replace(/\\\*/g, ".*"); // Replace escaped * with .*
-
-      const regex = new RegExp(`^${pattern}$`);
-
-      if (regex.test(network)) {
+      if (networkMatchesPattern(registeredNetworkPattern as Network, network)) {
         implementationsByScheme = implementations;
         break;
       }
@@ -68,8 +152,7 @@ export const findFacilitatorBySchemeAndNetwork = <T>(
   }
 
   // Try pattern matching
-  const patternRegex = new RegExp("^" + schemeData.pattern.replace("*", ".*") + "$");
-  if (patternRegex.test(network)) {
+  if (networkMatchesPattern(schemeData.pattern, network)) {
     return schemeData.facilitator;
   }
 

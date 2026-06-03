@@ -70,3 +70,40 @@ body {
 @utility animate-marquee {
   animation: marquee var(--duration, 40s) linear infinite reverse;
 }
+
+/* Hero section — explicit media queries for xl layout */
+.hero-illustration-col {
+  display: none;
+}
+
+@media (min-width: 1024px) {
+  /* At lg, layout is flex-row — align columns to top */
+  .hero-flex-row {
+    align-items: flex-start;
+  }
+}
+
+@media (min-width: 1280px) {
+  /* Remove section top padding — illustration fills from nav bottom */
+  .hero-section {
+    padding-top: 0;
+  }
+
+  /* Restore top padding on left column only */
+  .hero-left-col {
+    padding-top: 2.5rem; /* 40px = pt-10 */
+  }
+
+  /* Stretch both columns to illustration height at xl */
+  .hero-flex-row {
+    align-items: stretch;
+  }
+
+  /* Show illustration column */
+  .hero-illustration-col {
+    display: block;
+    position: relative;
+    flex-shrink: 0;
+    width: 720px;
+  }
+}

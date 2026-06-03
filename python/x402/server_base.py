@@ -5,15 +5,32 @@ Contains shared logic for server implementations.
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Awaitable, Callable, Generator
 from typing import TYPE_CHECKING, Any, Literal, Protocol
 
 from typing_extensions import Self
 
-from .interfaces import SchemeNetworkServer
+from .hook_adapters import (
+    build_extension_server_hook_handles,
+    collect_scheme_server_hook_handles,
+    get_labeled_server_hooks,
+)
+from .hook_policy import (
+    assert_accepts_additive_extra_after_scheme_enrich,
+    assert_accepts_allowlisted_after_extension_enrich,
+    assert_additive_payload_enrichment,
+    assert_additive_settlement_extra,
+    assert_settle_response_core_unchanged,
+    merge_additive_settlement_extra,
+    snapshot_payment_requirements_list,
+    snapshot_settle_response_core,
+)
+from .interfaces import SchemeNetworkServer, SchemePaymentRequiredContext
 from .schemas import (
     AbortResult,
     Network,
+    PaymentCancellationDispatcher,
     PaymentPayload,
     PaymentPayloadV1,
     PaymentRequired,
@@ -23,19 +40,29 @@ from .schemas import (
     RecoveredVerifyResult,
     ResourceInfo,
     ResourceServerExtension,
+    ResourceVerifyResponse,
     SchemeNotFoundError,
+    ServerPaymentRequiredContext,
     SettleContext,
     SettleFailureContext,
     SettleResponse,
     SettleResultContext,
+    SkipHandlerDirective,
+    SkipHandlerResult,
+    SkipSettleResult,
+    SkipVerifyResult,
     SupportedKind,
     SupportedResponse,
+    VerifiedPaymentCanceledContext,
+    VerifiedPaymentCancelOptions,
     VerifyContext,
     VerifyFailureContext,
     VerifyResponse,
     VerifyResultContext,
     find_schemes_by_network,
 )
+
+logger = logging.getLogger("x402")
 
 if TYPE_CHECKING:
     pass
@@ -97,28 +124,42 @@ class FacilitatorClientSync(Protocol):
 # Type Aliases - Support both sync and async hooks
 # ============================================================================
 
-BeforeVerifyHook = Callable[[VerifyContext], Awaitable[AbortResult | None] | AbortResult | None]
-AfterVerifyHook = Callable[[VerifyResultContext], Awaitable[None] | None]
+BeforeVerifyHook = Callable[
+    [VerifyContext],
+    Awaitable[AbortResult | SkipVerifyResult | None] | AbortResult | SkipVerifyResult | None,
+]
+AfterVerifyHook = Callable[
+    [VerifyResultContext],
+    Awaitable[SkipHandlerResult | None] | SkipHandlerResult | None,
+]
 OnVerifyFailureHook = Callable[
     [VerifyFailureContext],
     Awaitable[RecoveredVerifyResult | None] | RecoveredVerifyResult | None,
 ]
 
-BeforeSettleHook = Callable[[SettleContext], Awaitable[AbortResult | None] | AbortResult | None]
+BeforeSettleHook = Callable[
+    [SettleContext],
+    Awaitable[AbortResult | SkipSettleResult | None] | AbortResult | SkipSettleResult | None,
+]
 AfterSettleHook = Callable[[SettleResultContext], Awaitable[None] | None]
 OnSettleFailureHook = Callable[
     [SettleFailureContext],
     Awaitable[RecoveredSettleResult | None] | RecoveredSettleResult | None,
 ]
+OnVerifiedPaymentCanceledHook = Callable[
+    [VerifiedPaymentCanceledContext],
+    Awaitable[None] | None,
+]
 
 # Sync-only hook types (for sync class)
-SyncBeforeVerifyHook = Callable[[VerifyContext], AbortResult | None]
-SyncAfterVerifyHook = Callable[[VerifyResultContext], None]
+SyncBeforeVerifyHook = Callable[[VerifyContext], AbortResult | SkipVerifyResult | None]
+SyncAfterVerifyHook = Callable[[VerifyResultContext], SkipHandlerResult | None]
 SyncOnVerifyFailureHook = Callable[[VerifyFailureContext], RecoveredVerifyResult | None]
 
-SyncBeforeSettleHook = Callable[[SettleContext], AbortResult | None]
+SyncBeforeSettleHook = Callable[[SettleContext], AbortResult | SkipSettleResult | None]
 SyncAfterSettleHook = Callable[[SettleResultContext], None]
 SyncOnSettleFailureHook = Callable[[SettleFailureContext], RecoveredSettleResult | None]
+SyncOnVerifiedPaymentCanceledHook = Callable[[VerifiedPaymentCanceledContext], None]
 
 # Hook command type for generator-based implementation
 HookPhase = Literal["before", "after", "failure"]
@@ -164,6 +205,8 @@ class x402ResourceServerBase:
 
         # Extensions
         self._extensions: dict[str, ResourceServerExtension] = {}
+        self._scheme_hook_adapters: dict[Network, dict[str, Any]] = {}
+        self._extension_hook_adapters: dict[str, Any] = {}
 
         # Hooks (typed in subclasses)
         self._before_verify_hooks: list[Any] = []
@@ -173,6 +216,7 @@ class x402ResourceServerBase:
         self._before_settle_hooks: list[Any] = []
         self._after_settle_hooks: list[Any] = []
         self._on_settle_failure_hooks: list[Any] = []
+        self._on_verified_payment_canceled_hooks: list[Any] = []
 
         self._initialized = False
 
@@ -185,12 +229,38 @@ class x402ResourceServerBase:
         if network not in self._schemes:
             self._schemes[network] = {}
         self._schemes[network][server.scheme] = server
+
+        handles = collect_scheme_server_hook_handles(server)
+        if handles.is_empty():
+            by_scheme = self._scheme_hook_adapters.get(network)
+            if by_scheme is not None:
+                by_scheme.pop(server.scheme, None)
+                if not by_scheme:
+                    self._scheme_hook_adapters.pop(network, None)
+        else:
+            if network not in self._scheme_hook_adapters:
+                self._scheme_hook_adapters[network] = {}
+            self._scheme_hook_adapters[network][server.scheme] = handles
         return self
 
     def register_extension(self, extension: ResourceServerExtension) -> Self:
         """Register a resource server extension."""
         self._extensions[extension.key] = extension
+        extension_hooks = getattr(extension, "hooks", None)
+        if extension_hooks is None:
+            self._extension_hook_adapters.pop(extension.key, None)
+            return self
+
+        handles = build_extension_server_hook_handles(extension.key, extension_hooks)
+        if handles.is_empty():
+            self._extension_hook_adapters.pop(extension.key, None)
+        else:
+            self._extension_hook_adapters[extension.key] = handles
         return self
+
+    def get_extensions(self) -> list[ResourceServerExtension]:
+        """Return all registered resource server extensions."""
+        return list(self._extensions.values())
 
     def has_registered_scheme(self, network: Network, scheme: str) -> bool:
         """Check if a scheme is registered for a network."""
@@ -346,14 +416,352 @@ class x402ResourceServerBase:
         resource: ResourceInfo | None = None,
         error: str | None = None,
         extensions: dict[str, Any] | None = None,
+        transport_context: Any = None,
+        payment_payload: PaymentPayload | None = None,
     ) -> PaymentRequired:
-        """Create a 402 Payment Required response."""
-        return PaymentRequired(
+        """Create a 402 Payment Required response with scheme/extension enrichment."""
+        return self._build_payment_required_response(
+            requirements,
+            resource,
+            error,
+            extensions,
+            transport_context,
+            payment_payload,
+            self._run_enrich_hook_sync,
+        )
+
+    def _build_payment_required_response(
+        self,
+        requirements: list[PaymentRequirements],
+        resource: ResourceInfo | None,
+        error: str | None,
+        extensions: dict[str, Any] | None,
+        transport_context: Any,
+        payment_payload: PaymentPayload | None,
+        run_hook: Callable[..., Any],
+    ) -> PaymentRequired:
+        working_accepts = snapshot_payment_requirements_list(requirements)
+        baseline_accepts = snapshot_payment_requirements_list(working_accepts)
+
+        response = PaymentRequired(
             x402_version=2,
             error=error,
             resource=resource,
-            accepts=requirements,
-            extensions=extensions,
+            accepts=working_accepts,
+            extensions=extensions if extensions else None,
+        )
+
+        for accept in working_accepts:
+            scheme_server = self._find_registered_scheme(accept.scheme, accept.network)
+            enrich = getattr(scheme_server, "enrich_payment_required_response", None)
+            if enrich is None:
+                continue
+
+            context = SchemePaymentRequiredContext(
+                requirements=working_accepts,
+                payment_payload=payment_payload,
+                resource_info=resource,
+                error=error,
+                payment_required_response=response,
+                transport_context=transport_context,
+            )
+            try:
+                enriched_accepts = run_hook(enrich, context)
+            except Exception as hook_error:
+                label = f'scheme "{accept.scheme}" enrich_payment_required_response'
+                self._warn_resource_server_hook_failure(
+                    "enrichPaymentRequiredResponse",
+                    label,
+                    hook_error,
+                )
+                enriched_accepts = None
+
+            if enriched_accepts is not None:
+                working_accepts = enriched_accepts
+                response = response.model_copy(update={"accepts": working_accepts})
+
+            assert_accepts_additive_extra_after_scheme_enrich(
+                baseline_accepts,
+                response.accepts,
+                accept.scheme,
+                accept.network,
+            )
+            baseline_accepts = snapshot_payment_requirements_list(response.accepts)
+
+        if extensions:
+            for key, declaration in extensions.items():
+                extension = self._extensions.get(key)
+                enrich = getattr(extension, "enrich_payment_required_response", None)
+                if enrich is None:
+                    continue
+
+                context = ServerPaymentRequiredContext(
+                    requirements=working_accepts,
+                    resource_info=resource,
+                    error=error,
+                    payment_required_response=response,
+                    transport_context=transport_context,
+                    payment_payload=payment_payload,
+                )
+                try:
+                    extension_data = run_hook(enrich, declaration, context)
+                except Exception as hook_error:
+                    self._warn_extension_hook_failure(
+                        key, "enrichPaymentRequiredResponse", hook_error
+                    )
+                    extension_data = None
+
+                if extension_data is not None:
+                    merged_extensions = dict(response.extensions or {})
+                    merged_extensions[key] = extension_data
+                    response = response.model_copy(update={"extensions": merged_extensions})
+
+                assert_accepts_allowlisted_after_extension_enrich(
+                    baseline_accepts, working_accepts, key
+                )
+                baseline_accepts = snapshot_payment_requirements_list(working_accepts)
+
+        return response
+
+    async def _build_payment_required_response_async(
+        self,
+        requirements: list[PaymentRequirements],
+        resource: ResourceInfo | None,
+        error: str | None,
+        extensions: dict[str, Any] | None,
+        transport_context: Any,
+        payment_payload: PaymentPayload | None,
+    ) -> PaymentRequired:
+        import asyncio
+
+        async def invoke(hook: Any, *args: Any) -> Any:
+            result = hook(*args)
+            if asyncio.iscoroutine(result) or asyncio.isfuture(result):
+                return await result
+            return result
+
+        working_accepts = snapshot_payment_requirements_list(requirements)
+        baseline_accepts = snapshot_payment_requirements_list(working_accepts)
+
+        response = PaymentRequired(
+            x402_version=2,
+            error=error,
+            resource=resource,
+            accepts=working_accepts,
+            extensions=extensions if extensions else None,
+        )
+
+        for accept in working_accepts:
+            scheme_server = self._find_registered_scheme(accept.scheme, accept.network)
+            enrich = getattr(scheme_server, "enrich_payment_required_response", None)
+            if enrich is None:
+                continue
+
+            context = SchemePaymentRequiredContext(
+                requirements=working_accepts,
+                payment_payload=payment_payload,
+                resource_info=resource,
+                error=error,
+                payment_required_response=response,
+                transport_context=transport_context,
+            )
+            try:
+                enriched_accepts = await invoke(enrich, context)
+            except Exception as hook_error:
+                label = f'scheme "{accept.scheme}" enrich_payment_required_response'
+                self._warn_resource_server_hook_failure(
+                    "enrichPaymentRequiredResponse",
+                    label,
+                    hook_error,
+                )
+                enriched_accepts = None
+
+            if enriched_accepts is not None:
+                working_accepts = enriched_accepts
+                response = response.model_copy(update={"accepts": working_accepts})
+
+            assert_accepts_additive_extra_after_scheme_enrich(
+                baseline_accepts,
+                response.accepts,
+                accept.scheme,
+                accept.network,
+            )
+            baseline_accepts = snapshot_payment_requirements_list(response.accepts)
+
+        if extensions:
+            for key, declaration in extensions.items():
+                extension = self._extensions.get(key)
+                enrich = getattr(extension, "enrich_payment_required_response", None)
+                if enrich is None:
+                    continue
+
+                context = ServerPaymentRequiredContext(
+                    requirements=working_accepts,
+                    resource_info=resource,
+                    error=error,
+                    payment_required_response=response,
+                    transport_context=transport_context,
+                    payment_payload=payment_payload,
+                )
+                try:
+                    extension_data = await invoke(enrich, declaration, context)
+                except Exception as hook_error:
+                    self._warn_extension_hook_failure(
+                        key, "enrichPaymentRequiredResponse", hook_error
+                    )
+                    extension_data = None
+
+                if extension_data is not None:
+                    merged_extensions = dict(response.extensions or {})
+                    merged_extensions[key] = extension_data
+                    response = response.model_copy(update={"extensions": merged_extensions})
+
+                assert_accepts_allowlisted_after_extension_enrich(
+                    baseline_accepts, working_accepts, key
+                )
+                baseline_accepts = snapshot_payment_requirements_list(working_accepts)
+
+        return response
+
+    def _enrich_settlement_response(
+        self,
+        settle_result: SettleResponse,
+        context: SettleResultContext,
+        declared_extensions: dict[str, Any],
+        matched_scheme: dict[str, str],
+        run_hook: Callable[..., Any],
+    ) -> None:
+        if not settle_result.success:
+            return
+
+        if declared_extensions:
+            settle_core_snapshot = snapshot_settle_response_core(settle_result)
+            for key, declaration in declared_extensions.items():
+                extension = self._extensions.get(key)
+                enrich = getattr(extension, "enrich_settlement_response", None)
+                if enrich is None:
+                    continue
+
+                try:
+                    extension_data = run_hook(enrich, declaration, context)
+                except Exception as hook_error:
+                    self._warn_extension_hook_failure(key, "enrichSettlementResponse", hook_error)
+                    extension_data = None
+
+                if extension_data is not None:
+                    merged_extensions = dict(settle_result.extensions or {})
+                    merged_extensions[key] = extension_data
+                    settle_result.extensions = merged_extensions
+
+                assert_settle_response_core_unchanged(settle_core_snapshot, settle_result, key)
+
+        scheme_server = self._find_registered_scheme(
+            matched_scheme["scheme"], matched_scheme["network"]
+        )
+        enrich = getattr(scheme_server, "enrich_settlement_response", None)
+        if enrich is None:
+            return
+
+        label = f'scheme "{matched_scheme["scheme"]}" enrichSettlementResponse'
+        try:
+            enrichment = run_hook(enrich, context)
+        except Exception as hook_error:
+            self._warn_resource_server_hook_failure("enrichSettlementResponse", label, hook_error)
+            return
+
+        if enrichment is None:
+            return
+
+        extra = dict(settle_result.extra or {})
+        assert_additive_settlement_extra(extra, enrichment, label)
+        settle_result.extra = merge_additive_settlement_extra(extra, enrichment)
+
+    async def _enrich_settlement_response_async(
+        self,
+        settle_result: SettleResponse,
+        context: SettleResultContext,
+        declared_extensions: dict[str, Any],
+        matched_scheme: dict[str, str],
+    ) -> None:
+        import asyncio
+
+        async def invoke(hook: Any, *args: Any) -> Any:
+            result = hook(*args)
+            if asyncio.iscoroutine(result) or asyncio.isfuture(result):
+                return await result
+            return result
+
+        if not settle_result.success:
+            return
+
+        if declared_extensions:
+            settle_core_snapshot = snapshot_settle_response_core(settle_result)
+            for key, declaration in declared_extensions.items():
+                extension = self._extensions.get(key)
+                enrich = getattr(extension, "enrich_settlement_response", None)
+                if enrich is None:
+                    continue
+
+                try:
+                    extension_data = await invoke(enrich, declaration, context)
+                except Exception as hook_error:
+                    self._warn_extension_hook_failure(key, "enrichSettlementResponse", hook_error)
+                    extension_data = None
+
+                if extension_data is not None:
+                    merged_extensions = dict(settle_result.extensions or {})
+                    merged_extensions[key] = extension_data
+                    settle_result.extensions = merged_extensions
+
+                assert_settle_response_core_unchanged(settle_core_snapshot, settle_result, key)
+
+        scheme_server = self._find_registered_scheme(
+            matched_scheme["scheme"], matched_scheme["network"]
+        )
+        enrich = getattr(scheme_server, "enrich_settlement_response", None)
+        if enrich is None:
+            return
+
+        label = f'scheme "{matched_scheme["scheme"]}" enrichSettlementResponse'
+        try:
+            enrichment = await invoke(enrich, context)
+        except Exception as hook_error:
+            self._warn_resource_server_hook_failure("enrichSettlementResponse", label, hook_error)
+            return
+
+        if enrichment is None:
+            return
+
+        extra = dict(settle_result.extra or {})
+        assert_additive_settlement_extra(extra, enrichment, label)
+        settle_result.extra = merge_additive_settlement_extra(extra, enrichment)
+
+    def _find_registered_scheme(self, scheme: str, network: Network) -> SchemeNetworkServer | None:
+        schemes = find_schemes_by_network(self._schemes, network)
+        if schemes is None:
+            return None
+        return schemes.get(scheme)
+
+    @staticmethod
+    def _run_enrich_hook_sync(hook: Any, *args: Any) -> Any:
+        import inspect
+
+        result = hook(*args)
+        if inspect.iscoroutine(result):
+            result.close()
+            raise TypeError(
+                "Async enrichment hooks are not supported in x402ResourceServerSync. "
+                "Use x402ResourceServer for async enrichment hook support."
+            )
+        return result
+
+    @staticmethod
+    def _warn_extension_hook_failure(extension_key: str, hook_name: str, error: Exception) -> None:
+        logger.warning(
+            '[x402] Extension "%s" %s hook threw: %s',
+            extension_key,
+            hook_name,
+            error,
         )
 
     # ========================================================================
@@ -382,6 +790,76 @@ class x402ResourceServerBase:
     # Extensions
     # ========================================================================
 
+    def _finalize_settle_result(
+        self,
+        settle_result: SettleResponse,
+        payload: PaymentPayload | PaymentPayloadV1,
+        requirements: PaymentRequirements | PaymentRequirementsV1,
+        payload_bytes: bytes | None,
+        requirements_bytes: bytes | None,
+        declared_extensions: dict[str, Any] | None,
+        transport_context: Any,
+        run_hook: Callable[..., Any],
+    ) -> SettleResponse:
+        if not settle_result.success:
+            return settle_result
+
+        result_context = SettleResultContext(
+            payment_payload=payload,
+            requirements=requirements,
+            payload_bytes=payload_bytes,
+            requirements_bytes=requirements_bytes,
+            declared_extensions=declared_extensions or {},
+            transport_context=transport_context,
+            result=settle_result,
+        )
+        matched_scheme = {
+            "scheme": requirements.scheme,
+            "network": requirements.network,
+        }
+        self._enrich_settlement_response(
+            settle_result,
+            result_context,
+            declared_extensions or {},
+            matched_scheme,
+            run_hook,
+        )
+        return settle_result
+
+    async def _finalize_settle_result_async(
+        self,
+        settle_result: SettleResponse,
+        payload: PaymentPayload | PaymentPayloadV1,
+        requirements: PaymentRequirements | PaymentRequirementsV1,
+        payload_bytes: bytes | None,
+        requirements_bytes: bytes | None,
+        declared_extensions: dict[str, Any] | None,
+        transport_context: Any,
+    ) -> SettleResponse:
+        if not settle_result.success:
+            return settle_result
+
+        result_context = SettleResultContext(
+            payment_payload=payload,
+            requirements=requirements,
+            payload_bytes=payload_bytes,
+            requirements_bytes=requirements_bytes,
+            declared_extensions=declared_extensions or {},
+            transport_context=transport_context,
+            result=settle_result,
+        )
+        matched_scheme = {
+            "scheme": requirements.scheme,
+            "network": requirements.network,
+        }
+        await self._enrich_settlement_response_async(
+            settle_result,
+            result_context,
+            declared_extensions or {},
+            matched_scheme,
+        )
+        return settle_result
+
     def enrich_extensions(
         self,
         declared: dict[str, Any],
@@ -399,6 +877,62 @@ class x402ResourceServerBase:
 
         return result
 
+    def create_payment_cancellation_dispatcher(
+        self,
+        payload: PaymentPayload | PaymentPayloadV1,
+        requirements: PaymentRequirements | PaymentRequirementsV1,
+        declared_extensions: dict[str, Any] | None = None,
+        transport_context: Any = None,
+    ) -> PaymentCancellationDispatcher:
+        """Create cancellation controls for a verified payment attempt."""
+        return PaymentCancellationDispatcher(
+            self,
+            payload,
+            requirements,
+            declared_extensions,
+            transport_context,
+        )
+
+    @staticmethod
+    def _warn_resource_server_hook_failure(phase: str, label: str, error: Exception) -> None:
+        logger.warning(
+            "[x402] Resource server %s hook threw (%s): %s",
+            phase,
+            label,
+            error,
+        )
+
+    def _verified_payment_canceled_hooks(
+        self,
+        declared_extensions: dict[str, Any] | None,
+        requirements: PaymentRequirements | PaymentRequirementsV1,
+    ) -> list[tuple[str, Any]]:
+        declared = declared_extensions or {}
+        return get_labeled_server_hooks(
+            "on_verified_payment_canceled",
+            self,
+            list(declared.keys()),
+            {"network": requirements.network, "scheme": requirements.scheme},
+        )
+
+    def _build_verified_payment_canceled_context(
+        self,
+        payload: PaymentPayload | PaymentPayloadV1,
+        requirements: PaymentRequirements | PaymentRequirementsV1,
+        declared_extensions: dict[str, Any] | None,
+        options: VerifiedPaymentCancelOptions,
+        transport_context: Any,
+    ) -> VerifiedPaymentCanceledContext:
+        return VerifiedPaymentCanceledContext(
+            payment_payload=payload,
+            requirements=requirements,
+            declared_extensions=declared_extensions or {},
+            transport_context=transport_context,
+            reason=options.reason,
+            error=options.error,
+            response_status=options.response_status,
+        )
+
     # ========================================================================
     # Core Logic Generators (shared between async/sync)
     # ========================================================================
@@ -409,7 +943,9 @@ class x402ResourceServerBase:
         requirements: PaymentRequirements | PaymentRequirementsV1,
         payload_bytes: bytes | None,
         requirements_bytes: bytes | None,
-    ) -> Generator[HookCommand, Any, VerifyResponse]:
+        declared_extensions: dict[str, Any] | None = None,
+        transport_context: Any = None,
+    ) -> Generator[HookCommand, Any, ResourceVerifyResponse]:
         """Core verify logic as generator.
 
         Yields (phase, hook, context) tuples for hook execution.
@@ -418,20 +954,46 @@ class x402ResourceServerBase:
         if not self._initialized:
             raise RuntimeError("Server not initialized. Call initialize() first.")
 
+        declared = declared_extensions or {}
         context = VerifyContext(
             payment_payload=payload,
             requirements=requirements,
             payload_bytes=payload_bytes,
             requirements_bytes=requirements_bytes,
+            declared_extensions=declared,
+            transport_context=transport_context,
         )
+        matched_scheme = {
+            "network": requirements.network,
+            "scheme": requirements.scheme,
+        }
+        extension_keys = list(declared.keys())
 
         # Execute before hooks
-        for hook in self._before_verify_hooks:
+        for _label, hook in get_labeled_server_hooks(
+            "before_verify",
+            self,
+            extension_keys,
+            matched_scheme,
+        ):
             result = yield ("before", hook, context)
             if isinstance(result, AbortResult):
                 from .schemas import PaymentAbortedError
 
                 raise PaymentAbortedError(result.reason)
+            if isinstance(result, SkipVerifyResult):
+                verify_response = yield from self._run_after_verify_hooks(
+                    payload,
+                    requirements,
+                    payload_bytes,
+                    requirements_bytes,
+                    declared_extensions,
+                    transport_context,
+                    result.result,
+                    matched_scheme,
+                    extension_keys,
+                )
+                return verify_response
 
         try:
             # Get scheme and network
@@ -457,36 +1019,45 @@ class x402ResourceServerBase:
                     requirements=requirements,
                     payload_bytes=payload_bytes,
                     requirements_bytes=requirements_bytes,
+                    declared_extensions=declared_extensions or {},
+                    transport_context=transport_context,
                     error=Exception(verify_result.invalid_reason or "Verification failed"),
                 )
-                for hook in self._on_verify_failure_hooks:
+                for _label, hook in get_labeled_server_hooks(
+                    "on_verify_failure",
+                    self,
+                    extension_keys,
+                    matched_scheme,
+                ):
                     result = yield ("failure", hook, failure_context)
                     if isinstance(result, RecoveredVerifyResult):
-                        result_context = VerifyResultContext(
-                            payment_payload=payload,
-                            requirements=requirements,
-                            payload_bytes=payload_bytes,
-                            requirements_bytes=requirements_bytes,
-                            result=result.result,
+                        verify_response = yield from self._run_after_verify_hooks(
+                            payload,
+                            requirements,
+                            payload_bytes,
+                            requirements_bytes,
+                            declared_extensions,
+                            transport_context,
+                            result.result,
+                            matched_scheme,
+                            extension_keys,
                         )
-                        for after_hook in self._after_verify_hooks:
-                            yield ("after", after_hook, result_context)
-                        return result.result
+                        return verify_response
 
-                return verify_result
+                return ResourceVerifyResponse(verify=verify_result)
 
-            # Execute after hooks for success
-            result_context = VerifyResultContext(
-                payment_payload=payload,
-                requirements=requirements,
-                payload_bytes=payload_bytes,
-                requirements_bytes=requirements_bytes,
-                result=verify_result,
+            verify_response = yield from self._run_after_verify_hooks(
+                payload,
+                requirements,
+                payload_bytes,
+                requirements_bytes,
+                declared_extensions,
+                transport_context,
+                verify_result,
+                matched_scheme,
+                extension_keys,
             )
-            for hook in self._after_verify_hooks:
-                yield ("after", hook, result_context)
-
-            return verify_result
+            return verify_response
 
         except Exception as e:
             failure_context = VerifyFailureContext(
@@ -494,14 +1065,62 @@ class x402ResourceServerBase:
                 requirements=requirements,
                 payload_bytes=payload_bytes,
                 requirements_bytes=requirements_bytes,
+                declared_extensions=declared,
+                transport_context=transport_context,
                 error=e,
             )
-            for hook in self._on_verify_failure_hooks:
+            for _label, hook in get_labeled_server_hooks(
+                "on_verify_failure",
+                self,
+                extension_keys,
+                matched_scheme,
+            ):
                 result = yield ("failure", hook, failure_context)
                 if isinstance(result, RecoveredVerifyResult):
-                    return result.result
+                    return ResourceVerifyResponse(verify=result.result)
 
             raise
+
+    def _run_after_verify_hooks(
+        self,
+        payload: PaymentPayload | PaymentPayloadV1,
+        requirements: PaymentRequirements | PaymentRequirementsV1,
+        payload_bytes: bytes | None,
+        requirements_bytes: bytes | None,
+        declared_extensions: dict[str, Any] | None,
+        transport_context: Any,
+        verify_result: VerifyResponse,
+        matched_scheme: dict[str, str] | None = None,
+        extension_keys: list[str] | None = None,
+    ) -> Generator[HookCommand, Any, ResourceVerifyResponse]:
+        """Run after-verify hooks and attach any skip-handler directive."""
+        skip_handler: SkipHandlerDirective | None = None
+        declared = declared_extensions or {}
+        result_context = VerifyResultContext(
+            payment_payload=payload,
+            requirements=requirements,
+            payload_bytes=payload_bytes,
+            requirements_bytes=requirements_bytes,
+            declared_extensions=declared,
+            transport_context=transport_context,
+            result=verify_result,
+        )
+        scheme = matched_scheme or {
+            "network": requirements.network,
+            "scheme": requirements.scheme,
+        }
+        keys = extension_keys if extension_keys is not None else list(declared.keys())
+        for _label, hook in get_labeled_server_hooks(
+            "after_verify",
+            self,
+            keys,
+            scheme,
+        ):
+            hook_result = yield ("after", hook, result_context)
+            if isinstance(hook_result, SkipHandlerResult):
+                skip_handler = hook_result.response or SkipHandlerDirective()
+
+        return ResourceVerifyResponse(verify=verify_result, skip_handler=skip_handler)
 
     def _settle_payment_core(
         self,
@@ -509,6 +1128,8 @@ class x402ResourceServerBase:
         requirements: PaymentRequirements | PaymentRequirementsV1,
         payload_bytes: bytes | None,
         requirements_bytes: bytes | None,
+        declared_extensions: dict[str, Any] | None = None,
+        transport_context: Any = None,
     ) -> Generator[HookCommand, Any, SettleResponse]:
         """Core settle logic as generator.
 
@@ -518,25 +1139,71 @@ class x402ResourceServerBase:
         if not self._initialized:
             raise RuntimeError("Server not initialized. Call initialize() first.")
 
+        declared = declared_extensions or {}
         context = SettleContext(
             payment_payload=payload,
             requirements=requirements,
             payload_bytes=payload_bytes,
             requirements_bytes=requirements_bytes,
+            declared_extensions=declared,
+            transport_context=transport_context,
         )
+        matched_scheme = {
+            "network": requirements.network,
+            "scheme": requirements.scheme,
+        }
+        extension_keys = list(declared.keys())
 
         # Execute before hooks
-        for hook in self._before_settle_hooks:
+        for _label, hook in get_labeled_server_hooks(
+            "before_settle",
+            self,
+            extension_keys,
+            matched_scheme,
+        ):
             result = yield ("before", hook, context)
             if isinstance(result, AbortResult):
                 from .schemas import PaymentAbortedError
 
                 raise PaymentAbortedError(result.reason)
+            if isinstance(result, SkipSettleResult):
+                result_context = SettleResultContext(
+                    payment_payload=payload,
+                    requirements=requirements,
+                    payload_bytes=payload_bytes,
+                    requirements_bytes=requirements_bytes,
+                    declared_extensions=declared_extensions or {},
+                    transport_context=transport_context,
+                    result=result.result,
+                )
+                for _label, after_hook in get_labeled_server_hooks(
+                    "after_settle",
+                    self,
+                    extension_keys,
+                    matched_scheme,
+                ):
+                    yield ("after", after_hook, result_context)
+                return result.result
 
         try:
             # Get scheme and network
             scheme = payload.get_scheme()
             network = payload.get_network()
+
+            # Enrich the settlement payload before sending to facilitator (e.g. refund enrichment).
+            # Use a separate facilitator_payload so hooks always operate on the original payload
+            # (they key request contexts by id(payload), which model_copy changes).
+            facilitator_payload = payload
+            scheme_server = self._find_registered_scheme(scheme, network)
+            enrich_payload = getattr(scheme_server, "enrich_settlement_payload", None)
+            if enrich_payload is not None:
+                enrichment = enrich_payload(context)
+                if enrichment is not None:
+                    label = f'scheme "{scheme}" enrich_settlement_payload'
+                    assert_additive_payload_enrichment(payload.payload, enrichment, label)
+                    facilitator_payload = payload.model_copy(
+                        update={"payload": {**payload.payload, **enrichment}}
+                    )
 
             # Find facilitator client
             client = self._facilitator_clients_map.get(network, {}).get(scheme)
@@ -547,7 +1214,7 @@ class x402ResourceServerBase:
             settle_result: SettleResponse = yield (
                 "call_facilitator",
                 client,
-                ("settle", payload, requirements),
+                ("settle", facilitator_payload, requirements),
             )
 
             # Check if settlement failed
@@ -557,9 +1224,16 @@ class x402ResourceServerBase:
                     requirements=requirements,
                     payload_bytes=payload_bytes,
                     requirements_bytes=requirements_bytes,
+                    declared_extensions=declared_extensions or {},
+                    transport_context=transport_context,
                     error=Exception(settle_result.error_reason or "Settlement failed"),
                 )
-                for hook in self._on_settle_failure_hooks:
+                for _label, hook in get_labeled_server_hooks(
+                    "on_settle_failure",
+                    self,
+                    extension_keys,
+                    matched_scheme,
+                ):
                     result = yield ("failure", hook, failure_context)
                     if isinstance(result, RecoveredSettleResult):
                         result_context = SettleResultContext(
@@ -567,9 +1241,16 @@ class x402ResourceServerBase:
                             requirements=requirements,
                             payload_bytes=payload_bytes,
                             requirements_bytes=requirements_bytes,
+                            declared_extensions=declared,
+                            transport_context=transport_context,
                             result=result.result,
                         )
-                        for after_hook in self._after_settle_hooks:
+                        for _after_label, after_hook in get_labeled_server_hooks(
+                            "after_settle",
+                            self,
+                            extension_keys,
+                            matched_scheme,
+                        ):
                             yield ("after", after_hook, result_context)
                         return result.result
 
@@ -581,9 +1262,16 @@ class x402ResourceServerBase:
                 requirements=requirements,
                 payload_bytes=payload_bytes,
                 requirements_bytes=requirements_bytes,
+                declared_extensions=declared,
+                transport_context=transport_context,
                 result=settle_result,
             )
-            for hook in self._after_settle_hooks:
+            for _label, hook in get_labeled_server_hooks(
+                "after_settle",
+                self,
+                extension_keys,
+                matched_scheme,
+            ):
                 yield ("after", hook, result_context)
 
             return settle_result
@@ -594,9 +1282,16 @@ class x402ResourceServerBase:
                 requirements=requirements,
                 payload_bytes=payload_bytes,
                 requirements_bytes=requirements_bytes,
+                declared_extensions=declared,
+                transport_context=transport_context,
                 error=e,
             )
-            for hook in self._on_settle_failure_hooks:
+            for _label, hook in get_labeled_server_hooks(
+                "on_settle_failure",
+                self,
+                extension_keys,
+                matched_scheme,
+            ):
                 result = yield ("failure", hook, failure_context)
                 if isinstance(result, RecoveredSettleResult):
                     return result.result

@@ -149,11 +149,12 @@ class EvmPaywallHandler:
         app_logo = config.app_logo if config else ""
         testnet = config.testnet if config else True
         current_url = config.current_url if config else ""
+        faucet_urls = config.faucet_urls if config else None
 
         amount = _get_display_amount(payment_required)
         payment_required_json = payment_required.model_dump(by_alias=True, exclude_none=True)
 
-        x402_config = {
+        x402_config: dict[str, object] = {
             "amount": amount,
             "paymentRequired": payment_required_json,
             "testnet": testnet,
@@ -161,6 +162,8 @@ class EvmPaywallHandler:
             "appName": app_name,
             "appLogo": app_logo,
         }
+        if faucet_urls:
+            x402_config["faucetUrls"] = faucet_urls
         config_script = f"""
   <script>
     window.x402 = {htmlsafe_json_dumps(x402_config)};
@@ -226,11 +229,12 @@ class SvmPaywallHandler:
         app_logo = config.app_logo if config else ""
         testnet = config.testnet if config else True
         current_url = config.current_url if config else ""
+        faucet_urls = config.faucet_urls if config else None
 
         amount = _get_display_amount(payment_required)
         payment_required_json = payment_required.model_dump(by_alias=True, exclude_none=True)
 
-        x402_config = {
+        x402_config: dict[str, object] = {
             "amount": amount,
             "paymentRequired": payment_required_json,
             "testnet": testnet,
@@ -238,6 +242,8 @@ class SvmPaywallHandler:
             "appName": app_name,
             "appLogo": app_logo,
         }
+        if faucet_urls:
+            x402_config["faucetUrls"] = faucet_urls
         config_script = f"""
   <script>
     window.x402 = {htmlsafe_json_dumps(x402_config)};
@@ -294,6 +300,7 @@ class PaywallBuilder:
     _app_logo: str = ""
     _testnet: bool = True
     _current_url: str = ""
+    _faucet_urls: dict[str, str] | None = None
 
     def with_network(self, handler: PaywallNetworkHandler) -> PaywallBuilder:
         """Register a network-specific paywall handler.
@@ -313,6 +320,7 @@ class PaywallBuilder:
         app_logo: str = "",
         testnet: bool = True,
         current_url: str = "",
+        faucet_urls: dict[str, str] | None = None,
     ) -> PaywallBuilder:
         """Set configuration options for the paywall.
 
@@ -321,6 +329,7 @@ class PaywallBuilder:
             app_logo: Application logo URL.
             testnet: Whether to use testnet (default: True).
             current_url: URL of the protected resource.
+            faucet_urls: Per-chain override map keyed by CAIP-2 identifier.
 
         Returns:
             Self for method chaining.
@@ -332,6 +341,8 @@ class PaywallBuilder:
         self._testnet = testnet
         if current_url:
             self._current_url = current_url
+        if faucet_urls is not None:
+            self._faucet_urls = faucet_urls
         return self
 
     def build(self) -> PaywallProvider:
@@ -346,6 +357,7 @@ class PaywallBuilder:
             app_logo=self._app_logo,
             testnet=self._testnet,
             current_url=self._current_url,
+            faucet_urls=self._faucet_urls,
         )
 
 
@@ -358,6 +370,7 @@ class PaywallProvider:
     app_logo: str = ""
     testnet: bool = True
     current_url: str = ""
+    faucet_urls: dict[str, str] | None = None
 
     def generate_html(
         self,
@@ -386,6 +399,11 @@ class PaywallProvider:
             app_logo=config.app_logo if config and config.app_logo else self.app_logo,
             testnet=config.testnet if config else self.testnet,
             current_url=(config.current_url if config and config.current_url else self.current_url),
+            faucet_urls=(
+                config.faucet_urls
+                if config and config.faucet_urls is not None
+                else self.faucet_urls
+            ),
         )
 
         # Find first handler that supports the payment requirements

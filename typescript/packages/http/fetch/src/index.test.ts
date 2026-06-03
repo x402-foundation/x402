@@ -9,6 +9,7 @@ vi.mock("@x402/core/client", () => {
   MockX402HTTPClient.prototype.getPaymentRequiredResponse = vi.fn();
   MockX402HTTPClient.prototype.encodePaymentSignatureHeader = vi.fn();
   MockX402HTTPClient.prototype.handlePaymentRequired = vi.fn();
+  MockX402HTTPClient.prototype.processPaymentResult = vi.fn();
 
   const MockX402Client = vi.fn() as ReturnType<typeof vi.fn> & {
     fromConfig: ReturnType<typeof vi.fn>;
@@ -94,6 +95,9 @@ describe("wrapFetchWithPayment()", () => {
     (
       MockX402HTTPClient.prototype.handlePaymentRequired as ReturnType<typeof vi.fn>
     ).mockResolvedValue(null);
+    (
+      MockX402HTTPClient.prototype.processPaymentResult as ReturnType<typeof vi.fn>
+    ).mockResolvedValue({ recovered: false });
 
     wrappedFetch = wrapFetchWithPayment(mockFetch, mockClient);
   });
@@ -451,6 +455,9 @@ describe("wrapFetchWithPaymentFromConfig()", () => {
     (
       MockX402HTTPClient.prototype.handlePaymentRequired as ReturnType<typeof vi.fn>
     ).mockResolvedValue(null);
+    (
+      MockX402HTTPClient.prototype.processPaymentResult as ReturnType<typeof vi.fn>
+    ).mockResolvedValue({ recovered: false });
   });
 
   it("should create client from config and wrap fetch", async () => {

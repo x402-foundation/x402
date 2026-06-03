@@ -20,6 +20,7 @@ import threading
 import time
 
 import pytest
+from web3 import Web3
 
 mcp = pytest.importorskip("mcp", reason="mcp package not available")
 from mcp.client.streamable_http import streamable_http_client  # noqa: E402
@@ -55,6 +56,31 @@ pytestmark = pytest.mark.skipif(
     not CLIENT_PRIVATE_KEY or not FACILITATOR_PRIVATE_KEY,
     reason="EVM_CLIENT_PRIVATE_KEY and EVM_FACILITATOR_PRIVATE_KEY environment variables required for MCP EVM integration tests",
 )
+
+
+def wait_for_pending_transactions(
+    address: str,
+    rpc_url: str = RPC_URL,
+    timeout: float = 120.0,
+) -> None:
+    """Wait until a wallet has no pending transactions.
+
+    Prevents nonce collisions when integration tests share the same keys and run
+    back-to-back (matches Go's waitForPendingTransactions).
+    """
+    w3 = Web3(Web3.HTTPProvider(rpc_url))
+    checksum = Web3.to_checksum_address(address)
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        confirmed = w3.eth.get_transaction_count(checksum, "latest")
+        pending = w3.eth.get_transaction_count(checksum, "pending")
+        if pending == confirmed:
+            return
+        time.sleep(2)
+    raise TimeoutError(
+        f"Timed out waiting for pending transactions to clear for {address} "
+        f"(confirmed={confirmed}, pending={pending})"
+    )
 
 
 class EvmFacilitatorClientSync:
@@ -183,7 +209,7 @@ class TestMCPEVMIntegration:
             ["eip155:84532"],
             ExactEvmFacilitatorScheme(
                 self.facilitator_signer,
-                ExactEvmSchemeConfig(deploy_erc4337_with_eip6492=True),
+                ExactEvmSchemeConfig(),
             ),
         )
 
@@ -275,6 +301,10 @@ class TestMCPEVMIntegration:
 
         WARNING: This makes REAL blockchain transactions on Base Sepolia!
         """
+        # Prior EVM integration tests may leave facilitator txs in the mempool.
+        wait_for_pending_transactions(self.facilitator_signer.address)
+        wait_for_pending_transactions(self.client_signer.address)
+
         # Build payment requirements
         config = ResourceConfig(
             scheme="exact",
@@ -377,11 +407,17 @@ class TestMCPEVMIntegration:
                         result = x402_mcp.call_tool("get_weather", {"city": "New York"})
 
                         # Verify payment was made
-                        assert result.payment_made is True
-                        assert result.is_error is False
+                        assert result.payment_made is True, (
+                            f"expected payment retry; content={result.content!r}"
+                        )
+                        assert result.is_error is False, (
+                            f"tool call failed after payment; content={result.content!r}"
+                        )
 
                         # Verify payment response (settlement result)
-                        assert result.payment_response is not None
+                        assert result.payment_response is not None, (
+                            f"settlement meta missing; content={result.content!r}"
+                        )
                         assert result.payment_response.success is True
                         assert result.payment_response.transaction is not None
                         assert result.payment_response.network == TEST_NETWORK

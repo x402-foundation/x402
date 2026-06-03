@@ -16,9 +16,10 @@
     "x402-hono": "workspace:*"
   },
   "devDependencies": {
-    "tsup": "^7.2.0",
-    "tsx": "^4.7.0",
-    "typescript": "^5.3.0",
+    "tsup": "^8.4.0",
+    "tsx": "^4.21.0",
+    "@types/node": "^22.13.4",
+    "typescript": "^5.7.3",
     "@eslint/js": "^9.24.0",
     "eslint": "^9.24.0",
     "eslint-plugin-jsdoc": "^50.6.9",

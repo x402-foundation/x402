@@ -1,4 +1,4 @@
-# @x402/core
+# `@x402/core` • [![npm version](https://img.shields.io/npm/v/%40x402%2Fcore.svg)](https://www.npmjs.com/package/@x402/core)
 
 Core implementation of the x402 payment protocol for TypeScript/JavaScript applications. Provides transport-agnostic client, server and facilitator components.
 
@@ -283,11 +283,12 @@ For blockchain-specific implementations:
 
 - `@x402/evm` - Ethereum and EVM-compatible chains
 - `@x402/svm` - Solana blockchain
+- `@x402/avm` - Algorand blockchain
 
 ## Examples
 
-See the [examples directory](https://github.com/coinbase/x402/tree/main/examples/typescript) for complete examples.
+See the [examples directory](https://github.com/x402-foundation/x402/tree/main/examples/typescript) for complete examples.
 
 ## Contributing
 
-Contributions welcome! See [Contributing Guide](https://github.com/coinbase/x402/blob/main/CONTRIBUTING.md).
+Contributions welcome! See [Contributing Guide](https://github.com/x402-foundation/x402/blob/main/CONTRIBUTING.md).

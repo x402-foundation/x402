@@ -2,8 +2,9 @@
 
 from typing import TypedDict
 
-# Scheme identifier
+# Scheme identifiers
 SCHEME_EXACT = "exact"
+SCHEME_UPTO = "upto"
 
 # Default token decimals for USDC
 DEFAULT_DECIMALS = 6
@@ -37,6 +38,9 @@ PERMIT2_ADDRESS = "0x000000000022D473030F116dDEE9F6B43aC78BA3"
 # x402ExactPermit2Proxy contract address
 X402_EXACT_PERMIT2_PROXY_ADDRESS = "0x402085c248EeA27D92E8b30b2C58ed07f9E20001"
 
+# x402UptoPermit2Proxy contract address
+X402_UPTO_PERMIT2_PROXY_ADDRESS = "0x4020A4f3b7b90ccA423B9fabCc0CE57C6C240002"
+
 # Permit2 EIP-712 witness types for PermitWitnessTransferFrom
 # Note: Types must be in alphabetical order after primary type (TokenPermissions < Witness)
 PERMIT2_WITNESS_TYPES: dict[str, list[dict[str, str]]] = {
@@ -53,6 +57,26 @@ PERMIT2_WITNESS_TYPES: dict[str, list[dict[str, str]]] = {
     ],
     "Witness": [
         {"name": "to", "type": "address"},
+        {"name": "validAfter", "type": "uint256"},
+    ],
+}
+
+# Upto Permit2 EIP-712 witness types (includes facilitator field)
+UPTO_PERMIT2_WITNESS_TYPES: dict[str, list[dict[str, str]]] = {
+    "PermitWitnessTransferFrom": [
+        {"name": "permitted", "type": "TokenPermissions"},
+        {"name": "spender", "type": "address"},
+        {"name": "nonce", "type": "uint256"},
+        {"name": "deadline", "type": "uint256"},
+        {"name": "witness", "type": "Witness"},
+    ],
+    "TokenPermissions": [
+        {"name": "token", "type": "address"},
+        {"name": "amount", "type": "uint256"},
+    ],
+    "Witness": [
+        {"name": "to", "type": "address"},
+        {"name": "facilitator", "type": "address"},
         {"name": "validAfter", "type": "uint256"},
     ],
 }
@@ -169,6 +193,12 @@ EIP2612_PERMIT_TYPES: dict[str, list[dict[str, str]]] = {
 # Gas limit for a standard ERC-20 approve() transaction
 ERC20_APPROVE_GAS_LIMIT = 70_000
 
+# Fallback max fee per gas (1 gwei) when fee estimation fails
+DEFAULT_MAX_FEE_PER_GAS = 1_000_000_000
+
+# Fallback max priority fee per gas (0.1 gwei) when fee estimation fails
+DEFAULT_MAX_PRIORITY_FEE_PER_GAS = 100_000_000
+
 # Permit2 deadline buffer (seconds) for verification
 PERMIT2_DEADLINE_BUFFER = 6
 
@@ -200,10 +230,102 @@ ERC20_APPROVE_ABI = [
     }
 ]
 
+# x402UptoPermit2Proxy settle ABI (note: extra `amount` param vs exact)
+X402_UPTO_PERMIT2_PROXY_ABI = [
+    {
+        "type": "function",
+        "name": "settle",
+        "inputs": [
+            {
+                "name": "permit",
+                "type": "tuple",
+                "components": [
+                    {
+                        "name": "permitted",
+                        "type": "tuple",
+                        "components": [
+                            {"name": "token", "type": "address"},
+                            {"name": "amount", "type": "uint256"},
+                        ],
+                    },
+                    {"name": "nonce", "type": "uint256"},
+                    {"name": "deadline", "type": "uint256"},
+                ],
+            },
+            {"name": "amount", "type": "uint256"},
+            {"name": "owner", "type": "address"},
+            {
+                "name": "witness",
+                "type": "tuple",
+                "components": [
+                    {"name": "to", "type": "address"},
+                    {"name": "facilitator", "type": "address"},
+                    {"name": "validAfter", "type": "uint256"},
+                ],
+            },
+            {"name": "signature", "type": "bytes"},
+        ],
+        "outputs": [],
+        "stateMutability": "nonpayable",
+    }
+]
+
+# x402UptoPermit2Proxy settleWithPermit ABI (EIP-2612 extension path)
+X402_UPTO_PERMIT2_PROXY_SETTLE_WITH_PERMIT_ABI = [
+    {
+        "type": "function",
+        "name": "settleWithPermit",
+        "inputs": [
+            {
+                "name": "permit2612",
+                "type": "tuple",
+                "components": [
+                    {"name": "value", "type": "uint256"},
+                    {"name": "deadline", "type": "uint256"},
+                    {"name": "r", "type": "bytes32"},
+                    {"name": "s", "type": "bytes32"},
+                    {"name": "v", "type": "uint8"},
+                ],
+            },
+            {
+                "name": "permit",
+                "type": "tuple",
+                "components": [
+                    {
+                        "name": "permitted",
+                        "type": "tuple",
+                        "components": [
+                            {"name": "token", "type": "address"},
+                            {"name": "amount", "type": "uint256"},
+                        ],
+                    },
+                    {"name": "nonce", "type": "uint256"},
+                    {"name": "deadline", "type": "uint256"},
+                ],
+            },
+            {"name": "amount", "type": "uint256"},
+            {"name": "owner", "type": "address"},
+            {
+                "name": "witness",
+                "type": "tuple",
+                "components": [
+                    {"name": "to", "type": "address"},
+                    {"name": "facilitator", "type": "address"},
+                    {"name": "validAfter", "type": "uint256"},
+                ],
+            },
+            {"name": "signature", "type": "bytes"},
+        ],
+        "outputs": [],
+        "stateMutability": "nonpayable",
+    }
+]
+
 # Error codes
 ERR_INVALID_SIGNATURE = "invalid_exact_evm_payload_signature"
 ERR_UNDEPLOYED_SMART_WALLET = "invalid_exact_evm_payload_undeployed_smart_wallet"
 ERR_SMART_WALLET_DEPLOYMENT_FAILED = "smart_wallet_deployment_failed"
+ERR_FACTORY_NOT_ALLOWED = "eip6492_factory_not_allowed"
 ERR_RECIPIENT_MISMATCH = "invalid_exact_evm_payload_recipient_mismatch"
 ERR_AUTHORIZATION_VALUE_MISMATCH = "invalid_exact_evm_payload_authorization_value_mismatch"
 ERR_VALID_BEFORE_EXPIRED = "invalid_exact_evm_payload_authorization_valid_before"
@@ -227,10 +349,24 @@ ERR_PERMIT2_INVALID_SPENDER = "invalid_permit2_spender"
 ERR_PERMIT2_RECIPIENT_MISMATCH = "invalid_permit2_recipient_mismatch"
 ERR_PERMIT2_DEADLINE_EXPIRED = "permit2_deadline_expired"
 ERR_PERMIT2_NOT_YET_VALID = "permit2_not_yet_valid"
-ERR_PERMIT2_AMOUNT_MISMATCH = "invalid_exact_evm_payload_amount_mismatch"
+ERR_PERMIT2_AMOUNT_MISMATCH = "permit2_amount_mismatch"
 ERR_PERMIT2_TOKEN_MISMATCH = "permit2_token_mismatch"
 ERR_PERMIT2_INVALID_SIGNATURE = "invalid_permit2_signature"
 ERR_PERMIT2_ALLOWANCE_REQUIRED = "permit2_allowance_required"
+ERR_PERMIT2_INSUFFICIENT_BALANCE = "permit2_insufficient_balance"
+ERR_PERMIT2_INVALID_DESTINATION = "permit2_invalid_destination"
+ERR_PERMIT2_INVALID_OWNER = "permit2_invalid_owner"
+
+# Upto-specific error codes
+ERR_UPTO_SETTLEMENT_EXCEEDS_AMOUNT = "invalid_upto_evm_payload_settlement_exceeds_amount"
+ERR_UPTO_FACILITATOR_MISMATCH = "upto_facilitator_mismatch"
+ERR_UPTO_INVALID_SCHEME = "invalid_upto_evm_scheme"
+ERR_UPTO_NETWORK_MISMATCH = "invalid_upto_evm_network_mismatch"
+ERR_UPTO_AMOUNT_EXCEEDS_PERMITTED = "upto_amount_exceeds_permitted"
+ERR_UPTO_UNAUTHORIZED_FACILITATOR = "upto_unauthorized_facilitator"
+ERR_UPTO_TRANSACTION_FAILED = "invalid_upto_evm_transaction_failed"
+ERR_UPTO_FAILED_TO_GET_NETWORK_CONFIG = "invalid_upto_evm_failed_to_get_network_config"
+ERR_ERC20_APPROVAL_BROADCAST_FAILED = "erc20_approval_broadcast_failed"
 
 
 class _AssetInfoRequired(TypedDict):
@@ -371,6 +507,60 @@ NETWORK_CONFIGS: dict[str, NetworkConfig] = {
         "default_asset": {
             "address": "0x75faf114eafb1BDbe2F0316DF893fd58CE46AA4d",
             "name": "USD Coin",
+            "version": "2",
+            "decimals": 6,
+        },
+    },
+    # Radius Network (uses Permit2 instead of EIP-3009, supports EIP-2612)
+    "eip155:723487": {
+        "chain_id": 723487,
+        "default_asset": {
+            "address": "0x33ad9e4BD16B69B5BFdED37D8B5D9fF9aba014Fb",
+            "name": "Stable Coin",
+            "version": "1",
+            "decimals": 6,
+            "asset_transfer_method": "permit2",
+            "supports_eip2612": True,
+        },
+    },
+    # Radius Testnet (uses Permit2 instead of EIP-3009, supports EIP-2612)
+    "eip155:72344": {
+        "chain_id": 72344,
+        "default_asset": {
+            "address": "0x33ad9e4BD16B69B5BFdED37D8B5D9fF9aba014Fb",
+            "name": "Stable Coin",
+            "version": "1",
+            "decimals": 6,
+            "asset_transfer_method": "permit2",
+            "supports_eip2612": True,
+        },
+    },
+    # ADI Chain
+    "eip155:36900": {
+        "chain_id": 36900,
+        "default_asset": {
+            "address": "0x9cb8142aEBBcdc60AF7c97Af897A67A8f3CA71C2",
+            "name": "USDC.e",
+            "version": "2",
+            "decimals": 6,
+        },
+    },
+    # HPP Mainnet
+    "eip155:190415": {
+        "chain_id": 190415,
+        "default_asset": {
+            "address": "0x401eCb1D350407f13ba348573E5630B83638E30D",
+            "name": "Bridged USDC",
+            "version": "2",
+            "decimals": 6,
+        },
+    },
+    # HPP Sepolia
+    "eip155:181228": {
+        "chain_id": 181228,
+        "default_asset": {
+            "address": "0x401eCb1D350407f13ba348573E5630B83638E30D",
+            "name": "Bridged USDC",
             "version": "2",
             "decimals": 6,
         },

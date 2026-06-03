@@ -97,6 +97,48 @@ export const DEFAULT_STABLECOINS: Record<string, ExactDefaultAssetInfo> = {
     version: "2",
     decimals: 6,
   }, // Arbitrum Sepolia USDC
+  "eip155:31611": {
+    address: "0x118917a40FAF1CD7a13dB0Ef56C86De7973Ac503",
+    name: "Mezo USD",
+    version: "1",
+    decimals: 18,
+    assetTransferMethod: "permit2",
+    supportsEip2612: true,
+  }, // Mezo Testnet mUSD (no EIP-3009, supports EIP-2612)
+  "eip155:723487": {
+    address: "0x33ad9e4BD16B69B5BFdED37D8B5D9fF9aba014Fb",
+    name: "Stable Coin",
+    version: "1",
+    decimals: 6,
+    assetTransferMethod: "permit2",
+    supportsEip2612: true,
+  }, // Radius Network SBC (no EIP-3009, supports EIP-2612)
+  "eip155:72344": {
+    address: "0x33ad9e4BD16B69B5BFdED37D8B5D9fF9aba014Fb",
+    name: "Stable Coin",
+    version: "1",
+    decimals: 6,
+    assetTransferMethod: "permit2",
+    supportsEip2612: true,
+  }, // Radius Testnet SBC (no EIP-3009, supports EIP-2612)
+  "eip155:36900": {
+    address: "0x9cb8142aEBBcdc60AF7c97Af897A67A8f3CA71C2",
+    name: "USDC.e",
+    version: "2",
+    decimals: 6,
+  }, // ADI Chain USDC.e (EIP-3009 supported)
+  "eip155:190415": {
+    address: "0x401eCb1D350407f13ba348573E5630B83638E30D",
+    name: "Bridged USDC",
+    version: "2",
+    decimals: 6,
+  }, // HPP mainnet USDC.e
+  "eip155:181228": {
+    address: "0x401eCb1D350407f13ba348573E5630B83638E30D",
+    name: "Bridged USDC",
+    version: "2",
+    decimals: 6,
+  }, // HPP Sepolia USDC.e
 };
 
 /**
