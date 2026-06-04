@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" role="img" aria-labelledby="title">
+  <title id="title">WZRD</title>
+  <rect width="32" height="32" rx="7" fill="#181512" />
+  <path
+    d="M8 10L12.5 22.5L16 14L19.5 22.5L24 10"
+    fill="none"
+    stroke="#f6efe3"
+    stroke-width="1.6"
+    stroke-linejoin="miter"
+    stroke-linecap="square"
+  />
+</svg>
