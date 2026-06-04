@@ -1,0 +1,7 @@
+{
+  "name": "TWZRD Agent Intelligence",
+  "description": "Trust + receipt layer for x402 agents on Solana: a free preflight ReadinessCard scores any counterparty on a wash/Sybil-resistant cross-facilitator reputation corpus, then a paid 0.05 USDC endpoint returns a portable Ed25519-signed V5 receipt verifiable offline. Indexed on x402scan with an MCP server on the official MCP Registry.",
+  "logoUrl": "/logos/twzrd.svg",
+  "websiteUrl": "https://intel.twzrd.xyz",
+  "category": "Services/Endpoints"
+}
