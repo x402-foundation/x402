@@ -173,8 +173,8 @@ const stellarSigner = createEd25519Signer(
     **@x402/fetch** extends the native `fetch` API to handle 402 responses and payment headers for you. [Full example here](https://github.com/x402-foundation/x402/tree/main/examples/typescript/clients/fetch)
 
     ```typescript
-    import { wrapFetchWithPayment } from "@x402/fetch";
-    import { x402Client, x402HTTPClient } from "@x402/core/client";
+    import { wrapFetchWithPayment, x402HTTPClient } from "@x402/fetch";
+    import { x402Client } from "@x402/core/client";
     import { ExactEvmScheme } from "@x402/evm/exact/client";
     import { privateKeyToAccount } from "viem/accounts";
 
@@ -187,22 +187,21 @@ const stellarSigner = createEd25519Signer(
 
     // Wrap fetch with payment handling
     const fetchWithPayment = wrapFetchWithPayment(fetch, client);
+    const httpClient = new x402HTTPClient(client);
 
     // Make request - payment is handled automatically
     const response = await fetchWithPayment("https://api.example.com/paid-endpoint", {
       method: "GET",
     });
 
-    const data = await response.json();
-    console.log("Response:", data);
+    // Parse the payment result (status, body, and decoded payment header)
+    const result = await httpClient.processResponse(response);
+    console.log("Response:", result.body);
 
-    // Get payment receipt from response headers
-    if (response.ok) {
-      const httpClient = new x402HTTPClient(client);
-      const paymentResponse = httpClient.getPaymentSettleResponse(
-        (name) => response.headers.get(name)
-      );
-      console.log("Payment settled:", paymentResponse);
+    if (result.paymentStatus === "settled") {
+      console.log("Payment settled:", result.header);
+    } else if (result.paymentStatus === "settle_failed") {
+      console.error("Settlement failed:", result.header);
     }
     ```
   </Tab>
