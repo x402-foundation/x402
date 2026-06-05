@@ -275,6 +275,12 @@ type x402HTTPResourceServer struct {
 	protectedRequestHooks []ProtectedRequestHook
 }
 
+// ResourceServerExtensionProtectedRequestHookProvider lets resource server
+// extensions expose HTTP protected request hooks.
+type ResourceServerExtensionProtectedRequestHookProvider interface {
+	ProtectedRequestHook() ProtectedRequestHook
+}
+
 // Newx402HTTPResourceServer creates a new HTTP resource server
 func Newx402HTTPResourceServer(routes RoutesConfig, opts ...x402.ResourceServerOption) *x402HTTPResourceServer {
 	return Wrappedx402HTTPResourceServer(routes, x402.Newx402ResourceServer(opts...))
@@ -317,6 +323,17 @@ func (s *x402HTTPResourceServer) GetCompiledRoutes() []CompiledRoute {
 // by per-route CustomPaywallHTML. Returns the server for method chaining.
 func (s *x402HTTPResourceServer) RegisterPaywallProvider(provider PaywallProvider) *x402HTTPResourceServer {
 	s.paywallProvider = provider
+	return s
+}
+
+// RegisterExtension registers a resource server extension and any HTTP hook it provides.
+func (s *x402HTTPResourceServer) RegisterExtension(extension types.ResourceServerExtension) *x402HTTPResourceServer {
+	s.X402ResourceServer.RegisterExtension(extension)
+	if provider, ok := extension.(ResourceServerExtensionProtectedRequestHookProvider); ok {
+		if hook := provider.ProtectedRequestHook(); hook != nil {
+			s.OnProtectedRequest(hook)
+		}
+	}
 	return s
 }
 
@@ -506,7 +523,7 @@ func (s *x402HTTPResourceServer) ProcessHTTPRequest(ctx context.Context, reqCtx 
 
 	// Get payment options from route config
 	paymentOptions := routeConfig.Accepts
-	if len(paymentOptions) == 0 {
+	if len(paymentOptions) == 0 && len(routeConfig.Extensions) == 0 {
 		return HTTPProcessResult{Type: ResultNoPaymentRequired}
 	}
 
