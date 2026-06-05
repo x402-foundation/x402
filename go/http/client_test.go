@@ -115,7 +115,10 @@ func TestPaymentRoundTripper_OnPaymentRequiredHookSkippedWithoutHeaders(t *testi
 	if err != nil {
 		t.Fatalf("NewRequest() error = %v", err)
 	}
-	_, err = rt.RoundTrip(req)
+	resp, err := rt.RoundTrip(req)
+	if resp != nil && resp.Body != nil {
+		resp.Body.Close()
+	}
 	if err == nil || !strings.Contains(err.Error(), "cannot fulfill V2 payment requirements") {
 		t.Fatalf("RoundTrip() error = %v, want payment fallback error", err)
 	}

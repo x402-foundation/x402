@@ -84,14 +84,18 @@ func CreateClientHook(signer EVMSigner) x402http.PaymentRequiredHook {
 		if !ok {
 			return nil, nil
 		}
-		header, err := CreateHeader(ctx, declaration, signer)
-		if err != nil {
-			return nil, nil
+		header, createErr := CreateHeader(ctx, declaration, signer)
+		if createErr != nil {
+			return noPaymentRequiredHookResult()
 		}
 		return &x402http.PaymentRequiredHookResult{
 			Headers: map[string]string{HeaderName: header},
 		}, nil
 	}
+}
+
+func noPaymentRequiredHookResult() (*x402http.PaymentRequiredHookResult, error) {
+	return nil, nil
 }
 
 func extensionFromInterface(declaration interface{}) (Extension, error) {

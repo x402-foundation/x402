@@ -166,7 +166,7 @@ func (e *ServerExtension) onProtectedRequest(
 	payload, err := ParseHeader(header)
 	if err != nil {
 		e.emit(HookEvent{Type: "validation_failed", Resource: reqCtx.Path, Error: err.Error()})
-		return nil, nil
+		return noProtectedRequestResult()
 	}
 
 	validation := ValidateMessage(payload, resourceURI, ValidationOptions{})
@@ -211,6 +211,10 @@ func (e *ServerExtension) onProtectedRequest(
 	}
 	e.emit(HookEvent{Type: "access_granted", Resource: reqCtx.Path, Address: verification.Address})
 	return &x402http.ProtectedRequestHookResult{GrantAccess: true}, nil
+}
+
+func noProtectedRequestResult() (*x402http.ProtectedRequestHookResult, error) {
+	return nil, nil
 }
 
 func (e *ServerExtension) emit(event HookEvent) {
