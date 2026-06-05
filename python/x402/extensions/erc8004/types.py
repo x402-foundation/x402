@@ -8,7 +8,8 @@ from typing import Any
 from pydantic import BaseModel, Field
 
 EXTENSION_KEY = "erc8004"
-ARTIFACT_VERSION = "x402-erc8004/1"
+ARTIFACT_VERSION = "x402-erc8004/2"
+ARTIFACT_VERSION_V1 = "x402-erc8004/1"
 
 
 class ERC8004ExtensionInfo(BaseModel):
@@ -35,13 +36,19 @@ class ERC8004Config(BaseModel):
     reputation_registry: str
     identity_registry: str
     rpc_url: str
+    wrapper_address: str | None = None
     agent_id: int | None = None
 
     model_config = {"extra": "allow"}
 
+    @property
+    def feedback_contract(self) -> str:
+        """On-chain contract for ticket-gated feedback (v2 wrapper)."""
+        return self.wrapper_address or self.reputation_registry
+
 
 class FeedbackParams(BaseModel):
-    """Parameters for ReputationRegistry.giveFeedback."""
+    """Parameters for ticket-gated feedback submission."""
 
     agent_id: int
     value: int
@@ -51,25 +58,20 @@ class FeedbackParams(BaseModel):
     endpoint: str = ""
     feedback_uri: str = ""
     feedback_hash: bytes = Field(default=b"\x00" * 32)
-    interaction_hash: bytes = Field(default=b"\x00" * 32)
 
     model_config = {"extra": "allow"}
 
 
-class InteractionReceipt(BaseModel):
-    """Agent-signed attestation over a paid interaction (optional).
-
-    Signed by IdentityRegistry.ownerOf(agentId). Returned by the server in the
-    X-X402-Interaction-Receipt header and embedded by the client into the
-    artifact at interaction.response.agentSignature.
-
-    Phase 4.4: anchors to the ticket id (was: settlement tx hash). The ticket
-    id is the canonical identifier in the new model.
-    """
+class InteractionAttestation(BaseModel):
+    """Agent-signed EIP-712 attestation over a paid HTTP interaction."""
 
     ticket_id: int
-    interaction_hash: bytes
     chain_id: int
+    method: str
+    url: str
+    request_body_digest: bytes
+    response_body_digest: bytes
+    response_status: int
     signature: bytes
 
     model_config = {"extra": "allow"}
@@ -77,17 +79,25 @@ class InteractionReceipt(BaseModel):
     def to_dict(self) -> dict[str, Any]:
         return {
             "ticketId": str(self.ticket_id),
-            "interactionHash": "0x" + self.interaction_hash.hex(),
             "chainId": self.chain_id,
+            "method": self.method,
+            "url": self.url,
+            "requestBodyDigest": "0x" + self.request_body_digest.hex(),
+            "responseBodyDigest": "0x" + self.response_body_digest.hex(),
+            "responseStatus": self.response_status,
             "signature": "0x" + self.signature.hex(),
         }
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> InteractionReceipt:
+    def from_dict(cls, data: dict[str, Any]) -> InteractionAttestation:
         return cls(
             ticket_id=int(data["ticketId"]),
-            interaction_hash=bytes.fromhex(data["interactionHash"].removeprefix("0x")),
             chain_id=int(data["chainId"]),
+            method=str(data["method"]),
+            url=str(data["url"]),
+            request_body_digest=bytes.fromhex(data["requestBodyDigest"].removeprefix("0x")),
+            response_body_digest=bytes.fromhex(data["responseBodyDigest"].removeprefix("0x")),
+            response_status=int(data["responseStatus"]),
             signature=bytes.fromhex(data["signature"].removeprefix("0x")),
         )
 

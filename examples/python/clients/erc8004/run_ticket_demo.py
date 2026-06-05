@@ -2,7 +2,7 @@
 
 Forks Ethereum mainnet (or any RPC you point ``RPC_URL`` at) into a local
 Anvil, impersonates known whales to fund the payer with **real USDC and DAI**
-(no mocks), deploys ``TicketMinter`` + ``ReputationRegistryV3`` onto the fork,
+(no mocks), deploys ``X402AgentReputation`` onto the fork,
 and exercises both feedback paths against each token's natural settlement
 mode:
 
@@ -10,14 +10,14 @@ mode:
     Ticket #1 — Path A (direct ``giveFeedbackWithTicket``)
     Ticket #2 — Path B (payer signs ``FeedbackIntent``, relayer broadcasts)
 
-  Scenario 2 — DAI via ``transferFrom`` (``TicketMinter.settleAndMintTicket``):
+  Scenario 2 — DAI via ``transferFrom`` (``X402AgentReputation.settleAndMintTicket``):
     Ticket #3 — Path A
     Ticket #4 — Path B
 
 USDC supports EIP-3009 natively — the payer signs an off-chain authorization,
 no on-chain approval needed. DAI doesn't expose ``transferWithAuthorization``
 (it has its own non-standard ``permit``), so the ``transferFrom`` path of
-``TicketMinter.settleAndMintTicket`` is the natural fit there.
+``X402AgentReputation.settleAndMintTicket`` is the natural fit there.
 
 Requirements:
   - Foundry (``anvil``, ``forge`` on PATH)
@@ -249,7 +249,7 @@ def _wait_for_rpc(w3: Web3, timeout_s: float = 10.0) -> bool:
 
 def _ensure_built() -> None:
     """Make sure the erc8004 contracts are compiled. Builds via forge if needed."""
-    sentinel = FOUNDRY_OUT / "TicketMinter.sol" / "TicketMinter.json"
+    sentinel = FOUNDRY_OUT / "X402AgentReputation.sol" / "X402AgentReputation.json"
     if sentinel.exists():
         return
     print("Building contracts (forge build, erc8004 profile)...")
@@ -267,44 +267,36 @@ def _ensure_built() -> None:
         sys.exit(1)
 
 
-def _print_ticket(w3: Web3, minter: Any, ticket_id: int, label: str) -> None:
-    tdata = minter.functions.tickets(ticket_id).call()
+def _print_ticket(w3: Web3, wrapper: Any, ticket_id: int, label: str) -> None:
+    tdata = wrapper.functions.tickets(ticket_id).call()
     print(
         f"  ticket #{ticket_id} after {label}: payer={tdata[0]} agentId={tdata[1]} "
-        f"status={['NONE','MINTED','CONSUMED'][tdata[5]]}"
+        f"agentAddress={tdata[2]} consumed={tdata[5]}"
     )
 
 
 def _settle_and_mint(
     w3: Web3,
-    minter: Any,
+    wrapper: Any,
     token_addr: str,
     payer: Account,
     facilitator_signer: Account,
     pay_to: str,
     amount: int,
     agent_id: int,
-    request_hash: bytes,
-    interaction_hash: bytes,
-    endpoint: str,
 ) -> tuple[int, str]:
     """Approve + settleAndMintTicket. Returns (ticketId, settlement_tx_hash)."""
-    # 1) payer approves the minter to pull tokens. Uses the generic ERC-20 ABI
-    # so this works against real USDC / DAI / etc. without per-token artifacts.
     erc20 = w3.eth.contract(address=Web3.to_checksum_address(token_addr), abi=ERC20_ABI)
-    approve_tx = erc20.functions.approve(minter.address, 2**256 - 1).build_transaction({"from": payer.address})
+    approve_tx = erc20.functions.approve(wrapper.address, 2**256 - 1).build_transaction({"from": payer.address})
     approve_tx.pop("chainId", None)
     approve_tx.pop("nonce", None)
     approve_tx.pop("from", None)
     _send(w3, payer, {**approve_tx, "gas": 100_000})
 
-    # 2) facilitator calls TicketMinter.settleAndMintTicket (1 tx, transferFrom + mint).
-    settle_tx = minter.functions.settleAndMintTicket(
+    settle_tx = wrapper.functions.settleAndMintTicket(
         payer.address,
         agent_id,
-        request_hash,
-        interaction_hash,
-        endpoint,
+        Web3.to_checksum_address(pay_to),
         (Web3.to_checksum_address(token_addr), Web3.to_checksum_address(pay_to), amount),
     ).build_transaction({"from": facilitator_signer.address})
     settle_tx.pop("chainId", None)
@@ -318,16 +310,36 @@ def _settle_and_mint(
 def _recover_ticket_id_from_rcpt(rcpt: Any) -> tuple[int, str]:
     """Parse the TicketMinted log to recover (ticketId, settlement_tx_hash)."""
     topic0 = get_ticket_minted_topic()
-    for log in rcpt["logs"]:
-        topics = log["topics"]
+    tx_hash = rcpt["transactionHash"]
+    tx_hash_hex = tx_hash.hex() if hasattr(tx_hash, "hex") else str(tx_hash)
+    if not tx_hash_hex.startswith("0x"):
+        tx_hash_hex = "0x" + tx_hash_hex
+
+    for log in rcpt.get("logs", []) or []:
+        topics = log.get("topics") or []
+        if not topics:
+            continue
         topic0_hex = topics[0].hex() if isinstance(topics[0], (bytes, bytearray)) else str(topics[0])
         if not topic0_hex.startswith("0x"):
             topic0_hex = "0x" + topic0_hex
-        if topic0_hex.lower() == topic0.lower():
-            tid = topics[1]
-            tid_hex = tid.hex() if isinstance(tid, (bytes, bytearray)) else str(tid)
-            return int(tid_hex, 16), rcpt["transactionHash"].hex()
-    raise RuntimeError("settle tx did not emit TicketMinted")
+        if topic0_hex.lower() != topic0.lower():
+            continue
+        tid = topics[1]
+        if isinstance(tid, (bytes, bytearray)):
+            return int.from_bytes(tid, "big"), tx_hash_hex
+        tid_hex = str(tid)
+        return int(tid_hex, 16), tx_hash_hex
+
+    debug_topics = []
+    for log in rcpt.get("logs", []) or []:
+        topics = log.get("topics") or []
+        if topics:
+            t0 = topics[0].hex() if isinstance(topics[0], (bytes, bytearray)) else str(topics[0])
+            debug_topics.append(t0 if str(t0).startswith("0x") else "0x" + str(t0))
+    raise RuntimeError(
+        f"settle tx did not emit TicketMinted (status={rcpt.get('status')}, "
+        f"expected_topic={topic0}, log_topics={debug_topics[:8]})"
+    )
 
 
 def _sign_eip3009_authorization(
@@ -386,7 +398,7 @@ def _sign_eip3009_authorization(
 
 def _settle_and_mint_eip3009(
     w3: Web3,
-    minter: Any,
+    wrapper: Any,
     token_addr: str,
     token_name: str,
     token_version: str,
@@ -395,9 +407,6 @@ def _settle_and_mint_eip3009(
     pay_to: str,
     amount: int,
     agent_id: int,
-    request_hash: bytes,
-    interaction_hash: bytes,
-    endpoint: str,
     nonce_seed: bytes,
 ) -> tuple[int, str]:
     """USDC-style: payer signs EIP-3009; facilitator calls settleAndMintTicketEIP3009."""
@@ -427,12 +436,10 @@ def _settle_and_mint_eip3009(
         nonce,
         signature,
     )
-    tx = minter.functions.settleAndMintTicketEIP3009(
+    tx = wrapper.functions.settleAndMintTicketEIP3009(
         payer.address,
         agent_id,
-        request_hash,
-        interaction_hash,
-        endpoint,
+        Web3.to_checksum_address(pay_to),
         settlement,
     ).build_transaction({"from": facilitator_signer.address})
     tx.pop("chainId", None); tx.pop("nonce", None); tx.pop("from", None)
@@ -442,11 +449,10 @@ def _settle_and_mint_eip3009(
 
 def _path_a_direct(
     w3: Web3,
-    registry_addr: str,
+    wrapper_addr: str,
     payer: Account,
     ticket_id: int,
     agent_id: int,
-    interaction_hash: bytes,
 ) -> None:
     """Path A: payer submits giveFeedbackWithTicket directly (pays own gas).
 
@@ -457,7 +463,8 @@ def _path_a_direct(
     print("\n--- Path A: direct giveFeedbackWithTicket ---")
     cfg = ERC8004Config(
         network=f"eip155:{w3.eth.chain_id}",
-        reputation_registry=registry_addr,
+        reputation_registry=wrapper_addr,
+        wrapper_address=wrapper_addr,
         identity_registry="0x" + "00" * 20,
         rpc_url=w3.provider.endpoint_uri,
     )
@@ -471,7 +478,6 @@ def _path_a_direct(
         endpoint="https://agent.example/r",
         feedback_uri=f"mem://demo-path-a/ticket-{ticket_id}",
         feedback_hash=keccak(f"demo-artifact-path-a/ticket-{ticket_id}".encode()),
-        interaction_hash=interaction_hash,
     )
     tx_hash = client.submit_feedback_with_ticket(ticket_id, params)
     rcpt = w3.eth.wait_for_transaction_receipt(tx_hash)
@@ -482,18 +488,18 @@ def _path_a_direct(
 
 def _path_b_sponsored(
     w3: Web3,
-    registry_addr: str,
+    wrapper_addr: str,
     payer: Account,
     relayer: Account,
     ticket_id: int,
     agent_id: int,
-    interaction_hash: bytes,
 ) -> None:
     """Path B: payer signs an EIP-712 FeedbackIntent; relayer broadcasts."""
     print("\n--- Path B: sponsored giveFeedbackWithTicketFor ---")
     cfg = ERC8004Config(
         network=f"eip155:{w3.eth.chain_id}",
-        reputation_registry=registry_addr,
+        reputation_registry=wrapper_addr,
+        wrapper_address=wrapper_addr,
         identity_registry="0x" + "00" * 20,
         rpc_url=w3.provider.endpoint_uri,
     )
@@ -511,7 +517,6 @@ def _path_b_sponsored(
         endpoint="https://agent.example/r",
         feedback_uri=f"mem://demo-path-b/ticket-{ticket_id}",
         feedback_hash=keccak(f"demo-artifact-path-b/ticket-{ticket_id}".encode()),
-        interaction_hash=interaction_hash,
     )
     # The relayer-replay nonce is scoped per payer in the registry, so different
     # tickets need different nonces (or the second sponsored submission reverts
@@ -638,29 +643,23 @@ def main() -> int:
         agent_id = register_agent(w3, agent, identity_addr)
         print(f"  agentId = {agent_id}  (owner = ownerOf({agent_id}) = {agent.address})")
 
-        # ---- Deploy ReputationRegistryV3 (deploys paired TicketMinter) ----
+        # ---- Deploy X402AgentReputation (v2 wrapper) ----
         print("\nDeploying ticket-flow contracts onto the fork...")
-        registry_addr = _deploy(
+        wrapper_addr = _deploy(
             w3,
             deployer,
-            "ReputationRegistryV3",
-            identity_addr,
+            "X402AgentReputation",
             deployer.address,
             "0x" + "00" * 20,
+            identity_addr,
         )
-        print(f"  ReputationRegistryV3 = {registry_addr}  (uses canonical IdentityRegistry)")
+        print(f"  X402AgentReputation = {wrapper_addr}  (uses canonical IdentityRegistry)")
 
-        registry = w3.eth.contract(
-            address=registry_addr, abi=_load_artifact("ReputationRegistryV3")["abi"]
-        )
-        minter_addr = registry.functions.ticketMinter().call()
-        print(f"  TicketMinter         = {minter_addr}")
+        wrapper = w3.eth.contract(address=wrapper_addr, abi=_load_artifact("X402AgentReputation")["abi"])
 
-        minter = w3.eth.contract(address=minter_addr, abi=_load_artifact("TicketMinter")["abi"])
-
-        # ---- Wire minter: facilitator allowlist ----
+        # ---- Wire wrapper: facilitator allowlist ----
         print("\nWiring contracts...")
-        tx = minter.functions.setFacilitator(facilitator.address, True).build_transaction(
+        tx = wrapper.functions.setFacilitator(facilitator.address, True).build_transaction(
             {"from": deployer.address}
         )
         tx.pop("chainId", None)
@@ -677,33 +676,29 @@ def main() -> int:
         # Ticket #1 — Path A
         print("\n--- mint ticket #1 (USDC EIP-3009, then Path A direct feedback) ---")
         ticket_id_1, tx_1 = _settle_and_mint_eip3009(
-            w3, minter, usdc_addr, USDC_DOMAIN_NAME, USDC_DOMAIN_VERSION,
+            w3, wrapper, usdc_addr, USDC_DOMAIN_NAME, USDC_DOMAIN_VERSION,
             payer, facilitator,
             pay_to=agent.address, amount=amount_usdc, agent_id=agent_id,
-            request_hash=keccak(b"req-1"), interaction_hash=keccak(b"int-1"),
-            endpoint="https://agent.example/r",
             nonce_seed=b"usdc-nonce-1",
         )
         print(f"  payer signed USDC TransferWithAuthorization (no on-chain approval)")
         print(f"  settle+mint tx = {tx_1}  ticketId = {ticket_id_1}")
-        _print_ticket(w3, minter, ticket_id_1, "mint")
-        _path_a_direct(w3, registry_addr, payer, ticket_id_1, agent_id, keccak(b"int-1"))
-        _print_ticket(w3, minter, ticket_id_1, "feedback")
+        _print_ticket(w3, wrapper, ticket_id_1, "mint")
+        _path_a_direct(w3, wrapper_addr, payer, ticket_id_1, agent_id)
+        _print_ticket(w3, wrapper, ticket_id_1, "feedback")
 
         # Ticket #2 — Path B
         print("\n--- mint ticket #2 (USDC EIP-3009, then Path B sponsored feedback) ---")
         ticket_id_2, tx_2 = _settle_and_mint_eip3009(
-            w3, minter, usdc_addr, USDC_DOMAIN_NAME, USDC_DOMAIN_VERSION,
+            w3, wrapper, usdc_addr, USDC_DOMAIN_NAME, USDC_DOMAIN_VERSION,
             payer, facilitator,
             pay_to=agent.address, amount=amount_usdc, agent_id=agent_id,
-            request_hash=keccak(b"req-2"), interaction_hash=keccak(b"int-2"),
-            endpoint="https://agent.example/r",
             nonce_seed=b"usdc-nonce-2",
         )
         print(f"  settle+mint tx = {tx_2}  ticketId = {ticket_id_2}")
-        _print_ticket(w3, minter, ticket_id_2, "mint")
-        _path_b_sponsored(w3, registry_addr, payer, relayer, ticket_id_2, agent_id, keccak(b"int-2"))
-        _print_ticket(w3, minter, ticket_id_2, "feedback")
+        _print_ticket(w3, wrapper, ticket_id_2, "mint")
+        _path_b_sponsored(w3, wrapper_addr, payer, relayer, ticket_id_2, agent_id)
+        _print_ticket(w3, wrapper, ticket_id_2, "feedback")
 
         # ====================================================================
         # Scenario 2: DAI via ERC-20 transferFrom (DAI lacks transferWithAuthorization)
@@ -713,37 +708,33 @@ def main() -> int:
         # Ticket #3 — Path A
         print("\n--- mint ticket #3 (DAI transferFrom, then Path A direct feedback) ---")
         ticket_id_3, tx_3 = _settle_and_mint(
-            w3, minter, dai_addr, payer, facilitator,
+            w3, wrapper, dai_addr, payer, facilitator,
             pay_to=agent.address, amount=amount_dai, agent_id=agent_id,
-            request_hash=keccak(b"req-3"), interaction_hash=keccak(b"int-3"),
-            endpoint="https://agent.example/r",
         )
         print(f"  settle+mint tx = {tx_3}  ticketId = {ticket_id_3}")
-        _print_ticket(w3, minter, ticket_id_3, "mint")
-        _path_a_direct(w3, registry_addr, payer, ticket_id_3, agent_id, keccak(b"int-3"))
-        _print_ticket(w3, minter, ticket_id_3, "feedback")
+        _print_ticket(w3, wrapper, ticket_id_3, "mint")
+        _path_a_direct(w3, wrapper_addr, payer, ticket_id_3, agent_id)
+        _print_ticket(w3, wrapper, ticket_id_3, "feedback")
 
         # Ticket #4 — Path B
         print("\n--- mint ticket #4 (DAI transferFrom, then Path B sponsored feedback) ---")
         ticket_id_4, tx_4 = _settle_and_mint(
-            w3, minter, dai_addr, payer, facilitator,
+            w3, wrapper, dai_addr, payer, facilitator,
             pay_to=agent.address, amount=amount_dai, agent_id=agent_id,
-            request_hash=keccak(b"req-4"), interaction_hash=keccak(b"int-4"),
-            endpoint="https://agent.example/r",
         )
         print(f"  settle+mint tx = {tx_4}  ticketId = {ticket_id_4}")
-        _print_ticket(w3, minter, ticket_id_4, "mint")
-        _path_b_sponsored(w3, registry_addr, payer, relayer, ticket_id_4, agent_id, keccak(b"int-4"))
-        _print_ticket(w3, minter, ticket_id_4, "feedback")
+        _print_ticket(w3, wrapper, ticket_id_4, "mint")
+        _path_b_sponsored(w3, wrapper_addr, payer, relayer, ticket_id_4, agent_id)
+        _print_ticket(w3, wrapper, ticket_id_4, "feedback")
 
         # ---- Final assertions ----
         ticket_ids = (ticket_id_1, ticket_id_2, ticket_id_3, ticket_id_4)
-        states = [minter.functions.tickets(tid).call()[5] for tid in ticket_ids]
-        assert all(s == 2 for s in states), f"some tickets not CONSUMED: {dict(zip(ticket_ids, states))}"
+        states = [wrapper.functions.tickets(tid).call()[5] for tid in ticket_ids]
+        assert all(s is True for s in states), f"some tickets not consumed: {dict(zip(ticket_ids, states))}"
 
-        idx = registry.functions.getLastIndex(agent_id, payer.address).call()
+        idx = wrapper.functions.getLastIndex(agent_id, payer.address).call()
         assert idx == 4, f"expected 4 feedbacks recorded under payer, got {idx}"
-        idx_msg = f"  ReputationRegistryV3.getLastIndex(agentId={agent_id}, payer) = {idx}"
+        idx_msg = f"  X402AgentReputation.getLastIndex(agentId={agent_id}, payer) = {idx}"
 
         # Confirm payer's balances dropped by exactly the payments and the
         # agent received them — proves the transfers actually happened on the
@@ -757,11 +748,11 @@ def main() -> int:
 
         print("\n\nDONE — both scenarios, both feedback paths green.")
         print(f"  Scenario 1 (USDC EIP-3009):")
-        print(f"    ticket #{ticket_id_1}: MINTED -> CONSUMED  (Path A direct)")
-        print(f"    ticket #{ticket_id_2}: MINTED -> CONSUMED  (Path B sponsored)")
+        print(f"    ticket #{ticket_id_1}: minted -> consumed  (Path A direct)")
+        print(f"    ticket #{ticket_id_2}: minted -> consumed  (Path B sponsored)")
         print(f"  Scenario 2 (DAI transferFrom):")
-        print(f"    ticket #{ticket_id_3}: MINTED -> CONSUMED  (Path A direct)")
-        print(f"    ticket #{ticket_id_4}: MINTED -> CONSUMED  (Path B sponsored)")
+        print(f"    ticket #{ticket_id_3}: minted -> consumed  (Path A direct)")
+        print(f"    ticket #{ticket_id_4}: minted -> consumed  (Path B sponsored)")
         print(f"  agent received: USDC {agent_usdc} ({agent_usdc / 10**6} USDC), DAI {agent_dai} ({agent_dai / 10**18} DAI)")
         print(idx_msg)
         return 0

@@ -1,24 +1,25 @@
 """Tests for ERC-8004 extension types."""
 
 from x402.extensions.erc8004.types import (
+    ARTIFACT_VERSION,
     ERC8004Config,
     FeedbackParams,
-    InteractionReceipt,
     FeedbackArtifact,
     ERC8004ExtensionInfo,
+    InteractionAttestation,
 )
 
 
-def test_config_no_gateway_field() -> None:
+def test_config_wrapper_address() -> None:
     cfg = ERC8004Config(
         network="eip155:8453",
         reputation_registry="0x8004BAa17C55a88189AE136b182e5fdA19dE9b63",
         identity_registry="0x8004A18C4f0D0307C40Bd9176E1A53569b73e6a3",
+        wrapper_address="0x" + "aa" * 20,
         rpc_url="http://localhost:8545",
         agent_id=42,
     )
-    assert cfg.identity_registry.startswith("0x")
-    assert "feedback_gateway" not in ERC8004Config.model_fields
+    assert cfg.feedback_contract == "0x" + "aa" * 20
 
 
 def test_feedback_params_defaults() -> None:
@@ -33,39 +34,29 @@ def test_extension_info_accepts_wire_agent_id_alias() -> None:
     assert info.agent_id == 7
 
 
-def test_interaction_receipt_roundtrip() -> None:
-    r = InteractionReceipt(
+def test_interaction_attestation_roundtrip() -> None:
+    att = InteractionAttestation(
         ticket_id=42,
-        interaction_hash=b"\x22" * 32,
         chain_id=8453,
+        method="GET",
+        url="https://x/y",
+        request_body_digest=b"\x11" * 32,
+        response_body_digest=b"\x22" * 32,
+        response_status=200,
         signature=b"\x33" * 65,
     )
-    d = r.to_dict()
+    d = att.to_dict()
     assert d["ticketId"] == "42"
-    assert d["interactionHash"] == "0x" + "22" * 32
-    assert d["chainId"] == 8453
-    assert d["signature"] == "0x" + "33" * 65
-    back = InteractionReceipt.from_dict(d)
-    assert back == r
+    assert d["method"] == "GET"
+    back = InteractionAttestation.from_dict(d)
+    assert back.ticket_id == att.ticket_id
+    assert back.url == att.url
 
 
-def test_feedback_artifact_minimal() -> None:
+def test_feedback_artifact_v2_default_version() -> None:
     art = FeedbackArtifact(
-        settlement={
-            "txHash": "0x" + "ab" * 32,
-            "chainId": "eip155:8453",
-            "scheme": "exact",
-            "paymentMethod": "eip3009",
-            "asset": "0x" + "01" * 20,
-            "payer": "0x" + "02" * 20,
-            "payTo": "0x" + "03" * 20,
-            "amount": "1000000",
-        },
-        interaction={
-            "request": {"method": "GET", "url": "https://x/y", "headerDigest": "0x" + "00" * 32, "bodyDigest": "0x" + "00" * 32},
-            "response": {"status": 200, "headerDigest": "0x" + "00" * 32, "bodyDigest": "0x" + "0a" * 32, "agentSignature": None},
-        },
-        feedback={"agentId": 42, "value": 90, "valueDecimals": 0, "tag1": "", "tag2": "", "endpoint": "", "comment": ""},
+        settlement={"ticketId": 1},
+        interaction={"request": {}, "response": {}},
+        feedback={"agentId": 42},
     )
-    assert art.version == "x402-erc8004/1"
-    assert art.to_dict()["version"] == "x402-erc8004/1"
+    assert art.version == ARTIFACT_VERSION

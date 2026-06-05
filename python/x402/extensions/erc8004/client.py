@@ -7,22 +7,23 @@ from typing import Any
 from eth_utils import keccak, to_checksum_address
 from web3 import Web3
 
-
-def keccak_text(value: str) -> bytes:
-    """keccak256(utf-8 bytes) for empty-string-safe text hashing in EIP-712 fields."""
-    return keccak((value or "").encode("utf-8"))
 from x402.schemas.extensions import ClientExtension
 from x402.schemas.payments import PaymentPayload, PaymentRequired
 
 from .schema import erc8004_schema
-from .ticket_hashes import TicketBind, echo_ticket_bind_in_payment_payload
 from .types import (
     ERC8004Config,
     EXTENSION_KEY,
     FeedbackParams,
 )
 
-REPUTATION_ABI = [
+
+def keccak_text(value: str) -> bytes:
+    """keccak256(utf-8 bytes) for empty-string-safe text hashing in EIP-712 fields."""
+    return keccak((value or "").encode("utf-8"))
+
+
+WRAPPER_ABI = [
     {
         "inputs": [
             {"name": "agentId", "type": "uint256"},
@@ -48,7 +49,6 @@ REPUTATION_ABI = [
             {"name": "tag2", "type": "string"},
             {"name": "endpoint", "type": "string"},
             {"name": "feedbackURI", "type": "string"},
-            {"name": "interactionHash", "type": "bytes32"},
             {"name": "feedbackHash", "type": "bytes32"},
         ],
         "name": "giveFeedbackWithTicket",
@@ -64,7 +64,6 @@ REPUTATION_ABI = [
                 "components": [
                     {"name": "payer", "type": "address"},
                     {"name": "ticketId", "type": "uint256"},
-                    {"name": "interactionHash", "type": "bytes32"},
                     {"name": "value", "type": "int128"},
                     {"name": "valueDecimals", "type": "uint8"},
                     {"name": "tag1", "type": "string"},
@@ -85,9 +84,6 @@ REPUTATION_ABI = [
     },
 ]
 
-
-# EIP-712 typed data for the sponsored feedback path (matches
-# ReputationRegistryV3.FEEDBACK_INTENT_TYPEHASH and EIP712("ERC8004ReputationV3","2")).
 FEEDBACK_INTENT_TYPES: dict[str, list[dict[str, str]]] = {
     "EIP712Domain": [
         {"name": "name", "type": "string"},
@@ -97,7 +93,6 @@ FEEDBACK_INTENT_TYPES: dict[str, list[dict[str, str]]] = {
     ],
     "FeedbackIntent": [
         {"name": "ticketId", "type": "uint256"},
-        {"name": "interactionHash", "type": "bytes32"},
         {"name": "value", "type": "int128"},
         {"name": "valueDecimals", "type": "uint8"},
         {"name": "tag1Hash", "type": "bytes32"},
@@ -110,8 +105,8 @@ FEEDBACK_INTENT_TYPES: dict[str, list[dict[str, str]]] = {
     ],
 }
 
-FEEDBACK_DOMAIN_NAME = "ERC8004ReputationV3"
-FEEDBACK_DOMAIN_VERSION = "2"
+FEEDBACK_DOMAIN_NAME = "X402AgentReputation"
+FEEDBACK_DOMAIN_VERSION = "1"
 
 
 def extract_erc8004_info(payment_required: PaymentRequired) -> dict[str, Any] | None:
@@ -140,34 +135,12 @@ def echo_erc8004_in_payment_payload(
 
 
 class ERC8004ClientExtension(ClientExtension):
-    """Client extension that echoes erc8004 info into PaymentPayload.
-
-    By default it echoes the agentId the server declared. If a ``TicketBind``
-    is supplied (computed via ``compute_ticket_bind`` once the client knows
-    the request digests), the extension merges ``requestHash``,
-    ``interactionHash``, and ``endpoint`` into the same info block so the
-    facilitator can pin the ticket to this specific paid call.
-
-    The bind is supplied via ``set_ticket_bind(bind)`` between requests rather
-    than at construction time, because each request has a different bind.
-    """
+    """Client extension that echoes erc8004 agentId into PaymentPayload."""
 
     key = EXTENSION_KEY
 
-    def __init__(self, ticket_bind: TicketBind | None = None) -> None:
-        self._ticket_bind = ticket_bind
-
-    def set_ticket_bind(self, bind: TicketBind | None) -> None:
-        """Set (or clear) the bind to be echoed on the next ``enrich_payment_payload`` call."""
-        self._ticket_bind = bind
-
     def enrich_payment_payload(self, payment_payload: Any, payment_required: Any) -> Any:
-        payment_payload = echo_erc8004_in_payment_payload(payment_payload, payment_required)
-        if self._ticket_bind is not None:
-            payment_payload = echo_ticket_bind_in_payment_payload(
-                payment_payload, self._ticket_bind
-            )
-        return payment_payload
+        return echo_erc8004_in_payment_payload(payment_payload, payment_required)
 
 
 class ERCFeedbackClient:
@@ -183,40 +156,16 @@ class ERCFeedbackClient:
         return extract_erc8004_info(payment_required)
 
     def ticket_id_from_receipt(self, tx_hash: str) -> int | None:
-        """Parse the TicketMinted log on ``tx_hash`` and return the ticketId.
+        from .facilitator import ticket_id_from_receipt
 
-        Thin wrapper around the facilitator-side helper so clients holding an
-        ``ERCFeedbackClient`` can recover the ticket id from PAYMENT-RESPONSE
-        when ``extensions.erc8004.ticketId`` isn't echoed (older facilitators)
-        or as a backstop verification step.
-        """
-        from .facilitator import _w3_from_signer  # local: avoid cycle  # noqa: F401
-        from .constants import get_ticket_minted_topic
-
-        topic = get_ticket_minted_topic()
-        if not tx_hash.startswith("0x"):
-            tx_hash = "0x" + tx_hash
-        receipt = self._w3.eth.get_transaction_receipt(tx_hash)
-        for log in receipt.get("logs", []) or []:
-            topics = log.get("topics") or []
-            if not topics:
-                continue
-            topic0 = topics[0]
-            topic0_hex = topic0.hex() if isinstance(topic0, (bytes, bytearray)) else str(topic0)
-            if not topic0_hex.startswith("0x"):
-                topic0_hex = "0x" + topic0_hex
-            if topic0_hex.lower() == topic.lower():
-                tid = topics[1]
-                tid_hex = tid.hex() if isinstance(tid, (bytes, bytearray)) else str(tid)
-                return int(tid_hex, 16)
-        return None
+        return ticket_id_from_receipt(self._signer, tx_hash)
 
     def submit_feedback_to_registry(
         self, params: FeedbackParams, gas_limit: int | None = None
     ) -> str:
-        """Submit feedback directly to ReputationRegistry.giveFeedback (type-2 tx)."""
+        """Submit feedback directly to upstream ReputationRegistry.giveFeedback."""
         registry = self._w3.eth.contract(
-            address=to_checksum_address(self._config.reputation_registry), abi=REPUTATION_ABI
+            address=to_checksum_address(self._config.reputation_registry), abi=WRAPPER_ABI
         )
         func = registry.functions.giveFeedback(
             params.agent_id,
@@ -228,31 +177,7 @@ class ERCFeedbackClient:
             params.feedback_uri,
             params.feedback_hash,
         )
-
-        sender = getattr(self._signer, "address", None)
-        if sender is None:
-            raise TypeError("signer must expose an address attribute")
-
-        if gas_limit is None:
-            estimate = func.estimate_gas({"from": sender})
-            gas_limit = int(estimate * 1.2)
-
-        nonce = self._w3.eth.get_transaction_count(sender)
-        base_fee = self._w3.eth.get_block("latest")["baseFeePerGas"]
-        tx = {
-            "type": 2,
-            "chainId": self._w3.eth.chain_id,
-            "nonce": nonce,
-            "to": to_checksum_address(self._config.reputation_registry),
-            "value": 0,
-            "gas": gas_limit,
-            "data": func.build_transaction({"from": sender})["data"],
-            "maxFeePerGas": self._w3.eth.max_priority_fee + 2 * base_fee,
-            "maxPriorityFeePerGas": self._w3.eth.max_priority_fee,
-        }
-        signed = self._signer.sign_transaction(tx)
-        raw = self._w3.eth.send_raw_transaction(signed.raw_transaction)
-        return Web3.to_hex(raw)
+        return self._send_registry_tx(func, self._config.reputation_registry, gas_limit)
 
     def submit_feedback_with_ticket(
         self,
@@ -260,17 +185,9 @@ class ERCFeedbackClient:
         params: FeedbackParams,
         gas_limit: int | None = None,
     ) -> str:
-        """Submit feedback through the ticket-gated path (Path A).
-
-        Calls ``ReputationRegistryV3.giveFeedbackWithTicket``. The registry
-        verifies the ticket is MINTED + payer matches + feedbackHash hasn't
-        been reused, then atomically consumes the ticket and records the
-        feedback. The signer must be the ticket's payer.
-        """
-        registry = self._w3.eth.contract(
-            address=to_checksum_address(self._config.reputation_registry),
-            abi=REPUTATION_ABI,
-        )
+        """Submit feedback through the ticket-gated wrapper path (Path A)."""
+        contract_addr = self._config.feedback_contract
+        registry = self._w3.eth.contract(address=to_checksum_address(contract_addr), abi=WRAPPER_ABI)
         func = registry.functions.giveFeedbackWithTicket(
             int(ticket_id),
             params.value,
@@ -279,10 +196,9 @@ class ERCFeedbackClient:
             params.tag2,
             params.endpoint,
             params.feedback_uri,
-            params.interaction_hash,
             params.feedback_hash,
         )
-        return self._send_registry_tx(func, gas_limit)
+        return self._send_registry_tx(func, contract_addr, gas_limit)
 
     def build_feedback_intent(
         self,
@@ -291,24 +207,14 @@ class ERCFeedbackClient:
         nonce: int,
         deadline: int,
     ) -> tuple[dict[str, Any], dict[str, list[dict[str, str]]], dict[str, Any]]:
-        """Build the EIP-712 (domain, types, message) for a sponsored feedback intent.
-
-        The caller signs ``(domain, types, message)`` with the payer key, then
-        passes the signature plus the full ``FeedbackSubmission`` struct to
-        ``submit_feedback_sponsored``.
-
-        Returns ``(domain, types, message)`` ready to feed into any EIP-712
-        signer (``eth_account.Account.sign_typed_data`` or equivalent).
-        """
         domain = {
             "name": FEEDBACK_DOMAIN_NAME,
             "version": FEEDBACK_DOMAIN_VERSION,
             "chainId": self._w3.eth.chain_id,
-            "verifyingContract": to_checksum_address(self._config.reputation_registry),
+            "verifyingContract": to_checksum_address(self._config.feedback_contract),
         }
         message = {
             "ticketId": int(ticket_id),
-            "interactionHash": params.interaction_hash,
             "value": int(params.value),
             "valueDecimals": int(params.value_decimals),
             "tag1Hash": keccak_text(params.tag1),
@@ -331,19 +237,11 @@ class ERCFeedbackClient:
         signature: bytes,
         gas_limit: int | None = None,
     ) -> str:
-        """Relay a payer-signed FeedbackIntent (Path B — sponsored).
-
-        ``self._signer`` here is the *relayer* (pays gas). The on-chain
-        signature recovery binds the feedback to the ``payer`` argument.
-        """
-        registry = self._w3.eth.contract(
-            address=to_checksum_address(self._config.reputation_registry),
-            abi=REPUTATION_ABI,
-        )
+        contract_addr = self._config.feedback_contract
+        registry = self._w3.eth.contract(address=to_checksum_address(contract_addr), abi=WRAPPER_ABI)
         submission = (
             to_checksum_address(payer),
             int(ticket_id),
-            params.interaction_hash,
             int(params.value),
             int(params.value_decimals),
             params.tag1,
@@ -355,9 +253,9 @@ class ERCFeedbackClient:
         func = registry.functions.giveFeedbackWithTicketFor(
             submission, int(nonce), int(deadline), bytes(signature)
         )
-        return self._send_registry_tx(func, gas_limit)
+        return self._send_registry_tx(func, contract_addr, gas_limit)
 
-    def _send_registry_tx(self, func: Any, gas_limit: int | None) -> str:
+    def _send_registry_tx(self, func: Any, contract_address: str, gas_limit: int | None) -> str:
         sender = getattr(self._signer, "address", None)
         if sender is None:
             raise TypeError("signer must expose an address attribute")
@@ -372,7 +270,7 @@ class ERCFeedbackClient:
             "type": 2,
             "chainId": self._w3.eth.chain_id,
             "nonce": nonce,
-            "to": to_checksum_address(self._config.reputation_registry),
+            "to": to_checksum_address(contract_address),
             "value": 0,
             "gas": gas_limit,
             "data": func.build_transaction({"from": sender})["data"],

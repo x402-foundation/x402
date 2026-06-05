@@ -2,22 +2,23 @@
 
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 from x402.schemas.extensions import ResourceServerExtension
 from x402.schemas.hooks import (
     ServerPaymentRequiredContext,
     SettleResultContext,
-    SkipHandlerDirective,
-    SkipHandlerResult,
-    VerifyResultContext,
 )
 from x402.schemas.payments import PaymentPayload, PaymentRequirements
 
-from .artifact import build_artifact, compute_interaction_hash, sign_interaction_receipt
-from .facilitator import extract_ticket_bind
+from .artifact import body_digest, build_artifact, sign_interaction_attestation
 from .schema import declare_erc8004_extension
-from .types import ERC8004Config, EXTENSION_KEY, InteractionReceipt
+from .types import ERC8004Config, EXTENSION_KEY, InteractionAttestation
+
+logger = logging.getLogger("x402.erc8004.server")
+
+ATTESTATION_HEADER = "X-X402-Interaction-Attestation"
 
 
 def create_erc8004_resource_server_extension(
@@ -25,23 +26,15 @@ def create_erc8004_resource_server_extension(
 ) -> ResourceServerExtension:
     """Create ERC-8004 server extension.
 
-    Declares ``agentId`` in the 402 response. Forwards the ticket id minted at
-    settle time into ``PAYMENT-RESPONSE.extensions.erc8004.ticketId`` so the
-    client can recover the ticket without re-parsing the settlement receipt.
-
-    The ticket bind is **mandatory**: if the client's payment payload does
-    not include ``requestHash``, ``interactionHash``, ``endpoint``, and
-    ``agentId`` under ``extensions.erc8004.info``, the after-verify hook
-    short-circuits the paid handler. ``ReputationRegistryV3.giveFeedback``
-    has been disabled on-chain, so without a ticket the payer can never give
-    feedback — there is no working "ticketless" mode for this extension.
-
-    Args:
-        config: ERC-8004 configuration (must include ``agent_id``).
+    Declares ``agentId`` in the 402 response and surfaces ``ticketId`` in
+    PAYMENT-RESPONSE after settle. Post-handler, signs an InteractionAttestation
+    when possible (best-effort — never blocks the paid response).
     """
     agent_id = config.agent_id
     if agent_id is None:
         raise ValueError("agent_id is required in ERC8004Config for server extension")
+
+    wrapper_address = config.wrapper_address
 
     class ERC8004ResourceServerExtension:
         @property
@@ -56,44 +49,9 @@ def create_erc8004_resource_server_extension(
         ) -> dict[str, Any] | None:
             return declare_erc8004_extension(agent_id)
 
-        def after_verify(
-            self, context: VerifyResultContext
-        ) -> SkipHandlerResult | None:
-            """Refuse to run the paid handler when the client didn't bind a ticket.
-
-            Enabling this extension is an opt-in to the ticket model; a
-            ticketless payment can't produce feedback downstream, so the
-            handler is skipped before the user is charged for nothing.
-            """
-            payload = context.payment_payload
-            if not isinstance(payload, PaymentPayload):
-                # V1 payloads predate the ticket bind shape — block them
-                # outright to fail loudly rather than silently allow a no-op
-                # paid call.
-                return SkipHandlerResult(
-                    response=SkipHandlerDirective(
-                        content_type="application/json",
-                        body={"error": "erc8004_ticket_bind_required"},
-                    )
-                )
-            if extract_ticket_bind(payload) is None:
-                return SkipHandlerResult(
-                    response=SkipHandlerDirective(
-                        content_type="application/json",
-                        body={"error": "erc8004_ticket_bind_required"},
-                    )
-                )
-            return None
-
         def enrich_settlement_response(
             self, declaration: Any, context: SettleResultContext
         ) -> dict[str, Any] | None:
-            """Surface ticketId in PAYMENT-RESPONSE.extensions.erc8004.
-
-            The interaction receipt covers the response, which isn't in the
-            settle context. The HTTP layer produces it via
-            ``create_interaction_receipt`` once response digests exist.
-            """
             settle_response = context.result
             settle_ext = getattr(settle_response, "extensions", None) or {}
             erc8004_data = settle_ext.get(EXTENSION_KEY)
@@ -107,52 +65,68 @@ def create_erc8004_resource_server_extension(
     return ERC8004ResourceServerExtension()
 
 
-def create_interaction_receipt(
+def create_interaction_attestation(
     signer: Any,
     *,
+    wrapper_address: str,
     agent_id: int,
     requirements: PaymentRequirements,
     payment_payload: PaymentPayload,
     ticket_id: int,
     tx_hash: str,
     payer: str,
-    request: dict[str, Any],
-    response: dict[str, Any],
+    method: str,
+    url: str,
+    request_body: bytes,
+    response_body: bytes,
+    response_status: int,
     payment_method: str | None = None,
-) -> InteractionReceipt:
-    """Sign an InteractionReceipt over {version, settlement, request, response}.
-
-    Call this at the HTTP layer, after the resource handler runs, once the
-    response digests are known. ``request``/``response`` carry digests (not raw
-    bodies). The returned receipt is meant for the ``X-X402-Interaction-Receipt``
-    response header; the client embeds it at ``interaction.response.agentSignature``.
-
-    The signer must be the agent owner key (``IdentityRegistry.ownerOf(agentId)``).
-
-    The signed digest covers ``(chainId, ticketId, interactionHash)`` — see
-    ``artifact.receipt_digest``. ``tx_hash`` is still used to fill the
-    artifact's ``settlement.txHash`` field (so the artifact reads naturally)
-    but does not appear in the signed preimage.
-    """
+) -> InteractionAttestation:
+    """Sign an InteractionAttestation after the handler runs (HTTP layer)."""
     pm = payment_method or _payment_method(requirements)
-    artifact = build_artifact(
-        requirements=requirements,
-        payment_payload=payment_payload,
-        tx_hash=tx_hash,
-        payer=payer,
-        payment_method=pm,
-        agent_id=agent_id,
-        request=request,
-        response=response,
-        feedback={},
-    )
-    interaction_hash = compute_interaction_hash(artifact.to_dict())
     chain_id = int(requirements.network.split(":")[1])
-    return sign_interaction_receipt(signer, chain_id, int(ticket_id), interaction_hash)
+    req_digest = body_digest(request_body)
+    resp_digest = body_digest(response_body)
+
+    return sign_interaction_attestation(
+        signer,
+        wrapper_address=wrapper_address,
+        ticket_id=int(ticket_id),
+        chain_id=chain_id,
+        method=method,
+        url=url,
+        request_body_digest=req_digest,
+        response_body_digest=resp_digest,
+        response_status=response_status,
+    )
+
+
+def attach_interaction_attestation_header(
+    headers: dict[str, str],
+    attestation: InteractionAttestation | None,
+) -> dict[str, str]:
+    """Attach X-X402-Interaction-Attestation when signing succeeded."""
+    if attestation is None:
+        return headers
+    import json
+
+    out = dict(headers)
+    out[ATTESTATION_HEADER] = json.dumps(attestation.to_dict(), separators=(",", ":"))
+    return out
+
+
+def try_create_interaction_attestation(
+    signer: Any,
+    **kwargs: Any,
+) -> InteractionAttestation | None:
+    """Best-effort attestation — log and return None on signing failure."""
+    try:
+        return create_interaction_attestation(signer, **kwargs)
+    except Exception as e:
+        logger.warning("erc8004 attestation signing failed: %s", e, exc_info=True)
+        return None
 
 
 def _payment_method(requirements: Any) -> str:
-    """Best-effort scheme tag for the artifact (informational only)."""
     extra = getattr(requirements, "extra", {}) or {}
-    # x402 EVM mechanisms use `assetTransferMethod` ("eip3009", "permit2", ...).
     return extra.get("assetTransferMethod") or extra.get("paymentMethod") or requirements.scheme

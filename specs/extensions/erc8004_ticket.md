@@ -141,4 +141,4 @@ uv run python ../../examples/python/clients/erc8004/run_ticket_demo.py
 # (override with RPC_URL=<your-mainnet-rpc>)
 ```
 
-The `erc8004` profile enables `via_ir` for `ReputationRegistryV3` (stack depth with string params).
+The `erc8004` profile enables `via_ir` for `X402AgentReputation` (stack depth with string params).

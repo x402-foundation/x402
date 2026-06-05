@@ -291,9 +291,9 @@ class ExactEvmScheme:
         Returns:
             SettleResponse with success, transaction, and payer.
         """
-        # ERC-8004 ticket routing: if the facilitator has the ticket extension
-        # registered AND the client provided a ticket bind, route settlement
-        # through TicketMinter so the token transfer and the ticket mint land
+        # ERC-8004 wrapper routing: if the facilitator has the extension
+        # registered AND the client echoed agentId, route settlement
+        # through X402AgentReputation so the token transfer and the ticket mint land
         # atomically in one tx. Falls through to the standard path on any miss
         # so non-erc8004 traffic is untouched.
         if context is not None:
@@ -421,25 +421,21 @@ def _maybe_route_to_ticket_minter(
     requirements: PaymentRequirements,
     context: Any,
 ) -> SettleResponse | None:
-    """Route settle through TicketMinter when the erc8004 extension is active.
+    """Route settle through X402AgentReputation when the erc8004 extension is active.
 
-    Returns the SettleResponse from `settle_via_ticket_minter` when all three
-    activation guards hold; returns None otherwise so the caller falls through
-    to the standard transfer/proxy path.
+    Returns the SettleResponse from `settle_via_wrapper` when guards hold; None
+    otherwise so the caller falls through to the standard transfer/proxy path.
 
     Guards:
       1. Facilitator registered `ERC8004TicketFacilitatorExtension`
-      2. Extension resolves a minter address for the request network
-      3. Client populated `payload.extensions.erc8004` with ticket-bind fields
+      2. Extension resolves a wrapper address for the request network
+      3. Client echoed `agentId` in `payload.extensions.erc8004`
     """
-    # Imports are local to avoid the extensions package paying the import cost
-    # for every non-erc8004 settle, and to dodge a hypothetical circular import
-    # via x402.extensions.erc8004 → ...mechanisms.evm.types.
     try:
         from ....extensions.erc8004 import (
             ERC8004TicketFacilitatorExtension,
-            extract_ticket_bind,
-            settle_via_ticket_minter,
+            extract_agent_id,
+            settle_via_wrapper,
         )
         from ....extensions.erc8004.types import EXTENSION_KEY
     except ImportError:
@@ -449,12 +445,12 @@ def _maybe_route_to_ticket_minter(
     if not isinstance(ticket_ext, ERC8004TicketFacilitatorExtension):
         return None
 
-    minter_address = ticket_ext.resolve_minter(str(requirements.network))
-    if not minter_address:
+    wrapper_address = ticket_ext.resolve_wrapper(str(requirements.network))
+    if not wrapper_address:
         return None
 
-    bind = extract_ticket_bind(payload)
-    if bind is None:
+    agent_id = extract_agent_id(payload)
+    if agent_id is None:
         return None
 
-    return settle_via_ticket_minter(signer, minter_address, payload, requirements, bind)
+    return settle_via_wrapper(signer, wrapper_address, payload, requirements, agent_id)

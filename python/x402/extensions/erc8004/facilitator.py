@@ -1,27 +1,19 @@
 """Facilitator-side extension for ERC-8004 ticket minting.
 
-The extension wraps a facilitator EVM signer with the ability to route x402
-settlement through a deployed TicketMinter so that the token transfer and the
-ticket mint land in a single transaction. The returned tx hash + ticketId go
-back to the resource server via PAYMENT-RESPONSE.extensions.erc8004.
-
-Phase 2 ships the building blocks (extension class + settle helpers). Wiring
-this into the standard `ExactEvmScheme.settle` flow happens once the client
-extension populates payment.extensions.erc8004 with the ticket-bind fields
-(Phase 4).
+Routes x402 settlement through a deployed X402AgentReputation wrapper so token
+transfer and ticket mint land in a single transaction.
 """
 
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Callable
 
 from eth_utils import to_checksum_address
 
 from ...interfaces import FacilitatorExtension
 from ...schemas import PaymentPayload, PaymentRequirements, SettleResponse
-from .constants import TICKET_MINTER_ABI, get_ticket_minted_topic
+from .constants import X402_AGENT_REPUTATION_ABI, get_ticket_minted_topic
 from .types import EXTENSION_KEY
 
 if TYPE_CHECKING:
@@ -29,125 +21,73 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger("x402.erc8004.facilitator")
 
-ERR_TICKET_MISSING_BIND = "erc8004_ticket_bind_missing"
 ERR_TICKET_MINT_FAILED = "erc8004_ticket_mint_failed"
-ERR_TICKET_MINTER_NOT_CONFIGURED = "erc8004_ticket_minter_not_configured"
+ERR_WRAPPER_NOT_CONFIGURED = "erc8004_wrapper_not_configured"
 
 
-@dataclass(frozen=True)
-class TicketBind:
-    """Fields the client binds to a paid request before signing.
-
-    `agent_id`, `request_hash`, `interaction_hash`, `endpoint` are echoed by
-    the client in `PaymentPayload.extensions.erc8004` at signing time. The
-    facilitator reads them from there and forwards into the minter.
-    """
-
-    agent_id: int
-    request_hash: bytes
-    interaction_hash: bytes
-    endpoint: str
-
-
-def extract_ticket_bind(payload: PaymentPayload) -> TicketBind | None:
-    """Parse ticket-bind fields out of `PaymentPayload.extensions.erc8004`.
-
-    Returns None when the extension is absent or malformed — callers should
-    fall back to the standard settle path in that case.
-    """
+def extract_agent_id(payload: PaymentPayload) -> int | None:
+    """Parse agentId from PaymentPayload.extensions.erc8004 (echoed from server 402)."""
     extensions = payload.extensions or {}
     ext = extensions.get(EXTENSION_KEY)
     if not isinstance(ext, dict):
         return None
-
     info = ext.get("info") if isinstance(ext.get("info"), dict) else ext
     try:
-        agent_id = int(info["agentId"])
-        request_hash = _hex_to_bytes32(info["requestHash"])
-        interaction_hash = _hex_to_bytes32(info["interactionHash"])
-        endpoint = str(info["endpoint"])
+        return int(info["agentId"])
     except (KeyError, ValueError, TypeError):
         return None
 
-    return TicketBind(
-        agent_id=agent_id,
-        request_hash=request_hash,
-        interaction_hash=interaction_hash,
-        endpoint=endpoint,
-    )
-
-
-def _hex_to_bytes32(value: Any) -> bytes:
-    if isinstance(value, bytes):
-        if len(value) != 32:
-            raise ValueError("bytes32 must be 32 bytes")
-        return value
-    if not isinstance(value, str):
-        raise ValueError("bytes32 hex required")
-    raw = bytes.fromhex(value.removeprefix("0x"))
-    if len(raw) != 32:
-        raise ValueError("bytes32 hex must decode to 32 bytes")
-    return raw
-
 
 class ERC8004TicketFacilitatorExtension(FacilitatorExtension):
-    """Facilitator extension that mints an ERC-8004 ticket atomically with settle.
-
-    Holds the per-network TicketMinter address mapping. Looked up by the
-    scheme settle path via FacilitatorContext.get_extension(EXTENSION_KEY).
-
-    Usage:
-        ext = ERC8004TicketFacilitatorExtension(
-            minter_for_network=lambda net: ADDRS.get(net),
-        )
-        facilitator.register_extension(ext)
-    """
+    """Facilitator extension that mints an ERC-8004 ticket atomically with settle."""
 
     def __init__(
         self,
         *,
+        wrapper_for_network: Callable[[str], str | None] | None = None,
+        wrappers: dict[str, str] | None = None,
         minter_for_network: Callable[[str], str | None] | None = None,
         minters: dict[str, str] | None = None,
     ) -> None:
-        # FacilitatorExtension is a frozen dataclass — we bypass dataclass init
-        # to set the runtime fields (matching Erc20ApprovalFacilitatorExtension).
         object.__setattr__(self, "key", EXTENSION_KEY)
-        object.__setattr__(self, "_minter_for_network", minter_for_network)
-        object.__setattr__(self, "_minters", dict(minters or {}))
+        lookup = wrapper_for_network or minter_for_network
+        static = dict(wrappers or minters or {})
+        object.__setattr__(self, "_wrapper_for_network", lookup)
+        object.__setattr__(self, "_wrappers", static)
 
-    def resolve_minter(self, network: str) -> str | None:
-        """Return the TicketMinter address configured for `network`, or None."""
-        if self._minter_for_network is not None:
-            addr = self._minter_for_network(network)
+    def resolve_wrapper(self, network: str) -> str | None:
+        """Return the X402AgentReputation address for `network`, or None."""
+        if self._wrapper_for_network is not None:
+            addr = self._wrapper_for_network(network)
             if addr is not None:
                 return addr
-        return self._minters.get(network)
+        return self._wrappers.get(network)
+
+    def resolve_minter(self, network: str) -> str | None:
+        """Legacy alias for resolve_wrapper."""
+        return self.resolve_wrapper(network)
 
 
-def settle_via_ticket_minter(
+def settle_via_wrapper(
     signer: "FacilitatorEvmSigner",
-    minter_address: str,
+    wrapper_address: str,
     payload: PaymentPayload,
     requirements: PaymentRequirements,
-    ticket_bind: TicketBind,
+    agent_id: int,
 ) -> SettleResponse:
-    """Settle a payment by routing it through TicketMinter.settleAndMintTicket*.
-
-    Selects EIP-3009 or Permit2 path based on payload shape. Returns a
-    SettleResponse whose `extensions.erc8004.ticketId` carries the minted id
-    (parsed from the TicketMinted log on the receipt).
-    """
+    """Settle by routing through X402AgentReputation.settleAndMintTicket*."""
     network = str(requirements.network)
     payer = _payer_from_payload(payload)
+    agent_address = to_checksum_address(requirements.pay_to)
 
     try:
         if _is_permit2_payload(payload.payload):
             tx_hash = _write_settle_permit2(
-                signer, minter_address, payload, requirements, ticket_bind, payer
+                signer, wrapper_address, payload, requirements, agent_id, agent_address, payer
             )
         else:
             tx_hash = _write_settle_eip3009(
-                signer, minter_address, payload, requirements, ticket_bind, payer
+                signer, wrapper_address, payload, requirements, agent_id, agent_address, payer
             )
     except Exception as e:
         logger.warning("erc8004 settle failed for payer=%s: %s", payer, e, exc_info=True)
@@ -172,8 +112,6 @@ def settle_via_ticket_minter(
 
     ticket_id = ticket_id_from_receipt(signer, tx_hash)
     if ticket_id is None:
-        # Mint reverted silently or log topic missing — surface a failure so
-        # the resource server skips its handler.
         return SettleResponse(
             success=False,
             error_reason=ERR_TICKET_MINT_FAILED,
@@ -192,11 +130,7 @@ def settle_via_ticket_minter(
 
 
 def ticket_id_from_receipt(signer: "FacilitatorEvmSigner", tx_hash: str) -> int | None:
-    """Parse the TicketMinted event's ticketId from a settled transaction.
-
-    Returns None if no TicketMinted log is present (mint silently failed,
-    or this tx didn't go through the minter).
-    """
+    """Parse TicketMinted.ticketId from a settled transaction receipt."""
     w3 = _w3_from_signer(signer)
     if w3 is None:
         return None
@@ -213,16 +147,11 @@ def ticket_id_from_receipt(signer: "FacilitatorEvmSigner", tx_hash: str) -> int 
         if not topic0_hex.startswith("0x"):
             topic0_hex = "0x" + topic0_hex
         if topic0_hex.lower() == topic.lower():
-            # ticketId is the first indexed parameter → topics[1].
             tid = topics[1]
-            tid_hex = tid.hex() if isinstance(tid, (bytes, bytearray)) else str(tid)
-            return int(tid_hex, 16)
+            if isinstance(tid, (bytes, bytearray)):
+                return int.from_bytes(tid, "big")
+            return int(str(tid), 16)
     return None
-
-
-# ---------------------------------------------------------------------------
-# Internal helpers
-# ---------------------------------------------------------------------------
 
 
 def _is_permit2_payload(payload: Any) -> bool:
@@ -242,10 +171,11 @@ def _payer_from_payload(payload: PaymentPayload) -> str:
 
 def _write_settle_eip3009(
     signer: "FacilitatorEvmSigner",
-    minter_address: str,
+    wrapper_address: str,
     payload: PaymentPayload,
     requirements: PaymentRequirements,
-    ticket_bind: TicketBind,
+    agent_id: int,
+    agent_address: str,
     payer: str,
 ) -> str:
     from ...mechanisms.evm.types import ExactEIP3009Payload
@@ -274,24 +204,23 @@ def _write_settle_eip3009(
     )
 
     return signer.write_contract(
-        to_checksum_address(minter_address),
-        TICKET_MINTER_ABI,
+        to_checksum_address(wrapper_address),
+        X402_AGENT_REPUTATION_ABI,
         "settleAndMintTicketEIP3009",
         to_checksum_address(payer),
-        ticket_bind.agent_id,
-        ticket_bind.request_hash,
-        ticket_bind.interaction_hash,
-        ticket_bind.endpoint,
+        int(agent_id),
+        agent_address,
         settlement,
     )
 
 
 def _write_settle_permit2(
     signer: "FacilitatorEvmSigner",
-    minter_address: str,
+    wrapper_address: str,
     payload: PaymentPayload,
     requirements: PaymentRequirements,
-    ticket_bind: TicketBind,
+    agent_id: int,
+    agent_address: str,
     payer: str,
 ) -> str:
     from ...mechanisms.evm.types import ExactPermit2Payload
@@ -318,20 +247,17 @@ def _write_settle_permit2(
     )
 
     return signer.write_contract(
-        to_checksum_address(minter_address),
-        TICKET_MINTER_ABI,
+        to_checksum_address(wrapper_address),
+        X402_AGENT_REPUTATION_ABI,
         "settleAndMintTicketPermit2",
         to_checksum_address(payer),
-        ticket_bind.agent_id,
-        ticket_bind.request_hash,
-        ticket_bind.interaction_hash,
-        ticket_bind.endpoint,
+        int(agent_id),
+        agent_address,
         settlement,
     )
 
 
 def _w3_from_signer(signer: Any) -> Any:
-    """Best-effort access to the underlying web3 instance for log parsing."""
     for attr in ("_w3", "w3"):
         w3 = getattr(signer, attr, None)
         if w3 is not None:

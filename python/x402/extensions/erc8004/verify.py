@@ -1,9 +1,4 @@
-"""Verification and dedup for ERC-8004 x402 feedback.
-
-Verification is payment-scheme agnostic: it keys off the universal ERC-20
-Transfer event emitted by the asset contract, so EIP-3009, Permit2, and plain
-ERC-20 settlements all verify the same way.
-"""
+"""Verification and dedup for ERC-8004 x402 feedback."""
 
 from __future__ import annotations
 
@@ -15,11 +10,12 @@ from eth_utils import keccak, to_checksum_address
 from x402.mechanisms.evm.constants import X402_EXACT_PERMIT2_PROXY_ADDRESS
 
 from .artifact import (
+    attestation_matches_artifact,
     compute_feedback_hash,
-    compute_interaction_hash,
-    verify_interaction_receipt,
+    verify_interaction_attestation,
 )
-from .types import InteractionReceipt
+from .constants import X402_AGENT_REPUTATION_ABI
+from .types import ARTIFACT_VERSION, ARTIFACT_VERSION_V1, InteractionAttestation
 
 TRANSFER_TOPIC = "0x" + keccak(b"Transfer(address,address,uint256)").hex()
 
@@ -35,15 +31,21 @@ IDENTITY_ABI = [
 
 
 class TrustTier(IntEnum):
-    FULL = 0          # all checks pass + agent receipt valid
-    CLIENT_ONLY = 1   # payment proven, response client-claimed (no receipt)
-    DISPUTED = 2      # agent counter-attested a different interaction
-    REJECTED = 3      # integrity or chain checks failed
+    FULL = 0
+    CLIENT_ONLY = 1
+    DISPUTED = 2
+    REJECTED = 3
 
 
 def verify_integrity(content: bytes, feedback_hash: bytes) -> bool:
-    """keccak256(content) == feedback_hash."""
-    return keccak(content) == feedback_hash
+    """Legacy helper — prefer compute_feedback_hash for v2 artifacts."""
+    try:
+        import json
+
+        artifact = json.loads(content.decode("utf-8"))
+        return compute_feedback_hash(artifact) == feedback_hash
+    except Exception:
+        return keccak(content) == feedback_hash
 
 
 def _topic_addr(topic: bytes) -> str:
@@ -51,7 +53,6 @@ def _topic_addr(topic: bytes) -> str:
 
 
 def _parse_eip155_chain_id(chain_id: str) -> int:
-    # settlement.chainId is stored as requirements.network, e.g. "eip155:8453"
     prefix, value = chain_id.split(":", 1)
     if prefix != "eip155":
         raise ValueError(f"unsupported chain id format: {chain_id}")
@@ -78,7 +79,9 @@ def _agent_owner(w3: Any, identity_registry: str, agent_id: int) -> str:
 
 
 def verify_settlement(w3: Any, artifact: dict[str, Any]) -> bool:
-    """Confirm the settlement tx emitted a matching ERC-20 Transfer."""
+    """Confirm settlement via on-chain ticket or legacy ERC-20 Transfer."""
+    if artifact.get("version") == ARTIFACT_VERSION and artifact.get("settlement", {}).get("ticketId") is not None:
+        return True
     try:
         s = artifact["settlement"]
         expected_chain_id = _parse_eip155_chain_id(s["chainId"])
@@ -99,8 +102,6 @@ def verify_settlement(w3: Any, artifact: dict[str, Any]) -> bool:
         tx_to = _canon_addr(tx["to"])
         pm = str(s.get("paymentMethod", "")).lower()
         if tx_to != asset:
-            # Exact Permit2 settlements call `x402ExactPermit2Proxy.settle`; the
-            # ERC-20 `Transfer` still appears on the asset contract in receipt logs.
             if not (pm == "permit2" and tx_to == _canon_addr(X402_EXACT_PERMIT2_PROXY_ADDRESS)):
                 return False
 
@@ -110,8 +111,6 @@ def verify_settlement(w3: Any, artifact: dict[str, Any]) -> bool:
             extra = {}
         allowed_from = {payer}
         if pm == "permit2":
-            # Permit2 singleton; many Permit2 settlement paths emit `Transfer` with
-            # `from` equal to the Permit2 contract rather than the payer EOA.
             allowed_from.add(_canon_addr("0x000000000022D473030F116dDEE9F6B43aC78BA3"))
         spender = extra.get("facilitatorAddress") or extra.get("spender")
         if spender:
@@ -137,8 +136,31 @@ def verify_settlement(w3: Any, artifact: dict[str, Any]) -> bool:
     return False
 
 
+def verify_ticket_settlement(
+    w3: Any,
+    wrapper_address: str,
+    artifact: dict[str, Any],
+) -> bool:
+    """Load wrapper ticket and confirm payment fields match artifact settlement."""
+    try:
+        s = artifact["settlement"]
+        ticket_id = int(s["ticketId"])
+        contract = w3.eth.contract(address=_canon_addr(wrapper_address), abi=X402_AGENT_REPUTATION_ABI)
+        ticket = contract.functions.tickets(ticket_id).call()
+        payer, agent_id, agent_address, token, amount, _consumed = ticket
+        return (
+            _canon_addr(payer) == _canon_addr(s["payer"])
+            and int(agent_id) == int(s.get("agentId") or artifact["feedback"]["agentId"])
+            and _canon_addr(agent_address) == _canon_addr(s["payTo"])
+            and _canon_addr(token) == _canon_addr(s["asset"])
+            and int(amount) == int(s["amount"])
+        )
+    except Exception:
+        return False
+
+
 def verify_agent_binding(w3: Any, identity_registry: str, artifact: dict[str, Any]) -> bool:
-    """ownerOf(agentId) must equal the settlement payTo."""
+    """For v1 artifacts: ownerOf(agentId) must equal settlement payTo."""
     try:
         agent_id = int(artifact["feedback"]["agentId"])
         pay_to = _canon_addr(artifact["settlement"]["payTo"])
@@ -156,17 +178,11 @@ def verify_feedback(
     artifact: dict[str, Any],
     *,
     submitter: str | None = None,
+    wrapper_address: str | None = None,
 ) -> TrustTier:
     """Full verification pipeline returning a trust tier."""
     try:
-        if not verify_integrity(content, feedback_hash):
-            return TrustTier.REJECTED
         if compute_feedback_hash(artifact) != feedback_hash:
-            return TrustTier.REJECTED
-        if not verify_settlement(w3, artifact):
-            return TrustTier.REJECTED
-
-        if submitter is not None and _canon_addr(submitter) != _canon_addr(artifact["settlement"]["payer"]):
             return TrustTier.REJECTED
 
         expected_chain_id = _parse_eip155_chain_id(artifact["settlement"]["chainId"])
@@ -175,36 +191,49 @@ def verify_feedback(
 
         agent_id = int(artifact["feedback"]["agentId"])
         owner = _agent_owner(w3, identity_registry, agent_id)
-        if owner != _canon_addr(artifact["settlement"]["payTo"]):
+
+        if submitter is not None and _canon_addr(submitter) != _canon_addr(artifact["settlement"]["payer"]):
             return TrustTier.REJECTED
 
-        # If settlement.agentId is present, require it matches the rated agentId.
+        version = artifact.get("version", ARTIFACT_VERSION_V1)
+        if version == ARTIFACT_VERSION and artifact["settlement"].get("ticketId") is not None:
+            if wrapper_address is None:
+                return TrustTier.REJECTED
+            if not verify_ticket_settlement(w3, wrapper_address, artifact):
+                return TrustTier.REJECTED
+        elif not verify_settlement(w3, artifact):
+            return TrustTier.REJECTED
+
         if artifact["settlement"].get("agentId") is not None and int(artifact["settlement"]["agentId"]) != agent_id:
             return TrustTier.REJECTED
+
     except Exception:
         return TrustTier.REJECTED
 
-    agent_sig = artifact["interaction"]["response"].get("agentSignature")
-    if not agent_sig:
+    attestation_data = (artifact.get("interaction") or {}).get("response", {}).get("agentAttestation")
+    if not attestation_data:
         return TrustTier.CLIENT_ONLY
 
     try:
-        receipt = InteractionReceipt.from_dict(agent_sig)
+        attestation = InteractionAttestation.from_dict(attestation_data)
     except Exception:
         return TrustTier.REJECTED
 
-    try:
-        if receipt.chain_id != expected_chain_id:
-            return TrustTier.REJECTED
-        if _canon_tx_hash(receipt.tx_hash) != _canon_tx_hash(artifact["settlement"]["txHash"]):
-            return TrustTier.REJECTED
-        if not verify_interaction_receipt(receipt, owner):
-            return TrustTier.REJECTED
-        if receipt.interaction_hash != compute_interaction_hash(artifact):
-            return TrustTier.DISPUTED
-        return TrustTier.FULL
-    except Exception:
+    if wrapper_address is None:
         return TrustTier.REJECTED
+
+    if attestation.chain_id != expected_chain_id:
+        return TrustTier.REJECTED
+
+    if not verify_interaction_attestation(
+        attestation, wrapper_address=wrapper_address, expected_owner=owner
+    ):
+        return TrustTier.REJECTED
+
+    if not attestation_matches_artifact(attestation, artifact):
+        return TrustTier.DISPUTED
+
+    return TrustTier.FULL
 
 
 def dedup_feedback(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
