@@ -1,3 +1,3 @@
 kind: added
-body: Add Go sign-in-with-x extension helpers for declaration, header parsing, SIWE message validation, and EVM EIP-191 verification
+body: Add Go sign-in-with-x server and client support, including SIWX storage, auth hooks, EVM EIP-191 signing and verification, HTTP auth retry, and examples
 time: 2026-05-27T09:59:40.638384+09:00
