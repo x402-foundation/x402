@@ -20,7 +20,8 @@ import (
 
 // x402HTTPClient wraps x402Client with HTTP-specific payment handling
 type x402HTTPClient struct {
-	client *x402.X402Client
+	client               *x402.X402Client
+	paymentRequiredHooks []PaymentRequiredHook
 }
 
 // Newx402HTTPClient creates a new HTTP-aware x402 client
@@ -28,6 +29,22 @@ func Newx402HTTPClient(client *x402.X402Client) *x402HTTPClient {
 	return &x402HTTPClient{
 		client: client,
 	}
+}
+
+// PaymentRequiredHookResult contains headers for an auth-style retry.
+type PaymentRequiredHookResult struct {
+	Headers map[string]string
+}
+
+// PaymentRequiredHook can respond to a 402 PaymentRequired before payment payload creation.
+type PaymentRequiredHook func(ctx context.Context, paymentRequired types.PaymentRequired) (*PaymentRequiredHookResult, error)
+
+// OnPaymentRequired registers a hook that may retry a protected request with additional headers.
+func (c *x402HTTPClient) OnPaymentRequired(hook PaymentRequiredHook) *x402HTTPClient {
+	if hook != nil {
+		c.paymentRequiredHooks = append(c.paymentRequiredHooks, hook)
+	}
+	return c
 }
 
 // ============================================================================
@@ -219,6 +236,16 @@ func (t *PaymentRoundTripper) RoundTrip(req *http.Request) (*http.Response, erro
 		return t.sendPaymentRetry(req, ctx, payloadBytes)
 	}
 
+	if authResp, authHeaders, authBody, ok, err := t.tryPaymentRequiredHooks(req, ctx, headers, body); err != nil {
+		return nil, err
+	} else if ok {
+		if authResp.StatusCode != http.StatusPaymentRequired {
+			return authResp, nil
+		}
+		headers = authHeaders
+		body = authBody
+	}
+
 	// V2: rich build so we can fire OnPaymentResponse with the right payload + requirements.
 	build, err := t.buildV2Payment(ctx, headers, body)
 	if err != nil {
@@ -273,6 +300,81 @@ func (t *PaymentRoundTripper) RoundTrip(req *http.Request) (*http.Response, erro
 		return correctiveResp, nil
 	}
 	return correctiveResp, nil
+}
+
+func (t *PaymentRoundTripper) tryPaymentRequiredHooks(
+	req *http.Request,
+	ctx context.Context,
+	headers map[string]string,
+	body []byte,
+) (*http.Response, map[string]string, []byte, bool, error) {
+	if t.x402Client == nil || len(t.x402Client.paymentRequiredHooks) == 0 {
+		return nil, headers, body, false, nil
+	}
+
+	paymentRequired, err := decodeV2PaymentRequired(headers, body)
+	if err != nil {
+		return nil, headers, body, false, err
+	}
+
+	for _, hook := range t.x402Client.paymentRequiredHooks {
+		result, err := hook(ctx, paymentRequired)
+		if err != nil {
+			return nil, headers, body, false, err
+		}
+		if result == nil || len(result.Headers) == 0 {
+			continue
+		}
+
+		authResp, err := t.sendHeaderRetry(req, ctx, result.Headers)
+		if err != nil {
+			return nil, headers, body, false, err
+		}
+		if authResp.StatusCode != http.StatusPaymentRequired {
+			return authResp, headers, body, true, nil
+		}
+
+		authHeaders := responseHeaders(authResp)
+		authBody, err := io.ReadAll(authResp.Body)
+		authResp.Body.Close()
+		if err != nil {
+			return nil, headers, body, false, fmt.Errorf("failed to read auth retry body: %w", err)
+		}
+		return authResp, authHeaders, authBody, true, nil
+	}
+
+	return nil, headers, body, false, nil
+}
+
+func (t *PaymentRoundTripper) sendHeaderRetry(
+	req *http.Request,
+	ctx context.Context,
+	headers map[string]string,
+) (*http.Response, error) {
+	retryReq := req.Clone(ctx)
+	for k, v := range headers {
+		retryReq.Header.Set(k, v)
+	}
+
+	if req.GetBody != nil {
+		body, err := req.GetBody()
+		if err != nil {
+			return nil, fmt.Errorf("failed to get body for header retry: %w", err)
+		}
+		retryReq.Body = body
+	}
+
+	return t.Transport.RoundTrip(retryReq)
+}
+
+func responseHeaders(resp *http.Response) map[string]string {
+	headers := make(map[string]string)
+	for k, v := range resp.Header {
+		if len(v) > 0 {
+			headers[k] = v[0]
+		}
+	}
+	return headers
 }
 
 // sendPaymentRetry clones the original request, attaches PAYMENT-SIGNATURE / X-PAYMENT
@@ -359,25 +461,9 @@ func (t *PaymentRoundTripper) buildV2Payment(
 	headers map[string]string,
 	body []byte,
 ) (*v2PaymentBuild, error) {
-	var paymentRequiredV2 types.PaymentRequired
-
-	normalizedHeaders := make(map[string]string)
-	for k, v := range headers {
-		normalizedHeaders[strings.ToUpper(k)] = v
-	}
-
-	if header, exists := normalizedHeaders["PAYMENT-REQUIRED"]; exists {
-		decoded, err := decodePaymentRequiredHeader(header)
-		if err != nil {
-			return nil, fmt.Errorf("failed to decode V2 header: %w", err)
-		}
-		paymentRequiredV2 = decoded
-	} else if len(body) > 0 {
-		if err := json.Unmarshal(body, &paymentRequiredV2); err != nil {
-			return nil, fmt.Errorf("failed to parse V2 payment required: %w", err)
-		}
-	} else {
-		return nil, fmt.Errorf("no V2 payment required information found")
+	paymentRequiredV2, err := decodeV2PaymentRequired(headers, body)
+	if err != nil {
+		return nil, err
 	}
 
 	selected, err := t.x402Client.client.SelectPaymentRequirements(paymentRequiredV2.Accepts)
@@ -406,6 +492,30 @@ func (t *PaymentRoundTripper) buildV2Payment(
 		paymentPayload:  payload,
 		payloadBytes:    bytes,
 	}, nil
+}
+
+func decodeV2PaymentRequired(headers map[string]string, body []byte) (types.PaymentRequired, error) {
+	var paymentRequiredV2 types.PaymentRequired
+
+	normalizedHeaders := make(map[string]string)
+	for k, v := range headers {
+		normalizedHeaders[strings.ToUpper(k)] = v
+	}
+
+	if header, exists := normalizedHeaders["PAYMENT-REQUIRED"]; exists {
+		decoded, err := decodePaymentRequiredHeader(header)
+		if err != nil {
+			return types.PaymentRequired{}, fmt.Errorf("failed to decode V2 header: %w", err)
+		}
+		return decoded, nil
+	}
+	if len(body) > 0 {
+		if err := json.Unmarshal(body, &paymentRequiredV2); err != nil {
+			return types.PaymentRequired{}, fmt.Errorf("failed to parse V2 payment required: %w", err)
+		}
+		return paymentRequiredV2, nil
+	}
+	return types.PaymentRequired{}, fmt.Errorf("no V2 payment required information found")
 }
 
 // handleV1Payment processes V1 PaymentRequired and creates V1 payload

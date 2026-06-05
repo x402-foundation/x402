@@ -9,6 +9,7 @@ import (
 	"github.com/ethereum/go-ethereum/accounts"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/crypto"
+	"github.com/x402-foundation/x402/go/v2/types"
 )
 
 type testEVMSigner struct {
@@ -149,5 +150,65 @@ func TestCreatePayloadRequiresSigner(t *testing.T) {
 	_, err := CreatePayload(context.Background(), Extension{}, nil)
 	if err == nil || !strings.Contains(err.Error(), "signer is required") {
 		t.Fatalf("error = %v, want signer required", err)
+	}
+}
+
+func TestCreateClientHookReturnsSIWXHeader(t *testing.T) {
+	privateKey, err := crypto.GenerateKey()
+	if err != nil {
+		t.Fatalf("GenerateKey() error = %v", err)
+	}
+	address := crypto.PubkeyToAddress(privateKey.PublicKey)
+	signer := &testEVMSigner{
+		address: address.Hex(),
+		sign: func(_ context.Context, message string) (string, error) {
+			signature, err := crypto.Sign(accounts.TextHash([]byte(message)), privateKey)
+			if err != nil {
+				return "", err
+			}
+			signature[64] += 27
+			return "0x" + common.Bytes2Hex(signature), nil
+		},
+	}
+
+	hook := CreateClientHook(signer)
+	result, err := hook(context.Background(), types.PaymentRequired{
+		X402Version: 2,
+		Extensions: map[string]interface{}{
+			ExtensionKey: Extension{
+				Info: Info{
+					Domain:   "api.example.com",
+					URI:      "https://api.example.com/profile",
+					Version:  Version,
+					Nonce:    "nonce-hook",
+					IssuedAt: "2026-06-05T00:00:00Z",
+				},
+				SupportedChains: []SupportedChain{{ChainID: "eip155:8453", Type: SignatureTypeEIP191}},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("hook error = %v", err)
+	}
+	if result == nil || result.Headers[HeaderName] == "" {
+		t.Fatalf("result = %#v, want SIWX header", result)
+	}
+	payload, err := ParseHeader(result.Headers[HeaderName])
+	if err != nil {
+		t.Fatalf("ParseHeader() error = %v", err)
+	}
+	if verify := VerifySignature(payload); !verify.Valid {
+		t.Fatalf("VerifySignature() invalid: %s", verify.Error)
+	}
+}
+
+func TestCreateClientHookReturnsNilWithoutDeclaration(t *testing.T) {
+	hook := CreateClientHook(&testEVMSigner{})
+	result, err := hook(context.Background(), types.PaymentRequired{X402Version: 2})
+	if err != nil {
+		t.Fatalf("hook error = %v", err)
+	}
+	if result != nil {
+		t.Fatalf("result = %#v, want nil", result)
 	}
 }

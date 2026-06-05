@@ -5,6 +5,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+
+	x402http "github.com/x402-foundation/x402/go/v2/http"
+	"github.com/x402-foundation/x402/go/v2/types"
 )
 
 // EVMSigner signs EIP-191 SIWX messages.
@@ -69,6 +72,26 @@ func CreateHeader(ctx context.Context, declaration interface{}, signer EVMSigner
 		return "", err
 	}
 	return EncodeHeader(payload)
+}
+
+// CreateClientHook creates an HTTP on-payment-required hook for SIWX authentication.
+func CreateClientHook(signer EVMSigner) x402http.PaymentRequiredHook {
+	return func(ctx context.Context, paymentRequired types.PaymentRequired) (*x402http.PaymentRequiredHookResult, error) {
+		if paymentRequired.Extensions == nil {
+			return nil, nil
+		}
+		declaration, ok := paymentRequired.Extensions[ExtensionKey]
+		if !ok {
+			return nil, nil
+		}
+		header, err := CreateHeader(ctx, declaration, signer)
+		if err != nil {
+			return nil, nil
+		}
+		return &x402http.PaymentRequiredHookResult{
+			Headers: map[string]string{HeaderName: header},
+		}, nil
+	}
 }
 
 func extensionFromInterface(declaration interface{}) (Extension, error) {
