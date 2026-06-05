@@ -160,7 +160,7 @@ Start with EVM. Add Solana cases if Solana support lands in the same PR.
 
 ### Milestone 1: Server-Side Parity
 
-Status: Not started
+Status: Completed
 
 Deliverables:
 
@@ -173,7 +173,7 @@ Deliverables:
 
 ### Milestone 2: EVM Client Auth
 
-Status: Not started
+Status: Completed
 
 Deliverables:
 
@@ -185,7 +185,7 @@ Deliverables:
 
 ### Milestone 3: Examples And Docs
 
-Status: Not started
+Status: Completed for EVM auth-only flow
 
 Deliverables:
 
