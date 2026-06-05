@@ -1,0 +1,26 @@
+{
+  "slug": "x402_agentpay",
+  "name": "x402 AgentPay",
+  "description": "Pay for AI agent services with USDC on Base L2 using the x402 protocol. Query WALLY, CIPHER, SCOUT, FEEDS, and sports agents on agentpaystore.com. Includes live AGWC price and AgentWorld economy feed.",
+  "version": "0.1.0",
+  "type": "extension",
+  "author": "x402AgentPay LLC",
+  "homepage": "https://agentpaystore.com",
+  "files": [
+    {
+      "path": "SKILL.md",
+      "sha256": "a1bc0ceaa6e6048521064d286e8902bd32ebfbd7dcdc48eef29a30d85d3a41b2",
+      "size": 3266
+    },
+    {
+      "path": "plugin.py",
+      "sha256": "f20dc9b327b6c0379932d25ab43d24fd2acfff104e110122822f8c0f1a4952de",
+      "size": 10802
+    },
+    {
+      "path": "widget.js",
+      "sha256": "62dc6bb97e8df28122248f48628cac17a3826522921cbfb42893622a2387ae91",
+      "size": 4168
+    }
+  ]
+}
