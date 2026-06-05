@@ -1,0 +1,153 @@
+package signinwithx
+
+import (
+	"context"
+	"encoding/json"
+	"strings"
+	"testing"
+
+	"github.com/ethereum/go-ethereum/accounts"
+	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/crypto"
+)
+
+type testEVMSigner struct {
+	address string
+	sign    func(context.Context, string) (string, error)
+}
+
+func (s *testEVMSigner) Address() string { return s.address }
+func (s *testEVMSigner) SignMessage(ctx context.Context, message string) (string, error) {
+	return s.sign(ctx, message)
+}
+
+func TestCreatePayloadSignsEVMDeclaration(t *testing.T) {
+	privateKey, err := crypto.GenerateKey()
+	if err != nil {
+		t.Fatalf("GenerateKey() error = %v", err)
+	}
+	address := crypto.PubkeyToAddress(privateKey.PublicKey)
+	signer := &testEVMSigner{
+		address: address.Hex(),
+		sign: func(_ context.Context, message string) (string, error) {
+			signature, err := crypto.Sign(accounts.TextHash([]byte(message)), privateKey)
+			if err != nil {
+				return "", err
+			}
+			signature[64] += 27
+			return "0x" + common.Bytes2Hex(signature), nil
+		},
+	}
+	declaration := Extension{
+		Info: Info{
+			Domain:         "api.example.com",
+			URI:            "https://api.example.com/profile",
+			Statement:      "Sign in",
+			Version:        Version,
+			Nonce:          "nonce-1",
+			IssuedAt:       "2026-06-05T00:00:00Z",
+			ExpirationTime: "2026-06-05T00:05:00Z",
+			Resources:      []string{"https://api.example.com/profile"},
+		},
+		SupportedChains: []SupportedChain{
+			{ChainID: "solana:mainnet", Type: SignatureTypeEd25519},
+			{ChainID: "eip155:8453", Type: SignatureTypeEIP191},
+		},
+		Schema: Schema(),
+	}
+
+	payload, err := CreatePayload(context.Background(), declaration, signer)
+	if err != nil {
+		t.Fatalf("CreatePayload() error = %v", err)
+	}
+
+	if payload.Address != address.Hex() {
+		t.Fatalf("address = %q, want %q", payload.Address, address.Hex())
+	}
+	if payload.ChainID != "eip155:8453" {
+		t.Fatalf("chainID = %q", payload.ChainID)
+	}
+	if payload.Signature == "" {
+		t.Fatal("signature is empty")
+	}
+	result := VerifySignature(payload)
+	if !result.Valid {
+		t.Fatalf("VerifySignature() invalid: %s", result.Error)
+	}
+}
+
+func TestCreateHeaderAcceptsJSONDecodedDeclaration(t *testing.T) {
+	privateKey, err := crypto.GenerateKey()
+	if err != nil {
+		t.Fatalf("GenerateKey() error = %v", err)
+	}
+	address := crypto.PubkeyToAddress(privateKey.PublicKey)
+	signer := &testEVMSigner{
+		address: address.Hex(),
+		sign: func(_ context.Context, message string) (string, error) {
+			signature, err := crypto.Sign(accounts.TextHash([]byte(message)), privateKey)
+			if err != nil {
+				return "", err
+			}
+			signature[64] += 27
+			return common.Bytes2Hex(signature), nil
+		},
+	}
+
+	declaration := map[string]interface{}{
+		"info": map[string]interface{}{
+			"domain":   "api.example.com",
+			"uri":      "https://api.example.com/profile",
+			"version":  Version,
+			"nonce":    "nonce-2",
+			"issuedAt": "2026-06-05T00:00:00Z",
+		},
+		"supportedChains": []interface{}{
+			map[string]interface{}{"chainId": "eip155:8453", "type": SignatureTypeEIP191},
+		},
+		"schema": Schema(),
+	}
+
+	header, err := CreateHeader(context.Background(), declaration, signer)
+	if err != nil {
+		t.Fatalf("CreateHeader() error = %v", err)
+	}
+	payload, err := ParseHeader(header)
+	if err != nil {
+		t.Fatalf("ParseHeader() error = %v", err)
+	}
+	if !strings.HasPrefix(payload.Signature, "0x") {
+		t.Fatalf("signature = %q, want 0x prefix", payload.Signature)
+	}
+	if result := VerifySignature(payload); !result.Valid {
+		asJSON, _ := json.Marshal(payload)
+		t.Fatalf("VerifySignature() invalid: %s payload=%s", result.Error, asJSON)
+	}
+}
+
+func TestCreatePayloadRejectsUnsupportedDeclaration(t *testing.T) {
+	signer := &testEVMSigner{
+		address: "0x0000000000000000000000000000000000000001",
+		sign: func(context.Context, string) (string, error) {
+			t.Fatal("sign should not be called")
+			return "", nil
+		},
+	}
+
+	_, err := CreatePayload(context.Background(), Extension{
+		Info: Info{Version: Version},
+		SupportedChains: []SupportedChain{
+			{ChainID: "solana:mainnet", Type: SignatureTypeEd25519},
+		},
+	}, signer)
+	if err == nil || !strings.Contains(err.Error(), "does not support EVM") {
+		t.Fatalf("error = %v, want unsupported EVM", err)
+	}
+}
+
+func TestCreatePayloadRequiresSigner(t *testing.T) {
+	_, err := CreatePayload(context.Background(), Extension{}, nil)
+	if err == nil || !strings.Contains(err.Error(), "signer is required") {
+		t.Fatalf("error = %v, want signer required", err)
+	}
+}

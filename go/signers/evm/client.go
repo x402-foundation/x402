@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/ethereum/go-ethereum"
+	"github.com/ethereum/go-ethereum/accounts"
 	"github.com/ethereum/go-ethereum/accounts/abi"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/math"
@@ -77,6 +78,16 @@ func NewClientSignerFromPrivateKeyWithClient(privateKeyHex string, ethClient *et
 // Address returns the Ethereum address of the signer.
 func (s *ClientSigner) Address() string {
 	return s.address.Hex()
+}
+
+// SignMessage signs a UTF-8 message using the EIP-191 personal-sign format.
+func (s *ClientSigner) SignMessage(_ context.Context, message string) (string, error) {
+	signature, err := crypto.Sign(accounts.TextHash([]byte(message)), s.privateKey)
+	if err != nil {
+		return "", fmt.Errorf("failed to sign message: %w", err)
+	}
+	signature[64] += 27
+	return "0x" + common.Bytes2Hex(signature), nil
 }
 
 // SignTypedData signs EIP-712 typed data.
