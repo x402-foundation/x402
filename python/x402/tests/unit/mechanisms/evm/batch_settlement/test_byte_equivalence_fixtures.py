@@ -19,6 +19,11 @@ from typing import Any
 import pytest
 
 try:
+    from x402.mechanisms.evm.batch_settlement.constants import (
+        BATCH_SETTLEMENT_ADDRESS,
+        BATCH_SETTLEMENT_DOMAIN_NAME,
+        BATCH_SETTLEMENT_DOMAIN_VERSION,
+    )
     from x402.mechanisms.evm.batch_settlement.digest import (
         compute_channel_config_digest,
         compute_claim_batch_digest,
@@ -28,6 +33,28 @@ try:
     from x402.mechanisms.evm.batch_settlement.types import ChannelConfig
 except ImportError:
     pytest.skip("batch_settlement requires evm extras", allow_module_level=True)
+
+
+def _assert_fixture_domain_matches_python(fixture: dict[str, Any]) -> None:
+    """Defense-in-depth: fixture-recorded domain matches Python SDK constants.
+
+    The byte-equivalence assertion below catches any drift at the digest layer,
+    but explicit domain crosscheck gives more actionable failure messages
+    (e.g. ``domain.name drifted`` vs the bare ``digest mismatch``).
+    """
+    d = fixture["domain"]
+    assert d["name"] == BATCH_SETTLEMENT_DOMAIN_NAME, (
+        f"fixture domain.name {d['name']!r} drifted from "
+        f"BATCH_SETTLEMENT_DOMAIN_NAME {BATCH_SETTLEMENT_DOMAIN_NAME!r}"
+    )
+    assert d["version"] == BATCH_SETTLEMENT_DOMAIN_VERSION, (
+        f"fixture domain.version {d['version']!r} drifted from "
+        f"BATCH_SETTLEMENT_DOMAIN_VERSION {BATCH_SETTLEMENT_DOMAIN_VERSION!r}"
+    )
+    assert d["verifyingContract"].lower() == BATCH_SETTLEMENT_ADDRESS.lower(), (
+        f"fixture domain.verifyingContract {d['verifyingContract']!r} drifted "
+        f"from BATCH_SETTLEMENT_ADDRESS {BATCH_SETTLEMENT_ADDRESS!r}"
+    )
 
 
 # Path: this test file lives at
@@ -89,6 +116,7 @@ def _python_digest_for(fixture: dict[str, Any]) -> bytes:
 @pytest.mark.parametrize("name", FIXTURE_NAMES)
 def test_byte_equivalence(name: str) -> None:
     fixture = _load_fixture(name)
+    _assert_fixture_domain_matches_python(fixture)
     expected_hex = fixture["expected_digest"]
     assert expected_hex.startswith("0x"), f"{name}: expected_digest must be 0x-prefixed"
     expected_bytes = bytes.fromhex(expected_hex[2:])

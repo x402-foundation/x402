@@ -11,9 +11,9 @@
  * script to regenerate the fixtures. The CI drift-detection job will fail
  * if a regenerated fixture differs from the committed one.
  *
- * Run from the monorepo so the workspace `viem` is resolved:
- *   cd typescript/packages/mechanisms/evm
- *   pnpm tsx ../../../../python/x402/tests/fixtures/batch-settlement-byte-equivalence/v0/_generator.ts
+ * Run:
+ *   cd python/x402/tests/fixtures/batch-settlement-byte-equivalence/v0
+ *   npm install && npx tsx _generator.ts
  */
 
 import { writeFileSync } from "node:fs";

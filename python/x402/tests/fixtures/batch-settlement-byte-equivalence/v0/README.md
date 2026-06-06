@@ -87,15 +87,22 @@ cross-language byte-equivalence tests against the TS SDK. Without such
 tests, a `viem` change, a Python `eth_account` change, or a spec change
 could silently shift one side's digest while the other stays stable —
 breaking signature recovery in production. These fixtures + the
-drift-detection CI job close that gap for the four signing-time primitives.
-The complementary `collectorData` ABI-encoding equivalence (the 2-stage
-encoding case) is tracked in a follow-up PR.
+drift-detection CI job close that gap for the four
+batch-settlement-internal signing-time primitives (`ChannelConfig`,
+`Voucher`, `Refund`, `ClaimBatch`). The complementary deposit-side
+EIP-712 primitives (ERC-3009 `ReceiveWithAuthorization` and Permit2
+`PermitWitnessTransferFrom`) plus the `collectorData` ABI-encoding
+equivalence (the 2-stage encoding case) are tracked in a follow-up PR
+(#2499 — L2.5–L2.8).
 
 ## Related
 
 - Python digest API: `python/x402/mechanisms/evm/batch_settlement/digest.py`
 - Python verifier test: `python/x402/tests/unit/mechanisms/evm/batch_settlement/test_byte_equivalence_fixtures.py`
-- TS digest source: `typescript/packages/mechanisms/evm/src/batch-settlement/utils.ts`
-  (uses `viem.hashTypedData`)
-- TS EIP-712 type definitions: `typescript/packages/mechanisms/evm/src/batch-settlement/constants.ts`
+- TS EIP-712 type definitions (SSOT mirrored by `_generator.ts`):
+  `typescript/packages/mechanisms/evm/src/batch-settlement/constants.ts`
+- TS digest call sites (each uses `viem.hashTypedData` against the SSOT types):
+  - `ChannelConfig`: `batch-settlement/utils.ts` (`computeChannelId`)
+  - `Voucher`: `batch-settlement/client/voucher.ts` (signer), `batch-settlement/server/verify.ts` & `batch-settlement/facilitator/utils.ts` (verifiers)
+  - `Refund` / `ClaimBatch`: `batch-settlement/authorizerSigner.ts`
 - CI drift check: `.github/workflows/check_byte_equivalence_fixtures.yml`
