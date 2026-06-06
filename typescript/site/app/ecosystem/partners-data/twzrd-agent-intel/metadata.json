@@ -1,0 +1,7 @@
+{
+  "name": "TWZRD Agent Intel",
+  "category": "Services/Endpoints",
+  "logoUrl": "/logos/twzrd-agent-intel.svg",
+  "description": "Solana-native x402 MCP server for AI agent trust scoring and identity verification. 4 free preflight tools score any Solana wallet (on-chain activity, transaction patterns, network age, recurring behavior); paid get_trust_receipt returns a signed twzrd.receipt.v5 trust token via x402 USDC on Solana (<1s settlement). First pay-per-proof agent identity MCP on Solana.",
+  "websiteUrl": "https://intel.twzrd.xyz"
+}
