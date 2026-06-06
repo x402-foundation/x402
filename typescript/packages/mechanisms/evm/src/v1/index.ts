@@ -22,6 +22,8 @@ export const EVM_NETWORK_CHAIN_ID_MAP = {
   monad: 143,
   stable: 988,
   "stable-testnet": 2201,
+  kaia: 8217,
+  "kaia-kairos": 1001,
 } as const;
 
 export type EvmNetworkV1 = keyof typeof EVM_NETWORK_CHAIN_ID_MAP;

@@ -26,6 +26,8 @@ import {
   abstractTestnet,
   story,
   eduChain,
+  kaia,
+  kairos,
 } from "viem/chains";
 import { skaleBaseSepolia } from "../custom-chains";
 import { privateKeyToAccount } from "viem/accounts";
@@ -235,6 +237,10 @@ export function getChainFromNetwork(network: string | undefined): Chain {
       return iotexTestnet;
     case "skale-base-sepolia":
       return skaleBaseSepolia;
+    case "kaia":
+      return kaia;
+    case "kaia-kairos":
+      return kairos;
     default:
       throw new Error(`Unsupported network: ${network}`);
   }
