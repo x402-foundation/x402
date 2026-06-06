@@ -3,17 +3,17 @@ title: "Batch Settlement Recovery"
 description: "Wire-level recovery contract for stale-cumulative voucher conflicts in the batch-settlement scheme."
 ---
 
-The `batch-settlement` scheme uses cumulative vouchers for repeated paid requests on a single channel. When two clients (or two in-flight retries) sign vouchers against the same channel state, one of them can arrive at the server with a `max_claimable_amount` that is already below the server's tracked cumulative. The server cannot accept that voucher — but the client also cannot recover without an authoritative state snapshot.
+The `batch-settlement` scheme uses cumulative vouchers for repeated paid requests on a single channel. When two clients (or two in-flight retries) sign vouchers against the same channel state, one of them can arrive at the server with a `maxClaimableAmount` that is already below the server's tracked cumulative. The server cannot accept that voucher — but the client also cannot recover without an authoritative state snapshot.
 
 This document specifies the **corrective-402 recovery contract** that closes this gap, and links to the [reference vectors](./batch-settlement-recovery-vectors/v0/) any x402 SDK can implement against.
 
 ## When recovery is needed
 
-A `corrective 402` is returned when the server's `charged_cumulative_amount` for the channel meets or exceeds the `max_claimable_amount` of the voucher in the incoming request:
+A `corrective 402` is returned when the server's `chargedCumulativeAmount` for the channel meets or exceeds the `maxClaimableAmount` of the voucher in the incoming request:
 
 ```
-server.charged_cumulative_amount > voucher.max_claimable_amount   →   accept
-server.charged_cumulative_amount ≥ voucher.max_claimable_amount   →   corrective 402
+server.chargedCumulativeAmount < voucher.maxClaimableAmount   →   accept
+server.chargedCumulativeAmount ≥ voucher.maxClaimableAmount   →   corrective 402
 ```
 
 This happens in three operationally distinct (but wire-identical) situations:
@@ -29,10 +29,10 @@ Cases (1) and (2) are recoverable by a single retry. Case (3) is what the loop g
 After recovery, the channel must satisfy:
 
 ```
-onchain.total_claimed   ≤   server.charged_cumulative_amount   ≤   voucher.max_claimable_amount
+onchain.totalClaimed   ≤   server.chargedCumulativeAmount   ≤   voucher.maxClaimableAmount
 ```
 
-The middle term is monotone non-decreasing per channel; the left term lags it by at most one batched `claim()` transaction. The client trusts the server's `charged_cumulative_amount` **only after** verifying `total_claimed` against the onchain `BatchSettlement.channels(channel_id)` call — the trust-but-verify split that lets the client safely retry without re-reading the chain on every request.
+The middle term is monotone non-decreasing per channel; the left term lags it by at most one batched `claim()` transaction. The client trusts the server's `chargedCumulativeAmount` **only after** verifying `totalClaimed` against the onchain `BatchSettlement.channels(channelId)` call — the trust-but-verify split that lets the client safely retry without re-reading the chain on every request.
 
 ## Wire shape of the corrective response
 
@@ -41,19 +41,19 @@ A corrective 402 carries the authoritative server state in `extra.channelState`:
 ```json
 {
   "channelState": {
-    "channel_id": "0x...",
+    "channelId": "0x...",
     "balance": "<escrow balance>",
-    "total_claimed": "<onchain total_claimed>",
-    "charged_cumulative_amount": "<server cumulative, may exceed total_claimed>"
+    "totalClaimed": "<onchain totalClaimed>",
+    "chargedCumulativeAmount": "<server cumulative, may exceed totalClaimed>"
   }
 }
 ```
 
 This is the same `ChannelStateExtra` shape used by successful responses; only the HTTP status (402 vs 200) distinguishes them at the transport layer. The client uses this snapshot to:
 
-1. **Verify** `total_claimed` against onchain `BatchSettlement.channels(channel_id)` (trust-but-verify)
-2. **Replace** its local cumulative with `charged_cumulative_amount`
-3. **Sign** a new voucher with `max_claimable_amount = charged_cumulative_amount + request_charge`
+1. **Verify** `totalClaimed` against onchain `BatchSettlement.channels(channelId)` (trust-but-verify)
+2. **Replace** its local cumulative with `chargedCumulativeAmount`
+3. **Sign** a new voucher with `maxClaimableAmount = chargedCumulativeAmount + requestCharge`
 4. **Retry exactly once**
 
 If the retry also receives a corrective 402, the client must surface a hard error (`PERSISTENT_STALE`) and not retry further. See [`loop-guard.json`](./batch-settlement-recovery-vectors/v0/loop-guard.json).
@@ -67,9 +67,9 @@ sequenceDiagram
     participant Chain
 
     Client->>Server: POST + voucher (stale)
-    Server->>Server: detect charged ≥ max_claimable
+    Server->>Server: detect charged ≥ maxClaimable
     Server-->>Client: 402 + channelState
-    Client->>Chain: verify total_claimed
+    Client->>Chain: verify totalClaimed
     Chain-->>Client: confirmed
     Client->>Client: update local state, sign new voucher
     Client->>Server: POST + voucher (corrected, retry 1/1)
@@ -85,9 +85,9 @@ sequenceDiagram
 
 A second corrective 402 means one of three things, none of which a client retry can fix:
 
-- **Client-side bug** — the voucher reconstruction after the first recovery is producing the wrong `max_claimable_amount`.
-- **Server-side persistent drift** — the server's `charged_cumulative_amount` keeps advancing between retries due to concurrent traffic or a server bug.
-- **Adversarial server** — a malicious server can keep returning different `charged_cumulative_amount` values to force the client into a retry loop and deny the client's ability to complete any paid request. (The server cannot extract money — the client verifies `total_claimed` against onchain — but it can deny service.)
+- **Client-side bug** — the voucher reconstruction after the first recovery is producing the wrong `maxClaimableAmount`.
+- **Server-side persistent drift** — the server's `chargedCumulativeAmount` keeps advancing between retries due to concurrent traffic or a server bug.
+- **Adversarial server** — a malicious server can keep returning different `chargedCumulativeAmount` values to force the client into a retry loop and deny the client's ability to complete any paid request. (The server cannot extract money — the client verifies `totalClaimed` against onchain — but it can deny service.)
 
 The loop guard caps client resource burn, surfaces the failure for human or operational diagnosis, and removes the denial-of-service surface.
 
@@ -111,7 +111,7 @@ Three machine-readable JSON vectors under [`batch-settlement-recovery-vectors/v0
 - [`loop-guard.json`](./batch-settlement-recovery-vectors/v0/loop-guard.json) — retry also corrective, hard error
 - [`cas-conflict.json`](./batch-settlement-recovery-vectors/v0/cas-conflict.json) — concurrent same-channel requests, one wins, the other recovers
 
-SDKs implementing the `batch-settlement` scheme should add an integration test that walks each vector's `steps` array and asserts the `expected_client_behaviour`.
+SDKs implementing the `batch-settlement` scheme should add an integration test that walks each vector's `steps` array and asserts the `expectedClientBehaviour`.
 
 ## Refs
 

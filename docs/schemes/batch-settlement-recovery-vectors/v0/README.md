@@ -21,21 +21,21 @@ Each file has this shape:
   "scenario": "<id>",
   "description": "<human-readable summary>",
   "channel": {
-    "channel_id": "0x…",
+    "channelId": "0x…",
     "domain": { "name": "x402 Batch Settlement", "version": "1", "chainId": 84532, "verifyingContract": "0x…" }
   },
-  "initial_state": {
-    "onchain_total_claimed": "<wei>",
-    "server_charged_cumulative": "<wei>",
-    "client_local_cumulative": "<wei>",
+  "initialState": {
+    "onchainTotalClaimed": "<wei>",
+    "serverChargedCumulative": "<wei>",
+    "clientLocalCumulative": "<wei>",
     "comment": "<optional human note about the precondition>"
   },
   "steps": [
-    { "step": <n>, "actor": "client" | "client_a" | "client_b" | "server",
+    { "step": <n>, "actor": "client" | "clientA" | "clientB" | "server",
       "action": "<text>",
       "request": { … } /* OR */ "response": { … } }
   ],
-  "expected_client_behaviour": { "after_step_<n>": "<text>" },
+  "expectedClientBehaviour": { "afterStep<n>": "<text>" },
   "invariants": [ "<text>" ]
 }
 ```
@@ -48,7 +48,7 @@ A conformant SDK should read each `steps` entry in order and:
 
 1. **`actor: "client"` with `request`** — construct the request shape from the vector, sign with a test key (any deterministic signer is fine), submit to a test server.
 2. **`actor: "server"` with `response`** — assert the server's response matches the vector's status and `extra.channelState` shape, byte-by-byte where possible.
-3. After each step, evaluate `expected_client_behaviour.after_step_<n>` as the contract the SDK's client implementation must satisfy (e.g. parse and verify `channelState`, retry exactly once, emit a specific telemetry label, escalate to hard error).
+3. After each step, evaluate `expectedClientBehaviour.afterStep<n>` as the contract the SDK's client implementation must satisfy (e.g. parse and verify `channelState`, retry exactly once, emit a specific telemetry label, escalate to hard error).
 4. At the end of the sequence, assert all `invariants` still hold for the captured state.
 
 Two SDKs implementing the same vector will produce byte-identical request bodies (modulo signatures) and state transitions, and either both pass or both fail at the same step. That is the convergence property these vectors exist to provide.
@@ -59,4 +59,4 @@ This directory is `v0/`. Breaking changes to the schema (new top-level fields, r
 
 ## Why vectors, not just spec prose
 
-Spec prose tells implementers *what* the recovery contract is; the vectors fix *exactly* what each wire payload looks like, what state transitions occur, and what the client must do after each step. Two SDKs implementing the same prose can diverge in edge-case interpretation (is `total_claimed > charged_cumulative_amount` valid? does a `cas_conflict` telemetry label apply when `charged_cumulative_amount` is unchanged?). Two SDKs implementing the same vectors converge by construction.
+Spec prose tells implementers *what* the recovery contract is; the vectors fix *exactly* what each wire payload looks like, what state transitions occur, and what the client must do after each step. Two SDKs implementing the same prose can diverge in edge-case interpretation (is `totalClaimed > chargedCumulativeAmount` valid? does a `cas_conflict` telemetry label apply when `chargedCumulativeAmount` is unchanged?). Two SDKs implementing the same vectors converge by construction.
