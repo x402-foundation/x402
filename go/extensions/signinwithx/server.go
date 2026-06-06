@@ -29,9 +29,6 @@ type ServerOptions struct {
 	OnEvent       func(HookEvent)
 }
 
-// VerifyOptions configures SIWX signature verification.
-type VerifyOptions struct{}
-
 type ServerExtension struct {
 	storage       Storage
 	nonceStorage  NonceStorage
@@ -175,7 +172,7 @@ func (e *ServerExtension) onProtectedRequest(
 		return nil, nil
 	}
 
-	verification := VerifySignature(payload)
+	verification := VerifySignatureWithOptions(ctx, payload, e.verifyOptions)
 	if !verification.Valid || verification.Address == "" {
 		e.emit(HookEvent{Type: "validation_failed", Resource: reqCtx.Path, Error: verification.Error})
 		return nil, nil

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"strings"
 	"testing"
 	"time"
 
@@ -172,6 +173,44 @@ func TestProtectedRequestHookGrantsAuthOnlyAccess(t *testing.T) {
 	storage := NewInMemoryStorage()
 	ext := MustCreateResourceServerExtension(ServerOptions{Storage: storage})
 	header := signedHeaderForTest(t, "https://api.example.com/profile", "nonce-auth")
+
+	result, err := ext.ProtectedRequestHook()(context.Background(), x402http.HTTPRequestContext{
+		Adapter: &testHTTPAdapter{
+			headers: map[string]string{HeaderName: header},
+			path:    "/profile",
+			url:     "https://api.example.com/profile",
+		},
+		Path: "/profile",
+	}, x402http.RouteConfig{Accepts: x402http.PaymentOptions{}})
+	if err != nil {
+		t.Fatalf("hook error = %v", err)
+	}
+	if result == nil || !result.GrantAccess {
+		t.Fatalf("result = %#v, want grant", result)
+	}
+}
+
+func TestProtectedRequestHookGrantsAuthOnlyAccessWithSmartWalletVerifier(t *testing.T) {
+	storage := NewInMemoryStorage()
+	smartWallet := "0x1234567890123456789012345678901234567890"
+	ext := MustCreateResourceServerExtension(ServerOptions{
+		Storage: storage,
+		VerifyOptions: VerifyOptions{
+			EVMVerifier: func(ctx context.Context, address string, message string, signature string) (bool, error) {
+				if address != smartWallet {
+					t.Fatalf("address = %q, want %q", address, smartWallet)
+				}
+				if !strings.Contains(message, smartWallet) {
+					t.Fatalf("message = %q, want wallet address included", message)
+				}
+				if signature == "" {
+					t.Fatal("signature is empty")
+				}
+				return true, nil
+			},
+		},
+	})
+	header := smartWalletHeaderForTest(t, "https://api.example.com/profile", "nonce-smart-wallet", smartWallet)
 
 	result, err := ext.ProtectedRequestHook()(context.Background(), x402http.HTTPRequestContext{
 		Adapter: &testHTTPAdapter{
@@ -381,6 +420,29 @@ func signedHeaderAndAddressForTest(t *testing.T, resourceURI string, nonce strin
 		t.Fatalf("EncodeHeader() error = %v", err)
 	}
 	return header, address.Hex()
+}
+
+func smartWalletHeaderForTest(t *testing.T, resourceURI string, nonce string, address string) string {
+	t.Helper()
+	payload := Payload{
+		Domain:         "api.example.com",
+		Address:        address,
+		Statement:      "Sign in to access your purchased content",
+		URI:            resourceURI,
+		Version:        Version,
+		ChainID:        "eip155:8453",
+		Type:           SignatureTypeEIP191,
+		Nonce:          nonce,
+		IssuedAt:       time.Now().Add(-time.Minute).UTC().Format(time.RFC3339),
+		ExpirationTime: time.Now().Add(time.Minute).UTC().Format(time.RFC3339),
+		Resources:      []string{resourceURI},
+		Signature:      "0x" + strings.Repeat("ab", 96),
+	}
+	header, err := EncodeHeader(payload)
+	if err != nil {
+		t.Fatalf("EncodeHeader() error = %v", err)
+	}
+	return header
 }
 
 func decodePaymentRequiredForTest(header string) (types.PaymentRequired, error) {

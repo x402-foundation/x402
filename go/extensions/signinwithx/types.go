@@ -1,6 +1,9 @@
 package signinwithx
 
-import "time"
+import (
+	"context"
+	"time"
+)
 
 const (
 	// ExtensionKey is the x402 extension identifier for sign-in-with-x.
@@ -97,6 +100,17 @@ type ValidationOptions struct {
 type ValidationResult struct {
 	Valid bool
 	Error string
+}
+
+// EVMMessageVerifier verifies an EIP-191 SIWX message for an EVM address.
+//
+// Servers can provide a verifier backed by on-chain reads to support smart
+// wallet signatures such as EIP-1271 and ERC-6492.
+type EVMMessageVerifier func(ctx context.Context, address string, message string, signature string) (bool, error)
+
+// VerifyOptions configures SIWX signature verification.
+type VerifyOptions struct {
+	EVMVerifier EVMMessageVerifier
 }
 
 // VerifyResult is returned by VerifySignature.

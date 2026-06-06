@@ -1,8 +1,11 @@
 package signinwithx
 
 import (
+	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
+	"math/big"
 	"reflect"
 	"strings"
 	"testing"
@@ -11,6 +14,7 @@ import (
 	"github.com/ethereum/go-ethereum/accounts"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/crypto"
+	"github.com/x402-foundation/x402/go/v2/mechanisms/evm"
 )
 
 func TestDeclareExtension(t *testing.T) {
@@ -205,6 +209,161 @@ func TestVerifySignatureRejectsUnsupportedChain(t *testing.T) {
 	if !strings.Contains(result.Error, "Unsupported chain namespace") {
 		t.Fatalf("error = %q", result.Error)
 	}
+}
+
+func TestVerifySignatureWithOptionsUsesEVMVerifier(t *testing.T) {
+	payload := testPayload()
+	payload.Signature = "0x" + strings.Repeat("ab", 96)
+	called := false
+
+	result := VerifySignatureWithOptions(context.Background(), payload, VerifyOptions{
+		EVMVerifier: func(ctx context.Context, address string, message string, signature string) (bool, error) {
+			called = true
+			if address != payload.Address {
+				t.Fatalf("address = %q, want %q", address, payload.Address)
+			}
+			if !strings.Contains(message, payload.Address) {
+				t.Fatalf("message = %q, want address included", message)
+			}
+			if signature != payload.Signature {
+				t.Fatalf("signature = %q, want %q", signature, payload.Signature)
+			}
+			return true, nil
+		},
+	})
+
+	if !called {
+		t.Fatal("EVM verifier was not called")
+	}
+	if !result.Valid {
+		t.Fatalf("VerifySignatureWithOptions() invalid: %s", result.Error)
+	}
+	if result.Address != common.HexToAddress(payload.Address).Hex() {
+		t.Fatalf("address = %q, want checksum address", result.Address)
+	}
+}
+
+func TestVerifySignatureWithOptionsHandlesEVMVerifierFailures(t *testing.T) {
+	payload := testPayload()
+	payload.Signature = "0x" + strings.Repeat("ab", 96)
+
+	t.Run("invalid", func(t *testing.T) {
+		result := VerifySignatureWithOptions(context.Background(), payload, VerifyOptions{
+			EVMVerifier: func(context.Context, string, string, string) (bool, error) {
+				return false, nil
+			},
+		})
+		if result.Valid {
+			t.Fatal("VerifySignatureWithOptions() valid, want invalid")
+		}
+		if !strings.Contains(result.Error, "Signature verification failed") {
+			t.Fatalf("error = %q", result.Error)
+		}
+	})
+
+	t.Run("error", func(t *testing.T) {
+		result := VerifySignatureWithOptions(context.Background(), payload, VerifyOptions{
+			EVMVerifier: func(context.Context, string, string, string) (bool, error) {
+				return false, errors.New("rpc unavailable")
+			},
+		})
+		if result.Valid {
+			t.Fatal("VerifySignatureWithOptions() valid, want invalid")
+		}
+		if !strings.Contains(result.Error, "rpc unavailable") {
+			t.Fatalf("error = %q", result.Error)
+		}
+	})
+}
+
+func TestNewUniversalEVMVerifierSupportsEIP1271(t *testing.T) {
+	payload := testPayload()
+	payload.Address = "0x1234567890123456789012345678901234567890"
+	payload.Signature = "0x" + strings.Repeat("ab", 96)
+
+	verifier := NewUniversalEVMVerifier(&testFacilitatorSigner{
+		getCodeResult:      []byte{0x60, 0x80},
+		readContractResult: []byte{0x16, 0x26, 0xba, 0x7e},
+	})
+
+	result := VerifySignatureWithOptions(context.Background(), payload, VerifyOptions{
+		EVMVerifier: verifier,
+	})
+	if !result.Valid {
+		t.Fatalf("VerifySignatureWithOptions() invalid: %s", result.Error)
+	}
+	if result.Address != common.HexToAddress(payload.Address).Hex() {
+		t.Fatalf("address = %q, want checksum address", result.Address)
+	}
+}
+
+type testFacilitatorSigner struct {
+	readContractResult interface{}
+	readContractError  error
+	getCodeResult      []byte
+	getCodeError       error
+}
+
+func (s *testFacilitatorSigner) GetAddresses() []string {
+	return []string{"0x0000000000000000000000000000000000000000"}
+}
+
+func (s *testFacilitatorSigner) ReadContract(
+	context.Context,
+	string,
+	[]byte,
+	string,
+	...interface{},
+) (interface{}, error) {
+	if s.readContractError != nil {
+		return nil, s.readContractError
+	}
+	return s.readContractResult, nil
+}
+
+func (s *testFacilitatorSigner) VerifyTypedData(
+	context.Context,
+	string,
+	evm.TypedDataDomain,
+	map[string][]evm.TypedDataField,
+	string,
+	map[string]interface{},
+	[]byte,
+) (bool, error) {
+	return false, errors.New("not implemented")
+}
+
+func (s *testFacilitatorSigner) WriteContract(
+	context.Context,
+	string,
+	[]byte,
+	string,
+	...interface{},
+) (string, error) {
+	return "", errors.New("not implemented")
+}
+
+func (s *testFacilitatorSigner) SendTransaction(context.Context, string, []byte) (string, error) {
+	return "", errors.New("not implemented")
+}
+
+func (s *testFacilitatorSigner) WaitForTransactionReceipt(context.Context, string) (*evm.TransactionReceipt, error) {
+	return nil, errors.New("not implemented")
+}
+
+func (s *testFacilitatorSigner) GetBalance(context.Context, string, string) (*big.Int, error) {
+	return big.NewInt(0), nil
+}
+
+func (s *testFacilitatorSigner) GetChainID(context.Context) (*big.Int, error) {
+	return big.NewInt(1), nil
+}
+
+func (s *testFacilitatorSigner) GetCode(context.Context, string) ([]byte, error) {
+	if s.getCodeError != nil {
+		return nil, s.getCodeError
+	}
+	return s.getCodeResult, nil
 }
 
 func testPayload() Payload {

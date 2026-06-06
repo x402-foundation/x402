@@ -9,6 +9,7 @@ It includes:
 - SIWE message construction for `eip155:*` chains
 - SIWX payload validation
 - EVM EOA EIP-191 signature verification
+- Optional EVM smart wallet verification through EIP-1271
 - Server-side storage, request hooks, and settle hooks
 - Client-side EVM SIWX payload/header creation
 - HTTP client retry hooks that attempt SIWX auth before payment
@@ -23,6 +24,18 @@ extension := signinwithx.MustCreateResourceServerExtension(signinwithx.ServerOpt
 
 server := x402http.Newx402HTTPResourceServer(routes)
 server.RegisterExtension(extension)
+```
+
+To verify smart wallet signatures, provide an on-chain EVM verifier. The signer
+must support account code checks and contract reads for EIP-1271.
+
+```go
+extension := signinwithx.MustCreateResourceServerExtension(signinwithx.ServerOptions{
+    Storage: storage,
+    VerifyOptions: signinwithx.VerifyOptions{
+        EVMVerifier: signinwithx.NewUniversalEVMVerifier(facilitatorSigner),
+    },
+})
 ```
 
 Routes declare SIWX through `Extensions`. Auth-only routes use an empty
@@ -48,4 +61,4 @@ httpClient := x402http.Newx402HTTPClient(x402.Newx402Client()).
 The HTTP client first tries to satisfy a `sign-in-with-x` challenge by sending a
 `SIGN-IN-WITH-X` header. If auth fails, the normal x402 payment flow continues.
 
-Solana SIWS, EIP-1271, and EIP-6492 support are not implemented yet.
+Solana SIWS support is planned as a follow-up.
