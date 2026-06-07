@@ -8,7 +8,7 @@ Serves two paid endpoints:
 | Route | Token | Settlement |
 |-------|-------|------------|
 | `GET /agent/usdc` | USDC | EIP-3009 (`exact`) |
-| `GET /agent/dai` | DAI | Permit2 (`assetTransferMethod: permit2`) — requires TicketWitness signing (SDK gap; see client README) |
+| `GET /agent/dai` | DAI | Permit2 (`assetTransferMethod: permit2`) — standard x402 signature; the wrapper settles via `x402ExactPermit2Proxy` then mints |
 
 ## Prerequisites
 

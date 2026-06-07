@@ -6,6 +6,8 @@ dist/
 .next/
 proxy
 .env
+# ERC-8004 demo state (regenerated per bootstrap run; contains ephemeral keys)
+demo_state.json
 __pycache__/
 **/.DS_Store
 e2e/facilitators/external-proxies/*

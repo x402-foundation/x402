@@ -23,6 +23,24 @@ interface IERC3009 {
     ) external;
 }
 
+/// @notice Minimal view of the canonical x402ExactPermit2Proxy `settle` entrypoint.
+/// @dev The proxy is the Permit2 spender and enforces the witness-bound destination,
+///      exactly as in the standard x402 Permit2 flow. Struct layout (to, validAfter)
+///      matches x402ExactPermit2Proxy.Witness so the ABI encoding is identical.
+interface IX402ExactPermit2Proxy {
+    struct Witness {
+        address to;
+        uint256 validAfter;
+    }
+
+    function settle(
+        ISignatureTransfer.PermitTransferFrom calldata permit,
+        address owner,
+        Witness calldata witness,
+        bytes calldata signature
+    ) external;
+}
+
 /// @title X402AgentReputation
 /// @notice Single wrapper: x402 settle + ticket mint + ticket-gated ERC-8004 feedback + dispute.
 /// @dev Does not replace upstream `ReputationRegistry.giveFeedback` — direct feedback stays open there.
@@ -30,20 +48,13 @@ contract X402AgentReputation is IX402AgentReputation, EIP712, Ownable {
     using SafeERC20 for IERC20;
     using ECDSA for bytes32;
 
-    string public constant TICKET_WITNESS_TYPE_STRING =
-        "TicketWitness witness)TicketWitness(address payer,uint256 agentId,address agentAddress,address payTo,uint256 validAfter)TokenPermissions(address token,uint256 amount)";
-
-    bytes32 public constant TICKET_WITNESS_TYPEHASH = keccak256(
-        "TicketWitness(address payer,uint256 agentId,address agentAddress,address payTo,uint256 validAfter)"
-    );
-
     bytes32 private constant FEEDBACK_INTENT_TYPEHASH = keccak256(
         "FeedbackIntent(uint256 ticketId,int128 value,uint8 valueDecimals,bytes32 tag1Hash,bytes32 tag2Hash,bytes32 endpointHash,bytes32 feedbackURIHash,bytes32 feedbackHash,uint256 nonce,uint256 deadline)"
     );
 
     int128 private constant MAX_ABS_VALUE = 1e38;
 
-    ISignatureTransfer public immutable PERMIT2;
+    IX402ExactPermit2Proxy public immutable PERMIT2_PROXY;
     IIdentityRegistry public immutable identityRegistry;
 
     mapping(uint256 => Ticket) private _tickets;
@@ -68,7 +79,6 @@ contract X402AgentReputation is IX402AgentReputation, EIP712, Ownable {
     error InvalidPayment();
     error TicketNotMinted();
     error PayerMismatch();
-    error PaymentTooEarly();
     error InvalidPermit2();
     error InvalidAgent();
     error InvalidTicket();
@@ -91,12 +101,12 @@ contract X402AgentReputation is IX402AgentReputation, EIP712, Ownable {
     }
 
     /// @param owner_ Owner controlling the facilitator allowlist.
-    /// @param permit2_ Canonical Permit2 address; `address(0)` disables Permit2 settlement.
+    /// @param permit2Proxy_ Canonical x402ExactPermit2Proxy address; `address(0)` disables Permit2 settlement.
     /// @param identityRegistry_ ERC-8004 identity registry; `agentId` must exist at mint time.
-    constructor(address owner_, address permit2_, address identityRegistry_) Ownable(owner_) EIP712("X402AgentReputation", "1") {
+    constructor(address owner_, address permit2Proxy_, address identityRegistry_) Ownable(owner_) EIP712("X402AgentReputation", "1") {
         if (identityRegistry_ == address(0)) revert ZeroAddress();
         identityRegistry = IIdentityRegistry(identityRegistry_);
-        PERMIT2 = ISignatureTransfer(permit2_);
+        PERMIT2_PROXY = IX402ExactPermit2Proxy(permit2Proxy_);
     }
 
     function setFacilitator(address facilitator, bool enabled) external onlyOwner {
@@ -133,35 +143,26 @@ contract X402AgentReputation is IX402AgentReputation, EIP712, Ownable {
         ticketId = _mintTicket(payer, agentId, agentAddress, settlement.token, settlement.value);
     }
 
+    /// @notice Settle a standard x402 Permit2 payment through the canonical proxy, then mint a ticket.
+    /// @dev Settlement is delegated to `x402ExactPermit2Proxy.settle` so the on-chain flow — and the
+    ///      payer's signature (spender = proxy, witness = `Witness(to, validAfter)`) — is byte-for-byte
+    ///      identical to a non-ticket x402 Permit2 payment. The only added behaviour is minting the
+    ///      ticket atomically once the proxy has moved funds payer -> payTo.
     function settleAndMintTicketPermit2(
         address payer,
         uint256 agentId,
         address agentAddress,
         Permit2Settlement calldata settlement
     ) external onlyFacilitator returns (uint256 ticketId) {
-        if (address(PERMIT2) == address(0)) revert InvalidPermit2();
+        if (address(PERMIT2_PROXY) == address(0)) revert InvalidPermit2();
         address token = settlement.permit.permitted.token;
         uint256 amount = settlement.permit.permitted.amount;
         _validateMintPayment(payer, agentAddress, token, settlement.payTo, amount);
-        if (block.timestamp < settlement.validAfter) revert PaymentTooEarly();
 
-        bytes32 witnessHash = keccak256(
-            abi.encode(
-                TICKET_WITNESS_TYPEHASH, payer, agentId, agentAddress, settlement.payTo, settlement.validAfter
-            )
-        );
-
-        ISignatureTransfer.SignatureTransferDetails memory transferDetails = ISignatureTransfer.SignatureTransferDetails({
-            to: settlement.payTo,
-            requestedAmount: amount
-        });
-
-        PERMIT2.permitWitnessTransferFrom(
+        PERMIT2_PROXY.settle(
             settlement.permit,
-            transferDetails,
             payer,
-            witnessHash,
-            TICKET_WITNESS_TYPE_STRING,
+            IX402ExactPermit2Proxy.Witness({to: settlement.payTo, validAfter: settlement.validAfter}),
             settlement.signature
         );
 

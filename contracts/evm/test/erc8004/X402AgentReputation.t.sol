@@ -10,6 +10,7 @@ import {MockERC20} from "../mocks/MockERC20.sol";
 import {MockERC3009Token} from "../mocks/MockERC3009Token.sol";
 import {MockPermit2} from "../mocks/MockPermit2.sol";
 import {MockIdentityRegistry} from "./mocks/MockIdentityRegistry.sol";
+import {x402ExactPermit2Proxy} from "../../src/x402ExactPermit2Proxy.sol";
 
 contract X402AgentReputationTest is Test {
     X402AgentReputation public wrapper;
@@ -137,7 +138,10 @@ contract X402AgentReputationTest is Test {
         MockPermit2 permit2 = new MockPermit2();
         permit2.setShouldActuallyTransfer(true);
 
-        X402AgentReputation wp = new X402AgentReputation(owner, address(permit2), address(identity));
+        // Settle exactly as x402 does: the wrapper calls the proxy, which is the Permit2 spender.
+        x402ExactPermit2Proxy proxy = new x402ExactPermit2Proxy(address(permit2));
+
+        X402AgentReputation wp = new X402AgentReputation(owner, address(proxy), address(identity));
         vm.prank(owner);
         wp.setFacilitator(facilitator, true);
 

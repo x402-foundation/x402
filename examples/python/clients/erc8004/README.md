@@ -50,14 +50,17 @@ uv run python run_x402_client.py
 On success:
 
 - **USDC** ticket minted via x402 HTTP (EIP-3009) → Path A feedback + attestation
-- **DAI** ticket minted via `settleAndMintTicket` (transferFrom) → Path B sponsored feedback
-- USDC response includes verified `X-X402-Interaction-Attestation`
+- **DAI** ticket minted via x402 HTTP (Permit2) → Path B sponsored feedback
+- Both responses include a verified `X-X402-Interaction-Attestation`
 - Both tickets `consumed=true`, `getLastIndex == 2`
 
-The agent server exposes `GET /agent/dai` (Permit2) for when the SDK gains
-TicketWitness Permit2 signing. Until then, the client mints the DAI ticket with
-the same transferFrom path as `run_ticket_demo.py` (see README note in
-`run_x402_client.py`).
+Both endpoints are paid entirely over x402 HTTP. DAI settles with a **standard**
+x402 Permit2 signature (spender = canonical `x402ExactPermit2Proxy`, witness =
+`Witness(to, validAfter)`): `X402AgentReputation.settleAndMintTicketPermit2`
+delegates to `x402ExactPermit2Proxy.settle()` and then mints the ticket atomically
+in the same transaction. Both Permit2 and the canonical `x402ExactPermit2Proxy`
+are already deployed on mainnet, so the fork inherits them — no deploy needed. The
+payer approves Permit2 for DAI once before the run (USDC uses EIP-3009, no approval).
 
 ## Other files
 

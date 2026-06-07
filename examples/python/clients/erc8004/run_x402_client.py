@@ -27,7 +27,7 @@ from eth_account import Account
 from eth_utils import keccak
 from web3 import Web3
 
-from utils import send_tx
+from utils import ensure_dai_permit2_allowance
 
 from x402 import x402Client
 from x402.extensions.erc8004 import (
@@ -60,7 +60,6 @@ AGENT_OWNER_ADDRESS = os.getenv("AGENT_OWNER_ADDRESS", AGENT_ADDRESS)
 DAI_ADDRESS = os.getenv("DAI_ADDRESS")
 AMOUNT_DAI = int(os.getenv("AMOUNT_DAI", "1000000000000000000"))
 FACILITATOR_URL = os.getenv("FACILITATOR_URL", "http://127.0.0.1:4022")
-FACILITATOR_KEY = os.getenv("FACILITATOR_PRIVATE_KEY")
 
 GET_LAST_INDEX_ABI = [
     {
@@ -88,8 +87,6 @@ def _require_env() -> None:
         missing.append("AGENT_ID")
     if not DAI_ADDRESS:
         missing.append("DAI_ADDRESS")
-    if not FACILITATOR_KEY:
-        missing.append("FACILITATOR_PRIVATE_KEY")
     if missing:
         print(f"ERROR: missing env vars: {', '.join(missing)}")
         print("Run bootstrap_fork.py --write-env first.")
@@ -205,71 +202,6 @@ def _path_a_feedback(
     print(f"  tx={tx_hash}")
 
 
-def _mint_dai_ticket_transfer_from(
-    w3: Web3,
-    wrapper: str,
-    payer: Account,
-    facilitator: Account,
-    agent_id: int,
-    agent_address: str,
-    amount: int,
-) -> int:
-    """Mint a DAI ticket via settleAndMintTicket (transferFrom).
-
-    Standard x402 Permit2 uses the x402 proxy witness; the wrapper expects a
-    TicketWitness signature. Until the SDK signs that witness, the demo mints
-    the DAI ticket with the same transferFrom path as run_ticket_demo.py.
-    """
-    from x402.extensions.erc8004.constants import get_ticket_minted_topic
-
-    dai = w3.eth.contract(
-        address=Web3.to_checksum_address(DAI_ADDRESS),  # type: ignore[arg-type]
-        abi=[
-            {
-                "name": "approve",
-                "type": "function",
-                "stateMutability": "nonpayable",
-                "inputs": [
-                    {"name": "spender", "type": "address"},
-                    {"name": "amount", "type": "uint256"},
-                ],
-                "outputs": [{"name": "", "type": "bool"}],
-            },
-        ],
-    )
-    approve_data = dai.functions.approve(
-        Web3.to_checksum_address(wrapper), 2**256 - 1
-    ).build_transaction({"from": payer.address})["data"]
-    send_tx(w3, payer, {"to": Web3.to_checksum_address(DAI_ADDRESS), "data": approve_data, "value": 0, "gas": 120_000})  # type: ignore[arg-type]
-
-    contract = w3.eth.contract(address=Web3.to_checksum_address(wrapper), abi=X402_AGENT_REPUTATION_ABI)
-    func = contract.functions.settleAndMintTicket(
-        payer.address,
-        agent_id,
-        Web3.to_checksum_address(agent_address),
-        (Web3.to_checksum_address(DAI_ADDRESS), Web3.to_checksum_address(agent_address), amount),  # type: ignore[arg-type]
-    )
-    data = func.build_transaction({"from": facilitator.address})["data"]
-    rcpt = send_tx(
-        w3,
-        facilitator,
-        {"to": Web3.to_checksum_address(wrapper), "data": data, "value": 0, "gas": 600_000},
-    )
-
-    topic0 = get_ticket_minted_topic()
-    for log in rcpt.get("logs", []) or []:
-        topics = log.get("topics") or []
-        if not topics:
-            continue
-        t0 = topics[0].hex() if hasattr(topics[0], "hex") else str(topics[0])
-        if not t0.startswith("0x"):
-            t0 = "0x" + t0
-        if t0.lower() == topic0.lower():
-            tid = topics[1]
-            return int(tid.hex(), 16) if hasattr(tid, "hex") else int(str(tid), 16)
-    raise RuntimeError("TicketMinted log not found after DAI settleAndMintTicket")
-
-
 def _path_b_feedback(
     w3: Web3,
     payer: Account,
@@ -347,21 +279,19 @@ async def main() -> int:
     register_exact_evm_client(client, EthAccountSigner(payer), networks=NETWORK)
     http_helper = x402HTTPClient(client)
 
-    facilitator = Account.from_key(FACILITATOR_KEY)  # type: ignore[arg-type]
-    agent_addr = Web3.to_checksum_address(AGENT_ADDRESS)  # type: ignore[arg-type]
     usdc_url = f"{AGENT_SERVER_URL}/agent/usdc"
+    dai_url = f"{AGENT_SERVER_URL}/agent/dai"
+
+    # DAI settles through the canonical x402ExactPermit2Proxy (standard x402 Permit2),
+    # so the payer must have approved Permit2 once. USDC uses EIP-3009 (no approval).
+    print("\nEnsuring payer has approved Permit2 for DAI...")
+    ensure_dai_permit2_allowance(w3, payer, DAI_ADDRESS, AMOUNT_DAI)  # type: ignore[arg-type]
 
     async with x402HttpxClient(client) as http:
         ticket_usdc, _ = await _paid_get(http, http_helper, usdc_url, wrapper, owner)
+        ticket_dai, _ = await _paid_get(http, http_helper, dai_url, wrapper, owner)
 
     _path_a_feedback(w3, payer, ticket_usdc, agent_id, wrapper)
-
-    print("\nMinting DAI ticket via settleAndMintTicket (transferFrom)...")
-    print("  (TicketWitness Permit2 over x402 HTTP is not yet in the SDK; see README.)")
-    ticket_dai = _mint_dai_ticket_transfer_from(
-        w3, wrapper, payer, facilitator, agent_id, agent_addr, AMOUNT_DAI
-    )
-    print(f"  ticketId={ticket_dai}")
     _path_b_feedback(w3, payer, relayer, ticket_dai, agent_id, wrapper)
 
     contract = w3.eth.contract(

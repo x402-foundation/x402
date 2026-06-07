@@ -27,7 +27,7 @@ from typing import Any
 from eth_account import Account
 from web3 import Web3
 
-from x402.mechanisms.evm.constants import PERMIT2_ADDRESS
+from x402.mechanisms.evm.constants import X402_EXACT_PERMIT2_PROXY_ADDRESS
 
 from utils import fund_erc20_from_whale, fund_gas_if_low, register_agent, send_tx
 
@@ -100,6 +100,26 @@ def _fund_eth(w3: Web3, address: str, eth: float) -> None:
         "anvil_setBalance",
         [Web3.to_checksum_address(address), hex(w3.to_wei(eth, "ether"))],
     )
+
+
+def _require_exact_permit2_proxy(w3: Web3) -> str:
+    """Return the canonical x402ExactPermit2Proxy address, asserting it exists on the fork.
+
+    The x402 SDK signs Permit2 payloads with ``spender = X402_EXACT_PERMIT2_PROXY_ADDRESS``
+    and Permit2 enforces that the on-chain caller equals the signed spender, so settlement
+    must go through the proxy at exactly that address. The canonical proxy (and Permit2
+    itself) are already deployed on mainnet, so a mainnet fork inherits both — no deploy
+    needed. We only confirm the code is present and fail loudly if the fork lacks it.
+    """
+    canonical = Web3.to_checksum_address(X402_EXACT_PERMIT2_PROXY_ADDRESS)
+    code = w3.eth.get_code(canonical)
+    if not code or code == b"\x00":
+        raise RuntimeError(
+            f"x402ExactPermit2Proxy not found at canonical {canonical} on the fork. "
+            "The mainnet fork should inherit it; check the fork is mainnet (chainId 1)."
+        )
+    print(f"  x402ExactPermit2Proxy present at canonical {canonical}")
+    return canonical
 
 
 def _start_anvil_fork(port: int, fork_url: str) -> subprocess.Popen[Any]:
@@ -252,13 +272,16 @@ def bootstrap(write_env: bool) -> subprocess.Popen[Any]:
     agent_id = register_agent(w3, agent, identity_addr)
     print(f"  agentId = {agent_id}")
 
+    print("\nResolving canonical x402ExactPermit2Proxy on the fork...")
+    proxy_addr = _require_exact_permit2_proxy(w3)
+
     print("\nDeploying X402AgentReputation...")
     wrapper_addr = _deploy(
         w3,
         deployer,
         "X402AgentReputation",
         deployer.address,
-        PERMIT2_ADDRESS,
+        proxy_addr,
         identity_addr,
     )
     print(f"  wrapper = {wrapper_addr}")
