@@ -35,11 +35,56 @@
         .ascii .new { color: #c4b5fd; font-weight: 600; }
         .ascii .sdk { color: #86efac; }
         footer { margin-top: 1.5rem; font-size: 0.75rem; color: var(--muted); }
+        .cards { display: grid; grid-template-columns: 1fr 1fr; gap: 0.6rem; margin-bottom: 0.6rem; }
+        .card { border: 1px solid var(--border); border-radius: 6px; padding: 0.7rem 0.85rem; background: #fff; }
+        .card.contract { border-top: 3px solid var(--new); }
+        .card h3 { font-size: 0.92rem; margin-bottom: 0.1rem; }
+        .card .tag { font-size: 0.68rem; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; }
+        .card .lead { font-size: 0.82rem; margin: 0.35rem 0; }
+        .card ul { margin: 0.3rem 0 0 1rem; font-size: 0.76rem; color: var(--text); }
+        .card ul li { margin-bottom: 0.18rem; }
+        .card code { font-size: 0.72rem; background: var(--bg); padding: 0 0.15rem; border-radius: 3px; }
+        .why { font-size: 0.78rem; background: #faf5ff; border: 1px solid #c4b5fd; padding: 0.5rem 0.75rem; border-radius: 4px; margin-bottom: 0.6rem; }
+        .pipe { font-family: ui-monospace, monospace; font-size: 0.74rem; background: #1a1a2e; color: #e0e0e0; padding: 0.6rem 0.75rem; border-radius: 4px; margin-bottom: 1rem; overflow-x: auto; white-space: pre; }
+        .pipe b { color: #c4b5fd; }
     </style>
 </head>
 <body>
     <h1>x402 × ERC-8004 — ticket flow (v2)</h1>
     <p class="sub">1-step x402 (same URL). Spec: <code>specs/extensions/erc8004_ticket_v2.md</code></p>
+
+    <h2>What we added: two small contracts</h2>
+    <div class="cards">
+        <div class="card contract">
+            <span class="tag">Contract 1 · the ticket</span>
+            <h3>X402AgentReputation</h3>
+            <p class="lead">A paid x402 call mints a <strong>consume-once ticket</strong> — proof "this client paid this agent."</p>
+            <ul>
+                <li>Settles <strong>exactly like x402</strong> — EIP-3009 (USDC) or Permit2 via the canonical proxy (DAI) — then mints in the same tx.</li>
+                <li><strong>Permissionless:</strong> anyone can relay a signed payment; no facilitator allowlist.</li>
+                <li>Stores plain payment data only: <code>payer, agentId, agentAddress, token, amount, consumed</code>.</li>
+                <li>Calls: <code>settleAndMintTicket…()</code> → <code>ticketId</code>; <code>consumeTicket(ticketId)</code> → <code>agentId</code>.</li>
+            </ul>
+        </div>
+        <div class="card contract">
+            <span class="tag">Contract 2 · the feedback bridge</span>
+            <h3>FeedbackGateway <span style="font-weight:400;font-size:0.75rem;color:var(--muted)">(EIP-7702)</span></h3>
+            <p class="lead">Turns a ticket into <strong>client-authored feedback on the canonical ERC-8004 registry</strong>.</p>
+            <ul>
+                <li>The client <strong>delegates its EOA</strong> to this contract (EIP-7702). Its code then runs <em>as the client</em> — so <code>msg.sender</code> stays the client.</li>
+                <li>In one call: <code>consumeTicket</code> (gate) → <code>ReputationRegistry.giveFeedback</code> (author = client).</li>
+                <li><strong>Self-paid</strong> <code>submitFeedback</code> · <strong>sponsored</strong> <code>submitFeedbackFor</code> (client-signed intent, relayer pays gas).</li>
+                <li>Stateless chain-singleton — deploy once per chain, holds no funds.</li>
+            </ul>
+        </div>
+    </div>
+    <div class="why">
+        <strong>Why two contracts?</strong> The canonical <code>ReputationRegistry</code> credits feedback to <code>msg.sender</code>, so the client must be the caller. EIP-7702 makes that possible — but delegating your EOA to a contract is risky, so the delegate (<code>FeedbackGateway</code>) is kept tiny and fund-free, separate from the payment/ticket logic.
+    </div>
+    <div class="pipe">pay (HTTP 402) ─▶ <b>X402AgentReputation</b>: settle + mint ticket
+                   │
+   delegate EOA (7702) ─▶ <b>FeedbackGateway</b> ──▶ consumeTicket ──▶ canonical <b>ReputationRegistry</b>.giveFeedback
+                                                  (runs as the client — feedback authored by the payer)</div>
 
     <h2>Trust split</h2>
     <div class="trust">
