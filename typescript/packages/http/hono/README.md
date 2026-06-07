@@ -168,6 +168,55 @@ app.use(paymentMiddleware(routes, resourceServer, paywallConfig, customPaywallPr
 
 ## Advanced Usage
 
+### Dynamic Routes
+
+`paymentMiddleware(routes, server)` compiles the route table once, so adding keys to the `routes` object after the middleware is created has no effect. If your protected routes are only known at runtime — marketplaces, auctions, IoT devices, or any service where each resource gets its own payment URL — create the `x402HTTPResourceServer` yourself and use `registerRoute()` / `unregisterRoute()`:
+
+```typescript
+import {
+  paymentMiddlewareFromHTTPServer,
+  x402HTTPResourceServer,
+  x402ResourceServer,
+} from "@x402/hono";
+
+const httpServer = new x402HTTPResourceServer(resourceServer, {
+  // Routes known at startup can still be passed here
+  "GET /fixed-resource": {
+    accepts: {
+      scheme: "exact",
+      price: "$0.10",
+      network: "eip155:84532",
+      payTo: "0xYourAddress",
+    },
+  },
+});
+
+app.use(paymentMiddlewareFromHTTPServer(httpServer));
+
+// When a new payable resource is created at runtime:
+app.post("/quote", (c) => {
+  const jobId = createJob();
+  httpServer.registerRoute(`GET /pay/${jobId}`, {
+    accepts: {
+      scheme: "exact",
+      price: "$0.10",
+      network: "eip155:84532",
+      payTo: "0xYourAddress",
+    },
+    description: `Job ${jobId}`,
+  });
+  return c.json({ jobId, payUrl: `/pay/${jobId}` });
+});
+
+// Once the payment is settled, release the route so subsequent
+// requests to the same URL are no longer intercepted:
+httpServer.unregisterRoute(`GET /pay/${jobId}`);
+```
+
+`registerRoute(pattern, config)` accepts the same pattern syntax and `RouteConfig` shape as static routes and takes effect immediately for subsequent requests. Registering an already-registered pattern/verb pair is a no-op; unregistering an unknown pattern is ignored.
+
+If all routes are known at startup, the plain `paymentMiddleware(routes, server)` shown in the Quick Start remains the simplest option.
+
 ### Multiple Protected Routes
 
 ```typescript
