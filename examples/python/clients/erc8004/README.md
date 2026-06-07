@@ -1,8 +1,8 @@
 # ERC-8004 Feedback Extension — Examples
 
-The v2 ticket flow uses a single `X402AgentReputation` wrapper: settlement and
-ticket mint share one on-chain transaction. Feedback is ticket-gated via
-`giveFeedbackWithTicket`.
+The v2 ticket flow uses `X402AgentReputation` (settlement + consume-once ticket)
+plus a `FeedbackGateway` (EIP-7702 delegate). Feedback is ticket-gated but lands
+on the **canonical** ERC-8004 `ReputationRegistry`, authored by the paying client.
 
 ## Demo
 
@@ -39,10 +39,10 @@ uv run python run_x402_client.py
 
 On success:
 
-- **USDC** ticket minted via x402 HTTP (EIP-3009) → Path A feedback + attestation
-- **DAI** ticket minted via x402 HTTP (Permit2) → Path B sponsored feedback
+- **USDC** ticket minted via x402 HTTP (EIP-3009) → Path A self-paid 7702 feedback + attestation
+- **DAI** ticket minted via x402 HTTP (Permit2) → Path B sponsored 7702 feedback
 - Both responses include a verified `X-X402-Interaction-Attestation`
-- Both tickets `consumed=true`, `getLastIndex == 2`
+- Both tickets `consumed=true`; canonical `ReputationRegistry.getLastIndex(agentId, payer) == 2`
 
 Both endpoints are paid entirely over x402 HTTP. DAI settles with a **standard**
 x402 Permit2 signature (spender = canonical `x402ExactPermit2Proxy`, witness =

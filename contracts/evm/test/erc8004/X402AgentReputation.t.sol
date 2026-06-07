@@ -20,19 +20,13 @@ contract X402AgentReputationTest is Test {
 
     address public owner = makeAddr("owner");
     address public agentOwner = makeAddr("agentOwner");
-    address public facilitator = makeAddr("facilitator");
     address public payer = makeAddr("payer");
     address public payTo = makeAddr("payTo");
 
     uint256 public constant AGENT_ID = 7;
-    bytes32 public constant FEEDBACK_HASH = keccak256("feedback");
-
-    uint256 payerPrivateKey = 0xA11CE;
     uint256 private _nextNonce;
 
     function setUp() public {
-        payer = vm.addr(payerPrivateKey);
-
         identity = new MockIdentityRegistry();
         identity.setOwner(AGENT_ID, agentOwner);
 
@@ -43,8 +37,8 @@ contract X402AgentReputationTest is Test {
         t3009.mint(payer, 1_000e6);
     }
 
-    /// @dev Mint a ticket via the EIP-3009 path (the bare transferFrom path was removed).
-    ///      The EIP-3009 mock ignores the signature and transfers `value` from `from`.
+    /// @dev Mint a ticket via the EIP-3009 path. The EIP-3009 mock ignores the signature
+    ///      and transfers `value` from `from`.
     function _mintTicketEIP3009(address from, uint256 value, bytes32 nonce) internal returns (uint256 ticketId) {
         IX402AgentReputation.EIP3009Settlement memory settlement = IX402AgentReputation.EIP3009Settlement({
             token: address(t3009),
@@ -61,6 +55,8 @@ contract X402AgentReputationTest is Test {
     function _mintTicket() internal returns (uint256 ticketId) {
         ticketId = _mintTicketEIP3009(payer, 10e6, keccak256(abi.encode("mint", _nextNonce++)));
     }
+
+    // ----- mint -----
 
     function test_settleAndMintTicket_mintsPlainFields() public {
         uint256 ticketId = _mintTicketEIP3009(payer, 100e6, keccak256("plain"));
@@ -147,7 +143,6 @@ contract X402AgentReputationTest is Test {
             signature: ""
         });
 
-        vm.prank(facilitator);
         uint256 ticketId = wp.settleAndMintTicketPermit2(payer, AGENT_ID, payTo, settlement);
 
         assertEq(ticketId, 1);
@@ -155,112 +150,52 @@ contract X402AgentReputationTest is Test {
         assertFalse(wp.tickets(ticketId).consumed);
     }
 
-    function test_giveFeedbackWithTicket_consumesTicket() public {
+    // ----- consumeTicket (feedback gate) -----
+
+    function test_consumeTicket_marksConsumedAndReturnsAgent() public {
         uint256 ticketId = _mintTicket();
 
         vm.expectEmit(true, true, true, true);
-        emit IX402AgentReputation.TicketConsumed(ticketId, payer, AGENT_ID, 1);
+        emit IX402AgentReputation.TicketConsumed(ticketId, payer, AGENT_ID);
 
         vm.prank(payer);
-        wrapper.giveFeedbackWithTicket(ticketId, 100, 0, "quality", "", "https://agent.example/r", "", FEEDBACK_HASH);
+        uint256 agentId = wrapper.consumeTicket(ticketId);
 
+        assertEq(agentId, AGENT_ID);
         assertTrue(wrapper.tickets(ticketId).consumed);
-        assertEq(wrapper.getLastIndex(AGENT_ID, payer), 1);
+    }
+
+    function test_revertWhen_consumeByNonPayer() public {
+        uint256 ticketId = _mintTicket();
+
+        vm.prank(makeAddr("stranger"));
+        vm.expectRevert(X402AgentReputation.InvalidTicket.selector);
+        wrapper.consumeTicket(ticketId);
     }
 
     function test_revertWhen_reuseConsumedTicket() public {
         uint256 ticketId = _mintTicket();
 
         vm.startPrank(payer);
-        wrapper.giveFeedbackWithTicket(ticketId, 100, 0, "q", "", "/r", "", FEEDBACK_HASH);
+        wrapper.consumeTicket(ticketId);
         vm.expectRevert(X402AgentReputation.InvalidTicket.selector);
-        wrapper.giveFeedbackWithTicket(ticketId, 50, 0, "q", "", "/r", "", keccak256("other"));
+        wrapper.consumeTicket(ticketId);
         vm.stopPrank();
     }
 
-    function test_revertWhen_duplicateFeedbackHash() public {
-        uint256 ticketId = _mintTicket();
-
-        vm.startPrank(payer);
-        wrapper.giveFeedbackWithTicket(ticketId, 100, 0, "q", "", "/r", "", FEEDBACK_HASH);
-        vm.stopPrank();
-
-        uint256 ticketId2 = _mintTicket();
-
+    function test_revertWhen_consumeUnknownTicket() public {
         vm.prank(payer);
-        vm.expectRevert(X402AgentReputation.FeedbackHashAlreadyUsed.selector);
-        wrapper.giveFeedbackWithTicket(ticketId2, 50, 0, "q", "", "/r", "", FEEDBACK_HASH);
-    }
-
-    function test_giveFeedbackWithTicketFor_sponsored() public {
-        uint256 ticketId = _mintTicket();
-
-        uint256 nonce = 1;
-        uint256 deadline = block.timestamp + 1 hours;
-
-        bytes32 structHash = keccak256(
-            abi.encode(
-                keccak256(
-                    "FeedbackIntent(uint256 ticketId,int128 value,uint8 valueDecimals,bytes32 tag1Hash,bytes32 tag2Hash,bytes32 endpointHash,bytes32 feedbackURIHash,bytes32 feedbackHash,uint256 nonce,uint256 deadline)"
-                ),
-                ticketId,
-                int128(80),
-                uint8(0),
-                keccak256(bytes("quality")),
-                keccak256(bytes("")),
-                keccak256(bytes("https://agent.example/r")),
-                keccak256(bytes("")),
-                FEEDBACK_HASH,
-                nonce,
-                deadline
-            )
-        );
-
-        bytes32 digest = keccak256(abi.encodePacked("\x19\x01", wrapper.domainSeparator(), structHash));
-        (uint8 v, bytes32 r, bytes32 s) = vm.sign(payerPrivateKey, digest);
-        bytes memory sig = abi.encodePacked(r, s, v);
-
-        wrapper.giveFeedbackWithTicketFor(
-            IX402AgentReputation.FeedbackSubmission({
-                payer: payer,
-                ticketId: ticketId,
-                value: 80,
-                valueDecimals: 0,
-                tag1: "quality",
-                tag2: "",
-                endpoint: "https://agent.example/r",
-                feedbackURI: "",
-                feedbackHash: FEEDBACK_HASH
-            }),
-            nonce,
-            deadline,
-            sig
-        );
-
-        assertTrue(wrapper.tickets(ticketId).consumed);
-    }
-
-    function test_disputeFeedback_agentOnly() public {
-        uint256 ticketId = _mintTicket();
-
-        vm.prank(payer);
-        wrapper.giveFeedbackWithTicket(ticketId, 100, 0, "q", "", "/r", "", FEEDBACK_HASH);
-
-        vm.prank(agentOwner);
-        wrapper.disputeFeedback(AGENT_ID, payer, 1);
-
-        (,,,, bool isDisputed) = wrapper.readFeedback(AGENT_ID, payer, 1);
-        assertTrue(isDisputed);
+        vm.expectRevert(X402AgentReputation.InvalidTicket.selector);
+        wrapper.consumeTicket(999);
     }
 
     function test_revertWhen_selfFeedback() public {
-        address selfPayer = agentOwner;
-        t3009.mint(selfPayer, 100e6);
+        // Ticket whose payer is the agent owner: the agent cannot consume to review itself.
+        t3009.mint(agentOwner, 100e6);
+        uint256 ticketId = _mintTicketEIP3009(agentOwner, 10e6, keccak256("self"));
 
-        uint256 ticketId = _mintTicketEIP3009(selfPayer, 10e6, keccak256("self"));
-
-        vm.prank(selfPayer);
+        vm.prank(agentOwner);
         vm.expectRevert(X402AgentReputation.SelfFeedbackNotAllowed.selector);
-        wrapper.giveFeedbackWithTicket(ticketId, 100, 0, "q", "", "/r", "", FEEDBACK_HASH);
+        wrapper.consumeTicket(ticketId);
     }
 }

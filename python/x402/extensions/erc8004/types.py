@@ -37,6 +37,7 @@ class ERC8004Config(BaseModel):
     identity_registry: str
     rpc_url: str
     wrapper_address: str | None = None
+    feedback_gateway: str | None = None
     agent_id: int | None = None
 
     model_config = {"extra": "allow"}

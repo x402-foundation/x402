@@ -54,8 +54,8 @@
     <h2>Summary</h2>
     <div class="summary">
         <ul>
-            <li><strong>Contract:</strong> single <code>X402AgentReputation</code> — settle + mint + <code>giveFeedbackWithTicket{,For}</code> + dispute. Upstream <code>ReputationRegistry.giveFeedback</code> stays open.</li>
-            <li><strong>No bind at mint:</strong> client signs payment only; facilitator forwards payment fields it verified.</li>
+            <li><strong>Contracts:</strong> <code>X402AgentReputation</code> — x402 settle + consume-once ticket. <code>FeedbackGateway</code> (EIP-7702 delegate) consumes the ticket and forwards <code>giveFeedback</code> to the <strong>canonical</strong> <code>ReputationRegistry</code> — feedback is stored there, authored by the client.</li>
+            <li><strong>No bind at mint:</strong> client signs payment only; settlement is permissionless (gated by the signed authorization), so no facilitator allowlist.</li>
             <li><strong>Attestation:</strong> agent signs EIP-712 after handler → <code>X-X402-Interaction-Attestation</code> (best-effort; missing → <code>CLIENT_ONLY</code>).</li>
         </ul>
     </div>
@@ -97,8 +97,8 @@
 
     <h2>Feedback paths</h2>
     <div class="feedback-paths">
-        <div class="path"><strong>Path A — Client-paid:</strong> payer calls <code>giveFeedbackWithTicket(ticketId, …, feedbackHash)</code></div>
-        <div class="path"><strong>Path B — Sponsored:</strong> payer signs EIP-712 <code>FeedbackIntent</code>; relayer calls <code>giveFeedbackWithTicketFor</code></div>
+        <div class="path"><strong>Path A — Self-paid (EIP-7702):</strong> payer delegates its EOA to <code>FeedbackGateway</code> and calls <code>submitFeedback</code> on itself → <code>consumeTicket</code> + canonical <code>giveFeedback</code> (<code>msg.sender</code> = client).</div>
+        <div class="path"><strong>Path B — Sponsored (EIP-7702):</strong> payer signs a set-code authorization + EIP-712 <code>FeedbackIntent</code>; a relayer submits <code>submitFeedbackFor</code> and pays gas. Feedback is still authored by the client.</div>
     </div>
 
     <h2>Phases (one paid request)</h2>
@@ -128,8 +128,8 @@
         <p>200 + body + PAYMENT-RESPONSE + optional <code>X-X402-Interaction-Attestation</code>.</p>
     </div>
     <div class="phase chain new">
-        <h3>6 — Feedback (later)</h3>
-        <p>Client builds artifact (embeds attestation when present) → <code>giveFeedbackWithTicket*</code> → ticket <code>consumed=true</code>.</p>
+        <h3>6 — Feedback (later, EIP-7702)</h3>
+        <p>Client builds the artifact (embeds attestation when present), delegates its EOA to <code>FeedbackGateway</code> → <code>consumeTicket</code> (ticket <code>consumed=true</code>) + canonical <code>ReputationRegistry.giveFeedback</code>, authored by the client.</p>
     </div>
     <div class="phase">
         <h3>7 — Off-chain verify</h3>
@@ -164,9 +164,10 @@
 </span><span class="dim"> 5  RESPONSE                 |<- 200 + body -----|                   |                         |
                               |    PAYMENT-RESPONSE.ticketId + optional attestation header    |
                               |                  |                   |                         |
-</span><span class="new"> 6  FEEDBACK                 | Path A: giveFeedbackWithTicket(ticketId, …) ---------------->|
-                              | Path B: sign FeedbackIntent → giveFeedbackWithTicketFor ----->|
-                              |                  |                   | consumed=true + NewFeedback
+</span><span class="new"> 6  FEEDBACK (7702)          | client delegates EOA -> FeedbackGateway (set-code auth)
+                              |   A self-paid: submitFeedback   B sponsored: relayer submitFeedbackFor
+                              |   gateway (as client) -> W.consumeTicket (consumed=true)
+                              |   gateway (as client) -> ReputationRegistry.giveFeedback (canonical, author=client)
                               |                  |                   |                         |
 </span><span class="dim"> 7  VERIFY (off-chain)       | verify_feedback(artifact, wrapper, identityRegistry)        |
                               | FULL if attestation matches; CLIENT_ONLY if header missing    |

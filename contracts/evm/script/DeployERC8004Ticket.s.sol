@@ -4,6 +4,7 @@ pragma solidity ^0.8.20;
 import {Script, console2} from "forge-std/Script.sol";
 
 import {X402AgentReputation} from "../src/erc8004/X402AgentReputation.sol";
+import {FeedbackGateway} from "../src/erc8004/FeedbackGateway.sol";
 import {MockIdentityRegistry} from "../test/erc8004/mocks/MockIdentityRegistry.sol";
 
 /// @title DeployERC8004Ticket
@@ -51,6 +52,11 @@ contract DeployERC8004Ticket is Script {
 
         X402AgentReputation wrapper = new X402AgentReputation(owner, permit2Proxy, identityRegistry);
         console2.log("Deployed X402AgentReputation:", address(wrapper));
+
+        // Chain-level singleton: the EIP-7702 delegate clients delegate to for ticket-gated,
+        // client-authored feedback on the canonical ReputationRegistry.
+        FeedbackGateway gateway = new FeedbackGateway();
+        console2.log("Deployed FeedbackGateway:", address(gateway));
 
         vm.stopBroadcast();
 

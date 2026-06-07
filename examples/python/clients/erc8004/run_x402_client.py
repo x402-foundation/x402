@@ -39,7 +39,10 @@ from x402.extensions.erc8004 import (
     InteractionAttestation,
     verify_interaction_attestation,
 )
-from x402.extensions.erc8004.constants import X402_AGENT_REPUTATION_ABI
+from x402.extensions.erc8004.constants import (
+    REPUTATION_REGISTRY_ABI,
+    X402_AGENT_REPUTATION_ABI,
+)
 from x402.http import x402HTTPClient
 from x402.http.clients.httpx import x402HttpxClient
 from x402.mechanisms.evm import EthAccountSigner
@@ -53,6 +56,8 @@ AGENT_SERVER_URL = os.getenv("AGENT_SERVER_URL", "http://127.0.0.1:4021")
 EVM_RPC_URL = os.getenv("EVM_RPC_URL", "http://127.0.0.1:8545")
 NETWORK = os.getenv("NETWORK", "eip155:1")
 WRAPPER_ADDRESS = os.getenv("WRAPPER_ADDRESS")
+FEEDBACK_GATEWAY = os.getenv("FEEDBACK_GATEWAY")
+REPUTATION_REGISTRY = os.getenv("REPUTATION_REGISTRY")
 IDENTITY_REGISTRY = os.getenv("IDENTITY_REGISTRY", "0x" + "00" * 20)
 AGENT_ID = os.getenv("AGENT_ID")
 AGENT_ADDRESS = os.getenv("AGENT_ADDRESS")
@@ -60,19 +65,6 @@ AGENT_OWNER_ADDRESS = os.getenv("AGENT_OWNER_ADDRESS", AGENT_ADDRESS)
 DAI_ADDRESS = os.getenv("DAI_ADDRESS")
 AMOUNT_DAI = int(os.getenv("AMOUNT_DAI", "1000000000000000000"))
 FACILITATOR_URL = os.getenv("FACILITATOR_URL", "http://127.0.0.1:4022")
-
-GET_LAST_INDEX_ABI = [
-    {
-        "name": "getLastIndex",
-        "type": "function",
-        "stateMutability": "view",
-        "inputs": [
-            {"name": "agentId", "type": "uint256"},
-            {"name": "clientAddress", "type": "address"},
-        ],
-        "outputs": [{"name": "", "type": "uint64"}],
-    },
-]
 
 
 def _require_env() -> None:
@@ -83,6 +75,10 @@ def _require_env() -> None:
         missing.append("RELAYER_PRIVATE_KEY")
     if not WRAPPER_ADDRESS:
         missing.append("WRAPPER_ADDRESS")
+    if not FEEDBACK_GATEWAY:
+        missing.append("FEEDBACK_GATEWAY")
+    if not REPUTATION_REGISTRY:
+        missing.append("REPUTATION_REGISTRY")
     if not AGENT_ID:
         missing.append("AGENT_ID")
     if not DAI_ADDRESS:
@@ -169,22 +165,21 @@ async def _paid_get(
     return ticket_id, att
 
 
-def _path_a_feedback(
-    w3: Web3,
-    payer: Account,
-    ticket_id: int,
-    agent_id: int,
-    wrapper: str,
-) -> None:
-    print(f"\nPath A: giveFeedbackWithTicket for ticket #{ticket_id}")
-    cfg = ERC8004Config(
+def _config() -> ERC8004Config:
+    return ERC8004Config(
         network=NETWORK,
-        reputation_registry=wrapper,
-        wrapper_address=wrapper,
+        reputation_registry=Web3.to_checksum_address(REPUTATION_REGISTRY),  # type: ignore[arg-type]
+        wrapper_address=Web3.to_checksum_address(WRAPPER_ADDRESS),  # type: ignore[arg-type]
+        feedback_gateway=Web3.to_checksum_address(FEEDBACK_GATEWAY),  # type: ignore[arg-type]
         identity_registry=IDENTITY_REGISTRY,
         rpc_url=EVM_RPC_URL,
     )
-    client = ERCFeedbackClient(cfg, payer)
+
+
+def _path_a_feedback(w3: Web3, payer: Account, ticket_id: int, agent_id: int) -> None:
+    """Self-paid: payer delegates its EOA to the gateway (EIP-7702) and submits feedback."""
+    print(f"\nPath A: self-paid feedback (EIP-7702) for ticket #{ticket_id}")
+    client = ERCFeedbackClient(_config(), payer)
     params = FeedbackParams(
         agent_id=agent_id,
         value=95,
@@ -195,10 +190,10 @@ def _path_a_feedback(
         feedback_uri=f"mem://x402-demo/usdc-ticket-{ticket_id}",
         feedback_hash=keccak(f"x402-usdc-ticket-{ticket_id}".encode()),
     )
-    tx_hash = client.submit_feedback_with_ticket(ticket_id, params)
+    tx_hash = client.submit_feedback_self_paid(ticket_id, params)
     rcpt = w3.eth.wait_for_transaction_receipt(tx_hash)
     if rcpt["status"] != 1:
-        raise RuntimeError(f"giveFeedbackWithTicket reverted: {tx_hash}")
+        raise RuntimeError(f"self-paid feedback reverted: {tx_hash}")
     print(f"  tx={tx_hash}")
 
 
@@ -208,16 +203,10 @@ def _path_b_feedback(
     relayer: Account,
     ticket_id: int,
     agent_id: int,
-    wrapper: str,
 ) -> None:
-    print(f"\nPath B: sponsored giveFeedbackWithTicketFor for ticket #{ticket_id}")
-    cfg = ERC8004Config(
-        network=NETWORK,
-        reputation_registry=wrapper,
-        wrapper_address=wrapper,
-        identity_registry=IDENTITY_REGISTRY,
-        rpc_url=EVM_RPC_URL,
-    )
+    """Sponsored: payer signs a set-code authorization + EIP-712 intent; relayer pays gas."""
+    print(f"\nPath B: sponsored feedback (EIP-7702, relayer-paid) for ticket #{ticket_id}")
+    cfg = _config()
     payer_client = ERCFeedbackClient(cfg, payer)
     relayer_client = ERCFeedbackClient(cfg, relayer)
 
@@ -233,17 +222,20 @@ def _path_b_feedback(
     )
     nonce = ticket_id
     deadline = w3.eth.get_block("latest")["timestamp"] + 3600
-    domain, types, message = payer_client.build_feedback_intent(
-        ticket_id, params, nonce, deadline
-    )
+
+    # Payer delegates its EOA to the gateway and signs the feedback intent.
+    authorization = payer_client.authorize_gateway()
+    domain, types, message = payer_client.build_feedback_intent(ticket_id, params, nonce, deadline)
     signed = Account.sign_typed_data(
         payer.key,
         domain_data=domain,
         message_types={k: v for k, v in types.items() if k != "EIP712Domain"},
         message_data=message,
     )
+
     tx_hash = relayer_client.submit_feedback_sponsored(
-        payer=payer.address,
+        client_address=payer.address,
+        client_authorization=authorization,
         ticket_id=ticket_id,
         params=params,
         nonce=nonce,
@@ -252,7 +244,7 @@ def _path_b_feedback(
     )
     rcpt = w3.eth.wait_for_transaction_receipt(tx_hash)
     if rcpt["status"] != 1:
-        raise RuntimeError(f"giveFeedbackWithTicketFor reverted: {tx_hash}")
+        raise RuntimeError(f"sponsored feedback reverted: {tx_hash}")
     print(f"  relayer tx={tx_hash}")
 
 
@@ -291,24 +283,27 @@ async def main() -> int:
         ticket_usdc, _ = await _paid_get(http, http_helper, usdc_url, wrapper, owner)
         ticket_dai, _ = await _paid_get(http, http_helper, dai_url, wrapper, owner)
 
-    _path_a_feedback(w3, payer, ticket_usdc, agent_id, wrapper)
-    _path_b_feedback(w3, payer, relayer, ticket_dai, agent_id, wrapper)
+    _path_a_feedback(w3, payer, ticket_usdc, agent_id)
+    _path_b_feedback(w3, payer, relayer, ticket_dai, agent_id)
 
-    contract = w3.eth.contract(
-        address=wrapper, abi=X402_AGENT_REPUTATION_ABI + GET_LAST_INDEX_ABI
-    )
+    wrapper_c = w3.eth.contract(address=wrapper, abi=X402_AGENT_REPUTATION_ABI)
     for tid, label in ((ticket_usdc, "USDC"), (ticket_dai, "DAI")):
-        consumed = contract.functions.tickets(tid).call()[5]
+        consumed = wrapper_c.functions.tickets(tid).call()[5]
         print(f"\nTicket #{tid} ({label}) consumed={consumed}")
         if not consumed:
             raise RuntimeError(f"ticket #{tid} not consumed")
 
-    idx = contract.functions.getLastIndex(agent_id, payer.address).call()
-    print(f"getLastIndex(agentId={agent_id}, payer) = {idx}")
+    # Feedback is stored on the canonical ReputationRegistry, authored by the payer.
+    registry_c = w3.eth.contract(
+        address=Web3.to_checksum_address(REPUTATION_REGISTRY),  # type: ignore[arg-type]
+        abi=REPUTATION_REGISTRY_ABI,
+    )
+    idx = registry_c.functions.getLastIndex(agent_id, payer.address).call()
+    print(f"canonical ReputationRegistry.getLastIndex(agentId={agent_id}, payer) = {idx}")
     if idx != 2:
-        raise RuntimeError(f"expected 2 feedbacks, got {idx}")
+        raise RuntimeError(f"expected 2 canonical feedbacks by payer, got {idx}")
 
-    print("\nDONE — x402 HTTP flow complete (USDC + DAI tickets, attestation, Path A + B).")
+    print("\nDONE — x402 HTTP flow complete (USDC + DAI tickets, attestation, 7702 feedback Path A + B).")
     return 0
 
 

@@ -28,6 +28,7 @@ from eth_account import Account
 from web3 import Web3
 
 from x402.mechanisms.evm.constants import X402_EXACT_PERMIT2_PROXY_ADDRESS
+from x402.extensions.erc8004.constants import MAINNET_REPUTATION_REGISTRY
 
 from utils import fund_erc20_from_whale, fund_gas_if_low, register_agent, send_tx
 
@@ -122,6 +123,23 @@ def _require_exact_permit2_proxy(w3: Web3) -> str:
     return canonical
 
 
+def _require_reputation_registry(w3: Web3) -> str:
+    """Return the canonical ERC-8004 ReputationRegistry address, asserting it exists on the fork.
+
+    Feedback lands here (authored by the client) via the FeedbackGateway. Like the Permit2
+    proxy, the canonical registry is already deployed on mainnet, so the fork inherits it.
+    """
+    addr = Web3.to_checksum_address(MAINNET_REPUTATION_REGISTRY)
+    code = w3.eth.get_code(addr)
+    if not code or code == b"\x00":
+        raise RuntimeError(
+            f"canonical ReputationRegistry not found at {addr} on the fork. "
+            "The mainnet fork should inherit it; check the fork is mainnet (chainId 1)."
+        )
+    print(f"  ReputationRegistry present at canonical {addr}")
+    return addr
+
+
 def _start_anvil_fork(port: int, fork_url: str) -> subprocess.Popen[Any]:
     cmd = ["anvil", "--fork-url", fork_url, "--port", str(port)]
     return subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
@@ -199,6 +217,8 @@ def _write_envs(state: dict[str, str]) -> None:
         "EVM_RPC_URL": state["rpc_url"],
         "NETWORK": state["network"],
         "WRAPPER_ADDRESS": state["wrapper_address"],
+        "FEEDBACK_GATEWAY": state["feedback_gateway"],
+        "REPUTATION_REGISTRY": state["reputation_registry"],
         "IDENTITY_REGISTRY": state["identity_registry"],
         "AGENT_ID": state["agent_id"],
         "AGENT_ADDRESS": state["agent_address"],
@@ -288,11 +308,20 @@ def bootstrap(write_env: bool) -> subprocess.Popen[Any]:
     # Settlement is permissionless (gated by the signed payment authorization) — no
     # facilitator allowlist to wire.
 
+    print("\nResolving canonical ReputationRegistry on the fork...")
+    reputation_registry = _require_reputation_registry(w3)
+
+    print("\nDeploying FeedbackGateway (EIP-7702 delegate)...")
+    gateway_addr = _deploy(w3, deployer, "FeedbackGateway")
+    print(f"  gateway = {gateway_addr}")
+
     state = {
         "rpc_url": rpc_url,
         "network": network,
         "chain_id": str(w3.eth.chain_id),
         "wrapper_address": wrapper_addr,
+        "feedback_gateway": gateway_addr,
+        "reputation_registry": reputation_registry,
         "identity_registry": identity_addr,
         "agent_id": str(agent_id),
         "agent_address": agent.address,

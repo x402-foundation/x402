@@ -4,12 +4,12 @@ x402 v2 extension that turns paid HTTP calls into ticket-gated, on-chain feedbac
 
 ## How it works
 
-1. **Pay.** Client signs x402 payment only (no ticket bind). Facilitator routes settle through `X402AgentReputation.settleAndMintTicket{,EIP3009,Permit2}`. Ticket fields are plain payment data: `payer`, `agentId`, `agentAddress`, `token`, `amount`, `consumed`.
+1. **Pay.** Client signs x402 payment only (no ticket bind). Facilitator routes settle through `X402AgentReputation.settleAndMintTicket{EIP3009,Permit2}` (permissionless — gated by the signed authorization). Ticket fields are plain payment data: `payer`, `agentId`, `agentAddress`, `token`, `amount`, `consumed`.
 2. **Serve.** Agent runs handler, then best-effort signs EIP-712 `InteractionAttestation` → `X-X402-Interaction-Attestation` header (never blocks the 200).
-3. **Feedback.** Payer calls `giveFeedbackWithTicket` (Path A) or signs `FeedbackIntent` for relayer submission (Path B). Ticket sets `consumed=true` atomically with feedback.
+3. **Feedback.** Payer delegates its EOA to the `FeedbackGateway` (EIP-7702) — self-paid (`submitFeedback`) or sponsored via a signed `FeedbackIntent` (`submitFeedbackFor`). The gateway, running as the client, calls `X402AgentReputation.consumeTicket` (ticket `consumed=true`) and forwards `giveFeedback` to the **canonical** `ReputationRegistry`, authored by the client.
 4. **Verify.** Aggregators run `verify_feedback` → `FULL` / `CLIENT_ONLY` / `DISPUTED` / `REJECTED`.
 
-Direct feedback on upstream `ReputationRegistry.giveFeedback` remains available separately — the wrapper does not disable it.
+Feedback is stored on the canonical ERC-8004 `ReputationRegistry`; the wrapper only mints/consumes the payment-backed ticket. Disputes use the canonical registry's own `revokeFeedback` (client) / `appendResponse` (agent).
 
 ## Activation
 
