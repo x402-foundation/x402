@@ -48,14 +48,17 @@ import subprocess
 import sys
 import time
 from pathlib import Path
-from typing import Any
+from typing import Any, TypeAlias
 
 from eth_account import Account
 from eth_utils import keccak
 from web3 import Web3
+from web3.contract import Contract
 
 from x402.extensions.erc8004 import ERC8004Config, ERCFeedbackClient, FeedbackParams
 from x402.extensions.erc8004.constants import get_ticket_minted_topic
+
+X402AgentReputation: TypeAlias = Contract
 
 # Local helpers — share the legacy demo's register_agent / fund_gas logic so we
 # don't duplicate the IdentityRegistry calldata variants.
@@ -112,7 +115,7 @@ ERC20_ABI = [
 
 
 def _load_artifact(name: str) -> dict[str, Any]:
-    """Load a Foundry build artifact by contract name (e.g. ``MockERC20.sol/MockERC20.json``)."""
+    """Load a Foundry build artifact by contract name (e.g. ``X402AgentReputation.sol/X402AgentReputation.json``)."""
     path = FOUNDRY_OUT / f"{name}.sol" / f"{name}.json"
     if not path.exists():
         raise FileNotFoundError(
@@ -267,7 +270,7 @@ def _ensure_built() -> None:
         sys.exit(1)
 
 
-def _print_ticket(w3: Web3, wrapper: Any, ticket_id: int, label: str) -> None:
+def _print_ticket(w3: Web3, wrapper: X402AgentReputation, ticket_id: int, label: str) -> None:
     tdata = wrapper.functions.tickets(ticket_id).call()
     print(
         f"  ticket #{ticket_id} after {label}: payer={tdata[0]} agentId={tdata[1]} "
@@ -277,7 +280,7 @@ def _print_ticket(w3: Web3, wrapper: Any, ticket_id: int, label: str) -> None:
 
 def _settle_and_mint(
     w3: Web3,
-    wrapper: Any,
+    wrapper: X402AgentReputation,
     token_addr: str,
     payer: Account,
     facilitator_signer: Account,
@@ -357,11 +360,9 @@ def _sign_eip3009_authorization(
 ) -> bytes:
     """Sign a USDC-style EIP-3009 TransferWithAuthorization message.
 
-    Real USDC verifies this signature on-chain inside `transferWithAuthorization`.
-    The MockERC3009Token used in this demo skips the check and just performs
-    the transfer, but we still produce a real signature so the flow mirrors
-    what a production payer does (and the bytes are accepted by both the
-    mock and a real EIP-3009 token).
+    Mainnet USDC verifies this signature on-chain inside
+    ``transferWithAuthorization``. The demo forks mainnet and uses the real
+    USDC contract, so the signature must pass Circle's on-chain checker.
     """
     domain = {
         "name": token_name,
@@ -398,7 +399,7 @@ def _sign_eip3009_authorization(
 
 def _settle_and_mint_eip3009(
     w3: Web3,
-    wrapper: Any,
+    wrapper: X402AgentReputation,
     token_addr: str,
     token_name: str,
     token_version: str,

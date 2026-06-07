@@ -1,0 +1,19 @@
+[project]
+name = "x402-erc8004-client-example"
+version = "0.1.0"
+description = "ERC-8004 x402 HTTP client and fork bootstrap"
+readme = "README.md"
+requires-python = ">=3.10"
+keywords = ["x402", "erc8004", "httpx", "402"]
+dependencies = [
+    "x402[httpx,evm,extensions]",
+    "python-dotenv>=1.2.1",
+    "web3>=7.0.0",
+    "eth-account>=0.13.0",
+]
+
+[tool.uv]
+package = false
+
+[tool.uv.sources]
+x402 = { path = "../../../../python/x402", editable = true }
