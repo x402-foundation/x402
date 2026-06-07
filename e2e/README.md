@@ -39,6 +39,15 @@ bash install.sh
 bash build.sh
 ```
 
+### .NET ASP Server Prerequisites
+
+The e2e suite now includes ASP.NET Core server components:
+- `dotnet-asp-minimal`
+- `dotnet-asp-middleware`
+- `dotnet-asp-mvc`
+
+Install a compatible .NET SDK before running those components. Current e2e run scripts target .NET 10 (`net10.0`).
+
 ## Usage
 
 ### Interactive Test Mode
@@ -85,6 +94,12 @@ Add the `-v` flag to any command for verbose output:
 - Shows detailed information after each test scenario
 
 Useful for debugging test failures or understanding the payment flow.
+
+### Run Dotnet ASP Servers Only
+
+```bash
+pnpm test --testnet --servers=dotnet-asp-minimal,dotnet-asp-middleware,dotnet-asp-mvc --families=evm --schemes=exact --min -v
+```
 
 ## Wallet Safety Warning
 
