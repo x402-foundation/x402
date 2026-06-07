@@ -7,25 +7,25 @@ import {X402AgentReputation} from "../src/erc8004/X402AgentReputation.sol";
 import {MockIdentityRegistry} from "../test/erc8004/mocks/MockIdentityRegistry.sol";
 
 /// @title DeployERC8004Ticket
-/// @notice Deploys X402AgentReputation (v2 wrapper) and wires the facilitator allowlist.
+/// @notice Deploys the X402AgentReputation (v2 wrapper). Settlement is permissionless —
+///         there is no facilitator allowlist to wire.
 /// @dev Env vars (all optional, sensible defaults for local Anvil):
-///        - OWNER: wrapper owner (defaults to broadcaster).
-///        - FACILITATOR: address whitelisted on the wrapper (defaults to broadcaster).
+///        - OWNER: reserved admin handle (defaults to broadcaster; no privileged functions today).
 ///        - IDENTITY_REGISTRY: existing ERC-8004 IdentityRegistry; if unset, a
 ///            MockIdentityRegistry is deployed (Anvil only).
-///        - PERMIT2_ADDRESS: canonical Permit2 (0x000000000022D473030F116dDEE9F6B43aC78BA3
-///            by default; set to address(0) to disable Permit2 path).
+///        - PERMIT2_PROXY_ADDRESS: canonical x402ExactPermit2Proxy
+///            (0x402085c248EeA27D92E8b30b2C58ed07f9E20001 by default; set to address(0)
+///            to disable the Permit2 path).
 ///
 /// Run: forge script script/DeployERC8004Ticket.s.sol \
 ///        --rpc-url $RPC_URL --broadcast
 contract DeployERC8004Ticket is Script {
-    address constant CANONICAL_PERMIT2 = 0x000000000022D473030F116dDEE9F6B43aC78BA3;
+    address constant CANONICAL_PERMIT2_PROXY = 0x402085c248EeA27D92E8b30b2C58ed07f9E20001;
 
     function run() public {
         address broadcaster = msg.sender;
         address owner = vm.envOr("OWNER", broadcaster);
-        address facilitator = vm.envOr("FACILITATOR", broadcaster);
-        address permit2 = vm.envOr("PERMIT2_ADDRESS", CANONICAL_PERMIT2);
+        address permit2Proxy = vm.envOr("PERMIT2_PROXY_ADDRESS", CANONICAL_PERMIT2_PROXY);
         address identityRegistry = vm.envOr("IDENTITY_REGISTRY", address(0));
 
         bool isLocal = block.chainid == 31_337 || block.chainid == 1337;
@@ -36,8 +36,7 @@ contract DeployERC8004Ticket is Script {
         console2.log("============================================================");
         console2.log("chainId          :", block.chainid);
         console2.log("owner            :", owner);
-        console2.log("facilitator      :", facilitator);
-        console2.log("permit2          :", permit2);
+        console2.log("permit2Proxy     :", permit2Proxy);
         console2.log("identityRegistry :", identityRegistry);
         console2.log("");
 
@@ -50,18 +49,8 @@ contract DeployERC8004Ticket is Script {
             console2.log("Deployed MockIdentityRegistry:", identityRegistry);
         }
 
-        X402AgentReputation wrapper = new X402AgentReputation(owner, permit2, identityRegistry);
+        X402AgentReputation wrapper = new X402AgentReputation(owner, permit2Proxy, identityRegistry);
         console2.log("Deployed X402AgentReputation:", address(wrapper));
-
-        // setFacilitator requires msg.sender == wrapper owner.
-        if (broadcaster == owner) {
-            wrapper.setFacilitator(facilitator, true);
-            console2.log("Wired facilitator on the wrapper.");
-        } else {
-            console2.log("");
-            console2.log("Owner is not the broadcaster. Run this as owner:");
-            console2.log("  wrapper.setFacilitator(", facilitator, ", true)");
-        }
 
         vm.stopBroadcast();
 

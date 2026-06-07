@@ -108,4 +108,4 @@ tier = verify_feedback(
 
 - Spec: [`specs/extensions/erc8004_ticket_v2.md`](../../../../specs/extensions/erc8004_ticket_v2.md)
 - Flow diagram: [`x402-erc8004-ticket-flow.html`](./x402-erc8004-ticket-flow.html)
-- Demo: [`examples/python/clients/erc8004/run_ticket_demo.py`](../../../../examples/python/clients/erc8004/run_ticket_demo.py)
+- Demo: [`examples/python/clients/erc8004/run_x402_client.py`](../../../../examples/python/clients/erc8004/run_x402_client.py)

@@ -10,8 +10,8 @@ Pure helpers — no demo orchestration, no IPFS, no Pinata.
   - ensure_dai_permit2_allowance / settle_dai_via_x402_permit2_proxy: DAI
     settlement via the x402 Permit2 proxy.
 
-Used by `run_ticket_demo.py` (which imports `fund_gas_if_low` and
-`register_agent`) and available for any other demo that wants the same plumbing.
+Used by `bootstrap_fork.py` and `run_x402_client.py`, and available for any
+other demo that wants the same plumbing.
 """
 
 from __future__ import annotations

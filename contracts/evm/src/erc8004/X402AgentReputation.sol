@@ -1,8 +1,6 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.20;
 
-import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
-import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 import {ECDSA} from "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
 import {EIP712} from "@openzeppelin/contracts/utils/cryptography/EIP712.sol";
@@ -45,7 +43,6 @@ interface IX402ExactPermit2Proxy {
 /// @notice Single wrapper: x402 settle + ticket mint + ticket-gated ERC-8004 feedback + dispute.
 /// @dev Does not replace upstream `ReputationRegistry.giveFeedback` — direct feedback stays open there.
 contract X402AgentReputation is IX402AgentReputation, EIP712, Ownable {
-    using SafeERC20 for IERC20;
     using ECDSA for bytes32;
 
     bytes32 private constant FEEDBACK_INTENT_TYPEHASH = keccak256(
@@ -58,7 +55,6 @@ contract X402AgentReputation is IX402AgentReputation, EIP712, Ownable {
     IIdentityRegistry public immutable identityRegistry;
 
     mapping(uint256 => Ticket) private _tickets;
-    mapping(address => bool) public facilitators;
     mapping(uint256 => mapping(address => mapping(bytes32 => bool))) private _usedFeedbackHash;
     mapping(address => mapping(uint256 => bool)) private _feedbackNonces;
 
@@ -75,7 +71,6 @@ contract X402AgentReputation is IX402AgentReputation, EIP712, Ownable {
 
     uint256 private _nextTicketId = 1;
 
-    error NotFacilitator();
     error InvalidPayment();
     error TicketNotMinted();
     error PayerMismatch();
@@ -95,12 +90,7 @@ contract X402AgentReputation is IX402AgentReputation, EIP712, Ownable {
     error ZeroAddress();
     error PayToMismatch();
 
-    modifier onlyFacilitator() {
-        if (!facilitators[msg.sender]) revert NotFacilitator();
-        _;
-    }
-
-    /// @param owner_ Owner controlling the facilitator allowlist.
+    /// @param owner_ Reserved admin handle (currently no privileged functions).
     /// @param permit2Proxy_ Canonical x402ExactPermit2Proxy address; `address(0)` disables Permit2 settlement.
     /// @param identityRegistry_ ERC-8004 identity registry; `agentId` must exist at mint time.
     constructor(address owner_, address permit2Proxy_, address identityRegistry_) Ownable(owner_) EIP712("X402AgentReputation", "1") {
@@ -109,27 +99,12 @@ contract X402AgentReputation is IX402AgentReputation, EIP712, Ownable {
         PERMIT2_PROXY = IX402ExactPermit2Proxy(permit2Proxy_);
     }
 
-    function setFacilitator(address facilitator, bool enabled) external onlyOwner {
-        facilitators[facilitator] = enabled;
-    }
-
-    function settleAndMintTicket(
-        address payer,
-        uint256 agentId,
-        address agentAddress,
-        SettlePayment calldata payment
-    ) external onlyFacilitator returns (uint256 ticketId) {
-        _validateMintPayment(payer, agentAddress, payment.token, payment.payTo, payment.amount);
-        IERC20(payment.token).safeTransferFrom(payer, payment.payTo, payment.amount);
-        ticketId = _mintTicket(payer, agentId, agentAddress, payment.token, payment.amount);
-    }
-
     function settleAndMintTicketEIP3009(
         address payer,
         uint256 agentId,
         address agentAddress,
         EIP3009Settlement calldata settlement
-    ) external onlyFacilitator returns (uint256 ticketId) {
+    ) external returns (uint256 ticketId) {
         _validateMintPayment(payer, agentAddress, settlement.token, settlement.payTo, settlement.value);
         IERC3009(settlement.token).transferWithAuthorization(
             payer,
@@ -153,7 +128,7 @@ contract X402AgentReputation is IX402AgentReputation, EIP712, Ownable {
         uint256 agentId,
         address agentAddress,
         Permit2Settlement calldata settlement
-    ) external onlyFacilitator returns (uint256 ticketId) {
+    ) external returns (uint256 ticketId) {
         if (address(PERMIT2_PROXY) == address(0)) revert InvalidPermit2();
         address token = settlement.permit.permitted.token;
         uint256 amount = settlement.permit.permitted.amount;

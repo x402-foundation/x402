@@ -15,6 +15,7 @@ import {x402ExactPermit2Proxy} from "../../src/x402ExactPermit2Proxy.sol";
 contract X402AgentReputationTest is Test {
     X402AgentReputation public wrapper;
     MockERC20 public token;
+    MockERC3009Token public t3009;
     MockIdentityRegistry public identity;
 
     address public owner = makeAddr("owner");
@@ -27,6 +28,7 @@ contract X402AgentReputationTest is Test {
     bytes32 public constant FEEDBACK_HASH = keccak256("feedback");
 
     uint256 payerPrivateKey = 0xA11CE;
+    uint256 private _nextNonce;
 
     function setUp() public {
         payer = vm.addr(payerPrivateKey);
@@ -36,96 +38,82 @@ contract X402AgentReputationTest is Test {
 
         wrapper = new X402AgentReputation(owner, address(0), address(identity));
         token = new MockERC20("USDC", "USDC", 6);
-
-        vm.prank(owner);
-        wrapper.setFacilitator(facilitator, true);
-
         token.mint(payer, 1_000e6);
-        vm.prank(payer);
-        token.approve(address(wrapper), type(uint256).max);
+        t3009 = new MockERC3009Token("USDC3009", "USDC", 6);
+        t3009.mint(payer, 1_000e6);
+    }
+
+    /// @dev Mint a ticket via the EIP-3009 path (the bare transferFrom path was removed).
+    ///      The EIP-3009 mock ignores the signature and transfers `value` from `from`.
+    function _mintTicketEIP3009(address from, uint256 value, bytes32 nonce) internal returns (uint256 ticketId) {
+        IX402AgentReputation.EIP3009Settlement memory settlement = IX402AgentReputation.EIP3009Settlement({
+            token: address(t3009),
+            payTo: payTo,
+            value: value,
+            validAfter: 0,
+            validBefore: type(uint256).max,
+            nonce: nonce,
+            signature: ""
+        });
+        ticketId = wrapper.settleAndMintTicketEIP3009(from, AGENT_ID, payTo, settlement);
     }
 
     function _mintTicket() internal returns (uint256 ticketId) {
-        IX402AgentReputation.SettlePayment memory payment =
-            IX402AgentReputation.SettlePayment({token: address(token), payTo: payTo, amount: 10e6});
-
-        vm.prank(facilitator);
-        ticketId = wrapper.settleAndMintTicket(payer, AGENT_ID, payTo, payment);
+        ticketId = _mintTicketEIP3009(payer, 10e6, keccak256(abi.encode("mint", _nextNonce++)));
     }
 
     function test_settleAndMintTicket_mintsPlainFields() public {
-        IX402AgentReputation.SettlePayment memory payment =
-            IX402AgentReputation.SettlePayment({token: address(token), payTo: payTo, amount: 100e6});
-
-        vm.prank(facilitator);
-        uint256 ticketId = wrapper.settleAndMintTicket(payer, AGENT_ID, payTo, payment);
+        uint256 ticketId = _mintTicketEIP3009(payer, 100e6, keccak256("plain"));
 
         assertEq(ticketId, 1);
-        assertEq(token.balanceOf(payTo), 100e6);
+        assertEq(t3009.balanceOf(payTo), 100e6);
 
         IX402AgentReputation.Ticket memory ticket = wrapper.tickets(ticketId);
         assertEq(ticket.payer, payer);
         assertEq(ticket.agentId, AGENT_ID);
         assertEq(ticket.agentAddress, payTo);
-        assertEq(ticket.token, address(token));
+        assertEq(ticket.token, address(t3009));
         assertEq(ticket.amount, 100e6);
         assertFalse(ticket.consumed);
     }
 
     function test_ticketMinted_emittedForReceiptRecovery() public {
-        IX402AgentReputation.SettlePayment memory payment =
-            IX402AgentReputation.SettlePayment({token: address(token), payTo: payTo, amount: 50e6});
-
         vm.expectEmit(true, true, true, true);
-        emit IX402AgentReputation.TicketMinted(1, payer, AGENT_ID, payTo, address(token), 50e6);
+        emit IX402AgentReputation.TicketMinted(1, payer, AGENT_ID, payTo, address(t3009), 50e6);
 
-        vm.prank(facilitator);
-        wrapper.settleAndMintTicket(payer, AGENT_ID, payTo, payment);
+        _mintTicketEIP3009(payer, 50e6, keccak256("emit"));
     }
 
     function test_revertWhen_payToMismatch() public {
-        IX402AgentReputation.SettlePayment memory payment =
-            IX402AgentReputation.SettlePayment({token: address(token), payTo: makeAddr("other"), amount: 1});
-
-        vm.prank(facilitator);
+        IX402AgentReputation.EIP3009Settlement memory settlement = IX402AgentReputation.EIP3009Settlement({
+            token: address(t3009),
+            payTo: makeAddr("other"),
+            value: 1,
+            validAfter: 0,
+            validBefore: type(uint256).max,
+            nonce: keccak256("mismatch"),
+            signature: ""
+        });
         vm.expectRevert(X402AgentReputation.PayToMismatch.selector);
-        wrapper.settleAndMintTicket(payer, AGENT_ID, payTo, payment);
+        wrapper.settleAndMintTicketEIP3009(payer, AGENT_ID, payTo, settlement);
     }
 
     function test_revertWhen_invalidAgent() public {
-        IX402AgentReputation.SettlePayment memory payment =
-            IX402AgentReputation.SettlePayment({token: address(token), payTo: payTo, amount: 1});
-
-        vm.prank(facilitator);
-        vm.expectRevert(X402AgentReputation.InvalidAgent.selector);
-        wrapper.settleAndMintTicket(payer, 9999, payTo, payment);
-    }
-
-    function test_revertWhen_notFacilitator() public {
-        IX402AgentReputation.SettlePayment memory payment =
-            IX402AgentReputation.SettlePayment({token: address(token), payTo: payTo, amount: 1});
-
-        vm.prank(payer);
-        vm.expectRevert(X402AgentReputation.NotFacilitator.selector);
-        wrapper.settleAndMintTicket(payer, AGENT_ID, payTo, payment);
-    }
-
-    function test_settleAndMintTicketEIP3009_callsTokenAndMints() public {
-        MockERC3009Token t3009 = new MockERC3009Token("USDC3009", "USDC", 6);
-        t3009.mint(payer, 1_000e6);
-
         IX402AgentReputation.EIP3009Settlement memory settlement = IX402AgentReputation.EIP3009Settlement({
             token: address(t3009),
             payTo: payTo,
-            value: 25e6,
+            value: 1,
             validAfter: 0,
             validBefore: type(uint256).max,
-            nonce: keccak256("nonce-1"),
+            nonce: keccak256("badagent"),
             signature: ""
         });
+        vm.expectRevert(X402AgentReputation.InvalidAgent.selector);
+        wrapper.settleAndMintTicketEIP3009(payer, 9999, payTo, settlement);
+    }
 
-        vm.prank(facilitator);
-        uint256 ticketId = wrapper.settleAndMintTicketEIP3009(payer, AGENT_ID, payTo, settlement);
+    function test_settleAndMintTicketEIP3009_callsTokenAndMints() public {
+        uint256 ticketId = _mintTicketEIP3009(payer, 25e6, keccak256("nonce-1"));
 
         assertEq(ticketId, 1);
         assertEq(t3009.balanceOf(payTo), 25e6);
@@ -142,8 +130,6 @@ contract X402AgentReputationTest is Test {
         x402ExactPermit2Proxy proxy = new x402ExactPermit2Proxy(address(permit2));
 
         X402AgentReputation wp = new X402AgentReputation(owner, address(proxy), address(identity));
-        vm.prank(owner);
-        wp.setFacilitator(facilitator, true);
 
         vm.prank(payer);
         token.approve(address(permit2), type(uint256).max);
@@ -269,14 +255,9 @@ contract X402AgentReputationTest is Test {
 
     function test_revertWhen_selfFeedback() public {
         address selfPayer = agentOwner;
-        token.mint(selfPayer, 100e6);
-        vm.prank(selfPayer);
-        token.approve(address(wrapper), type(uint256).max);
+        t3009.mint(selfPayer, 100e6);
 
-        IX402AgentReputation.SettlePayment memory payment =
-            IX402AgentReputation.SettlePayment({token: address(token), payTo: payTo, amount: 10e6});
-        vm.prank(facilitator);
-        uint256 ticketId = wrapper.settleAndMintTicket(selfPayer, AGENT_ID, payTo, payment);
+        uint256 ticketId = _mintTicketEIP3009(selfPayer, 10e6, keccak256("self"));
 
         vm.prank(selfPayer);
         vm.expectRevert(X402AgentReputation.SelfFeedbackNotAllowed.selector);

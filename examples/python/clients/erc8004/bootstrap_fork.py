@@ -285,17 +285,8 @@ def bootstrap(write_env: bool) -> subprocess.Popen[Any]:
         identity_addr,
     )
     print(f"  wrapper = {wrapper_addr}")
-
-    wrapper_abi = _load_artifact("X402AgentReputation")["abi"]
-    wrapper = w3.eth.contract(address=wrapper_addr, abi=wrapper_abi)
-    tx = wrapper.functions.setFacilitator(deployer.address, True).build_transaction(
-        {"from": deployer.address}
-    )
-    tx.pop("chainId", None)
-    tx.pop("nonce", None)
-    tx.pop("from", None)
-    send_tx(w3, deployer, {**tx, "gas": 200_000})
-    print("  setFacilitator(deployer, true)")
+    # Settlement is permissionless (gated by the signed payment authorization) — no
+    # facilitator allowlist to wire.
 
     state = {
         "rpc_url": rpc_url,

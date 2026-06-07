@@ -4,17 +4,7 @@ The v2 ticket flow uses a single `X402AgentReputation` wrapper: settlement and
 ticket mint share one on-chain transaction. Feedback is ticket-gated via
 `giveFeedbackWithTicket`.
 
-## Demos
-
-### On-chain only (`run_ticket_demo.py`)
-
-Direct contract calls — no HTTP. Four tickets (USDC × 2, DAI × 2), Path A + B.
-
-```bash
-cd contracts/evm && FOUNDRY_PROFILE=erc8004 forge build
-cd ../../python/x402 && uv pip install -e .
-uv run python ../../examples/python/clients/erc8004/run_ticket_demo.py
-```
+## Demo
 
 ### x402 HTTP flow (facilitator + agent server + client)
 

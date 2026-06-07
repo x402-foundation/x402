@@ -59,3 +59,6 @@ docs/plans/
 specs/2026-*-erc8004-*.md
 
 **/run.sh
+
+# Serena MCP tool workspace
+.serena/

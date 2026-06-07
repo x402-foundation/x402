@@ -14,12 +14,6 @@ interface IX402AgentReputation {
         bool consumed;
     }
 
-    struct SettlePayment {
-        address token;
-        address payTo;
-        uint256 amount;
-    }
-
     struct EIP3009Settlement {
         address token;
         address payTo;
@@ -77,13 +71,6 @@ interface IX402AgentReputation {
     );
 
     event FeedbackDisputed(uint256 indexed agentId, address indexed clientAddress, uint64 indexed feedbackIndex);
-
-    function settleAndMintTicket(
-        address payer,
-        uint256 agentId,
-        address agentAddress,
-        SettlePayment calldata payment
-    ) external returns (uint256 ticketId);
 
     function settleAndMintTicketEIP3009(
         address payer,
