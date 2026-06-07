@@ -99,6 +99,7 @@ Each example demonstrates a specific advanced pattern:
 | `hooks` | `pnpm dev:hooks` | Payment lifecycle hooks |
 | `dynamic-price` | `pnpm dev:dynamic-price` | Context-based pricing |
 | `dynamic-pay-to` | `pnpm dev:dynamic-pay-to` | Route payments to different recipients |
+| `dynamic-routes` | `pnpm dev:dynamic-routes` | Register payment-protected routes at runtime |
 | `custom-money-definition` | `pnpm dev:custom-money-definition` | Accept alternative tokens |
 
 ## Testing the Server
@@ -219,6 +220,42 @@ app.use(
 ```
 
 **Use case:** Marketplace applications where payments should go to different sellers, content creators, or service providers based on the resource being accessed.
+
+## Example: Dynamic Routes
+
+Register payment-protected routes at runtime with `registerRoute()` / `unregisterRoute()`.
+
+Static route maps are compiled once at startup. When a payable resource is created by a request (an order, an auction, a job), its payment URL and price don't exist yet at that point — dynamic routes close that gap:
+
+```typescript
+import { paymentMiddlewareFromHTTPServer, x402HTTPResourceServer } from "@x402/express";
+
+const httpServer = new x402HTTPResourceServer(resourceServer, {});
+app.use(paymentMiddlewareFromHTTPServer(httpServer));
+
+// Order created → protect its payment URL with an order-specific price
+app.post("/orders", (req, res) => {
+  const price = `$${(req.body.quantity * 0.001).toFixed(3)}`;
+  const orderId = createOrder(req.body.quantity, price);
+
+  // Verb-agnostic pattern: Express serves HEAD through GET handlers, so a
+  // "GET /..." pattern would let HEAD requests bypass the middleware
+  httpServer.registerRoute(`/orders/${orderId}/receipt`, {
+    accepts: { scheme: "exact", price, network: "eip155:84532", payTo: evmAddress },
+    description: `Order ${orderId}`,
+  });
+
+  res.json({ orderId, price, payUrl: `/orders/${orderId}/receipt` });
+});
+
+// Payment settled → release the route (one-shot payment, replay protection)
+app.get("/orders/:id/receipt", (req, res) => {
+  httpServer.unregisterRoute(`/orders/${req.params.id}/receipt`);
+  res.send(completeOrder(req.params.id));
+});
+```
+
+**Use case:** Orders, auctions, pay-per-job services, IoT devices — any flow where the protected URL and its price are only known at runtime, or where a route should stop charging after a one-time payment.
 
 ## Example: Lifecycle Hooks
 
