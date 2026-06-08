@@ -12,6 +12,11 @@ from typing import TYPE_CHECKING, Any, Callable
 from eth_utils import to_checksum_address
 
 from ...interfaces import FacilitatorExtension
+from ...mechanisms.evm.types import (
+    ExactEIP3009Payload,
+    ExactPermit2Payload,
+    is_permit2_payload,
+)
 from ...schemas import PaymentPayload, PaymentRequirements, SettleResponse
 from .constants import X402_AGENT_REPUTATION_ABI, get_ticket_minted_topic
 from .types import EXTENSION_KEY
@@ -46,14 +51,10 @@ class ERC8004TicketFacilitatorExtension(FacilitatorExtension):
         *,
         wrapper_for_network: Callable[[str], str | None] | None = None,
         wrappers: dict[str, str] | None = None,
-        minter_for_network: Callable[[str], str | None] | None = None,
-        minters: dict[str, str] | None = None,
     ) -> None:
         object.__setattr__(self, "key", EXTENSION_KEY)
-        lookup = wrapper_for_network or minter_for_network
-        static = dict(wrappers or minters or {})
-        object.__setattr__(self, "_wrapper_for_network", lookup)
-        object.__setattr__(self, "_wrappers", static)
+        object.__setattr__(self, "_wrapper_for_network", wrapper_for_network)
+        object.__setattr__(self, "_wrappers", dict(wrappers or {}))
 
     def resolve_wrapper(self, network: str) -> str | None:
         """Return the X402AgentReputation address for `network`, or None."""
@@ -62,10 +63,6 @@ class ERC8004TicketFacilitatorExtension(FacilitatorExtension):
             if addr is not None:
                 return addr
         return self._wrappers.get(network)
-
-    def resolve_minter(self, network: str) -> str | None:
-        """Legacy alias for resolve_wrapper."""
-        return self.resolve_wrapper(network)
 
 
 def settle_via_wrapper(
@@ -81,7 +78,7 @@ def settle_via_wrapper(
     agent_address = to_checksum_address(requirements.pay_to)
 
     try:
-        if _is_permit2_payload(payload.payload):
+        if is_permit2_payload(payload.payload):
             tx_hash = _write_settle_permit2(
                 signer, wrapper_address, payload, requirements, agent_id, agent_address, payer
             )
@@ -154,17 +151,9 @@ def ticket_id_from_receipt(signer: "FacilitatorEvmSigner", tx_hash: str) -> int 
     return None
 
 
-def _is_permit2_payload(payload: Any) -> bool:
-    if not isinstance(payload, dict):
-        return False
-    return "permit2Authorization" in payload
-
-
 def _payer_from_payload(payload: PaymentPayload) -> str:
-    from ...mechanisms.evm.types import ExactEIP3009Payload, ExactPermit2Payload
-
     inner = payload.payload or {}
-    if _is_permit2_payload(inner):
+    if is_permit2_payload(inner):
         return ExactPermit2Payload.from_dict(inner).permit2_authorization.from_address
     return ExactEIP3009Payload.from_dict(inner).authorization.from_address
 
@@ -178,8 +167,6 @@ def _write_settle_eip3009(
     agent_address: str,
     payer: str,
 ) -> str:
-    from ...mechanisms.evm.types import ExactEIP3009Payload
-
     eip3009 = ExactEIP3009Payload.from_dict(payload.payload)
     auth = eip3009.authorization
     nonce = auth.nonce
@@ -223,8 +210,6 @@ def _write_settle_permit2(
     agent_address: str,
     payer: str,
 ) -> str:
-    from ...mechanisms.evm.types import ExactPermit2Payload
-
     permit2 = ExactPermit2Payload.from_dict(payload.payload)
     auth = permit2.permit2_authorization
 

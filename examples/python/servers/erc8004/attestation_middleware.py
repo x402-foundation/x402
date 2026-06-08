@@ -195,12 +195,8 @@ def erc8004_payment_middleware(
                         att = create_interaction_attestation(
                             agent_owner,
                             wrapper_address=wrapper_address,
-                            agent_id=agent_id,
                             requirements=result.payment_requirements,
-                            payment_payload=result.payment_payload,
                             ticket_id=int(ticket_id_raw),
-                            tx_hash=settle_resp.transaction or "",
-                            payer=settle_resp.payer or "",
                             method=request.method,
                             url=str(request.url),
                             request_body=b"",

@@ -45,7 +45,6 @@ from x402.extensions.erc8004.verify import (
     dedup_feedback,
     verify_agent_binding,
     verify_feedback,
-    verify_integrity,
     verify_settlement,
     verify_ticket_settlement,
 )
@@ -77,7 +76,6 @@ __all__ = [
     "dedup_feedback",
     "verify_agent_binding",
     "verify_feedback",
-    "verify_integrity",
     "verify_settlement",
     "verify_ticket_settlement",
     "ARTIFACT_VERSION",

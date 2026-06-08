@@ -269,6 +269,22 @@ class ExactEvmScheme:
 
         return VerifyResponse(is_valid=True, payer=payer)
 
+    def _verify_for_settle(
+        self,
+        payload: PaymentPayload,
+        requirements: PaymentRequirements,
+        context=None,
+    ) -> VerifyResponse:
+        """Run the same verification the standard settle path performs.
+
+        EIP-3009 settlement re-verifies via ``_verify``; Permit2 settlement re-verifies
+        inside ``settle_permit2`` (``verify_permit2``). The ERC-8004 wrapper route
+        bypasses both, so it calls this to keep the same checks before minting.
+        """
+        if is_permit2_payload(payload.payload):
+            return verify_permit2(self._signer, payload, requirements, context)
+        return self._verify(payload, requirements, simulate=self._config.simulate_in_settle)
+
     def settle(
         self,
         payload: PaymentPayload,
@@ -297,11 +313,26 @@ class ExactEvmScheme:
         # atomically in one tx. Falls through to the standard path on any miss
         # so non-erc8004 traffic is untouched.
         if context is not None:
-            ticket_response = _maybe_route_to_ticket_minter(
-                self._signer, payload, requirements, context
-            )
-            if ticket_response is not None:
-                return ticket_response
+            ticket_route = _maybe_route_to_ticket_minter(payload, requirements, context)
+            if ticket_route is not None:
+                from ....extensions.erc8004 import settle_via_wrapper
+
+                wrapper_address, agent_id = ticket_route
+                # Re-verify before minting so ticket traffic gets the same
+                # signature/amount/recipient/expiry checks as the standard path.
+                verify_result = self._verify_for_settle(payload, requirements, context)
+                if not verify_result.is_valid:
+                    return SettleResponse(
+                        success=False,
+                        error_reason=verify_result.invalid_reason,
+                        error_message=verify_result.invalid_message,
+                        network=str(payload.accepted.network),
+                        payer=verify_result.payer,
+                        transaction="",
+                    )
+                return settle_via_wrapper(
+                    self._signer, wrapper_address, payload, requirements, agent_id
+                )
 
         if is_permit2_payload(payload.payload):
             return settle_permit2(self._signer, payload, requirements, context)
@@ -416,15 +447,16 @@ class ExactEvmScheme:
 
 
 def _maybe_route_to_ticket_minter(
-    signer: FacilitatorEvmSigner,
     payload: PaymentPayload,
     requirements: PaymentRequirements,
     context: Any,
-) -> SettleResponse | None:
-    """Route settle through X402AgentReputation when the erc8004 extension is active.
+) -> tuple[str, int] | None:
+    """Decide whether settle should route through X402AgentReputation.
 
-    Returns the SettleResponse from `settle_via_wrapper` when guards hold; None
-    otherwise so the caller falls through to the standard transfer/proxy path.
+    Returns ``(wrapper_address, agent_id)`` when the erc8004 extension is active and
+    the client echoed `agentId`; None otherwise so the caller falls through to the
+    standard transfer/proxy path. Deciding (not settling) here lets `settle` re-verify
+    the payment before minting the ticket.
 
     Guards:
       1. Facilitator registered `ERC8004TicketFacilitatorExtension`
@@ -435,7 +467,6 @@ def _maybe_route_to_ticket_minter(
         from ....extensions.erc8004 import (
             ERC8004TicketFacilitatorExtension,
             extract_agent_id,
-            settle_via_wrapper,
         )
         from ....extensions.erc8004.types import EXTENSION_KEY
     except ImportError:
@@ -453,4 +484,4 @@ def _maybe_route_to_ticket_minter(
     if agent_id is None:
         return None
 
-    return settle_via_wrapper(signer, wrapper_address, payload, requirements, agent_id)
+    return wrapper_address, agent_id

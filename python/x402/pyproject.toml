@@ -189,6 +189,9 @@ warn_unused_configs = true
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+markers = [
+    "integration: end-to-end tests that spawn external processes (deselect with '-m \"not integration\"')",
+]
 
 [tool.towncrier]
 package = "x402"

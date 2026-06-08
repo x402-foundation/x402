@@ -6,20 +6,10 @@ from eth_utils import keccak
 
 from x402.extensions.erc8004.verify import (
     TrustTier,
-    verify_integrity,
     dedup_feedback,
     verify_settlement,
 )
 from x402.mechanisms.evm.constants import X402_EXACT_PERMIT2_PROXY_ADDRESS
-
-
-def test_verify_integrity_match() -> None:
-    content = b'{"a":1}'
-    assert verify_integrity(content, keccak(content)) is True
-
-
-def test_verify_integrity_mismatch() -> None:
-    assert verify_integrity(b'{"a":1}', b"\x00" * 32) is False
 
 
 def test_dedup_keeps_latest_per_key() -> None:

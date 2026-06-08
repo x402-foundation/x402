@@ -8,6 +8,7 @@ from typing import Any
 from eth_utils import keccak, to_checksum_address
 
 from x402.mechanisms.evm.constants import X402_EXACT_PERMIT2_PROXY_ADDRESS
+from x402.mechanisms.evm.utils import get_evm_chain_id
 
 from .artifact import (
     attestation_matches_artifact,
@@ -37,26 +38,8 @@ class TrustTier(IntEnum):
     REJECTED = 3
 
 
-def verify_integrity(content: bytes, feedback_hash: bytes) -> bool:
-    """Legacy helper — prefer compute_feedback_hash for v2 artifacts."""
-    try:
-        import json
-
-        artifact = json.loads(content.decode("utf-8"))
-        return compute_feedback_hash(artifact) == feedback_hash
-    except Exception:
-        return keccak(content) == feedback_hash
-
-
 def _topic_addr(topic: bytes) -> str:
     return to_checksum_address("0x" + topic.hex()[-40:])
-
-
-def _parse_eip155_chain_id(chain_id: str) -> int:
-    prefix, value = chain_id.split(":", 1)
-    if prefix != "eip155":
-        raise ValueError(f"unsupported chain id format: {chain_id}")
-    return int(value)
 
 
 def _canon_tx_hash(tx_hash: Any) -> str:
@@ -84,7 +67,7 @@ def verify_settlement(w3: Any, artifact: dict[str, Any]) -> bool:
         return True
     try:
         s = artifact["settlement"]
-        expected_chain_id = _parse_eip155_chain_id(s["chainId"])
+        expected_chain_id = get_evm_chain_id(s["chainId"])
         if int(w3.eth.chain_id) != expected_chain_id:
             return False
         receipt = w3.eth.get_transaction_receipt(s["txHash"])
@@ -185,7 +168,7 @@ def verify_feedback(
         if compute_feedback_hash(artifact) != feedback_hash:
             return TrustTier.REJECTED
 
-        expected_chain_id = _parse_eip155_chain_id(artifact["settlement"]["chainId"])
+        expected_chain_id = get_evm_chain_id(artifact["settlement"]["chainId"])
         if int(w3.eth.chain_id) != expected_chain_id:
             return TrustTier.REJECTED
 

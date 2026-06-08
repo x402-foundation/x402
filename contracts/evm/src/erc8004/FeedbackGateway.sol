@@ -39,6 +39,13 @@ contract FeedbackGateway {
     ///      address). Computed at construction and read as an immutable so it stays correct
     ///      even when the code runs under EIP-7702 delegation, where `address(this)` is the
     ///      client EOA rather than the gateway.
+    ///
+    ///      NB: do NOT replace this with OpenZeppelin `EIP712`. Its `_domainSeparatorV4()`
+    ///      caches `address(this)` at construction and *rebuilds* the separator whenever the
+    ///      runtime `address(this)` differs — which under 7702 delegation is the client EOA.
+    ///      That would set `verifyingContract` to the EOA and break recovery of intents the
+    ///      client signed against the gateway address. The immutable below is inlined into the
+    ///      gateway's runtime bytecode, so it survives delegated execution unchanged.
     bytes32 private immutable _DOMAIN_SEPARATOR;
 
     /// @dev signer (== `address(this)` under delegation) => nonce => used.

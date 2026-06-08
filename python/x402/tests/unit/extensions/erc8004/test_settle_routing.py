@@ -4,84 +4,43 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock, patch
 
-from x402.interfaces import FacilitatorContext
-from x402.schemas.payments import PaymentPayload, PaymentRequirements
-from x402.schemas.responses import SettleResponse
-
 from x402.extensions.erc8004 import ERC8004TicketFacilitatorExtension
 from x402.extensions.erc8004.types import EXTENSION_KEY
+from x402.interfaces import FacilitatorContext
 from x402.mechanisms.evm.exact.facilitator import (
     ExactEvmScheme,
     _maybe_route_to_ticket_minter,
 )
+from x402.schemas import VerifyResponse
+from x402.schemas.responses import SettleResponse
 
 
-def _requirements() -> PaymentRequirements:
-    return PaymentRequirements(
-        scheme="exact",
-        network="eip155:31337",
-        asset="0x" + "01" * 20,
-        amount="1000000",
-        pay_to="0x" + "03" * 20,
-        max_timeout_seconds=60,
-    )
-
-
-def _payload_with_agent() -> PaymentPayload:
-    return PaymentPayload(
-        x402_version=2,
-        payload={"authorization": {"from": "0x" + "02" * 20}},
-        accepted=_requirements(),
-        extensions={EXTENSION_KEY: {"info": {"agentId": 42}}},
-    )
-
-
-def _payload_without_agent() -> PaymentPayload:
-    return PaymentPayload(
-        x402_version=2,
-        payload={"authorization": {"from": "0x" + "02" * 20}},
-        accepted=_requirements(),
-        extensions=None,
-    )
-
-
-def test_routes_through_wrapper_when_all_guards_hold() -> None:
+def test_routes_through_wrapper_when_all_guards_hold(
+    make_requirements, make_payload_with_agent
+) -> None:
     wrapper_addr = "0x" + "aa" * 20
     ext = ERC8004TicketFacilitatorExtension(wrappers={"eip155:31337": wrapper_addr})
     context = FacilitatorContext({EXTENSION_KEY: ext})
-    signer = MagicMock()
-    sentinel = SettleResponse(
-        success=True,
-        transaction="0xdead",
-        network="eip155:31337",
-        payer="0x" + "02" * 20,
-        extensions={EXTENSION_KEY: {"ticketId": "7"}},
+
+    route = _maybe_route_to_ticket_minter(
+        make_payload_with_agent(), make_requirements("eip155:31337"), context
     )
 
-    with patch(
-        "x402.extensions.erc8004.settle_via_wrapper",
-        return_value=sentinel,
-    ) as mock_settle:
-        result = _maybe_route_to_ticket_minter(
-            signer, _payload_with_agent(), _requirements(), context
-        )
-
-    assert result is sentinel
-    mock_settle.assert_called_once()
-    args, _ = mock_settle.call_args
-    assert args[1] == wrapper_addr
+    assert route == (wrapper_addr, 42)
 
 
-def test_falls_through_when_agent_id_missing() -> None:
+def test_falls_through_when_agent_id_missing(make_requirements, make_payload) -> None:
     ext = ERC8004TicketFacilitatorExtension(wrappers={"eip155:31337": "0x" + "aa" * 20})
     context = FacilitatorContext({EXTENSION_KEY: ext})
-    result = _maybe_route_to_ticket_minter(
-        MagicMock(), _payload_without_agent(), _requirements(), context
+    route = _maybe_route_to_ticket_minter(
+        make_payload(network="eip155:31337"), make_requirements("eip155:31337"), context
     )
-    assert result is None
+    assert route is None
 
 
-def test_exact_evm_scheme_settle_uses_wrapper_routing() -> None:
+def test_exact_evm_scheme_settle_reverifies_then_routes(
+    make_requirements, make_payload_with_agent
+) -> None:
     wrapper_addr = "0x" + "aa" * 20
     ext = ERC8004TicketFacilitatorExtension(wrappers={"eip155:31337": wrapper_addr})
     context = FacilitatorContext({EXTENSION_KEY: ext})
@@ -98,9 +57,45 @@ def test_exact_evm_scheme_settle_uses_wrapper_routing() -> None:
     with (
         patch("x402.extensions.erc8004.settle_via_wrapper", return_value=sentinel) as routed,
         patch("x402.mechanisms.evm.exact.facilitator.settle_permit2") as default_permit2,
+        patch.object(
+            ExactEvmScheme,
+            "_verify_for_settle",
+            return_value=VerifyResponse(is_valid=True, payer="0x" + "02" * 20),
+        ) as reverify,
     ):
-        result = scheme.settle(_payload_with_agent(), _requirements(), context)
+        result = scheme.settle(
+            make_payload_with_agent(), make_requirements("eip155:31337"), context
+        )
 
     assert result is sentinel
+    reverify.assert_called_once()
     routed.assert_called_once()
     default_permit2.assert_not_called()
+
+
+def test_exact_evm_scheme_settle_rejects_invalid_ticket_payment(
+    make_requirements, make_payload_with_agent
+) -> None:
+    """Re-verify failure short-circuits before the wrapper is touched."""
+    wrapper_addr = "0x" + "aa" * 20
+    ext = ERC8004TicketFacilitatorExtension(wrappers={"eip155:31337": wrapper_addr})
+    context = FacilitatorContext({EXTENSION_KEY: ext})
+    scheme = ExactEvmScheme(MagicMock())
+
+    with (
+        patch("x402.extensions.erc8004.settle_via_wrapper") as routed,
+        patch.object(
+            ExactEvmScheme,
+            "_verify_for_settle",
+            return_value=VerifyResponse(
+                is_valid=False, invalid_reason="bad_sig", payer="0x" + "02" * 20
+            ),
+        ),
+    ):
+        result = scheme.settle(
+            make_payload_with_agent(), make_requirements("eip155:31337"), context
+        )
+
+    assert result.success is False
+    assert result.error_reason == "bad_sig"
+    routed.assert_not_called()

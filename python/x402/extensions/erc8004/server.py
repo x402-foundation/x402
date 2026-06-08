@@ -5,16 +5,17 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+from x402.mechanisms.evm.utils import get_evm_chain_id
 from x402.schemas.extensions import ResourceServerExtension
 from x402.schemas.hooks import (
     ServerPaymentRequiredContext,
     SettleResultContext,
 )
-from x402.schemas.payments import PaymentPayload, PaymentRequirements
+from x402.schemas.payments import PaymentRequirements
 
-from .artifact import body_digest, build_artifact, sign_interaction_attestation
+from .artifact import body_digest, sign_interaction_attestation
 from .schema import declare_erc8004_extension
-from .types import ERC8004Config, EXTENSION_KEY, InteractionAttestation
+from .types import EXTENSION_KEY, ERC8004Config, InteractionAttestation
 
 logger = logging.getLogger("x402.erc8004.server")
 
@@ -69,22 +70,16 @@ def create_interaction_attestation(
     signer: Any,
     *,
     wrapper_address: str,
-    agent_id: int,
     requirements: PaymentRequirements,
-    payment_payload: PaymentPayload,
     ticket_id: int,
-    tx_hash: str,
-    payer: str,
     method: str,
     url: str,
     request_body: bytes,
     response_body: bytes,
     response_status: int,
-    payment_method: str | None = None,
 ) -> InteractionAttestation:
     """Sign an InteractionAttestation after the handler runs (HTTP layer)."""
-    pm = payment_method or _payment_method(requirements)
-    chain_id = int(requirements.network.split(":")[1])
+    chain_id = get_evm_chain_id(str(requirements.network))
     req_digest = body_digest(request_body)
     resp_digest = body_digest(response_body)
 
@@ -125,8 +120,3 @@ def try_create_interaction_attestation(
     except Exception as e:
         logger.warning("erc8004 attestation signing failed: %s", e, exc_info=True)
         return None
-
-
-def _payment_method(requirements: Any) -> str:
-    extra = getattr(requirements, "extra", {}) or {}
-    return extra.get("assetTransferMethod") or extra.get("paymentMethod") or requirements.scheme

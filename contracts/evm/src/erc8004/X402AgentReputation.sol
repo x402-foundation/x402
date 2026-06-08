@@ -3,21 +3,10 @@ pragma solidity ^0.8.20;
 
 import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 
+import {IERC3009} from "../interfaces/IERC3009.sol";
 import {ISignatureTransfer} from "../interfaces/ISignatureTransfer.sol";
 import {IIdentityRegistry} from "./interfaces/IIdentityRegistry.sol";
 import {IX402AgentReputation} from "./interfaces/IX402AgentReputation.sol";
-
-interface IERC3009 {
-    function transferWithAuthorization(
-        address from,
-        address to,
-        uint256 value,
-        uint256 validAfter,
-        uint256 validBefore,
-        bytes32 nonce,
-        bytes calldata signature
-    ) external;
-}
 
 /// @notice Minimal view of the canonical x402ExactPermit2Proxy `settle` entrypoint.
 /// @dev The proxy is the Permit2 spender and enforces the witness-bound destination,

@@ -4,34 +4,13 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock
 
+from x402.extensions.erc8004.constants import get_ticket_minted_topic
 from x402.extensions.erc8004.facilitator import (
     ERC8004TicketFacilitatorExtension,
     extract_agent_id,
     ticket_id_from_receipt,
 )
-from x402.extensions.erc8004.constants import get_ticket_minted_topic
 from x402.extensions.erc8004.types import EXTENSION_KEY
-from x402.schemas.payments import PaymentPayload, PaymentRequirements
-
-
-def _accepted() -> PaymentRequirements:
-    return PaymentRequirements(
-        scheme="exact",
-        network="eip155:31337",
-        asset="0x" + "01" * 20,
-        amount="1000000",
-        pay_to="0x" + "03" * 20,
-        max_timeout_seconds=60,
-    )
-
-
-def _payload_with_agent(info: dict | None = None) -> PaymentPayload:
-    return PaymentPayload(
-        x402_version=2,
-        payload={},
-        accepted=_accepted(),
-        extensions={EXTENSION_KEY: {"info": info or {"agentId": 99}}},
-    )
 
 
 def test_extension_resolves_wrapper_from_static_map() -> None:
@@ -43,18 +22,13 @@ def test_extension_resolves_wrapper_from_static_map() -> None:
     assert ext.resolve_wrapper("eip155:8453") is None
 
 
-def test_extract_agent_id_returns_int_when_present() -> None:
-    payload = _payload_with_agent({"agentId": 99})
+def test_extract_agent_id_returns_int_when_present(make_payload_with_agent) -> None:
+    payload = make_payload_with_agent(info={"agentId": 99})
     assert extract_agent_id(payload) == 99
 
 
-def test_extract_agent_id_missing_returns_none() -> None:
-    payload = PaymentPayload(
-        x402_version=2,
-        payload={},
-        accepted=_accepted(),
-        extensions=None,
-    )
+def test_extract_agent_id_missing_returns_none(make_payload) -> None:
+    payload = make_payload(network="eip155:31337")
     assert extract_agent_id(payload) is None
 
 

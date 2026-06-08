@@ -12,18 +12,6 @@ from x402.extensions.erc8004.artifact import (
     sign_interaction_attestation,
     verify_interaction_attestation,
 )
-from x402.schemas.payments import PaymentPayload, PaymentRequirements
-
-
-def _requirements() -> PaymentRequirements:
-    return PaymentRequirements(
-        scheme="exact",
-        network="eip155:8453",
-        asset="0x" + "01" * 20,
-        amount="1000000",
-        pay_to="0x" + "03" * 20,
-        max_timeout_seconds=60,
-    )
 
 
 def test_canonical_bytes_sorted_compact() -> None:
@@ -35,10 +23,10 @@ def test_body_digest_empty() -> None:
     assert body_digest(b"") == keccak(b"")
 
 
-def test_build_artifact_v2_shape() -> None:
-    payload = PaymentPayload(payload={"sig": "0xdead"}, accepted=_requirements())
+def test_build_artifact_v2_shape(make_requirements, make_payload) -> None:
+    payload = make_payload(payload={"sig": "0xdead"})
     art = build_artifact(
-        requirements=_requirements(),
+        requirements=make_requirements(),
         payment_payload=payload,
         tx_hash="0x" + "ab" * 32,
         payer="0x" + "02" * 20,
@@ -86,19 +74,19 @@ def test_attestation_sign_verify_and_match() -> None:
     assert attestation_matches_artifact(att, artifact) is True
 
 
-def test_feedback_hash_changes_with_rating() -> None:
-    payload = PaymentPayload(payload={"sig": "0xdead"}, accepted=_requirements())
-    base = dict(
-        requirements=_requirements(),
-        payment_payload=payload,
-        tx_hash="0x" + "ab" * 32,
-        payer="0x" + "02" * 20,
-        payment_method="eip3009",
-        agent_id=42,
-        ticket_id=1,
-        request={"method": "GET", "url": "https://x/y", "bodyDigest": "0x" + "00" * 32},
-        response={"status": 200, "bodyDigest": "0x" + "0a" * 32},
-    )
+def test_feedback_hash_changes_with_rating(make_requirements, make_payload) -> None:
+    payload = make_payload(payload={"sig": "0xdead"})
+    base = {
+        "requirements": make_requirements(),
+        "payment_payload": payload,
+        "tx_hash": "0x" + "ab" * 32,
+        "payer": "0x" + "02" * 20,
+        "payment_method": "eip3009",
+        "agent_id": 42,
+        "ticket_id": 1,
+        "request": {"method": "GET", "url": "https://x/y", "bodyDigest": "0x" + "00" * 32},
+        "response": {"status": 200, "bodyDigest": "0x" + "0a" * 32},
+    }
     art1 = build_artifact(feedback={"agentId": 42, "value": 90}, **base)
     art2 = build_artifact(feedback={"agentId": 42, "value": 10}, **base)
     assert compute_feedback_hash(art1.to_dict()) != compute_feedback_hash(art2.to_dict())
