@@ -219,6 +219,72 @@
 
 <span class="dim">  --- paid HTTP ends at step 5; feedback step 6 is async ---</span></div>
 
+    <h2>Events — what off-chain aggregators see</h2>
+    <p class="sub" style="margin-bottom:0.5rem">The <code>FeedbackGateway</code> emits <strong>nothing</strong> — it's transparent. Everything observable comes from the ticket contract and the canonical registry. (<code>*</code> = indexed / topic.)</p>
+    <div class="hashes">
+        <table>
+            <thead>
+                <tr><th>Contract</th><th>Event</th><th>Emitted when</th><th>Key fields</th></tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td><strong>X402AgentReputation</strong></td>
+                    <td><code>TicketMinted</code></td>
+                    <td>Settle + mint (the paid call)</td>
+                    <td><code>ticketId*, payer*, agentId*</code>, agentAddress, token, amount</td>
+                </tr>
+                <tr>
+                    <td><strong>X402AgentReputation</strong></td>
+                    <td><code>TicketConsumed</code></td>
+                    <td>Feedback tx (gateway calls it)</td>
+                    <td><code>ticketId*, payer*, agentId*</code></td>
+                </tr>
+                <tr>
+                    <td><strong>ReputationRegistry</strong><br><span class="tag">canonical ERC-8004</span></td>
+                    <td><code>NewFeedback</code></td>
+                    <td>Feedback tx (same tx as <code>TicketConsumed</code>)</td>
+                    <td><code>agentId*, clientAddress*, indexedTag1*</code>, feedbackIndex, value, valueDecimals, tag1/2, endpoint, feedbackURI, feedbackHash</td>
+                </tr>
+                <tr>
+                    <td><strong>ReputationRegistry</strong></td>
+                    <td><code>FeedbackRevoked</code></td>
+                    <td>Client retracts their feedback</td>
+                    <td><code>agentId*, clientAddress*, feedbackIndex*</code></td>
+                </tr>
+                <tr>
+                    <td><strong>ReputationRegistry</strong></td>
+                    <td><code>ResponseAppended</code></td>
+                    <td>Agent rebuts feedback</td>
+                    <td><code>agentId*, clientAddress*, responder*</code>, feedbackIndex, responseURI, responseHash</td>
+                </tr>
+            </tbody>
+        </table>
+    </div>
+
+    <div class="pipe">PAYMENT tx
+  <b>TicketMinted</b>(ticketId, payer, agentId, token, amount)
+        │  ticketId
+        ▼
+FEEDBACK tx   ── one EIP-7702 tx emits BOTH ──────────────────────────────
+  <b>TicketConsumed</b>(ticketId, payer, agentId)          ◀─ payment-proof / gate
+  <b>NewFeedback</b>(agentId, clientAddress = payer, idx, …, feedbackHash, feedbackURI)
+        │  (agentId, clientAddress, idx)            feedbackHash ─▶ artifact @ feedbackURI ─▶ InteractionAttestation
+        ▼
+LATER (optional)
+  <b>FeedbackRevoked</b>(agentId, clientAddress, idx)       ◀─ client retracts
+  <b>ResponseAppended</b>(agentId, clientAddress, idx, responder = agent, …)  ◀─ agent rebuts</div>
+
+    <div class="why">
+        <strong>Join keys for aggregators.</strong>
+        <strong>ticketId</strong> links <code>TicketMinted</code> ↔ <code>TicketConsumed</code> (ticket lifecycle).
+        <strong>Same tx</strong> + matching <code>agentId</code> + <code>TicketConsumed.payer == NewFeedback.clientAddress</code> links the gate to the feedback.
+        <code>(agentId, clientAddress, feedbackIndex)</code> links <code>NewFeedback</code> ↔ <code>FeedbackRevoked</code> / <code>ResponseAppended</code>.
+        <code>feedbackHash</code> commits the off-chain artifact at <code>feedbackURI</code> (which embeds the agent's <code>InteractionAttestation</code>).
+    </div>
+    <div class="why" style="background:#fff7ed;border-color:#fdba74">
+        <strong>Payment-backed vs direct.</strong> The canonical registry is permissionless — a <code>NewFeedback</code> with <em>no</em> same-tx <code>TicketConsumed</code> is unverified direct feedback (anyone can call <code>giveFeedback</code>). <strong>Payment-backed feedback = a <code>NewFeedback</code> co-emitted with a <code>TicketConsumed</code> from <code>X402AgentReputation</code> in the same tx.</strong> That co-occurrence is the on-chain signal aggregators filter on; <code>verify_feedback</code> then checks the ticket + attestation off-chain.
+    </div>
+
     <footer>v2 — June 2026. See <a href="../../../../specs/extensions/erc8004_ticket_v2.md">erc8004_ticket_v2.md</a> · <a href="../../../../examples/python/clients/erc8004/README.md">demo README</a></footer>
 </body>
 </html>
