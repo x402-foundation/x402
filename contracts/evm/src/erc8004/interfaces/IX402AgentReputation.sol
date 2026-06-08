@@ -42,7 +42,9 @@ interface IX402AgentReputation {
         uint256 amount
     );
 
-    event TicketConsumed(uint256 indexed ticketId, address indexed payer, uint256 indexed agentId);
+    event TicketConsumed(
+        uint256 indexed ticketId, address indexed payer, uint256 indexed agentId, address agentAddress
+    );
 
     function settleAndMintTicketEIP3009(
         address payer,

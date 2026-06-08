@@ -237,7 +237,7 @@
                     <td><strong>X402AgentReputation</strong></td>
                     <td><code>TicketConsumed</code></td>
                     <td>Feedback tx (gateway calls it)</td>
-                    <td><code>ticketId*, payer*, agentId*</code></td>
+                    <td><code>ticketId*, payer*, agentId*</code>, agentAddress</td>
                 </tr>
                 <tr>
                     <td><strong>ReputationRegistry</strong><br><span class="tag">canonical ERC-8004</span></td>
@@ -266,7 +266,7 @@
         │  ticketId
         ▼
 FEEDBACK tx   ── one EIP-7702 tx emits BOTH ──────────────────────────────
-  <b>TicketConsumed</b>(ticketId, payer, agentId)          ◀─ payment-proof / gate
+  <b>TicketConsumed</b>(ticketId, payer, agentId, agentAddress)   ◀─ payment-proof / gate
   <b>NewFeedback</b>(agentId, clientAddress = payer, idx, …, feedbackHash, feedbackURI)
         │  (agentId, clientAddress, idx)            feedbackHash ─▶ artifact @ feedbackURI ─▶ InteractionAttestation
         ▼

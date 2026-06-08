@@ -129,7 +129,7 @@ contract X402AgentReputation is IX402AgentReputation, Ownable {
         ticket.consumed = true;
         agentId = ticket.agentId;
 
-        emit TicketConsumed(ticketId, msg.sender, agentId);
+        emit TicketConsumed(ticketId, msg.sender, agentId, ticket.agentAddress);
     }
 
     function tickets(uint256 ticketId) external view returns (Ticket memory) {

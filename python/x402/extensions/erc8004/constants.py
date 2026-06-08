@@ -131,6 +131,7 @@ X402_AGENT_REPUTATION_ABI: list[dict] = [
             {"name": "ticketId", "type": "uint256", "indexed": True},
             {"name": "payer", "type": "address", "indexed": True},
             {"name": "agentId", "type": "uint256", "indexed": True},
+            {"name": "agentAddress", "type": "address", "indexed": False},
         ],
     },
 ]

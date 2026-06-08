@@ -156,7 +156,7 @@ contract X402AgentReputationTest is Test {
         uint256 ticketId = _mintTicket();
 
         vm.expectEmit(true, true, true, true);
-        emit IX402AgentReputation.TicketConsumed(ticketId, payer, AGENT_ID);
+        emit IX402AgentReputation.TicketConsumed(ticketId, payer, AGENT_ID, payTo);
 
         vm.prank(payer);
         uint256 agentId = wrapper.consumeTicket(ticketId);
