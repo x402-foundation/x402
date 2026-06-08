@@ -27,6 +27,8 @@ All codes must match `^[a-z0-9_]{1,32}$`:
 
 Declare your app builder code per-route in the payment middleware configuration:
 
+<Tabs>
+  <Tab title="TypeScript">
 ```typescript
 import { paymentMiddleware, x402ResourceServer } from "@x402/express";
 import { ExactEvmScheme } from "@x402/evm/exact/server";
@@ -59,8 +61,51 @@ app.use(
   ),
 );
 ```
+  </Tab>
+  <Tab title="Go">
+```go
+import (
+    x402 "github.com/x402-foundation/x402/go/v2"
+    "github.com/x402-foundation/x402/go/v2/extensions/buildercode"
+    x402http "github.com/x402-foundation/x402/go/v2/http"
+    ginmw "github.com/x402-foundation/x402/go/v2/http/gin"
+    evm "github.com/x402-foundation/x402/go/v2/mechanisms/evm/exact/server"
+)
 
-`declareBuilderCodeExtension` validates the code format and returns the extension declaration (including the JSON Schema) for inclusion in the `PaymentRequired` response.
+facilitatorClient := x402http.NewHTTPFacilitatorClient(&x402http.FacilitatorConfig{
+    URL: facilitatorURL,
+})
+
+server := x402.Newx402ResourceServer(
+    x402.WithFacilitatorClient(facilitatorClient),
+).Register("eip155:84532", evm.NewExactEvmScheme())
+
+builderCodeExt := buildercode.DeclareBuilderCodeExtension("bc_my_app")
+extensions := make(map[string]interface{})
+for k, v := range builderCodeExt {
+    extensions[k] = v
+}
+
+routes := x402http.RoutesConfig{
+    "GET /weather": {
+        Accepts: x402http.PaymentOptions{
+            {
+                Scheme:  "exact",
+                Price:   "$0.001",
+                Network: "eip155:84532",
+                PayTo:   evmAddress,
+            },
+        },
+        Extensions: extensions,
+    },
+}
+
+r.Use(ginmw.PaymentMiddleware(routes, server))
+```
+  </Tab>
+</Tabs>
+
+`DeclareBuilderCodeExtension` validates the code format and returns the extension declaration (including the JSON Schema) for inclusion in the `PaymentRequired` response.
 
 ## Quickstart for Buyers (Clients)
 
