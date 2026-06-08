@@ -161,6 +161,8 @@ resp, _ := httpClient.Get("https://api.example.com/weather")
 
 Register the `BuilderCodeFacilitatorExtension` on your facilitator. At settlement time it reads `a` and `s` from the payment payload, adds its own `w` code, and appends the ERC-8021 CBOR suffix to the transaction calldata:
 
+<Tabs>
+  <Tab title="TypeScript">
 ```typescript
 import { x402Facilitator } from "@x402/core/facilitator";
 import { BuilderCodeFacilitatorExtension } from "@x402/extensions/builder-code";
@@ -172,6 +174,24 @@ const facilitator = new x402Facilitator()
     }),
   );
 ```
+  </Tab>
+  <Tab title="Go">
+```go
+import (
+    x402 "github.com/x402-foundation/x402/go/v2"
+    "github.com/x402-foundation/x402/go/v2/extensions/buildercode"
+    evm "github.com/x402-foundation/x402/go/v2/mechanisms/evm/exact/facilitator"
+)
+
+facilitator := x402.Newx402Facilitator()
+facilitator.Register([]x402.Network{"eip155:84532"}, evm.NewExactEvmScheme(evmSigner, nil))
+
+facilitator.RegisterExtension(&buildercode.BuilderCodeFacilitatorExtension{
+    BuilderCode: "bc_my_facilitator",
+})
+```
+  </Tab>
+</Tabs>
 
 ## Protocol Flow
 
