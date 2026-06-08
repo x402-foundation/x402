@@ -111,6 +111,8 @@ r.Use(ginmw.PaymentMiddleware(routes, server))
 
 Register the `BuilderCodeClientExtension` on your x402 client. It automatically echoes the server's app code (`a`) and attaches your service code (`s`) to every payment payload:
 
+<Tabs>
+  <Tab title="TypeScript">
 ```typescript
 import { x402Client, wrapFetchWithPayment } from "@x402/fetch";
 import { ExactEvmScheme } from "@x402/evm/exact/client";
@@ -126,6 +128,34 @@ client.registerExtension(new BuilderCodeClientExtension("bc_my_client"));
 const fetchWithPayment = wrapFetchWithPayment(fetch, client);
 const response = await fetchWithPayment("https://api.example.com/weather");
 ```
+  </Tab>
+  <Tab title="Go">
+```go
+import (
+    x402 "github.com/x402-foundation/x402/go/v2"
+    "github.com/x402-foundation/x402/go/v2/extensions/buildercode"
+    x402http "github.com/x402-foundation/x402/go/v2/http"
+    exactevm "github.com/x402-foundation/x402/go/v2/mechanisms/evm/exact/client"
+    evmsigners "github.com/x402-foundation/x402/go/v2/signers/evm"
+)
+
+evmSigner, _ := evmsigners.NewClientSignerFromPrivateKey(evmPrivateKey)
+
+client := x402.Newx402Client()
+client.Register("eip155:*", exactevm.NewExactEvmScheme(evmSigner, &exactevm.ExactEvmSchemeConfig{
+    RPCURL: evmRpcURL,
+}))
+client.RegisterExtension(buildercode.NewBuilderCodeClientExtension("bc_my_client"))
+
+httpClient := x402http.WrapHTTPClientWithPayment(
+    http.DefaultClient,
+    x402http.Newx402HTTPClient(client),
+)
+
+resp, _ := httpClient.Get("https://api.example.com/weather")
+```
+  </Tab>
+</Tabs>
 
 ## Quickstart for Facilitators
 
