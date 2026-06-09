@@ -47,17 +47,24 @@ The settled amount MUST be less than or equal to the authorized maximum.
 - The settled `amount` MUST be `<=` the authorized maximum
 - The settled `amount` MAY be `0` (no charge if no usage occurred)
 
-### 5. Phase-Dependent `amount` Semantics in `PaymentRequirements`
+### 5. Phase-Dependent Payment Amount Semantics in `PaymentRequirements`
 
-In the x402 protocol, the verify and settle requests share the same `PaymentPayload` and `PaymentRequirements` types. In the `upto` scheme, the `amount` field of `PaymentRequirements` is **phase-dependent** for server-to-facilitator communication:
+In the x402 protocol, the verify and settle requests share the same `PaymentPayload` and `PaymentRequirements` types. In the `upto` scheme, the payment amount field is **phase-dependent** for server-to-facilitator communication:
 
-- At **verification** time, `amount` represents the **maximum** amount the client authorizes.
-- At **settlement** time, `amount` represents the **actual amount to settle**, which MUST be less than or equal to the previously authorized maximum.
+- At **verification** time, the field represents the **maximum** amount the client authorizes.
+- At **settlement** time, the field represents the **actual amount to settle**, which MUST be less than or equal to the previously authorized maximum.
 
-The actual settled amount is communicated by the resource server to the facilitator via the `amount` field in the settlement-time `PaymentRequirements`. This allows the resource server to determine the final charge based on actual resource consumption (e.g., tokens generated, bytes transferred) and communicate it to the facilitator without requiring additional fields or a separate settlement type.
+The field name depends on the protocol version:
 
-- Rationale: Reusing the existing `PaymentRequirements` type for both phases keeps the protocol simple and avoids introducing settlement-specific message types. The `amount` field naturally maps to "how much" in both contexts — "how much is authorized" at verification time and "how much to charge" at settlement time.
-- Implementation: The resource server MUST set the `amount` field in the `PaymentRequirements` passed to the facilitator's settle endpoint to the desired settlement amount. The facilitator MUST verify that this amount does not exceed the authorized maximum from the client's signed authorization.
+| Version | Field Name | Description |
+|:---|:---|:---|
+| v1 | `maxAmountRequired` | Carries the authorized maximum at verify time and the actual amount at settle time |
+| v2 | `amount` | Same phase-dependent semantics as v1's `maxAmountRequired` |
+
+The actual settled amount is communicated by the resource server to the facilitator via the payment amount field in the settlement-time `PaymentRequirements`. This allows the resource server to determine the final charge based on actual resource consumption (e.g., tokens generated, bytes transferred) and communicate it to the facilitator without requiring additional fields or a separate settlement type.
+
+- Rationale: Reusing the existing `PaymentRequirements` type for both phases keeps the protocol simple and avoids introducing settlement-specific message types. The payment amount field naturally maps to "how much" in both contexts — "how much is authorized" at verification time and "how much to charge" at settlement time.
+- Implementation: The resource server MUST set the payment amount field (`maxAmountRequired` in v1, `amount` in v2) in the `PaymentRequirements` passed to the facilitator's settle endpoint to the desired settlement amount. The facilitator MUST verify that this amount does not exceed the authorized maximum from the client's signed authorization.
 
 ## Out of Scope
 
@@ -72,3 +79,4 @@ The following patterns are NOT supported by `upto` and would require different s
 Network-specific rules and implementation details are defined in the per-network scheme documents:
 
 - EVM chains: See [`scheme_upto_evm.md`](./scheme_upto_evm.md)
+- Hive: See [`scheme_upto_hive.md`](./scheme_upto_hive.md)

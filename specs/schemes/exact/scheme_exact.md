@@ -30,6 +30,15 @@ While implementation details vary by network, facilitators MUST enforce security
 - Transfer correctness: `to` MUST equal `payTo` and `amount` MUST equal `requirements.amount` exactly.
 - Simulation verification: MUST emit events showing only the expected balance changes (recipient increase, payer decrease) for `requirements.amount`—no other balance changes allowed.
 
+### Hive
+
+- Transaction structure: the signed transaction MUST contain exactly one `transfer` operation.
+- Recipient correctness: `transfer.to` MUST equal `paymentRequirements.payTo`.
+- Amount correctness: the transferred HBD amount MUST be ≥ `maxAmountRequired`.
+- Signature verification: the recovered public key MUST match an active key authority of the `transfer.from` account on-chain.
+- Zero-cost safety: Hive transactions have no fees, so the Facilitator incurs no cost and cannot be tricked into spending its own funds. The Facilitator MUST NOT modify any field of the signed transaction before broadcasting.
+
+Network-specific rules are in per-network documents: `scheme_exact_svm.md` (Solana), `scheme_exact_stellar.md` (Stellar), `scheme_exact_evm.md` (EVM), `scheme_exact_sui.md` (SUI), `scheme_exact_hive.md` (Hive).
 ### TON
 
 - Transfer correctness: exactly 1 `jetton_transfer` with destination equal to `payTo` and amount equal to `requirements.amount` exactly.

@@ -1,3 +1,7 @@
+> **Note:** We've moved the x402 repo under the x402 Foundation repo. All issues and PRs were transferred here: [github.com/x402-foundation/x402](https://github.com/x402-foundation/x402)
+>
+> Our repo ([coinbase/x402](https://github.com/coinbase/x402)) is now a development fork.
+
 # x402
 
 x402 is an open standard for internet native payments. It aims to support all networks (both crypto & fiat) and forms of value (stablecoins, tokens, fiat).
