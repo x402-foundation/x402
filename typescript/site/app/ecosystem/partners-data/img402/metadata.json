@@ -1,0 +1,7 @@
+{
+  "name": "img402",
+  "category": "Services/Endpoints",
+  "logoUrl": "/logos/img402.svg",
+  "description": "Image hosting for AI agents, paid via x402. Upload an image, get a public CDN-backed URL — free 7-day tier plus $0.01 (1-year) and $1 (permanent) tiers in USDC on Base and Solana.",
+  "websiteUrl": "https://img402.dev"
+}
