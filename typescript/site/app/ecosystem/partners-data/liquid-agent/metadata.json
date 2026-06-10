@@ -1,0 +1,7 @@
+{
+  "name": "Liquid Agent — Wallet Analyzer",
+  "description": "Machine-payable wallet analysis (token flows, P&L, balances) across 16 chains for $0.25 USDC per call via x402 (EIP-3009). Payment is verified and settled on-chain before the response is served. No API keys.",
+  "logoUrl": "/logos/liquid-agent.png",
+  "websiteUrl": "https://api.liquidagent.ai/x402",
+  "category": "Services/Endpoints"
+}
