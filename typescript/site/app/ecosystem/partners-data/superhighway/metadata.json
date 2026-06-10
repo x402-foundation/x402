@@ -2,6 +2,6 @@
   "name": "Superhighway",
   "category": "Services/Endpoints",
   "logoUrl": "/logos/superhighway.png",
-  "description": "21 pay-per-call web tools for AI agents behind x402 USDC paywalls on Base — real-time web search, scrape-to-markdown, geocoding, DNS, currency rates, email verification and more. No signup, no API key; also installable as an MCP server (npx -y superhighway-mcp).",
+  "description": "Web search for AI agents behind x402 USDC paywalls on Base — live web search, recent news, and read-any-page-as-clean-markdown, paid per call. No signup, no API key; also installable as an MCP server (npx -y superhighway-mcp).",
   "websiteUrl": "https://superhighway.walls.sh"
 }
