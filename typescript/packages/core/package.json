@@ -20,6 +20,10 @@
   "license": "Apache-2.0",
   "author": "x402 Foundation",
   "repository": "https://github.com/x402-foundation/x402",
+  "homepage": "https://github.com/x402-foundation/x402/tree/main/typescript/packages/core#readme",
+  "bugs": {
+    "url": "https://github.com/x402-foundation/x402/issues"
+  },
   "description": "x402 Payment Protocol",
   "devDependencies": {
     "@eslint/js": "^9.24.0",
