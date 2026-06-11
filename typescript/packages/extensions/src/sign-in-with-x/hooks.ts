@@ -131,8 +131,12 @@ export function createSIWxRequestHook(options: CreateSIWxHookOptions) {
       const resourceUri = context.adapter.getUrl();
 
       const validation = await validateSIWxMessage(payload, resourceUri);
-      if (!validation.valid) {
-        onEvent?.({ type: "validation_failed", resource: context.path, error: validation.error });
+      if (!validation.isValid) {
+        onEvent?.({
+          type: "validation_failed",
+          resource: context.path,
+          error: validation.invalidMessage,
+        });
         return;
       }
 

@@ -94,8 +94,8 @@ async function handleRequest(request: Request) {
     payload,
     'https://api.example.com/data'
   );
-  if (!validation.valid) {
-    return { error: validation.error };
+  if (!validation.isValid) {
+    return { error: validation.invalidMessage };
   }
 
   // Verify signature and recover address
@@ -220,19 +220,20 @@ validateSIWxMessage(payload, resourceUri, {
   maxAge?: number;                    // Max age for issuedAt (default: 5 min)
   checkNonce?: (nonce) => boolean;    // Custom nonce validation
 })
-// Returns: { valid: boolean; code?: SIWxValidationCode; error?: string }
+// Returns: { isValid: true }
+//        | { isValid: false; invalidReason: SIWxValidationCode; invalidMessage: string }
 
 type SIWxValidationCode =
-  | "domain_mismatch"
-  | "uri_mismatch"
-  | "invalid_issued_at"
-  | "too_old"
-  | "issued_at_in_future"
-  | "invalid_expiration_time"
-  | "expired"
-  | "invalid_not_before"
-  | "not_yet_valid"
-  | "nonce_invalid";
+  | "invalid_siwx_domain_mismatch"
+  | "invalid_siwx_uri_mismatch"
+  | "invalid_siwx_issued_at"
+  | "invalid_siwx_issued_at_too_old"
+  | "invalid_siwx_issued_at_in_future"
+  | "invalid_siwx_expiration_time"
+  | "invalid_siwx_expired"
+  | "invalid_siwx_not_before"
+  | "invalid_siwx_not_yet_valid"
+  | "invalid_siwx_nonce";
 ```
 
 ### `verifySIWxSignature(payload, options?)`

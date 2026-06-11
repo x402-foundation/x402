@@ -174,26 +174,26 @@ export interface DeclareSIWxOptions {
  * Machine-readable code identifying which validation check failed
  */
 export type SIWxValidationCode =
-  | "domain_mismatch"
-  | "uri_mismatch"
-  | "invalid_issued_at"
-  | "too_old"
-  | "issued_at_in_future"
-  | "invalid_expiration_time"
-  | "expired"
-  | "invalid_not_before"
-  | "not_yet_valid"
-  | "nonce_invalid";
+  | "invalid_siwx_domain_mismatch"
+  | "invalid_siwx_uri_mismatch"
+  | "invalid_siwx_issued_at"
+  | "invalid_siwx_issued_at_too_old"
+  | "invalid_siwx_issued_at_in_future"
+  | "invalid_siwx_expiration_time"
+  | "invalid_siwx_expired"
+  | "invalid_siwx_not_before"
+  | "invalid_siwx_not_yet_valid"
+  | "invalid_siwx_nonce";
 
 /**
- * Validation result from validateSIWxMessage
+ * Validation result from validateSIWxMessage.
+ *
+ * Failure fields follow the facilitator VerifyResponse naming
+ * (isValid/invalidReason/invalidMessage).
  */
-export interface SIWxValidationResult {
-  valid: boolean;
-  /** Code for the failed check (present when valid is false) */
-  code?: SIWxValidationCode;
-  error?: string;
-}
+export type SIWxValidationResult =
+  | { isValid: true }
+  | { isValid: false; invalidReason: SIWxValidationCode; invalidMessage: string };
 
 /**
  * Options for message validation

@@ -237,54 +237,63 @@ describe("Sign-In-With-X Extension", () => {
       };
 
       const result = await validateSIWxMessage(payload, "https://api.example.com/data");
-      expect(result.valid).toBe(true);
-      expect(result.code).toBeUndefined();
+      expect(result).toEqual({ isValid: true });
     });
 
     it("should reject domain mismatch", async () => {
       const result = await validateSIWxMessage(validPayload, "https://different.example.com/data");
-      expect(result.valid).toBe(false);
-      expect(result.error).toContain("Domain mismatch");
-      expect(result.code).toBe("domain_mismatch");
+      expect(result).toEqual({
+        isValid: false,
+        invalidReason: "invalid_siwx_domain_mismatch",
+        invalidMessage: expect.stringContaining("Domain mismatch"),
+      });
     });
 
     const failureCases: Array<{
-      code: SIWxValidationCode;
+      invalidReason: SIWxValidationCode;
       overrides: Partial<SIWxPayload>;
       options?: SIWxValidationOptions;
     }> = [
-      { code: "uri_mismatch", overrides: { uri: "https://evil.example.com/data" } },
-      { code: "invalid_issued_at", overrides: { issuedAt: "not-a-date" } },
       {
-        code: "too_old",
+        invalidReason: "invalid_siwx_uri_mismatch",
+        overrides: { uri: "https://evil.example.com/data" },
+      },
+      { invalidReason: "invalid_siwx_issued_at", overrides: { issuedAt: "not-a-date" } },
+      {
+        invalidReason: "invalid_siwx_issued_at_too_old",
         overrides: { issuedAt: new Date(Date.now() - 10 * 60 * 1000).toISOString() },
       },
       {
-        code: "issued_at_in_future",
+        invalidReason: "invalid_siwx_issued_at_in_future",
         overrides: { issuedAt: new Date(Date.now() + 60 * 1000).toISOString() },
       },
-      { code: "invalid_expiration_time", overrides: { expirationTime: "not-a-date" } },
       {
-        code: "expired",
+        invalidReason: "invalid_siwx_expiration_time",
+        overrides: { expirationTime: "not-a-date" },
+      },
+      {
+        invalidReason: "invalid_siwx_expired",
         overrides: { expirationTime: new Date(Date.now() - 1000).toISOString() },
       },
-      { code: "invalid_not_before", overrides: { notBefore: "not-a-date" } },
+      { invalidReason: "invalid_siwx_not_before", overrides: { notBefore: "not-a-date" } },
       {
-        code: "not_yet_valid",
+        invalidReason: "invalid_siwx_not_yet_valid",
         overrides: { notBefore: new Date(Date.now() + 60 * 1000).toISOString() },
       },
-      { code: "nonce_invalid", overrides: {}, options: { checkNonce: () => false } },
+      { invalidReason: "invalid_siwx_nonce", overrides: {}, options: { checkNonce: () => false } },
     ];
 
-    it.each(failureCases)("should reject with code $code", async ({ code, overrides, options }) => {
-      const result = await validateSIWxMessage(
-        { ...validPayload, issuedAt: new Date().toISOString(), ...overrides },
-        "https://api.example.com/data",
-        options,
-      );
-      expect(result.valid).toBe(false);
-      expect(result.code).toBe(code);
-    });
+    it.each(failureCases)(
+      "should reject with $invalidReason",
+      async ({ invalidReason, overrides, options }) => {
+        const result = await validateSIWxMessage(
+          { ...validPayload, issuedAt: new Date().toISOString(), ...overrides },
+          "https://api.example.com/data",
+          options,
+        );
+        expect(result).toMatchObject({ isValid: false, invalidReason });
+      },
+    );
 
     it("should propagate checkNonce errors to the caller", async () => {
       const payload = { ...validPayload, issuedAt: new Date().toISOString() };
@@ -354,7 +363,7 @@ describe("Sign-In-With-X Extension", () => {
       const parsed = parseSIWxHeader(header);
 
       const validation = await validateSIWxMessage(parsed, "https://api.example.com/resource");
-      expect(validation.valid).toBe(true);
+      expect(validation.isValid).toBe(true);
 
       const verification = await verifySIWxSignature(parsed);
       expect(verification.valid).toBe(true);
@@ -406,7 +415,7 @@ describe("Sign-In-With-X Extension", () => {
 
       const parsed = parseSIWxHeader(header);
       const validation = await validateSIWxMessage(parsed, resourceUri);
-      expect(validation.valid).toBe(true);
+      expect(validation.isValid).toBe(true);
 
       const result = await verifySIWxSignature(parsed);
       expect(result.valid).toBe(true);
@@ -933,7 +942,7 @@ describe("Sign-In-With-X Extension", () => {
         const parsed = parseSIWxHeader(header);
 
         const validation = await validateSIWxMessage(parsed, "https://api.example.com/resource");
-        expect(validation.valid).toBe(true);
+        expect(validation.isValid).toBe(true);
 
         const verification = await verifySIWxSignature(parsed);
         expect(verification.valid).toBe(true);

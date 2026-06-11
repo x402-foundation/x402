@@ -272,6 +272,21 @@ Base64 decode the header value and JSON parse the result.
 - **Not Before**: If `notBefore` is present, it MUST be in the past.
 - **Nonce**: MUST be unique. Server SHOULD track used nonces to prevent replay attacks.
 
+Validation failures SHOULD be reported with a machine-readable code identifying the failed check:
+
+| Code                               | Failed check                                            |
+| ---------------------------------- | ------------------------------------------------------- |
+| `invalid_siwx_domain_mismatch`     | `domain` does not match the request host                |
+| `invalid_siwx_uri_mismatch`        | `uri` does not start with the expected resource origin  |
+| `invalid_siwx_issued_at`           | `issuedAt` is not a valid timestamp                     |
+| `invalid_siwx_issued_at_too_old`   | `issuedAt` exceeds the maximum age                      |
+| `invalid_siwx_issued_at_in_future` | `issuedAt` is in the future                             |
+| `invalid_siwx_expiration_time`     | `expirationTime` is not a valid timestamp               |
+| `invalid_siwx_expired`             | `expirationTime` is in the past                         |
+| `invalid_siwx_not_before`          | `notBefore` is not a valid timestamp                    |
+| `invalid_siwx_not_yet_valid`       | `notBefore` is in the future                            |
+| `invalid_siwx_nonce`               | nonce failed uniqueness validation                      |
+
 ### 3. Verify Signature
 
 Route verification by `chainId` prefix:
