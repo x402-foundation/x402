@@ -1,0 +1,5 @@
+---
+"@x402/evm": minor
+---
+
+Add XDC Network mainnet (chain ID 50) and Apothem testnet (chain ID 51) support with USDC as the default stablecoin

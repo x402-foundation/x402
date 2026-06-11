@@ -578,6 +578,26 @@ NETWORK_CONFIGS: dict[str, NetworkConfig] = {
             "decimals": 6,
         },
     },
+    # XDC Network Mainnet
+    "eip155:50": {
+        "chain_id": 50,
+        "default_asset": {
+            "address": "0xfA2958CB79b0491CC627c1557F441eF849Ca8eb1",
+            "name": "USDC",
+            "version": "2",
+            "decimals": 6,
+        },
+    },
+    # XDC Apothem Testnet
+    "eip155:51": {
+        "chain_id": 51,
+        "default_asset": {
+            "address": "0xb5AB69F7bBada22B28e79C8FFAECe55eF1c771D4",
+            "name": "USDC",
+            "version": "2",
+            "decimals": 6,
+        },
+    },
 }
 
 # V1 legacy constants are in x402.mechanisms.evm.v1.constants
