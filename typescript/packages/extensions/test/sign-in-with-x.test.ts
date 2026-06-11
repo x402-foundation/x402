@@ -32,6 +32,9 @@ import {
   type SolanaSigner,
   type EVMSigner,
   type EVMMessageVerifier,
+  type SIWxPayload,
+  type SIWxValidationCode,
+  type SIWxValidationOptions,
 } from "../src/sign-in-with-x/index";
 import { safeBase64Encode } from "@x402/core/utils";
 import { privateKeyToAccount, generatePrivateKey } from "viem/accounts";
@@ -235,12 +238,63 @@ describe("Sign-In-With-X Extension", () => {
 
       const result = await validateSIWxMessage(payload, "https://api.example.com/data");
       expect(result.valid).toBe(true);
+      expect(result.code).toBeUndefined();
     });
 
     it("should reject domain mismatch", async () => {
       const result = await validateSIWxMessage(validPayload, "https://different.example.com/data");
       expect(result.valid).toBe(false);
       expect(result.error).toContain("Domain mismatch");
+      expect(result.code).toBe("domain_mismatch");
+    });
+
+    const failureCases: Array<{
+      code: SIWxValidationCode;
+      overrides: Partial<SIWxPayload>;
+      options?: SIWxValidationOptions;
+    }> = [
+      { code: "uri_mismatch", overrides: { uri: "https://evil.example.com/data" } },
+      { code: "invalid_issued_at", overrides: { issuedAt: "not-a-date" } },
+      {
+        code: "too_old",
+        overrides: { issuedAt: new Date(Date.now() - 10 * 60 * 1000).toISOString() },
+      },
+      {
+        code: "issued_at_in_future",
+        overrides: { issuedAt: new Date(Date.now() + 60 * 1000).toISOString() },
+      },
+      { code: "invalid_expiration_time", overrides: { expirationTime: "not-a-date" } },
+      {
+        code: "expired",
+        overrides: { expirationTime: new Date(Date.now() - 1000).toISOString() },
+      },
+      { code: "invalid_not_before", overrides: { notBefore: "not-a-date" } },
+      {
+        code: "not_yet_valid",
+        overrides: { notBefore: new Date(Date.now() + 60 * 1000).toISOString() },
+      },
+      { code: "nonce_invalid", overrides: {}, options: { checkNonce: () => false } },
+    ];
+
+    it.each(failureCases)("should reject with code $code", async ({ code, overrides, options }) => {
+      const result = await validateSIWxMessage(
+        { ...validPayload, issuedAt: new Date().toISOString(), ...overrides },
+        "https://api.example.com/data",
+        options,
+      );
+      expect(result.valid).toBe(false);
+      expect(result.code).toBe(code);
+    });
+
+    it("should propagate checkNonce errors to the caller", async () => {
+      const payload = { ...validPayload, issuedAt: new Date().toISOString() };
+      await expect(
+        validateSIWxMessage(payload, "https://api.example.com/data", {
+          checkNonce: () => {
+            throw new Error("nonce store unavailable");
+          },
+        }),
+      ).rejects.toThrow("nonce store unavailable");
     });
   });
 
@@ -439,10 +493,12 @@ describe("Sign-In-With-X Extension", () => {
 
       expect(result.valid).toBe(false);
       expect(result.error).toContain("Signature verification failed");
+      expect(result.cause).toBeUndefined();
     });
 
     it("should return error when verifier throws", async () => {
-      const mockVerifier: EVMMessageVerifier = vi.fn().mockRejectedValue(new Error("RPC error"));
+      const rpcError = new Error("RPC error");
+      const mockVerifier: EVMMessageVerifier = vi.fn().mockRejectedValue(rpcError);
       const account = privateKeyToAccount(generatePrivateKey());
 
       const extension = createTestChallenge({
@@ -465,6 +521,7 @@ describe("Sign-In-With-X Extension", () => {
 
       expect(result.valid).toBe(false);
       expect(result.error).toContain("RPC error");
+      expect(result.cause).toBe(rpcError);
     });
 
     it("should not use verifier for Solana signatures", async () => {
@@ -687,6 +744,18 @@ describe("Sign-In-With-X Extension", () => {
       const result = await verifySIWxSignature(payload);
       expect(result.valid).toBe(false);
       expect(result.error).toContain("Unsupported chain namespace");
+    });
+
+    it("should return error for malformed EVM chainId", async () => {
+      const payload = {
+        ...validPayload,
+        chainId: "eip155:not-a-number",
+      };
+
+      const result = await verifySIWxSignature(payload);
+      expect(result.valid).toBe(false);
+      expect(result.error).toContain("Invalid EVM chainId format");
+      expect(result.cause).toBeInstanceOf(Error);
     });
 
     it("should verify Solana signatures", async () => {

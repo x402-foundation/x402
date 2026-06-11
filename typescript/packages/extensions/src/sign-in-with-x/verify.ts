@@ -50,7 +50,7 @@ export async function verifySIWxSignature(
   try {
     // Route by chain namespace
     if (payload.chainId.startsWith("eip155:")) {
-      return verifyEVMPayload(payload, options?.evmVerifier);
+      return await verifyEVMPayload(payload, options?.evmVerifier);
     }
 
     if (payload.chainId.startsWith("solana:")) {
@@ -65,6 +65,7 @@ export async function verifySIWxSignature(
     return {
       valid: false,
       error: error instanceof Error ? error.message : "Verification failed",
+      cause: error,
     };
   }
 }
@@ -117,6 +118,7 @@ async function verifyEVMPayload(
     return {
       valid: false,
       error: error instanceof Error ? error.message : "Signature verification failed",
+      cause: error,
     };
   }
 }

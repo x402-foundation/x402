@@ -24,6 +24,7 @@ export type {
   DeclareSIWxOptions,
   SignatureScheme,
   SignatureType,
+  SIWxValidationCode,
   SIWxValidationResult,
   SIWxValidationOptions,
   SIWxVerifyResult,
