@@ -86,6 +86,8 @@ var (
 	ChainIDADI           = big.NewInt(36900)
 	ChainIDHPP           = big.NewInt(190415)
 	ChainIDHPPSepolia    = big.NewInt(181228)
+	ChainIDXDC           = big.NewInt(50)
+	ChainIDXDCApothem    = big.NewInt(51)
 
 	// Network configurations
 	// See DEFAULT_ASSET.md for guidelines on adding new chains
@@ -265,6 +267,26 @@ var (
 			DefaultAsset: AssetInfo{
 				Address:  "0x401eCb1D350407f13ba348573E5630B83638E30D", // USDC.e (Bridged USDC) on HPP Sepolia
 				Name:     "Bridged USDC",
+				Version:  "2",
+				Decimals: DefaultDecimals,
+			},
+		},
+		// XDC Network Mainnet
+		"eip155:50": {
+			ChainID: ChainIDXDC,
+			DefaultAsset: AssetInfo{
+				Address:  "0xfA2958CB79b0491CC627c1557F441eF849Ca8eb1", // USDC (Bridged USDC Standard) on XDC Network
+				Name:     "USDC",
+				Version:  "2",
+				Decimals: DefaultDecimals,
+			},
+		},
+		// XDC Apothem Testnet
+		"eip155:51": {
+			ChainID: ChainIDXDCApothem,
+			DefaultAsset: AssetInfo{
+				Address:  "0xb5AB69F7bBada22B28e79C8FFAECe55eF1c771D4", // USDC (Bridged USDC Standard) on XDC Apothem
+				Name:     "USDC",
 				Version:  "2",
 				Decimals: DefaultDecimals,
 			},
