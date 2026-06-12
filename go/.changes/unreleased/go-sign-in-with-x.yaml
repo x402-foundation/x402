@@ -1,0 +1,2 @@
+kind: added
+body: Go implementation of the sign-in-with-x (SIWX) extension under extensions/signinwithx — CAIP-122 challenge declaration, EIP-4361 (SIWE) and SIWS message construction, base64 header parse/encode, field validation, and signature verification for EVM (EIP-191 EOA, with optional EIP-1271/ERC-6492 via a facilitator signer) and Solana (Ed25519).
