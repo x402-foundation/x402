@@ -213,12 +213,12 @@ Client                         Resource Server                Facilitator
   |--- GET /weather + payment ------>|                              |
   |    extensions.builder-code:      |                              |
   |      { a: "bc_my_app",          |                              |
-  |        s: "bc_my_client" }      |                              |
+  |        s: ["bc_my_client"] }    |                              |
   |                                  |                              |
   |                                  |--- settle ------------------>|
   |                                  |    extensions.builder-code:  |
   |                                  |      { a: "bc_my_app",      |
-  |                                  |        s: "bc_my_client" }  |
+  |                                  |        s: ["bc_my_client"] }|
   |                                  |                              |
   |                                  |    Facilitator adds w,       |
   |                                  |    encodes CBOR suffix,      |
