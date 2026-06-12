@@ -13,7 +13,7 @@ Three parties each contribute an attribution code:
 |-------|--------|-------------|
 | `a` | Resource server | App code — identifies the application exposing the paid endpoint |
 | `w` | Facilitator | Wallet code — identifies the facilitator settling the payment on-chain |
-| `s` | Client | Service code — client-provided attribution |
+| `s` | Client | Service code(s) — one or more client-provided attribution codes (string or array of strings) |
 
 These codes are CBOR-encoded as an [ERC-8021](https://eip.tools/eip/8021) Schema 2 suffix and appended to the settlement transaction calldata. Off-chain tools can parse the calldata to verify attribution.
 
