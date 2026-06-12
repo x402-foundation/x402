@@ -314,7 +314,7 @@ Encodes builder code fields as an ERC-8021 Schema 2 hex suffix.
 ```typescript
 import { encodeBuilderCodeSuffix } from "@x402/extensions/builder-code";
 
-const suffix = encodeBuilderCodeSuffix({ a: "bc_my_app", w: "bc_my_fac", s: "bc_my_client" });
+const suffix = encodeBuilderCodeSuffix({ a: "bc_my_app", w: "bc_my_fac", s: ["bc_my_client"] });
 // Returns hex string to append to calldata
 ```
 
