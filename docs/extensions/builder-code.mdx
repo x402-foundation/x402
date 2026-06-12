@@ -241,7 +241,7 @@ const tx = await publicClient.getTransaction({ hash: txHash });
 const attribution = parseBuilderCodeSuffixFromCalldata(tx.input);
 
 console.log(attribution);
-// { a: "bc_my_app", s: "bc_my_client", w: "bc_my_facilitator" }
+// { a: "bc_my_app", s: ["bc_my_client"], w: "bc_my_facilitator" }
 ```
 
 ## ERC-8021 Schema 2 Calldata Format
