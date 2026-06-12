@@ -145,7 +145,11 @@ client := x402.Newx402Client()
 client.Register("eip155:*", exactevm.NewExactEvmScheme(evmSigner, &exactevm.ExactEvmSchemeConfig{
     RPCURL: evmRpcURL,
 }))
+// Single service code
 client.RegisterExtension(buildercode.NewBuilderCodeClientExtension("bc_my_client"))
+
+// Multiple service codes (layered clients)
+// client.RegisterExtension(buildercode.NewBuilderCodeClientExtension("bc_mcp_server", "bc_my_app"))
 
 httpClient := x402http.WrapHTTPClientWithPayment(
     http.DefaultClient,
