@@ -1,0 +1,7 @@
+{
+  "name": "Decision Anchor",
+  "category": "Infrastructure & Tooling",
+  "logoUrl": "/logos/decision-anchor.svg",
+  "description": "External anchoring layer for AI agent decisions — records what was authorized, when, and at what scope, before x402 payment execution. Non-judgmental, content-blind.",
+  "websiteUrl": "https://decision-anchor.com"
+}

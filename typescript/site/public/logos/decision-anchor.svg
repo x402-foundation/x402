@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="160" height="160" viewBox="0 0 160 160" role="img" aria-label="Decision Anchor">
+  <rect width="160" height="160" rx="28" fill="#0a0a0a"/>
+  <rect x="0.75" y="0.75" width="158.5" height="158.5" rx="27.25" fill="none" stroke="#2a2a2a" stroke-width="1.5"/>
+  <text x="80" y="98" text-anchor="middle" font-family="'DM Mono','SFMono-Regular',Menlo,Consolas,monospace" font-size="62" font-weight="500" letter-spacing="2" fill="#c4956a">DA</text>
+</svg>
