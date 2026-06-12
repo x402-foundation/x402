@@ -295,6 +295,10 @@ describe("computeRetryDelay", () => {
     expect(computeRetryDelay("not-a-date", 1)).toBe(2000);
   });
 
+  it("does not treat fractional Retry-After values as delta-seconds", () => {
+    expect(computeRetryDelay("1.5", 1)).toBe(2000);
+  });
+
   it("caps the delay to MAX_RETRY_DELAY_MS to prevent pathological waits", () => {
     expect(computeRetryDelay("9999", 0)).toBe(30_000);
   });

@@ -79,10 +79,10 @@ export function computeRetryDelay(retryAfter: string | null, attempt: number): n
   let delay: number | null = null;
 
   if (retryAfter !== null) {
-    const seconds = Number(retryAfter);
-    if (!isNaN(seconds)) {
+    const trimmedRetryAfter = retryAfter.trim();
+    if (/^\d+$/.test(trimmedRetryAfter)) {
       // delta-seconds form
-      delay = seconds * 1000;
+      delay = Number(trimmedRetryAfter) * 1000;
     } else {
       // HTTP-date form
       const retryDate = Date.parse(retryAfter);
