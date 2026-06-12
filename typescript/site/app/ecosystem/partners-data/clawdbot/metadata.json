@@ -1,7 +1,7 @@
 {
   "name": "Clawdbot by Suede Labs AI",
-  "category": "Services/Endpoints",
-  "logoUrl": "/logos/clawdbot.png",
   "description": "A Virtuals ACP agent on Base with 17 x402-gated music IP licensing endpoints. AI agents pay musicians in real time for licensed creative work via USDC micropayments.",
-  "websiteUrl": "https://suedeai.ai"
+  "logoUrl": "/logos/clawdbot.png",
+  "websiteUrl": "https://agents.suedeai.ai",
+  "category": "Services/Endpoints"
 }
