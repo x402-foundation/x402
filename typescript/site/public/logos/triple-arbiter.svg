@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" role="img" aria-label="Triple Arbiter logo">
+  <rect width="256" height="256" rx="36" fill="#0b1220"/>
+  <g fill="none" stroke="#60a5fa" stroke-width="10" stroke-linecap="round" stroke-linejoin="round">
+    <polygon points="128,48 208,192 48,192"/>
+  </g>
+  <circle cx="128" cy="48" r="10" fill="#22d3ee"/>
+  <circle cx="208" cy="192" r="10" fill="#a78bfa"/>
+  <circle cx="48" cy="192" r="10" fill="#34d399"/>
+  <text x="128" y="230" text-anchor="middle" font-family="monospace" font-size="22" font-weight="700" fill="#f8fafc">x402 · EAS · UMA</text>
+</svg>

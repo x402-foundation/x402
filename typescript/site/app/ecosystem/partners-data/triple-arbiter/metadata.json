@@ -1,0 +1,19 @@
+{
+  "name": "Triple Arbiter",
+  "description": "x402 settlement facilitator + EAS-compatible threat-intel attestation issuer on Base mainnet. Non-custodial EIP-3009 USDC settlement with a 50 bps facilitator fee. Pairs settlement receipts with on-chain EAS attestations for agent-to-agent trust signals.",
+  "logoUrl": "/logos/triple-arbiter.svg",
+  "websiteUrl": "https://facilitator.eno.cx.ua",
+  "category": "Facilitators",
+  "facilitator": {
+    "baseUrl": "https://facilitator.eno.cx.ua",
+    "networks": ["base"],
+    "schemes": ["exact"],
+    "assets": ["EIP-3009"],
+    "supports": {
+      "verify": true,
+      "settle": true,
+      "supported": true,
+      "list": false
+    }
+  }
+}
