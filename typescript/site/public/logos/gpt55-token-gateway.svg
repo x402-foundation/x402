@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 80" role="img" aria-labelledby="title desc">
+  <title id="title">GPT-5.5 x402 Gateway</title>
+  <desc id="desc">Wordmark for the GPT-5.5 x402 Gateway ecosystem listing.</desc>
+  <rect width="240" height="80" rx="10" fill="#0B0F14"/>
+  <rect x="14" y="14" width="52" height="52" rx="8" fill="#0052FF"/>
+  <path d="M27 28h26v6H34v6h17v6H34v8h-7V28Z" fill="#FFFFFF"/>
+  <path d="M78 28h86v8H78v-8Zm0 17h54v7H78v-7Z" fill="#FFFFFF"/>
+  <text x="78" y="65" fill="#8AA7FF" font-family="Arial, Helvetica, sans-serif" font-size="14" font-weight="700">x402 Base USDC</text>
+  <text x="169" y="36" fill="#FFFFFF" font-family="Arial, Helvetica, sans-serif" font-size="22" font-weight="700">GPT55</text>
+  <circle cx="218" cy="58" r="7" fill="#22C55E"/>
+</svg>

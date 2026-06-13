@@ -1,0 +1,7 @@
+{
+  "name": "GPT-5.5 x402 Gateway",
+  "description": "OpenAI-compatible GPT-5.5 and deterministic seller tools behind x402 payments. Offers 100+ paid HTTP endpoints, MCP metadata, Bazaar discovery, and Base USDC settlement for agents and scripts without API-key onboarding.",
+  "logoUrl": "/logos/gpt55-token-gateway.svg",
+  "websiteUrl": "https://gpt55.558686.xyz",
+  "category": "Services/Endpoints"
+}
