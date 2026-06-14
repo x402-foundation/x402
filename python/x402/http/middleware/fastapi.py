@@ -6,6 +6,7 @@ Provides payment-gated route protection for FastAPI applications.
 from __future__ import annotations
 
 import asyncio
+import logging
 from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Any
 
@@ -48,6 +49,8 @@ from ._bazaar_utils import (
 from ._bazaar_utils import (
     validate_bazaar_extensions as _validate_bazaar_extensions,
 )
+
+logger = logging.getLogger(__name__)
 
 # ============================================================================
 # FastAPI Adapter
@@ -375,7 +378,11 @@ def payment_middleware(
             except FacilitatorResponseError as error:
                 return _facilitator_error_response(error)
             except Exception:
-                return JSONResponse(content={}, status_code=402)
+                logger.exception("Unexpected error while settling x402 payment")
+                return JSONResponse(
+                    content={"error": "Internal server error during payment settlement"},
+                    status_code=500,
+                )
 
         # Fallthrough - should not happen
         return await call_next(request)
