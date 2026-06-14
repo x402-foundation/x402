@@ -26,9 +26,8 @@ from ...constants import (
     MEMO_PROGRAM_ADDRESS,
     NETWORK_CONFIGS,
     SCHEME_EXACT,
-    TOKEN_2022_PROGRAM_ADDRESS,
-    TOKEN_PROGRAM_ADDRESS,
 )
+from ...mint_cache import MintMetadataCache, get_cached_mint_metadata
 from ...signer import ClientSvmSigner
 from ...types import ExactSvmPayload
 from ...utils import derive_ata, normalize_network
@@ -60,6 +59,7 @@ class ExactSvmSchemeV1:
         self._signer = signer
         self._custom_rpc_url = rpc_url
         self._clients: dict[str, SolanaClient] = {}
+        self._mint_cache: MintMetadataCache = {}
 
     def _get_client(self, network: str) -> SolanaClient:
         """Get or create RPC client for network.
@@ -116,24 +116,9 @@ class ExactSvmSchemeV1:
         mint = Pubkey.from_string(requirements.asset)
         payer_pubkey = Pubkey.from_string(self._signer.address)
 
-        # Fetch token mint info to get decimals and program
-        mint_info = client.get_account_info(mint)
-        if not mint_info.value:
-            raise ValueError(f"Token mint not found: {requirements.asset}")
-
-        # Determine token program from mint owner
-        mint_owner = str(mint_info.value.owner)
-        if mint_owner == TOKEN_PROGRAM_ADDRESS:
-            token_program = Pubkey.from_string(TOKEN_PROGRAM_ADDRESS)
-        elif mint_owner == TOKEN_2022_PROGRAM_ADDRESS:
-            token_program = Pubkey.from_string(TOKEN_2022_PROGRAM_ADDRESS)
-        else:
-            raise ValueError(f"Unknown token program: {mint_owner}")
-
-        # Parse mint data to get decimals
-        # SPL Token Mint layout: decimals is at byte 44
-        mint_data = mint_info.value.data
-        decimals = mint_data[44]
+        mint_metadata = get_cached_mint_metadata(client, network, mint, self._mint_cache)
+        token_program = mint_metadata.token_program
+        decimals = mint_metadata.decimals
 
         # Derive ATAs
         source_ata_str = derive_ata(self._signer.address, requirements.asset, str(token_program))
