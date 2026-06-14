@@ -505,6 +505,82 @@ describe("Memo Uniqueness", () => {
   });
 });
 
+describe("mint metadata cache", () => {
+  beforeEach(() => {
+    blockhashes = [];
+    blockhashIndex = 0;
+    mockAtaMap = {};
+    vi.resetModules();
+    vi.clearAllMocks();
+  });
+
+  it("caches mint metadata for repeated V2 payment payloads", async () => {
+    blockhashes = [FIXED_BLOCKHASH, FIXED_BLOCKHASH_ALT];
+
+    const { ExactSvmScheme } = await import("../../src/exact/client/scheme");
+    const { fetchMint } = await import("@solana-program/token-2022");
+
+    const clientSigner = await createSigner();
+    const feePayer = await createSigner();
+    const payTo = await createSigner();
+
+    const client = new ExactSvmScheme(clientSigner);
+    mockAtaMap = {
+      [clientSigner.address]: clientSigner.address as Address,
+      [payTo.address]: payTo.address as Address,
+    };
+
+    const requirements: PaymentRequirements = {
+      scheme: "exact",
+      network: SOLANA_DEVNET_CAIP2,
+      asset: USDC_DEVNET_ADDRESS,
+      amount: "100000",
+      payTo: payTo.address,
+      maxTimeoutSeconds: 3600,
+      extra: { feePayer: feePayer.address },
+    };
+
+    await client.createPaymentPayload(2, requirements);
+    await client.createPaymentPayload(2, requirements);
+
+    expect(fetchMint).toHaveBeenCalledTimes(1);
+    expect(mockRpc.getLatestBlockhash).toHaveBeenCalledTimes(2);
+  });
+
+  it("caches mint metadata for repeated V1 payment payloads", async () => {
+    blockhashes = [FIXED_BLOCKHASH, FIXED_BLOCKHASH_ALT];
+
+    const { ExactSvmSchemeV1 } = await import("../../src/exact/v1/client/scheme");
+    const { fetchMint } = await import("@solana-program/token-2022");
+
+    const clientSigner = await createSigner();
+    const feePayer = await createSigner();
+    const payTo = await createSigner();
+
+    const client = new ExactSvmSchemeV1(clientSigner);
+    mockAtaMap = {
+      [clientSigner.address]: clientSigner.address as Address,
+      [payTo.address]: payTo.address as Address,
+    };
+
+    const requirements = {
+      scheme: "exact",
+      network: "solana-devnet",
+      asset: USDC_DEVNET_ADDRESS,
+      maxAmountRequired: "100000",
+      payTo: payTo.address,
+      maxTimeoutSeconds: 3600,
+      extra: { feePayer: feePayer.address },
+    };
+
+    await client.createPaymentPayload(1, requirements as never);
+    await client.createPaymentPayload(1, requirements as never);
+
+    expect(fetchMint).toHaveBeenCalledTimes(1);
+    expect(mockRpc.getLatestBlockhash).toHaveBeenCalledTimes(2);
+  });
+});
+
 // Verify that randomizing the fee-payer signature bytes (slot 0) — which the
 // facilitator overwrites before broadcast — does not change the cache key.
 describe("transactionMessageHash malleability resistance", () => {
