@@ -18,4 +18,4 @@ The table below lists selected production options; it is not an exhaustive catal
 | [PayAI Facilitator](https://facilitator.payai.network) | Multi-network facilitator supporting all tokens. No API keys required |
 | [Polygon Facilitator](https://docs.polygon.technology/payment-services/agentic-payments/x402/intro/) | Production-grade x402 facilitator for Polygon Mainnet and Amoy testnet |
 
-For testnet development, the [x402.org facilitator](/core-concepts/network-and-token-support#x402org-facilitator) requires no setup. 
+For testnet development, the [x402.org facilitator](/core-concepts/network-and-token-support#x402org-facilitator) requires no setup. It is not intended for mainnet routes; use a production facilitator or self-hosted facilitator for production networks.

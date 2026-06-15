@@ -126,6 +126,7 @@ Yes. Programmatic wallets (e.g., **CDP Wallet API**, **viem**, **ethers‑v6** H
 #### My test works on Base Sepolia but fails on Base mainnet—what changed?
 
 * Ensure you set `network: "eip155:8453"` (Base mainnet) instead of `"eip155:84532"` (Base Sepolia).
+* If you are still using `https://x402.org/facilitator`, switch to a production facilitator. The default x402.org facilitator is for testnet development and does not support Base mainnet (`eip155:8453`), which can surface as a route-configuration error after changing only the network.
 * Confirm your wallet has _mainnet_ USDC.
 * Gas fees are higher on mainnet; fund the wallet with a small amount of ETH for gas.
 
