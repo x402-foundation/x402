@@ -4,7 +4,8 @@ import {
   PaymentPayloadResult,
   PaymentPayloadContext,
 } from "@x402/core/types";
-import { ClientEvmSigner } from "../../signer";
+import { assertClientEvmSigner } from "../../signer";
+import type { ClientEvmSigner } from "../../signer";
 import { AssetTransferMethod } from "../../types";
 import { createEIP3009Payload } from "./eip3009";
 import { createPermit2Payload } from "./permit2";
@@ -41,7 +42,9 @@ export class ExactEvmScheme implements SchemeNetworkClient {
   constructor(
     private readonly signer: ClientEvmSigner,
     private readonly options?: ExactEvmSchemeOptions,
-  ) {}
+  ) {
+    assertClientEvmSigner(signer);
+  }
 
   /**
    * Creates a payment payload for the Exact scheme.

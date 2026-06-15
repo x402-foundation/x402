@@ -28,6 +28,19 @@ describe("ExactEvmScheme (Client)", () => {
       expect(client).toBeDefined();
       expect(client.scheme).toBe("exact");
     });
+
+    it("should reject WalletClient-like values without top-level address", () => {
+      const walletClientLike = {
+        account: {
+          address: "0x1234567890123456789012345678901234567890",
+        },
+        signTypedData: vi.fn().mockResolvedValue("0xmocksignature123456789"),
+      };
+
+      expect(() => new ExactEvmScheme(walletClientLike as never)).toThrow(
+        "Pass a viem LocalAccount",
+      );
+    });
   });
 
   describe("createPaymentPayload", () => {

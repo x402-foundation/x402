@@ -24,7 +24,7 @@ This package provides three main components for handling x402 payments on EVM-co
 
 **Client:**
 - `ExactEvmClient` - V2 client implementation using EIP-3009
-- `toClientEvmSigner(account)` - Converts viem accounts to x402 signers
+- `toClientEvmSigner(account, publicClient?)` - Converts viem LocalAccount values to x402 signers
 - `ClientEvmSigner` - TypeScript type for client signers
 
 **Facilitator:**
@@ -79,8 +79,15 @@ This package provides three main components for handling x402 payments on EVM-co
 
 ```typescript
 import { x402Client } from "@x402/core/client";
-import { ExactEvmClient } from "@x402/evm";
+import { ExactEvmClient, toClientEvmSigner } from "@x402/evm";
 import { ExactEvmClientV1 } from "@x402/evm/v1";
+import { createPublicClient, http } from "viem";
+import { privateKeyToAccount } from "viem/accounts";
+import { baseSepolia } from "viem/chains";
+
+const account = privateKeyToAccount("0x...");
+const publicClient = createPublicClient({ chain: baseSepolia, transport: http() });
+const signer = toClientEvmSigner(account, publicClient);
 
 const client = new x402Client()
   .register("eip155:*", new ExactEvmClient(signer))
@@ -91,8 +98,9 @@ const client = new x402Client()
 ### Extension RPC Configuration (Optional)
 
 `ExactEvmClient` only requires signer support for `address` + `signTypedData`.
-Permit2 extension enrichment (EIP-2612 / ERC-20 approval gas sponsoring) can
-optionally use explicit RPC config when signer read/fee helpers are unavailable.
+`toClientEvmSigner(account, publicClient)` composes a LocalAccount with optional
+read/fee helpers for Permit2 extension enrichment (EIP-2612 / ERC-20 approval
+gas sponsoring).
 
 No chain-default RPC fallback is applied by the SDK.
 

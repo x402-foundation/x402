@@ -3,13 +3,9 @@ import type { Log } from "viem";
 /**
  * ClientEvmSigner - Used by x402 clients to sign payment authorizations.
  *
- * Typically a viem WalletClient extended with publicActions:
+ * Typically a viem LocalAccount:
  * ```typescript
- * const client = createWalletClient({
- *   account: privateKeyToAccount('0x...'),
- *   chain: baseSepolia,
- *   transport: http(),
- * }).extend(publicActions);
+ * const account = privateKeyToAccount("0x...");
  * ```
  *
  * Or composed via `toClientEvmSigner(account, publicClient)`.
@@ -56,6 +52,29 @@ export type ClientEvmSigner = {
    */
   estimateFeesPerGas?(): Promise<{ maxFeePerGas: bigint; maxPriorityFeePerGas: bigint }>;
 };
+
+/**
+ * Asserts that a value has the minimal client signer shape expected by x402 EVM clients.
+ *
+ * A viem WalletClient stores its account at `walletClient.account.address`; pass the LocalAccount
+ * itself, or compose one with `toClientEvmSigner(account, publicClient)`.
+ *
+ * @param signer - Value to validate before using it as a ClientEvmSigner
+ */
+export function assertClientEvmSigner(signer: unknown): asserts signer is ClientEvmSigner {
+  const candidate = signer as Partial<ClientEvmSigner> | undefined;
+  const address = candidate?.address;
+
+  if (typeof address !== "string" || !address.startsWith("0x")) {
+    throw new Error(
+      "ClientEvmSigner must expose an `address` string. Pass a viem LocalAccount from `privateKeyToAccount(...)`, or wrap it with `toClientEvmSigner(account, publicClient)` instead of passing a WalletClient.",
+    );
+  }
+
+  if (typeof candidate?.signTypedData !== "function") {
+    throw new Error("ClientEvmSigner must expose a `signTypedData` function.");
+  }
+}
 
 /**
  * FacilitatorEvmSigner - Used by x402 facilitators to verify and settle payments
@@ -107,15 +126,6 @@ export type FacilitatorEvmSigner = {
  * Use this when your signer (e.g., `privateKeyToAccount`) doesn't have
  * `readContract`. The `publicClient` provides the on-chain read capability.
  *
- * Alternatively, use a WalletClient extended with publicActions directly:
- * ```typescript
- * const signer = createWalletClient({
- *   account: privateKeyToAccount('0x...'),
- *   chain: baseSepolia,
- *   transport: http(),
- * }).extend(publicActions);
- * ```
- *
  * @param signer - A signer with `address` and `signTypedData` (and optionally `readContract`)
  * @param publicClient - A client with optional read/nonce/fee helpers
  * @param publicClient.readContract - The readContract method from the public client
@@ -145,6 +155,8 @@ export function toClientEvmSigner(
     estimateFeesPerGas?(): Promise<{ maxFeePerGas: bigint; maxPriorityFeePerGas: bigint }>;
   },
 ): ClientEvmSigner {
+  assertClientEvmSigner(signer);
+
   const readContract = signer.readContract ?? publicClient?.readContract.bind(publicClient);
 
   const result: ClientEvmSigner = {

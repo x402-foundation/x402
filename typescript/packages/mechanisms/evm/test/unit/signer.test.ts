@@ -41,6 +41,19 @@ describe("EVM Signer Converters", () => {
       expect(result.address).toBe(mockAccount.address);
       expect(result.readContract).toBeUndefined();
     });
+
+    it("should reject WalletClient-like values without top-level address", () => {
+      const walletClientLike = {
+        account: {
+          address: "0x1234567890123456789012345678901234567890",
+        },
+        signTypedData: async () => "0xsignature" as `0x${string}`,
+      };
+
+      expect(() => toClientEvmSigner(walletClientLike as never)).toThrow(
+        "Pass a viem LocalAccount",
+      );
+    });
   });
 
   describe("toFacilitatorEvmSigner", () => {
