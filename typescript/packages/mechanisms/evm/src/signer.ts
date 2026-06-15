@@ -3,13 +3,9 @@ import type { Log } from "viem";
 /**
  * ClientEvmSigner - Used by x402 clients to sign payment authorizations.
  *
- * Typically a viem WalletClient extended with publicActions:
+ * Typically a viem LocalAccount:
  * ```typescript
- * const client = createWalletClient({
- *   account: privateKeyToAccount('0x...'),
- *   chain: baseSepolia,
- *   transport: http(),
- * }).extend(publicActions);
+ * const account = privateKeyToAccount('0x...');
  * ```
  *
  * Or composed via `toClientEvmSigner(account, publicClient)`.
@@ -107,13 +103,11 @@ export type FacilitatorEvmSigner = {
  * Use this when your signer (e.g., `privateKeyToAccount`) doesn't have
  * `readContract`. The `publicClient` provides the on-chain read capability.
  *
- * Alternatively, use a WalletClient extended with publicActions directly:
+ * Alternatively, use a local account with an explicit public client:
  * ```typescript
- * const signer = createWalletClient({
- *   account: privateKeyToAccount('0x...'),
- *   chain: baseSepolia,
- *   transport: http(),
- * }).extend(publicActions);
+ * const account = privateKeyToAccount('0x...');
+ * const publicClient = createPublicClient({ chain: baseSepolia, transport: http() });
+ * const signer = toClientEvmSigner(account, publicClient);
  * ```
  *
  * @param signer - A signer with `address` and `signTypedData` (and optionally `readContract`)
