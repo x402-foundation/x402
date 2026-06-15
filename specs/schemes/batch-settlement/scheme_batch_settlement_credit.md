@@ -109,11 +109,11 @@ Request:
 
 Response on success: `{ "attestation": "<compact JWS>" }`. The decrement and the attestation issuance are one atomic operation. Repeating the call with the same `idempotencyKey` and identical parameters returns the same attestation without a second decrement; the same key with different parameters fails with `idempotency_conflict`.
 
-Failure codes: `insufficient_credits`, `bundle_not_found`, `idempotency_conflict`.
+Failure codes: `insufficient_credits`, `bundle_not_found`, `bundle_revoked`, `idempotency_conflict`.
 
 ### `POST /verify` (standard facilitator endpoint)
 
-Takes the standard `{ paymentPayload, paymentRequirements }` request. The authority validates the attestation (signature, `iss`, `exp`, amount/asset, `aud`, and — because it owns the ledger — that the `jti` has not already been settled) and returns the standard `{ isValid, invalidReason }` response. Because verification of presentation-replay happens against the authority's own ledger, **resource servers can remain fully stateless**.
+Takes the standard `{ paymentPayload, paymentRequirements }` request. The authority validates the attestation (signature, `iss`, `exp`, amount/asset, `aud`, and — because it owns the ledger — that the `jti` has not already been settled and has not been revoked) and returns the standard `{ isValid, invalidReason }` response. Because verification of presentation-replay and revocation happens against the authority's own ledger, **resource servers can remain fully stateless**.
 
 ### `POST /settle` (standard facilitator endpoint)
 
@@ -135,7 +135,7 @@ Takes the standard settle request extended with the binding's charge fields:
 
 The settle response is the settlement result the server forwards as `PAYMENT-RESPONSE` (see below), including `extra.commitmentId` and the post-settle `bundleState`.
 
-Failure codes: `settle_conflict`, `hold_expired`, `unauthorized_server`.
+Failure codes: `settle_conflict`, `hold_expired`, `unauthorized_server`, `revoked`.
 
 ## 402 Response (PaymentRequirements)
 
@@ -266,6 +266,16 @@ The settlement result returned by `/settle`, forwarded by the server:
 - `extra.chargedAmount` is the actual charge (≤ authorized `amount`). The difference between authorized and charged amounts is re-credited to the bundle.
 - `extra.bundleState` carries the post-charge snapshot, mirroring the EVM binding's `channelState` pattern, so the client stays in sync without a separate balance endpoint. Under deferred settle the snapshot reflects the hold, not the final settled charge. The balance is informational; clients MUST NOT treat it as a guarantee that a future `/authorize` will succeed — the atomic decrement at the authority is the only authorization.
 
+## Revocation and disputes
+
+A principal may need to stop an agent mid-flight: the mandate is withdrawn, the bundle credential is suspected compromised, or spending is paused. How revocation is *triggered* is a client↔authority account operation outside the x402 exchange (like purchase and top-up); its *effect* on the in-band verbs is normative:
+
+- **Bundle freeze.** The authority MUST support freezing a bundle. While frozen, `/authorize` fails with `bundle_revoked` and no new attestations are issued.
+- **Attestation revocation.** The authority MUST support revoking an outstanding attestation by `jti`. A revoked `jti` MUST fail `/verify` (reason `revoked`) and MUST fail `/settle` (`revoked`); any hold it reserved is released back to the bundle, or to the refund path if the bundle is also closed.
+- **Revocation latency under local verification.** A server verifying locally (no `/verify` call) cannot observe revocation and will accept a revoked-but-unexpired attestation until its `exp` lapses. The short presentation window (`exp`) is therefore the upper bound on local-verify revocation latency. Servers that must honor revocation immediately MUST use `/verify`. This is the same trust-vs-latency tradeoff as elsewhere in the binding: local verification is faster but `exp`-bounded stale; `/verify` is authoritative but adds a round trip.
+
+**Disputes.** A *settled* charge is past the hold lifecycle and cannot be revoked; it is resolved through dispute. The `extra.commitmentId` (the attestation `jti`) is the dispute handle against the authority's ledger. Dispute adjudication and any resulting re-credit or PSP chargeback are registration terms between authority and resource server, outside the x402 protocol; the protocol's contribution is a stable charge reference per request.
+
 ## Appendix
 
 ### Mapping to base-spec network requirements
@@ -288,6 +298,7 @@ The settlement result returned by `/settle`, forwarded by the server:
 2. The authority verifies the mandate before honoring `/authorize` calls, and enforces the cumulative cap as the bundle ceiling.
 3. The attestation may carry an `evidence` claim: `sha256:<lowercase-hex>` over the RFC 8785 (JCS) canonical bytes of the mandate body, binding the per-request authorization to the mandate for audit.
 4. A failed mandate pre-flight is a non-payment denial: no attestation, no payment payload, no settlement artifact.
+5. Mandate revocation by the principal maps to bundle freeze: the authority stops honoring `/authorize` and revokes outstanding attestations per [Revocation and disputes](#revocation-and-disputes).
 
 Because the authority's counter sits above the settlement rail, the same bundle (and the same AP2 cumulative cap) can span multiple rails and multiple merchants — the cross-merchant budget enforcement pattern discussed in [AP2 #207](https://github.com/google-agentic-commerce/AP2/issues/207) and [x402 #2452](https://github.com/x402-foundation/x402/issues/2452).
 
@@ -295,10 +306,11 @@ Because the authority's counter sits above the settlement rail, the same bundle 
 
 - `attestation_expired`: Valid signature, expired attestation — re-authorize and retry
 - `attestation_invalid`: Signature, structural, or type failure — reject and log
+- `attestation_revoked`: Attestation revoked by the principal (reported by `/verify`) — do not retry; surface to the principal
 - `price_not_acceptable`: Attestation amount below resource requirements
 - `unknown`: Unknown error
 
-(Facilitator-side errors — `insufficient_credits`, `bundle_not_found`, `idempotency_conflict`, `settle_conflict`, `hold_expired`, `unauthorized_server` — are defined in the [facilitator interface](#facilitator-interface).)
+(Facilitator-side errors — `insufficient_credits`, `bundle_not_found`, `bundle_revoked`, `idempotency_conflict`, `settle_conflict`, `hold_expired`, `unauthorized_server`, `revoked` — are defined in the [facilitator interface](#facilitator-interface) and [Revocation and disputes](#revocation-and-disputes).)
 
 ### Security considerations
 
