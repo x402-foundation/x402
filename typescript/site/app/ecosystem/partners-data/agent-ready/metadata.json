@@ -1,0 +1,7 @@
+{
+  "name": "Agent Ready",
+  "category": "Services/Endpoints",
+  "logoUrl": "/logos/agent-ready.png",
+  "description": "AI agent-readability scanner — scores any website against the Vercel Agent Readability Spec and llmstxt.org. Pay per scan with x402 (USDC on Base), no account.",
+  "websiteUrl": "https://agent-ready.dev"
+}
