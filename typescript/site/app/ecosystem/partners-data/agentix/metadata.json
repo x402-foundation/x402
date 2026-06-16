@@ -1,0 +1,7 @@
+{
+  "name": "Agentix",
+  "description": "AI agent builder and marketplace with native x402 per-call payments. Creators set a USDC price per call; every call settles instantly on Base via Coinbase CDP.",
+  "logoUrl": "/logos/agentix.png",
+  "websiteUrl": "https://agentix.suedeai.ai",
+  "category": "Services/Endpoints"
+}
