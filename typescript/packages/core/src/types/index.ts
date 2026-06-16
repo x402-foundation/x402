@@ -50,6 +50,13 @@ export type {
 
 export type { DeepReadonly } from "./readonly";
 
+export type {
+  DiscoveryManifest,
+  DiscoveryManifestResource,
+  DiscoveryInput,
+  DiscoveryOutput,
+} from "./discovery";
+
 export type Network = `${string}:${string}`;
 
 export type Money = string | number;

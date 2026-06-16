@@ -9,6 +9,7 @@ import { TestDiscovery } from './src/discovery';
 import { ClientConfig, ScenarioResult, ServerConfig, TestScenario, endpointAssetTransferMethod, endpointPaymentScheme, endpointUsesBatchSettlement } from './src/types';
 import { config as loggerConfig, log, verboseLog, errorLog, close as closeLogger, createComboLogger } from './src/logger';
 import { handleDiscoveryValidation, shouldRunDiscoveryValidation, type TestedDiscoveryScenario } from './extensions/bazaar';
+import { validateServerWellKnown, hasWellKnownResults, summarizeWellKnown } from './extensions/well-known';
 import { parseArgs, printHelp } from './src/cli/args';
 import { runInteractiveMode } from './src/cli/interactive';
 import { filterScenarios, TestFilters, shouldShowExtensionOutput } from './src/cli/filters';
@@ -1474,6 +1475,10 @@ async function runTest() {
     }
     cLog.log(`  ✅ Server ${serverName} ready`);
 
+    // Validate the server's per-origin discovery manifest while it is running.
+    // Dedups per server implementation; servers without the route are skipped.
+    await validateServerWellKnown(serverName, port);
+
     const results: DetailedTestResult[] = [];
     // Track which endpoint paths have already been "cold started" in this combo.
     // The first test for each path runs the full state-setup (fund/revoke/drain);
@@ -1659,6 +1664,13 @@ async function runTest() {
     discoveryFailed = !discoveryResult.success;
   }
 
+  // Validate the per-origin well-known discovery manifest (served by the server
+  // middleware, checked while each server was running above).
+  let wellKnownFailed = false;
+  if (hasWellKnownResults()) {
+    wellKnownFailed = !summarizeWellKnown();
+  }
+
   // Clean up facilitators (servers already stopped in test loop for both modes)
   log('\n🧹 Cleaning up...');
 
@@ -1835,7 +1847,7 @@ async function runTest() {
   // Close logger
   closeLogger();
 
-  if (failed > 0 || discoveryFailed) {
+  if (failed > 0 || discoveryFailed || wellKnownFailed) {
     process.exit(1);
   }
 }

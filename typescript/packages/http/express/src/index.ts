@@ -16,6 +16,9 @@ import { SchemeNetworkServer, Network } from "@x402/core/types";
 import { NextFunction, Request, Response } from "express";
 import { ExpressAdapter } from "./adapter";
 
+/** Canonical well-known path for the per-origin x402 discovery manifest (RFC 8615). */
+const WELL_KNOWN_DISCOVERY_PATH = "/.well-known/x402.json";
+
 /**
  * Set settlement overrides on the response for partial settlement.
  * The middleware will extract these before settlement and strip the header from the client response.
@@ -61,6 +64,7 @@ function sendFacilitatorError(res: Response, error: FacilitatorResponseError): v
  * @param paywallConfig - Optional configuration for the built-in paywall UI
  * @param paywall - Optional custom paywall provider (overrides default)
  * @param syncFacilitatorOnStart - Whether to sync with the facilitator on startup (defaults to true)
+ * @param serveWellKnownDiscovery - Whether to auto-serve the discovery manifest at /.well-known/x402.json (defaults to true)
  * @returns Express middleware handler
  *
  * @example
@@ -81,6 +85,7 @@ export function paymentMiddlewareFromHTTPServer(
   paywallConfig?: PaywallConfig,
   paywall?: PaywallProvider,
   syncFacilitatorOnStart: boolean = true,
+  serveWellKnownDiscovery: boolean = true,
 ) {
   // Register custom paywall provider if provided
   if (paywall) {
@@ -133,6 +138,27 @@ export function paymentMiddlewareFromHTTPServer(
   }
 
   return async (req: Request, res: Response, next: NextFunction) => {
+    // Auto-serve the per-origin discovery manifest (default-on). Adopting x402
+    // HTTP payments yields /.well-known/x402.json for free; no route to register.
+    if (serveWellKnownDiscovery && req.method === "GET" && req.path === WELL_KNOWN_DISCOVERY_PATH) {
+      try {
+        if (syncFacilitatorOnStart && !isInitialized) {
+          await initializeHttpServer();
+        }
+        if (bazaarPromise) {
+          await bazaarPromise;
+          bazaarPromise = null;
+        }
+        const origin = `${req.protocol}://${req.get("host") ?? req.headers.host ?? ""}`;
+        const manifest = await httpServer.buildDiscoveryManifest(origin);
+        res.setHeader("Cache-Control", "public, max-age=300");
+        res.json(manifest);
+        return;
+      } catch (error) {
+        return next(error);
+      }
+    }
+
     // Create adapter and context
     const adapter = new ExpressAdapter(req);
     const context: HTTPRequestContext = {
@@ -388,6 +414,7 @@ export function paymentMiddlewareFromHTTPServer(
  * @param paywallConfig - Optional configuration for the built-in paywall UI
  * @param paywall - Optional custom paywall provider (overrides default)
  * @param syncFacilitatorOnStart - Whether to sync with the facilitator on startup (defaults to true)
+ * @param serveWellKnownDiscovery - Whether to auto-serve the discovery manifest at /.well-known/x402.json (defaults to true)
  * @returns Express middleware handler
  *
  * @example
@@ -406,6 +433,7 @@ export function paymentMiddleware(
   paywallConfig?: PaywallConfig,
   paywall?: PaywallProvider,
   syncFacilitatorOnStart: boolean = true,
+  serveWellKnownDiscovery: boolean = true,
 ) {
   // Create the x402 HTTP server instance with the resource server
   const httpServer = new x402HTTPResourceServer(server, routes);
@@ -415,6 +443,7 @@ export function paymentMiddleware(
     paywallConfig,
     paywall,
     syncFacilitatorOnStart,
+    serveWellKnownDiscovery,
   );
 }
 
@@ -430,6 +459,7 @@ export function paymentMiddleware(
  * @param paywallConfig - Optional configuration for the built-in paywall UI
  * @param paywall - Optional custom paywall provider (overrides default)
  * @param syncFacilitatorOnStart - Whether to sync with the facilitator on startup (defaults to true)
+ * @param serveWellKnownDiscovery - Whether to auto-serve the discovery manifest at /.well-known/x402.json (defaults to true)
  * @returns Express middleware handler
  *
  * @example
@@ -451,6 +481,7 @@ export function paymentMiddlewareFromConfig(
   paywallConfig?: PaywallConfig,
   paywall?: PaywallProvider,
   syncFacilitatorOnStart: boolean = true,
+  serveWellKnownDiscovery: boolean = true,
 ) {
   const ResourceServer = new x402ResourceServer(facilitatorClients);
 
@@ -462,7 +493,14 @@ export function paymentMiddlewareFromConfig(
 
   // Use the direct paymentMiddleware with the configured server
   // Note: paymentMiddleware handles dynamic bazaar registration
-  return paymentMiddleware(routes, ResourceServer, paywallConfig, paywall, syncFacilitatorOnStart);
+  return paymentMiddleware(
+    routes,
+    ResourceServer,
+    paywallConfig,
+    paywall,
+    syncFacilitatorOnStart,
+    serveWellKnownDiscovery,
+  );
 }
 
 export { x402ResourceServer, x402HTTPResourceServer } from "@x402/core/server";
