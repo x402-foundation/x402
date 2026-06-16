@@ -24,13 +24,10 @@
   "author": "",
   "license": "ISC",
   "devDependencies": {
-    "@eslint/js": "^9.24.0",
     "tsx": "^4.21.0",
     "tsup": "^8.4.0",
     "turbo": "^2.5.0",
     "typescript": "^5.7.3",
-    "@typescript-eslint/eslint-plugin": "^8.29.1",
-    "@typescript-eslint/parser": "^8.29.1",
     "@changesets/cli": "^2.28.1",
     "@changesets/changelog-github": "^0.5.1"
   }

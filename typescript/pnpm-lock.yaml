@@ -17,15 +17,6 @@ importers:
       '@changesets/cli':
         specifier: ^2.28.1
         version: 2.29.8(@types/node@22.19.17)
-      '@eslint/js':
-        specifier: ^9.24.0
-        version: 9.34.0
-      '@typescript-eslint/eslint-plugin':
-        specifier: ^8.29.1
-        version: 8.49.0(@typescript-eslint/parser@8.49.0(eslint@9.34.0(jiti@2.6.1))(typescript@5.9.2))(eslint@9.34.0(jiti@2.6.1))(typescript@5.9.2)
-      '@typescript-eslint/parser':
-        specifier: ^8.29.1
-        version: 8.49.0(eslint@9.34.0(jiti@2.6.1))(typescript@5.9.2)
       tsup:
         specifier: ^8.4.0
         version: 8.5.0(jiti@2.6.1)(postcss@8.5.6)(tsx@4.21.0)(typescript@5.9.2)(yaml@2.8.1)

@@ -87,7 +87,7 @@ export function parseOutList(cell: Cell): ReturnType<typeof loadOutList> {
   try {
     return loadOutList(cell.beginParse());
   } catch (error) {
-    throw new Error(ERR_EXACT_TVM_INVALID_W5_ACTIONS, { cause: error });
+    throw Object.assign(new Error(ERR_EXACT_TVM_INVALID_W5_ACTIONS), { cause: error });
   }
 }
 

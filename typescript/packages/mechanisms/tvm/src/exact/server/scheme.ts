@@ -6,13 +6,9 @@ import {
   SchemeNetworkServer,
   MoneyParser,
 } from "@x402/core/types";
+import { convertToTokenAmount, numberToDecimalString, parseMoneyString } from "@x402/core/utils";
 import { USDT_DECIMALS, USDT_MAINNET_MINTER, USDT_TESTNET_MINTER } from "../../constants";
-import {
-  getDefaultAsset,
-  makeZeroBitCellBoc,
-  normalizeTonAddress,
-  parseDecimalAmount,
-} from "../../utils";
+import { getDefaultAsset, makeZeroBitCellBoc, normalizeTonAddress } from "../../utils";
 
 /**
  * TVM server implementation for the Exact payment scheme.
@@ -45,7 +41,10 @@ export class ExactTvmScheme implements SchemeNetworkServer {
     }
 
     // Parse Money to decimal number
-    const amount = this.parseMoneyToDecimal(price);
+    const amount =
+      typeof price === "number"
+        ? price
+        : parseMoneyString(price.replace(/\s*(?:USD|USDT)\s*$/i, ""));
 
     // Try each custom money parser in order
     for (const parser of this.moneyParsers) {
@@ -85,10 +84,7 @@ export class ExactTvmScheme implements SchemeNetworkServer {
         typeof extra.decimals === "number" || typeof extra.decimals === "string"
           ? Number(extra.decimals)
           : this.getAssetDecimals(paymentRequirements.asset, paymentRequirements.network);
-      paymentRequirements.amount = parseDecimalAmount(
-        paymentRequirements.amount,
-        decimals,
-      ).toString();
+      paymentRequirements.amount = convertToTokenAmount(paymentRequirements.amount, decimals);
     }
 
     if (typeof extra.responseDestination === "string") {
@@ -108,27 +104,9 @@ export class ExactTvmScheme implements SchemeNetworkServer {
     return Promise.resolve(paymentRequirements);
   }
 
-  private parseMoneyToDecimal(money: string | number): number {
-    if (typeof money === "number") {
-      return money;
-    }
-
-    const cleanMoney = money
-      .replace(/^\$/, "")
-      .replace(/\s*(USD|USDT)\s*$/i, "")
-      .trim();
-    const amount = parseFloat(cleanMoney);
-
-    if (isNaN(amount)) {
-      throw new Error(`Invalid money format: ${money}`);
-    }
-
-    return amount;
-  }
-
   private defaultMoneyConversion(amount: number, network: Network): AssetAmount {
     return {
-      amount: parseDecimalAmount(amount, USDT_DECIMALS).toString(),
+      amount: convertToTokenAmount(numberToDecimalString(amount), USDT_DECIMALS),
       asset: getDefaultAsset(network),
       extra: {
         areFeesSponsored: true,

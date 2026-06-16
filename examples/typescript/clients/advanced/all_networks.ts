@@ -21,7 +21,7 @@ import { createEd25519Signer } from "@x402/stellar";
 import { ExactHederaScheme } from "@x402/hedera/exact/client";
 import { createClientHederaSigner, PrivateKey } from "@x402/hedera";
 import { toClientTvmSigner, TVM_PROVIDER_TONAPI, TVM_PROVIDER_TONCENTER } from "@x402/tvm";
-import { mnemonicToPrivateKey } from "@ton/crypto";
+import { keyPairFromSeed, type KeyPair } from "@ton/crypto";
 import { base58 } from "@scure/base";
 import { createKeyPairSignerFromBytes } from "@solana/kit";
 import { privateKeyToAccount } from "viem/accounts";
@@ -37,12 +37,32 @@ const hederaAccountId = process.env.HEDERA_ACCOUNT_ID;
 // Hedera private key should be an ECDSA key string (0x-prefixed or DER-encoded).
 const hederaPrivateKey = process.env.HEDERA_PRIVATE_KEY;
 const hederaNetwork = process.env.HEDERA_NETWORK || "hedera:testnet";
-const tvmMnemonic = process.env.TVM_MNEMONIC as string | undefined;
+const tvmPrivateKey = process.env.TVM_PRIVATE_KEY as string | undefined;
 const tvmNetwork = process.env.TVM_NETWORK || "tvm:-3";
 const tvmProvider = (process.env.TVM_PROVIDER || TVM_PROVIDER_TONCENTER).toLowerCase();
 const baseURL = process.env.RESOURCE_SERVER_URL || "http://localhost:4021";
 const endpointPath = process.env.ENDPOINT_PATH || "/weather";
 const url = `${baseURL}${endpointPath}`;
+
+/**
+ * Parses a TVM private key seed or secret key from a hex/base64 environment value.
+ *
+ * @param privateKey - The TVM_PRIVATE_KEY environment value.
+ * @returns A TON key pair derived from the seed component.
+ */
+function parseTvmKeyPair(privateKey: string): KeyPair {
+  const value = privateKey.trim().replace(/^0x/, "");
+  let bytes: Buffer;
+  if (/^[0-9a-fA-F]+$/.test(value) && value.length % 2 === 0) {
+    bytes = Buffer.from(value, "hex");
+  } else {
+    bytes = Buffer.from(value, "base64");
+  }
+  if (bytes.length !== 32 && bytes.length !== 64) {
+    throw new Error("TVM_PRIVATE_KEY must be a 32-byte seed or 64-byte secret key");
+  }
+  return keyPairFromSeed(bytes.subarray(0, 32));
+}
 
 /**
  * Example demonstrating how to use @x402/fetch with all supported networks.
@@ -56,10 +76,10 @@ async function main(): Promise<void> {
     !svmPrivateKey &&
     !stellarPrivateKey &&
     !(hederaAccountId && hederaPrivateKey) &&
-    !tvmMnemonic
+    !tvmPrivateKey
   ) {
     console.error(
-      "❌ At least one of AVM_PRIVATE_KEY, EVM_PRIVATE_KEY, SVM_PRIVATE_KEY, STELLAR_PRIVATE_KEY, HEDERA_ACCOUNT_ID + HEDERA_PRIVATE_KEY, or TVM_MNEMONIC is required",
+      "❌ At least one of AVM_PRIVATE_KEY, EVM_PRIVATE_KEY, SVM_PRIVATE_KEY, STELLAR_PRIVATE_KEY, HEDERA_ACCOUNT_ID + HEDERA_PRIVATE_KEY, or TVM_PRIVATE_KEY is required",
     );
     process.exit(1);
   }
@@ -107,10 +127,9 @@ async function main(): Promise<void> {
     console.log(`Initialized Stellar account: ${stellarSigner.address}`);
   }
 
-  // Register TVM scheme if mnemonic is provided
-  if (tvmMnemonic) {
-    const keyPair = await mnemonicToPrivateKey(tvmMnemonic.split(" "));
-    const tvmSigner = toClientTvmSigner(keyPair, {
+  // Register TVM scheme if private key is provided
+  if (tvmPrivateKey) {
+    const tvmSigner = toClientTvmSigner(parseTvmKeyPair(tvmPrivateKey), {
       network: tvmNetwork,
       provider: tvmProvider,
       apiKey:

@@ -19,7 +19,7 @@ export function parseExactTvmPayload(settlementBoc: string): ParsedTvmSettlement
     root = decodeBase64Boc(settlementBoc);
     message = loadMessageRelaxed(root.beginParse());
   } catch (error) {
-    throw new Error(ERR_EXACT_TVM_INVALID_SETTLEMENT_BOC, { cause: error });
+    throw Object.assign(new Error(ERR_EXACT_TVM_INVALID_SETTLEMENT_BOC), { cause: error });
   }
 
   if (message.info.type !== "internal") {

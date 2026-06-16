@@ -3,11 +3,7 @@
   "type": "server",
   "language": "typescript",
   "x402Version": 2,
-  "extensions": [
-    "bazaar",
-    "eip2612GasSponsoring",
-    "erc20ApprovalGasSponsoring"
-  ],
+  "extensions": ["bazaar", "eip2612GasSponsoring", "erc20ApprovalGasSponsoring"],
   "endpoints": [
     {
       "path": "/api/exact/evm/eip3009/proxy",
@@ -48,9 +44,7 @@
       "description": "EVM Permit2 endpoint with ERC-20 approval gas sponsoring using proxy middleware",
       "requiresPayment": true,
       "protocolFamily": "evm",
-      "extensions": [
-        "erc20ApprovalGasSponsoring"
-      ],
+      "extensions": ["erc20ApprovalGasSponsoring"],
       "scheme": "exact",
       "assetTransferMethod": "permit2",
       "schemeOptions": {
@@ -87,9 +81,7 @@
       "description": "Protected Upto Permit2 endpoint with ERC-20 approval gas sponsoring",
       "requiresPayment": true,
       "protocolFamily": "evm",
-      "extensions": [
-        "erc20ApprovalGasSponsoring"
-      ],
+      "extensions": ["erc20ApprovalGasSponsoring"],
       "scheme": "upto",
       "assetTransferMethod": "permit2",
       "schemeOptions": {
@@ -130,6 +122,13 @@
       "description": "Stellar endpoint using proxy middleware",
       "requiresPayment": true,
       "protocolFamily": "stellar"
+    },
+    {
+      "path": "/api/exact/tvm",
+      "method": "GET",
+      "description": "TVM endpoint using proxy middleware",
+      "requiresPayment": true,
+      "protocolFamily": "tvm"
     },
     {
       "path": "/api/exact/evm/eip3009/withx402",
@@ -179,9 +178,7 @@
       "description": "Batch-settlement Permit2 endpoint with ERC-20 approval gas sponsoring using proxy middleware",
       "requiresPayment": true,
       "protocolFamily": "evm",
-      "extensions": [
-        "erc20ApprovalGasSponsoring"
-      ],
+      "extensions": ["erc20ApprovalGasSponsoring"],
       "scheme": "batch-settlement",
       "assetTransferMethod": "permit2",
       "schemeOptions": {
@@ -232,17 +229,14 @@
     }
   ],
   "environment": {
-    "required": [
-      "PORT",
-      "EVM_PAYEE_ADDRESS",
-      "SVM_PAYEE_ADDRESS",
-      "FACILITATOR_URL"
-    ],
+    "required": ["PORT", "EVM_PAYEE_ADDRESS", "SVM_PAYEE_ADDRESS", "FACILITATOR_URL"],
     "optional": [
       "AVM_PAYEE_ADDRESS",
       "APTOS_PAYEE_ADDRESS",
       "HEDERA_PAYEE_ADDRESS",
       "STELLAR_PAYEE_ADDRESS",
+      "TVM_PAYEE_ADDRESS",
+      "TVM_NETWORK",
       "EVM_RECEIVER_AUTHORIZER_PRIVATE_KEY"
     ]
   }

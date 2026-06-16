@@ -5,7 +5,9 @@
   "main": "./dist/cjs/index.js",
   "module": "./dist/esm/index.js",
   "types": "./dist/cjs/index.d.ts",
-  "license": "MIT",
+  "license": "Apache-2.0",
+  "author": "x402 Foundation",
+  "repository": "https://github.com/x402-foundation/x402",
   "scripts": {
     "build": "tsup",
     "test": "vitest run",

@@ -2241,6 +2241,9 @@ importers:
       '@x402/svm':
         specifier: workspace:*
         version: link:../../../typescript/packages/mechanisms/svm
+      '@x402/tvm':
+        specifier: workspace:*
+        version: link:../../../typescript/packages/mechanisms/tvm
       dotenv:
         specifier: ^16.6.1
         version: 16.6.1
@@ -2542,6 +2545,9 @@ importers:
       '@x402/svm':
         specifier: workspace:*
         version: link:../../../typescript/packages/mechanisms/svm
+      '@x402/tvm':
+        specifier: workspace:*
+        version: link:../../../typescript/packages/mechanisms/tvm
       next:
         specifier: ^16.2.6
         version: 16.2.6(react-dom@19.2.6(react@19.2.6))(react@19.2.6)

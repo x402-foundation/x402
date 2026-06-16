@@ -3,7 +3,6 @@ import {
   DEFAULT_SETTLEMENT_BATCH_FLUSH_SIZE,
   DEFAULT_SETTLEMENT_BATCH_MAX_SIZE,
   DEFAULT_TRACE_CONFIRMATION_TIMEOUT_SECONDS,
-  ERR_EXACT_TVM_SIMULATION_FAILED,
   ERR_EXACT_TVM_TRANSACTION_FAILED,
 } from "../constants";
 import type { SettlementCache } from "../settlement-cache";
@@ -92,10 +91,7 @@ export class SettlementBatcher {
       traceExternalHashNorm = await this.signer.sendExternalMessage(network, externalBoc);
     } catch (error) {
       this.failBatch(batch, {
-        errorReason:
-          error instanceof Error && error.name === "ValueError"
-            ? ERR_EXACT_TVM_SIMULATION_FAILED
-            : ERR_EXACT_TVM_TRANSACTION_FAILED,
+        errorReason: ERR_EXACT_TVM_TRANSACTION_FAILED,
         errorMessage: error instanceof Error ? error.message : String(error),
       });
       return;

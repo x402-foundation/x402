@@ -5,7 +5,7 @@ on:
 
 jobs:
   publish-npm-x402-tvm:
-    if: github.ref == 'refs/heads/main'
+    if: github.repository == 'x402-foundation/x402' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     environment: npm
     permissions:
@@ -34,7 +34,7 @@ jobs:
         working-directory: ./typescript
         run: |
           pnpm install --frozen-lockfile --ignore-scripts
-          pnpm -r --filter=@x402/core --filter=@x402/tvm run build
+          pnpm -r --filter=@x402/core --filter=@x402/extensions --filter=@x402/tvm run build
 
       - name: Publish @x402/tvm package
         working-directory: ./typescript/packages/mechanisms/tvm
