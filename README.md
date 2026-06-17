@@ -1,3 +1,5 @@
+[![MseeP.ai Security Assessment Badge](https://mseep.net/pr/x402-foundation-x402-badge.png)](https://mseep.ai/app/x402-foundation-x402)
+
 # x402
 
 x402 is an open standard for internet native payments. It aims to support all networks (both crypto & fiat) and forms of value (stablecoins, tokens, fiat).
