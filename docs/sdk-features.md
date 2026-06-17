@@ -33,6 +33,7 @@ This page tracks which features are implemented in each SDK (TypeScript, Go, Pyt
 | stellar | ✅ | ❌ | ❌ |
 | aptos | ✅ | ❌ | ❌ |
 | hedera | ✅ | ❌ | ❌ |
+| keeta | ✅ | ❌ | ❌ |
 
 ## Mechanisms
 
