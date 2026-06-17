@@ -56,6 +56,20 @@ interface BazaarDiscoveryBlock {
 }
 
 /**
+ * A resolved discovery entry, cached once and reused across requests. Everything
+ * here is **origin-independent**; only `resource.url` is filled in per request
+ * (from `origin` + `path`, unless `hasOverride` is set).
+ */
+interface CachedDiscoveryEntry {
+  /** The manifest item; `resource.url` is a placeholder unless `hasOverride`. */
+  item: DiscoveryManifestResource;
+  /** The route path, used to build `resource.url` as `origin + path`. */
+  path: string;
+  /** True when the route set an explicit (absolute) `resource` URL override. */
+  hasOverride: boolean;
+}
+
+/**
  * Narrow an unknown value to a plain record.
  *
  * @param value - The value to test.
@@ -431,6 +445,10 @@ export class x402HTTPResourceServer {
   private routesConfig: RoutesConfig;
   private paywallProvider?: PaywallProvider;
   private protectedRequestHooks: ProtectedRequestHook[] = [];
+  /** Memoized, origin-independent discovery entries (resolved once, reused). */
+  private discoveryEntriesPromise?: Promise<CachedDiscoveryEntry[]>;
+  /** Unix timestamp (seconds) of when the discovery entries were resolved. */
+  private discoveryLastUpdated?: number;
 
   /**
    * Creates a new x402HTTPResourceServer instance.
@@ -873,12 +891,47 @@ export class x402HTTPResourceServer {
    * @returns The discovery manifest.
    */
   async buildDiscoveryManifest(origin: string): Promise<DiscoveryManifest> {
+    // Resolve routes once (heavy: facilitator + scheme work) and cache the
+    // origin-independent entries; subsequent calls only substitute the origin.
+    if (!this.discoveryEntriesPromise) {
+      this.discoveryEntriesPromise = this.resolveDiscoveryEntries();
+    }
+    const entries = await this.discoveryEntriesPromise;
+
+    const items = entries.map(entry => ({
+      ...entry.item,
+      resource: {
+        ...entry.item.resource,
+        // Only resource.url depends on the request host; everything else is cached.
+        url: entry.hasOverride ? entry.item.resource.url : new URL(entry.path, origin).toString(),
+      },
+    }));
+
+    return {
+      x402Version: 2,
+      lastUpdated: this.discoveryLastUpdated ?? Math.floor(Date.now() / 1000),
+      items,
+    };
+  }
+
+  /**
+   * Resolve every configured route into origin-independent discovery entries.
+   *
+   * Runs the full 402 resolution path (`buildPaymentRequirementsFromOptions` +
+   * `createPaymentRequiredResponse`) **once** — the result is memoized by
+   * {@link buildDiscoveryManifest} and reused across requests (config is static
+   * until the server restarts). Best-effort: routes that cannot resolve (e.g.
+   * unsupported scheme) are skipped.
+   *
+   * @returns The cacheable, origin-independent discovery entries.
+   */
+  private async resolveDiscoveryEntries(): Promise<CachedDiscoveryEntry[]> {
     const normalizedRoutes: Array<[string, RouteConfig]> =
       typeof this.routesConfig === "object" && !("accepts" in this.routesConfig)
         ? Object.entries(this.routesConfig as Record<string, RouteConfig>)
         : [["*", this.routesConfig as RouteConfig]];
 
-    const items: DiscoveryManifestResource[] = [];
+    const entries: CachedDiscoveryEntry[] = [];
 
     for (const [pattern, config] of normalizedRoutes) {
       const hasMethod = pattern.includes(" ");
@@ -887,7 +940,9 @@ export class x402HTTPResourceServer {
       const path = !pathPart || pathPart === "*" ? "/" : pathPart;
 
       try {
-        const resourceUrl = config.resource || new URL(path, origin).toString();
+        const hasOverride = typeof config.resource === "string" && config.resource.length > 0;
+        // Origin-independent placeholder; buildDiscoveryManifest fills resource.url per request.
+        const resourceUrl = hasOverride ? (config.resource as string) : path;
         const context = this.createDiscoveryContext(resourceUrl, path, method);
 
         const resourceInfo = {
@@ -943,21 +998,24 @@ export class x402HTTPResourceServer {
         // whose contract is lifted into input/output). Payloads stay in the 402.
         const requires = Object.keys(paymentRequired.extensions ?? {}).filter(k => k !== "bazaar");
 
-        items.push({
+        const item: DiscoveryManifestResource = {
           resource,
           type: bazaar?.info?.input?.type ?? "http",
           accepts: paymentRequired.accepts,
           input,
           ...(lifted.output ? { output: lifted.output } : {}),
           ...(requires.length > 0 ? { requires } : {}),
-        });
+        };
+
+        entries.push({ item, path, hasOverride });
       } catch (error) {
         // Best-effort: skip routes that require a live request to resolve.
         console.warn(`[x402] Skipping route "${pattern}" in discovery manifest:`, error);
       }
     }
 
-    return { x402Version: 2, lastUpdated: Math.floor(Date.now() / 1000), items };
+    this.discoveryLastUpdated = Math.floor(Date.now() / 1000);
+    return entries;
   }
 
   /**

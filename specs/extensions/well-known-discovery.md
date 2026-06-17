@@ -54,18 +54,28 @@ yields the manifest for free, generated from the same route config that produces
   carries only a lightweight `requires` capability hint so agents can decide before paying.
 - **Advisory precedence.** `accepts` and schemas are advisory; the live `402` remains
   authoritative for payment.
+- **Resolved once, served cached.** The route configuration is static (it only changes on a
+  server restart), so the heavy resolution — turning each route's `price` into concrete
+  `accepts` via the scheme + facilitator, and lifting the `bazaar` contract — runs **once** and
+  is cached. The cached entries are **origin-independent**; only `resource.url` is filled in
+  per request (`origin` + route path), so the manifest stays correct when the server is reached
+  via multiple hostnames. `lastUpdated` reflects the one-time resolution. (Dynamic `price`
+  functions resolve against an empty context to their default branch — the live `402` carries
+  the per-call price; consistent with advisory precedence.)
 
 ## Implementation
 
 | Piece | Location |
 |-------|----------|
 | Types (`DiscoveryManifest`, `DiscoveryManifestResource`, `DiscoveryInput`, `DiscoveryOutput`) | `typescript/packages/core/src/types/discovery.ts` |
-| Manifest generator (`buildDiscoveryManifest`) | `typescript/packages/core/src/http/x402HTTPResourceServer.ts` |
+| Manifest generator + cache (`buildDiscoveryManifest` / `resolveDiscoveryEntries`) | `typescript/packages/core/src/http/x402HTTPResourceServer.ts` |
 | Auto-serve middleware + `serveWellKnownDiscovery` opt-out | `typescript/packages/http/express/src/index.ts` |
 | Example server (offline, zero-config) | `examples/typescript/servers/well-known/` |
 
-Other adapters (Hono/Next/Fastify) can serve the route by calling
-`httpServer.buildDiscoveryManifest(origin)` from the same interception point.
+`buildDiscoveryManifest(origin)` memoizes the resolved entries (`resolveDiscoveryEntries`)
+and only substitutes `origin` per call, so the per-request cost is a cheap cache read. Other
+adapters (Hono/Next/Fastify) can serve the route by calling it from the same interception
+point.
 
 ## Notes / open items
 - Canonical location is `/.well-known/x402.json` (RFC 8615).

@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, vi } from "vitest";
 import { x402HTTPResourceServer } from "../../../src/http/x402HTTPResourceServer";
 import { x402ResourceServer } from "../../../src/server/x402ResourceServer";
 import {
@@ -169,6 +169,49 @@ describe("x402HTTPResourceServer.buildDiscoveryManifest", () => {
 
     expect(item.requires).toEqual(["sign-in-with-x"]); // bazaar excluded (lifted, not required)
     expect(item).not.toHaveProperty("extensions"); // no full payloads in the manifest
+  });
+
+  it("resolves routes once and reuses the cache across calls", async () => {
+    const httpServer = new x402HTTPResourceServer(ResourceServer, {
+      "GET /weather/:city": { accepts: evmOption() },
+    });
+    const spy = vi.spyOn(ResourceServer, "buildPaymentRequirementsFromOptions");
+
+    const first = await httpServer.buildDiscoveryManifest(ORIGIN);
+    const callsAfterFirst = spy.mock.calls.length;
+    const second = await httpServer.buildDiscoveryManifest(ORIGIN);
+
+    expect(callsAfterFirst).toBeGreaterThan(0);
+    // Second build must not re-resolve (cache hit).
+    expect(spy.mock.calls.length).toBe(callsAfterFirst);
+    expect(second.items).toEqual(first.items);
+    expect(second.lastUpdated).toBe(first.lastUpdated);
+  });
+
+  it("substitutes the request origin per call from the cached entries", async () => {
+    const httpServer = new x402HTTPResourceServer(ResourceServer, {
+      "GET /weather/:city": { accepts: evmOption() },
+    });
+
+    const a = await httpServer.buildDiscoveryManifest("https://a.example.com");
+    const b = await httpServer.buildDiscoveryManifest("https://b.example.com");
+
+    expect(a.items[0].resource.url).toBe("https://a.example.com/weather/:city");
+    expect(b.items[0].resource.url).toBe("https://b.example.com/weather/:city");
+    // Everything except the URL is identical (resolved once, origin-independent).
+    expect(b.items[0].accepts).toEqual(a.items[0].accepts);
+    expect(b.items[0].input).toEqual(a.items[0].input);
+  });
+
+  it("keeps an absolute `resource` override stable across origins", async () => {
+    const httpServer = new x402HTTPResourceServer(ResourceServer, {
+      "GET /proxied": { accepts: evmOption(), resource: "https://fixed.example.com/real" },
+    });
+
+    const a = await httpServer.buildDiscoveryManifest("https://a.example.com");
+    const b = await httpServer.buildDiscoveryManifest("https://b.example.com");
+    expect(a.items[0].resource.url).toBe("https://fixed.example.com/real");
+    expect(b.items[0].resource.url).toBe("https://fixed.example.com/real");
   });
 
   it("produces only an input skeleton for a bare route (no discovery declared)", async () => {

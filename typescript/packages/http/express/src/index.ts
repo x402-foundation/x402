@@ -142,12 +142,12 @@ export function paymentMiddlewareFromHTTPServer(
     // HTTP payments yields /.well-known/x402.json for free; no route to register.
     if (serveWellKnownDiscovery && req.method === "GET" && req.path === WELL_KNOWN_DISCOVERY_PATH) {
       try {
+        // Resolving accepts requires the facilitator's /supported (fetched once at
+        // init). The bazaar extension does NOT need to be registered: the declared
+        // info/schema already live on the route config, and buildDiscoveryManifest
+        // caches the resolved entries, so this runs the heavy work only once.
         if (syncFacilitatorOnStart && !isInitialized) {
           await initializeHttpServer();
-        }
-        if (bazaarPromise) {
-          await bazaarPromise;
-          bazaarPromise = null;
         }
         const origin = `${req.protocol}://${req.get("host") ?? req.headers.host ?? ""}`;
         const manifest = await httpServer.buildDiscoveryManifest(origin);
