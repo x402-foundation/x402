@@ -632,6 +632,7 @@ async function runTest() {
   const serverKeetaAddress = process.env.SERVER_KEETA_ADDRESS;
   const serverStellarAddress = process.env.SERVER_STELLAR_ADDRESS;
   const serverTvmAddress = process.env.SERVER_TVM_ADDRESS;
+  const serverNearAddress = process.env.SERVER_NEAR_ADDRESS;
   const clientEvmPrivateKey = process.env.CLIENT_EVM_PRIVATE_KEY;
   const clientSvmPrivateKey = process.env.CLIENT_SVM_PRIVATE_KEY;
   const clientAvmPrivateKey = process.env.CLIENT_AVM_PRIVATE_KEY;
@@ -641,6 +642,8 @@ async function runTest() {
   const clientKeetaMnemonic = process.env.CLIENT_KEETA_MNEMONIC;
   const clientStellarPrivateKey = process.env.CLIENT_STELLAR_PRIVATE_KEY;
   const clientTvmPrivateKey = process.env.CLIENT_TVM_PRIVATE_KEY;
+  const clientNearAccountId = process.env.CLIENT_NEAR_ACCOUNT_ID;
+  const clientNearPrivateKey = process.env.CLIENT_NEAR_PRIVATE_KEY;
   const facilitatorEvmPrivateKey = process.env.FACILITATOR_EVM_PRIVATE_KEY;
   const facilitatorSvmPrivateKey = process.env.FACILITATOR_SVM_PRIVATE_KEY;
   const facilitatorAvmPrivateKey = process.env.FACILITATOR_AVM_PRIVATE_KEY;
@@ -650,6 +653,8 @@ async function runTest() {
   const facilitatorKeetaMnemonic = process.env.FACILITATOR_KEETA_MNEMONIC;
   const facilitatorStellarPrivateKey = process.env.FACILITATOR_STELLAR_PRIVATE_KEY;
   const facilitatorTvmPrivateKey = process.env.FACILITATOR_TVM_PRIVATE_KEY;
+  const facilitatorNearAccountId = process.env.FACILITATOR_NEAR_ACCOUNT_ID;
+  const facilitatorNearPrivateKey = process.env.FACILITATOR_NEAR_PRIVATE_KEY;
   const batchSettlementRecovery = envFlagDefaultTrue(process.env.BATCH_SETTLEMENT_RECOVERY);
 
   // Discover all servers, clients, and facilitators (always include legacy)
@@ -734,6 +739,7 @@ async function runTest() {
   log(`   KEETA: ${networks.keeta.name} (${networks.keeta.caip2})`);
   log(`   STELLAR: ${networks.stellar.name} (${networks.stellar.caip2})`);
   log(`   TVM: ${networks.tvm.name} (${networks.tvm.caip2})`);
+  log(`   NEAR: ${networks.near.name} (${networks.near.caip2})`);
 
   if (networkMode === 'mainnet') {
     log('\n⚠️  WARNING: Running on MAINNET - real funds will be used!');
@@ -786,6 +792,13 @@ async function runTest() {
       ['SERVER_TVM_ADDRESS', serverTvmAddress],
       ['CLIENT_TVM_PRIVATE_KEY', clientTvmPrivateKey],
       ['FACILITATOR_TVM_PRIVATE_KEY', facilitatorTvmPrivateKey],
+    ],
+    near: [
+      ['SERVER_NEAR_ADDRESS', serverNearAddress],
+      ['CLIENT_NEAR_ACCOUNT_ID', clientNearAccountId],
+      ['CLIENT_NEAR_PRIVATE_KEY', clientNearPrivateKey],
+      ['FACILITATOR_NEAR_ACCOUNT_ID', facilitatorNearAccountId],
+      ['FACILITATOR_NEAR_PRIVATE_KEY', facilitatorNearPrivateKey],
     ],
   };
 
@@ -982,6 +995,15 @@ async function runTest() {
     'TVM_PROVIDER',
     'TONAPI_API_KEY',
     'TONAPI_BASE_URL',
+    'NEAR_NETWORK',
+    'NEAR_RPC_URL',
+    'NEAR_ACCOUNT_ID',
+    'NEAR_PRIVATE_KEY',
+    'NEAR_RELAYER_ACCOUNT_ID',
+    'NEAR_RELAYER_PRIVATE_KEY',
+    'NEAR_PAYEE_ADDRESS',
+    'NEAR_ASSET',
+    'NEAR_AMOUNT',
   ]);
 
   for (const [facilitatorName, facilitator] of uniqueFacilitators) {
@@ -1128,6 +1150,7 @@ async function runTest() {
         KEETA_NETWORK: networks.keeta.caip2,
         STELLAR_NETWORK: networks.stellar.caip2,
         TVM_NETWORK: networks.tvm.caip2,
+        NEAR_NETWORK: networks.near.caip2,
       },
       stdio: 'pipe',
     },
@@ -1205,6 +1228,10 @@ async function runTest() {
       keetaNetwork: networks.keeta.caip2,
       tvmNetwork: networks.tvm.caip2,
       tvmRpcUrl: networks.tvm.rpcUrl,
+      nearAccountId: clientNearAccountId || '',
+      nearPrivateKey: clientNearPrivateKey || '',
+      nearNetwork: networks.near.caip2,
+      nearRpcUrl: networks.near.rpcUrl,
     };
 
     try {
@@ -1436,6 +1463,7 @@ async function runTest() {
     const facilitatorSupportsKeeta = facilitatorConfig?.protocolFamilies?.includes('keeta') ?? false;
     const facilitatorSupportsStellar = facilitatorConfig?.protocolFamilies?.includes('stellar') ?? false;
     const facilitatorSupportsTvm = facilitatorConfig?.protocolFamilies?.includes('tvm') ?? false;
+    const facilitatorSupportsNear = facilitatorConfig?.protocolFamilies?.includes('near') ?? false;
 
     const serverConfig: ServerConfig = {
       port,
@@ -1454,6 +1482,9 @@ async function runTest() {
       keetaPayTo: facilitatorSupportsKeeta ? (serverKeetaAddress || '') : '',
       stellarPayTo: facilitatorSupportsStellar ? (serverStellarAddress || '') : '',
       tvmPayTo: facilitatorSupportsTvm ? (serverTvmAddress || '') : '',
+      nearPayTo: facilitatorSupportsNear ? (serverNearAddress || '') : '',
+      nearAsset: process.env.SERVER_NEAR_ASSET,
+      nearAmount: process.env.SERVER_NEAR_AMOUNT,
       networks,
       facilitatorUrl,
       mockFacilitatorUrl,

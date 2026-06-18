@@ -133,6 +133,13 @@ export class GenericServerProxy extends BaseProxy implements ServerProxy {
         TVM_NETWORK: config.networks.tvm.caip2,
         TVM_PAYEE_ADDRESS: config.tvmPayTo,
 
+        // NEAR network config
+        NEAR_NETWORK: config.networks.near.caip2,
+        NEAR_RPC_URL: config.networks.near.rpcUrl,
+        NEAR_PAYEE_ADDRESS: config.nearPayTo,
+        ...(config.nearAsset !== undefined ? { NEAR_ASSET: config.nearAsset } : {}),
+        ...(config.nearAmount !== undefined ? { NEAR_AMOUNT: config.nearAmount } : {}),
+
         // Facilitator
         FACILITATOR_URL: config.facilitatorUrl || '',
         MOCK_FACILITATOR_URL: config.mockFacilitatorUrl || '',

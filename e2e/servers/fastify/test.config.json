@@ -184,6 +184,13 @@
       "protocolFamily": "tvm"
     },
     {
+      "path": "/exact/near",
+      "method": "GET",
+      "description": "Protected endpoint requiring payment on NEAR network",
+      "requiresPayment": true,
+      "protocolFamily": "near"
+    },
+    {
       "path": "/health",
       "method": "GET",
       "description": "Health check endpoint",
@@ -206,7 +213,11 @@
       "STELLAR_PAYEE_ADDRESS",
       "TVM_PAYEE_ADDRESS",
       "TVM_NETWORK",
-      "EVM_RECEIVER_AUTHORIZER_PRIVATE_KEY"
+      "EVM_RECEIVER_AUTHORIZER_PRIVATE_KEY",
+      "NEAR_PAYEE_ADDRESS",
+      "NEAR_ASSET",
+      "NEAR_AMOUNT",
+      "NEAR_NETWORK"
     ]
   }
 }

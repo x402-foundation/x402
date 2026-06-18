@@ -2,7 +2,7 @@
   "name": "fetch",
   "type": "client",
   "language": "typescript",
-  "protocolFamilies": ["evm", "svm", "avm", "aptos", "hedera", "keeta", "stellar", "tvm"],
+  "protocolFamilies": ["evm", "svm", "avm", "aptos", "hedera", "keeta", "near", "stellar", "tvm"],
   "x402Versions": [1, 2],
   "schemes": ["exact", "upto", "batch-settlement"],
   "evm": {
@@ -30,7 +30,11 @@
       "CHANNEL_SALT",
       "BATCH_SETTLEMENT_PHASE",
       "BATCH_SETTLEMENT_RECOVERY",
-      "EVM_VOUCHER_SIGNER_PRIVATE_KEY"
+      "EVM_VOUCHER_SIGNER_PRIVATE_KEY",
+      "NEAR_ACCOUNT_ID",
+      "NEAR_PRIVATE_KEY",
+      "NEAR_NETWORK",
+      "NEAR_RPC_URL"
     ]
   }
 }

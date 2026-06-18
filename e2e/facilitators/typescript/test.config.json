@@ -10,7 +10,8 @@
     "hedera",
     "keeta",
     "stellar",
-    "tvm"
+    "tvm",
+    "near"
   ],
   "x402Versions": [
     1,
@@ -59,7 +60,11 @@
       "TONCENTER_BASE_URL",
       "TONAPI_API_KEY",
       "TONAPI_BASE_URL",
-      "EVM_RECEIVER_AUTHORIZER_PRIVATE_KEY"
+      "EVM_RECEIVER_AUTHORIZER_PRIVATE_KEY",
+      "NEAR_RELAYER_ACCOUNT_ID",
+      "NEAR_RELAYER_PRIVATE_KEY",
+      "NEAR_NETWORK",
+      "NEAR_RPC_URL"
     ]
   }
 }

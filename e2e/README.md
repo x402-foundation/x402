@@ -123,6 +123,8 @@ CLIENT_HEDERA_PRIVATE_KEY=0x...     # Hedera ECDSA private key for client paymen
 CLIENT_KEETA_MNEMONIC=...           # Keeta mnemonic for client payments
 CLIENT_STELLAR_PRIVATE_KEY=...      # Stellar private key for client payments
 CLIENT_TVM_PRIVATE_KEY=...          # TVM private key for client payments
+CLIENT_NEAR_ACCOUNT_ID=...          # NEAR account id for client payments (payer)
+CLIENT_NEAR_PRIVATE_KEY=ed25519:... # NEAR private key for client payments
 
 # Server payment addresses
 SERVER_EVM_ADDRESS=0x...            # Where servers receive EVM payments
@@ -132,6 +134,7 @@ SERVER_HEDERA_ADDRESS=0.0....       # Where servers receive Hedera payments
 SERVER_KEETA_ADDRESS=keeta_...      # Where servers receive Keeta payments
 SERVER_STELLAR_ADDRESS=...          # Where servers receive Stellar payments
 SERVER_TVM_ADDRESS=...              # Where servers receive TVM payments
+SERVER_NEAR_ADDRESS=...             # Where servers receive NEAR payments (merchant account)
 
 # Facilitator wallets (⚠️ TEST WALLETS ONLY — used to fund/drain client between tests)
 FACILITATOR_EVM_PRIVATE_KEY=0x...   # EVM private key for facilitator
@@ -142,6 +145,8 @@ FACILITATOR_HEDERA_PRIVATE_KEY=0x... # Hedera ECDSA private key for facilitator
 FACILITATOR_KEETA_MNEMONIC=...      # Keeta mnemonic for facilitator
 FACILITATOR_STELLAR_PRIVATE_KEY=... # Stellar private key for facilitator
 FACILITATOR_TVM_PRIVATE_KEY=...     # TVM private key for facilitator
+FACILITATOR_NEAR_ACCOUNT_ID=...     # NEAR relayer account id (submits meta-tx, sponsors gas)
+FACILITATOR_NEAR_PRIVATE_KEY=ed25519:... # NEAR relayer private key
 
 # TVM support
 TVM_PROVIDER=tonapi                 # Optional: toncenter (default) or tonapi
@@ -194,6 +199,16 @@ You need **three separate Keeta accounts** for e2e tests (client, server, facili
 3. To get Testnet USDC on Keeta, go to the "Receive" page in the wallet, click on "Any token from Keeta Testnet", select "USDC from Base (Sepolia) Testnet" and copy the deposit address (starting with `0x`). Then go the [Circle Faucet](https://faucet.circle.com/), select Base network and enter your Base deposit address.
 
 > **Note:** The facilitator account only needs KTA (step 2). Client and server accounts need all three steps.
+
+#### NEAR Testnet
+
+You need **three separate NEAR testnet accounts** for e2e tests — client (payer), server (merchant), and facilitator (relayer):
+
+1. Create three testnet accounts (e.g. via [MyNearWallet testnet](https://testnet.mynearwallet.com/) or `near create-account`); export each account's private key (`ed25519:...`) — e.g. from `~/.near-credentials/testnet/<account>.json`.
+2. Fund the **facilitator (relayer)** account with testnet NEAR for gas from the [NEAR faucet](https://near-faucet.io/). The relayer submits the NEP-366 `SignedDelegate` and sponsors gas, so the payer spends zero gas.
+3. Give the **client (payer)** the payment token. The default asset is **wNEAR** (`wrap.testnet`, a NEP-141): wrap NEAR via `wrap.testnet` `near_deposit`. Both payer and merchant must be `storage_deposit`-registered on the token contract.
+
+> **Note:** payer key = `CLIENT_NEAR_*`, relayer key = `FACILITATOR_NEAR_*`, merchant = `SERVER_NEAR_ADDRESS`. Override the token with `SERVER_NEAR_ASSET` / `SERVER_NEAR_AMOUNT` (defaults: `wrap.testnet` / `1000000000000000000000` = 0.001 wNEAR; set them to a NEP-141 like Circle USDC for stablecoin runs).
 
 ## Example Session
 

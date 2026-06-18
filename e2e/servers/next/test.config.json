@@ -124,6 +124,13 @@
       "protocolFamily": "keeta"
     },
     {
+      "path": "/api/exact/near",
+      "method": "GET",
+      "description": "NEAR endpoint using proxy middleware",
+      "requiresPayment": true,
+      "protocolFamily": "near"
+    },
+    {
       "path": "/api/exact/stellar",
       "method": "GET",
       "description": "Stellar endpoint using proxy middleware",
@@ -223,6 +230,13 @@
       "protocolFamily": "keeta"
     },
     {
+      "path": "/api/exact/near/withx402",
+      "method": "GET",
+      "description": "NEAR endpoint using withX402 wrapper",
+      "requiresPayment": true,
+      "protocolFamily": "near"
+    },
+    {
       "path": "/api/exact/stellar/withx402",
       "method": "GET",
       "description": "Stellar endpoint using withX402 wrapper",
@@ -252,6 +266,10 @@
       "STELLAR_PAYEE_ADDRESS",
       "TVM_PAYEE_ADDRESS",
       "TVM_NETWORK",
+      "NEAR_PAYEE_ADDRESS",
+      "NEAR_ASSET",
+      "NEAR_AMOUNT",
+      "NEAR_NETWORK",
       "EVM_RECEIVER_AUTHORIZER_PRIVATE_KEY"
     ]
   }

@@ -23,6 +23,8 @@ import { ExactStellarScheme } from "@x402/stellar/exact/client";
 import { createEd25519Signer, Ed25519Signer } from "@x402/stellar";
 import { ExactTvmScheme } from "@x402/tvm/exact/client";
 import { toClientTvmSigner, TVM_PROVIDER_TONAPI, TVM_PROVIDER_TONCENTER } from "@x402/tvm";
+import { createClientNearSigner, type ClientNearSignerConfig } from "@x402/near";
+import { ExactNearScheme as ExactNearClientScheme } from "@x402/near/exact/client";
 import { ExactAvmScheme as ExactAvmClientScheme } from "@x402/avm/exact/client";
 import { toClientAvmSigner } from "@x402/avm";
 import * as KeetaNet from "@keetanetwork/keetanet-client";
@@ -188,6 +190,15 @@ if (avmSigner) {
 }
 if (tvmScheme) {
   client.register("tvm:*", tvmScheme);
+}
+if (process.env.NEAR_ACCOUNT_ID && process.env.NEAR_PRIVATE_KEY) {
+  const nearNetwork = (process.env.NEAR_NETWORK || "near:testnet") as `${string}:${string}`;
+  const nearSigner = createClientNearSigner({
+    accountId: process.env.NEAR_ACCOUNT_ID,
+    secretKey: process.env.NEAR_PRIVATE_KEY as ClientNearSignerConfig["secretKey"],
+    rpcUrls: process.env.NEAR_RPC_URL ? { [nearNetwork]: process.env.NEAR_RPC_URL } : undefined,
+  });
+  client.register(nearNetwork, new ExactNearClientScheme(nearSigner));
 }
 
 const fetchWithPayment = wrapFetchWithPayment(fetch, client);

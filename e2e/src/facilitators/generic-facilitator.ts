@@ -60,6 +60,8 @@ export interface FacilitatorConfig {
   keetaFacilitatorMnemonic?: string;
   stellarPrivateKey?: string;
   tvmPrivateKey?: string;
+  nearRelayerAccountId?: string;
+  nearRelayerPrivateKey?: string;
   networks: NetworkSet;
 }
 
@@ -126,6 +128,8 @@ export class GenericFacilitatorProxy extends BaseProxy implements FacilitatorPro
       KEETA_FACILITATOR_MNEMONIC: config.keetaFacilitatorMnemonic || '',
       STELLAR_PRIVATE_KEY: config.stellarPrivateKey || '',
       TVM_PRIVATE_KEY: config.tvmPrivateKey || '',
+      NEAR_RELAYER_ACCOUNT_ID: config.nearRelayerAccountId || '',
+      NEAR_RELAYER_PRIVATE_KEY: config.nearRelayerPrivateKey || '',
 
       // Network configs from NetworkSet
       EVM_NETWORK: config.networks.evm.caip2,
@@ -142,6 +146,8 @@ export class GenericFacilitatorProxy extends BaseProxy implements FacilitatorPro
       STELLAR_NETWORK: config.networks.stellar.caip2,
       STELLAR_RPC_URL: config.networks.stellar.rpcUrl,
       TVM_NETWORK: config.networks.tvm.caip2,
+      NEAR_NETWORK: config.networks.near.caip2,
+      NEAR_RPC_URL: config.networks.near.rpcUrl,
       TVM_PROVIDER: process.env.TVM_PROVIDER || '',
       TONCENTER_BASE_URL: process.env.TONCENTER_BASE_URL || config.networks.tvm.rpcUrl,
       TONAPI_API_KEY: process.env.TONAPI_API_KEY || '',

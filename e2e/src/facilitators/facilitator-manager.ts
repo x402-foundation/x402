@@ -42,6 +42,8 @@ export class FacilitatorManager {
       keetaFacilitatorMnemonic: process.env.FACILITATOR_KEETA_MNEMONIC,
       stellarPrivateKey: process.env.FACILITATOR_STELLAR_PRIVATE_KEY,
       tvmPrivateKey: process.env.FACILITATOR_TVM_PRIVATE_KEY,
+      nearRelayerAccountId: process.env.FACILITATOR_NEAR_ACCOUNT_ID,
+      nearRelayerPrivateKey: process.env.FACILITATOR_NEAR_PRIVATE_KEY,
       networks,
     });
 

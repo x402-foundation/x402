@@ -71,6 +71,8 @@ import {
   type FacilitatorHighloadV3Signer,
 } from "@x402/tvm";
 import { ExactTvmScheme } from "@x402/tvm/exact/facilitator";
+import { createFacilitatorNearSigner, type FacilitatorNearSignerConfig } from "@x402/near";
+import { ExactNearScheme as ExactNearFacilitatorScheme } from "@x402/near/exact/facilitator";
 import * as KeetaNet from "@keetanetwork/keetanet-client";
 import crypto from "crypto";
 import dotenv from "dotenv";
@@ -104,6 +106,8 @@ const HEDERA_NETWORK = process.env.HEDERA_NETWORK || "hedera:testnet";
 const KEETA_NETWORK = process.env.KEETA_NETWORK || KEETA_TESTNET_CAIP2;
 const STELLAR_NETWORK = process.env.STELLAR_NETWORK || "stellar:testnet";
 const TVM_NETWORK = process.env.TVM_NETWORK || "tvm:-3";
+const NEAR_NETWORK = process.env.NEAR_NETWORK || "near:testnet";
+const NEAR_RPC_URL = process.env.NEAR_RPC_URL;
 const EVM_RPC_URL = process.env.EVM_RPC_URL;
 const SVM_RPC_URL = process.env.SVM_RPC_URL;
 const AVM_RPC_URL = process.env.AVM_RPC_URL;
@@ -260,6 +264,22 @@ if (process.env.TVM_PRIVATE_KEY) {
   });
   tvmSigner = toFacilitatorTvmSigner({ [TVM_NETWORK]: tvmConfig });
   console.info(`TVM Facilitator account: ${tvmSigner.getAddressesForNetwork(TVM_NETWORK)[0]}`);
+}
+
+// Initialize the NEAR facilitator (relayer) signer from account + key (optional)
+let nearSigner: ReturnType<typeof createFacilitatorNearSigner> | undefined;
+if (process.env.NEAR_RELAYER_ACCOUNT_ID && process.env.NEAR_RELAYER_PRIVATE_KEY) {
+  nearSigner = createFacilitatorNearSigner({
+    relayers: [
+      {
+        accountId: process.env.NEAR_RELAYER_ACCOUNT_ID,
+        secretKey: process.env
+          .NEAR_RELAYER_PRIVATE_KEY as FacilitatorNearSignerConfig["relayers"][number]["secretKey"],
+      },
+    ],
+    rpcUrls: NEAR_RPC_URL ? { [NEAR_NETWORK]: NEAR_RPC_URL } : undefined,
+  });
+  console.info(`NEAR Facilitator relayer: ${process.env.NEAR_RELAYER_ACCOUNT_ID}`);
 }
 
 // Create a Viem client with both wallet and public capabilities
@@ -502,6 +522,9 @@ if (stellarSigner) {
 }
 if (tvmSigner) {
   facilitator.register(TVM_NETWORK as Network, new ExactTvmScheme(tvmSigner));
+}
+if (nearSigner) {
+  facilitator.register(NEAR_NETWORK as Network, new ExactNearFacilitatorScheme(nearSigner));
 }
 
 

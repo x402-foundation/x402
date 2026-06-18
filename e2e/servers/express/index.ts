@@ -12,6 +12,7 @@ import { KEETA_TESTNET_CAIP2 } from "@x402/keeta";
 import { ExactKeetaScheme } from "@x402/keeta/exact/server";
 import { ExactStellarScheme } from "@x402/stellar/exact/server";
 import { ExactTvmScheme } from "@x402/tvm/exact/server";
+import { ExactNearScheme } from "@x402/near/exact/server";
 import { bazaarResourceServerExtension, declareDiscoveryExtension } from "@x402/extensions/bazaar";
 import {
   declareEip2612GasSponsoringExtension,
@@ -49,6 +50,10 @@ const HEDERA_PAYEE_ADDRESS = process.env.HEDERA_PAYEE_ADDRESS as string | undefi
 const KEETA_PAYEE_ADDRESS = process.env.KEETA_PAYEE_ADDRESS as string | undefined;
 const STELLAR_PAYEE_ADDRESS = process.env.STELLAR_PAYEE_ADDRESS as string | undefined;
 const TVM_PAYEE_ADDRESS = process.env.TVM_PAYEE_ADDRESS as string | undefined;
+const NEAR_NETWORK = (process.env.NEAR_NETWORK || "near:testnet") as `${string}:${string}`;
+const NEAR_PAYEE_ADDRESS = process.env.NEAR_PAYEE_ADDRESS as string | undefined;
+const NEAR_ASSET = process.env.NEAR_ASSET as string | undefined;
+const NEAR_AMOUNT = process.env.NEAR_AMOUNT as string | undefined;
 const HEDERA_ASSET = process.env.HEDERA_ASSET ?? "0.0.0"; // 0.0.0 = HBAR or 0.0.429274 for USDC testnet
 const HEDERA_AMOUNT = process.env.HEDERA_AMOUNT ?? "100000"; // price in smallest units (tinybars or token decimals), defaults to 0.001 HBAR or 0.1 USDC
 const facilitatorUrl = process.env.FACILITATOR_URL;
@@ -117,6 +122,9 @@ if (STELLAR_PAYEE_ADDRESS) {
 }
 if (TVM_PAYEE_ADDRESS) {
   server.register("tvm:*", new ExactTvmScheme());
+}
+if (NEAR_PAYEE_ADDRESS) {
+  server.register("near:*", new ExactNearScheme());
 }
 
 // Register Bazaar discovery extension
@@ -643,6 +651,21 @@ app.use(
             },
           }
         : {}),
+      ...(NEAR_PAYEE_ADDRESS
+        ? {
+            "GET /exact/near": {
+              accepts: {
+                payTo: NEAR_PAYEE_ADDRESS,
+                scheme: "exact",
+                price: {
+                  amount: NEAR_AMOUNT || "1000000000000000000000",
+                  asset: NEAR_ASSET || "wrap.testnet",
+                },
+                network: NEAR_NETWORK,
+              },
+            },
+          }
+        : {}),
     },
     server, // Pass pre-configured server instance
   ),
@@ -861,6 +884,15 @@ if (TVM_PAYEE_ADDRESS) {
   app.get("/exact/tvm", (req, res) => {
     res.json({
       message: "Protected TVM endpoint accessed successfully",
+      timestamp: new Date().toISOString(),
+    });
+  });
+}
+
+if (NEAR_PAYEE_ADDRESS) {
+  app.get("/exact/near", (req, res) => {
+    res.json({
+      message: "Protected NEAR endpoint accessed successfully",
       timestamp: new Date().toISOString(),
     });
   });

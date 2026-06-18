@@ -19,6 +19,7 @@
     "@x402/evm": "workspace:*",
     "@x402/hedera": "workspace:*",
     "@x402/keeta": "workspace:*",
+    "@x402/near": "workspace:*",
     "@x402/extensions": "workspace:*",
     "@x402/next": "workspace:*",
     "@x402/stellar": "workspace:*",

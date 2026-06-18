@@ -22,6 +22,7 @@
     "@x402/fetch": "workspace:*",
     "@x402/hedera": "workspace:*",
     "@x402/keeta": "workspace:*",
+    "@x402/near": "workspace:*",
     "@x402/stellar": "workspace:*",
     "@x402/svm": "workspace:*",
     "@x402/tvm": "workspace:*",
