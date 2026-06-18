@@ -140,6 +140,32 @@ func TestFormatSIWEMessage(t *testing.T) {
 	}
 }
 
+func TestFormatSIWEMessageWithoutStatement(t *testing.T) {
+	payload := testPayload()
+	payload.Statement = ""
+
+	got, err := FormatSIWEMessage(payload)
+	if err != nil {
+		t.Fatalf("FormatSIWEMessage() error = %v", err)
+	}
+
+	want := "api.example.com wants you to sign in with your Ethereum account:\n" +
+		"0x0000000000000000000000000000000000000001\n\n\n" +
+		"URI: https://api.example.com/data\n" +
+		"Version: 1\n" +
+		"Chain ID: 8453\n" +
+		"Nonce: abc123xyz\n" +
+		"Issued At: 2026-05-27T00:00:00Z\n" +
+		"Expiration Time: 2026-05-27T00:05:00Z\n" +
+		"Request ID: request-1\n" +
+		"Resources:\n" +
+		"- https://api.example.com/data"
+
+	if got != want {
+		t.Fatalf("message =\n%s\nwant =\n%s", got, want)
+	}
+}
+
 func TestValidateMessage(t *testing.T) {
 	payload := testPayload()
 	payload.IssuedAt = time.Now().Add(-time.Minute).UTC().Format(time.RFC3339)
@@ -338,6 +364,7 @@ func (s *testFacilitatorSigner) WriteContract(
 	string,
 	[]byte,
 	string,
+	[]byte,
 	...interface{},
 ) (string, error) {
 	return "", errors.New("not implemented")

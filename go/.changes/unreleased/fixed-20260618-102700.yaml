@@ -1,0 +1,3 @@
+kind: fixed
+body: Fix Go sign-in-with-x interoperability with TypeScript by matching SIWE message formatting for empty statements and returning an empty JSON object for default net/http 402 responses
+time: 2026-06-18T10:27:00+09:00

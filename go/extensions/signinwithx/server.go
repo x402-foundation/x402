@@ -62,6 +62,10 @@ func (e *ServerExtension) Key() string {
 	return ExtensionKey
 }
 
+func (e *ServerExtension) DynamicInfoFields() []string {
+	return []string{"nonce", "issuedAt", "expirationTime"}
+}
+
 func (e *ServerExtension) EnrichDeclaration(declaration interface{}, transportContext interface{}) interface{} {
 	ext, ok := declaration.(Extension)
 	if !ok {

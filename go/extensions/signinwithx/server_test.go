@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -125,6 +126,16 @@ func TestResourceServerExtensionEnrichDeclaration(t *testing.T) {
 	}
 	if enriched.Schema == nil {
 		t.Fatal("schema is nil")
+	}
+}
+
+func TestResourceServerExtensionDynamicInfoFields(t *testing.T) {
+	ext := MustCreateResourceServerExtension(ServerOptions{Storage: NewInMemoryStorage()})
+	fields := ext.DynamicInfoFields()
+
+	want := []string{"nonce", "issuedAt", "expirationTime"}
+	if !reflect.DeepEqual(fields, want) {
+		t.Fatalf("DynamicInfoFields() = %#v, want %#v", fields, want)
 	}
 }
 

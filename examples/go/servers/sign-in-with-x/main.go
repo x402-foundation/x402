@@ -7,43 +7,26 @@ import (
 	"net/http"
 	"os"
 
+	x402 "github.com/x402-foundation/x402/go/v2"
 	"github.com/x402-foundation/x402/go/v2/extensions/signinwithx"
 	x402http "github.com/x402-foundation/x402/go/v2/http"
+	nethttp "github.com/x402-foundation/x402/go/v2/http/nethttp"
+	exactevmserver "github.com/x402-foundation/x402/go/v2/mechanisms/evm/exact/server"
 )
 
-type netHTTPAdapter struct {
-	request *http.Request
-}
-
-func (a netHTTPAdapter) GetHeader(name string) string {
-	return a.request.Header.Get(name)
-}
-
-func (a netHTTPAdapter) GetMethod() string {
-	return a.request.Method
-}
-
-func (a netHTTPAdapter) GetPath() string {
-	return a.request.URL.Path
-}
-
-func (a netHTTPAdapter) GetURL() string {
-	scheme := "http"
-	if a.request.TLS != nil {
-		scheme = "https"
-	}
-	return fmt.Sprintf("%s://%s%s", scheme, a.request.Host, a.request.URL.Path)
-}
-
-func (a netHTTPAdapter) GetAcceptHeader() string {
-	return a.request.Header.Get("Accept")
-}
-
-func (a netHTTPAdapter) GetUserAgent() string {
-	return a.request.UserAgent()
-}
+const evmNetwork = "eip155:84532"
 
 func main() {
+	evmAddress := os.Getenv("EVM_ADDRESS")
+	if evmAddress == "" {
+		log.Fatal("EVM_ADDRESS is required")
+	}
+
+	facilitatorURL := os.Getenv("FACILITATOR_URL")
+	if facilitatorURL == "" {
+		log.Fatal("FACILITATOR_URL is required")
+	}
+
 	port := os.Getenv("PORT")
 	if port == "" {
 		port = "4021"
@@ -57,58 +40,86 @@ func main() {
 		},
 	})
 
-	server := x402http.Newx402HTTPResourceServer(x402http.RoutesConfig{
+	routes := x402http.RoutesConfig{
+		"GET /weather": protectedRoute("/weather", evmAddress),
+		"GET /joke":    protectedRoute("/joke", evmAddress),
 		"GET /profile": {
-			Accepts: x402http.PaymentOptions{},
+			Accepts:     x402http.PaymentOptions{},
+			Description: "Auth-only: wallet signature required",
 			Extensions: map[string]interface{}{
 				signinwithx.ExtensionKey: signinwithx.DeclareExtension(signinwithx.DeclareOptions{
-					Statement:         "Sign in to access your profile",
-					Networks:          []string{"eip155:8453"},
+					Statement:         "Sign in to view your profile",
+					Networks:          []string{evmNetwork},
 					ExpirationSeconds: 300,
 				})[signinwithx.ExtensionKey],
 			},
 		},
+	}
+
+	facilitatorClient := x402http.NewHTTPFacilitatorClient(&x402http.FacilitatorConfig{
+		URL: facilitatorURL,
 	})
-	server.RegisterExtension(extension)
+	resourceServer := x402.Newx402ResourceServer(
+		x402.WithFacilitatorClient(facilitatorClient),
+		x402.WithSchemeServer(evmNetwork, exactevmserver.NewExactEvmScheme()),
+	)
+	httpServer := x402http.Wrappedx402HTTPResourceServer(routes, resourceServer).
+		RegisterExtension(extension)
 
-	http.HandleFunc("/profile", func(w http.ResponseWriter, r *http.Request) {
-		result := server.ProcessHTTPRequest(r.Context(), x402http.HTTPRequestContext{
-			Adapter: netHTTPAdapter{request: r},
-			Path:    r.URL.Path,
-			Method:  r.Method,
-		}, nil)
-		if result.Type == x402http.ResultPaymentError {
-			writePaymentError(w, result.Response)
-			return
-		}
-
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /weather", func(w http.ResponseWriter, _ *http.Request) {
+		writeJSON(w, http.StatusOK, map[string]interface{}{"weather": "sunny", "temperature": 72})
+	})
+	mux.HandleFunc("GET /joke", func(w http.ResponseWriter, _ *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]interface{}{
-			"authenticated": true,
-			"profile": map[string]string{
-				"name": "SIWX demo user",
-			},
+			"joke": "Why do programmers prefer dark mode? Because light attracts bugs.",
 		})
 	})
-
-	http.HandleFunc("/health", func(w http.ResponseWriter, _ *http.Request) {
+	mux.HandleFunc("GET /profile", func(w http.ResponseWriter, r *http.Request) {
+		payload, err := signinwithx.ParseHeader(r.Header.Get(signinwithx.HeaderName))
+		if err != nil {
+			writeJSON(w, http.StatusOK, map[string]interface{}{
+				"authenticated": true,
+				"profile": map[string]string{
+					"name": "SIWX demo user",
+				},
+			})
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]interface{}{
+			"address": payload.Address,
+			"data":    "Your profile data",
+		})
+	})
+	mux.HandleFunc("GET /health", func(w http.ResponseWriter, _ *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 	})
 
+	handler := nethttp.PaymentMiddlewareFromHTTPServer(httpServer)(mux)
+
 	log.Printf("sign-in-with-x server listening on http://localhost:%s", port)
-	log.Fatal(http.ListenAndServe(":"+port, nil))
+	log.Printf("routes: GET /weather, GET /joke, GET /profile (auth-only)")
+	log.Fatal(http.ListenAndServe(":"+port, handler))
 }
 
-func writePaymentError(w http.ResponseWriter, response *x402http.HTTPResponseInstructions) {
-	for key, value := range response.Headers {
-		w.Header().Set(key, value)
+func protectedRoute(path string, payTo string) x402http.RouteConfig {
+	return x402http.RouteConfig{
+		Accepts: x402http.PaymentOptions{
+			{
+				Scheme:  "exact",
+				Price:   "$0.001",
+				Network: evmNetwork,
+				PayTo:   payTo,
+			},
+		},
+		Description: fmt.Sprintf("Protected resource: %s", path),
+		MimeType:    "application/json",
+		Extensions: map[string]interface{}{
+			signinwithx.ExtensionKey: signinwithx.DeclareExtension(signinwithx.DeclareOptions{
+				Networks: []string{evmNetwork},
+			})[signinwithx.ExtensionKey],
+		},
 	}
-	if response.IsHTML {
-		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		w.WriteHeader(response.Status)
-		_, _ = w.Write([]byte(response.Body.(string)))
-		return
-	}
-	writeJSON(w, response.Status, response.Body)
 }
 
 func writeJSON(w http.ResponseWriter, status int, body interface{}) {
