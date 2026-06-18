@@ -28,7 +28,11 @@
   "author": "x402 Foundation",
   "repository": "https://github.com/x402-foundation/x402",
   "description": "x402 Payment Protocol Stellar Implementation",
+  "engines": {
+    "node": ">=22.0.0"
+  },
   "devDependencies": {
+    "@stellar/stellar-sdk": "16.0.0",
     "@eslint/js": "^9.24.0",
     "@types/node": "^22.13.4",
     "@typescript-eslint/eslint-plugin": "^8.29.1",
@@ -46,7 +50,7 @@
     "vitest": "^3.0.5"
   },
   "dependencies": {
-    "@stellar/stellar-sdk": "^14.6.1",
+    "@stellar/stellar-sdk": "^16",
     "@x402/core": "workspace:~"
   },
   "exports": {
