@@ -26,7 +26,7 @@ The `eip3009` asset transfer method uses the `transferWithAuthorization` functio
 
 The `payload` field must contain:
 
-- `signature`: The 65-byte signature of the `transferWithAuthorization` operation.
+- `signature`: The signature authorizing the `transferWithAuthorization` operation. For an externally owned account (EOA) payer this is a 65-byte ECDSA signature. For a smart-contract account payer it is the account's EIP-1271 signature payload (arbitrary length), optionally ERC-6492-wrapped when the account is not yet deployed.
 - `authorization`: The parameters required to reconstruct the signed message.
 
 **Example PaymentPayload:**
@@ -74,7 +74,7 @@ The `payload` field must contain:
 
 ### Phase 2: Verification Logic
 
-1.  **Verify** the signature is valid and recovers to the `authorization.from` address.
+1.  **Verify** the signature authorizes `authorization.from`. For an EOA, the 65-byte ECDSA signature MUST recover to `authorization.from`; for a smart-contract account, `authorization.from`'s EIP-1271 `isValidSignature(bytes32, bytes)` MUST return the magic value `0x1626ba7e` (ERC-6492 supported for counterfactual accounts).
 2.  **Verify** the `client` has sufficient balance of the `asset`.
 3.  **Verify** the authorization parameters (Amount, Validity Window) meet the `PaymentRequirements`.
 4.  **Verify** the Token and Network match the requirement.
@@ -82,7 +82,7 @@ The `payload` field must contain:
 
 ### Phase 3: Settlement Logic
 
-Settlement is performed via the facilitator calling the `transferWithAuthorization` function on the `EIP-3009` compliant contract with the `payload.signature` and `payload.authorization` parameters from the `PAYMENT-SIGNATURE` header.
+Settlement is performed via the facilitator calling the `transferWithAuthorization` function on the `EIP-3009` compliant contract with the `payload.signature` and `payload.authorization` parameters from the `PAYMENT-SIGNATURE` header. EOA payers use the `(v, r, s)` overload; smart-contract (EIP-1271) payers use the `bytes signature` overload (ERC-7598).
 
 ---
 
