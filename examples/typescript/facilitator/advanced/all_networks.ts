@@ -5,7 +5,7 @@
  * optional chain configuration via environment variables.
  *
  * New chain support should be added here in alphabetic order by network prefix
- * (e.g., "eip155" before "solana" before "stellar").
+ * (e.g., "algorand" before "eip155" before "hedera" before "near" before "solana" before "stellar" before "tvm").
  */
 
 import * as KeetaNet from "@keetanetwork/keetanet-client";
@@ -38,6 +38,12 @@ import {
   FacilitatorKeetaSigner,
 } from "@x402/keeta";
 import { ExactKeetaScheme } from "@x402/keeta/exact/facilitator";
+import {
+  createFacilitatorNearSigner,
+  NEAR_TESTNET_CAIP2,
+  type FacilitatorRelayerConfig,
+} from "@x402/near";
+import { ExactNearScheme } from "@x402/near/exact/facilitator";
 import { toFacilitatorSvmSigner } from "@x402/svm";
 import { ExactSvmScheme } from "@x402/svm/exact/facilitator";
 import { base58 } from "@scure/base";
@@ -66,6 +72,14 @@ const PORT = process.env.PORT || "4022";
 const avmPrivateKey = process.env.AVM_PRIVATE_KEY as string | undefined;
 const evmPrivateKey = process.env.EVM_PRIVATE_KEY as `0x${string}` | undefined;
 const keetaMnemonic = process.env.KEETA_MNEMONIC as string | undefined;
+const nearRelayerAccountId = process.env.NEAR_RELAYER_ACCOUNT_ID as
+  | string
+  | undefined;
+const nearRelayerPrivateKey = process.env.NEAR_RELAYER_PRIVATE_KEY as
+  | FacilitatorRelayerConfig["secretKey"]
+  | undefined;
+const nearNetwork = process.env.NEAR_NETWORK || NEAR_TESTNET_CAIP2;
+const nearRpcUrl = process.env.NEAR_RPC_URL as string | undefined;
 const svmPrivateKey = process.env.SVM_PRIVATE_KEY as string | undefined;
 const stellarPrivateKey = process.env.STELLAR_PRIVATE_KEY as string | undefined;
 const tvmPrivateKey = process.env.TVM_PRIVATE_KEY as string | undefined;
@@ -78,13 +92,14 @@ if (
   !avmPrivateKey &&
   !evmPrivateKey &&
   !keetaMnemonic &&
+  !(nearRelayerAccountId && nearRelayerPrivateKey) &&
   !svmPrivateKey &&
   !stellarPrivateKey &&
   !tvmPrivateKey &&
   !(hederaAccountId && hederaPrivateKey)
 ) {
   console.error(
-    "❌ At least one of AVM_PRIVATE_KEY, EVM_PRIVATE_KEY, KEETA_MNEMONIC, SVM_PRIVATE_KEY, STELLAR_PRIVATE_KEY, TVM_PRIVATE_KEY, or HEDERA_ACCOUNT_ID + HEDERA_PRIVATE_KEY is required",
+    "❌ At least one of AVM_PRIVATE_KEY, EVM_PRIVATE_KEY, KEETA_MNEMONIC, NEAR_RELAYER_ACCOUNT_ID + NEAR_RELAYER_PRIVATE_KEY, SVM_PRIVATE_KEY, STELLAR_PRIVATE_KEY, TVM_PRIVATE_KEY, or HEDERA_ACCOUNT_ID + HEDERA_PRIVATE_KEY is required",
   );
   process.exit(1);
 }
@@ -94,6 +109,7 @@ const AVM_NETWORK = "algorand:SGO1GKSzyE7IEPItTxCByw9x8FmnrCDexi9/cOUJOiI="; // 
 const EVM_NETWORK = "eip155:84532"; // Base Sepolia
 const HEDERA_NETWORK = "hedera:testnet"; // Hedera Testnet
 const KEETA_NETWORK = KEETA_TESTNET_CAIP2; // Keeta Testnet
+const NEAR_NETWORK = nearNetwork as Network; // NEAR Testnet
 const SVM_NETWORK = "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1"; // Solana Devnet
 const STELLAR_NETWORK = "stellar:testnet"; // Stellar Testnet
 const TVM_NETWORK = (process.env.TVM_NETWORK || "tvm:-3") as Network; // TON Testnet
@@ -223,6 +239,20 @@ if (keetaMnemonic) {
   facilitator.register(
     KEETA_NETWORK,
     new ExactKeetaScheme(keetaSigner, console),
+  );
+}
+
+// Register NEAR scheme if relayer account and private key are provided
+if (nearRelayerAccountId && nearRelayerPrivateKey) {
+  const nearSigner = createFacilitatorNearSigner({
+    relayers: [
+      { accountId: nearRelayerAccountId, secretKey: nearRelayerPrivateKey },
+    ],
+    rpcUrls: nearRpcUrl ? { [NEAR_NETWORK]: nearRpcUrl } : undefined,
+  });
+  facilitator.register(NEAR_NETWORK, new ExactNearScheme(nearSigner));
+  console.info(
+    `NEAR Facilitator relayer account: ${nearRelayerAccountId} on ${NEAR_NETWORK}`,
   );
 }
 

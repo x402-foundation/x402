@@ -5,10 +5,11 @@
  * optional chain configuration via environment variables.
  *
  * New chain support should be added here in alphabetic order by network prefix
- * (e.g., "algorand" before "eip155" before "hedera" before "solana" before "stellar" before "tvm").
+ * (e.g., "algorand" before "eip155" before "hedera" before "near" before "solana" before "stellar" before "tvm").
  */
 
 import { config } from "dotenv";
+import type { Network } from "@x402/core/types";
 import { x402Client, wrapFetchWithPayment, x402HTTPClient } from "@x402/fetch";
 import { toClientAvmSigner } from "@x402/avm";
 import { ExactAvmScheme } from "@x402/avm/exact/client";
@@ -17,6 +18,12 @@ import { UptoEvmScheme } from "@x402/evm/upto/client";
 import { ExactSvmScheme } from "@x402/svm/exact/client";
 import { toClientKeetaSigner } from "@x402/keeta";
 import { ExactKeetaScheme } from "@x402/keeta/exact/client";
+import {
+  createClientNearSigner,
+  NEAR_TESTNET_CAIP2,
+  type ClientNearSignerConfig,
+} from "@x402/near";
+import { ExactNearScheme } from "@x402/near/exact/client";
 import { ExactStellarScheme } from "@x402/stellar/exact/client";
 import { ExactTvmScheme } from "@x402/tvm/exact/client";
 import { createEd25519Signer } from "@x402/stellar";
@@ -35,6 +42,12 @@ config();
 const avmPrivateKey = process.env.AVM_PRIVATE_KEY as string | undefined;
 const evmPrivateKey = process.env.EVM_PRIVATE_KEY as `0x${string}` | undefined;
 const keetaMnemonic = process.env.KEETA_MNEMONIC as string | undefined;
+const nearAccountId = process.env.NEAR_ACCOUNT_ID as string | undefined;
+const nearPrivateKey = process.env.NEAR_PRIVATE_KEY as
+  | ClientNearSignerConfig["secretKey"]
+  | undefined;
+const nearNetwork = (process.env.NEAR_NETWORK || NEAR_TESTNET_CAIP2) as Network;
+const nearRpcUrl = process.env.NEAR_RPC_URL as string | undefined;
 const svmPrivateKey = process.env.SVM_PRIVATE_KEY as string | undefined;
 const stellarPrivateKey = process.env.STELLAR_PRIVATE_KEY as string | undefined;
 const hederaAccountId = process.env.HEDERA_ACCOUNT_ID;
@@ -78,13 +91,14 @@ async function main(): Promise<void> {
     !avmPrivateKey &&
     !evmPrivateKey &&
     !keetaMnemonic &&
+    !(nearAccountId && nearPrivateKey) &&
     !svmPrivateKey &&
     !stellarPrivateKey &&
     !(hederaAccountId && hederaPrivateKey) &&
     !tvmPrivateKey
   ) {
     console.error(
-      "❌ At least one of AVM_PRIVATE_KEY, EVM_PRIVATE_KEY, KEETA_MNEMONIC, SVM_PRIVATE_KEY, STELLAR_PRIVATE_KEY, HEDERA_ACCOUNT_ID + HEDERA_PRIVATE_KEY, or TVM_PRIVATE_KEY is required",
+      "❌ At least one of AVM_PRIVATE_KEY, EVM_PRIVATE_KEY, KEETA_MNEMONIC, NEAR_ACCOUNT_ID + NEAR_PRIVATE_KEY, SVM_PRIVATE_KEY, STELLAR_PRIVATE_KEY, HEDERA_ACCOUNT_ID + HEDERA_PRIVATE_KEY, or TVM_PRIVATE_KEY is required",
     );
     process.exit(1);
   }
@@ -126,6 +140,17 @@ async function main(): Promise<void> {
   if (keetaSigner && keetaAccount) {
     client.register("keeta:*", new ExactKeetaScheme(keetaSigner));
     console.log(`Initialized Keeta account: ${keetaAccount.publicKeyString.toString()}`);
+  }
+
+  // Register NEAR scheme if account and private key are provided
+  if (nearAccountId && nearPrivateKey) {
+    const nearSigner = createClientNearSigner({
+      accountId: nearAccountId,
+      secretKey: nearPrivateKey,
+      rpcUrls: nearRpcUrl ? { [nearNetwork]: nearRpcUrl } : undefined,
+    });
+    client.register(nearNetwork, new ExactNearScheme(nearSigner));
+    console.log(`Initialized NEAR account: ${nearAccountId} on ${nearNetwork}`);
   }
 
   // Register SVM scheme if private key is provided
