@@ -31,8 +31,8 @@ How transaction fees are sponsored—and how the sponsoring party evaluates risk
 The protocol flow for `exact` on Solana is client-driven.
 
 1. Client makes a request to a Resource Server.
-2. Resource Server responds with a payment required signal containing `PaymentRequired`. The `extra` field contains a `feePayer`, identifying the sponsor.
-3. Client creates a transaction that effects a payment of an asset to the merchant for a specified amount.
+2. Resource Server responds with a payment required signal containing `PaymentRequired`. The `extra` field contains a `feePayer`, identifying the sponsor, and MAY contain a `recentBlockhash` for the Client to build against.
+3. Client creates a transaction that effects a payment of an asset to the merchant for a specified amount. If `extra.recentBlockhash` is present the Client uses it as the transaction lifetime; otherwise the Client fetches a recent blockhash itself.
 4. Client signs the transaction, producing a partially signed transaction (the sponsor's `feePayer` signature is still missing).
 5. Client serializes the partially signed transaction as Base64.
 6. Client sends a request to the Resource Server, submitting the transaction via `PaymentPayload` alongside the `PaymentRequirements`.
@@ -60,7 +60,9 @@ In addition to the standard x402 `PaymentRequirements` fields, the `exact` schem
   "maxTimeoutSeconds": 60,
   "extra": {
     "feePayer": "EwWqGE4ZFKLofuestmU4LDdK7XM1N4ALgdZccwYugwGd",
-    "memo": "pi_3abc123def456"
+    "memo": "pi_3abc123def456",
+    "recentBlockhash": "EZ3rST5dvHmbanh75jc4PuLfV96vp9fEYBVeNk4FfM1k",
+    "lastValidBlockHeight": "291470237"
   }
 }
 ```
@@ -69,6 +71,8 @@ In addition to the standard x402 `PaymentRequirements` fields, the `exact` schem
 - `payTo`: The merchant's public key.
 - `extra.feePayer`: The sponsor's public key. This MAY equal `payTo` (merchant-sponsored fees) or be a distinct third party.
 - `extra.memo` (optional): A seller-defined UTF-8 string to include in the transaction's Memo instruction. When present, the client MUST use this value as the Memo instruction data instead of a random nonce. Maximum 256 bytes. This enables sellers to attach payment references (e.g., invoice IDs) to on-chain transactions for reconciliation without requiring unique deposit addresses.
+- `extra.recentBlockhash` (optional): A recent blockhash for the Client to use as the transaction's lifetime, supplied by the Resource Server. When present, the Client SHOULD use it instead of fetching its own via `getLatestBlockhash`, saving an RPC round-trip and pinning the transaction to a blockhash the settling RPC has observed. When absent, the Client MUST fetch a recent blockhash itself. A Resource Server SHOULD only set this when it has an RPC endpoint whose view of recent blockhashes matches the settling Sponsor's; a stale or fork-divergent blockhash will cause the transaction to expire or fail to land.
+- `extra.lastValidBlockHeight` (optional): The last block height at which `extra.recentBlockhash` is valid, as a decimal string. Provided alongside `recentBlockhash` so the Client and Sponsor can bound the transaction's validity window. Ignored when `recentBlockhash` is absent.
 
 ## PaymentPayload `payload` Field
 

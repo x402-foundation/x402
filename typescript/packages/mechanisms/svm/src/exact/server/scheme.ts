@@ -7,7 +7,22 @@ import type {
   MoneyParser,
 } from "@x402/core/types";
 import { parseMoneyString } from "@x402/core/utils";
-import { convertToTokenAmount, getUsdcAddress, numberToDecimalString } from "../../utils";
+import {
+  convertToTokenAmount,
+  createRpcClient,
+  getUsdcAddress,
+  numberToDecimalString,
+} from "../../utils";
+
+/** Options for the server-side {@link ExactSvmScheme}. */
+export interface ExactSvmServerOptions {
+  /**
+   * RPC endpoint used to fetch a recent blockhash to embed in the 402
+   * challenge (`extra.recentBlockhash`). When omitted, no blockhash is embedded
+   * and the client fetches its own — see {@link import('../../utils').resolveBlockhash}.
+   */
+  rpcUrl?: string;
+}
 
 /**
  * SVM server implementation for the Exact payment scheme.
@@ -15,6 +30,14 @@ import { convertToTokenAmount, getUsdcAddress, numberToDecimalString } from "../
 export class ExactSvmScheme implements SchemeNetworkServer {
   readonly scheme = "exact";
   private moneyParsers: MoneyParser[] = [];
+
+  /**
+   * Construct the server-side exact scheme.
+   *
+   * @param options - Optional server configuration (e.g. an `rpcUrl` to embed a
+   *   recent blockhash in the challenge).
+   */
+  constructor(private readonly options: ExactSvmServerOptions = {}) {}
 
   /**
    * Register a custom money parser in the parser chain.
@@ -81,7 +104,7 @@ export class ExactSvmScheme implements SchemeNetworkServer {
    * @param extensionKeys - Extension keys supported by the facilitator
    * @returns Enhanced payment requirements with feePayer in extra
    */
-  enhancePaymentRequirements(
+  async enhancePaymentRequirements(
     paymentRequirements: PaymentRequirements,
     supportedKind: {
       x402Version: number;
@@ -94,15 +117,29 @@ export class ExactSvmScheme implements SchemeNetworkServer {
     // Mark unused parameters to satisfy linter
     void extensionKeys;
 
-    // Add feePayer from supportedKind.extra to payment requirements
-    // The facilitator provides its address as the fee payer for transaction fees
-    return Promise.resolve({
-      ...paymentRequirements,
-      extra: {
-        ...paymentRequirements.extra,
-        feePayer: supportedKind.extra?.feePayer,
-      },
-    });
+    const extra: Record<string, unknown> = {
+      ...paymentRequirements.extra,
+      // The facilitator provides its address as the fee payer for transaction fees.
+      feePayer: supportedKind.extra?.feePayer,
+    };
+
+    // When an RPC is configured, embed a fresh blockhash in the challenge so
+    // the client can build its transaction without its own RPC round-trip and
+    // against the same RPC that will settle it. The client reads it via
+    // `resolveBlockhash`. Best-effort: on failure the field is omitted and the
+    // client falls back to fetching its own.
+    if (this.options.rpcUrl) {
+      try {
+        const rpc = createRpcClient(supportedKind.network, this.options.rpcUrl);
+        const { value } = await rpc.getLatestBlockhash().send();
+        extra.recentBlockhash = value.blockhash;
+        extra.lastValidBlockHeight = value.lastValidBlockHeight.toString();
+      } catch {
+        // Leave the blockhash out; the client resolves one itself.
+      }
+    }
+
+    return { ...paymentRequirements, extra };
   }
 
   /**

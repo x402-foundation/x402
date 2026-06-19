@@ -10,6 +10,12 @@ export interface SvmResourceServerConfig {
    * Optional specific networks to register
    */
   networks?: Network[];
+  /**
+   * Optional RPC endpoint. When set, the scheme embeds a recent blockhash in
+   * the 402 challenge (`extra.recentBlockhash`) so clients can skip their own
+   * `getLatestBlockhash` round-trip.
+   */
+  rpcUrl?: string;
 }
 
 /**
@@ -23,12 +29,13 @@ export function registerExactSvmScheme(
   server: x402ResourceServer,
   config: SvmResourceServerConfig = {},
 ): x402ResourceServer {
+  const options = { rpcUrl: config.rpcUrl };
   if (config.networks && config.networks.length > 0) {
     config.networks.forEach(network => {
-      server.register(network, new ExactSvmScheme());
+      server.register(network, new ExactSvmScheme(options));
     });
   } else {
-    server.register("solana:*", new ExactSvmScheme());
+    server.register("solana:*", new ExactSvmScheme(options));
   }
 
   return server;

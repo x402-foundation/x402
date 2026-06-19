@@ -3,6 +3,7 @@ import {
   getBase64Encoder,
   getTransactionDecoder,
   getCompiledTransactionMessageDecoder,
+  type Blockhash,
   type Transaction,
   createSolanaRpc,
   devnet,
@@ -17,7 +18,7 @@ import {
 } from "@solana/kit";
 import { TOKEN_PROGRAM_ADDRESS } from "@solana-program/token";
 import { TOKEN_2022_PROGRAM_ADDRESS } from "@solana-program/token-2022";
-import type { Network } from "@x402/core/types";
+import type { Network, PaymentRequirements } from "@x402/core/types";
 import {
   SVM_ADDRESS_REGEX,
   DEVNET_RPC_URL,
@@ -165,6 +166,31 @@ export function createRpcClient(
     default:
       throw new Error(`Unsupported network: ${network}`);
   }
+}
+
+/**
+ * Resolve the transaction-lifetime blockhash for a payment.
+ *
+ * Prefers a server-provided blockhash carried in the 402 challenge
+ * (`extra.recentBlockhash` + `extra.lastValidBlockHeight`) so the client needn't
+ * make its own RPC round-trip. Falls back to fetching one from `rpc` when the
+ * challenge omits it.
+ *
+ * @param rpc - RPC client used for the fallback fetch
+ * @param requirements - The payment requirements (challenge) being paid
+ * @returns The blockhash and its last-valid block height
+ */
+export async function resolveBlockhash(
+  rpc: ReturnType<typeof createRpcClient>,
+  requirements: PaymentRequirements,
+): Promise<{ blockhash: Blockhash; lastValidBlockHeight: bigint }> {
+  const provided = requirements.extra?.recentBlockhash;
+  if (typeof provided === "string") {
+    const lastValid = requirements.extra?.lastValidBlockHeight as string | number | undefined;
+    return { blockhash: provided as Blockhash, lastValidBlockHeight: BigInt(lastValid ?? 0) };
+  }
+  const { value } = await rpc.getLatestBlockhash().send();
+  return value;
 }
 
 /**
