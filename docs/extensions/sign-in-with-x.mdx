@@ -417,20 +417,49 @@ The easiest way to use SIWX as a client is with the provided client extension:
         evmsigner "github.com/x402-foundation/x402/go/v2/signers/evm"
     )
 
-    signer, err := evmsigner.NewClientSignerFromPrivateKey(os.Getenv("EVM_PRIVATE_KEY"))
+    evmSigner, err := evmsigner.NewClientSignerFromPrivateKey(os.Getenv("EVM_PRIVATE_KEY"))
     if err != nil {
         log.Fatal(err)
     }
-    siwxSigner := signer.(signinwithx.EVMSigner)
+    siwxSigner := evmSigner.(signinwithx.EVMSigner)
 
     client := x402.Newx402Client().
-        Register("eip155:*", exactevmclient.NewExactEvmScheme(signer, nil)).
+        Register("eip155:*", exactevmclient.NewExactEvmScheme(evmSigner, nil)).
         RegisterExtension(signinwithx.CreateClientExtension(siwxSigner))
     httpClient := x402http.Newx402HTTPClient(client)
 
     // Requests automatically use SIWX auth when server supports it
     wrappedClient := x402http.WrapHTTPClientWithPayment(http.DefaultClient, httpClient)
     resp, err := wrappedClient.Get("https://api.example.com/data")
+    ```
+
+    For multi-chain clients (EVM + Solana), pass ordered signers. The first compatible signer for the server's `supportedChains` is used:
+
+    ```go
+    import (
+        exactsvmclient "github.com/x402-foundation/x402/go/v2/mechanisms/svm/exact/client"
+        svmsigner "github.com/x402-foundation/x402/go/v2/signers/svm"
+    )
+
+    svmSigner, err := svmsigner.NewClientSignerFromPrivateKey(os.Getenv("SVM_PRIVATE_KEY"))
+    if err != nil {
+        log.Fatal(err)
+    }
+
+    // Wrap the Solana signer to satisfy the signinwithx.SolanaSigner interface
+    type solanaSIWXSigner struct{ signer *svmsigner.ClientSigner }
+    func (s *solanaSIWXSigner) Address() string { return s.signer.Address().String() }
+    func (s *solanaSIWXSigner) SignMessage(ctx context.Context, msg string) (string, error) {
+        return s.signer.SignMessage(ctx, msg)
+    }
+
+    client := x402.Newx402Client().
+        Register("eip155:*", exactevmclient.NewExactEvmScheme(evmSigner, nil)).
+        Register("solana:*", exactsvmclient.NewExactSvmScheme(svmSigner)).
+        RegisterExtension(signinwithx.CreateClientExtensionWithSigners(
+            signinwithx.NewEVMSIWXSigner(siwxSigner),
+            signinwithx.NewSolanaSIWXSigner(&solanaSIWXSigner{signer: svmSigner.(*svmsigner.ClientSigner)}),
+        ))
     ```
   </Tab>
   <Tab title="Python">
