@@ -227,16 +227,23 @@ By default, only EOA (Externally Owned Account) signatures are verified. To supp
   <Tab title="Go">
     ```go
     import (
+        "github.com/ethereum/go-ethereum/ethclient"
+        siwe "github.com/signinwithethereum/siwe-go"
         "github.com/x402-foundation/x402/go/v2/extensions/signinwithx"
     )
 
-    // Provide a facilitator signer that supports on-chain reads for EIP-1271
-    evmVerifier := signinwithx.NewUniversalEVMVerifier(facilitatorSigner)
+    // An ethclient.Client satisfies the siwe-go ContractSignatureVerifier interface
+    // used for deployed EIP-1271 and counterfactual EIP-6492 verification.
+    ethClient, err := ethclient.Dial("https://mainnet.base.org")
+    if err != nil {
+        log.Fatal(err)
+    }
+    contractVerifier := siwe.NewEthCallerVerifier(ethClient)
 
     extension := signinwithx.MustCreateResourceServerExtension(signinwithx.ServerOptions{
         Storage: storage,
         VerifyOptions: signinwithx.VerifyOptions{
-            EVMVerifier: evmVerifier,
+            EVMContractVerifier: contractVerifier,
         },
     })
     ```
