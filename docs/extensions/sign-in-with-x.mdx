@@ -400,6 +400,32 @@ The easiest way to use SIWX as a client is with the provided client extension:
     const response = await httpClient.fetch('https://api.example.com/data');
     ```
   </Tab>
+  <Tab title="Go">
+    ```go
+    import (
+        x402 "github.com/x402-foundation/x402/go/v2"
+        "github.com/x402-foundation/x402/go/v2/extensions/signinwithx"
+        x402http "github.com/x402-foundation/x402/go/v2/http"
+        exactevmclient "github.com/x402-foundation/x402/go/v2/mechanisms/evm/exact/client"
+        evmsigner "github.com/x402-foundation/x402/go/v2/signers/evm"
+    )
+
+    signer, err := evmsigner.NewClientSignerFromPrivateKey(os.Getenv("EVM_PRIVATE_KEY"))
+    if err != nil {
+        log.Fatal(err)
+    }
+    siwxSigner := signer.(signinwithx.EVMSigner)
+
+    client := x402.Newx402Client().
+        Register("eip155:*", exactevmclient.NewExactEvmScheme(signer, nil)).
+        RegisterExtension(signinwithx.CreateClientExtension(siwxSigner))
+    httpClient := x402http.Newx402HTTPClient(client)
+
+    // Requests automatically use SIWX auth when server supports it
+    wrappedClient := x402http.WrapHTTPClientWithPayment(http.DefaultClient, httpClient)
+    resp, err := wrappedClient.Get("https://api.example.com/data")
+    ```
+  </Tab>
   <Tab title="Python">
     ```python
     from eth_account import Account
