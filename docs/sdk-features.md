@@ -60,7 +60,7 @@ This page tracks which features are implemented in each SDK (TypeScript, Go, Pyt
 | bazaar (facilitator client - list) | ✅ | ✅ | ✅ |
 | bazaar (facilitator client - search) | ✅ | ✅ | ✅ |
 | builder-code | ✅ | ✅ | ❌ |
-| sign-in-with-x | ✅ | ❌ | ✅ |
+| sign-in-with-x | ✅ | ✅ | ✅ |
 | payment-identifier | ✅ | ✅ | ✅ |
 | offer-receipt | ✅ | ❌ | ❌ |
 | eip2612-gas-sponsoring | ✅ | ✅ | ✅ |
