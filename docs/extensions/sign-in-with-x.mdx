@@ -224,6 +224,23 @@ By default, only EOA (Externally Owned Account) signatures are verified. To supp
       }));
     ```
   </Tab>
+  <Tab title="Go">
+    ```go
+    import (
+        "github.com/x402-foundation/x402/go/v2/extensions/signinwithx"
+    )
+
+    // Provide a facilitator signer that supports on-chain reads for EIP-1271
+    evmVerifier := signinwithx.NewUniversalEVMVerifier(facilitatorSigner)
+
+    extension := signinwithx.MustCreateResourceServerExtension(signinwithx.ServerOptions{
+        Storage: storage,
+        VerifyOptions: signinwithx.VerifyOptions{
+            EVMVerifier: evmVerifier,
+        },
+    })
+    ```
+  </Tab>
   <Tab title="Python">
     ```python
     from web3 import Web3
