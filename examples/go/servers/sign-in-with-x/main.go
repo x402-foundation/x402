@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 
+	"github.com/joho/godotenv"
 	x402 "github.com/x402-foundation/x402/go/v2"
 	"github.com/x402-foundation/x402/go/v2/extensions/signinwithx"
 	x402http "github.com/x402-foundation/x402/go/v2/http"
@@ -17,6 +18,8 @@ import (
 const evmNetwork = "eip155:84532"
 
 func main() {
+	_ = godotenv.Load()
+
 	evmAddress := os.Getenv("EVM_ADDRESS")
 	if evmAddress == "" {
 		log.Fatal("EVM_ADDRESS is required")

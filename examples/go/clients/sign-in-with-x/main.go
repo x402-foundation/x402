@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/joho/godotenv"
 	x402 "github.com/x402-foundation/x402/go/v2"
 	"github.com/x402-foundation/x402/go/v2/extensions/signinwithx"
 	x402http "github.com/x402-foundation/x402/go/v2/http"
@@ -20,6 +21,8 @@ import (
 )
 
 func main() {
+	_ = godotenv.Load()
+
 	privateKey := os.Getenv("EVM_PRIVATE_KEY")
 	if privateKey == "" {
 		log.Fatal("EVM_PRIVATE_KEY is required")
@@ -41,9 +44,9 @@ func main() {
 
 	client := x402.Newx402Client().
 		Register("eip155:*", exactevmclient.NewExactEvmScheme(signer, nil)).
-		Register("eip155:*", uptoevmclient.NewUptoEvmScheme(signer, nil))
-	httpClient := x402http.Newx402HTTPClient(client).
-		OnPaymentRequired(signinwithx.CreateClientHook(siwxSigner))
+		Register("eip155:*", uptoevmclient.NewUptoEvmScheme(signer, nil)).
+		RegisterExtension(signinwithx.CreateClientExtension(siwxSigner))
+	httpClient := x402http.Newx402HTTPClient(client)
 	wrappedClient := x402http.WrapHTTPClientWithPayment(http.DefaultClient, httpClient)
 
 	fmt.Printf("Client EVM address: %s\n", signer.Address())

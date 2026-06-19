@@ -11,8 +11,6 @@
 - Cache SVM mint metadata in exact clients to avoid repeated mint account RPC lookups. ([#2456](https://github.com/x402-foundation/x402/pull/2456)) - Thanks [@wnjoon](https://github.com/wnjoon)!
 
 ## v2.14.0 - 2026-05-29
-### Added
-- Add Go sign-in-with-x server and client support, including SIWX storage, auth hooks, EVM EIP-191 and smart wallet verification, HTTP auth retry, and examples.
 ### Fixed
 - Update module path to `github.com/x402-foundation/x402/go/v2` so consumers can resolve tagged releases (e.g. `go get github.com/x402-foundation/x402/go/v2@latest`) instead of pseudo-versions.
 
@@ -134,3 +132,4 @@ to DiscoveryExtension so callers can read it without a type assertion.
 ## 1.0.0 - 2025-09-12
 ### Added
 - Implements x402 v1 for the Go SDK.
+

@@ -1,3 +1,3 @@
 kind: added
-body: Add Go sign-in-with-x server and client support, including SIWX storage, auth hooks, EVM EIP-191 signing and verification, HTTP auth retry, and TS-compatible profile, weather, and joke examples
+body: Add Go sign-in-with-x server and client support, including SIWX storage, auth hooks, EVM EIP-191 signing and verification, HTTP auth retry, TS-compatible profile, weather, and joke examples, and interoperability fixes for SIWE empty statements, net/http 402 JSON responses, and TS server payment payload extension echo validation
 time: 2026-05-27T09:59:40.638384+09:00

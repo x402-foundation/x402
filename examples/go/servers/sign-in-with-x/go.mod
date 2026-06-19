@@ -6,7 +6,10 @@ toolchain go1.24.1
 
 replace github.com/x402-foundation/x402/go/v2 => ../../../../go
 
-require github.com/x402-foundation/x402/go/v2 v2.14.0
+require (
+	github.com/joho/godotenv v1.5.1
+	github.com/x402-foundation/x402/go/v2 v2.14.0
+)
 
 require (
 	github.com/Microsoft/go-winio v0.6.2 // indirect

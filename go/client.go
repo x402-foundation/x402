@@ -23,7 +23,8 @@ type x402Client struct {
 	policies             []PaymentPolicy
 
 	// Registered client extensions (keyed by extension key)
-	extensions map[string]ClientExtension
+	extensions     map[string]ClientExtension
+	extensionOrder []string
 
 	// Lifecycle hooks
 	beforePaymentCreationHooks    []BeforePaymentCreationHook
@@ -105,8 +106,25 @@ func (c *x402Client) RegisterPolicy(policy PaymentPolicy) *x402Client {
 func (c *x402Client) RegisterExtension(ext ClientExtension) *x402Client {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	if _, exists := c.extensions[ext.Key()]; !exists {
+		c.extensionOrder = append(c.extensionOrder, ext.Key())
+	}
 	c.extensions[ext.Key()] = ext
 	return c
+}
+
+// GetExtensions returns the client extensions registered on this client.
+func (c *x402Client) GetExtensions() []ClientExtension {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+
+	extensions := make([]ClientExtension, 0, len(c.extensionOrder))
+	for _, key := range c.extensionOrder {
+		if ext, ok := c.extensions[key]; ok {
+			extensions = append(extensions, ext)
+		}
+	}
+	return extensions
 }
 
 // OnBeforePaymentCreation registers a hook to execute before payment payload creation
@@ -395,12 +413,14 @@ func (c *x402Client) CreatePaymentPayload(
 		}
 	}
 
+	payloadExtensions := c.paymentPayloadExtensions(extensions)
+
 	// Get partial payload from mechanism.
 	// If the scheme supports extensions (e.g., EIP-2612), pass them for enrichment.
 	var partial types.PaymentPayload
 	var err error
-	if extAware, ok := client.(ExtensionAwareClient); ok && extensions != nil {
-		partial, err = extAware.CreatePaymentPayloadWithExtensions(ctx, requirements, extensions)
+	if extAware, ok := client.(ExtensionAwareClient); ok && payloadExtensions != nil {
+		partial, err = extAware.CreatePaymentPayloadWithExtensions(ctx, requirements, payloadExtensions)
 	} else {
 		partial, err = client.CreatePaymentPayload(ctx, requirements)
 	}
@@ -426,13 +446,13 @@ func (c *x402Client) CreatePaymentPayload(
 	partial.Accepted = requirements
 	partial.Resource = resource
 	// Merge server extensions with any scheme-provided extensions
-	partial.Extensions = mergeExtensions(extensions, partial.Extensions)
+	partial.Extensions = mergeExtensions(payloadExtensions, partial.Extensions)
 
 	// Enrich payload via registered client extensions (for non-scheme extensions)
 	partial, err = c.enrichPaymentPayloadWithExtensions(ctx, partial, types.PaymentRequired{
 		X402Version: 2,
 		Accepts:     []types.PaymentRequirements{requirements},
-		Extensions:  partial.Extensions,
+		Extensions:  payloadExtensions,
 		Resource:    resource,
 	})
 	if err != nil {
@@ -460,6 +480,36 @@ func (c *x402Client) CreatePaymentPayload(
 		})
 	}
 	return partial, nil
+}
+
+func (c *x402Client) paymentPayloadExtensions(extensions map[string]interface{}) map[string]interface{} {
+	if len(extensions) == 0 || len(c.extensions) == 0 {
+		return extensions
+	}
+
+	var filtered map[string]interface{}
+	for key := range extensions {
+		ext, registered := c.extensions[key]
+		if !registered {
+			continue
+		}
+		policy, ok := ext.(ClientExtensionPaymentPayloadEchoPolicy)
+		if !ok || policy.EchoPaymentRequiredExtension() {
+			continue
+		}
+
+		if filtered == nil {
+			filtered = make(map[string]interface{}, len(extensions)-1)
+			for existingKey, existingValue := range extensions {
+				filtered[existingKey] = existingValue
+			}
+		}
+		delete(filtered, key)
+	}
+	if filtered != nil {
+		return filtered
+	}
+	return extensions
 }
 
 // GetRegisteredSchemes returns a list of registered schemes for debugging

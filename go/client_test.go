@@ -86,6 +86,30 @@ func TestClientRegister(t *testing.T) {
 	}
 }
 
+func TestClientGetExtensions(t *testing.T) {
+	client := Newx402Client()
+	first := mockClientExtension{key: "first"}
+	second := mockClientExtension{key: "second"}
+	replacement := mockClientExtension{key: "first", label: "replacement"}
+
+	client.RegisterExtension(first).RegisterExtension(second).RegisterExtension(replacement)
+
+	extensions := client.GetExtensions()
+	if len(extensions) != 2 {
+		t.Fatalf("extensions length = %d, want 2", len(extensions))
+	}
+	if extensions[0].Key() != "first" || extensions[1].Key() != "second" {
+		t.Fatalf("extension order = [%s, %s], want [first, second]", extensions[0].Key(), extensions[1].Key())
+	}
+	gotFirst, ok := extensions[0].(mockClientExtension)
+	if !ok {
+		t.Fatalf("first extension type = %T, want mockClientExtension", extensions[0])
+	}
+	if gotFirst.label != "replacement" {
+		t.Fatalf("first extension label = %q, want replacement", gotFirst.label)
+	}
+}
+
 func TestClientWithScheme(t *testing.T) {
 	mockClientV2 := &mockSchemeNetworkClientV2{scheme: "exact"}
 
@@ -96,6 +120,27 @@ func TestClientWithScheme(t *testing.T) {
 	if len(schemes[2]) != 1 || schemes[2][0].Scheme != "exact" {
 		t.Fatal("Expected mock client to be registered")
 	}
+}
+
+type mockClientExtension struct {
+	key   string
+	label string
+}
+
+func (e mockClientExtension) Key() string {
+	return e.key
+}
+
+func (e mockClientExtension) EnrichPaymentPayload(_ context.Context, payload types.PaymentPayload, _ types.PaymentRequired) (types.PaymentPayload, error) {
+	return payload, nil
+}
+
+type mockNoEchoClientExtension struct {
+	mockClientExtension
+}
+
+func (e mockNoEchoClientExtension) EchoPaymentRequiredExtension() bool {
+	return false
 }
 
 func TestClientSelectPaymentRequirements(t *testing.T) {
@@ -249,6 +294,30 @@ func TestClientCreatePaymentPayload(t *testing.T) {
 	if payload.Extensions == nil {
 		t.Fatal("Expected extensions to be set")
 	}
+}
+
+func TestClientCreatePaymentPayloadFiltersNoEchoExtensions(t *testing.T) {
+	ctx := context.Background()
+	client := Newx402Client()
+	client.Register("eip155:1", &mockSchemeNetworkClientV2{scheme: "exact"})
+	client.RegisterExtension(mockNoEchoClientExtension{mockClientExtension{key: "auth"}})
+
+	payload, err := client.CreatePaymentPayload(ctx, types.PaymentRequirements{
+		Scheme:  "exact",
+		Network: "eip155:1",
+		Asset:   "USDC",
+		Amount:  "1000",
+		PayTo:   "0xrecipient",
+	}, nil, map[string]interface{}{
+		"auth": map[string]interface{}{"info": map[string]interface{}{"nonce": "dynamic"}},
+		"keep": map[string]interface{}{"info": map[string]interface{}{"value": "stable"}},
+	})
+	require.NoError(t, err)
+
+	if _, ok := payload.Extensions["auth"]; ok {
+		t.Fatalf("no-echo extension was included in payment payload: %#v", payload.Extensions)
+	}
+	require.Contains(t, payload.Extensions, "keep")
 }
 
 func TestClientCreatePaymentPayloadValidation(t *testing.T) {

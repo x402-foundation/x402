@@ -3,6 +3,7 @@ package signinwithx
 import (
 	"context"
 	"encoding/json"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -210,5 +211,28 @@ func TestCreateClientHookReturnsNilWithoutDeclaration(t *testing.T) {
 	}
 	if result != nil {
 		t.Fatalf("result = %#v, want nil", result)
+	}
+}
+
+func TestCreateClientExtension(t *testing.T) {
+	signer := &testEVMSigner{address: "0x0000000000000000000000000000000000000001"}
+	extension := CreateClientExtension(signer)
+	if extension.Key() != ExtensionKey {
+		t.Fatalf("Key() = %q, want %q", extension.Key(), ExtensionKey)
+	}
+	if extension.PaymentRequiredHook() == nil {
+		t.Fatal("PaymentRequiredHook() = nil")
+	}
+	if extension.EchoPaymentRequiredExtension() {
+		t.Fatal("EchoPaymentRequiredExtension() = true, want false")
+	}
+
+	payload := types.PaymentPayload{X402Version: 2}
+	enriched, err := extension.EnrichPaymentPayload(context.Background(), payload, types.PaymentRequired{})
+	if err != nil {
+		t.Fatalf("EnrichPaymentPayload() error = %v", err)
+	}
+	if !reflect.DeepEqual(enriched, payload) {
+		t.Fatalf("EnrichPaymentPayload() = %#v, want %#v", enriched, payload)
 	}
 }

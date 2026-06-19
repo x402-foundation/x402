@@ -12,6 +12,8 @@ Start the server:
 EVM_ADDRESS=0x... FACILITATOR_URL=https://x402.org/facilitator go run .
 ```
 
+You can also place these values in a local `.env` file.
+
 Then run the matching client example:
 
 ```sh

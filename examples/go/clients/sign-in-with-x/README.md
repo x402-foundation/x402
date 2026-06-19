@@ -5,6 +5,7 @@ This client mirrors the TypeScript SIWX client example:
 - `GET /profile` authenticates with SIWX only.
 - `GET /weather` pays once, then retries with SIWX.
 - `GET /joke` pays once, then retries with SIWX.
+- The SIWX client hook is registered through `x402Client.RegisterExtension`.
 
 Start the matching server example first:
 
@@ -18,6 +19,8 @@ Then run the client:
 ```sh
 EVM_PRIVATE_KEY=0x... go run .
 ```
+
+You can also place these values in a local `.env` file.
 
 Override the server URL with:
 

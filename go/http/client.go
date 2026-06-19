@@ -39,6 +39,12 @@ type PaymentRequiredHookResult struct {
 // PaymentRequiredHook can respond to a 402 PaymentRequired before payment payload creation.
 type PaymentRequiredHook func(ctx context.Context, paymentRequired types.PaymentRequired) (*PaymentRequiredHookResult, error)
 
+// ClientExtensionPaymentRequiredHookProvider lets registered client extensions
+// expose HTTP auth-style retry hooks.
+type ClientExtensionPaymentRequiredHookProvider interface {
+	PaymentRequiredHook() PaymentRequiredHook
+}
+
 // OnPaymentRequired registers a hook that may retry a protected request with additional headers.
 func (c *x402HTTPClient) OnPaymentRequired(hook PaymentRequiredHook) *x402HTTPClient {
 	if hook != nil {
@@ -308,7 +314,7 @@ func (t *PaymentRoundTripper) tryPaymentRequiredHooks(
 	headers map[string]string,
 	body []byte,
 ) (*http.Response, map[string]string, []byte, bool, error) {
-	if t.x402Client == nil || len(t.x402Client.paymentRequiredHooks) == 0 {
+	if t.x402Client == nil {
 		return nil, headers, body, false, nil
 	}
 
@@ -317,7 +323,7 @@ func (t *PaymentRoundTripper) tryPaymentRequiredHooks(
 		return nil, headers, body, false, err
 	}
 
-	for _, hook := range t.x402Client.paymentRequiredHooks {
+	for _, hook := range t.x402Client.getPaymentRequiredHooks(paymentRequired) {
 		result, err := hook(ctx, paymentRequired)
 		if err != nil {
 			return nil, headers, body, false, err
@@ -344,6 +350,27 @@ func (t *PaymentRoundTripper) tryPaymentRequiredHooks(
 	}
 
 	return nil, headers, body, false, nil
+}
+
+func (c *x402HTTPClient) getPaymentRequiredHooks(paymentRequired types.PaymentRequired) []PaymentRequiredHook {
+	hooks := append([]PaymentRequiredHook(nil), c.paymentRequiredHooks...)
+	if c.client == nil || len(paymentRequired.Extensions) == 0 {
+		return hooks
+	}
+
+	for _, extension := range c.client.GetExtensions() {
+		if _, declared := paymentRequired.Extensions[extension.Key()]; !declared {
+			continue
+		}
+		provider, ok := extension.(ClientExtensionPaymentRequiredHookProvider)
+		if !ok {
+			continue
+		}
+		if hook := provider.PaymentRequiredHook(); hook != nil {
+			hooks = append(hooks, hook)
+		}
+	}
+	return hooks
 }
 
 func (t *PaymentRoundTripper) sendHeaderRetry(

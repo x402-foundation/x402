@@ -12,7 +12,7 @@ It includes:
 - Optional EVM smart wallet verification through EIP-1271
 - Server-side storage, request hooks, and settle hooks
 - Client-side EVM SIWX payload/header creation
-- HTTP client retry hooks that attempt SIWX auth before payment
+- HTTP client extension hooks that attempt SIWX auth before payment
 
 ## Server
 
@@ -54,8 +54,9 @@ Extensions: map[string]interface{}{
 ```go
 signer, _ := evmsigner.NewClientSignerFromPrivateKey(privateKey)
 
-httpClient := x402http.Newx402HTTPClient(x402.Newx402Client()).
-    OnPaymentRequired(signinwithx.CreateClientHook(signer.(signinwithx.EVMSigner)))
+x402Client := x402.Newx402Client().
+    RegisterExtension(signinwithx.CreateClientExtension(signer.(signinwithx.EVMSigner)))
+httpClient := x402http.Newx402HTTPClient(x402Client)
 ```
 
 The HTTP client first tries to satisfy a `sign-in-with-x` challenge by sending a

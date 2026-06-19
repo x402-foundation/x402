@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 
+	x402 "github.com/x402-foundation/x402/go/v2"
 	x402http "github.com/x402-foundation/x402/go/v2/http"
 	"github.com/x402-foundation/x402/go/v2/types"
 )
@@ -15,6 +16,34 @@ type EVMSigner interface {
 	Address() string
 	SignMessage(ctx context.Context, message string) (string, error)
 }
+
+// ClientExtension signs SIWX challenges declared by HTTP PaymentRequired responses.
+type ClientExtension struct {
+	signer EVMSigner
+}
+
+// CreateClientExtension creates a client extension that auto-wires SIWX HTTP auth retries.
+func CreateClientExtension(signer EVMSigner) *ClientExtension {
+	return &ClientExtension{signer: signer}
+}
+
+func (e *ClientExtension) Key() string {
+	return ExtensionKey
+}
+
+func (e *ClientExtension) EnrichPaymentPayload(_ context.Context, payload types.PaymentPayload, _ types.PaymentRequired) (types.PaymentPayload, error) {
+	return payload, nil
+}
+
+func (e *ClientExtension) EchoPaymentRequiredExtension() bool {
+	return false
+}
+
+func (e *ClientExtension) PaymentRequiredHook() x402http.PaymentRequiredHook {
+	return CreateClientHook(e.signer)
+}
+
+var _ x402.ClientExtension = (*ClientExtension)(nil)
 
 // CreatePayload creates and signs a SIWX payload from a server declaration.
 func CreatePayload(ctx context.Context, declaration interface{}, signer EVMSigner) (Payload, error) {
