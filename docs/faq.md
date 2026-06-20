@@ -29,11 +29,15 @@ Typescript, Python, and Go are reference implementations, but x402 is an **open 
 
 Nothing prevents you from implementing the spec in Rust, Java, or other languages. If you're interested in building support for your favorite language, please [open an issue](https://github.com/x402-foundation/x402/issues) and let us know, we'd be happy to help!
 
-#### Can I use x402 to protect dynamic routes or server-side operations?
+#### Can I use x402 to protect dynamic routes?
 
 Yes. Parameterized routes like `GET /api/:id` are supported.
 
-Framework integrations such as Express, Fastify, and Hono verify the payment before your handler runs, then settle only after the handler finishes with a successful response (`status < 400`). Next.js API routes have the same behavior when you use `withX402`.
+Framework integrations such as Express, Fastify, and Hono verify the payment before your handler runs. Next.js API routes have the same behavior when you use `withX402`.
+
+#### How does settlement work when a handler performs server-side work?
+
+The framework integrations settle only after the handler finishes with a successful response (`status < 400`).
 
 That means x402 works well for paid server-side logic, but you should still validate inputs and prerequisites before performing any irreversible action. If your handler throws or returns an error after doing one-way work, the payment will not settle, so those operations should be idempotent or otherwise safe to retry.
 
