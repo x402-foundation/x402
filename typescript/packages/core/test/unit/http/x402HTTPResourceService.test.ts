@@ -775,6 +775,44 @@ describe("x402HTTPResourceServer", () => {
       }
     });
 
+    it("should return 400 if PAYMENT-SIGNATURE is present but malformed", async () => {
+      const routes = {
+        "/api/test": {
+          accepts: {
+            scheme: "exact",
+            payTo: "0xabc",
+            price: "$1.00" as Price,
+            network: "eip155:8453" as Network,
+          },
+        },
+      };
+
+      const httpServer = new x402HTTPResourceServer(ResourceServer, routes);
+
+      const adapter = new MockHTTPAdapter({
+        "payment-signature": "garbage-value",
+      });
+      const context: HTTPRequestContext = {
+        adapter,
+        path: "/api/test",
+        method: "GET",
+      };
+
+      const result = await httpServer.processHTTPRequest(context);
+
+      expect(result.type).toBe("payment-error");
+      if (result.type === "payment-error") {
+        expect(result.response.status).toBe(400);
+        expect(result.response.headers["Content-Type"]).toBe("application/json");
+        expect(result.response.headers["PAYMENT-REQUIRED"]).toBeUndefined();
+        expect(result.response.body).toEqual({
+          error: "invalid_payment_signature_header",
+          message: "PAYMENT-SIGNATURE header could not be decoded",
+        });
+      }
+      expect(mockFacilitator.verifyCalls.length).toBe(0);
+    });
+
     it("should include bazaar service metadata on PaymentRequired.resource", async () => {
       const routes = {
         "/api/weather": {

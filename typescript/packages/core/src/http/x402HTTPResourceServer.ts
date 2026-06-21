@@ -519,7 +519,25 @@ export class x402HTTPResourceServer {
     const paymentOptions = this.normalizePaymentOptions(routeConfig);
 
     // Check for payment header (v1 or v2)
-    const paymentPayload = this.extractPayment(adapter);
+    let paymentPayload: PaymentPayload | null;
+    try {
+      paymentPayload = this.extractPayment(adapter);
+    } catch (error) {
+      return {
+        type: "payment-error",
+        response: {
+          status: 400,
+          headers: { "Content-Type": "application/json" },
+          body: {
+            error: "invalid_payment_signature_header",
+            message:
+              error instanceof Error
+                ? error.message
+                : "PAYMENT-SIGNATURE header could not be decoded",
+          },
+        },
+      };
+    }
 
     // Create resource info, using config override if provided
     const resourceInfo = {
@@ -1027,6 +1045,7 @@ export class x402HTTPResourceServer {
         return decodePaymentSignatureHeader(header);
       } catch (error) {
         console.warn("Failed to decode PAYMENT-SIGNATURE header:", error);
+        throw new Error("PAYMENT-SIGNATURE header could not be decoded");
       }
     }
 
