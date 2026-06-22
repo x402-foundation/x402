@@ -214,6 +214,13 @@ describe("x402 Schemas", () => {
         delete (withoutExtra as Record<string, unknown>).extra;
         const result = PaymentRequirementsV2Schema.safeParse(withoutExtra);
         expect(result.success).toBe(true);
+        expect(result.data?.extra).toEqual({});
+      });
+
+      it("should reject null extra field", () => {
+        const withNullExtra = { ...validPaymentRequirementsV2, extra: null };
+        const result = PaymentRequirementsV2Schema.safeParse(withNullExtra);
+        expect(result.success).toBe(false);
       });
     });
 
