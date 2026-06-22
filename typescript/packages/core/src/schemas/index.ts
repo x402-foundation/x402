@@ -25,6 +25,13 @@ export type Any = z.infer<typeof Any>;
 export const OptionalAny = z.record(z.unknown()).optional().nullable();
 export type OptionalAny = z.infer<typeof OptionalAny>;
 
+/**
+ * Optional record schema with an empty object default.
+ * Used for v2 wire fields that may be absent but must not be `null` when present.
+ */
+export const OptionalRecord = z.record(z.unknown()).optional().default({});
+export type OptionalRecord = z.infer<typeof OptionalRecord>;
+
 // ============================================================================
 // Network Schemas
 // ============================================================================
@@ -138,7 +145,7 @@ export const PaymentRequirementsV2Schema = z.object({
   asset: NonEmptyString,
   payTo: NonEmptyString,
   maxTimeoutSeconds: z.number().positive(),
-  extra: OptionalAny,
+  extra: OptionalRecord,
 });
 export type PaymentRequirementsV2 = z.infer<typeof PaymentRequirementsV2Schema>;
 
