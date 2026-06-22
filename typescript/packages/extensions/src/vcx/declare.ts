@@ -14,11 +14,7 @@
  * limitations under the License.
  */
 
-import type {
-  IdentityRequirements,
-  DisclosureTier,
-  KycLevel,
-} from "./types";
+import type { IdentityRequirements, DisclosureTier, KycLevel } from "./types";
 import { buildVCXEnvelopeSchema, type VCXEnvelopeSchema } from "./schema";
 
 /** Extension key registered with the x402 v2 runtime (spec §4). */
@@ -69,10 +65,14 @@ export interface VCXDeclaration {
  *   },
  * };
  * ```
+ *
+ * @param options - Disclosure tier, required claims, minimum KYC level,
+ *   accepted issuer trust-list references, and optional protocol override
+ *   that define the identity requirements advertised to clients.
+ * @returns A declaration object keyed by the VCX extension key, carrying the
+ *   identity requirements, envelope JSON Schema, and the raw options.
  */
-export function declareVCXExtension(
-  options: DeclareVCXOptions,
-): Record<string, VCXDeclaration> {
+export function declareVCXExtension(options: DeclareVCXOptions): Record<string, VCXDeclaration> {
   // Conditional spread so optional fields are absent when undefined, rather
   // than serialised as explicit-undefined keys.
   const info: IdentityRequirements = {

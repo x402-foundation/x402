@@ -21,6 +21,9 @@ export const VCX_HEADER_NAME = "VCX";
 
 /**
  * Encode an identity envelope as a base64 string suitable for the VCX header.
+ *
+ * @param envelope - The VCX identity envelope to serialise.
+ * @returns The base64-encoded JSON representation of the envelope.
  */
 export function encodeVCXHeader(envelope: IdentityEnvelope): string {
   return Buffer.from(JSON.stringify(envelope)).toString("base64");
@@ -29,7 +32,9 @@ export function encodeVCXHeader(envelope: IdentityEnvelope): string {
 /**
  * Decode the VCX header value back into an identity envelope.
  *
- * @throws if the input is not valid base64 JSON.
+ * @param headerValue - The base64-encoded VCX header value to decode.
+ * @returns The decoded identity envelope.
+ * @throws If the input is not valid base64 JSON.
  */
 export function parseVCXHeader(headerValue: string): IdentityEnvelope {
   const decoded = Buffer.from(headerValue, "base64").toString("utf8");

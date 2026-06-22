@@ -21,10 +21,14 @@ import { trustedIssuer } from "./vcx-test-utils";
 
 const TRUST_LIST_URL = "https://trust.example.test/.well-known/vcx-trust-list";
 
+/**
+ * Build the signing options (issuer DID, EdDSA signer, alg) for the trusted
+ * fixture issuer, used to sign trust list JWSs.
+ *
+ * @returns The createJWT signer options for the trusted issuer.
+ */
 function issuerSignerOpts() {
-  const privateKeyBytes = Uint8Array.from(
-    Buffer.from(trustedIssuer.privateKeyHex, "hex"),
-  );
+  const privateKeyBytes = Uint8Array.from(Buffer.from(trustedIssuer.privateKeyHex, "hex"));
   return {
     issuer: trustedIssuer.did,
     signer: EdDSASigner(privateKeyBytes),
@@ -32,6 +36,13 @@ function issuerSignerOpts() {
   };
 }
 
+/**
+ * Sign a trust list body into a JWS, defaulting the `iss` claim to the signer's issuer.
+ *
+ * @param body - The trust list body claims to sign.
+ * @param signerOverride - Optional signer options to use instead of the trusted issuer.
+ * @returns The signed trust list JWS.
+ */
 async function buildTrustListJws(
   body: Record<string, unknown>,
   signerOverride?: ReturnType<typeof issuerSignerOpts>,
@@ -45,10 +56,16 @@ async function buildTrustListJws(
   );
 }
 
-function mockFetch(opts: {
-  jws: string;
-  cacheControl?: string;
-}): typeof fetch & { calls: number } {
+/**
+ * Build a `fetch` mock that serves the given JWS for the trust list URL and
+ * 404s for everything else, tracking the number of calls made.
+ *
+ * @param opts - Options for the fetch mock.
+ * @param opts.jws - The JWS response body returned for the trust list URL.
+ * @param opts.cacheControl - Optional `cache-control` header value to include.
+ * @returns A fetch-compatible function exposing a `calls` counter.
+ */
+function mockFetch(opts: { jws: string; cacheControl?: string }): typeof fetch & { calls: number } {
   const fn = (async (input: RequestInfo | URL): Promise<Response> => {
     fn.calls += 1;
     const url = typeof input === "string" ? input : input.toString();
@@ -68,14 +85,11 @@ function mockFetch(opts: {
 describe("resolveAcceptedIssuers — inline DIDs (§8.1)", () => {
   it("passes through inline DIDs without fetching", async () => {
     const fetchMock = mockFetch({ jws: "unused" });
-    const entries = await resolveAcceptedIssuers(
-      ["did:web:paypal.com", "did:key:zAbc"],
-      { resolver: getDidResolver(), fetchImpl: fetchMock },
-    );
-    expect(entries).toEqual([
-      { did: "did:web:paypal.com" },
-      { did: "did:key:zAbc" },
-    ]);
+    const entries = await resolveAcceptedIssuers(["did:web:paypal.com", "did:key:zAbc"], {
+      resolver: getDidResolver(),
+      fetchImpl: fetchMock,
+    });
+    expect(entries).toEqual([{ did: "did:web:paypal.com" }, { did: "did:key:zAbc" }]);
     expect(fetchMock.calls).toBe(0);
   });
 });
@@ -220,8 +234,7 @@ describe("verifyDidDocumentHash (§8.2)", () => {
     const resolver = getDidResolver();
     const check = await verifyDidDocumentHash({
       issuerDid: trustedIssuer.did,
-      expectedHash:
-        "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+      expectedHash: "sha256:0000000000000000000000000000000000000000000000000000000000000000",
       resolver,
     });
     expect(check.ok).toBe(false);

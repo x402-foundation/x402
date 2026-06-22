@@ -125,7 +125,7 @@ describe("buildEnvelopeFromRequirements", () => {
         delegationProof: "x",
         paymentSource,
       },
-      requirements
+      requirements,
     );
     expect(env.principal.disclosed).toEqual({
       kycLevel: "IdentityVerified",
@@ -134,14 +134,28 @@ describe("buildEnvelopeFromRequirements", () => {
   });
 });
 
+/**
+ * Issues a credential and builds a valid identity envelope, allowing delegation
+ * conditions and the payment source to be overridden for failure-path tests.
+ *
+ * @param overrides - Optional overrides for the scenario.
+ * @param overrides.conditions - Delegation conditions to embed instead of the default expiry-only block.
+ * @param overrides.paymentSourceOverride - Payment source to use in place of the shared fixture.
+ * @returns The built envelope, the agent, and the issued credential JWT.
+ */
 async function buildValidScenario(overrides?: {
   conditions?: Record<string, unknown>;
   paymentSourceOverride?: typeof paymentSource;
 }) {
   const agent = createAgent("verify-agent");
-  const conditions = (overrides?.conditions ?? {
-    expiresAt: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
-  }) as Record<string, unknown>;
+  // Presence-check rather than `??` so a test can pass `conditions: undefined`
+  // to exercise the no-conditions delegation path; `??` would swap it for the
+  // default block and make that case impossible to express.
+  const conditions = (
+    overrides && "conditions" in overrides
+      ? overrides.conditions
+      : { expiresAt: new Date(Date.now() + 60 * 60 * 1000).toISOString() }
+  ) as Record<string, unknown>;
   const delegation = buildDelegation({
     agentDid: agent.did,
     paymentSource: (overrides?.paymentSourceOverride ?? paymentSource).accountId,
@@ -172,13 +186,13 @@ describe("verifyEnvelope", () => {
     const result = await verifyEnvelope(envelope, requirements, paymentSource.sourceId);
     expect(result.valid).toBe(true);
     expect(result.steps).toHaveLength(4);
-    expect(result.steps.map((s) => s.step)).toEqual([
+    expect(result.steps.map(s => s.step)).toEqual([
       "principal_credential",
       "agent_delegation",
       "payment_source_binding",
       "payment_settlement",
     ]);
-    expect(result.steps.every((s) => s.success)).toBe(true);
+    expect(result.steps.every(s => s.success)).toBe(true);
   });
 
   it("rejects a forged credential signature", async () => {
@@ -225,7 +239,7 @@ describe("verifyEnvelope", () => {
     envelope.agent.did = "did:key:zMismatchedAgent";
     const result = await verifyEnvelope(envelope, requirements, paymentSource.sourceId);
     expect(result.valid).toBe(false);
-    const step = result.steps.find((s) => s.step === "agent_delegation");
+    const step = result.steps.find(s => s.step === "agent_delegation");
     expect(step?.success).toBe(false);
   });
 
@@ -233,12 +247,10 @@ describe("verifyEnvelope", () => {
     const { envelope } = await buildValidScenario();
     const result = await verifyEnvelope(envelope, requirements, "0xWRONGSENDER");
     expect(result.valid).toBe(false);
-    const step = result.steps.find((s) => s.step === "payment_source_binding");
+    const step = result.steps.find(s => s.step === "payment_source_binding");
     expect(step?.success).toBe(false);
     // Verifier short-circuits on first failure; settlement step MUST NOT appear.
-    expect(
-      result.steps.find((s) => s.step === "payment_settlement"),
-    ).toBeUndefined();
+    expect(result.steps.find(s => s.step === "payment_settlement")).toBeUndefined();
   });
 
   it("rejects an expired delegation", async () => {
@@ -263,7 +275,7 @@ describe("verifyEnvelope", () => {
     });
     const result = await verifyEnvelope(envelope, requirements, paymentSource.sourceId);
     expect(result.valid).toBe(false);
-    const step = result.steps.find((s) => s.step === "agent_delegation");
+    const step = result.steps.find(s => s.step === "agent_delegation");
     expect(step?.success).toBe(false);
     expect(step?.error ?? "").toMatch(/expired/i);
   });
@@ -284,15 +296,19 @@ describe("verifyEnvelope", () => {
   // the accountId↔sourceId binding, the verifier accepts; with it, rejects.
   it("rejects when sourceId does not match the accountId address component (B1 binding)", async () => {
     const { envelope } = await buildValidScenario();
-    envelope.paymentSource.sourceId =
-      "0xATTACKER000000000000000000000000000FACE";
+    // Reassign a fresh object rather than mutating the shared paymentSource
+    // fixture in place — an in-place mutation here leaks into every later test.
+    envelope.paymentSource = {
+      ...envelope.paymentSource,
+      sourceId: "0xATTACKER000000000000000000000000000FACE",
+    };
     const result = await verifyEnvelope(
       envelope,
       requirements,
       "0xATTACKER000000000000000000000000000FACE",
     );
     expect(result.valid).toBe(false);
-    const step = result.steps.find((s) => s.step === "payment_source_binding");
+    const step = result.steps.find(s => s.step === "payment_source_binding");
     expect(step?.success).toBe(false);
     expect(step?.error ?? "").toMatch(/address component/i);
   });
@@ -325,39 +341,38 @@ describe("verifyEnvelope", () => {
 
   it("rejects when principal.credentialFormat is out of enum", async () => {
     const { envelope } = await buildValidScenario();
-    (envelope.principal as { credentialFormat: unknown }).credentialFormat =
-      "ld-vc";
+    (envelope.principal as { credentialFormat: unknown }).credentialFormat = "ld-vc";
     const result = await verifyEnvelope(envelope, requirements, paymentSource.sourceId);
     expect(result.valid).toBe(false);
     expect(result.steps[0].error ?? "").toMatch(/credentialFormat/);
   });
 
-  it("rejects credentialFormat=sd-jwt-vc with a deferred-to-v1.0.0 message in v0.2.0", async () => {
+  it("rejects credentialFormat=sd-jwt-vc when the credential is not a valid SD-JWT VC", async () => {
     const { envelope } = await buildValidScenario();
+    // The fixture credential is a plain JWT, not an SD-JWT VC (no `~` separators),
+    // so the now-implemented SD-JWT VC path must reject it.
     envelope.principal.credentialFormat = "sd-jwt-vc";
     const result = await verifyEnvelope(envelope, requirements, paymentSource.sourceId);
     expect(result.valid).toBe(false);
-    expect(result.steps[0].error ?? "").toMatch(/SD-JWT VC.*v1\.0\.0/i);
+    expect(result.steps[0].error ?? "").toMatch(/SD-JWT/i);
   });
 
   it("rejects when agent.delegationProofFormat is missing", async () => {
     const { envelope } = await buildValidScenario();
-    delete (envelope.agent as { delegationProofFormat?: unknown })
-      .delegationProofFormat;
+    delete (envelope.agent as { delegationProofFormat?: unknown }).delegationProofFormat;
     const result = await verifyEnvelope(envelope, requirements, paymentSource.sourceId);
     expect(result.valid).toBe(false);
-    const step = result.steps.find((s) => s.step === "agent_delegation");
+    const step = result.steps.find(s => s.step === "agent_delegation");
     expect(step?.success).toBe(false);
     expect(step?.error ?? "").toMatch(/delegationProofFormat/);
   });
 
   it("rejects when agent.delegationProofFormat is a reserved-but-non-v1 value", async () => {
     const { envelope } = await buildValidScenario();
-    (envelope.agent as { delegationProofFormat: unknown }).delegationProofFormat =
-      "ucan";
+    (envelope.agent as { delegationProofFormat: unknown }).delegationProofFormat = "ucan";
     const result = await verifyEnvelope(envelope, requirements, paymentSource.sourceId);
     expect(result.valid).toBe(false);
-    const step = result.steps.find((s) => s.step === "agent_delegation");
+    const step = result.steps.find(s => s.step === "agent_delegation");
     expect(step?.error ?? "").toMatch(/delegationProofFormat/);
   });
 
@@ -413,8 +428,7 @@ describe("verifyEnvelope", () => {
 // v0.3 §9.2 full delegation enforcement: every condition's happy path and
 // every failure path. Reads against verifier.ts:verifyAgentDelegation.
 describe("verifyEnvelope — v0.3 §9.2 delegation conditions", () => {
-  const validExpiresAt = () =>
-    new Date(Date.now() + 60 * 60 * 1000).toISOString();
+  const validExpiresAt = () => new Date(Date.now() + 60 * 60 * 1000).toISOString();
 
   it("rejects an unknown condition key (§13.4 fail-closed)", async () => {
     const { envelope } = await buildValidScenario({
@@ -422,7 +436,7 @@ describe("verifyEnvelope — v0.3 §9.2 delegation conditions", () => {
     });
     const result = await verifyEnvelope(envelope, requirements, paymentSource.sourceId);
     expect(result.valid).toBe(false);
-    const step = result.steps.find((s) => s.step === "agent_delegation");
+    const step = result.steps.find(s => s.step === "agent_delegation");
     expect(step?.error ?? "").toMatch(/geoFence|Unknown delegation condition/);
   });
 
@@ -433,7 +447,7 @@ describe("verifyEnvelope — v0.3 §9.2 delegation conditions", () => {
     });
     const result = await verifyEnvelope(envelope, requirements, paymentSource.sourceId);
     expect(result.valid).toBe(false);
-    const step = result.steps.find((s) => s.step === "agent_delegation");
+    const step = result.steps.find(s => s.step === "agent_delegation");
     expect(step?.error ?? "").toMatch(/conditions/i);
   });
 
@@ -445,7 +459,7 @@ describe("verifyEnvelope — v0.3 §9.2 delegation conditions", () => {
       paymentAmount: "500",
     });
     expect(result.valid).toBe(false);
-    const step = result.steps.find((s) => s.step === "agent_delegation");
+    const step = result.steps.find(s => s.step === "agent_delegation");
     expect(step?.error ?? "").toMatch(/expiresAt/);
   });
 
@@ -457,7 +471,7 @@ describe("verifyEnvelope — v0.3 §9.2 delegation conditions", () => {
     });
     const result = await verifyEnvelope(envelope, requirements, paymentSource.sourceId);
     expect(result.valid).toBe(false);
-    const step = result.steps.find((s) => s.step === "agent_delegation");
+    const step = result.steps.find(s => s.step === "agent_delegation");
     expect(step?.error ?? "").toMatch(/30-day/);
   });
 
@@ -467,7 +481,7 @@ describe("verifyEnvelope — v0.3 §9.2 delegation conditions", () => {
     });
     const result = await verifyEnvelope(envelope, requirements, paymentSource.sourceId);
     expect(result.valid).toBe(false);
-    const step = result.steps.find((s) => s.step === "agent_delegation");
+    const step = result.steps.find(s => s.step === "agent_delegation");
     expect(step?.error ?? "").toMatch(/maxPerTransaction.*paymentAmount/i);
   });
 
@@ -479,7 +493,7 @@ describe("verifyEnvelope — v0.3 §9.2 delegation conditions", () => {
       paymentAmount: "1500",
     });
     expect(result.valid).toBe(false);
-    const step = result.steps.find((s) => s.step === "agent_delegation");
+    const step = result.steps.find(s => s.step === "agent_delegation");
     expect(step?.error ?? "").toMatch(/exceeds delegation maxPerTransaction/);
   });
 
@@ -502,7 +516,7 @@ describe("verifyEnvelope — v0.3 §9.2 delegation conditions", () => {
     });
     const result = await verifyEnvelope(envelope, requirements, paymentSource.sourceId);
     expect(result.valid).toBe(false);
-    const step = result.steps.find((s) => s.step === "agent_delegation");
+    const step = result.steps.find(s => s.step === "agent_delegation");
     expect(step?.error ?? "").toMatch(/allowedNetworks/);
   });
 
@@ -527,7 +541,7 @@ describe("verifyEnvelope — v0.3 §9.2 delegation conditions", () => {
     // paymentSource fixture has no `asset` field → reject
     const result = await verifyEnvelope(envelope, requirements, paymentSource.sourceId);
     expect(result.valid).toBe(false);
-    const step = result.steps.find((s) => s.step === "agent_delegation");
+    const step = result.steps.find(s => s.step === "agent_delegation");
     expect(step?.error ?? "").toMatch(/allowedAssets.*absent|asset is absent/);
   });
 
@@ -542,7 +556,7 @@ describe("verifyEnvelope — v0.3 §9.2 delegation conditions", () => {
     });
     const result = await verifyEnvelope(envelope, requirements, paymentSource.sourceId);
     expect(result.valid).toBe(false);
-    const step = result.steps.find((s) => s.step === "agent_delegation");
+    const step = result.steps.find(s => s.step === "agent_delegation");
     expect(step?.error ?? "").toMatch(/allowedAssets/);
   });
 
@@ -568,7 +582,7 @@ describe("verifyEnvelope — v0.3 §9.2 delegation conditions", () => {
       strictDelegationConditions: true,
     });
     expect(result.valid).toBe(false);
-    const step = result.steps.find((s) => s.step === "agent_delegation");
+    const step = result.steps.find(s => s.step === "agent_delegation");
     expect(step?.error ?? "").toMatch(/maxDaily.*dailyLimitStore/);
   });
 
@@ -576,7 +590,6 @@ describe("verifyEnvelope — v0.3 §9.2 delegation conditions", () => {
     const { envelope } = await buildValidScenario({
       conditions: { expiresAt: validExpiresAt(), maxDaily: "10000" },
     });
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
     const result = await verifyEnvelope(envelope, requirements, paymentSource.sourceId, {
       paymentAmount: "500",
@@ -598,7 +611,7 @@ describe("verifyEnvelope — v0.3 §9.2 delegation conditions", () => {
       dailyLimitStore: store,
     });
     expect(result.valid).toBe(false);
-    const step = result.steps.find((s) => s.step === "agent_delegation");
+    const step = result.steps.find(s => s.step === "agent_delegation");
     expect(step?.error ?? "").toMatch(/Daily total.*exceeds.*maxDaily/);
   });
 

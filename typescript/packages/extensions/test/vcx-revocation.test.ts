@@ -35,13 +35,18 @@ import {
   mockStatusListFetch,
 } from "./vcx-test-utils";
 
-const validExpiresAt = () =>
-  new Date(Date.now() + 60 * 60 * 1000).toISOString();
+const validExpiresAt = () => new Date(Date.now() + 60 * 60 * 1000).toISOString();
 
-async function buildLongLivedScenario(opts: {
-  statusListIndex: number;
-  revokedIndices: number[];
-}) {
+/**
+ * Build a long-lived credential scenario: an identity envelope plus a matching
+ * signed status list credential with the given revoked indices.
+ *
+ * @param opts - Options for the scenario.
+ * @param opts.statusListIndex - The status list index assigned to the credential.
+ * @param opts.revokedIndices - The indices marked revoked in the status list.
+ * @returns The envelope, agent, credential JWT, and status list JWT.
+ */
+async function buildLongLivedScenario(opts: { statusListIndex: number; revokedIndices: number[] }) {
   const agent = createAgent("revocation-test-agent");
   const delegation = buildDelegation({
     agentDid: agent.did,
@@ -160,9 +165,7 @@ describe("checkCredentialStatus — Bitstring Status List v1.0 (§11.2)", () => 
     const { EdDSASigner } = await import("did-jwt");
     const issuer = {
       did: trustedIssuer.did,
-      signer: EdDSASigner(
-        Uint8Array.from(Buffer.from(trustedIssuer.privateKeyHex, "hex")),
-      ),
+      signer: EdDSASigner(Uint8Array.from(Buffer.from(trustedIssuer.privateKeyHex, "hex"))),
       alg: "EdDSA",
     };
     const now = Math.floor(Date.now() / 1000);

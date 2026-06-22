@@ -24,6 +24,13 @@ export interface Ed25519KeyPair {
   privateKeyHex: string;
 }
 
+/**
+ * Generate a fresh Ed25519 key pair and derive its `did:key` identifier.
+ * The raw 32-byte public and private keys are extracted from the encoded
+ * SPKI/PKCS#8 output, and the private key is also exposed as hex.
+ *
+ * @returns The generated key pair with its raw keys, `did:key`, and hex private key.
+ */
 export function generateEd25519KeyPair(): Ed25519KeyPair {
   const { publicKey, privateKey } = crypto.generateKeyPairSync("ed25519", {
     publicKeyEncoding: { type: "spki", format: "der" },
@@ -41,17 +48,32 @@ export function generateEd25519KeyPair(): Ed25519KeyPair {
   };
 }
 
+/**
+ * Derive the `did:key` identifier for a raw Ed25519 public key by
+ * prepending the Ed25519 multicodec prefix (`0xed 0x01`) and encoding the
+ * result as a base58btc multibase string.
+ *
+ * @param publicKey - The raw 32-byte Ed25519 public key.
+ * @returns The `did:key:z...` identifier.
+ */
 export function publicKeyToDidKey(publicKey: Uint8Array): string {
   const multicodecPrefix = new Uint8Array([0xed, 0x01]);
-  const multicodecKey = new Uint8Array(
-    multicodecPrefix.length + publicKey.length
-  );
+  const multicodecKey = new Uint8Array(multicodecPrefix.length + publicKey.length);
   multicodecKey.set(multicodecPrefix);
   multicodecKey.set(publicKey, multicodecPrefix.length);
 
   return `did:key:${base58btcEncode(multicodecKey)}`;
 }
 
+/**
+ * Build a `did:web` identifier from a domain and a URL-style path,
+ * translating path separators (`/`) into the `:` segment delimiter
+ * required by the did:web method.
+ *
+ * @param domain - The host (and optional encoded port) for the DID.
+ * @param path - A URL-style path such as `user/abc`.
+ * @returns The `did:web:...` identifier.
+ */
 export function buildDid(domain: string, path: string): string {
   // did:web encodes path segments with `:`, not `/`. Translate so callers
   // can pass familiar URL-style paths like "user/abc".

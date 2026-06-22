@@ -14,10 +14,7 @@
  * limitations under the License.
  */
 
-export {
-  buildIdentityEnvelope,
-  buildEnvelopeFromRequirements,
-} from "./builder";
+export { buildIdentityEnvelope, buildEnvelopeFromRequirements } from "./builder";
 export type { BuildEnvelopeOpts } from "./builder";
 
 export { verifyEnvelope } from "./verifier";
@@ -25,10 +22,7 @@ export type { VerifyEnvelopeOptions } from "./verifier";
 
 export { canonicalEnvelope, envelopeDigest } from "./canonicalize";
 
-export {
-  checkCredentialStatus,
-  InMemoryStatusListCache,
-} from "./revocation";
+export { checkCredentialStatus, InMemoryStatusListCache } from "./revocation";
 export type {
   StatusListCache,
   CachedStatusList,

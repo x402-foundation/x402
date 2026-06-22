@@ -15,6 +15,12 @@
  * types are present.
  */
 declare module "canonicalize" {
+  /**
+   * Produce the RFC 8785 (JCS) canonical JSON serialization of a value.
+   *
+   * @param value - The value to canonicalize.
+   * @returns The canonical JSON string, or undefined for unsupported input.
+   */
   function canonicalize(value: unknown): string | undefined;
   export default canonicalize;
 }

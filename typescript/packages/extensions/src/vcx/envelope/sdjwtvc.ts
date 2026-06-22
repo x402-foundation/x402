@@ -56,12 +56,14 @@ export interface Disclosure {
  * (ASCII bytes) is what the issuer puts into the `_sd` array of the
  * SD-JWT payload; the disclosure itself is transmitted alongside the
  * JWT separated by `~`.
+ *
+ * @param name - The claim name being disclosed.
+ * @param value - The claim value being disclosed.
+ * @param salt - Optional explicit salt; a random 16-byte base64url salt is
+ *   generated when omitted.
+ * @returns The base64url-encoded `[salt, name, value]` disclosure string.
  */
-export function buildDisclosure(
-  name: string,
-  value: unknown,
-  salt?: string,
-): string {
+export function buildDisclosure(name: string, value: unknown, salt?: string): string {
   const actualSalt = salt ?? randomBytes(16).toString("base64url");
   const json = JSON.stringify([actualSalt, name, value]);
   return Buffer.from(json, "utf8").toString("base64url");
@@ -70,6 +72,9 @@ export function buildDisclosure(
 /**
  * Hash a disclosure string per SD-JWT: SHA-256 over the ASCII bytes
  * of the base64url-encoded disclosure, output base64url-encoded.
+ *
+ * @param disclosure - The base64url-encoded disclosure string to hash.
+ * @returns The base64url-encoded SHA-256 digest of the disclosure.
  */
 export function disclosureHash(disclosure: string): string {
   return createHash("sha256").update(disclosure, "ascii").digest("base64url");
@@ -77,6 +82,9 @@ export function disclosureHash(disclosure: string): string {
 
 /**
  * Decode a base64url disclosure back into its `[salt, name, value]` parts.
+ *
+ * @param disclosure - The base64url-encoded disclosure string to decode.
+ * @returns The decoded salt, name, and value.
  */
 export function parseDisclosure(disclosure: string): Disclosure {
   let json: string;
@@ -111,6 +119,10 @@ export function parseDisclosure(disclosure: string): Disclosure {
  * The trailing key-binding JWT is identified by its 2-dot JWT shape and
  * captured separately. Empty trailing segments (from the canonical
  * trailing `~`) are dropped.
+ *
+ * @param sdjwt - The SD-JWT presentation string to parse.
+ * @returns The issuer JWT, the list of disclosure strings, and the
+ *   optional trailing key-binding JWT.
  */
 export function parseSdJwt(sdjwt: string): {
   jwt: string;
@@ -164,6 +176,11 @@ export interface VerifiedSdJwtVc {
  *    disclosure's hash isn't in the `_sd` set (i.e. a holder appended
  *    a disclosure the issuer didn't commit to).
  * 6. Return the verified disclosed claims as a flat name→value map.
+ *
+ * @param opts - The verification inputs.
+ * @param opts.sdjwt - The SD-JWT VC presentation string to verify.
+ * @param opts.resolver - The DID resolver used to verify the issuer JWS.
+ * @returns The verified payload, issuer DID, and disclosed claims.
  */
 export async function verifySdJwtVcPresentation(opts: {
   sdjwt: string;
@@ -184,9 +201,7 @@ export async function verifySdJwtVcPresentation(opts: {
   // _sd_alg defaults to sha-256 per spec; v1.0 supports only this value.
   const sdAlg = payload._sd_alg;
   if (sdAlg !== undefined && sdAlg !== "sha-256") {
-    throw new Error(
-      `SD-JWT VC: _sd_alg MUST be "sha-256" in v1; got ${JSON.stringify(sdAlg)}`,
-    );
+    throw new Error(`SD-JWT VC: _sd_alg MUST be "sha-256" in v1; got ${JSON.stringify(sdAlg)}`);
   }
 
   const sdDigests = collectSdDigests(payload);
@@ -215,6 +230,10 @@ export async function verifySdJwtVcPresentation(opts: {
  * place `_sd` inside `vc.credentialSubject` (so the disclosures map to
  * credential subject fields), but generic SD-JWT placement at the top
  * level is also accepted.
+ *
+ * @param payload - The verified issuer JWT payload to scan for `_sd`
+ *   commitments.
+ * @returns The set of `_sd` digest strings found in the payload.
  */
 function collectSdDigests(payload: Record<string, unknown>): Set<string> {
   const set = new Set<string>();
@@ -226,6 +245,13 @@ function collectSdDigests(payload: Record<string, unknown>): Set<string> {
   return set;
 }
 
+/**
+ * Add every string element of `raw` to `set`, ignoring `raw` entirely when
+ * it is not an array and skipping any non-string elements.
+ *
+ * @param raw - The candidate value expected to be an array of strings.
+ * @param set - The set to add the string elements into.
+ */
 function addStringArrayToSet(raw: unknown, set: Set<string>): void {
   if (!Array.isArray(raw)) return;
   for (const v of raw) {
@@ -242,6 +268,13 @@ function addStringArrayToSet(raw: unknown, set: Set<string>): void {
  * The caller then signs the payload (via did-jwt's `createJWT` or
  * did-jwt-vc's `createVerifiableCredentialJwt`) and assembles the
  * SD-JWT format `<jwt>~<d1>~<d2>~...`.
+ *
+ * @param opts - The issuer-subject build inputs.
+ * @param opts.subject - The base credential subject object.
+ * @param opts.selectivelyDisclosable - Field names to make selectively
+ *   disclosable (replaced by `_sd` digests in the issuer subject).
+ * @returns The issuer subject (with `_sd` digests) and the matching
+ *   disclosure strings.
  */
 export function buildSdIssuerSubject(opts: {
   subject: Record<string, unknown>;
@@ -273,6 +306,10 @@ export function buildSdIssuerSubject(opts: {
  * Concatenate a JWT and its disclosures into the canonical SD-JWT
  * format. Convenience for issuer-side composition; verification accepts
  * the same shape.
+ *
+ * @param jwt - The issuer-signed JWT.
+ * @param disclosures - The disclosure strings to append.
+ * @returns The canonical `<jwt>~<d1>~<d2>~...~` SD-JWT string.
  */
 export function composeSdJwt(jwt: string, disclosures: readonly string[]): string {
   return [jwt, ...disclosures].join("~") + "~";

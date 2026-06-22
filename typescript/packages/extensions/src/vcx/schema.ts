@@ -32,6 +32,12 @@ export interface VCXEnvelopeSchema {
   required: string[];
 }
 
+/**
+ * Build the JSON Schema describing the VCX identity envelope contract.
+ *
+ * @returns The JSON Schema object emitted alongside the extension
+ *   declaration for client-side and external envelope validation.
+ */
 export function buildVCXEnvelopeSchema(): VCXEnvelopeSchema {
   return {
     $schema: "https://json-schema.org/draft/2020-12/schema",

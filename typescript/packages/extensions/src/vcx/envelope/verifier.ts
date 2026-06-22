@@ -105,6 +105,21 @@ const KNOWN_CONDITION_KEYS = new Set([
  */
 const MAX_DELEGATION_LIFETIME_SECONDS = 30 * 24 * 60 * 60;
 
+/**
+ * Verify a VCX identity envelope against a verifier's requirements,
+ * running the four ordered checks of spec §6: principal credential,
+ * agent delegation, payment-source binding, and payment settlement.
+ * Returns on the first failing step.
+ *
+ * @param envelope - The identity envelope to verify.
+ * @param requirements - The verifier's identity requirements (accepted
+ *   issuers, minimum KYC level, required claims).
+ * @param paymentSender - The address/identifier that actually originated
+ *   the x402 payment, bound against the envelope's payment source.
+ * @param options - Additional verification context (payment amount, daily
+ *   limit store, strict-conditions flag, caches, and fetch override).
+ * @returns The full verification result, including each step's outcome.
+ */
 export async function verifyEnvelope(
   envelope: IdentityEnvelope,
   requirements: IdentityRequirements,
@@ -170,6 +185,18 @@ interface Step1Result {
   credentialNbf?: number;
 }
 
+/**
+ * Step 1 of {@link verifyEnvelope}: verify the principal credential's JWS,
+ * resolve and match the issuer against the trust list (with optional
+ * didDocumentHash pinning), run the revocation check, and confirm the
+ * subject, KYC level, and disclosed/required claims (spec §6.1, §8, §11).
+ *
+ * @param envelope - The identity envelope being verified.
+ * @param requirements - The verifier's identity requirements.
+ * @param options - Additional verification context (caches, fetch override).
+ * @returns The step result plus, on success, the verified credential
+ *   subject and its `nbf` issuance baseline for step 2.
+ */
 async function verifyPrincipalCredential(
   envelope: IdentityEnvelope,
   requirements: IdentityRequirements,
@@ -184,8 +211,7 @@ async function verifyPrincipalCredential(
   // two enum values. v0.2.0 verifies "jwt-vc" only; "sd-jwt-vc" is
   // typed-and-accepted by the envelope shape but its verification path
   // is deferred to v1.0.0 (PR #6 in the v1.0 roadmap).
-  const format = (envelope.principal as { credentialFormat?: unknown })
-    .credentialFormat;
+  const format = (envelope.principal as { credentialFormat?: unknown }).credentialFormat;
   if (format !== "jwt-vc" && format !== "sd-jwt-vc") {
     result.error = `principal.credentialFormat MUST be "jwt-vc" or "sd-jwt-vc" (spec §6.1); got ${
       typeof format === "string" ? `"${format}"` : String(format)
@@ -214,7 +240,7 @@ async function verifyPrincipalCredential(
       result.error = `Trust-list resolution failed: ${err instanceof Error ? err.message : String(err)}`;
       return { result };
     }
-    const matchedEntry = trustList.find((e) => e.did === issuer);
+    const matchedEntry = trustList.find(e => e.did === issuer);
     if (!matchedEntry) {
       result.error = `Issuer ${issuer} not in resolved trust list (${trustList.length} entries)`;
       return { result };
@@ -261,9 +287,7 @@ async function verifyPrincipalCredential(
         typeof subject.kycLevel !== "string" ||
         !meetsKycRequirement(subject.kycLevel, requirements.minKycLevel)
       ) {
-        const actual = typeof subject.kycLevel === "string"
-          ? subject.kycLevel
-          : "(missing)";
+        const actual = typeof subject.kycLevel === "string" ? subject.kycLevel : "(missing)";
         result.error = `Credential kycLevel "${actual}" does not meet minimum ${requirements.minKycLevel}`;
         return { result };
       }
@@ -276,9 +300,7 @@ async function verifyPrincipalCredential(
     // verifySdJwtVcPresentation; we just check the envelope's reported
     // disclosed values match what the presentation actually disclosed.
     if (format === "sd-jwt-vc") {
-      for (const [claim, disclosedValue] of Object.entries(
-        envelope.principal.disclosed,
-      )) {
+      for (const [claim, disclosedValue] of Object.entries(envelope.principal.disclosed)) {
         if (!(claim in disclosed)) {
           result.error = `Disclosed claim "${claim}" was not actually disclosed by the SD-JWT VC presentation`;
           return { result };
@@ -290,9 +312,7 @@ async function verifyPrincipalCredential(
       }
     } else {
       const subjectClaims = subject as unknown as Record<string, unknown>;
-      for (const [claim, disclosedValue] of Object.entries(
-        envelope.principal.disclosed,
-      )) {
+      for (const [claim, disclosedValue] of Object.entries(envelope.principal.disclosed)) {
         if (!(claim in subjectClaims)) {
           result.error = `Disclosed claim "${claim}" is not present in credential`;
           return { result };
@@ -333,6 +353,19 @@ interface NormalizedCredential {
   credentialNbf?: number;
 }
 
+/**
+ * Verify the principal credential by format and normalize the result into
+ * a common shape. For `sd-jwt-vc` this verifies the SD-JWT VC presentation
+ * and overlays the verified disclosures; for `jwt-vc` it uses did-jwt-vc's
+ * `verifyCredential`.
+ *
+ * @param envelope - The identity envelope whose principal credential is
+ *   verified.
+ * @param resolver - The DID resolver used to verify the credential JWS.
+ * @param format - The credential serialization format to verify.
+ * @returns The normalized credential (issuer, payload, subject, disclosed
+ *   claims, `nbf`) on success, or an error result.
+ */
 async function verifyAndNormalize(
   envelope: IdentityEnvelope,
   resolver: Resolvable,
@@ -356,14 +389,11 @@ async function verifyAndNormalize(
     // the verified disclosures. Fields needed downstream (id, kycLevel,
     // delegatedTo) may live in either the base or the disclosures
     // depending on the issuer's framing.
-    const vc = v.payload.vc as
-      | { credentialSubject?: Record<string, unknown> }
-      | undefined;
+    const vc = v.payload.vc as { credentialSubject?: Record<string, unknown> } | undefined;
     const baseSubject = { ...(vc?.credentialSubject ?? {}) };
     delete baseSubject._sd;
     delete baseSubject._sd_alg;
-    const subject = { ...baseSubject, ...v.disclosed } as unknown as
-      VCXCredentialSubject;
+    const subject = { ...baseSubject, ...v.disclosed } as unknown as VCXCredentialSubject;
     return {
       ok: true,
       issuer: v.issuer,
@@ -379,15 +409,11 @@ async function verifyAndNormalize(
     return { ok: false, error: "Credential JWT signature verification failed" };
   }
   const issuerRaw = verified.verifiableCredential.issuer;
-  const issuer =
-    typeof issuerRaw === "string"
-      ? issuerRaw
-      : (issuerRaw as { id?: string })?.id;
+  const issuer = typeof issuerRaw === "string" ? issuerRaw : (issuerRaw as { id?: string })?.id;
   if (!issuer) {
     return { ok: false, error: "Verified credential has no issuer" };
   }
-  const subject = verified.verifiableCredential
-    .credentialSubject as VCXCredentialSubject;
+  const subject = verified.verifiableCredential.credentialSubject as VCXCredentialSubject;
   return {
     ok: true,
     issuer,
@@ -401,6 +427,14 @@ async function verifyAndNormalize(
   };
 }
 
+/**
+ * Read a finite numeric epoch-seconds claim from a JWT payload.
+ *
+ * @param payload - The JWT payload to read from, if any.
+ * @param key - The claim name to read (`"nbf"` or `"exp"`).
+ * @returns The numeric claim value, or `undefined` when absent or not a
+ *   finite number.
+ */
 function readEpochClaim(
   payload: Record<string, unknown> | undefined,
   key: "nbf" | "exp",
@@ -409,6 +443,24 @@ function readEpochClaim(
   return typeof value === "number" && Number.isFinite(value) ? value : undefined;
 }
 
+/**
+ * Step 2 of {@link verifyEnvelope}: verify the agent delegation embedded in
+ * the credential subject. Enforces the `vc-embedded` proof format, agent-DID
+ * and payment-source binding, the fail-closed condition whitelist, the
+ * `expiresAt` 30-day cap, and the per-transaction / network / asset / daily
+ * limits (spec §9.2, §10, §13.4).
+ *
+ * @param args - The delegation-verification inputs.
+ * @param args.envelope - The identity envelope being verified.
+ * @param args.subject - The verified credential subject carrying the
+ *   delegation.
+ * @param args.credentialNbf - The credential's `nbf` issuance baseline used
+ *   for the 30-day cap.
+ * @param args.options - Additional verification context (payment amount,
+ *   daily limit store, strict-conditions flag).
+ * @returns The step result, successful only when every present condition is
+ *   satisfied.
+ */
 async function verifyAgentDelegation(args: {
   envelope: IdentityEnvelope;
   subject: VCXCredentialSubject;
@@ -424,8 +476,7 @@ async function verifyAgentDelegation(args: {
   // Spec §6.2 / §10: delegationProofFormat MUST be "vc-embedded" in v1.
   // Reserved values (ucan, cacao, hdp) are not permitted; v1 verifiers
   // MUST reject any other value rather than attempt to interpret it.
-  const proofFormat = (envelope.agent as { delegationProofFormat?: unknown })
-    .delegationProofFormat;
+  const proofFormat = (envelope.agent as { delegationProofFormat?: unknown }).delegationProofFormat;
   if (proofFormat !== "vc-embedded") {
     step.error = `agent.delegationProofFormat MUST be "vc-embedded" in v1 (spec §10); got ${
       typeof proofFormat === "string" ? `"${proofFormat}"` : String(proofFormat)
@@ -454,8 +505,7 @@ async function verifyAgentDelegation(args: {
   const conditions = subject.delegatedTo.conditions;
   if (!conditions) {
     // No conditions block means no expiresAt, which is a spec MUST.
-    step.error =
-      "Delegation has no conditions block; spec §9.2 requires `expiresAt` to be present";
+    step.error = "Delegation has no conditions block; spec §9.2 requires `expiresAt` to be present";
     return step;
   }
 
@@ -486,12 +536,10 @@ async function verifyAgentDelegation(args: {
     return step;
   }
   if (credentialNbf === undefined) {
-    step.error =
-      "Cannot enforce spec §9.2 30-day expiresAt cap: credential JWT has no `nbf` claim";
+    step.error = "Cannot enforce spec §9.2 30-day expiresAt cap: credential JWT has no `nbf` claim";
     return step;
   }
-  const maxExpiresAtMs =
-    (credentialNbf + MAX_DELEGATION_LIFETIME_SECONDS) * 1000;
+  const maxExpiresAtMs = (credentialNbf + MAX_DELEGATION_LIFETIME_SECONDS) * 1000;
   if (expiresAtMs > maxExpiresAtMs) {
     step.error = `Delegation expiresAt (${expiresAt}) exceeds the 30-day cap from credential issuance (spec §9.2)`;
     return step;
@@ -524,8 +572,7 @@ async function verifyAgentDelegation(args: {
   // when present. Envelope-layer comparison; no payment-details thread.
   if (conditions.allowedNetworks !== undefined) {
     if (!Array.isArray(conditions.allowedNetworks)) {
-      step.error =
-        "Delegation conditions.allowedNetworks MUST be an array of CAIP-2 strings";
+      step.error = "Delegation conditions.allowedNetworks MUST be an array of CAIP-2 strings";
       return step;
     }
     if (!conditions.allowedNetworks.includes(envelope.paymentSource.network)) {
@@ -563,7 +610,6 @@ async function verifyAgentDelegation(args: {
           "Delegation conditions.maxDaily is set but no dailyLimitStore was provided and strictDelegationConditions is true (spec §9.2)";
         return step;
       }
-      // eslint-disable-next-line no-console
       console.warn(
         "VCX: delegation carries maxDaily but no DailyLimitStore configured; skipping the check (set strictDelegationConditions: true to fail-closed)",
       );
@@ -603,6 +649,16 @@ async function verifyAgentDelegation(args: {
   return step;
 }
 
+/**
+ * Step 3 of {@link verifyEnvelope}: bind the envelope's payment source to
+ * the actual payment sender. Confirms `sourceId` matches the sender and
+ * that it also matches the address component of `accountId`, closing the
+ * gap where step 2 trusts `accountId` while step 3 trusts `sourceId`.
+ *
+ * @param envelope - The identity envelope being verified.
+ * @param paymentSender - The address/identifier that originated the payment.
+ * @returns The step result, successful only when both bindings match.
+ */
 function verifyPaymentSourceBinding(
   envelope: IdentityEnvelope,
   paymentSender: string,
@@ -627,8 +683,7 @@ function verifyPaymentSourceBinding(
   // another (Step 3 uses sourceId), defeating the integrity guarantee that
   // the credential authorised payment from this specific source.
   const accountIdSegments = envelope.paymentSource.accountId.split(":");
-  const accountIdAddress =
-    accountIdSegments[accountIdSegments.length - 1].toLowerCase();
+  const accountIdAddress = accountIdSegments[accountIdSegments.length - 1].toLowerCase();
   if (accountIdAddress !== sourceId) {
     step.error = `paymentSource.sourceId ${envelope.paymentSource.sourceId} does not match the address component of paymentSource.accountId ${envelope.paymentSource.accountId}`;
     return step;
@@ -638,6 +693,14 @@ function verifyPaymentSourceBinding(
   return step;
 }
 
+/**
+ * Compare two disclosed claim values for equality. Uses `Object.is` for
+ * primitives and a stable JSON-stringify comparison for objects.
+ *
+ * @param left - The first claim value to compare.
+ * @param right - The second claim value to compare.
+ * @returns `true` when the values are considered equal.
+ */
 function claimsEqual(left: unknown, right: unknown): boolean {
   if (Object.is(left, right)) return true;
   if (!left || !right) return false;

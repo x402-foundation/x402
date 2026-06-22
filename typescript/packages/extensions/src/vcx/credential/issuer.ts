@@ -29,10 +29,15 @@ import { buildSdIssuerSubject, composeSdJwt } from "../envelope/sdjwtvc";
  */
 const DEFAULT_EXPIRES_IN_SECONDS = 24 * 60 * 60;
 
+/**
+ * Build a did-jwt-vc {@link Issuer} from a VCX issuer configuration,
+ * decoding the hex-encoded Ed25519 private key into an EdDSA signer.
+ *
+ * @param config - The issuer configuration, including its DID and hex private key.
+ * @returns An {@link Issuer} ready to sign verifiable credentials.
+ */
 export function createVCXIssuer(config: IssuerConfig): Issuer {
-  const privateKeyBytes = Uint8Array.from(
-    Buffer.from(config.privateKeyHex, "hex"),
-  );
+  const privateKeyBytes = Uint8Array.from(Buffer.from(config.privateKeyHex, "hex"));
   return {
     did: config.did,
     signer: EdDSASigner(privateKeyBytes),
@@ -63,6 +68,20 @@ export interface IssueCredentialOptions {
   selectivelyDisclosable?: readonly string[];
 }
 
+/**
+ * Issue a signed X402 identity verifiable credential for the given
+ * subject. Emits a standard `jwt-vc` by default, or an `sd-jwt-vc` with
+ * selective-disclosure digest commitments when requested, returning the
+ * serialised credential alongside its computed expiry and format.
+ *
+ * @param opts - The issuance options.
+ * @param opts.issuerConfig - The issuer configuration used to sign the credential.
+ * @param opts.subject - The credential subject to embed.
+ * @param opts.expiresInSeconds - Credential lifetime in seconds; defaults to 24 hours.
+ * @param opts.format - The serialisation format (`"jwt-vc"` or `"sd-jwt-vc"`); defaults to `"jwt-vc"`.
+ * @param opts.selectivelyDisclosable - Subject claim names to make selectively disclosable under `sd-jwt-vc`.
+ * @returns The serialised credential, its ISO 8601 expiry, and the emitted format.
+ */
 export async function issueCredential(
   opts: IssueCredentialOptions,
 ): Promise<{ jwt: string; expiresAt: string; format: "jwt-vc" | "sd-jwt-vc" }> {

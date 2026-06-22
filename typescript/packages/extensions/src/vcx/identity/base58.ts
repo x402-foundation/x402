@@ -14,17 +14,30 @@
  * limitations under the License.
  */
 
-const BASE58_BTC_ALPHABET =
-  "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
+const BASE58_BTC_ALPHABET = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
 
 const BASE58_BTC_LOOKUP = new Map(
-  [...BASE58_BTC_ALPHABET].map((character, index) => [character, index])
+  [...BASE58_BTC_ALPHABET].map((character, index) => [character, index]),
 );
 
+/**
+ * Encode bytes as a base58btc multibase string, prefixing the result
+ * with the `z` multibase code point per the multibase specification.
+ *
+ * @param bytes - The raw bytes to encode.
+ * @returns The `z`-prefixed base58btc multibase string.
+ */
 export function base58btcEncode(bytes: Uint8Array): string {
   return `z${base58Encode(bytes)}`;
 }
 
+/**
+ * Decode a base58btc multibase string back to its raw bytes, requiring
+ * and stripping the leading `z` multibase code point.
+ *
+ * @param value - The `z`-prefixed base58btc multibase string.
+ * @returns The decoded raw bytes.
+ */
 export function base58btcDecode(value: string): Uint8Array {
   if (!value.startsWith("z")) {
     throw new Error("Expected base58btc multibase value");
@@ -32,6 +45,13 @@ export function base58btcDecode(value: string): Uint8Array {
   return base58Decode(value.slice(1));
 }
 
+/**
+ * Encode bytes as a base58 string using the Bitcoin alphabet, preserving
+ * leading zero bytes as leading `1` characters.
+ *
+ * @param bytes - The raw bytes to encode.
+ * @returns The base58-encoded string.
+ */
 export function base58Encode(bytes: Uint8Array): string {
   let zeroes = 0;
   while (zeroes < bytes.length && bytes[zeroes] === 0) zeroes += 1;
@@ -59,6 +79,14 @@ export function base58Encode(bytes: Uint8Array): string {
   return encoded;
 }
 
+/**
+ * Decode a base58 string (Bitcoin alphabet) back to its raw bytes,
+ * restoring leading `1` characters as leading zero bytes. Throws on any
+ * character outside the base58 alphabet.
+ *
+ * @param value - The base58-encoded string.
+ * @returns The decoded raw bytes.
+ */
 function base58Decode(value: string): Uint8Array {
   if (value.length === 0) return new Uint8Array();
 

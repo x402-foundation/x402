@@ -18,11 +18,7 @@ import type { ClientExtension } from "@x402/core/client";
 import { buildEnvelopeFromRequirements } from "./envelope/builder";
 import { encodeVCXHeader, VCX_HEADER_NAME } from "./header";
 import { VCX_EXTENSION_KEY } from "./declare";
-import type {
-  IdentityRequirements,
-  PrincipalClaims,
-  PaymentSourceLayer,
-} from "./types";
+import type { IdentityRequirements, PrincipalClaims, PaymentSourceLayer } from "./types";
 import type { AgentIdentity } from "./identity/agent";
 
 export interface CreateVCXClientExtensionOptions {
@@ -70,6 +66,12 @@ export interface CreateVCXClientExtensionOptions {
  *
  * const client = new x402HTTPClient(...).registerExtension(vcx);
  * ```
+ *
+ * @param options - Principal credential, principal DID, disclosed claims,
+ *   agent identity, payment-source binding, and optional delegation proof
+ *   used to construct the identity envelope.
+ * @returns A client extension that attaches the VCX identity header when a
+ *   402 response declares the VCX extension.
  */
 export function createVCXClientExtension(
   options: CreateVCXClientExtensionOptions,
@@ -99,8 +101,7 @@ export function createVCXClientExtension(
               principalClaims: options.principalClaims,
               agentDid: options.agent.did,
               agentName: options.agent.name,
-              delegationProof:
-                options.delegationProof ?? options.principalCredential,
+              delegationProof: options.delegationProof ?? options.principalCredential,
               paymentSource: options.paymentSource,
             },
             declared.info,

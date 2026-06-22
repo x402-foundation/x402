@@ -34,13 +34,13 @@ import {
   DisclosureTier,
   type VCXRequestContext,
 } from "../src/vcx";
-import {
-  trustedIssuer,
-  principalDid,
-  principalClaims,
-  paymentSource,
-} from "./vcx-test-utils";
+import { trustedIssuer, principalDid, principalClaims, paymentSource } from "./vcx-test-utils";
 
+/**
+ * Issues a credential and returns a VCX client extension for the end-to-end flow.
+ *
+ * @returns The configured VCX client extension.
+ */
 async function setupClient() {
   const agent = createAgent("e2e-agent");
   const delegation = buildDelegation({
@@ -88,6 +88,14 @@ const extractFromPayment = (ctx: VCXRequestContext): string => {
   }
 };
 
+/**
+ * Builds a server request context whose adapter exposes the given VCX header and
+ * a base64 X-PAYMENT header carrying the supplied sender address.
+ *
+ * @param vcxHeader - The VCX header value to return for the `vcx` header lookup.
+ * @param sender - The payment sender address to embed in the X-PAYMENT header.
+ * @returns A context object with an `adapter.getHeader` lookup.
+ */
 function buildServerContext(vcxHeader: string, sender: string) {
   const paymentHeader = Buffer.from(
     JSON.stringify({ payload: { authorization: { from: sender } } }),
@@ -112,10 +120,9 @@ describe("VCX end-to-end via extension factories", () => {
       nonceStorage: new InMemoryNonceStorage(),
     });
 
-    const clientResult = (await clientExt.transportHooks!.http!.onPaymentRequired!(
-      undefined,
-      { paymentRequired: { extensions: declared } },
-    )) as { headers: Record<string, string> };
+    const clientResult = (await clientExt.transportHooks!.http!.onPaymentRequired!(undefined, {
+      paymentRequired: { extensions: declared },
+    })) as { headers: Record<string, string> };
 
     const headerValue = clientResult.headers[VCX_HEADER_NAME];
     expect(headerValue).toBeTypeOf("string");
@@ -135,10 +142,9 @@ describe("VCX end-to-end via extension factories", () => {
       nonceStorage: new InMemoryNonceStorage(),
     });
 
-    const clientResult = (await clientExt.transportHooks!.http!.onPaymentRequired!(
-      undefined,
-      { paymentRequired: { extensions: declared } },
-    )) as { headers: Record<string, string> };
+    const clientResult = (await clientExt.transportHooks!.http!.onPaymentRequired!(undefined, {
+      paymentRequired: { extensions: declared },
+    })) as { headers: Record<string, string> };
 
     const envelope = parseVCXHeader(clientResult.headers[VCX_HEADER_NAME]);
     envelope.principal.disclosed.ageOver18 = false;

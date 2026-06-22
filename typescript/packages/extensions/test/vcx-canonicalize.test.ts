@@ -125,7 +125,9 @@ describe("canonicalEnvelope", () => {
     const json = new TextDecoder().decode(bytes);
     // Top-level keys MUST appear sorted: agent, paymentSource, principal,
     // protocol, transactionId, vcxPresent, version.
-    const topLevelKeyOrder = json.match(/"(agent|paymentSource|principal|protocol|transactionId|vcxPresent|version)"\s*:/g);
+    const topLevelKeyOrder = json.match(
+      /"(agent|paymentSource|principal|protocol|transactionId|vcxPresent|version)"\s*:/g,
+    );
     expect(topLevelKeyOrder).toEqual([
       '"agent":',
       '"paymentSource":',

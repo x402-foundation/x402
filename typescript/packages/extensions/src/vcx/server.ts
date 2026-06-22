@@ -18,16 +18,8 @@ import type { ResourceServerExtension } from "@x402/core/types";
 import { verifyEnvelope } from "./envelope/verifier";
 import { parseVCXHeader, VCX_HEADER_NAME } from "./header";
 import { VCX_EXTENSION_KEY, type VCXDeclaration } from "./declare";
-import {
-  type NonceStorage,
-  type DailyLimitStore,
-  DEFAULT_NONCE_FRESHNESS_MS,
-} from "./storage";
-import type {
-  IdentityEnvelope,
-  FullVerificationResult,
-  PaymentDetails,
-} from "./types";
+import { type NonceStorage, type DailyLimitStore, DEFAULT_NONCE_FRESHNESS_MS } from "./storage";
+import type { IdentityEnvelope, FullVerificationResult, PaymentDetails } from "./types";
 
 /**
  * Request context surface VCX needs during `onProtectedRequest`. A thin
@@ -61,9 +53,7 @@ export interface CreateVCXResourceServerExtensionOptions {
    * - `exact_solana`: read the transaction fee-payer, the SystemProgram
    *   transfer amount, and the asset (typically SOL or a token mint).
    */
-  extractPaymentDetails?: (
-    ctx: VCXRequestContext,
-  ) => PaymentDetails | Promise<PaymentDetails>;
+  extractPaymentDetails?: (ctx: VCXRequestContext) => PaymentDetails | Promise<PaymentDetails>;
 
   /**
    * Extract the payment sender identifier from the request context. Used
@@ -77,9 +67,7 @@ export interface CreateVCXResourceServerExtensionOptions {
    * those specific checks. Kept for back-compat in v0.x; will be removed
    * in v2.0.
    */
-  extractPaymentSender?: (
-    ctx: VCXRequestContext,
-  ) => string | Promise<string>;
+  extractPaymentSender?: (ctx: VCXRequestContext) => string | Promise<string>;
 
   /**
    * Storage for transactionId uniqueness enforcement (spec §13.1).
@@ -118,10 +106,7 @@ export interface CreateVCXResourceServerExtensionOptions {
    * Invoked after every verification (success or failure) for audit
    * logging (spec §16).
    */
-  onVerify?: (
-    envelope: IdentityEnvelope,
-    verification: FullVerificationResult,
-  ) => void;
+  onVerify?: (envelope: IdentityEnvelope, verification: FullVerificationResult) => void;
 }
 
 /**
@@ -148,6 +133,13 @@ export interface CreateVCXResourceServerExtensionOptions {
  * const server = new x402HTTPResourceServer(resourceServer, routes)
  *   .registerExtension(vcx);
  * ```
+ *
+ * @param options - Payment-detail/sender extractors, replay-protection
+ *   nonce storage, optional nonce freshness window, optional daily-limit
+ *   store, the strict-delegation-conditions toggle, and an optional
+ *   post-verification audit callback.
+ * @returns A resource-server extension that parses and verifies the VCX
+ *   identity header on each protected request, aborting on failure.
  */
 export function createVCXResourceServerExtension(
   options: CreateVCXResourceServerExtensionOptions,
@@ -157,7 +149,7 @@ export function createVCXResourceServerExtension(
   return {
     key: VCX_EXTENSION_KEY,
 
-    enrichPaymentRequiredResponse: async (declaration) => {
+    enrichPaymentRequiredResponse: async declaration => {
       const decl = declaration as VCXDeclaration;
       return { info: decl.info, schema: decl.schema };
     },
@@ -167,7 +159,7 @@ export function createVCXResourceServerExtension(
         onProtectedRequest: async (
           declaration: unknown,
           context: unknown,
-          _routeConfig: unknown,
+          _: unknown,
         ): Promise<void | { abort: true; reason: string }> => {
           const decl = declaration as VCXDeclaration;
           const ctx = context as {
@@ -175,9 +167,8 @@ export function createVCXResourceServerExtension(
           };
 
           const adapterCtx: VCXRequestContext = {
-            getHeader: (name) =>
-              ctx.adapter.getHeader(name) ??
-              ctx.adapter.getHeader(name.toLowerCase()),
+            getHeader: name =>
+              ctx.adapter.getHeader(name) ?? ctx.adapter.getHeader(name.toLowerCase()),
           };
 
           const headerValue = adapterCtx.getHeader(VCX_HEADER_NAME);
@@ -189,9 +180,7 @@ export function createVCXResourceServerExtension(
           try {
             envelope = parseVCXHeader(headerValue);
           } catch (err) {
-            return abort(
-              `malformed envelope: ${err instanceof Error ? err.message : String(err)}`,
-            );
+            return abort(`malformed envelope: ${err instanceof Error ? err.message : String(err)}`);
           }
 
           let paymentDetails: PaymentDetails;
@@ -213,22 +202,16 @@ export function createVCXResourceServerExtension(
             );
           }
 
-          const verification = await verifyEnvelope(
-            envelope,
-            decl.info,
-            paymentDetails.sender,
-            {
-              paymentAmount: paymentDetails.amount,
-              dailyLimitStore: options.dailyLimitStore,
-              strictDelegationConditions:
-                options.strictDelegationConditions ?? false,
-            },
-          );
+          const verification = await verifyEnvelope(envelope, decl.info, paymentDetails.sender, {
+            paymentAmount: paymentDetails.amount,
+            dailyLimitStore: options.dailyLimitStore,
+            strictDelegationConditions: options.strictDelegationConditions ?? false,
+          });
 
           options.onVerify?.(envelope, verification);
 
           if (!verification.valid) {
-            const failed = verification.steps.find((s) => !s.success);
+            const failed = verification.steps.find(s => !s.success);
             return abort(
               `verification failed at ${failed?.step ?? "unknown"}: ${failed?.error ?? "no error message"}`,
             );
@@ -255,6 +238,13 @@ export function createVCXResourceServerExtension(
   };
 }
 
+/**
+ * Build an abort result that rejects the protected request, prefixing the
+ * reason with `VCX:` for log attribution.
+ *
+ * @param reason - Human-readable explanation of why the request was rejected.
+ * @returns An abort directive carrying the namespaced reason.
+ */
 function abort(reason: string): { abort: true; reason: string } {
   return { abort: true, reason: `VCX: ${reason}` };
 }

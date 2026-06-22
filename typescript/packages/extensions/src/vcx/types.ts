@@ -39,11 +39,7 @@ export interface IdentityRequirements {
 
 // --- KYC Levels ---
 
-export type KycLevel =
-  | "Unverified"
-  | "EmailVerified"
-  | "IdentityVerified"
-  | "BusinessVerified";
+export type KycLevel = "Unverified" | "EmailVerified" | "IdentityVerified" | "BusinessVerified";
 
 export const KYC_LEVEL_ORDER: Record<KycLevel, number> = {
   Unverified: 0,
@@ -55,13 +51,13 @@ export const KYC_LEVEL_ORDER: Record<KycLevel, number> = {
 // --- Principal Layer ---
 
 export interface PrincipalClaims {
+  [key: string]: unknown;
   kycLevel?: KycLevel;
   ageOver18?: boolean;
   jurisdiction?: string;
   paymentsEnabled?: boolean;
   emailVerified?: boolean;
   accountType?: string;
-  [key: string]: unknown;
 }
 
 /**

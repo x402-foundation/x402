@@ -24,6 +24,14 @@ export interface AgentIdentity {
   keyPair: Ed25519KeyPair;
 }
 
+/**
+ * Create a new agent identity by generating a fresh Ed25519 key pair and
+ * associating it with a human-readable name. The resulting identity's DID
+ * is the key pair's `did:key`.
+ *
+ * @param name - A human-readable label for the agent.
+ * @returns The agent identity, including its DID, name, and key material.
+ */
 export function createAgent(name: string): AgentIdentity {
   const keyPair = generateEd25519KeyPair();
   return {
@@ -34,6 +42,17 @@ export function createAgent(name: string): AgentIdentity {
   };
 }
 
+/**
+ * Build an agent delegation record describing the agent a principal
+ * delegates to, along with the optional payment source and conditions
+ * that constrain the delegation.
+ *
+ * @param opts - The delegation parameters.
+ * @param opts.agentDid - The DID of the agent being delegated to.
+ * @param opts.paymentSource - Optional payment source authorised for the delegation.
+ * @param opts.conditions - Optional conditions constraining the delegation.
+ * @returns The assembled agent delegation record.
+ */
 export function buildDelegation(opts: {
   agentDid: string;
   paymentSource?: string;

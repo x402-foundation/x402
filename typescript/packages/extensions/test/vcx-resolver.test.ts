@@ -23,6 +23,13 @@ const dummyParsed = {
 const dummyOptions = { accept: "application/did+json" };
 const dummyResolver = {} as Parameters<ReturnType<typeof buildHardenedWebResolver>>[2];
 
+/**
+ * Builds a 200 JSON `Response` with the DID-document content type for the given body.
+ *
+ * @param body - The value to JSON-serialize as the response body.
+ * @param init - Optional response init overrides merged over the defaults.
+ * @returns A `Response` carrying the serialized body.
+ */
 function jsonResponse(body: unknown, init?: ResponseInit): Response {
   return new Response(JSON.stringify(body), {
     status: 200,
@@ -39,15 +46,15 @@ describe("didWebToUrl", () => {
   });
 
   it("maps a path-bearing did:web to /path/segments/did.json", () => {
-    expect(
-      didWebToUrl("did:web:example.com:users:alice").toString(),
-    ).toBe("https://example.com/users/alice/did.json");
+    expect(didWebToUrl("did:web:example.com:users:alice").toString()).toBe(
+      "https://example.com/users/alice/did.json",
+    );
   });
 
   it("URL-decodes a port-bearing domain (%3A)", () => {
-    expect(
-      didWebToUrl("did:web:example.com%3A8443:users:alice").toString(),
-    ).toBe("https://example.com:8443/users/alice/did.json");
+    expect(didWebToUrl("did:web:example.com%3A8443:users:alice").toString()).toBe(
+      "https://example.com:8443/users/alice/did.json",
+    );
   });
 
   it("rejects identifiers that don't start with did:web:", () => {
@@ -67,12 +74,7 @@ describe("buildHardenedWebResolver — happy path", () => {
         verificationMethod: [],
       })) as unknown as typeof fetch;
     const resolver = buildHardenedWebResolver({ fetchImpl });
-    const result = await resolver(
-      "did:web:example.com",
-      dummyParsed,
-      dummyResolver,
-      dummyOptions,
-    );
+    const result = await resolver("did:web:example.com", dummyParsed, dummyResolver, dummyOptions);
     expect(result.didResolutionMetadata.error).toBeUndefined();
     expect(result.didDocument?.id).toBe("did:web:example.com");
   });
@@ -99,9 +101,7 @@ describe("buildHardenedWebResolver — TLS / scheme hardening (§7.2)", () => {
       dummyOptions,
     );
     expect(result.didResolutionMetadata.error).toBe("notFound");
-    expect(result.didResolutionMetadata.message ?? "").toMatch(
-      /redirect refused: http/,
-    );
+    expect(result.didResolutionMetadata.message ?? "").toMatch(/redirect refused: http/);
     expect(callCount).toBe(1);
   });
 
@@ -123,9 +123,7 @@ describe("buildHardenedWebResolver — TLS / scheme hardening (§7.2)", () => {
       dummyOptions,
     );
     expect(result.didResolutionMetadata.error).toBe("notFound");
-    expect(result.didResolutionMetadata.message ?? "").toMatch(
-      /cross-host redirect refused/,
-    );
+    expect(result.didResolutionMetadata.message ?? "").toMatch(/cross-host redirect refused/);
   });
 
   it("follows a same-host redirect within the redirect budget", async () => {
@@ -171,31 +169,18 @@ describe("buildHardenedWebResolver — TLS / scheme hardening (§7.2)", () => {
       fetchImpl,
       maxSameHostRedirects: 2,
     });
-    const result = await resolver(
-      "did:web:example.com",
-      dummyParsed,
-      dummyResolver,
-      dummyOptions,
-    );
+    const result = await resolver("did:web:example.com", dummyParsed, dummyResolver, dummyOptions);
     expect(result.didResolutionMetadata.error).toBe("notFound");
-    expect(result.didResolutionMetadata.message ?? "").toMatch(
-      /maxSameHostRedirects/,
-    );
+    expect(result.didResolutionMetadata.message ?? "").toMatch(/maxSameHostRedirects/);
   });
 
   it("rejects a 3xx with no Location header", async () => {
-    const fetchImpl = (async () =>
-      new Response("", { status: 301 })) as unknown as typeof fetch;
+    const fetchImpl = (async () => new Response("", { status: 301 })) as unknown as typeof fetch;
     const resolver = buildHardenedWebResolver({
       fetchImpl,
       maxSameHostRedirects: 1,
     });
-    const result = await resolver(
-      "did:web:example.com",
-      dummyParsed,
-      dummyResolver,
-      dummyOptions,
-    );
+    const result = await resolver("did:web:example.com", dummyParsed, dummyResolver, dummyOptions);
     expect(result.didResolutionMetadata.error).toBe("notFound");
     expect(result.didResolutionMetadata.message ?? "").toMatch(/no Location header/);
   });
@@ -206,12 +191,7 @@ describe("buildHardenedWebResolver — body validation", () => {
     const fetchImpl = (async () =>
       new Response("server exploded", { status: 500 })) as unknown as typeof fetch;
     const resolver = buildHardenedWebResolver({ fetchImpl });
-    const result = await resolver(
-      "did:web:example.com",
-      dummyParsed,
-      dummyResolver,
-      dummyOptions,
-    );
+    const result = await resolver("did:web:example.com", dummyParsed, dummyResolver, dummyOptions);
     expect(result.didResolutionMetadata.error).toBe("notFound");
     expect(result.didResolutionMetadata.message ?? "").toMatch(/HTTP 500/);
   });
@@ -220,12 +200,7 @@ describe("buildHardenedWebResolver — body validation", () => {
     const fetchImpl = (async () =>
       new Response("<html></html>", { status: 200 })) as unknown as typeof fetch;
     const resolver = buildHardenedWebResolver({ fetchImpl });
-    const result = await resolver(
-      "did:web:example.com",
-      dummyParsed,
-      dummyResolver,
-      dummyOptions,
-    );
+    const result = await resolver("did:web:example.com", dummyParsed, dummyResolver, dummyOptions);
     expect(result.didResolutionMetadata.error).toBe("notFound");
     expect(result.didResolutionMetadata.message ?? "").toMatch(/not valid JSON/);
   });
@@ -234,15 +209,8 @@ describe("buildHardenedWebResolver — body validation", () => {
     const fetchImpl = (async () =>
       jsonResponse({ id: "did:web:other.com" })) as unknown as typeof fetch;
     const resolver = buildHardenedWebResolver({ fetchImpl });
-    const result = await resolver(
-      "did:web:example.com",
-      dummyParsed,
-      dummyResolver,
-      dummyOptions,
-    );
+    const result = await resolver("did:web:example.com", dummyParsed, dummyResolver, dummyOptions);
     expect(result.didResolutionMetadata.error).toBe("notFound");
-    expect(result.didResolutionMetadata.message ?? "").toMatch(
-      /document\.id.*does not match/,
-    );
+    expect(result.didResolutionMetadata.message ?? "").toMatch(/document\.id.*does not match/);
   });
 });

@@ -48,13 +48,35 @@ export interface BuildEnvelopeOpts {
   delegationProofFormat?: DelegationProofFormat;
 }
 
-export function buildIdentityEnvelope(
-  opts: BuildEnvelopeOpts
-): IdentityEnvelope {
+/**
+ * Build a VCX identity envelope from the principal credential, agent
+ * delegation, and payment-source inputs. Selectively discloses principal
+ * claims according to the requested disclosure tier (spec §6).
+ *
+ * @param opts - The envelope build inputs.
+ * @param opts.credentialJwt - The principal's credential serialization.
+ * @param opts.principalDid - The principal's DID.
+ * @param opts.principalClaims - The full set of principal claims available
+ *   for disclosure.
+ * @param opts.agentDid - The delegated agent's DID.
+ * @param opts.agentName - The delegated agent's human-readable name.
+ * @param opts.delegationProof - The delegation proof authorizing the agent.
+ * @param opts.paymentSource - The payment-source layer bound into the
+ *   envelope.
+ * @param opts.disclosureTier - The disclosure tier governing which
+ *   principal claims are revealed. Defaults to tier 1.
+ * @param opts.requiredClaims - Claim names to disclose under tier 1.
+ * @param opts.credentialFormat - Credential serialization format (spec
+ *   §6.1). Defaults to `"jwt-vc"`.
+ * @param opts.delegationProofFormat - Delegation-proof profile (spec §6.2).
+ *   Defaults to `"vc-embedded"`.
+ * @returns The assembled identity envelope.
+ */
+export function buildIdentityEnvelope(opts: BuildEnvelopeOpts): IdentityEnvelope {
   const disclosed = selectDisclosedClaims(
     opts.principalClaims,
     opts.disclosureTier ?? 1,
-    opts.requiredClaims
+    opts.requiredClaims,
   );
 
   return {
@@ -78,9 +100,20 @@ export function buildIdentityEnvelope(
   };
 }
 
+/**
+ * Build an identity envelope, deriving the disclosure tier and required
+ * claims from a verifier's stated {@link IdentityRequirements} rather than
+ * passing them explicitly.
+ *
+ * @param opts - The envelope build inputs, excluding the disclosure tier
+ *   and required claims (which are taken from `requirements`).
+ * @param requirements - The verifier's identity requirements supplying the
+ *   disclosure tier and required claims.
+ * @returns The assembled identity envelope.
+ */
 export function buildEnvelopeFromRequirements(
   opts: Omit<BuildEnvelopeOpts, "disclosureTier" | "requiredClaims">,
-  requirements: IdentityRequirements
+  requirements: IdentityRequirements,
 ): IdentityEnvelope {
   return buildIdentityEnvelope({
     ...opts,
@@ -89,10 +122,21 @@ export function buildEnvelopeFromRequirements(
   });
 }
 
+/**
+ * Select which principal claims to disclose for a given disclosure tier.
+ * Tier 0 discloses nothing, tier 2 discloses everything, and tier 1
+ * discloses only the requested required claims (or everything when no
+ * required claims are specified).
+ *
+ * @param claims - The full set of principal claims available.
+ * @param tier - The disclosure tier governing the selection.
+ * @param requiredClaims - Claim names to disclose under tier 1.
+ * @returns The subset of claims to embed in the envelope.
+ */
 function selectDisclosedClaims(
   claims: PrincipalClaims,
   tier: DisclosureTier,
-  requiredClaims?: string[]
+  requiredClaims?: string[],
 ): PrincipalClaims {
   if (tier === 0) return {};
 

@@ -46,9 +46,20 @@ export interface TrustListCache {
   set(ref: string, entries: TrustListEntry[], ttlSeconds: number): void;
 }
 
+/**
+ * In-memory {@link TrustListCache} suitable for single-process verifiers.
+ * Entries are evicted lazily on read once their TTL has elapsed.
+ */
 export class InMemoryTrustListCache implements TrustListCache {
   private readonly store = new Map<string, CachedTrustList>();
 
+  /**
+   * Look up a cached trust list, evicting and returning `undefined` when
+   * the entry has expired.
+   *
+   * @param ref - The trust-list reference key.
+   * @returns The cached trust list, or `undefined` if missing or expired.
+   */
   get(ref: string): CachedTrustList | undefined {
     const entry = this.store.get(ref);
     if (!entry) return undefined;
@@ -59,6 +70,14 @@ export class InMemoryTrustListCache implements TrustListCache {
     return entry;
   }
 
+  /**
+   * Store a trust list under a reference key with a TTL, computing its
+   * absolute expiry timestamp.
+   *
+   * @param ref - The trust-list reference key.
+   * @param entries - The resolved trust-list entries to cache.
+   * @param ttlSeconds - How long the entry remains valid, in seconds.
+   */
   set(ref: string, entries: TrustListEntry[], ttlSeconds: number): void {
     this.store.set(ref, {
       entries,
@@ -85,6 +104,10 @@ export interface ResolveAcceptedIssuersOptions {
  * - **§8.3 ETSI Trusted List**: deferred to v1.1. Returns an explicit
  *   "deferred" error so a verifier configured with one fails-closed
  *   rather than silently accepting.
+ *
+ * @param refs - The `acceptedIssuers` references to resolve.
+ * @param options - Resolution options (resolver, optional cache and fetch).
+ * @returns The flattened list of resolved {@link TrustListEntry} values.
  */
 export async function resolveAcceptedIssuers(
   refs: readonly string[],
@@ -107,9 +130,7 @@ export async function resolveAcceptedIssuers(
       continue;
     }
     if (ref.startsWith("http://")) {
-      throw new Error(
-        `Trust-list reference MUST be HTTPS (spec §8.2); got ${ref}`,
-      );
+      throw new Error(`Trust-list reference MUST be HTTPS (spec §8.2); got ${ref}`);
     }
     throw new Error(
       `Unrecognised acceptedIssuers reference shape: ${ref}. Expected inline DID URI, https://.../.well-known/vcx-trust-list, or ETSI URL.`,
@@ -118,6 +139,17 @@ export async function resolveAcceptedIssuers(
   return entries;
 }
 
+/**
+ * Fetch and validate a well-known JWS-signed trust list (spec §8.2),
+ * returning its entries. Serves a cached copy when available; otherwise
+ * fetches the JWS, verifies it against the resolver, checks that the body
+ * issuer matches the JWS issuer and the validity window, validates each
+ * entry, caches the result per `Cache-Control: max-age`, and returns it.
+ *
+ * @param ref - The HTTPS URL of the well-known trust list.
+ * @param options - Resolution options (resolver, optional cache and fetch).
+ * @returns The validated trust-list entries.
+ */
 async function fetchWellKnownTrustList(
   ref: string,
   options: ResolveAcceptedIssuersOptions,
@@ -217,6 +249,12 @@ async function fetchWellKnownTrustList(
  * document. If the hash differs, the resolved document was tampered
  * (or rotated without an updated trust-list publication) and the
  * envelope MUST be rejected (spec §8.2 / §13.3).
+ *
+ * @param opts - The hash-pinning inputs.
+ * @param opts.issuerDid - The issuer DID whose document is re-resolved.
+ * @param opts.expectedHash - The pinned `sha256:<hex>` document hash to match.
+ * @param opts.resolver - The resolver used to re-fetch the DID document.
+ * @returns `{ ok: true }` on match, otherwise `{ ok: false, reason }`.
  */
 export async function verifyDidDocumentHash(opts: {
   issuerDid: string;
@@ -248,6 +286,14 @@ export async function verifyDidDocumentHash(opts: {
   return { ok: true };
 }
 
+/**
+ * Parse the `max-age` directive from a `Cache-Control` header value,
+ * falling back to the default trust-list TTL when the header is absent,
+ * malformed, or negative.
+ *
+ * @param header - The raw `Cache-Control` header value, or `null`.
+ * @returns The cache lifetime in seconds.
+ */
 function parseCacheControlMaxAge(header: string | null): number {
   if (!header) return DEFAULT_TRUST_LIST_TTL_SECONDS;
   const match = header.match(/max-age=(\d+)/i);

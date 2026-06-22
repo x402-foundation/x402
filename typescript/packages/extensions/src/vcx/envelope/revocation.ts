@@ -54,9 +54,21 @@ export interface StatusListCache {
   set(url: string, bitstring: Uint8Array, ttlSeconds: number): void;
 }
 
+/**
+ * In-process {@link StatusListCache} backed by a `Map`. Entries expire on
+ * read once their TTL elapses. Suitable for single-process verifiers; not
+ * shared across instances.
+ */
 export class InMemoryStatusListCache implements StatusListCache {
   private readonly store = new Map<string, CachedStatusList>();
 
+  /**
+   * Return the cached status list for a URL, or `undefined` when absent or
+   * expired. Expired entries are evicted on access.
+   *
+   * @param url - The status-list credential URL to look up.
+   * @returns The cached entry, or `undefined` when missing or expired.
+   */
   get(url: string): CachedStatusList | undefined {
     const entry = this.store.get(url);
     if (!entry) return undefined;
@@ -67,6 +79,13 @@ export class InMemoryStatusListCache implements StatusListCache {
     return entry;
   }
 
+  /**
+   * Store decoded status-list bytes for a URL with the given TTL.
+   *
+   * @param url - The status-list credential URL to cache under.
+   * @param bitstring - The decoded, decompressed status-list bytes.
+   * @param ttlSeconds - Time-to-live in seconds before the entry expires.
+   */
   set(url: string, bitstring: Uint8Array, ttlSeconds: number): void {
     this.store.set(url, {
       bitstring,
@@ -79,9 +98,7 @@ export class InMemoryStatusListCache implements StatusListCache {
  * Result of a revocation check. `ok: false` always carries a reason
  * suitable for inclusion in the verifier's step-1 error message.
  */
-export type RevocationCheckResult =
-  | { ok: true }
-  | { ok: false; reason: string };
+export type RevocationCheckResult = { ok: true } | { ok: false; reason: string };
 
 export interface CheckCredentialStatusOptions {
   /** Issuer DID of the verified principal credential (spec §11.2). */
@@ -101,9 +118,13 @@ export interface CheckCredentialStatusOptions {
  * payload. Detects the short-lived (§11.1) vs status-list (§11.2)
  * profile and enforces the relevant MUSTs.
  *
- * @param payload  The `payload` field returned by did-jwt-vc's
+ * @param payload - The `payload` field returned by did-jwt-vc's
  *   verifyCredential. Must include `nbf` and `exp` (epoch seconds) and
  *   the W3C VC body under `vc`.
+ * @param options - Revocation-check options (issuer DID, resolver, cache,
+ *   and fetch override).
+ * @returns `{ ok: true }` when the credential is not revoked, or
+ *   `{ ok: false, reason }` describing the failure.
  */
 export async function checkCredentialStatus(
   payload: unknown,
@@ -190,11 +211,7 @@ export async function checkCredentialStatus(
         reason: `Failed to fetch / verify status list at ${credentialStatus.statusListCredential}: ${err instanceof Error ? err.message : String(err)}`,
       };
     }
-    cache.set(
-      credentialStatus.statusListCredential,
-      fetchResult.bitstring,
-      fetchResult.ttlSeconds,
-    );
+    cache.set(credentialStatus.statusListCredential, fetchResult.bitstring, fetchResult.ttlSeconds);
     bitstring = fetchResult.bitstring;
   }
 
@@ -221,6 +238,19 @@ interface FetchedStatusList {
   ttlSeconds: number;
 }
 
+/**
+ * Fetch a status-list credential, verify its JWS against the resolver,
+ * confirm the issuer matches the credential issuer, and decode the
+ * embedded bitstring (spec §11.2).
+ *
+ * @param args - The fetch-and-verify inputs.
+ * @param args.url - The status-list credential URL to fetch.
+ * @param args.expectedIssuerDid - The DID the status-list issuer MUST equal.
+ * @param args.resolver - The DID resolver used to verify the status-list JWS.
+ * @param args.fetchImpl - The fetch implementation to use.
+ * @returns The decoded bitstring and the cache TTL derived from the
+ *   response headers.
+ */
 async function fetchAndVerifyStatusList(args: {
   url: string;
   expectedIssuerDid: string;
@@ -269,6 +299,14 @@ async function fetchAndVerifyStatusList(args: {
   return { bitstring, ttlSeconds };
 }
 
+/**
+ * Read a finite numeric epoch-seconds claim from a JWT payload.
+ *
+ * @param payload - The JWT payload to read from.
+ * @param key - The claim name to read (`"nbf"` or `"exp"`).
+ * @returns The numeric claim value, or `undefined` when absent or not a
+ *   finite number.
+ */
 function readEpochClaim(payload: unknown, key: "nbf" | "exp"): number | undefined {
   const value = (payload as Record<string, unknown> | null | undefined)?.[key];
   return typeof value === "number" && Number.isFinite(value) ? value : undefined;
@@ -281,6 +319,13 @@ interface CredentialStatusObject {
   statusListCredential?: unknown;
 }
 
+/**
+ * Extract the `vc.credentialStatus` object from a JWT payload, if present.
+ *
+ * @param payload - The JWT payload to read from.
+ * @returns The credential-status object, or `undefined` when absent or not
+ *   an object.
+ */
 function readCredentialStatus(payload: unknown): CredentialStatusObject | undefined {
   const vc = (payload as { vc?: unknown }).vc as { credentialStatus?: unknown } | undefined;
   const status = vc?.credentialStatus;
@@ -288,12 +333,27 @@ function readCredentialStatus(payload: unknown): CredentialStatusObject | undefi
   return status as CredentialStatusObject;
 }
 
+/**
+ * Normalize a W3C VC `issuer` field (string or `{ id }` object) to its DID
+ * string.
+ *
+ * @param issuer - The raw issuer value (string or object with `id`).
+ * @returns The issuer DID string, or `undefined` when it cannot be
+ *   determined.
+ */
 function readIssuer(issuer: unknown): string | undefined {
   if (typeof issuer === "string") return issuer;
   const id = (issuer as { id?: unknown } | null | undefined)?.id;
   return typeof id === "string" ? id : undefined;
 }
 
+/**
+ * Parse a `statusListIndex` into a non-negative safe integer, accepting
+ * either a decimal-digit string or a number.
+ *
+ * @param raw - The raw status-list index value.
+ * @returns The parsed non-negative integer, or `undefined` when invalid.
+ */
 function parseStatusListIndex(raw: unknown): number | undefined {
   if (typeof raw === "string") {
     if (!/^\d+$/.test(raw)) return undefined;
@@ -306,6 +366,13 @@ function parseStatusListIndex(raw: unknown): number | undefined {
   return undefined;
 }
 
+/**
+ * Derive a cache TTL in seconds from a `Cache-Control` header's `max-age`
+ * directive, falling back to the default when absent or unparseable.
+ *
+ * @param header - The raw `Cache-Control` header value, or `null`.
+ * @returns The TTL in seconds.
+ */
 function parseCacheControlMaxAge(header: string | null): number {
   if (!header) return DEFAULT_STATUS_LIST_TTL_SECONDS;
   const match = header.match(/max-age=(\d+)/i);
@@ -318,6 +385,9 @@ function parseCacheControlMaxAge(header: string | null): number {
  * Decode the `encodedList` per Bitstring Status List v1.0 §3.4: a
  * multibase-prefixed (typically `u` for base64url-no-pad) GZIP-compressed
  * bitstring. Returns the decompressed bytes.
+ *
+ * @param encoded - The multibase-prefixed, GZIP-compressed encoded list.
+ * @returns The decompressed bitstring bytes.
  */
 function decodeEncodedList(encoded: string): Uint8Array {
   if (encoded.length === 0) {
@@ -329,9 +399,7 @@ function decodeEncodedList(encoded: string): Uint8Array {
   if (prefix === "u") {
     raw = Buffer.from(body, "base64url");
   } else {
-    throw new Error(
-      `Unsupported multibase prefix "${prefix}"; v1 supports base64url (\`u\`) only`,
-    );
+    throw new Error(`Unsupported multibase prefix "${prefix}"; v1 supports base64url (\`u\`) only`);
   }
   // GZIP-decompress per Bitstring Status List v1.0 §3.4.
   return new Uint8Array(gunzipSync(raw));
@@ -341,6 +409,10 @@ function decodeEncodedList(encoded: string): Uint8Array {
  * MSB-first bit access into the decoded bitstring per Bitstring Status
  * List v1.0 §3.1 (the bit at position `i` is bit `7 - (i % 8)` of byte
  * `floor(i / 8)`).
+ *
+ * @param bitstring - The decoded status-list bytes.
+ * @param index - The zero-based bit position to read.
+ * @returns The bit value (0 or 1) at the given index.
  */
 function getBit(bitstring: Uint8Array, index: number): number {
   const byteIdx = Math.floor(index / 8);

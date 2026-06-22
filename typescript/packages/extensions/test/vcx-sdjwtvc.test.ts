@@ -33,8 +33,7 @@ import {
   requirements,
 } from "./vcx-test-utils";
 
-const validExpiresAt = () =>
-  new Date(Date.now() + 60 * 60 * 1000).toISOString();
+const validExpiresAt = () => new Date(Date.now() + 60 * 60 * 1000).toISOString();
 
 describe("SD-JWT format primitives", () => {
   it("round-trips a disclosure: build → hash matches; parse → original values", () => {
@@ -61,11 +60,12 @@ describe("SD-JWT format primitives", () => {
     expect(parsed.keyBindingJwt).toBeUndefined();
   });
 
-  it("captures a trailing KB-JWT (3-dot shape) separately from disclosures", () => {
-    const parsed = parseSdJwt("h.p.s~d1~d2~kb.h.p.s");
+  it("captures a trailing KB-JWT (3-part JWT shape) separately from disclosures", () => {
+    // A KB-JWT is a compact JWS: exactly three parts (header.payload.signature).
+    const parsed = parseSdJwt("h.p.s~d1~d2~kb.payload.sig");
     expect(parsed.jwt).toBe("h.p.s");
     expect(parsed.disclosures).toEqual(["d1", "d2"]);
-    expect(parsed.keyBindingJwt).toBe("kb.h.p.s");
+    expect(parsed.keyBindingJwt).toBe("kb.payload.sig");
   });
 });
 
@@ -251,8 +251,6 @@ describe("verifyEnvelope — sd-jwt-vc end-to-end (§12 Tier 1)", () => {
     );
     expect(result.valid).toBe(false);
     expect(result.steps[0].step).toBe("principal_credential");
-    expect(result.steps[0].error ?? "").toMatch(
-      /does not match the SD-JWT VC disclosure/,
-    );
+    expect(result.steps[0].error ?? "").toMatch(/does not match the SD-JWT VC disclosure/);
   });
 });

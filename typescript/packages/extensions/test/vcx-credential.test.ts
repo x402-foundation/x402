@@ -34,7 +34,6 @@ describe("createVCXIssuer", () => {
     expect(issuer.alg).toBe("EdDSA");
     expect(typeof issuer.signer).toBe("function");
   });
-
 });
 
 describe("issueCredential", () => {
@@ -78,7 +77,7 @@ describe("issueCredential", () => {
       issueCredential({
         issuerConfig: { did: trustedIssuer.did, privateKeyHex: "" },
         subject,
-      })
+      }),
     ).rejects.toThrow();
   });
 });

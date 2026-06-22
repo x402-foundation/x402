@@ -47,10 +47,17 @@ export interface NonceStorage {
 export class InMemoryNonceStorage implements NonceStorage {
   private readonly seen = new Map<string, number>();
 
-  async checkAndRecord(
-    nonce: string,
-    freshnessWindowMs: number,
-  ): Promise<boolean> {
+  /**
+   * Check whether the nonce was seen within the freshness window, recording
+   * it when newly observed.
+   *
+   * @param nonce - The transactionId nonce to check and record.
+   * @param freshnessWindowMs - How long, in milliseconds, a recorded nonce
+   *   remains in effect before it is eligible for eviction.
+   * @returns `true` if the nonce was already present (reject the request),
+   *   `false` if it was newly recorded.
+   */
+  async checkAndRecord(nonce: string, freshnessWindowMs: number): Promise<boolean> {
     const now = Date.now();
     this.evictExpired(now, freshnessWindowMs);
     if (this.seen.has(nonce)) return true;
@@ -58,6 +65,13 @@ export class InMemoryNonceStorage implements NonceStorage {
     return false;
   }
 
+  /**
+   * Drop recorded nonces older than the freshness window to bound memory use.
+   *
+   * @param now - The current timestamp in milliseconds.
+   * @param freshnessWindowMs - The freshness window in milliseconds; nonces
+   *   recorded before `now - freshnessWindowMs` are evicted.
+   */
   private evictExpired(now: number, freshnessWindowMs: number): void {
     const cutoff = now - freshnessWindowMs;
     for (const [nonce, recordedAt] of this.seen) {
@@ -72,6 +86,11 @@ export class InMemoryNonceStorage implements NonceStorage {
  * spec §13.1.
  */
 export class NoOpNonceStorage implements NonceStorage {
+  /**
+   * Always report the nonce as new, performing no replay tracking.
+   *
+   * @returns `false` always, signalling the nonce is treated as unseen.
+   */
   async checkAndRecord(): Promise<boolean> {
     return false;
   }
@@ -105,9 +124,5 @@ export interface DailyLimitStore {
    *   `delegatedTo.conditions.maxDaily` (decimal string, same scale as
    *   the payment amount) to decide whether to accept the request.
    */
-  addAndGetTotal(opts: {
-    principalDid: string;
-    agentDid: string;
-    amount: string;
-  }): Promise<string>;
+  addAndGetTotal(opts: { principalDid: string; agentDid: string; amount: string }): Promise<string>;
 }

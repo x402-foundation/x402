@@ -61,7 +61,7 @@ describe("publicKeyToDidKey", () => {
 
 describe("buildDid", () => {
   it("formats a did:web identifier from domain and path", () => {
-    expect(buildDid("example.com", "user/abc")).toBe("did:web:example.com:user/abc");
+    expect(buildDid("example.com", "user/abc")).toBe("did:web:example.com:user:abc");
   });
 });
 

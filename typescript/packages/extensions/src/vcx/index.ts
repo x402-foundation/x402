@@ -47,11 +47,7 @@ export {
   createAgent,
   buildDelegation,
 } from "./identity";
-export type {
-  Ed25519KeyPair,
-  PrincipalIdentity,
-  AgentIdentity,
-} from "./identity";
+export type { Ed25519KeyPair, PrincipalIdentity, AgentIdentity } from "./identity";
 
 // Credentials
 export {
@@ -107,10 +103,7 @@ export type { DeclareVCXOptions, VCXDeclaration } from "./declare";
 
 // V2 extension factories
 export { createVCXResourceServerExtension } from "./server";
-export type {
-  CreateVCXResourceServerExtensionOptions,
-  VCXRequestContext,
-} from "./server";
+export type { CreateVCXResourceServerExtensionOptions, VCXRequestContext } from "./server";
 
 export { createVCXClientExtension } from "./client";
 export type { CreateVCXClientExtensionOptions } from "./client";
@@ -119,11 +112,7 @@ export type { CreateVCXClientExtensionOptions } from "./client";
 export { VCX_HEADER_NAME, encodeVCXHeader, parseVCXHeader } from "./header";
 
 // Replay-protection storage + daily-limit storage
-export {
-  InMemoryNonceStorage,
-  NoOpNonceStorage,
-  DEFAULT_NONCE_FRESHNESS_MS,
-} from "./storage";
+export { InMemoryNonceStorage, NoOpNonceStorage, DEFAULT_NONCE_FRESHNESS_MS } from "./storage";
 export type { NonceStorage, DailyLimitStore } from "./storage";
 
 // JSON Schema for the envelope

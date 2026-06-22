@@ -22,11 +22,7 @@ export {
   didWebToUrl,
 } from "./resolver";
 export type { DidWebHardeningConfig } from "./resolver";
-export {
-  resolveAcceptedIssuers,
-  verifyDidDocumentHash,
-  InMemoryTrustListCache,
-} from "./trustlist";
+export { resolveAcceptedIssuers, verifyDidDocumentHash, InMemoryTrustListCache } from "./trustlist";
 export type {
   TrustListEntry,
   TrustListCache,

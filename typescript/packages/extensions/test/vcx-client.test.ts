@@ -29,13 +29,14 @@ import {
   issueCredential,
   DisclosureTier,
 } from "../src/vcx";
-import {
-  trustedIssuer,
-  principalDid,
-  principalClaims,
-  paymentSource,
-} from "./vcx-test-utils";
+import { trustedIssuer, principalDid, principalClaims, paymentSource } from "./vcx-test-utils";
 
+/**
+ * Issues a credential and builds a VCX client extension wired to a fresh agent,
+ * delegation, and the shared test payment source.
+ *
+ * @returns The configured client extension, the agent, and the issued credential JWT.
+ */
 async function buildClientWithCredential() {
   const agent = createAgent("client-test-agent");
   const delegation = buildDelegation({
@@ -83,20 +84,18 @@ describe("createVCXClientExtension", () => {
   describe("onPaymentRequired", () => {
     it("returns void when the 402 has no VCX extension declared", async () => {
       const { ext } = await buildClientWithCredential();
-      const result = await ext.transportHooks!.http!.onPaymentRequired!(
-        undefined,
-        { paymentRequired: { extensions: {} } },
-      );
+      const result = await ext.transportHooks!.http!.onPaymentRequired!(undefined, {
+        paymentRequired: { extensions: {} },
+      });
       expect(result).toBeUndefined();
     });
 
     it("returns a VCX header when the extension is declared", async () => {
       const { ext } = await buildClientWithCredential();
       const declared = declarationFor();
-      const result = (await ext.transportHooks!.http!.onPaymentRequired!(
-        undefined,
-        { paymentRequired: { extensions: declared } },
-      )) as { headers: Record<string, string> } | undefined;
+      const result = (await ext.transportHooks!.http!.onPaymentRequired!(undefined, {
+        paymentRequired: { extensions: declared },
+      })) as { headers: Record<string, string> } | undefined;
 
       expect(result?.headers[VCX_HEADER_NAME]).toBeTypeOf("string");
     });
@@ -104,10 +103,9 @@ describe("createVCXClientExtension", () => {
     it("constructs an envelope matching the declared requirements", async () => {
       const { ext, agent } = await buildClientWithCredential();
       const declared = declarationFor();
-      const result = (await ext.transportHooks!.http!.onPaymentRequired!(
-        undefined,
-        { paymentRequired: { extensions: declared } },
-      )) as { headers: Record<string, string> };
+      const result = (await ext.transportHooks!.http!.onPaymentRequired!(undefined, {
+        paymentRequired: { extensions: declared },
+      })) as { headers: Record<string, string> };
 
       const envelope = parseVCXHeader(result.headers[VCX_HEADER_NAME]);
       expect(envelope.version).toBe("1.0");
@@ -133,10 +131,9 @@ describe("createVCXClientExtension", () => {
       });
 
       const declared = declarationFor();
-      const result = (await overrideExt.transportHooks!.http!.onPaymentRequired!(
-        undefined,
-        { paymentRequired: { extensions: declared } },
-      )) as { headers: Record<string, string> };
+      const result = (await overrideExt.transportHooks!.http!.onPaymentRequired!(undefined, {
+        paymentRequired: { extensions: declared },
+      })) as { headers: Record<string, string> };
 
       const envelope = parseVCXHeader(result.headers[VCX_HEADER_NAME]);
       expect(envelope.agent.delegationProof).toBe("explicit.override.proof");
@@ -145,14 +142,12 @@ describe("createVCXClientExtension", () => {
     it("produces a unique transactionId per invocation", async () => {
       const { ext } = await buildClientWithCredential();
       const declared = declarationFor();
-      const first = (await ext.transportHooks!.http!.onPaymentRequired!(
-        undefined,
-        { paymentRequired: { extensions: declared } },
-      )) as { headers: Record<string, string> };
-      const second = (await ext.transportHooks!.http!.onPaymentRequired!(
-        undefined,
-        { paymentRequired: { extensions: declared } },
-      )) as { headers: Record<string, string> };
+      const first = (await ext.transportHooks!.http!.onPaymentRequired!(undefined, {
+        paymentRequired: { extensions: declared },
+      })) as { headers: Record<string, string> };
+      const second = (await ext.transportHooks!.http!.onPaymentRequired!(undefined, {
+        paymentRequired: { extensions: declared },
+      })) as { headers: Record<string, string> };
 
       const e1 = parseVCXHeader(first.headers[VCX_HEADER_NAME]);
       const e2 = parseVCXHeader(second.headers[VCX_HEADER_NAME]);

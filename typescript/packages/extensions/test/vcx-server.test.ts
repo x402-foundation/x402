@@ -21,7 +21,6 @@ import {
   createVCXResourceServerExtension,
   declareVCXExtension,
   VCX_EXTENSION_KEY,
-  VCX_HEADER_NAME,
   encodeVCXHeader,
   InMemoryNonceStorage,
   buildIdentityEnvelope,
@@ -40,6 +39,12 @@ import {
   requirements,
 } from "./vcx-test-utils";
 
+/**
+ * Build a fully valid VCX identity envelope (agent, delegation, credential)
+ * for use as the happy-path fixture in server extension tests.
+ *
+ * @returns A signed, verifiable VCX identity envelope.
+ */
 async function buildValidEnvelope() {
   const agent = createAgent("server-test-agent");
   const delegation = buildDelegation({
@@ -71,10 +76,16 @@ async function buildValidEnvelope() {
   });
 }
 
+/**
+ * Encode a mock base64 X-PAYMENT header carrying the given payment sender address.
+ *
+ * @param sender - The payment sender address to embed in the authorization payload.
+ * @returns A base64-encoded X-PAYMENT header value.
+ */
 function encodePaymentHeader(sender: string): string {
-  return Buffer.from(
-    JSON.stringify({ payload: { authorization: { from: sender } } }),
-  ).toString("base64");
+  return Buffer.from(JSON.stringify({ payload: { authorization: { from: sender } } })).toString(
+    "base64",
+  );
 }
 
 // Realistic extract function — mirrors the JSDoc example in src/server.ts.
@@ -91,10 +102,15 @@ const extractFromPayment = (ctx: VCXRequestContext): string => {
   }
 };
 
-function makeContext(
-  vcxHeader: string | undefined,
-  sender: string = paymentSource.sourceId,
-) {
+/**
+ * Build a mock request context whose adapter serves the given VCX and
+ * X-PAYMENT headers, for driving the onProtectedRequest hook.
+ *
+ * @param vcxHeader - The VCX header value to serve, or undefined to omit it.
+ * @param sender - The payment sender address encoded into the X-PAYMENT header.
+ * @returns A mock request context with a header-resolving adapter.
+ */
+function makeContext(vcxHeader: string | undefined, sender: string = paymentSource.sourceId) {
   const paymentHeader = encodePaymentHeader(sender);
   return {
     adapter: {
@@ -117,7 +133,9 @@ const declarationFor = (overrides: Partial<Parameters<typeof declareVCXExtension
     ...overrides,
   })[VCX_EXTENSION_KEY];
 
-const newServerExtension = (overrides: Partial<Parameters<typeof createVCXResourceServerExtension>[0]> = {}) =>
+const newServerExtension = (
+  overrides: Partial<Parameters<typeof createVCXResourceServerExtension>[0]> = {},
+) =>
   createVCXResourceServerExtension({
     extractPaymentSender: extractFromPayment,
     nonceStorage: new InMemoryNonceStorage(),
@@ -135,10 +153,10 @@ describe("createVCXResourceServerExtension", () => {
     it("returns the declaration's info and schema", async () => {
       const ext = newServerExtension();
       const decl = declarationFor();
-      const enriched = (await ext.enrichPaymentRequiredResponse!(
-        decl,
-        {} as never,
-      )) as { info: unknown; schema: unknown };
+      const enriched = (await ext.enrichPaymentRequiredResponse!(decl, {} as never)) as {
+        info: unknown;
+        schema: unknown;
+      };
       expect(enriched.info).toEqual(decl.info);
       expect(enriched.schema).toEqual(decl.schema);
     });
@@ -252,7 +270,7 @@ describe("createVCXResourceServerExtension", () => {
       );
       expect(result).toEqual({
         abort: true,
-        reason: expect.stringMatching(/extractPaymentSender threw/i),
+        reason: expect.stringMatching(/extractor threw/i),
       });
     });
 

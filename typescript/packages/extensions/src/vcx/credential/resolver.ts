@@ -15,11 +15,7 @@
  */
 
 import { Resolver } from "did-resolver";
-import type {
-  DIDResolutionResult,
-  DIDResolver,
-  VerificationMethod,
-} from "did-resolver";
+import type { DIDResolutionResult, DIDResolver, VerificationMethod } from "did-resolver";
 import { base58btcDecode, base58Encode } from "../identity/base58";
 
 /**
@@ -51,12 +47,21 @@ let activeHardeningConfig: DidWebHardeningConfig = {};
  * Override the `did:web` hardening config. Invalidates the cached
  * resolver so the next {@link getDidResolver} call rebuilds with the
  * new config. Use this in tests to inject a mock fetch.
+ *
+ * @param config - The hardening configuration to apply on the next resolver build.
  */
 export function configureDidWebResolver(config: DidWebHardeningConfig): void {
   activeHardeningConfig = { ...config };
   cachedResolver = null;
 }
 
+/**
+ * Return a cached DID resolver wired for the `did:key` and hardened
+ * `did:web` methods, building it on first use from the active hardening
+ * config and reusing it on subsequent calls.
+ *
+ * @returns The shared {@link Resolver} instance.
+ */
 export function getDidResolver(): Resolver {
   if (cachedResolver) return cachedResolver;
 
@@ -80,10 +85,11 @@ export function getDidResolver(): Resolver {
  * Replaces the unmodified `web-did-resolver` registration the SDK used
  * through v0.4. The shape `DIDResolver` is unchanged so consumers see
  * no API difference.
+ *
+ * @param config - Optional hardening configuration (fetch override, redirect limit).
+ * @returns A {@link DIDResolver} that resolves `did:web` identifiers safely.
  */
-export function buildHardenedWebResolver(
-  config: DidWebHardeningConfig = {},
-): DIDResolver {
+export function buildHardenedWebResolver(config: DidWebHardeningConfig = {}): DIDResolver {
   const fetchImpl = config.fetchImpl ?? fetch;
   const maxRedirects = config.maxSameHostRedirects ?? 0;
 
@@ -111,10 +117,7 @@ export function buildHardenedWebResolver(
         maxRedirects,
       });
     } catch (err) {
-      return webError(
-        "notFound",
-        err instanceof Error ? err.message : String(err),
-      );
+      return webError("notFound", err instanceof Error ? err.message : String(err));
     }
 
     if (!response.ok) {
@@ -154,6 +157,9 @@ export function buildHardenedWebResolver(
  * `https://DOMAIN[/PATH...]/did.json`, or
  * `https://DOMAIN/.well-known/did.json` when there is no path. Domain
  * may be URL-encoded (`%3A` for the port colon).
+ *
+ * @param did - The `did:web` identifier to translate.
+ * @returns The HTTPS URL of the corresponding `did.json` document.
  */
 export function didWebToUrl(did: string): URL {
   if (!did.startsWith("did:web:")) {
@@ -171,6 +177,18 @@ export function didWebToUrl(did: string): URL {
   return new URL(`https://${domain}${pathPart}`);
 }
 
+/**
+ * Fetch a URL while following only same-host HTTPS redirects up to a
+ * limit. Any cross-host redirect, non-HTTPS redirect, missing `Location`
+ * header, or exceeding the redirect limit throws (spec §7.2).
+ *
+ * @param args - The fetch parameters.
+ * @param args.url - The initial URL to fetch.
+ * @param args.originalHostname - The hostname redirects must stay within.
+ * @param args.fetchImpl - The fetch implementation to use.
+ * @param args.maxRedirects - The maximum number of same-host redirects to follow.
+ * @returns The final non-redirect {@link Response}.
+ */
 async function fetchWithSameHostRedirects(args: {
   url: URL;
   originalHostname: string;
@@ -191,9 +209,7 @@ async function fetchWithSameHostRedirects(args: {
       }
       const next = new URL(location, currentUrl);
       if (next.protocol !== "https:") {
-        throw new Error(
-          `did:web redirect refused: ${next.protocol} is not https (spec §7.2)`,
-        );
+        throw new Error(`did:web redirect refused: ${next.protocol} is not https (spec §7.2)`);
       }
       if (next.hostname !== args.originalHostname) {
         throw new Error(
@@ -205,11 +221,17 @@ async function fetchWithSameHostRedirects(args: {
     }
     return response;
   }
-  throw new Error(
-    `did:web exceeded the maxSameHostRedirects limit (${args.maxRedirects})`,
-  );
+  throw new Error(`did:web exceeded the maxSameHostRedirects limit (${args.maxRedirects})`);
 }
 
+/**
+ * Build a failed `did:web` {@link DIDResolutionResult} carrying an error
+ * code and human-readable message with a null DID document.
+ *
+ * @param error - The resolution error code.
+ * @param message - The human-readable error message.
+ * @returns A resolution result representing the failure.
+ */
 function webError(error: string, message: string): DIDResolutionResult {
   return {
     didResolutionMetadata: { error, message },
@@ -222,7 +244,7 @@ const resolveDidKey: DIDResolver = async (
   did,
   parsed,
   _resolver,
-  options
+  options,
 ): Promise<DIDResolutionResult> => {
   try {
     const multicodecPublicKey = base58btcDecode(parsed.id);
@@ -258,11 +280,18 @@ const resolveDidKey: DIDResolver = async (
       },
       didDocumentMetadata: {},
     };
-  } catch (err: any) {
-    return notFound(err.message);
+  } catch (err) {
+    return notFound(err instanceof Error ? err.message : String(err));
   }
 };
 
+/**
+ * Build a `notFound` {@link DIDResolutionResult} carrying the given
+ * message with a null DID document.
+ *
+ * @param message - The human-readable error message.
+ * @returns A resolution result representing the not-found failure.
+ */
 function notFound(message: string): DIDResolutionResult {
   return {
     didResolutionMetadata: {
