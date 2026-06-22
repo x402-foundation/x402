@@ -1022,6 +1022,27 @@ Content-Type: application/json
 
 ## References
 
+### Public Standards
+
+VCX is an application of established, openly published specifications and
+conventions. It implements them independently; it does not depend on or derive
+from any single vendor implementation of them.
+
+| Standard / Convention | Reference | Used in |
+|---|---|---|
+| JSON Canonicalization Scheme (JCS) | RFC 8785 | §6.4, §17 (canonical bytes for digesting/signing) |
+| SHA-256 | FIPS 180-4 | §6.4, §8.2 (envelope and document digests) |
+| `sha256:<lowercase-hex>` digest prefix | Multihash / OCI-style content-digest convention | §6.4, §8.2 |
+| Verifiable Credentials Data Model | W3C VC Data Model 1.1 | §6 (envelope), §10 (delegation), §12 (disclosure) |
+| Bitstring Status List | W3C Bitstring Status List v1.0 | §11.2 (revocation) |
+| SD-JWT Verifiable Credentials | SD-JWT VC (IETF, draft) | §12 Tier 1 (selective disclosure) |
+| Decentralized Identifiers | W3C DID Core; `did:key`, `did:web` methods | §7 (agent identity) |
+| JSON Web Signature | RFC 7515 (JWS) | §8 (trust-list signatures), §9 (verification) |
+
+These building blocks are widely used across the ecosystem and are not specific
+to any one implementation. VCX composes them in TypeScript, against general-purpose
+libraries, applied to the identity envelope defined in this specification.
+
 ### Normative
 
 - x402 core protocol v2 — https://github.com/x402-foundation/x402
