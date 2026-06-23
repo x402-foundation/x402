@@ -1,0 +1,7 @@
+{
+  "name": "AgentCourt",
+  "category": "Infrastructure & Tooling",
+  "logoUrl": "",
+  "description": "Policy-driven dispute resolution API for agent commerce. 7 templates, 39 rules, <500ms deterministic rulings. The Evaluator layer for ERC-8183. Non-custodial, open source, MIT. x402-native at $0.05/dispute.",
+  "websiteUrl": "https://github.com/vbkotecha/agentcourt-api"
+}
