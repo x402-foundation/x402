@@ -142,7 +142,7 @@ The conformance vectors and checker are pinned to an immutable commit:
 
 **6. Lifecycle (`seq` and `terminal`)**
 
-The action tuple carries `seq` (monotonic) and `terminal` (boolean). Because both fields are inside the tuple, a non-terminal settlement and its terminal successor produce **distinct** `actionRef`s. A mid-task (non-terminal) receipt therefore cannot be presented where the final one is required: it does not resolve against the terminal settlement. A verifier tells "settled and action completed" from "settled and action still running" by which record the receipt binds to and whether its `terminal` flag is set.
+The action tuple carries `seq` (monotonic) and `terminal` (boolean). Because both fields are inside the tuple, a non-terminal settlement and its terminal successor produce **distinct** `actionRef`s. A mid-task (non-terminal) receipt therefore cannot be presented where the final one is required: it does not resolve against the terminal settlement. A verifier tells "settled and action completed" from "settled and action still running" by which record the receipt binds to and whether its `terminal` flag is set. This distinction lives in the settlement records' `actionRef`s, not in the receipt issuer's record shape: the binding (§4) is evaluated per settlement step — each receipt resolves against exactly one settlement record — so a single decision-bearing record and a separately-signed decision+outcome pair are equally conformant.
 
 **7. Rail-Agnostic Composition**
 
