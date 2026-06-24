@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120" role="img" aria-label="x402 Data Gateway">
+  <rect width="120" height="120" rx="26" fill="#0B1020"/>
+  <rect x="6" y="6" width="108" height="108" rx="21" fill="none" stroke="#1E2A4A" stroke-width="2"/>
+  <!-- payment / data node glyph -->
+  <g stroke="#5B8DEF" stroke-width="5" fill="none" stroke-linecap="round">
+    <circle cx="34" cy="60" r="9" fill="#5B8DEF" stroke="none"/>
+    <circle cx="86" cy="38" r="7"/>
+    <circle cx="86" cy="82" r="7"/>
+    <line x1="42" y1="55" x2="80" y2="40"/>
+    <line x1="42" y1="65" x2="80" y2="80"/>
+  </g>
+  <text x="60" y="104" text-anchor="middle" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="17" font-weight="700" fill="#9DB4E6" letter-spacing="1">402</text>
+</svg>
