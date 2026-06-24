@@ -1,0 +1,7 @@
+{
+  "name": "x402 Data Gateway",
+  "description": "Pay-per-call USDC endpoints for autonomous agents, no auth or API keys. /enrich turns a bare domain into agent-ready company intelligence (identity, tech stack, social, contact, DNS/email infra, AI-readiness score); /extract and /read return clean structured JSON or LLM-ready Markdown for any URL; /scan is a static supply-chain security scan of a public GitHub repo before an agent installs it. Settles USDC directly on Base via x402 v2.",
+  "logoUrl": "/logos/x402-data-gateway.svg",
+  "websiteUrl": "https://x402-url-extractor-production.up.railway.app/",
+  "category": "Services/Endpoints"
+}
