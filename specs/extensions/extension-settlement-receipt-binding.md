@@ -26,6 +26,7 @@ Canonicalization is load-bearing and normative:
 - All digests are encoded as the string `sha256:<lowercase-hex>`.
 - **No IEEE-754 floats** appear anywhere in the canonical body. Monetary amounts are **atomic-integer strings** with an explicit integer `decimals`; any other non-integer is a decimal string.
 - `timestampMs` is an integer (milliseconds since the Unix epoch).
+- Conformance REQUIRES a genuine RFC 8785 implementation. A `sort_keys`-style approximation (e.g. `json.dumps(obj, sort_keys=True, separators=(",", ":"))`) is byte-identical only for ASCII-string and integer field sets; it diverges on non-ASCII strings (Python's default `ensure_ascii` emits `\uXXXX` where JCS emits UTF-8) and on non-integer numbers (ECMAScript number canonicalization), and MUST NOT be relied on for the join.
 
 **3.1 Common Fields (rail-agnostic)**
 
@@ -131,6 +132,8 @@ An independent party holding only the settlement record and the receipt MUST be 
 - **`lifecycle_distinguishes_terminal`** — the in-progress (`terminal=false`) and terminal (`terminal=true`) steps have distinct `actionRef`s, and the in-progress receipt does not resolve against the terminal settlement (§6).
 
 A normative reference suite implements these verdicts across two rails (`generic`, `sui`) and two lifecycle steps (in-progress, terminal), with a checker that imports neither x402 nor the receipt framework — standard library plus a JCS library and an ES256 verifier. A conformant implementation reproduces every verdict against the committed vectors byte-for-byte.
+
+**Scope of the gate (non-goals).** Passing these verdicts proves the receipt *shape* recomputes and binds: the `action_ref` derives, the settlement digest resolves, the signature verifies, and the lifecycle steps are distinct. It does **not** prove that `backLink` resolves to a live attestation instance — the checker treats `backLink` and `issuerAsserted` as issuer-populated and does not dereference them. Binding a receipt to an actual upstream execution-attestation instance is a separate property, out of scope for this gate and not implied by a green result.
 
 The conformance vectors and checker are pinned to an immutable commit:
 
