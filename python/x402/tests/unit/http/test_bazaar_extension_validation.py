@@ -85,6 +85,28 @@ class TestFastAPIBazaarExtensionValidation:
         bazaar_warnings = [w for w in caught if "bazaar" in str(w.message).lower()]
         assert len(bazaar_warnings) == 0
 
+    def test_declared_extension_without_method_uses_route_key(self):
+        """Startup validation should infer method for declared discovery extensions."""
+        from x402.extensions.bazaar import declare_discovery_extension
+        from x402.http.middleware.fastapi import _validate_bazaar_extensions
+
+        routes = {
+            "GET /api/data": RouteConfig(
+                accepts=[_make_payment_option()],
+                extensions=declare_discovery_extension(
+                    input={"query": "test"},
+                    input_schema={"properties": {"query": {"type": "string"}}},
+                ),
+            )
+        }
+
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            _validate_bazaar_extensions(routes)
+
+        bazaar_warnings = [w for w in caught if "bazaar" in str(w.message).lower()]
+        assert len(bazaar_warnings) == 0
+
     def test_invalid_extension_emits_warning(self):
         """A route with schema requiring fields absent from info should emit a warning."""
         from x402.http.middleware.fastapi import _validate_bazaar_extensions

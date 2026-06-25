@@ -6,6 +6,7 @@ used by both FastAPI and Flask middleware.
 
 from __future__ import annotations
 
+import copy
 import warnings
 from typing import Any
 
@@ -92,7 +93,7 @@ def validate_bazaar_extensions(routes: RoutesConfig) -> None:
         if not extensions or "bazaar" not in extensions:
             continue
 
-        bazaar_ext = extensions["bazaar"]
+        bazaar_ext = _with_method_from_route_pattern(pattern, extensions["bazaar"])
         if (
             not isinstance(bazaar_ext, dict)
             or "info" not in bazaar_ext
@@ -123,3 +124,40 @@ def validate_bazaar_extensions(routes: RoutesConfig) -> None:
                 )
         except Exception:
             pass
+
+
+def _with_method_from_route_pattern(pattern: str, bazaar_ext: Any) -> Any:
+    """Return a validation copy with HTTP method inferred from a route key.
+
+    ``declare_discovery_extension`` intentionally omits ``info.input.method`` so
+    framework middleware can infer it from route keys such as ``GET /weather``.
+    Startup validation runs before request-time enrichment, so it needs the same
+    route-key inference to avoid warning on valid declarations.
+    """
+    if not isinstance(bazaar_ext, dict):
+        return bazaar_ext
+
+    method = _method_from_route_pattern(pattern)
+    if method is None:
+        return bazaar_ext
+
+    ext = copy.deepcopy(bazaar_ext)
+    info = ext.setdefault("info", {})
+    if not isinstance(info, dict):
+        return bazaar_ext
+
+    input_info = info.setdefault("input", {})
+    if not isinstance(input_info, dict):
+        return bazaar_ext
+
+    input_info.setdefault("method", method)
+    return ext
+
+
+def _method_from_route_pattern(pattern: str) -> str | None:
+    parts = pattern.split(None, 1)
+    if len(parts) != 2:
+        return None
+
+    method = parts[0].upper()
+    return method if method != "*" else None
