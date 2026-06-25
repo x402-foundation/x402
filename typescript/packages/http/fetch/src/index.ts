@@ -96,9 +96,17 @@ export function wrapFetchWithPayment(
     try {
       paymentPayload = await client.createPaymentPayload(paymentRequired);
     } catch (error) {
-      throw new Error(
-        `Failed to create payment payload: ${error instanceof Error ? error.message : "Unknown error"}`,
-      );
+      const message = `Failed to create payment payload: ${error instanceof Error ? error.message : "Unknown error"}`;
+      if (error instanceof Error) {
+        const wrappedError = new Error(message);
+        Object.defineProperty(wrappedError, "cause", {
+          configurable: true,
+          value: error,
+          writable: true,
+        });
+        throw wrappedError;
+      }
+      throw new Error(message);
     }
 
     // Encode payment header
