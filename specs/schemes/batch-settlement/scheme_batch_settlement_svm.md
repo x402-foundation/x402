@@ -52,23 +52,35 @@ normative profile:
 
 ### 3.1 `payment-channel` (normative, v1)
 
-Backed by the on-chain payment-channels program (a `pay-kit`-controlled program;
-program id `CHNLxYvVA28MJP9PrFuDXccuoGXAx7jBacfLEkahyGsX` on the current
-deployment). The escrow **deposit is the ceiling**; the client signs cumulative
-vouchers off-chain; the operator settles the latest voucher per channel in
-batches and finalizes with a refund of the unused remainder.
+Backed by the on-chain payment-channels program (advertised via
+`extra.channelProgram`; a canonical deployment is assumed when omitted). The
+escrow **deposit is the ceiling**; the client signs cumulative vouchers
+off-chain; the operator settles the latest voucher per channel in batches and
+finalizes with a refund of the unused remainder.
 
 Unlike `upto`, where the **operator** is the `authorizedSigner` (it fills in
 `actual ≤ ceiling` after metering), here the **client** is the `authorizedSigner`
 — the client signs each cumulative voucher itself (this is the `session` /
-client-voucher model). The operator only ever submits on-chain `settle` /
-`distribute` / `finalize`; it can never exceed the on-chain `deposit` or redirect
-funds away from the fixed `payee`.
+client-voucher model). The operator fills the remaining channel roles: it is the
+fee payer, the `rentPayer`, **and the channel `payee`** — which the program
+requires as the `settle_and_finalize` merchant (`merchant == channel.payee`). The
+x402 `payTo` is realized as that `payee` when the server self-facilitates
+(`payTo == operator`), or as a program-enforced `distributionSplits` entry when a
+separate facilitator is the `payee`. The operator only ever submits on-chain
+`settle` / `distribute` / `finalize`; it can never exceed the on-chain `deposit`
+(the client signs the cumulative) or redirect funds away from the sealed
+distribution.
 
 Strengths: per-request cost approaches zero (no on-chain tx per request); every
-guarantee is enforced by a program we control. Cost: the client locks the
+requirement is enforced on-chain by the program. Cost: the client locks the
 deposit for the channel's lifetime, and the operator must settle before the
 forced-close grace period elapses to capture funds.
+
+> **Reference-implementation status.** The v1 reference implements the
+> **self-facilitating** case (`operator == payTo`), where the operator is both
+> the settlement authority (`channel.payee`) and the recipient. Separate-facilitator
+> operation — `payTo` as a program-enforced `distributionSplits` entry, the
+> facilitator as `channel.payee` — is specified but not yet implemented.
 
 ## 4. Wire format
 
@@ -87,7 +99,7 @@ relative to `exact`. The core `PaymentRequirements`, `PaymentPayload`, and
 | `network` | string | ✓ | CAIP-2, e.g. `solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp` (mainnet), `solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1` (devnet) |
 | `amount` | string | ✓ | Per-request price, base units (fixed in v1) |
 | `asset` | string | ✓ | SPL mint address (or a known symbol like `"USDC"`) |
-| `payTo` | string | ✓ | Base58 channel payee |
+| `payTo` | string | ✓ | Base58 recipient. Realized as the channel `payee` when the server self-facilitates (`payTo == operator`), or as a `distributionSplits` entry when a separate facilitator is the `payee`. |
 | `maxTimeoutSeconds` | number | ✓ | Completion window |
 | `extra` | object | ✓ | See below |
 
@@ -168,7 +180,9 @@ expires_at (i64 le)`, identical to `upto` and the MPP `session` voucher.
 
 The client builds an `open` transaction depositing `depositAmount` (≥
 `extra.minimumDeposit`), with `authorizedSigner = payer` (client-voucher model),
-`payee = payTo`, and `distributionSplits` matching `extra.distributionSplits`.
+`payee = operator` (the settlement authority — equal to `payTo` when the server
+self-facilitates; see §3.1), `rentPayer = operator`, and `distributionSplits`
+matching `extra.distributionSplits`.
 The client sends a `deposit` payload carrying the base64 client-signed
 transaction plus the first cumulative voucher.
 
@@ -247,8 +261,10 @@ Standard x402 codes apply. Scheme-specific failures surface as `402` with an
 - **No fee-payer drain.** The operator validates the `open` transaction (single
   instruction, correct program/discriminator/accounts) before co-signing as fee
   payer.
-- **Time-bounded.** `expiresAt` is checked off-chain at acceptance and signed into
-  the on-chain voucher, so a stale voucher cannot settle.
+- **Time-bounded.** `expiresAt` is checked off-chain at acceptance and enforced
+  on-chain at settle. Because the **client** signs each voucher (it is the
+  `authorizedSigner`), `expiresAt` is a genuine client commitment here — unlike
+  `upto`, where the operator signs and the field is operator-attested.
 - **Bounded loss.** The client trusts the operator to settle before grace; the
   operator trusts the client only up to the escrowed `deposit`. Everything above
   the deposit, the destination, and replay are enforced cryptographically /
