@@ -18,6 +18,8 @@ This scheme facilitates payments of a specific amount of XRP or an issued curren
 
 XRPL charges the transaction fee to the transaction `Account`. This exact scheme therefore does not support facilitator-sponsored network fees for the signed `Payment` transaction. Supporting fee sponsorship would require a different payment model, not only a facilitator implementation change.
 
+`PaymentRequirements.extra.areFeesSponsored` MUST be present and MUST be `false`.
+
 ## Network Identifier (CAIP-2)
 
 x402 v2 requires CAIP-2 network identifiers. For XRPL, the format is:
@@ -35,6 +37,9 @@ Common XRPL network identifiers:
 | Mainnet | `xrpl:0`   |
 | Testnet | `xrpl:1`   |
 | Devnet  | `xrpl:2`   |
+
+> [!WARNING]
+> For standard XRPL networks where `networkId <= 1024`, XRPL protocol rules require omitting the signed `NetworkID` field. Wallets SHOULD use separate XRPL accounts for mainnet, testnet, and devnet x402 payments. If the same account has funds and compatible ticket state on multiple standard networks, a malicious or misconfigured facilitator could replay a transaction signed for one network on another.
 
 ## Protocol Flow
 
@@ -79,6 +84,7 @@ The resource server advertises payment requirements in the `accepts` array.
   "amount": "1000000",
   "maxTimeoutSeconds": 600,
   "extra": {
+    "areFeesSponsored": false,
     "invoiceId": "INV-2025-001"
   }
 }
@@ -95,6 +101,7 @@ The resource server advertises payment requirements in the `accepts` array.
   "amount": "10.5",
   "maxTimeoutSeconds": 600,
   "extra": {
+    "areFeesSponsored": false,
     "issuer": "rMwjYedjc7qqtKYVLiAccJSmCwih4LnE2q",
     "invoiceId": "INV-2025-002"
   }
@@ -103,19 +110,22 @@ The resource server advertises payment requirements in the `accepts` array.
 
 ### Field Definitions
 
-| Field                  | Type    | Required | Description                                      |
-| ---------------------- | ------- | -------- | ------------------------------------------------ |
-| `scheme`               | string  | Yes      | Must be `"exact"`                                |
-| `network`              | string  | Yes      | CAIP-2 identifier (for example, `"xrpl:0"`)      |
-| `asset`                | string  | Yes      | `"XRP"` for native XRP, or currency code for IOU |
-| `payTo`                | string  | Yes      | XRPL classic address receiving the payment       |
-| `amount`               | string  | Yes      | XRP drops string or IOU issued-currency value    |
-| `maxTimeoutSeconds`    | integer | Yes      | Maximum validity window for payment attempt      |
-| `extra.invoiceId`      | string  | No       | Unique invoice identifier for binding            |
-| `extra.destinationTag` | integer | No       | DestinationTag for hosted accounts               |
-| `extra.issuer`         | string  | IOU only | Classic address of the IOU issuer                |
+| Field                    | Type    | Required | Description                                      |
+| ------------------------ | ------- | -------- | ------------------------------------------------ |
+| `scheme`                 | string  | Yes      | Must be `"exact"`                                |
+| `network`                | string  | Yes      | CAIP-2 identifier (for example, `"xrpl:0"`)      |
+| `asset`                  | string  | Yes      | `"XRP"` for native XRP, or currency code for IOU |
+| `payTo`                  | string  | Yes      | XRPL classic address receiving the payment       |
+| `amount`                 | string  | Yes      | XRP drops string or IOU issued-currency value    |
+| `maxTimeoutSeconds`      | integer | Yes      | Maximum validity window for payment attempt      |
+| `extra.areFeesSponsored` | boolean | Yes      | Must be `false` for XRPL exact payments          |
+| `extra.invoiceId`        | string  | No       | Unique invoice identifier for binding            |
+| `extra.destinationTag`   | integer | No       | DestinationTag for hosted accounts               |
+| `extra.issuer`           | string  | IOU only | Classic address of the IOU issuer                |
 
 `extra.destinationTag` applies to both native XRP and IOU payments. It is used when the receiver is a hosted account or otherwise requires a destination tag for attribution.
+
+`extra.areFeesSponsored` is always `false` because this scheme uses payer-signed XRPL `Payment` transactions whose fee is paid by the payer account.
 
 No `extra.decimals` field is defined for XRPL exact payments. Implementations MUST NOT derive the signed transfer amount from server-provided decimal precision metadata.
 
@@ -169,6 +179,7 @@ The `PAYMENT-SIGNATURE` header contains a base64-encoded `PaymentPayload`.
     "amount": "1000000",
     "maxTimeoutSeconds": 600,
     "extra": {
+      "areFeesSponsored": false,
       "invoiceId": "INV-2025-001"
     }
   },
@@ -191,6 +202,7 @@ The `PAYMENT-SIGNATURE` header contains a base64-encoded `PaymentPayload`.
     "amount": "10.5",
     "maxTimeoutSeconds": 600,
     "extra": {
+      "areFeesSponsored": false,
       "issuer": "rMwjYedjc7qqtKYVLiAccJSmCwih4LnE2q",
       "invoiceId": "INV-2025-002"
     }
@@ -220,6 +232,7 @@ The facilitator MUST reject if:
 - `paymentPayload.accepted.network` is unsupported
 - `paymentPayload.accepted` does not match `paymentRequirements` on `scheme`, `network`, `asset`, `payTo`, `amount`, or `maxTimeoutSeconds`
 - Required `extra` keys are missing or mismatched:
+  - `areFeesSponsored=false`
   - `issuer` for IOU payments
   - `invoiceId` when invoice binding is required
   - `destinationTag` when destination tag binding is required
@@ -251,6 +264,8 @@ Let `networkId` be the integer parsed from `paymentRequirements.network` (for ex
 For XRPL mainnet, testnet, devnet, and other standard networks with `networkId <= 1024`, `NetworkID` is omitted by XRPL protocol rules. This omission is a transaction-format requirement, not a standalone cryptographic replay guarantee between standard XRPL networks.
 
 For `networkId <= 1024`, the facilitator MUST submit the transaction only to the XRPL network identified by `paymentRequirements.network`. For custom XRPL networks with `networkId > 1024`, the signed `NetworkID` field provides explicit network binding.
+
+Clients and wallets SHOULD use different XRPL accounts for mainnet, testnet, devnet, and other standard networks. If one account has funds and compatible ticket state on more than one standard network, a malicious or misconfigured facilitator could replay a transaction intended for one standard network on another standard network where the signed `NetworkID` field is also omitted.
 
 ### 6. Amount Validation
 
@@ -301,25 +316,16 @@ The facilitator MUST reject if:
 
 - `tx_json.LastLedgerSequence` MUST be present.
 - `LastLedgerSequence` MUST be no later than the facilitator's policy-derived maximum for `paymentRequirements.maxTimeoutSeconds`.
-- The transaction MUST use either a normal `Sequence` or a `TicketSequence`.
+- The transaction MUST use `TicketSequence`.
+- `tx_json.Sequence` MUST be `0`.
+- `tx_json.TicketSequence` MUST refer to an available ticket for `tx_json.Account`.
 
 Recommended `LastLedgerSequence` policy:
 
 - Convert `maxTimeoutSeconds` to ledgers: `maxLedgerDelta = ceil(maxTimeoutSeconds / 5) + 2`.
 - Require: `LastLedgerSequence <= currentValidatedLedgerIndex + maxLedgerDelta`.
 
-`TicketSequence` SHOULD be used for x402 flows where `/verify` and `/settle` are separated by resource-handler execution. A ticket avoids blocking the payer's normal account sequence while the resource server handles the request.
-
-If `TicketSequence` is present:
-
-- `tx_json.Sequence` MUST be `0`.
-- `tx_json.TicketSequence` MUST refer to an available ticket for `tx_json.Account`.
-
-If `TicketSequence` is absent:
-
-- `tx_json.Sequence` MUST be present.
-- `/verify` MUST check that `tx_json.Sequence` is currently available for `tx_json.Account`.
-- Resource servers SHOULD settle promptly after successful verification to minimize sequence-race risk.
+`TicketSequence` is required because x402 `exact` settlement occurs after successful resource-handler execution. A ticket avoids blocking the payer's normal account sequence while the resource server handles the request. Clients MUST create a ticket before signing an x402 XRPL payment if no available ticket exists.
 
 ### 8. Invoice Binding
 
@@ -337,6 +343,7 @@ The facilitator MUST reject if `invoiceId` is present and `InvoiceID` is missing
 The facilitator MUST reject transactions with:
 
 - `Fee` above facilitator policy.
+- `Delegate` present.
 - `Memos` present.
 - `SendMax` present for XRP.
 - `Paths` present.
@@ -357,7 +364,7 @@ The facilitator MUST reject transactions with:
 If simulation is unavailable, implementations MUST perform targeted checks that cover at least:
 
 - account existence for `tx_json.Account`;
-- normal sequence availability or ticket availability;
+- ticket availability;
 - XRP balance sufficient for the transaction fee;
 - destination account existence or create-account funding rules for XRP payments;
 - IOU trust line existence, issuer, and balance sufficiency for IOU payments.
@@ -378,6 +385,7 @@ The payer pays the XRPL transaction fee because:
 
 - `Fee` is embedded in the signed transaction.
 - XRPL charges fees to the transaction's `Account` field.
+- `Delegate` is not supported by this scheme.
 
 ### Settlement Timeout
 
@@ -416,9 +424,9 @@ Implementations MAY include additional fields when defined by the SDK or facilit
 ### Replay and Race Protection
 
 - `LastLedgerSequence` ensures transactions expire.
-- `TicketSequence` is recommended for delayed settlement flows because it avoids blocking the payer's normal account sequence.
-- Normal `Sequence` may race if the payer submits another transaction between `/verify` and `/settle`; implementations using normal `Sequence` SHOULD minimize the verify-to-settle window.
+- `TicketSequence` is required because x402 `exact` settlement is separated from `/verify` by resource-handler execution.
 - `NetworkID` provides signed network binding only for XRPL networks with `networkId > 1024`; standard XRPL networks require facilitators to route strictly by `paymentRequirements.network`.
+- Clients SHOULD use different XRPL accounts for standard networks such as mainnet and testnet to reduce replay risk when `NetworkID` must be omitted.
 
 ### Partial Payment Protection
 
