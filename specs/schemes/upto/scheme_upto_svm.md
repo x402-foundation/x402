@@ -87,6 +87,13 @@ channel-account rent is funded by the operator (the `open` `rentPayer` account)
 and reclaimed at finalize; the client supplies only the stablecoin deposit and
 never needs SOL.
 
+> **Reference-implementation status.** The v1 reference implements the
+> **self-facilitating** case (`operator == payTo`), where the operator is both
+> the settlement authority (`channel.payee`) and the recipient. Separate-facilitator
+> operation — where `payTo` is a program-enforced distribution split and the
+> facilitator is the `channel.payee` — is specified (§4.1) but not yet implemented;
+> the reference rejects an open whose `payTo` is not the operator.
+
 ## 4. Wire format
 
 `upto` reuses the x402 v2 transport: a `402` response carries `PAYMENT-REQUIRED`;
