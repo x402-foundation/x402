@@ -247,6 +247,7 @@ Sponsors SHOULD maintain an allowlist of programs permitted to reach simulation-
 | SPL Governance | `GovER5Lthms3bLBqWub97yVrMmEogzX7xNjdXpPPCVZw` |
 | Metaplex Core | `CoREENxT6tW1HoK8ypY1SxRMZTcVPm7R94rH4PZNhX7d` |
 | Lighthouse (Phantom assertions) | `L2TExMFKdjpN9kozasaurPirfHy9P8sbXoAN1qA3S95` |
+| Subscriptions & Allowances | `De1egAFMkMWZSN5rYXRj9CAdheBamobVNubTsi9avR44` |
 
 The ComputeBudget and SPL Memo programs are **category-exempt** — they are not wallet programs and are permitted independently of the allowlist (ComputeBudget is bounded by §2.2.1; Memo is enforced in §3.2). Any other top-level program not on the allowlist SHOULD be rejected (`smart_wallet_program_not_allowed`). Operators MAY override the allowlist.
 
@@ -258,6 +259,18 @@ Sponsors SHOULD simulate the exact signed transaction and reject it if execution
 
 - A transaction MAY be valid under the `exact` scheme while being rejected by a sponsor's policy.
 - Sponsors MAY introduce stricter limits but MUST NOT relax the §2.1 MUSTs.
+
+### 2.4 Allowance-Backed Payments (Subscriptions Program)
+
+The Subscriptions & Allowances program (`De1egAFMkMWZSN5rYXRj9CAdheBamobVNubTsi9avR44`, allowlisted in §2.2.2) lets a user sign an on-chain allowance once, authorizing a spender key to draw up to a cap of an SPL token from the user's account until an expiry. An `exact` payment draws `PaymentRequirements.amount` via the program's `transferFixed`, which CPIs the token transfer to `ATA(payTo)`. The payment outcome (§1) is satisfied as for any program-mediated transfer, and the principal stays in the user's account, so an agent never holds a hot balance.
+
+This mechanism adds one allowance-specific normative check:
+
+- **Allowance resolves and covers the draw (MUST).** Before signing, the sponsor MUST read the cited delegation account on-chain and confirm it exists, is not expired, its delegator, spender, and mint match the draw, and its remaining cap is `>= amount`, fail-closed, at the same status as the §1 outcome check. The program enforces the cap and expiry at execution, but `verify()` MUST remain a sound predictor of `settle()`: a sponsor MUST NOT sign a draw whose allowance does not resolve and cover it (`allowance_missing`, `allowance_expired`, `allowance_under_cap`).
+
+For settlement-receipt binding, the delegation is the authorization artifact and the executed `transferFixed` is the finalized result. A receipt SHOULD bind the executed transfer's net-balance delta to `ATA(payTo)`, with the delegation as provenance, not the delegation itself, which proves authority rather than execution.
+
+Modeling the draw as a lifecycle (authorized envelope, then executed draw) keeps the binding shape stable across a future per-payment `upto` axis: `transferFixed` settles the full advertised amount today, and a recipient-bound variable draw would settle `actual <= max` later, with the same receipt binding and no rewrite.
 
 ---
 
