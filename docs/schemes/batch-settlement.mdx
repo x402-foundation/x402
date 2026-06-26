@@ -434,12 +434,16 @@ Client channel state is stored in memory by default. Persistent client storage i
 
 ### Receiver Authorizer
 
-Every channel commits to a `receiverAuthorizer`, which signs claim and refund authorizations.
+Every channel commits to a `receiverAuthorizer`, which signs claim and refund authorizations. The server must have a `receiverAuthorizer` available from one of two sources:
 
 | Strategy | When to use it |
 |----------|----------------|
 | Self-managed `receiverAuthorizerSigner` | Recommended for production. Channels survive facilitator changes because any facilitator can relay your signed claims and refunds. |
-| Facilitator-delegated authorizer | Simpler to run. If you switch facilitators, claim and refund old channels before opening new ones. |
+| Facilitator-delegated authorizer | Simpler to run. Omit `receiverAuthorizerSigner` and the server picks up the address advertised by the facilitator's `/supported` response. If you switch facilitators, claim and refund old channels before opening new ones. |
+
+The server validates this configuration at startup. If no `receiverAuthorizerSigner` is configured and the facilitator does not advertise a valid `receiverAuthorizer` in its `/supported` response, the server will throw an error during `initialize()` rather than failing on the first protected request.
+
+On the facilitator side, the `authorizerSigner` passed to `BatchSettlementEvmScheme` is optional. When provided, the facilitator advertises its address as `receiverAuthorizer` in `/supported` and signs missing authorizer signatures. When omitted, no `receiverAuthorizer` is advertised and servers must supply their own `receiverAuthorizerSigner`.
 
 ### Settlement Policy
 
