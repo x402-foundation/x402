@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="Webpage-to-Markdown by Lagoon Tech">
+  <defs>
+    <linearGradient id="lg-bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#0b1620"/>
+      <stop offset="1" stop-color="#1a3247"/>
+    </linearGradient>
+  </defs>
+  <rect width="512" height="512" rx="64" fill="url(#lg-bg)"/>
+  <g font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif" text-anchor="middle">
+    <text x="256" y="220" font-size="120" font-weight="700" fill="#eaf3fb" letter-spacing="-4">URL</text>
+    <text x="256" y="290" font-size="40" font-weight="500" fill="#5fb2e8" letter-spacing="2">→</text>
+    <text x="256" y="360" font-size="80" font-weight="700" fill="#5fb2e8" letter-spacing="-2">md</text>
+  </g>
+  <g transform="translate(256 430)">
+    <circle cx="-32" cy="0" r="6" fill="#5fb2e8"/>
+    <circle cx="0"   cy="0" r="6" fill="#eaf3fb"/>
+    <circle cx="32"  cy="0" r="6" fill="#5fb2e8"/>
+  </g>
+</svg>
