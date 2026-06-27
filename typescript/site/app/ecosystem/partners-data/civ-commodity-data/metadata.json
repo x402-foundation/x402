@@ -1,0 +1,7 @@
+{
+  "name": "CIV Commodity Data",
+  "description": "x402-paid HTTP API for cocoa, coffee, sugar, cotton, and cashew commodity data. First-mover Côte d'Ivoire farmgate prices (CCC and CCA decrees, FCFA/kg), ICE Futures US settlements (CC, KC, SB, CT), CFTC COT positioning, and historical trends. 19 endpoints across 5 commodities, $0.01–$0.10 USDC on Base. Machine-readable real public data, no API keys. Listed on x402scan.",
+  "logoUrl": "/logos/lagoon-tech-commodity-data.svg",
+  "websiteUrl": "https://data.lagoontechsystems.com",
+  "category": "Services/Endpoints"
+}
