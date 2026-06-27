@@ -1,0 +1,7 @@
+{
+  "name": "Webpage-to-Markdown",
+  "description": "x402-paid HTTP API that converts any webpage URL into clean, agent-ready Markdown (Readability + Turndown). POST a URL, pay $0.005 USDC on Base, receive structured Markdown. No API keys. Built for agent-context construction. Listed on x402scan.",
+  "logoUrl": "/logos/lagoon-tech-x402-md.svg",
+  "websiteUrl": "https://x402-md.lagoontechsystems.com",
+  "category": "Services/Endpoints"
+}
