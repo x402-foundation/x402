@@ -1,0 +1,1 @@
+The Flask WSGI middleware now returns `500` (and logs the exception) when the settlement path raises an unexpected error, instead of a silent empty-body `402` that could prompt a paying client to retry. Mirrors the FastAPI fix in #2622.

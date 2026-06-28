@@ -7,6 +7,7 @@ Uses x402HTTPResourceServerSync for synchronous request processing without async
 from __future__ import annotations
 
 import json
+import logging
 import threading
 from collections.abc import Callable, Iterator
 from typing import TYPE_CHECKING, Any
@@ -47,6 +48,8 @@ from ._bazaar_utils import (
 from ._bazaar_utils import (
     validate_bazaar_extensions as _validate_bazaar_extensions,
 )
+
+logger = logging.getLogger(__name__)
 
 # ============================================================================
 # Flask Adapter
@@ -473,12 +476,20 @@ class PaymentMiddleware:
                         return _facilitator_error_wsgi_response(start_response, error)
 
                     except Exception:
-                        # Settlement error - return empty body with 402
+                        # An unexpected failure here (RPC outage, bug, etc.) is a
+                        # server error, not "payment required". Returning 402 would
+                        # tell a paying client to retry and pay again into a broken
+                        # endpoint.
+                        logger.exception("internal server error during settlement")
                         start_response(
-                            "402 Payment Required",
+                            "500 Internal Server Error",
                             [("Content-Type", "application/json")],
                         )
-                        return [json.dumps({}).encode("utf-8")]
+                        return [
+                            json.dumps({"error": "internal server error during settlement"}).encode(
+                                "utf-8"
+                            )
+                        ]
 
                 # Send buffered response
                 response_wrapper.send_response(body_chunks)

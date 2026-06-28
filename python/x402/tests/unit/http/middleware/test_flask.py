@@ -680,6 +680,41 @@ class TestFlaskMiddlewareIntegration:
                 assert data == {}
                 assert "PAYMENT-RESPONSE" in response.headers
 
+    def test_settlement_unexpected_exception_returns_500(self):
+        """Test that an unexpected settlement error returns 500, not an empty 402."""
+        app = Flask(__name__)
+
+        @app.route("/api/protected")
+        def protected_route():
+            return "Protected content"
+
+        mock_server = MagicMock()
+        routes = {}
+
+        payment_payload = make_v2_payload()
+        payment_requirements = make_payment_requirements()
+
+        with patch("x402.http.middleware.flask.x402HTTPResourceServerSync") as mock_http_server:
+            mock_http_server_instance = MagicMock()
+            mock_http_server_instance.requires_payment.return_value = True
+            mock_http_server_instance.process_http_request.return_value = HTTPProcessResult(
+                type="payment-verified",
+                payment_payload=payment_payload,
+                payment_requirements=payment_requirements,
+            )
+            mock_http_server_instance.process_settlement.side_effect = RuntimeError(
+                "RPC node unreachable"
+            )
+            mock_http_server.return_value = mock_http_server_instance
+
+            PaymentMiddleware(app, routes, mock_server, sync_facilitator_on_start=False)
+
+            with app.test_client() as client:
+                response = client.get("/api/protected")
+                assert response.status_code == 500
+                data = json.loads(response.data)
+                assert data == {"error": "internal server error during settlement"}
+
     def test_cancels_on_handler_error_status(self):
         """Test that handler 4xx/5xx triggers cancellation without settlement."""
         app = Flask(__name__)
