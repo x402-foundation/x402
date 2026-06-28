@@ -206,6 +206,18 @@ paymentWrapper := mcp402.NewPaymentWrapper(resourceServer, mcp402.PaymentWrapper
 
 The Bazaar extension just facilitates the data exchange between servers and facilitators - the implementation is yours.
 
+### Offer-Receipt (Signed Offers and Receipts)
+
+**Import Path:**
+```
+github.com/x402-foundation/x402/go/v2/extensions/offerreceipt
+```
+
+**Purpose:**
+- Clients can extract signed offers from `PaymentRequired.extensions`
+- Clients can extract signed receipts from `SettleResponse.extensions`
+- Helpers decode payloads and compare receipt fields without verifying signatures
+
 ### Future Extensions
 
 Extensions can serve many purposes. Planned extensions include:
@@ -404,4 +416,3 @@ extensions/
 - **[Main README](../README.md)** - Package overview
 - **[SERVER.md](../SERVER.md)** - Using extensions in servers
 - **[FACILITATOR.md](../FACILITATOR.md)** - Extracting extensions in facilitators
-
