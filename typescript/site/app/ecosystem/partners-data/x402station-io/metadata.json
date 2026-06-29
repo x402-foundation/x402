@@ -1,0 +1,7 @@
+{
+  "name": "x402station.io",
+  "category": "Services/Endpoints",
+  "logoUrl": "/logos/x402station-io.png",
+  "description": "Independent risk-signal layer for x402 endpoints. Preflight by x402station.io checks endpoint risk before PAYMENT-SIGNATURE so agents avoid paying unknown, scam, decoy, zombie, dead, or proxy-markup x402 resources. Nine pay-per-call endpoints on Base mainnet across discover, evaluate, monitor, and verify. Not a facilitator, marketplace, or payment rail.",
+  "websiteUrl": "https://x402station.io/"
+}
