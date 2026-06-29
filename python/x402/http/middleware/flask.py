@@ -19,7 +19,7 @@ except ImportError as e:
         "Flask middleware requires the flask package. Install with: uv add x402[flask]"
     ) from e
 
-from ...schemas import VerifiedPaymentCancelOptions
+from ...schemas import SettleResponse, VerifiedPaymentCancelOptions
 from ..constants import SETTLEMENT_OVERRIDES_HEADER
 from ..facilitator_client_base import FacilitatorResponseError
 from ..types import (
@@ -476,20 +476,31 @@ class PaymentMiddleware:
                         return _facilitator_error_wsgi_response(start_response, error)
 
                     except Exception:
-                        # An unexpected failure here (RPC outage, bug, etc.) is a
-                        # server error, not "payment required". Returning 402 would
-                        # tell a paying client to retry and pay again into a broken
-                        # endpoint.
-                        logger.exception("internal server error during settlement")
-                        start_response(
-                            "500 Internal Server Error",
-                            [("Content-Type", "application/json")],
+                        # An unexpected error here (RPC failure, bug, ...) is a
+                        # server-side failure, not a payment problem. Log it so
+                        # operators get a signal (the module otherwise logs
+                        # nothing), and surface it as a settle failure
+                        # (402 + PAYMENT-RESPONSE, success=False) - consistent with
+                        # the not-settle_result.success path and distinguishable
+                        # from a genuine "payment required". The client-facing
+                        # reason stays generic; the raw exception detail is logged
+                        # only. Mirrors the FastAPI fix in #2622.
+                        logger.exception("x402: unexpected error while settling a verified payment")
+                        settle_response = SettleResponse(
+                            success=False,
+                            error_reason="unexpected_settlement_error",
+                            error_message="Unexpected error during settlement",
+                            transaction="",
+                            network=result.payment_requirements.network,
                         )
-                        return [
-                            json.dumps({"error": "internal server error during settlement"}).encode(
-                                "utf-8"
-                            )
-                        ]
+                        settle_headers = self._http_server._create_settlement_headers(
+                            settle_response, result.payment_requirements
+                        )
+                        start_response(
+                            "402 Payment Required",
+                            [("Content-Type", "application/json"), *settle_headers.items()],
+                        )
+                        return [json.dumps({}).encode("utf-8")]
 
                 # Send buffered response
                 response_wrapper.send_response(body_chunks)

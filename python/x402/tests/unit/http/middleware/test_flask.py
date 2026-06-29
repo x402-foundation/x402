@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import threading
 from typing import Any
 from unittest.mock import MagicMock, patch
@@ -419,9 +420,9 @@ class TestFlaskMiddlewareConcurrency:
                 futures = [executor.submit(make_request) for _ in range(5)]
                 responses = [f.result() for f in futures]
 
-            assert init_call_count == 1, (
-                f"Expected initialize() to be called exactly once, got {init_call_count}"
-            )
+            assert (
+                init_call_count == 1
+            ), f"Expected initialize() to be called exactly once, got {init_call_count}"
             for resp in responses:
                 assert resp.status_code == 402
 
@@ -680,8 +681,11 @@ class TestFlaskMiddlewareIntegration:
                 assert data == {}
                 assert "PAYMENT-RESPONSE" in response.headers
 
-    def test_settlement_unexpected_exception_returns_500(self):
-        """Test that an unexpected settlement error returns 500, not an empty 402."""
+    def test_settlement_unexpected_exception_returns_402_with_payment_response(self, caplog):
+        """An unexpected settlement error must be LOGGED and surfaced as a settle
+        failure (402 + PAYMENT-RESPONSE, success=False) - not a silent empty-body
+        402 with no header and no log (see issue #2603). The raw exception detail
+        is logged only, not leaked to the client."""
         app = Flask(__name__)
 
         @app.route("/api/protected")
@@ -703,17 +707,26 @@ class TestFlaskMiddlewareIntegration:
                 payment_requirements=payment_requirements,
             )
             mock_http_server_instance.process_settlement.side_effect = RuntimeError(
-                "RPC node unreachable"
+                "boom: RPC node unreachable mid-settle"
             )
+            mock_http_server_instance._create_settlement_headers.return_value = {
+                "PAYMENT-RESPONSE": "base64encoded"
+            }
             mock_http_server.return_value = mock_http_server_instance
 
             PaymentMiddleware(app, routes, mock_server, sync_facilitator_on_start=False)
 
-            with app.test_client() as client:
-                response = client.get("/api/protected")
-                assert response.status_code == 500
-                data = json.loads(response.data)
-                assert data == {"error": "internal server error during settlement"}
+            with caplog.at_level(logging.ERROR):
+                with app.test_client() as client:
+                    response = client.get("/api/protected")
+
+            assert response.status_code == 402
+            assert json.loads(response.data) == {}
+            assert "PAYMENT-RESPONSE" in response.headers
+            # raw exception detail is logged for operators...
+            assert "boom: RPC node unreachable mid-settle" in caplog.text
+            # ...but not leaked to the client
+            assert "boom" not in response.get_data(as_text=True)
 
     def test_cancels_on_handler_error_status(self):
         """Test that handler 4xx/5xx triggers cancellation without settlement."""
