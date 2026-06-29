@@ -290,9 +290,10 @@ type TypedDataField struct {
 
 // TransactionReceipt represents the receipt of a mined transaction
 type TransactionReceipt struct {
-	Status      uint64 `json:"status"`
-	BlockNumber uint64 `json:"blockNumber"`
-	TxHash      string `json:"transactionHash"`
+	Status      uint64            `json:"status"`
+	BlockNumber uint64            `json:"blockNumber"`
+	TxHash      string            `json:"transactionHash"`
+	Logs        []*goethtypes.Log `json:"logs,omitempty"`
 }
 
 // AssetInfo contains information about an ERC20 token
