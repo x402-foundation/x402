@@ -488,7 +488,7 @@ class PaymentMiddleware:
                         logger.exception("x402: unexpected error while settling a verified payment")
                         settle_response = SettleResponse(
                             success=False,
-                            error_reason="unexpected_settlement_error",
+                            error_reason="unexpected_settle_error",
                             error_message="Unexpected error during settlement",
                             transaction="",
                             network=result.payment_requirements.network,
