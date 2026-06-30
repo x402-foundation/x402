@@ -127,7 +127,7 @@ The following outlines the flow of a payment using the `x402` protocol. Note tha
 
 1. `Client` makes an HTTP request to a `resource server`.
 
-2. `Resource server` responds with a `402 Payment Required` status and a `PaymentRequired` b64 object return as a `PAYMENT-REQUIRED` header.
+2. `Resource server` responds with a `402 Payment Required` status and a `PaymentRequired` b64 object returned as a `PAYMENT-REQUIRED` header.
 
 3. `Client` selects one of the `PaymentRequirements` returned by the server response and creates a `PaymentPayload` based on the `scheme` & `network` of the `PaymentRequirements` they have selected.
 
