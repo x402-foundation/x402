@@ -87,6 +87,14 @@ channel-account rent is funded by the operator (the `open` `rentPayer` account)
 and reclaimed at finalize; the client supplies only the stablecoin deposit and
 never needs SOL.
 
+The program stores `rentPayer` in channel state, so rent can only be returned to
+the account that funded it. A server/facilitator that sponsors rent SHOULD keep
+or reconstruct an index of channels it opened, for example from `Opened` events
+or channel accounts where `rentPayer` equals the operator. It can then close
+stale channels and reclaim rent by finalizing and distributing them; a no-charge
+cleanup uses the no-voucher `settle_and_finalize` path followed by `distribute`.
+This indexing is operational bookkeeping, not a trust assumption.
+
 > **Reference-implementation status.** The v1 reference implements the
 > **self-facilitating** case (`operator == payTo`), where the operator is both
 > the settlement authority (`channel.payee`) and the recipient. Separate-facilitator
