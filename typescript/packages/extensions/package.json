@@ -47,6 +47,10 @@
     "@scure/base": "^1.2.6",
     "@x402/core": "workspace:~",
     "ajv": "^8.17.1",
+    "canonicalize": "^2.0.0",
+    "did-jwt": "^8.0.0",
+    "did-jwt-vc": "^4.0.0",
+    "did-resolver": "^4.1.0",
     "jose": "^5.9.6",
     "@signinwithethereum/siwe": "^4.1.0",
     "tweetnacl": "^1.0.3",
@@ -112,6 +116,16 @@
       "require": {
         "types": "./dist/cjs/builder-code/index.d.ts",
         "default": "./dist/cjs/builder-code/index.js"
+      }
+    },
+    "./vcx": {
+      "import": {
+        "types": "./dist/esm/vcx/index.d.mts",
+        "default": "./dist/esm/vcx/index.mjs"
+      },
+      "require": {
+        "types": "./dist/cjs/vcx/index.d.ts",
+        "default": "./dist/cjs/vcx/index.js"
       }
     }
   },
