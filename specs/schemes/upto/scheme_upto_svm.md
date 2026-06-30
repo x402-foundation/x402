@@ -53,12 +53,12 @@ program change — see §3 and §5.
 The server/facilitator MUST always verify against the client-signed ceiling,
 never against the settlement-time `amount`.
 
-## 3. Payment-channel profile
+## 3. Payment-channel asset transfer method
 
-v1 defines a single profile, `payment-channel`, carried in the payload's
-`profile` field. It is backed by the on-chain payment-channels program
-(advertised via `extra.channelProgram`). The escrow **deposit is the ceiling**;
-a single operator-signed
+SVM `upto` defines a single asset transfer method, `payment-channel`, carried in
+`extra.assetTransferMethod`. It is backed by the on-chain payment-channels
+program (advertised via `extra.channelProgram`). The escrow **deposit is the
+ceiling**; a single operator-signed
 voucher locks the actual amount via `settle_and_finalize`, and `distribute` then
 moves the funds — paying out the `payTo`/`splits`, refunding the unused
 `deposit − actual` to the payer, returning the fronted rent to the operator, and
@@ -117,7 +117,7 @@ to `exact`.
 
 | Field | Type | Required | Notes |
 |---|---|---|---|
-| `profiles` | string[] | ✓ | `["payment-channel"]` (the only v1 profile) |
+| `assetTransferMethod` | string | ✓ | MUST be `"payment-channel"`. This value selects the remaining `extra` fields in this table. |
 | `feePayer` | string | ✓ | Base58 operator key that sponsors fees (co-signs the setup transaction as fee payer) and settles |
 | `channelProgram` | string | ✓ | Base58 payment-channels program id. Clients and facilitators MUST reject unsupported program ids for the selected `network`. |
 | `tokenProgram` | string | ✓ | `Tokenkeg…` or `TokenzQ…` (Token-2022); the client SHOULD verify it against the on-chain mint owner |
@@ -139,7 +139,6 @@ Common fields:
 
 | Field | Type | Notes |
 |---|---|---|
-| `profile` | string | `"payment-channel"` (the only v1 profile) |
 | `from` | string | Payer wallet (base58) |
 | `maxAmount` | string | The signed ceiling (base units). MUST equal verification-phase `amount`. |
 | `expiresAt` | number | Deadline (Unix seconds); signed into the on-chain message |
@@ -171,13 +170,14 @@ find_program_address(
 )
 ```
 
-For this profile, `channel_payee == authorizedSigner == extra.feePayer`. Because
-the channel address is a PDA, the client knows `channelId` before the channel is
-opened. The client MUST derive it before signing `openTransaction`, include the
-same PDA as the writable `channel` account in the `open` instruction, and set
-`payload.channelId` to that address. The server/facilitator MUST rederive the
-PDA from the decoded `openTransaction` and reject the payload if it differs from
-either the decoded `channel` account or `payload.channelId`.
+For `payment-channel`, `channel_payee == authorizedSigner == extra.feePayer`.
+Because the channel address is a PDA, the client knows `channelId` before the
+channel is opened. The client MUST derive it before signing `openTransaction`,
+include the same PDA as the writable `channel` account in the `open`
+instruction, and set `payload.channelId` to that address. The
+server/facilitator MUST rederive the PDA from the decoded `openTransaction` and
+reject the payload if it differs from either the decoded `channel` account or
+`payload.channelId`.
 
 > The voucher is **not** carried in the payload. Because the actual amount is
 > only known after the resource is consumed, and the client's protection is the
@@ -231,7 +231,7 @@ in a single round-trip.
 The server/facilitator MUST, in order:
 
 1. Confirm `payload.maxAmount` equals verification-phase `requirements.amount`.
-2. Confirm `network`, `asset` (mint), `tokenProgram`, `channelProgram`, and `payTo` match the requirements.
+2. Confirm `extra.assetTransferMethod == "payment-channel"` and `network`, `asset` (mint), `tokenProgram`, `channelProgram`, and `payTo` match the requirements.
 3. Confirm `feePayer` in `extra` is the operator's own key (the server's, or the facilitator's it delegates to).
 4. Confirm the channel exists (or the `openTransaction` is valid and broadcastable), targets `extra.channelProgram`, **`channel.deposit == maxAmount`** (exact, not `≥`: `topUp` can raise an open channel's deposit, so only equality keeps the x402 ceiling enforced rather than advisory), `distribution_hash` matches the intended `payTo`/`splits` (so `payTo`'s payout is locked on-chain), `channel.status == Open`, `channel.mint == asset`, **`channel.payee == channel.authorizedSigner == operator`** (so the operator is both the voucher signer and the `settle_and_finalize` merchant, and alone can settle and finalize), and the open's **`rentPayer == operator`** with `rentPayer` marked as a required signer (the operator funds and reclaims the rent it co-signs for). An `open` naming any other payee, authorized signer, or rentPayer, or naming `rentPayer` without requiring the operator signature, MUST be rejected before co-signing.
 5. Validate `validAfter ≤ now ≤ expiresAt`.
