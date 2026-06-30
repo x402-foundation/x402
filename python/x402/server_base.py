@@ -28,6 +28,7 @@ from .hook_policy import (
 )
 from .interfaces import SchemeNetworkServer, SchemePaymentRequiredContext
 from .schemas import (
+    X402_VERSION,
     AbortResult,
     Network,
     PaymentCancellationDispatcher,
@@ -347,7 +348,48 @@ class x402ResourceServerBase:
                 if scheme not in self._supported_responses[network]:
                     self._supported_responses[network][scheme] = supported
 
+        self._validate_facilitator_capabilities()
         self._initialized = True
+
+    def _validate_facilitator_capabilities(self) -> None:
+        """Fail fast when a registered scheme's config is incompatible with the
+        facilitator capabilities advertised for the scheme/network it supports.
+
+        Only schemes the facilitator actually supports are validated, and only
+        schemes exposing a `validate_facilitator_support` hook participate.
+
+        Raises:
+            ValueError: Listing every capability problem when one or more are reported.
+        """
+        problems: list[str] = []
+
+        for network, scheme_map in self._schemes.items():
+            for scheme, server in scheme_map.items():
+                validate = getattr(server, "validate_facilitator_support", None)
+                if validate is None:
+                    continue
+
+                supported_kind = self.get_supported_kind(X402_VERSION, network, scheme)
+                if supported_kind is None:
+                    continue
+
+                extensions = self._facilitator_extensions(network, scheme)
+                problem = validate(network, supported_kind, extensions)
+                if problem:
+                    problems.append(f"{scheme} on {network}: {problem}")
+
+        if problems:
+            details = "\n".join(f"  - {p}" for p in problems)
+            raise ValueError(f"x402 facilitator capability errors:\n{details}")
+
+    def _facilitator_extensions(self, network: Network, scheme: str) -> list[str]:
+        """Return the extensions a facilitator advertises for a scheme/network."""
+        supported = self._supported_responses.get(network, {}).get(scheme)
+        if supported is None:
+            prefix = network.split(":")[0]
+            wildcard = f"{prefix}:*"
+            supported = self._supported_responses.get(wildcard, {}).get(scheme)
+        return list(supported.extensions) if supported else []
 
     # ========================================================================
     # Build Requirements

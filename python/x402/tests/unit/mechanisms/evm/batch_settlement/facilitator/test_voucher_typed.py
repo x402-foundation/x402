@@ -105,13 +105,23 @@ class TestVerifyVoucherTypedData:
         )
 
     def test_zero_authorizer_falls_back_to_signer_path(self):
-        """With payer_authorizer=0, we expect signer.verify_typed_data to be called."""
+        """With payer_authorizer=0, verify_typed_data_strict is called on the payer.
+
+        The fake signer returns code (contract path) so EIP-1271 isValidSignature
+        is exercised rather than ECDSA, confirming the strict signer path is taken
+        instead of the payer_authorizer ECDSA path.
+        """
         calls: list[dict] = []
 
         class _FakeSigner:
-            def verify_typed_data(self, **kwargs):
-                calls.append(kwargs)
-                return True
+            def get_code(self, address: str) -> bytes:
+                return b"\x01"  # treat payer as contract → EIP-1271 path
+
+            def read_contract(self, address, abi, function_name, *args):
+                if function_name == "isValidSignature":
+                    calls.append({"function": "isValidSignature", "address": address})
+                    return bytes.fromhex("1626ba7e")  # EIP1271_MAGIC_VALUE → True
+                raise AssertionError(f"unexpected read_contract call: {function_name}")
 
         ok = verify_batch_settlement_voucher_typed_data(
             signer=_FakeSigner(),  # type: ignore[arg-type]
@@ -123,8 +133,7 @@ class TestVerifyVoucherTypedData:
             chain_id=CHAIN_ID,
         )
         assert ok is True
-        assert len(calls) == 1
-        assert calls[0]["primary_type"] == "Voucher"
+        assert len(calls) == 1  # strict signer path was used (not payer_authorizer ECDSA)
 
     def test_zero_authorizer_signer_exception_returns_false(self):
         class _RaisingSigner:

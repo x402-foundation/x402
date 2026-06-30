@@ -17,18 +17,18 @@
     "lint:check": "turbo run lint:check",
     "format:check": "turbo run format:check",
     "test": "turbo run test",
-    "test:integration": "pnpm --filter @x402/core --filter @x402/evm --filter @x402/svm --filter @x402/avm --filter @x402/aptos --filter @x402/hedera --filter @x402/stellar test:integration",
+    "test:integration": "pnpm --filter @x402/core --filter @x402/evm --filter @x402/svm --filter @x402/avm --filter @x402/aptos --filter @x402/hedera --filter @x402/keeta --filter @x402/stellar test:integration",
     "test:all": "pnpm test && pnpm test:integration"
   },
   "keywords": [],
   "author": "",
   "license": "ISC",
   "devDependencies": {
-    "tsx": "^4.21.0",
-    "tsup": "^8.4.0",
-    "turbo": "^2.5.0",
-    "typescript": "^5.7.3",
+    "@changesets/changelog-github": "^0.5.1",
     "@changesets/cli": "^2.28.1",
-    "@changesets/changelog-github": "^0.5.1"
+    "tsup": "^8.4.0",
+    "tsx": "^4.21.0",
+    "turbo": "^2.5.0",
+    "typescript": "^5.7.3"
   }
 }

@@ -68,6 +68,7 @@ from ..utils import (  # noqa: E402
     hex_to_bytes,
     normalize_address,
 )
+from ..verify import verify_typed_data_strict  # noqa: E402
 
 
 def verify_upto_permit2(
@@ -811,7 +812,9 @@ def _verify_upto_permit2_signature(
         permit2_authorization, chain_id
     )
 
-    return signer.verify_typed_data(
+    # Uses the strict primitive that mirrors on-chain SignatureChecker (code-routed, no ECDSA fallback).
+    return verify_typed_data_strict(
+        signer,
         payer,
         domain_dict,  # type: ignore[arg-type]
         typed_fields,

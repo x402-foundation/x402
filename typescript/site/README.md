@@ -52,6 +52,17 @@ x402 is an open protocol for internet-native payments built around the HTTP 402 
   FACILITATOR_HEDERA_PRIVATE_KEY=your_hedera_ecdsa_private_key
   ```
 
+  Optionally enable Keeta:
+
+  ```bash
+  FACILITATOR_KEETA_MNEMONIC=...
+  # Optionally, specify an amount of signers to create for the facilitator
+  # to process multiple settlement requests concurrently.
+  # The accounts will be derived from the mnemonic set above and must be
+  # funded manually.
+  # FACILITATOR_KEETA_SIGNER_AMOUNT=2
+  ```
+
 ### Running the Development Server
 
 ```bash

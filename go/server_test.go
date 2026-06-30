@@ -861,6 +861,21 @@ func TestResolveSettlementOverrideAmount(t *testing.T) {
 	})
 }
 
+// dynamicFieldExtension is a minimal ResourceServerExtension that opts into
+// dynamic-info-field handling for echo validation tests.
+type dynamicFieldExtension struct {
+	key    string
+	fields []string
+}
+
+func (e dynamicFieldExtension) Key() string { return e.key }
+
+func (e dynamicFieldExtension) EnrichDeclaration(declaration interface{}, _ interface{}) interface{} {
+	return declaration
+}
+
+func (e dynamicFieldExtension) DynamicInfoFields() []string { return e.fields }
+
 // ValidateExtensions must reject client echoes that drop or alter server fields
 // while allowing additive fields, omitted keys, and client-only keys.
 func TestValidateExtensions(t *testing.T) {
@@ -1008,6 +1023,45 @@ func TestValidateExtensions(t *testing.T) {
 		r := server.ValidateExtensions(structExtensions, p)
 		if r.Valid || r.InvalidReason != "extension_echo_mismatch" || r.ExtensionKey != "eip2612GasSponsoring" {
 			t.Fatalf("expected echo mismatch on eip2612GasSponsoring, got %+v", r)
+		}
+	})
+
+	t.Run("passes when only a declared dynamic info field differs", func(t *testing.T) {
+		dynServer := Newx402ResourceServer()
+		dynServer.RegisterExtension(dynamicFieldExtension{key: "siwx", fields: []string{"nonce"}})
+		advertised := map[string]interface{}{
+			"siwx": map[string]interface{}{"info": map[string]interface{}{"domain": "example.com", "nonce": "fresh"}},
+		}
+		p := payloadWith(map[string]interface{}{
+			"siwx": map[string]interface{}{"info": map[string]interface{}{"domain": "example.com", "nonce": "stale"}},
+		})
+		if r := dynServer.ValidateExtensions(advertised, p); !r.Valid {
+			t.Fatalf("expected valid, got %+v", r)
+		}
+	})
+
+	t.Run("fails when a static info field differs despite a declared dynamic field", func(t *testing.T) {
+		dynServer := Newx402ResourceServer()
+		dynServer.RegisterExtension(dynamicFieldExtension{key: "siwx", fields: []string{"nonce"}})
+		advertised := map[string]interface{}{
+			"siwx": map[string]interface{}{"info": map[string]interface{}{"domain": "example.com", "nonce": "fresh"}},
+		}
+		p := payloadWith(map[string]interface{}{
+			"siwx": map[string]interface{}{"info": map[string]interface{}{"domain": "evil.com", "nonce": "stale"}},
+		})
+		r := dynServer.ValidateExtensions(advertised, p)
+		if r.Valid || r.InvalidReason != "extension_echo_mismatch" || r.ExtensionKey != "siwx" {
+			t.Fatalf("expected echo mismatch on siwx, got %+v", r)
+		}
+	})
+
+	t.Run("keeps strict comparison when no dynamic fields are declared", func(t *testing.T) {
+		p := payloadWith(map[string]interface{}{
+			"builder": map[string]interface{}{"info": map[string]interface{}{"code": "tampered"}},
+		})
+		r := server.ValidateExtensions(serverExtensions, p)
+		if r.Valid || r.InvalidReason != "extension_echo_mismatch" || r.ExtensionKey != "builder" {
+			t.Fatalf("expected echo mismatch on builder, got %+v", r)
 		}
 	})
 }

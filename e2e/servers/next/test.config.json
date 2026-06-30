@@ -96,6 +96,13 @@
       "protocolFamily": "svm"
     },
     {
+      "path": "/api/exact/ccd",
+      "method": "GET",
+      "description": "Concordium endpoint using proxy middleware",
+      "requiresPayment": true,
+      "protocolFamily": "ccd"
+    },
+    {
       "path": "/api/exact/avm",
       "method": "GET",
       "description": "AVM endpoint using proxy middleware",
@@ -115,6 +122,13 @@
       "description": "Hedera endpoint using proxy middleware",
       "requiresPayment": true,
       "protocolFamily": "hedera"
+    },
+    {
+      "path": "/api/exact/keeta",
+      "method": "GET",
+      "description": "Keeta endpoint using proxy middleware",
+      "requiresPayment": true,
+      "protocolFamily": "keeta"
     },
     {
       "path": "/api/exact/stellar",
@@ -209,6 +223,13 @@
       "protocolFamily": "hedera"
     },
     {
+      "path": "/api/exact/keeta/withx402",
+      "method": "GET",
+      "description": "Keeta endpoint using withX402 wrapper",
+      "requiresPayment": true,
+      "protocolFamily": "keeta"
+    },
+    {
       "path": "/api/exact/stellar/withx402",
       "method": "GET",
       "description": "Stellar endpoint using withX402 wrapper",
@@ -233,7 +254,9 @@
     "optional": [
       "AVM_PAYEE_ADDRESS",
       "APTOS_PAYEE_ADDRESS",
+      "CCD_PAYEE_ADDRESS",
       "HEDERA_PAYEE_ADDRESS",
+      "KEETA_PAYEE_ADDRESS",
       "STELLAR_PAYEE_ADDRESS",
       "TVM_PAYEE_ADDRESS",
       "TVM_NETWORK",

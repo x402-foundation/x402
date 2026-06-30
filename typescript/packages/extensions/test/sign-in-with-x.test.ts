@@ -28,16 +28,19 @@ import {
   createSIWxClientHook,
   createSIWxClientExtension,
   createSIWxResourceServerExtension,
+  SIGN_IN_WITH_X,
   type SIWxHookEvent,
   type SolanaSigner,
   type EVMSigner,
   type EVMMessageVerifier,
 } from "../src/sign-in-with-x/index";
 import { safeBase64Encode } from "@x402/core/utils";
+import { x402ResourceServer } from "@x402/core/server";
 import { privateKeyToAccount, generatePrivateKey } from "viem/accounts";
 import nacl from "tweetnacl";
 import { randomBytes } from "crypto";
 import type { SIWxExtension } from "../src/sign-in-with-x/index";
+import type { PaymentRequired, PaymentPayload } from "@x402/core/types";
 
 /**
  * Test-only helper: builds a complete SIWX extension with nonce/issuedAt.
@@ -1652,6 +1655,52 @@ describe("createSIWxResourceServerExtension", () => {
 
     expect(result.info.domain).toBe("api.example.com");
     expect(result.info.uri).toBe("https://api.example.com/data");
+  });
+
+  it("declares nonce, issuedAt, and expirationTime as dynamic info fields", () => {
+    const storage = new InMemorySIWxStorage();
+    const extension = createSIWxResourceServerExtension({ storage });
+
+    expect(extension.dynamicInfoFields).toEqual(["nonce", "issuedAt", "expirationTime"]);
+  });
+
+  it("validates a client echo against a regenerated challenge with a fresh nonce", async () => {
+    const storage = new InMemorySIWxStorage();
+    const extension = createSIWxResourceServerExtension({ storage });
+    const declaration = declareSIWxExtension({ expirationSeconds: 300 });
+    const ext = declaration["sign-in-with-x"];
+
+    const challengeA = (await extension.enrichPaymentRequiredResponse!(
+      ext,
+      mockContext(["eip155:8453"]),
+    )) as SIWxExtension;
+    const challengeB = (await extension.enrichPaymentRequiredResponse!(
+      ext,
+      mockContext(["eip155:8453"]),
+    )) as SIWxExtension;
+
+    expect(challengeA.info.nonce).not.toBe(challengeB.info.nonce);
+
+    const server = new x402ResourceServer().registerExtension(extension);
+    const paymentRequired = {
+      x402Version: 2 as const,
+      accepts: [],
+      extensions: { [SIGN_IN_WITH_X]: challengeB },
+    };
+    const paymentPayload = {
+      x402Version: 2 as const,
+      scheme: "exact",
+      network: "eip155:8453",
+      payload: {},
+      extensions: { [SIGN_IN_WITH_X]: challengeA },
+    };
+
+    expect(
+      server.validateExtensions(
+        paymentRequired as unknown as PaymentRequired,
+        paymentPayload as unknown as PaymentPayload,
+      ),
+    ).toEqual({ valid: true });
   });
 
   it("should generate time-based fields from static declaration", async () => {

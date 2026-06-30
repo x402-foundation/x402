@@ -40,6 +40,10 @@ func ExecuteClaimWithSignature(
 				fmt.Sprintf("invalid claim authorizer signature: %s", err))
 		}
 	} else {
+		if authorizerSigner == nil {
+			return nil, x402.NewSettleError(ErrAuthorizerNotConfigured, "", network, "",
+				"no claim authorizer signature in payload and no authorizer signer configured")
+		}
 		// Verify authorizer address matches all claims' receiverAuthorizer
 		for _, claim := range payload.Claims {
 			if !strings.EqualFold(claim.Voucher.Channel.ReceiverAuthorizer, authorizerSigner.Address()) {

@@ -1,11 +1,12 @@
 import { Account, Ed25519PrivateKey, PrivateKey, PrivateKeyVariants } from "@aptos-labs/ts-sdk";
+import * as KeetaNet from "@keetanetwork/keetanet-client";
 import { base58 } from "@scure/base";
 import { createKeyPairSignerFromBytes } from "@solana/kit";
 import { toFacilitatorAptosSigner } from "@x402/aptos";
 import { ExactAptosScheme } from "@x402/aptos/exact/facilitator";
 import { x402Facilitator } from "@x402/core/facilitator";
 import { Network } from "@x402/core/types";
-import { type AuthorizerSigner, toFacilitatorEvmSigner } from "@x402/evm";
+import { toFacilitatorEvmSigner } from "@x402/evm";
 import { BatchSettlementEvmScheme } from "@x402/evm/batch-settlement/facilitator";
 import { ExactEvmScheme } from "@x402/evm/exact/facilitator";
 import { ExactEvmSchemeV1 } from "@x402/evm/exact/v1/facilitator";
@@ -23,6 +24,8 @@ import {
   toFacilitatorHederaSigner,
 } from "@x402/hedera";
 import { ExactHederaScheme } from "@x402/hedera/exact/facilitator";
+import { toFacilitatorKeetaSigner, KEETA_TESTNET_CAIP2 } from "@x402/keeta";
+import { ExactKeetaScheme } from "@x402/keeta/exact/facilitator";
 import { createEd25519Signer } from "@x402/stellar";
 import { ExactStellarScheme } from "@x402/stellar/exact/facilitator";
 import { toFacilitatorSvmSigner } from "@x402/svm";
@@ -35,7 +38,7 @@ import { privateKeyToAccount } from "viem/accounts";
 import { baseSepolia } from "viem/chains";
 
 /**
- * Initialize and configure the x402 facilitator with EVM, SVM, AVM, Aptos, Stellar, and Hedera support
+ * Initialize and configure the x402 facilitator with EVM, SVM, AVM, Aptos, Stellar, Hedera, and Keeta support
  * This is called lazily on first use to support Next.js module loading
  *
  * @returns A configured x402Facilitator instance
@@ -104,12 +107,6 @@ async function createFacilitator(): Promise<x402Facilitator> {
     getCode: (args: { address: `0x${string}` }) => viemClient.getCode(args),
   });
 
-  const receiverAuthorizerSigner: AuthorizerSigner = {
-    address: evmAccount.address,
-    signTypedData: params =>
-      evmAccount.signTypedData(params as Parameters<typeof evmAccount.signTypedData>[0]),
-  };
-
   // Initialize the SVM account from private key
   const svmAccount = await createKeyPairSignerFromBytes(
     base58.decode(process.env.FACILITATOR_SVM_PRIVATE_KEY as string),
@@ -133,7 +130,7 @@ async function createFacilitator(): Promise<x402Facilitator> {
       new ExactEvmSchemeV1(evmSigner, { eip6492AllowedFactories }),
     )
     .register("eip155:84532", new UptoEvmScheme(evmSigner))
-    .register("eip155:84532", new BatchSettlementEvmScheme(evmSigner, receiverAuthorizerSigner))
+    .register("eip155:84532", new BatchSettlementEvmScheme(evmSigner))
     .register(
       "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1",
       new ExactSvmScheme(svmSigner, undefined, { enableSmartWalletVerification: true }),
@@ -159,6 +156,32 @@ async function createFacilitator(): Promise<x402Facilitator> {
     const aptosAccount = Account.fromPrivateKey({ privateKey: aptosPrivateKey });
     const aptosSigner = toFacilitatorAptosSigner(aptosAccount);
     facilitator.register("aptos:2", new ExactAptosScheme(aptosSigner));
+  }
+
+  // Optionally register Keeta if configured
+  if (process.env.FACILITATOR_KEETA_MNEMONIC) {
+    const amountSigners = parseInt(process.env.FACILITATOR_KEETA_SIGNER_AMOUNT ?? "1");
+    const keetaAccounts = [];
+
+    for (let i = 0; i < amountSigners; i++) {
+      const account = KeetaNet.lib.Account.fromSeed(
+        await KeetaNet.lib.Account.seedFromPassphrase(process.env.FACILITATOR_KEETA_MNEMONIC),
+        i,
+      );
+      keetaAccounts.push(account);
+    }
+
+    const keetaSigner = toFacilitatorKeetaSigner(keetaAccounts);
+    facilitator.register(KEETA_TESTNET_CAIP2, new ExactKeetaScheme(keetaSigner, console));
+
+    // Tear down signer on shutdown so the process exits cleanly.
+    // createFacilitator() runs once as a lazy singleton, so these handlers only register once.
+    const destroyKeetaSigner = async () => {
+      await keetaSigner.destroy();
+      // We don't process.exit here to allow other cleanups to run as well.
+    };
+    process.once("SIGINT", destroyKeetaSigner);
+    process.once("SIGTERM", destroyKeetaSigner);
   }
 
   // Optionally register Stellar if configured

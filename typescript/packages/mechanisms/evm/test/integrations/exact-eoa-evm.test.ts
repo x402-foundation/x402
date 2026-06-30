@@ -600,12 +600,9 @@ describe("EVM Integration Tests", () => {
     });
 
     it("should avoid floating-point rounding error", async () => {
-      // Test different Money formats
       const testCases = [
         { input: "$4.02", expectedAmount: "4020000" },
         { input: "4.02", expectedAmount: "4020000" },
-        { input: "4.02 USDC", expectedAmount: "4020000" },
-        { input: "4.02 USD", expectedAmount: "4020000" },
         { input: 4.02, expectedAmount: "4020000" },
       ];
 

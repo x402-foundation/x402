@@ -20,6 +20,7 @@ from ..authorizer_signer import sign_claim_batch, sign_refund
 from ..constants import BATCH_SETTLEMENT_ADDRESS
 from ..errors import (
     ERR_AUTHORIZER_ADDRESS_MISMATCH,
+    ERR_AUTHORIZER_NOT_CONFIGURED,
     ERR_REFUND_NO_BALANCE,
     ERR_REFUND_SIMULATION_FAILED,
     ERR_REFUND_TRANSACTION_FAILED,
@@ -139,7 +140,7 @@ def execute_refund_with_signature(
     signer: FacilitatorEvmSigner,
     payload: EnrichedRefundPayload,
     requirements: PaymentRequirements,
-    authorizer_signer: AuthorizerSigner,
+    authorizer_signer: AuthorizerSigner | None,
 ) -> SettleResponse:
     """Submit a cooperative refund via `refundWithSignature`, optionally batched with claims."""
     network = str(requirements.network)
@@ -160,26 +161,34 @@ def execute_refund_with_signature(
                 network=network,
             )
 
-        has_client_sig = payload.refund_authorizer_signature is not None
-        authorizer_mismatch = to_checksum_address(
-            payload.channel_config.receiver_authorizer
-        ) != to_checksum_address(authorizer_signer.address)
+        refund_sig_hex = payload.refund_authorizer_signature
+        if refund_sig_hex is None:
+            if authorizer_signer is None:
+                return SettleResponse(
+                    success=False,
+                    error_reason=ERR_AUTHORIZER_NOT_CONFIGURED,
+                    transaction="",
+                    network=network,
+                )
 
-        if not has_client_sig and authorizer_mismatch:
-            return SettleResponse(
-                success=False,
-                error_reason=ERR_AUTHORIZER_ADDRESS_MISMATCH,
-                transaction="",
-                network=network,
+            if to_checksum_address(
+                payload.channel_config.receiver_authorizer
+            ) != to_checksum_address(authorizer_signer.address):
+                return SettleResponse(
+                    success=False,
+                    error_reason=ERR_AUTHORIZER_ADDRESS_MISMATCH,
+                    transaction="",
+                    network=network,
+                )
+
+            refund_sig_hex = sign_refund(
+                authorizer_signer,
+                channel_id,
+                payload.amount,
+                payload.refund_nonce,
+                network,
             )
 
-        refund_sig_hex = payload.refund_authorizer_signature or sign_refund(
-            authorizer_signer,
-            channel_id,
-            payload.amount,
-            payload.refund_nonce,
-            network,
-        )
         refund_sig_bytes = bytes.fromhex(refund_sig_hex.removeprefix("0x"))
 
         contract_channel = to_contract_channel_config(payload.channel_config)
@@ -191,9 +200,16 @@ def execute_refund_with_signature(
         ]
 
         if payload.claims:
-            claim_sig_hex = payload.claim_authorizer_signature or sign_claim_batch(
-                authorizer_signer, payload.claims, network
-            )
+            claim_sig_hex = payload.claim_authorizer_signature
+            if not claim_sig_hex:
+                if authorizer_signer is None:
+                    return SettleResponse(
+                        success=False,
+                        error_reason=ERR_AUTHORIZER_NOT_CONFIGURED,
+                        transaction="",
+                        network=network,
+                    )
+                claim_sig_hex = sign_claim_batch(authorizer_signer, payload.claims, network)
             claim_sig_bytes = bytes.fromhex(claim_sig_hex.removeprefix("0x"))
             claim_args = [build_voucher_claim_args(payload.claims), claim_sig_bytes]
 

@@ -22,6 +22,7 @@ from .....schemas import PaymentPayload, PaymentRequirements, VerifyResponse
 from ...constants import PERMIT2_ADDRESS, PERMIT2_DEADLINE_BUFFER
 from ...erc6492 import parse_erc6492_signature
 from ...signer import FacilitatorEvmSigner
+from ...verify import verify_typed_data_strict
 from ..constants import (
     BATCH_PERMIT2_WITNESS_TYPES,
     PERMIT2_DEPOSIT_COLLECTOR_ADDRESS,
@@ -270,7 +271,9 @@ def _verify_permit2_typed_data(
             "deadline": int(auth.deadline),
             "witness": {"channelId": _to_bytes32(auth.witness.channel_id)},
         }
-        ok = signer.verify_typed_data(
+        # Uses the strict primitive that mirrors on-chain SignatureChecker (code-routed, no ECDSA fallback).
+        ok = verify_typed_data_strict(
+            signer,
             address=to_checksum_address(auth.from_address),
             domain=domain,
             types=BATCH_PERMIT2_WITNESS_TYPES,

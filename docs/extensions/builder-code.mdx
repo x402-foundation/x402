@@ -5,6 +5,10 @@ description: "The builder-code extension enables on-chain attribution tracking f
 
 The builder-code extension enables **on-chain attribution tracking** for x402 payments. It appends [ERC-8021](https://eip.tools/eip/8021) Schema 2 builder codes to settlement transaction calldata, identifying which application exposed the paid endpoint, which facilitator settled the payment, and which client participated.
 
+## Minting Builder Codes
+
+Builder codes are minted through any [ERC-8021](https://eip.tools/eip/8021) implementation. Currently, the primary implementation in production is available at [base.dev](https://base.dev), where you can mint codes for your app, wallet, or service.
+
 ## How It Works
 
 Three parties each contribute an attribution code:

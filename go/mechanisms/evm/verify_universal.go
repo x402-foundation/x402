@@ -7,22 +7,21 @@ import (
 	"github.com/ethereum/go-ethereum/common"
 )
 
-// VerifyUniversalSignature verifies signatures from EOA, EIP-1271, and ERC-6492 sources
+// VerifyUniversalSignature verifies signatures from EOA, EIP-1271, and ERC-6492 sources.
 //
-// This function provides a unified verification interface that automatically detects
-// and handles three types of Ethereum signatures:
-// - EOA (Externally Owned Account): Standard ECDSA signatures
-// - EIP-1271: Smart contract wallet signatures (deployed contracts)
-// - ERC-6492: Counterfactual signatures (undeployed contracts with deployment info)
+// This function mirrors on-chain SignatureChecker semantics — routing is determined by
+// code.length at the signer address, not by the byte-length of the signature. The old
+// 65-byte EOA fast-path (that skipped GetCode) was removed because it caused pre-verify
+// to accept signatures that on-chain verifiers routed to isValidSignature and rejected,
+// most visibly for ERC-7702-delegated EOAs whose delegate rejects raw owner ECDSA.
 //
 // The verification flow:
 //  1. Parse ERC-6492 wrapper if present to extract inner signature
-//  2. If inner signature is exactly 65 bytes AND no factory: EOA path (optimization - skips GetCode)
-//  3. Otherwise: check if contract is deployed (GetCode)
-//  4. If undeployed + has deployment info + allowUndeployed: classify as counterfactual,
-//     but do not treat it as valid until a later onchain simulation succeeds
-//  5. If undeployed without deployment info: fallback to EOA verification
-//  6. If deployed: use EIP-1271 verification
+//  2. GetCode — always required; determines whether to use ECDSA or EIP-1271
+//  3. If undeployed + has deployment info + allowUndeployed: classify as counterfactual,
+//     do not treat as valid until a later onchain simulation succeeds
+//  4. If undeployed without deployment info: ECDSA fallback (covers plain EOAs)
+//  5. If deployed (any address with code, including ERC-7702): strict EIP-1271
 //
 // Args:
 //
@@ -52,30 +51,18 @@ func VerifyUniversalSignature(
 		return false, nil, err
 	}
 
-	// Step 2: Detect if this is likely a smart wallet signature
-	// EOA signatures are exactly 65 bytes
-	// Smart wallet signatures can be any other length or have ERC-6492 deployment info
-	zeroFactory := [20]byte{}
-	isEOASignature := len(sigData.InnerSignature) == 65 && sigData.Factory == zeroFactory
-
-	// Step 3: If clearly an EOA signature, skip to EOA verification (optimization)
-	if isEOASignature {
-		// EOA signature - use ECDSA recovery directly (avoids GetCode call)
-		signerAddr := common.HexToAddress(signerAddress)
-		valid, err := VerifyEOASignature(hash[:], sigData.InnerSignature, signerAddr)
-		if err == nil {
-			return valid, sigData, nil
-		}
-		// EOA verification failed - could be smart wallet with 65-byte sig, fall through to check GetCode
-	}
-
-	// Step 4: Potential smart wallet signature - check if contract is deployed
+	// Step 2: Always fetch code first. Routing is determined by whether the address
+	// has bytecode — matching on-chain SignatureChecker (Permit2, USDC v2.2, OZ).
+	// We no longer fast-path to ECDSA before GetCode: for ERC-7702 delegated EOAs,
+	// the address has code (the delegation designation) and the on-chain verifier
+	// routes to isValidSignature, not ecrecover. Pre-verify must do the same.
 	code, err := facilitatorSigner.GetCode(ctx, signerAddress)
 	if err != nil {
 		return false, nil, err
 	}
 
 	isDeployed := len(code) > 0
+	zeroFactory := [20]byte{}
 
 	// Step 5: Handle undeployed address
 	if !isDeployed {

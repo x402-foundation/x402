@@ -28,8 +28,8 @@ app.use(
 ```shell
 # All available reference sdks
 npm install @x402/core \
-  @x402/evm @x402/svm @x402/stellar @x402/svm \
-  @x402/axios @x402/fastify @x402/fetch @x402/express @x402/hono @x402/next @x402/paywall @x402/extensions
+  @x402/evm @x402/svm @x402/avm @x402/aptos @x402/stellar @x402/tvm @x402/hedera @x402/keeta \
+  @x402/axios @x402/fastify @x402/fetch @x402/express @x402/hono @x402/next @x402/paywall @x402/extensions @x402/mcp
 ```
 
 ```shell

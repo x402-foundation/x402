@@ -1,7 +1,12 @@
 import { HTTPFacilitatorClient } from "@x402/core/server";
 import { BatchSettlementEvmScheme } from "@x402/evm/batch-settlement/server";
 import { FileChannelStorage } from "@x402/evm/batch-settlement/server/file-storage";
-import { paymentMiddleware, setSettlementOverrides, x402ResourceServer } from "@x402/express";
+import {
+  paymentMiddlewareFromHTTPServer,
+  setSettlementOverrides,
+  x402HTTPResourceServer,
+  x402ResourceServer,
+} from "@x402/express";
 import { config } from "dotenv";
 import express from "express";
 import { privateKeyToAccount } from "viem/accounts";
@@ -74,42 +79,53 @@ const app = express();
 // Authorize up to this amount per request; optional usage-based override below bills actual usage.
 const maxPrice = "$0.01";
 
-app.use(
-  paymentMiddleware(
-    {
-      "GET /weather": {
-        accepts: {
-          scheme: "batch-settlement",
-          price: maxPrice,
-          network: NETWORK,
-          payTo: evmAddress,
-        },
-        description: "Weather data",
-        mimeType: "application/json",
-      },
+const httpServer = new x402HTTPResourceServer(resourceServer, {
+  "GET /weather": {
+    accepts: {
+      scheme: "batch-settlement",
+      price: maxPrice,
+      network: NETWORK,
+      payTo: evmAddress,
     },
-    resourceServer,
-  ),
-);
-
-app.get("/weather", (req, res) => {
-  const chargedPercent = 1 + Math.floor(Math.random() * 100);
-  setSettlementOverrides(res, { amount: `${chargedPercent}%` });
-
-  res.send({
-    report: {
-      weather: "sunny",
-      temperature: 70,
-    },
-  });
+    description: "Weather data",
+    mimeType: "application/json",
+  },
 });
 
-app.listen(4021, () => {
-  console.log("Batch-settlement server listening at http://localhost:4021");
-  console.log("  GET /weather");
-  if (receiverAuthorizerSigner) {
-    console.log(`  Receiver authorizer: local signer ${receiverAuthorizerSigner.address}`);
-  } else {
-    console.log("  Receiver authorizer: facilitator");
-  }
+/**
+ * Initializes facilitator capability checks and starts the batch-settlement server.
+ */
+async function main() {
+  // Fail fast on misconfiguration: this throws the capability error (and any
+  // HTTP route validation error) before the server starts accepting requests.
+  await httpServer.initialize();
+
+  app.use(paymentMiddlewareFromHTTPServer(httpServer, undefined, undefined, false));
+
+  app.get("/weather", (req, res) => {
+    const chargedPercent = 1 + Math.floor(Math.random() * 100);
+    setSettlementOverrides(res, { amount: `${chargedPercent}%` });
+
+    res.send({
+      report: {
+        weather: "sunny",
+        temperature: 70,
+      },
+    });
+  });
+
+  app.listen(4021, () => {
+    console.log("Batch-settlement server listening at http://localhost:4021");
+    console.log("  GET /weather");
+    if (receiverAuthorizerSigner) {
+      console.log(`  Receiver authorizer: local signer ${receiverAuthorizerSigner.address}`);
+    } else {
+      console.log("  Receiver authorizer: facilitator");
+    }
+  });
+}
+
+main().catch(err => {
+  console.error("Startup failed:", err);
+  process.exit(1);
 });

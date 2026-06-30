@@ -5,11 +5,13 @@ Express.js server demonstrating advanced x402 patterns including dynamic pricing
 ```typescript
 import { paymentMiddleware, x402ResourceServer } from "@x402/express";
 import { ExactEvmScheme } from "@x402/evm/exact/server";
+import { ExactKeetaScheme } from "@x402/keeta/exact/server";
 import { ExactStellarScheme } from "@x402/stellar/exact/server";
 import { HTTPFacilitatorClient } from "@x402/core/server";
 
 const resourceServer = new x402ResourceServer(new HTTPFacilitatorClient({ url: facilitatorUrl }))
   .register("eip155:84532", new ExactEvmScheme())
+  .register("keeta:*", new ExactKeetaScheme())
   .register("stellar:*", new ExactStellarScheme())
   .onBeforeVerify(async ctx => console.log("Verifying payment..."))
   .onAfterSettle(async ctx => console.log("Settled:", ctx.result.transaction));
@@ -31,6 +33,14 @@ app.use(
           price: ctx => (ctx.adapter.getQueryParam?.("tier") === "premium" ? "$0.01" : "$0.001"),
           network: "stellar:*",
           payTo: stellarAddress,
+        },
+      },
+      "GET /weather-keeta": {
+        accepts: {
+          scheme: "exact",
+          price: ctx => (ctx.adapter.getQueryParam?.("tier") === "premium" ? "$0.01" : "$0.001"),
+          network: "keeta:*",
+          payTo: keetaAddress,
         },
       },
     },
@@ -57,10 +67,12 @@ cp .env-local .env
 and fill required environment variables:
 
 - `FACILITATOR_URL` - Facilitator endpoint URL
+- `CCD_ADDRESS` - Concordium account address to receive payments (optional for `all-networks`)
 - `EVM_ADDRESS` - Ethereum address to receive payments
 - `SVM_ADDRESS` - Solana address to receive payments (optional for `all-networks`)
 - `STELLAR_ADDRESS` - Stellar public address (starts with `G`) to receive payments
 - `HEDERA_ACCOUNT_ID` - Hedera account id to receive payments (optional for `all-networks`; format: `0.0.XXXXX`)
+- `KEETA_ADDRESS` - Keeta address (starts with `keeta_`) to receive payments
 
 > **Hedera Testnet:** Get testnet HBAR from the [Hedera Faucet](https://portal.hedera.com/faucet).
 
@@ -87,6 +99,14 @@ Stellar accounts need to be created and funded with both XLM and USDC. Instructi
 1. Go to [Stellar Laboratory](https://lab.stellar.org/account/create) ➡️ Generate keypair ➡️ Fund account with Friendbot, then copy the `Secret` and `Public` keys so you can use them.
 2. Add USDC trustline (required to transact USDC): go to [Fund Account](https://lab.stellar.org/account/fund) ➡️ Paste your `Public Key` ➡️ Add USDC Trustline ➡️ paste your `Secret key` ➡️ Sign transaction ➡️ Add Trustline.
 3. Get testnet USDC from [Circle Faucet](https://faucet.circle.com/) (select Stellar network).
+
+#### Keeta Testnet
+
+To create a Keeta Testnet wallet:
+
+1. Go to [Keeta Testnet Wallet](https://wallet.test.keeta.com/) and follow the steps to create your wallet. Make sure to save your mnemonic (seed phrase) to keep access to your wallet. To get your Keeta address, click on "Receive" and copy the deposit address (starting with `keeta_`).
+2. Use the [Keeta Testnet Faucet](https://faucet.test.keeta.com/) to send Testnet KTA to your wallet.
+3. To get Testnet USDC on Keeta, go to the "Receive" page in the wallet, click on "Any token from Keeta Testnet", select "USDC from Base (Sepolia) Testnet" and copy the deposit address (starting with `0x`). Then go the [Circle Faucet](https://faucet.circle.com/), select Base network and enter your Base deposit address.
 
 ## Available Examples
 

@@ -18,11 +18,14 @@
     "swig:setup": "tsx scripts/swig-setup.ts"
   },
   "dependencies": {
+    "@concordium/web-sdk": "^12.0.0",
     "@scure/base": "^1.2.6",
     "@solana-program/token-2022": "^0.6.1",
     "@solana/kit": "^6.1.0",
     "@swig-wallet/kit": "^2.0.0",
     "@swig-wallet/lib": "^2.0.0",
+    "@x402/concordium": "workspace:*",
+    "@x402/core": "workspace:*",
     "dotenv": "^17.0.1",
     "prompts": "^2.4.2",
     "tsx": "^4.21.0",
@@ -32,7 +35,8 @@
     "@types/express": "^4.17.0",
     "@types/node": "^22.13.4",
     "@types/prompts": "^2.4.9",
-    "typescript": "^5.7.3"
+    "typescript": "^5.7.3",
+    "vitest": "^3.2.4"
   },
   "engines": {
     "node": ">=22.0.0"

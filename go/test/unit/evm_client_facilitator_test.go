@@ -1112,7 +1112,11 @@ func TestVerifyEIP3009SimulationParity(t *testing.T) {
 				}, nil
 			},
 		}
-		scheme := evmfacilitator.NewExactEvmScheme(signer, nil)
+		// Factory must be allowlisted so verify reaches simulation diagnostics rather than
+		// short-circuiting on the allowlist gate.
+		scheme := evmfacilitator.NewExactEvmScheme(signer, &evmfacilitator.ExactEvmSchemeConfig{
+			EIP6492AllowedFactories: []string{factory.Hex()},
+		})
 
 		_, err := scheme.Verify(ctx, payload, requirements, nil)
 		if err == nil {
@@ -1150,7 +1154,9 @@ func TestVerifyEIP3009SimulationParity(t *testing.T) {
 				}, nil
 			},
 		}
-		scheme := evmfacilitator.NewExactEvmScheme(signer, nil)
+		scheme := evmfacilitator.NewExactEvmScheme(signer, &evmfacilitator.ExactEvmSchemeConfig{
+			EIP6492AllowedFactories: []string{factory.Hex()},
+		})
 
 		_, err := scheme.Verify(ctx, payload, requirements, nil)
 		if err == nil {
@@ -1213,7 +1219,9 @@ func TestVerifyEIP3009SimulationParity(t *testing.T) {
 				}, nil
 			},
 		}
-		scheme := evmfacilitator.NewExactEvmScheme(signer, nil)
+		scheme := evmfacilitator.NewExactEvmScheme(signer, &evmfacilitator.ExactEvmSchemeConfig{
+			EIP6492AllowedFactories: []string{factory.Hex()},
+		})
 
 		_, err := scheme.Verify(ctx, payload, requirements, nil)
 		if err == nil {
@@ -1241,7 +1249,9 @@ func TestVerifyEIP3009SimulationParity(t *testing.T) {
 				}, nil
 			},
 		}
-		scheme := evmfacilitator.NewExactEvmScheme(signer, nil)
+		scheme := evmfacilitator.NewExactEvmScheme(signer, &evmfacilitator.ExactEvmSchemeConfig{
+			EIP6492AllowedFactories: []string{factory.Hex()},
+		})
 
 		verifyResp, err := scheme.Verify(ctx, payload, requirements, nil)
 		if err != nil {
@@ -1325,7 +1335,9 @@ func TestVerifyEIP3009V1UsesSimulationDiagnostics(t *testing.T) {
 			}, nil
 		},
 	}
-	scheme := evmv1facilitator.NewExactEvmSchemeV1(signer, nil)
+	scheme := evmv1facilitator.NewExactEvmSchemeV1(signer, &evmv1facilitator.ExactEvmSchemeV1Config{
+		EIP6492AllowedFactories: []string{factory.Hex()},
+	})
 
 	_, err := scheme.Verify(ctx, payload, requirements, nil)
 	if err == nil {

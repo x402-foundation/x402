@@ -267,6 +267,37 @@ class BatchSettlementEvmScheme:
         requirements.extra = extra
         return requirements
 
+    def validate_facilitator_support(
+        self,
+        network: Network,
+        supported_kind: SupportedKind,
+        _facilitator_extensions: list[str],
+    ) -> str | None:
+        """Reject startup when this scheme delegates the receiver-authorizer role
+        but the facilitator does not advertise a usable `receiverAuthorizer`.
+
+        Args:
+            network: The network identifier being validated.
+            supported_kind: The facilitator's advertised kind for this scheme/network.
+            _facilitator_extensions: Extensions advertised by the facilitator (unused).
+
+        Returns:
+            A problem message when delegation is impossible, or None when valid.
+        """
+        if self._receiver_authorizer_signer is not None:
+            return None
+
+        extra = supported_kind.extra or {}
+        advertised = extra.get("receiverAuthorizer")
+        if isinstance(advertised, str) and to_checksum_address(advertised) != _ZERO_ADDRESS:
+            return None
+
+        return (
+            "no receiver_authorizer_signer is configured and the facilitator does not advertise "
+            f"a receiverAuthorizer on {network}. Configure a receiver_authorizer_signer or use a "
+            "facilitator that advertises one."
+        )
+
     def _default_money_conversion(self, amount: float, network: str) -> AssetAmount:
         config = get_network_config(network)
         asset = config.get("default_asset")

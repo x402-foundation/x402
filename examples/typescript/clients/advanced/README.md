@@ -24,7 +24,7 @@ const response = await fetchWithPayment("http://localhost:4021/weather");
 
 - Node.js v20+ (install via [nvm](https://github.com/nvm-sh/nvm))
 - pnpm v10 (install via [pnpm.io/installation](https://pnpm.io/installation))
-- Valid EVM, SVM, and/or Stellar private keys for making payments
+- Valid EVM, SVM, Stellar and/or Keeta private keys for making payments
 - A running x402 server (see [server examples](../../servers/))
 - Familiarity with the [basic fetch client](../fetch/)
 
@@ -38,12 +38,15 @@ cp .env-local .env
 
 and fill required environment variables:
 
+- `CCD_PRIVATE_KEY` - Concordium Ed25519 private key for Concordium payments (optional; `all-networks`)
+- `CCD_ADDRESS` - Concordium account address for Concordium payments (optional; `all-networks`)
 - `EVM_PRIVATE_KEY` - Ethereum private key for EVM payments
 - `SVM_PRIVATE_KEY` - Solana private key for SVM payments
 - `STELLAR_PRIVATE_KEY` - Stellar secret key (starts with `S`) for signing Stellar payments
 - `HEDERA_ACCOUNT_ID` - Hedera account id for Hedera payments (optional)
 - `HEDERA_PRIVATE_KEY` - Hedera **ECDSA** private key (0x-prefixed or DER-encoded) for Hedera payments (optional)
 - `HEDERA_NETWORK` - Hedera network (optional, defaults to `hedera:testnet`)
+- `KEETA_MNEMONIC` - Keeta mnemonic for Keeta payments
 
 2. Install and build all packages from the typescript examples root:
 
@@ -68,6 +71,29 @@ Stellar accounts need to be created and funded with both XLM and USDC. Instructi
 1. Go to [Stellar Laboratory](https://lab.stellar.org/account/create) ➡️ Generate keypair ➡️ Fund account with Friendbot, then copy the `Secret` and `Public` keys so you can use them.
 2. Add USDC trustline (required to transact USDC): go to [Fund Account](https://lab.stellar.org/account/fund) ➡️ Paste your `Public Key` ➡️ Add USDC Trustline ➡️ paste your `Secret key` ➡️ Sign transaction ➡️ Add Trustline.
 3. Get testnet USDC from [Circle Faucet](https://faucet.circle.com/) (select Stellar network).
+
+#### Keeta Testnet
+
+To create a Keeta Testnet wallet:
+
+1. Go to [Keeta Testnet Wallet](https://wallet.test.keeta.com/) and follow the steps to create your wallet. Make sure to save your mnemonic (seed phrase) to keep access to your wallet. To get your Keeta address, click on "Receive" and copy the deposit address (starting with `keeta_`).
+2. Use the [Keeta Testnet Faucet](https://faucet.test.keeta.com/) to send Testnet KTA to your wallet.
+3. To get Testnet USDC on Keeta, go to the "Receive" page in the wallet, click on "Any token from Keeta Testnet", select "USDC from Base (Sepolia) Testnet" and copy the deposit address (starting with `0x`). Then go the [Circle Faucet](https://faucet.circle.com/), select Base network and enter your Base deposit address.
+
+#### Concordium Testnet
+
+To get test CCD:
+
+1. Set up [Concordium Wallet for Web](https://wallet.testnet.concordium.com/) on **Testnet**.
+2. Open the account in the wallet.
+3. Go to **Activity**.
+4. Click **Request CCD**.
+5. Wait for the test CCD transfer to arrive. Official guide: [Request CCD](https://docs.concordium.com/en/mainnet/docs/plt/setup-guide/request-ccd.html).
+
+To get test PLT, there is no universal public faucet for arbitrary PLT symbols. Either:
+
+1. Use a token issuer's own test distribution for the symbol you want to use, or
+2. Request your own PLT issuance on testnet, then mint/distribute balances from the nominated governance account. Official guide: [Request PLT](https://docs.concordium.com/en/mainnet/tutorials/plt/request-plt.html).
 
 ## Available Examples
 
@@ -103,6 +129,7 @@ Use the builder pattern for fine-grained control over which networks are support
 ```typescript
 import { x402Client, wrapFetchWithPayment } from "@x402/fetch";
 import { ExactEvmScheme } from "@x402/evm/exact/client";
+import { ExactKeetaScheme } from "@x402/keeta/exact/client";
 import { ExactSvmScheme } from "@x402/svm/exact/client";
 import { ExactStellarScheme } from "@x402/stellar/exact/client";
 import { privateKeyToAccount } from "viem/accounts";
@@ -114,7 +141,8 @@ const mainnetSigner = privateKeyToAccount(mainnetPrivateKey);
 const client = new x402Client()
   .register("eip155:*", new ExactEvmScheme(evmSigner)) // All EVM networks
   .register("eip155:1", new ExactEvmScheme(mainnetSigner)) // Ethereum mainnet override
-  .register("solana:*", new ExactSvmScheme(svmSigner)); // All Solana networks
+  .register("keeta:*", new ExactKeetaScheme(keetaSigner)) // All Keeta networks
+  .register("solana:*", new ExactSvmScheme(svmSigner)) // All Solana networks
   .register("stellar:*", new ExactStellarScheme(stellarSigner)); // All Stellar networks
 
 const fetchWithPayment = wrapFetchWithPayment(fetch, client);
@@ -177,11 +205,12 @@ Configure client-side network preferences with automatic fallback:
 ```typescript
 import { x402Client, wrapFetchWithPayment, type PaymentRequirements } from "@x402/fetch";
 import { ExactEvmScheme } from "@x402/evm/exact/client";
+import { ExactKeetaScheme } from "@x402/keeta/exact/client";
 import { ExactSvmScheme } from "@x402/svm/exact/client";
 import { ExactStellarScheme } from "@x402/stellar/exact/client";
 
 // Define network preference order (most preferred first)
-const networkPreferences = ["eip155:", "solana:", "stellar:"];
+const networkPreferences = ["eip155:", "keeta:", "solana:", "stellar:"];
 
 const preferredNetworkSelector = (
   _x402Version: number,
@@ -198,6 +227,7 @@ const preferredNetworkSelector = (
 
 const client = new x402Client(preferredNetworkSelector)
   .register("eip155:*", new ExactEvmScheme(evmSigner))
+  .register("keeta:*", new ExactKeetaScheme(keetaSigner))
   .register("solana:*", new ExactSvmScheme(svmSigner))
   .register("stellar:*", new ExactStellarScheme(stellarSigner));
 

@@ -316,6 +316,61 @@ describe("x402ResourceServer", () => {
     });
   });
 
+  describe("initialize - validateFacilitatorSupport", () => {
+    class ValidatingScheme extends MockSchemeNetworkServer {
+      public validateCalls = 0;
+      private problem: string | undefined;
+
+      constructor(scheme: string, problem: string | undefined) {
+        super(scheme);
+        this.problem = problem;
+      }
+
+      validateFacilitatorSupport(): string | void {
+        this.validateCalls++;
+        return this.problem;
+      }
+    }
+
+    /**
+     * Builds a facilitator advertising the `exact` scheme on Base.
+     *
+     * @returns Mock facilitator client supporting `exact` on `eip155:8453`.
+     */
+    function buildExactFacilitator(): MockFacilitatorClient {
+      return new MockFacilitatorClient(
+        buildSupportedResponse({
+          kinds: [{ x402Version: 2, scheme: "exact", network: "eip155:8453" as Network }],
+        }),
+      );
+    }
+
+    it("rejects when a registered scheme reports a capability problem", async () => {
+      const server = new x402ResourceServer(buildExactFacilitator());
+      server.register("eip155:8453" as Network, new ValidatingScheme("exact", "needs a signer"));
+
+      await expect(server.initialize()).rejects.toThrow(/exact on eip155:8453: needs a signer/);
+    });
+
+    it("resolves when the hook returns void", async () => {
+      const server = new x402ResourceServer(buildExactFacilitator());
+      const scheme = new ValidatingScheme("exact", undefined);
+      server.register("eip155:8453" as Network, scheme);
+
+      await expect(server.initialize()).resolves.not.toThrow();
+      expect(scheme.validateCalls).toBe(1);
+    });
+
+    it("skips the hook when the facilitator does not support the scheme/network", async () => {
+      const server = new x402ResourceServer(buildExactFacilitator());
+      const scheme = new ValidatingScheme("unsupported", "should not be reported");
+      server.register("eip155:8453" as Network, scheme);
+
+      await expect(server.initialize()).resolves.not.toThrow();
+      expect(scheme.validateCalls).toBe(0);
+    });
+  });
+
   describe("buildPaymentRequirements", () => {
     it("should build requirements from ResourceConfig", async () => {
       const mockClient = new MockFacilitatorClient(
@@ -1648,6 +1703,51 @@ describe("x402ResourceServer", () => {
       });
 
       expect(server.validateExtensions(paymentRequired, payload)).toEqual({ valid: true });
+    });
+
+    it("passes when only a declared dynamic info field differs", () => {
+      const server = new x402ResourceServer();
+      server.registerExtension({ key: "siwx", dynamicInfoFields: ["nonce"] });
+      const paymentRequired = buildPaymentRequired({
+        extensions: { siwx: { info: { domain: "example.com", nonce: "fresh" } } },
+      });
+      const payload = buildPaymentPayload({
+        extensions: { siwx: { info: { domain: "example.com", nonce: "stale" } } },
+      });
+
+      expect(server.validateExtensions(paymentRequired, payload)).toEqual({ valid: true });
+    });
+
+    it("fails when a static info field differs despite a declared dynamic field", () => {
+      const server = new x402ResourceServer();
+      server.registerExtension({ key: "siwx", dynamicInfoFields: ["nonce"] });
+      const paymentRequired = buildPaymentRequired({
+        extensions: { siwx: { info: { domain: "example.com", nonce: "fresh" } } },
+      });
+      const payload = buildPaymentPayload({
+        extensions: { siwx: { info: { domain: "evil.com", nonce: "stale" } } },
+      });
+
+      expect(server.validateExtensions(paymentRequired, payload)).toEqual({
+        valid: false,
+        invalidReason: "extension_echo_mismatch",
+        extensionKey: "siwx",
+      });
+    });
+
+    it("keeps strict comparison when no dynamic fields are declared", () => {
+      const server = new x402ResourceServer();
+      server.registerExtension({ key: "builder" });
+      const paymentRequired = buildPaymentRequired({ extensions: serverExtensions });
+      const payload = buildPaymentPayload({
+        extensions: { builder: { info: { code: "tampered" } } },
+      });
+
+      expect(server.validateExtensions(paymentRequired, payload)).toEqual({
+        valid: false,
+        invalidReason: "extension_echo_mismatch",
+        extensionKey: "builder",
+      });
     });
   });
 

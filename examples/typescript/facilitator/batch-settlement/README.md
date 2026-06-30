@@ -8,20 +8,22 @@ See the [scheme specification](../../../../specs/schemes/batch-settlement/scheme
 
 This example can use separate keys for relaying transactions and authorizing receiver actions:
 
-| Env var                               | Role                                                                       | Onchain effect                                                                                   |
-| ------------------------------------- | -------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------ |
-| `EVM_PRIVATE_KEY`                     | **Relayer** — submits transactions                                         | Pays gas for `deposit` / `claimWithSignature` / `settle` / `refundWithSignature`                 |
-| `EVM_RECEIVER_AUTHORIZER_PRIVATE_KEY` | **Receiver authorizer** — signs `ClaimBatch` and `Refund` EIP-712 messages | Address is committed into the channel identity for any server that delegates to this facilitator |
+| Env var                               | Role                                                                                  | Onchain effect                                                                                             |
+| ------------------------------------- | ------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------- |
+| `EVM_PRIVATE_KEY`                     | **Relayer** — submits transactions                                                    | Pays gas for `deposit` / `claimWithSignature` / `settle` / `refundWithSignature`                           |
+| `EVM_RECEIVER_AUTHORIZER_PRIVATE_KEY` | **Receiver authorizer** (optional) — signs `ClaimBatch` and `Refund` EIP-712 messages | When set, address is committed into the channel identity for any server that delegates to this facilitator |
 
-If `EVM_RECEIVER_AUTHORIZER_PRIVATE_KEY` is omitted, the relayer key is reused for both roles. In production, keep them separate so the receiver-authorizer key (which controls how much gets claimed) can be rotated independently of the gas-paying hot wallet.
+If `EVM_RECEIVER_AUTHORIZER_PRIVATE_KEY` is omitted, this example registers `BatchSettlementEvmScheme` without an authorizer signer: no `receiverAuthorizer` is advertised in `/supported`, and servers must supply their own claim/refund authorizer signatures. Set this key only when you want servers to delegate authorization to this facilitator; in production, keep it separate from the relayer so the authorizer key (which controls how much gets claimed) can be rotated independently of the gas-paying hot wallet.
 
-> The receiver-authorizer address is advertised under `kinds[].extra.receiverAuthorizer` in `GET /supported`. **Servers that delegate authorization to this facilitator bind that address into their channel config** — rotating the authorizer key requires opening new channels, so treat this address as long-lived.
+> When configured, the receiver-authorizer address is advertised under `kinds[].extra.receiverAuthorizer` in `GET /supported`. **Servers that delegate authorization to this facilitator bind that address into their channel config** — rotating the authorizer key requires opening new channels, so treat this address as long-lived.
+
+> ⚠️ A facilitator that advertises a `receiverAuthorizer` (so servers can delegate to it) MUST authenticate that each cooperative refund request originates from the service that created the channel (e.g. SIWX, JWT, or an API credential bound at channel creation). This example does **not** implement that check, so it is for local testing only. Leave `EVM_RECEIVER_AUTHORIZER_PRIVATE_KEY` unset unless you are explicitly testing delegated authorization.
 
 ## Prerequisites
 
 - Node.js v20+, pnpm v10
 - Base Sepolia ETH on the **relayer** address (gas)
-- Optional: a separate funded address for the **authorizer** (no gas required if relayer is separate)
+- Optional: a separate **authorizer** key (`EVM_RECEIVER_AUTHORIZER_PRIVATE_KEY`; no gas required)
 
 ## Setup
 
@@ -51,7 +53,7 @@ Standard x402 facilitator endpoints: `POST /verify`, `POST /settle`, `GET /suppo
 
 `/verify` and `/settle` always return the onchain channel snapshot (`balance`, `totalClaimed`, `withdrawRequestedAt`, `refundNonce`) in the `extra` field — the resource server mirrors these into its session state.
 
-`GET /supported` advertises the receiver authorizer address:
+`GET /supported` includes `extra.receiverAuthorizer` only when `EVM_RECEIVER_AUTHORIZER_PRIVATE_KEY` is set:
 
 ```json
 {

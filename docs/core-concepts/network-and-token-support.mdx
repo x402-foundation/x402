@@ -14,19 +14,24 @@ x402 uses [CAIP-2](https://chainagnostic.org/CAIPs/caip-2) standard network iden
 - **Stellar**: `stellar:<network>` (`pubnet` or `testnet`)
 - **Aptos**: `aptos:<chainId>` (e.g., `aptos:1` for mainnet)
 - **Hedera**: `hedera:<network>` (`mainnet` or `testnet`)
+- **Keeta**: `keeta:<networkId>` (e.g., `keeta:21378` for mainnet)
+- **Concordium**: `ccd:<genesisHash>` (e.g., `ccd:9dd9ca4d19e9393877d2c44b70f89acb` for mainnet)
 
 ## Token Support
 
-x402 supports tokens on EVM, Solana, TON, Stellar, Aptos, and Hedera networks:
+x402 supports tokens on EVM, Solana, TON, Algorand (AVM), Stellar, Aptos, Hedera, Keeta, and Concordium networks:
 
 | Ecosystem | Supported Tokens | Transfer Method |
 |-----------|------------------|-----------------|
 | **EVM** | Any ERC-20 token | EIP-3009 or Permit2 |
 | **Solana** | Any SPL or Token-2022 token | SPL Transfer |
 | **TON (TVM)** | Any TEP-74 jetton (e.g., USDT) | Signed W5R1 internal message |
+| **Algorand (AVM)** | Any ASA (e.g., USDC) | ASA transfer (`axfer`) in atomic group |
 | **Stellar** | Any Soroban token implementing SEP-41 | `transfer(from, to, amount)` |
 | **Aptos** | Any fungible asset | `primary_fungible_store::transfer` |
 | **Hedera** | HBAR or any HTS fungible token | Hedera Transfer Transaction |
+| **Keeta** | Any Keeta token | `SEND` operation |
+| **Concordium** | CCD or any PLT token (e.g., EURR) | Sponsored V1 transfer |
 
 Facilitators support **networks**, not specific tokens — any compatible token works on any facilitator that supports that network.
 
@@ -150,6 +155,13 @@ When you use `"$0.01"` syntax, x402 needs to know which stablecoin to use. The f
 | Hedera Testnet | `hedera:testnet` | `0.0.429274` (USDC) | 6 |
 
 HBAR (native token) is also supported using asset ID `0.0.0`, with amounts in tinybars (1 HBAR = 10⁸ tinybars).
+
+### Keeta
+
+| Chain | CAIP-2 | Token Address | Decimals |
+|-------|--------|---------------|----------|
+| Keeta Mainnet | `keeta:21378` | `keeta_amnkge74xitii5dsobstldatv3irmyimujfjotftx7plaaaseam4bntb7wnna` (USDC) | 6 |
+| Keeta Testnet | `keeta:1413829460` | `keeta_apna75yhhvnv4ei7ape55hndk4yepno7a7i2mhtiwahiygixjcnmvswxhnmnk` (USDC) | 6 |
 
 ## Adding Support for New Networks
 
@@ -283,7 +295,7 @@ Video Guide: [Adding EVM Chains to x402](https://x.com/jaycoolh/status/192085155
 
 Key takeaways:
 
-* **Any EVM chain** is supported via `eip155:<chainId>` — plus Solana, TON (TVM), Algorand, Stellar, Aptos, and Hedera
+* **Any EVM chain** is supported via `eip155:<chainId>` — plus Solana, TON (TVM), Algorand (AVM), Stellar, Aptos, Hedera, Keeta, and Concordium
 * [Default assets](#default-assets-for-dollar-string-pricing) are a convenience for `"$0.01"` dollar-string pricing; explicit `TokenAmount` works on any chain
 * Any ERC-20 token works on any EVM facilitator (via EIP-3009 or Permit2)
 * CAIP-2 identifiers provide unambiguous cross-chain support

@@ -34,7 +34,14 @@ export const ErrReceiverAuthorizerMismatch =
 export const ErrWithdrawDelayMismatch = "invalid_batch_settlement_evm_withdraw_delay_mismatch";
 export const ErrAuthorizerAddressMismatch =
   "invalid_batch_settlement_evm_authorizer_address_mismatch";
+export const ErrAuthorizerNotConfigured = "invalid_batch_settlement_evm_authorizer_not_configured";
 export const ErrDepositSimulationFailed = "invalid_batch_settlement_evm_deposit_simulation_failed";
+
+// ERC-6492 counterfactual deployment errors (ERC-3009 deposit path). Wire values keep the
+// scheme prefix to match the rest of this module's contract.
+export const ErrFactoryNotAllowed = "invalid_batch_settlement_evm_eip6492_factory_not_allowed";
+export const ErrSmartWalletDeploymentFailed =
+  "invalid_batch_settlement_evm_smart_wallet_deployment_failed";
 export const ErrClaimSimulationFailed = "invalid_batch_settlement_evm_claim_simulation_failed";
 export const ErrSettleSimulationFailed = "invalid_batch_settlement_evm_settle_simulation_failed";
 export const ErrNothingToSettle = "invalid_batch_settlement_evm_nothing_to_settle";

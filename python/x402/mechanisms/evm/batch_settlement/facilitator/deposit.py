@@ -21,9 +21,11 @@ from .....schemas import (
     VerifyResponse,
 )
 from ...constants import TX_STATUS_SUCCESS
+from ...erc6492 import has_deployment_info, parse_erc6492_signature
 from ...multicall import MulticallCall, multicall
 from ...signer import FacilitatorEvmSigner
-from ...utils import get_evm_chain_id
+from ...types import ERC6492SignatureData
+from ...utils import bytes_to_hex, get_evm_chain_id
 from ..abi import BATCH_SETTLEMENT_ABI, ERC20_BALANCE_OF_ABI
 from ..constants import BATCH_SETTLEMENT_ADDRESS
 from ..errors import (
@@ -31,10 +33,12 @@ from ..errors import (
     ERR_CUMULATIVE_EXCEEDS_BALANCE,
     ERR_DEPOSIT_SIMULATION_FAILED,
     ERR_DEPOSIT_TRANSACTION_FAILED,
+    ERR_FACTORY_NOT_ALLOWED,
     ERR_INSUFFICIENT_BALANCE,
     ERR_INVALID_PAYLOAD_TYPE,
     ERR_INVALID_VOUCHER_SIGNATURE,
     ERR_RPC_READ_FAILED,
+    ERR_SMART_WALLET_DEPLOYMENT_FAILED,
 )
 from ..types import DepositPayload
 from ..utils import coerce_bytes32
@@ -83,6 +87,7 @@ def verify_deposit(
     payload: DepositPayload,
     requirements: PaymentRequirements,
     context: FacilitatorContext | None = None,
+    allowed_factories: list[str] | None = None,
 ) -> VerifyResponse:
     """Validate the full deposit envelope without submitting an onchain transaction."""
     assert payload.channel_config is not None and payload.voucher is not None
@@ -100,14 +105,22 @@ def verify_deposit(
     if transfer_method == "permit2" and payload.deposit.authorization.permit2_authorization is None:
         return VerifyResponse(is_valid=False, invalid_reason=ERR_INVALID_PAYLOAD_TYPE, payer=payer)
 
+    # erc3009_counterfactual is non-None when the ERC-3009 deposit is from an undeployed
+    # ERC-6492 wallet with an allowlisted factory; its inner signature is validated by the
+    # deploy+deposit simulation below rather than a direct (no-code) signature check.
+    erc3009_counterfactual: ERC6492SignatureData | None = None
     if transfer_method == "permit2":
         method_err = verify_permit2_deposit_authorization(
             signer, payment, payload, requirements, chain_id, context
         )
+        if method_err is not None:
+            return method_err
     else:
-        method_err = verify_eip3009_deposit_authorization(signer, payload, requirements, chain_id)
-    if method_err is not None:
-        return method_err
+        erc3009_counterfactual, method_err = verify_eip3009_deposit_authorization(
+            signer, payload, requirements, chain_id, allowed_factories
+        )
+        if method_err is not None:
+            return method_err
 
     shared = _verify_shared_deposit_state(signer, payload, requirements)
     if isinstance(shared, VerifyResponse):
@@ -117,7 +130,19 @@ def verify_deposit(
     if isinstance(execution, VerifyResponse):
         return execution
 
-    if not execution.skip_direct_simulation:
+    if erc3009_counterfactual is not None:
+        # Counterfactual: the payer has no code yet, so a plain deposit() eth_call would
+        # revert. Simulate factory-deploy + deposit atomically via one Multicall3 eth_call so
+        # the inner signature is validated against the just-deployed wallet.
+        if not _simulate_counterfactual_deposit(
+            signer, erc3009_counterfactual, payload, shared.deposit_amount, execution
+        ):
+            return VerifyResponse(
+                is_valid=False,
+                invalid_reason=ERR_DEPOSIT_SIMULATION_FAILED,
+                payer=payer,
+            )
+    elif not execution.skip_direct_simulation:
         try:
             signer.read_contract(
                 to_checksum_address(BATCH_SETTLEMENT_ADDRESS),
@@ -155,6 +180,7 @@ def settle_deposit(
     payload: DepositPayload,
     requirements: PaymentRequirements,
     context: FacilitatorContext | None = None,
+    allowed_factories: list[str] | None = None,
 ) -> SettleResponse:
     """Verify then execute a deposit onchain via the appropriate collector."""
     assert payload.channel_config is not None and payload.voucher is not None
@@ -165,7 +191,7 @@ def settle_deposit(
     deposit = payload.deposit
     voucher = payload.voucher
 
-    verified = verify_deposit(signer, payment, payload, requirements, context)
+    verified = verify_deposit(signer, payment, payload, requirements, context, allowed_factories)
     if not verified.is_valid:
         reason = verified.invalid_reason or ERR_INVALID_PAYLOAD_TYPE
         return SettleResponse(
@@ -189,6 +215,17 @@ def settle_deposit(
                 network=network,
                 payer=execution.payer,
             )
+
+        # ERC-6492 counterfactual deposit: deploy the undeployed wallet (gated by the factory
+        # allowlist) before the deposit. The inner signature is validated by the verify-side
+        # deploy+deposit Multicall3 simulation and, definitively, by the on-chain deposit().
+        transfer_method = _resolve_deposit_transfer_method(payload, requirements)
+        if transfer_method == "eip3009":
+            deploy_err = _deploy_erc3009_counterfactual_if_needed(
+                signer, payload, requirements, allowed_factories
+            )
+            if deploy_err is not None:
+                return deploy_err
 
         if execution.kind == "erc20Approval":
             assert execution.extension_signer is not None
@@ -268,6 +305,115 @@ def settle_deposit(
             network=network,
             payer=payer,
         )
+
+
+def _simulate_counterfactual_deposit(
+    signer: FacilitatorEvmSigner,
+    sig_data: ERC6492SignatureData,
+    payload: DepositPayload,
+    deposit_amount: int,
+    execution: _DepositExecution,
+) -> bool:
+    """Simulate factory-deploy + deposit atomically via Multicall3.
+
+    The deposit succeeds only if, after the wallet is deployed in the first sub-call, its
+    isValidSignature accepts the inner ERC-3009 signature carried by the (already-stripped)
+    collector data. Returns the success of the deposit sub-call.
+    """
+    assert payload.channel_config is not None
+    results = multicall(
+        signer,
+        [
+            MulticallCall(
+                address=bytes_to_hex(sig_data.factory),
+                call_data=sig_data.factory_calldata,
+            ),
+            MulticallCall(
+                address=to_checksum_address(BATCH_SETTLEMENT_ADDRESS),
+                abi=BATCH_SETTLEMENT_ABI,
+                function_name="deposit",
+                args=(
+                    to_contract_channel_config(payload.channel_config),
+                    deposit_amount,
+                    execution.collector,
+                    execution.collector_data,
+                ),
+            ),
+        ],
+    )
+    return len(results) >= 2 and results[1].success
+
+
+def _deploy_erc3009_counterfactual_if_needed(
+    signer: FacilitatorEvmSigner,
+    payload: DepositPayload,
+    requirements: PaymentRequirements,
+    allowed_factories: list[str] | None,
+) -> SettleResponse | None:
+    """Deploy an undeployed ERC-6492 wallet before an ERC-3009 deposit.
+
+    Returns None when no deployment is needed or the wallet deployed successfully (the caller
+    proceeds to the real deposit), or a terminal SettleResponse when the factory is disallowed
+    or the deploy reverts. The inner signature is validated by the verify-side deploy+deposit
+    Multicall3 simulation and, definitively, by the on-chain deposit() that follows — so no
+    post-deploy re-simulation is performed here.
+    """
+    assert payload.deposit is not None and payload.channel_config is not None
+    network = str(requirements.network)
+    payer = payload.channel_config.payer
+    auth = payload.deposit.authorization.erc3009_authorization
+    if auth is None:
+        return None
+
+    try:
+        sig_data = parse_erc6492_signature(bytes.fromhex(auth.signature.removeprefix("0x")))
+    except Exception:
+        return None
+    if not has_deployment_info(sig_data):
+        return None
+
+    code = signer.get_code(to_checksum_address(payer))
+    if len(code) != 0:
+        # Already deployed — nothing to do; proceed with the standard deposit.
+        return None
+
+    allowed = [f.strip().lower() for f in (allowed_factories or [])]
+    if bytes_to_hex(sig_data.factory).lower() not in allowed:
+        return SettleResponse(
+            success=False,
+            error_reason=ERR_FACTORY_NOT_ALLOWED,
+            error_message="factory not in eip6492_allowed_factories allowlist",
+            transaction="",
+            network=network,
+            payer=payer,
+        )
+
+    try:
+        tx_hash = signer.send_transaction(bytes_to_hex(sig_data.factory), sig_data.factory_calldata)
+        receipt = signer.wait_for_transaction_receipt(tx_hash)
+        if receipt.status != TX_STATUS_SUCCESS:
+            raise RuntimeError("deployment transaction reverted")
+    except Exception as e:
+        return SettleResponse(
+            success=False,
+            error_reason=ERR_SMART_WALLET_DEPLOYMENT_FAILED,
+            error_message=str(e)[:500],
+            transaction="",
+            network=network,
+            payer=payer,
+        )
+
+    # Do NOT re-simulate the deposit here. The single authoritative pre-check is the
+    # atomic Multicall3 deploy+isValidSignature simulation that runs in verify_deposit
+    # (one eth_call, state shared across both sub-calls). A second standalone eth_call
+    # after the real deploy tx is unreliable — the read can race the deploy's state
+    # propagation across load-balanced RPC nodes — and was producing false
+    # inner-signature-unsupported rejections for valid wallets
+    # (e.g. Coinbase Smart Wallet v1.1). The on-chain deposit() transaction that
+    # follows is itself the definitive signature check; a genuinely unsupported inner
+    # signature will revert there and the outer try/except in settle_deposit will
+    # surface it as ERR_DEPOSIT_TRANSACTION_FAILED.
+    return None
 
 
 def _verify_shared_deposit_state(

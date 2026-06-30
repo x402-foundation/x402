@@ -28,11 +28,13 @@ This page tracks which features are implemented in each SDK (TypeScript, Go, Pyt
 |---------|------------|-----|--------|
 | evm (EIP-155) | ✅ | ✅ | ✅ |
 | svm (Solana) | ✅ | ✅ | ✅ |
-| tvm (TON) | ❌ | ❌ | ✅ |
+| tvm (TON) | ✅ | ❌ | ✅ |
 | avm (Algorand) | ✅ | ❌ | ❌ |
 | stellar | ✅ | ❌ | ❌ |
 | aptos | ✅ | ❌ | ❌ |
 | hedera | ✅ | ❌ | ❌ |
+| keeta | ✅ | ❌ | ❌ |
+| ccd (Concordium) | ✅ | ❌ | ❌ |
 
 ## Mechanisms
 
@@ -45,7 +47,9 @@ This page tracks which features are implemented in each SDK (TypeScript, Go, Pyt
 | exact | stellar | - | ✅ | ❌ | ❌ |
 | exact | aptos | - | ✅ | ❌ | ❌ |
 | exact | hedera | - | ✅ | ❌ | ❌ |
-| exact | tvm | - | ❌ | ❌ | ✅ |
+| exact | tvm | - | ✅ | ❌ | ✅ |
+| exact | keeta | - | ✅ | ❌ | ❌ |
+| exact | ccd (Concordium) | sponsored V1 | ✅ | ❌ | ❌ |
 | upto | evm | `permit2` | ✅ | ✅ | ✅ |
 | batch-settlement | evm | `eip3009` | ✅ | ✅ | ✅ |
 | batch-settlement | evm | `permit2` | ✅ | ✅ | ✅ |
@@ -58,7 +62,7 @@ This page tracks which features are implemented in each SDK (TypeScript, Go, Pyt
 | bazaar (facilitator client - list) | ✅ | ✅ | ✅ |
 | bazaar (facilitator client - search) | ✅ | ✅ | ✅ |
 | builder-code | ✅ | ✅ | ❌ |
-| sign-in-with-x | ✅ | ❌ | ✅ |
+| sign-in-with-x | ✅ | ✅ | ✅ |
 | payment-identifier | ✅ | ✅ | ✅ |
 | offer-receipt | ✅ | ❌ | ❌ |
 | eip2612-gas-sponsoring | ✅ | ✅ | ✅ |

@@ -87,6 +87,62 @@ The easiest way to implement SIWX is registering the provided extension factorie
 
     ```
   </Tab>
+  <Tab title="Go">
+    ```go
+    import (
+        x402 "github.com/x402-foundation/x402/go/v2"
+        "github.com/x402-foundation/x402/go/v2/extensions/signinwithx"
+        x402http "github.com/x402-foundation/x402/go/v2/http"
+        exactevmserver "github.com/x402-foundation/x402/go/v2/mechanisms/evm/exact/server"
+    )
+
+    const NETWORK = "eip155:8453" // Base mainnet
+
+    // Storage for tracking paid addresses
+    storage := signinwithx.NewInMemoryStorage()
+    extension := signinwithx.MustCreateResourceServerExtension(signinwithx.ServerOptions{
+        Storage: storage,
+    })
+
+    // Declare SIWX support in routes
+    routes := x402http.RoutesConfig{
+        "GET /data": {
+            Accepts: x402http.PaymentOptions{{
+                Scheme:  "exact",
+                Price:   "$0.01",
+                Network: NETWORK,
+                PayTo:   "0xYourAddress",
+            }},
+            Extensions: map[string]interface{}{
+                signinwithx.ExtensionKey: signinwithx.DeclareExtension(signinwithx.DeclareOptions{
+                    Networks: []string{NETWORK},
+                })[signinwithx.ExtensionKey],
+            },
+        },
+        "GET /profile": {
+            Accepts:     x402http.PaymentOptions{}, // Auth-only route: no payment required
+            Extensions: map[string]interface{}{
+                signinwithx.ExtensionKey: signinwithx.DeclareExtension(signinwithx.DeclareOptions{
+                    Statement:         "Sign in to view your profile",
+                    Networks:          []string{NETWORK}, // Required for auth-only routes
+                    ExpirationSeconds: 300,
+                })[signinwithx.ExtensionKey],
+            },
+        },
+    }
+
+    // Register extension with the HTTP server
+    facilitatorClient := x402http.NewHTTPFacilitatorClient(&x402http.FacilitatorConfig{
+        URL: "https://x402.org/facilitator",
+    })
+    resourceServer := x402.Newx402ResourceServer(
+        x402.WithFacilitatorClient(facilitatorClient),
+        x402.WithSchemeServer(NETWORK, exactevmserver.NewExactEvmScheme()),
+    )
+    httpServer := x402http.Wrappedx402HTTPResourceServer(routes, resourceServer).
+        RegisterExtension(extension)
+    ```
+  </Tab>
   <Tab title="Python">
     ```python
     from x402.extensions.sign_in_with_x import (
@@ -166,6 +222,30 @@ By default, only EOA (Externally Owned Account) signatures are verified. To supp
         storage,
         verifyOptions: { evmVerifier: publicClient.verifyMessage },
       }));
+    ```
+  </Tab>
+  <Tab title="Go">
+    ```go
+    import (
+        "github.com/ethereum/go-ethereum/ethclient"
+        siwe "github.com/signinwithethereum/siwe-go"
+        "github.com/x402-foundation/x402/go/v2/extensions/signinwithx"
+    )
+
+    // An ethclient.Client satisfies the siwe-go ContractSignatureVerifier interface
+    // used for deployed EIP-1271 and counterfactual EIP-6492 verification.
+    ethClient, err := ethclient.Dial("https://mainnet.base.org")
+    if err != nil {
+        log.Fatal(err)
+    }
+    contractVerifier := siwe.NewEthCallerVerifier(ethClient)
+
+    extension := signinwithx.MustCreateResourceServerExtension(signinwithx.ServerOptions{
+        Storage: storage,
+        VerifyOptions: signinwithx.VerifyOptions{
+            EVMContractVerifier: contractVerifier,
+        },
+    })
     ```
   </Tab>
   <Tab title="Python">
@@ -325,6 +405,61 @@ The easiest way to use SIWX as a client is with the provided client extension:
 
     // Requests automatically use SIWX auth when server supports it
     const response = await httpClient.fetch('https://api.example.com/data');
+    ```
+  </Tab>
+  <Tab title="Go">
+    ```go
+    import (
+        x402 "github.com/x402-foundation/x402/go/v2"
+        "github.com/x402-foundation/x402/go/v2/extensions/signinwithx"
+        x402http "github.com/x402-foundation/x402/go/v2/http"
+        exactevmclient "github.com/x402-foundation/x402/go/v2/mechanisms/evm/exact/client"
+        evmsigner "github.com/x402-foundation/x402/go/v2/signers/evm"
+    )
+
+    evmSigner, err := evmsigner.NewClientSignerFromPrivateKey(os.Getenv("EVM_PRIVATE_KEY"))
+    if err != nil {
+        log.Fatal(err)
+    }
+    siwxSigner := evmSigner.(signinwithx.EVMSigner)
+
+    client := x402.Newx402Client().
+        Register("eip155:*", exactevmclient.NewExactEvmScheme(evmSigner, nil)).
+        RegisterExtension(signinwithx.CreateClientExtension(siwxSigner))
+    httpClient := x402http.Newx402HTTPClient(client)
+
+    // Requests automatically use SIWX auth when server supports it
+    wrappedClient := x402http.WrapHTTPClientWithPayment(http.DefaultClient, httpClient)
+    resp, err := wrappedClient.Get("https://api.example.com/data")
+    ```
+
+    For multi-chain clients (EVM + Solana), pass ordered signers. The first compatible signer for the server's `supportedChains` is used:
+
+    ```go
+    import (
+        exactsvmclient "github.com/x402-foundation/x402/go/v2/mechanisms/svm/exact/client"
+        svmsigner "github.com/x402-foundation/x402/go/v2/signers/svm"
+    )
+
+    svmSigner, err := svmsigner.NewClientSignerFromPrivateKey(os.Getenv("SVM_PRIVATE_KEY"))
+    if err != nil {
+        log.Fatal(err)
+    }
+
+    // Wrap the Solana signer to satisfy the signinwithx.SolanaSigner interface
+    type solanaSIWXSigner struct{ signer *svmsigner.ClientSigner }
+    func (s *solanaSIWXSigner) Address() string { return s.signer.Address().String() }
+    func (s *solanaSIWXSigner) SignMessage(ctx context.Context, msg string) (string, error) {
+        return s.signer.SignMessage(ctx, msg)
+    }
+
+    client := x402.Newx402Client().
+        Register("eip155:*", exactevmclient.NewExactEvmScheme(evmSigner, nil)).
+        Register("solana:*", exactsvmclient.NewExactSvmScheme(svmSigner)).
+        RegisterExtension(signinwithx.CreateClientExtensionWithSigners(
+            signinwithx.NewEVMSIWXSigner(siwxSigner),
+            signinwithx.NewSolanaSIWXSigner(&solanaSIWXSigner{signer: svmSigner.(*svmsigner.ClientSigner)}),
+        ))
     ```
   </Tab>
   <Tab title="Python">

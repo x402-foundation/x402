@@ -352,6 +352,14 @@ type ResourceServerExtensionHookProvider interface {
 	ResourceServerExtensionHooks() ResourceServerExtensionHooks
 }
 
+// ResourceServerExtensionDynamicInfoFieldsProvider lets an extension declare the
+// names of fields under its `info` that are dynamic — regenerated on every
+// PaymentRequired response (e.g. nonces, timestamps) rather than static
+// committed terms. Dynamic fields are excluded from client echo validation.
+type ResourceServerExtensionDynamicInfoFieldsProvider interface {
+	DynamicInfoFields() []string
+}
+
 // ResourceServerExtensionHooks is an extension's optional bundle of
 // lifecycle hooks. Mirrors the TS `ResourceServerExtensionHooks` interface
 // shape — fields left nil mean "no hook for that phase".

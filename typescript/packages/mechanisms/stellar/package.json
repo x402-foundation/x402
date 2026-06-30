@@ -1,6 +1,6 @@
 {
   "name": "@x402/stellar",
-  "version": "2.15.0",
+  "version": "2.17.0",
   "main": "./dist/cjs/index.js",
   "module": "./dist/esm/index.js",
   "types": "./dist/cjs/index.d.ts",
@@ -28,6 +28,9 @@
   "author": "x402 Foundation",
   "repository": "https://github.com/x402-foundation/x402",
   "description": "x402 Payment Protocol Stellar Implementation",
+  "engines": {
+    "node": ">=22.0.0"
+  },
   "devDependencies": {
     "@eslint/js": "^9.24.0",
     "@types/node": "^22.13.4",
@@ -46,7 +49,7 @@
     "vitest": "^3.0.5"
   },
   "dependencies": {
-    "@stellar/stellar-sdk": "^14.6.1",
+    "@stellar/stellar-sdk": "^16.0.1",
     "@x402/core": "workspace:~"
   },
   "exports": {

@@ -38,6 +38,70 @@ from .schemas import (
 from .schemas.extensions import ClientExtension
 
 # ============================================================================
+# Extension merging
+# ============================================================================
+
+
+def _merge_extensions(
+    server_extensions: dict[str, Any] | None,
+    client_extensions: dict[str, Any] | None,
+) -> dict[str, Any] | None:
+    """Deep-merge server-declared extensions with client/scheme extension data.
+
+    Mirrors the TypeScript ``x402Client.mergeExtensions`` semantics so payment
+    payloads are structurally identical across language implementations. The
+    server's declared extension entry (e.g. ``info.description`` and the
+    ``schema`` object) is preserved, while the client overlays only NEW fields
+    it populates (e.g. the signed ``from``/``signature``/... permit data). For
+    conflicting leaf fields the server value wins.
+
+    Without this, a shallow ``{**server, **client}`` replace would drop the
+    server's ``schema`` from gas-sponsoring extensions, which strict Go/TS
+    resource servers reject before the payment reaches the facilitator.
+
+    Args:
+        server_extensions: Extensions declared by the server in the 402 response.
+        client_extensions: Extensions provided by the client or scheme.
+
+    Returns:
+        The merged extensions object, or ``None`` if both inputs are empty.
+    """
+    if not client_extensions:
+        return server_extensions or None
+    if not server_extensions:
+        return client_extensions or None
+
+    def _is_mergeable(value: Any) -> bool:
+        return isinstance(value, dict)
+
+    merged: dict[str, Any] = {**server_extensions}
+    for key, client_value in client_extensions.items():
+        server_value = merged.get(key)
+        if not _is_mergeable(server_value) or not _is_mergeable(client_value):
+            merged[key] = client_value
+            continue
+        merged[key] = _deep_overlay(server_value, client_value)
+    return merged
+
+
+def _deep_overlay(target: dict[str, Any], source: dict[str, Any]) -> dict[str, Any]:
+    """Recursively overlay ``source`` onto a copy of ``target``.
+
+    Nested dicts are merged recursively; for leaf fields the existing
+    ``target`` (server) value is kept and only missing keys are added from
+    ``source`` (client). Matches the TS ``mergeExtensions`` inner loop.
+    """
+    result: dict[str, Any] = {**target}
+    for field_key, source_value in source.items():
+        target_value = result.get(field_key)
+        if isinstance(target_value, dict) and isinstance(source_value, dict):
+            result[field_key] = _deep_overlay(target_value, source_value)
+        elif field_key not in result:
+            result[field_key] = source_value
+    return result
+
+
+# ============================================================================
 # Type Aliases
 # ============================================================================
 
@@ -414,11 +478,15 @@ class x402ClientBase:
             else:
                 inner_payload = client.create_payment_payload(selected)
 
-            # 5b. Extract scheme-generated extensions (e.g. gas sponsoring)
+            # 5b. Extract scheme-generated extensions (e.g. gas sponsoring) and
+            # deep-merge them onto the server's declared extensions. This keeps
+            # the server's `schema` (and `info.description`/`version`) intact
+            # while overlaying the client's signed fields — matching the TS
+            # client. A shallow replace would drop `schema`, which strict Go/TS
+            # resource servers reject before reaching the facilitator.
             scheme_extensions = inner_payload.pop("__extensions", None)
-            final_extensions = extensions or payment_required.extensions or {}
-            if scheme_extensions:
-                final_extensions = {**final_extensions, **scheme_extensions}
+            base_extensions = extensions or payment_required.extensions or {}
+            final_extensions = _merge_extensions(base_extensions, scheme_extensions)
 
             # 6. Wrap into full PaymentPayload
             payload = PaymentPayload(

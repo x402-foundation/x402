@@ -114,7 +114,3 @@ to obtain testnet USDT.
 The facilitator wallet also needs testnet TON and must hold at least 1.1 TON
 before running tests. The facilitator uses a Highload V3 wallet, so fund the
 Highload V3 address, not the W5 address derived from the same key.
-
-## License
-
-MIT

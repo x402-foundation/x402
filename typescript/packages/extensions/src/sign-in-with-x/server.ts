@@ -119,6 +119,7 @@ export function createSIWxResourceServerExtension(
 
   return {
     key: SIGN_IN_WITH_X,
+    dynamicInfoFields: ["nonce", "issuedAt", "expirationTime"],
     enrichPaymentRequiredResponse: enrichSIWxPaymentRequiredResponse,
     transportHooks: {
       http: {

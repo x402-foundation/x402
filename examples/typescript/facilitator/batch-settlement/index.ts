@@ -26,10 +26,9 @@ if (!process.env.EVM_PRIVATE_KEY) {
 
 const evmRpcUrl = process.env.EVM_RPC_URL ?? "https://sepolia.base.org";
 
-// Treat unset or blank like Go's envOr: `.env` often has `KEY=` which is "" not undefined.
+// Treat unset or blank as not configured
 const receiverAuthorizerPrivateKey =
-  process.env.EVM_RECEIVER_AUTHORIZER_PRIVATE_KEY?.trim() ||
-  process.env.EVM_PRIVATE_KEY;
+  process.env.EVM_RECEIVER_AUTHORIZER_PRIVATE_KEY?.trim();
 
 // Initialize the EVM account from private key (submits transactions)
 const evmAccount = privateKeyToAccount(
@@ -37,20 +36,27 @@ const evmAccount = privateKeyToAccount(
   { nonceManager },
 );
 
-// Dedicated receiverAuthorizer (signs ClaimBatch / Refund EIP-712 messages)
-const authorizerAccount = privateKeyToAccount(
-  receiverAuthorizerPrivateKey as `0x${string}`,
-);
-const authorizerSigner: AuthorizerSigner = {
-  address: authorizerAccount.address,
-  signTypedData: (params) =>
-    authorizerAccount.signTypedData(
-      params as Parameters<typeof authorizerAccount.signTypedData>[0],
-    ),
-};
+// Optional receiverAuthorizer (signs ClaimBatch / Refund EIP-712 messages)
+let authorizerSigner: AuthorizerSigner | undefined;
+if (receiverAuthorizerPrivateKey) {
+  const authorizerAccount = privateKeyToAccount(
+    receiverAuthorizerPrivateKey as `0x${string}`,
+  );
+  authorizerSigner = {
+    address: authorizerAccount.address,
+    signTypedData: (params) =>
+      authorizerAccount.signTypedData(
+        params as Parameters<typeof authorizerAccount.signTypedData>[0],
+      ),
+  };
+}
 
 console.info(`EVM Facilitator account: ${evmAccount.address}`);
-console.info(`EVM Receiver Authorizer: ${authorizerSigner.address}`);
+if (authorizerSigner) {
+  console.info(`EVM Receiver Authorizer: ${authorizerSigner.address}`);
+} else {
+  console.info("EVM Receiver Authorizer: not configured");
+}
 
 // Create a Viem client with both wallet and public capabilities
 const viemClient = createWalletClient({

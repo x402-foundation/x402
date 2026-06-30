@@ -25,7 +25,8 @@ from pathlib import Path
 VERSION_RE = re.compile(r"^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$")
 CONSTANTS_VERSION_RE = re.compile(r'^(\s*)Version = "([^"]+)"$', re.MULTILINE)
 KIND_RE = re.compile(r"^kind:\s*(\S+)\s*$", re.MULTILINE)
-BODY_RE = re.compile(r"^body:\s*(.+)$", re.MULTILINE | re.DOTALL)
+BODY_RE = re.compile(r"^body:\s*(.+?)(?:\ntime:|\Z)", re.MULTILINE | re.DOTALL)
+TIME_RE = re.compile(r"^time:\s*(.+)\s*$", re.MULTILINE)
 DEFAULT_REPOSITORY = "x402-foundation/x402"
 REPOSITORY_URL = f"https://github.com/{DEFAULT_REPOSITORY}"
 
@@ -390,18 +391,25 @@ def normalize_changie_kind(root: Path, kind: str) -> str:
     return normalized
 
 
-def read_changie_fragment(fragment: Path) -> tuple[str, str]:
+def read_changie_fragment(fragment: Path) -> tuple[str, str, str | None]:
     content = fragment.read_text()
     kind_match = KIND_RE.search(content)
     body_match = BODY_RE.search(content)
     if kind_match is None or body_match is None:
         raise ReleasePrepError(f"Could not parse Changie fragment: {fragment}")
 
-    return kind_match.group(1), body_match.group(1).strip()
+    time_match = TIME_RE.search(content)
+    time = time_match.group(1).strip() if time_match is not None else None
+    return kind_match.group(1), body_match.group(1).strip(), time
 
 
-def write_changie_fragment(fragment: Path, kind: str, body: str) -> None:
-    fragment.write_text(f"kind: {kind}\nbody: {body}\n")
+def write_changie_fragment(
+    fragment: Path, kind: str, body: str, time: str | None = None
+) -> None:
+    lines = [f"kind: {kind}", f"body: {json.dumps(body)}"]
+    if time is not None:
+        lines.append(f"time: {time}")
+    fragment.write_text("\n".join(lines) + "\n")
 
 
 def fragment_changelog_body(root: Path, fragment: Path, body: str) -> str | None:
@@ -424,30 +432,34 @@ def fragment_changelog_body(root: Path, fragment: Path, body: str) -> str | None
 
 def changelog_fragment_bodies(
     root: Path, fragments: list[Path]
-) -> list[tuple[Path, str, str]]:
-    bodies: list[tuple[Path, str, str]] = []
+) -> list[tuple[Path, str, str, str | None]]:
+    bodies: list[tuple[Path, str, str, str | None]] = []
     for fragment in fragments:
-        kind, body = read_changie_fragment(fragment)
+        kind, body, time = read_changie_fragment(fragment)
         kind = normalize_changie_kind(root, kind)
         rendered = fragment_changelog_body(root, fragment, body)
         if rendered is not None:
-            bodies.append((fragment, kind, rendered))
+            bodies.append((fragment, kind, rendered, time))
     return bodies
 
 
-def print_changelog_fragment_preview(bodies: list[tuple[Path, str, str]]) -> None:
+def print_changelog_fragment_preview(
+    bodies: list[tuple[Path, str, str, str | None]],
+) -> None:
     if not bodies:
         return
 
     print("Changelog fragment preview:")
-    for _, _, body in bodies:
+    for _, _, body, _ in bodies:
         print(f"- {body}")
     print()
 
 
-def rewrite_fragments(root: Path, bodies: list[tuple[Path, str, str]]) -> None:
-    for fragment, kind, body in bodies:
-        write_changie_fragment(fragment, kind, body)
+def rewrite_fragments(
+    root: Path, bodies: list[tuple[Path, str, str, str | None]]
+) -> None:
+    for fragment, kind, body, time in bodies:
+        write_changie_fragment(fragment, kind, body, time)
         git_output(root, ["add", "--", str(fragment.relative_to(root))])
 
 

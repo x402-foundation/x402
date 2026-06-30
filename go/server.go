@@ -3,6 +3,7 @@ package x402
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"math/big"
 	"regexp"
@@ -241,7 +242,62 @@ func (s *x402ResourceServer) Initialize(ctx context.Context) error {
 		s.supportedCache.Set(fmt.Sprintf("facilitator_%p", client), supported)
 	}
 
-	return nil
+	return s.validateFacilitatorCapabilities(ctx)
+}
+
+// validateFacilitatorCapabilities fails fast when a registered scheme's config is
+// incompatible with the facilitator capabilities advertised for the scheme/network
+// it supports. Only schemes the facilitator actually supports are validated, and
+// only schemes implementing FacilitatorSupportValidator participate.
+func (s *x402ResourceServer) validateFacilitatorCapabilities(_ context.Context) error {
+	var problems []error
+
+	for network, schemeMap := range s.schemes {
+		for scheme, server := range schemeMap {
+			validator, ok := server.(FacilitatorSupportValidator)
+			if !ok {
+				continue
+			}
+
+			supportedKind, extensions, found := s.findSupportedKind(network, scheme)
+			if !found {
+				continue
+			}
+
+			if err := validator.ValidateFacilitatorSupport(network, supportedKind, extensions); err != nil {
+				problems = append(problems, fmt.Errorf("%s on %s: %w", scheme, network, err))
+			}
+		}
+	}
+
+	if len(problems) == 0 {
+		return nil
+	}
+	return fmt.Errorf("x402 facilitator capability errors: %w", errors.Join(problems...))
+}
+
+// findSupportedKind scans the cached facilitator responses for the V2 kind matching
+// the scheme/network and returns it alongside the facilitator's advertised extensions.
+// The bool reports whether the facilitator supports the scheme/network at all.
+func (s *x402ResourceServer) findSupportedKind(network Network, scheme string) (types.SupportedKind, []string, bool) {
+	s.supportedCache.mu.RLock()
+	defer s.supportedCache.mu.RUnlock()
+
+	for _, cachedResponse := range s.supportedCache.data {
+		for _, kind := range cachedResponse.Kinds {
+			if kind.X402Version != 2 || kind.Scheme != scheme || string(kind.Network) != string(network) {
+				continue
+			}
+			supportedKind := types.SupportedKind{
+				X402Version: kind.X402Version,
+				Scheme:      kind.Scheme,
+				Network:     string(kind.Network),
+				Extra:       kind.Extra,
+			}
+			return supportedKind, cachedResponse.Extensions, true
+		}
+	}
+	return types.SupportedKind{}, nil, false
 }
 
 // HasRegisteredScheme checks if a scheme is registered for a given network
@@ -740,6 +796,13 @@ func (s *x402ResourceServer) ValidateExtensions(
 			}
 		}
 
+		// Exclude fields the extension regenerates per response (e.g. nonces)
+		// so a fresh server value is not flagged against the client's echo.
+		if dynamicFields := s.dynamicInfoFields(key); len(dynamicFields) > 0 {
+			advertised = omitFields(advertised, dynamicFields)
+			echoed = omitFields(echoed, dynamicFields)
+		}
+
 		mismatch := false
 		pending := []pair{{advertised, echoed}}
 		for i := 0; i < len(pending) && !mismatch; i++ {
@@ -775,6 +838,44 @@ func (s *x402ResourceServer) ValidateExtensions(
 	}
 
 	return ExtensionValidationResult{Valid: true}
+}
+
+// dynamicInfoFields returns the dynamic `info` field names declared by the
+// registered extension for `key`, or nil when the extension is unknown or does
+// not opt into dynamic-field handling.
+func (s *x402ResourceServer) dynamicInfoFields(key string) []string {
+	s.mu.RLock()
+	ext, ok := s.registeredExtensions[key]
+	s.mu.RUnlock()
+	if !ok {
+		return nil
+	}
+	provider, ok := ext.(ResourceServerExtensionDynamicInfoFieldsProvider)
+	if !ok {
+		return nil
+	}
+	return provider.DynamicInfoFields()
+}
+
+// omitFields returns a copy of an extension info object without the named
+// dynamic fields. The value is returned unchanged when no fields apply or when
+// it is not a JSON object. Mirrors TS `omitFields`.
+func omitFields(value interface{}, fields []string) interface{} {
+	if len(fields) == 0 {
+		return value
+	}
+	original, ok := value.(map[string]interface{})
+	if !ok {
+		return value
+	}
+	copied := make(map[string]interface{}, len(original))
+	for k, v := range original {
+		copied[k] = v
+	}
+	for _, field := range fields {
+		delete(copied, field)
+	}
+	return copied
 }
 
 // VerifyPayment verifies a V2 payment with no declared extensions.

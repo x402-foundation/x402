@@ -10,6 +10,7 @@ import (
 
 	"github.com/joho/godotenv"
 	x402 "github.com/x402-foundation/x402/go/v2"
+	batchsettlement "github.com/x402-foundation/x402/go/v2/mechanisms/evm/batch-settlement"
 	batchedfac "github.com/x402-foundation/x402/go/v2/mechanisms/evm/batch-settlement/facilitator"
 )
 
@@ -28,24 +29,30 @@ func main() {
 
 	rpcURL := envOr("EVM_RPC_URL", "https://sepolia.base.org")
 
-	// receiverAuthorizer signs ClaimBatch / Refund messages. Defaults to the same
-	// key as the facilitator if a dedicated authorizer key isn't supplied.
-	authKey := envOr("EVM_RECEIVER_AUTHORIZER_PRIVATE_KEY", evmPrivateKey)
-
 	evmSigner, err := newFacilitatorEvmSigner(evmPrivateKey, rpcURL)
 	if err != nil {
 		fmt.Printf("Failed to create EVM signer: %v\n", err)
 		os.Exit(1)
 	}
 
-	authorizer, err := newAuthorizerSigner(authKey)
-	if err != nil {
-		fmt.Printf("Failed to create authorizer signer: %v\n", err)
-		os.Exit(1)
+	// receiverAuthorizer signs ClaimBatch / Refund messages. When no dedicated
+	// authorizer key is supplied, the facilitator advertises no receiverAuthorizer
+	// and servers must supply their own authorizer signatures.
+	var authorizer batchsettlement.AuthorizerSigner
+	if authKey := os.Getenv("EVM_RECEIVER_AUTHORIZER_PRIVATE_KEY"); authKey != "" {
+		authorizer, err = newAuthorizerSigner(authKey)
+		if err != nil {
+			fmt.Printf("Failed to create authorizer signer: %v\n", err)
+			os.Exit(1)
+		}
 	}
 
 	fmt.Printf("EVM Facilitator account: %s\n", evmSigner.GetAddresses()[0])
-	fmt.Printf("EVM Receiver Authorizer: %s\n", authorizer.Address())
+	if authorizer != nil {
+		fmt.Printf("EVM Receiver Authorizer: %s\n", authorizer.Address())
+	} else {
+		fmt.Println("EVM Receiver Authorizer: not configured")
+	}
 
 	facilitator := x402.Newx402Facilitator()
 	facilitator.Register(

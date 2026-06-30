@@ -110,6 +110,10 @@ export class GenericServerProxy extends BaseProxy implements ServerProxy {
         APTOS_RPC_URL: config.networks.aptos.rpcUrl,
         APTOS_PAYEE_ADDRESS: config.aptosPayTo,
 
+        // Concordium network config
+        CCD_NETWORK: config.networks.ccd.caip2,
+        CCD_PAYEE_ADDRESS: config.ccdPayTo,
+
         // Hedera network config. HEDERA_ASSET / HEDERA_AMOUNT are only
         // forwarded when set by the caller; the resource servers apply their
         // own HBAR defaults (0.0.0 / 100000 tinybars) when absent, so passing
@@ -119,6 +123,10 @@ export class GenericServerProxy extends BaseProxy implements ServerProxy {
         HEDERA_PAYEE_ADDRESS: config.hederaPayTo,
         ...(config.hederaAsset !== undefined ? { HEDERA_ASSET: config.hederaAsset } : {}),
         ...(config.hederaAmount !== undefined ? { HEDERA_AMOUNT: config.hederaAmount } : {}),
+
+        // Keeta network config
+        KEETA_NETWORK: config.networks.keeta.caip2,
+        KEETA_PAYEE_ADDRESS: config.keetaPayTo,
 
         // Stellar network config
         STELLAR_NETWORK: config.networks.stellar.caip2,
@@ -259,7 +267,7 @@ export class GenericServerProxy extends BaseProxy implements ServerProxy {
 
 /**
  * Translates v2 CAIP-2 network format to v1 simple format for legacy servers
- * 
+ *
  * @param network - Network in CAIP-2 format (e.g., "eip155:84532")
  * @returns Network in v1 format (e.g., "base-sepolia")
  */

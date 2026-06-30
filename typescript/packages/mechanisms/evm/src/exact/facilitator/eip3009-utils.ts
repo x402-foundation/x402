@@ -12,6 +12,15 @@ export interface Eip6492Deployment {
 }
 
 /**
+ * Outcome of a transfer simulation. `error` is populated only when the underlying `eth_call`
+ * threw (revert or transport), letting callers distinguish a contract revert from an RPC failure.
+ */
+export interface SimulateEip3009Result {
+  ok: boolean;
+  error?: unknown;
+}
+
+/**
  * Simulates transferWithAuthorization via eth_call.
  * Returns true if simulation succeeded, false if it failed.
  *
@@ -28,6 +37,25 @@ export async function simulateEip3009Transfer(
   payload: ExactEIP3009Payload,
   eip6492Deployment?: Eip6492Deployment,
 ): Promise<boolean> {
+  return (await simulateEip3009TransferResult(signer, erc20Address, payload, eip6492Deployment)).ok;
+}
+
+/**
+ * Like {@link simulateEip3009Transfer} but returns the thrown error (if any) alongside the
+ * boolean outcome, so callers can tell a contract revert apart from a transport/RPC failure.
+ *
+ * @param signer - EVM signer for contract reads
+ * @param erc20Address - ERC-20 token contract address
+ * @param payload - EIP-3009 transfer authorization payload
+ * @param eip6492Deployment - Optional EIP-6492 factory info for undeployed smart wallets
+ * @returns The simulation outcome and, on failure via a thrown error, that error.
+ */
+export async function simulateEip3009TransferResult(
+  signer: FacilitatorEvmSigner,
+  erc20Address: `0x${string}`,
+  payload: ExactEIP3009Payload,
+  eip6492Deployment?: Eip6492Deployment,
+): Promise<SimulateEip3009Result> {
   const auth = payload.authorization;
   const transferArgs = [
     getAddress(auth.from),
@@ -58,9 +86,9 @@ export async function simulateEip3009Transfer(
         } satisfies RawContractCall,
       ]);
 
-      return results[1]?.status === "success";
-    } catch {
-      return false;
+      return { ok: results[1]?.status === "success" };
+    } catch (error) {
+      return { ok: false, error };
     }
   }
 
@@ -90,9 +118,9 @@ export async function simulateEip3009Transfer(
         args: [...transferArgs, sig],
       });
     }
-    return true;
-  } catch {
-    return false;
+    return { ok: true };
+  } catch (error) {
+    return { ok: false, error };
   }
 }
 

@@ -17,12 +17,17 @@ import { ExactAptosScheme } from "@x402/aptos/exact/client";
 import { Account, Ed25519PrivateKey, PrivateKey, PrivateKeyVariants } from "@aptos-labs/ts-sdk";
 import { createClientHederaSigner, PrivateKey as HederaPrivateKey } from "@x402/hedera";
 import { ExactHederaScheme } from "@x402/hedera/exact/client";
+import { ExactKeetaScheme } from "@x402/keeta/exact/client";
+import { toClientKeetaSigner, KEETA_TESTNET_CAIP2, ClientKeetaSigner } from "@x402/keeta";
 import { ExactStellarScheme } from "@x402/stellar/exact/client";
 import { createEd25519Signer, Ed25519Signer } from "@x402/stellar";
 import { ExactTvmScheme } from "@x402/tvm/exact/client";
 import { toClientTvmSigner, TVM_PROVIDER_TONAPI, TVM_PROVIDER_TONCENTER } from "@x402/tvm";
 import { ExactAvmScheme as ExactAvmClientScheme } from "@x402/avm/exact/client";
 import { toClientAvmSigner } from "@x402/avm";
+import { ExactConcordiumScheme } from "@x402/concordium/exact/client";
+import { AccountAddress, buildBasicAccountSigner } from "@concordium/web-sdk";
+import * as KeetaNet from "@keetanetwork/keetanet-client";
 import { base58 } from "@scure/base";
 import { createKeyPairSignerFromBytes } from "@solana/kit";
 import { keyPairFromSeed, type KeyPair } from "@ton/crypto";
@@ -58,6 +63,9 @@ const uptoSchemeOptions: UptoEvmSchemeOptions | undefined = process.env.EVM_RPC_
   : undefined;
 const svmSchemeOptions = process.env.SVM_RPC_URL ? { rpcUrl: process.env.SVM_RPC_URL } : undefined;
 
+
+const ccdPrivateKey = process.env.CCD_PRIVATE_KEY;
+const ccdAddress = process.env.CCD_ADDRESS;
 /**
  * Parses the TVM private key accepted by e2e env fixtures.
  *
@@ -117,6 +125,16 @@ if (process.env.HEDERA_ACCOUNT_ID && process.env.HEDERA_PRIVATE_KEY) {
   );
 }
 
+// Initialize Keeta signer if mnemonic is provided
+let keetaSigner: ClientKeetaSigner | undefined;
+if (process.env.KEETA_CLIENT_MNEMONIC) {
+  const keetaAccount = KeetaNet.lib.Account.fromSeed(
+    await KeetaNet.lib.Account.seedFromPassphrase(process.env.KEETA_CLIENT_MNEMONIC),
+    0,
+  );
+  keetaSigner = toClientKeetaSigner(keetaAccount);
+}
+
 // Initialize Stellar signer if key is provided
 let stellarSigner: Ed25519Signer | undefined;
 if (process.env.STELLAR_PRIVATE_KEY) {
@@ -158,11 +176,26 @@ const client = new x402Client()
   .register("solana:*", new ExactSvmScheme(svmSigner, svmSchemeOptions))
   .registerV1("solana-devnet", new ExactSvmSchemeV1(svmSigner, svmSchemeOptions))
   .registerV1("solana", new ExactSvmSchemeV1(svmSigner, svmSchemeOptions));
+if (ccdPrivateKey && ccdAddress) {
+  client.register(
+    "ccd:*",
+    new ExactConcordiumScheme(
+      {
+        accountAddress: AccountAddress.fromBase58(ccdAddress),
+        signer: buildBasicAccountSigner(ccdPrivateKey),
+      },
+      process.env.CCD_GRPC_URL ? { grpcUrl: process.env.CCD_GRPC_URL } : undefined,
+    ),
+  );
+}
 if (aptosAccount) {
   client.register("aptos:*", new ExactAptosScheme(aptosAccount));
 }
 if (hederaClientSigner) {
   client.register("hedera:*", new ExactHederaScheme(hederaClientSigner));
+}
+if (keetaSigner) {
+  client.register(KEETA_TESTNET_CAIP2, new ExactKeetaScheme(keetaSigner));
 }
 if (stellarSigner) {
   client.register("stellar:*", new ExactStellarScheme(stellarSigner));

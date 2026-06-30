@@ -15,6 +15,7 @@ ERR_CHANNEL_STATE_READ_FAILED = "invalid_batch_settlement_evm_channel_state_read
 ERR_RECEIVER_MISMATCH = "invalid_batch_settlement_evm_receiver_mismatch"
 ERR_RECEIVER_AUTHORIZER_MISMATCH = "invalid_batch_settlement_evm_receiver_authorizer_mismatch"
 ERR_AUTHORIZER_ADDRESS_MISMATCH = "invalid_batch_settlement_evm_authorizer_address_mismatch"
+ERR_AUTHORIZER_NOT_CONFIGURED = "invalid_batch_settlement_evm_authorizer_not_configured"
 ERR_TOKEN_MISMATCH = "invalid_batch_settlement_evm_token_mismatch"
 ERR_WITHDRAW_DELAY_MISMATCH = "invalid_batch_settlement_evm_withdraw_delay_mismatch"
 ERR_WITHDRAW_DELAY_OUT_OF_RANGE = "invalid_batch_settlement_evm_withdraw_delay_out_of_range"
@@ -29,6 +30,11 @@ ERR_INSUFFICIENT_BALANCE = "invalid_batch_settlement_evm_insufficient_balance"
 ERR_DEPOSIT_PAYLOAD = "invalid_batch_settlement_evm_deposit_payload"
 ERR_DEPOSIT_SIMULATION_FAILED = "invalid_batch_settlement_evm_deposit_simulation_failed"
 ERR_DEPOSIT_TRANSACTION_FAILED = "invalid_batch_settlement_evm_deposit_transaction_failed"
+
+# ERC-6492 counterfactual deployment errors (ERC-3009 deposit path). Wire values keep the
+# scheme prefix to match the rest of this module's contract.
+ERR_FACTORY_NOT_ALLOWED = "invalid_batch_settlement_evm_eip6492_factory_not_allowed"
+ERR_SMART_WALLET_DEPLOYMENT_FAILED = "invalid_batch_settlement_evm_smart_wallet_deployment_failed"
 
 ERR_VOUCHER_PAYLOAD = "invalid_batch_settlement_evm_voucher_payload"
 

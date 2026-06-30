@@ -234,6 +234,24 @@ def bytes_to_hex(data: bytes) -> str:
     return "0x" + data.hex()
 
 
+def is_contract_revert(error: Exception | None) -> bool:
+    """Report whether error looks like an on-chain contract revert (vs a transport/RPC failure).
+
+    Used by the post-deploy ERC-6492 simulation paths so a transient RPC error is not
+    misreported as a deterministic "signature unsupported" rejection. Matches the
+    revert-substring heuristic the EIP-3009 revert-reason parsers already rely on.
+
+    Args:
+        error: The exception raised by a simulation/eth_call, if any.
+
+    Returns:
+        True if the error looks like a contract revert, False for transport/RPC failures.
+    """
+    if error is None:
+        return False
+    return "revert" in str(error).lower()
+
+
 def parse_money_to_decimal(money: str | float | int) -> float:
     """Parse Money to decimal.
 

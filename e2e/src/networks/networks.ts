@@ -1,12 +1,12 @@
 /**
  * Network configuration for E2E tests
- * 
+ *
  * This is the single source of truth for all network configs.
  * Use getNetworkSet() to get configs for testnet or mainnet mode.
  */
 
 export type NetworkMode = 'testnet' | 'mainnet';
-export type ProtocolFamily = 'evm' | 'svm' | 'avm' | 'aptos' | 'hedera' | 'stellar' | 'tvm';
+export type ProtocolFamily = 'evm' | 'svm' | 'avm' | 'aptos' | 'hedera' | 'keeta' | 'stellar' | 'ccd' | 'tvm';
 
 export type NetworkConfig = {
   name: string;
@@ -21,7 +21,9 @@ export type NetworkSet = {
   avm: NetworkConfig;
   aptos: NetworkConfig;
   hedera: NetworkConfig;
+  keeta: NetworkConfig;
   stellar: NetworkConfig;
+  ccd: NetworkConfig;
   tvm: NetworkConfig;
 };
 
@@ -46,6 +48,11 @@ const NETWORK_SETS: Record<NetworkMode, NetworkSet> = {
       caip2: 'algorand:SGO1GKSzyE7IEPItTxCByw9x8FmnrCDexi9/cOUJOiI=',
       rpcUrl: process.env.AVM_TESTNET_RPC_URL || 'https://testnet-api.4160.nodely.dev',
     },
+    ccd: {
+      name: 'Concordium Testnet',
+      caip2: 'ccd:4221332d34e1694168c2a0c0b3fd0f27',
+      rpcUrl: process.env.CONCORDIUM_TESTNET_GRPC_URL || 'grpc.testnet.concordium.com:20000',
+    },
     aptos: {
       name: 'Aptos Testnet',
       caip2: 'aptos:2',
@@ -55,6 +62,12 @@ const NETWORK_SETS: Record<NetworkMode, NetworkSet> = {
       name: 'Hedera Testnet',
       caip2: 'hedera:testnet',
       rpcUrl: process.env.HEDERA_TESTNET_NODE_URL || '',
+    },
+    keeta: {
+      name: 'Keeta Testnet',
+      caip2: 'keeta:1413829460',
+      // Unused in Keeta, representative API endpoints are set in the SDK itself
+      rpcUrl: '',
     },
     stellar: {
       name: 'Stellar Testnet',
@@ -84,6 +97,11 @@ const NETWORK_SETS: Record<NetworkMode, NetworkSet> = {
       caip2: 'algorand:wGHE2Pwdvd7S12BL5FaOP20EGYesN73ktiC1qzkkit8=',
       rpcUrl: process.env.AVM_RPC_URL || 'https://mainnet-api.4160.nodely.dev',
     },
+    ccd: {
+      name: 'Concordium Mainnet',
+      caip2: 'ccd:9dd9ca4d19e9393877d2c44b70f89acb',
+      rpcUrl: process.env.CONCORDIUM_MAINNET_GRPC_URL || 'grpc.mainnet.concordium.software:20000',
+    },
     aptos: {
       name: 'Aptos',
       caip2: 'aptos:1',
@@ -93,6 +111,12 @@ const NETWORK_SETS: Record<NetworkMode, NetworkSet> = {
       name: 'Hedera Mainnet',
       caip2: 'hedera:mainnet',
       rpcUrl: process.env.HEDERA_NODE_URL || '',
+    },
+    keeta: {
+      name: 'Keeta',
+      caip2: 'keeta:21378',
+      // Unused in Keeta, representative API endpoints are set in the SDK itself
+      rpcUrl: '',
     },
     stellar: {
       name: 'Stellar Pubnet',
@@ -109,7 +133,7 @@ const NETWORK_SETS: Record<NetworkMode, NetworkSet> = {
 
 /**
  * Get the network set for a given mode
- * 
+ *
  * @param mode - 'testnet' or 'mainnet'
  * @returns NetworkSet containing configured protocol network configs
  */
@@ -136,9 +160,9 @@ export function resolveEvmPermit2Asset(networks: NetworkSet): string {
 
 /**
  * Get network config for a protocol family in a given mode
- * 
+ *
  * @param mode - 'testnet' or 'mainnet'
- * @param protocolFamily - 'evm', 'svm', 'avm', 'aptos', 'hedera', 'stellar', or 'tvm'
+ * @param protocolFamily - 'evm', 'svm', 'avm', 'aptos', 'hedera', 'stellar', 'ccd', or 'tvm'
  * @returns NetworkConfig for the specified protocol
  */
 export function getNetworkForProtocol(
@@ -150,12 +174,12 @@ export function getNetworkForProtocol(
 
 /**
  * Get display string for a network mode
- * 
+ *
  * @param mode - 'testnet' or 'mainnet'
  * @returns Human-readable description of the networks
  */
 export function getNetworkModeDescription(mode: NetworkMode): string {
   const set = NETWORK_SETS[mode];
-  const networks = [set.evm.name, set.svm.name, set.avm.name, set.aptos.name, set.hedera.name, set.stellar.name, set.tvm.name];
+  const networks = [set.evm.name, set.svm.name, set.avm.name, set.aptos.name, set.hedera.name, set.keeta.name, set.stellar.name, set.ccd.name, set.tvm.name];
   return networks.join(' + ');
 }

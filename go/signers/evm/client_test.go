@@ -6,6 +6,9 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/ethereum/go-ethereum/accounts"
+	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/crypto"
 	x402evm "github.com/x402-foundation/x402/go/v2/mechanisms/evm"
 )
 
@@ -98,6 +101,30 @@ func TestClientSigner_Address(t *testing.T) {
 	expected := "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266"
 	if !equalAddresses(addr, expected) {
 		t.Errorf("Address() = %v, want %v", addr, expected)
+	}
+}
+
+func TestClientSigner_SignMessage(t *testing.T) {
+	signer, err := NewClientSignerFromPrivateKey(testPrivateKeyHex)
+	if err != nil {
+		t.Fatalf("NewClientSignerFromPrivateKey() failed: %v", err)
+	}
+
+	message := "api.example.com wants you to sign in"
+	signature, err := signer.(*ClientSigner).SignMessage(context.Background(), message)
+	if err != nil {
+		t.Fatalf("SignMessage() error = %v", err)
+	}
+	if !strings.HasPrefix(signature, "0x") {
+		t.Fatalf("signature = %q, want 0x prefix", signature)
+	}
+
+	valid, err := verifyPersonalSignature(message, signer.Address(), signature)
+	if err != nil {
+		t.Fatalf("verifyPersonalSignature() error = %v", err)
+	}
+	if !valid {
+		t.Fatal("personal signature did not recover signer address")
 	}
 }
 
@@ -271,6 +298,22 @@ func testRecovery(t *testing.T, signature []byte, _ string, _ x402evm.TypedDataD
 	if v != 27 && v != 28 {
 		t.Errorf("invalid v value: %d", v)
 	}
+}
+
+func verifyPersonalSignature(message string, address string, signature string) (bool, error) {
+	sig := common.FromHex(signature)
+	if len(sig) != 65 {
+		return false, nil
+	}
+	if sig[64] >= 27 {
+		sig[64] -= 27
+	}
+	pubKey, err := crypto.SigToPub(accounts.TextHash([]byte(message)), sig)
+	if err != nil {
+		return false, err
+	}
+	recovered := crypto.PubkeyToAddress(*pubKey)
+	return strings.EqualFold(recovered.Hex(), address), nil
 }
 
 // equalAddresses compares two Ethereum addresses (case-insensitive)

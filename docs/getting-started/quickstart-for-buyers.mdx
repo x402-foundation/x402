@@ -38,6 +38,18 @@ There are pre-configured [examples available in the x402 repo](https://github.co
 
     # For Stellar support, also add:
     npm install @x402/stellar
+
+    # For Keeta support, also add:
+    npm install @x402/keeta
+
+    # For Hedera support, also add:
+    npm install @x402/hedera
+
+    # For Concordium support, also add:
+    npm install @x402/concordium
+
+    # For TON (TVM) support, also add:
+    npm install @x402/tvm
     ```
   </Tab>
   <Tab title="Go">
@@ -59,6 +71,9 @@ There are pre-configured [examples available in the x402 repo](https://github.co
 
     # For Solana support, also add:
     pip install "x402[svm]"
+
+    # For TON (TVM) support, also add:
+    pip install "x402[tvm]"
     ```
   </Tab>
 </Tabs>
@@ -164,6 +179,65 @@ const stellarSigner = createEd25519Signer(
   process.env.STELLAR_PRIVATE_KEY!,
   "stellar:testnet"
 );
+```
+
+#### Keeta
+
+Use the Keeta SDK to instantiate a signer:
+
+```typescript
+import * as KeetaNet from "@keetanetwork/keetanet-client";
+import { toClientKeetaSigner } from "@x402/keeta";
+
+// Derive account from mnemonic
+const account = KeetaNet.lib.Account.fromSeed(
+  await KeetaNet.lib.Account.seedFromPassphrase(process.env.KEETA_MNEMONIC!),
+  0,
+);
+const keetaSigner = toClientKeetaSigner(account);
+```
+
+#### Hedera
+
+Use `@x402/hedera` to instantiate a signer:
+
+```typescript
+import { createClientHederaSigner } from "@x402/hedera";
+import { PrivateKey } from "@hiero-ledger/sdk";
+
+const hederaSigner = createClientHederaSigner(
+  process.env.HEDERA_ACCOUNT_ID!,
+  PrivateKey.fromStringECDSA(process.env.HEDERA_PRIVATE_KEY!),
+  { network: "hedera:testnet" },
+);
+```
+
+#### Concordium
+
+Use `@x402/concordium` with the Concordium web SDK to instantiate a signer:
+
+```typescript
+import { buildBasicAccountSigner, AccountAddress } from "@concordium/web-sdk";
+
+const concordiumSigner = {
+  accountAddress: AccountAddress.fromBase58(process.env.CCD_ADDRESS!),
+  signer: buildBasicAccountSigner(process.env.CCD_PRIVATE_KEY!),
+};
+```
+
+#### TON (TVM)
+
+Use `@x402/tvm` to instantiate a signer:
+
+```typescript
+import { toClientTvmSigner } from "@x402/tvm";
+import { mnemonicToPrivateKey } from "@ton/crypto";
+
+const keyPair = await mnemonicToPrivateKey(process.env.TVM_MNEMONIC!.split(" "));
+const tvmSigner = toClientTvmSigner(keyPair, {
+  network: "tvm:-3",
+  apiKey: process.env.TONCENTER_API_KEY,
+});
 ```
 
 ### 3. Make Paid Requests Automatically
@@ -439,6 +513,53 @@ You can register multiple payment schemes to handle different networks:
       "stellar:testnet"
     );
     client.register("stellar:*", new ExactStellarScheme(stellarSigner));
+
+    // For Keeta support, also add:
+    import * as KeetaNet from "@keetanetwork/keetanet-client";
+    import { ExactKeetaScheme, toClientKeetaSigner } from "@x402/keeta";
+
+    const keetaAccount = KeetaNet.lib.Account.fromSeed(
+      await KeetaNet.lib.Account.seedFromPassphrase(process.env.KEETA_MNEMONIC!),
+      0,
+    );
+    client.register("keeta:*", new ExactKeetaScheme(toClientKeetaSigner(keetaAccount)));
+
+    // For Hedera support, also add:
+    import { ExactHederaScheme } from "@x402/hedera/exact/client";
+    import { createClientHederaSigner, PrivateKey } from "@x402/hedera";
+
+    const hederaSigner = createClientHederaSigner(
+      process.env.HEDERA_ACCOUNT_ID!,
+      PrivateKey.fromStringECDSA(process.env.HEDERA_PRIVATE_KEY!),
+      { network: "hedera:testnet" },
+    );
+    client.register("hedera:*", new ExactHederaScheme(hederaSigner));
+
+    // For Concordium support, also add:
+    import { ExactConcordiumScheme } from "@x402/concordium/exact/client";
+    import { buildBasicAccountSigner, AccountAddress } from "@concordium/web-sdk";
+
+    const concordiumSigner = {
+      accountAddress: AccountAddress.fromBase58(process.env.CCD_ADDRESS!),
+      signer: buildBasicAccountSigner(process.env.CCD_PRIVATE_KEY!),
+    };
+    client.register("ccd:*", new ExactConcordiumScheme(concordiumSigner));
+
+    // For TON (TVM) support, also add:
+    import { ExactTvmScheme } from "@x402/tvm/exact/client";
+    import { toClientTvmSigner } from "@x402/tvm";
+    import { mnemonicToPrivateKey } from "@ton/crypto";
+
+    const tvmKeyPair = await mnemonicToPrivateKey(process.env.TVM_MNEMONIC!.split(" "));
+    client.register(
+      "tvm:*",
+      new ExactTvmScheme(
+        toClientTvmSigner(tvmKeyPair, {
+          network: "tvm:-3",
+          apiKey: process.env.TONCENTER_API_KEY,
+        }),
+      ),
+    );
     ```
   </Tab>
   <Tab title="Go">
@@ -483,6 +604,8 @@ You can register multiple payment schemes to handle different networks:
     from x402.mechanisms.evm.exact.register import register_exact_evm_client
     from x402.mechanisms.svm import KeypairSigner
     from x402.mechanisms.svm.exact.register import register_exact_svm_client
+    from x402.mechanisms.tvm import TVM_TESTNET, WalletV5R1Config, WalletV5R1MnemonicSigner
+    from x402.mechanisms.tvm.exact import ExactTvmClientScheme
 
 
     async def main() -> None:
@@ -495,6 +618,10 @@ You can register multiple payment schemes to handle different networks:
         # Register SVM scheme
         svm_signer = KeypairSigner.from_base58(os.getenv("SVM_PRIVATE_KEY"))
         register_exact_svm_client(client, svm_signer)
+
+        # Register TVM scheme
+        tvm_config = WalletV5R1Config.from_private_key(TVM_TESTNET, os.getenv("TVM_PRIVATE_KEY"))
+        client.register(TVM_TESTNET, ExactTvmClientScheme(WalletV5R1MnemonicSigner(tvm_config)))
 
         async with x402HttpxClient(client) as http:
             response = await http.get("https://api.example.com/paid-endpoint")
@@ -565,7 +692,7 @@ try {
 
 ### Summary
 
-* Install x402 client packages (`@x402/fetch` or `@x402/axios`) and mechanism packages (`@x402/evm`, `@x402/svm`, `@x402/aptos`)
+* Install x402 client packages (`@x402/fetch` or `@x402/axios`) and mechanism packages (`@x402/evm`, `@x402/svm`, `@x402/tvm`, `@x402/aptos`, `@x402/keeta`)
 * Create a wallet signer
 * Create an `x402Client` and register payment schemes (`exact` for fixed-price, `upto` for usage-based billing, `batch-settlement` for batched EVM micropayments when the server advertises it)
 * Use the provided wrapper/interceptor to make paid API requests

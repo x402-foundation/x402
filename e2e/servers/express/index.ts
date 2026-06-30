@@ -8,8 +8,11 @@ import { BatchSettlementEvmScheme } from "@x402/evm/batch-settlement/server";
 import { ExactSvmScheme } from "@x402/svm/exact/server";
 import { ExactAptosScheme } from "@x402/aptos/exact/server";
 import { ExactHederaScheme } from "@x402/hedera/exact/server";
+import { KEETA_TESTNET_CAIP2 } from "@x402/keeta";
+import { ExactKeetaScheme } from "@x402/keeta/exact/server";
 import { ExactStellarScheme } from "@x402/stellar/exact/server";
 import { ExactTvmScheme } from "@x402/tvm/exact/server";
+import { ExactConcordiumScheme } from "@x402/concordium/exact/server";
 import { bazaarResourceServerExtension, declareDiscoveryExtension } from "@x402/extensions/bazaar";
 import {
   declareEip2612GasSponsoringExtension,
@@ -35,14 +38,19 @@ const SVM_NETWORK = (process.env.SVM_NETWORK ||
   "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1") as `${string}:${string}`;
 const APTOS_NETWORK = (process.env.APTOS_NETWORK || "aptos:2") as `${string}:${string}`;
 const HEDERA_NETWORK = (process.env.HEDERA_NETWORK || "hedera:testnet") as `${string}:${string}`;
+const KEETA_NETWORK = (process.env.KEETA_NETWORK || KEETA_TESTNET_CAIP2) as `${string}:${string}`;
 const STELLAR_NETWORK = (process.env.STELLAR_NETWORK || "stellar:testnet") as `${string}:${string}`;
 const TVM_NETWORK = (process.env.TVM_NETWORK || "tvm:-3") as `${string}:${string}`;
+const CCD_NETWORK = (process.env.CCD_NETWORK || "ccd:4221332d34e1694168c2a0c0b3fd0f27") as `${string}:${string}`;
+const CCD_PAYEE_ADDRESS = process.env.CCD_PAYEE_ADDRESS as string | undefined;
+const CCD_WEATHER_PRICE_MICRO_CCD = "1000";
 const EVM_PAYEE_ADDRESS = process.env.EVM_PAYEE_ADDRESS as `0x${string}`;
 const SVM_PAYEE_ADDRESS = process.env.SVM_PAYEE_ADDRESS as string;
 const EVM_PERMIT2_ASSET = process.env.EVM_PERMIT2_ASSET as `0x${string}`;
 const AVM_PAYEE_ADDRESS = process.env.AVM_PAYEE_ADDRESS as string;
 const APTOS_PAYEE_ADDRESS = process.env.APTOS_PAYEE_ADDRESS as string;
 const HEDERA_PAYEE_ADDRESS = process.env.HEDERA_PAYEE_ADDRESS as string | undefined;
+const KEETA_PAYEE_ADDRESS = process.env.KEETA_PAYEE_ADDRESS as string | undefined;
 const STELLAR_PAYEE_ADDRESS = process.env.STELLAR_PAYEE_ADDRESS as string | undefined;
 const TVM_PAYEE_ADDRESS = process.env.TVM_PAYEE_ADDRESS as string | undefined;
 const HEDERA_ASSET = process.env.HEDERA_ASSET ?? "0.0.0"; // 0.0.0 = HBAR or 0.0.429274 for USDC testnet
@@ -81,6 +89,9 @@ const server = new x402ResourceServer(facilitatorClients);
 if (AVM_PAYEE_ADDRESS) {
   server.register("algorand:*", new ExactAvmScheme());
 }
+if (CCD_PAYEE_ADDRESS) {
+  server.register("ccd:*", new ExactConcordiumScheme());
+}
 server.register("eip155:*", new ExactEvmScheme());
 server.register("eip155:*", new UptoEvmScheme());
 
@@ -104,6 +115,9 @@ if (APTOS_PAYEE_ADDRESS) {
 }
 if (HEDERA_PAYEE_ADDRESS) {
   server.register("hedera:*", new ExactHederaScheme());
+}
+if (KEETA_PAYEE_ADDRESS) {
+  server.register("keeta:*", new ExactKeetaScheme());
 }
 if (STELLAR_PAYEE_ADDRESS) {
   server.register("stellar:*", new ExactStellarScheme());
@@ -163,6 +177,34 @@ app.get("/exact/hedera", (req, res, next) => {
 });
 
 /**
+ * Pre- middleware guard for optional Keeta endpoint
+ * Returns 501 Not Implemented if Keeta is not configured
+ */
+app.get("/exact/keeta", (req, res, next) => {
+  if (!KEETA_PAYEE_ADDRESS) {
+    return res.status(501).json({
+      error: "Keeta payments not configured",
+      message: "KEETA_PAYEE_ADDRESS environment variable is not set",
+    });
+  }
+  next();
+});
+
+/**
+ * Pre-middleware guard for optional Concordium endpoint
+ * Returns 501 Not Implemented if Concordium is not configured
+ */
+app.get("/exact/ccd", (req, res, next) => {
+  if (!CCD_PAYEE_ADDRESS) {
+    return res.status(501).json({
+      error: "Concordium payments not configured",
+      message: "CCD_PAYEE_ADDRESS environment variable is not set",
+    });
+  }
+  next();
+});
+
+/**
  * Pre-middleware guard for optional Stellar endpoint
  * Returns 501 Not Implemented if Stellar is not configured
  */
@@ -208,6 +250,38 @@ app.use(
                 scheme: "exact",
                 price: "$0.001",
                 network: AVM_NETWORK,
+              },
+              extensions: {
+                ...declareDiscoveryExtension({
+                  output: {
+                    example: {
+                      message: "Protected endpoint accessed successfully",
+                      timestamp: "2024-01-01T00:00:00Z",
+                    },
+                    schema: {
+                      properties: {
+                        message: { type: "string" },
+                        timestamp: { type: "string" },
+                      },
+                      required: ["message", "timestamp"],
+                    },
+                  },
+                }),
+              },
+            },
+          }
+        : {}),
+      ...(CCD_PAYEE_ADDRESS
+        ? {
+            "GET /exact/ccd": {
+              accepts: {
+                payTo: CCD_PAYEE_ADDRESS,
+                scheme: "exact",
+                price: {
+                  amount: CCD_WEATHER_PRICE_MICRO_CCD,
+                  asset: "CCD",
+                },
+                network: CCD_NETWORK,
               },
               extensions: {
                 ...declareDiscoveryExtension({
@@ -378,6 +452,35 @@ app.use(
                   output: {
                     example: {
                       message: "Protected Hedera endpoint accessed successfully",
+                      timestamp: "2024-01-01T00:00:00Z",
+                    },
+                    schema: {
+                      properties: {
+                        message: { type: "string" },
+                        timestamp: { type: "string" },
+                      },
+                      required: ["message", "timestamp"],
+                    },
+                  },
+                }),
+              },
+            },
+          }
+        : {}),
+      ...(KEETA_PAYEE_ADDRESS
+        ? {
+            "GET /exact/keeta": {
+              accepts: {
+                payTo: KEETA_PAYEE_ADDRESS,
+                scheme: "exact",
+                price: "$0.001",
+                network: KEETA_NETWORK,
+              },
+              extensions: {
+                ...declareDiscoveryExtension({
+                  output: {
+                    example: {
+                      message: "Protected Keeta endpoint accessed successfully",
                       timestamp: "2024-01-01T00:00:00Z",
                     },
                     schema: {
@@ -702,6 +805,34 @@ app.get("/exact/hedera", (req, res) => {
 });
 
 /**
+ * Protected Keeta endpoint - requires payment to access
+ *
+ * This endpoint demonstrates a resource protected by x402 payment middleware for Keeta.
+ * Clients must provide a valid payment signature to access this endpoint.
+ * Note: 501 check is handled by pre-middleware guard above.
+ */
+app.get("/exact/keeta", (req, res) => {
+  res.json({
+    message: "Protected Keeta endpoint accessed successfully",
+    timestamp: new Date().toISOString(),
+  });
+});
+
+/**
+ * Protected Concordium endpoint - requires payment via Concordium exact scheme
+ *
+ * This endpoint demonstrates a resource protected by x402 payment middleware for Concordium.
+ * Clients must provide a valid payment signature to access this endpoint.
+ * Note: 501 check is handled by pre-middleware guard above.
+ */
+app.get("/exact/ccd", (req, res) => {
+  res.json({
+    message: "Protected Concordium endpoint accessed successfully",
+    timestamp: new Date().toISOString(),
+  });
+});
+
+/**
  * Protected Permit2 ERC-20 endpoint - requires payment via Permit2 flow with ERC-20 approval
  *
  * This endpoint demonstrates the ERC-20 approval gas sponsoring flow for tokens
@@ -845,11 +976,14 @@ app.listen(parseInt(PORT), () => {
 ║  Hedera Network: ${HEDERA_NETWORK}                     ║
 ║  Stellar Network: ${STELLAR_NETWORK}║
 ║  TVM Network: ${TVM_NETWORK}║
+║  CCD Network:  ${CCD_NETWORK}                          ║
 ║  AVM Payee:    ${AVM_PAYEE_ADDRESS || "(not configured)"}
 ║  EVM Payee:    ${EVM_PAYEE_ADDRESS}                    ║
 ║  SVM Payee:    ${SVM_PAYEE_ADDRESS}                    ║
 ║  Aptos Payee:  ${APTOS_PAYEE_ADDRESS || "(not configured)"}
 ║  Hedera Payee: ${HEDERA_PAYEE_ADDRESS || "(not configured)"}
+║  Keeta Payee:  ${KEETA_PAYEE_ADDRESS || "(not configured)"}
+║  CCD Payee:    ${CCD_PAYEE_ADDRESS || "(not configured)"}
 ║  Stellar Payee: ${STELLAR_PAYEE_ADDRESS || "(not configured)"}
 ║  TVM Payee: ${TVM_PAYEE_ADDRESS || "(not configured)"}
 ║                                                        ║
@@ -866,6 +1000,7 @@ app.listen(parseInt(PORT), () => {
 ║  • GET  /exact/svm                            (SVM)           ║
 ║  • GET  /exact/aptos                          (Aptos)         ║
 ║  • GET  /exact/hedera                         (Hedera)        ║
+║  • GET  /exact/keeta                           (Keeta)        ║
 ║  • GET  /exact/stellar                        (Stellar)       ║
 ║  • GET  /exact/tvm                            (TVM)           ║
 ║  • GET  /health                (no payment required)       ║

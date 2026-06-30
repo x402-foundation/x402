@@ -10,8 +10,11 @@ except ImportError as e:
     ) from e
 
 from .....schemas import PaymentRequirements, VerifyResponse
-from ...erc6492 import parse_erc6492_signature
+from ...erc6492 import has_deployment_info, parse_erc6492_signature
 from ...signer import FacilitatorEvmSigner
+from ...types import ERC6492SignatureData
+from ...utils import bytes_to_hex
+from ...verify import verify_typed_data_strict
 from ..constants import (
     ERC3009_DEPOSIT_COLLECTOR_ADDRESS,
     RECEIVE_AUTHORIZATION_TYPES,
@@ -19,6 +22,7 @@ from ..constants import (
 from ..encoding import build_erc3009_collector_data, build_erc3009_deposit_nonce
 from ..errors import (
     ERR_ERC3009_AUTHORIZATION_REQUIRED,
+    ERR_FACTORY_NOT_ALLOWED,
     ERR_INVALID_RECEIVE_AUTHORIZATION_SIGNATURE,
     ERR_MISSING_EIP712_DOMAIN,
 )
@@ -50,8 +54,16 @@ def verify_eip3009_deposit_authorization(
     payload: DepositPayload,
     requirements: PaymentRequirements,
     chain_id: int,
-) -> VerifyResponse | None:
-    """Validate ERC-3009 timing + typed-data signature. Returns None when valid."""
+    allowed_factories: list[str] | None = None,
+) -> tuple[ERC6492SignatureData | None, VerifyResponse | None]:
+    """Validate ERC-3009 timing + typed-data signature.
+
+    Returns ``(counterfactual_sig_data, None)`` when the deposit is from an undeployed
+    ERC-6492 wallet whose factory is allowlisted — the caller must then validate the inner
+    signature via the deploy+deposit simulation (the wallet has no code yet, so a direct
+    signature check cannot succeed). Returns ``(None, None)`` when a deployed wallet / plain
+    EOA signature is valid, and ``(None, VerifyResponse)`` on any rejection.
+    """
     assert payload.deposit is not None and payload.voucher is not None
     assert payload.channel_config is not None
     deposit = payload.deposit
@@ -60,7 +72,7 @@ def verify_eip3009_deposit_authorization(
     auth = deposit.authorization.erc3009_authorization
 
     if auth is None:
-        return VerifyResponse(
+        return None, VerifyResponse(
             is_valid=False, invalid_reason=ERR_ERC3009_AUTHORIZATION_REQUIRED, payer=payer
         )
 
@@ -68,13 +80,40 @@ def verify_eip3009_deposit_authorization(
     name = extra.get("name")
     version = extra.get("version")
     if not name or not version:
-        return VerifyResponse(is_valid=False, invalid_reason=ERR_MISSING_EIP712_DOMAIN, payer=payer)
+        return None, VerifyResponse(
+            is_valid=False, invalid_reason=ERR_MISSING_EIP712_DOMAIN, payer=payer
+        )
 
     time_invalid = erc3009_authorization_time_invalid_reason(
         int(auth.valid_after), int(auth.valid_before)
     )
     if time_invalid:
-        return VerifyResponse(is_valid=False, invalid_reason=time_invalid, payer=payer)
+        return None, VerifyResponse(is_valid=False, invalid_reason=time_invalid, payer=payer)
+
+    try:
+        sig_data = parse_erc6492_signature(bytes.fromhex(auth.signature.removeprefix("0x")))
+    except Exception:
+        return None, VerifyResponse(
+            is_valid=False,
+            invalid_reason=ERR_INVALID_RECEIVE_AUTHORIZATION_SIGNATURE,
+            payer=payer,
+        )
+
+    # Counterfactual detection: only fetch code when there is deployment info so the common
+    # (already-deployed / plain EOA) path keeps a single RPC round-trip.
+    if has_deployment_info(sig_data):
+        code = signer.get_code(to_checksum_address(payer))
+        if len(code) == 0:
+            allowed = [f.strip().lower() for f in (allowed_factories or [])]
+            if bytes_to_hex(sig_data.factory).lower() not in allowed:
+                return None, VerifyResponse(
+                    is_valid=False, invalid_reason=ERR_FACTORY_NOT_ALLOWED, payer=payer
+                )
+            # Counterfactual + allowlisted: defer signature validation to the
+            # deploy+deposit simulation performed by the caller.
+            return sig_data, None
+        # Already deployed despite the wrapper — fall through and validate the inner
+        # signature against its EIP-1271 validator like any other deployed wallet.
 
     erc3009_nonce = build_erc3009_deposit_nonce(voucher.channel_id, auth.salt)
     ok = _verify_receive_auth(
@@ -88,16 +127,16 @@ def verify_eip3009_deposit_authorization(
         valid_after=int(auth.valid_after),
         valid_before=int(auth.valid_before),
         nonce=erc3009_nonce,
-        signature=auth.signature,
+        signature="0x" + sig_data.inner_signature.hex(),
     )
     if not ok:
-        return VerifyResponse(
+        return None, VerifyResponse(
             is_valid=False,
             invalid_reason=ERR_INVALID_RECEIVE_AUTHORIZATION_SIGNATURE,
             payer=payer,
         )
 
-    return None
+    return None, None
 
 
 def _verify_receive_auth(
@@ -130,7 +169,9 @@ def _verify_receive_auth(
             "validBefore": valid_before,
             "nonce": coerce_bytes32(nonce),
         }
-        return signer.verify_typed_data(
+        # Uses the strict primitive that mirrors on-chain SignatureChecker (code-routed, no ECDSA fallback).
+        return verify_typed_data_strict(
+            signer,
             address=to_checksum_address(payer),
             domain=domain,
             types=RECEIVE_AUTHORIZATION_TYPES,

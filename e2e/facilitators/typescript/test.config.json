@@ -8,8 +8,10 @@
     "avm",
     "aptos",
     "hedera",
+    "keeta",
     "stellar",
-    "tvm"
+    "tvm",
+    "ccd"
   ],
   "x402Versions": [
     1,
@@ -40,14 +42,18 @@
     "optional": [
       "AVM_PRIVATE_KEY",
       "APTOS_PRIVATE_KEY",
+      "CCD_NETWORK",
+      "CCD_GRPC_URL",
       "HEDERA_ACCOUNT_ID",
       "HEDERA_PRIVATE_KEY",
+      "KEETA_FACILITATOR_MNEMONIC",
       "STELLAR_PRIVATE_KEY",
       "TVM_PRIVATE_KEY",
       "EVM_NETWORK",
       "SVM_NETWORK",
       "AVM_NETWORK",
       "APTOS_NETWORK",
+      "CCD_NETWORK",
       "HEDERA_NETWORK",
       "HEDERA_NODE_URL",
       "STELLAR_NETWORK",
@@ -57,7 +63,9 @@
       "TONCENTER_BASE_URL",
       "TONAPI_API_KEY",
       "TONAPI_BASE_URL",
-      "EVM_RECEIVER_AUTHORIZER_PRIVATE_KEY"
+      "EVM_RECEIVER_AUTHORIZER_PRIVATE_KEY",
+      "CCD_FACILITATOR_PRIVATE_KEY",
+      "CCD_FACILITATOR_ADDRESS"
     ]
   }
 }

@@ -46,6 +46,14 @@ interface ResourceServerExtension {
   /** Unique identifier for this extension */
   key: string;
 
+  /**
+   * Names of fields under the extension's `info` that are dynamic — regenerated
+   * on every PaymentRequired response (e.g. nonces, timestamps) — rather than
+   * static committed terms. Dynamic fields are excluded from client echo
+   * validation. Defaults to none (all info fields treated as static / strict).
+   */
+  dynamicInfoFields?: string[];
+
   /** Enrich the extension declaration at route registration time */
   enrichDeclaration?: (declaration: unknown, transportContext: unknown) => unknown;
 
@@ -152,9 +160,14 @@ import type { ResourceServerExtension } from "@x402/core";
 const myExtension: ResourceServerExtension = {
   key: "my-extension",
 
+  // Mark fields that are regenerated on every 402 response so they are
+  // excluded from client echo validation (extension_echo_mismatch check).
+  // Omit this property when all info fields are static committed terms.
+  dynamicInfoFields: ["timestamp"],
+
   enrichPaymentRequiredResponse: async (declaration, context) => {
     // Add custom data to the 402 response
-    return { customField: "value", timestamp: Date.now() };
+    return { info: { customField: "value", timestamp: Date.now() } };
   },
 
   enrichSettlementResponse: async (declaration, context) => {

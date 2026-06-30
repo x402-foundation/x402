@@ -10,7 +10,9 @@ Run with:
 Environment variables:
     EVM_PRIVATE_KEY                        Required. Facilitator EVM key (pays gas / submits txs).
     EVM_RPC_URL                            Optional. Defaults to https://sepolia.base.org.
-    EVM_RECEIVER_AUTHORIZER_PRIVATE_KEY    Optional. Receiver-authorizer key (defaults to EVM_PRIVATE_KEY).
+    EVM_RECEIVER_AUTHORIZER_PRIVATE_KEY    Optional. Receiver-authorizer key. When unset, no
+                                           receiverAuthorizer is advertised and servers must
+                                           supply their own authorizer signatures.
 """
 
 from __future__ import annotations
@@ -44,11 +46,12 @@ evm_signer = FacilitatorWeb3Signer(
 )
 print(f"EVM Facilitator account: {evm_signer.get_addresses()[0]}")
 
-receiver_authorizer_pk = (
-    os.environ.get("EVM_RECEIVER_AUTHORIZER_PRIVATE_KEY") or os.environ["EVM_PRIVATE_KEY"]
-)
-authorizer_signer = LocalAuthorizerSigner(receiver_authorizer_pk)
-print(f"Receiver authorizer: {authorizer_signer.address}")
+receiver_authorizer_pk = os.environ.get("EVM_RECEIVER_AUTHORIZER_PRIVATE_KEY")
+authorizer_signer = LocalAuthorizerSigner(receiver_authorizer_pk) if receiver_authorizer_pk else None
+if authorizer_signer is not None:
+    print(f"Receiver authorizer: {authorizer_signer.address}")
+else:
+    print("Receiver authorizer: not configured")
 
 facilitator = (
     x402Facilitator()
