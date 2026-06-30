@@ -153,7 +153,7 @@ Plus the channel fields:
 | `channelId` | string | Channel PDA (base58), derived before `open` from the fields below |
 | `deposit` | string | On-chain escrow = the ceiling; MUST equal `maxAmount` |
 | `authorizedSigner` | string | The **operator** key (base58) — the server's or facilitator's pubkey, equal to `extra.feePayer` **and** to `channel.payee`. The operator — not the client — signs the single settlement voucher (see §5 Phase 2); because it is also the channel `payee` (the `settle_and_finalize` merchant) it alone can settle and finalize the channel. |
-| `openTransaction` | string | Base64 client-signed `open` transaction for the server/facilitator to co-sign and broadcast if the channel is not yet open. |
+| `openTransaction` | string | Base64 partially signed `open` transaction. The client signature is present; the operator signature is still required for the transaction fee payer and `rentPayer` before broadcast. |
 
 `channelId` is the program-derived address:
 
@@ -193,7 +193,7 @@ either the decoded `channel` account or `payload.channelId`.
 | `success` | boolean | ✓ | |
 | `errorReason` | string | – | Omitted on success |
 | `payer` | string | – | `from` |
-| `transaction` | string | ✓ | Settle (or settle-and-finalize) signature; empty string if the actual charge is `0` |
+| `transaction` | string | ✓ | Base58 transaction signature (tx hash) for the confirmed transaction that finalizes and distributes the channel. MUST NOT be empty, including when `amount` is `0`. |
 | `network` | string | ✓ | CAIP-2 |
 | `amount` | string | ✓ | Actual base units charged (may be `0`) |
 
@@ -203,10 +203,16 @@ either the decoded `channel` account or `payload.channelId`.
 
 The client builds an `open` transaction depositing `maxAmount`, naming the
 operator as the open's `rentPayer` so the operator funds the channel rent (the
-client supplies only the stablecoin deposit). The client sends
-`openTransaction`; the server/facilitator co-signs it as fee payer **and** as
+client supplies only the stablecoin deposit). Rent is paid during `open`: the
+payment-channels program requires the `rentPayer` account to be a signer because
+the instruction transfers SOL from that account to fund the channel PDA and
+escrow ATA rent. Merely naming the operator as `rentPayer` is not sufficient.
+
+The client therefore sends a partially signed `openTransaction`; the
+server/facilitator validates it, co-signs it as transaction fee payer **and** as
 `rentPayer`, then broadcasts it (one operator signature covers both, matching
-`exact`'s fee-sponsorship).
+`exact`'s fee-sponsorship). Without the operator signature, the transaction is
+invalid and cannot charge rent to the operator.
 
 ### Phase 2 — Authorization signature
 
@@ -227,7 +233,7 @@ The server/facilitator MUST, in order:
 1. Confirm `payload.maxAmount` equals verification-phase `requirements.amount`.
 2. Confirm `network`, `asset` (mint), `tokenProgram`, `channelProgram`, and `payTo` match the requirements.
 3. Confirm `feePayer` in `extra` is the operator's own key (the server's, or the facilitator's it delegates to).
-4. Confirm the channel exists (or the `openTransaction` is valid and broadcastable), targets `extra.channelProgram`, **`channel.deposit == maxAmount`** (exact, not `≥`: `topUp` can raise an open channel's deposit, so only equality keeps the x402 ceiling enforced rather than advisory), `distribution_hash` matches the intended `payTo`/`splits` (so `payTo`'s payout is locked on-chain), `channel.status == Open`, `channel.mint == asset`, **`channel.payee == channel.authorizedSigner == operator`** (so the operator is both the voucher signer and the `settle_and_finalize` merchant, and alone can settle and finalize), and the open's **`rentPayer == operator`** (the operator funds and reclaims the rent it co-signs for). An `open` naming any other payee, authorized signer, or rentPayer MUST be rejected before co-signing.
+4. Confirm the channel exists (or the `openTransaction` is valid and broadcastable), targets `extra.channelProgram`, **`channel.deposit == maxAmount`** (exact, not `≥`: `topUp` can raise an open channel's deposit, so only equality keeps the x402 ceiling enforced rather than advisory), `distribution_hash` matches the intended `payTo`/`splits` (so `payTo`'s payout is locked on-chain), `channel.status == Open`, `channel.mint == asset`, **`channel.payee == channel.authorizedSigner == operator`** (so the operator is both the voucher signer and the `settle_and_finalize` merchant, and alone can settle and finalize), and the open's **`rentPayer == operator`** with `rentPayer` marked as a required signer (the operator funds and reclaims the rent it co-signs for). An `open` naming any other payee, authorized signer, or rentPayer, or naming `rentPayer` without requiring the operator signature, MUST be rejected before co-signing.
 5. Validate `validAfter ≤ now ≤ expiresAt`.
 6. Simulate the settlement instruction(s).
 
@@ -248,12 +254,17 @@ The server/facilitator MUST:
    `Finalized`. Then `distribute`, which is what actually pays out
    `payTo`/`splits`, refunds `deposit − actual` to the payer, returns the rent to
    the operator (`rentPayer`), and closes (tombstones) the channel. The two
-   instructions MAY be bundled in one transaction.
+   instructions MAY be bundled in one transaction. `SettlementResponse.transaction`
+   MUST identify the confirmed transaction containing the final `distribute`
+   instruction; if settlement and distribution are not bundled, this is the
+   `distribute` transaction because it moves the settled `amount` to the sealed
+   `payTo`/`splits` distribution and closes the channel.
 4. A `0`-amount settlement uses the **no-voucher** path: `settle_and_finalize`
    with `has_voucher = 0` (a `cumulative_amount = 0` voucher is invalid — the
    watermark must advance strictly above the initial `settled = 0`), then
-   `distribute` to refund the full deposit and close. `transaction` MAY be empty
-   when no token movement occurred.
+   `distribute` to refund the full deposit and close.
+   `SettlementResponse.transaction` MUST be the signature of that confirmed
+   close/refund transaction.
 
 ## 6. Error codes
 
