@@ -214,6 +214,12 @@ server/facilitator validates it, co-signs it as transaction fee payer **and** as
 `exact`'s fee-sponsorship). Without the operator signature, the transaction is
 invalid and cannot charge rent to the operator.
 
+`openTransaction` is consumed during verification, before the protected resource
+is served. The server/facilitator MUST NOT defer broadcasting `openTransaction`
+until settlement. If the channel is not already open, verification MUST co-sign
+and broadcast `openTransaction`, wait until the channel account is confirmed
+`Open`, and then continue with the checks below.
+
 ### Phase 2 — Authorization signature
 
 The client's signature on the `open` transaction **is** the authorization — it
@@ -233,7 +239,21 @@ The server/facilitator MUST, in order:
 1. Confirm `payload.maxAmount` equals verification-phase `requirements.amount`.
 2. Confirm `extra.assetTransferMethod == "payment-channel"` and `network`, `asset` (mint), `tokenProgram`, `channelProgram`, and `payTo` match the requirements.
 3. Confirm `feePayer` in `extra` is the operator's own key (the server's, or the facilitator's it delegates to).
-4. Confirm the channel exists (or the `openTransaction` is valid and broadcastable), targets `extra.channelProgram`, **`channel.deposit == maxAmount`** (exact, not `≥`: `topUp` can raise an open channel's deposit, so only equality keeps the x402 ceiling enforced rather than advisory), `distribution_hash` matches the intended `payTo`/`splits` (so `payTo`'s payout is locked on-chain), `channel.status == Open`, `channel.mint == asset`, **`channel.payee == channel.authorizedSigner == operator`** (so the operator is both the voucher signer and the `settle_and_finalize` merchant, and alone can settle and finalize), and the open's **`rentPayer == operator`** with `rentPayer` marked as a required signer (the operator funds and reclaims the rent it co-signs for). An `open` naming any other payee, authorized signer, or rentPayer, or naming `rentPayer` without requiring the operator signature, MUST be rejected before co-signing.
+4. Confirm the channel is open:
+   - If it does not yet exist, validate that `openTransaction` targets
+     `extra.channelProgram`, names `rentPayer == operator` with `rentPayer`
+     marked as a required signer, names no other payee or authorized signer than
+     the operator, and is otherwise valid for the requirements; then co-sign,
+     broadcast, and wait until the channel account is confirmed `Open`.
+   - After the channel is open, confirm **`channel.deposit == maxAmount`**
+     (exact, not `≥`: `topUp` can raise an open channel's deposit, so only
+     equality keeps the x402 ceiling enforced rather than advisory),
+     `distribution_hash` matches the intended `payTo`/`splits` (so `payTo`'s
+     payout is locked on-chain), `channel.status == Open`,
+     `channel.mint == asset`, and
+     **`channel.payee == channel.authorizedSigner == operator`** (so the
+     operator is both the voucher signer and the `settle_and_finalize` merchant,
+     and alone can settle and finalize).
 5. Validate `validAfter ≤ now ≤ expiresAt`.
 6. Simulate the settlement instruction(s).
 
@@ -271,7 +291,7 @@ The server/facilitator MUST:
 Standard x402 codes apply. Scheme-specific:
 
 - `invalid_upto_svm_payload_settlement_exceeds_amount` — actual > signed ceiling.
-- `CHANNEL_REQUIRED` (with `412`) — no open channel and no broadcastable `openTransaction`.
+- `CHANNEL_REQUIRED` (with `412`) — no open channel and no valid `openTransaction` that can be co-signed, broadcast, and confirmed before serving the resource.
 
 ## 7. Security properties
 
