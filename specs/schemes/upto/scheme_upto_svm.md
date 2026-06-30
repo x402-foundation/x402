@@ -122,7 +122,6 @@ to `exact`. The core `PaymentRequirements`, `PaymentPayload`, and
 | `profiles` | string[] | ✓ | `["payment-channel"]` (the only v1 profile) |
 | `feePayer` | string | ✓ | Base58 operator key that sponsors fees (co-signs the setup transaction as fee payer) and settles |
 | `channelProgram` | string | ✓ | Base58 payment-channels program id. Clients and facilitators MUST reject unsupported program ids for the selected `network`. |
-| `decimals` | number | ✓ | Token decimals |
 | `tokenProgram` | string | ✓ | `Tokenkeg…` or `TokenzQ…` (Token-2022); the client SHOULD verify it against the on-chain mint owner |
 | `recentBlockhash` | string | – | Pre-fetched blockhash so the client can build setup transactions without an extra RPC round-trip |
 | `validAfter` | number | – | Earliest activation time (Unix seconds); default = now |
