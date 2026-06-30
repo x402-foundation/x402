@@ -57,8 +57,8 @@ never against the settlement-time `amount`.
 
 v1 defines a single profile, `payment-channel`, carried in the payload's
 `profile` field. It is backed by the on-chain payment-channels program
-(advertised via `extra.channelProgram`; a canonical deployment is assumed when
-omitted). The escrow **deposit is the ceiling**; a single operator-signed
+(advertised via `extra.channelProgram`). The escrow **deposit is the ceiling**;
+a single operator-signed
 voucher locks the actual amount via `settle_and_finalize`, and `distribute` then
 moves the funds — paying out the `payTo`/`splits`, refunding the unused
 `deposit − actual` to the payer, returning the fronted rent to the operator, and
@@ -121,12 +121,20 @@ to `exact`. The core `PaymentRequirements`, `PaymentPayload`, and
 |---|---|---|---|
 | `profiles` | string[] | ✓ | `["payment-channel"]` (the only v1 profile) |
 | `feePayer` | string | ✓ | Base58 operator key that sponsors fees (co-signs the setup transaction as fee payer) and settles |
-| `channelProgram` | string | – | Channel program id; defaults to the canonical deployment |
+| `channelProgram` | string | ✓ | Base58 payment-channels program id. Clients and facilitators MUST reject unsupported program ids for the selected `network`. |
 | `decimals` | number | ✓ | Token decimals |
 | `tokenProgram` | string | ✓ | `Tokenkeg…` or `TokenzQ…` (Token-2022); the client SHOULD verify it against the on-chain mint owner |
 | `recentBlockhash` | string | – | Pre-fetched blockhash so the client can build setup transactions without an extra RPC round-trip |
 | `validAfter` | number | – | Earliest activation time (Unix seconds); default = now |
 | `splits` | `{recipient,bps}[]` | – | Distribution splits sealed at open; distributed at finalize |
+
+`channelProgram` is discovery, not a trust anchor. The client consumes it to
+derive the channel address and build the `open` transaction; the
+server/facilitator consumes it to verify and settle the channel. Implementations
+MUST maintain a supported-program set per `network` and reject any
+`channelProgram` outside that set. The server/facilitator MUST verify that the
+`openTransaction`, settlement, and distribution instructions target exactly
+`extra.channelProgram`.
 
 ### 4.2 `UptoPayload` (in `PAYMENT-SIGNATURE.payload`)
 
@@ -197,9 +205,9 @@ in a single round-trip.
 The server/facilitator MUST, in order:
 
 1. Confirm `payload.maxAmount` equals verification-phase `requirements.amount`.
-2. Confirm `network`, `asset` (mint), `tokenProgram`, and `payTo` match the requirements.
+2. Confirm `network`, `asset` (mint), `tokenProgram`, `channelProgram`, and `payTo` match the requirements.
 3. Confirm `feePayer` in `extra` is the operator's own key (the server's, or the facilitator's it delegates to).
-4. Confirm the channel exists (or the `openTransaction` is valid and broadcastable), **`channel.deposit == maxAmount`** (exact, not `≥`: `topUp` can raise an open channel's deposit, so only equality keeps the x402 ceiling enforced rather than advisory), `distribution_hash` matches the intended `payTo`/`splits` (so `payTo`'s payout is locked on-chain), `channel.status == Open`, `channel.mint == asset`, **`channel.payee == channel.authorizedSigner == operator`** (so the operator is both the voucher signer and the `settle_and_finalize` merchant, and alone can settle and finalize), and the open's **`rentPayer == operator`** (the operator funds and reclaims the rent it co-signs for). An `open` naming any other payee, authorized signer, or rentPayer MUST be rejected before co-signing.
+4. Confirm the channel exists (or the `openTransaction` is valid and broadcastable), targets `extra.channelProgram`, **`channel.deposit == maxAmount`** (exact, not `≥`: `topUp` can raise an open channel's deposit, so only equality keeps the x402 ceiling enforced rather than advisory), `distribution_hash` matches the intended `payTo`/`splits` (so `payTo`'s payout is locked on-chain), `channel.status == Open`, `channel.mint == asset`, **`channel.payee == channel.authorizedSigner == operator`** (so the operator is both the voucher signer and the `settle_and_finalize` merchant, and alone can settle and finalize), and the open's **`rentPayer == operator`** (the operator funds and reclaims the rent it co-signs for). An `open` naming any other payee, authorized signer, or rentPayer MUST be rejected before co-signing.
 5. Validate `validAfter ≤ now ≤ expiresAt`.
 6. Simulate the settlement instruction(s).
 
