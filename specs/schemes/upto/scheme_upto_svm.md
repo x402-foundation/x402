@@ -99,9 +99,7 @@ never needs SOL.
 `upto` reuses the x402 v2 transport: a `402` response carries `PAYMENT-REQUIRED`;
 the paid retry carries `PAYMENT-SIGNATURE`; the response carries
 `PAYMENT-RESPONSE`. Only the `scheme` value and the payload shape change relative
-to `exact`. The core `PaymentRequirements`, `PaymentPayload`, and
-`SettlementResponse` types are defined in
-[`x402-specification-v2.md`](../../x402-specification-v2.md).
+to `exact`.
 
 ### 4.1 `PaymentRequirements` (in `PAYMENT-REQUIRED.accepts[]`)
 
