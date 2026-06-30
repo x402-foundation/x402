@@ -274,7 +274,8 @@ describe("ExactEvmScheme (Facilitator)", () => {
       const result = await facilitator.verify(fullPayload, modifiedRequirements);
 
       expect(result.isValid).toBe(false);
-      // Verification should fail (amount mismatch or other validation error)
+      // Must emit the spec-documented, cross-SDK code (matches the Go facilitator)
+      expect(result.invalidReason).toBe(Errors.ErrAuthorizationValueMismatch);
     });
 
     it("should include payer in response", async () => {

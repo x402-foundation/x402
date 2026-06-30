@@ -205,7 +205,7 @@ export async function verifyEIP3009(
   if (BigInt(eip3009Payload.authorization.value) !== BigInt(requirements.amount)) {
     return {
       isValid: false,
-      invalidReason: Errors.ErrInvalidAuthorizationValue,
+      invalidReason: Errors.ErrAuthorizationValueMismatch,
       payer,
     };
   }
