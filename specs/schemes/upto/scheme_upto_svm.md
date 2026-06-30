@@ -144,17 +144,40 @@ Common fields:
 | `maxAmount` | string | The signed ceiling (base units). MUST equal verification-phase `amount`. |
 | `expiresAt` | number | Deadline (Unix seconds); signed into the on-chain message |
 | `validAfter` | number | Activation time (Unix seconds) |
-| `nonce` | string | Unique per authorization |
+| `nonce` | string | Unique per authorization. For `payment-channel`, interpreted as the decimal `u64` `salt` encoded in the `open` instruction. |
 
 Plus the channel fields:
 
 | Field | Type | Notes |
 |---|---|---|
-| `channelId` | string | Channel PDA (base58) |
+| `channelId` | string | Channel PDA (base58), derived before `open` from the fields below |
 | `deposit` | string | On-chain escrow = the ceiling; MUST equal `maxAmount` |
 | `authorizedSigner` | string | The **operator** key (base58) — the server's or facilitator's pubkey, equal to `extra.feePayer` **and** to `channel.payee`. The operator — not the client — signs the single settlement voucher (see §5 Phase 2); because it is also the channel `payee` (the `settle_and_finalize` merchant) it alone can settle and finalize the channel. |
-| `openTransaction` | string | Base64 signed `open` transaction for the server/facilitator to broadcast if the channel is not yet open (pull-style). Omitted if the client already broadcast `open` (push-style) and `signature` is set. |
-| `signature` | string | Base58 signature of the broadcast `open` transaction (push) |
+| `openTransaction` | string | Base64 client-signed `open` transaction for the server/facilitator to co-sign and broadcast if the channel is not yet open. |
+
+`channelId` is the program-derived address:
+
+```text
+find_program_address(
+  [
+    "channel",
+    from,
+    channel_payee,
+    asset,
+    authorizedSigner,
+    u64(nonce).to_le_bytes()
+  ],
+  extra.channelProgram
+)
+```
+
+For this profile, `channel_payee == authorizedSigner == extra.feePayer`. Because
+the channel address is a PDA, the client knows `channelId` before the channel is
+opened. The client MUST derive it before signing `openTransaction`, include the
+same PDA as the writable `channel` account in the `open` instruction, and set
+`payload.channelId` to that address. The server/facilitator MUST rederive the
+PDA from the decoded `openTransaction` and reject the payload if it differs from
+either the decoded `channel` account or `payload.channelId`.
 
 > The voucher is **not** carried in the payload. Because the actual amount is
 > only known after the resource is consumed, and the client's protection is the
@@ -180,10 +203,10 @@ Plus the channel fields:
 
 The client builds an `open` transaction depositing `maxAmount`, naming the
 operator as the open's `rentPayer` so the operator funds the channel rent (the
-client supplies only the stablecoin deposit). Push: the client broadcasts it and
-sends `signature`. Pull: the client sends `openTransaction` and the
-server/facilitator broadcasts it, co-signing as fee payer **and** as `rentPayer`
-(one operator signature covers both, matching `exact`'s fee-sponsorship).
+client supplies only the stablecoin deposit). The client sends
+`openTransaction`; the server/facilitator co-signs it as fee payer **and** as
+`rentPayer`, then broadcasts it (one operator signature covers both, matching
+`exact`'s fee-sponsorship).
 
 ### Phase 2 — Authorization signature
 
