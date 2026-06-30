@@ -152,6 +152,9 @@ export function paymentMiddlewareFromHTTPServer(
         const origin = `${req.protocol}://${req.get("host") ?? req.headers.host ?? ""}`;
         const manifest = await httpServer.buildDiscoveryManifest(origin);
         res.setHeader("Cache-Control", "public, max-age=300");
+        // Serve as the x402 artifact media type so an AI Catalog entry whose
+        // `type` is application/x402+json agrees with the fetched document.
+        res.setHeader("Content-Type", "application/x402+json");
         res.json(manifest);
         return;
       } catch (error) {

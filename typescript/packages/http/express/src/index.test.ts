@@ -1037,6 +1037,7 @@ describe("well-known discovery (/.well-known/x402.json)", () => {
 
     expect(mockBuildDiscoveryManifest).toHaveBeenCalledWith("https://api.example.com");
     expect(res.setHeader).toHaveBeenCalledWith("Cache-Control", "public, max-age=300");
+    expect(res.setHeader).toHaveBeenCalledWith("Content-Type", "application/x402+json");
     expect(res.json).toHaveBeenCalledWith({
       x402Version: 2,
       items: [{ resource: "https://api.example.com/x" }],
