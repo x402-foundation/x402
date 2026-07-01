@@ -1,0 +1,7 @@
+{
+  "name": "USTA Agent Market",
+  "description": "Machine-payable MCP endpoint selling verified public-data intelligence over x402 (USDC on Base) — permit records, datacenter-buildout change detection, AI web-access policy history, agentic-commerce adoption, and ERC-8004 agent-census feeds. Every paid response carries a sealed data attestation plus an HMAC-signed receipt, and a free verified_track_record tool publishes the house's calibration scores.",
+  "logoUrl": "/logos/usta-agent-market.png",
+  "websiteUrl": "https://agents.ustechautomations.com/llms.txt",
+  "category": "Services/Endpoints"
+}
