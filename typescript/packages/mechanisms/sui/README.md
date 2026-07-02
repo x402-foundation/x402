@@ -40,6 +40,8 @@ const signer = toClientSuiSigner(keypair, client);
 x402Client.register("sui:testnet", new ExactSuiScheme(signer));
 ```
 
+`toClientSuiSigner` accepts any `Signer` from `@mysten/sui/cryptography` — the abstract class is the contract, not `Ed25519Keypair`. `Secp256k1Keypair`, wallet adapters, and remote-custody signers such as [`@mysten/aws-kms-signer`](https://www.npmjs.com/package/@mysten/aws-kms-signer) drop in unchanged: the private key never has to enter process memory.
+
 ### Server
 
 ```typescript
