@@ -6,7 +6,7 @@
  */
 
 export type NetworkMode = 'testnet' | 'mainnet';
-export type ProtocolFamily = 'evm' | 'svm' | 'avm' | 'aptos' | 'hedera' | 'keeta' | 'near' | 'stellar' | 'ccd' | 'tvm' | 'xrpl';
+export type ProtocolFamily = 'evm' | 'svm' | 'avm' | 'aptos' | 'sui' | 'hedera' | 'keeta' | 'near' | 'stellar' | 'ccd' | 'tvm' | 'xrpl';
 
 export type NetworkConfig = {
   name: string;
@@ -20,6 +20,7 @@ export type NetworkSet = {
   svm: NetworkConfig;
   avm: NetworkConfig;
   aptos: NetworkConfig;
+  sui: NetworkConfig;
   hedera: NetworkConfig;
   keeta: NetworkConfig;
   stellar: NetworkConfig;
@@ -59,6 +60,11 @@ const NETWORK_SETS: Record<NetworkMode, NetworkSet> = {
       name: 'Aptos Testnet',
       caip2: 'aptos:2',
       rpcUrl: process.env.APTOS_TESTNET_RPC_URL || 'https://fullnode.testnet.aptoslabs.com/v1',
+    },
+    sui: {
+      name: 'Sui Testnet',
+      caip2: 'sui:testnet',
+      rpcUrl: process.env.SUI_TESTNET_RPC_URL || 'https://fullnode.testnet.sui.io:443',
     },
     hedera: {
       name: 'Hedera Testnet',
@@ -118,6 +124,11 @@ const NETWORK_SETS: Record<NetworkMode, NetworkSet> = {
       name: 'Aptos',
       caip2: 'aptos:1',
       rpcUrl: process.env.APTOS_RPC_URL || 'https://fullnode.mainnet.aptoslabs.com/v1',
+    },
+    sui: {
+      name: 'Sui',
+      caip2: 'sui:mainnet',
+      rpcUrl: process.env.SUI_RPC_URL || 'https://fullnode.mainnet.sui.io:443',
     },
     hedera: {
       name: 'Hedera Mainnet',
@@ -184,7 +195,7 @@ export function resolveEvmPermit2Asset(networks: NetworkSet): string {
  * Get network config for a protocol family in a given mode
  *
  * @param mode - 'testnet' or 'mainnet'
- * @param protocolFamily - 'evm', 'svm', 'avm', 'aptos', 'hedera', 'near', 'stellar', 'ccd', 'tvm', or 'xrpl'
+ * @param protocolFamily - 'evm', 'svm', 'avm', 'aptos', 'sui', 'hedera', 'near', 'stellar', 'ccd', 'tvm', or 'xrpl'
  * @returns NetworkConfig for the specified protocol
  */
 export function getNetworkForProtocol(
@@ -202,6 +213,6 @@ export function getNetworkForProtocol(
  */
 export function getNetworkModeDescription(mode: NetworkMode): string {
   const set = NETWORK_SETS[mode];
-  const networks = [set.evm.name, set.svm.name, set.avm.name, set.aptos.name, set.hedera.name, set.keeta.name, set.near.name, set.stellar.name, set.ccd.name, set.tvm.name, set.xrpl.name];
+  const networks = [set.evm.name, set.svm.name, set.avm.name, set.aptos.name, set.sui.name, set.hedera.name, set.keeta.name, set.near.name, set.stellar.name, set.ccd.name, set.tvm.name, set.xrpl.name];
   return networks.join(' + ');
 }
