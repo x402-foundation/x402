@@ -318,6 +318,13 @@ transaction `digest` (as `transaction`), the `network`, and the `payer` per
   debit equals `amount`, so the payer's trust model is unchanged from the single-output case.
 - **Settlement atomicity.** All declared outputs settle in a single transaction; a Sui PTB is
   all-or-nothing, so a partial split (one recipient credited but not another) is impossible.
+- **Independently recomputable settlement.** Verification is effects-based: the digest is
+  recomputed from the signed bytes and the per-output `balanceChanges` are checked against the
+  declared outputs. On the gasless path there are no gas side-effects to net out of the
+  balance-change set, so any third party can recompute a settled payment's exact outcome from
+  public chain data alone — digest, per-output credits, payer debit — with no trust in the
+  facilitator's report. Receipt or attestation extensions can bind to this recomputable result
+  without additional on-chain state.
 - **No-object-writes bound.** Because a gasless transaction cannot write objects, it cannot be
   used to mint, upgrade, transfer object capabilities, or perform any side effect beyond the
   asset transfer — the BCS command-shape allowlist in Verification step 3 enforces this and is
