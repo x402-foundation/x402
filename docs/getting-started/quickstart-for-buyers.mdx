@@ -243,6 +243,19 @@ const tvmSigner = toClientTvmSigner(keyPair, {
 });
 ```
 
+#### NEAR
+
+Use `@x402/near` to instantiate a signer:
+
+```typescript
+import { createClientNearSigner } from "@x402/near";
+
+const nearSigner = createClientNearSigner({
+  accountId: "alice.testnet",
+  secretKey: process.env.NEAR_SECRET_KEY!, // ed25519:... full-access key
+});
+```
+
 ### 3. Make Paid Requests Automatically
 
 <Tabs>
