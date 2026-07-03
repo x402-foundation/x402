@@ -576,6 +576,15 @@ You can register multiple payment schemes to handle different networks:
         }),
       ),
     );
+
+    // For NEAR support, also add:
+    import { ExactNearScheme, createClientNearSigner } from "@x402/near";
+
+    const nearSigner = createClientNearSigner({
+      accountId: "alice.testnet",
+      secretKey: process.env.NEAR_SECRET_KEY!, // ed25519:... full-access key
+    });
+    client.register("near:*", new ExactNearScheme(nearSigner));
     ```
   </Tab>
   <Tab title="Go">
