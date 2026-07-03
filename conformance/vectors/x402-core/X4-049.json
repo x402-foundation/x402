@@ -1,0 +1,20 @@
+{
+  "id": "X4-049",
+  "title": "Premature Finality Claim",
+  "category": "settlement_finality",
+  "requirement": "HC-39: Server must verify sufficient block confirmations before granting access",
+  "method": "GET",
+  "request": {
+    "premature_variants": [
+      "zero_confirmations",
+      "pending_status",
+      "future_block"
+    ]
+  },
+  "owasp_asi": "ASI03",
+  "severity": "high",
+  "impact": "fund_theft",
+  "normative": "MUST",
+  "expected": "A conformant x402 implementation satisfies the stated requirement; a divergent response is a finding.",
+  "source": "agent-security-harness (Apache-2.0) :: x402_harness.py :: X4-049"
+}

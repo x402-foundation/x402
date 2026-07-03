@@ -1,0 +1,16 @@
+{
+  "id": "X4-045",
+  "title": "Replay Same Payment Hash",
+  "category": "replay_double_spend",
+  "requirement": "HC-35: Payment hashes must be single-use; replay of consumed hash must be rejected",
+  "method": "GET",
+  "request": {
+    "payment_hash": "ae6d4a9baba123d16dccb6629f3e94bc880e66858f039ba6c87a1fd60d64c58a"
+  },
+  "owasp_asi": "ASI03",
+  "severity": "critical",
+  "impact": "fund_theft",
+  "normative": "MUST",
+  "expected": "A conformant x402 implementation satisfies the stated requirement; a divergent response is a finding.",
+  "source": "agent-security-harness (Apache-2.0) :: x402_harness.py :: X4-045"
+}

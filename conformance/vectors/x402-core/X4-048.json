@@ -1,0 +1,21 @@
+{
+  "id": "X4-048",
+  "title": "Scope Escalation in Payment Context",
+  "category": "authorization_bypass",
+  "requirement": "HC-38: Payment proofs with escalated scope claims must be validated against authorized scope",
+  "method": "GET",
+  "request": {
+    "escalation_variants": [
+      "admin_scope",
+      "write_scope",
+      "wildcard_scope",
+      "elevated_amount"
+    ]
+  },
+  "owasp_asi": "ASI02",
+  "severity": "high",
+  "impact": "fund_theft",
+  "normative": "MUST",
+  "expected": "A conformant x402 implementation satisfies the stated requirement; a divergent response is a finding.",
+  "source": "agent-security-harness (Apache-2.0) :: x402_harness.py :: X4-048"
+}

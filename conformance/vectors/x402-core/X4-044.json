@@ -1,0 +1,17 @@
+{
+  "id": "X4-044",
+  "title": "Payment Replay Against Different Endpoint",
+  "category": "network_attacks",
+  "requirement": "HC-34: Payment proofs must be bound to specific resource paths",
+  "method": "GET",
+  "request": {
+    "original_path": "/paid",
+    "replayed_to": "/admin"
+  },
+  "owasp_asi": "ASI04",
+  "severity": "high",
+  "impact": "fund_theft",
+  "normative": "MUST",
+  "expected": "A conformant x402 implementation satisfies the stated requirement; a divergent response is a finding.",
+  "source": "agent-security-harness (Apache-2.0) :: x402_harness.py :: X4-044"
+}

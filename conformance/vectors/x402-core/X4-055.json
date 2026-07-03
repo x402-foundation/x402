@@ -1,0 +1,16 @@
+{
+  "id": "X4-055",
+  "title": "Cascading Payment Approval Chain",
+  "category": "agent_autonomy",
+  "requirement": "HC-45: Responses must not embed or trigger cascading payment requirements without explicit agent consent",
+  "method": "GET",
+  "request": {
+    "path": "/paid"
+  },
+  "owasp_asi": "ASI02",
+  "severity": "high",
+  "impact": "fund_theft",
+  "normative": "MUST",
+  "expected": "A conformant x402 implementation satisfies the stated requirement; a divergent response is a finding.",
+  "source": "agent-security-harness (Apache-2.0) :: x402_harness.py :: X4-055"
+}

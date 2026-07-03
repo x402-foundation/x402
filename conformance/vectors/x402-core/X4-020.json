@@ -1,0 +1,25 @@
+{
+  "id": "X4-020",
+  "title": "Wrong Token Type Payment Rejection",
+  "category": "cross_chain_confusion",
+  "requirement": "HC-13: Server must validate payment currency matches requirement",
+  "method": "GET",
+  "request": {
+    "tokens_tested": [
+      "EURC",
+      "USDT",
+      "DAI",
+      "WETH",
+      "WBTC",
+      "FAKE_TOKEN",
+      ""
+    ],
+    "expected_currency": "1"
+  },
+  "owasp_asi": "ASI09",
+  "severity": "high",
+  "impact": "fund_theft",
+  "normative": "MUST",
+  "expected": "A conformant x402 implementation satisfies the stated requirement; a divergent response is a finding.",
+  "source": "agent-security-harness (Apache-2.0) :: x402_harness.py :: X4-020"
+}
