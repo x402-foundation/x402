@@ -1,0 +1,7 @@
+{
+  "name": "ForgeMesh Anomaly",
+  "category": "Services/Endpoints",
+  "logoUrl": "/logos/forgemesh-anomaly.png",
+  "description": "Agent-facing anomaly intelligence over crypto, wallet, token, bridge, and market activity. Agents can pay per call via x402 on Base for sequence anomaly checks, whale alerts, token scans, address scans, bridge flow monitoring, and compact risk summaries.",
+  "websiteUrl": "https://anomaly.forgemesh.io"
+}

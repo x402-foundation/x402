@@ -1,0 +1,7 @@
+{
+  "name": "ClawVoice by ForgeMesh",
+  "category": "Services/Endpoints",
+  "logoUrl": "/logos/forgemesh-clawvoice.png",
+  "description": "Hosted text-to-speech for agents, paid per request with x402 on Base. Agents can generate low-cost WAV speech across standard voices, languages, presets, and longer-form voice tiers without API keys or subscriptions.",
+  "websiteUrl": "https://voice.forgemesh.io"
+}

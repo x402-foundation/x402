@@ -1,0 +1,7 @@
+{
+  "name": "ForgeMesh Travel Agent",
+  "category": "Services/Endpoints",
+  "logoUrl": "/logos/forgemesh-travel-agent.png",
+  "description": "Paid travel intelligence endpoints for autonomous agents via x402 on Base. Agents can buy travel pulse, transit provider, weather-aware planning, day-trip, weekend getaway, and creator-experience outputs per call.",
+  "websiteUrl": "https://travel-agent.forgemesh.io"
+}

@@ -1,0 +1,7 @@
+{
+  "name": "ForgeMesh x402 Notary",
+  "category": "Services/Endpoints",
+  "logoUrl": "/logos/forgemesh-x402-notary.png",
+  "description": "Cryptographic receipts for AI inference, paid per call with x402 on Base. Agents can notarize model outputs for $0.001, receive signed Ed25519 attestations and content hashes, then verify receipts for free without storing raw prompt or response payloads.",
+  "websiteUrl": "https://notary.forgemesh.io"
+}
