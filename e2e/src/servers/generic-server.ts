@@ -110,6 +110,10 @@ export class GenericServerProxy extends BaseProxy implements ServerProxy {
         APTOS_RPC_URL: config.networks.aptos.rpcUrl,
         APTOS_PAYEE_ADDRESS: config.aptosPayTo,
 
+        // Concordium network config
+        CCD_NETWORK: config.networks.ccd.caip2,
+        CCD_PAYEE_ADDRESS: config.ccdPayTo,
+
         // Hedera network config. HEDERA_ASSET / HEDERA_AMOUNT are only
         // forwarded when set by the caller; the resource servers apply their
         // own HBAR defaults (0.0.0 / 100000 tinybars) when absent, so passing

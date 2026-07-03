@@ -114,31 +114,31 @@ export class ExactNearScheme implements SchemeNetworkFacilitator {
         return this.invalid("unsupported_scheme");
       }
       if (!isNearNetwork(requirements.network)) {
-        return this.invalid("unsupported_network");
+        return this.invalid("invalid_network");
       }
       if (payload.accepted.network !== requirements.network) {
-        return this.invalid("network_mismatch");
+        return this.invalid("invalid_exact_near_network_mismatch");
       }
 
       // ── §2 Requirement consistency ───────────────────────────────────────
       if (payload.accepted.asset !== requirements.asset) {
-        return this.invalid("asset_mismatch");
+        return this.invalid("invalid_exact_near_asset_mismatch");
       }
       if (payload.accepted.payTo !== requirements.payTo) {
-        return this.invalid("pay_to_mismatch");
+        return this.invalid("invalid_exact_near_pay_to_mismatch");
       }
       if (payload.accepted.amount !== requirements.amount) {
-        return this.invalid("amount_mismatch");
+        return this.invalid("invalid_exact_near_amount_mismatch");
       }
       const maxTimeoutSeconds = requirements.maxTimeoutSeconds;
       if (!Number.isInteger(maxTimeoutSeconds) || maxTimeoutSeconds <= 0) {
-        return this.invalid("invalid_max_timeout");
+        return this.invalid("invalid_exact_near_max_timeout");
       }
 
       // Payload shape.
       const nearPayload = payload.payload as ExactNearPayload | undefined;
       if (!nearPayload || typeof nearPayload.signedDelegateAction !== "string") {
-        return this.invalid("invalid_payload_shape");
+        return this.invalid("invalid_exact_near_payload_shape");
       }
 
       // ── §4 SignedDelegateAction integrity ────────────────────────────────
@@ -146,13 +146,13 @@ export class ExactNearScheme implements SchemeNetworkFacilitator {
       try {
         decoded = decodeSignedDelegateB64(nearPayload.signedDelegateAction);
       } catch {
-        return this.invalid("invalid_signed_delegate_action");
+        return this.invalid("invalid_exact_near_payload_signed_delegate_action");
       }
       const delegate = decoded.delegate;
 
       // Signature must verify before we attribute `payer` to any party.
       if (!decoded.verifySignature()) {
-        return this.invalid("invalid_signature");
+        return this.invalid("invalid_exact_near_payload_signature");
       }
       // From here the sender is cryptographically attributed.
       const payer = delegate.senderId;
@@ -160,54 +160,54 @@ export class ExactNearScheme implements SchemeNetworkFacilitator {
       // ── §3 Relayer sponsorship abuse prevention ──────────────────────────
       const relayers = this.signer.getRelayerIds();
       if (relayers.length === 0) {
-        return this.invalid("no_relayer_configured", payer);
+        return this.invalid("invalid_exact_near_no_relayer_configured", payer);
       }
       if (relayers.includes(payer)) {
-        return this.invalid("relayer_cannot_be_payer", payer);
+        return this.invalid("invalid_exact_near_relayer_cannot_be_payer", payer);
       }
 
       // ── §6 Delegated action safety (exactly one ft_transfer) ─────────────
       if (delegate.actionCount !== 1) {
-        return this.invalid("invalid_action_count", payer);
+        return this.invalid("invalid_exact_near_payload_action_count", payer);
       }
       const fc = delegate.functionCall;
       if (!fc) {
-        return this.invalid("unsupported_action_kind", payer);
+        return this.invalid("invalid_exact_near_payload_action_kind", payer);
       }
       if (fc.methodName !== FT_TRANSFER_METHOD) {
-        return this.invalid("invalid_method_name", payer);
+        return this.invalid("invalid_exact_near_payload_method_name", payer);
       }
 
       // ── §7 Token transfer intent and exactness ───────────────────────────
       if (delegate.receiverId !== requirements.asset) {
-        return this.invalid("token_contract_mismatch", payer);
+        return this.invalid("invalid_exact_near_payload_token_contract_mismatch", payer);
       }
       let transfer;
       try {
         transfer = parseFtTransferArgs(fc.args);
       } catch {
-        return this.invalid("invalid_ft_transfer_args", payer);
+        return this.invalid("invalid_exact_near_payload_ft_transfer_args", payer);
       }
       if (transfer.receiver_id !== requirements.payTo) {
-        return this.invalid("recipient_mismatch", payer);
+        return this.invalid("invalid_exact_near_payload_recipient_mismatch", payer);
       }
       if (transfer.amount !== requirements.amount) {
-        return this.invalid("transfer_amount_mismatch", payer);
+        return this.invalid("invalid_exact_near_payload_amount_mismatch", payer);
       }
       // The 1 yoctoNEAR deposit is NEP-141's `ft_transfer` security marker; requiring it
       // also forces the signing key to be FullAccess, since FunctionCall keys cannot attach
       // a positive deposit (reinforces the §8 access-key permission check below).
       if (fc.deposit !== ONE_YOCTO) {
-        return this.invalid("invalid_attached_deposit", payer);
+        return this.invalid("invalid_exact_near_payload_attached_deposit", payer);
       }
       if (fc.gas > this.maxSponsoredGas) {
-        return this.invalid("gas_limit_exceeded", payer);
+        return this.invalid("invalid_exact_near_payload_gas_limit_exceeded", payer);
       }
 
       // ── §5 Replay and expiry (deterministic timeout mapping + nonce) ─────
       const heightResult = await this.safe(
         () => this.signer.getCurrentBlockHeight(requirements.network),
-        "current_block_height_unavailable",
+        "invalid_exact_near_current_block_height_unavailable",
       );
       if (!heightResult.ok) {
         return this.invalid(heightResult.reason, payer);
@@ -217,13 +217,16 @@ export class ExactNearScheme implements SchemeNetworkFacilitator {
       const timeoutBlocks = computeTimeoutBlocks(maxTimeoutSeconds);
       const remainingBlocks = delegate.maxBlockHeight - currentHeight;
       if (remainingBlocks <= 0n) {
-        return this.invalid("delegate_action_expired", payer);
+        return this.invalid("invalid_exact_near_payload_delegate_action_expired", payer);
       }
       if (remainingBlocks > timeoutBlocks) {
-        return this.invalid("delegate_action_timeout_window_exceeds_maxTimeout", payer);
+        return this.invalid(
+          "invalid_exact_near_payload_delegate_action_timeout_window_exceeds_max_timeout",
+          payer,
+        );
       }
       if (delegate.nonce >= currentHeight * NONCE_RANGE_MULTIPLIER) {
-        return this.invalid("delegate_action_nonce_out_of_range", payer);
+        return this.invalid("invalid_exact_near_payload_delegate_action_nonce_out_of_range", payer);
       }
 
       const accessKeyResult = await this.safe(
@@ -233,55 +236,55 @@ export class ExactNearScheme implements SchemeNetworkFacilitator {
             accountId: delegate.senderId,
             publicKey: delegate.publicKey,
           }),
-        "access_key_lookup_failed",
+        "invalid_exact_near_access_key_lookup_failed",
       );
       if (!accessKeyResult.ok) {
         return this.invalid(accessKeyResult.reason, payer);
       }
       const accessKey = accessKeyResult.value;
       if (!accessKey) {
-        return this.invalid("access_key_not_found", payer);
+        return this.invalid("invalid_exact_near_access_key_not_found", payer);
       }
       // Core replay guard: the on-chain access-key nonce is authoritative, so any delegate
       // nonce at or below it has already been used — no facilitator-side nonce store needed.
       if (delegate.nonce <= accessKey.nonce) {
-        return this.invalid("delegate_action_nonce_already_used", payer);
+        return this.invalid("invalid_exact_near_payload_delegate_action_nonce_already_used", payer);
       }
 
       // ── §8 Access-key permission safety ──────────────────────────────────
       if (accessKey.permissionKind === "FunctionCall") {
-        return this.invalid("function_call_key_not_allowed", payer);
+        return this.invalid("invalid_exact_near_function_call_key_not_allowed", payer);
       }
       if (accessKey.permissionKind !== "FullAccess") {
-        return this.invalid("unsupported_access_key_permission", payer);
+        return this.invalid("invalid_exact_near_unsupported_access_key_permission", payer);
       }
 
       // ── §9 Chain-state preflight ─────────────────────────────────────────
       const senderAccount = await this.safe(
         () =>
           this.signer.viewAccount({ network: requirements.network, accountId: delegate.senderId }),
-        "account_lookup_failed",
+        "invalid_exact_near_account_lookup_failed",
       );
       if (!senderAccount.ok) {
         return this.invalid(senderAccount.reason, payer);
       }
       if (!senderAccount.value) {
-        return this.invalid("sender_account_not_found", payer);
+        return this.invalid("invalid_exact_near_sender_account_not_found", payer);
       }
 
       const tokenAccount = await this.safe(
         () =>
           this.signer.viewAccount({ network: requirements.network, accountId: requirements.asset }),
-        "token_account_lookup_failed",
+        "invalid_exact_near_token_account_lookup_failed",
       );
       if (!tokenAccount.ok) {
         return this.invalid(tokenAccount.reason, payer);
       }
       if (!tokenAccount.value) {
-        return this.invalid("token_account_not_found", payer);
+        return this.invalid("invalid_exact_near_token_account_not_found", payer);
       }
       if (tokenAccount.value.codeHash === EMPTY_CONTRACT_CODE_HASH) {
-        return this.invalid("token_contract_no_code", payer);
+        return this.invalid("invalid_exact_near_token_contract_no_code", payer);
       }
 
       const balanceResult = await this.safe(
@@ -291,13 +294,13 @@ export class ExactNearScheme implements SchemeNetworkFacilitator {
             token: requirements.asset,
             accountId: delegate.senderId,
           }),
-        "balance_check_failed",
+        "invalid_exact_near_balance_check_failed",
       );
       if (!balanceResult.ok) {
         return this.invalid(balanceResult.reason, payer);
       }
       if (balanceResult.value < BigInt(requirements.amount)) {
-        return this.invalid("insufficient_token_balance", payer);
+        return this.invalid("insufficient_funds", payer);
       }
 
       const storageResult = await this.safe(
@@ -307,20 +310,23 @@ export class ExactNearScheme implements SchemeNetworkFacilitator {
             token: requirements.asset,
             accountId: requirements.payTo,
           }),
-        "storage_check_failed",
+        "invalid_exact_near_storage_check_failed",
       );
       if (!storageResult.ok) {
         return this.invalid(storageResult.reason, payer);
       }
       if (storageResult.value.supported && !storageResult.value.registered) {
-        return this.invalid("recipient_not_registered_for_storage", payer);
+        return this.invalid("invalid_exact_near_recipient_not_registered_for_storage", payer);
       }
 
       return { isValid: true, payer };
     } catch (error) {
       // Unexpected error: fail closed without attributing a payer.
-      const reason = error instanceof Error ? error.message : String(error);
-      return { isValid: false, invalidReason: `verification_error:${reason}` };
+      return {
+        isValid: false,
+        invalidReason: "unexpected_verify_error",
+        invalidMessage: error instanceof Error ? error.message : String(error),
+      };
     }
   }
 
@@ -348,7 +354,11 @@ export class ExactNearScheme implements SchemeNetworkFacilitator {
 
     const relayerId = this.signer.getRelayerIds()[0];
     if (!relayerId) {
-      return this.settleFailure("no_relayer_configured", requirements.network, verified.payer);
+      return this.settleFailure(
+        "invalid_exact_near_no_relayer_configured",
+        requirements.network,
+        verified.payer,
+      );
     }
 
     const nearPayload = payload.payload as ExactNearPayload;
@@ -362,7 +372,7 @@ export class ExactNearScheme implements SchemeNetworkFacilitator {
         .maxBlockHeight;
     } catch {
       return this.settleFailure(
-        "invalid_signed_delegate_action",
+        "invalid_exact_near_payload_signed_delegate_action",
         requirements.network,
         verified.payer,
       );

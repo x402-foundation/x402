@@ -96,8 +96,19 @@ const (
 	ErrSettleSimulationFailed  = "invalid_batch_settlement_evm_settle_simulation_failed"
 	ErrRefundSimulationFailed  = "invalid_batch_settlement_evm_refund_simulation_failed"
 
+	// ERC-6492 counterfactual deployment errors (ERC-3009 deposit path). Wire values keep the
+	// scheme prefix to match the rest of this package's contract.
+	//
+	// ErrFactoryNotAllowed is returned when a counterfactual deposit references a factory
+	// that is not in the facilitator's EIP6492AllowedFactories allowlist.
+	ErrFactoryNotAllowed = "invalid_batch_settlement_evm_eip6492_factory_not_allowed"
+	// ErrSmartWalletDeploymentFailed is returned when the ERC-6492 factory deployment
+	// transaction itself fails or reverts.
+	ErrSmartWalletDeploymentFailed = "invalid_batch_settlement_evm_smart_wallet_deployment_failed"
+
 	// Authorizer errors
 	ErrAuthorizerAddressMismatch = "invalid_batch_settlement_evm_authorizer_address_mismatch"
+	ErrAuthorizerNotConfigured   = "invalid_batch_settlement_evm_authorizer_not_configured"
 
 	// Settle action errors
 	ErrUnknownSettleAction = "invalid_batch_settlement_evm_unknown_settle_action"

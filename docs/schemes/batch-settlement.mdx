@@ -434,12 +434,73 @@ Client channel state is stored in memory by default. Persistent client storage i
 
 ### Receiver Authorizer
 
-Every channel commits to a `receiverAuthorizer`, which signs claim and refund authorizations.
+Every channel commits to a `receiverAuthorizer`, which signs claim and refund authorizations. The server must have a `receiverAuthorizer` available from one of two sources:
 
 | Strategy | When to use it |
 |----------|----------------|
 | Self-managed `receiverAuthorizerSigner` | Recommended for production. Channels survive facilitator changes because any facilitator can relay your signed claims and refunds. |
-| Facilitator-delegated authorizer | Simpler to run. If you switch facilitators, claim and refund old channels before opening new ones. |
+| Facilitator-delegated authorizer | Simpler to run. Omit `receiverAuthorizerSigner` and the server picks up the address advertised by the facilitator's `/supported` response. If you switch facilitators, claim and refund old channels before opening new ones. |
+
+The server validates this configuration at startup. If no `receiverAuthorizerSigner` is configured and the facilitator does not advertise a valid `receiverAuthorizer` in its `/supported` response, the server will throw an error during `initialize()` rather than failing on the first protected request.
+
+On the facilitator side, the `authorizerSigner` passed to `BatchSettlementEvmScheme` is optional. When provided, the facilitator advertises its address as `receiverAuthorizer` in `/supported` and signs missing authorizer signatures. When omitted, no `receiverAuthorizer` is advertised and servers must supply their own `receiverAuthorizerSigner`.
+
+### Facilitator Setup
+
+The batch-settlement facilitator scheme accepts an optional `authorizerSigner`. Pass one to enable facilitator-delegated authorization; omit it to require servers to supply their own.
+
+<Tabs>
+  <Tab title="Go">
+    ```go
+    import (
+        x402 "github.com/x402-foundation/x402/go/v2"
+        batchsettlement "github.com/x402-foundation/x402/go/v2/mechanisms/evm/batch-settlement"
+        batchedfac "github.com/x402-foundation/x402/go/v2/mechanisms/evm/batch-settlement/facilitator"
+        evmsigners "github.com/x402-foundation/x402/go/v2/signers/evm"
+    )
+
+    evmSigner, _ := evmsigners.NewFacilitatorSignerFromPrivateKey(os.Getenv("EVM_PRIVATE_KEY"), rpcURL)
+
+    // Optional: provide an authorizer key to enable facilitator-delegated authorization.
+    // When nil, no receiverAuthorizer is advertised and servers must supply their own.
+    var authorizer batchsettlement.AuthorizerSigner
+    if authKey := os.Getenv("EVM_RECEIVER_AUTHORIZER_PRIVATE_KEY"); authKey != "" {
+        authorizer, _ = evmsigners.NewAuthorizerSignerFromPrivateKey(authKey)
+    }
+
+    facilitator := x402.Newx402Facilitator()
+    facilitator.Register(
+        []x402.Network{"eip155:84532"},
+        batchedfac.NewBatchSettlementEvmScheme(evmSigner, authorizer),
+    )
+    ```
+  </Tab>
+  <Tab title="Python">
+    ```python
+    from x402 import x402Facilitator
+    from x402.mechanisms.evm import FacilitatorWeb3Signer
+    from x402.mechanisms.evm.batch_settlement.authorizer_signer import LocalAuthorizerSigner
+    from x402.mechanisms.evm.batch_settlement.facilitator import BatchSettlementEvmFacilitator
+    import os
+
+    evm_signer = FacilitatorWeb3Signer(
+        private_key=os.environ["EVM_PRIVATE_KEY"],
+        rpc_url=os.environ.get("EVM_RPC_URL", "https://sepolia.base.org"),
+    )
+
+    # Optional: provide an authorizer key to enable facilitator-delegated authorization.
+    # When None, no receiverAuthorizer is advertised and servers must supply their own.
+    receiver_authorizer_pk = os.environ.get("EVM_RECEIVER_AUTHORIZER_PRIVATE_KEY")
+    authorizer_signer = LocalAuthorizerSigner(receiver_authorizer_pk) if receiver_authorizer_pk else None
+
+    facilitator = x402Facilitator()
+    facilitator.register(
+        ["eip155:84532"],
+        BatchSettlementEvmFacilitator(evm_signer, authorizer_signer),
+    )
+    ```
+  </Tab>
+</Tabs>
 
 ### Settlement Policy
 
@@ -458,6 +519,7 @@ Set `withdrawDelay` greater than your claim cadence plus an operational safety m
 * [Next.js server + Redis storage](https://github.com/x402-foundation/x402/tree/main/examples/typescript/fullstack/next-batch-settlement-redis)
 * [Go client](https://github.com/x402-foundation/x402/tree/main/examples/go/clients/batch-settlement)
 * [Go server](https://github.com/x402-foundation/x402/tree/main/examples/go/servers/batch-settlement)
+* [Go facilitator](https://github.com/x402-foundation/x402/tree/main/examples/go/facilitator/batch-settlement)
 * [Python client](https://github.com/x402-foundation/x402/tree/main/examples/python/clients/batch-settlement)
 * [Python server](https://github.com/x402-foundation/x402/tree/main/examples/python/servers/batch-settlement)
 * [Python facilitator](https://github.com/x402-foundation/x402/tree/main/examples/python/facilitator/batch-settlement)

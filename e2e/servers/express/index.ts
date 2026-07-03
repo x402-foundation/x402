@@ -13,6 +13,7 @@ import { ExactKeetaScheme } from "@x402/keeta/exact/server";
 import { ExactStellarScheme } from "@x402/stellar/exact/server";
 import { ExactTvmScheme } from "@x402/tvm/exact/server";
 import { ExactNearScheme } from "@x402/near/exact/server";
+import { ExactConcordiumScheme } from "@x402/concordium/exact/server";
 import { bazaarResourceServerExtension, declareDiscoveryExtension } from "@x402/extensions/bazaar";
 import {
   declareEip2612GasSponsoringExtension,
@@ -41,6 +42,9 @@ const HEDERA_NETWORK = (process.env.HEDERA_NETWORK || "hedera:testnet") as `${st
 const KEETA_NETWORK = (process.env.KEETA_NETWORK || KEETA_TESTNET_CAIP2) as `${string}:${string}`;
 const STELLAR_NETWORK = (process.env.STELLAR_NETWORK || "stellar:testnet") as `${string}:${string}`;
 const TVM_NETWORK = (process.env.TVM_NETWORK || "tvm:-3") as `${string}:${string}`;
+const CCD_NETWORK = (process.env.CCD_NETWORK || "ccd:4221332d34e1694168c2a0c0b3fd0f27") as `${string}:${string}`;
+const CCD_PAYEE_ADDRESS = process.env.CCD_PAYEE_ADDRESS as string | undefined;
+const CCD_WEATHER_PRICE_MICRO_CCD = "1000";
 const EVM_PAYEE_ADDRESS = process.env.EVM_PAYEE_ADDRESS as `0x${string}`;
 const SVM_PAYEE_ADDRESS = process.env.SVM_PAYEE_ADDRESS as string;
 const EVM_PERMIT2_ASSET = process.env.EVM_PERMIT2_ASSET as `0x${string}`;
@@ -89,6 +93,9 @@ const server = new x402ResourceServer(facilitatorClients);
 // Register server schemes
 if (AVM_PAYEE_ADDRESS) {
   server.register("algorand:*", new ExactAvmScheme());
+}
+if (CCD_PAYEE_ADDRESS) {
+  server.register("ccd:*", new ExactConcordiumScheme());
 }
 server.register("eip155:*", new ExactEvmScheme());
 server.register("eip155:*", new UptoEvmScheme());
@@ -192,6 +199,20 @@ app.get("/exact/keeta", (req, res, next) => {
 });
 
 /**
+ * Pre-middleware guard for optional Concordium endpoint
+ * Returns 501 Not Implemented if Concordium is not configured
+ */
+app.get("/exact/ccd", (req, res, next) => {
+  if (!CCD_PAYEE_ADDRESS) {
+    return res.status(501).json({
+      error: "Concordium payments not configured",
+      message: "CCD_PAYEE_ADDRESS environment variable is not set",
+    });
+  }
+  next();
+});
+
+/**
  * Pre-middleware guard for optional Stellar endpoint
  * Returns 501 Not Implemented if Stellar is not configured
  */
@@ -237,6 +258,38 @@ app.use(
                 scheme: "exact",
                 price: "$0.001",
                 network: AVM_NETWORK,
+              },
+              extensions: {
+                ...declareDiscoveryExtension({
+                  output: {
+                    example: {
+                      message: "Protected endpoint accessed successfully",
+                      timestamp: "2024-01-01T00:00:00Z",
+                    },
+                    schema: {
+                      properties: {
+                        message: { type: "string" },
+                        timestamp: { type: "string" },
+                      },
+                      required: ["message", "timestamp"],
+                    },
+                  },
+                }),
+              },
+            },
+          }
+        : {}),
+      ...(CCD_PAYEE_ADDRESS
+        ? {
+            "GET /exact/ccd": {
+              accepts: {
+                payTo: CCD_PAYEE_ADDRESS,
+                scheme: "exact",
+                price: {
+                  amount: CCD_WEATHER_PRICE_MICRO_CCD,
+                  asset: "CCD",
+                },
+                network: CCD_NETWORK,
               },
               extensions: {
                 ...declareDiscoveryExtension({
@@ -789,6 +842,20 @@ app.get("/exact/keeta", (req, res) => {
 });
 
 /**
+ * Protected Concordium endpoint - requires payment via Concordium exact scheme
+ *
+ * This endpoint demonstrates a resource protected by x402 payment middleware for Concordium.
+ * Clients must provide a valid payment signature to access this endpoint.
+ * Note: 501 check is handled by pre-middleware guard above.
+ */
+app.get("/exact/ccd", (req, res) => {
+  res.json({
+    message: "Protected Concordium endpoint accessed successfully",
+    timestamp: new Date().toISOString(),
+  });
+});
+
+/**
  * Protected Permit2 ERC-20 endpoint - requires payment via Permit2 flow with ERC-20 approval
  *
  * This endpoint demonstrates the ERC-20 approval gas sponsoring flow for tokens
@@ -941,12 +1008,14 @@ app.listen(parseInt(PORT), () => {
 ║  Hedera Network: ${HEDERA_NETWORK}                     ║
 ║  Stellar Network: ${STELLAR_NETWORK}║
 ║  TVM Network: ${TVM_NETWORK}║
+║  CCD Network:  ${CCD_NETWORK}                          ║
 ║  AVM Payee:    ${AVM_PAYEE_ADDRESS || "(not configured)"}
 ║  EVM Payee:    ${EVM_PAYEE_ADDRESS}                    ║
 ║  SVM Payee:    ${SVM_PAYEE_ADDRESS}                    ║
 ║  Aptos Payee:  ${APTOS_PAYEE_ADDRESS || "(not configured)"}
 ║  Hedera Payee: ${HEDERA_PAYEE_ADDRESS || "(not configured)"}
 ║  Keeta Payee:  ${KEETA_PAYEE_ADDRESS || "(not configured)"}
+║  CCD Payee:    ${CCD_PAYEE_ADDRESS || "(not configured)"}
 ║  Stellar Payee: ${STELLAR_PAYEE_ADDRESS || "(not configured)"}
 ║  TVM Payee: ${TVM_PAYEE_ADDRESS || "(not configured)"}
 ║                                                        ║

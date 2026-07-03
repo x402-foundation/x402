@@ -104,6 +104,15 @@ func (f *ExactEvmScheme) verifyEIP3009(
 		return nil, x402.NewVerifyError(ErrInvalidSignature, evmPayload.Authorization.From, fmt.Sprintf("invalid signature: %s", evmPayload.Signature))
 	}
 
+	// Counterfactual ERC-6492 wallet: settle deploys via the factory, gated by the
+	// allowlist. Enforce the same gate here so verify mirrors settle (a payment that
+	// settle rejects with ErrFactoryNotAllowed must not verify as valid).
+	if !classification.Valid && classification.IsUndeployed && HasEIP6492Deployment(classification.SigData) {
+		if !evm.IsFactoryAllowed(classification.SigData.Factory, f.config.EIP6492AllowedFactories) {
+			return nil, x402.NewVerifyError(ErrFactoryNotAllowed, evmPayload.Authorization.From, "factory not in EIP6492AllowedFactories allowlist")
+		}
+	}
+
 	if errReason, err := evm.ValidateAssetIsContract(ctx, f.signer, requirements.Asset); err != nil {
 		return nil, fmt.Errorf("asset contract check failed: %w", err)
 	} else if errReason != "" {
@@ -183,13 +192,23 @@ func (f *ExactEvmScheme) settleEIP3009(
 		}
 
 		if len(code) == 0 {
-			if !IsFactoryAllowed(sigData.Factory, f.config.EIP6492AllowedFactories) {
+			if !evm.IsFactoryAllowed(sigData.Factory, f.config.EIP6492AllowedFactories) {
 				return nil, x402.NewSettleError(ErrFactoryNotAllowed, verifyResp.Payer, network, "", "")
 			}
 
-			if err := DeploySmartWallet(ctx, f.signer, sigData); err != nil {
+			if err := SendDeployTransaction(ctx, f.signer, sigData); err != nil {
 				return nil, x402.NewSettleError(ErrSmartWalletDeploymentFailed, verifyResp.Payer, network, "", err.Error())
 			}
+
+			// Do NOT re-simulate the transfer here. The single authoritative pre-check is the
+			// atomic deploy+transfer simulation that runs in verify (one eth_call via
+			// Multicall3, state carried across both sub-calls). A second standalone eth_call
+			// after the real deploy tx is unreliable — the read can race the deploy's state
+			// propagation across load-balanced RPC nodes — and was producing false
+			// inner-signature-unsupported rejections for valid wallets (e.g.
+			// Coinbase Smart Wallet). The on-chain transferWithAuthorization below is the
+			// definitive signature check; a genuinely unsupported inner signature reverts
+			// there and is classified by parseEIP3009TransferError.
 		}
 	}
 

@@ -238,6 +238,21 @@ class ExactEvmSchemeV1:
                 payer=payer,
             )
 
+        # Counterfactual ERC-6492 wallet (undeployed + carries factory deployment info):
+        # settle will deploy via the factory, which is gated by the allowlist. Enforce the
+        # same gate here so verify does not pass for a payment settle will reject.
+        if (
+            not classification.valid
+            and classification.is_undeployed
+            and has_deployment_info(classification.sig_data)
+        ):
+            factory_addr = bytes_to_hex(classification.sig_data.factory).lower()
+            allowed = {f.strip().lower() for f in self._config.eip6492_allowed_factories}
+            if factory_addr not in allowed:
+                return VerifyResponse(
+                    is_valid=False, invalid_reason=ERR_FACTORY_NOT_ALLOWED, payer=payer
+                )
+
         if not simulate:
             return VerifyResponse(is_valid=True, payer=payer)
 
@@ -349,6 +364,14 @@ class ExactEvmSchemeV1:
                         payer=payer,
                         transaction="",
                     )
+
+                # Do NOT re-simulate the transfer here. The authoritative pre-check is the
+                # atomic deploy+transfer simulation in verify; a second standalone eth_call
+                # after the real deploy tx races the deploy's state propagation across
+                # load-balanced RPC nodes and false-rejected valid wallets. The on-chain
+                # transferWithAuthorization below is the definitive signature check; a
+                # genuinely unsupported inner signature reverts there and is classified by
+                # parse_eip3009_transfer_error.
 
         try:
             tx_hash = execute_transfer_with_authorization(

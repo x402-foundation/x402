@@ -5,13 +5,14 @@
  * optional chain configuration via environment variables.
  *
  * New chain support should be added here in alphabetic order by network prefix
- * (e.g., "algorand" before "eip155" before "hedera" before "near" before "solana" before "stellar" before "tvm").
+ * (e.g., "algorand" before "ccd" before "eip155" before "hedera" before "near" before "solana" before "stellar" before "tvm").
  */
 
 import { config } from "dotenv";
 import express from "express";
 import { paymentMiddleware, x402ResourceServer } from "@x402/express";
 import { ExactAvmScheme } from "@x402/avm/exact/server";
+import { ExactConcordiumScheme } from "@x402/concordium/exact/server";
 import { ExactEvmScheme } from "@x402/evm/exact/server";
 import { ExactHederaScheme } from "@x402/hedera/exact/server";
 import { ExactSvmScheme } from "@x402/svm/exact/server";
@@ -28,6 +29,7 @@ config();
 
 // Configuration - optional per network
 const avmAddress = process.env.AVM_ADDRESS as string | undefined;
+const ccdAddress = process.env.CCD_ADDRESS as string | undefined;
 const evmAddress = process.env.EVM_ADDRESS as `0x${string}` | undefined;
 const hederaAddress = process.env.HEDERA_ACCOUNT_ID as string | undefined;
 const keetaAddress = process.env.KEETA_ADDRESS as string | undefined;
@@ -39,6 +41,7 @@ const tvmAddress = process.env.TVM_ADDRESS as string | undefined;
 // Validate at least one address is provided
 if (
   !avmAddress &&
+  !ccdAddress &&
   !evmAddress &&
   !svmAddress &&
   !keetaAddress &&
@@ -48,7 +51,7 @@ if (
   !tvmAddress
 ) {
   console.error(
-    "❌ At least one of AVM_ADDRESS, EVM_ADDRESS, KEETA_ADDRESS, NEAR_ADDRESS, SVM_ADDRESS, STELLAR_ADDRESS, HEDERA_ACCOUNT_ID, or TVM_ADDRESS is required",
+    "❌ At least one of AVM_ADDRESS, CCD_ADDRESS, EVM_ADDRESS, KEETA_ADDRESS, NEAR_ADDRESS, SVM_ADDRESS, STELLAR_ADDRESS, HEDERA_ACCOUNT_ID, or TVM_ADDRESS is required",
   );
   process.exit(1);
 }
@@ -61,6 +64,7 @@ if (!facilitatorUrl) {
 
 // Network configuration
 const AVM_NETWORK = "algorand:SGO1GKSzyE7IEPItTxCByw9x8FmnrCDexi9/cOUJOiI=" as const; // Algorand Testnet
+const CCD_NETWORK = "ccd:4221332d34e1694168c2a0c0b3fd0f27" as const; // Concordium Testnet
 const EVM_NETWORK = "eip155:84532" as const; // Base Sepolia
 const HEDERA_NETWORK = "hedera:testnet" as const; // Hedera Testnet
 const KEETA_NETWORK = KEETA_TESTNET_CAIP2; // Keeta Testnet
@@ -70,6 +74,7 @@ const STELLAR_NETWORK = "stellar:testnet" as const; // Stellar Testnet
 const HEDERA_HBAR_ASSET = "0.0.0" as const; // Native HBAR asset id
 const HEDERA_WEATHER_PRICE_TINYBARS = "100000" as const; // 0.001 HBAR
 const TVM_NETWORK = (process.env.TVM_NETWORK || "tvm:-3") as Network; // TON Testnet
+const CCD_WEATHER_PRICE_MICRO_CCD = "1000" as const; // 0.001 CCD
 
 // Build accepts array dynamically based on configured addresses
 const accepts: Array<{
@@ -84,6 +89,17 @@ if (avmAddress) {
     price: "$0.001",
     network: AVM_NETWORK,
     payTo: avmAddress,
+  });
+}
+if (ccdAddress) {
+  accepts.push({
+    scheme: "exact",
+    price: {
+      amount: CCD_WEATHER_PRICE_MICRO_CCD,
+      asset: "CCD",
+    },
+    network: CCD_NETWORK,
+    payTo: ccdAddress,
   });
 }
 if (evmAddress) {
@@ -154,6 +170,9 @@ const server = new x402ResourceServer(facilitatorClient);
 if (avmAddress) {
   server.register(AVM_NETWORK, new ExactAvmScheme());
 }
+if (ccdAddress) {
+  server.register(CCD_NETWORK, new ExactConcordiumScheme());
+}
 if (evmAddress) {
   server.register(EVM_NETWORK, new ExactEvmScheme());
 }
@@ -214,6 +233,9 @@ app.listen(port, () => {
   console.log(`🚀 All Networks Server listening at http://localhost:${port}`);
   if (avmAddress) {
     console.log(`   AVM: ${avmAddress} on ${AVM_NETWORK}`);
+  }
+  if (ccdAddress) {
+    console.log(`   CCD: ${ccdAddress} on ${CCD_NETWORK}`);
   }
   if (evmAddress) {
     console.log(`   EVM: ${evmAddress} on ${EVM_NETWORK}`);

@@ -26,6 +26,12 @@ except ImportError as e:
 from .constants import EIP1271_MAGIC_VALUE, IS_VALID_SIGNATURE_ABI, TX_STATUS_SUCCESS  # noqa: E402
 from .types import TransactionReceipt, TypedDataDomain, TypedDataField  # noqa: E402
 
+# Gas limit for facilitator-sent transactions (settle transferWithAuthorization and
+# ERC-6492 factory deploys). Must cover larger smart-account deploys: an ERC-7579 /
+# Kernel counterfactual deploy measures ~410k gas, so a 300k limit reverted with
+# out-of-gas. 500k covers known smart-account factories with headroom.
+_DEFAULT_TX_GAS_LIMIT = 500_000
+
 # ERC20 ABI for balance checks
 _ERC20_BALANCE_ABI = [
     {
@@ -492,7 +498,7 @@ class FacilitatorWeb3Signer:
             {
                 "from": self._account.address,
                 "nonce": self._reserve_nonce(),
-                "gas": 300000,
+                "gas": _DEFAULT_TX_GAS_LIMIT,
                 "gasPrice": self._w3.eth.gas_price,
             }
         )
@@ -518,7 +524,7 @@ class FacilitatorWeb3Signer:
             "to": Web3.to_checksum_address(to),
             "data": data,
             "nonce": self._reserve_nonce(),
-            "gas": 300000,
+            "gas": _DEFAULT_TX_GAS_LIMIT,
             "gasPrice": self._w3.eth.gas_price,
         }
 

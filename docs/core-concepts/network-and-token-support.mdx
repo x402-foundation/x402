@@ -15,20 +15,23 @@ x402 uses [CAIP-2](https://chainagnostic.org/CAIPs/caip-2) standard network iden
 - **Aptos**: `aptos:<chainId>` (e.g., `aptos:1` for mainnet)
 - **Hedera**: `hedera:<network>` (`mainnet` or `testnet`)
 - **Keeta**: `keeta:<networkId>` (e.g., `keeta:21378` for mainnet)
+- **Concordium**: `ccd:<genesisHash>` (e.g., `ccd:9dd9ca4d19e9393877d2c44b70f89acb` for mainnet)
 
 ## Token Support
 
-x402 supports tokens on EVM, Solana, TON, Stellar, Aptos, Hedera, and Keeta networks:
+x402 supports tokens on EVM, Solana, TON, Algorand (AVM), Stellar, Aptos, Hedera, Keeta, and Concordium networks:
 
 | Ecosystem | Supported Tokens | Transfer Method |
 |-----------|------------------|-----------------|
 | **EVM** | Any ERC-20 token | EIP-3009 or Permit2 |
 | **Solana** | Any SPL or Token-2022 token | SPL Transfer |
 | **TON (TVM)** | Any TEP-74 jetton (e.g., USDT) | Signed W5R1 internal message |
+| **Algorand (AVM)** | Any ASA (e.g., USDC) | ASA transfer (`axfer`) in atomic group |
 | **Stellar** | Any Soroban token implementing SEP-41 | `transfer(from, to, amount)` |
 | **Aptos** | Any fungible asset | `primary_fungible_store::transfer` |
 | **Hedera** | HBAR or any HTS fungible token | Hedera Transfer Transaction |
 | **Keeta** | Any Keeta token | `SEND` operation |
+| **Concordium** | CCD or any PLT token (e.g., EURR) | Sponsored V1 transfer |
 
 Facilitators support **networks**, not specific tokens — any compatible token works on any facilitator that supports that network.
 
@@ -292,7 +295,7 @@ Video Guide: [Adding EVM Chains to x402](https://x.com/jaycoolh/status/192085155
 
 Key takeaways:
 
-* **Any EVM chain** is supported via `eip155:<chainId>` — plus Solana, TON (TVM), Algorand, Stellar, Aptos, Hedera, and Keeta
+* **Any EVM chain** is supported via `eip155:<chainId>` — plus Solana, TON (TVM), Algorand (AVM), Stellar, Aptos, Hedera, Keeta, and Concordium
 * [Default assets](#default-assets-for-dollar-string-pricing) are a convenience for `"$0.01"` dollar-string pricing; explicit `TokenAmount` works on any chain
 * Any ERC-20 token works on any EVM facilitator (via EIP-3009 or Permit2)
 * CAIP-2 identifiers provide unambiguous cross-chain support

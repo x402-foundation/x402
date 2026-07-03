@@ -230,10 +230,11 @@ func VerifyBatchedVoucherTypedData(
 		"maxClaimableAmount": maxClaimable,
 	}
 
-	// If payerAuthorizer is non-zero, verify via ECDSA against payerAuthorizer
+	// If payerAuthorizer is non-zero, verify via pure ECDSA against payerAuthorizer.
+	// On-chain x402BatchSettlement uses ECDSA.recoverCalldata for the payerAuthorizer
+	// path regardless of code at that address — mirror that exactly.
 	if payerAuthorizer != zeroAddress && payerAuthorizer != "" {
-		return signer.VerifyTypedData(
-			ctx,
+		return evm.VerifyEOATypedData(
 			payerAuthorizer,
 			domain,
 			batchsettlement.VoucherTypes,
@@ -243,9 +244,11 @@ func VerifyBatchedVoucherTypedData(
 		)
 	}
 
-	// Otherwise, verify via ERC-1271 against payer (smart wallet)
-	return signer.VerifyTypedData(
+	// payerAuthorizer == 0: on-chain uses OZ SignatureChecker.isValidSignatureNow(payer, …)
+	// which is code-routed. Use the strict primitive to match that.
+	return evm.VerifyTypedDataStrict(
 		ctx,
+		signer,
 		payer,
 		domain,
 		batchsettlement.VoucherTypes,

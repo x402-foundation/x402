@@ -42,6 +42,12 @@ There are pre-configured [examples available in the x402 repo](https://github.co
     # For Keeta support, also add:
     npm install @x402/keeta
 
+    # For Hedera support, also add:
+    npm install @x402/hedera
+
+    # For Concordium support, also add:
+    npm install @x402/concordium
+
     # For TON (TVM) support, also add:
     npm install @x402/tvm
     ```
@@ -189,6 +195,34 @@ const account = KeetaNet.lib.Account.fromSeed(
   0,
 );
 const keetaSigner = toClientKeetaSigner(account);
+```
+
+#### Hedera
+
+Use `@x402/hedera` to instantiate a signer:
+
+```typescript
+import { createClientHederaSigner } from "@x402/hedera";
+import { PrivateKey } from "@hiero-ledger/sdk";
+
+const hederaSigner = createClientHederaSigner(
+  process.env.HEDERA_ACCOUNT_ID!,
+  PrivateKey.fromStringECDSA(process.env.HEDERA_PRIVATE_KEY!),
+  { network: "hedera:testnet" },
+);
+```
+
+#### Concordium
+
+Use `@x402/concordium` with the Concordium web SDK to instantiate a signer:
+
+```typescript
+import { buildBasicAccountSigner, AccountAddress } from "@concordium/web-sdk";
+
+const concordiumSigner = {
+  accountAddress: AccountAddress.fromBase58(process.env.CCD_ADDRESS!),
+  signer: buildBasicAccountSigner(process.env.CCD_PRIVATE_KEY!),
+};
 ```
 
 #### TON (TVM)
@@ -489,6 +523,27 @@ You can register multiple payment schemes to handle different networks:
       0,
     );
     client.register("keeta:*", new ExactKeetaScheme(toClientKeetaSigner(keetaAccount)));
+
+    // For Hedera support, also add:
+    import { ExactHederaScheme } from "@x402/hedera/exact/client";
+    import { createClientHederaSigner, PrivateKey } from "@x402/hedera";
+
+    const hederaSigner = createClientHederaSigner(
+      process.env.HEDERA_ACCOUNT_ID!,
+      PrivateKey.fromStringECDSA(process.env.HEDERA_PRIVATE_KEY!),
+      { network: "hedera:testnet" },
+    );
+    client.register("hedera:*", new ExactHederaScheme(hederaSigner));
+
+    // For Concordium support, also add:
+    import { ExactConcordiumScheme } from "@x402/concordium/exact/client";
+    import { buildBasicAccountSigner, AccountAddress } from "@concordium/web-sdk";
+
+    const concordiumSigner = {
+      accountAddress: AccountAddress.fromBase58(process.env.CCD_ADDRESS!),
+      signer: buildBasicAccountSigner(process.env.CCD_PRIVATE_KEY!),
+    };
+    client.register("ccd:*", new ExactConcordiumScheme(concordiumSigner));
 
     // For TON (TVM) support, also add:
     import { ExactTvmScheme } from "@x402/tvm/exact/client";

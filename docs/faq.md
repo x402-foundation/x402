@@ -70,6 +70,8 @@ Yes. x402 handles the _payment execution_. You can still meter usage, aggregate 
 
 \* Gas paid onchain; many facilitators offer **zero** facilitator fees (see [Facilitators](/dev-tools/facilitators) for details).
 
+For the complete list of protocol-supported networks and tokens, see [Networks & Token Support](/core-concepts/network-and-token-support).
+
 _Support for additional chains and assets is on the roadmap and community‑driven._
 
 #### Does x402 support fiat off‑ramps or credit‑card deposits?

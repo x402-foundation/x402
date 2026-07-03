@@ -1,5 +1,22 @@
 # @x402/evm Changelog
 
+## 2.17.0
+
+### Minor Changes
+
+- [266b19d](https://github.com/x402-foundation/x402/commit/266b19d): Declares `receiverAuthorizer` in facilitator supported as optional. If a facilitator opts in to provide `receiverAuthorizer`, servers may delegate to it. Otherwise, they must provide their own. ([#2700](https://github.com/x402-foundation/x402/pull/2700)) - Thanks [@phdargen](https://github.com/phdargen)!
+- Made the batch-settlement facilitator `authorizerSigner` optional. A facilitator that omits it no longer advertises a `receiverAuthorizer` in `/supported` and requires servers to supply their own claim/refund authorizer signatures, returning `invalid_batch_settlement_evm_authorizer_not_configured` when one is missing. The batch-settlement server scheme now also implements `validateFacilitatorSupport`, so a server configured without a `receiverAuthorizerSigner` (intending to delegate) fails fast during `initialize()` when the facilitator does not advertise a usable `receiverAuthorizer`, instead of only failing lazily on the first request.
+- [4cba262](https://github.com/x402-foundation/x402/commit/4cba262): Expanded wallet compatibility so payments verify and settle consistently across plain EOAs, deployed smart accounts (ERC-4337 / ERC-7579), counterfactual ERC-6492 wallets, and ERC-7702-delegated EOAs. Pre-verification now mirrors on-chain signature checking, so a payment that passes `verify` is the same one that succeeds at `settle`. Added counterfactual ERC-6492 support to the `exact` and `batch-settlement` flows — the wallet is deployed and its signature validated together during `verify` — gated by a new `eip6492AllowedFactories` allowlist you set on the facilitator scheme config. Also added a wallet-compatibility guide documenting which wallet and scheme combinations are supported. ([#2658](https://github.com/x402-foundation/x402/pull/2658)) - Thanks [@CarsonRoscoe](https://github.com/CarsonRoscoe) and [@cursoragent](https://github.com/cursoragent)!
+- Updated dependencies [266b19d](https://github.com/x402-foundation/x402/commit/266b19d)
+  - @x402/core@2.17.0
+
+## 2.16.0
+
+### Minor Changes
+
+- Updated dependencies [59ac597](https://github.com/x402-foundation/x402/commit/59ac597)
+  - @x402/core@2.16.0
+
 ## 2.15.0
 
 ### Minor Changes

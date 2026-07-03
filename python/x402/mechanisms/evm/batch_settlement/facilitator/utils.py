@@ -17,6 +17,7 @@ except ImportError as e:
 from .....schemas import PaymentRequirements
 from ...multicall import MulticallCall, multicall
 from ...signer import FacilitatorEvmSigner
+from ...verify import verify_typed_data_strict
 from ..abi import BATCH_SETTLEMENT_ABI
 from ..constants import (
     BATCH_SETTLEMENT_ADDRESS,
@@ -124,7 +125,9 @@ def verify_batch_settlement_voucher_typed_data(
             return False
 
     try:
-        return signer.verify_typed_data(
+        # Uses the strict primitive that mirrors on-chain SignatureChecker (code-routed, no ECDSA fallback).
+        return verify_typed_data_strict(
+            signer,
             address=to_checksum_address(payer),
             domain=domain,
             types=VOUCHER_TYPES,

@@ -52,14 +52,14 @@ describe("near facilitator verify", () => {
 
     const evmReqs = makeRequirements({ network: "eip155:8453" as PaymentRequirements["network"] });
     expect((await scheme.verify(makePayload(b64, evmReqs), evmReqs)).invalidReason).toBe(
-      "unsupported_network",
+      "invalid_network",
     );
 
     const mainnetReqs = makeRequirements({ network: "near:mainnet" });
     const testnetAccepted = makeRequirements({ network: "near:testnet" });
     expect(
       (await scheme.verify(makePayload(b64, testnetAccepted), mainnetReqs)).invalidReason,
-    ).toBe("network_mismatch");
+    ).toBe("invalid_exact_near_network_mismatch");
   });
 
   it("rejects asset/payTo/amount/timeout requirement mismatches", async () => {
@@ -68,9 +68,9 @@ describe("near facilitator verify", () => {
     const reqs = makeRequirements();
 
     const cases: Array<[Partial<PaymentRequirements>, string]> = [
-      [{ asset: "other.testnet" }, "asset_mismatch"],
-      [{ payTo: "other.testnet" }, "pay_to_mismatch"],
-      [{ amount: "2" }, "amount_mismatch"],
+      [{ asset: "other.testnet" }, "invalid_exact_near_asset_mismatch"],
+      [{ payTo: "other.testnet" }, "invalid_exact_near_pay_to_mismatch"],
+      [{ amount: "2" }, "invalid_exact_near_amount_mismatch"],
     ];
     for (const [acceptedOverride, reason] of cases) {
       const accepted = makeRequirements(acceptedOverride);
@@ -79,7 +79,7 @@ describe("near facilitator verify", () => {
 
     const zeroTimeout = makeRequirements({ maxTimeoutSeconds: 0 });
     expect((await scheme.verify(makePayload(b64, zeroTimeout), zeroTimeout)).invalidReason).toBe(
-      "invalid_max_timeout",
+      "invalid_exact_near_max_timeout",
     );
   });
 
@@ -88,10 +88,12 @@ describe("near facilitator verify", () => {
     const reqs = makeRequirements();
 
     const noField = { x402Version: 2, accepted: reqs, payload: {} } as never;
-    expect((await scheme.verify(noField, reqs)).invalidReason).toBe("invalid_payload_shape");
+    expect((await scheme.verify(noField, reqs)).invalidReason).toBe(
+      "invalid_exact_near_payload_shape",
+    );
 
     expect((await scheme.verify(makePayload("@@not-borsh@@", reqs), reqs)).invalidReason).toBe(
-      "invalid_signed_delegate_action",
+      "invalid_exact_near_payload_signed_delegate_action",
     );
   });
 
@@ -100,7 +102,7 @@ describe("near facilitator verify", () => {
     const reqs = makeRequirements();
     const scheme = new ExactNearScheme(mockFacilitatorSigner());
     const result = await scheme.verify(makePayload(tamperSignature(b64), reqs), reqs);
-    expect(result.invalidReason).toBe("invalid_signature");
+    expect(result.invalidReason).toBe("invalid_exact_near_payload_signature");
     expect(result.payer).toBeUndefined();
   });
 
@@ -109,7 +111,7 @@ describe("near facilitator verify", () => {
     const reqs = makeRequirements();
     const scheme = new ExactNearScheme(mockFacilitatorSigner({ relayerIds: ["alice.testnet"] }));
     const result = await scheme.verify(makePayload(b64, reqs), reqs);
-    expect(result.invalidReason).toBe("relayer_cannot_be_payer");
+    expect(result.invalidReason).toBe("invalid_exact_near_relayer_cannot_be_payer");
     expect(result.payer).toBe("alice.testnet");
   });
 
@@ -134,17 +136,17 @@ describe("near facilitator verify", () => {
       ],
     });
     expect((await scheme.verify(makePayload(twoActions.b64, reqs), reqs)).invalidReason).toBe(
-      "invalid_action_count",
+      "invalid_exact_near_payload_action_count",
     );
 
     const transferKind = await buildSignedDelegateB64({ actions: [actionCreators.transfer(1n)] });
     expect((await scheme.verify(makePayload(transferKind.b64, reqs), reqs)).invalidReason).toBe(
-      "unsupported_action_kind",
+      "invalid_exact_near_payload_action_kind",
     );
 
     const wrongMethod = await buildSignedDelegateB64({ methodName: "storage_deposit" });
     expect((await scheme.verify(makePayload(wrongMethod.b64, reqs), reqs)).invalidReason).toBe(
-      "invalid_method_name",
+      "invalid_exact_near_payload_method_name",
     );
   });
 
@@ -154,27 +156,27 @@ describe("near facilitator verify", () => {
 
     const wrongToken = await buildSignedDelegateB64({ receiverId: "other.testnet" });
     expect((await scheme.verify(makePayload(wrongToken.b64, reqs), reqs)).invalidReason).toBe(
-      "token_contract_mismatch",
+      "invalid_exact_near_payload_token_contract_mismatch",
     );
 
     const wrongRecipient = await buildSignedDelegateB64({ ftReceiver: "attacker.testnet" });
     expect((await scheme.verify(makePayload(wrongRecipient.b64, reqs), reqs)).invalidReason).toBe(
-      "recipient_mismatch",
+      "invalid_exact_near_payload_recipient_mismatch",
     );
 
     const wrongAmount = await buildSignedDelegateB64({ amount: "999999" });
     expect((await scheme.verify(makePayload(wrongAmount.b64, reqs), reqs)).invalidReason).toBe(
-      "transfer_amount_mismatch",
+      "invalid_exact_near_payload_amount_mismatch",
     );
 
     const wrongDeposit = await buildSignedDelegateB64({ deposit: 0n });
     expect((await scheme.verify(makePayload(wrongDeposit.b64, reqs), reqs)).invalidReason).toBe(
-      "invalid_attached_deposit",
+      "invalid_exact_near_payload_attached_deposit",
     );
 
     const tooMuchGas = await buildSignedDelegateB64({ gas: 200_000_000_000_000n });
     expect((await scheme.verify(makePayload(tooMuchGas.b64, reqs), reqs)).invalidReason).toBe(
-      "gas_limit_exceeded",
+      "invalid_exact_near_payload_gas_limit_exceeded",
     );
   });
 
@@ -184,13 +186,13 @@ describe("near facilitator verify", () => {
     const expired = await buildSignedDelegateB64({ maxBlockHeight: 500n });
     const expiredScheme = new ExactNearScheme(mockFacilitatorSigner({ blockHeight: 1000n }));
     expect((await expiredScheme.verify(makePayload(expired.b64, reqs), reqs)).invalidReason).toBe(
-      "delegate_action_expired",
+      "invalid_exact_near_payload_delegate_action_expired",
     );
 
     const tooFar = await buildSignedDelegateB64({ maxBlockHeight: 2000n });
     const tooFarScheme = new ExactNearScheme(mockFacilitatorSigner({ blockHeight: 1000n }));
     expect((await tooFarScheme.verify(makePayload(tooFar.b64, reqs), reqs)).invalidReason).toBe(
-      "delegate_action_timeout_window_exceeds_maxTimeout",
+      "invalid_exact_near_payload_delegate_action_timeout_window_exceeds_max_timeout",
     );
   });
 
@@ -203,7 +205,7 @@ describe("near facilitator verify", () => {
     });
     const s1 = new ExactNearScheme(mockFacilitatorSigner({ blockHeight: 1000n }));
     expect((await s1.verify(makePayload(outOfRange.b64, reqs), reqs)).invalidReason).toBe(
-      "delegate_action_nonce_out_of_range",
+      "invalid_exact_near_payload_delegate_action_nonce_out_of_range",
     );
 
     const reused = await buildSignedDelegateB64({ nonce: 5n, maxBlockHeight: 1060n });
@@ -214,7 +216,7 @@ describe("near facilitator verify", () => {
       }),
     );
     expect((await s2.verify(makePayload(reused.b64, reqs), reqs)).invalidReason).toBe(
-      "delegate_action_nonce_already_used",
+      "invalid_exact_near_payload_delegate_action_nonce_already_used",
     );
   });
 
@@ -224,21 +226,21 @@ describe("near facilitator verify", () => {
 
     const missing = new ExactNearScheme(mockFacilitatorSigner({ accessKey: null }));
     expect((await missing.verify(makePayload(b64, reqs), reqs)).invalidReason).toBe(
-      "access_key_not_found",
+      "invalid_exact_near_access_key_not_found",
     );
 
     const fnKey = new ExactNearScheme(
       mockFacilitatorSigner({ accessKey: { nonce: 0n, permissionKind: "FunctionCall" } }),
     );
     expect((await fnKey.verify(makePayload(b64, reqs), reqs)).invalidReason).toBe(
-      "function_call_key_not_allowed",
+      "invalid_exact_near_function_call_key_not_allowed",
     );
 
     const unknownKey = new ExactNearScheme(
       mockFacilitatorSigner({ accessKey: { nonce: 0n, permissionKind: "Unknown" } }),
     );
     expect((await unknownKey.verify(makePayload(b64, reqs), reqs)).invalidReason).toBe(
-      "unsupported_access_key_permission",
+      "invalid_exact_near_unsupported_access_key_permission",
     );
   });
 
@@ -250,14 +252,14 @@ describe("near facilitator verify", () => {
       mockFacilitatorSigner({ accounts: { "alice.testnet": null } }),
     );
     expect((await noSender.verify(makePayload(b64, reqs), reqs)).invalidReason).toBe(
-      "sender_account_not_found",
+      "invalid_exact_near_sender_account_not_found",
     );
 
     const noToken = new ExactNearScheme(
       mockFacilitatorSigner({ accounts: { "usdc.testnet": null } }),
     );
     expect((await noToken.verify(makePayload(b64, reqs), reqs)).invalidReason).toBe(
-      "token_account_not_found",
+      "invalid_exact_near_token_account_not_found",
     );
 
     const noCode = new ExactNearScheme(
@@ -266,19 +268,19 @@ describe("near facilitator verify", () => {
       }),
     );
     expect((await noCode.verify(makePayload(b64, reqs), reqs)).invalidReason).toBe(
-      "token_contract_no_code",
+      "invalid_exact_near_token_contract_no_code",
     );
 
     const lowBalance = new ExactNearScheme(mockFacilitatorSigner({ balance: 1n }));
     expect((await lowBalance.verify(makePayload(b64, reqs), reqs)).invalidReason).toBe(
-      "insufficient_token_balance",
+      "insufficient_funds",
     );
 
     const noStorage = new ExactNearScheme(
       mockFacilitatorSigner({ storage: { supported: true, registered: false } }),
     );
     expect((await noStorage.verify(makePayload(b64, reqs), reqs)).invalidReason).toBe(
-      "recipient_not_registered_for_storage",
+      "invalid_exact_near_recipient_not_registered_for_storage",
     );
 
     const noNep145 = new ExactNearScheme(mockFacilitatorSigner({ storage: { supported: false } }));
@@ -292,8 +294,29 @@ describe("near facilitator verify", () => {
       mockFacilitatorSigner({ blockHeightError: new Error("rpc down") }),
     );
     const result = await scheme.verify(makePayload(b64, reqs), reqs);
-    expect(result.invalidReason).toBe("current_block_height_unavailable");
+    expect(result.invalidReason).toBe("invalid_exact_near_current_block_height_unavailable");
     expect(result.payer).toBe("alice.testnet");
+  });
+
+  it("returns the core unexpected verify error code and message for unexpected errors", async () => {
+    const { b64 } = await buildSignedDelegateB64();
+    const reqs = makeRequirements();
+    const signer = mockFacilitatorSigner();
+    const scheme = new ExactNearScheme({
+      ...signer,
+      getRelayerIds: () => {
+        throw new Error("relayer lookup exploded");
+      },
+    });
+
+    const result = await scheme.verify(makePayload(b64, reqs), reqs);
+
+    expect(result).toMatchObject({
+      isValid: false,
+      invalidReason: "unexpected_verify_error",
+      invalidMessage: "relayer lookup exploded",
+    });
+    expect(result.payer).toBeUndefined();
   });
 });
 

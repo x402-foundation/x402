@@ -1,2 +1,2 @@
 #!/bin/bash
-pnpm dev 
+pnpm start

@@ -43,6 +43,9 @@ examples/go/servers/builder-codes/builder-codes
 examples/go/facilitator/builder-codes/builder-codes
 examples/go/clients/builder-codes/builder-codes
 
+# Generated setup-script output (smart-account addresses per run)
+typescript/packages/mechanisms/evm/scripts/setup-smart-accounts.log
+
 # Agent artifacts
 TASK.md
 .claude/

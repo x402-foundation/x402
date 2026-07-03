@@ -13,6 +13,7 @@ export interface ParsedArgs {
   filters: TestFilters;
   showHelp: boolean;
   minimize: boolean;
+  seed?: number;             // Optional seed for reproducible --min shuffle
   networkMode?: NetworkMode;  // undefined = prompt user, set = skip prompt
   parallel: boolean;
   concurrency: number;
@@ -53,9 +54,9 @@ export function parseArgs(): ParsedArgs {
   // Parse verbose
   const verbose = args.includes('-v') || args.includes('--verbose');
 
-  // Parse log file — supports --log (timestamped default), --log=path, and legacy --log-file=path
+  // Parse log file — supports --log (timestamped default), --log=path, --logs=path, and legacy --log-file=path
   let logFile: string | undefined;
-  const logArg = args.find(arg => arg === '--log' || arg.startsWith('--log='));
+  const logArg = args.find(arg => arg === '--log' || arg.startsWith('--log=') || arg === '--logs' || arg.startsWith('--logs='));
   const legacyLogArg = args.find(arg => arg.startsWith('--log-file='));
   if (logArg) {
     if (logArg.includes('=')) {
@@ -73,6 +74,10 @@ export function parseArgs(): ParsedArgs {
 
   // Parse minimize flag
   const minimize = args.includes('--min');
+
+  // Parse optional seed for reproducible --min shuffling
+  const seedArg = args.find(arg => arg.startsWith('--seed='))?.split('=')[1];
+  const seed = seedArg !== undefined ? parseInt(seedArg, 10) : undefined;
 
   // Parse parallel mode flags
   const parallel = args.includes('--parallel');
@@ -116,6 +121,7 @@ export function parseArgs(): ParsedArgs {
     },
     showHelp: false,
     minimize,
+    seed,
     networkMode,
     parallel,
     concurrency,
@@ -156,9 +162,11 @@ export function printHelp(): void {
   console.log('Options:');
   console.log('  -v, --verbose              Enable verbose logging');
   console.log('  --log[=<path>]             Write output to file (default: logs/e2e-run-<timestamp>.log)');
+  console.log('  --logs[=<path>]            Alias for --log');
   console.log('  --log-file=<path>          Alias for --log=<path> (legacy)');
   console.log('  --output-json=<path>       Write structured JSON results to file');
-  console.log('  --min                      Minimize tests (coverage-based skipping)');
+  console.log('  --min                      Minimize tests (coverage-based skipping, shuffled for even distribution)');
+  console.log('  --seed=<N>                 Seed for --min shuffle (default: random; use for reproducible runs)');
   console.log('  --parallel                 Run server+facilitator combos concurrently');
   console.log('  --concurrency=<N>          Max concurrent combos (default: 4, requires --parallel)');
   console.log('  -h, --help                 Show this help message');
@@ -167,7 +175,8 @@ export function printHelp(): void {
   console.log('  pnpm test                                           # Interactive mode (testnet)');
   console.log('  pnpm test --testnet                                 # Skip network prompt');
   console.log('  pnpm test --mainnet                                 # Use mainnet (real funds!)');
-  console.log('  pnpm test --min -v                                  # Minimize with verbose');
+  console.log('  pnpm test --min -v                                  # Minimize with verbose (random shuffle)');
+  console.log('  pnpm test --min --seed=42 -v                        # Minimize with reproducible shuffle');
   console.log('  pnpm test --transport=mcp                                # MCP transport only');
   console.log('  pnpm test --mainnet --facilitators=go --servers=express  # Mainnet programmatic');
   console.log("  pnpm test --testnet --endpoints='/protected'              # Exact path match");

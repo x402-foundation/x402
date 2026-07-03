@@ -6,7 +6,7 @@
  */
 
 export type NetworkMode = 'testnet' | 'mainnet';
-export type ProtocolFamily = 'evm' | 'svm' | 'avm' | 'aptos' | 'hedera' | 'keeta' | 'near' | 'stellar' | 'tvm';
+export type ProtocolFamily = 'evm' | 'svm' | 'avm' | 'aptos' | 'hedera' | 'keeta' | 'near' | 'stellar' | 'ccd' | 'tvm';
 
 export type NetworkConfig = {
   name: string;
@@ -23,6 +23,7 @@ export type NetworkSet = {
   hedera: NetworkConfig;
   keeta: NetworkConfig;
   stellar: NetworkConfig;
+  ccd: NetworkConfig;
   tvm: NetworkConfig;
   near: NetworkConfig;
 };
@@ -47,6 +48,11 @@ const NETWORK_SETS: Record<NetworkMode, NetworkSet> = {
       name: 'Algorand Testnet',
       caip2: 'algorand:SGO1GKSzyE7IEPItTxCByw9x8FmnrCDexi9/cOUJOiI=',
       rpcUrl: process.env.AVM_TESTNET_RPC_URL || 'https://testnet-api.4160.nodely.dev',
+    },
+    ccd: {
+      name: 'Concordium Testnet',
+      caip2: 'ccd:4221332d34e1694168c2a0c0b3fd0f27',
+      rpcUrl: process.env.CONCORDIUM_TESTNET_GRPC_URL || 'grpc.testnet.concordium.com:20000',
     },
     aptos: {
       name: 'Aptos Testnet',
@@ -96,6 +102,11 @@ const NETWORK_SETS: Record<NetworkMode, NetworkSet> = {
       name: 'Algorand Mainnet',
       caip2: 'algorand:wGHE2Pwdvd7S12BL5FaOP20EGYesN73ktiC1qzkkit8=',
       rpcUrl: process.env.AVM_RPC_URL || 'https://mainnet-api.4160.nodely.dev',
+    },
+    ccd: {
+      name: 'Concordium Mainnet',
+      caip2: 'ccd:9dd9ca4d19e9393877d2c44b70f89acb',
+      rpcUrl: process.env.CONCORDIUM_MAINNET_GRPC_URL || 'grpc.mainnet.concordium.software:20000',
     },
     aptos: {
       name: 'Aptos',
@@ -162,7 +173,7 @@ export function resolveEvmPermit2Asset(networks: NetworkSet): string {
  * Get network config for a protocol family in a given mode
  *
  * @param mode - 'testnet' or 'mainnet'
- * @param protocolFamily - 'evm', 'svm', 'avm', 'aptos', 'hedera', 'stellar', or 'tvm'
+ * @param protocolFamily - 'evm', 'svm', 'avm', 'aptos', 'hedera', 'near', 'stellar', 'ccd', or 'tvm'
  * @returns NetworkConfig for the specified protocol
  */
 export function getNetworkForProtocol(
@@ -180,6 +191,6 @@ export function getNetworkForProtocol(
  */
 export function getNetworkModeDescription(mode: NetworkMode): string {
   const set = NETWORK_SETS[mode];
-  const networks = [set.evm.name, set.svm.name, set.avm.name, set.aptos.name, set.hedera.name, set.keeta.name, set.near.name, set.stellar.name, set.tvm.name];
+  const networks = [set.evm.name, set.svm.name, set.avm.name, set.aptos.name, set.hedera.name, set.keeta.name, set.near.name, set.stellar.name, set.ccd.name, set.tvm.name];
   return networks.join(' + ');
 }

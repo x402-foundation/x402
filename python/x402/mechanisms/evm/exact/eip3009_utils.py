@@ -29,6 +29,7 @@ from ..multicall import MulticallCall, encode_contract_call, multicall
 from ..signer import FacilitatorEvmSigner
 from ..types import ERC6492SignatureData, ExactEIP3009Authorization
 from ..utils import bytes_to_hex, hex_to_bytes
+from ..verify import verify_typed_data_strict
 
 
 @dataclass
@@ -91,7 +92,9 @@ def classify_eip3009_signature(
     )
 
     is_smart_wallet = has_deployment_info(sig_data) or len(sig_data.inner_signature) != 65
-    valid = signer.verify_typed_data(
+    # Uses the strict primitive that mirrors on-chain SignatureChecker (code-routed, no ECDSA fallback).
+    valid = verify_typed_data_strict(
+        signer,
         authorization.from_address,
         domain,
         types,
@@ -139,6 +142,21 @@ def simulate_eip3009_transfer(
     sig_data: ERC6492SignatureData,
 ) -> bool:
     """Simulate `transferWithAuthorization` and return whether it succeeds."""
+    return simulate_eip3009_transfer_result(signer, token_address, parsed, sig_data)[0]
+
+
+def simulate_eip3009_transfer_result(
+    signer: FacilitatorEvmSigner,
+    token_address: str,
+    parsed: ParsedEIP3009Authorization,
+    sig_data: ERC6492SignatureData,
+) -> tuple[bool, Exception | None]:
+    """Like `simulate_eip3009_transfer` but also returns the raised exception (if any).
+
+    Lets callers distinguish a contract revert from a transport/RPC failure (see
+    `is_contract_revert`). Returns `(ok, error)` where `error` is populated only when the
+    underlying `eth_call` raised.
+    """
     if has_deployment_info(sig_data):
         transfer_calldata = encode_contract_call(
             TRANSFER_WITH_AUTHORIZATION_BYTES_ABI,
@@ -162,9 +180,14 @@ def simulate_eip3009_transfer(
                     MulticallCall(address=token_address, call_data=transfer_calldata),
                 ],
             )
-        except Exception:
-            return False
-        return len(results) >= 2 and results[1].success
+        except Exception as e:
+            return (False, e)
+        if len(results) >= 2 and results[1].success:
+            return (True, None)
+        # Surface the transfer sub-call's revert (decoded by multicall) so the caller can
+        # report the concrete reason rather than a generic simulation-failed code.
+        transfer_error = results[1].error if len(results) >= 2 else None
+        return (False, transfer_error)
 
     if len(sig_data.inner_signature) == 65:
         v, r, s = _split_signature_parts(sig_data.inner_signature)
@@ -183,9 +206,9 @@ def simulate_eip3009_transfer(
                 r,
                 s,
             )
-        except Exception:
-            return False
-        return True
+        except Exception as e:
+            return (False, e)
+        return (True, None)
 
     try:
         signer.read_contract(
@@ -200,9 +223,9 @@ def simulate_eip3009_transfer(
             parsed.nonce,
             sig_data.inner_signature,
         )
-    except Exception:
-        return False
-    return True
+    except Exception as e:
+        return (False, e)
+    return (True, None)
 
 
 def diagnose_eip3009_simulation_failure(

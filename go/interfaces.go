@@ -135,8 +135,9 @@ type PaymentResponseHandler interface {
 
 // ClientExtension can enrich payment payloads on the client side.
 // Client extensions are invoked after the scheme creates the base payload
-// but before it is returned. This allows mechanism-specific logic (e.g., EVM EIP-2612
-// permit signing) to enrich the payload's extensions data.
+// but before it is returned. Optional transport-specific capabilities can be
+// exposed through package-level provider interfaces such as the HTTP client's
+// payment-required hook provider.
 type ClientExtension interface {
 	// Key returns the unique extension identifier (e.g., "eip2612GasSponsoring").
 	// Must match the extension key used in PaymentRequired.Extensions.
@@ -223,6 +224,15 @@ type PaymentRequiredContext struct {
 // implementations may mutate ctx.Requirements entries in place.
 type PaymentRequiredEnricher interface {
 	EnrichPaymentRequiredResponse(ctx PaymentRequiredContext)
+}
+
+// FacilitatorSupportValidator is an optional interface that SchemeNetworkServer
+// implementations can satisfy to validate facilitator capabilities at startup.
+// Invoked during Initialize(), only when the facilitator supports the
+// scheme/network. Returns a non-nil error describing the problem when the
+// configuration cannot be fulfilled, or nil when valid.
+type FacilitatorSupportValidator interface {
+	ValidateFacilitatorSupport(network Network, supportedKind types.SupportedKind, facilitatorExtensions []string) error
 }
 
 // SchemeNetworkFacilitator is implemented by facilitator-side payment mechanisms (V2)

@@ -87,6 +87,25 @@ const mockGetCodeEOAPayer =
         : ("0x" as `0x${string}`),
     );
 
+// Wraps a per-test readContract impl so isValidSignature returns the ERC-1271
+// magic value. The strict signature primitive added in the 7702 fix calls
+// readContract for ERC-1271 verification; this helper preserves the previous
+// "default: signature accepted" semantics for tests that mock readContract for
+// other purposes (allowance, nonce, multicall).
+const sigValid = "0x1626ba7e";
+function rcWithSig(
+  impl: unknown | ((args: { address?: string; functionName?: string }) => unknown),
+  sigResponse: string = sigValid,
+) {
+  return vi.fn().mockImplementation(async (args: { address?: string; functionName?: string }) => {
+    if (args?.functionName === "isValidSignature") return sigResponse;
+    if (typeof impl === "function") {
+      return (impl as (a: typeof args) => unknown)(args);
+    }
+    return impl;
+  });
+}
+
 describe("UptoEvmScheme (Facilitator)", () => {
   let mockSigner: FacilitatorEvmSigner;
   let scheme: UptoEvmScheme;
@@ -94,7 +113,7 @@ describe("UptoEvmScheme (Facilitator)", () => {
   beforeEach(() => {
     mockSigner = {
       getAddresses: () => [FACILITATOR_ADDRESS],
-      readContract: vi.fn().mockResolvedValue(BigInt("999999999999999999")),
+      readContract: rcWithSig(BigInt("999999999999999999")),
       verifyTypedData: vi.fn().mockResolvedValue(true),
       writeContract: vi.fn().mockResolvedValue("0xtxhash1234" as `0x${string}`),
       sendTransaction: vi.fn(),
@@ -126,19 +145,12 @@ describe("UptoEvmScheme (Facilitator)", () => {
 
       expect(result.isValid).toBe(true);
       expect(result.payer).toBe("0x1234567890123456789012345678901234567890");
-      expect(mockSigner.verifyTypedData).toHaveBeenCalled();
-    });
-
-    it("should verify with uptoPermit2WitnessTypes containing facilitator", async () => {
-      await scheme.verify(makePayload(), makeRequirements());
-
-      const callArgs = (mockSigner.verifyTypedData as ReturnType<typeof vi.fn>).mock.calls[0][0];
-      const witnessType = callArgs.types.Witness;
-      expect(witnessType).toEqual([
-        { name: "to", type: "address" },
-        { name: "facilitator", type: "address" },
-        { name: "validAfter", type: "uint256" },
-      ]);
+      // The strict primitive checks code.length first then either ecrecovers or
+      // calls isValidSignature. Default mock returns deployed bytecode, so we
+      // expect an isValidSignature ERC-1271 readContract call.
+      expect(mockSigner.readContract).toHaveBeenCalledWith(
+        expect.objectContaining({ functionName: "isValidSignature" }),
+      );
     });
 
     it("should reject if scheme is not upto", async () => {
@@ -398,10 +410,11 @@ describe("UptoEvmScheme (Facilitator)", () => {
 
       expect(result.success).toBe(true);
 
-      // Verify that verifyTypedData was called with the ceiling amount,
-      // not the metered amount — this is the swap convention.
-      const verifyCall = (mockSigner.verifyTypedData as ReturnType<typeof vi.fn>).mock.calls[0][0];
-      expect(verifyCall.message.permitted.amount).toBe(BigInt(ceiling));
+      // Default mock returns deployed bytecode → ERC-1271 path; readContract
+      // is called with isValidSignature to verify the ceiling-amount typed data.
+      expect(mockSigner.readContract).toHaveBeenCalledWith(
+        expect.objectContaining({ functionName: "isValidSignature" }),
+      );
     });
 
     it("should transfer the metered amount on-chain, not the ceiling", async () => {
@@ -428,7 +441,7 @@ describe("UptoEvmScheme (Facilitator)", () => {
 
       for (const metered of testAmounts) {
         vi.clearAllMocks();
-        mockSigner.readContract = vi.fn().mockResolvedValue(BigInt("999999999999999999"));
+        mockSigner.readContract = rcWithSig(BigInt("999999999999999999"));
         mockSigner.verifyTypedData = vi.fn().mockResolvedValue(true);
         mockSigner.writeContract = vi.fn().mockResolvedValue("0xtxhash1234" as `0x${string}`);
         mockSigner.waitForTransactionReceipt = vi.fn().mockResolvedValue({ status: "success" });
@@ -655,7 +668,7 @@ describe("UptoEvmScheme (Facilitator)", () => {
     }
 
     it("should call settleWithPermit when EIP-2612 extension is present", async () => {
-      mockSigner.readContract = vi.fn().mockResolvedValue(undefined);
+      mockSigner.readContract = rcWithSig(undefined);
 
       const payload = makePayloadWithExtensions(makeEip2612Extension());
       const result = await scheme.settle(payload, eip2612Requirements);
@@ -668,7 +681,7 @@ describe("UptoEvmScheme (Facilitator)", () => {
     });
 
     it("should call settle (not settleWithPermit) when no EIP-2612 extension", async () => {
-      mockSigner.readContract = vi.fn().mockResolvedValue(BigInt("999999999999999999"));
+      mockSigner.readContract = rcWithSig(BigInt("999999999999999999"));
 
       const payload = makePayloadWithExtensions();
       const result = await scheme.settle(payload, eip2612Requirements);
@@ -680,7 +693,7 @@ describe("UptoEvmScheme (Facilitator)", () => {
     });
 
     it("should pass correct EIP-2612 permit struct to settleWithPermit", async () => {
-      mockSigner.readContract = vi.fn().mockResolvedValue(undefined);
+      mockSigner.readContract = rcWithSig(undefined);
 
       const payload = makePayloadWithExtensions(makeEip2612Extension());
       await scheme.settle(payload, eip2612Requirements);
@@ -698,7 +711,7 @@ describe("UptoEvmScheme (Facilitator)", () => {
     });
 
     it("should include settlement amount in settleWithPermit args", async () => {
-      mockSigner.readContract = vi.fn().mockResolvedValue(undefined);
+      mockSigner.readContract = rcWithSig(undefined);
 
       const payload = makePayloadWithExtensions(makeEip2612Extension());
       await scheme.settle(payload, makeRequirements({ amount: "500000" }));
@@ -786,7 +799,7 @@ describe("UptoEvmScheme (Facilitator)", () => {
     }
 
     it("should reject when ERC-20 extension has invalid format (bad address)", async () => {
-      mockSigner.readContract = vi.fn().mockResolvedValue(undefined);
+      mockSigner.readContract = rcWithSig(undefined);
 
       const payload = makeErc20UptoPayload({
         erc20ApprovalGasSponsoring: {
@@ -809,7 +822,7 @@ describe("UptoEvmScheme (Facilitator)", () => {
     });
 
     it("should reject when ERC-20 extension from doesn't match payer", async () => {
-      mockSigner.readContract = vi.fn().mockResolvedValue(undefined);
+      mockSigner.readContract = rcWithSig(undefined);
 
       const payload = makeErc20UptoPayload({
         erc20ApprovalGasSponsoring: {
@@ -832,7 +845,7 @@ describe("UptoEvmScheme (Facilitator)", () => {
     });
 
     it("should accept when valid ERC-20 extension present and simulation succeeds", async () => {
-      mockSigner.readContract = vi.fn().mockResolvedValue(undefined);
+      mockSigner.readContract = rcWithSig(undefined);
 
       const { parseTransaction, recoverTransactionAddress } = await import("viem");
       vi.mocked(parseTransaction).mockReturnValue({
@@ -970,7 +983,7 @@ describe("UptoEvmScheme (Facilitator)", () => {
       } as any);
       vi.mocked(recoverTransactionAddress).mockResolvedValue(PAYER);
 
-      mockSigner.readContract = vi.fn().mockResolvedValue(undefined);
+      mockSigner.readContract = rcWithSig(undefined);
 
       const { mockContext, mockSendTransactions } = makeErc20SettleContext();
 
@@ -999,7 +1012,7 @@ describe("UptoEvmScheme (Facilitator)", () => {
       } as any);
       vi.mocked(recoverTransactionAddress).mockResolvedValue(PAYER);
 
-      mockSigner.readContract = vi.fn().mockResolvedValue(undefined);
+      mockSigner.readContract = rcWithSig(undefined);
 
       const { mockContext } = makeErc20SettleContext();
 

@@ -459,7 +459,7 @@ Example facilitator response for a refund:
 
 ### GET /supported
 
-The facilitator declares a receiver authorizer whose role is to produce EIP-712 signatures for claims and refunds. The server may delegate to this address as its channel's `receiverAuthorizer`, or supply its own. Any address in `signers` may relay the resulting transactions.
+The facilitator MAY declare a receiver authorizer whose role is to produce EIP-712 signatures for claims and refunds. The server may delegate to this address as its channel's `receiverAuthorizer`, or supply its own. Any address in `signers` may relay the resulting transactions.
 
 ```json
 {
@@ -659,6 +659,8 @@ The recovery baseline is:
 3. **Cross-function replay prevention**: `Voucher`, `Refund`, and `ClaimBatch` use distinct EIP-712 type hashes so a signature for one cannot be replayed as another. Refunds additionally carry a per-channel nonce.
 
 4. **Voucher expiry via escrow depletion**: Vouchers carry no expiry field. A voucher remains claimable as long as `balance - totalClaimed > 0`; `finalizeWithdraw` and `refundWithSignature` close the claim window by draining available escrow. The ERC-3009 `validBefore`/`validAfter` fields bound only the deposit authorization, not the voucher.
+
+5. **Refund authorization when the facilitator is `receiverAuthorizer`**: A cooperative refund bypasses the timed-withdrawal delay, so it must carry receiver-side consent. When a server supplies its own `refundAuthorizerSignature` that signature is the consent. When the server delegates `receiverAuthorizer` to the facilitator, the faciltator MUST authenticate that each `refund` request originates from the service that created the channel (e.g. SIWX, JWT, or API credential bound at channel-creation time) and reject all others. A facilitator with no such authentication mechanism MUST NOT advertise a `receiverAuthorizer` in `/supported`.
 
 ---
 

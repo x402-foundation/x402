@@ -187,7 +187,8 @@ function buildRefundExtraFromPostState(
  * @param signer - Facilitator signer used to submit the onchain transactions.
  * @param payload - Refund payload with optional signatures, amount, and nonce.
  * @param requirements - Payment requirements for network identification.
- * @param authorizerSigner - Dedicated key for producing EIP-712 signatures.
+ * @param authorizerSigner - Optional dedicated key for producing EIP-712 signatures.
+ *   When omitted, the payload must already carry the required authorizer signatures.
  * @param dataSuffix - Optional hex suffix appended to the refund transaction.
  * @returns A {@link SettleResponse} with the transaction hash on success.
  */
@@ -195,7 +196,7 @@ export async function executeRefundWithSignature(
   signer: FacilitatorEvmSigner,
   payload: BatchSettlementEnrichedRefundPayload,
   requirements: PaymentRequirements,
-  authorizerSigner: AuthorizerSigner,
+  authorizerSigner: AuthorizerSigner | undefined,
   dataSuffix?: `0x${string}`,
 ): Promise<SettleResponse> {
   const network = requirements.network;
@@ -217,10 +218,21 @@ export async function executeRefundWithSignature(
     }
 
     const hasClientSig = payload.refundAuthorizerSignature !== undefined;
-    const authorizerMismatch =
-      getAddress(payload.channelConfig.receiverAuthorizer) !== getAddress(authorizerSigner.address);
 
-    if (!hasClientSig && authorizerMismatch) {
+    if (!hasClientSig && !authorizerSigner) {
+      return {
+        success: false,
+        errorReason: Errors.ErrAuthorizerNotConfigured,
+        transaction: "",
+        network,
+      };
+    }
+
+    if (
+      !hasClientSig &&
+      authorizerSigner &&
+      getAddress(payload.channelConfig.receiverAuthorizer) !== getAddress(authorizerSigner.address)
+    ) {
       return {
         success: false,
         errorReason: Errors.ErrAuthorizerAddressMismatch,
@@ -231,7 +243,13 @@ export async function executeRefundWithSignature(
 
     const refundSig =
       payload.refundAuthorizerSignature ??
-      (await signRefund(authorizerSigner, channelId, payload.amount, payload.refundNonce, network));
+      (await signRefund(
+        authorizerSigner!,
+        channelId,
+        payload.amount,
+        payload.refundNonce,
+        network,
+      ));
 
     const refundCalldata = encodeFunctionData({
       abi: batchSettlementABI,
@@ -249,6 +267,14 @@ export async function executeRefundWithSignature(
     if (payload.claims.length > 0) {
       let claimSig = payload.claimAuthorizerSignature;
       if (!claimSig) {
+        if (!authorizerSigner) {
+          return {
+            success: false,
+            errorReason: Errors.ErrAuthorizerNotConfigured,
+            transaction: "",
+            network,
+          };
+        }
         claimSig = await signClaimBatch(authorizerSigner, payload.claims, network);
       }
 

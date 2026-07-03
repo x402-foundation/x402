@@ -621,6 +621,8 @@ export class x402ResourceServer {
             "Failed to initialize: no supported payment kinds loaded from any facilitator.",
           );
     }
+
+    this.validateFacilitatorCapabilities();
   }
 
   /**
@@ -1335,6 +1337,42 @@ export class x402ResourceServer {
         throw new Error(
           `Unsupported x402 version: ${(paymentPayload as PaymentPayload).x402Version}`,
         );
+    }
+  }
+
+  /**
+   * Validates that each registered scheme's configuration is compatible with the
+   * facilitator capabilities advertised for the scheme/network combinations it
+   * supports. Only schemes the facilitator actually supports are validated.
+   *
+   * @throws Error listing every capability problem when one or more schemes report one.
+   */
+  private validateFacilitatorCapabilities(): void {
+    const configErrors: string[] = [];
+
+    for (const [network, schemeMap] of this.registeredServerSchemes) {
+      for (const [scheme, server] of schemeMap) {
+        if (!server.validateFacilitatorSupport) continue;
+
+        for (const x402Version of this.supportedResponsesMap.keys()) {
+          const supportedKind = this.getSupportedKind(x402Version, network as Network, scheme);
+          if (!supportedKind) continue;
+
+          const extensions = this.getFacilitatorExtensions(x402Version, network as Network, scheme);
+          const problem = server.validateFacilitatorSupport(
+            network as Network,
+            supportedKind,
+            extensions,
+          );
+          if (problem) configErrors.push(`${scheme} on ${network}: ${problem}`);
+        }
+      }
+    }
+
+    if (configErrors.length > 0) {
+      throw new Error(
+        `x402 facilitator capability errors:\n${configErrors.map(e => `  - ${e}`).join("\n")}`,
+      );
     }
   }
 

@@ -2,6 +2,21 @@
 
 <!-- towncrier release notes start -->
 
+## [2.14.0] - 2026-06-26
+
+### Added
+
+- Expanded wallet compatibility so payments verify and settle consistently across plain EOAs, deployed smart accounts (ERC-4337 / ERC-7579), counterfactual ERC-6492 wallets, and ERC-7702-delegated EOAs. Pre-verification now mirrors on-chain signature checking, so a payment that passes `verify` is the same one that succeeds at `settle`. Added counterfactual ERC-6492 support to the `exact` and `batch-settlement` flows — the wallet is deployed and its signature validated together during `verify` — gated by a new `eip6492_allowed_factories` allowlist you set on the facilitator scheme config. Also added a wallet-compatibility guide documenting which wallet and scheme combinations are supported. ([#2658](https://github.com/x402-foundation/x402/pull/2658)) - Thanks [@CarsonRoscoe](https://github.com/CarsonRoscoe) and [@cursoragent](https://github.com/cursoragent)!
+- Made the batch-settlement facilitator's receiver-authorizer signer optional: when omitted, the facilitator no longer advertises a `receiverAuthorizer` in `/supported`, and claim/refund execution returns `invalid_batch_settlement_evm_authorizer_not_configured` instead of auto-signing when a payload omits its authorizer signature. Added a fail-fast startup check on the resource server: a batch-settlement server with no `receiver_authorizer_signer` configured now raises during `initialize()` when the facilitator advertises no usable `receiverAuthorizer`. ([#2706](https://github.com/x402-foundation/x402/pull/2706)) - Thanks [@phdargen](https://github.com/phdargen)!
+
+
+## [2.13.1] - 2026-06-19
+
+### Fixed
+
+- Cache SVM exact client mint metadata to avoid repeated mint RPC fetches. ([#2629](https://github.com/x402-foundation/x402/pull/2629)) - Thanks [@wnjoon](https://github.com/wnjoon)!
+
+
 ## [2.13.0] - 2026-06-12
 
 ### Fixed

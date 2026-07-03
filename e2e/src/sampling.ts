@@ -2,6 +2,32 @@ import { TestScenario, endpointAssetTransferMethod, endpointPaymentScheme } from
 import { log, verboseLog } from './logger';
 
 /**
+ * Fisher-Yates shuffle — returns a new shuffled copy without mutating the input.
+ *
+ * An optional seed (integer) makes the shuffle deterministic and reproducible;
+ * omit it (or pass undefined) for a truly random shuffle on every run.
+ */
+export function shuffleScenarios(scenarios: TestScenario[], seed?: number): TestScenario[] {
+  const arr = [...scenarios];
+  // Simple seeded LCG so that --seed produces a reproducible order.
+  let rng: () => number;
+  if (seed !== undefined) {
+    let s = seed >>> 0;
+    rng = () => {
+      s = (Math.imul(1664525, s) + 1013904223) >>> 0;
+      return s / 0x100000000;
+    };
+  } else {
+    rng = Math.random;
+  }
+  for (let i = arr.length - 1; i > 0; i--) {
+    const j = Math.floor(rng() * (i + 1));
+    [arr[i], arr[j]] = [arr[j], arr[i]];
+  }
+  return arr;
+}
+
+/**
  * Coverage tracker for minimizing test runs
  * 
  * Tracks which components (client, server, facilitator) have been tested
@@ -160,22 +186,35 @@ export class CoverageTracker {
 }
 
 /**
- * Filter scenarios based on coverage to minimize test runs
- * 
- * Only includes scenarios that provide new coverage (i.e., test a component
- * with a protocol family and version combination that hasn't been tested yet).
- * 
+ * Filter scenarios based on coverage to minimize test runs.
+ *
+ * Shuffles the input before the greedy coverage pass so that equivalent
+ * implementations (e.g. go / python / typescript facilitators, or
+ * express / flask / gin servers) are distributed evenly rather than the
+ * first alphabetical entry always being chosen for every coverage slot.
+ *
+ * Pass a numeric `seed` for a reproducible shuffle; omit it (default) for a
+ * fresh random distribution on every run.
+ *
  * Args:
  *   scenarios: All test scenarios to filter
- * 
+ *   seed:      Optional integer seed for reproducible shuffling
+ *
  * Returns:
  *   Filtered list of scenarios that provide new coverage
  */
-export function minimizeScenarios(scenarios: TestScenario[]): TestScenario[] {
+export function minimizeScenarios(scenarios: TestScenario[], seed?: number): TestScenario[] {
+  // Shuffle before the greedy pass to ensure random, even distribution
+  // across equivalent implementations rather than always picking the first
+  // alphabetical entry (e.g. "go" before "python"/"typescript").
+  const shuffled = shuffleScenarios(scenarios, seed);
+  const seedLabel = seed !== undefined ? ` (seed=${seed})` : ' (random)';
+  verboseLog(`  🔀 Shuffled ${shuffled.length} scenarios before coverage pass${seedLabel}`);
+
   const tracker = new CoverageTracker();
   const minimized: TestScenario[] = [];
 
-  for (const scenario of scenarios) {
+  for (const scenario of shuffled) {
     if (tracker.isNewCoverage(scenario)) {
       minimized.push(scenario);
       tracker.markCovered(scenario);

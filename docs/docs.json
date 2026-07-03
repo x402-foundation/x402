@@ -87,7 +87,8 @@
       {
         "group": "Advanced Concepts",
         "pages": [
-          "advanced-concepts/lifecycle-hooks"
+          "advanced-concepts/lifecycle-hooks",
+          "advanced-concepts/wallet-compatibility"
         ]
       },
       {

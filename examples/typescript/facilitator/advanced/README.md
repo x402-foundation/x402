@@ -22,6 +22,9 @@ cp .env-local .env
 
 and fill required environment variables:
 
+- `CCD_FACILITATOR_PRIVATE_KEY` - Concordium Ed25519 private key for sponsor signing (optional; `all-networks`)
+- `CCD_FACILITATOR_ADDRESS` - Concordium sponsor account address (optional; `all-networks`)
+- `CCD_NETWORK` - Concordium network CAIP-2 (optional; defaults to `ccd:4221332d34e1694168c2a0c0b3fd0f27`)
 - `EVM_PRIVATE_KEY` - Ethereum private key
 - `SVM_PRIVATE_KEY` - Solana private key
 - `STELLAR_PRIVATE_KEY` - Stellar secret key (starts with `S`)

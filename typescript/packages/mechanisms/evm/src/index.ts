@@ -86,6 +86,24 @@ export type { DefaultAssetInfo, ExactDefaultAssetInfo } from "./shared/defaultAs
 export { BUILDER_CODE_KEY, resolveDataSuffix, appendDataSuffix } from "./shared/extensions";
 export type { DataSuffixContext, BuilderCodeFacilitatorExtension } from "./shared/extensions";
 
+// ERC-7702 detection utilities (diagnostic — not used in routing).
+// Verification is code-routed via {@link verifyTypedDataSignature}; 7702 is just
+// "address has code" and routes to EIP-1271 like any other contract.
+export { isERC7702Delegation, getERC7702DelegateAddress } from "./shared/erc7702";
+
+// Strict signature verification primitive. Use this instead of
+// `signer.verifyTypedData` (or viem's `publicClient.verifyTypedData`) inside a
+// facilitator — those have an ECDSA fallback when EIP-1271 returns failure
+// that diverges from on-chain SignatureChecker semantics for any address with
+// code (most visibly ERC-7702 EOAs whose delegate rejects raw owner ECDSA).
+export {
+  verifyTypedDataSignature,
+  verifyHashSignature,
+  verifyHashSignatureWithCode,
+  classifyErc6492Payer,
+} from "./shared/verifySignature";
+export type { Erc6492Classification } from "./shared/verifySignature";
+
 // Constants
 export {
   PERMIT2_ADDRESS,

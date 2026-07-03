@@ -771,7 +771,7 @@ When a request is made to these routes without payment, your server will respond
 
 x402 supports several payment schemes that control how charges are calculated:
 
-**`exact`** (default) — The client pays the exact advertised price. This is the simplest scheme and works across all networks (EVM, SVM, Stellar, Aptos) and all SDKs (TypeScript, Go, Python). Best for fixed-price endpoints where the cost is known upfront.
+**`exact`** (default) — The client pays the exact advertised price. This is the simplest scheme and works on all supported networks — see [Networks & Token Support](/core-concepts/network-and-token-support). TypeScript supports every network; Go and Python support a subset — see [SDK Features](/sdk-features). Best for fixed-price endpoints where the cost is known upfront.
 
 **`upto`** — The client authorizes a **maximum** amount, but the server settles **only what was actually used**. This enables usage-based billing where the final charge depends on work performed (LLM token count, compute time, bytes served, etc.). Currently available on EVM networks only (Permit2), in TypeScript, Go, and Python SDKs.
 

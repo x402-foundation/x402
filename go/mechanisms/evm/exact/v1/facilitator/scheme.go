@@ -210,6 +210,14 @@ func (f *ExactEvmSchemeV1) verify(
 		return nil, x402.NewVerifyError(ErrInvalidSignature, evmPayload.Authorization.From, "invalid signature")
 	}
 
+	// Counterfactual ERC-6492 wallet: settle deploys via the factory, gated by the
+	// allowlist. Enforce the same gate here so verify mirrors settle.
+	if !classification.Valid && classification.IsUndeployed && exactfacilitator.HasEIP6492Deployment(classification.SigData) {
+		if !evm.IsFactoryAllowed(classification.SigData.Factory, f.config.EIP6492AllowedFactories) {
+			return nil, x402.NewVerifyError(ErrFactoryNotAllowed, evmPayload.Authorization.From, "factory not in EIP6492AllowedFactories allowlist")
+		}
+	}
+
 	if simulate {
 		simulationSucceeded, err := exactfacilitator.SimulateEIP3009Transfer(
 			ctx,
@@ -290,13 +298,20 @@ func (f *ExactEvmSchemeV1) Settle(
 		}
 
 		if len(code) == 0 {
-			if !exactfacilitator.IsFactoryAllowed(sigData.Factory, f.config.EIP6492AllowedFactories) {
+			if !evm.IsFactoryAllowed(sigData.Factory, f.config.EIP6492AllowedFactories) {
 				return nil, x402.NewSettleError(ErrFactoryNotAllowed, verifyResp.Payer, network, "", "")
 			}
 
 			if err := f.deploySmartWallet(ctx, sigData); err != nil {
 				return nil, x402.NewSettleError(ErrSmartWalletDeploymentFailed, verifyResp.Payer, network, "", err.Error())
 			}
+
+			// Do NOT re-simulate the transfer here. The authoritative pre-check is the atomic
+			// deploy+transfer simulation in verify; a second standalone eth_call after the real
+			// deploy tx races the deploy's state propagation across load-balanced RPC nodes and
+			// false-rejected valid wallets. The on-chain transferWithAuthorization below is the
+			// definitive signature check; a genuinely unsupported inner signature reverts there
+			// and is classified by parseEIP3009TransferError.
 		}
 	}
 

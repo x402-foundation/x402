@@ -55,6 +55,8 @@ export interface FacilitatorConfig {
   svmPrivateKey?: string;
   avmPrivateKey?: string;
   aptosPrivateKey?: string;
+  ccdPrivateKey?: string;
+  ccdAddress?: string;
   hederaAccountId?: string;
   hederaPrivateKey?: string;
   keetaFacilitatorMnemonic?: string;
@@ -123,6 +125,8 @@ export class GenericFacilitatorProxy extends BaseProxy implements FacilitatorPro
       SVM_PRIVATE_KEY: config.svmPrivateKey || '',
       AVM_PRIVATE_KEY: config.avmPrivateKey || '',
       APTOS_PRIVATE_KEY: config.aptosPrivateKey || '',
+      CCD_FACILITATOR_PRIVATE_KEY: config.ccdPrivateKey || '',
+      CCD_FACILITATOR_ADDRESS: config.ccdAddress || '',
       HEDERA_ACCOUNT_ID: config.hederaAccountId || '',
       HEDERA_PRIVATE_KEY: config.hederaPrivateKey || '',
       KEETA_FACILITATOR_MNEMONIC: config.keetaFacilitatorMnemonic || '',
@@ -140,6 +144,8 @@ export class GenericFacilitatorProxy extends BaseProxy implements FacilitatorPro
       AVM_RPC_URL: config.networks.avm.rpcUrl,
       APTOS_NETWORK: config.networks.aptos.caip2,
       APTOS_RPC_URL: config.networks.aptos.rpcUrl,
+      CCD_NETWORK: config.networks.ccd.caip2,
+      CCD_GRPC_URL: config.networks.ccd.rpcUrl,
       HEDERA_NETWORK: config.networks.hedera.caip2,
       HEDERA_NODE_URL: config.networks.hedera.rpcUrl,
       KEETA_NETWORK: config.networks.keeta.caip2,

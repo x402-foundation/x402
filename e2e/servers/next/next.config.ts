@@ -10,6 +10,7 @@ const nextConfig: NextConfig = {
     root: monorepoRoot,
   },
   outputFileTracingRoot: monorepoRoot,
+  serverExternalPackages: ["@keetanetwork/keetanet-client", "@keetanetwork/asn1-napi-rs"],
 };
 
 export default nextConfig;

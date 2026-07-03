@@ -40,7 +40,12 @@ from x402.mechanisms.evm.signers import EthAccountSigner, FacilitatorWeb3Signer 
 from x402.schemas import ResourceConfig, ResourceInfo  # noqa: E402
 
 # Environment variables
-CLIENT_PRIVATE_KEY = os.environ.get("EVM_CLIENT_PRIVATE_KEY")
+# Prefer EVM_CLIENT_EOA_PRIVATE_KEY (a plain EOA, not ERC-7702 delegated) so that
+# strict verify_typed_data_strict routing (code-length-based) does not cause the
+# facilitator to try EIP-1271 on an address that has been delegated for 7702 tests.
+CLIENT_PRIVATE_KEY = os.environ.get("EVM_CLIENT_EOA_PRIVATE_KEY") or os.environ.get(
+    "EVM_CLIENT_PRIVATE_KEY"
+)
 FACILITATOR_PRIVATE_KEY = os.environ.get("EVM_FACILITATOR_PRIVATE_KEY")
 RPC_URL = os.environ.get("EVM_RPC_URL", "https://sepolia.base.org")
 
@@ -54,7 +59,7 @@ TEST_PORT_PAID = 4100
 # Skip all tests if environment variables aren't set
 pytestmark = pytest.mark.skipif(
     not CLIENT_PRIVATE_KEY or not FACILITATOR_PRIVATE_KEY,
-    reason="EVM_CLIENT_PRIVATE_KEY and EVM_FACILITATOR_PRIVATE_KEY environment variables required for MCP EVM integration tests",
+    reason="EVM_CLIENT_EOA_PRIVATE_KEY (or EVM_CLIENT_PRIVATE_KEY) and EVM_FACILITATOR_PRIVATE_KEY environment variables required for MCP EVM integration tests",
 )
 
 

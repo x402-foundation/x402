@@ -69,10 +69,10 @@ func (s *stubErc3009Signer) VerifyTypedData(_ context.Context, _ string, _ evm.T
 func TestVerifyErc3009_InvalidValidAfter(t *testing.T) {
 	auth := goodErc3009Auth()
 	auth.ValidAfter = "not-a-number"
-	_, err := verifyErc3009DepositAuthorization(
+	_, _, err := verifyErc3009DepositAuthorization(
 		context.Background(), &fakeFacilitatorSigner{},
 		goodErc3009Config(), testErc3009ChannelId,
-		big.NewInt(1000), auth, big.NewInt(8453), goodErc3009Extra(),
+		big.NewInt(1000), auth, big.NewInt(8453), goodErc3009Extra(), nil,
 	)
 	var ve *x402.VerifyError
 	if !errors.As(err, &ve) || ve.InvalidReason != ErrInvalidDepositPayload {
@@ -85,10 +85,10 @@ func TestVerifyErc3009_InvalidValidAfter(t *testing.T) {
 func TestVerifyErc3009_InvalidValidBefore(t *testing.T) {
 	auth := goodErc3009Auth()
 	auth.ValidBefore = "not-a-number"
-	_, err := verifyErc3009DepositAuthorization(
+	_, _, err := verifyErc3009DepositAuthorization(
 		context.Background(), &fakeFacilitatorSigner{},
 		goodErc3009Config(), testErc3009ChannelId,
-		big.NewInt(1000), auth, big.NewInt(8453), goodErc3009Extra(),
+		big.NewInt(1000), auth, big.NewInt(8453), goodErc3009Extra(), nil,
 	)
 	var ve *x402.VerifyError
 	if !errors.As(err, &ve) || ve.InvalidReason != ErrInvalidDepositPayload {
@@ -104,10 +104,10 @@ func TestVerifyErc3009_ValidBeforeExpired(t *testing.T) {
 	now := time.Now().Unix()
 	auth.ValidAfter = fmt.Sprintf("%d", now-3600)
 	auth.ValidBefore = fmt.Sprintf("%d", now-60)
-	reason, err := verifyErc3009DepositAuthorization(
+	_, reason, err := verifyErc3009DepositAuthorization(
 		context.Background(), &fakeFacilitatorSigner{},
 		goodErc3009Config(), testErc3009ChannelId,
-		big.NewInt(1000), auth, big.NewInt(8453), goodErc3009Extra(),
+		big.NewInt(1000), auth, big.NewInt(8453), goodErc3009Extra(), nil,
 	)
 	if err != nil {
 		t.Fatalf("err: %v", err)
@@ -125,10 +125,10 @@ func TestVerifyErc3009_ValidAfterInFuture(t *testing.T) {
 	now := time.Now().Unix()
 	auth.ValidAfter = fmt.Sprintf("%d", now+3600)
 	auth.ValidBefore = fmt.Sprintf("%d", now+7200)
-	reason, err := verifyErc3009DepositAuthorization(
+	_, reason, err := verifyErc3009DepositAuthorization(
 		context.Background(), &fakeFacilitatorSigner{},
 		goodErc3009Config(), testErc3009ChannelId,
-		big.NewInt(1000), auth, big.NewInt(8453), goodErc3009Extra(),
+		big.NewInt(1000), auth, big.NewInt(8453), goodErc3009Extra(), nil,
 	)
 	if err != nil {
 		t.Fatalf("err: %v", err)
@@ -146,10 +146,10 @@ func TestVerifyErc3009_ValidAfterInFuture(t *testing.T) {
 func TestVerifyErc3009_MissingExtraName(t *testing.T) {
 	extra := goodErc3009Extra()
 	delete(extra, "name")
-	reason, err := verifyErc3009DepositAuthorization(
+	_, reason, err := verifyErc3009DepositAuthorization(
 		context.Background(), &fakeFacilitatorSigner{},
 		goodErc3009Config(), testErc3009ChannelId,
-		big.NewInt(1000), goodErc3009Auth(), big.NewInt(8453), extra,
+		big.NewInt(1000), goodErc3009Auth(), big.NewInt(8453), extra, nil,
 	)
 	if err != nil {
 		t.Fatalf("err: %v", err)
@@ -165,10 +165,10 @@ func TestVerifyErc3009_MissingExtraName(t *testing.T) {
 func TestVerifyErc3009_MissingExtraVersion(t *testing.T) {
 	extra := goodErc3009Extra()
 	delete(extra, "version")
-	reason, err := verifyErc3009DepositAuthorization(
+	_, reason, err := verifyErc3009DepositAuthorization(
 		context.Background(), &fakeFacilitatorSigner{},
 		goodErc3009Config(), testErc3009ChannelId,
-		big.NewInt(1000), goodErc3009Auth(), big.NewInt(8453), extra,
+		big.NewInt(1000), goodErc3009Auth(), big.NewInt(8453), extra, nil,
 	)
 	if err != nil {
 		t.Fatalf("err: %v", err)
@@ -183,10 +183,10 @@ func TestVerifyErc3009_MissingExtraVersion(t *testing.T) {
 // metadata). Reading a nil map is well-defined in Go and yields the
 // zero-value string, so the missing-domain check still fires.
 func TestVerifyErc3009_NilExtra(t *testing.T) {
-	reason, err := verifyErc3009DepositAuthorization(
+	_, reason, err := verifyErc3009DepositAuthorization(
 		context.Background(), &fakeFacilitatorSigner{},
 		goodErc3009Config(), testErc3009ChannelId,
-		big.NewInt(1000), goodErc3009Auth(), big.NewInt(8453), nil,
+		big.NewInt(1000), goodErc3009Auth(), big.NewInt(8453), nil, nil,
 	)
 	if err != nil {
 		t.Fatalf("err: %v", err)
@@ -203,10 +203,10 @@ func TestVerifyErc3009_NilExtra(t *testing.T) {
 // instead of short-circuiting on a missing-domain check.
 func TestVerifyErc3009_VerifyTypedDataFalse(t *testing.T) {
 	signer := &stubErc3009Signer{verifyTypedDataResult: false}
-	reason, err := verifyErc3009DepositAuthorization(
+	_, reason, err := verifyErc3009DepositAuthorization(
 		context.Background(), signer,
 		goodErc3009Config(), testErc3009ChannelId,
-		big.NewInt(1000), goodErc3009Auth(), big.NewInt(8453), goodErc3009Extra(),
+		big.NewInt(1000), goodErc3009Auth(), big.NewInt(8453), goodErc3009Extra(), nil,
 	)
 	if err != nil {
 		t.Fatalf("err: %v", err)

@@ -64,6 +64,13 @@ import { toFacilitatorKeetaSigner, KEETA_TESTNET_CAIP2, FacilitatorKeetaSigner }
 import { ExactKeetaScheme } from "@x402/keeta/exact/facilitator";
 import { ExactStellarScheme } from "@x402/stellar/exact/facilitator";
 import {
+  CONCORDIUM_TESTNET_CAIP2,
+  getConcordiumGrpcUrl,
+  parseGrpcUrl,
+  toConcordiumFacilitatorSigner,
+} from "@x402/concordium";
+import { ExactConcordiumScheme } from "@x402/concordium/exact/facilitator";
+import {
   HighloadV3Config,
   toFacilitatorTvmSigner,
   TVM_PROVIDER_TONAPI,
@@ -108,6 +115,9 @@ const STELLAR_NETWORK = process.env.STELLAR_NETWORK || "stellar:testnet";
 const TVM_NETWORK = process.env.TVM_NETWORK || "tvm:-3";
 const NEAR_NETWORK = process.env.NEAR_NETWORK || "near:testnet";
 const NEAR_RPC_URL = process.env.NEAR_RPC_URL;
+const CCD_NETWORK = process.env.CCD_NETWORK || CONCORDIUM_TESTNET_CAIP2;
+const CCD_GRPC_URL =
+  process.env.CCD_GRPC_URL || getConcordiumGrpcUrl(CCD_NETWORK as Network);
 const EVM_RPC_URL = process.env.EVM_RPC_URL;
 const SVM_RPC_URL = process.env.SVM_RPC_URL;
 const AVM_RPC_URL = process.env.AVM_RPC_URL;
@@ -135,6 +145,8 @@ console.log(`🌐 Hedera Network: ${HEDERA_NETWORK}`);
 console.log(`🌐 Keeta Network: ${KEETA_NETWORK}`);
 console.log(`🌐 Stellar Network: ${STELLAR_NETWORK}`);
 console.log(`🌐 TVM Network: ${TVM_NETWORK}`);
+console.log(`🌐 CCD Network: ${CCD_NETWORK}`);
+console.log(`🌐 CCD gRPC URL: ${CCD_GRPC_URL}`);
 if (EVM_RPC_URL) console.log(`🌐 EVM RPC URL: ${EVM_RPC_URL}`);
 if (SVM_RPC_URL) console.log(`🌐 SVM RPC URL: ${SVM_RPC_URL}`);
 if (AVM_RPC_URL) console.log(`🌐 AVM RPC URL: ${AVM_RPC_URL}`);
@@ -280,6 +292,17 @@ if (process.env.NEAR_RELAYER_ACCOUNT_ID && process.env.NEAR_RELAYER_PRIVATE_KEY)
     rpcUrls: NEAR_RPC_URL ? { [NEAR_NETWORK]: NEAR_RPC_URL } : undefined,
   });
   console.info(`NEAR Facilitator relayer: ${process.env.NEAR_RELAYER_ACCOUNT_ID}`);
+}
+
+let concordiumSigner: ReturnType<typeof toConcordiumFacilitatorSigner> | undefined;
+if (process.env.CCD_FACILITATOR_PRIVATE_KEY && process.env.CCD_FACILITATOR_ADDRESS) {
+  const [host, port] = parseGrpcUrl(CCD_GRPC_URL);
+  concordiumSigner = toConcordiumFacilitatorSigner(
+    process.env.CCD_FACILITATOR_ADDRESS,
+    process.env.CCD_FACILITATOR_PRIVATE_KEY,
+    { host, port, useTls: true },
+  );
+  console.info(`CCD Facilitator account: ${process.env.CCD_FACILITATOR_ADDRESS} on ${CCD_NETWORK} (private key)`);
 }
 
 // Create a Viem client with both wallet and public capabilities
@@ -525,6 +548,12 @@ if (tvmSigner) {
 }
 if (nearSigner) {
   facilitator.register(NEAR_NETWORK as Network, new ExactNearFacilitatorScheme(nearSigner));
+}
+if (concordiumSigner) {
+  facilitator.register(
+    CCD_NETWORK as Network,
+    new ExactConcordiumScheme({ signer: concordiumSigner }),
+  );
 }
 
 
@@ -848,6 +877,8 @@ app.get("/health", (req, res) => {
     hederaNetwork: hederaSigner ? HEDERA_NETWORK : "(not configured)",
     keetaNetwork: process.env.KEETA_FACILITATOR_MNEMONIC ? KEETA_NETWORK : "(not configured)",
     stellarNetwork: stellarSigner ? STELLAR_NETWORK : "(not configured)",
+    nearNetwork: nearSigner ? NEAR_NETWORK : "(not configured)",
+    ccdNetwork: concordiumSigner ? CCD_NETWORK : "(not configured)",
     facilitator: "typescript",
     version: "2.0.0",
     extensions: [BAZAAR.key],
@@ -883,12 +914,16 @@ let server = app.listen(parseInt(PORT), () => {
 ║  Aptos Network: ${APTOS_NETWORK}                       ║
 ║  Hedera Network: ${HEDERA_NETWORK}                     ║
 ║  Keeta Network: ${KEETA_NETWORK}                       ║
+║  NEAR Network: ${NEAR_NETWORK}                         ║
+║  CCD Network:  ${CCD_NETWORK}                          ║
 ║  EVM Address:  ${evmAccount.address}                   ║
 ║  AVM Address:  ${avmSigner ? avmSigner.getAddresses()[0] : "(not configured)"}
 ║  Aptos Address: ${aptosAccount ? aptosAccount.accountAddress.toStringLong().slice(0, 20) + "..." : "(not configured)"}
 ║  Hedera Address: ${process.env.HEDERA_ACCOUNT_ID || "(not configured)"} ║
 ║  Keeta Address: ${keetaSigner?.getAddresses()[0] || "(not configured)"} ║
 ║  Stellar Address: ${stellarSigner ? stellarSigner.address : "(not configured)"} ║
+║  NEAR Address: ${process.env.NEAR_RELAYER_ACCOUNT_ID || "(not configured)"} ║
+║  CCD Address:  ${concordiumSigner ? concordiumSigner.getAddress() : "(not configured)"} ║
 ║  Extensions:   bazaar                                  ║
 ║                                                        ║
 ║  Endpoints:                                            ║

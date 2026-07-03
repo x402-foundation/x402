@@ -1,6 +1,6 @@
 {
   "name": "@x402/evm",
-  "version": "2.15.0",
+  "version": "2.17.0",
   "main": "./dist/cjs/index.js",
   "module": "./dist/esm/index.js",
   "types": "./dist/cjs/index.d.ts",
@@ -9,6 +9,7 @@
     "build": "tsup",
     "test": "vitest run",
     "test:integration": "vitest run --config vitest.integration.config.ts",
+    "setup:smart-accounts": "tsx scripts/setup-smart-accounts.ts",
     "test:watch": "vitest",
     "watch": "tsc --watch",
     "format": "prettier -c .prettierrc --write \"**/*.{ts,js,cjs,json,md}\"",

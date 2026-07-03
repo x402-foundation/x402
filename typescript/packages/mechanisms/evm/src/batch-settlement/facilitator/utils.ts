@@ -1,4 +1,5 @@
-import { getAddress, verifyTypedData as viemVerifyTypedData } from "viem";
+import { getAddress, hashTypedData, recoverAddress, isAddressEqual } from "viem";
+import { verifyTypedDataSignature } from "../../shared/verifySignature";
 import type { PaymentRequirements } from "@x402/core/types";
 import { FacilitatorEvmSigner } from "../../signer";
 import { multicall } from "../../multicall";
@@ -108,17 +109,32 @@ export async function verifyBatchSettlementVoucherTypedData(
   const zeroAddress = "0x0000000000000000000000000000000000000000";
 
   if (params.payerAuthorizer !== zeroAddress) {
-    return viemVerifyTypedData({
-      address: getAddress(params.payerAuthorizer),
-      domain,
-      types: voucherTypes,
-      primaryType: "Voucher",
-      message,
-      signature: params.signature,
-    });
+    // on-chain x402BatchSettlement uses ECDSA.recoverCalldata — pure ecrecover,
+    // no code check, no EIP-1271. Use recoverAddress directly so there is no
+    // ambiguity: this path never issues an RPC call regardless of address state.
+    try {
+      const digest = hashTypedData({
+        domain,
+        types: voucherTypes,
+        primaryType: "Voucher",
+        message,
+      });
+      const recovered = await recoverAddress({
+        hash: digest,
+        signature: params.signature as `0x${string}`,
+      });
+      return isAddressEqual(recovered, getAddress(params.payerAuthorizer));
+    } catch {
+      return false;
+    }
   }
 
-  return signer.verifyTypedData({
+  // payerAuthorizer == 0 path: x402BatchSettlement._processVoucherClaim falls
+  // back to OpenZeppelin's SignatureChecker.isValidSignatureNow(payer, …) which
+  // routes by signer.code.length (ECDSA for EOAs, strict EIP-1271 for contracts
+  // including 7702-delegated EOAs). Mirror that exactly — no ECDSA fallback
+  // for addresses with code.
+  return verifyTypedDataSignature(signer, {
     address: getAddress(params.payer),
     domain,
     types: voucherTypes,

@@ -1,3 +1,16 @@
+## v2.17.0 - 2026-06-26
+### Added
+- Expanded wallet compatibility so payments verify and settle consistently across plain EOAs, deployed smart accounts (ERC-4337 / ERC-7579), counterfactual ERC-6492 wallets, and ERC-7702-delegated EOAs. Pre-verification now mirrors on-chain signature checking, so a payment that passes verify is the same one that succeeds at settle. Added counterfactual ERC-6492 support to the exact and batch-settlement flows — the wallet is deployed and its signature validated together during verify — gated by a new EIP6492AllowedFactories allowlist you set on the facilitator scheme config. Also added a wallet-compatibility guide documenting which wallet and scheme combinations are supported. ([#2658](https://github.com/x402-foundation/x402/pull/2658)) - Thanks [@CarsonRoscoe](https://github.com/CarsonRoscoe) and [@cursoragent](https://github.com/cursoragent)!
+### Changed
+- Made the batch-settlement facilitator `authorizerSigner` optional: when omitted, no `receiverAuthorizer` is advertised in `/supported` and claim/refund settlement returns `ErrAuthorizerNotConfigured` if the payload carries no authorizer signature. Added a `FacilitatorSupportValidator` hook so the resource server fails fast at `Initialize()` when a scheme delegates the receiver-authorizer role but the facilitator advertises none. ([#2706](https://github.com/x402-foundation/x402/pull/2706)) - Thanks [@phdargen](https://github.com/phdargen)!
+
+## v2.16.0 - 2026-06-19
+### Added
+- Add Go sign-in-with-x server and client support, including SIWX storage, auth hooks, EVM EIP-191 signing and verification, HTTP auth retry, TS-compatible profile, weather, and joke examples, and interoperability fixes for SIWE empty statements, net/http 402 JSON responses, and TS server payment payload extension echo validation ([#2485](https://github.com/x402-foundation/x402/pull/2485)) - Thanks [@wnjoon](https://github.com/wnjoon)!
+- Adds SIWX support for undeployed EIP-6492 and SVM ([#2669](https://github.com/x402-foundation/x402/pull/2669)) - Thanks [@phdargen](https://github.com/phdargen)!
+### Fixed
+- Added a dynamicInfoFields capability so an extension can mark certain info fields (nonces, timestamps) as regenerated per PaymentRequired response. Those fields are then excluded from the client-echo validatio (extension_echo_mismatch), while all other fields stay strictly compared. ([#2653](https://github.com/x402-foundation/x402/pull/2653)) - Thanks [@phdargen](https://github.com/phdargen)!
+
 ## v2.15.0 - 2026-06-12
 ### Added
 - Add Mezo mainnet (chain ID 31612) support with mUSD as the default stablecoin ([#2590](https://github.com/x402-foundation/x402/pull/2590)) - Thanks [@ryanRfox](https://github.com/ryanRfox)!

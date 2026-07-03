@@ -52,7 +52,12 @@ from x402.schemas import (
 # Environment Variable Loading
 # =============================================================================
 
-CLIENT_PRIVATE_KEY = os.environ.get("EVM_CLIENT_PRIVATE_KEY")
+# Prefer EVM_CLIENT_EOA_PRIVATE_KEY (a plain EOA, not ERC-7702 delegated) so that
+# strict verify_typed_data_strict routing (code-length-based) does not cause the
+# facilitator to try EIP-1271 on an address that has been delegated for 7702 tests.
+CLIENT_PRIVATE_KEY = os.environ.get("EVM_CLIENT_EOA_PRIVATE_KEY") or os.environ.get(
+    "EVM_CLIENT_PRIVATE_KEY"
+)
 FACILITATOR_PRIVATE_KEY = os.environ.get("EVM_FACILITATOR_PRIVATE_KEY")
 
 # Base Sepolia RPC URL
@@ -64,7 +69,7 @@ USDC_ADDRESS = "0x036CbD53842c5426634e7929541eC2318f3dCF7e"
 # Skip all tests if environment variables aren't set
 pytestmark = pytest.mark.skipif(
     not CLIENT_PRIVATE_KEY or not FACILITATOR_PRIVATE_KEY,
-    reason="EVM_CLIENT_PRIVATE_KEY and EVM_FACILITATOR_PRIVATE_KEY environment variables required for EVM integration tests",
+    reason="EVM_CLIENT_EOA_PRIVATE_KEY (or EVM_CLIENT_PRIVATE_KEY) and EVM_FACILITATOR_PRIVATE_KEY environment variables required for EVM integration tests",
 )
 
 

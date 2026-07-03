@@ -6,7 +6,7 @@ import { toFacilitatorAptosSigner } from "@x402/aptos";
 import { ExactAptosScheme } from "@x402/aptos/exact/facilitator";
 import { x402Facilitator } from "@x402/core/facilitator";
 import { Network } from "@x402/core/types";
-import { type AuthorizerSigner, toFacilitatorEvmSigner } from "@x402/evm";
+import { toFacilitatorEvmSigner } from "@x402/evm";
 import { BatchSettlementEvmScheme } from "@x402/evm/batch-settlement/facilitator";
 import { ExactEvmScheme } from "@x402/evm/exact/facilitator";
 import { ExactEvmSchemeV1 } from "@x402/evm/exact/v1/facilitator";
@@ -107,12 +107,6 @@ async function createFacilitator(): Promise<x402Facilitator> {
     getCode: (args: { address: `0x${string}` }) => viemClient.getCode(args),
   });
 
-  const receiverAuthorizerSigner: AuthorizerSigner = {
-    address: evmAccount.address,
-    signTypedData: params =>
-      evmAccount.signTypedData(params as Parameters<typeof evmAccount.signTypedData>[0]),
-  };
-
   // Initialize the SVM account from private key
   const svmAccount = await createKeyPairSignerFromBytes(
     base58.decode(process.env.FACILITATOR_SVM_PRIVATE_KEY as string),
@@ -136,7 +130,7 @@ async function createFacilitator(): Promise<x402Facilitator> {
       new ExactEvmSchemeV1(evmSigner, { eip6492AllowedFactories }),
     )
     .register("eip155:84532", new UptoEvmScheme(evmSigner))
-    .register("eip155:84532", new BatchSettlementEvmScheme(evmSigner, receiverAuthorizerSigner))
+    .register("eip155:84532", new BatchSettlementEvmScheme(evmSigner))
     .register(
       "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1",
       new ExactSvmScheme(svmSigner, undefined, { enableSmartWalletVerification: true }),

@@ -15,6 +15,7 @@ import {
   type Erc20ApprovalGasSponsoringSigner,
 } from "../../exact/extensions";
 import { appendDataSuffix } from "../../shared/extensions";
+import { verifyTypedDataSignature } from "../../shared/verifySignature";
 import { validateErc20ApprovalForPayment } from "../../shared/erc20approval";
 import { validateEip2612PermitForPayment, splitEip2612Signature } from "../../shared/permit2";
 import { PERMIT2_ADDRESS, erc20AllowanceAbi } from "../../constants";
@@ -305,30 +306,31 @@ async function verifyPermit2TypedData(
     return { isValid: false, invalidReason: Errors.ErrPermit2DeadlineExpired, payer };
   }
 
-  try {
-    const ok = await signer.verifyTypedData({
-      address: getAddress(auth.from),
-      domain: { name: "Permit2", chainId, verifyingContract: PERMIT2_ADDRESS },
-      types: batchPermit2WitnessTypes,
-      primaryType: "PermitWitnessTransferFrom",
-      message: {
-        permitted: {
-          token: getAddress(auth.permitted.token),
-          amount: BigInt(auth.permitted.amount),
-        },
-        spender: getAddress(auth.spender),
-        nonce: BigInt(auth.nonce),
-        deadline: BigInt(auth.deadline),
-        witness: {
-          channelId: auth.witness.channelId,
-        },
+  // Mirror Permit2's on-chain SignatureVerification: ecrecover when the address
+  // has no code, strict EIP-1271 isValidSignature when it does. No ECDSA
+  // fallback for code addresses — that fallback would accept sigs Permit2
+  // rejects on-chain (notably for ERC-7702 EOAs whose delegate doesn't accept
+  // raw owner ECDSA).
+  const ok = await verifyTypedDataSignature(signer, {
+    address: getAddress(auth.from),
+    domain: { name: "Permit2", chainId, verifyingContract: PERMIT2_ADDRESS },
+    types: batchPermit2WitnessTypes,
+    primaryType: "PermitWitnessTransferFrom",
+    message: {
+      permitted: {
+        token: getAddress(auth.permitted.token),
+        amount: BigInt(auth.permitted.amount),
       },
-      signature: auth.signature,
-    });
-    if (!ok) {
-      return { isValid: false, invalidReason: Errors.ErrPermit2InvalidSignature, payer };
-    }
-  } catch {
+      spender: getAddress(auth.spender),
+      nonce: BigInt(auth.nonce),
+      deadline: BigInt(auth.deadline),
+      witness: {
+        channelId: auth.witness.channelId,
+      },
+    },
+    signature: auth.signature,
+  });
+  if (!ok) {
     return { isValid: false, invalidReason: Errors.ErrPermit2InvalidSignature, payer };
   }
 

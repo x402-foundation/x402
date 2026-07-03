@@ -14,6 +14,7 @@ import { ExactStellarScheme } from "@x402/stellar/exact/server";
 import { ExactTvmScheme } from "@x402/tvm/exact/server";
 import { ExactAvmScheme } from "@x402/avm/exact/server";
 import { ExactNearScheme } from "@x402/near/exact/server";
+import { ExactConcordiumScheme } from "@x402/concordium/exact/server";
 import { bazaarResourceServerExtension, declareDiscoveryExtension } from "@x402/extensions/bazaar";
 import {
   declareEip2612GasSponsoringExtension,
@@ -43,6 +44,9 @@ const KEETA_NETWORK = (process.env.KEETA_NETWORK || KEETA_TESTNET_CAIP2) as `${s
 const STELLAR_NETWORK = (process.env.STELLAR_NETWORK || "stellar:testnet") as `${string}:${string}`;
 const TVM_NETWORK = (process.env.TVM_NETWORK || "tvm:-3") as `${string}:${string}`;
 const NEAR_NETWORK = (process.env.NEAR_NETWORK || "near:testnet") as `${string}:${string}`;
+const CCD_NETWORK = (process.env.CCD_NETWORK || "ccd:4221332d34e1694168c2a0c0b3fd0f27") as `${string}:${string}`;
+const CCD_PAYEE_ADDRESS = process.env.CCD_PAYEE_ADDRESS as string | undefined;
+const CCD_WEATHER_PRICE_MICRO_CCD = "1000";
 const EVM_PAYEE_ADDRESS = process.env.EVM_PAYEE_ADDRESS as `0x${string}`;
 const SVM_PAYEE_ADDRESS = process.env.SVM_PAYEE_ADDRESS as string;
 const APTOS_PAYEE_ADDRESS = process.env.APTOS_PAYEE_ADDRESS as string;
@@ -90,6 +94,9 @@ const x402Server = new x402ResourceServer(facilitatorClients);
 // Register server schemes
 if (AVM_PAYEE_ADDRESS) {
   x402Server.register("algorand:*", new ExactAvmScheme());
+}
+if (CCD_PAYEE_ADDRESS) {
+  x402Server.register("ccd:*", new ExactConcordiumScheme());
 }
 x402Server.register("eip155:*", new ExactEvmScheme());
 x402Server.register("eip155:*", new UptoEvmScheme());
@@ -205,6 +212,23 @@ app.get("/exact/keeta", async (c, next) => {
 });
 
 /**
+ * Pre-middleware guard for optional Concordium endpoint
+ * Returns 501 Not Implemented if Concordium is not configured
+ */
+app.get("/exact/ccd", async (c, next) => {
+  if (!CCD_PAYEE_ADDRESS) {
+    return c.json(
+      {
+        error: "Concordium payments not configured",
+        message: "CCD_PAYEE_ADDRESS environment variable is not set",
+      },
+      501,
+    );
+  }
+  await next();
+});
+
+/**
  * Pre-middleware guard for optional Stellar endpoint
  * Returns 501 Not Implemented if Stellar is not configured
  */
@@ -270,6 +294,38 @@ app.use(
                 scheme: "exact",
                 price: "$0.001",
                 network: AVM_NETWORK,
+              },
+              extensions: {
+                ...declareDiscoveryExtension({
+                  output: {
+                    example: {
+                      message: "Protected endpoint accessed successfully",
+                      timestamp: "2024-01-01T00:00:00Z",
+                    },
+                    schema: {
+                      properties: {
+                        message: { type: "string" },
+                        timestamp: { type: "string" },
+                      },
+                      required: ["message", "timestamp"],
+                    },
+                  },
+                }),
+              },
+            },
+          }
+        : {}),
+      ...(CCD_PAYEE_ADDRESS
+        ? {
+            "GET /exact/ccd": {
+              accepts: {
+                payTo: CCD_PAYEE_ADDRESS,
+                scheme: "exact",
+                price: {
+                  amount: CCD_WEATHER_PRICE_MICRO_CCD,
+                  asset: "CCD",
+                },
+                network: CCD_NETWORK,
               },
               extensions: {
                 ...declareDiscoveryExtension({
@@ -835,6 +891,19 @@ app.get("/exact/keeta", c => {
 });
 
 /**
+ * Protected Concordium endpoint - requires payment via Concordium exact scheme
+ *
+ * This endpoint demonstrates a resource protected by x402 payment middleware for Concordium.
+ * Note: 501 check is handled by pre-middleware guard above.
+ */
+app.get("/exact/ccd", c => {
+  return c.json({
+    message: "Protected Concordium endpoint accessed successfully",
+    timestamp: new Date().toISOString(),
+  });
+});
+
+/**
  * Protected Permit2 endpoint - standard settle (no gas sponsoring)
  */
 app.get("/exact/evm/permit2", c => {
@@ -989,12 +1058,14 @@ console.log(`
 ║  Keeta Network:  ${KEETA_NETWORK}                       ║
 ║  Stellar Network: ${STELLAR_NETWORK}                    ║
 ║  NEAR Network:   ${NEAR_NETWORK}                        ║
+║  CCD Network:    ${CCD_NETWORK}                          ║
 ║  AVM Payee:      ${AVM_PAYEE_ADDRESS || "(not configured)"}
 ║  EVM Payee:      ${EVM_PAYEE_ADDRESS}                   ║
 ║  SVM Payee:      ${SVM_PAYEE_ADDRESS}                   ║
 ║  Aptos Payee:    ${APTOS_PAYEE_ADDRESS || "(not configured)"}
 ║  Hedera Payee:   ${HEDERA_PAYEE_ADDRESS || "(not configured)"}
 ║  Keeta Payee:    ${KEETA_PAYEE_ADDRESS || "(not configured)"}
+║  CCD Payee:      ${CCD_PAYEE_ADDRESS || "(not configured)"}
 ║  Stellar Payee:  ${STELLAR_PAYEE_ADDRESS || "(not configured)"}
 ║  NEAR Payee:     ${NEAR_PAYEE_ADDRESS || "(not configured)"}
 ║                                                        ║
@@ -1008,6 +1079,7 @@ console.log(`
 ║  • GET  /exact/aptos                          (Aptos)         ║
 ║  • GET  /exact/hedera                         (Hedera)        ║
 ║  • GET  /exact/keeta                          (Keeta)         ║
+║  • GET  /exact/ccd                            (CCD)           ║
 ║  • GET  /exact/stellar                        (Stellar)       ║
 ║  • GET  /exact/near                           (NEAR)          ║
 ║  • GET  /health                  (no payment required)     ║

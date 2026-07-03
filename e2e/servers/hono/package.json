@@ -13,6 +13,7 @@
     "@hono/node-server": "^1.14.0",
     "@x402/aptos": "workspace:*",
     "@x402/avm": "workspace:*",
+    "@x402/concordium": "workspace:*",
     "@x402/core": "workspace:*",
     "@x402/evm": "workspace:*",
     "@x402/hedera": "workspace:*",

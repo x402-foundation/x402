@@ -97,8 +97,8 @@ export const DEFAULT_ASSET_BY_NETWORK: Record<(typeof NEAR_NETWORKS)[number], st
  * Checks whether a network belongs to the NEAR CAIP family.
  *
  * @param network - The network identifier
- * @returns True when network uses the `near:` prefix
+ * @returns True when network is one of the canonical NEAR network identifiers
  */
 export function isNearNetwork(network: string): boolean {
-  return network.startsWith("near:");
+  return (NEAR_NETWORKS as readonly string[]).includes(network);
 }

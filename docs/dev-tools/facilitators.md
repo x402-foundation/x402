@@ -13,6 +13,7 @@ The table below lists selected production options; it is not an exhaustive catal
 | [CDP Facilitator](https://docs.cdp.coinbase.com/x402/docs/quickstart-sellers) | Coinbase-hosted facilitator with KYT/OFAC checks on every transaction |
 | [Corbits](https://corbits.dev) | Production-grade multi-network, multi-token facilitator supporting EVM and Solana |
 | [Dexter](https://dexter.cash/facilitator) | Free public x402 facilitator across Solana and EVM chains with no fees and no account required |
+| [HPP Facilitator](https://docs.hpp.io/x402/facilitator) | Gasless, public x402 facilitator for HPP Mainnet and Sepolia |
 | [Meridian](https://mrdn.finance) | Multi-chain facilitator with developer-first features |
 | [Mogami Facilitator](https://facilitator.mogami.tech) | Free, developer-focused facilitator for Base with optional self-hosted Docker deployment |
 | [PayAI Facilitator](https://facilitator.payai.network) | Multi-network facilitator supporting all tokens. No API keys required |

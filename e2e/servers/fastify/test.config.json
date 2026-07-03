@@ -13,6 +13,13 @@
       "protocolFamily": "avm"
     },
     {
+      "path": "/exact/ccd",
+      "method": "GET",
+      "description": "Protected endpoint requiring payment on Concordium network",
+      "requiresPayment": true,
+      "protocolFamily": "ccd"
+    },
+    {
       "path": "/exact/evm/eip3009",
       "method": "GET",
       "description": "Protected endpoint requiring EIP-3009 payment",
@@ -208,6 +215,7 @@
     "optional": [
       "AVM_PAYEE_ADDRESS",
       "APTOS_PAYEE_ADDRESS",
+      "CCD_PAYEE_ADDRESS",
       "HEDERA_PAYEE_ADDRESS",
       "KEETA_PAYEE_ADDRESS",
       "STELLAR_PAYEE_ADDRESS",

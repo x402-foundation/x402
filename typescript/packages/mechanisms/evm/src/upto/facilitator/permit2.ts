@@ -33,6 +33,7 @@ import { FacilitatorEvmSigner } from "../../signer";
 import { UptoPermit2Payload } from "../../types";
 import { getEvmChainId } from "../../utils";
 import { validateErc20ApprovalForPayment } from "../../shared/erc20approval";
+import { verifyTypedDataSignature } from "../../shared/verifySignature";
 import {
   buildUptoPermit2SettleArgs,
   waitAndReturnSettleResponse,
@@ -204,34 +205,21 @@ export async function verifyUptoPermit2(
     },
   };
 
-  // Verify signature
-  // Note: verifyTypedData is implementation-dependent and pluggable on FacilitatorEvmSigner
-  // Some implementations only do EOA-style ECDSA recovery (e.g. viem/utils verifyTypedData, ethers.verifyTypedData)
-  // Viem's publicClient.verifyTypedData supports EOA and Smart Contract Account (ERC-1271 / ERC-6492) signature verification
-  let signatureValid = false;
-  try {
-    signatureValid = await signer.verifyTypedData({
-      address: payer,
-      ...permit2TypedData,
-      signature: permit2Payload.signature,
-    });
-  } catch {
-    signatureValid = false;
-  }
-
+  // Verify signature using a strict primitive that mirrors Permit2's
+  // on-chain SignatureVerification: ecrecover when the address has no code,
+  // strict EIP-1271 isValidSignature when it does. No ECDSA fallback for
+  // addresses with code (would accept sigs Permit2 rejects on-chain).
+  const signatureValid = await verifyTypedDataSignature(signer, {
+    address: payer,
+    ...permit2TypedData,
+    signature: permit2Payload.signature,
+  });
   if (!signatureValid) {
-    // Check if the payer is a deployed smart contract (ERC-1271 / ERC-6492)
-    const bytecode = await signer.getCode({ address: payer });
-    const isDeployedContract = bytecode && bytecode !== "0x";
-
-    if (!isDeployedContract) {
-      return {
-        isValid: false,
-        invalidReason: "invalid_permit2_signature",
-        payer,
-      };
-    }
-    // Deployed smart contract: fall through to simulation
+    return {
+      isValid: false,
+      invalidReason: "invalid_permit2_signature",
+      payer,
+    };
   }
 
   // If simulation is disabled, return early

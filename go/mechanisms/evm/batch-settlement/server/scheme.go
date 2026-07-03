@@ -417,6 +417,31 @@ func (s *BatchSettlementEvmScheme) GetReceiverAuthorizerAddress() string {
 	return ""
 }
 
+// ValidateFacilitatorSupport rejects startup when this scheme delegates the
+// receiver-authorizer role but the facilitator does not advertise a usable
+// receiverAuthorizer.
+func (s *BatchSettlementEvmScheme) ValidateFacilitatorSupport(
+	network x402.Network,
+	supportedKind types.SupportedKind,
+	_ []string,
+) error {
+	if s.receiverAuthorizerSigner != nil {
+		return nil
+	}
+
+	advertised, _ := supportedKind.Extra["receiverAuthorizer"].(string)
+	if advertised != "" && !strings.EqualFold(advertised, zeroAddress) {
+		return nil
+	}
+
+	return fmt.Errorf(
+		"no receiver authorizer signer is configured and the facilitator does not advertise "+
+			"a receiverAuthorizer on %s. Configure a ReceiverAuthorizerSigner or use a "+
+			"facilitator that advertises one",
+		network,
+	)
+}
+
 // ParsePrice parses a price and converts it to an asset amount.
 func (s *BatchSettlementEvmScheme) ParsePrice(price x402.Price, network x402.Network) (x402.AssetAmount, error) {
 	// If already an AssetAmount map, return directly

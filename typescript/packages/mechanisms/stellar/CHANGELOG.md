@@ -1,5 +1,20 @@
 # @x402/stellar Changelog
 
+## 2.17.0
+
+### Minor Changes
+
+- [be91f31](https://github.com/x402-foundation/x402/commit/be91f31): Upgraded Stellar SDK to v16 and preserved extra signer handling when rebuilding settlement transactions. ([#2662](https://github.com/x402-foundation/x402/pull/2662)) - Thanks [@skyc1e](https://github.com/skyc1e)!
+- Updated dependencies [266b19d](https://github.com/x402-foundation/x402/commit/266b19d)
+  - @x402/core@2.17.0
+
+## 2.16.0
+
+### Minor Changes
+
+- Updated dependencies [59ac597](https://github.com/x402-foundation/x402/commit/59ac597)
+  - @x402/core@2.16.0
+
 ## 2.15.0
 
 ### Minor Changes

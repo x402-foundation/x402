@@ -350,3 +350,45 @@ class TestCreateChannelManager:
 
         with pytest.raises(ValueError):
             s.create_channel_manager(facilitator=_AsyncFac(), network="eip155:99999999")
+
+
+ZERO_ADDRESS = "0x0000000000000000000000000000000000000000"
+
+
+def _supported_kind(extra: dict | None) -> SupportedKind:
+    return SupportedKind(
+        x402_version=2,
+        scheme=SCHEME_BATCH_SETTLEMENT,
+        network="eip155:8453",
+        extra=extra,
+    )
+
+
+class TestValidateFacilitatorSupport:
+    def test_local_signer_skips_validation(self):
+        s = BatchSettlementEvmScheme(
+            RECEIVER,
+            BatchSettlementEvmSchemeServerConfig(
+                receiver_authorizer_signer=_MockSigner(AUTHORIZER_ADDR)
+            ),
+        )
+        assert s.validate_facilitator_support("eip155:8453", _supported_kind(None), []) is None
+
+    def test_advertised_authorizer_is_valid(self):
+        s = BatchSettlementEvmScheme(RECEIVER)
+        kind = _supported_kind({"receiverAuthorizer": AUTHORIZER_ADDR})
+        assert s.validate_facilitator_support("eip155:8453", kind, []) is None
+
+    def test_missing_extra_reports_problem(self):
+        s = BatchSettlementEvmScheme(RECEIVER)
+        problem = s.validate_facilitator_support("eip155:8453", _supported_kind(None), [])
+        assert problem is not None
+        assert "receiverAuthorizer" in problem
+        assert "eip155:8453" in problem
+
+    def test_zero_address_reports_problem(self):
+        s = BatchSettlementEvmScheme(RECEIVER)
+        kind = _supported_kind({"receiverAuthorizer": ZERO_ADDRESS})
+        problem = s.validate_facilitator_support("eip155:8453", kind, [])
+        assert problem is not None
+        assert "receiverAuthorizer" in problem

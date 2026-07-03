@@ -396,6 +396,47 @@ describe("BatchSettlementEvmScheme — enhancePaymentRequirements", () => {
   });
 });
 
+describe("BatchSettlementEvmScheme — validateFacilitatorSupport", () => {
+  const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000";
+
+  function supportedKind(extra?: Record<string, unknown>) {
+    return { x402Version: 2, scheme: "batch-settlement", network: NETWORK, extra };
+  }
+
+  it("returns a problem when no signer and the facilitator advertises no receiverAuthorizer", () => {
+    const server = new BatchSettlementEvmScheme(RECEIVER);
+    const problem = server.validateFacilitatorSupport(NETWORK, supportedKind(), []);
+    expect(problem).toMatch(/receiverAuthorizer/);
+  });
+
+  it("returns a problem when no signer and the facilitator advertises a zero receiverAuthorizer", () => {
+    const server = new BatchSettlementEvmScheme(RECEIVER);
+    const problem = server.validateFacilitatorSupport(
+      NETWORK,
+      supportedKind({ receiverAuthorizer: ZERO_ADDRESS }),
+      [],
+    );
+    expect(problem).toMatch(/receiverAuthorizer/);
+  });
+
+  it("returns void when the server has its own receiver-authorizer signer", () => {
+    const server = new BatchSettlementEvmScheme(RECEIVER, {
+      receiverAuthorizerSigner: buildAuthorizerSigner(),
+    });
+    expect(server.validateFacilitatorSupport(NETWORK, supportedKind(), [])).toBeUndefined();
+  });
+
+  it("returns void when the facilitator advertises a valid receiverAuthorizer", () => {
+    const server = new BatchSettlementEvmScheme(RECEIVER);
+    const problem = server.validateFacilitatorSupport(
+      NETWORK,
+      supportedKind({ receiverAuthorizer: RECEIVER_AUTHORIZER }),
+      [],
+    );
+    expect(problem).toBeUndefined();
+  });
+});
+
 describe("BatchSettlementEvmScheme — onBeforeVerify", () => {
   let server: BatchSettlementEvmScheme;
   let storage: InMemoryChannelStorage;

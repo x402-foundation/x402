@@ -99,6 +99,10 @@ func ExecuteRefundWithSignature(
 				fmt.Sprintf("invalid refund authorizer signature: %s", err))
 		}
 	} else {
+		if authorizerSigner == nil {
+			return nil, x402.NewSettleError(ErrAuthorizerNotConfigured, "", network, "",
+				"no refund authorizer signature in payload and no authorizer signer configured")
+		}
 		// Verify authorizer address matches config's receiverAuthorizer
 		if !strings.EqualFold(payload.ChannelConfig.ReceiverAuthorizer, authorizerSigner.Address()) {
 			return nil, x402.NewSettleError(ErrAuthorizerAddressMismatch, "", network, "",
@@ -154,6 +158,10 @@ func ExecuteRefundWithSignature(
 					fmt.Sprintf("invalid claim authorizer signature: %s", err))
 			}
 		} else {
+			if authorizerSigner == nil {
+				return nil, x402.NewSettleError(ErrAuthorizerNotConfigured, "", network, "",
+					"no claim authorizer signature in payload and no authorizer signer configured")
+			}
 			var err error
 			claimSig, err = authorizerSigner.SignClaimBatch(ctx, payload.Claims, string(network))
 			if err != nil {

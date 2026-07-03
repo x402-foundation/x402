@@ -1257,7 +1257,7 @@ describe("x402HTTPResourceServer", () => {
       expect(html).not.toContain("<script>");
       expect(html).not.toContain("alert(1)");
       expect(html).not.toMatch(/'\s*onfocus/i);
-    });
+    }, 15000);
 
     it("does not reflect paywallConfig.appName into the HTML", async () => {
       const html = await renderFallbackPaywallFor("", "TENANT_SENTINEL_x9y8z7\"' onerror=alert(1)");

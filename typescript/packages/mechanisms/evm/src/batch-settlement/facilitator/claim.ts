@@ -37,7 +37,8 @@ export function buildVoucherClaimArgs(claims: BatchSettlementClaimPayload["claim
  * @param signer - Facilitator signer used to submit the claim transaction.
  * @param payload - Claim payload containing voucher claims and optional authorizer signature.
  * @param requirements - Payment requirements for network identification.
- * @param authorizerSigner - Dedicated key for producing `ClaimBatch` EIP-712 signatures.
+ * @param authorizerSigner - Optional dedicated key for producing `ClaimBatch` EIP-712 signatures.
+ *   When omitted, the payload must already carry a `claimAuthorizerSignature`.
  * @param dataSuffix - Optional hex suffix appended to the claim transaction.
  * @returns A {@link SettleResponse} with the transaction hash on success.
  */
@@ -45,7 +46,7 @@ export async function executeClaimWithSignature(
   signer: FacilitatorEvmSigner,
   payload: BatchSettlementClaimPayload,
   requirements: PaymentRequirements,
-  authorizerSigner: AuthorizerSigner,
+  authorizerSigner: AuthorizerSigner | undefined,
   dataSuffix?: `0x${string}`,
 ): Promise<SettleResponse> {
   const network = requirements.network;
@@ -54,6 +55,14 @@ export async function executeClaimWithSignature(
   let sig = payload.claimAuthorizerSignature;
 
   if (!sig) {
+    if (!authorizerSigner) {
+      return {
+        success: false,
+        errorReason: Errors.ErrAuthorizerNotConfigured,
+        transaction: "",
+        network,
+      };
+    }
     for (const claim of payload.claims) {
       if (
         getAddress(claim.voucher.channel.receiverAuthorizer) !==

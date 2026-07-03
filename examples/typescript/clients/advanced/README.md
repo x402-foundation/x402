@@ -38,6 +38,8 @@ cp .env-local .env
 
 and fill required environment variables:
 
+- `CCD_PRIVATE_KEY` - Concordium Ed25519 private key for Concordium payments (optional; `all-networks`)
+- `CCD_ADDRESS` - Concordium account address for Concordium payments (optional; `all-networks`)
 - `EVM_PRIVATE_KEY` - Ethereum private key for EVM payments
 - `SVM_PRIVATE_KEY` - Solana private key for SVM payments
 - `STELLAR_PRIVATE_KEY` - Stellar secret key (starts with `S`) for signing Stellar payments
@@ -77,6 +79,21 @@ To create a Keeta Testnet wallet:
 1. Go to [Keeta Testnet Wallet](https://wallet.test.keeta.com/) and follow the steps to create your wallet. Make sure to save your mnemonic (seed phrase) to keep access to your wallet. To get your Keeta address, click on "Receive" and copy the deposit address (starting with `keeta_`).
 2. Use the [Keeta Testnet Faucet](https://faucet.test.keeta.com/) to send Testnet KTA to your wallet.
 3. To get Testnet USDC on Keeta, go to the "Receive" page in the wallet, click on "Any token from Keeta Testnet", select "USDC from Base (Sepolia) Testnet" and copy the deposit address (starting with `0x`). Then go the [Circle Faucet](https://faucet.circle.com/), select Base network and enter your Base deposit address.
+
+#### Concordium Testnet
+
+To get test CCD:
+
+1. Set up [Concordium Wallet for Web](https://wallet.testnet.concordium.com/) on **Testnet**.
+2. Open the account in the wallet.
+3. Go to **Activity**.
+4. Click **Request CCD**.
+5. Wait for the test CCD transfer to arrive. Official guide: [Request CCD](https://docs.concordium.com/en/mainnet/docs/plt/setup-guide/request-ccd.html).
+
+To get test PLT, there is no universal public faucet for arbitrary PLT symbols. Either:
+
+1. Use a token issuer's own test distribution for the symbol you want to use, or
+2. Request your own PLT issuance on testnet, then mint/distribute balances from the nominated governance account. Official guide: [Request PLT](https://docs.concordium.com/en/mainnet/tutorials/plt/request-plt.html).
 
 ## Available Examples
 

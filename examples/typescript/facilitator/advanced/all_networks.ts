@@ -5,12 +5,19 @@
  * optional chain configuration via environment variables.
  *
  * New chain support should be added here in alphabetic order by network prefix
- * (e.g., "algorand" before "eip155" before "hedera" before "near" before "solana" before "stellar" before "tvm").
+ * (e.g., "algorand" before "ccd" before "eip155" before "hedera" before "near" before "solana" before "stellar" before "tvm").
  */
 
 import * as KeetaNet from "@keetanetwork/keetanet-client";
 import { toFacilitatorAvmSigner } from "@x402/avm";
 import { ExactAvmScheme } from "@x402/avm/exact/facilitator";
+import { ExactConcordiumScheme } from "@x402/concordium/exact/facilitator";
+import {
+  CONCORDIUM_TESTNET_CAIP2,
+  getConcordiumGrpcUrl,
+  parseGrpcUrl,
+  toConcordiumFacilitatorSigner,
+} from "@x402/concordium";
 import { x402Facilitator } from "@x402/core/facilitator";
 import {
   PaymentPayload,
@@ -70,6 +77,12 @@ const PORT = process.env.PORT || "4022";
 
 // Configuration - optional per network (alphabetic order)
 const avmPrivateKey = process.env.AVM_PRIVATE_KEY as string | undefined;
+const ccdFacilitatorPrivateKey = process.env.CCD_FACILITATOR_PRIVATE_KEY as
+  | string
+  | undefined;
+const ccdFacilitatorAddress = process.env.CCD_FACILITATOR_ADDRESS as
+  | string
+  | undefined;
 const evmPrivateKey = process.env.EVM_PRIVATE_KEY as `0x${string}` | undefined;
 const keetaMnemonic = process.env.KEETA_MNEMONIC as string | undefined;
 const nearRelayerAccountId = process.env.NEAR_RELAYER_ACCOUNT_ID as
@@ -90,6 +103,7 @@ const hederaPrivateKey = process.env.HEDERA_PRIVATE_KEY;
 // Validate at least one private key is provided
 if (
   !avmPrivateKey &&
+  !(ccdFacilitatorPrivateKey && ccdFacilitatorAddress) &&
   !evmPrivateKey &&
   !keetaMnemonic &&
   !(nearRelayerAccountId && nearRelayerPrivateKey) &&
@@ -99,13 +113,14 @@ if (
   !(hederaAccountId && hederaPrivateKey)
 ) {
   console.error(
-    "❌ At least one of AVM_PRIVATE_KEY, EVM_PRIVATE_KEY, KEETA_MNEMONIC, NEAR_RELAYER_ACCOUNT_ID + NEAR_RELAYER_PRIVATE_KEY, SVM_PRIVATE_KEY, STELLAR_PRIVATE_KEY, TVM_PRIVATE_KEY, or HEDERA_ACCOUNT_ID + HEDERA_PRIVATE_KEY is required",
+    "❌ At least one of AVM_PRIVATE_KEY, CCD_FACILITATOR_PRIVATE_KEY + CCD_FACILITATOR_ADDRESS, EVM_PRIVATE_KEY, KEETA_MNEMONIC, NEAR_RELAYER_ACCOUNT_ID + NEAR_RELAYER_PRIVATE_KEY, SVM_PRIVATE_KEY, STELLAR_PRIVATE_KEY, TVM_PRIVATE_KEY, or HEDERA_ACCOUNT_ID + HEDERA_PRIVATE_KEY is required",
   );
   process.exit(1);
 }
 
 // Network configuration (alphabetic order)
 const AVM_NETWORK = "algorand:SGO1GKSzyE7IEPItTxCByw9x8FmnrCDexi9/cOUJOiI="; // Algorand Testnet
+const CCD_NETWORK = "ccd:4221332d34e1694168c2a0c0b3fd0f27"; // Concordium Testnet
 const EVM_NETWORK = "eip155:84532"; // Base Sepolia
 const HEDERA_NETWORK = "hedera:testnet"; // Hedera Testnet
 const KEETA_NETWORK = KEETA_TESTNET_CAIP2; // Keeta Testnet
@@ -140,6 +155,23 @@ if (avmPrivateKey) {
   const avmSigner = toFacilitatorAvmSigner(avmPrivateKey);
   console.info(`AVM Facilitator account: ${avmSigner.getAddresses()[0]}`);
   facilitator.register(AVM_NETWORK, new ExactAvmScheme(avmSigner));
+}
+
+// Register Concordium scheme if private key + address are provided (recommended).
+// This matches how every other mechanism reads a private key from an env var.
+if (ccdFacilitatorPrivateKey && ccdFacilitatorAddress) {
+  const [host, port] = parseGrpcUrl(getConcordiumGrpcUrl(CCD_NETWORK));
+
+  const signer = toConcordiumFacilitatorSigner(
+    ccdFacilitatorAddress,
+    ccdFacilitatorPrivateKey,
+    { host, port, useTls: true },
+  );
+
+  facilitator.register(CCD_NETWORK, new ExactConcordiumScheme({ signer }));
+  console.info(
+    `CCD Facilitator account: ${ccdFacilitatorAddress} on ${CCD_NETWORK}`,
+  );
 }
 
 // Register EVM scheme if private key is provided

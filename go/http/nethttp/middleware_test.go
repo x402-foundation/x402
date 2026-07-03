@@ -315,6 +315,14 @@ func TestPaymentMiddleware_Returns402JSONForPaymentError(t *testing.T) {
 	if w.Header().Get("PAYMENT-REQUIRED") == "" {
 		t.Error("Expected PAYMENT-REQUIRED header")
 	}
+
+	var response map[string]any
+	if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
+		t.Fatalf("Failed to parse response: %v", err)
+	}
+	if len(response) != 0 {
+		t.Errorf("Expected empty body {}, got %v", response)
+	}
 }
 
 func TestPaymentMiddleware_Returns402HTMLForBrowserRequest(t *testing.T) {

@@ -53,7 +53,7 @@ Launches an interactive CLI where you can select:
 - **Servers** - Protected endpoints requiring payment (Express, Gin, Hono, Next.js, FastAPI, Flask, etc.)
 - **Clients** - Payment-capable HTTP clients (axios, fetch, httpx, requests, etc.)
 - **Extensions** - Additional features like Bazaar discovery
-- **Protocols** - EVM, SVM, Aptos, Hedera, Stellar, and/or TVM networks
+- **Protocols** - EVM, SVM, AVM, Aptos, Concordium, Hedera, Stellar, and/or TVM networks
 - **Payment schemes** (when multiple apply) - `exact`, `upto`, or `batch-settlement`
 
 Every valid combination of your selections will be tested. For example, selecting 2 facilitators, 3 servers, and 2 clients will generate and run all compatible test scenarios.
@@ -118,18 +118,21 @@ Required environment variables (set in `.env` file):
 CLIENT_EVM_PRIVATE_KEY=0x...        # EVM private key for client payments
 CLIENT_SVM_PRIVATE_KEY=...          # Solana private key for client payments
 CLIENT_APTOS_PRIVATE_KEY=...        # Aptos private key for client payments (hex string)
+CLIENT_CCD_PRIVATE_KEY=...         # Concordium private key for client payments
+CLIENT_CCD_ADDRESS=...            # Concordium account address for client payments
 CLIENT_HEDERA_ACCOUNT_ID=0.0....    # Hedera account id for client payments
 CLIENT_HEDERA_PRIVATE_KEY=0x...     # Hedera ECDSA private key for client payments
 CLIENT_KEETA_MNEMONIC=...           # Keeta mnemonic for client payments
 CLIENT_STELLAR_PRIVATE_KEY=...      # Stellar private key for client payments
 CLIENT_TVM_PRIVATE_KEY=...          # TVM private key for client payments
-CLIENT_NEAR_ACCOUNT_ID=...          # NEAR account id for client payments (payer)
-CLIENT_NEAR_PRIVATE_KEY=ed25519:... # NEAR private key for client payments
+CLIENT_NEAR_ACCOUNT_ID=...          # NEAR payer account id that owns the access key
+CLIENT_NEAR_PRIVATE_KEY=ed25519:... # NEAR private key for that payer account
 
 # Server payment addresses
 SERVER_EVM_ADDRESS=0x...            # Where servers receive EVM payments
 SERVER_SVM_ADDRESS=...              # Where servers receive Solana payments
 SERVER_APTOS_ADDRESS=0x...          # Where servers receive Aptos payments
+SERVER_CCD_ADDRESS=...              # Where servers receive Concordium payments
 SERVER_HEDERA_ADDRESS=0.0....       # Where servers receive Hedera payments
 SERVER_KEETA_ADDRESS=keeta_...      # Where servers receive Keeta payments
 SERVER_STELLAR_ADDRESS=...          # Where servers receive Stellar payments
@@ -140,6 +143,8 @@ SERVER_NEAR_ADDRESS=...             # Where servers receive NEAR payments (merch
 FACILITATOR_EVM_PRIVATE_KEY=0x...   # EVM private key for facilitator
 FACILITATOR_SVM_PRIVATE_KEY=...     # Solana private key for facilitator
 FACILITATOR_APTOS_PRIVATE_KEY=...   # Aptos private key for facilitator (hex string)
+FACILITATOR_CCD_PRIVATE_KEY=...    # Concordium private key for facilitator
+FACILITATOR_CCD_ADDRESS=...       # Concordium account address for facilitator
 FACILITATOR_HEDERA_ACCOUNT_ID=0.0... # Hedera fee payer account id for facilitator
 FACILITATOR_HEDERA_PRIVATE_KEY=0x... # Hedera ECDSA private key for facilitator
 FACILITATOR_KEETA_MNEMONIC=...      # Keeta mnemonic for facilitator
@@ -147,6 +152,10 @@ FACILITATOR_STELLAR_PRIVATE_KEY=... # Stellar private key for facilitator
 FACILITATOR_TVM_PRIVATE_KEY=...     # TVM private key for facilitator
 FACILITATOR_NEAR_ACCOUNT_ID=...     # NEAR relayer account id (submits meta-tx, sponsors gas)
 FACILITATOR_NEAR_PRIVATE_KEY=ed25519:... # NEAR relayer private key
+
+# Concordium network override
+CCD_NETWORK=ccd:4221332d34e1694168c2a0c0b3fd0f27  # Optional; defaults to testnet
+CCD_GRPC_URL=grpc.testnet.concordium.com:20000    # Optional; defaults by network
 
 # TVM support
 TVM_PROVIDER=tonapi                 # Optional: toncenter (default) or tonapi
@@ -208,7 +217,7 @@ You need **three separate NEAR testnet accounts** for e2e tests — client (paye
 2. Fund the **facilitator (relayer)** account with testnet NEAR for gas from the [NEAR faucet](https://near-faucet.io/). The relayer submits the NEP-366 `SignedDelegate` and sponsors gas, so the payer spends zero gas.
 3. Give the **client (payer)** the payment token. The default asset is **wNEAR** (`wrap.testnet`, a NEP-141): wrap NEAR via `wrap.testnet` `near_deposit`. Both payer and merchant must be `storage_deposit`-registered on the token contract.
 
-> **Note:** payer key = `CLIENT_NEAR_*`, relayer key = `FACILITATOR_NEAR_*`, merchant = `SERVER_NEAR_ADDRESS`. Override the token with `SERVER_NEAR_ASSET` / `SERVER_NEAR_AMOUNT` (defaults: `wrap.testnet` / `1000000000000000000000` = 0.001 wNEAR; set them to a NEP-141 like Circle USDC for stablecoin runs).
+> **Note:** payer key = `CLIENT_NEAR_*`, relayer key = `FACILITATOR_NEAR_*`, merchant = `SERVER_NEAR_ADDRESS`. `CLIENT_NEAR_ACCOUNT_ID` is required because a NEAR private key identifies a public key, but the signer must also know which account owns that access key to read its nonce and set the delegated action `senderId`. Override the token with `SERVER_NEAR_ASSET` / `SERVER_NEAR_AMOUNT` (defaults: `wrap.testnet` / `1000000000000000000000` = 0.001 wNEAR; set them to a NEP-141 like Circle USDC for stablecoin runs).
 
 ## Example Session
 

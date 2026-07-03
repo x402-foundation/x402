@@ -15,6 +15,8 @@ export const ErrInvalidSignature = "invalid_exact_evm_signature";
 export const ErrValidBeforeExpired = "invalid_exact_evm_payload_authorization_valid_before";
 export const ErrValidAfterInFuture = "invalid_exact_evm_payload_authorization_valid_after";
 export const ErrInvalidAuthorizationValue = "invalid_exact_evm_authorization_value";
+export const ErrAuthorizationValueMismatch =
+  "invalid_exact_evm_payload_authorization_value_mismatch";
 export const ErrUndeployedSmartWallet = "invalid_exact_evm_payload_undeployed_smart_wallet";
 export const ErrTransactionFailed = "invalid_exact_evm_transaction_failed";
 
@@ -72,3 +74,4 @@ export const ErrEip2612DeadlineExpired = "eip2612_deadline_expired";
 export const ErrUnsupportedPayloadType = "unsupported_payload_type";
 export const ErrInvalidTransactionState = "invalid_transaction_state";
 export const ErrFactoryNotAllowed = "eip6492_factory_not_allowed";
+export const ErrSmartWalletDeploymentFailed = "smart_wallet_deployment_failed";

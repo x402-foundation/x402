@@ -3,6 +3,7 @@ package x402
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"math/big"
 	"regexp"
@@ -241,7 +242,62 @@ func (s *x402ResourceServer) Initialize(ctx context.Context) error {
 		s.supportedCache.Set(fmt.Sprintf("facilitator_%p", client), supported)
 	}
 
-	return nil
+	return s.validateFacilitatorCapabilities(ctx)
+}
+
+// validateFacilitatorCapabilities fails fast when a registered scheme's config is
+// incompatible with the facilitator capabilities advertised for the scheme/network
+// it supports. Only schemes the facilitator actually supports are validated, and
+// only schemes implementing FacilitatorSupportValidator participate.
+func (s *x402ResourceServer) validateFacilitatorCapabilities(_ context.Context) error {
+	var problems []error
+
+	for network, schemeMap := range s.schemes {
+		for scheme, server := range schemeMap {
+			validator, ok := server.(FacilitatorSupportValidator)
+			if !ok {
+				continue
+			}
+
+			supportedKind, extensions, found := s.findSupportedKind(network, scheme)
+			if !found {
+				continue
+			}
+
+			if err := validator.ValidateFacilitatorSupport(network, supportedKind, extensions); err != nil {
+				problems = append(problems, fmt.Errorf("%s on %s: %w", scheme, network, err))
+			}
+		}
+	}
+
+	if len(problems) == 0 {
+		return nil
+	}
+	return fmt.Errorf("x402 facilitator capability errors: %w", errors.Join(problems...))
+}
+
+// findSupportedKind scans the cached facilitator responses for the V2 kind matching
+// the scheme/network and returns it alongside the facilitator's advertised extensions.
+// The bool reports whether the facilitator supports the scheme/network at all.
+func (s *x402ResourceServer) findSupportedKind(network Network, scheme string) (types.SupportedKind, []string, bool) {
+	s.supportedCache.mu.RLock()
+	defer s.supportedCache.mu.RUnlock()
+
+	for _, cachedResponse := range s.supportedCache.data {
+		for _, kind := range cachedResponse.Kinds {
+			if kind.X402Version != 2 || kind.Scheme != scheme || string(kind.Network) != string(network) {
+				continue
+			}
+			supportedKind := types.SupportedKind{
+				X402Version: kind.X402Version,
+				Scheme:      kind.Scheme,
+				Network:     string(kind.Network),
+				Extra:       kind.Extra,
+			}
+			return supportedKind, cachedResponse.Extensions, true
+		}
+	}
+	return types.SupportedKind{}, nil, false
 }
 
 // HasRegisteredScheme checks if a scheme is registered for a given network
