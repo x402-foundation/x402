@@ -68,8 +68,10 @@ derived from the Apache-2.0 `agent-security-harness`; methodology at Zenodo
 [10.5281/zenodo.19343034](https://doi.org/10.5281/zenodo.19343034). Licensed
 Apache-2.0, matching this repository.
 
-Building these vectors against a reference x402 hardening implementation
-surfaced three real fail-open defects (a credential-release check trusting an
-attacker-controlled flag, a scope check that failed open on an omitted field,
-and an SSRF blocklist that missed most of the RFC1918 `172.16/12` range) — all
-disclosed and guarded. That is what a conformance suite is for.
+While building the harness these vectors come from, adversarial review of **its
+own reference verifier** caught three fail-open defects *in that harness code* —
+a credential-release check trusting a self-asserted flag, a scope check that
+failed open on an omitted field, and an SSRF blocklist that missed most of the
+RFC1918 `172.16/12` range — each fixed and guarded by a negative test before
+release. Fail-open is easy to ship even in code written to catch it; that is
+exactly why machine-checkable conformance vectors are worth having.
