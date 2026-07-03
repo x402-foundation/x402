@@ -20,6 +20,36 @@ XRPL charges the transaction fee to the transaction `Account`. This exact scheme
 
 `PaymentRequirements.extra.areFeesSponsored` MUST be present and MUST be `false`.
 
+## Asset Transfer Methods
+
+An XRPL `Payment` can be sequenced by the payer account's normal `Sequence` number or by a pre-created XRPL Ticket (`TicketSequence`). This scheme supports both, selected via `extra.assetTransferMethod`:
+
+| AssetTransferMethod  | Use Case                                                            | Recommendation                                               | Usage Semantics                                  |
+| :------------------- | :------------------------------------------------------------------ | :----------------------------------------------------------- | :------------------------------------------------ |
+| **`sequence`**       | Micropayments, low-balance wallets, resources that settle promptly | **Default** (no ticket reserve, no preflight transaction)    | One pending payment per payer account            |
+| **`ticketSequence`** | Long-running resource handlers, concurrent pending payments        | **Strictest settlement safety** (requires ticket inventory)  | Multiple concurrent pending payments per account |
+
+If no `assetTransferMethod` is specified in `PaymentRequired.extra`, clients SHOULD default to `"sequence"`. Payment payloads that use a non-default transfer method MUST echo the selected `assetTransferMethod` in `accepted.extra`. If `PaymentRequired.extra.assetTransferMethod` is present, the client MUST use the specified method. A resource server MAY offer both methods by listing multiple entries in `accepts` that differ only in `extra.assetTransferMethod`.
+
+### Tradeoffs
+
+`"sequence"` uses the payer account's normal, strictly ordered sequence number:
+
+- No preflight transaction and no reserve: the payer only needs balance for the payment and the network fee, which suits low-balance micropayment wallets.
+- The payer account is effectively serialized until the payment settles or expires: consuming the same sequence with any other transaction between `/verify` and `/settle` permanently invalidates the payment (`tefPAST_SEQ`) after the resource handler has already run.
+- Facilitator sequence checks at `/verify` and `/settle` and client-side sequence locking reduce this race but do not eliminate it. This is a cooperative mitigation, not a protocol-level reservation.
+
+`"ticketSequence"` uses an XRPL Ticket created ahead of time by the payer:
+
+- The ticket reserves the payment's sequencing slot at the protocol level, so the payment cannot be invalidated by other account activity between `/verify` and `/settle`, and multiple payments can be pending concurrently (one ticket each).
+- If no ticket is available, the client must first submit a `TicketCreate` transaction, adding one network fee and one transaction round trip before the payment request.
+- Each outstanding ticket locks owner reserve (currently `0.2 XRP` on mainnet, subject to validator fee voting) until it is used or deleted. For a `0.01 XRP` payment this is roughly 20x the payment amount in temporarily locked liquidity, and an account can hold at most 250 outstanding tickets.
+
+### Choosing a Method
+
+- Resource servers that settle promptly after verification (for example, a fast database lookup) MAY accept `"sequence"` and MAY additionally offer `"ticketSequence"` for clients that want concurrent pending requests.
+- Resource servers with long-running handlers SHOULD require `"ticketSequence"`, or accept `"sequence"` only if they explicitly accept the risk that settlement fails after the resource handler has run.
+
 ## Network Identifier (CAIP-2)
 
 x402 v2 requires CAIP-2 network identifiers. For XRPL, the format is:
@@ -39,7 +69,7 @@ Common XRPL network identifiers:
 | Devnet  | `xrpl:2`   |
 
 > [!WARNING]
-> For standard XRPL networks where `networkId <= 1024`, XRPL protocol rules require omitting the signed `NetworkID` field. Wallets SHOULD use separate XRPL accounts for mainnet, testnet, and devnet x402 payments. If the same account has funds and compatible ticket state on multiple standard networks, a malicious or misconfigured facilitator could replay a transaction signed for one network on another.
+> For standard XRPL networks where `networkId <= 1024`, XRPL protocol rules require omitting the signed `NetworkID` field. Wallets SHOULD use separate XRPL accounts for mainnet, testnet, and devnet x402 payments. If the same account has funds and a compatible account sequence or ticket state on multiple standard networks, a malicious or misconfigured facilitator could replay a transaction signed for one network on another.
 
 ## Protocol Flow
 
@@ -47,7 +77,7 @@ The protocol flow for `exact` on XRPL is client-driven.
 
 1. **Client** makes a request to a **Resource Server**.
 2. **Resource Server** responds with a payment required signal containing `PaymentRequired` in the `PAYMENT-REQUIRED` header (base64-encoded JSON).
-3. **Client** creates a `Payment` transaction to the resource server's XRPL address for the specified amount.
+3. **Client** creates a `Payment` transaction to the resource server's XRPL address for the specified amount, sequenced according to the selected [asset transfer method](#asset-transfer-methods).
 4. **Client** signs the transaction with their wallet, producing a fully signed transaction blob.
 5. **Client** encodes the signed transaction as a hex string.
 6. **Client** sends a new request to the resource server with the `PAYMENT-SIGNATURE` header containing the base64-encoded `PaymentPayload`.
@@ -85,6 +115,7 @@ The resource server advertises payment requirements in the `accepts` array.
   "maxTimeoutSeconds": 600,
   "extra": {
     "areFeesSponsored": false,
+    "assetTransferMethod": "sequence",
     "invoiceId": "INV-2025-001"
   }
 }
@@ -102,6 +133,7 @@ The resource server advertises payment requirements in the `accepts` array.
   "maxTimeoutSeconds": 600,
   "extra": {
     "areFeesSponsored": false,
+    "assetTransferMethod": "ticketSequence",
     "issuer": "rMwjYedjc7qqtKYVLiAccJSmCwih4LnE2q",
     "invoiceId": "INV-2025-002"
   }
@@ -119,6 +151,7 @@ The resource server advertises payment requirements in the `accepts` array.
 | `amount`                 | string  | Yes      | XRP drops string or IOU issued-currency value    |
 | `maxTimeoutSeconds`      | integer | Yes      | Maximum validity window for payment attempt      |
 | `extra.areFeesSponsored` | boolean | Yes      | Must be `false` for XRPL exact payments          |
+| `extra.assetTransferMethod` | string | No     | `"sequence"` (default) or `"ticketSequence"`     |
 | `extra.invoiceId`        | string  | No       | Unique invoice identifier for binding            |
 | `extra.destinationTag`   | integer | No       | DestinationTag for hosted accounts               |
 | `extra.issuer`           | string  | IOU only | Classic address of the IOU issuer                |
@@ -126,6 +159,8 @@ The resource server advertises payment requirements in the `accepts` array.
 `extra.destinationTag` applies to both native XRP and IOU payments. It is used when the receiver is a hosted account or otherwise requires a destination tag for attribution.
 
 `extra.areFeesSponsored` is always `false` because this scheme uses payer-signed XRPL `Payment` transactions whose fee is paid by the payer account.
+
+`extra.assetTransferMethod` selects how the signed transaction is sequenced. See [Asset Transfer Methods](#asset-transfer-methods) for negotiation rules and tradeoffs.
 
 No `extra.decimals` field is defined for XRPL exact payments. Implementations MUST NOT derive the signed transfer amount from server-provided decimal precision metadata.
 
@@ -180,6 +215,7 @@ The `PAYMENT-SIGNATURE` header contains a base64-encoded `PaymentPayload`.
     "maxTimeoutSeconds": 600,
     "extra": {
       "areFeesSponsored": false,
+      "assetTransferMethod": "sequence",
       "invoiceId": "INV-2025-001"
     }
   },
@@ -188,6 +224,8 @@ The `PAYMENT-SIGNATURE` header contains a base64-encoded `PaymentPayload`.
   }
 }
 ```
+
+The XRP example uses `assetTransferMethod="sequence"`, so the signed blob carries the payer account's current `Sequence`.
 
 ### IOU Example
 
@@ -203,15 +241,18 @@ The `PAYMENT-SIGNATURE` header contains a base64-encoded `PaymentPayload`.
     "maxTimeoutSeconds": 600,
     "extra": {
       "areFeesSponsored": false,
+      "assetTransferMethod": "ticketSequence",
       "issuer": "rMwjYedjc7qqtKYVLiAccJSmCwih4LnE2q",
       "invoiceId": "INV-2025-002"
     }
   },
   "payload": {
-    "signedTxBlob": "120000228000000024000000036840000000000000C732103AB40A0490F9B7ED8DF29D246BF2D6269820A0EE7742ACDD457BEA7C7D0931EDB74473045022100..."
+    "signedTxBlob": "1200002280000000240000000020290000C3516840000000000000C732103AB40A0490F9B7ED8DF29D246BF2D6269820A0EE7742ACDD457BEA7C7D0931EDB74473045022100..."
   }
 }
 ```
+
+The IOU example uses `assetTransferMethod="ticketSequence"`, so the signed blob carries `Sequence = 0` and a `TicketSequence`.
 
 ### Payload Fields
 
@@ -233,6 +274,7 @@ The facilitator MUST reject if:
 - `paymentPayload.accepted` does not match `paymentRequirements` on `scheme`, `network`, `asset`, `payTo`, `amount`, or `maxTimeoutSeconds`
 - Required `extra` keys are missing or mismatched:
   - `areFeesSponsored=false`
+  - `assetTransferMethod` when present in `paymentRequirements.extra` (the payload MUST NOT select a different method; when the requirement omits it, `accepted.extra.assetTransferMethod` MAY declare the selected method, see section 7)
   - `issuer` for IOU payments
   - `invoiceId` when invoice binding is required
   - `destinationTag` when destination tag binding is required
@@ -265,7 +307,7 @@ For XRPL mainnet, testnet, devnet, and other standard networks with `networkId <
 
 For `networkId <= 1024`, the facilitator MUST submit the transaction only to the XRPL network identified by `paymentRequirements.network`. For custom XRPL networks with `networkId > 1024`, the signed `NetworkID` field provides explicit network binding.
 
-Clients and wallets SHOULD use different XRPL accounts for mainnet, testnet, devnet, and other standard networks. If one account has funds and compatible ticket state on more than one standard network, a malicious or misconfigured facilitator could replay a transaction intended for one standard network on another standard network where the signed `NetworkID` field is also omitted.
+Clients and wallets SHOULD use different XRPL accounts for mainnet, testnet, devnet, and other standard networks. If one account has funds and a compatible account sequence or ticket state on more than one standard network, a malicious or misconfigured facilitator could replay a transaction intended for one standard network on another standard network where the signed `NetworkID` field is also omitted.
 
 ### 6. Amount Validation
 
@@ -316,7 +358,23 @@ The facilitator MUST reject if:
 
 - `tx_json.LastLedgerSequence` MUST be present.
 - `LastLedgerSequence` MUST be no later than the facilitator's policy-derived maximum for `paymentRequirements.maxTimeoutSeconds`.
-- The transaction MUST use `TicketSequence`.
+
+Determine the selected asset transfer method:
+
+- If `paymentPayload.accepted.extra.assetTransferMethod` is present, it is the selected method.
+- Else if `paymentRequirements.extra.assetTransferMethod` is present, it is the selected method.
+- Else the selected method is `"sequence"`.
+
+The facilitator MUST reject if the selected method is not `"sequence"` or `"ticketSequence"`, or if `paymentRequirements.extra.assetTransferMethod` is present and the selected method differs from it.
+
+If the selected method is `"sequence"`:
+
+- `tx_json.TicketSequence` MUST be absent.
+- `tx_json.Sequence` MUST equal the current `Sequence` of `tx_json.Account` on the target network at verification time.
+- Because `/settle` re-runs verification, a sequence consumed between `/verify` and `/settle` is detected before submission; the signed transaction is then permanently invalid and settlement MUST fail.
+
+If the selected method is `"ticketSequence"`:
+
 - `tx_json.Sequence` MUST be `0`.
 - `tx_json.TicketSequence` MUST refer to an available ticket for `tx_json.Account`.
 
@@ -325,7 +383,10 @@ Recommended `LastLedgerSequence` policy:
 - Convert `maxTimeoutSeconds` to ledgers: `maxLedgerDelta = ceil(maxTimeoutSeconds / 5) + 2`.
 - Require: `LastLedgerSequence <= currentValidatedLedgerIndex + maxLedgerDelta`.
 
-`TicketSequence` is required because x402 `exact` settlement occurs after successful resource-handler execution. A ticket avoids blocking the payer's normal account sequence while the resource server handles the request. Clients MUST create a ticket before signing an x402 XRPL payment if no available ticket exists.
+Client requirements per method:
+
+- `"sequence"`: the client SHOULD NOT sign or submit any other transaction from the payer account until the payment settles or `LastLedgerSequence` has passed, and SHOULD keep at most one pending `"sequence"`-method payment per account. These are cooperative mitigations; the sequence is not reserved at the protocol level.
+- `"ticketSequence"`: the client MUST create a ticket (`TicketCreate`) before signing if no available ticket exists, and SHOULD maintain enough available tickets for its expected number of concurrent pending payments.
 
 ### 8. Invoice Binding
 
@@ -364,7 +425,7 @@ The facilitator MUST reject transactions with:
 If simulation is unavailable, implementations MUST perform targeted checks that cover at least:
 
 - account existence for `tx_json.Account`;
-- ticket availability;
+- account sequence currency or ticket availability, according to the selected asset transfer method;
 - XRP balance sufficient for the transaction fee;
 - destination account existence or create-account funding rules for XRP payments;
 - IOU trust line existence, issuer, and balance sufficiency for IOU payments.
@@ -424,7 +485,8 @@ Implementations MAY include additional fields when defined by the SDK or facilit
 ### Replay and Race Protection
 
 - `LastLedgerSequence` ensures transactions expire.
-- `TicketSequence` is required because x402 `exact` settlement is separated from `/verify` by resource-handler execution.
+- With `assetTransferMethod="ticketSequence"`, the ticket reserves the payment's sequencing slot at the protocol level across the `/verify` -> resource handler -> `/settle` gap.
+- With `assetTransferMethod="sequence"`, that gap is protected only cooperatively: the facilitator verifies the sequence is current at `/verify` and re-checks it at `/settle`, and clients avoid other transactions from the same account while the payment is pending. A payer that consumes the sequence elsewhere invalidates settlement after resource execution; resource servers that accept `"sequence"` accept this risk.
 - `NetworkID` provides signed network binding only for XRPL networks with `networkId > 1024`; standard XRPL networks require facilitators to route strictly by `paymentRequirements.network`.
 - Clients SHOULD use different XRPL accounts for standard networks such as mainnet and testnet to reduce replay risk when `NetworkID` must be omitted.
 
@@ -440,6 +502,7 @@ Implementations MAY include additional fields when defined by the SDK or facilit
 - [XRPL Transaction Common Fields](https://xrpl.org/docs/references/protocol/transactions/common-fields)
 - [XRPL Tickets](https://xrpl.org/docs/concepts/accounts/tickets)
 - [XRPL Use Tickets](https://xrpl.org/docs/tutorials/best-practices/transaction-sending/use-tickets)
+- [XRPL Reserves](https://xrpl.org/docs/concepts/accounts/reserves)
 - [XRPL Currency Formats](https://xrpl.org/docs/references/protocol/data-types/currency-formats)
 - [CAIP-2 Specification](https://github.com/ChainAgnostic/CAIPs/blob/main/CAIPs/caip-2.md)
 - [x402 Protocol Specification](https://github.com/coinbase/x402/blob/main/specs/x402-specification-v2.md)
