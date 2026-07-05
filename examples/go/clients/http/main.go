@@ -113,26 +113,24 @@ func makeRequest(client *x402.X402Client, url string) error {
 	fmt.Printf("  %s\n", string(prettyJSON))
 
 	// Extract payment response from headers if present
-	paymentHeader := resp.Header.Get("PAYMENT-RESPONSE")
-	if paymentHeader == "" {
-		paymentHeader = resp.Header.Get("X-PAYMENT-RESPONSE")
+	settleResp, err := extractPaymentResponse(resp.Header)
+	if err != nil {
+		return fmt.Errorf("failed to parse payment response: %w", err)
+	}
+	if settleResp == nil {
+		return nil
 	}
 
-	if paymentHeader != "" {
-		fmt.Println("\n💰 Payment Details:")
-		settleResp, err := extractPaymentResponse(resp.Header)
-		if err == nil {
-			fmt.Printf("  Success: %v\n", settleResp.Success)
-			if settleResp.ErrorReason != "" {
-				fmt.Printf("  ErrorReason: %s\n", settleResp.ErrorReason)
-			}
-			if settleResp.Transaction != "" {
-				fmt.Printf("  Transaction: %s\n", settleResp.Transaction)
-			}
-			fmt.Printf("  Network: %s\n", settleResp.Network)
-			fmt.Printf("  Payer: %s\n", settleResp.Payer)
-		}
+	fmt.Println("\n💰 Payment Details:")
+	fmt.Printf("  Success: %v\n", settleResp.Success)
+	if settleResp.ErrorReason != "" {
+		fmt.Printf("  ErrorReason: %s\n", settleResp.ErrorReason)
 	}
+	if settleResp.Transaction != "" {
+		fmt.Printf("  Transaction: %s\n", settleResp.Transaction)
+	}
+	fmt.Printf("  Network: %s\n", settleResp.Network)
+	fmt.Printf("  Payer: %s\n", settleResp.Payer)
 
 	return nil
 }
