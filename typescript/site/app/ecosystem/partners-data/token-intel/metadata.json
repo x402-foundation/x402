@@ -1,0 +1,7 @@
+{
+  "name": "Solana Token Intelligence",
+  "category": "Services/Endpoints",
+  "logoUrl": "/logos/token-intel.svg",
+  "description": "Agent-native token safety API: one x402 micropayment ($0.02 USDC on Base) returns a fused risk read on any Solana token — mint/freeze authorities, holder concentration, dev holdings, organic volume score, liquidity — with a synthesized verdict and red/green flags. No API key, no account; full OpenAPI + bazaar discovery schemas.",
+  "websiteUrl": "https://token-intel-x402.echolonius.deno.net"
+}
