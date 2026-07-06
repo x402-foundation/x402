@@ -1,0 +1,59 @@
+/**
+ * XRPL mainnet CAIP-2 identifier.
+ */
+export const XRPL_MAINNET = "xrpl:0";
+
+/**
+ * XRPL testnet CAIP-2 identifier.
+ */
+export const XRPL_TESTNET = "xrpl:1";
+
+/**
+ * XRPL devnet CAIP-2 identifier.
+ */
+export const XRPL_DEVNET = "xrpl:2";
+
+/**
+ * XRPL CAIP family pattern used in facilitator supported responses.
+ */
+export const XRPL_CAIP_FAMILY = "xrpl:*";
+
+/**
+ * Default XRPL mainnet WebSocket endpoint.
+ */
+export const XRPL_MAINNET_WS_URL = "wss://s1.ripple.com:51233";
+
+/**
+ * Default XRPL testnet WebSocket endpoint.
+ */
+export const XRPL_TESTNET_WS_URL = "wss://s.altnet.rippletest.net:51233";
+
+/**
+ * Default XRPL devnet WebSocket endpoint.
+ */
+export const XRPL_DEVNET_WS_URL = "wss://s.devnet.rippletest.net:51233";
+
+/**
+ * Default maximum transaction fee accepted by the facilitator, in drops.
+ */
+export const DEFAULT_MAX_FEE_DROPS = "10000";
+
+/**
+ * Default number of additional ledgers allowed beyond maxTimeoutSeconds conversion.
+ */
+export const DEFAULT_LEDGER_CLOSE_SECONDS = 5;
+
+/**
+ * Additional ledgers added to maxTimeoutSeconds conversion to tolerate close-time variance.
+ */
+export const DEFAULT_LEDGER_TOLERANCE = 2;
+
+/**
+ * XRPL Payment tfPartialPayment flag.
+ */
+export const TF_PARTIAL_PAYMENT = 0x00020000;
+
+/**
+ * Maximum number of outstanding tickets an XRPL account can hold.
+ */
+export const MAX_ACCOUNT_TICKETS = 250;

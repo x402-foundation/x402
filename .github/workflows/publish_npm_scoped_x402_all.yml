@@ -76,6 +76,7 @@ jobs:
           publish_package "packages/mechanisms/keeta"
           publish_package "packages/mechanisms/near"
           publish_package "packages/mechanisms/tvm"
+          publish_package "packages/mechanisms/xrpl"
           publish_package "packages/http/paywall"
           publish_package "packages/http/axios"
           publish_package "packages/http/fetch"
