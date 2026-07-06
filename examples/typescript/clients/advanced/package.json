@@ -28,12 +28,14 @@
     "@x402/stellar": "workspace:*",
     "@x402/hedera": "workspace:*",
     "@x402/tvm": "workspace:*",
+    "@x402/xrpl": "workspace:*",
     "@x402/fetch": "workspace:*",
     "@ton/crypto": "^3.3.0",
     "@concordium/web-sdk": "^12.0.0",
     "dotenv": "^16.4.7",
     "viem": "^2.48.11",
-    "@solana/kit": "^6.1.0"
+    "@solana/kit": "^6.1.0",
+    "xrpl": "^4.6.0"
   },
   "devDependencies": {
     "@eslint/js": "^9.24.0",

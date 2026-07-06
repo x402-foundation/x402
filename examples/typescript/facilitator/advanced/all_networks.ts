@@ -5,7 +5,7 @@
  * optional chain configuration via environment variables.
  *
  * New chain support should be added here in alphabetic order by network prefix
- * (e.g., "algorand" before "aptos" before "ccd" before "eip155" before "hedera" before "near" before "solana" before "stellar" before "tvm").
+ * (e.g., "algorand" before "aptos" before "ccd" before "eip155" before "hedera" before "near" before "solana" before "stellar" before "tvm" before "xrpl").
  */
 
 import {
@@ -73,6 +73,8 @@ import {
   TVM_PROVIDER_TONCENTER,
 } from "@x402/tvm";
 import { ExactTvmScheme } from "@x402/tvm/exact/facilitator";
+import { XRPL_TESTNET } from "@x402/xrpl";
+import { ExactXrplScheme } from "@x402/xrpl/exact/facilitator";
 import dotenv from "dotenv";
 import express from "express";
 import { createWalletClient, http, publicActions } from "viem";
@@ -110,6 +112,9 @@ const tvmPrivateKey = process.env.TVM_PRIVATE_KEY as string | undefined;
 const hederaAccountId = process.env.HEDERA_ACCOUNT_ID;
 // Hedera private key should be an ECDSA key string (0x-prefixed or DER-encoded).
 const hederaPrivateKey = process.env.HEDERA_PRIVATE_KEY;
+// XRPL is keyless for the facilitator: the payer signs and pays fees.
+const xrplNetwork = process.env.XRPL_NETWORK || XRPL_TESTNET;
+const xrplWsUrl = process.env.XRPL_WS_URL as string | undefined;
 
 // Validate at least one private key is provided
 if (
@@ -141,6 +146,7 @@ const NEAR_NETWORK = nearNetwork as Network; // NEAR Testnet
 const SVM_NETWORK = "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1"; // Solana Devnet
 const STELLAR_NETWORK = "stellar:testnet"; // Stellar Testnet
 const TVM_NETWORK = (process.env.TVM_NETWORK || "tvm:-3") as Network; // TON Testnet
+const XRPL_NETWORK = xrplNetwork as Network; // XRPL Testnet
 
 // Initialize the x402 Facilitator
 const facilitator = new x402Facilitator()
@@ -366,6 +372,23 @@ if (tvmPrivateKey) {
   );
 
   facilitator.register(TVM_NETWORK, new ExactTvmScheme(tvmSigner));
+}
+
+// Register XRPL scheme if XRPL_NETWORK is set. XRPL is keyless: the payer
+// signs and pays transaction fees; the facilitator only reads ledger state
+// and submits the payer-signed transaction.
+if (process.env.XRPL_NETWORK) {
+  facilitator.register(
+    XRPL_NETWORK,
+    new ExactXrplScheme(
+      xrplWsUrl
+        ? { wsUrlByNetwork: { [XRPL_NETWORK as `xrpl:${number}`]: xrplWsUrl } }
+        : {},
+    ),
+  );
+  console.info(
+    `XRPL facilitator enabled on ${XRPL_NETWORK} (payer-signed transactions; no facilitator signer)`,
+  );
 }
 
 // Initialize Express app

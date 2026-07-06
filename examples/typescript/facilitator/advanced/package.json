@@ -31,6 +31,7 @@
     "@x402/near": "workspace:*",
     "@x402/stellar": "workspace:*",
     "@x402/tvm": "workspace:*",
+    "@x402/xrpl": "workspace:*",
     "@concordium/web-sdk": "^12.0.0",
     "dotenv": "^16.4.5",
     "express": "^4.19.2",
