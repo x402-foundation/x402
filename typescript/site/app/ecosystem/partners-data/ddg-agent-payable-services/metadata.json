@@ -1,0 +1,7 @@
+{
+  "name": "DDG Agent-Payable Services",
+  "category": "Services/Endpoints",
+  "logoUrl": "/logos/ddg-agent-payable-services.png",
+  "description": "Pay-per-call gateway for AI agents: 90+ x402 tools (utilities, blockchain RPC, market data, security audits) plus an OpenAI-compatible LLM gateway. USDC on Base, free-trial calls per agent.",
+  "websiteUrl": "https://agents.daedalusdevelopmentgroup.com"
+}
