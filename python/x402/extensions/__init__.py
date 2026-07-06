@@ -114,6 +114,10 @@ from .sign_in_with_x import (  # noqa: E402
     verify_siwx_signature,
     verify_solana_signature,
 )
+from .trace_trust import (  # noqa: E402
+    TraceTrustExtension,
+    TraceTrustExtensionHooks,
+)
 
 __all__ = [
     # Constants
@@ -238,4 +242,7 @@ __all__ = [
     "get_solana_address",
     "sign_evm_message",
     "sign_solana_message",
+    # TRACE Trust API
+    "TraceTrustExtension",
+    "TraceTrustExtensionHooks",
 ]
