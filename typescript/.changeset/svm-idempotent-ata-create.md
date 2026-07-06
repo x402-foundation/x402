@@ -1,0 +1,5 @@
+---
+'@x402/svm': minor
+---
+
+Support first-time token recipients in the exact SVM scheme (#2395). When the destination associated token account does not exist yet, the client (v1 and v2) now prepends a `CreateAssociatedTokenIdempotent` instruction funded by the facilitator fee payer — only when the ATA is actually missing, so the repeat-payment layout is unchanged. The facilitator static path (v1 and v2) accepts exactly one optional create-ATA at index 2 (TransferChecked shifts to index 3) and pins every field of it — idempotent discriminator byte, six-account layout, funder == fee payer, owner == payTo, mint == asset, system program, token program == the transfer's, and derived ATA == the transfer destination — so the only account the facilitator can be made to rent-fund is the one it is being paid into. New error reasons: `invalid_exact_svm_payload_create_ata_{not_idempotent,account_count,funder_mismatch,owner_mismatch,mint_mismatch,system_program_mismatch,token_program_mismatch,destination_mismatch}`.

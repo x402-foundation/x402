@@ -5,11 +5,13 @@ import {
 import { TOKEN_PROGRAM_ADDRESS } from "@solana-program/token";
 import {
   findAssociatedTokenPda,
+  getCreateAssociatedTokenIdempotentInstruction,
   getTransferCheckedInstruction,
   TOKEN_2022_PROGRAM_ADDRESS,
 } from "@solana-program/token-2022";
 import {
   appendTransactionMessageInstructions,
+  createNoopSigner,
   createTransactionMessage,
   getBase64EncodedWireTransaction,
   partiallySignTransactionMessageWithSigners,
@@ -18,6 +20,7 @@ import {
   setTransactionMessageFeePayer,
   setTransactionMessageLifetimeUsingBlockhash,
   type Address,
+  type Instruction,
 } from "@solana/kit";
 import type { PaymentPayload, PaymentRequirements, SchemeNetworkClient } from "@x402/core/types";
 import {
@@ -108,6 +111,27 @@ export class ExactSvmScheme implements SchemeNetworkClient {
       throw new Error("feePayer is required in paymentRequirements.extra for SVM transactions");
     }
 
+    // If the recipient has never held this token, the destination ATA does not
+    // exist yet and TransferChecked would fail with InvalidAccountData (#2395).
+    // Prepend an idempotent create funded by the facilitator fee payer — only
+    // when the ATA is actually missing, so the common repeat-payment layout is
+    // unchanged. The facilitator statically pins every field of this
+    // instruction, and the idempotent discriminator makes a lost race with a
+    // concurrent creation harmless.
+    const prefixInstructions: Instruction[] = [];
+    const destinationInfo = await rpc.getAccountInfo(destinationATA, { encoding: "base64" }).send();
+    if (!destinationInfo.value) {
+      prefixInstructions.push(
+        getCreateAssociatedTokenIdempotentInstruction({
+          payer: createNoopSigner(feePayer),
+          ata: destinationATA,
+          owner: paymentRequirements.payTo as Address,
+          mint: paymentRequirements.asset as Address,
+          tokenProgram: tokenProgramAddress,
+        }),
+      );
+    }
+
     const { value: latestBlockhash } = await rpc.getLatestBlockhash().send();
 
     const sellerMemo = paymentRequirements.extra?.memo as string | undefined;
@@ -140,7 +164,7 @@ export class ExactSvmScheme implements SchemeNetworkClient {
           getSetComputeUnitLimitInstruction({ units: DEFAULT_COMPUTE_UNIT_LIMIT }),
           tx,
         ),
-      tx => appendTransactionMessageInstructions([transferIx, memoIx], tx),
+      tx => appendTransactionMessageInstructions([...prefixInstructions, transferIx, memoIx], tx),
       tx => setTransactionMessageLifetimeUsingBlockhash(latestBlockhash, tx),
     );
 

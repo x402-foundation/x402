@@ -38,6 +38,10 @@ import {
   getTokenPayerFromTransaction,
   transactionMessageHash,
 } from "../../../utils";
+import {
+  isAssociatedTokenProgramInstruction,
+  validateCreateAtaIdempotentInstruction,
+} from "../../createAta";
 
 /**
  * SVM facilitator implementation for the Exact payment scheme (V1).
@@ -157,13 +161,17 @@ export class ExactSvmSchemeV1 implements SchemeNetworkFacilitator {
     const decompiled = decompileTransactionMessage(compiled);
     const instructions = decompiled.instructions ?? [];
 
-    // Allow 3-6 instructions:
+    // Allow 3-6 instructions (7 when an idempotent create-ATA is present):
     // - 3 instructions: ComputeLimit + ComputePrice + TransferChecked
     // - 4 instructions: ComputeLimit + ComputePrice + TransferChecked + Lighthouse or Memo
     // - 5 instructions: ComputeLimit + ComputePrice + TransferChecked + Lighthouse + Lighthouse or Memo
     // - 6 instructions: ComputeLimit + ComputePrice + TransferChecked + Lighthouse + Lighthouse + Memo
+    // An optional CreateAssociatedTokenIdempotent at index 2 (first payment to a
+    // payTo/mint whose ATA does not exist yet, see #2395) shifts TransferChecked
+    // to index 3 and raises each bound by one.
     // See: https://github.com/x402-foundation/x402/issues/828
-    if (instructions.length < 3 || instructions.length > 6) {
+    //  and: https://github.com/x402-foundation/x402/issues/2395
+    if (instructions.length < 3 || instructions.length > 7) {
       return {
         isValid: false,
         invalidReason: "invalid_exact_svm_payload_transaction_instructions_length",
@@ -193,8 +201,36 @@ export class ExactSvmSchemeV1 implements SchemeNetworkFacilitator {
       };
     }
 
+    // Step 3b: Optional idempotent create-ATA at index 2 (#2395).
+    // Same pinning as the v2 scheme: the facilitator fee payer funds the rent,
+    // so every field is validated; the ata/tokenProgram pins against the parsed
+    // transfer are asserted after the transfer instruction is parsed below.
+    let transferIndex = 2;
+    let createAtaAccounts: { ata: string; tokenProgram: string } | null = null;
+    if (instructions.length >= 4 && isAssociatedTokenProgramInstruction(instructions[2] as never)) {
+      const result = validateCreateAtaIdempotentInstruction(instructions[2] as never, {
+        payTo: requirements.payTo,
+        asset: requirements.asset,
+        feePayer: requirementsV1.extra!.feePayer as string,
+      });
+      if ("invalidReason" in result) {
+        return { isValid: false, invalidReason: result.invalidReason, payer };
+      }
+      createAtaAccounts = result;
+      transferIndex = 3;
+    }
+
+    // Without a create-ATA the original 3-6 instruction bound still applies.
+    if (!createAtaAccounts && instructions.length > 6) {
+      return {
+        isValid: false,
+        invalidReason: "invalid_exact_svm_payload_transaction_instructions_length",
+        payer,
+      };
+    }
+
     // Step 4: Verify Transfer Instruction
-    const transferIx = instructions[2];
+    const transferIx = instructions[transferIndex];
     const programAddress = transferIx.programAddress.toString();
 
     if (
@@ -272,6 +308,27 @@ export class ExactSvmSchemeV1 implements SchemeNetworkFacilitator {
       };
     }
 
+    // Step 4b: Pin the create-ATA instruction to the parsed transfer (#2395).
+    // ata must be the transfer destination and the token program must be the
+    // transfer's — the token program is a derivation seed, so this is what
+    // keeps the derived-destination check sound for Token-2022.
+    if (createAtaAccounts) {
+      if (createAtaAccounts.tokenProgram !== programAddress) {
+        return {
+          isValid: false,
+          invalidReason: "invalid_exact_svm_payload_create_ata_token_program_mismatch",
+          payer,
+        };
+      }
+      if (createAtaAccounts.ata !== destATA) {
+        return {
+          isValid: false,
+          invalidReason: "invalid_exact_svm_payload_create_ata_destination_mismatch",
+          payer,
+        };
+      }
+    }
+
     // Verify transfer amount exactly matches requirements
     const amount = parsedTransfer.data.amount;
     if (amount !== BigInt(requirementsV1.maxAmountRequired)) {
@@ -284,7 +341,7 @@ export class ExactSvmSchemeV1 implements SchemeNetworkFacilitator {
 
     // Step 5: Verify optional instructions (if present)
     // Allowed optional programs: Lighthouse (wallet protection) and Memo (uniqueness)
-    const optionalInstructions = instructions.slice(3);
+    const optionalInstructions = instructions.slice(transferIndex + 1);
     const invalidReasonByIndex = [
       "invalid_exact_svm_payload_unknown_fourth_instruction",
       "invalid_exact_svm_payload_unknown_fifth_instruction",
