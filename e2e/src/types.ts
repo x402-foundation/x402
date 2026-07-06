@@ -1,6 +1,6 @@
 import type { NetworkSet } from './networks/networks';
 
-export type ProtocolFamily = 'evm' | 'svm' | 'avm' | 'aptos' | 'hedera' | 'keeta' | 'near' | 'stellar' | 'ccd' | 'tvm';
+export type ProtocolFamily = 'evm' | 'svm' | 'avm' | 'aptos' | 'hedera' | 'keeta' | 'near' | 'stellar' | 'ccd' | 'tvm' | 'xrpl';
 export type Transport = 'http' | 'mcp';
 export type PaymentScheme = 'exact' | 'upto' | 'batch-settlement';
 export type AssetTransferMethod = 'eip3009' | 'permit2';
@@ -102,6 +102,9 @@ export interface ClientConfig {
   nearPrivateKey: string;
   nearNetwork: string;
   nearRpcUrl: string;
+  xrplSeed: string;
+  xrplNetwork: string;
+  xrplWsUrl: string;
   batchSettlement?: BatchSettlementClientConfig;
 }
 
@@ -121,6 +124,9 @@ export interface ServerConfig {
   nearPayTo: string;
   nearAsset?: string;
   nearAmount?: string;
+  xrplPayTo: string;
+  xrplAsset?: string;
+  xrplAmount?: string;
   networks: NetworkSet;
   facilitatorUrl?: string;
   mockFacilitatorUrl?: string;

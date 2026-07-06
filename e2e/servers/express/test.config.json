@@ -198,6 +198,13 @@
       "protocolFamily": "near"
     },
     {
+      "path": "/exact/xrpl",
+      "method": "GET",
+      "description": "Protected endpoint requiring payment on XRPL network",
+      "requiresPayment": true,
+      "protocolFamily": "xrpl"
+    },
+    {
       "path": "/health",
       "method": "GET",
       "description": "Health check endpoint",
@@ -225,7 +232,12 @@
       "NEAR_PAYEE_ADDRESS",
       "NEAR_ASSET",
       "NEAR_AMOUNT",
-      "NEAR_NETWORK"
+      "NEAR_NETWORK",
+      "XRPL_PAYEE_ADDRESS",
+      "XRPL_ASSET",
+      "XRPL_AMOUNT",
+      "XRPL_NETWORK",
+      "XRPL_WS_URL"
     ]
   }
 }

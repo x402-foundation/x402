@@ -138,6 +138,13 @@
       "protocolFamily": "near"
     },
     {
+      "path": "/api/exact/xrpl",
+      "method": "GET",
+      "description": "XRPL endpoint using proxy middleware",
+      "requiresPayment": true,
+      "protocolFamily": "xrpl"
+    },
+    {
       "path": "/api/exact/stellar",
       "method": "GET",
       "description": "Stellar endpoint using proxy middleware",
@@ -244,6 +251,13 @@
       "protocolFamily": "near"
     },
     {
+      "path": "/api/exact/xrpl/withx402",
+      "method": "GET",
+      "description": "XRPL endpoint using withX402 wrapper",
+      "requiresPayment": true,
+      "protocolFamily": "xrpl"
+    },
+    {
       "path": "/api/exact/stellar/withx402",
       "method": "GET",
       "description": "Stellar endpoint using withX402 wrapper",
@@ -278,6 +292,11 @@
       "NEAR_ASSET",
       "NEAR_AMOUNT",
       "NEAR_NETWORK",
+      "XRPL_PAYEE_ADDRESS",
+      "XRPL_ASSET",
+      "XRPL_AMOUNT",
+      "XRPL_NETWORK",
+      "XRPL_WS_URL",
       "EVM_RECEIVER_AUTHORIZER_PRIVATE_KEY"
     ]
   }

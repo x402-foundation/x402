@@ -28,8 +28,10 @@
     "@x402/stellar": "workspace:*",
     "@x402/svm": "workspace:*",
     "@x402/tvm": "workspace:*",
+    "@x402/xrpl": "workspace:*",
     "axios": "1.12.2",
     "dotenv": "^16.4.7",
+    "xrpl": "^4.6.0",
     "viem": "^2.48.11"
   },
   "devDependencies": {

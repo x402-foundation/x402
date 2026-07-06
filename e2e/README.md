@@ -127,6 +127,7 @@ CLIENT_STELLAR_PRIVATE_KEY=...      # Stellar private key for client payments
 CLIENT_TVM_PRIVATE_KEY=...          # TVM private key for client payments
 CLIENT_NEAR_ACCOUNT_ID=...          # NEAR payer account id that owns the access key
 CLIENT_NEAR_PRIVATE_KEY=ed25519:... # NEAR private key for that payer account
+CLIENT_XRPL_SEED=s...               # XRPL seed for client payments (payer signs and pays fees)
 
 # Server payment addresses
 SERVER_EVM_ADDRESS=0x...            # Where servers receive EVM payments
@@ -138,6 +139,7 @@ SERVER_KEETA_ADDRESS=keeta_...      # Where servers receive Keeta payments
 SERVER_STELLAR_ADDRESS=...          # Where servers receive Stellar payments
 SERVER_TVM_ADDRESS=...              # Where servers receive TVM payments
 SERVER_NEAR_ADDRESS=...             # Where servers receive NEAR payments (merchant account)
+SERVER_XRPL_ADDRESS=r...            # Where servers receive XRPL payments
 
 # Facilitator wallets (⚠️ TEST WALLETS ONLY — used to fund/drain client between tests)
 FACILITATOR_EVM_PRIVATE_KEY=0x...   # EVM private key for facilitator
@@ -152,6 +154,7 @@ FACILITATOR_STELLAR_PRIVATE_KEY=... # Stellar private key for facilitator
 FACILITATOR_TVM_PRIVATE_KEY=...     # TVM private key for facilitator
 FACILITATOR_NEAR_ACCOUNT_ID=...     # NEAR relayer account id (submits meta-tx, sponsors gas)
 FACILITATOR_NEAR_PRIVATE_KEY=ed25519:... # NEAR relayer private key
+# XRPL needs no facilitator wallet — the facilitator is keyless (payer signs and pays fees)
 
 # Concordium network override
 CCD_NETWORK=ccd:4221332d34e1694168c2a0c0b3fd0f27  # Optional; defaults to testnet

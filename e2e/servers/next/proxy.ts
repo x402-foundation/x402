@@ -10,6 +10,7 @@ import { ExactHederaScheme } from "@x402/hedera/exact/server";
 import { KEETA_TESTNET_CAIP2 } from "@x402/keeta";
 import { ExactKeetaScheme } from "@x402/keeta/exact/server";
 import { ExactNearScheme } from "@x402/near/exact/server";
+import { ExactXrplScheme } from "@x402/xrpl/exact/server";
 import { ExactStellarScheme } from "@x402/stellar/exact/server";
 import { ExactTvmScheme } from "@x402/tvm/exact/server";
 import { ExactAvmScheme } from "@x402/avm/exact/server";
@@ -46,6 +47,10 @@ export const NEAR_PAYEE_ADDRESS = process.env.NEAR_PAYEE_ADDRESS as string | und
 export const NEAR_NETWORK = (process.env.NEAR_NETWORK || "near:testnet") as `${string}:${string}`;
 export const NEAR_ASSET = process.env.NEAR_ASSET as string | undefined;
 export const NEAR_AMOUNT = process.env.NEAR_AMOUNT as string | undefined;
+export const XRPL_PAYEE_ADDRESS = process.env.XRPL_PAYEE_ADDRESS as string | undefined;
+export const XRPL_NETWORK = (process.env.XRPL_NETWORK || "xrpl:1") as `${string}:${string}`;
+export const XRPL_ASSET = process.env.XRPL_ASSET as string | undefined;
+export const XRPL_AMOUNT = process.env.XRPL_AMOUNT as string | undefined;
 export const CCD_NETWORK = (process.env.CCD_NETWORK || "ccd:4221332d34e1694168c2a0c0b3fd0f27") as `${string}:${string}`;
 export const CCD_PAYEE_ADDRESS = process.env.CCD_PAYEE_ADDRESS as string | undefined;
 export const CCD_WEATHER_PRICE_MICRO_CCD = "1000";
@@ -109,6 +114,9 @@ if (TVM_PAYEE_ADDRESS) {
 }
 if (NEAR_PAYEE_ADDRESS) {
   server.register("near:*", new ExactNearScheme());
+}
+if (XRPL_PAYEE_ADDRESS) {
+  server.register("xrpl:*", new ExactXrplScheme());
 }
 
 // Register Bazaar discovery extension
@@ -404,6 +412,38 @@ export const proxy = paymentProxy(
           },
         }
       : {}),
+    ...(XRPL_PAYEE_ADDRESS
+      ? {
+          "/api/exact/xrpl": {
+            accepts: {
+              payTo: XRPL_PAYEE_ADDRESS,
+              scheme: "exact" as const,
+              price: {
+                amount: XRPL_AMOUNT || "1000",
+                asset: XRPL_ASSET || "XRP",
+              },
+              network: XRPL_NETWORK,
+            },
+            extensions: {
+              ...declareDiscoveryExtension({
+                output: {
+                  example: {
+                    message: "Protected XRPL endpoint accessed successfully",
+                    timestamp: "2024-01-01T00:00:00Z",
+                  },
+                  schema: {
+                    properties: {
+                      message: { type: "string" },
+                      timestamp: { type: "string" },
+                    },
+                    required: ["message", "timestamp"],
+                  },
+                },
+              }),
+            },
+          },
+        }
+      : {}),
     ...(STELLAR_PAYEE_ADDRESS
       ? {
           "/api/exact/stellar": {
@@ -606,6 +646,7 @@ export const config = {
     "/api/exact/hedera",
     "/api/exact/keeta",
     "/api/exact/near",
+    "/api/exact/xrpl",
     "/api/exact/ccd",
     "/api/exact/stellar",
     "/api/exact/tvm",

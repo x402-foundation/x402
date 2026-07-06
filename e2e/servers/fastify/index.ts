@@ -13,6 +13,7 @@ import { ExactStellarScheme } from "@x402/stellar/exact/server";
 import { ExactTvmScheme } from "@x402/tvm/exact/server";
 import { ExactAvmScheme } from "@x402/avm/exact/server";
 import { ExactNearScheme } from "@x402/near/exact/server";
+import { ExactXrplScheme } from "@x402/xrpl/exact/server";
 import { ExactConcordiumScheme } from "@x402/concordium/exact/server";
 import { bazaarResourceServerExtension, declareDiscoveryExtension } from "@x402/extensions/bazaar";
 import {
@@ -59,6 +60,10 @@ const NEAR_NETWORK = (process.env.NEAR_NETWORK || "near:testnet") as `${string}:
 const NEAR_PAYEE_ADDRESS = process.env.NEAR_PAYEE_ADDRESS as string | undefined;
 const NEAR_ASSET = process.env.NEAR_ASSET as string | undefined;
 const NEAR_AMOUNT = process.env.NEAR_AMOUNT as string | undefined;
+const XRPL_NETWORK = (process.env.XRPL_NETWORK || "xrpl:1") as `${string}:${string}`;
+const XRPL_PAYEE_ADDRESS = process.env.XRPL_PAYEE_ADDRESS as string | undefined;
+const XRPL_ASSET = process.env.XRPL_ASSET as string | undefined;
+const XRPL_AMOUNT = process.env.XRPL_AMOUNT as string | undefined;
 const HEDERA_ASSET = process.env.HEDERA_ASSET ?? "0.0.0"; // 0.0.0 = HBAR or 0.0.429274 for USDC testnet
 const HEDERA_AMOUNT = process.env.HEDERA_AMOUNT ?? "100000"; // price in smallest units (tinybars or token decimals), defaults to 0.001 HBAR or 0.1 USDC
 const facilitatorUrl = process.env.FACILITATOR_URL;
@@ -130,6 +135,9 @@ if (TVM_PAYEE_ADDRESS) {
 if (NEAR_PAYEE_ADDRESS) {
   server.register("near:*", new ExactNearScheme());
 }
+if (XRPL_PAYEE_ADDRESS) {
+  server.register("xrpl:*", new ExactXrplScheme());
+}
 
 // Register Bazaar discovery extension
 server.registerExtension(bazaarResourceServerExtension);
@@ -191,6 +199,12 @@ app.addHook("onRequest", async (request, reply) => {
     return reply.status(501).send({
       error: "NEAR payments not configured",
       message: "NEAR_PAYEE_ADDRESS environment variable is not set",
+    });
+  }
+  if (path.startsWith("/exact/xrpl") && !XRPL_PAYEE_ADDRESS) {
+    return reply.status(501).send({
+      error: "XRPL payments not configured",
+      message: "XRPL_PAYEE_ADDRESS environment variable is not set",
     });
   }
 });
@@ -688,6 +702,38 @@ paymentMiddleware(
           },
         }
       : {}),
+    ...(XRPL_PAYEE_ADDRESS
+      ? {
+          "GET /exact/xrpl": {
+            accepts: {
+              payTo: XRPL_PAYEE_ADDRESS,
+              scheme: "exact" as const,
+              price: {
+                amount: XRPL_AMOUNT || "1000",
+                asset: XRPL_ASSET || "XRP",
+              },
+              network: XRPL_NETWORK,
+            },
+            extensions: {
+              ...declareDiscoveryExtension({
+                output: {
+                  example: {
+                    message: "Protected XRPL endpoint accessed successfully",
+                    timestamp: "2024-01-01T00:00:00Z",
+                  },
+                  schema: {
+                    properties: {
+                      message: { type: "string" },
+                      timestamp: { type: "string" },
+                    },
+                    required: ["message", "timestamp"],
+                  },
+                },
+              }),
+            },
+          },
+        }
+      : {}),
   },
   server, // Pass pre-configured server instance
 );
@@ -915,6 +961,15 @@ if (NEAR_PAYEE_ADDRESS) {
   });
 }
 
+if (XRPL_PAYEE_ADDRESS) {
+  app.get("/exact/xrpl", async () => {
+    return {
+      message: "Protected XRPL endpoint accessed successfully",
+      timestamp: new Date().toISOString(),
+    };
+  });
+}
+
 /**
  * Health check endpoint - no payment required
  *
@@ -964,6 +1019,7 @@ app.listen({ port: parseInt(PORT) }, (err, address) => {
 ║  Stellar Network: ${STELLAR_NETWORK}║
 ║  TVM Network: ${TVM_NETWORK}║
 ║  NEAR Network: ${NEAR_NETWORK}║
+║  XRPL Network: ${XRPL_NETWORK}║
 ║  CCD Network:  ${CCD_NETWORK}                          ║
 ║  AVM Payee:    ${AVM_PAYEE_ADDRESS || "(not configured)"}
 ║  EVM Payee:    ${EVM_PAYEE_ADDRESS}                    ║
@@ -975,6 +1031,7 @@ app.listen({ port: parseInt(PORT) }, (err, address) => {
 ║  Stellar Payee: ${STELLAR_PAYEE_ADDRESS || "(not configured)"}
 ║  TVM Payee: ${TVM_PAYEE_ADDRESS || "(not configured)"}
 ║  NEAR Payee: ${NEAR_PAYEE_ADDRESS || "(not configured)"}
+║  XRPL Payee: ${XRPL_PAYEE_ADDRESS || "(not configured)"}
 ║                                                        ║
 ║  Endpoints:                                            ║
 ║  • GET  /exact/avm                            (AVM)           ║
@@ -990,6 +1047,7 @@ app.listen({ port: parseInt(PORT) }, (err, address) => {
 ║  • GET  /exact/stellar                        (Stellar)       ║
 ║  • GET  /exact/tvm                            (TVM)           ║
 ║  • GET  /exact/near                           (NEAR)          ║
+║  • GET  /exact/xrpl                           (XRPL)          ║
 ║  • GET  /health                (no payment required)       ║
 ║  • POST /close                 (shutdown server)           ║
 ╚════════════════════════════════════════════════════════╝

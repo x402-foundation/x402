@@ -81,6 +81,7 @@ import {
 import { ExactTvmScheme } from "@x402/tvm/exact/facilitator";
 import { createFacilitatorNearSigner, type FacilitatorNearSignerConfig } from "@x402/near";
 import { ExactNearScheme as ExactNearFacilitatorScheme } from "@x402/near/exact/facilitator";
+import { ExactXrplScheme as ExactXrplFacilitatorScheme } from "@x402/xrpl/exact/facilitator";
 import * as KeetaNet from "@keetanetwork/keetanet-client";
 import crypto from "crypto";
 import dotenv from "dotenv";
@@ -116,6 +117,8 @@ const STELLAR_NETWORK = process.env.STELLAR_NETWORK || "stellar:testnet";
 const TVM_NETWORK = process.env.TVM_NETWORK || "tvm:-3";
 const NEAR_NETWORK = process.env.NEAR_NETWORK || "near:testnet";
 const NEAR_RPC_URL = process.env.NEAR_RPC_URL;
+const XRPL_NETWORK = process.env.XRPL_NETWORK || "xrpl:1";
+const XRPL_WS_URL = process.env.XRPL_WS_URL;
 const CCD_NETWORK = process.env.CCD_NETWORK || CONCORDIUM_TESTNET_CAIP2;
 const CCD_GRPC_URL =
   process.env.CCD_GRPC_URL || getConcordiumGrpcUrl(CCD_NETWORK as Network);
@@ -551,6 +554,15 @@ if (tvmSigner) {
 if (nearSigner) {
   facilitator.register(NEAR_NETWORK as Network, new ExactNearFacilitatorScheme(nearSigner));
 }
+if (process.env.XRPL_NETWORK) {
+  facilitator.register(
+    XRPL_NETWORK as Network,
+    new ExactXrplFacilitatorScheme(
+      XRPL_WS_URL ? { wsUrlByNetwork: { [XRPL_NETWORK as `xrpl:${number}`]: XRPL_WS_URL } } : {},
+    ),
+  );
+  console.info(`XRPL facilitator enabled on ${XRPL_NETWORK} (payer-signed; no facilitator signer)`);
+}
 if (concordiumSigner) {
   facilitator.register(
     CCD_NETWORK as Network,
@@ -880,6 +892,7 @@ app.get("/health", (req, res) => {
     keetaNetwork: process.env.KEETA_FACILITATOR_MNEMONIC ? KEETA_NETWORK : "(not configured)",
     stellarNetwork: stellarSigner ? STELLAR_NETWORK : "(not configured)",
     nearNetwork: nearSigner ? NEAR_NETWORK : "(not configured)",
+    xrplNetwork: process.env.XRPL_NETWORK ? XRPL_NETWORK : "(not configured)",
     ccdNetwork: concordiumSigner ? CCD_NETWORK : "(not configured)",
     facilitator: "typescript",
     version: "2.0.0",
@@ -917,6 +930,7 @@ let server = app.listen(parseInt(PORT), () => {
 ║  Hedera Network: ${HEDERA_NETWORK}                     ║
 ║  Keeta Network: ${KEETA_NETWORK}                       ║
 ║  NEAR Network: ${NEAR_NETWORK}                         ║
+║  XRPL Network: ${XRPL_NETWORK}                         ║
 ║  CCD Network:  ${CCD_NETWORK}                          ║
 ║  EVM Address:  ${evmAccount.address}                   ║
 ║  AVM Address:  ${avmSigner ? avmSigner.getAddresses()[0] : "(not configured)"}
