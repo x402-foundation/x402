@@ -117,7 +117,25 @@ export class ExactSvmSchemeV1 implements SchemeNetworkClient {
       throw new Error("feePayer is required in paymentRequirements.extra for SVM transactions");
     }
 
-    const { value: latestBlockhash } = await rpc.getLatestBlockhash().send();
+    // Fail fast when the destination ATA does not exist (#2395): TransferChecked
+    // against a missing ATA only fails at settle time with an opaque
+    // InstructionError: [.., InvalidAccountData]. Surfacing it here names the
+    // actual problem and the party who can fix it (the recipient self-provisions
+    // their ATA — facilitator-funded creation is a griefing vector, see #1020).
+    // Fetched in parallel with the blockhash, so no latency is added.
+    const [destinationInfo, { value: latestBlockhash }] = await Promise.all([
+      rpc.getAccountInfo(destinationATA, { encoding: "base64" }).send(),
+      rpc.getLatestBlockhash().send(),
+    ]);
+    if (!destinationInfo.value) {
+      throw new Error(
+        `Destination associated token account ${destinationATA} does not exist for ` +
+          `payTo ${selectedV1.payTo} and mint ${selectedV1.asset} on ` +
+          `${selectedV1.network}; the transfer would fail on-chain with ` +
+          `InvalidAccountData. The recipient must provision their own ATA before they ` +
+          `can accept payments for this asset (see x402-foundation/x402#1020).`,
+      );
+    }
 
     const sellerMemo = selectedV1.extra?.memo as string | undefined;
     let memoData: Uint8Array;
