@@ -41,6 +41,7 @@ evm = [
     "eth-utils>=4.0.0",
     "eth-account>=0.13.0",
     "web3>=7.0.0",
+    "httpx>=0.28.1",
 ]
 svm = [
     "solders>=0.27.0",
@@ -188,6 +189,9 @@ warn_unused_configs = true
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+markers = [
+    "integration: end-to-end tests that spawn external processes (deselect with '-m \"not integration\"')",
+]
 
 [tool.towncrier]
 package = "x402"

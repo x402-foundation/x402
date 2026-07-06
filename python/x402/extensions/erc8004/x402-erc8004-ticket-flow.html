@@ -1,0 +1,309 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>x402 × ERC-8004 — Ticket flow v2</title>
+    <style>
+        :root {
+            --text: #1f2937; --muted: #6b7280; --border: #e5e7eb; --bg: #f9fafb;
+            --new: #7c3aed; --chain: #0891b2;
+        }
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: system-ui, sans-serif; font-size: 0.9rem; line-height: 1.45; color: var(--text); max-width: 920px; margin: 0 auto; padding: 1.5rem; }
+        h1 { font-size: 1.35rem; margin-bottom: 0.25rem; }
+        .sub { color: var(--muted); font-size: 0.8rem; margin-bottom: 1rem; }
+        h2 { font-size: 1rem; margin: 1.25rem 0 0.5rem; border-bottom: 1px solid var(--border); padding-bottom: 0.25rem; }
+        .summary { font-size: 0.8rem; background: #f0fdf4; border: 1px solid #86efac; padding: 0.6rem 0.75rem; border-radius: 4px; margin-bottom: 1rem; }
+        .summary ul { margin: 0.35rem 0 0 1.1rem; color: var(--muted); }
+        .trust { font-size: 0.78rem; background: #faf5ff; border: 1px solid #c4b5fd; padding: 0.5rem 0.75rem; border-radius: 4px; margin-bottom: 1rem; }
+        .trust table { width: 100%; border-collapse: collapse; margin-top: 0.35rem; }
+        .trust th, .trust td { border: 1px solid var(--border); padding: 0.35rem 0.5rem; text-align: left; }
+        .trust th { background: var(--bg); font-size: 0.72rem; }
+        .hashes table { width: 100%; border-collapse: collapse; font-size: 0.78rem; margin-bottom: 1rem; }
+        .hashes th, .hashes td { border: 1px solid var(--border); padding: 0.4rem 0.5rem; vertical-align: top; }
+        .hashes th { background: var(--bg); font-size: 0.72rem; }
+        .phase { margin-bottom: 0.75rem; padding: 0.5rem 0.75rem; border-left: 3px solid var(--border); background: var(--bg); }
+        .phase.chain { border-color: var(--chain); }
+        .phase.new { border-color: var(--new); background: #faf5ff; }
+        .phase h3 { font-size: 0.85rem; margin-bottom: 0.2rem; }
+        .phase p { font-size: 0.78rem; color: var(--muted); }
+        .feedback-paths { display: grid; gap: 0.5rem; font-size: 0.78rem; margin-bottom: 1rem; }
+        .feedback-paths .path { padding: 0.5rem 0.75rem; border: 1px solid var(--border); border-radius: 4px; background: var(--bg); }
+        .ascii { background: #1a1a2e; color: #e0e0e0; padding: 0.75rem; border-radius: 4px; font-family: ui-monospace, monospace; font-size: 0.52rem; line-height: 1.25; overflow-x: auto; white-space: pre; margin-bottom: 0.35rem; }
+        .ascii .dim { color: #9ca3af; }
+        .ascii .new { color: #c4b5fd; font-weight: 600; }
+        .ascii .sdk { color: #86efac; }
+        footer { margin-top: 1.5rem; font-size: 0.75rem; color: var(--muted); }
+        .cards { display: grid; grid-template-columns: 1fr 1fr; gap: 0.6rem; margin-bottom: 0.6rem; }
+        .card { border: 1px solid var(--border); border-radius: 6px; padding: 0.7rem 0.85rem; background: #fff; }
+        .card.contract { border-top: 3px solid var(--new); }
+        .card h3 { font-size: 0.92rem; margin-bottom: 0.1rem; }
+        .card .tag { font-size: 0.68rem; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; }
+        .card .lead { font-size: 0.82rem; margin: 0.35rem 0; }
+        .card ul { margin: 0.3rem 0 0 1rem; font-size: 0.76rem; color: var(--text); }
+        .card ul li { margin-bottom: 0.18rem; }
+        .card code { font-size: 0.72rem; background: var(--bg); padding: 0 0.15rem; border-radius: 3px; }
+        .why { font-size: 0.78rem; background: #faf5ff; border: 1px solid #c4b5fd; padding: 0.5rem 0.75rem; border-radius: 4px; margin-bottom: 0.6rem; }
+        .pipe { font-family: ui-monospace, monospace; font-size: 0.74rem; background: #1a1a2e; color: #e0e0e0; padding: 0.6rem 0.75rem; border-radius: 4px; margin-bottom: 1rem; overflow-x: auto; white-space: pre; }
+        .pipe b { color: #c4b5fd; }
+    </style>
+</head>
+<body>
+    <h1>x402 × ERC-8004 — ticket flow (one contract)</h1>
+    <p class="sub">1-step x402 (same URL). One contract: <code>FeedbackGateway</code>. Spec: <code>specs/extensions/erc8004_ticket_v2.md</code></p>
+
+    <h2>What we added: one contract</h2>
+    <div class="cards">
+        <div class="card contract">
+            <span class="tag">Contract · the gateway</span>
+            <h3>FeedbackGateway</h3>
+            <p class="lead">Settles the x402 payment, mints a single-use <b>ticket</b>, then itself submits ticket-gated feedback to the canonical ERC-8004 <code>ReputationRegistry</code>.</p>
+            <ul>
+                <li><code>settleAndMintTicket{EIP3009,Permit2}</code> — pay → mint ticket (binds payer + agentId)</li>
+                <li><code>submitFeedback</code> — self-paid: payer consumes ticket + calls <code>giveFeedback</code></li>
+                <li><code>submitFeedbackFor</code> — sponsored: relayer submits a client-signed <code>FeedbackIntent</code></li>
+                <li><code>revokeFeedbackFor</code> — client-signed revoke, relayed to the registry</li>
+            </ul>
+        </div>
+        <div class="card">
+            <span class="tag">Canonical · unchanged</span>
+            <h3>ReputationRegistry (v2)</h3>
+            <p class="lead">The deployed ERC-8004 registry. Records feedback keyed by <code>msg.sender</code> — which here is always the gateway.</p>
+            <ul>
+                <li>No upgrade required; no ticket awareness needed</li>
+                <li><code>clientAddress == FeedbackGateway</code> for every payment-backed feedback</li>
+                <li>Real payer recovered off-chain (see below)</li>
+            </ul>
+        </div>
+    </div>
+    <div class="why">
+        <b>Why one contract (no EIP-7702).</b> The gateway calls <code>giveFeedback</code> itself, so the
+        registry sees <code>msg.sender == gateway</code>. We give up <i>on-chain</i> per-client attribution and
+        recover the real payer <i>off-chain</i> instead — which removes the EIP-7702 delegate and the second
+        contract entirely. Filtering <code>NewFeedback</code> by <code>clientAddress == FeedbackGateway</code>
+        yields exactly the payment-backed set (unforgeable — no one else can be that <code>msg.sender</code>).
+    </div>
+    <div class="pipe">client pays x402  →  <b>FeedbackGateway.settleAndMintTicket</b>  →  Ticket{payer, agentId, agentAddress}
+client builds artifact + feedbackHash (commits ticketId, payer, agentId)
+  ├─ self-paid:   payer → <b>FeedbackGateway.submitFeedback(ticketId, params)</b>
+  └─ sponsored:   relayer → <b>FeedbackGateway.submitFeedbackFor(intent, params, sig)</b>   (client signs, pays 0 gas)
+        └─ consume ticket  →  registry.<b>giveFeedback</b>(... feedbackHash)  →  capture feedbackRef[ticketId]
+        └─ emit <b>TicketConsumed</b>(ticketId, payer, agentId, agentAddress, feedbackHash)
+revoke:  payer signs RevokeIntent → <b>FeedbackGateway.revokeFeedbackFor</b> → registry.revokeFeedback(agentId, idx)</div>
+
+    <h2>Off-chain payer recovery (aggregators)</h2>
+    <p class="sub">The registry event has no payer; recover it by joining on <code>feedbackHash</code>.</p>
+    <div class="pipe">1. filter <b>NewFeedback</b> where clientAddress == FEEDBACK_GATEWAY_ADDR     (payment-backed set)
+2. join <b>NewFeedback</b>.feedbackHash == <b>TicketConsumed</b>.feedbackHash
+3. payer = TicketConsumed.payer        // the real customer (bound at mint)
+   assert TicketConsumed.agentId == NewFeedback.agentId
+   (on-chain feedbackHash uniqueness makes the join 1:1; verify artifact.settlement.payer == payer)</div>
+    <p class="sub">Counting: enumerate from <code>TicketConsumed</code> (one per consumed ticket), not from
+    <code>NewFeedback</code>. Invariant: payment-backed feedback ≤ tickets consumed ≤ payments made.</p>
+
+    <h2>Trust split</h2>
+    <div class="trust">
+        <table>
+            <tr><th>Layer</th><th>Proves</th><th>Does not prove</th></tr>
+            <tr><td><strong>Ticket (on-chain)</strong></td><td>Payment: payer, agentId, agentAddress, token, amount</td><td>HTTP URL, bodies, attestation</td></tr>
+            <tr><td><strong>InteractionAttestation (EIP-712)</strong></td><td>Job: ticketId, method, url, body digests, status</td><td>Payment fields (resolved via ticket)</td></tr>
+            <tr><td><strong>Artifact + verify_feedback</strong></td><td>Joins ticket + attestation + feedback opinion</td><td>—</td></tr>
+        </table>
+    </div>
+
+    <h2>Summary</h2>
+    <div class="summary">
+        <ul>
+            <li><strong>Contract:</strong> <code>FeedbackGateway</code> — settles x402, mints a single-use ticket, then itself calls <code>giveFeedback</code> on the <strong>canonical</strong> <code>ReputationRegistry</code>. The registry records <code>clientAddress == FeedbackGateway</code>; real payer recovered off-chain via <code>TicketConsumed</code>.</li>
+            <li><strong>No bind at mint:</strong> client signs payment only; settlement is permissionless (gated by the signed authorization), so no facilitator allowlist. <code>agentId</code> is server-sourced at settle (never sent to or echoed by the client) and bound on-chain to the paid address.</li>
+            <li><strong>Attestation:</strong> agent signs EIP-712 after handler → <code>X-X402-Interaction-Attestation</code> (best-effort; missing → <code>CLIENT_ONLY</code>).</li>
+        </ul>
+    </div>
+
+    <h2>Commitments</h2>
+    <div class="hashes">
+        <table>
+            <thead>
+                <tr><th>Field</th><th>Who</th><th>When</th><th>Definition</th></tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td><code>ticketId</code></td>
+                    <td>Wrapper</td>
+                    <td>Settle tx</td>
+                    <td>Auto-increment; recovery via PAYMENT-RESPONSE or <code>TicketMinted</code> log</td>
+                </tr>
+                <tr>
+                    <td><code>requestBodyDigest</code> / <code>responseBodyDigest</code></td>
+                    <td>Server (attestation)</td>
+                    <td>After handler</td>
+                    <td><code>keccak256(raw_body_bytes)</code> — only content-level hashes in v2</td>
+                </tr>
+                <tr>
+                    <td><code>InteractionAttestation</code></td>
+                    <td>Agent owner</td>
+                    <td>After handler</td>
+                    <td>EIP-712 domain <code>("FeedbackGateway","1")</code>, verifyingContract = gateway</td>
+                </tr>
+                <tr>
+                    <td><code>feedbackHash</code></td>
+                    <td>Client</td>
+                    <td>Feedback</td>
+                    <td><code>keccak256(canonical_json(fullArtifact))</code></td>
+                </tr>
+            </tbody>
+        </table>
+    </div>
+
+    <h2>Feedback paths</h2>
+    <div class="feedback-paths">
+        <div class="path"><strong>Path A — Self-paid:</strong> payer calls <code>FeedbackGateway.submitFeedback(ticketId, params)</code> directly → consume ticket + <code>FeedbackGateway</code> calls canonical <code>giveFeedback</code>.</div>
+        <div class="path"><strong>Path B — Sponsored:</strong> payer signs an EIP-712 <code>FeedbackIntent</code>; a relayer submits <code>FeedbackGateway.submitFeedbackFor(intent, params, sig)</code> and pays gas. The gateway verifies the signature, consumes the ticket, and calls <code>giveFeedback</code>.</div>
+    </div>
+
+    <h2>Phases (one paid request)</h2>
+
+    <div class="phase">
+        <h3>0 — Discover</h3>
+        <p>GET → 402 advertises the <code>erc8004</code> extension as a presence marker — <strong>no <code>agentId</code> on the wire</strong>. The client signs payment only; nothing to echo or confirm.</p>
+    </div>
+    <div class="phase">
+        <h3>1 — Sign payment</h3>
+        <p>Standard x402 token authorization (EIP-3009 / Permit2 / ERC-20).</p>
+    </div>
+    <div class="phase">
+        <h3>2 — Paid retry</h3>
+        <p>GET + X-PAYMENT → verify → settle.</p>
+    </div>
+    <div class="phase chain new">
+        <h3>3 — Settle + mint (one tx)</h3>
+        <p>The server stamps its <code>agentId</code> into the settle requirements (server-sourced, not client-supplied). Facilitator re-verifies the payment (signature, amount, recipient, expiry — same checks as the standard x402 settle), then <code>settleAndMintTicket*(payer, agentId, agentAddress, payment)</code> settles and mints in one tx; the wrapper binds the ticket on-chain (<code>ownerOf(agentId) == payTo</code>). Plain ticket fields stored. <code>ticketId</code> on PAYMENT-RESPONSE.</p>
+    </div>
+    <div class="phase">
+        <h3>4 — Serve + attest (best-effort)</h3>
+        <p>Handler runs. Server signs <code>InteractionAttestation</code> from raw request/response bytes. If signing fails: still return 200 without header.</p>
+    </div>
+    <div class="phase">
+        <h3>5 — HTTP response</h3>
+        <p>200 + body + PAYMENT-RESPONSE + optional <code>X-X402-Interaction-Attestation</code>.</p>
+    </div>
+    <div class="phase chain new">
+        <h3>6 — Feedback (later)</h3>
+        <p>Client builds the artifact (embeds attestation when present), calls <code>FeedbackGateway.submitFeedback</code> (self-paid) or provides a signed <code>FeedbackIntent</code> for a relayer → gateway consumes ticket + calls <code>ReputationRegistry.giveFeedback</code>.</p>
+    </div>
+    <div class="phase">
+        <h3>7 — Off-chain verify</h3>
+        <p><code>verify_feedback</code>: ticket match → attestation field compare → <code>FULL</code> / <code>CLIENT_ONLY</code> / <code>DISPUTED</code> / <code>REJECTED</code>.</p>
+    </div>
+
+    <h2>Sequence</h2>
+    <div class="ascii"><span class="dim">                         Client (payer)     Agent server        Facilitator          FeedbackGateway
+                              |                  |                   |                         |
+</span><span class="dim"> 0  DISCOVER                 |                  |                   |                         |
+                              |-- GET /resource ->|                   |                         |
+                              |<- 402 + erc8004 marker (no agentId) ----|                         |
+                              |                  |                   |                         |
+</span><span class="dim"> 1  SIGN PAYMENT             | sign token auth (EIP-3009 / Permit2 / ERC-20)                 |
+                              | (no agentId echo — server sources it at settle, requirements)   |
+                              |                  |                   |                         |
+ 2  PAID RETRY               |-- GET + X-PAYMENT ->|                   |                         |
+                              |                  |-- verify -------->|                         |
+                              |                  |<- ok -------------|                         |
+                              |                  |                   |                         |
+</span><span class="new"> 3  SETTLE + MINT            |                  |                   | settleAndMintTicket*(   |
+                              |                  |                   |   payer, agentId,       |
+                              |                  |                   |   agentAddress, payment)|
+                              |                  |                   | ----------------------->|
+                              |                  |                   |<- txHash, ticketId -----|
+                              |                  |<- settle ok -------|                         |
+                              |                  |                   |                         |
+</span><span class="dim"> 4  SERVE                    |                  | run handler       |                         |
+</span><span class="sdk">                              |                  | sign InteractionAttestation (EIP-712, best-effort)
+                              |                  | -> X-X402-Interaction-Attestation             |
+                              |                  |                   |                         |
+</span><span class="dim"> 5  RESPONSE                 |<- 200 + body -----|                   |                         |
+                              |    PAYMENT-RESPONSE.ticketId + optional attestation header    |
+                              |                  |                   |                         |
+</span><span class="new"> 6  FEEDBACK (later)         |
+                              |   A self-paid: client -> FeedbackGateway.submitFeedback(ticketId, params)
+                              |   B sponsored:  client signs FeedbackIntent; relayer -> FeedbackGateway.submitFeedbackFor
+                              |   gateway -> consumeTicket (internal, ticket consumed=true)
+                              |   gateway -> ReputationRegistry.giveFeedback (clientAddress = gateway)
+                              |   emit TicketConsumed(ticketId, payer, agentId, agentAddress, feedbackHash)
+                              |                  |                   |                         |
+</span><span class="dim"> 7  VERIFY (off-chain)       | verify_feedback(artifact, gateway, identityRegistry)        |
+                              | FULL if attestation matches; CLIENT_ONLY if header missing    |
+</span>
+<span class="dim">  --- paid HTTP ends at step 5; feedback step 6 is async ---</span></div>
+
+    <h2>Events — what off-chain aggregators see</h2>
+    <p class="sub" style="margin-bottom:0.5rem"><code>FeedbackGateway</code> emits <code>TicketMinted</code> and <code>TicketConsumed</code>; the canonical registry emits <code>NewFeedback</code> / <code>FeedbackRevoked</code> / <code>ResponseAppended</code>. (<code>*</code> = indexed / topic.)</p>
+    <div class="hashes">
+        <table>
+            <thead>
+                <tr><th>Contract</th><th>Event</th><th>Emitted when</th><th>Key fields</th></tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td><strong>FeedbackGateway</strong></td>
+                    <td><code>TicketMinted</code></td>
+                    <td>Settle + mint (the paid call)</td>
+                    <td><code>ticketId*, payer*, agentId*</code>, agentAddress, token, amount</td>
+                </tr>
+                <tr>
+                    <td><strong>FeedbackGateway</strong></td>
+                    <td><code>TicketConsumed</code></td>
+                    <td>Feedback tx (gateway consumes + calls registry)</td>
+                    <td><code>ticketId*, payer*, agentId*</code>, agentAddress, feedbackHash</td>
+                </tr>
+                <tr>
+                    <td><strong>ReputationRegistry</strong><br><span class="tag">canonical ERC-8004</span></td>
+                    <td><code>NewFeedback</code></td>
+                    <td>Feedback tx (same tx as <code>TicketConsumed</code>)</td>
+                    <td><code>agentId*, clientAddress*, indexedTag1*</code>, feedbackIndex, value, valueDecimals, tag1/2, endpoint, feedbackURI, feedbackHash</td>
+                </tr>
+                <tr>
+                    <td><strong>ReputationRegistry</strong></td>
+                    <td><code>FeedbackRevoked</code></td>
+                    <td>Client retracts their feedback</td>
+                    <td><code>agentId*, clientAddress*, feedbackIndex*</code></td>
+                </tr>
+                <tr>
+                    <td><strong>ReputationRegistry</strong></td>
+                    <td><code>ResponseAppended</code></td>
+                    <td>Agent rebuts feedback</td>
+                    <td><code>agentId*, clientAddress*, responder*</code>, feedbackIndex, responseURI, responseHash</td>
+                </tr>
+            </tbody>
+        </table>
+    </div>
+
+    <div class="pipe">PAYMENT tx   (FeedbackGateway.settleAndMintTicket*)
+  <b>TicketMinted</b>(ticketId, payer, agentId, token, amount)
+        │  ticketId
+        ▼
+FEEDBACK tx   (FeedbackGateway.submitFeedback or submitFeedbackFor)
+  <b>TicketConsumed</b>(ticketId, payer, agentId, agentAddress, feedbackHash)   ◀─ payment-proof / gate
+  <b>NewFeedback</b>(agentId, clientAddress = FeedbackGateway, idx, …, feedbackHash, feedbackURI)
+        │  (agentId, clientAddress, idx)            feedbackHash ─▶ artifact @ feedbackURI ─▶ InteractionAttestation
+        │  join TicketConsumed.feedbackHash == NewFeedback.feedbackHash  →  payer = TicketConsumed.payer
+        ▼
+LATER (optional)
+  <b>FeedbackRevoked</b>(agentId, clientAddress, idx)       ◀─ client retracts (via revokeFeedbackFor)
+  <b>ResponseAppended</b>(agentId, clientAddress, idx, responder = agent, …)  ◀─ agent rebuts</div>
+
+    <div class="why">
+        <strong>Join keys for aggregators.</strong>
+        <strong>ticketId</strong> links <code>TicketMinted</code> ↔ <code>TicketConsumed</code> (ticket lifecycle).
+        <strong>feedbackHash</strong> links <code>TicketConsumed</code> ↔ <code>NewFeedback</code> — the join recovers <code>payer</code> (see Off-chain payer recovery above).
+        <code>(agentId, clientAddress, feedbackIndex)</code> links <code>NewFeedback</code> ↔ <code>FeedbackRevoked</code> / <code>ResponseAppended</code>.
+        <code>feedbackHash</code> commits the off-chain artifact at <code>feedbackURI</code> (which embeds the agent's <code>InteractionAttestation</code>).
+    </div>
+    <div class="why" style="background:#fff7ed;border-color:#fdba74">
+        <strong>Payment-backed vs direct.</strong> The canonical registry is permissionless — anyone can call <code>giveFeedback</code>. <strong>Payment-backed feedback = a <code>NewFeedback</code> where <code>clientAddress == FeedbackGateway</code></strong> (only the gateway can be that <code>msg.sender</code>, and it only calls the registry after consuming a valid ticket). That filter is the on-chain signal aggregators use; <code>verify_feedback</code> then checks the ticket + attestation off-chain.
+    </div>
+
+    <footer>v2 — June 2026. See <a href="../../../../specs/extensions/erc8004_ticket_v2.md">erc8004_ticket_v2.md</a> · <a href="../../../../examples/python/clients/erc8004/README.md">demo README</a></footer>
+</body>
+</html>

@@ -17,4 +17,14 @@ interface IERC3009 {
         bytes32 nonce,
         bytes memory signature
     ) external;
+
+    function transferWithAuthorization(
+        address from,
+        address to,
+        uint256 value,
+        uint256 validAfter,
+        uint256 validBefore,
+        bytes32 nonce,
+        bytes memory signature
+    ) external;
 }

@@ -1,0 +1,18 @@
+[project]
+name = "x402-erc8004-facilitator-example"
+version = "0.1.0"
+description = "x402 facilitator with ERC-8004 ticket minting"
+readme = "README.md"
+requires-python = ">=3.10"
+keywords = ["x402", "erc8004", "facilitator", "402"]
+dependencies = [
+    "x402[fastapi,evm,extensions]",
+    "python-dotenv>=1.2.1",
+    "uvicorn[standard]>=0.40.0",
+]
+
+[tool.uv]
+package = false
+
+[tool.uv.sources]
+x402 = { path = "../../../../python/x402", editable = true }
