@@ -159,6 +159,13 @@ export const DEFAULT_STABLECOINS: Record<string, ExactDefaultAssetInfo> = {
     version: "2",
     decimals: 6,
   }, // XDC Apothem testnet USDC (Bridged USDC Standard, EIP-3009 supported)
+  "eip155:38833": {
+    address: "0xA5b8BF902b2844dA17d4506cc827F7F1681735E7",
+    name: "USDC",
+    version: "1",
+    decimals: 6,
+    assetTransferMethod: "permit2",
+  }, // Igra mainnet USDC (no EIP-3009, no EIP-2612)
 };
 
 /**

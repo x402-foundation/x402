@@ -88,6 +88,7 @@ var (
 	ChainIDHPPSepolia    = big.NewInt(181228)
 	ChainIDXDC           = big.NewInt(50)
 	ChainIDXDCApothem    = big.NewInt(51)
+	ChainIDIgra          = big.NewInt(38833)
 
 	// Network configurations
 	// See DEFAULT_ASSET.md for guidelines on adding new chains
@@ -289,6 +290,17 @@ var (
 				Name:     "USDC",
 				Version:  "2",
 				Decimals: DefaultDecimals,
+			},
+		},
+		// Igra Mainnet (uses Permit2 instead of EIP-3009, no EIP-2612)
+		"eip155:38833": {
+			ChainID: ChainIDIgra,
+			DefaultAsset: AssetInfo{
+				Address:             "0xA5b8BF902b2844dA17d4506cc827F7F1681735E7", // USDC on Igra
+				Name:                "USDC",
+				Version:             "1",
+				Decimals:            DefaultDecimals,
+				AssetTransferMethod: AssetTransferMethodPermit2,
 			},
 		},
 	}

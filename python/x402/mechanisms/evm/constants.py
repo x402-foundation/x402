@@ -595,6 +595,17 @@ NETWORK_CONFIGS: dict[str, NetworkConfig] = {
             "decimals": 6,
         },
     },
+    # Igra Mainnet (uses Permit2 instead of EIP-3009, no EIP-2612)
+    "eip155:38833": {
+        "chain_id": 38833,
+        "default_asset": {
+            "address": "0xA5b8BF902b2844dA17d4506cc827F7F1681735E7",
+            "name": "USDC",
+            "version": "1",
+            "decimals": 6,
+            "asset_transfer_method": "permit2",
+        },
+    },
 }
 
 # V1 legacy constants are in x402.mechanisms.evm.v1.constants
