@@ -1,0 +1,114 @@
+{
+  "SPDX-License-Identifier": "Apache-2.0",
+  "copyright": "Copyright 2026 Antoni Jagodka (DrVelvetFog). Contributed under Apache-2.0.",
+  "note": "Token-2022 companion to chopmob-cloud's ata-create-fixtures.json (#2798). Exercises the token-program derivation seed in both directions. payment_mint is PYUSD, a live Token-2022 mint on Solana mainnet; transfer_destination is the ATA derived under Token-2022 and reproduces from (payTo, Token-2022 program, mint).",
+  "context": {
+    "payTo": "GyGKxMyg1p9SsHfm15MkNUu1u9TN2JtTspcdmrtGUdse",
+    "payment_mint": "2b1kV6DkPAnxd5ixfnxCpjxmKwqjjaYmCZfHsFu24GXo",
+    "transfer_token_program": "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb",
+    "fee_payer": "AKnL4NNf3DGWZJS6cPknBuEGnVsV4A4m5tgebLHaRSZ9",
+    "transfer_destination": "5AJ5PmLBPTY9JkKPSkSdNrghd1iqoWh1U55g3ByVG41y",
+    "system_program": "11111111111111111111111111111111"
+  },
+  "assertions": [
+    "program == ATA program",
+    "data == 0x01",
+    "accounts length == 6",
+    "account[1] == transfer_destination",
+    "account[2] == payTo",
+    "account[3] == payment_mint",
+    "account[5] == transfer_token_program",
+    "account[0] == fee_payer",
+    "account[4] == System Program"
+  ],
+  "fixtures": [
+    {
+      "id": "fixture-pos-02-token2022",
+      "description": "legit Token-2022 payment (PYUSD): create-ATA derived under Token-2022 (account[5]=Token-2022), account[1] the Token-2022 ATA. Accepts only if the validator derives the destination parametrically on the token program rather than hardcoding SPL Token.",
+      "instruction": {
+        "program_id": "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL",
+        "data_b64": "AQ==",
+        "data_hex": "01",
+        "accounts": [
+          {
+            "pubkey": "AKnL4NNf3DGWZJS6cPknBuEGnVsV4A4m5tgebLHaRSZ9",
+            "is_signer": true,
+            "is_writable": true
+          },
+          {
+            "pubkey": "5AJ5PmLBPTY9JkKPSkSdNrghd1iqoWh1U55g3ByVG41y",
+            "is_signer": false,
+            "is_writable": true
+          },
+          {
+            "pubkey": "GyGKxMyg1p9SsHfm15MkNUu1u9TN2JtTspcdmrtGUdse",
+            "is_signer": false,
+            "is_writable": false
+          },
+          {
+            "pubkey": "2b1kV6DkPAnxd5ixfnxCpjxmKwqjjaYmCZfHsFu24GXo",
+            "is_signer": false,
+            "is_writable": false
+          },
+          {
+            "pubkey": "11111111111111111111111111111111",
+            "is_signer": false,
+            "is_writable": false
+          },
+          {
+            "pubkey": "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb",
+            "is_signer": false,
+            "is_writable": false
+          }
+        ]
+      },
+      "expected_verdict": "ACCEPT",
+      "failed_assertions": []
+    },
+    {
+      "id": "fixture-neg-04-cross-program-create",
+      "description": "transfer is under Token-2022 (PYUSD) but the create-ATA names SPL Token in account[5]. account[1] is left as the correct Token-2022 destination so only the token-program pin fails; on-chain this would rent-fund the SPL-derived ATA (6v1NJ9vKgoG2v7BJXjcZhBtdsMk33bSYsUX51DV3Jw17) instead of the paid Token-2022 ATA (5AJ5PmLBPTY9JkKPSkSdNrghd1iqoWh1U55g3ByVG41y).",
+      "instruction": {
+        "program_id": "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL",
+        "data_b64": "AQ==",
+        "data_hex": "01",
+        "accounts": [
+          {
+            "pubkey": "AKnL4NNf3DGWZJS6cPknBuEGnVsV4A4m5tgebLHaRSZ9",
+            "is_signer": true,
+            "is_writable": true
+          },
+          {
+            "pubkey": "5AJ5PmLBPTY9JkKPSkSdNrghd1iqoWh1U55g3ByVG41y",
+            "is_signer": false,
+            "is_writable": true
+          },
+          {
+            "pubkey": "GyGKxMyg1p9SsHfm15MkNUu1u9TN2JtTspcdmrtGUdse",
+            "is_signer": false,
+            "is_writable": false
+          },
+          {
+            "pubkey": "2b1kV6DkPAnxd5ixfnxCpjxmKwqjjaYmCZfHsFu24GXo",
+            "is_signer": false,
+            "is_writable": false
+          },
+          {
+            "pubkey": "11111111111111111111111111111111",
+            "is_signer": false,
+            "is_writable": false
+          },
+          {
+            "pubkey": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+            "is_signer": false,
+            "is_writable": false
+          }
+        ]
+      },
+      "expected_verdict": "REJECT",
+      "failed_assertions": [
+        "account[5] == transfer_token_program"
+      ]
+    }
+  ]
+}
