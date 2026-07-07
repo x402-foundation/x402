@@ -863,3 +863,26 @@ class TestFlaskMiddlewareIntegration:
                 assert response.get_json() == {
                     "error": "Facilitator settle returned invalid data: {'success': true}"
                 }
+
+
+def test_payment_middleware_from_config_builds_with_sync_server():
+    """flask_payment_middleware_from_config must construct without raising.
+
+    Regression: the factory used to instantiate the async x402ResourceServer,
+    which x402HTTPResourceServerSync rejects at construction with TypeError
+    ("requires a sync server"). It must use x402ResourceServerSync instead,
+    mirroring how the FastAPI factory uses the async server for its async path.
+    """
+    from x402.http.middleware.flask import payment_middleware_from_config
+
+    app = Flask(__name__)
+    facilitator = MagicMock()
+
+    # Must not raise TypeError about async methods on a sync server.
+    middleware = payment_middleware_from_config(
+        app,
+        {"/api/protected": {"price": "$0.01", "pay_to": "0x" + "1" * 40}},
+        facilitator_client=facilitator,
+    )
+
+    assert middleware is not None
