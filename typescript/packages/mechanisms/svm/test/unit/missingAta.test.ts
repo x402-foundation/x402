@@ -20,6 +20,7 @@ const FIXED_BLOCKHASH = "5Tx8F3jgSHx21CbtjwmdaKPLM5tWmreWAnPrbqHomSJF";
 
 let mockAtaMap: Record<string, Address> = {};
 let destinationAtaExists = true;
+let destinationAtaOwner: string = TOKEN_PROGRAM_ADDRESS.toString();
 
 const mockRpc = {
   getLatestBlockhash: vi.fn(() => ({
@@ -27,7 +28,7 @@ const mockRpc = {
   })),
   getAccountInfo: vi.fn(() => ({
     send: vi.fn().mockImplementation(async () => ({
-      value: destinationAtaExists ? { data: ["", "base64"] } : null,
+      value: destinationAtaExists ? { data: ["", "base64"], owner: destinationAtaOwner } : null,
     })),
   })),
 };
@@ -77,6 +78,7 @@ describe("client fail-fast on missing destination ATA (#2395)", () => {
   beforeEach(() => {
     mockAtaMap = {};
     destinationAtaExists = true;
+    destinationAtaOwner = TOKEN_PROGRAM_ADDRESS.toString();
     vi.resetModules();
     vi.clearAllMocks();
   });
@@ -119,6 +121,26 @@ describe("client fail-fast on missing destination ATA (#2395)", () => {
     const client = new ExactSvmScheme(clientSigner);
     const payload = await client.createPaymentPayload(2, requirements);
     expect((payload.payload as { transaction: string }).transaction.length).toBeGreaterThan(100);
+  });
+
+  it("v2: throws when the ATA address is squatted by a non-token-program account", async () => {
+    destinationAtaExists = true;
+    destinationAtaOwner = "11111111111111111111111111111111"; // System-owned squatter
+    const { ExactSvmScheme } = await import("../../src/exact/client/scheme");
+    const { clientSigner, feePayer, payTo } = await setup();
+    const requirements: PaymentRequirements = {
+      scheme: "exact",
+      network: SOLANA_DEVNET_CAIP2,
+      asset: USDC_DEVNET_ADDRESS,
+      amount: "100000",
+      payTo: payTo.address,
+      maxTimeoutSeconds: 3600,
+      extra: { feePayer: feePayer.address },
+    };
+    const client = new ExactSvmScheme(clientSigner);
+    await expect(client.createPaymentPayload(2, requirements)).rejects.toThrow(
+      /owned by 11111111111111111111111111111111 rather/,
+    );
   });
 
   it("v1: throws the same explicit error", async () => {

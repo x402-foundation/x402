@@ -136,6 +136,19 @@ export class ExactSvmSchemeV1 implements SchemeNetworkClient {
           `can accept payments for this asset (see x402-foundation/x402#1020).`,
       );
     }
+    // An account merely existing at the ATA address is not enough: a
+    // lamport-only System account can squat the PDA (the known ATA-blocking
+    // vector) and would still fail TransferChecked at settle time. Require the
+    // account to actually be owned by the mint's token program.
+    if (destinationInfo.value.owner.toString() !== tokenProgramAddress.toString()) {
+      throw new Error(
+        `Destination associated token account ${destinationATA} for payTo ` +
+          `${selectedV1.payTo} exists but is owned by ${destinationInfo.value.owner} rather ` +
+          `than the token program ${tokenProgramAddress}; TransferChecked would fail ` +
+          `on-chain. The recipient's own idempotent ATA creation converts a prefunded ` +
+          `system account into a usable token account (see x402-foundation/x402#1020).`,
+      );
+    }
 
     const sellerMemo = selectedV1.extra?.memo as string | undefined;
     let memoData: Uint8Array;
