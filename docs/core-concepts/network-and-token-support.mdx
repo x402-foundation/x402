@@ -15,12 +15,13 @@ x402 uses [CAIP-2](https://chainagnostic.org/CAIPs/caip-2) standard network iden
 - **Aptos**: `aptos:<chainId>` (e.g., `aptos:1` for mainnet)
 - **Hedera**: `hedera:<network>` (`mainnet` or `testnet`)
 - **Keeta**: `keeta:<networkId>` (e.g., `keeta:21378` for mainnet)
+- **NEAR**: `near:<network>` (`mainnet` or `testnet`)
 - **Concordium**: `ccd:<genesisHash>` (e.g., `ccd:9dd9ca4d19e9393877d2c44b70f89acb` for mainnet)
 - **XRPL**: `xrpl:<networkId>` (e.g., `xrpl:0` for mainnet, `xrpl:1` for testnet)
 
 ## Token Support
 
-x402 supports tokens on EVM, Solana, TON, Algorand (AVM), Stellar, Aptos, Hedera, Keeta, Concordium, and XRPL networks:
+x402 supports tokens on EVM, Solana, TON, Algorand (AVM), Stellar, Aptos, Hedera, Keeta, NEAR, Concordium, and XRPL networks:
 
 | Ecosystem | Supported Tokens | Transfer Method |
 |-----------|------------------|-----------------|
@@ -32,10 +33,13 @@ x402 supports tokens on EVM, Solana, TON, Algorand (AVM), Stellar, Aptos, Hedera
 | **Aptos** | Any fungible asset | `primary_fungible_store::transfer` |
 | **Hedera** | HBAR or any HTS fungible token | Hedera Transfer Transaction |
 | **Keeta** | Any Keeta token | `SEND` operation |
+| **NEAR** | Any NEP-141 token | NEP-366 `SignedDelegate` authorizing `ft_transfer` |
 | **Concordium** | CCD or any PLT token (e.g., EURR) | Sponsored V1 transfer |
 | **XRPL** | XRP or any issued currency (e.g., RLUSD) | Payer-signed `Payment` transaction |
 
 Facilitators support **networks**, not specific tokens — any compatible token works on any facilitator that supports that network.
+
+For NEAR, the payer signs a delegated NEP-141 transfer. The facilitator relayer sponsors NEAR gas and the required `1` yoctoNEAR deposit, so the payer spends only the NEP-141 token amount.
 
 ## Production Network Support
 
@@ -175,6 +179,13 @@ HBAR (native token) is also supported using asset ID `0.0.0`, with amounts in ti
 |-------|--------|---------------|----------|
 | Keeta Mainnet | `keeta:21378` | `keeta_amnkge74xitii5dsobstldatv3irmyimujfjotftx7plaaaseam4bntb7wnna` (USDC) | 6 |
 | Keeta Testnet | `keeta:1413829460` | `keeta_apna75yhhvnv4ei7ape55hndk4yepno7a7i2mhtiwahiygixjcnmvswxhnmnk` (USDC) | 6 |
+
+### NEAR
+
+| Chain | CAIP-2 | Token Contract | Decimals |
+|-------|--------|----------------|----------|
+| NEAR Mainnet | `near:mainnet` | `17208628f84f5d6ad33f0da3bbbeb27ffcb398eac501a31bd6ad2011e36133a1` (USDC) | 6 |
+| NEAR Testnet | `near:testnet` | `3e2210e1184b45b64c8a434c0a7e7b23cc04ea7eb7a6c3c32520d03d4afcb8af` (USDC) | 6 |
 
 ## Adding Support for New Networks
 
@@ -321,7 +332,7 @@ Video Guide: [Adding EVM Chains to x402](https://x.com/jaycoolh/status/192085155
 
 Key takeaways:
 
-* **Any EVM chain** is supported via `eip155:<chainId>` — plus Solana, TON (TVM), Algorand (AVM), Stellar, Aptos, Hedera, Keeta, Concordium, and XRPL
+* **Any EVM chain** is supported via `eip155:<chainId>` — plus Solana, TON (TVM), Algorand (AVM), Stellar, Aptos, Hedera, Keeta, NEAR, Concordium, and XRPL
 * [Default assets](#default-assets-for-dollar-string-pricing) are a convenience for `"$0.01"` dollar-string pricing; explicit `TokenAmount` works on any chain
 * Any ERC-20 token works on any EVM facilitator (via EIP-3009 or Permit2)
 * CAIP-2 identifiers provide unambiguous cross-chain support
