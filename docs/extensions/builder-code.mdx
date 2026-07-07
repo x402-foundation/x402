@@ -195,6 +195,29 @@ httpClient := x402http.WrapHTTPClientWithPayment(
 resp, _ := httpClient.Get("https://api.example.com/weather")
 ```
   </Tab>
+  <Tab title="Python">
+```python
+from x402 import x402Client
+from x402.extensions.builder_code import BuilderCodeClientExtension
+from x402.http.clients import x402HttpxClient
+from x402.mechanisms.evm import EthAccountSigner
+from x402.mechanisms.evm.exact.register import register_exact_evm_client
+from eth_account import Account
+
+account = Account.from_key(EVM_PRIVATE_KEY)
+client = x402Client()
+register_exact_evm_client(client, EthAccountSigner(account))
+
+# Single service code
+client.register_extension(BuilderCodeClientExtension("bc_my_client"))
+
+# Multiple service codes (layered clients)
+# client.register_extension(BuilderCodeClientExtension(["bc_mcp_server", "bc_my_app"]))
+
+async with x402HttpxClient(client) as http:
+    response = await http.get("https://api.example.com/weather")
+```
+  </Tab>
 </Tabs>
 
 ## Quickstart for Facilitators
