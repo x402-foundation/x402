@@ -54,6 +54,16 @@ export const DEFAULT_LEDGER_TOLERANCE = 2;
 export const TF_PARTIAL_PAYMENT = 0x00020000;
 
 /**
+ * XRPL AccountRoot lsfDisableMaster flag: the account's master key pair is disabled.
+ */
+export const LSF_DISABLE_MASTER = 0x00100000;
+
+/**
+ * Maximum XRPL destination tag value (32-bit unsigned integer).
+ */
+export const MAX_DESTINATION_TAG = 0xffffffff;
+
+/**
  * Maximum number of outstanding tickets an XRPL account can hold.
  */
 export const MAX_ACCOUNT_TICKETS = 250;

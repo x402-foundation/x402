@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { Wallet, decode } from "xrpl";
+import { Wallet, decode, encode } from "xrpl";
 import { ExactXrplScheme as ExactXrplClientScheme } from "../../src/exact/client/scheme";
 import { ExactXrplScheme as ExactXrplFacilitatorScheme } from "../../src/exact/facilitator/scheme";
 import { ExactXrplScheme as ExactXrplServerScheme } from "../../src/exact/server/scheme";
@@ -18,6 +18,7 @@ import type { PaymentPayload, PaymentRequirements } from "@x402/core/types";
 import type { Client, Payment, Transaction } from "xrpl";
 
 const payerWallet = Wallet.fromSeed("sEdTM1uX8pu2do5XvTnutH6HsouMaM2");
+const otherWallet = Wallet.fromSeed("sEd7t79mzn2dwy3vvpvRmaaLbLhvme6");
 const payTo = "rGsd42GGEq1tJBPQ3Aoj9iyePZbxiX5Nrv";
 const issuer = "rL4JcsJfvkYYAqNhjZ7Gvkh14eF7GXRh3q";
 const invoiceId = "INV-2026-XRPL-001";
@@ -126,6 +127,7 @@ function createFacilitator(
   return new ExactXrplFacilitatorScheme({
     getCurrentLedgerIndex: async () => 990,
     getAccountSequence: async () => 1,
+    getAccountAuthorization: async () => ({ isMasterKeyDisabled: false }),
     isTicketAvailable: async () => true,
     maxFeeDrops: DEFAULT_MAX_FEE_DROPS,
     simulateSignedTransaction: async () => ({ engineResult: "tesSUCCESS" }),
@@ -536,6 +538,21 @@ describe("ExactXrplScheme server", () => {
       ),
     ).toThrow("assetTransferMethod");
   });
+
+  it("rejects malformed destination tags when enhancing requirements", () => {
+    const server = new ExactXrplServerScheme();
+
+    expect(() =>
+      server.enhancePaymentRequirements(
+        {
+          ...baseIouRequirements,
+          extra: { ...baseIouRequirements.extra, destinationTag: "12345" },
+        } as unknown as PaymentRequirements,
+        { x402Version: 2, scheme: "exact", network: XRPL_TESTNET },
+        [],
+      ),
+    ).toThrow("destinationTag");
+  });
 });
 
 describe("ExactXrplScheme client", () => {
@@ -685,6 +702,60 @@ describe("ExactXrplScheme client", () => {
     await expect(client.createPaymentPayload(2, baseXrpRequirements)).rejects.toThrow(
       "must set the account Sequence",
     );
+  });
+
+  it("rejects malformed destination tag requirements", async () => {
+    const client = new ExactXrplClientScheme(createXrplWalletSigner(payerWallet), {
+      preparePaymentTransaction: preparePaymentForTest,
+    });
+
+    await expect(
+      client.createPaymentPayload(2, {
+        ...baseIouRequirements,
+        extra: { ...baseIouRequirements.extra, destinationTag: 1.5 },
+      }),
+    ).rejects.toThrow("destinationTag");
+  });
+
+  it("signs custom-network payments with the prepared NetworkID", async () => {
+    const client = new ExactXrplClientScheme(createXrplWalletSigner(payerWallet), {
+      getCurrentLedgerIndex: async () => 980,
+      preparePaymentTransaction: async transaction => ({
+        ...(await preparePaymentForTest(transaction)),
+        NetworkID: 21337,
+      }),
+    });
+
+    const result = await client.createPaymentPayload(2, {
+      ...baseXrpRequirements,
+      network: "xrpl:21337",
+    });
+    const decoded = decode(String(result.payload.signedTxBlob)) as Payment;
+
+    expect(decoded.NetworkID).toBe(21337);
+  });
+
+  it("rejects prepared custom-network payments missing the NetworkID", async () => {
+    const client = new ExactXrplClientScheme(createXrplWalletSigner(payerWallet), {
+      getCurrentLedgerIndex: async () => 980,
+      preparePaymentTransaction: preparePaymentForTest,
+    });
+
+    await expect(
+      client.createPaymentPayload(2, { ...baseXrpRequirements, network: "xrpl:21337" }),
+    ).rejects.toThrow("NetworkID");
+  });
+
+  it("rejects prepared standard-network payments that set a NetworkID", async () => {
+    const client = new ExactXrplClientScheme(createXrplWalletSigner(payerWallet), {
+      getCurrentLedgerIndex: async () => 980,
+      preparePaymentTransaction: async transaction => ({
+        ...(await preparePaymentForTest(transaction)),
+        NetworkID: 1,
+      }),
+    });
+
+    await expect(client.createPaymentPayload(2, baseXrpRequirements)).rejects.toThrow("NetworkID");
   });
 });
 
@@ -1057,5 +1128,346 @@ describe("ExactXrplScheme facilitator verify", () => {
 
     expect(result.isValid).toBe(false);
     expect(result.invalidReason?.toLowerCase()).toContain("sendmax");
+  });
+
+  it("rejects payloads with an unsupported x402 version", async () => {
+    const payload = buildPayload(baseXrpRequirements);
+
+    const result = await facilitator.verify(
+      { ...payload, x402Version: 1 } as PaymentPayload,
+      baseXrpRequirements,
+    );
+
+    expect(result.isValid).toBe(false);
+    expect(result.invalidReason).toContain("x402_version");
+  });
+
+  it("rejects payloads that accept a non-exact scheme", async () => {
+    const payload = buildPayload(baseXrpRequirements);
+
+    const result = await facilitator.verify(
+      {
+        ...payload,
+        accepted: { ...baseXrpRequirements, scheme: "upto" },
+      } as unknown as PaymentPayload,
+      baseXrpRequirements,
+    );
+
+    expect(result.isValid).toBe(false);
+    expect(result.invalidReason).toContain("scheme");
+  });
+
+  it.each([
+    ["asset", { asset: "USD" }, "asset_mismatch"],
+    ["amount", { amount: "999999" }, "amount_mismatch"],
+    ["payTo", { payTo: issuer }, "pay_to_mismatch"],
+  ])(
+    "rejects mismatched %s between accepted and requirements",
+    async (_field, acceptedPatch, expectedReason) => {
+      const payload = buildPayload(baseXrpRequirements);
+
+      const result = await facilitator.verify(
+        { ...payload, accepted: { ...baseXrpRequirements, ...acceptedPatch } },
+        baseXrpRequirements,
+      );
+
+      expect(result.isValid).toBe(false);
+      expect(result.invalidReason).toContain(expectedReason);
+    },
+  );
+
+  it("accepts a custom-network payment with the matching NetworkID", async () => {
+    const requirements = { ...baseXrpRequirements, network: "xrpl:21337" };
+    const payload = buildPayload(requirements, { NetworkID: 21337 } as Partial<Payment>);
+
+    const result = await facilitator.verify(payload, requirements);
+
+    expect(result).toMatchObject({
+      isValid: true,
+      payer: payerWallet.classicAddress,
+    });
+  });
+
+  it("rejects a standard-network payment that carries a NetworkID", async () => {
+    const payload = buildPayload(baseXrpRequirements, { NetworkID: 1 } as Partial<Payment>);
+
+    const result = await facilitator.verify(payload, baseXrpRequirements);
+
+    expect(result.isValid).toBe(false);
+    expect(result.invalidReason).toContain("network_id_for_standard_network");
+  });
+
+  it("rejects an XRP payment whose amount is an issued-currency object", async () => {
+    const payload = buildPayload(baseXrpRequirements, {
+      Amount: { currency: "USD", issuer, value: "1" },
+    });
+
+    const result = await facilitator.verify(payload, baseXrpRequirements);
+
+    expect(result.isValid).toBe(false);
+    expect(result.invalidReason).toContain("amount_xrp");
+  });
+
+  it("rejects an IOU payment without SendMax", async () => {
+    const payload = buildPayload(baseIouRequirements, { SendMax: undefined });
+
+    const result = await facilitator.verify(payload, baseIouRequirements);
+
+    expect(result.isValid).toBe(false);
+    expect(result.invalidReason).toContain("sendmax_required");
+  });
+
+  it("rejects an IOU SendMax with a mismatched currency", async () => {
+    const payload = buildPayload(baseIouRequirements, {
+      SendMax: { currency: "EUR", issuer, value: "10.5" },
+    });
+
+    const result = await facilitator.verify(payload, baseIouRequirements);
+
+    expect(result.isValid).toBe(false);
+    expect(result.invalidReason).toContain("sendmax_iou_mismatch");
+  });
+
+  it("rejects a payment without a LastLedgerSequence", async () => {
+    const payload = buildPayload(baseXrpRequirements, { LastLedgerSequence: undefined });
+
+    const result = await facilitator.verify(payload, baseXrpRequirements);
+
+    expect(result.isValid).toBe(false);
+    expect(result.invalidReason).toContain("lastledgersequence_missing");
+  });
+
+  it("rejects a LastLedgerSequence beyond the timeout policy", async () => {
+    const payload = buildPayload(baseXrpRequirements, { LastLedgerSequence: 1_005 });
+
+    const result = await facilitator.verify(payload, baseXrpRequirements);
+
+    expect(result.isValid).toBe(false);
+    expect(result.invalidReason).toContain("lastledgersequence_too_large");
+  });
+
+  it("rejects a sequence payment with Sequence 0", async () => {
+    const payload = buildPayload(baseXrpRequirements, { Sequence: 0 });
+
+    const result = await facilitator.verify(payload, baseXrpRequirements);
+
+    expect(result.isValid).toBe(false);
+    expect(result.invalidReason).toContain("sequence_missing");
+  });
+
+  it("rejects an InvoiceID that does not match the invoice id hash", async () => {
+    const payload = buildPayload(baseXrpRequirements, { InvoiceID: "AB".repeat(32) });
+
+    const result = await facilitator.verify(payload, baseXrpRequirements);
+
+    expect(result.isValid).toBe(false);
+    expect(result.invalidReason).toContain("invoice_id_mismatch");
+  });
+
+  it("rejects a transaction that omits the required destination tag", async () => {
+    const payload = buildPayload(baseIouRequirements, { DestinationTag: undefined });
+
+    const result = await facilitator.verify(payload, baseIouRequirements);
+
+    expect(result.isValid).toBe(false);
+    expect(result.invalidReason).toContain("destination_tag_mismatch");
+  });
+
+  it("rejects malformed destination tags in requirements", async () => {
+    const requirements = {
+      ...baseIouRequirements,
+      extra: { ...baseIouRequirements.extra, destinationTag: "12345" },
+    } as unknown as PaymentRequirements;
+    const payload = buildPayload(requirements);
+
+    const result = await facilitator.verify(payload, requirements);
+
+    expect(result.isValid).toBe(false);
+    expect(result.invalidReason).toContain("destination_tag_malformed");
+  });
+
+  it("checks signer authorization against the payer account", async () => {
+    const getAccountAuthorization = vi.fn(async () => ({ isMasterKeyDisabled: false }));
+    const authFacilitator = createFacilitator({ getAccountAuthorization });
+
+    const result = await authFacilitator.verify(
+      buildPayload(baseXrpRequirements),
+      baseXrpRequirements,
+    );
+
+    expect(result.isValid).toBe(true);
+    expect(getAccountAuthorization).toHaveBeenCalledWith(payerWallet.classicAddress, XRPL_TESTNET);
+  });
+
+  it("rejects a payment signed by a key that is not authorized for the account", async () => {
+    const payload = buildPayload(baseXrpRequirements, {
+      Account: otherWallet.classicAddress,
+    } as Partial<Payment>);
+
+    const result = await facilitator.verify(payload, baseXrpRequirements);
+
+    expect(result.isValid).toBe(false);
+    expect(result.invalidReason).toContain("signer_not_authorized");
+  });
+
+  it("accepts a payment signed by the account's configured regular key", async () => {
+    const regularKeyFacilitator = createFacilitator({
+      getAccountAuthorization: async () => ({
+        regularKey: payerWallet.classicAddress,
+        isMasterKeyDisabled: true,
+      }),
+    });
+    const payload = buildPayload(baseXrpRequirements, {
+      Account: otherWallet.classicAddress,
+    } as Partial<Payment>);
+
+    const result = await regularKeyFacilitator.verify(payload, baseXrpRequirements);
+
+    expect(result).toMatchObject({
+      isValid: true,
+      payer: otherWallet.classicAddress,
+    });
+  });
+
+  it("rejects a master-key signature when the account's master key is disabled", async () => {
+    const disabledMasterFacilitator = createFacilitator({
+      getAccountAuthorization: async () => ({ isMasterKeyDisabled: true }),
+    });
+
+    const result = await disabledMasterFacilitator.verify(
+      buildPayload(baseXrpRequirements),
+      baseXrpRequirements,
+    );
+
+    expect(result.isValid).toBe(false);
+    expect(result.invalidReason).toContain("signer_not_authorized");
+  });
+
+  it("rejects a single-signed transaction that carries a Signers array", async () => {
+    const payload = buildPayload(baseXrpRequirements);
+    const decoded = decode(String(payload.payload.signedTxBlob)) as unknown as Record<
+      string,
+      unknown
+    >;
+    decoded.Signers = [
+      {
+        Signer: {
+          Account: otherWallet.classicAddress,
+          SigningPubKey: otherWallet.publicKey,
+          TxnSignature: "AA".repeat(35),
+        },
+      },
+    ];
+    const hybridBlob = encode(decoded as unknown as Transaction);
+
+    const result = await facilitator.verify(
+      { ...payload, payload: { signedTxBlob: hybridBlob } },
+      baseXrpRequirements,
+    );
+
+    expect(result.isValid).toBe(false);
+    expect(result.invalidReason).toContain("multisig_not_supported");
+  });
+});
+
+describe("ExactXrplScheme facilitator settle", () => {
+  const settledHash = "C".repeat(64);
+
+  it("settles a validated tesSUCCESS submission", async () => {
+    const submitSignedTransaction = vi.fn(async () => ({
+      hash: settledHash,
+      validated: true,
+      resultCode: "tesSUCCESS",
+    }));
+    const settleFacilitator = createFacilitator({ submitSignedTransaction });
+
+    const result = await settleFacilitator.settle(
+      buildPayload(baseXrpRequirements),
+      baseXrpRequirements,
+    );
+
+    expect(result).toMatchObject({
+      success: true,
+      transaction: settledHash,
+      network: XRPL_TESTNET,
+      payer: payerWallet.classicAddress,
+    });
+    expect(submitSignedTransaction).toHaveBeenCalledOnce();
+  });
+
+  it("does not submit when re-verification fails", async () => {
+    const submitSignedTransaction = vi.fn(async () => ({
+      hash: settledHash,
+      validated: true,
+      resultCode: "tesSUCCESS",
+    }));
+    const settleFacilitator = createFacilitator({
+      submitSignedTransaction,
+      simulateSignedTransaction: async () => ({ engineResult: "tecUNFUNDED_PAYMENT" }),
+    });
+
+    const result = await settleFacilitator.settle(
+      buildPayload(baseXrpRequirements),
+      baseXrpRequirements,
+    );
+
+    expect(result.success).toBe(false);
+    expect(result.errorReason).toContain("simulation_failed");
+    expect(submitSignedTransaction).not.toHaveBeenCalled();
+  });
+
+  it("fails settlement for a validated non-success result", async () => {
+    const settleFacilitator = createFacilitator({
+      submitSignedTransaction: async () => ({
+        hash: settledHash,
+        validated: true,
+        resultCode: "tecPATH_DRY",
+      }),
+    });
+
+    const result = await settleFacilitator.settle(
+      buildPayload(baseXrpRequirements),
+      baseXrpRequirements,
+    );
+
+    expect(result.success).toBe(false);
+    expect(result.transaction).toBe(settledHash);
+    expect(result.errorReason).toContain("tecPATH_DRY");
+  });
+
+  it("fails settlement when the transaction is not validated", async () => {
+    const settleFacilitator = createFacilitator({
+      submitSignedTransaction: async () => ({
+        hash: settledHash,
+        validated: false,
+        resultCode: "tesSUCCESS",
+      }),
+    });
+
+    const result = await settleFacilitator.settle(
+      buildPayload(baseXrpRequirements),
+      baseXrpRequirements,
+    );
+
+    expect(result.success).toBe(false);
+    expect(result.errorReason).toContain("transaction_failed");
+  });
+
+  it("reports submission errors without settling", async () => {
+    const settleFacilitator = createFacilitator({
+      submitSignedTransaction: async () => {
+        throw new Error("websocket disconnected");
+      },
+    });
+
+    const result = await settleFacilitator.settle(
+      buildPayload(baseXrpRequirements),
+      baseXrpRequirements,
+    );
+
+    expect(result.success).toBe(false);
+    expect(result.errorReason).toContain("transaction_failed");
+    expect(result.transaction).toMatch(/^[A-F0-9]{64}$/);
+    expect(result.payer).toBe(payerWallet.classicAddress);
   });
 });

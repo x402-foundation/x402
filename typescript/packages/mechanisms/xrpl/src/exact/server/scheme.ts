@@ -11,6 +11,7 @@ import type {
 import {
   isDecimalString,
   isIntegerString,
+  isValidDestinationTag,
   isXrplAssetTransferMethod,
   requireClassicAddress,
 } from "../../utils";
@@ -93,6 +94,12 @@ export class ExactXrplScheme implements SchemeNetworkServer {
     const invoiceId = paymentRequirements.extra?.invoiceId;
     if (invoiceId !== undefined && (typeof invoiceId !== "string" || invoiceId === "")) {
       throw new Error("XRPL exact payments require a non-empty extra.invoiceId when provided");
+    }
+    const destinationTag = paymentRequirements.extra?.destinationTag;
+    if (destinationTag !== undefined && !isValidDestinationTag(destinationTag)) {
+      throw new Error(
+        "XRPL exact payments require extra.destinationTag to be a 32-bit unsigned integer",
+      );
     }
 
     return Promise.resolve({

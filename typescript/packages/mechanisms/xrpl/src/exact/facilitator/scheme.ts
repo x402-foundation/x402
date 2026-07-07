@@ -6,10 +6,12 @@ import {
   getExactXrplPayload,
   getMaxLastLedgerSequence,
   getSignedTransactionHash,
+  getXrplAccountAuthorization,
   getXrplAccountSequence,
   invoiceIdToInvoiceIdField,
   isIssuedCurrencyAmount,
   isRecord,
+  isValidDestinationTag,
   isXrplNetwork,
   isXrplTicketAvailable,
   parseXrplNetworkId,
@@ -27,7 +29,7 @@ import type {
   SettleResponse,
   VerifyResponse,
 } from "@x402/core/types";
-import { verifySignature, type Payment, type Transaction } from "xrpl";
+import { deriveAddress, verifySignature, type Payment, type Transaction } from "xrpl";
 
 /**
  * XRPL facilitator implementation for the exact payment scheme.
@@ -117,6 +119,14 @@ export class ExactXrplScheme implements SchemeNetworkFacilitator {
       const expiryError = this.verifyLedgerExpiry(transaction, requirements, currentLedgerIndex);
       if (expiryError) {
         return invalidVerify(expiryError, payer);
+      }
+
+      const signerAuthorizationError = await this.verifySignerAuthorization(
+        transaction,
+        requirements.network,
+      );
+      if (signerAuthorizationError) {
+        return invalidVerify(signerAuthorizationError, payer);
       }
 
       const sequencingStateError = await this.verifySequencingState(
@@ -274,14 +284,20 @@ export class ExactXrplScheme implements SchemeNetworkFacilitator {
     if (transaction.Destination !== expectedDestination) {
       return "invalid_exact_xrpl_payload_destination_mismatch";
     }
-    if (
-      typeof requirements.extra?.destinationTag === "number" &&
-      transaction.DestinationTag !== requirements.extra.destinationTag
-    ) {
-      return "invalid_exact_xrpl_payload_destination_tag_mismatch";
+    const requiredDestinationTag = requirements.extra?.destinationTag;
+    if (requiredDestinationTag !== undefined) {
+      if (!isValidDestinationTag(requiredDestinationTag)) {
+        return "invalid_exact_xrpl_destination_tag_malformed";
+      }
+      if (transaction.DestinationTag !== requiredDestinationTag) {
+        return "invalid_exact_xrpl_payload_destination_tag_mismatch";
+      }
     }
     if (hasDelegateField(transaction)) {
       return "invalid_exact_xrpl_payload_delegate_not_allowed";
+    }
+    if (transaction.Signers !== undefined) {
+      return "invalid_exact_xrpl_payload_multisig_not_supported";
     }
 
     const networkError = this.verifyNetworkBinding(transaction, requirements.network);
@@ -502,6 +518,46 @@ export class ExactXrplScheme implements SchemeNetworkFacilitator {
     }
     if (typeof transaction.TicketSequence !== "number") {
       return "invalid_exact_xrpl_payload_ticket_sequence_missing";
+    }
+    return undefined;
+  }
+
+  /**
+   * Verifies that the embedded signing key is authorized for the payer account.
+   *
+   * `verifySignature` only proves the blob was signed by its embedded
+   * `SigningPubKey`; this check binds that key to `Account` (master key pair,
+   * unless disabled, or the configured regular key) so payments that would
+   * deterministically fail authorization at settlement (`tefBAD_AUTH`,
+   * `tefMASTER_DISABLED`) are rejected during verification. Simulation cannot
+   * catch these because signature fields are stripped before `simulate`.
+   *
+   * @param transaction - Decoded XRPL payment transaction
+   * @param network - XRPL network id
+   * @returns Invalid reason, if validation fails
+   */
+  private async verifySignerAuthorization(
+    transaction: Payment,
+    network: Network,
+  ): Promise<string | undefined> {
+    const signingPubKey = transaction.SigningPubKey;
+    if (typeof signingPubKey !== "string" || signingPubKey === "") {
+      return "invalid_exact_xrpl_payload_signature";
+    }
+    const signerAddress = deriveAddress(signingPubKey);
+    const authorization = await getXrplAccountAuthorization(
+      transaction.Account,
+      network,
+      this.options,
+    );
+    if (signerAddress === transaction.Account) {
+      if (authorization.isMasterKeyDisabled) {
+        return "invalid_exact_xrpl_payload_signer_not_authorized";
+      }
+      return undefined;
+    }
+    if (authorization.regularKey !== signerAddress) {
+      return "invalid_exact_xrpl_payload_signer_not_authorized";
     }
     return undefined;
   }

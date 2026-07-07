@@ -5,6 +5,7 @@ import {
   invoiceIdToInvoiceIdField,
   isDecimalString,
   isIntegerString,
+  isValidDestinationTag,
   isXrplAssetTransferMethod,
   isXrplNetwork,
   parseXrplNetworkId,
@@ -85,6 +86,12 @@ export class ExactXrplScheme implements SchemeNetworkClient {
         : getMaxLastLedgerSequence(currentLedgerIndex, requirements);
     const invoiceId =
       typeof requirements.extra?.invoiceId === "string" ? requirements.extra.invoiceId : undefined;
+    const destinationTag = requirements.extra?.destinationTag;
+    if (destinationTag !== undefined && !isValidDestinationTag(destinationTag)) {
+      throw new Error(
+        "XRPL exact payments require extra.destinationTag to be a 32-bit unsigned integer",
+      );
+    }
     const isXrp = requirements.asset === "XRP";
     let amount: Payment["Amount"] = requirements.amount;
     let sendMax: Payment["SendMax"];
@@ -108,9 +115,7 @@ export class ExactXrplScheme implements SchemeNetworkClient {
       ...(invoiceId !== undefined ? { InvoiceID: invoiceIdToInvoiceIdField(invoiceId) } : {}),
       ...(this.options.feeDrops !== undefined ? { Fee: this.options.feeDrops } : {}),
       ...(lastLedgerSequence !== undefined ? { LastLedgerSequence: lastLedgerSequence } : {}),
-      ...(typeof requirements.extra?.destinationTag === "number"
-        ? { DestinationTag: requirements.extra.destinationTag }
-        : {}),
+      ...(destinationTag !== undefined ? { DestinationTag: destinationTag } : {}),
     };
 
     if (sendMax !== undefined) {

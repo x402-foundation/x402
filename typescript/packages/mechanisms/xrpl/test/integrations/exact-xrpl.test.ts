@@ -47,6 +47,7 @@ describe("ExactXrplScheme settlement", () => {
     const facilitator = new ExactXrplScheme({
       getCurrentLedgerIndex: async () => 990,
       getAccountSequence: async () => 1,
+      getAccountAuthorization: async () => ({ isMasterKeyDisabled: false }),
       submitSignedTransaction,
       simulateSignedTransaction: async () => ({ engineResult: "tesSUCCESS" }),
     });
@@ -66,6 +67,7 @@ describe("ExactXrplScheme settlement", () => {
     const facilitator = new ExactXrplScheme({
       getCurrentLedgerIndex: async () => 990,
       getAccountSequence: async () => 1,
+      getAccountAuthorization: async () => ({ isMasterKeyDisabled: false }),
       simulateSignedTransaction: async () => ({ engineResult: "tesSUCCESS" }),
       submitSignedTransaction: vi.fn().mockResolvedValue({
         hash: "B".repeat(64),

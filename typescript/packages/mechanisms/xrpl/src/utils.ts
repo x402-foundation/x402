@@ -13,7 +13,9 @@ import {
 import {
   DEFAULT_LEDGER_CLOSE_SECONDS,
   DEFAULT_LEDGER_TOLERANCE,
+  LSF_DISABLE_MASTER,
   MAX_ACCOUNT_TICKETS,
+  MAX_DESTINATION_TAG,
   XRPL_DEVNET,
   XRPL_DEVNET_WS_URL,
   XRPL_MAINNET,
@@ -23,6 +25,7 @@ import {
 } from "./constants";
 import type {
   ExactXrplPayload,
+  XrplAccountAuthorization,
   XrplAssetTransferMethod,
   XrplClientFactory,
   XrplFacilitatorOptions,
@@ -197,6 +200,21 @@ export function isDecimalString(value: string): boolean {
 }
 
 /**
+ * Checks whether a value is a valid XRPL destination tag.
+ *
+ * @param value - Value to inspect
+ * @returns Whether the value is a 32-bit unsigned integer
+ */
+export function isValidDestinationTag(value: unknown): value is number {
+  return (
+    typeof value === "number" &&
+    Number.isInteger(value) &&
+    value >= 0 &&
+    value <= MAX_DESTINATION_TAG
+  );
+}
+
+/**
  * Builds the max allowed LastLedgerSequence for requirements.
  *
  * @param currentLedgerIndex - Current validated ledger index
@@ -354,6 +372,48 @@ export async function getXrplAccountSequence(
       ledger_index: "validated",
     });
     return response.result.account_data.Sequence;
+  } finally {
+    await client.disconnect();
+  }
+}
+
+/**
+ * Gets the signing authorization state for an XRPL account.
+ *
+ * Reads the account's configured regular key and master-key status from the
+ * validated ledger so verification can bind the payload's `SigningPubKey` to
+ * a key pair that is currently authorized to sign for `Account`.
+ *
+ * @param account - XRPL classic address
+ * @param network - XRPL network id
+ * @param options - Facilitator options
+ * @returns Regular key and master-key status for the account
+ */
+export async function getXrplAccountAuthorization(
+  account: string,
+  network: Network,
+  options: Pick<
+    XrplFacilitatorOptions,
+    "getAccountAuthorization" | "wsUrlByNetwork" | "clientFactory"
+  >,
+): Promise<XrplAccountAuthorization> {
+  if (options.getAccountAuthorization) {
+    return options.getAccountAuthorization(account, network);
+  }
+
+  const client = createXrplClient(network, options);
+  try {
+    await client.connect();
+    const response = await client.request({
+      command: "account_info",
+      account,
+      ledger_index: "validated",
+    });
+    const accountData = response.result.account_data;
+    return {
+      regularKey: accountData.RegularKey,
+      isMasterKeyDisabled: ((accountData.Flags ?? 0) & LSF_DISABLE_MASTER) !== 0,
+    };
   } finally {
     await client.disconnect();
   }

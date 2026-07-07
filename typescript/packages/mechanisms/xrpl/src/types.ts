@@ -138,6 +138,20 @@ export type XrplSimulationResult = {
 };
 
 /**
+ * Signing authorization state for an XRPL account.
+ */
+export type XrplAccountAuthorization = {
+  /**
+   * Classic address of the account's configured regular key, if one is set.
+   */
+  regularKey?: string;
+  /**
+   * Whether the account's master key pair is disabled (lsfDisableMaster).
+   */
+  isMasterKeyDisabled: boolean;
+};
+
+/**
  * Factory for creating XRPL SDK clients.
  */
 export type XrplClientFactory = (wsUrl: string) => Client;
@@ -159,6 +173,15 @@ export type XrplFacilitatorOptions = {
    * sequence. Defaults to a validated account_info lookup.
    */
   getAccountSequence?: (account: string, network: Network) => Promise<number>;
+  /**
+   * Optional function used to fetch the account's signing authorization
+   * (regular key and master-key status). Defaults to a validated
+   * account_info lookup.
+   */
+  getAccountAuthorization?: (
+    account: string,
+    network: Network,
+  ) => Promise<XrplAccountAuthorization>;
   /**
    * Optional function used to check ticket availability for an account.
    * Defaults to a validated account_objects lookup.
