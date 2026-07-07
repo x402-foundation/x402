@@ -74,6 +74,9 @@ and fill required environment variables:
 - `STELLAR_ADDRESS` - Stellar public address (starts with `G`) to receive payments
 - `HEDERA_ACCOUNT_ID` - Hedera account id to receive payments (optional for `all-networks`; format: `0.0.XXXXX`)
 - `KEETA_ADDRESS` - Keeta address (starts with `keeta_`) to receive payments
+- `XRPL_ADDRESS` - XRPL classic address (starts with `r`) to receive payments (optional for `all-networks`)
+- `XRPL_NETWORK` - XRPL network CAIP-2 (optional, defaults to `xrpl:1` XRPL Testnet)
+- `XRPL_AMOUNT` - XRPL price in drops (optional, defaults to `1000` = 0.001 XRP)
 
 > **Hedera Testnet:** Get testnet HBAR from the [Hedera Faucet](https://portal.hedera.com/faucet).
 
@@ -115,6 +118,13 @@ For testing on Aptos testnet, you can obtain test tokens from these faucets:
 
 - **Test APT**: https://aptos.dev/network/faucet or through an account on [geomi.dev](https://geomi.dev/manage/faucet)
 - **Test USDC**: https://faucet.circle.com/
+
+#### XRPL Testnet
+
+The receiving account must exist on the ledger, i.e. hold the [base reserve](https://xrpl.org/docs/concepts/accounts/reserves) (currently 1 XRP):
+
+1. Use the [XRPL Testnet faucet](https://xrpl.org/resources/dev-tools/xrp-faucets) to generate a funded account, and copy its classic address (starts with `r`) into `XRPL_ADDRESS`.
+2. The `all-networks` example prices in XRP drops, so no further setup is needed. To receive issued-currency (IOU) payments instead, the receiving account must hold a [trust line](https://xrpl.org/docs/concepts/tokens/fungible-tokens) to the issuer.
 
 ## Available Examples
 

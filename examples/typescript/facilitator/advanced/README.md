@@ -11,6 +11,7 @@ Express.js facilitator service demonstrating advanced x402 patterns including al
 - Stellar private key with testnet XLM for transaction fees (fund via [Stellar Laboratory](https://lab.stellar.org/account/create) ➡️ Generate keypair ➡️ Fund account with Friendbot)
 - Hedera account id + private key for Hedera testnet fees (optional)
 - Keeta mnemonic (seed phrase) and wallet with Testnet KTA for transaction fees (create wallet on [Keeta Testnet Wallet](https://wallet.test.keeta.com/) and fund via [Keeta Testnet Faucet](https://faucet.test.keeta.com/))
+- No XRPL account or key: the XRPL facilitator is keyless (the payer signs and pays transaction fees); set `XRPL_NETWORK` to enable it (optional)
 
 ## Setup
 
@@ -33,6 +34,8 @@ and fill required environment variables:
 - `HEDERA_ACCOUNT_ID` - Hedera account id for fee payer (optional)
 - `HEDERA_PRIVATE_KEY` - Hedera **ECDSA** private key (0x-prefixed or DER-encoded) for fee payer (optional)
 - `KEETA_MNEMONIC` - Keeta mnemonic
+- `XRPL_NETWORK` - XRPL network CAIP-2 (e.g., `xrpl:1` for XRPL Testnet); set to enable the keyless XRPL scheme (optional; `all-networks`)
+- `XRPL_WS_URL` - Custom XRPL WebSocket endpoint (optional, defaults to the public endpoint for `XRPL_NETWORK`)
 - `PORT` - Server port (optional, defaults to 4022)
 
 2. Install and build all packages from the typescript examples root:
@@ -101,6 +104,14 @@ Returns payment schemes and networks this facilitator supports.
       "network": "stellar:testnet",
       "extra": {
         "areFeesSponsored": true
+      }
+    },
+    {
+      "x402Version": 2,
+      "scheme": "exact",
+      "network": "xrpl:1",
+      "extra": {
+        "areFeesSponsored": false
       }
     }
   ],
@@ -273,3 +284,5 @@ Networks use [CAIP-2](https://github.com/ChainAgnostic/CAIPs/blob/main/CAIPs/cai
 - `hedera:mainnet` — Hedera Mainnet
 - `keeta:1413829460` — Keeta Testnet
 - `keeta:21378` — Keeta Mainnet
+- `xrpl:1` — XRPL Testnet
+- `xrpl:0` — XRPL Mainnet
