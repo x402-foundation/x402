@@ -1343,6 +1343,46 @@ describe("ExactXrplScheme facilitator verify", () => {
     expect(result.invalidReason).toContain("signer_not_authorized");
   });
 
+  it("accepts a legacy master-key signature when the master key is also the regular key", async () => {
+    // rippled's fixMasterKeyAsRegularKey authorizes the regular key before the
+    // master-disabled check; mirror that for legacy accounts whose RegularKey
+    // equals their own address.
+    const legacyFacilitator = createFacilitator({
+      getAccountAuthorization: async () => ({
+        regularKey: payerWallet.classicAddress,
+        isMasterKeyDisabled: true,
+      }),
+    });
+
+    const result = await legacyFacilitator.verify(
+      buildPayload(baseXrpRequirements),
+      baseXrpRequirements,
+    );
+
+    expect(result).toMatchObject({
+      isValid: true,
+      payer: payerWallet.classicAddress,
+    });
+  });
+
+  it("rejects a non-canonical signing public key", async () => {
+    const payload = buildPayload(baseXrpRequirements);
+    const decoded = decode(String(payload.payload.signedTxBlob)) as unknown as Record<
+      string,
+      unknown
+    >;
+    decoded.SigningPubKey = `04${"AB".repeat(64)}`;
+    const nonCanonicalBlob = encode(decoded as unknown as Transaction);
+
+    const result = await facilitator.verify(
+      { ...payload, payload: { signedTxBlob: nonCanonicalBlob } },
+      baseXrpRequirements,
+    );
+
+    expect(result.isValid).toBe(false);
+    expect(result.invalidReason).toContain("signing_pub_key");
+  });
+
   it("rejects a single-signed transaction that carries a Signers array", async () => {
     const payload = buildPayload(baseXrpRequirements);
     const decoded = decode(String(payload.payload.signedTxBlob)) as unknown as Record<

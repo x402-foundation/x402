@@ -1,4 +1,9 @@
-import { DEFAULT_MAX_FEE_DROPS, TF_PARTIAL_PAYMENT, XRPL_CAIP_FAMILY } from "../../constants";
+import {
+  CANONICAL_SIGNING_PUB_KEY_PATTERN,
+  DEFAULT_MAX_FEE_DROPS,
+  TF_PARTIAL_PAYMENT,
+  XRPL_CAIP_FAMILY,
+} from "../../constants";
 import {
   compareDecimalStrings,
   decodeSignedTransactionBlob,
@@ -93,6 +98,13 @@ export class ExactXrplScheme implements SchemeNetworkFacilitator {
 
       const exactPayload = getExactXrplPayload(payload);
       const decoded = decodeSignedTransactionBlob(exactPayload.signedTxBlob);
+      const signingPubKey = (decoded as { SigningPubKey?: unknown }).SigningPubKey;
+      if (
+        typeof signingPubKey !== "string" ||
+        !CANONICAL_SIGNING_PUB_KEY_PATTERN.test(signingPubKey)
+      ) {
+        return invalidVerify("invalid_exact_xrpl_payload_signing_pub_key", payer);
+      }
       if (!verifySignature(exactPayload.signedTxBlob)) {
         return invalidVerify("invalid_exact_xrpl_payload_signature", payer);
       }
@@ -550,16 +562,15 @@ export class ExactXrplScheme implements SchemeNetworkFacilitator {
       network,
       this.options,
     );
-    if (signerAddress === transaction.Account) {
-      if (authorization.isMasterKeyDisabled) {
-        return "invalid_exact_xrpl_payload_signer_not_authorized";
-      }
+    // rippled (fixMasterKeyAsRegularKey) authorizes the configured regular key
+    // first, then the master key pair unless it is disabled.
+    if (authorization.regularKey === signerAddress) {
       return undefined;
     }
-    if (authorization.regularKey !== signerAddress) {
-      return "invalid_exact_xrpl_payload_signer_not_authorized";
+    if (signerAddress === transaction.Account && !authorization.isMasterKeyDisabled) {
+      return undefined;
     }
-    return undefined;
+    return "invalid_exact_xrpl_payload_signer_not_authorized";
   }
 
   /**

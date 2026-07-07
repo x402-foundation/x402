@@ -59,6 +59,13 @@ export const TF_PARTIAL_PAYMENT = 0x00020000;
 export const LSF_DISABLE_MASTER = 0x00100000;
 
 /**
+ * Canonical XRPL signing public key: 33-byte compressed secp256k1 (02/03) or
+ * ed25519 (ED) hex. rippled rejects non-canonical keys at preflight, so
+ * verification rejects them too instead of passing an unsettleable payload.
+ */
+export const CANONICAL_SIGNING_PUB_KEY_PATTERN = /^(02|03|ED)[0-9A-F]{64}$/i;
+
+/**
  * Maximum XRPL destination tag value (32-bit unsigned integer).
  */
 export const MAX_DESTINATION_TAG = 0xffffffff;
