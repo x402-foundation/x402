@@ -254,6 +254,28 @@ facilitator.RegisterExtension(&buildercode.BuilderCodeFacilitatorExtension{
 })
 ```
   </Tab>
+  <Tab title="Python">
+```python
+from x402 import x402Facilitator
+from x402.extensions.builder_code import BuilderCodeFacilitatorExtension
+from x402.mechanisms.evm import FacilitatorWeb3Signer
+from x402.mechanisms.evm.exact import register_exact_evm_facilitator
+
+evm_signer = FacilitatorWeb3Signer(
+    private_key=EVM_PRIVATE_KEY,
+    rpc_url="https://sepolia.base.org",
+)
+
+facilitator = (
+    x402Facilitator()
+    .register_extension(
+        BuilderCodeFacilitatorExtension(builder_code="bc_my_facilitator")
+    )
+)
+
+register_exact_evm_facilitator(facilitator, evm_signer, networks="eip155:84532")
+```
+  </Tab>
 </Tabs>
 
 ## Protocol Flow
