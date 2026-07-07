@@ -53,7 +53,7 @@ The `payload` field must contain:
 
 ### `accepted` field definitions
 
-- `network`: CAIP-2 network identifier (e.g. `casper:casper` or `casper:casper-test`).
+- `network`: CAIP-2 network identifier. This spec defines behavior for `casper:casper` (Mainnet) and `casper:casper-test` (Testnet); implementations MAY support additional `casper:*` identifiers.
 - `asset`: 32-byte hex contract package hash of the token (no prefix). This is the `contract_package_hash` used in the CEP-3009 EIP-712 domain separator.
 - `payTo`: 33-byte hex address of the recipient (1-byte type tag + 32-byte hash; see [Address Format](#address-format)).
 - `amount`: Exact amount in atomic units, as a decimal string.
@@ -79,12 +79,13 @@ The `payload` field must contain:
 A facilitator verifying an `exact` scheme payment on Casper MUST reject any payload that fails any rule below. General x402 v2 validation, including `PaymentPayload` structure and selected `PaymentRequirements` consistency, is defined by the core x402 specification. In this section, `PaymentRequirements` means the selected requirement supplied to the facilitator alongside the `PaymentPayload`.
 
 1. **Verify** the `signature` is valid under `publicKey` over the CEP-3009 `TransferWithAuthorization` EIP-712 digest, and that `publicKey` derives `authorization.from`.
+   - For `secp256k1` signatures (`publicKey`/`signature` tag `0x02`), the facilitator MUST additionally verify the signature is in canonical low-s form (`s <= n/2`) and MUST reject non-canonical (high-s) signatures.
 2. **Verify** the client (`authorization.from`) has sufficient balance of `PaymentRequirements.asset`.
 3. **Verify** the authorization parameters meet the `PaymentRequirements`:
    - `authorization.to` MUST equal `PaymentRequirements.payTo`.
    - `authorization.value` MUST equal `PaymentRequirements.amount`.
    - Current chain time MUST satisfy `validAfter < now < validBefore` (strict bounds, per CEP-3009).
-   - `validBefore` MUST NOT be later than `now + PaymentRequirements.maxTimeoutSeconds`; this binds the authorization expiry to the x402 timeout budget.
+   - `validBefore` MUST be equal to or later than `now + PaymentRequirements.maxTimeoutSeconds`.
    - `nonce` MUST NOT have previously been consumed or canceled for `from` on this token contract (CEP-3009 `authorization_state`).
 4. **Verify** the token contract identified by `PaymentRequirements.asset` exists on `PaymentRequirements.network` and supports the CEP-3009 `transfer_with_authorization` entry point.
 5. **Simulate (optional)** the `transfer_with_authorization` call on the token contract via Casper's `speculative_exec` RPC to ensure success. Facilitators MAY skip this step and rely on the targeted state checks above (balance, `authorization_state`, current chain time).
@@ -97,9 +98,9 @@ The token contract recomputes the CEP-3009 EIP-712 digest, verifies the signatur
 
 The facilitator MUST perform full verification again during settlement and MUST NOT assume that a prior `/verify` result is still valid. The facilitator MUST wait for the submitted Casper transaction to be included and executed successfully on chain before returning `success: true`. If execution fails, the facilitator MUST return `success: false` with an `errorReason` and an empty `transaction` value.
 
-## `PAYMENT-RESPONSE` Header Payload
+## `SettlementResponse`
 
-The `PAYMENT-RESPONSE` header is base64-encoded and returned to the client from the resource server.
+The `SettlementResponse` returned to the client for the `exact` scheme in Casper is:
 
 ```json
 {
@@ -130,6 +131,8 @@ Casper supports both `ed25519` and `secp256k1` keys at the protocol level. To pr
 
 Implementations MUST select the verification algorithm based on this tag and MUST reject payloads where the `publicKey` and `signature` tags disagree.
 
+For `secp256k1` (`0x02`) signatures, the facilitator MUST reject non-canonical (high-s) signatures — i.e. `s` MUST satisfy `s <= n/2` where `n` is the secp256k1 curve order (SEC1 §4.1.4, EIP-2).
+
 ### Address Format
 
 `accepted.payTo`, `authorization.from`, and `authorization.to` use the 33-byte `Address` encoding — a 1-byte type tag followed by a 32-byte hash:
@@ -149,4 +152,4 @@ The `asset` field is the 32-byte hex `contract_package_hash` of the CEP-18 token
 - [CEP-18: Casper Fungible Token Standard](https://github.com/casper-network/ceps/blob/master/text/0018-token-standard.md) — the underlying token interface CEP-3009 extends.
 - [Casper EIP-712 toolkit](https://github.com/casper-ecosystem/casper-eip-712) — reference implementation of EIP-712 for Casper.
 - [CAIP-2 for Casper](https://github.com/ChainAgnostic/namespaces/blob/main/casper/caip2.md) — network identifier format.
-- [Casper `speculative_exec` JSON-RPC](https://docs.casper.network/1.5.X/developers/json-rpc/json-rpc-transactional#speculative_exec) — optional simulation endpoint used in verification step 5.
+- [Casper `speculative_exec` JSON-RPC](https://docs.casper.network/developers/json-rpc/json-rpc-transactional#speculative_exec_txn) — optional simulation endpoint used in verification step 5.
