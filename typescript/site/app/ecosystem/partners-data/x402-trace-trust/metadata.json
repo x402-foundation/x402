@@ -1,0 +1,8 @@
+{
+  "name": "x402-trace-trust",
+  "category": "Infrastructure & Tooling",
+  "logoUrl": "/logos/x402-trace-trust.svg",
+  "description": "TRACE trust scoring extension for x402 payments. Evaluates agent reputation via TRACE API before processing payments — blocks untrusted agents (Sybil, collusion) with HTTP 402.",
+  "websiteUrl": "https://github.com/trace-api/trace-api/tree/main/sdk-python/x402_trace_trust",
+  "packageUrl": "https://pypi.org/project/x402-trace-trust/"
+}
