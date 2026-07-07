@@ -107,9 +107,41 @@ routes := x402http.RoutesConfig{
 r.Use(ginmw.PaymentMiddleware(routes, server))
 ```
   </Tab>
+  <Tab title="Python">
+```python
+from x402.extensions.builder_code import BUILDER_CODE, declare_builder_code_extension
+from x402.http import FacilitatorConfig, HTTPFacilitatorClient, PaymentOption
+from x402.http.middleware.fastapi import PaymentMiddlewareASGI
+from x402.http.types import RouteConfig
+from x402.mechanisms.evm.exact import ExactEvmServerScheme
+from x402.server import x402ResourceServer
+
+facilitator = HTTPFacilitatorClient(FacilitatorConfig(url=FACILITATOR_URL))
+server = x402ResourceServer(facilitator)
+server.register("eip155:84532", ExactEvmServerScheme())
+
+routes = {
+    "GET /weather": RouteConfig(
+        accepts=[
+            PaymentOption(
+                scheme="exact",
+                price="$0.001",
+                network="eip155:84532",
+                pay_to=EVM_ADDRESS,
+            ),
+        ],
+        extensions={
+            BUILDER_CODE: declare_builder_code_extension("bc_my_app"),
+        },
+    ),
+}
+
+app.add_middleware(PaymentMiddlewareASGI, routes=routes, server=server)
+```
+  </Tab>
 </Tabs>
 
-`DeclareBuilderCodeExtension` validates the code format and returns the extension declaration (including the JSON Schema) for inclusion in the `PaymentRequired` response.
+`declareBuilderCodeExtension` / `DeclareBuilderCodeExtension` validates the code format and returns the extension declaration (including the JSON Schema) for inclusion in the `PaymentRequired` response.
 
 ## Quickstart for Buyers (Clients)
 
