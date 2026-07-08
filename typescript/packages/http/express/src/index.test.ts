@@ -39,6 +39,7 @@ let mockProcessHTTPRequest: ReturnType<typeof vi.fn>;
 let mockProcessSettlement: ReturnType<typeof vi.fn>;
 let mockRegisterPaywallProvider: ReturnType<typeof vi.fn>;
 let mockRequiresPayment: ReturnType<typeof vi.fn>;
+let mockBuildDiscoveryManifest: ReturnType<typeof vi.fn>;
 
 type PaymentVerifiedResult = Extract<HTTPProcessResult, { type: "payment-verified" }>;
 type MockHTTPProcessResult =
@@ -229,6 +230,7 @@ describe("paymentMiddleware", () => {
     mockProcessSettlement = vi.fn();
     mockRegisterPaywallProvider = vi.fn();
     mockRequiresPayment = vi.fn().mockReturnValue(true);
+    mockBuildDiscoveryManifest = vi.fn().mockResolvedValue({ x402Version: 2, items: [] });
 
     // Reset the mock implementation
     vi.mocked(HTTPResourceServer).mockImplementation(
@@ -238,6 +240,7 @@ describe("paymentMiddleware", () => {
           processSettlement: mockProcessSettlement,
           registerPaywallProvider: mockRegisterPaywallProvider,
           requiresPayment: mockRequiresPayment,
+          buildDiscoveryManifest: mockBuildDiscoveryManifest,
           routes: routes,
           server: server || {
             hasExtension: vi.fn().mockReturnValue(false),
@@ -969,5 +972,132 @@ describe("ExpressAdapter", () => {
       }),
       undefined,
     );
+  });
+});
+
+describe("well-known discovery (/.well-known/x402.json)", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockProcessHTTPRequest = vi.fn();
+    mockProcessSettlement = vi.fn();
+    mockRegisterPaywallProvider = vi.fn();
+    mockRequiresPayment = vi.fn().mockReturnValue(false);
+    mockBuildDiscoveryManifest = vi
+      .fn()
+      .mockResolvedValue({ x402Version: 2, items: [{ resource: "https://api.example.com/x" }] });
+
+    vi.mocked(HTTPResourceServer).mockImplementation(
+      (server, routes) =>
+        ({
+          processHTTPRequest: mockProcessHTTPRequest,
+          processSettlement: mockProcessSettlement,
+          registerPaywallProvider: mockRegisterPaywallProvider,
+          requiresPayment: mockRequiresPayment,
+          buildDiscoveryManifest: mockBuildDiscoveryManifest,
+          routes: routes,
+          server: server || {
+            hasExtension: vi.fn().mockReturnValue(false),
+            registerExtension: vi.fn(),
+          },
+        }) as unknown as x402HTTPResourceServer,
+    );
+  });
+
+  /**
+   * Builds a mock Express request for the well-known path with protocol/host.
+   *
+   * @param method - HTTP method.
+   * @param path - Request path.
+   * @returns A mock Express Request.
+   */
+  function wellKnownReq(method = "GET", path = "/.well-known/x402.json"): Request {
+    return {
+      path,
+      method,
+      protocol: "https",
+      get: (name: string) => (name.toLowerCase() === "host" ? "api.example.com" : undefined),
+      header: vi.fn(),
+      headers: { host: "api.example.com" },
+    } as unknown as Request;
+  }
+
+  it("auto-serves the manifest with caching headers (default-on)", async () => {
+    const middleware = paymentMiddleware(
+      mockRoutes,
+      {} as unknown as x402ResourceServer,
+      undefined,
+      undefined,
+      false,
+    );
+    const req = wellKnownReq();
+    const res = createMockResponse();
+    const next = vi.fn();
+
+    await middleware(req, res, next);
+
+    expect(mockBuildDiscoveryManifest).toHaveBeenCalledWith("https://api.example.com");
+    expect(res.setHeader).toHaveBeenCalledWith("Cache-Control", "public, max-age=300");
+    expect(res.setHeader).toHaveBeenCalledWith("Content-Type", "application/x402+json");
+    expect(res.json).toHaveBeenCalledWith({
+      x402Version: 2,
+      items: [{ resource: "https://api.example.com/x" }],
+    });
+    expect(next).not.toHaveBeenCalled();
+    expect(mockProcessHTTPRequest).not.toHaveBeenCalled();
+  });
+
+  it("does not intercept when serveWellKnownDiscovery is false", async () => {
+    const middleware = paymentMiddleware(
+      mockRoutes,
+      {} as unknown as x402ResourceServer,
+      undefined,
+      undefined,
+      false,
+      false,
+    );
+    const req = wellKnownReq();
+    const res = createMockResponse();
+    const next = vi.fn();
+
+    await middleware(req, res, next);
+
+    expect(mockBuildDiscoveryManifest).not.toHaveBeenCalled();
+    expect(next).toHaveBeenCalled();
+  });
+
+  it("does not intercept other paths", async () => {
+    const middleware = paymentMiddleware(
+      mockRoutes,
+      {} as unknown as x402ResourceServer,
+      undefined,
+      undefined,
+      false,
+    );
+    const req = wellKnownReq("GET", "/api/test");
+    const res = createMockResponse();
+    const next = vi.fn();
+
+    await middleware(req, res, next);
+
+    expect(mockBuildDiscoveryManifest).not.toHaveBeenCalled();
+    expect(next).toHaveBeenCalled();
+  });
+
+  it("does not intercept non-GET requests to the well-known path", async () => {
+    const middleware = paymentMiddleware(
+      mockRoutes,
+      {} as unknown as x402ResourceServer,
+      undefined,
+      undefined,
+      false,
+    );
+    const req = wellKnownReq("POST");
+    const res = createMockResponse();
+    const next = vi.fn();
+
+    await middleware(req, res, next);
+
+    expect(mockBuildDiscoveryManifest).not.toHaveBeenCalled();
+    expect(next).toHaveBeenCalled();
   });
 });

@@ -18,10 +18,78 @@ import {
   Price,
   Network,
   PaymentRequirements,
+  ResourceInfo,
+  DiscoveryManifest,
+  DiscoveryManifestResource,
+  DiscoveryInput,
+  DiscoveryOutput,
 } from "../types";
 import { x402Version } from "..";
 
 export const SETTLEMENT_OVERRIDES_HEADER = "Settlement-Overrides";
+
+/**
+ * Shape of a declared `bazaar` discovery extension, as it appears on a resolved
+ * `PaymentRequired`. Used to lift the invocation contract into the manifest.
+ */
+interface BazaarDiscoveryBlock {
+  info?: {
+    input?: {
+      type?: string;
+      method?: string;
+      bodyType?: string;
+      body?: unknown;
+      toolName?: string;
+      inputSchema?: unknown;
+      transport?: string;
+    };
+    output?: { type?: string; example?: unknown };
+  };
+  schema?: {
+    properties?: {
+      input?: {
+        properties?: { body?: unknown; pathParams?: unknown; queryParams?: unknown };
+      };
+    };
+  };
+  routeTemplate?: string;
+}
+
+/**
+ * A resolved discovery entry, cached once and reused across requests. Everything
+ * here is **origin-independent**; only `resource.url` is filled in per request
+ * (from `origin` + `path`, unless `hasOverride` is set).
+ */
+interface CachedDiscoveryEntry {
+  /** The manifest item; `resource.url` is a placeholder unless `hasOverride`. */
+  item: DiscoveryManifestResource;
+  /** The route path, used to build `resource.url` as `origin + path`. */
+  path: string;
+  /** True when the route set an explicit (absolute) `resource` URL override. */
+  hasOverride: boolean;
+}
+
+/**
+ * Narrow an unknown value to a plain record.
+ *
+ * @param value - The value to test.
+ * @returns True if `value` is a non-null, non-array object.
+ */
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/**
+ * Whether a JSON Schema fragment declares at least one property.
+ *
+ * @param schema - The schema fragment to inspect.
+ * @returns True if `schema.properties` has entries.
+ */
+function hasSchemaProperties(schema: unknown): boolean {
+  return (
+    isRecord(schema) && isRecord(schema.properties) && Object.keys(schema.properties).length > 0
+  );
+}
 
 /**
  * Framework-agnostic HTTP adapter interface
@@ -377,6 +445,10 @@ export class x402HTTPResourceServer {
   private routesConfig: RoutesConfig;
   private paywallProvider?: PaywallProvider;
   private protectedRequestHooks: ProtectedRequestHook[] = [];
+  /** Memoized, origin-independent discovery entries (resolved once, reused). */
+  private discoveryEntriesPromise?: Promise<CachedDiscoveryEntry[]>;
+  /** Unix timestamp (seconds) of when the discovery entries were resolved. */
+  private discoveryLastUpdated?: number;
 
   /**
    * Creates a new x402HTTPResourceServer instance.
@@ -802,6 +874,151 @@ export class x402HTTPResourceServer {
   }
 
   /**
+   * Build a per-origin discovery manifest (`/.well-known/x402.json`) describing
+   * every configured route.
+   *
+   * Reuses the exact same `buildPaymentRequirementsFromOptions` +
+   * `createPaymentRequiredResponse` path as live `402` responses, so the manifest
+   * stays consistent with runtime behavior by construction. Resource URLs are
+   * built from `origin` + the route's path template (or the route's `resource`
+   * override when present).
+   *
+   * Best-effort: routes that cannot be resolved without a live request (e.g.
+   * dynamic price/payTo that reads request context) are skipped rather than
+   * throwing, so this never breaks the server.
+   *
+   * @param origin - Origin base URL for resource URLs (e.g. `https://api.example.com`).
+   * @returns The discovery manifest.
+   */
+  async buildDiscoveryManifest(origin: string): Promise<DiscoveryManifest> {
+    // Resolve routes once (heavy: facilitator + scheme work) and cache the
+    // origin-independent entries; subsequent calls only substitute the origin.
+    if (!this.discoveryEntriesPromise) {
+      this.discoveryEntriesPromise = this.resolveDiscoveryEntries();
+    }
+    const entries = await this.discoveryEntriesPromise;
+
+    const items = entries.map(entry => ({
+      ...entry.item,
+      resource: {
+        ...entry.item.resource,
+        // Only resource.url depends on the request host; everything else is cached.
+        url: entry.hasOverride ? entry.item.resource.url : new URL(entry.path, origin).toString(),
+      },
+    }));
+
+    return {
+      x402Version: 2,
+      lastUpdated: this.discoveryLastUpdated ?? Math.floor(Date.now() / 1000),
+      items,
+    };
+  }
+
+  /**
+   * Resolve every configured route into origin-independent discovery entries.
+   *
+   * Runs the full 402 resolution path (`buildPaymentRequirementsFromOptions` +
+   * `createPaymentRequiredResponse`) **once** — the result is memoized by
+   * {@link buildDiscoveryManifest} and reused across requests (config is static
+   * until the server restarts). Best-effort: routes that cannot resolve (e.g.
+   * unsupported scheme) are skipped.
+   *
+   * @returns The cacheable, origin-independent discovery entries.
+   */
+  private async resolveDiscoveryEntries(): Promise<CachedDiscoveryEntry[]> {
+    const normalizedRoutes: Array<[string, RouteConfig]> =
+      typeof this.routesConfig === "object" && !("accepts" in this.routesConfig)
+        ? Object.entries(this.routesConfig as Record<string, RouteConfig>)
+        : [["*", this.routesConfig as RouteConfig]];
+
+    const entries: CachedDiscoveryEntry[] = [];
+
+    for (const [pattern, config] of normalizedRoutes) {
+      const hasMethod = pattern.includes(" ");
+      const method = hasMethod ? pattern.split(/\s+/)[0].toUpperCase() : "GET";
+      const pathPart = hasMethod ? pattern.split(/\s+/)[1] : pattern;
+      const path = !pathPart || pathPart === "*" ? "/" : pathPart;
+
+      try {
+        const hasOverride = typeof config.resource === "string" && config.resource.length > 0;
+        // Origin-independent placeholder; buildDiscoveryManifest fills resource.url per request.
+        const resourceUrl = hasOverride ? (config.resource as string) : path;
+        const context = this.createDiscoveryContext(resourceUrl, path, method);
+
+        const resourceInfo = {
+          url: resourceUrl,
+          description: config.description || "",
+          mimeType: config.mimeType || "",
+          ...(config.serviceName !== undefined && { serviceName: config.serviceName }),
+          ...(config.tags !== undefined && { tags: config.tags }),
+          ...(config.iconUrl !== undefined && { iconUrl: config.iconUrl }),
+        };
+
+        const paymentOptions = this.normalizePaymentOptions(config);
+        const requirements = await this.ResourceServer.buildPaymentRequirementsFromOptions(
+          paymentOptions,
+          context,
+        );
+
+        let extensions = config.extensions;
+        if (extensions) {
+          extensions = this.ResourceServer.enrichExtensions(extensions, context);
+        }
+
+        const paymentRequired = await this.ResourceServer.createPaymentRequiredResponse(
+          requirements,
+          resourceInfo,
+          undefined,
+          extensions,
+          { request: context } as HTTPTransportContext,
+        );
+
+        const bazaar = paymentRequired.extensions?.bazaar as BazaarDiscoveryBlock | undefined;
+
+        // Clean resource: drop empty-string defaults left by createPaymentRequiredResponse.
+        const res = paymentRequired.resource;
+        const resource: ResourceInfo = {
+          url: res.url,
+          ...(res.description ? { description: res.description } : {}),
+          ...(res.mimeType ? { mimeType: res.mimeType } : {}),
+          ...(res.serviceName !== undefined ? { serviceName: res.serviceName } : {}),
+          ...(res.tags !== undefined ? { tags: res.tags } : {}),
+          ...(res.iconUrl !== undefined ? { iconUrl: res.iconUrl } : {}),
+        };
+
+        // Skeleton input (always) + lifted contract (when bazaar was declared).
+        const lifted = this.liftDiscoveryContract(bazaar, res.mimeType || undefined);
+        const input: DiscoveryInput = { method, ...lifted.input };
+        const routeTemplate = bazaar?.routeTemplate ?? (path.includes(":") ? path : undefined);
+        if (routeTemplate) {
+          input.routeTemplate = routeTemplate;
+        }
+
+        // Capability hint: extension keys a consumer must satisfy (minus bazaar,
+        // whose contract is lifted into input/output). Payloads stay in the 402.
+        const requires = Object.keys(paymentRequired.extensions ?? {}).filter(k => k !== "bazaar");
+
+        const item: DiscoveryManifestResource = {
+          resource,
+          type: bazaar?.info?.input?.type ?? "http",
+          accepts: paymentRequired.accepts,
+          input,
+          ...(lifted.output ? { output: lifted.output } : {}),
+          ...(requires.length > 0 ? { requires } : {}),
+        };
+
+        entries.push({ item, path, hasOverride });
+      } catch (error) {
+        // Best-effort: skip routes that require a live request to resolve.
+        console.warn(`[x402] Skipping route "${pattern}" in discovery manifest:`, error);
+      }
+    }
+
+    this.discoveryLastUpdated = Math.floor(Date.now() / 1000);
+    return entries;
+  }
+
+  /**
    * Settle a verified payment that requested `skipHandler`, packaging the
    * result as a `payment-error` HTTPProcessResult so framework adapters can
    * write the response without invoking the route handler.
@@ -895,6 +1112,83 @@ export class x402HTTPResourceServer {
    */
   private normalizePaymentOptions(routeConfig: RouteConfig): PaymentOption[] {
     return Array.isArray(routeConfig.accepts) ? routeConfig.accepts : [routeConfig.accepts];
+  }
+
+  /**
+   * Build a synthetic request context for discovery-manifest generation (no live
+   * request). Returns route-template values; dynamic resolvers that need real
+   * request data will throw and cause the route to be skipped.
+   *
+   * @param url - The resource URL for the route.
+   * @param path - The route path (template).
+   * @param method - The HTTP method.
+   * @returns A minimal {@link HTTPRequestContext}.
+   */
+  private createDiscoveryContext(url: string, path: string, method: string): HTTPRequestContext {
+    const adapter: HTTPAdapter = {
+      getHeader: () => undefined,
+      getMethod: () => method,
+      getPath: () => path,
+      getUrl: () => url,
+      getAcceptHeader: () => "application/json",
+      getUserAgent: () => "x402-discovery-manifest",
+      getQueryParams: () => ({}),
+      getQueryParam: () => undefined,
+      getBody: () => undefined,
+    };
+    return { adapter, path, method, routePattern: path };
+  }
+
+  /**
+   * Lift a declared `bazaar` discovery block into the manifest's top-level
+   * `input`/`output` contract, dropping the envelope meta-schema. Prefers the
+   * declared JSON Schemas (types + descriptions) over example values.
+   *
+   * @param bazaar - The bazaar discovery block from the resolved PaymentRequired (if any).
+   * @param mimeType - The resource's response MIME type (used for `output.mimeType`).
+   * @returns The lifted `input` contract fields and optional `output`.
+   */
+  private liftDiscoveryContract(
+    bazaar: BazaarDiscoveryBlock | undefined,
+    mimeType: string | undefined,
+  ): { input: Partial<DiscoveryInput>; output?: DiscoveryOutput } {
+    if (!bazaar) {
+      return { input: {} };
+    }
+
+    const inputInfo = bazaar.info?.input ?? {};
+    const schemaProps = bazaar.schema?.properties?.input?.properties ?? {};
+
+    const input: Partial<DiscoveryInput> = {};
+    if (typeof inputInfo.method === "string") input.method = inputInfo.method;
+    if (typeof inputInfo.bodyType === "string") input.bodyType = inputInfo.bodyType;
+    if (typeof inputInfo.toolName === "string") input.toolName = inputInfo.toolName;
+    if (typeof inputInfo.transport === "string") input.transport = inputInfo.transport;
+    if (isRecord(inputInfo.inputSchema)) input.inputSchema = inputInfo.inputSchema;
+
+    // Prefer the declared JSON Schema (types/descriptions) over example values.
+    const body = isRecord(schemaProps.body)
+      ? schemaProps.body
+      : isRecord(inputInfo.body)
+        ? inputInfo.body
+        : undefined;
+    if (body) input.body = body;
+    if (isRecord(schemaProps.pathParams)) input.pathParams = schemaProps.pathParams;
+    if (hasSchemaProperties(schemaProps.queryParams)) {
+      input.queryParams = schemaProps.queryParams as Record<string, unknown>;
+    }
+
+    let output: DiscoveryOutput | undefined;
+    const outputInfo = bazaar.info?.output;
+    if (outputInfo) {
+      const built: DiscoveryOutput = {
+        ...(mimeType ? { mimeType } : {}),
+        ...(outputInfo.example !== undefined ? { example: outputInfo.example } : {}),
+      };
+      if (Object.keys(built).length > 0) output = built;
+    }
+
+    return { input, output };
   }
 
   /**
