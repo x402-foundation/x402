@@ -904,6 +904,18 @@ class x402HTTPServerBase:
                     route.pattern,
                 )
 
+            # Warn if description exceeds CDP facilitator's 500-char limit
+            if route.config.description and len(route.config.description) > 500:
+                logger.warning(
+                    'Route "%s %s": resource.description (%d chars) '
+                    "exceeds the CDP facilitator's 500-character limit. "
+                    "Mainnet payment verification will fail silently. "
+                    "Keep descriptions under 500 characters for CDP facilitator compatibility.",
+                    route.verb,
+                    route.pattern,
+                    len(route.config.description),
+                )
+
             # Get options as list
             options = route.config.accepts
             if isinstance(options, PaymentOption):

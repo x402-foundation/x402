@@ -951,6 +951,16 @@ export class x402HTTPResourceServer {
         );
       }
 
+      // Warn if resource.description exceeds CDP facilitator's 500-char limit
+      if (config.description && config.description.length > 500) {
+        console.warn(
+          `[x402] Route "${pattern}": resource.description (${config.description.length} chars) ` +
+            `exceeds the CDP facilitator's 500-character limit. ` +
+            `Mainnet payment verification will fail silently. ` +
+            `Keep descriptions under 500 characters for CDP facilitator compatibility.`,
+        );
+      }
+
       const paymentOptions = this.normalizePaymentOptions(config);
 
       for (const option of paymentOptions) {
