@@ -10,155 +10,153 @@
 ## 1. Purpose
 
 `upto` lets a client authorize a **maximum** amount while the server settles for
-**actual** usage (`actual ≤ max`), with the final charge determined after the
+**actual** usage (`actual <= max`), with the final charge determined after the
 resource is consumed. Same target use cases as the generic spec: LLM token
-billing, per-byte metering, dynamic compute pricing.
+billing, per-byte metering, and dynamic compute pricing.
 
-A normal signed transfer commits to an *exact* amount
-and exact instruction data, so the server cannot lower the amount after the
-client signs without invalidating the signature. `upto` therefore requires an
-authorization that commits the client to a **ceiling** and lets the
-**operator** choose the actual amount at settlement. On SVM this is realized with
-an on-chain **payment channel**: the client escrows the ceiling, and the operator
-settles the actual amount against it with a single signed voucher.
+A normal signed SVM transfer commits to an exact amount and exact instruction
+data, so the server cannot lower the amount after the client signs without
+invalidating the signature. SVM `upto` therefore uses the
+[payment-channels program](https://github.com/solana-foundation/payment-channels):
+the client escrows the ceiling in an onchain channel, and the server later
+settles the actual amount with a signed cumulative voucher.
 
-The **operator** is the party that co-signs the channel `open` as fee payer and
-submits settlement — the **server itself, or a facilitator it delegates to**
-(advertised as `extra.facilitatorAddress`). When `extra.facilitatorAddress` is
-omitted, the operator is `payTo`, so the server self-facilitates by running
-verify and settle directly. "Server/facilitator" below denotes whichever fills
-the operator role.
+The x402 roles map to the payment-channel program as follows:
 
-The operator fills every channel role that must act without the client: the
-`open` fee payer and `rentPayer`, the voucher `authorizedSigner`, **and the
-channel `payee`** — which the program requires as the `settle_and_finalize`
-signer (the program checks `merchant == channel.payee`). The x402 `payTo` (the
-resource server's revenue address) is realized as a **program-enforced
-distribution split** fixed at `open`: when the server self-facilitates it simply
-*is* the operator/payee and receives the settled amount directly; when a
-separate facilitator is the operator, `payTo` is a locked split recipient and
-`extra.facilitatorFee` is the facilitator's basis-point share, paid through the
-payee's implicit remainder. This is why a third-party facilitator needs no
-program change — the x402 fields map to the payment-channel program's native
-split support.
+- **Client**: channel `payer`; signs the `open` transaction and funds the
+  stablecoin deposit.
+- **Server**: resource provider; receives funds at `payTo`; determines the
+  actual metered charge after serving the resource.
+- **Receiver authorizer**: server-controlled hot key advertised as
+  `extra.receiverAuthorizer`; set as both channel `payee` and
+  `authorized_signer`; signs the settlement voucher and the cooperative close
+  instruction. It does not need to hold SOL or token funds.
+- **Facilitator / sponsor**: account advertised as `extra.feePayer`; sponsors
+  transaction fees and channel rent by co-signing the channel `open` as
+  transaction fee payer and program `rent_payer`. The server MAY self-facilitate
+  by using its own key as `feePayer`.
+
+This keeps the facilitator out of the payment authority path. A third-party
+facilitator cannot close or refund the channel on its own, because
+`settle_and_seal` requires the channel `payee` signature and vouchers must be
+signed by `authorized_signer`; in this scheme both are `receiverAuthorizer`.
 
 ## 2. Mapping the five core requirements to SVM
 
 | Requirement (generic spec) | SVM mechanism |
 |---|---|
-| Single-use authorization | `finalize` makes the channel terminal (`ChannelStatus::Finalized`). |
-| Time-bound validity (`validAfter`, `expiresAt`) | `expiresAt` is signed by the operator into the on-chain voucher and enforced by the program (settle rejected once `now ≥ expiresAt`); `validAfter` is off-chain verify-time policy only. Neither is client-bound — the client signs only `open`. |
-| Recipient binding | `channel.payee` (the operator) + `distribution_hash` (the `payTo` / `facilitatorFee` split) fixed at open; the program re-checks the distribution at `distribute`. |
-| Maximum amount enforcement | On-chain `deposit` ceiling, `cumulative_amount ≤ deposit`; the verifier pins `deposit == maxAmount` so the ceiling is exact, not advisory. |
+| Single-use authorization | The x402 authorization is a one-request channel. Settlement uses `settle_and_seal` followed by a final `distribute`; after sealing and final distribution, the authorization cannot be used again for `upto`. |
+| Time-bound validity (`validAfter`, `expiresAt`) | `expiresAt` is signed by `receiverAuthorizer` into the voucher and enforced by the program (`now < expiresAt`). Although the program supports `expires_at == 0` as no expiry, SVM `upto` MUST reject `expiresAt == 0`. `validAfter` is offchain verify-time policy. Neither value is client-bound; the client signs only `open`. |
+| Recipient binding | The `open` transaction fixes `distribution_hash`. For this scheme the distribution sends 100% of settled funds to `payTo`, unless `payTo == receiverAuthorizer`, where the channel payee's implicit remainder is sufficient. The program re-checks the distribution at `distribute`. |
+| Maximum amount enforcement | Onchain `deposit` is the ceiling and vouchers must satisfy `settled < cumulative_amount <= deposit`; the verifier pins `deposit == maxAmount` so the x402 ceiling is exact, not advisory. |
 | Phase-dependent amount semantics | `amount` in `PaymentRequirements` is the max during verification and the actual charge during settlement. |
 
-The server/facilitator MUST always verify against the client-signed ceiling,
-never against the settlement-time `amount`.
+The facilitator MUST always verify against the client-signed ceiling, never
+against the settlement-time `amount`.
 
-## 3. Payment-channel asset transfer method
+## 3. Payment-channel Method
 
-SVM `upto` defines a single asset transfer method, `payment-channel`, carried in
-`extra.assetTransferMethod`. It is backed by the on-chain payment-channels
-program (advertised via `extra.channelProgram`). The escrow **deposit is the
-ceiling**; a single operator-signed
-voucher locks the actual amount via `settle_and_finalize`, and `distribute` then
-moves the funds — paying out the sealed `payTo` / facilitator-fee distribution,
-refunding the unused `deposit − actual` to the payer, returning the fronted rent
-to the operator, and closing (tombstoning) the channel. Note
-`settle_and_finalize`/`finalize` only
-advance channel *status*; the token movement, refund, and close all happen in
-`distribute` (the two can be bundled in one transaction).
+SVM `upto` v1 defines a single payment method backed by the payment-channels
+program. Because there is only one method, the wire format does not include an
+`extra.assetTransferMethod` discriminator.
 
-Strengths: every requirement is enforced on-chain by the program. The operator
-cannot overcharge (capped by `deposit`), cannot redirect funds (the `payTo` /
-facilitator-fee distribution and `distribution_hash` are fixed at open and
-re-checked by the program at `distribute`), and cannot replay (channel is
-terminal after `finalize`).
-Conversely, because the operator is the channel `payee` (hence the
-`settle_and_finalize` merchant) **and** the voucher `authorizedSigner`, it can
-settle and finalize **at any time** — locking the metered amount, refunding the
-client's unused deposit, and closing the channel — without the client's
-cooperation. The channel-account rent is fronted by the operator: the `open`
-instruction's `rentPayer` account (the operator's own key) funds the PDA and
-escrow-ATA rent, and `distribute` **returns it to that `rentPayer`** on close —
-so the client moves only stablecoin and never needs SOL. The operator can settle
-a stale channel at will, reclaiming the rent it fronted; its only exposure is the
-cheap settle-and-finalize + distribute transaction.
+The canonical program id is a network/SDK constant, not a server-provided wire
+field. For the current mainnet deployment:
 
-Cost: the client locks `max` in escrow for the lifetime of the request, and the
-flow needs two on-chain transactions (open, then settle-and-finalize). The
-channel-account rent is funded by the operator (the `open` `rentPayer` account)
-and reclaimed at finalize; the client supplies only the stablecoin deposit and
-never needs SOL.
+```text
+CHNLxYvVA28MJP9PrFuDXccuoGXAx7jBacfLEkahyGsX
+```
 
-The program stores `rentPayer` in channel state, so rent can only be returned to
-the account that funded it. A server/facilitator that sponsors rent SHOULD keep
-or reconstruct an index of channels it opened, for example from `Opened` events
-or channel accounts where `rentPayer` equals the operator. It can then close
-stale channels and reclaim rent by finalizing and distributing them; a no-charge
-cleanup uses the no-voucher `settle_and_finalize` path followed by `distribute`.
-This indexing is operational bookkeeping, not a trust assumption.
+Implementations MUST target the canonical payment-channels program id for the
+selected `network` and MUST NOT trust or negotiate a `channelProgram` value from
+`extra`. Program documentation and instruction references live in the
+[payment-channels repository](https://github.com/solana-foundation/payment-channels).
 
-> **Reference-implementation status.** The v1 reference implements the
-> **self-facilitating** case (`operator == payTo`), where the operator is both
-> the settlement authority (`channel.payee`) and the recipient. Separate-facilitator
-> operation — where `payTo` is a program-enforced distribution split and the
-> facilitator is the `channel.payee` — is specified (§4.1) but not yet implemented;
-> the reference rejects an open whose `payTo` is not the operator.
+The v1 flow uses these program instructions:
 
-## 4. Wire format
+1. `open`: creates a channel PDA, escrows `maxAmount`, stores
+   `grace_period == extra.withdrawDelay`, and commits the payout distribution.
+2. `settle_and_seal`: payee-signed cooperative close. It optionally applies the
+   final voucher, locks the settled watermark, and moves the channel to
+   `Sealed`.
+3. `distribute`: pays `payTo`, refunds `deposit - actual` to the client, closes
+   the escrow token account, and either deallocates the channel PDA immediately
+   or marks it `Distributed` until `reclaim` is allowed.
+4. `reclaim`: permissionless cleanup for `Distributed` channels once
+   `clock.slot > open_slot + OPEN_SLOT_WINDOW`; it returns the remaining PDA
+   rent to the recorded `rent_payer`.
 
-`upto` reuses the x402 v2 transport: a `402` response carries `PAYMENT-REQUIRED`;
-the paid retry carries `PAYMENT-SIGNATURE`; the response carries
-`PAYMENT-RESPONSE`. Only the `scheme` value and the payload shape change relative
-to `exact`.
+The fee/rent sponsor is `extra.feePayer`. It funds the channel PDA and escrow
+ATA rent at `open`; that rent is returned to the recorded `rent_payer` during
+final cleanup (`distribute` fast path, or later `reclaim`). A sponsor SHOULD
+keep or reconstruct an index of channels it opened, for example from `Opened`
+events or channel accounts whose `rent_payer` equals its key, so it can reclaim
+rent for channels that were distributed before the reclaim gate elapsed. This is
+operational bookkeeping; token payouts and client refunds are not delayed by
+`reclaim`.
+
+The client has an escape hatch if the server never settles. The client can call
+`request_close`, which moves the channel to `Closing` and starts the
+`withdrawDelay` grace period fixed at `open`. The server can still
+`settle_and_seal` during that grace period. After the grace period, anyone can
+call `seal`; the payer can then call `withdraw_payer` to recover
+`deposit - settled`, and `distribute`/`reclaim` can finish cleanup.
+
+## 4. Wire Format
+
+`upto` reuses the x402 v2 transport: a `402` response carries
+`PAYMENT-REQUIRED`; the paid retry carries `PAYMENT-SIGNATURE`; the response
+carries `PAYMENT-RESPONSE`. Only the `scheme` value and payload shape differ
+from `exact`.
 
 ### 4.1 `PaymentRequirements` (in `PAYMENT-REQUIRED.accepts[]`)
 
 | Field | Type | Required | Notes |
 |---|---|---|---|
-| `scheme` | string | ✓ | `"upto"` |
-| `network` | string | ✓ | CAIP-2, e.g. `solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp` (mainnet), `solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1` (devnet) |
-| `amount` | string | ✓ | **Phase-dependent**: max authorized at verification; actual charge at settlement. Base units. |
-| `asset` | string | ✓ | SPL mint address (e.g. USDC `EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v`) |
-| `payTo` | string | ✓ | Base58 final recipient. When the server self-facilitates, `payTo` is also the operator/channel `payee`. When `extra.facilitatorAddress` is present, `payTo` is realized as a program-enforced distribution split and the facilitator is the operator/channel `payee`. |
-| `maxTimeoutSeconds` | number | ✓ | Completion window; also the basis for the authorization `expiresAt` |
-| `extra` | object | ✓ | See below |
+| `scheme` | string | yes | `"upto"` |
+| `network` | string | yes | CAIP-2, e.g. `solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp` |
+| `amount` | string | yes | Phase-dependent: max authorized at verification; actual charge at settlement. Base units. |
+| `asset` | string | yes | SPL mint address, e.g. USDC `EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v` |
+| `payTo` | string | yes | Base58 final payment recipient. This is normally a server cold wallet, not the hot `receiverAuthorizer`. |
+| `maxTimeoutSeconds` | number | yes | Completion window; basis for `expiresAt` |
+| `extra` | object | yes | See below |
 
 `extra`:
 
 | Field | Type | Required | Notes |
 |---|---|---|---|
-| `assetTransferMethod` | string | ✓ | MUST be `"payment-channel"`. This value selects the remaining `extra` fields in this table. |
-| `facilitatorAddress` | string | – | Base58 operator key. If omitted, `payTo` is the operator. If present, this key sponsors fees/rent, co-signs the setup transaction, and settles. |
-| `facilitatorFee` | number | – | Facilitator fee in basis points of the settled amount. Default `0`. MUST be an integer `0..10000`. MUST be omitted or `0` when `facilitatorAddress` is omitted. |
-| `channelProgram` | string | ✓ | Base58 payment-channels program id. Clients and facilitators MUST reject unsupported program ids for the selected `network`. |
-| `tokenProgram` | string | ✓ | `Tokenkeg…` or `TokenzQ…` (Token-2022); the client SHOULD verify it against the on-chain mint owner |
-| `recentBlockhash` | string | – | Pre-fetched blockhash so the client can build setup transactions without an extra RPC round-trip |
-| `validAfter` | number | – | Earliest activation time (Unix seconds); default = now |
+| `feePayer` | string | yes | Base58 sponsor key that co-signs `open` as transaction fee payer and channel `rent_payer`, and co-signs settlement transactions as fee payer. MAY equal `receiverAuthorizer` for self-facilitation. |
+| `receiverAuthorizer` | string | yes | Base58 server-controlled key set as channel `payee` and `authorized_signer`; signs vouchers and `settle_and_seal`. |
+| `withdrawDelay` | number | yes | Server-defined `grace_period` in seconds. The client MUST encode this exact value in `open`; the verifier MUST reject any other value. MUST be an integer greater than zero. |
+| `tokenProgram` | string | yes | `Tokenkeg...` or `TokenzQ...` (Token-2022); the client SHOULD verify it against the onchain mint owner. |
+| `recentBlockhash` | string | no | Pre-fetched blockhash so the client can build `openTransaction` without an RPC round trip. |
+| `recentSlot` | number | no | Recent slot the client MAY use as `openSlot` when it does not fetch its own slot. The `open` instruction still enforces the program's slot window. |
+| `validAfter` | number | no | Earliest activation time (Unix seconds); default = now. |
 
 The x402 wire format does not expose program-specific split arrays. The client
-derives the payment-channel distribution from `payTo`, `facilitatorAddress`, and
-`facilitatorFee`:
+derives the payment-channel accounts and distribution from the x402 fields:
 
 ```text
-operator = extra.facilitatorAddress ?? payTo
-facilitator_fee_bps = extra.facilitatorFee ?? 0
-pay_to_bps = 10000 - facilitator_fee_bps
-channel.payee = operator
-channel.authorizedSigner = operator
+rent_payer = extra.feePayer
+payee = extra.receiverAuthorizer
+authorized_signer = extra.receiverAuthorizer
+grace_period = extra.withdrawDelay
+
+if payTo == extra.receiverAuthorizer:
+  recipients = []
+  payee_implicit_remainder_bps = 10000
+else:
+  recipients = [{ recipient: payTo, bps: 10000 }]
+  payee_implicit_remainder_bps = 0
 ```
 
-If `operator == payTo` and `facilitator_fee_bps == 0`, the client MAY omit the
-program `recipients` array because the channel payee receives the implicit
-remainder. If `operator != payTo`, the client MUST encode `payTo` as a
-recipient with `pay_to_bps`; the facilitator receives the implicit remainder as
-its fee. The server/facilitator MUST rederive this distribution and verify that
-the decoded `openTransaction` seals the matching `distribution_hash`.
+Any facilitator commercial fee is outside this wire contract or included in the
+server's pricing. The channel distribution for `upto` MUST NOT assign any
+portion of the settled amount away from `payTo`, except when `payTo` is itself
+the channel payee via the implicit remainder path above.
 
-Examples:
-
-Self-facilitating server (`operator == payTo`):
+Example: server self-facilitates while using a hot receiver key and cold payout
+wallet:
 
 ```json
 {
@@ -166,18 +164,20 @@ Self-facilitating server (`operator == payTo`):
   "network": "solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp",
   "amount": "10000",
   "asset": "<mint>",
-  "payTo": "<merchant/operator>",
+  "payTo": "<server-cold-wallet>",
   "maxTimeoutSeconds": 300,
   "extra": {
-    "assetTransferMethod": "payment-channel",
-    "channelProgram": "CHNLxYvVA28MJP9PrFuDXccuoGXAx7jBacfLEkahyGsX",
+    "feePayer": "<server-hot-wallet>",
+    "receiverAuthorizer": "<server-hot-wallet>",
+    "withdrawDelay": 3600,
     "tokenProgram": "<token-program>",
-    "recentBlockhash": "<cached>"
+    "recentBlockhash": "<cached>",
+    "recentSlot": 341000000
   }
 }
 ```
 
-Separate facilitator (`operator == extra.facilitatorAddress`):
+Example: server uses an external facilitator for fee/rent sponsorship:
 
 ```json
 {
@@ -185,47 +185,33 @@ Separate facilitator (`operator == extra.facilitatorAddress`):
   "network": "solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp",
   "amount": "10000",
   "asset": "<mint>",
-  "payTo": "<merchant>",
+  "payTo": "<server-cold-wallet>",
   "maxTimeoutSeconds": 300,
   "extra": {
-    "assetTransferMethod": "payment-channel",
-    "facilitatorAddress": "<operator>",
-    "facilitatorFee": 0,
-    "channelProgram": "CHNLxYvVA28MJP9PrFuDXccuoGXAx7jBacfLEkahyGsX",
+    "feePayer": "<facilitator>",
+    "receiverAuthorizer": "<server-hot-wallet>",
+    "withdrawDelay": 3600,
     "tokenProgram": "<token-program>",
-    "recentBlockhash": "<cached>"
+    "recentBlockhash": "<cached>",
+    "recentSlot": 341000000
   }
 }
 ```
-
-`channelProgram` is discovery, not a trust anchor. The client consumes it to
-derive the channel address and build the `open` transaction; the
-server/facilitator consumes it to verify and settle the channel. Implementations
-MUST maintain a supported-program set per `network` and reject any
-`channelProgram` outside that set. The server/facilitator MUST verify that the
-`openTransaction`, settlement, and distribution instructions target exactly
-`extra.channelProgram`.
 
 ### 4.2 `UptoPayload` (in `PAYMENT-SIGNATURE.payload`)
 
-Common fields:
-
 | Field | Type | Notes |
 |---|---|---|
-| `from` | string | Payer wallet (base58) |
-| `maxAmount` | string | The signed ceiling (base units). MUST equal verification-phase `amount`. |
-| `expiresAt` | number | Deadline (Unix seconds); signed into the on-chain message |
-| `validAfter` | number | Activation time (Unix seconds) |
-| `nonce` | string | Unique per authorization. For `payment-channel`, interpreted as the decimal `u64` `salt` encoded in the `open` instruction. |
-
-Plus the channel fields:
-
-| Field | Type | Notes |
-|---|---|---|
-| `channelId` | string | Channel PDA (base58), derived before `open` from the fields below |
-| `deposit` | string | On-chain escrow = the ceiling; MUST equal `maxAmount` |
-| `authorizedSigner` | string | The **operator** key (base58): `extra.facilitatorAddress` when present, otherwise `payTo`. It MUST equal `channel.payee`. The operator — not the client — signs the single settlement voucher (see §5 Phase 2); because it is also the channel `payee` (the `settle_and_finalize` merchant) it alone can settle and finalize the channel. |
-| `openTransaction` | string | Base64 partially signed `open` transaction. The client signature is present; the operator signature is still required for the transaction fee payer and `rentPayer` before broadcast. |
+| `from` | string | Payer wallet (base58). |
+| `maxAmount` | string | Signed ceiling in base units. MUST equal verification-phase `amount`. |
+| `expiresAt` | number | Nonzero deadline (Unix seconds); signed into the server voucher. |
+| `validAfter` | number | Activation time (Unix seconds). |
+| `nonce` | string | Unique decimal `u64` salt encoded in the `open` instruction. |
+| `openSlot` | number | `u64` slot encoded in the `open` instruction and used as a channel PDA seed. |
+| `channelId` | string | Channel PDA (base58), derived before `open` from the fields below. |
+| `deposit` | string | Onchain escrow amount. MUST equal `maxAmount`. |
+| `authorizedSigner` | string | MUST equal `extra.receiverAuthorizer`; included for explicit payload validation. |
+| `openTransaction` | string | Base64 partially signed `open` transaction. The client signature is present; the `feePayer`/`rent_payer` signature is still required before broadcast. |
 
 `channelId` is the program-derived address:
 
@@ -234,177 +220,193 @@ find_program_address(
   [
     "channel",
     from,
-    channel_payee,
+    extra.receiverAuthorizer,
     asset,
-    authorizedSigner,
-    u64(nonce).to_le_bytes()
+    extra.receiverAuthorizer,
+    u64(nonce).to_le_bytes(),
+    u64(openSlot).to_le_bytes()
   ],
-  extra.channelProgram
+  CANONICAL_PAYMENT_CHANNELS_PROGRAM_ID
 )
 ```
 
-For `payment-channel`, `channel_payee == authorizedSigner == operator`, where
-`operator = extra.facilitatorAddress ?? payTo`.
-Because the channel address is a PDA, the client knows `channelId` before the
-channel is opened. The client MUST derive it before signing `openTransaction`,
-include the same PDA as the writable `channel` account in the `open`
-instruction, and set `payload.channelId` to that address. The
-server/facilitator MUST rederive the PDA from the decoded `openTransaction` and
-reject the payload if it differs from either the decoded `channel` account or
-`payload.channelId`.
+The client MUST derive `channelId` before signing `openTransaction`, include the
+same PDA as the writable `channel` account in the `open` instruction, and set
+`payload.channelId` to that address. The server/facilitator MUST rederive the
+PDA from the decoded `openTransaction` and reject the payload if it differs from
+either the decoded `channel` account or `payload.channelId`.
 
-> The voucher is **not** carried in the payload. Because the actual amount is
-> only known after the resource is consumed, and the client's protection is the
-> on-chain `deposit` ceiling plus the fixed `payee`, the operator (set as the
-> channel's `authorizedSigner` at open) signs the single voucher for the metered
-> amount at settlement. This keeps `upto` a single HTTP round-trip with a
-> handler-determined amount: the server fills in `actual ≤ ceiling`.
+The `open` instruction MUST encode:
+
+- `salt == u64(payload.nonce)`
+- `deposit == payload.maxAmount`
+- `grace_period == extra.withdrawDelay`
+- `open_slot == payload.openSlot`
+- `rent_payer == extra.feePayer`
+- `payee == extra.receiverAuthorizer`
+- `authorized_signer == extra.receiverAuthorizer`
+- the distribution derived from `payTo` as specified in section 4.1
+
+The voucher is not carried in the client payload. After metering, the server
+signs an Ed25519 voucher with `receiverAuthorizer`. The signed message is:
+
+```text
+0x56 0x01 || channelId || u64(cumulativeAmount).le || i64(expiresAt).le
+```
+
+where `cumulativeAmount == actual` for `upto`. The voucher is supplied to the
+program through the Ed25519 native-program instruction immediately preceding
+`settle_and_seal`.
 
 ### 4.3 `SettlementResponse` (in `PAYMENT-RESPONSE`)
 
 | Field | Type | Required | Notes |
 |---|---|---|---|
-| `success` | boolean | ✓ | |
-| `errorReason` | string | – | Omitted on success |
-| `payer` | string | – | `from` |
-| `transaction` | string | ✓ | Base58 transaction signature (tx hash) for the confirmed transaction that finalizes and distributes the channel. MUST NOT be empty, including when `amount` is `0`. |
-| `network` | string | ✓ | CAIP-2 |
-| `amount` | string | ✓ | Actual base units charged (may be `0`) |
+| `success` | boolean | yes |  |
+| `errorReason` | string | no | Omitted on success. |
+| `payer` | string | no | `from`. |
+| `transaction` | string | yes | Base58 transaction signature for the confirmed transaction containing the final `distribute` instruction. MUST NOT be empty, including when `amount` is `0`. |
+| `network` | string | yes | CAIP-2. |
+| `amount` | string | yes | Actual base units charged, which MAY be `0`. |
+
+If final `distribute` marks the channel `Distributed` because the reclaim gate
+has not elapsed, the later `reclaim` transaction is not the x402 settlement
+transaction. `distribute` is sufficient for x402 success because it moves the
+settled funds, refunds the client, and closes the escrow token account.
 
 ## 5. Phases
 
-### Phase 1 — Setup
+### Phase 1 - Setup
 
-The client builds an `open` transaction depositing `maxAmount`, naming the
-operator as the open's `rentPayer` so the operator funds the channel rent (the
-client supplies only the stablecoin deposit). Rent is paid during `open`: the
-payment-channels program requires the `rentPayer` account to be a signer because
-the instruction transfers SOL from that account to fund the channel PDA and
-escrow ATA rent. Merely naming the operator as `rentPayer` is not sufficient.
+The server returns `feePayer`, `receiverAuthorizer`, and `withdrawDelay` in the
+402 response. The client builds an `open` transaction against the canonical
+payment-channels program, deposits `maxAmount`, sets `rent_payer` to
+`extra.feePayer`, sets `payee` and `authorized_signer` to
+`extra.receiverAuthorizer`, and signs as channel `payer`.
 
-The client therefore sends a partially signed `openTransaction`; the
-server/facilitator validates it, co-signs it as transaction fee payer **and** as
-`rentPayer`, then broadcasts it (one operator signature covers both, matching
-`exact`'s fee-sponsorship). Without the operator signature, the transaction is
-invalid and cannot charge rent to the operator.
+The client sends only a partially signed `openTransaction`. The
+server/facilitator validates it, signs it as transaction fee payer and as
+program `rent_payer`, broadcasts it during verification, and waits until the
+channel account is confirmed `Open` before the protected resource is served.
+The open transaction MUST NOT be deferred until settlement.
 
-`openTransaction` is consumed during verification, before the protected resource
-is served. The server/facilitator MUST NOT defer broadcasting `openTransaction`
-until settlement. If the channel is not already open, verification MUST co-sign
-and broadcast `openTransaction`, wait until the channel account is confirmed
-`Open`, and then continue with the checks below.
+### Phase 2 - Authorization
 
-### Phase 2 — Authorization signature
+The client's signature on `openTransaction` is the client's authorization: it
+commits the deposit ceiling, mint, `withdrawDelay`, `openSlot`, and fixed
+distribution to `payTo`.
 
-The client's signature on the `open` transaction **is** the authorization — it
-commits the `deposit` ceiling, the `mint`, and the sealed distribution
-(`distribution_hash` over the `payTo` / `facilitatorFee` distribution), with
-`payee` and `authorizedSigner` set to the **operator**. The client does not sign
-a voucher. After metering, the operator signs the single voucher for
-`cumulativeAmount = actual` (Ed25519 over
-`channel_id ‖ cumulative_amount_le ‖ expires_at_le`) and settles it. The client
-is protected by the on-chain ceiling (the operator cannot exceed `deposit`) and
-the sealed distribution (the operator cannot redirect or shortchange `payTo`),
-in a single round-trip.
+The server's later settlement authorization is separate. The
+`receiverAuthorizer` key signs the voucher for the actual amount and signs the
+`settle_and_seal` transaction. That transaction may be constructed by the server
+or by the facilitator, but the `receiverAuthorizer` signature MUST cover the
+`settle_and_seal` instruction before the facilitator co-signs and broadcasts.
+This signature also authenticates the otherwise unauthenticated facilitator
+`settle/` HTTP request: the facilitator MUST NOT settle, seal, or refund a
+channel unless the submitted settlement is authorized by `receiverAuthorizer`.
 
-### Phase 3 — Verification (before serving the resource)
+### Phase 3 - Verification (before serving the resource)
 
 The server/facilitator MUST, in order:
 
 1. Confirm `payload.maxAmount` equals verification-phase `requirements.amount`.
-2. Confirm `extra.assetTransferMethod == "payment-channel"` and `network`, `asset` (mint), `tokenProgram`, `channelProgram`, and `payTo` match the requirements.
-3. Determine `operator = extra.facilitatorAddress ?? payTo`. If
-   `facilitatorAddress` is present, confirm it is the facilitator's own key. If
-   `facilitatorAddress` is absent, confirm the server self-facilitates as
-   `payTo`. Confirm `extra.facilitatorFee` is absent or an integer basis-point
-   value in `0..10000`, and that it is `0` when `facilitatorAddress` is absent.
+2. Confirm `network`, `asset` (mint), `tokenProgram`, and `payTo` match the
+   selected requirements.
+3. Confirm `extra.feePayer` is the sponsor key that will co-sign the
+   transaction, `extra.receiverAuthorizer` is the server's configured receiver
+   authorizer, and `extra.withdrawDelay` is an integer greater than zero.
 4. Confirm the channel is open:
-   - If it does not yet exist, validate that `openTransaction` targets
-     `extra.channelProgram`, names `rentPayer == operator` with `rentPayer`
-     marked as a required signer, names no other payee or authorized signer than
-     the operator, seals the distribution derived from `payTo` and
-     `facilitatorFee`, and is otherwise valid for the requirements; then
-     co-sign, broadcast, and wait until the channel account is confirmed `Open`.
-   - After the channel is open, confirm **`channel.deposit == maxAmount`**
-     (exact, not `≥`: `topUp` can raise an open channel's deposit, so only
-     equality keeps the x402 ceiling enforced rather than advisory),
-     `distribution_hash` matches the intended `payTo` / `facilitatorFee`
-     distribution (so `payTo`'s payout is locked on-chain),
-     `channel.status == Open`,
-     `channel.mint == asset`, and
-     **`channel.payee == channel.authorizedSigner == operator`** (so the
-     operator is both the voucher signer and the `settle_and_finalize` merchant,
-     and alone can settle and finalize).
-5. Validate `validAfter ≤ now ≤ expiresAt`.
-6. Simulate the settlement instruction(s).
+   - If it does not yet exist, validate that `openTransaction` targets the
+     canonical payment-channels program, names `rent_payer == extra.feePayer`
+     with `rent_payer` marked as a required signer, names
+     `payee == authorized_signer == extra.receiverAuthorizer`, encodes
+     `grace_period == extra.withdrawDelay`, encodes
+     `open_slot == payload.openSlot`, seals the distribution derived from
+     `payTo`, and is otherwise valid for the requirements; then co-sign,
+     broadcast, and wait until the channel account is confirmed `Open`.
+   - After the channel is open, confirm `channel.deposit == maxAmount` (exact,
+     not `>=`: `top_up` can raise an open channel's deposit, so equality keeps
+     the x402 ceiling enforced), `channel.status == Open`,
+     `channel.mint == asset`, `channel.rent_payer == extra.feePayer`,
+     `channel.payee == channel.authorized_signer == extra.receiverAuthorizer`,
+     `channel.open_slot == payload.openSlot`, and `distribution_hash` matches
+     the intended `payTo` distribution.
+5. Confirm `payload.channelId` equals the PDA derived from `from`, `asset`,
+   `extra.receiverAuthorizer`, `nonce`, and `openSlot` under the canonical
+   program id.
+6. Validate `validAfter <= now < expiresAt` and reject `expiresAt == 0`.
+7. Simulate the expected settlement instructions before accepting the payment.
 
-On failure the server returns `402` (or `412` for the approval/open
-precondition) without serving the resource.
+On failure the server returns `402` (or `412` for the open precondition) without
+serving the resource.
 
-### Phase 4 — Settlement (after serving the resource)
+### Phase 4 - Settlement (after serving the resource)
 
-At settlement `paymentRequirements.amount` carries the **actual** metered amount.
+At settlement, `paymentRequirements.amount` carries the actual metered amount.
 The server/facilitator MUST:
 
-1. Re-verify the authorization against the **signed ceiling**
-   (`maxAmount` / `deposit`), NOT against `paymentRequirements.amount`.
-2. Assert `paymentRequirements.amount ≤ maxAmount`. On violation, fail with
+1. Re-verify the authorization against the signed ceiling (`maxAmount` /
+   `deposit`), not against `paymentRequirements.amount`.
+2. Assert `paymentRequirements.amount <= maxAmount`. On violation, fail with
    `invalid_upto_svm_payload_settlement_exceeds_amount`.
-3. `settle_and_finalize` with the single operator-signed voucher for the actual
-   cumulative amount — this only locks `settled` and flips status to
-   `Finalized`. Then `distribute`, which is what actually pays out
-   the sealed `payTo` / facilitator-fee distribution, refunds
-   `deposit − actual` to the payer, returns the rent to the operator
-   (`rentPayer`), and closes (tombstones) the channel. The two instructions MAY
-   be bundled in one transaction. `SettlementResponse.transaction` MUST identify
-   the confirmed transaction containing the final `distribute` instruction; if
-   settlement and distribution are not bundled, this is the `distribute`
-   transaction because it moves the settled `amount` to the sealed `payTo` /
-   facilitator-fee distribution and closes the channel.
-4. A `0`-amount settlement uses the **no-voucher** path: `settle_and_finalize`
-   with `has_voucher = 0` (a `cumulative_amount = 0` voucher is invalid — the
-   watermark must advance strictly above the initial `settled = 0`), then
-   `distribute` to refund the full deposit and close.
-   `SettlementResponse.transaction` MUST be the signature of that confirmed
-   close/refund transaction.
+3. Require server authorization from `receiverAuthorizer`:
+   - For `actual > 0`, a voucher signed by `receiverAuthorizer` for
+     `cumulativeAmount == actual` and the agreed `expiresAt`.
+   - For `actual == 0`, no voucher; the `settle_and_seal` instruction uses
+     `has_voucher = 0`.
+   In both cases, the `settle_and_seal` transaction MUST be signed by
+   `receiverAuthorizer` as channel `payee`.
+4. Co-sign as transaction `feePayer`, broadcast the final transaction, and
+   confirm a successful `distribute`. The usual bundle is Ed25519 precompile
+   (for nonzero actual), `settle_and_seal`, then `distribute`.
 
-## 6. Error codes
+`settle_and_seal` only locks the settled watermark and moves status to
+`Sealed`. `distribute` is the instruction that pays `payTo`, refunds
+`deposit - actual` to the payer, closes the escrow token account, and advances
+the channel to its cleanup state. `SettlementResponse.transaction` MUST identify
+the confirmed transaction containing that final `distribute`.
+
+## 6. Error Codes
 
 Standard x402 codes apply. Scheme-specific:
 
-- `invalid_upto_svm_payload_settlement_exceeds_amount` — actual > signed ceiling.
-- `CHANNEL_REQUIRED` (with `412`) — no open channel and no valid `openTransaction` that can be co-signed, broadcast, and confirmed before serving the resource.
+- `invalid_upto_svm_payload_settlement_exceeds_amount` - actual amount exceeds
+  the signed ceiling.
+- `CHANNEL_REQUIRED` (with `412`) - no open channel and no valid
+  `openTransaction` that can be co-signed, broadcast, and confirmed before
+  serving the resource.
 
-## 7. Security properties
+## 7. Security Properties
 
-- **No overcharge.** Capped by the on-chain `deposit`.
-- **No redirection.** `channel.payee` (the operator) and `distribution_hash`
-  (the `payTo` / facilitator-fee distribution) are fixed at open and re-checked
-  by the program at `distribute`, so the operator cannot redirect or shortchange
-  `payTo`.
-- **No replay.** Terminal `ChannelStatus::Finalized` plus monotonic
-  `SettlementWatermarks.settled`.
-- **No operator griefing.** The operator is the channel `payee` (so it is the
-  `settle_and_finalize` merchant, which the program requires to equal
-  `channel.payee`) **and** the voucher `authorizedSigner`, so it can always
-  settle the metered amount, refund the client's unused deposit, and — via
-  `distribute` — close the channel and reclaim the rent it fronted, all without
-  the client. The client never needs SOL and cannot strand the operator's funds;
-  the operator's only exposure is the settle-and-finalize + distribute
-  transaction it elects to send. The server/facilitator MUST reject any `open`
-  whose `payee`, `authorizedSigner`, or `rentPayer` is not the operator before
-  co-signing (§5 Phase 3).
-- **Time-bounded.** `expiresAt` is signed by the operator into the voucher and
-  enforced on-chain (the program rejects a settle once `now ≥ expiresAt`);
-  `validAfter` is off-chain verify-time policy only. These bind the *operator's*
-  voucher rather than the client (who signs only `open`): they bound when a
-  metered settlement may land, not a client-side commitment.
-- **Trust model.** As in the generic spec, the client trusts the server to meter
-  honestly within the ceiling. Everything above the ceiling, the destination,
-  and replay are enforced cryptographically/on-chain.
+- **No overcharge.** Capped by the onchain `deposit`; verifier requires
+  `deposit == maxAmount`.
+- **No redirection.** The distribution fixed at `open` sends settled funds to
+  `payTo`, and the program re-checks `distribution_hash` at `distribute`.
+- **Authenticated settlement.** A third-party facilitator is only `feePayer` /
+  `rent_payer`. It cannot sign vouchers or `settle_and_seal`; those require the
+  server-controlled `receiverAuthorizer`.
+- **No replay.** Vouchers are scoped to `channelId`, monotonic in
+  `cumulativeAmount`, and the x402 flow seals and distributes the channel once
+  for the request. `openSlot` is part of the channel PDA derivation for the
+  current program version.
+- **Client gaslessness.** The client supplies the stablecoin deposit and signs
+  `open`; `feePayer` signs the transaction and funds SOL fees/rent. The
+  verifier MUST ensure the client-signed `open` cannot debit `feePayer` beyond
+  fees and the intended channel/escrow rent.
+- **Client escape hatch.** `withdrawDelay` is server-defined and fixed at
+  `open`. If the server does not settle, the payer can start forced close with
+  `request_close`, wait the grace period, then recover unspent deposit through
+  `seal` and `withdraw_payer` / `distribute`.
+- **Time-bounded settlement.** `expiresAt` is enforced by the program for
+  nonzero vouchers; `validAfter` is offchain verification policy. These bound
+  when a metered settlement may land, but they are not client-signed terms.
+- **Metering trust.** As in the generic `upto` spec, the client trusts the
+  server to meter honestly within the ceiling. The ceiling, recipient, and
+  replay properties are enforced by signatures and the onchain program.
 
-## 8. Out of scope
+## 8. Out of Scope
 
-Multi-settlement streaming — a long-lived channel reused across many requests —
-is served by the [`batch-settlement`](../batch-settlement/scheme_batch_settlement_svm.md)
-scheme, not `upto`. `upto` settles **at most once** per authorization.
+Multi-settlement streaming or long-lived channels reused across many requests
+are served by [`batch-settlement`](../batch-settlement/scheme_batch_settlement.md)
+or a session-oriented payment-channel protocol, not `upto`. `upto` settles at
+most once per authorization.
