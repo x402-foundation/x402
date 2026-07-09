@@ -19,15 +19,15 @@ describe("Sui Types", () => {
   });
 
   describe("ExactSuiExtra", () => {
-    it("allows optional outputs and buildUrl", () => {
+    it("allows optional outputs and assetTransferMethod", () => {
       const withOutputs: ExactSuiExtra = {
         outputs: [{ to: "0x1", amount: "9000" }],
-        buildUrl: "https://facilitator.example/build",
+        assetTransferMethod: "address-balance",
       };
       const empty: ExactSuiExtra = {};
       expect(withOutputs.outputs).toHaveLength(1);
       expect(empty.outputs).toBeUndefined();
-      expect(empty.buildUrl).toBeUndefined();
+      expect(empty.assetTransferMethod).toBeUndefined();
     });
   });
 });

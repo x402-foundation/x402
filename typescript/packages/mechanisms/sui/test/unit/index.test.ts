@@ -89,14 +89,14 @@ describe("@x402/sui server scheme — enhancePaymentRequirements", () => {
   };
   const kind = { x402Version: 2, scheme: "exact", network: TESTNET };
 
-  it("passes facilitator extras through (e.g. buildUrl)", async () => {
+  it("passes facilitator extras through (e.g. assetTransferMethod)", async () => {
     const server = new ExactSuiServer();
     const r = await server.enhancePaymentRequirements(
       base,
-      { ...kind, extra: { buildUrl: "https://f.example/build" } },
+      { ...kind, extra: { assetTransferMethod: "address-balance" } },
       [],
     );
-    expect(r.extra.buildUrl).toBe("https://f.example/build");
+    expect(r.extra.assetTransferMethod).toBe("address-balance");
   });
 
   it("accepts declared outputs that sum to amount", async () => {

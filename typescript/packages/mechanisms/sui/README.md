@@ -76,9 +76,9 @@ When the payer's USDC is a classic `Coin<T>` OBJECT rather than an Address Balan
 
 `PaymentRequirements.extra.outputs` (OPTIONAL) declares a multi-recipient split summing to `amount`. Verification anchors on the EXACT payer debit: every declared recipient is credited exactly its amount, the payer is debited exactly `amount`, and no undeclared recipient of the asset is allowed. Absent, verification is the unchanged single-`payTo` rule.
 
-## Prebuilt transactions
+## Asset transfer methods
 
-`PaymentRequirements.extra.buildUrl` (OPTIONAL) advertises a facilitator endpoint that returns unsigned gasless bytes. The client INDEPENDENTLY verifies the bytes before signing — sender match, gasless gas fields, allowlisted commands, AND a dry-run that confirms the bytes pay EXACTLY the declared recipients/amounts (no hidden recipient). Signing is the only authorization act, so this pre-sign check — not trust in the facilitator — is what binds the signature to the agreed terms.
+The Sui spec defines two `extra.assetTransferMethod` values: `address-balance` (the gasless Address-Balance path) and `coin` (the classic gas-paying path, optionally gas-station sponsored). This package implements `address-balance` end to end — the client builds gasless PTBs and the facilitator verifies the gasless shape and settles keylessly — and the facilitator announces the method in its `/supported` extras, so a resource server relays it into `PaymentRequirements.extra` and the payload echoes it. A declared or echoed `coin` method is rejected as unsupported; independently of any declaration, the facilitator derives the effective method from the decoded bytes (`gasPayment == []`), so a mislabeled payment cannot slip through.
 
 ## License
 

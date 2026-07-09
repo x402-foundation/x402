@@ -80,8 +80,8 @@ export class ExactSuiScheme implements SchemeNetworkServer {
 
   /**
    * Build payment requirements for this scheme/network combination. Passes
-   * through facilitator extras (e.g. `buildUrl`) and, when `extra.outputs` is
-   * declared, asserts the spec invariant `sum(outputs) == amount`.
+   * through facilitator extras (e.g. `assetTransferMethod`) and, when
+   * `extra.outputs` is declared, asserts the spec invariant `sum(outputs) == amount`.
    *
    * @param paymentRequirements - The base payment requirements
    * @param supportedKind - The supported kind from the facilitator's /supported

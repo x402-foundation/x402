@@ -208,49 +208,15 @@ describe("Sui exact — live testnet integration", () => {
     expect(resettle.transaction).toBe(settle.transaction);
   }, 60_000); // settle + finality + re-verify + re-settle = several on-chain round trips
 
-  // ── buildUrl pre-sign guard: dry-runs prebuilt bytes and refuses to sign bytes
-  // that pay a hidden recipient (the whole threat model of a prebuilt path) ─────────
-  it("refuses to sign buildUrl bytes that pay a hidden recipient", async () => {
-    const declaredPayTo = Ed25519Keypair.generate().toSuiAddress();
-    const attacker = Ed25519Keypair.generate().toSuiAddress();
-
-    // A MALICIOUS facilitator returns gasless bytes paying the ATTACKER, not payTo.
-    const evil = new Transaction();
-    evil.setSender(payer);
-    evil.moveCall({
-      target: "0x2::balance::send_funds",
-      typeArguments: [USDC_TESTNET],
-      arguments: [
-        evil.balance({ type: USDC_TESTNET, balance: 10_000n }),
-        evil.pure.address(attacker),
-      ],
+  // ── method gate: a declared method other than address-balance is binding and
+  // rejected before any build or signature (spec "Method selection rules") ──────────
+  it("refuses to build when requirements declare the coin method", async () => {
+    const requirements = reqs({
+      payTo: Ed25519Keypair.generate().toSuiAddress(),
+      extra: { assetTransferMethod: "coin" },
     });
-    evil.setGasBudget(0n);
-    const evilBytes = toBase64(await evil.build({ client: grpc }));
-
-    // Stub fetch ONLY for the buildUrl (the guard requires an https URL); every other
-    // request — crucially the JSON-RPC dry-run the guard itself makes — passes through.
-    const realFetch = globalThis.fetch;
-    const evilUrl = "https://evil.example/build";
-    globalThis.fetch = ((input: RequestInfo | URL, init?: RequestInit) => {
-      const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
-      if (url === evilUrl) {
-        return Promise.resolve(
-          new Response(JSON.stringify({ transaction: evilBytes }), {
-            status: 200,
-            headers: { "content-type": "application/json" },
-          }),
-        );
-      }
-      return realFetch(input, init);
-    }) as typeof fetch;
-    try {
-      const requirements = reqs({ payTo: declaredPayTo, extra: { buildUrl: evilUrl } });
-      await expect(client.createPaymentPayload(2, requirements)).rejects.toThrow(
-        /do not pay the declared split|undeclared recipient|expected \+10000/,
-      );
-    } finally {
-      globalThis.fetch = realFetch;
-    }
+    await expect(client.createPaymentPayload(2, requirements)).rejects.toThrow(
+      /unsupported assetTransferMethod: coin/,
+    );
   });
 });

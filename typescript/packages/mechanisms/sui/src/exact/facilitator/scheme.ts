@@ -39,15 +39,18 @@ export class ExactSuiScheme implements SchemeNetworkFacilitator {
   constructor(private readonly signer: FacilitatorSuiSigner) {}
 
   /**
-   * Get mechanism-specific extra data for the supported kinds endpoint. The
-   * gasless path is sponsor-free, so there is no feePayer to advertise.
+   * Get mechanism-specific extra data for the supported kinds endpoint. This
+   * facilitator implements the gasless `address-balance` method and announces it
+   * here; the resource server relays it into `PaymentRequirements.extra`
+   * (requirements are server-defined — the facilitator only announces capability).
+   * The gasless path is sponsor-free, so there is no feePayer to advertise.
    *
    * @param _ - The network identifier (unused)
-   * @returns Always undefined — gasless needs no sponsor metadata
+   * @returns The supported asset transfer method
    */
   getExtra(_: Network): Record<string, unknown> | undefined {
     void _;
-    return undefined;
+    return { assetTransferMethod: "address-balance" };
   }
 
   /**
@@ -63,10 +66,13 @@ export class ExactSuiScheme implements SchemeNetworkFacilitator {
   }
 
   /**
-   * Verify a payment payload (the spec's `exact`-Sui verification):
-   * version/scheme/network/shape → signature binds the sender → gasless command
-   * shape → not-already-executed (the stateless replay guard) → simulate succeeds →
-   * exact balance-change match against the declared outputs.
+   * Verify a payment payload (the spec's `exact`-Sui verification, `address-balance`
+   * method): version/scheme/network/shape → method gate (a declared or echoed
+   * `assetTransferMethod` other than `address-balance` is rejected; the effective
+   * method is derived from the decoded bytes in the gas-shape step) → signature
+   * binds the sender → gasless command shape → not-already-executed (the stateless
+   * replay guard) → simulate succeeds → exact balance-change match against the
+   * declared outputs.
    *
    * @param payload - The payment payload to verify
    * @param requirements - The payment requirements
@@ -90,6 +96,24 @@ export class ExactSuiScheme implements SchemeNetworkFacilitator {
       const suiPayload = payload.payload as ExactSuiPayload;
       if (!suiPayload?.transaction || !suiPayload?.signature) {
         return { isValid: false, invalidReason: "invalid_payload", payer: "" };
+      }
+
+      // Method gate: this facilitator implements the `address-balance` method.
+      // A declared (requirements) or echoed (accepted) method naming anything
+      // else is rejected up front; the gasless-shape step below derives the
+      // effective method from the decoded bytes themselves.
+      for (const method of [
+        requirements.extra?.assetTransferMethod,
+        payload.accepted.extra?.assetTransferMethod,
+      ]) {
+        if (method !== undefined && method !== "address-balance") {
+          return {
+            isValid: false,
+            invalidReason: "invalid_payload",
+            invalidMessage: `unsupported assetTransferMethod: ${String(method)} (this facilitator implements address-balance)`,
+            payer: "",
+          };
+        }
       }
 
       // Step 2: signature is valid AND the recovered address is the tx sender.

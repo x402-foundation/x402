@@ -114,6 +114,37 @@ describe("ExactSuiFacilitator.verify() — step 1: version / scheme / network / 
   });
 });
 
+describe("ExactSuiFacilitator.verify() — assetTransferMethod gate", () => {
+  it("rejects requirements declaring the coin method", async () => {
+    const f = new ExactSuiFacilitator(mockSigner({}));
+    const r = await f.verify(
+      buildPayload(VALID_SINGLE.transaction, VALID_SINGLE.signature),
+      requirements({ extra: { assetTransferMethod: "coin" } }),
+    );
+    expect(r.isValid).toBe(false);
+    expect(r.invalidReason).toBe("invalid_payload");
+    expect(r.invalidMessage).toMatch(/unsupported assetTransferMethod: coin/);
+  });
+
+  it("rejects an echoed coin method in accepted.extra", async () => {
+    const f = new ExactSuiFacilitator(mockSigner({}));
+    const p = buildPayload(VALID_SINGLE.transaction, VALID_SINGLE.signature);
+    p.accepted.extra = { assetTransferMethod: "coin" };
+    const r = await f.verify(p, requirements());
+    expect(r.isValid).toBe(false);
+    expect(r.invalidReason).toBe("invalid_payload");
+  });
+
+  it("accepts a declared address-balance method (full happy path)", async () => {
+    const f = new ExactSuiFacilitator(mockSigner({ balanceChanges: VALID_SINGLE_BALANCE_CHANGES }));
+    const r = await f.verify(
+      buildPayload(VALID_SINGLE.transaction, VALID_SINGLE.signature),
+      requirements({ extra: { assetTransferMethod: "address-balance" } }),
+    );
+    expect(r.isValid).toBe(true);
+  });
+});
+
 describe("ExactSuiFacilitator.verify() — step 2: signature binding", () => {
   it("rejects when signature verification throws", async () => {
     const f = new ExactSuiFacilitator(mockSigner({ recoverThrows: true }));
@@ -297,9 +328,9 @@ describe("ExactSuiFacilitator.verify() — step 5: balance-change match", () => 
 });
 
 describe("ExactSuiFacilitator metadata", () => {
-  it("getExtra is undefined (gasless is sponsor-free)", () => {
+  it("getExtra announces the address-balance method", () => {
     const f = new ExactSuiFacilitator(mockSigner({}));
-    expect(f.getExtra(NETWORK)).toBeUndefined();
+    expect(f.getExtra(NETWORK)).toEqual({ assetTransferMethod: "address-balance" });
   });
 
   it("caipFamily is sui:*", () => {

@@ -45,10 +45,10 @@ export type ExactSuiExtra = {
   outputs?: SuiOutput[];
 
   /**
-   * Absolute https URL of a facilitator convenience endpoint that returns
-   * unsigned gasless transaction bytes for these terms. The client MUST verify
-   * the returned bytes before signing (see scheme_exact_sui.md "Prebuilt
-   * Transactions").
+   * The asset transfer method of the payment. OPTIONAL; when present the
+   * payment MUST use the declared method (see scheme_exact_sui.md "Method
+   * selection rules"). `"address-balance"` is the gasless path this package
+   * implements; `"coin"` is the classic gas-paying path.
    */
-  buildUrl?: string;
+  assetTransferMethod?: "address-balance" | "coin";
 };
