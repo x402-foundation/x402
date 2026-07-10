@@ -796,13 +796,11 @@ describe("ExactXrplScheme client", () => {
     ).rejects.toThrow("destinationTag");
   });
 
-  it("signs custom-network payments with the prepared NetworkID", async () => {
+  it("adds the custom NetworkID before preparing and signing", async () => {
+    const preparePaymentTransaction = vi.fn(preparePaymentForTest);
     const client = new ExactXrplClientScheme(createXrplWalletSigner(payerWallet), {
       getCurrentLedgerIndex: async () => 980,
-      preparePaymentTransaction: async transaction => ({
-        ...(await preparePaymentForTest(transaction)),
-        NetworkID: 21337,
-      }),
+      preparePaymentTransaction,
     });
 
     const result = await client.createPaymentPayload(2, {
@@ -811,13 +809,34 @@ describe("ExactXrplScheme client", () => {
     });
     const decoded = decode(String(result.payload.signedTxBlob)) as Payment;
 
+    expect(preparePaymentTransaction).toHaveBeenCalledWith(
+      expect.objectContaining({ NetworkID: 21337 }),
+      expect.objectContaining({ network: "xrpl:21337" }),
+    );
     expect(decoded.NetworkID).toBe(21337);
   });
 
-  it("rejects prepared custom-network payments missing the NetworkID", async () => {
+  it("rejects custom preparers that remove the custom NetworkID", async () => {
     const client = new ExactXrplClientScheme(createXrplWalletSigner(payerWallet), {
       getCurrentLedgerIndex: async () => 980,
-      preparePaymentTransaction: preparePaymentForTest,
+      preparePaymentTransaction: async transaction => ({
+        ...(await preparePaymentForTest(transaction)),
+        NetworkID: undefined,
+      }),
+    });
+
+    await expect(
+      client.createPaymentPayload(2, { ...baseXrpRequirements, network: "xrpl:21337" }),
+    ).rejects.toThrow("NetworkID");
+  });
+
+  it("rejects custom preparers that replace the custom NetworkID", async () => {
+    const client = new ExactXrplClientScheme(createXrplWalletSigner(payerWallet), {
+      getCurrentLedgerIndex: async () => 980,
+      preparePaymentTransaction: async transaction => ({
+        ...(await preparePaymentForTest(transaction)),
+        NetworkID: 21338,
+      }),
     });
 
     await expect(

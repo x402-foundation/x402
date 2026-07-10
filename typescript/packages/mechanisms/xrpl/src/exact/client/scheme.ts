@@ -78,6 +78,7 @@ export class ExactXrplScheme implements SchemeNetworkClient {
     requirements: PaymentRequirements,
     method: XrplAssetTransferMethod,
   ): Promise<Payment> {
+    const networkId = parseXrplNetworkId(requirements.network);
     const currentLedgerIndex = this.options.getCurrentLedgerIndex
       ? await this.options.getCurrentLedgerIndex(requirements.network)
       : undefined;
@@ -117,6 +118,7 @@ export class ExactXrplScheme implements SchemeNetworkClient {
       ...(this.options.feeDrops !== undefined ? { Fee: this.options.feeDrops } : {}),
       ...(lastLedgerSequence !== undefined ? { LastLedgerSequence: lastLedgerSequence } : {}),
       ...(destinationTag !== undefined ? { DestinationTag: destinationTag } : {}),
+      ...(networkId > 1024 ? { NetworkID: networkId } : {}),
     };
 
     if (sendMax !== undefined) {
