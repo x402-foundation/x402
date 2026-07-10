@@ -863,8 +863,27 @@ describe("ExactXrplScheme facilitator verify", () => {
     expect(facilitator.getExtra(XRPL_TESTNET)).toEqual({ areFeesSponsored: false });
   });
 
+  it("returns a stable reason and separate message for malformed payloads", async () => {
+    const payload = buildPayload(baseXrpRequirements);
+
+    const result = await facilitator.verify(
+      {
+        ...payload,
+        payload: { signedTxBlob: "not-hex" },
+      },
+      baseXrpRequirements,
+    );
+
+    expect(result).toMatchObject({
+      isValid: false,
+      invalidReason: "invalid_exact_xrpl_facilitator_error",
+      invalidMessage: expect.any(String),
+      payer: "",
+    });
+    expect(result.invalidMessage?.length).toBeGreaterThan(0);
+  });
+
   it.each([
-    ["malformed signedTxBlob", { payload: { signedTxBlob: "not-hex" } }, "malformed"],
     ["wrong network", { accepted: { ...baseXrpRequirements, network: "xrpl:0" } }, "network"],
     ["wrong destination", {}, "destination"],
     ["amount mismatch", {}, "amount"],
@@ -915,8 +934,6 @@ describe("ExactXrplScheme facilitator verify", () => {
       payload = buildPayload(requirements, { NetworkID: 21338 } as Partial<Payment>);
     } else if (caseName === "wrong network") {
       payload = { ...payload, ...payloadPatch } as PaymentPayload;
-    } else if (caseName === "malformed signedTxBlob") {
-      payload = { ...payload, payload: payloadPatch.payload as Record<string, unknown> };
     }
 
     const result = await facilitator.verify(payload, requirements);

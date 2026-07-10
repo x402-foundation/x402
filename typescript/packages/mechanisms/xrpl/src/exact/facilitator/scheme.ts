@@ -161,8 +161,9 @@ export class ExactXrplScheme implements SchemeNetworkFacilitator {
       };
     } catch (error) {
       return invalidVerify(
-        `invalid_exact_xrpl_payload_malformed: ${error instanceof Error ? error.message : String(error)}`,
+        "invalid_exact_xrpl_facilitator_error",
         payer,
+        error instanceof Error ? error.message : String(error),
       );
     }
   }
@@ -642,12 +643,14 @@ export class ExactXrplScheme implements SchemeNetworkFacilitator {
  *
  * @param reason - Invalid reason
  * @param payer - Payer address, if known
+ * @param message - Human-readable invalidation detail, if available
  * @returns Invalid verify response
  */
-function invalidVerify(reason: string, payer: string): VerifyResponse {
+function invalidVerify(reason: string, payer: string, message?: string): VerifyResponse {
   return {
     isValid: false,
     invalidReason: reason,
+    invalidMessage: message,
     payer,
   };
 }
