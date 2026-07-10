@@ -294,9 +294,14 @@ describe("XRPL exact utilities", () => {
       submitAndWait,
     } as unknown as Client;
 
-    const ticketSequences = await createTickets(payerWallet, XRPL_TESTNET, 2, {
-      clientFactory: () => fakeClient,
-    });
+    const ticketSequences = await createTickets(
+      createXrplWalletSigner(payerWallet),
+      XRPL_TESTNET,
+      2,
+      {
+        clientFactory: () => fakeClient,
+      },
+    );
 
     expect(autofill).toHaveBeenCalledWith(
       expect.objectContaining({ TransactionType: "TicketCreate", TicketCount: 2 }),
@@ -329,15 +334,17 @@ describe("XRPL exact utilities", () => {
     } as unknown as Client;
 
     await expect(
-      createTickets(payerWallet, XRPL_TESTNET, 1, { clientFactory: () => fakeClient }),
+      createTickets(createXrplWalletSigner(payerWallet), XRPL_TESTNET, 1, {
+        clientFactory: () => fakeClient,
+      }),
     ).rejects.toThrow("tecINSUFFICIENT_RESERVE");
   });
 
   it("rejects invalid ticket counts before contacting the network", async () => {
-    await expect(createTickets(payerWallet, XRPL_TESTNET, 0)).rejects.toThrow("between 1 and 250");
-    await expect(createTickets(payerWallet, XRPL_TESTNET, 251)).rejects.toThrow(
-      "between 1 and 250",
-    );
+    const signer = createXrplWalletSigner(payerWallet);
+
+    await expect(createTickets(signer, XRPL_TESTNET, 0)).rejects.toThrow("between 1 and 250");
+    await expect(createTickets(signer, XRPL_TESTNET, 251)).rejects.toThrow("between 1 and 250");
   });
 });
 
@@ -622,16 +629,88 @@ describe("ExactXrplScheme client", () => {
     expect(decoded.TicketSequence).toBe(7);
   });
 
-  it("requires an available ticket for ticketSequence payments", async () => {
+  it.each([
+    ["the default policy", undefined, 1],
+    ["a configured policy", 3, 3],
+  ])("auto-creates tickets with %s", async (_label, ticketCreateCount, expectedCount) => {
+    const autofill = vi.fn(async (transaction: Transaction) => ({
+      ...transaction,
+      Fee: "12",
+      Sequence: 3,
+      LastLedgerSequence: 1_000,
+    }));
+    const submitAndWait = vi.fn(async () => ({
+      result: {
+        hash: "C".repeat(64),
+        validated: true,
+        meta: {
+          TransactionIndex: 0,
+          TransactionResult: "tesSUCCESS",
+          AffectedNodes: Array.from({ length: expectedCount }, (_, index) => ({
+            CreatedNode: {
+              LedgerEntryType: "Ticket",
+              LedgerIndex: String(index).padStart(64, "0"),
+              NewFields: { TicketSequence: 8 + index },
+            },
+          })),
+        },
+      },
+    }));
+    const fakeClient = {
+      connect: vi.fn(async () => undefined),
+      disconnect: vi.fn(async () => undefined),
+      autofill,
+      submitAndWait,
+    } as unknown as Client;
     const client = new ExactXrplClientScheme(createXrplWalletSigner(payerWallet), {
       getCurrentLedgerIndex: async () => 980,
       getAvailableTicketSequence: async () => undefined,
+      ...(ticketCreateCount === undefined ? {} : { ticketCreateCount }),
+      clientFactory: () => fakeClient,
+      preparePaymentTransaction: preparePaymentForTest,
+    });
+
+    const result = await client.createPaymentPayload(2, ticketXrpRequirements);
+    const decoded = decode(String(result.payload.signedTxBlob)) as Payment;
+
+    expect(autofill).toHaveBeenCalledWith(
+      expect.objectContaining({ TransactionType: "TicketCreate", TicketCount: expectedCount }),
+    );
+    expect(submitAndWait).toHaveBeenCalledOnce();
+    expect(decoded.Sequence).toBe(0);
+    expect(decoded.TicketSequence).toBe(8);
+  });
+
+  it("does not auto-create tickets when the policy is disabled", async () => {
+    const clientFactory = vi.fn();
+    const client = new ExactXrplClientScheme(createXrplWalletSigner(payerWallet), {
+      getCurrentLedgerIndex: async () => 980,
+      getAvailableTicketSequence: async () => undefined,
+      ticketCreateCount: 0,
+      clientFactory,
       preparePaymentTransaction: preparePaymentForTest,
     });
 
     await expect(client.createPaymentPayload(2, ticketXrpRequirements)).rejects.toThrow(
-      "createTickets",
+      "automatic ticket creation is disabled",
     );
+    expect(clientFactory).not.toHaveBeenCalled();
+  });
+
+  it.each([-1, 1.5, 251])("rejects an invalid ticket creation policy of %s", async count => {
+    const clientFactory = vi.fn();
+    const client = new ExactXrplClientScheme(createXrplWalletSigner(payerWallet), {
+      getCurrentLedgerIndex: async () => 980,
+      getAvailableTicketSequence: async () => undefined,
+      ticketCreateCount: count,
+      clientFactory,
+      preparePaymentTransaction: preparePaymentForTest,
+    });
+
+    await expect(client.createPaymentPayload(2, ticketXrpRequirements)).rejects.toThrow(
+      "between 1 and 250",
+    );
+    expect(clientFactory).not.toHaveBeenCalled();
   });
 
   it("rejects requirements without areFeesSponsored=false", async () => {

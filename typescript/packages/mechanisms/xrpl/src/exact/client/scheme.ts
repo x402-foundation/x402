@@ -1,4 +1,5 @@
 import {
+  createTickets,
   createXrplClient,
   getMaxLastLedgerSequence,
   getXrplTicketSequences,
@@ -141,12 +142,27 @@ export class ExactXrplScheme implements SchemeNetworkClient {
     const ticketSequence = this.options.getAvailableTicketSequence
       ? await this.options.getAvailableTicketSequence(account, network)
       : (await getXrplTicketSequences(account, network, this.options))[0];
-    if (ticketSequence === undefined) {
+    if (ticketSequence !== undefined) {
+      return ticketSequence;
+    }
+
+    const ticketCreateCount = this.options.ticketCreateCount ?? 1;
+    if (ticketCreateCount === 0) {
       throw new Error(
-        `No available XRPL ticket for ${account}; create tickets with createTickets() before ticketSequence payments`,
+        `No available XRPL ticket for ${account}; automatic ticket creation is disabled`,
       );
     }
-    return ticketSequence;
+
+    const [createdTicketSequence] = await createTickets(
+      this.signer,
+      network,
+      ticketCreateCount,
+      this.options,
+    );
+    if (createdTicketSequence === undefined) {
+      throw new Error(`TicketCreate returned no tickets for ${account}`);
+    }
+    return createdTicketSequence;
   }
 
   /**

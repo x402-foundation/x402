@@ -25,7 +25,7 @@ The payer signs a complete XRPL `Payment` transaction and pays the XRPL transact
 ### Main Package (`@x402/xrpl`)
 
 - `createXrplWalletSigner(wallet)` - Creates a client signer from an `xrpl` `Wallet`.
-- `createTickets(wallet, network, ticketCount)` - Creates XRPL Tickets for `ticketSequence` payments.
+- `createTickets(signer, network, ticketCount)` - Creates XRPL Tickets for `ticketSequence` payments.
 - `getXrplTicketSequences(account, network)` - Lists an account's available ticket sequences.
 - `invoiceIdToInvoiceIdField(invoiceId)` - Converts an invoice id to an XRPL `InvoiceID`.
 - XRPL network constants: `XRPL_MAINNET`, `XRPL_TESTNET`, `XRPL_DEVNET`.
@@ -59,14 +59,17 @@ There is no `extra.decimals` field: XRPL issued-currency amounts are ledger deci
 
 The client follows the method pinned in the payment requirements and defaults to `"sequence"`. Resource servers offer `"ticketSequence"` by advertising it in `extra.assetTransferMethod` (optionally as a second `accepts` entry so clients can choose either method).
 
-For `"ticketSequence"` payments the payer account must hold an available ticket before signing:
+For `"ticketSequence"` payments, the client automatically creates one ticket when none is
+available. Set `ticketCreateCount` to create more at once, or to `0` to disable automatic creation.
+To provision ticket inventory explicitly:
 
 ```typescript
 import { Wallet } from "xrpl";
-import { createTickets } from "@x402/xrpl";
+import { createTickets, createXrplWalletSigner } from "@x402/xrpl";
 
 const wallet = Wallet.fromSeed(process.env.XRPL_SEED!);
-const ticketSequences = await createTickets(wallet, "xrpl:1", 5);
+const signer = createXrplWalletSigner(wallet);
+const ticketSequences = await createTickets(signer, "xrpl:1", 5);
 ```
 
 Each outstanding ticket locks owner reserve (currently 0.2 XRP on mainnet) until it is used or deleted, and an account can hold at most 250 outstanding tickets.
@@ -102,6 +105,10 @@ The default client uses `xrpl.Client` to autofill ledger-derived fields before s
 - `NetworkID` for custom XRPL networks
 
 Use `wsUrlByNetwork` or `clientFactory` to customize the XRPL connection, and `feeDrops` only when the client should use an explicit fee instead of the network autofill value. If a wallet or application prepares transactions externally, pass `preparePaymentTransaction`; the returned transaction must satisfy the selected asset transfer method, and include `Fee`, `LastLedgerSequence`, and the correct custom-network `NetworkID` when applicable.
+
+For `"ticketSequence"` payments, `ticketCreateCount` controls automatic ticket creation when the
+account has no available tickets. It defaults to `1`; set it to `0` to require pre-provisioned
+tickets.
 
 While a `"sequence"` payment is pending, the payer account should not sign or submit other transactions until the payment settles or its `LastLedgerSequence` passes; consuming the sequence elsewhere permanently invalidates the payment.
 

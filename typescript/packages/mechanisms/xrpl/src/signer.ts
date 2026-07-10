@@ -1,4 +1,4 @@
-import type { Wallet, Payment } from "xrpl";
+import type { SubmittableTransaction, Wallet } from "xrpl";
 import type { ClientXrplSigner } from "./types";
 
 /**
@@ -10,7 +10,7 @@ import type { ClientXrplSigner } from "./types";
 export function createXrplWalletSigner(wallet: Wallet): ClientXrplSigner {
   return {
     classicAddress: wallet.classicAddress,
-    sign: (transaction: Payment) => {
+    sign: (transaction: SubmittableTransaction) => {
       const signed = wallet.sign(transaction);
       return {
         signedTxBlob: signed.tx_blob,

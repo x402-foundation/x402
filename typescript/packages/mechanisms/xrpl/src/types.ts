@@ -1,4 +1,4 @@
-import type { Payment, Client } from "xrpl";
+import type { Client, Payment, SubmittableTransaction } from "xrpl";
 import type { Network, PaymentRequirements } from "@x402/core/types";
 
 /**
@@ -55,7 +55,7 @@ export type XrplPaymentRequirementsExtra = {
 };
 
 /**
- * Client signer abstraction for XRPL exact payments.
+ * Client signer abstraction for XRPL transactions.
  */
 export type ClientXrplSigner = {
   /**
@@ -63,10 +63,10 @@ export type ClientXrplSigner = {
    */
   classicAddress: string;
   /**
-   * Sign an XRPL payment transaction.
+   * Sign an XRPL transaction without submitting it.
    */
   sign(
-    transaction: Payment,
+    transaction: SubmittableTransaction,
   ): Promise<{ signedTxBlob: string; hash?: string }> | { signedTxBlob: string; hash?: string };
 };
 
@@ -88,6 +88,11 @@ export type XrplClientOptions = {
    * ticket objects from the ledger.
    */
   getAvailableTicketSequence?: (account: string, network: Network) => Promise<number | undefined>;
+  /**
+   * Number of tickets to create when a ticketSequence payment finds none.
+   * Defaults to 1. Set to 0 to disable automatic ticket creation.
+   */
+  ticketCreateCount?: number;
   /**
    * Optional function to prepare/autofill the transaction before signing.
    */

@@ -8,7 +8,6 @@ import {
   type TicketCreate,
   type Transaction,
   type TransactionMetadata,
-  type Wallet,
 } from "xrpl";
 import {
   DEFAULT_LEDGER_CLOSE_SECONDS,
@@ -24,6 +23,7 @@ import {
   XRPL_TESTNET_WS_URL,
 } from "./constants";
 import type {
+  ClientXrplSigner,
   ExactXrplPayload,
   XrplAccountAuthorization,
   XrplAssetTransferMethod,
@@ -488,14 +488,14 @@ export async function isXrplTicketAvailable(
  * Each outstanding ticket locks owner reserve until it is used or deleted,
  * and an account can hold at most 250 outstanding tickets.
  *
- * @param wallet - XRPL wallet that owns and signs the TicketCreate
+ * @param signer - XRPL account that owns and signs the TicketCreate
  * @param network - XRPL network id
  * @param ticketCount - Number of tickets to create
  * @param options - Client connection options
  * @returns Ascending list of created ticket sequences
  */
 export async function createTickets(
-  wallet: Wallet,
+  signer: ClientXrplSigner,
   network: Network,
   ticketCount: number,
   options: Pick<XrplFacilitatorOptions, "wsUrlByNetwork" | "clientFactory"> = {},
@@ -509,12 +509,12 @@ export async function createTickets(
     await client.connect();
     const ticketCreate: TicketCreate = {
       TransactionType: "TicketCreate",
-      Account: wallet.classicAddress,
+      Account: signer.classicAddress,
       TicketCount: ticketCount,
     };
     const prepared = await client.autofill(ticketCreate);
-    const signed = wallet.sign(prepared);
-    const response = await client.submitAndWait(signed.tx_blob, {
+    const signed = await signer.sign(prepared);
+    const response = await client.submitAndWait(signed.signedTxBlob, {
       autofill: false,
       failHard: true,
     });
