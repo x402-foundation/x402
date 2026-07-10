@@ -22,6 +22,18 @@ By using a facilitator, servers do not need to maintain direct blockchain connec
 
 The facilitator does not hold funds or act as a custodian - it performs verification and execution of onchain transactions based on signed payloads provided by clients.
 
+### Choosing a Facilitator Path
+
+There is no single facilitator deployment model for every x402 integration. In practice, most teams should choose one of three paths:
+
+| Goal | Recommended path |
+| ---- | ---------------- |
+| Fastest testnet or local quickstart | Use the public `x402.org` facilitator |
+| Managed production deployment | Use a production facilitator provider that supports your target network |
+| Full operational control | Run your own facilitator or [self-facilitate](https://github.com/x402-foundation/x402/tree/main/examples/typescript/servers/self-facilitation) inside your resource server |
+
+**Important:** the public `x402.org` facilitator is intended for development and testnet workflows. Do not assume it is the default path for production mainnet routes. For mainnet deployments, use a production facilitator that supports your network, run your own facilitator, or self-facilitate.
+
 ### Why Use a Facilitator?
 
 Using a facilitator provides:

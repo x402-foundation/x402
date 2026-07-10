@@ -7,6 +7,16 @@ description: "Production facilitator services for x402 payments."
 Anyone can run a facilitator. You can [run your own](/core-concepts/network-and-token-support#running-your-own-facilitator) or [self-facilitate](https://github.com/x402-foundation/x402/tree/main/examples/typescript/servers/self-facilitation). 
 The table below lists selected production options; it is not an exhaustive catalog. 
 
+## Which option should I use?
+
+Use this as a quick operator guide:
+
+- **Public testnet / quickstart:** use the `x402.org` facilitator
+- **Managed production mainnet:** use a production facilitator provider that supports your target network
+- **Full control:** run your own facilitator or self-facilitate in-process
+
+If you are evaluating a mainnet EVM route, decide on your production facilitator path up front. The public `x402.org` facilitator is convenient for development, but it is not intended to be the default production choice for mainnet routes.
+
 | Name | Description |
 | ---- | ----------- | 
 | [Built on Stellar](https://developers.stellar.org/docs/build/apps/x402/built-on-stellar) | Free, public x402 facilitator for Stellar |
@@ -19,4 +29,4 @@ The table below lists selected production options; it is not an exhaustive catal
 | [PayAI Facilitator](https://facilitator.payai.network) | Multi-network facilitator supporting all tokens. No API keys required |
 | [Polygon Facilitator](https://docs.polygon.technology/payment-services/agentic-payments/x402/intro/) | Production-grade x402 facilitator for Polygon Mainnet and Amoy testnet |
 
-For testnet development, the [x402.org facilitator](/core-concepts/network-and-token-support#x402org-facilitator) requires no setup. It is not intended for mainnet routes; use a production facilitator or self-hosted facilitator for production networks.
+For testnet development, the [x402.org facilitator](/core-concepts/network-and-token-support#x402org-facilitator) requires no setup. It is not intended for mainnet routes; use a production facilitator, a self-hosted facilitator, or [self-facilitation](https://github.com/x402-foundation/x402/tree/main/examples/typescript/servers/self-facilitation) for production networks.

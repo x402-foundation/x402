@@ -88,6 +88,16 @@ Curated third-party SDKs, extensions, and facilitators are listed in the [Develo
 
 **Documentation:** see [`docs/`](./docs/) for the published documentation source (Mintlify). Payment **schemes** include **`exact`**, **`upto`**, and **`batch-settlement`**; specifications live under [`specs/schemes/`](./specs/schemes/).
 
+## Choosing a Production Path
+
+For testnet development and quickstarts, the public x402 facilitator is the easiest way to get started. For production mainnet routes, decide on your facilitator model explicitly:
+
+- use a production facilitator provider that supports your target network,
+- run your own facilitator,
+- or [self-facilitate](./examples/typescript/servers/self-facilitation/README.md) inside your resource server.
+
+Do not assume the public x402.org facilitator is the default production path for mainnet EVM routes. See the [Facilitator docs](https://docs.x402.org/core-concepts/facilitator), [Facilitators directory](https://docs.x402.org/dev-tools/facilitators), and [Networks & Token Support](https://docs.x402.org/core-concepts/network-and-token-support) for operator guidance.
+
 ## Terms:
 
 - `resource`: Something on the internet. This could be a webpage, file server, RPC service, API, any resource on the internet that accepts HTTP / HTTPS requests.

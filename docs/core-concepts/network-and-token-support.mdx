@@ -35,6 +35,16 @@ x402 supports tokens on EVM, Solana, TON, Algorand (AVM), Stellar, Aptos, Hedera
 
 Facilitators support **networks**, not specific tokens — any compatible token works on any facilitator that supports that network.
 
+## Production Network Support
+
+Protocol support and production support are related but not identical:
+
+- **Protocol support** means x402 can express payment requirements and payloads for that network.
+- **Runtime support** means your server can register the network and use a compatible scheme implementation.
+- **Production support** means you also have a facilitator path that works for your deployment model: a production facilitator provider, a self-hosted facilitator, or self-facilitation.
+
+For EVM networks in particular, x402 can support any `eip155:<chainId>` network at the protocol level. The operational question is whether you have a production settlement path for that network.
+
 ### EVM: Asset Transfer Methods
 
 x402 supports two asset transfer methods on EVM, selected automatically based on token capabilities:
@@ -248,7 +258,20 @@ x402 uses dynamic network registration — you can support any EVM network witho
 **Key Points:**
 - Use CAIP-2 format: `eip155:<chainId>` for any EVM network
 - The scheme implementation handles the network automatically
-- You only need a facilitator that supports your target network (or run your own)
+- You only need a facilitator that supports your target network, or you can run your own facilitator, or self-facilitate
+
+### Production checklist for a new EVM network
+
+Before you treat a new EVM network as production-ready in your application, confirm all of the following:
+
+1. You know which token you want to accept and whether it uses EIP-3009 or Permit2.
+2. You have a production settlement path for that network:
+   - a managed production facilitator,
+   - a self-hosted facilitator,
+   - or self-facilitation.
+3. You have decided whether to use explicit `TokenAmount` pricing or contribute a default asset for dollar-string pricing.
+
+If you are still evaluating or prototyping, prefer explicit `TokenAmount` configuration first. That keeps the integration path clear even before a chain is added to the default-asset tables.
 
 ### Contributing a New Default Asset
 
