@@ -167,6 +167,7 @@ The Offer and Receipt Extension proves the server cryptographically committed to
 **9. Security Considerations**
 
 - **Recomputability, not outcome.** The binding proves the settled-action record reproduces from committed bytes; it does **not** prove a downstream world-effect occurred. Implementations SHOULD keep "paid," "settled," "executed," and "observed" distinct and label any unobserved effect explicitly.
+- **Signature authority is trusted, not recomputed.** `receipt_signature_ok` proves the receipt was signed by the key it names and that its signed bytes are intact — not that the signer was honest or authorized to issue it. Unlike `action_ref_recomputes` and `settlement_binding_resolves`, which a verifier reconstructs from committed public bytes, this verdict rests on trusting the issuer's key. For actions whose `action_ref` recomputes entirely from committed public data, that residual trust MAY be replaced by a proof the verifier recomputes (e.g. an on-chain-enforced commitment opening) — binding to such an enforcing anchor is a separate, out-of-scope extension, not implied here.
 - **Verification scope on privacy rails.** Net-balance assertion is only as sound as the facilitator's visibility. State who must be a stakeholder/observer for `verifiedBy` to be meaningful, and what a non-stakeholder verifier can independently check.
 - **Canonicalization is the trust root.** Two producers MUST canonicalize identically (RFC 8785 over the normative field set) or the recompute fails closed. The reference vectors are the gate against drift.
 
