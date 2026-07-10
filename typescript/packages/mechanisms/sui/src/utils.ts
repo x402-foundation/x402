@@ -1,6 +1,6 @@
 // Portions copyright 2026 Danny Devs (https://github.com/Danny-Devs/x402-sui), Apache-2.0
 
-import { SuiJsonRpcClient, getJsonRpcFullnodeUrl } from "@mysten/sui/jsonRpc";
+import { SuiGrpcClient } from "@mysten/sui/grpc";
 import type { BalanceChange } from "@mysten/sui/jsonRpc";
 import { normalizeStructTag } from "@mysten/sui/utils";
 import type { Network, PaymentRequirements } from "@x402/core/types";
@@ -10,21 +10,28 @@ import {
   SUI_MAINNET_CAIP2,
   SUI_TESTNET_CAIP2,
   SUI_DEVNET_CAIP2,
+  MAINNET_RPC_URL,
+  TESTNET_RPC_URL,
+  DEVNET_RPC_URL,
 } from "./constants";
 
 /**
- * Create a JSON-RPC Sui client for the specified network. The facilitator uses
- * this for `dryRunTransactionBlock` (simulation) and `executeTransactionBlock`
- * (settlement). The gasless PTB builder uses a gRPC client instead (see the
- * client scheme), because gasless eligibility resolves over the gRPC transport.
+ * Create a gRPC Sui client for the specified network. The facilitator uses this
+ * for `simulateTransaction` (verification), `executeTransaction` (settlement),
+ * `getTransaction` (the replay guard), and `waitForTransaction`. gRPC is the
+ * transport where the gasless Address-Balance path resolves, and the only one
+ * Mysten's public fullnodes still serve (the JSON-RPC endpoints are retired).
  *
  * @param network - CAIP-2 network identifier (e.g., "sui:testnet")
- * @param customRpcUrl - Optional custom RPC URL override
- * @returns SuiJsonRpcClient configured for the specified network
+ * @param customRpcUrl - Optional custom gRPC base URL override
+ * @returns SuiGrpcClient configured for the specified network
  */
-export function createSuiClient(network: Network, customRpcUrl?: string): SuiJsonRpcClient {
+export function createSuiClient(network: Network, customRpcUrl?: string): SuiGrpcClient {
   const ref = suiNetworkRef(network);
-  return new SuiJsonRpcClient({ url: customRpcUrl ?? getJsonRpcFullnodeUrl(ref), network: ref });
+  const baseUrl =
+    customRpcUrl ??
+    { mainnet: MAINNET_RPC_URL, testnet: TESTNET_RPC_URL, devnet: DEVNET_RPC_URL }[ref];
+  return new SuiGrpcClient({ network: ref, baseUrl });
 }
 
 /**

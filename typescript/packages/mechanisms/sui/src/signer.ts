@@ -130,9 +130,9 @@ export function toFacilitatorSuiSigner(
   config?: FacilitatorSuiSignerConfig,
   keypair?: Signer,
 ): FacilitatorSuiSigner {
-  const clientCache = new Map<string, SuiJsonRpcClient>();
+  const clientCache = new Map<string, SuiGrpcClient>();
 
-  const getClient = (network: string): SuiJsonRpcClient => {
+  const getClient = (network: string): SuiGrpcClient => {
     const cached = clientCache.get(network);
     if (cached) return cached;
 
@@ -140,6 +140,18 @@ export function toFacilitatorSuiSigner(
     const client = createSuiClient(network as Network, rpcUrl);
     clientCache.set(network, client);
     return client;
+  };
+
+  // A transaction-lookup MISS (never committed) surfaces as a gRPC NOT_FOUND
+  // status or the core client's "Transaction <digest> not found" throw — that
+  // means "not executed". Any OTHER transport error (unavailable, timeout) must
+  // PROPAGATE: reading it as "not executed" would let the replay guard pass an
+  // already-settled payment and double-serve a merchant.
+  const isNotFound = (error: unknown): boolean => {
+    const code = (error as { code?: unknown } | null)?.code;
+    if (typeof code === "string" && code.toUpperCase().includes("NOT_FOUND")) return true;
+    const message = (error as { message?: unknown } | null)?.message;
+    return typeof message === "string" && /not found/i.test(message);
   };
 
   return {
@@ -159,20 +171,42 @@ export function toFacilitatorSuiSigner(
       network: string,
     ): Promise<DryRunTransactionBlockResponse> {
       const client = getClient(network);
-      return await client.dryRunTransactionBlock({
-        transactionBlock: transactionBytes,
+      const sim = await client.simulateTransaction<{ balanceChanges: true }>({
+        transaction: fromBase64(transactionBytes),
+        include: { balanceChanges: true },
       });
+
+      // Adapt the gRPC simulate result into the JSON-RPC DryRun shape the untouched
+      // facilitator scheme + `matchBalanceChanges` consume: `effects.status.status`
+      // ("success" | "failure"), `effects.status.error`, and `balanceChanges[]` as
+      // `{ owner: { AddressOwner }, coinType, amount }`. A gRPC balance change is
+      // inherently per-ADDRESS (a flat `address`, no owner-kind field), so every
+      // entry maps to an AddressOwner — the API surfaces no object/shared/immutable
+      // owner kind to preserve. (`matchBalanceChanges` still skips an empty address.)
+      const tx = sim.$kind === "Transaction" ? sim.Transaction : sim.FailedTransaction;
+      const success = sim.$kind === "Transaction" && tx.status.success === true;
+      const error = tx.status.success === false ? tx.status.error.message : undefined;
+
+      return {
+        effects: {
+          status: { status: success ? "success" : "failure", error },
+        },
+        balanceChanges: tx.balanceChanges.map(change => ({
+          coinType: change.coinType,
+          amount: change.amount,
+          owner: { AddressOwner: change.address },
+        })),
+      } as unknown as DryRunTransactionBlockResponse;
     },
 
     async isTransactionExecuted(digest: string, network: string): Promise<boolean> {
       const client = getClient(network);
       try {
-        const tx = await client.getTransactionBlock({ digest });
-        return tx?.digest === digest;
-      } catch {
-        // An unknown digest (never committed) makes the node return an error — the
-        // transaction is not on-chain. Treat any lookup failure as "not executed".
-        return false;
+        await client.getTransaction({ digest });
+        return true;
+      } catch (error) {
+        if (isNotFound(error)) return false;
+        throw error;
       }
     },
 
@@ -182,30 +216,32 @@ export function toFacilitatorSuiSigner(
       network: string,
     ): Promise<string> {
       const client = getClient(network);
+      const signatures = Array.isArray(signature) ? signature : [signature];
 
-      const result = await client.executeTransactionBlock({
-        transactionBlock: transaction,
-        signature,
-        options: {
-          showEffects: true,
-        },
+      // Broadcast over gRPC. Re-broadcasting an already-executed gasless tx THROWS
+      // (unlike JSON-RPC) — that throw propagates to the scheme's settle, which
+      // treats it as a race and re-checks the chain. No retry/swallow here.
+      const result = await client.executeTransaction({
+        transaction: fromBase64(transaction),
+        signatures,
       });
 
-      if (result.effects?.status?.status !== "success") {
+      const tx = result.$kind === "Transaction" ? result.Transaction : result.FailedTransaction;
+      if (tx.status.success !== true) {
         throw new Error(
-          `Transaction execution failed: ${result.effects?.status?.error || "unknown error"}`,
+          `Transaction execution failed: ${
+            tx.status.success === false ? tx.status.error.message : "unknown error"
+          }`,
         );
       }
-
-      return result.digest;
+      return tx.digest;
     },
 
     async waitForTransaction(digest: string, network: string): Promise<void> {
       const client = getClient(network);
-      await client.waitForTransaction({
-        digest,
-        options: { showEffects: true },
-      });
+      // The gRPC client's native wait shares the base CoreClient poll implementation
+      // with the JSON-RPC client, so its patience matches the previous transport.
+      await client.waitForTransaction({ digest });
     },
   };
 }

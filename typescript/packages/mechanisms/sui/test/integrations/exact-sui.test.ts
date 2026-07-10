@@ -6,7 +6,6 @@
 
 import { beforeAll, describe, expect, it } from "vitest";
 import { SuiGrpcClient } from "@mysten/sui/grpc";
-import { SuiJsonRpcClient, getJsonRpcFullnodeUrl } from "@mysten/sui/jsonRpc";
 import { Transaction } from "@mysten/sui/transactions";
 import { Ed25519Keypair } from "@mysten/sui/keypairs/ed25519";
 import { decodeSuiPrivateKey } from "@mysten/sui/cryptography";
@@ -120,15 +119,14 @@ describe("Sui exact — live testnet integration", () => {
   // coin::send_funds]; the facilitator must ACCEPT it — a too-strict allowlist that
   // rejected SplitCoins would refuse the payloads its own client produces.
   it("settles a COIN-OBJECT payer (zero Address Balance) end-to-end", async () => {
-    const jsonRpc = new SuiJsonRpcClient({
-      url: getJsonRpcFullnodeUrl("testnet"),
-      network: "testnet",
-    });
+    const rpc = toFacilitatorSuiSigner();
     const funder = Ed25519Keypair.fromSecretKey(decodeSuiPrivateKey(CLIENT_KEY!).secretKey);
 
     // Mint a fresh payer funded with USDC as a COIN OBJECT (+ a little SUI for parity)
     // and ZERO Address Balance, by withdrawing from the funder's Address Balance into a
-    // Coin and transferring it.
+    // Coin and transferring it. The payer is coin-object-only BY CONSTRUCTION (a fresh
+    // address receiving one Coin<USDC>); the `SplitCoins` command assertion below is the
+    // proof — an Address-Balance source would build `redeem_funds` instead and fail it.
     const coinPayer = new Ed25519Keypair();
     const coinPayerAddr = coinPayer.toSuiAddress();
     const fundTx = new Transaction();
@@ -142,21 +140,11 @@ describe("Sui exact — live testnet integration", () => {
       arguments: [bal],
     });
     fundTx.transferObjects([coin], fundTx.pure.address(coinPayerAddr));
-    const fundBytes = await fundTx.build({ client: jsonRpc });
+    const fundBytes = await fundTx.build({ client: grpc });
     const { signature: fundSig } = await funder.signTransaction(fundBytes);
-    const fundRes = await jsonRpc.executeTransactionBlock({
-      transactionBlock: toBase64(fundBytes),
-      signature: fundSig,
-      options: { showEffects: true },
-    });
-    expect(fundRes.effects?.status?.status).toBe("success");
-    await jsonRpc.waitForTransaction({ digest: fundRes.digest, options: { showEffects: true } });
-
-    // Confirm the payer is coin-object-only (zero Address Balance).
-    const payerBal = await jsonRpc.getBalance({ owner: coinPayerAddr, coinType: USDC_TESTNET });
-    expect((payerBal as unknown as { fundsInAddressBalance: string }).fundsInAddressBalance).toBe(
-      "0",
-    );
+    const fundDigest = await rpc.executeTransaction(toBase64(fundBytes), fundSig, NETWORK);
+    expect(fundDigest).toMatch(/^[A-Za-z0-9]+$/);
+    await rpc.waitForTransaction(fundDigest, NETWORK);
 
     const coinClient = new ExactSuiClient(toClientSuiSigner(coinPayer, grpc));
     const requirements = reqs({ payTo: Ed25519Keypair.generate().toSuiAddress() });
@@ -182,20 +170,14 @@ describe("Sui exact — live testnet integration", () => {
   // ── replay guard: an already-executed payment is rejected on re-verify; re-settle
   // is idempotent (simulation is NOT a replay guard for gasless Address Balances) ───
   it("rejects a replay on re-verify and re-settles idempotently", async () => {
-    const jsonRpc = new SuiJsonRpcClient({
-      url: getJsonRpcFullnodeUrl("testnet"),
-      network: "testnet",
-    });
+    const rpc = toFacilitatorSuiSigner();
     const requirements = reqs();
     const payload = (await client.createPaymentPayload(2, requirements)) as PaymentPayload;
     payload.accepted = requirements;
 
     const settle = await facilitator.settle(payload, requirements);
     expect(settle.success, settle.errorMessage).toBe(true);
-    await jsonRpc.waitForTransaction({
-      digest: settle.transaction,
-      options: { showEffects: true },
-    });
+    await rpc.waitForTransaction(settle.transaction, NETWORK);
 
     // Re-verify the SAME payload — now rejected as already-executed (the replay hole).
     const replay = await facilitator.verify(payload, requirements);
