@@ -1651,6 +1651,7 @@ async function runTest() {
       xrplPayTo: facilitatorSupportsXrpl ? (serverXrplAddress || '') : '',
       xrplAsset: process.env.SERVER_XRPL_ASSET,
       xrplAmount: process.env.SERVER_XRPL_AMOUNT,
+      xrplIssuer: process.env.SERVER_XRPL_ISSUER,
       networks,
       facilitatorUrl,
       mockFacilitatorUrl,

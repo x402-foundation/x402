@@ -198,11 +198,22 @@
       "protocolFamily": "near"
     },
     {
-      "path": "/exact/xrpl",
+      "path": "/exact/xrpl/sequence",
       "method": "GET",
-      "description": "Protected endpoint requiring payment on XRPL network",
+      "description": "Protected endpoint requiring an XRPL sequence payment",
       "requiresPayment": true,
-      "protocolFamily": "xrpl"
+      "protocolFamily": "xrpl",
+      "scheme": "exact",
+      "assetTransferMethod": "sequence"
+    },
+    {
+      "path": "/exact/xrpl/ticketSequence",
+      "method": "GET",
+      "description": "Protected endpoint requiring an XRPL ticketSequence payment",
+      "requiresPayment": true,
+      "protocolFamily": "xrpl",
+      "scheme": "exact",
+      "assetTransferMethod": "ticketSequence"
     },
     {
       "path": "/health",
@@ -236,6 +247,7 @@
       "XRPL_PAYEE_ADDRESS",
       "XRPL_ASSET",
       "XRPL_AMOUNT",
+      "XRPL_ISSUER",
       "XRPL_NETWORK",
       "XRPL_WS_URL"
     ]

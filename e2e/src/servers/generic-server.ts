@@ -150,6 +150,7 @@ export class GenericServerProxy extends BaseProxy implements ServerProxy {
         XRPL_PAYEE_ADDRESS: config.xrplPayTo,
         ...(config.xrplAsset !== undefined ? { XRPL_ASSET: config.xrplAsset } : {}),
         ...(config.xrplAmount !== undefined ? { XRPL_AMOUNT: config.xrplAmount } : {}),
+        ...(config.xrplIssuer !== undefined ? { XRPL_ISSUER: config.xrplIssuer } : {}),
 
         // Facilitator
         FACILITATOR_URL: config.facilitatorUrl || '',

@@ -3,21 +3,24 @@ import type { NetworkSet } from './networks/networks';
 export type ProtocolFamily = 'evm' | 'svm' | 'avm' | 'aptos' | 'hedera' | 'keeta' | 'near' | 'stellar' | 'ccd' | 'tvm' | 'xrpl';
 export type Transport = 'http' | 'mcp';
 export type PaymentScheme = 'exact' | 'upto' | 'batch-settlement';
-export type AssetTransferMethod = 'eip3009' | 'permit2';
+export type AssetTransferMethod = 'eip3009' | 'permit2' | 'sequence' | 'ticketSequence';
 
 /**
- * Resolved asset transfer for an EVM endpoint.
+ * Resolved asset transfer method for an endpoint.
  */
 export function endpointAssetTransferMethod(endpoint: TestEndpoint): AssetTransferMethod | undefined {
   const family = endpoint.protocolFamily ?? 'evm';
-  if (family !== 'evm') {
-    return undefined;
-  }
   if (endpoint.assetTransferMethod != null) {
     return endpoint.assetTransferMethod;
   }
-  const scheme = endpoint.scheme ?? 'exact';
-  return scheme === 'upto' ? 'permit2' : 'eip3009';
+  if (family === 'evm') {
+    const scheme = endpoint.scheme ?? 'exact';
+    return scheme === 'upto' ? 'permit2' : 'eip3009';
+  }
+  if (family === 'xrpl') {
+    return 'sequence';
+  }
+  return undefined;
 }
 
 /**
@@ -127,6 +130,7 @@ export interface ServerConfig {
   xrplPayTo: string;
   xrplAsset?: string;
   xrplAmount?: string;
+  xrplIssuer?: string;
   networks: NetworkSet;
   facilitatorUrl?: string;
   mockFacilitatorUrl?: string;

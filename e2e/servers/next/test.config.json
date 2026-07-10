@@ -138,11 +138,22 @@
       "protocolFamily": "near"
     },
     {
-      "path": "/api/exact/xrpl",
+      "path": "/api/exact/xrpl/sequence",
       "method": "GET",
-      "description": "XRPL endpoint using proxy middleware",
+      "description": "XRPL sequence endpoint using proxy middleware",
       "requiresPayment": true,
-      "protocolFamily": "xrpl"
+      "protocolFamily": "xrpl",
+      "scheme": "exact",
+      "assetTransferMethod": "sequence"
+    },
+    {
+      "path": "/api/exact/xrpl/ticketSequence",
+      "method": "GET",
+      "description": "XRPL ticketSequence endpoint using proxy middleware",
+      "requiresPayment": true,
+      "protocolFamily": "xrpl",
+      "scheme": "exact",
+      "assetTransferMethod": "ticketSequence"
     },
     {
       "path": "/api/exact/stellar",
@@ -251,11 +262,22 @@
       "protocolFamily": "near"
     },
     {
-      "path": "/api/exact/xrpl/withx402",
+      "path": "/api/exact/xrpl/sequence/withx402",
       "method": "GET",
-      "description": "XRPL endpoint using withX402 wrapper",
+      "description": "XRPL sequence endpoint using withX402 wrapper",
       "requiresPayment": true,
-      "protocolFamily": "xrpl"
+      "protocolFamily": "xrpl",
+      "scheme": "exact",
+      "assetTransferMethod": "sequence"
+    },
+    {
+      "path": "/api/exact/xrpl/ticketSequence/withx402",
+      "method": "GET",
+      "description": "XRPL ticketSequence endpoint using withX402 wrapper",
+      "requiresPayment": true,
+      "protocolFamily": "xrpl",
+      "scheme": "exact",
+      "assetTransferMethod": "ticketSequence"
     },
     {
       "path": "/api/exact/stellar/withx402",
@@ -295,6 +317,7 @@
       "XRPL_PAYEE_ADDRESS",
       "XRPL_ASSET",
       "XRPL_AMOUNT",
+      "XRPL_ISSUER",
       "XRPL_NETWORK",
       "XRPL_WS_URL",
       "EVM_RECEIVER_AUTHORIZER_PRIVATE_KEY"
