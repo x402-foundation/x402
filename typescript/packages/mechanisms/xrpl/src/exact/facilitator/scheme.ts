@@ -273,11 +273,16 @@ export class ExactXrplScheme implements SchemeNetworkFacilitator {
     if (payload.accepted.extra?.destinationTag !== requirements.extra?.destinationTag) {
       return "invalid_exact_xrpl_destination_tag_mismatch";
     }
-    if (
-      requirements.asset !== "XRP" &&
-      payload.accepted.extra?.issuer !== requirements.extra?.issuer
-    ) {
-      return "invalid_exact_xrpl_iou_issuer_mismatch";
+    if (requirements.asset !== "XRP") {
+      try {
+        requireClassicAddress(requirements.extra?.issuer, "issuer");
+        requireClassicAddress(payload.accepted.extra?.issuer, "issuer");
+      } catch {
+        return "invalid_exact_xrpl_iou_issuer_missing";
+      }
+      if (payload.accepted.extra?.issuer !== requirements.extra?.issuer) {
+        return "invalid_exact_xrpl_iou_issuer_mismatch";
+      }
     }
     return undefined;
   }

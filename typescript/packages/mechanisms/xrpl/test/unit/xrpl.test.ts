@@ -1005,6 +1005,74 @@ describe("ExactXrplScheme facilitator verify", () => {
     expect(result.invalidReason).toContain("destination_tag");
   });
 
+  it("rejects IOU envelopes when both issuers are missing", async () => {
+    const requirements: PaymentRequirements = {
+      ...baseIouRequirements,
+      extra: {
+        areFeesSponsored: false,
+        invoiceId,
+        destinationTag: 12345,
+      },
+    };
+    const payload = {
+      ...buildPayload(baseIouRequirements),
+      accepted: requirements,
+    };
+
+    const result = await facilitator.verify(payload, requirements);
+
+    expect(result.isValid).toBe(false);
+    expect(result.invalidReason).toBe("invalid_exact_xrpl_iou_issuer_missing");
+  });
+
+  it("rejects IOU envelopes with an invalid accepted issuer", async () => {
+    const payload = buildPayload(baseIouRequirements);
+
+    const result = await facilitator.verify(
+      {
+        ...payload,
+        accepted: {
+          ...baseIouRequirements,
+          extra: { ...baseIouRequirements.extra, issuer: "not-a-classic-address" },
+        },
+      },
+      baseIouRequirements,
+    );
+
+    expect(result.isValid).toBe(false);
+    expect(result.invalidReason).toBe("invalid_exact_xrpl_iou_issuer_missing");
+  });
+
+  it("rejects IOU envelopes with an invalid required issuer", async () => {
+    const requirements: PaymentRequirements = {
+      ...baseIouRequirements,
+      extra: { ...baseIouRequirements.extra, issuer: "not-a-classic-address" },
+    };
+
+    const result = await facilitator.verify(buildPayload(baseIouRequirements), requirements);
+
+    expect(result.isValid).toBe(false);
+    expect(result.invalidReason).toBe("invalid_exact_xrpl_iou_issuer_missing");
+  });
+
+  it("distinguishes mismatched valid IOU issuers from missing issuers", async () => {
+    const payload = buildPayload(baseIouRequirements);
+
+    const result = await facilitator.verify(
+      {
+        ...payload,
+        accepted: {
+          ...baseIouRequirements,
+          extra: { ...baseIouRequirements.extra, issuer: otherWallet.classicAddress },
+        },
+      },
+      baseIouRequirements,
+    );
+
+    expect(result.isValid).toBe(false);
+    expect(result.invalidReason).toBe("invalid_exact_xrpl_iou_issuer_mismatch");
+  });
+
   it("rejects payloads that select a method differing from the required one", async () => {
     const sequenceRequirements: PaymentRequirements = {
       ...baseXrpRequirements,
