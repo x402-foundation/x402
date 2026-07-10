@@ -462,6 +462,22 @@ describe("ExactXrplScheme server", () => {
     expect(parser).not.toHaveBeenCalled();
   });
 
+  it("parses Money before custom parser dispatch", async () => {
+    const parser = vi.fn(async (amount: number) => ({
+      amount: String(amount),
+      asset: "USD",
+      extra: { issuer },
+    }));
+    const server = new ExactXrplServerScheme().registerMoneyParser(parser);
+
+    await expect(server.parsePrice("$0.01", XRPL_TESTNET)).resolves.toEqual({
+      amount: "0.01",
+      asset: "USD",
+      extra: { issuer },
+    });
+    expect(parser).toHaveBeenCalledWith(0.01, XRPL_TESTNET);
+  });
+
   it("adds fee metadata while preserving caller extras", async () => {
     const server = new ExactXrplServerScheme();
 

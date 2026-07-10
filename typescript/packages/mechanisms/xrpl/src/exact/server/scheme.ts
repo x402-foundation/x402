@@ -8,6 +8,7 @@ import type {
   SchemeNetworkServer,
   SupportedKind,
 } from "@x402/core/types";
+import { parseMoneyString } from "@x402/core/utils";
 import {
   isDecimalString,
   isIntegerString,
@@ -125,11 +126,7 @@ export class ExactXrplScheme implements SchemeNetworkServer {
       return money;
     }
 
-    const cleanMoney = money.trim().replace(/^\$/, "");
-    if (!/^\d+(\.\d+)?$/.test(cleanMoney)) {
-      throw new Error(`Invalid money format: ${money}`);
-    }
-    return Number(cleanMoney);
+    return parseMoneyString(money);
   }
 
   /**
