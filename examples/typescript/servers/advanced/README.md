@@ -56,6 +56,21 @@ app.use(
 - Valid EVM for receiving payments
 - URL of a facilitator supporting the desired payment network, see [facilitator list](https://www.x402.org/ecosystem?category=facilitators)
 
+## Production-oriented EVM notes
+
+For EVM networks, there are two separate questions:
+
+1. does the protocol support the network, and
+2. do you have a production facilitator path for that network?
+
+When you are moving beyond tutorial deployments:
+
+- decide on your facilitator model early,
+- prefer explicit token configuration when you are not using a documented default asset,
+- and verify whether the token flow relies on EIP-3009 or Permit2.
+
+If you want to avoid an external facilitator entirely, use the dedicated `servers/self-facilitation` example.
+
 ## Setup
 
 1. Copy `.env-local` to `.env`:
