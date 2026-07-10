@@ -498,7 +498,7 @@ function maskPrivateKeys<T>(value: T): T {
     const masked: Record<string, unknown> = {};
     for (const [key, entry] of Object.entries(value)) {
       masked[key] =
-        /privateKey/i.test(key) && typeof entry === 'string' && entry.length > 0
+        /(privateKey|seed)$/i.test(key) && typeof entry === 'string' && entry.length > 0
           ? maskSecret(entry)
           : maskPrivateKeys(entry);
     }
