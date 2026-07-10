@@ -32,8 +32,6 @@ from ..types import (
 )
 from ..x402_http_server import PaywallProvider, x402HTTPResourceServer
 
-logger = logging.getLogger(__name__)
-
 if TYPE_CHECKING:
     from ...server import x402ResourceServer
 
@@ -51,6 +49,8 @@ from ._bazaar_utils import (
 from ._bazaar_utils import (
     validate_bazaar_extensions as _validate_bazaar_extensions,
 )
+
+logger = logging.getLogger(__name__)
 
 # ============================================================================
 # FastAPI Adapter
@@ -377,16 +377,14 @@ def payment_middleware(
 
             except FacilitatorResponseError as error:
                 return _facilitator_error_response(error)
-            except Exception as error:
+            except Exception:
                 # An unexpected error here (RPC failure, bug, ...) is a
                 # server-side failure, not a payment problem. Log it so
                 # operators get a signal (the module otherwise logs nothing),
                 # and surface it as a settle failure (402 + PAYMENT-RESPONSE,
                 # success=False) - consistent with the not-settle_result.success
                 # path and distinguishable from a genuine "payment required".
-                logger.exception(
-                    "x402: unexpected error while settling a verified payment"
-                )
+                logger.exception("x402: unexpected error while settling a verified payment")
                 settle_response = SettleResponse(
                     success=False,
                     error_reason="unexpected_settle_error",

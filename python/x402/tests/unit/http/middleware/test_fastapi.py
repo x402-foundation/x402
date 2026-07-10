@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import logging
-
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -710,9 +709,7 @@ class TestFastAPIMiddlewareIntegration:
 
             assert response.status_code == 402
             assert "PAYMENT-RESPONSE" in response.headers  # distinguishable settle failure
-            assert any(
-                "unexpected error while settling" in r.getMessage() for r in caplog.records
-            )
+            assert any("unexpected error while settling" in r.getMessage() for r in caplog.records)
 
 
 # =============================================================================
