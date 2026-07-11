@@ -41,6 +41,12 @@ export type ExactDefaultAssetInfo = DefaultAssetInfo & {
  * exact/server/ for how to add new chains.
  */
 export const DEFAULT_STABLECOINS: Record<string, ExactDefaultAssetInfo> = {
+  "eip155:4663": {
+    address: "0x5fc5360D0400a0Fd4f2af552ADD042D716F1d168",
+    name: "USDG",
+    version: "2",
+    decimals: 6,
+  }, // Robinhood Chain mainnet USDG
   "eip155:8453": {
     address: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
     name: "USD Coin",

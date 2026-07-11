@@ -1,0 +1,31 @@
+version: "3.9"
+
+services:
+  facilitator:
+    build:
+      context: .
+      target: facilitator
+    ports:
+      - "3001:3001"
+    environment:
+      - FACILITATOR_PORT=3001
+      - RPC_URL=${RPC_URL:-https://rpc.testnet.chain.robinhood.com}
+      - CHAIN_ID=${CHAIN_ID:-46630}
+      - FACILITATOR_PRIVATE_KEY=${FACILITATOR_PRIVATE_KEY}
+      - PAYMENT_DESTINATION=${PAYMENT_DESTINATION:-0x5131c099eB615227aB2Bb8b542D4cBd622910a25}
+      - MOCK_USDG_ADDRESS=${MOCK_USDG_ADDRESS:-0xdDC7e17D6c06F8c5126b65fc9164481D87e6edE4}
+    restart: unless-stopped
+
+  api:
+    build:
+      context: .
+      target: demo-api
+    ports:
+      - "3005:3005"
+    environment:
+      - PORT=3005
+      - FACILITATOR_URL=http://facilitator:3001
+      - FIRECRAWL_KEY=${FIRECRAWL_KEY:-}
+    depends_on:
+      - facilitator
+    restart: unless-stopped
