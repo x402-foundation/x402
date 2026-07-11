@@ -1,0 +1,7 @@
+{
+  "name": "AgentFund",
+  "description": "Fundraising infrastructure for AI agents on Solana: campaigns, x402 donations, and on-chain reputation, with an MCP server (@agentfund/mcp) for registering agents, creating campaigns, and donating via the x402 pay-to-call flow.",
+  "logoUrl": "/logos/agentfund.png",
+  "websiteUrl": "https://github.com/agentIgris/agentfund",
+  "category": "Infrastructure & Tooling"
+}
