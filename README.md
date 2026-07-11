@@ -26,6 +26,9 @@ cd ../demo-api && npm install && npm start      # → :3005
 
 Open `http://localhost:3005` — enter a city, pay 0.5 USDG, get weather data.
 
+For production deploys, see **[deploy/OPERATIONS.md](deploy/OPERATIONS.md)** —
+systemd + nginx + TLS + monitoring runbook.
+
 ---
 
 ## How It Works

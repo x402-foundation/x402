@@ -9,26 +9,44 @@ const FACILITATOR = process.env.FACILITATOR_URL || "http://localhost:3001";
 const PRICE_USD = "0.5";
 
 const app = express();
-app.use(express.json());
+app.use(express.json({ limit: "16kb" })); // payload is a city name + a signature blob, never large
+
+// Upstream (wttr.in) hard cap. If wttr.in is slow, we DO NOT want to hold
+// an open connection while the client waits — they've already signed but
+// we haven't settled yet, so a timeout here means clean retry (no burned
+// nonce, no burned gas).
+const WTTR_TIMEOUT_MS = parseInt(process.env.WTTR_TIMEOUT_MS || "5000");
 
 // ── Fetch real weather from wttr.in directly ──────────────
+// Throws on any failure. Caller MUST NOT settle if this throws.
 async function fetchWeather(city: string): Promise<Record<string, any>> {
   const url = `https://wttr.in/${encodeURIComponent(city)}?format=j1`;
-  const resp = await fetch(url, { headers: { "User-Agent": "curl/8.0" } });
-  if (!resp.ok) throw new Error(`wttr.in returned ${resp.status}`);
-  const data = await resp.json() as any;
-  const curr = data.current_condition[0];
-  return {
-    city: data.nearest_area[0].areaName[0].value,
-    country: data.nearest_area[0].country[0].value,
-    temp_c: curr.temp_C,
-    temp_f: curr.temp_F,
-    condition: curr.weatherDesc[0].value,
-    humidity: curr.humidity,
-    wind: `${curr.winddir16Point} ${curr.windspeedMiles}mph`,
-    feels_like: curr.FeelsLikeF,
-    source: "wttr.in",
-  };
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), WTTR_TIMEOUT_MS);
+  try {
+    const resp = await fetch(url, {
+      headers: { "User-Agent": "curl/8.0" },
+      signal: ctrl.signal,
+    });
+    if (!resp.ok) throw new Error(`wttr.in returned ${resp.status}`);
+    const data = await resp.json() as any;
+    const curr = data.current_condition?.[0];
+    const area = data.nearest_area?.[0];
+    if (!curr || !area) throw new Error("wttr.in returned unexpected shape");
+    return {
+      city: area.areaName?.[0]?.value ?? city,
+      country: area.country?.[0]?.value ?? "",
+      temp_c: curr.temp_C,
+      temp_f: curr.temp_F,
+      condition: curr.weatherDesc?.[0]?.value ?? "",
+      humidity: curr.humidity,
+      wind: `${curr.winddir16Point} ${curr.windspeedMiles}mph`,
+      feels_like: curr.FeelsLikeF,
+      source: "wttr.in",
+    };
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 // ── x402 v2 constants ───────────────────────────────────
@@ -76,8 +94,20 @@ function send402(res: any, extra?: Record<string, any>) {
 }
 
 // ── Weather endpoint (paid via x402 v2 / PAYMENT-SIGNATURE) ─────────
+// City name: [letters, digits, space, hyphen, apostrophe, comma, period],
+// 1–64 chars. Enough for "St. Louis" / "Aix-en-Provence" / "Washington, D.C."
+// while rejecting SSRF payloads / control chars / oversized junk.
+const CITY_RE = /^[A-Za-z0-9 .,'\-]{1,64}$/;
+
 app.post("/weather", async (req, res) => {
-  const city = (req.body?.city as string) || "New York";
+  const raw = (req.body?.city as string) ?? "New York";
+  if (typeof raw !== "string" || !CITY_RE.test(raw)) {
+    return res.status(400).json({
+      x402Version: 2,
+      error: "invalid city: must be 1–64 chars of [A-Za-z0-9 .,'-]",
+    });
+  }
+  const city = raw.trim();
   // v2 canonical header is PAYMENT-SIGNATURE; accept legacy X-PAYMENT for back-compat.
   const payHeader = (req.headers["payment-signature"] || req.headers["x-payment"]) as string | undefined;
 
@@ -110,7 +140,25 @@ app.post("/weather", async (req, res) => {
     });
   }
 
-  // Settle on-chain
+  // ── Fetch the goods BEFORE charging (fix C5) ──────────────────────
+  // The payment is verified (signature valid, funds committed) but NOT yet
+  // settled on-chain. Fetch the actual product first. If the upstream is
+  // down, we bail with 502 WITHOUT settling — the client's authorization
+  // nonce stays unused, so they can retry cleanly and no gas was burned.
+  // Only once we have real data do we broadcast the settlement tx.
+  let weather: any;
+  try {
+    weather = await fetchWeather(city);
+  } catch (e: any) {
+    console.error("fetchWeather error (pre-settle, client NOT charged):", e.message);
+    return res.status(502).json({
+      x402Version: 2,
+      error: "upstream weather provider unavailable — payment was NOT settled, safe to retry",
+      accepts: [paymentRequirements()],
+    });
+  }
+
+  // Settle on-chain — only now that we can actually deliver.
   let settle: any = { success: false, transaction: "", network: requirements.network };
   try {
     settle = await (await fetch(`${FACILITATOR}/settle`, {
@@ -136,12 +184,6 @@ app.post("/weather", async (req, res) => {
   const settlementB64 = Buffer.from(JSON.stringify(settlementResponse)).toString("base64");
   res.setHeader("PAYMENT-RESPONSE", settlementB64);
   res.setHeader("X-PAYMENT-RESPONSE", settlementB64);
-
-  // Fetch real weather
-  let weather: any;
-  try { weather = await fetchWeather(city); } catch (e: any) { console.error("fetchWeather error:", e.message);
-    weather = { city, temp_f: 72, condition: "Sunny", humidity: "45%", source: "fallback" };
-  }
 
   res.json({ ...weather, paid: `${PRICE_USD} USDG`, settlement: settlementResponse });
 });

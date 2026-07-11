@@ -1,0 +1,50 @@
+[Unit]
+Description=Hoodgate demo API (x402-protected weather resource)
+Documentation=https://github.com/hoodgate/hoodgate
+After=network-online.target hoodgate-facilitator.service
+Wants=network-online.target
+# Not a hard dep — the demo API will still start if the facilitator is
+# down, and its /weather calls will surface the outage via 502.
+
+[Service]
+Type=simple
+User=hoodgate
+Group=hoodgate
+
+WorkingDirectory=/opt/hoodgate/demo-api
+ExecStart=/usr/bin/node /opt/hoodgate/demo-api/dist/server.cjs
+
+EnvironmentFile=-/etc/hoodgate/demo-api.env
+Environment=NODE_ENV=production
+
+Restart=always
+RestartSec=3s
+StartLimitBurst=5
+StartLimitIntervalSec=60
+
+KillSignal=SIGTERM
+TimeoutStopSec=15
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=hoodgate-demo-api
+
+# Hardening (same profile as facilitator).
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictNamespaces=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged @resources
+
+[Install]
+WantedBy=multi-user.target

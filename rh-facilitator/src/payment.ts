@@ -20,9 +20,10 @@ import {
 } from "viem";
 
 // ── Constants ───────────────────────────────────────────
-const PERMIT2_ADDRESS: Address = "0x000000000022D473030F116dDEE9F6B43aC78BA3";
+// NOTE: Permit2 support was scoped out — only the "exact" / EIP-3009 scheme
+// is implemented below. If Permit2 is added later, reintroduce
+// PERMIT2_ADDRESS ("0x000000000022D473030F116dDEE9F6B43aC78BA3") here.
 const USDG: Address = (process.env.MOCK_USDG_ADDRESS || "0xdDC7e17D6c06F8c5126b65fc9164481D87e6edE4") as Address;
-const USDG_DECIMALS = 6;
 const CHAIN_ID = parseInt(process.env.CHAIN_ID || "46630");
 
 // ── Helpers ─────────────────────────────────────────────
@@ -215,3 +216,8 @@ export async function settlePayment(wallet: WalletClient, client: PublicClient, 
   if (scheme === "exact") return settleEIP3009(wallet, client, paymentPayload, requirements);
   return { success: false, transaction: "", network: requirements?.network || `eip155:${CHAIN_ID}`, errorReason: "unsupported_scheme" };
 }
+
+// Test-only surface. Not part of the public API — exported so unit tests can
+// exercise the pure helpers and the verify branch matrix without spinning up
+// the HTTP server. Do not import these from application code.
+export const __test = { toBig, normalizeAuth, resolveToken, verifyEIP3009, USDG, CHAIN_ID };

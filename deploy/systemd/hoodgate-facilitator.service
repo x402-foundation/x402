@@ -1,0 +1,63 @@
+[Unit]
+Description=Hoodgate x402 Facilitator (verify + settle for Robinhood Chain)
+Documentation=https://github.com/hoodgate/hoodgate
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=hoodgate
+Group=hoodgate
+
+# Paths — override with `systemctl edit` if you install elsewhere.
+WorkingDirectory=/opt/hoodgate/rh-facilitator
+ExecStart=/usr/bin/node /opt/hoodgate/rh-facilitator/dist/index.cjs
+
+# Env: load defaults from a file, keep secrets in a locked-down file.
+# `EnvironmentFile=-...` (leading dash) = tolerate missing file.
+EnvironmentFile=-/etc/hoodgate/facilitator.env
+EnvironmentFile=-/etc/hoodgate/facilitator.secret.env
+Environment=NODE_ENV=production
+
+# Restart policy — service should never stay dead. Cap at 5 restarts per
+# 60s window; beyond that systemd gives up and the alert webhook (if
+# configured) becomes the escalation path.
+Restart=always
+RestartSec=3s
+StartLimitBurst=5
+StartLimitIntervalSec=60
+
+# Graceful shutdown: the app handles SIGTERM and drains in-flight settles.
+# Give it up to 20s before SIGKILL.
+KillSignal=SIGTERM
+TimeoutStopSec=20
+
+# Logging — pino writes JSON to stdout; journald captures it.
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=hoodgate-facilitator
+
+# Hardening
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+ProtectClock=true
+ProtectHostname=true
+ProtectKernelLogs=true
+RestrictNamespaces=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged @resources
+# Facilitator needs network (RPC + alerts) but no filesystem writes.
+ReadWritePaths=
+
+[Install]
+WantedBy=multi-user.target
