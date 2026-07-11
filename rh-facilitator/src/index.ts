@@ -51,44 +51,42 @@ app.get("/health", (_req, res) => {
   res.json({ status: "ok", chain: CHAIN_ID, address: account.address });
 });
 
-// ── Supported schemes ───────────────────────────────────
+// ── Supported schemes (x402 v2) ─────────────────────────
 app.get("/supported", (_req, res) => {
   res.json({
-    schemes: [
-      {
-        scheme: "exact",
-        network: `eip155:${CHAIN_ID}`,
-        assets: [
-          {
-            address: process.env.MOCK_USDG_ADDRESS || "0xdDC7e17D6c06F8c5126b65fc9164481D87e6edE4",
-            name: "USDG",
-            decimals: 6,
-          },
-        ],
-      },
+    kinds: [
+      { x402Version: 2, scheme: "exact", network: `eip155:${CHAIN_ID}` },
     ],
+    extensions: [],
+    signers: {
+      [`eip155:${CHAIN_ID}`]: [account.address],
+    },
   });
 });
 
-// ── Verify ──────────────────────────────────────────────
+// ── Verify (x402 v2: {x402Version, paymentPayload, paymentRequirements}) ──
 app.post("/verify", async (req, res) => {
   try {
-    const { payload, requirements } = req.body;
-    const result = await verifyPayment(publicClient, payload, requirements);
+    // v2 naming, with legacy {payload, requirements} tolerance
+    const paymentPayload = req.body.paymentPayload ?? req.body.payload;
+    // Requirements: explicit param → payload.accepted (v2 canonical) → undefined
+    const paymentRequirements = req.body.paymentRequirements ?? req.body.requirements ?? paymentPayload?.accepted;
+    const result = await verifyPayment(publicClient, paymentPayload, paymentRequirements);
     res.json(result);
   } catch (err: any) {
-    res.status(400).json({ valid: false, error: err.message });
+    res.status(400).json({ isValid: false, invalidReason: err.message });
   }
 });
 
-// ── Settle ──────────────────────────────────────────────
+// ── Settle (x402 v2) ────────────────────────────────────
 app.post("/settle", async (req, res) => {
   try {
-    const { payload, requirements } = req.body;
-    const result = await settlePayment(walletClient, publicClient, payload, requirements);
+    const paymentPayload = req.body.paymentPayload ?? req.body.payload;
+    const paymentRequirements = req.body.paymentRequirements ?? req.body.requirements ?? paymentPayload?.accepted;
+    const result = await settlePayment(walletClient, publicClient, paymentPayload, paymentRequirements);
     res.json(result);
   } catch (err: any) {
-    res.status(400).json({ settled: false, error: err.message });
+    res.status(400).json({ success: false, transaction: "", network: `eip155:${CHAIN_ID}`, errorReason: err.message });
   }
 });
 

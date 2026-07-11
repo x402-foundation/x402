@@ -32,43 +32,111 @@ async function fetchWeather(city: string): Promise<Record<string, any>> {
   };
 }
 
-// ── Weather endpoint (paid via 402) ────────────────────────
-app.post("/weather", async (req, res) => {
-  const sig = req.headers["payment-signature"] as string;
-  const payloadRaw = req.headers["payment-payload"] as string;
-  const network = req.headers["payment-network"] as string;
-  const city = (req.body?.city as string) || "New York";
+// ── x402 v2 constants ───────────────────────────────────
+const USDG_ADDRESS = process.env.MOCK_USDG_ADDRESS || "0xdDC7e17D6c06F8c5126b65fc9164481D87e6edE4";
+const FACILITATOR_ADDRESS = process.env.FACILITATOR_ADDRESS || "";
+const RESOURCE_URL_BASE = process.env.PUBLIC_URL || `http://localhost:${PORT}`;
+const PRICE_ATOMIC = "500000"; // 0.5 USDG, 6 decimals, atomic decimal string per spec
 
-  if (!sig || !payloadRaw) {
-    res.setHeader("Payment-Required", JSON.stringify({
-      scheme: "exact", network: "eip155:46630", token: "USDG",
-      amount: PRICE_USD, facilitator: FACILITATOR,
-    }));
-    return res.status(402).json({ error: "Payment Required", cost: `${PRICE_USD} USDG` });
+function paymentRequirements() {
+  return {
+    scheme: "exact",
+    network: "eip155:46630",
+    amount: PRICE_ATOMIC,
+    asset: USDG_ADDRESS,
+    payTo: FACILITATOR_ADDRESS,
+    maxTimeoutSeconds: 60,
+    resource: `${RESOURCE_URL_BASE}/weather`,
+    description: "Real-time weather data for a given city",
+    mimeType: "application/json",
+    extra: { name: "USDG", version: "2" },
+  };
+}
+
+// Canonical x402 v2 PaymentRequired object (per @x402/fetch SDK).
+function paymentRequired() {
+  return {
+    x402Version: 2,
+    accepts: [paymentRequirements()],
+    resource: {
+      url: `${RESOURCE_URL_BASE}/weather`,
+      description: "Real-time weather data for a given city",
+      mimeType: "application/json",
+    },
+    extensions: {},
+  };
+}
+
+// Emit the 402 challenge in canonical SDK shape:
+//   - PAYMENT-REQUIRED header (base64 JSON) — primary v2 signal
+//   - JSON body — fallback / human-readable
+function send402(res: any, extra?: Record<string, any>) {
+  const pr = { ...paymentRequired(), ...(extra || {}) };
+  res.setHeader("PAYMENT-REQUIRED", Buffer.from(JSON.stringify(pr)).toString("base64"));
+  return res.status(402).json(pr);
+}
+
+// ── Weather endpoint (paid via x402 v2 / PAYMENT-SIGNATURE) ─────────
+app.post("/weather", async (req, res) => {
+  const city = (req.body?.city as string) || "New York";
+  // v2 canonical header is PAYMENT-SIGNATURE; accept legacy X-PAYMENT for back-compat.
+  const payHeader = (req.headers["payment-signature"] || req.headers["x-payment"]) as string | undefined;
+
+  if (!payHeader) {
+    return send402(res, { error: "PAYMENT-SIGNATURE header is required" });
   }
 
-  let payload: any;
-  try { payload = JSON.parse(payloadRaw); } catch { return res.status(400).json({ error: "invalid payload" }); }
-  const reqs = { scheme: "exact", network: network || "eip155:46630", token: "USDG", amount: PRICE_USD };
+  let paymentPayload: any;
+  try {
+    paymentPayload = JSON.parse(Buffer.from(payHeader, "base64").toString("utf-8"));
+  } catch {
+    return send402(res, { error: "malformed PAYMENT-SIGNATURE header" });
+  }
+
+  // v2 payload carries the selected requirements in `accepted`; fall back to server's own.
+  const requirements = paymentPayload.accepted || paymentRequirements();
 
   // Verify
   let v: any;
   try {
     v = await (await fetch(`${FACILITATOR}/verify`, {
       method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ payload, requirements: reqs }),
+      body: JSON.stringify({ x402Version: 2, paymentPayload, paymentRequirements: requirements }),
     })).json();
   } catch (e: any) { return res.status(502).json({ error: "facilitator down", detail: e.message }); }
-  if (!v.valid) return res.status(402).json({ error: "Payment verification failed", reason: v.reason });
+  if (!v.isValid) {
+    return res.status(402).json({
+      x402Version: 2, error: `Payment verification failed: ${v.invalidReason || "unknown"}`,
+      accepts: [paymentRequirements()],
+    });
+  }
 
   // Settle on-chain
-  let settle: any = { skipped: true };
+  let settle: any = { success: false, transaction: "", network: requirements.network };
   try {
     settle = await (await fetch(`${FACILITATOR}/settle`, {
       method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ payload, requirements: reqs }),
+      body: JSON.stringify({ x402Version: 2, paymentPayload, paymentRequirements: requirements }),
     })).json();
   } catch (e: any) { console.error("settle error:", e.message); }
+
+  if (!settle.success) {
+    return res.status(402).json({
+      x402Version: 2, error: `Settlement failed: ${settle.errorReason || "unknown"}`,
+      accepts: [paymentRequirements()],
+    });
+  }
+
+  // Settlement response header — v2 canonical is PAYMENT-RESPONSE; keep legacy X-PAYMENT-RESPONSE for back-compat.
+  const settlementResponse = {
+    success: settle.success,
+    transaction: settle.transaction,
+    network: settle.network,
+    payer: settle.payer,
+  };
+  const settlementB64 = Buffer.from(JSON.stringify(settlementResponse)).toString("base64");
+  res.setHeader("PAYMENT-RESPONSE", settlementB64);
+  res.setHeader("X-PAYMENT-RESPONSE", settlementB64);
 
   // Fetch real weather
   let weather: any;
@@ -76,7 +144,7 @@ app.post("/weather", async (req, res) => {
     weather = { city, temp_f: 72, condition: "Sunny", humidity: "45%", source: "fallback" };
   }
 
-  res.json({ ...weather, paid: `${PRICE_USD} USDG`, settlement: settle });
+  res.json({ ...weather, paid: `${PRICE_USD} USDG`, settlement: settlementResponse });
 });
 
 // ── UI (single HTML with embedded 402 flow) ─────────────────
