@@ -2,7 +2,7 @@
  * Payment verification & settlement for Robinhood Chain x402 (v2 wire format).
  *
  * Accepts the x402 v2 PaymentPayload shape:
- *   { x402Version, scheme, network, payload: { signature, authorization: { from,to,value,validAfter,validBefore,nonce } } }
+ *   { x402Version, scheme, network, payload: { signature, authorization: { from, to, value, validAfter, validBefore, nonce } } }
  * with atomic DECIMAL string values (per spec). Also tolerates legacy hex + flat payloads.
  *
  * Two modes:
@@ -79,17 +79,21 @@ const transferWithAuthorizationAbi = [
   ], name: "transferWithAuthorization", outputs: [], stateMutability: "nonpayable", type: "function" },
 ] as const;
 
-// EIP-3009 domain types
+// EIP-3009 typed-data types. Note: EIP712Domain is intentionally omitted —
+// viem's recoverTypedDataAddress derives the domain separator from the
+// `domain` argument itself, and including EIP712Domain here breaks its
+// generic type inference (TS2322 on domain.chainId).
 const eip3009DomainTypes = {
-  EIP712Domain: [
-    { name: "name", type: "string" }, { name: "version", type: "string" },
-    { name: "chainId", type: "uint256" }, { name: "verifyingContract", type: "address" },
-  ],
   TransferWithAuthorization: [
     { name: "from", type: "address" }, { name: "to", type: "address" }, { name: "value", type: "uint256" },
     { name: "validAfter", type: "uint256" }, { name: "validBefore", type: "uint256" }, { name: "nonce", type: "bytes32" },
   ],
-};
+} as const;
+
+// Optional cap on gas price the facilitator is willing to pay when settling.
+// Unset (null) means no cap. Protects the facilitator's own funds from a
+// gas price spike burning through the wallet on otherwise-valid settlements.
+const MAX_GAS_PRICE_WEI = process.env.MAX_GAS_PRICE_WEI ? BigInt(process.env.MAX_GAS_PRICE_WEI) : null;
 
 // ── Verify: EIP-3009 (v2) ───────────────────────────────
 async function verifyEIP3009(
@@ -141,7 +145,7 @@ async function verifyEIP3009(
   const domain = { name: domainName, version: domainVersion, chainId: BigInt(chainIdEff), verifyingContract: token };
   const message = { from: a.from, to: a.to, value: a.value, validAfter: a.validAfter, validBefore: a.validBefore, nonce: a.nonce };
   const sig = a.signature;
-  const v = parseInt(slice(sig, 64, 65), 16);
+  const v = BigInt(parseInt(slice(sig, 64, 65), 16));
   const r = slice(sig, 0, 32);
   const s = slice(sig, 32, 64);
   try {
@@ -157,6 +161,7 @@ async function verifyEIP3009(
 // ── Settle: EIP-3009 (v2) ───────────────────────────────
 async function settleEIP3009(
   wallet: WalletClient,
+  client: PublicClient,
   paymentPayload: any,
   requirements: any,
 ): Promise<{ success: boolean; transaction: string; network: string; payer?: string; errorReason?: string }> {
@@ -169,6 +174,19 @@ async function settleEIP3009(
   const v = parseInt(slice(sig, 64, 65), 16);
   const r = slice(sig, 0, 32);
   const s = slice(sig, 32, 64);
+
+  if (MAX_GAS_PRICE_WEI !== null) {
+    try {
+      const gasPrice = await client.getGasPrice();
+      if (gasPrice > MAX_GAS_PRICE_WEI) {
+        return { success: false, transaction: "", network, payer: a.from, errorReason: "gas_price_exceeds_cap" };
+      }
+    } catch {
+      // If the gas price read itself fails, don't block settlement on a
+      // monitoring check — fall through and let writeContract surface the
+      // real error if the RPC is actually down.
+    }
+  }
 
   try {
     const hash = await wallet.writeContract({
@@ -192,8 +210,8 @@ export async function verifyPayment(client: PublicClient, paymentPayload: any, r
   return { isValid: false, invalidReason: "unsupported_scheme" };
 }
 
-export async function settlePayment(wallet: WalletClient, _client: PublicClient, paymentPayload: any, requirements: any): Promise<any> {
+export async function settlePayment(wallet: WalletClient, client: PublicClient, paymentPayload: any, requirements: any): Promise<any> {
   const scheme = paymentPayload?.scheme || requirements?.scheme || "exact";
-  if (scheme === "exact") return settleEIP3009(wallet, paymentPayload, requirements);
+  if (scheme === "exact") return settleEIP3009(wallet, client, paymentPayload, requirements);
   return { success: false, transaction: "", network: requirements?.network || `eip155:${CHAIN_ID}`, errorReason: "unsupported_scheme" };
 }

@@ -6,7 +6,6 @@ import express from "express";
 
 const PORT = parseInt(process.env.PORT || "3005");
 const FACILITATOR = process.env.FACILITATOR_URL || "http://localhost:3001";
-const FIRECRAWL_KEY = process.env.FIRECRAWL_API_KEY || process.env.FIRECRAWL_KEY || "";
 const PRICE_USD = "0.5";
 
 const app = express();
@@ -1093,7 +1092,7 @@ import path from "path";
 app.use("/", express.static(path.join(process.cwd(), "dist")));
 
 // ── Health ─────────────────────────────────────────────────
-app.get("/health", (_req, res) => res.json({ status: "ok", firecrawl: !!FIRECRAWL_KEY }));
+app.get("/health", (_req, res) => res.json({ status: "ok" }));
 
 app.listen(PORT, () => console.log("Weather API + UI on :" + PORT));
 export default app;

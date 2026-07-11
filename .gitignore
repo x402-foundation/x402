@@ -54,3 +54,4 @@ REVIEW_PROMPT.md
 .omc/
 /demo/
 /contracts/tvm/
+.client_key.local
