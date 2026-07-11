@@ -1,5 +1,5 @@
 import { x402Version } from "..";
-import { SettleResponse, VerifyResponse } from "../types/facilitator";
+import { SettleResponse, SupportedResponse, VerifyResponse } from "../types/facilitator";
 import { FacilitatorExtension } from "../types/extensions";
 import { SchemeNetworkFacilitator, FacilitatorContext } from "../types/mechanisms";
 import { PaymentPayload, PaymentRequirements } from "../types/payments";
@@ -216,22 +216,8 @@ export class x402Facilitator {
    *
    * @returns Supported response with kinds as array (with version in each element), extensions, and signers
    */
-  getSupported(): {
-    kinds: Array<{
-      x402Version: number;
-      scheme: string;
-      network: string;
-      extra?: Record<string, unknown>;
-    }>;
-    extensions: string[];
-    signers: Record<string, string[]>;
-  } {
-    const kinds: Array<{
-      x402Version: number;
-      scheme: string;
-      network: string;
-      extra?: Record<string, unknown>;
-    }> = [];
+  getSupported(): SupportedResponse {
+    const kinds: SupportedResponse["kinds"] = [];
     const signersByFamily: Record<string, Set<string>> = {};
 
     // Iterate over registered scheme data (array supports multiple facilitators per version)

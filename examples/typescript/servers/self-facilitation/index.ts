@@ -44,12 +44,40 @@ const viemClient = createWalletClient({
 
 const evmSigner = toFacilitatorEvmSigner({
   address: evmAccount.address,
-  getCode: viemClient.getCode,
-  readContract: viemClient.readContract,
-  verifyTypedData: viemClient.verifyTypedData,
-  writeContract: viemClient.writeContract,
-  sendTransaction: viemClient.sendTransaction,
-  waitForTransactionReceipt: viemClient.waitForTransactionReceipt,
+  getCode: (args: { address: `0x${string}` }) => viemClient.getCode(args),
+  readContract: (args: {
+    address: `0x${string}`;
+    abi: readonly unknown[];
+    functionName: string;
+    args?: readonly unknown[];
+  }) =>
+    viemClient.readContract({
+      ...args,
+      args: args.args || [],
+    }),
+  verifyTypedData: (args: {
+    address: `0x${string}`;
+    domain: Record<string, unknown>;
+    types: Record<string, unknown>;
+    primaryType: string;
+    message: Record<string, unknown>;
+    signature: `0x${string}`;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  }) => viemClient.verifyTypedData(args as any),
+  writeContract: (args: {
+    address: `0x${string}`;
+    abi: readonly unknown[];
+    functionName: string;
+    args: readonly unknown[];
+  }) =>
+    viemClient.writeContract({
+      ...args,
+      args: args.args || [],
+    }),
+  sendTransaction: (args: { to: `0x${string}`; data: `0x${string}` }) =>
+    viemClient.sendTransaction(args),
+  waitForTransactionReceipt: (args: { hash: `0x${string}` }) =>
+    viemClient.waitForTransactionReceipt(args),
 });
 
 // 2) Build an in-process facilitator and register supported scheme/network.
