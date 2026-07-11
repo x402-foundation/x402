@@ -34,7 +34,6 @@ This example supports the following EVM networks through environment configurati
 - `eip155:84532` - Base Sepolia
 - `eip155:8453` - Base Mainnet
 - `eip155:137` - Polygon Mainnet
-- `eip155:80002` - Polygon Amoy
 
 The default is `eip155:84532`.
 
@@ -52,6 +51,7 @@ Then fill required environment variables:
 - `EVM_NETWORK` - Target network CAIP-2 id. Defaults to `eip155:84532`
 - `EVM_RPC_URL` - Optional explicit RPC URL. Recommended for production deployments
 
+If you leave `EVM_RPC_URL` blank, the example falls back to the viem default transport for the selected chain.
 If you are targeting mainnet, set both `EVM_NETWORK` and `EVM_RPC_URL` explicitly instead of relying on defaults.
 
 2. Install and build all packages from the TypeScript examples root:

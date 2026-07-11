@@ -7,7 +7,7 @@ import { config } from "dotenv";
 import express from "express";
 import { createWalletClient, http, publicActions } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
-import { base, baseSepolia, polygon, polygonAmoy } from "viem/chains";
+import { base, baseSepolia, polygon } from "viem/chains";
 
 config();
 
@@ -20,22 +20,18 @@ const evmAccount = privateKeyToAccount(process.env.EVM_PRIVATE_KEY as `0x${strin
 const evmNetwork = (process.env.EVM_NETWORK ?? "eip155:84532") as
   | "eip155:84532"
   | "eip155:8453"
-  | "eip155:137"
-  | "eip155:80002";
-const evmRpcUrl = process.env.EVM_RPC_URL;
+  | "eip155:137";
+const evmRpcUrl = process.env.EVM_RPC_URL?.trim() || undefined;
 
 const chainConfig = {
   "eip155:84532": { chain: baseSepolia, label: "Base Sepolia" },
   "eip155:8453": { chain: base, label: "Base Mainnet" },
   "eip155:137": { chain: polygon, label: "Polygon Mainnet" },
-  "eip155:80002": { chain: polygonAmoy, label: "Polygon Amoy" },
 } as const;
 
 const selectedNetwork = chainConfig[evmNetwork];
 if (!selectedNetwork) {
-  console.error(
-    "Unsupported EVM_NETWORK. Supported values: eip155:84532, eip155:8453, eip155:137, eip155:80002",
-  );
+  console.error("Unsupported EVM_NETWORK. Supported values: eip155:84532, eip155:8453, eip155:137");
   process.exit(1);
 }
 
@@ -100,5 +96,7 @@ app.get("/weather", (_req, res) => {
 });
 
 app.listen(4021, () => {
-  console.log(`Server listening at http://localhost:${4021} using ${selectedNetwork.label} (${evmNetwork})`);
+  console.log(
+    `Server listening at http://localhost:${4021} using ${selectedNetwork.label} (${evmNetwork})`,
+  );
 });
