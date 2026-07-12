@@ -102,4 +102,3 @@ on `ExactBip122ServerScheme`.
 - `extra.paymentMethod` is always `"lightning"`
 - `extra.invoice` carries the BOLT11 invoice string
 - `SettleResponse.transaction` returns the invoice `payment_hash`
-
