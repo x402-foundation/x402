@@ -13,6 +13,7 @@ if TYPE_CHECKING:
         x402ResourceServer,
         x402ResourceServerSync,
     )
+    from x402.client_base import PaymentPolicy
 
     from ..payer import LightningPayer
     from ..receiver import LightningReceiver
@@ -26,7 +27,7 @@ def register_exact_bip122_client(
     client: ClientT,
     payer: "LightningPayer",
     networks: str | list[str] | None = None,
-    policies: list | None = None,
+    policies: list["PaymentPolicy"] | None = None,
 ) -> ClientT:
     """Register BIP-122 exact payment schemes to x402Client."""
     from .client import ExactBip122Scheme as ExactBip122ClientScheme

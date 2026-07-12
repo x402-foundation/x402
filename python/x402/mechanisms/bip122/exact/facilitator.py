@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from ....interfaces import FacilitatorContext
 from ....schemas import (
     Network,
     PaymentPayload,
@@ -63,7 +64,7 @@ class ExactBip122Scheme:
         self,
         payload: PaymentPayload,
         requirements: PaymentRequirements,
-        context=None,
+        context: FacilitatorContext | None = None,
     ) -> VerifyResponse:
         """Verify that the referenced invoice was issued here and has been paid."""
         _ = context
@@ -154,7 +155,7 @@ class ExactBip122Scheme:
         self,
         payload: PaymentPayload,
         requirements: PaymentRequirements,
-        context=None,
+        context: FacilitatorContext | None = None,
     ) -> SettleResponse:
         """Return the invoice payment hash as the settlement identifier."""
         verify_result = self.verify(payload, requirements, context)

@@ -41,7 +41,7 @@ def decode_invoice(invoice: str) -> Bolt11:
 
 def get_invoice_payment_hash(invoice: str) -> str:
     """Decode and return the invoice payment hash."""
-    return decode_invoice(invoice).payment_hash
+    return str(decode_invoice(invoice).payment_hash)
 
 
 def sat_to_msat(amount: str | int | float | Decimal) -> int:
