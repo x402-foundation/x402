@@ -2,7 +2,18 @@
   "name": "demo-api",
   "version": "0.1.0",
   "type": "module",
-  "scripts": { "dev": "tsx watch server.ts", "client": "tsx client.ts" },
-  "dependencies": { "express": "^4.21.0", "viem": "^2.48.11" },
-  "devDependencies": { "tsx": "^4.19.0", "typescript": "^5.7.3" }
+  "scripts": {
+    "dev": "tsx watch server.ts",
+    "client": "tsx client.ts"
+  },
+  "dependencies": {
+    "express": "^4.21.0",
+    "viem": "^2.48.11"
+  },
+  "devDependencies": {
+    "@types/express": "^4.17.25",
+    "@types/node": "^20.19.43",
+    "tsx": "^4.19.0",
+    "typescript": "^5.7.3"
+  }
 }

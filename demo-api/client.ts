@@ -53,7 +53,7 @@ async function main() {
     domain: {
       name: "USDG",
       version: "2",
-      chainId: CHAIN_ID,
+      chainId: BigInt(CHAIN_ID),
       verifyingContract: getAddress(USDG),
     },
     types: {

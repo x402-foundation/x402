@@ -97,15 +97,22 @@ step "1/7 — install + build rh-facilitator"
 # rate-limit-redis + ioredis are optional deps, loaded lazily via require()
 # only when REDIS_URL is set. Mark them --external so a Redis-less build
 # (the default testnet path) neither bundles nor requires them present.
-( cd "$FACILITATOR_DIR" && npm ci --silent && npx esbuild src/index.ts \
-    --bundle --platform=node --format=cjs --outfile=dist/index.cjs \
-    --external:dotenv --external:rate-limit-redis --external:ioredis )
-ok "rh-facilitator built → dist/index.cjs"
+# esbuild strips types without checking them, so run tsc --noEmit first as a
+# real type gate. Catches type regressions that a bundle-only build silently
+# lets through.
+( cd "$FACILITATOR_DIR" && npm ci --silent \
+    && npx tsc --noEmit \
+    && npx esbuild src/index.ts \
+        --bundle --platform=node --format=cjs --outfile=dist/index.cjs \
+        --external:dotenv --external:rate-limit-redis --external:ioredis )
+ok "rh-facilitator typechecked + built → dist/index.cjs"
 
 step "1/7 — install + build demo-api"
-( cd "$DEMO_DIR" && npm ci --silent && npx esbuild server.ts \
-    --bundle --platform=node --format=cjs --outfile=dist/server.cjs )
-ok "demo-api built → dist/server.cjs"
+( cd "$DEMO_DIR" && npm ci --silent \
+    && npx tsc --noEmit \
+    && npx esbuild server.ts \
+        --bundle --platform=node --format=cjs --outfile=dist/server.cjs )
+ok "demo-api typechecked + built → dist/server.cjs"
 
 # ── 2. Unit tests ─────────────────────────────────────────────────────
 step "2/7 — unit tests (rh-facilitator)"
