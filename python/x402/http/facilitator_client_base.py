@@ -130,6 +130,16 @@ class FacilitatorClientSync(Protocol):
 # ============================================================================
 
 
+# PaymentPayload fields a resource server may attach for its own bookkeeping but
+# that a facilitator does not need in order to verify or settle a payment: the
+# signature is over the scheme's typed data, not the payload envelope, so these
+# can be dropped without changing what gets signed. Some hosted facilitators
+# validate the POSTed paymentPayload against a strict schema and reject requests
+# that carry these optional siblings; omitting them keeps verify/settle working
+# against such facilitators.
+OPTIONAL_PAYMENT_PAYLOAD_FIELDS: tuple[str, ...] = ("resource", "extensions")
+
+
 @dataclass
 class FacilitatorConfig:
     """Configuration for HTTP facilitator client."""
@@ -139,6 +149,10 @@ class FacilitatorConfig:
     http_client: Any = None  # Optional httpx.Client or httpx.AsyncClient
     auth_provider: AuthProvider | None = None
     identifier: str | None = None
+    # When True, drop the optional PaymentPayload fields above before POSTing to
+    # the facilitator. Off by default (sends the full spec-compliant payload);
+    # enable only for facilitators that reject the optional fields.
+    omit_optional_payload_fields: bool = False
 
 
 # ============================================================================
@@ -162,6 +176,9 @@ class HTTPFacilitatorClientBase:
             self._identifier = self._url
             self._http_client = None
             self._owns_client = True
+            self._omit_optional_payload_fields = bool(
+                config.get("omit_optional_payload_fields", False)
+            )
         else:
             config = config or FacilitatorConfig()
 
@@ -171,6 +188,7 @@ class HTTPFacilitatorClientBase:
             self._identifier = config.identifier or self._url
             self._http_client = config.http_client
             self._owns_client = config.http_client is None
+            self._omit_optional_payload_fields = config.omit_optional_payload_fields
 
     @property
     def url(self) -> str:
@@ -199,6 +217,12 @@ class HTTPFacilitatorClientBase:
         requirements_dict: dict[str, Any],
     ) -> dict[str, Any]:
         """Build request body for verify/settle."""
+        if self._omit_optional_payload_fields and isinstance(payload_dict, dict):
+            payload_dict = {
+                key: value
+                for key, value in payload_dict.items()
+                if key not in OPTIONAL_PAYMENT_PAYLOAD_FIELDS
+            }
         return {
             "x402Version": version,
             "paymentPayload": self._to_json_safe(payload_dict),
