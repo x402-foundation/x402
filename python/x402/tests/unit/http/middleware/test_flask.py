@@ -420,9 +420,9 @@ class TestFlaskMiddlewareConcurrency:
                 futures = [executor.submit(make_request) for _ in range(5)]
                 responses = [f.result() for f in futures]
 
-            assert (
-                init_call_count == 1
-            ), f"Expected initialize() to be called exactly once, got {init_call_count}"
+            assert init_call_count == 1, (
+                f"Expected initialize() to be called exactly once, got {init_call_count}"
+            )
             for resp in responses:
                 assert resp.status_code == 402
 
