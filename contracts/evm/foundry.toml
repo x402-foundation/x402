@@ -13,7 +13,7 @@ cbor_metadata = false
 bytecode_hash = "none"
 ffi = false
 fs_permissions = [{ access = "read", path = "./" }]
-gas_reports = ["x402ExactPermit2Proxy", "x402UptoPermit2Proxy", "x402BatchSettlement"]
+gas_reports = ["x402ExactPermit2Proxy", "x402UptoPermit2Proxy", "x402BatchSettlement", "x402SwapSettler"]
 
 [profile.default.fuzz]
 runs = 256

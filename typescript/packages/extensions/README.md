@@ -23,6 +23,7 @@ Per-extension guides live next to the TypeScript sources in this repository:
 | Payment identifier | Client-supplied idempotency `id` for deduplication | `@x402/extensions/payment-identifier` | [src/payment-identifier/README.md](src/payment-identifier/README.md) |
 | EIP-2612 gas sponsoring | Gasless Permit2 via EIP-2612 permit + facilitator `settleWithPermit` | `@x402/extensions` | [src/eip2612-gas-sponsoring/README.md](src/eip2612-gas-sponsoring/README.md) |
 | ERC-20 approval gas sponsoring | Gasless Permit2 for tokens without EIP-2612 (pre-signed `approve`) | `@x402/extensions` | [src/erc20-approval-gas-sponsoring/README.md](src/erc20-approval-gas-sponsoring/README.md) |
+| Swap settlement | Token-agnostic payments: pay in a different same-chain asset, swapped and settled atomically | `@x402/extensions` | [src/swap-settlement/README.md](src/swap-settlement/README.md) |
 
 ## Related resources
 

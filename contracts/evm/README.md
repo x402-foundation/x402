@@ -12,6 +12,9 @@ Transfers the **exact** permitted amount (similar to EIP-3009's `transferWithAut
 ### `x402UptoPermit2Proxy`
 Allows the facilitator to transfer **up to** the permitted amount. Useful for scenarios where the actual amount is determined at settlement time.
 
+### `x402SwapSettler`
+Reference settler for the [`swap-settlement` extension](../../specs/extensions/swap_settlement.md): atomically acquires a payer's input asset (via EIP-3009, Permit2 witness, EIP-2612 bootstrap, or direct allowance), swaps it through a facilitator-whitelisted swap target, and delivers the exact required asset and amount to `payTo` — with a delta-based minimum-output check, same-transaction surplus refunds, and a consumed-quote replay guard. Unlike the proxies it is `Ownable2Step`-managed (facilitator and swap-target allowlists) and holds funds transiently within the settlement transaction.
+
 Both contracts:
 - Use the **witness pattern** to cryptographically bind payment destinations
 - Prevent facilitators from redirecting funds
@@ -59,6 +62,18 @@ Both contracts:
 | Linea Mainnet | [Deployed](https://lineascan.build/address/0x4020074e9dF2ce1deE5A9C1b5c3f541D02a10003) | [Deployed](https://lineascan.build/address/0x4020806089470a89826cB9fB1f4059150b550004) | [Deployed](https://lineascan.build/address/0x4020425FAf3B746C082C2f942b4E5159887B0005) |
 | Unichain Mainnet | [Deployed](https://uniscan.xyz/address/0x4020074e9dF2ce1deE5A9C1b5c3f541D02a10003) | [Deployed](https://uniscan.xyz/address/0x4020806089470a89826cB9fB1f4059150b550004) | [Deployed](https://uniscan.xyz/address/0x4020425FAf3B746C082C2f942b4E5159887B0005) |
 | Monad Mainnet | [Deployed](https://monadscan.com/address/0x4020074e9dF2ce1deE5A9C1b5c3f541D02a10003) | [Deployed](https://monadscan.com/address/0x4020806089470a89826cB9fB1f4059150b550004) | [Deployed](https://monadscan.com/address/0x4020425FAf3B746C082C2f942b4E5159887B0005) |
+
+**Swap settler deployments**
+
+| Chain | x402SwapSettler |
+|-------|-----------------|
+| Base Mainnet | [Deployed](https://basescan.org/address/0x9d53b055cd41FEDfd357ddF733D2093edc36A14C) · [Blockscout (verified)](https://base.blockscout.com/address/0x9d53b055cd41FEDfd357ddF733D2093edc36A14C) |
+
+> `x402SwapSettler` has no vanity salt: its CREATE2 address depends on the constructor
+> arguments (Permit2, owner), so it differs per owner. The Base mainnet deployment above used
+> the default salt `keccak256("x402SwapSettler.v1")` with owner
+> `0xC077C1A915A61021b16d1581067C828b7C76F8e7`; reproduce it on other chains by running
+> `script/DeploySwapSettler.s.sol` with the same `SETTLER_OWNER`.
 
 > \*Older testnet deployments may use prior vanity salts; the canonical **Upto** address for
 > CREATE2 deployments from this tree is `0x402015c7…313a0002` (see `forge script script/ComputeAddress.s.sol`).
@@ -353,11 +368,22 @@ The function signatures follow the same pattern as `settle()` for each variant.
 
 ## Security
 
-- **Immutable:** No upgrade mechanism, no owner, no admin functions
-- **No custody:** Contracts never hold tokens
-- **Destination locked:** Witness pattern enforces payTo address
-- **Reentrancy protected:** Uses OpenZeppelin's `ReentrancyGuardTransient`
-- **Deterministic:** Same address on all chains via CREATE2
+All contracts:
+
+- **No upgrade mechanism** and **reentrancy protected** (OpenZeppelin `ReentrancyGuardTransient`)
+- **Deterministic:** CREATE2 deployments (same address on all chains for identical constructor arguments)
+
+Permit2 proxies (`Exact`/`Upto`):
+
+- **No owner, no admin functions;** contracts never hold tokens
+- **Destination locked:** witness pattern enforces the payTo address
+
+`x402SwapSettler`:
+
+- **Owner-managed allowlists** (`Ownable2Step`) for authorized facilitators and swap targets
+- **Bounded custody:** holds funds only within the settlement transaction; delta-based
+  minimum-output check and surplus refunds revert under-delivery or fee inflation
+- **Quote binding:** Permit2 witness locks payTo/output; a consumed-quote set blocks replay
 
 ## Coverage
 

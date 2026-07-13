@@ -23,3 +23,6 @@ export * from "./erc20-approval-gas-sponsoring";
 
 // Builder Code extension (ERC-8021)
 export * from "./builder-code";
+
+// Swap Settlement extension
+export * from "./swap-settlement";
