@@ -149,6 +149,16 @@ const facilitator = new x402Facilitator().register("xrpl:*", new ExactXrplScheme
 
 Verification enforces the spec's checks: envelope consistency, offline signature validation, signer-to-account authorization (the embedded `SigningPubKey` must be the account's master key pair, unless disabled, or its configured regular key), destination and amount matching, NetworkID binding, per-method sequencing (current account `Sequence`, or ticket availability), `LastLedgerSequence` expiry policy, invoice binding via `InvoiceID`, fee caps, safety rejections (`Delegate`, `Memos`, `Paths`, `DeliverMin`, partial payments, multisigned blobs), and an XRPL simulation. Settlement re-runs verification, submits the signed blob, and succeeds only on a validated `tesSUCCESS` result.
 
+## Duplicate Settlement Protection
+
+This package includes a built-in `SettlementCache` that prevents a race condition where the same signed payment could be settled multiple times before its on-chain effects become visible: XRPL submission is idempotent on the transaction hash, so `submitAndWait` for an already-submitted blob resolves with the same validated `tesSUCCESS` outcome instead of failing.
+
+The cache rejects concurrent `/settle` calls that carry the same signed transaction blob, returning a `duplicate_settlement` error for the second and subsequent attempts. Entries are keyed on the signed transaction hash and retained for the transaction's landable window — sized from the payment's `maxTimeoutSeconds` (which bounds its `LastLedgerSequence`) — so an entry cannot be evicted while a slow-to-validate duplicate could still pass re-verification. Because entries are not cleared on failure, a `duplicate_settlement` result means the transaction was already seen, not that it settled.
+
+**No additional configuration is required** — each `ExactXrplScheme` facilitator instance creates its own cache by default. Pass a shared `SettlementCache` as the second constructor argument if you register several scheme instances that should block each other's duplicates. This is a per-process guard: a horizontally scaled facilitator must back it with a shared atomic store so duplicates routed to different replicas are still caught.
+
+For full details on the race condition and mitigation strategy, see the [Exact XRPL Scheme Specification](../../../../specs/schemes/exact/scheme_exact_xrpl.md#duplicate-settlement-mitigation-required).
+
 ## Development
 
 ```bash

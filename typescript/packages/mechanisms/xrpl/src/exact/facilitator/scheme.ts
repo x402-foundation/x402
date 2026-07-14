@@ -1,6 +1,7 @@
 import {
   CANONICAL_SIGNING_PUB_KEY_PATTERN,
   DEFAULT_MAX_FEE_DROPS,
+  SETTLEMENT_TTL_MS,
   TF_PARTIAL_PAYMENT,
   XRPL_CAIP_FAMILY,
 } from "../../constants";
@@ -25,6 +26,7 @@ import {
   simulateSignedTransaction,
   submitSignedTransaction,
 } from "../../utils";
+import { SettlementCache } from "../../settlement-cache";
 import type { XrplAssetTransferMethod, XrplFacilitatorOptions } from "../../types";
 import type {
   Network,
@@ -43,14 +45,17 @@ export class ExactXrplScheme implements SchemeNetworkFacilitator {
   readonly caipFamily = XRPL_CAIP_FAMILY;
   readonly scheme = "exact";
   private readonly options: XrplFacilitatorOptions;
+  private readonly settlementCache: SettlementCache;
 
   /**
    * Creates a new XRPL exact facilitator scheme.
    *
    * @param options - Facilitator configuration
+   * @param settlementCache - Optional shared settlement cache; a private one is created by default
    */
-  constructor(options: XrplFacilitatorOptions = {}) {
+  constructor(options: XrplFacilitatorOptions = {}, settlementCache?: SettlementCache) {
     this.options = options;
+    this.settlementCache = settlementCache ?? new SettlementCache();
   }
 
   /**
@@ -193,6 +198,27 @@ export class ExactXrplScheme implements SchemeNetworkFacilitator {
 
     const exactPayload = getExactXrplPayload(payload);
     const transactionHash = getSignedTransactionHash(exactPayload.signedTxBlob);
+
+    // XRPL submission is idempotent on the transaction hash: submitAndWait for
+    // an already-submitted hash resolves tesSUCCESS again, so concurrent settle
+    // calls carrying the same signed blob would each report success while only
+    // one payment lands. The check + insert below is synchronous, so concurrent
+    // calls that all passed verification are still serialized correctly. The
+    // entry is retained for the transaction's landable window (its
+    // LastLedgerSequence is derived from maxTimeoutSeconds) plus a margin, so it
+    // cannot be evicted while a slow-to-validate duplicate could still pass
+    // re-verification.
+    const settlementTtlMs = requirements.maxTimeoutSeconds * 1000 + SETTLEMENT_TTL_MS;
+    if (this.settlementCache.isDuplicate(transactionHash, settlementTtlMs)) {
+      return {
+        success: false,
+        transaction: "",
+        network: payload.accepted.network,
+        payer: verification.payer ?? "",
+        errorReason: "duplicate_settlement",
+      };
+    }
+
     try {
       const result = await submitSignedTransaction(
         exactPayload.signedTxBlob,

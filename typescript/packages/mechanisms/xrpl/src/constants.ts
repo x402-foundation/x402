@@ -74,3 +74,17 @@ export const MAX_DESTINATION_TAG = 0xffffffff;
  * Maximum number of outstanding tickets an XRPL account can hold.
  */
 export const MAX_ACCOUNT_TICKETS = 250;
+
+/**
+ * Default (and minimum) settlement cache TTL in milliseconds.
+ *
+ * A cached entry must outlive its transaction's landable window: while the
+ * transaction can still land, a re-submission of the same signed blob would
+ * pass re-verification (its sequence number or ticket is not yet consumed) and
+ * resolve to the same validated `tesSUCCESS`. The scheme therefore sizes each
+ * entry's TTL from the payment's `maxTimeoutSeconds` (which bounds the
+ * `LastLedgerSequence` expiry) and uses this constant as the floor and as the
+ * margin added on top. 120 seconds mirrors the SVM settlement cache and
+ * comfortably covers ledger-close variance and clock skew.
+ */
+export const SETTLEMENT_TTL_MS = 120_000;

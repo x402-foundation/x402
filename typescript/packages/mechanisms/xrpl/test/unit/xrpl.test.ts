@@ -6,6 +6,8 @@ import { ExactXrplScheme as ExactXrplServerScheme } from "../../src/exact/server
 import { createXrplWalletSigner } from "../../src/signer";
 import {
   DEFAULT_MAX_FEE_DROPS,
+  SETTLEMENT_TTL_MS,
+  SettlementCache,
   XRPL_TESTNET,
   compareDecimalStrings,
   createTickets,
@@ -123,16 +125,20 @@ async function preparePaymentForTest(transaction: Payment): Promise<Payment> {
 
 function createFacilitator(
   overrides: ConstructorParameters<typeof ExactXrplFacilitatorScheme>[0] = {},
+  settlementCache?: SettlementCache,
 ): ExactXrplFacilitatorScheme {
-  return new ExactXrplFacilitatorScheme({
-    getCurrentLedgerIndex: async () => 990,
-    getAccountSequence: async () => 1,
-    getAccountAuthorization: async () => ({ isMasterKeyDisabled: false }),
-    isTicketAvailable: async () => true,
-    maxFeeDrops: DEFAULT_MAX_FEE_DROPS,
-    simulateSignedTransaction: async () => ({ engineResult: "tesSUCCESS" }),
-    ...overrides,
-  });
+  return new ExactXrplFacilitatorScheme(
+    {
+      getCurrentLedgerIndex: async () => 990,
+      getAccountSequence: async () => 1,
+      getAccountAuthorization: async () => ({ isMasterKeyDisabled: false }),
+      isTicketAvailable: async () => true,
+      maxFeeDrops: DEFAULT_MAX_FEE_DROPS,
+      simulateSignedTransaction: async () => ({ engineResult: "tesSUCCESS" }),
+      ...overrides,
+    },
+    settlementCache,
+  );
 }
 
 describe("XRPL exact utilities", () => {
@@ -1708,5 +1714,138 @@ describe("ExactXrplScheme facilitator settle", () => {
     expect(result.errorReason).toContain("transaction_failed");
     expect(result.transaction).toMatch(/^[A-F0-9]{64}$/);
     expect(result.payer).toBe(payerWallet.classicAddress);
+  });
+});
+
+describe("ExactXrplScheme facilitator settlement dedup", () => {
+  const settledHash = "C".repeat(64);
+  const successfulSubmission = {
+    hash: settledHash,
+    validated: true,
+    resultCode: "tesSUCCESS",
+  };
+
+  it("rejects a second settlement of the same signed blob", async () => {
+    const submitSignedTransaction = vi.fn(async () => successfulSubmission);
+    const settleFacilitator = createFacilitator({ submitSignedTransaction });
+    const payload = buildPayload(baseXrpRequirements);
+
+    const first = await settleFacilitator.settle(payload, baseXrpRequirements);
+    const second = await settleFacilitator.settle(payload, baseXrpRequirements);
+
+    expect(first.success).toBe(true);
+    expect(second).toMatchObject({
+      success: false,
+      errorReason: "duplicate_settlement",
+      transaction: "",
+      network: XRPL_TESTNET,
+      payer: payerWallet.classicAddress,
+    });
+    expect(submitSignedTransaction).toHaveBeenCalledOnce();
+  });
+
+  it("settles exactly once across concurrent calls with the same signed blob", async () => {
+    let resolveSubmission: (result: typeof successfulSubmission) => void = () => {};
+    const submitSignedTransaction = vi.fn(
+      () =>
+        new Promise<typeof successfulSubmission>(resolve => {
+          resolveSubmission = resolve;
+        }),
+    );
+    const settleFacilitator = createFacilitator({ submitSignedTransaction });
+    const payload = buildPayload(baseXrpRequirements);
+
+    const settlements = Array.from({ length: 10 }, () =>
+      settleFacilitator.settle(payload, baseXrpRequirements),
+    );
+    // Wait for every call to pass verification and reach the cache check
+    // while the winning submission is still in flight.
+    await vi.waitFor(() => expect(submitSignedTransaction).toHaveBeenCalledOnce());
+    resolveSubmission(successfulSubmission);
+    const results = await Promise.all(settlements);
+
+    expect(results.filter(result => result.success)).toHaveLength(1);
+    const duplicates = results.filter(result => !result.success);
+    expect(duplicates).toHaveLength(9);
+    for (const duplicate of duplicates) {
+      expect(duplicate.errorReason).toBe("duplicate_settlement");
+    }
+    expect(submitSignedTransaction).toHaveBeenCalledOnce();
+  });
+
+  it("does not block settlements of distinct transactions", async () => {
+    const submitSignedTransaction = vi.fn(async () => successfulSubmission);
+    const settleFacilitator = createFacilitator({ submitSignedTransaction });
+
+    const first = await settleFacilitator.settle(
+      buildPayload(baseXrpRequirements),
+      baseXrpRequirements,
+    );
+    const second = await settleFacilitator.settle(
+      buildPayload(baseXrpRequirements, { Fee: "10" }),
+      baseXrpRequirements,
+    );
+
+    expect(first.success).toBe(true);
+    expect(second.success).toBe(true);
+    expect(submitSignedTransaction).toHaveBeenCalledTimes(2);
+  });
+
+  it("blocks duplicates across scheme instances sharing a settlement cache", async () => {
+    const sharedCache = new SettlementCache();
+    const submitSignedTransaction = vi.fn(async () => successfulSubmission);
+    const firstScheme = createFacilitator({ submitSignedTransaction }, sharedCache);
+    const secondScheme = createFacilitator({ submitSignedTransaction }, sharedCache);
+    const payload = buildPayload(baseXrpRequirements);
+
+    const first = await firstScheme.settle(payload, baseXrpRequirements);
+    const second = await secondScheme.settle(payload, baseXrpRequirements);
+
+    expect(first.success).toBe(true);
+    expect(second.errorReason).toBe("duplicate_settlement");
+    expect(submitSignedTransaction).toHaveBeenCalledOnce();
+  });
+
+  it("evicts a cache entry only after its transaction's landable window elapses", async () => {
+    vi.useFakeTimers();
+    try {
+      const submitSignedTransaction = vi.fn(async () => successfulSubmission);
+      const settleFacilitator = createFacilitator({ submitSignedTransaction });
+      const payload = buildPayload(baseXrpRequirements);
+      const entryTtlMs = baseXrpRequirements.maxTimeoutSeconds * 1000 + SETTLEMENT_TTL_MS;
+
+      const first = await settleFacilitator.settle(payload, baseXrpRequirements);
+      // Still within the landable window: a slow-to-validate duplicate must not
+      // slip through because the cache entry was evicted early.
+      vi.advanceTimersByTime(SETTLEMENT_TTL_MS + 1);
+      const duringWindow = await settleFacilitator.settle(payload, baseXrpRequirements);
+      // Past the landable window: the transaction can no longer land, so re-use
+      // of the key is harmless and the entry is evicted.
+      vi.advanceTimersByTime(entryTtlMs);
+      const afterWindow = await settleFacilitator.settle(payload, baseXrpRequirements);
+
+      expect(first.success).toBe(true);
+      expect(duringWindow.errorReason).toBe("duplicate_settlement");
+      expect(afterWindow.success).toBe(true);
+      expect(submitSignedTransaction).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("honors heterogeneous per-entry TTLs when pruning", () => {
+    vi.useFakeTimers();
+    try {
+      const cache = new SettlementCache();
+
+      cache.isDuplicate("tx-short", SETTLEMENT_TTL_MS);
+      cache.isDuplicate("tx-long", 10 * SETTLEMENT_TTL_MS);
+      vi.advanceTimersByTime(SETTLEMENT_TTL_MS + 1);
+
+      expect(cache.isDuplicate("tx-short", SETTLEMENT_TTL_MS)).toBe(false); // expired, re-inserted
+      expect(cache.isDuplicate("tx-long", 10 * SETTLEMENT_TTL_MS)).toBe(true); // still within its window
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
