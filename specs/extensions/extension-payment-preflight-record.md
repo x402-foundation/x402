@@ -70,7 +70,7 @@ data is harmless; unknown *rules* are not.
 | `risk.price_anomaly` | object | no | risk oracle | e.g. quote vs the payee's own historical median |
 | `risk.sanctions` | object | no | risk oracle | list identity + version pin + hit flag |
 | `risk.coverage` | object | yes | risk oracle | the declared envelope (§5) |
-| `risk.oracle` | object | yes | risk oracle | name, receipt/forecast identifiers |
+| `risk.oracle` | object | yes | risk oracle | name, receipt/forecast id, and the verdict's binding commitment (§5.6) |
 | `authority.policy_basis` | `auto\|human_confirmed` | yes | state holder | which rule permitted this |
 | `authority.budget` | object | yes | state holder | `{cap, spent, remaining, window}` — live state, not a static mandate |
 | `authority.signer_scope` | object | yes | state holder | `{key_id, action_classes[], scope_terminates_on?}` |
@@ -97,7 +97,9 @@ Example (abbreviated):
               { "field": "payment.network", "in": ["eip155:8453"] },
               { "field": "payment.quote_usd", "range": { "gt": 0, "lte": 10000 } },
               { "field": "payment.payee_address", "format": "eth-address" } ] },
-            "oracle": { "name": "…", "receipt_id": "…" } },
+            "oracle": { "name": "…", "receipt_id": "…",
+              "binding": { "record_id": "rec-9f2c01", "payee_address": "0xABC…",
+                           "asset": "USDC", "network": "eip155:8453", "quote_usd": 4.50 } } },
   "authority": { "policy_basis": "human_confirmed",
                  "budget": { "cap": 25, "spent": 5, "remaining": 20, "window": "daily" },
                  "signer_scope": { "key_id": "k1", "action_classes": ["api-purchase"] },
@@ -153,6 +155,21 @@ freshest-stale check has expired as outside coverage for that dimension. This ta
 the Still OS claim-vocabulary specification's per-resolver freshness kinds, which named the
 problem precisely.
 
+**5.6 Verdict binding (Normative).** Coverage answers *does this verdict's envelope contain
+this action* — not *was this verdict computed for this action*. They are different questions,
+and satisfying only the first lets a verdict computed for one challenge be replayed against any
+other action inside the same envelope: two payments to different payees both satisfy
+`payment.network in ["eip155:8453"]`, so an envelope-only check passes a GO the oracle issued
+for the wrong payee. Binding closes this. The oracle's signed receipt (`risk.oracle.receipt_id`)
+MUST commit to the payment it was computed for — at minimum `record_id` and the binding tuple
+(`payment.payee_address`, `payment.asset`, `payment.network`, `payment.quote_usd`); the
+`risk.oracle.binding` object echoes that committed tuple for local inspection. The consumer MUST
+verify BOTH that every echoed value equals the record's own field AND that the receipt attests
+the echo — the echo is not client-assertable, its authority is the oracle's signature over the
+receipt. A verdict whose receipt does not bind, or binds values other than the record carries,
+is OUTSIDE coverage (§3.5) — STOP-equivalent. Envelope membership is necessary, not sufficient:
+a verdict the oracle never issued for *this* challenge is unchecked.
+
 # 6. Signing Rules (Normative)
 
 The client MUST NOT sign the payment authorization unless ALL of the following hold:
@@ -161,12 +178,15 @@ The client MUST NOT sign the payment authorization unless ALL of the following h
 2. `risk.verdict != STOP`; a HOLD verdict additionally requires `authority.human_confirmation`
    present, `status: approved`, unexpired, and bound to THIS `record_id`;
 3. the payment falls INSIDE `risk.coverage` under §5.2;
-4. `payment.quote_usd` is a finite positive number ≤ `authority.budget.remaining`;
-5. `execution.idempotency_key` has never been used;
-6. `authority.signer_scope.action_classes` contains `payment.action_class` exactly
+4. the verdict is bound to THIS payment — `risk.oracle.binding` commits (through the oracle's
+   receipt) to this `record_id` and the `payment.*` binding tuple, and every committed value
+   equals the record's own (§5.6); a verdict not bound to this specific challenge is unchecked;
+5. `payment.quote_usd` is a finite positive number ≤ `authority.budget.remaining`;
+6. `execution.idempotency_key` has never been used;
+7. `authority.signer_scope.action_classes` contains `payment.action_class` exactly
    (array membership — a scalar scope MUST fail);
-7. `execution.rollback.route` is populated (even if `none` — the agent must know);
-8. every rule above evaluated without error; any evaluation failure is a refusal, not an
+8. `execution.rollback.route` is populated (even if `none` — the agent must know);
+9. every rule above evaluated without error; any evaluation failure is a refusal, not an
    exception for the caller to interpret.
 
 A confirmation is a pre-authorization that expires — not a standing power of attorney.
@@ -283,6 +303,11 @@ accepting them; the receipt is proof of the completed exchange. Before / during 
   outside the agent's channel.
 - **Replay:** `record_id` + `idempotency_key` are single-use; confirmations are record-bound
   and expiring.
+- **Verdict portability / challenge confusion:** envelope membership alone lets a verdict
+  computed for one action be reused for another inside the same coverage envelope. §5.6's
+  receipt-binding requirement is the containment — the verdict MUST bind this specific challenge
+  (`record_id` + the `payment.*` tuple, attested by the oracle's receipt), not merely fall
+  inside a shared envelope. Unbound, or bound to other values, fails closed.
 - **Self-flattering telemetry:** §8's provenance tiers exist because callers grade their own
   homework otherwise.
 
@@ -308,8 +333,13 @@ sharpened §6.1/§6.2 — bounded, fail-closed-on-silence, operator-tiered escal
 the no-shared-story / facts-fetched-complete escalation surface, and the honest reduction of
 residual intent-poisoning to the invoice-fraud floor).
 
+In PR review, @AmitabhainArunachala flagged the verdict-binding gap — a verdict must bind the
+specific challenge it was computed for, not merely fall inside a shared coverage envelope — which
+§5.6 now closes.
+
 # 15. Version History
 
 | Version | Date | Author | Changes |
 | --- | --- | --- | --- |
 | 0.1-draft | 2026-07-03 | BlueTier Operations (Black_Wall) | Initial draft for RFC |
+| 0.1-draft rev 1 | 2026-07-13 | BlueTier Operations (Black_Wall) | Add §5.6 verdict binding (challenge-confusion fix; per @AmitabhainArunachala PR review) |
