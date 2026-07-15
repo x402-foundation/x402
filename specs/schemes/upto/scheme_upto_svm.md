@@ -88,12 +88,10 @@ The v1 flow uses these program instructions:
 
 The fee/rent sponsor is `extra.feePayer`. It funds the channel PDA and escrow
 ATA rent at `open`; that rent is returned to the recorded `rent_payer` during
-final cleanup (`distribute` fast path, or later `reclaim`). A sponsor SHOULD
-keep or reconstruct an index of channels it opened, for example from `Opened`
-events or channel accounts whose `rent_payer` equals its key, so it can reclaim
-rent for channels that were distributed before the reclaim gate elapsed. This is
-operational bookkeeping; token payouts and client refunds are not delayed by
-`reclaim`.
+final cleanup (`distribute` fast path, or later `reclaim`). A sponsor MAY keep a
+local channel index, but it MUST be able to rediscover the channels it funded
+onchain as specified in [Asynchronous Recovery and Channel Discovery](#6-asynchronous-recovery-and-channel-discovery).
+Token payouts and client refunds are not delayed by `reclaim`.
 
 The client has an escape hatch if the server never settles. The client can call
 `request_close`, which moves the channel to `Closing` and starts the
@@ -366,7 +364,96 @@ The server/facilitator MUST:
 the channel to its cleanup state. `SettlementResponse.transaction` MUST identify
 the confirmed transaction containing that final `distribute`.
 
-## 6. Error Codes
+## 6. Asynchronous Recovery and Channel Discovery
+
+Channel discovery is onchain. A client can discover channels for which it
+provided the deposit by querying channel accounts whose `payer` equals the
+client key. A facilitator or other fee/rent sponsor can discover every channel
+for which it fronted rent by querying accounts whose `rent_payer` equals its
+key. A server can similarly query `payee` or `authorized_signer` to find
+channels it is able to settle. Local storage is therefore an optimization, not
+the source of truth for channel lifecycle or rent recovery.
+
+Implementations MAY retain a local index for request correlation, worker leases,
+and response history. They MUST be able to rebuild the onchain portion of that
+index after local state loss, including at worker startup and periodically while
+they sponsor rent or operate channels.
+
+### 6.1 Discovery RPC
+
+Implementations MUST use `getProgramAccounts` against the canonical
+payment-channels program for the selected network. The channel account layout
+targeted by this version is fixed at 256 bytes. Its public-key field offsets are:
+
+| Channel field | Offset | Discovery use |
+|---|---:|---|
+| `payer` | 88 | Client deposit/channel recovery |
+| `payee` | 120 | Server/operator channel recovery |
+| `authorized_signer` | 152 | Server settlement-authority recovery |
+| `rent_payer` | 216 | Facilitator/sponsor rent recovery |
+
+For example, a facilitator discovers channels for which it paid rent using a
+base58-encoded public key in a `memcmp` filter:
+
+```json
+{
+  "encoding": "base64",
+  "commitment": "confirmed",
+  "filters": [
+    { "dataSize": 256 },
+    { "memcmp": { "offset": 216, "bytes": "<feePayer>" } }
+  ]
+}
+```
+
+The client uses the same request with `offset: 88` and its payer key. An
+implementation MAY add one of the other listed filters to narrow its result
+set. It MUST decode each returned account with the program's supported channel
+codec and reject an account whose owner, discriminator, version, length, or PDA
+does not match the selected program and its decoded channel fields. In
+particular, the implementation MUST rederive the PDA from `payer`, `payee`,
+`mint`, `authorized_signer`, `salt`, and `open_slot` before treating the account
+as a recovered channel. Implementations MUST NOT rely on these byte offsets for
+an unsupported future channel-account version.
+
+### 6.2 Asynchronous recovery flow
+
+The scan is asynchronous maintenance work, not part of the paid HTTP request.
+An implementation that has lost its local state, or that resumes after a
+restart, MUST perform the following flow:
+
+1. Query and decode its matching channel accounts as described above, then
+   upsert the validated account address and its current status into a local work
+   queue. The queue is disposable; a later scan is always able to reconstruct
+   it from chain state.
+2. Before submitting an action, refetch the channel and revalidate its status.
+   Multiple workers and normal user activity can change a channel between the
+   scan and submission. A transition failure caused by stale state MUST cause
+   the worker to refetch and reclassify the channel, rather than assuming that
+   cleanup failed.
+3. For an `Open` channel, the server may resume settlement only when it has
+   recovered the application metering result and can obtain the required
+   `receiverAuthorizer` signatures. Otherwise it MUST NOT invent a nonzero
+   charge. The server may perform the no-voucher, zero-charge close path; the
+   client may instead begin its `request_close` escape hatch.
+4. For a `Closing` channel, schedule a recheck when the recorded grace period
+   expires. The server can still settle during that period; after it, the normal
+   `seal`, payer withdrawal, and distribution path applies.
+5. For a `Sealed` channel, submit or relay the remaining distribution/withdrawal
+   actions permitted by the channel state. For a `Distributed` channel, schedule
+   `reclaim` after its open-slot reclaim gate. `reclaim` is permissionless, but
+   the program returns the recovered SOL rent only to the recorded `rent_payer`.
+
+A fee/rent sponsor has discovery and relay capability, not payment authority:
+it cannot create a nonzero settlement or close a channel by itself without the
+server-controlled `receiverAuthorizer` authorization required elsewhere in this
+spec. Likewise, onchain recovery does not reconstruct application-specific
+metering, request/response correlation, or an unpersisted settlement voucher.
+Those records MAY be kept offchain; if they are lost, the server MUST take the
+conservative no-charge or client-initiated close path rather than charging based
+on a guess.
+
+## 7. Error Codes
 
 Standard x402 codes apply. Scheme-specific:
 
@@ -376,7 +463,7 @@ Standard x402 codes apply. Scheme-specific:
   `openTransaction` that can be co-signed, broadcast, and confirmed before
   serving the resource.
 
-## 7. Security Properties
+## 8. Security Properties
 
 - **No overcharge.** Capped by the onchain `deposit`; verifier requires
   `deposit == maxAmount`.
@@ -404,7 +491,7 @@ Standard x402 codes apply. Scheme-specific:
   server to meter honestly within the ceiling. The ceiling, recipient, and
   replay properties are enforced by signatures and the onchain program.
 
-## 8. Out of Scope
+## 9. Out of Scope
 
 Multi-settlement streaming or long-lived channels reused across many requests
 are served by [`batch-settlement`](../batch-settlement/scheme_batch_settlement.md)
