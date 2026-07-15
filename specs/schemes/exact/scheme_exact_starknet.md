@@ -22,7 +22,7 @@ Starknet networks MUST use [CAIP-2](https://namespaces.chainagnostic.org/starkne
 - `starknet:SN_MAIN` — Starknet mainnet
 - `starknet:SN_SEPOLIA` — Starknet Sepolia testnet
 
-The CAIP-2 reference is the string form of the chain id returned by `starknet_chainId` (`SN_MAIN` = `0x534e5f4d41494e`, `SN_SEPOLIA` = `0x534e5f5345504f4c4941`). The namespace registry document predates the Goerli→Sepolia migration and enumerates only `SN_MAIN`/`SN_GOERLI`; `starknet:SN_SEPOLIA` follows the namespace's chain-id resolution rule.
+The CAIP-2 reference is the string form of the chain id returned by `starknet_chainId` (`SN_MAIN` = `0x534e5f4d41494e`, `SN_SEPOLIA` = `0x534e5f5345504f4c4941`). The namespace registry document predates the Goerli→Sepolia migration and lists only `SN_MAIN`/`SN_GOERLI`; `starknet:SN_SEPOLIA` follows the namespace's chain-id resolution rule.
 
 ## Protocol Flow
 
@@ -61,7 +61,9 @@ The CAIP-2 reference is the string form of the chain id returned by `starknet_ch
 - `asset`: Starknet contract address of an ERC-20-compatible token (USDC by default; see Default Assets). The token MUST expose the standard `transfer(recipient: ContractAddress, amount: u256)` entry point and a balance getter (`balance_of` or `balanceOf`).
 - `payTo`: recipient's Starknet address.
 - `extra.areFeesSponsored`: whether the facilitator sponsors gas. This spec covers the sponsored flow only; when present it MUST be `true`, and `false` MUST be rejected (`invalid_payload`). An unsponsored flow is planned for a follow-up.
-- `extra.caller` (optional): the address that will be the on-chain caller of `execute_from_outside_v2` at settlement — the facilitator's executor account, or its paymaster's pinned relayer address. When advertised, clients MUST set it as the `OutsideExecution` `Caller`; binding a specific caller prevents third parties from submitting the execution (see Security Considerations). Facilitators that cannot guarantee the submitting address MUST NOT advertise `extra.caller`. When absent, clients MUST use the SNIP-9 `ANY_CALLER` sentinel (`0x414e595f43414c4c4552`, the short string `ANY_CALLER`).
+- `extra.caller` (optional): the address that will be the on-chain caller of `execute_from_outside_v2` at settlement — the facilitator's executor account, or its paymaster's pinned relayer/forwarder address. Binding a specific caller prevents third parties from submitting the execution (see Security Considerations). Facilitators that cannot guarantee the submitting address MUST NOT advertise `extra.caller`. Two client flows produce the `OutsideExecution` `Caller`:
+  - **Paymaster (sponsored) flow**: the paymaster sets `Caller` to its own forwarder; the client does not choose it. When `extra.caller` is advertised the client MUST verify the paymaster-built `Caller` equals it and reject a mismatch, and the advertised value MUST be that forwarder. When it is absent, the resulting forwarder `Caller` is accepted by the facilitator under rule 4 as an address it can guarantee will submit.
+  - **Direct flow** (client builds the `OutsideExecution` itself, no paymaster): the client MUST set `Caller` to the advertised `extra.caller`, or to the SNIP-9 `ANY_CALLER` sentinel (`0x414e595f43414c4c4552`, the short string `ANY_CALLER`) when none is advertised.
 - The client never needs gas funds in the sponsored flow. Executor/paymaster selection beyond `extra.caller` is facilitator-local configuration and MUST NOT be required from the client-facing `PaymentRequirements`.
 
 ### Timeout Mapping: `maxTimeoutSeconds` → Time Bounds
@@ -233,7 +235,7 @@ All felt/address comparisons MUST be performed numerically (as field elements), 
 ### 8. Chain-State Preflight
 
 - The payer's `accepted.asset` balance MUST be a valid u256 (via `balance_of` or `balanceOf`) greater than or equal to `accepted.amount`, else `insufficient_funds`; a token exposing neither getter fails closed.
-- The facilitator MUST simulate the settlement via `starknet_simulateTransactions` (skip-validate, skip-fee-charge, v3 `INVOKE`) and MUST fail closed (`simulation_failed`) unless the trace shows exactly one `Transfer` emitted by `accepted.asset`, from `payer` to `payTo`, for exactly `accepted.amount`. An event that cannot be attributed to the `asset` contract (via its enclosing call frame) MUST NOT count as proof of payment. Simulating the full `execute_from_outside_v2` topology is preferred; when the `Caller` is bound to an address the facilitator cannot originate from (e.g. a paymaster forwarder), the facilitator MAY instead simulate the `transfer` from the payer and rely on rules 3–6 plus the paymaster's own estimation at settlement.
+- The facilitator MUST simulate the settlement via `starknet_simulateTransactions` (skip-validate, skip-fee-charge, v3 `INVOKE`) and MUST fail closed (`simulation_failed`) unless the trace shows exactly one `Transfer` emitted by `accepted.asset`, from `payer` to `payTo`, for exactly `accepted.amount`. An event that cannot be attributed to the `asset` contract (via its enclosing call frame) MUST NOT count as proof of payment. Simulating the full `execute_from_outside_v2` call tree is preferred; when the `Caller` is bound to an address the facilitator cannot originate from (e.g. a paymaster forwarder), the facilitator MAY instead simulate the `transfer` from the payer and rely on rules 3–6 plus the paymaster's own estimation at settlement.
 
 ### 9. Facilitator Safety
 
@@ -241,7 +243,7 @@ All felt/address comparisons MUST be performed numerically (as field elements), 
 - The executor MUST only ever sign the `INVOKE` wrapping `execute_from_outside_v2`.
 - `payer` MUST only be included on a response once the payer's signature has been verified; it MUST NOT be echoed from unverified client input.
 
-Unlike chains where the client sets the transaction fee, here the client signs only the inner OutsideExecution and the facilitator/paymaster alone sets the outer `INVOKE` fee — so a client cannot directly inflate the sponsored gas. The residual risk is gas spent on settlements that fail the effect check or revert despite passing verification (e.g. an account whose `is_valid_signature` and execution paths diverge, or an account upgraded between verify and settle). To bound it, facilitators SHOULD cap the sponsored settlement fee (reject when an estimate exceeds a configured bound) and apply per-payer rate limits, and — because settlement spends sponsored gas — SHOULD access-control `/verify` and `/settle` (shared secret, mTLS, or a resource-server allowlist). The mandatory simulation (rule 8) attests that the only `asset` balance change is the payer → `payTo` transfer; no balance change accrues to the facilitator's executor beyond the transaction fee.
+Unlike chains where the client sets the transaction fee, here the client signs only the inner OutsideExecution and the facilitator/paymaster alone sets the outer `INVOKE` fee — so a client cannot directly inflate the sponsored gas. The residual risk is gas spent on settlements that fail the effect check or revert despite passing verification (e.g. an account whose `is_valid_signature` and execution paths diverge, or an account upgraded between verify and settle). To bound it, facilitators SHOULD cap the sponsored settlement fee (reject when an estimate exceeds a configured bound) and apply per-payer rate limits, and — because settlement spends sponsored gas — SHOULD access-control `/verify` and `/settle` (shared secret, mTLS, or a resource-server allowlist). The mandatory simulation (rule 8) confirms the only `asset` balance change is the payer → `payTo` transfer; no balance change accrues to the facilitator's executor beyond the transaction fee.
 
 ### Error Codes
 
@@ -262,8 +264,10 @@ Unlike chains where the client sets the transaction fee, here the client signs o
 | `duplicate_settlement` | same nonce already submitted by this facilitator |
 | `settlement_pending` | broadcast succeeded but confirmation is not yet established — **non-terminal**; the `transaction` field carries the hash to reconcile on-chain before retrying |
 | `unauthorized` | request rejected by facilitator endpoint access control |
+| `unexpected_verify_error` | an internal error (e.g. a balance/RPC read failed) prevented verification from completing — fails closed |
+| `unexpected_settle_error` | an internal error prevented settlement from completing before broadcast; the payment did not execute |
 
-The `amount` in `PaymentRequirements` MUST be a base-10 integer string; hex/octal/binary/signed/whitespace forms MUST be rejected (`invalid_payload`). The `PaymentPayload` signature MUST be a felt array of bounded length (implementations reject arrays beyond a small cap, e.g. 32, to prevent calldata-bloat amplification).
+The `amount` in `PaymentRequirements` MUST be a base-10 integer string; hex/octal/binary/signed/whitespace forms MUST be rejected (`invalid_payload`). Facilitators SHOULD bound the `PaymentPayload` signature array length (e.g. reject beyond ~32 felts) so an oversized signature cannot amplify resource use.
 
 ### Implementing Verification with Starknet JSON-RPC
 
