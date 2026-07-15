@@ -38,4 +38,13 @@ While implementation details vary by network, facilitators MUST enforce security
 - Replay protection: seqno MUST be strictly equal to on-chain value; duplicate `settlementBoc` submissions rejected via BoC hash dedup.
 - Simulation verification: SHOULD simulate via emulation during `/verify` to confirm expected balance changes.
 
-Network-specific rules are in per-network documents: `scheme_exact_svm.md` (Solana), `scheme_exact_stellar.md` (Stellar), `scheme_exact_evm.md` (EVM), `scheme_exact_sui.md` (SUI), `scheme_exact_ton.md` (TON).
+### Starknet
+
+- Facilitator safety: the submitting executor MUST come from facilitator configuration, never client input, and MUST NOT be the payer or the transfer recipient.
+- Transfer correctness: the signed SNIP-9 OutsideExecution MUST contain exactly one call — `transfer` on `requirements.asset` with calldata `[payTo, amount_low, amount_high]` — and the u256 amount MUST equal `requirements.amount` exactly.
+- Signature validity: the SNIP-12 message hash MUST be computed from the facilitator's own canonical reconstruction of the typed data and MUST validate via SNIP-6 `is_valid_signature` on the payer's account (magic value `VALID`).
+- Caller binding and expiry: `Caller` MUST be `ANY_CALLER` or the known submitting address (and equal `extra.caller` when advertised); the `Execute After`/`Execute Before` window MUST be current and within `maxTimeoutSeconds`.
+- Replay protection: the SNIP-9 nonce MUST be unused at verification and is consumed on-chain by the account at execution.
+- Simulation verification: MUST simulate `execute_from_outside_v2` and fail closed unless the only asset balance changes are the expected transfer (payer decrease, recipient increase) plus fees.
+
+Network-specific rules are in per-network documents: `scheme_exact_svm.md` (Solana), `scheme_exact_stellar.md` (Stellar), `scheme_exact_evm.md` (EVM), `scheme_exact_sui.md` (SUI), `scheme_exact_ton.md` (TON), `scheme_exact_starknet.md` (Starknet).
