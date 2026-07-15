@@ -1,6 +1,6 @@
 # x402 Facilitator
 
-A standalone [Next.js](https://nextjs.org) service that runs the x402 testnet facilitator. It exposes the facilitator API used to verify and settle x402 payments across EVM, SVM, AVM, Aptos, Stellar, Hedera, and Keeta.
+A standalone [Next.js](https://nextjs.org) service that runs the x402 testnet facilitator. It exposes the facilitator API used to verify and settle x402 payments across EVM, SVM, AVM, Aptos, Stellar, Hedera, Keeta, and XRPL.
 
 ## Endpoints
 
@@ -27,7 +27,7 @@ pnpm install
 
 ### Configuration
 
-Configure environment variables in `.env`. EVM and SVM keys are required; other networks are registered only when their variables are present.
+Configure environment variables in `.env`. EVM and SVM keys are required; other networks are registered only when their variables are present (XRPL, which needs no key, is enabled by an explicit `FACILITATOR_XRPL_ENABLED=true` flag).
 
 ```bash
 # Required
@@ -50,6 +50,13 @@ FACILITATOR_HEDERA_PRIVATE_KEY=your_hedera_ecdsa_private_key
 FACILITATOR_KEETA_MNEMONIC=...
 # Number of signers to derive from the mnemonic for concurrent settlement (each must be funded).
 # FACILITATOR_KEETA_SIGNER_AMOUNT=2
+
+# Optional: XRPL (registers xrpl:1 testnet). No key or funds are needed: the
+# payer signs the transaction and pays its fee, and the facilitator only
+# verifies and submits the signed blob.
+# FACILITATOR_XRPL_ENABLED=true
+# Optional override for the default public testnet WebSocket endpoint.
+# FACILITATOR_XRPL_TESTNET_WS_URL=wss://s.altnet.rippletest.net:51233
 
 # Optional: builder attribution
 FACILITATOR_BUILDER_CODE=your_builder_code

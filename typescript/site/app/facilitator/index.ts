@@ -35,12 +35,14 @@ import { ExactSvmScheme } from "@x402/svm/exact/facilitator";
 import { ExactSvmSchemeV1 } from "@x402/svm/exact/v1/facilitator";
 import { toFacilitatorAvmSigner } from "@x402/avm";
 import { ExactAvmScheme } from "@x402/avm/exact/facilitator";
+import { XRPL_TESTNET } from "@x402/xrpl";
+import { ExactXrplScheme } from "@x402/xrpl/exact/facilitator";
 import { createWalletClient, http, publicActions } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import { baseSepolia } from "viem/chains";
 
 /**
- * Initialize and configure the x402 facilitator with EVM, SVM, AVM, Aptos, Stellar, Hedera, and Keeta support
+ * Initialize and configure the x402 facilitator with EVM, SVM, AVM, Aptos, Stellar, Hedera, Keeta, and XRPL support
  * This is called lazily on first use to support Next.js module loading
  *
  * @returns A configured x402Facilitator instance
@@ -229,6 +231,17 @@ async function createFacilitator(): Promise<x402Facilitator> {
     facilitator.register(
       "hedera:testnet",
       new ExactHederaScheme(hederaSigner, { aliasPolicy: "reject" }),
+    );
+  }
+
+  // Optionally register XRPL if enabled. Unlike the other networks, no
+  // facilitator key or funds are needed: the payer signs the transaction and
+  // pays its fee, and the facilitator only verifies and submits the signed blob.
+  if (process.env.FACILITATOR_XRPL_ENABLED === "true") {
+    const xrplWsUrl = process.env.FACILITATOR_XRPL_TESTNET_WS_URL;
+    facilitator.register(
+      XRPL_TESTNET,
+      new ExactXrplScheme(xrplWsUrl ? { wsUrlByNetwork: { [XRPL_TESTNET]: xrplWsUrl } } : {}),
     );
   }
 

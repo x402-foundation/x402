@@ -1861,6 +1861,9 @@ importers:
       '@x402/svm':
         specifier: workspace:*
         version: link:../packages/mechanisms/svm
+      '@x402/xrpl':
+        specifier: workspace:*
+        version: link:../packages/mechanisms/xrpl
       next:
         specifier: ^16.2.6
         version: 16.2.6(@opentelemetry/api@1.9.1)(react-dom@19.2.6(react@19.2.6))(react@19.2.6)
