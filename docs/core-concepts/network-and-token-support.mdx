@@ -20,7 +20,7 @@ x402 uses [CAIP-2](https://chainagnostic.org/CAIPs/caip-2) standard network iden
 
 ## Token Support
 
-x402 supports tokens on EVM, Solana, TON, Algorand (AVM), Stellar, Aptos, Hedera, Keeta, and Concordium networks:
+x402 supports tokens on EVM, Solana, TON, Algorand (AVM), Stellar, Aptos, Hedera, Keeta, Concordium, and XRPL networks:
 
 | Ecosystem | Supported Tokens | Transfer Method |
 |-----------|------------------|-----------------|
@@ -33,6 +33,7 @@ x402 supports tokens on EVM, Solana, TON, Algorand (AVM), Stellar, Aptos, Hedera
 | **Hedera** | HBAR or any HTS fungible token | Hedera Transfer Transaction |
 | **Keeta** | Any Keeta token | `SEND` operation |
 | **Concordium** | CCD or any PLT token (e.g., EURR) | Sponsored V1 transfer |
+| **XRPL** | XRP or any issued currency (e.g., RLUSD) | Payer-signed `Payment` transaction |
 
 Facilitators support **networks**, not specific tokens — any compatible token works on any facilitator that supports that network.
 
