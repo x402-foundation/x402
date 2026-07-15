@@ -87,6 +87,36 @@ Sequential numbering is a **completeness** control, not an ordering convenience 
 
 Who supplies non-issuer observation of a sequence is a service-layer question, intentionally out of scope for this spec.
 
+### Existence and precedence (normative)
+
+A signed record proves **integrity** — the bytes have not changed since signing — but not
+**existence in time**: nothing inside a signature distinguishes a record emitted at transaction
+time from one fabricated later and backdated. For audit use this matters exactly where
+completeness does: retroactive fabrication and retroactive omission are the two halves of the
+same failure. Accordingly:
+
+> **Verifiers MUST NOT treat `issuedAt`, or the attestation signature over it, as evidence of
+> when a record came into existence.**
+
+Existence and precedence are established by **anchoring**: publishing a digest — the
+`recordDigest` itself, or a commitment that includes it (such as a counter-signed sequence head
+or batch root) — in a public, append-only timestamping mechanism (a blockchain, a transparency
+log, an RFC 3161 authority). An anchor is a sibling fact *about* a digest, not a field inside
+the record; nothing in the EIP-712 types changes. Anchor references MUST identify the mechanism
+and carry (or point to) a proof independently verifiable against that mechanism; **verifiers
+MUST NOT bind to any single anchoring mechanism** — a record anchored anywhere public and
+append-only is anchored.
+
+Anchoring composes with sequential numbering, and the composition is where completeness
+survives: anchoring an individual `recordDigest` evidences the existence of *that record only* —
+a party can anchor the records it keeps and omit the ones it doesn't, so **per-record anchors
+MUST NOT be treated as evidence that no record was omitted.** Anchoring a commitment over an
+issuer's full sequence (a head covering `seq` 1..N) yields existence *and* completeness in one
+proof: every record with `seq ≤ N` is committed under the head, precedence is inherited, and a
+gap is visible against `seq`.
+
+Who operates anchoring is a service-layer question, intentionally out of scope for this spec.
+
 ### Canonicalization (normative)
 
 `canonicalizationVersion: 1` = **RFC 8785 (JCS)** serialization; `recordDigest = keccak256(utf8(canonical(record)))`. Serialization and digest function are versioned **together**: `receiptDigest` binds the offer-receipt artifact and the attestation base is EIP-712 — both keccak256 — so changing either independently invalidates existing signatures.
@@ -107,7 +137,7 @@ ComplianceAttestation { uint256 version; bytes32 recordDigest; bytes32 receiptDi
 
 JWS profile mirrors offer-receipt §3.3 (`alg`, `kid` DID URL). Signer authorization follows offer-receipt §4.5.1 (payTo-key or external registry). Verification: (1) recompute `recordDigest`, (2) match both digests, (3) recover/verify signer, (4) apply authorization policy.
 
-Third parties MAY additionally counter-sign `(receiptDigest, prevDigest, seq)` chains to provide sequential-numbering guarantees and post-hoc verifiability; that service layer is intentionally out of scope for this spec.
+Third parties MAY additionally counter-sign `(receiptDigest, prevDigest, seq)` chains to provide sequential-numbering, existence, and precedence guarantees and post-hoc verifiability; that service layer is intentionally out of scope for this spec.
 
 ## Refunds and corrections
 
