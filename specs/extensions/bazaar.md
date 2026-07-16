@@ -514,6 +514,49 @@ Clients are expected to echo the `bazaar` extension from `PaymentRequired` into 
 
 ---
 
+## Troubleshooting Discovery (Informative)
+
+A resource server that settles payments successfully can still fail to appear in a
+facilitator's catalog. In practice these are the most common causes, in the order
+worth checking (see x402-foundation/x402#2112 for field reports):
+
+1. **The settled payload did not carry the extension.** Cataloging happens when the
+   facilitator processes a `PaymentPayload` containing the `bazaar` extension (see
+   [Client Behavior](#client-behavior)). Declaring the extension on `402` responses
+   that are never paid catalogs nothing, and settlements whose payloads omit the
+   extension catalog nothing either — a resource is cataloged by a settlement
+   *carrying* the declaration. Declaration alone and settlement alone are each
+   insufficient.
+
+2. **The `PaymentRequired` body is not spec-conformant.** Facilitators validate the
+   declaration (and the surrounding payment body) before cataloging, and a
+   non-conforming resource may be dropped from cataloging even though verification
+   and settlement succeed. Mistakes frequently reported by integrators:
+   - missing `info.input.type` / `info.output.type` discriminators (see
+     [Input Type Discriminator](#input-type-discriminator))
+   - a relative `resource.url` — it must be an absolute URL
+   - malformed `accepts` entries, e.g. `asset` as a rich object instead of the
+     token address string, or a missing atomic-units `amount`
+   - service metadata violating the rules in
+     [Service Metadata on `resource`](#service-metadata-on-resource) — those
+     fields are soft-dropped individually, so a too-long `serviceName` disappears
+     silently rather than failing the request
+
+3. **Treating the absence of `EXTENSION-RESPONSES` as failure.** The header is
+   optional (**MAY**): facilitators can catalog a resource without ever emitting
+   it. Its absence carries no signal. When the header *is* present,
+   `bazaar.status` and `rejectedReason` are the authoritative outcome.
+
+4. **Not allowing for asynchronous cataloging.** A `"processing"` status means the
+   declaration was accepted but indexing happens later; allow for indexing delay
+   before concluding failure.
+
+Where a facilitator exposes the optional discovery endpoints,
+`GET /discovery/resources?payTo=<address>` is the quickest way to confirm what has
+actually been cataloged for a given payee.
+
+---
+
 ## Dynamic Routes and `routeTemplate`
 
 HTTP endpoints can use parameterized route patterns (e.g. `/users/[userId]`). When a route has
