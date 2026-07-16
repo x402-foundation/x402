@@ -193,7 +193,7 @@ For XRPL issued currencies, `PaymentRequirements.amount` is the exact XRPL issue
 
 XRPL issued currencies are identified by `(currency, issuer)` and the ledger `Payment` amount uses a decimal `value` string. XRPL does not define a universal token-decimals field for arbitrary issued currencies, so this scheme does not accept server-declared decimal precision.
 
-Every issue comparison in this scheme MUST use canonical XRPL currency identity together with exact issuer equality. A valid three-character currency code and a 160-bit currency code identify the same currency only when the 160-bit value has XRPL's exact standard layout: 12 zero bytes, the three code bytes, then 5 zero bytes. The three decoded bytes MUST form the same valid XRPL three-character code and MUST NOT be `XRP`. This includes every symbol permitted in XRPL standard codes, including `<` and `>`; for example, `A>B` and `000000000000000000000000413E420000000000` are the same currency even if an API represents the latter as hex. Similarly, `USD` and `0000000000000000000000005553440000000000` are the same currency, while `5553440000000000000000000000000000000000` is a distinct custom 160-bit currency. Implementations MUST NOT shorten or otherwise canonicalize any other 160-bit value. Two issued-currency amounts are the same issue only when their canonical currencies and issuers both match.
+Every issue comparison in this scheme MUST use canonical XRPL currency identity together with exact issuer equality. A valid three-character currency code and a 160-bit currency code identify the same currency only when the 160-bit value has XRPL's exact standard layout: 12 zero bytes, the three code bytes, then 5 zero bytes. The three decoded bytes MUST form the same valid XRPL three-character code and MUST NOT be `XRP`. This includes every symbol permitted in XRPL standard codes, including `<` and `>`; for example, `A>B` and `000000000000000000000000413E420000000000` are the same currency even if an API represents the latter as hex. Similarly, `USD` and `0000000000000000000000005553440000000000` are the same currency, while `5553440000000000000000000000000000000000` is a distinct custom 160-bit currency. Implementations MUST NOT shorten or otherwise canonicalize any other 160-bit value. Two issued-currency amounts are the same issue only when their canonical currencies and issuers both match. This canonical issue rule does not relax x402 envelope echo requirements: `paymentPayload.accepted.asset` MUST contain the exact string from `paymentRequirements.asset`; canonicalization applies when comparing that negotiated asset to an issue decoded from the XRPL transaction or metadata.
 
 | Human Amount | `amount` Value | XRPL destination amount `value` |
 | ------------ | -------------- | ------------------------------- |
@@ -400,7 +400,7 @@ The facilitator MUST reject if:
 - `paymentPayload.x402Version != 2`
 - `paymentPayload.accepted.scheme != "exact"`
 - `paymentPayload.accepted.network` is unsupported
-- `paymentPayload.accepted` does not match `paymentRequirements` on `scheme`, `network`, `asset`, `payTo`, `amount`, or `maxTimeoutSeconds`
+- `paymentPayload.accepted` does not match `paymentRequirements` on `scheme`, `network`, `asset`, `payTo`, `amount`, or `maxTimeoutSeconds`; `asset` MUST be an exact string match at this envelope layer, even when another representation would identify the same canonical XRPL currency
 - Required `extra` keys are missing or mismatched:
   - `areFeesSponsored=false`
   - `assetTransferMethod` when present in `paymentRequirements.extra` (the payload MUST NOT select a different method; when the requirement omits it, `accepted.extra.assetTransferMethod` MAY declare the selected method, see section 7)
@@ -579,7 +579,7 @@ Given verified `(paymentPayload, paymentRequirements)`, the facilitator:
 2. Rejects the settlement as a duplicate when the transaction hash is already pending settlement (see [Duplicate Settlement Mitigation](#duplicate-settlement-mitigation-required)).
 3. Submits `signedTxBlob` to the XRPL network identified by `paymentRequirements.network`.
 4. Waits for a validated result by polling `tx` until `validated=true`.
-5. Treats settlement as successful only when the validated result is `tesSUCCESS`. For `crossCurrency=true`, it also verifies metadata `delivered_amount` equals the exact negotiated destination amount and issue.
+5. Treats settlement as successful only when the validated result is `tesSUCCESS`. For `crossCurrency=true`, it also verifies that metadata `delivered_amount` has the negotiated canonical issue and satisfies the XRP-exact or issued-currency XRPL-precision-equivalence rule in [Partial Payments, Simulation, and Failure](#partial-payments-simulation-and-failure).
 6. Returns the transaction hash and payer address.
 
 ### Fee Responsibility
