@@ -272,7 +272,7 @@ export class ExactXrplScheme implements SchemeNetworkClient {
     const sourceTag = isValidSourceTag(requirements.extra?.sourceTag)
       ? requirements.extra.sourceTag
       : undefined;
-    if (transaction.SourceTag !== sourceTag) {
+    if (sourceTag !== undefined && transaction.SourceTag !== sourceTag) {
       throw new Error("preparePaymentTransaction must preserve the negotiated SourceTag");
     }
     const facilitatorProof = isValidFacilitatorProof(requirements.extra?.facilitatorProof)

@@ -776,6 +776,21 @@ describe("ExactXrplScheme client", () => {
     );
   });
 
+  it("preserves a payer-selected SourceTag when attribution is not negotiated", async () => {
+    const client = new ExactXrplClientScheme(createXrplWalletSigner(payerWallet), {
+      preparePaymentTransaction: async transaction => ({
+        ...(await preparePaymentForTest(transaction)),
+        SourceTag: sourceTag,
+      }),
+    });
+
+    const result = await client.createPaymentPayload(2, baseXrpRequirements);
+    const decoded = decode(String(result.payload.signedTxBlob)) as Payment;
+
+    expect(decoded.SourceTag).toBe(sourceTag);
+    expect(baseXrpRequirements.extra?.sourceTag).toBeUndefined();
+  });
+
   it("rejects a preparer that changes the attribution Memo", async () => {
     const client = new ExactXrplClientScheme(createXrplWalletSigner(payerWallet), {
       preparePaymentTransaction: async transaction => ({
@@ -1161,13 +1176,13 @@ describe("ExactXrplScheme facilitator verify", () => {
     expect(result.invalidReason).toBe("invalid_exact_xrpl_source_tag_mismatch");
   });
 
-  it("rejects a transaction SourceTag that was not negotiated", async () => {
+  it("accepts a payer-signed SourceTag without giving it attribution semantics", async () => {
     const result = await facilitator.verify(
       buildPayload(baseXrpRequirements, { SourceTag: sourceTag }),
       baseXrpRequirements,
     );
 
-    expect(result.invalidReason).toBe("invalid_exact_xrpl_payload_source_tag_unexpected");
+    expect(result.isValid).toBe(true);
   });
 
   it("rejects a missing or mismatched negotiated transaction SourceTag", async () => {

@@ -96,7 +96,9 @@ Resource servers can explicitly bind a payment to the facilitator expected to su
 }
 ```
 
-The server checks the facilitator's `/supported` metadata before advertising these fields. The official facilitator advertises `features.sourceTag` and `features.facilitatorProof`; it never supplies a fallback tag. If the fields are omitted, the client omits both `SourceTag` and `Memos`.
+The server checks the facilitator's `/supported` metadata before advertising these fields. The official facilitator advertises `features.sourceTag` and `features.facilitatorProof`; it never supplies a fallback tag. If the fields are omitted, the default client omits both `SourceTag` and `Memos`. For backward compatibility, a custom transaction preparer may preserve its own payer-signed `SourceTag`, but that value has no facilitator-attribution meaning.
+
+These fields label the facilitator expected by the resource server; they do not prove which network peer broadcast the signed blob. Do not use them alone for rewards, security decisions, or submitter accountability.
 
 Invoice binding is independent and continues to use `extra.invoiceId` plus the signed `InvoiceID` field. The facilitator-attribution Memo is never accepted as invoice binding.
 

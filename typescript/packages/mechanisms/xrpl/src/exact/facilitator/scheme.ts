@@ -418,9 +418,6 @@ export class ExactXrplScheme implements SchemeNetworkFacilitator {
     const facilitatorProof = requirements.extra?.facilitatorProof;
 
     if (sourceTag === undefined) {
-      if (transaction.SourceTag !== undefined) {
-        return "invalid_exact_xrpl_payload_source_tag_unexpected";
-      }
       if (transaction.Memos !== undefined) {
         return "invalid_exact_xrpl_payload_memos_not_allowed";
       }

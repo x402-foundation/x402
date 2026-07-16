@@ -261,6 +261,12 @@ and, when a proof is present, its canonical typed Memo. The facilitator never
 inserts a fallback tag. Invoice binding remains independent and uses
 `extra.invoiceId` plus the signed `InvoiceID` field.
 
+The tag and Memo identify the facilitator expected by the resource server; they
+do not authenticate the network peer that broadcasts the payer-signed blob.
+When attribution is omitted, a custom transaction preparer may preserve an
+independent payer-signed `SourceTag`, but it has no facilitator-attribution
+meaning.
+
 **Client**
 
 ```typescript
