@@ -12,7 +12,7 @@ Hooks allow you to intercept and modify payment lifecycle events on clients, ser
 Register hooks on the core resource server for verification and settlement lifecycle events. Use cases include logging payments, recording analytics, implementing custom access control or recovering from transient failures.
 
 * **onBeforeVerify** — Runs before payment verification. Return `{ abort: true, reason }` to reject, or `{ skip: true, result }` to use a locally produced verification result.
-* **onAfterVerify** — Runs after successful verification. Return `{ skipHandler: true, response? }` to settle without invoking the resource handler.
+* **onAfterVerify** — Runs after successful verification. Return `{ skipHandler: true, response? }` to settle without invoking the resource handler, or `{ abort: true, reason, message? }` to reject the payment after verification. When a hook aborts, `onVerifiedPaymentCanceled` is dispatched so schemes can clear any reserved state.
 * **onVerifyFailure** — Runs on verification failure. Return `{ recovered: true, result }` to override.
 * **onBeforeSettle** — Runs before settlement. Return `{ abort: true, reason }` to reject, or `{ skip: true, result }` to use a locally produced settlement result.
 * **onAfterSettle** — Runs after successful settlement.
