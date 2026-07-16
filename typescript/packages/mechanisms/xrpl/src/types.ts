@@ -151,6 +151,10 @@ export type XrplSimulationResult = {
    * Human-readable engine result message.
    */
   engineResultMessage?: string;
+  /**
+   * Amount the simulated transaction would deliver according to metadata.
+   */
+  deliveredAmount?: Payment["Amount"] | "unavailable";
 };
 
 /**

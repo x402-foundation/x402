@@ -7,6 +7,7 @@ import {
   XRPL_CAIP_FAMILY,
 } from "../../constants";
 import {
+  areXrplTokenAmountsEquivalent,
   compareDecimalStrings,
   decodeSignedTransactionBlob,
   getCurrentLedgerIndex,
@@ -552,7 +553,7 @@ export class ExactXrplScheme implements SchemeNetworkFacilitator {
       isIssuedCurrencyAmount(deliveredAmount) &&
       deliveredAmount.currency === requirements.asset &&
       deliveredAmount.issuer === requirements.extra?.issuer &&
-      compareDecimalStrings(deliveredAmount.value, requirements.amount) === 0
+      areXrplTokenAmountsEquivalent(deliveredAmount.value, requirements.amount)
     );
   }
 
@@ -759,6 +760,12 @@ export class ExactXrplScheme implements SchemeNetworkFacilitator {
     );
     if (result.engineResult !== "tesSUCCESS") {
       return `invalid_exact_xrpl_payload_simulation_failed: ${result.engineResult}`;
+    }
+    if (
+      requirements.extra?.crossCurrency === true &&
+      !this.isExactDeliveredAmount(result.deliveredAmount, requirements)
+    ) {
+      return "invalid_exact_xrpl_payload_simulation_delivered_amount_mismatch";
     }
     return undefined;
   }

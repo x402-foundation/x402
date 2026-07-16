@@ -75,7 +75,9 @@ const xrplScheme = new ExactXrplScheme(signer, {
 
 The callback must preserve the destination and exact target amount. Omitted `Paths` uses XRPL's default path; explicit paths must be non-empty. `tfNoRippleDirect` is valid only with explicit paths. The client and facilitator reject `tfPartialPayment`, `DeliverMin`, same-asset or non-positive source caps, and malformed path policy.
 
-The facilitator simulates the exact signed transaction during verification and settlement re-verification. Settlement succeeds only for validated `tesSUCCESS` metadata whose `delivered_amount` exactly matches the required destination amount and issue. Quote or simulation success is not a guarantee because ledger liquidity can change before validation.
+The facilitator simulates the exact signed transaction during verification and settlement re-verification, including its `delivered_amount` metadata. Settlement succeeds only for validated `tesSUCCESS` metadata with the required destination asset and issue. XRP drops must match exactly; issued-currency values use XRPL's 15-significant-digit precision tolerance because ledger metadata can differ from `Amount` by one least-significant precision unit. Quote or simulation success is not a guarantee because ledger liquidity can change before validation.
+
+Issued-currency `SendMax.value` accepts XRPL decimal strings in plain or `e`/`E` scientific notation and is parsed without binary floating point.
 
 ## Asset Transfer Methods
 
@@ -174,7 +176,7 @@ import { ExactXrplScheme } from "@x402/xrpl/exact/facilitator";
 const facilitator = new x402Facilitator().register("xrpl:*", new ExactXrplScheme());
 ```
 
-Verification enforces the spec's checks: envelope consistency, offline signature validation, signer-to-account authorization (the embedded `SigningPubKey` must be the account's master key pair, unless disabled, or its configured regular key), destination and amount matching, NetworkID binding, per-method sequencing (current account `Sequence`, or ticket availability), `LastLedgerSequence` expiry policy, invoice binding via `InvoiceID`, fee caps, safety rejections (`Delegate`, `Memos`, unnegotiated `Paths`, `DeliverMin`, partial payments, multisigned blobs), and an XRPL simulation. For opt-in cross-currency payments it additionally validates the signed source cap and path policy. Settlement re-runs verification, submits the signed blob, and succeeds only on validated `tesSUCCESS`; cross-currency settlement also requires exact `delivered_amount` metadata.
+Verification enforces the spec's checks: envelope consistency, offline signature validation, signer-to-account authorization (the embedded `SigningPubKey` must be the account's master key pair, unless disabled, or its configured regular key), destination and amount matching, NetworkID binding, per-method sequencing (current account `Sequence`, or ticket availability), `LastLedgerSequence` expiry policy, invoice binding via `InvoiceID`, fee caps, safety rejections (`Delegate`, `Memos`, unnegotiated `Paths`, `DeliverMin`, partial payments, multisigned blobs), and an XRPL simulation. For opt-in cross-currency payments it additionally validates the signed source cap, path policy, and simulated delivery metadata. Settlement re-runs verification, submits the signed blob, and succeeds only on validated `tesSUCCESS`; cross-currency settlement also requires XRPL-precision-equivalent `delivered_amount` metadata.
 
 ## Duplicate Settlement Protection
 

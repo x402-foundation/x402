@@ -11,6 +11,7 @@ import {
   TF_NO_RIPPLE_DIRECT,
   TF_PARTIAL_PAYMENT,
   XRPL_TESTNET,
+  areXrplTokenAmountsEquivalent,
   compareDecimalStrings,
   createTickets,
   getXrplTicketSequences,
@@ -156,7 +157,13 @@ function createFacilitator(
       getAccountAuthorization: async () => ({ isMasterKeyDisabled: false }),
       isTicketAvailable: async () => true,
       maxFeeDrops: DEFAULT_MAX_FEE_DROPS,
-      simulateSignedTransaction: async () => ({ engineResult: "tesSUCCESS" }),
+      simulateSignedTransaction: async signedTxBlob => {
+        const transaction = decode(signedTxBlob) as Payment;
+        return {
+          engineResult: "tesSUCCESS",
+          deliveredAmount: transaction.DeliverMax ?? transaction.Amount,
+        };
+      },
       ...overrides,
     },
     settlementCache,
@@ -172,6 +179,16 @@ describe("XRPL exact utilities", () => {
     expect(compareDecimalStrings("10.5", "10.50")).toBe(0);
     expect(compareDecimalStrings("10.5", "10.49")).toBe(1);
     expect(compareDecimalStrings("0.000001", "0.00001")).toBe(-1);
+    expect(compareDecimalStrings("1.23e11", "123000000000")).toBe(0);
+    expect(compareDecimalStrings("1E-5", "0.000009")).toBe(1);
+  });
+
+  it("compares delivered token amounts using XRPL precision", () => {
+    expect(areXrplTokenAmountsEquivalent("10.5", "10.50")).toBe(true);
+    expect(areXrplTokenAmountsEquivalent("10.49999999999999", "10.5")).toBe(true);
+    expect(areXrplTokenAmountsEquivalent("10.499999999", "10.5")).toBe(false);
+    expect(areXrplTokenAmountsEquivalent("1.23e11", "123000000000")).toBe(true);
+    expect(areXrplTokenAmountsEquivalent("1e1000", "10.5")).toBe(false);
   });
 
   it("recognizes positive cross-currency source caps", () => {
@@ -188,6 +205,18 @@ describe("XRPL exact utilities", () => {
       isDifferentXrplSourceAsset({ currency: "USD", issuer, value: "20" }, destinationIou),
     ).toBe(false);
     expect(isDifferentXrplSourceAsset("0", destinationIou)).toBe(false);
+    expect(
+      isDifferentXrplSourceAsset(
+        { currency: "EUR", issuer: sourceIssuer, value: "1e-5" },
+        destinationIou,
+      ),
+    ).toBe(true);
+    expect(
+      isDifferentXrplSourceAsset(
+        { currency: "EUR", issuer: sourceIssuer, value: "1E96" },
+        destinationIou,
+      ),
+    ).toBe(false);
   });
 
   it("recognizes only non-empty explicit path sets", () => {
@@ -245,6 +274,12 @@ describe("XRPL exact utilities", () => {
       result: {
         engine_result: "tesSUCCESS",
         engine_result_message: "The transaction was applied.",
+        meta: {
+          TransactionIndex: 0,
+          TransactionResult: "tesSUCCESS",
+          AffectedNodes: [],
+          delivered_amount: "1000000",
+        },
       },
     }));
     const fakeClient = {
@@ -270,6 +305,7 @@ describe("XRPL exact utilities", () => {
     expect(result).toEqual({
       engineResult: "tesSUCCESS",
       engineResultMessage: "The transaction was applied.",
+      deliveredAmount: "1000000",
     });
   });
 
@@ -789,6 +825,20 @@ describe("ExactXrplScheme client", () => {
     expect(decoded.SendMax).toEqual(sourceAmount);
     expect(decoded.Paths).toEqual(paths);
     expect(Number(decoded.Flags) & TF_NO_RIPPLE_DIRECT).toBe(TF_NO_RIPPLE_DIRECT);
+  });
+
+  it("accepts a scientific-notation issued-currency source cap", async () => {
+    const client = new ExactXrplClientScheme(createXrplWalletSigner(payerWallet), {
+      preparePaymentTransaction: async transaction => ({
+        ...(await preparePaymentForTest(transaction)),
+        SendMax: { currency: "EUR", issuer: sourceIssuer, value: "1e-5" },
+      }),
+    });
+
+    const result = await client.createPaymentPayload(2, crossCurrencyIouRequirements);
+    const decoded = decode(String(result.payload.signedTxBlob)) as Payment;
+
+    expect(decoded.SendMax).toEqual({ currency: "EUR", issuer: sourceIssuer, value: "0.00001" });
   });
 
   it("requires explicit quote preparation before signing cross-currency payments", async () => {
@@ -1597,6 +1647,23 @@ describe("ExactXrplScheme facilitator verify", () => {
     expect(result.invalidReason).toContain("simulation_failed: tecPATH_DRY");
   });
 
+  it("fails cross-currency verification when simulation metadata under-delivers", async () => {
+    const simulator = createFacilitator({
+      simulateSignedTransaction: async () => ({
+        engineResult: "tesSUCCESS",
+        deliveredAmount: { currency: "USD", issuer, value: "10.49" },
+      }),
+    });
+
+    const result = await simulator.verify(
+      buildPayload(crossCurrencyIouRequirements, { SendMax: "25000000" }),
+      crossCurrencyIouRequirements,
+    );
+
+    expect(result.isValid).toBe(false);
+    expect(result.invalidReason).toContain("simulation_delivered_amount_mismatch");
+  });
+
   it("rejects a non-Payment transaction", async () => {
     const blob = buildBlobFromTransaction({
       TransactionType: "AccountSet",
@@ -1983,13 +2050,13 @@ describe("ExactXrplScheme facilitator settle", () => {
     expect(submitSignedTransaction).toHaveBeenCalledOnce();
   });
 
-  it("settles cross-currency only when delivered_amount is exact", async () => {
+  it("settles cross-currency when delivered_amount is XRPL-precision equivalent", async () => {
     const settleFacilitator = createFacilitator({
       submitSignedTransaction: async () => ({
         hash: settledHash,
         validated: true,
         resultCode: "tesSUCCESS",
-        deliveredAmount: { currency: "USD", issuer, value: "10.50" },
+        deliveredAmount: { currency: "USD", issuer, value: "10.49999999999999" },
       }),
     });
 

@@ -85,7 +85,10 @@ describe("ExactXrplScheme settlement", () => {
       getAccountSequence: async () => 1,
       getAccountAuthorization: async () => ({ isMasterKeyDisabled: false }),
       submitSignedTransaction,
-      simulateSignedTransaction: async () => ({ engineResult: "tesSUCCESS" }),
+      simulateSignedTransaction: async () => ({
+        engineResult: "tesSUCCESS",
+        deliveredAmount: { currency: "USD", issuer, value: "10.50" },
+      }),
     });
     const server = new ExactXrplServerScheme();
     const enhancedRequirements = await server.enhancePaymentRequirements(

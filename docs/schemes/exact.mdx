@@ -289,7 +289,9 @@ const client = new x402Client().register("xrpl:*", xrplScheme);
 The client and facilitator reject partial payments, `DeliverMin`, invalid path
 policy, and same-asset or non-positive caps. The facilitator simulates the
 signed transaction and accepts settlement only when validated metadata reports
-the exact required `delivered_amount`.
+the required `delivered_amount`. XRP drops must match exactly; issued-currency
+metadata uses XRPL's 15-significant-digit precision tolerance for ledger
+rounding. Issued-currency `SendMax` caps may use XRPL scientific notation.
 
 **Facilitator**
 
