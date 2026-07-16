@@ -4,6 +4,7 @@ import {
   decode,
   hashes,
   isValidClassicAddress,
+  type Payment,
   type SubmittableTransaction,
   type TicketCreate,
   type Transaction,
@@ -294,6 +295,62 @@ export function compareDecimalStrings(left: string, right: string): number {
 }
 
 /**
+ * Checks whether an XRPL amount is positive and valid for a cross-currency source cap.
+ *
+ * @param amount - Source amount to validate
+ * @returns Whether the amount is positive XRP or an issued-currency amount
+ */
+export function isPositiveXrplAmount(amount: unknown): amount is NonNullable<Payment["SendMax"]> {
+  if (typeof amount === "string") {
+    return /^\d+$/.test(amount) && BigInt(amount) > 0n;
+  }
+  return (
+    isIssuedCurrencyAmount(amount) &&
+    isValidClassicAddress(amount.issuer) &&
+    isDecimalString(amount.value) &&
+    compareDecimalStrings(amount.value, "0") > 0
+  );
+}
+
+/**
+ * Checks that a positive source cap uses a different asset or issue from the destination.
+ *
+ * @param sourceAmount - Signed SendMax source cap
+ * @param destinationAmount - Exact destination Amount or DeliverMax
+ * @returns Whether the payment exchanges a different source asset or issue
+ */
+export function isDifferentXrplSourceAsset(
+  sourceAmount: unknown,
+  destinationAmount: unknown,
+): boolean {
+  if (!isPositiveXrplAmount(sourceAmount)) return false;
+  if (typeof destinationAmount === "string") {
+    return isIssuedCurrencyAmount(sourceAmount);
+  }
+  if (!isIssuedCurrencyAmount(destinationAmount)) return false;
+  if (typeof sourceAmount === "string") return true;
+  if (!isIssuedCurrencyAmount(sourceAmount)) return false;
+  return (
+    sourceAmount.currency !== destinationAmount.currency ||
+    sourceAmount.issuer !== destinationAmount.issuer
+  );
+}
+
+/**
+ * Checks that an explicit XRPL path set contains at least one non-empty path.
+ *
+ * @param paths - Signed Payment Paths field
+ * @returns Whether the path set is non-empty and usable
+ */
+export function isNonEmptyXrplPathSet(paths: Payment["Paths"]): boolean {
+  return (
+    Array.isArray(paths) &&
+    paths.length > 0 &&
+    paths.some(path => Array.isArray(path) && path.length > 0)
+  );
+}
+
+/**
  * Computes the transaction hash for a signed blob.
  *
  * @param signedTxBlob - Hex-encoded signed transaction blob
@@ -562,10 +619,15 @@ export async function submitSignedTransaction(
       typeof response.result.meta === "object" && response.result.meta !== null
         ? response.result.meta.TransactionResult
         : "unknown";
+    const deliveredAmount =
+      typeof response.result.meta === "object" && response.result.meta !== null
+        ? response.result.meta.delivered_amount
+        : undefined;
     return {
       hash: response.result.hash ?? getSignedTransactionHash(signedTxBlob),
       validated: response.result.validated === true,
       resultCode,
+      deliveredAmount,
     };
   } finally {
     await client.disconnect();

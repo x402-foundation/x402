@@ -12,6 +12,7 @@ import { parseMoneyString } from "@x402/core/utils";
 import {
   isDecimalString,
   isIntegerString,
+  isRecord,
   isValidDestinationTag,
   isXrplAssetTransferMethod,
   requireClassicAddress,
@@ -85,7 +86,6 @@ export class ExactXrplScheme implements SchemeNetworkServer {
     supportedKind: SupportedKind,
     extensionKeys: string[],
   ): Promise<PaymentRequirements> {
-    void supportedKind;
     void extensionKeys;
 
     const assetTransferMethod = paymentRequirements.extra?.assetTransferMethod;
@@ -101,6 +101,14 @@ export class ExactXrplScheme implements SchemeNetworkServer {
       throw new Error(
         "XRPL exact payments require extra.destinationTag to be a 32-bit unsigned integer",
       );
+    }
+    const crossCurrency = paymentRequirements.extra?.crossCurrency;
+    if (crossCurrency !== undefined && crossCurrency !== true) {
+      throw new Error("XRPL exact payments require extra.crossCurrency to be true when provided");
+    }
+    const features = supportedKind.extra?.features;
+    if (crossCurrency === true && (!isRecord(features) || features.crossCurrency !== true)) {
+      throw new Error("XRPL facilitator does not advertise cross-currency support");
     }
 
     return Promise.resolve({

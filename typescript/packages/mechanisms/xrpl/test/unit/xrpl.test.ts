@@ -8,13 +8,18 @@ import {
   DEFAULT_MAX_FEE_DROPS,
   SETTLEMENT_TTL_MS,
   SettlementCache,
+  TF_NO_RIPPLE_DIRECT,
+  TF_PARTIAL_PAYMENT,
   XRPL_TESTNET,
   compareDecimalStrings,
   createTickets,
   getXrplTicketSequences,
   invoiceIdToInvoiceIdField,
+  isDifferentXrplSourceAsset,
+  isNonEmptyXrplPathSet,
   resolveAssetTransferMethod,
   simulateSignedTransaction,
+  submitSignedTransaction,
 } from "../../src";
 import type { PaymentPayload, PaymentRequirements } from "@x402/core/types";
 import type { Client, Payment, Transaction } from "xrpl";
@@ -24,6 +29,7 @@ const otherWallet = Wallet.fromSeed("sEd7t79mzn2dwy3vvpvRmaaLbLhvme6");
 const payTo = "rGsd42GGEq1tJBPQ3Aoj9iyePZbxiX5Nrv";
 const issuer = "rL4JcsJfvkYYAqNhjZ7Gvkh14eF7GXRh3q";
 const invoiceId = "INV-2026-XRPL-001";
+const sourceIssuer = otherWallet.classicAddress;
 
 const baseXrpRequirements: PaymentRequirements = {
   scheme: "exact",
@@ -55,6 +61,22 @@ const ticketXrpRequirements: PaymentRequirements = {
   extra: {
     ...baseXrpRequirements.extra,
     assetTransferMethod: "ticketSequence",
+  },
+};
+
+const crossCurrencyIouRequirements: PaymentRequirements = {
+  ...baseIouRequirements,
+  extra: {
+    ...baseIouRequirements.extra,
+    crossCurrency: true,
+  },
+};
+
+const crossCurrencyXrpRequirements: PaymentRequirements = {
+  ...baseXrpRequirements,
+  extra: {
+    ...baseXrpRequirements.extra,
+    crossCurrency: true,
   },
 };
 
@@ -152,6 +174,28 @@ describe("XRPL exact utilities", () => {
     expect(compareDecimalStrings("0.000001", "0.00001")).toBe(-1);
   });
 
+  it("recognizes positive cross-currency source caps", () => {
+    const destinationIou = { currency: "USD", issuer, value: "10.5" };
+
+    expect(isDifferentXrplSourceAsset("25000000", destinationIou)).toBe(true);
+    expect(
+      isDifferentXrplSourceAsset(
+        { currency: "EUR", issuer: sourceIssuer, value: "20" },
+        destinationIou,
+      ),
+    ).toBe(true);
+    expect(
+      isDifferentXrplSourceAsset({ currency: "USD", issuer, value: "20" }, destinationIou),
+    ).toBe(false);
+    expect(isDifferentXrplSourceAsset("0", destinationIou)).toBe(false);
+  });
+
+  it("recognizes only non-empty explicit path sets", () => {
+    expect(isNonEmptyXrplPathSet([[{ account: issuer }]])).toBe(true);
+    expect(isNonEmptyXrplPathSet([])).toBe(false);
+    expect(isNonEmptyXrplPathSet([[]])).toBe(false);
+  });
+
   it("defaults the asset transfer method to sequence", () => {
     const payload = buildPayload(baseXrpRequirements);
 
@@ -227,6 +271,34 @@ describe("XRPL exact utilities", () => {
       engineResult: "tesSUCCESS",
       engineResultMessage: "The transaction was applied.",
     });
+  });
+
+  it("extracts delivered_amount from validated submission metadata", async () => {
+    const deliveredAmount = { currency: "USD", issuer, value: "10.5" };
+    const fakeClient = {
+      connect: vi.fn(async () => undefined),
+      disconnect: vi.fn(async () => undefined),
+      submitAndWait: vi.fn(async () => ({
+        result: {
+          hash: "D".repeat(64),
+          validated: true,
+          meta: {
+            TransactionIndex: 0,
+            TransactionResult: "tesSUCCESS",
+            AffectedNodes: [],
+            delivered_amount: deliveredAmount,
+          },
+        },
+      })),
+    } as unknown as Client;
+
+    const result = await submitSignedTransaction(
+      String(buildPayload(baseXrpRequirements).payload.signedTxBlob),
+      XRPL_TESTNET,
+      { clientFactory: () => fakeClient },
+    );
+
+    expect(result.deliveredAmount).toEqual(deliveredAmount);
   });
 
   it("lists available ticket sequences across paginated ledger objects", async () => {
@@ -582,6 +654,55 @@ describe("ExactXrplScheme server", () => {
       ),
     ).toThrow("destinationTag");
   });
+
+  it("preserves cross-currency opt-in when the facilitator supports it", async () => {
+    const server = new ExactXrplServerScheme();
+
+    const result = await server.enhancePaymentRequirements(
+      crossCurrencyIouRequirements,
+      {
+        x402Version: 2,
+        scheme: "exact",
+        network: XRPL_TESTNET,
+        extra: { features: { crossCurrency: true } },
+      },
+      [],
+    );
+
+    expect(result.extra?.crossCurrency).toBe(true);
+  });
+
+  it("rejects cross-currency requirements with an incompatible facilitator", () => {
+    const server = new ExactXrplServerScheme();
+
+    expect(() =>
+      server.enhancePaymentRequirements(
+        crossCurrencyIouRequirements,
+        { x402Version: 2, scheme: "exact", network: XRPL_TESTNET },
+        [],
+      ),
+    ).toThrow("does not advertise cross-currency");
+  });
+
+  it("rejects false cross-currency negotiation", () => {
+    const server = new ExactXrplServerScheme();
+
+    expect(() =>
+      server.enhancePaymentRequirements(
+        {
+          ...baseXrpRequirements,
+          extra: { ...baseXrpRequirements.extra, crossCurrency: false },
+        },
+        {
+          x402Version: 2,
+          scheme: "exact",
+          network: XRPL_TESTNET,
+          extra: { features: { crossCurrency: true } },
+        },
+        [],
+      ),
+    ).toThrow("crossCurrency to be true");
+  });
 });
 
 describe("ExactXrplScheme client", () => {
@@ -630,6 +751,117 @@ describe("ExactXrplScheme client", () => {
     expect(decoded.Sequence).toBe(1);
     expect(decoded.Fee).toBe(DEFAULT_MAX_FEE_DROPS);
     expect(decoded.LastLedgerSequence).toBe(994);
+  });
+
+  it("creates a cross-currency IOU destination payment with an XRP source cap", async () => {
+    const client = new ExactXrplClientScheme(createXrplWalletSigner(payerWallet), {
+      preparePaymentTransaction: async transaction => ({
+        ...(await preparePaymentForTest(transaction)),
+        SendMax: "25000000",
+      }),
+    });
+
+    const result = await client.createPaymentPayload(2, crossCurrencyIouRequirements);
+    const decoded = decode(String(result.payload.signedTxBlob)) as Payment;
+
+    expect(decoded.Amount).toEqual({ currency: "USD", issuer, value: "10.5" });
+    expect(decoded.SendMax).toBe("25000000");
+    expect(decoded.Paths).toBeUndefined();
+    expect(decoded.DeliverMin).toBeUndefined();
+  });
+
+  it("creates a cross-currency XRP destination payment with explicit paths", async () => {
+    const sourceAmount = { currency: "USD", issuer: sourceIssuer, value: "20" };
+    const paths: NonNullable<Payment["Paths"]> = [[{ account: issuer }]];
+    const client = new ExactXrplClientScheme(createXrplWalletSigner(payerWallet), {
+      preparePaymentTransaction: async transaction => ({
+        ...(await preparePaymentForTest(transaction)),
+        SendMax: sourceAmount,
+        Paths: paths,
+        Flags: TF_NO_RIPPLE_DIRECT,
+      }),
+    });
+
+    const result = await client.createPaymentPayload(2, crossCurrencyXrpRequirements);
+    const decoded = decode(String(result.payload.signedTxBlob)) as Payment;
+
+    expect(decoded.Amount).toBe(baseXrpRequirements.amount);
+    expect(decoded.SendMax).toEqual(sourceAmount);
+    expect(decoded.Paths).toEqual(paths);
+    expect(Number(decoded.Flags) & TF_NO_RIPPLE_DIRECT).toBe(TF_NO_RIPPLE_DIRECT);
+  });
+
+  it("requires explicit quote preparation before signing cross-currency payments", async () => {
+    const sign = vi.fn(createXrplWalletSigner(payerWallet).sign);
+    const client = new ExactXrplClientScheme({
+      classicAddress: payerWallet.classicAddress,
+      sign,
+    });
+
+    await expect(client.createPaymentPayload(2, crossCurrencyIouRequirements)).rejects.toThrow(
+      "require preparePaymentTransaction",
+    );
+    expect(sign).not.toHaveBeenCalled();
+  });
+
+  it("rejects false cross-currency negotiation before signing", async () => {
+    const sign = vi.fn(createXrplWalletSigner(payerWallet).sign);
+    const client = new ExactXrplClientScheme({
+      classicAddress: payerWallet.classicAddress,
+      sign,
+    });
+
+    await expect(
+      client.createPaymentPayload(2, {
+        ...baseXrpRequirements,
+        extra: { ...baseXrpRequirements.extra, crossCurrency: false },
+      }),
+    ).rejects.toThrow("crossCurrency to be true");
+    expect(sign).not.toHaveBeenCalled();
+  });
+
+  it.each<Array<[string, (payment: Payment) => Payment, string]>>([
+    ["missing SendMax", payment => ({ ...payment, SendMax: undefined }), "positive SendMax"],
+    [
+      "same-issue SendMax",
+      payment => ({ ...payment, SendMax: { currency: "USD", issuer, value: "20" } }),
+      "different source asset",
+    ],
+    ["zero SendMax", payment => ({ ...payment, SendMax: "0" }), "positive SendMax"],
+    [
+      "DeliverMin",
+      payment => ({ ...payment, SendMax: "25000000", DeliverMin: "1" }),
+      "must not set DeliverMin",
+    ],
+    [
+      "partial payment",
+      payment => ({ ...payment, SendMax: "25000000", Flags: TF_PARTIAL_PAYMENT }),
+      "must not enable tfPartialPayment",
+    ],
+    [
+      "tfNoRippleDirect without Paths",
+      payment => ({ ...payment, SendMax: "25000000", Flags: TF_NO_RIPPLE_DIRECT }),
+      "requires explicit Paths",
+    ],
+    [
+      "empty Paths",
+      payment => ({ ...payment, SendMax: "25000000", Paths: [] }),
+      "at least one non-empty path",
+    ],
+    [
+      "changed destination amount",
+      payment => ({ ...payment, Amount: { currency: "USD", issuer, value: "9" }, SendMax: "25" }),
+      "preserve the exact IOU destination amount",
+    ],
+  ])("rejects a cross-currency preparer with %s", async (_name, mutate, expectedMessage) => {
+    const client = new ExactXrplClientScheme(createXrplWalletSigner(payerWallet), {
+      preparePaymentTransaction: async transaction =>
+        mutate(await preparePaymentForTest(transaction)),
+    });
+
+    await expect(client.createPaymentPayload(2, crossCurrencyIouRequirements)).rejects.toThrow(
+      expectedMessage,
+    );
   });
 
   it("creates a ticketSequence payment when the requirements pin the method", async () => {
@@ -900,8 +1132,105 @@ describe("ExactXrplScheme facilitator verify", () => {
     });
   });
 
-  it("advertises unsponsored fees in supported metadata", () => {
-    expect(facilitator.getExtra(XRPL_TESTNET)).toEqual({ areFeesSponsored: false });
+  it("accepts an exact IOU destination with an XRP source cap", async () => {
+    const result = await facilitator.verify(
+      buildPayload(crossCurrencyIouRequirements, { SendMax: "25000000" }),
+      crossCurrencyIouRequirements,
+    );
+
+    expect(result).toMatchObject({
+      isValid: true,
+      payer: payerWallet.classicAddress,
+    });
+  });
+
+  it("accepts an exact XRP destination with an issued-currency source cap", async () => {
+    const result = await facilitator.verify(
+      buildPayload(crossCurrencyXrpRequirements, {
+        SendMax: { currency: "USD", issuer: sourceIssuer, value: "20" },
+      }),
+      crossCurrencyXrpRequirements,
+    );
+
+    expect(result.isValid).toBe(true);
+  });
+
+  it("accepts explicit paths with tfNoRippleDirect", async () => {
+    const result = await facilitator.verify(
+      buildPayload(crossCurrencyIouRequirements, {
+        SendMax: "25000000",
+        Paths: [[{ account: sourceIssuer }]],
+        Flags: TF_NO_RIPPLE_DIRECT,
+      }),
+      crossCurrencyIouRequirements,
+    );
+
+    expect(result.isValid).toBe(true);
+  });
+
+  it("advertises unsponsored fees and cross-currency support", () => {
+    expect(facilitator.getExtra(XRPL_TESTNET)).toEqual({
+      areFeesSponsored: false,
+      features: { crossCurrency: true },
+    });
+  });
+
+  it("rejects malformed or mismatched cross-currency envelope negotiation", async () => {
+    const basePayload = buildPayload(baseIouRequirements);
+    const malformedRequirements = {
+      ...baseIouRequirements,
+      extra: { ...baseIouRequirements.extra, crossCurrency: false },
+    };
+    const malformed = await facilitator.verify(
+      { ...basePayload, accepted: malformedRequirements },
+      malformedRequirements,
+    );
+    const mismatched = await facilitator.verify(
+      {
+        ...basePayload,
+        accepted: {
+          ...basePayload.accepted,
+          extra: { ...basePayload.accepted.extra, crossCurrency: true },
+        },
+      },
+      baseIouRequirements,
+    );
+
+    expect(malformed.invalidReason).toBe("invalid_exact_xrpl_cross_currency_malformed");
+    expect(mismatched.invalidReason).toBe("invalid_exact_xrpl_cross_currency_mismatch");
+  });
+
+  it.each<Array<[string, Partial<Payment>, string]>>([
+    ["missing SendMax", { SendMax: undefined }, "cross_currency_sendmax"],
+    [
+      "same-issue SendMax",
+      { SendMax: { currency: "USD", issuer, value: "20" } },
+      "cross_currency_sendmax",
+    ],
+    ["zero SendMax", { SendMax: "0" }, "cross_currency_sendmax"],
+    [
+      "partial payment",
+      { SendMax: "25000000", Flags: TF_PARTIAL_PAYMENT },
+      "partial_payment_not_allowed",
+    ],
+    [
+      "DeliverMin",
+      { SendMax: "25000000", DeliverMin: "1", Flags: TF_PARTIAL_PAYMENT },
+      "delivermin_not_allowed",
+    ],
+    [
+      "tfNoRippleDirect without Paths",
+      { SendMax: "25000000", Flags: TF_NO_RIPPLE_DIRECT },
+      "default_path_disabled_without_paths",
+    ],
+  ])("rejects cross-currency payment with %s", async (_name, overrides, expectedReason) => {
+    const result = await facilitator.verify(
+      buildPayload(crossCurrencyIouRequirements, overrides),
+      crossCurrencyIouRequirements,
+    );
+
+    expect(result.isValid).toBe(false);
+    expect(result.invalidReason).toContain(expectedReason);
   });
 
   it("returns a stable reason and separate message for malformed payloads", async () => {
@@ -1252,6 +1581,20 @@ describe("ExactXrplScheme facilitator verify", () => {
 
     expect(result.isValid).toBe(false);
     expect(result.invalidReason).toContain("simulation_failed");
+  });
+
+  it("fails cross-currency verification closed when route simulation fails", async () => {
+    const simulator = createFacilitator({
+      simulateSignedTransaction: async () => ({ engineResult: "tecPATH_DRY" }),
+    });
+
+    const result = await simulator.verify(
+      buildPayload(crossCurrencyIouRequirements, { SendMax: "25000000" }),
+      crossCurrencyIouRequirements,
+    );
+
+    expect(result.isValid).toBe(false);
+    expect(result.invalidReason).toContain("simulation_failed: tecPATH_DRY");
   });
 
   it("rejects a non-Payment transaction", async () => {
@@ -1638,6 +1981,48 @@ describe("ExactXrplScheme facilitator settle", () => {
       payer: payerWallet.classicAddress,
     });
     expect(submitSignedTransaction).toHaveBeenCalledOnce();
+  });
+
+  it("settles cross-currency only when delivered_amount is exact", async () => {
+    const settleFacilitator = createFacilitator({
+      submitSignedTransaction: async () => ({
+        hash: settledHash,
+        validated: true,
+        resultCode: "tesSUCCESS",
+        deliveredAmount: { currency: "USD", issuer, value: "10.50" },
+      }),
+    });
+
+    const result = await settleFacilitator.settle(
+      buildPayload(crossCurrencyIouRequirements, { SendMax: "25000000" }),
+      crossCurrencyIouRequirements,
+    );
+
+    expect(result.success).toBe(true);
+  });
+
+  it.each<Array<[string, Payment["Amount"] | "unavailable" | undefined]>>([
+    ["missing metadata", undefined],
+    ["unavailable metadata", "unavailable"],
+    ["wrong value", { currency: "USD", issuer, value: "10.49" }],
+    ["wrong issue", { currency: "USD", issuer: sourceIssuer, value: "10.5" }],
+  ])("rejects cross-currency settlement with %s", async (_name, deliveredAmount) => {
+    const settleFacilitator = createFacilitator({
+      submitSignedTransaction: async () => ({
+        hash: settledHash,
+        validated: true,
+        resultCode: "tesSUCCESS",
+        deliveredAmount,
+      }),
+    });
+
+    const result = await settleFacilitator.settle(
+      buildPayload(crossCurrencyIouRequirements, { SendMax: "25000000" }),
+      crossCurrencyIouRequirements,
+    );
+
+    expect(result.success).toBe(false);
+    expect(result.errorReason).toBe("transaction_failed: delivered_amount_mismatch");
   });
 
   it("does not submit when re-verification fails", async () => {
