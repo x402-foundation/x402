@@ -193,6 +193,8 @@ For XRPL issued currencies, `PaymentRequirements.amount` is the exact XRPL issue
 
 XRPL issued currencies are identified by `(currency, issuer)` and the ledger `Payment` amount uses a decimal `value` string. XRPL does not define a universal token-decimals field for arbitrary issued currencies, so this scheme does not accept server-declared decimal precision.
 
+Every issue comparison in this scheme MUST use canonical XRPL currency identity together with exact issuer equality. A valid three-character currency code and a 160-bit currency code identify the same currency only when the 160-bit value has XRPL's exact standard layout: 12 zero bytes, the three code bytes, then 5 zero bytes. The three decoded bytes MUST form the same valid XRPL three-character code and MUST NOT be `XRP`. For example, `USD` and `0000000000000000000000005553440000000000` are the same currency, while `5553440000000000000000000000000000000000` is a distinct custom 160-bit currency. Implementations MUST NOT shorten or otherwise canonicalize any other 160-bit value. Two issued-currency amounts are the same issue only when their canonical currencies and issuers both match.
+
 | Human Amount | `amount` Value | XRPL destination amount `value` |
 | ------------ | -------------- | ------------------------------- |
 | 10.50 USD    | `"10.5"`       | `"10.5"`                        |
@@ -206,7 +208,7 @@ Cross-currency behavior is enabled only when both `PaymentRequirements.extra.cro
 
 The destination `Amount` (API v1) or `DeliverMax` (API v2) remains the exact target amount and asset from `PaymentRequirements`. Because `tfPartialPayment` is forbidden, the transaction either delivers that full amount or fails. The facilitator and resource server MUST NOT interpret `SendMax` as the amount owed.
 
-`SendMax` is REQUIRED and is the payer's signed, absolute cap in the source asset. It includes transfer fees, exchange rates, and the payer's chosen slippage allowance, but excludes the XRP transaction fee. `SendMax` MUST be positive and use a source asset different from the destination asset. Issued-currency values MAY use any XRPL-valid decimal string representation, including `e` or `E` scientific notation; implementations MUST parse them with arbitrary-precision decimal arithmetic rather than binary floating point.
+`SendMax` is REQUIRED and is the payer's signed, absolute cap in the source asset. It includes transfer fees, exchange rates, and the payer's chosen slippage allowance, but excludes the XRP transaction fee. `SendMax` MUST be positive and use a source asset different from the destination asset under the canonical issue comparison above. Issued-currency values MAY use any XRPL-valid decimal string representation, including `e` or `E` scientific notation; implementations MUST parse them with arbitrary-precision decimal arithmetic rather than binary floating point.
 
 - For an XRP destination, `SendMax` MUST be an issued-currency amount with a valid currency, issuer, and positive decimal value.
 - For an issued-currency destination, `SendMax` MAY be a positive XRP drops string or an issued-currency amount. An issued-currency source MUST differ from the destination by currency or issuer.
@@ -294,9 +296,9 @@ A facilitator that implements this amendment advertises the capability in its
 ### Paths and Default-Path Policy
 
 - If `Paths` is omitted, the transaction uses XRPL's default path and `tfNoRippleDirect` MUST NOT be set.
-- If `Paths` is present, it MUST be a non-empty path set containing at least one non-empty path. Without `tfNoRippleDirect`, XRPL may use the supplied paths or the default path. With `tfNoRippleDirect`, only the explicit paths are eligible.
+- If `Paths` is present, it MUST contain 1 through 6 paths, and every path MUST contain 1 through 8 path steps. Empty paths, including an empty sibling beside a non-empty path, and any path set or path exceeding those bounds are invalid. Without `tfNoRippleDirect`, XRPL may use the supplied paths or the default path. With `tfNoRippleDirect`, only the explicit paths are eligible.
 - The client MUST obtain and review explicit paths before signing. It MUST NOT allow a resource server or facilitator to add or replace paths after the payer chooses its source cap.
-- The facilitator MUST validate the signed path-set shape and simulate the exact signed `Amount`, `SendMax`, `Paths`, and flags. It MUST NOT perform new pathfinding and substitute a different path set.
+- The client MUST reject an invalid explicit path set before signing. The facilitator MUST independently enforce the same bounds on the signed path set before simulation, then simulate the exact signed `Amount`, `SendMax`, `Paths`, and flags. Successful serialization or simulation does not make an out-of-bounds path set valid. The facilitator MUST NOT perform new pathfinding and substitute a different path set.
 
 ### Partial Payments, Simulation, and Failure
 
@@ -465,7 +467,7 @@ If `paymentRequirements.asset != "XRP"`:
   ```json
   { "currency": "...", "issuer": "...", "value": "..." }
   ```
-- `currency` MUST match `paymentRequirements.asset` (3-char or 160-bit hex).
+- `currency` MUST match `paymentRequirements.asset` under the canonical currency comparison above (3-char or 160-bit hex).
 - `issuer` MUST match `paymentRequirements.extra.issuer`.
 - `value` MUST equal `paymentRequirements.amount` using exact decimal arithmetic suitable for XRPL issued-currency values.
 
@@ -474,7 +476,7 @@ If `paymentRequirements.asset != "XRP"`:
 When `crossCurrency` is absent, the following rules prevent cross-currency behavior while allowing issuer transfer fees:
 
 - `tx_json.SendMax` MUST be present.
-- `SendMax` MUST be the same issued currency (same `currency` and `issuer`).
+- `SendMax` MUST be the same issued currency under the canonical issue comparison above.
 - `Decimal(SendMax.value) >= Decimal(destinationAmount.value)`.
 
 The facilitator MUST reject if:
@@ -489,7 +491,7 @@ When `crossCurrency=true`, the facilitator MUST apply all rules in [Cross-Curren
 
 - exact destination amount and issue comparison;
 - a positive `SendMax` in a different source asset/issue;
-- the default/explicit `Paths` and `tfNoRippleDirect` policy;
+- the default/explicit `Paths`, 1-through-6 path and 1-through-8 step bounds, and `tfNoRippleDirect` policy;
 - rejection of `DeliverMin` and `tfPartialPayment`;
 - successful simulation of the signed cap, paths, and flags.
 
@@ -657,7 +659,7 @@ Implementations MAY include additional fields when defined by the SDK or facilit
 - `tfPartialPayment` is explicitly rejected.
 - `DeliverMin` is rejected.
 - Same-asset IOU payments require `SendMax` to match the destination currency and issuer, and all same-asset payments reject `Paths`.
-- Opt-in cross-currency payments require a different source asset, a signed `SendMax` cap, deterministic path policy, mandatory simulation, and post-settlement `delivered_amount` equality.
+- Opt-in cross-currency payments require a canonically different source asset, a signed `SendMax` cap, protocol-bounded deterministic path policy, mandatory simulation, and post-settlement `delivered_amount` equality.
 
 ## References
 
