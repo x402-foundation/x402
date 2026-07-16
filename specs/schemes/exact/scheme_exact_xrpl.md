@@ -154,6 +154,7 @@ The resource server advertises payment requirements in the `accepts` array.
 | `extra.assetTransferMethod` | string | No     | `"sequence"` (default) or `"ticketSequence"`     |
 | `extra.invoiceId`        | string  | No       | Unique invoice identifier for binding            |
 | `extra.destinationTag`   | integer | No       | DestinationTag for hosted accounts               |
+| `extra.crossCurrency`    | boolean | No       | Must be `true` to permit a different source asset |
 | `extra.issuer`           | string  | IOU only | Classic address of the IOU issuer                |
 
 `extra.destinationTag` applies to both native XRP and IOU payments. It is used when the receiver is a hosted account or otherwise requires a destination tag for attribution.
@@ -161,6 +162,8 @@ The resource server advertises payment requirements in the `accepts` array.
 `extra.areFeesSponsored` is always `false` because this scheme uses payer-signed XRPL `Payment` transactions whose fee is paid by the payer account.
 
 `extra.assetTransferMethod` selects how the signed transaction is sequenced. See [Asset Transfer Methods](#asset-transfer-methods) for negotiation rules and tradeoffs.
+
+`extra.crossCurrency` is an opt-in capability. The only valid value is `true`; `false` is invalid and omission selects the existing same-asset behavior. A resource server MUST NOT advertise `crossCurrency=true` unless its facilitator advertises `extra.features.crossCurrency=true` for the selected XRPL network and exact scheme.
 
 No `extra.decimals` field is defined for XRPL exact payments. Implementations MUST NOT derive the signed transfer amount from server-provided decimal precision metadata.
 
@@ -196,6 +199,75 @@ XRPL issued currencies are identified by `(currency, issuer)` and the ledger `Pa
 | 0.01 RLUSD   | `"0.01"`       | `"0.01"`                        |
 
 The facilitator MUST compare IOU amounts using exact decimal arithmetic suitable for XRPL issued-currency values, not binary floating point.
+
+## Cross-Currency Exact Payments
+
+Cross-currency behavior is enabled only when both `PaymentRequirements.extra.crossCurrency` and `PaymentPayload.accepted.extra.crossCurrency` are exactly `true`. If the value is absent in both objects, the same-asset rules remain unchanged. If it is `false`, malformed, present in only one object, or mismatched, the client and facilitator MUST reject the payment.
+
+The destination `Amount` (API v1) or `DeliverMax` (API v2) remains the exact target amount and asset from `PaymentRequirements`. Because `tfPartialPayment` is forbidden, the transaction either delivers that full amount or fails. The facilitator and resource server MUST NOT interpret `SendMax` as the amount owed.
+
+`SendMax` is REQUIRED and is the payer's signed, absolute cap in the source asset. It includes transfer fees, exchange rates, and the payer's chosen slippage allowance, but excludes the XRP transaction fee. `SendMax` MUST be positive and use a source asset different from the destination asset:
+
+- For an XRP destination, `SendMax` MUST be an issued-currency amount with a valid currency, issuer, and positive decimal value.
+- For an issued-currency destination, `SendMax` MAY be a positive XRP drops string or an issued-currency amount. An issued-currency source MUST differ from the destination by currency or issuer.
+- The special XRPL issuer forms where the source issuer equals the payer or the destination issuer equals the destination remain XRPL protocol behavior; clients MUST account for them during preflight and facilitators MUST rely on successful simulation rather than assuming an issuer from the currency code alone.
+
+The resource server does not select the source asset or cap. Before signing, the client MUST obtain pathfinding or equivalent quote data from a current validated ledger, apply its own source-asset authorization policy, and set `SendMax` no lower than the quoted source amount and no higher than the payer-authorized cap. The client SHOULD simulate the final unsigned transaction before signing. A quote or simulation is not a price guarantee because ledger liquidity can change.
+
+For example, a requirement for exactly `10.5 USD` may opt in as follows:
+
+```json
+{
+  "scheme": "exact",
+  "network": "xrpl:0",
+  "asset": "USD",
+  "payTo": "rN7n3473SaZBCG4dFL83w7a1RXtXtbk2D9",
+  "amount": "10.5",
+  "maxTimeoutSeconds": 600,
+  "extra": {
+    "areFeesSponsored": false,
+    "issuer": "rMwjYedjc7qqtKYVLiAccJSmCwih4LnE2q",
+    "crossCurrency": true
+  }
+}
+```
+
+A payer choosing XRP as the source might sign these transaction fields after quote preflight; the resource server does not advertise the `SendMax` value:
+
+```json
+{
+  "TransactionType": "Payment",
+  "Amount": {
+    "currency": "USD",
+    "issuer": "rMwjYedjc7qqtKYVLiAccJSmCwih4LnE2q",
+    "value": "10.5"
+  },
+  "SendMax": "25000000"
+}
+```
+
+### Paths and Default-Path Policy
+
+- If `Paths` is omitted, the transaction uses XRPL's default path and `tfNoRippleDirect` MUST NOT be set.
+- If `Paths` is present, it MUST be a non-empty path set containing at least one non-empty path. Without `tfNoRippleDirect`, XRPL may use the supplied paths or the default path. With `tfNoRippleDirect`, only the explicit paths are eligible.
+- The client MUST obtain and review explicit paths before signing. It MUST NOT allow a resource server or facilitator to add or replace paths after the payer chooses its source cap.
+- The facilitator MUST validate the signed path-set shape and simulate the exact signed `Amount`, `SendMax`, `Paths`, and flags. It MUST NOT perform new pathfinding and substitute a different path set.
+
+### Partial Payments, Simulation, and Failure
+
+`tfPartialPayment` and `DeliverMin` are forbidden. `tfLimitQuality` MAY be used, but it does not relax exact delivery: if no eligible path can deliver the full destination amount within `SendMax`, the transaction fails.
+
+For cross-currency payments, facilitator simulation is REQUIRED at `/verify` and again when `/settle` re-runs verification. Targeted balance, trust-line, or sequence checks are not a substitute because they do not prove current path liquidity or cap sufficiency. If simulation is unavailable, fails, or returns any result other than `tesSUCCESS`, verification MUST fail and the resource server MUST NOT run or release the protected resource.
+
+Liquidity may change after simulation. If re-verification at `/settle` no longer succeeds, the facilitator MUST NOT submit. If ledger state changes between the final simulation and validation, the submitted transaction may fail; the facilitator MUST return settlement failure and the resource server MUST NOT grant access.
+
+After validation, the facilitator MUST require all of the following before returning settlement success:
+
+- `validated=true`;
+- `TransactionResult=tesSUCCESS`;
+- transaction metadata contains `delivered_amount` in the same asset/issue and exact value as the negotiated destination amount.
+
+Missing, unavailable, malformed, or mismatched `delivered_amount` MUST fail settlement even if the transaction result is `tesSUCCESS`.
 
 ## `PaymentPayload` for `exact`
 
@@ -278,6 +350,9 @@ The facilitator MUST reject if:
   - `issuer` for IOU payments
   - `invoiceId` when invoice binding is required
   - `destinationTag` when destination tag binding is required
+  - `crossCurrency=true` when cross-currency behavior is required
+
+`crossCurrency` MUST be absent from both envelopes for same-asset payments or exactly `true` in both envelopes for cross-currency payments. Any other combination MUST be rejected.
 
 ### 2. Transaction Decoding
 
@@ -324,8 +399,7 @@ If `paymentRequirements.asset == "XRP"`:
 
 - Destination amount field MUST be a string of digits representing drops.
 - `int(destinationAmount) == int(paymentRequirements.amount)`.
-- `tx_json.SendMax` MUST be omitted.
-- `tx_json.Paths` MUST be omitted.
+- If `crossCurrency` is absent, `tx_json.SendMax` and `tx_json.Paths` MUST be omitted.
 - `tx_json.DeliverMin` MUST be omitted.
 
 #### IOU Amount Rules
@@ -340,9 +414,9 @@ If `paymentRequirements.asset != "XRP"`:
 - `issuer` MUST match `paymentRequirements.extra.issuer`.
 - `value` MUST equal `paymentRequirements.amount` using exact decimal arithmetic suitable for XRPL issued-currency values.
 
-##### SendMax Policy (Required for IOU)
+##### Same-Asset SendMax Policy (Required for IOU)
 
-To prevent cross-currency behaviors while allowing issuer transfer fees:
+When `crossCurrency` is absent, the following rules prevent cross-currency behavior while allowing issuer transfer fees:
 
 - `tx_json.SendMax` MUST be present.
 - `SendMax` MUST be the same issued currency (same `currency` and `issuer`).
@@ -353,6 +427,16 @@ The facilitator MUST reject if:
 - `Paths` is present.
 - `DeliverMin` is present.
 - `Flags` includes `tfPartialPayment` (`0x00020000`).
+
+#### Cross-Currency Amount and Path Rules
+
+When `crossCurrency=true`, the facilitator MUST apply all rules in [Cross-Currency Exact Payments](#cross-currency-exact-payments), including:
+
+- exact destination amount and issue comparison;
+- a positive `SendMax` in a different source asset/issue;
+- the default/explicit `Paths` and `tfNoRippleDirect` policy;
+- rejection of `DeliverMin` and `tfPartialPayment`;
+- successful simulation of the signed cap, paths, and flags.
 
 ### 7. Expiry and Account Sequencing
 
@@ -406,8 +490,8 @@ The facilitator MUST reject transactions with:
 - `Fee` above facilitator policy.
 - `Delegate` present.
 - `Memos` present.
-- `SendMax` present for XRP.
-- `Paths` present.
+- `SendMax` present for XRP unless `crossCurrency=true` and `SendMax` is a valid issued-currency source cap.
+- `Paths` present unless `crossCurrency=true` and the signed path set follows the explicit-path policy.
 - `DeliverMin` present.
 - `Flags` including `tfPartialPayment` (`0x00020000`).
 - Both `Amount` and `DeliverMax` present.
@@ -420,9 +504,9 @@ The facilitator MUST reject transactions with:
 
 ### 11. Simulation
 
-`/verify` MUST check that the signed transaction would currently succeed on XRPL. Implementations SHOULD use XRPL transaction simulation when available.
+`/verify` MUST check that the signed transaction would currently succeed on XRPL. Implementations SHOULD use XRPL transaction simulation when available for same-asset payments and MUST use it for `crossCurrency=true` payments.
 
-If simulation is unavailable, implementations MUST perform targeted checks that cover at least:
+For same-asset payments only, if simulation is unavailable, implementations MUST perform targeted checks that cover at least:
 
 - account existence for `tx_json.Account`;
 - account sequence currency or ticket availability, according to the selected asset transfer method;
@@ -438,7 +522,7 @@ Given verified `(paymentPayload, paymentRequirements)`, the facilitator:
 2. Rejects the settlement as a duplicate when the transaction hash is already pending settlement (see [Duplicate Settlement Mitigation](#duplicate-settlement-mitigation-required)).
 3. Submits `signedTxBlob` to the XRPL network identified by `paymentRequirements.network`.
 4. Waits for a validated result by polling `tx` until `validated=true`.
-5. Treats settlement as successful only when the validated result is `tesSUCCESS`.
+5. Treats settlement as successful only when the validated result is `tesSUCCESS`. For `crossCurrency=true`, it also verifies metadata `delivered_amount` equals the exact negotiated destination amount and issue.
 6. Returns the transaction hash and payer address.
 
 ### Fee Responsibility
@@ -516,12 +600,17 @@ Implementations MAY include additional fields when defined by the SDK or facilit
 ### Partial Payment Protection
 
 - `tfPartialPayment` is explicitly rejected.
-- `Paths` and `DeliverMin` are rejected.
-- IOU payments require `SendMax` to match the destination currency and issuer.
+- `DeliverMin` is rejected.
+- Same-asset IOU payments require `SendMax` to match the destination currency and issuer, and all same-asset payments reject `Paths`.
+- Opt-in cross-currency payments require a different source asset, a signed `SendMax` cap, deterministic path policy, mandatory simulation, and post-settlement `delivered_amount` equality.
 
 ## References
 
 - [XRPL Payment Transaction](https://xrpl.org/docs/references/protocol/transactions/types/payment)
+- [XRPL Cross-Currency Payments](https://xrpl.org/docs/concepts/payment-types/cross-currency-payments)
+- [XRPL Paths](https://xrpl.org/docs/concepts/tokens/fungible-tokens/paths)
+- [XRPL Simulate](https://xrpl.org/docs/references/http-websocket-apis/public-api-methods/transaction-methods/simulate)
+- [XRPL Transaction Metadata](https://xrpl.org/docs/references/protocol/transactions/metadata)
 - [XRPL Transaction Common Fields](https://xrpl.org/docs/references/protocol/transactions/common-fields)
 - [XRPL Tickets](https://xrpl.org/docs/concepts/accounts/tickets)
 - [XRPL Use Tickets](https://xrpl.org/docs/tutorials/best-practices/transaction-sending/use-tickets)
