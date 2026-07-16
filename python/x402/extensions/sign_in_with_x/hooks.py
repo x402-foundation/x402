@@ -23,13 +23,43 @@ from .verify import verify_siwx_signature
 SIWxHookEvent = dict[str, Any]
 
 
-@dataclass
-class CreateSIWxHookOptions:
-    """Options for creating server-side SIWX hooks."""
+def normalize_configured_origin(origin: str) -> str:
+    """Normalize and validate a configured SIWX origin."""
+    parsed = urlparse(origin)
+
+    if parsed.scheme not in ("http", "https") or not parsed.netloc:
+        if parsed.scheme and parsed.scheme not in ("http", "https"):
+            raise ValueError(f'Invalid SIWX origin: "{origin}" must use http: or https:')
+        raise ValueError(f'Invalid SIWX origin: "{origin}" is not a valid URL')
+
+    if parsed.username or parsed.password:
+        raise ValueError(f'Invalid SIWX origin: "{origin}" must not include credentials')
+
+    if parsed.path not in ("", "/") or parsed.query or parsed.fragment:
+        raise ValueError(
+            f'Invalid SIWX origin: "{origin}" must not include a path, query, or fragment'
+        )
+
+    return f"{parsed.scheme}://{parsed.netloc}"
+
+
+@dataclass(kw_only=True)
+class CreateSIWxSettleHookOptions:
+    """Options for creating the SIWX settle hook."""
 
     storage: Any
-    verify_options: SIWxVerifyOptions | None = None
     on_event: Callable[[SIWxHookEvent], None] | None = None
+
+
+@dataclass(kw_only=True)
+class CreateSIWxRequestHookOptions(CreateSIWxSettleHookOptions):
+    """Options for creating the SIWX request hook and resource server extension."""
+
+    origin: str
+    verify_options: SIWxVerifyOptions | None = None
+
+
+CreateSIWxHookOptions = CreateSIWxRequestHookOptions
 
 
 @dataclass
@@ -39,7 +69,7 @@ class CreateSIWxClientExtensionOptions:
     signers: list[Any]
 
 
-def create_siwx_settle_hook(options: CreateSIWxHookOptions):
+def create_siwx_settle_hook(options: CreateSIWxSettleHookOptions):
     """Create an onAfterSettle hook that records payments for SIWX."""
 
     async def hook(ctx: Any) -> None:
@@ -63,8 +93,9 @@ def create_siwx_settle_hook(options: CreateSIWxHookOptions):
     return hook
 
 
-def create_siwx_request_hook(options: CreateSIWxHookOptions):
+def create_siwx_request_hook(options: CreateSIWxRequestHookOptions):
     """Create an onProtectedRequest hook that validates SIWX auth."""
+    configured_origin = normalize_configured_origin(options.origin)
     storage = options.storage
     has_used_nonce = callable(getattr(storage, "has_used_nonce", None))
     has_record_nonce = callable(getattr(storage, "has_record_nonce", None))
@@ -85,8 +116,7 @@ def create_siwx_request_hook(options: CreateSIWxHookOptions):
 
         try:
             payload = parse_siwx_header(header)
-            resource_uri = adapter.get_url()
-            validation = await validate_siwx_message(payload, resource_uri)
+            validation = await validate_siwx_message(payload, configured_origin)
             if not validation.valid:
                 if options.on_event:
                     options.on_event(

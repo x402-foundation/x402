@@ -17,6 +17,15 @@ import (
 	"github.com/x402-foundation/x402/go/v2/types"
 )
 
+const testSIWXOrigin = "https://api.example.com"
+
+func testServerOptions(storage Storage) ServerOptions {
+	return ServerOptions{
+		Storage: storage,
+		Origin:  testSIWXOrigin,
+	}
+}
+
 type testHTTPAdapter struct {
 	headers map[string]string
 	method  string
@@ -37,6 +46,29 @@ func (a *testHTTPAdapter) GetPath() string         { return a.path }
 func (a *testHTTPAdapter) GetURL() string          { return a.url }
 func (a *testHTTPAdapter) GetAcceptHeader() string { return a.accept }
 func (a *testHTTPAdapter) GetUserAgent() string    { return a.agent }
+
+func TestCreateResourceServerExtensionRequiresOrigin(t *testing.T) {
+	_, err := CreateResourceServerExtension(ServerOptions{Storage: NewInMemoryStorage()})
+	if err == nil {
+		t.Fatal("CreateResourceServerExtension() error = nil")
+	}
+	if !strings.Contains(err.Error(), "siwx origin is required") {
+		t.Fatalf("error = %q", err.Error())
+	}
+
+	_, err = CreateResourceServerExtension(testServerOptions(NewInMemoryStorage()))
+	if err != nil {
+		t.Fatalf("CreateResourceServerExtension() error = %v", err)
+	}
+
+	_, err = CreateResourceServerExtension(ServerOptions{
+		Storage: NewInMemoryStorage(),
+		Origin:  "https://api.example.com/profile",
+	})
+	if err == nil || !strings.Contains(err.Error(), "must not include a path, query, or fragment") {
+		t.Fatalf("CreateResourceServerExtension() error = %v", err)
+	}
+}
 
 func TestInMemoryStorageRecordsPaymentsCaseInsensitiveForEVM(t *testing.T) {
 	storage := NewInMemoryStorage()
@@ -88,7 +120,7 @@ func TestInMemoryStorageTracksNonces(t *testing.T) {
 }
 
 func TestResourceServerExtensionEnrichDeclarationFromPaymentRequirements(t *testing.T) {
-	ext := MustCreateResourceServerExtension(ServerOptions{Storage: NewInMemoryStorage()})
+	ext := MustCreateResourceServerExtension(testServerOptions(NewInMemoryStorage()))
 	declaration := DeclareExtension(DeclareOptions{})[ExtensionKey]
 
 	enrichedRaw := ext.EnrichDeclaration(declaration, x402http.HTTPRequestContext{
@@ -114,7 +146,7 @@ func TestResourceServerExtensionEnrichDeclarationFromPaymentRequirements(t *test
 }
 
 func TestResourceServerExtensionEnrichDeclaration(t *testing.T) {
-	ext := MustCreateResourceServerExtension(ServerOptions{Storage: NewInMemoryStorage()})
+	ext := MustCreateResourceServerExtension(testServerOptions(NewInMemoryStorage()))
 	declaration := DeclareExtension(DeclareOptions{
 		Statement:         "Sign in",
 		Networks:          []string{"eip155:8453"},
@@ -156,7 +188,7 @@ func TestResourceServerExtensionEnrichDeclaration(t *testing.T) {
 }
 
 func TestResourceServerExtensionDynamicInfoFields(t *testing.T) {
-	ext := MustCreateResourceServerExtension(ServerOptions{Storage: NewInMemoryStorage()})
+	ext := MustCreateResourceServerExtension(testServerOptions(NewInMemoryStorage()))
 	fields := ext.DynamicInfoFields()
 
 	want := []string{"nonce", "issuedAt", "expirationTime"}
@@ -166,7 +198,7 @@ func TestResourceServerExtensionDynamicInfoFields(t *testing.T) {
 }
 
 func TestHTTPServerAuthOnlyRouteReturnsSIWXChallenge(t *testing.T) {
-	ext := MustCreateResourceServerExtension(ServerOptions{Storage: NewInMemoryStorage()})
+	ext := MustCreateResourceServerExtension(testServerOptions(NewInMemoryStorage()))
 	server := x402http.Newx402HTTPResourceServer(x402http.RoutesConfig{
 		"GET /profile": {
 			Accepts:     x402http.PaymentOptions{},
@@ -208,7 +240,7 @@ func TestHTTPServerAuthOnlyRouteReturnsSIWXChallenge(t *testing.T) {
 
 func TestProtectedRequestHookGrantsAuthOnlyAccess(t *testing.T) {
 	storage := NewInMemoryStorage()
-	ext := MustCreateResourceServerExtension(ServerOptions{Storage: storage})
+	ext := MustCreateResourceServerExtension(testServerOptions(storage))
 	header := signedHeaderForTest(t, "https://api.example.com/profile", "nonceauth")
 
 	result, err := ext.ProtectedRequestHook()(context.Background(), x402http.HTTPRequestContext{
@@ -232,6 +264,7 @@ func TestProtectedRequestHookGrantsAuthOnlyAccessWithSmartWalletVerifier(t *test
 	smartWallet := "0x1234567890123456789012345678901234567890"
 	ext := MustCreateResourceServerExtension(ServerOptions{
 		Storage: storage,
+		Origin:  testSIWXOrigin,
 		VerifyOptions: VerifyOptions{
 			EVMVerifier: func(ctx context.Context, address string, message string, signature string) (bool, error) {
 				if address != smartWallet {
@@ -268,7 +301,7 @@ func TestProtectedRequestHookGrantsAuthOnlyAccessWithSmartWalletVerifier(t *test
 func TestProtectedRequestHookRequiresPaymentRecordForPaidRoute(t *testing.T) {
 	ctx := context.Background()
 	storage := NewInMemoryStorage()
-	ext := MustCreateResourceServerExtension(ServerOptions{Storage: storage})
+	ext := MustCreateResourceServerExtension(testServerOptions(storage))
 	header, address := signedHeaderAndAddressForTest(t, "https://api.example.com/weather", "noncepaid")
 	reqCtx := x402http.HTTPRequestContext{
 		Adapter: &testHTTPAdapter{
@@ -301,7 +334,7 @@ func TestProtectedRequestHookRequiresPaymentRecordForPaidRoute(t *testing.T) {
 }
 
 func TestProtectedRequestHookRejectsNonceReplay(t *testing.T) {
-	ext := MustCreateResourceServerExtension(ServerOptions{Storage: NewInMemoryStorage()})
+	ext := MustCreateResourceServerExtension(testServerOptions(NewInMemoryStorage()))
 	header := signedHeaderForTest(t, "https://api.example.com/profile", "noncereplay")
 	reqCtx := x402http.HTTPRequestContext{
 		Adapter: &testHTTPAdapter{
@@ -334,6 +367,7 @@ func TestProtectedRequestHookFallsBackForInvalidHeader(t *testing.T) {
 	var events []HookEvent
 	ext := MustCreateResourceServerExtension(ServerOptions{
 		Storage: NewInMemoryStorage(),
+		Origin:  testSIWXOrigin,
 		OnEvent: func(event HookEvent) {
 			events = append(events, event)
 		},
@@ -361,7 +395,7 @@ func TestProtectedRequestHookFallsBackForInvalidHeader(t *testing.T) {
 func TestAfterSettleHookRecordsPayment(t *testing.T) {
 	ctx := context.Background()
 	storage := NewInMemoryStorage()
-	ext := MustCreateResourceServerExtension(ServerOptions{Storage: storage})
+	ext := MustCreateResourceServerExtension(testServerOptions(storage))
 	payload := types.PaymentPayload{
 		X402Version: 2,
 		Resource:    &types.ResourceInfo{URL: "https://api.example.com/weather"},
@@ -390,7 +424,7 @@ func TestAfterSettleHookRecordsPayment(t *testing.T) {
 func TestAfterSettleHookIgnoresUnsuccessfulOrMissingPayer(t *testing.T) {
 	ctx := context.Background()
 	storage := NewInMemoryStorage()
-	ext := MustCreateResourceServerExtension(ServerOptions{Storage: storage})
+	ext := MustCreateResourceServerExtension(testServerOptions(storage))
 	hook := ext.ResourceServerExtensionHooks().OnAfterSettle
 	payload := types.PaymentPayload{X402Version: 2, Resource: &types.ResourceInfo{URL: "https://api.example.com/weather"}}
 

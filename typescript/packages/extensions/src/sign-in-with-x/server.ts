@@ -11,44 +11,56 @@ import type { SIWxExtension, SIWxExtensionInfo, SupportedChain, DeclareSIWxOptio
 import { SIGN_IN_WITH_X } from "./types";
 import { getSignatureType, type SIWxDeclaration } from "./declare";
 import { buildSIWxSchema } from "./schema";
-import { createSIWxRequestHook, createSIWxSettleHook, type CreateSIWxHookOptions } from "./hooks";
+import {
+  createSIWxRequestHook,
+  createSIWxSettleHook,
+  normalizeConfiguredOrigin,
+  type CreateSIWxRequestHookOptions,
+} from "./hooks";
 
 /**
  * Options for creating the SIWX resource server extension.
- *
- * Includes storage for paid wallet tracking, optional signature verification
- * settings, and an optional event callback.
  */
-export type CreateSIWxResourceServerExtensionOptions = CreateSIWxHookOptions;
+export type CreateSIWxResourceServerExtensionOptions = CreateSIWxRequestHookOptions;
+
+/**
+ * Rebases a resource URL onto the configured public origin.
+ *
+ * Preserves the request path and query while replacing scheme and host so
+ * SIWX domain/URI binding matches the server's public origin.
+ *
+ * @param resourceUrl - Request resource URL from PaymentRequired context
+ * @param configuredOrigin - Normalized public origin for domain/URI binding
+ * @returns Resource URI with configured origin and original path/query
+ */
+function rebaseResourcePath(resourceUrl: string, configuredOrigin: URL): string {
+  const resource = new URL(resourceUrl);
+  const rebased = new URL(configuredOrigin.origin);
+  rebased.pathname = resource.pathname;
+  rebased.search = resource.search;
+  return rebased.toString();
+}
 
 /**
  * Builds the SIWX challenge fields included in PaymentRequired.extensions.
  *
- * Missing network, URI, and domain values are derived from request context.
+ * Domain and URI are derived from the configured origin and request path.
  * Nonce and timestamp fields are refreshed for every response.
  *
  * @param declaration - SIWX route declaration from declareSIWxExtension()
  * @param context - PaymentRequired creation context
+ * @param configuredOrigin - Normalized public origin for domain/URI binding
  * @returns Complete SIWX extension payload for the client
  */
 async function enrichSIWxPaymentRequiredResponse(
   declaration: unknown,
   context: PaymentRequiredContext,
+  configuredOrigin: URL,
 ): Promise<SIWxExtension> {
   const decl = declaration as SIWxDeclaration;
   const opts: DeclareSIWxOptions = decl._options ?? {};
 
-  // Use the request URL when the route did not declare a fixed resource URI.
-  const resourceUri = opts.resourceUri ?? context.resourceInfo.url;
-
-  let domain = opts.domain;
-  if (!domain && resourceUri) {
-    try {
-      domain = new URL(resourceUri).hostname;
-    } catch {
-      domain = undefined;
-    }
-  }
+  const resourceUri = rebaseResourcePath(context.resourceInfo.url, configuredOrigin);
 
   let supportedNetworks: string[];
   if (opts.network) {
@@ -70,7 +82,7 @@ async function enrichSIWxPaymentRequiredResponse(
       : undefined;
 
   const info: SIWxExtensionInfo = {
-    domain: domain ?? "",
+    domain: configuredOrigin.host,
     uri: resourceUri,
     version: opts.version ?? "1",
     nonce,
@@ -101,26 +113,31 @@ async function enrichSIWxPaymentRequiredResponse(
  * Creates a SIWX server extension that publishes challenges, records payments,
  * and validates HTTP SIWX proofs for declared routes.
  *
- * @param options - Storage, verification, and event callback configuration
+ * @param options - Storage, configured origin, verification, and event callback configuration
  * @returns Resource server extension for registration with x402ResourceServer
  *
  * @example
  * ```typescript
  * const storage = new InMemorySIWxStorage();
  * const resourceServer = new x402ResourceServer(facilitator)
- *   .registerExtension(createSIWxResourceServerExtension({ storage }));
+ *   .registerExtension(createSIWxResourceServerExtension({
+ *     storage,
+ *     origin: "https://api.example.com",
+ *   }));
  * ```
  */
 export function createSIWxResourceServerExtension(
   options: CreateSIWxResourceServerExtensionOptions,
 ): ResourceServerExtension {
+  const configuredOrigin = normalizeConfiguredOrigin(options.origin);
   const settleHook = createSIWxSettleHook(options);
   const requestHook = createSIWxRequestHook(options);
 
   return {
     key: SIGN_IN_WITH_X,
     dynamicInfoFields: ["nonce", "issuedAt", "expirationTime"],
-    enrichPaymentRequiredResponse: enrichSIWxPaymentRequiredResponse,
+    enrichPaymentRequiredResponse: (declaration, context) =>
+      enrichSIWxPaymentRequiredResponse(declaration, context, configuredOrigin),
     transportHooks: {
       http: {
         onProtectedRequest: async (_declaration, context, routeConfig) =>

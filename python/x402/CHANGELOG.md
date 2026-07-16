@@ -2,6 +2,20 @@
 
 <!-- towncrier release notes start -->
 
+## [2.15.0] - 2026-07-10
+
+### Fixed
+
+- Fixed Flask middleware skipping settlement on 3xx responses, allowing paid content behind redirects to be delivered without onchain payment. ([#2826](https://github.com/x402-foundation/x402/pull/2826)) - Thanks [@phdargen](https://github.com/phdargen)!
+- Fixed `flask_payment_middleware_from_config`, which raised `TypeError` at construction because it built the async `x402ResourceServer` for the sync Flask middleware; it now uses `x402ResourceServerSync`. ([#2810](https://github.com/x402-foundation/x402/pull/2810)) - Thanks [@kakedashi3](https://github.com/kakedashi3)!
+- Fixed cross-SDK MCP interop: the FastMCP payment wrapper now verifies and settles against the advertised `accepts` entry that matches the payment payload instead of always using the first entry, and omits `None` optional fields from serialized `PaymentRequired` results so stricter clients accept them. ([#2774](https://github.com/x402-foundation/x402/pull/2774)) - Thanks [@phdargen](https://github.com/phdargen)!
+
+### Added
+
+- Add Igra mainnet (eip155:38833) default stablecoin USDC via Permit2 ([#2800](https://github.com/x402-foundation/x402/pull/2800)) - Thanks [@emdin](https://github.com/emdin)!
+- Added the `builder-code` extension for onchain payment attribution. Also added the enabling core capabilities: client re-merge preserving server-declared extension fields, server-side extension echo validation (with opt-in dynamic `info` fields), and EVM `data_suffix` plumbing threaded through settlement. Marked the `sign-in-with-x` extension's `nonce`, `issuedAt`, and `expirationTime` as dynamic `info` fields so regenerated challenges pass echo validation. ([#2795](https://github.com/x402-foundation/x402/pull/2795)) - Thanks [@phdargen](https://github.com/phdargen)!
+
+
 ## [2.14.0] - 2026-06-26
 
 ### Added

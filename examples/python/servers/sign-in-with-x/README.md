@@ -25,7 +25,7 @@ server = x402ResourceServer(facilitator)
 server.register("eip155:84532", ExactEvmServerScheme())
 server.register_extension(
     create_siwx_resource_server_extension(
-        CreateSIWxHookOptions(storage=storage, on_event=on_event)
+        CreateSIWxHookOptions(storage=storage, origin="https://api.example.com", on_event=on_event)
     )
 )
 
@@ -144,7 +144,7 @@ if SVM_ADDRESS:
 
 server.register_extension(
     create_siwx_resource_server_extension(
-        CreateSIWxHookOptions(storage=storage, on_event=on_event)
+        CreateSIWxHookOptions(storage=storage, origin="https://api.example.com", on_event=on_event)
     )
 )
 ```
@@ -202,7 +202,7 @@ def on_event(event: dict) -> None:
     print(f"[SIWX] {event['type']}", event)
 
 create_siwx_resource_server_extension(
-    CreateSIWxHookOptions(storage=storage, on_event=on_event)
+    CreateSIWxHookOptions(storage=storage, origin="https://api.example.com", on_event=on_event)
 )
 ```
 

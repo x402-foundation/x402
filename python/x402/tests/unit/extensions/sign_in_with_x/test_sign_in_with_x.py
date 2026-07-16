@@ -14,6 +14,8 @@ from x402.extensions.sign_in_with_x import (
     SOLANA_DEVNET,
     SOLANA_MAINNET,
     CreateSIWxHookOptions,
+    CreateSIWxRequestHookOptions,
+    CreateSIWxSettleHookOptions,
     DeclareSIWxOptions,
     InMemorySIWxStorage,
     SIWxPayload,
@@ -29,11 +31,12 @@ from x402.extensions.sign_in_with_x import (
     extract_solana_chain_reference,
     format_siws_message,
     is_solana_signer,
+    normalize_configured_origin,
     parse_siwx_header,
     validate_siwx_message,
     verify_siwx_signature,
 )
-from x402.http.types import HTTPRequestContext, RouteConfig
+from x402.http.types import HTTPRequestContext, PaymentOption, RouteConfig
 from x402.schemas import (
     PaymentPayload,
     PaymentRequired,
@@ -49,6 +52,9 @@ from x402.server_base import ERR_EXTENSION_ECHO_MISMATCH
 
 pytest.importorskip("siwe")
 pytest.importorskip("nacl")
+
+API_ORIGIN = "https://api.example.com"
+EXAMPLE_ORIGIN = "http://example.com"
 
 
 def _valid_payload(**overrides) -> SIWxPayload:
@@ -155,15 +161,14 @@ class TestDeclare:
     def test_static_declaration(self):
         result = declare_siwx_extension(
             DeclareSIWxOptions(
-                domain="api.example.com",
-                resource_uri="https://api.example.com/data",
                 network="eip155:8453",
                 statement="Sign in to access",
                 expiration_seconds=300,
             )
         )
         ext = result[SIGN_IN_WITH_X]
-        assert ext["info"]["domain"] == "api.example.com"
+        assert ext["info"]["version"] == "1"
+        assert ext["info"]["statement"] == "Sign in to access"
         assert ext["info"].get("nonce") is None
         assert ext["supportedChains"][0]["chainId"] == "eip155:8453"
         assert ext["_options"].expiration_seconds == 300
@@ -173,14 +178,45 @@ class TestValidate:
     @pytest.mark.asyncio
     async def test_valid_message(self):
         payload = _valid_payload()
-        result = await validate_siwx_message(payload, "https://api.example.com/data")
+        result = await validate_siwx_message(payload, API_ORIGIN)
         assert result.valid is True
 
     @pytest.mark.asyncio
     async def test_domain_mismatch(self):
-        result = await validate_siwx_message(_valid_payload(), "https://different.example.com/data")
+        result = await validate_siwx_message(_valid_payload(), "https://different.example.com")
         assert result.valid is False
         assert "Domain mismatch" in (result.error or "")
+
+    @pytest.mark.asyncio
+    async def test_rejects_origin_prefix_attacker_domain(self):
+        payload = _valid_payload(uri="https://api.example.com.attacker.test/data")
+        result = await validate_siwx_message(payload, API_ORIGIN)
+        assert result.valid is False
+        assert "URI mismatch" in (result.error or "")
+
+    @pytest.mark.asyncio
+    async def test_rejects_malformed_signed_uri(self):
+        payload = _valid_payload(uri="not-a-valid-uri")
+        result = await validate_siwx_message(payload, API_ORIGIN)
+        assert result.valid is False
+        assert "Invalid URI" in (result.error or "")
+
+
+class TestNormalizeConfiguredOrigin:
+    def test_accepts_valid_origin(self):
+        assert normalize_configured_origin("https://api.example.com") == "https://api.example.com"
+
+    def test_rejects_path(self):
+        with pytest.raises(ValueError, match="must not include a path"):
+            normalize_configured_origin("https://api.example.com/profile")
+
+    def test_rejects_invalid_scheme(self):
+        with pytest.raises(ValueError, match="must use http: or https:"):
+            normalize_configured_origin("ftp://api.example.com")
+
+    def test_rejects_invalid_url(self):
+        with pytest.raises(ValueError, match="not a valid URL"):
+            normalize_configured_origin("not-a-url")
 
 
 class TestEvmIntegration:
@@ -201,7 +237,7 @@ class TestEvmIntegration:
         }
         payload = await create_siwx_payload(complete, account)
         parsed = parse_siwx_header(encode_siwx_header(payload))
-        assert (await validate_siwx_message(parsed, "https://api.example.com/resource")).valid
+        assert (await validate_siwx_message(parsed, API_ORIGIN)).valid
         verification = await verify_siwx_signature(parsed)
         assert verification.valid
         assert verification.address.lower() == account.address.lower()
@@ -305,7 +341,7 @@ class TestSettleHook:
     @pytest.mark.asyncio
     async def test_records_payer(self):
         storage = InMemorySIWxStorage()
-        hook = create_siwx_settle_hook(CreateSIWxHookOptions(storage=storage))
+        hook = create_siwx_settle_hook(CreateSIWxSettleHookOptions(storage=storage))
 
         class _Ctx:
             class _Payload:
@@ -329,7 +365,9 @@ class TestRequestHook:
     @pytest.mark.asyncio
     async def test_no_header(self):
         storage = InMemorySIWxStorage()
-        hook = create_siwx_request_hook(CreateSIWxHookOptions(storage=storage))
+        hook = create_siwx_request_hook(
+            CreateSIWxRequestHookOptions(storage=storage, origin=EXAMPLE_ORIGIN)
+        )
 
         class _Adapter:
             def get_header(self, _name: str) -> str | None:
@@ -357,7 +395,9 @@ class TestRequestHook:
             "type": "eip191",
         }
         header = encode_siwx_header(await create_siwx_payload(complete, account))
-        hook = create_siwx_request_hook(CreateSIWxHookOptions(storage=storage))
+        hook = create_siwx_request_hook(
+            CreateSIWxRequestHookOptions(storage=storage, origin=EXAMPLE_ORIGIN)
+        )
 
         class _Adapter:
             def get_header(self, name: str) -> str | None:
@@ -372,6 +412,67 @@ class TestRequestHook:
         route = RouteConfig(accepts=[])
         result = await hook(ctx, route)
         assert isinstance(result, GrantAccessResult)
+
+
+class TestRequestHookOriginBinding:
+    @pytest.mark.asyncio
+    async def test_rejects_proof_for_wrong_origin_despite_matching_request_url(self):
+        storage = InMemorySIWxStorage()
+        account = Account.create()
+        storage.record_payment("/resource", account.address)
+
+        challenge = _test_challenge(
+            domain="malicious-dapp.example",
+            resource_uri="https://malicious-dapp.example/resource",
+            network="eip155:8453",
+        )
+        ext = challenge[SIGN_IN_WITH_X]
+        complete = {
+            **ext["info"],
+            "chainId": ext["supportedChains"][0]["chainId"],
+            "type": "eip191",
+        }
+        header = encode_siwx_header(await create_siwx_payload(complete, account))
+        hook = create_siwx_request_hook(
+            CreateSIWxRequestHookOptions(storage=storage, origin=API_ORIGIN)
+        )
+
+        class _Adapter:
+            def get_header(self, name: str) -> str | None:
+                if name in (SIGN_IN_WITH_X, SIGN_IN_WITH_X.lower()):
+                    return header
+                return None
+
+            def get_url(self) -> str:
+                return "https://malicious-dapp.example/resource"
+
+        ctx = HTTPRequestContext(adapter=_Adapter(), method="GET", path="/resource")
+        route = RouteConfig(
+            accepts=PaymentOption(
+                scheme="exact",
+                price="$0.001",
+                network="eip155:8453",
+                pay_to="0x0",
+            )
+        )
+        assert await hook(ctx, route) is None
+
+    def test_rejects_invalid_origin_at_construction(self):
+        storage = InMemorySIWxStorage()
+        with pytest.raises(ValueError, match="must not include a path"):
+            create_siwx_request_hook(
+                CreateSIWxRequestHookOptions(
+                    storage=storage, origin="https://api.example.com/profile"
+                )
+            )
+        with pytest.raises(ValueError, match="not a valid URL"):
+            create_siwx_resource_server_extension(
+                CreateSIWxHookOptions(storage=storage, origin="not-a-url")
+            )
+        with pytest.raises(ValueError, match="must use http: or https:"):
+            create_siwx_resource_server_extension(
+                CreateSIWxHookOptions(storage=storage, origin="ftp://api.example.com")
+            )
 
 
 class TestClientHook:
@@ -434,7 +535,9 @@ class TestServerExtension:
     @pytest.mark.asyncio
     async def test_enrichment_fresh_nonce(self):
         storage = InMemorySIWxStorage()
-        ext = create_siwx_resource_server_extension(CreateSIWxHookOptions(storage=storage))
+        ext = create_siwx_resource_server_extension(
+            CreateSIWxHookOptions(storage=storage, origin=API_ORIGIN)
+        )
         declaration = declare_siwx_extension(DeclareSIWxOptions(expiration_seconds=300))
         ctx = type(
             "Ctx",
@@ -456,10 +559,42 @@ class TestServerExtension:
         result = await ext.enrich_payment_required_response(declaration[SIGN_IN_WITH_X], ctx)
         assert len(result["info"]["nonce"]) == 32
         assert result["supportedChains"][0]["chainId"] == "eip155:8453"
+        assert result["info"]["domain"] == "api.example.com"
+        assert result["info"]["uri"] == "https://api.example.com/data"
+
+    @pytest.mark.asyncio
+    async def test_uses_configured_public_origin_behind_tls_termination(self):
+        storage = InMemorySIWxStorage()
+        ext = create_siwx_resource_server_extension(
+            CreateSIWxHookOptions(storage=storage, origin=API_ORIGIN)
+        )
+        declaration = declare_siwx_extension()
+        ctx = type(
+            "Ctx",
+            (),
+            {
+                "requirements": [
+                    PaymentRequirements(
+                        scheme="exact",
+                        network="eip155:8453",
+                        asset="0x",
+                        amount="1",
+                        pay_to="0x0",
+                        max_timeout_seconds=300,
+                    )
+                ],
+                "resource_info": ResourceInfo(url="http://127.0.0.1:4021/profile"),
+            },
+        )()
+        result = await ext.enrich_payment_required_response(declaration[SIGN_IN_WITH_X], ctx)
+        assert result["info"]["domain"] == "api.example.com"
+        assert result["info"]["uri"] == "https://api.example.com/profile"
 
     def test_declares_dynamic_info_fields(self):
         storage = InMemorySIWxStorage()
-        ext = create_siwx_resource_server_extension(CreateSIWxHookOptions(storage=storage))
+        ext = create_siwx_resource_server_extension(
+            CreateSIWxHookOptions(storage=storage, origin=API_ORIGIN)
+        )
         assert ext.dynamic_info_fields == ["nonce", "issuedAt", "expirationTime"]
 
 
@@ -468,7 +603,9 @@ class TestServerEchoValidation:
 
     def _server(self):
         storage = InMemorySIWxStorage()
-        ext = create_siwx_resource_server_extension(CreateSIWxHookOptions(storage=storage))
+        ext = create_siwx_resource_server_extension(
+            CreateSIWxHookOptions(storage=storage, origin=API_ORIGIN)
+        )
         return x402ResourceServer().register_extension(ext)
 
     @staticmethod

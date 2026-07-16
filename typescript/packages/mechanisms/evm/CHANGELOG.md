@@ -1,5 +1,17 @@
 # @x402/evm Changelog
 
+## 2.18.0
+
+### Minor Changes
+
+- Updated dependencies [a3ad102](https://github.com/x402-foundation/x402/commit/a3ad102)
+  - @x402/core@2.18.0
+
+### Patch Changes
+
+- [d9bd02d](https://github.com/x402-foundation/x402/commit/d9bd02d): Add Igra mainnet (eip155:38833) default stablecoin USDC via Permit2 ([#2800](https://github.com/x402-foundation/x402/pull/2800)) - Thanks [@emdin](https://github.com/emdin)!
+- [0486033](https://github.com/x402-foundation/x402/commit/0486033): Align the exact EVM authorization-value-mismatch error code across SDKs. The `@x402/evm` facilitator now emits the spec-documented `invalid_exact_evm_payload_authorization_value_mismatch` reason when an authorization value does not match the required amount, matching the Go facilitator (the previous `invalid_exact_evm_authorization_value` string was not in the spec error registry). The legacy `x402` `ErrorReasons` enum now accepts this reason so responses from the Python/Go facilitators no longer fail TypeScript schema validation. ([#2744](https://github.com/x402-foundation/x402/pull/2744)) - Thanks [@DrVelvetFog](https://github.com/DrVelvetFog)!
+
 ## 2.17.0
 
 ### Minor Changes

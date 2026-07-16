@@ -86,8 +86,6 @@ class SIWxPayload(BaseModel):
 class DeclareSIWxOptions(BaseModel):
     """Options for declaring SIWX extension on server."""
 
-    domain: str | None = None
-    resource_uri: str | None = Field(default=None, alias="resourceUri")
     statement: str | None = None
     version: str | None = None
     network: str | list[str] | None = None

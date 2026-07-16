@@ -140,18 +140,10 @@ export type SIWxPayload = z.infer<typeof SIWxPayloadSchema>;
 /**
  * Options for declaring SIWX extension on server.
  *
- * Most fields are optional and derived automatically from request context:
- * - `domain`: Parsed from resourceUri or request URL
- * - `resourceUri`: From request URL
- * - `network`: From payment requirements (accepts[].network)
- *
- * Explicit values override automatic derivation.
+ * Domain and URI are derived from the configured `origin` passed to
+ * `createSIWxResourceServerExtension`. Network defaults to payment requirements.
  */
 export interface DeclareSIWxOptions {
-  /** Server's domain. If omitted, derived from resourceUri or request URL. */
-  domain?: string;
-  /** Full resource URI. If omitted, derived from request URL. */
-  resourceUri?: string;
   /** Human-readable purpose */
   statement?: string;
   /** CAIP-122 version (default: "1") */

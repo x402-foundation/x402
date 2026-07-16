@@ -12,11 +12,14 @@ from .evm import (
 from .hooks import (
     CreateSIWxClientExtensionOptions,
     CreateSIWxHookOptions,
+    CreateSIWxRequestHookOptions,
+    CreateSIWxSettleHookOptions,
     SIWxHookEvent,
     create_siwx_client_extension,
     create_siwx_client_hook,
     create_siwx_request_hook,
     create_siwx_settle_hook,
+    normalize_configured_origin,
 )
 from .message import create_siwx_message
 from .parse import parse_siwx_header
@@ -86,6 +89,9 @@ __all__ = [
     "declare_siwx_extension",
     "create_siwx_resource_server_extension",
     "CreateSIWxResourceServerExtensionOptions",
+    "CreateSIWxSettleHookOptions",
+    "CreateSIWxRequestHookOptions",
+    "normalize_configured_origin",
     "parse_siwx_header",
     "validate_siwx_message",
     "verify_siwx_signature",

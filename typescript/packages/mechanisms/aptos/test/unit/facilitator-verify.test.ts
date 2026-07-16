@@ -1,7 +1,11 @@
 import {
   Account,
   AccountAddress,
+  AccountAuthenticator,
+  AccountAuthenticatorEd25519,
   ChainId,
+  Ed25519PublicKey,
+  Ed25519Signature,
   EntryFunction,
   Identifier,
   ModuleId,
@@ -57,6 +61,7 @@ function buildEncodedTransaction(opts: {
   maxGasAmount?: bigint;
   gasUnitPrice?: bigint;
   expiration?: bigint;
+  senderAuth?: AccountAuthenticator;
 }): string {
   const {
     sender,
@@ -64,6 +69,7 @@ function buildEncodedTransaction(opts: {
     maxGasAmount = 200_000n,
     gasUnitPrice = 100n,
     expiration = FUTURE_EXPIRATION,
+    senderAuth,
   } = opts;
 
   const rawTx = new RawTransaction(
@@ -81,8 +87,8 @@ function buildEncodedTransaction(opts: {
   const simpleTx = feePayer
     ? new SimpleTransaction(rawTx, feePayer.accountAddress)
     : new SimpleTransaction(rawTx);
-  const senderAuth = sender.signTransactionWithAuthenticator(simpleTx);
-  return encodeAptosPayload(simpleTx.bcsToBytes(), senderAuth.bcsToBytes());
+  const authenticator = senderAuth ?? sender.signTransactionWithAuthenticator(simpleTx);
+  return encodeAptosPayload(simpleTx.bcsToBytes(), authenticator.bcsToBytes());
 }
 
 function buildPayload(encodedTx: string): PaymentPayload {
@@ -242,5 +248,74 @@ describe("ExactAptosFacilitator.verify() - gas parameter validation", () => {
       // Falls through to expiration check, which rejects for the expected reason
       expect(result.invalidReason).toBe("invalid_exact_aptos_payload_transaction_expired");
     });
+  });
+});
+
+describe("ExactAptosFacilitator.verify() - signature verification", () => {
+  let sender: Account;
+  let feePayerAccount: Account;
+  let facilitator: ExactAptosFacilitator;
+
+  beforeEach(() => {
+    sender = Account.generate();
+    feePayerAccount = Account.generate();
+    facilitator = new ExactAptosFacilitator(toFacilitatorAptosSigner(feePayerAccount));
+  });
+
+  it("rejects a forged all-zero Ed25519 signature before network calls", async () => {
+    const forgedAuth = new AccountAuthenticatorEd25519(
+      sender.publicKey as Ed25519PublicKey,
+      new Ed25519Signature(new Uint8Array(64)),
+    );
+    const encodedTx = buildEncodedTransaction({
+      sender,
+      feePayer: feePayerAccount,
+      expiration: PAST_EXPIRATION,
+      senderAuth: forgedAuth,
+    });
+
+    const result = await facilitator.verify(
+      buildPayload(encodedTx),
+      buildRequirements(feePayerAccount.accountAddress.toStringLong()),
+    );
+
+    expect(result.isValid).toBe(false);
+    expect(result.invalidReason).toBe(
+      "invalid_exact_aptos_payload_sender_authenticator_invalid_signature",
+    );
+  });
+
+  it("accepts a valid sponsored signature and reaches later checks", async () => {
+    const encodedTx = buildEncodedTransaction({
+      sender,
+      feePayer: feePayerAccount,
+      expiration: PAST_EXPIRATION,
+    });
+
+    const result = await facilitator.verify(
+      buildPayload(encodedTx),
+      buildRequirements(feePayerAccount.accountAddress.toStringLong()),
+    );
+
+    expect(result.isValid).toBe(false);
+    expect(result.invalidReason).toBe("invalid_exact_aptos_payload_transaction_expired");
+    expect(result.invalidReason).not.toBe(
+      "invalid_exact_aptos_payload_sender_authenticator_invalid_signature",
+    );
+  });
+
+  it("accepts a valid non-sponsored signature and reaches later checks", async () => {
+    const encodedTx = buildEncodedTransaction({
+      sender,
+      expiration: PAST_EXPIRATION,
+    });
+
+    const result = await facilitator.verify(buildPayload(encodedTx), buildRequirements());
+
+    expect(result.isValid).toBe(false);
+    expect(result.invalidReason).toBe("invalid_exact_aptos_payload_transaction_expired");
+    expect(result.invalidReason).not.toBe(
+      "invalid_exact_aptos_payload_sender_authenticator_invalid_signature",
+    );
   });
 });

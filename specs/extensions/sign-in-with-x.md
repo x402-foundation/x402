@@ -161,7 +161,7 @@ The Server includes these fields in `extensions["sign-in-with-x"].info`:
 
 | Field | Type | Required | Description |
 | --- | --- | --- | --- |
-| `domain` | `string` | Required | Server's domain (e.g., `"api.example.com"`). MUST match the request host. |
+| `domain` | `string` | Required | Server's domain (e.g., `"api.example.com"`). |
 | `uri` | `string` | Required | Full resource URI being accessed. |
 | `version` | `string` | Required | CAIP-122 version. Always `"1"`. |
 | `nonce` | `string` | Required | Cryptographic nonce (32 hex characters). Server MUST generate this. |
@@ -265,8 +265,8 @@ Base64 decode the header value and JSON parse the result.
 
 ### 2. Validate Message Fields
 
-- **Domain**: `domain` MUST match the request host exactly.
-- **URI**: `uri` MUST start with the expected resource origin.
+- **Domain**: `domain` MUST match the Server's configured public origin host exactly. The Server derives the expected domain from its own configuration, not from request headers such as `Host`, since those can be set by the caller.
+- **URI**: The origin of `uri` MUST match the configured public origin exactly (scheme, host, and port).
 - **Issued At**: `issuedAt` MUST be recent (default: < 5 minutes) and MUST NOT be in the future.
 - **Expiration**: If `expirationTime` is present, it MUST be in the future.
 - **Not Before**: If `notBefore` is present, it MUST be in the past.
@@ -287,7 +287,7 @@ If signature is valid, the Server checks whether the recovered `address` has pre
 
 ## Security Considerations
 
-- **Domain Binding**: The `domain` field prevents signature reuse across different services.
+- **Domain Binding**: The `domain` field prevents signature reuse across different services. The Server MUST validate `domain` and the `uri` origin against its configured public origin, not against request-derived values such as the `Host` header — otherwise a signature made for another site could be replayed against the Server. Behind a TLS-terminating reverse proxy, the configured origin should be the browser-visible URL, not the upstream listener address.
 - **Nonce Uniqueness**: Each challenge MUST have a unique nonce to prevent replay attacks.
 - **Temporal Bounds**: The `issuedAt`, `expirationTime`, and `notBefore` fields constrain signature validity windows.
 - **Chain-Specific Verification**: Signatures are verified using chain-appropriate algorithms, preventing cross-chain signature reuse.

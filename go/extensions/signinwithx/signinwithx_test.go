@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"math/big"
+	"net/url"
 	"reflect"
 	"strings"
 	"testing"
@@ -20,8 +21,6 @@ import (
 
 func TestDeclareExtension(t *testing.T) {
 	got := DeclareExtension(DeclareOptions{
-		Domain:            "api.example.com",
-		ResourceURI:       "https://api.example.com/data",
 		Statement:         "Sign in to access your purchased content",
 		Networks:          []string{"eip155:8453", "solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp"},
 		ExpirationSeconds: 300,
@@ -37,11 +36,14 @@ func TestDeclareExtension(t *testing.T) {
 		t.Fatalf("extension type = %T, want Extension", raw)
 	}
 
-	if ext.Info.Domain != "api.example.com" {
-		t.Fatalf("domain = %q", ext.Info.Domain)
+	if ext.Info.Domain != "" {
+		t.Fatalf("domain = %q, want empty at declaration time", ext.Info.Domain)
 	}
-	if len(ext.Info.Resources) != 1 || ext.Info.Resources[0] != "https://api.example.com/data" {
-		t.Fatalf("resources = %#v", ext.Info.Resources)
+	if len(ext.Info.Resources) != 0 {
+		t.Fatalf("resources = %#v, want empty at declaration time", ext.Info.Resources)
+	}
+	if ext.Info.Statement != "Sign in to access your purchased content" {
+		t.Fatalf("statement = %q", ext.Info.Statement)
 	}
 	if len(ext.SupportedChains) != 2 {
 		t.Fatalf("supportedChains length = %d", len(ext.SupportedChains))
@@ -207,12 +209,48 @@ func TestExtractSolanaChainReference(t *testing.T) {
 	}
 }
 
+func TestNormalizeConfiguredOrigin(t *testing.T) {
+	got, err := normalizeConfiguredOrigin("https://api.example.com")
+	if err != nil {
+		t.Fatalf("normalizeConfiguredOrigin() error = %v", err)
+	}
+	if got.Scheme != "https" || got.Host != "api.example.com" {
+		t.Fatalf("origin = %#v", got)
+	}
+
+	tests := []struct {
+		name   string
+		origin string
+		want   string
+	}{
+		{name: "path", origin: "https://api.example.com/profile", want: "must not include a path, query, or fragment"},
+		{name: "invalid url", origin: "not-a-url", want: "not a valid URL"},
+		{name: "ftp", origin: "ftp://api.example.com", want: "must use http or https"},
+		{name: "credentials", origin: "https://user:pass@api.example.com", want: "must not include credentials"},
+		{name: "missing", origin: "", want: "siwx origin is required"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := normalizeConfiguredOrigin(tt.origin)
+			if err == nil {
+				t.Fatal("normalizeConfiguredOrigin() error = nil")
+			}
+			if !strings.Contains(err.Error(), tt.want) {
+				t.Fatalf("error = %q, want contains %q", err.Error(), tt.want)
+			}
+		})
+	}
+}
+
 func TestValidateMessage(t *testing.T) {
+	expectedOrigin := testOriginURL(t)
+
 	payload := testPayload()
 	payload.IssuedAt = time.Now().Add(-time.Minute).UTC().Format(time.RFC3339)
 	payload.ExpirationTime = time.Now().Add(time.Minute).UTC().Format(time.RFC3339)
 
-	result := ValidateMessage(payload, "https://api.example.com/data", ValidationOptions{
+	result := ValidateMessage(payload, expectedOrigin, ValidationOptions{
 		CheckNonce: func(nonce string) bool {
 			return nonce == "abc123xyz"
 		},
@@ -222,9 +260,29 @@ func TestValidateMessage(t *testing.T) {
 	}
 
 	payload.Domain = "evil.example.com"
-	result = ValidateMessage(payload, "https://api.example.com/data", ValidationOptions{})
+	result = ValidateMessage(payload, expectedOrigin, ValidationOptions{})
 	if result.Valid || !strings.Contains(result.Error, "Domain mismatch") {
 		t.Fatalf("ValidateMessage() = %#v, want domain mismatch", result)
+	}
+
+	payload = testPayload()
+	payload.IssuedAt = time.Now().Add(-time.Minute).UTC().Format(time.RFC3339)
+	payload.URI = "https://api.example.com.attacker.test/data"
+	result = ValidateMessage(payload, expectedOrigin, ValidationOptions{})
+	if result.Valid || !strings.Contains(result.Error, "URI mismatch") {
+		t.Fatalf("ValidateMessage() = %#v, want URI mismatch", result)
+	}
+
+	payload.URI = "http://api.example.com/data"
+	result = ValidateMessage(payload, expectedOrigin, ValidationOptions{})
+	if result.Valid || !strings.Contains(result.Error, "URI mismatch") {
+		t.Fatalf("ValidateMessage() = %#v, want URI scheme mismatch", result)
+	}
+
+	payload.URI = "not-a-url"
+	result = ValidateMessage(payload, expectedOrigin, ValidationOptions{})
+	if result.Valid || !strings.Contains(result.Error, "Invalid URI") {
+		t.Fatalf("ValidateMessage() = %#v, want invalid URI", result)
 	}
 }
 
@@ -475,6 +533,15 @@ func (s *testFacilitatorSigner) GetCode(context.Context, string) ([]byte, error)
 		return nil, s.getCodeError
 	}
 	return s.getCodeResult, nil
+}
+
+func testOriginURL(t *testing.T) *url.URL {
+	t.Helper()
+	origin, err := normalizeConfiguredOrigin("https://api.example.com")
+	if err != nil {
+		t.Fatalf("normalizeConfiguredOrigin() error = %v", err)
+	}
+	return origin
 }
 
 func testPayload() Payload {

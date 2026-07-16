@@ -1,3 +1,0 @@
-kind: fixed
-body: MCP payment matching now selects the advertised `accepts` entry matching the payment payload instead of always using the first entry, so cross-SDK MCP flows advertising multiple requirements no longer fail when the payer selects a non-first option.
-time: 2026-07-03T17:31:09.645073+02:00

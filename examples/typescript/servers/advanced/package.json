@@ -20,6 +20,7 @@
     "dotenv": "^16.4.7",
     "express": "^4.18.2",
     "@keetanetwork/keetanet-client": "^0.18.1",
+    "@x402/aptos": "workspace:*",
     "@x402/avm": "workspace:*",
     "@x402/casper": "workspace:*",
     "@x402/concordium": "workspace:*",
@@ -32,6 +33,7 @@
     "@x402/svm": "workspace:*",
     "@x402/stellar": "workspace:*",
     "@x402/tvm": "workspace:*",
+    "@x402/xrpl": "workspace:*",
     "@x402/extensions": "workspace:*"
   },
   "devDependencies": {

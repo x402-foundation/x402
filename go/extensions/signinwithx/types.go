@@ -93,8 +93,6 @@ type Payload struct {
 
 // DeclareOptions configures a SIWX extension declaration.
 type DeclareOptions struct {
-	Domain            string
-	ResourceURI       string
 	Statement         string
 	Version           string
 	Networks          []string

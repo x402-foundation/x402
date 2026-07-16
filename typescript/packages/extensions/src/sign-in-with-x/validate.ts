@@ -14,8 +14,8 @@ const DEFAULT_MAX_AGE_MS = 5 * 60 * 1000;
  * Validate SIWX message fields.
  *
  * Performs validation per spec (CHANGELOG-v2.md lines 318-329):
- * - Domain binding: domain MUST match server's domain
- * - URI validation: uri must refer to base url of resource
+ * - Domain binding: domain MUST match configured origin host
+ * - URI validation: uri origin MUST exactly match configured origin
  * - Temporal validation:
  *   - issuedAt MUST be recent (< 5 minutes by default)
  *   - expirationTime MUST be in the future
@@ -23,7 +23,7 @@ const DEFAULT_MAX_AGE_MS = 5 * 60 * 1000;
  * - Nonce: MUST be unique (via optional checkNonce callback)
  *
  * @param message - The SIWX payload to validate
- * @param expectedResourceUri - Expected resource URI (for domain/URI matching)
+ * @param expectedOrigin - Configured public origin for domain/URI matching
  * @param options - Validation options
  * @returns Validation result
  *
@@ -32,7 +32,7 @@ const DEFAULT_MAX_AGE_MS = 5 * 60 * 1000;
  * const payload = parseSIWxHeader(header);
  * const result = await validateSIWxMessage(
  *   payload,
- *   'https://api.example.com/data',
+ *   new URL('https://api.example.com'),
  *   { checkNonce: (n) => !usedNonces.has(n) }
  * );
  *
@@ -43,27 +43,34 @@ const DEFAULT_MAX_AGE_MS = 5 * 60 * 1000;
  */
 export async function validateSIWxMessage(
   message: SIWxPayload,
-  expectedResourceUri: string,
+  expectedOrigin: URL,
   options: SIWxValidationOptions = {},
 ): Promise<SIWxValidationResult> {
-  const expectedUrl = new URL(expectedResourceUri);
   const maxAge = options.maxAge ?? DEFAULT_MAX_AGE_MS;
 
   // 1. Domain binding (spec: "domain field MUST match server's domain")
-  // Use hostname (without port) per EIP-4361 convention
-  if (message.domain !== expectedUrl.hostname) {
+  if (message.domain !== expectedOrigin.host) {
     return {
       valid: false,
-      error: `Domain mismatch: expected "${expectedUrl.hostname}", got "${message.domain}"`,
+      error: `Domain mismatch: expected "${expectedOrigin.host}", got "${message.domain}"`,
     };
   }
 
   // 2. URI validation (spec: "uri and resources must refer to base url of resource")
-  // Allow the message URI to be the origin or the full resource URL
-  if (!message.uri.startsWith(expectedUrl.origin)) {
+  let messageUri: URL;
+  try {
+    messageUri = new URL(message.uri);
+  } catch {
     return {
       valid: false,
-      error: `URI mismatch: expected origin "${expectedUrl.origin}", got "${message.uri}"`,
+      error: `Invalid URI: "${message.uri}" is not a valid URL`,
+    };
+  }
+
+  if (messageUri.origin !== expectedOrigin.origin) {
+    return {
+      valid: false,
+      error: `URI mismatch: expected origin "${expectedOrigin.origin}", got "${messageUri.origin}"`,
     };
   }
 

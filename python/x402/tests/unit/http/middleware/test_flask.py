@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import threading
 from typing import Any
 from unittest.mock import MagicMock, patch
@@ -11,7 +12,7 @@ import pytest
 
 # Skip all tests if flask not installed
 pytest.importorskip("flask")
-from flask import Flask
+from flask import Flask, redirect
 from werkzeug.datastructures import Headers, ImmutableMultiDict
 
 from x402.http.facilitator_client_base import FacilitatorResponseError
@@ -635,6 +636,55 @@ class TestFlaskMiddlewareIntegration:
                 assert b"Protected content" in response.data
                 assert "PAYMENT-RESPONSE" in response.headers
 
+    def test_verified_payment_settles_on_redirect(self):
+        """Test that verified payment settles on 3xx redirect responses."""
+        app = Flask(__name__)
+
+        @app.route("/api/protected")
+        def protected_route():
+            return redirect("https://cdn.example/signed", 302)
+
+        mock_server = MagicMock()
+        routes = {
+            "GET /api/protected": RouteConfig(
+                accepts=PaymentOption(
+                    scheme="exact",
+                    pay_to="0x1234567890123456789012345678901234567890",
+                    price="$0.01",
+                    network="eip155:8453",
+                ),
+            )
+        }
+
+        payment_payload = make_v2_payload()
+        payment_requirements = make_payment_requirements()
+
+        with patch("x402.http.middleware.flask.x402HTTPResourceServerSync") as mock_http_server:
+            mock_http_server_instance = MagicMock()
+            mock_http_server_instance.requires_payment.return_value = True
+            mock_http_server_instance.process_http_request.return_value = HTTPProcessResult(
+                type="payment-verified",
+                payment_payload=payment_payload,
+                payment_requirements=payment_requirements,
+            )
+            mock_http_server_instance.process_settlement.return_value = ProcessSettleResult(
+                success=True,
+                headers={"PAYMENT-RESPONSE": "settlement_encoded"},
+            )
+            mock_http_server.return_value = mock_http_server_instance
+
+            PaymentMiddleware(app, routes, mock_server, sync_facilitator_on_start=False)
+
+            with app.test_client() as client:
+                response = client.get(
+                    "/api/protected",
+                    headers={"PAYMENT-SIGNATURE": "valid_payment"},
+                )
+                assert response.status_code == 302
+                assert response.headers["Location"] == "https://cdn.example/signed"
+                assert "PAYMENT-RESPONSE" in response.headers
+                mock_http_server_instance.process_settlement.assert_called_once()
+
     def test_settlement_failure_returns_402(self):
         """Test that settlement failure returns 402 with empty body and PAYMENT-RESPONSE header."""
         app = Flask(__name__)
@@ -679,6 +729,53 @@ class TestFlaskMiddlewareIntegration:
                 data = json.loads(response.data)
                 assert data == {}
                 assert "PAYMENT-RESPONSE" in response.headers
+
+    def test_settlement_unexpected_exception_returns_402_with_payment_response(self, caplog):
+        """An unexpected settlement error must be LOGGED and surfaced as a settle
+        failure (402 + PAYMENT-RESPONSE, success=False) - not a silent empty-body
+        402 with no header and no log (see issue #2603). The raw exception detail
+        is logged only, not leaked to the client."""
+        app = Flask(__name__)
+
+        @app.route("/api/protected")
+        def protected_route():
+            return "Protected content"
+
+        mock_server = MagicMock()
+        routes = {}
+
+        payment_payload = make_v2_payload()
+        payment_requirements = make_payment_requirements()
+
+        with patch("x402.http.middleware.flask.x402HTTPResourceServerSync") as mock_http_server:
+            mock_http_server_instance = MagicMock()
+            mock_http_server_instance.requires_payment.return_value = True
+            mock_http_server_instance.process_http_request.return_value = HTTPProcessResult(
+                type="payment-verified",
+                payment_payload=payment_payload,
+                payment_requirements=payment_requirements,
+            )
+            mock_http_server_instance.process_settlement.side_effect = RuntimeError(
+                "boom: RPC node unreachable mid-settle"
+            )
+            mock_http_server_instance._create_settlement_headers.return_value = {
+                "PAYMENT-RESPONSE": "base64encoded"
+            }
+            mock_http_server.return_value = mock_http_server_instance
+
+            PaymentMiddleware(app, routes, mock_server, sync_facilitator_on_start=False)
+
+            with caplog.at_level(logging.ERROR):
+                with app.test_client() as client:
+                    response = client.get("/api/protected")
+
+            assert response.status_code == 402
+            assert json.loads(response.data) == {}
+            assert "PAYMENT-RESPONSE" in response.headers
+            # raw exception detail is logged for operators...
+            assert "boom: RPC node unreachable mid-settle" in caplog.text
+            # ...but not leaked to the client
+            assert "boom" not in response.get_data(as_text=True)
 
     def test_cancels_on_handler_error_status(self):
         """Test that handler 4xx/5xx triggers cancellation without settlement."""

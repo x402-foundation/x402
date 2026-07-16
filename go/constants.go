@@ -3,7 +3,7 @@ package x402
 // Version constants
 const (
 	// Version is the SDK version
-	Version = "2.17.0"
+	Version = "2.18.0"
 
 	// ProtocolVersion is the current x402 protocol version
 	ProtocolVersion = 2

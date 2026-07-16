@@ -1,3 +1,9 @@
+## v2.18.0 - 2026-07-10
+### Added
+- Add Igra mainnet (eip155:38833) default stablecoin USDC via Permit2 ([#2800](https://github.com/x402-foundation/x402/pull/2800)) - Thanks [@emdin](https://github.com/emdin)!
+### Fixed
+- MCP payment matching now selects the advertised `accepts` entry matching the payment payload instead of always using the first entry, so cross-SDK MCP flows advertising multiple requirements no longer fail when the payer selects a non-first option. ([#2774](https://github.com/x402-foundation/x402/pull/2774)) - Thanks [@phdargen](https://github.com/phdargen)!
+
 ## v2.17.0 - 2026-06-26
 ### Added
 - Expanded wallet compatibility so payments verify and settle consistently across plain EOAs, deployed smart accounts (ERC-4337 / ERC-7579), counterfactual ERC-6492 wallets, and ERC-7702-delegated EOAs. Pre-verification now mirrors on-chain signature checking, so a payment that passes verify is the same one that succeeds at settle. Added counterfactual ERC-6492 support to the exact and batch-settlement flows — the wallet is deployed and its signature validated together during verify — gated by a new EIP6492AllowedFactories allowlist you set on the facilitator scheme config. Also added a wallet-compatibility guide documenting which wallet and scheme combinations are supported. ([#2658](https://github.com/x402-foundation/x402/pull/2658)) - Thanks [@CarsonRoscoe](https://github.com/CarsonRoscoe) and [@cursoragent](https://github.com/cursoragent)!

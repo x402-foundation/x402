@@ -5,19 +5,8 @@
  * Use getNetworkSet() to get configs for testnet or mainnet mode.
  */
 
-export type NetworkMode = "testnet" | "mainnet";
-export type ProtocolFamily =
-  | "evm"
-  | "svm"
-  | "avm"
-  | "aptos"
-  | "casper"
-  | "hedera"
-  | "keeta"
-  | "near"
-  | "stellar"
-  | "ccd"
-  | "tvm";
+export type NetworkMode = 'testnet' | 'mainnet';
+export type ProtocolFamily = 'evm' | 'svm' | 'avm' | 'aptos' | 'casper' | 'hedera' | 'keeta' | 'near' | 'stellar' | 'ccd' | 'tvm' | 'xrpl';
 
 export type NetworkConfig = {
   name: string;
@@ -38,6 +27,7 @@ export type NetworkSet = {
   ccd: NetworkConfig;
   tvm: NetworkConfig;
   near: NetworkConfig;
+  xrpl: NetworkConfig;
 };
 
 /**
@@ -46,140 +36,130 @@ export type NetworkSet = {
 const NETWORK_SETS: Record<NetworkMode, NetworkSet> = {
   testnet: {
     evm: {
-      name: "Base Sepolia",
-      caip2: "eip155:84532",
-      rpcUrl: process.env.BASE_SEPOLIA_RPC_URL || "https://sepolia.base.org",
-      permit2Asset: "0x036CbD53842c5426634e7929541eC2318f3dCF7e",
+      name: 'Base Sepolia',
+      caip2: 'eip155:84532',
+      rpcUrl: process.env.BASE_SEPOLIA_RPC_URL || 'https://sepolia.base.org',
+      permit2Asset: '0x036CbD53842c5426634e7929541eC2318f3dCF7e',
     },
     svm: {
-      name: "Solana Devnet",
-      caip2: "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1",
-      rpcUrl:
-        process.env.SOLANA_DEVNET_RPC_URL || "https://api.devnet.solana.com",
+      name: 'Solana Devnet',
+      caip2: 'solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1',
+      rpcUrl: process.env.SOLANA_DEVNET_RPC_URL || 'https://api.devnet.solana.com',
     },
     avm: {
-      name: "Algorand Testnet",
-      caip2: "algorand:SGO1GKSzyE7IEPItTxCByw9x8FmnrCDexi9/cOUJOiI=",
-      rpcUrl:
-        process.env.AVM_TESTNET_RPC_URL ||
-        "https://testnet-api.4160.nodely.dev",
+      name: 'Algorand Testnet',
+      caip2: 'algorand:SGO1GKSzyE7IEPItTxCByw9x8FmnrCDexi9/cOUJOiI=',
+      rpcUrl: process.env.AVM_TESTNET_RPC_URL || 'https://testnet-api.4160.nodely.dev',
     },
     ccd: {
-      name: "Concordium Testnet",
-      caip2: "ccd:4221332d34e1694168c2a0c0b3fd0f27",
-      rpcUrl:
-        process.env.CONCORDIUM_TESTNET_GRPC_URL ||
-        "grpc.testnet.concordium.com:20000",
+      name: 'Concordium Testnet',
+      caip2: 'ccd:4221332d34e1694168c2a0c0b3fd0f27',
+      rpcUrl: process.env.CONCORDIUM_TESTNET_GRPC_URL || 'grpc.testnet.concordium.com:20000',
     },
     aptos: {
-      name: "Aptos Testnet",
-      caip2: "aptos:2",
-      rpcUrl:
-        process.env.APTOS_TESTNET_RPC_URL ||
-        "https://fullnode.testnet.aptoslabs.com/v1",
+      name: 'Aptos Testnet',
+      caip2: 'aptos:2',
+      rpcUrl: process.env.APTOS_TESTNET_RPC_URL || 'https://fullnode.testnet.aptoslabs.com/v1',
     },
     casper: {
       name: "Casper Testnet",
       caip2: "casper:casper-test",
-      rpcUrl:
-        process.env.CASPER_TESTNET_RPC_URL ||
-        "https://node.testnet.casper.network/rpc",
+      rpcUrl: process.env.CASPER_TESTNET_RPC_URL || 'https://node.testnet.casper.network/rpc',
     },
     hedera: {
-      name: "Hedera Testnet",
-      caip2: "hedera:testnet",
-      rpcUrl: process.env.HEDERA_TESTNET_NODE_URL || "",
+      name: 'Hedera Testnet',
+      caip2: 'hedera:testnet',
+      rpcUrl: process.env.HEDERA_TESTNET_NODE_URL || '',
     },
     keeta: {
-      name: "Keeta Testnet",
-      caip2: "keeta:1413829460",
+      name: 'Keeta Testnet',
+      caip2: 'keeta:1413829460',
       // Unused in Keeta, representative API endpoints are set in the SDK itself
-      rpcUrl: "",
+      rpcUrl: '',
     },
     stellar: {
-      name: "Stellar Testnet",
-      caip2: "stellar:testnet",
-      rpcUrl:
-        process.env.STELLAR_TESTNET_RPC_URL ||
-        "https://soroban-testnet.stellar.org",
+      name: 'Stellar Testnet',
+      caip2: 'stellar:testnet',
+      rpcUrl: process.env.STELLAR_TESTNET_RPC_URL || 'https://soroban-testnet.stellar.org',
     },
     tvm: {
-      name: "TON Testnet",
-      caip2: "tvm:-3",
-      rpcUrl:
-        process.env.TONCENTER_TESTNET_BASE_URL ||
-        "https://testnet.toncenter.com",
+      name: 'TON Testnet',
+      caip2: 'tvm:-3',
+      rpcUrl: process.env.TONCENTER_TESTNET_BASE_URL || 'https://testnet.toncenter.com',
     },
     near: {
-      name: "NEAR Testnet",
-      caip2: "near:testnet",
-      rpcUrl:
-        process.env.NEAR_TESTNET_RPC_URL || "https://rpc.testnet.fastnear.com",
+      name: 'NEAR Testnet',
+      caip2: 'near:testnet',
+      rpcUrl: process.env.NEAR_TESTNET_RPC_URL || 'https://rpc.testnet.fastnear.com',
+    },
+    xrpl: {
+      name: 'XRPL Testnet',
+      caip2: 'xrpl:1',
+      rpcUrl: process.env.XRPL_TESTNET_WS_URL || 'wss://s.altnet.rippletest.net:51233',
     },
   },
   mainnet: {
     evm: {
-      name: "Base",
-      caip2: "eip155:8453",
-      rpcUrl: process.env.BASE_RPC_URL || "https://mainnet.base.org",
-      permit2Asset: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+      name: 'Base',
+      caip2: 'eip155:8453',
+      rpcUrl: process.env.BASE_RPC_URL || 'https://mainnet.base.org',
+      permit2Asset: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913',
     },
     svm: {
-      name: "Solana",
-      caip2: "solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp",
-      rpcUrl:
-        process.env.SOLANA_RPC_URL || "https://api.mainnet-beta.solana.com",
+      name: 'Solana',
+      caip2: 'solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp',
+      rpcUrl: process.env.SOLANA_RPC_URL || 'https://api.mainnet-beta.solana.com',
     },
     avm: {
-      name: "Algorand Mainnet",
-      caip2: "algorand:wGHE2Pwdvd7S12BL5FaOP20EGYesN73ktiC1qzkkit8=",
-      rpcUrl: process.env.AVM_RPC_URL || "https://mainnet-api.4160.nodely.dev",
+      name: 'Algorand Mainnet',
+      caip2: 'algorand:wGHE2Pwdvd7S12BL5FaOP20EGYesN73ktiC1qzkkit8=',
+      rpcUrl: process.env.AVM_RPC_URL || 'https://mainnet-api.4160.nodely.dev',
     },
     ccd: {
-      name: "Concordium Mainnet",
-      caip2: "ccd:9dd9ca4d19e9393877d2c44b70f89acb",
-      rpcUrl:
-        process.env.CONCORDIUM_MAINNET_GRPC_URL ||
-        "grpc.mainnet.concordium.software:20000",
+      name: 'Concordium Mainnet',
+      caip2: 'ccd:9dd9ca4d19e9393877d2c44b70f89acb',
+      rpcUrl: process.env.CONCORDIUM_MAINNET_GRPC_URL || 'grpc.mainnet.concordium.software:20000',
     },
     aptos: {
-      name: "Aptos",
-      caip2: "aptos:1",
-      rpcUrl:
-        process.env.APTOS_RPC_URL ||
-        "https://fullnode.mainnet.aptoslabs.com/v1",
+      name: 'Aptos',
+      caip2: 'aptos:1',
+      rpcUrl: process.env.APTOS_RPC_URL || 'https://fullnode.mainnet.aptoslabs.com/v1',
     },
     casper: {
       name: "Casper",
       caip2: "casper:casper",
-      rpcUrl:
-        process.env.CASPER_RPC_URL || "https://node.mainnet.casper.network/rpc",
+      rpcUrl: process.env.CASPER_RPC_URL || 'https://node.mainnet.casper.network/rpc',
     },
     hedera: {
-      name: "Hedera Mainnet",
-      caip2: "hedera:mainnet",
-      rpcUrl: process.env.HEDERA_NODE_URL || "",
+      name: 'Hedera Mainnet',
+      caip2: 'hedera:mainnet',
+      rpcUrl: process.env.HEDERA_NODE_URL || '',
     },
     keeta: {
-      name: "Keeta",
-      caip2: "keeta:21378",
+      name: 'Keeta',
+      caip2: 'keeta:21378',
       // Unused in Keeta, representative API endpoints are set in the SDK itself
-      rpcUrl: "",
+      rpcUrl: '',
     },
     stellar: {
-      name: "Stellar Pubnet",
-      caip2: "stellar:pubnet",
-      rpcUrl: process.env.STELLAR_RPC_URL || "https://mainnet.sorobanrpc.com",
+      name: 'Stellar Pubnet',
+      caip2: 'stellar:pubnet',
+      rpcUrl: process.env.STELLAR_RPC_URL || 'https://mainnet.sorobanrpc.com',
     },
     tvm: {
-      name: "TON Mainnet",
-      caip2: "tvm:-239",
-      rpcUrl: process.env.TONCENTER_MAINNET_BASE_URL || "https://toncenter.com",
+      name: 'TON Mainnet',
+      caip2: 'tvm:-239',
+      rpcUrl: process.env.TONCENTER_MAINNET_BASE_URL || 'https://toncenter.com',
     },
     near: {
-      name: "NEAR",
-      caip2: "near:mainnet",
-      rpcUrl: process.env.NEAR_RPC_URL || "https://rpc.mainnet.fastnear.com",
+      name: 'NEAR',
+      caip2: 'near:mainnet',
+      rpcUrl: process.env.NEAR_RPC_URL || 'https://rpc.mainnet.fastnear.com',
+    },
+    xrpl: {
+      name: 'XRPL',
+      caip2: 'xrpl:0',
+      rpcUrl: process.env.XRPL_MAINNET_WS_URL || 'wss://s1.ripple.com:51233',
     },
   },
 };
@@ -208,19 +188,19 @@ export function resolveEvmPermit2Asset(networks: NetworkSet): string {
   if (fromEnv) {
     return fromEnv;
   }
-  return (networks.evm.permit2Asset ?? "").trim();
+  return (networks.evm.permit2Asset ?? '').trim();
 }
 
 /**
  * Get network config for a protocol family in a given mode
  *
  * @param mode - 'testnet' or 'mainnet'
- * @param protocolFamily - 'evm', 'svm', 'avm', 'aptos', 'hedera', 'near', 'stellar', 'ccd', or 'tvm'
+ * @param protocolFamily - 'evm', 'svm', 'avm', 'aptos', 'hedera', 'near', 'stellar', 'ccd', 'tvm', or 'xrpl'
  * @returns NetworkConfig for the specified protocol
  */
 export function getNetworkForProtocol(
   mode: NetworkMode,
-  protocolFamily: ProtocolFamily,
+  protocolFamily: ProtocolFamily
 ): NetworkConfig {
   return NETWORK_SETS[mode][protocolFamily];
 }
@@ -233,18 +213,6 @@ export function getNetworkForProtocol(
  */
 export function getNetworkModeDescription(mode: NetworkMode): string {
   const set = NETWORK_SETS[mode];
-  const networks = [
-    set.evm.name,
-    set.svm.name,
-    set.avm.name,
-    set.aptos.name,
-    set.casper.name,
-    set.hedera.name,
-    set.keeta.name,
-    set.near.name,
-    set.stellar.name,
-    set.ccd.name,
-    set.tvm.name,
-  ];
-  return networks.join(" + ");
+  const networks = [set.evm.name, set.svm.name, set.avm.name, set.aptos.name, set.hedera.name, set.keeta.name, set.near.name, set.stellar.name, set.ccd.name, set.tvm.name, set.xrpl.name];
+  return networks.join(' + ');
 }

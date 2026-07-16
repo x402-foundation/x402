@@ -16,6 +16,7 @@ const SVM_NETWORK = process.env.SVM_NETWORK || "solana:EtWTRABZaYq6iMfeYKouRu166
 const APTOS_NETWORK = process.env.APTOS_NETWORK || "aptos:2";
 const STELLAR_NETWORK = process.env.STELLAR_NETWORK || "stellar:testnet";
 const NEAR_NETWORK = process.env.NEAR_NETWORK || "near:testnet";
+const XRPL_NETWORK = process.env.XRPL_NETWORK || "xrpl:1";
 
 const DUMMY_EVM_SIGNER = "0x0000000000000000000000000000000000000001";
 const DUMMY_SVM_SIGNER = "11111111111111111111111111111111";
@@ -56,6 +57,11 @@ function buildSupportedResponse() {
         kinds.push({ x402Version: version, scheme, network: NEAR_NETWORK });
       }
     }
+    if (XRPL_NETWORK) {
+      for (const scheme of otherSchemes) {
+        kinds.push({ x402Version: version, scheme, network: XRPL_NETWORK });
+      }
+    }
   }
 
   const signers: Record<string, string[]> = {
@@ -71,6 +77,9 @@ function buildSupportedResponse() {
   if (NEAR_NETWORK) {
     signers["near:*"] = ["relayer.testnet"];
   }
+  if (XRPL_NETWORK) {
+    signers["xrpl:*"] = [];
+  }
 
   return { kinds, extensions: [], signers };
 }
@@ -83,6 +92,27 @@ function sendJson(res: http.ServerResponse, statusCode: number, body: unknown) {
 
 const supportedResponse = buildSupportedResponse();
 
+let shuttingDown = false;
+
+function shutdown() {
+  if (shuttingDown) {
+    return;
+  }
+
+  shuttingDown = true;
+  const forceExitTimeout = setTimeout(() => process.exit(1), 5_000);
+  forceExitTimeout.unref();
+
+  server.close(error => {
+    clearTimeout(forceExitTimeout);
+    if (error) {
+      console.error("Failed to close mock facilitator:", error);
+      process.exit(1);
+    }
+    process.exit(0);
+  });
+}
+
 const server = http.createServer((req, res) => {
   const url = new URL(req.url || "/", `http://localhost:${PORT}`);
 
@@ -93,6 +123,12 @@ const server = http.createServer((req, res) => {
 
   if (req.method === "GET" && url.pathname === "/health") {
     sendJson(res, 200, { status: "ok" });
+    return;
+  }
+
+  if (req.method === "POST" && url.pathname === "/close") {
+    sendJson(res, 200, { status: "shutting down" });
+    setImmediate(shutdown);
     return;
   }
 
@@ -119,3 +155,6 @@ server.listen(PORT, () => {
   console.log(`Mock facilitator listening on port ${PORT}`);
   console.log("Facilitator listening");
 });
+
+process.on("SIGTERM", shutdown);
+process.on("SIGINT", shutdown);

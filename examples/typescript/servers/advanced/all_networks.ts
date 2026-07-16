@@ -5,12 +5,14 @@
  * optional chain configuration via environment variables.
  *
  * New chain support should be added here in alphabetic order by network prefix
- * (e.g., "algorand" before "ccd" before "eip155" before "hedera" before "near" before "solana" before "stellar" before "tvm").
+ * (e.g., "algorand" before "aptos" before "ccd" before "eip155" before "hedera" before "near" before "solana" before "stellar" before "tvm" before "xrpl").
  */
 
 import { config } from "dotenv";
 import express from "express";
 import { paymentMiddleware, x402ResourceServer } from "@x402/express";
+import { APTOS_TESTNET_CAIP2 } from "@x402/aptos";
+import { ExactAptosScheme } from "@x402/aptos/exact/server";
 import { ExactAvmScheme } from "@x402/avm/exact/server";
 import { ExactCasperScheme } from "@x402/casper/exact/server";
 import { ExactConcordiumScheme } from "@x402/concordium/exact/server";
@@ -23,6 +25,8 @@ import { NEAR_TESTNET_CAIP2 } from "@x402/near";
 import { ExactNearScheme } from "@x402/near/exact/server";
 import { ExactStellarScheme } from "@x402/stellar/exact/server";
 import { ExactTvmScheme } from "@x402/tvm/exact/server";
+import { XRPL_TESTNET } from "@x402/xrpl";
+import { ExactXrplScheme } from "@x402/xrpl/exact/server";
 import { HTTPFacilitatorClient } from "@x402/core/server";
 import type { Network, Price } from "@x402/core/types";
 
@@ -30,10 +34,8 @@ config();
 
 // Configuration - optional per network
 const avmAddress = process.env.AVM_ADDRESS as string | undefined;
+const aptosAddress = process.env.APTOS_ADDRESS as string | undefined;
 const casperAddress = process.env.CASPER_ADDRESS as string | undefined;
-const casperAsset = process.env.CASPER_ASSET as string | undefined;
-const casperTokenName = process.env.CASPER_TOKEN_NAME as string | undefined;
-const casperTokenVersion = process.env.CASPER_TOKEN_VERSION as string | undefined;
 const ccdAddress = process.env.CCD_ADDRESS as string | undefined;
 const evmAddress = process.env.EVM_ADDRESS as `0x${string}` | undefined;
 const hederaAddress = process.env.HEDERA_ACCOUNT_ID as string | undefined;
@@ -42,10 +44,12 @@ const nearAddress = process.env.NEAR_ADDRESS as string | undefined;
 const svmAddress = process.env.SVM_ADDRESS as string | undefined;
 const stellarAddress = process.env.STELLAR_ADDRESS as string | undefined;
 const tvmAddress = process.env.TVM_ADDRESS as string | undefined;
+const xrplAddress = process.env.XRPL_ADDRESS as string | undefined;
 
 // Validate at least one address is provided
 if (
   !avmAddress &&
+  !aptosAddress &&
   !casperAddress &&
   !ccdAddress &&
   !evmAddress &&
@@ -54,10 +58,11 @@ if (
   !nearAddress &&
   !stellarAddress &&
   !hederaAddress &&
-  !tvmAddress
+  !tvmAddress &&
+  !xrplAddress
 ) {
   console.error(
-    "❌ At least one of AVM_ADDRESS, CASPER_ADDRESS, CCD_ADDRESS, EVM_ADDRESS, KEETA_ADDRESS, NEAR_ADDRESS, SVM_ADDRESS, STELLAR_ADDRESS, HEDERA_ACCOUNT_ID, or TVM_ADDRESS is required",
+    "❌ At least one of AVM_ADDRESS, APTOS_ADDRESS, CASPER_ADDRESS, CCD_ADDRESS, EVM_ADDRESS, KEETA_ADDRESS, NEAR_ADDRESS, SVM_ADDRESS, STELLAR_ADDRESS, HEDERA_ACCOUNT_ID, TVM_ADDRESS, or XRPL_ADDRESS is required",
   );
   process.exit(1);
 }
@@ -70,7 +75,12 @@ if (!facilitatorUrl) {
 
 // Network configuration
 const AVM_NETWORK = "algorand:SGO1GKSzyE7IEPItTxCByw9x8FmnrCDexi9/cOUJOiI=" as const; // Algorand Testnet
+const APTOS_NETWORK = (process.env.APTOS_NETWORK || APTOS_TESTNET_CAIP2) as Network; // Aptos Testnet
 const CASPER_NETWORK = (process.env.CASPER_NETWORK || "casper:casper-test") as Network; // Casper Testnet
+const CASPER_AMOUNT = (process.env.CASPER_AMOUNT || "1500000000") as string; // Casper CEP-18 amount (e.g., "1500000000" for 1.5 WCSPR)
+const CASPER_ASSET = (process.env.CASPER_ASSET || "3d80df21ba4ee4d66a2a1f60c32570dd5685e4b279f6538162a5fd1314847c1e") as string; // Defaults to Casper WCSPR CEP-18
+const CASPER_TOKEN_NAME = (process.env.CASPER_TOKEN_NAME || "Wrapped CSPR") as string; // Casper CEP-18 token name (e.g., "Wrapped CSPR")
+const CASPER_TOKEN_VERSION = (process.env.CASPER_TOKEN_VERSION || "1") as string; // Casper CEP-18 token version
 const CCD_NETWORK = "ccd:4221332d34e1694168c2a0c0b3fd0f27" as const; // Concordium Testnet
 const EVM_NETWORK = "eip155:84532" as const; // Base Sepolia
 const HEDERA_NETWORK = "hedera:testnet" as const; // Hedera Testnet
@@ -81,6 +91,7 @@ const STELLAR_NETWORK = "stellar:testnet" as const; // Stellar Testnet
 const HEDERA_HBAR_ASSET = "0.0.0" as const; // Native HBAR asset id
 const HEDERA_WEATHER_PRICE_TINYBARS = "100000" as const; // 0.001 HBAR
 const TVM_NETWORK = (process.env.TVM_NETWORK || "tvm:-3") as Network; // TON Testnet
+const XRPL_NETWORK = (process.env.XRPL_NETWORK || XRPL_TESTNET) as Network; // XRPL Testnet
 const CCD_WEATHER_PRICE_MICRO_CCD = "1000" as const; // 0.001 CCD
 
 // Build accepts array dynamically based on configured addresses
@@ -98,15 +109,24 @@ if (avmAddress) {
     payTo: avmAddress,
   });
 }
-if (casperAddress && casperAsset && casperTokenName && casperTokenVersion) {
+if (aptosAddress) {
+  accepts.push({
+    scheme: "exact",
+    price: "$0.001",
+    network: APTOS_NETWORK,
+    payTo: aptosAddress,
+  });
+}
+if (casperAddress) {
   accepts.push({
     scheme: "exact",
     price: {
-      amount: process.env.CASPER_AMOUNT || "1",
-      asset: casperAsset,
+      amount: CASPER_AMOUNT,
+      asset: CASPER_ASSET,
       extra: {
-        name: casperTokenName,
-        version: casperTokenVersion,
+        name: CASPER_TOKEN_NAME,
+        version: CASPER_TOKEN_VERSION,
+        decimals: 9
       },
     },
     network: CASPER_NETWORK,
@@ -183,6 +203,17 @@ if (tvmAddress) {
     payTo: tvmAddress,
   });
 }
+if (xrplAddress) {
+  accepts.push({
+    scheme: "exact",
+    price: {
+      amount: process.env.XRPL_AMOUNT || "1000",
+      asset: "XRP",
+    },
+    network: XRPL_NETWORK,
+    payTo: xrplAddress,
+  });
+}
 
 // Create facilitator client
 const facilitatorClient = new HTTPFacilitatorClient({ url: facilitatorUrl });
@@ -192,7 +223,10 @@ const server = new x402ResourceServer(facilitatorClient);
 if (avmAddress) {
   server.register(AVM_NETWORK, new ExactAvmScheme());
 }
-if (casperAddress && casperAsset && casperTokenName && casperTokenVersion) {
+if (aptosAddress) {
+  server.register(APTOS_NETWORK, new ExactAptosScheme());
+}
+if (casperAddress) {
   server.register(CASPER_NETWORK, new ExactCasperScheme());
 }
 if (ccdAddress) {
@@ -218,6 +252,9 @@ if (stellarAddress) {
 }
 if (tvmAddress) {
   server.register(TVM_NETWORK, new ExactTvmScheme());
+}
+if (xrplAddress) {
+  server.register(XRPL_NETWORK, new ExactXrplScheme());
 }
 
 // Create Express app
@@ -259,6 +296,9 @@ app.listen(port, () => {
   if (avmAddress) {
     console.log(`   AVM: ${avmAddress} on ${AVM_NETWORK}`);
   }
+  if (aptosAddress) {
+    console.log(`   Aptos: ${aptosAddress} on ${APTOS_NETWORK}`);
+  }
   if (casperAddress) {
     console.log(`   Casper: ${casperAddress} on ${CASPER_NETWORK}`);
   }
@@ -285,6 +325,9 @@ app.listen(port, () => {
   }
   if (tvmAddress) {
     console.log(`   TVM: ${tvmAddress} on ${TVM_NETWORK}`);
+  }
+  if (xrplAddress) {
+    console.log(`   XRPL: ${xrplAddress} on ${XRPL_NETWORK}`);
   }
   console.log(`   Facilitator: ${facilitatorUrl}`);
   console.log();

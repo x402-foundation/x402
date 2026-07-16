@@ -17,6 +17,7 @@
       "@x402/keeta",
       "@x402/near",
       "@x402/concordium",
+      "@x402/xrpl",
       "@x402/express",
       "@x402/fastify",
       "@x402/hono",

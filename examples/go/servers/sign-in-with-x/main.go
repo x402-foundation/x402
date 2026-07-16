@@ -40,9 +40,15 @@ func main() {
 		port = "4021"
 	}
 
+	publicOrigin := os.Getenv("PUBLIC_ORIGIN")
+	if publicOrigin == "" {
+		publicOrigin = fmt.Sprintf("http://localhost:%s", port)
+	}
+
 	storage := signinwithx.NewInMemoryStorage()
 	extension := signinwithx.MustCreateResourceServerExtension(signinwithx.ServerOptions{
 		Storage: storage,
+		Origin:  publicOrigin,
 		OnEvent: func(event signinwithx.HookEvent) {
 			log.Printf("siwx event=%s resource=%s address=%s error=%s", event.Type, event.Resource, event.Address, event.Error)
 		},

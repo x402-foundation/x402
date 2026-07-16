@@ -60,7 +60,10 @@ The easiest way to implement SIWX is registering the provided extension factorie
     // 1. Register extension
     const resourceServer = new x402ResourceServer(facilitatorClient)
       .register(NETWORK, new ExactEvmScheme())
-      .registerExtension(createSIWxResourceServerExtension({ storage }));
+      .registerExtension(createSIWxResourceServerExtension({
+        storage,
+        origin: 'https://api.example.com',
+      }));
 
     // 2. Declare SIWX support in routes
     const routes = {
@@ -102,6 +105,7 @@ The easiest way to implement SIWX is registering the provided extension factorie
     storage := signinwithx.NewInMemoryStorage()
     extension := signinwithx.MustCreateResourceServerExtension(signinwithx.ServerOptions{
         Storage: storage,
+        Origin:  "https://api.example.com",
     })
 
     // Declare SIWX support in routes
@@ -170,7 +174,12 @@ The easiest way to implement SIWX is registering the provided extension factorie
     server = x402ResourceServer(facilitator)
     server.register(NETWORK, ExactEvmServerScheme())
     server.register_extension(
-        create_siwx_resource_server_extension(CreateSIWxHookOptions(storage=storage))
+        create_siwx_resource_server_extension(
+            CreateSIWxHookOptions(
+                storage=storage,
+                origin="https://api.example.com",
+            )
+        )
     )
 
     # 2. Declare SIWX support in routes
@@ -197,9 +206,44 @@ The easiest way to implement SIWX is registering the provided extension factorie
   </Tab>
 </Tabs>
 
-The server extension derives `network` from `accepts`, derives `domain`/`uri` from the request URL, refreshes nonce/timestamps per request, records successful payments, and validates SIWX proofs for declared HTTP routes.
+The server extension derives `network` from `accepts`, derives `domain`/`uri` from the configured `origin` and request path, refreshes nonce/timestamps per request, records successful payments, and validates SIWX proofs for declared HTTP routes.
 
 **Auth-only routes** (declared with `accepts: []`) grant access based on a valid SIWX signature alone, without requiring payment. This is useful for wallet-gated content that doesn't need micropayments.
+
+### Configured origin (required)
+
+SIWX proofs bind to the public origin configured when creating the server extension or request hook. Challenge issuance and validation both use this value — never request headers such as `Host`, `X-Forwarded-Host`, or `X-Forwarded-Proto`.
+
+<Tabs>
+  <Tab title="TypeScript">
+    ```typescript
+    createSIWxResourceServerExtension({
+      storage,
+      origin: 'https://api.example.com',
+    });
+    ```
+  </Tab>
+  <Tab title="Go">
+    ```go
+    signinwithx.MustCreateResourceServerExtension(signinwithx.ServerOptions{
+        Storage: storage,
+        Origin:  "https://api.example.com",
+    })
+    ```
+  </Tab>
+  <Tab title="Python">
+    ```python
+    create_siwx_resource_server_extension(
+        CreateSIWxHookOptions(
+            storage=storage,
+            origin="https://api.example.com",
+        )
+    )
+    ```
+  </Tab>
+</Tabs>
+
+Behind a TLS-terminating reverse proxy, set `origin` to the browser-visible URL (for example `https://api.example.com`), not the upstream listener address (for example `http://127.0.0.1:4021`). The request path is rebased onto the configured origin for each challenge.
 
 ### Smart Wallet Support (EIP-1271 / EIP-6492)
 
@@ -220,6 +264,7 @@ By default, only EOA (Externally Owned Account) signatures are verified. To supp
       .register(NETWORK, new ExactEvmScheme())
       .registerExtension(createSIWxResourceServerExtension({
         storage,
+        origin: 'https://api.example.com',
         verifyOptions: { evmVerifier: publicClient.verifyMessage },
       }));
     ```
@@ -242,6 +287,7 @@ By default, only EOA (Externally Owned Account) signatures are verified. To supp
 
     extension := signinwithx.MustCreateResourceServerExtension(signinwithx.ServerOptions{
         Storage: storage,
+        Origin:  "https://api.example.com",
         VerifyOptions: signinwithx.VerifyOptions{
             EVMContractVerifier: contractVerifier,
         },
@@ -263,6 +309,7 @@ By default, only EOA (Externally Owned Account) signatures are verified. To supp
         create_siwx_resource_server_extension(
             CreateSIWxHookOptions(
                 storage=storage,
+                origin="https://api.example.com",
                 verify_options=SIWxVerifyOptions(provider=provider),
             )
         )
@@ -301,7 +348,10 @@ If you need more control over the integration, you can use the individual hook a
 
     // Attach request hook to validate SIWX proofs on incoming requests
     const httpServer = new x402HTTPResourceServer(resourceServer, routes)
-      .onProtectedRequest(createSIWxRequestHook({ storage }));
+      .onProtectedRequest(createSIWxRequestHook({
+        storage,
+        origin: 'https://api.example.com',
+      }));
     ```
   </Tab>
 </Tabs>
@@ -341,8 +391,6 @@ For custom implementations, you can use the low-level functions directly:
     // 1. Declare in PaymentRequired response
     const extensions = {
       [SIGN_IN_WITH_X]: declareSIWxExtension({
-        domain: 'api.example.com',
-        resourceUri: 'https://api.example.com/data',
         network: 'eip155:8453',
         statement: 'Sign in to access your purchased content',
       }),
@@ -359,7 +407,7 @@ For custom implementations, you can use the low-level functions directly:
       // Validate message fields (expiry, nonce, domain, etc.)
       const validation = await validateSIWxMessage(
         payload,
-        'https://api.example.com/data'
+        new URL('https://api.example.com')
       );
       if (!validation.valid) {
         return { error: validation.error };
@@ -598,13 +646,10 @@ Clients match their wallet's `chainId` against `supportedChains` and use the fir
 
 ### `declareSIWxExtension(options?)`
 
-Creates the extension declaration for servers to include in PaymentRequired. Most fields are derived automatically from request context when using `createSIWxResourceServerExtension`.
+Creates the extension declaration for servers to include in PaymentRequired. Domain and URI are derived from the configured `origin` passed to the server extension factory (`createSIWxResourceServerExtension` in TypeScript/Python, `CreateResourceServerExtension` in Go). Do not set `domain` or `resource_uri`/`ResourceURI` in route declarations.
 
 ```typescript
 declareSIWxExtension({
-  // All fields optional - derived from context if omitted
-  domain?: string;                     // Server domain (derived from request URL)
-  resourceUri?: string;                // Full resource URI (derived from request URL)
   network?: string | string[];         // CAIP-2 network(s) (derived from accepts[].network)
   statement?: string;                  // Human-readable purpose
   version?: string;                    // CAIP-122 version (default: "1")
@@ -612,11 +657,19 @@ declareSIWxExtension({
 })
 ```
 
+Go: `DeclareExtension(DeclareOptions{Statement, Version, Networks, ExpirationSeconds})`
+
+Python: `declare_siwx_extension(DeclareSIWxOptions(...))`
+
 **Note for auth-only routes:** When using `accepts: []`, the `network` parameter cannot be inferred from payment requirements and must be provided explicitly.
 
-### `createSIWxResourceServerExtension(options)`
+### `createSIWxResourceServerExtension(options)` / `CreateResourceServerExtension` / `create_siwx_resource_server_extension`
 
-Creates the server extension that enriches SIWX challenges, records successful payments, and verifies HTTP SIWX proofs for declared routes. Internally uses `createSIWxSettleHook` and `createSIWxRequestHook`.
+Creates the server extension that enriches SIWX challenges, records successful payments, and verifies HTTP SIWX proofs for declared routes. Requires `origin` / `Origin`. Internally uses settle and request hooks.
+
+Go: `CreateResourceServerExtension(ServerOptions{Storage, Origin, VerifyOptions, OnEvent})`
+
+Python: `create_siwx_resource_server_extension(CreateSIWxHookOptions(storage=..., origin=...))`
 
 ### `createSIWxSettleHook(options)`
 
@@ -637,6 +690,7 @@ Creates an `onProtectedRequest` hook that validates SIWX proofs on incoming HTTP
 ```typescript
 createSIWxRequestHook({
   storage: SIWxStorage;                  // Storage for tracking paid addresses
+  origin: string;                        // Public browser-visible origin (required)
   verifyOptions?: SIWxVerifyOptions;     // Optional smart wallet verification settings
   onEvent?: (event) => void;             // Optional callback for logging/debugging
 })
@@ -660,17 +714,21 @@ Creates the client extension that signs compatible SIWX challenges before fallin
 
 Parses a base64-encoded SIGN-IN-WITH-X header into a payload object.
 
-### `validateSIWxMessage(payload, resourceUri, options?)`
+### `validateSIWxMessage(payload, expectedOrigin, options?)` / `ValidateMessage` / `validate_siwx_message`
 
 Validates message fields (expiry, domain binding, nonce, etc.).
 
 ```typescript
-validateSIWxMessage(payload, resourceUri, {
+validateSIWxMessage(payload, new URL('https://api.example.com'), {
   maxAge?: number;                    // Max age for issuedAt (default: 5 min)
   checkNonce?: (nonce) => boolean;    // Custom nonce validation
 })
 // Returns: { valid: boolean; error?: string }
 ```
+
+Go: `ValidateMessage(payload, *url.URL, ValidationOptions)`
+
+Python: `validate_siwx_message(message, expected_origin: str, options=None)`
 
 ### `verifySIWxSignature(payload, options?)`
 
@@ -724,7 +782,7 @@ Optionally implement `hasUsedNonce` and `recordNonce` to prevent replay attacks 
 
 ## Security Considerations
 
-- **Domain Binding**: The `domain` field prevents signature reuse across different services
+- **Origin Binding**: The configured `origin` prevents signature reuse across different services. Validation compares `message.domain` and the origin of `message.uri` against this operator-defined value, not request headers.
 - **Nonce Uniqueness**: Each challenge MUST have a unique nonce to prevent replay attacks
 - **Temporal Bounds**: The `issuedAt`, `expirationTime`, and `notBefore` fields constrain signature validity windows
 - **Chain-Specific Verification**: Signatures are verified using chain-appropriate algorithms, preventing cross-chain signature reuse
@@ -749,8 +807,8 @@ Optionally implement `hasUsedNonce` and `recordNonce` to prevent replay attacks 
 **Solutions:**
 - Check that `issuedAt` is recent (within `maxAge`, default 5 minutes)
 - Verify `expirationTime` hasn't passed
-- Ensure `domain` matches the server's domain
-- Confirm `uri` matches the resource URI
+- Ensure `domain` matches the configured origin host
+- Confirm `message.uri` origin exactly matches the configured origin
 
 ### Client Hook Not Working
 

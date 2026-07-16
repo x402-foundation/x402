@@ -81,6 +81,8 @@ export {
   createSIWxRequestHook,
   createSIWxClientHook,
   createSIWxClientExtension,
+  type CreateSIWxSettleHookOptions,
+  type CreateSIWxRequestHookOptions,
   type CreateSIWxHookOptions,
   type CreateSIWxClientExtensionOptions,
   type SIWxHookEvent,

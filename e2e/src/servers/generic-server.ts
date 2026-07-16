@@ -144,6 +144,14 @@ export class GenericServerProxy extends BaseProxy implements ServerProxy {
         ...(config.nearAsset !== undefined ? { NEAR_ASSET: config.nearAsset } : {}),
         ...(config.nearAmount !== undefined ? { NEAR_AMOUNT: config.nearAmount } : {}),
 
+        // XRPL network config
+        XRPL_NETWORK: config.networks.xrpl.caip2,
+        XRPL_WS_URL: config.networks.xrpl.rpcUrl,
+        XRPL_PAYEE_ADDRESS: config.xrplPayTo,
+        ...(config.xrplAsset !== undefined ? { XRPL_ASSET: config.xrplAsset } : {}),
+        ...(config.xrplAmount !== undefined ? { XRPL_AMOUNT: config.xrplAmount } : {}),
+        ...(config.xrplIssuer !== undefined ? { XRPL_ISSUER: config.xrplIssuer } : {}),
+
         // Facilitator
         FACILITATOR_URL: config.facilitatorUrl || '',
         MOCK_FACILITATOR_URL: config.mockFacilitatorUrl || '',

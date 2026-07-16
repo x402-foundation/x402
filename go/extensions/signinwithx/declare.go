@@ -10,13 +10,8 @@ func DeclareExtension(options DeclareOptions) map[string]interface{} {
 	}
 
 	info := Info{
-		Domain:    options.Domain,
-		URI:       options.ResourceURI,
 		Statement: options.Statement,
 		Version:   version,
-	}
-	if options.ResourceURI != "" {
-		info.Resources = []string{options.ResourceURI}
 	}
 
 	supportedChains := make([]SupportedChain, 0, len(options.Networks))

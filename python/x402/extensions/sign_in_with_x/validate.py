@@ -10,27 +10,40 @@ from .types import SIWxPayload, SIWxValidationOptions, SIWxValidationResult
 DEFAULT_MAX_AGE_MS = 5 * 60 * 1000
 
 
+def _url_origin(parsed_url) -> str:
+    return f"{parsed_url.scheme}://{parsed_url.netloc}"
+
+
 async def validate_siwx_message(
     message: SIWxPayload,
-    expected_resource_uri: str,
+    expected_origin: str,
     options: SIWxValidationOptions | None = None,
 ) -> SIWxValidationResult:
     """Validate SIWX payload fields before cryptographic verification."""
     opts = options or SIWxValidationOptions()
-    expected = urlparse(expected_resource_uri)
+    expected = urlparse(expected_origin)
     max_age = opts.max_age if opts.max_age is not None else DEFAULT_MAX_AGE_MS
 
-    if message.domain != expected.hostname:
+    if message.domain != expected.netloc:
         return SIWxValidationResult(
             valid=False,
-            error=f'Domain mismatch: expected "{expected.hostname}", got "{message.domain}"',
+            error=f'Domain mismatch: expected "{expected.netloc}", got "{message.domain}"',
         )
 
-    if not message.uri.startswith(f"{expected.scheme}://{expected.netloc}"):
-        origin = f"{expected.scheme}://{expected.netloc}"
+    message_uri = urlparse(message.uri)
+    if not message_uri.scheme or not message_uri.netloc:
         return SIWxValidationResult(
             valid=False,
-            error=f'URI mismatch: expected origin "{origin}", got "{message.uri}"',
+            error=f'Invalid URI: "{message.uri}" is not a valid URL',
+        )
+
+    if _url_origin(message_uri) != expected_origin:
+        return SIWxValidationResult(
+            valid=False,
+            error=(
+                f'URI mismatch: expected origin "{expected_origin}", '
+                f'got "{_url_origin(message_uri)}"'
+            ),
         )
 
     try:

@@ -1,5 +1,14 @@
 # @x402/hono Changelog
 
+## 2.18.0
+
+### Minor Changes
+
+- Updated dependencies [a3ad102](https://github.com/x402-foundation/x402/commit/a3ad102)
+  - @x402/core@2.18.0
+  - @x402/extensions@2.18.0
+  - @x402/paywall@2.18.0
+
 ## 2.17.0
 
 ### Minor Changes

@@ -191,40 +191,38 @@ def assert_head_matches_release_main(root: Path, remote: str) -> None:
     print(f"HEAD matches {remote}/{RELEASE_BRANCH} ({head[:12]}).")
 
 
-def release_tags(version: str) -> list[tuple[str, str | None]]:
-    """Return ``(tag, message)`` pairs. A ``None`` message means a lightweight tag."""
+def release_tags(version: str) -> list[tuple[str, str]]:
+    """Return ``(tag, message)`` pairs for the release tags."""
     return [
         (
             f"go-x402@v{version}",
             f"Released x402 in go as version v{version}",
         ),
-        (f"go/v{version}", None),
+        (
+            f"go/v{version}",
+            f"go module release v{version}",
+        ),
     ]
 
 
-def create_tag(root: Path, tag: str, message: str | None, *, sign: bool) -> None:
-    if message is None:
-        git_run(root, ["tag", tag])
-        return
-
+def create_tag(root: Path, tag: str, message: str, *, sign: bool) -> None:
     sign_flag = "-s" if sign else "-a"
-    git_run(root, ["tag", sign_flag, "-a", tag, "-m", message])
+    git_run(root, ["tag", sign_flag, tag, "-m", message])
 
 
 def print_plan(
     version: str,
     remote: str,
-    tags: list[tuple[str, str | None]],
+    tags: list[tuple[str, str]],
     local: set[str],
     remote_existing: set[str],
 ) -> None:
     print(f"Go SDK release version: {version}")
     print(f"Release remote: {remote}")
     print("Tags:")
-    for tag, message in tags:
-        kind = "lightweight" if message is None else "annotated"
+    for tag, _ in tags:
         marker = existing_marker(tag, local, remote_existing, remote)
-        print(f"  - {tag} ({kind}){marker}")
+        print(f"  - {tag} (annotated){marker}")
 
 
 def main() -> int:

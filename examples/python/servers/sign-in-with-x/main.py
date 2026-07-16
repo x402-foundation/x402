@@ -27,6 +27,7 @@ EVM_ADDRESS = os.getenv("EVM_ADDRESS")
 SVM_ADDRESS = os.getenv("SVM_ADDRESS")
 FACILITATOR_URL = os.getenv("FACILITATOR_URL")
 PORT = 4021
+PUBLIC_ORIGIN = os.getenv("PUBLIC_ORIGIN", f"http://localhost:{PORT}")
 EVM_NETWORK = "eip155:84532"
 SVM_NETWORK = "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1"
 
@@ -94,7 +95,7 @@ if SVM_ADDRESS:
     server.register(SVM_NETWORK, ExactSvmServerScheme())
 server.register_extension(
     create_siwx_resource_server_extension(
-        CreateSIWxHookOptions(storage=storage, on_event=on_event)
+        CreateSIWxHookOptions(storage=storage, origin=PUBLIC_ORIGIN, on_event=on_event)
     )
 )
 

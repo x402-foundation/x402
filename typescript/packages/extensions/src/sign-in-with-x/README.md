@@ -25,10 +25,13 @@ import {
 // Storage for tracking paid addresses
 const storage = new InMemorySIWxStorage();
 
-// Register extension
+// Register extension with the public browser-visible origin
 const resourceServer = new x402ResourceServer(facilitatorClient)
   .register(NETWORK, new ExactEvmScheme())
-  .registerExtension(createSIWxResourceServerExtension({ storage }));
+  .registerExtension(createSIWxResourceServerExtension({
+    storage,
+    origin: 'https://api.example.com',
+  }));
 
 // Declare SIWX support in routes
 const routes = {
@@ -57,11 +60,27 @@ const resourceServerWithSmartWallets = new x402ResourceServer(facilitatorClient)
   .register(NETWORK, new ExactEvmScheme())
   .registerExtension(createSIWxResourceServerExtension({
     storage,
+    origin: 'https://api.example.com',
     verifyOptions: { evmVerifier: publicClient.verifyMessage },
   }));
 ```
 
-The server extension derives challenge fields from request context, records successful payments, and validates SIWX proofs for declared HTTP routes.
+The server extension derives challenge fields from the configured origin and request path, records successful payments, and validates SIWX proofs for declared HTTP routes.
+
+### Configured origin (required)
+
+SIWX proofs bind to the public origin configured when creating the server extension or request hook. Challenge issuance and validation both use this value — never request headers such as `Host`, `X-Forwarded-Host`, or `X-Forwarded-Proto`.
+
+```typescript
+createSIWxResourceServerExtension({
+  storage,
+  origin: 'https://api.example.com',
+});
+```
+
+Behind a TLS-terminating reverse proxy, set `origin` to the browser-visible URL (for example `https://api.example.com`), not the upstream listener address (for example `http://127.0.0.1:4021`). The request path is rebased onto the configured origin for each challenge.
+
+If a proxy also rewrites external path prefixes, SIWX cannot reconstruct that prefix from `origin` alone — public routes should preserve their external path.
 
 ### Manual Usage (Advanced)
 
@@ -75,8 +94,6 @@ import {
 
 // 1. Declare in PaymentRequired response
 const extensions = declareSIWxExtension({
-  domain: 'api.example.com',
-  resourceUri: 'https://api.example.com/data',
   network: 'eip155:8453',
   statement: 'Sign in to access your purchased content',
 });
@@ -92,7 +109,7 @@ async function handleRequest(request: Request) {
   // Validate message fields (expiry, nonce, domain, etc.)
   const validation = await validateSIWxMessage(
     payload,
-    'https://api.example.com/data'
+    new URL('https://api.example.com'),
   );
   if (!validation.valid) {
     return { error: validation.error };
@@ -176,13 +193,10 @@ const response = await fetch(url, {
 
 ### `declareSIWxExtension(options?)`
 
-Creates the extension declaration for servers to include in PaymentRequired. Most fields are derived automatically from request context when using `createSIWxResourceServerExtension`.
+Creates the extension declaration for servers to include in PaymentRequired. Domain and URI are derived from the configured `origin` passed to `createSIWxResourceServerExtension`.
 
 ```typescript
 declareSIWxExtension({
-  // All fields optional - derived from context if omitted
-  domain?: string;                     // Server domain (derived from request URL)
-  resourceUri?: string;                // Full resource URI (derived from request URL)
   network?: string | string[];         // CAIP-2 network(s) (derived from accepts[].network)
   statement?: string;                  // Human-readable purpose
   version?: string;                    // CAIP-122 version (default: "1")
@@ -192,8 +206,7 @@ declareSIWxExtension({
 
 **Automatic derivation:** When using `createSIWxResourceServerExtension`, omitted fields are derived:
 - `network` → from `accepts[].network` in route config
-- `resourceUri` → from request URL
-- `domain` → parsed from resourceUri
+- `domain` / `uri` → from configured `origin` and request path
 
 For auth-only routes declared with `accepts: []`, `network` cannot be inferred from payment requirements and should be provided explicitly.
 
@@ -201,7 +214,7 @@ For auth-only routes declared with `accepts: []`, `network` cannot be inferred f
 
 ### `createSIWxResourceServerExtension(options)`
 
-Creates the server extension that enriches SIWX challenges, records successful payments, and verifies HTTP SIWX proofs for declared routes.
+Creates the server extension that enriches SIWX challenges, records successful payments, and verifies HTTP SIWX proofs for declared routes. Requires `origin` (public browser-visible URL).
 
 ### `createSIWxClientExtension({ signers })`
 
@@ -211,12 +224,12 @@ Creates the client extension that signs compatible SIWX challenges before fallin
 
 Parses a base64-encoded SIGN-IN-WITH-X header into a payload object.
 
-### `validateSIWxMessage(payload, resourceUri, options?)`
+### `validateSIWxMessage(payload, expectedOrigin, options?)`
 
 Validates message fields (expiry, domain binding, nonce, etc.).
 
 ```typescript
-validateSIWxMessage(payload, resourceUri, {
+validateSIWxMessage(payload, new URL('https://api.example.com'), {
   maxAge?: number;                    // Max age for issuedAt (default: 5 min)
   checkNonce?: (nonce) => boolean;    // Custom nonce validation
 })
@@ -300,8 +313,8 @@ Extension identifier constant (`"sign-in-with-x"`).
 
 - Check that `issuedAt` is recent (within `maxAge`, default 5 minutes)
 - Verify `expirationTime` has not passed
-- Ensure `domain` matches the server's domain
-- Confirm `uri` matches the resource URI
+- Ensure `domain` matches the configured origin host
+- Confirm `message.uri` origin exactly matches the configured origin
 
 ## Related resources
 

@@ -25,15 +25,17 @@ type HookEvent struct {
 // ServerOptions configures the SIWX resource server extension.
 type ServerOptions struct {
 	Storage       Storage
+	Origin        string
 	VerifyOptions VerifyOptions
 	OnEvent       func(HookEvent)
 }
 
 type ServerExtension struct {
-	storage       Storage
-	nonceStorage  NonceStorage
-	verifyOptions VerifyOptions
-	onEvent       func(HookEvent)
+	storage          Storage
+	nonceStorage     NonceStorage
+	configuredOrigin *url.URL
+	verifyOptions    VerifyOptions
+	onEvent          func(HookEvent)
 }
 
 // CreateResourceServerExtension creates a SIWX resource server extension.
@@ -41,11 +43,16 @@ func CreateResourceServerExtension(options ServerOptions) (*ServerExtension, err
 	if options.Storage == nil {
 		return nil, fmt.Errorf("SIWX storage is required")
 	}
+	configuredOrigin, err := normalizeConfiguredOrigin(options.Origin)
+	if err != nil {
+		return nil, err
+	}
 	return &ServerExtension{
-		storage:       options.Storage,
-		nonceStorage:  asNonceStorage(options.Storage),
-		verifyOptions: options.VerifyOptions,
-		onEvent:       options.OnEvent,
+		storage:          options.Storage,
+		nonceStorage:     asNonceStorage(options.Storage),
+		configuredOrigin: configuredOrigin,
+		verifyOptions:    options.VerifyOptions,
+		onEvent:          options.OnEvent,
 	}, nil
 }
 
@@ -66,6 +73,20 @@ func (e *ServerExtension) DynamicInfoFields() []string {
 	return []string{"nonce", "issuedAt", "expirationTime"}
 }
 
+func rebaseResourcePath(resourceURL string, configuredOrigin *url.URL) (string, error) {
+	resource, err := url.Parse(resourceURL)
+	if err != nil {
+		return "", err
+	}
+	rebased := &url.URL{
+		Scheme:   configuredOrigin.Scheme,
+		Host:     configuredOrigin.Host,
+		Path:     resource.Path,
+		RawQuery: resource.RawQuery,
+	}
+	return rebased.String(), nil
+}
+
 func (e *ServerExtension) EnrichDeclaration(declaration interface{}, transportContext interface{}) interface{} {
 	ext, ok := declaration.(Extension)
 	if !ok {
@@ -78,27 +99,17 @@ func (e *ServerExtension) EnrichDeclaration(declaration interface{}, transportCo
 		info.Version = Version
 	}
 
-	resourceURI := options.ResourceURI
-	if resourceURI == "" {
-		resourceURI = info.URI
-	}
-	if resourceURI == "" {
-		if reqCtx, ok := transportContext.(x402http.HTTPRequestContext); ok && reqCtx.Adapter != nil {
-			resourceURI = reqCtx.Adapter.GetURL()
+	resourceURI := ""
+	if reqCtx, ok := transportContext.(x402http.HTTPRequestContext); ok && reqCtx.Adapter != nil {
+		requestURL := reqCtx.Adapter.GetURL()
+		if requestURL != "" {
+			if rebased, err := rebaseResourcePath(requestURL, e.configuredOrigin); err == nil {
+				resourceURI = rebased
+			}
 		}
 	}
 
-	domain := options.Domain
-	if domain == "" {
-		domain = info.Domain
-	}
-	if domain == "" && resourceURI != "" {
-		if parsed, err := url.Parse(resourceURI); err == nil {
-			domain = parsed.Hostname()
-		}
-	}
-
-	info.Domain = domain
+	info.Domain = e.configuredOrigin.Host
 	info.URI = resourceURI
 	info.Nonce = randomNonce()
 	info.IssuedAt = time.Now().UTC().Format(time.RFC3339)
@@ -193,14 +204,13 @@ func (e *ServerExtension) onProtectedRequest(
 		return nil, nil
 	}
 
-	resourceURI := reqCtx.Adapter.GetURL()
 	payload, err := ParseHeader(header)
 	if err != nil {
 		e.emit(HookEvent{Type: "validation_failed", Resource: reqCtx.Path, Error: err.Error()})
 		return noProtectedRequestResult()
 	}
 
-	validation := ValidateMessage(payload, resourceURI, ValidationOptions{})
+	validation := ValidateMessage(payload, e.configuredOrigin, ValidationOptions{})
 	if !validation.Valid {
 		e.emit(HookEvent{Type: "validation_failed", Resource: reqCtx.Path, Error: validation.Error})
 		return nil, nil

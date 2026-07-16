@@ -1,5 +1,11 @@
 # @x402/core Changelog
 
+## 2.18.0
+
+### Patch Changes
+
+- [a3ad102](https://github.com/x402-foundation/x402/commit/a3ad102): Fixed cross-SDK MCP interop: optional `PaymentRequired`/`ResourceInfo`/`PaymentPayload` wire fields serialized as explicit `null` by the Python and Go SDKs are now accepted and normalized to `undefined` instead of failing validation. The MCP client routes both result and error extraction through `parsePaymentRequired`, so 402 responses from other implementations reliably trigger auto-payment. ([#2774](https://github.com/x402-foundation/x402/pull/2774)) - Thanks [@phdargen](https://github.com/phdargen)!
+
 ## 2.17.0
 
 ### Minor Changes

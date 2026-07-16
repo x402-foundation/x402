@@ -2,7 +2,9 @@ import type { Network } from "@x402/core/types";
 import { buildDomain, CASPER_DOMAIN_TYPES, hashTypedData } from "@casper-ecosystem/casper-eip-712";
 import { NetworkConfigs } from "./constants";
 import type { ExactCasperAuthorization } from "./types";
-import { Conversions } from "casper-js-sdk";
+import casperSdk from "casper-js-sdk";
+
+const { Conversions } = casperSdk;
 
 /**
  * Casper address regex. "00" is account-hash and "01" is package hash.

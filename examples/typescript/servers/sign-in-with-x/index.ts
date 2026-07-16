@@ -27,6 +27,7 @@ if (!facilitatorUrl) {
 }
 
 const PORT = 4021;
+const PUBLIC_ORIGIN = process.env.PUBLIC_ORIGIN ?? `http://localhost:${PORT}`;
 const EVM_NETWORK = "eip155:84532" as const;
 const SVM_NETWORK = "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1" as const;
 
@@ -48,7 +49,7 @@ function onEvent(event: { type: string; resource: string; address?: string; erro
 
 /**
  * Creates route configuration with SIWX extension.
- * Network, domain, and resourceUri are derived automatically from context.
+ * Network is derived from payment requirements; domain and URI from configured origin.
  *
  * @param path - The resource path
  * @returns Route configuration object
@@ -109,7 +110,7 @@ if (svmAddress) resourceServer = resourceServer.register(SVM_NETWORK, new ExactS
 
 // Register SIWX resource server extension
 resourceServer = resourceServer.registerExtension(
-  createSIWxResourceServerExtension({ storage, onEvent }),
+  createSIWxResourceServerExtension({ storage, origin: PUBLIC_ORIGIN, onEvent }),
 );
 
 const app = express();

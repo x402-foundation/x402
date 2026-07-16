@@ -3,31 +3,72 @@ package signinwithx
 import (
 	"fmt"
 	"net/url"
-	"strings"
 	"time"
 )
 
 const defaultMaxAge = 5 * time.Minute
 
-// ValidateMessage validates SIWX payload fields before cryptographic verification.
-func ValidateMessage(payload Payload, expectedResourceURI string, options ValidationOptions) ValidationResult {
-	expectedURL, err := url.Parse(expectedResourceURI)
-	if err != nil || expectedURL.Hostname() == "" {
-		return ValidationResult{Valid: false, Error: "Invalid expected resource URI"}
+func normalizeConfiguredOrigin(origin string) (*url.URL, error) {
+	if origin == "" {
+		return nil, fmt.Errorf("siwx origin is required")
 	}
 
-	if payload.Domain != expectedURL.Hostname() {
+	parsed, err := url.Parse(origin)
+	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
+		return nil, fmt.Errorf("invalid siwx origin %q is not a valid URL", origin)
+	}
+
+	if parsed.Scheme != "http" && parsed.Scheme != "https" {
+		return nil, fmt.Errorf("invalid siwx origin %q must use http or https", origin)
+	}
+
+	if parsed.User != nil {
+		return nil, fmt.Errorf("invalid siwx origin %q must not include credentials", origin)
+	}
+
+	if parsed.Path != "" && parsed.Path != "/" {
+		return nil, fmt.Errorf("invalid siwx origin %q must not include a path, query, or fragment", origin)
+	}
+	if parsed.RawQuery != "" || parsed.Fragment != "" {
+		return nil, fmt.Errorf("invalid siwx origin %q must not include a path, query, or fragment", origin)
+	}
+
+	return &url.URL{
+		Scheme: parsed.Scheme,
+		Host:   parsed.Host,
+	}, nil
+}
+
+func urlOrigin(u *url.URL) string {
+	return u.Scheme + "://" + u.Host
+}
+
+// ValidateMessage validates SIWX payload fields before cryptographic verification.
+func ValidateMessage(payload Payload, expectedOrigin *url.URL, options ValidationOptions) ValidationResult {
+	if expectedOrigin == nil || expectedOrigin.Scheme == "" || expectedOrigin.Host == "" {
+		return ValidationResult{Valid: false, Error: "Invalid expected origin"}
+	}
+
+	if payload.Domain != expectedOrigin.Host {
 		return ValidationResult{
 			Valid: false,
-			Error: fmt.Sprintf("Domain mismatch: expected %q, got %q", expectedURL.Hostname(), payload.Domain),
+			Error: fmt.Sprintf(`Domain mismatch: expected %q, got %q`, expectedOrigin.Host, payload.Domain),
 		}
 	}
 
-	origin := expectedURL.Scheme + "://" + expectedURL.Host
-	if !strings.HasPrefix(payload.URI, origin) {
+	messageURI, err := url.Parse(payload.URI)
+	if err != nil || messageURI.Scheme == "" || messageURI.Host == "" {
 		return ValidationResult{
 			Valid: false,
-			Error: fmt.Sprintf("URI mismatch: expected origin %q, got %q", origin, payload.URI),
+			Error: fmt.Sprintf(`Invalid URI: %q is not a valid URL`, payload.URI),
+		}
+	}
+
+	expected := urlOrigin(expectedOrigin)
+	if urlOrigin(messageURI) != expected {
+		return ValidationResult{
+			Valid: false,
+			Error: fmt.Sprintf(`URI mismatch: expected origin %q, got %q`, expected, urlOrigin(messageURI)),
 		}
 	}
 

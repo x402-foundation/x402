@@ -199,6 +199,85 @@ Use `exact` when the final charge is known before the response is generated, suc
   </Tab>
 </Tabs>
 
+### XRPL Setup
+
+The XRPL implementation uses payer-signed `Payment` transactions. The payer pays the XRPL transaction fee; facilitator-sponsored fees are not supported.
+
+Install the XRPL package:
+
+```bash
+npm install @x402/xrpl
+```
+
+**Server**
+
+```typescript
+import { x402ResourceServer } from "@x402/core/server";
+import { ExactXrplScheme } from "@x402/xrpl/exact/server";
+
+const resourceServer = new x402ResourceServer(facilitatorClient)
+  .register("xrpl:*", new ExactXrplScheme());
+
+// In your route config:
+{
+  "GET /data": {
+    accepts: [
+      {
+        scheme: "exact",
+        price: {
+          amount: "1000000", // 1 XRP in drops
+          asset: "XRP",
+        },
+        network: "xrpl:1", // XRPL testnet
+        payTo: "rYourXrplAddress",
+      },
+    ],
+    description: "Data endpoint",
+    mimeType: "application/json",
+  },
+}
+```
+
+**Client**
+
+```typescript
+import { Wallet } from "xrpl";
+import { x402Client } from "@x402/core/client";
+import { createXrplWalletSigner } from "@x402/xrpl";
+import { ExactXrplScheme } from "@x402/xrpl/exact/client";
+
+const wallet = Wallet.fromSeed(process.env.XRPL_SEED!);
+const signer = createXrplWalletSigner(wallet);
+
+const client = new x402Client()
+  .register("xrpl:*", new ExactXrplScheme(signer));
+```
+
+**Facilitator**
+
+```typescript
+import { x402Facilitator } from "@x402/core/facilitator";
+import { ExactXrplScheme } from "@x402/xrpl/exact/facilitator";
+
+const facilitator = new x402Facilitator()
+  .register("xrpl:*", new ExactXrplScheme());
+```
+
+XRPL supports two asset transfer methods via `extra.assetTransferMethod`:
+
+| Method | Description |
+|--------|-------------|
+| `sequence` | Uses the payer account's current sequence number. Default. One pending payment per account at a time. |
+| `ticketSequence` | Uses a pre-created XRPL Ticket. Allows multiple concurrent pending payments per account. |
+
+For `ticketSequence` payments, the client automatically creates a ticket when none is available. To provision tickets explicitly:
+
+```typescript
+import { createTickets, createXrplWalletSigner } from "@x402/xrpl";
+
+const ticketSequences = await createTickets(signer, "xrpl:1", 5);
+```
+
 ### Network Implementations
 
 The `exact` scheme has network specifications for EVM, SVM, AVM, Stellar, Aptos, Hedera, TON, Cardano, Keeta, Sui, Concordium, NEAR, and XRPL.

@@ -9,6 +9,7 @@ import type { SIWxExtension, SIWxVerifyOptions, SignatureType } from "./types";
 import type { SIWxSigner } from "./sign";
 import type { ClientExtension } from "@x402/core/client";
 import type { PaymentRequiredContext } from "@x402/core/http";
+import type { ProtectedRequestHook } from "@x402/core/http";
 import { SIGN_IN_WITH_X } from "./types";
 import { parseSIWxHeader } from "./parse";
 import { validateSIWxMessage } from "./validate";
@@ -18,16 +19,61 @@ import { encodeSIWxHeader } from "./encode";
 import { isSolanaSigner } from "./solana";
 
 /**
- * Options for creating server-side SIWX hooks.
+ * Normalizes and validates a configured SIWX origin.
+ *
+ * @param origin - Absolute http(s) origin without credentials, path, query, or fragment
+ * @returns Parsed origin URL
+ * @throws Error when the origin string is invalid
  */
-export interface CreateSIWxHookOptions {
+export function normalizeConfiguredOrigin(origin: string): URL {
+  let url: URL;
+  try {
+    url = new URL(origin);
+  } catch {
+    throw new Error(`Invalid SIWX origin: "${origin}" is not a valid URL`);
+  }
+
+  if (url.protocol !== "http:" && url.protocol !== "https:") {
+    throw new Error(`Invalid SIWX origin: "${origin}" must use http: or https:`);
+  }
+
+  if (url.username || url.password) {
+    throw new Error(`Invalid SIWX origin: "${origin}" must not include credentials`);
+  }
+
+  if (url.pathname !== "/" || url.search || url.hash) {
+    throw new Error(`Invalid SIWX origin: "${origin}" must not include a path, query, or fragment`);
+  }
+
+  return url;
+}
+
+/**
+ * Options for creating the SIWX settle hook.
+ */
+export interface CreateSIWxSettleHookOptions {
   /** Storage for tracking paid addresses */
   storage: SIWxStorage;
-  /** Options for signature verification (e.g., EVM smart wallet support) */
-  verifyOptions?: SIWxVerifyOptions;
   /** Optional callback for logging/debugging */
   onEvent?: (event: SIWxHookEvent) => void;
 }
+
+/**
+ * Options for creating the SIWX request hook and resource server extension.
+ */
+export interface CreateSIWxRequestHookOptions extends CreateSIWxSettleHookOptions {
+  /**
+   * Public browser-visible origin for SIWX domain and URI binding.
+   *
+   * Set this to the external origin (for example `https://api.example.com`),
+   * not the upstream listener address behind a reverse proxy.
+   */
+  origin: string;
+  /** Options for signature verification (e.g., EVM smart wallet support) */
+  verifyOptions?: SIWxVerifyOptions;
+}
+
+export type CreateSIWxHookOptions = CreateSIWxRequestHookOptions;
 
 /**
  * Options for creating the SIWX client extension.
@@ -60,7 +106,7 @@ export type SIWxHookEvent =
  *   .onAfterSettle(createSIWxSettleHook({ storage }));
  * ```
  */
-export function createSIWxSettleHook(options: CreateSIWxHookOptions) {
+export function createSIWxSettleHook(options: CreateSIWxSettleHookOptions) {
   const { storage, onEvent } = options;
 
   return async (ctx: {
@@ -91,18 +137,22 @@ export function createSIWxSettleHook(options: CreateSIWxHookOptions) {
  * For auth-only routes (accepts: []): grants access on valid SIWX signature alone.
  * Auth-only detection uses the routeConfig passed by x402HTTPResourceServer.
  *
- * @param options - Hook configuration
+ * @param options - Hook configuration including required configured origin
  * @returns Hook function for x402HTTPResourceServer.onProtectedRequest()
  *
  * @example
  * ```typescript
  * const storage = new InMemorySIWxStorage();
  * const httpServer = new x402HTTPResourceServer(resourceServer, routes)
- *   .onProtectedRequest(createSIWxRequestHook({ storage }));
+ *   .onProtectedRequest(createSIWxRequestHook({
+ *     storage,
+ *     origin: "https://api.example.com",
+ *   }));
  * ```
  */
-export function createSIWxRequestHook(options: CreateSIWxHookOptions) {
+export function createSIWxRequestHook(options: CreateSIWxRequestHookOptions): ProtectedRequestHook {
   const { storage, verifyOptions, onEvent } = options;
+  const configuredOrigin = normalizeConfiguredOrigin(options.origin);
 
   // Validate nonce tracking is fully implemented or not at all
   const hasUsedNonce = typeof storage.hasUsedNonce === "function";
@@ -113,13 +163,7 @@ export function createSIWxRequestHook(options: CreateSIWxHookOptions) {
     );
   }
 
-  return async (
-    context: {
-      adapter: { getHeader(name: string): string | undefined; getUrl(): string };
-      path: string;
-    },
-    routeConfig?: { accepts?: unknown },
-  ): Promise<void | { grantAccess: true }> => {
+  return async (context, routeConfig) => {
     // Try both cases for header (HTTP headers are case-insensitive)
     const header =
       context.adapter.getHeader(SIGN_IN_WITH_X) ||
@@ -128,9 +172,7 @@ export function createSIWxRequestHook(options: CreateSIWxHookOptions) {
 
     try {
       const payload = parseSIWxHeader(header);
-      const resourceUri = context.adapter.getUrl();
-
-      const validation = await validateSIWxMessage(payload, resourceUri);
+      const validation = await validateSIWxMessage(payload, configuredOrigin);
       if (!validation.valid) {
         onEvent?.({ type: "validation_failed", resource: context.path, error: validation.error });
         return;
@@ -152,7 +194,7 @@ export function createSIWxRequestHook(options: CreateSIWxHookOptions) {
       }
 
       // Auth-only routes (accepts: []) grant access on valid SIWX alone
-      const isAuthOnly = Array.isArray(routeConfig?.accepts) && routeConfig.accepts.length === 0;
+      const isAuthOnly = Array.isArray(routeConfig.accepts) && routeConfig.accepts.length === 0;
 
       const shouldGrant = isAuthOnly || (await storage.hasPaid(context.path, verification.address));
       if (shouldGrant) {

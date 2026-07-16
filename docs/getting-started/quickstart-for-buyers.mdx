@@ -53,6 +53,9 @@ There are pre-configured [examples available in the x402 repo](https://github.co
 
     # For NEAR support, also add:
     npm install @x402/near
+
+    # For XRPL support, also add:
+    npm install @x402/xrpl
     ```
   </Tab>
   <Tab title="Go">
@@ -254,6 +257,17 @@ const nearSigner = createClientNearSigner({
   accountId: "alice.testnet",
   secretKey: process.env.NEAR_SECRET_KEY!, // ed25519:... full-access key
 });
+```
+
+#### XRPL
+
+Use `@x402/xrpl` to instantiate a signer:
+
+```typescript
+import { Wallet } from "xrpl";
+import { createXrplWalletSigner } from "@x402/xrpl";
+
+const xrplSigner = createXrplWalletSigner(Wallet.fromSeed(process.env.XRPL_SEED!));
 ```
 
 ### 3. Make Paid Requests Automatically
@@ -585,6 +599,14 @@ You can register multiple payment schemes to handle different networks:
       secretKey: process.env.NEAR_SECRET_KEY!, // ed25519:... full-access key
     });
     client.register("near:*", new ExactNearScheme(nearSigner));
+
+    // For XRPL support, also add:
+    import { Wallet } from "xrpl";
+    import { createXrplWalletSigner } from "@x402/xrpl";
+    import { ExactXrplScheme } from "@x402/xrpl/exact/client";
+
+    const xrplSigner = createXrplWalletSigner(Wallet.fromSeed(process.env.XRPL_SEED!));
+    client.register("xrpl:*", new ExactXrplScheme(xrplSigner));
     ```
   </Tab>
   <Tab title="Go">
@@ -717,7 +739,7 @@ try {
 
 ### Summary
 
-* Install x402 client packages (`@x402/fetch` or `@x402/axios`) and mechanism packages (`@x402/evm`, `@x402/svm`, `@x402/tvm`, `@x402/aptos`, `@x402/keeta`, `@x402/near`)
+* Install x402 client packages (`@x402/fetch` or `@x402/axios`) and mechanism packages (`@x402/evm`, `@x402/svm`, `@x402/tvm`, `@x402/aptos`, `@x402/keeta`, `@x402/near`, `@x402/xrpl`)
 * Create a wallet signer
 * Create an `x402Client` and register payment schemes (`exact` for fixed-price, `upto` for usage-based billing, `batch-settlement` for batched EVM micropayments when the server advertises it)
 * Use the provided wrapper/interceptor to make paid API requests

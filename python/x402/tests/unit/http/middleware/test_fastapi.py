@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -652,6 +653,63 @@ class TestFastAPIMiddlewareIntegration:
                 assert response.json() == {
                     "error": "Facilitator settle returned invalid data: {'success': true}"
                 }
+
+    def test_unexpected_settlement_error_logs_and_returns_402_with_payment_response(self, caplog):
+        """An unexpected error during settlement must be LOGGED and surfaced as a
+        settle failure (402 + PAYMENT-RESPONSE, success=False) - not a silent
+        empty-body 402 with no header and no log (see issue #2603)."""
+        app = FastAPI()
+
+        @app.get("/api/protected")
+        def protected_route():
+            return {"data": "Protected content"}
+
+        mock_server = MagicMock()
+        routes = {
+            "GET /api/protected": RouteConfig(
+                accepts=PaymentOption(
+                    scheme="exact",
+                    pay_to="0x1234567890123456789012345678901234567890",
+                    price="$0.01",
+                    network="eip155:8453",
+                ),
+            )
+        }
+
+        payment_payload = make_v2_payload()
+        payment_requirements = make_payment_requirements()
+
+        with patch("x402.http.middleware.fastapi.x402HTTPResourceServer") as mock_http_server:
+            mock_http_server_instance = MagicMock()
+            mock_http_server_instance.requires_payment.return_value = True
+            mock_http_server_instance.process_http_request = AsyncMock(
+                return_value=HTTPProcessResult(
+                    type="payment-verified",
+                    payment_payload=payment_payload,
+                    payment_requirements=payment_requirements,
+                )
+            )
+            mock_http_server_instance.process_settlement = AsyncMock(
+                side_effect=RuntimeError("boom: RPC node unreachable mid-settle")
+            )
+            mock_http_server_instance._create_settlement_headers.return_value = {
+                "PAYMENT-RESPONSE": "encoded-settle-failure"
+            }
+            mock_http_server.return_value = mock_http_server_instance
+
+            @app.middleware("http")
+            async def x402_middleware(request: Request, call_next):
+                return await payment_middleware(
+                    routes, mock_server, sync_facilitator_on_start=False
+                )(request, call_next)
+
+            with caplog.at_level(logging.ERROR):
+                with TestClient(app, raise_server_exceptions=False) as client:
+                    response = client.get("/api/protected")
+
+            assert response.status_code == 402
+            assert "PAYMENT-RESPONSE" in response.headers  # distinguishable settle failure
+            assert any("unexpected error while settling" in r.getMessage() for r in caplog.records)
 
 
 # =============================================================================
