@@ -238,6 +238,29 @@ const resourceServer = new x402ResourceServer(facilitatorClient)
 }
 ```
 
+To require facilitator attribution, the resource server selects a `sourceTag`
+and may add a 32-byte `facilitatorProof` commitment:
+
+```typescript
+{
+  scheme: "exact",
+  price: { amount: "1000000", asset: "XRP" },
+  network: "xrpl:1",
+  payTo: "rYourXrplAddress",
+  extra: {
+    sourceTag: 804681468,
+    facilitatorProof:
+      "0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF",
+  },
+}
+```
+
+The server advertises these fields only when the selected facilitator reports
+the matching capabilities. The client then signs the negotiated `SourceTag`
+and, when a proof is present, its canonical typed Memo. The facilitator never
+inserts a fallback tag. Invoice binding remains independent and uses
+`extra.invoiceId` plus the signed `InvoiceID` field.
+
 **Client**
 
 ```typescript

@@ -12,7 +12,10 @@ import { parseMoneyString } from "@x402/core/utils";
 import {
   isDecimalString,
   isIntegerString,
+  isRecord,
   isValidDestinationTag,
+  isValidFacilitatorProof,
+  isValidSourceTag,
   isXrplAssetTransferMethod,
   requireClassicAddress,
 } from "../../utils";
@@ -85,7 +88,6 @@ export class ExactXrplScheme implements SchemeNetworkServer {
     supportedKind: SupportedKind,
     extensionKeys: string[],
   ): Promise<PaymentRequirements> {
-    void supportedKind;
     void extensionKeys;
 
     const assetTransferMethod = paymentRequirements.extra?.assetTransferMethod;
@@ -101,6 +103,34 @@ export class ExactXrplScheme implements SchemeNetworkServer {
       throw new Error(
         "XRPL exact payments require extra.destinationTag to be a 32-bit unsigned integer",
       );
+    }
+    const sourceTag = paymentRequirements.extra?.sourceTag;
+    if (sourceTag !== undefined && !isValidSourceTag(sourceTag)) {
+      throw new Error(
+        "XRPL exact payments require extra.sourceTag to be a 32-bit unsigned integer",
+      );
+    }
+    const facilitatorProof = paymentRequirements.extra?.facilitatorProof;
+    if (facilitatorProof !== undefined) {
+      if (!isValidFacilitatorProof(facilitatorProof)) {
+        throw new Error(
+          "XRPL exact payments require extra.facilitatorProof to be 64 hexadecimal characters",
+        );
+      }
+      if (sourceTag === undefined) {
+        throw new Error("XRPL exact payments require extra.sourceTag with facilitatorProof");
+      }
+    }
+
+    const features = supportedKind.extra?.features;
+    if (sourceTag !== undefined && (!isRecord(features) || features.sourceTag !== true)) {
+      throw new Error("XRPL facilitator does not advertise SourceTag attribution support");
+    }
+    if (
+      facilitatorProof !== undefined &&
+      (!isRecord(features) || features.facilitatorProof !== true)
+    ) {
+      throw new Error("XRPL facilitator does not advertise facilitatorProof support");
     }
 
     return Promise.resolve({
