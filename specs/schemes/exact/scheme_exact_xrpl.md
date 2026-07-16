@@ -206,7 +206,7 @@ Cross-currency behavior is enabled only when both `PaymentRequirements.extra.cro
 
 The destination `Amount` (API v1) or `DeliverMax` (API v2) remains the exact target amount and asset from `PaymentRequirements`. Because `tfPartialPayment` is forbidden, the transaction either delivers that full amount or fails. The facilitator and resource server MUST NOT interpret `SendMax` as the amount owed.
 
-`SendMax` is REQUIRED and is the payer's signed, absolute cap in the source asset. It includes transfer fees, exchange rates, and the payer's chosen slippage allowance, but excludes the XRP transaction fee. `SendMax` MUST be positive and use a source asset different from the destination asset:
+`SendMax` is REQUIRED and is the payer's signed, absolute cap in the source asset. It includes transfer fees, exchange rates, and the payer's chosen slippage allowance, but excludes the XRP transaction fee. `SendMax` MUST be positive and use a source asset different from the destination asset. Issued-currency values MAY use any XRPL-valid decimal string representation, including `e` or `E` scientific notation; implementations MUST parse them with arbitrary-precision decimal arithmetic rather than binary floating point.
 
 - For an XRP destination, `SendMax` MUST be an issued-currency amount with a valid currency, issuer, and positive decimal value.
 - For an issued-currency destination, `SendMax` MAY be a positive XRP drops string or an issued-currency amount. An issued-currency source MUST differ from the destination by currency or issuer.
@@ -246,6 +246,51 @@ A payer choosing XRP as the source might sign these transaction fields after quo
 }
 ```
 
+The matching accepted envelope echoes the opt-in exactly:
+
+```json
+{
+  "x402Version": 2,
+  "accepted": {
+    "scheme": "exact",
+    "network": "xrpl:0",
+    "asset": "USD",
+    "payTo": "rN7n3473SaZBCG4dFL83w7a1RXtXtbk2D9",
+    "amount": "10.5",
+    "maxTimeoutSeconds": 600,
+    "extra": {
+      "areFeesSponsored": false,
+      "issuer": "rMwjYedjc7qqtKYVLiAccJSmCwih4LnE2q",
+      "crossCurrency": true
+    }
+  },
+  "payload": {
+    "signedTxBlob": "1200002280000000240000000361D4838D7EA4C68000000000000000000000000000555344000000000000..."
+  }
+}
+```
+
+A facilitator that implements this amendment advertises the capability in its
+`/supported` response:
+
+```json
+{
+  "kinds": [
+    {
+      "x402Version": 2,
+      "scheme": "exact",
+      "network": "xrpl:0",
+      "extra": {
+        "areFeesSponsored": false,
+        "features": { "crossCurrency": true }
+      }
+    }
+  ],
+  "extensions": [],
+  "signers": { "xrpl:*": [] }
+}
+```
+
 ### Paths and Default-Path Policy
 
 - If `Paths` is omitted, the transaction uses XRPL's default path and `tfNoRippleDirect` MUST NOT be set.
@@ -257,15 +302,25 @@ A payer choosing XRP as the source might sign these transaction fields after quo
 
 `tfPartialPayment` and `DeliverMin` are forbidden. `tfLimitQuality` MAY be used, but it does not relax exact delivery: if no eligible path can deliver the full destination amount within `SendMax`, the transaction fails.
 
-For cross-currency payments, facilitator simulation is REQUIRED at `/verify` and again when `/settle` re-runs verification. Targeted balance, trust-line, or sequence checks are not a substitute because they do not prove current path liquidity or cap sufficiency. If simulation is unavailable, fails, or returns any result other than `tesSUCCESS`, verification MUST fail and the resource server MUST NOT run or release the protected resource.
+For cross-currency payments, facilitator simulation is REQUIRED at `/verify` and again when `/settle` re-runs verification. Targeted balance, trust-line, or sequence checks are not a substitute because they do not prove current path liquidity or cap sufficiency. If simulation is unavailable, fails, returns any result other than `tesSUCCESS`, or does not return matching `delivered_amount` metadata as defined below, verification MUST fail and the resource server MUST NOT run or release the protected resource.
 
 Liquidity may change after simulation. If re-verification at `/settle` no longer succeeds, the facilitator MUST NOT submit. If ledger state changes between the final simulation and validation, the submitted transaction may fail; the facilitator MUST return settlement failure and the resource server MUST NOT grant access.
+
+XRPL uses 15 decimal digits of precision for issued currencies, and metadata for a successful non-partial token payment can differ slightly from `Amount` because of ledger rounding. For this scheme, two positive issued-currency values are **XRPL-precision equivalent** when they are exactly equal or their absolute difference is no more than one unit in the required amount's 15th significant decimal digit:
+
+```text
+abs(delivered - required) <= 10^(floor(log10(required)) - 14)
+```
+
+For a zero required value, only exact zero is equivalent. This comparison MUST use arbitrary-precision decimal arithmetic and MUST accept XRPL scientific notation. It does not weaken issue matching or permit partial payments.
+
+Both successful simulation and validated settlement metadata MUST contain `delivered_amount` in the exact negotiated asset/issue. XRP drops MUST equal the negotiated amount exactly. Issued-currency values MUST be XRPL-precision equivalent to the negotiated amount.
 
 After validation, the facilitator MUST require all of the following before returning settlement success:
 
 - `validated=true`;
 - `TransactionResult=tesSUCCESS`;
-- transaction metadata contains `delivered_amount` in the same asset/issue and exact value as the negotiated destination amount.
+- transaction metadata contains `delivered_amount` satisfying the asset, issue, and XRPL-precision rules above.
 
 Missing, unavailable, malformed, or mismatched `delivered_amount` MUST fail settlement even if the transaction result is `tesSUCCESS`.
 
