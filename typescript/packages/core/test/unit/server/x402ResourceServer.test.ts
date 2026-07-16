@@ -504,18 +504,20 @@ describe("x402ResourceServer", () => {
       expect(requirements[0].maxTimeoutSeconds).toBe(600);
     });
 
-    it("should return empty array if no scheme registered for network", async () => {
+    it("should throw if no scheme registered for network", async () => {
       const server = new x402ResourceServer();
 
-      const requirements = await server.buildPaymentRequirements({
-        scheme: "test-scheme",
-        payTo: "recipient",
-        price: 1.0,
-        network: "test:network" as Network,
-      });
-
-      // Current implementation returns empty array and logs warning
-      expect(requirements).toEqual([]);
+      await expect(
+        async () =>
+          await server.buildPaymentRequirements({
+            scheme: "test-scheme",
+            payTo: "recipient",
+            price: 1.0,
+            network: "test:network" as Network,
+          }),
+      ).rejects.toThrow(
+        "No server implementation registered for scheme: test-scheme, network: test:network",
+      );
     });
 
     it("should throw if facilitator doesn't support scheme/network", async () => {
