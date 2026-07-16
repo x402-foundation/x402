@@ -156,8 +156,8 @@ The resource server advertises payment requirements in the `accepts` array.
 | `extra.assetTransferMethod` | string | No     | `"sequence"` (default) or `"ticketSequence"`     |
 | `extra.invoiceId`        | string  | No       | Unique invoice identifier for binding            |
 | `extra.destinationTag`   | integer | No       | DestinationTag for hosted accounts               |
-| `extra.sourceTag`        | integer | No       | Facilitator attribution tag selected by server   |
-| `extra.facilitatorProof` | string  | No       | 32-byte facilitator proof commitment (hex)       |
+| `extra.sourceTag`        | integer | No       | Expected-facilitator label selected by server     |
+| `extra.facilitatorProof` | string  | No       | 32-byte facilitator commitment (hex)              |
 | `extra.issuer`           | string  | IOU only | Classic address of the IOU issuer                |
 
 `extra.destinationTag` applies to both native XRP and IOU payments. It is used when the receiver is a hosted account or otherwise requires a destination tag for attribution.
@@ -172,11 +172,13 @@ No `extra.decimals` field is defined for XRPL exact payments. Implementations MU
 
 ## Facilitator Attribution
 
-Facilitator attribution is optional and explicitly negotiated by the resource server. The resource server selects `extra.sourceTag` for the facilitator it expects to submit the signed transaction. A facilitator MAY advertise support for this feature, but it MUST NOT choose, inject, replace, or fall back to a `SourceTag` that the resource server did not include in `PaymentRequirements`.
+Facilitator attribution is optional and explicitly negotiated by the resource server. The resource server selects `extra.sourceTag` as a label for the facilitator it expects to submit the signed transaction. A facilitator MAY advertise support for this feature, but it MUST NOT choose, inject, replace, or fall back to a `SourceTag` that the resource server did not include in `PaymentRequirements`.
 
-`extra.sourceTag`, when present, MUST be an integer from `0` through `4294967295` (XRPL `uint32`). The client MUST echo the exact value in `PaymentPayload.accepted.extra.sourceTag` and include it as the signed transaction's `SourceTag`. If `extra.sourceTag` is absent, `accepted.extra.sourceTag` and the transaction `SourceTag` MUST both be absent.
+`extra.sourceTag`, when present, MUST be an integer from `0` through `4294967295` (XRPL `uint32`). The client MUST echo the exact value in `PaymentPayload.accepted.extra.sourceTag` and include it as the signed transaction's `SourceTag`. If `extra.sourceTag` is absent, `accepted.extra.sourceTag` MUST be absent and no `SourceTag` has facilitator-attribution semantics. For backward compatibility, a payer-controlled transaction preparer MAY preserve an independently selected, payer-signed `SourceTag` when attribution is not negotiated; the facilitator MUST NOT create or replace that value.
 
-`extra.facilitatorProof` is an optional 32-byte commitment represented as exactly 64 hexadecimal characters. It MUST NOT be present unless `extra.sourceTag` is also present. The proof bytes are opaque to this scheme; the resource server and facilitator MAY use them to commit to an out-of-band facilitator identity or attestation. The client MUST echo the same value in `PaymentPayload.accepted.extra.facilitatorProof`, normalizing hexadecimal letters to uppercase in the transaction Memo.
+`extra.facilitatorProof` is an optional 32-byte commitment represented as exactly 64 hexadecimal characters. It MUST NOT be present unless `extra.sourceTag` is also present. The proof bytes are opaque to this scheme; the resource server and facilitator MAY use them to commit to an out-of-band expected-facilitator identity or attestation. The client MUST echo the same value in `PaymentPayload.accepted.extra.facilitatorProof`, normalizing hexadecimal letters to uppercase in the transaction Memo.
+
+Neither field authenticates the network peer or RPC caller that broadcasts the signed transaction. Any party holding the payer-signed blob can submit it without changing these fields. Implementations MUST treat them only as a server-selected expected-facilitator label and commitment, and MUST NOT use them alone as cryptographic proof of submission, entitlement to rewards, or accountability. A verifiable submitter attestation requires a separate facilitator-signed statement bound to the validated transaction hash.
 
 When `extra.facilitatorProof` is present, the signed transaction MUST contain exactly one `Memos` entry with exactly one `Memo` object and the following three fields:
 
@@ -337,7 +339,7 @@ If `sourceTag` or `facilitatorProof` is present in either the requirements or ac
 ### 4.1. Facilitator Attribution Validation
 
 - If `paymentRequirements.extra.sourceTag` is present, `tx_json.SourceTag` MUST be present and equal.
-- If `paymentRequirements.extra.sourceTag` is absent, `tx_json.SourceTag` MUST be absent.
+- If `paymentRequirements.extra.sourceTag` is absent, `paymentPayload.accepted.extra.sourceTag` MUST be absent. A payer-signed `tx_json.SourceTag` MAY be present for independent account-routing or refund semantics, but it has no facilitator-attribution meaning and MUST NOT be injected or replaced by the facilitator.
 - If `paymentRequirements.extra.facilitatorProof` is present, `tx_json.Memos` MUST match the exact encoding and cardinality in [Facilitator Attribution](#facilitator-attribution), including the embedded `SourceTag` value.
 - If `paymentRequirements.extra.facilitatorProof` is absent, `tx_json.Memos` MUST be absent.
 - The facilitator MUST NOT apply a locally configured `SourceTag` or Memo when the corresponding requirement is absent, and MUST NOT treat such a local value as equivalent to negotiation.
@@ -453,7 +455,7 @@ The facilitator MUST reject transactions with:
 
 - `Fee` above facilitator policy.
 - `Delegate` present.
-- `SourceTag` present when `extra.sourceTag` is absent, or absent, malformed, or mismatched when `extra.sourceTag` is present.
+- `SourceTag` absent, malformed, or mismatched when `extra.sourceTag` is present.
 - `Memos` present unless they are the single canonical facilitator-attribution Memo negotiated through `extra.facilitatorProof`.
 - A canonical facilitator-attribution Memo that is malformed, duplicated, mismatched, or present without `SourceTag`.
 - `SendMax` present for XRP.
@@ -553,8 +555,8 @@ Implementations MAY include additional fields when defined by the SDK or facilit
 - The facilitator cannot redirect funds because any mutation of the signed transaction invalidates the payer's signature.
 - The resource server cannot collect more than the amount the payer signed for.
 - When present, invoice binding commits the payer's transaction to a specific invoice.
-- When negotiated, `SourceTag` attributes the submitting facilitator selected by the resource server; the canonical Memo can additionally commit to a facilitator proof without weakening `InvoiceID` invoice binding.
-- Omission is fail closed: facilitators cannot add hidden attribution fields to an already signed transaction or accept locally configured fallbacks that were not included in the payment requirements.
+- When negotiated, `SourceTag` labels the facilitator selected by the resource server and the canonical Memo can additionally carry its commitment without weakening `InvoiceID` invoice binding. These payer-signed fields do not prove which party actually broadcast the transaction.
+- Omission is fail closed at the x402 envelope: facilitators cannot add hidden attribution fields to an already signed transaction or accept locally configured fallbacks that were not included in the payment requirements. An independently payer-signed `SourceTag` remains permitted for backward compatibility but has no facilitator-attribution meaning.
 
 ### Replay and Race Protection
 
