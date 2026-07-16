@@ -40,6 +40,8 @@ async def get_weather(city: str) -> dict:
 
 Note that the x402 route key uses `:city` (Express convention) while the FastAPI handler uses `{city}` (FastAPI convention). The x402 middleware handles the `:city` matching; FastAPI handles the `{city}` extraction for your handler.
 
+**Service metadata** -- `RouteConfig` also accepts `service_name`, `tags`, and `icon_url`. They are emitted on the top-level `resource` block of the 402 response, and catalogs use them to render a named, tagged service page instead of a raw-domain listing. Keep the metadata identical across routes (catalogs group routes into one service by name), and mind the indexer caps -- `service_name` <= 32 printable-ASCII chars, <= 5 tags of <= 32 chars each, absolute http(s) icon URL -- values that exceed them are silently dropped field-by-field.
+
 ## Prerequisites
 
 - Python 3.10+
