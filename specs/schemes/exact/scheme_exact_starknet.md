@@ -30,7 +30,7 @@ The CAIP-2 reference is the string form of the chain id returned by `starknet_ch
 2. Client selects a Starknet `exact` entry from `accepts` and builds a single `transfer(recipient, amount)` call against the `asset` token contract, where `recipient = payTo` and the u256 `amount` equals `amount` from the requirements.
 3. Client wraps the call in a SNIP-9 `OutsideExecution` (directly, or via a paymaster service that returns the prepared SNIP-12 typed data) with a fresh nonce, the required `Caller` (see `extra.caller`), and time bounds within `maxTimeoutSeconds`.
 4. Client signs the typed data with its account key(s) (e.g., `account.signMessage`), producing a felt-array signature.
-5. Client resends the request with the base64-encoded `PaymentPayload` attached.
+5. Client resends the request with the `PaymentPayload` attached.
 6. Resource server forwards the payload and requirements to the facilitator's `/verify` endpoint; the facilitator enforces the verification rules below.
 7. On `isValid: true`, the resource server requests settlement via `/settle`. The facilitator re-verifies, executes `execute_from_outside_v2` on the client's account, and waits for confirmation.
 8. Resource server returns the response with the `SettlementResponse` attached.
@@ -196,7 +196,7 @@ All felt/address comparisons MUST be performed numerically (as field elements), 
 - `PaymentPayload.x402Version` MUST be `2`.
 - `accepted.scheme` MUST be `exact` and `accepted.network` MUST be a supported `starknet:*` identifier.
 - `accepted` MUST match the `PaymentRequirements` supplied by the resource server in the `/verify`/`/settle` request body — never the client's echo — field-by-field (`scheme`, `network`, `amount`, `asset`, `payTo`, `maxTimeoutSeconds`, `extra.caller` when advertised, and `extra.areFeesSponsored` when present).
-- The server-supplied requirements themselves MUST be well-formed: `amount` a base-10 integer string, `maxTimeoutSeconds` a finite positive number. Malformed requirements MUST be rejected (`invalid_payload`) — implementations MUST NOT let a missing field silently disable a dependent check (e.g., a NaN window bound).
+- The server-supplied requirements themselves MUST be well-formed: `amount` a base-10 integer string, `maxTimeoutSeconds` a finite positive number. Malformed requirements MUST be rejected (`invalid_payment_requirements`) — implementations MUST NOT let a missing field silently disable a dependent check (e.g., a NaN window bound).
 
 ### 2. Typed Data Canonicalization
 
@@ -248,7 +248,7 @@ Unlike chains where the client sets the transaction fee, here the client signs o
 
 ### Error Codes
 
-`invalidReason` and `errorReason` MUST be stable enum tokens (below) so wire consumers can switch on them; any human-readable context MUST travel in a separate `detail` (verify) or `errorMessage` (settle) field, never appended to the code. Standard v2 codes (`insufficient_funds`, `invalid_payload`, `invalid_scheme`, `invalid_network`, `invalid_x402_version`, `invalid_transaction_state`) apply as usual. Starknet-specific values:
+`invalidReason` and `errorReason` MUST be stable enum tokens (below) so wire consumers can switch on them; any human-readable context MUST travel in the core response fields `invalidMessage` (verify) or `errorMessage` (settle), never appended to the code. Standard v2 codes (`insufficient_funds`, `invalid_payload`, `invalid_payment_requirements`, `invalid_scheme`, `invalid_network`, `invalid_x402_version`, `invalid_transaction_state`, `unexpected_verify_error`, `unexpected_settle_error`) apply as usual. Starknet-specific values:
 
 | Code | Meaning |
 | ---- | ------- |
@@ -263,12 +263,10 @@ Unlike chains where the client sets the transaction fee, here the client signs o
 | `nonce_already_used` | SNIP-9 nonce already consumed |
 | `simulation_failed` | settlement simulation reverted or showed unexpected transfers |
 | `duplicate_settlement` | same nonce already submitted by this facilitator |
-| `settlement_pending` | broadcast succeeded but confirmation is not yet established — **non-terminal**; the `transaction` field carries the hash to reconcile on-chain before retrying |
+| `settlement_pending` | broadcast succeeded but confirmation is not yet established — **non-terminal**; the `transaction` field carries the hash to reconcile on-chain before retrying. Intentionally returns a non-empty `transaction` with `success: false` (a pending settlement is not a terminal failure, and the hash is what makes reconciliation possible) |
 | `unauthorized` | request rejected by facilitator endpoint access control |
-| `unexpected_verify_error` | an internal error (e.g. a balance/RPC read failed) prevented verification from completing — fails closed |
-| `unexpected_settle_error` | an internal error prevented settlement from completing before broadcast; the payment did not execute |
 
-The `amount` in `PaymentRequirements` MUST be a base-10 integer string; hex/octal/binary/signed/whitespace forms MUST be rejected (`invalid_payload`). Facilitators SHOULD bound the `PaymentPayload` signature array length (e.g. reject beyond ~32 felts) so an oversized signature cannot amplify resource use.
+The `amount` in `PaymentRequirements` MUST be a base-10 integer string; hex/octal/binary/signed/whitespace forms MUST be rejected (`invalid_payment_requirements`). Facilitators SHOULD bound the `PaymentPayload` signature array length (e.g. reject beyond ~32 felts) so an oversized signature cannot amplify resource use.
 
 ### Implementing Verification with Starknet JSON-RPC
 
