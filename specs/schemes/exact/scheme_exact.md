@@ -45,6 +45,6 @@ While implementation details vary by network, facilitators MUST enforce security
 - Signature validity: the SNIP-12 message hash MUST be computed from the facilitator's own canonical reconstruction of the typed data and MUST validate via SNIP-6 `is_valid_signature` on the payer's account (magic value `VALID`).
 - Caller binding and expiry: `Caller` MUST be `ANY_CALLER` or the known submitting address (and equal `extra.caller` when advertised); the `Execute After`/`Execute Before` window MUST be current and within `maxTimeoutSeconds`.
 - Replay protection: the SNIP-9 nonce MUST be unused at verification and is consumed on-chain by the account at execution.
-- Simulation verification: MUST simulate `execute_from_outside_v2` and fail closed unless the only asset balance changes are the expected transfer (payer decrease, recipient increase) plus fees.
+- Simulation verification: MUST simulate the settlement and fail closed unless the trace shows exactly one `Transfer` emitted by the asset, from payer to `payTo`, for the exact amount. Full `execute_from_outside_v2` call-tree simulation is preferred; a transfer-only fallback is permitted when the bound `Caller` cannot be originated in simulation.
 
 Network-specific rules are in per-network documents: `scheme_exact_svm.md` (Solana), `scheme_exact_stellar.md` (Stellar), `scheme_exact_evm.md` (EVM), `scheme_exact_sui.md` (SUI), `scheme_exact_ton.md` (TON), `scheme_exact_starknet.md` (Starknet).

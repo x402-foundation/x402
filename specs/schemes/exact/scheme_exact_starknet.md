@@ -26,14 +26,14 @@ The CAIP-2 reference is the string form of the chain id returned by `starknet_ch
 
 ## Protocol Flow
 
-1. Client requests a resource; the server responds `402` with a `PAYMENT-REQUIRED` header containing the `PaymentRequired` object.
+1. Client requests a resource; the server responds `402` with a `PaymentRequired` object.
 2. Client selects a Starknet `exact` entry from `accepts` and builds a single `transfer(recipient, amount)` call against the `asset` token contract, where `recipient = payTo` and the u256 `amount` equals `amount` from the requirements.
 3. Client wraps the call in a SNIP-9 `OutsideExecution` (directly, or via a paymaster service that returns the prepared SNIP-12 typed data) with a fresh nonce, the required `Caller` (see `extra.caller`), and time bounds within `maxTimeoutSeconds`.
 4. Client signs the typed data with its account key(s) (e.g., `account.signMessage`), producing a felt-array signature.
-5. Client resends the request with the `PAYMENT-SIGNATURE` header containing the base64-encoded `PaymentPayload`.
+5. Client resends the request with the base64-encoded `PaymentPayload` attached.
 6. Resource server forwards the payload and requirements to the facilitator's `/verify` endpoint; the facilitator enforces the verification rules below.
 7. On `isValid: true`, the resource server requests settlement via `/settle`. The facilitator re-verifies, executes `execute_from_outside_v2` on the client's account, and waits for confirmation.
-8. Resource server returns the response with the `PAYMENT-RESPONSE` header containing the `SettlementResponse`.
+8. Resource server returns the response with the `SettlementResponse` attached.
 
 ## `PaymentRequirements` for `exact`
 
@@ -60,23 +60,25 @@ The CAIP-2 reference is the string form of the chain id returned by `starknet_ch
 - `amount`: required payment amount in the token's atomic units, as a base-10 string (e.g., `"10000"` = 0.01 USDC with 6 decimals).
 - `asset`: Starknet contract address of an ERC-20-compatible token (USDC by default; see Default Assets). The token MUST expose the standard `transfer(recipient: ContractAddress, amount: u256)` entry point and a balance getter (`balance_of` or `balanceOf`).
 - `payTo`: recipient's Starknet address.
-- `extra.areFeesSponsored`: whether the facilitator sponsors gas. This spec covers the sponsored flow only; when present it MUST be `true`, and `false` MUST be rejected (`invalid_payload`). An unsponsored flow is planned for a follow-up.
-- `extra.caller` (optional): the address that will be the on-chain caller of `execute_from_outside_v2` at settlement — the facilitator's executor account, or its paymaster's pinned relayer/forwarder address. Binding a specific caller prevents third parties from submitting the execution (see Security Considerations). Facilitators that cannot guarantee the submitting address MUST NOT advertise `extra.caller`. Two client flows produce the `OutsideExecution` `Caller`:
+- `extra.areFeesSponsored`: whether the facilitator sponsors gas. This spec covers the sponsored flow only; when present it MUST be `true`, and `false` MUST be rejected (`invalid_payload`). When absent, the requirement is treated as sponsored — the only flow this spec defines — and MUST be accepted identically to `areFeesSponsored: true`. An unsponsored flow is planned for a follow-up.
+- `extra.caller` (optional): the address that will be the on-chain caller of `execute_from_outside_v2` at settlement — the facilitator's executor account, or its paymaster's forwarder contract (the address the payer's account observes as the SNIP-9 `Caller`). Binding a specific caller prevents third parties from submitting the execution (see Security Considerations). Facilitators that cannot guarantee the submitting address MUST NOT advertise `extra.caller`. Two client flows produce the `OutsideExecution` `Caller`:
   - **Paymaster (sponsored) flow**: the paymaster sets `Caller` to its own forwarder; the client does not choose it. When `extra.caller` is advertised the client MUST verify the paymaster-built `Caller` equals it and reject a mismatch, and the advertised value MUST be that forwarder. When it is absent, the resulting forwarder `Caller` is accepted by the facilitator under rule 4 as an address it can guarantee will submit.
   - **Direct flow** (client builds the `OutsideExecution` itself, no paymaster): the client MUST set `Caller` to the advertised `extra.caller`, or to the SNIP-9 `ANY_CALLER` sentinel (`0x414e595f43414c4c4552`, the short string `ANY_CALLER`) when none is advertised.
 - The client never needs gas funds in the sponsored flow. Executor/paymaster selection beyond `extra.caller` is facilitator-local configuration and MUST NOT be required from the client-facing `PaymentRequirements`.
 
 ### Timeout Mapping: `maxTimeoutSeconds` → Time Bounds
 
-SNIP-9 time bounds are Unix seconds checked strictly (`Execute After < block_timestamp < Execute Before`) against the sequencer's block timestamp, which can lag wall clock. Facilitators MUST apply a symmetric skew margin `skewMargin` (SHOULD be ≤ 60 seconds) on both bounds:
+SNIP-9 time bounds are Unix seconds checked strictly (`Execute After < block_timestamp < Execute Before`) against the sequencer's block timestamp, which can lag wall clock. Facilitators MUST absorb that lag with a skew margin `skewMargin` (SHOULD be ≤ 60 seconds, an upper bound on observed sequencer timestamp lag) wherever it could flip a check:
 
 - Client signing rule: `Execute Before = now + maxTimeoutSeconds`; `Execute After` SHOULD be well in the past (e.g., `1`).
-- Facilitator verification rules:
-  - MUST reject if `Execute After >= now - skewMargin` (e.g. `invalid_payload`).
-  - MUST reject if `Execute Before <= now` (expired, `outside_execution_expired`).
-  - MUST reject if `Execute Before > now + maxTimeoutSeconds + skewMargin` (window exceeds the x402 timeout budget, `outside_execution_window_exceeds_max_timeout`).
+- Facilitator verification rules (at `/verify`):
+  - MUST reject if `Execute After >= now - skewMargin` (`invalid_payload`).
+  - MUST reject if `Execute Before < now + maxTimeoutSeconds - skewMargin` (`outside_execution_expired`) — the authorization MUST remain valid for the full advertised settlement window, so a stale signature (or one signed against a smaller window) is rejected up front rather than left to expire mid-settlement.
+  - MUST reject if `Execute Before > now + maxTimeoutSeconds + skewMargin` (`outside_execution_window_exceeds_max_timeout`).
+  - With the client signing rule, these bound `Execute Before` to `now + maxTimeoutSeconds ± skewMargin`: a payload is only accepted within `skewMargin` of signing.
+- At settlement-time re-verification the freshness bound does not re-apply (remaining validity necessarily shrinks while the resource server prepares settlement). Settlement instead requires a minimum remaining window: MUST reject if `Execute Before <= now + minSettleMargin` (RECOMMENDED ≥ 30 seconds, covering broadcast-to-inclusion latency) so the transaction cannot expire in flight (`outside_execution_expired`).
 
-## `PAYMENT-SIGNATURE` Payload
+## `PaymentPayload` `payload` Field
 
 The `payload` field of `PaymentPayload` is:
 
@@ -193,7 +195,7 @@ All felt/address comparisons MUST be performed numerically (as field elements), 
 
 - `PaymentPayload.x402Version` MUST be `2`.
 - `accepted.scheme` MUST be `exact` and `accepted.network` MUST be a supported `starknet:*` identifier.
-- `accepted` MUST match the `PaymentRequirements` supplied by the resource server in the `/verify`/`/settle` request body — never the client's echo — field-by-field (`scheme`, `network`, `amount`, `asset`, `payTo`, `maxTimeoutSeconds`, and `extra.caller` when advertised).
+- `accepted` MUST match the `PaymentRequirements` supplied by the resource server in the `/verify`/`/settle` request body — never the client's echo — field-by-field (`scheme`, `network`, `amount`, `asset`, `payTo`, `maxTimeoutSeconds`, `extra.caller` when advertised, and `extra.areFeesSponsored` when present).
 - The server-supplied requirements themselves MUST be well-formed: `amount` a base-10 integer string, `maxTimeoutSeconds` a finite positive number. Malformed requirements MUST be rejected (`invalid_payload`) — implementations MUST NOT let a missing field silently disable a dependent check (e.g., a NaN window bound).
 
 ### 2. Typed Data Canonicalization
@@ -216,8 +218,7 @@ All felt/address comparisons MUST be performed numerically (as field elements), 
 
 ### 5. Execution Time Window
 
-- The time bounds MUST satisfy the Timeout Mapping rules above.
-- Facilitators SHOULD additionally require a minimum remaining window (e.g., ~30 seconds before `Execute Before`) so settlement cannot expire mid-flight.
+- The time bounds MUST satisfy the Timeout Mapping rules above: the freshness band at `/verify`, the minimum remaining window at settlement re-verification.
 
 ### 6. Replay Protection
 
@@ -243,7 +244,7 @@ All felt/address comparisons MUST be performed numerically (as field elements), 
 - The executor MUST only ever sign the `INVOKE` wrapping `execute_from_outside_v2`.
 - `payer` MUST only be included on a response once the payer's signature has been verified; it MUST NOT be echoed from unverified client input.
 
-Unlike chains where the client sets the transaction fee, here the client signs only the inner OutsideExecution and the facilitator/paymaster alone sets the outer `INVOKE` fee — so a client cannot directly inflate the sponsored gas. The residual risk is gas spent on settlements that fail the effect check or revert despite passing verification (e.g. an account whose `is_valid_signature` and execution paths diverge, or an account upgraded between verify and settle). To bound it, facilitators SHOULD cap the sponsored settlement fee (reject when an estimate exceeds a configured bound) and apply per-payer rate limits, and — because settlement spends sponsored gas — SHOULD access-control `/verify` and `/settle` (shared secret, mTLS, or a resource-server allowlist). The mandatory simulation (rule 8) confirms the only `asset` balance change is the payer → `payTo` transfer; no balance change accrues to the facilitator's executor beyond the transaction fee.
+Unlike chains where the client sets the transaction fee, here the client signs only the inner OutsideExecution and the facilitator/paymaster alone sets the outer `INVOKE` fee — so a client cannot directly inflate the sponsored gas. The residual risk is gas spent on settlements that fail the effect check or revert despite passing verification (e.g. an account whose `is_valid_signature` and execution paths diverge, or an account upgraded between verify and settle). To bound it, facilitators SHOULD cap the sponsored settlement fee (reject when an estimate exceeds a configured bound) and apply per-payer rate limits, and — because settlement spends sponsored gas — SHOULD access-control `/verify` and `/settle` (shared secret, mTLS, or a resource-server allowlist). The mandatory simulation (rule 8) confirms on either simulation path that the only `asset` `Transfer` is payer → `payTo`; only the full call tree additionally exercises the account's execution path — the transfer-only fallback leaves exactly the residual gas risk described above. No balance change accrues to the facilitator's executor beyond the transaction fee.
 
 ### Error Codes
 
@@ -257,7 +258,7 @@ Unlike chains where the client sets the transaction fee, here the client signs o
 | `invalid_exact_starknet_payload_amount_mismatch` | transfer amount ≠ `amount` |
 | `invalid_exact_starknet_payload_caller` | `Caller` violates the binding rules |
 | `account_not_deployed` | payer account contract not deployed |
-| `outside_execution_expired` | `Execute Before` has passed |
+| `outside_execution_expired` | `Execute Before` has passed or leaves less than the required window (freshness band at `/verify`; `minSettleMargin` at settlement) |
 | `outside_execution_window_exceeds_max_timeout` | window exceeds `maxTimeoutSeconds` budget |
 | `nonce_already_used` | SNIP-9 nonce already consumed |
 | `simulation_failed` | settlement simulation reverted or showed unexpected transfers |
@@ -286,9 +287,9 @@ All checks are implementable against a stock public Starknet JSON-RPC node:
 1. Re-run all verification rules, including simulation. The facilitator MUST NOT trust a prior `/verify` result.
 2. Execute the outside execution. Two equivalent executor options:
    - **Direct**: the facilitator's own funded account submits an `INVOKE` transaction calling `execute_from_outside_v2(outside_execution, signature)` on `payload.from`.
-   - **Paymaster service**: the facilitator forwards the signed typed data to a [SNIP-29](https://github.com/starknet-io/SNIPs/blob/main/SNIPS/snip-29.md) (Applicative Paymaster API) execution endpoint using its gas-sponsoring fee mode; the paymaster's relayer performs the same `execute_from_outside_v2` call. Caller-bound payloads (rule 4) MUST only be settled through the bound address.
+   - **Paymaster service**: the facilitator forwards the signed typed data to a [SNIP-29](https://github.com/starknet-io/SNIPs/blob/main/SNIPS/snip-29.md) (Applicative Paymaster API) execution endpoint using its gas-sponsoring fee mode; the paymaster executes the same `execute_from_outside_v2` call through its forwarder contract (the on-chain `Caller`). Caller-bound payloads (rule 4) MUST only be settled through the bound address.
 3. Wait for the transaction to reach finality status `ACCEPTED_ON_L2` (or `ACCEPTED_ON_L1`). `ACCEPTED_ON_L2` is a sequencer commitment prior to L1 finality and can, in rare cases, be reverted in an L2 reorg; facilitators serving high-value resources SHOULD offer resource servers the option to require `ACCEPTED_ON_L1` (at the cost of added latency).
-4. Check the receipt's `execution_status` AND its effect. Settlement succeeds only if `execution_status` is `SUCCEEDED` **and** the receipt emits exactly the expected `Transfer` (from `payTo`'s perspective: exactly one `accepted.asset` `Transfer` from `payer` to `payTo` for exactly `accepted.amount`). A `SUCCEEDED` transaction that does not emit that transfer MUST be reported as failure (`invalid_transaction_state`) — because `execute_from_outside_v2` runs inside the payer's own (possibly adversarial) account, a non-reverting transaction is not by itself proof the payment executed. A `REVERTED` transaction MUST also fail; a revert rolls back the SNIP-9 nonce, so the authorization remains valid and the facilitator SHOULD allow the same payment to be retried. If post-broadcast confirmation cannot be established (RPC failure after the transaction was submitted), the facilitator MUST NOT report success and MUST NOT report a plain terminal failure either: the transfer may still land. It MUST return the non-terminal `settlement_pending` code with the transaction hash in the `transaction` field so the caller reconciles on-chain before retrying, and MUST keep its duplicate-settlement guard for that nonce so a blind retry cannot double-submit. A later retry of the same payload resolves idempotently (see step 5 / Duplicate Settlement Mitigation).
+4. Check the receipt's `execution_status` AND its effect. Settlement succeeds only if `execution_status` is `SUCCEEDED` **and** the receipt emits exactly the expected `Transfer` (exactly one `Transfer` emitted by `accepted.asset`, from `payer` to `payTo`, for exactly `accepted.amount` — the same criterion as rule 8). A `SUCCEEDED` transaction that does not emit that transfer MUST be reported as failure (`invalid_transaction_state`) — because `execute_from_outside_v2` runs inside the payer's own (possibly adversarial) account, a non-reverting transaction is not by itself proof the payment executed. A `REVERTED` transaction MUST also fail; a revert rolls back the SNIP-9 nonce, so the authorization remains valid and the facilitator SHOULD allow the same payment to be retried. If post-broadcast confirmation cannot be established (RPC failure after the transaction was submitted), the facilitator MUST NOT report success and MUST NOT report a plain terminal failure either: the transfer may still land. It MUST return the non-terminal `settlement_pending` code with the transaction hash in the `transaction` field so the caller reconciles on-chain before retrying, and MUST keep its duplicate-settlement guard for that nonce so a blind retry cannot double-submit. A later retry of the same payload resolves idempotently (see step 5 / Duplicate Settlement Mitigation).
 5. If the settlement transaction reverts because the nonce was already consumed, the facilitator SHOULD locate the consuming transaction; if it executed the identical `OutsideExecution` (same hash — i.e., the payment itself landed on-chain), the facilitator SHOULD report `success: true` with that transaction hash, otherwise `nonce_already_used`. This makes `ANY_CALLER` front-running a no-op rather than a paid-but-denied outcome. Implementations that match by (payer, payTo, amount) Transfer events MUST additionally confirm the consuming transaction carries this payload's SNIP-9 nonce, so a different same-amount payment cannot be mistaken for this one.
 6. Return the `SettlementResponse` with the transaction hash. RPC acceptance or pending status is not sufficient for `success: true`; the protected resource MUST only be released after the transfer has succeeded on-chain.
 7. Facilitators MUST NOT leak raw paymaster/RPC exception text to clients; internal error detail is logged server-side, and the client-facing `errorMessage` is generic.
@@ -303,7 +304,7 @@ On `success: false`, `payer` MUST only be included if independently verified by 
 
 Facilitators SHOULD list their executor addresses under a `starknet:*` key in the `/supported` response's `signers` map.
 
-## `PAYMENT-RESPONSE` (`SettlementResponse`) Example
+## `SettlementResponse` Example
 
 ```json
 {
@@ -346,7 +347,7 @@ This cache is an optimization only; the SNIP-9 nonce remains the authoritative r
 
 ### Account compatibility
 
-Current versions of the major Starknet account contracts (Argent/Ready, Braavos, and OpenZeppelin's SRC9 component) implement SNIP-9 v2; older non-upgraded deployments may not, which mandatory simulation (rule 8) detects.
+Current versions of the major Starknet account contracts (Argent/Ready, Braavos, and OpenZeppelin's SRC9 component) implement SNIP-9 v2; older non-upgraded deployments may not; the nonce preflight (rule 6) fails closed for such accounts, and full call-tree simulation (rule 8) detects them.
 
 ### Security Considerations
 
