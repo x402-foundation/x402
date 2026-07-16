@@ -19,9 +19,11 @@ import {
   invoiceIdToInvoiceIdField,
   isDifferentXrplSourceAsset,
   isIssuedCurrencyAmount,
-  isNonEmptyXrplPathSet,
   isRecord,
+  isSameXrplCurrency,
+  isSameXrplIssue,
   isValidDestinationTag,
+  isValidXrplPathSet,
   isXrplNetwork,
   isXrplTicketAvailable,
   parseXrplNetworkId,
@@ -461,7 +463,7 @@ export class ExactXrplScheme implements SchemeNetworkFacilitator {
     if (!isIssuedCurrencyAmount(destinationAmount)) {
       return "invalid_exact_xrpl_payload_iou_amount";
     }
-    if (destinationAmount.currency !== requirements.asset) {
+    if (!isSameXrplCurrency(destinationAmount.currency, requirements.asset)) {
       return "invalid_exact_xrpl_payload_iou_currency_mismatch";
     }
     if (destinationAmount.issuer !== requirements.extra?.issuer) {
@@ -476,10 +478,7 @@ export class ExactXrplScheme implements SchemeNetworkFacilitator {
     if (!isIssuedCurrencyAmount(transaction.SendMax)) {
       return "invalid_exact_xrpl_payload_sendmax_required";
     }
-    if (
-      transaction.SendMax.currency !== destinationAmount.currency ||
-      transaction.SendMax.issuer !== destinationAmount.issuer
-    ) {
+    if (!isSameXrplIssue(transaction.SendMax, destinationAmount)) {
       return "invalid_exact_xrpl_payload_sendmax_iou_mismatch";
     }
     if (compareDecimalStrings(transaction.SendMax.value, destinationAmount.value) < 0) {
@@ -525,7 +524,7 @@ export class ExactXrplScheme implements SchemeNetworkFacilitator {
       }
       return undefined;
     }
-    if (!isNonEmptyXrplPathSet(transaction.Paths)) {
+    if (!isValidXrplPathSet(transaction.Paths)) {
       return "invalid_exact_xrpl_payload_paths_malformed";
     }
     return undefined;
@@ -551,7 +550,7 @@ export class ExactXrplScheme implements SchemeNetworkFacilitator {
     }
     return (
       isIssuedCurrencyAmount(deliveredAmount) &&
-      deliveredAmount.currency === requirements.asset &&
+      isSameXrplCurrency(deliveredAmount.currency, requirements.asset) &&
       deliveredAmount.issuer === requirements.extra?.issuer &&
       areXrplTokenAmountsEquivalent(deliveredAmount.value, requirements.amount)
     );

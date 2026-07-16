@@ -9,9 +9,10 @@ import {
   isDecimalString,
   isIntegerString,
   isIssuedCurrencyAmount,
-  isNonEmptyXrplPathSet,
   isRecord,
+  isSameXrplCurrency,
   isValidDestinationTag,
+  isValidXrplPathSet,
   isXrplAssetTransferMethod,
   isXrplNetwork,
   parseXrplNetworkId,
@@ -312,7 +313,7 @@ export class ExactXrplScheme implements SchemeNetworkClient {
       }
     } else if (
       !isIssuedCurrencyAmount(destinationAmount) ||
-      destinationAmount.currency !== requirements.asset ||
+      !isSameXrplCurrency(destinationAmount.currency, requirements.asset) ||
       destinationAmount.issuer !== requirements.extra?.issuer ||
       compareDecimalStrings(destinationAmount.value, requirements.amount) !== 0
     ) {
@@ -339,8 +340,8 @@ export class ExactXrplScheme implements SchemeNetworkClient {
       if (noRippleDirect) {
         throw new Error("tfNoRippleDirect requires explicit Paths");
       }
-    } else if (!isNonEmptyXrplPathSet(transaction.Paths)) {
-      throw new Error("cross-currency Paths must contain at least one non-empty path");
+    } else if (!isValidXrplPathSet(transaction.Paths)) {
+      throw new Error("cross-currency Paths must contain 1-6 paths with 1-8 steps each");
     }
   }
 

@@ -17,7 +17,8 @@ import {
   getXrplTicketSequences,
   invoiceIdToInvoiceIdField,
   isDifferentXrplSourceAsset,
-  isNonEmptyXrplPathSet,
+  isSameXrplCurrency,
+  isValidXrplPathSet,
   resolveAssetTransferMethod,
   simulateSignedTransaction,
   submitSignedTransaction,
@@ -31,6 +32,8 @@ const payTo = "rGsd42GGEq1tJBPQ3Aoj9iyePZbxiX5Nrv";
 const issuer = "rL4JcsJfvkYYAqNhjZ7Gvkh14eF7GXRh3q";
 const invoiceId = "INV-2026-XRPL-001";
 const sourceIssuer = otherWallet.classicAddress;
+const standardUsdHex = "0000000000000000000000005553440000000000";
+const customUsdPrefixHex = "5553440000000000000000000000000000000000";
 
 const baseXrpRequirements: PaymentRequirements = {
   scheme: "exact",
@@ -71,6 +74,11 @@ const crossCurrencyIouRequirements: PaymentRequirements = {
     ...baseIouRequirements.extra,
     crossCurrency: true,
   },
+};
+
+const standardHexCrossCurrencyIouRequirements: PaymentRequirements = {
+  ...crossCurrencyIouRequirements,
+  asset: standardUsdHex,
 };
 
 const crossCurrencyXrpRequirements: PaymentRequirements = {
@@ -204,6 +212,21 @@ describe("XRPL exact utilities", () => {
     expect(
       isDifferentXrplSourceAsset({ currency: "USD", issuer, value: "20" }, destinationIou),
     ).toBe(false);
+    expect(
+      isDifferentXrplSourceAsset({ currency: standardUsdHex, issuer, value: "20" }, destinationIou),
+    ).toBe(false);
+    expect(
+      isDifferentXrplSourceAsset(
+        { currency: standardUsdHex, issuer: sourceIssuer, value: "20" },
+        destinationIou,
+      ),
+    ).toBe(true);
+    expect(
+      isDifferentXrplSourceAsset(
+        { currency: customUsdPrefixHex, issuer, value: "20" },
+        destinationIou,
+      ),
+    ).toBe(true);
     expect(isDifferentXrplSourceAsset("0", destinationIou)).toBe(false);
     expect(
       isDifferentXrplSourceAsset(
@@ -219,10 +242,24 @@ describe("XRPL exact utilities", () => {
     ).toBe(false);
   });
 
-  it("recognizes only non-empty explicit path sets", () => {
-    expect(isNonEmptyXrplPathSet([[{ account: issuer }]])).toBe(true);
-    expect(isNonEmptyXrplPathSet([])).toBe(false);
-    expect(isNonEmptyXrplPathSet([[]])).toBe(false);
+  it("compares only exact standard-layout currency hex as a three-character code", () => {
+    expect(isSameXrplCurrency("USD", standardUsdHex)).toBe(true);
+    expect(isSameXrplCurrency(standardUsdHex, "USD")).toBe(true);
+    expect(isSameXrplCurrency("USD", customUsdPrefixHex)).toBe(false);
+    expect(isSameXrplCurrency("XRP", "0000000000000000000000005852500000000000")).toBe(false);
+  });
+
+  it("enforces explicit PathSet protocol bounds", () => {
+    const step = { account: issuer };
+
+    expect(isValidXrplPathSet([[step]])).toBe(true);
+    expect(isValidXrplPathSet(Array.from({ length: 6 }, () => [step]))).toBe(true);
+    expect(isValidXrplPathSet([Array.from({ length: 8 }, () => step)])).toBe(true);
+    expect(isValidXrplPathSet([])).toBe(false);
+    expect(isValidXrplPathSet([[]])).toBe(false);
+    expect(isValidXrplPathSet([[step], []])).toBe(false);
+    expect(isValidXrplPathSet(Array.from({ length: 7 }, () => [step]))).toBe(false);
+    expect(isValidXrplPathSet([Array.from({ length: 9 }, () => step)])).toBe(false);
   });
 
   it("defaults the asset transfer method to sequence", () => {
@@ -806,6 +843,21 @@ describe("ExactXrplScheme client", () => {
     expect(decoded.DeliverMin).toBeUndefined();
   });
 
+  it("accepts the standard-layout hex form of the destination currency", async () => {
+    const client = new ExactXrplClientScheme(createXrplWalletSigner(payerWallet), {
+      preparePaymentTransaction: async transaction => ({
+        ...(await preparePaymentForTest(transaction)),
+        SendMax: "25000000",
+      }),
+    });
+
+    const result = await client.createPaymentPayload(2, standardHexCrossCurrencyIouRequirements);
+    const decoded = decode(String(result.payload.signedTxBlob)) as Payment;
+
+    expect(decoded.Amount).toEqual({ currency: "USD", issuer, value: "10.5" });
+    expect(decoded.SendMax).toBe("25000000");
+  });
+
   it("creates a cross-currency XRP destination payment with explicit paths", async () => {
     const sourceAmount = { currency: "USD", issuer: sourceIssuer, value: "20" };
     const paths: NonNullable<Payment["Paths"]> = [[{ account: issuer }]];
@@ -839,6 +891,20 @@ describe("ExactXrplScheme client", () => {
     const decoded = decode(String(result.payload.signedTxBlob)) as Payment;
 
     expect(decoded.SendMax).toEqual({ currency: "EUR", issuer: sourceIssuer, value: "0.00001" });
+  });
+
+  it("preserves a custom 160-bit source currency that begins with USD bytes", async () => {
+    const client = new ExactXrplClientScheme(createXrplWalletSigner(payerWallet), {
+      preparePaymentTransaction: async transaction => ({
+        ...(await preparePaymentForTest(transaction)),
+        SendMax: { currency: customUsdPrefixHex, issuer, value: "20" },
+      }),
+    });
+
+    const result = await client.createPaymentPayload(2, crossCurrencyIouRequirements);
+    const decoded = decode(String(result.payload.signedTxBlob)) as Payment;
+
+    expect(decoded.SendMax).toEqual({ currency: customUsdPrefixHex, issuer, value: "20" });
   });
 
   it("requires explicit quote preparation before signing cross-currency payments", async () => {
@@ -877,6 +943,11 @@ describe("ExactXrplScheme client", () => {
       payment => ({ ...payment, SendMax: { currency: "USD", issuer, value: "20" } }),
       "different source asset",
     ],
+    [
+      "same-issue standard-layout hex SendMax",
+      payment => ({ ...payment, SendMax: { currency: standardUsdHex, issuer, value: "20" } }),
+      "different source asset",
+    ],
     ["zero SendMax", payment => ({ ...payment, SendMax: "0" }), "positive SendMax"],
     [
       "DeliverMin",
@@ -896,7 +967,34 @@ describe("ExactXrplScheme client", () => {
     [
       "empty Paths",
       payment => ({ ...payment, SendMax: "25000000", Paths: [] }),
-      "at least one non-empty path",
+      "1-6 paths with 1-8 steps each",
+    ],
+    [
+      "empty sibling Path",
+      payment => ({
+        ...payment,
+        SendMax: "25000000",
+        Paths: [[{ account: sourceIssuer }], []],
+      }),
+      "1-6 paths with 1-8 steps each",
+    ],
+    [
+      "seven Paths",
+      payment => ({
+        ...payment,
+        SendMax: "25000000",
+        Paths: Array.from({ length: 7 }, () => [{ account: sourceIssuer }]),
+      }),
+      "1-6 paths with 1-8 steps each",
+    ],
+    [
+      "nine Path steps",
+      payment => ({
+        ...payment,
+        SendMax: "25000000",
+        Paths: [Array.from({ length: 9 }, () => ({ account: sourceIssuer }))],
+      }),
+      "1-6 paths with 1-8 steps each",
     ],
     [
       "changed destination amount",
@@ -1194,12 +1292,35 @@ describe("ExactXrplScheme facilitator verify", () => {
     });
   });
 
+  it("accepts canonical standard-layout hex destination requirements", async () => {
+    const result = await facilitator.verify(
+      buildPayload(standardHexCrossCurrencyIouRequirements, { SendMax: "25000000" }),
+      standardHexCrossCurrencyIouRequirements,
+    );
+
+    expect(result).toMatchObject({
+      isValid: true,
+      payer: payerWallet.classicAddress,
+    });
+  });
+
   it("accepts an exact XRP destination with an issued-currency source cap", async () => {
     const result = await facilitator.verify(
       buildPayload(crossCurrencyXrpRequirements, {
         SendMax: { currency: "USD", issuer: sourceIssuer, value: "20" },
       }),
       crossCurrencyXrpRequirements,
+    );
+
+    expect(result.isValid).toBe(true);
+  });
+
+  it("accepts a custom 160-bit source issue that begins with USD bytes", async () => {
+    const result = await facilitator.verify(
+      buildPayload(crossCurrencyIouRequirements, {
+        SendMax: { currency: customUsdPrefixHex, issuer, value: "20" },
+      }),
+      crossCurrencyIouRequirements,
     );
 
     expect(result.isValid).toBe(true);
@@ -1257,6 +1378,11 @@ describe("ExactXrplScheme facilitator verify", () => {
       { SendMax: { currency: "USD", issuer, value: "20" } },
       "cross_currency_sendmax",
     ],
+    [
+      "same-issue standard-layout hex SendMax",
+      { SendMax: { currency: standardUsdHex, issuer, value: "20" } },
+      "cross_currency_sendmax",
+    ],
     ["zero SendMax", { SendMax: "0" }, "cross_currency_sendmax"],
     [
       "partial payment",
@@ -1272,6 +1398,22 @@ describe("ExactXrplScheme facilitator verify", () => {
       "tfNoRippleDirect without Paths",
       { SendMax: "25000000", Flags: TF_NO_RIPPLE_DIRECT },
       "default_path_disabled_without_paths",
+    ],
+    [
+      "seven Paths",
+      {
+        SendMax: "25000000",
+        Paths: Array.from({ length: 7 }, () => [{ account: sourceIssuer }]),
+      },
+      "paths_malformed",
+    ],
+    [
+      "nine Path steps",
+      {
+        SendMax: "25000000",
+        Paths: [Array.from({ length: 9 }, () => ({ account: sourceIssuer }))],
+      },
+      "paths_malformed",
     ],
   ])("rejects cross-currency payment with %s", async (_name, overrides, expectedReason) => {
     const result = await facilitator.verify(

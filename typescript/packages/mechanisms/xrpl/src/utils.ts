@@ -342,6 +342,60 @@ export function isPositiveXrplAmount(amount: unknown): amount is NonNullable<Pay
   );
 }
 
+const STANDARD_CURRENCY_HEX_PATTERN = /^0{24}([A-F0-9]{6})0{10}$/;
+const STANDARD_CURRENCY_CODE_PATTERN = /^[A-Z0-9a-z?!@#$%^&*(){}[\]|]{3}$/;
+type XrplIssue = { currency: string; issuer: string };
+
+/**
+ * Returns the canonical identity for an XRPL currency code.
+ *
+ * XRPL serializes a standard three-character code as 12 zero bytes, the
+ * three code bytes, and 5 zero bytes. All other 160-bit values remain custom
+ * currencies and must not be shortened based on printable bytes alone.
+ *
+ * @param currency - Three-character or 160-bit XRPL currency code
+ * @returns Canonical currency identity
+ */
+function canonicalizeXrplCurrency(currency: string): string {
+  const match = STANDARD_CURRENCY_HEX_PATTERN.exec(currency);
+  if (!match) return currency;
+
+  const codeBytes = match[1]!;
+  const code = String.fromCharCode(
+    Number.parseInt(codeBytes.slice(0, 2), 16),
+    Number.parseInt(codeBytes.slice(2, 4), 16),
+    Number.parseInt(codeBytes.slice(4, 6), 16),
+  );
+  if (code === "XRP" || !STANDARD_CURRENCY_CODE_PATTERN.test(code)) return currency;
+  return code;
+}
+
+/**
+ * Compares XRPL currencies using their canonical protocol identity.
+ *
+ * @param left - First currency code
+ * @param right - Second currency code
+ * @returns Whether both values identify the same XRPL currency
+ */
+export function isSameXrplCurrency(left: string, right: string): boolean {
+  return canonicalizeXrplCurrency(left) === canonicalizeXrplCurrency(right);
+}
+
+/**
+ * Compares XRPL issued-currency issues using canonical currency and exact issuer identity.
+ *
+ * @param left - First issued-currency issue
+ * @param left.currency - First issue currency code
+ * @param left.issuer - First issue issuer address
+ * @param right - Second issued-currency issue
+ * @param right.currency - Second issue currency code
+ * @param right.issuer - Second issue issuer address
+ * @returns Whether both values identify the same XRPL issue
+ */
+export function isSameXrplIssue(left: XrplIssue, right: XrplIssue): boolean {
+  return left.issuer === right.issuer && isSameXrplCurrency(left.currency, right.currency);
+}
+
 /**
  * Checks that a positive source cap uses a different asset or issue from the destination.
  *
@@ -360,23 +414,21 @@ export function isDifferentXrplSourceAsset(
   if (!isIssuedCurrencyAmount(destinationAmount)) return false;
   if (typeof sourceAmount === "string") return true;
   if (!isIssuedCurrencyAmount(sourceAmount)) return false;
-  return (
-    sourceAmount.currency !== destinationAmount.currency ||
-    sourceAmount.issuer !== destinationAmount.issuer
-  );
+  return !isSameXrplIssue(sourceAmount, destinationAmount);
 }
 
 /**
- * Checks that an explicit XRPL path set contains at least one non-empty path.
+ * Checks that an explicit XRPL path set satisfies the protocol path bounds.
  *
  * @param paths - Signed Payment Paths field
- * @returns Whether the path set is non-empty and usable
+ * @returns Whether there are 1-6 paths with 1-8 steps in every path
  */
-export function isNonEmptyXrplPathSet(paths: Payment["Paths"]): boolean {
+export function isValidXrplPathSet(paths: Payment["Paths"]): boolean {
   return (
     Array.isArray(paths) &&
-    paths.length > 0 &&
-    paths.some(path => Array.isArray(path) && path.length > 0)
+    paths.length >= 1 &&
+    paths.length <= 6 &&
+    paths.every(path => Array.isArray(path) && path.length >= 1 && path.length <= 8)
   );
 }
 
