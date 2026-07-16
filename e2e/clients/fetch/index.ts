@@ -15,6 +15,8 @@ import { ExactSvmScheme } from "@x402/svm/exact/client";
 import { ExactSvmSchemeV1 } from "@x402/svm/v1";
 import { ExactAptosScheme } from "@x402/aptos/exact/client";
 import { Account, Ed25519PrivateKey, PrivateKey, PrivateKeyVariants } from "@aptos-labs/ts-sdk";
+import { createClientCasperSigner } from "@x402/casper";
+import { ExactCasperScheme } from "@x402/casper/exact/client";
 import { createClientHederaSigner, PrivateKey as HederaPrivateKey } from "@x402/hedera";
 import { ExactHederaScheme } from "@x402/hedera/exact/client";
 import { ExactKeetaScheme } from "@x402/keeta/exact/client";
@@ -65,9 +67,9 @@ const uptoSchemeOptions: UptoEvmSchemeOptions | undefined = process.env.EVM_RPC_
   : undefined;
 const svmSchemeOptions = process.env.SVM_RPC_URL ? { rpcUrl: process.env.SVM_RPC_URL } : undefined;
 
-
 const ccdPrivateKey = process.env.CCD_PRIVATE_KEY;
 const ccdAddress = process.env.CCD_ADDRESS;
+const casperClientPrivateKeyPem = process.env.CASPER_CLIENT_PRIVATE_KEY_PEM;
 /**
  * Parses the TVM private key accepted by e2e env fixtures.
  *
@@ -154,19 +156,19 @@ const tvmPrivateKey = process.env.TVM_PRIVATE_KEY;
 const tvmProvider = (process.env.TVM_PROVIDER || TVM_PROVIDER_TONCENTER).toLowerCase();
 const tvmScheme = tvmPrivateKey
   ? new ExactTvmScheme(
-      toClientTvmSigner(parseTvmKeyPair(tvmPrivateKey), {
-        network: tvmNetwork,
-        provider: tvmProvider,
-        apiKey:
-          tvmProvider === TVM_PROVIDER_TONAPI
-            ? process.env.TONAPI_API_KEY
-            : process.env.TONCENTER_API_KEY,
-        providerBaseUrl:
-          tvmProvider === TVM_PROVIDER_TONAPI
-            ? process.env.TONAPI_BASE_URL
-            : process.env.TONCENTER_BASE_URL,
-      }),
-    )
+    toClientTvmSigner(parseTvmKeyPair(tvmPrivateKey), {
+      network: tvmNetwork,
+      provider: tvmProvider,
+      apiKey:
+        tvmProvider === TVM_PROVIDER_TONAPI
+          ? process.env.TONAPI_API_KEY
+          : process.env.TONCENTER_API_KEY,
+      providerBaseUrl:
+        tvmProvider === TVM_PROVIDER_TONAPI
+          ? process.env.TONAPI_BASE_URL
+          : process.env.TONCENTER_BASE_URL,
+    }),
+  )
   : undefined;
 
 const client = new x402Client()
@@ -189,6 +191,13 @@ if (ccdPrivateKey && ccdAddress) {
       process.env.CCD_GRPC_URL ? { grpcUrl: process.env.CCD_GRPC_URL } : undefined,
     ),
   );
+}
+if (casperClientPrivateKeyPem) {
+  const casperSigner = await createClientCasperSigner(
+    casperClientPrivateKeyPem,
+    process.env.CASPER_CLIENT_PRIVATE_KEY_PEM === 'secp256k1' ? 2 : 1, // Default to ED25519 if not specified
+  );
+  client.register("casper:*", new ExactCasperScheme(casperSigner));
 }
 if (aptosAccount) {
   client.register("aptos:*", new ExactAptosScheme(aptosAccount));

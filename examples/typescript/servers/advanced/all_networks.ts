@@ -12,6 +12,7 @@ import { config } from "dotenv";
 import express from "express";
 import { paymentMiddleware, x402ResourceServer } from "@x402/express";
 import { ExactAvmScheme } from "@x402/avm/exact/server";
+import { ExactCasperScheme } from "@x402/casper/exact/server";
 import { ExactConcordiumScheme } from "@x402/concordium/exact/server";
 import { ExactEvmScheme } from "@x402/evm/exact/server";
 import { ExactHederaScheme } from "@x402/hedera/exact/server";
@@ -29,6 +30,10 @@ config();
 
 // Configuration - optional per network
 const avmAddress = process.env.AVM_ADDRESS as string | undefined;
+const casperAddress = process.env.CASPER_ADDRESS as string | undefined;
+const casperAsset = process.env.CASPER_ASSET as string | undefined;
+const casperTokenName = process.env.CASPER_TOKEN_NAME as string | undefined;
+const casperTokenVersion = process.env.CASPER_TOKEN_VERSION as string | undefined;
 const ccdAddress = process.env.CCD_ADDRESS as string | undefined;
 const evmAddress = process.env.EVM_ADDRESS as `0x${string}` | undefined;
 const hederaAddress = process.env.HEDERA_ACCOUNT_ID as string | undefined;
@@ -41,6 +46,7 @@ const tvmAddress = process.env.TVM_ADDRESS as string | undefined;
 // Validate at least one address is provided
 if (
   !avmAddress &&
+  !casperAddress &&
   !ccdAddress &&
   !evmAddress &&
   !svmAddress &&
@@ -51,7 +57,7 @@ if (
   !tvmAddress
 ) {
   console.error(
-    "❌ At least one of AVM_ADDRESS, CCD_ADDRESS, EVM_ADDRESS, KEETA_ADDRESS, NEAR_ADDRESS, SVM_ADDRESS, STELLAR_ADDRESS, HEDERA_ACCOUNT_ID, or TVM_ADDRESS is required",
+    "❌ At least one of AVM_ADDRESS, CASPER_ADDRESS, CCD_ADDRESS, EVM_ADDRESS, KEETA_ADDRESS, NEAR_ADDRESS, SVM_ADDRESS, STELLAR_ADDRESS, HEDERA_ACCOUNT_ID, or TVM_ADDRESS is required",
   );
   process.exit(1);
 }
@@ -64,6 +70,7 @@ if (!facilitatorUrl) {
 
 // Network configuration
 const AVM_NETWORK = "algorand:SGO1GKSzyE7IEPItTxCByw9x8FmnrCDexi9/cOUJOiI=" as const; // Algorand Testnet
+const CASPER_NETWORK = (process.env.CASPER_NETWORK || "casper:casper-test") as Network; // Casper Testnet
 const CCD_NETWORK = "ccd:4221332d34e1694168c2a0c0b3fd0f27" as const; // Concordium Testnet
 const EVM_NETWORK = "eip155:84532" as const; // Base Sepolia
 const HEDERA_NETWORK = "hedera:testnet" as const; // Hedera Testnet
@@ -89,6 +96,21 @@ if (avmAddress) {
     price: "$0.001",
     network: AVM_NETWORK,
     payTo: avmAddress,
+  });
+}
+if (casperAddress && casperAsset && casperTokenName && casperTokenVersion) {
+  accepts.push({
+    scheme: "exact",
+    price: {
+      amount: process.env.CASPER_AMOUNT || "1",
+      asset: casperAsset,
+      extra: {
+        name: casperTokenName,
+        version: casperTokenVersion,
+      },
+    },
+    network: CASPER_NETWORK,
+    payTo: casperAddress,
   });
 }
 if (ccdAddress) {
@@ -170,6 +192,9 @@ const server = new x402ResourceServer(facilitatorClient);
 if (avmAddress) {
   server.register(AVM_NETWORK, new ExactAvmScheme());
 }
+if (casperAddress && casperAsset && casperTokenName && casperTokenVersion) {
+  server.register(CASPER_NETWORK, new ExactCasperScheme());
+}
 if (ccdAddress) {
   server.register(CCD_NETWORK, new ExactConcordiumScheme());
 }
@@ -233,6 +258,9 @@ app.listen(port, () => {
   console.log(`🚀 All Networks Server listening at http://localhost:${port}`);
   if (avmAddress) {
     console.log(`   AVM: ${avmAddress} on ${AVM_NETWORK}`);
+  }
+  if (casperAddress) {
+    console.log(`   Casper: ${casperAddress} on ${CASPER_NETWORK}`);
   }
   if (ccdAddress) {
     console.log(`   CCD: ${ccdAddress} on ${CCD_NETWORK}`);

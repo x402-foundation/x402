@@ -11,6 +11,8 @@
 import * as KeetaNet from "@keetanetwork/keetanet-client";
 import { toFacilitatorAvmSigner } from "@x402/avm";
 import { ExactAvmScheme } from "@x402/avm/exact/facilitator";
+import { createFacilitatorCasperSigner } from "@x402/casper";
+import { ExactCasperScheme } from "@x402/casper/exact/facilitator";
 import { ExactConcordiumScheme } from "@x402/concordium/exact/facilitator";
 import {
   CONCORDIUM_TESTNET_CAIP2,
@@ -78,6 +80,9 @@ const PORT = process.env.PORT || "4022";
 
 // Configuration - optional per network (alphabetic order)
 const avmPrivateKey = process.env.AVM_PRIVATE_KEY as string | undefined;
+const casperFacilitatorPrivateKeyPem = process.env
+  .CASPER_FACILITATOR_PRIVATE_KEY_PEM as string | undefined;
+const casperRpcUrl = process.env.CASPER_RPC_URL as string | undefined;
 const ccdFacilitatorPrivateKey = process.env.CCD_FACILITATOR_PRIVATE_KEY as
   | string
   | undefined;
@@ -104,6 +109,7 @@ const hederaPrivateKey = process.env.HEDERA_PRIVATE_KEY;
 // Validate at least one private key is provided
 if (
   !avmPrivateKey &&
+  !casperFacilitatorPrivateKeyPem &&
   !(ccdFacilitatorPrivateKey && ccdFacilitatorAddress) &&
   !evmPrivateKey &&
   !keetaMnemonic &&
@@ -114,13 +120,15 @@ if (
   !(hederaAccountId && hederaPrivateKey)
 ) {
   console.error(
-    "❌ At least one of AVM_PRIVATE_KEY, CCD_FACILITATOR_PRIVATE_KEY + CCD_FACILITATOR_ADDRESS, EVM_PRIVATE_KEY, KEETA_MNEMONIC, NEAR_RELAYER_ACCOUNT_ID + NEAR_RELAYER_PRIVATE_KEY, SVM_PRIVATE_KEY, STELLAR_PRIVATE_KEY, TVM_PRIVATE_KEY, or HEDERA_ACCOUNT_ID + HEDERA_PRIVATE_KEY is required",
+    "❌ At least one of AVM_PRIVATE_KEY, CASPER_FACILITATOR_PRIVATE_KEY_PEM, CCD_FACILITATOR_PRIVATE_KEY + CCD_FACILITATOR_ADDRESS, EVM_PRIVATE_KEY, KEETA_MNEMONIC, NEAR_RELAYER_ACCOUNT_ID + NEAR_RELAYER_PRIVATE_KEY, SVM_PRIVATE_KEY, STELLAR_PRIVATE_KEY, TVM_PRIVATE_KEY, or HEDERA_ACCOUNT_ID + HEDERA_PRIVATE_KEY is required",
   );
   process.exit(1);
 }
 
 // Network configuration (alphabetic order)
 const AVM_NETWORK = "algorand:SGO1GKSzyE7IEPItTxCByw9x8FmnrCDexi9/cOUJOiI="; // Algorand Testnet
+const CASPER_NETWORK = (process.env.CASPER_NETWORK ||
+  "casper:casper-test") as Network; // Casper Testnet
 const CCD_NETWORK = "ccd:4221332d34e1694168c2a0c0b3fd0f27"; // Concordium Testnet
 const EVM_NETWORK = "eip155:84532"; // Base Sepolia
 const HEDERA_NETWORK = "hedera:testnet"; // Hedera Testnet
@@ -156,6 +164,24 @@ if (avmPrivateKey) {
   const avmSigner = toFacilitatorAvmSigner(avmPrivateKey);
   console.info(`AVM Facilitator account: ${avmSigner.getAddresses()[0]}`);
   facilitator.register(AVM_NETWORK, new ExactAvmScheme(avmSigner));
+}
+
+// Register Casper scheme if private key PEM is provided.
+if (casperFacilitatorPrivateKeyPem) {
+  const casperSigner = await createFacilitatorCasperSigner(
+    casperFacilitatorPrivateKeyPem,
+    process.env.CASPER_FACILITATOR_PRIVATE_KEY_ALGORITHM === 'secp256k1' ? 2 : 1, // Default to ED25519 if not specified,
+    casperRpcUrl ? { [CASPER_NETWORK]: casperRpcUrl } : undefined,
+    {
+      getBalance: async () => 10n ** 30n,
+      getAuthorizationState: async () => "unused",
+      assertTransferWithAuthorizationSupported: async () => { },
+    },
+  );
+  facilitator.register(CASPER_NETWORK, new ExactCasperScheme(casperSigner));
+  console.info(
+    `Casper Facilitator account: ${casperSigner.getAddresses(CASPER_NETWORK)[0]}`,
+  );
 }
 
 // Register Concordium scheme if private key + address are provided (recommended).

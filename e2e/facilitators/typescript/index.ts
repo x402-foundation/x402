@@ -23,6 +23,8 @@ import { toFacilitatorAptosSigner } from "@x402/aptos";
 import { ExactAptosScheme } from "@x402/aptos/exact/facilitator";
 import { toFacilitatorAvmSigner } from "@x402/avm";
 import { ExactAvmScheme } from "@x402/avm/exact/facilitator";
+import { createFacilitatorCasperSigner } from "@x402/casper";
+import { ExactCasperScheme as ExactCasperFacilitatorScheme } from "@x402/casper/exact/facilitator";
 import { x402Facilitator } from "@x402/core/facilitator";
 import {
   Network,
@@ -37,7 +39,11 @@ import { ExactEvmScheme } from "@x402/evm/exact/facilitator";
 import { UptoEvmScheme } from "@x402/evm/upto/facilitator";
 import { ExactEvmSchemeV1 } from "@x402/evm/exact/v1/facilitator";
 import { NETWORKS as EVM_V1_NETWORKS } from "@x402/evm/v1";
-import { BAZAAR, extractDiscoveryInfo, type DiscoveryResource } from "@x402/extensions/bazaar";
+import {
+  BAZAAR,
+  extractDiscoveryInfo,
+  type DiscoveryResource,
+} from "@x402/extensions/bazaar";
 import {
   EIP2612_GAS_SPONSORING,
   createErc20ApprovalGasSponsoringExtension,
@@ -61,7 +67,11 @@ import {
   createEd25519Signer,
   type FacilitatorStellarSigner,
 } from "@x402/stellar";
-import { toFacilitatorKeetaSigner, KEETA_TESTNET_CAIP2, FacilitatorKeetaSigner } from "@x402/keeta";
+import {
+  toFacilitatorKeetaSigner,
+  KEETA_TESTNET_CAIP2,
+  FacilitatorKeetaSigner,
+} from "@x402/keeta";
 import { ExactKeetaScheme } from "@x402/keeta/exact/facilitator";
 import { ExactStellarScheme } from "@x402/stellar/exact/facilitator";
 import {
@@ -79,7 +89,10 @@ import {
   type FacilitatorHighloadV3Signer,
 } from "@x402/tvm";
 import { ExactTvmScheme } from "@x402/tvm/exact/facilitator";
-import { createFacilitatorNearSigner, type FacilitatorNearSignerConfig } from "@x402/near";
+import {
+  createFacilitatorNearSigner,
+  type FacilitatorNearSignerConfig,
+} from "@x402/near";
 import { ExactNearScheme as ExactNearFacilitatorScheme } from "@x402/near/exact/facilitator";
 import * as KeetaNet from "@keetanetwork/keetanet-client";
 import crypto from "crypto";
@@ -107,6 +120,7 @@ const EVM_NETWORK = process.env.EVM_NETWORK || "eip155:84532";
 const SVM_NETWORK =
   process.env.SVM_NETWORK || "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1";
 const APTOS_NETWORK = process.env.APTOS_NETWORK || "aptos:2";
+const CASPER_NETWORK = (process.env.CASPER_NETWORK || "casper:casper-test") as Network;
 const AVM_NETWORK =
   process.env.AVM_NETWORK ||
   "algorand:SGO1GKSzyE7IEPItTxCByw9x8FmnrCDexi9/cOUJOiI=";
@@ -123,9 +137,12 @@ const EVM_RPC_URL = process.env.EVM_RPC_URL;
 const SVM_RPC_URL = process.env.SVM_RPC_URL;
 const AVM_RPC_URL = process.env.AVM_RPC_URL;
 const APTOS_RPC_URL = process.env.APTOS_RPC_URL;
+const CASPER_RPC_URL = process.env.CASPER_RPC_URL;
 const HEDERA_NODE_URL = process.env.HEDERA_NODE_URL;
 const STELLAR_RPC_URL = process.env.STELLAR_RPC_URL;
-const TVM_PROVIDER = (process.env.TVM_PROVIDER || TVM_PROVIDER_TONCENTER).toLowerCase();
+const TVM_PROVIDER = (
+  process.env.TVM_PROVIDER || TVM_PROVIDER_TONCENTER
+).toLowerCase();
 
 // Map CAIP-2 network IDs to viem chains
 function getEvmChain(network: string): Chain {
@@ -141,6 +158,7 @@ function getEvmChain(network: string): Chain {
 console.log(`🌐 EVM Network: ${EVM_NETWORK}`);
 console.log(`🌐 SVM Network: ${SVM_NETWORK}`);
 console.log(`🌐 Aptos Network: ${APTOS_NETWORK}`);
+console.log(`🌐 Casper Network: ${CASPER_NETWORK}`);
 console.log(`🌐 AVM Network: ${AVM_NETWORK}`);
 console.log(`🌐 Hedera Network: ${HEDERA_NETWORK}`);
 console.log(`🌐 Keeta Network: ${KEETA_NETWORK}`);
@@ -152,6 +170,7 @@ if (EVM_RPC_URL) console.log(`🌐 EVM RPC URL: ${EVM_RPC_URL}`);
 if (SVM_RPC_URL) console.log(`🌐 SVM RPC URL: ${SVM_RPC_URL}`);
 if (AVM_RPC_URL) console.log(`🌐 AVM RPC URL: ${AVM_RPC_URL}`);
 if (APTOS_RPC_URL) console.log(`🌐 Aptos RPC URL: ${APTOS_RPC_URL}`);
+if (CASPER_RPC_URL) console.log(`🌐 Casper RPC URL: ${CASPER_RPC_URL}`);
 if (HEDERA_NODE_URL) console.log(`🌐 Hedera Node URL: ${HEDERA_NODE_URL}`);
 if (STELLAR_RPC_URL) console.log(`🌐 Stellar RPC URL: ${STELLAR_RPC_URL}`);
 console.log(`🌐 TVM Provider: ${TVM_PROVIDER}`);
@@ -176,7 +195,8 @@ console.info(`EVM Facilitator account: ${evmAccount.address}`);
 
 // Dedicated receiver authorizer for the batch-settlement scheme (falls back to EVM_PRIVATE_KEY)
 const receiverAuthorizerPrivateKey =
-  process.env.EVM_RECEIVER_AUTHORIZER_PRIVATE_KEY ?? process.env.EVM_PRIVATE_KEY;
+  process.env.EVM_RECEIVER_AUTHORIZER_PRIVATE_KEY ??
+  process.env.EVM_PRIVATE_KEY;
 const authorizerAccount = privateKeyToAccount(
   receiverAuthorizerPrivateKey as `0x${string}`,
 );
@@ -206,6 +226,25 @@ if (process.env.APTOS_PRIVATE_KEY) {
   aptosAccount = Account.fromPrivateKey({ privateKey: aptosPrivateKey });
   console.info(
     `Aptos Facilitator account: ${aptosAccount.accountAddress.toStringLong()}`,
+  );
+}
+
+let casperSigner:
+  | Awaited<ReturnType<typeof createFacilitatorCasperSigner>>
+  | undefined;
+if (process.env.CASPER_FACILITATOR_PRIVATE_KEY_PEM) {
+  casperSigner = await createFacilitatorCasperSigner(
+    process.env.CASPER_FACILITATOR_PRIVATE_KEY_PEM,
+    process.env.CASPER_FACILITATOR_PRIVATE_KEY_ALGORITHM === 'secp256k1' ? 2 : 1, // Default to ED25519 if not specified
+    CASPER_RPC_URL ? { [CASPER_NETWORK]: CASPER_RPC_URL } : undefined,
+    {
+      getBalance: async () => 10n ** 30n,
+      getAuthorizationState: async () => "unused",
+      assertTransferWithAuthorizationSupported: async () => { },
+    },
+  );
+  console.info(
+    `Casper Facilitator account: ${casperSigner.getAddresses(CASPER_NETWORK)[0]}`,
   );
 }
 
@@ -245,10 +284,14 @@ if (process.env.HEDERA_ACCOUNT_ID && process.env.HEDERA_PRIVATE_KEY) {
 let keetaSigner: FacilitatorKeetaSigner | undefined;
 if (process.env.KEETA_FACILITATOR_MNEMONIC) {
   const keetaAccount = KeetaNet.lib.Account.fromSeed(
-    await KeetaNet.lib.Account.seedFromPassphrase(process.env.KEETA_FACILITATOR_MNEMONIC),
+    await KeetaNet.lib.Account.seedFromPassphrase(
+      process.env.KEETA_FACILITATOR_MNEMONIC,
+    ),
     0,
   );
-  console.info(`Keeta Facilitator account: ${keetaAccount.publicKeyString.toString()}`);
+  console.info(
+    `Keeta Facilitator account: ${keetaAccount.publicKeyString.toString()}`,
+  );
   keetaSigner = toFacilitatorKeetaSigner([keetaAccount]);
 }
 
@@ -265,24 +308,32 @@ if (process.env.STELLAR_PRIVATE_KEY) {
 // Initialize the TVM highload signer from private key (optional)
 let tvmSigner: FacilitatorHighloadV3Signer | undefined;
 if (process.env.TVM_PRIVATE_KEY) {
-  const tvmConfig = HighloadV3Config.fromPrivateKey(process.env.TVM_PRIVATE_KEY, {
-    provider: TVM_PROVIDER,
-    apiKey:
-      TVM_PROVIDER === TVM_PROVIDER_TONAPI
-        ? process.env.TONAPI_API_KEY
-        : process.env.TONCENTER_API_KEY,
-    providerBaseUrl:
-      TVM_PROVIDER === TVM_PROVIDER_TONAPI
-        ? process.env.TONAPI_BASE_URL
-        : process.env.TONCENTER_BASE_URL,
-  });
+  const tvmConfig = HighloadV3Config.fromPrivateKey(
+    process.env.TVM_PRIVATE_KEY,
+    {
+      provider: TVM_PROVIDER,
+      apiKey:
+        TVM_PROVIDER === TVM_PROVIDER_TONAPI
+          ? process.env.TONAPI_API_KEY
+          : process.env.TONCENTER_API_KEY,
+      providerBaseUrl:
+        TVM_PROVIDER === TVM_PROVIDER_TONAPI
+          ? process.env.TONAPI_BASE_URL
+          : process.env.TONCENTER_BASE_URL,
+    },
+  );
   tvmSigner = toFacilitatorTvmSigner({ [TVM_NETWORK]: tvmConfig });
-  console.info(`TVM Facilitator account: ${tvmSigner.getAddressesForNetwork(TVM_NETWORK)[0]}`);
+  console.info(
+    `TVM Facilitator account: ${tvmSigner.getAddressesForNetwork(TVM_NETWORK)[0]}`,
+  );
 }
 
 // Initialize the NEAR facilitator (relayer) signer from account + key (optional)
 let nearSigner: ReturnType<typeof createFacilitatorNearSigner> | undefined;
-if (process.env.NEAR_RELAYER_ACCOUNT_ID && process.env.NEAR_RELAYER_PRIVATE_KEY) {
+if (
+  process.env.NEAR_RELAYER_ACCOUNT_ID &&
+  process.env.NEAR_RELAYER_PRIVATE_KEY
+) {
   nearSigner = createFacilitatorNearSigner({
     relayers: [
       {
@@ -293,18 +344,27 @@ if (process.env.NEAR_RELAYER_ACCOUNT_ID && process.env.NEAR_RELAYER_PRIVATE_KEY)
     ],
     rpcUrls: NEAR_RPC_URL ? { [NEAR_NETWORK]: NEAR_RPC_URL } : undefined,
   });
-  console.info(`NEAR Facilitator relayer: ${process.env.NEAR_RELAYER_ACCOUNT_ID}`);
+  console.info(
+    `NEAR Facilitator relayer: ${process.env.NEAR_RELAYER_ACCOUNT_ID}`,
+  );
 }
 
-let concordiumSigner: ReturnType<typeof toConcordiumFacilitatorSigner> | undefined;
-if (process.env.CCD_FACILITATOR_PRIVATE_KEY && process.env.CCD_FACILITATOR_ADDRESS) {
+let concordiumSigner:
+  | ReturnType<typeof toConcordiumFacilitatorSigner>
+  | undefined;
+if (
+  process.env.CCD_FACILITATOR_PRIVATE_KEY &&
+  process.env.CCD_FACILITATOR_ADDRESS
+) {
   const [host, port] = parseGrpcUrl(CCD_GRPC_URL);
   concordiumSigner = toConcordiumFacilitatorSigner(
     process.env.CCD_FACILITATOR_ADDRESS,
     process.env.CCD_FACILITATOR_PRIVATE_KEY,
     { host, port, useTls: true },
   );
-  console.info(`CCD Facilitator account: ${process.env.CCD_FACILITATOR_ADDRESS} on ${CCD_NETWORK} (private key)`);
+  console.info(
+    `CCD Facilitator account: ${process.env.CCD_FACILITATOR_ADDRESS} on ${CCD_NETWORK} (private key)`,
+  );
 }
 
 // Create a Viem client with both wallet and public capabilities
@@ -404,7 +464,8 @@ function extractPayloadAction(paymentPayload: PaymentPayload): string {
 }
 
 // Minimal ABI fragment for reading channel state from the BatchSettlement contract
-const BATCH_SETTLEMENT_ADDRESS = "0x4020e07E964De72a79367828c9C6140fcaE00003" as const;
+const BATCH_SETTLEMENT_ADDRESS =
+  "0x4020e07E964De72a79367828c9C6140fcaE00003" as const;
 const channelsAbi = [
   {
     type: "function",
@@ -432,7 +493,11 @@ async function readChannelBalance(channelId: `0x${string}`): Promise<bigint> {
 async function waitForChannelDepositConfirmed(
   channelId: `0x${string}`,
   expectedMinBalance: bigint,
-  options: { initialDelayMs?: number; maxDelayMs?: number; timeoutMs?: number } = {},
+  options: {
+    initialDelayMs?: number;
+    maxDelayMs?: number;
+    timeoutMs?: number;
+  } = {},
 ): Promise<void> {
   const initialDelayMs = options.initialDelayMs ?? 250;
   const maxDelayMs = options.maxDelayMs ?? 4_000;
@@ -472,8 +537,12 @@ async function waitForChannelDepositConfirmed(
 async function waitForBatchSettlementDepositConfirmed(
   extra: Record<string, unknown> | undefined,
 ): Promise<void> {
-  const channelId = typeof extra?.channelId === "string" ? (extra.channelId as `0x${string}`) : undefined;
-  const balanceStr = typeof extra?.balance === "string" ? extra.balance : undefined;
+  const channelId =
+    typeof extra?.channelId === "string"
+      ? (extra.channelId as `0x${string}`)
+      : undefined;
+  const balanceStr =
+    typeof extra?.balance === "string" ? extra.balance : undefined;
 
   if (!channelId || !balanceStr) {
     console.warn(
@@ -486,7 +555,9 @@ async function waitForBatchSettlementDepositConfirmed(
   try {
     expectedMinBalance = BigInt(balanceStr);
   } catch {
-    console.warn(`⏳ deposit confirm: unparseable balance ${balanceStr}, skipping wait`);
+    console.warn(
+      `⏳ deposit confirm: unparseable balance ${balanceStr}, skipping wait`,
+    );
     return;
   }
 
@@ -530,6 +601,12 @@ if (aptosSigner) {
     new ExactAptosScheme(aptosSigner),
   );
 }
+if (casperSigner) {
+  facilitator.register(
+    CASPER_NETWORK as Network,
+    new ExactCasperFacilitatorScheme(casperSigner),
+  );
+}
 if (hederaSigner) {
   facilitator.register(
     HEDERA_NETWORK as Network,
@@ -537,7 +614,10 @@ if (hederaSigner) {
   );
 }
 if (keetaSigner) {
-  facilitator.register(KEETA_NETWORK as Network, new ExactKeetaScheme(keetaSigner, console));
+  facilitator.register(
+    KEETA_NETWORK as Network,
+    new ExactKeetaScheme(keetaSigner, console),
+  );
 }
 if (stellarSigner) {
   facilitator.register(
@@ -549,7 +629,10 @@ if (tvmSigner) {
   facilitator.register(TVM_NETWORK as Network, new ExactTvmScheme(tvmSigner));
 }
 if (nearSigner) {
-  facilitator.register(NEAR_NETWORK as Network, new ExactNearFacilitatorScheme(nearSigner));
+  facilitator.register(
+    NEAR_NETWORK as Network,
+    new ExactNearFacilitatorScheme(nearSigner),
+  );
 }
 if (concordiumSigner) {
   facilitator.register(
@@ -557,7 +640,6 @@ if (concordiumSigner) {
     new ExactConcordiumScheme({ signer: concordiumSigner }),
   );
 }
-
 
 const erc20ApprovalSigner = {
   ...evmSigner,
@@ -632,13 +714,13 @@ facilitator
       verifiedPayments.set(paymentHash, Date.now());
 
       // Hook 2: Extract and catalog bazaar discovery info
-        const discovered = extractDiscoveryInfo(
-          context.paymentPayload,
-          context.requirements,
-        );
-        if (discovered) {
-          const action =
-            "toolName" in discovered ? discovered.toolName : discovered.method;
+      const discovered = extractDiscoveryInfo(
+        context.paymentPayload,
+        context.requirements,
+      );
+      if (discovered) {
+        const action =
+          "toolName" in discovered ? discovered.toolName : discovered.method;
         if (!action) {
           return;
         }
@@ -877,7 +959,9 @@ app.get("/health", (req, res) => {
     avmNetwork: avmSigner ? AVM_NETWORK : "(not configured)",
     aptosNetwork: aptosAccount ? APTOS_NETWORK : "(not configured)",
     hederaNetwork: hederaSigner ? HEDERA_NETWORK : "(not configured)",
-    keetaNetwork: process.env.KEETA_FACILITATOR_MNEMONIC ? KEETA_NETWORK : "(not configured)",
+    keetaNetwork: process.env.KEETA_FACILITATOR_MNEMONIC
+      ? KEETA_NETWORK
+      : "(not configured)",
     stellarNetwork: stellarSigner ? STELLAR_NETWORK : "(not configured)",
     nearNetwork: nearSigner ? NEAR_NETWORK : "(not configured)",
     ccdNetwork: concordiumSigner ? CCD_NETWORK : "(not configured)",

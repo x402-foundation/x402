@@ -1,0 +1,227 @@
+import casperSdk from "casper-js-sdk";
+import type { KeyAlgorithm as KeyAlgorithmType, PrivateKey as PrivateKeyType } from "casper-js-sdk";
+import type { Network } from "@x402/core/types";
+import { NetworkConfigs, type NetworkConfig } from "./constants";
+import type {
+  CasperAuthorizationState,
+  CasperBalanceParams,
+  CasperPreflightParams,
+  ClientCasperSigner,
+  FacilitatorCasperSigner,
+} from "./types";
+import { chainNameFromNetwork } from "./utils";
+
+const { HttpHandler, KeyAlgorithm, PrivateKey, RpcClient } = casperSdk;
+
+const ACCOUNT_HASH_PREFIX = "00";
+
+type RpcUrlConfig = string | { defaultRpcUrl?: string } | Record<string, string>;
+
+type PreflightHooks = {
+  getBalance?: (params: CasperBalanceParams) => Promise<bigint>;
+  getAuthorizationState?: (params: CasperPreflightParams) => Promise<CasperAuthorizationState>;
+  assertTransferWithAuthorizationSupported?: (params: {
+    network: Network;
+    asset: string;
+  }) => Promise<void>;
+};
+
+/**
+ * Pause execution for the given number of milliseconds.
+ *
+ * @param ms - Milliseconds to sleep.
+ * @returns Promise that resolves after the delay.
+ */
+function sleep(ms: number): Promise<void> {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+/**
+ * Resolve an RPC URL for a network.
+ *
+ * @param network - CAIP-2 network identifier.
+ * @param config - Optional RPC URL config.
+ * @returns RPC URL.
+ */
+function resolveRpcUrl(network: Network, config?: RpcUrlConfig): string {
+  if (typeof config === "string") {
+    return config;
+  }
+  if (config) {
+    if ("defaultRpcUrl" in config && config.defaultRpcUrl) {
+      return config.defaultRpcUrl;
+    }
+    const rpcUrls = config as Record<string, string | undefined>;
+    const rpcUrl = rpcUrls[network];
+    if (rpcUrl) {
+      return rpcUrl;
+    }
+  }
+  return NetworkConfigs[network]?.rpcUrl ?? "";
+}
+
+/**
+ * Create a client signer from a Casper private key.
+ *
+ * @param privateKey - Casper private key.
+ * @returns Client signer.
+ */
+export function toClientCasperSigner(privateKey: PrivateKeyType): ClientCasperSigner {
+  const accountAddress = `${ACCOUNT_HASH_PREFIX}${privateKey.publicKey.accountHash().toHex()}`;
+  const publicKey = privateKey.publicKey.toHex();
+
+  return {
+    accountAddress: () => accountAddress,
+    publicKey: () => publicKey,
+    signEIP712: async digest => privateKey.signAndAddAlgorithmBytes(digest),
+  };
+}
+
+/**
+ * Create a client signer from a PEM private-key file.
+ *
+ * @param pemPath - Path to the PEM-encoded private key.
+ * @param algorithm - Key algorithm.
+ * @returns Client signer.
+ */
+export async function createClientCasperSigner(
+  pemPath: string,
+  algorithm: KeyAlgorithmType = KeyAlgorithm.ED25519,
+): Promise<ClientCasperSigner> {
+  const { readFile } = await import("fs/promises");
+  const pemContent = await readFile(pemPath, "utf-8");
+  return toClientCasperSigner(PrivateKey.fromPem(pemContent, algorithm));
+}
+
+/**
+ * Create a facilitator signer from a Casper private key.
+ *
+ * @param privateKey - Casper private key.
+ * @param rpcUrlConfig - RPC URL config.
+ * @param preflightHooks - Optional live preflight hooks.
+ * @returns Facilitator signer.
+ */
+export async function toFacilitatorCasperSigner(
+  privateKey: PrivateKeyType,
+  rpcUrlConfig?: RpcUrlConfig,
+  preflightHooks: PreflightHooks = {},
+): Promise<FacilitatorCasperSigner> {
+  const rpcClients = new Map<string, InstanceType<typeof RpcClient>>();
+
+  const getNetworkConfig = async (network: Network): Promise<NetworkConfig> => {
+    const rpcUrl = resolveRpcUrl(network, rpcUrlConfig);
+    if (!rpcUrl) {
+      throw new Error(`unsupported Casper network: ${network}`);
+    }
+    return {
+      chainName: NetworkConfigs[network]?.chainName ?? chainNameFromNetwork(network),
+      rpcUrl,
+    };
+  };
+
+  const getRpcClient = async (network: Network): Promise<InstanceType<typeof RpcClient>> => {
+    const networkConfig = await getNetworkConfig(network);
+    const existing = rpcClients.get(networkConfig.rpcUrl);
+    if (existing) {
+      return existing;
+    }
+    const client = new RpcClient(new HttpHandler(networkConfig.rpcUrl));
+    rpcClients.set(networkConfig.rpcUrl, client);
+    return client;
+  };
+
+  return {
+    getNetworkConfig,
+
+    getAddresses: () => [privateKey.publicKey.accountHash().toHex()],
+
+    getPublicKeyHex: () => privateKey.publicKey.toHex(),
+
+    getBalance: async params => {
+      if (!preflightHooks.getBalance) {
+        throw new Error("Casper balance preflight is not configured");
+      }
+      return preflightHooks.getBalance(params);
+    },
+
+    getAuthorizationState: async params => {
+      if (!preflightHooks.getAuthorizationState) {
+        throw new Error("Casper authorization-state preflight is not configured");
+      }
+      return preflightHooks.getAuthorizationState(params);
+    },
+
+    assertTransferWithAuthorizationSupported: async params => {
+      if (!preflightHooks.assertTransferWithAuthorizationSupported) {
+        throw new Error("Casper contract preflight is not configured");
+      }
+      await preflightHooks.assertTransferWithAuthorizationSupported(params);
+    },
+
+    signTransaction: async transaction => {
+      transaction.sign(privateKey);
+    },
+
+    putTransaction: async (network, transaction) => {
+      const rpcClient = await getRpcClient(network);
+      try {
+        const result = await rpcClient.putTransaction(transaction);
+        return result.transactionHash.toHex();
+      } catch (error: unknown) {
+        const sourceErr =
+          typeof error === "object" && error !== null && "sourceErr" in error
+            ? ` - ${JSON.stringify(error.sourceErr)}`
+            : "";
+        const message = error instanceof Error ? `${error.message}${sourceErr}` : String(error);
+        throw new Error(`transaction submission failed: ${message}`);
+      }
+    },
+
+    waitForTransaction: async (network, transactionHash) => {
+      const rpcClient = await getRpcClient(network);
+      const start = Date.now();
+      const timeoutMs = 60_000;
+      const pollIntervalMs = 3_000;
+
+      while (Date.now() - start < timeoutMs) {
+        const info = await rpcClient.getTransactionByTransactionHash(transactionHash);
+        const execInfo = info.executionInfo;
+        if (execInfo && execInfo.blockHeight !== 0 && execInfo.executionResult) {
+          const errorMessage = execInfo.executionResult.errorMessage;
+          if (errorMessage) {
+            throw new Error(`transaction execution failed: ${errorMessage}`);
+          }
+          return;
+        }
+
+        await sleep(pollIntervalMs);
+      }
+
+      throw new Error(`Timed out waiting for transaction ${transactionHash}`);
+    },
+  };
+}
+
+/**
+ * Create a facilitator signer from a PEM private-key file.
+ *
+ * @param pemPath - Path to the PEM-encoded private key.
+ * @param algorithm - Key algorithm.
+ * @param rpcUrlConfig - RPC URL config.
+ * @param preflightHooks - Optional live preflight hooks.
+ * @returns Facilitator signer.
+ */
+export async function createFacilitatorCasperSigner(
+  pemPath: string,
+  algorithm: KeyAlgorithmType = KeyAlgorithm.ED25519,
+  rpcUrlConfig?: RpcUrlConfig,
+  preflightHooks: PreflightHooks = {},
+): Promise<FacilitatorCasperSigner> {
+  const { readFile } = await import("fs/promises");
+  const pemContent = await readFile(pemPath, "utf-8");
+  return toFacilitatorCasperSigner(
+    PrivateKey.fromPem(pemContent, algorithm),
+    rpcUrlConfig,
+    preflightHooks,
+  );
+}

@@ -2,7 +2,19 @@
   "name": "fetch",
   "type": "client",
   "language": "typescript",
-  "protocolFamilies": ["evm", "svm", "avm", "aptos", "hedera", "keeta", "near", "stellar", "tvm", "ccd"],
+  "protocolFamilies": [
+    "evm",
+    "svm",
+    "avm",
+    "aptos",
+    "casper",
+    "hedera",
+    "keeta",
+    "near",
+    "stellar",
+    "tvm",
+    "ccd"
+  ],
   "x402Versions": [1, 2],
   "schemes": ["exact", "upto", "batch-settlement"],
   "evm": {
@@ -13,6 +25,7 @@
     "required": ["EVM_PRIVATE_KEY", "SVM_PRIVATE_KEY", "RESOURCE_SERVER_URL", "ENDPOINT_PATH"],
     "optional": [
       "AVM_PRIVATE_KEY",
+      "CASPER_CLIENT_PRIVATE_KEY_PEM",
       "APTOS_PRIVATE_KEY",
       "CCD_PRIVATE_KEY",
       "CCD_ADDRESS",

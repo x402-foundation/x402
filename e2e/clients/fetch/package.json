@@ -18,6 +18,7 @@
     "@ton/crypto": "^3.3.0",
     "@x402/aptos": "workspace:*",
     "@x402/avm": "workspace:*",
+    "@x402/casper": "workspace:*",
     "@x402/concordium": "workspace:*",
     "@x402/core": "workspace:*",
     "@x402/evm": "workspace:*",

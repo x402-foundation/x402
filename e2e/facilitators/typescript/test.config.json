@@ -7,6 +7,7 @@
     "svm",
     "avm",
     "aptos",
+    "casper",
     "hedera",
     "keeta",
     "stellar",
@@ -14,35 +15,24 @@
     "near",
     "ccd"
   ],
-  "x402Versions": [
-    1,
-    2
-  ],
-  "schemes": [
-    "exact",
-    "upto",
-    "batch-settlement"
-  ],
+  "x402Versions": [1, 2],
+  "schemes": ["exact", "upto", "batch-settlement"],
   "extensions": [
     "bazaar",
     "eip2612GasSponsoring",
     "erc20ApprovalGasSponsoring"
   ],
   "evm": {
-    "assetTransferMethods": [
-      "eip3009",
-      "permit2"
-    ]
+    "assetTransferMethods": ["eip3009", "permit2"]
   },
   "environment": {
-    "required": [
-      "PORT",
-      "EVM_PRIVATE_KEY",
-      "SVM_PRIVATE_KEY"
-    ],
+    "required": ["PORT", "EVM_PRIVATE_KEY", "SVM_PRIVATE_KEY"],
     "optional": [
       "AVM_PRIVATE_KEY",
       "APTOS_PRIVATE_KEY",
+      "CASPER_FACILITATOR_PRIVATE_KEY_PEM",
+      "CASPER_NETWORK",
+      "CASPER_RPC_URL",
       "CCD_NETWORK",
       "CCD_GRPC_URL",
       "HEDERA_ACCOUNT_ID",
