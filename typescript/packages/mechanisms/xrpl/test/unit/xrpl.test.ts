@@ -34,6 +34,8 @@ const invoiceId = "INV-2026-XRPL-001";
 const sourceIssuer = otherWallet.classicAddress;
 const standardUsdHex = "0000000000000000000000005553440000000000";
 const customUsdPrefixHex = "5553440000000000000000000000000000000000";
+const angleBracketCurrency = "A>B";
+const angleBracketCurrencyHex = "000000000000000000000000413E420000000000";
 
 const baseXrpRequirements: PaymentRequirements = {
   scheme: "exact",
@@ -79,6 +81,11 @@ const crossCurrencyIouRequirements: PaymentRequirements = {
 const standardHexCrossCurrencyIouRequirements: PaymentRequirements = {
   ...crossCurrencyIouRequirements,
   asset: standardUsdHex,
+};
+
+const angleBracketCrossCurrencyIouRequirements: PaymentRequirements = {
+  ...crossCurrencyIouRequirements,
+  asset: angleBracketCurrency,
 };
 
 const crossCurrencyXrpRequirements: PaymentRequirements = {
@@ -245,6 +252,7 @@ describe("XRPL exact utilities", () => {
   it("compares only exact standard-layout currency hex as a three-character code", () => {
     expect(isSameXrplCurrency("USD", standardUsdHex)).toBe(true);
     expect(isSameXrplCurrency(standardUsdHex, "USD")).toBe(true);
+    expect(isSameXrplCurrency(angleBracketCurrency, angleBracketCurrencyHex)).toBe(true);
     expect(isSameXrplCurrency("USD", customUsdPrefixHex)).toBe(false);
     expect(isSameXrplCurrency("XRP", "0000000000000000000000005852500000000000")).toBe(false);
   });
@@ -858,6 +866,21 @@ describe("ExactXrplScheme client", () => {
     expect(decoded.SendMax).toBe("25000000");
   });
 
+  it("accepts an angle-bracket currency whose wire form decodes as standard-layout hex", async () => {
+    const client = new ExactXrplClientScheme(createXrplWalletSigner(payerWallet), {
+      preparePaymentTransaction: async transaction => ({
+        ...(await preparePaymentForTest(transaction)),
+        SendMax: "25000000",
+      }),
+    });
+
+    const result = await client.createPaymentPayload(2, angleBracketCrossCurrencyIouRequirements);
+    const decoded = decode(String(result.payload.signedTxBlob)) as Payment;
+
+    expect(decoded.Amount).toEqual({ currency: angleBracketCurrencyHex, issuer, value: "10.5" });
+    expect(decoded.SendMax).toBe("25000000");
+  });
+
   it("creates a cross-currency XRP destination payment with explicit paths", async () => {
     const sourceAmount = { currency: "USD", issuer: sourceIssuer, value: "20" };
     const paths: NonNullable<Payment["Paths"]> = [[{ account: issuer }]];
@@ -1296,6 +1319,18 @@ describe("ExactXrplScheme facilitator verify", () => {
     const result = await facilitator.verify(
       buildPayload(standardHexCrossCurrencyIouRequirements, { SendMax: "25000000" }),
       standardHexCrossCurrencyIouRequirements,
+    );
+
+    expect(result).toMatchObject({
+      isValid: true,
+      payer: payerWallet.classicAddress,
+    });
+  });
+
+  it("accepts an angle-bracket requirement matching its standard-layout wire hex", async () => {
+    const result = await facilitator.verify(
+      buildPayload(angleBracketCrossCurrencyIouRequirements, { SendMax: "25000000" }),
+      angleBracketCrossCurrencyIouRequirements,
     );
 
     expect(result).toMatchObject({

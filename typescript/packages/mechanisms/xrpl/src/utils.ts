@@ -343,7 +343,7 @@ export function isPositiveXrplAmount(amount: unknown): amount is NonNullable<Pay
 }
 
 const STANDARD_CURRENCY_HEX_PATTERN = /^0{24}([A-F0-9]{6})0{10}$/;
-const STANDARD_CURRENCY_CODE_PATTERN = /^[A-Z0-9a-z?!@#$%^&*(){}[\]|]{3}$/;
+const STANDARD_CURRENCY_CODE_PATTERN = /^[A-Z0-9a-z?!@#$%^&*<>(){}[\]|]{3}$/;
 type XrplIssue = { currency: string; issuer: string };
 
 /**
