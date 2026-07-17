@@ -738,7 +738,7 @@ Verifies the cryptographic signature and recovers the signer address.
 verifySIWxSignature(payload, {
   evmVerifier?: EVMMessageVerifier;  // For smart wallet support
 })
-// Returns: { valid: boolean; address?: string; error?: string }
+// Returns: { isValid: true; payer: string } | { isValid: false; invalidReason: SIWxVerifyCode; invalidMessage: string }
 ```
 
 ### `createSIWxPayload(serverInfo, signer)`
