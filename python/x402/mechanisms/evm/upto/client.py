@@ -32,11 +32,11 @@ from ..utils import (
 
 
 def _wrap_if_local_account(signer: Any) -> ClientEvmSigner:
-    """Auto-wrap eth_account LocalAccount in EthAccountSigner if needed."""
+    """Auto-wrap an eth_account-compatible signer (any BaseAccount) in EthAccountSigner."""
     try:
-        from eth_account.signers.local import LocalAccount
+        from eth_account.signers.base import BaseAccount
 
-        if isinstance(signer, LocalAccount):
+        if isinstance(signer, BaseAccount):
             from ..signers import EthAccountSigner
 
             return EthAccountSigner(signer)
