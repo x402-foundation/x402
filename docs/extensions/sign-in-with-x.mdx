@@ -723,7 +723,7 @@ validateSIWxMessage(payload, new URL('https://api.example.com'), {
   maxAge?: number;                    // Max age for issuedAt (default: 5 min)
   checkNonce?: (nonce) => boolean;    // Custom nonce validation
 })
-// Returns: { valid: boolean; error?: string }
+// Returns: { isValid: true } | { isValid: false; invalidReason: SIWxValidationCode; invalidMessage: string }
 ```
 
 Go: `ValidateMessage(payload, *url.URL, ValidationOptions)`
