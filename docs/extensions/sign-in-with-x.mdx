@@ -409,20 +409,20 @@ For custom implementations, you can use the low-level functions directly:
         payload,
         new URL('https://api.example.com')
       );
-      if (!validation.valid) {
-        return { error: validation.error };
+      if (!validation.isValid) {
+        return { error: validation.invalidMessage, code: validation.invalidReason };
       }
 
       // Verify signature and recover address
       const verification = await verifySIWxSignature(payload);
-      if (!verification.valid) {
-        return { error: verification.error };
+      if (!verification.isValid) {
+        return { error: verification.invalidMessage, code: verification.invalidReason };
       }
 
-      // verification.address is the verified wallet
+      // verification.payer is the verified wallet address
       // Grant access for auth-only routes or if wallet has paid
       const isAuthOnly = await checkIfAuthOnlyRoute(request);
-      const hasPaid = await checkPaymentHistory(verification.address);
+      const hasPaid = await checkPaymentHistory(verification.payer);
       if (isAuthOnly || hasPaid) {
         // Grant access
       }
