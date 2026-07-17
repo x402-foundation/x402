@@ -334,6 +334,101 @@ cleanup authority.
 
 ### Phase 3 - Verification (before serving the resource)
 
+#### Client-supplied `openTransaction` acceptance policy
+
+The facilitator adds its `feePayer` signature to transaction bytes constructed
+by the client. Before signing, it MUST statically inspect the complete message
+and enforce the rules in this section. Simulation or eventual onchain failure
+MUST NOT replace these checks: either occurs only after the facilitator's
+signature has already authorized the transaction.
+
+These rules apply only to the client-supplied `openTransaction`. The settlement
+transaction is constructed by the facilitator and is governed by Phase 4.
+
+##### Message and signer rules
+
+- The message MAY be legacy or version `0`, but it MUST NOT contain Address
+  Lookup Table lookups. The canonical `open` fits entirely in static account
+  keys, and rejecting lookups ensures that every program and account is visible
+  before the facilitator signs.
+- The transaction fee payer MUST equal `extra.feePayer`.
+- The complete required-signer set MUST equal the distinct addresses in
+  `{ payload.from, extra.feePayer }`. No other signature may be required.
+- The `payload.from` signature MUST be present and valid before the facilitator
+  signs. The facilitator MUST add or replace only its own `extra.feePayer`
+  signature slot.
+- Outside the canonical `open` account positions defined below,
+  `extra.feePayer` MUST NOT appear in any instruction's account list or as an
+  invoked program. If two requirements-bound roles intentionally have the same
+  address (for example `feePayer == receiverAuthorizer`), each occurrence in
+  its prescribed `open` position is permitted.
+
+##### Top-level instruction layout
+
+The top-level instructions MUST consist only of the following ordered regions:
+
+1. An optional Compute Budget prefix containing at most one
+   `SetComputeUnitLimit` instruction and at most one `SetComputeUnitPrice`
+   instruction. If both are present, `SetComputeUnitLimit` MUST precede
+   `SetComputeUnitPrice`.
+2. Exactly one payment-channels `open` instruction.
+3. An optional suffix of at most three Lighthouse instructions, each invoking
+   `L2TExMFKdjpN9kozasaurPirfHy9P8sbXoAN1qA3S95`.
+
+No other top-level instruction or program is allowed. In particular, another
+payment-channels instruction, an SPL Memo instruction, an arbitrary wallet
+program, or a duplicate `open` MUST cause rejection.
+
+When present, Compute Budget instructions:
+
+- MUST invoke `ComputeBudget111111111111111111111111111111`;
+- MUST use only discriminator `2` (`SetComputeUnitLimit`, exactly 5 data bytes)
+  or discriminator `3` (`SetComputeUnitPrice`, exactly 9 data bytes);
+- MUST set a compute-unit limit no greater than `400000`; and
+- MUST set a compute-unit price no greater than `5000000` microlamports per
+  compute unit (5 lamports per compute unit).
+
+Lighthouse instructions are allowed only for Phantom/Solflare transaction
+assertions and MUST NOT reference `extra.feePayer` as an account. A sponsor MAY
+apply a stricter local policy, including rejecting all optional instructions,
+but MUST NOT admit instructions outside this allowlist or relax the limits
+above.
+
+##### Canonical `open` instruction
+
+The `open` instruction MUST invoke the canonical payment-channels program for
+the selected network, use discriminator `1`, contain exactly the following 14
+account positions in order, and contain no remaining accounts:
+
+| Position | Account role | Required binding | Required privileges |
+|---:|---|---|---|
+| 0 | `payer` | `payload.from` | writable, signer |
+| 1 | `rent_payer` | `extra.feePayer` | writable, signer |
+| 2 | `payee` | `extra.feePayer` | read-only role |
+| 3 | `mint` | `requirements.asset` | read-only |
+| 4 | `authorized_signer` | `extra.receiverAuthorizer` | read-only role |
+| 5 | `channel` | `payload.channelId` | writable |
+| 6 | `payer_token_account` | ATA derived from `payload.from`, `asset`, and `extra.tokenProgram` | writable |
+| 7 | `channel_token_account` | ATA derived from `payload.channelId`, `asset`, and `extra.tokenProgram` | writable |
+| 8 | `token_program` | `extra.tokenProgram` | read-only |
+| 9 | `system_program` | `11111111111111111111111111111111` | read-only |
+| 10 | `rent` | `SysvarRent111111111111111111111111111111111` | read-only |
+| 11 | `associated_token_program` | `ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL` | read-only |
+| 12 | `event_authority` | canonical event-authority PDA for the payment-channels program | read-only |
+| 13 | `self_program` | canonical payment-channels program id | read-only |
+
+Solana message compilation deduplicates equal public keys and unions their
+privileges. Therefore a read-only role at position 2 or 4 MAY be effectively
+writable and/or a signer when it equals another requirements-bound role (as
+`payee == rent_payer` always does in this profile); that expected privilege
+union MUST NOT itself cause rejection. No account outside the writable roles in
+the table (including an intentional equal-key union) may be writable.
+
+The facilitator MUST fully decode the canonical `open` instruction data, reject
+truncated data or trailing bytes, and enforce every field binding defined in
+section 4.2, including the exact deposit, salt, open slot, grace period,
+distribution, and rederived channel PDA.
+
 The server/facilitator MUST, in order:
 
 1. Confirm `payload.maxAmount` equals verification-phase `requirements.amount`.
@@ -343,14 +438,9 @@ The server/facilitator MUST, in order:
    transaction, `extra.receiverAuthorizer` is the server's configured receiver
    authorizer, and `extra.withdrawDelay` is an integer greater than zero.
 4. Confirm the channel is open:
-   - If it does not yet exist, validate that `openTransaction` targets the
-     canonical payment-channels program, names
-     `payee == rent_payer == extra.feePayer` with `rent_payer` marked as a
-     required signer, names `authorized_signer == extra.receiverAuthorizer`,
-     encodes `grace_period == extra.withdrawDelay`, encodes
-     `open_slot == payload.openSlot`, seals the single-entry 100% `payTo`
-     distribution, and is otherwise valid for the requirements; then co-sign,
-     broadcast, and wait until the channel account is confirmed `Open`.
+   - If it does not yet exist, validate `openTransaction` against the complete
+     acceptance policy above; then co-sign, broadcast, and wait until the
+     channel account is confirmed `Open`.
    - After the channel is open, confirm `channel.deposit == maxAmount` (exact,
      not `>=`: `top_up` can raise an open channel's deposit, so equality keeps
      the x402 ceiling enforced), `channel.status == Open`,
@@ -536,8 +626,9 @@ Standard x402 codes apply. Scheme-specific:
   current program version.
 - **Client gaslessness.** The client supplies the stablecoin deposit and signs
   `open`; `feePayer` signs the transaction and funds SOL fees/rent. The
-  verifier MUST ensure the client-signed `open` cannot debit `feePayer` beyond
-  fees and the intended channel/escrow rent.
+  verifier MUST enforce the Phase 3 `openTransaction` acceptance policy so the
+  client-signed transaction cannot debit `feePayer` beyond fees and the
+  intended channel/escrow rent.
 - **Client escape hatch.** `withdrawDelay` is server-defined and fixed at
   `open`. If the server does not settle, the payer can start forced close with
   `request_close`, wait the grace period, then recover unspent deposit through
