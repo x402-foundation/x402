@@ -41,9 +41,9 @@ While implementation details vary by network, facilitators MUST enforce security
 ### Starknet
 
 - Facilitator safety: the submitting executor MUST come from facilitator configuration, never client input, and MUST NOT be the payer or the recipient.
-- Transfer correctness: the signed SNIP-9 OutsideExecution MUST contain exactly one call — `transfer` on `requirements.asset` — with the u256 amount equal to `requirements.amount` exactly.
+- Transfer correctness: the signed SNIP-9 OutsideExecution MUST contain exactly one call — `transfer` on `requirements.asset` with calldata `[payTo, amount_low, amount_high]` — and the u256 amount MUST equal `requirements.amount` exactly.
 - Signature validity: the SNIP-12 hash MUST be computed from the facilitator's own canonical reconstruction of the typed data and validate via SNIP-6 `is_valid_signature`.
-- Caller binding and expiry: `Caller` MUST be `ANY_CALLER` or the known submitting address (`extra.caller` when advertised); `Execute Before` MUST cover the advertised `maxTimeoutSeconds` window within a skew margin.
+- Caller binding and expiry: `Caller` MUST be `ANY_CALLER` or the known submitting address, and MUST equal `extra.caller` when advertised; `Execute Before` MUST cover the advertised `maxTimeoutSeconds` window (within a skew margin) at verification, with a minimum remaining window at settlement.
 - Replay protection: the SNIP-9 nonce MUST be unused at verification; it is consumed on-chain at execution.
 - Simulation verification: MUST simulate the settlement and fail closed unless it shows exactly one asset `Transfer` from payer to `payTo` for the exact amount.
 
