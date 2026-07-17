@@ -792,7 +792,9 @@ Optionally implement `hasUsedNonce` and `recordNonce` to prevent replay attacks 
 
 ### Signature Verification Fails
 
-**Problem:** `verifySIWxSignature` returns `valid: false`.
+**Problem:** `verifySIWxSignature` returns `{ isValid: false }`.
+
+Check `invalidReason` for the specific failure code (e.g., `invalid_siwx_signature`, `invalid_siwx_unsupported_chain`).
 
 **Solutions:**
 - Ensure the message was signed with the correct wallet
@@ -802,7 +804,9 @@ Optionally implement `hasUsedNonce` and `recordNonce` to prevent replay attacks 
 
 ### Message Validation Fails
 
-**Problem:** `validateSIWxMessage` returns `valid: false`.
+**Problem:** `validateSIWxMessage` returns `{ isValid: false }`.
+
+Check `invalidReason` for the specific failure code (e.g., `invalid_siwx_expired`, `invalid_siwx_domain_mismatch`).
 
 **Solutions:**
 - Check that `issuedAt` is recent (within `maxAge`, default 5 minutes)
