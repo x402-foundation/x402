@@ -274,7 +274,7 @@ class ExactEvmScheme:
         domain, types, primary_type, message = build_typed_data_for_signing(
             authorization,
             chain_id,
-            requirements.asset,
+            extra.get("verifyingContract", requirements.asset),
             name,
             version,
         )

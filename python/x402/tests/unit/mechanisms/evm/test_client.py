@@ -297,3 +297,117 @@ class TestBaseAccountAutoWrap:
         assert "signature" in payload
         assert payload["signature"].startswith("0x")
         assert len(payload["signature"]) > 2  # not just "0x"
+
+
+class TestSigningDomainVerifyingContract:
+    """The EIP-712 domain must be signed against extra.verifyingContract when
+    the seller provides one, not against the asset (token) address.
+
+    Regression test: `_sign_authorization` passed `requirements.asset` as the
+    `verifying_contract` to `build_typed_data_for_signing` unconditionally,
+    ignoring `extra["verifyingContract"]`. This is correct for a plain ERC-3009
+    token domain (where the token contract IS the verifier), but wrong for any
+    seller settling through a different verifying contract than the token
+    itself — e.g. Circle Gateway's `GatewayWalletBatched` batch-settlement
+    domain, which specifies its own `verifyingContract` distinct from the USDC
+    token address. Signing against the wrong contract produces a signature
+    that is well-formed but invalid once the real verifier recomputes the
+    domain separator, since a different domain changes the EIP-712 hash.
+
+    Found and confirmed against a real x402 v2 GatewayWalletBatched payment
+    requirement: the seller rejected the payment as PAYMENT_INVALID_SIGNATURE
+    until the domain used `extra["verifyingContract"]` instead of `asset`.
+    """
+
+    def _signed_domain_matches(self, payload, requirements, verifying_contract):
+        """True if `payload`'s signature recovers against the given verifying_contract."""
+        from eth_account.messages import _hash_eip191_message, encode_typed_data
+        from eth_keys import KeyAPI
+        from eth_utils import to_checksum_address
+
+        auth = payload["authorization"]
+        domain = {
+            "name": requirements.extra["name"],
+            "version": requirements.extra.get("version", "1"),
+            "chainId": int(requirements.network.split(":")[1]),
+            "verifyingContract": verifying_contract,
+        }
+        types = {
+            "TransferWithAuthorization": [
+                {"name": "from", "type": "address"},
+                {"name": "to", "type": "address"},
+                {"name": "value", "type": "uint256"},
+                {"name": "validAfter", "type": "uint256"},
+                {"name": "validBefore", "type": "uint256"},
+                {"name": "nonce", "type": "bytes32"},
+            ]
+        }
+        message = {
+            "from": auth["from"],
+            "to": auth["to"],
+            "value": int(auth["value"]),
+            "validAfter": int(auth["validAfter"]),
+            "validBefore": int(auth["validBefore"]),
+            "nonce": bytes.fromhex(auth["nonce"].removeprefix("0x")),
+        }
+        signable = encode_typed_data(domain_data=domain, message_types=types, message_data=message)
+        digest = _hash_eip191_message(signable)
+        signature = bytes.fromhex(payload["signature"].removeprefix("0x"))
+        r, s, v = signature[:32], signature[32:64], signature[64]
+        rec_id = v - 27 if v >= 27 else v
+        pubkey = (
+            KeyAPI()
+            .Signature(vrs=(rec_id, int.from_bytes(r, "big"), int.from_bytes(s, "big")))
+            .recover_public_key_from_msg_hash(digest)
+        )
+        return to_checksum_address(pubkey.to_address()) == to_checksum_address(auth["from"])
+
+    def test_signs_against_custom_verifying_contract_when_provided(self):
+        """A seller-provided extra.verifyingContract must be used for signing,
+        not the asset (token) address."""
+        account = Account.create()
+        client = ExactEvmClientScheme(signer=account)
+        network = "eip155:8453"
+        gateway_contract = "0x77777777Dcc4d5A8B6E418Fd04D8997ef11000eE"
+        usdc_asset = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913"
+
+        requirements = PaymentRequirements(
+            scheme="exact",
+            network=network,
+            asset=usdc_asset,
+            amount="8000",
+            pay_to="0x0987654321098765432109876543210987654321",
+            max_timeout_seconds=3600,
+            extra={
+                "name": "GatewayWalletBatched",
+                "version": "1",
+                "verifyingContract": gateway_contract,
+            },
+        )
+
+        payload = client.create_payment_payload(requirements)
+
+        assert self._signed_domain_matches(payload, requirements, gateway_contract)
+        assert not self._signed_domain_matches(payload, requirements, usdc_asset)
+
+    def test_falls_back_to_asset_when_no_verifying_contract_given(self):
+        """Without extra.verifyingContract, the asset address is still used
+        (unchanged behavior for plain token EIP-3009 domains)."""
+        account = Account.create()
+        client = ExactEvmClientScheme(signer=account)
+        network = "eip155:8453"
+        usdc_asset = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913"
+
+        requirements = PaymentRequirements(
+            scheme="exact",
+            network=network,
+            asset=usdc_asset,
+            amount="500000",
+            pay_to="0x0987654321098765432109876543210987654321",
+            max_timeout_seconds=3600,
+            extra={"name": "USD Coin", "version": "2"},
+        )
+
+        payload = client.create_payment_payload(requirements)
+
+        assert self._signed_domain_matches(payload, requirements, usdc_asset)
