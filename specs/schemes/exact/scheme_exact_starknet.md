@@ -341,7 +341,7 @@ Facilitators SHOULD keep a short-lived cache keyed by `(payload.from, message.No
 3. Evict entries once `Execute Before + skewMargin` has passed, after which the authorization can no longer execute even with sequencer-timestamp lag.
 4. The key intentionally covers any payload sharing the nonce — only one of them can ever execute on-chain.
 
-The pre-broadcast dedup cache is an optimization only; the SNIP-9 nonce remains the authoritative replay protection. Independently of that optimization, every facilitator MUST track nonces whose settlement outcome is unresolved (`settlement_pending`) until resolved on-chain or expired — settlement step 4 depends on it. A per-process cache does not protect horizontally scaled facilitators — those need a shared store, or must accept the residual race (safe on-chain; only gas is at stake).
+The pre-broadcast dedup cache is an optimization only; the SNIP-9 nonce remains the authoritative replay protection. Independently of that optimization, settlement step 4 requires the duplicate-settlement guard to be held for nonces whose outcome is unresolved (`settlement_pending`) until resolved on-chain or expired; that requirement is normative in step 4. A per-process cache does not protect horizontally scaled facilitators — those need a shared store, or must accept the residual race (safe on-chain; only gas is at stake).
 
 ## Appendix
 
