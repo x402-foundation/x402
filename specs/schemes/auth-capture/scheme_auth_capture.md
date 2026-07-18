@@ -75,6 +75,18 @@ Two absolute-timestamp deadlines govern the payment lifecycle (network-specific 
 | Refundable | No                 | Yes (both paths)                                                      |
 | Fee system | None               | Configurable (min/max bounds, client-signed)                          |
 
+## Security Considerations
+
+1. **Capture margin before `captureDeadline`**: In the two-phase path, reclaim becomes available to the client the moment `captureDeadline` passes, so a capture initiated near the deadline races both the client's reclaim and its own transaction latency — a capture that lands after the deadline reverts and the escrow returns to the client even though the resource was already delivered. CaptureAuthorizers should treat `captureDeadline − margin` as the effective deadline, with the margin sized to cover capture-transaction latency, any batching cadence, and clock skew. This matters most for the periodic-capture use case, where the final capture naturally drifts toward the end of the window.
+
+2. **CaptureAuthorizer liveness is settlement liveness**: Funds reach the receiver only if the captureAuthorizer acts inside the capture window. If it is unavailable for the remainder of the window, the client reclaims and the receiver bears the loss for resources already delivered; in the single-shot path the same outage instead blocks refunds, shifting the risk to the client. `captureDeadline` should be sized with authorizer downtime in mind, and receivers should capture promptly after delivery rather than deferring to the end of the window.
+
+3. **CaptureAuthorizer compromise and settlement finality**: The captureAuthorizer can void before capture and refund after it, until `refundDeadline`. A compromised authorizer — or one colluding with a payer — can therefore return already-settled funds to the client after the resource was delivered. Receivers should treat `refundDeadline`, not capture, as the moment of settlement finality and price that exposure window accordingly; using a contract (arbiter, multisig) rather than an EOA as the captureAuthorizer reduces single-key risk. Fee parameters are a second lever: with `feeRecipient` unset, a compromised authorizer may direct up to `maxFeeBps` of every capture to an address of its choice, so clients should keep `maxFeeBps` tight and pin `feeRecipient` where the fee model allows.
+
+4. **Delivery before on-chain authorization re-opens the serve/settle race**: Escrow protects the receiver against the payer invalidating funds after delivery — but only once `authorize()` (or `charge()`) is confirmed on-chain. A server that delivers the resource on successful verification alone (signature check + simulation) is exposed to the same race as `exact`'s verify-then-settle flow: balances or allowances can move between simulation and settlement so that collection fails after the resource is gone. Servers wanting escrow-grade safety should deliver only after settlement confirmation.
+
+5. **Operation-level idempotency**: The payment nonce is consumed on-chain, so a duplicate authorization is rejected — but capture, void, and refund are separately triggered operations, and their transport-level retries are not covered by that nonce. Facilitator APIs exposing these operations should define an idempotency key per operation and replay the original outcome for repeats, rather than surfacing a revert that tempts callers into blind retries. This matters most for partial-capture billing, where several captures legitimately share one authorization.
+
 ## Appendix
 
 Network-specific implementation details (contracts, signature formats, verification logic) are in per-network documents: `scheme_auth_capture_evm.md` (EVM).
