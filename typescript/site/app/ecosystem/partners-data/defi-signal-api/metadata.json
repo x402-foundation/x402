@@ -1,0 +1,7 @@
+{
+  "name": "DeFi Signal API",
+  "description": "Pay-per-call real-time DeFi data API. Morpho vault stats, undercollateralized borrowers, PoolTogether prize timing, AAVE health factors, and perpetual funding rates. No signup or subscription — pay fractions of a cent per call in USDC on Base.",
+  "logoUrl": "/logos/defi-signal-api.png",
+  "websiteUrl": "http://138.201.204.97:3748/",
+  "category": "Services & Endpoints"
+}
