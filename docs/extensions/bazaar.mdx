@@ -45,14 +45,14 @@ After processing a payment that includes the `bazaar` extension, facilitators **
 **Example (success):**
 
 ```
-EXTENSION-RESPONSES: eyJiYXphYXIiOnsic3RhdHVzIjoic3VjY2VzcyJ9fQ==
+EXTENSION-RESPONSES: [REDACTED]==
 ```
 *(base64 of `{"bazaar":{"status":"success"}}`)*
 
 **Example (rejected):**
 
 ```
-EXTENSION-RESPONSES: eyJiYXphYXIiOnsic3RhdHVzIjoicmVqZWN0ZWQiLCJyZWplY3RlZFJlYXNvbiI6ImluZm8gZmFpbGVkIHNjaGVtYSB2YWxpZGF0aW9uIn19
+EXTENSION-RESPONSES: [REDACTED]
 ```
 *(base64 of `{"bazaar":{"status":"rejected","rejectedReason":"info failed schema validation"}}`)*
 
@@ -897,3 +897,17 @@ A: No, only x402-compatible endpoints can be listed. See our [Quickstart for Sel
 
 **Q: What are MCP tools and how do they work with Bazaar?**
 A: MCP (Model Context Protocol) tools are AI-agent-friendly interfaces that can be discovered and paid for through x402. When listing an MCP tool, use the MCP Bazaar discovery helper and include the tool name (`toolName`) and input schema. The unique identifier for MCP tools is the combination of the resource URL and tool name, since multiple tools can be served from a single MCP endpoint.
+
+### Troubleshooting: My Endpoint Isn't Appearing in Discovery
+
+A common seller experience is an endpoint with working payments and confirmed on-chain settlements that still never appears in `/discovery/resources`. Facilitator behavior varies; the checks below reflect the widely used CDP facilitator's indexing behavior as observed and confirmed in the issues linked at the end.
+
+1. **Your resource must answer a paymentless probe with HTTP 402.** Indexers verify a resource by probing its URL with no payment header and an empty body, and only index resources that respond with a `402` and a valid payment-requirements body. If your server runs input validation before the payment check (returning `400`), serves a free tier to unauthenticated callers (returning `200`), or only registers a handler for one HTTP method (returning `405` to the probe), the resource will not be indexed even though real settlements succeed. The fix is to run the payment check before input validation and return the 402 envelope to any paymentless request on the resource URL. A production seller in issue #1982 went from not-indexed to indexed roughly an hour after reordering exactly this.
+
+2. **x402Version 1 sellers: discovery metadata is only read from `accepts[].outputSchema`.** For v1 responses, the indexer's normalizer reads the request/response schema information exclusively from an `outputSchema` object on each entry in `accepts` (with `input` describing the request — `type`, `method`, body shape — and `output` describing the response). Metadata placed anywhere else (for example a custom field under `extra`) is silently ignored, so the endpoint may index with no usable schema or fail validation. v2 sellers should use the `extensions.bazaar.info` structure shown earlier in this document.
+
+3. **How to verify indexing.** The discovery list endpoint is publicly readable, so you can check for your resource directly after your first settled payment. Per-settlement, the `EXTENSION-RESPONSES` header documented above is the immediate signal: `"rejected"` includes a reason you can act on, but note that `"processing"` means accepted-for-async-cataloging, not a guarantee that a record will materialize — sellers have reported settlements returning `"processing"` with no record appearing (issues #2814, #2821). If that happens, re-check items 1 and 2 before spending on more settlements.
+
+4. **Indexes can drop inactive endpoints.** Discovery services may apply a rolling activity window, dropping resources with no recent settlements. If a previously indexed endpoint disappears despite still working, recent payment activity (or the regression tracked in #2840) is the first thing to check.
+
+If you've checked all of the above and still can't determine why your resource isn't indexed, the community-built validator at [bazaar-validate.vercel.app](https://bazaar-validate.vercel.app) (linked by CDP staff in #1982) probes an endpoint and diagnoses these failure modes automatically. For current status on these behaviors, see the related issues: [#1982](https://github.com/x402-foundation/x402/issues/1982), [#2156](https://github.com/x402-foundation/x402/issues/2156), [#2162](https://github.com/x402-foundation/x402/issues/2162), [#2814](https://github.com/x402-foundation/x402/issues/2814), [#2821](https://github.com/x402-foundation/x402/issues/2821), [#2840](https://github.com/x402-foundation/x402/issues/2840).
