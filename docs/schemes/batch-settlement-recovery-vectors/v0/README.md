@@ -9,8 +9,10 @@ Each JSON file describes a single recovery scenario as a sequence of `(client re
 | File | Scenario | Recovery outcome |
 | --- | --- | --- |
 | `happy-path.json` | Stale local cumulative | Single retry succeeds |
-| `loop-guard.json` | Retry also returns corrective 402 | Client emits hard error (`PERSISTENT_STALE`) |
-| `cas-conflict.json` | Concurrent same-channel requests, one wins | Loser recovers via single retry, tagged separately for telemetry |
+| `invalid-corrective-state.json` | Onchain claimed exceeds server cumulative | Client emits hard error (`INVALID_CORRECTIVE_STATE`) without retry |
+| `loop-guard.json` | Retry returns corrective 402 with an advanced cumulative | Client emits hard error (`PERSISTENT_STALE`) |
+| `loop-guard-unchanged.json` | Retry returns corrective 402 with an unchanged cumulative | Client emits the same hard error (`PERSISTENT_STALE`) |
+| `cas-conflict.json` | Concurrent same-channel requests, one wins | Loser recovers via single retry; CAS is an optional suspected cause |
 
 ## Vector schema
 
@@ -59,4 +61,4 @@ This directory is `v0/`. Breaking changes to the schema (new top-level fields, r
 
 ## Why vectors, not just spec prose
 
-Spec prose tells implementers *what* the recovery contract is; the vectors fix *exactly* what each wire payload looks like, what state transitions occur, and what the client must do after each step. Two SDKs implementing the same prose can diverge in edge-case interpretation (is `totalClaimed > chargedCumulativeAmount` valid? does a `cas_conflict` telemetry label apply when `chargedCumulativeAmount` is unchanged?). Two SDKs implementing the same vectors converge by construction.
+Spec prose tells implementers *what* the recovery contract is; the vectors fix *exactly* what each wire payload looks like, what state transitions occur, and what the client must do after each step. Two SDKs implementing the same prose can diverge in edge-case interpretation (is `totalClaimed > chargedCumulativeAmount` valid? does the loop guard apply when the second `chargedCumulativeAmount` is unchanged? can a client infer a CAS conflict from a wire-identical corrective response?). Two SDKs implementing the same vectors converge by construction.

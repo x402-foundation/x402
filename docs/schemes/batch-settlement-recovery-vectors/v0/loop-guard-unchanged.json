@@ -1,0 +1,88 @@
+{
+  "scenario": "loop-guard-unchanged",
+  "description": "The corrected retry receives another corrective 402 with the same chargedCumulativeAmount. The attempt-based loop guard must emit PERSISTENT_STALE and stop.",
+  "channel": {
+    "channelId": "0x1111111111111111111111111111111111111111111111111111111111111111",
+    "domain": {
+      "name": "x402 Batch Settlement",
+      "version": "1",
+      "chainId": 84532,
+      "verifyingContract": "0x4020074e9dF2ce1deE5A9C1b5c3f541D02a10003"
+    }
+  },
+  "initialState": {
+    "onchainTotalClaimed": "0",
+    "serverChargedCumulative": "100",
+    "clientLocalCumulative": "0",
+    "comment": "The first corrective is valid and the client reconstructs a voucher against it, but the server rejects that corrected voucher without advancing its cumulative. This points to voucher reconstruction, signature, or server verification failure rather than ordinary state drift."
+  },
+  "steps": [
+    {
+      "step": 1,
+      "actor": "client",
+      "action": "POST a paid request with a voucher signed against stale local cumulative 0.",
+      "request": {
+        "voucher": {
+          "channelId": "0x1111111111111111111111111111111111111111111111111111111111111111",
+          "maxClaimableAmount": "10",
+          "signature": "<placeholder>"
+        },
+        "requestCharge": "10"
+      }
+    },
+    {
+      "step": 2,
+      "actor": "server",
+      "action": "Return corrective 402 with chargedCumulativeAmount = 100.",
+      "response": {
+        "status": 402,
+        "extra": {
+          "channelState": {
+            "channelId": "0x1111111111111111111111111111111111111111111111111111111111111111",
+            "balance": "1000",
+            "totalClaimed": "0",
+            "chargedCumulativeAmount": "100"
+          }
+        }
+      }
+    },
+    {
+      "step": 3,
+      "actor": "client",
+      "action": "Verify totalClaimed onchain, update local cumulative to 100, sign maxClaimableAmount = 110, and perform the single allowed retry.",
+      "request": {
+        "voucher": {
+          "channelId": "0x1111111111111111111111111111111111111111111111111111111111111111",
+          "maxClaimableAmount": "110",
+          "signature": "<placeholder>"
+        },
+        "requestCharge": "10"
+      }
+    },
+    {
+      "step": 4,
+      "actor": "server",
+      "action": "Return another corrective 402 with chargedCumulativeAmount still equal to 100.",
+      "response": {
+        "status": 402,
+        "extra": {
+          "channelState": {
+            "channelId": "0x1111111111111111111111111111111111111111111111111111111111111111",
+            "balance": "1000",
+            "totalClaimed": "0",
+            "chargedCumulativeAmount": "100"
+          }
+        }
+      }
+    }
+  ],
+  "expectedClientBehaviour": {
+    "afterStep2": "Apply the valid corrective state and retry exactly once, as in happy-path.json.",
+    "afterStep4": "DO NOT sign or retry again. Emit hard error PERSISTENT_STALE, surface it to the caller, and emit telemetry label recovery.persistent_stale. The unchanged cumulative is diagnostic metadata only."
+  },
+  "invariants": [
+    "The loop guard is based on whether recovery has already been attempted for the logical request, not on whether chargedCumulativeAmount changed.",
+    "A second valid corrective response always produces PERSISTENT_STALE and no further retry.",
+    "The unchanged value may help diagnose voucher reconstruction or server verification, but it cannot authorize another automatic recovery attempt."
+  ]
+}

@@ -1,6 +1,6 @@
 {
   "scenario": "cas-conflict",
-  "description": "Two clients (or two in-flight requests from the same client) sign vouchers against the same prior cumulative; one wins the race, the other receives corrective 402 and recovers with a single retry. Wire-identical to happy-path, but operationally distinct (normal contention, not stale local state).",
+  "description": "Two clients (or two in-flight requests from the same client) sign vouchers against the same prior cumulative; one wins the race, the other receives corrective 402 and recovers with a single retry. The response is wire-identical to happy-path, so CAS is an optional suspected cause rather than a normative protocol outcome.",
   "channel": {
     "channelId": "0x1111111111111111111111111111111111111111111111111111111111111111",
     "domain": {
@@ -79,7 +79,7 @@
     {
       "step": 5,
       "actor": "clientB",
-      "action": "Recovery: verify totalClaimed onchain, advance local cumulative to 110, sign new voucher with maxClaimableAmount = 120, retry exactly once. Telemetry label is recovery.cas_conflict, not recovery.stale_state — B's prior local view was current, it lost a race.",
+      "action": "Recovery: verify totalClaimed onchain, advance local cumulative to 110, sign new voucher with maxClaimableAmount = 120, retry exactly once. Emit the normative recovery.stale_state outcome. An implementation with supporting evidence may additionally record cas_conflict as a suspected diagnostic cause.",
       "request": {
         "voucher": {
           "channelId": "0x1111111111111111111111111111111111111111111111111111111111111111",
@@ -107,12 +107,12 @@
     }
   ],
   "expectedClientBehaviour": {
-    "afterStep4ClientB": "Same recovery as happy-path: parse channelState, verify totalClaimed onchain, update local cumulative, sign new voucher, retry exactly once. Telemetry label MUST be recovery.cas_conflict rather than recovery.stale_state — distinguishing the two lets operators identify normal contention (expected, especially at high request rates on a shared channel) from unexpected drift (worth investigating).",
+    "afterStep4ClientB": "Same recovery as happy-path: parse channelState, verify totalClaimed onchain, update local cumulative, sign new voucher, retry exactly once, and emit recovery.stale_state. Because the corrective response does not prove its cause, cas_conflict MAY be recorded only as a suspected diagnostic cause when the implementation has supporting evidence. The optional diagnostic MUST NOT alter recovery behaviour.",
     "afterStep6ClientB": "Accept response. Update local cumulative to 120. Effective charge for B's request = 10."
   },
   "invariants": [
-    "The wire shape of the corrective 402 in step 4 is byte-identical to the corrective 402 in happy-path.json step 2; only the precondition (both clients consistent before the race) and the telemetry label differ.",
+    "The wire shape of the corrective 402 in step 4 is byte-identical to the corrective 402 in happy-path.json step 2; the client therefore emits the same normative recovery.stale_state outcome.",
     "Recovery still completes in a single retry, so the loop guard (max 1 retry) is not triggered.",
-    "When CAS conflicts are frequent on a single channel, the application should consider serialising requests through that channel rather than relying on recovery as the steady-state path; recovery is for occasional races, not for replacing application-level concurrency control."
+    "If supporting evidence indicates frequent CAS conflicts on a single channel, the application should consider serialising requests through that channel rather than relying on recovery as the steady-state path; recovery is for occasional races, not for replacing application-level concurrency control."
   ]
 }
