@@ -6,7 +6,7 @@ This extension binds an x402 **settlement** to a server-side **signed execution 
 
 It composes with the [Offer and Receipt Extension](./extension-offer-and-receipt.md): Offer and Receipt proves *the server asserted X*; this extension proves *X is what settled*, recomputably, through a content-addressed join. That is the half the auditability and dispute-evidence use cases are missing.
 
-The receipt format is defined externally — the Model Context Protocol's **SEP-2828, "Server-Side Signed Execution Record for MCP Tool Calls."** This extension does **not** redefine the receipt. It specifies the **x402 settlement record** a receipt commits to, the **content-addressed join key** (`action_ref`), and the **`exact`-scheme settlement semantics**, so the two sides bind cleanly and verify offline.
+The receipt format is defined externally by the IETF Internet-Draft [**`draft-sirkkavaara-vaara-receipt`**](https://datatracker.ietf.org/doc/draft-sirkkavaara-vaara-receipt/), *"The Vaara Receipt: A Recomputable Receipt Format for Decisions About Agent Actions,"* profile identifier **`vaara.receipt/v1`** — the maintained home of the format originally circulated as MCP SEP-2828. This extension does **not** redefine the receipt. It specifies the **x402 settlement record** a receipt commits to, the **content-addressed join key** (`action_ref`), and the **`exact`-scheme settlement semantics**, so the two sides bind cleanly and verify offline.
 
 The join is **rail-agnostic by construction**: the join key is computed only from the authorized-action tuple and never reaches into settlement internals, so the same receipt binds to a settlement on an EVM token or a non-EVM facilitator alike.
 
@@ -14,11 +14,11 @@ A reference conformance suite — committed `generic` and `sui` vectors plus an 
 
 **2. Status, Evolution, and Forward Compatibility**
 
-Draft (`v0`). Composes with the Offer and Receipt Extension. Receipt format: SEP-2828 (MCP). Implementations MUST treat unknown top-level settlement-record fields as opaque and preserve them under canonicalization. The conformance vectors are versioned alongside this document; a schema bump (`x402.settlement*/v1`) accompanies any change to the canonical field set.
+Draft (`v0`). Composes with the Offer and Receipt Extension. Receipt format: `vaara.receipt/v1` (IETF `draft-sirkkavaara-vaara-receipt`). Implementations MUST treat unknown top-level settlement-record fields as opaque and preserve them under canonicalization. The conformance vectors are versioned alongside this document; a schema bump (`x402.settlement*/v1`) accompanies any change to the canonical field set.
 
 **3. The Settlement Record**
 
-The resource server (or its facilitator) emits a **settlement record**: a JSON object that names the authorized action and binds it to the on-chain settlement. A SEP-2828 receipt commits to this record (§4).
+The resource server (or its facilitator) emits a **settlement record**: a JSON object that names the authorized action and binds it to the on-chain settlement. A `vaara.receipt/v1` receipt commits to this record (§4).
 
 Canonicalization is load-bearing and normative:
 
@@ -111,7 +111,7 @@ This is a real `exact`-scheme settlement from a live Sui facilitator; its on-cha
 
 **4. Binding a Receipt to the Settlement**
 
-A SEP-2828 receipt commits to the settlement record through a content-addressed evidence reference inside `decisionDerived.evidenceRef`, using the SEP-2787/SEP-2828 content-addressed commitment shape:
+A `vaara.receipt/v1` receipt commits to the settlement record through a content-addressed evidence reference inside `decisionDerived.evidenceRef`, using the receipt format's content-addressed commitment shape:
 
 | `evidenceRef` field | Value                                                                                 |
 | ------------------- | ------------------------------------------------------------------------------------- |
@@ -120,7 +120,7 @@ A SEP-2828 receipt commits to the settlement record through a content-addressed 
 | `ref`               | `x402:action_ref/<actionRef>` — a stable, human-legible pointer to the join key.      |
 | `schema`            | Echoes the settlement record's `schema`.                                               |
 
-The receipt is signed per SEP-2828 (ES256/RS256/HS256, detached signature over the JCS body excluding `signature`). This extension defines only what the receipt's evidence reference points at and how its digest is computed; the receipt's decision/outcome structure and pairing are SEP-2828's.
+The receipt is signed per `vaara.receipt/v1` (ES256/RS256/HS256, detached signature over the JCS body excluding `signature`). This extension defines only what the receipt's evidence reference points at and how its digest is computed; the receipt's decision/outcome structure and pairing are the receipt format's.
 
 **5. Recompute (Conformance Gate)**
 
@@ -128,7 +128,7 @@ An independent party holding only the settlement record and the receipt MUST be 
 
 - **`action_ref_recomputes`** — `sha256(JCS(action tuple))` equals `settlement.actionRef`.
 - **`settlement_binding_resolves`** — `sha256(JCS(settlement record))` equals `receipt.decisionDerived.evidenceRef.digest`, and `evidenceRef.canonicalization == "JCS"`.
-- **`receipt_signature_ok`** — the receipt's signature verifies over its canonical signed blocks (SEP-2828).
+- **`receipt_signature_ok`** — the receipt's signature verifies over its canonical signed blocks (`vaara.receipt/v1`).
 - **`lifecycle_distinguishes_terminal`** — the in-progress (`terminal=false`) and terminal (`terminal=true`) steps have distinct `actionRef`s, and the in-progress receipt does not resolve against the terminal settlement (§6).
 
 A normative reference suite implements these verdicts across two rails (`generic`, `sui`) and two lifecycle steps (in-progress, terminal), with a checker that imports neither x402 nor the receipt framework — standard library plus a JCS library and an ES256 verifier. A conformant implementation reproduces every verdict against the committed vectors byte-for-byte.
@@ -174,8 +174,8 @@ The Offer and Receipt Extension proves the server cryptographically committed to
 **10. Privacy Considerations**
 
 - The settlement record carries no personal data; amounts, addresses, and the settlement id are on-chain-public. The join key references the action, it does not embed payloads.
-- Receipt result payloads SHOULD use SEP-2828's commitment-only (hash-only-identity) projection so result data is committed to without being copied into the record.
+- Receipt result payloads SHOULD use the receipt format's commitment-only (hash-only-identity) projection so result data is committed to without being copied into the record.
 
 **11. Version History**
 
-- `v0` — initial draft. `generic` and `sui` (`exact`) rails, in-progress + terminal lifecycle steps, with a committed recompute suite as the conformance gate. Co-authored; receipt format per SEP-2828.
+- `v0` — initial draft. `generic` and `sui` (`exact`) rails, in-progress + terminal lifecycle steps, with a committed recompute suite as the conformance gate. Co-authored; receipt format per IETF `draft-sirkkavaara-vaara-receipt` (`vaara.receipt/v1`).
