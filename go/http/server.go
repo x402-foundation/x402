@@ -527,7 +527,7 @@ func (s *x402HTTPResourceServer) ProcessHTTPRequest(ctx context.Context, reqCtx 
 	if err != nil {
 		return HTTPProcessResult{
 			Type:     ResultPaymentError,
-			Response: &HTTPResponseInstructions{Status: 400, Body: map[string]string{"error": "Invalid payment"}},
+			Response: &HTTPResponseInstructions{Status: 400, Body: map[string]string{"error": "invalid_payload"}},
 		}
 	}
 

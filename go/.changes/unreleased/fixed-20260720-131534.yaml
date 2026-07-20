@@ -1,0 +1,3 @@
+kind: fixed
+body: Return a spec-compatible invalid_payload error for malformed PAYMENT-SIGNATURE headers in the Go HTTP server
+time: 2026-07-20T13:15:34.715303+09:00
