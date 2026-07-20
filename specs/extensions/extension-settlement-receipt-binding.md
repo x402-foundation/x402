@@ -158,7 +158,7 @@ The action tuple carries `seq` (monotonic) and `terminal` (boolean). Because bot
 
 **7. Rail-Agnostic Composition**
 
-The join key is identical across rails — it is computed only from the action tuple (§3.2). Only the settlement-binding bytes differ (`paymentHash` for `generic`; the `settlement` object for `exact`). The committed vectors demonstrate this directly: the **same `actionRef`** appears on both the `generic` and `sui` rails at each lifecycle step; only the settlement bytes and the receipt's `evidenceRef.digest` change. The property is shown as a test, not asserted.
+The join key is identical across rails — it is computed only from the action tuple (§3.2). Only the settlement-binding bytes differ (`paymentHash` for `generic`; the `settlement` object for `exact`). The committed vectors demonstrate this directly: the **same `actionRef`** appears on both the `generic` and `sui` rails at each lifecycle step; only the settlement bytes and the receipt's `evidenceRef.digest` change. For the receipt half, the producer-agnostic property is likewise a recompute — conformance is defined against the **`vaara.receipt/v1` conformance vectors** (pinned at `v1.1.1`; §5): an issuer is conformant when it reproduces the pinned `action_ref` bytes against those vectors, independent of implementation. Both properties are shown as tests, not asserted.
 
 **8. Composition with Offer and Receipt**
 
