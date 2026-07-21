@@ -117,6 +117,28 @@ gap is visible against `seq`.
 
 Who operates anchoring is a service-layer question, intentionally out of scope for this spec.
 
+### Independence and economic phase (normative)
+
+Attestation by the parties to a transaction proves **structure** — that these facts were
+composed and signed together — not **independence**: a record composed, role-tagged, and
+attested entirely by the payer, the payee, or their operators proves the shape those parties
+assert, not that an outside observer would concur. Accordingly:
+
+> **Evaluators MUST NOT treat a record attested only by parties to the transaction (or their
+> delegates) as an independent or neutral finding.**
+
+Who supplies non-party attestation is a service-layer question, intentionally out of scope
+for this spec.
+
+A compliance record also evidences a specific **economic phase**. Payment flows decompose
+into distinct phases — funding, delivery, settlement, and where applicable refund or
+reversal — with different legal consequences, and a record of one phase says nothing about a
+later one. Accordingly:
+
+> **Verifiers MUST NOT treat a record evidencing one economic phase as evidence of any later
+> phase** — a funding receipt is not delivery evidence; a delivery attestation is not
+> settlement.
+
 ### Canonicalization (normative)
 
 `canonicalizationVersion: 1` = **RFC 8785 (JCS)** serialization; `recordDigest = keccak256(utf8(canonical(record)))`. Serialization and digest function are versioned **together**: `receiptDigest` binds the offer-receipt artifact and the attestation base is EIP-712 — both keccak256 — so changing either independently invalidates existing signatures.
