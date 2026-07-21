@@ -1,0 +1,3 @@
+kind: fixed
+body: Preserved one-shot request bodies across payment retries.
+time: 2026-07-21T11:16:33.744189+09:00
