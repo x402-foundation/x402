@@ -201,6 +201,25 @@ func TestUpdateSessionAfterRefund_NoPriorSessionPartial(t *testing.T) {
 	}
 }
 
+func TestUpdateSessionAfterRefund_GetError(t *testing.T) {
+	storageErr := errors.New("storage unavailable")
+	storage := &failingClientChannelStorage{
+		storage: NewInMemoryClientChannelStorage(),
+		getErr:  storageErr,
+	}
+	err := UpdateSessionAfterRefund(storage, testChannelID, map[string]interface{}{
+		"channelState": map[string]interface{}{
+			"balance": "500",
+		},
+	})
+	if !errors.Is(err, storageErr) {
+		t.Fatalf("expected storage error, got %v", err)
+	}
+	if storage.setCalls != 0 {
+		t.Fatalf("Set called %d time(s) after Get failure", storage.setCalls)
+	}
+}
+
 // ---------- probeRefundRequirements (HTTP) ----------
 
 func TestProbeRefundRequirements_Non402(t *testing.T) {
@@ -288,7 +307,7 @@ func TestProbeRefundRequirements_BadHeader(t *testing.T) {
 // ---------- buildRefundVoucherPayload via stub RefundContext ----------
 
 type fakeRefundContext struct {
-	storage       *InMemoryClientChannelStorage
+	storage       ClientChannelStorage
 	signer        *mockSigner
 	voucherSigner *mockSigner
 	config        batchsettlement.ChannelConfig
@@ -342,6 +361,23 @@ func TestBuildRefundVoucherPayload_NoSession(t *testing.T) {
 	_, err := buildRefundVoucherPayload(context.Background(), fctx, types.PaymentRequirements{Network: "eip155:8453"}, "")
 	if err == nil || !strings.Contains(err.Error(), "existing channel session") {
 		t.Fatalf("expected missing-session error, got %v", err)
+	}
+}
+
+func TestBuildRefundVoucherPayload_GetError(t *testing.T) {
+	storageErr := errors.New("storage unavailable")
+	fctx := &fakeRefundContext{
+		storage: &failingClientChannelStorage{
+			storage: NewInMemoryClientChannelStorage(),
+			getErr:  storageErr,
+		},
+		signer: &mockSigner{address: "0x1"},
+		config: defaultConfig(),
+	}
+
+	_, err := buildRefundVoucherPayload(context.Background(), fctx, types.PaymentRequirements{Network: "eip155:8453"}, "")
+	if !errors.Is(err, storageErr) {
+		t.Fatalf("expected storage error, got %v", err)
 	}
 }
 
@@ -669,5 +705,66 @@ func TestExecuteRefund_402MissingHeadersErrors(t *testing.T) {
 		"", http.DefaultClient)
 	if err == nil || !strings.Contains(err.Error(), "missing PAYMENT-REQUIRED") {
 		t.Fatalf("got %v", err)
+	}
+}
+
+func TestExecuteRefund_SessionUpdateErrors(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		balance   string
+		configure func(*failingClientChannelStorage, error)
+	}{
+		{
+			name:    "partial refund set",
+			balance: "500",
+			configure: func(storage *failingClientChannelStorage, err error) {
+				storage.setErr = err
+			},
+		},
+		{
+			name:    "full refund delete",
+			balance: "0",
+			configure: func(storage *failingClientChannelStorage, err error) {
+				storage.deleteErr = err
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			storageErr := errors.New("storage unavailable")
+			fctx := fakeRefundContextWithSession("100")
+			storage := &failingClientChannelStorage{storage: fctx.storage}
+			tc.configure(storage, storageErr)
+			fctx.storage = storage
+
+			settle := x402.SettleResponse{
+				Success: true,
+				Extra: map[string]interface{}{
+					"channelState": map[string]interface{}{
+						"channelId": testChannelID,
+						"balance":   tc.balance,
+					},
+				},
+			}
+			settleBytes, err := json.Marshal(settle)
+			if err != nil {
+				t.Fatalf("marshal settle response: %v", err)
+			}
+			settleHeader := base64.StdEncoding.EncodeToString(settleBytes)
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set("PAYMENT-RESPONSE", settleHeader)
+				w.WriteHeader(http.StatusOK)
+			}))
+			defer srv.Close()
+
+			got, err := executeRefund(context.Background(), fctx, srv.URL,
+				types.PaymentRequirements{Scheme: batchsettlement.SchemeBatched, Network: "eip155:8453"},
+				"", http.DefaultClient)
+			if !errors.Is(err, storageErr) {
+				t.Fatalf("expected storage error, got %v", err)
+			}
+			if got == nil || !got.Success {
+				t.Fatalf("expected settle response with storage error, got %+v", got)
+			}
+		})
 	}
 }

@@ -20,6 +20,36 @@ func sampleCtx() *BatchSettlementClientContext {
 	}
 }
 
+type failingClientChannelStorage struct {
+	storage   ClientChannelStorage
+	getErr    error
+	setErr    error
+	deleteErr error
+	setCalls  int
+}
+
+func (s *failingClientChannelStorage) Get(channelId string) (*BatchSettlementClientContext, error) {
+	if s.getErr != nil {
+		return nil, s.getErr
+	}
+	return s.storage.Get(channelId)
+}
+
+func (s *failingClientChannelStorage) Set(channelId string, ctx *BatchSettlementClientContext) error {
+	s.setCalls++
+	if s.setErr != nil {
+		return s.setErr
+	}
+	return s.storage.Set(channelId, ctx)
+}
+
+func (s *failingClientChannelStorage) Delete(channelId string) error {
+	if s.deleteErr != nil {
+		return s.deleteErr
+	}
+	return s.storage.Delete(channelId)
+}
+
 func TestInMemoryClientChannelStorage_GetMissing(t *testing.T) {
 	s := NewInMemoryClientChannelStorage()
 	got, err := s.Get(missingChannelID)

@@ -374,7 +374,10 @@ func (c *BatchSettlementEvmScheme) ProcessSettleResponse(settle map[string]inter
 		return err
 	}
 
-	prev, _ := c.storage.Get(channelId)
+	prev, err := c.storage.Get(channelId)
+	if err != nil {
+		return fmt.Errorf("get channel session: %w", err)
+	}
 	next := &BatchSettlementClientContext{}
 	if prev != nil {
 		*next = *prev

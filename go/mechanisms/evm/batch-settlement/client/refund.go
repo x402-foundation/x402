@@ -110,7 +110,10 @@ func UpdateSessionAfterRefund(storage ClientChannelStorage, channelKey string, s
 		return storage.Delete(channelKey)
 	}
 
-	prev, _ := storage.Get(channelKey)
+	prev, err := storage.Get(channelKey)
+	if err != nil {
+		return fmt.Errorf("get channel session: %w", err)
+	}
 	next := &BatchSettlementClientContext{}
 	if prev != nil {
 		*next = *prev
@@ -262,7 +265,9 @@ func executeRefund(
 		if settle != nil && settle.Extra != nil {
 			if cs, ok := settle.Extra["channelState"].(map[string]interface{}); ok {
 				if channelId, ok := cs["channelId"].(string); ok && channelId != "" {
-					_ = UpdateSessionAfterRefund(scheme.Storage(), channelId, settle.Extra)
+					if err := UpdateSessionAfterRefund(scheme.Storage(), channelId, settle.Extra); err != nil {
+						return settle, fmt.Errorf("refund: update channel session: %w", err)
+					}
 				}
 			}
 		}
@@ -293,7 +298,10 @@ func buildRefundVoucherPayload(
 	}
 
 	storage := scheme.Storage()
-	session, _ := storage.Get(channelId)
+	session, err := storage.Get(channelId)
+	if err != nil {
+		return nil, fmt.Errorf("refund: get channel session: %w", err)
+	}
 	if session == nil {
 		// Try recovery if the signer supports onchain reads.
 		if _, ok := scheme.Signer().(evm.ClientEvmSignerWithReadContract); ok {

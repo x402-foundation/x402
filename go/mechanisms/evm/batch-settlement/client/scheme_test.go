@@ -334,6 +334,28 @@ func TestProcessSettleResponse_StoresSession(t *testing.T) {
 	}
 }
 
+func TestProcessSettleResponse_GetError(t *testing.T) {
+	storageErr := errors.New("storage unavailable")
+	storage := &failingClientChannelStorage{
+		storage: NewInMemoryClientChannelStorage(),
+		getErr:  storageErr,
+	}
+	scheme := NewBatchSettlementEvmScheme(&mockSigner{address: "0x1"}, &BatchSettlementEvmSchemeOptions{Storage: storage})
+
+	err := scheme.ProcessSettleResponse(map[string]interface{}{
+		"channelState": map[string]interface{}{
+			"channelId": testChannelID,
+			"balance":   "1000",
+		},
+	})
+	if !errors.Is(err, storageErr) {
+		t.Fatalf("expected storage error, got %v", err)
+	}
+	if storage.setCalls != 0 {
+		t.Fatalf("Set called %d time(s) after Get failure", storage.setCalls)
+	}
+}
+
 // ProcessSettleResponse is a pure-merge updater.
 // It does NOT delete sessions on zero balance — that responsibility belongs to
 // UpdateSessionAfterRefund, called explicitly at the refund call site.
