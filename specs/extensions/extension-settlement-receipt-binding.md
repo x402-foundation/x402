@@ -135,6 +135,15 @@ A normative reference suite implements these verdicts across two rails (`generic
 
 **Scope of the gate (non-goals).** Passing these verdicts proves the receipt *shape* recomputes and binds: the `action_ref` derives, the settlement digest resolves, the signature verifies, and the lifecycle steps are distinct. It does **not** prove that `backLink` resolves to a live attestation instance — the checker treats `backLink` and `issuerAsserted` as issuer-populated and does not dereference them. Binding a receipt to an actual upstream execution-attestation instance is a separate property, out of scope for this gate and not implied by a green result.
 
+**Presentation rules (normative).** A green result from this gate establishes recomputability and binding, and nothing beyond it. Within the scope of the gate, a green result MUST NOT be presented as evidence of:
+
+- **Outcome** — that any downstream world-effect occurred. Recomputability is not outcome (§9).
+- **Issuer honesty** — that the signer was honest or authorized to issue the receipt. `receipt_signature_ok` establishes key custody and byte-integrity only (§9).
+- **Independent conduct** — an independent finding about a party's conduct. Every signature in the bound pair is from a party to the transaction, so the pair is co-interested self-attestation, not an outside audit of either party.
+- **Existence at a time** — that the record existed at its stated time. An issuer-asserted `timestampMs` is part of the claim, not a bound on it; only a timestamp an outside verifier resolves without trusting the issuer (e.g. the on-chain settlement time, or an RFC 3161-style timestamp token) establishes when-at-latest the record existed.
+
+These are presentation constraints on the gate result, not schema requirements: they add no field and change no byte of the committed vectors.
+
 The conformance vectors and checker are pinned to an immutable commit:
 
 - Repository: `vaaraio/vaara`, tag `v1.1.1`, commit `088a869d20fe577719175251588ae66b871d1cef`
@@ -166,8 +175,10 @@ The Offer and Receipt Extension proves the server cryptographically committed to
 
 **9. Security Considerations**
 
-- **Recomputability, not outcome.** The binding proves the settled-action record reproduces from committed bytes; it does **not** prove a downstream world-effect occurred. Implementations SHOULD keep "paid," "settled," "executed," and "observed" distinct and label any unobserved effect explicitly.
+- **Recomputability, not outcome.** The binding proves the settled-action record reproduces from committed bytes; it does **not** prove a downstream world-effect occurred. Implementations SHOULD keep "paid," "settled," "executed," and "observed" distinct and label any unobserved effect explicitly. Presenting a green result as outcome is disallowed normatively by the §5 presentation rules.
 - **Signature authority is trusted, not recomputed.** `receipt_signature_ok` proves the receipt was signed by the key it names and that its signed bytes are intact — not that the signer was honest or authorized to issue it. Unlike `action_ref_recomputes` and `settlement_binding_resolves`, which a verifier reconstructs from committed public bytes, this verdict rests on trusting the issuer's key. For actions whose `action_ref` recomputes entirely from committed public data, that residual trust MAY be replaced by a proof the verifier recomputes (e.g. an on-chain-enforced commitment opening) — binding to such an enforcing anchor is a separate, out-of-scope extension, not implied here.
+- **Not an independent finding.** Every signature in the bound pair is from a party to the transaction, so a green result is co-interested self-attestation that recomputes, not an outside audit. It MUST NOT be read as an independent finding about any party's conduct; an independent finding requires a signer that is not a party to the transaction (§5).
+- **Assertion of time, not a bound on it.** `timestampMs` is issuer-asserted and lives inside the signed claim, so a green result does not establish when the record existed. Where "the record existed no later than T" is required, bind an outside-verifiable time the verifier resolves without trusting the issuer — the on-chain settlement time, or an RFC 3161-style timestamp token — rather than relying on `timestampMs` (§5).
 - **Verification scope on privacy rails.** Net-balance assertion is only as sound as the facilitator's visibility. State who must be a stakeholder/observer for `verifiedBy` to be meaningful, and what a non-stakeholder verifier can independently check.
 - **Canonicalization is the trust root.** Two producers MUST canonicalize identically (RFC 8785 over the normative field set) or the recompute fails closed. The reference vectors are the gate against drift.
 
