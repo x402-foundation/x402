@@ -376,6 +376,8 @@ client.registerExtension(new BuilderCodeClientExtension(["bc_mcp_server", "bc_my
 
 Accepts a single string or an array of strings. Automatically echoes the server's `a` code and attaches the client's `s` code(s) to every payment payload. Multiple codes are useful for layered clients (e.g. an MCP server acting as middleware) that need to attribute multiple participants.
 
+<Note>Facilitators cap `s` to the first **5** entries (`MAX_SERVICE_CODES`) at settlement to bound calldata size. Extra entries are silently dropped.</Note>
+
 ### Facilitator
 
 #### `BuilderCodeFacilitatorExtension`
