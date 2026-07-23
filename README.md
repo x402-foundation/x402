@@ -60,6 +60,36 @@ pip install x402
 </details>
 
 <details>
+<summary><b>Java</b></summary>
+
+<br/> 
+
+> See the [**`java/`**](./java/) folder for code examples and integration guides.
+
+To use this library, you need to build and install it locally:
+
+```bash
+# Clone the repository
+git clone https://github.com/x402-foundation/x402.git
+cd x402/java
+
+# Build and install to your local Maven repository
+mvn clean install
+```
+
+Then add the dependency to your Maven project:
+
+```xml
+<dependency>
+    <groupId>org.x402</groupId>
+    <artifactId>x402</artifactId>
+    <version>1.0.0-SNAPSHOT</version>
+</dependency>
+```
+
+</details>
+
+<details>
 <summary><b>Go</b></summary>
 
 <br/> 
