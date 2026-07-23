@@ -21,7 +21,7 @@ export const SCHEME_EXACT = "exact";
 /**
  * Default Casper payment amount, in motes, for settlement transactions.
  */
-export const DEFAULT_PAYMENT_MOTES = 7_000_000_000;
+export const DEFAULT_PAYMENT_MOTES = 2_500_000_000;
 
 /**
  * Configuration for a Casper network.
