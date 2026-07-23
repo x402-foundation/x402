@@ -19,6 +19,7 @@ If you are evaluating a mainnet EVM route, decide on your production facilitator
 
 | Name | Description |
 | ---- | ----------- | 
+| [ArisPay Facilitator](https://facilitator.arispay.app) | Free, public x402 facilitator for Base mainnet with USDC and EURC settlement. No API key required |
 | [Built on Stellar](https://developers.stellar.org/docs/build/apps/x402/built-on-stellar) | Free, public x402 facilitator for Stellar |
 | [CDP Facilitator](https://docs.cdp.coinbase.com/x402/docs/quickstart-sellers) | Coinbase-hosted facilitator with KYT/OFAC checks on every transaction |
 | [Corbits](https://corbits.dev) | Production-grade multi-network, multi-token facilitator supporting EVM and Solana |
