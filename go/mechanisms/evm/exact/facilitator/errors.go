@@ -36,6 +36,7 @@ const (
 	ErrFailedToExecuteTransfer = "invalid_exact_evm_failed_to_execute_transfer"
 	ErrFailedToGetReceipt      = "invalid_exact_evm_failed_to_get_receipt"
 	ErrTransactionFailed       = "invalid_exact_evm_transaction_failed"
+	ErrRelayerInsufficientFunds = "invalid_exact_evm_relayer_insufficient_funds"
 
 	// Smart wallet errors (shared by EIP-3009 and Permit2)
 	ErrUndeployedSmartWallet       = "invalid_exact_evm_payload_undeployed_smart_wallet"

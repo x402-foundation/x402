@@ -444,6 +444,11 @@ func mustNonce(nonce string) [32]byte {
 func parseEIP3009TransferError(err error) string {
 	msg := err.Error()
 	switch {
+	case strings.Contains(msg, "insufficient funds for gas") ||
+		strings.Contains(msg, "insufficient funds for transfer") ||
+		strings.Contains(msg, "exceeds the balance of the account") ||
+		strings.Contains(msg, "insufficient balance for transaction"):
+		return ErrRelayerInsufficientFunds
 	case strings.Contains(msg, "authorization is expired") || strings.Contains(msg, "AuthorizationExpired"):
 		return ErrValidBeforeExpired
 	case strings.Contains(msg, "authorization is not yet valid") || strings.Contains(msg, "AuthorizationNotYetValid"):

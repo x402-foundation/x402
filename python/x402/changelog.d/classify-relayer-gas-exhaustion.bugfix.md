@@ -1,0 +1,1 @@
+Classified relayer gas exhaustion distinctly from EIP-3009 contract reverts in parse_eip3009_transfer_error. Added ERR_RELAYER_INSUFFICIENT_FUNDS so operators can alert on facilitator wallet gas drain without it being collapsed into the generic ERR_TRANSACTION_FAILED bucket.

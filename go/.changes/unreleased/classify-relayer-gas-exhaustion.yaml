@@ -1,0 +1,2 @@
+kind: fixed
+body: Classified relayer gas exhaustion distinctly from EIP-3009 contract reverts in parseEIP3009TransferError. Added ErrRelayerInsufficientFunds so operators can alert on facilitator wallet gas drain without it being collapsed into the generic ErrFailedToExecuteTransfer bucket.
