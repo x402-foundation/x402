@@ -8,6 +8,19 @@ The client signs a NEP-366 `SignedDelegateAction` that authorizes one exact `ft_
 
 NEAR account keys and signatures may use either `ed25519` or `secp256k1`; implementers should account for both when validating signed delegate actions.
 
+## Asset Transfer Methods
+
+NEAR `exact` payments are implemented via one of two asset transfer methods:
+
+| AssetTransferMethod | Mechanism | Payer universe | Networks |
+| :--- | :--- | :--- | :--- |
+| **1. `delegate`** (default) | NEP-366 `SignedDelegateAction` wrapping one exact `ft_transfer`; a facilitator relayer submits and sponsors gas | A NEAR account holding the token, signing with a **full-access** key | `near:mainnet`, `near:testnet` |
+| **2. `intents`** | A [NEAR Intents](https://docs.near-intents.org) multi-standard signed payload settled through the Verifier contract `intents.near` | Any signature standard the Verifier accepts — including EVM keys via `erc191` with **no NEAR account at all** | `near:mainnet` only |
+
+If no `assetTransferMethod` is specified in `PaymentRequired.extra`, clients should default to `"delegate"`. Payment payloads that use a non-default transfer method should echo the selected `assetTransferMethod` in `accepted.extra`.
+
+The sections from `PaymentRequirements` through `Settlement` below define the default `delegate` method. The `intents` method is defined in [its own section](#asset-transfer-method-intents).
+
 ## Versions Supported
 
 This specification supports **x402 v2 only**.
@@ -23,6 +36,8 @@ NEAR networks MUST use CAIP-style identifiers:
 - `near:testnet`
 
 Implementations MAY support additional `near:*` identifiers, but this spec defines behavior for the two canonical networks above.
+
+The `intents` asset transfer method is defined for `near:mainnet` only — no testnet Verifier deployment exists (see its section below).
 
 ## Protocol Flow
 
@@ -59,6 +74,7 @@ The client does not need a sponsoring account identifier to create the signed pa
 - `payTo`: recipient NEAR account ID that must receive the transfer.
 - `maxTimeoutSeconds`: positive integer timeout budget in seconds.
 - `extra` MAY contain additional metadata, but unknown keys MUST NOT change verification of amount, recipient, asset, nonce, or expiry.
+- `extra.assetTransferMethod` selects the asset transfer method; when absent, the default `delegate` method defined here applies (see Asset Transfer Methods).
 - Relayer account selection is facilitator-local configuration and MUST NOT be required from the client-facing `PaymentRequirements`.
 
 ### Timeout Mapping: `maxTimeoutSeconds` -> `max_block_height`
@@ -140,7 +156,7 @@ A facilitator verifying a NEAR `exact` payment MUST reject any payload that fail
 
 - `asset`, `payTo`, and `amount` in `payload.accepted` MUST exactly match `PaymentRequirements`.
 - `maxTimeoutSeconds` MUST be an integer greater than `0`.
-- `extra`, when present, MUST NOT alter the required transfer target, amount, nonce, expiry, or settlement semantics.
+- `extra`, when present, MUST NOT alter the required transfer target, amount, nonce, or expiry. `extra.assetTransferMethod` alone selects which asset transfer method's settlement semantics apply (see Asset Transfer Methods).
 
 ### 3. Relayer Sponsorship Abuse Prevention
 
@@ -274,6 +290,118 @@ Failure:
 }
 ```
 
+## Asset Transfer Method: `intents`
+
+The `intents` method settles the exact payment through the NEAR Intents Verifier contract — `intents.near` on `near:mainnet` — instead of a signed delegate action. The payer signs a Verifier intent payload in one of the Verifier's supported signature standards; the facilitator submits it via `execute_intents` from its own account and pays the gas. The signature alone carries the payment authority, so any account may submit it.
+
+What this method changes relative to `delegate`:
+
+- **Payer universe.** The Verifier accepts multiple signature standards (`nep413`, `erc191`, `tip191`, `raw_ed25519`, `webauthn`, `tonconnect`, `sep53`). In particular, an EVM key signing `erc191` (exactly what `personal_sign` / Circle's `signMessage` emits) pays a NEAR merchant with **no NEAR account, no access key, and no gas** — the Verifier derives an implicit signer id from the recovered key.
+- **Custody.** The payer's funds must already sit in the Verifier's internal ledger. Custody is transferred to the shared `intents.near` contract, and any key authorized for the signer can move that signer's whole deposited balance. This is a blast-radius trade the `delegate` method does not make; implementations SHOULD keep standing Verifier balances near a single payment (just-in-time deposits).
+- **No relayer/payer distinction.** The facilitator's own account submits `execute_intents`; there is no `Action::Delegate` and no 1 yoctoNEAR requirement, and the payer's key type is never inspected on chain — full-access vs function-call does not apply.
+
+### Network Constraint
+
+- This method is defined for **`near:mainnet` only**. No testnet Verifier deployment exists; facilitators MUST NOT advertise `assetTransferMethod: "intents"` for `near:testnet`.
+
+### Account Preconditions
+
+- The payer MUST already hold ≥ `amount` of `nep141:<asset>` in the Verifier's internal ledger. Deposits are made out of band by calling `ft_transfer_call` on the token contract with `receiver_id: "intents.near"` (`msg: ""` credits the sender; `msg: "<account>"` credits that account). The deposit flow is outside x402.
+- A **named** NEAR account MUST have registered its signing key with the Verifier (`add_public_key`) before its signatures are accepted. **Implicit** signers need no registration: an `ed25519` key maps to the 64-hex NEAR implicit account, and an `erc191`/ECDSA key maps to the implicit-Eth address (`0x…`) — the derived id MUST equal the payload's `signer_id`.
+- For wallet delivery (default, below), `payTo` MUST be NEP-145 storage-registered on the token contract.
+
+### `PaymentRequirements` for `intents`
+
+```json
+{
+  "scheme": "exact",
+  "network": "near:mainnet",
+  "amount": "1000",
+  "asset": "17208628f84f5d6ad33f0da3bbbeb27ffcb398eac501a31bd6ad2011e36133a1",
+  "payTo": "merchant.near",
+  "maxTimeoutSeconds": 120,
+  "extra": {
+    "assetTransferMethod": "intents"
+  }
+}
+```
+
+- `extra.assetTransferMethod` (required for this method): MUST be `"intents"`.
+- `extra.delivery` (optional): `"wallet"` (default) or `"internal"`, see Intent Binding below. Servers advertising `"internal"` are declaring that they knowingly accept payment as Verifier-ledger balance.
+
+### `PAYMENT-SIGNATURE` Payload
+
+The payload object carries the Verifier's signed payload verbatim as native JSON (the Verifier's `execute_intents` input element, sometimes called a multi-standard payload):
+
+```json
+{
+  "signedIntent": {
+    "standard": "nep413",
+    "payload": {
+      "message": "{\"signer_id\":\"alice.near\",\"deadline\":\"2026-08-01T00:00:00.000Z\",\"intents\":[{\"intent\":\"ft_withdraw\",\"token\":\"17208628f84f5d6ad33f0da3bbbeb27ffcb398eac501a31bd6ad2011e36133a1\",\"receiver_id\":\"merchant.near\",\"amount\":\"1000\"}]}",
+      "nonce": "<base64 of 32 random bytes>",
+      "recipient": "intents.near"
+    },
+    "public_key": "ed25519:...",
+    "signature": "ed25519:..."
+  }
+}
+```
+
+Per-standard shapes (facilitators MUST accept `nep413` and `erc191`; other Verifier standards MAY be accepted; unsupported standards MUST be rejected deterministically):
+
+- **`nep413`** — envelope form. `payload.message` is the intent JSON **string** with the minimal fields `{signer_id, deadline, intents}`; `payload.nonce` (base64, 32 bytes) and `payload.recipient` (MUST be `"intents.near"`) live in the envelope, not the message. The signature is `ed25519` over the NEP-413 prehash: `sha256(u32_le(2^31 + 413) || borsh { message, nonce: [u8;32], recipient, callback_url: None })`.
+- **`erc191`** — flat form: `{ "standard": "erc191", "payload": "<JSON string>", "signature": "secp256k1:<base58 of 65 bytes r||s||v>" }`. There is no envelope: the signed JSON string itself carries `signer_id`, `verifying_contract: "intents.near"`, `deadline`, `nonce`, and `intents`. The digest is EIP-191 `personal_sign` over the exact payload string bytes; the signer is recovered from the signature (`v` of 27/28 MUST be normalized to 0/1). Reference vector: the accepted `execute_intents` args of mainnet transaction [`ALqQDmeTUouVv6vqG8bqbwBo7RzxBuB7gufPwtcLyw6E`](https://nearblocks.io/txns/ALqQDmeTUouVv6vqG8bqbwBo7RzxBuB7gufPwtcLyw6E).
+
+The message string MUST be carried byte-identical from signing through submission — no re-serialization, no key reordering, no whitespace changes.
+
+### Intent Binding (Exactness)
+
+`message.intents` MUST contain exactly one intent, bound to the requirements by delivery mode:
+
+- **`delivery: "wallet"`** (default): the intent MUST be `ft_withdraw` with `token == asset`, `receiver_id == payTo`, and `amount == amount` exactly. The Verifier debits the payer's internal balance and transfers real tokens out to `payTo` on the token contract — the merchant receives tokens in its own account, equivalent in effect to the `delegate` method's `ft_transfer`.
+- **`delivery: "internal"`**: the intent MUST be `transfer` with `receiver_id == payTo` and `tokens == { "nep141:<asset>": amount }` exactly. This only moves balance **inside** the Verifier's ledger; the merchant must withdraw separately. Servers MUST NOT advertise this mode unless the merchant operates a Verifier balance.
+- `token_diff` (the Verifier's swap primitive) is out of scope for `exact`: its fill amounts are quote-dependent, which breaks exact-amount semantics. Cross-asset payment belongs in a different scheme.
+
+### Deadline Mapping: `maxTimeoutSeconds` -> `deadline`
+
+- Client signing rule: `deadline = signing_time + maxTimeoutSeconds`, ISO-8601 UTC (milliseconds permitted).
+- Facilitator verification rule: MUST reject if `deadline <= now + settlementMargin` (expired or too tight to settle) or `deadline > now + maxTimeoutSeconds` (window exceeds the x402 timeout budget).
+
+### Facilitator Verification Rules (MUST)
+
+1. **Version, scheme, network, method.** `x402Version == 2`; scheme `exact` on both sides; `accepted.network == PaymentRequirements.network == "near:mainnet"`; `accepted.extra.assetTransferMethod == "intents"`.
+2. **Standard allowlist.** `signedIntent.standard` MUST be a supported standard; reject others deterministically.
+3. **Signature.** Recompute the signing bytes per standard (NEP-413 prehash for `nep413`; EIP-191 digest for `erc191`) and verify the signature. For recovery-based standards, the recovered key defines the signer.
+4. **Signer authorization.** For implicit signers, the id derived from the (recovered or declared) public key MUST equal `signer_id`. For named accounts, the Verifier MUST report the key as registered for `signer_id` (`has_public_key` view). NEAR account access keys are NOT the authority here — the Verifier's own key registry is.
+5. **Nonce.** The message/envelope nonce MUST be 32 bytes and unused: `is_nonce_used(signer_id, nonce)` MUST return `false`. The Verifier enforces single-use per signer on chain, so no facilitator nonce storage is required.
+6. **Deadline bounds** per the mapping above.
+7. **Intent binding.** Exactly one intent, matching the delivery-mode binding rules exactly (token/receiver/amount equality against `PaymentRequirements`).
+8. **Balance preflight.** `mt_balance_of(signer_id, "nep141:<asset>")` on the Verifier MUST be ≥ `amount`.
+9. **Delivery preflight.** For wallet delivery, `storage_balance_of(payTo)` on the token contract MUST be non-null.
+10. **Simulation.** `simulate_intents([signedIntent])` (a read-only Verifier view taking the same input as `execute_intents`) MUST complete without panic. Empirical note (deployed contract, defuse v0.4.2): simulation **does validate signatures** — upstream documentation stating simulation skips signature validation does not match the deployed contract — but implementations MUST NOT rely on simulation alone for rule 3. Simulation excludes external async effects (a simulated `ft_withdraw`'s outer token transfer is not reflected) and reads state that can change before settlement.
+11. **Exactness under fees.** The Verifier reports a protocol fee (`state.fee`, pips) in simulation output. If simulation shows `payTo` receiving less than `amount`, verification MUST fail closed. (Empirically the fee applies to `token_diff` matching rather than plain `transfer`/`ft_withdraw`, but implementations MUST verify delivery equality rather than assume.)
+12. **Fail closed** on any RPC error, unparsable value, or undeterminable state.
+
+### Settlement
+
+1. The facilitator submits `execute_intents({ "signed": [signedIntent] })` on `intents.near` from its own configured account, with gas within facilitator policy and no attached deposit.
+2. Wait until the transaction and all spawned receipts finish executing.
+3. For **wallet** delivery, return `success: true` only when the `ft_withdraw`'s spawned token-contract transfer receipt has status `SuccessValue` — outer transaction success is not sufficient. For **internal** delivery, `execute_intents` completing successfully is authoritative (the ledger move is synchronous within the Verifier).
+4. `payer` in `SettlementResponse` is the payload's `signer_id`.
+5. Duplicate-settlement mitigation follows §10 of the `delegate` method, with the cache key derived from the exact `signedIntent` bytes and eviction at `deadline` or on an authoritatively observed outcome. The Verifier's on-chain nonce guarantees at-most-once execution regardless.
+
+### Comparison to the `delegate` Method
+
+| | `delegate` (default) | `intents` |
+| :--- | :--- | :--- |
+| Payer needs a NEAR account | Yes, holding the token | No — any supported signature standard; implicit signers derived |
+| Payer key constraint | Full-access key required (1 yocto rule) | Any registered/derivable key; key type not inspected |
+| Custody before settlement | Payer's own token balance | Shared Verifier ledger (deposit required; blast radius = deposited balance) |
+| Merchant receives | `ft_transfer` on the token contract | `ft_withdraw` to wallet (default) or Verifier-ledger credit (`internal`) |
+| Testnet | Yes | No (mainnet-only Verifier) |
+| Circle Developer-Controlled Wallets | NEAR wallet (`signDelegateAction`) | EVM wallet (`signMessage` emits exact `erc191` bytes) |
+
 ## Appendix
 
 ### Transport Header Mapping (HTTP v2)
@@ -290,3 +418,5 @@ Failure:
 - [NEP-141 Fungible Token Standard](https://nomicon.io/Standards/Tokens/FungibleToken/Core)
 - [NEP-366 Delegate Action](https://nomicon.io/Standards/ChainAbstraction/MetaTransactions)
 - [NEP-413 Signed Message Standard](https://nomicon.io/Standards/Wallets/WalletSignMessage)
+- [NEAR Intents Verifier documentation](https://docs.near-intents.org)
+- [NEAR Intents Verifier contract (defuse)](https://github.com/near/intents)
