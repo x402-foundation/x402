@@ -68,7 +68,7 @@ Credits are denominated in the smallest unit of the bundle's `asset` (e.g. cents
 2. Client sends the HTTP request with the payment payload (type `consume`) carrying the attestation.
 3. Resource server verifies the payment — via facilitator [`/verify`](#post-verify-standard-facilitator-endpoint), or locally by signature check (see [Verification](#verification)).
 4. On success, the server serves the resource and returns `PAYMENT-RESPONSE` with the actual charged amount and a bundle state snapshot.
-5. The server settles the actual charge via facilitator [`/settle`](#post-settle-standard-facilitator-endpoint) — synchronously before responding, or deferred within the hold window. The difference between authorized and charged amounts is re-credited to the bundle. If fulfillment fails, the server settles with `status: "failed"` (or lets the hold lapse at `holdExp`).
+5. The server settles the actual charge via facilitator [`/settle`](#post-settle-standard-facilitator-endpoint) — synchronously before responding, or deferred within the hold window. The difference between authorized and charged amounts is re-credited to the bundle. If fulfillment fails, the server settles with `amount: "0"` (release the full hold) or lets the hold lapse at `holdExp`.
 6. The authority settles accumulated charges with the resource server on a billing cycle through the PSP rail.
 
 Clients holding a valid attestation may include the payment payload in their initial request, bypassing the `402` negotiation (same pre-authorized pattern as `cloudflare:402`).
@@ -107,31 +107,38 @@ Request:
 }
 ```
 
-Response on success: `{ "attestation": "<compact JWS>" }`. The decrement and the attestation issuance are one atomic operation. Repeating the call with the same `idempotencyKey` and identical parameters returns the same attestation without a second decrement; the same key with different parameters fails with `idempotency_conflict`.
+Response on success: `{ "attestation": "<compact JWS>" }`. The decrement and the attestation issuance are one atomic operation.
+
+**Idempotency (normative).** `idempotencyKey` is REQUIRED. The authority MUST bind `(bundleId, idempotencyKey)` to the authorization request and its result as part of the same atomic decrement:
+
+- Concurrent or later calls with the same key and identical parameters MUST cause **at most one** decrement; every such call MUST return the attestation minted by the first successful decrement. A non-atomic check-then-decrement does not satisfy this under concurrency — the authority MUST coalesce concurrent redemptions so at most one wins and the rest observe its result.
+- Reusing the key with parameters that differ in any field affecting the authorization (`amount`, `asset`, `resource`, …) MUST fail with `idempotency_conflict` and MUST NOT decrement.
+- The authority MUST preserve the key binding through at least the attestation's `holdExp`. If the original result is no longer retained, the authority MUST reject reuse rather than treat the key as a new authorization. Clients MUST use a fresh key for each new logical authorization.
+
+Because these hold across retries and concurrent delivery, a client MAY retry `/authorize` safely on timeout or transport failure without risk of double-decrement.
 
 Failure codes: `insufficient_credits`, `bundle_not_found`, `bundle_revoked`, `idempotency_conflict`.
 
 ### `POST /verify` (standard facilitator endpoint)
 
-Takes the standard `{ paymentPayload, paymentRequirements }` request. The authority validates the attestation (signature, `iss`, `exp`, amount/asset, `aud`, and — because it owns the ledger — that the `jti` has not already been settled and has not been revoked) and returns the standard `{ isValid, invalidReason }` response. Because verification of presentation-replay and revocation happens against the authority's own ledger, **resource servers can remain fully stateless**.
+Takes the standard `{ x402Version, paymentPayload, paymentRequirements }` request. The authority validates the attestation (signature, `iss`, `exp`, amount/asset, `aud`, `resource`, and — because it owns the ledger — that the `jti` has not already been settled and has not been revoked) and returns the standard `{ isValid, invalidReason }` response. Because verification of presentation-replay and revocation happens against the authority's own ledger, **resource servers can remain fully stateless**.
 
 ### `POST /settle` (standard facilitator endpoint)
 
-Takes the standard settle request extended with the binding's charge fields:
+Takes the **standard** `SettleRequest` — `{ x402Version, paymentPayload, paymentRequirements }` — with no binding-specific top-level fields. Following the [`upto`](../upto/scheme_upto_evm.md) precedent, the actual charge is carried in the **settlement-time** `paymentRequirements.amount`:
 
 ```json
 {
+  "x402Version": 2,
   "paymentPayload": { "...": "..." },
-  "paymentRequirements": { "...": "..." },
-  "chargedAmount": "35",
-  "status": "fulfilled"
+  "paymentRequirements": { "...": "...", "amount": "35" }
 }
 ```
 
-- `chargedAmount`: actual charge, MUST be ≤ the attestation `amount`. The difference is re-credited to the bundle.
-- `status`: `"fulfilled"` (charge `chargedAmount`) or `"failed"` (release the full hold; `chargedAmount` MUST be `"0"`).
-- The attestation `jti` is the idempotency key: the first settle for a `jti` is final; repeating it with identical parameters is an idempotent no-op returning the original result; different parameters fail with `settle_conflict`.
-- The authority MUST authenticate the caller as the attestation's `aud` when `aud` is present (per the registration between server and authority — API key, mTLS, or signed request).
+- Settlement-time `paymentRequirements.amount` is the actual charge, MUST be ≤ the attestation `amount`. The difference is re-credited to the bundle.
+- A **release** (fulfillment failed, or nothing consumed) is `amount: "0"`, which frees the full hold. *(Open question under discussion: whether a zero-cost **fulfilled** charge must be distinguishable from a **failed** one — and if so, whether that status belongs in `paymentRequirements.extra` rather than a top-level field, which would require extending the facilitator's settlement-override support. Until resolved, `amount: "0"` covers both as a ledger release.)*
+- **Idempotency (normative).** The attestation `jti` is the settlement idempotency key. The authority MUST commit at most one terminal result per `jti` and MUST coalesce concurrent settles for the same `jti`; after a terminal result commits, an identical repeat MUST return that result, and a repeat with different parameters MUST fail with `settle_conflict`. A transport or internal failure that commits no terminal result is not final and MAY be retried.
+- The authority MUST authenticate the caller as the attestation's `aud` (now REQUIRED; see [Payment Payload](#payment-payload)), per the registration between server and authority — API key, mTLS, or signed request.
 
 The settle response is the settlement result the server forwards as `PAYMENT-RESPONSE` (see below), including `extra.commitmentId` and the post-settle `bundleState`.
 
@@ -214,14 +221,17 @@ The `attestation` is a compact JWS issued by the authority. Required claims:
 | `jti` | Unique attestation ID — the commitment identifier, replay anchor, and settle idempotency key |
 | `amount` | Authorized maximum for this request, smallest unit |
 | `asset` | ISO 4217 currency code |
-| `aud` | Resource server origin (optional but RECOMMENDED) |
+| `aud` | Resource server origin. **REQUIRED** — bounds the attestation to one audience so it is not a transferable bearer authorization across resource servers drawing on the same authority |
+| `resource` | The resource this authorization is for — the exact resource URL, or a `sha256:<lowercase-hex>` over the RFC 8785 (JCS) canonical bytes of the accepted `PaymentRequirements`. **REQUIRED** — binds the attestation to the specific endpoint/price so it cannot be replayed against a different resource of the same audience |
 
 ## Verification
 
 Resource servers have two verification paths, mirroring the EVM binding's local-vs-facilitator distinction:
 
-- **Facilitator `/verify`** (RECOMMENDED): the authority checks signature, `iss`, freshness, amount/asset, `aud`, and — against its own ledger — that the `jti` is unsettled. The server keeps no state.
-- **Local verification**: the server validates the JWS against the authority's published keys (e.g. JWKS at `{extra.authority}/.well-known/jwks.json`) and checks `iss`, `exp`/`iat`, amount/asset, `aud`, and the `accepted` field. This avoids the `/verify` round trip. Without an authority-side `jti` check, a same-`jti` re-presentation within the `exp` window may be served twice — but never charged twice, since `/settle` is `jti`-idempotent. Servers for whom double-serving within the presentation window is unacceptable MUST use `/verify` or keep a local `jti` cache spanning the `exp` window.
+- **Facilitator `/verify`** (RECOMMENDED): the authority checks signature, `iss`, freshness, amount/asset, `aud`, `resource`, and — against its own ledger — that the `jti` is unsettled. The server keeps no state.
+- **Local verification**: the server validates the JWS against the authority's published keys (e.g. JWKS at `{extra.authority}/.well-known/jwks.json`) and checks `iss`, `exp`/`iat`, amount/asset, `aud`, `resource`, and the `accepted` field. This avoids the `/verify` round trip. Without an authority-side `jti` check, a same-`jti` re-presentation within the `exp` window may be served twice — but never charged twice, since `/settle` is `jti`-idempotent.
+
+**Verification prevents double *charge*, not double *execution*.** Settlement is downstream of fulfillment, so two *concurrent* presentations of the same `jti` can both observe it unsettled — under local verification **and** under facilitator `/verify` — and both be served, even though `/settle` idempotency collapses them to a single charge. For costly or non-idempotent resources, the server MUST coalesce fulfillment by `jti` (single-flight, and cache the outcome for the `exp` window) regardless of the verification path; a `jti` cache spanning `exp` is required for exactly-once serving.
 
 Verification failures surfaced to the client MUST be distinguishable:
 
@@ -283,9 +293,9 @@ A principal may need to stop an agent mid-flight: the mandate is withdrawn, the 
 | Requirement | This binding |
 | --- | --- |
 | Commitment format | Compact JWS attestation with the claims table above |
-| Verification rules | Facilitator `/verify` (signature, `iss`/origin binding, expiry, `jti` unsettled, amount/asset, `aud`) or local JWS verification |
+| Verification rules | Facilitator `/verify` (signature, `iss`/origin binding, expiry, `jti` unsettled, amount/asset, `aud`, `resource`) or local JWS verification |
 | Storage behavior | The authority ledger is the commitment store; the attestation `jti` is the commitment identifier, returned as `extra.commitmentId` |
-| Double-spend prevention | Atomic decrement-on-authorize at the authority (no query-then-act), `jti`-idempotent `/settle`, mandatory idempotency keys on `/authorize` |
+| Double-spend prevention | Atomic decrement-on-authorize at the authority (no query-then-act), concurrency-coalesced `jti`-idempotent `/settle`, mandatory concurrency-safe idempotency keys on `/authorize` |
 | Commitment expiry | Two windows: `exp` bounds presentation (minutes); `holdExp` bounds settlement (hours). Unsettled holds are released at `holdExp` |
 | Redemption | Server settles charges via facilitator `/settle`; authority pays out accumulated settled charges to the resource server via PSP rail on a billing cycle |
 | Trust model | Credit-backed: the trust anchor is the bundle authority, in the same trust position as a PSP — already inside the trust boundary of any payment flow |
@@ -318,7 +328,7 @@ Because the authority's counter sits above the settlement rail, the same bundle 
 
 **`purchaseUrl` phishing.** A malicious resource server can declare a fraudulent authority and a `purchaseUrl` pointing at a fake checkout, harvesting payment credentials from the human principal. Clients SHOULD maintain an allowlist of trusted authority origins (or consult a registry/reputation source) and MUST NOT route a principal to a `purchaseUrl` on an authority origin the client has no prior trust relationship with, without surfacing a clear warning.
 
-**Hold release on failure.** If a request is authorized but fulfillment fails, the hold MUST be released back to the bundle — by an explicit `status: "failed"` settle, or by lapse at `holdExp`. Without this the bundle leaks value over time.
+**Hold release on failure.** If a request is authorized but fulfillment fails, the hold MUST be released back to the bundle — by an explicit `amount: "0"` settle, or by lapse at `holdExp`. Without this the bundle leaks value over time.
 
 **Presentation TTL.** `exp` is minutes, not hours. A stale attestation MUST NOT be acceptable for a new charge. The longer `holdExp` window exists solely between server and authority and does not extend the presentation surface.
 
@@ -345,3 +355,4 @@ The `extra.version` field uses semantic versioning to signal changes in binding 
 | Version | Date | Changes |
 | --- | --- | --- |
 | `1.0.0` | 2026-06 | Initial draft |
+| _unreleased_ | 2026-07 | Idempotency made normative on `/authorize` (concurrency coalescing + retention through `holdExp`) and `/settle` (`jti`, concurrent-safe); `/settle` aligned to the standard `SettleRequest` — actual charge carried in settlement-time `paymentRequirements.amount` per the `upto` precedent, top-level `chargedAmount`/`status` removed; `aud` and `resource` attestation claims made REQUIRED to prevent cross-audience/cross-resource replay; clarified that verification prevents double-charge but not concurrent double-execution (servers MUST coalesce fulfillment by `jti`) |
