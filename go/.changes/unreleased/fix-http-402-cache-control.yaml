@@ -1,0 +1,2 @@
+kind: fix
+body: Add Cache-Control no-store to 402 responses to prevent CDN caching of payment headers
