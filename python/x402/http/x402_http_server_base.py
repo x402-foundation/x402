@@ -822,9 +822,13 @@ class x402HTTPServerBase:
                 is_html=True,
             )
 
-        # API response
+        # API response. Default the body to the same payload the
+        # PAYMENT-REQUIRED header carries so body-reading clients see the
+        # full challenge rather than an empty object.
         content_type = "application/json"
-        body: Any = {}
+        body: Any = payment_required.model_dump(
+            by_alias=True, exclude_none=True, mode="json"
+        )
 
         if unpaid_response:
             content_type = unpaid_response.content_type
