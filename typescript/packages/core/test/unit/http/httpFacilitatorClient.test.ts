@@ -264,6 +264,99 @@ describe("HTTPFacilitatorClient", () => {
       );
     });
   });
+
+  describe("createAuthHeaders", () => {
+    it("returns the path-scoped headers for a correctly keyed callback", async () => {
+      const client = new HTTPFacilitatorClient({
+        url: "https://facilitator.test",
+        createAuthHeaders: async () => ({
+          verify: { Authorization: "Bearer verify" },
+          settle: { Authorization: "Bearer settle" },
+          supported: { Authorization: "Bearer supported" },
+        }),
+      });
+
+      expect(await client.createAuthHeaders("verify")).toEqual({
+        headers: { Authorization: "Bearer verify" },
+      });
+      expect(await client.createAuthHeaders("settle")).toEqual({
+        headers: { Authorization: "Bearer settle" },
+      });
+    });
+
+    it("returns empty headers for a path the callback intentionally omits", async () => {
+      const client = new HTTPFacilitatorClient({
+        url: "https://facilitator.test",
+        createAuthHeaders: async () => ({ verify: { Authorization: "Bearer verify" } }),
+      });
+
+      expect(await client.createAuthHeaders("settle")).toEqual({ headers: {} });
+    });
+
+    it("returns empty headers when the callback returns an empty object", async () => {
+      const client = new HTTPFacilitatorClient({
+        url: "https://facilitator.test",
+        createAuthHeaders: async () => ({}),
+      });
+
+      expect(await client.createAuthHeaders("verify")).toEqual({ headers: {} });
+    });
+
+    it("throws when the callback returns a flat headers object", async () => {
+      const client = new HTTPFacilitatorClient({
+        url: "https://facilitator.test",
+        // Intentionally wrong shape: a flat headers object instead of one keyed by path.
+        createAuthHeaders: async () => ({ Authorization: "Bearer token" }) as never,
+      });
+
+      const error = await client.createAuthHeaders("verify").catch(caught => caught as Error);
+      expect(error).toBeInstanceOf(Error);
+      expect(error.message).toContain("must return an object keyed by facilitator path");
+    });
+
+    it("throws when a flat object has non-string header values", async () => {
+      const client = new HTTPFacilitatorClient({
+        url: "https://facilitator.test",
+        createAuthHeaders: async () => ({ Authorization: 123 }) as never,
+      });
+
+      const error = await client.createAuthHeaders("verify").catch(caught => caught as Error);
+      expect(error).toBeInstanceOf(Error);
+      expect(error.message).toContain("must return an object keyed by facilitator path");
+    });
+
+    it("returns empty headers when no callback is configured", async () => {
+      const client = new HTTPFacilitatorClient({ url: "https://facilitator.test" });
+      expect(await client.createAuthHeaders("verify")).toEqual({ headers: {} });
+    });
+
+    it("sends the path-scoped auth headers on the outgoing verify request", async () => {
+      const mockFetch = vi.fn().mockResolvedValue(
+        new Response(JSON.stringify({ isValid: true, payer: paymentRequirements.payTo }), {
+          status: 200,
+        }),
+      );
+      vi.stubGlobal("fetch", mockFetch);
+
+      const client = new HTTPFacilitatorClient({
+        url: "https://facilitator.test",
+        createAuthHeaders: async () => ({
+          verify: { Authorization: "Bearer verify" },
+          settle: { Authorization: "Bearer settle" },
+          supported: { Authorization: "Bearer supported" },
+        }),
+      });
+
+      await client.verify(paymentPayload, paymentRequirements).catch(() => undefined);
+
+      expect(mockFetch).toHaveBeenCalledWith(
+        "https://facilitator.test/verify",
+        expect.objectContaining({
+          headers: expect.objectContaining({ Authorization: "Bearer verify" }),
+        }),
+      );
+    });
+  });
 });
 
 describe("computeRetryDelay", () => {

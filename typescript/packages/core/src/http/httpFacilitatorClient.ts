@@ -14,10 +14,27 @@ const DEFAULT_FACILITATOR_URL = "https://x402.org/facilitator";
 
 export interface FacilitatorConfig {
   url?: string;
+  /**
+   * Returns authentication headers for the facilitator, keyed by request path.
+   *
+   * The returned object must be keyed by path (`verify`, `settle`, `supported`,
+   * and optionally `bazaar`), each mapping to a headers object — NOT a flat
+   * headers object. Paths may be omitted (no auth is sent for them), but
+   * returning a flat object such as `{ Authorization: "Bearer ..." }` will
+   * throw, since it would otherwise silently drop auth on every request.
+   *
+   * @example
+   * ```ts
+   * createAuthHeaders: async () => {
+   *   const headers = { Authorization: `Bearer ${token}` };
+   *   return { verify: headers, settle: headers, supported: headers };
+   * }
+   * ```
+   */
   createAuthHeaders?: () => Promise<{
-    verify: Record<string, string>;
-    settle: Record<string, string>;
-    supported: Record<string, string>;
+    verify?: Record<string, string>;
+    settle?: Record<string, string>;
+    supported?: Record<string, string>;
     bazaar?: Record<string, string>;
   }>;
 }
@@ -444,17 +461,39 @@ export class HTTPFacilitatorClient implements FacilitatorClient {
   async createAuthHeaders(path: string): Promise<{
     headers: Record<string, string>;
   }> {
-    if (this._createAuthHeaders) {
-      const authHeaders = (await this._createAuthHeaders()) as Record<
-        string,
-        Record<string, string>
-      >;
-      return {
-        headers: authHeaders[path] ?? {},
-      };
+    if (!this._createAuthHeaders) {
+      return { headers: {} };
     }
+
+    const authHeaders = (await this._createAuthHeaders()) as Record<string, unknown>;
+
+    // `createAuthHeaders` must return an object keyed by facilitator path
+    // (`verify` | `settle` | `supported` | `bazaar`), whose values are header
+    // objects.
+    // A common mistake is returning a flat headers object (e.g.
+    // `{ Authorization: "Bearer ..." }`), which would otherwise index to
+    // `undefined` here and silently drop auth on every request. Detect that
+    // shape and fail loudly instead. See
+    // https://github.com/x402-foundation/x402/issues/2762
+    const isHeaderObject = (value: unknown): value is Record<string, string> =>
+      typeof value === "object" && value !== null && !Array.isArray(value);
+    const hasPathKey = ["verify", "settle", "supported", "bazaar"].some(key =>
+      isHeaderObject(authHeaders[key]),
+    );
+    const looksFlat =
+      !hasPathKey && Object.values(authHeaders).some(value => !isHeaderObject(value));
+    if (looksFlat) {
+      throw new Error(
+        "createAuthHeaders must return an object keyed by facilitator path, e.g. " +
+          '{ verify: { Authorization: "..." }, settle: { ... }, supported: { ... } }, ' +
+          "but received a flat headers object. See " +
+          "https://github.com/x402-foundation/x402/issues/2762",
+      );
+    }
+
+    const headersForPath = authHeaders[path];
     return {
-      headers: {},
+      headers: isHeaderObject(headersForPath) ? headersForPath : {},
     };
   }
 
