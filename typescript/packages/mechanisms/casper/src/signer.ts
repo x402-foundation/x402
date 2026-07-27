@@ -78,19 +78,17 @@ export function toClientCasperSigner(privateKey: PrivateKeyType): ClientCasperSi
 }
 
 /**
- * Create a client signer from a PEM private-key file.
+ * Create a client signer from a hex-encoded private key.
  *
- * @param pemPath - Path to the PEM-encoded private key.
+ * @param privateKey - Hex-encoded private key.
  * @param algorithm - Key algorithm.
  * @returns Client signer.
  */
 export async function createClientCasperSigner(
-  pemPath: string,
+  privateKey: string,
   algorithm: KeyAlgorithmType = KeyAlgorithm.ED25519,
 ): Promise<ClientCasperSigner> {
-  const { readFile } = await import("fs/promises");
-  const pemContent = await readFile(pemPath, "utf-8");
-  return toClientCasperSigner(PrivateKey.fromPem(pemContent, algorithm));
+  return toClientCasperSigner(PrivateKey.fromHex(privateKey, algorithm));
 }
 
 /**
@@ -203,24 +201,22 @@ export async function toFacilitatorCasperSigner(
 }
 
 /**
- * Create a facilitator signer from a PEM private-key file.
+ * Create a facilitator signer from a hex-encoded private key.
  *
- * @param pemPath - Path to the PEM-encoded private key.
+ * @param privateKey - Hex-encoded private key.
  * @param algorithm - Key algorithm.
  * @param rpcUrlConfig - RPC URL config.
  * @param preflightHooks - Optional live preflight hooks.
  * @returns Facilitator signer.
  */
 export async function createFacilitatorCasperSigner(
-  pemPath: string,
+  privateKey: string,
   algorithm: KeyAlgorithmType = KeyAlgorithm.ED25519,
   rpcUrlConfig?: RpcUrlConfig,
   preflightHooks: PreflightHooks = {},
 ): Promise<FacilitatorCasperSigner> {
-  const { readFile } = await import("fs/promises");
-  const pemContent = await readFile(pemPath, "utf-8");
   return toFacilitatorCasperSigner(
-    PrivateKey.fromPem(pemContent, algorithm),
+    PrivateKey.fromHex(privateKey, algorithm),
     rpcUrlConfig,
     preflightHooks,
   );

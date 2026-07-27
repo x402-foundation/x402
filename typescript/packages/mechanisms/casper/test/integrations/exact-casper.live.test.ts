@@ -17,10 +17,10 @@ import { ExactCasperScheme as ExactCasperServer } from "../../src/exact/server/s
 import { createClientCasperSigner, createFacilitatorCasperSigner } from "../../src/signer";
 import type { CasperAuthorizationState, ExactCasperPayload } from "../../src/types";
 
-const CLIENT_PRIVATE_KEY_PEM = process.env.CASPER_CLIENT_PRIVATE_KEY_PEM;
+const CLIENT_PRIVATE_KEY = process.env.CASPER_CLIENT_PRIVATE_KEY;
 const CLIENT_PRIVATE_KEY_ALGORITHM =
   process.env.CASPER_CLIENT_PRIVATE_KEY_ALGORITHM === "secp256k1" ? 2 : 1;
-const FACILITATOR_PRIVATE_KEY_PEM = process.env.CASPER_FACILITATOR_PRIVATE_KEY_PEM;
+const FACILITATOR_PRIVATE_KEY = process.env.CASPER_FACILITATOR_PRIVATE_KEY;
 const FACILITATOR_PRIVATE_KEY_ALGORITHM =
   process.env.CASPER_FACILITATOR_PRIVATE_KEY_ALGORITHM === "secp256k1" ? 2 : 1;
 const PAY_TO = process.env.CASPER_PAY_TO;
@@ -36,8 +36,8 @@ const RUN_LIVE = process.env.CASPER_RUN_LIVE === "1";
 
 const missingLiveEnv =
   !RUN_LIVE ||
-  !CLIENT_PRIVATE_KEY_PEM ||
-  !FACILITATOR_PRIVATE_KEY_PEM ||
+  !CLIENT_PRIVATE_KEY ||
+  !FACILITATOR_PRIVATE_KEY ||
   !PAY_TO ||
   !ASSET ||
   !TOKEN_NAME ||
@@ -47,7 +47,7 @@ const describeLive = missingLiveEnv ? describe.skip : describe;
 
 if (missingLiveEnv) {
   console.warn(
-    "[exact-casper.live] skipped: set CASPER_RUN_LIVE=1, CASPER_CLIENT_PRIVATE_KEY_PEM, CASPER_FACILITATOR_PRIVATE_KEY_PEM, CASPER_PAY_TO, CASPER_ASSET, CASPER_TOKEN_NAME, and CASPER_TOKEN_VERSION to run.",
+    "[exact-casper.live] skipped: set CASPER_RUN_LIVE=1, CASPER_CLIENT_PRIVATE_KEY, CASPER_FACILITATOR_PRIVATE_KEY, CASPER_PAY_TO, CASPER_ASSET, CASPER_TOKEN_NAME, and CASPER_TOKEN_VERSION to run.",
   );
 }
 
@@ -106,11 +106,11 @@ describeLive(
   () => {
     it("verifies and settles an exact Casper payment on Casper testnet", async () => {
       const clientSigner = await createClientCasperSigner(
-        CLIENT_PRIVATE_KEY_PEM!,
+        CLIENT_PRIVATE_KEY!,
         CLIENT_PRIVATE_KEY_ALGORITHM,
       );
       const facilitatorSigner = await createFacilitatorCasperSigner(
-        FACILITATOR_PRIVATE_KEY_PEM!,
+        FACILITATOR_PRIVATE_KEY!,
         FACILITATOR_PRIVATE_KEY_ALGORITHM,
         { [NETWORK]: RPC_URL },
         {

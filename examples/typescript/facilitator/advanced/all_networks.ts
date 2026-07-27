@@ -92,8 +92,7 @@ const PORT = process.env.PORT || "4022";
 const avmPrivateKey = process.env.AVM_PRIVATE_KEY as string | undefined;
 const aptosPrivateKey = process.env.APTOS_PRIVATE_KEY as string | undefined;
 const aptosRpcUrl = process.env.APTOS_RPC_URL as string | undefined;
-const casperFacilitatorPrivateKeyPem = process.env
-  .CASPER_FACILITATOR_PRIVATE_KEY_PEM as string | undefined;
+const casperPrivateKey = process.env.CASPER_PRIVATE_KEY as string | undefined;
 const casperRpcUrl = process.env.CASPER_RPC_URL as string | undefined;
 const ccdFacilitatorPrivateKey = process.env.CCD_FACILITATOR_PRIVATE_KEY as
   | string
@@ -125,7 +124,7 @@ const xrplWsUrl = process.env.XRPL_WS_URL as string | undefined;
 if (
   !avmPrivateKey &&
   !aptosPrivateKey &&
-  !casperFacilitatorPrivateKeyPem &&
+  !casperPrivateKey &&
   !(ccdFacilitatorPrivateKey && ccdFacilitatorAddress) &&
   !evmPrivateKey &&
   !keetaMnemonic &&
@@ -136,7 +135,7 @@ if (
   !(hederaAccountId && hederaPrivateKey)
 ) {
   console.error(
-    "❌ At least one of AVM_PRIVATE_KEY, APTOS_PRIVATE_KEY, CASPER_FACILITATOR_PRIVATE_KEY_PEM, CCD_FACILITATOR_PRIVATE_KEY + CCD_FACILITATOR_ADDRESS, EVM_PRIVATE_KEY, KEETA_MNEMONIC, NEAR_RELAYER_ACCOUNT_ID + NEAR_RELAYER_PRIVATE_KEY, SVM_PRIVATE_KEY, STELLAR_PRIVATE_KEY, TVM_PRIVATE_KEY, or HEDERA_ACCOUNT_ID + HEDERA_PRIVATE_KEY is required",
+    "❌ At least one of AVM_PRIVATE_KEY, APTOS_PRIVATE_KEY, CASPER_PRIVATE_KEY, CCD_FACILITATOR_PRIVATE_KEY + CCD_FACILITATOR_ADDRESS, EVM_PRIVATE_KEY, KEETA_MNEMONIC, NEAR_RELAYER_ACCOUNT_ID + NEAR_RELAYER_PRIVATE_KEY, SVM_PRIVATE_KEY, STELLAR_PRIVATE_KEY, TVM_PRIVATE_KEY, or HEDERA_ACCOUNT_ID + HEDERA_PRIVATE_KEY is required",
   );
   process.exit(1);
 }
@@ -203,13 +202,11 @@ if (aptosPrivateKey) {
   );
 }
 
-// Register Casper scheme if private key PEM is provided.
-if (casperFacilitatorPrivateKeyPem) {
+// Register Casper scheme if private key is provided.
+if (casperPrivateKey) {
   const casperSigner = await createFacilitatorCasperSigner(
-    casperFacilitatorPrivateKeyPem,
-    process.env.CASPER_FACILITATOR_PRIVATE_KEY_ALGORITHM === "secp256k1"
-      ? 2
-      : 1, // Default to ED25519 if not specified,
+    casperPrivateKey,
+    process.env.CASPER_PRIVATE_KEY_ALGORITHM === "secp256k1" ? 2 : 1, // Default to ED25519 if not specified,
     casperRpcUrl ? { [CASPER_NETWORK]: casperRpcUrl } : undefined,
     {
       getBalance: async () => 10n ** 30n,

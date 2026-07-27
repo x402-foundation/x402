@@ -72,7 +72,7 @@ const svmSchemeOptions = process.env.SVM_RPC_URL ? { rpcUrl: process.env.SVM_RPC
 
 const ccdPrivateKey = process.env.CCD_PRIVATE_KEY;
 const ccdAddress = process.env.CCD_ADDRESS;
-const casperClientPrivateKeyPem = process.env.CASPER_CLIENT_PRIVATE_KEY_PEM;
+const casperPrivateKey = process.env.CASPER_PRIVATE_KEY;
 /**
  * Parses the TVM private key accepted by e2e env fixtures.
  *
@@ -159,19 +159,19 @@ const tvmPrivateKey = process.env.TVM_PRIVATE_KEY;
 const tvmProvider = (process.env.TVM_PROVIDER || TVM_PROVIDER_TONCENTER).toLowerCase();
 const tvmScheme = tvmPrivateKey
   ? new ExactTvmScheme(
-    toClientTvmSigner(parseTvmKeyPair(tvmPrivateKey), {
-      network: tvmNetwork,
-      provider: tvmProvider,
-      apiKey:
-        tvmProvider === TVM_PROVIDER_TONAPI
-          ? process.env.TONAPI_API_KEY
-          : process.env.TONCENTER_API_KEY,
-      providerBaseUrl:
-        tvmProvider === TVM_PROVIDER_TONAPI
-          ? process.env.TONAPI_BASE_URL
-          : process.env.TONCENTER_BASE_URL,
-    }),
-  )
+      toClientTvmSigner(parseTvmKeyPair(tvmPrivateKey), {
+        network: tvmNetwork,
+        provider: tvmProvider,
+        apiKey:
+          tvmProvider === TVM_PROVIDER_TONAPI
+            ? process.env.TONAPI_API_KEY
+            : process.env.TONCENTER_API_KEY,
+        providerBaseUrl:
+          tvmProvider === TVM_PROVIDER_TONAPI
+            ? process.env.TONAPI_BASE_URL
+            : process.env.TONCENTER_BASE_URL,
+      }),
+    )
   : undefined;
 
 const client = new x402Client()
@@ -195,10 +195,10 @@ if (ccdPrivateKey && ccdAddress) {
     ),
   );
 }
-if (casperClientPrivateKeyPem) {
+if (casperPrivateKey) {
   const casperSigner = await createClientCasperSigner(
-    casperClientPrivateKeyPem,
-    process.env.CASPER_CLIENT_PRIVATE_KEY_FACILITATOR === 'secp256k1' ? 2 : 1, // Default to ED25519 if not specified
+    casperPrivateKey,
+    process.env.CASPER_PRIVATE_KEY_ALGORITHM === "secp256k1" ? 2 : 1, // Default to ED25519 if not specified
   );
   client.register("casper:*", new ExactCasperScheme(casperSigner));
 }
@@ -236,9 +236,7 @@ if (process.env.XRPL_SEED) {
     xrplNetwork,
     new ExactXrplClientScheme(
       xrplSigner,
-      process.env.XRPL_WS_URL
-        ? { wsUrlByNetwork: { [xrplNetwork]: process.env.XRPL_WS_URL } }
-        : {},
+      process.env.XRPL_WS_URL ? { wsUrlByNetwork: { [xrplNetwork]: process.env.XRPL_WS_URL } } : {},
     ),
   );
 }

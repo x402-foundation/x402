@@ -4,9 +4,14 @@ import {
   toClientCasperSigner,
   toFacilitatorCasperSigner,
   createClientCasperSigner,
+  createFacilitatorCasperSigner,
 } from "../../src/signer";
 
 const { KeyAlgorithm, PrivateKey } = casperSdk;
+
+function privateKeyHex(privateKey: InstanceType<typeof PrivateKey>): string {
+  return Buffer.from(privateKey.toBytes()).toString("hex");
+}
 
 describe("Casper signer adapters", () => {
   it("wraps a private key for client signing", async () => {
@@ -59,7 +64,25 @@ describe("Casper signer adapters", () => {
     ).rejects.toThrow("Casper contract preflight is not configured");
   });
 
-  it("exposes PEM client signer creation", () => {
-    expect(createClientCasperSigner).toBeDefined();
+  it("creates a client signer from a hex private key", async () => {
+    const privateKey = PrivateKey.generate(KeyAlgorithm.ED25519);
+    const signer = await createClientCasperSigner(privateKeyHex(privateKey));
+
+    expect(signer.accountAddress()).toBe(`00${privateKey.publicKey.accountHash().toHex()}`);
+    expect(signer.publicKey()).toBe(privateKey.publicKey.toHex());
+  });
+
+  it("creates a facilitator signer from a hex private key", async () => {
+    const privateKey = PrivateKey.generate(KeyAlgorithm.SECP256K1);
+    const signer = await createFacilitatorCasperSigner(
+      privateKeyHex(privateKey),
+      KeyAlgorithm.SECP256K1,
+      "http://localhost:11101/rpc",
+    );
+
+    expect(signer.getAddresses("casper:casper-test")).toEqual([
+      privateKey.publicKey.accountHash().toHex(),
+    ]);
+    expect(signer.getPublicKeyHex("casper:casper-test")).toBe(privateKey.publicKey.toHex());
   });
 });

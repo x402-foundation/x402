@@ -2,7 +2,20 @@
   "name": "axios",
   "type": "client",
   "language": "typescript",
-  "protocolFamilies": ["evm", "svm", "avm", "aptos", "casper", "hedera", "keeta", "near", "stellar", "tvm", "ccd", "xrpl"],
+  "protocolFamilies": [
+    "evm",
+    "svm",
+    "avm",
+    "aptos",
+    "casper",
+    "hedera",
+    "keeta",
+    "near",
+    "stellar",
+    "tvm",
+    "ccd",
+    "xrpl"
+  ],
   "x402Versions": [1, 2],
   "schemes": ["exact", "upto", "batch-settlement"],
   "evm": {
@@ -13,7 +26,7 @@
     "required": ["EVM_PRIVATE_KEY", "SVM_PRIVATE_KEY", "RESOURCE_SERVER_URL", "ENDPOINT_PATH"],
     "optional": [
       "AVM_PRIVATE_KEY",
-      "CASPER_CLIENT_PRIVATE_KEY_PEM",
+      "CASPER_PRIVATE_KEY",
       "APTOS_PRIVATE_KEY",
       "CCD_PRIVATE_KEY",
       "CCD_ADDRESS",

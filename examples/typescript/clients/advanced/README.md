@@ -39,6 +39,8 @@ cp .env-local .env
 and fill required environment variables:
 
 - `APTOS_PRIVATE_KEY` - Aptos Ed25519 private key for Aptos payments (optional; `all-networks`)
+- `CASPER_PRIVATE_KEY` - Casper private key for Casper payments (optional; `all-networks`)
+- `CASPER_PRIVATE_KEY_ALGORITHM` - Casper private key algorithm, either `ed25519` (default) or `secp256k1` (optional; `all-networks`)
 - `CCD_PRIVATE_KEY` - Concordium Ed25519 private key for Concordium payments (optional; `all-networks`)
 - `CCD_ADDRESS` - Concordium account address for Concordium payments (optional; `all-networks`)
 - `EVM_PRIVATE_KEY` - Ethereum private key for EVM payments

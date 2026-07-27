@@ -121,7 +121,8 @@ const EVM_NETWORK = process.env.EVM_NETWORK || "eip155:84532";
 const SVM_NETWORK =
   process.env.SVM_NETWORK || "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1";
 const APTOS_NETWORK = process.env.APTOS_NETWORK || "aptos:2";
-const CASPER_NETWORK = (process.env.CASPER_NETWORK || "casper:casper-test") as Network;
+const CASPER_NETWORK = (process.env.CASPER_NETWORK ||
+  "casper:casper-test") as Network;
 const AVM_NETWORK =
   process.env.AVM_NETWORK ||
   "algorand:SGO1GKSzyE7IEPItTxCByw9x8FmnrCDexi9/cOUJOiI=";
@@ -235,15 +236,15 @@ if (process.env.APTOS_PRIVATE_KEY) {
 let casperSigner:
   | Awaited<ReturnType<typeof createFacilitatorCasperSigner>>
   | undefined;
-if (process.env.CASPER_FACILITATOR_PRIVATE_KEY_PEM) {
+if (process.env.CASPER_PRIVATE_KEY) {
   casperSigner = await createFacilitatorCasperSigner(
-    process.env.CASPER_FACILITATOR_PRIVATE_KEY_PEM,
-    process.env.CASPER_FACILITATOR_PRIVATE_KEY_ALGORITHM === 'secp256k1' ? 2 : 1, // Default to ED25519 if not specified
+    process.env.CASPER_PRIVATE_KEY,
+    process.env.CASPER_PRIVATE_KEY_ALGORITHM === "secp256k1" ? 2 : 1, // Default to ED25519 if not specified
     CASPER_RPC_URL ? { [CASPER_NETWORK]: CASPER_RPC_URL } : undefined,
     {
       getBalance: async () => 10n ** 30n,
       getAuthorizationState: async () => "unused",
-      assertTransferWithAuthorizationSupported: async () => { },
+      assertTransferWithAuthorizationSupported: async () => {},
     },
   );
   console.info(
@@ -430,9 +431,9 @@ const svmSigner = toFacilitatorSvmSigner(
 // Pass custom RPC URL if provided
 const aptosSigner = aptosAccount
   ? toFacilitatorAptosSigner(
-    aptosAccount,
-    APTOS_RPC_URL ? { defaultRpcUrl: APTOS_RPC_URL } : undefined,
-  )
+      aptosAccount,
+      APTOS_RPC_URL ? { defaultRpcUrl: APTOS_RPC_URL } : undefined,
+    )
   : undefined;
 
 const verifiedPayments = new Map<string, number>();
@@ -641,10 +642,16 @@ if (process.env.XRPL_NETWORK) {
   facilitator.register(
     XRPL_NETWORK as Network,
     new ExactXrplFacilitatorScheme(
-      XRPL_WS_URL ? { wsUrlByNetwork: { [XRPL_NETWORK as `xrpl:${number}`]: XRPL_WS_URL } } : {},
+      XRPL_WS_URL
+        ? {
+            wsUrlByNetwork: { [XRPL_NETWORK as `xrpl:${number}`]: XRPL_WS_URL },
+          }
+        : {},
     ),
   );
-  console.info(`XRPL facilitator enabled on ${XRPL_NETWORK} (payer-signed; no facilitator signer)`);
+  console.info(
+    `XRPL facilitator enabled on ${XRPL_NETWORK} (payer-signed; no facilitator signer)`,
+  );
 }
 if (concordiumSigner) {
   facilitator.register(

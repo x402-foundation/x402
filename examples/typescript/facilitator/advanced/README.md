@@ -25,6 +25,10 @@ and fill required environment variables:
 
 - `APTOS_PRIVATE_KEY` - Aptos Ed25519 private key for fee payer (optional; `all-networks`)
 - `APTOS_RPC_URL` - Aptos RPC URL (optional; `all-networks`)
+- `CASPER_PRIVATE_KEY` - Casper private key as 64-character hex (optional; `all-networks`)
+- `CASPER_PRIVATE_KEY_ALGORITHM` - Casper private key algorithm, either `ed25519` (default) or `secp256k1` (optional; `all-networks`)
+- `CASPER_NETWORK` - Casper network CAIP-2 (optional; defaults to `casper:casper-test`)
+- `CASPER_RPC_URL` - Casper JSON-RPC URL (optional; defaults to the SDK testnet RPC for known networks)
 - `CCD_FACILITATOR_PRIVATE_KEY` - Concordium Ed25519 private key for sponsor signing (optional; `all-networks`)
 - `CCD_FACILITATOR_ADDRESS` - Concordium sponsor account address (optional; `all-networks`)
 - `CCD_NETWORK` - Concordium network CAIP-2 (optional; defaults to `ccd:4221332d34e1694168c2a0c0b3fd0f27`)
@@ -274,6 +278,8 @@ Networks use [CAIP-2](https://github.com/ChainAgnostic/CAIPs/blob/main/CAIPs/cai
 
 - `aptos:2` — Aptos Testnet
 - `aptos:1` — Aptos Mainnet
+- `casper:casper-test` - Casper Testnet
+- `casper:casper` - Casper Mainnet
 - `eip155:84532` — Base Sepolia
 - `eip155:8453` — Base Mainnet
 - `solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1` — Solana Devnet

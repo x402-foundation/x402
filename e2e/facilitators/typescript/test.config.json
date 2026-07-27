@@ -31,7 +31,7 @@
     "optional": [
       "AVM_PRIVATE_KEY",
       "APTOS_PRIVATE_KEY",
-      "CASPER_FACILITATOR_PRIVATE_KEY_PEM",
+      "CASPER_PRIVATE_KEY",
       "CASPER_NETWORK",
       "CASPER_RPC_URL",
       "CCD_NETWORK",

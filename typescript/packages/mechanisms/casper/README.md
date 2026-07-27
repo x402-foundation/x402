@@ -27,7 +27,7 @@ import { x402Client } from "@x402/core/client";
 import { createClientCasperSigner } from "@x402/casper";
 import { ExactCasperScheme } from "@x402/casper/exact/client";
 
-const signer = await createClientCasperSigner("./client-secret.pem");
+const signer = await createClientCasperSigner(process.env.CASPER_CLIENT_PRIVATE_KEY!);
 const client = new x402Client().register("casper:*", new ExactCasperScheme(signer));
 ```
 
@@ -67,7 +67,7 @@ import { createFacilitatorCasperSigner } from "@x402/casper";
 import { ExactCasperScheme } from "@x402/casper/exact/facilitator";
 
 const signer = await createFacilitatorCasperSigner(
-  "./facilitator-secret.pem",
+  process.env.CASPER_FACILITATOR_PRIVATE_KEY!,
   undefined,
   { "casper:casper-test": "https://node.testnet.casper.network/rpc" },
   {
@@ -95,8 +95,8 @@ The default facilitator signer fails closed unless preflight hooks are supplied.
 Live integration tests require a funded Casper testnet account and a CEP-3009-enabled CEP-18 token:
 
 ```bash
-CASPER_CLIENT_PRIVATE_KEY_PEM=./client-secret.pem \
-CASPER_FACILITATOR_PRIVATE_KEY_PEM=./facilitator-secret.pem \
+CASPER_CLIENT_PRIVATE_KEY=... \
+CASPER_FACILITATOR_PRIVATE_KEY=... \
 CASPER_PAY_TO=00... \
 CASPER_ASSET=17be3c3dc67ddf193b8f64bfc2421826407470f88b3dab68184ebffebdd57f59 \
 CASPER_TOKEN_NAME="Casper X402 Token" \

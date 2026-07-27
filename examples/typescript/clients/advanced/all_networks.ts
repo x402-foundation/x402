@@ -55,7 +55,7 @@ config();
 // Configuration - optional per network
 const avmPrivateKey = process.env.AVM_PRIVATE_KEY as string | undefined;
 const aptosPrivateKey = process.env.APTOS_PRIVATE_KEY as string | undefined;
-const casperClientPrivateKeyPem = process.env.CASPER_CLIENT_PRIVATE_KEY_PEM as string | undefined;
+const casperPrivateKey = process.env.CASPER_PRIVATE_KEY as string | undefined;
 const ccdPrivateKey = process.env.CCD_PRIVATE_KEY as string | undefined;
 const ccdAddress = process.env.CCD_ADDRESS as string | undefined;
 const evmPrivateKey = process.env.EVM_PRIVATE_KEY as `0x${string}` | undefined;
@@ -111,7 +111,7 @@ async function main(): Promise<void> {
   if (
     !avmPrivateKey &&
     !aptosPrivateKey &&
-    !casperClientPrivateKeyPem &&
+    !casperPrivateKey &&
     !(ccdPrivateKey && ccdAddress) &&
     !evmPrivateKey &&
     !keetaMnemonic &&
@@ -123,7 +123,7 @@ async function main(): Promise<void> {
     !xrplSeed
   ) {
     console.error(
-      "❌ At least one of AVM_PRIVATE_KEY, APTOS_PRIVATE_KEY, CASPER_CLIENT_PRIVATE_KEY_PEM, CCD_PRIVATE_KEY + CCD_ADDRESS, EVM_PRIVATE_KEY, KEETA_MNEMONIC, NEAR_ACCOUNT_ID + NEAR_PRIVATE_KEY, SVM_PRIVATE_KEY, STELLAR_PRIVATE_KEY, HEDERA_ACCOUNT_ID + HEDERA_PRIVATE_KEY, TVM_PRIVATE_KEY, or XRPL_SEED is required",
+      "❌ At least one of AVM_PRIVATE_KEY, APTOS_PRIVATE_KEY, CASPER_PRIVATE_KEY, CCD_PRIVATE_KEY + CCD_ADDRESS, EVM_PRIVATE_KEY, KEETA_MNEMONIC, NEAR_ACCOUNT_ID + NEAR_PRIVATE_KEY, SVM_PRIVATE_KEY, STELLAR_PRIVATE_KEY, HEDERA_ACCOUNT_ID + HEDERA_PRIVATE_KEY, TVM_PRIVATE_KEY, or XRPL_SEED is required",
     );
     process.exit(1);
   }
@@ -149,11 +149,11 @@ async function main(): Promise<void> {
     console.log(`Initialized Aptos account: ${account.accountAddress.toStringLong()}`);
   }
 
-  // Register Casper scheme if private key PEM is provided
-  if (casperClientPrivateKeyPem) {
+  // Register Casper scheme if private key is provided
+  if (casperPrivateKey) {
     const casperSigner = await createClientCasperSigner(
-      casperClientPrivateKeyPem,
-      process.env.CASPER_CLIENT_PRIVATE_KEY_ALGORITHM === "secp256k1" ? 2 : 1, // Default to ED25519 if not specified
+      casperPrivateKey,
+      process.env.CASPER_PRIVATE_KEY_ALGORITHM === "secp256k1" ? 2 : 1, // Default to ED25519 if not specified
     );
     client.register("casper:*", new ExactCasperScheme(casperSigner));
     console.log(`Initialized Casper account: ${casperSigner.accountAddress()}`);
