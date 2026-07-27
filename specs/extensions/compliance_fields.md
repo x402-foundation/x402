@@ -143,7 +143,14 @@ later one. Accordingly:
 
 `canonicalizationVersion: 1` = **RFC 8785 (JCS)** serialization; `recordDigest = keccak256(utf8(canonical(record)))`. Serialization and digest function are versioned **together**: `receiptDigest` binds the offer-receipt artifact and the attestation base is EIP-712 — both keccak256 — so changing either independently invalidates existing signatures.
 
-Two implementations disagreeing on key order or number serialization produce different digests from the same record, silently breaking the `refundOf` chain. Byte-level cross-implementation conformance vectors — including the integer-like-key ordering case that sort-then-stringify implementations get wrong — are published with the reference implementation: [canonical-vectors.json](https://github.com/tersignhq/tersign-js/blob/main/test/fixtures/canonical-vectors.json), [compliance-record.json](https://github.com/tersignhq/tersign-js/blob/main/test/fixtures/compliance-record.json). Conformance is testable, not asserted.
+Two implementations disagreeing on key order or number serialization produce different digests from the same record, silently breaking the `refundOf` chain. Conformance is testable, not asserted — an implementation MUST reproduce these vectors:
+
+| input | canonical form | `recordDigest` |
+|---|---|---|
+| `{"b":"x","a":1}` | `{"a":1,"b":"x"}` | `0x84fc3d9faf736ddfdb9baab9973656bd8d9bd142f1dfff8aa513a774fddfdd04` |
+| `{"10":"a","2":"b","1":"c"}` | `{"1":"c","10":"a","2":"b"}` | `0x426b770f81b8ad5e307bcfb767deb02f8d32cd340d81a946be88bb184857e81b` |
+
+The second vector is load-bearing: RFC 8785 orders keys by UTF-16 code unit, so `"1" < "10" < "2"`. A sort-then-stringify implementation whose runtime hoists integer-like keys into numeric order emits `{"1":"c","2":"b","10":"a"}` and produces a different digest from the same record. A vector with only non-numeric keys cannot catch this class.
 
 ---
 
@@ -176,6 +183,6 @@ A refund emits a NEW record with `refundOf` + `adjustment{type: refund, status, 
 
 EN 16931-1 (+ CEN/TS 16931-8:2024 e-receipt) · Peppol BIS Billing 3.0 (UBL 2.1) · VAT Directive 2006/112/EC Arts 220a/226/226b · ViDA Directive (EU) 2025/516 · JP Qualified Invoice System · KR e-Tax Invoice · HK IRO s.51C · IRS 1099-DA · MiCA Art 68(9) · RFC 8785 (JCS) · schema.org Invoice/Order · x402 `offer-receipt`, `payment-identifier`, SAR proposal (#1195).
 
-## Reference implementation
+## Implementation status
 
-TypeScript, MIT: [tersignhq/tersign-js](https://github.com/tersignhq/tersign-js) (`tersign` on npm). The reference implementation migrates its vendor EIP-712 domain to the canonical `compliance-fields` domain above when this spec merges.
+An MIT-licensed TypeScript implementation exists and migrates its pre-standard EIP-712 domain to the canonical `compliance-fields` domain above on merge. The spec is self-contained: the canonicalization vectors above are sufficient to implement and test conformance without it.
