@@ -1,0 +1,7 @@
+{
+  "name": "x402-suretat — 86 Pay-per-Call Micro-APIs",
+  "description": "86 pay-per-call micro-APIs on x402/USDC (Base mainnet): French-specific tools (SIRET, TVA, INSEE, NAF, addresses, public holidays, phone), developer utilities (hash, JWT, QR code, PDF, DNS, regex, screenshot, currency), NLP/AI (CV parser, salary estimator, job matcher, sentiment, lang detect), and data tools (CSV/JSON/XML/YAML converters, diff, readability). No signup, no API key, no rate limit. Runs on Oracle Cloud ARM (Always Free).",
+  "logoUrl": "/logos/x402-suretat-fr.png",
+  "websiteUrl": "https://github.com/fredericsuretat/x402-suretat",
+  "category": "Services & Endpoints"
+}
