@@ -88,7 +88,7 @@ describe("ExactCasperScheme facilitator", () => {
     const signer = createMockSigner();
     const scheme = new ExactCasperScheme(signer);
 
-    expect(scheme.getExtra(testNetwork)).toEqual({ feePayer: signer.getAddresses(testNetwork)[0] });
+    expect(scheme.getExtra(testNetwork)).toEqual({});
     expect(scheme.getSigners(testNetwork)).toEqual(signer.getAddresses(testNetwork));
   });
 

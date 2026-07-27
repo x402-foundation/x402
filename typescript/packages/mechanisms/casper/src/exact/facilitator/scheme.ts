@@ -78,11 +78,11 @@ export class ExactCasperScheme implements SchemeNetworkFacilitator {
   /**
    * Get supported endpoint extra data.
    *
-   * @param network - Network identifier.
+   * @param _network - Network identifier.
    * @returns Extra data.
    */
-  getExtra(network: Network): Record<string, unknown> {
-    return { feePayer: this.signer.getAddresses(network)[0] ?? "" };
+  getExtra(_network: Network): Record<string, unknown> {
+    return {};
   }
 
   /**

@@ -25,7 +25,7 @@ const supportedKind = {
   x402Version: 2,
   scheme: "exact",
   network: testNetwork,
-  extra: { feePayer: "facilitator" },
+  extra: {},
 };
 
 describe("ExactCasperScheme server", () => {
@@ -68,14 +68,13 @@ describe("ExactCasperScheme server", () => {
     const enhanced = await scheme.enhancePaymentRequirements(
       buildRequirements({ amount: "1.5" }),
       supportedKind,
-      ["feePayer"],
+      [],
     );
 
     expect(enhanced.amount).toBe("1500000");
     expect(enhanced.extra).toMatchObject({
       name: "TestToken",
       version: "1",
-      feePayer: "facilitator",
     });
   });
 

@@ -153,7 +153,7 @@ async function main(): Promise<void> {
   if (casperClientPrivateKeyPem) {
     const casperSigner = await createClientCasperSigner(
       casperClientPrivateKeyPem,
-      process.env.CASPER_CLIENT_PRIVATE_KEY_ALGORITHM === 'secp256k1' ? 2 : 1, // Default to ED25519 if not specified
+      process.env.CASPER_CLIENT_PRIVATE_KEY_ALGORITHM === "secp256k1" ? 2 : 1, // Default to ED25519 if not specified
     );
     client.register("casper:*", new ExactCasperScheme(casperSigner));
     console.log(`Initialized Casper account: ${casperSigner.accountAddress()}`);

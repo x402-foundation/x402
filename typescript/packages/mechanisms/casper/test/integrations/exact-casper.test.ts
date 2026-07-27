@@ -174,7 +174,7 @@ describe("Casper integration", () => {
           x402Version: 2,
           scheme: "exact",
           network: NETWORK,
-          extra: { feePayer: FACILITATOR_ADDRESS },
+          extra: {},
         }),
       ]);
     });

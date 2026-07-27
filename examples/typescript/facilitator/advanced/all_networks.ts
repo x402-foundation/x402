@@ -144,7 +144,8 @@ if (
 // Network configuration (alphabetic order)
 const AVM_NETWORK = "algorand:SGO1GKSzyE7IEPItTxCByw9x8FmnrCDexi9/cOUJOiI="; // Algorand Testnet
 const APTOS_NETWORK = (process.env.APTOS_NETWORK || "aptos:2") as Network; // Aptos Testnet
-const CASPER_NETWORK = (process.env.CASPER_NETWORK || "casper:casper-test") as Network; // Casper Testnet
+const CASPER_NETWORK = (process.env.CASPER_NETWORK ||
+  "casper:casper-test") as Network; // Casper Testnet
 const CCD_NETWORK = "ccd:4221332d34e1694168c2a0c0b3fd0f27"; // Concordium Testnet
 const EVM_NETWORK = "eip155:84532"; // Base Sepolia
 const HEDERA_NETWORK = "hedera:testnet"; // Hedera Testnet
@@ -206,12 +207,14 @@ if (aptosPrivateKey) {
 if (casperFacilitatorPrivateKeyPem) {
   const casperSigner = await createFacilitatorCasperSigner(
     casperFacilitatorPrivateKeyPem,
-    process.env.CASPER_FACILITATOR_PRIVATE_KEY_ALGORITHM === 'secp256k1' ? 2 : 1, // Default to ED25519 if not specified,
+    process.env.CASPER_FACILITATOR_PRIVATE_KEY_ALGORITHM === "secp256k1"
+      ? 2
+      : 1, // Default to ED25519 if not specified,
     casperRpcUrl ? { [CASPER_NETWORK]: casperRpcUrl } : undefined,
     {
       getBalance: async () => 10n ** 30n,
       getAuthorizationState: async () => "unused",
-      assertTransferWithAuthorizationSupported: async () => { },
+      assertTransferWithAuthorizationSupported: async () => {},
     },
   );
   facilitator.register(CASPER_NETWORK, new ExactCasperScheme(casperSigner));
