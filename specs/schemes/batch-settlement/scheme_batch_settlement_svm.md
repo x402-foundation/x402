@@ -28,10 +28,6 @@ The x402 roles map to the payment-channel program as follows:
 - **Server**: resource provider; receives funds at `payTo`; owns per-channel
   offchain state, including the accepted cumulative watermark and latest
   voucher.
-- **Receiver authorizer**: lifecycle key advertised as
-  `extra.receiverAuthorizer`; recorded as channel `payee`; signs cooperative
-  close/refund operations. It MUST equal `extra.feePayer` so the rent sponsor
-  can close abandoned channels and recover its rent.
 - **Facilitator / sponsor**: account advertised as `extra.feePayer`; sponsors
   transaction fees and channel rent. It is the transaction fee payer and channel
   `rent_payer`, and occupies the channel `payee` lifecycle-authority seat with a
@@ -53,7 +49,7 @@ the facilitator:
   watermark, but it cannot create a nonzero claim or redirect funds.
 
 A facilitator that closes before the latest client voucher is claimed freezes
-the watermark and causes the unclaimed remainder to be refunded to the client.
+the watermark and causes the unclaimed remainder to be returned to the client.
 The server MUST treat unclaimed voucher value as facilitator credit risk and
 claim promptly.
 
@@ -66,13 +62,13 @@ claim promptly.
 | Monotonic amount | Server-owned offchain watermark plus onchain `settled < maxClaimableAmount <= deposit` at redemption. |
 | Batched redemption | One `settle` per channel, packed transaction-size permitting; `distribute` pays settled deltas. |
 | Recipient binding | `distribution_hash` fixed at `open` sends funds to `payTo`; program re-checks it at `distribute`. |
-| Refund of unused deposit | `settle_and_seal` + `distribute` for cooperative close; `request_close` / `seal` / `withdraw_payer` for payer-forced close. |
+| Recovery of unused deposit | `request_close` / `seal` / `withdraw_payer` for payer-forced close. |
 
 ## 3. Payment-Channel Method
 
 SVM `batch-settlement` defines a single payment method backed by the
-payment-channels program. Because there is only one method, the wire format does
-not include `extra.profiles` or `extra.assetTransferMethod`.
+payment-channels program, so the wire format does not include
+`extra.assetTransferMethod`.
 
 The canonical program id is a network/SDK constant, not a server-provided wire
 field. For the current mainnet deployment:
@@ -95,10 +91,10 @@ The current program lifecycle is:
    valid voucher.
 3. `distribute`: permissionlessly pays the newly settled delta to `payTo` and
    advances `payout_watermark`. While the channel is still open, it does not
-   refund the payer or close the escrow.
-4. `settle_and_seal`: receiver-authorizer-signed cooperative close. It may apply
-   a final voucher, locks the watermark, and moves the channel to `Sealed`.
-5. Sealed `distribute`: pays any final settled delta, refunds
+   return unused escrow to the payer or close the escrow.
+4. `settle_and_seal`: `payee`-signed cooperative close. It may apply a final
+   voucher, locks the watermark, and moves the channel to `Sealed`.
+5. Sealed `distribute`: pays any final settled delta, returns
    `deposit - settled` to the payer, closes the escrow token account, and either
    deallocates the channel PDA immediately or marks it `Distributed`.
 6. `reclaim`: permissionless cleanup for `Distributed` channels after
@@ -111,14 +107,14 @@ to that address during the final `distribute` fast path or a later `reclaim`.
 Because the sponsor holds the `payee` lifecycle authority, it can seal and clean
 up an abandoned channel without a client or server signature. It MUST be able
 to rediscover the channels it sponsored as specified in section 6. Token
-payouts and client refunds are completed by `distribute` and are not delayed by
-the later `reclaim` of PDA rent.
+payouts and the return of unused escrow are completed by `distribute` and are
+not delayed by the later `reclaim` of PDA rent.
 
-If the client invokes `request_close`, only the `payee` can cooperatively
-`settle_and_seal` during the grace period. The server therefore depends on the
-facilitator to include its latest voucher before the deadline. After the grace
-period, anyone can call `seal`; the payer can recover unspent escrow through
-`withdraw_payer` or sealed `distribute`.
+If the client invokes `request_close`, the channel enters `Closing` and regular
+`settle` is no longer available. Only the `payee` can apply a final voucher with
+`settle_and_seal` during the grace period. After the grace period, anyone can
+call `seal`; the payer can recover unspent escrow through `withdraw_payer` or
+sealed `distribute`.
 
 ## 4. Wire Format
 
@@ -134,7 +130,7 @@ and `SettlementResponse` types are defined in
 |---|---|---|---|
 | `scheme` | string | yes | `"batch-settlement"` |
 | `network` | string | yes | CAIP-2, e.g. `solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp` |
-| `amount` | string | yes | Maximum per-request price in atomic units. The server MAY charge less and reports the actual charge in `SettlementResponse.extra.chargedAmount`. |
+| `amount` | string | yes | Fixed per-request price in atomic units. |
 | `asset` | string | yes | Concrete SPL / Token-2022 mint pubkey, not a symbol. |
 | `payTo` | string | yes | Base58 final payment receiver. Normally a server cold wallet. |
 | `maxTimeoutSeconds` | number | yes | HTTP completion window. |
@@ -144,8 +140,7 @@ and `SettlementResponse` types are defined in
 
 | Field | Type | Required | Notes |
 |---|---|---|---|
-| `feePayer` | string | yes | Base58 sponsor key set as channel `rent_payer` and zero-share `payee`. Co-signs setup/top-up transactions as transaction fee payer and signs cooperative close/refund transactions. |
-| `receiverAuthorizer` | string | yes | Base58 lifecycle-authority key set as channel `payee`. MUST equal `feePayer`, so rent recovery never depends on a separate server key. |
+| `feePayer` | string | yes | Base58 sponsor key set as channel `rent_payer` and zero-share `payee`. Co-signs setup/top-up transactions as transaction fee payer and signs channel lifecycle transactions. |
 | `withdrawDelay` | number | yes | Server-defined forced-close grace period in seconds. The client MUST encode this exact value as the program `grace_period`; the verifier MUST reject any other value. |
 | `recentBlockhash` | string | no | Pre-fetched blockhash the client MAY use to build an `open` or `top_up` transaction without an RPC round trip. The client MUST refresh it if it is no longer valid. |
 | `recentSlot` | number | no | Recent slot the client MAY use as `channelConfig.openSlot` when it does not fetch its own slot. The program still enforces the open-slot window. |
@@ -186,7 +181,6 @@ Example:
   "maxTimeoutSeconds": 300,
   "extra": {
     "feePayer": "<facilitator-fee-payer>",
-    "receiverAuthorizer": "<facilitator-fee-payer>",
     "withdrawDelay": 3600,
     "recentBlockhash": "<recent-blockhash>",
     "recentSlot": 341000000
@@ -209,7 +203,6 @@ may expose those program fields with language-specific casing.
 | `channelConfig.payer` | `Channel.payer` |
 | `channelConfig.payerAuthorizer` | `Channel.authorized_signer` |
 | `channelConfig.receiver` | Sole `DistributionEntry.recipient` with `bps = 10000`; the `Channel.payee` implicit remainder is always zero |
-| `channelConfig.receiverAuthorizer` | `Channel.payee` |
 | `channelConfig.token` | `Channel.mint` |
 | `channelConfig.withdrawDelay` | `Channel.grace_period` |
 | `channelConfig.salt` | `Channel.salt` |
@@ -226,10 +219,9 @@ may expose those program fields with language-specific casing.
 
 | Field | Type | Notes |
 |---|---|---|
-| `payer` | string | Client wallet and channel payer. MUST NOT equal `receiverAuthorizer`, because the program requires distinct payer and payee accounts. |
-| `payerAuthorizer` | string | Client-controlled Ed25519 voucher signer; maps to channel `authorized_signer`. MAY equal `payer` but MUST NOT equal `receiverAuthorizer` / `feePayer`. |
+| `payer` | string | Client wallet and channel payer. MUST NOT equal `feePayer`, because the program requires distinct payer and payee accounts. |
+| `payerAuthorizer` | string | Client-controlled Ed25519 voucher signer; maps to channel `authorized_signer`. MAY equal `payer` but MUST NOT equal `feePayer`. |
 | `receiver` | string | MUST equal `payTo`. |
-| `receiverAuthorizer` | string | MUST equal `extra.receiverAuthorizer == extra.feePayer`; maps to channel `payee`. |
 | `token` | string | MUST equal `asset`; maps to channel `mint`. |
 | `withdrawDelay` | number | MUST equal `extra.withdrawDelay`; maps to channel `grace_period`. |
 | `salt` | string | Decimal `u64` channel salt. |
@@ -246,7 +238,7 @@ find_program_address(
   [
     "channel",
     channelConfig.payer,
-    channelConfig.receiverAuthorizer,
+    PaymentRequirements.extra.feePayer,
     channelConfig.token,
     channelConfig.payerAuthorizer,
     u64(channelConfig.salt).to_le_bytes(),
@@ -263,7 +255,7 @@ For a new channel, the `open` instruction MUST encode:
 - `grace_period == channelConfig.withdrawDelay`
 - `open_slot == channelConfig.openSlot`
 - `rent_payer == PaymentRequirements.extra.feePayer`
-- `payee == channelConfig.receiverAuthorizer`
+- `payee == PaymentRequirements.extra.feePayer`
 - `authorized_signer == channelConfig.payerAuthorizer`
 - `mint == channelConfig.token`
 - the distribution derived from `channelConfig.receiver` as specified in
@@ -295,13 +287,12 @@ This is the payment-channels program voucher layout (`VOUCHER_MAGIC`,
 | `balance` | string | Current `Channel.deposit` ceiling in atomic units. |
 | `totalClaimed` | string | Current onchain `Channel.settled` watermark. |
 | `withdrawRequestedAt` | number | `Channel.closure_started_at`, or `0` when no forced close is pending. |
-| `chargedCumulativeAmount` | string | Server-owned offchain cumulative actual charge. Present only when the response is authored by the server. |
+| `chargedCumulativeAmount` | string | Server-owned offchain cumulative fixed charge. Present only when the response is authored by the server. |
 
 ### 4.3 Client `PaymentPayload` Variants
 
-The client payload is a tagged union on `payload.type`. `/verify` accepts all
-three variants. `/settle` accepts `deposit` and `voucher` directly; the server
-enriches `refund` before settlement as specified in section 4.5.
+The client payload is a tagged union on `payload.type`. `/verify` and `/settle`
+accept the `deposit` and `voucher` variants.
 
 **`deposit`** opens a channel or tops up an existing channel and authorizes the
 current request:
@@ -326,7 +317,6 @@ current request:
     "maxTimeoutSeconds": 300,
     "extra": {
       "feePayer": "<facilitator-fee-payer>",
-      "receiverAuthorizer": "<facilitator-fee-payer>",
       "withdrawDelay": 3600,
       "recentBlockhash": "<recent-blockhash>",
       "recentSlot": 341000000
@@ -338,7 +328,6 @@ current request:
       "payer": "<client-wallet>",
       "payerAuthorizer": "<client-voucher-signer>",
       "receiver": "<server-receiver>",
-      "receiverAuthorizer": "<facilitator-fee-payer>",
       "token": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
       "withdrawDelay": 3600,
       "salt": "42",
@@ -379,7 +368,6 @@ transaction:
     "maxTimeoutSeconds": 300,
     "extra": {
       "feePayer": "<facilitator-fee-payer>",
-      "receiverAuthorizer": "<facilitator-fee-payer>",
       "withdrawDelay": 3600,
       "recentBlockhash": "<recent-blockhash>",
       "recentSlot": 341000000
@@ -391,7 +379,6 @@ transaction:
       "payer": "<client-wallet>",
       "payerAuthorizer": "<client-voucher-signer>",
       "receiver": "<server-receiver>",
-      "receiverAuthorizer": "<facilitator-fee-payer>",
       "token": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
       "withdrawDelay": 3600,
       "salt": "42",
@@ -407,57 +394,6 @@ transaction:
 }
 ```
 
-**`refund`** requests cooperative closure and a full refund of the unspent
-escrow. The application resource handler is bypassed. Its voucher is
-zero-charge: `maxClaimableAmount` MUST equal the server's current
-`chargedCumulativeAmount`.
-
-| Field | Type | Notes |
-|---|---|---|
-| `type` | string | `"refund"` |
-| `channelConfig` | `ChannelConfig` | Full channel configuration. |
-| `voucher` | `BatchVoucher` | Zero-charge voucher at the server's current cumulative charge. |
-
-```json
-{
-  "x402Version": 2,
-  "accepted": {
-    "scheme": "batch-settlement",
-    "network": "solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp",
-    "amount": "1000",
-    "asset": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
-    "payTo": "<server-receiver>",
-    "maxTimeoutSeconds": 300,
-    "extra": {
-      "feePayer": "<facilitator-fee-payer>",
-      "receiverAuthorizer": "<facilitator-fee-payer>",
-      "withdrawDelay": 3600,
-      "recentBlockhash": "<recent-blockhash>",
-      "recentSlot": 341000000
-    }
-  },
-  "payload": {
-    "type": "refund",
-    "channelConfig": {
-      "payer": "<client-wallet>",
-      "payerAuthorizer": "<client-voucher-signer>",
-      "receiver": "<server-receiver>",
-      "receiverAuthorizer": "<facilitator-fee-payer>",
-      "token": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
-      "withdrawDelay": 3600,
-      "salt": "42",
-      "openSlot": 341000000
-    },
-    "voucher": {
-      "channelId": "<channel-pda>",
-      "maxClaimableAmount": "3200",
-      "expiresAt": 0,
-      "signature": "<base58-ed25519-zero-charge-voucher-signature>"
-    }
-  }
-}
-```
-
 ### 4.4 `SettlementResponse` (in `PAYMENT-RESPONSE`)
 
 | Field | Type | Required | Notes |
@@ -465,11 +401,11 @@ zero-charge: `maxClaimableAmount` MUST equal the server's current
 | `success` | boolean | yes | Whether acceptance or settlement succeeded. |
 | `errorReason` | string | no | Omitted on success. |
 | `payer` | string | no | Channel `payer`. |
-| `transaction` | string | yes | Onchain signature for deposit/top-up/refund/claim/settle operations; empty string for offchain voucher acceptance. |
+| `transaction` | string | yes | Onchain signature for deposit/top-up/claim/settle operations; empty string for offchain voucher acceptance. |
 | `network` | string | yes | CAIP-2 network identifier. |
 | `amount` | string | no | Amount moved onchain; empty for voucher acceptance and `claim`. |
 | `extra.commitmentId` | string | no | MUST be non-empty for voucher acceptance, e.g. `channelId:maxClaimableAmount`. |
-| `extra.chargedAmount` | string | no | Actual per-request charge committed offchain. |
+| `extra.chargedAmount` | string | no | Fixed per-request charge; MUST equal `PaymentRequirements.amount`. |
 | `extra.channelState` | `ChannelState` | no | Current channel snapshot. |
 
 Scheme-specific response fields are nested under `extra`.
@@ -484,13 +420,13 @@ A successful voucher-only response is:
   "amount": "",
   "extra": {
     "commitmentId": "<channel-pda>:5000",
-    "chargedAmount": "700",
+    "chargedAmount": "1000",
     "channelState": {
       "channelId": "<channel-pda>",
       "balance": "100000",
-      "totalClaimed": "3200",
+      "totalClaimed": "3000",
       "withdrawRequestedAt": 0,
-      "chargedCumulativeAmount": "4700"
+      "chargedCumulativeAmount": "5000"
     }
   }
 }
@@ -510,8 +446,8 @@ The standard x402 `POST /verify` and `POST /settle` request envelope contains
 
 #### `POST /verify`
 
-`paymentPayload.payload` MUST be one of the client-authored `deposit`,
-`voucher`, or `refund` variants in section 4.3. The facilitator validates the
+`paymentPayload.payload` MUST be one of the client-authored `deposit` or
+`voucher` variants in section 4.3. The facilitator validates the
 wire fields, voucher signature, derived channel PDA, onchain channel state, and,
 for `deposit`, the client-signed transaction.
 
@@ -542,8 +478,7 @@ A successful response is:
 
 The facilitator MUST return `isValid: false` with `invalidReason` when
 verification fails. The server MAY verify ordinary voucher payloads locally
-when its onchain snapshot is fresh; `deposit` and `refund` MUST be sent to the
-facilitator.
+when its onchain snapshot is fresh; `deposit` MUST be sent to the facilitator.
 
 #### `POST /settle`
 
@@ -556,22 +491,17 @@ instruction it invokes:
 | `voucher` | Client | Accept an offchain authorization; no funds move. | None |
 | `claim` | Server | Advance accounting; no funds move to the receiver. | `settle` |
 | `settle` | Server | Move earned funds to the receiver. | `distribute` |
-| `refund` | Client, then server-enriched | Cooperatively close and return unspent escrow to the payer. | `settle_and_seal` + `distribute` |
 
 The examples in this subsection show the inner `paymentPayload.payload`; the
 caller MUST wrap each one in the standard request envelope defined above.
 
 The `deposit` and `voucher` settle payloads are the client variants from
-section 4.3. The server-authored or server-enriched variants are:
+section 4.3. The server-authored variants are:
 
 | Payload | Field | Type | Notes |
 |---|---|---|---|
-| Refund | `type` | string | `"refund"` |
-| Refund | `channelConfig` | `ChannelConfig` | Client-provided channel configuration. |
-| Refund | `voucher` | `BatchVoucher` | Client's zero-charge voucher. |
-| Refund | `transaction` | string | Base64 transaction containing `settle_and_seal` and sealed `distribute`, prepared for `feePayer` to sign as transaction fee payer and channel `payee`. |
 | Claim | `type` | string | `"claim"` |
-| Claim | `claims` | array | One or more voucher claims. |
+| Claim | `claims` | array | One to four voucher claims. |
 | Claim | `claims[].voucher.channelConfig` | `ChannelConfig` | Full channel configuration. |
 | Claim | `claims[].voucher.channelId` | string | Channel PDA. |
 | Claim | `claims[].voucher.maxClaimableAmount` | string | Cumulative amount for program `settle`. |
@@ -584,33 +514,7 @@ section 4.3. The server-authored or server-enriched variants are:
 
 The server forwards a client-authored `deposit` unchanged. It MAY settle
 `voucher` locally by storing the commitment and producing the response in
-section 4.4. Before forwarding `refund`, the server MUST build the cooperative
-close transaction and add `transaction`. The facilitator MUST validate the
-complete transaction, then sign as both transaction `feePayer` and channel
-`payee` before broadcasting it:
-
-```json
-{
-  "type": "refund",
-  "channelConfig": {
-    "payer": "<client-wallet>",
-    "payerAuthorizer": "<client-voucher-signer>",
-    "receiver": "<server-receiver>",
-    "receiverAuthorizer": "<facilitator-fee-payer>",
-    "token": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
-    "withdrawDelay": 3600,
-    "salt": "42",
-    "openSlot": 341000000
-  },
-  "voucher": {
-    "channelId": "<channel-pda>",
-    "maxClaimableAmount": "3200",
-    "expiresAt": 0,
-    "signature": "<base58-ed25519-zero-charge-voucher-signature>"
-  },
-  "transaction": "<base64-settle-and-seal-and-distribute-transaction-awaiting-facilitator-signature>"
-}
-```
+section 4.4.
 
 The server initiates asynchronous accounting with a `claim` payload. Each
 claim carries the full channel configuration needed to derive and validate the
@@ -627,7 +531,6 @@ instruction:
           "payer": "<client-wallet-1>",
           "payerAuthorizer": "<client-voucher-signer-1>",
           "receiver": "<server-receiver>",
-          "receiverAuthorizer": "<facilitator-fee-payer>",
           "token": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
           "withdrawDelay": 3600,
           "salt": "42",
@@ -645,7 +548,6 @@ instruction:
           "payer": "<client-wallet-2>",
           "payerAuthorizer": "<client-voucher-signer-2>",
           "receiver": "<server-receiver>",
-          "receiverAuthorizer": "<facilitator-fee-payer>",
           "token": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
           "withdrawDelay": 3600,
           "salt": "43",
@@ -661,8 +563,10 @@ instruction:
 }
 ```
 
-The facilitator MUST process every `claims[]` entry or fail the request; it
-MUST NOT silently truncate a batch. For each claim it emits an Ed25519
+`claims[]` MUST contain between one and four entries so the instruction pairs
+fit in a legacy Solana transaction without address lookup tables. The
+facilitator MUST process every entry or fail the request; it MUST NOT silently
+truncate a batch. For each claim it emits an Ed25519
 precompile instruction immediately followed by the program `settle`
 instruction.
 
@@ -679,7 +583,6 @@ a `settle` payload:
         "payer": "<client-wallet-1>",
         "payerAuthorizer": "<client-voucher-signer-1>",
         "receiver": "<server-receiver>",
-        "receiverAuthorizer": "<facilitator-fee-payer>",
         "token": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
         "withdrawDelay": 3600,
         "salt": "42",
@@ -692,7 +595,6 @@ a `settle` payload:
         "payer": "<client-wallet-2>",
         "payerAuthorizer": "<client-voucher-signer-2>",
         "receiver": "<server-receiver>",
-        "receiverAuthorizer": "<facilitator-fee-payer>",
         "token": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
         "withdrawDelay": 3600,
         "salt": "43",
@@ -741,31 +643,14 @@ Deposit (`amount` is the amount deposited or topped up):
   "payer": "<client-wallet>",
   "amount": "100000",
   "extra": {
+    "commitmentId": "<channel-pda>:1000",
+    "chargedAmount": "1000",
     "channelState": {
       "channelId": "<channel-pda>",
       "balance": "100000",
-      "totalClaimed": "3200",
-      "withdrawRequestedAt": 0
-    }
-  }
-}
-```
-
-Refund (`amount` is the amount returned to the payer):
-
-```json
-{
-  "success": true,
-  "transaction": "<base58-transaction-signature>",
-  "network": "solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp",
-  "payer": "<client-wallet>",
-  "amount": "96800",
-  "extra": {
-    "channelState": {
-      "channelId": "<channel-pda>",
-      "balance": "0",
-      "totalClaimed": "3200",
-      "withdrawRequestedAt": 0
+      "totalClaimed": "0",
+      "withdrawRequestedAt": 0,
+      "chargedCumulativeAmount": "1000"
     }
   }
 }
@@ -774,8 +659,7 @@ Refund (`amount` is the amount returned to the payer):
 #### `GET /supported`
 
 The facilitator advertises its SVM transaction fee payer. The server MUST copy
-this value into both `PaymentRequirements.extra.feePayer` and
-`PaymentRequirements.extra.receiverAuthorizer`:
+this value into `PaymentRequirements.extra.feePayer`:
 
 ```json
 {
@@ -816,19 +700,18 @@ signed recovery proof:
       "maxTimeoutSeconds": 300,
       "extra": {
         "feePayer": "<facilitator-fee-payer>",
-        "receiverAuthorizer": "<facilitator-fee-payer>",
         "withdrawDelay": 3600,
         "recentBlockhash": "<recent-blockhash>",
         "recentSlot": 341000000,
         "channelState": {
           "channelId": "<channel-pda>",
           "balance": "100000",
-          "totalClaimed": "500",
+          "totalClaimed": "2000",
           "withdrawRequestedAt": 0,
-          "chargedCumulativeAmount": "3200"
+          "chargedCumulativeAmount": "3000"
         },
         "voucherState": {
-          "signedMaxClaimable": "3200",
+          "signedMaxClaimable": "3000",
           "expiresAt": 0,
           "signature": "<base58-ed25519-voucher-signature>"
         }
@@ -854,12 +737,10 @@ client MUST fetch a fresh value and rebuild the transaction. The facilitator
 MUST reject an expired transaction blockhash and an `openSlot` outside the
 program's accepted window.
 
-For `open`, the client MUST require `extra.receiverAuthorizer ==
-extra.feePayer` and set `payee = extra.feePayer`,
-`authorized_signer = channelConfig.payerAuthorizer`, `rent_payer =
-extra.feePayer`, `mint = channelConfig.token`, `grace_period =
-channelConfig.withdrawDelay`, `open_slot = channelConfig.openSlot`, and
-`deposit = payload.deposit.amount`.
+For `open`, the client MUST set `payee = extra.feePayer`, `authorized_signer =
+channelConfig.payerAuthorizer`, `rent_payer = extra.feePayer`,
+`mint = channelConfig.token`, `grace_period = channelConfig.withdrawDelay`,
+`open_slot = channelConfig.openSlot`, and `deposit = payload.deposit.amount`.
 
 The sponsor MUST validate the full compiled setup transaction before co-signing,
 not only the payment-channel instruction. It MUST resolve address lookup tables,
@@ -900,8 +781,7 @@ voucher signature and expiry, and a cached response keyed by
 2. Confirm `channelId` matches the PDA derived from `channelConfig` and the
    canonical payment-channels program id.
 3. Confirm the channel exists, is `Open`, has `mint == channelConfig.token ==
-   asset`, `payee == channelConfig.receiverAuthorizer ==
-   extra.receiverAuthorizer == extra.feePayer`, `authorized_signer ==
+   asset`, `payee == extra.feePayer`, `authorized_signer ==
    channelConfig.payerAuthorizer`, `rent_payer == extra.feePayer`,
    `grace_period == channelConfig.withdrawDelay == extra.withdrawDelay`,
    `open_slot == channelConfig.openSlot`, and a distribution to `payTo`
@@ -921,9 +801,8 @@ voucher signature and expiry, and a cached response keyed by
      rejected.
    - A fresh voucher MUST have `maxClaimableAmount ==
      chargedCumulativeAmount + PaymentRequirements.amount`.
-7. Execute the resource handler and determine `chargedAmount`, which MUST be
-   greater than zero and less than or equal to `PaymentRequirements.amount`.
-   Only after the handler succeeds, atomically add `chargedAmount` to
+7. Execute the resource handler. Only after it succeeds, set `chargedAmount =
+   PaymentRequirements.amount`, atomically add `chargedAmount` to
    `chargedCumulativeAmount`, store `signedMaxClaimable`, the voucher and the
    cached response, and return `PAYMENT-RESPONSE` with `transaction == ""`,
    `extra.commitmentId`, `extra.chargedAmount`, and `extra.channelState`. If the
@@ -942,29 +821,28 @@ the request path:
 
 - **Claim (`type: "claim"`).** For each channel, build an Ed25519 precompile
   instruction for the latest stored voucher followed by program `settle`. Pack
-  as many channels into one transaction as the transaction size permits; do not
-  silently drop channels from a full batch. Program `settle` advances onchain
-  `settled` to the voucher's exact `maxClaimableAmount`.
+  no more than four channels into one transaction and do not silently drop
+  channels from a full batch. Program `settle` advances onchain `settled` to
+  the voucher's exact `maxClaimableAmount`.
 - **Settle (`type: "settle"`).** Call program `distribute` to pay the newly
   claimed delta to `payTo` and advance `payout_watermark`. The channel remains
   open.
-- **Cooperative close/refund.** For a `refund` payload or server-initiated
-  close, the facilitator signs `settle_and_seal` as `payee`, applying the final
-  voucher when it advances the watermark (or using `has_voucher = 0` when no
-  claim is needed). `distribute` then pays any remaining settled delta, refunds
-  `deposit - settled` to the payer, closes the escrow token account, and moves
-  the channel to its cleanup state.
+- **Channel close.** Cooperative close is a payment-channel lifecycle operation,
+  not an x402 wire payload. The facilitator MAY sign `settle_and_seal` as
+  `payee` under its lifecycle policy. `distribute` then pays any remaining
+  settled delta, returns `deposit - settled` to the payer, closes the escrow
+  token account, and moves the channel to its cleanup state.
 - **Rent cleanup.** If final `distribute` leaves the channel in `Distributed`,
   anyone can later call `reclaim` after the open-slot window to return remaining
   PDA rent to `rent_payer`.
 
-The server SHOULD claim with enough buffer before `withdrawDelay` can elapse
-after a client starts forced close. If the payer calls `request_close`, only the
-facilitator as `payee` can `settle_and_seal` during the grace period, using a
-final voucher supplied by the server. After the grace period, anyone can call
-`seal`; the payer can then recover unspent deposit via `withdraw_payer` or the
-sealed `distribute` refund branch, and vouchers not yet claimed are forfeited by
-the server.
+The payer exits through the payment-channel program's forced-close path. The
+server SHOULD claim with enough buffer before `withdrawDelay` can elapse after
+the payer calls `request_close`. During the grace period, only the facilitator
+as `payee` can apply a final voucher and seal cooperatively. After the grace
+period, anyone can call `seal`; the payer can recover unspent deposit via
+`withdraw_payer` or sealed `distribute`, and vouchers not yet claimed are
+forfeited by the server.
 
 ## 6. Asynchronous Recovery and Channel Discovery
 
@@ -1058,9 +936,8 @@ Standard x402 codes apply. The facilitator reports verification failures in
   `channelConfig.payerAuthorizer` does not match channel `authorized_signer`.
 - `invalid_batch_settlement_svm_channel_id_mismatch` - `channelId` does not
   match the canonical PDA derivation.
-- `invalid_batch_settlement_svm_receiver_authorizer_mismatch` - channel `payee`
-  does not match `extra.receiverAuthorizer`, or `receiverAuthorizer` does not
-  equal `feePayer`.
+- `invalid_batch_settlement_svm_fee_payer_mismatch` - channel `payee` or
+  `rent_payer` does not match `extra.feePayer`.
 - `invalid_batch_settlement_svm_withdraw_delay_mismatch` - channel grace period
   does not match `extra.withdrawDelay`.
 - `invalid_batch_settlement_svm_cumulative_amount_mismatch` - corrective 402:
@@ -1078,7 +955,7 @@ Standard x402 codes apply. The facilitator reports verification failures in
   and sets the exact cumulative maximum signed by the client.
 - **No redirection.** `distribution_hash` is fixed at `open` and re-checked at
   `distribute`; the derived distribution sends settled funds to `payTo`.
-- **Authenticated claims.** The wire `extra.feePayer` address is recorded as
+- **Authenticated vouchers.** The wire `extra.feePayer` address is recorded as
   program `Channel.rent_payer` and zero-share `Channel.payee`. Program
   `Channel.authorized_signer` instead comes from wire
   `channelConfig.payerAuthorizer`, so the facilitator can close a channel but
@@ -1089,7 +966,7 @@ Standard x402 codes apply. The facilitator reports verification failures in
   `reclaim`, without client or server cooperation. Abandoned channels cannot
   permanently lock sponsored rent.
 - **Facilitator early-close exposure.** Closing before the latest voucher is
-  claimed freezes the onchain watermark and refunds the remainder to the
+  claimed freezes the onchain watermark and returns the remainder to the
   client. The server MUST bound its exposure by claiming promptly and SHOULD
   treat unclaimed voucher value as facilitator credit risk. During a
   client-initiated grace period, only the facilitator can apply the final
@@ -1103,11 +980,9 @@ Standard x402 codes apply. The facilitator reports verification failures in
 - **Time-bounded commitments.** Nonzero voucher `expiresAt` is checked both at
   server acceptance and onchain redemption. `expiresAt == 0` means no voucher
   expiry; in that case the channel's forced-close path bounds the commitment.
-- **Metering trust.** Each voucher authorizes at most the advertised
-  `PaymentRequirements.amount` above the previously reported actual cumulative
-  charge. The client trusts the server to claim no more than the reported
-  `chargedCumulativeAmount`; the server trusts itself to redeem before voucher
-  expiry or forced-close expiry.
+- **Fixed pricing.** Each fresh voucher increases the cumulative authorization
+  by exactly `PaymentRequirements.amount`. The server trusts itself to redeem
+  before voucher expiry or forced-close expiry.
 
 ## 9. Out of Scope
 
