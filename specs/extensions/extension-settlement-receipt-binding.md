@@ -144,13 +144,16 @@ A normative reference suite implements these verdicts across two rails (`generic
 
 These are presentation constraints on the gate result, not schema requirements: they add no field and change no byte of the committed vectors.
 
-The conformance vectors and checker are pinned to an immutable commit:
+The conformance vectors and checker are pinned **by content**. Git refs are mutable; the pin below names the objects themselves, so a re-tag, a history rewrite, or a repository move cannot silently change what "conformant" means:
 
-- Repository: `vaaraio/vaara`, tag `v1.1.1`, commit `088a869d20fe577719175251588ae66b871d1cef`
+- Repository: `vaaraio/vaara`, tag `v1.1.1` (commit `719827ce35544ee7d702c1402613d28d0e5a2552`)
 - Path: `tests/vectors/x402_settlement_v0/` (rails `generic` + `sui`, steps `step0` + `step1`, plus `_check_independent.py` and `expected.json`)
-- Permalink: <https://github.com/vaaraio/vaara/tree/088a869d20fe577719175251588ae66b871d1cef/tests/vectors/x402_settlement_v0>
+- **Content pin (normative).** The vector directory tree `0907322631fec65dcce6fb8d3bec2de277e8dee2`, within which the checker is blob `06697860273c7e585b75550856ca31193b8a1e3d` and `expected.json` is blob `3bd08232559030171949d03ba59bc7c568b85992`. These object identifiers — not the tag and not the commit — define the gate.
+- Permalink: <https://github.com/vaaraio/vaara/tree/719827ce35544ee7d702c1402613d28d0e5a2552/tests/vectors/x402_settlement_v0>
 
-`_check_independent.py` imports only the standard library plus a JCS library (`rfc8785`) and an ES256 verifier (`cryptography`) — no x402 and no receipt-framework import — and exits `0` only when every verdict matches `expected.json`. *(The pin is reconfirmed with the receipt-side author before merge; a vector update is accompanied by a schema version bump per §2.)*
+`_check_independent.py` imports only the standard library plus a JCS library (`rfc8785`) and an ES256 verifier (`cryptography`) — no x402 and no receipt-framework import — and exits `0` only when every verdict matches `expected.json`. *(A vector update is a change to the object identifiers above, and is accompanied by a schema version bump per §2. Where the vectors are hosted, and who controls that update path, is a venue decision for the maintainers; the content pin makes the gate checkable independent of that choice.)*
+
+*Pin history.* An earlier revision of this section pinned commit `088a869d20fe577719175251588ae66b871d1cef`. The `v1.1.1` tag was subsequently re-created at `719827ce…` — same commit message, same committer timestamp, same root tree `c25f5fcac8d965d0a90021ce97fca54468961fe7` — which left `088a869…` off the repository's live history. Every object named in the content pin above is byte-identical across both commits, so no vector, verdict, or digest in this specification changed; only the ref did. The content pin is the response.
 
 **Independent reproductions.** The gate has been reproduced green by independent receipt issuers — distinct codebases that import neither `vaaraio/vaara` nor each other — issuing their own signed receipts over the committed `generic` and `sui` settlement records and running the unmodified `_check_independent.py` against the pinned `v1.1.1` vectors. This is what makes the producer-agnostic property (§7) demonstrated rather than asserted:
 
