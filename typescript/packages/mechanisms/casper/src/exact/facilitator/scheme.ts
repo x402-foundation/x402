@@ -443,8 +443,8 @@ export class ExactCasperScheme implements SchemeNetworkFacilitator {
  * @returns Casper runtime args.
  */
 function buildTransferWithAuthorizationArgs(payload: ExactCasperPayload) {
-  const fromKey = casperSdk.Key.newKey(`account-hash-${payload.authorization.from.slice(2)}`);
-  const toKey = casperSdk.Key.newKey(`account-hash-${payload.authorization.to.slice(2)}`);
+  const fromKey = casperSdk.Key.fromBytes(hexToBytes(payload.authorization.from)).result;
+  const toKey = casperSdk.Key.fromBytes(hexToBytes(payload.authorization.to)).result;
   const signatureBytes = hexToBytes(payload.signature);
   const nonceBytes = hexToBytes(payload.authorization.nonce);
   const publicKey = casperSdk.PublicKey.fromHex(payload.publicKey);

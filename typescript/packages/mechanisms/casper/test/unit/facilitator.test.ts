@@ -1,4 +1,4 @@
-import casperSdk from "casper-js-sdk";
+import casperSdk, { type Transaction } from "casper-js-sdk";
 import { describe, expect, it, vi } from "vitest";
 import type { PaymentPayload, PaymentRequirements } from "@x402/core/types";
 import { ExactCasperScheme as ClientExactCasperScheme } from "../../src/exact/client/scheme";
@@ -27,6 +27,7 @@ const { KeyAlgorithm, PrivateKey } = casperSdk;
 
 const testAsset = "aabbccddeeff0011223344556677889900aabbccddeeff001122334455667788";
 const testPayTo = "00aabbccddeeff0011223344556677889900aabbccddeeff001122334455667788";
+const testPackagePayTo = `01${"b".repeat(64)}`;
 const testNetwork = "casper:casper-test";
 
 function createMockSigner(
@@ -75,11 +76,13 @@ function buildPaymentPayload(payload: ExactCasperPayload): PaymentPayload {
   };
 }
 
-async function createValidPayload(): Promise<ExactCasperPayload> {
+async function createValidPayload(
+  requirements: PaymentRequirements = buildRequirements(),
+): Promise<ExactCasperPayload> {
   const privateKey = PrivateKey.generate(KeyAlgorithm.ED25519);
   const clientSigner = toClientCasperSigner(privateKey);
   const clientScheme = new ClientExactCasperScheme(clientSigner);
-  const result = await clientScheme.createPaymentPayload(2, buildRequirements());
+  const result = await clientScheme.createPaymentPayload(2, requirements);
   return result.payload as ExactCasperPayload;
 }
 
@@ -244,5 +247,24 @@ describe("ExactCasperScheme facilitator", () => {
       errorReason: ErrSettleFailed,
       transaction: "",
     });
+  });
+
+  it("preserves package-hash recipients in settlement runtime args", async () => {
+    const requirements = buildRequirements({ payTo: testPackagePayTo });
+    const payload = await createValidPayload(requirements);
+    const signer = createMockSigner();
+    const scheme = new ExactCasperScheme(signer);
+
+    await scheme.settle(buildPaymentPayload(payload), requirements);
+
+    const transaction = vi.mocked(signer.signTransaction).mock.calls[0]?.[0] as
+      | Transaction
+      | undefined;
+    expect(transaction?.args.getByName("from")?.key?.toString()).toBe(
+      `account-hash-${payload.authorization.from.slice(2)}`,
+    );
+    expect(transaction?.args.getByName("to")?.key?.toString()).toBe(
+      `hash-${testPackagePayTo.slice(2)}`,
+    );
   });
 });
