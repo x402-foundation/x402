@@ -207,11 +207,13 @@ if (casperPrivateKey) {
   const casperSigner = await createFacilitatorCasperSigner(
     casperPrivateKey,
     process.env.CASPER_PRIVATE_KEY_ALGORITHM === "secp256k1" ? 2 : 1, // Default to ED25519 if not specified,
-    casperRpcUrl ? { [CASPER_NETWORK]: casperRpcUrl } : undefined,
     {
-      getBalance: async () => 10n ** 30n,
-      getAuthorizationState: async () => "unused",
-      assertTransferWithAuthorizationSupported: async () => {},
+      rpcUrlConfig: casperRpcUrl ? { [CASPER_NETWORK]: casperRpcUrl } : undefined,
+      preflightHooks: {
+        getBalance: async () => 10n ** 30n,
+        getAuthorizationState: async () => "unused",
+        assertTransferWithAuthorizationSupported: async () => {},
+      },
     },
   );
   facilitator.register(CASPER_NETWORK, new ExactCasperScheme(casperSigner));

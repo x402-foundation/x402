@@ -112,11 +112,13 @@ describeLive(
       const facilitatorSigner = await createFacilitatorCasperSigner(
         FACILITATOR_PRIVATE_KEY!,
         FACILITATOR_PRIVATE_KEY_ALGORITHM,
-        { [NETWORK]: RPC_URL },
         {
-          getBalance: async () => 10n ** 30n,
-          getAuthorizationState: async (): Promise<CasperAuthorizationState> => "unused",
-          assertTransferWithAuthorizationSupported: async () => {},
+          rpcUrlConfig: { [NETWORK]: RPC_URL },
+          preflightHooks: {
+            getBalance: async () => 10n ** 30n,
+            getAuthorizationState: async (): Promise<CasperAuthorizationState> => "unused",
+            assertTransferWithAuthorizationSupported: async () => {},
+          },
         },
       );
 

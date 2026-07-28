@@ -240,11 +240,13 @@ if (process.env.CASPER_PRIVATE_KEY) {
   casperSigner = await createFacilitatorCasperSigner(
     process.env.CASPER_PRIVATE_KEY,
     process.env.CASPER_PRIVATE_KEY_ALGORITHM === "secp256k1" ? 2 : 1, // Default to ED25519 if not specified
-    CASPER_RPC_URL ? { [CASPER_NETWORK]: CASPER_RPC_URL } : undefined,
     {
-      getBalance: async () => 10n ** 30n,
-      getAuthorizationState: async () => "unused",
-      assertTransferWithAuthorizationSupported: async () => {},
+      rpcUrlConfig: CASPER_RPC_URL ? { [CASPER_NETWORK]: CASPER_RPC_URL } : undefined,
+      preflightHooks: {
+        getBalance: async () => 10n ** 30n,
+        getAuthorizationState: async () => "unused",
+        assertTransferWithAuthorizationSupported: async () => {},
+      },
     },
   );
   console.info(

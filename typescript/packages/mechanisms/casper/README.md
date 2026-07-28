@@ -69,18 +69,23 @@ import { ExactCasperScheme } from "@x402/casper/exact/facilitator";
 const signer = await createFacilitatorCasperSigner(
   process.env.CASPER_FACILITATOR_PRIVATE_KEY!,
   undefined,
-  { "casper:casper-test": "https://node.testnet.casper.network/rpc" },
   {
-    getBalance: async params => {
-      // Read CEP-18 balance for params.account.
-      return 0n;
-    },
-    getAuthorizationState: async params => {
-      // Read CEP-3009 authorization_state for params.payer and params.nonce.
-      return "unused";
-    },
-    assertTransferWithAuthorizationSupported: async params => {
-      // Fail if params.asset does not expose transfer_with_authorization.
+    rpcUrlConfig: { "casper:casper-test": "https://node.testnet.casper.network/rpc" },
+    speculativeRpcUrlConfig: process.env.CASPER_SPECULATIVE_RPC_URL
+      ? { "casper:casper-test": process.env.CASPER_SPECULATIVE_RPC_URL }
+      : undefined,
+    preflightHooks: {
+      getBalance: async params => {
+        // Read CEP-18 balance for params.account.
+        return 0n;
+      },
+      getAuthorizationState: async params => {
+        // Read CEP-3009 authorization_state for params.payer and params.nonce.
+        return "unused";
+      },
+      assertTransferWithAuthorizationSupported: async params => {
+        // Fail if params.asset does not expose transfer_with_authorization.
+      },
     },
   },
 );
@@ -89,6 +94,8 @@ const facilitator = new x402Facilitator().register("casper:*", new ExactCasperSc
 ```
 
 The default facilitator signer fails closed unless preflight hooks are supplied. This prevents verification from accidentally skipping balance, nonce-state, or CEP-3009 contract support checks.
+
+`speculativeRpcUrlConfig` is optional. When it contains a URL for the payment network, facilitator `verify()` runs Casper speculative execution against that endpoint as a final check. The speculative endpoint is network-specific and is often exposed separately from standard node JSON-RPC, commonly on port `7778`.
 
 ## Integration Tests
 
