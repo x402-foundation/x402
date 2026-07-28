@@ -1,0 +1,4 @@
+kind: fixed
+body: Bounded buffered HTTP response bodies in Go payment, facilitator, and Bazaar
+  clients (1 MiB for control-plane responses, 4 MiB for Bazaar discovery).
+time: 2026-07-28T10:10:28+09:00

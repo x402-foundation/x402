@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"net/http/httptest"
@@ -623,6 +624,89 @@ func TestHTTPFacilitatorClientGetSupportedInvalidResponse(t *testing.T) {
 	}
 	if !strings.Contains(responseErr.Error(), "facilitator getSupported returned invalid data") {
 		t.Errorf("Expected invalid data message, got %q", responseErr.Error())
+	}
+}
+
+func TestHTTPFacilitatorClientRejectsOversizedResponses(t *testing.T) {
+	requirements := x402.PaymentRequirements{
+		Scheme:  "exact",
+		Network: "eip155:1",
+		Asset:   "USDC",
+		Amount:  "1000000",
+		PayTo:   "0xrecipient",
+	}
+	payload := x402.PaymentPayload{
+		X402Version: 2,
+		Accepted:    requirements,
+		Payload:     map[string]interface{}{},
+	}
+	payloadBytes, err := json.Marshal(payload)
+	if err != nil {
+		t.Fatalf("json.Marshal(payload) error = %v", err)
+	}
+	requirementsBytes, err := json.Marshal(requirements)
+	if err != nil {
+		t.Fatalf("json.Marshal(requirements) error = %v", err)
+	}
+
+	tests := []struct {
+		name       string
+		statusCode int
+		call       func(*HTTPFacilitatorClient) error
+	}{
+		{
+			name:       "supported 429",
+			statusCode: http.StatusTooManyRequests,
+			call: func(client *HTTPFacilitatorClient) error {
+				_, err := client.GetSupported(context.Background())
+				return err
+			},
+		},
+		{
+			name:       "verify success",
+			statusCode: http.StatusOK,
+			call: func(client *HTTPFacilitatorClient) error {
+				_, err := client.Verify(context.Background(), payloadBytes, requirementsBytes)
+				return err
+			},
+		},
+		{
+			name:       "settle error",
+			statusCode: http.StatusInternalServerError,
+			call: func(client *HTTPFacilitatorClient) error {
+				_, err := client.Settle(context.Background(), payloadBytes, requirementsBytes)
+				return err
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var attempts atomic.Int32
+			body := &oneShotBody{reader: io.LimitReader(testZeroReader{}, maxControlPlaneResponseBytes+1)}
+			client := NewHTTPFacilitatorClient(&FacilitatorConfig{
+				URL: "https://facilitator.example.com",
+				HTTPClient: &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+					attempts.Add(1)
+					return &http.Response{
+						StatusCode: tt.statusCode,
+						Header:     make(http.Header),
+						Body:       body,
+					}, nil
+				})},
+			})
+
+			err := tt.call(client)
+			if !errors.Is(err, ErrResponseBodyTooLarge) {
+				t.Fatalf("call() error = %v, want ErrResponseBodyTooLarge", err)
+			}
+			if !body.closed {
+				t.Fatal("response body was not closed")
+			}
+			if attempts.Load() != 1 {
+				t.Fatalf("attempts = %d, want 1", attempts.Load())
+			}
+		})
 	}
 }
 
