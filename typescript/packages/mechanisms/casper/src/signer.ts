@@ -6,12 +6,13 @@ import type {
   ClientCasperSigner,
   FacilitatorCasperSigner,
   FacilitatorCasperSignerOptions,
+  CasperSpeculativeTransferParams,
   RpcUrlConfig,
   ToFacilitatorCasperSignerOptions,
 } from "./types";
 import { chainNameFromNetwork } from "./utils";
 
-const { HttpHandler, KeyAlgorithm, PrivateKey, RpcClient } = casperSdk;
+const { HttpHandler, KeyAlgorithm, PrivateKey, RpcClient, SpeculativeClient } = casperSdk;
 
 const ACCOUNT_HASH_PREFIX = "00";
 
@@ -78,8 +79,12 @@ export async function toFacilitatorCasperSigner(
   privateKey: PrivateKeyType,
   options: ToFacilitatorCasperSignerOptions = {},
 ): Promise<FacilitatorCasperSigner> {
-  const { rpcUrlConfig, preflightHooks = {} } = options;
+  const { rpcUrlConfig, preflightHooks = {}, speculativeRpcUrlConfig } = options;
   const rpcClients = new Map<string, InstanceType<typeof RpcClient>>();
+  const speculativeClients = new Map<
+    string,
+    ReturnType<typeof SpeculativeClient.newSpeculativeClient>
+  >();
 
   const getNetworkConfig = async (network: Network): Promise<NetworkConfig> => {
     const rpcUrl = resolveRpcUrl(network, rpcUrlConfig);
@@ -102,6 +107,51 @@ export async function toFacilitatorCasperSigner(
     rpcClients.set(networkConfig.rpcUrl, client);
     return client;
   };
+
+  const getSpeculativeClient = (
+    network: Network,
+  ): ReturnType<typeof SpeculativeClient.newSpeculativeClient> | undefined => {
+    const speculativeRpcUrl = speculativeRpcUrlConfig?.[network];
+    if (!speculativeRpcUrl) {
+      return undefined;
+    }
+    const existing = speculativeClients.get(speculativeRpcUrl);
+    if (existing) {
+      return existing;
+    }
+    const client = SpeculativeClient.newSpeculativeClient(new HttpHandler(speculativeRpcUrl));
+    speculativeClients.set(speculativeRpcUrl, client);
+    return client;
+  };
+
+  const simulateTransferWithAuthorization = speculativeRpcUrlConfig
+    ? async ({ network, deploy }: CasperSpeculativeTransferParams): Promise<void> => {
+        const speculativeClient = getSpeculativeClient(network);
+        if (!speculativeClient) {
+          throw new Error(`Casper speculative RPC is not configured for network: ${network}`);
+        }
+
+        const result = await speculativeClient.speculativeExec("1", deploy);
+        const v1Failure = result.executionResultV1?.failure;
+        if (v1Failure) {
+          throw new Error(
+            `speculative execution failed: ${v1Failure.errorMessage || JSON.stringify(v1Failure)}`,
+          );
+        }
+        if (result.executionResultV1?.success) {
+          return;
+        }
+        const v2ErrorMessage = result.executionResult?.errorMessage;
+        if (v2ErrorMessage) {
+          throw new Error(`speculative execution failed: ${v2ErrorMessage}`);
+        }
+        if (result.executionResult) {
+          return;
+        }
+
+        throw new Error("speculative execution returned an unrecognized response");
+      }
+    : undefined;
 
   return {
     getNetworkConfig,
@@ -130,6 +180,8 @@ export async function toFacilitatorCasperSigner(
       }
       await preflightHooks.assertTransferWithAuthorizationSupported(params);
     },
+
+    ...(simulateTransferWithAuthorization ? { simulateTransferWithAuthorization } : {}),
 
     signTransaction: async transaction => {
       transaction.sign(privateKey);
