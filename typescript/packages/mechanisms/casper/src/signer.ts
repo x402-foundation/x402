@@ -3,28 +3,17 @@ import type { KeyAlgorithm as KeyAlgorithmType, PrivateKey as PrivateKeyType } f
 import type { Network } from "@x402/core/types";
 import { NetworkConfigs, type NetworkConfig } from "./constants";
 import type {
-  CasperAuthorizationState,
-  CasperBalanceParams,
-  CasperPreflightParams,
   ClientCasperSigner,
   FacilitatorCasperSigner,
+  FacilitatorCasperSignerOptions,
+  RpcUrlConfig,
+  ToFacilitatorCasperSignerOptions,
 } from "./types";
 import { chainNameFromNetwork } from "./utils";
 
 const { HttpHandler, KeyAlgorithm, PrivateKey, RpcClient } = casperSdk;
 
 const ACCOUNT_HASH_PREFIX = "00";
-
-type RpcUrlConfig = string | { defaultRpcUrl?: string } | Record<string, string>;
-
-type PreflightHooks = {
-  getBalance?: (params: CasperBalanceParams) => Promise<bigint>;
-  getAuthorizationState?: (params: CasperPreflightParams) => Promise<CasperAuthorizationState>;
-  assertTransferWithAuthorizationSupported?: (params: {
-    network: Network;
-    asset: string;
-  }) => Promise<void>;
-};
 
 /**
  * Pause execution for the given number of milliseconds.
@@ -44,20 +33,7 @@ function sleep(ms: number): Promise<void> {
  * @returns RPC URL.
  */
 function resolveRpcUrl(network: Network, config?: RpcUrlConfig): string {
-  if (typeof config === "string") {
-    return config;
-  }
-  if (config) {
-    if ("defaultRpcUrl" in config && config.defaultRpcUrl) {
-      return config.defaultRpcUrl;
-    }
-    const rpcUrls = config as Record<string, string | undefined>;
-    const rpcUrl = rpcUrls[network];
-    if (rpcUrl) {
-      return rpcUrl;
-    }
-  }
-  return NetworkConfigs[network]?.rpcUrl ?? "";
+  return config?.[network] ?? NetworkConfigs[network]?.rpcUrl ?? "";
 }
 
 /**
@@ -95,15 +71,14 @@ export async function createClientCasperSigner(
  * Create a facilitator signer from a Casper private key.
  *
  * @param privateKey - Casper private key.
- * @param rpcUrlConfig - RPC URL config.
- * @param preflightHooks - Optional live preflight hooks.
+ * @param options - RPC URL config and optional live preflight hooks.
  * @returns Facilitator signer.
  */
 export async function toFacilitatorCasperSigner(
   privateKey: PrivateKeyType,
-  rpcUrlConfig?: RpcUrlConfig,
-  preflightHooks: PreflightHooks = {},
+  options: ToFacilitatorCasperSignerOptions = {},
 ): Promise<FacilitatorCasperSigner> {
+  const { rpcUrlConfig, preflightHooks = {} } = options;
   const rpcClients = new Map<string, InstanceType<typeof RpcClient>>();
 
   const getNetworkConfig = async (network: Network): Promise<NetworkConfig> => {
@@ -205,19 +180,13 @@ export async function toFacilitatorCasperSigner(
  *
  * @param privateKey - Hex-encoded private key.
  * @param algorithm - Key algorithm.
- * @param rpcUrlConfig - RPC URL config.
- * @param preflightHooks - Optional live preflight hooks.
+ * @param options - RPC URL config and optional live preflight hooks.
  * @returns Facilitator signer.
  */
 export async function createFacilitatorCasperSigner(
   privateKey: string,
   algorithm: KeyAlgorithmType = KeyAlgorithm.ED25519,
-  rpcUrlConfig?: RpcUrlConfig,
-  preflightHooks: PreflightHooks = {},
+  options: FacilitatorCasperSignerOptions = {},
 ): Promise<FacilitatorCasperSigner> {
-  return toFacilitatorCasperSigner(
-    PrivateKey.fromHex(privateKey, algorithm),
-    rpcUrlConfig,
-    preflightHooks,
-  );
+  return toFacilitatorCasperSigner(PrivateKey.fromHex(privateKey, algorithm), options);
 }

@@ -1,5 +1,5 @@
 import type { Network } from "@x402/core/types";
-import type { Transaction } from "casper-js-sdk";
+import type { Deploy, Transaction } from "casper-js-sdk";
 import type { NetworkConfig } from "./constants";
 
 /**
@@ -56,6 +56,33 @@ export type CasperPreflightParams = {
   nonce: string;
 };
 
+export type RpcUrlConfig = Record<string, string>;
+
+export type SpeculativeRpcUrlConfig = Record<string, string>;
+
+export type PreflightHooks = {
+  getBalance?: (params: CasperBalanceParams) => Promise<bigint>;
+  getAuthorizationState?: (params: CasperPreflightParams) => Promise<CasperAuthorizationState>;
+  assertTransferWithAuthorizationSupported?: (params: {
+    network: Network;
+    asset: string;
+  }) => Promise<void>;
+};
+
+export type FacilitatorCasperSignerOptions = {
+  rpcUrlConfig?: RpcUrlConfig;
+  preflightHooks?: PreflightHooks;
+  speculativeRpcUrlConfig?: SpeculativeRpcUrlConfig;
+};
+
+export type ToFacilitatorCasperSignerOptions = FacilitatorCasperSignerOptions;
+
+export type CasperSpeculativeTransferParams = {
+  network: Network;
+  asset: string;
+  deploy: Deploy;
+};
+
 /**
  * Client-side signer for Casper x402 payments.
  */
@@ -87,6 +114,8 @@ export type FacilitatorCasperSigner = {
     network: Network;
     asset: string;
   }): Promise<void>;
+  /** Optionally simulate a transfer before submission. */
+  simulateTransferWithAuthorization?(params: CasperSpeculativeTransferParams): Promise<void>;
   /** Sign a Casper transaction. */
   signTransaction(transaction: Transaction, network: Network): Promise<void>;
   /** Submit a Casper transaction and return its hash. */

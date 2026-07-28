@@ -26,7 +26,7 @@ describe("Casper signer adapters", () => {
   it("wraps a private key for facilitator settlement", async () => {
     const privateKey = PrivateKey.generate(KeyAlgorithm.ED25519);
     const signer = await toFacilitatorCasperSigner(privateKey, {
-      defaultRpcUrl: "http://localhost:11101/rpc",
+      rpcUrlConfig: { "casper:casper-test": "http://localhost:11101/rpc" },
     });
 
     expect(await signer.getNetworkConfig("casper:casper-test")).toMatchObject({
@@ -39,7 +39,9 @@ describe("Casper signer adapters", () => {
 
   it("fails closed for default preflight checks", async () => {
     const privateKey = PrivateKey.generate(KeyAlgorithm.ED25519);
-    const signer = await toFacilitatorCasperSigner(privateKey, "http://localhost:11101/rpc");
+    const signer = await toFacilitatorCasperSigner(privateKey, {
+      rpcUrlConfig: { "casper:casper-test": "http://localhost:11101/rpc" },
+    });
 
     await expect(
       signer.getBalance({
@@ -77,12 +79,25 @@ describe("Casper signer adapters", () => {
     const signer = await createFacilitatorCasperSigner(
       privateKeyHex(privateKey),
       KeyAlgorithm.SECP256K1,
-      "http://localhost:11101/rpc",
+      {
+        rpcUrlConfig: { "casper:casper-test": "http://localhost:11101/rpc" },
+      },
     );
 
     expect(signer.getAddresses("casper:casper-test")).toEqual([
       privateKey.publicKey.accountHash().toHex(),
     ]);
     expect(signer.getPublicKeyHex("casper:casper-test")).toBe(privateKey.publicKey.toHex());
+  });
+
+  it("rejects unsupported networks when no RPC URL is configured", async () => {
+    const privateKey = PrivateKey.generate(KeyAlgorithm.ED25519);
+    const signer = await toFacilitatorCasperSigner(privateKey, {
+      rpcUrlConfig: { "casper:casper-test": "http://localhost:11101/rpc" },
+    });
+
+    await expect(signer.getNetworkConfig("casper:casper-net-1")).rejects.toThrow(
+      "unsupported Casper network: casper:casper-net-1",
+    );
   });
 });
