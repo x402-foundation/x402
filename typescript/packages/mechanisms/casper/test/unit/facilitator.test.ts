@@ -78,8 +78,9 @@ function buildPaymentPayload(payload: ExactCasperPayload): PaymentPayload {
 
 async function createValidPayload(
   requirements: PaymentRequirements = buildRequirements(),
+  keyAlgorithm = KeyAlgorithm.ED25519,
 ): Promise<ExactCasperPayload> {
-  const privateKey = PrivateKey.generate(KeyAlgorithm.ED25519);
+  const privateKey = PrivateKey.generate(keyAlgorithm);
   const clientSigner = toClientCasperSigner(privateKey);
   const clientScheme = new ClientExactCasperScheme(clientSigner);
   const result = await clientScheme.createPaymentPayload(2, requirements);
@@ -164,6 +165,32 @@ describe("ExactCasperScheme facilitator", () => {
       isValid: false,
       invalidReason: ErrNotYetValid,
     });
+  });
+
+  it("rejects payloads whose signature and public key use different algorithms", async () => {
+    const scheme = new ExactCasperScheme(createMockSigner());
+
+    for (const { signingAlgorithm, publicKeyAlgorithm } of [
+      {
+        signingAlgorithm: KeyAlgorithm.ED25519,
+        publicKeyAlgorithm: KeyAlgorithm.SECP256K1,
+      },
+      {
+        signingAlgorithm: KeyAlgorithm.SECP256K1,
+        publicKeyAlgorithm: KeyAlgorithm.ED25519,
+      },
+    ]) {
+      const payload = await createValidPayload(buildRequirements(), signingAlgorithm);
+      const mismatchedPublicKey = structuredClone(payload);
+      mismatchedPublicKey.publicKey = payload.publicKey.replace(
+        new RegExp(`^0${signingAlgorithm.toString()}`),
+        `0${publicKeyAlgorithm.toString()}`,
+      );
+
+      await expect(
+        scheme.verify(buildPaymentPayload(mismatchedPublicKey), buildRequirements()),
+      ).resolves.toMatchObject({ isValid: false, invalidReason: ErrInvalidSignature });
+    }
   });
 
   it("rejects signature and public key failures", async () => {
