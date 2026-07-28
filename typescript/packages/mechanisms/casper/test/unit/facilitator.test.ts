@@ -262,6 +262,22 @@ describe("ExactCasperScheme facilitator", () => {
     expect(call?.deploy).toBeDefined();
   });
 
+  it("preserves the custom signer receiver during speculative execution", async () => {
+    const payload = await createValidPayload();
+    const signer = createMockSigner();
+    let receiver: FacilitatorCasperSigner | undefined;
+    signer.simulateTransferWithAuthorization = async function (this: FacilitatorCasperSigner) {
+      receiver = this;
+    };
+    const scheme = new ExactCasperScheme(signer);
+
+    await expect(
+      scheme.verify(buildPaymentPayload(payload), buildRequirements()),
+    ).resolves.toMatchObject({ isValid: true });
+
+    expect(receiver).toBe(signer);
+  });
+
   it("rejects speculative execution failures", async () => {
     const payload = await createValidPayload();
     const scheme = new ExactCasperScheme(

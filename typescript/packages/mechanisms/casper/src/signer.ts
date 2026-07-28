@@ -85,6 +85,9 @@ export async function toFacilitatorCasperSigner(
     string,
     ReturnType<typeof SpeculativeClient.newSpeculativeClient>
   >();
+  const hasSpeculativeRpcUrl = Object.values(speculativeRpcUrlConfig ?? {}).some(
+    speculativeRpcUrl => speculativeRpcUrl.trim().length > 0,
+  );
 
   const getNetworkConfig = async (network: Network): Promise<NetworkConfig> => {
     const rpcUrl = resolveRpcUrl(network, rpcUrlConfig);
@@ -111,7 +114,7 @@ export async function toFacilitatorCasperSigner(
   const getSpeculativeClient = (
     network: Network,
   ): ReturnType<typeof SpeculativeClient.newSpeculativeClient> | undefined => {
-    const speculativeRpcUrl = speculativeRpcUrlConfig?.[network];
+    const speculativeRpcUrl = speculativeRpcUrlConfig?.[network]?.trim();
     if (!speculativeRpcUrl) {
       return undefined;
     }
@@ -124,11 +127,11 @@ export async function toFacilitatorCasperSigner(
     return client;
   };
 
-  const simulateTransferWithAuthorization = speculativeRpcUrlConfig
+  const simulateTransferWithAuthorization = hasSpeculativeRpcUrl
     ? async ({ network, deploy }: CasperSpeculativeTransferParams): Promise<void> => {
         const speculativeClient = getSpeculativeClient(network);
         if (!speculativeClient) {
-          throw new Error(`Casper speculative RPC is not configured for network: ${network}`);
+          return;
         }
 
         const result = await speculativeClient.speculativeExec("1", deploy);
@@ -149,7 +152,8 @@ export async function toFacilitatorCasperSigner(
           return;
         }
 
-        throw new Error("speculative execution returned an unrecognized response");
+        const rawJSON = result.rawJSON === undefined ? "" : `: ${JSON.stringify(result.rawJSON)}`;
+        throw new Error(`speculative execution returned an unrecognized response${rawJSON}`);
       }
     : undefined;
 

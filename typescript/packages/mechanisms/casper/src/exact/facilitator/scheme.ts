@@ -476,8 +476,7 @@ export class ExactCasperScheme implements SchemeNetworkFacilitator {
     payload: ExactCasperPayload,
     requirements: PaymentRequirements,
   ): Promise<VerifyResponse | undefined> {
-    const simulateTransferWithAuthorization = this.signer.simulateTransferWithAuthorization;
-    if (!simulateTransferWithAuthorization) {
+    if (!this.signer.simulateTransferWithAuthorization) {
       return undefined;
     }
 
@@ -497,7 +496,7 @@ export class ExactCasperScheme implements SchemeNetworkFacilitator {
           "buildFor1_5 did not produce a deploy",
         );
       }
-      await simulateTransferWithAuthorization({
+      await this.signer.simulateTransferWithAuthorization({
         network: requirements.network,
         asset: requirements.asset,
         deploy,

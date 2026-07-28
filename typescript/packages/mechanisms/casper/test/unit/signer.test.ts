@@ -1,6 +1,9 @@
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const { speculativeExec } = vi.hoisted(() => ({ speculativeExec: vi.fn() }));
+const { newSpeculativeClient, speculativeExec } = vi.hoisted(() => ({
+  newSpeculativeClient: vi.fn(),
+  speculativeExec: vi.fn(),
+}));
 
 vi.mock("casper-js-sdk", async importOriginal => {
   const actual = await importOriginal<typeof import("casper-js-sdk")>();
@@ -8,7 +11,7 @@ vi.mock("casper-js-sdk", async importOriginal => {
     default: {
       ...actual.default,
       SpeculativeClient: {
-        newSpeculativeClient: vi.fn(() => ({ speculativeExec })),
+        newSpeculativeClient: newSpeculativeClient.mockImplementation(() => ({ speculativeExec })),
       },
     },
   };
@@ -44,6 +47,11 @@ function buildDeploy(privateKey: InstanceType<typeof PrivateKey>) {
 }
 
 describe("Casper signer adapters", () => {
+  beforeEach(() => {
+    newSpeculativeClient.mockClear();
+    speculativeExec.mockReset();
+  });
+
   it("wraps a private key for client signing", async () => {
     const privateKey = PrivateKey.generate(KeyAlgorithm.ED25519);
     const signer = toClientCasperSigner(privateKey);
@@ -140,6 +148,15 @@ describe("Casper signer adapters", () => {
     expect(signer.simulateTransferWithAuthorization).toBeUndefined();
   });
 
+  it("does not expose speculative simulation with an empty speculative RPC URL map", async () => {
+    const privateKey = PrivateKey.generate(KeyAlgorithm.ED25519);
+    const signer = await toFacilitatorCasperSigner(privateKey, {
+      speculativeRpcUrlConfig: {},
+    });
+
+    expect(signer.simulateTransferWithAuthorization).toBeUndefined();
+  });
+
   it("exposes speculative simulation when a speculative RPC URL is configured", async () => {
     const privateKey = PrivateKey.generate(KeyAlgorithm.ED25519);
     const signer = await toFacilitatorCasperSigner(privateKey, {
@@ -166,6 +183,44 @@ describe("Casper signer adapters", () => {
     ).resolves.toBeUndefined();
 
     expect(speculativeExec).toHaveBeenCalledWith("1", deploy);
+  });
+
+  it("skips speculative execution for a network without a configured URL", async () => {
+    const privateKey = PrivateKey.generate(KeyAlgorithm.ED25519);
+    const signer = await toFacilitatorCasperSigner(privateKey, {
+      speculativeRpcUrlConfig: { "casper:casper-test": "http://localhost:7778/rpc" },
+    });
+
+    await expect(
+      signer.simulateTransferWithAuthorization!({
+        network: "casper:casper-net-1",
+        asset: "a".repeat(64),
+        deploy: buildDeploy(privateKey),
+      }),
+    ).resolves.toBeUndefined();
+
+    expect(speculativeExec).not.toHaveBeenCalled();
+  });
+
+  it("reuses a speculative client for calls sharing a URL", async () => {
+    speculativeExec.mockResolvedValue({ executionResultV1: { success: {} } });
+    const privateKey = PrivateKey.generate(KeyAlgorithm.ED25519);
+    const signer = await toFacilitatorCasperSigner(privateKey, {
+      speculativeRpcUrlConfig: { "casper:casper-test": "http://localhost:7778/rpc" },
+    });
+
+    await signer.simulateTransferWithAuthorization!({
+      network: "casper:casper-test",
+      asset: "a".repeat(64),
+      deploy: buildDeploy(privateKey),
+    });
+    await signer.simulateTransferWithAuthorization!({
+      network: "casper:casper-test",
+      asset: "a".repeat(64),
+      deploy: buildDeploy(privateKey),
+    });
+
+    expect(newSpeculativeClient).toHaveBeenCalledTimes(1);
   });
 
   it("throws speculative execution failure messages", async () => {
@@ -200,5 +255,23 @@ describe("Casper signer adapters", () => {
         deploy: buildDeploy(privateKey),
       }),
     ).rejects.toThrow("speculative execution failed: v2 reverted");
+  });
+
+  it("includes raw JSON in unrecognized speculative execution errors", async () => {
+    speculativeExec.mockResolvedValueOnce({ rawJSON: { result: "unexpected" } });
+    const privateKey = PrivateKey.generate(KeyAlgorithm.ED25519);
+    const signer = await toFacilitatorCasperSigner(privateKey, {
+      speculativeRpcUrlConfig: { "casper:casper-test": "http://localhost:7778/rpc" },
+    });
+
+    await expect(
+      signer.simulateTransferWithAuthorization!({
+        network: "casper:casper-test",
+        asset: "a".repeat(64),
+        deploy: buildDeploy(privateKey),
+      }),
+    ).rejects.toThrow(
+      'speculative execution returned an unrecognized response: {"result":"unexpected"}',
+    );
   });
 });
