@@ -23,6 +23,8 @@ export class GenericClientProxy extends BaseProxy implements ClientProxy {
         SVM_PRIVATE_KEY: config.svmPrivateKey,
         AVM_PRIVATE_KEY: config.avmPrivateKey,
         APTOS_PRIVATE_KEY: config.aptosPrivateKey,
+        CASPER_PRIVATE_KEY: config.casperPrivateKey,
+        CASPER_PRIVATE_KEY_ALGORITHM: config.casperPrivateKeyAlgorithm,
         CCD_PRIVATE_KEY: config.ccdPrivateKey || '',
         CCD_ADDRESS: config.ccdAddress || '',
         HEDERA_ACCOUNT_ID: config.hederaAccountId,

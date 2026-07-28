@@ -12,6 +12,7 @@ import { ExactKeetaScheme } from "@x402/keeta/exact/server";
 import { ExactStellarScheme } from "@x402/stellar/exact/server";
 import { ExactTvmScheme } from "@x402/tvm/exact/server";
 import { ExactAvmScheme } from "@x402/avm/exact/server";
+import { ExactCasperScheme } from "@x402/casper/exact/server";
 import { ExactNearScheme } from "@x402/near/exact/server";
 import type { XrplAssetTransferMethod } from "@x402/xrpl";
 import { ExactXrplScheme } from "@x402/xrpl/exact/server";
@@ -41,6 +42,8 @@ const APTOS_NETWORK = (process.env.APTOS_NETWORK || "aptos:2") as `${string}:${s
 const HEDERA_NETWORK = (process.env.HEDERA_NETWORK || "hedera:testnet") as `${string}:${string}`;
 const AVM_NETWORK = (process.env.AVM_NETWORK ||
   "algorand:SGO1GKSzyE7IEPItTxCByw9x8FmnrCDexi9/cOUJOiI=") as `${string}:${string}`;
+const CASPER_NETWORK = (process.env.CASPER_NETWORK ||
+  "casper:casper-test") as `${string}:${string}`;
 const KEETA_NETWORK = (process.env.KEETA_NETWORK || KEETA_TESTNET_CAIP2) as `${string}:${string}`;
 const STELLAR_NETWORK = (process.env.STELLAR_NETWORK || "stellar:testnet") as `${string}:${string}`;
 const TVM_NETWORK = (process.env.TVM_NETWORK || "tvm:-3") as `${string}:${string}`;
@@ -52,6 +55,11 @@ const EVM_PAYEE_ADDRESS = process.env.EVM_PAYEE_ADDRESS as `0x${string}`;
 const SVM_PAYEE_ADDRESS = process.env.SVM_PAYEE_ADDRESS as string;
 const EVM_PERMIT2_ASSET = process.env.EVM_PERMIT2_ASSET as `0x${string}`;
 const AVM_PAYEE_ADDRESS = process.env.AVM_PAYEE_ADDRESS as string;
+const CASPER_PAYEE_ADDRESS = process.env.CASPER_PAYEE_ADDRESS as string | undefined;
+const CASPER_ASSET = process.env.CASPER_ASSET as string | undefined;
+const CASPER_TOKEN_NAME = process.env.CASPER_TOKEN_NAME as string | undefined;
+const CASPER_TOKEN_VERSION = process.env.CASPER_TOKEN_VERSION as string | undefined;
+const CASPER_AMOUNT = process.env.CASPER_AMOUNT || "1";
 const APTOS_PAYEE_ADDRESS = process.env.APTOS_PAYEE_ADDRESS as string;
 const HEDERA_PAYEE_ADDRESS = process.env.HEDERA_PAYEE_ADDRESS as string | undefined;
 const KEETA_PAYEE_ADDRESS = process.env.KEETA_PAYEE_ADDRESS as string | undefined;
@@ -131,6 +139,9 @@ const server = new x402ResourceServer(facilitatorClient);
 if (AVM_PAYEE_ADDRESS) {
   server.register("algorand:*", new ExactAvmScheme());
 }
+if (CASPER_PAYEE_ADDRESS && CASPER_ASSET && CASPER_TOKEN_NAME && CASPER_TOKEN_VERSION) {
+  server.register("casper:*", new ExactCasperScheme());
+}
 if (CCD_PAYEE_ADDRESS) {
   server.register("ccd:*", new ExactConcordiumScheme());
 }
@@ -198,6 +209,16 @@ app.addHook("onRequest", async (request, reply) => {
     return reply.status(501).send({
       error: "Aptos payments not configured",
       message: "APTOS_PAYEE_ADDRESS environment variable is not set",
+    });
+  }
+  if (
+    path === "/exact/casper" &&
+    (!CASPER_PAYEE_ADDRESS || !CASPER_ASSET || !CASPER_TOKEN_NAME || !CASPER_TOKEN_VERSION)
+  ) {
+    return reply.status(501).send({
+      error: "Casper payments not configured",
+      message:
+        "CASPER_PAYEE_ADDRESS, CASPER_ASSET, CASPER_TOKEN_NAME, and CASPER_TOKEN_VERSION environment variables must be set",
     });
   }
   if (path === "/exact/hedera" && !HEDERA_PAYEE_ADDRESS) {
@@ -300,6 +321,42 @@ paymentMiddleware(
                 output: {
                   example: {
                     message: "Protected endpoint accessed successfully",
+                    timestamp: "2024-01-01T00:00:00Z",
+                  },
+                  schema: {
+                    properties: {
+                      message: { type: "string" },
+                      timestamp: { type: "string" },
+                    },
+                    required: ["message", "timestamp"],
+                  },
+                },
+              }),
+            },
+          },
+        }
+      : {}),
+    ...(CASPER_PAYEE_ADDRESS && CASPER_ASSET && CASPER_TOKEN_NAME && CASPER_TOKEN_VERSION
+      ? {
+          "GET /exact/casper": {
+            accepts: {
+              payTo: CASPER_PAYEE_ADDRESS,
+              scheme: "exact",
+              price: {
+                amount: CASPER_AMOUNT,
+                asset: CASPER_ASSET,
+                extra: {
+                  name: CASPER_TOKEN_NAME,
+                  version: CASPER_TOKEN_VERSION,
+                },
+              },
+              network: CASPER_NETWORK,
+            },
+            extensions: {
+              ...declareDiscoveryExtension({
+                output: {
+                  example: {
+                    message: "Protected Casper endpoint accessed successfully",
                     timestamp: "2024-01-01T00:00:00Z",
                   },
                   schema: {
@@ -943,6 +1000,15 @@ if (CCD_PAYEE_ADDRESS) {
   });
 }
 
+if (CASPER_PAYEE_ADDRESS && CASPER_ASSET && CASPER_TOKEN_NAME && CASPER_TOKEN_VERSION) {
+  app.get("/exact/casper", async () => {
+    return {
+      message: "Protected Casper endpoint accessed successfully",
+      timestamp: new Date().toISOString(),
+    };
+  });
+}
+
 if (STELLAR_PAYEE_ADDRESS) {
   app.get("/exact/stellar", async () => {
     return {
@@ -1025,6 +1091,7 @@ app.listen({ port: parseInt(PORT) }, (err, address) => {
 ║  EVM Network:  ${EVM_NETWORK}                          ║
 ║  SVM Network:  ${SVM_NETWORK}                          ║
 ║  Aptos Network: ${APTOS_NETWORK}                       ║
+║  Casper Network: ${CASPER_NETWORK}                     ║
 ║  Hedera Network: ${HEDERA_NETWORK}                     ║
 ║  Keeta Network:  ${KEETA_NETWORK}                      ║
 ║  Stellar Network: ${STELLAR_NETWORK}║
@@ -1036,6 +1103,7 @@ app.listen({ port: parseInt(PORT) }, (err, address) => {
 ║  EVM Payee:    ${EVM_PAYEE_ADDRESS}                    ║
 ║  SVM Payee:    ${SVM_PAYEE_ADDRESS}                    ║
 ║  Aptos Payee:  ${APTOS_PAYEE_ADDRESS || "(not configured)"}
+║  Casper Payee: ${CASPER_PAYEE_ADDRESS || "(not configured)"}
 ║  Hedera Payee: ${HEDERA_PAYEE_ADDRESS || "(not configured)"}
 ║  Keeta Payee:   ${KEETA_PAYEE_ADDRESS || "(not configured)"}
 ║  CCD Payee:    ${CCD_PAYEE_ADDRESS || "(not configured)"}
@@ -1052,6 +1120,7 @@ app.listen({ port: parseInt(PORT) }, (err, address) => {
 ║  • GET  /exact/evm/permit2-erc20ApprovalGasSponsoring         ║
 ║  • GET  /exact/svm                            (SVM)           ║
 ║  • GET  /exact/aptos                          (Aptos)         ║
+║  • GET  /exact/casper                         (Casper)        ║
 ║  • GET  /exact/hedera                         (Hedera)        ║
 ║  • GET  /exact/keeta                          (Keeta)         ║
 ║  • GET  /exact/ccd                            (CCD)           ║

@@ -1018,6 +1018,7 @@ let server = app.listen(parseInt(PORT), () => {
 ║  SVM Network:  ${SVM_NETWORK}                          ║
 ║  AVM Network:  ${AVM_NETWORK}                          ║
 ║  Aptos Network: ${APTOS_NETWORK}                       ║
+║  Casper Network: ${CASPER_NETWORK}                     ║
 ║  Hedera Network: ${HEDERA_NETWORK}                     ║
 ║  Keeta Network: ${KEETA_NETWORK}                       ║
 ║  NEAR Network: ${NEAR_NETWORK}                         ║

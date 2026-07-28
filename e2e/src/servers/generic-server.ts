@@ -110,6 +110,11 @@ export class GenericServerProxy extends BaseProxy implements ServerProxy {
         APTOS_RPC_URL: config.networks.aptos.rpcUrl,
         APTOS_PAYEE_ADDRESS: config.aptosPayTo,
 
+        // Casper network config
+        CASPER_NETWORK: config.networks.casper.caip2,
+        CASPER_RPC_URL: config.networks.casper.rpcUrl,
+        CASPER_PAYEE_ADDRESS: config.casperPayTo,
+
         // Concordium network config
         CCD_NETWORK: config.networks.ccd.caip2,
         CCD_PAYEE_ADDRESS: config.ccdPayTo,
@@ -158,9 +163,9 @@ export class GenericServerProxy extends BaseProxy implements ServerProxy {
 
         ...(config.batchSettlement
           ? {
-              EVM_RECEIVER_AUTHORIZER_PRIVATE_KEY:
-                config.batchSettlement.receiverAuthorizerPrivateKey,
-            }
+            EVM_RECEIVER_AUTHORIZER_PRIVATE_KEY:
+              config.batchSettlement.receiverAuthorizerPrivateKey,
+          }
           : {}),
       }
     };

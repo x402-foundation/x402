@@ -1,6 +1,6 @@
 import type { NetworkSet } from './networks/networks';
 
-export type ProtocolFamily = 'evm' | 'svm' | 'avm' | 'aptos' | 'hedera' | 'keeta' | 'near' | 'stellar' | 'ccd' | 'tvm' | 'xrpl';
+export type ProtocolFamily = 'evm' | 'svm' | 'avm' | 'aptos' | 'casper' | 'hedera' | 'keeta' | 'near' | 'stellar' | 'ccd' | 'tvm' | 'xrpl';
 export type Transport = 'http' | 'mcp';
 export type PaymentScheme = 'exact' | 'upto' | 'batch-settlement';
 export type AssetTransferMethod = 'eip3009' | 'permit2' | 'sequence' | 'ticketSequence';
@@ -81,6 +81,8 @@ export interface ClientConfig {
   svmPrivateKey: string;
   avmPrivateKey: string;
   aptosPrivateKey: string;
+  casperPrivateKey: string;
+  casperPrivateKeyAlgorithm: string;
   ccdPrivateKey: string;
   ccdAddress: string;
   hederaAccountId: string;
@@ -117,6 +119,7 @@ export interface ServerConfig {
   svmPayTo: string;
   avmPayTo: string;
   aptosPayTo: string;
+  casperPayTo: string;
   ccdPayTo: string;
   hederaPayTo: string;
   hederaAsset?: string;

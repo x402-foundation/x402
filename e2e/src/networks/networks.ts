@@ -195,7 +195,7 @@ export function resolveEvmPermit2Asset(networks: NetworkSet): string {
  * Get network config for a protocol family in a given mode
  *
  * @param mode - 'testnet' or 'mainnet'
- * @param protocolFamily - 'evm', 'svm', 'avm', 'aptos', 'hedera', 'near', 'stellar', 'ccd', 'tvm', or 'xrpl'
+ * @param protocolFamily - 'evm', 'svm', 'avm', 'aptos', 'casper', 'hedera', 'near', 'stellar', 'ccd', 'tvm', or 'xrpl'
  * @returns NetworkConfig for the specified protocol
  */
 export function getNetworkForProtocol(
@@ -213,6 +213,6 @@ export function getNetworkForProtocol(
  */
 export function getNetworkModeDescription(mode: NetworkMode): string {
   const set = NETWORK_SETS[mode];
-  const networks = [set.evm.name, set.svm.name, set.avm.name, set.aptos.name, set.hedera.name, set.keeta.name, set.near.name, set.stellar.name, set.ccd.name, set.tvm.name, set.xrpl.name];
+  const networks = [set.evm.name, set.svm.name, set.avm.name, set.aptos.name, set.casper.name, set.hedera.name, set.keeta.name, set.near.name, set.stellar.name, set.ccd.name, set.tvm.name, set.xrpl.name];
   return networks.join(' + ');
 }

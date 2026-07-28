@@ -2705,6 +2705,9 @@ importers:
       '@x402/avm':
         specifier: workspace:*
         version: link:../../../typescript/packages/mechanisms/avm
+      '@x402/casper':
+        specifier: workspace:*
+        version: link:../../../typescript/packages/mechanisms/casper
       '@x402/concordium':
         specifier: workspace:*
         version: link:../../../typescript/packages/mechanisms/concordium
@@ -2796,6 +2799,9 @@ importers:
       '@x402/avm':
         specifier: workspace:*
         version: link:../../../typescript/packages/mechanisms/avm
+      '@x402/casper':
+        specifier: workspace:*
+        version: link:../../../typescript/packages/mechanisms/casper
       '@x402/concordium':
         specifier: workspace:*
         version: link:../../../typescript/packages/mechanisms/concordium
@@ -2954,6 +2960,9 @@ importers:
       '@x402/avm':
         specifier: workspace:*
         version: link:../../../typescript/packages/mechanisms/avm
+      '@x402/casper':
+        specifier: workspace:*
+        version: link:../../../typescript/packages/mechanisms/casper
       '@x402/concordium':
         specifier: workspace:*
         version: link:../../../typescript/packages/mechanisms/concordium
@@ -17387,7 +17396,7 @@ snapshots:
       '@solana/buffer-layout': 4.0.1
       '@solana/codecs-numbers': 2.3.0(typescript@5.8.3)
       agentkeepalive: 4.6.0
-      bn.js: 5.2.2
+      bn.js: 5.2.3
       borsh: 0.7.0
       bs58: 4.0.1
       buffer: 6.0.3
@@ -19849,7 +19858,7 @@ snapshots:
 
   borsh@0.7.0:
     dependencies:
-      bn.js: 5.2.2
+      bn.js: 5.2.3
       bs58: 4.0.1
       text-encoding-utf-8: 1.0.2
 
@@ -23807,7 +23816,7 @@ snapshots:
       buffer: 6.0.3
       eventemitter3: 5.0.1
       uuid: 8.3.2
-      ws: 8.19.0(bufferutil@4.0.9)(utf-8-validate@5.0.10)
+      ws: 8.21.0(bufferutil@4.0.9)(utf-8-validate@5.0.10)
     optionalDependencies:
       bufferutil: 4.0.9
       utf-8-validate: 5.0.10

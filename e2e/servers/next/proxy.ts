@@ -15,6 +15,7 @@ import { ExactXrplScheme } from "@x402/xrpl/exact/server";
 import { ExactStellarScheme } from "@x402/stellar/exact/server";
 import { ExactTvmScheme } from "@x402/tvm/exact/server";
 import { ExactAvmScheme } from "@x402/avm/exact/server";
+import { ExactCasperScheme } from "@x402/casper/exact/server";
 import { ExactConcordiumScheme } from "@x402/concordium/exact/server";
 import { bazaarResourceServerExtension, declareDiscoveryExtension } from "@x402/extensions/bazaar";
 import {
@@ -25,6 +26,11 @@ import {
 export const EVM_PAYEE_ADDRESS = process.env.EVM_PAYEE_ADDRESS as `0x${string}`;
 export const SVM_PAYEE_ADDRESS = process.env.SVM_PAYEE_ADDRESS as string;
 export const AVM_PAYEE_ADDRESS = process.env.AVM_PAYEE_ADDRESS as string;
+export const CASPER_PAYEE_ADDRESS = process.env.CASPER_PAYEE_ADDRESS as string | undefined;
+export const CASPER_ASSET = process.env.CASPER_ASSET as string | undefined;
+export const CASPER_TOKEN_NAME = process.env.CASPER_TOKEN_NAME as string | undefined;
+export const CASPER_TOKEN_VERSION = process.env.CASPER_TOKEN_VERSION as string | undefined;
+export const CASPER_AMOUNT = process.env.CASPER_AMOUNT || "1";
 export const APTOS_PAYEE_ADDRESS = process.env.APTOS_PAYEE_ADDRESS as string;
 export const HEDERA_PAYEE_ADDRESS = process.env.HEDERA_PAYEE_ADDRESS as string | undefined;
 export const KEETA_PAYEE_ADDRESS = process.env.KEETA_PAYEE_ADDRESS as string | undefined;
@@ -35,12 +41,15 @@ export const SVM_NETWORK = (process.env.SVM_NETWORK ||
   "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1") as `${string}:${string}`;
 export const AVM_NETWORK = (process.env.AVM_NETWORK ||
   "algorand:SGO1GKSzyE7IEPItTxCByw9x8FmnrCDexi9/cOUJOiI=") as `${string}:${string}`;
+export const CASPER_NETWORK = (process.env.CASPER_NETWORK ||
+  "casper:casper-test") as `${string}:${string}`;
 export const APTOS_NETWORK = (process.env.APTOS_NETWORK || "aptos:2") as `${string}:${string}`;
 export const HEDERA_NETWORK = (process.env.HEDERA_NETWORK ||
   "hedera:testnet") as `${string}:${string}`;
 export const HEDERA_ASSET = process.env.HEDERA_ASSET ?? "0.0.0"; // 0.0.0 = HBAR or 0.0.429274 for USDC testnet
 export const HEDERA_AMOUNT = process.env.HEDERA_AMOUNT ?? "100000"; // price in smallest units (tinybars or token decimals), defaults to 0.001 HBAR or 0.1 USDC
-export const KEETA_NETWORK = (process.env.KEETA_NETWORK || KEETA_TESTNET_CAIP2) as `${string}:${string}`;
+export const KEETA_NETWORK = (process.env.KEETA_NETWORK ||
+  KEETA_TESTNET_CAIP2) as `${string}:${string}`;
 export const STELLAR_NETWORK = (process.env.STELLAR_NETWORK ||
   "stellar:testnet") as `${string}:${string}`;
 export const TVM_NETWORK = (process.env.TVM_NETWORK || "tvm:-3") as `${string}:${string}`;
@@ -53,7 +62,8 @@ export const XRPL_NETWORK = (process.env.XRPL_NETWORK || "xrpl:1") as `${string}
 export const XRPL_ASSET = process.env.XRPL_ASSET as string | undefined;
 export const XRPL_AMOUNT = process.env.XRPL_AMOUNT as string | undefined;
 export const XRPL_ISSUER = process.env.XRPL_ISSUER as string | undefined;
-export const CCD_NETWORK = (process.env.CCD_NETWORK || "ccd:4221332d34e1694168c2a0c0b3fd0f27") as `${string}:${string}`;
+export const CCD_NETWORK = (process.env.CCD_NETWORK ||
+  "ccd:4221332d34e1694168c2a0c0b3fd0f27") as `${string}:${string}`;
 export const CCD_PAYEE_ADDRESS = process.env.CCD_PAYEE_ADDRESS as string | undefined;
 export const CCD_WEATHER_PRICE_MICRO_CCD = "1000";
 const EVM_PERMIT2_ASSET = process.env.EVM_PERMIT2_ASSET as `0x${string}`;
@@ -113,6 +123,9 @@ export const server = new x402ResourceServer(facilitatorClients);
 // Register server schemes
 if (AVM_PAYEE_ADDRESS) {
   server.register("algorand:*", new ExactAvmScheme());
+}
+if (CASPER_PAYEE_ADDRESS && CASPER_ASSET && CASPER_TOKEN_NAME && CASPER_TOKEN_VERSION) {
+  server.register("casper:*", new ExactCasperScheme());
 }
 if (CCD_PAYEE_ADDRESS) {
   server.register("ccd:*", new ExactConcordiumScheme());
@@ -328,6 +341,42 @@ export const proxy = paymentProxy(
           },
         }
       : {}),
+    ...(CASPER_PAYEE_ADDRESS && CASPER_ASSET && CASPER_TOKEN_NAME && CASPER_TOKEN_VERSION
+      ? {
+          "/api/exact/casper": {
+            accepts: {
+              payTo: CASPER_PAYEE_ADDRESS,
+              scheme: "exact",
+              price: {
+                amount: CASPER_AMOUNT,
+                asset: CASPER_ASSET,
+                extra: {
+                  name: CASPER_TOKEN_NAME,
+                  version: CASPER_TOKEN_VERSION,
+                },
+              },
+              network: CASPER_NETWORK,
+            },
+            extensions: {
+              ...declareDiscoveryExtension({
+                output: {
+                  example: {
+                    message: "Protected Casper endpoint accessed successfully",
+                    timestamp: "2024-01-01T00:00:00Z",
+                  },
+                  schema: {
+                    properties: {
+                      message: { type: "string" },
+                      timestamp: { type: "string" },
+                    },
+                    required: ["message", "timestamp"],
+                  },
+                },
+              }),
+            },
+          },
+        }
+      : {}),
     ...(APTOS_PAYEE_ADDRESS
       ? {
           "/api/exact/aptos": {
@@ -391,32 +440,32 @@ export const proxy = paymentProxy(
       : {}),
     ...(KEETA_PAYEE_ADDRESS
       ? {
-        "/api/exact/keeta": {
-          accepts: {
-            payTo: KEETA_PAYEE_ADDRESS,
-            scheme: "exact",
-            price: "$0.001",
-            network: KEETA_NETWORK,
-          },
-          extensions: {
-            ...declareDiscoveryExtension({
-              output: {
-                example: {
-                  message: "Protected Keeta endpoint accessed successfully",
-                  timestamp: "2024-01-01T00:00:00Z",
-                },
-                schema: {
-                  properties: {
-                    message: { type: "string" },
-                    timestamp: { type: "string" },
+          "/api/exact/keeta": {
+            accepts: {
+              payTo: KEETA_PAYEE_ADDRESS,
+              scheme: "exact",
+              price: "$0.001",
+              network: KEETA_NETWORK,
+            },
+            extensions: {
+              ...declareDiscoveryExtension({
+                output: {
+                  example: {
+                    message: "Protected Keeta endpoint accessed successfully",
+                    timestamp: "2024-01-01T00:00:00Z",
                   },
-                  required: ["message", "timestamp"],
+                  schema: {
+                    properties: {
+                      message: { type: "string" },
+                      timestamp: { type: "string" },
+                    },
+                    required: ["message", "timestamp"],
+                  },
                 },
-              },
-            }),
+              }),
+            },
           },
-        },
-      }
+        }
       : {}),
     ...(NEAR_PAYEE_ADDRESS
       ? {
@@ -658,6 +707,7 @@ export const config = {
     "/api/exact/svm",
     "/api/exact/avm",
     "/api/exact/aptos",
+    "/api/exact/casper",
     "/api/exact/hedera",
     "/api/exact/keeta",
     "/api/exact/near",

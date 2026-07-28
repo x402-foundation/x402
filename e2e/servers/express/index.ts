@@ -954,6 +954,20 @@ app.get("/exact/ccd", (req, res) => {
 });
 
 /**
+ * Protected Casper endpoint - requires payment via Casper exact scheme
+ *
+ * This endpoint demonstrates a resource protected by x402 payment middleware for Casper.
+ * Clients must provide a valid payment signature to access this endpoint.
+ * Note: 501 check is handled by pre-middleware guard above.
+ */
+app.get("/exact/casper", (req, res) => {
+  res.json({
+    message: "Protected Casper endpoint accessed successfully",
+    timestamp: new Date().toISOString(),
+  });
+});
+
+/**
  * Protected Permit2 ERC-20 endpoint - requires payment via Permit2 flow with ERC-20 approval
  *
  * This endpoint demonstrates the ERC-20 approval gas sponsoring flow for tokens
@@ -1114,6 +1128,7 @@ app.listen(parseInt(PORT), () => {
 ║  EVM Network:  ${EVM_NETWORK}                          ║
 ║  SVM Network:  ${SVM_NETWORK}                          ║
 ║  Aptos Network: ${APTOS_NETWORK}                       ║
+║  Casper Network: ${CASPER_NETWORK}                     ║
 ║  Hedera Network: ${HEDERA_NETWORK}                     ║
 ║  Stellar Network: ${STELLAR_NETWORK}║
 ║  TVM Network: ${TVM_NETWORK}║
@@ -1122,6 +1137,7 @@ app.listen(parseInt(PORT), () => {
 ║  EVM Payee:    ${EVM_PAYEE_ADDRESS}                    ║
 ║  SVM Payee:    ${SVM_PAYEE_ADDRESS}                    ║
 ║  Aptos Payee:  ${APTOS_PAYEE_ADDRESS || "(not configured)"}
+║  Casper Payee: ${CASPER_PAYEE_ADDRESS || "(not configured)"}
 ║  Hedera Payee: ${HEDERA_PAYEE_ADDRESS || "(not configured)"}
 ║  Keeta Payee:  ${KEETA_PAYEE_ADDRESS || "(not configured)"}
 ║  CCD Payee:    ${CCD_PAYEE_ADDRESS || "(not configured)"}
@@ -1140,6 +1156,7 @@ app.listen(parseInt(PORT), () => {
 ║  • GET  /exact/evm/permit2-erc20ApprovalGasSponsoring         ║
 ║  • GET  /exact/svm                            (SVM)           ║
 ║  • GET  /exact/aptos                          (Aptos)         ║
+║  • GET  /exact/casper                         (Casper)        ║
 ║  • GET  /exact/hedera                         (Hedera)        ║
 ║  • GET  /exact/keeta                           (Keeta)        ║
 ║  • GET  /exact/stellar                        (Stellar)       ║

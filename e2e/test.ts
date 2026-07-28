@@ -725,6 +725,7 @@ async function runTest() {
   const serverSvmAddress = process.env.SERVER_SVM_ADDRESS;
   const serverAvmAddress = process.env.SERVER_AVM_ADDRESS;
   const serverAptosAddress = process.env.SERVER_APTOS_ADDRESS;
+  const serverCasperAddress = process.env.SERVER_CASPER_ADDRESS;
   const serverCcdAddress = process.env.SERVER_CCD_ADDRESS;
   const serverHederaAddress = process.env.SERVER_HEDERA_ADDRESS;
   const serverKeetaAddress = process.env.SERVER_KEETA_ADDRESS;
@@ -736,6 +737,8 @@ async function runTest() {
   const clientSvmPrivateKey = process.env.CLIENT_SVM_PRIVATE_KEY;
   const clientAvmPrivateKey = process.env.CLIENT_AVM_PRIVATE_KEY;
   const clientAptosPrivateKey = process.env.CLIENT_APTOS_PRIVATE_KEY;
+  const clientCasperPrivateKey = process.env.CLIENT_CASPER_PRIVATE_KEY;
+  const clientCasperPrivateKeyAlgo = process.env.CLIENT_CASPER_PRIVATE_KEY_ALGORITHM;
   const clientCcdPrivateKey = process.env.CLIENT_CCD_PRIVATE_KEY;
   const clientCcdAddress = process.env.CLIENT_CCD_ADDRESS;
   const clientHederaAccountId = process.env.CLIENT_HEDERA_ACCOUNT_ID;
@@ -750,6 +753,8 @@ async function runTest() {
   const facilitatorSvmPrivateKey = process.env.FACILITATOR_SVM_PRIVATE_KEY;
   const facilitatorAvmPrivateKey = process.env.FACILITATOR_AVM_PRIVATE_KEY;
   const facilitatorAptosPrivateKey = process.env.FACILITATOR_APTOS_PRIVATE_KEY;
+  const facilitatorCasperPrivateKey = process.env.FACILITATOR_CASPER_PRIVATE_KEY;
+  const facilitatorCasperPrivateKeyAlgo = process.env.FACILITATOR_CASPER_PRIVATE_KEY_ALGORITHM;
   const facilitatorCcdPrivateKey = process.env.FACILITATOR_CCD_PRIVATE_KEY;
   const facilitatorCcdAddress = process.env.FACILITATOR_CCD_ADDRESS;
   const facilitatorHederaAccountId = process.env.FACILITATOR_HEDERA_ACCOUNT_ID;
@@ -839,6 +844,7 @@ async function runTest() {
   log(`   EVM Permit2 asset: ${evmPermit2Asset || '(missing)'} (${permit2AssetSource})`);
   log(`   SVM: ${networks.svm.name} (${networks.svm.caip2})`);
   log(`   APTOS: ${networks.aptos.name} (${networks.aptos.caip2})`);
+  log(`   CASPER: ${networks.casper.name} (${networks.casper.caip2})`);
   log(`   CCD: ${networks.ccd.name} (${networks.ccd.caip2})`);
   log(`   HEDERA: ${networks.hedera.name} (${networks.hedera.caip2})`);
   log(`   KEETA: ${networks.keeta.name} (${networks.keeta.caip2})`);
@@ -881,6 +887,13 @@ async function runTest() {
       ['SERVER_AVM_ADDRESS', serverAvmAddress],
       ['CLIENT_AVM_PRIVATE_KEY', clientAvmPrivateKey],
       ['FACILITATOR_AVM_PRIVATE_KEY', facilitatorAvmPrivateKey],
+    ],
+    casper: [
+      ['SERVER_CASPER_ADDRESS', serverCasperAddress],
+      ['CLIENT_CASPER_PRIVATE_KEY', clientCasperPrivateKey],
+      ['CLIENT_CASPER_PRIVATE_KEY_ALGORITHM', clientCasperPrivateKeyAlgo],
+      ['FACILITATOR_CASPER_PRIVATE_KEY', facilitatorCasperPrivateKey],
+      ['FACILITATOR_CASPER_PRIVATE_KEY_ALGORITHM', facilitatorCasperPrivateKeyAlgo],
     ],
     ccd: [
       ['SERVER_CCD_ADDRESS', serverCcdAddress],
@@ -1105,6 +1118,8 @@ async function runTest() {
     'EVM_PRIVATE_KEY',
     'SVM_PRIVATE_KEY',
     'APTOS_PRIVATE_KEY',
+    'CASPER_PRIVATE_KEY',
+    'CASPER_PRIVATE_KEY_ALGORITHM',
     'HEDERA_ACCOUNT_ID',
     'HEDERA_PRIVATE_KEY',
     'KEETA_FACILITATOR_MNEMONIC',
@@ -1113,6 +1128,7 @@ async function runTest() {
     'EVM_NETWORK',
     'SVM_NETWORK',
     'APTOS_NETWORK',
+    'CASPER_NETWORK',
     'HEDERA_NETWORK',
     'KEETA_NETWORK',
     'STELLAR_NETWORK',
@@ -1121,6 +1137,7 @@ async function runTest() {
     'SVM_RPC_URL',
     'SWIG_ACCOUNT_ADDRESS',
     'APTOS_RPC_URL',
+    'CASPER_RPC_URL',
     'HEDERA_NODE_URL',
     'STELLAR_RPC_URL',
     'TONCENTER_BASE_URL',
@@ -1298,6 +1315,7 @@ async function runTest() {
         EVM_NETWORK: networks.evm.caip2,
         SVM_NETWORK: networks.svm.caip2,
         APTOS_NETWORK: networks.aptos.caip2,
+        CASPER_NETWORK: networks.casper.caip2,
         CCD_NETWORK: networks.ccd.caip2,
         KEETA_NETWORK: networks.keeta.caip2,
         STELLAR_NETWORK: networks.stellar.caip2,
@@ -1365,6 +1383,8 @@ async function runTest() {
       svmPrivateKey: clientSvmPrivateKey!,
       avmPrivateKey: clientAvmPrivateKey || '',
       aptosPrivateKey: clientAptosPrivateKey || '',
+      casperPrivateKey: clientCasperPrivateKey || '',
+      casperPrivateKeyAlgorithm: clientCasperPrivateKeyAlgo || '',
       ccdPrivateKey: clientCcdPrivateKey || '',
       ccdAddress: clientCcdAddress || '',
       hederaAccountId: clientHederaAccountId || '',
@@ -1619,6 +1639,7 @@ async function runTest() {
     const facilitatorConfig = facilitatorName ? uniqueFacilitators.get(facilitatorName)?.config : undefined;
     const facilitatorSupportsAvm = facilitatorConfig?.protocolFamilies?.includes('avm') ?? false;
     const facilitatorSupportsAptos = facilitatorConfig?.protocolFamilies?.includes('aptos') ?? false;
+    const facilitatorSupportsCasper = facilitatorConfig?.protocolFamilies?.includes('casper') ?? false;
     const facilitatorSupportsCcd = facilitatorConfig?.protocolFamilies?.includes('ccd') ?? false;
     const facilitatorSupportsHedera = facilitatorConfig?.protocolFamilies?.includes('hedera') ?? false;
     const facilitatorSupportsKeeta = facilitatorConfig?.protocolFamilies?.includes('keeta') ?? false;
@@ -1633,6 +1654,7 @@ async function runTest() {
       svmPayTo: serverSvmAddress!,
       avmPayTo: facilitatorSupportsAvm ? (serverAvmAddress || '') : '',
       aptosPayTo: facilitatorSupportsAptos ? (serverAptosAddress || '') : '',
+      casperPayTo: facilitatorSupportsCasper ? (serverCasperAddress || '') : '',
       ccdPayTo: facilitatorSupportsCcd ? (serverCcdAddress || '') : '',
       hederaPayTo:
         facilitatorSupportsHedera &&
