@@ -37,6 +37,8 @@ export const ErrFailedToHash = "invalid_exact_casper_facilitator_failed_to_hash"
 export const ErrInsufficientBalance = "invalid_exact_casper_facilitator_insufficient_balance";
 export const ErrAuthorizationUsed = "invalid_exact_casper_facilitator_authorization_used";
 export const ErrUnsupportedAsset = "invalid_exact_casper_facilitator_unsupported_asset";
+export const ErrSpeculativeExecutionFailed =
+  "invalid_exact_casper_facilitator_speculative_execution_failed";
 
 /**
  * Facilitator configuration for exact Casper.
@@ -140,6 +142,14 @@ export class ExactCasperScheme implements SchemeNetworkFacilitator {
       return preflightValidation;
     }
 
+    const simulationValidation = await this.validateSpeculativeExecution(
+      exactPayload,
+      requirements,
+    );
+    if (simulationValidation) {
+      return simulationValidation;
+    }
+
     return { isValid: true, payer };
   }
 
@@ -170,18 +180,10 @@ export class ExactCasperScheme implements SchemeNetworkFacilitator {
 
     try {
       const exactPayload = payload.payload as unknown as ExactCasperPayload;
-      const facilitatorPublicKey = casperSdk.PublicKey.fromHex(
-        this.signer.getPublicKeyHex(requirements.network),
+      const transaction = await this.buildTransferWithAuthorizationTransaction(
+        exactPayload,
+        requirements,
       );
-      const networkConfig = await this.signer.getNetworkConfig(requirements.network);
-      const transaction = new casperSdk.ContractCallBuilder()
-        .from(facilitatorPublicKey)
-        .byPackageHash(requirements.asset)
-        .entryPoint("transfer_with_authorization")
-        .runtimeArgs(buildTransferWithAuthorizationArgs(exactPayload))
-        .chainName(networkConfig.chainName)
-        .payment(this.config.limitedPaymentMotes ?? DEFAULT_PAYMENT_MOTES)
-        .build();
 
       await this.signer.signTransaction(transaction, requirements.network);
       const transactionHash = await this.signer.putTransaction(requirements.network, transaction);
@@ -204,6 +206,34 @@ export class ExactCasperScheme implements SchemeNetworkFacilitator {
         network: requirements.network,
       };
     }
+  }
+
+  /**
+   * Build a transfer_with_authorization transaction.
+   *
+   * @param payload - Exact Casper payload.
+   * @param requirements - Payment requirements.
+   * @param mode - Transaction build mode.
+   * @returns Casper transaction.
+   */
+  private async buildTransferWithAuthorizationTransaction(
+    payload: ExactCasperPayload,
+    requirements: PaymentRequirements,
+    mode: "transaction-v1" | "deploy" = "transaction-v1",
+  ): Promise<casperSdk.Transaction> {
+    const facilitatorPublicKey = casperSdk.PublicKey.fromHex(
+      this.signer.getPublicKeyHex(requirements.network),
+    );
+    const networkConfig = await this.signer.getNetworkConfig(requirements.network);
+    const builder = new casperSdk.ContractCallBuilder()
+      .from(facilitatorPublicKey)
+      .byPackageHash(requirements.asset)
+      .entryPoint("transfer_with_authorization")
+      .runtimeArgs(buildTransferWithAuthorizationArgs(payload))
+      .chainName(networkConfig.chainName)
+      .payment(this.config.limitedPaymentMotes ?? DEFAULT_PAYMENT_MOTES);
+
+    return mode === "deploy" ? builder.buildFor1_5() : builder.build();
   }
 
   /**
@@ -430,6 +460,51 @@ export class ExactCasperScheme implements SchemeNetworkFacilitator {
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       return invalid(ErrUnsupportedAsset, payer, message);
+    }
+
+    return undefined;
+  }
+
+  /**
+   * Validate the authorization with optional speculative execution.
+   *
+   * @param payload - Exact Casper payload.
+   * @param requirements - Payment requirements.
+   * @returns Invalid response or undefined.
+   */
+  private async validateSpeculativeExecution(
+    payload: ExactCasperPayload,
+    requirements: PaymentRequirements,
+  ): Promise<VerifyResponse | undefined> {
+    const simulateTransferWithAuthorization = this.signer.simulateTransferWithAuthorization;
+    if (!simulateTransferWithAuthorization) {
+      return undefined;
+    }
+
+    const payer = payload.authorization.from;
+    try {
+      const transaction = await this.buildTransferWithAuthorizationTransaction(
+        payload,
+        requirements,
+        "deploy",
+      );
+      await this.signer.signTransaction(transaction, requirements.network);
+      const deploy = transaction.getDeploy();
+      if (!deploy) {
+        return invalid(
+          ErrSpeculativeExecutionFailed,
+          payer,
+          "buildFor1_5 did not produce a deploy",
+        );
+      }
+      await simulateTransferWithAuthorization({
+        network: requirements.network,
+        asset: requirements.asset,
+        deploy,
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return invalid(ErrSpeculativeExecutionFailed, payer, message);
     }
 
     return undefined;

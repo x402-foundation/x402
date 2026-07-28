@@ -18,6 +18,7 @@ import {
   ErrPayToMismatch,
   ErrPublicKeyMismatch,
   ErrSettleFailed,
+  ErrSpeculativeExecutionFailed,
   ErrUnsupportedAsset,
 } from "../../src/exact/facilitator/scheme";
 import { toClientCasperSigner } from "../../src/signer";
@@ -244,6 +245,55 @@ describe("ExactCasperScheme facilitator", () => {
         }),
       ).verify(buildPaymentPayload(payload), buildRequirements()),
     ).resolves.toMatchObject({ isValid: false, invalidReason: ErrUnsupportedAsset });
+  });
+
+  it("runs speculative execution when configured", async () => {
+    const payload = await createValidPayload();
+    const simulateTransferWithAuthorization = vi.fn(async () => {});
+    const signer = createMockSigner({ simulateTransferWithAuthorization });
+    const scheme = new ExactCasperScheme(signer);
+
+    const result = await scheme.verify(buildPaymentPayload(payload), buildRequirements());
+
+    expect(result).toMatchObject({ isValid: true, payer: payload.authorization.from });
+    expect(simulateTransferWithAuthorization).toHaveBeenCalledTimes(1);
+    const call = simulateTransferWithAuthorization.mock.calls[0]?.[0];
+    expect(call).toMatchObject({ network: testNetwork, asset: testAsset });
+    expect(call?.deploy).toBeDefined();
+  });
+
+  it("rejects speculative execution failures", async () => {
+    const payload = await createValidPayload();
+    const scheme = new ExactCasperScheme(
+      createMockSigner({
+        simulateTransferWithAuthorization: vi.fn(async () => {
+          throw new Error("simulation reverted");
+        }),
+      }),
+    );
+
+    await expect(
+      scheme.verify(buildPaymentPayload(payload), buildRequirements()),
+    ).resolves.toMatchObject({
+      isValid: false,
+      invalidReason: ErrSpeculativeExecutionFailed,
+      invalidMessage: "simulation reverted",
+      payer: payload.authorization.from,
+    });
+  });
+
+  it("skips speculative execution when no simulation hook is configured", async () => {
+    const payload = await createValidPayload();
+    const signer = createMockSigner();
+    const scheme = new ExactCasperScheme(signer);
+
+    await expect(
+      scheme.verify(buildPaymentPayload(payload), buildRequirements()),
+    ).resolves.toMatchObject({
+      isValid: true,
+    });
+
+    expect("simulateTransferWithAuthorization" in signer).toBe(false);
   });
 
   it("settles valid payloads and maps failures", async () => {
