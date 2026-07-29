@@ -824,7 +824,9 @@ class x402HTTPServerBase:
 
         # API response
         content_type = "application/json"
-        body: Any = {}
+        body = payment_required.model_dump(
+            by_alias=True, exclude_none=True, mode="json"
+        )
 
         if unpaid_response:
             content_type = unpaid_response.content_type
