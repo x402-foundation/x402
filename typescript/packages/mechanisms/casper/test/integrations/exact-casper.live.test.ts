@@ -32,6 +32,7 @@ const TOKEN_DECIMALS = process.env.CASPER_TOKEN_DECIMALS
   : 9;
 const NETWORK = (process.env.CASPER_NETWORK || NETWORK_CASPER_TESTNET) as Network;
 const RPC_URL = process.env.CASPER_RPC_URL || "https://node.testnet.casper.network/rpc";
+const SPECEXEC_RPC_URL = process.env.CASPER_SPECEXEC_RPC_URL;
 const RUN_LIVE = process.env.CASPER_RUN_LIVE === "1";
 
 const missingLiveEnv =
@@ -119,6 +120,7 @@ describeLive(
             getAuthorizationState: async (): Promise<CasperAuthorizationState> => "unused",
             assertTransferWithAuthorizationSupported: async () => {},
           },
+          speculativeRpcUrlConfig: SPECEXEC_RPC_URL ? { [NETWORK]: SPECEXEC_RPC_URL } : undefined,
         },
       );
 

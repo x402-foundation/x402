@@ -68,12 +68,10 @@ import { ExactCasperScheme } from "@x402/casper/exact/facilitator";
 
 const signer = await createFacilitatorCasperSigner(
   process.env.CASPER_FACILITATOR_PRIVATE_KEY!,
-  undefined,
+  KeyAlgorithm.ED25519,
   {
     rpcUrlConfig: { "casper:casper-test": "https://node.testnet.casper.network/rpc" },
-    speculativeRpcUrlConfig: process.env.CASPER_SPECULATIVE_RPC_URL
-      ? { "casper:casper-test": process.env.CASPER_SPECULATIVE_RPC_URL }
-      : undefined,
+    speculativeRpcUrlConfig: { "casper:casper-test": process.env.CASPER_SPECULATIVE_RPC_URL },
     preflightHooks: {
       getBalance: async params => {
         // Read CEP-18 balance for params.account.

@@ -135,15 +135,6 @@ export async function toFacilitatorCasperSigner(
         }
 
         const result = await speculativeClient.speculativeExec("1", deploy);
-        const v1Failure = result.executionResultV1?.failure;
-        if (v1Failure) {
-          throw new Error(
-            `speculative execution failed: ${v1Failure.errorMessage || JSON.stringify(v1Failure)}`,
-          );
-        }
-        if (result.executionResultV1?.success) {
-          return;
-        }
         const v2ErrorMessage = result.executionResult?.errorMessage;
         if (v2ErrorMessage) {
           throw new Error(`speculative execution failed: ${v2ErrorMessage}`);

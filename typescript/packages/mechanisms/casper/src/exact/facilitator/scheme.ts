@@ -322,9 +322,6 @@ export class ExactCasperScheme implements SchemeNetworkFacilitator {
     if (now >= validBefore) {
       return invalid(ErrExpired, payer, `validBefore=${validBefore} now=${now}`);
     }
-    if (validBefore < now + requirements.maxTimeoutSeconds) {
-      return invalid(ErrExpired, payer, "validBefore is earlier than required timeout");
-    }
 
     const name = requirements.extra?.name;
     const version = requirements.extra?.version;
