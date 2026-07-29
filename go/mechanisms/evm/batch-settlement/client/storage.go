@@ -2,6 +2,8 @@ package client
 
 import (
 	"sync"
+
+	batchsettlement "github.com/x402-foundation/x402/go/v2/mechanisms/evm/batch-settlement"
 )
 
 // BatchSettlementClientContext holds per-channel session state on the client side.
@@ -35,9 +37,13 @@ func NewInMemoryClientChannelStorage() *InMemoryClientChannelStorage {
 }
 
 func (s *InMemoryClientChannelStorage) Get(channelId string) (*BatchSettlementClientContext, error) {
+	key, err := batchsettlement.NormalizeChannelId(channelId)
+	if err != nil {
+		return nil, err
+	}
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	ctx, ok := s.sessions[channelId]
+	ctx, ok := s.sessions[key]
 	if !ok {
 		return nil, nil
 	}
@@ -47,16 +53,24 @@ func (s *InMemoryClientChannelStorage) Get(channelId string) (*BatchSettlementCl
 }
 
 func (s *InMemoryClientChannelStorage) Set(channelId string, ctx *BatchSettlementClientContext) error {
+	key, err := batchsettlement.NormalizeChannelId(channelId)
+	if err != nil {
+		return err
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	copy := *ctx
-	s.sessions[channelId] = &copy
+	s.sessions[key] = &copy
 	return nil
 }
 
 func (s *InMemoryClientChannelStorage) Delete(channelId string) error {
+	key, err := batchsettlement.NormalizeChannelId(channelId)
+	if err != nil {
+		return err
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	delete(s.sessions, channelId)
+	delete(s.sessions, key)
 	return nil
 }

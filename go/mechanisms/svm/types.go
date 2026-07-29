@@ -75,6 +75,11 @@ type ClientConfig struct {
 	RPCURL string // Custom RPC URL
 }
 
+// ServerConfig contains optional server configuration.
+type ServerConfig struct {
+	RPCURL string // Custom RPC URL for challenge enrichment
+}
+
 // ToMap converts an ExactSvmPayload to a map for JSON marshaling
 func (p *ExactSvmPayload) ToMap() map[string]interface{} {
 	return map[string]interface{}{

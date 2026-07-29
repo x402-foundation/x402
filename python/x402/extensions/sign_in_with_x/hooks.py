@@ -117,25 +117,25 @@ def create_siwx_request_hook(options: CreateSIWxRequestHookOptions):
         try:
             payload = parse_siwx_header(header)
             validation = await validate_siwx_message(payload, configured_origin)
-            if not validation.valid:
+            if not validation.is_valid:
                 if options.on_event:
                     options.on_event(
                         {
                             "type": "validation_failed",
                             "resource": context.path,
-                            "error": validation.error,
+                            "error": validation.invalid_message,
                         }
                     )
                 return None
 
             verification = await verify_siwx_signature(payload, options.verify_options)
-            if not verification.valid or not verification.address:
+            if not verification.is_valid or not verification.payer:
                 if options.on_event:
                     options.on_event(
                         {
                             "type": "validation_failed",
                             "resource": context.path,
-                            "error": verification.error,
+                            "error": verification.invalid_message,
                         }
                     )
                 return None
@@ -162,7 +162,7 @@ def create_siwx_request_hook(options: CreateSIWxRequestHookOptions):
                 accept_list = list(accepts or [])
             is_auth_only = isinstance(accept_list, list) and len(accept_list) == 0
 
-            has_paid = storage.has_paid(context.path, verification.address)
+            has_paid = storage.has_paid(context.path, verification.payer)
             if inspect.isawaitable(has_paid):
                 has_paid = await has_paid
             should_grant = is_auth_only or has_paid
@@ -176,7 +176,7 @@ def create_siwx_request_hook(options: CreateSIWxRequestHookOptions):
                         {
                             "type": "access_granted",
                             "resource": context.path,
-                            "address": verification.address,
+                            "address": verification.payer,
                         }
                     )
                 return GrantAccessResult()

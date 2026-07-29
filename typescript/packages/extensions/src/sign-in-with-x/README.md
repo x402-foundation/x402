@@ -111,18 +111,18 @@ async function handleRequest(request: Request) {
     payload,
     new URL('https://api.example.com'),
   );
-  if (!validation.valid) {
-    return { error: validation.error };
+  if (!validation.isValid) {
+    return { error: validation.invalidMessage };
   }
 
   // Verify signature and recover address
   const verification = await verifySIWxSignature(payload);
-  if (!verification.valid) {
-    return { error: verification.error };
+  if (!verification.isValid) {
+    return { error: verification.invalidMessage };
   }
 
-  // verification.address is the verified wallet
-  if (await isAuthOnlyRoute(request) || await checkPaymentHistory(verification.address)) {
+  // verification.payer is the verified wallet
+  if (await isAuthOnlyRoute(request) || await checkPaymentHistory(verification.payer)) {
     // Grant access
   }
 }
@@ -233,7 +233,20 @@ validateSIWxMessage(payload, new URL('https://api.example.com'), {
   maxAge?: number;                    // Max age for issuedAt (default: 5 min)
   checkNonce?: (nonce) => boolean;    // Custom nonce validation
 })
-// Returns: { valid: boolean; error?: string }
+// Returns: { isValid: true }
+//        | { isValid: false; invalidReason: SIWxValidationCode; invalidMessage: string }
+
+type SIWxValidationCode =
+  | "invalid_siwx_domain_mismatch"
+  | "invalid_siwx_uri_mismatch"
+  | "invalid_siwx_issued_at"
+  | "invalid_siwx_issued_at_too_old"
+  | "invalid_siwx_issued_at_in_future"
+  | "invalid_siwx_expiration_time"
+  | "invalid_siwx_expired"
+  | "invalid_siwx_not_before"
+  | "invalid_siwx_not_yet_valid"
+  | "invalid_siwx_nonce";
 ```
 
 ### `verifySIWxSignature(payload, options?)`
@@ -244,7 +257,15 @@ Verifies the cryptographic signature and recovers the signer address.
 verifySIWxSignature(payload, {
   evmVerifier?: EVMMessageVerifier;  // For smart wallet support
 })
-// Returns: { valid: boolean; address?: string; error?: string }
+// Returns: { isValid: true; payer: string }
+//        | { isValid: false; invalidReason: SIWxVerifyCode; invalidMessage: string }
+
+type SIWxVerifyCode =
+  | "invalid_siwx_signature"
+  | "invalid_siwx_chain_id"
+  | "invalid_siwx_unsupported_chain"
+  | "invalid_siwx_malformed_signature"
+  | "invalid_siwx_verifier_error";
 ```
 
 **Smart Wallet Support (EIP-1271 / EIP-6492):**

@@ -9,11 +9,30 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 // IsNotExist returns true when err is a "file does not exist" error.
 func IsNotExist(err error) bool {
 	return errors.Is(err, fs.ErrNotExist) || errors.Is(err, os.ErrNotExist)
+}
+
+// ResolveWithinDir resolves filename under baseDir and asserts the result stays
+// within baseDir. Rejects path-escape attempts (e.g. via `..`).
+func ResolveWithinDir(baseDir, filename string) (string, error) {
+	base, err := filepath.Abs(baseDir)
+	if err != nil {
+		return "", err
+	}
+	target, err := filepath.Abs(filepath.Join(base, filename))
+	if err != nil {
+		return "", err
+	}
+	sep := string(os.PathSeparator)
+	if target != base && !strings.HasPrefix(target, base+sep) {
+		return "", errors.New("resolved channel path escapes storage root")
+	}
+	return target, nil
 }
 
 // ReadJSONFile reads filePath and unmarshals the JSON into out.

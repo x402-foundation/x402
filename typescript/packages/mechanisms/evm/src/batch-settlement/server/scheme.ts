@@ -46,6 +46,7 @@ export interface BatchSettlementRequestContext {
   pendingId?: string;
   channelSnapshot?: Channel;
   localVerify?: boolean;
+  reservationCommitted?: boolean;
 }
 
 /**
@@ -190,7 +191,7 @@ export class BatchSettlementEvmScheme implements SchemeNetworkServer {
    */
   async clearPendingRequest(payload: DeepReadonly<PaymentPayload>): Promise<void> {
     const context = this.takeRequestContext(payload);
-    if (!context?.channelId || !context.pendingId) {
+    if (!context?.reservationCommitted || !context.channelId || !context.pendingId) {
       return;
     }
 
@@ -254,7 +255,10 @@ export class BatchSettlementEvmScheme implements SchemeNetworkServer {
 
   /**
    * Injects batched-specific fields into the payment requirements returned to
-   * the client (receiverAuthorizer, withdrawDelay, EIP-712 domain info).
+   * the client (receiverAuthorizer, withdrawDelay). Asset metadata (name,
+   * version, assetTransferMethod) is left untouched — it is already set by
+   * `parsePrice` or supplied explicitly by the caller, and is not re-derived
+   * from the default-asset registry here so unlisted networks keep working.
    *
    * @param paymentRequirements - Base payment requirements from the middleware.
    * @param supportedKind - Matched scheme/network kind (extra may contain overrides).
@@ -277,8 +281,6 @@ export class BatchSettlementEvmScheme implements SchemeNetworkServer {
   ): Promise<PaymentRequirements> {
     void _extensionKeys;
 
-    const assetInfo = getDefaultAsset(paymentRequirements.network as Network);
-
     const receiverAuthorizer =
       this.receiverAuthorizerSigner?.address ??
       (typeof supportedKind.extra?.receiverAuthorizer === "string"
@@ -298,10 +300,6 @@ export class BatchSettlementEvmScheme implements SchemeNetworkServer {
         ...paymentRequirements.extra,
         receiverAuthorizer: getAddress(receiverAuthorizer),
         withdrawDelay: this.withdrawDelay,
-        name: assetInfo.name,
-        version: assetInfo.version,
-        assetTransferMethod:
-          paymentRequirements.extra?.assetTransferMethod ?? assetInfo.assetTransferMethod,
       },
     };
   }
@@ -383,22 +381,25 @@ export class BatchSettlementEvmScheme implements SchemeNetworkServer {
 
   /**
    * Creates a {@link BatchSettlementChannelManager} pre-configured with this scheme's
-   * receiver, default token for the given network, and the provided facilitator.
+   * receiver, a token for the given network, and the provided facilitator.
    *
    * @param facilitator - Facilitator client for submitting onchain claims/settlements.
    * @param network - CAIP-2 network identifier (e.g. `"eip155:84532"`).
+   * @param token - Explicit token address to use. Falls back to the network's
+   *   default asset (from the registry) when omitted.
    * @returns A ready-to-use channel manager.
    */
   createChannelManager(
     facilitator: FacilitatorClient,
     network: Network,
+    token?: `0x${string}`,
   ): BatchSettlementChannelManager {
-    const token = getDefaultAsset(network).address as `0x${string}`;
+    const resolvedToken = token ?? (getDefaultAsset(network).address as `0x${string}`);
     return new BatchSettlementChannelManager({
       scheme: this,
       facilitator,
       receiver: this.receiverAddress,
-      token,
+      token: resolvedToken,
       network,
     });
   }
@@ -428,12 +429,23 @@ export class BatchSettlementEvmScheme implements SchemeNetworkServer {
     const assetInfo = getDefaultAsset(network);
     const tokenAmount = convertToTokenAmount(numberToDecimalString(amount), assetInfo.decimals);
 
+    // EIP-3009 tokens always need name/version for their transferWithAuthorization domain.
+    // Permit2 tokens only need them if the token supports EIP-2612 (for gasless permit signing).
+    // Omitting name/version for permit2 tokens signals the client to skip EIP-2612 and use
+    // ERC-20 approval gas sponsoring instead.
+    const includeEip712Domain = !assetInfo.assetTransferMethod || assetInfo.supportsEip2612;
+
     return {
       amount: tokenAmount,
       asset: assetInfo.address,
       extra: {
-        name: assetInfo.name,
-        version: assetInfo.version,
+        ...(includeEip712Domain && {
+          name: assetInfo.name,
+          version: assetInfo.version,
+        }),
+        ...(assetInfo.assetTransferMethod && {
+          assetTransferMethod: assetInfo.assetTransferMethod,
+        }),
       },
     };
   }

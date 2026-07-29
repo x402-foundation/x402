@@ -50,6 +50,7 @@ from .types import (
     BUILDER_CODE,
     BUILDER_CODE_PATTERN,
     ERC_8021_MARKER,
+    MAX_SERVICE_CODES,
     SCHEMA_2_ID,
     BuilderCodeExtensionData,
     BuilderCodeFacilitatorConfig,
@@ -60,6 +61,7 @@ __all__ = [
     "BUILDER_CODE",
     "BUILDER_CODE_PATTERN",
     "ERC_8021_MARKER",
+    "MAX_SERVICE_CODES",
     "SCHEMA_2_ID",
     "BUILDER_CODE_SCHEMA",
     # Types

@@ -87,14 +87,21 @@ class InMemoryClientChannelStorage:
         self._channels: dict[str, BatchSettlementClientContext] = {}
 
     def get(self, key: str) -> BatchSettlementClientContext | None:
-        existing = self._channels.get(key)
+        from ..utils import normalize_channel_id
+
+        normalized = normalize_channel_id(key)
+        existing = self._channels.get(normalized)
         return existing.copy() if existing is not None else None
 
     def set(self, key: str, context: BatchSettlementClientContext) -> None:
-        self._channels[key] = context.copy()
+        from ..utils import normalize_channel_id
+
+        self._channels[normalize_channel_id(key)] = context.copy()
 
     def delete(self, key: str) -> None:
-        self._channels.pop(key, None)
+        from ..utils import normalize_channel_id
+
+        self._channels.pop(normalize_channel_id(key), None)
 
 
 __all__ = [

@@ -21,6 +21,9 @@ SCHEMA_2_ID = 0x02
 # Pattern for valid builder codes (lowercase alphanumeric + underscore, 1-32 chars)
 BUILDER_CODE_PATTERN = re.compile(r"^[a-z0-9_]{1,32}$")
 
+# Maximum number of service codes (`s`) encoded onchain at settlement
+MAX_SERVICE_CODES = 5
+
 
 @dataclass
 class BuilderCodeExtensionData:

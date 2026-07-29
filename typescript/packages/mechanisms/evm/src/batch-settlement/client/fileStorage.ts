@@ -1,7 +1,8 @@
 import { unlink } from "node:fs/promises";
 import { join } from "node:path";
 
-import { isNodeEnoent, readJsonFile, writeJsonAtomic } from "../storage-utils";
+import { isNodeEnoent, readJsonFile, resolveWithinDir, writeJsonAtomic } from "../storage-utils";
+import { normalizeChannelId } from "../utils";
 import type { FileChannelStorageOptions } from "../types";
 import type { ClientChannelStorage, BatchSettlementClientContext } from "./storage";
 
@@ -61,10 +62,12 @@ export class FileClientChannelStorage implements ClientChannelStorage {
   /**
    * Absolute path to the JSON file for a channel.
    *
-   * @param key - Channel storage key.
+   * @param key - Channel storage key (a canonical `bytes32` channel id).
    * @returns Filesystem path under `{root}/client/...`.
+   * @throws When `key` is not a canonical `bytes32` string or escapes the storage root.
    */
   private filePath(key: string): string {
-    return join(this.root, "client", `${key.toLowerCase()}.json`);
+    const id = normalizeChannelId(key);
+    return resolveWithinDir(join(this.root, "client"), `${id}.json`);
   }
 }

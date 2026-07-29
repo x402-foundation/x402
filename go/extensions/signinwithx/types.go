@@ -105,10 +105,29 @@ type ValidationOptions struct {
 	CheckNonce func(string) bool
 }
 
+const (
+	ErrInvalidSIWxDomainMismatch     = "invalid_siwx_domain_mismatch"
+	ErrInvalidSIWxURIMismatch        = "invalid_siwx_uri_mismatch"
+	ErrInvalidSIWxIssuedAt           = "invalid_siwx_issued_at"
+	ErrInvalidSIWxIssuedAtTooOld     = "invalid_siwx_issued_at_too_old"
+	ErrInvalidSIWxIssuedAtInFuture   = "invalid_siwx_issued_at_in_future"
+	ErrInvalidSIWxExpirationTime     = "invalid_siwx_expiration_time"
+	ErrInvalidSIWxExpired            = "invalid_siwx_expired"
+	ErrInvalidSIWxNotBefore          = "invalid_siwx_not_before"
+	ErrInvalidSIWxNotYetValid        = "invalid_siwx_not_yet_valid"
+	ErrInvalidSIWxNonce              = "invalid_siwx_nonce"
+	ErrInvalidSIWxSignature          = "invalid_siwx_signature"
+	ErrInvalidSIWxChainID            = "invalid_siwx_chain_id"
+	ErrInvalidSIWxUnsupportedChain   = "invalid_siwx_unsupported_chain"
+	ErrInvalidSIWxMalformedSignature = "invalid_siwx_malformed_signature"
+	ErrInvalidSIWxVerifierError      = "invalid_siwx_verifier_error"
+)
+
 // ValidationResult is returned by ValidateMessage.
 type ValidationResult struct {
-	Valid bool
-	Error string
+	IsValid        bool
+	InvalidReason  string
+	InvalidMessage string
 }
 
 // EVMMessageVerifier verifies an EIP-191 SIWX message for an EVM address.
@@ -132,7 +151,8 @@ type VerifyOptions struct {
 
 // VerifyResult is returned by VerifySignature.
 type VerifyResult struct {
-	Valid   bool
-	Address string
-	Error   string
+	IsValid        bool
+	InvalidReason  string
+	InvalidMessage string
+	Payer          string
 }

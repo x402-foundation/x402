@@ -1,8 +1,12 @@
 /**
  * Algorand Network Constants for x402 AVM Implementation
  *
- * CAIP-2 Network Identifiers use the format: algorand:<genesis-hash-base64>
- * Genesis hashes uniquely identify Algorand networks.
+ * CAIP-2 network identifiers use the Algorand namespace profile:
+ * algorand:<url-safe-base64-genesis-hash-first-32-chars>
+ *
+ * @see https://namespaces.chainagnostic.org/algorand/caip2
+ *
+ * Full genesis hashes (standard base64) are used for onchain transaction `gh` fields.
  */
 
 // ============================================================================
@@ -11,15 +15,13 @@
 
 /**
  * CAIP-2 network identifier for Algorand Mainnet
- * Format: algorand:<genesis-hash-base64>
  */
-export const ALGORAND_MAINNET_CAIP2 = "algorand:wGHE2Pwdvd7S12BL5FaOP20EGYesN73ktiC1qzkkit8=";
+export const ALGORAND_MAINNET_CAIP2 = "algorand:wGHE2Pwdvd7S12BL5FaOP20EGYesN73k";
 
 /**
  * CAIP-2 network identifier for Algorand Testnet
- * Format: algorand:<genesis-hash-base64>
  */
-export const ALGORAND_TESTNET_CAIP2 = "algorand:SGO1GKSzyE7IEPItTxCByw9x8FmnrCDexi9/cOUJOiI=";
+export const ALGORAND_TESTNET_CAIP2 = "algorand:SGO1GKSzyE7IEPItTxCByw9x8FmnrCDe";
 
 /**
  * All supported CAIP-2 network identifiers

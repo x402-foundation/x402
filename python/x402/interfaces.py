@@ -211,7 +211,9 @@ class BeforeVerifyHookProvider(Protocol):
 class AfterVerifyHookProvider(Protocol):
     def after_verify(
         self, context: VerifyResultContext
-    ) -> SkipHandlerResult | None | Awaitable[SkipHandlerResult | None]: ...
+    ) -> (
+        AbortResult | SkipHandlerResult | None | Awaitable[AbortResult | SkipHandlerResult | None]
+    ): ...
 
 
 class OnVerifyFailureHookProvider(Protocol):

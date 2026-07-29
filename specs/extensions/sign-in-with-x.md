@@ -272,12 +272,37 @@ Base64 decode the header value and JSON parse the result.
 - **Not Before**: If `notBefore` is present, it MUST be in the past.
 - **Nonce**: MUST be unique. Server SHOULD track used nonces to prevent replay attacks.
 
+Validation failures SHOULD be reported with a machine-readable code identifying the failed check:
+
+| Code                               | Failed check                                            |
+| ---------------------------------- | ------------------------------------------------------- |
+| `invalid_siwx_domain_mismatch`     | `domain` does not match the request host                |
+| `invalid_siwx_uri_mismatch`        | `uri` does not start with the expected resource origin  |
+| `invalid_siwx_issued_at`           | `issuedAt` is not a valid timestamp                     |
+| `invalid_siwx_issued_at_too_old`   | `issuedAt` exceeds the maximum age                      |
+| `invalid_siwx_issued_at_in_future` | `issuedAt` is in the future                             |
+| `invalid_siwx_expiration_time`     | `expirationTime` is not a valid timestamp               |
+| `invalid_siwx_expired`             | `expirationTime` is in the past                         |
+| `invalid_siwx_not_before`          | `notBefore` is not a valid timestamp                    |
+| `invalid_siwx_not_yet_valid`       | `notBefore` is in the future                            |
+| `invalid_siwx_nonce`               | nonce failed uniqueness validation                      |
+
 ### 3. Verify Signature
 
 Route verification by `chainId` prefix:
 
 - **`eip155:*`**: Reconstruct SIWE message, verify using ECDSA recovery (EOA) or on-chain verification (EIP-1271/EIP-6492 for smart wallets).
 - **`solana:*`**: Reconstruct SIWS message, verify Ed25519 signature.
+
+Verification failures SHOULD be reported with a machine-readable code identifying the failed check:
+
+| Code                               | Failed check                                              |
+| ---------------------------------- | --------------------------------------------------------- |
+| `invalid_siwx_signature`           | cryptographic signature verification failed               |
+| `invalid_siwx_chain_id`            | `chainId` is not a valid CAIP-2 EVM identifier            |
+| `invalid_siwx_unsupported_chain`   | `chainId` namespace is not supported                      |
+| `invalid_siwx_malformed_signature` | signature or address encoding/length is invalid (Solana)  |
+| `invalid_siwx_verifier_error`      | verifier threw (e.g. RPC unavailable during EIP-1271)     |
 
 ### 4. Check Payment History
 

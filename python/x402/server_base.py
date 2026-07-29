@@ -197,7 +197,7 @@ BeforeVerifyHook = Callable[
 ]
 AfterVerifyHook = Callable[
     [VerifyResultContext],
-    Awaitable[SkipHandlerResult | None] | SkipHandlerResult | None,
+    Awaitable[AbortResult | SkipHandlerResult | None] | AbortResult | SkipHandlerResult | None,
 ]
 OnVerifyFailureHook = Callable[
     [VerifyFailureContext],
@@ -220,7 +220,7 @@ OnVerifiedPaymentCanceledHook = Callable[
 
 # Sync-only hook types (for sync class)
 SyncBeforeVerifyHook = Callable[[VerifyContext], AbortResult | SkipVerifyResult | None]
-SyncAfterVerifyHook = Callable[[VerifyResultContext], SkipHandlerResult | None]
+SyncAfterVerifyHook = Callable[[VerifyResultContext], AbortResult | SkipHandlerResult | None]
 SyncOnVerifyFailureHook = Callable[[VerifyFailureContext], RecoveredVerifyResult | None]
 
 SyncBeforeSettleHook = Callable[[SettleContext], AbortResult | SkipSettleResult | None]
@@ -229,8 +229,8 @@ SyncOnSettleFailureHook = Callable[[SettleFailureContext], RecoveredSettleResult
 SyncOnVerifiedPaymentCanceledHook = Callable[[VerifiedPaymentCanceledContext], None]
 
 # Hook command type for generator-based implementation
-HookPhase = Literal["before", "after", "failure"]
-HookCommand = tuple[HookPhase, Any, Any]  # (phase, hook, context)
+HookPhase = Literal["before", "after", "failure", "call_facilitator", "dispatch_cancel"]
+HookCommand = tuple[HookPhase, Any, Any]  # (phase, hook|client|options, context)
 
 # Type alias for facilitator clients (either async or sync)
 _AnyFacilitatorClient = FacilitatorClient | FacilitatorClientSync
@@ -1233,7 +1233,18 @@ class x402ResourceServerBase:
             ):
                 result = yield ("failure", hook, failure_context)
                 if isinstance(result, RecoveredVerifyResult):
-                    return ResourceVerifyResponse(verify=result.result)
+                    verify_response = yield from self._run_after_verify_hooks(
+                        payload,
+                        requirements,
+                        payload_bytes,
+                        requirements_bytes,
+                        declared_extensions,
+                        transport_context,
+                        result.result,
+                        matched_scheme,
+                        extension_keys,
+                    )
+                    return verify_response
 
             raise
 
@@ -1249,7 +1260,11 @@ class x402ResourceServerBase:
         matched_scheme: dict[str, str] | None = None,
         extension_keys: list[str] | None = None,
     ) -> Generator[HookCommand, Any, ResourceVerifyResponse]:
-        """Run after-verify hooks and attach any skip-handler directive."""
+        """Run after-verify hooks and attach any skip-handler directive.
+
+        On AbortResult: stop remaining hooks, dispatch after_verify_aborted
+        cancellation, and return an invalid verify response.
+        """
         skip_handler: SkipHandlerDirective | None = None
         declared = declared_extensions or {}
         result_context = VerifyResultContext(
@@ -1273,6 +1288,19 @@ class x402ResourceServerBase:
             scheme,
         ):
             hook_result = yield ("after", hook, result_context)
+            if isinstance(hook_result, AbortResult):
+                yield (
+                    "dispatch_cancel",
+                    VerifiedPaymentCancelOptions(reason="after_verify_aborted"),
+                    (payload, requirements, declared_extensions, transport_context),
+                )
+                return ResourceVerifyResponse(
+                    verify=VerifyResponse(
+                        is_valid=False,
+                        invalid_reason=hook_result.reason,
+                        invalid_message=hook_result.message,
+                    )
+                )
             if isinstance(hook_result, SkipHandlerResult):
                 skip_handler = hook_result.response or SkipHandlerDirective()
 

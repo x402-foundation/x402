@@ -376,6 +376,8 @@ client.registerExtension(new BuilderCodeClientExtension(["bc_mcp_server", "bc_my
 
 Accepts a single string or an array of strings. Automatically echoes the server's `a` code and attaches the client's `s` code(s) to every payment payload. Multiple codes are useful for layered clients (e.g. an MCP server acting as middleware) that need to attribute multiple participants.
 
+<Note>Facilitators cap `s` to the first **5** entries (`MAX_SERVICE_CODES`) at settlement to bound calldata size. Extra entries are silently dropped.</Note>
+
 ### Facilitator
 
 #### `BuilderCodeFacilitatorExtension`
@@ -420,6 +422,7 @@ const attribution = parseBuilderCodeSuffixFromCalldata(tx.input);
 import {
   BUILDER_CODE,          // "builder-code"
   BUILDER_CODE_PATTERN,  // /^[a-z0-9_]{1,32}$/
+  MAX_SERVICE_CODES,     // 5 — on-chain cap for `s`; facilitators truncate excess entries
   ERC_8021_MARKER,       // "80218021802180218021802180218021"
   SCHEMA_2_ID,           // 0x02
 } from "@x402/extensions/builder-code";

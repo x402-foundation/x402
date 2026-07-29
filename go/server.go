@@ -956,20 +956,9 @@ func (s *x402ResourceServer) VerifyPaymentWithExtensions(
 	}
 
 	// Short-circuit: a BeforeVerify hook produced a local verify result. Still run
-	// AfterVerify hooks so cooperative-refund SkipHandler signaling works.
+	// AfterVerify hooks so cooperative-refund SkipHandler signaling and abort work.
 	if skipVerifyResult != nil {
-		resultCtx := VerifyResultContext{VerifyContext: hookCtx, Result: skipVerifyResult}
-		for _, lh := range afterVerifyHooks {
-			directive, _ := lh.Hook(resultCtx)
-			if directive != nil && directive.SkipHandler {
-				resp := directive.Response
-				if resp == nil {
-					resp = &SkipHandlerDirective{}
-				}
-				skipVerifyResult.SkipHandler = resp
-			}
-		}
-		return skipVerifyResult, nil
+		return s.runAfterVerifyHooks(payload, requirements, declaredExtensions, hookCtx, afterVerifyHooks, skipVerifyResult)
 	}
 
 	if facilitator == nil {
@@ -985,7 +974,7 @@ func (s *x402ResourceServer) VerifyPaymentWithExtensions(
 		for _, lh := range verifyFailureHooks {
 			result, _ := lh.Hook(failureCtx)
 			if result != nil && result.Recovered {
-				return result.Result, nil
+				return s.runAfterVerifyHooks(payload, requirements, declaredExtensions, hookCtx, afterVerifyHooks, result.Result)
 			}
 		}
 		return verifyResult, verifyErr
@@ -1009,19 +998,51 @@ func (s *x402ResourceServer) VerifyPaymentWithExtensions(
 		for _, lh := range verifyFailureHooks {
 			result, _ := lh.Hook(failureCtx)
 			if result != nil && result.Recovered {
-				return result.Result, nil
+				return s.runAfterVerifyHooks(payload, requirements, declaredExtensions, hookCtx, afterVerifyHooks, result.Result)
 			}
 		}
 		return verifyResult, ve
 	}
 
-	// Execute afterVerify hooks. The last hook to return a SkipHandler directive
-	// wins; this lets schemes signal that a self-contained operation (e.g.
-	// cooperative refund) should bypass the resource handler and settle inline.
+	return s.runAfterVerifyHooks(payload, requirements, declaredExtensions, hookCtx, afterVerifyHooks, verifyResult)
+}
+
+// runAfterVerifyHooks runs after-verify hooks against a verify result.
+// On Abort, remaining hooks stop, after_verify_aborted cancellation fires, and
+// verification fails closed. Otherwise the last SkipHandler directive wins.
+func (s *x402ResourceServer) runAfterVerifyHooks(
+	payload types.PaymentPayload,
+	requirements types.PaymentRequirements,
+	declaredExtensions map[string]interface{},
+	hookCtx VerifyContext,
+	afterVerifyHooks []labeledHook[AfterVerifyHook],
+	verifyResult *VerifyResponse,
+) (*VerifyResponse, error) {
+	if verifyResult == nil {
+		return nil, NewVerifyError(ErrCodeInvalidPayment, "", "missing verify result")
+	}
+
 	resultCtx := VerifyResultContext{VerifyContext: hookCtx, Result: verifyResult}
 	for _, lh := range afterVerifyHooks {
 		directive, _ := lh.Hook(resultCtx) // Log errors but don't fail
-		if directive != nil && directive.SkipHandler {
+		if directive == nil {
+			continue
+		}
+		if directive.Abort {
+			dispatcher := s.CreatePaymentCancellationDispatcherWithExtensions(
+				hookCtx.Ctx, payload, requirements, declaredExtensions,
+			)
+			dispatcher.Cancel(VerifiedPaymentCancelOptions{
+				Reason: CancellationReasonAfterVerifyAborted,
+			})
+			return &VerifyResponse{
+					IsValid:        false,
+					InvalidReason:  directive.Reason,
+					InvalidMessage: directive.Message,
+				},
+				NewVerifyError(directive.Reason, "", directive.Message)
+		}
+		if directive.SkipHandler {
 			resp := directive.Response
 			if resp == nil {
 				resp = &SkipHandlerDirective{}

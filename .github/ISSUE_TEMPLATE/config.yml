@@ -1,0 +1,11 @@
+blank_issues_enabled: false
+contact_links:
+  - name: My service is not indexed in the Bazaar catalog
+    url: https://docs.x402.org/extensions/bazaar#troubleshooting-catalog-visibility
+    about: Catalog indexing is handled by your facilitator, an external service provider. Read the troubleshooting guide and contact your facilitator operator directly — please do not open an issue here.
+  - name: Questions & community
+    url: http://slack.x402.org/
+    about: Ask questions, discuss ideas, or share what you're building on x402.
+  - name: Documentation
+    url: https://docs.x402.org/
+    about: Read the x402 docs and guides.

@@ -252,6 +252,184 @@ func TestOnVerifyFailureHook_NoRecover(t *testing.T) {
 	}
 }
 
+func TestAfterVerifyHook_Abort(t *testing.T) {
+	laterCalled := false
+	cancelReason := VerifiedPaymentCancellationReason("")
+
+	server := Newx402ResourceServer()
+	server.OnAfterVerify(func(ctx VerifyResultContext) (*AfterVerifyResult, error) {
+		return &AfterVerifyResult{
+			Abort:   true,
+			Reason:  "extension_rejected",
+			Message: "policy denied",
+		}, nil
+	})
+	server.OnAfterVerify(func(ctx VerifyResultContext) (*AfterVerifyResult, error) {
+		laterCalled = true
+		return nil, nil
+	})
+	server.OnVerifiedPaymentCanceled(func(ctx VerifiedPaymentCanceledContext) error {
+		cancelReason = ctx.Reason
+		return nil
+	})
+
+	server.facilitatorClients[Network("eip155:8453")] = map[string]FacilitatorClient{
+		"exact": &mockFacilitatorClient{
+			verify: func(ctx context.Context, payload []byte, reqs []byte) (*VerifyResponse, error) {
+				return &VerifyResponse{IsValid: true, Payer: "0xpayer"}, nil
+			},
+		},
+	}
+
+	payload := types.PaymentPayload{X402Version: 2, Payload: map[string]interface{}{}}
+	requirements := types.PaymentRequirements{Scheme: "exact", Network: "eip155:8453"}
+	result, err := server.VerifyPayment(context.Background(), payload, requirements)
+
+	if err == nil {
+		t.Fatal("expected abort error")
+	}
+	ve := &VerifyError{}
+	if !errors.As(err, &ve) || ve.InvalidReason != "extension_rejected" {
+		t.Fatalf("got err=%v", err)
+	}
+	if result == nil || result.IsValid || result.InvalidReason != "extension_rejected" {
+		t.Fatalf("got result=%+v", result)
+	}
+	if laterCalled {
+		t.Fatal("later afterVerify hook should not run after abort")
+	}
+	if cancelReason != CancellationReasonAfterVerifyAborted {
+		t.Fatalf("cancel reason = %q", cancelReason)
+	}
+}
+
+func TestAfterVerifyHook_AbortKeepsResponseWhenCancelThrows(t *testing.T) {
+	server := Newx402ResourceServer()
+	server.OnAfterVerify(func(ctx VerifyResultContext) (*AfterVerifyResult, error) {
+		return &AfterVerifyResult{Abort: true, Reason: "aborted"}, nil
+	})
+	server.OnVerifiedPaymentCanceled(func(ctx VerifiedPaymentCanceledContext) error {
+		return errors.New("cleanup failed")
+	})
+	server.facilitatorClients[Network("eip155:8453")] = map[string]FacilitatorClient{
+		"exact": &mockFacilitatorClient{
+			verify: func(ctx context.Context, payload []byte, reqs []byte) (*VerifyResponse, error) {
+				return &VerifyResponse{IsValid: true, Payer: "0xpayer"}, nil
+			},
+		},
+	}
+
+	result, err := server.VerifyPayment(
+		context.Background(),
+		types.PaymentPayload{X402Version: 2, Payload: map[string]interface{}{}},
+		types.PaymentRequirements{Scheme: "exact", Network: "eip155:8453"},
+	)
+	if err == nil {
+		t.Fatal("expected abort error")
+	}
+	if result == nil || result.IsValid || result.InvalidReason != "aborted" {
+		t.Fatalf("got result=%+v", result)
+	}
+}
+
+func TestAfterVerifyHook_SkipHandlerStillWorks(t *testing.T) {
+	server := Newx402ResourceServer()
+	server.OnAfterVerify(func(ctx VerifyResultContext) (*AfterVerifyResult, error) {
+		return &AfterVerifyResult{
+			SkipHandler: true,
+			Response:    &SkipHandlerDirective{ContentType: "application/json", Body: map[string]string{"ok": "1"}},
+		}, nil
+	})
+	server.facilitatorClients[Network("eip155:8453")] = map[string]FacilitatorClient{
+		"exact": &mockFacilitatorClient{
+			verify: func(ctx context.Context, payload []byte, reqs []byte) (*VerifyResponse, error) {
+				return &VerifyResponse{IsValid: true, Payer: "0xpayer"}, nil
+			},
+		},
+	}
+
+	result, err := server.VerifyPayment(
+		context.Background(),
+		types.PaymentPayload{X402Version: 2, Payload: map[string]interface{}{}},
+		types.PaymentRequirements{Scheme: "exact", Network: "eip155:8453"},
+	)
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	if result.SkipHandler == nil || result.SkipHandler.ContentType != "application/json" {
+		t.Fatalf("skipHandler = %+v", result.SkipHandler)
+	}
+}
+
+func TestOnVerifyFailureHook_RecoverRunsAfterVerify(t *testing.T) {
+	afterCalled := false
+	server := Newx402ResourceServer()
+	server.OnVerifyFailure(func(ctx VerifyFailureContext) (*VerifyFailureHookResult, error) {
+		return &VerifyFailureHookResult{
+			Recovered: true,
+			Result:    &VerifyResponse{IsValid: true, Payer: "0xrecovered"},
+		}, nil
+	})
+	server.OnAfterVerify(func(ctx VerifyResultContext) (*AfterVerifyResult, error) {
+		afterCalled = true
+		if ctx.Result == nil || ctx.Result.Payer != "0xrecovered" {
+			t.Fatalf("unexpected result: %+v", ctx.Result)
+		}
+		return nil, nil
+	})
+	server.facilitatorClients[Network("eip155:8453")] = map[string]FacilitatorClient{
+		"exact": &mockFacilitatorClient{
+			verify: func(ctx context.Context, payload []byte, reqs []byte) (*VerifyResponse, error) {
+				return nil, errors.New("facilitator error")
+			},
+		},
+	}
+
+	result, err := server.VerifyPayment(
+		context.Background(),
+		types.PaymentPayload{X402Version: 2, Payload: map[string]interface{}{}},
+		types.PaymentRequirements{Scheme: "exact", Network: "eip155:8453"},
+	)
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	if !result.IsValid || !afterCalled {
+		t.Fatalf("result=%+v afterCalled=%v", result, afterCalled)
+	}
+}
+
+func TestOnVerifyFailureHook_RecoverThenAfterVerifyAbort(t *testing.T) {
+	server := Newx402ResourceServer()
+	server.OnVerifyFailure(func(ctx VerifyFailureContext) (*VerifyFailureHookResult, error) {
+		return &VerifyFailureHookResult{
+			Recovered: true,
+			Result:    &VerifyResponse{IsValid: true, Payer: "0xrecovered"},
+		}, nil
+	})
+	server.OnAfterVerify(func(ctx VerifyResultContext) (*AfterVerifyResult, error) {
+		return &AfterVerifyResult{Abort: true, Reason: "post_recover_abort"}, nil
+	})
+	server.facilitatorClients[Network("eip155:8453")] = map[string]FacilitatorClient{
+		"exact": &mockFacilitatorClient{
+			verify: func(ctx context.Context, payload []byte, reqs []byte) (*VerifyResponse, error) {
+				return nil, errors.New("facilitator error")
+			},
+		},
+	}
+
+	result, err := server.VerifyPayment(
+		context.Background(),
+		types.PaymentPayload{X402Version: 2, Payload: map[string]interface{}{}},
+		types.PaymentRequirements{Scheme: "exact", Network: "eip155:8453"},
+	)
+	if err == nil {
+		t.Fatal("expected abort after recovery")
+	}
+	if result == nil || result.IsValid || result.InvalidReason != "post_recover_abort" {
+		t.Fatalf("got result=%+v", result)
+	}
+}
+
 // Test BeforeSettle hook - abort settlement
 func TestBeforeSettleHook_Abort(t *testing.T) {
 	server := Newx402ResourceServer()

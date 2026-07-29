@@ -21,6 +21,7 @@ export const BUILDER_CODE_SCHEMA = {
     },
     s: {
       type: "array",
+      maxItems: 5,
       items: {
         type: "string",
         pattern: "^[a-z0-9_]{1,32}$",

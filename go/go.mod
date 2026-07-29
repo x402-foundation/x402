@@ -18,6 +18,7 @@ require (
 require github.com/google/uuid v1.6.0
 
 require (
+	filippo.io/edwards25519 v1.0.0-rc.1
 	github.com/labstack/echo/v4 v4.15.1
 	github.com/mr-tron/base58 v1.2.0
 	github.com/signinwithethereum/siwe-go v1.0.0
@@ -25,7 +26,6 @@ require (
 )
 
 require (
-	filippo.io/edwards25519 v1.0.0-rc.1 // indirect
 	github.com/Microsoft/go-winio v0.6.2 // indirect
 	github.com/ProjectZKM/Ziren/crates/go-runtime/zkvm_runtime v0.0.0-20251001021608-1fe7b43fc4d6 // indirect
 	github.com/StackExchange/wmi v1.2.1 // indirect

@@ -12,6 +12,7 @@ import { encodeBuilderCodeSuffix } from "./cbor";
 import {
   BUILDER_CODE,
   BUILDER_CODE_PATTERN,
+  MAX_SERVICE_CODES,
   type BuilderCodeExtensionData,
   type BuilderCodeFacilitatorConfig,
   type DataSuffixContext,
@@ -32,17 +33,17 @@ function extractClientExtension(
 }
 
 /**
- * Normalizes `s` from the client payload — accepts a string or an array and keeps
- * every valid entry.
+ * Normalizes `s` from the client payload — accepts a string or an array, keeps
+ * valid entries in order, and truncates to {@link MAX_SERVICE_CODES}.
  *
  * @param raw - Client-provided service code value (string or array of strings)
  * @returns Array of valid service codes (empty when missing or all invalid)
  */
 function resolveServiceCodes(raw: unknown): string[] {
   const candidates = typeof raw === "string" ? [raw] : Array.isArray(raw) ? raw : [];
-  return candidates.filter(
-    (v): v is string => typeof v === "string" && BUILDER_CODE_PATTERN.test(v),
-  );
+  return candidates
+    .filter((v): v is string => typeof v === "string" && BUILDER_CODE_PATTERN.test(v))
+    .slice(0, MAX_SERVICE_CODES);
 }
 
 /**

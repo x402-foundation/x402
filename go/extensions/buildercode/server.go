@@ -19,7 +19,8 @@ var BUILDER_CODE_SCHEMA = map[string]interface{}{
 			"description": "Wallet builder code",
 		},
 		"s": map[string]interface{}{
-			"type": "array",
+			"type":     "array",
+			"maxItems": 5,
 			"items": map[string]interface{}{
 				"type":    "string",
 				"pattern": "^[a-z0-9_]{1,32}$",

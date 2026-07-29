@@ -48,7 +48,7 @@ const NETWORK_SETS: Record<NetworkMode, NetworkSet> = {
     },
     avm: {
       name: 'Algorand Testnet',
-      caip2: 'algorand:SGO1GKSzyE7IEPItTxCByw9x8FmnrCDexi9/cOUJOiI=',
+      caip2: 'algorand:SGO1GKSzyE7IEPItTxCByw9x8FmnrCDe',
       rpcUrl: process.env.AVM_TESTNET_RPC_URL || 'https://testnet-api.4160.nodely.dev',
     },
     ccd: {
@@ -112,7 +112,7 @@ const NETWORK_SETS: Record<NetworkMode, NetworkSet> = {
     },
     avm: {
       name: 'Algorand Mainnet',
-      caip2: 'algorand:wGHE2Pwdvd7S12BL5FaOP20EGYesN73ktiC1qzkkit8=',
+      caip2: 'algorand:wGHE2Pwdvd7S12BL5FaOP20EGYesN73k',
       rpcUrl: process.env.AVM_RPC_URL || 'https://mainnet-api.4160.nodely.dev',
     },
     ccd: {

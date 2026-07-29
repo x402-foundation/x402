@@ -28,6 +28,11 @@ export const SCHEMA_2_ID = 0x02;
 export const BUILDER_CODE_PATTERN = /^[a-z0-9_]{1,32}$/;
 
 /**
+ * Maximum number of service codes (`s`) encoded onchain at settlement.
+ */
+export const MAX_SERVICE_CODES = 5;
+
+/**
  * Builder code extension data as it appears in PaymentRequired/PaymentPayload extensions.
  *
  * Maps to ERC-8021 Schema 2 fields:

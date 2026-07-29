@@ -1,14 +1,19 @@
 package batchsettlement
 
 import (
+	"errors"
 	"fmt"
 	"math/big"
+	"regexp"
 	"strings"
 
 	"github.com/ethereum/go-ethereum/common"
 
 	"github.com/x402-foundation/x402/go/v2/mechanisms/evm"
 )
+
+// Canonical bytes32 channel id: 0x followed by exactly 64 hex digits.
+var channelIDRe = regexp.MustCompile(`^0x[0-9a-fA-F]{64}$`)
 
 // ComputeChannelId computes the chain-bound channel ID from a ChannelConfig
 // via EIP-712 hashTypedData. The networkOrChainID argument may be either a
@@ -72,9 +77,33 @@ func resolveChainID(networkOrChainID interface{}) (*big.Int, error) {
 	}
 }
 
-// NormalizeChannelId lowercases and normalizes a channel ID hex string.
-func NormalizeChannelId(channelId string) string {
-	return strings.ToLower(channelId)
+// IsCanonicalChannelId reports whether value is a canonical bytes32 channel id
+// (`0x` + exactly 64 hex digits). Mixed-case hex is accepted.
+func IsCanonicalChannelId(value string) bool {
+	return channelIDRe.MatchString(value)
+}
+
+// NormalizeChannelId validates canonical bytes32 form and returns lowercase.
+// The error message is the stable ErrInvalidChannelId code only — untrusted
+// input is never echoed.
+func NormalizeChannelId(channelId string) (string, error) {
+	if !IsCanonicalChannelId(channelId) {
+		return "", errors.New(ErrInvalidChannelId)
+	}
+	return strings.ToLower(channelId), nil
+}
+
+// ChannelIdBindingError binds a claimed channel id to a channel config and network.
+// Returns ErrInvalidChannelId or ErrChannelIdMismatch, or "" when the binding is valid.
+func ChannelIdBindingError(config ChannelConfig, claimedChannelId string, networkOrChainId interface{}) string {
+	if !IsCanonicalChannelId(claimedChannelId) {
+		return ErrInvalidChannelId
+	}
+	computed, err := ComputeChannelId(config, networkOrChainId)
+	if err != nil || !strings.EqualFold(computed, claimedChannelId) {
+		return ErrChannelIdMismatch
+	}
+	return ""
 }
 
 // GetBatchSettlementEip712Domain returns the EIP-712 domain for the

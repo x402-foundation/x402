@@ -1,5 +1,10 @@
 import { describe, it, expect } from "vitest";
-import { computeChannelId as computeChannelIdForNetwork } from "../../../src/batch-settlement/utils";
+import {
+  channelIdBindingError,
+  computeChannelId as computeChannelIdForNetwork,
+  isCanonicalChannelId,
+  normalizeChannelId,
+} from "../../../src/batch-settlement/utils";
 import {
   channelIdsEqual,
   validateChannelConfig,
@@ -7,6 +12,7 @@ import {
 } from "../../../src/batch-settlement/facilitator/utils";
 import {
   ErrChannelIdMismatch,
+  ErrInvalidChannelId,
   ErrReceiverMismatch,
   ErrReceiverAuthorizerMismatch,
   ErrTokenMismatch,
@@ -88,6 +94,84 @@ describe("computeChannelId", () => {
     const base = computeChannelId(BASE_CONFIG);
     const changed = computeChannelId({ ...BASE_CONFIG, ...override });
     expect(changed).not.toBe(base);
+  });
+});
+
+describe("isCanonicalChannelId", () => {
+  const valid = "0xABCdef0123456789ABCDEF0123456789abcdef0123456789ABCdef0123456789";
+
+  it("accepts a mixed-case 32-byte hex string", () => {
+    expect(isCanonicalChannelId(valid)).toBe(true);
+    expect(isCanonicalChannelId(valid.toLowerCase())).toBe(true);
+  });
+
+  it.each([
+    ["missing 0x prefix", valid.slice(2)],
+    ["too short", "0x1234"],
+    ["too long", `${valid}00`],
+    ["non-hex character", "0xZZZdef0123456789ABCDEF0123456789abcdef0123456789ABCdef0123456789"],
+    ["path traversal", "../../../etc/passwd"],
+    ["absolute path", "/etc/passwd"],
+    ["forward slash separator", `0x${"a".repeat(30)}/${"b".repeat(32)}`],
+    ["backslash separator", `0x${"a".repeat(30)}\\${"b".repeat(32)}`],
+    ["empty string", ""],
+  ])("rejects %s", (_label, value) => {
+    expect(isCanonicalChannelId(value)).toBe(false);
+  });
+
+  it("rejects non-string input", () => {
+    expect(isCanonicalChannelId(123)).toBe(false);
+    expect(isCanonicalChannelId(null)).toBe(false);
+    expect(isCanonicalChannelId(undefined)).toBe(false);
+    expect(isCanonicalChannelId({})).toBe(false);
+  });
+});
+
+describe("normalizeChannelId", () => {
+  it("lowercases a valid mixed-case id (round-trips valid ids unchanged in bytes)", () => {
+    const valid = "0xABCdef0123456789ABCDEF0123456789abcdef0123456789ABCdef0123456789";
+    expect(normalizeChannelId(valid)).toBe(valid.toLowerCase());
+    expect(normalizeChannelId(valid.toLowerCase())).toBe(valid.toLowerCase());
+  });
+
+  it.each([
+    ["../../../etc/passwd"],
+    ["/etc/passwd"],
+    ["0x1234"],
+    [""],
+    [`0x${"a".repeat(30)}/${"b".repeat(32)}`],
+    [`0x${"a".repeat(30)}\\${"b".repeat(32)}`],
+  ])("throws ErrInvalidChannelId for %s", value => {
+    expect(() => normalizeChannelId(value)).toThrow(ErrInvalidChannelId);
+  });
+});
+
+describe("channelIdBindingError", () => {
+  it("returns undefined when the claimed id matches the config", () => {
+    const channelId = computeChannelId(BASE_CONFIG);
+    expect(
+      channelIdBindingError(BASE_CONFIG, channelId, BASE_REQUIREMENTS.network),
+    ).toBeUndefined();
+  });
+
+  it("accepts a mixed-case claimed id that matches the config", () => {
+    const channelId = computeChannelId(BASE_CONFIG);
+    const upper = channelId.toUpperCase().replace("0X", "0x");
+    expect(channelIdBindingError(BASE_CONFIG, upper, BASE_REQUIREMENTS.network)).toBeUndefined();
+  });
+
+  it("returns ErrInvalidChannelId for a malformed claimed id", () => {
+    expect(channelIdBindingError(BASE_CONFIG, "../../evil", BASE_REQUIREMENTS.network)).toBe(
+      ErrInvalidChannelId,
+    );
+  });
+
+  it("returns ErrChannelIdMismatch when the id does not match the config", () => {
+    const otherId =
+      "0x0000000000000000000000000000000000000000000000000000000000000001" as `0x${string}`;
+    expect(channelIdBindingError(BASE_CONFIG, otherId, BASE_REQUIREMENTS.network)).toBe(
+      ErrChannelIdMismatch,
+    );
   });
 });
 

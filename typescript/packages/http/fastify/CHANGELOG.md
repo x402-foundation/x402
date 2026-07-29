@@ -1,5 +1,27 @@
 # @x402/fastify
 
+## 2.20.0
+
+### Minor Changes
+
+- Updated dependencies [b7bfa69](https://github.com/x402-foundation/x402/commit/b7bfa69)
+- Updated dependencies [4453a92](https://github.com/x402-foundation/x402/commit/4453a92)
+- Updated dependencies [32464a2](https://github.com/x402-foundation/x402/commit/32464a2)
+  - @x402/extensions@2.20.0
+  - @x402/core@2.20.0
+  - @x402/paywall@2.20.0
+
+## 2.19.0
+
+### Minor Changes
+
+- Updated dependencies [c72cfee](https://github.com/x402-foundation/x402/commit/c72cfee)
+- Updated dependencies [21b0745](https://github.com/x402-foundation/x402/commit/21b0745)
+- Updated dependencies [c1f2d90](https://github.com/x402-foundation/x402/commit/c1f2d90)
+  - @x402/core@2.19.0
+  - @x402/extensions@2.19.0
+  - @x402/paywall@2.19.0
+
 ## 2.18.0
 
 ### Minor Changes

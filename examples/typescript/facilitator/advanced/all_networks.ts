@@ -141,7 +141,7 @@ if (
 }
 
 // Network configuration (alphabetic order)
-const AVM_NETWORK = "algorand:SGO1GKSzyE7IEPItTxCByw9x8FmnrCDexi9/cOUJOiI="; // Algorand Testnet
+const AVM_NETWORK = "algorand:SGO1GKSzyE7IEPItTxCByw9x8FmnrCDe"; // Algorand Testnet
 const APTOS_NETWORK = (process.env.APTOS_NETWORK || "aptos:2") as Network; // Aptos Testnet
 const CASPER_NETWORK = (process.env.CASPER_NETWORK ||
   "casper:casper-test") as Network; // Casper Testnet

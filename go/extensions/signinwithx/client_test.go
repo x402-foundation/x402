@@ -84,8 +84,8 @@ func TestCreatePayloadSignsEVMDeclaration(t *testing.T) {
 		t.Fatal("signature is empty")
 	}
 	result := VerifySignature(payload)
-	if !result.Valid {
-		t.Fatalf("VerifySignature() invalid: %s", result.Error)
+	if !result.IsValid {
+		t.Fatalf("VerifySignature() invalid: %s", result.InvalidMessage)
 	}
 }
 
@@ -133,8 +133,8 @@ func TestCreatePayloadWithSignersSignsSolanaDeclaration(t *testing.T) {
 		t.Fatalf("signatureScheme = %q", payload.SignatureScheme)
 	}
 	result := VerifySignature(payload)
-	if !result.Valid {
-		t.Fatalf("VerifySignature() invalid: %s", result.Error)
+	if !result.IsValid {
+		t.Fatalf("VerifySignature() invalid: %s", result.InvalidMessage)
 	}
 }
 
@@ -220,9 +220,9 @@ func TestCreateHeaderAcceptsJSONDecodedDeclaration(t *testing.T) {
 	if !strings.HasPrefix(payload.Signature, "0x") {
 		t.Fatalf("signature = %q, want 0x prefix", payload.Signature)
 	}
-	if result := VerifySignature(payload); !result.Valid {
+	if result := VerifySignature(payload); !result.IsValid {
 		asJSON, _ := json.Marshal(payload)
-		t.Fatalf("VerifySignature() invalid: %s payload=%s", result.Error, asJSON)
+		t.Fatalf("VerifySignature() invalid: %s payload=%s", result.InvalidMessage, asJSON)
 	}
 }
 
@@ -297,8 +297,8 @@ func TestCreateClientHookReturnsSIWXHeader(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ParseHeader() error = %v", err)
 	}
-	if verify := VerifySignature(payload); !verify.Valid {
-		t.Fatalf("VerifySignature() invalid: %s", verify.Error)
+	if verify := VerifySignature(payload); !verify.IsValid {
+		t.Fatalf("VerifySignature() invalid: %s", verify.InvalidMessage)
 	}
 }
 
@@ -340,8 +340,8 @@ func TestCreateClientHookWithSignersReturnsSolanaHeader(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ParseHeader() error = %v", err)
 	}
-	if verify := VerifySignature(payload); !verify.Valid {
-		t.Fatalf("VerifySignature() invalid: %s", verify.Error)
+	if verify := VerifySignature(payload); !verify.IsValid {
+		t.Fatalf("VerifySignature() invalid: %s", verify.InvalidMessage)
 	}
 }
 

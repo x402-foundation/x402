@@ -163,12 +163,29 @@ export interface DeclareSIWxOptions {
 }
 
 /**
- * Validation result from validateSIWxMessage
+ * Machine-readable code identifying which validation check failed
  */
-export interface SIWxValidationResult {
-  valid: boolean;
-  error?: string;
-}
+export type SIWxValidationCode =
+  | "invalid_siwx_domain_mismatch"
+  | "invalid_siwx_uri_mismatch"
+  | "invalid_siwx_issued_at"
+  | "invalid_siwx_issued_at_too_old"
+  | "invalid_siwx_issued_at_in_future"
+  | "invalid_siwx_expiration_time"
+  | "invalid_siwx_expired"
+  | "invalid_siwx_not_before"
+  | "invalid_siwx_not_yet_valid"
+  | "invalid_siwx_nonce";
+
+/**
+ * Validation result from validateSIWxMessage.
+ *
+ * Failure fields follow the facilitator VerifyResponse naming
+ * (isValid/invalidReason/invalidMessage).
+ */
+export type SIWxValidationResult =
+  | { isValid: true }
+  | { isValid: false; invalidReason: SIWxValidationCode; invalidMessage: string };
 
 /**
  * Options for message validation
@@ -176,19 +193,37 @@ export interface SIWxValidationResult {
 export interface SIWxValidationOptions {
   /** Maximum age for issuedAt in milliseconds (default: 5 minutes) */
   maxAge?: number;
-  /** Custom nonce validation function */
+  /**
+   * Custom nonce validation function.
+   *
+   * Errors thrown here are not caught: they propagate to the
+   * validateSIWxMessage caller, so a failing nonce backend fails closed.
+   */
   checkNonce?: (nonce: string) => boolean | Promise<boolean>;
 }
 
 /**
- * Result from signature verification
+ * Machine-readable code identifying which signature verification check failed
  */
-export interface SIWxVerifyResult {
-  valid: boolean;
-  /** Recovered/verified address (checksummed) */
-  address?: string;
-  error?: string;
-}
+export type SIWxVerifyCode =
+  | "invalid_siwx_signature"
+  | "invalid_siwx_chain_id"
+  | "invalid_siwx_unsupported_chain"
+  | "invalid_siwx_malformed_signature"
+  | "invalid_siwx_verifier_error";
+
+/** All spec-documented SIWx failure codes (validation and verify). */
+export type SIWxErrorCode = SIWxValidationCode | SIWxVerifyCode;
+
+/**
+ * Result from signature verification.
+ *
+ * Failure fields follow the facilitator VerifyResponse naming
+ * (isValid/invalidReason/invalidMessage).
+ */
+export type SIWxVerifyResult =
+  | { isValid: true; payer: string }
+  | { isValid: false; invalidReason: SIWxVerifyCode; invalidMessage: string };
 
 /**
  * EVM message verifier function type.

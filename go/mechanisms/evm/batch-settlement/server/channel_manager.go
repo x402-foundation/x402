@@ -690,7 +690,10 @@ func (m *BatchSettlementChannelManager) refundChannels(ctx context.Context, chan
 }
 
 func (m *BatchSettlementChannelManager) refundChannel(ctx context.Context, target *ChannelSession) (*RefundResult, error) {
-	normalizedId := batchsettlement.NormalizeChannelId(target.ChannelId)
+	normalizedId, err := batchsettlement.NormalizeChannelId(target.ChannelId)
+	if err != nil {
+		return nil, err
+	}
 
 	balance, _ := new(big.Int).SetString(target.Balance, 10)
 	charged, _ := new(big.Int).SetString(target.ChargedCumulativeAmount, 10)
@@ -780,7 +783,10 @@ func (m *BatchSettlementChannelManager) updateClaimedSessions(claims []batchsett
 		if err != nil {
 			return fmt.Errorf("compute channel id: %w", err)
 		}
-		normalizedId := batchsettlement.NormalizeChannelId(channelId)
+		normalizedId, err := batchsettlement.NormalizeChannelId(channelId)
+		if err != nil {
+			return err
+		}
 		claimedAmount, ok := new(big.Int).SetString(claim.TotalClaimed, 10)
 		if !ok || claimedAmount == nil {
 			continue

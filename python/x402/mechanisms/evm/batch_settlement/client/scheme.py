@@ -46,11 +46,11 @@ from .voucher import sign_voucher
 
 
 def _wrap_if_local_account(signer: Any) -> ClientEvmSigner:
-    """Auto-wrap an `eth_account` LocalAccount in `EthAccountSigner`."""
+    """Auto-wrap an eth_account-compatible signer (any `BaseAccount`) in `EthAccountSigner`."""
     try:
-        from eth_account.signers.local import LocalAccount
+        from eth_account.signers.base import BaseAccount
 
-        if isinstance(signer, LocalAccount):
+        if isinstance(signer, BaseAccount):
             from ....evm.signers import EthAccountSigner
 
             return EthAccountSigner(signer)

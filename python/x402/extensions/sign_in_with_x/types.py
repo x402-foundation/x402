@@ -94,11 +94,36 @@ class DeclareSIWxOptions(BaseModel):
     model_config = {"populate_by_name": True}
 
 
+SIWxValidationCode = Literal[
+    "invalid_siwx_domain_mismatch",
+    "invalid_siwx_uri_mismatch",
+    "invalid_siwx_issued_at",
+    "invalid_siwx_issued_at_too_old",
+    "invalid_siwx_issued_at_in_future",
+    "invalid_siwx_expiration_time",
+    "invalid_siwx_expired",
+    "invalid_siwx_not_before",
+    "invalid_siwx_not_yet_valid",
+    "invalid_siwx_nonce",
+]
+
+SIWxVerifyCode = Literal[
+    "invalid_siwx_signature",
+    "invalid_siwx_chain_id",
+    "invalid_siwx_unsupported_chain",
+    "invalid_siwx_malformed_signature",
+    "invalid_siwx_verifier_error",
+]
+
+SIWxErrorCode = SIWxValidationCode | SIWxVerifyCode
+
+
 class SIWxValidationResult(BaseModel):
     """Validation result from validate_siwx_message."""
 
-    valid: bool
-    error: str | None = None
+    is_valid: bool
+    invalid_reason: SIWxValidationCode | None = None
+    invalid_message: str | None = None
 
 
 class SIWxValidationOptions(BaseModel):
@@ -113,9 +138,10 @@ class SIWxValidationOptions(BaseModel):
 class SIWxVerifyResult(BaseModel):
     """Result from signature verification."""
 
-    valid: bool
-    address: str | None = None
-    error: str | None = None
+    is_valid: bool
+    payer: str | None = None
+    invalid_reason: SIWxVerifyCode | None = None
+    invalid_message: str | None = None
 
 
 class EVMMessageVerifier(Protocol):

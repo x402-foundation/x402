@@ -46,9 +46,16 @@ type SkipHandlerDirective struct {
 }
 
 // AfterVerifyResult is the optional return value of an AfterVerifyHook.
+// When Abort is true, verification fails closed: remaining after-verify hooks
+// are skipped, verified-payment cancellation runs with after_verify_aborted,
+// and VerifyPayment returns an invalid verify error.
 // When SkipHandler is true, the resource handler is bypassed and settlement is
 // performed inline; the optional Response is used to craft the success body.
+// Abort takes precedence over SkipHandler.
 type AfterVerifyResult struct {
+	Abort       bool
+	Reason      string
+	Message     string
 	SkipHandler bool
 	Response    *SkipHandlerDirective
 }
@@ -90,6 +97,9 @@ const (
 	// CancellationReasonHandlerFailed indicates the resource handler completed but with a failing
 	// response status (>= 400).
 	CancellationReasonHandlerFailed VerifiedPaymentCancellationReason = "handler_failed"
+	// CancellationReasonAfterVerifyAborted indicates an AfterVerifyHook aborted verification
+	// after a successful (or recovered) verify, so schemes can clear committed reservations.
+	CancellationReasonAfterVerifyAborted VerifiedPaymentCancellationReason = "after_verify_aborted"
 )
 
 // VerifiedPaymentCanceledContext is delivered to OnVerifiedPaymentCanceled hooks when a
@@ -164,11 +174,14 @@ type SettleFailureHookResult struct {
 // and an invalid VerifyResponse will be returned with the provided reason
 type BeforeVerifyHook func(VerifyContext) (*BeforeHookResult, error)
 
-// AfterVerifyHook is called after successful payment verification.
+// AfterVerifyHook is called after successful payment verification (including
+// BeforeVerify skip and onVerifyFailure recovery).
 // Any error returned will be logged but will not affect the verification result.
-// Returning an AfterVerifyResult with SkipHandler=true signals the HTTP layer to
-// bypass the resource handler and perform settlement inline (e.g. cooperative refund).
-// The last hook to return a SkipHandler directive wins.
+// Returning an AfterVerifyResult with Abort=true fails verification closed and
+// dispatches after_verify_aborted cancellation.
+// Returning SkipHandler=true signals the HTTP layer to bypass the resource
+// handler and perform settlement inline (e.g. cooperative refund).
+// The last hook to return a SkipHandler directive wins (unless a later hook aborts).
 type AfterVerifyHook func(VerifyResultContext) (*AfterVerifyResult, error)
 
 // OnVerifyFailureHook is called when payment verification fails

@@ -211,14 +211,14 @@ func (e *ServerExtension) onProtectedRequest(
 	}
 
 	validation := ValidateMessage(payload, e.configuredOrigin, ValidationOptions{})
-	if !validation.Valid {
-		e.emit(HookEvent{Type: "validation_failed", Resource: reqCtx.Path, Error: validation.Error})
+	if !validation.IsValid {
+		e.emit(HookEvent{Type: "validation_failed", Resource: reqCtx.Path, Error: validation.InvalidMessage})
 		return nil, nil
 	}
 
 	verification := VerifySignatureWithOptions(ctx, payload, e.verifyOptions)
-	if !verification.Valid || verification.Address == "" {
-		e.emit(HookEvent{Type: "validation_failed", Resource: reqCtx.Path, Error: verification.Error})
+	if !verification.IsValid || verification.Payer == "" {
+		e.emit(HookEvent{Type: "validation_failed", Resource: reqCtx.Path, Error: verification.InvalidMessage})
 		return nil, nil
 	}
 
@@ -236,7 +236,7 @@ func (e *ServerExtension) onProtectedRequest(
 	grant := len(routeConfig.Accepts) == 0
 	if !grant {
 		var err error
-		grant, err = e.storage.HasPaid(ctx, reqCtx.Path, verification.Address)
+		grant, err = e.storage.HasPaid(ctx, reqCtx.Path, verification.Payer)
 		if err != nil {
 			return nil, err
 		}
@@ -250,7 +250,7 @@ func (e *ServerExtension) onProtectedRequest(
 			return nil, err
 		}
 	}
-	e.emit(HookEvent{Type: "access_granted", Resource: reqCtx.Path, Address: verification.Address})
+	e.emit(HookEvent{Type: "access_granted", Resource: reqCtx.Path, Address: verification.Payer})
 	return &x402http.ProtectedRequestHookResult{GrantAccess: true}, nil
 }
 

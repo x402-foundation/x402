@@ -1,8 +1,20 @@
 # @x402/core Changelog
 
+## 2.20.0
+
+### Minor Changes
+
+- [4453a92](https://github.com/x402-foundation/x402/commit/4453a92): Throw a clear error when the `HTTPFacilitatorClient` `createAuthHeaders` callback returns a flat headers object instead of one keyed by facilitator path (`verify`/`settle`/`supported`). Previously this silently dropped authentication on every request. Also documented the expected shape on the `createAuthHeaders` option. ([#2957](https://github.com/x402-foundation/x402/pull/2957)) - Thanks [@cristianizzo](https://github.com/cristianizzo)!
+
+## 2.19.0
+
+### Minor Changes
+
+- [c72cfee](https://github.com/x402-foundation/x402/commit/c72cfee): Widen the resource-server and extension `AfterVerifyHook` contracts so a hook can return `{ abort: true, reason, message? }`. When an after-verify hook aborts, `verifyPayment` stops the remaining after-verify hooks, dispatches verified-payment cancellation so a scheme that already reserved state can clear it when a later hook aborts. Existing `skipHandler` accumulation for non-aborting hooks is unchanged. This lets schemes defer their first authoritative state mutation until after verification succeeds without leaking reservations when a later hook aborts. When `onVerifyFailure` recovers with a verify result, that result now also runs through after-verify hooks (same as a normal successful verify), so schemes can still commit post-verify state after recovery. ([#2863](https://github.com/x402-foundation/x402/pull/2863)) - Thanks [@phdargen](https://github.com/phdargen)!
+
 ## 2.18.0
 
-### Patch Changes
+### Minor Changes
 
 - [a3ad102](https://github.com/x402-foundation/x402/commit/a3ad102): Fixed cross-SDK MCP interop: optional `PaymentRequired`/`ResourceInfo`/`PaymentPayload` wire fields serialized as explicit `null` by the Python and Go SDKs are now accepted and normalized to `undefined` instead of failing validation. The MCP client routes both result and error extraction through `parsePaymentRequired`, so 402 responses from other implementations reliably trigger auto-payment. ([#2774](https://github.com/x402-foundation/x402/pull/2774)) - Thanks [@phdargen](https://github.com/phdargen)!
 

@@ -14,6 +14,7 @@ import { paymentMiddleware, x402ResourceServer } from "@x402/express";
 import { APTOS_TESTNET_CAIP2 } from "@x402/aptos";
 import { ExactAptosScheme } from "@x402/aptos/exact/server";
 import { ExactAvmScheme } from "@x402/avm/exact/server";
+import { ALGORAND_TESTNET_CAIP2 } from "@x402/avm";
 import { ExactCasperScheme } from "@x402/casper/exact/server";
 import { ExactConcordiumScheme } from "@x402/concordium/exact/server";
 import { ExactEvmScheme } from "@x402/evm/exact/server";
@@ -74,7 +75,7 @@ if (!facilitatorUrl) {
 }
 
 // Network configuration
-const AVM_NETWORK = "algorand:SGO1GKSzyE7IEPItTxCByw9x8FmnrCDexi9/cOUJOiI=" as const; // Algorand Testnet
+const AVM_NETWORK = (process.env.AVM_NETWORK || ALGORAND_TESTNET_CAIP2) as Network; // Algorand Testnet
 const APTOS_NETWORK = (process.env.APTOS_NETWORK || APTOS_TESTNET_CAIP2) as Network; // Aptos Testnet
 const CASPER_NETWORK = (process.env.CASPER_NETWORK || "casper:casper-test") as Network; // Casper Testnet
 const CASPER_AMOUNT = (process.env.CASPER_AMOUNT || "1500000000") as string; // Casper CEP-18 amount (e.g., "1500000000" for 1.5 WCSPR)

@@ -59,8 +59,9 @@ func extractClientExtension(extensions map[string]interface{}) map[string]interf
 }
 
 // resolveServiceCodes normalizes the client-provided `s` value, accepting a
-// string, a []string, or a []interface{} (JSON-decoded) and keeping every valid
-// entry. Returns nil when missing or all entries are invalid.
+// string, a []string, or a []interface{} (JSON-decoded), keeps valid entries in
+// order, and truncates to MAX_SERVICE_CODES. Returns nil when missing or all
+// entries are invalid.
 func resolveServiceCodes(raw interface{}) []string {
 	var codes []string
 	appendValid := func(s string) {
@@ -82,6 +83,9 @@ func resolveServiceCodes(raw interface{}) []string {
 				appendValid(s)
 			}
 		}
+	}
+	if len(codes) > MAX_SERVICE_CODES {
+		codes = codes[:MAX_SERVICE_CODES]
 	}
 	return codes
 }

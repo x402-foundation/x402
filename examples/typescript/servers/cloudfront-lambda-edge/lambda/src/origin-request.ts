@@ -7,11 +7,10 @@
 
 import type { CloudFrontRequestEvent, CloudFrontRequestResult } from 'aws-lambda';
 import { createX402Middleware, MiddlewareResultType, type LambdaEdgeResponse } from './lib';
-import { FACILITATOR_URL, NETWORK, ROUTES } from './config';
+import { FACILITATOR_URL, ROUTES } from './config';
 
 const x402 = createX402Middleware({
   facilitatorUrl: FACILITATOR_URL,
-  network: NETWORK,
   routes: ROUTES,
 });
 

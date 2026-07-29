@@ -4,11 +4,13 @@ from collections.abc import Awaitable
 from typing import Any, Protocol
 
 from .hooks import (
+    AbortResult,
     ProtectedRequestHookResult,
     ServerPaymentRequiredContext,
     SettleContext,
     SettleFailureContext,
     SettleResultContext,
+    SkipHandlerResult,
     VerifiedPaymentCanceledContext,
     VerifyContext,
     VerifyFailureContext,
@@ -46,7 +48,9 @@ class ResourceServerExtensionHooks(Protocol):
         self,
         declaration: Any,
         context: VerifyResultContext,
-    ) -> None | Awaitable[None]: ...
+    ) -> (
+        None | AbortResult | SkipHandlerResult | Awaitable[None | AbortResult | SkipHandlerResult]
+    ): ...
 
     def on_verify_failure(
         self,

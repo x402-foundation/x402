@@ -23,6 +23,7 @@ type fakeFacilitatorSigner struct {
 	readContract    func(functionName string, args ...interface{}) (interface{}, error)
 	writeContract   func(functionName string, args ...interface{}) (string, error)
 	getCode         func(address string) ([]byte, error)
+	getBalance      func(address string, token string) (*big.Int, error)
 	sendTransaction func(to string, data []byte) (string, error)
 	waitForReceipt  func(txHash string) (*evm.TransactionReceipt, error)
 	verifyCalls     int
@@ -66,7 +67,10 @@ func (f *fakeFacilitatorSigner) WaitForTransactionReceipt(_ context.Context, txH
 	}
 	return nil, errors.New("no rpc")
 }
-func (f *fakeFacilitatorSigner) GetBalance(_ context.Context, _ string, _ string) (*big.Int, error) {
+func (f *fakeFacilitatorSigner) GetBalance(_ context.Context, address string, token string) (*big.Int, error) {
+	if f.getBalance != nil {
+		return f.getBalance(address, token)
+	}
 	return big.NewInt(0), nil
 }
 func (f *fakeFacilitatorSigner) GetChainID(_ context.Context) (*big.Int, error) {

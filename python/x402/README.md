@@ -217,16 +217,20 @@ client.register_policy(max_amount(1_000_000))  # 1 USDC max
 ```python
 from x402 import AbortResult, RecoveredPayloadResult
 
+
 def before_payment(ctx):
     print(f"Creating payment for: {ctx.selected_requirements.network}")
     # Return AbortResult(reason="...") to cancel
 
+
 def after_payment(ctx):
     print(f"Payment created: {ctx.payment_payload}")
+
 
 def on_failure(ctx):
     print(f"Payment failed: {ctx.error}")
     # Return RecoveredPayloadResult(payload=...) to recover
+
 
 client.on_before_payment_creation(before_payment)
 client.on_after_payment_creation(after_payment)

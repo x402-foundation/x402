@@ -233,6 +233,36 @@ describe("Builder Code Extension", () => {
       expect(parsed).toEqual({ w: WALLET, s: [SERVICE, "bc_other"] });
     });
 
+    it("truncates service codes to the first 5 valid entries", () => {
+      const codes = ["bc_1", "bc_2", "bc_3", "bc_4", "bc_5", "bc_6", "bc_7"];
+      const parsed = parsedFromFacilitator(
+        suffixContext({
+          paymentPayloadExtensions: {
+            [BUILDER_CODE]: { info: { s: codes }, schema: {} },
+          },
+        }),
+      );
+
+      expect(parsed).toEqual({ w: WALLET, s: ["bc_1", "bc_2", "bc_3", "bc_4", "bc_5"] });
+    });
+
+    it("filters invalid service codes before truncating to 5", () => {
+      const parsed = parsedFromFacilitator(
+        suffixContext({
+          paymentPayloadExtensions: {
+            [BUILDER_CODE]: {
+              info: {
+                s: ["INVALID", "bc_1", "bc_2", "bc_3", "bc_4", "bc_5", "bc_6", "bc_7", "bc_8"],
+              },
+              schema: {},
+            },
+          },
+        }),
+      );
+
+      expect(parsed).toEqual({ w: WALLET, s: ["bc_1", "bc_2", "bc_3", "bc_4", "bc_5"] });
+    });
+
     it("ignores invalid client service codes", () => {
       const parsed = parsedFromFacilitator(
         suffixContext({

@@ -1,5 +1,20 @@
 # @x402/aptos
 
+## 2.20.0
+
+### Minor Changes
+
+- Updated dependencies [4453a92](https://github.com/x402-foundation/x402/commit/4453a92)
+  - @x402/core@2.20.0
+
+## 2.19.0
+
+### Minor Changes
+
+- [60af28e](https://github.com/x402-foundation/x402/commit/60af28e): Verify the transaction signing message before balance lookup or simulation. ([#2850](https://github.com/x402-foundation/x402/pull/2850)) - Thanks [@phdargen](https://github.com/phdargen)!
+- Updated dependencies [c72cfee](https://github.com/x402-foundation/x402/commit/c72cfee)
+  - @x402/core@2.19.0
+
 ## 2.18.0
 
 ### Minor Changes

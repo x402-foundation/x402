@@ -187,7 +187,7 @@ class TestProcessSettleResponse:
             network=NETWORK,
             extra={
                 "channelState": {
-                    "channelId": "0xabc",
+                    "channelId": "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
                     "balance": "500",
                     "totalClaimed": "100",
                     "chargedCumulativeAmount": "100",
@@ -195,7 +195,7 @@ class TestProcessSettleResponse:
             },
         )
         s.process_settle_response(settle)
-        got = storage.get("0xabc")
+        got = storage.get("0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
         assert got is not None
         assert got.balance == "500"
 

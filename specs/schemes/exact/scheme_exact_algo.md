@@ -66,7 +66,7 @@ Full `paymentRequirements` Example:
 ```json
 {
   "scheme": "exact",
-  "network": "algorand:wGHE2Pwdvd7S12BL5FaOP20EGYesN73ktiC1qzkkit8=",
+  "network": "algorand:wGHE2Pwdvd7S12BL5FaOP20EGYesN73k",
   "amount": "5000000",
   "payTo": "RESOURCESERVERADDRESSAAAAAAAAAAAAAAAAAAAAAAAAAAAAAALTSRPAE",
   "maxTimeoutSeconds": 60,
@@ -110,7 +110,7 @@ Example of a USDC asset transfer with an abstracted fee (i.e paid by the facilit
 {
   "x402Version": 2,
   "scheme": "exact",
-  "network": "algorand:wGHE2Pwdvd7S12BL5FaOP20EGYesN73ktiC1qzkkit8=",
+  "network": "algorand:wGHE2Pwdvd7S12BL5FaOP20EGYesN73k",
   "resource": {
     "url": "https://example.net/signup",
     "description": "$5 registration payment",
@@ -118,7 +118,7 @@ Example of a USDC asset transfer with an abstracted fee (i.e paid by the facilit
   },
   "accepted": {
     "scheme": "exact",
-    "network": "algorand:wGHE2Pwdvd7S12BL5FaOP20EGYesN73ktiC1qzkkit8=",
+    "network": "algorand:wGHE2Pwdvd7S12BL5FaOP20EGYesN73k",
     "amount": "5000000",
     "payTo": "RESOURCESERVERADDRESSAAAAAAAAAAAAAAAAAAAAAAAAAAAAAALTSRPAE",
     "maxTimeoutSeconds": 60,
@@ -153,7 +153,7 @@ Should the settlement fail, the transaction ID **SHOULD** be returned, but since
   "errorReason": null,
   "payer": "<payer>",
   "transaction": "NTRZR6HGMMZGYMJKUNVNLKLA427ACAVIPFNC6JHA5XNBQQHW7MWA",
-  "network": "algorand:wGHE2Pwdvd7S12BL5FaOP20EGYesN73ktiC1qzkkit8="
+  "network": "algorand:wGHE2Pwdvd7S12BL5FaOP20EGYesN73k"
 }
 ```
 
@@ -182,6 +182,17 @@ Steps to verify a payment for the `exact` scheme on Algorand:
 Once the group is validated by the resource server, settlement can occur by the facilitator submitting the verified transaction group to the Algorand network through the `v2/transactions` endpoint against any valid Algorand node.
 
 In Algorand there are no consensus forks and so it achieves instant finality the moment a transaction is included in a block. So as soon as the transaction is included in a block, the payment is considered settled and the facilitator can inform the resource server of the successful payment and proceed with the resource delivery.
+
+## Network Identifiers (CAIP-2)
+
+Algorand `network` values **MUST** use CAIP-2 identifiers in the `algorand` namespace. The reference is the URL-safe base64 encoding of the genesis hash, truncated to the first 32 characters. Full genesis hashes are used only in onchain transaction `gh` fields, not in CAIP-2 `network` values.
+
+| Network | CAIP-2 |
+| ------- | ------ |
+| Mainnet | `algorand:wGHE2Pwdvd7S12BL5FaOP20EGYesN73k` |
+| Testnet | `algorand:SGO1GKSzyE7IEPItTxCByw9x8FmnrCDe` |
+
+See the [Algorand CAIP-2 namespace profile](https://namespaces.chainagnostic.org/algorand/caip2) for the encoding rules.
 
 ## Additional Considerations
 

@@ -21,7 +21,7 @@ This guide deploys the same architecture as the [Console guide](./GETTING-STARTE
   aws sts get-caller-identity  # verify it works
   ```
 - **Node.js 20+** and **pnpm** — verify with `node --version` and `pnpm --version`
-- **Ethereum wallet address on Base Sepolia** — install [MetaMask](https://metamask.io) and copy your `0x...` address. Base Sepolia is a testnet — no real money required.
+- **Wallet addresses on Base Sepolia and Solana Devnet** — use an Ethereum wallet such as [MetaMask](https://metamask.io) and a Solana wallet such as [Phantom](https://phantom.com) or [Solflare](https://solflare.com). Both networks are testnets — no real money required.
 
 ---
 
@@ -37,11 +37,16 @@ cd examples/typescript/servers/cloudfront-lambda-edge/lambda
 
 **1b. Configure your wallet address**
 
-Open `src/config.ts` and replace the placeholder:
+Open `src/config.ts` and replace both payment-address placeholders:
 
 ```typescript
-export const PAY_TO = '0xYourActualAddressHere';
+export const EVM_PAY_TO = '0xYourActualEvmAddressHere';
+export const SVM_PAY_TO = 'YourActualSolanaAddressHere';
 ```
+
+Leave `FACILITATOR_URL`, `EVM_NETWORK`, and `SVM_NETWORK` as-is — the default facilitator supports Base Sepolia and Solana Devnet.
+
+> The Solana `payTo` address must already have a USDC token account (an address gets one the first time it ever receives that token); send it any amount of USDC once before going live.
 
 **1c. Install and build**
 
@@ -133,14 +138,33 @@ Expected response:
 HTTP/2 402
 
 {
-  "x402Version": 1,
+  "x402Version": 2,
   "error": "Payment required",
-  "accepts": [{
-    "scheme": "exact",
-    "network": "eip155:84532",
-    "payTo": "0xYourAddress...",
-    "price": "$0.001"
-  }]
+  "resource": {
+    "url": "https://[YOUR_DOMAIN]/api/test",
+    "description": "API access",
+    "mimeType": ""
+  },
+  "accepts": [
+    {
+      "scheme": "exact",
+      "network": "eip155:84532",
+      "amount": "1000",
+      "asset": "0x036CbD53842c5426634e7929541eC2318f3dCF7e",
+      "payTo": "0xYourEvmAddress...",
+      "maxTimeoutSeconds": 300,
+      "extra": { "name": "USDC", "version": "2" }
+    },
+    {
+      "scheme": "exact",
+      "network": "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1",
+      "amount": "1000",
+      "asset": "4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU",
+      "payTo": "YourSolanaAddress...",
+      "maxTimeoutSeconds": 300,
+      "extra": { "feePayer": "..." }
+    }
+  ]
 }
 ```
 
@@ -156,6 +180,8 @@ The path `/get` is not in your `ROUTES` config, so it passes through to httpbin 
 
 **Test 3 — Full payment flow**
 
+Get test USDC for Base Sepolia or Solana Devnet from the [Circle faucet](https://faucet.circle.com). The default facilitator supports both testnets, so no facilitator change is needed.
+
 Use the [`fetch` client example](../../../../clients/fetch/) to make a paid request:
 
 ```bash
@@ -166,6 +192,7 @@ cp .env-local .env
 Edit `.env`:
 ```
 EVM_PRIVATE_KEY=0xYourBaseSepoliaPrivateKey
+SVM_PRIVATE_KEY=YourSolanaDevnetPrivateKey
 RESOURCE_SERVER_URL=https://[YOUR_DOMAIN]
 ENDPOINT_PATH=/api/test
 ```
@@ -177,7 +204,7 @@ pnpm install && pnpm start
 
 The client automatically detects the `402`, constructs and signs the payment, attaches it as a `PAYMENT-SIGNATURE` header, and retries — returning the 200 response from httpbin.
 
-> **Never use a mainnet private key here.** Use a throwaway Base Sepolia wallet with test funds only.
+> **Never use mainnet private keys here.** Use throwaway Base Sepolia and Solana Devnet wallets with test funds only.
 
 ---
 
@@ -234,10 +261,14 @@ Then `npx cdk deploy` to update. Your origin needs no changes — that's the poi
 Update `src/config.ts` in the lambda directory:
 
 ```typescript
-export const NETWORK = 'eip155:8453'; // Base mainnet
+export const EVM_NETWORK = 'eip155:8453'; // Base mainnet
+export const EVM_PAY_TO = '0xYourEvmMainnetWalletAddress';
+export const SVM_NETWORK = 'solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp'; // Solana mainnet
+export const SVM_PAY_TO = 'YourSolanaMainnetWalletAddress';
 export const FACILITATOR_URL = 'https://your-mainnet-facilitator-url';
-export const PAY_TO = '0xYourMainnetWalletAddress';
 ```
+
+Mainnet requires a facilitator that supports your networks, and each may have different authentication requirements. If yours requires auth, pass its `facilitatorConfig` through the middleware as described in the [README](./README.md#running-on-mainnet). Browse available facilitators at the [x402 Ecosystem — Facilitators](https://www.x402.org/ecosystem?filter=facilitators).
 
 Rebuild and redeploy:
 
@@ -245,8 +276,6 @@ Rebuild and redeploy:
 cd ../lambda && pnpm build
 cd ../cdk && npx cdk deploy
 ```
-
-Browse available mainnet facilitators at the [x402 ecosystem](https://www.x402.org/ecosystem?filter=facilitators).
 
 ---
 

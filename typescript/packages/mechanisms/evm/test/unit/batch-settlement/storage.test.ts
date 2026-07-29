@@ -1,5 +1,10 @@
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { mkdtemp, readdir, readFile, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { InMemoryChannelStorage, type Channel } from "../../../src/batch-settlement/server/storage";
+import { FileChannelStorage } from "../../../src/batch-settlement/server/fileStorage";
+import { FileClientChannelStorage } from "../../../src/batch-settlement/client/fileStorage";
 import {
   RedisChannelStorage,
   type RedisChannelStorageClient,
@@ -12,6 +17,7 @@ import {
   type BatchSettlementClientContext,
 } from "../../../src/batch-settlement/client/storage";
 import type { ChannelConfig } from "../../../src/batch-settlement/types";
+import { ErrInvalidChannelId } from "../../../src/batch-settlement/errors";
 
 const CHANNEL_CONFIG: ChannelConfig = {
   payer: "0x1234567890123456789012345678901234567890",
@@ -24,6 +30,15 @@ const CHANNEL_CONFIG: ChannelConfig = {
 };
 
 const CHANNEL_ID = "0xabc1230000000000000000000000000000000000000000000000000000000001";
+const MIXED_CASE_ID = "0xABC1230000000000000000000000000000000000000000000000000000000001";
+const MALFORMED_IDS = [
+  "../../../etc/passwd",
+  "/etc/passwd",
+  "0x1234",
+  "",
+  `0x${"a".repeat(30)}/${"b".repeat(32)}`,
+  `0x${"a".repeat(30)}\\${"b".repeat(32)}`,
+];
 
 const buildSession = (overrides: Partial<Channel> = {}): Channel => ({
   channelId: CHANNEL_ID,
@@ -59,8 +74,19 @@ describe("InMemoryChannelStorage", () => {
 
     it("treats channelId case-insensitively", async () => {
       const session = buildSession({ chargedCumulativeAmount: "500" });
-      await storage.updateChannel(CHANNEL_ID.toUpperCase(), () => session);
-      expect(await storage.get(CHANNEL_ID.toLowerCase())).toEqual(session);
+      await storage.updateChannel(MIXED_CASE_ID, () => session);
+      expect(await storage.get(MIXED_CASE_ID.toLowerCase())).toEqual(session);
+      expect(await storage.get(MIXED_CASE_ID)).toEqual(session);
+    });
+
+    it.each(MALFORMED_IDS)("rejects malformed id %j on get", async id => {
+      await expect(storage.get(id)).rejects.toThrow(ErrInvalidChannelId);
+    });
+
+    it.each(MALFORMED_IDS)("rejects malformed id %j on updateChannel", async id => {
+      await expect(storage.updateChannel(id, () => buildSession())).rejects.toThrow(
+        ErrInvalidChannelId,
+      );
     });
 
     it("overwrites a session on subsequent update", async () => {
@@ -305,8 +331,19 @@ describe("RedisChannelStorage", () => {
 
   it("treats channelId case-insensitively", async () => {
     const channel = buildSession({ chargedCumulativeAmount: "500" });
-    await storage.updateChannel(CHANNEL_ID.toUpperCase(), () => channel);
-    expect(await storage.get(CHANNEL_ID.toLowerCase())).toEqual(channel);
+    await storage.updateChannel(MIXED_CASE_ID, () => channel);
+    expect(await storage.get(MIXED_CASE_ID.toLowerCase())).toEqual(channel);
+    expect(await storage.get(MIXED_CASE_ID)).toEqual(channel);
+  });
+
+  it.each(MALFORMED_IDS)("rejects malformed id %j on get", async id => {
+    await expect(storage.get(id)).rejects.toThrow(ErrInvalidChannelId);
+  });
+
+  it.each(MALFORMED_IDS)("rejects malformed id %j on updateChannel", async id => {
+    await expect(storage.updateChannel(id, () => buildSession())).rejects.toThrow(
+      ErrInvalidChannelId,
+    );
   });
 
   it("lists stored channels sorted by channelId", async () => {
@@ -421,9 +458,121 @@ describe("InMemoryClientChannelStorage", () => {
     await expect(storage.delete(CHANNEL_ID)).resolves.toBeUndefined();
   });
 
-  it("uses keys verbatim (no normalization)", async () => {
-    await storage.set(CHANNEL_ID.toUpperCase(), { chargedCumulativeAmount: "1" });
-    expect(await storage.get(CHANNEL_ID.toLowerCase())).toBeUndefined();
-    expect(await storage.get(CHANNEL_ID.toUpperCase())).toEqual({ chargedCumulativeAmount: "1" });
+  it("normalizes keys to lowercase canonical channel ids", async () => {
+    await storage.set(MIXED_CASE_ID, { chargedCumulativeAmount: "1" });
+    expect(await storage.get(MIXED_CASE_ID.toLowerCase())).toEqual({
+      chargedCumulativeAmount: "1",
+    });
+    expect(await storage.get(MIXED_CASE_ID)).toEqual({ chargedCumulativeAmount: "1" });
+  });
+
+  it.each(MALFORMED_IDS)("rejects malformed key %j across get/set/delete", async id => {
+    await expect(storage.get(id)).rejects.toThrow(ErrInvalidChannelId);
+    await expect(storage.set(id, { chargedCumulativeAmount: "1" })).rejects.toThrow(
+      ErrInvalidChannelId,
+    );
+    await expect(storage.delete(id)).rejects.toThrow(ErrInvalidChannelId);
+  });
+});
+
+describe("FileChannelStorage", () => {
+  let root: string;
+  let storage: FileChannelStorage;
+
+  beforeEach(async () => {
+    root = await mkdtemp(join(tmpdir(), "x402-bs-server-"));
+    storage = new FileChannelStorage({ directory: root });
+  });
+
+  afterEach(async () => {
+    await rm(root, { recursive: true, force: true });
+  });
+
+  it("round-trips a canonical id with a lowercased, byte-identical JSON file", async () => {
+    const channel = buildSession({ channelId: MIXED_CASE_ID, chargedCumulativeAmount: "1000" });
+    await storage.updateChannel(MIXED_CASE_ID, () => channel);
+
+    expect(await storage.get(MIXED_CASE_ID)).toEqual(channel);
+    expect(await storage.get(MIXED_CASE_ID.toLowerCase())).toEqual(channel);
+
+    const serverDir = join(root, "server");
+    const files = (await readdir(serverDir)).filter(name => name.endsWith(".json"));
+    expect(files).toEqual([`${MIXED_CASE_ID.toLowerCase()}.json`]);
+
+    const onDisk = await readFile(join(serverDir, files[0]), "utf8");
+    expect(onDisk).toBe(`${JSON.stringify(channel, null, 2)}\n`);
+  });
+
+  it.each(MALFORMED_IDS)("rejects malformed id %j on get without touching disk", async id => {
+    await expect(storage.get(id)).rejects.toThrow();
+    expect(await readdir(root)).toEqual([]);
+  });
+
+  it.each(MALFORMED_IDS)(
+    "rejects malformed id %j on updateChannel without touching disk",
+    async id => {
+      await expect(storage.updateChannel(id, () => buildSession())).rejects.toThrow();
+      expect(await readdir(root)).toEqual([]);
+    },
+  );
+
+  it("cannot overwrite or delete a sibling channel via a traversal id", async () => {
+    const victim = buildSession({ channelId: CHANNEL_ID, chargedCumulativeAmount: "42" });
+    await storage.updateChannel(CHANNEL_ID, () => victim);
+
+    const serverDir = join(root, "server");
+    const before = await readFile(join(serverDir, `${CHANNEL_ID}.json`), "utf8");
+
+    const traversal = `../server/${CHANNEL_ID}`;
+    await expect(storage.updateChannel(traversal, () => undefined)).rejects.toThrow();
+    await expect(storage.updateChannel(traversal, () => buildSession())).rejects.toThrow();
+
+    expect(await storage.get(CHANNEL_ID)).toEqual(victim);
+    expect(await readFile(join(serverDir, `${CHANNEL_ID}.json`), "utf8")).toBe(before);
+    expect((await readdir(serverDir)).filter(name => name.endsWith(".json"))).toEqual([
+      `${CHANNEL_ID}.json`,
+    ]);
+  });
+});
+
+describe("FileClientChannelStorage", () => {
+  let root: string;
+  let storage: FileClientChannelStorage;
+
+  beforeEach(async () => {
+    root = await mkdtemp(join(tmpdir(), "x402-bs-client-"));
+    storage = new FileClientChannelStorage({ directory: root });
+  });
+
+  afterEach(async () => {
+    await rm(root, { recursive: true, force: true });
+  });
+
+  it("round-trips a canonical key with a lowercased, byte-identical JSON file", async () => {
+    const ctx: BatchSettlementClientContext = {
+      chargedCumulativeAmount: "1000",
+      balance: "10000000",
+      totalClaimed: "0",
+      signedMaxClaimable: "1000",
+      signature: "0xdeadbeef",
+    };
+    await storage.set(MIXED_CASE_ID, ctx);
+
+    expect(await storage.get(MIXED_CASE_ID)).toEqual(ctx);
+    expect(await storage.get(MIXED_CASE_ID.toLowerCase())).toEqual(ctx);
+
+    const clientDir = join(root, "client");
+    const files = (await readdir(clientDir)).filter(name => name.endsWith(".json"));
+    expect(files).toEqual([`${MIXED_CASE_ID.toLowerCase()}.json`]);
+
+    const onDisk = await readFile(join(clientDir, files[0]), "utf8");
+    expect(onDisk).toBe(`${JSON.stringify(ctx, null, 2)}\n`);
+  });
+
+  it.each(MALFORMED_IDS)("rejects malformed key %j across get/set/delete", async id => {
+    await expect(storage.get(id)).rejects.toThrow();
+    await expect(storage.set(id, { chargedCumulativeAmount: "1" })).rejects.toThrow();
+    await expect(storage.delete(id)).rejects.toThrow();
+    expect(await readdir(root)).toEqual([]);
   });
 });

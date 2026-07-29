@@ -1,9 +1,11 @@
 package http
 
 import (
+	"bytes"
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -192,6 +194,12 @@ func (t *PaymentRoundTripper) RoundTrip(req *http.Request) (*http.Response, erro
 		return nil, fmt.Errorf("payment retry limit exceeded")
 	}
 
+	preparedReq, err := prepareRequestBody(req)
+	if err != nil {
+		return nil, err
+	}
+	req = preparedReq
+
 	// Make initial request
 	resp, err := t.Transport.RoundTrip(req)
 	if err != nil {
@@ -306,6 +314,36 @@ func (t *PaymentRoundTripper) RoundTrip(req *http.Request) (*http.Response, erro
 		return correctiveResp, nil
 	}
 	return correctiveResp, nil
+}
+
+func prepareRequestBody(req *http.Request) (*http.Request, error) {
+	if req.Body == nil || req.Body == http.NoBody || req.GetBody != nil {
+		return req, nil
+	}
+
+	var closeErr error
+	var closeOnce sync.Once
+	closeBody := func() {
+		closeOnce.Do(func() {
+			closeErr = req.Body.Close()
+		})
+	}
+
+	stopClose := context.AfterFunc(req.Context(), closeBody)
+	body, readErr := io.ReadAll(req.Body)
+	stopClose()
+	closeBody()
+
+	if err := errors.Join(context.Cause(req.Context()), readErr, closeErr); err != nil {
+		return nil, fmt.Errorf("failed to buffer request body: %w", err)
+	}
+
+	preparedReq := req.Clone(req.Context())
+	preparedReq.Body = io.NopCloser(bytes.NewReader(body))
+	preparedReq.GetBody = func() (io.ReadCloser, error) {
+		return io.NopCloser(bytes.NewReader(body)), nil
+	}
+	return preparedReq, nil
 }
 
 func (t *PaymentRoundTripper) tryPaymentRequiredHooks(

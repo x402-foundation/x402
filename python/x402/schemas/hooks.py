@@ -19,13 +19,15 @@ if TYPE_CHECKING:
 
 @dataclass
 class AbortResult:
-    """Return from before hook to abort the operation.
+    """Return from a before/after hook to abort the operation.
 
     Attributes:
-        reason: Human-readable reason for aborting.
+        reason: Machine-readable reason for aborting.
+        message: Optional human-readable message (used by after-verify abort).
     """
 
     reason: str
+    message: str | None = None
 
 
 @dataclass
@@ -103,7 +105,9 @@ class SkipHandlerResult:
     response: SkipHandlerDirective | None = None
 
 
-VerifiedPaymentCancellationReason = Literal["handler_threw", "handler_failed"]
+VerifiedPaymentCancellationReason = Literal[
+    "handler_threw", "handler_failed", "after_verify_aborted"
+]
 
 
 @dataclass

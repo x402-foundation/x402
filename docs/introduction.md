@@ -65,4 +65,4 @@ Ready to build? Start here:
 - [Quickstart for Buyers](/getting-started/quickstart-for-buyers)
 - [Explore Core Concepts](/core-concepts/http-402)
 - [Batch settlement](/schemes/batch-settlement) (EVM micropayments / batched redemption)
-- [Join our community on Discord](https://discord.gg/invite/cdp)
+- [Join our community on Slack](http://slack.x402.org/)

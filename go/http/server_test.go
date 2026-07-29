@@ -190,6 +190,97 @@ func TestProcessHTTPRequestPaymentRequired(t *testing.T) {
 	}
 }
 
+func TestProcessHTTPRequestMalformedPaymentSignature(t *testing.T) {
+	ctx := context.Background()
+
+	routes := RoutesConfig{
+		"GET /api": {
+			Accepts: PaymentOptions{
+				{
+					Scheme:  "exact",
+					PayTo:   "0xtest",
+					Price:   "$1.00",
+					Network: "eip155:1",
+				},
+			},
+		},
+	}
+
+	mockServer := &mockSchemeServer{scheme: "exact"}
+	mockClient := &mockFacilitatorClient{
+		supported: func(ctx context.Context) (x402.SupportedResponse, error) {
+			return x402.SupportedResponse{
+				Kinds: []x402.SupportedKind{
+					{X402Version: 2, Scheme: "exact", Network: "eip155:1"},
+				},
+				Extensions: []string{},
+				Signers:    make(map[string][]string),
+			}, nil
+		},
+	}
+
+	server := Newx402HTTPResourceServer(
+		routes,
+		x402.WithFacilitatorClient(mockClient),
+		x402.WithSchemeServer("eip155:1", mockServer),
+	)
+	_ = server.Initialize(ctx)
+
+	tests := []struct {
+		name   string
+		header string
+	}{
+		{
+			name:   "non-base64 header",
+			header: "garbage-value",
+		},
+		{
+			name:   "base64 invalid JSON",
+			header: base64.StdEncoding.EncodeToString([]byte("not-json")),
+		},
+		{
+			name:   "unsupported x402 version",
+			header: base64.StdEncoding.EncodeToString(mustMarshal(t, map[string]interface{}{"x402Version": 1})),
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			adapter := &mockHTTPAdapter{
+				method: "GET",
+				path:   "/api",
+				url:    "http://example.com/api",
+				headers: map[string]string{
+					"PAYMENT-SIGNATURE": tt.header,
+				},
+			}
+
+			result := server.ProcessHTTPRequest(ctx, HTTPRequestContext{
+				Adapter: adapter,
+				Path:    "/api",
+				Method:  "GET",
+			}, nil)
+
+			if result.Type != ResultPaymentError {
+				t.Fatalf("expected ResultPaymentError, got %s", result.Type)
+			}
+			if result.Response == nil {
+				t.Fatal("expected response instructions")
+			}
+			if result.Response.Status != 400 {
+				t.Fatalf("expected status 400, got %d", result.Response.Status)
+			}
+			body, ok := result.Response.Body.(map[string]string)
+			if !ok {
+				t.Fatalf("expected string map body, got %T", result.Response.Body)
+			}
+			if body["error"] != "invalid_payload" {
+				t.Fatalf("expected invalid_payload error, got %q", body["error"])
+			}
+		})
+	}
+}
+
 func TestProcessHTTPRequestServiceMetadataOnResource(t *testing.T) {
 	ctx := context.Background()
 

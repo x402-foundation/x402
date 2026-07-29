@@ -41,7 +41,7 @@ Both formats produce equivalent proof artifacts. Clients and verifiers handle bo
 
 This example uses EIP-712 signing with a raw private key from an environment variable. This is the simplest way to get started.
 
-> **Not for Production:** Storing private keys in environment variables is acceptable for local development and testing. For production deployments, use a key management service (KMS), hardware security module (HSM), or a managed wallet provider. See [Production Key Management](#production-key-management) below.
+> **Key Security:** Storing private keys in environment variables works for production as long as you keep them secret and rotate them regularly. For higher security guarantees, use a key management service (KMS), hardware security module (HSM), or a managed wallet provider. See [Production Key Management](#production-key-management) below for options. When rotating keys, use a signer-authorization service (see [Ecosystem Trust Providers](#ecosystem-trust-providers)) to maintain verifiable continuity of authorization.
 
 > **Signing Key ≠ Payment Address:** The signing key used for offers and receipts should be a dedicated signing key, not the wallet that receives payments (`payTo`). Separating signing from payment receipt limits exposure if the signing key is compromised.
 
@@ -55,7 +55,8 @@ EVM_ADDRESS=0xYourPaymentWalletAddress
 
 # Private key for signing offers and receipts (EIP-712)
 # This should be a DEDICATED SIGNING KEY, not the payment wallet's key
-# For production deployments, do not store private keys in an environment variable
+# Keep your private key secret and rotate it in accordance with your security policy and key storage mechanism
+# Use a key-binding service to maintain authorization continuity
 SIGNING_PRIVATE_KEY=0xYourDedicatedSigningPrivateKey
 
 # x402 facilitator URL
@@ -80,7 +81,7 @@ import { privateKeyToAccount } from "viem/accounts";
 config();
 
 const evmAddress = process.env.EVM_ADDRESS as `0x${string}`;
-const signingPrivateKey = process.env.SIGNING_PRIVATE_KEY as `0x${string}`; // not for production
+const signingPrivateKey = process.env.SIGNING_PRIVATE_KEY as `0x${string}`;
 const facilitatorUrl = process.env.FACILITATOR_URL!;
 
 // Create EIP-712 signer from the dedicated signing key
@@ -158,7 +159,7 @@ EVM_ADDRESS=0xYourPaymentWalletAddress
 FACILITATOR_URL=https://x402.org/facilitator
 
 # Base64-encoded PKCS#8 private key (EC P-256)
-# For production deployments, do not store private keys in an environment variable
+# Keep secret and consider using more secure key store mechanisms
 SIGNING_PRIVATE_KEY=base64EncodedPrivateKey
 
 # Your server's domain (URL-encoded for did:web)
@@ -178,7 +179,7 @@ import {
 } from "@x402/extensions/offer-receipt";
 
 const serverDomain = process.env.SERVER_DOMAIN!;
-const signingPrivateKey = process.env.SIGNING_PRIVATE_KEY!; // not for production
+const signingPrivateKey = process.env.SIGNING_PRIVATE_KEY!;
 
 const did = `did:web:${serverDomain}`;
 const kid = `${did}#key-1`;
@@ -284,9 +285,11 @@ Both payloads are signed using the format configured on the server (EIP-712 or J
 
 ## Production Key Management
 
-> The examples above use environment variables for signing keys. This is fine for development but not for production. Private keys in environment variables can leak through process inspection, logging, crash dumps, and container metadata endpoints.
+Environment variables are not ideal for storing signing keys, but if you use them keep them secret and rotate them periodically. The main risks are leaking through process inspection, logging, crash dumps, or container metadata endpoints — standard operational security applies.
 
-For production, use a signing backend that keeps keys in secure hardware or managed infrastructure. The extension's signer interface is pluggable — you only need to implement the `sign()` function (for JWS) or `signTypedData()` function (for EIP-712) using your provider's SDK. The `OfferReceiptIssuer` interface handles the rest.
+For higher security guarantees, use a signing backend that keeps keys in secure hardware or managed infrastructure. The extension's signer interface is pluggable — you only need to implement the `sign()` function (for JWS) or `signTypedData()` function (for EIP-712) using your provider's SDK. The `OfferReceiptIssuer` interface handles the rest.
+
+**Key rotation:** When you rotate signing keys (whether stored in environment variables or KMS), previously-issued offers and receipts remain valid as long as verifiers can confirm the old key was authorized at issuance time. Use a signer-authorization service (see [Ecosystem Trust Providers](#ecosystem-trust-providers)) to record key-binding attestations that survive rotation.
 
 When using a managed wallet provider, you won't have access to the raw private key. Instead, you call the provider's signing API. Here's what the EIP-712 setup looks like with a server wallet (conceptual example):
 
@@ -329,9 +332,19 @@ If you're using EIP-712 signing, you can host a `did.json` as well — list your
 
 This is a W3C standard mechanism and is sufficient for many use cases. However, the DID document is mutable — if you remove the key later, verifiers checking at that point won't find it.
 
-### Additional Binding Mechanisms
+### Signer Authorization Approaches
 
-For production services that need stronger guarantees — immutable onchain attestations, DNS-based verification, temporal anchoring, or key lifecycle management (expiration, rotation, revocation) — third parties offer additional trust layers on top of `did.json`.
+The following approaches can establish that a signing key is authorized for your service. They differ in durability — specifically whether authorization evidence survives key rotation and whether it provides temporally immutable proof.
+
+| Approach | Description |
+|----------|-------------|
+| `did:web` + `did.json` | Host your signing key at `/.well-known/did.json`. Simple and self-service. However, the document is mutable and current-state only — once a key is removed during rotation, there is no record it was previously authorized. Does not support key rotation history or temporal immutability. |
+| DNS TXT records | Bind your signing key to your domain via DNS. Easy to automate. Same limitation as `did:web` — mutable, no history. Does not support key rotation history or temporal immutability. |
+| [OMATrust](https://docs.omatrust.org/integrations/x402/overview) | On-chain signer-authorization attestations with timestamps. Authorization evidence persists regardless of key rotation or DID document changes. Supports key rotation history and temporal immutability. |
+
+> **Adding to this table:** Solutions that provide signer-authorization evidence for x402 signed artifacts are welcome. To be listed, describe how the approach handles key rotation and whether it provides temporally immutable proof of authorization. Open a PR or issue against this repository.
+
+These mechanisms are not optional — verifiers need at least one way to confirm your signing key is authorized for your service. The choice depends on your durability requirements.
 
 ## Client-Side: Extracting Offers and Receipts
 
@@ -406,6 +419,7 @@ Signed offers and receipts are portable, verifiable artifacts. Clients can:
 - **Store them for auditing** — receipts create a verifiable trail of service delivery
 - **Use them in dispute resolution** — offers prove the server committed to terms; receipts prove delivery
 - **Share them with aggregators** — trust scoring engines can verify the signatures independently
+- **Submit them to trust providers** — services like [OMATrust](https://docs.omatrust.org/integrations/x402/overview) can embed receipts into user reviews, and [PEAC Protocol](https://x402.peacprotocol.org) can record them as payment evidence attestation chains
 
 ## Working Examples
 

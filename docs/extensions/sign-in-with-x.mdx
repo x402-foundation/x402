@@ -409,20 +409,20 @@ For custom implementations, you can use the low-level functions directly:
         payload,
         new URL('https://api.example.com')
       );
-      if (!validation.valid) {
-        return { error: validation.error };
+      if (!validation.isValid) {
+        return { error: validation.invalidMessage, code: validation.invalidReason };
       }
 
       // Verify signature and recover address
       const verification = await verifySIWxSignature(payload);
-      if (!verification.valid) {
-        return { error: verification.error };
+      if (!verification.isValid) {
+        return { error: verification.invalidMessage, code: verification.invalidReason };
       }
 
-      // verification.address is the verified wallet
+      // verification.payer is the verified wallet address
       // Grant access for auth-only routes or if wallet has paid
       const isAuthOnly = await checkIfAuthOnlyRoute(request);
-      const hasPaid = await checkPaymentHistory(verification.address);
+      const hasPaid = await checkPaymentHistory(verification.payer);
       if (isAuthOnly || hasPaid) {
         // Grant access
       }
@@ -723,7 +723,7 @@ validateSIWxMessage(payload, new URL('https://api.example.com'), {
   maxAge?: number;                    // Max age for issuedAt (default: 5 min)
   checkNonce?: (nonce) => boolean;    // Custom nonce validation
 })
-// Returns: { valid: boolean; error?: string }
+// Returns: { isValid: true } | { isValid: false; invalidReason: SIWxValidationCode; invalidMessage: string }
 ```
 
 Go: `ValidateMessage(payload, *url.URL, ValidationOptions)`
@@ -738,7 +738,7 @@ Verifies the cryptographic signature and recovers the signer address.
 verifySIWxSignature(payload, {
   evmVerifier?: EVMMessageVerifier;  // For smart wallet support
 })
-// Returns: { valid: boolean; address?: string; error?: string }
+// Returns: { isValid: true; payer: string } | { isValid: false; invalidReason: SIWxVerifyCode; invalidMessage: string }
 ```
 
 ### `createSIWxPayload(serverInfo, signer)`
@@ -792,7 +792,9 @@ Optionally implement `hasUsedNonce` and `recordNonce` to prevent replay attacks 
 
 ### Signature Verification Fails
 
-**Problem:** `verifySIWxSignature` returns `valid: false`.
+**Problem:** `verifySIWxSignature` returns `{ isValid: false }`.
+
+Check `invalidReason` for the specific failure code (e.g., `invalid_siwx_signature`, `invalid_siwx_unsupported_chain`).
 
 **Solutions:**
 - Ensure the message was signed with the correct wallet
@@ -802,7 +804,9 @@ Optionally implement `hasUsedNonce` and `recordNonce` to prevent replay attacks 
 
 ### Message Validation Fails
 
-**Problem:** `validateSIWxMessage` returns `valid: false`.
+**Problem:** `validateSIWxMessage` returns `{ isValid: false }`.
+
+Check `invalidReason` for the specific failure code (e.g., `invalid_siwx_expired`, `invalid_siwx_domain_mismatch`).
 
 **Solutions:**
 - Check that `issuedAt` is recent (within `maxAge`, default 5 minutes)

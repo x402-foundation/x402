@@ -12,12 +12,12 @@ Hooks allow you to intercept and modify payment lifecycle events on clients, ser
 Register hooks on the core resource server for verification and settlement lifecycle events. Use cases include logging payments, recording analytics, implementing custom access control or recovering from transient failures.
 
 * **onBeforeVerify** — Runs before payment verification. Return `{ abort: true, reason }` to reject, or `{ skip: true, result }` to use a locally produced verification result.
-* **onAfterVerify** — Runs after successful verification. Return `{ skipHandler: true, response? }` to settle without invoking the resource handler.
+* **onAfterVerify** — Runs after successful verification. Return `{ skipHandler: true, response? }` to settle without invoking the resource handler, or `{ abort: true, reason, message? }` to reject the payment after verification. When a hook aborts, `onVerifiedPaymentCanceled` is dispatched so schemes can clear any reserved state.
 * **onVerifyFailure** — Runs on verification failure. Return `{ recovered: true, result }` to override.
 * **onBeforeSettle** — Runs before settlement. Return `{ abort: true, reason }` to reject, or `{ skip: true, result }` to use a locally produced settlement result.
 * **onAfterSettle** — Runs after successful settlement.
 * **onSettleFailure** — Runs on settlement failure. Return `{ recovered: true, result }` to override.
-* **onVerifiedPaymentCanceled** — Runs when a verified payment is not settled because the protected handler throws or returns an error response.
+* **onVerifiedPaymentCanceled** — Runs when a verified payment is not settled. Triggered when the protected handler throws or returns an error response (`handler_threw`, `handler_failed`), or when an `onAfterVerify` hook aborts (`after_verify_aborted`).
 
 These server-level hooks run for every payment regardless of which extensions are active. Extensions and schemes can also contribute lifecycle hook adapters that run only when their extension key or scheme/network is used. See [Extensions Overview](/extensions/overview) for extension-level behavior.
 

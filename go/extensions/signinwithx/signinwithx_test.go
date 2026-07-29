@@ -255,13 +255,13 @@ func TestValidateMessage(t *testing.T) {
 			return nonce == "abc123xyz"
 		},
 	})
-	if !result.Valid {
-		t.Fatalf("ValidateMessage() invalid: %s", result.Error)
+	if !result.IsValid {
+		t.Fatalf("ValidateMessage() invalid: %s", result.InvalidMessage)
 	}
 
 	payload.Domain = "evil.example.com"
 	result = ValidateMessage(payload, expectedOrigin, ValidationOptions{})
-	if result.Valid || !strings.Contains(result.Error, "Domain mismatch") {
+	if result.IsValid || result.InvalidReason != ErrInvalidSIWxDomainMismatch {
 		t.Fatalf("ValidateMessage() = %#v, want domain mismatch", result)
 	}
 
@@ -269,20 +269,112 @@ func TestValidateMessage(t *testing.T) {
 	payload.IssuedAt = time.Now().Add(-time.Minute).UTC().Format(time.RFC3339)
 	payload.URI = "https://api.example.com.attacker.test/data"
 	result = ValidateMessage(payload, expectedOrigin, ValidationOptions{})
-	if result.Valid || !strings.Contains(result.Error, "URI mismatch") {
+	if result.IsValid || result.InvalidReason != ErrInvalidSIWxURIMismatch {
 		t.Fatalf("ValidateMessage() = %#v, want URI mismatch", result)
 	}
 
 	payload.URI = "http://api.example.com/data"
 	result = ValidateMessage(payload, expectedOrigin, ValidationOptions{})
-	if result.Valid || !strings.Contains(result.Error, "URI mismatch") {
+	if result.IsValid || result.InvalidReason != ErrInvalidSIWxURIMismatch {
 		t.Fatalf("ValidateMessage() = %#v, want URI scheme mismatch", result)
 	}
 
 	payload.URI = "not-a-url"
 	result = ValidateMessage(payload, expectedOrigin, ValidationOptions{})
-	if result.Valid || !strings.Contains(result.Error, "Invalid URI") {
+	if result.IsValid || result.InvalidReason != ErrInvalidSIWxURIMismatch {
 		t.Fatalf("ValidateMessage() = %#v, want invalid URI", result)
+	}
+}
+
+func TestValidateMessageFailureCodes(t *testing.T) {
+	expectedOrigin := testOriginURL(t)
+	now := time.Now().UTC()
+
+	tests := []struct {
+		name          string
+		overrides     func(*Payload)
+		options       ValidationOptions
+		invalidReason string
+	}{
+		{
+			name: "issued_at",
+			overrides: func(payload *Payload) {
+				payload.IssuedAt = "not-a-date"
+			},
+			invalidReason: ErrInvalidSIWxIssuedAt,
+		},
+		{
+			name: "issued_at_too_old",
+			overrides: func(payload *Payload) {
+				payload.IssuedAt = now.Add(-10 * time.Minute).Format(time.RFC3339)
+			},
+			invalidReason: ErrInvalidSIWxIssuedAtTooOld,
+		},
+		{
+			name: "issued_at_in_future",
+			overrides: func(payload *Payload) {
+				payload.IssuedAt = now.Add(60 * time.Second).Format(time.RFC3339)
+			},
+			invalidReason: ErrInvalidSIWxIssuedAtInFuture,
+		},
+		{
+			name: "expiration_time",
+			overrides: func(payload *Payload) {
+				payload.IssuedAt = now.Add(-time.Minute).Format(time.RFC3339)
+				payload.ExpirationTime = "not-a-date"
+			},
+			invalidReason: ErrInvalidSIWxExpirationTime,
+		},
+		{
+			name: "expired",
+			overrides: func(payload *Payload) {
+				payload.IssuedAt = now.Add(-2 * time.Minute).Format(time.RFC3339)
+				payload.ExpirationTime = now.Add(-time.Second).Format(time.RFC3339)
+			},
+			invalidReason: ErrInvalidSIWxExpired,
+		},
+		{
+			name: "not_before",
+			overrides: func(payload *Payload) {
+				payload.IssuedAt = now.Add(-time.Minute).Format(time.RFC3339)
+				payload.NotBefore = "not-a-date"
+			},
+			invalidReason: ErrInvalidSIWxNotBefore,
+		},
+		{
+			name: "not_yet_valid",
+			overrides: func(payload *Payload) {
+				payload.IssuedAt = now.Add(-time.Minute).Format(time.RFC3339)
+				payload.NotBefore = now.Add(60 * time.Second).Format(time.RFC3339)
+			},
+			invalidReason: ErrInvalidSIWxNotYetValid,
+		},
+		{
+			name: "nonce",
+			overrides: func(payload *Payload) {
+				payload.IssuedAt = now.Add(-time.Minute).Format(time.RFC3339)
+			},
+			options: ValidationOptions{
+				CheckNonce: func(string) bool { return false },
+			},
+			invalidReason: ErrInvalidSIWxNonce,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			payload := testPayload()
+			payload.ExpirationTime = ""
+			payload.NotBefore = ""
+			tt.overrides(&payload)
+			result := ValidateMessage(payload, expectedOrigin, tt.options)
+			if result.IsValid {
+				t.Fatal("ValidateMessage() valid, want invalid")
+			}
+			if result.InvalidReason != tt.invalidReason {
+				t.Fatalf("InvalidReason = %q, want %q", result.InvalidReason, tt.invalidReason)
+			}
+		})
 	}
 }
 
@@ -302,17 +394,43 @@ func TestVerifySolanaSignature(t *testing.T) {
 	payload.Signature = EncodeBase58(ed25519.Sign(privateKey, []byte(message)))
 
 	result := VerifySignature(payload)
-	if !result.Valid {
-		t.Fatalf("VerifySignature() invalid: %s", result.Error)
+	if !result.IsValid {
+		t.Fatalf("VerifySignature() invalid: %s", result.InvalidMessage)
 	}
-	if result.Address != payload.Address {
-		t.Fatalf("address = %q, want %q", result.Address, payload.Address)
+	if result.Payer != payload.Address {
+		t.Fatalf("payer = %q, want %q", result.Payer, payload.Address)
 	}
 
 	payload.Signature = EncodeBase58(ed25519.Sign(privateKey, []byte(message+"tampered")))
 	result = VerifySignature(payload)
-	if result.Valid {
+	if result.IsValid {
 		t.Fatal("VerifySignature() valid for tampered Solana signature")
+	}
+	if result.InvalidReason != ErrInvalidSIWxSignature {
+		t.Fatalf("InvalidReason = %q, want %q", result.InvalidReason, ErrInvalidSIWxSignature)
+	}
+}
+
+func TestVerifySolanaSignatureRejectsSmallOrderPublicKey(t *testing.T) {
+	publicKey := bytesRepeat(ed25519.PublicKeySize, 0)
+	publicKey[0] = 1
+	signature := bytesRepeat(ed25519.SignatureSize, 0)
+	signature[0] = 1
+
+	if VerifySolanaSignature("arbitrary message", signature, publicKey) {
+		t.Fatal("VerifySolanaSignature() valid for small-order public key forgery")
+	}
+
+	payload := testSolanaPayload()
+	payload.Address = EncodeBase58(publicKey)
+	payload.Signature = EncodeBase58(signature)
+
+	result := VerifySignature(payload)
+	if result.IsValid {
+		t.Fatal("VerifySignature() valid for small-order public key forgery")
+	}
+	if result.InvalidReason != ErrInvalidSIWxSignature {
+		t.Fatalf("InvalidReason = %q, want %q", result.InvalidReason, ErrInvalidSIWxSignature)
 	}
 }
 
@@ -321,11 +439,14 @@ func TestVerifySolanaSignatureRejectsInvalidBase58(t *testing.T) {
 	payload.Signature = "0OIl"
 
 	result := VerifySignature(payload)
-	if result.Valid {
+	if result.IsValid {
 		t.Fatal("VerifySignature() valid for invalid Base58 signature")
 	}
-	if !strings.Contains(result.Error, "Invalid Base58 encoding") {
-		t.Fatalf("error = %q", result.Error)
+	if result.InvalidReason != ErrInvalidSIWxMalformedSignature {
+		t.Fatalf("InvalidReason = %q, want %q", result.InvalidReason, ErrInvalidSIWxMalformedSignature)
+	}
+	if !strings.Contains(result.InvalidMessage, "Invalid Base58 encoding") {
+		t.Fatalf("InvalidMessage = %q", result.InvalidMessage)
 	}
 }
 
@@ -352,17 +473,20 @@ func TestVerifyEVMSignature(t *testing.T) {
 	payload.Signature = "0x" + common.Bytes2Hex(signature)
 
 	result := VerifySignature(payload)
-	if !result.Valid {
-		t.Fatalf("VerifySignature() invalid: %s", result.Error)
+	if !result.IsValid {
+		t.Fatalf("VerifySignature() invalid: %s", result.InvalidMessage)
 	}
-	if result.Address != address.Hex() {
-		t.Fatalf("address = %q, want %q", result.Address, address.Hex())
+	if result.Payer != address.Hex() {
+		t.Fatalf("payer = %q, want %q", result.Payer, address.Hex())
 	}
 
 	payload.Address = "0x0000000000000000000000000000000000000002"
 	result = VerifySignature(payload)
-	if result.Valid {
+	if result.IsValid {
 		t.Fatal("VerifySignature() valid for wrong address")
+	}
+	if result.InvalidReason != ErrInvalidSIWxSignature {
+		t.Fatalf("InvalidReason = %q, want %q", result.InvalidReason, ErrInvalidSIWxSignature)
 	}
 }
 
@@ -371,12 +495,63 @@ func TestVerifySignatureRejectsUnsupportedChain(t *testing.T) {
 	payload.ChainID = "cosmos:cosmoshub-4"
 
 	result := VerifySignature(payload)
-	if result.Valid {
+	if result.IsValid {
 		t.Fatal("VerifySignature() valid for unsupported chain")
 	}
-	if !strings.Contains(result.Error, "Unsupported chain namespace") {
-		t.Fatalf("error = %q", result.Error)
+	if result.InvalidReason != ErrInvalidSIWxUnsupportedChain {
+		t.Fatalf("InvalidReason = %q, want %q", result.InvalidReason, ErrInvalidSIWxUnsupportedChain)
 	}
+	if !strings.Contains(result.InvalidMessage, "Unsupported chain namespace") {
+		t.Fatalf("InvalidMessage = %q", result.InvalidMessage)
+	}
+}
+
+func TestVerifySignatureStructuredErrors(t *testing.T) {
+	t.Run("malformed_evm_chain_id", func(t *testing.T) {
+		payload := testPayload()
+		payload.ChainID = "eip155:not-a-number"
+
+		result := VerifySignature(payload)
+		if result.IsValid {
+			t.Fatal("VerifySignature() valid, want invalid")
+		}
+		if result.InvalidReason != ErrInvalidSIWxChainID {
+			t.Fatalf("InvalidReason = %q, want %q", result.InvalidReason, ErrInvalidSIWxChainID)
+		}
+		if !strings.Contains(result.InvalidMessage, "invalid EVM chainId format") {
+			t.Fatalf("InvalidMessage = %q", result.InvalidMessage)
+		}
+	})
+
+	t.Run("invalid_solana_signature_length", func(t *testing.T) {
+		payload := testSolanaPayload()
+		payload.Signature = EncodeBase58(bytesRepeat(32, 0))
+		payload.Address = EncodeBase58(bytesRepeat(32, 1))
+
+		result := VerifySignature(payload)
+		if result.IsValid {
+			t.Fatal("VerifySignature() valid, want invalid")
+		}
+		if result.InvalidReason != ErrInvalidSIWxMalformedSignature {
+			t.Fatalf("InvalidReason = %q, want %q", result.InvalidReason, ErrInvalidSIWxMalformedSignature)
+		}
+		if !strings.Contains(result.InvalidMessage, "Invalid signature length") {
+			t.Fatalf("InvalidMessage = %q", result.InvalidMessage)
+		}
+	})
+
+	t.Run("empty_solana_chain_reference", func(t *testing.T) {
+		payload := testSolanaPayload()
+		payload.ChainID = "solana:"
+
+		result := VerifySignature(payload)
+		if result.IsValid {
+			t.Fatal("VerifySignature() valid, want invalid")
+		}
+		if result.InvalidReason != ErrInvalidSIWxUnsupportedChain {
+			t.Fatalf("InvalidReason = %q, want %q", result.InvalidReason, ErrInvalidSIWxUnsupportedChain)
+		}
+	})
 }
 
 func TestVerifySignatureWithOptionsUsesEVMVerifier(t *testing.T) {
@@ -403,11 +578,11 @@ func TestVerifySignatureWithOptionsUsesEVMVerifier(t *testing.T) {
 	if !called {
 		t.Fatal("EVM verifier was not called")
 	}
-	if !result.Valid {
-		t.Fatalf("VerifySignatureWithOptions() invalid: %s", result.Error)
+	if !result.IsValid {
+		t.Fatalf("VerifySignatureWithOptions() invalid: %s", result.InvalidMessage)
 	}
-	if result.Address != common.HexToAddress(payload.Address).Hex() {
-		t.Fatalf("address = %q, want checksum address", result.Address)
+	if result.Payer != common.HexToAddress(payload.Address).Hex() {
+		t.Fatalf("payer = %q, want checksum address", result.Payer)
 	}
 }
 
@@ -421,11 +596,14 @@ func TestVerifySignatureWithOptionsHandlesEVMVerifierFailures(t *testing.T) {
 				return false, nil
 			},
 		})
-		if result.Valid {
+		if result.IsValid {
 			t.Fatal("VerifySignatureWithOptions() valid, want invalid")
 		}
-		if !strings.Contains(result.Error, "Signature verification failed") {
-			t.Fatalf("error = %q", result.Error)
+		if result.InvalidReason != ErrInvalidSIWxSignature {
+			t.Fatalf("InvalidReason = %q, want %q", result.InvalidReason, ErrInvalidSIWxSignature)
+		}
+		if !strings.Contains(result.InvalidMessage, "Signature verification failed") {
+			t.Fatalf("InvalidMessage = %q", result.InvalidMessage)
 		}
 	})
 
@@ -435,11 +613,14 @@ func TestVerifySignatureWithOptionsHandlesEVMVerifierFailures(t *testing.T) {
 				return false, errors.New("rpc unavailable")
 			},
 		})
-		if result.Valid {
+		if result.IsValid {
 			t.Fatal("VerifySignatureWithOptions() valid, want invalid")
 		}
-		if !strings.Contains(result.Error, "rpc unavailable") {
-			t.Fatalf("error = %q", result.Error)
+		if result.InvalidReason != ErrInvalidSIWxVerifierError {
+			t.Fatalf("InvalidReason = %q, want %q", result.InvalidReason, ErrInvalidSIWxVerifierError)
+		}
+		if !strings.Contains(result.InvalidMessage, "rpc unavailable") {
+			t.Fatalf("InvalidMessage = %q", result.InvalidMessage)
 		}
 	})
 }
@@ -457,12 +638,20 @@ func TestNewUniversalEVMVerifierSupportsEIP1271(t *testing.T) {
 	result := VerifySignatureWithOptions(context.Background(), payload, VerifyOptions{
 		EVMVerifier: verifier,
 	})
-	if !result.Valid {
-		t.Fatalf("VerifySignatureWithOptions() invalid: %s", result.Error)
+	if !result.IsValid {
+		t.Fatalf("VerifySignatureWithOptions() invalid: %s", result.InvalidMessage)
 	}
-	if result.Address != common.HexToAddress(payload.Address).Hex() {
-		t.Fatalf("address = %q, want checksum address", result.Address)
+	if result.Payer != common.HexToAddress(payload.Address).Hex() {
+		t.Fatalf("payer = %q, want checksum address", result.Payer)
 	}
+}
+
+func bytesRepeat(n int, value byte) []byte {
+	out := make([]byte, n)
+	for i := range out {
+		out[i] = value
+	}
+	return out
 }
 
 type testFacilitatorSigner struct {

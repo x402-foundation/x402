@@ -23,6 +23,10 @@ const SCHEMA_2_ID = 0x02
 // characters and underscores.
 var BUILDER_CODE_PATTERN = regexp.MustCompile(`^[a-z0-9_]{1,32}$`)
 
+// MAX_SERVICE_CODES is the maximum number of service codes (`s`) encoded onchain
+// at settlement.
+const MAX_SERVICE_CODES = 5
+
 // BuilderCodeExtensionData holds the ERC-8021 Schema 2 fields as they appear in
 // PaymentRequired/PaymentPayload extensions.
 //   - A: app builder code — the x402 service that exposed the paid endpoint.

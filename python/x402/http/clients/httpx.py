@@ -113,6 +113,10 @@ class x402AsyncTransport(AsyncBaseTransport):
         Returns:
             Response (original or retried with payment).
         """
+        # A 402 response requires replaying the request with payment headers.
+        # Buffer streaming bodies before the first send so retries preserve them.
+        await request.aread()
+
         # Send the initial request
         response = await self._transport.handle_async_request(request)
 

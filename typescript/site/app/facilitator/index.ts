@@ -145,7 +145,7 @@ async function createFacilitator(): Promise<x402Facilitator> {
   if (avmPrivateKey) {
     const avmSigner = toFacilitatorAvmSigner(avmPrivateKey);
     facilitator.register(
-      "algorand:SGO1GKSzyE7IEPItTxCByw9x8FmnrCDexi9/cOUJOiI=",
+      "algorand:SGO1GKSzyE7IEPItTxCByw9x8FmnrCDe",
       new ExactAvmScheme(avmSigner),
     );
   }

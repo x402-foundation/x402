@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 try:
@@ -19,7 +20,46 @@ from .constants import (
     BATCH_SETTLEMENT_DOMAIN_VERSION,
     CHANNEL_CONFIG_TYPES,
 )
+from .errors import ERR_CHANNEL_ID_MISMATCH, ERR_INVALID_CHANNEL_ID
 from .types import ChannelConfig
+
+# Canonical bytes32 channel id: 0x followed by exactly 64 hex digits.
+_CHANNEL_ID_RE = re.compile(r"^0x[0-9a-fA-F]{64}$")
+
+
+def is_canonical_channel_id(value: object) -> bool:
+    """Return True when value is a canonical `0x` + 64-hex-digit channel id."""
+    return isinstance(value, str) and _CHANNEL_ID_RE.fullmatch(value) is not None
+
+
+def normalize_channel_id(channel_id: str) -> str:
+    """Validate canonical bytes32 form and return lowercase.
+
+    Raises:
+        ValueError: When `channel_id` is not canonical. The message is the stable
+            error code only — untrusted input is never echoed.
+    """
+    if not is_canonical_channel_id(channel_id):
+        raise ValueError(ERR_INVALID_CHANNEL_ID)
+    return channel_id.lower()
+
+
+def channel_id_binding_error(
+    config: ChannelConfig,
+    claimed_channel_id: str,
+    network_or_chain_id: str | int,
+) -> str | None:
+    """Bind a claimed channel id to a channel config and network.
+
+    Returns:
+        `ERR_INVALID_CHANNEL_ID` or `ERR_CHANNEL_ID_MISMATCH`, or None when valid.
+    """
+    if not is_canonical_channel_id(claimed_channel_id):
+        return ERR_INVALID_CHANNEL_ID
+    computed = compute_channel_id(config, network_or_chain_id)
+    if computed.lower() != claimed_channel_id.lower():
+        return ERR_CHANNEL_ID_MISMATCH
+    return None
 
 
 def get_batch_settlement_eip712_domain(chain_id: int) -> dict[str, Any]:
@@ -106,4 +146,7 @@ __all__ = [
     "compute_channel_id",
     "channel_config_to_signing_message",
     "coerce_bytes32",
+    "is_canonical_channel_id",
+    "normalize_channel_id",
+    "channel_id_binding_error",
 ]

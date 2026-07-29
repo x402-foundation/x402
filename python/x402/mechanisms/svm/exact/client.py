@@ -30,7 +30,7 @@ from ..constants import (
 from ..mint_cache import MintMetadataCache, get_cached_mint_metadata
 from ..signer import ClientSvmSigner
 from ..types import ExactSvmPayload
-from ..utils import derive_ata, normalize_network
+from ..utils import derive_ata, normalize_network, resolve_blockhash
 
 
 class ExactSvmScheme:
@@ -174,9 +174,7 @@ class ExactSvmScheme:
             data=memo_data,
         )
 
-        # Get latest blockhash
-        blockhash_resp = client.get_latest_blockhash()
-        blockhash = blockhash_resp.value.blockhash
+        blockhash = resolve_blockhash(client, extra.get("recentBlockhash"))
 
         # Build message
         message = MessageV0.try_compile(

@@ -1,5 +1,20 @@
 # @x402/avm
 
+## 2.20.0
+
+### Minor Changes
+
+- [61349de](https://github.com/x402-foundation/x402/commit/61349de): Adopted CAIP-2-compliant Algorand network identifiers per the Algorand namespace profile. Server registration and constants emit canonical truncated IDs; client and facilitator normalize legacy full-hash IDs on input for backwards compatibility. ([#2931](https://github.com/x402-foundation/x402/pull/2931)) - Thanks [@phdargen](https://github.com/phdargen)!
+- Updated dependencies [4453a92](https://github.com/x402-foundation/x402/commit/4453a92)
+  - @x402/core@2.20.0
+
+## 2.19.0
+
+### Minor Changes
+
+- Updated dependencies [c72cfee](https://github.com/x402-foundation/x402/commit/c72cfee)
+  - @x402/core@2.19.0
+
 ## 2.18.0
 
 ### Minor Changes

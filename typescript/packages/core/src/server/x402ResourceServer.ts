@@ -109,7 +109,10 @@ export interface SettleFailureContext extends SettleContext {
   error: Error;
 }
 
-export type VerifiedPaymentCancellationReason = "handler_threw" | "handler_failed";
+export type VerifiedPaymentCancellationReason =
+  | "handler_threw"
+  | "handler_failed"
+  | "after_verify_aborted";
 
 export interface VerifiedPaymentCanceledContext extends SettleContext {
   reason: VerifiedPaymentCancellationReason;
@@ -135,7 +138,11 @@ export type BeforeVerifyHook = (
 
 export type AfterVerifyHook = (
   context: VerifyResultContext,
-) => Promise<void | { skipHandler: true; response?: SkipHandlerDirective }>;
+) => Promise<
+  | void
+  | { skipHandler: true; response?: SkipHandlerDirective }
+  | { abort: true; reason: string; message?: string }
+>;
 
 export type OnVerifyFailureHook = (
   context: VerifyFailureContext,
@@ -1005,7 +1012,12 @@ export class x402ResourceServer {
         try {
           const result = await hook(failureContext);
           if (result && "recovered" in result && result.recovered) {
-            return result.result;
+            return this.runAfterVerifyHooks(
+              result.result,
+              context,
+              extensionKeysInUse,
+              matchedScheme,
+            );
           }
         } catch (error) {
           this.warnResourceServerHookFailure("onVerifyFailure", label, error);
@@ -1430,6 +1442,20 @@ export class x402ResourceServer {
     )) {
       try {
         const directive = await hook(resultContext);
+        if (directive && "abort" in directive && directive.abort) {
+          await this.dispatchVerifiedPaymentCanceled(
+            context.paymentPayload,
+            context.requirements,
+            context.declaredExtensions,
+            { reason: "after_verify_aborted" },
+            context.transportContext,
+          );
+          return {
+            isValid: false,
+            invalidReason: directive.reason,
+            invalidMessage: directive.message,
+          };
+        }
         if (directive && "skipHandler" in directive && directive.skipHandler) {
           skipHandler = directive.response ?? {};
         }
@@ -1508,9 +1534,9 @@ export class x402ResourceServer {
    * @param fallbackTransportContext - Optional transport-specific context
    */
   private async dispatchVerifiedPaymentCanceled(
-    paymentPayload: PaymentPayload,
-    requirements: PaymentRequirements,
-    declaredExtensions: Record<string, unknown>,
+    paymentPayload: DeepReadonly<PaymentPayload>,
+    requirements: DeepReadonly<PaymentRequirements>,
+    declaredExtensions: DeepReadonly<Record<string, unknown>>,
     options: VerifiedPaymentCancelOptions,
     fallbackTransportContext?: unknown,
   ): Promise<void> {

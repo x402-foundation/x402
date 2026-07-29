@@ -83,6 +83,7 @@ export {
   getNetworkFromCaip2,
   isAlgorandNetwork,
   isTestnetNetwork,
+  normalizeAlgorandNetwork,
   getGenesisHashFromTransaction,
   validateGroupId,
   getTransactionId,

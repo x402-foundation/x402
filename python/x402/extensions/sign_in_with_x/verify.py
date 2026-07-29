@@ -2,9 +2,17 @@
 
 from __future__ import annotations
 
-from .evm import format_siwe_message, verify_evm_signature
+from .evm import extract_evm_chain_id, format_siwe_message, verify_evm_signature
 from .solana import decode_base58, format_siws_message, verify_solana_signature
-from .types import SIWxPayload, SIWxVerifyOptions, SIWxVerifyResult
+from .types import SIWxPayload, SIWxVerifyCode, SIWxVerifyOptions, SIWxVerifyResult
+
+
+def _verify_failure(invalid_reason: SIWxVerifyCode, invalid_message: str) -> SIWxVerifyResult:
+    return SIWxVerifyResult(
+        is_valid=False,
+        invalid_reason=invalid_reason,
+        invalid_message=invalid_message,
+    )
 
 
 async def verify_siwx_signature(
@@ -13,23 +21,25 @@ async def verify_siwx_signature(
 ) -> SIWxVerifyResult:
     """Verify SIWX signature cryptographically."""
     opts = options or SIWxVerifyOptions()
-    try:
-        if payload.chain_id.startswith("eip155:"):
-            return await _verify_evm_payload(payload, opts)
-        if payload.chain_id.startswith("solana:"):
-            return _verify_solana_payload(payload)
-        return SIWxVerifyResult(
-            valid=False,
-            error=(
-                f"Unsupported chain namespace: {payload.chain_id}. "
-                "Supported: eip155:* (EVM), solana:* (Solana)"
-            ),
-        )
-    except Exception as e:
-        return SIWxVerifyResult(valid=False, error=str(e))
+    if payload.chain_id.startswith("eip155:"):
+        return await _verify_evm_payload(payload, opts)
+    if payload.chain_id.startswith("solana:"):
+        return _verify_solana_payload(payload)
+    return _verify_failure(
+        "invalid_siwx_unsupported_chain",
+        (
+            f"Unsupported chain namespace: {payload.chain_id}. "
+            "Supported: eip155:* (EVM), solana:* (Solana)"
+        ),
+    )
 
 
 async def _verify_evm_payload(payload: SIWxPayload, options: SIWxVerifyOptions) -> SIWxVerifyResult:
+    try:
+        extract_evm_chain_id(payload.chain_id)
+    except ValueError as error:
+        return _verify_failure("invalid_siwx_chain_id", str(error))
+
     message = format_siwe_message(payload, payload.address)
     try:
         valid = await verify_evm_signature(
@@ -40,10 +50,13 @@ async def _verify_evm_payload(payload: SIWxPayload, options: SIWxVerifyOptions) 
             provider=options.provider,
         )
         if not valid:
-            return SIWxVerifyResult(valid=False, error="Signature verification failed")
-        return SIWxVerifyResult(valid=True, address=payload.address)
-    except Exception as e:
-        return SIWxVerifyResult(valid=False, error=str(e))
+            return _verify_failure("invalid_siwx_signature", "Signature verification failed")
+        return SIWxVerifyResult(is_valid=True, payer=payload.address)
+    except Exception as error:
+        return _verify_failure(
+            "invalid_siwx_verifier_error",
+            str(error) if str(error) else "Signature verification failed",
+        )
 
 
 def _verify_solana_payload(payload: SIWxPayload) -> SIWxVerifyResult:
@@ -51,20 +64,23 @@ def _verify_solana_payload(payload: SIWxPayload) -> SIWxVerifyResult:
     try:
         signature = decode_base58(payload.signature)
         public_key = decode_base58(payload.address)
-    except ValueError as e:
-        return SIWxVerifyResult(valid=False, error=f"Invalid Base58 encoding: {e}")
+    except ValueError as error:
+        return _verify_failure(
+            "invalid_siwx_malformed_signature",
+            f"Invalid Base58 encoding: {error}",
+        )
 
     if len(signature) != 64:
-        return SIWxVerifyResult(
-            valid=False,
-            error=f"Invalid signature length: expected 64 bytes, got {len(signature)}",
+        return _verify_failure(
+            "invalid_siwx_malformed_signature",
+            f"Invalid signature length: expected 64 bytes, got {len(signature)}",
         )
     if len(public_key) != 32:
-        return SIWxVerifyResult(
-            valid=False,
-            error=f"Invalid public key length: expected 32 bytes, got {len(public_key)}",
+        return _verify_failure(
+            "invalid_siwx_malformed_signature",
+            f"Invalid public key length: expected 32 bytes, got {len(public_key)}",
         )
 
     if not verify_solana_signature(message, signature, public_key):
-        return SIWxVerifyResult(valid=False, error="Solana signature verification failed")
-    return SIWxVerifyResult(valid=True, address=payload.address)
+        return _verify_failure("invalid_siwx_signature", "Solana signature verification failed")
+    return SIWxVerifyResult(is_valid=True, payer=payload.address)

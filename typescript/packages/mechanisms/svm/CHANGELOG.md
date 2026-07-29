@@ -1,5 +1,21 @@
 # @x402/svm Changelog
 
+## 2.20.0
+
+### Minor Changes
+
+- Updated dependencies [4453a92](https://github.com/x402-foundation/x402/commit/4453a92)
+  - @x402/core@2.20.0
+
+- [04c94b6](https://github.com/x402-foundation/x402/commit/04c94b6): Added support for resource servers to include recent blockhash hints in SVM exact payment requirements. Clients use valid hints without a blockhash RPC call and fetch their own blockhash when a hint is absent or malformed. ([#2937](https://github.com/x402-foundation/x402/pull/2937)) - Thanks [@phdargen](https://github.com/phdargen)!
+
+## 2.19.0
+
+### Minor Changes
+
+- Updated dependencies [c72cfee](https://github.com/x402-foundation/x402/commit/c72cfee)
+  - @x402/core@2.19.0
+
 ## 2.18.0
 
 ### Minor Changes

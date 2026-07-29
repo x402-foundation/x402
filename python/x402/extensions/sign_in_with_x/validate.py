@@ -26,21 +26,26 @@ async def validate_siwx_message(
 
     if message.domain != expected.netloc:
         return SIWxValidationResult(
-            valid=False,
-            error=f'Domain mismatch: expected "{expected.netloc}", got "{message.domain}"',
+            is_valid=False,
+            invalid_reason="invalid_siwx_domain_mismatch",
+            invalid_message=(
+                f'Domain mismatch: expected "{expected.netloc}", got "{message.domain}"'
+            ),
         )
 
     message_uri = urlparse(message.uri)
     if not message_uri.scheme or not message_uri.netloc:
         return SIWxValidationResult(
-            valid=False,
-            error=f'Invalid URI: "{message.uri}" is not a valid URL',
+            is_valid=False,
+            invalid_reason="invalid_siwx_uri_mismatch",
+            invalid_message=f'Invalid URI: "{message.uri}" is not a valid URL',
         )
 
     if _url_origin(message_uri) != expected_origin:
         return SIWxValidationResult(
-            valid=False,
-            error=(
+            is_valid=False,
+            invalid_reason="invalid_siwx_uri_mismatch",
+            invalid_message=(
                 f'URI mismatch: expected origin "{expected_origin}", '
                 f'got "{_url_origin(message_uri)}"'
             ),
@@ -49,7 +54,11 @@ async def validate_siwx_message(
     try:
         issued_at = datetime.fromisoformat(message.issued_at.replace("Z", "+00:00"))
     except ValueError:
-        return SIWxValidationResult(valid=False, error="Invalid issuedAt timestamp")
+        return SIWxValidationResult(
+            is_valid=False,
+            invalid_reason="invalid_siwx_issued_at",
+            invalid_message="Invalid issuedAt timestamp",
+        )
 
     now = datetime.now(timezone.utc)
     if issued_at.tzinfo is None:
@@ -57,33 +66,53 @@ async def validate_siwx_message(
     age_ms = (now - issued_at).total_seconds() * 1000
     if age_ms > max_age:
         return SIWxValidationResult(
-            valid=False,
-            error=f"Message too old: {round(age_ms / 1000)}s exceeds {max_age / 1000}s limit",
+            is_valid=False,
+            invalid_reason="invalid_siwx_issued_at_too_old",
+            invalid_message=(
+                f"Message too old: {round(age_ms / 1000)}s exceeds {max_age / 1000}s limit"
+            ),
         )
     if age_ms < 0:
-        return SIWxValidationResult(valid=False, error="issuedAt is in the future")
+        return SIWxValidationResult(
+            is_valid=False,
+            invalid_reason="invalid_siwx_issued_at_in_future",
+            invalid_message="issuedAt is in the future",
+        )
 
     if message.expiration_time:
         try:
             expiration = datetime.fromisoformat(message.expiration_time.replace("Z", "+00:00"))
         except ValueError:
-            return SIWxValidationResult(valid=False, error="Invalid expirationTime timestamp")
+            return SIWxValidationResult(
+                is_valid=False,
+                invalid_reason="invalid_siwx_expiration_time",
+                invalid_message="Invalid expirationTime timestamp",
+            )
         if expiration.tzinfo is None:
             expiration = expiration.replace(tzinfo=timezone.utc)
         if expiration < now:
-            return SIWxValidationResult(valid=False, error="Message expired")
+            return SIWxValidationResult(
+                is_valid=False,
+                invalid_reason="invalid_siwx_expired",
+                invalid_message="Message expired",
+            )
 
     if message.not_before:
         try:
             not_before = datetime.fromisoformat(message.not_before.replace("Z", "+00:00"))
         except ValueError:
-            return SIWxValidationResult(valid=False, error="Invalid notBefore timestamp")
+            return SIWxValidationResult(
+                is_valid=False,
+                invalid_reason="invalid_siwx_not_before",
+                invalid_message="Invalid notBefore timestamp",
+            )
         if not_before.tzinfo is None:
             not_before = not_before.replace(tzinfo=timezone.utc)
         if now < not_before:
             return SIWxValidationResult(
-                valid=False,
-                error="Message not yet valid (notBefore is in the future)",
+                is_valid=False,
+                invalid_reason="invalid_siwx_not_yet_valid",
+                invalid_message="Message not yet valid (notBefore is in the future)",
             )
 
     if opts.check_nonce is not None:
@@ -92,8 +121,9 @@ async def validate_siwx_message(
             nonce_valid = await nonce_valid
         if not nonce_valid:
             return SIWxValidationResult(
-                valid=False,
-                error="Nonce validation failed (possible replay attack)",
+                is_valid=False,
+                invalid_reason="invalid_siwx_nonce",
+                invalid_message="Nonce validation failed (possible replay attack)",
             )
 
-    return SIWxValidationResult(valid=True)
+    return SIWxValidationResult(is_valid=True)

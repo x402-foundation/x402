@@ -91,6 +91,26 @@ func TestBuildDataSuffixServiceCodeArray(t *testing.T) {
 	}
 }
 
+func TestBuildDataSuffixTruncatesServiceCodesToFive(t *testing.T) {
+	codes := []interface{}{"bc_1", "bc_2", "bc_3", "bc_4", "bc_5", "bc_6", "bc_7"}
+	parsed := parsedFromFacilitator(t, suffixContext(map[string]interface{}{"s": codes}))
+	want := []string{"bc_1", "bc_2", "bc_3", "bc_4", "bc_5"}
+	if parsed.W != walletCode || !reflect.DeepEqual(parsed.S, want) {
+		t.Fatalf("expected first 5 service codes, got %+v", parsed)
+	}
+}
+
+func TestBuildDataSuffixFiltersInvalidBeforeTruncatingToFive(t *testing.T) {
+	info := map[string]interface{}{
+		"s": []interface{}{"INVALID", "bc_1", "bc_2", "bc_3", "bc_4", "bc_5", "bc_6", "bc_7", "bc_8"},
+	}
+	parsed := parsedFromFacilitator(t, suffixContext(info))
+	want := []string{"bc_1", "bc_2", "bc_3", "bc_4", "bc_5"}
+	if parsed.W != walletCode || !reflect.DeepEqual(parsed.S, want) {
+		t.Fatalf("expected first 5 valid service codes, got %+v", parsed)
+	}
+}
+
 func TestBuildDataSuffixIgnoresInvalidServiceCode(t *testing.T) {
 	parsed := parsedFromFacilitator(t, suffixContext(map[string]interface{}{"s": "Also_Invalid"}))
 	if parsed.W != walletCode || len(parsed.S) != 0 || parsed.A != "" {

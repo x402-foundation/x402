@@ -11,6 +11,14 @@ import (
 	"github.com/x402-foundation/x402/go/v2/mechanisms/evm"
 )
 
+func verifyFailure(invalidReason, invalidMessage string) VerifyResult {
+	return VerifyResult{
+		IsValid:        false,
+		InvalidReason:  invalidReason,
+		InvalidMessage: invalidMessage,
+	}
+}
+
 // VerifySignature verifies a SIWX payload signature.
 func VerifySignature(payload Payload) VerifyResult {
 	return VerifySignatureWithOptions(context.Background(), payload, VerifyOptions{})
@@ -24,27 +32,38 @@ func VerifySignatureWithOptions(ctx context.Context, payload Payload, options Ve
 	if strings.HasPrefix(payload.ChainID, "solana:") {
 		return verifySolanaPayload(payload)
 	}
-	return VerifyResult{
-		Valid: false,
-		Error: fmt.Sprintf("Unsupported chain namespace: %s. Supported: eip155:* (EVM), solana:* (Solana)", payload.ChainID),
-	}
+	return verifyFailure(
+		ErrInvalidSIWxUnsupportedChain,
+		fmt.Sprintf(
+			"Unsupported chain namespace: %s. Supported: eip155:* (EVM), solana:* (Solana)",
+			payload.ChainID,
+		),
+	)
 }
 
 func verifyEVMPayload(ctx context.Context, payload Payload, options VerifyOptions) VerifyResult {
+	if _, err := ExtractEVMChainID(payload.ChainID); err != nil {
+		return verifyFailure(ErrInvalidSIWxChainID, err.Error())
+	}
+
 	message, err := createSIWEMessage(payload)
 	if err != nil {
-		return VerifyResult{Valid: false, Error: err.Error()}
+		return verifyFailure(ErrInvalidSIWxChainID, err.Error())
 	}
 
 	valid, err := verifyEVMMessage(ctx, message, payload.Signature, options)
 	if err != nil {
-		return VerifyResult{Valid: false, Error: err.Error()}
+		message := err.Error()
+		if message == "" {
+			message = "Signature verification failed"
+		}
+		return verifyFailure(ErrInvalidSIWxVerifierError, message)
 	}
 	if !valid {
-		return VerifyResult{Valid: false, Error: "Signature verification failed"}
+		return verifyFailure(ErrInvalidSIWxSignature, "Signature verification failed")
 	}
 
-	return VerifyResult{Valid: true, Address: message.GetAddress().Hex()}
+	return VerifyResult{IsValid: true, Payer: message.GetAddress().Hex()}
 }
 
 func verifyEVMMessage(
@@ -87,29 +106,41 @@ func VerifyEVMSignature(message string, address string, signature string) (bool,
 func verifySolanaPayload(payload Payload) VerifyResult {
 	message, err := FormatSIWSMessage(payload)
 	if err != nil {
-		return VerifyResult{Valid: false, Error: err.Error()}
+		return verifyFailure(ErrInvalidSIWxUnsupportedChain, err.Error())
 	}
 
 	signature, err := DecodeBase58(payload.Signature)
 	if err != nil {
-		return VerifyResult{Valid: false, Error: fmt.Sprintf("Invalid Base58 encoding: %s", err.Error())}
+		return verifyFailure(
+			ErrInvalidSIWxMalformedSignature,
+			fmt.Sprintf("Invalid Base58 encoding: %s", err.Error()),
+		)
 	}
 	publicKey, err := DecodeBase58(payload.Address)
 	if err != nil {
-		return VerifyResult{Valid: false, Error: fmt.Sprintf("Invalid Base58 encoding: %s", err.Error())}
+		return verifyFailure(
+			ErrInvalidSIWxMalformedSignature,
+			fmt.Sprintf("Invalid Base58 encoding: %s", err.Error()),
+		)
 	}
 
 	if len(signature) != 64 {
-		return VerifyResult{Valid: false, Error: fmt.Sprintf("Invalid signature length: expected 64 bytes, got %d", len(signature))}
+		return verifyFailure(
+			ErrInvalidSIWxMalformedSignature,
+			fmt.Sprintf("Invalid signature length: expected 64 bytes, got %d", len(signature)),
+		)
 	}
 	if len(publicKey) != 32 {
-		return VerifyResult{Valid: false, Error: fmt.Sprintf("Invalid public key length: expected 32 bytes, got %d", len(publicKey))}
+		return verifyFailure(
+			ErrInvalidSIWxMalformedSignature,
+			fmt.Sprintf("Invalid public key length: expected 32 bytes, got %d", len(publicKey)),
+		)
 	}
 	if !VerifySolanaSignature(message, signature, publicKey) {
-		return VerifyResult{Valid: false, Error: "Solana signature verification failed"}
+		return verifyFailure(ErrInvalidSIWxSignature, "Solana signature verification failed")
 	}
 
-	return VerifyResult{Valid: true, Address: payload.Address}
+	return VerifyResult{IsValid: true, Payer: payload.Address}
 }
 
 // NewUniversalEVMVerifier creates an EVM verifier for EOA and deployed EIP-1271 signatures.

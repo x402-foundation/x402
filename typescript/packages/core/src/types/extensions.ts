@@ -8,6 +8,7 @@ import type {
   SettleContext,
   SettleFailureContext,
   VerifiedPaymentCanceledContext,
+  SkipHandlerDirective,
 } from "../server/x402ResourceServer";
 import type { ResourceServerTransportExtensionHooks } from "../http/x402HTTPResourceServer";
 export type {
@@ -43,7 +44,14 @@ export interface ResourceServerExtensionHooks {
     | { abort: true; reason: string; message?: string }
     | { skip: true; result: VerifyResponse }
   >;
-  onAfterVerify?: (declaration: unknown, context: VerifyResultContext) => Promise<void>;
+  onAfterVerify?: (
+    declaration: unknown,
+    context: VerifyResultContext,
+  ) => Promise<
+    | void
+    | { skipHandler: true; response?: SkipHandlerDirective }
+    | { abort: true; reason: string; message?: string }
+  >;
   onVerifyFailure?: (
     declaration: unknown,
     context: VerifyFailureContext,

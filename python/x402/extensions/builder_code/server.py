@@ -22,6 +22,7 @@ BUILDER_CODE_SCHEMA: dict[str, Any] = {
         },
         "s": {
             "type": "array",
+            "maxItems": 5,
             "items": {
                 "type": "string",
                 "pattern": "^[a-z0-9_]{1,32}$",

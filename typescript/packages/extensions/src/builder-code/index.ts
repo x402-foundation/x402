@@ -47,7 +47,13 @@ export type {
   DataSuffixContext,
 } from "./types";
 
-export { BUILDER_CODE, BUILDER_CODE_PATTERN, ERC_8021_MARKER, SCHEMA_2_ID } from "./types";
+export {
+  BUILDER_CODE,
+  BUILDER_CODE_PATTERN,
+  ERC_8021_MARKER,
+  MAX_SERVICE_CODES,
+  SCHEMA_2_ID,
+} from "./types";
 
 // CBOR encoding
 export { encodeBuilderCodeSuffix, parseBuilderCodeSuffixFromCalldata } from "./cbor";

@@ -9,6 +9,19 @@ from pathlib import Path
 from typing import Any
 
 
+def resolve_within_dir(base_dir: str | Path, filename: str) -> Path:
+    """Resolve `filename` under `base_dir` and assert the result stays within it.
+
+    Raises:
+        ValueError: When the resolved path escapes `base_dir` (e.g. via `..`).
+    """
+    base = Path(base_dir).resolve()
+    target = (base / filename).resolve()
+    if target != base and not target.is_relative_to(base):
+        raise ValueError("resolved channel path escapes storage root")
+    return target
+
+
 def read_json_file(file_path: str | Path) -> Any | None:
     """Read and parse a JSON file. Returns ``None`` if the file is missing."""
     path = Path(file_path)
@@ -48,4 +61,4 @@ def delete_file(file_path: str | Path) -> None:
         pass
 
 
-__all__ = ["read_json_file", "write_json_atomic", "delete_file"]
+__all__ = ["resolve_within_dir", "read_json_file", "write_json_atomic", "delete_file"]

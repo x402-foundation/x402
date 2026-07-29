@@ -43,33 +43,41 @@ func urlOrigin(u *url.URL) string {
 	return u.Scheme + "://" + u.Host
 }
 
+func validationFailure(invalidReason, invalidMessage string) ValidationResult {
+	return ValidationResult{
+		IsValid:        false,
+		InvalidReason:  invalidReason,
+		InvalidMessage: invalidMessage,
+	}
+}
+
 // ValidateMessage validates SIWX payload fields before cryptographic verification.
 func ValidateMessage(payload Payload, expectedOrigin *url.URL, options ValidationOptions) ValidationResult {
 	if expectedOrigin == nil || expectedOrigin.Scheme == "" || expectedOrigin.Host == "" {
-		return ValidationResult{Valid: false, Error: "Invalid expected origin"}
+		return validationFailure(ErrInvalidSIWxURIMismatch, "Invalid expected origin")
 	}
 
 	if payload.Domain != expectedOrigin.Host {
-		return ValidationResult{
-			Valid: false,
-			Error: fmt.Sprintf(`Domain mismatch: expected %q, got %q`, expectedOrigin.Host, payload.Domain),
-		}
+		return validationFailure(
+			ErrInvalidSIWxDomainMismatch,
+			fmt.Sprintf(`Domain mismatch: expected %q, got %q`, expectedOrigin.Host, payload.Domain),
+		)
 	}
 
 	messageURI, err := url.Parse(payload.URI)
 	if err != nil || messageURI.Scheme == "" || messageURI.Host == "" {
-		return ValidationResult{
-			Valid: false,
-			Error: fmt.Sprintf(`Invalid URI: %q is not a valid URL`, payload.URI),
-		}
+		return validationFailure(
+			ErrInvalidSIWxURIMismatch,
+			fmt.Sprintf(`Invalid URI: %q is not a valid URL`, payload.URI),
+		)
 	}
 
 	expected := urlOrigin(expectedOrigin)
 	if urlOrigin(messageURI) != expected {
-		return ValidationResult{
-			Valid: false,
-			Error: fmt.Sprintf(`URI mismatch: expected origin %q, got %q`, expected, urlOrigin(messageURI)),
-		}
+		return validationFailure(
+			ErrInvalidSIWxURIMismatch,
+			fmt.Sprintf(`URI mismatch: expected origin %q, got %q`, expected, urlOrigin(messageURI)),
+		)
 	}
 
 	maxAge := options.MaxAge
@@ -82,46 +90,52 @@ func ValidateMessage(payload Payload, expectedOrigin *url.URL, options Validatio
 		issuedAt, err = time.Parse(time.RFC3339Nano, payload.IssuedAt)
 	}
 	if err != nil {
-		return ValidationResult{Valid: false, Error: "Invalid issuedAt timestamp"}
+		return validationFailure(ErrInvalidSIWxIssuedAt, "Invalid issuedAt timestamp")
 	}
 
 	now := time.Now()
 	age := now.Sub(issuedAt)
 	if age > maxAge {
-		return ValidationResult{
-			Valid: false,
-			Error: fmt.Sprintf("Message too old: %.0fs exceeds %.0fs limit", age.Seconds(), maxAge.Seconds()),
-		}
+		return validationFailure(
+			ErrInvalidSIWxIssuedAtTooOld,
+			fmt.Sprintf("Message too old: %.0fs exceeds %.0fs limit", age.Seconds(), maxAge.Seconds()),
+		)
 	}
 	if age < 0 {
-		return ValidationResult{Valid: false, Error: "issuedAt is in the future"}
+		return validationFailure(ErrInvalidSIWxIssuedAtInFuture, "issuedAt is in the future")
 	}
 
 	if payload.ExpirationTime != "" {
 		expiration, err := parseTimestamp(payload.ExpirationTime)
 		if err != nil {
-			return ValidationResult{Valid: false, Error: "Invalid expirationTime timestamp"}
+			return validationFailure(ErrInvalidSIWxExpirationTime, "Invalid expirationTime timestamp")
 		}
 		if expiration.Before(now) {
-			return ValidationResult{Valid: false, Error: "Message expired"}
+			return validationFailure(ErrInvalidSIWxExpired, "Message expired")
 		}
 	}
 
 	if payload.NotBefore != "" {
 		notBefore, err := parseTimestamp(payload.NotBefore)
 		if err != nil {
-			return ValidationResult{Valid: false, Error: "Invalid notBefore timestamp"}
+			return validationFailure(ErrInvalidSIWxNotBefore, "Invalid notBefore timestamp")
 		}
 		if now.Before(notBefore) {
-			return ValidationResult{Valid: false, Error: "Message not yet valid (notBefore is in the future)"}
+			return validationFailure(
+				ErrInvalidSIWxNotYetValid,
+				"Message not yet valid (notBefore is in the future)",
+			)
 		}
 	}
 
 	if options.CheckNonce != nil && !options.CheckNonce(payload.Nonce) {
-		return ValidationResult{Valid: false, Error: "Nonce validation failed (possible replay attack)"}
+		return validationFailure(
+			ErrInvalidSIWxNonce,
+			"Nonce validation failed (possible replay attack)",
+		)
 	}
 
-	return ValidationResult{Valid: true}
+	return ValidationResult{IsValid: true}
 }
 
 func parseTimestamp(value string) (time.Time, error) {

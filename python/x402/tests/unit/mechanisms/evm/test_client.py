@@ -2,6 +2,7 @@
 
 try:
     from eth_account import Account
+    from eth_account.signers.base import BaseAccount
     from eth_account.signers.local import LocalAccount
 except ImportError:
     import pytest
@@ -208,3 +209,91 @@ class TestLocalAccountAutoWrap:
         assert auth["validAfter"] == "0"
         assert int(auth["validBefore"]) >= now + 600 - 2
         assert int(auth["validBefore"]) <= now + 600 + 2
+
+
+class _CustomBaseAccountSigner(BaseAccount):
+    """A signer that satisfies `BaseAccount` without being a `LocalAccount`.
+
+    Mirrors third-party wallet-provider adapters (e.g. Coinbase AgentKit's
+    `EvmWalletSigner`) that wrap non-key-based custody backends: they extend
+    the abstract `BaseAccount` directly and implement `sign_typed_data` with
+    eth_account's keyword convention, but are never a `LocalAccount` instance.
+    """
+
+    def __init__(self):
+        self._account = Account.create()
+
+    @property
+    def address(self):
+        return self._account.address
+
+    def unsafe_sign_hash(self, message_hash):
+        return self._account.unsafe_sign_hash(message_hash)
+
+    def sign_message(self, signable_message):
+        return self._account.sign_message(signable_message)
+
+    def sign_transaction(self, transaction_dict):
+        return self._account.sign_transaction(transaction_dict)
+
+    def sign_typed_data(
+        self, domain_data=None, message_types=None, message_data=None, full_message=None
+    ):
+        return self._account.sign_typed_data(
+            domain_data=domain_data,
+            message_types=message_types,
+            message_data=message_data,
+            full_message=full_message,
+        )
+
+
+class TestBaseAccountAutoWrap:
+    """A non-`LocalAccount` `BaseAccount` signer must also be auto-wrapped.
+
+    Regression test: `_wrap_if_local_account` previously checked
+    `isinstance(signer, LocalAccount)`, which only matches raw private-key
+    accounts. Wallet-provider adapters that extend `BaseAccount` directly
+    (not `LocalAccount`) fell through unwrapped, and were then called with
+    `EthAccountSigner`'s 4-positional-argument convention
+    (`domain, types, primary_type, message`), which does not match
+    eth_account's keyword convention — causing a `KeyError` deep in
+    `eth_account.messages.encode_typed_data`.
+    """
+
+    def test_should_auto_wrap_base_account_signer(self):
+        """A custom BaseAccount (not LocalAccount) should be auto-wrapped."""
+        signer = _CustomBaseAccountSigner()
+        assert isinstance(signer, BaseAccount)
+        assert not isinstance(signer, LocalAccount)
+
+        client = ExactEvmClientScheme(signer=signer)
+
+        assert isinstance(client._signer, EthAccountSigner)
+
+    def test_custom_base_account_signer_can_sign_payload(self):
+        """End-to-end: a custom BaseAccount signer should produce a valid signed payload."""
+        signer = _CustomBaseAccountSigner()
+        network = "eip155:8453"
+
+        client = ExactEvmClientScheme(signer=signer)
+
+        requirements = PaymentRequirements(
+            scheme="exact",
+            network=network,
+            asset=get_asset_info(network, "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913")["address"],
+            amount="500000",
+            pay_to="0x0987654321098765432109876543210987654321",
+            max_timeout_seconds=3600,
+            extra={
+                "name": "USD Coin",
+                "version": "2",
+            },
+        )
+
+        payload = client.create_payment_payload(requirements)
+
+        assert isinstance(payload, dict)
+        assert "authorization" in payload
+        assert "signature" in payload
+        assert payload["signature"].startswith("0x")
+        assert len(payload["signature"]) > 2  # not just "0x"

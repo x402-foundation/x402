@@ -25,7 +25,7 @@ import type { FacilitatorAvmSigner } from "../../signer";
 import type { ExactAvmPayloadV2 } from "../../types";
 import { isExactAvmPayload } from "../../types";
 import { MAX_TRANSACTION_GROUP_SIZE } from "@algorandfoundation/algokit-utils/common";
-import { decodeTransaction, hasSignature } from "../../utils";
+import { decodeTransaction, hasSignature, normalizeAlgorandNetwork } from "../../utils";
 import { maxReasonableGroupFee } from "../../constants";
 import * as Errors from "./errors";
 
@@ -115,8 +115,11 @@ export class ExactAvmScheme implements SchemeNetworkFacilitator {
         };
       }
 
-      // Validate network
-      if (payload.accepted.network !== requirements.network) {
+      // Validate network (accept legacy full-hash identifiers on input)
+      if (
+        normalizeAlgorandNetwork(payload.accepted.network) !==
+        normalizeAlgorandNetwork(requirements.network)
+      ) {
         return {
           isValid: false,
           invalidReason: Errors.ErrNetworkMismatch,
@@ -186,7 +189,7 @@ export class ExactAvmScheme implements SchemeNetworkFacilitator {
       // Simulate the assembled group
       const simResult = await this.simulateTransactionGroup(
         prepared.signedTxns,
-        requirements.network,
+        normalizeAlgorandNetwork(requirements.network),
       );
       if (!simResult.isValid) return simResult;
 
@@ -268,7 +271,10 @@ export class ExactAvmScheme implements SchemeNetworkFacilitator {
 
     // Submit transaction group
     try {
-      await this.signer.sendTransactions(prepared.signedTxns, requirements.network);
+      await this.signer.sendTransactions(
+        prepared.signedTxns,
+        normalizeAlgorandNetwork(requirements.network),
+      );
     } catch (error) {
       return {
         success: false,
@@ -283,7 +289,11 @@ export class ExactAvmScheme implements SchemeNetworkFacilitator {
     // Wait for on-chain confirmation
     try {
       // Wait up to 10 rounds for on-chain confirmation
-      await this.signer.waitForConfirmation(paymentTxId, requirements.network, 10);
+      await this.signer.waitForConfirmation(
+        paymentTxId,
+        normalizeAlgorandNetwork(requirements.network),
+        10,
+      );
     } catch (error) {
       return {
         success: false,

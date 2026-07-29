@@ -16,6 +16,7 @@ from .cbor import encode_builder_code_suffix
 from .types import (
     BUILDER_CODE,
     BUILDER_CODE_PATTERN,
+    MAX_SERVICE_CODES,
     BuilderCodeExtensionData,
 )
 
@@ -34,9 +35,10 @@ def _extract_client_info(extensions: dict[str, Any] | None) -> dict[str, Any] | 
 
 
 def _resolve_service_codes(raw: Any) -> list[str]:
-    """Normalize and validate ``s`` from the client payload, keeping every valid entry."""
+    """Normalize and validate ``s`` from the client payload, keeping valid entries in order and truncating to MAX_SERVICE_CODES."""
     candidates = [raw] if isinstance(raw, str) else raw if isinstance(raw, list) else []
-    return [c for c in candidates if isinstance(c, str) and BUILDER_CODE_PATTERN.match(c)]
+    valid = [c for c in candidates if isinstance(c, str) and BUILDER_CODE_PATTERN.match(c)]
+    return valid[:MAX_SERVICE_CODES]
 
 
 @dataclass(frozen=True)

@@ -173,14 +173,22 @@ export function createSIWxRequestHook(options: CreateSIWxRequestHookOptions): Pr
     try {
       const payload = parseSIWxHeader(header);
       const validation = await validateSIWxMessage(payload, configuredOrigin);
-      if (!validation.valid) {
-        onEvent?.({ type: "validation_failed", resource: context.path, error: validation.error });
+      if (!validation.isValid) {
+        onEvent?.({
+          type: "validation_failed",
+          resource: context.path,
+          error: validation.invalidMessage,
+        });
         return;
       }
 
       const verification = await verifySIWxSignature(payload, verifyOptions);
-      if (!verification.valid || !verification.address) {
-        onEvent?.({ type: "validation_failed", resource: context.path, error: verification.error });
+      if (!verification.isValid) {
+        onEvent?.({
+          type: "validation_failed",
+          resource: context.path,
+          error: verification.invalidMessage,
+        });
         return;
       }
 
@@ -196,7 +204,7 @@ export function createSIWxRequestHook(options: CreateSIWxRequestHookOptions): Pr
       // Auth-only routes (accepts: []) grant access on valid SIWX alone
       const isAuthOnly = Array.isArray(routeConfig.accepts) && routeConfig.accepts.length === 0;
 
-      const shouldGrant = isAuthOnly || (await storage.hasPaid(context.path, verification.address));
+      const shouldGrant = isAuthOnly || (await storage.hasPaid(context.path, verification.payer));
       if (shouldGrant) {
         // Record nonce as used before granting access
         if (storage.recordNonce) {
@@ -206,7 +214,7 @@ export function createSIWxRequestHook(options: CreateSIWxRequestHookOptions): Pr
         onEvent?.({
           type: "access_granted",
           resource: context.path,
-          address: verification.address,
+          address: verification.payer,
         });
         return { grantAccess: true };
       }

@@ -127,12 +127,10 @@ func (c *ExactSvmScheme) CreatePaymentPayload(
 		return types.PaymentPayload{}, fmt.Errorf(ErrInvalidFeePayerAddress+": %w", err)
 	}
 
-	// Get latest blockhash
-	latestBlockhash, err := rpcClient.GetLatestBlockhash(ctx, rpc.CommitmentFinalized)
+	recentBlockhash, err := c.resolveRecentBlockhash(ctx, rpcClient, requirements)
 	if err != nil {
-		return types.PaymentPayload{}, fmt.Errorf(ErrFailedToGetLatestBlockhash+": %w", err)
+		return types.PaymentPayload{}, err
 	}
-	recentBlockhash := latestBlockhash.Value.Blockhash
 
 	// Build compute budget instructions
 	cuLimit, err := computebudget.NewSetComputeUnitLimitInstructionBuilder().
@@ -221,4 +219,23 @@ func (c *ExactSvmScheme) CreatePaymentPayload(
 		X402Version: 2,
 		Payload:     svmPayload.ToMap(),
 	}, nil
+}
+
+func (c *ExactSvmScheme) resolveRecentBlockhash(
+	ctx context.Context,
+	rpcClient *rpc.Client,
+	requirements types.PaymentRequirements,
+) (solana.Hash, error) {
+	if blockhash, ok := requirements.Extra["recentBlockhash"].(string); ok && blockhash != "" {
+		recentBlockhash, err := solana.HashFromBase58(blockhash)
+		if err == nil {
+			return recentBlockhash, nil
+		}
+	}
+
+	latestBlockhash, err := rpcClient.GetLatestBlockhash(ctx, rpc.CommitmentFinalized)
+	if err != nil {
+		return solana.Hash{}, fmt.Errorf(ErrFailedToGetLatestBlockhash+": %w", err)
+	}
+	return latestBlockhash.Value.Blockhash, nil
 }

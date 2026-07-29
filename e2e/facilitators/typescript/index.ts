@@ -125,7 +125,7 @@ const CASPER_NETWORK = (process.env.CASPER_NETWORK ||
   "casper:casper-test") as Network;
 const AVM_NETWORK =
   process.env.AVM_NETWORK ||
-  "algorand:SGO1GKSzyE7IEPItTxCByw9x8FmnrCDexi9/cOUJOiI=";
+  "algorand:SGO1GKSzyE7IEPItTxCByw9x8FmnrCDe";
 const HEDERA_NETWORK = process.env.HEDERA_NETWORK || "hedera:testnet";
 const KEETA_NETWORK = process.env.KEETA_NETWORK || KEETA_TESTNET_CAIP2;
 const STELLAR_NETWORK = process.env.STELLAR_NETWORK || "stellar:testnet";

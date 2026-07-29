@@ -69,6 +69,40 @@ class TestBuildDataSuffix:
         )
         assert _parse(ext, payload) == BuilderCodeExtensionData(w=WALLET, s=[SERVICE, "bc_other"])
 
+    def test_truncates_service_codes_to_first_five_valid(self) -> None:
+        ext = BuilderCodeFacilitatorExtension(builder_code=WALLET)
+        codes = ["bc_1", "bc_2", "bc_3", "bc_4", "bc_5", "bc_6", "bc_7"]
+        payload = _payload({BUILDER_CODE: {"info": {"s": codes}, "schema": {}}})
+        assert _parse(ext, payload) == BuilderCodeExtensionData(
+            w=WALLET, s=["bc_1", "bc_2", "bc_3", "bc_4", "bc_5"]
+        )
+
+    def test_filters_invalid_before_truncating_to_five(self) -> None:
+        ext = BuilderCodeFacilitatorExtension(builder_code=WALLET)
+        payload = _payload(
+            {
+                BUILDER_CODE: {
+                    "info": {
+                        "s": [
+                            "INVALID",
+                            "bc_1",
+                            "bc_2",
+                            "bc_3",
+                            "bc_4",
+                            "bc_5",
+                            "bc_6",
+                            "bc_7",
+                            "bc_8",
+                        ]
+                    },
+                    "schema": {},
+                }
+            }
+        )
+        assert _parse(ext, payload) == BuilderCodeExtensionData(
+            w=WALLET, s=["bc_1", "bc_2", "bc_3", "bc_4", "bc_5"]
+        )
+
     def test_ignores_invalid_client_service_string(self) -> None:
         ext = BuilderCodeFacilitatorExtension(builder_code=WALLET)
         payload = _payload({BUILDER_CODE: {"info": {"s": "Also_Invalid"}, "schema": {}}})

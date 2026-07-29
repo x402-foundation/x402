@@ -32,7 +32,7 @@ import type {
 } from "@algorandfoundation/algokit-utils/transact";
 import { waitForConfirmation } from "@algorandfoundation/algokit-utils/transaction";
 import type { Network } from "@x402/core/types";
-import { ALGORAND_TESTNET_CAIP2 } from "./constants";
+import { isTestnetNetwork } from "./utils";
 
 /**
  * Symbol key used to attach the internal algokit-utils AddressWithSigners
@@ -287,16 +287,6 @@ export function getAlgokitSigner(signer: ClientAvmSigner): AddressWithTransactio
 }
 
 /**
- * Determines if a network identifier refers to testnet.
- *
- * @param network - The network identifier (CAIP-2 format)
- * @returns True if the network is testnet
- */
-function isTestnet(network: string): boolean {
-  return network === ALGORAND_TESTNET_CAIP2;
-}
-
-/**
  * Creates a FacilitatorAvmSigner from a Base64-encoded private key.
  *
  * This is the recommended way to create a facilitator-side AVM signer for x402 payments.
@@ -321,7 +311,7 @@ function isTestnet(network: string): boolean {
  *   mainnetUrl: "https://my-mainnet-node.example.com",
  * });
  *
- * facilitator.register("algorand:SGO1GKSzyE7IEPItTxCByw9x8FmnrCDexi9/cOUJOiI=", new ExactAvmScheme(signer));
+ * facilitator.register("algorand:SGO1GKSzyE7IEPItTxCByw9x8FmnrCDe", new ExactAvmScheme(signer));
  * ```
  */
 export function toFacilitatorAvmSigner(
@@ -336,7 +326,7 @@ export function toFacilitatorAvmSigner(
 
   // Create AlgorandClient instances for each network, with optional URL overrides
   const getAlgorandClientForNetwork = (network: string) => {
-    if (isTestnet(network)) {
+    if (isTestnetNetwork(network)) {
       if (config?.testnetUrl) {
         return AlgorandClient.fromConfig({
           algodConfig: { server: config.testnetUrl, token: config.algodToken ?? "" },
@@ -356,7 +346,7 @@ export function toFacilitatorAvmSigner(
   const clientCache = new Map<string, ReturnType<typeof AlgorandClient.testNet>>();
 
   const getClient = (network: string) => {
-    const key = isTestnet(network) ? "testnet" : "mainnet";
+    const key = isTestnetNetwork(network) ? "testnet" : "mainnet";
     let client = clientCache.get(key);
     if (!client) {
       client = getAlgorandClientForNetwork(network);

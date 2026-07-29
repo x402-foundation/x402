@@ -159,6 +159,44 @@ class TestX402AsyncTransport:
         assert mock_transport.handle_async_request.call_count == 2
 
     @pytest.mark.asyncio
+    async def test_streaming_body_is_replayed_on_payment_retry(self):
+        """Streaming request bodies are identical on the initial send and retry."""
+        mock_client = MockX402Client()
+        payment_required = PaymentRequired(
+            x402_version=2,
+            accepts=[make_payment_requirements()],
+        )
+        encoded = encode_payment_required_header(payment_required)
+        sent_bodies = []
+
+        async def handle_request(request):
+            sent_bodies.append(await request.aread())
+            if len(sent_bodies) == 1:
+                return httpx.Response(
+                    402,
+                    headers={"PAYMENT-REQUIRED": encoded},
+                    request=request,
+                )
+            return httpx.Response(200, request=request)
+
+        mock_transport = AsyncMock()
+        mock_transport.handle_async_request = handle_request
+        transport = x402AsyncTransport(mock_client, mock_transport)
+
+        async def stream_body():
+            yield b'{"tool":"paid"}'
+
+        request = httpx.Request(
+            "POST",
+            "https://example.com/mcp",
+            content=stream_body(),
+        )
+        response = await transport.handle_async_request(request)
+
+        assert response.status_code == 200
+        assert sent_bodies == [b'{"tool":"paid"}', b'{"tool":"paid"}']
+
+    @pytest.mark.asyncio
     async def test_retry_request_has_payment_headers(self):
         """Test that retry request includes payment headers."""
         mock_client = MockX402Client()

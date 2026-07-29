@@ -873,15 +873,71 @@ To make paid MCP tools discoverable, pass the discovery extension in your paymen
   </Tab>
 </Tabs>
 
+### Troubleshooting catalog visibility
+
+Whether and how a resource appears in a facilitator's catalog is an implementation detail of the **facilitator
+operator**, an external 3rd party service provider.
+Payment verification and settlement succeeding does not, by itself, guarantee
+catalog inclusion. If a resource does not appear where you expect, contact the
+**facilitator or catalog operator** you are integrating with. Catalog behavior,
+indexing latency, and discovery APIs are outside the scope of the x402
+open-source repository.
+
+It is adviced to use the **official x402 SDKs** (or a maintained [third-party SDK](/dev-tools/third-party-sdks)) to declare, echo, and
+validate bazaar data, instead of hand-rolling `PaymentRequired`, `PaymentPayload` or extension schemas.
+
+Common protocol-level mistakes include:
+
+1. **The settled `PaymentPayload` did not carry the extension.** Cataloging
+   happens when a facilitator processes a `PaymentPayload` that includes the
+   echoed `bazaar` extension. A server-side declaration alone catalogs nothing
+   if no paying client echoes it; a settlement whose payload omits the
+   extension catalogs nothing either.
+
+2. **The echoed declaration is not spec-conformant.** Servers advertise bazaar
+   data in `PaymentRequired` (HTTP: `PAYMENT-REQUIRED` header; MCP: tool-result
+   `structuredContent`). Clients must echo that data into `PaymentPayload`.
+   Facilitators validate the payload before cataloging; non-conforming content
+   may be dropped even when verify and settle succeed. Frequent mistakes:
+   - missing `info.input.type` / `info.output.type` (when `output` is present)
+   - a relative `resource.url` — use an absolute URL
+   - malformed `accepts` entries (e.g. `asset` as an object instead of a string,
+     or a missing atomic-units `amount`)
+   - service metadata violating the validation rules above — invalid fields are
+     soft-dropped individually
+
+3. **Treating the absence of `EXTENSION-RESPONSES` as failure.** Facilitators
+   **may** return this header; its absence carries no signal. When present,
+   `bazaar.status` and `rejectedReason` reflect that facilitator's outcome.
+
+4. **Not allowing for asynchronous cataloging.** A `"processing"` status means
+   the declaration was accepted but indexing may happen later. Allow for delay
+   before concluding failure with your facilitator.
+
+If your facilitator exposes optional discovery endpoints,
+`GET /discovery/resources?payTo=<address>` can confirm what that facilitator
+has cataloged for a given payee.
+
+**Reference implementations** in the x402 repo:
+
+- [TypeScript bazaar server](https://github.com/x402-foundation/x402/tree/main/examples/typescript/servers/bazaar) — dynamic routes and `routeTemplate`
+- [Python bazaar server](https://github.com/x402-foundation/x402/tree/main/examples/python/servers/bazaar) — same pattern (FastAPI)
+- [Go bazaar server](https://github.com/x402-foundation/x402/tree/main/examples/go/servers/bazaar)
+
+Please compare your setup against these before opening a support request with your facilitator.
+
 ### Support
 
 * **GitHub**: [github.com/x402-foundation/x402](https://github.com/x402-foundation/x402)
-* **Discord**: [Join #x402 channel](https://discord.com/invite/cdp)
+* **Slack**: [Join x402 Slack](http://slack.x402.org/)
 
 ### FAQ
 
 **Q: How do I get my service listed?**
 A: Add the bazaar extension to your route configuration. See the examples above.
+
+**Q: My service settles payments but doesn't appear in a facilitator's catalog — why?**
+A: Catalog indexing is a facilitator implementation detail, not something the x402 OSS repo controls. Contact the facilitator or catalog operator you're using first. For common self-checks, see [Troubleshooting catalog visibility](#troubleshooting-catalog-visibility) above.
 
 **Q: How can I make endpoint calls more accurate?**
 A: Include descriptions clearly stating what each parameter does and how to call your endpoint, but do so as succinctly as possible.

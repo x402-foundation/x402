@@ -13,10 +13,21 @@ try:
     from x402.mechanisms.evm.batch_settlement.storage_utils import (
         delete_file,
         read_json_file,
+        resolve_within_dir,
         write_json_atomic,
     )
 except ImportError:
     pytest.skip("batch_settlement requires evm extras", allow_module_level=True)
+
+
+class TestResolveWithinDir:
+    def test_resolves_under_base(self, tmp_path: Path):
+        target = resolve_within_dir(tmp_path, "channel.json")
+        assert target == (tmp_path / "channel.json").resolve()
+
+    def test_rejects_path_escape(self, tmp_path: Path):
+        with pytest.raises(ValueError, match="escapes storage root"):
+            resolve_within_dir(tmp_path, "../../evil.json")
 
 
 class TestReadJsonFile:

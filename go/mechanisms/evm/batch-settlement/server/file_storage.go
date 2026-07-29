@@ -25,13 +25,21 @@ func NewFileChannelStorage(opts batchsettlement.FileChannelStorageOptions) *File
 	return &FileChannelStorage{root: opts.Directory}
 }
 
-func (s *FileChannelStorage) filePath(channelId string) string {
-	return filepath.Join(s.root, "server", strings.ToLower(channelId)+".json")
+func (s *FileChannelStorage) filePath(channelId string) (string, error) {
+	id, err := batchsettlement.NormalizeChannelId(channelId)
+	if err != nil {
+		return "", err
+	}
+	return batchsettlement.ResolveWithinDir(filepath.Join(s.root, "server"), id+".json")
 }
 
 func (s *FileChannelStorage) Get(channelId string) (*ChannelSession, error) {
+	path, err := s.filePath(channelId)
+	if err != nil {
+		return nil, err
+	}
 	out := &ChannelSession{}
-	ok, err := batchsettlement.ReadJSONFile(s.filePath(channelId), out)
+	ok, err := batchsettlement.ReadJSONFile(path, out)
 	if err != nil {
 		return nil, err
 	}
@@ -42,11 +50,19 @@ func (s *FileChannelStorage) Get(channelId string) (*ChannelSession, error) {
 }
 
 func (s *FileChannelStorage) Set(channelId string, session *ChannelSession) error {
-	return batchsettlement.WriteJSONAtomic(s.filePath(channelId), session)
+	path, err := s.filePath(channelId)
+	if err != nil {
+		return err
+	}
+	return batchsettlement.WriteJSONAtomic(path, session)
 }
 
 func (s *FileChannelStorage) Delete(channelId string) error {
-	if err := os.Remove(s.filePath(channelId)); err != nil && !batchsettlement.IsNotExist(err) {
+	path, err := s.filePath(channelId)
+	if err != nil {
+		return err
+	}
+	if err := os.Remove(path); err != nil && !batchsettlement.IsNotExist(err) {
 		return err
 	}
 	return nil
@@ -90,7 +106,10 @@ func (s *FileChannelStorage) List() ([]*ChannelSession, error) {
 // The mkdir call ensures the very first CompareAndSet on a fresh directory
 // does not fail with ENOENT on the lock file.
 func (s *FileChannelStorage) CompareAndSet(channelId string, expectedCharged string, session *ChannelSession) (bool, error) {
-	path := s.filePath(channelId)
+	path, err := s.filePath(channelId)
+	if err != nil {
+		return false, err
+	}
 	lockPath := path + ".lock"
 
 	if err := os.MkdirAll(filepath.Dir(lockPath), 0o755); err != nil {
@@ -128,7 +147,10 @@ func (s *FileChannelStorage) CompareAndSet(channelId string, expectedCharged str
 // returning nil deletes the file; returning the same pointer is treated as a
 // no-op (status: unchanged).
 func (s *FileChannelStorage) UpdateChannel(channelId string, update func(current *ChannelSession) *ChannelSession) (*ChannelUpdateResult, error) {
-	path := s.filePath(channelId)
+	path, err := s.filePath(channelId)
+	if err != nil {
+		return nil, err
+	}
 	lockPath := path + ".lock"
 
 	if err := os.MkdirAll(filepath.Dir(lockPath), 0o755); err != nil {

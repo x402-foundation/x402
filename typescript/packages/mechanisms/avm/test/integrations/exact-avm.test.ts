@@ -19,6 +19,7 @@ import {
 import {
   ExactAvmScheme as ExactAvmClient,
   ALGORAND_TESTNET_CAIP2,
+  ALGORAND_TESTNET_GENESIS_HASH,
   USDC_TESTNET_ASA_ID,
   toClientAvmSigner,
   toFacilitatorAvmSigner,
@@ -206,6 +207,32 @@ describe("AVM Integration Tests", () => {
         expect(settleResponse.network).toBe(ALGORAND_TESTNET_CAIP2);
         expect(settleResponse.transaction).toBeDefined();
         expect(settleResponse.payer).toBe(clientAddress);
+      },
+    );
+
+    it(
+      "should verify and settle when paymentRequirements use legacy full-hash network ID",
+      { timeout: 30000 },
+      async () => {
+        const legacyNetwork = `algorand:${ALGORAND_TESTNET_GENESIS_HASH}` as Network;
+        const accepts = [buildAvmPaymentRequirements(SERVER_ADDRESS, "1000", legacyNetwork)];
+        const resource = {
+          url: "https://company.co",
+          description: "Company Co. resource",
+          mimeType: "application/json",
+        };
+        const paymentRequired = await server.createPaymentRequiredResponse(accepts, resource);
+        const paymentPayload = await client.createPaymentPayload(paymentRequired);
+        const accepted = server.findMatchingRequirements(accepts, paymentPayload);
+
+        expect(accepted).toBeDefined();
+
+        const verifyResponse = await server.verifyPayment(paymentPayload, accepted!);
+        expect(verifyResponse.isValid).toBe(true);
+
+        const settleResponse = await server.settlePayment(paymentPayload, accepted!);
+        expect(settleResponse.success).toBe(true);
+        expect(settleResponse.network).toBe(legacyNetwork);
       },
     );
   });

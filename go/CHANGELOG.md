@@ -1,3 +1,23 @@
+## v2.20.0 - 2026-07-27
+### Added
+- Support server-provided recent blockhashes for Go SVM exact payment challenges ([#2731](https://github.com/x402-foundation/x402/pull/2731)) - Thanks [@wnjoon](https://github.com/wnjoon)!
+### Changed
+- 'Cap builder-code service codes (`s`) to five onchain entries at settlement. Facilitators now truncate excess valid codes, the server schema advertises `maxItems: 5`, and `MAX_SERVICE_CODES` is exported.' ([#2912](https://github.com/x402-foundation/x402/pull/2912)) - Thanks [@phdargen](https://github.com/phdargen)!
+### Fixed
+- Return a spec-compatible invalid_payload error for malformed PAYMENT-SIGNATURE headers in the Go HTTP server ([#2907](https://github.com/x402-foundation/x402/pull/2907)) - Thanks [@wnjoon](https://github.com/wnjoon)!
+- Preserved one-shot request bodies across payment retries. ([#2914](https://github.com/x402-foundation/x402/pull/2914)) - Thanks [@wnjoon](https://github.com/wnjoon)!
+- Propagated client storage errors during batch settlement and refunds. ([#2917](https://github.com/x402-foundation/x402/pull/2917)) - Thanks [@wnjoon](https://github.com/wnjoon)!
+- Rejected small-order Ed25519 public keys in SIWx Solana signature verification. ([#2933](https://github.com/x402-foundation/x402/pull/2933)) - Thanks [@phdargen](https://github.com/phdargen)!
+
+## v2.19.0 - 2026-07-17
+### Changed
+- SIWX validation and verification results now use IsValid, InvalidReason, InvalidMessage, and Payer instead of Valid, Error, and Address. Each failure includes a machine-readable invalid_siwx_* code aligned with the TypeScript SDK. ([#2889](https://github.com/x402-foundation/x402/pull/2889)) - Thanks [@phdargen](https://github.com/phdargen)!
+- Require a configured `Origin` for SIWX server integration. Challenge issuance and proof validation now bind to this operator-defined public origin instead of deriving trust from request headers or per-route declaration fields. Pass `Origin` to `CreateResourceServerExtension()`; remove `Domain` and `ResourceURI` from `DeclareOptions`. ([#2859](https://github.com/x402-foundation/x402/pull/2859)) - Thanks [@phdargen](https://github.com/phdargen)!
+### Fixed
+- Fix unauthenticated path-traversal and pre-verification channel mutation in the batch-settlement server scheme, and widen AfterVerifyHook so hooks can abort with after_verify_aborted cancellation. Channel ids are validated to canonical bytes32 form before storage access; file paths stay within the storage root; reservation is deferred until after successful verify; recovered onVerifyFailure results now run after-verify hooks. ([#2863](https://github.com/x402-foundation/x402/pull/2863)) - Thanks [@phdargen](https://github.com/phdargen)!
+- Fix batch-settlement SettleDeposit double-counting channel balance after a confirmed deposit by anchoring the optimistic balance to a pre-submit ReadChannelState and adding depositAmount once. ([#2881](https://github.com/x402-foundation/x402/pull/2881)) - Thanks [@phdargen](https://github.com/phdargen)!
+- Fix batch-settlement VerifyDeposit returning projected balance+deposit in verify extra before the deposit is mined, aligning with TS/Python so AfterVerifyHook does not cache unconfirmed escrow. ([#2883](https://github.com/x402-foundation/x402/pull/2883)) - Thanks [@phdargen](https://github.com/phdargen)!
+
 ## v2.18.0 - 2026-07-10
 ### Added
 - Add Igra mainnet (eip155:38833) default stablecoin USDC via Permit2 ([#2800](https://github.com/x402-foundation/x402/pull/2800)) - Thanks [@emdin](https://github.com/emdin)!

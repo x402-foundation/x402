@@ -67,6 +67,8 @@ cp .env-local .env
 and fill required environment variables:
 
 - `FACILITATOR_URL` - Facilitator endpoint URL
+- `AVM_ADDRESS` - Algorand address to receive payments (optional for `all-networks`)
+- `AVM_NETWORK` - Algorand network CAIP-2 (optional; defaults to canonical Algorand Testnet)
 - `APTOS_ADDRESS` - Aptos account address to receive payments (optional for `all-networks`)
 - `CCD_ADDRESS` - Concordium account address to receive payments (optional for `all-networks`)
 - `EVM_ADDRESS` - Ethereum address to receive payments
@@ -92,6 +94,16 @@ cd servers/advanced
 
 ```bash
 pnpm dev
+```
+
+### Network configuration
+
+The `network` in route `accepts` and `.register(...)` must **exactly match** a scheme/network pair from your facilitator's `/supported` response. The server checks this on startup; a mismatch fails initialization.
+
+Check what your facilitator supports before configuring networks:
+
+```bash
+curl -s "$FACILITATOR_URL/supported" | jq '.kinds[] | {scheme, network}'
 ```
 
 ### Account Setup Instructions

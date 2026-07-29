@@ -42,8 +42,15 @@ from x402 import x402ResourceServer
 from x402.mechanisms.svm.exact import ExactSvmServerScheme
 
 server = x402ResourceServer(facilitator_client)
-server.register("solana:*", ExactSvmServerScheme())
+server.register(
+    "solana:*",
+    ExactSvmServerScheme(rpc_url="https://api.mainnet-beta.solana.com"),
+)
 ```
+
+The optional server RPC URL adds `recentBlockhash` and `lastValidBlockHeight`
+transaction-construction hints to payment requirements. If it is omitted or the
+lookup fails, clients fetch a fresh blockhash from their configured network RPC.
 
 ### Facilitator
 

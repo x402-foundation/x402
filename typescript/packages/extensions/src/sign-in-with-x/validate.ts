@@ -36,8 +36,8 @@ const DEFAULT_MAX_AGE_MS = 5 * 60 * 1000;
  *   { checkNonce: (n) => !usedNonces.has(n) }
  * );
  *
- * if (!result.valid) {
- *   return { error: result.error };
+ * if (!result.isValid) {
+ *   return { error: result.invalidMessage };
  * }
  * ```
  */
@@ -51,8 +51,9 @@ export async function validateSIWxMessage(
   // 1. Domain binding (spec: "domain field MUST match server's domain")
   if (message.domain !== expectedOrigin.host) {
     return {
-      valid: false,
-      error: `Domain mismatch: expected "${expectedOrigin.host}", got "${message.domain}"`,
+      isValid: false,
+      invalidReason: "invalid_siwx_domain_mismatch",
+      invalidMessage: `Domain mismatch: expected "${expectedOrigin.host}", got "${message.domain}"`,
     };
   }
 
@@ -62,15 +63,17 @@ export async function validateSIWxMessage(
     messageUri = new URL(message.uri);
   } catch {
     return {
-      valid: false,
-      error: `Invalid URI: "${message.uri}" is not a valid URL`,
+      isValid: false,
+      invalidReason: "invalid_siwx_uri_mismatch",
+      invalidMessage: `Invalid URI: "${message.uri}" is not a valid URL`,
     };
   }
 
   if (messageUri.origin !== expectedOrigin.origin) {
     return {
-      valid: false,
-      error: `URI mismatch: expected origin "${expectedOrigin.origin}", got "${messageUri.origin}"`,
+      isValid: false,
+      invalidReason: "invalid_siwx_uri_mismatch",
+      invalidMessage: `URI mismatch: expected origin "${expectedOrigin.origin}", got "${messageUri.origin}"`,
     };
   }
 
@@ -78,22 +81,25 @@ export async function validateSIWxMessage(
   const issuedAt = new Date(message.issuedAt);
   if (isNaN(issuedAt.getTime())) {
     return {
-      valid: false,
-      error: "Invalid issuedAt timestamp",
+      isValid: false,
+      invalidReason: "invalid_siwx_issued_at",
+      invalidMessage: "Invalid issuedAt timestamp",
     };
   }
 
   const age = Date.now() - issuedAt.getTime();
   if (age > maxAge) {
     return {
-      valid: false,
-      error: `Message too old: ${Math.round(age / 1000)}s exceeds ${maxAge / 1000}s limit`,
+      isValid: false,
+      invalidReason: "invalid_siwx_issued_at_too_old",
+      invalidMessage: `Message too old: ${Math.round(age / 1000)}s exceeds ${maxAge / 1000}s limit`,
     };
   }
   if (age < 0) {
     return {
-      valid: false,
-      error: "issuedAt is in the future",
+      isValid: false,
+      invalidReason: "invalid_siwx_issued_at_in_future",
+      invalidMessage: "issuedAt is in the future",
     };
   }
 
@@ -102,14 +108,16 @@ export async function validateSIWxMessage(
     const expiration = new Date(message.expirationTime);
     if (isNaN(expiration.getTime())) {
       return {
-        valid: false,
-        error: "Invalid expirationTime timestamp",
+        isValid: false,
+        invalidReason: "invalid_siwx_expiration_time",
+        invalidMessage: "Invalid expirationTime timestamp",
       };
     }
     if (expiration < new Date()) {
       return {
-        valid: false,
-        error: "Message expired",
+        isValid: false,
+        invalidReason: "invalid_siwx_expired",
+        invalidMessage: "Message expired",
       };
     }
   }
@@ -119,14 +127,16 @@ export async function validateSIWxMessage(
     const notBefore = new Date(message.notBefore);
     if (isNaN(notBefore.getTime())) {
       return {
-        valid: false,
-        error: "Invalid notBefore timestamp",
+        isValid: false,
+        invalidReason: "invalid_siwx_not_before",
+        invalidMessage: "Invalid notBefore timestamp",
       };
     }
     if (new Date() < notBefore) {
       return {
-        valid: false,
-        error: "Message not yet valid (notBefore is in the future)",
+        isValid: false,
+        invalidReason: "invalid_siwx_not_yet_valid",
+        invalidMessage: "Message not yet valid (notBefore is in the future)",
       };
     }
   }
@@ -136,11 +146,12 @@ export async function validateSIWxMessage(
     const nonceValid = await options.checkNonce(message.nonce);
     if (!nonceValid) {
       return {
-        valid: false,
-        error: "Nonce validation failed (possible replay attack)",
+        isValid: false,
+        invalidReason: "invalid_siwx_nonce",
+        invalidMessage: "Nonce validation failed (possible replay attack)",
       };
     }
   }
 
-  return { valid: true };
+  return { isValid: true };
 }

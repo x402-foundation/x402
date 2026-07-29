@@ -10,7 +10,7 @@ x402 uses [CAIP-2](https://chainagnostic.org/CAIPs/caip-2) standard network iden
 - **EVM networks**: `eip155:<chainId>` — any EVM chain is supported (e.g., `eip155:8453` for Base)
 - **Solana**: `solana:<genesisHash>` (first 32 bytes of the genesis block hash)
 - **TON (TVM)**: `tvm:<workchain>` (e.g., `tvm:-239` for mainnet, `tvm:-3` for testnet)
-- **Algorand**: `algorand:<genesisHash>` (base64-encoded genesis hash)
+- **Algorand**: `algorand:<reference>` — URL-safe base64 of the genesis hash, first 32 characters ([Algorand CAIP-2 profile](https://namespaces.chainagnostic.org/algorand/caip2))
 - **Stellar**: `stellar:<network>` (`pubnet` or `testnet`)
 - **Aptos**: `aptos:<chainId>` (e.g., `aptos:1` for mainnet)
 - **Hedera**: `hedera:<network>` (`mainnet` or `testnet`)
@@ -147,8 +147,8 @@ When you use `"$0.01"` syntax, x402 needs to know which stablecoin to use. The f
 
 | Chain | CAIP-2 | ASA ID | Decimals |
 |-------|--------|--------|----------|
-| Algorand Mainnet | `algorand:wGHE2Pwdvd7S12BL5FaOP20EGYesN73ktiC1qzkkit8=` | `31566704` (USDC) | 6 |
-| Algorand Testnet | `algorand:SGO1GKSzyE7IEPItTxCByw9x8FmnrCDexi9/cOUJOiI=` | `10458941` (USDC) | 6 |
+| Algorand Mainnet | `algorand:wGHE2Pwdvd7S12BL5FaOP20EGYesN73k` | `31566704` (USDC) | 6 |
+| Algorand Testnet | `algorand:SGO1GKSzyE7IEPItTxCByw9x8FmnrCDe` | `10458941` (USDC) | 6 |
 
 ### Stellar
 
@@ -325,7 +325,7 @@ Video Guide: [Adding EVM Chains to x402](https://x.com/jaycoolh/status/192085155
 
 ## Getting Help
 
-* Join the [x402 Discord community](https://discord.gg/cdp)
+* Join the [x402 Slack community](http://slack.x402.org/)
 * Check the [x402 GitHub repository](https://github.com/x402-foundation/x402)
 
 ## Summary

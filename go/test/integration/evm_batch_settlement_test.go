@@ -416,7 +416,11 @@ func (p *batchedPipeline) channelIdForRequirements(req types.PaymentRequirements
 	if err != nil {
 		return ""
 	}
-	return batchsettlement.NormalizeChannelId(id)
+	normalized, err := batchsettlement.NormalizeChannelId(id)
+	if err != nil {
+		return ""
+	}
+	return normalized
 }
 
 // resourceInfo returns a stub resource descriptor for createPaymentPayload.
@@ -1102,7 +1106,11 @@ func TestBatchSettlementIntegration_WithdrawalPendingRefund(t *testing.T) {
 	if len(pending) != 1 {
 		t.Fatalf("expected 1 withdrawal-pending session, got %d", len(pending))
 	}
-	if !strings.EqualFold(batchsettlement.NormalizeChannelId(pending[0].ChannelId), channelId) {
+	normalizedPending, err := batchsettlement.NormalizeChannelId(pending[0].ChannelId)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.EqualFold(normalizedPending, channelId) {
 		t.Fatalf("expected channel %s, got %s", channelId, pending[0].ChannelId)
 	}
 

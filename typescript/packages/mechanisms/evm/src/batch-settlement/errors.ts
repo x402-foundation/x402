@@ -28,6 +28,7 @@ export const ErrInvalidPayloadType = "invalid_batch_settlement_evm_payload_type"
 export const ErrWithdrawDelayOutOfRange =
   "invalid_batch_settlement_evm_withdraw_delay_out_of_range";
 export const ErrChannelIdMismatch = "invalid_batch_settlement_evm_channel_id_mismatch";
+export const ErrInvalidChannelId = "invalid_batch_settlement_evm_channel_id_invalid";
 export const ErrReceiverMismatch = "invalid_batch_settlement_evm_receiver_mismatch";
 export const ErrReceiverAuthorizerMismatch =
   "invalid_batch_settlement_evm_receiver_authorizer_mismatch";
@@ -68,6 +69,8 @@ export const ErrErc20ApprovalUnavailable =
 export const ErrCumulativeAmountMismatch =
   "invalid_batch_settlement_evm_cumulative_amount_mismatch";
 export const ErrChannelBusy = "invalid_batch_settlement_evm_channel_busy";
+export const ErrVerificationStateUnavailable =
+  "invalid_batch_settlement_evm_verification_state_unavailable";
 export const ErrChargeExceedsSignedCumulative =
   "invalid_batch_settlement_evm_charge_exceeds_signed_cumulative";
 export const ErrMissingChannel = "invalid_batch_settlement_evm_missing_channel";

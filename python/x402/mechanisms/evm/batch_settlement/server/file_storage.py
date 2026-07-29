@@ -8,7 +8,7 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 
-from ..storage_utils import read_json_file, write_json_atomic
+from ..storage_utils import read_json_file, resolve_within_dir, write_json_atomic
 from .storage import Channel, ChannelUpdate, ChannelUpdateResult
 
 
@@ -31,7 +31,10 @@ class FileChannelStorage:
         return Path(self._root) / "server"
 
     def _file_path(self, channel_id: str) -> Path:
-        return self._server_dir() / f"{channel_id.lower()}.json"
+        from ..utils import normalize_channel_id
+
+        key = normalize_channel_id(channel_id)
+        return resolve_within_dir(self._server_dir(), f"{key}.json")
 
     def get(self, channel_id: str) -> Channel | None:
         data = read_json_file(self._file_path(channel_id))

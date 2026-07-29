@@ -91,11 +91,11 @@ func TestClaim_NoClaimableVouchers(t *testing.T) {
 
 func TestClaim_SingleBatch(t *testing.T) {
 	s := NewBatchSettlementEvmScheme("0xreceiver", nil)
-	sess := sampleSession("0xa", "100")
+	sess := sampleSession(testChA, "100")
 	sess.SignedMaxClaimable = "1000"
 	sess.TotalClaimed = "100"
 	sess.ChargedCumulativeAmount = "1000"
-	_ = s.UpdateSession("0xa", sess)
+	_ = s.UpdateSession(testChA, sess)
 
 	f := &fakeFacilitator{}
 	m := newManager(s, f)
@@ -136,7 +136,10 @@ func TestClaim_AdvancesTotalClaimedInStorageAfterSuccess(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ComputeChannelId: %v", err)
 	}
-	channelId = batchsettlement.NormalizeChannelId(channelId)
+	channelId, err = batchsettlement.NormalizeChannelId(channelId)
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	sess := sampleSession(channelId, "1000")
 	sess.ChannelConfig = cfg
@@ -167,7 +170,7 @@ func TestClaim_AdvancesTotalClaimedInStorageAfterSuccess(t *testing.T) {
 
 func TestClaim_BatchesAcrossMaxClaimsPerBatch(t *testing.T) {
 	s := NewBatchSettlementEvmScheme("0xreceiver", nil)
-	for _, id := range []string{"0xa", "0xb", "0xc"} {
+	for _, id := range []string{testChA, testChB, testChC} {
 		sess := sampleSession(id, "100")
 		sess.SignedMaxClaimable = "1000"
 		sess.TotalClaimed = "100"
@@ -195,11 +198,11 @@ func TestClaim_BatchesAcrossMaxClaimsPerBatch(t *testing.T) {
 
 func TestClaim_FacilitatorError(t *testing.T) {
 	s := NewBatchSettlementEvmScheme("0xreceiver", nil)
-	sess := sampleSession("0xa", "100")
+	sess := sampleSession(testChA, "100")
 	sess.SignedMaxClaimable = "1000"
 	sess.TotalClaimed = "100"
 	sess.ChargedCumulativeAmount = "1000"
-	_ = s.UpdateSession("0xa", sess)
+	_ = s.UpdateSession(testChA, sess)
 
 	f := &fakeFacilitator{settleErr: errors.New("boom")}
 	m := newManager(s, f)
@@ -211,9 +214,9 @@ func TestClaim_FacilitatorError(t *testing.T) {
 
 func TestSettle_Success(t *testing.T) {
 	s := NewBatchSettlementEvmScheme("0xreceiver", nil)
-	sess := sampleSession("0xa", "100")
+	sess := sampleSession(testChA, "100")
 	sess.ChannelConfig.Token = "0xtoken"
-	_ = s.UpdateSession("0xa", sess)
+	_ = s.UpdateSession(testChA, sess)
 
 	f := &fakeFacilitator{}
 	m := newManager(s, f)
@@ -270,13 +273,13 @@ func TestRefund_SkipsMissingSession(t *testing.T) {
 
 func TestRefund_SkipsZeroRefundAmount(t *testing.T) {
 	s := NewBatchSettlementEvmScheme("0xreceiver", nil)
-	sess := sampleSession("0xa", "500")
+	sess := sampleSession(testChA, "500")
 	sess.Balance = "500" // balance == charged → refund = 0
-	_ = s.UpdateSession("0xa", sess)
+	_ = s.UpdateSession(testChA, sess)
 
 	f := &fakeFacilitator{}
 	m := newManager(s, f)
-	res, _ := m.Refund(context.Background(), []string{"0xa"})
+	res, _ := m.Refund(context.Background(), []string{testChA})
 	if len(res) != 0 {
 		t.Fatalf("expected empty, got %+v", res)
 	}
@@ -287,12 +290,12 @@ func TestRefund_SkipsZeroRefundAmount(t *testing.T) {
 
 func TestRefund_SkipsMalformedNumbers(t *testing.T) {
 	s := NewBatchSettlementEvmScheme("0xreceiver", nil)
-	sess := sampleSession("0xa", "not-a-number")
-	_ = s.UpdateSession("0xa", sess)
+	sess := sampleSession(testChA, "not-a-number")
+	_ = s.UpdateSession(testChA, sess)
 
 	f := &fakeFacilitator{}
 	m := newManager(s, f)
-	res, _ := m.Refund(context.Background(), []string{"0xa"})
+	res, _ := m.Refund(context.Background(), []string{testChA})
 	if len(res) != 0 {
 		t.Fatalf("expected empty, got %+v", res)
 	}
@@ -300,18 +303,18 @@ func TestRefund_SkipsMalformedNumbers(t *testing.T) {
 
 func TestRefund_SuccessDeletesSession(t *testing.T) {
 	s := NewBatchSettlementEvmScheme("0xreceiver", nil)
-	sess := sampleSession("0xa", "100")
+	sess := sampleSession(testChA, "100")
 	sess.Balance = "1000"
 	sess.ChargedCumulativeAmount = "100"
-	_ = s.UpdateSession("0xa", sess)
+	_ = s.UpdateSession(testChA, sess)
 
 	f := &fakeFacilitator{}
 	m := newManager(s, f)
-	res, err := m.Refund(context.Background(), []string{"0xa"})
+	res, err := m.Refund(context.Background(), []string{testChA})
 	if err != nil {
 		t.Fatalf("err: %v", err)
 	}
-	if len(res) != 1 || res[0].Channel != "0xa" {
+	if len(res) != 1 || res[0].Channel != testChA {
 		t.Fatalf("got %+v", res)
 	}
 	if res[0].Transaction != "0xtx" {
@@ -321,21 +324,21 @@ func TestRefund_SuccessDeletesSession(t *testing.T) {
 		t.Fatalf("payload = %+v", f.settlePayloads[0])
 	}
 	// Session should be deleted.
-	if got, _ := s.GetSession("0xa"); got != nil {
+	if got, _ := s.GetSession(testChA); got != nil {
 		t.Fatalf("expected session deleted, got %+v", got)
 	}
 }
 
 func TestRefund_FacilitatorErrorIsReturned(t *testing.T) {
 	s := NewBatchSettlementEvmScheme("0xreceiver", nil)
-	sess := sampleSession("0xa", "100")
+	sess := sampleSession(testChA, "100")
 	sess.Balance = "1000"
 	sess.ChargedCumulativeAmount = "100"
-	_ = s.UpdateSession("0xa", sess)
+	_ = s.UpdateSession(testChA, sess)
 
 	f := &fakeFacilitator{settleErr: errors.New("boom")}
 	m := newManager(s, f)
-	res, err := m.Refund(context.Background(), []string{"0xa"})
+	res, err := m.Refund(context.Background(), []string{testChA})
 	if err == nil {
 		t.Fatal("expected error from facilitator failure")
 	}
@@ -343,7 +346,7 @@ func TestRefund_FacilitatorErrorIsReturned(t *testing.T) {
 		t.Fatalf("expected empty results on facilitator error, got %+v", res)
 	}
 	// Session must NOT be deleted on failure.
-	if got, _ := s.GetSession("0xa"); got == nil {
+	if got, _ := s.GetSession(testChA); got == nil {
 		t.Fatal("session unexpectedly deleted after refund error")
 	}
 }
@@ -353,14 +356,14 @@ func TestRefund_WithAuthorizerSignerAttachesSignatures(t *testing.T) {
 	s := NewBatchSettlementEvmScheme("0xreceiver", &BatchSettlementEvmSchemeServerConfig{
 		ReceiverAuthorizerSigner: auth,
 	})
-	sess := sampleSession("0xab", "500")
+	sess := sampleSession(testChA, "500")
 	sess.Balance = "1000"
 	sess.ChargedCumulativeAmount = "500" // > TotalClaimed (100) → claim batch is non-empty
-	_ = s.UpdateSession("0xab", sess)
+	_ = s.UpdateSession(testChA, sess)
 
 	f := &fakeFacilitator{}
 	m := newManager(s, f)
-	if _, err := m.Refund(context.Background(), []string{"0xab"}); err != nil {
+	if _, err := m.Refund(context.Background(), []string{testChA}); err != nil {
 		t.Fatalf("err: %v", err)
 	}
 	if len(f.settlePayloads) == 0 {
@@ -377,18 +380,18 @@ func TestRefund_WithAuthorizerSignerAttachesSignatures(t *testing.T) {
 
 func TestRefund_SkipsChannelWithLivePendingRequest(t *testing.T) {
 	s := NewBatchSettlementEvmScheme("0xreceiver", nil)
-	sess := sampleSession("0xa", "100")
+	sess := sampleSession(testChA, "100")
 	sess.Balance = "1000"
 	sess.ChargedCumulativeAmount = "100"
 	sess.PendingRequest = &PendingRequest{
 		PendingId: "p1",
 		ExpiresAt: time.Now().Add(time.Minute).UnixMilli(),
 	}
-	_ = s.UpdateSession("0xa", sess)
+	_ = s.UpdateSession(testChA, sess)
 
 	f := &fakeFacilitator{}
 	m := newManager(s, f)
-	res, err := m.Refund(context.Background(), []string{"0xa"})
+	res, err := m.Refund(context.Background(), []string{testChA})
 	if err != nil {
 		t.Fatalf("err: %v", err)
 	}
@@ -399,11 +402,11 @@ func TestRefund_SkipsChannelWithLivePendingRequest(t *testing.T) {
 
 func TestClaimAndSettle_PropagatesClaimError(t *testing.T) {
 	s := NewBatchSettlementEvmScheme("0xreceiver", nil)
-	sess := sampleSession("0xa", "100")
+	sess := sampleSession(testChA, "100")
 	sess.SignedMaxClaimable = "1000"
 	sess.TotalClaimed = "100"
 	sess.ChargedCumulativeAmount = "1000"
-	_ = s.UpdateSession("0xa", sess)
+	_ = s.UpdateSession(testChA, sess)
 
 	f := &fakeFacilitator{settleErr: errors.New("boom")}
 	m := newManager(s, f)
@@ -414,11 +417,11 @@ func TestClaimAndSettle_PropagatesClaimError(t *testing.T) {
 
 func TestClaimAndSettle_SettlesAfterClaim(t *testing.T) {
 	s := NewBatchSettlementEvmScheme("0xreceiver", nil)
-	sess := sampleSession("0xa", "100")
+	sess := sampleSession(testChA, "100")
 	sess.SignedMaxClaimable = "1000"
 	sess.TotalClaimed = "100"
 	sess.ChargedCumulativeAmount = "1000"
-	_ = s.UpdateSession("0xa", sess)
+	_ = s.UpdateSession(testChA, sess)
 
 	f := &fakeFacilitator{}
 	m := newManager(s, f)
@@ -491,11 +494,11 @@ func TestStartStop_Idempotent(t *testing.T) {
 
 func TestStop_FlushTriggersClaimAndSettle(t *testing.T) {
 	s := NewBatchSettlementEvmScheme("0xreceiver", nil)
-	sess := sampleSession("0xa", "100")
+	sess := sampleSession(testChA, "100")
 	sess.SignedMaxClaimable = "1000"
 	sess.TotalClaimed = "100"
 	sess.ChargedCumulativeAmount = "1000"
-	_ = s.UpdateSession("0xa", sess)
+	_ = s.UpdateSession(testChA, sess)
 
 	f := &fakeFacilitator{}
 	m := newManager(s, f)
@@ -513,11 +516,11 @@ func TestStop_FlushTriggersClaimAndSettle(t *testing.T) {
 // runtime helpers to avoid needing a full timer dance.
 func TestRunClaimJob_FiresOnClaim(t *testing.T) {
 	s := NewBatchSettlementEvmScheme("0xreceiver", nil)
-	sess := sampleSession("0xa", "100")
+	sess := sampleSession(testChA, "100")
 	sess.SignedMaxClaimable = "1000"
 	sess.TotalClaimed = "100"
 	sess.ChargedCumulativeAmount = "1000"
-	_ = s.UpdateSession("0xa", sess)
+	_ = s.UpdateSession(testChA, sess)
 
 	f := &fakeFacilitator{}
 	m := newManager(s, f)
@@ -590,11 +593,11 @@ func TestRunSettleJob_ShouldSettleFalseSkips(t *testing.T) {
 
 func TestRunRefundJob_UsesSelectRefundChannels(t *testing.T) {
 	s := NewBatchSettlementEvmScheme("0xreceiver", nil)
-	sess := sampleSession("0xa", "100")
+	sess := sampleSession(testChA, "100")
 	sess.Balance = "1000"
 	sess.ChargedCumulativeAmount = "100"
 	sess.LastRequestTimestamp = time.Now().Add(-1 * time.Hour).UnixMilli()
-	_ = s.UpdateSession("0xa", sess)
+	_ = s.UpdateSession(testChA, sess)
 
 	f := &fakeFacilitator{}
 	m := newManager(s, f)
@@ -613,10 +616,10 @@ func TestRunRefundJob_UsesSelectRefundChannels(t *testing.T) {
 
 func TestRunRefundJob_NoOpWithoutSelectRefundChannels(t *testing.T) {
 	s := NewBatchSettlementEvmScheme("0xreceiver", nil)
-	sess := sampleSession("0xa", "100")
+	sess := sampleSession(testChA, "100")
 	sess.Balance = "1000"
 	sess.ChargedCumulativeAmount = "100"
-	_ = s.UpdateSession("0xa", sess)
+	_ = s.UpdateSession(testChA, sess)
 
 	f := &fakeFacilitator{}
 	m := newManager(s, f)
@@ -641,10 +644,10 @@ func TestGetClaimableVouchers_NoSessions(t *testing.T) {
 
 func TestGetClaimableVouchers_FiltersUnclaimed(t *testing.T) {
 	s := NewBatchSettlementEvmScheme("0xreceiver", nil)
-	sess := sampleSession("0xa", "10")
+	sess := sampleSession(testChA, "10")
 	sess.SignedMaxClaimable = "10"
 	sess.TotalClaimed = "10"
-	_ = s.UpdateSession("0xa", sess)
+	_ = s.UpdateSession(testChA, sess)
 	m := newManager(s, &fakeFacilitator{})
 	got, _ := m.GetClaimableVouchers(nil)
 	if len(got) != 0 {
@@ -654,11 +657,11 @@ func TestGetClaimableVouchers_FiltersUnclaimed(t *testing.T) {
 
 func TestGetClaimableVouchers_ReturnsClaimable(t *testing.T) {
 	s := NewBatchSettlementEvmScheme("0xreceiver", nil)
-	sess := sampleSession("0xa", "100")
+	sess := sampleSession(testChA, "100")
 	sess.SignedMaxClaimable = "1000"
 	sess.TotalClaimed = "100"
 	sess.ChargedCumulativeAmount = "1000"
-	_ = s.UpdateSession("0xa", sess)
+	_ = s.UpdateSession(testChA, sess)
 	m := newManager(s, &fakeFacilitator{})
 	got, err := m.GetClaimableVouchers(nil)
 	if err != nil {
@@ -671,12 +674,12 @@ func TestGetClaimableVouchers_ReturnsClaimable(t *testing.T) {
 
 func TestGetClaimableVouchers_FiltersByIdle(t *testing.T) {
 	s := NewBatchSettlementEvmScheme("0xreceiver", nil)
-	sess := sampleSession("0xa", "100")
+	sess := sampleSession(testChA, "100")
 	sess.SignedMaxClaimable = "1000"
 	sess.TotalClaimed = "100"
 	sess.ChargedCumulativeAmount = "1000"
 	sess.LastRequestTimestamp = nowMs() // very recent
-	_ = s.UpdateSession("0xa", sess)
+	_ = s.UpdateSession(testChA, sess)
 	m := newManager(s, &fakeFacilitator{})
 	got, _ := m.GetClaimableVouchers(&GetClaimableVouchersOpts{IdleSecs: 3600})
 	if len(got) != 0 {
@@ -686,17 +689,17 @@ func TestGetClaimableVouchers_FiltersByIdle(t *testing.T) {
 
 func TestGetWithdrawalPendingSessions(t *testing.T) {
 	s := NewBatchSettlementEvmScheme("0xreceiver", nil)
-	a := sampleSession("0xa", "10")
-	b := sampleSession("0xb", "10")
+	a := sampleSession(testChA, "10")
+	b := sampleSession(testChB, "10")
 	b.WithdrawRequestedAt = 12345
-	_ = s.UpdateSession("0xa", a)
-	_ = s.UpdateSession("0xb", b)
+	_ = s.UpdateSession(testChA, a)
+	_ = s.UpdateSession(testChB, b)
 	m := newManager(s, &fakeFacilitator{})
 	got, err := m.GetWithdrawalPendingSessions()
 	if err != nil {
 		t.Fatalf("err: %v", err)
 	}
-	if len(got) != 1 || got[0].ChannelId != "0xb" {
+	if len(got) != 1 || got[0].ChannelId != testChB {
 		t.Fatalf("got %+v", got)
 	}
 }
