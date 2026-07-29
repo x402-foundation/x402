@@ -1073,6 +1073,7 @@ export class x402HTTPResourceServer {
         status,
         headers: {
           "Content-Type": "text/html",
+          "Cache-Control": "no-store",
           ...response.headers,
         },
         body: html,
@@ -1088,6 +1089,7 @@ export class x402HTTPResourceServer {
       status,
       headers: {
         "Content-Type": contentType,
+        "Cache-Control": "no-store",
         ...response.headers,
       },
       body,

@@ -958,6 +958,7 @@ func (s *x402HTTPResourceServer) createHTTPResponseV2(paymentRequired types.Paym
 			Headers: map[string]string{
 				"Content-Type":     "text/html",
 				"PAYMENT-REQUIRED": encodedHeader,
+				"Cache-Control":   "no-store",
 			},
 			Body:   html,
 			IsHTML: true,
@@ -978,6 +979,7 @@ func (s *x402HTTPResourceServer) createHTTPResponseV2(paymentRequired types.Paym
 		Headers: map[string]string{
 			"Content-Type":     contentType,
 			"PAYMENT-REQUIRED": encodedHeader,
+			"Cache-Control":   "no-store",
 		},
 		Body: body,
 	}, nil

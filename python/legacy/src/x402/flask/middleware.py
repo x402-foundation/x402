@@ -221,7 +221,10 @@ class PaymentMiddleware:
                         ] or get_paywall_html(
                             error, payment_requirements, config["paywall_config"]
                         )
-                        headers = [("Content-Type", "text/html; charset=utf-8")]
+                        headers = [
+                            ("Content-Type", "text/html; charset=utf-8"),
+                            ("Cache-Control", "no-store"),
+                        ]
 
                         start_response(status, headers)
                         return [html_content.encode("utf-8")]
@@ -235,6 +238,7 @@ class PaymentMiddleware:
                         headers = [
                             ("Content-Type", "application/json"),
                             ("Content-Length", str(len(json.dumps(response_data)))),
+                            ("Cache-Control", "no-store"),
                         ]
 
                         start_response(status, headers)
