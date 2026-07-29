@@ -18,7 +18,8 @@ Use this as a quick operator guide:
 If you are evaluating a mainnet EVM route, decide on your production facilitator path up front. The public `x402.org` facilitator is convenient for development, but it is not intended to be the default production choice for mainnet routes.
 
 | Name | Description |
-| ---- | ----------- | 
+| ---- | ----------- |
+| [ArisPay Facilitator](https://facilitator.arispay.app) | Free, public x402 facilitator for Base mainnet (eip155:8453), USDC + EURC, exact scheme, EIP-3009. No fee. |
 | [Built on Stellar](https://developers.stellar.org/docs/build/apps/x402/built-on-stellar) | Free, public x402 facilitator for Stellar |
 | [CDP Facilitator](https://docs.cdp.coinbase.com/x402/docs/quickstart-sellers) | Coinbase-hosted facilitator with KYT/OFAC checks on every transaction |
 | [Corbits](https://corbits.dev) | Production-grade multi-network, multi-token facilitator supporting EVM and Solana |
