@@ -116,6 +116,16 @@ To create and fund an XRPL Testnet payer account:
 2. Keep the [base reserve](https://xrpl.org/docs/concepts/accounts/reserves) funded (currently 1 XRP; the faucet funding is more than enough). The `all-networks` example pays in XRP drops, so no further setup is needed.
 3. For issued-currency (IOU) payments, the payer needs a sufficient issued-currency balance, and the receiving account must hold a [trust line](https://xrpl.org/docs/concepts/tokens/fungible-tokens) to the issuer.
 
+#### Casper Testnet
+
+Create or reuse a dedicated Casper testnet account or wallet key, then fund any
+account that submits Casper transactions with testnet CSPR from the
+[CSPR.live testnet faucet](https://testnet.cspr.live/tools/faucet). CSPR is
+required for gas on Casper Testnet. 
+
+Use [testnet.cspr.trade](https://testnet.cspr.trade) to get wrapped CSPR (WCSPR) or csprUSD for
+the client payments.
+
 ## Available Examples
 
 Each example demonstrates a specific advanced pattern:

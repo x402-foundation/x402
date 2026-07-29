@@ -99,12 +99,20 @@ The default facilitator signer fails closed unless preflight hooks are supplied.
 
 Live integration tests require a funded Casper testnet account and a CEP-3009-enabled CEP-18 token:
 
+Create or reuse a dedicated Casper testnet account or wallet key, then fund any
+account that submits Casper transactions with testnet CSPR from the
+[CSPR.live testnet faucet](https://testnet.cspr.live/tools/faucet). CSPR is
+required for gas on Casper Testnet. 
+
+Use [testnet.cspr.trade](https://testnet.cspr.trade) to get wrapped CSPR (WCSPR) or csprUSD for
+the client payments.
+
 ```bash
 CASPER_CLIENT_PRIVATE_KEY=... \
 CASPER_FACILITATOR_PRIVATE_KEY=... \
 CASPER_PAY_TO=00... \
-CASPER_ASSET=17be3c3dc67ddf193b8f64bfc2421826407470f88b3dab68184ebffebdd57f59 \
-CASPER_TOKEN_NAME="Casper X402 Token" \
+CASPER_ASSET=3d80df21ba4ee4d66a2a1f60c32570dd5685e4b279f6538162a5fd1314847c1e \
+CASPER_TOKEN_NAME="Wrapped CSPR" \
 CASPER_TOKEN_VERSION=1 \
 CASPER_NETWORK=casper:casper-test \
 CASPER_RPC_URL=https://node.testnet.casper.network/rpc \

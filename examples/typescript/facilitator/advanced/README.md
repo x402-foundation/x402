@@ -12,6 +12,7 @@ Express.js facilitator service demonstrating advanced x402 patterns including al
 - Hedera account id + private key for Hedera testnet fees (optional)
 - Keeta mnemonic (seed phrase) and wallet with Testnet KTA for transaction fees (create wallet on [Keeta Testnet Wallet](https://wallet.test.keeta.com/) and fund via [Keeta Testnet Faucet](https://faucet.test.keeta.com/))
 - No XRPL account or key: the XRPL facilitator is keyless (the payer signs and pays transaction fees); set `XRPL_NETWORK` to enable it (optional)
+- Casper private key with testnet CSPR for transaction fees (fund via the [CSPR.live testnet faucet](https://testnet.cspr.live/tools/faucet))
 
 ## Setup
 
@@ -64,6 +65,16 @@ For testing on Aptos testnet, you can obtain test tokens from these faucets:
 
 - **Test APT**: https://aptos.dev/network/faucet or through an account on [geomi.dev](https://geomi.dev/manage/faucet)
 - **Test USDC**: https://faucet.circle.com/
+
+#### Casper Testnet
+
+Create or reuse a dedicated Casper testnet account or wallet key, then fund any
+account that submits Casper transactions with testnet CSPR from the
+[CSPR.live testnet faucet](https://testnet.cspr.live/tools/faucet). CSPR is
+required for gas on Casper Testnet. 
+
+Use [testnet.cspr.trade](https://testnet.cspr.trade) to get wrapped CSPR (WCSPR) or csprUSD for
+the client payments.
 
 ## Available Examples
 
