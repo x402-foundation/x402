@@ -16,6 +16,8 @@ import (
 	"github.com/x402-foundation/x402/go/v2/types"
 )
 
+const maxResponseBodySize = 512 * 1024
+
 // ============================================================================
 // x402HTTPClient - HTTP-aware payment client
 // ============================================================================
@@ -222,11 +224,15 @@ func (t *PaymentRoundTripper) RoundTrip(req *http.Request) (*http.Response, erro
 		}
 	}
 
-	// Read response body for V1 support
-	body, err := io.ReadAll(resp.Body)
+	// Read response body for V1 support (bounded)
+	limited := io.LimitReader(resp.Body, maxResponseBodySize+1)
+	body, err := io.ReadAll(limited)
 	resp.Body.Close()
 	if err != nil {
 		return nil, fmt.Errorf("failed to read response body: %w", err)
+	}
+	if len(body) > maxResponseBodySize {
+		return nil, fmt.Errorf("response body exceeds maximum allowed size of %d bytes", maxResponseBodySize)
 	}
 
 	// Detect version from response
@@ -379,10 +385,15 @@ func (t *PaymentRoundTripper) tryPaymentRequiredHooks(
 		}
 
 		authHeaders := responseHeaders(authResp)
-		authBody, err := io.ReadAll(authResp.Body)
+		// Read response body (bounded)
+		limited := io.LimitReader(authResp.Body, maxResponseBodySize+1)
+		authBody, err := io.ReadAll(limited)
 		authResp.Body.Close()
 		if err != nil {
 			return nil, headers, body, false, fmt.Errorf("failed to read auth retry body: %w", err)
+		}
+		if len(authBody) > maxResponseBodySize {
+			return nil, headers, body, false, fmt.Errorf("auth retry response body exceeds maximum allowed size of %d bytes", maxResponseBodySize)
 		}
 		return authResp, authHeaders, authBody, true, nil
 	}

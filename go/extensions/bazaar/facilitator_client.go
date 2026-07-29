@@ -12,6 +12,8 @@ import (
 	x402http "github.com/x402-foundation/x402/go/v2/http"
 )
 
+const maxResponseBodySize = 512 * 1024
+
 // ListDiscoveryResourcesParams contains optional filtering and pagination parameters
 // for listing discovery resources from a facilitator's bazaar.
 type ListDiscoveryResourcesParams struct {
@@ -211,12 +213,15 @@ func (c *BazaarFacilitatorClient) ListDiscoveryResources(
 	if err != nil {
 		return nil, fmt.Errorf("discovery request failed: %w", err)
 	}
+	// Read response body (bounded)
+	limited := io.LimitReader(resp.Body, maxResponseBodySize+1)
+	body, err := io.ReadAll(limited)
 	defer resp.Body.Close()
-
-	// Read response body
-	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read response body: %w", err)
+	}
+	if len(body) > maxResponseBodySize {
+		return nil, fmt.Errorf("response body exceeds maximum allowed size of %d bytes", maxResponseBodySize)
 	}
 
 	// Check for error response
@@ -273,11 +278,16 @@ func (c *BazaarFacilitatorClient) SearchDiscoveryResources(
 	if err != nil {
 		return nil, fmt.Errorf("search request failed: %w", err)
 	}
-	defer resp.Body.Close()
 
-	body, err := io.ReadAll(resp.Body)
+	// Read response body (bounded)
+	limited := io.LimitReader(resp.Body, maxResponseBodySize+1)
+	body, err := io.ReadAll(limited)
+	defer resp.Body.Close()
 	if err != nil {
 		return nil, fmt.Errorf("failed to read response body: %w", err)
+	}
+	if len(body) > maxResponseBodySize {
+		return nil, fmt.Errorf("response body exceeds maximum allowed size of %d bytes", maxResponseBodySize)
 	}
 
 	if resp.StatusCode != http.StatusOK {

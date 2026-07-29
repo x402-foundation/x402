@@ -69,6 +69,7 @@ const getSupportedRetries = 3
 
 // getSupportedRetryBaseDelay is the base delay for exponential backoff on retries
 const getSupportedRetryBaseDelay = 1 * time.Second
+const maxResponseBodySize = 512 * 1024
 
 // FacilitatorResponseError indicates a facilitator returned malformed success payload data.
 type FacilitatorResponseError struct {
@@ -361,11 +362,15 @@ func (c *HTTPFacilitatorClient) GetSupported(ctx context.Context) (x402.Supporte
 			return x402.SupportedResponse{}, fmt.Errorf("supported request failed: %w", err)
 		}
 
-		// Read response body
-		responseBody, err := io.ReadAll(resp.Body)
+		// Read response body (bounded to prevent excessive memory use)
+		limited := io.LimitReader(resp.Body, maxResponseBodySize+1)
+		responseBody, err := io.ReadAll(limited)
 		resp.Body.Close()
 		if err != nil {
 			return x402.SupportedResponse{}, fmt.Errorf("failed to read response body: %w", err)
+		}
+		if len(responseBody) > maxResponseBodySize {
+			return x402.SupportedResponse{}, fmt.Errorf("response body exceeds maximum allowed size of %d bytes", maxResponseBodySize)
 		}
 
 		// Success
@@ -446,11 +451,15 @@ func (c *HTTPFacilitatorClient) verifyHTTP(ctx context.Context, version int, pay
 	if err != nil {
 		return nil, fmt.Errorf("verify request failed: %w", err)
 	}
-	defer resp.Body.Close()
 
-	responseBody, err := io.ReadAll(resp.Body)
+	// Read response body (bounded)
+	limited := io.LimitReader(resp.Body, maxResponseBodySize+1)
+	responseBody, err := io.ReadAll(limited)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read response body: %w", err)
+	}
+	if len(responseBody) > maxResponseBodySize {
+		return nil, fmt.Errorf("response body exceeds maximum allowed size of %d bytes", maxResponseBodySize)
 	}
 
 	if resp.StatusCode != http.StatusOK {
@@ -518,11 +527,16 @@ func (c *HTTPFacilitatorClient) settleHTTP(ctx context.Context, version int, pay
 	if err != nil {
 		return nil, fmt.Errorf("settle request failed: %w", err)
 	}
-	defer resp.Body.Close()
 
-	responseBody, err := io.ReadAll(resp.Body)
+	// Read response body (bounded)
+	limited := io.LimitReader(resp.Body, maxResponseBodySize+1)
+	responseBody, err := io.ReadAll(limited)
+	defer resp.Body.Close()
 	if err != nil {
 		return nil, fmt.Errorf("failed to read response body: %w", err)
+	}
+	if len(responseBody) > maxResponseBodySize {
+		return nil, fmt.Errorf("response body exceeds maximum allowed size of %d bytes", maxResponseBodySize)
 	}
 
 	if resp.StatusCode != http.StatusOK {
