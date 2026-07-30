@@ -1,2 +1,2 @@
 kind: fix
-body: Add Cache-Control no-store to 402 responses to prevent CDN caching of payment headers
+body: Add Cache-Control no-store to 402/412 PAYMENT-REQUIRED responses and private (merged with handler directives) on 200 PAYMENT-RESPONSE responses to prevent shared caches from storing payment signaling headers

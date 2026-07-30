@@ -470,6 +470,7 @@ func handlePaymentVerified(c echo.Context, next echo.HandlerFunc, server *x402ht
 	for key, value := range settleResult.Headers {
 		origWriter.Header().Set(key, value)
 	}
+	origWriter.Header().Set("Cache-Control", x402http.WithPrivateCacheControl(origWriter.Header().Get("Cache-Control")))
 
 	// Call settlement handler if configured
 	if config.SettlementHandler != nil {

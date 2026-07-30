@@ -452,6 +452,73 @@ func TestPaymentMiddleware_SettlesAndReturnsResponseForVerifiedPayment(t *testin
 	if w.Header().Get("PAYMENT-RESPONSE") == "" {
 		t.Error("Expected PAYMENT-RESPONSE header")
 	}
+	if w.Header().Get("Cache-Control") != "private" {
+		t.Errorf("Expected Cache-Control private, got %q", w.Header().Get("Cache-Control"))
+	}
+}
+
+func TestPaymentMiddleware_SettlesWithPrivateCacheControlMergedFromHandler(t *testing.T) {
+	mockClient := &mockFacilitatorClient{
+		verifyFunc: func(ctx context.Context, payloadBytes []byte, requirementsBytes []byte) (*x402.VerifyResponse, error) {
+			return &x402.VerifyResponse{IsValid: true, Payer: "0xpayer"}, nil
+		},
+		settleFunc: func(ctx context.Context, payloadBytes []byte, requirementsBytes []byte) (*x402.SettleResponse, error) {
+			return &x402.SettleResponse{
+				Success:     true,
+				Transaction: "0xtx",
+				Network:     "eip155:1",
+				Payer:       "0xpayer",
+			}, nil
+		},
+		supportedFunc: defaultSupportedFunc(),
+	}
+
+	mockServer := &mockSchemeServer{scheme: "exact"}
+
+	routes := x402http.RoutesConfig{
+		"POST /api": x402http.RouteConfig{
+			Accepts: x402http.PaymentOptions{
+				{
+					Scheme:  "exact",
+					PayTo:   "0xtest",
+					Price:   "$1.00",
+					Network: "eip155:1",
+				},
+			},
+		},
+	}
+
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Cache-Control", "max-age=300")
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_ = json.NewEncoder(w).Encode(map[string]string{"data": "protected-data"})
+	})
+
+	middleware := PaymentMiddlewareFromConfig(routes,
+		WithFacilitatorClient(mockClient),
+		WithScheme("eip155:1", mockServer),
+		WithSyncFacilitatorOnStart(true),
+		WithTimeout(5*time.Second),
+	)
+	wrapped := middleware(handler)
+
+	req := httptest.NewRequest("POST", "/api", nil)
+	req.Header.Set("PAYMENT-SIGNATURE", createPaymentHeader("0xtest"))
+	req.Host = "example.com"
+
+	w := httptest.NewRecorder()
+	wrapped.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("Expected status 200, got %d. Body: %s", w.Code, w.Body.String())
+	}
+	if w.Header().Get("PAYMENT-RESPONSE") == "" {
+		t.Error("Expected PAYMENT-RESPONSE header")
+	}
+	if w.Header().Get("Cache-Control") != "max-age=300, private" {
+		t.Errorf("Expected Cache-Control max-age=300, private, got %q", w.Header().Get("Cache-Control"))
+	}
 }
 
 func TestPaymentMiddleware_SkipsSettlementWhenHandlerReturns400OrHigher(t *testing.T) {

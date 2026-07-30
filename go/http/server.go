@@ -761,6 +761,24 @@ func (s *x402HTTPResourceServer) RequiresPayment(reqCtx HTTPRequestContext) bool
 // with both http.Header methods and direct map access.
 const SettlementOverridesHeader = "Settlement-Overrides"
 
+// PaymentRequiredCacheControl is the Cache-Control directive for 402/412 responses
+// carrying PAYMENT-REQUIRED or 402 settlement-failure PAYMENT-RESPONSE.
+const PaymentRequiredCacheControl = "no-store"
+
+// WithPrivateCacheControl appends the private directive for 200 responses with
+// PAYMENT-RESPONSE without clobbering existing handler Cache-Control values.
+func WithPrivateCacheControl(value string) string {
+	if value == "" {
+		return "private"
+	}
+	for _, directive := range strings.Split(value, ",") {
+		if strings.EqualFold(strings.TrimSpace(directive), "private") {
+			return value
+		}
+	}
+	return value + ", private"
+}
+
 // MarshalSettlementOverrides serializes overrides to the JSON string suitable for
 // the SettlementOverridesHeader value. Returns an empty string on marshal failure
 // (which cannot happen for a well-formed SettlementOverrides value).
@@ -847,20 +865,28 @@ func (s *x402HTTPResourceServer) buildSettlementFailureResult(errorReason string
 			Success:     false,
 			ErrorReason: errorReason,
 			Response: &HTTPResponseInstructions{
-				Status:  402,
-				Headers: map[string]string{},
-				Body:    map[string]interface{}{},
+				Status: 402,
+				Headers: map[string]string{
+					"Cache-Control": PaymentRequiredCacheControl,
+				},
+				Body: map[string]interface{}{},
 			},
 		}
 	}
 
+	responseHeaders := make(map[string]string, len(headers)+1)
+	for k, v := range headers {
+		responseHeaders[k] = v
+	}
+	responseHeaders["Cache-Control"] = PaymentRequiredCacheControl
+
 	return &ProcessSettleResult{
 		Success:     false,
 		ErrorReason: errorReason,
-		Headers:     headers,
+		Headers:     responseHeaders,
 		Response: &HTTPResponseInstructions{
 			Status:  402,
-			Headers: headers,
+			Headers: responseHeaders,
 			Body:    map[string]interface{}{},
 		},
 	}
@@ -958,7 +984,7 @@ func (s *x402HTTPResourceServer) createHTTPResponseV2(paymentRequired types.Paym
 			Headers: map[string]string{
 				"Content-Type":     "text/html",
 				"PAYMENT-REQUIRED": encodedHeader,
-                                "Cache-Control":    "no-store",
+				"Cache-Control":    PaymentRequiredCacheControl,
 			},
 			Body:   html,
 			IsHTML: true,
@@ -979,7 +1005,7 @@ func (s *x402HTTPResourceServer) createHTTPResponseV2(paymentRequired types.Paym
 		Headers: map[string]string{
 			"Content-Type":     contentType,
 			"PAYMENT-REQUIRED": encodedHeader,
-                        "Cache-Control":    "no-store",
+			"Cache-Control":    PaymentRequiredCacheControl,
 		},
 		Body: body,
 	}, nil

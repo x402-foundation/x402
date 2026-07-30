@@ -188,6 +188,9 @@ func TestProcessHTTPRequestPaymentRequired(t *testing.T) {
 	if result.Response.Headers["PAYMENT-REQUIRED"] == "" {
 		t.Error("Expected PAYMENT-REQUIRED header")
 	}
+	if result.Response.Headers["Cache-Control"] != "no-store" {
+		t.Errorf("Expected Cache-Control no-store, got %q", result.Response.Headers["Cache-Control"])
+	}
 }
 
 func TestProcessHTTPRequestMalformedPaymentSignature(t *testing.T) {
@@ -642,6 +645,9 @@ func TestProcessSettlement(t *testing.T) {
 	if result.Headers["PAYMENT-RESPONSE"] == "" {
 		t.Error("Expected PAYMENT-RESPONSE header")
 	}
+	if _, ok := result.Headers["Cache-Control"]; ok {
+		t.Errorf("Expected settlement headers to omit Cache-Control, got %q", result.Headers["Cache-Control"])
+	}
 }
 
 func TestProcessSettlement_Failure(t *testing.T) {
@@ -694,6 +700,9 @@ func TestProcessSettlement_Failure(t *testing.T) {
 	body, ok := result.Response.Body.(map[string]interface{})
 	if !ok || len(body) != 0 {
 		t.Errorf("Expected empty body {}, got %v", result.Response.Body)
+	}
+	if result.Response.Headers["Cache-Control"] != "no-store" {
+		t.Errorf("Expected Cache-Control no-store, got %q", result.Response.Headers["Cache-Control"])
 	}
 }
 
@@ -1745,4 +1754,25 @@ func (e testProtectedRequestExtension) EnrichDeclaration(declaration interface{}
 
 func (e testProtectedRequestExtension) ProtectedRequestHook() ProtectedRequestHook {
 	return e.hook
+}
+
+func TestWithPrivateCacheControl(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+		want  string
+	}{
+		{name: "empty", input: "", want: "private"},
+		{name: "append private", input: "max-age=60", want: "max-age=60, private"},
+		{name: "idempotent lowercase", input: "max-age=60, private", want: "max-age=60, private"},
+		{name: "idempotent mixed case", input: "max-age=60, Private", want: "max-age=60, Private"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := WithPrivateCacheControl(tt.input); got != tt.want {
+				t.Errorf("WithPrivateCacheControl(%q) = %q, want %q", tt.input, got, tt.want)
+			}
+		})
+	}
 }

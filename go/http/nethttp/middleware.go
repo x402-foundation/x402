@@ -387,6 +387,7 @@ func handlePaymentVerified(w http.ResponseWriter, r *http.Request, next http.Han
 	for key, value := range settleResult.Headers {
 		w.Header().Set(key, value)
 	}
+	w.Header().Set("Cache-Control", x402http.WithPrivateCacheControl(w.Header().Get("Cache-Control")))
 
 	// Call settlement handler if configured
 	if config.SettlementHandler != nil {
