@@ -22,6 +22,7 @@ If you are evaluating a mainnet EVM route, decide on your production facilitator
 | [Built on Stellar](https://developers.stellar.org/docs/build/apps/x402/built-on-stellar) | Free, public x402 facilitator for Stellar |
 | [CDP Facilitator](https://docs.cdp.coinbase.com/x402/docs/quickstart-sellers) | Coinbase-hosted facilitator with KYT/OFAC checks on every transaction |
 | [Corbits](https://corbits.dev) | Production-grade multi-network, multi-token facilitator supporting EVM and Solana |
+| [CryptoAPIs Facilitator](https://cryptoapis.io/products/x402) | Non-custodial facilitator for USDC on Base and Solana, mainnet and testnet, with AML screening on every payment |
 | [Dexter](https://dexter.cash/facilitator) | Free public x402 facilitator across Solana and EVM chains with no fees and no account required |
 | [HPP Facilitator](https://docs.hpp.io/x402/facilitator) | Gasless, public x402 facilitator for HPP Mainnet and Sepolia |
 | [Meridian](https://mrdn.finance) | Multi-chain facilitator with developer-first features |
