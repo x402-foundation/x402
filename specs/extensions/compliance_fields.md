@@ -62,12 +62,12 @@ extensions["compliance-fields"].info = {
 | `buyer.principal` | string | F | the signed principal behind the paying agent (deployer / AP2 mandate subject) — never merely a wallet |
 | `buyer.mandateRef` | bytes32 hex | F | hash of the AP2 Checkout/Payment Mandate, when the payment carried one |
 | `supply.description` | string | M | nature of goods/services (Art 226b(c); BT-153/BT-154 class) |
-| `lines[]` | array | F | description, quantity, unitPrice, net (Art 226(6)-(8)) |
+| `lines[]` | array | F | `{description, quantity, unitPrice, net}` — quantity, unitPrice, net are strings (Art 226(6)-(8)) |
 | `tax.scheme` | enum `none/vat/gst/jct/sales` | M | tax regime marker |
 | `tax.currency` | string | M | ISO 4217 |
 | `tax.amount` | string | M unless `none` | tax payable or data to compute it (Art 226b(d); JP QIS per-rate rule) |
-| `tax.breakdown[]` | array | F | per-rate `{rate, taxable, tax, category}` (Art 226(8)-(10)) |
-| `settlement.fiat` | object | F | `{amount, currency, source, asOf}` — fiat-equivalent valuation at issuance (1099-DA gross-proceeds context) |
+| `tax.breakdown[]` | array | F | per-rate `{rate, taxable, tax, category}` — rate, taxable, tax are strings (Art 226(8)-(10)) |
+| `settlement.fiat` | object | F | `{amount, currency, source, asOf}` — amount is a string, asOf an int (unix s); fiat-equivalent valuation at issuance (1099-DA gross-proceeds context) |
 | `settlement.txHash` | string | F | on-chain settlement binding (ViDA "payment details") |
 | `refundOf` | bytes32 hex | cond. | digest of the corrected/refunded record (Art 226b(e); ViDA corrective reference) |
 | `adjustment` | object | cond. | ACP/UCP adjustment vocabulary verbatim |
@@ -143,14 +143,23 @@ later one. Accordingly:
 
 `canonicalizationVersion: 1` = **RFC 8785 (JCS)** serialization; `recordDigest = keccak256(utf8(canonical(record)))`. Serialization and digest function are versioned **together**: `receiptDigest` binds the offer-receipt artifact and the attestation base is EIP-712 — both keccak256 — so changing either independently invalidates existing signatures.
 
+**Numbers (normative).** The only members that MAY be JSON numbers are the ones declared `int` above (`version`, `canonicalizationVersion`, `issuedAt`, `seq`, `correctionSeq`, `retentionYears`, `settlement.fiat.asOf`); each is an exact integer well inside IEEE 754's exactly-representable range, which every RFC 8785 implementation serializes identically. Every member carrying a monetary amount, tax rate, or quantity — `lines[].quantity`, `lines[].unitPrice`, `lines[].net`, `tax.amount`, `tax.breakdown[].rate`, `tax.breakdown[].taxable`, `tax.breakdown[].tax`, `settlement.fiat.amount` — is a **decimal string** matching `^-?(0|[1-9][0-9]*)(\.[0-9]+)?$` (no exponent notation). `adjustment` reuses the ACP/UCP vocabulary verbatim; whatever that vocabulary declares, the rule below still binds.
+
+> **A record containing a non-integer JSON number anywhere is non-conformant. Verifiers MUST reject it before computing `recordDigest`.**
+
+This is not stylistic. RFC 8785 §3.2.2.3 serializes JSON numbers through ECMAScript `Number::toString` over IEEE 754 doubles, so a decimal amount emitted as a JSON number is re-interpreted as the nearest double *before canonicalization runs* — the digest binds a value the issuing system never held, even when two implementations agree on the bytes — and imperfect `Number::toString` implementations additionally produce byte-divergent forms of the same record. RFC 8785 §3.1 itself RECOMMENDS representing such values as JSON strings (Appendix D). Strings cross canonicalization byte-for-byte; the x402 base specification already carries every amount as a string of atomic units. Integer minor units remain conformant where a vocabulary defines an atomic unit — they are exact integers — but rates and quantities have no minor unit, so decimal strings are the uniform rule here.
+
 Two implementations disagreeing on key order or number serialization produce different digests from the same record, silently breaking the `refundOf` chain. Conformance is testable, not asserted — an implementation MUST reproduce these vectors:
 
 | input | canonical form | `recordDigest` |
 |---|---|---|
 | `{"b":"x","a":1}` | `{"a":1,"b":"x"}` | `0x84fc3d9faf736ddfdb9baab9973656bd8d9bd142f1dfff8aa513a774fddfdd04` |
 | `{"10":"a","2":"b","1":"c"}` | `{"1":"c","10":"a","2":"b"}` | `0x426b770f81b8ad5e307bcfb767deb02f8d32cd340d81a946be88bb184857e81b` |
+| `{"tax":{"amount":"1.10"},"issuedAt":1735689600}` | `{"issuedAt":1735689600,"tax":{"amount":"1.10"}}` | `0x81086b5801b1bfd992e4d1e929f54907e0d3be0e8ede94f1da1a954b4e78b250` |
 
 The second vector is load-bearing: RFC 8785 orders keys by UTF-16 code unit, so `"1" < "10" < "2"`. A sort-then-stringify implementation whose runtime hoists integer-like keys into numeric order emits `{"1":"c","2":"b","10":"a"}` and produces a different digest from the same record. A vector with only non-numeric keys cannot catch this class.
+
+The third vector is the number boundary. `1735689600` is an exact integer — the only number class the record admits — and `"1.10"` is a decimal string. A pipeline that coerces numeric-looking strings into numbers re-emits `1.1` (the float round-trip drops the trailing zero), producing different bytes and a different digest: it fails the vector instead of diverging silently. Float emission itself is excluded at the type layer above — a vector cannot make IEEE 754 re-interpretation safe, only detect it. The digest was cross-checked on two unrelated stacks (viem and Python `eth_utils`) before pinning, both of which also reproduce the two vectors above.
 
 ---
 
