@@ -321,6 +321,12 @@ The `schema` field contains a JSON Schema (Draft 2020-12) that validates the str
 
 Facilitators **must** validate `info` against `schema` before cataloging.
 
+### Field Size Limits & Rejection Reasons
+
+To ensure indexing reliability across facilitators and prevent catalog bloat:
+- **`description` Field Length:** Resource and tool descriptions SHOULD NOT exceed 1,000 characters. Facilitators MAY reject declarations exceeding this limit.
+- **Explicit Rejection Signals:** When cataloging is rejected due to size limit or schema validation failure, facilitators MUST set `bazaar.status` to `"rejected"` in the `EXTENSION-RESPONSES` header and provide a descriptive `bazaar.rejectedReason` (e.g., `"description exceeds maximum allowed length of 1000 characters"` or `"info failed schema validation"`).
+
 ### MCP Schema Example
 
 ```json
