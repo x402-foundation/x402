@@ -27,6 +27,7 @@ from x402.mechanisms.tvm import (
     HighloadV3Config,
 )
 from x402.mechanisms.tvm.exact.facilitator import ExactTvmScheme
+from x402.mechanisms.xrpl.exact.facilitator import ExactXrplScheme
 
 # Load environment variables
 load_dotenv()
@@ -38,10 +39,16 @@ PORT = int(os.environ.get("PORT", "4022"))
 evm_private_key = os.environ.get("EVM_PRIVATE_KEY")
 svm_private_key = os.environ.get("SVM_PRIVATE_KEY")
 tvm_private_key = os.environ.get("TVM_PRIVATE_KEY")
+# The XRPL facilitator holds no keys: the payer signs and the transaction
+# carries its own fee. It is enabled by naming a network, not by a key.
+xrpl_network = os.environ.get("XRPL_NETWORK")
 
 # Validate at least one private key is provided
-if not evm_private_key and not svm_private_key and not tvm_private_key:
-    print("❌ At least one of EVM_PRIVATE_KEY, SVM_PRIVATE_KEY, or TVM_PRIVATE_KEY is required")
+if not evm_private_key and not svm_private_key and not tvm_private_key and not xrpl_network:
+    print(
+        "❌ At least one of EVM_PRIVATE_KEY, SVM_PRIVATE_KEY, TVM_PRIVATE_KEY, "
+        "or XRPL_NETWORK is required"
+    )
     sys.exit(1)
 
 # Network configuration
@@ -136,6 +143,9 @@ if tvm_signer:
         [TVM_NETWORK],
         ExactTvmScheme(tvm_signer),
     )
+if xrpl_network:
+    facilitator.register([xrpl_network], ExactXrplScheme())
+    print(f"XRPL facilitator enabled on {xrpl_network} (holds no keys)")
 
 
 # Pydantic models for request/response
