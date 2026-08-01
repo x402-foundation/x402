@@ -88,6 +88,10 @@ go get github.com/x402-foundation/x402/go/v2
 
 Curated third-party SDKs, extensions, and facilitators are listed in the [Developer Tools docs](https://docs.x402.org/dev-tools/overview). For broader discovery of x402 services and integrations, see community-maintained directories such as [x402scan.com](https://x402scan.com), [Agentic.Market](https://agentic.market), [Pay.sh](https://pay.sh), [app.ampersend.ai/discover](https://app.ampersend.ai/discover), and [x402-list.com](https://x402-list.com).
 
+**Featured services built on x402:**
+
+- **[Mazza Group AI APIs](https://mazzagrp.com)** — 21 AI API endpoints (RAG, SQL generation, negotiation training, web agent, simulation, etc.) that accept USDC on Base via x402. Includes MCP server wrapper, Python SDK, and llms.txt for agent discovery. Prices range from $0.20 to $5.00 per call.
+
 **Roadmap:** see [ROADMAP.md](https://github.com/x402-foundation/x402/blob/main/ROADMAP.md)
 
 **Documentation:** see [`docs/`](./docs/) for the published documentation source (Mintlify). Payment **schemes** include **`exact`**, **`upto`**, and **`batch-settlement`**; specifications live under [`specs/schemes/`](./specs/schemes/).
