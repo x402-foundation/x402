@@ -71,6 +71,7 @@ The `payload` field must contain:
 - `extra.assetTransferMethod` (optional in `PaymentRequired`, default `"eip3009"`): if present, MUST be `"eip3009"`.
 - `extra.name` (required): The EIP-712 domain name of the token contract. Used for `transferWithAuthorization` signature construction.
 - `extra.version` (required): The EIP-712 domain version of the token contract. Used for `transferWithAuthorization` signature construction.
+- `extra.verifyingContract` (optional): Overrides the EIP-712 domain's `verifyingContract` for signing, used when the settlement contract that will verify the `transferWithAuthorization` signature is not the token contract itself (e.g. Circle Gateway's `GatewayWalletBatched` batch-settlement contract, which has its own EIP-712 domain distinct from the USDC token). If absent, clients MUST sign against `requirements.asset`. Clients MUST NOT trust a seller-supplied `extra.verifyingContract` by default: because a scheme client is typically registered once per network and reused for every payment made on that network for the life of the client, unconditionally trusting this field would let any seller redirect the client's signature to an arbitrary contract. Clients that need to support this field (e.g. for Circle Gateway) MUST validate the candidate address against an allowlist or equivalent authorization check before trusting it — see the Python SDK's `verifying_contract_validator` constructor option on `ExactEvmScheme`/`ExactEvmSchemeV1` for a reference implementation of this gating.
 
 ### Phase 2: Verification Logic
 
