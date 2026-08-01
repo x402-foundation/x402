@@ -79,7 +79,12 @@ execution environment MAY advertise it in its manifest:
   auditable history, not just live state).
 - `verification` — a procedure (script, endpoint, or document) that lets a
   third party re-derive the whole chain: evidence → measurement →
-  imageDigest → registered key → live settlement address.
+  imageDigest → registered key → live settlement address. The `evidence`
+  endpoint is **live state**; facilitators SHOULD additionally anchor the
+  digest of each verification event (same `evidenceDigest`/`evidenceAnchor`
+  shape as badge records, below), giving a permanent, independently
+  checkable record that the chain passed at a given time — separate from
+  whether the endpoint keeps serving that token.
 
 **Honest-manifest rule (normative):** a manifest MUST only carry an
 `attestation` block while the full verification chain currently passes.
@@ -122,7 +127,15 @@ A conforming registry is a smart contract where records are:
   `hasActiveBadge(subject, kind) → bool`.
 - **Evidence-linked** — each record carries an `evidenceRef` URI pointing to
   the artifact that justified issuance (verification report, audit output,
-  payment receipt).
+  payment receipt). A bare URI has the trust model of brand reputation:
+  the pointer can be edited or taken down after the fact. Records SHOULD
+  therefore also carry an **`evidenceDigest`** (SHA-256 of the artifact at
+  issuance time) and MAY carry an **`evidenceAnchor`** — a chain reference
+  (network + contract + record id) to where that digest is anchored in a
+  permissionless anchor registry. This extension privileges no particular
+  anchor registry. With a digest present, the record inherits
+  tamper-evidence from the evidence itself rather than from the registry's
+  honesty about not editing the link.
 - **Revocable with history** — revocation flips the record inactive but MUST
   NOT erase it. "Held 2026-07 through 2026-09, then revoked" is signal;
   deletion is not.
@@ -139,7 +152,11 @@ Given a service URL:
 3. Active → status **active** (proceed). Present-but-revoked or absent →
    status **inactive** (clients SHOULD refuse or require explicit override).
 4. Optionally fetch `evidenceRef` and re-run the evidence check itself —
-   records are pointers to proof, not substitutes for it.
+   records are pointers to proof, not substitutes for it. When an
+   `evidenceDigest` is present, verifiers SHOULD check the fetched artifact
+   against it (and against the `evidenceAnchor`, if any) rather than trust
+   the URI, and MUST treat a digest mismatch as **evidence-invalid** — a
+   stronger negative signal than an unreachable URI.
 
 Clients SHOULD treat **inactive** as a hard stop and **unadvertised** as a
 soft signal (many honest services simply have no records yet).
@@ -186,6 +203,9 @@ beyond the manifest fetch.
   exactly as they pin facilitators today.
 - **Revocation liveness** — clients MUST read active status from chain at
   decision time; cached "active" results decay.
-- **Evidence rot** — `evidenceRef` URIs can die; issuers SHOULD use
-  content-addressed storage where practical. A record whose evidence is
-  unreachable SHOULD be down-weighted, not treated as revoked.
+- **Evidence rot vs. evidence tampering** — these are different failures.
+  An unreachable `evidenceRef` SHOULD down-weight a record, not revoke it.
+  A fetched artifact that MISMATCHES its `evidenceDigest` is
+  evidence-invalid and MUST be treated as a hard negative. The
+  digest/anchor mechanism (above) exists so that link rot degrades
+  gracefully while tampering cannot hide behind it.
