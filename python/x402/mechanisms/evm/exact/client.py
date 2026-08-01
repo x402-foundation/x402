@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import time
+from collections.abc import Callable
 from typing import Any
 
 from ....schemas import PaymentRequirements
@@ -37,6 +38,20 @@ def _wrap_if_local_account(signer: Any) -> ClientEvmSigner:
     return signer
 
 
+VerifyingContractValidator = Callable[[str, PaymentRequirements], bool]
+"""Validates a seller-supplied extra.verifyingContract before it is trusted
+for EIP-712 signing.
+
+Args:
+    candidate: The address from requirements.extra["verifyingContract"].
+    requirements: The full payment requirements, for context (e.g. network).
+
+Returns:
+    True to sign against `candidate`. False to fall back to
+    requirements.asset, same as if no verifyingContract were supplied.
+"""
+
+
 class ExactEvmScheme:
     """EVM client implementation for the Exact payment scheme (V2).
 
@@ -53,15 +68,27 @@ class ExactEvmScheme:
 
     scheme = SCHEME_EXACT
 
-    def __init__(self, signer: ClientEvmSigner):
+    def __init__(
+        self,
+        signer: ClientEvmSigner,
+        verifying_contract_validator: VerifyingContractValidator | None = None,
+    ):
         """Create ExactEvmScheme.
 
         Args:
             signer: EVM signer for payment authorizations. Can also be an
                 eth_account LocalAccount, which will be auto-wrapped in
                 EthAccountSigner.
+            verifying_contract_validator: Optional callback invoked when a
+                payment requirement's extra.verifyingContract differs from
+                requirements.asset (e.g. Circle Gateway's batch-settlement
+                contract). Receives the candidate address and the
+                requirements, and must return True to trust it for EIP-712
+                signing. If not provided (default), extra.verifyingContract
+                is never trusted and signing always uses requirements.asset.
         """
         self._signer = _wrap_if_local_account(signer)
+        self._verifying_contract_validator = verifying_contract_validator
 
     def create_payment_payload(
         self,
@@ -271,10 +298,12 @@ class ExactEvmScheme:
         name = extra["name"]
         version = extra.get("version", "1")
 
+        verifying_contract = self._resolve_verifying_contract(extra, requirements)
+
         domain, types, primary_type, message = build_typed_data_for_signing(
             authorization,
             chain_id,
-            extra.get("verifyingContract", requirements.asset),
+            verifying_contract,
             name,
             version,
         )
@@ -289,3 +318,23 @@ class ExactEvmScheme:
         sig_bytes = self._signer.sign_typed_data(domain, typed_fields, primary_type, message)
 
         return "0x" + sig_bytes.hex()
+
+    def _resolve_verifying_contract(
+        self,
+        extra: dict[str, Any],
+        requirements: PaymentRequirements,
+    ) -> str:
+        """Resolve the EIP-712 verifyingContract for signing.
+
+        Defaults to requirements.asset. Only trusts a seller-supplied
+        extra.verifyingContract if a validator was supplied at construction
+        time and it returns True for this specific candidate.
+        """
+        candidate = extra.get("verifyingContract")
+        if candidate is None:
+            return requirements.asset
+        if self._verifying_contract_validator is None:
+            return requirements.asset
+        if self._verifying_contract_validator(candidate, requirements):
+            return candidate
+        return requirements.asset

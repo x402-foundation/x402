@@ -362,14 +362,17 @@ class TestSigningDomainVerifyingContract:
         )
         return to_checksum_address(pubkey.to_address()) == to_checksum_address(auth["from"])
 
-    def test_signs_against_custom_verifying_contract_when_provided(self):
-        """A seller-provided extra.verifyingContract must be used for signing,
-        not the asset (token) address."""
+    def test_signs_against_custom_verifying_contract_when_validator_approves(self):
+        """A seller-provided extra.verifyingContract is used for signing when
+        an explicit validator approves it -- trust is opt-in, not automatic."""
         account = Account.create()
-        client = ExactEvmClientScheme(signer=account)
         network = "eip155:8453"
         gateway_contract = "0x77777777Dcc4d5A8B6E418Fd04D8997ef11000eE"
         usdc_asset = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913"
+        client = ExactEvmClientScheme(
+            signer=account,
+            verifying_contract_validator=lambda addr, reqs: addr == gateway_contract,
+        )
 
         requirements = PaymentRequirements(
             scheme="exact",
@@ -411,3 +414,117 @@ class TestSigningDomainVerifyingContract:
         payload = client.create_payment_payload(requirements)
 
         assert self._signed_domain_matches(payload, requirements, usdc_asset)
+
+    def test_falls_back_to_asset_when_no_validator_supplied(self):
+        """A seller-provided extra.verifyingContract must NOT be trusted by
+        default -- with no validator supplied at construction time, signing
+        must still use requirements.asset even though a candidate is present.
+        This is the safe default the opt-in gating exists to guarantee."""
+        account = Account.create()
+        client = ExactEvmClientScheme(signer=account)
+        network = "eip155:8453"
+        gateway_contract = "0x77777777Dcc4d5A8B6E418Fd04D8997ef11000eE"
+        usdc_asset = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913"
+
+        requirements = PaymentRequirements(
+            scheme="exact",
+            network=network,
+            asset=usdc_asset,
+            amount="8000",
+            pay_to="0x0987654321098765432109876543210987654321",
+            max_timeout_seconds=3600,
+            extra={
+                "name": "GatewayWalletBatched",
+                "version": "1",
+                "verifyingContract": gateway_contract,
+            },
+        )
+
+        payload = client.create_payment_payload(requirements)
+
+        assert self._signed_domain_matches(payload, requirements, usdc_asset)
+        assert not self._signed_domain_matches(payload, requirements, gateway_contract)
+
+    def test_falls_back_to_asset_when_validator_rejects(self):
+        """If the validator explicitly rejects the candidate, signing falls
+        back to requirements.asset rather than trusting it anyway."""
+        account = Account.create()
+        network = "eip155:8453"
+        gateway_contract = "0x77777777Dcc4d5A8B6E418Fd04D8997ef11000eE"
+        usdc_asset = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913"
+        client = ExactEvmClientScheme(
+            signer=account,
+            verifying_contract_validator=lambda addr, reqs: False,
+        )
+
+        requirements = PaymentRequirements(
+            scheme="exact",
+            network=network,
+            asset=usdc_asset,
+            amount="8000",
+            pay_to="0x0987654321098765432109876543210987654321",
+            max_timeout_seconds=3600,
+            extra={
+                "name": "GatewayWalletBatched",
+                "version": "1",
+                "verifyingContract": gateway_contract,
+            },
+        )
+
+        payload = client.create_payment_payload(requirements)
+
+        assert self._signed_domain_matches(payload, requirements, usdc_asset)
+
+    def test_validator_receives_candidate_and_requirements(self):
+        """The validator must be called with exactly (candidate, requirements)."""
+        from unittest.mock import Mock
+
+        account = Account.create()
+        network = "eip155:8453"
+        gateway_contract = "0x77777777Dcc4d5A8B6E418Fd04D8997ef11000eE"
+        usdc_asset = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913"
+        validator = Mock(return_value=True)
+        client = ExactEvmClientScheme(signer=account, verifying_contract_validator=validator)
+
+        requirements = PaymentRequirements(
+            scheme="exact",
+            network=network,
+            asset=usdc_asset,
+            amount="8000",
+            pay_to="0x0987654321098765432109876543210987654321",
+            max_timeout_seconds=3600,
+            extra={
+                "name": "GatewayWalletBatched",
+                "version": "1",
+                "verifyingContract": gateway_contract,
+            },
+        )
+
+        client.create_payment_payload(requirements)
+
+        validator.assert_called_once_with(gateway_contract, requirements)
+
+    def test_validator_not_invoked_when_no_verifying_contract_present(self):
+        """The validator must only be invoked when extra.verifyingContract
+        is actually present -- no candidate means nothing to validate."""
+        from unittest.mock import Mock
+
+        account = Account.create()
+        network = "eip155:8453"
+        usdc_asset = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913"
+        validator = Mock(return_value=True)
+        client = ExactEvmClientScheme(signer=account, verifying_contract_validator=validator)
+
+        requirements = PaymentRequirements(
+            scheme="exact",
+            network=network,
+            asset=usdc_asset,
+            amount="500000",
+            pay_to="0x0987654321098765432109876543210987654321",
+            max_timeout_seconds=3600,
+            extra={"name": "USD Coin", "version": "2"},
+        )
+
+        client.create_payment_payload(requirements)
+
+        validator.assert_not_called()
