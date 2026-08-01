@@ -2,7 +2,11 @@ import { Keypair } from "@stellar/stellar-sdk";
 import { basicNodeSigner, SignAuthEntry, SignTransaction } from "@stellar/stellar-sdk/contract";
 import { STELLAR_TESTNET_CAIP2 } from "./constants";
 import { getNetworkPassphrase } from "./utils";
+import type { authorizeEntry as AuthorizeEntryFn } from "@stellar/stellar-sdk";
 import type { Network } from "@x402/core/types";
+
+/** The SDK's `authorizeEntry`, which `signAuthEntries` accepts as an override. */
+type AuthorizeEntry = typeof AuthorizeEntryFn;
 
 /**
  * Ed25519 signer for Stellar transactions and auth entries.
@@ -38,6 +42,8 @@ export type ClientStellarSigner = {
   address: string;
   signAuthEntry: SignAuthEntry;
   signTransaction?: SignTransaction;
+  /** Override for contract (C) accounts, which the SDK's default `authorizeEntry` cannot sign for. */
+  authorizeEntry?: AuthorizeEntry;
 };
 
 /**
