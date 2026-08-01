@@ -140,6 +140,50 @@ A conforming registry is a smart contract where records are:
   NOT erase it. "Held 2026-07 through 2026-09, then revoked" is signal;
   deletion is not.
 
+### On-chain representation of the evidence triple
+
+A registry contract usually has **one** string field for evidence, not
+three — and adding typed fields means redeploying to a new address,
+which breaks every manifest already pointing at the registry. The
+triple must therefore survive inside a single string, in a form two
+independent implementations can compare **byte for byte**. Registries
+SHOULD use the following canonical grammar:
+
+```
+x402ev/1; digest=<alg>:<hex>[; anchor=<caip2>:<contract>:<record>][; ref=<uri>]
+```
+
+- `x402ev/1` — version tag. Parsers MUST reject unknown majors.
+- `digest=` — REQUIRED. Algorithm-prefixed so the format survives a
+  hash migration (`sha256:<64 lowercase hex>` today).
+- `anchor=` — OPTIONAL. Where the digest is independently recorded:
+  CAIP-2 chain, contract, record id. **Omit it when the record
+  carrying this string is itself the anchor** — a badge that already
+  contains the digest needs no second witness.
+- `ref=` — OPTIONAL. Where the artifact can be fetched. Link rot is
+  expected; the digest is the truth.
+
+Canonicalization, which is what makes comparison meaningful: fixed
+field order (`digest`, `anchor`, `ref`); separator exactly `"; "`;
+algorithm, digest hex and addresses lowercased; URIs verbatim
+(case-sensitive); no trailing separator. Parsers MUST accept fields in
+any order and MUST re-emit canonical order before comparing. Unknown
+keys MUST be ignored rather than rejected.
+
+Two references describe the same evidence when their **digests**
+match — never their `ref`. A relocated artifact is still the same
+evidence; different bytes at the same URL are not.
+
+Registries with typed fields MAY store the components separately, but
+MUST be able to produce this canonical string, so that cross-registry
+verification stays a string comparison rather than a schema
+negotiation.
+
+Serving the artifact at a path **named by its digest** (e.g.
+`/evidence/<sha256>.json`) is RECOMMENDED: a verifier then fetches and
+re-hashes without trusting the server about which file it received,
+and the URL is immutable by construction.
+
 ### Client verification algorithm
 
 Given a service URL:
