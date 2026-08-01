@@ -1,0 +1,3 @@
+kind: fixed
+body: Propagate payment response hook errors after corrective retries and close response bodies on hook failure.
+time: 2026-07-31T22:06:57.340821-04:00

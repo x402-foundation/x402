@@ -975,6 +975,7 @@ type hookSchemeClient struct {
 	settleCalls      int
 	correctiveCalls  int
 	signalRecover    bool
+	settleErr        error
 	createPayloadCnt int
 }
 
@@ -991,6 +992,9 @@ func (m *hookSchemeClient) CreatePaymentPayload(ctx context.Context, requirement
 func (m *hookSchemeClient) OnPaymentResponse(ctx context.Context, prCtx x402.PaymentResponseContext) (x402.PaymentResponseResult, error) {
 	if prCtx.SettleResponse != nil {
 		m.settleCalls++
+		if m.settleErr != nil {
+			return x402.PaymentResponseResult{}, m.settleErr
+		}
 		return x402.PaymentResponseResult{}, nil
 	}
 	if prCtx.PaymentRequired != nil {
@@ -1067,6 +1071,85 @@ func TestPaymentRoundTripper_DispatchesOnPaymentResponseOnSuccess(t *testing.T) 
 	}
 	if scheme.correctiveCalls != 0 {
 		t.Fatalf("did not expect corrective dispatch, got %d", scheme.correctiveCalls)
+	}
+}
+
+func TestPaymentRoundTripper_PropagatesPaymentResponseHookErrors(t *testing.T) {
+	accepts := []types.PaymentRequirements{{
+		Scheme:  "test-scheme",
+		Network: "eip155:1",
+		Asset:   "USDC",
+		Amount:  "100",
+		PayTo:   "0xrecipient",
+	}}
+
+	for _, tt := range []struct {
+		name       string
+		corrective bool
+	}{
+		{name: "first paid response"},
+		{name: "corrective response", corrective: true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			hookErr := errors.New("payment response hook failed")
+			scheme := &hookSchemeClient{
+				scheme:        "test-scheme",
+				signalRecover: tt.corrective,
+				settleErr:     hookErr,
+			}
+			x402Client := x402.Newx402Client()
+			x402Client.Register("eip155:1", scheme)
+
+			responseBody := &oneShotBody{reader: strings.NewReader("response")}
+			attempt := 0
+			transport := roundTripFunc(func(*http.Request) (*http.Response, error) {
+				attempt++
+				if attempt == 1 || tt.corrective && attempt == 2 {
+					return stringResponse(http.StatusPaymentRequired, map[string]string{
+						"PAYMENT-REQUIRED": paymentRequiredHeader(t, accepts),
+					}, "")
+				}
+
+				resp := &http.Response{
+					StatusCode: http.StatusOK,
+					Header:     make(http.Header),
+					Body:       responseBody,
+				}
+				resp.Header.Set("PAYMENT-RESPONSE", paymentResponseHeader(t, x402.SettleResponse{
+					Success:     true,
+					Transaction: "0xtx",
+					Network:     "eip155:1",
+				}))
+				return resp, nil
+			})
+			rt := &PaymentRoundTripper{
+				Transport:  transport,
+				x402Client: Newx402HTTPClient(x402Client),
+				retryCount: &sync.Map{},
+			}
+			req, err := http.NewRequest(http.MethodGet, "https://api.example.com/resource", nil)
+			if err != nil {
+				t.Fatalf("NewRequest() error = %v", err)
+			}
+
+			resp, err := rt.RoundTrip(req)
+			if !errors.Is(err, hookErr) {
+				if resp != nil && resp.Body != nil {
+					resp.Body.Close()
+				}
+				t.Fatalf("RoundTrip() error = %v, want %v", err, hookErr)
+			}
+			if resp != nil {
+				resp.Body.Close()
+				t.Fatalf("RoundTrip() response = %v, want nil", resp)
+			}
+			if !responseBody.closed {
+				t.Fatal("response body was not closed")
+			}
+			if responseBody.closeCalls != 1 {
+				t.Fatalf("response body close calls = %d, want 1", responseBody.closeCalls)
+			}
+		})
 	}
 }
 

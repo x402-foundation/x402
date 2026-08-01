@@ -275,6 +275,7 @@ func (t *PaymentRoundTripper) RoundTrip(req *http.Request) (*http.Response, erro
 	// retry once more with a freshly built payload (mirrors @x402/fetch recovery).
 	recovered, err := t.dispatchPaymentResponseHooks(ctx, build, newResp)
 	if err != nil {
+		newResp.Body.Close()
 		return nil, err
 	}
 	if !recovered || newResp.StatusCode != http.StatusPaymentRequired {
@@ -311,7 +312,8 @@ func (t *PaymentRoundTripper) RoundTrip(req *http.Request) (*http.Response, erro
 	correctiveBuild.paymentPayload = freshPayload
 	correctiveBuild.payloadBytes = freshBytes
 	if _, err := t.dispatchPaymentResponseHooks(ctx, &correctiveBuild, correctiveResp); err != nil {
-		return correctiveResp, nil
+		correctiveResp.Body.Close()
+		return nil, err
 	}
 	return correctiveResp, nil
 }
