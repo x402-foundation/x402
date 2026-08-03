@@ -177,6 +177,22 @@ indefinitely, and the crawler exhausts memory or hangs. Size limits **MUST**
 be applied to the bytes actually received, not to `Content-Length`, which is
 the server's claim rather than a measurement.
 
+**Consumers MUST refuse private destinations.** Before every fetch this
+document invites — the manifest, each redirect hop, `resources[]` probes,
+the live `supported` cross-check — a consumer MUST refuse a URL whose host
+is, or resolves to, a loopback, link-local, or private-range address. The
+HTTPS and in-domain rules do **not** cover this: the publisher controls
+their own DNS, so an in-domain hostname can resolve to `169.254.169.254`
+or an address inside the crawler's network, and DNS-01 issuance grants
+valid certificates to names that never point anywhere public. The check
+MUST be re-applied on every redirect hop (a public first hop redirecting
+to an internal name is the classic bypass). Resolution-time checks remain
+subject to DNS rebinding between check and connect; consumers needing a
+stronger guarantee SHOULD pin the resolved address for the connection.
+Deployments intentionally operating on private networks MAY relax this
+rule, explicitly. Our reference implementation resolves first and refuses
+loopback, link-local, RFC 1918, CGNAT, and IPv6 ULA ranges.
+
 ## Security considerations
 
 - **Discovery is not endorsement.** A manifest proves a host *claims* a
