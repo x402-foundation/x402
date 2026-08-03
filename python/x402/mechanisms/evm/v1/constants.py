@@ -52,6 +52,12 @@ V1_DEFAULT_ASSETS: dict[str, AssetInfo] = {
         "version": "1",
         "decimals": 6,
     },
+    "celo": {
+        "address": "0xcebA9300f2b948710d2653dD7B07f33A8B32118C",
+        "name": "USDC",
+        "version": "2",
+        "decimals": 6,
+    },
 }
 
 
@@ -76,6 +82,7 @@ V1_NETWORKS = [
     "monad",
     "stable",
     "stable-testnet",
+    "celo",
 ]
 
 # V1 network name to chain ID mapping
@@ -100,4 +107,5 @@ V1_NETWORK_CHAIN_IDS: dict[str, int] = {
     "monad": 143,
     "stable": 988,
     "stable-testnet": 2201,
+    "celo": 42220,
 }

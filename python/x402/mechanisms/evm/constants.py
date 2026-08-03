@@ -606,6 +606,26 @@ NETWORK_CONFIGS: dict[str, NetworkConfig] = {
             "asset_transfer_method": "permit2",
         },
     },
+    # Celo Mainnet
+    "eip155:42220": {
+        "chain_id": 42220,
+        "default_asset": {
+            "address": "0xcebA9300f2b948710d2653dD7B07f33A8B32118C",
+            "name": "USDC",
+            "version": "2",
+            "decimals": 6,
+        },
+    },
+    # Celo Sepolia (Testnet)
+    "eip155:11142220": {
+        "chain_id": 11142220,
+        "default_asset": {
+            "address": "0x01C5C0122039549AD1493B8220cABEdD739BC44E",
+            "name": "USDC",
+            "version": "2",
+            "decimals": 6,
+        },
+    },
 }
 
 # V1 legacy constants are in x402.mechanisms.evm.v1.constants

@@ -89,6 +89,8 @@ var (
 	ChainIDXDC           = big.NewInt(50)
 	ChainIDXDCApothem    = big.NewInt(51)
 	ChainIDIgra          = big.NewInt(38833)
+	ChainIDCelo          = big.NewInt(42220)
+	ChainIDCeloSepolia   = big.NewInt(11142220)
 
 	// Network configurations
 	// See DEFAULT_ASSET.md for guidelines on adding new chains
@@ -301,6 +303,26 @@ var (
 				Version:             "1",
 				Decimals:            DefaultDecimals,
 				AssetTransferMethod: AssetTransferMethodPermit2,
+			},
+		},
+		// Celo Mainnet
+		"eip155:42220": {
+			ChainID: ChainIDCelo,
+			DefaultAsset: AssetInfo{
+				Address:  "0xcebA9300f2b948710d2653dD7B07f33A8B32118C", // USDC on Celo
+				Name:     "USDC",
+				Version:  "2",
+				Decimals: DefaultDecimals,
+			},
+		},
+		// Celo Sepolia (Testnet)
+		"eip155:11142220": {
+			ChainID: ChainIDCeloSepolia,
+			DefaultAsset: AssetInfo{
+				Address:  "0x01C5C0122039549AD1493B8220cABEdD739BC44E", // USDC on Celo Sepolia
+				Name:     "USDC",
+				Version:  "2",
+				Decimals: DefaultDecimals,
 			},
 		},
 	}
