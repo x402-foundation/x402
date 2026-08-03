@@ -79,7 +79,10 @@ execution environment MAY advertise it in its manifest:
   auditable history, not just live state).
 - `verification` — a procedure (script, endpoint, or document) that lets a
   third party re-derive the whole chain: evidence → measurement →
-  imageDigest → registered key → live settlement address. The `evidence`
+  imageDigest → registered key → live settlement address. The `procedure`
+  is **documentation for a verifier the client already trusts, never code
+  for the client to run** — see *Remote references: safe fetching*, which
+  binds every URI in this block. The `evidence`
   endpoint is **live state**; facilitators SHOULD additionally anchor the
   digest of each verification event (same `evidenceDigest`/`evidenceAnchor`
   shape as badge records, below), giving a permanent, independently
@@ -184,6 +187,45 @@ Serving the artifact at a path **named by its digest** (e.g.
 re-hashes without trusting the server about which file it received,
 and the URL is immutable by construction.
 
+### Remote references: safe fetching (normative)
+
+This extension introduces URIs the previous sections invite clients to
+dereference — `verification.procedure`, `verification.evidence`,
+`evidenceRef`, and `ref=` inside the `x402ev/1` string. Every one of
+them is a fetch performed on the say-so of an unauthenticated stranger,
+so they inherit the `discovery` extension's manifest-fetch profile
+rather than defining a weaker one:
+
+- **HTTPS only.** Clients MUST NOT dereference non-HTTPS references.
+- **Bounded.** Clients MUST apply a request deadline and a maximum
+  response size, and MUST cap redirect hops, re-validating these rules
+  on **every** hop. (Evidence artifacts may legitimately exceed a
+  manifest's size; the bound is the client's to choose, but there MUST
+  be one.)
+- **Public destinations only.** Clients MUST refuse a reference whose
+  host is, or resolves to, a loopback, link-local, or private-range
+  address, re-checked on every redirect hop. The in-domain and HTTPS
+  rules do not imply this one: a publisher controls their own DNS, so an
+  in-domain name can resolve anywhere — including a crawler's own
+  internal network — and DNS-01 issuance grants valid certificates to
+  names that never point anywhere public. Deployments that intentionally
+  operate on private networks MAY relax this, explicitly.
+- **Origin.** `verification.*` URLs describe the operator's own live
+  state and SHOULD be same-origin with the manifest or the facilitator
+  `baseUrl`. `evidenceRef` / `ref=` MAY be off-origin — content-addressed
+  storage is legitimate and expected — because the **digest**, not the
+  origin, is the integrity control. Retrieval-safety rules above still
+  apply in full: a digest protects what you received, not what fetching
+  it made you do.
+
+**Procedures are documentation, not code to run.** Clients MUST NOT
+automatically execute a fetched `verification.procedure` — or any other
+fetched artifact — as code. Verification logic MUST be code the verifier
+already trusts (vendored, pinned, or independently obtained); manifest
+fields supply only *parameters* to that logic — URLs, digests,
+addresses, chain coordinates. A manifest that can inject code into its
+own verifier verifies nothing.
+
 ### Client verification algorithm
 
 Given a service URL:
@@ -195,7 +237,8 @@ Given a service URL:
    requires.
 3. Active → status **active** (proceed). Present-but-revoked or absent →
    status **inactive** (clients SHOULD refuse or require explicit override).
-4. Optionally fetch `evidenceRef` and re-run the evidence check itself —
+4. Optionally fetch `evidenceRef` (under the *safe fetching* rules above)
+   and re-run the evidence check itself —
    records are pointers to proof, not substitutes for it. When an
    `evidenceDigest` is present, verifiers SHOULD check the fetched artifact
    against it (and against the `evidenceAnchor`, if any) rather than trust
@@ -247,6 +290,14 @@ beyond the manifest fetch.
   exactly as they pin facilitators today.
 - **Revocation liveness** — clients MUST read active status from chain at
   decision time; cached "active" results decay.
+- **Fetch-and-run surface** — this extension's remote references are
+  requests made on a stranger's say-so. The *safe fetching* section is
+  normative for all of them: HTTPS only, bounded time/size/redirects
+  with per-hop re-validation, private destinations refused after
+  resolution, and no fetched artifact ever executed as code. Integrity
+  controls (`evidenceDigest`, content addressing) protect what was
+  retrieved; they do nothing to make retrieval or execution safe, which
+  is why both sets of rules exist.
 - **Evidence rot vs. evidence tampering** — these are different failures.
   An unreachable `evidenceRef` SHOULD down-weight a record, not revoke it.
   A fetched artifact that MISMATCHES its `evidenceDigest` is
