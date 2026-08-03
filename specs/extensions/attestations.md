@@ -121,13 +121,65 @@ A conforming registry is a smart contract where records are:
 
 - **Non-transferable** — soulbound (ERC-721 with ERC-5192 lock semantics, or
   equivalent). Reputation must not be tradeable.
-- **Issuer-explicit** — every record names its issuer; verifying a record
-  includes deciding whether you trust that issuer. A registry is a namespace,
-  not an authority.
+- **Issuer-explicit** — verifying a record includes deciding whether you
+  trust its issuer, so the issuer MUST be determinable from chain state.
+  Two conforming shapes:
+  - **Multi-issuer registries MUST record the issuer per record** (an
+    `issuer` field set at issuance, emitted in the issuance event) and
+    SHOULD expose an issuer-scoped query, e.g.
+    `hasActiveBadgeFrom(subject, kind, issuer)`. Without it, records from
+    an issuer a client trusts are indistinguishable from records from one
+    it does not — and a permissionless registry is then unusable.
+  - **Single-issuer registries MAY** leave the issuer implicit in the
+    contract's own authority (e.g. an `onlyOwner` mint), in which case the
+    registry address IS the issuer identity and clients pin that address.
+
+  Implementers choosing the second shape should note two sharp edges we
+  hit ourselves. First, ownership is usually transferable, so a registry
+  that changes hands **retroactively re-attributes its entire history** —
+  clients pinning such a registry SHOULD also pin the expected owner and
+  re-check it. Second, the choice is one-way in practice: a deployed
+  single-issuer registry cannot later admit other issuers without a
+  migration, because its existing records carry no issuer to distinguish
+  them from the new ones.
+
+  A registry is a namespace, not an authority.
 - **Typed** — each record carries a `kind` (e.g.
   `x402-facilitator-attested`, `agent-audits-before-paying`) so clients can
   query for the specific claim they care about:
   `hasActiveBadge(subject, kind) → bool`.
+- **Durable in what they assert** — a record is a permanent, revocable
+  statement that a **verification happened and produced a given result**,
+  anchored to the evidence for it. A record MUST NOT be read as an
+  assertion about the subject's *present runtime state*. This distinction
+  is easy to lose and expensive to lose: a soulbound record is durable by
+  construction, so pointing one at a transient property produces a claim
+  that is true when written and silently false later, with nothing in the
+  record itself to reveal the drift.
+
+  We found this in our own reference implementation. A live
+  `x402-facilitator-attested` record read `active` on-chain while the same
+  operator's discovery manifest correctly reported `attestation: none`
+  because the TEE was down — the registry and the manifest contradicting
+  each other, with the registry the more authoritative-looking of the two.
+  The record was not wrong about what it attested (a verification did
+  happen, and its evidence still hashes); it was being *read* as a
+  liveness signal it was never able to carry.
+
+  The division of labour that resolves it:
+
+  | Question | Source of truth |
+  |---|---|
+  | *Was this operator verified, by whom, against what evidence?* | the registry record (durable, revocable) |
+  | *Is it operating in that verified mode right now?* | the operator's live manifest / health endpoint (self-degrading) |
+
+  Therefore: clients evaluating a **runtime** property (is settlement
+  attested *now*?) MUST cross-check the subject's live manifest and MUST
+  NOT treat an active record alone as sufficient. Issuers SHOULD name
+  kinds after the verification event (`…-verified`) rather than a state
+  (`…-attested`), and SHOULD revoke when the underlying evidence is
+  falsified — not merely when the service is temporarily degraded, since
+  routine downtime is the manifest's job to report, not the registry's.
 - **Evidence-linked** — each record carries an `evidenceRef` URI pointing to
   the artifact that justified issuance (verification report, audit output,
   payment receipt). A bare URI has the trust model of brand reputation:
@@ -186,6 +238,52 @@ Serving the artifact at a path **named by its digest** (e.g.
 `/evidence/<sha256>.json`) is RECOMMENDED: a verifier then fetches and
 re-hashes without trusting the server about which file it received,
 and the URL is immutable by construction.
+
+#### Canonicalization (implementation guidance, non-normative)
+
+`evidenceDigest` is only meaningful if two independent implementations
+hash the same bytes, so the artifact MUST be canonicalized before
+hashing. **RFC 8785 (JCS)** is the recommended scheme.
+
+One implementation note is worth stating because it is where most JCS
+implementations break, and it was surfaced by an independent reviewer
+re-running our vectors rather than by re-reading this text: **RFC 8785
+is defined in ECMAScript terms.** Object keys sort by UTF-16 code unit —
+which is what a plain `Object.keys().sort()` already does — and number
+formatting is `Number::toString`, which a JS runtime already implements
+exactly. A conformant canonicalizer in that environment is therefore a
+few lines that *delegate* to the runtime.
+
+Two specifics, both verified against a running implementation rather
+than reasoned about:
+
+- **Key ordering.** UTF-16 code unit and code point disagree above the
+  BMP, in opposite directions: `U+1F600` begins with code unit `0xD83D`,
+  which sorts *below* `0xFFFF`, while its code point `0x1F600` sorts
+  *above* it. A canonicalizer that sorts by code point — a reasonable
+  thing to write — produces a different document, and therefore a
+  different digest, for the same data. Every ASCII test passes under
+  both, which is why the bug survives review.
+- **Number formatting.** The rule is sharper than "don't hand-roll it":
+  it is *the digits must come from `Number::toString`*. Implementations
+  shaped like `String(parseFloat(n.toPrecision(17)))` look hand-rolled
+  but re-enter the runtime's own formatter and agree on every case.
+  Implementations that genuinely format the value themselves diverge —
+  `Intl.NumberFormat` expands `1e+30` and `1e+21` to full digits,
+  renders `1e-7` as `0.0000001`, flattens the minimum denormal to `0`,
+  and preserves the sign on negative zero where JSON drops it.
+
+The honest boundary: JCS canonicalizes **parsed** JSON, so anything lost
+at parse time (duplicate keys, `1.0` versus `1`) is out of scope by
+design. Implementers digesting floats or non-BMP keys should verify
+against the RFC author's reference vectors rather than assume.
+
+Verifiers MUST fail closed on malformed input rather than coerce it. If
+a timestamp is not well-formed RFC 3339, the correct behaviour is to
+exit with an error — not to normalize it and hash the repaired value.
+Equally, canonicalization is performed **once**: deterministic key
+ordering is required by the scheme, and is not licence to try orderings
+until one matches a claimed digest.
 
 ### Remote references: safe fetching (normative)
 
@@ -290,6 +388,15 @@ beyond the manifest fetch.
   exactly as they pin facilitators today.
 - **Revocation liveness** — clients MUST read active status from chain at
   decision time; cached "active" results decay.
+- **Durability mismatch** — an `active` record and a degraded live service
+  are not a contradiction; they answer different questions (see *Durable in
+  what they assert*). The danger is that the record is the more
+  authoritative-looking of the two, so a client that checks only the
+  registry will believe a runtime claim no one made. For any
+  state-dependent decision, the registry answers *whether to consider this
+  operator at all* and the live manifest answers *whether to proceed right
+  now*; a client MUST consult both, and MUST fail closed if the manifest
+  says the verified mode is not currently active.
 - **Fetch-and-run surface** — this extension's remote references are
   requests made on a stranger's say-so. The *safe fetching* section is
   normative for all of them: HTTPS only, bounded time/size/redirects
