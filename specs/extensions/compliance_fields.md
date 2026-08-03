@@ -127,6 +127,11 @@ assert, not that an outside observer would concur. Accordingly:
 > **Evaluators MUST NOT treat a record attested only by parties to the transaction (or their
 > delegates) as an independent or neutral finding.**
 
+An independence claim is also scoped by commitment: **evaluators MUST NOT read an independence
+claim as covering any fact the record does not itself commit to.** A record whose committed
+content is a settlement digest carries, at most, independent evidence *of that settlement* —
+nothing its attestation did not cover, however independent the attestor.
+
 Who supplies non-party attestation is a service-layer question, intentionally out of scope
 for this spec.
 
