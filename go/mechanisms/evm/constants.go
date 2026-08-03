@@ -91,7 +91,7 @@ var (
 	ChainIDIgra          = big.NewInt(38833)
 
 	// Network configurations
-	// See DEFAULT_ASSET.md for guidelines on adding new chains
+	// See DEFAULT_ASSETS.md for guidelines on adding new chains
 	//
 	// Default Asset Selection Policy:
 	// - Each chain has the right to determine its own default stablecoin
@@ -100,7 +100,7 @@ var (
 	//
 	// Both EIP-3009 (transferWithAuthorization) and Permit2 asset transfer methods are supported.
 	// EIP-3009 is the default. Set AssetTransferMethod to AssetTransferMethodPermit2 for tokens
-	// that don't support EIP-3009. See DEFAULT_ASSET.md for details.
+	// that don't support EIP-3009. See DEFAULT_ASSETS.md for details.
 	NetworkConfigs = map[string]NetworkConfig{
 		// Base Mainnet
 		"eip155:8453": {

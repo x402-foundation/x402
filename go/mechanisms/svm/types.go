@@ -62,7 +62,7 @@ type AssetInfo struct {
 }
 
 // NetworkConfig contains network-specific configuration
-// See DEFAULT_ASSET.md for guidelines on adding new chains
+// See DEFAULT_ASSETS.md for guidelines on adding new chains
 type NetworkConfig struct {
 	Name         string    // Network name
 	CAIP2        string    // CAIP-2 identifier

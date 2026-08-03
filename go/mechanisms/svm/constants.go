@@ -69,7 +69,7 @@ const (
 
 var (
 	// NetworkConfigs maps CAIP-2 identifiers to network configurations
-	// See DEFAULT_ASSET.md for guidelines on adding new networks
+	// See DEFAULT_ASSETS.md for guidelines on adding new networks
 	NetworkConfigs = map[string]NetworkConfig{
 		SolanaMainnetCAIP2: {
 			Name:   "Solana Mainnet",

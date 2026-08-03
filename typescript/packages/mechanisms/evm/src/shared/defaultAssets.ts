@@ -37,8 +37,8 @@ export type ExactDefaultAssetInfo = DefaultAssetInfo & {
  * Default stablecoins indexed by CAIP-2 network identifier.
  *
  * Each network has the right to determine its own default stablecoin that can
- * be expressed as a USD string by calling servers. See DEFAULT_ASSET.md in
- * exact/server/ for how to add new chains.
+ * be expressed as a USD string by calling servers. See DEFAULT_ASSETS.md at the
+ * repository root for how to add new chains.
  */
 export const DEFAULT_STABLECOINS: Record<string, ExactDefaultAssetInfo> = {
   "eip155:8453": {
