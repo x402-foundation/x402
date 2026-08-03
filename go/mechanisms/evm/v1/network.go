@@ -30,6 +30,7 @@ var NetworkChainIDs = map[string]*big.Int{
 	"stable":             big.NewInt(988),
 	"stable-testnet":     big.NewInt(2201),
 	"celo":               big.NewInt(42220),
+	"flare":              big.NewInt(14),
 }
 
 // NetworkConfigs maps v1 legacy network names to their full configuration.
@@ -95,6 +96,15 @@ var NetworkConfigs = map[string]evm.NetworkConfig{
 			Address:  "0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359",
 			Name:     "USD Coin",
 			Version:  "2",
+			Decimals: evm.DefaultDecimals,
+		},
+	},
+	"flare": {
+		ChainID: big.NewInt(14),
+		DefaultAsset: evm.AssetInfo{
+			Address:  "0xe7cd86e13AC4309349F30B3435a9d337750fC82D",
+			Name:     "USD₮0",
+			Version:  "1",
 			Decimals: evm.DefaultDecimals,
 		},
 	},

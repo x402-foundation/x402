@@ -89,6 +89,7 @@ var (
 	ChainIDXDC           = big.NewInt(50)
 	ChainIDXDCApothem    = big.NewInt(51)
 	ChainIDIgra          = big.NewInt(38833)
+	ChainIDFlare         = big.NewInt(14)
 	ChainIDCelo          = big.NewInt(42220)
 	ChainIDCeloSepolia   = big.NewInt(11142220)
 
@@ -306,6 +307,16 @@ var (
 			},
 		},
 		// Celo Mainnet
+		// Flare (Mainnet)
+		"eip155:14": {
+			ChainID: ChainIDFlare,
+			DefaultAsset: AssetInfo{
+				Address:  "0xe7cd86e13AC4309349F30B3435a9d337750fC82D", // USD₮0 on Flare
+				Name:     "USD₮0",
+				Version:  "1",
+				Decimals: DefaultDecimals,
+			},
+		},
 		"eip155:42220": {
 			ChainID: ChainIDCelo,
 			DefaultAsset: AssetInfo{

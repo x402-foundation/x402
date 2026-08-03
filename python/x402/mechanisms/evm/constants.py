@@ -606,6 +606,16 @@ NETWORK_CONFIGS: dict[str, NetworkConfig] = {
             "asset_transfer_method": "permit2",
         },
     },
+    # Flare Mainnet
+    "eip155:14": {
+        "chain_id": 14,
+        "default_asset": {
+            "address": "0xe7cd86e13AC4309349F30B3435a9d337750fC82D",
+            "name": "USD₮0",
+            "version": "1",
+            "decimals": 6,
+        },
+    },
     # Celo Mainnet
     "eip155:42220": {
         "chain_id": 42220,

@@ -4,6 +4,12 @@ from ..constants import AssetInfo
 
 # Default assets keyed by v1 legacy network name.
 V1_DEFAULT_ASSETS: dict[str, AssetInfo] = {
+    "flare": {
+        "address": "0xe7cd86e13AC4309349F30B3435a9d337750fC82D",
+        "name": "USD₮0",
+        "version": "1",
+        "decimals": 6,
+    },
     "ethereum": {
         "address": "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
         "name": "USD Coin",
@@ -108,4 +114,5 @@ V1_NETWORK_CHAIN_IDS: dict[str, int] = {
     "stable": 988,
     "stable-testnet": 2201,
     "celo": 42220,
+    "flare": 14,
 }

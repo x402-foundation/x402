@@ -166,6 +166,12 @@ export const DEFAULT_STABLECOINS: Record<string, ExactDefaultAssetInfo> = {
     decimals: 6,
     assetTransferMethod: "permit2",
   }, // Igra mainnet USDC (no EIP-3009, no EIP-2612)
+  "eip155:14": {
+    address: "0xe7cd86e13AC4309349F30B3435a9d337750fC82D",
+    name: "USD\u20AE0",
+    version: "1",
+    decimals: 6,
+  }, // Flare mainnet USD₮0 (EIP-3009 supported)
   "eip155:42220": {
     address: "0xcebA9300f2b948710d2653dD7B07f33A8B32118C",
     name: "USDC",
