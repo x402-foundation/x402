@@ -903,8 +903,8 @@ Common protocol-level mistakes include:
    - a relative `resource.url` — use an absolute URL
    - malformed `accepts` entries (e.g. `asset` as an object instead of a string,
      or a missing atomic-units `amount`)
-   - service metadata violating the validation rules above — invalid fields are
-     soft-dropped individually
+   - `description` or field lengths exceeding facilitator size limits (keep descriptions under 1,000 characters to ensure indexing across facilitators)
+   - service metadata violating validation rules — check `rejectedReason` in the `EXTENSION-RESPONSES` header for exact rejection causes
 
 3. **Treating the absence of `EXTENSION-RESPONSES` as failure.** Facilitators
    **may** return this header; its absence carries no signal. When present,

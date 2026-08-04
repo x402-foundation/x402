@@ -1,0 +1,44 @@
+---
+title: "Discovery Extension"
+description: "Protocol version requirements, OpenAPI x-x402 extensions, and manifest validation for x402 discovery."
+---
+
+# Discovery Extension Specification
+
+The `discovery` extension standardizes protocol version declarations (`x402Version` & `x402Versions`) across `/.well-known/x402` and OpenAPI manifests.
+
+## Key Protocol Requirements
+
+1. **`x402Version` is Mandatory:** All discovery descriptors must specify `x402Version`.
+2. **Integer Typing:** `x402Version` must be typed as an integer (e.g. `2`). Strings like `"1"` are rejected.
+3. **Multi-Version Support:** Use `x402Versions: [1, 2]` to declare hosts that support both protocol versions.
+
+## Manifest Examples
+
+### Standalone Manifest (`/.well-known/x402`)
+
+```json
+{
+  "x402Version": 2,
+  "x402Versions": [1, 2],
+  "name": "Weather Service",
+  "description": "x402 v2 weather data service."
+}
+```
+
+### OpenAPI Extension (`x-x402`)
+
+```yaml
+openapi: 3.1.0
+info:
+  title: Weather Service API
+  version: 1.0.0
+  x-x402:
+    x402Version: 2
+    x402Versions: [1, 2]
+```
+
+## Validation & Error Handling
+
+* **Missing Version:** Indexers flag descriptor as `invalid_manifest` (`missing_x402Version`).
+* **String Version:** Indexers reject string types (`invalid_x402Version_type`).
