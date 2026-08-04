@@ -327,10 +327,7 @@ def verify_eip3009_transfer_event(
     to: str,
     value: int,
 ) -> bool:
-    """Return True when receipt logs contain the expected ERC-20 Transfer.
-
-    Mirrors Go ``verifyEIP3009TransferEvent`` / TS ``verifyEip3009TransferEvent``.
-    """
+    """Return True when receipt logs contain the expected ERC-20 Transfer."""
     if not logs:
         return False
 

@@ -59,7 +59,11 @@ describe("verifyEip3009TransferEvent", () => {
       makeTransferLog({ address: TOKEN, from: PAYER, to: RECEIVER, value: 1000n }),
     ]);
     expect(
-      verifyEip3009TransferEvent(receipt, TOKEN, { from: PAYER, to: RECEIVER, value: 1000n }),
+      verifyEip3009TransferEvent(receipt.logs, TOKEN, {
+        from: PAYER,
+        to: RECEIVER,
+        value: 1000n,
+      }),
     ).toBe(true);
   });
 
@@ -69,7 +73,11 @@ describe("verifyEip3009TransferEvent", () => {
       makeTransferLog({ address: TOKEN, from: PAYER, to: RECEIVER, value: 1000n }),
     ]);
     expect(
-      verifyEip3009TransferEvent(receipt, TOKEN, { from: PAYER, to: RECEIVER, value: 1000n }),
+      verifyEip3009TransferEvent(receipt.logs, TOKEN, {
+        from: PAYER,
+        to: RECEIVER,
+        value: 1000n,
+      }),
     ).toBe(true);
   });
 
@@ -78,7 +86,11 @@ describe("verifyEip3009TransferEvent", () => {
       makeTransferLog({ address: TOKEN, from: PAYER, to: RECEIVER, value: 1n }),
     ]);
     expect(
-      verifyEip3009TransferEvent(receipt, TOKEN, { from: PAYER, to: RECEIVER, value: 1000n }),
+      verifyEip3009TransferEvent(receipt.logs, TOKEN, {
+        from: PAYER,
+        to: RECEIVER,
+        value: 1000n,
+      }),
     ).toBe(false);
   });
 
@@ -87,7 +99,11 @@ describe("verifyEip3009TransferEvent", () => {
       makeTransferLog({ address: TOKEN, from: PAYER, to: ATTACKER, value: 1000n }),
     ]);
     expect(
-      verifyEip3009TransferEvent(receipt, TOKEN, { from: PAYER, to: RECEIVER, value: 1000n }),
+      verifyEip3009TransferEvent(receipt.logs, TOKEN, {
+        from: PAYER,
+        to: RECEIVER,
+        value: 1000n,
+      }),
     ).toBe(false);
   });
 
@@ -96,7 +112,11 @@ describe("verifyEip3009TransferEvent", () => {
       makeTransferLog({ address: TOKEN, from: ATTACKER, to: RECEIVER, value: 1000n }),
     ]);
     expect(
-      verifyEip3009TransferEvent(receipt, TOKEN, { from: PAYER, to: RECEIVER, value: 1000n }),
+      verifyEip3009TransferEvent(receipt.logs, TOKEN, {
+        from: PAYER,
+        to: RECEIVER,
+        value: 1000n,
+      }),
     ).toBe(false);
   });
 
@@ -105,14 +125,22 @@ describe("verifyEip3009TransferEvent", () => {
       makeTransferLog({ address: OTHER_TOKEN, from: PAYER, to: RECEIVER, value: 1000n }),
     ]);
     expect(
-      verifyEip3009TransferEvent(receipt, TOKEN, { from: PAYER, to: RECEIVER, value: 1000n }),
+      verifyEip3009TransferEvent(receipt.logs, TOKEN, {
+        from: PAYER,
+        to: RECEIVER,
+        value: 1000n,
+      }),
     ).toBe(false);
   });
 
   it("rejects when receipt has no logs at all", () => {
     const receipt = makeReceipt([]);
     expect(
-      verifyEip3009TransferEvent(receipt, TOKEN, { from: PAYER, to: RECEIVER, value: 1000n }),
+      verifyEip3009TransferEvent(receipt.logs, TOKEN, {
+        from: PAYER,
+        to: RECEIVER,
+        value: 1000n,
+      }),
     ).toBe(false);
   });
 
@@ -126,7 +154,11 @@ describe("verifyEip3009TransferEvent", () => {
       }),
     ]);
     expect(
-      verifyEip3009TransferEvent(receipt, TOKEN, { from: PAYER, to: RECEIVER, value: 1000n }),
+      verifyEip3009TransferEvent(receipt.logs, TOKEN, {
+        from: PAYER,
+        to: RECEIVER,
+        value: 1000n,
+      }),
     ).toBe(true);
   });
 });

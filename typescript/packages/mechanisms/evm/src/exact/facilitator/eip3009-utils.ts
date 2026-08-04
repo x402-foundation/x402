@@ -7,7 +7,7 @@ import {
   parseErc6492Signature,
   parseEventLogs,
   parseSignature,
-  type TransactionReceipt,
+  type Log,
 } from "viem";
 import { eip3009ABI } from "../../constants";
 import { multicall, ContractCall, RawContractCall } from "../../multicall";
@@ -239,39 +239,29 @@ export async function diagnoseEip3009SimulationFailure(
 }
 
 /**
- * Maps an EIP-3009 contract revert error to a specific error code.
- * Falls back to ErrTransactionFailed when the revert reason is unknown.
- *
- * @param error - The error thrown during transfer execution
- * @returns A specific error reason string
- */
-/**
  * Verifies that the post-settle receipt contains an ERC-20 Transfer event
  * emitted by the expected token contract whose (from, to, value) matches the
- * authorization. Mirrors the same kind of post-execution check that the EVM
- * batch-settlement and Stellar facilitators already perform on their own settle
- * receipts.
+ * authorization.
  *
- * @param receipt - The settlement transaction receipt
+ * @param logs - Receipt logs to search for a matching Transfer
  * @param erc20Address - The ERC-20 token contract that should have emitted the Transfer
  * @param expected - The expected Transfer arguments from the authorization
  * @param expected.from - Expected `from` of the Transfer event
  * @param expected.to - Expected `to` of the Transfer event
  * @param expected.value - Expected `value` of the Transfer event
- * @returns true when a matching Transfer log is present in the receipt, false otherwise
+ * @returns true when a matching Transfer log is present, false otherwise
  */
 export function verifyEip3009TransferEvent(
-  receipt: TransactionReceipt,
+  logs: readonly Log[],
   erc20Address: `0x${string}`,
   expected: { from: `0x${string}`; to: `0x${string}`; value: bigint },
 ): boolean {
-  if (!receipt.logs) return false;
-  const logs = parseEventLogs({
+  const transferLogs = parseEventLogs({
     abi: erc20TransferEventAbi,
     eventName: "Transfer",
-    logs: receipt.logs.filter(log => isAddressEqual(log.address, erc20Address)),
+    logs: logs.filter(log => isAddressEqual(log.address, erc20Address)),
   });
-  return logs.some(
+  return transferLogs.some(
     log =>
       isAddressEqual(log.args.from, expected.from) &&
       isAddressEqual(log.args.to, expected.to) &&

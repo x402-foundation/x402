@@ -389,13 +389,17 @@ export async function settleEIP3009(
       };
     }
 
+    // Receipt status only proves the tx did not revert.
+    // When logs are present, require the expected ERC-20 Transfer event.
     const auth = eip3009Payload.authorization;
-    const transferMatched = verifyEip3009TransferEvent(receipt, getAddress(requirements.asset), {
-      from: getAddress(auth.from),
-      to: getAddress(auth.to),
-      value: BigInt(auth.value),
-    });
-    if (!transferMatched) {
+    if (
+      receipt.logs != null &&
+      !verifyEip3009TransferEvent(receipt.logs, getAddress(requirements.asset), {
+        from: getAddress(auth.from),
+        to: getAddress(auth.to),
+        value: BigInt(auth.value),
+      })
+    ) {
       return {
         success: false,
         errorReason: Errors.ErrTransferEventMismatch,
