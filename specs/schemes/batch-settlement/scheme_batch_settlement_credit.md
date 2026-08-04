@@ -78,12 +78,14 @@ Clients holding a valid attestation may include the payment payload in their ini
 The attestation carries two windows:
 
 - **`exp`** — the presentation window (short: minutes). After `exp`, the resource server MUST reject the attestation. This bounds the replay surface.
-- **`holdExp`** — the settlement window (longer: hours). Until `holdExp`, the authority MUST hold the authorized funds and MUST accept a `/settle` for this attestation. After `holdExp`, an unsettled hold is released back to the bundle and `/settle` fails with `hold_expired`.
+- **`holdExp`** — the settlement window, sized to the settlement mode (see below). Until `holdExp`, the authority MUST hold the authorized funds and MUST accept a `/settle` for this attestation. After `holdExp`, an unsettled hold is released back to the bundle and `/settle` fails with `hold_expired`. `holdExp` is a *ceiling*, not a fixed lock: a hold is released as soon as `/settle` arrives, so the window only binds when settlement does not happen — its practical role is to bound how long funds stay reserved if the server never settles.
 
 This gives servers a choice of payment-guarantee model, made explicit rather than left ambiguous:
 
-- **Synchronous settle** — the server settles before returning `200`. Zero merchant risk; the standard x402 middleware flow.
-- **Deferred settle** — the server responds immediately after verification (the hold guarantees the funds exist and are reserved) and settles in the background, retrying on transient failure until `holdExp`. Merchant risk is bounded: it is exactly the probability of the server failing to deliver one idempotent HTTP call within the hold window. `holdExp` MUST be generous enough to make this negligible (RECOMMENDED minimum: 24 hours after `exp`).
+- **Synchronous settle** — the server settles before returning `200`. Zero merchant risk; the standard x402 middleware flow. Here `holdExp` SHOULD be **short** (minutes): the hold is released at settle, so a long window only serves as the failure-reclaim bound if the server crashes between authorize and settle. A short window returns funds to the bundle quickly in that case (peage's fiat escrow uses a 900s default for exactly this synchronous shape — see [#2612 discussion](https://github.com/x402-foundation/x402/pull/2612)).
+- **Deferred settle** — the server responds immediately after verification (the hold guarantees the funds exist and are reserved) and settles in the background, retrying on transient failure until `holdExp`. Merchant risk is bounded: it is exactly the probability of the server failing to deliver one idempotent HTTP call within the hold window. Here `holdExp` MUST be generous enough to make this negligible (RECOMMENDED minimum: 24 hours after `exp`).
+
+The `holdExp` window is therefore **mode-specific, not a flat minimum**: short for synchronous settle (bound the failure-reclaim window), long for deferred settle (cover the background-retry horizon). Authorities and servers SHOULD choose it per the settlement mode in use.
 
 Servers MUST NOT serve the resource before verifying the attestation; the choice above concerns only when settlement happens relative to the response.
 
@@ -216,7 +218,7 @@ The `attestation` is a compact JWS issued by the authority. Required claims:
 | `iss` | Authority origin; MUST equal `extra.authority` |
 | `sub` | Bundle identifier |
 | `exp` | Presentation expiry; MUST be short-TTL (minutes, not hours) |
-| `holdExp` | Settlement expiry; MUST be after `exp` (RECOMMENDED ≥ 24h after). Private claim per RFC 7519 §4.3 |
+| `holdExp` | Settlement expiry; MUST be after `exp`. Sized to the settlement mode (see [Settlement timing](#settlement-timing)): deferred settle RECOMMENDS ≥ 24h after `exp`; synchronous settle SHOULD keep it short (minutes) to bound failure-reclaim. Private claim per RFC 7519 §4.3 |
 | `iat` | Issued-at |
 | `jti` | Unique attestation ID — the commitment identifier, replay anchor, and settle idempotency key |
 | `amount` | Authorized maximum for this request, smallest unit |
@@ -355,4 +357,4 @@ The `extra.version` field uses semantic versioning to signal changes in binding 
 | Version | Date | Changes |
 | --- | --- | --- |
 | `1.0.0` | 2026-06 | Initial draft |
-| _unreleased_ | 2026-07 | Idempotency made normative on `/authorize` (concurrency coalescing + retention through `holdExp`) and `/settle` (`jti`, concurrent-safe); `/settle` aligned to the standard `SettleRequest` — actual charge carried in settlement-time `paymentRequirements.amount` per the `upto` precedent, top-level `chargedAmount`/`status` removed; `aud` and `resource` attestation claims made REQUIRED to prevent cross-audience/cross-resource replay; clarified that verification prevents double-charge but not concurrent double-execution (servers MUST coalesce fulfillment by `jti`) |
+| _unreleased_ | 2026-07 | Idempotency made normative on `/authorize` (concurrency coalescing + retention through `holdExp`) and `/settle` (`jti`, concurrent-safe); `/settle` aligned to the standard `SettleRequest` — actual charge carried in settlement-time `paymentRequirements.amount` per the `upto` precedent, top-level `chargedAmount`/`status` removed; `aud` and `resource` attestation claims made REQUIRED to prevent cross-audience/cross-resource replay; clarified that verification prevents double-charge but not concurrent double-execution (servers MUST coalesce fulfillment by `jti`); `holdExp` sizing clarified as mode-specific (short for synchronous settle, ≥24h for deferred) rather than a flat minimum |
