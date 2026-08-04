@@ -1,13 +1,13 @@
 .env
 .env.local
-.env~
-.env.local~
 node_modules/
 dist/
 .turbo/
 .next/
-next-env.d.ts
+proxy
 .env
+# ERC-8004 demo state (regenerated per bootstrap run; contains ephemeral keys)
+demo_state.json
 __pycache__/
 **/.DS_Store
 e2e/facilitators/external-proxies/*
@@ -32,25 +32,33 @@ e2e/servers/mcp-go/mcp-go
 e2e/servers/mcp-go/mcp-server
 e2e/servers/nethttp/nethttp
 e2e/legacy/servers/gin/gin
-go/legacy/bin/proxy
 
 # Example build artifacts
 examples/go/servers/upto/upto
 examples/go/clients/batch-settlement/batch-settlement
 examples/go/servers/batch-settlement/batch-settlement
 examples/go/facilitator/batch-settlement/batch-settlement
-examples/go/servers/builder-codes/builder-codes
-examples/go/facilitator/builder-codes/builder-codes
-examples/go/clients/builder-codes/builder-codes
-
-# Generated setup-script output (smart-account addresses per run)
-typescript/packages/mechanisms/evm/scripts/setup-smart-accounts.log
 
 # Agent artifacts
 TASK.md
 .claude/
+skills/
 REVIEW_PROMPT.md
 .omx/
 .omc/
 /demo/
 /contracts/tvm/
+
+# Foundry build artifacts
+contracts/erc8004/cache/
+contracts/erc8004/out/
+contracts/erc8004/lib/
+
+# ERC-8004 design docs & planning notes (kept local, not part of the PR)
+docs/plans/
+specs/2026-*-erc8004-*.md
+
+**/run.sh
+
+# Serena MCP tool workspace
+.serena/
