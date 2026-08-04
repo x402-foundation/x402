@@ -4,7 +4,6 @@ import {
   x402ResourceServer,
   x402HTTPResourceServer,
   RoutesConfig,
-  RouteConfig,
   FacilitatorClient,
   FacilitatorResponseError,
   checkIfBazaarNeeded,
@@ -362,7 +361,11 @@ export function withX402FromHTTPServer<T = unknown>(
  * response (status < 400). This provides more precise control over when payments are settled.
  *
  * @param routeHandler - The API route handler function to wrap
- * @param routeConfig - Payment configuration for this specific route
+ * @param routes - Payment configuration for this route: either a bare route config
+ * (matches any path, like the previous behavior) or a single-entry map keyed by the
+ * route's path pattern (e.g. `{ "/api/users/[id]": config }`). Prefer the keyed form
+ * when using bazaar discovery extensions: a bare config registers as a wildcard, which
+ * produces an auto-generated `routeTemplate` (`:var1`) that discovery services reject.
  * @param server - Pre-configured x402ResourceServer instance
  * @param paywallConfig - Optional configuration for the built-in paywall UI
  * @param paywall - Optional custom paywall provider (overrides default)
@@ -384,13 +387,15 @@ export function withX402FromHTTPServer<T = unknown>(
  * export const GET = withX402(
  *   handler,
  *   {
- *     accepts: {
- *       scheme: "exact",
- *       payTo: "0x123...",
- *       price: "$0.01",
- *       network: "eip155:84532",
+ *     "/api/protected": {
+ *       accepts: {
+ *         scheme: "exact",
+ *         payTo: "0x123...",
+ *         price: "$0.01",
+ *         network: "eip155:84532",
+ *       },
+ *       description: "Access to protected API",
  *     },
- *     description: "Access to protected API",
  *   },
  *   server,
  * );
@@ -398,13 +403,12 @@ export function withX402FromHTTPServer<T = unknown>(
  */
 export function withX402<T = unknown>(
   routeHandler: (request: NextRequest) => Promise<NextResponse<T>>,
-  routeConfig: RouteConfig,
+  routes: RoutesConfig,
   server: x402ResourceServer,
   paywallConfig?: PaywallConfig,
   paywall?: PaywallProvider,
   syncFacilitatorOnStart: boolean = true,
 ): (request: NextRequest) => Promise<NextResponse<T>> {
-  const routes = { "*": routeConfig };
   // Create the x402 HTTP server instance with the resource server
   const httpServer = new x402HTTPResourceServer(server, routes);
 
@@ -429,6 +433,7 @@ export type {
   PaywallProvider,
   PaywallConfig,
   RouteConfig,
+  RoutesConfig,
   SettlementOverrides,
 } from "@x402/core/server";
 

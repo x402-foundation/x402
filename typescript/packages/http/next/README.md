@@ -60,17 +60,26 @@ const handler = async (_: NextRequest) => {
 export const GET = withX402(
   handler,
   {
-    accepts: {
-      scheme: "exact",
-      price: "$0.01",
-      network: "eip155:84532",
-      payTo: "0xYourAddress",
+    "/api/your-endpoint": {
+      accepts: {
+        scheme: "exact",
+        price: "$0.01",
+        network: "eip155:84532",
+        payTo: "0xYourAddress",
+      },
+      description: "Access to API endpoint",
     },
-    description: "Access to API endpoint",
   },
   server, // your configured x402ResourceServer
 );
 ```
+
+Keying the configuration by the route's path pattern (dynamic segments like
+`/api/users/[id]` are supported) is preferred over passing a bare route config.
+A bare config still works and matches any path, but it registers as a wildcard
+(`*`) route — with bazaar discovery extensions that produces an auto-generated
+`routeTemplate` (`:var1`) that discovery services reject, so the resource is
+never indexed.
 
 ## Configuration
 
@@ -103,7 +112,7 @@ The `withX402` function wraps API route handlers. This is the recommended approa
 ```typescript
 withX402(
   routeHandler: (request: NextRequest) => Promise<NextResponse>,
-  routeConfig: RouteConfig,
+  routes: RoutesConfig,
   server: x402ResourceServer,
   paywallConfig?: PaywallConfig,
   paywall?: PaywallProvider,
@@ -114,7 +123,7 @@ withX402(
 #### Parameters
 
 1. **`routeHandler`** (required): Your API route handler function
-2. **`routeConfig`** (required): Payment configuration for this specific route
+2. **`routes`** (required): Payment configuration for this route — a map keyed by the route's path pattern (preferred, e.g. `{ "/api/users/[id]": config }`), or a bare route config that matches any path
 3. **`server`** (required): Pre-configured x402ResourceServer instance
 4. **`paywallConfig`** (optional): Configuration for the built-in paywall UI
 5. **`paywall`** (optional): Custom paywall provider
