@@ -462,6 +462,86 @@ describe("paymentMiddleware", () => {
     expect(res.headers.get("PAYMENT-RESPONSE")).toBe("settled");
   });
 
+  it("preserves status text and handler headers through the rebuild", async () => {
+    setupMockHttpServer(
+      {
+        type: "payment-verified",
+        paymentPayload: mockPaymentPayload,
+        paymentRequirements: mockPaymentRequirements,
+      },
+      { success: true, headers: { "PAYMENT-RESPONSE": "settled" } },
+    );
+
+    const app = new Hono();
+    app.use(
+      "/api/*",
+      paymentMiddleware(
+        mockRoutes,
+        {} as unknown as x402ResourceServer,
+        undefined,
+        undefined,
+        false,
+      ),
+    );
+    app.get(
+      "/api/test",
+      () =>
+        new Response('{"ok":true}', {
+          status: 200,
+          statusText: "Totally Fine",
+          headers: {
+            "content-type": "application/json; charset=utf-8",
+            "content-length": "11",
+            "x-custom": "kept",
+          },
+        }),
+    );
+
+    const res = await app.request("/api/test");
+
+    expect(res.statusText).toBe("Totally Fine");
+    expect(res.headers.get("content-type")).toBe("application/json; charset=utf-8");
+    expect(res.headers.get("content-length")).toBe("11");
+    expect(res.headers.get("x-custom")).toBe("kept");
+    expect(res.headers.get("Cache-Control")).toContain("private");
+    expect(await res.text()).toBe('{"ok":true}');
+  });
+
+  it("keeps multiple Set-Cookie headers separate through the rebuild", async () => {
+    setupMockHttpServer(
+      {
+        type: "payment-verified",
+        paymentPayload: mockPaymentPayload,
+        paymentRequirements: mockPaymentRequirements,
+      },
+      { success: true, headers: { "PAYMENT-RESPONSE": "settled" } },
+    );
+
+    const app = new Hono();
+    app.use(
+      "/api/*",
+      paymentMiddleware(
+        mockRoutes,
+        {} as unknown as x402ResourceServer,
+        undefined,
+        undefined,
+        false,
+      ),
+    );
+    app.get("/api/test", () => {
+      // `new Headers(res.headers)` must not collapse these into one value.
+      const headers = new Headers({ "content-type": "application/json" });
+      headers.append("set-cookie", "a=1; Path=/");
+      headers.append("set-cookie", "b=2; Path=/");
+      return new Response('{"ok":true}', { status: 200, headers });
+    });
+
+    const res = await app.request("/api/test");
+
+    expect(res.headers.getSetCookie()).toEqual(["a=1; Path=/", "b=2; Path=/"]);
+    expect(res.headers.get("PAYMENT-RESPONSE")).toBe("settled");
+  });
+
   it("does not turn an unreconstructable response into a 402 after settling", async () => {
     setupMockHttpServer(
       {
