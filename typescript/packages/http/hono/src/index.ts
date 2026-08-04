@@ -306,15 +306,38 @@ export function paymentMiddlewareFromHTTPServer(
               headers: response.headers,
             });
           } else {
-            // Settlement succeeded - add headers to response
+            // Settlement succeeded - rebuild the response from the bytes buffered
+            // before settlement, so what reaches the client does not depend on the
+            // state of the original body stream across the settlement await.
+            const headers = new Headers(res.headers);
             Object.entries(settleResult.headers).forEach(([key, value]) => {
-              res.headers.set(key, value);
+              headers.set(key, value);
             });
-            res.headers.set(
-              "Cache-Control",
-              withPrivateCacheControl(res.headers.get("Cache-Control")),
-            );
-            res.headers.delete(SETTLEMENT_OVERRIDES_HEADER);
+            headers.set("Cache-Control", withPrivateCacheControl(headers.get("Cache-Control")));
+            headers.delete(SETTLEMENT_OVERRIDES_HEADER);
+            try {
+              // Null-body statuses must pass null: `new Response(buf, { status: 204 })`
+              // throws.
+              res = new Response(responseBody.length > 0 ? responseBody : null, {
+                status: res.status,
+                statusText: res.statusText,
+                headers,
+              });
+            } catch {
+              // Some responses cannot be reconstructed at all - a status outside
+              // 200-599 throws whatever the body is (e.g. a 101 upgrade, which is
+              // constructible on workerd). The payment has already settled on-chain,
+              // so this must not fall through to the 402 below: keep the handler's
+              // own response and apply the settlement headers in place instead.
+              Object.entries(settleResult.headers).forEach(([key, value]) => {
+                res.headers.set(key, value);
+              });
+              res.headers.set(
+                "Cache-Control",
+                withPrivateCacheControl(res.headers.get("Cache-Control")),
+              );
+              res.headers.delete(SETTLEMENT_OVERRIDES_HEADER);
+            }
           }
         } catch (error) {
           if (error instanceof FacilitatorResponseError) {
