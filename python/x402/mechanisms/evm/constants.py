@@ -341,6 +341,7 @@ ERR_TOKEN_NAME_MISMATCH = "invalid_exact_evm_token_name_mismatch"
 ERR_TOKEN_VERSION_MISMATCH = "invalid_exact_evm_token_version_mismatch"
 ERR_EIP3009_NOT_SUPPORTED = "invalid_exact_evm_eip3009_not_supported"
 ERR_TRANSACTION_SIMULATION_FAILED = "invalid_exact_evm_transaction_simulation_failed"
+ERR_TRANSFER_EVENT_MISMATCH = "invalid_exact_evm_transfer_event_mismatch"
 
 # Permit2-specific error codes
 ERR_PERMIT2_INVALID_SPENDER = "invalid_permit2_spender"
