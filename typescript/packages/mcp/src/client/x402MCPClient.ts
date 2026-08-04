@@ -633,8 +633,43 @@ export class x402MCPClient {
 
     // A paid attempt can return a corrective 402. Scheme hooks recover local
     // state from it, then we retry once with a fresh payload from that response.
+    // Corrective terms (amount/asset/payTo) are server-controlled — re-run the
+    // same approval / abort gates used for the first payment before signing again.
     if (recoveryResult?.recovered && paymentRequired) {
-      const freshPayload = await this._paymentClient.createPaymentPayload(paymentRequired);
+      const correctiveRequiredContext: PaymentRequiredContext = {
+        toolName: name,
+        arguments: args,
+        paymentRequired,
+      };
+      let correctivePayload: PaymentPayload | undefined;
+      for (const hook of this.paymentRequiredHooks) {
+        const hookResult = await hook(correctiveRequiredContext);
+        if (hookResult?.abort) {
+          throw new Error("Payment aborted by hook");
+        }
+        if (hookResult?.payment) {
+          correctivePayload = hookResult.payment;
+          break;
+        }
+      }
+      if (!correctivePayload) {
+        const correctiveRequestedContext: PaymentRequestedContext = {
+          toolName: name,
+          arguments: args,
+          paymentRequired,
+        };
+        const correctiveApproved =
+          await this.options.onPaymentRequested(correctiveRequestedContext);
+        if (!correctiveApproved) {
+          throw new Error("Payment request denied");
+        }
+        for (const hook of this.beforePaymentHooks) {
+          await hook(correctiveRequestedContext);
+        }
+        correctivePayload = await this._paymentClient.createPaymentPayload(paymentRequired);
+      }
+
+      const freshPayload = correctivePayload;
       const retryCallParams = {
         name,
         arguments: args,
