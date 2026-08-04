@@ -905,6 +905,11 @@ Common protocol-level mistakes include:
      or a missing atomic-units `amount`)
    - service metadata violating the validation rules above — invalid fields are
      soft-dropped individually
+   - `$ref` or `$id` values in the `schema` field that are not same-document
+     JSON Pointer fragments (i.e. do not start with `#`) — external references
+     such as `https://...`, `file://...`, or relative URIs are rejected to
+     prevent SSRF/LFI (CWE-918). Only in-document references like
+     `"$ref": "#/definitions/foo"` are allowed.
 
 3. **Treating the absence of `EXTENSION-RESPONSES` as failure.** Facilitators
    **may** return this header; its absence carries no signal. When present,
