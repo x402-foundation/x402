@@ -996,7 +996,7 @@ export function wrapMCPClientWithPaymentFromConfig(
  *   schemes: [
  *     { network: "eip155:84532", client: new ExactEvmScheme(account) },
  *   ],
- *   // Bound spend — without policies the factory used to drop all spend controls
+ *   // Optional spend policies
  *   policies: [
  *     (_v, reqs) => reqs.filter(r => BigInt(r.amount ?? "0") < 1_000_000n),
  *   ],
@@ -1028,8 +1028,7 @@ export function createx402MCPClient(config: x402MCPClientConfig): x402MCPClient 
     config.mcpClientOptions,
   );
 
-  // Build payment client via fromConfig so policies / selector are not silently dropped.
-  // (Previously this used `new x402Client()` + register-only, which could not bound spend.)
+  // Apply schemes (and optional policies/selector) via fromConfig.
   const paymentClient = x402Client.fromConfig({
     schemes: config.schemes,
     policies: config.policies,
