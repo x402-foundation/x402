@@ -38,11 +38,7 @@ def make_transfer_log(
 
 
 def test_matches_canonical_transfer_event():
-    logs = [
-        make_transfer_log(
-            address=TOKEN, from_address=PAYER, to=RECEIVER, value=1000
-        )
-    ]
+    logs = [make_transfer_log(address=TOKEN, from_address=PAYER, to=RECEIVER, value=1000)]
     assert verify_eip3009_transfer_event(
         logs,
         TOKEN,
@@ -54,12 +50,8 @@ def test_matches_canonical_transfer_event():
 
 def test_matches_when_unrelated_logs_present():
     logs = [
-        make_transfer_log(
-            address=OTHER_TOKEN, from_address=ATTACKER, to=RECEIVER, value=999
-        ),
-        make_transfer_log(
-            address=TOKEN, from_address=PAYER, to=RECEIVER, value=1000
-        ),
+        make_transfer_log(address=OTHER_TOKEN, from_address=ATTACKER, to=RECEIVER, value=999),
+        make_transfer_log(address=TOKEN, from_address=PAYER, to=RECEIVER, value=1000),
     ]
     assert verify_eip3009_transfer_event(
         logs,
@@ -71,53 +63,35 @@ def test_matches_when_unrelated_logs_present():
 
 
 def test_rejects_wrong_value():
-    logs = [
-        make_transfer_log(
-            address=TOKEN, from_address=PAYER, to=RECEIVER, value=1
-        )
-    ]
+    logs = [make_transfer_log(address=TOKEN, from_address=PAYER, to=RECEIVER, value=1)]
     assert not verify_eip3009_transfer_event(
         logs, TOKEN, from_address=PAYER, to=RECEIVER, value=1000
     )
 
 
 def test_rejects_wrong_recipient():
-    logs = [
-        make_transfer_log(
-            address=TOKEN, from_address=PAYER, to=ATTACKER, value=1000
-        )
-    ]
+    logs = [make_transfer_log(address=TOKEN, from_address=PAYER, to=ATTACKER, value=1000)]
     assert not verify_eip3009_transfer_event(
         logs, TOKEN, from_address=PAYER, to=RECEIVER, value=1000
     )
 
 
 def test_rejects_wrong_sender():
-    logs = [
-        make_transfer_log(
-            address=TOKEN, from_address=ATTACKER, to=RECEIVER, value=1000
-        )
-    ]
+    logs = [make_transfer_log(address=TOKEN, from_address=ATTACKER, to=RECEIVER, value=1000)]
     assert not verify_eip3009_transfer_event(
         logs, TOKEN, from_address=PAYER, to=RECEIVER, value=1000
     )
 
 
 def test_rejects_wrong_token():
-    logs = [
-        make_transfer_log(
-            address=OTHER_TOKEN, from_address=PAYER, to=RECEIVER, value=1000
-        )
-    ]
+    logs = [make_transfer_log(address=OTHER_TOKEN, from_address=PAYER, to=RECEIVER, value=1000)]
     assert not verify_eip3009_transfer_event(
         logs, TOKEN, from_address=PAYER, to=RECEIVER, value=1000
     )
 
 
 def test_rejects_empty_or_missing_logs():
-    assert not verify_eip3009_transfer_event(
-        [], TOKEN, from_address=PAYER, to=RECEIVER, value=1000
-    )
+    assert not verify_eip3009_transfer_event([], TOKEN, from_address=PAYER, to=RECEIVER, value=1000)
     assert not verify_eip3009_transfer_event(
         None, TOKEN, from_address=PAYER, to=RECEIVER, value=1000
     )

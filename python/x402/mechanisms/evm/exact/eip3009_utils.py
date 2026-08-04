@@ -32,9 +32,7 @@ from ..utils import bytes_to_hex, hex_to_bytes, normalize_address
 from ..verify import verify_typed_data_strict
 
 # keccak256("Transfer(address,address,uint256)")
-ERC20_TRANSFER_EVENT_TOPIC = (
-    "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef"
-)
+ERC20_TRANSFER_EVENT_TOPIC = "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef"
 
 
 @dataclass
@@ -367,11 +365,7 @@ def verify_eip3009_transfer_event(
         except Exception:
             continue
 
-        if (
-            log_from == expected_from
-            and log_to == expected_to
-            and log_value == expected_value
-        ):
+        if log_from == expected_from and log_to == expected_to and log_value == expected_value:
             return True
 
     return False
