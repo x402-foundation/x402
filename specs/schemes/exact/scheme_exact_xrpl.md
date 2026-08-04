@@ -16,9 +16,9 @@ This scheme facilitates payments of a specific amount of XRP or an issued curren
 | **Settlement**            | The facilitator submits the signed transaction to XRPL                       |
 | **Fee payer**             | The payer pays the XRPL transaction fee embedded in the signed transaction   |
 
-XRPL charges the transaction fee to the transaction `Account`. This exact scheme therefore does not support facilitator-sponsored network fees for the signed `Payment` transaction. Supporting fee sponsorship would require a different payment model, not only a facilitator implementation change.
+XRPL charges the transaction fee to the transaction `Account`. This exact scheme therefore does not support facilitator-sponsored network fees for the signed `Payment` transaction. Supporting fee sponsorship would require a different payment model, not only a facilitator implementation change. The [`xrplFeeSponsoring`](../../extensions/xrpl_fee_sponsoring.md) extension defines that payment model via the XLS-68 `Sponsor` amendment, on networks where that amendment is enabled.
 
-`PaymentRequirements.extra.areFeesSponsored` MUST be present and MUST be `false`.
+`PaymentRequirements.extra.areFeesSponsored` MUST be present and MUST be `false`, unless a fee-sponsoring extension (e.g. [`xrplFeeSponsoring`](../../extensions/xrpl_fee_sponsoring.md)) is active, in which case that extension's rules apply.
 
 ## Asset Transfer Methods
 
@@ -150,7 +150,7 @@ The resource server advertises payment requirements in the `accepts` array.
 | `payTo`                  | string  | Yes      | XRPL classic address receiving the payment       |
 | `amount`                 | string  | Yes      | XRP drops string or IOU issued-currency value    |
 | `maxTimeoutSeconds`      | integer | Yes      | Maximum validity window for payment attempt      |
-| `extra.areFeesSponsored` | boolean | Yes      | Must be `false` for XRPL exact payments          |
+| `extra.areFeesSponsored` | boolean | Yes      | `false` unless a fee-sponsoring extension is active |
 | `extra.assetTransferMethod` | string | No     | `"sequence"` (default) or `"ticketSequence"`     |
 | `extra.invoiceId`        | string  | No       | Unique invoice identifier for binding            |
 | `extra.destinationTag`   | integer | No       | DestinationTag for hosted accounts               |
@@ -158,7 +158,7 @@ The resource server advertises payment requirements in the `accepts` array.
 
 `extra.destinationTag` applies to both native XRP and IOU payments. It is used when the receiver is a hosted account or otherwise requires a destination tag for attribution.
 
-`extra.areFeesSponsored` is always `false` because this scheme uses payer-signed XRPL `Payment` transactions whose fee is paid by the payer account.
+`extra.areFeesSponsored` is `false` in the base scheme because payer-signed XRPL `Payment` transactions carry a fee paid by the payer account. A fee-sponsoring extension changes this; see [`xrplFeeSponsoring`](../../extensions/xrpl_fee_sponsoring.md).
 
 `extra.assetTransferMethod` selects how the signed transaction is sequenced. See [Asset Transfer Methods](#asset-transfer-methods) for negotiation rules and tradeoffs.
 
@@ -273,7 +273,7 @@ The facilitator MUST reject if:
 - `paymentPayload.accepted.network` is unsupported
 - `paymentPayload.accepted` does not match `paymentRequirements` on `scheme`, `network`, `asset`, `payTo`, `amount`, or `maxTimeoutSeconds`
 - Required `extra` keys are missing or mismatched:
-  - `areFeesSponsored=false`
+  - `areFeesSponsored=false` (`true` only under an active fee-sponsoring extension, per that extension's rules)
   - `assetTransferMethod` when present in `paymentRequirements.extra` (the payload MUST NOT select a different method; when the requirement omits it, `accepted.extra.assetTransferMethod` MAY declare the selected method, see section 7)
   - `issuer` for IOU payments
   - `invoiceId` when invoice binding is required
@@ -405,6 +405,7 @@ The facilitator MUST reject transactions with:
 
 - `Fee` above facilitator policy.
 - `Delegate` present.
+- `Sponsor`, `SponsorFlags`, or `SponsorSignature` present, unless a fee-sponsoring extension is active.
 - `Memos` present.
 - `SendMax` present for XRP.
 - `Paths` present.
@@ -448,6 +449,8 @@ The payer pays the XRPL transaction fee because:
 - `Fee` is embedded in the signed transaction.
 - XRPL charges fees to the transaction's `Account` field.
 - `Delegate` is not supported by this scheme.
+
+Under an active fee-sponsoring extension the sponsor pays the fee instead; see [`xrplFeeSponsoring`](../../extensions/xrpl_fee_sponsoring.md).
 
 ### Settlement Timeout
 
