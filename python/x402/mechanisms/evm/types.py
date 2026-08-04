@@ -306,9 +306,6 @@ class TransactionReceipt:
     status: int
     block_number: int
     tx_hash: str
-    # When present (including empty list), exact EIP-3009 settle verifies a matching
-    # ERC-20 Transfer log. None preserves backward-compatible mock/signers that omit logs
-    # (mirrors Go's `if receipt.Logs != nil` gate).
     logs: list[Any] | None = None
 
 

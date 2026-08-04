@@ -449,8 +449,7 @@ class ExactEvmScheme:
                     payer=payer,
                 )
 
-            # Receipt status only proves the tx did not revert. Mirror Go #2727 /
-            # TS #2385: require the expected ERC-20 Transfer when logs are present.
+            # Receipt status only proves the tx did not revert.
             if receipt.logs is not None and not verify_eip3009_transfer_event(
                 receipt.logs,
                 token_address,
