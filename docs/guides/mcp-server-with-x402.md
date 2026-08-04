@@ -214,7 +214,32 @@ At minimum, compare the selected requirement against your expected tool call:
 * tool name and user-requested operation
 * per-user, per-agent, or per-session spend limits
 
-For example, reject unexpected payment requirements in `onPaymentRequested`:
+#### Using spend policies (recommended)
+
+Pass `policies` directly to `createx402MCPClient` to filter payment requirements before any payment is created. Policies run before the wallet signs, so they are the safest place to cap spend:
+
+```typescript
+import { createx402MCPClient } from "@x402/mcp";
+import { ExactEvmScheme } from "@x402/evm/exact/client";
+
+const client = createx402MCPClient({
+  name: "my-agent",
+  version: "1.0.0",
+  schemes: [
+    { network: "eip155:84532", client: new ExactEvmScheme(account) },
+  ],
+  // Reject any payment requirement above 1 USDC (6 decimals)
+  policies: [
+    (_version, reqs) => reqs.filter(r => BigInt(r.amount ?? "0") < 1_000_000n),
+  ],
+  // Optionally override which accept entry is selected (default: server-ordered accepts[0])
+  paymentRequirementsSelector: (reqs) => reqs.find(r => r.network === "eip155:84532"),
+});
+```
+
+#### Using the onPaymentRequested hook
+
+For per-call logic (e.g. checking tool name or prompting the user), use `onPaymentRequested`:
 
 ```typescript
 const x402Mcp = new x402MCPClient(mcpClient, paymentClient, {
