@@ -15,6 +15,7 @@ const (
 	ErrUptoFailedToGetNetworkConfig = "invalid_upto_evm_failed_to_get_network_config"
 	ErrUptoFailedToGetReceipt       = "invalid_upto_evm_failed_to_get_receipt"
 	ErrUptoTransactionFailed        = "invalid_upto_evm_transaction_failed"
+	ErrUptoTransferEventMismatch    = "invalid_upto_evm_transfer_event_mismatch"
 
 	// Shared Permit2 error constants — canonical values live in evm.ErrPermit2*
 	ErrPermit2InvalidSpender      = evm.ErrPermit2InvalidSpender

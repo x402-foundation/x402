@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/ethereum/go-ethereum/common"
 	x402 "github.com/x402-foundation/x402/go/v2"
 	"github.com/x402-foundation/x402/go/v2/extensions/eip2612gassponsor"
 	"github.com/x402-foundation/x402/go/v2/extensions/erc20approvalgassponsor"
@@ -370,6 +371,28 @@ func SettlePermit2(
 
 	if receipt.Status != evm.TxStatusSuccess {
 		return nil, x402.NewSettleError(ErrTransactionFailed, payer, network, txHash, "")
+	}
+
+	// Receipt status only proves the tx did not revert. When logs are present,
+	// require the expected ERC-20 Transfer event so a deflationary/misbehaving
+	// token cannot yield success while the payee received less (or nothing)
+	// (same post-settle check the eip3009 path performs).
+	if receipt.Logs != nil {
+		settleValue, ok := new(big.Int).SetString(permit2Payload.Permit2Authorization.Permitted.Amount, 10)
+		if !ok {
+			return nil, x402.NewSettleError(ErrTransferEventMismatch, payer, network, txHash, "invalid permitted amount")
+		}
+		transferMatched, err := verifyEIP3009TransferEvent(receipt.Logs, common.HexToAddress(permit2Payload.Permit2Authorization.Permitted.Token), expectedTransferEvent{
+			From:  common.HexToAddress(permit2Payload.Permit2Authorization.From),
+			To:    common.HexToAddress(permit2Payload.Permit2Authorization.Witness.To),
+			Value: settleValue,
+		})
+		if err != nil {
+			return nil, x402.NewSettleError(ErrTransferEventMismatch, payer, network, txHash, err.Error())
+		}
+		if !transferMatched {
+			return nil, x402.NewSettleError(ErrTransferEventMismatch, payer, network, txHash, "")
+		}
 	}
 
 	return &x402.SettleResponse{
