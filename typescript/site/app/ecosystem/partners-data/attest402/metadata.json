@@ -1,0 +1,7 @@
+{
+  "name": "Attest402",
+  "description": "Agent-native evidence service: captures a public web or API response and returns a portable, cryptographically signed and RFC-3161 timestamped evidence package that verifies fully offline. 0.20 USDC per attestation via x402 on Base; verification is free.",
+  "logoUrl": "/logos/attest402.png",
+  "websiteUrl": "https://attest402.com",
+  "category": "Services/Endpoints"
+}
