@@ -698,12 +698,10 @@ export class x402ResourceServer {
     );
 
     if (!SchemeNetworkServer) {
-      // Fallback to placeholder implementation if no server registered
-      // TODO: Remove this fallback once implementations are registered
-      console.warn(
-        `No server implementation registered for scheme: ${scheme}, network: ${resourceConfig.network}`,
+      throw new Error(
+        `No server implementation registered for ${scheme} on ${resourceConfig.network}. ` +
+          `Make sure to call register() with a scheme server for this network.`,
       );
-      return requirements;
     }
 
     // Find the matching supported kind from facilitator
