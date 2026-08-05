@@ -1,0 +1,1 @@
+Fixed wildcard (`*`) route matching in the HTTP server when the wildcard tail contains a decoded line feed. Wildcard route regexes now compile with `re.DOTALL`, preventing protected routes from being missed before payment verification and settlement.

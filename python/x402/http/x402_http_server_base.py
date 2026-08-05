@@ -975,7 +975,10 @@ class x402HTTPServerBase:
         regex_pattern = re.sub(r":([a-zA-Z_]\w*)", r"[^/]+", regex_pattern)  # :param
         regex_pattern += "$"
 
-        return verb, path, re.compile(regex_pattern, re.IGNORECASE)
+        # re.DOTALL: without it, "." (from a "*" wildcard) does not match a line
+        # feed, so a request path whose wildcard tail contains a decoded LF fails
+        # to match its own route, skipping payment verification and settlement.
+        return verb, path, re.compile(regex_pattern, re.IGNORECASE | re.DOTALL)
 
     @staticmethod
     def _normalize_path(path: str) -> str:
