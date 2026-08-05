@@ -1,6 +1,6 @@
 # Advanced x402 Client Examples
 
-Advanced patterns for x402 TypeScript clients demonstrating builder pattern registration, payment lifecycle hooks, network preferences, and spend controls.
+Advanced patterns for x402 TypeScript clients demonstrating builder pattern registration, payment lifecycle hooks, network preferences, spend controls, and recipient screening (`onBeforePaymentCreation` → abort on a bad `payTo`).
 
 ```typescript
 import { x402Client, wrapFetchWithPayment } from "@x402/fetch";
@@ -125,6 +125,7 @@ Each example demonstrates a specific advanced pattern:
 | `hooks` | `pnpm dev:hooks` | Payment lifecycle hooks |
 | `preferred-network` | `pnpm dev:preferred-network` | Client-side network preferences |
 | `spend-controls` | `pnpm dev:spend-controls` | Default `$1` USD cap, `allowedAssets`, and per-asset caps |
+| `screen-recipient` | `pnpm dev:screen-recipient` | Screen the recipient (`payTo`) before paying; abort a bad address |
 
 ## Testing the Examples
 

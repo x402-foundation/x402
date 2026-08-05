@@ -10,6 +10,7 @@
     "dev:hooks": "tsx index.ts hooks",
     "dev:preferred-network": "tsx index.ts preferred-network",
     "dev:spend-controls": "tsx index.ts spend-controls",
+    "dev:screen-recipient": "tsx index.ts screen-recipient",
     "format": "prettier -c .prettierrc --write \"**/*.{ts,js,cjs,json,md}\"",
     "format:check": "prettier -c .prettierrc --check \"**/*.{ts,js,cjs,json,md}\"",
     "lint": "eslint . --ext .ts --fix",
