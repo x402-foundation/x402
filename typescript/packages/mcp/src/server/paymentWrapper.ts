@@ -425,6 +425,20 @@ async function settlePaymentResult(
       transportContext,
     );
 
+    // settlePayment resolves (does not throw) on facilitator-side failures:
+    // e.g. a double-spend race where the nonce was consumed between verify
+    // and settle. Returning the tool result here would serve paid content
+    // for free, so mirror the HTTP resource server and withhold it.
+    if (!settleResult.success) {
+      return createSettlementFailedResult(
+        resourceServer,
+        toolName,
+        config,
+        settleResult.errorMessage || settleResult.errorReason || "Settlement failed",
+        transportContext,
+      );
+    }
+
     if (config.hooks?.onAfterSettlement) {
       const settlementContext: SettlementContext = {
         ...hookContext,

@@ -160,6 +160,42 @@ describe("createPaymentWrapper", () => {
       expect(result._meta?.[MCP_PAYMENT_RESPONSE_META_KEY]).toEqual(mockSettleResponse);
     });
 
+    it("should withhold tool result when settlement resolves with success: false", async () => {
+      mockResourceServer.settlePayment.mockResolvedValue({
+        success: false,
+        errorReason: "invalid_exact_evm_payload_authorization_nonce_already_used",
+        transaction: "",
+        network: "eip155:84532",
+      } as SettleResponse);
+
+      const onAfterSettlement = vi.fn();
+      const paid = createPaymentWrapper(
+        mockResourceServer as unknown as Parameters<typeof createPaymentWrapper>[0],
+        {
+          accepts: [mockPaymentRequirements],
+          hooks: { onAfterSettlement },
+        },
+      );
+
+      const handler = vi.fn().mockResolvedValue({
+        content: [{ type: "text", text: "paid content" }],
+      });
+
+      const wrappedHandler = paid(handler);
+      const result = await wrappedHandler(
+        { test: "arg" },
+        { _meta: { "x402/payment": mockPaymentPayload } },
+      );
+
+      // Double-spend race: verify passed, another call consumed the nonce,
+      // settle resolves success:false. The paid content must NOT be served.
+      expect(handler).toHaveBeenCalled();
+      expect(result.isError).toBe(true);
+      expect(result.content?.[0]?.text).not.toContain("paid content");
+      expect(result._meta?.[MCP_PAYMENT_RESPONSE_META_KEY]).toBeUndefined();
+      expect(onAfterSettlement).not.toHaveBeenCalled();
+    });
+
     it("should settle payment after successful execution", async () => {
       const paid = createPaymentWrapper(
         mockResourceServer as unknown as Parameters<typeof createPaymentWrapper>[0],
