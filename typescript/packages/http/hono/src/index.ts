@@ -315,12 +315,10 @@ export function paymentMiddlewareFromHTTPServer(
               withPrivateCacheControl(res.headers.get("Cache-Control")),
             );
             res.headers.delete(SETTLEMENT_OVERRIDES_HEADER);
-            // Rebuild from the bytes buffered before settlement so the body sent to
-            // the client does not depend on the state of the original stream across
-            // the settlement await. A throw here would be caught as a settlement
-            // failure and return 402 after the payment settled onchain, so statuses
-            // `new Response` rejects are left alone: outside 200-599 it throws
-            // whatever the body is, and null-body statuses reject a non-null body.
+            // Rebuild from the buffered bytes so the body does not depend on the
+            // original stream's state across the settlement await. `new Response`
+            // rejects statuses outside 200-599, and any body on a null-body status;
+            // throwing here would settle the payment and then return 402.
             if (res.status >= 200 && res.status < 600) {
               res = new Response(responseBody.length > 0 ? responseBody : null, {
                 status: res.status,
