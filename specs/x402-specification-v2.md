@@ -530,7 +530,7 @@ List discoverable x402 resources from the Bazaar.
     {
       "resource": "https://api.example.com/premium-data",
       "type": "http",
-      "x402Version": 1,
+      "x402Version": 2,
       "accepts": [
         {
           "scheme": "exact",
@@ -545,11 +545,7 @@ List discoverable x402 resources from the Bazaar.
           }
         }
       ],
-      "lastUpdated": 1703123456,
-      "metadata": {
-        "category": "finance",
-        "provider": "Example Corp"
-      }
+      "lastUpdated": "2025-08-09T01:07:04.005Z"
     }
   ],
   "pagination": {
@@ -573,7 +569,7 @@ Search semantics and response shape are defined in the Bazaar extension specific
 | `type`        | `string` | Required | Resource type (currently "http" for HTTP endpoints)             |
 | `x402Version` | `number` | Required | Protocol version supported by the resource                      |
 | `accepts`     | `array`  | Required | Array of PaymentRequirements objects specifying payment methods |
-| `lastUpdated` | `number` | Required | Unix timestamp of when the resource was last updated            |
+| `lastUpdated` | `string` | Required | ISO 8601 timestamp of when the resource was last updated        |
 | `extensions`  | `object` | Optional | Additional extension payloads associated with this discovered resource |
 
 **8.4 Bazaar Concept**
