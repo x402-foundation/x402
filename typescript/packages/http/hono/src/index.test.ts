@@ -529,7 +529,7 @@ describe("paymentMiddleware", () => {
       ),
     );
     app.get("/api/test", () => {
-      // `new Headers(res.headers)` must not collapse these into one value.
+      // Carrying headers into the rebuilt response must not collapse these into one.
       const headers = new Headers({ "content-type": "application/json" });
       headers.append("set-cookie", "a=1; Path=/");
       headers.append("set-cookie", "b=2; Path=/");
@@ -564,7 +564,7 @@ describe("paymentMiddleware", () => {
     // A status outside 200-599 makes `new Response()` throw whatever the body is.
     // Undici cannot build one, but workerd can (a 101 upgrade carries a webSocket),
     // so the middleware has to survive receiving it. The payment is already settled
-    // on-chain at this point, so a 402 here would charge and withhold.
+    // onchain at this point, so a 402 here would charge and withhold.
     const responseHeaders = new Headers();
     responseHeaders.set("Settlement-Overrides", JSON.stringify({ amount: "32%" }));
     const upgradeResponse = {

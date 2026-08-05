@@ -306,37 +306,27 @@ export function paymentMiddlewareFromHTTPServer(
               headers: response.headers,
             });
           } else {
-            // Settlement succeeded - rebuild the response from the bytes buffered
-            // before settlement, so what reaches the client does not depend on the
-            // state of the original body stream across the settlement await.
-            const headers = new Headers(res.headers);
+            // Settlement succeeded - add headers to response
             Object.entries(settleResult.headers).forEach(([key, value]) => {
-              headers.set(key, value);
+              res.headers.set(key, value);
             });
-            headers.set("Cache-Control", withPrivateCacheControl(headers.get("Cache-Control")));
-            headers.delete(SETTLEMENT_OVERRIDES_HEADER);
-            try {
-              // Null-body statuses must pass null: `new Response(buf, { status: 204 })`
-              // throws.
+            res.headers.set(
+              "Cache-Control",
+              withPrivateCacheControl(res.headers.get("Cache-Control")),
+            );
+            res.headers.delete(SETTLEMENT_OVERRIDES_HEADER);
+            // Rebuild from the bytes buffered before settlement so the body sent to
+            // the client does not depend on the state of the original stream across
+            // the settlement await. A throw here would be caught as a settlement
+            // failure and return 402 after the payment settled onchain, so statuses
+            // `new Response` rejects are left alone: outside 200-599 it throws
+            // whatever the body is, and null-body statuses reject a non-null body.
+            if (res.status >= 200 && res.status < 600) {
               res = new Response(responseBody.length > 0 ? responseBody : null, {
                 status: res.status,
                 statusText: res.statusText,
-                headers,
+                headers: res.headers,
               });
-            } catch {
-              // Some responses cannot be reconstructed at all - a status outside
-              // 200-599 throws whatever the body is (e.g. a 101 upgrade, which is
-              // constructible on workerd). The payment has already settled on-chain,
-              // so this must not fall through to the 402 below: keep the handler's
-              // own response and apply the settlement headers in place instead.
-              Object.entries(settleResult.headers).forEach(([key, value]) => {
-                res.headers.set(key, value);
-              });
-              res.headers.set(
-                "Cache-Control",
-                withPrivateCacheControl(res.headers.get("Cache-Control")),
-              );
-              res.headers.delete(SETTLEMENT_OVERRIDES_HEADER);
             }
           }
         } catch (error) {
