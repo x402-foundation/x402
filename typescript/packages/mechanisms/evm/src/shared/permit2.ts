@@ -15,8 +15,21 @@ import {
   type Erc20ApprovalGasSponsoringFacilitatorExtension,
   type Erc20ApprovalGasSponsoringSigner,
 } from "../exact/extensions";
-import { getAddress, encodeFunctionData, parseErc6492Signature } from "viem";
-import { PERMIT2_ADDRESS, eip3009ABI, erc20AllowanceAbi, permit2WitnessTypes } from "../constants";
+import {
+  getAddress,
+  encodeFunctionData,
+  parseErc6492Signature,
+  parseEventLogs,
+  isAddressEqual,
+  type Log,
+} from "viem";
+import {
+  PERMIT2_ADDRESS,
+  eip3009ABI,
+  erc20AllowanceAbi,
+  erc20TransferEventAbi,
+  permit2WitnessTypes,
+} from "../constants";
 import { multicall, ContractCall } from "../multicall";
 import { createPermit2Nonce, getEvmChainId } from "../utils";
 import {
@@ -33,6 +46,7 @@ import {
   ErrPermit2ProxyNotDeployed,
   ErrInvalidTransactionState,
   ErrTransactionFailed,
+  ErrTransferEventMismatch,
   ErrInvalidEip2612ExtensionFormat,
   ErrEip2612FromMismatch,
   ErrEip2612AssetMismatch,
@@ -164,6 +178,11 @@ export async function verifyPermit2Allowance(
  * @param tx - The transaction hash to wait for
  * @param payload - The payment payload (for network info)
  * @param payer - The payer address
+ * @param expected - The Transfer event the settlement must emit
+ * @param expected.asset - Expected asset contract that must emit the event
+ * @param expected.from - Expected sender of the Transfer event
+ * @param expected.to - Expected recipient of the Transfer event
+ * @param expected.value - Expected value of the Transfer event
  * @returns Promise resolving to a settlement response indicating success or failure
  */
 export async function waitAndReturnSettleResponse(
@@ -171,6 +190,7 @@ export async function waitAndReturnSettleResponse(
   tx: `0x${string}`,
   payload: PaymentPayload,
   payer: `0x${string}`,
+  expected: { asset: `0x${string}`; from: `0x${string}`; to: `0x${string}`; value: bigint },
 ): Promise<SettleResponse> {
   const receipt = await signer.waitForTransactionReceipt({ hash: tx });
 
@@ -184,12 +204,62 @@ export async function waitAndReturnSettleResponse(
     };
   }
 
+  // Receipt status only proves the tx did not revert. When logs are present,
+  // require the expected ERC-20 Transfer event so a deflationary/misbehaving
+  // token cannot yield success:true without the full amount reaching `to`
+  // (same post-settle check the eip3009 path performs).
+  if (
+    receipt.logs != null &&
+    !verifyPermit2TransferEvent(receipt.logs, getAddress(expected.asset), {
+      from: getAddress(expected.from),
+      to: getAddress(expected.to),
+      value: expected.value,
+    })
+  ) {
+    return {
+      success: false,
+      errorReason: ErrTransferEventMismatch,
+      transaction: tx,
+      network: payload.accepted.network,
+      payer,
+    };
+  }
+
   return {
     success: true,
     transaction: tx,
     network: payload.accepted.network,
     payer,
   };
+}
+
+/**
+ * Verifies that a settlement receipt contains the expected ERC-20 Transfer event.
+ *
+ * @param logs - Receipt logs to search
+ * @param erc20Address - Expected asset contract that must have emitted the event
+ * @param expected - Expected `from`, `to`, and `value` of the Transfer event
+ * @param expected.from - Expected sender of the Transfer event
+ * @param expected.to - Expected recipient of the Transfer event
+ * @param expected.value - Expected value of the Transfer event
+ * @returns true when a matching Transfer log is present, false otherwise
+ */
+function verifyPermit2TransferEvent(
+  logs: readonly Log[],
+  erc20Address: `0x${string}`,
+  expected: { from: `0x${string}`; to: `0x${string}`; value: bigint },
+): boolean {
+  const transferLogs = parseEventLogs({
+    abi: erc20TransferEventAbi,
+    eventName: "Transfer",
+    logs: logs.filter(log => isAddressEqual(log.address, erc20Address)),
+  });
+  return transferLogs.some(
+    log =>
+      isAddressEqual(log.args.from, expected.from) &&
+      isAddressEqual(log.args.to, expected.to) &&
+      log.args.value === expected.value,
+  );
 }
 
 /**
