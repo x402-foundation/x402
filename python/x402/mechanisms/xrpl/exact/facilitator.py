@@ -83,7 +83,11 @@ from ..constants import (
     TF_PARTIAL_PAYMENT,
     XRPL_CAIP_FAMILY,
 )
-from ..settlement_cache import DEFAULT_SETTLEMENT_TTL_SECONDS, SettlementCache
+from ..settlement_cache import (
+    DEFAULT_SETTLEMENT_TTL_SECONDS,
+    SettlementCache,
+    SettlementCacheLike,
+)
 from ..types import (
     ExactXrplPayload,
     XrplFacilitatorOptions,
@@ -177,11 +181,11 @@ class ExactXrplScheme:
     exception: it is a function of the signed blob, so it is computed rather
     than believed.
 
-    **The duplicate-settlement guard is per-process.** A horizontally scaled
-    facilitator must back
-    :class:`~x402.mechanisms.xrpl.settlement_cache.SettlementCache` with a
-    shared atomic store, or duplicates routed to different replicas each pass
-    their local check.
+    **The default duplicate-settlement guard is per-process.** A horizontally
+    scaled facilitator must pass a ``settlement_cache`` backed by a shared
+    atomic store — anything satisfying
+    :class:`~x402.mechanisms.xrpl.settlement_cache.SettlementCacheLike` — or
+    duplicates routed to different replicas each pass their local check.
     """
 
     scheme = SCHEME_EXACT
@@ -190,17 +194,22 @@ class ExactXrplScheme:
     def __init__(
         self,
         options: XrplFacilitatorOptions | None = None,
-        settlement_cache: SettlementCache | None = None,
+        settlement_cache: SettlementCacheLike | None = None,
     ) -> None:
         """Create the scheme.
 
         Args:
             options: Facilitator configuration and ledger overrides.
-            settlement_cache: Shared duplicate-settlement guard; a private one
-                is created when omitted.
+            settlement_cache: Shared duplicate-settlement guard; anything
+                satisfying :class:`SettlementCacheLike`, so a scaled
+                deployment can pass a shared-store implementation. A private
+                in-process :class:`SettlementCache` is created when omitted.
         """
         self.options = options or XrplFacilitatorOptions()
-        self.settlement_cache = settlement_cache or SettlementCache()
+        # Explicit None test: a falsy-but-real guard (empty ``__len__``) must not be discarded.
+        self.settlement_cache: SettlementCacheLike = (
+            SettlementCache() if settlement_cache is None else settlement_cache
+        )
 
     def get_extra(self, network: Network) -> dict[str, Any] | None:
         """Return capability metadata advertised for this scheme.

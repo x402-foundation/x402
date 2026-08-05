@@ -90,6 +90,38 @@ class TestDecoding:
             decode_signed_transaction_blob("not-hex")
 
 
+class TestPaymentFieldAllowlist:
+    def test_every_allowlisted_field_is_known_to_the_codec(self):
+        # A misspelt entry would never match a decoded field, silently
+        # rejecting the payments it was meant to admit. get_field_instance
+        # raises KeyError for an unknown name, failing the test with the
+        # misspelt entry in the traceback.
+        from xrpl.core.binarycodec.definitions import get_field_instance
+
+        for field in utils.ALLOWED_PAYMENT_FIELDS:
+            get_field_instance(field)
+
+    def test_the_non_signing_guard_covers_every_transaction_type(self):
+        # The Payment template check subsumes the non-signing rejection for
+        # Payments, but the non-signing guard is the one that applies to every
+        # type: hash identity must not be mintable on any decodable blob.
+        from xrpl.core import binarycodec
+
+        blob = binarycodec.encode(
+            {
+                "TransactionType": "AccountSet",
+                "Account": "rHb9CJAWyB4rj91VRWn96DkukG4bwdtyTh",
+                "Fee": "12",
+                "Sequence": 7,
+                "SigningPubKey": "ED" + "11" * 32,
+                "TxnSignature": "AA" * 64,
+                "Signature": "AB" * 32,
+            }
+        )
+        with pytest.raises(ValueError, match="non-signing field"):
+            decode_signed_transaction_blob(blob)
+
+
 class TestSignatureVerification:
     """xrpl-py has no verifySignature equivalent, so this is reconstructed."""
 

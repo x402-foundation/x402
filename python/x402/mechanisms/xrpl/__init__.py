@@ -77,7 +77,11 @@ from .constants import (
     XRPL_MAINNET,
     XRPL_TESTNET,
 )
-from .settlement_cache import DEFAULT_SETTLEMENT_TTL_SECONDS, SettlementCache
+from .settlement_cache import (
+    DEFAULT_SETTLEMENT_TTL_SECONDS,
+    SettlementCache,
+    SettlementCacheLike,
+)
 from .types import (
     ExactXrplPayload,
     XrplAccountAuthorization,
@@ -163,6 +167,7 @@ __all__ = [
     "XRPL_TESTNET",
     "DEFAULT_SETTLEMENT_TTL_SECONDS",
     "SettlementCache",
+    "SettlementCacheLike",
     "ExactXrplPayload",
     "XrplAccountAuthorization",
     "XrplFacilitatorOptions",

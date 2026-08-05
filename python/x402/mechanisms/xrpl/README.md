@@ -89,6 +89,7 @@ infrastructure.
 |--------|-------------|
 | `XrplFacilitatorOptions` | Facilitator configuration and ledger-access injection |
 | `SettlementCache` | Duplicate-settlement guard, shareable across scheme instances |
+| `SettlementCacheLike` | Protocol a shared-store settlement guard implements |
 | `XRPL_MAINNET` / `XRPL_TESTNET` / `XRPL_DEVNET` | CAIP-2 network identifiers |
 | `ERR_*` | Wire reason codes; shared codes use the TypeScript spelling |
 
@@ -144,6 +145,14 @@ the one form rippled accepts. Both are otherwise malleable: the same payment can
 re-encoded, or its signature rewritten without the key, into a variant that verifies and
 hashes differently, which would give one payment several identities.
 
+Field acceptance is pinned to rippled's own Payment template rather than to whatever the
+installed codec can decode. The codec is type-agnostic and learns new fields with every
+release, so gating on its knowledge would silently widen acceptance on upgrade — XLS-68's
+`Sponsor`/`SponsorFlags`, for example, become decodable signing fields the release after
+the amendment's definitions ship. A field outside the template is refused as a malformed
+payload, exactly as its codec-unknown spelling is refused today, until it is admitted
+deliberately.
+
 Verification is total: any input yields a `VerifyResponse` with a machine-readable
 `invalidReason`, never an exception. Codes shared with the TypeScript mechanism use its
 spelling, so a client switching facilitators gets the same string for the same fault;
@@ -172,7 +181,31 @@ transient failure is also rejected: `duplicate_settlement` means "already seen",
 The cache is per-process. A horizontally scaled facilitator must back it with a shared
 atomic store, or duplicates routed to different replicas each pass their local check.
 Pass a shared `SettlementCache` instance to scheme constructors that should block each
-other's duplicates.
+other's duplicates within one process; across processes, pass anything satisfying the
+`SettlementCacheLike` protocol. The one obligation is that test-and-record is a single
+atomic operation. Redis' `SET NX EX` is exactly that:
+
+```python
+import math
+
+import redis
+
+class RedisSettlementCache:
+    """Shared duplicate-settlement guard for a horizontally scaled facilitator."""
+
+    def __init__(self, client: redis.Redis) -> None:
+        self._client = client
+
+    def is_duplicate(self, key: str, ttl_seconds: float) -> bool:
+        stored = self._client.set(
+            f"x402:xrpl:settle:{key}", "1", nx=True, ex=max(1, math.ceil(ttl_seconds))
+        )
+        return stored is None
+
+facilitator = ExactXrplFacilitatorScheme(settlement_cache=RedisSettlementCache(client))
+```
+
+A database row inserted under a uniqueness constraint works the same way.
 
 For details, see the [scheme specification]'s duplicate-settlement section.
 

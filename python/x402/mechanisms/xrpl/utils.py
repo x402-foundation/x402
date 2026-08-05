@@ -62,6 +62,51 @@ MAX_SIGNED_TX_BLOB_HEX = 4096
 # other non-signing field would only serve to change the transaction hash.
 ALLOWED_NON_SIGNING_FIELDS = frozenset({"TxnSignature", "Signers"})
 
+# Every field rippled's Payment template accepts today. The codec is
+# type-agnostic — it happily decodes any field it knows onto any transaction —
+# and it classifies fields the moment a release teaches it new ones, so
+# "reject what the codec calls non-signing" silently starts accepting fields
+# added by future amendments (XLS-68 Sponsor/SponsorFlags are signing fields
+# on xrpl-py's main branch). Acceptance is therefore pinned to this list, not
+# to the installed codec's knowledge. Memos, Paths, DeliverMin, Delegate and
+# Signers stay in the list although the facilitator refuses them: each has its
+# own reason code, which must remain reachable.
+ALLOWED_PAYMENT_FIELDS = frozenset(
+    {
+        # Common transaction fields, including the legacy optional pair
+        # (PreviousTxnID, OperationLimit) that rippled's template still
+        # admits: the list pins today's acceptance, it does not narrow it.
+        "TransactionType",
+        "Account",
+        "Fee",
+        "Sequence",
+        "AccountTxnID",
+        "PreviousTxnID",
+        "OperationLimit",
+        "Flags",
+        "LastLedgerSequence",
+        "Memos",
+        "NetworkID",
+        "Signers",
+        "SourceTag",
+        "SigningPubKey",
+        "TicketSequence",
+        "TxnSignature",
+        "Delegate",
+        # Payment fields. DeliverMax is a JSON-API alias with no binary
+        # field, so a decoded blob can only spell the amount as Amount.
+        "Amount",
+        "Destination",
+        "DestinationTag",
+        "InvoiceID",
+        "Paths",
+        "SendMax",
+        "DeliverMin",
+        "CredentialIDs",
+        "DomainID",
+    }
+)
+
 
 def is_xrpl_network(network: str) -> bool:
     """Return True when the CAIP-2 identifier names a supported XRPL network.
@@ -113,8 +158,8 @@ def decode_signed_transaction_blob(signed_tx_blob: str) -> dict[str, Any]:
         The decoded transaction fields.
 
     Raises:
-        ValueError: If the blob is not canonical hexadecimal or cannot be
-            decoded.
+        ValueError: If the blob is not canonical hexadecimal, cannot be
+            decoded, or carries a field a conforming Payment cannot.
     """
     # Length before the linear hex scan, so rejection costs one comparison.
     if len(signed_tx_blob) > MAX_SIGNED_TX_BLOB_HEX:
@@ -139,6 +184,18 @@ def decode_signed_transaction_blob(signed_tx_blob: str) -> dict[str, Any]:
     for field in decoded:
         if field not in ALLOWED_NON_SIGNING_FIELDS and not get_field_instance(field).is_signing:
             raise ValueError(f"signedTxBlob carries a non-signing field: {field}")
+
+    # A Payment is additionally held to the ledger's own field template,
+    # because the codec decodes any field it knows onto any transaction. This
+    # keeps acceptance stable across xrpl-py upgrades — a field added by a
+    # future amendment is refused here, with the same error a blob the codec
+    # cannot decode gets today, until it is admitted deliberately. Other
+    # transaction types pass through so the facilitator can reject them under
+    # its transaction-type reason code rather than as a malformed blob.
+    if decoded.get("TransactionType") == "Payment":
+        for field in decoded:
+            if field not in ALLOWED_PAYMENT_FIELDS:
+                raise ValueError(f"signedTxBlob carries a field foreign to Payment: {field}")
     return decoded
 
 

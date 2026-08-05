@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import threading
 import time
+from typing import Protocol
 
 # Floor, and the margin added on top of a payment's own validity window. Sized
 # to cover ledger-close variance and clock skew; matches the TypeScript
@@ -15,6 +16,32 @@ DEFAULT_SETTLEMENT_TTL_SECONDS = 120.0
 # the scan to be worth deferring; above it the threshold tracks the surviving
 # set, so the sweep stays amortised.
 _MIN_SWEEP_THRESHOLD = 1024
+
+
+class SettlementCacheLike(Protocol):
+    """What the facilitator requires of a duplicate-settlement guard.
+
+    The scheme spec requires deduplication across every process that serves
+    ``/settle``, so a horizontally scaled deployment backs the guard with a
+    shared atomic store rather than the in-process default. Any object with
+    this method — a Redis ``SET NX EX`` wrapper, a database row with a
+    uniqueness constraint — can be passed to the facilitator constructor.
+
+    The one obligation is atomicity: test-and-record must be a single
+    operation, because two concurrent settles of one payment must not both
+    observe the key as absent.
+    """
+
+    def is_duplicate(self, key: str, ttl_seconds: float) -> bool:
+        """Record a settlement key, reporting whether it was already present.
+
+        Args:
+            key: Settlement identity, normally the signed transaction hash.
+            ttl_seconds: How long the entry must be retained.
+
+        Returns:
+            True if the key was already recorded, False after recording it.
+        """
 
 
 class SettlementCache:

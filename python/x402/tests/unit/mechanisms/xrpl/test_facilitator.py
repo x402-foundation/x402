@@ -200,6 +200,72 @@ class TestBlobMustBeCanonical:
         )
 
 
+class TestPaymentFieldAllowlist:
+    """Payments are held to rippled's own field template; the rationale for
+    pinning acceptance there rather than to the codec's field classification
+    is with ALLOWED_PAYMENT_FIELDS in utils.py."""
+
+    @pytest.mark.parametrize(
+        ("field", "value"),
+        [("OfferSequence", 1), ("ClearFlag", 1), ("TicketCount", 1)],
+    )
+    def test_a_signing_field_foreign_to_payment_is_refused(self, field, value):
+        # Signed by the payer over the foreign field, so neither the signature
+        # check nor the non-signing guard objects first: the allowlist is the
+        # sole rejector, as it will be for fields future amendments add.
+        wallet = make_wallet()
+        requirements = make_requirements()
+        blob = sign_raw(wallet, base_fields(wallet, **{field: value}))
+        assert _scheme().verify(make_payload(blob, requirements), requirements).invalid_reason == (
+            "invalid_exact_xrpl_payload_blob"
+        )
+
+    def test_tolerated_fields_still_verify(self):
+        # Every field the ledger accepts on a Payment and the TypeScript
+        # facilitator tolerates must stay accepted: the allowlist pins
+        # today's acceptance, it does not narrow it. PreviousTxnID and
+        # OperationLimit are the easy ones to lose, legacy optional fields
+        # rippled's template still admits that no current SDK model emits.
+        wallet = make_wallet()
+        requirements = make_requirements()
+        blob = sign_raw(
+            wallet,
+            base_fields(
+                wallet,
+                SourceTag=7,
+                AccountTxnID="AB" * 32,
+                PreviousTxnID="BC" * 32,
+                OperationLimit=1,
+                DomainID="CD" * 32,
+                CredentialIDs=["EF" * 32],
+            ),
+        )
+        result = _scheme().verify(make_payload(blob, requirements), requirements)
+        assert result.is_valid is True
+
+    def test_a_non_payment_transaction_still_gets_the_type_reason(self):
+        # The allowlist is a Payment rule. Holding every transaction type to
+        # it would report an AccountSet as a malformed blob and leave the
+        # transaction-type reason code unreachable.
+        wallet = make_wallet()
+        requirements = make_requirements()
+        blob = sign_raw(
+            wallet,
+            {
+                "TransactionType": "AccountSet",
+                "Account": wallet.address,
+                "Fee": "12",
+                "Flags": 0,
+                "Sequence": 7,
+                "LastLedgerSequence": CURRENT_LEDGER + 10,
+                "ClearFlag": 1,
+            },
+        )
+        assert _scheme().verify(make_payload(blob, requirements), requirements).invalid_reason == (
+            "invalid_exact_xrpl_payload_transaction_type"
+        )
+
+
 class TestSignatureMustBeFullyCanonical:
     """A signature is malleable: an attacker holding no key can rewrite one
     into another that still verifies but hashes differently. rippled refuses
@@ -564,6 +630,49 @@ class TestSettlement:
         second = ExactXrplFacilitatorScheme(make_options(), cache)
         assert first.settle(payload, requirements).success is True
         assert second.settle(payload, requirements).error_reason == "duplicate_settlement"
+
+    def test_any_object_with_is_duplicate_can_be_the_guard(self):
+        # The spec requires deduplication across every process serving
+        # /settle, so the shared-store deployment shape must not require
+        # subclassing the in-process cache: the constructor takes anything
+        # satisfying SettlementCacheLike.
+        class RecordingGuard:
+            def __init__(self) -> None:
+                self.calls: list[tuple[str, float]] = []
+
+            def is_duplicate(self, key: str, ttl_seconds: float) -> bool:
+                self.calls.append((key, ttl_seconds))
+                return len(self.calls) > 1
+
+        wallet = make_wallet()
+        requirements = make_requirements()
+        blob = sign_payment(wallet)
+        payload = make_payload(blob, requirements)
+        guard = RecordingGuard()
+        scheme = ExactXrplFacilitatorScheme(make_options(), guard)
+
+        assert scheme.settle(payload, requirements).success is True
+        assert scheme.settle(payload, requirements).error_reason == "duplicate_settlement"
+        # The guard receives the identity and the retention the spec derives:
+        # the blob's own hash, held past the payment's validity window.
+        assert guard.calls[0] == (
+            get_signed_transaction_hash(blob),
+            requirements.max_timeout_seconds + DEFAULT_SETTLEMENT_TTL_SECONDS,
+        )
+
+    def test_an_empty_shared_guard_is_not_discarded_for_being_falsy(self):
+        # A store may define emptiness, and an empty store is falsy; `or`
+        # would silently replace it with a fresh per-process cache, splitting
+        # the deduplication the caller wired up to be shared.
+        class SizedGuard:
+            def __len__(self) -> int:
+                return 0
+
+            def is_duplicate(self, key: str, ttl_seconds: float) -> bool:
+                return False
+
+        guard = SizedGuard()
+        assert ExactXrplFacilitatorScheme(make_options(), guard).settlement_cache is guard
 
 
 USD = "USD"

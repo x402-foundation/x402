@@ -59,6 +59,12 @@ def _loop_safe(func: Callable[_P, _T]) -> Callable[_P, _T]:
     invoking this sync scheme inline) raises ``RuntimeError`` and every
     ledger read fails. The call is offloaded to its own thread in that case;
     it still blocks the caller, as any sync call invoked inline does.
+
+    The executor is deliberately per-call, not shared: a module-level pool
+    inherited across ``fork()`` holds dead worker threads and a stale idle
+    count, so the first offloaded call in a pre-fork worker queues onto a
+    pool that will never run it and hangs without an exception. Thread
+    startup is microseconds against a ledger RPC.
     """
 
     @functools.wraps(func)
