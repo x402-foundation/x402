@@ -279,20 +279,23 @@ export class ExactSvmScheme implements SchemeNetworkFacilitator {
       };
     }
 
-    // Settlements verified through Path 2 (smart wallet) require post-settlement
-    // verification to defend against TOCTOU. _verify reports the path directly,
-    // so we no longer re-decode the transaction to infer it.
-    const isSmartWalletSettlement = verificationPath === "smartWallet";
+    // Post-settlement delivery verification runs for every settlement when the
+    // signer supports it: for smart wallets it defends against TOCTOU, and for
+    // all payments it confirms the payee's balance actually increased by the
+    // required amount — a Token-2022 mint with a transfer-fee extension skims
+    // at execution, so the declared TransferChecked amount can match while the
+    // payee receives less.
 
-    // For smart wallet settlements: record destination ATA balance before sending.
-    // Used as fallback verification if getTransaction has indexing lag.
+    // Record destination ATA balance before sending.
+    // Used as primary delivery verification; inner-instruction inspection is
+    // the fallback when no pre-balance is available.
     // Try both SPL Token and Token-2022 programs — the payment may use either.
     let balanceBefore: bigint | null = null;
     let balanceBeforeTokenProgram:
       | typeof TOKEN_PROGRAM_ADDRESS
       | typeof TOKEN_2022_PROGRAM_ADDRESS
       | null = null;
-    if (isSmartWalletSettlement && typeof this.signer.getTokenAccountBalance === "function") {
+    if (typeof this.signer.getTokenAccountBalance === "function") {
       for (const tokenProgram of [TOKEN_PROGRAM_ADDRESS, TOKEN_2022_PROGRAM_ADDRESS]) {
         try {
           const [destinationAta] = await findAssociatedTokenPda({
@@ -335,9 +338,17 @@ export class ExactSvmScheme implements SchemeNetworkFacilitator {
       // Wait for confirmation
       await this.signer.confirmTransaction(signature, requirements.network);
 
-      // Post-settlement verification for smart wallet transactions.
-      // Confirms the TransferChecked actually executed on-chain (TOCTOU defense).
-      if (isSmartWalletSettlement) {
+      // Post-settlement verification for every settlement the signer can
+      // support. Smart-wallet settlements keep fail-closed TOCTOU semantics
+      // (inner-instruction inspection); static-path settlements get the
+      // balance-delta delivery check (transfer-fee skim), where "unverified"
+      // (e.g. fresh ATA with no pre-balance) preserves legacy fail-open
+      // behavior — only hard evidence of under-delivery fails the settlement.
+      if (
+        typeof this.signer.getTokenAccountBalance === "function" ||
+        typeof this.signer.getConfirmedTransactionInnerInstructions === "function"
+      ) {
+        const isSmartWalletSettlement = verificationPath === "smartWallet";
         const signerAddresses = this.signer.getAddresses().map(a => a.toString());
         const postVerify = await verifyPostSettlement(
           this.signer,
@@ -347,9 +358,13 @@ export class ExactSvmScheme implements SchemeNetworkFacilitator {
           signerAddresses,
           balanceBefore,
           balanceBeforeTokenProgram?.toString() ?? null,
+          { inspectInnerInstructions: isSmartWalletSettlement },
         );
 
-        if (!postVerify.verified) {
+        if (
+          !postVerify.verified &&
+          (isSmartWalletSettlement || postVerify.method !== "unverified")
+        ) {
           return {
             success: false,
             errorReason: "post_settlement_transfer_not_confirmed",
