@@ -100,7 +100,7 @@ https://<host>/.well-known/x402
 
 | Field | Req | Meaning |
 |---|---|---|
-| `x402Version` | MUST | Highest x402 protocol version the host speaks. |
+| `x402Version` | MUST | Highest x402 protocol version the host speaks. MUST be a JSON number (integer), not a string, and MUST NOT be spelled `version` — the field carries the same name and type as the `x402Version` in the host's own 402 challenge. See Migration. |
 | `kind` | MUST | `"facilitator"`, `"resource-server"`, or `"both"`. |
 | `name`, `description` | SHOULD | Human-readable identification. |
 | `facilitator` | MUST if kind includes facilitator | Capability block. |
@@ -113,6 +113,48 @@ https://<host>/.well-known/x402
 | `updated` | SHOULD | ISO-8601 timestamp of last manifest change; consumers use it for cache decisions alongside HTTP caching headers. |
 
 Unknown fields MUST be ignored (forward compatibility).
+
+### Resource entries: bare pointer or complete
+
+A `resources` entry MUST be either a **bare pointer** — `url`, and optionally `method` and
+`description` — or a **complete** payment description carrying every field a client needs
+to construct a payment without a round trip. A partially populated entry MUST NOT be
+published, and consumers MUST treat one as a bare pointer: dereference the `url`, take the
+402 as authoritative, and ignore the partial fields entirely.
+
+The reason is that payment data rots and the 402 challenge does not. A complete entry is a
+standing promise to keep `asset` and `payTo` correct forever; a bare pointer delegates that
+to the endpoint, which is already authoritative and already has to be right. There is no
+value in the middle: a consumer that cannot trust the block to be complete has to fetch the
+402 anyway, so the partial fields buy nothing and can only be wrong.
+
+Publish a complete entry only if you intend to serve payment data statically and keep it
+fresh. Otherwise publish the pointer.
+
+### Migration
+
+Two changes affect already-deployed manifests. Both are mechanical, and in both cases the
+correct value can be verified against the host's own endpoint rather than against this
+document.
+
+**`version` → `x402Version`.** Deployments spelling this field `version` should rename it.
+The value does not change. A census of 260 live payment-gated hosts found 139 readable 402
+challenges, and **all 139** spell the field `x402Version`, every one typed as an integer.
+The protocol therefore already has one unanimous name for this field on the wire, and a
+manifest spelling it differently makes the same protocol call one thing two names in two
+documents that ship together. Confirm the value by reading your own 402 response.
+
+**Partial resource entries.** For an entry in the middle state, the cheaper compliant move
+is usually **removing** the partial payment fields rather than completing them — a bare
+pointer is fully conforming and carries no maintenance obligation. Of 205 manifests observed
+in the middle state, 188 were missing `asset` and 144 were missing `payTo`; for those,
+deletion is both less work and less to keep correct. Complete the block only if serving
+static payment data is a deliberate choice.
+
+*(Deployment figures from an independent census of the x402 Bazaar by
+[@meloliva14](https://github.com/meloliva14), published at
+[meloliva14/x402-measure](https://github.com/meloliva14/x402-measure); re-runnable against
+any revision of this document.)*
 
 ## The DNS TXT record
 
@@ -264,3 +306,4 @@ grammar has a reference parser in the same codebase.)
 [SPF]: https://www.rfc-editor.org/rfc/rfc7208#section-4.5
 [DMARC]: https://www.rfc-editor.org/rfc/rfc7489#section-6.6.3
 [MTA-STS]: https://www.rfc-editor.org/rfc/rfc8461
+
