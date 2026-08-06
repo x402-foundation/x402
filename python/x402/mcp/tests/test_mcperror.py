@@ -47,9 +47,7 @@ class McpError(Exception):
 
 
 class MockAsyncMCPResult:
-    def __init__(
-        self, content=None, is_error=False, meta=None, structured_content=None
-    ):
+    def __init__(self, content=None, is_error=False, meta=None, structured_content=None):
         self.content = content or [{"type": "text", "text": "pong"}]
         self.isError = is_error
         self._meta = meta or {}
@@ -274,9 +272,7 @@ async def test_async_client_rethrows_32042_without_valid_data():
     mock_mcp = MockAsyncMCPClient()
     mock_payment = MockAsyncPaymentClient()
 
-    mock_mcp.call_tool.side_effect = McpError(
-        -32042, "no payment data", data={"foo": "bar"}
-    )
+    mock_mcp.call_tool.side_effect = McpError(-32042, "no payment data", data={"foo": "bar"})
 
     client = x402MCPClient(mock_mcp, mock_payment, auto_payment=True)
     with pytest.raises(McpError, match="no payment data"):
