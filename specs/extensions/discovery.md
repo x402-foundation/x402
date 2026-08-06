@@ -110,6 +110,7 @@ https://<host>/.well-known/x402
 | `facilitator.assets` | SHOULD | Settleable assets per network, with the token standard the scheme relies on (e.g. `EIP-3009`). |
 | `resources` | MAY | x402-paywalled resources on this host, `bazaar`-compatible: indexers that speak `bazaar` can probe each URL for the full 402 + `extensions.bazaar` description. Each `url` **MUST** be HTTPS and on the manifest's own domain or a subdomain. Consumers **MUST NOT** dereference entries that are not, and SHOULD treat their presence as an abuse signal rather than silently discarding them. Because this document invites indexers to fetch these URLs, an unconstrained field is server-side request forgery by specification — a host listing `http://169.254.169.254/…` or an internal address has every conforming crawler dereference it from inside the crawler's own network. |
 | `attestation` | MAY | Execution-integrity claims: `{"type":"none"}`, or e.g. `{"type":"tee","scheme":"confidential-space","verifier":"<url>"}`. See Security. |
+| `peers` | MAY | Up to 32 bare domain names of other hosts believed to publish x402 discovery data. Hints only, never vouchers — see Peer hints. |
 | `updated` | SHOULD | ISO-8601 timestamp of last manifest change; consumers use it for cache decisions alongside HTTP caching headers. |
 
 Unknown fields MUST be ignored (forward compatibility).
@@ -130,6 +131,44 @@ value in the middle: a consumer that cannot trust the block to be complete has t
 
 Publish a complete entry only if you intend to serve payment data statically and keep it
 fresh. Otherwise publish the pointer.
+
+### Peer hints (`peers`)
+
+A manifest MAY carry a `peers` array of bare registrable domain names — no
+scheme, no path, no port — of other hosts the publisher believes publish x402
+discovery data:
+
+```json
+"peers": ["facilitator-b.example", "indexer.example.org"]
+```
+
+Peers are **hints, not vouchers**. A consumer treats each entry as nothing
+more than a domain name to feed back into the resolution algorithm from the
+beginning: its own TXT lookup, its own manifest fetch, every bound and
+refusal in this document applied unchanged. No capability, reputation, or
+trust of any kind transfers from the referring manifest — an entry is only a
+name, so there is nothing to transfer.
+
+Rules:
+
+- A manifest MUST NOT list more than **32** peers. Consumers MUST ignore
+  entries beyond the cap, and indexers SHOULD flag manifests that exceed it.
+- Entries MUST be bare DNS names. Consumers MUST ignore entries carrying a
+  scheme, path, port, or userinfo, IP-address literals, and the manifest's
+  own domain.
+- Crawlers SHOULD dedupe the frontier globally and bound traversal depth as
+  in any web crawl. The peer graph is public, attacker-writable input; each
+  name is hostile until it has resolved on its own.
+
+Why this exists: with peer hints the network is crawlable from **any seed**.
+One known-good domain reaches its connected component with no directory, no
+registry, and no gatekeeper — curated lists stop being load-bearing even for
+bootstrap. Sybil clusters can list each other freely and gain nothing,
+because listing confers nothing: every name still has to resolve, serve a
+manifest under its own TLS certificate, and pass every check alone. This is
+the address-gossip pattern proven by Bitcoin `addr` relay, NNTP feeds, and
+fediverse instance peers: **existence spreads peer-to-peer; trust never
+does.**
 
 ### Migration
 
@@ -282,6 +321,14 @@ loopback, link-local, RFC 1918, CGNAT, and IPv6 ULA ranges.
   Operators SHOULD sign zones carrying `_x402` records, and SHOULD monitor
   RRSIG expiry: an expired signature fails validation exactly like a forged
   one, so the record — and the discovery path — disappears on a timer.
+- **Peer hints transfer discovery, not trust.** The `peers` list is
+  attacker-writable by construction (anyone can publish a manifest naming
+  anyone). That is safe precisely because an entry carries no claim beyond
+  "a name exists": consumers re-run the full resolution pipeline per name,
+  and crawler resource use is bounded by the 32-entry cap plus ordinary
+  frontier dedup. A consumer that lets a peer entry shortcut any check in
+  this document has reimplemented the vulnerability the entry-cap and
+  re-resolution rules exist to prevent.
 - **Manifest/live divergence**: consumers MUST prefer live `supported` data;
   indexers SHOULD flag divergent hosts.
 - **Attestation claims** (`attestation` field) are claims like everything
