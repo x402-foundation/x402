@@ -16,6 +16,38 @@ export const SOLANA_NETWORK_REFS = {
   DEVNET: "EtWTRABZaYq6iMfeYKouRu166VU2xqa1",
 } as const;
 
+// Algorand Network References (full base64 genesis hash for SDK/RPC routing)
+export const ALGORAND_NETWORK_REFS = {
+  MAINNET: "wGHE2Pwdvd7S12BL5FaOP20EGYesN73ktiC1qzkkit8=",
+  TESTNET: "SGO1GKSzyE7IEPItTxCByw9x8FmnrCDexi9/cOUJOiI=",
+} as const;
+
+/** Canonical truncated CAIP-2 references per the Algorand namespace profile. */
+const ALGORAND_CANONICAL_REFS = {
+  MAINNET: "wGHE2Pwdvd7S12BL5FaOP20EGYesN73k",
+  TESTNET: "SGO1GKSzyE7IEPItTxCByw9x8FmnrCDe",
+} as const;
+
+/**
+ * Resolves a CAIP-2 Algorand network identifier to its full genesis hash reference.
+ *
+ * @param network - CAIP-2 network identifier (canonical or legacy full-hash form)
+ * @returns Full base64 genesis hash reference
+ */
+export function resolveAlgorandGenesisRef(network: string): string {
+  const ref = network.split(":")[1];
+  if (ref === ALGORAND_NETWORK_REFS.MAINNET || ref === ALGORAND_NETWORK_REFS.TESTNET) {
+    return ref;
+  }
+  if (ref === ALGORAND_CANONICAL_REFS.MAINNET) {
+    return ALGORAND_NETWORK_REFS.MAINNET;
+  }
+  if (ref === ALGORAND_CANONICAL_REFS.TESTNET) {
+    return ALGORAND_NETWORK_REFS.TESTNET;
+  }
+  return ref;
+}
+
 /**
  * Normalizes the payment requirements into an array.
  *
@@ -91,6 +123,16 @@ export function isSvmNetwork(network: string): boolean {
 }
 
 /**
+ * Determines if the provided network is an AVM (Algorand) network.
+ *
+ * @param network - The network to check (CAIP-2 format: algorand:genesisHash).
+ * @returns True if the network is AVM based.
+ */
+export function isAvmNetwork(network: string): boolean {
+  return network.startsWith("algorand:");
+}
+
+/**
  * Provides a human-readable display name for a network.
  * Uses viem/chains for EVM chain metadata (based on ethereum-lists/chains).
  * See: https://github.com/ethereum-lists/chains
@@ -117,6 +159,11 @@ export function getNetworkDisplayName(network: string): string {
     return ref === SOLANA_NETWORK_REFS.DEVNET ? "Solana Devnet" : "Solana Mainnet";
   }
 
+  if (network.startsWith("algorand:")) {
+    const ref = resolveAlgorandGenesisRef(network);
+    return ref === ALGORAND_NETWORK_REFS.TESTNET ? "Algorand Testnet" : "Algorand Mainnet";
+  }
+
   return network;
 }
 
@@ -137,6 +184,11 @@ export function isTestnetNetwork(network: string): boolean {
   if (network.startsWith("solana:")) {
     const ref = network.split(":")[1];
     return ref === SOLANA_NETWORK_REFS.DEVNET;
+  }
+
+  if (network.startsWith("algorand:")) {
+    const ref = resolveAlgorandGenesisRef(network);
+    return ref === ALGORAND_NETWORK_REFS.TESTNET;
   }
 
   return false;

@@ -1,6 +1,7 @@
 package svm
 
 import (
+	"crypto/sha256"
 	"encoding/base64"
 	"fmt"
 	"math"
@@ -152,6 +153,20 @@ func FormatAmount(amount uint64, decimals int) string {
 	}
 
 	return fmt.Sprintf("%d.%s", quotient, decStr)
+}
+
+// MessageHash returns a stable, immutable cache key for a transaction by hashing its
+// message bytes. The fee-payer signature (slot 0) is mutable — the facilitator
+// overwrites it before broadcast — so keying on the full wire bytes would let an
+// attacker bypass deduplication by randomizing those bytes. The message is what
+// every signer commits to, so its hash uniquely and immutably identifies a payment.
+func MessageHash(tx *solana.Transaction) (string, error) {
+	msgBytes, err := tx.Message.MarshalBinary()
+	if err != nil {
+		return "", fmt.Errorf("failed to serialize transaction message: %w", err)
+	}
+	hash := sha256.Sum256(msgBytes)
+	return base64.StdEncoding.EncodeToString(hash[:]), nil
 }
 
 // DecodeTransaction decodes a base64 encoded Solana transaction

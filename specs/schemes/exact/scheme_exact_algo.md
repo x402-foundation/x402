@@ -66,13 +66,13 @@ Full `paymentRequirements` Example:
 ```json
 {
   "scheme": "exact",
-  "network": "algorand:wGHE2Pwdvd7S12BL5FaOP20EGYesN73ktiC1qzkkit8=",
+  "network": "algorand:wGHE2Pwdvd7S12BL5FaOP20EGYesN73k",
   "amount": "5000000",
   "payTo": "RESOURCESERVERADDRESSAAAAAAAAAAAAAAAAAAAAAAAAAAAAAALTSRPAE",
   "maxTimeoutSeconds": 60,
   "asset": "31566704",
   "extra": {
-    "feePayer": "FACILITATORADDRESSAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAALQCXBZE",
+    "feePayer": "FACILITATORADDRESSAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAALQCXBZE"
   }
 }
 ```
@@ -110,21 +110,21 @@ Example of a USDC asset transfer with an abstracted fee (i.e paid by the facilit
 {
   "x402Version": 2,
   "scheme": "exact",
-  "network": "algorand:wGHE2Pwdvd7S12BL5FaOP20EGYesN73ktiC1qzkkit8=",
-  "resource": { 
+  "network": "algorand:wGHE2Pwdvd7S12BL5FaOP20EGYesN73k",
+  "resource": {
     "url": "https://example.net/signup",
     "description": "$5 registration payment",
     "mimeType": "text/html"
   },
   "accepted": {
     "scheme": "exact",
-    "network": "algorand:wGHE2Pwdvd7S12BL5FaOP20EGYesN73ktiC1qzkkit8=",
+    "network": "algorand:wGHE2Pwdvd7S12BL5FaOP20EGYesN73k",
     "amount": "5000000",
     "payTo": "RESOURCESERVERADDRESSAAAAAAAAAAAAAAAAAAAAAAAAAAAAAALTSRPAE",
     "maxTimeoutSeconds": 60,
     "asset": "31566704",
     "extra": {
-      "feePayer": "FACILITATORADDRESSAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAALQCXBZE",
+      "feePayer": "FACILITATORADDRESSAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAALQCXBZE"
     }
   },
   "extensions": {},
@@ -141,18 +141,19 @@ Example of a USDC asset transfer with an abstracted fee (i.e paid by the facilit
 
 ## `PAYMENT-RESPONSE` Header
 
-Upon a successful settlement, the `PAYMENT-RESPONSE` **MUST** return the transaction ID of the `paymentGroup[paymentIndex]` transaction. This identifies the specific asset transfer transaction to the `payTo` address for the `maxAmountRequired`, and can be used to identify the transaction on the network.
+Upon a successful settlement, the `PAYMENT-RESPONSE` **MUST** return the transaction ID of the `paymentGroup[paymentIndex]` transaction. This identifies the specific asset transfer transaction to the `payTo` address for the `amount`, and can be used to identify the transaction on the network.
 
 Should the settlement fail, the transaction ID **SHOULD** be returned, but since failed transactions are not committed to the network, it might not be visible on the chain.
 
 ### Full `PAYMENT-RESPONSE` header example:
+
 ```json
 {
   "success": true,
   "errorReason": null,
   "payer": "<payer>",
   "transaction": "NTRZR6HGMMZGYMJKUNVNLKLA427ACAVIPFNC6JHA5XNBQQHW7MWA",
-  "network": "algorand:wGHE2Pwdvd7S12BL5FaOP20EGYesN73ktiC1qzkkit8="
+  "network": "algorand:wGHE2Pwdvd7S12BL5FaOP20EGYesN73k"
 }
 ```
 
@@ -160,23 +161,38 @@ Should the settlement fail, the transaction ID **SHOULD** be returned, but since
 
 Steps to verify a payment for the `exact` scheme on Algorand:
 
-1. Check the `paymentGroup` contains 16 or fewer elements.
-2. Decode all transactions from the `paymentGroup`.
-3. Locate the `paymentGroup[paymentIndex]` transaction from the `Payment Payload`.
-    1. Check the `aamt` (asset amount) matches `maxAmountRequired` from the `Payment Requirements`.
-    2. Check the `arcv` (asset receiver) matches `payTo` from the `Payment Requirements`.
-4. Locate all transactions where for `snd` (sender) is the `Facilitator`s Algorand address.
-    1. Check the `type` (transaction type) is `pay`.
-    2. Check the following fields are omitted: `close`, `rekey`, `amt`.
-    3. Check the `fee` (Fee) is a reasonable amount.
-    4. Sign the transaction.
-5. Evaluate the payment group against an Algorand node's `simulate` endpoint to ensure the transactions would succeed.
+1. Validate `x402Version` is a supported version (currently `2`).
+2. Validate `scheme` is `"exact"` in both the `PAYMENT-SIGNATURE` payload `accepted` field and the `paymentRequirements`.
+3. Validate `network` matches between the `PAYMENT-SIGNATURE` payload `accepted` field and the `paymentRequirements`.
+4. Check the `paymentGroup` contains 16 or fewer elements.
+5. Decode all transactions from the `paymentGroup`.
+6. Locate the `paymentGroup[paymentIndex]` transaction from the `Payment Payload`.
+   1. Check the `aamt` (asset amount) matches `amount` from the `Payment Requirements`.
+   2. Check the `arcv` (asset receiver) matches `payTo` from the `Payment Requirements`.
+   3. Check the `xaid` (asset ID) matches `asset` from the `Payment Requirements`.
+7. Locate all transactions where `snd` (sender) is the `Facilitator`s Algorand address.
+   1. Check the `type` (transaction type) is `pay`.
+   2. Check the following fields are omitted: `close`, `rekey`, `amt`.
+   3. Check the `fee` (Fee) is a reasonable amount.
+   4. Sign the transaction.
+8. Evaluate the payment group against an Algorand node's `simulate` endpoint to ensure the transactions would succeed.
 
 ## Settlement
 
 Once the group is validated by the resource server, settlement can occur by the facilitator submitting the verified transaction group to the Algorand network through the `v2/transactions` endpoint against any valid Algorand node.
 
 In Algorand there are no consensus forks and so it achieves instant finality the moment a transaction is included in a block. So as soon as the transaction is included in a block, the payment is considered settled and the facilitator can inform the resource server of the successful payment and proceed with the resource delivery.
+
+## Network Identifiers (CAIP-2)
+
+Algorand `network` values **MUST** use CAIP-2 identifiers in the `algorand` namespace. The reference is the URL-safe base64 encoding of the genesis hash, truncated to the first 32 characters. Full genesis hashes are used only in onchain transaction `gh` fields, not in CAIP-2 `network` values.
+
+| Network | CAIP-2 |
+| ------- | ------ |
+| Mainnet | `algorand:wGHE2Pwdvd7S12BL5FaOP20EGYesN73k` |
+| Testnet | `algorand:SGO1GKSzyE7IEPItTxCByw9x8FmnrCDe` |
+
+See the [Algorand CAIP-2 namespace profile](https://namespaces.chainagnostic.org/algorand/caip2) for the encoding rules.
 
 ## Additional Considerations
 

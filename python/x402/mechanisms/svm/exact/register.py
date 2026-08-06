@@ -73,6 +73,7 @@ def register_exact_svm_client(
 def register_exact_svm_server(
     server: ServerT,
     networks: str | list[str] | None = None,
+    rpc_url: str | None = None,
 ) -> ServerT:
     """Register SVM exact payment schemes to x402ResourceServer.
 
@@ -81,13 +82,14 @@ def register_exact_svm_server(
     Args:
         server: x402ResourceServer instance.
         networks: Optional specific network(s) (default: wildcard).
+        rpc_url: Optional RPC URL used to add blockhash construction hints.
 
     Returns:
         Server for chaining.
     """
     from .server import ExactSvmScheme as ExactSvmServerScheme
 
-    scheme = ExactSvmServerScheme()
+    scheme = ExactSvmServerScheme(rpc_url)
 
     if networks:
         if isinstance(networks, str):

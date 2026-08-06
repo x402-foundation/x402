@@ -7,6 +7,7 @@ Uses x402HTTPResourceServerSync for synchronous request processing without async
 from __future__ import annotations
 
 import json
+import logging
 import threading
 from collections.abc import Callable, Iterator
 from typing import TYPE_CHECKING, Any
@@ -18,15 +19,18 @@ except ImportError as e:
         "Flask middleware requires the flask package. Install with: uv add x402[flask]"
     ) from e
 
+from ...schemas import SettleResponse, VerifiedPaymentCancelOptions
+from ..constants import SETTLEMENT_OVERRIDES_HEADER
 from ..facilitator_client_base import FacilitatorResponseError
 from ..types import (
     HTTPAdapter,
     HTTPRequestContext,
+    HTTPTransportContext,
     PaywallConfig,
-    RouteConfig,
     RoutesConfig,
 )
 from ..x402_http_server import PaywallProvider, x402HTTPResourceServerSync
+from ..x402_http_server_base import PAYMENT_REQUIRED_CACHE_CONTROL, with_private_cache_control
 
 if TYPE_CHECKING:
     from ...server import x402ResourceServerSync
@@ -36,54 +40,17 @@ if TYPE_CHECKING:
 # Extension Auto-Registration
 # ============================================================================
 
+from ._bazaar_utils import (
+    check_if_bazaar_needed as _check_if_bazaar_needed,
+)
+from ._bazaar_utils import (
+    register_bazaar_extension as _register_bazaar_extension,
+)
+from ._bazaar_utils import (
+    validate_bazaar_extensions as _validate_bazaar_extensions,
+)
 
-def _check_if_bazaar_needed(routes: RoutesConfig) -> bool:
-    """Check if any routes in the configuration declare bazaar extensions.
-
-    Args:
-        routes: Route configuration.
-
-    Returns:
-        True if any route has extensions.bazaar defined.
-    """
-    # Handle single RouteConfig instance
-    if isinstance(routes, RouteConfig):
-        return bool(routes.extensions and "bazaar" in routes.extensions)
-
-    # Handle dict of routes
-    if isinstance(routes, dict):
-        # Check if it's a single route config dict (has "accepts" key)
-        if "accepts" in routes:
-            extensions = routes.get("extensions", {})
-            return bool(extensions and "bazaar" in extensions)
-
-        # Handle multiple routes
-        for route_config in routes.values():
-            if isinstance(route_config, RouteConfig):
-                if route_config.extensions and "bazaar" in route_config.extensions:
-                    return True
-            elif isinstance(route_config, dict):
-                extensions = route_config.get("extensions", {})
-                if extensions and "bazaar" in extensions:
-                    return True
-
-    return False
-
-
-def _register_bazaar_extension(server: x402ResourceServerSync) -> None:
-    """Register bazaar extension with server if available.
-
-    Args:
-        server: x402ResourceServerSync to register extension with.
-    """
-    try:
-        from ...extensions.bazaar import bazaar_resource_server_extension
-
-        server.register_extension(bazaar_resource_server_extension)
-    except ImportError:
-        # Bazaar extension not available, skip silently
-        pass
-
+logger = logging.getLogger(__name__)
 
 # ============================================================================
 # Flask Adapter
@@ -329,6 +296,7 @@ class PaymentMiddleware:
         # Auto-register bazaar extension if routes declare it
         if _check_if_bazaar_needed(routes):
             _register_bazaar_extension(server)
+            _validate_bazaar_extensions(routes)
 
         self._app = app
         self._http_server = x402HTTPResourceServerSync(server, routes)
@@ -424,31 +392,87 @@ class PaymentMiddleware:
                 # Store in Flask g object
                 g.payment_payload = result.payment_payload
                 g.payment_requirements = result.payment_requirements
+                dispatcher = result.cancellation_dispatcher
+                transport_context = HTTPTransportContext(request=context)
 
                 # Capture response
                 response_wrapper = ResponseWrapper(start_response)
                 body_chunks: list[bytes] = []
 
-                for chunk in self._original_wsgi(environ, response_wrapper):
-                    body_chunks.append(chunk)
+                try:
+                    for chunk in self._original_wsgi(environ, response_wrapper):
+                        body_chunks.append(chunk)
+                except BaseException as error:
+                    if dispatcher is not None:
+                        dispatcher.cancel_sync(
+                            VerifiedPaymentCancelOptions(reason="handler_threw", error=error)
+                        )
+                    raise
+
+                if response_wrapper.status_code is not None and response_wrapper.status_code >= 400:
+                    if dispatcher is not None:
+                        dispatcher.cancel_sync(
+                            VerifiedPaymentCancelOptions(
+                                reason="handler_failed",
+                                response_status=response_wrapper.status_code,
+                            )
+                        )
+                    response_wrapper.send_response(body_chunks)
+                    return []
 
                 # Check if successful response
-                if (
-                    response_wrapper.status_code is not None
-                    and 200 <= response_wrapper.status_code < 300
-                ):
+                if response_wrapper.status_code is not None and response_wrapper.status_code < 400:
+                    # Extract settlement overrides from response headers and strip them
+                    overrides = self._http_server._extract_settlement_overrides(
+                        response_wrapper.headers,
+                    )
+                    response_wrapper.headers = [
+                        (k, v)
+                        for k, v in response_wrapper.headers
+                        if k.lower() != SETTLEMENT_OVERRIDES_HEADER.lower()
+                    ]
+                    transport_context.response_headers = dict(response_wrapper.headers)
+
                     # Settle payment
                     try:
                         settle_result = self._http_server.process_settlement(
                             result.payment_payload,
                             result.payment_requirements,
                             context=context,
+                            settlement_overrides=overrides,
+                            declared_extensions=result.declared_extensions,
+                            transport_context=transport_context,
                         )
 
                         if settle_result.success:
                             # Add settlement headers
                             for key, value in settle_result.headers.items():
                                 response_wrapper.add_header(key, value)
+                            existing_cache_control = next(
+                                (
+                                    value
+                                    for key, value in response_wrapper.headers
+                                    if key.lower() == "cache-control"
+                                ),
+                                None,
+                            )
+                            private_cache_control = with_private_cache_control(
+                                existing_cache_control
+                            )
+                            cache_control_updated = False
+                            for index, (key, _) in enumerate(response_wrapper.headers):
+                                if key.lower() == "cache-control":
+                                    response_wrapper.headers[index] = (
+                                        key,
+                                        private_cache_control,
+                                    )
+                                    cache_control_updated = True
+                                    break
+                            if not cache_control_updated:
+                                response_wrapper.add_header(
+                                    "Cache-Control",
+                                    private_cache_control,
+                                )
                         else:
                             # Settlement failed - use response from process_settlement
                             # (includes PAYMENT-RESPONSE header and empty body by default)
@@ -475,10 +499,33 @@ class PaymentMiddleware:
                         return _facilitator_error_wsgi_response(start_response, error)
 
                     except Exception:
-                        # Settlement error - return empty body with 402
+                        # An unexpected error here (RPC failure, bug, ...) is a
+                        # server-side failure, not a payment problem. Log it so
+                        # operators get a signal (the module otherwise logs
+                        # nothing), and surface it as a settle failure
+                        # (402 + PAYMENT-RESPONSE, success=False) - consistent with
+                        # the not-settle_result.success path and distinguishable
+                        # from a genuine "payment required". The client-facing
+                        # reason stays generic; the raw exception detail is logged
+                        # only. Mirrors the FastAPI fix in #2622.
+                        logger.exception("x402: unexpected error while settling a verified payment")
+                        settle_response = SettleResponse(
+                            success=False,
+                            error_reason="unexpected_settle_error",
+                            error_message="Unexpected error during settlement",
+                            transaction="",
+                            network=result.payment_requirements.network,
+                        )
+                        settle_headers = self._http_server._create_settlement_headers(
+                            settle_response, result.payment_requirements
+                        )
                         start_response(
                             "402 Payment Required",
-                            [("Content-Type", "application/json")],
+                            [
+                                ("Content-Type", "application/json"),
+                                ("Cache-Control", PAYMENT_REQUIRED_CACHE_CONTROL),
+                                *settle_headers.items(),
+                            ],
                         )
                         return [json.dumps({}).encode("utf-8")]
 
@@ -493,6 +540,19 @@ class PaymentMiddleware:
 # ============================================================================
 # Convenience Functions
 # ============================================================================
+
+
+def set_settlement_overrides(response: Any, overrides: dict[str, Any]) -> None:
+    """Set settlement overrides on a Flask response for partial settlement.
+
+    The middleware extracts these before settlement and strips the header
+    from the client response.
+
+    Args:
+        response: Flask ``Response`` object (or ``make_response()`` result).
+        overrides: Settlement overrides, e.g. ``{"amount": "500"}``.
+    """
+    response.headers[SETTLEMENT_OVERRIDES_HEADER] = json.dumps(overrides)
 
 
 def payment_middleware(
@@ -544,9 +604,13 @@ def payment_middleware_from_config(
     Returns:
         PaymentMiddleware instance.
     """
-    from ...server import x402ResourceServer
+    # Flask's PaymentMiddleware drives x402HTTPResourceServerSync, which rejects a
+    # server whose verify_payment is async. Use the sync server; the async
+    # x402ResourceServer would raise TypeError at construction. (The FastAPI
+    # factory correctly uses the async x402ResourceServer for its async server.)
+    from ...server import x402ResourceServerSync
 
-    server = x402ResourceServer(facilitator_client)
+    server = x402ResourceServerSync(facilitator_client)
 
     if schemes:
         for registration in schemes:

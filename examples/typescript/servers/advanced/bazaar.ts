@@ -33,6 +33,8 @@ app.use(
         },
         description: "Weather data",
         mimeType: "application/json",
+        serviceName: "Weather API",
+        tags: ["weather", "api"],
         extensions: {
           ...declareDiscoveryExtension({
             input: { city: "San Francisco" },

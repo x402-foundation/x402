@@ -18,10 +18,20 @@ flowchart LR
 - **Works with any origin** — APIs, static sites, cached or non-cached content
 - **Any cloud or on-prem** — AWS, GCP, Azure, third-party services, or your own infrastructure
 - **Drop-in monetization** — add payments to existing endpoints in minutes
+- **Multi-chain** — accept payments on Base and Solana from the same routes
 - **Edge performance** — payment verification at CloudFront's global edge locations
 - **Fair billing** — customers only charged when the request succeeds
 
 ## Getting Started
+
+### New to AWS? Choose your path
+
+| Guide | Best for | What you'll use |
+|---|---|---|
+| [Console Guide](./GETTING-STARTED-CONSOLE.md) | Learning the architecture, first-time AWS setup | AWS Console (browser only, no CLI) |
+| [CDK Guide](./GETTING-STARTED-CDK.md) | Repeatable deployments, taking this to production | AWS CLI + `cdk deploy` |
+
+Both guides deploy the same architecture. Start with the Console guide if you want to understand what each AWS resource does. Use the CDK guide if you want a single command to deploy and destroy everything.
 
 ### Already using CloudFront + Lambda@Edge?
 
@@ -70,11 +80,6 @@ See [Lambda@Edge quotas](https://docs.aws.amazon.com/AmazonCloudFront/latest/Dev
 
 Copy `lambda/src/` into your project and adapt the build to your tooling.
 
-> **Note**: Replace `workspace:*` dependencies with specific versions:
-> ```json
-> "@x402/core": "^2.2.0",
-> "@x402/evm": "^2.2.0"
-> ```
 
 ### 2. Configure Payment Settings
 
@@ -82,9 +87,15 @@ Edit `config.ts`:
 
 ```typescript
 export const FACILITATOR_URL = 'https://x402.org/facilitator';
-export const PAY_TO = '0xYourPaymentAddressHere';  // Your wallet address
-export const NETWORK = 'eip155:84532';              // Base Sepolia (testnet)
+export const EVM_NETWORK = 'eip155:84532'; // Base Sepolia testnet
+export const EVM_PAY_TO = '0xYourEvmPaymentAddressHere';
+export const SVM_NETWORK = 'solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1'; // Solana Devnet
+export const SVM_PAY_TO = 'YourSolanaPaymentAddressHere';
 ```
+
+The default facilitator supports both testnets, so no facilitator change is needed for testing. Get test USDC for either network from the [Circle faucet](https://faucet.circle.com).
+
+> The Solana `payTo` address must already have a USDC token account (an address gets one the first time it ever receives that token); send it any amount of USDC once before going live.
 
 ### 3. Configure Routes
 
@@ -93,12 +104,20 @@ Define which routes require payment:
 ```typescript
 export const ROUTES: RoutesConfig = {
   '/api/*': {
-    accepts: {
-      scheme: 'exact',
-      network: NETWORK,
-      payTo: PAY_TO,
-      price: '$0.001',
-    },
+    accepts: [
+      {
+        scheme: 'exact',
+        network: EVM_NETWORK,
+        payTo: EVM_PAY_TO,
+        price: '$0.001',
+      },
+      {
+        scheme: 'exact',
+        network: SVM_NETWORK,
+        payTo: SVM_PAY_TO,
+        price: '$0.001',
+      },
+    ],
     description: 'API access',
   },
 };
@@ -132,14 +151,16 @@ import { originRequestHandler, originResponseHandler } from './index';
 
 ## Running on Mainnet
 
-To accept real payments, you need a mainnet facilitator. Each facilitator may have different authentication requirements. Browse available facilitators at the [x402 Ecosystem — Facilitators](https://www.x402.org/ecosystem?filter=facilitators).
+To accept real payments, you need a mainnet facilitator that supports your networks. Each facilitator may have different authentication requirements. Browse available facilitators at the [x402 Ecosystem — Facilitators](https://www.x402.org/ecosystem?filter=facilitators).
 
-Update `config.ts` with your chosen facilitator, a mainnet network, and your wallet address:
+Update `config.ts` with your chosen facilitator, both mainnet networks, and your wallet addresses:
 
 ```typescript
 export const FACILITATOR_URL = 'https://your-facilitator-url';
-export const NETWORK = 'eip155:8453'; // Base mainnet
-export const PAY_TO = '0xYourMainnetWalletAddress';
+export const EVM_NETWORK = 'eip155:8453'; // Base mainnet
+export const EVM_PAY_TO = '0xYourEvmMainnetWalletAddress';
+export const SVM_NETWORK = 'solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp'; // Solana mainnet
+export const SVM_PAY_TO = 'YourSolanaMainnetWalletAddress';
 ```
 
 If your facilitator requires authentication, you can pass a `facilitatorConfig` object (with `url` and `createAuthHeaders`) via the middleware config. Update `config.ts`:
@@ -156,7 +177,6 @@ Then pass it in `origin-request.ts` and `origin-response.ts`:
 ```typescript
 const x402 = createX402Middleware({
   facilitatorUrl: FACILITATOR_URL,
-  network: NETWORK,
   routes: ROUTES,
   facilitatorConfig: FACILITATOR_CONFIG, // overrides facilitatorUrl when provided
 });
@@ -195,10 +215,17 @@ import { createX402Middleware, MiddlewareResultType } from './lib';
 // Create middleware with config
 const x402 = createX402Middleware({
   facilitatorUrl: 'https://x402.org/facilitator',
-  network: 'eip155:84532',
   routes: {
     '/api/*': {
-      accepts: { scheme: 'exact', network: 'eip155:84532', payTo: '0x...', price: '$0.01' },
+      accepts: [
+        { scheme: 'exact', network: 'eip155:84532', payTo: '0x...', price: '$0.01' },
+        {
+          scheme: 'exact',
+          network: 'solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1',
+          payTo: '...',
+          price: '$0.01',
+        },
+      ],
       description: 'API access',
     },
   },

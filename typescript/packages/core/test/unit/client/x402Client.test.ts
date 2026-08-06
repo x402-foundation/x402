@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import { x402Client } from "../../../src/client/x402Client";
 import { PaymentPolicy } from "../../../src/client/x402Client";
 import { MockSchemeNetworkClient } from "../../mocks";
-import { buildPaymentRequired, buildPaymentRequirements } from "../../mocks";
+import { buildPaymentPayload, buildPaymentRequired, buildPaymentRequirements } from "../../mocks";
 import { Network, PaymentRequirements } from "../../../src/types";
 
 describe("x402Client", () => {
@@ -213,6 +213,69 @@ describe("x402Client", () => {
 
       expect(evmClient.createPaymentPayloadCalls.length).toBe(1);
     });
+
+    it("runs scheme hooks only for the selected network pattern and scheme", async () => {
+      const client = new x402Client();
+      const order: string[] = [];
+
+      client.onBeforePaymentCreation(async () => {
+        order.push("manual");
+      });
+      client.register(
+        "eip155:*" as Network,
+        new MockSchemeNetworkClient("exact", undefined, {
+          onBeforePaymentCreation: async () => {
+            order.push("scheme");
+          },
+        }),
+      );
+      client.register(
+        "eip155:*" as Network,
+        new MockSchemeNetworkClient("other", undefined, {
+          onBeforePaymentCreation: async () => {
+            order.push("other-scheme");
+          },
+        }),
+      );
+      client.register(
+        "solana:*" as Network,
+        new MockSchemeNetworkClient("exact", undefined, {
+          onBeforePaymentCreation: async () => {
+            order.push("other-network");
+          },
+        }),
+      );
+
+      await client.createPaymentPayload(
+        buildPaymentRequired({
+          accepts: [
+            buildPaymentRequirements({ scheme: "exact", network: "eip155:8453" as Network }),
+          ],
+        }),
+      );
+
+      expect(order).toEqual(["manual", "scheme"]);
+    });
+
+    it("removes scheme client hook adapters when a scheme is re-registered without hooks", async () => {
+      const client = new x402Client();
+      let calls = 0;
+
+      client.register(
+        "test:network" as Network,
+        new MockSchemeNetworkClient("test-scheme", undefined, {
+          onBeforePaymentCreation: async () => {
+            calls++;
+          },
+        }),
+      );
+      await client.createPaymentPayload(buildPaymentRequired());
+      expect(calls).toBe(1);
+
+      client.register("test:network" as Network, new MockSchemeNetworkClient("test-scheme"));
+      await client.createPaymentPayload(buildPaymentRequired());
+      expect(calls).toBe(1);
+    });
   });
 
   describe("registerV1", () => {
@@ -270,6 +333,229 @@ describe("x402Client", () => {
         expect(result.resource).toEqual(paymentRequired.resource);
         expect(result.extensions).toEqual({ testExtension: true });
         expect(result.accepted).toBeDefined();
+      });
+
+      it("deep merges server extension data when scheme extensions add fields", async () => {
+        const client = new x402Client();
+        const mockClient = new MockSchemeNetworkClient("exact", {
+          x402Version: 2,
+          payload: { signature: "mock_signature" },
+          extensions: {
+            gas: {
+              info: {
+                permit: { signature: "0xpermit" },
+                nested: { clientField: "client" },
+              },
+              schema: {
+                properties: {
+                  permit: { type: "object" },
+                },
+              },
+              metadata: {
+                nested: { clientField: "client" },
+              },
+            },
+          },
+        } as any);
+        client.register("eip155:8453" as Network, mockClient);
+
+        const result = await client.createPaymentPayload(
+          buildPaymentRequired({
+            accepts: [
+              buildPaymentRequirements({ scheme: "exact", network: "eip155:8453" as Network }),
+            ],
+            extensions: {
+              gas: {
+                info: {
+                  description: "Gas sponsoring",
+                  version: 1,
+                  nested: { serverField: "server" },
+                },
+                schema: {
+                  type: "object",
+                  properties: {
+                    description: { type: "string" },
+                  },
+                },
+                metadata: {
+                  nested: { serverField: "server" },
+                },
+              },
+            },
+          }),
+        );
+
+        expect(result.extensions?.gas).toEqual({
+          info: {
+            description: "Gas sponsoring",
+            version: 1,
+            nested: { serverField: "server", clientField: "client" },
+            permit: { signature: "0xpermit" },
+          },
+          schema: {
+            type: "object",
+            properties: {
+              description: { type: "string" },
+              permit: { type: "object" },
+            },
+          },
+          metadata: {
+            nested: { serverField: "server", clientField: "client" },
+          },
+        });
+      });
+
+      it("merges conflicting array fields instead of replacing client values", async () => {
+        const client = new x402Client();
+        const mockClient = new MockSchemeNetworkClient("exact", {
+          x402Version: 2,
+          payload: { signature: "mock_signature" },
+        } as any);
+        client.register("eip155:8453" as Network, mockClient);
+        client.registerExtension({
+          key: "builder-code",
+          enrichPaymentPayload: async payload => ({
+            ...payload,
+            extensions: {
+              ...payload.extensions,
+              "builder-code": { info: { s: ["bc_shared", "bc_client"] } },
+            },
+          }),
+        });
+
+        const result = await client.createPaymentPayload(
+          buildPaymentRequired({
+            accepts: [
+              buildPaymentRequirements({ scheme: "exact", network: "eip155:8453" as Network }),
+            ],
+            extensions: {
+              "builder-code": {
+                info: { a: "bc_app", s: ["bc_server", "bc_shared"] },
+                schema: { type: "object" },
+              },
+            },
+          }),
+        );
+
+        expect(result.extensions?.["builder-code"]).toEqual({
+          info: { a: "bc_app", s: ["bc_shared", "bc_client", "bc_server"] },
+          schema: { type: "object" },
+        });
+      });
+
+      it("merges a scalar array field against an array on the other side", async () => {
+        const client = new x402Client();
+        const mockClient = new MockSchemeNetworkClient("exact", {
+          x402Version: 2,
+          payload: { signature: "mock_signature" },
+        } as any);
+        client.register("eip155:8453" as Network, mockClient);
+        client.registerExtension({
+          key: "builder-code",
+          enrichPaymentPayload: async payload => ({
+            ...payload,
+            extensions: {
+              ...payload.extensions,
+              "builder-code": { info: { s: ["bc_client"] } },
+            },
+          }),
+        });
+
+        const result = await client.createPaymentPayload(
+          buildPaymentRequired({
+            accepts: [
+              buildPaymentRequirements({ scheme: "exact", network: "eip155:8453" as Network }),
+            ],
+            extensions: {
+              "builder-code": {
+                info: { a: "bc_app", s: "bc_server" },
+                schema: { type: "object" },
+              },
+            },
+          }),
+        );
+
+        expect(result.extensions?.["builder-code"]).toEqual({
+          info: { a: "bc_app", s: ["bc_client", "bc_server"] },
+          schema: { type: "object" },
+        });
+      });
+
+      it("dedupes repeated entries within a single side of a merged array field", async () => {
+        const client = new x402Client();
+        const mockClient = new MockSchemeNetworkClient("exact", {
+          x402Version: 2,
+          payload: { signature: "mock_signature" },
+        } as any);
+        client.register("eip155:8453" as Network, mockClient);
+        client.registerExtension({
+          key: "builder-code",
+          enrichPaymentPayload: async payload => ({
+            ...payload,
+            extensions: {
+              ...payload.extensions,
+              "builder-code": { info: { s: ["bc_client", "bc_client"] } },
+            },
+          }),
+        });
+
+        const result = await client.createPaymentPayload(
+          buildPaymentRequired({
+            accepts: [
+              buildPaymentRequirements({ scheme: "exact", network: "eip155:8453" as Network }),
+            ],
+            extensions: {
+              "builder-code": {
+                info: { a: "bc_app", s: ["bc_server", "bc_server"] },
+                schema: { type: "object" },
+              },
+            },
+          }),
+        );
+
+        expect(result.extensions?.["builder-code"]).toEqual({
+          info: { a: "bc_app", s: ["bc_client", "bc_server"] },
+          schema: { type: "object" },
+        });
+      });
+
+      it("keeps the server array for a non-additive extension field instead of concatenating", async () => {
+        // Array concatenation is scoped to ADDITIVE_ARRAY_INFO_FIELDS (builder-code's
+        // `s`); other extensions' conflicting array fields must keep the server's
+        // value, matching x402ResourceServer's exact-match requirement for them.
+        const client = new x402Client();
+        const mockClient = new MockSchemeNetworkClient("exact", {
+          x402Version: 2,
+          payload: { signature: "mock_signature" },
+        } as any);
+        client.register("eip155:8453" as Network, mockClient);
+        client.registerExtension({
+          key: "sign-in-with-x",
+          enrichPaymentPayload: async payload => ({
+            ...payload,
+            extensions: {
+              ...payload.extensions,
+              "sign-in-with-x": { info: { resources: ["https://evil.example.com"] } },
+            },
+          }),
+        });
+
+        const result = await client.createPaymentPayload(
+          buildPaymentRequired({
+            accepts: [
+              buildPaymentRequirements({ scheme: "exact", network: "eip155:8453" as Network }),
+            ],
+            extensions: {
+              "sign-in-with-x": {
+                info: { resources: ["https://api.example.com/data"] },
+              },
+            },
+          }),
+        );
+
+        expect(result.extensions?.["sign-in-with-x"]).toEqual({
+          info: { resources: ["https://api.example.com/data"] },
+        });
       });
 
       it("should call scheme client's createPaymentPayload", async () => {
@@ -630,21 +916,28 @@ describe("x402Client", () => {
 
       expect(enrichCalled).toBe(true);
       expect((result.extensions as Record<string, unknown>)?.testExtension).toEqual({
-        info: { enriched: true },
+        info: { description: "test", enriched: true },
+        schema: {},
       });
     });
 
-    it("should NOT invoke extension when key is not in paymentRequired.extensions", async () => {
+    it("should invoke registered extension enrichPaymentPayload even when key is not in paymentRequired.extensions", async () => {
       const client = new x402Client();
       const mockClient = new MockSchemeNetworkClient("exact");
       client.register("eip155:84532" as Network, mockClient);
 
       let enrichCalled = false;
       client.registerExtension({
-        key: "missingExtension",
+        key: "clientOwnedExtension",
         enrichPaymentPayload: async payload => {
           enrichCalled = true;
-          return payload;
+          return {
+            ...payload,
+            extensions: {
+              ...payload.extensions,
+              clientOwnedExtension: { info: { s: "client_data" } },
+            },
+          };
         },
       });
 
@@ -658,9 +951,12 @@ describe("x402Client", () => {
         extensions: {},
       });
 
-      await client.createPaymentPayload(paymentRequired);
+      const result = await client.createPaymentPayload(paymentRequired);
 
-      expect(enrichCalled).toBe(false);
+      expect(enrichCalled).toBe(true);
+      expect((result.extensions as Record<string, unknown>)?.clientOwnedExtension).toEqual({
+        info: { s: "client_data" },
+      });
     });
 
     it("should support chaining registerExtension", () => {
@@ -668,6 +964,177 @@ describe("x402Client", () => {
       const result = client.registerExtension({ key: "ext1" }).registerExtension({ key: "ext2" });
 
       expect(result).toBe(client);
+    });
+
+    it("should expose registered extensions", () => {
+      const client = new x402Client();
+      const extension = { key: "ext1" };
+
+      client.registerExtension(extension);
+
+      expect(client.getExtensions()).toEqual([extension]);
+    });
+
+    it("should run declared lifecycle hooks after manual and scheme hooks", async () => {
+      const client = new x402Client();
+      const order: string[] = [];
+
+      client.onBeforePaymentCreation(async () => {
+        order.push("manual-before");
+      });
+      client.onAfterPaymentCreation(async () => {
+        order.push("manual-after");
+      });
+      client.register(
+        "eip155:*" as Network,
+        new MockSchemeNetworkClient("exact", undefined, {
+          onBeforePaymentCreation: async () => {
+            order.push("scheme-before");
+          },
+          onAfterPaymentCreation: async () => {
+            order.push("scheme-after");
+          },
+        }),
+      );
+      client.registerExtension({
+        key: "clientExtension",
+        hooks: {
+          onBeforePaymentCreation: async declaration => {
+            order.push("extension-before");
+            expect(declaration).toEqual({ enabled: true });
+          },
+          onAfterPaymentCreation: async declaration => {
+            order.push("extension-after");
+            expect(declaration).toEqual({ enabled: true });
+          },
+        },
+      });
+
+      await client.createPaymentPayload(
+        buildPaymentRequired({
+          accepts: [
+            buildPaymentRequirements({ scheme: "exact", network: "eip155:8453" as Network }),
+          ],
+          extensions: { clientExtension: { enabled: true } },
+        }),
+      );
+
+      expect(order).toEqual([
+        "manual-before",
+        "scheme-before",
+        "extension-before",
+        "manual-after",
+        "scheme-after",
+        "extension-after",
+      ]);
+    });
+
+    it("should skip lifecycle hooks for undeclared extensions", async () => {
+      const client = new x402Client();
+      let extensionCalled = false;
+
+      client.register("eip155:*" as Network, new MockSchemeNetworkClient("exact"));
+      client.registerExtension({
+        key: "clientExtension",
+        hooks: {
+          onBeforePaymentCreation: async () => {
+            extensionCalled = true;
+          },
+          onAfterPaymentCreation: async () => {
+            extensionCalled = true;
+          },
+        },
+      });
+
+      await client.createPaymentPayload(
+        buildPaymentRequired({
+          accepts: [
+            buildPaymentRequirements({ scheme: "exact", network: "eip155:8453" as Network }),
+          ],
+        }),
+      );
+
+      expect(extensionCalled).toBe(false);
+    });
+
+    it("should let declared extension failure hooks recover after manual and scheme hooks", async () => {
+      const client = new x402Client();
+      const order: string[] = [];
+      const recoveredPayload = buildPaymentPayload();
+
+      client.onPaymentCreationFailure(async () => {
+        order.push("manual-failure");
+      });
+      client.register(
+        "eip155:*" as Network,
+        new MockSchemeNetworkClient("exact", new Error("scheme failed"), {
+          onPaymentCreationFailure: async () => {
+            order.push("scheme-failure");
+          },
+        }),
+      );
+      client.registerExtension({
+        key: "clientExtension",
+        hooks: {
+          onPaymentCreationFailure: async declaration => {
+            order.push("extension-failure");
+            expect(declaration).toEqual({ enabled: true });
+            return { recovered: true, payload: recoveredPayload };
+          },
+        },
+      });
+
+      const result = await client.createPaymentPayload(
+        buildPaymentRequired({
+          accepts: [
+            buildPaymentRequirements({ scheme: "exact", network: "eip155:8453" as Network }),
+          ],
+          extensions: { clientExtension: { enabled: true } },
+        }),
+      );
+
+      expect(result).toBe(recoveredPayload);
+      expect(order).toEqual(["manual-failure", "scheme-failure", "extension-failure"]);
+    });
+
+    it("should run declared payment response hooks after manual and scheme hooks", async () => {
+      const client = new x402Client();
+      const order: string[] = [];
+      const requirements = buildPaymentRequirements({
+        scheme: "exact",
+        network: "eip155:8453" as Network,
+      });
+
+      client.onPaymentResponse(async () => {
+        order.push("manual-response");
+      });
+      client.register(
+        "eip155:*" as Network,
+        new MockSchemeNetworkClient("exact", undefined, {
+          onPaymentResponse: async () => {
+            order.push("scheme-response");
+          },
+        }),
+      );
+      client.registerExtension({
+        key: "clientExtension",
+        hooks: {
+          onPaymentResponse: async declaration => {
+            order.push("extension-response");
+            expect(declaration).toEqual({ enabled: true });
+          },
+        },
+      });
+
+      await client.handlePaymentResponse({
+        paymentPayload: buildPaymentPayload({
+          accepted: requirements,
+          extensions: { clientExtension: { enabled: true } },
+        }),
+        requirements,
+      });
+
+      expect(order).toEqual(["manual-response", "scheme-response", "extension-response"]);
     });
   });
 });

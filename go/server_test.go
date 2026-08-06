@@ -3,10 +3,11 @@ package x402
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 
-	"github.com/coinbase/x402/go/types"
+	"github.com/x402-foundation/x402/go/v2/types"
 )
 
 // Mock server for testing
@@ -345,6 +346,80 @@ func TestServerCreatePaymentRequiredResponse(t *testing.T) {
 	}
 }
 
+// stubEnricherScheme records EnrichPaymentRequiredResponse calls and mutates
+// the matching requirement's Extra to verify core wiring.
+type stubEnricherScheme struct {
+	calls           int
+	lastErrorReason string
+	lastPayload     *types.PaymentPayload
+}
+
+func (s *stubEnricherScheme) Scheme() string { return "stub-enricher" }
+func (s *stubEnricherScheme) ParsePrice(_ Price, _ Network) (AssetAmount, error) {
+	return AssetAmount{}, nil
+}
+func (s *stubEnricherScheme) EnhancePaymentRequirements(
+	_ context.Context,
+	r types.PaymentRequirements,
+	_ types.SupportedKind,
+	_ []string,
+) (types.PaymentRequirements, error) {
+	return r, nil
+}
+func (s *stubEnricherScheme) EnrichPaymentRequiredResponse(ctx PaymentRequiredContext) {
+	s.calls++
+	s.lastErrorReason = ctx.Error
+	s.lastPayload = ctx.PaymentPayload
+	for i := range ctx.Requirements {
+		if ctx.Requirements[i].Scheme != "stub-enricher" {
+			continue
+		}
+		if ctx.Requirements[i].Extra == nil {
+			ctx.Requirements[i].Extra = map[string]interface{}{}
+		}
+		ctx.Requirements[i].Extra["EnrichedBy"] = "stub-enricher"
+	}
+}
+
+func TestCreatePaymentRequiredResponse_InvokesEnricher(t *testing.T) {
+	server := Newx402ResourceServer()
+	enricher := &stubEnricherScheme{}
+	server.Register(Network("eip155:1"), enricher)
+
+	pp := &types.PaymentPayload{X402Version: 2}
+	requirements := []types.PaymentRequirements{
+		{Scheme: "stub-enricher", Network: "eip155:1", Asset: "USDC", Amount: "1"},
+	}
+	resp := server.CreatePaymentRequiredResponseWithPayload(
+		requirements, &types.ResourceInfo{URL: "https://x"}, "some_error", nil, pp,
+	)
+
+	if enricher.calls != 1 {
+		t.Fatalf("expected 1 enricher call, got %d", enricher.calls)
+	}
+	if enricher.lastErrorReason != "some_error" {
+		t.Fatalf("unexpected error reason: %q", enricher.lastErrorReason)
+	}
+	if enricher.lastPayload != pp {
+		t.Fatalf("expected payload to flow through")
+	}
+	if resp.Accepts[0].Extra["EnrichedBy"] != "stub-enricher" {
+		t.Fatalf("expected enrichment mutation, got %+v", resp.Accepts[0].Extra)
+	}
+}
+
+func TestCreatePaymentRequiredResponse_NoEnricherForUnknownScheme(t *testing.T) {
+	server := Newx402ResourceServer()
+	requirements := []types.PaymentRequirements{
+		{Scheme: "unknown", Network: "eip155:1"},
+	}
+	// Must not panic and must return baseline response.
+	resp := server.CreatePaymentRequiredResponse(requirements, nil, "err", nil)
+	if len(resp.Accepts) != 1 {
+		t.Fatalf("expected requirements untouched")
+	}
+}
+
 func TestServerVerifyPayment(t *testing.T) {
 	ctx := context.Background()
 
@@ -389,6 +464,71 @@ func TestServerVerifyPayment(t *testing.T) {
 	}
 	if response.Payer != "0xverifiedpayer" {
 		t.Fatalf("Expected payer '0xverifiedpayer', got %s", response.Payer)
+	}
+}
+
+// TestServerVerifyPayment_InvalidFacilitatorResponse is a regression test for the security
+// bug where a facilitator HTTP-200 response with isValid:false was not treated as an error,
+// allowing any structurally well-formed payment header to pass the gate.
+func TestServerVerifyPayment_InvalidFacilitatorResponse(t *testing.T) {
+	ctx := context.Background()
+
+	for _, tc := range []struct {
+		name           string
+		verifyResponse *VerifyResponse
+		wantReason     string
+	}{
+		{
+			name:           "isValid false with reason",
+			verifyResponse: &VerifyResponse{IsValid: false, InvalidReason: "insufficient_balance", Payer: "0xpayer"},
+			wantReason:     "insufficient_balance",
+		},
+		{
+			name:           "isValid false without reason",
+			verifyResponse: &VerifyResponse{IsValid: false},
+			wantReason:     ErrCodeInvalidPayment,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			mockClient := &mockFacilitatorClient{
+				kinds: []SupportedKind{
+					{X402Version: 2, Scheme: "exact", Network: "eip155:1"},
+				},
+				verify: func(ctx context.Context, payloadBytes []byte, requirementsBytes []byte) (*VerifyResponse, error) {
+					return tc.verifyResponse, nil // HTTP-200 but isValid:false
+				},
+			}
+
+			server := Newx402ResourceServer(WithFacilitatorClient(mockClient))
+			if err := server.Initialize(ctx); err != nil {
+				t.Fatalf("Failed to initialize server: %v", err)
+			}
+
+			requirements := types.PaymentRequirements{
+				Scheme:  "exact",
+				Network: "eip155:1",
+				Asset:   "USDC",
+				Amount:  "1000000",
+				PayTo:   "0xrecipient",
+			}
+			payload := types.PaymentPayload{
+				X402Version: 2,
+				Accepted:    requirements,
+				Payload:     map[string]interface{}{},
+			}
+
+			_, err := server.VerifyPayment(ctx, payload, requirements)
+			if err == nil {
+				t.Fatal("Expected error for isValid:false facilitator response, got nil — payment gate bypass")
+			}
+			var ve *VerifyError
+			if !errors.As(err, &ve) {
+				t.Fatalf("Expected *VerifyError, got %T: %v", err, err)
+			}
+			if ve.InvalidReason != tc.wantReason {
+				t.Fatalf("Expected reason %q, got %q", tc.wantReason, ve.InvalidReason)
+			}
+		})
 	}
 }
 
@@ -571,8 +711,6 @@ func TestServerProcessPaymentRequest(t *testing.T) {
 }
 */
 
-// TestSupportedCache - SKIPPED: Cache.Clear method not implemented
-/*
 func TestSupportedCache(t *testing.T) {
 	cache := &SupportedCache{
 		data:   make(map[string]SupportedResponse),
@@ -588,16 +726,22 @@ func TestSupportedCache(t *testing.T) {
 		Signers:    make(map[string][]string),
 	}
 
-	// Set and verify
+	// Set stores the value.
 	cache.Set("test", response)
 	if len(cache.data) != 1 {
 		t.Fatal("Expected item in cache")
 	}
 
-	// Wait for expiry
-	time.Sleep(150 * time.Millisecond)
+	// Get returns the stored value before expiry.
+	cached, ok := cache.Get("test")
+	if !ok {
+		t.Fatal("Expected cached item to be found")
+	}
+	if len(cached.Kinds) != 1 || cached.Kinds[0].Scheme != "exact" || cached.Kinds[0].Network != "eip155:1" {
+		t.Fatalf("Expected cached response to match stored value, got %+v", cached)
+	}
 
-	// Clear cache
+	// Clear removes all data and expiry state.
 	cache.Clear()
 	if len(cache.data) != 0 {
 		t.Fatal("Expected cache to be cleared")
@@ -605,8 +749,12 @@ func TestSupportedCache(t *testing.T) {
 	if len(cache.expiry) != 0 {
 		t.Fatal("Expected expiry map to be cleared")
 	}
+
+	// Get returns false after the cache is cleared.
+	if _, ok := cache.Get("test"); ok {
+		t.Fatal("Expected cache miss after Clear")
+	}
 }
-*/
 
 func TestResolveSettlementOverrideAmount(t *testing.T) {
 	baseReqs := types.PaymentRequirements{
@@ -710,6 +858,368 @@ func TestResolveSettlementOverrideAmount(t *testing.T) {
 		}
 		if result != "50000" {
 			t.Errorf("expected 50000 (6 decimals), got %s", result)
+		}
+	})
+}
+
+// dynamicFieldExtension is a minimal ResourceServerExtension that opts into
+// dynamic-info-field handling for echo validation tests.
+type dynamicFieldExtension struct {
+	key    string
+	fields []string
+}
+
+func (e dynamicFieldExtension) Key() string { return e.key }
+
+func (e dynamicFieldExtension) EnrichDeclaration(declaration interface{}, _ interface{}) interface{} {
+	return declaration
+}
+
+func (e dynamicFieldExtension) DynamicInfoFields() []string { return e.fields }
+
+// ValidateExtensions must reject client echoes that drop or alter server fields
+// while allowing additive fields, omitted keys, and client-only keys.
+func TestValidateExtensions(t *testing.T) {
+	serverExtensions := map[string]interface{}{
+		"bazaar":  map[string]interface{}{"info": map[string]interface{}{"tool": "search", "version": 1}},
+		"builder": map[string]interface{}{"info": map[string]interface{}{"code": "abc"}},
+	}
+	server := Newx402ResourceServer()
+
+	payloadWith := func(extensions map[string]interface{}) types.PaymentPayload {
+		return types.PaymentPayload{X402Version: 2, Extensions: extensions}
+	}
+
+	t.Run("passes when server has no extensions", func(t *testing.T) {
+		p := payloadWith(map[string]interface{}{"bazaar": map[string]interface{}{"info": map[string]interface{}{"tool": "wrong"}}})
+		if r := server.ValidateExtensions(nil, p); !r.Valid {
+			t.Fatalf("expected valid, got %+v", r)
+		}
+	})
+
+	t.Run("passes when client omits extensions", func(t *testing.T) {
+		if r := server.ValidateExtensions(serverExtensions, payloadWith(nil)); !r.Valid {
+			t.Fatalf("expected valid, got %+v", r)
+		}
+	})
+
+	t.Run("passes with additive info fields", func(t *testing.T) {
+		p := payloadWith(map[string]interface{}{
+			"bazaar": map[string]interface{}{"info": map[string]interface{}{"tool": "search", "version": 1, "extraField": "ok"}},
+		})
+		if r := server.ValidateExtensions(serverExtensions, p); !r.Valid {
+			t.Fatalf("expected valid, got %+v", r)
+		}
+	})
+
+	t.Run("passes when client echoes subset of keys", func(t *testing.T) {
+		p := payloadWith(map[string]interface{}{
+			"bazaar": map[string]interface{}{"info": map[string]interface{}{"tool": "search", "version": 1}},
+		})
+		if r := server.ValidateExtensions(serverExtensions, p); !r.Valid {
+			t.Fatalf("expected valid, got %+v", r)
+		}
+	})
+
+	t.Run("passes with client-only extension key", func(t *testing.T) {
+		p := payloadWith(map[string]interface{}{
+			"clientOnly": map[string]interface{}{"info": map[string]interface{}{"anything": true}},
+		})
+		if r := server.ValidateExtensions(serverExtensions, p); !r.Valid {
+			t.Fatalf("expected valid, got %+v", r)
+		}
+	})
+
+	t.Run("passes with flat extension values", func(t *testing.T) {
+		flat := map[string]interface{}{"bazaar": map[string]interface{}{"tool": "search", "version": 1}}
+		p := payloadWith(map[string]interface{}{"bazaar": map[string]interface{}{"tool": "search", "version": 1, "extra": "ok"}})
+		if r := server.ValidateExtensions(flat, p); !r.Valid {
+			t.Fatalf("expected valid, got %+v", r)
+		}
+	})
+
+	t.Run("fails when client changes a server field", func(t *testing.T) {
+		p := payloadWith(map[string]interface{}{
+			"bazaar": map[string]interface{}{"info": map[string]interface{}{"tool": "search", "version": 2}},
+		})
+		r := server.ValidateExtensions(serverExtensions, p)
+		if r.Valid || r.InvalidReason != "extension_echo_mismatch" || r.ExtensionKey != "bazaar" {
+			t.Fatalf("expected echo mismatch on bazaar, got %+v", r)
+		}
+	})
+
+	t.Run("fails when client deletes a server field", func(t *testing.T) {
+		p := payloadWith(map[string]interface{}{
+			"bazaar": map[string]interface{}{"info": map[string]interface{}{"tool": "search"}},
+		})
+		r := server.ValidateExtensions(serverExtensions, p)
+		if r.Valid || r.InvalidReason != "extension_echo_mismatch" || r.ExtensionKey != "bazaar" {
+			t.Fatalf("expected echo mismatch on bazaar, got %+v", r)
+		}
+	})
+
+	t.Run("passes for v1 payloads", func(t *testing.T) {
+		p := types.PaymentPayload{
+			X402Version: 1,
+			Extensions:  map[string]interface{}{"bazaar": map[string]interface{}{"info": map[string]interface{}{"tool": "wrong"}}},
+		}
+		if r := server.ValidateExtensions(serverExtensions, p); !r.Valid {
+			t.Fatalf("expected valid, got %+v", r)
+		}
+	})
+
+	// Extensions declared as typed Go structs (e.g. eip2612gassponsor.Extension)
+	// must validate the same way as map-declared extensions. Mirrors the gas
+	// extension shape inline to avoid an import cycle (eip2612gassponsor imports
+	// this package).
+	type srvInfo struct {
+		Description string `json:"description"`
+		Version     string `json:"version"`
+	}
+	type srvExt struct {
+		Info   interface{}            `json:"info"`
+		Schema map[string]interface{} `json:"schema"`
+	}
+	structExtensions := map[string]interface{}{
+		"eip2612GasSponsoring": srvExt{
+			Info:   srvInfo{Description: "gasless permit", Version: "1"},
+			Schema: map[string]interface{}{"type": "object"},
+		},
+	}
+
+	t.Run("passes with struct-declared extension and merged echo", func(t *testing.T) {
+		p := payloadWith(map[string]interface{}{
+			"eip2612GasSponsoring": map[string]interface{}{
+				"info": map[string]interface{}{
+					"description": "gasless permit",
+					"version":     "1",
+					"from":        "0xabc",
+					"asset":       "0xdef",
+				},
+			},
+		})
+		if r := server.ValidateExtensions(structExtensions, p); !r.Valid {
+			t.Fatalf("expected valid, got %+v", r)
+		}
+	})
+
+	t.Run("fails when struct-declared field is dropped", func(t *testing.T) {
+		p := payloadWith(map[string]interface{}{
+			"eip2612GasSponsoring": map[string]interface{}{
+				"info": map[string]interface{}{"version": "1", "from": "0xabc"},
+			},
+		})
+		r := server.ValidateExtensions(structExtensions, p)
+		if r.Valid || r.InvalidReason != "extension_echo_mismatch" || r.ExtensionKey != "eip2612GasSponsoring" {
+			t.Fatalf("expected echo mismatch on eip2612GasSponsoring, got %+v", r)
+		}
+	})
+
+	t.Run("fails when struct-declared field is changed", func(t *testing.T) {
+		p := payloadWith(map[string]interface{}{
+			"eip2612GasSponsoring": map[string]interface{}{
+				"info": map[string]interface{}{"description": "gasless permit", "version": "2"},
+			},
+		})
+		r := server.ValidateExtensions(structExtensions, p)
+		if r.Valid || r.InvalidReason != "extension_echo_mismatch" || r.ExtensionKey != "eip2612GasSponsoring" {
+			t.Fatalf("expected echo mismatch on eip2612GasSponsoring, got %+v", r)
+		}
+	})
+
+	t.Run("passes when only a declared dynamic info field differs", func(t *testing.T) {
+		dynServer := Newx402ResourceServer()
+		dynServer.RegisterExtension(dynamicFieldExtension{key: "siwx", fields: []string{"nonce"}})
+		advertised := map[string]interface{}{
+			"siwx": map[string]interface{}{"info": map[string]interface{}{"domain": "example.com", "nonce": "fresh"}},
+		}
+		p := payloadWith(map[string]interface{}{
+			"siwx": map[string]interface{}{"info": map[string]interface{}{"domain": "example.com", "nonce": "stale"}},
+		})
+		if r := dynServer.ValidateExtensions(advertised, p); !r.Valid {
+			t.Fatalf("expected valid, got %+v", r)
+		}
+	})
+
+	t.Run("fails when a static info field differs despite a declared dynamic field", func(t *testing.T) {
+		dynServer := Newx402ResourceServer()
+		dynServer.RegisterExtension(dynamicFieldExtension{key: "siwx", fields: []string{"nonce"}})
+		advertised := map[string]interface{}{
+			"siwx": map[string]interface{}{"info": map[string]interface{}{"domain": "example.com", "nonce": "fresh"}},
+		}
+		p := payloadWith(map[string]interface{}{
+			"siwx": map[string]interface{}{"info": map[string]interface{}{"domain": "evil.com", "nonce": "stale"}},
+		})
+		r := dynServer.ValidateExtensions(advertised, p)
+		if r.Valid || r.InvalidReason != "extension_echo_mismatch" || r.ExtensionKey != "siwx" {
+			t.Fatalf("expected echo mismatch on siwx, got %+v", r)
+		}
+	})
+
+	t.Run("keeps strict comparison when no dynamic fields are declared", func(t *testing.T) {
+		p := payloadWith(map[string]interface{}{
+			"builder": map[string]interface{}{"info": map[string]interface{}{"code": "tampered"}},
+		})
+		r := server.ValidateExtensions(serverExtensions, p)
+		if r.Valid || r.InvalidReason != "extension_echo_mismatch" || r.ExtensionKey != "builder" {
+			t.Fatalf("expected echo mismatch on builder, got %+v", r)
+		}
+	})
+
+	t.Run("passes when echoed array is a superset of advertised array", func(t *testing.T) {
+		advertised := map[string]interface{}{
+			"builder-code": map[string]interface{}{
+				"info": map[string]interface{}{"a": "bc_app", "s": []interface{}{"bc_server"}},
+			},
+		}
+		p := payloadWith(map[string]interface{}{
+			"builder-code": map[string]interface{}{
+				"info": map[string]interface{}{
+					"a": "bc_app",
+					"s": []interface{}{"bc_server", "bc_client"},
+				},
+			},
+		})
+		if r := server.ValidateExtensions(advertised, p); !r.Valid {
+			t.Fatalf("expected valid additive s merge, got %+v", r)
+		}
+	})
+
+	t.Run("fails when echoed array drops an advertised element", func(t *testing.T) {
+		advertised := map[string]interface{}{
+			"builder-code": map[string]interface{}{
+				"info": map[string]interface{}{"s": []interface{}{"bc_server"}},
+			},
+		}
+		p := payloadWith(map[string]interface{}{
+			"builder-code": map[string]interface{}{
+				"info": map[string]interface{}{"s": []interface{}{"bc_client"}},
+			},
+		})
+		r := server.ValidateExtensions(advertised, p)
+		if r.Valid || r.InvalidReason != "extension_echo_mismatch" || r.ExtensionKey != "builder-code" {
+			t.Fatalf("expected echo mismatch on builder-code, got %+v", r)
+		}
+	})
+
+	t.Run("fails when echoed array exceeds the combined client+server budget even as a superset", func(t *testing.T) {
+		// Regression test: a hand-crafted echo padding `s` past the combined
+		// budget must be rejected outright rather than accepted and left to be
+		// silently truncated downstream (e.g. by a facilitator extension),
+		// which could crowd out the legitimately advertised entry.
+		advertised := map[string]interface{}{
+			"builder-code": map[string]interface{}{
+				"info": map[string]interface{}{"s": []interface{}{"bc_server"}},
+			},
+		}
+		padded := make([]interface{}, 0, 11)
+		padded = append(padded, "bc_server")
+		for i := 0; i < 10; i++ {
+			padded = append(padded, fmt.Sprintf("bc_fake_%d", i))
+		}
+		p := payloadWith(map[string]interface{}{
+			"builder-code": map[string]interface{}{
+				"info": map[string]interface{}{"s": padded},
+			},
+		})
+		r := server.ValidateExtensions(advertised, p)
+		if r.Valid || r.InvalidReason != "extension_echo_mismatch" || r.ExtensionKey != "builder-code" {
+			t.Fatalf("expected echo mismatch on builder-code for oversized echo, got %+v", r)
+		}
+	})
+
+	t.Run("passes when echoed array is exactly at the combined client+server budget", func(t *testing.T) {
+		advertised := map[string]interface{}{
+			"builder-code": map[string]interface{}{
+				"info": map[string]interface{}{"s": []interface{}{"bc_server"}},
+			},
+		}
+		atBudget := make([]interface{}, 0, 10)
+		atBudget = append(atBudget, "bc_server")
+		for i := 0; i < 9; i++ {
+			atBudget = append(atBudget, fmt.Sprintf("bc_client_%d", i))
+		}
+		p := payloadWith(map[string]interface{}{
+			"builder-code": map[string]interface{}{
+				"info": map[string]interface{}{"s": atBudget},
+			},
+		})
+		if r := server.ValidateExtensions(advertised, p); !r.Valid {
+			t.Fatalf("expected valid echo at the combined budget, got %+v", r)
+		}
+	})
+
+	t.Run("passes when the echoed array elements are []map[string]interface{} instead of []interface{}", func(t *testing.T) {
+		advertised := map[string]interface{}{
+			"ext": map[string]interface{}{
+				"info": map[string]interface{}{
+					"items": []interface{}{map[string]interface{}{"a": 1.0}},
+				},
+			},
+		}
+		p := payloadWith(map[string]interface{}{
+			"ext": map[string]interface{}{
+				"info": map[string]interface{}{
+					"items": []map[string]interface{}{{"a": 1.0}},
+				},
+			},
+		})
+		if r := server.ValidateExtensions(advertised, p); !r.Valid {
+			t.Fatalf("expected valid echo for []map[string]interface{} element type, got %+v", r)
+		}
+	})
+
+	t.Run("passes when the advertised s is a scalar and the echo is an array containing it", func(t *testing.T) {
+		advertised := map[string]interface{}{
+			"builder-code": map[string]interface{}{
+				"info": map[string]interface{}{"s": "bc_server"},
+			},
+		}
+		p := payloadWith(map[string]interface{}{
+			"builder-code": map[string]interface{}{
+				"info": map[string]interface{}{"s": []interface{}{"bc_server", "bc_client"}},
+			},
+		})
+		if r := server.ValidateExtensions(advertised, p); !r.Valid {
+			t.Fatalf("expected valid echo for scalar advertised s, got %+v", r)
+		}
+	})
+
+	t.Run("passes when the advertised s is an array and the echo is a matching scalar", func(t *testing.T) {
+		advertised := map[string]interface{}{
+			"builder-code": map[string]interface{}{
+				"info": map[string]interface{}{"s": []interface{}{"bc_server"}},
+			},
+		}
+		p := payloadWith(map[string]interface{}{
+			"builder-code": map[string]interface{}{
+				"info": map[string]interface{}{"s": "bc_server"},
+			},
+		})
+		if r := server.ValidateExtensions(advertised, p); !r.Valid {
+			t.Fatalf("expected valid echo for scalar echo of single-element advertised s, got %+v", r)
+		}
+	})
+
+	t.Run("fails when a non-builder-code extension's array field gains an echoed element", func(t *testing.T) {
+		// Additive-array echo matching is scoped to builder-code's `s`; other
+		// extensions' array fields (e.g. sign-in-with-x's `resources`) must still
+		// match exactly so clients cannot smuggle extra values into the echo.
+		advertised := map[string]interface{}{
+			"sign-in-with-x": map[string]interface{}{
+				"info": map[string]interface{}{"resources": []interface{}{"https://api.example.com/data"}},
+			},
+		}
+		p := payloadWith(map[string]interface{}{
+			"sign-in-with-x": map[string]interface{}{
+				"info": map[string]interface{}{
+					"resources": []interface{}{"https://api.example.com/data", "https://evil.example.com"},
+				},
+			},
+		})
+		r := server.ValidateExtensions(advertised, p)
+		if r.Valid || r.InvalidReason != "extension_echo_mismatch" || r.ExtensionKey != "sign-in-with-x" {
+			t.Fatalf("expected echo mismatch on sign-in-with-x, got %+v", r)
 		}
 	})
 }

@@ -73,7 +73,7 @@ EVM_PRIVATE_KEY=<your-evm-private-key>
 SVM_PRIVATE_KEY=<your-svm-private-key>
 ```
 
-**⚠️ Security Note:** The facilitator private key needs ETH/SOL for gas fees. Use a dedicated testnet account.
+**⚠️ Security Note:** The facilitator private key needs ETH/SOL for gas fees. Use a dedicated facilitator account for settlement, and keep it separate from your seller `payTo` wallet and buyer test wallets.
 
 2. Install dependencies and run:
 
@@ -235,16 +235,16 @@ Register additional schemes for other networks:
 
 ```go
 import (
-    x402 "github.com/coinbase/x402/go"
-    evm "github.com/coinbase/x402/go/mechanisms/evm/exact/facilitator"
-    svm "github.com/coinbase/x402/go/mechanisms/svm/exact/facilitator"
+    x402 "github.com/x402-foundation/x402/go/v2"
+    evm "github.com/x402-foundation/x402/go/v2/mechanisms/evm/exact/facilitator"
+    svm "github.com/x402-foundation/x402/go/v2/mechanisms/svm/exact/facilitator"
 )
 
 facilitator := x402.Newx402Facilitator()
 
-// Register EVM scheme with smart wallet deployment enabled
+// Register EVM scheme with smart wallet deployment support
 evmConfig := &evm.ExactEvmSchemeConfig{
-    DeployERC4337WithEIP6492: true,
+    EIP6492AllowedFactories: []string{ /* trusted factory addresses */ },
 }
 facilitator.Register([]x402.Network{"eip155:84532"}, evm.NewExactEvmScheme(evmSigner, evmConfig))
 

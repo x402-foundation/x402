@@ -20,7 +20,6 @@ from x402.mechanisms.evm import (
     FacilitatorWeb3Signer,
     bytes_to_hex,
     create_nonce,
-    create_validity_window,
     format_amount,
     get_asset_info,
     get_evm_chain_id,
@@ -278,40 +277,6 @@ class TestFormatAmount:
         assert format_amount(1000000000, 9) == "1"
         assert format_amount(100, 2) == "1"
         assert format_amount(1, 0) == "1"
-
-
-class TestCreateValidityWindow:
-    """Test create_validity_window function."""
-
-    def test_should_create_validity_window_with_default_duration(self):
-        """Should create validity window with default duration."""
-
-        valid_after, valid_before = create_validity_window()
-
-        assert valid_after is not None
-        assert valid_before is not None
-        assert valid_before > valid_after
-        # Should be approximately 1 hour apart (3600 seconds)
-        assert valid_before - valid_after >= 3600 - 100  # Allow some tolerance
-
-    def test_should_create_validity_window_with_custom_duration(self):
-        """Should create validity window with custom duration."""
-        from datetime import timedelta
-
-        duration = timedelta(hours=2)
-        valid_after, valid_before = create_validity_window(duration=duration)
-
-        assert valid_before - valid_after >= 7200 - 100  # Approximately 2 hours
-
-    def test_should_apply_buffer_to_valid_after(self):
-        """Should apply buffer to valid_after (clock skew)."""
-        valid_after, valid_before = create_validity_window()
-
-        import time
-
-        now = int(time.time())
-        # valid_after should be in the past (with buffer)
-        assert valid_after < now
 
 
 class TestHexToBytes:

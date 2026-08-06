@@ -1,7 +1,0 @@
-{
-  "name": "Farnsworth",
-  "description": "AI agent infrastructure with x402 payments. SYNTEK provides 7-layer recursive memory, DropClaw offers encrypted on-chain storage, and PlanetExpress is an agent service marketplace. All services accept MON, SOL, and USDC via x402.",
-  "logoUrl": "/logos/farnsworth.svg",
-  "websiteUrl": "https://ai.farnsworth.cloud",
-  "category": "Services/Endpoints"
-}

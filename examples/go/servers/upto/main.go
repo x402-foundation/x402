@@ -7,12 +7,13 @@ import (
 	"os"
 	"time"
 
-	x402 "github.com/coinbase/x402/go"
-	x402http "github.com/coinbase/x402/go/http"
-	ginmw "github.com/coinbase/x402/go/http/gin"
-	uptoevm "github.com/coinbase/x402/go/mechanisms/evm/upto/server"
 	ginfw "github.com/gin-gonic/gin"
 	"github.com/joho/godotenv"
+	x402 "github.com/x402-foundation/x402/go/v2"
+	"github.com/x402-foundation/x402/go/v2/extensions/eip2612gassponsor"
+	x402http "github.com/x402-foundation/x402/go/v2/http"
+	ginmw "github.com/x402-foundation/x402/go/v2/http/gin"
+	uptoevm "github.com/x402-foundation/x402/go/v2/mechanisms/evm/upto/server"
 )
 
 const DefaultPort = "4021"
@@ -59,6 +60,7 @@ func main() {
 			},
 			Description: "AI text generation - billed by token usage",
 			MimeType:    "application/json",
+			Extensions:  eip2612gassponsor.DeclareEip2612GasSponsoringExtension(),
 		},
 	}
 

@@ -1,9 +1,13 @@
 # Go x402
 
+> **Deprecated (v1)**  
+> This Go module (`go/legacy`) implements x402 **v1**. It is **deprecated** and will only receive **security patches**. Please migrate to **v2**, see the [Migration guide: v1 to v2](https://docs.x402.org/guides/migration-v1-to-v2).
+> Legacy examples are available at git tag `archive/legacy-v1-examples`.
+
 ## Installation
 
 ```bash
-go get github.com/coinbase/x402/go
+go get github.com/x402-foundation/x402/go
 ```
 
 ## Usage
@@ -16,7 +20,7 @@ package main
 import (
 	"math/big"
 
-	x402gin "github.com/coinbase/x402/go/pkg/gin"
+	x402gin "github.com/x402-foundation/x402/go/pkg/gin"
 	"github.com/gin-gonic/gin"
 )
 

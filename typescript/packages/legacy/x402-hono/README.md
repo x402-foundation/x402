@@ -1,5 +1,9 @@
 # x402-hono
 
+> **Deprecated (v1)**  
+> This npm package implements x402 **v1**. It is **deprecated** and will only receive **security patches**. Please migrate to **v2** (`@x402/hono`, `@x402/core`, `@x402/evm`, etc.). See the [Migration guide: v1 to v2](https://docs.x402.org/guides/migration-v1-to-v2).
+> Legacy examples are available at git tag `archive/legacy-v1-examples`.
+
 Hono middleware integration for the x402 Payment Protocol. This package allows you to easily add paywall functionality to your Hono applications using the x402 protocol.
 
 ## Installation

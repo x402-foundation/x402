@@ -1,4 +1,4 @@
-# @x402/evm
+# `@x402/evm` [![npm version](https://img.shields.io/npm/v/%40x402%2Fevm.svg)](https://www.npmjs.com/package/@x402/evm)
 
 EVM (Ethereum Virtual Machine) implementation of the x402 payment protocol using the **Exact** payment scheme with EIP-3009 TransferWithAuthorization.
 
@@ -145,7 +145,7 @@ Supports two asset transfer methods:
 - **EIP-3009**: Tokens with native `transferWithAuthorization()` (e.g., USDC, EURC) — simplest, truly gasless
 - **Permit2**: Any ERC-20 token — universal fallback, requires one-time approval
 
-See [DEFAULT_ASSET.md](src/exact/server/DEFAULT_ASSET.md) for the current list of configured chains and how to add new ones.
+For the current list of chains with default assets configured, see [Default Assets for Dollar-String Pricing](../../../../docs/core-concepts/network-and-token-support.mdx#default-assets-for-dollar-string-pricing) in the x402 docs. To add default asset support for a new chain, see [Adding Support for New Networks](../../../../docs/core-concepts/network-and-token-support.mdx#adding-support-for-new-networks).
 
 ## Development
 

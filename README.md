@@ -1,5 +1,7 @@
 # x402
 
+[![Slack Community](https://img.shields.io/badge/Slack-Join%20Community-4A154B?logo=slack&logoColor=white)](http://slack.x402.org/)
+
 x402 is an open standard for internet native payments. It aims to support all networks (both crypto & fiat) and forms of value (stablecoins, tokens, fiat).
 
 ```typescript
@@ -16,59 +18,89 @@ app.use(
 // That's it! See examples/ for full details
 ```
 
-<details>
-<summary><b>Installation</b></summary>
+## Installation
 
-### Typescript
+<details>
+<summary><b>Typescript</b></summary>
+
+<br/> 
+
+> See all the packages available in the [**Typescript SDK**](./typescript/), including chain implementations of x402, code examples and integration guides.
 
 ```shell
 # All available reference sdks
-npm install @x402/core @x402/evm @x402/svm @x402/axios @x402/fetch @x402/express @x402/hono @x402/next @x402/paywall @x402/extensions
+npm install @x402/core \
+  @x402/evm @x402/svm @x402/avm @x402/aptos @x402/stellar @x402/tvm @x402/hedera @x402/keeta \
+  @x402/axios @x402/fastify @x402/fetch @x402/express @x402/hono @x402/next @x402/paywall @x402/extensions @x402/mcp
+```
 
+```shell
 # Minimal Fetch client
 npm install @x402/core @x402/evm @x402/svm @x402/fetch
+```
 
+```shell
 # Minimal express Server
 npm install @x402/core @x402/evm @x402/svm @x402/express
 ```
 
-### Python
+</details>
+
+<details>
+<summary><b>Python</b></summary>
+
+<br/> 
+
+> See the [**`python/x402`**](./python/) folder for code examples and integration guides.
 
 ```shell
 pip install x402
 ```
 
-### Go
+</details>
+
+<details>
+<summary><b>Go</b></summary>
+
+<br/> 
+
+> See the [**`go/`**](./go/) folder for code examples and integration guides.
 
 ```shell
-go get github.com/coinbase/x402/go
+go get github.com/x402-foundation/x402/go/v2
 ```
 
 </details>
+
 
 ## Principles
 
 - **Open standard:** x402 is an open standard, freely accessible and usable by anyone. It will never force reliance on a single party.
 - **HTTP / Transport Native:** x402 is meant to seamlessly complement existing data transportation. It should whenever possible not mandate additional requests outside the scope of a typical client / server flow.
-- **Network, token, and currency agnostic:** we welcome contributions that add support for new networks (both crypto and fiat), signing standards, or schemes, so long as they meet our acceptance criteria laid out in [CONTRIBUTING.md](https://github.com/coinbase/x402/blob/main/CONTRIBUTING.md). x402 may extend support to fiat based networks, but will never deprioritize onchain payments in favor of fiat payments.
+- **Network, token, and currency agnostic:** we welcome contributions that add support for new networks (both crypto and fiat), signing standards, or schemes, so long as they meet our acceptance criteria laid out in [CONTRIBUTING.md](https://github.com/x402-foundation/x402/blob/main/CONTRIBUTING.md). x402 may extend support to fiat based networks, but will never deprioritize onchain payments in favor of fiat payments.
 - **Backwards Compatible:** x402 will not deprecate support for any existing networks unless such removal is deemed necessary for the security of the standard. Whenever possible, x402 will aim for backwards compatibility for non-major version changes.
 - **Trust minimizing:** all payment schemes must not allow for the facilitator or resource server to move funds, other than in accordance with client intentions
 - **Easy to use:** It is the goal of the x402 community to improve ease of use relative to other forms of payment on the Internet. This means abstracting as many details of crypto as possible away from the client and resource server, and into the facilitator. This means the client/server should not need to think about gas, rpc, etc.
 
 ## Ecosystem
 
-The x402 ecosystem is growing! Check out our [ecosystem page](https://x402.org/ecosystem) to see projects building with x402, including:
+**Community:** join the [x402 Slack](http://slack.x402.org/) to ask questions, discuss ideas, and share what you're building.
 
-- Client-side integrations
-- Services and endpoints
-- Ecosystem infrastructure and tooling
-- Learning and community resources
+Curated third-party SDKs, extensions, and facilitators are listed in the [Developer Tools docs](https://docs.x402.org/dev-tools/overview). For broader discovery of x402 services and integrations, see community-maintained directories such as [x402scan.com](https://x402scan.com), [Agentic.Market](https://agentic.market), [Pay.sh](https://pay.sh), [app.ampersend.ai/discover](https://app.ampersend.ai/discover), and [x402-list.com](https://x402-list.com).
 
-Want to add your project to the ecosystem? See our [demo site README](https://github.com/coinbase/x402/tree/main/typescript/site#adding-your-project-to-the-ecosystem) for detailed instructions on how to submit your project.
+**Roadmap:** see [ROADMAP.md](https://github.com/x402-foundation/x402/blob/main/ROADMAP.md)
 
-**Roadmap:** see [ROADMAP.md](https://github.com/coinbase/x402/blob/main/ROADMAP.md)
+**Documentation:** see [`docs/`](./docs/) for the published documentation source (Mintlify). Payment **schemes** include **`exact`**, **`upto`**, and **`batch-settlement`**; specifications live under [`specs/schemes/`](./specs/schemes/).
 
-**Documentation:** see [docs/](./docs/) for the GitBook documentation source
+## Choosing a Production Path
+
+For testnet development and quickstarts, the public x402 facilitator is the easiest way to get started. For production mainnet routes, decide on your facilitator model explicitly:
+
+- use a production facilitator provider that supports your target network,
+- run your own facilitator,
+- or [self-facilitate](./examples/typescript/servers/self-facilitation/README.md) inside your resource server.
+
+Do not assume the public x402.org facilitator is the default production path for mainnet EVM routes. See the [Facilitator docs](https://docs.x402.org/core-concepts/facilitator), [Facilitators directory](https://docs.x402.org/dev-tools/facilitators), and [Networks & Token Support](https://docs.x402.org/core-concepts/network-and-token-support) for operator guidance.
 
 ## Terms:
 
@@ -127,9 +159,9 @@ A scheme is a logical way of moving money.
 Blockchains allow for a large number of flexible ways to move money. To help facilitate an expanding number of payment use cases, the `x402` protocol is extensible to different ways of settling payments via its `scheme` field.
 
 Each payment scheme may have different operational functionality depending on what actions are necessary to fulfill the payment.
-For example `exact`, the first scheme shipping as part of the protocol, would have different behavior than `upto`. `exact` transfers a specific amount (ex: pay $1 to read an article), while a theoretical `upto` would transfer up to an amount, based on the resources consumed during a request (ex: generating tokens from an LLM).
+For example, **`exact`** transfers a specific amount (for example, pay $1 to read an article). **`upto`** authorizes up to a maximum per request; the seller settles the actual usage, up to that cap. **`batch-settlement`** (EVM) uses escrow and off-chain vouchers so sellers can redeem many small charges onchain in batches instead of settling every HTTP request separately.
 
-See `specs/schemes` for more details on schemes, and see `specs/schemes/exact/scheme_exact_evm.md` to see the first proposed scheme for exact payment on EVM chains.
+See `specs/schemes` for full scheme specifications; `specs/schemes/exact/scheme_exact_evm.md` describes **exact** payments on EVM chains.
 
 ### Schemes vs Networks
 

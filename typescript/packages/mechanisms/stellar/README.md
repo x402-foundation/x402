@@ -1,4 +1,4 @@
-# @x402/stellar
+# `@x402/stellar` [![npm version](https://img.shields.io/npm/v/%40x402%2Fstellar.svg)](https://www.npmjs.com/package/@x402/stellar)
 
 Stellar implementation of the x402 payment protocol using the **Exact** payment scheme with [Soroban token](https://stellar.org/protocol/sep-41) transfers.
 
@@ -40,7 +40,7 @@ This package provides three main components for handling x402 payments on Stella
 - `FacilitatorStellarSigner` - TypeScript type for facilitator signers
 
 > [!NOTE]
-> Facilitators currently always sponsor transaction fees (`areFeesSponsored: true`). A non-sponsored flow will be added later. See [spec](../../../specs/schemes/exact/scheme_exact_stellar.md#paymentrequirements-for-exact) for details.
+> Facilitators currently always sponsor transaction fees (`areFeesSponsored: true`). Settlement fees are derived from the settle-time simulation (`simulationResourceFee + inclusionBuffer`); `maxTransactionFeeStroops` is a safety ceiling, not a per-transaction budget. A non-sponsored flow will be added later. See [spec](../../../specs/schemes/exact/scheme_exact_stellar.md#paymentrequirements-for-exact) for details.
 
 **Server:**
 

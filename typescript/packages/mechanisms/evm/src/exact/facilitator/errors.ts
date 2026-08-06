@@ -5,6 +5,8 @@
  * go/mechanisms/evm/exact/facilitator/errors.go to maintain cross-SDK parity.
  */
 
+export const ErrAssetNotDeployedContract = "asset_not_deployed_contract";
+
 export const ErrInvalidScheme = "invalid_exact_evm_scheme";
 export const ErrNetworkMismatch = "invalid_exact_evm_network_mismatch";
 export const ErrMissingEip712Domain = "invalid_exact_evm_missing_eip712_domain";
@@ -13,8 +15,11 @@ export const ErrInvalidSignature = "invalid_exact_evm_signature";
 export const ErrValidBeforeExpired = "invalid_exact_evm_payload_authorization_valid_before";
 export const ErrValidAfterInFuture = "invalid_exact_evm_payload_authorization_valid_after";
 export const ErrInvalidAuthorizationValue = "invalid_exact_evm_authorization_value";
+export const ErrAuthorizationValueMismatch =
+  "invalid_exact_evm_payload_authorization_value_mismatch";
 export const ErrUndeployedSmartWallet = "invalid_exact_evm_payload_undeployed_smart_wallet";
 export const ErrTransactionFailed = "invalid_exact_evm_transaction_failed";
+export const ErrTransferEventMismatch = "invalid_exact_evm_transfer_event_mismatch";
 
 // EIP-3009 verify errors
 export const ErrEip3009TokenNameMismatch = "invalid_exact_evm_token_name_mismatch";
@@ -69,3 +74,5 @@ export const ErrEip2612DeadlineExpired = "eip2612_deadline_expired";
 // Shared settle errors
 export const ErrUnsupportedPayloadType = "unsupported_payload_type";
 export const ErrInvalidTransactionState = "invalid_transaction_state";
+export const ErrFactoryNotAllowed = "eip6492_factory_not_allowed";
+export const ErrSmartWalletDeploymentFailed = "smart_wallet_deployment_failed";

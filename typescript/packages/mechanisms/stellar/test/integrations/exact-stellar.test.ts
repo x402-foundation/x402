@@ -24,10 +24,10 @@ import { ExactStellarScheme as ExactStellarServer } from "../../src/exact/server
 import type { ExactStellarPayloadV2 } from "../../src/types";
 
 // Load private keys and addresses from environment
-const CLIENT_PRIVATE_KEY = process.env.CLIENT_PRIVATE_KEY;
-const FACILITATOR_PRIVATE_KEY = process.env.FACILITATOR_PRIVATE_KEY;
-const FACILITATOR_ADDRESS = process.env.FACILITATOR_ADDRESS;
-const RESOURCE_SERVER_ADDRESS = process.env.RESOURCE_SERVER_ADDRESS;
+const CLIENT_PRIVATE_KEY = process.env.CLIENT_PRIVATE_KEY as string;
+const FACILITATOR_PRIVATE_KEY = process.env.FACILITATOR_PRIVATE_KEY as string;
+const FACILITATOR_ADDRESS = process.env.FACILITATOR_ADDRESS as string;
+const RESOURCE_SERVER_ADDRESS = process.env.RESOURCE_SERVER_ADDRESS as string;
 const XLM_TESTNET_ASSET = "CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC";
 
 async function xlmFallbackParser(amount: number, network: string): Promise<AssetAmount | null> {
@@ -172,7 +172,7 @@ describe.skipIf(missingEnvVars)("Stellar Integration Tests", () => {
   let clientSigner: Ed25519Signer;
   let facilitatorSigner: Ed25519Signer;
   beforeAll(async () => {
-    clientSigner = createEd25519Signer(CLIENT_PRIVATE_KEY!, STELLAR_TESTNET_CAIP2);
+    clientSigner = createEd25519Signer(CLIENT_PRIVATE_KEY, STELLAR_TESTNET_CAIP2);
     clientAddress = clientSigner.address;
 
     facilitatorSigner = createEd25519Signer(FACILITATOR_PRIVATE_KEY, STELLAR_TESTNET_CAIP2);

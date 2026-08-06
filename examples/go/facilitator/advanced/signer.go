@@ -9,8 +9,6 @@ import (
 	"strings"
 	"time"
 
-	evmmech "github.com/coinbase/x402/go/mechanisms/evm"
-	svmmech "github.com/coinbase/x402/go/mechanisms/svm"
 	"github.com/ethereum/go-ethereum"
 	"github.com/ethereum/go-ethereum/accounts/abi"
 	"github.com/ethereum/go-ethereum/common"
@@ -21,6 +19,9 @@ import (
 	"github.com/ethereum/go-ethereum/signer/core/apitypes"
 	solana "github.com/gagliardetto/solana-go"
 	"github.com/gagliardetto/solana-go/rpc"
+	"github.com/x402-foundation/x402/go/v2/extensions/erc20approvalgassponsor"
+	evmmech "github.com/x402-foundation/x402/go/v2/mechanisms/evm"
+	svmmech "github.com/x402-foundation/x402/go/v2/mechanisms/svm"
 )
 
 const (
@@ -201,10 +202,12 @@ func (s *facilitatorEvmSigner) ReadContract(
 		return nil, fmt.Errorf("failed to pack method call: %w", err)
 	}
 
-	// Make the call
+	// Make the call. Set From to the facilitator address — required by the upto/exact
+	// proxies which enforce msg.sender == witness.facilitator in settle().
 	to := common.HexToAddress(contractAddress)
 
 	msg := ethereum.CallMsg{
+		From: s.address,
 		To:   &to,
 		Data: data,
 	}
@@ -236,6 +239,7 @@ func (s *facilitatorEvmSigner) WriteContract(
 	contractAddress string,
 	abiJSON []byte,
 	method string,
+	dataSuffix []byte,
 	args ...interface{},
 ) (string, error) {
 	// Parse ABI
@@ -249,6 +253,7 @@ func (s *facilitatorEvmSigner) WriteContract(
 	if err != nil {
 		return "", fmt.Errorf("failed to pack method call: %w", err)
 	}
+	data = evmmech.AppendDataSuffix(data, dataSuffix)
 
 	// Get nonce
 	nonce, err := s.client.PendingNonceAt(ctx, s.address)
@@ -382,6 +387,53 @@ func (s *facilitatorEvmSigner) GetCode(ctx context.Context, address string) ([]b
 		return nil, fmt.Errorf("failed to get code: %w", err)
 	}
 	return code, nil
+}
+
+// erc20ApprovalGasSponsorSigner wraps facilitatorEvmSigner with SendTransactions for the
+// erc20ApprovalGasSponsoring facilitator extension (see gas_extensions example).
+type erc20ApprovalGasSponsorSigner struct {
+	*facilitatorEvmSigner
+}
+
+func newErc20ApprovalGasSponsorSigner(base *facilitatorEvmSigner) *erc20ApprovalGasSponsorSigner {
+	return &erc20ApprovalGasSponsorSigner{facilitatorEvmSigner: base}
+}
+
+// SendTransactions implements erc20approvalgassponsor.Erc20ApprovalGasSponsoringSigner.
+func (s *erc20ApprovalGasSponsorSigner) SendTransactions(ctx context.Context, txs []erc20approvalgassponsor.TransactionRequest) ([]string, error) {
+	hashes := make([]string, 0, len(txs))
+	for _, req := range txs {
+		var txHash string
+		switch {
+		case req.Serialized != "":
+			raw := common.FromHex(strings.TrimPrefix(req.Serialized, "0x"))
+			var tx types.Transaction
+			if err := tx.UnmarshalBinary(raw); err != nil {
+				return nil, fmt.Errorf("decode signed transaction: %w", err)
+			}
+			if err := s.client.SendTransaction(ctx, &tx); err != nil {
+				return nil, fmt.Errorf("send raw transaction: %w", err)
+			}
+			txHash = tx.Hash().Hex()
+		case req.Call != nil:
+			h, err := s.WriteContract(ctx, req.Call.Address, req.Call.ABI, req.Call.Function, req.Call.DataSuffix, req.Call.Args...)
+			if err != nil {
+				return nil, err
+			}
+			txHash = h
+		default:
+			return nil, fmt.Errorf("empty transaction request")
+		}
+		rec, err := s.WaitForTransactionReceipt(ctx, txHash)
+		if err != nil {
+			return nil, err
+		}
+		if rec.Status != evmmech.TxStatusSuccess {
+			return nil, fmt.Errorf("transaction failed: %s", txHash)
+		}
+		hashes = append(hashes, txHash)
+	}
+	return hashes, nil
 }
 
 // ============================================================================

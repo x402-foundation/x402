@@ -1,6 +1,6 @@
 package facilitator
 
-import "github.com/coinbase/x402/go/mechanisms/evm"
+import "github.com/x402-foundation/x402/go/v2/mechanisms/evm"
 
 // Facilitator error constants for the exact EVM scheme
 const (
@@ -36,10 +36,12 @@ const (
 	ErrFailedToExecuteTransfer = "invalid_exact_evm_failed_to_execute_transfer"
 	ErrFailedToGetReceipt      = "invalid_exact_evm_failed_to_get_receipt"
 	ErrTransactionFailed       = "invalid_exact_evm_transaction_failed"
+	ErrTransferEventMismatch   = "invalid_exact_evm_transfer_event_mismatch"
 
 	// Smart wallet errors (shared by EIP-3009 and Permit2)
 	ErrUndeployedSmartWallet       = "invalid_exact_evm_payload_undeployed_smart_wallet"
 	ErrSmartWalletDeploymentFailed = "smart_wallet_deployment_failed"
+	ErrFactoryNotAllowed           = "eip6492_factory_not_allowed"
 	ErrUnsupportedPayloadType      = "unsupported_payload_type"
 
 	// Permit2 verify errors — canonical values live in evm.ErrPermit2*

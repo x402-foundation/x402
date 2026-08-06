@@ -8,19 +8,19 @@
   
   <!-- Ignore field assignments in PaymentFilter -->
   <Match>
-    <Class name="com.coinbase.x402.server.PaymentFilter"/>
+    <Class name="org.x402.server.PaymentFilter"/>
     <Bug pattern="URF_UNREAD_PUBLIC_OR_PROTECTED_FIELD,EI_EXPOSE_REP,EI_EXPOSE_REP2"/>
   </Match>
   
   <!-- Ignore field warnings in X402HttpClient -->
   <Match>
-    <Class name="com.coinbase.x402.client.X402HttpClient"/>
+    <Class name="org.x402.client.X402HttpClient"/>
     <Bug pattern="SS_SHOULD_BE_STATIC"/>
   </Match>
   
   <!-- Ignore ignoring exceptions in payment filter -->
   <Match>
-    <Class name="com.coinbase.x402.server.PaymentFilter"/>
+    <Class name="org.x402.server.PaymentFilter"/>
     <Method name="doFilter"/>
     <Bug pattern="DE_MIGHT_IGNORE"/>
   </Match>

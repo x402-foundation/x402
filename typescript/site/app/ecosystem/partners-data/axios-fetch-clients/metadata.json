@@ -1,7 +1,0 @@
-{
-  "name": "Axios & Fetch Clients",
-  "category": "Client-Side Integrations",
-  "logoUrl": "/logos/axios-fetch-clients.png",
-  "description": "Reference TypeScript clients for x402 using both Axios and Fetch. Easily integrate x402 payments into your own applications.",
-  "websiteUrl": "https://github.com/coinbase/x402/tree/main/examples/typescript/clients"
-}

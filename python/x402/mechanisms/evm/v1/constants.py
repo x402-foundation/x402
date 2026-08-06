@@ -4,6 +4,12 @@ from ..constants import AssetInfo
 
 # Default assets keyed by v1 legacy network name.
 V1_DEFAULT_ASSETS: dict[str, AssetInfo] = {
+    "flare": {
+        "address": "0xe7cd86e13AC4309349F30B3435a9d337750fC82D",
+        "name": "USD₮0",
+        "version": "1",
+        "decimals": 6,
+    },
     "ethereum": {
         "address": "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
         "name": "USD Coin",
@@ -46,6 +52,18 @@ V1_DEFAULT_ASSETS: dict[str, AssetInfo] = {
         "version": "1",
         "decimals": 6,
     },
+    "stable-testnet": {
+        "address": "0x78Cf24370174180738C5B8E352B6D14c83a6c9A9",
+        "name": "USDT0",
+        "version": "1",
+        "decimals": 6,
+    },
+    "celo": {
+        "address": "0xcebA9300f2b948710d2653dD7B07f33A8B32118C",
+        "name": "USDC",
+        "version": "2",
+        "decimals": 6,
+    },
 }
 
 
@@ -69,6 +87,8 @@ V1_NETWORKS = [
     "megaeth",
     "monad",
     "stable",
+    "stable-testnet",
+    "celo",
 ]
 
 # V1 network name to chain ID mapping
@@ -92,4 +112,7 @@ V1_NETWORK_CHAIN_IDS: dict[str, int] = {
     "megaeth": 4326,
     "monad": 143,
     "stable": 988,
+    "stable-testnet": 2201,
+    "celo": 42220,
+    "flare": 14,
 }

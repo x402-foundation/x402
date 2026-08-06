@@ -15,6 +15,7 @@ import { config } from "dotenv";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { SSEClientTransport } from "@modelcontextprotocol/sdk/client/sse.js";
 import { ExactEvmScheme } from "@x402/evm/exact/client";
+import { UptoEvmScheme } from "@x402/evm/upto/client";
 import { x402MCPClient } from "@x402/mcp";
 import { x402Client } from "@x402/core/client";
 import { privateKeyToAccount } from "viem/accounts";
@@ -61,6 +62,7 @@ export async function main(): Promise<void> {
   // Step 2: Create x402 payment client manually
   const paymentClient = new x402Client();
   paymentClient.register("eip155:84532", new ExactEvmScheme(evmSigner));
+  paymentClient.register("eip155:84532", new UptoEvmScheme(evmSigner));
 
   // Step 3: Compose into x402MCPClient
   const x402Mcp = new x402MCPClient(mcpClient, paymentClient, {

@@ -263,6 +263,24 @@ describe("x402Facilitator", () => {
       expect(testFacilitator.verifyCalls.length).toBe(1);
     });
 
+    it("should not treat regex metacharacters in network namespaces as wildcards", async () => {
+      const facilitator = new x402Facilitator();
+      const testFacilitator = new TestFacilitator("exact");
+
+      facilitator.register(["chain.v1:1" as Network, "chain.v1:2" as Network], testFacilitator);
+
+      const payload = buildPaymentPayload({ x402Version: 2 });
+      const requirements = buildPaymentRequirements({
+        scheme: "exact",
+        network: "chainXv1:3" as Network,
+      });
+
+      await expect(async () => await facilitator.verify(payload, requirements)).rejects.toThrow(
+        "No facilitator registered for scheme: exact and network: chainXv1:3",
+      );
+      expect(testFacilitator.verifyCalls.length).toBe(0);
+    });
+
     it("should throw if no facilitator registered for version", async () => {
       const facilitator = new x402Facilitator();
 

@@ -17,7 +17,7 @@ from .types import (
     SyncPaymentWrapperConfig,
 )
 from .utils import (
-    create_tool_resource_url,
+    build_tool_resource_info,
     extract_payment_from_meta,
 )
 
@@ -158,6 +158,14 @@ def create_payment_wrapper_sync(
                     resource_server, tool_name, config, str(e)
                 )
 
+            if not settle_result.success:
+                return _create_settlement_failed_result_sync(
+                    resource_server,
+                    tool_name,
+                    config,
+                    settle_result.error_reason or "Unknown settlement failure",
+                )
+
             if config.hooks and config.hooks.on_after_settlement:
                 settlement_context = SettlementContext(
                     tool_name=tool_name,
@@ -174,7 +182,7 @@ def create_payment_wrapper_sync(
             if result.meta is None:
                 result.meta = {}
             result.meta[MCP_PAYMENT_RESPONSE_META_KEY] = (
-                settle_result.model_dump(by_alias=True)
+                settle_result.model_dump(by_alias=True, exclude_none=True)
                 if hasattr(settle_result, "model_dump")
                 else settle_result
             )
@@ -193,22 +201,17 @@ def _create_payment_required_result_sync(
     error_message: str,
 ) -> MCPToolResult:
     """Create a 402 payment required result (sync)."""
-    from ..schemas import ResourceInfo as SchemaResourceInfo
-
-    resource_info = SchemaResourceInfo(
-        url=create_tool_resource_url(tool_name, config.resource.url if config.resource else None),
-        description=(config.resource.description if config.resource else f"Tool: {tool_name}"),
-        mime_type=(config.resource.mime_type if config.resource else "application/json"),
-    )
+    resource_info = build_tool_resource_info(tool_name, config.resource)
 
     payment_required = resource_server.create_payment_required_response(
         config.accepts,
         resource_info,
         error_message,
+        config.extensions,
     )
 
     payment_required_dict = (
-        payment_required.model_dump(by_alias=True)
+        payment_required.model_dump(by_alias=True, exclude_none=True)
         if hasattr(payment_required, "model_dump")
         else payment_required
     )
@@ -229,18 +232,13 @@ def _create_settlement_failed_result_sync(
     error_message: str,
 ) -> MCPToolResult:
     """Create a 402 settlement failed result (sync)."""
-    from ..schemas import ResourceInfo as SchemaResourceInfo
+    resource_info = build_tool_resource_info(tool_name, config.resource)
 
-    resource_info = SchemaResourceInfo(
-        url=create_tool_resource_url(tool_name, config.resource.url if config.resource else None),
-        description=(config.resource.description if config.resource else f"Tool: {tool_name}"),
-        mime_type=(config.resource.mime_type if config.resource else "application/json"),
-    )
-
-    resource_server.create_payment_required_response(
+    payment_required = resource_server.create_payment_required_response(
         config.accepts,
         resource_info,
         f"Payment settlement failed: {error_message}",
+        config.extensions,
     )
 
     settlement_failure = {
@@ -250,14 +248,12 @@ def _create_settlement_failed_result_sync(
         "network": config.accepts[0].network,
     }
 
-    error_data = {
-        "x402Version": 2,
-        "accepts": [
-            r.model_dump(by_alias=True) if hasattr(r, "model_dump") else r for r in config.accepts
-        ],
-        "error": f"Payment settlement failed: {error_message}",
-        MCP_PAYMENT_RESPONSE_META_KEY: settlement_failure,
-    }
+    error_data = (
+        payment_required.model_dump(by_alias=True, exclude_none=True)
+        if hasattr(payment_required, "model_dump")
+        else payment_required
+    )
+    error_data[MCP_PAYMENT_RESPONSE_META_KEY] = settlement_failure
 
     content_text = json.dumps(error_data)
 

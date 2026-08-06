@@ -8,8 +8,11 @@ import {
   RoutesConfig,
   FacilitatorResponseError,
   getFacilitatorResponseError as getCoreFacilitatorResponseError,
+  PaymentCancellationDispatcher,
+  SETTLEMENT_OVERRIDES_HEADER,
+  withPrivateCacheControl,
 } from "@x402/core/server";
-import { PaymentPayload, PaymentRequirements } from "@x402/core/types";
+import type { PaymentPayload, PaymentRequirements } from "@x402/core/types";
 import { NextAdapter } from "./adapter";
 
 /**
@@ -56,6 +59,11 @@ export function prepareHttpServer(
   // Store initialization promise (not the result)
   // httpServer.initialize() fetches facilitator support and validates routes
   let initPromise: Promise<void> | null = syncFacilitatorOnStart ? httpServer.initialize() : null;
+  // Attach a no-op rejection handler so an early failure (e.g. a facilitator
+  // request timeout) cannot become an unhandled rejection before the first
+  // protected request awaits initPromise. The original promise is kept, so that
+  // request still observes the failure and triggers the retry path.
+  void initPromise?.catch(() => {});
   let isInitialized = false;
 
   return {
@@ -152,7 +160,8 @@ export function handlePaymentError(response: HTTPResponseInstructions): NextResp
  * @param paymentPayload - The payment payload from the client
  * @param paymentRequirements - The payment requirements for the route
  * @param declaredExtensions - Optional declared extensions (for per-key enrichment)
- * @param httpContext - Optional HTTP request context for extensions
+ * @param cancellationDispatcher - Cancels verified payments that should not settle
+ * @param httpContext - HTTP request context for extensions
  * @returns The response with settlement headers or an error response if settlement fails
  */
 export async function handleSettlement(
@@ -160,11 +169,17 @@ export async function handleSettlement(
   response: NextResponse,
   paymentPayload: PaymentPayload,
   paymentRequirements: PaymentRequirements,
-  declaredExtensions?: Record<string, unknown>,
-  httpContext?: HTTPRequestContext,
+  declaredExtensions: Record<string, unknown> | undefined,
+  cancellationDispatcher: PaymentCancellationDispatcher,
+  httpContext: HTTPRequestContext,
 ): Promise<NextResponse> {
   // If the response from the protected route is >= 400, do not settle payment
   if (response.status >= 400) {
+    await cancellationDispatcher.cancel({
+      reason: "handler_failed",
+      responseStatus: response.status,
+    });
+    response.headers.delete(SETTLEMENT_OVERRIDES_HEADER);
     return response;
   }
 
@@ -172,11 +187,16 @@ export async function handleSettlement(
     // Get response body for extensions
     const responseBody = Buffer.from(await response.clone().arrayBuffer());
 
+    const responseHeaders: Record<string, string> = {};
+    response.headers.forEach((value, key) => {
+      responseHeaders[key] = value;
+    });
+
     const result = await httpServer.processSettlement(
       paymentPayload,
       paymentRequirements,
       declaredExtensions,
-      { request: httpContext, responseBody },
+      { request: httpContext, responseBody, responseHeaders },
     );
 
     if (!result.success) {
@@ -189,10 +209,17 @@ export async function handleSettlement(
       });
     }
 
-    // Settlement succeeded - add headers and return original response
+    // Settlement succeeded - add headers and return original response.
     Object.entries(result.headers).forEach(([key, value]) => {
       response.headers.set(key, value);
     });
+    response.headers.set(
+      "Cache-Control",
+      withPrivateCacheControl(response.headers.get("Cache-Control")),
+    );
+
+    // Strip internal settlement override header before sending to client.
+    response.headers.delete(SETTLEMENT_OVERRIDES_HEADER);
 
     return response;
   } catch (error) {

@@ -27,6 +27,7 @@ import {
   decodeTransactionFromPayload,
   getTokenPayerFromTransaction,
   signTransactionWithSigner,
+  transactionMessageHash,
 } from "../../../../shared/svm";
 import { getRpcClient, getRpcSubscriptions } from "../../../../shared/svm/rpc";
 import {
@@ -47,7 +48,7 @@ import { SettlementCache } from "./settlement-cache";
  * @param config - Optional configuration for X402 operations (e.g., custom RPC URLs)
  * @returns A SettleResponse indicating if the payment is settled and any error reason
  */
-const settlementCache = new SettlementCache();
+export const settlementCache = new SettlementCache();
 
 /**
  * Settles an exact SVM payment by verifying the payment and recording the settlement.
@@ -76,9 +77,13 @@ export async function settle(
 
   const svmPayload = payload.payload as ExactSvmPayload;
 
-  // Duplicate settlement check: reject if this transaction is already being settled.
-  // Must occur before any async work so concurrent calls for the same tx are caught.
-  const txKey = svmPayload.transaction;
+  // Decode the transaction to compute the message hash used as the cache key.
+  // Must remain synchronous (before any await) so concurrent settle calls for
+  // the same payment are caught before any async work begins.
+  const decodedTransaction = decodeTransactionFromPayload(svmPayload);
+
+  // Duplicate settlement check keyed on message hash (immune to mutable fee-payer sig at slot 0).
+  const txKey = transactionMessageHash(decodedTransaction);
   if (settlementCache.isDuplicate(txKey)) {
     return {
       success: false,
@@ -87,7 +92,6 @@ export async function settle(
       transaction: "",
     };
   }
-  const decodedTransaction = decodeTransactionFromPayload(svmPayload);
   const signedTransaction = await signTransactionWithSigner(signer, decodedTransaction);
   assertTransactionFullySigned(signedTransaction);
   const payer = getTokenPayerFromTransaction(signedTransaction);

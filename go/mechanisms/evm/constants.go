@@ -6,8 +6,9 @@ import (
 
 const (
 	// Scheme identifiers
-	SchemeExact = "exact"
-	SchemeUpto  = "upto"
+	SchemeExact   = "exact"
+	SchemeUpto    = "upto"
+	SchemeBatched = "batch-settlement"
 
 	// Default token decimals for USDC
 	DefaultDecimals = 6
@@ -54,7 +55,7 @@ const (
 
 	// X402UptoPermit2ProxyAddress is the x402 upto payment proxy.
 	// Vanity address: 0x4020...0002 for easy recognition.
-	X402UptoPermit2ProxyAddress = "0x402039b3d6E6BEC5A02c2C9fd937ac17A6940002"
+	X402UptoPermit2ProxyAddress = "0x4020A4f3b7b90ccA423B9fabCc0CE57C6C240002"
 
 	// Permit2DeadlineBuffer is the time buffer (in seconds) added when checking
 	// deadline expiration to account for block propagation time.
@@ -69,16 +70,31 @@ const (
 
 var (
 	// Network chain IDs
-	ChainIDBase        = big.NewInt(8453)
-	ChainIDBaseSepolia = big.NewInt(84532)
-	ChainIDMegaETH     = big.NewInt(4326)
-	ChainIDMonad       = big.NewInt(143)
-	ChainIDMezoTestnet = big.NewInt(31611)
-	ChainIDStable      = big.NewInt(988)
-	ChainIDPolygon     = big.NewInt(137)
+	ChainIDBase          = big.NewInt(8453)
+	ChainIDBaseSepolia   = big.NewInt(84532)
+	ChainIDMegaETH       = big.NewInt(4326)
+	ChainIDMonad         = big.NewInt(143)
+	ChainIDMezo          = big.NewInt(31612)
+	ChainIDMezoTestnet   = big.NewInt(31611)
+	ChainIDStable        = big.NewInt(988)
+	ChainIDStableTestnet = big.NewInt(2201)
+	ChainIDPolygon       = big.NewInt(137)
+	ChainIDArbOne        = big.NewInt(42161)
+	ChainIDArbSepolia    = big.NewInt(421614)
+	ChainIDRadius        = big.NewInt(723487)
+	ChainIDRadiusTestnet = big.NewInt(72344)
+	ChainIDADI           = big.NewInt(36900)
+	ChainIDHPP           = big.NewInt(190415)
+	ChainIDHPPSepolia    = big.NewInt(181228)
+	ChainIDXDC           = big.NewInt(50)
+	ChainIDXDCApothem    = big.NewInt(51)
+	ChainIDIgra          = big.NewInt(38833)
+	ChainIDFlare         = big.NewInt(14)
+	ChainIDCelo          = big.NewInt(42220)
+	ChainIDCeloSepolia   = big.NewInt(11142220)
 
 	// Network configurations
-	// See DEFAULT_ASSET.md for guidelines on adding new chains
+	// See DEFAULT_ASSETS.md for guidelines on adding new chains
 	//
 	// Default Asset Selection Policy:
 	// - Each chain has the right to determine its own default stablecoin
@@ -87,7 +103,7 @@ var (
 	//
 	// Both EIP-3009 (transferWithAuthorization) and Permit2 asset transfer methods are supported.
 	// EIP-3009 is the default. Set AssetTransferMethod to AssetTransferMethodPermit2 for tokens
-	// that don't support EIP-3009. See DEFAULT_ASSET.md for details.
+	// that don't support EIP-3009. See DEFAULT_ASSETS.md for details.
 	NetworkConfigs = map[string]NetworkConfig{
 		// Base Mainnet
 		"eip155:8453": {
@@ -131,6 +147,18 @@ var (
 				Decimals: DefaultDecimals,
 			},
 		},
+		// Mezo Mainnet (uses Permit2 instead of EIP-3009, supports EIP-2612)
+		"eip155:31612": {
+			ChainID: ChainIDMezo,
+			DefaultAsset: AssetInfo{
+				Address:             "0xdD468A1DDc392dcdbEf6db6e34E89AA338F9F186", // mUSD on Mezo
+				Name:                "Mezo USD",
+				Version:             "1",
+				Decimals:            18,
+				AssetTransferMethod: AssetTransferMethodPermit2,
+				SupportsEip2612:     true,
+			},
+		},
 		// Mezo Testnet (uses Permit2 instead of EIP-3009, supports EIP-2612)
 		"eip155:31611": {
 			ChainID: ChainIDMezoTestnet,
@@ -153,12 +181,157 @@ var (
 				Decimals: DefaultDecimals,
 			},
 		},
+		// Stable Testnet
+		"eip155:2201": {
+			ChainID: ChainIDStableTestnet,
+			DefaultAsset: AssetInfo{
+				Address:  "0x78Cf24370174180738C5B8E352B6D14c83a6c9A9", // USDT0 on Stable Testnet
+				Name:     "USDT0",
+				Version:  "1",
+				Decimals: DefaultDecimals,
+			},
+		},
 		// Polygon Mainnet
 		"eip155:137": {
 			ChainID: ChainIDPolygon,
 			DefaultAsset: AssetInfo{
 				Address:  "0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359", // USDC on Polygon
 				Name:     "USD Coin",
+				Version:  "2",
+				Decimals: DefaultDecimals,
+			},
+		},
+		// Arbitrum One
+		"eip155:42161": {
+			ChainID: ChainIDArbOne,
+			DefaultAsset: AssetInfo{
+				Address:  "0xaf88d065e77c8cC2239327C5EDb3A432268e5831", // USDC on ArbOne
+				Name:     "USD Coin",
+				Version:  "2",
+				Decimals: DefaultDecimals,
+			},
+		},
+		// Arbitrum Sepolia
+		"eip155:421614": {
+			ChainID: ChainIDArbSepolia,
+			DefaultAsset: AssetInfo{
+				Address:  "0x75faf114eafb1BDbe2F0316DF893fd58CE46AA4d", // USDC on ArbSepolia
+				Name:     "USD Coin",
+				Version:  "2",
+				Decimals: DefaultDecimals,
+			},
+		},
+		// Radius Network (uses Permit2 instead of EIP-3009, supports EIP-2612)
+		"eip155:723487": {
+			ChainID: ChainIDRadius,
+			DefaultAsset: AssetInfo{
+				Address:             "0x33ad9e4BD16B69B5BFdED37D8B5D9fF9aba014Fb", // SBC on Radius
+				Name:                "Stable Coin",
+				Version:             "1",
+				Decimals:            DefaultDecimals,
+				AssetTransferMethod: AssetTransferMethodPermit2,
+				SupportsEip2612:     true,
+			},
+		},
+		// Radius Testnet (uses Permit2 instead of EIP-3009, supports EIP-2612)
+		"eip155:72344": {
+			ChainID: ChainIDRadiusTestnet,
+			DefaultAsset: AssetInfo{
+				Address:             "0x33ad9e4BD16B69B5BFdED37D8B5D9fF9aba014Fb", // SBC on Radius Testnet
+				Name:                "Stable Coin",
+				Version:             "1",
+				Decimals:            DefaultDecimals,
+				AssetTransferMethod: AssetTransferMethodPermit2,
+				SupportsEip2612:     true,
+			},
+		},
+		// ADI Chain
+		"eip155:36900": {
+			ChainID: ChainIDADI,
+			DefaultAsset: AssetInfo{
+				Address:  "0x9cb8142aEBBcdc60AF7c97Af897A67A8f3CA71C2", // USDC.e on ADI Chain
+				Name:     "USDC.e",
+				Version:  "2",
+				Decimals: DefaultDecimals,
+			},
+		},
+		// HPP Mainnet
+		"eip155:190415": {
+			ChainID: ChainIDHPP,
+			DefaultAsset: AssetInfo{
+				Address:  "0x401eCb1D350407f13ba348573E5630B83638E30D", // USDC.e (Bridged USDC) on HPP
+				Name:     "Bridged USDC",
+				Version:  "2",
+				Decimals: DefaultDecimals,
+			},
+		},
+		// HPP Sepolia
+		"eip155:181228": {
+			ChainID: ChainIDHPPSepolia,
+			DefaultAsset: AssetInfo{
+				Address:  "0x401eCb1D350407f13ba348573E5630B83638E30D", // USDC.e (Bridged USDC) on HPP Sepolia
+				Name:     "Bridged USDC",
+				Version:  "2",
+				Decimals: DefaultDecimals,
+			},
+		},
+		// XDC Network Mainnet
+		"eip155:50": {
+			ChainID: ChainIDXDC,
+			DefaultAsset: AssetInfo{
+				Address:  "0xfA2958CB79b0491CC627c1557F441eF849Ca8eb1", // USDC (Bridged USDC Standard) on XDC Network
+				Name:     "USDC",
+				Version:  "2",
+				Decimals: DefaultDecimals,
+			},
+		},
+		// XDC Apothem Testnet
+		"eip155:51": {
+			ChainID: ChainIDXDCApothem,
+			DefaultAsset: AssetInfo{
+				Address:  "0xb5AB69F7bBada22B28e79C8FFAECe55eF1c771D4", // USDC (Bridged USDC Standard) on XDC Apothem
+				Name:     "USDC",
+				Version:  "2",
+				Decimals: DefaultDecimals,
+			},
+		},
+		// Igra Mainnet (uses Permit2 instead of EIP-3009, no EIP-2612)
+		"eip155:38833": {
+			ChainID: ChainIDIgra,
+			DefaultAsset: AssetInfo{
+				Address:             "0xA5b8BF902b2844dA17d4506cc827F7F1681735E7", // USDC on Igra
+				Name:                "USDC",
+				Version:             "1",
+				Decimals:            DefaultDecimals,
+				AssetTransferMethod: AssetTransferMethodPermit2,
+			},
+		},
+		// Celo Mainnet
+		// Flare (Mainnet)
+		"eip155:14": {
+			ChainID: ChainIDFlare,
+			DefaultAsset: AssetInfo{
+				Address:  "0xe7cd86e13AC4309349F30B3435a9d337750fC82D", // USD₮0 on Flare
+				Name:     "USD₮0",
+				Version:  "1",
+				Decimals: DefaultDecimals,
+			},
+		},
+		"eip155:42220": {
+			ChainID: ChainIDCelo,
+			DefaultAsset: AssetInfo{
+				Address:  "0xcebA9300f2b948710d2653dD7B07f33A8B32118C", // USDC on Celo
+				Name:     "USDC",
+				Version:  "2",
+				Decimals: DefaultDecimals,
+			},
+		},
+		// Celo Sepolia (Testnet)
+		"eip155:11142220": {
+			ChainID: ChainIDCeloSepolia,
+			DefaultAsset: AssetInfo{
+				Address:  "0x01C5C0122039549AD1493B8220cABEdD739BC44E", // USDC on Celo Sepolia
+				Name:     "USDC",
 				Version:  "2",
 				Decimals: DefaultDecimals,
 			},
@@ -207,6 +380,20 @@ var (
 
 	// Legacy: Combined ABI (deprecated, use specific ABIs above)
 	TransferWithAuthorizationABI = TransferWithAuthorizationVRSABI
+
+	// ERC20TransferEventABI for parsing Transfer event logs
+	ERC20TransferEventABI = []byte(`[
+		{
+			"anonymous": false,
+			"inputs": [
+				{"indexed": true, "name": "from", "type": "address"},
+				{"indexed": true, "name": "to", "type": "address"},
+				{"indexed": false, "name": "value", "type": "uint256"}
+			],
+			"name": "Transfer",
+			"type": "event"
+		}
+	]`)
 
 	// ABI for authorizationState check
 	AuthorizationStateABI = []byte(`[

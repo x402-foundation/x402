@@ -1,7 +1,0 @@
-{
-  "name": "Node Servers (Hono, Express, Advanced)",
-  "category": "Infrastructure & Tooling",
-  "logoUrl": "/logos/node-servers.png",
-  "description": "Reference x402 server implementations in Node.js using Hono and Express, plus an advanced example with dynamic pricing and complex logic.",
-  "websiteUrl": "https://github.com/coinbase/x402/tree/main/examples/typescript/servers"
-}

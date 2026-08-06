@@ -1,7 +1,0 @@
-{
-  "name": "x402 Example Gallery",
-  "category": "Learning & Community Resources",
-  "logoUrl": "/logos/x402-examples.png",
-  "description": "A collection of x402 examples including Next.js integration, Go Proxy, agent use-cases, authentication flows, and more. Explore practical code samples to accelerate your x402 journey.",
-  "websiteUrl": "https://github.com/coinbase/x402/tree/main/examples/typescript"
-}

@@ -18,14 +18,50 @@ Both contracts:
 - Support both standard Permit2 and EIP-2612 flows
 - Deploy to the **same address on all EVM chains** via CREATE2
 
-## Deployed Addresses
+## Canonical Addresses
 
-### Base Sepolia (Testnet)
+| Contract | Address |
+|----------|---------|
+| x402ExactPermit2Proxy | `0x402085c248EeA27D92E8b30b2C58ed07f9E20001` |
+| x402UptoPermit2Proxy | `0x402015c795ecb48A360bDC6e35a2EaEb313a0002` |
 
-| Contract | Address | Verified |
-|----------|---------|----------|
-| x402ExactPermit2Proxy | [`0x402085c248EeA27D92E8b30b2C58ed07f9E20001`](https://sepolia.basescan.org/address/0x402085c248EeA27D92E8b30b2C58ed07f9E20001) | ✓ |
-| x402UptoPermit2Proxy | [`0x402039b3d6E6BEC5A02c2C9fd937ac17A6940002`](https://sepolia.basescan.org/address/0x402039b3d6E6BEC5A02c2C9fd937ac17A6940002) | ✓ |
+**Batch settlement (CREATE2 vanity `0x4020…`)**
+
+| Contract | Address |
+|----------|---------|
+| x402BatchSettlement | `0x4020074e9dF2ce1deE5A9C1b5c3f541D02a10003` |
+| ERC3009DepositCollector | `0x4020806089470a89826cB9fB1f4059150b550004` |
+| Permit2DepositCollector | `0x4020425FAf3B746C082C2f942b4E5159887B0005` |
+
+**Implementer notes:** [x402-batch-settlement-implementers.md](docs/x402-batch-settlement-implementers.md) — on-chain vs off-chain entitlement, timed withdrawal vs `claim`, deposits, EIP-712, and deployment constraints.
+
+> Re-mine collectors (`cargo run --release -- batch-stack`) whenever `ERC3009DepositCollector` / `Permit2DepositCollector` bytecode changes; salts live in `script/DeployBatchSettlement.s.sol`.
+
+### Current Deployments
+
+| Chain | Exact | Upto |
+|-------|-------|------|
+| Base Mainnet | [Deployed](https://basescan.org/address/0x402085c248EeA27D92E8b30b2C58ed07f9E20001) | — |
+| Base Sepolia | [Deployed](https://sepolia.basescan.org/address/0x402085c248EeA27D92E8b30b2C58ed07f9E20001) | [Legacy\*](https://sepolia.basescan.org/address/0x402039b3d6E6BEC5A02c2C9fd937ac17A6940002) |
+
+**Batch settlement deployments**
+
+| Chain | x402BatchSettlement | ERC3009DepositCollector | Permit2DepositCollector |
+|-------|---------------------|------------------------|------------------------|
+| Base Mainnet | [Deployed](https://basescan.org/address/0x4020074e9dF2ce1deE5A9C1b5c3f541D02a10003) | [Deployed](https://basescan.org/address/0x4020806089470a89826cB9fB1f4059150b550004) | [Deployed](https://basescan.org/address/0x4020425FAf3B746C082C2f942b4E5159887B0005) |
+| Arbitrum Mainnet | [Deployed](https://arbiscan.io/address/0x4020074e9dF2ce1deE5A9C1b5c3f541D02a10003) | [Deployed](https://arbiscan.io/address/0x4020806089470a89826cB9fB1f4059150b550004) | [Deployed](https://arbiscan.io/address/0x4020425FAf3B746C082C2f942b4E5159887B0005) |
+| World Chain | [Deployed](https://worldscan.org/address/0x4020074e9dF2ce1deE5A9C1b5c3f541D02a10003) | [Deployed](https://worldscan.org/address/0x4020806089470a89826cB9fB1f4059150b550004) | [Deployed](https://worldscan.org/address/0x4020425FAf3B746C082C2f942b4E5159887B0005) |
+| World Chain Sepolia | [Deployed](https://sepolia.worldscan.org/address/0x4020074e9dF2ce1deE5A9C1b5c3f541D02a10003) | [Deployed](https://sepolia.worldscan.org/address/0x4020806089470a89826cB9fB1f4059150b550004) | [Deployed](https://sepolia.worldscan.org/address/0x4020425FAf3B746C082C2f942b4E5159887B0005) |
+| Polygon Mainnet | [Deployed](https://polygonscan.com/address/0x4020074e9dF2ce1deE5A9C1b5c3f541D02a10003) · [Sourcify](https://sourcify.dev/#/lookup/0x4020074e9dF2ce1deE5A9C1b5c3f541D02a10003) | [Deployed](https://polygonscan.com/address/0x4020806089470a89826cB9fB1f4059150b550004) · [Sourcify](https://sourcify.dev/#/lookup/0x4020806089470a89826cB9fB1f4059150b550004) | [Deployed](https://polygonscan.com/address/0x4020425FAf3B746C082C2f942b4E5159887B0005) · [Sourcify](https://sourcify.dev/#/lookup/0x4020425FAf3B746C082C2f942b4E5159887B0005) |
+| Optimism Mainnet | [Deployed](https://optimistic.etherscan.io/address/0x4020074e9dF2ce1deE5A9C1b5c3f541D02a10003) | [Deployed](https://optimistic.etherscan.io/address/0x4020806089470a89826cB9fB1f4059150b550004) | [Deployed](https://optimistic.etherscan.io/address/0x4020425FAf3B746C082C2f942b4E5159887B0005) |
+| Avalanche Mainnet | [Deployed](https://snowscan.xyz/address/0x4020074e9dF2ce1deE5A9C1b5c3f541D02a10003) | [Deployed](https://snowscan.xyz/address/0x4020806089470a89826cB9fB1f4059150b550004) | [Deployed](https://snowscan.xyz/address/0x4020425FAf3B746C082C2f942b4E5159887B0005) |
+| Celo Mainnet | [Deployed](https://celoscan.io/address/0x4020074e9dF2ce1deE5A9C1b5c3f541D02a10003) | [Deployed](https://celoscan.io/address/0x4020806089470a89826cB9fB1f4059150b550004) | [Deployed](https://celoscan.io/address/0x4020425FAf3B746C082C2f942b4E5159887B0005) |
+| Linea Mainnet | [Deployed](https://lineascan.build/address/0x4020074e9dF2ce1deE5A9C1b5c3f541D02a10003) | [Deployed](https://lineascan.build/address/0x4020806089470a89826cB9fB1f4059150b550004) | [Deployed](https://lineascan.build/address/0x4020425FAf3B746C082C2f942b4E5159887B0005) |
+| Unichain Mainnet | [Deployed](https://uniscan.xyz/address/0x4020074e9dF2ce1deE5A9C1b5c3f541D02a10003) | [Deployed](https://uniscan.xyz/address/0x4020806089470a89826cB9fB1f4059150b550004) | [Deployed](https://uniscan.xyz/address/0x4020425FAf3B746C082C2f942b4E5159887B0005) |
+| Monad Mainnet | [Deployed](https://monadscan.com/address/0x4020074e9dF2ce1deE5A9C1b5c3f541D02a10003) | [Deployed](https://monadscan.com/address/0x4020806089470a89826cB9fB1f4059150b550004) | [Deployed](https://monadscan.com/address/0x4020425FAf3B746C082C2f942b4E5159887B0005) |
+
+> \*Older testnet deployments may use prior vanity salts; the canonical **Upto** address for
+> CREATE2 deployments from this tree is `0x402015c7…313a0002` (see `forge script script/ComputeAddress.s.sol`).
 
 ## Prerequisites
 
@@ -34,12 +70,86 @@ Both contracts:
 ## Installation
 
 ```bash
-# Install dependencies
 forge install
-
-# Build contracts
 forge build
 ```
+
+## Deploying to a New EVM Chain
+
+Anyone can deploy both contracts to their canonical addresses on any EVM chain.
+No special build environment, private key, or permission is required—only gas on the target chain.
+
+### How it works
+
+Both contracts are deployed via [Arachnid's deterministic CREATE2 deployer](https://github.com/Arachnid/deterministic-deployment-proxy)
+(`0x4e59b44847b379578588920cA78FbF26c0B4956C`), which exists at the same address on
+virtually every EVM chain. The CREATE2 address depends only on the deployer, a salt,
+and `keccak256(initCode)`—not on who sends the transaction.
+
+| Contract | Bytecode source | Why |
+|----------|----------------|-----|
+| **Exact** | Pre-built initCode in `script/data/exact-proxy-initcode.hex` | The original build included Solidity CBOR metadata (an IPFS hash that varies per build environment). The committed hex file is the exact initCode from the original deployment, ensuring the same address everywhere. |
+| **Upto** | Compiled from source (`forge build`) | Built with `cbor_metadata = false` so the bytecode is identical on every machine at the same git commit. |
+
+### Step-by-step
+
+1. **Clone and build**
+   ```bash
+   cd contracts/evm
+   forge install
+   forge build
+   ```
+
+2. **Verify expected addresses** (optional, no RPC needed)
+   ```bash
+   forge script script/ComputeAddress.s.sol
+   ```
+   You should see:
+   - Exact → `0x402085c248EeA27D92E8b30b2C58ed07f9E20001`
+   - Upto  → `0x402015c795ecb48A360bDC6e35a2EaEb313a0002`
+
+3. **Check prerequisites on the target chain**
+   - [Permit2](https://github.com/Uniswap/permit2) must be deployed at `0x000000000022D473030F116dDEE9F6B43aC78BA3`
+   - The CREATE2 deployer must exist at `0x4e59b44847b379578588920cA78FbF26c0B4956C`
+   - Your wallet needs enough native gas to pay for deployment (~300k gas per contract)
+
+4. **Deploy**
+   ```bash
+   export PRIVATE_KEY="your_private_key"
+
+   forge script script/Deploy.s.sol \
+     --rpc-url <RPC_URL> \
+     --broadcast \
+     --verify
+   ```
+
+   The script automatically:
+   - Loads the pre-built initCode for Exact and compiler-derived initCode for Upto
+   - Skips any contract already deployed at the expected address
+   - Verifies `PERMIT2()` returns the correct address after deployment
+
+5. **Verify on Etherscan** (if `--verify` didn't work automatically)
+   ```bash
+   forge verify-contract <DEPLOYED_ADDRESS> x402UptoPermit2Proxy \
+     --rpc-url <RPC_URL> \
+     --constructor-args $(cast abi-encode "constructor(address)" 0x000000000022D473030F116dDEE9F6B43aC78BA3)
+   ```
+
+   For the Exact proxy, verification may require matching the original compiler metadata.
+   The verified source on Base Sepolia / Base Mainnet can be used as a reference.
+
+### Overriding Permit2 address
+
+If the target chain has Permit2 at a non-canonical address:
+
+```bash
+export PERMIT2_ADDRESS="0x..."
+forge script script/Deploy.s.sol --rpc-url <RPC_URL> --broadcast
+```
+
+> **Warning:** Overriding the Permit2 address changes the initCode for the Upto contract
+> and will produce a different deployment address. The Exact contract's pre-built initCode
+> already encodes the canonical Permit2 address and cannot be overridden.
 
 ## Testing
 
@@ -71,91 +181,140 @@ forge test --match-contract Invariants
 Fork tests run against real Permit2 on Base Sepolia:
 
 ```bash
-# Set up environment
 export BASE_SEPOLIA_RPC_URL="https://sepolia.base.org"
 
-# Run fork tests for Exact variant
 forge test --match-contract X402ExactPermit2ProxyForkTest --fork-url $BASE_SEPOLIA_RPC_URL
-
-# Run fork tests for Upto variant
 forge test --match-contract X402UptoPermit2ProxyForkTest --fork-url $BASE_SEPOLIA_RPC_URL
 ```
 
-## Deployment
+## Vanity Address Mining
 
-### Compute Expected Addresses
+Permit2 proxies use prefix `0x4020` and suffix `…0001` (Exact) or `…0002` (Upto).
+
+**Batch settlement stack** (`x402BatchSettlement`, `ERC3009DepositCollector`, `Permit2DepositCollector`) uses the same prefix with suffixes `…0003`, `…0004`, and `…0005` respectively. The two deposit collectors take the batch settlement contract address in their constructors, so their CREATE2 `initCode` (and thus the mined salt) **depends on the batch contract address**. Mine **batch first**, then collectors: use `batch-stack` (see below).
+
+After any contract change, refresh embedded creation bytecode used by the miner:
+
+```bash
+cd contracts/evm
+forge build
+mkdir -p vanity-miner/bytecode
+forge inspect ERC3009DepositCollector bytecode | sed 's/^0x//' | tr -d '\n' > vanity-miner/bytecode/erc3009_creation.hex
+forge inspect Permit2DepositCollector bytecode | sed 's/^0x//' | tr -d '\n' > vanity-miner/bytecode/permit2_creation.hex
+```
+
+Update `BATCH_INIT_CODE_HASH` in `vanity-miner/src/main.rs` to `cast keccak $(forge inspect x402BatchSettlement bytecode)` (with `0x` prefix in the constant).
+
+```bash
+cd vanity-miner
+
+# Permit2 proxies only (Exact + Upto)
+cargo run --release -- proxies
+
+# Single proxy
+cargo run --release -- exact
+cargo run --release -- upto
+
+# Batch settlement only (...0003); update BATCH_INIT_CODE_HASH first if batch bytecode changed
+cargo run --release -- batch
+
+# Full pipeline: batch (...0003) then ERC3009 (...0004) then Permit2DepositCollector (...0005)
+cargo run --release -- batch-stack
+
+# If you already have a batch address, mine one collector (set BATCH_ADDRESS=0x...)
+cargo run --release -- erc3009
+cargo run --release -- permit2-collector
+```
+
+After mining, update salt constants in `script/Deploy.s.sol` / `script/ComputeAddress.s.sol` (proxies) or `script/DeployBatchSettlement.s.sol` (batch stack), and init code hashes in `vanity-miner/src/main.rs` as needed.
+
+### Preview CREATE2 addresses (no RPC)
+
+Proxies (default salts):
 
 ```bash
 forge script script/ComputeAddress.s.sol
 ```
 
-### Deploy to Testnet
+Batch stack (pass the three salts and Permit2 address used in the collector constructor):
 
 ```bash
-# Set environment variables
-export PRIVATE_KEY="your_private_key"
-export BASE_SEPOLIA_RPC_URL="https://sepolia.base.org"
-export BASESCAN_API_KEY="your_api_key"
+forge script script/ComputeAddress.s.sol --sig "computeBatchStack(bytes32,bytes32,bytes32,address)" \
+  <BATCH_SALT> <ERC3009_SALT> <PERMIT2_COLLECTOR_SALT> 0x000000000022D473030F116dDEE9F6B43aC78BA3
+```
 
-# Deploy both contracts with verification
-forge script script/Deploy.s.sol \
-  --rpc-url $BASE_SEPOLIA_RPC_URL \
+### Deploy batch stack
+
+Prerequisites: [Permit2](https://github.com/Uniswap/permit2) at `0x000000000022D473030F116dDEE9F6B43aC78BA3`, Arachnid [CREATE2 deployer](https://github.com/Arachnid/deterministic-deployment-proxy) at `0x4e59b44847b379578588920cA78FbF26c0B4956C`, Cancun-compatible chain (transient storage), and native gas on the target chain.
+
+**Base Sepolia:**
+```bash
+export PRIVATE_KEY="..."
+forge script script/DeployBatchSettlement.s.sol \
+  --rpc-url https://sepolia.base.org \
   --broadcast \
   --verify
 ```
 
-### Deploy to Mainnet
-
+**Polygon Mainnet:**
 ```bash
-export BASE_RPC_URL="https://mainnet.base.org"
+export PRIVATE_KEY="..."
+export POLYGON_RPC_URL="https://polygon-rpc.com"   # or your own node
+export POLYGONSCAN_API_KEY="..."
 
-forge script script/Deploy.s.sol \
-  --rpc-url $BASE_RPC_URL \
+forge script script/DeployBatchSettlement.s.sol \
+  --rpc-url polygon \
   --broadcast \
   --verify
 ```
 
-## Vanity Address Mining
-
-The deployment uses vanity addresses starting with `0x4020`. To mine new salts:
+If `--verify` fails, verify manually (constructor args match deployment `initCode`):
 
 ```bash
-cd vanity-miner
-cargo run --release
+forge verify-contract <ADDR> ERC3009DepositCollector --chain base-sepolia \
+  --constructor-args $(cast abi-encode "constructor(address)" <SETTLEMENT>)
+forge verify-contract <ADDR> Permit2DepositCollector --chain base-sepolia \
+  --constructor-args $(cast abi-encode "constructor(address,address)" <SETTLEMENT> 0x000000000022D473030F116dDEE9F6B43aC78BA3)
 ```
 
-The Rust miner uses parallel processing for efficient address generation. Update the init code hashes in `vanity-miner/src/main.rs` if the contract bytecode changes.
+`x402BatchSettlement` has no constructor arguments beyond the EIP-712 parent (empty user ctor).
+
+## Deterministic Build Configuration
+
+The `foundry.toml` includes two settings that ensure bytecode reproducibility:
+
+```toml
+cbor_metadata = false
+bytecode_hash = "none"
+```
+
+Without these, the Solidity compiler appends a CBOR-encoded IPFS hash of the contract
+metadata to the bytecode. This hash varies across build environments (even with identical
+source code and compiler version), breaking CREATE2 address determinism.
+
+The `x402ExactPermit2Proxy` was deployed before this fix was in place, which is why it
+uses a committed initCode hex file instead of compiler-derived bytecode.
 
 ## Contract Architecture
 
 ```
 src/
+├── x402BasePermit2Proxy.sol   # Shared settlement logic and Permit2 interaction
 ├── x402ExactPermit2Proxy.sol  # Exact amount transfers (EIP-3009-like)
 ├── x402UptoPermit2Proxy.sol   # Flexible amount transfers (up to permitted)
 └── interfaces/
     └── ISignatureTransfer.sol # Permit2 SignatureTransfer interface
 
-test/
-├── x402ExactPermit2Proxy.t.sol      # Exact variant unit tests
-├── x402ExactPermit2Proxy.fork.t.sol # Exact variant fork tests
-├── x402UptoPermit2Proxy.t.sol       # Upto variant unit tests
-├── x402UptoPermit2Proxy.fork.t.sol  # Upto variant fork tests
-├── invariants/
-│   ├── X402ExactInvariants.t.sol    # Exact variant invariant tests
-│   └── X402UptoInvariants.t.sol     # Upto variant invariant tests
-└── mocks/
-    ├── MockERC20.sol
-    ├── MockERC20Permit.sol
-    ├── MockPermit2.sol
-    ├── MaliciousReentrantExact.sol
-    └── MaliciousReentrantUpto.sol
-
 script/
-├── Deploy.s.sol              # CREATE2 deployment for both contracts
-└── ComputeAddress.s.sol      # Address computation for both contracts
+├── Deploy.s.sol                  # CREATE2 deployment for Permit2 proxy pair
+├── DeployBatchSettlement.s.sol   # CREATE2: batch settlement + deposit collectors
+├── ComputeAddress.s.sol          # Address computation (no RPC needed)
+└── data/
+    └── exact-proxy-initcode.hex  # Pre-built initCode for Exact proxy
 
-vanity-miner/                   # Rust-based vanity address miner
-└── src/main.rs
+vanity-miner/                  # Rust-based vanity address miner
+├── src/main.rs
+└── bytecode/                  # ERC3009 / Permit2 collector creation hex (refresh from forge)
 ```
 
 ## Key Functions
@@ -194,11 +353,11 @@ The function signatures follow the same pattern as `settle()` for each variant.
 
 ## Security
 
-- **Immutable:** No upgrade mechanism, one-time initialization
+- **Immutable:** No upgrade mechanism, no owner, no admin functions
 - **No custody:** Contracts never hold tokens
 - **Destination locked:** Witness pattern enforces payTo address
-- **Reentrancy protected:** Uses OpenZeppelin's ReentrancyGuard
-- **Deterministic:** Same address on all chains via CREATE2 (Permit2 set via initialize)
+- **Reentrancy protected:** Uses OpenZeppelin's `ReentrancyGuardTransient`
+- **Deterministic:** Same address on all chains via CREATE2
 
 ## Coverage
 
@@ -213,10 +372,7 @@ forge coverage --no-match-coverage "(test|script)/.*" --offline
 ## Gas Snapshots
 
 ```bash
-# Create snapshot
 forge snapshot
-
-# Compare against baseline
 forge snapshot --diff
 ```
 

@@ -6,14 +6,14 @@ import (
 	"os"
 	"time"
 
-	x402 "github.com/coinbase/x402/go"
-	"github.com/coinbase/x402/go/extensions/bazaar"
-	"github.com/coinbase/x402/go/extensions/types"
-	x402http "github.com/coinbase/x402/go/http"
-	ginmw "github.com/coinbase/x402/go/http/gin"
-	evm "github.com/coinbase/x402/go/mechanisms/evm/exact/server"
 	ginfw "github.com/gin-gonic/gin"
 	"github.com/joho/godotenv"
+	x402 "github.com/x402-foundation/x402/go/v2"
+	"github.com/x402-foundation/x402/go/v2/extensions/bazaar"
+	"github.com/x402-foundation/x402/go/v2/extensions/types"
+	x402http "github.com/x402-foundation/x402/go/v2/http"
+	ginmw "github.com/x402-foundation/x402/go/v2/http/gin"
+	evm "github.com/x402-foundation/x402/go/v2/mechanisms/evm/exact/server"
 )
 
 const DefaultPort = "4021"
@@ -101,8 +101,10 @@ func main() {
 			},
 			Description: "Get weather data for a city",
 			MimeType:    "application/json",
+			ServiceName: "Weather API",
+			Tags:        []string{"weather", "api"},
 			Extensions: map[string]interface{}{
-				types.BAZAAR: discoveryExtension,
+				bazaar.BAZAAR.Key(): discoveryExtension,
 			},
 		},
 	}
@@ -114,7 +116,7 @@ func main() {
 			{Network: evmNetwork, Server: evm.NewExactEvmScheme()},
 		},
 		SyncFacilitatorOnStart: true,
-		Timeout:    30 * time.Second,
+		Timeout:                30 * time.Second,
 	}))
 
 	r.GET("/weather", func(c *ginfw.Context) {
@@ -145,4 +147,3 @@ func main() {
 		os.Exit(1)
 	}
 }
-

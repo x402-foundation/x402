@@ -1,7 +1,0 @@
-{
-  "name": "MCP Server Example",
-  "category": "Infrastructure & Tooling",
-  "logoUrl": "/logos/mcp-example.png",
-  "description": "A reference implementation MCP server and wallet to call x402 endpoints. Explore the code and run your own server.",
-  "websiteUrl": "https://github.com/coinbase/x402/tree/main/examples/typescript/mcp"
-}

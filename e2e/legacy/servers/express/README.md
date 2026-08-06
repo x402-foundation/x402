@@ -7,8 +7,6 @@ This is an example Express.js server that demonstrates how to use the `x402-expr
 - Node.js v20+ (install via [nvm](https://github.com/nvm-sh/nvm))
 - pnpm v10 (install via [pnpm.io/installation](https://pnpm.io/installation))
 - A valid Ethereum address for receiving payments
-- Coinbase Developer Platform API Key & Secret (if accepting payments on Base mainnet)
-  -- Get them here [https://portal.cdp.coinbase.com/projects](https://portal.cdp.coinbase.com/projects)
 
 ## Setup
 

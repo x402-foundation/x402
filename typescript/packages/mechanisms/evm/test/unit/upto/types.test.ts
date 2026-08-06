@@ -12,7 +12,7 @@ const VALID_PAYLOAD = {
       token: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
       amount: "1000000",
     },
-    spender: "0x402039b3d6E6BEC5A02c2C9fd937ac17A6940002",
+    spender: "0x4020A4f3b7b90ccA423B9fabCc0CE57C6C240002",
     nonce: "12345",
     deadline: "1700000000",
     witness: {
@@ -184,7 +184,7 @@ describe("buildUptoPermit2SettleArgs", () => {
         token: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
         amount: "5000000",
       },
-      spender: "0x402039b3d6E6BEC5A02c2C9fd937ac17A6940002",
+      spender: "0x4020A4f3b7b90ccA423B9fabCc0CE57C6C240002",
       nonce: "99",
       deadline: "1700000000",
       witness: {

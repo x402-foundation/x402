@@ -2,10 +2,12 @@ package x402
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"reflect"
 	"sync"
 
-	"github.com/coinbase/x402/go/types"
+	"github.com/x402-foundation/x402/go/v2/types"
 )
 
 // x402Client manages payment mechanisms and creates payment payloads
@@ -22,12 +24,14 @@ type x402Client struct {
 	policies             []PaymentPolicy
 
 	// Registered client extensions (keyed by extension key)
-	extensions map[string]ClientExtension
+	extensions     map[string]ClientExtension
+	extensionOrder []string
 
 	// Lifecycle hooks
 	beforePaymentCreationHooks    []BeforePaymentCreationHook
 	afterPaymentCreationHooks     []AfterPaymentCreationHook
 	onPaymentCreationFailureHooks []OnPaymentCreationFailureHook
+	onPaymentResponseHooks        []OnPaymentResponseHook
 }
 
 // ClientOption configures the client
@@ -97,14 +101,32 @@ func (c *x402Client) RegisterPolicy(policy PaymentPolicy) *x402Client {
 }
 
 // RegisterExtension registers a client extension that can enrich payment payloads.
-// Extensions are invoked after the scheme creates the base payload. If the extension's
-// key is present in paymentRequired.Extensions, the extension's EnrichPaymentPayload
-// method is called to modify the payload.
+// Extensions are invoked after the scheme creates the base payload and the payload
+// is wrapped with extensions/resource/accepted data. Every registered extension's
+// EnrichPaymentPayload hook is called to modify the payload. Server-declared fields
+// are preserved via merge after enrichment.
 func (c *x402Client) RegisterExtension(ext ClientExtension) *x402Client {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	if _, exists := c.extensions[ext.Key()]; !exists {
+		c.extensionOrder = append(c.extensionOrder, ext.Key())
+	}
 	c.extensions[ext.Key()] = ext
 	return c
+}
+
+// GetExtensions returns the client extensions registered on this client.
+func (c *x402Client) GetExtensions() []ClientExtension {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+
+	extensions := make([]ClientExtension, 0, len(c.extensionOrder))
+	for _, key := range c.extensionOrder {
+		if ext, ok := c.extensions[key]; ok {
+			extensions = append(extensions, ext)
+		}
+	}
+	return extensions
 }
 
 // OnBeforePaymentCreation registers a hook to execute before payment payload creation
@@ -129,6 +151,55 @@ func (c *x402Client) OnPaymentCreationFailure(hook OnPaymentCreationFailureHook)
 	defer c.mu.Unlock()
 	c.onPaymentCreationFailureHooks = append(c.onPaymentCreationFailureHooks, hook)
 	return c
+}
+
+// OnPaymentResponse registers a hook fired by the transport after each paid
+// response. Returning Recovered=true on a corrective 402 instructs the transport
+// to retry once with a freshly built payment payload.
+func (c *x402Client) OnPaymentResponse(hook OnPaymentResponseHook) *x402Client {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.onPaymentResponseHooks = append(c.onPaymentResponseHooks, hook)
+	return c
+}
+
+// HandlePaymentResponse dispatches the OnPaymentResponse lifecycle for a paid
+// response: invokes the scheme's PaymentResponseHandler (if implemented) followed
+// by every user-registered OnPaymentResponseHook. Returns Recovered=true if any
+// hook recovered (first wins; subsequent hooks still run for instrumentation).
+func (c *x402Client) HandlePaymentResponse(
+	ctx context.Context,
+	prCtx PaymentResponseContext,
+) (PaymentResponseResult, error) {
+	c.mu.RLock()
+	schemes := findSchemesByNetwork(c.schemes, Network(prCtx.Requirements.Network))
+	var schemeImpl SchemeNetworkClient
+	if schemes != nil {
+		schemeImpl = schemes[prCtx.Requirements.Scheme]
+	}
+	userHooks := append([]OnPaymentResponseHook(nil), c.onPaymentResponseHooks...)
+	c.mu.RUnlock()
+
+	combined := PaymentResponseResult{}
+	if handler, ok := schemeImpl.(PaymentResponseHandler); ok {
+		res, err := handler.OnPaymentResponse(ctx, prCtx)
+		if err != nil {
+			return PaymentResponseResult{}, fmt.Errorf("scheme OnPaymentResponse: %w", err)
+		}
+		if res.Recovered {
+			combined.Recovered = true
+		}
+	}
+	for _, hook := range userHooks {
+		res, err := hook(ctx, prCtx)
+		if err != nil {
+			return combined, fmt.Errorf("user OnPaymentResponse hook: %w", err)
+		}
+		if res.Recovered {
+			combined.Recovered = true
+		}
+	}
+	return combined, nil
 }
 
 // SelectPaymentRequirementsV1 selects a V1 payment requirement
@@ -248,7 +319,51 @@ func (c *x402Client) CreatePaymentPayloadV1(
 		}
 	}
 
-	return client.CreatePaymentPayload(ctx, requirements)
+	// Before hooks
+	creationCtxV1 := PaymentCreationContext{
+		Ctx:                  ctx,
+		Version:              1,
+		SelectedRequirements: requirements,
+	}
+	for _, hook := range c.beforePaymentCreationHooks {
+		result, err := hook(creationCtxV1)
+		if err != nil {
+			return types.PaymentPayloadV1{}, err
+		}
+		if result != nil && result.Abort {
+			return types.PaymentPayloadV1{}, &PaymentError{
+				Code:    ErrCodeUnsupportedScheme,
+				Message: result.Reason,
+			}
+		}
+	}
+
+	payload, err := client.CreatePaymentPayload(ctx, requirements)
+	if err != nil {
+		for _, hook := range c.onPaymentCreationFailureHooks {
+			result, hookErr := hook(PaymentCreationFailureContext{
+				PaymentCreationContext: creationCtxV1,
+				Error:                  err,
+			})
+			if hookErr != nil {
+				return types.PaymentPayloadV1{}, hookErr
+			}
+			if result != nil && result.Recovered {
+				if recovered, ok := result.Payload.(types.PaymentPayloadV1); ok {
+					return recovered, nil
+				}
+			}
+		}
+		return types.PaymentPayloadV1{}, err
+	}
+
+	for _, hook := range c.afterPaymentCreationHooks {
+		_ = hook(PaymentCreatedContext{
+			PaymentCreationContext: creationCtxV1,
+			Payload:                payload,
+		})
+	}
+	return payload, nil
 }
 
 // CreatePaymentPayload creates a payment payload (V2, default)
@@ -281,6 +396,25 @@ func (c *x402Client) CreatePaymentPayload(
 		}
 	}
 
+	// Before hooks
+	creationCtxV2 := PaymentCreationContext{
+		Ctx:                  ctx,
+		Version:              2,
+		SelectedRequirements: requirements,
+	}
+	for _, hook := range c.beforePaymentCreationHooks {
+		result, err := hook(creationCtxV2)
+		if err != nil {
+			return types.PaymentPayload{}, err
+		}
+		if result != nil && result.Abort {
+			return types.PaymentPayload{}, &PaymentError{
+				Code:    ErrCodeUnsupportedScheme,
+				Message: result.Reason,
+			}
+		}
+	}
+
 	// Get partial payload from mechanism.
 	// If the scheme supports extensions (e.g., EIP-2612), pass them for enrichment.
 	var partial types.PaymentPayload
@@ -291,6 +425,20 @@ func (c *x402Client) CreatePaymentPayload(
 		partial, err = client.CreatePaymentPayload(ctx, requirements)
 	}
 	if err != nil {
+		for _, hook := range c.onPaymentCreationFailureHooks {
+			result, hookErr := hook(PaymentCreationFailureContext{
+				PaymentCreationContext: creationCtxV2,
+				Error:                  err,
+			})
+			if hookErr != nil {
+				return types.PaymentPayload{}, hookErr
+			}
+			if result != nil && result.Recovered {
+				if recovered, ok := result.Payload.(types.PaymentPayload); ok {
+					return recovered, nil
+				}
+			}
+		}
 		return types.PaymentPayload{}, err
 	}
 
@@ -304,13 +452,33 @@ func (c *x402Client) CreatePaymentPayload(
 	partial, err = c.enrichPaymentPayloadWithExtensions(ctx, partial, types.PaymentRequired{
 		X402Version: 2,
 		Accepts:     []types.PaymentRequirements{requirements},
-		Extensions:  partial.Extensions,
+		Extensions:  extensions,
 		Resource:    resource,
 	})
 	if err != nil {
+		for _, hook := range c.onPaymentCreationFailureHooks {
+			result, hookErr := hook(PaymentCreationFailureContext{
+				PaymentCreationContext: creationCtxV2,
+				Error:                  err,
+			})
+			if hookErr != nil {
+				return types.PaymentPayload{}, hookErr
+			}
+			if result != nil && result.Recovered {
+				if recovered, ok := result.Payload.(types.PaymentPayload); ok {
+					return recovered, nil
+				}
+			}
+		}
 		return types.PaymentPayload{}, err
 	}
 
+	for _, hook := range c.afterPaymentCreationHooks {
+		_ = hook(PaymentCreatedContext{
+			PaymentCreationContext: creationCtxV2,
+			Payload:                partial,
+		})
+	}
 	return partial, nil
 }
 
@@ -356,65 +524,221 @@ func (c *x402Client) GetRegisteredSchemes() map[int][]struct {
 	return result
 }
 
-// enrichPaymentPayloadWithExtensions invokes registered client extensions
-// to enrich the payment payload. For each registered extension whose key is
-// present in the PaymentRequired extensions, calls EnrichPaymentPayload.
+// enrichPaymentPayloadWithExtensions invokes EnrichPaymentPayload for every
+// registered extension, then merges server-declared extension fields back into
+// the result.
 func (c *x402Client) enrichPaymentPayloadWithExtensions(
 	ctx context.Context,
 	payload types.PaymentPayload,
 	required types.PaymentRequired,
 ) (types.PaymentPayload, error) {
-	if len(required.Extensions) == 0 || len(c.extensions) == 0 {
+	if len(c.extensions) == 0 {
 		return payload, nil
 	}
 
 	enriched := payload
 	for key, ext := range c.extensions {
-		if _, exists := required.Extensions[key]; exists {
-			var err error
-			enriched, err = ext.EnrichPaymentPayload(ctx, enriched, required)
-			if err != nil {
-				return types.PaymentPayload{}, fmt.Errorf("extension %s enrichment failed: %w", key, err)
-			}
+		var err error
+		enriched, err = ext.EnrichPaymentPayload(ctx, enriched, required)
+		if err != nil {
+			return types.PaymentPayload{}, fmt.Errorf("extension %s enrichment failed: %w", key, err)
 		}
 	}
+
+	// Re-merge server extensions over the enriched payload
+	enriched.Extensions = mergeExtensions(required.Extensions, enriched.Extensions)
 
 	return enriched, nil
 }
 
-// mergeExtensions merges server-declared extensions with scheme-provided extensions.
-// Scheme extensions overlay on top of server extensions at each key.
-func mergeExtensions(server, scheme map[string]interface{}) map[string]interface{} {
-	if scheme == nil {
+// asStringMap returns v as a map[string]interface{} so it can participate in the
+// extension deep-merge. Values that are already maps are returned directly; typed
+// structs/pointers attached by scheme clients (e.g. gas-sponsoring info structs) are
+// coerced via a JSON round-trip, mirroring the payload's eventual serialization. Non-object
+// values (strings, numbers, slices, nil) return ok=false so the caller treats them atomically.
+func asStringMap(v interface{}) (map[string]interface{}, bool) {
+	if v == nil {
+		return nil, false
+	}
+	if m, ok := v.(map[string]interface{}); ok {
+		return m, true
+	}
+	data, err := json.Marshal(v)
+	if err != nil {
+		return nil, false
+	}
+	var m map[string]interface{}
+	if err := json.Unmarshal(data, &m); err != nil || m == nil {
+		return nil, false
+	}
+	return m, true
+}
+
+// mergeExtensions merges server-declared extensions with client/scheme-provided
+// extensions, always preserving server-declared fields. For keys present on
+// both sides whose values are objects, server fields win and only client
+// fields the server did not declare are added (recursing into nested objects).
+// For fields listed in additiveArrayInfoFields (e.g. builder-code `s`), a
+// conflicting array is concatenated with client entries first (so a downstream
+// length cap trims server entries rather than the client's) and duplicates
+// removed; a scalar on either side is treated as a single-element array. Every
+// other conflicting array keeps the server's value, same as any other scalar.
+// For any other key the client value is used.
+func mergeExtensions(server, client map[string]interface{}) map[string]interface{} {
+	if client == nil {
 		return server
 	}
 	if server == nil {
-		return scheme
+		return client
 	}
-	merged := make(map[string]interface{})
+
+	merged := make(map[string]interface{}, len(server))
 	for k, v := range server {
 		merged[k] = v
 	}
-	for k, schemeVal := range scheme {
-		if serverVal, exists := merged[k]; exists {
-			serverMap, sOk := serverVal.(map[string]interface{})
-			schemeMap, cOk := schemeVal.(map[string]interface{})
-			if sOk && cOk {
-				// Deep merge: scheme overlays server
-				m := make(map[string]interface{})
-				for mk, mv := range serverMap {
-					m[mk] = mv
+
+	for key, clientVal := range client {
+		serverMap, sOk := asStringMap(merged[key])
+		clientMap, cOk := asStringMap(clientVal)
+		if !sOk || !cOk {
+			merged[key] = clientVal
+			continue
+		}
+
+		// Deep-merge into a copy of the server object, preserving server fields and
+		// only adding client fields the server did not declare. Conflicting arrays
+		// in an additive field (see additiveArrayInfoFields) are concatenated
+		// (client first) with duplicates removed; every other conflicting array
+		// keeps the server's value.
+		additiveFields := additiveArrayInfoFields[key]
+		extensionValue := make(map[string]interface{}, len(serverMap))
+		for k, v := range serverMap {
+			extensionValue[k] = v
+		}
+		type mergePair struct{ target, source map[string]interface{} }
+		pending := []mergePair{{target: extensionValue, source: clientMap}}
+		for i := 0; i < len(pending); i++ {
+			target, source := pending[i].target, pending[i].source
+			for fieldKey, clientFieldVal := range source {
+				serverFieldMap, sfOk := asStringMap(target[fieldKey])
+				clientFieldMap, cfOk := asStringMap(clientFieldVal)
+				if sfOk && cfOk {
+					nested := make(map[string]interface{}, len(serverFieldMap))
+					for k, v := range serverFieldMap {
+						nested[k] = v
+					}
+					target[fieldKey] = nested
+					pending = append(pending, mergePair{target: nested, source: clientFieldMap})
+					continue
 				}
-				for mk, mv := range schemeMap {
-					m[mk] = mv
+				if additiveFields[fieldKey] {
+					serverSlice, ssOk := asSlice(target[fieldKey])
+					clientSlice, csOk := asSlice(clientFieldVal)
+					// A scalar on one side (e.g. builder-code `s` sent as a bare string)
+					// merges as a single-element array against an array on the other side.
+					if !ssOk && csOk {
+						serverSlice, ssOk = asScalarSingleton(target[fieldKey])
+					}
+					if !csOk && ssOk {
+						clientSlice, csOk = asScalarSingleton(clientFieldVal)
+					}
+					if ssOk && csOk {
+						target[fieldKey] = mergeSlicesUnique(clientSlice, serverSlice)
+						continue
+					}
 				}
-				merged[k] = m
-				continue
+				if _, exists := target[fieldKey]; !exists {
+					target[fieldKey] = clientFieldVal
+				}
 			}
 		}
-		merged[k] = schemeVal
+
+		merged[key] = extensionValue
 	}
 	return merged
 }
 
-// Helper functions use the generic findSchemesByNetwork from utils.go
+// asSlice returns v as a []interface{} so array fields can participate in merge
+// and echo subset checks. []interface{} is returned directly; any other slice or
+// array type (e.g. []string, []map[string]interface{} built directly by Go scheme
+// code) is coerced via a JSON round-trip, mirroring the payload's eventual
+// serialization. Non-slice values return ok=false so the caller treats them
+// atomically or as a scalar (see asScalarSingleton).
+func asSlice(v interface{}) ([]interface{}, bool) {
+	if s, ok := v.([]interface{}); ok {
+		return s, true
+	}
+	if v == nil {
+		return nil, false
+	}
+	switch reflect.ValueOf(v).Kind() {
+	case reflect.Slice, reflect.Array:
+	default:
+		return nil, false
+	}
+	data, err := json.Marshal(v)
+	if err != nil {
+		return nil, false
+	}
+	var s []interface{}
+	if err := json.Unmarshal(data, &s); err != nil {
+		return nil, false
+	}
+	return s, true
+}
+
+// asScalarSingleton wraps a non-nil, non-array, non-map value in a single-element
+// slice so a scalar declaration (e.g. builder-code `s` sent as a bare string) can
+// merge or compare against an array declared on the other side.
+func asScalarSingleton(v interface{}) ([]interface{}, bool) {
+	if v == nil {
+		return nil, false
+	}
+	switch reflect.ValueOf(v).Kind() {
+	case reflect.Slice, reflect.Array, reflect.Map:
+		return nil, false
+	default:
+		return []interface{}{v}, true
+	}
+}
+
+// mergeSlicesUnique concatenates client then server, dropping duplicate items
+// (DeepEqual) wherever they occur, including within either input slice. Client
+// entries lead so a downstream cap on array length (e.g. builder-code's
+// MAX_SERVICE_CODES) truncates excess server entries rather than the client's.
+func mergeSlicesUnique(client, server []interface{}) []interface{} {
+	merged := make([]interface{}, 0, len(client)+len(server))
+	appendUnique := func(item interface{}) {
+		for _, existing := range merged {
+			if DeepEqual(existing, item) {
+				return
+			}
+		}
+		merged = append(merged, item)
+	}
+	for _, item := range client {
+		appendUnique(item)
+	}
+	for _, item := range server {
+		appendUnique(item)
+	}
+	return merged
+}
+
+// arrayContainsSubset reports whether every element of expected appears in
+// actual (DeepEqual membership). Extra actual elements are allowed.
+func arrayContainsSubset(expected, actual []interface{}) bool {
+	for _, exp := range expected {
+		found := false
+		for _, act := range actual {
+			if DeepEqual(exp, act) {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return false
+		}
+	}
+	return true
+}

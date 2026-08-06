@@ -4,7 +4,6 @@ import {
 } from "@solana-program/compute-budget";
 import { TOKEN_PROGRAM_ADDRESS } from "@solana-program/token";
 import {
-  fetchMint,
   findAssociatedTokenPda,
   getTransferCheckedInstruction,
   TOKEN_2022_PROGRAM_ADDRESS,
@@ -24,17 +23,20 @@ import type { PaymentPayload, PaymentRequirements, SchemeNetworkClient } from "@
 import {
   DEFAULT_COMPUTE_UNIT_LIMIT,
   DEFAULT_COMPUTE_UNIT_PRICE_MICROLAMPORTS,
+  MAX_MEMO_BYTES,
   MEMO_PROGRAM_ADDRESS,
 } from "../../constants";
 import type { ClientSvmConfig, ClientSvmSigner } from "../../signer";
 import type { ExactSvmPayloadV2 } from "../../types";
-import { createRpcClient } from "../../utils";
+import { createRpcClient, resolveBlockhash } from "../../utils";
+import { getCachedMintMetadata, type MintMetadataCache } from "../../mint-cache";
 
 /**
  * SVM client implementation for the Exact payment scheme.
  */
 export class ExactSvmScheme implements SchemeNetworkClient {
   readonly scheme = "exact";
+  private readonly mintCache: MintMetadataCache = new Map();
 
   /**
    * Creates a new ExactSvmClient instance.
@@ -61,8 +63,13 @@ export class ExactSvmScheme implements SchemeNetworkClient {
   ): Promise<Pick<PaymentPayload, "x402Version" | "payload">> {
     const rpc = createRpcClient(paymentRequirements.network, this.config?.rpcUrl);
 
-    const tokenMint = await fetchMint(rpc, paymentRequirements.asset as Address);
-    const tokenProgramAddress = tokenMint.programAddress;
+    const mintMetadata = await getCachedMintMetadata(
+      rpc,
+      paymentRequirements.network,
+      paymentRequirements.asset as Address,
+      this.mintCache,
+    );
+    const tokenProgramAddress = mintMetadata.programAddress;
 
     if (
       tokenProgramAddress.toString() !== TOKEN_PROGRAM_ADDRESS.toString() &&
@@ -90,7 +97,7 @@ export class ExactSvmScheme implements SchemeNetworkClient {
         destination: destinationATA,
         authority: this.signer,
         amount: BigInt(paymentRequirements.amount),
-        decimals: tokenMint.data.decimals,
+        decimals: mintMetadata.decimals,
       },
       { programAddress: tokenProgramAddress },
     );
@@ -101,17 +108,27 @@ export class ExactSvmScheme implements SchemeNetworkClient {
       throw new Error("feePayer is required in paymentRequirements.extra for SVM transactions");
     }
 
-    const { value: latestBlockhash } = await rpc.getLatestBlockhash().send();
+    const latestBlockhash = await resolveBlockhash(rpc, paymentRequirements);
 
-    const nonce = crypto.getRandomValues(new Uint8Array(16));
-    const memoIx = {
-      programAddress: MEMO_PROGRAM_ADDRESS as Address,
-      accounts: [] as const,
-      data: new TextEncoder().encode(
+    const sellerMemo = paymentRequirements.extra?.memo as string | undefined;
+    let memoData: Uint8Array;
+    if (sellerMemo) {
+      memoData = new TextEncoder().encode(sellerMemo);
+      if (memoData.byteLength > MAX_MEMO_BYTES) {
+        throw new Error(`extra.memo exceeds maximum ${MAX_MEMO_BYTES} bytes`);
+      }
+    } else {
+      const nonce = crypto.getRandomValues(new Uint8Array(16));
+      memoData = new TextEncoder().encode(
         Array.from(nonce)
           .map(b => b.toString(16).padStart(2, "0"))
           .join(""),
-      ),
+      );
+    }
+    const memoIx = {
+      programAddress: MEMO_PROGRAM_ADDRESS as Address,
+      accounts: [] as const,
+      data: memoData,
     };
 
     const tx = pipe(

@@ -142,6 +142,22 @@ describe("ExactEvmScheme (Server) - registerMoneyParser", () => {
       expect(result.asset).toBe("0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913");
       expect(result.amount).toBe("4020000"); // 4.02* 1e6
     });
+
+    it("should correctly convert sub-microsecond prices for 18-decimal tokens", async () => {
+      const server = new ExactEvmScheme();
+      // MegaETH MegaUSD has 18 decimals: $0.0000001 = 1e-7 * 1e18 = 100000000000 atomic units
+      const result = await server.parsePrice("$0.0000001", "eip155:4326");
+      expect(result.amount).toBe("100000000000");
+      expect(result.asset).toBe("0xFAfDdbb3FC7688494971a79cc65DCa3EF82079E7");
+    });
+
+    it("should throw when price is too small to represent in the token's precision", async () => {
+      const server = new ExactEvmScheme();
+      // USDC has 6 decimals: $0.00000001 = 1e-8 * 1e6 = 0.01 → rounds to 0 → must throw
+      await expect(server.parsePrice("$0.00000001", "eip155:8453")).rejects.toThrow("too small");
+      // Also throws when passed as a number
+      await expect(server.parsePrice(0.00000001, "eip155:8453")).rejects.toThrow("too small");
+    });
   });
 
   describe("Multiple parsers - chain of responsibility", () => {

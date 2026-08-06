@@ -1,45 +1,20 @@
-import type { DiscoveryInfo } from "@x402/extensions/bazaar";
 import type { PaymentRequirements } from "@x402/core/types";
-
-export interface DiscoveredResource {
-  resource: string;
-  type: "http";
-  x402Version: number;
-  accepts: PaymentRequirements[];
-  discoveryInfo?: DiscoveryInfo;
-  routeTemplate?: string;
-  lastUpdated: string;
-  metadata?: Record<string, unknown>;
-}
+import type { DiscoveryResource } from "@x402/extensions/bazaar";
 
 export class BazaarCatalog {
-  private discoveredResources = new Map<string, DiscoveredResource>();
+  private discoveredResources = new Map<string, DiscoveryResource>();
 
-  catalogResource(
-    resourceUrl: string,
-    method: string,
-    x402Version: number,
-    discoveryInfo: DiscoveryInfo,
-    paymentRequirements: PaymentRequirements,
-    routeTemplate?: string,
-  ): void {
-    console.log(`📝 Discovered resource: ${resourceUrl}`);
-    console.log(`   Method: ${method}`);
-    console.log(`   x402 Version: ${x402Version}`);
-    if (routeTemplate) {
-      console.log(`   Route template: ${routeTemplate}`);
+  add(resource: DiscoveryResource): void {
+    console.log(`📝 Discovered resource: ${resource.resource}`);
+    console.log(`   x402 Version: ${resource.x402Version}`);
+    if (resource.serviceName) {
+      console.log(`   Service: ${resource.serviceName}`);
+    }
+    if (resource.tags?.length) {
+      console.log(`   Tags: ${resource.tags.join(", ")}`);
     }
 
-    this.discoveredResources.set(resourceUrl, {
-      resource: resourceUrl,
-      type: "http",
-      x402Version,
-      accepts: [paymentRequirements],
-      discoveryInfo,
-      routeTemplate,
-      lastUpdated: new Date().toISOString(),
-      metadata: {},
-    });
+    this.discoveredResources.set(resource.resource, resource);
   }
 
   getResources(limit: number = 100, offset: number = 0) {
@@ -48,7 +23,7 @@ export class BazaarCatalog {
     const items = allResources.slice(offset, offset + limit);
 
     return {
-      x402Version: 1,
+      x402Version: 2,
       items,
       pagination: {
         limit,
@@ -58,8 +33,41 @@ export class BazaarCatalog {
     };
   }
 
+  /**
+   * Search resources using case-insensitive keyword matching against resource URL,
+   * type, description, service metadata, and extension values.
+   */
+  searchResources(query: string, type?: string, limit?: number) {
+    const needle = query.toLowerCase();
+    let results = Array.from(this.discoveredResources.values()).filter((r) => {
+      const haystack = [
+        r.resource,
+        r.type,
+        r.description ?? "",
+        r.serviceName ?? "",
+        ...(r.tags ?? []),
+        ...Object.values(r.extensions ?? {}),
+      ]
+        .join(" ")
+        .toLowerCase();
+      return haystack.includes(needle);
+    });
+
+    if (type) {
+      results = results.filter((r) => r.type === type);
+    }
+
+    const items = limit !== undefined ? results.slice(0, limit) : results;
+
+    return {
+      x402Version: 2,
+      resources: items,
+      partialResults: false,
+      pagination: null,
+    };
+  }
+
   getCount(): number {
     return this.discoveredResources.size;
   }
 }
-

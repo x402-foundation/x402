@@ -1,5 +1,13 @@
 package evm
 
+// Shared EVM error constants used across all EVM payment types.
+// Values must never change without a coordinated update across all SDKs.
+const (
+	// ErrAssetNotDeployedContract is returned when the payment asset address has no bytecode.
+	// EOAs return empty data on any eth_call without reverting, causing silent no-op settlements.
+	ErrAssetNotDeployedContract = "asset_not_deployed_contract"
+)
+
 // Shared Permit2 error constants used by both the exact and upto facilitators.
 // Both schemes write these strings to JSON responses and facilitate cross-SDK parity,
 // so the values must never change without a coordinated update across all SDKs.

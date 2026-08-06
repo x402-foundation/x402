@@ -49,7 +49,11 @@ class MockFacilitatorSigner:
 class TestVerifyUniversalSignature:
     """Generic verification should stay generic and not perform EIP-3009 simulation."""
 
-    def test_allow_undeployed_true_accepts_erc6492_wrapper(self):
+    def test_allow_undeployed_true_defers_erc6492_to_settle(self):
+        # ERC-6492 counterfactual wallets return (False, sig_data) to signal
+        # "deferred to simulation/settle" — matching Go's (false, sigData, nil).
+        # Callers must NOT treat valid=False here as "reject"; they must check
+        # sig_data.factory to distinguish "counterfactual deferred" from "invalid sig".
         erc6492_sig = make_erc6492_sig(FACTORY_ADDR, FACTORY_CALLDATA, GARBAGE_INNER_SIG)
         signer = MockFacilitatorSigner(
             code=b"",
@@ -63,8 +67,8 @@ class TestVerifyUniversalSignature:
             allow_undeployed=True,
         )
 
-        assert valid is True
-        assert sig_data.factory == FACTORY_ADDR
+        assert valid is False  # deferred, not rejected
+        assert sig_data.factory == FACTORY_ADDR  # factory info preserved for settle
 
     def test_allow_undeployed_false_raises(self):
         erc6492_sig = make_erc6492_sig(FACTORY_ADDR, FACTORY_CALLDATA, GARBAGE_INNER_SIG)

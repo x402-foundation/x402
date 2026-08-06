@@ -9,6 +9,7 @@ import {
   encodePaymentSignatureHeader,
 } from "@x402/core/http";
 import { ExactEvmScheme } from "@x402/evm/exact/client";
+import { UptoEvmScheme } from "@x402/evm/upto/client";
 import { ExactSvmScheme } from "@x402/svm/exact/client";
 import type { PaymentRequirements } from "@x402/core/types";
 
@@ -28,8 +29,9 @@ config();
 
 const evmPrivateKey = process.env.EVM_PRIVATE_KEY as `0x${string}`;
 const svmPrivateKey = process.env.SVM_PRIVATE_KEY as string;
-const baseURL = process.env.SERVER_URL || "http://localhost:4021";
-const url = `${baseURL}/weather`;
+const baseURL = process.env.RESOURCE_SERVER_URL || "http://localhost:4021";
+const endpointPath = process.env.ENDPOINT_PATH || "/weather";
+const url = `${baseURL}${endpointPath}`;
 
 /**
  * Makes a request with x402 payment handling.
@@ -121,6 +123,7 @@ async function main(): Promise<void> {
 
   const client = new x402Client(selectPayment)
     .register("eip155:*", new ExactEvmScheme(evmSigner))
+    .register("eip155:*", new UptoEvmScheme(evmSigner))
     .register("solana:*", new ExactSvmScheme(solanaSigner));
   console.log("✅ Client ready\n");
 

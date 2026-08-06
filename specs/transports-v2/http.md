@@ -11,6 +11,9 @@ The server indicates payment is required using the HTTP 402 "Payment Required" s
 **Mechanism**: HTTP 402 status code with `PAYMENT-REQUIRED` header
 **Data Format**: Base64-encoded `PaymentRequired` schema in header
 
+The `PAYMENT-REQUIRED` header is the canonical HTTP transport location for the
+`PaymentRequired` object.
+
 **Example:**
 
 ```http

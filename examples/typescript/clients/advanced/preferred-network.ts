@@ -1,6 +1,7 @@
 import { privateKeyToAccount } from "viem/accounts";
 import { x402Client, type PaymentRequirements } from "@x402/fetch";
 import { ExactEvmScheme } from "@x402/evm/exact/client";
+import { UptoEvmScheme } from "@x402/evm/upto/client";
 import { ExactSvmScheme } from "@x402/svm/exact/client";
 import { createKeyPairSignerFromBytes } from "@solana/kit";
 import { base58 } from "@scure/base";
@@ -72,6 +73,7 @@ export async function runPreferredNetworkExample(
 
   const client = new x402Client(preferredNetworkSelector)
     .register("eip155:*", new ExactEvmScheme(evmSigner))
+    .register("eip155:*", new UptoEvmScheme(evmSigner))
     .register("solana:*", new ExactSvmScheme(svmSigner));
 
   const fetchWithPayment = wrapFetchWithPayment(fetch, client);

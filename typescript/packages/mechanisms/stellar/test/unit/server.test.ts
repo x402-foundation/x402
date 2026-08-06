@@ -93,6 +93,12 @@ describe("ExactStellarScheme", () => {
           async () => await server.parsePrice("abc", STELLAR_PUBNET_CAIP2),
         ).rejects.toThrow("Invalid money format");
       });
+
+      it("should reject partially numeric money strings", async () => {
+        await expect(
+          async () => await server.parsePrice("1abc", STELLAR_PUBNET_CAIP2),
+        ).rejects.toThrow("Invalid money format");
+      });
     });
   });
 

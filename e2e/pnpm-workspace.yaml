@@ -11,3 +11,21 @@ packages:
   - "../typescript/packages/http/*"
   - "../typescript/packages/mechanisms/*"
   - "../typescript/packages/legacy/*"
+packageExtensions:
+  # @keetanetwork/anchor imports tslib at runtime but does not declare it.
+  "@keetanetwork/anchor@*":
+    dependencies:
+      tslib: "^2.8.1"
+minimumReleaseAge: 4320 # Only install package versions that have been published for at least 3 days.
+minimumReleaseAgeStrict: false
+allowBuilds:
+  '@coinbase/x402': true # Required for /external-proxies/* CDP testing due to post-install script that prints TOS
+  bigint-buffer: true
+  bufferutil: true
+  esbuild: true
+  keccak: true
+  protobufjs: true
+  secp256k1: true
+  sharp: true
+  unrs-resolver: true
+  utf-8-validate: true

@@ -1,348 +1,191 @@
 # E2E Test Workflow for x402 Protocol
 #
-# This workflow runs the full end-to-end test suite which validates the x402
-# payment protocol across multiple languages (TypeScript, Go, Python),
-# frameworks, transports (HTTP, MCP), and blockchain networks.
-#
-# Trigger: Manual only (workflow_dispatch). Select the branch to test from
-# the "Use workflow from" dropdown in the GitHub Actions UI.
-#
-# ============================================================================
-# REQUIRED GITHUB SECRETS
-# ============================================================================
-#
-# The following secrets must be configured in the repository settings
-# (Settings > Secrets and variables > Actions) for this workflow to succeed.
-#
-# --- Wallet Keys (Required) ---
-#
-# CLIENT_EVM_PRIVATE_KEY:
-#   EVM private key for the client wallet that makes payments.
-#   Must be funded with testnet USDC on Base Sepolia.
-#   Format: 0x-prefixed hex string (e.g., 0x4df9...)
-#
-# CLIENT_SVM_PRIVATE_KEY:
-#   Solana private key for the client wallet that makes payments.
-#   Must be funded with devnet USDC on Solana Devnet.
-#   Format: base58 encoded string
-#
-# FACILITATOR_EVM_PRIVATE_KEY:
-#   EVM private key for the facilitator wallet that verifies/settles payments.
-#   Format: 0x-prefixed hex string
-#
-# FACILITATOR_SVM_PRIVATE_KEY:
-#   Solana private key for the facilitator wallet that verifies/settles payments.
-#   Format: base58 encoded string
-#
-# SERVER_EVM_ADDRESS:
-#   EVM address where server payments are sent (payee address).
-#   Format: 0x-prefixed hex address (e.g., 0x122F...)
-#
-# SERVER_SVM_ADDRESS:
-#   Solana address where server payments are sent (payee address).
-#   Format: base58 encoded public key
-#
-# --- RPC URLs (Optional) ---
-#
-# These are optional. If not set, the test suite falls back to public defaults.
-# Setting custom RPC URLs is recommended for reliability in CI.
-#
-# BASE_SEPOLIA_RPC_URL:
-#   Custom RPC URL for Base Sepolia testnet.
-#   Default: https://sepolia.base.org
-#
-# SOLANA_DEVNET_RPC_URL:
-#   Custom RPC URL for Solana Devnet.
-#   Default: https://api.devnet.solana.com
-#
-# ============================================================================
+# Runs the minimized end-to-end test suite on testnet. Protocol families are
+# included only when all required wallet secrets for that family are configured.
 
 name: E2E Tests
 
 on:
+  schedule:
+    - cron: "0 5 * * 0-4,6" # daily except Friday — v2 only
+    - cron: "0 5 * * 5"     # Friday — v1 legacy + v2
   workflow_dispatch:
     inputs:
-      branch:
-        description: "Branch to test (leave empty to use the branch selected above)"
+      include_legacy:
+        description: "Include legacy v1 coverage"
         required: false
-        default: ""
-      transport:
-        description: "Transports to test (comma-separated: http,mcp)"
-        required: false
-        default: "http"
-      facilitators:
-        description: "Facilitators to test (comma-separated: go,typescript,python)"
-        required: false
-        default: "go,typescript,python"
-      servers:
-        description: "Servers to test (comma-separated: express,hono,gin,flask,fastapi,next)"
-        required: false
-      clients:
-        description: "Clients to test (comma-separated: axios,fetch,go-http,httpx,requests)"
-        required: false
-      families:
-        description: "Protocol families (comma-separated: evm,svm)"
-        required: false
-      minimize:
-        description: "Use coverage-based test minimization (--min)"
         type: boolean
-        default: true
-      verbose:
-        description: "Enable verbose logging"
-        type: boolean
-        default: true
+        default: false
 
 permissions:
   contents: read
-  pull-requests: write
+  id-token: none
 
 jobs:
-  e2e-tests:
+  e2e:
+    if: github.repository == 'x402-foundation/x402' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 60
+    defaults:
+      run:
+        working-directory: e2e
 
     steps:
-      # --- Validate Required Secrets ---
-      # Fail fast before installing anything if secrets are missing.
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
 
-      - name: Validate required secrets
+      # Detect families from GitHub secrets directly (before any install).
+      # Step-level env maps secrets into the shell so ci-select-families.sh
+      # can read them the same way as a local .env-backed run.
+      - name: Select protocol families from configured secrets
+        id: families
+        env:
+          CLIENT_EVM_PRIVATE_KEY: ${{ secrets.CLIENT_EVM_PRIVATE_KEY }}
+          CLIENT_SVM_PRIVATE_KEY: ${{ secrets.CLIENT_SVM_PRIVATE_KEY }}
+          CLIENT_AVM_PRIVATE_KEY: ${{ secrets.CLIENT_AVM_PRIVATE_KEY }}
+          CLIENT_APTOS_PRIVATE_KEY: ${{ secrets.CLIENT_APTOS_PRIVATE_KEY }}
+          CLIENT_HEDERA_ACCOUNT_ID: ${{ secrets.CLIENT_HEDERA_ACCOUNT_ID }}
+          CLIENT_HEDERA_PRIVATE_KEY: ${{ secrets.CLIENT_HEDERA_PRIVATE_KEY }}
+          CLIENT_STELLAR_PRIVATE_KEY: ${{ secrets.CLIENT_STELLAR_PRIVATE_KEY }}
+          CLIENT_TVM_PRIVATE_KEY: ${{ secrets.CLIENT_TVM_PRIVATE_KEY }}
+          SERVER_EVM_ADDRESS: ${{ secrets.SERVER_EVM_ADDRESS }}
+          SERVER_SVM_ADDRESS: ${{ secrets.SERVER_SVM_ADDRESS }}
+          SERVER_AVM_ADDRESS: ${{ secrets.SERVER_AVM_ADDRESS }}
+          SERVER_APTOS_ADDRESS: ${{ secrets.SERVER_APTOS_ADDRESS }}
+          SERVER_HEDERA_ADDRESS: ${{ secrets.SERVER_HEDERA_ADDRESS }}
+          SERVER_STELLAR_ADDRESS: ${{ secrets.SERVER_STELLAR_ADDRESS }}
+          SERVER_TVM_ADDRESS: ${{ secrets.SERVER_TVM_ADDRESS }}
+          FACILITATOR_EVM_PRIVATE_KEY: ${{ secrets.FACILITATOR_EVM_PRIVATE_KEY }}
+          FACILITATOR_SVM_PRIVATE_KEY: ${{ secrets.FACILITATOR_SVM_PRIVATE_KEY }}
+          FACILITATOR_AVM_PRIVATE_KEY: ${{ secrets.FACILITATOR_AVM_PRIVATE_KEY }}
+          FACILITATOR_APTOS_PRIVATE_KEY: ${{ secrets.FACILITATOR_APTOS_PRIVATE_KEY }}
+          FACILITATOR_HEDERA_ACCOUNT_ID: ${{ secrets.FACILITATOR_HEDERA_ACCOUNT_ID }}
+          FACILITATOR_HEDERA_PRIVATE_KEY: ${{ secrets.FACILITATOR_HEDERA_PRIVATE_KEY }}
+          FACILITATOR_STELLAR_PRIVATE_KEY: ${{ secrets.FACILITATOR_STELLAR_PRIVATE_KEY }}
+          FACILITATOR_TVM_PRIVATE_KEY: ${{ secrets.FACILITATOR_TVM_PRIVATE_KEY }}
         run: |
-          MISSING=()
-
-          if [ -z "${{ secrets.CLIENT_EVM_PRIVATE_KEY }}" ]; then MISSING+=("CLIENT_EVM_PRIVATE_KEY"); fi
-          if [ -z "${{ secrets.CLIENT_SVM_PRIVATE_KEY }}" ]; then MISSING+=("CLIENT_SVM_PRIVATE_KEY"); fi
-          if [ -z "${{ secrets.FACILITATOR_EVM_PRIVATE_KEY }}" ]; then MISSING+=("FACILITATOR_EVM_PRIVATE_KEY"); fi
-          if [ -z "${{ secrets.FACILITATOR_SVM_PRIVATE_KEY }}" ]; then MISSING+=("FACILITATOR_SVM_PRIVATE_KEY"); fi
-          if [ -z "${{ secrets.SERVER_EVM_ADDRESS }}" ]; then MISSING+=("SERVER_EVM_ADDRESS"); fi
-          if [ -z "${{ secrets.SERVER_SVM_ADDRESS }}" ]; then MISSING+=("SERVER_SVM_ADDRESS"); fi
-
-          if [ ${#MISSING[@]} -gt 0 ]; then
-            echo "::error::Missing required secrets: ${MISSING[*]}"
-            echo ""
-            echo "The following secrets must be configured in Settings > Secrets and variables > Actions:"
-            for secret in "${MISSING[@]}"; do
-              echo "  - $secret"
-            done
-            exit 1
+          if [[ "${{ github.event_name }}" == "schedule" && "${{ github.event.schedule }}" == "0 5 * * 5" ]]; then
+            VERSIONS="1,2"
+            RUN_SCOPE="friday v1 legacy + v2"
+          elif [[ "${{ github.event_name }}" == "workflow_dispatch" && "${{ inputs.include_legacy }}" == "true" ]]; then
+            VERSIONS="1,2"
+            RUN_SCOPE="manual v1 legacy + v2"
+          else
+            VERSIONS="2"
+            RUN_SCOPE="v2 only"
           fi
 
-          echo "All required secrets are present."
-
-      - uses: actions/checkout@v4
-        with:
-          ref: ${{ inputs.branch || github.ref }}
-
-      # --- Language Runtimes ---
+          set +e
+          FAMILIES=$(bash scripts/ci-select-families.sh)
+          status=$?
+          set -e
+          if [[ $status -ne 0 ]]; then
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+            echo "No wallet secrets configured — skipping e2e run." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          echo "families=$FAMILIES" >> "$GITHUB_OUTPUT"
+          echo "versions=$VERSIONS" >> "$GITHUB_OUTPUT"
+          echo "configured=true" >> "$GITHUB_OUTPUT"
+          echo "Running minimized e2e for families: **$FAMILIES** ($RUN_SCOPE, versions: **$VERSIONS**)" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Setup pnpm
-        uses: pnpm/action-setup@a7487c7e89a18df4991f7f222e4898a00d66ddda
+        if: steps.families.outputs.configured == 'true'
+        uses: pnpm/action-setup@0e279bb959325dab635dd2c09392533439d90093 # v6.0.8
         with:
+          version: 11.1.1
           run_install: false
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        if: steps.families.outputs.configured == 'true'
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
         with:
-          node-version: "20"
-          cache: "pnpm"
-          cache-dependency-path: |
-            e2e/pnpm-lock.yaml
-            typescript/pnpm-lock.yaml
+          node-version: "22"
 
       - name: Setup Go
-        uses: actions/setup-go@v5
+        if: steps.families.outputs.configured == 'true'
+        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
         with:
           go-version: "1.24"
-          cache-dependency-path: |
-            go/go.sum
-            e2e/**/go.sum
+          cache: false
 
-      - name: Setup Python (uv)
-        uses: astral-sh/setup-uv@v5
+      - name: Setup uv
+        if: steps.families.outputs.configured == 'true'
+        uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86 # v5.4.2
         with:
-          enable-cache: true
+          enable-cache: false
 
       - name: Install Python
-        run: uv python install 3.13
-
-      # --- Install Dependencies ---
+        if: steps.families.outputs.configured == 'true'
+        run: uv python install 3.10
 
       - name: Install and build TypeScript SDK
+        if: steps.families.outputs.configured == 'true'
         working-directory: ./typescript
         run: |
           pnpm install --frozen-lockfile
           pnpm build
 
       - name: Install E2E dependencies
-        working-directory: ./e2e
+        if: steps.families.outputs.configured == 'true'
         run: pnpm install --frozen-lockfile
 
-      # --- Build & Setup E2E Components ---
-      # setup.sh runs install.sh and build.sh for all servers, clients, and
-      # facilitators (TypeScript, Go, and Python components).
-
       - name: Setup E2E components
-        working-directory: ./e2e
-        run: ./setup.sh -v
+        if: steps.families.outputs.configured == 'true'
+        run: ./setup.sh
 
-      # --- Write Environment File ---
-
+      # Write secrets to e2e/.env so test.ts (dotenv) and spawned
+      # servers/clients/facilitators (dotenv/godotenv) can read wallet config.
       - name: Create .env file
-        working-directory: ./e2e
+        if: steps.families.outputs.configured == 'true'
         run: |
           {
             echo "SERVER_EVM_ADDRESS=${{ secrets.SERVER_EVM_ADDRESS }}"
             echo "SERVER_SVM_ADDRESS=${{ secrets.SERVER_SVM_ADDRESS }}"
+            echo "SERVER_AVM_ADDRESS=${{ secrets.SERVER_AVM_ADDRESS }}"
+            echo "SERVER_APTOS_ADDRESS=${{ secrets.SERVER_APTOS_ADDRESS }}"
+            echo "SERVER_HEDERA_ADDRESS=${{ secrets.SERVER_HEDERA_ADDRESS }}"
+            echo "SERVER_STELLAR_ADDRESS=${{ secrets.SERVER_STELLAR_ADDRESS }}"
+            echo "SERVER_TVM_ADDRESS=${{ secrets.SERVER_TVM_ADDRESS }}"
             echo "CLIENT_EVM_PRIVATE_KEY=${{ secrets.CLIENT_EVM_PRIVATE_KEY }}"
             echo "CLIENT_SVM_PRIVATE_KEY=${{ secrets.CLIENT_SVM_PRIVATE_KEY }}"
+            echo "CLIENT_AVM_PRIVATE_KEY=${{ secrets.CLIENT_AVM_PRIVATE_KEY }}"
+            echo "CLIENT_APTOS_PRIVATE_KEY=${{ secrets.CLIENT_APTOS_PRIVATE_KEY }}"
+            echo "CLIENT_HEDERA_ACCOUNT_ID=${{ secrets.CLIENT_HEDERA_ACCOUNT_ID }}"
+            echo "CLIENT_HEDERA_PRIVATE_KEY=${{ secrets.CLIENT_HEDERA_PRIVATE_KEY }}"
+            echo "CLIENT_STELLAR_PRIVATE_KEY=${{ secrets.CLIENT_STELLAR_PRIVATE_KEY }}"
+            echo "CLIENT_TVM_PRIVATE_KEY=${{ secrets.CLIENT_TVM_PRIVATE_KEY }}"
             echo "FACILITATOR_EVM_PRIVATE_KEY=${{ secrets.FACILITATOR_EVM_PRIVATE_KEY }}"
             echo "FACILITATOR_SVM_PRIVATE_KEY=${{ secrets.FACILITATOR_SVM_PRIVATE_KEY }}"
+            echo "FACILITATOR_AVM_PRIVATE_KEY=${{ secrets.FACILITATOR_AVM_PRIVATE_KEY }}"
+            echo "FACILITATOR_APTOS_PRIVATE_KEY=${{ secrets.FACILITATOR_APTOS_PRIVATE_KEY }}"
+            echo "FACILITATOR_HEDERA_ACCOUNT_ID=${{ secrets.FACILITATOR_HEDERA_ACCOUNT_ID }}"
+            echo "FACILITATOR_HEDERA_PRIVATE_KEY=${{ secrets.FACILITATOR_HEDERA_PRIVATE_KEY }}"
+            echo "FACILITATOR_STELLAR_PRIVATE_KEY=${{ secrets.FACILITATOR_STELLAR_PRIVATE_KEY }}"
+            echo "FACILITATOR_TVM_PRIVATE_KEY=${{ secrets.FACILITATOR_TVM_PRIVATE_KEY }}"
+            echo "SERVER_EVM_RECEIVER_AUTHORIZER_PRIVATE_KEY=${{ secrets.SERVER_EVM_RECEIVER_AUTHORIZER_PRIVATE_KEY }}"
+            echo "CLIENT_EVM_VOUCHER_SIGNER_PRIVATE_KEY=${{ secrets.CLIENT_EVM_VOUCHER_SIGNER_PRIVATE_KEY }}"
+            echo "TVM_PROVIDER=${{ secrets.TVM_PROVIDER }}"
+            echo "TONAPI_API_KEY=${{ secrets.TONAPI_API_KEY }}"
+            echo "TONAPI_BASE_URL=${{ secrets.TONAPI_BASE_URL }}"
+            echo "TONCENTER_API_KEY=${{ secrets.TONCENTER_API_KEY }}"
+            echo "BASE_SEPOLIA_RPC_URL=${{ secrets.BASE_SEPOLIA_RPC_URL }}"
+            echo "SOLANA_DEVNET_RPC_URL=${{ secrets.SOLANA_DEVNET_RPC_URL }}"
           } > .env
 
-      # --- Run E2E Tests ---
-      # Uses programmatic mode (CLI filter flags) to bypass the interactive
-      # prompt that `pnpm test` opens by default. Any --flag triggers
-      # programmatic mode in the test runner (see e2e/src/cli/args.ts).
-
-      - name: Run E2E tests
-        id: e2e
-        working-directory: ./e2e
+      - name: Run minimized e2e tests (testnet)
+        if: steps.families.outputs.configured == 'true'
         run: |
-          ARGS=""
+          pnpm test --testnet --min --parallel -v --log=e2e-run.log --output-json=e2e-results.json --families=${{ steps.families.outputs.families }} --versions=${{ steps.families.outputs.versions }}
 
-          # Apply workflow_dispatch inputs (or defaults)
-          ARGS="$ARGS --transport=${{ inputs.transport || 'http' }}"
-          ARGS="$ARGS --facilitators=${{ inputs.facilitators || 'go,python,typescript' }}"
-
-          if [ -n "${{ inputs.servers }}" ]; then
-            ARGS="$ARGS --servers=${{ inputs.servers }}"
-          fi
-
-          if [ -n "${{ inputs.clients }}" ]; then
-            ARGS="$ARGS --clients=${{ inputs.clients }}"
-          fi
-
-          if [ -n "${{ inputs.families }}" ]; then
-            ARGS="$ARGS --families=${{ inputs.families }}"
-          fi
-
-          # Default to --min and -v when inputs are not provided (e.g. push trigger)
-          MINIMIZE="${{ inputs.minimize }}"
-          if [ "$MINIMIZE" = "true" ] || [ -z "$MINIMIZE" ]; then
-            ARGS="$ARGS --min"
-          fi
-
-          VERBOSE="${{ inputs.verbose }}"
-          if [ "$VERBOSE" = "true" ]; then
-            ARGS="$ARGS -v"
-          fi
-
-          ARGS="$ARGS --parallel"
-
-          ARGS="$ARGS --log-file=e2e-results.log --output-json=e2e-results.json"
-
-          echo "Running: pnpm test $ARGS"
-
-          # Run tests but capture exit code so we can still comment on the PR
-          set +e
-          pnpm test $ARGS
-          TEST_EXIT_CODE=$?
-          set -e
-
-          echo "test_exit_code=$TEST_EXIT_CODE" >> "$GITHUB_OUTPUT"
-          exit 0
-
-      # --- Upload Results ---
-
-      - name: Upload test log
-        if: always()
-        uses: actions/upload-artifact@v4
+      - name: Upload test results
+        if: always() && steps.families.outputs.configured == 'true'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: e2e-test-log
+          name: e2e-results
           path: |
-            e2e/e2e-results.log
             e2e/e2e-results.json
-          retention-days: 14
-
-      # --- Comment on PR ---
-      # Find any open PR for the tested branch, delete previous E2E comments
-      # from this workflow, and post a new comment with results.
-
-      - name: Comment results on PR
-        if: always()
-        env:
-          GH_TOKEN: ${{ github.token }}
-          TEST_EXIT_CODE: ${{ steps.e2e.outputs.test_exit_code }}
-        run: |
-          BRANCH="${{ inputs.branch || github.ref_name }}"
-
-          # Find open PR for this branch
-          PR_NUMBER=$(gh pr list --head "$BRANCH" --state open --json number --jq '.[0].number' 2>/dev/null || true)
-
-          if [ -z "$PR_NUMBER" ]; then
-            echo "No open PR found for branch '$BRANCH', skipping comment."
-            exit 0
-          fi
-
-          echo "Found PR #$PR_NUMBER for branch '$BRANCH'"
-
-          # Delete previous E2E comments from this workflow
-          COMMENT_IDS=$(gh api "repos/${{ github.repository }}/issues/${PR_NUMBER}/comments" \
-            --paginate --jq '.[] | select(.body | contains("<!-- x402-e2e-results -->")) | .id' 2>/dev/null || true)
-
-          for CID in $COMMENT_IDS; do
-            echo "Deleting previous E2E comment $CID"
-            gh api --method DELETE "repos/${{ github.repository }}/issues/comments/$CID" 2>/dev/null || true
-          done
-
-          # Build comment body from JSON results
-          COMMENT_BODY="<!-- x402-e2e-results -->"$'\n'
-
-          if [ -f e2e/e2e-results.json ]; then
-            TOTAL=$(jq '.summary.total' e2e/e2e-results.json)
-            PASSED=$(jq '.summary.passed' e2e/e2e-results.json)
-            FAILED=$(jq '.summary.failed' e2e/e2e-results.json)
-            NETWORK=$(jq -r '.summary.networkMode' e2e/e2e-results.json)
-
-            if [ "$FAILED" = "0" ]; then
-              COMMENT_BODY+="## :white_check_mark: E2E Tests Passed"$'\n\n'
-            else
-              COMMENT_BODY+="## :x: E2E Tests Failed"$'\n\n'
-            fi
-
-            COMMENT_BODY+="**Network:** ${NETWORK} | **Total:** ${TOTAL} | **Passed:** ${PASSED} | **Failed:** ${FAILED}"$'\n\n'
-
-            # Failed test details (only shown when there are failures)
-            FAILED_DETAILS=$(jq -r '.results[] | select(.passed == false) | "| \(.testNumber) | \(.client) | \(.server) | \(.endpoint) | \(.facilitator) | \(.error // "Unknown") |"' e2e/e2e-results.json)
-            if [ -n "$FAILED_DETAILS" ]; then
-              COMMENT_BODY+="### Failed Tests"$'\n'
-              COMMENT_BODY+="| Test | Client | Server | Endpoint | Facilitator | Error |"$'\n'
-              COMMENT_BODY+="|---|---|---|---|---|---|"$'\n'
-              COMMENT_BODY+="${FAILED_DETAILS}"$'\n\n'
-            fi
-          else
-            # No JSON output — tests likely crashed before producing results
-            if [ "$TEST_EXIT_CODE" != "0" ]; then
-              COMMENT_BODY+="## :x: E2E Tests Failed"$'\n\n'
-              COMMENT_BODY+="Test runner exited with code ${TEST_EXIT_CODE} before producing results."$'\n'
-              COMMENT_BODY+="Check the [workflow run](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}) for details."$'\n'
-            else
-              COMMENT_BODY+="## :warning: E2E Tests — No Results"$'\n\n'
-              COMMENT_BODY+="No structured output was produced. Check the [workflow run](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}) for details."$'\n'
-            fi
-          fi
-
-          COMMENT_BODY+=$'\n'"<sub>Run: [${{ github.run_id }}](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})</sub>"$'\n'
-
-          # Post new comment
-          gh pr comment "$PR_NUMBER" --body "$COMMENT_BODY"
-          echo "Posted E2E results comment on PR #$PR_NUMBER"
-
-      # --- Fail the workflow if tests failed ---
-
-      - name: Check test result
-        if: always()
-        run: |
-          if [ "${{ steps.e2e.outputs.test_exit_code }}" != "0" ]; then
-            echo "E2E tests failed with exit code ${{ steps.e2e.outputs.test_exit_code }}"
-            exit 1
-          fi
+            e2e/e2e-run.log
+          retention-days: 7
+          if-no-files-found: ignore

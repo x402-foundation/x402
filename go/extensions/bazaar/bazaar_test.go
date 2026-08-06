@@ -2,14 +2,20 @@ package bazaar_test
 
 import (
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"strings"
+	"sync/atomic"
 	"testing"
 
-	x402 "github.com/coinbase/x402/go"
-	"github.com/coinbase/x402/go/extensions/bazaar"
-	v1 "github.com/coinbase/x402/go/extensions/v1"
-	x402http "github.com/coinbase/x402/go/http"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	x402 "github.com/x402-foundation/x402/go/v2"
+	"github.com/x402-foundation/x402/go/v2/extensions/bazaar"
+	v1 "github.com/x402-foundation/x402/go/v2/extensions/v1"
+	x402http "github.com/x402-foundation/x402/go/v2/http"
 )
 
 func TestBazaarConstant(t *testing.T) {
@@ -277,6 +283,133 @@ func TestValidateDiscoveryExtension(t *testing.T) {
 
 		result := bazaar.ValidateDiscoveryExtension(extension)
 		assert.True(t, result.Valid)
+	})
+}
+
+func TestValidateDiscoveryExtensionSpec(t *testing.T) {
+	t.Run("should pass for valid HTTP GET extension", func(t *testing.T) {
+		ext, _ := bazaar.DeclareDiscoveryExtension(
+			bazaar.MethodGET,
+			map[string]interface{}{"q": "test"},
+			bazaar.JSONSchema{"properties": map[string]interface{}{"q": map[string]interface{}{"type": "string"}}},
+			"",
+			nil,
+		)
+		result := bazaar.ValidateDiscoveryExtensionSpec(ext)
+		assert.True(t, result.Valid)
+	})
+
+	t.Run("should pass for valid HTTP POST extension", func(t *testing.T) {
+		ext, _ := bazaar.DeclareDiscoveryExtension(
+			bazaar.MethodPOST,
+			map[string]interface{}{"name": "foo"},
+			bazaar.JSONSchema{"properties": map[string]interface{}{"name": map[string]interface{}{"type": "string"}}},
+			bazaar.BodyTypeJSON,
+			nil,
+		)
+		result := bazaar.ValidateDiscoveryExtensionSpec(ext)
+		assert.True(t, result.Valid)
+	})
+
+	t.Run("should pass for pre-enrichment HTTP extension (no method)", func(t *testing.T) {
+		ext := bazaar.DiscoveryExtension{
+			Info: bazaar.DiscoveryInfo{
+				Input: bazaar.QueryInput{Type: "http"},
+			},
+			Schema: bazaar.JSONSchema{},
+		}
+		result := bazaar.ValidateDiscoveryExtensionSpec(ext)
+		assert.True(t, result.Valid)
+	})
+
+	t.Run("should fail for invalid input.type", func(t *testing.T) {
+		ext := bazaar.DiscoveryExtension{
+			Info: bazaar.DiscoveryInfo{
+				Input: bazaar.QueryInput{Type: "grpc"},
+			},
+			Schema: bazaar.JSONSchema{},
+		}
+		result := bazaar.ValidateDiscoveryExtensionSpec(ext)
+		assert.False(t, result.Valid)
+		assert.Contains(t, result.Errors[0], "input.type")
+	})
+
+	t.Run("should fail for invalid HTTP method", func(t *testing.T) {
+		ext := bazaar.DiscoveryExtension{
+			Info: bazaar.DiscoveryInfo{
+				Input: bazaar.QueryInput{Type: "http", Method: "DESTROY"},
+			},
+			Schema: bazaar.JSONSchema{},
+		}
+		result := bazaar.ValidateDiscoveryExtensionSpec(ext)
+		assert.False(t, result.Valid)
+		assert.Contains(t, result.Errors[0], "method")
+	})
+
+	t.Run("should fail for invalid bodyType", func(t *testing.T) {
+		ext := bazaar.DiscoveryExtension{
+			Info: bazaar.DiscoveryInfo{
+				Input: bazaar.BodyInput{Type: "http", Method: "POST", BodyType: "xml"},
+			},
+			Schema: bazaar.JSONSchema{},
+		}
+		result := bazaar.ValidateDiscoveryExtensionSpec(ext)
+		assert.False(t, result.Valid)
+		assert.Contains(t, result.Errors[0], "bodyType")
+	})
+
+	t.Run("should fail when bodyType set with non-body method", func(t *testing.T) {
+		ext := bazaar.DiscoveryExtension{
+			Info: bazaar.DiscoveryInfo{
+				Input: bazaar.BodyInput{Type: "http", Method: "GET", BodyType: "json"},
+			},
+			Schema: bazaar.JSONSchema{},
+		}
+		result := bazaar.ValidateDiscoveryExtensionSpec(ext)
+		assert.False(t, result.Valid)
+		hasBodyMethodErr := false
+		for _, e := range result.Errors {
+			if strings.Contains(e, "not a body method") {
+				hasBodyMethodErr = true
+			}
+		}
+		assert.True(t, hasBodyMethodErr)
+	})
+
+	t.Run("should fail for MCP missing toolName", func(t *testing.T) {
+		ext := bazaar.DiscoveryExtension{
+			Info:   bazaar.DiscoveryInfo{},
+			Schema: bazaar.JSONSchema{},
+		}
+		extJSON := `{"info":{"input":{"type":"mcp","inputSchema":{"type":"object"}}},"schema":{}}`
+		_ = json.Unmarshal([]byte(extJSON), &ext)
+		result := bazaar.ValidateDiscoveryExtensionSpec(ext)
+		assert.False(t, result.Valid)
+		assert.Contains(t, result.Errors[0], "toolName")
+	})
+
+	t.Run("should fail for MCP missing inputSchema", func(t *testing.T) {
+		ext := bazaar.DiscoveryExtension{
+			Info:   bazaar.DiscoveryInfo{},
+			Schema: bazaar.JSONSchema{},
+		}
+		extJSON := `{"info":{"input":{"type":"mcp","toolName":"t"}},"schema":{}}`
+		_ = json.Unmarshal([]byte(extJSON), &ext)
+		result := bazaar.ValidateDiscoveryExtensionSpec(ext)
+		assert.False(t, result.Valid)
+		assert.Contains(t, result.Errors[0], "inputSchema")
+	})
+
+	t.Run("should fail for MCP invalid transport", func(t *testing.T) {
+		ext := bazaar.DiscoveryExtension{
+			Info:   bazaar.DiscoveryInfo{},
+			Schema: bazaar.JSONSchema{},
+		}
+		extJSON := `{"info":{"input":{"type":"mcp","toolName":"t","inputSchema":{"type":"object"},"transport":"websocket"}},"schema":{}}`
+		_ = json.Unmarshal([]byte(extJSON), &ext)
+		result := bazaar.ValidateDiscoveryExtensionSpec(ext)
+		assert.False(t, result.Valid)
+		assert.Contains(t, result.Errors[0], "transport")
 	})
 }
 
@@ -713,6 +846,30 @@ func TestV1Transformation(t *testing.T) {
 		assert.Equal(t, "integer parameter", queryInput.QueryParams["offset"])
 	})
 
+	t.Run("should extract discovery info from v1 GET with pathParams", func(t *testing.T) {
+		v1Requirements := map[string]interface{}{
+			"outputSchema": map[string]interface{}{
+				"input": map[string]interface{}{
+					"discoverable": true,
+					"method":       "GET",
+					"pathParams": map[string]interface{}{
+						"resourceId": "string parameter",
+					},
+					"type": "http",
+				},
+				"output": map[string]interface{}{"type": "object"},
+			},
+		}
+
+		info, err := v1.ExtractDiscoveryInfoV1(v1Requirements)
+		require.NoError(t, err)
+		require.NotNil(t, info)
+
+		queryInput, ok := info.Input.(bazaar.QueryInput)
+		require.True(t, ok)
+		assert.Equal(t, "string parameter", queryInput.PathParams["resourceId"])
+	})
+
 	t.Run("should extract discovery info from v1 POST with bodyFields", func(t *testing.T) {
 		v1Requirements := map[string]interface{}{
 			"outputSchema": map[string]interface{}{
@@ -808,6 +965,34 @@ func TestV1Transformation(t *testing.T) {
 		bodyMap, ok := bodyInput.Body.(map[string]interface{})
 		require.True(t, ok)
 		assert.NotNil(t, bodyMap["question"])
+	})
+
+	t.Run("should extract discovery info from v1 POST with pathParams", func(t *testing.T) {
+		v1Requirements := map[string]interface{}{
+			"outputSchema": map[string]interface{}{
+				"input": map[string]interface{}{
+					"bodyFields": map[string]interface{}{
+						"name": map[string]interface{}{
+							"type": "string",
+						},
+					},
+					"discoverable": true,
+					"method":       "POST",
+					"pathParams": map[string]interface{}{
+						"resourceId": "string parameter",
+					},
+					"type": "http",
+				},
+			},
+		}
+
+		info, err := v1.ExtractDiscoveryInfoV1(v1Requirements)
+		require.NoError(t, err)
+		require.NotNil(t, info)
+
+		bodyInput, ok := info.Input.(bazaar.BodyInput)
+		require.True(t, ok)
+		assert.Equal(t, "string parameter", bodyInput.PathParams["resourceId"])
 	})
 
 	t.Run("should extract discovery info from v1 POST with properties field", func(t *testing.T) {
@@ -1089,6 +1274,15 @@ func TestIntegration_FullWorkflow(t *testing.T) {
 		assert.Equal(t, "Find tokens by address, ticker/symbol, or token name", info.Description)
 		assert.Equal(t, "application/json", info.MimeType)
 		assert.Equal(t, 1, info.X402Version)
+		require.NotNil(t, info.Extensions)
+		assert.NotContains(t, info.Extensions, "outputSchema")
+		bazaarExtRaw, ok := info.Extensions[bazaar.BAZAAR.Key()]
+		require.True(t, ok)
+		bazaarExtJSON, _ := json.Marshal(bazaarExtRaw)
+		var bazaarExt bazaar.DiscoveryExtension
+		require.NoError(t, json.Unmarshal(bazaarExtJSON, &bazaarExt))
+		validation := bazaar.ValidateDiscoveryExtension(bazaarExt)
+		assert.True(t, validation.Valid)
 	})
 
 	t.Run("should handle unified extraction for both v1 and v2", func(t *testing.T) {
@@ -1503,6 +1697,10 @@ func TestExtractDiscoveredResourceFromPaymentRequired(t *testing.T) {
 		queryInput, ok := info.DiscoveryInfo.Input.(bazaar.QueryInput)
 		require.True(t, ok)
 		assert.Equal(t, bazaar.MethodGET, queryInput.Method)
+		require.NotNil(t, info.Extensions)
+		assert.NotContains(t, info.Extensions, "outputSchema")
+		_, ok = info.Extensions[bazaar.BAZAAR.Key()]
+		assert.True(t, ok)
 	})
 
 	t.Run("v1: should return nil when accepts array is empty", func(t *testing.T) {
@@ -2150,6 +2348,701 @@ func TestBazaarDynamicRoutes(t *testing.T) {
 	})
 }
 
+// ===== MCP Discovery Extension Tests =====
+
+func TestDeclareMcpDiscoveryExtension(t *testing.T) {
+	t.Run("should create a valid MCP extension with full config", func(t *testing.T) {
+		extension, err := bazaar.DeclareMcpDiscoveryExtension(bazaar.DeclareMcpDiscoveryConfig{
+			ToolName:    "weather_lookup",
+			Description: "Look up weather for a city",
+			Transport:   bazaar.TransportStreamableHTTP,
+			InputSchema: map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"city": map[string]interface{}{"type": "string"},
+				},
+				"required": []string{"city"},
+			},
+			Example: map[string]interface{}{"city": "San Francisco"},
+			Output: &bazaar.OutputConfig{
+				Example: map[string]interface{}{"temperature": 72, "unit": "F"},
+			},
+		})
+
+		require.NoError(t, err)
+		assert.NotNil(t, extension.Info)
+		assert.NotNil(t, extension.Schema)
+
+		mcpInput, ok := extension.Info.Input.(bazaar.McpInput)
+		require.True(t, ok, "Expected McpInput type")
+		assert.Equal(t, "mcp", mcpInput.Type)
+		assert.Equal(t, "weather_lookup", mcpInput.ToolName)
+		assert.Equal(t, "Look up weather for a city", mcpInput.Description)
+		assert.Equal(t, bazaar.TransportStreamableHTTP, mcpInput.Transport)
+		assert.NotNil(t, mcpInput.InputSchema)
+		assert.NotNil(t, mcpInput.Example)
+
+		assert.NotNil(t, extension.Info.Output)
+		assert.Equal(t, "json", extension.Info.Output.Type)
+	})
+
+	t.Run("should create a valid MCP extension with minimal config", func(t *testing.T) {
+		extension, err := bazaar.DeclareMcpDiscoveryExtension(bazaar.DeclareMcpDiscoveryConfig{
+			ToolName: "simple_tool",
+			InputSchema: map[string]interface{}{
+				"type":       "object",
+				"properties": map[string]interface{}{},
+			},
+		})
+
+		require.NoError(t, err)
+
+		mcpInput, ok := extension.Info.Input.(bazaar.McpInput)
+		require.True(t, ok)
+		assert.Equal(t, "mcp", mcpInput.Type)
+		assert.Equal(t, "simple_tool", mcpInput.ToolName)
+		assert.Empty(t, mcpInput.Description)
+		assert.Empty(t, mcpInput.Transport)
+		assert.Nil(t, mcpInput.Example)
+		assert.Nil(t, extension.Info.Output)
+	})
+
+	t.Run("should return error when toolName is missing", func(t *testing.T) {
+		_, err := bazaar.DeclareMcpDiscoveryExtension(bazaar.DeclareMcpDiscoveryConfig{
+			InputSchema: map[string]interface{}{"type": "object"},
+		})
+
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "toolName is required")
+	})
+
+	t.Run("should return error when inputSchema is missing", func(t *testing.T) {
+		_, err := bazaar.DeclareMcpDiscoveryExtension(bazaar.DeclareMcpDiscoveryConfig{
+			ToolName: "my_tool",
+		})
+
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "inputSchema is required")
+	})
+
+	t.Run("should return error when toolName is whitespace-only", func(t *testing.T) {
+		_, err := bazaar.DeclareMcpDiscoveryExtension(bazaar.DeclareMcpDiscoveryConfig{
+			ToolName:    "   ",
+			InputSchema: map[string]interface{}{"type": "object"},
+		})
+
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "toolName is required")
+	})
+
+	t.Run("should support SSE transport", func(t *testing.T) {
+		extension, err := bazaar.DeclareMcpDiscoveryExtension(bazaar.DeclareMcpDiscoveryConfig{
+			ToolName:  "sse_tool",
+			Transport: bazaar.TransportSSE,
+			InputSchema: map[string]interface{}{
+				"type":       "object",
+				"properties": map[string]interface{}{},
+			},
+		})
+
+		require.NoError(t, err)
+
+		mcpInput, ok := extension.Info.Input.(bazaar.McpInput)
+		require.True(t, ok)
+		assert.Equal(t, bazaar.TransportSSE, mcpInput.Transport)
+	})
+
+	t.Run("should accept an arbitrary transport value without error", func(t *testing.T) {
+		extension, err := bazaar.DeclareMcpDiscoveryExtension(bazaar.DeclareMcpDiscoveryConfig{
+			ToolName:  "custom_transport_tool",
+			Transport: bazaar.McpTransport("custom-protocol"),
+			InputSchema: map[string]interface{}{
+				"type":       "object",
+				"properties": map[string]interface{}{},
+			},
+		})
+
+		// Declaration succeeds since transport is not validated at declaration time
+		require.NoError(t, err)
+
+		mcpInput, ok := extension.Info.Input.(bazaar.McpInput)
+		require.True(t, ok)
+		assert.Equal(t, bazaar.McpTransport("custom-protocol"), mcpInput.Transport)
+
+		// Custom transports should pass both declaration and schema validation
+		result := bazaar.ValidateDiscoveryExtension(extension)
+		assert.True(t, result.Valid, "Custom transport should pass schema validation")
+	})
+
+	t.Run("should support streamable-http transport", func(t *testing.T) {
+		extension, err := bazaar.DeclareMcpDiscoveryExtension(bazaar.DeclareMcpDiscoveryConfig{
+			ToolName:  "streamable_tool",
+			Transport: bazaar.TransportStreamableHTTP,
+			InputSchema: map[string]interface{}{
+				"type":       "object",
+				"properties": map[string]interface{}{},
+			},
+		})
+
+		require.NoError(t, err)
+
+		mcpInput, ok := extension.Info.Input.(bazaar.McpInput)
+		require.True(t, ok)
+		assert.Equal(t, bazaar.TransportStreamableHTTP, mcpInput.Transport)
+	})
+}
+
+func TestValidateDiscoveryExtension_MCP(t *testing.T) {
+	t.Run("should validate a correct MCP extension", func(t *testing.T) {
+		extension, err := bazaar.DeclareMcpDiscoveryExtension(bazaar.DeclareMcpDiscoveryConfig{
+			ToolName:    "weather_lookup",
+			Description: "Look up weather",
+			InputSchema: map[string]interface{}{
+				"type":       "object",
+				"properties": map[string]interface{}{"city": map[string]interface{}{"type": "string"}},
+			},
+		})
+		require.NoError(t, err)
+
+		result := bazaar.ValidateDiscoveryExtension(extension)
+		assert.True(t, result.Valid, "MCP extension should be valid: %v", result.Errors)
+	})
+
+	t.Run("should validate a minimal MCP extension", func(t *testing.T) {
+		extension, err := bazaar.DeclareMcpDiscoveryExtension(bazaar.DeclareMcpDiscoveryConfig{
+			ToolName:    "minimal_tool",
+			InputSchema: map[string]interface{}{"type": "object"},
+		})
+		require.NoError(t, err)
+
+		result := bazaar.ValidateDiscoveryExtension(extension)
+		assert.True(t, result.Valid, "Minimal MCP extension should be valid: %v", result.Errors)
+	})
+
+	t.Run("should validate MCP extension with output", func(t *testing.T) {
+		extension, err := bazaar.DeclareMcpDiscoveryExtension(bazaar.DeclareMcpDiscoveryConfig{
+			ToolName:    "output_tool",
+			InputSchema: map[string]interface{}{"type": "object"},
+			Output: &bazaar.OutputConfig{
+				Example: map[string]interface{}{"result": "ok"},
+			},
+		})
+		require.NoError(t, err)
+
+		result := bazaar.ValidateDiscoveryExtension(extension)
+		assert.True(t, result.Valid, "MCP extension with output should be valid: %v", result.Errors)
+	})
+
+	t.Run("should reject MCP extension with wrong type in info", func(t *testing.T) {
+		// Manually construct an extension where info.input.type != "mcp"
+		// but schema requires const: "mcp"
+		extension := bazaar.DiscoveryExtension{
+			Info: bazaar.DiscoveryInfo{
+				Input: bazaar.McpInput{
+					Type:        "http", // wrong type
+					ToolName:    "bad_tool",
+					InputSchema: map[string]interface{}{"type": "object"},
+				},
+			},
+			Schema: bazaar.JSONSchema{
+				"$schema": "https://json-schema.org/draft/2020-12/schema",
+				"type":    "object",
+				"properties": map[string]interface{}{
+					"input": map[string]interface{}{
+						"type": "object",
+						"properties": map[string]interface{}{
+							"type": map[string]interface{}{
+								"type":  "string",
+								"const": "mcp",
+							},
+							"toolName": map[string]interface{}{
+								"type": "string",
+							},
+							"inputSchema": map[string]interface{}{
+								"type": "object",
+							},
+						},
+						"required":             []string{"type", "toolName", "inputSchema"},
+						"additionalProperties": false,
+					},
+				},
+				"required": []string{"input"},
+			},
+		}
+
+		result := bazaar.ValidateDiscoveryExtension(extension)
+		assert.False(t, result.Valid, "Extension with wrong type should fail validation")
+	})
+
+	t.Run("should reject MCP extension missing toolName in info", func(t *testing.T) {
+		// Manually construct an extension where info is missing toolName
+		extension := bazaar.DiscoveryExtension{
+			Info: bazaar.DiscoveryInfo{
+				Input: bazaar.McpInput{
+					Type:        "mcp",
+					ToolName:    "", // missing
+					InputSchema: map[string]interface{}{"type": "object"},
+				},
+			},
+			Schema: bazaar.JSONSchema{
+				"$schema": "https://json-schema.org/draft/2020-12/schema",
+				"type":    "object",
+				"properties": map[string]interface{}{
+					"input": map[string]interface{}{
+						"type": "object",
+						"properties": map[string]interface{}{
+							"type": map[string]interface{}{
+								"type":  "string",
+								"const": "mcp",
+							},
+							"toolName": map[string]interface{}{
+								"type":      "string",
+								"minLength": 1,
+							},
+							"inputSchema": map[string]interface{}{
+								"type": "object",
+							},
+						},
+						"required":             []string{"type", "toolName", "inputSchema"},
+						"additionalProperties": false,
+					},
+				},
+				"required": []string{"input"},
+			},
+		}
+
+		result := bazaar.ValidateDiscoveryExtension(extension)
+		assert.False(t, result.Valid, "Extension with empty toolName should fail validation when schema has minLength")
+	})
+}
+
+func TestDiscoveryInfoUnmarshalJSON_MCP(t *testing.T) {
+	t.Run("should unmarshal MCP discovery info correctly", func(t *testing.T) {
+		// Create an MCP extension, marshal to JSON, unmarshal back
+		extension, err := bazaar.DeclareMcpDiscoveryExtension(bazaar.DeclareMcpDiscoveryConfig{
+			ToolName:    "round_trip_tool",
+			Description: "Tests JSON round-trip",
+			Transport:   bazaar.TransportStreamableHTTP,
+			InputSchema: map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"query": map[string]interface{}{"type": "string"},
+				},
+			},
+			Example: map[string]interface{}{"query": "test"},
+		})
+		require.NoError(t, err)
+
+		// Marshal to JSON
+		jsonBytes, err := json.Marshal(extension)
+		require.NoError(t, err)
+
+		// Unmarshal back
+		var roundTripped bazaar.DiscoveryExtension
+		err = json.Unmarshal(jsonBytes, &roundTripped)
+		require.NoError(t, err)
+
+		// Should preserve McpInput type
+		mcpInput, ok := roundTripped.Info.Input.(bazaar.McpInput)
+		require.True(t, ok, "Expected McpInput after round-trip, got %T", roundTripped.Info.Input)
+		assert.Equal(t, "mcp", mcpInput.Type)
+		assert.Equal(t, "round_trip_tool", mcpInput.ToolName)
+		assert.Equal(t, "Tests JSON round-trip", mcpInput.Description)
+		assert.Equal(t, bazaar.TransportStreamableHTTP, mcpInput.Transport)
+	})
+
+	t.Run("should distinguish MCP from HTTP in mixed JSON", func(t *testing.T) {
+		// HTTP extension
+		httpExtension, err := bazaar.DeclareDiscoveryExtension(
+			bazaar.MethodGET,
+			map[string]interface{}{"q": "test"},
+			bazaar.JSONSchema{"properties": map[string]interface{}{"q": map[string]interface{}{"type": "string"}}},
+			"",
+			nil,
+		)
+		require.NoError(t, err)
+
+		// MCP extension
+		mcpExtension, err := bazaar.DeclareMcpDiscoveryExtension(bazaar.DeclareMcpDiscoveryConfig{
+			ToolName:    "mcp_tool",
+			InputSchema: map[string]interface{}{"type": "object"},
+		})
+		require.NoError(t, err)
+
+		// Marshal both
+		httpJSON, _ := json.Marshal(httpExtension)
+		mcpJSON, _ := json.Marshal(mcpExtension)
+
+		// Unmarshal both
+		var httpResult bazaar.DiscoveryExtension
+		var mcpResult bazaar.DiscoveryExtension
+		require.NoError(t, json.Unmarshal(httpJSON, &httpResult))
+		require.NoError(t, json.Unmarshal(mcpJSON, &mcpResult))
+
+		_, isQuery := httpResult.Info.Input.(bazaar.QueryInput)
+		assert.True(t, isQuery, "HTTP extension should unmarshal to QueryInput")
+
+		_, isMcp := mcpResult.Info.Input.(bazaar.McpInput)
+		assert.True(t, isMcp, "MCP extension should unmarshal to McpInput")
+	})
+}
+
+func TestExtractDiscoveredResourceFromPaymentPayload_MCP(t *testing.T) {
+	t.Run("should extract MCP info from v2 PaymentPayload", func(t *testing.T) {
+		extension, err := bazaar.DeclareMcpDiscoveryExtension(bazaar.DeclareMcpDiscoveryConfig{
+			ToolName:    "search_tool",
+			Description: "Search the database",
+			Transport:   bazaar.TransportStreamableHTTP,
+			InputSchema: map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"query": map[string]interface{}{"type": "string"},
+				},
+				"required": []string{"query"},
+			},
+		})
+		require.NoError(t, err)
+
+		requirements := x402.PaymentRequirements{
+			Scheme:  "exact",
+			Network: "eip155:8453",
+		}
+
+		paymentPayload := x402.PaymentPayload{
+			X402Version: 2,
+			Accepted:    requirements,
+			Payload:     map[string]interface{}{},
+			Resource: &x402.ResourceInfo{
+				URL: "https://api.example.com/mcp",
+			},
+			Extensions: map[string]interface{}{
+				bazaar.BAZAAR.Key(): extension,
+			},
+		}
+
+		payloadBytes, _ := json.Marshal(paymentPayload)
+		requirementsBytes, _ := json.Marshal(requirements)
+
+		info, err := bazaar.ExtractDiscoveredResourceFromPaymentPayload(payloadBytes, requirementsBytes, true)
+		require.NoError(t, err)
+		require.NotNil(t, info)
+
+		assert.Equal(t, "https://api.example.com/mcp", info.ResourceURL)
+		assert.Equal(t, 2, info.X402Version)
+		assert.Equal(t, "search_tool", info.ToolName)
+		assert.Empty(t, info.Method, "MCP resources should have empty Method")
+
+		mcpInput, ok := info.DiscoveryInfo.Input.(bazaar.McpInput)
+		require.True(t, ok)
+		assert.Equal(t, "mcp", mcpInput.Type)
+		assert.Equal(t, "search_tool", mcpInput.ToolName)
+	})
+
+	t.Run("should extract MCP resource when method is empty", func(t *testing.T) {
+		extension := map[string]interface{}{
+			"info": map[string]interface{}{
+				"input": map[string]interface{}{
+					"type":        "mcp",
+					"method":      "",
+					"toolName":    "search_tool",
+					"inputSchema": map[string]interface{}{"type": "object"},
+				},
+			},
+			"schema": map[string]interface{}{},
+		}
+
+		requirements := x402.PaymentRequirements{
+			Scheme:  "exact",
+			Network: "eip155:8453",
+		}
+
+		paymentPayload := x402.PaymentPayload{
+			X402Version: 2,
+			Accepted:    requirements,
+			Payload:     map[string]interface{}{},
+			Resource: &x402.ResourceInfo{
+				URL: "https://api.example.com/mcp",
+			},
+			Extensions: map[string]interface{}{
+				bazaar.BAZAAR.Key(): extension,
+			},
+		}
+
+		payloadBytes, _ := json.Marshal(paymentPayload)
+		requirementsBytes, _ := json.Marshal(requirements)
+
+		info, err := bazaar.ExtractDiscoveredResourceFromPaymentPayload(payloadBytes, requirementsBytes, false)
+		require.NoError(t, err)
+		require.NotNil(t, info)
+		assert.Equal(t, "search_tool", info.ToolName)
+		assert.Empty(t, info.Method)
+	})
+
+	t.Run("should recover MCP fields when deserialized as query input", func(t *testing.T) {
+		// Missing input.type causes default QueryInput decoding in DiscoveryInfo.UnmarshalJSON.
+		// The extractor should recover MCP fields from raw payload input.
+		extension := map[string]interface{}{
+			"info": map[string]interface{}{
+				"input": map[string]interface{}{
+					"toolName":    "query_fallback_tool",
+					"transport":   "sse",
+					"inputSchema": map[string]interface{}{"type": "object"},
+				},
+			},
+			"schema": map[string]interface{}{},
+		}
+
+		requirements := x402.PaymentRequirements{
+			Scheme:  "exact",
+			Network: "eip155:8453",
+		}
+
+		paymentPayload := x402.PaymentPayload{
+			X402Version: 2,
+			Accepted:    requirements,
+			Payload:     map[string]interface{}{},
+			Resource: &x402.ResourceInfo{
+				URL: "https://api.example.com/mcp",
+			},
+			Extensions: map[string]interface{}{
+				bazaar.BAZAAR.Key(): extension,
+			},
+		}
+
+		payloadBytes, _ := json.Marshal(paymentPayload)
+		requirementsBytes, _ := json.Marshal(requirements)
+
+		info, err := bazaar.ExtractDiscoveredResourceFromPaymentPayload(payloadBytes, requirementsBytes, false)
+		require.NoError(t, err)
+		require.NotNil(t, info)
+		assert.Equal(t, "query_fallback_tool", info.ToolName)
+		assert.Empty(t, info.Method)
+
+		mcpInput, ok := info.DiscoveryInfo.Input.(bazaar.McpInput)
+		require.True(t, ok)
+		assert.Equal(t, "query_fallback_tool", mcpInput.ToolName)
+		assert.Equal(t, bazaar.TransportSSE, mcpInput.Transport)
+	})
+}
+
+func TestExtractDiscoveredResourceFromPaymentRequired_MCP(t *testing.T) {
+	t.Run("should extract MCP info from v2 PaymentRequired", func(t *testing.T) {
+		extension, err := bazaar.DeclareMcpDiscoveryExtension(bazaar.DeclareMcpDiscoveryConfig{
+			ToolName:    "lookup_tool",
+			Description: "Lookup data",
+			InputSchema: map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"id": map[string]interface{}{"type": "string"},
+				},
+			},
+		})
+		require.NoError(t, err)
+
+		paymentRequired := x402.PaymentRequired{
+			X402Version: 2,
+			Resource: &x402.ResourceInfo{
+				URL:         "https://api.example.com/mcp",
+				Description: "MCP endpoint",
+				MimeType:    "application/json",
+			},
+			Accepts: []x402.PaymentRequirements{
+				{Scheme: "exact", Network: "eip155:8453"},
+			},
+			Extensions: map[string]interface{}{
+				"bazaar": extension,
+			},
+		}
+
+		paymentRequiredBytes, _ := json.Marshal(paymentRequired)
+
+		info, err := bazaar.ExtractDiscoveredResourceFromPaymentRequired(paymentRequiredBytes, true)
+		require.NoError(t, err)
+		require.NotNil(t, info)
+
+		assert.Equal(t, "https://api.example.com/mcp", info.ResourceURL)
+		assert.Equal(t, 2, info.X402Version)
+		assert.Equal(t, "lookup_tool", info.ToolName)
+		assert.Empty(t, info.Method)
+
+		mcpInput, ok := info.DiscoveryInfo.Input.(bazaar.McpInput)
+		require.True(t, ok)
+		assert.Equal(t, "mcp", mcpInput.Type)
+		assert.Equal(t, "lookup_tool", mcpInput.ToolName)
+	})
+
+	t.Run("should extract MCP info from payment required when method is empty", func(t *testing.T) {
+		extension := map[string]interface{}{
+			"info": map[string]interface{}{
+				"input": map[string]interface{}{
+					"type":        "mcp",
+					"method":      "",
+					"toolName":    "lookup_tool",
+					"inputSchema": map[string]interface{}{"type": "object"},
+				},
+			},
+			"schema": map[string]interface{}{},
+		}
+
+		paymentRequired := x402.PaymentRequired{
+			X402Version: 2,
+			Resource: &x402.ResourceInfo{
+				URL: "https://api.example.com/mcp",
+			},
+			Accepts: []x402.PaymentRequirements{
+				{Scheme: "exact", Network: "eip155:8453"},
+			},
+			Extensions: map[string]interface{}{
+				bazaar.BAZAAR.Key(): extension,
+			},
+		}
+
+		paymentRequiredBytes, _ := json.Marshal(paymentRequired)
+		info, err := bazaar.ExtractDiscoveredResourceFromPaymentRequired(paymentRequiredBytes, false)
+		require.NoError(t, err)
+		require.NotNil(t, info)
+		assert.Equal(t, "lookup_tool", info.ToolName)
+		assert.Empty(t, info.Method)
+	})
+
+	t.Run("should recover MCP fields in payment required when deserialized as query input", func(t *testing.T) {
+		extension := map[string]interface{}{
+			"info": map[string]interface{}{
+				"input": map[string]interface{}{
+					"toolName":    "query_fallback_lookup_tool",
+					"transport":   "streamable-http",
+					"inputSchema": map[string]interface{}{"type": "object"},
+				},
+			},
+			"schema": map[string]interface{}{},
+		}
+
+		paymentRequired := x402.PaymentRequired{
+			X402Version: 2,
+			Resource: &x402.ResourceInfo{
+				URL: "https://api.example.com/mcp",
+			},
+			Accepts: []x402.PaymentRequirements{
+				{Scheme: "exact", Network: "eip155:8453"},
+			},
+			Extensions: map[string]interface{}{
+				bazaar.BAZAAR.Key(): extension,
+			},
+		}
+
+		paymentRequiredBytes, _ := json.Marshal(paymentRequired)
+		info, err := bazaar.ExtractDiscoveredResourceFromPaymentRequired(paymentRequiredBytes, false)
+		require.NoError(t, err)
+		require.NotNil(t, info)
+		assert.Equal(t, "query_fallback_lookup_tool", info.ToolName)
+		assert.Empty(t, info.Method)
+
+		mcpInput, ok := info.DiscoveryInfo.Input.(bazaar.McpInput)
+		require.True(t, ok)
+		assert.Equal(t, "query_fallback_lookup_tool", mcpInput.ToolName)
+		assert.Equal(t, bazaar.TransportStreamableHTTP, mcpInput.Transport)
+	})
+}
+
+func TestBazaarResourceServerExtension_MCP(t *testing.T) {
+	t.Run("should pass MCP extension through unchanged", func(t *testing.T) {
+		extension, err := bazaar.DeclareMcpDiscoveryExtension(bazaar.DeclareMcpDiscoveryConfig{
+			ToolName:    "passthrough_tool",
+			Description: "Should not be modified by EnrichDeclaration",
+			Transport:   bazaar.TransportStreamableHTTP,
+			InputSchema: map[string]interface{}{
+				"type":       "object",
+				"properties": map[string]interface{}{"x": map[string]interface{}{"type": "number"}},
+			},
+		})
+		require.NoError(t, err)
+
+		httpContext := x402http.HTTPRequestContext{
+			Method:       "POST",
+			Path:         "/mcp/tool",
+			RoutePattern: "/mcp/tool",
+			Adapter:      &mockHTTPAdapterForBazaar{path: "/mcp/tool"},
+		}
+
+		enriched := bazaar.BazaarResourceServerExtension.EnrichDeclaration(extension, httpContext)
+
+		// Should be returned unchanged (same object)
+		enrichedExt, ok := enriched.(bazaar.DiscoveryExtension)
+		require.True(t, ok)
+
+		mcpInput, ok := enrichedExt.Info.Input.(bazaar.McpInput)
+		require.True(t, ok)
+		assert.Equal(t, "passthrough_tool", mcpInput.ToolName)
+		assert.Equal(t, "Should not be modified by EnrichDeclaration", mcpInput.Description)
+		assert.Empty(t, enrichedExt.RouteTemplate, "MCP should not get a routeTemplate")
+	})
+
+	t.Run("should pass MCP extension through even with dynamic route context", func(t *testing.T) {
+		extension, err := bazaar.DeclareMcpDiscoveryExtension(bazaar.DeclareMcpDiscoveryConfig{
+			ToolName:    "dynamic_context_tool",
+			InputSchema: map[string]interface{}{"type": "object"},
+		})
+		require.NoError(t, err)
+
+		// Even with a dynamic route pattern, MCP should be unchanged
+		httpContext := x402http.HTTPRequestContext{
+			Method:       "POST",
+			Path:         "/mcp/tools/123",
+			RoutePattern: "/mcp/tools/[toolId]",
+			Adapter:      &mockHTTPAdapterForBazaar{path: "/mcp/tools/123"},
+		}
+
+		enriched := bazaar.BazaarResourceServerExtension.EnrichDeclaration(extension, httpContext)
+
+		enrichedExt, ok := enriched.(bazaar.DiscoveryExtension)
+		require.True(t, ok)
+
+		_, isMcp := enrichedExt.Info.Input.(bazaar.McpInput)
+		assert.True(t, isMcp, "Should still be McpInput after enrichment")
+		assert.Empty(t, enrichedExt.RouteTemplate, "MCP should not get a routeTemplate even with dynamic route")
+	})
+}
+
+func TestExtractDiscoveryInfoFromExtension_MCP(t *testing.T) {
+	t.Run("should extract info from MCP extension with validation", func(t *testing.T) {
+		extension, err := bazaar.DeclareMcpDiscoveryExtension(bazaar.DeclareMcpDiscoveryConfig{
+			ToolName:    "extract_tool",
+			Description: "For extraction test",
+			InputSchema: map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"param": map[string]interface{}{"type": "string"},
+				},
+			},
+		})
+		require.NoError(t, err)
+
+		info, err := bazaar.ExtractDiscoveryInfoFromExtension(extension, true)
+		require.NoError(t, err)
+		require.NotNil(t, info)
+
+		mcpInput, ok := info.Input.(bazaar.McpInput)
+		require.True(t, ok)
+		assert.Equal(t, "extract_tool", mcpInput.ToolName)
+	})
+
+	t.Run("should extract info from MCP extension without validation", func(t *testing.T) {
+		extension, err := bazaar.DeclareMcpDiscoveryExtension(bazaar.DeclareMcpDiscoveryConfig{
+			ToolName:    "novalidate_tool",
+			InputSchema: map[string]interface{}{"type": "object"},
+		})
+		require.NoError(t, err)
+
+		info, err := bazaar.ExtractDiscoveryInfoFromExtension(extension, false)
+		require.NoError(t, err)
+		require.NotNil(t, info)
+
+		mcpInput, ok := info.Input.(bazaar.McpInput)
+		require.True(t, ok)
+		assert.Equal(t, "novalidate_tool", mcpInput.ToolName)
+	})
+}
+
 // TestDynamicRoutesCatalogConsolidation verifies that two requests to the same
 // parameterized route produce the same canonical ResourceURL, so a catalog keyed by ResourceURL
 // contains exactly one entry regardless of how many distinct concrete parameter values arrive.
@@ -2192,4 +3085,227 @@ func TestDynamicRoutesCatalogConsolidation(t *testing.T) {
 	assert.Equal(t, "http://api.example.com/users/:userId", discovered2.ResourceURL)
 	assert.Equal(t, discovered1.ResourceURL, discovered2.ResourceURL,
 		"requests to the same parameterized route should consolidate to one catalog entry")
+}
+
+func TestExtractDiscoveredResource_ServiceMetadata(t *testing.T) {
+	declared, _ := bazaar.DeclareDiscoveryExtension(
+		bazaar.MethodGET,
+		map[string]interface{}{"city": "NYC"},
+		bazaar.JSONSchema{
+			"properties": map[string]interface{}{
+				"city": map[string]interface{}{"type": "string"},
+			},
+		},
+		"",
+		nil,
+	)
+
+	build := func(resource *x402.ResourceInfo) []byte {
+		payload := x402.PaymentPayload{
+			X402Version: 2,
+			Accepted:    x402.PaymentRequirements{Scheme: "exact", Network: "eip155:8453"},
+			Payload:     map[string]interface{}{},
+			Resource:    resource,
+			Extensions:  map[string]interface{}{bazaar.BAZAAR.Key(): declared},
+		}
+		b, _ := json.Marshal(payload)
+		return b
+	}
+
+	t.Run("surfaces sanitized serviceName / tags / iconUrl from PaymentPayload", func(t *testing.T) {
+		bytes := build(&x402.ResourceInfo{
+			URL:         "https://api.example.com/weather",
+			Description: "Weather API",
+			MimeType:    "application/json",
+			ServiceName: "Example Weather",
+			Tags:        []string{"weather", "forecast"},
+			IconUrl:     "https://api.example.com/icon.png",
+		})
+		discovered, err := bazaar.ExtractDiscoveredResourceFromPaymentPayload(bytes, nil, false)
+		require.NoError(t, err)
+		require.NotNil(t, discovered)
+		assert.Equal(t, "Example Weather", discovered.ServiceName)
+		assert.Equal(t, []string{"weather", "forecast"}, discovered.Tags)
+		assert.Equal(t, "https://api.example.com/icon.png", discovered.IconUrl)
+	})
+
+	t.Run("soft-drops invalid metadata fields independently from PaymentPayload", func(t *testing.T) {
+		bytes := build(&x402.ResourceInfo{
+			URL:         "https://api.example.com/weather",
+			ServiceName: strings.Repeat("a", 33),
+			Tags:        []string{"weather", "", "forecast"},
+			IconUrl:     "http://localhost/icon.png",
+		})
+		discovered, err := bazaar.ExtractDiscoveredResourceFromPaymentPayload(bytes, nil, false)
+		require.NoError(t, err)
+		require.NotNil(t, discovered)
+		assert.Equal(t, "", discovered.ServiceName)
+		assert.Equal(t, []string{"weather", "forecast"}, discovered.Tags)
+		assert.Equal(t, "", discovered.IconUrl)
+	})
+
+	t.Run("surfaces sanitized metadata from PaymentRequired", func(t *testing.T) {
+		paymentRequired := x402.PaymentRequired{
+			X402Version: 2,
+			Resource: &x402.ResourceInfo{
+				URL:         "https://api.example.com/weather",
+				ServiceName: "Example Weather",
+				Tags:        []string{"weather"},
+				IconUrl:     "https://api.example.com/icon.png",
+			},
+			Accepts:    []x402.PaymentRequirements{{Scheme: "exact", Network: "eip155:8453"}},
+			Extensions: map[string]interface{}{bazaar.BAZAAR.Key(): declared},
+		}
+		b, _ := json.Marshal(paymentRequired)
+		discovered, err := bazaar.ExtractDiscoveredResourceFromPaymentRequired(b, false)
+		require.NoError(t, err)
+		require.NotNil(t, discovered)
+		assert.Equal(t, "Example Weather", discovered.ServiceName)
+		assert.Equal(t, []string{"weather"}, discovered.Tags)
+		assert.Equal(t, "https://api.example.com/icon.png", discovered.IconUrl)
+	})
+}
+
+// TestValidateDiscoveryExtension_SSRF reproduces CWE-918: a client-controlled schema `$ref`/`$id`
+// must never be dereferenced. gojsonschema's default loader resolves any unregistered `$ref` via
+// an outbound HTTP request or a filesystem read during schema compilation, before the instance is
+// ever checked. Since `schema` arrives in the client's payment payload, this is a real SSRF /
+// local file disclosure vector.
+func TestValidateDiscoveryExtension_SSRF(t *testing.T) {
+	t.Run("rejects a $ref over http without dereferencing it", func(t *testing.T) {
+		var hits int32
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			atomic.AddInt32(&hits, 1)
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"type": "object"}`))
+		}))
+		defer server.Close()
+
+		extension := bazaar.DiscoveryExtension{
+			Info: bazaar.DiscoveryInfo{
+				Input: bazaar.QueryInput{Type: "http", Method: bazaar.MethodGET},
+			},
+			Schema: bazaar.JSONSchema{"$ref": server.URL + "/attacker-schema.json"},
+		}
+
+		result := bazaar.ValidateDiscoveryExtension(extension)
+
+		assert.Equal(t, int32(0), atomic.LoadInt32(&hits),
+			"an attacker-controlled $ref must never cause an outbound HTTP request (CWE-918 SSRF)")
+		assert.False(t, result.Valid, "schema with an external $ref must be rejected")
+	})
+
+	t.Run("rejects a $ref via file:// URI without reading the file", func(t *testing.T) {
+		dir := t.TempDir()
+		secretPath := filepath.Join(dir, "attacker-schema.json")
+		require.NoError(t, os.WriteFile(secretPath, []byte(`{"type": "object"}`), 0o600))
+
+		extension := bazaar.DiscoveryExtension{
+			Info: bazaar.DiscoveryInfo{
+				Input: bazaar.QueryInput{Type: "http", Method: bazaar.MethodGET},
+			},
+			Schema: bazaar.JSONSchema{"$ref": "file://" + secretPath},
+		}
+
+		result := bazaar.ValidateDiscoveryExtension(extension)
+
+		assert.False(t, result.Valid, "schema with a file:// $ref must be rejected")
+	})
+
+	t.Run("rejects a $ref nested inside schema properties", func(t *testing.T) {
+		var hits int32
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			atomic.AddInt32(&hits, 1)
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"type": "object"}`))
+		}))
+		defer server.Close()
+
+		extension := bazaar.DiscoveryExtension{
+			Info: bazaar.DiscoveryInfo{
+				Input: bazaar.QueryInput{Type: "http", Method: bazaar.MethodGET},
+			},
+			Schema: bazaar.JSONSchema{
+				"properties": map[string]interface{}{
+					"input": map[string]interface{}{"$ref": server.URL + "/attacker-schema.json"},
+				},
+			},
+		}
+
+		result := bazaar.ValidateDiscoveryExtension(extension)
+
+		assert.Equal(t, int32(0), atomic.LoadInt32(&hits), "nested $ref must not be dereferenced")
+		assert.False(t, result.Valid)
+	})
+
+	t.Run("rejects an external $id", func(t *testing.T) {
+		extension := bazaar.DiscoveryExtension{
+			Info: bazaar.DiscoveryInfo{
+				Input: bazaar.QueryInput{Type: "http", Method: bazaar.MethodGET},
+			},
+			Schema: bazaar.JSONSchema{"$id": "https://evil.example.com/schema.json", "type": "object"},
+		}
+
+		result := bazaar.ValidateDiscoveryExtension(extension)
+
+		assert.False(t, result.Valid, "schema with an external $id must be rejected")
+	})
+
+	t.Run("still validates schemas with only local fragment refs", func(t *testing.T) {
+		extension := bazaar.DiscoveryExtension{
+			Info: bazaar.DiscoveryInfo{
+				Input: bazaar.QueryInput{Type: "http", Method: bazaar.MethodGET},
+			},
+			Schema: bazaar.JSONSchema{
+				"$ref": "#/definitions/root",
+				"definitions": map[string]interface{}{
+					"root": map[string]interface{}{"type": "object"},
+				},
+			},
+		}
+
+		result := bazaar.ValidateDiscoveryExtension(extension)
+
+		assert.True(t, result.Valid, "local fragment $ref should still validate: %v", result.Errors)
+	})
+}
+
+// TestExtractDiscoveredResourceFromPaymentPayload_SSRF matches the real attack path: a client's
+// paymentPayload with a malicious extensions.bazaar.schema, processed via
+// ExtractDiscoveredResourceFromPaymentPayload(validate=true) the way a facilitator's
+// OnAfterVerify hook does.
+func TestExtractDiscoveredResourceFromPaymentPayload_SSRF(t *testing.T) {
+	var hits int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&hits, 1)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"type": "object"}`))
+	}))
+	defer server.Close()
+
+	extension := bazaar.DiscoveryExtension{
+		Info: bazaar.DiscoveryInfo{
+			Input: bazaar.QueryInput{Type: "http", Method: bazaar.MethodGET},
+		},
+		Schema: bazaar.JSONSchema{"$ref": server.URL + "/attacker-schema.json"},
+	}
+
+	payload := x402.PaymentPayload{
+		X402Version: 2,
+		Accepted:    x402.PaymentRequirements{Scheme: "exact", Network: "eip155:84532"},
+		Payload:     map[string]interface{}{},
+		Resource:    &x402.ResourceInfo{URL: "http://api.example.com/weather"},
+		Extensions:  map[string]interface{}{bazaar.BAZAAR.Key(): extension},
+	}
+	payloadBytes, err := json.Marshal(payload)
+	require.NoError(t, err)
+
+	discovered, err := bazaar.ExtractDiscoveredResourceFromPaymentPayload(payloadBytes, nil, true)
+
+	assert.Equal(t, int32(0), atomic.LoadInt32(&hits),
+		"an attacker-controlled $ref in extensions.bazaar.schema must never cause the facilitator "+
+			"to make an outbound HTTP request (CWE-918 SSRF)")
+	assert.Error(t, err,
+		"a schema containing an external $ref should fail validation, not silently succeed")
+	assert.Nil(t, discovered)
 }

@@ -5,16 +5,18 @@ import (
 	"encoding/json"
 	"fmt"
 	"math/rand"
+	"net"
 	"net/http"
 	"os"
 	"time"
 
-	x402 "github.com/coinbase/x402/go"
-	x402http "github.com/coinbase/x402/go/http"
-	mcp402 "github.com/coinbase/x402/go/mcp"
-	evm "github.com/coinbase/x402/go/mechanisms/evm/exact/server"
-	"github.com/coinbase/x402/go/types"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
+	x402 "github.com/x402-foundation/x402/go/v2"
+	"github.com/x402-foundation/x402/go/v2/extensions/bazaar"
+	x402http "github.com/x402-foundation/x402/go/v2/http"
+	mcp402 "github.com/x402-foundation/x402/go/v2/mcp"
+	evm "github.com/x402-foundation/x402/go/v2/mechanisms/evm/exact/server"
+	"github.com/x402-foundation/x402/go/v2/types"
 )
 
 // getWeatherData simulates fetching weather data for a city.
@@ -96,6 +98,29 @@ func main() {
 		os.Exit(1)
 	}
 
+	// Declare bazaar MCP discovery extension for weather tool
+	weatherInputSchema := map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"city": map[string]any{
+				"type":        "string",
+				"description": "The city name to get weather for",
+			},
+		},
+		"required": []string{"city"},
+	}
+	bazaarExtension, err := bazaar.DeclareMcpDiscoveryExtension(bazaar.DeclareMcpDiscoveryConfig{
+		ToolName:    "get_weather",
+		Description: "Get current weather for a city. Requires payment of $0.001.",
+		Transport:   bazaar.TransportSSE,
+		InputSchema: weatherInputSchema,
+		Example:     map[string]any{"city": "San Francisco"},
+	})
+	if err != nil {
+		fmt.Printf("❌ Failed to declare bazaar extension: %v\n", err)
+		os.Exit(1)
+	}
+
 	// Create payment wrapper using the x402 MCP SDK
 	paymentWrapper := mcp402.NewPaymentWrapper(resourceServer, mcp402.PaymentWrapperConfig{
 		Accepts: weatherAccepts,
@@ -103,6 +128,9 @@ func main() {
 			URL:         "mcp://tool/get_weather",
 			Description: "Get current weather for a city",
 			MimeType:    "application/json",
+		},
+		Extensions: map[string]interface{}{
+			bazaar.BAZAAR.Key(): bazaarExtension,
 		},
 	})
 
@@ -190,11 +218,21 @@ func main() {
 	// Mount SSE handler as catch-all
 	mux.Handle("/", sseHandler)
 
+	// Bind the socket first and only then print the "listening" log, so the
+	// e2e harness (which treats this log line as the readiness signal)
+	// doesn't consider the server ready before it can actually accept
+	// connections.
+	listener, err := net.Listen("tcp", ":"+port)
+	if err != nil {
+		fmt.Printf("Error starting server: %v\n", err)
+		os.Exit(1)
+	}
+
 	fmt.Printf("Server listening on port %s\n", port)
 	fmt.Printf("SSE endpoint: http://localhost:%s/sse\n", port)
 	fmt.Printf("Health: http://localhost:%s/health\n", port)
 
-	if err := http.ListenAndServe(":"+port, mux); err != nil {
+	if err := http.Serve(listener, mux); err != nil {
 		fmt.Printf("Error starting server: %v\n", err)
 		os.Exit(1)
 	}
