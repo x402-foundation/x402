@@ -2,10 +2,12 @@ import {
   CANONICAL_SIGNING_PUB_KEY_PATTERN,
   DEFAULT_MAX_FEE_DROPS,
   SETTLEMENT_TTL_MS,
+  TF_NO_RIPPLE_DIRECT,
   TF_PARTIAL_PAYMENT,
   XRPL_CAIP_FAMILY,
 } from "../../constants";
 import {
+  areXrplTokenAmountsEquivalent,
   compareDecimalStrings,
   decodeSignedTransactionBlob,
   getCurrentLedgerIndex,
@@ -15,9 +17,13 @@ import {
   getXrplAccountAuthorization,
   getXrplAccountSequence,
   invoiceIdToInvoiceIdField,
+  isDifferentXrplSourceAsset,
   isIssuedCurrencyAmount,
   isRecord,
+  isSameXrplCurrency,
+  isSameXrplIssue,
   isValidDestinationTag,
+  isValidXrplPathSet,
   isXrplNetwork,
   isXrplTicketAvailable,
   parseXrplNetworkId,
@@ -65,7 +71,10 @@ export class ExactXrplScheme implements SchemeNetworkFacilitator {
    * @returns Extra metadata advertising that fees are never sponsored
    */
   getExtra(_network: Network): Record<string, unknown> | undefined {
-    return { areFeesSponsored: false };
+    return {
+      areFeesSponsored: false,
+      features: { crossCurrency: true },
+    };
   }
 
   /**
@@ -234,6 +243,18 @@ export class ExactXrplScheme implements SchemeNetworkFacilitator {
           errorReason: `transaction_failed: ${result.resultCode}`,
         };
       }
+      if (
+        requirements.extra?.crossCurrency === true &&
+        !this.isExactDeliveredAmount(result.deliveredAmount, requirements)
+      ) {
+        return {
+          success: false,
+          transaction: result.hash || transactionHash,
+          network: payload.accepted.network,
+          payer: verification.payer ?? "",
+          errorReason: "transaction_failed: delivered_amount_mismatch",
+        };
+      }
 
       return {
         success: true,
@@ -298,6 +319,17 @@ export class ExactXrplScheme implements SchemeNetworkFacilitator {
     }
     if (payload.accepted.extra?.destinationTag !== requirements.extra?.destinationTag) {
       return "invalid_exact_xrpl_destination_tag_mismatch";
+    }
+    const requiredCrossCurrency = requirements.extra?.crossCurrency;
+    const acceptedCrossCurrency = payload.accepted.extra?.crossCurrency;
+    if (
+      (requiredCrossCurrency !== undefined && requiredCrossCurrency !== true) ||
+      (acceptedCrossCurrency !== undefined && acceptedCrossCurrency !== true)
+    ) {
+      return "invalid_exact_xrpl_cross_currency_malformed";
+    }
+    if (acceptedCrossCurrency !== requiredCrossCurrency) {
+      return "invalid_exact_xrpl_cross_currency_mismatch";
     }
     if (requirements.asset !== "XRP") {
       try {
@@ -398,6 +430,9 @@ export class ExactXrplScheme implements SchemeNetworkFacilitator {
     if (BigInt(destinationAmount) !== BigInt(requirements.amount)) {
       return "invalid_exact_xrpl_payload_amount_mismatch";
     }
+    if (requirements.extra?.crossCurrency === true) {
+      return this.verifyCrossCurrencyControls(transaction, destinationAmount);
+    }
     if (transaction.SendMax !== undefined) {
       return "invalid_exact_xrpl_payload_sendmax_not_allowed";
     }
@@ -428,7 +463,7 @@ export class ExactXrplScheme implements SchemeNetworkFacilitator {
     if (!isIssuedCurrencyAmount(destinationAmount)) {
       return "invalid_exact_xrpl_payload_iou_amount";
     }
-    if (destinationAmount.currency !== requirements.asset) {
+    if (!isSameXrplCurrency(destinationAmount.currency, requirements.asset)) {
       return "invalid_exact_xrpl_payload_iou_currency_mismatch";
     }
     if (destinationAmount.issuer !== requirements.extra?.issuer) {
@@ -437,13 +472,13 @@ export class ExactXrplScheme implements SchemeNetworkFacilitator {
     if (compareDecimalStrings(destinationAmount.value, requirements.amount) !== 0) {
       return "invalid_exact_xrpl_payload_iou_value_mismatch";
     }
+    if (requirements.extra?.crossCurrency === true) {
+      return this.verifyCrossCurrencyControls(transaction, destinationAmount);
+    }
     if (!isIssuedCurrencyAmount(transaction.SendMax)) {
       return "invalid_exact_xrpl_payload_sendmax_required";
     }
-    if (
-      transaction.SendMax.currency !== destinationAmount.currency ||
-      transaction.SendMax.issuer !== destinationAmount.issuer
-    ) {
+    if (!isSameXrplIssue(transaction.SendMax, destinationAmount)) {
       return "invalid_exact_xrpl_payload_sendmax_iou_mismatch";
     }
     if (compareDecimalStrings(transaction.SendMax.value, destinationAmount.value) < 0) {
@@ -459,6 +494,66 @@ export class ExactXrplScheme implements SchemeNetworkFacilitator {
       return "invalid_exact_xrpl_payload_partial_payment_not_allowed";
     }
     return undefined;
+  }
+
+  /**
+   * Verifies cross-currency source-cap, partial-payment, and path invariants.
+   *
+   * @param transaction - Decoded XRPL payment transaction
+   * @param destinationAmount - Exact destination amount
+   * @returns Invalid reason, if validation fails
+   */
+  private verifyCrossCurrencyControls(
+    transaction: Payment,
+    destinationAmount: Payment["Amount"],
+  ): string | undefined {
+    if (!isDifferentXrplSourceAsset(transaction.SendMax, destinationAmount)) {
+      return "invalid_exact_xrpl_payload_cross_currency_sendmax";
+    }
+    if (transaction.DeliverMin !== undefined) {
+      return "invalid_exact_xrpl_payload_delivermin_not_allowed";
+    }
+    if (hasPartialPaymentFlag(transaction.Flags)) {
+      return "invalid_exact_xrpl_payload_partial_payment_not_allowed";
+    }
+
+    const noRippleDirect = hasNoRippleDirectFlag(transaction.Flags);
+    if (transaction.Paths === undefined) {
+      if (noRippleDirect) {
+        return "invalid_exact_xrpl_payload_default_path_disabled_without_paths";
+      }
+      return undefined;
+    }
+    if (!isValidXrplPathSet(transaction.Paths)) {
+      return "invalid_exact_xrpl_payload_paths_malformed";
+    }
+    return undefined;
+  }
+
+  /**
+   * Checks validated metadata against the exact negotiated destination amount.
+   *
+   * @param deliveredAmount - Metadata delivered_amount value
+   * @param requirements - Exact destination requirements
+   * @returns Whether the delivered amount and issue are exact
+   */
+  private isExactDeliveredAmount(
+    deliveredAmount: Payment["Amount"] | "unavailable" | undefined,
+    requirements: PaymentRequirements,
+  ): boolean {
+    if (requirements.asset === "XRP") {
+      return (
+        typeof deliveredAmount === "string" &&
+        /^\d+$/.test(deliveredAmount) &&
+        BigInt(deliveredAmount) === BigInt(requirements.amount)
+      );
+    }
+    return (
+      isIssuedCurrencyAmount(deliveredAmount) &&
+      isSameXrplCurrency(deliveredAmount.currency, requirements.asset) &&
+      deliveredAmount.issuer === requirements.extra?.issuer &&
+      areXrplTokenAmountsEquivalent(deliveredAmount.value, requirements.amount)
+    );
   }
 
   /**
@@ -665,6 +760,12 @@ export class ExactXrplScheme implements SchemeNetworkFacilitator {
     if (result.engineResult !== "tesSUCCESS") {
       return `invalid_exact_xrpl_payload_simulation_failed: ${result.engineResult}`;
     }
+    if (
+      requirements.extra?.crossCurrency === true &&
+      !this.isExactDeliveredAmount(result.deliveredAmount, requirements)
+    ) {
+      return "invalid_exact_xrpl_payload_simulation_delivered_amount_mismatch";
+    }
     return undefined;
   }
 }
@@ -710,6 +811,19 @@ function hasPartialPaymentFlag(flags: Payment["Flags"]): boolean {
     return (flags & TF_PARTIAL_PAYMENT) !== 0;
   }
   return isRecord(flags) && flags.tfPartialPayment === true;
+}
+
+/**
+ * Checks whether XRPL Payment flags disable the default path.
+ *
+ * @param flags - XRPL payment flags
+ * @returns Whether tfNoRippleDirect is enabled
+ */
+function hasNoRippleDirectFlag(flags: Payment["Flags"]): boolean {
+  if (typeof flags === "number") {
+    return (flags & TF_NO_RIPPLE_DIRECT) !== 0;
+  }
+  return isRecord(flags) && flags.tfNoRippleDirect === true;
 }
 
 /**

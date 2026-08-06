@@ -1,16 +1,23 @@
 import {
+  compareDecimalStrings,
   createTickets,
   createXrplClient,
   getMaxLastLedgerSequence,
   getXrplTicketSequences,
   invoiceIdToInvoiceIdField,
+  isDifferentXrplSourceAsset,
   isDecimalString,
   isIntegerString,
+  isIssuedCurrencyAmount,
+  isRecord,
+  isSameXrplCurrency,
   isValidDestinationTag,
+  isValidXrplPathSet,
   isXrplAssetTransferMethod,
   isXrplNetwork,
   parseXrplNetworkId,
 } from "../../utils";
+import { TF_NO_RIPPLE_DIRECT, TF_PARTIAL_PAYMENT } from "../../constants";
 import type { ClientXrplSigner, XrplAssetTransferMethod, XrplClientOptions } from "../../types";
 import type {
   Network,
@@ -95,6 +102,7 @@ export class ExactXrplScheme implements SchemeNetworkClient {
       );
     }
     const isXrp = requirements.asset === "XRP";
+    const isCrossCurrency = requirements.extra?.crossCurrency === true;
     let amount: Payment["Amount"] = requirements.amount;
     let sendMax: Payment["SendMax"];
     if (!isXrp) {
@@ -103,11 +111,13 @@ export class ExactXrplScheme implements SchemeNetworkClient {
         issuer: String(requirements.extra?.issuer),
         value: requirements.amount,
       };
-      sendMax = {
-        currency: requirements.asset,
-        issuer: String(requirements.extra?.issuer),
-        value: requirements.amount,
-      };
+      if (!isCrossCurrency) {
+        sendMax = {
+          currency: requirements.asset,
+          issuer: String(requirements.extra?.issuer),
+          value: requirements.amount,
+        };
+      }
     }
     const transaction: Payment = {
       TransactionType: "Payment",
@@ -180,11 +190,16 @@ export class ExactXrplScheme implements SchemeNetworkClient {
     requirements: PaymentRequirements,
     method: XrplAssetTransferMethod,
   ): Promise<Payment> {
+    if (requirements.extra?.crossCurrency === true && !this.options.preparePaymentTransaction) {
+      throw new Error(
+        "XRPL cross-currency payments require preparePaymentTransaction to apply a payer-approved SendMax and optional Paths",
+      );
+    }
     const preparedPayment = this.options.preparePaymentTransaction
       ? await this.options.preparePaymentTransaction(transaction, requirements)
       : await this.autofillPaymentTransaction(transaction, requirements);
 
-    this.validatePreparedPaymentTransaction(preparedPayment, requirements.network, method);
+    this.validatePreparedPaymentTransaction(preparedPayment, requirements, method);
     return preparedPayment;
   }
 
@@ -223,12 +238,12 @@ export class ExactXrplScheme implements SchemeNetworkClient {
    * Ensures the transaction can be submitted after signing.
    *
    * @param transaction - Prepared XRPL payment transaction
-   * @param network - XRPL network id
+   * @param requirements - Payment requirements encoded by the transaction
    * @param method - Selected asset transfer method
    */
   private validatePreparedPaymentTransaction(
     transaction: Payment,
-    network: Network,
+    requirements: PaymentRequirements,
     method: XrplAssetTransferMethod,
   ): void {
     if (transaction.TransactionType !== "Payment") {
@@ -255,7 +270,7 @@ export class ExactXrplScheme implements SchemeNetworkClient {
     if (typeof transaction.LastLedgerSequence !== "number") {
       throw new Error("preparePaymentTransaction must set LastLedgerSequence");
     }
-    const networkId = parseXrplNetworkId(network);
+    const networkId = parseXrplNetworkId(requirements.network);
     if (networkId <= 1024 && transaction.NetworkID !== undefined) {
       throw new Error(
         "preparePaymentTransaction must not set NetworkID for standard XRPL networks",
@@ -265,6 +280,68 @@ export class ExactXrplScheme implements SchemeNetworkClient {
       if (transaction.NetworkID !== networkId) {
         throw new Error("preparePaymentTransaction must set NetworkID for custom XRPL networks");
       }
+    }
+    if (requirements.extra?.crossCurrency === true) {
+      this.validateCrossCurrencyPayment(transaction, requirements);
+    }
+  }
+
+  /**
+   * Ensures a custom preparer preserves the exact target and applies a safe source cap.
+   *
+   * @param transaction - Prepared cross-currency payment
+   * @param requirements - Exact destination requirements
+   */
+  private validateCrossCurrencyPayment(
+    transaction: Payment,
+    requirements: PaymentRequirements,
+  ): void {
+    if (transaction.Destination !== requirements.payTo) {
+      throw new Error("preparePaymentTransaction must preserve the payment Destination");
+    }
+    if (transaction.Amount !== undefined && transaction.DeliverMax !== undefined) {
+      throw new Error("cross-currency payments must set either Amount or DeliverMax, not both");
+    }
+    const destinationAmount = transaction.DeliverMax ?? transaction.Amount;
+    if (requirements.asset === "XRP") {
+      if (
+        typeof destinationAmount !== "string" ||
+        !isIntegerString(destinationAmount) ||
+        BigInt(destinationAmount) !== BigInt(requirements.amount)
+      ) {
+        throw new Error("preparePaymentTransaction must preserve the exact XRP destination amount");
+      }
+    } else if (
+      !isIssuedCurrencyAmount(destinationAmount) ||
+      !isSameXrplCurrency(destinationAmount.currency, requirements.asset) ||
+      destinationAmount.issuer !== requirements.extra?.issuer ||
+      compareDecimalStrings(destinationAmount.value, requirements.amount) !== 0
+    ) {
+      throw new Error("preparePaymentTransaction must preserve the exact IOU destination amount");
+    }
+
+    if (!isDifferentXrplSourceAsset(transaction.SendMax, destinationAmount)) {
+      throw new Error(
+        "preparePaymentTransaction must set a positive SendMax in a different source asset",
+      );
+    }
+    if (transaction.DeliverMin !== undefined) {
+      throw new Error("cross-currency payments must not set DeliverMin");
+    }
+    if (hasPaymentFlag(transaction.Flags, TF_PARTIAL_PAYMENT, "tfPartialPayment")) {
+      throw new Error("cross-currency payments must not enable tfPartialPayment");
+    }
+    const noRippleDirect = hasPaymentFlag(
+      transaction.Flags,
+      TF_NO_RIPPLE_DIRECT,
+      "tfNoRippleDirect",
+    );
+    if (transaction.Paths === undefined) {
+      if (noRippleDirect) {
+        throw new Error("tfNoRippleDirect requires explicit Paths");
+      }
+    } else if (!isValidXrplPathSet(transaction.Paths)) {
+      throw new Error("cross-currency Paths must contain 1-6 paths with 1-8 steps each");
     }
   }
 
@@ -290,6 +367,10 @@ export class ExactXrplScheme implements SchemeNetworkClient {
         throw new Error("XRPL exact payments require a non-empty extra.invoiceId when provided");
       }
     }
+    const crossCurrency = requirements.extra?.crossCurrency;
+    if (crossCurrency !== undefined && crossCurrency !== true) {
+      throw new Error("XRPL exact payments require extra.crossCurrency to be true when provided");
+    }
     if (requirements.asset === "XRP") {
       if (!isIntegerString(requirements.amount)) {
         throw new Error("XRPL native payments require amount as an integer drops string");
@@ -305,6 +386,23 @@ export class ExactXrplScheme implements SchemeNetworkClient {
       );
     }
   }
+}
+
+/**
+ * Checks a numeric or object-form XRPL Payment flag.
+ *
+ * @param flags - Payment Flags field
+ * @param bit - Numeric flag bit
+ * @param name - Object-form flag name
+ * @returns Whether the flag is enabled
+ */
+function hasPaymentFlag(
+  flags: Payment["Flags"],
+  bit: number,
+  name: "tfNoRippleDirect" | "tfPartialPayment",
+): boolean {
+  if (typeof flags === "number") return (flags & bit) !== 0;
+  return isRecord(flags) && flags[name] === true;
 }
 
 /**

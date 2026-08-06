@@ -4,6 +4,7 @@ import {
   decode,
   hashes,
   isValidClassicAddress,
+  type Payment,
   type SubmittableTransaction,
   type TicketCreate,
   type Transaction,
@@ -273,24 +274,162 @@ export function isIssuedCurrencyAmount(amount: unknown): amount is {
  * @returns -1, 0, or 1
  */
 export function compareDecimalStrings(left: string, right: string): number {
-  const normalizedLeft = normalizeDecimalString(left);
-  const normalizedRight = normalizeDecimalString(right);
+  const parsedLeft = parseUnsignedDecimal(left);
+  const parsedRight = parseUnsignedDecimal(right);
+  return compareParsedDecimals(parsedLeft, parsedRight);
+}
 
-  if (normalizedLeft.whole.length !== normalizedRight.whole.length) {
-    return normalizedLeft.whole.length > normalizedRight.whole.length ? 1 : -1;
+/**
+ * Checks issued-currency metadata equality within one XRPL precision unit.
+ *
+ * XRPL issued currencies use 15 decimal digits of precision and successful
+ * non-partial payments can report a delivered amount one least-significant
+ * precision unit away from the requested amount because of ledger rounding.
+ *
+ * @param delivered - Metadata delivered amount value
+ * @param required - Negotiated destination value
+ * @returns Whether the values are XRPL-precision equivalent
+ */
+export function areXrplTokenAmountsEquivalent(delivered: string, required: string): boolean {
+  if (!isValidXrplTokenValue(delivered, true) || !isValidXrplTokenValue(required, true)) {
+    return false;
   }
-  if (normalizedLeft.whole !== normalizedRight.whole) {
-    return normalizedLeft.whole > normalizedRight.whole ? 1 : -1;
+  let parsedDelivered: ParsedDecimal;
+  let parsedRequired: ParsedDecimal;
+  try {
+    parsedDelivered = parseUnsignedDecimal(delivered);
+    parsedRequired = parseUnsignedDecimal(required);
+  } catch {
+    return false;
   }
+  if (compareParsedDecimals(parsedDelivered, parsedRequired) === 0) return true;
+  if (parsedRequired.coefficient === 0n || parsedDelivered.coefficient === 0n) return false;
 
-  const maxFractionLength = Math.max(
-    normalizedLeft.fraction.length,
-    normalizedRight.fraction.length,
+  const requiredMagnitude =
+    parsedRequired.coefficient.toString().length - 1 + parsedRequired.exponent;
+  const toleranceExponent = requiredMagnitude - 14;
+  const commonExponent = Math.min(
+    parsedDelivered.exponent,
+    parsedRequired.exponent,
+    toleranceExponent,
   );
-  const leftFraction = normalizedLeft.fraction.padEnd(maxFractionLength, "0");
-  const rightFraction = normalizedRight.fraction.padEnd(maxFractionLength, "0");
-  if (leftFraction === rightFraction) return 0;
-  return leftFraction > rightFraction ? 1 : -1;
+  const deliveredInteger =
+    parsedDelivered.coefficient * powerOfTen(parsedDelivered.exponent - commonExponent);
+  const requiredInteger =
+    parsedRequired.coefficient * powerOfTen(parsedRequired.exponent - commonExponent);
+  const difference =
+    deliveredInteger >= requiredInteger
+      ? deliveredInteger - requiredInteger
+      : requiredInteger - deliveredInteger;
+  const tolerance = powerOfTen(toleranceExponent - commonExponent);
+  return difference <= tolerance;
+}
+
+/**
+ * Checks whether an XRPL amount is positive and valid for a cross-currency source cap.
+ *
+ * @param amount - Source amount to validate
+ * @returns Whether the amount is positive XRP or an issued-currency amount
+ */
+export function isPositiveXrplAmount(amount: unknown): amount is NonNullable<Payment["SendMax"]> {
+  if (typeof amount === "string") {
+    return /^\d+$/.test(amount) && BigInt(amount) > 0n;
+  }
+  return (
+    isIssuedCurrencyAmount(amount) &&
+    isValidClassicAddress(amount.issuer) &&
+    isValidXrplTokenValue(amount.value, false)
+  );
+}
+
+const STANDARD_CURRENCY_HEX_PATTERN = /^0{24}([A-F0-9]{6})0{10}$/;
+const STANDARD_CURRENCY_CODE_PATTERN = /^[A-Z0-9a-z?!@#$%^&*<>(){}[\]|]{3}$/;
+type XrplIssue = { currency: string; issuer: string };
+
+/**
+ * Returns the canonical identity for an XRPL currency code.
+ *
+ * XRPL serializes a standard three-character code as 12 zero bytes, the
+ * three code bytes, and 5 zero bytes. All other 160-bit values remain custom
+ * currencies and must not be shortened based on printable bytes alone.
+ *
+ * @param currency - Three-character or 160-bit XRPL currency code
+ * @returns Canonical currency identity
+ */
+function canonicalizeXrplCurrency(currency: string): string {
+  const match = STANDARD_CURRENCY_HEX_PATTERN.exec(currency);
+  if (!match) return currency;
+
+  const codeBytes = match[1]!;
+  const code = String.fromCharCode(
+    Number.parseInt(codeBytes.slice(0, 2), 16),
+    Number.parseInt(codeBytes.slice(2, 4), 16),
+    Number.parseInt(codeBytes.slice(4, 6), 16),
+  );
+  if (code === "XRP" || !STANDARD_CURRENCY_CODE_PATTERN.test(code)) return currency;
+  return code;
+}
+
+/**
+ * Compares XRPL currencies using their canonical protocol identity.
+ *
+ * @param left - First currency code
+ * @param right - Second currency code
+ * @returns Whether both values identify the same XRPL currency
+ */
+export function isSameXrplCurrency(left: string, right: string): boolean {
+  return canonicalizeXrplCurrency(left) === canonicalizeXrplCurrency(right);
+}
+
+/**
+ * Compares XRPL issued-currency issues using canonical currency and exact issuer identity.
+ *
+ * @param left - First issued-currency issue
+ * @param left.currency - First issue currency code
+ * @param left.issuer - First issue issuer address
+ * @param right - Second issued-currency issue
+ * @param right.currency - Second issue currency code
+ * @param right.issuer - Second issue issuer address
+ * @returns Whether both values identify the same XRPL issue
+ */
+export function isSameXrplIssue(left: XrplIssue, right: XrplIssue): boolean {
+  return left.issuer === right.issuer && isSameXrplCurrency(left.currency, right.currency);
+}
+
+/**
+ * Checks that a positive source cap uses a different asset or issue from the destination.
+ *
+ * @param sourceAmount - Signed SendMax source cap
+ * @param destinationAmount - Exact destination Amount or DeliverMax
+ * @returns Whether the payment exchanges a different source asset or issue
+ */
+export function isDifferentXrplSourceAsset(
+  sourceAmount: unknown,
+  destinationAmount: unknown,
+): boolean {
+  if (!isPositiveXrplAmount(sourceAmount)) return false;
+  if (typeof destinationAmount === "string") {
+    return isIssuedCurrencyAmount(sourceAmount);
+  }
+  if (!isIssuedCurrencyAmount(destinationAmount)) return false;
+  if (typeof sourceAmount === "string") return true;
+  if (!isIssuedCurrencyAmount(sourceAmount)) return false;
+  return !isSameXrplIssue(sourceAmount, destinationAmount);
+}
+
+/**
+ * Checks that an explicit XRPL path set satisfies the protocol path bounds.
+ *
+ * @param paths - Signed Payment Paths field
+ * @returns Whether there are 1-6 paths with 1-8 steps in every path
+ */
+export function isValidXrplPathSet(paths: Payment["Paths"]): boolean {
+  return (
+    Array.isArray(paths) &&
+    paths.length >= 1 &&
+    paths.length <= 6 &&
+    paths.every(path => Array.isArray(path) && path.length >= 1 && path.length <= 8)
+  );
 }
 
 /**
@@ -562,10 +701,15 @@ export async function submitSignedTransaction(
       typeof response.result.meta === "object" && response.result.meta !== null
         ? response.result.meta.TransactionResult
         : "unknown";
+    const deliveredAmount =
+      typeof response.result.meta === "object" && response.result.meta !== null
+        ? response.result.meta.delivered_amount
+        : undefined;
     return {
       hash: response.result.hash ?? getSignedTransactionHash(signedTxBlob),
       validated: response.result.validated === true,
       resultCode,
+      deliveredAmount,
     };
   } finally {
     await client.disconnect();
@@ -608,9 +752,14 @@ export async function simulateSignedTransaction(
   try {
     await client.connect();
     const response = await client.simulate(unsignedTransaction as SubmittableTransaction);
+    const deliveredAmount =
+      typeof response.result.meta === "object" && response.result.meta !== null
+        ? response.result.meta.delivered_amount
+        : undefined;
     return {
       engineResult: response.result.engine_result,
       engineResultMessage: response.result.engine_result_message,
+      deliveredAmount,
     };
   } finally {
     await client.disconnect();
@@ -641,17 +790,93 @@ function extractCreatedTicketSequences(meta: TransactionMetadata): number[] {
 }
 
 /**
- * Normalizes a decimal string for exact decimal comparison.
+ * Parsed arbitrary-precision decimal representation.
+ *
+ * The represented value is `coefficient * 10^exponent`.
+ */
+type ParsedDecimal = {
+  coefficient: bigint;
+  exponent: number;
+};
+
+/**
+ * Parses a non-negative decimal or scientific-notation value without using
+ * binary floating point.
  *
  * @param value - Decimal string
- * @returns Normalized decimal parts
+ * @returns Integer coefficient and base-10 exponent
  */
-function normalizeDecimalString(value: string): { whole: string; fraction: string } {
-  if (!isDecimalString(value)) {
-    throw new Error(`Invalid decimal string: ${value}`);
+function parseUnsignedDecimal(value: string): ParsedDecimal {
+  const match = /^(\d+)(?:\.(\d+))?(?:[eE]([+-]?\d+))?$/.exec(value);
+  if (!match) throw new Error(`Invalid decimal string: ${value}`);
+  const explicitExponent = Number(match[3] ?? "0");
+  if (!Number.isSafeInteger(explicitExponent) || Math.abs(explicitExponent) > 1_000) {
+    throw new Error(`Invalid decimal exponent: ${value}`);
   }
-  const [rawWhole, rawFraction = ""] = value.split(".");
-  const whole = rawWhole.replace(/^0+(?=\d)/, "") || "0";
-  const fraction = rawFraction.replace(/0+$/, "");
-  return { whole, fraction };
+  const fraction = match[2] ?? "";
+  const rawDigits = `${match[1]}${fraction}`.replace(/^0+/, "");
+  if (rawDigits === "") return { coefficient: 0n, exponent: 0 };
+
+  let coefficientDigits = rawDigits;
+  let exponent = explicitExponent - fraction.length;
+  while (coefficientDigits.endsWith("0")) {
+    coefficientDigits = coefficientDigits.slice(0, -1);
+    exponent += 1;
+  }
+  return { coefficient: BigInt(coefficientDigits), exponent };
+}
+
+/**
+ * Validates the XRPL issued-currency numeric range and precision.
+ *
+ * @param value - Issued-currency value
+ * @param allowZero - Whether zero is valid
+ * @returns Whether the value can be represented by XRPL issued currency
+ */
+function isValidXrplTokenValue(value: string, allowZero: boolean): boolean {
+  try {
+    const parsed = parseUnsignedDecimal(value);
+    if (parsed.coefficient === 0n) return allowZero;
+    const coefficientDigits = parsed.coefficient.toString().length;
+    const magnitude = coefficientDigits - 1 + parsed.exponent;
+    return coefficientDigits <= 16 && magnitude >= -81 && magnitude <= 95;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Compares parsed non-negative decimal values.
+ *
+ * @param left - Left parsed decimal
+ * @param right - Right parsed decimal
+ * @returns -1, 0, or 1
+ */
+function compareParsedDecimals(left: ParsedDecimal, right: ParsedDecimal): number {
+  if (left.coefficient === 0n || right.coefficient === 0n) {
+    if (left.coefficient === right.coefficient) return 0;
+    return left.coefficient === 0n ? -1 : 1;
+  }
+  const leftMagnitude = left.coefficient.toString().length + left.exponent;
+  const rightMagnitude = right.coefficient.toString().length + right.exponent;
+  if (leftMagnitude !== rightMagnitude) return leftMagnitude > rightMagnitude ? 1 : -1;
+
+  const commonExponent = Math.min(left.exponent, right.exponent);
+  const leftInteger = left.coefficient * powerOfTen(left.exponent - commonExponent);
+  const rightInteger = right.coefficient * powerOfTen(right.exponent - commonExponent);
+  if (leftInteger === rightInteger) return 0;
+  return leftInteger > rightInteger ? 1 : -1;
+}
+
+/**
+ * Computes a bounded non-negative power of ten as bigint.
+ *
+ * @param exponent - Non-negative exponent
+ * @returns 10 raised to exponent
+ */
+function powerOfTen(exponent: number): bigint {
+  if (!Number.isInteger(exponent) || exponent < 0 || exponent > 2_000) {
+    throw new Error(`Invalid decimal scaling exponent: ${exponent}`);
+  }
+  return 10n ** BigInt(exponent);
 }

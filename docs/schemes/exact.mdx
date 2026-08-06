@@ -238,6 +238,24 @@ const resourceServer = new x402ResourceServer(facilitatorClient)
 }
 ```
 
+To accept an exact destination amount from a different payer-selected source
+asset, opt in with `extra.crossCurrency: true`:
+
+```typescript
+{
+  scheme: "exact",
+  price: { amount: "1000000", asset: "XRP" },
+  network: "xrpl:1",
+  payTo: "rYourXrplAddress",
+  extra: { crossCurrency: true },
+}
+```
+
+The server advertises this requirement only when the selected facilitator
+reports cross-currency support. `Amount` remains the exact destination target;
+the client must set a payer-approved `SendMax` source-asset cap after a current
+path and quote preflight.
+
 **Client**
 
 ```typescript
@@ -252,6 +270,28 @@ const signer = createXrplWalletSigner(wallet);
 const client = new x402Client()
   .register("xrpl:*", new ExactXrplScheme(signer));
 ```
+
+Cross-currency payments require a transaction preparer so the payer controls
+the source asset, cap, and optional explicit paths:
+
+```typescript
+const xrplScheme = new ExactXrplScheme(signer, {
+  preparePaymentTransaction: async transaction =>
+    xrplClient.autofill({
+      ...transaction,
+      SendMax: "25000000",
+    }),
+});
+
+const client = new x402Client().register("xrpl:*", xrplScheme);
+```
+
+The client and facilitator reject partial payments, `DeliverMin`, invalid path
+policy, and same-asset or non-positive caps. The facilitator simulates the
+signed transaction and accepts settlement only when validated metadata reports
+the required `delivered_amount`. XRP drops must match exactly; issued-currency
+metadata uses XRPL's 15-significant-digit precision tolerance for ledger
+rounding. Issued-currency `SendMax` caps may use XRPL scientific notation.
 
 **Facilitator**
 

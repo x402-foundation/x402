@@ -54,6 +54,11 @@ export const DEFAULT_LEDGER_TOLERANCE = 2;
 export const TF_PARTIAL_PAYMENT = 0x00020000;
 
 /**
+ * XRPL Payment tfNoRippleDirect flag.
+ */
+export const TF_NO_RIPPLE_DIRECT = 0x00010000;
+
+/**
  * XRPL AccountRoot lsfDisableMaster flag: the account's master key pair is disabled.
  */
 export const LSF_DISABLE_MASTER = 0x00100000;

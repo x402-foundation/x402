@@ -59,6 +59,12 @@ This page tracks which features are implemented in each SDK (TypeScript, Go, Pyt
 | batch-settlement | evm | `eip3009` | ✅ | ✅ | ✅ |
 | batch-settlement | evm | `permit2` | ✅ | ✅ | ✅ |
 
+### XRPL Optional Capabilities
+
+| Capability | TypeScript | Go | Python |
+|------------|------------|-----|--------|
+| Cross-currency exact payments | ✅ | ❌ | ❌ |
+
 ## Extensions
 
 | Extension | TypeScript | Go | Python |
