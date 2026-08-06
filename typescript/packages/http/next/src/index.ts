@@ -265,7 +265,7 @@ export function paymentProxyFromConfig(
  * const resourceServer = new x402ResourceServer(facilitatorClient)
  *   .register(NETWORK, new ExactEvmScheme());
  *
- * const httpServer = new x402HTTPResourceServer(resourceServer, { "*": routeConfig })
+ * const httpServer = new x402HTTPResourceServer(resourceServer, { "/api/protected": routeConfig })
  *   .onProtectedRequest(requestHook);
  *
  * const handler = async (request: NextRequest) => {
@@ -303,6 +303,8 @@ export function withX402FromHTTPServer<T = unknown>(
       });
   }
 
+  let warnedNoMatch = false;
+
   return async (request: NextRequest): Promise<NextResponse<T>> => {
     // Only initialize when processing a protected route
     await init();
@@ -321,6 +323,23 @@ export function withX402FromHTTPServer<T = unknown>(
     // Handle the different result types
     switch (result.type) {
       case "no-payment-required":
+        // This wrapper protects a single handler, so with pattern-keyed routes every
+        // request should match one; a miss means the pattern is wrong and the handler
+        // is being served without payment.
+        if (
+          !warnedNoMatch &&
+          !("accepts" in httpServer.routes) &&
+          !httpServer.requiresPayment(context)
+        ) {
+          warnedNoMatch = true;
+          const patterns = Object.keys(httpServer.routes)
+            .map(pattern => `"${pattern}"`)
+            .join(", ");
+          console.warn(
+            `[x402] Request path "${context.path}" did not match any configured route pattern (${patterns}); ` +
+              `the handler ran without payment. Check the route patterns passed to withX402.`,
+          );
+        }
         // No payment needed, proceed directly to the route handler
         return routeHandler(request);
 
@@ -366,6 +385,8 @@ export function withX402FromHTTPServer<T = unknown>(
  * route's path pattern (e.g. `{ "/api/users/[id]": config }`). Prefer the keyed form
  * when using bazaar discovery extensions: a bare config registers as a wildcard, which
  * produces an auto-generated `routeTemplate` (`:var1`) that discovery services reject.
+ * The pattern must match the request path exactly as served (including any `basePath`);
+ * if it does not match, the handler runs without payment and a warning is logged.
  * @param server - Pre-configured x402ResourceServer instance
  * @param paywallConfig - Optional configuration for the built-in paywall UI
  * @param paywall - Optional custom paywall provider (overrides default)

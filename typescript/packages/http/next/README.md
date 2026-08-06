@@ -81,6 +81,11 @@ A bare config still works and matches any path, but it registers as a wildcard
 `routeTemplate` (`:var1`) that discovery services reject, so the resource is
 never indexed.
 
+The pattern must match the request path exactly as served (including any
+`basePath`, no trailing slash). If it does not match — a typo, a missing
+dynamic segment — the handler runs **without** payment protection; `withX402`
+logs a warning when this happens.
+
 ## Configuration
 
 ### paymentProxy
