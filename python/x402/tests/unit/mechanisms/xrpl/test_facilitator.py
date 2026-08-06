@@ -17,6 +17,8 @@ from x402.mechanisms.xrpl.settlement_cache import (
     SettlementCache,
 )
 from x402.mechanisms.xrpl.utils import (
+    ALLOWED_PAYMENT_FIELDS,
+    decode_signed_transaction_blob,
     get_max_last_ledger_sequence,
     get_signed_transaction_hash,
     verify_signed_blob,
@@ -264,6 +266,70 @@ class TestPaymentFieldAllowlist:
         assert _scheme().verify(make_payload(blob, requirements), requirements).invalid_reason == (
             "invalid_exact_xrpl_payload_transaction_type"
         )
+
+
+# Joint cross-implementation vectors: real Devnet transactions, validated
+# on-ledger, published in whawk46/xls68-x402-fee-sponsoring
+# (test-vectors/sponsoring-test-vectors.json) and re-derivable from public
+# Devnet history via the tx method with binary: true. Asserted verbatim,
+# like the TypeScript fixtures in test_utils.py.
+SPONSORED_DEVNET_BLOB = (
+    "120000240040414E201B0040417A204A0000000161D488E1BC9BF0400000000000000000"
+    "000000000046434400000000000F8AE3322434A9F800DE6F3F8A3CE4571651C33D684000"
+    "00000000000C7321EDA1EC51E363E86F50C845611412C6CB8F5736BA25EF9406DA516D5F"
+    "8A543A394C7440EE1C0CED21D3794FBFBA5E61F4BC44B880BD3A591118138DDCF2007573"
+    "1D355F8EEDF56EAD11F4A662E3B974BF7D3F4665CAEF4EAF61ACB4015B2E7C36CF110181"
+    "14C226FF9458B8B0D6EEF1C504BC3178F68FD9E1BE83146E7807830BEA4C9D495B091E8C"
+    "C2FFDB39BD0278801B146C92943ED80CB008FBC02B38EC7D35F74B8A3FE5E0267321EDE8"
+    "70C1A491E87A212D41DBF634476D4A1E50AF3D7CE94CA9BFB8BD476F4CF9317440BCAA29"
+    "225213CE6A1B85D85756A55B7C5B6F5FB9213D294190F9851BFA8CAD9BEF43BF1E2E47B0"
+    "F472E042D986E0CB3B22446F1F8DB6B1E7B06F410CD8B86F07E1"
+)
+SPONSORED_DEVNET_HASH = "F306E3053CA5317F4464E62EA074B6DBE5F2CD53A7428AB6CC43C3615CDCB32A"
+PLAIN_DEVNET_BLOB = (
+    "120000240040414A201B0040417761D4C38D7EA4C6800000000000000000000000000046"
+    "434400000000000F8AE3322434A9F800DE6F3F8A3CE4571651C33D68400000000000000C"
+    "7321ED43DBB35E73B8FC96EC70B956E76CF4C3B4C9611BA9FDD290A90BD8831FD80D3274"
+    "4009C627784FE8F420E459904E98E3AB7BAA6A216F7352F498848185C8B945861CB77225"
+    "4695A2F1D98C47EB893C1705AC19575CA1D7F1294886F23CE68248730681140F8AE33224"
+    "34A9F800DE6F3F8A3CE4571651C33D8314C226FF9458B8B0D6EEF1C504BC3178F68FD9E1"
+    "BE"
+)
+PLAIN_DEVNET_HASH = "A13433C559E76157BEBF9965328C562F0FA571477760A14E9D6E21FB83870703"
+
+
+class TestJointSponsorshipVectors:
+    """The fee-sponsoring extension's joint vectors, checked against the same
+    bytes the extension-aware implementation checks. The sponsored Payment
+    carries XLS-68 fields outside the Payment allowlist, so a base facilitator
+    must refuse it on the blob; the plain Payment is the acceptance control at
+    the same layer."""
+
+    def test_the_sponsored_payment_is_refused_on_the_bytes(self):
+        # The exception type and the reason code are the stable contract; the
+        # failing layer migrates from codec-unknown to the blob field guards
+        # (this blob's SponsorSignature is non-signing on xrpl-py main) when
+        # xrpl-py ships the XLS-68 definitions, with the same outcome.
+        assert get_signed_transaction_hash(SPONSORED_DEVNET_BLOB) == SPONSORED_DEVNET_HASH
+        with pytest.raises(ValueError):
+            decode_signed_transaction_blob(SPONSORED_DEVNET_BLOB)
+
+        requirements = make_requirements()
+        payload = make_payload(SPONSORED_DEVNET_BLOB, requirements)
+        assert _scheme().verify(payload, requirements).invalid_reason == (
+            "invalid_exact_xrpl_payload_blob"
+        )
+
+    def test_the_plain_payment_is_accepted_at_the_same_layer(self):
+        # Byte-level acceptance only: the vector's own claim is that every
+        # field is in the allowlist, and its genuine Devnet signature verifies
+        # offline. Full verification is out of the vector's scope; this blob
+        # carries no SendMax, so the IOU SendMax rule would refuse it there.
+        assert get_signed_transaction_hash(PLAIN_DEVNET_BLOB) == PLAIN_DEVNET_HASH
+        decoded = decode_signed_transaction_blob(PLAIN_DEVNET_BLOB)
+        assert decoded["TransactionType"] == "Payment"
+        assert set(decoded) <= ALLOWED_PAYMENT_FIELDS
+        assert verify_signed_blob(PLAIN_DEVNET_BLOB) is True
 
 
 class TestSignatureMustBeFullyCanonical:
