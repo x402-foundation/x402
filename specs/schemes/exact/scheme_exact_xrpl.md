@@ -419,10 +419,13 @@ excludes for this scheme, not the mechanism itself:
 
 - `Fee` above facilitator policy.
 - `Delegate` present.
-- Sponsorship fields — at the time of writing `Sponsor`, `SponsorFlags`,
-  `SponsorSignature`, and on `SponsorshipSet` the budget fields — unless a
-  fee-sponsoring extension is active. Named for the reader's benefit; the
-  allowlist, not this list, is what rejects them.
+- Sponsorship fields — at the time of writing `Sponsor`, `SponsorFlags`, and
+  `SponsorSignature` — unless a fee-sponsoring extension is active. Named for
+  the reader's benefit; the allowlist, not this list, is what rejects them.
+  (A `SponsorshipSet` and its budget fields never reach this check in the
+  base scheme: §3 already refuses any `TransactionType` other than
+  `Payment`. They belong to the fee-sponsoring extension's territory and are
+  specified there.)
 - `Memos` present.
 - `SendMax` present for XRP.
 - `Paths` present.
