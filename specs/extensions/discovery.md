@@ -159,6 +159,17 @@ Rules:
 - Crawlers SHOULD dedupe the frontier globally and bound traversal depth as
   in any web crawl. The peer graph is public, attacker-writable input; each
   name is hostile until it has resolved on its own.
+- Crawlers SHOULD additionally enforce **frontier diversity by registrable
+  domain**. The 32-entry cap bounds fan-out per manifest; it bounds nothing
+  per operator, and deployment data makes the gap concrete: in a census of
+  1,521 live hosts, four single-operator domains each hold 32 or more hosts
+  of their own, so any of them can fill an entire peers array without naming
+  anything it does not control — a crawler seeded inside such a fleet walks
+  a full frontier and never leaves. Diversity belongs to the consumer's
+  crawl budget, not the record grammar: when scheduling the frontier, prefer
+  names under registrable domains not yet visited, and treat a frontier
+  dominated by one registrable domain as measuring an operator's fleet
+  rather than the network.
 
 Why this exists: with peer hints the network is crawlable from **any seed**.
 One known-good domain reaches its connected component with no directory, no
@@ -169,6 +180,12 @@ manifest under its own TLS certificate, and pass every check alone. This is
 the address-gossip pattern proven by Bitcoin `addr` relay, NNTP feeds, and
 fediverse instance peers: **existence spreads peer-to-peer; trust never
 does.**
+
+The claim this section makes is testable, and should be tested rather than
+asserted: the number that matters is **coverage** — the fraction of
+independently censused hosts a peer-crawl reaches from a single seed,
+checked against the census as ground truth. Entries-per-manifest is
+bookkeeping; coverage is whether the directory bootstrap is actually gone.
 
 ### Migration
 
