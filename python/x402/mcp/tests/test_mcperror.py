@@ -47,7 +47,9 @@ class McpError(Exception):
 
 
 class MockAsyncMCPResult:
-    def __init__(self, content=None, is_error=False, meta=None, structured_content=None):
+    def __init__(
+        self, content=None, is_error=False, meta=None, structured_content=None
+    ):
         self.content = content or [{"type": "text", "text": "pong"}]
         self.isError = is_error
         self._meta = meta or {}
@@ -188,12 +190,16 @@ class TestIsPaymentRequiredError:
         assert is_payment_required_error(err) is True
 
     def test_mcperror_32042(self):
-        err = McpError(-32042, "payment required")
+        err = McpError(-32042, "payment required", data=PAYMENT_REQUIRED_DATA)
         assert is_payment_required_error(err) is True
 
     def test_mcperror_402(self):
-        err = McpError(402, "payment required")
+        err = McpError(402, "payment required", data=PAYMENT_REQUIRED_DATA)
         assert is_payment_required_error(err) is True
+
+    def test_mcperror_without_payment_data(self):
+        err = McpError(-32042, "payment required")
+        assert is_payment_required_error(err) is False
 
     def test_mcperror_other_code(self):
         err = McpError(-32600, "bad request")
@@ -268,7 +274,9 @@ async def test_async_client_rethrows_32042_without_valid_data():
     mock_mcp = MockAsyncMCPClient()
     mock_payment = MockAsyncPaymentClient()
 
-    mock_mcp.call_tool.side_effect = McpError(-32042, "no payment data", data={"foo": "bar"})
+    mock_mcp.call_tool.side_effect = McpError(
+        -32042, "no payment data", data={"foo": "bar"}
+    )
 
     client = x402MCPClient(mock_mcp, mock_payment, auto_payment=True)
     with pytest.raises(McpError, match="no payment data"):
@@ -309,16 +317,16 @@ async def test_async_get_tool_payment_requirements_from_32042():
 
 
 @pytest.mark.asyncio
-async def test_async_get_tool_payment_requirements_non_payment_returns_none():
-    """get_tool_payment_requirements returns None for non-payment exceptions."""
+async def test_async_get_tool_payment_requirements_rethrows_non_payment_error():
+    """get_tool_payment_requirements re-raises non-payment exceptions."""
     mock_mcp = MockAsyncMCPClient()
     mock_payment = MockAsyncPaymentClient()
 
     mock_mcp.call_tool.side_effect = McpError(-32600, "bad request")
 
     client = x402MCPClient(mock_mcp, mock_payment)
-    pr = await client.get_tool_payment_requirements("tool", {})
-    assert pr is None
+    with pytest.raises(McpError, match="bad request"):
+        await client.get_tool_payment_requirements("tool", {})
 
 
 @pytest.mark.asyncio
@@ -379,6 +387,50 @@ def test_sync_client_rethrows_non_payment_error():
     client = x402MCPClientSync(mock_mcp, mock_payment, auto_payment=True)
     with pytest.raises(McpError, match="invalid request"):
         client.call_tool("tool", {})
+
+
+def test_sync_client_auto_payment_false_raises():
+    """Sync client does not pay a thrown challenge when auto-payment is disabled."""
+    mock_mcp = MockSyncMCPClient()
+    mock_payment = MockSyncPaymentClient()
+
+    mock_mcp.call_tool.side_effect = McpError(
+        -32042, "payment required", data=PAYMENT_REQUIRED_DATA
+    )
+
+    client = x402MCPClientSync(mock_mcp, mock_payment, auto_payment=False)
+    with pytest.raises(PaymentRequiredError):
+        client.call_tool("tool", {})
+
+    mock_payment.create_payment_payload.assert_not_called()
+
+
+def test_sync_get_tool_payment_requirements_from_32042():
+    """Sync requirement probing extracts a thrown -32042 challenge."""
+    mock_mcp = MockSyncMCPClient()
+    mock_payment = MockSyncPaymentClient()
+
+    mock_mcp.call_tool.side_effect = McpError(
+        -32042, "payment required", data=PAYMENT_REQUIRED_DATA
+    )
+
+    client = x402MCPClientSync(mock_mcp, mock_payment)
+    payment_required = client.get_tool_payment_requirements("tool", {})
+
+    assert payment_required is not None
+    assert payment_required.x402_version == 2
+
+
+def test_sync_get_tool_payment_requirements_rethrows_non_payment_error():
+    """Sync requirement probing re-raises non-payment exceptions."""
+    mock_mcp = MockSyncMCPClient()
+    mock_payment = MockSyncPaymentClient()
+
+    mock_mcp.call_tool.side_effect = McpError(-32600, "bad request")
+
+    client = x402MCPClientSync(mock_mcp, mock_payment)
+    with pytest.raises(McpError, match="bad request"):
+        client.get_tool_payment_requirements("tool", {})
 
 
 # ===================================================================

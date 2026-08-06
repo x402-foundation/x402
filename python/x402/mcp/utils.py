@@ -1,7 +1,7 @@
 """Utility functions for MCP payment handling."""
 
 import json
-from typing import Any
+from typing import Any, TypeGuard
 
 from ..schemas import (
     PaymentPayload,
@@ -246,7 +246,7 @@ def build_tool_resource_info(
     return resource_info
 
 
-def is_object(value: Any) -> bool:
+def is_object(value: Any) -> TypeGuard[dict[str, Any]]:
     """Type guard to check if a value is a non-null object (dict).
 
     Args:
@@ -326,7 +326,9 @@ def extract_payment_required_from_error(error: Any) -> PaymentRequired | Payment
     return None
 
 
-def _try_parse_payment_data(data: dict[str, Any]) -> PaymentRequired | None:
+def _try_parse_payment_data(
+    data: dict[str, Any],
+) -> PaymentRequired | PaymentRequiredV1 | None:
     """Try to parse PaymentRequired from a data dict.
 
     Handles both direct PaymentRequired data and namespaced ``data.x402``.
@@ -407,8 +409,8 @@ def register_schemes(payment_client: Any, schemes: list[dict[str, Any]]) -> None
 def is_payment_required_error(error: Exception) -> bool:
     """Check if an error is a payment-required error.
 
-    Returns True for PaymentRequiredError instances as well as any exception
-    whose ``code`` attribute equals 402 or -32042.
+    Returns True for PaymentRequiredError instances or errors containing a
+    valid payment challenge under code 402 or -32042.
 
     Args:
         error: The error to check
@@ -420,5 +422,4 @@ def is_payment_required_error(error: Exception) -> bool:
 
     if isinstance(error, PaymentRequiredError):
         return True
-    code = getattr(error, "code", None)
-    return code in {MCP_PAYMENT_REQUIRED_CODE, JSONRPC_PAYMENT_REQUIRED_CODE}
+    return extract_payment_required_from_error(error) is not None

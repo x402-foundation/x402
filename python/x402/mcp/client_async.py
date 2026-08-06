@@ -6,7 +6,7 @@ import warnings
 from collections.abc import Awaitable, Callable
 from typing import Any
 
-from ..schemas import PaymentPayload, PaymentRequired
+from ..schemas import PaymentPayload, PaymentRequired, PaymentRequiredV1
 from .types import (
     AfterPaymentContext,
     MCPToolCallResult,
@@ -188,7 +188,7 @@ class x402MCPClient:
         self,
         name: str,
         args: dict[str, Any],
-        payment_required: PaymentRequired,
+        payment_required: PaymentRequired | PaymentRequiredV1,
         **kwargs: Any,
     ) -> MCPToolCallResult:
         """Handle a payment-required signal (from isError result or thrown exception).
@@ -297,7 +297,7 @@ class x402MCPClient:
         name: str,
         args: dict[str, Any],
         **kwargs: Any,
-    ) -> PaymentRequired | None:
+    ) -> PaymentRequired | PaymentRequiredV1 | None:
         """Probe a tool to discover its payment requirements.
 
         WARNING: This actually calls the tool, so it may have side effects.
@@ -314,7 +314,10 @@ class x402MCPClient:
         try:
             result = await self._call_mcp_tool(call_params, **kwargs)
         except Exception as exc:
-            return extract_payment_required_from_error(exc)
+            payment_required = extract_payment_required_from_error(exc)
+            if payment_required is None:
+                raise
+            return payment_required
         return extract_payment_required_from_result(result)
 
     async def _call_mcp_tool(self, params: dict[str, Any], **kwargs: Any) -> MCPToolResult:

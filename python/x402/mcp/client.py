@@ -28,8 +28,10 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from ..client import x402Client, x402ClientSync
+from ..schemas import PaymentRequired, PaymentRequiredV1
 from ..schemas.responses import SettleResponse
 from .constants import MCP_PAYMENT_META_KEY, MCP_PAYMENT_RESPONSE_META_KEY
+from .types import PaymentRequiredError
 from .utils import (
     _extract_payment_required_from_object,
     convert_mcp_result,
@@ -254,29 +256,28 @@ class x402MCPClientSync:
         if payment_required is None:
             return self._build_result(mcp_result, payment_made=False)
 
-        if not self._auto_payment:
-            return self._build_result(mcp_result, payment_made=False)
-
         return self._handle_payment_required(name, args, payment_required, **kwargs)
 
     def _handle_payment_required(
         self,
         name: str,
         args: dict[str, Any],
-        payment_required: PaymentRequired,
+        payment_required: PaymentRequired | PaymentRequiredV1,
         **kwargs: Any,
     ) -> MCPToolCallResult:
         """Handle a payment-required signal (from isError result or thrown exception)."""
+        if not self._auto_payment:
+            raise PaymentRequiredError(
+                "Payment required but auto_payment is disabled",
+                payment_required,
+            )
+
         if self._on_payment_requested:
             approved = self._on_payment_requested(
                 type("Ctx", (), {"payment_required": payment_required})()
             )
             if not approved:
-                return MCPToolCallResult(
-                    content=[],
-                    is_error=True,
-                    payment_made=False,
-                )
+                raise PaymentRequiredError("Payment request denied", payment_required)
 
         payment_payload = self._payment_client.create_payment_payload(payment_required)
         payload_dict = payment_payload.model_dump(by_alias=True)
@@ -289,6 +290,27 @@ class x402MCPClientSync:
         result = self._mcp_client.call_tool(params_with_meta, **kwargs)
         mcp_result = convert_mcp_result(result)
         return self._build_result(mcp_result, payment_made=True)
+
+    def get_tool_payment_requirements(
+        self,
+        name: str,
+        args: dict[str, Any] | None = None,
+        **kwargs: Any,
+    ) -> PaymentRequired | PaymentRequiredV1 | None:
+        """Probe a tool to discover its payment requirements.
+
+        WARNING: This calls the tool, so it may have side effects.
+        """
+        params = {"name": name, "arguments": args or {}}
+        try:
+            result = self._mcp_client.call_tool(params, **kwargs)
+        except Exception as exc:
+            payment_required = extract_payment_required_from_error(exc)
+            if payment_required is None:
+                raise
+            return payment_required
+
+        return extract_payment_required_from_result(convert_mcp_result(result))
 
     def _build_result(self, mcp_result: Any, payment_made: bool) -> MCPToolCallResult:
         """Build MCPToolCallResult from MCPToolResult."""
