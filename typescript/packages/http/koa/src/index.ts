@@ -1,4 +1,5 @@
 import type { Context, Next, Middleware } from "koa";
+import type { Readable } from "stream";
 import {
   HTTPRequestContext,
   PaywallConfig,
@@ -15,6 +16,16 @@ import {
 } from "@x402/core/server";
 import { SchemeNetworkServer, Network } from "@x402/core/types";
 import { KoaAdapter } from "./adapter";
+
+/**
+ * Checks if a value is a readable stream (duck typing, matching Koa's detection).
+ *
+ * @param body - The value to check
+ * @returns True if the value is a readable stream
+ */
+function isReadableStream(body: unknown): body is Readable {
+  return typeof (body as Readable)?.pipe === "function";
+}
 
 /**
  * Set settlement overrides on the response for partial settlement.
@@ -201,9 +212,154 @@ export function paymentMiddlewareFromHTTPServer(
         return;
 
       case "payment-verified":
-        // Payment is valid - for KOA-05, just proceed to handler
-        // Settlement will be handled in KOA-06
-        await next();
+        // Payment is valid, need to wrap response for settlement
+        const { cancellationDispatcher, paymentPayload, paymentRequirements, declaredExtensions } =
+          result;
+
+        try {
+          await next();
+        } catch (error) {
+          // Handler threw - do not settle, rethrow
+          ctx.remove(SETTLEMENT_OVERRIDES_HEADER);
+          await cancellationDispatcher.cancel({
+            reason: "handler_threw",
+            error,
+          });
+          throw error;
+        }
+
+        // Check for unrecoverable cases where we cannot control the response
+        if (ctx.respond === false) {
+          // Handler bypassed Koa's response handling (e.g., direct res.write)
+          throw new Error(
+            `x402: Route "${ctx.method} ${ctx.path}" set ctx.respond = false, bypassing Koa response handling. Content was served without settlement.`,
+          );
+        }
+
+        if (ctx.res.headersSent) {
+          // Headers already flushed to client - cannot modify response
+          throw new Error(
+            `x402: Route "${ctx.method} ${ctx.path}" had headers flushed by a downstream middleware writing to ctx.res directly. Content was served without settlement.`,
+          );
+        }
+
+        // Check status code - only settle on 2xx
+        if (ctx.status < 200 || ctx.status >= 300) {
+          // Non-2xx response - do not settle
+          ctx.remove(SETTLEMENT_OVERRIDES_HEADER);
+          await cancellationDispatcher.cancel({
+            reason: "handler_failed",
+            responseStatus: ctx.status,
+          });
+          return;
+        }
+
+        // Read settlement overrides from response header before removing it
+        // (set by handler via setSettlementOverrides)
+        const overridesRaw = ctx.response.get(SETTLEMENT_OVERRIDES_HEADER);
+        let settlementOverrides: SettlementOverrides | undefined;
+        if (overridesRaw) {
+          settlementOverrides = JSON.parse(overridesRaw);
+        }
+        // Remove the header so it's not sent to client
+        ctx.remove(SETTLEMENT_OVERRIDES_HEADER);
+
+        // Check for stream body
+        if (isReadableStream(ctx.body)) {
+          // Stream body - settle before sending
+          // We settle first, and if it fails, destroy the stream and replace with 402
+          const streamResponseHeaders: Record<string, string> = {};
+          for (const [key, value] of Object.entries(ctx.response.headers)) {
+            if (value != null) {
+              streamResponseHeaders[key] = Array.isArray(value) ? value.join(", ") : String(value);
+            }
+          }
+
+          try {
+            const settleResult = await httpServer.processSettlement(
+              paymentPayload,
+              paymentRequirements,
+              declaredExtensions,
+              { request: context, responseHeaders: streamResponseHeaders },
+              settlementOverrides,
+            );
+
+            if (!settleResult.success) {
+              // Settlement failed - destroy stream and return 402
+              (ctx.body as Readable).destroy();
+              const { response } = settleResult;
+              ctx.status = response.status;
+              for (const [key, value] of Object.entries(response.headers)) {
+                ctx.set(key, value);
+              }
+              ctx.body = response.isHtml ? response.body : response.body || {};
+              return;
+            }
+
+            // Settlement succeeded - add headers
+            for (const [key, value] of Object.entries(settleResult.headers)) {
+              ctx.set(key, value);
+            }
+          } catch (error) {
+            // Settlement threw - destroy stream and return error
+            (ctx.body as Readable).destroy();
+            if (error instanceof FacilitatorResponseError) {
+              sendFacilitatorError(ctx, error);
+              return;
+            }
+            console.error(error);
+            ctx.status = 402;
+            ctx.body = {};
+            return;
+          }
+
+          return;
+        }
+
+        // Non-stream body - settle without buffering
+        // ctx.body is left untouched; Koa handles serialization after middleware completes
+        const responseHeaders: Record<string, string> = {};
+        for (const [key, value] of Object.entries(ctx.response.headers)) {
+          if (value != null) {
+            responseHeaders[key] = Array.isArray(value) ? value.join(", ") : String(value);
+          }
+        }
+
+        try {
+          const settleResult = await httpServer.processSettlement(
+            paymentPayload,
+            paymentRequirements,
+            declaredExtensions,
+            { request: context, responseHeaders },
+            settlementOverrides,
+          );
+
+          if (!settleResult.success) {
+            // Settlement failed - discard body and return 402
+            const { response } = settleResult;
+            ctx.status = response.status;
+            for (const [key, value] of Object.entries(response.headers)) {
+              ctx.set(key, value);
+            }
+            ctx.body = response.isHtml ? response.body : response.body || {};
+            return;
+          }
+
+          // Settlement succeeded - add headers to response
+          for (const [key, value] of Object.entries(settleResult.headers)) {
+            ctx.set(key, value);
+          }
+        } catch (error) {
+          if (error instanceof FacilitatorResponseError) {
+            sendFacilitatorError(ctx, error);
+            return;
+          }
+          console.error(error);
+          ctx.status = 402;
+          ctx.body = {};
+          return;
+        }
+
         return;
     }
   };
