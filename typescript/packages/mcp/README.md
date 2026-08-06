@@ -250,7 +250,20 @@ Per the x402 MCP transport, `PaymentRequired` is included directly in `structure
 }
 ```
 
-The client also supports JSON-RPC payment errors using the legacy `402` code or SEP-1036's `-32042` code. For `-32042`, `PaymentRequired` may be provided directly in `error.data` or under `error.data.x402`.
+### Supported PaymentRequired Shapes
+
+The client accepts 4 `PaymentRequired` shapes across 2 response types. A payment requirement may be returned as either a tool result or a JSON-RPC error:
+
+| Order | Response Type | Error Code | Shape | Example |
+|-------|---------------|------------|-------|---------|
+| 1 | Tool result ⭐ | — | `result.structuredContent`<br>+<br>`result.content[0].text` (JSON-encoded) | `{`<br>&nbsp;&nbsp;`result: {`<br>&nbsp;&nbsp;&nbsp;&nbsp;`isError: true,`<br>&nbsp;&nbsp;&nbsp;&nbsp;`structuredContent: PaymentRequired,`<br>&nbsp;&nbsp;&nbsp;&nbsp;`content: [{ text: "<PaymentRequired JSON>" }]`<br>&nbsp;&nbsp;`}`<br>`}` |
+| 1 | JSON-RPC error | `-32042` | `error.data.x402` | `{`<br>&nbsp;&nbsp;`error: {`<br>&nbsp;&nbsp;&nbsp;&nbsp;`data: {`<br>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;`x402: PaymentRequired`<br>&nbsp;&nbsp;&nbsp;&nbsp;`}`<br>&nbsp;&nbsp;`}`<br>`}` |
+| 2 | JSON-RPC error | `-32042` | `error.data` | `{`<br>&nbsp;&nbsp;`error: {`<br>&nbsp;&nbsp;&nbsp;&nbsp;`data: PaymentRequired`<br>&nbsp;&nbsp;`}`<br>`}` |
+| 3 | JSON-RPC error | `402` | `error.data` | `{`<br>&nbsp;&nbsp;`error: {`<br>&nbsp;&nbsp;&nbsp;&nbsp;`data: PaymentRequired`<br>&nbsp;&nbsp;`}`<br>`}` |
+
+⭐ Server generated & recommended shape.
+
+For tool results, the client checks `result.structuredContent` first, then falls back to `result.content[0].text`. For JSON-RPC errors, it uses `error.data.x402` first when available, otherwise `error.data`.
 
 ## Configuration Options
 
