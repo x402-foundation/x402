@@ -143,55 +143,49 @@ public class PaymentFilter implements Filter {
             return;
         }
 
-        /* -------- payment verified → continue business logic ----------- */
-        chain.doFilter(req, res);
+        /* -------- payment verified → buffer response, then settle ------ */
+        //
+        // Content must NOT be sent to the client until settlement succeeds.
+        // BufferingResponseWrapper captures handler output in memory so we can
+        // discard it and return 402 if settle() fails — matching the behaviour
+        // of the TypeScript/Express middleware.  See: #3068
+        BufferingResponseWrapper buffered = new BufferingResponseWrapper(response);
+        chain.doFilter(req, buffered);
 
-        /* -------- settlement (return errors to user) ------------- */
-        // Don't settle if response failed (4xx/5xx status codes)
-        if (response.getStatus() >= 400) {
+        /* -------- if the handler itself failed, pass the error through -- */
+        if (buffered.getStatus() >= 400) {
+            buffered.copyTo(response);
             return;
         }
 
+        /* -------- settle before flushing buffered content -------------- */
         try {
             SettlementResponse sr = facilitator.settle(header, buildRequirements(path));
             if (sr == null || !sr.success) {
-                // Settlement failed - return 402 if headers not sent yet
-                if (!response.isCommitted()) {
-                    String errorMsg = sr != null && sr.error != null ? sr.error : "settlement failed";
-                    respond402(response, path, errorMsg);
-                }
+                // Discard buffer — client never sees the premium response.
+                String errorMsg = sr != null && sr.error != null ? sr.error : "settlement failed";
+                respond402(response, path, errorMsg);
                 return;
             }
-            
-            // Settlement succeeded - add settlement response header (base64-encoded JSON) 
+
+            // Settlement succeeded — attach header then flush content to client.
             try {
-                // Extract payer from payment payload (wallet address of person making payment)
-                String payer = extractPayerFromPayload(payload);
-                
+                String payer        = extractPayerFromPayload(payload);
                 String base64Header = createPaymentResponseHeader(sr, payer);
                 response.setHeader("X-PAYMENT-RESPONSE", base64Header);
-                
-                // Set CORS header to expose X-PAYMENT-RESPONSE to browser clients
                 response.setHeader("Access-Control-Expose-Headers", "X-PAYMENT-RESPONSE");
             } catch (Exception ex) {
-                // If header creation fails, return 500
-                if (!response.isCommitted()) {
-                    response.setStatus(HttpServletResponse.SC_INTERNAL_SERVER_ERROR);
-                    response.setContentType("application/json");
-                    try {
-                        response.getWriter().write("{\"error\":\"Failed to create settlement response header\"}");
-                    } catch (IOException writeEx) {
-                        System.err.println("Failed to write error response: " + writeEx.getMessage());
-                    }
-                }
+                response.setStatus(HttpServletResponse.SC_INTERNAL_SERVER_ERROR);
+                response.setContentType("application/json");
+                response.getWriter().write("{\"error\":\"Failed to create settlement response header\"}");
                 return;
             }
+
+            buffered.copyTo(response);
+
         } catch (Exception ex) {
-            // Network/communication errors during settlement - return 402
-            if (!response.isCommitted()) {
-                respond402(response, path, "settlement error: " + ex.getMessage());
-            }
-            return;
+            // Discard buffer — client never sees the premium response.
+            respond402(response, path, "settlement error: " + ex.getMessage());
         }
     }
 

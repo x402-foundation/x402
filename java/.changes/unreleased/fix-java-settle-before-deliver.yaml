@@ -1,0 +1,5 @@
+kind: fix
+body: >
+  Buffer HTTP response in PaymentFilter and settle payment before flushing to
+  client, preventing premium content from being delivered when settlement fails.
+  Also adds Cache-Control: no-store to 402 responses to prevent CDN caching.
