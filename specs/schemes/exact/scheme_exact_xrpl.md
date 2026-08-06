@@ -401,11 +401,28 @@ The facilitator MUST reject if `invoiceId` is present and `InvoiceID` is missing
 
 ### 9. Safety Checks (MUST)
 
-The facilitator MUST reject transactions with:
+**Field acceptance is an allowlist, not a denylist.** The facilitator MUST hold
+the decoded `Payment` to an explicit set of permitted fields and reject any
+transaction carrying a field outside it, unless an active extension admits that
+field deliberately.
+
+This is normative because the alternative fails open. A denylist of named
+fields silently widens what a facilitator accepts every time the XRPL adds a
+field, and the field names in any such list are not stable: XLS-68 renamed
+`FeeAmount` to `FeeAmountDelta` between the published draft and the Devnet
+`3.3.0-rc5` implementation, so a list written from the draft would already be
+wrong. Deriving the permitted set from rippled's own field template for the
+transaction type keeps the check correct without maintenance.
+
+The fields below are therefore **informative examples** of what an allowlist
+excludes for this scheme, not the mechanism itself:
 
 - `Fee` above facilitator policy.
 - `Delegate` present.
-- `Sponsor`, `SponsorFlags`, or `SponsorSignature` present, unless a fee-sponsoring extension is active.
+- Sponsorship fields — at the time of writing `Sponsor`, `SponsorFlags`,
+  `SponsorSignature`, and on `SponsorshipSet` the budget fields — unless a
+  fee-sponsoring extension is active. Named for the reader's benefit; the
+  allowlist, not this list, is what rejects them.
 - `Memos` present.
 - `SendMax` present for XRP.
 - `Paths` present.
@@ -532,3 +549,4 @@ Implementations MAY include additional fields when defined by the SDK or facilit
 - [XRPL Currency Formats](https://xrpl.org/docs/references/protocol/data-types/currency-formats)
 - [CAIP-2 Specification](https://github.com/ChainAgnostic/CAIPs/blob/main/CAIPs/caip-2.md)
 - [x402 Protocol Specification](https://github.com/coinbase/x402/blob/main/specs/x402-specification-v2.md)
+
