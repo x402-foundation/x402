@@ -151,8 +151,8 @@ in the middle state, 188 were missing `asset` and 144 were missing `payTo`; for 
 deletion is both less work and less to keep correct. Complete the block only if serving
 static payment data is a deliberate choice.
 
-*(Deployment figures from an independent census of the x402 Bazaar by
-[@meloliva14](https://github.com/meloliva14), published at
+*(Deployment figures here, and the DNS census cited in the TXT section, are from
+independent measurements by [@meloliva14](https://github.com/meloliva14), published at
 [meloliva14/x402-measure](https://github.com/meloliva14/x402-measure); re-runnable against
 any revision of this document.)*
 
@@ -181,6 +181,20 @@ TXT record can win by ordering — a shared DNS panel, a delegated subdomain, a
 partial compromise. [SPF] and [DMARC] both make duplicates a hard error for
 precisely this reason, and it is worth inheriting rather than rediscovering.
 
+Consumers **MUST** ignore a record that does not parse under this grammar —
+a missing or unrecognized `v` token, an absent or non-HTTPS `wk` — and
+continue to resolution step 2 exactly as if no record existed. The label is
+already occupied by near-misses: a DNS census of 1,971 names found three
+`_x402` TXT records live today, across two operators, and none parses under
+this document (`v=x4021` where this grammar says `v=x402-1`, `url=` where it
+says `wk=`). Treating a malformed record as an absence rather than an error
+keeps the manifest-only fallback reachable for exactly the hosts that most
+need it: a publisher has no in-band way to learn their record is malformed —
+a wrong TXT record produces no error anywhere — so a hard failure here would
+silently unlist them everywhere at once. Indexers SHOULD flag records that
+exist at the label but fail to parse, since an indexer's report is the only
+feedback channel such a publisher has.
+
 The TXT record is a **pointer, not an authority**: all capability data comes
 from the manifest, which comes over HTTPS. This split (unauthenticated DNS
 pointer → authenticated HTTPS policy) is the [MTA-STS] pattern and keeps the
@@ -195,6 +209,8 @@ Given a domain `D`, a client resolves x402 capability as:
 
 1. Query TXT for `_x402.D`. If a record with `v=x402-1` exists, fetch the
    manifest from its `wk` URL (rejecting non-HTTPS or out-of-domain URLs).
+   A record that fails to parse under the grammar above is treated as
+   absent, not as an error.
    Consumers **MUST** re-apply the in-domain constraint to **every redirect
    hop**, and report the final URL as the manifest source. Checking only the
    URL that was requested validates a location the bytes need not have come
