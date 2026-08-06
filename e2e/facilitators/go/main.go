@@ -28,19 +28,21 @@ import (
 	solana "github.com/gagliardetto/solana-go"
 	"github.com/gagliardetto/solana-go/rpc"
 	"github.com/gin-gonic/gin"
-	x402 "github.com/x402-foundation/x402/go"
-	"github.com/x402-foundation/x402/go/extensions/bazaar"
-	"github.com/x402-foundation/x402/go/extensions/eip2612gassponsor"
-	"github.com/x402-foundation/x402/go/extensions/erc20approvalgassponsor"
-	exttypes "github.com/x402-foundation/x402/go/extensions/types"
-	evmmech "github.com/x402-foundation/x402/go/mechanisms/evm"
-	exactevm "github.com/x402-foundation/x402/go/mechanisms/evm/exact/facilitator"
-	exactevmv1 "github.com/x402-foundation/x402/go/mechanisms/evm/exact/v1/facilitator"
-	uptoevm "github.com/x402-foundation/x402/go/mechanisms/evm/upto/facilitator"
-	svmmech "github.com/x402-foundation/x402/go/mechanisms/svm"
-	svm "github.com/x402-foundation/x402/go/mechanisms/svm/exact/facilitator"
-	svmv1 "github.com/x402-foundation/x402/go/mechanisms/svm/exact/v1/facilitator"
-	x402types "github.com/x402-foundation/x402/go/types"
+	x402 "github.com/x402-foundation/x402/go/v2"
+	"github.com/x402-foundation/x402/go/v2/extensions/bazaar"
+	"github.com/x402-foundation/x402/go/v2/extensions/eip2612gassponsor"
+	"github.com/x402-foundation/x402/go/v2/extensions/erc20approvalgassponsor"
+	exttypes "github.com/x402-foundation/x402/go/v2/extensions/types"
+	evmmech "github.com/x402-foundation/x402/go/v2/mechanisms/evm"
+	"github.com/x402-foundation/x402/go/v2/mechanisms/evm/batch-settlement"
+	batchedevm "github.com/x402-foundation/x402/go/v2/mechanisms/evm/batch-settlement/facilitator"
+	exactevm "github.com/x402-foundation/x402/go/v2/mechanisms/evm/exact/facilitator"
+	exactevmv1 "github.com/x402-foundation/x402/go/v2/mechanisms/evm/exact/v1/facilitator"
+	uptoevm "github.com/x402-foundation/x402/go/v2/mechanisms/evm/upto/facilitator"
+	svmmech "github.com/x402-foundation/x402/go/v2/mechanisms/svm"
+	svm "github.com/x402-foundation/x402/go/v2/mechanisms/svm/exact/facilitator"
+	svmv1 "github.com/x402-foundation/x402/go/v2/mechanisms/svm/exact/v1/facilitator"
+	x402types "github.com/x402-foundation/x402/go/v2/types"
 )
 
 const (
@@ -66,6 +68,9 @@ type realFacilitatorEvmSigner struct {
 	address    common.Address
 	client     *ethclient.Client
 	chainID    *big.Int
+	nonceMu    sync.Mutex
+	nextNonce  uint64
+	nonceInit  bool
 }
 
 func newRealFacilitatorEvmSigner(privateKeyHex string, rpcURL string) (*realFacilitatorEvmSigner, error) {
@@ -108,6 +113,26 @@ func (s *realFacilitatorEvmSigner) GetChainID(ctx context.Context) (*big.Int, er
 	return s.chainID, nil
 }
 
+func (s *realFacilitatorEvmSigner) reserveNonce(ctx context.Context) (uint64, error) {
+	s.nonceMu.Lock()
+	defer s.nonceMu.Unlock()
+
+	// Sync with chain so txs from outside this process (e.g. e2e harness
+	// fundClientForRevoke) are reflected before we reserve the next nonce.
+	pending, err := s.client.PendingNonceAt(ctx, s.address)
+	if err != nil {
+		return 0, fmt.Errorf("failed to get nonce: %w", err)
+	}
+	if !s.nonceInit || pending > s.nextNonce {
+		s.nextNonce = pending
+		s.nonceInit = true
+	}
+
+	nonce := s.nextNonce
+	s.nextNonce++
+	return nonce, nil
+}
+
 func (s *realFacilitatorEvmSigner) VerifyTypedData(
 	ctx context.Context,
 	address string,
@@ -143,14 +168,30 @@ func (s *realFacilitatorEvmSigner) VerifyTypedData(
 		typedData.Types[typeName] = typedFields
 	}
 
-	// Add EIP712Domain if not present
+	// Add EIP712Domain type if not present.
+	//
+	// Domain fields are conditionally declared based on which TypedDataDomain
+	// fields are populated. go-ethereum's `apitypes.TypedDataDomain.Map()`
+	// drops empty Name/Version/VerifyingContract and nil ChainID; if the type
+	// list still names them, `HashStruct("EIP712Domain", ...)` errors with
+	// "provided data '<nil>' doesn't match type 'string'" (Permit2's no-version
+	// domain is the canonical case). Mirrors viem's `getTypesForEIP712Domain`
+	// and the same fix applied to `go/mechanisms/evm/eip712.go`.
 	if _, exists := typedData.Types["EIP712Domain"]; !exists {
-		typedData.Types["EIP712Domain"] = []apitypes.Type{
-			{Name: "name", Type: "string"},
-			{Name: "version", Type: "string"},
-			{Name: "chainId", Type: "uint256"},
-			{Name: "verifyingContract", Type: "address"},
+		domainFields := make([]apitypes.Type, 0, 4)
+		if typedData.Domain.Name != "" {
+			domainFields = append(domainFields, apitypes.Type{Name: "name", Type: "string"})
 		}
+		if typedData.Domain.Version != "" {
+			domainFields = append(domainFields, apitypes.Type{Name: "version", Type: "string"})
+		}
+		if typedData.Domain.ChainId != nil {
+			domainFields = append(domainFields, apitypes.Type{Name: "chainId", Type: "uint256"})
+		}
+		if typedData.Domain.VerifyingContract != "" {
+			domainFields = append(domainFields, apitypes.Type{Name: "verifyingContract", Type: "address"})
+		}
+		typedData.Types["EIP712Domain"] = domainFields
 	}
 
 	// Hash the data
@@ -256,6 +297,7 @@ func (s *realFacilitatorEvmSigner) WriteContract(
 	contractAddress string,
 	abiJSON []byte,
 	method string,
+	dataSuffix []byte,
 	args ...interface{},
 ) (string, error) {
 	// Parse ABI
@@ -269,11 +311,12 @@ func (s *realFacilitatorEvmSigner) WriteContract(
 	if err != nil {
 		return "", fmt.Errorf("failed to pack method call: %w", err)
 	}
+	data = evmmech.AppendDataSuffix(data, dataSuffix)
 
 	// Get nonce
-	nonce, err := s.client.PendingNonceAt(ctx, s.address)
+	nonce, err := s.reserveNonce(ctx)
 	if err != nil {
-		return "", fmt.Errorf("failed to get nonce: %w", err)
+		return "", err
 	}
 
 	// Get gas price
@@ -314,9 +357,9 @@ func (s *realFacilitatorEvmSigner) SendTransaction(
 	data []byte,
 ) (string, error) {
 	// Get nonce
-	nonce, err := s.client.PendingNonceAt(ctx, s.address)
+	nonce, err := s.reserveNonce(ctx)
 	if err != nil {
-		return "", fmt.Errorf("failed to get nonce: %w", err)
+		return "", err
 	}
 
 	// Get gas price
@@ -449,9 +492,9 @@ func (s *realFacilitatorEvmSigner) fundPayerGasIfNeeded(ctx context.Context, dec
 	deficit := new(big.Int).Sub(gasCost, payerBalance)
 	log.Printf("⛽ Funding payer %s with %s wei for gas", payerAddr.Hex(), deficit.String())
 
-	fundNonce, err := s.client.PendingNonceAt(ctx, s.address)
+	fundNonce, err := s.reserveNonce(ctx)
 	if err != nil {
-		return fmt.Errorf("failed to get funding nonce: %w", err)
+		return err
 	}
 	fundGasPrice, err := s.client.SuggestGasPrice(ctx)
 	if err != nil {
@@ -490,7 +533,7 @@ func (s *realFacilitatorEvmSigner) SendTransactions(ctx context.Context, transac
 			}
 			hash, err = s.sendRawTransaction(ctx, decodedTx)
 		} else if tx.Call != nil {
-			hash, err = s.WriteContract(ctx, tx.Call.Address, tx.Call.ABI, tx.Call.Function, tx.Call.Args...)
+			hash, err = s.WriteContract(ctx, tx.Call.Address, tx.Call.ABI, tx.Call.Function, tx.Call.DataSuffix, tx.Call.Args...)
 		} else {
 			return hashes, fmt.Errorf("transaction_failed: empty transaction request")
 		}
@@ -553,6 +596,18 @@ func createPaymentHash(paymentPayload x402.PaymentPayload) string {
 func hashBytes(data []byte) string {
 	hash := sha256.Sum256(data)
 	return hex.EncodeToString(hash[:])
+}
+
+// isBatchSettlementRequirements reports whether the payment requirements use
+// the batch-settlement scheme. Used by the verify-hash cache hooks to exempt
+// batch-settlement flows: the resource server rewrites refund and voucher
+// payloads between /verify and /settle, so the verify-time payload hash never
+// matches the settle-time hash for those flows. Mirrors the TS e2e facilitator.
+func isBatchSettlementRequirements(req x402.PaymentRequirementsView) bool {
+	if req == nil {
+		return false
+	}
+	return req.GetScheme() == batchsettlement.SchemeBatched
 }
 
 // Real SVM facilitator signer
@@ -836,10 +891,7 @@ func main() {
 	facilitator := x402.Newx402Facilitator()
 
 	// Register EVM schemes with dynamic network
-	// Enable smart wallet deployment via EIP-6492
-	evmConfig := &exactevm.ExactEvmSchemeConfig{
-		DeployERC4337WithEIP6492: true,
-	}
+	evmConfig := &exactevm.ExactEvmSchemeConfig{}
 	evmFacilitatorScheme := exactevm.NewExactEvmScheme(evmSigner, evmConfig)
 	facilitator.Register([]x402.Network{x402.Network(evmNetwork)}, evmFacilitatorScheme)
 
@@ -847,9 +899,23 @@ func main() {
 	uptoEvmFacilitatorScheme := uptoevm.NewUptoEvmScheme(evmSigner, nil)
 	facilitator.Register([]x402.Network{x402.Network(evmNetwork)}, uptoEvmFacilitatorScheme)
 
-	evmV1Config := &exactevmv1.ExactEvmSchemeV1Config{
-		DeployERC4337WithEIP6492: true,
+	// Register batch-settlement EVM scheme. Mirrors TS:
+	// `new BatchSettlementEvmScheme(evmSigner, authorizerSigner)` where the
+	// authorizer key falls back to EVM_PRIVATE_KEY when
+	// EVM_RECEIVER_AUTHORIZER_PRIVATE_KEY is not set.
+	authorizerKey := os.Getenv("EVM_RECEIVER_AUTHORIZER_PRIVATE_KEY")
+	if authorizerKey == "" {
+		authorizerKey = evmPrivateKey
 	}
+	batchedAuthorizer, err := newBatchedAuthorizerSigner(authorizerKey)
+	if err != nil {
+		log.Fatalf("Failed to create batch-settlement authorizer: %v", err)
+	}
+	log.Printf("EVM Receiver Authorizer (batch-settlement): %s", batchedAuthorizer.Address())
+	batchedScheme := batchedevm.NewBatchSettlementEvmScheme(evmSigner, batchedAuthorizer)
+	facilitator.Register([]x402.Network{x402.Network(evmNetwork)}, batchedScheme)
+
+	evmV1Config := &exactevmv1.ExactEvmSchemeV1Config{}
 	evmFacilitatorV1Scheme := exactevmv1.NewExactEvmSchemeV1(evmSigner, evmV1Config)
 	facilitator.RegisterV1([]x402.Network{x402.Network(getV1EvmNetwork(evmNetwork))}, evmFacilitatorV1Scheme)
 
@@ -892,20 +958,34 @@ func main() {
 					log.Printf("Warning: Failed to extract discovery info: %v", err)
 				} else if discovered != nil {
 					log.Printf("📝 Cataloging discovered resource: %s %s", discovered.Method, discovered.ResourceURL)
+					if discovered.ServiceName != "" {
+						log.Printf("   Service: %s", discovered.ServiceName)
+					}
+					if len(discovered.Tags) > 0 {
+						log.Printf("   Tags: %s", strings.Join(discovered.Tags, ", "))
+					}
 
 					// Unmarshal requirements for cataloging based on version
 					version := ctx.Payload.GetVersion()
 					if version == 2 {
 						var requirements x402.PaymentRequirements
 						if err := json.Unmarshal(ctx.RequirementsBytes, &requirements); err == nil {
-							bazaarCatalog.CatalogResource(
-								discovered.ResourceURL,
-								discovered.Method,
-								version,
-								discovered.DiscoveryInfo,
-								requirements,
-								discovered.RouteTemplate,
-							)
+							reqJSON, marshalErr := json.Marshal(requirements)
+							if marshalErr == nil {
+								bazaarCatalog.Add(bazaar.DiscoveryResource{
+									Resource:    discovered.ResourceURL,
+									Type:        discovered.InputType(),
+									X402Version: version,
+									Accepts:     []json.RawMessage{reqJSON},
+									LastUpdated: time.Now().UTC().Format(time.RFC3339),
+									Description: discovered.Description,
+									MimeType:    discovered.MimeType,
+									ServiceName: discovered.ServiceName,
+									Tags:        discovered.Tags,
+									IconUrl:     discovered.IconUrl,
+									Extensions:  discovered.Extensions,
+								})
+							}
 						}
 					} else if version == 1 {
 						var requirementsV1 x402types.PaymentRequirementsV1
@@ -920,14 +1000,22 @@ func main() {
 								PayTo:             requirementsV1.PayTo,
 								MaxTimeoutSeconds: requirementsV1.MaxTimeoutSeconds,
 							}
-							bazaarCatalog.CatalogResource(
-								discovered.ResourceURL,
-								discovered.Method,
-								version,
-								discovered.DiscoveryInfo,
-								requirements,
-								discovered.RouteTemplate,
-							)
+							reqJSON, marshalErr := json.Marshal(requirements)
+							if marshalErr == nil {
+								bazaarCatalog.Add(bazaar.DiscoveryResource{
+									Resource:    discovered.ResourceURL,
+									Type:        discovered.InputType(),
+									X402Version: version,
+									Accepts:     []json.RawMessage{reqJSON},
+									LastUpdated: time.Now().UTC().Format(time.RFC3339),
+									Description: discovered.Description,
+									MimeType:    discovered.MimeType,
+									ServiceName: discovered.ServiceName,
+									Tags:        discovered.Tags,
+									IconUrl:     discovered.IconUrl,
+									Extensions:  discovered.Extensions,
+								})
+							}
 						}
 					}
 				}
@@ -935,7 +1023,18 @@ func main() {
 			return nil
 		}).
 		OnBeforeSettle(func(ctx x402.FacilitatorSettleContext) (*x402.FacilitatorBeforeHookResult, error) {
-			// Hook 3: Validate payment was previously verified
+			// Hook 3: Validate payment was previously verified.
+			//
+			// Batch-settlement is exempt: the resource server's `BeforeSettleHook`
+			// rewrites refund payloads (adds claims/amount/refundNonce) and rewrites
+			// voucher commits before /settle, so the payload bytes seen at settle
+			// time differ from the verify-time bytes. Mirrors the TS e2e fac
+			// (e2e/facilitators/typescript/index.ts ~548) which skips the cache
+			// check for `requirements.scheme === "batch-settlement"`.
+			if isBatchSettlementRequirements(ctx.Requirements) {
+				return nil, nil
+			}
+
 			paymentHash := hashBytes(ctx.PayloadBytes)
 			verificationMutex.RLock()
 			verificationTimestamp, verified := verifiedPayments[paymentHash]
@@ -964,11 +1063,17 @@ func main() {
 			return nil, nil
 		}).
 		OnAfterSettle(func(ctx x402.FacilitatorSettleResultContext) error {
-			// Hook 4: Clean up verified payment tracking after successful settlement
-			paymentHash := hashBytes(ctx.PayloadBytes)
-			verificationMutex.Lock()
-			delete(verifiedPayments, paymentHash)
-			verificationMutex.Unlock()
+			// Hook 4: Clean up verified payment tracking after successful settlement.
+			// Skip cleanup for batch-settlement: the verify-time entry was keyed by
+			// a different payload (see OnBeforeSettle comment) so there's nothing
+			// to delete here, and the cache entry naturally ages out via the 5-min
+			// TTL check above. Mirrors TS e2e fac.
+			if !isBatchSettlementRequirements(ctx.Requirements) {
+				paymentHash := hashBytes(ctx.PayloadBytes)
+				verificationMutex.Lock()
+				delete(verifiedPayments, paymentHash)
+				verificationMutex.Unlock()
+			}
 
 			if ctx.Result.Success {
 				log.Printf("✅ Settlement completed: %s", ctx.Result.Transaction)
@@ -976,11 +1081,14 @@ func main() {
 			return nil
 		}).
 		OnSettleFailure(func(ctx x402.FacilitatorSettleFailureContext) (*x402.FacilitatorSettleFailureHookResult, error) {
-			// Hook 5: Clean up verified payment tracking on failure too
-			paymentHash := hashBytes(ctx.PayloadBytes)
-			verificationMutex.Lock()
-			delete(verifiedPayments, paymentHash)
-			verificationMutex.Unlock()
+			// Hook 5: Clean up verified payment tracking on failure too. Same
+			// batch-settlement exemption as OnAfterSettle.
+			if !isBatchSettlementRequirements(ctx.Requirements) {
+				paymentHash := hashBytes(ctx.PayloadBytes)
+				verificationMutex.Lock()
+				delete(verifiedPayments, paymentHash)
+				verificationMutex.Unlock()
+			}
 
 			log.Printf("❌ Settlement failed: %v", ctx.Error)
 			return nil, nil
@@ -1104,13 +1212,40 @@ func main() {
 		items, total := bazaarCatalog.GetResources(limit, offset)
 
 		c.JSON(http.StatusOK, gin.H{
-			"x402Version": 1,
+			"x402Version": 2,
 			"items":       items,
 			"pagination": gin.H{
 				"limit":  limit,
 				"offset": offset,
 				"total":  total,
 			},
+		})
+	})
+
+	// GET /discovery/search - Search discovered resources using keyword matching
+	router.GET("/discovery/search", func(c *gin.Context) {
+		query := c.Query("query")
+		if query == "" {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "query parameter is required"})
+			return
+		}
+
+		resourceType := c.Query("type")
+		limit := 0
+		if limitParam := c.Query("limit"); limitParam != "" {
+			fmt.Sscanf(limitParam, "%d", &limit)
+		}
+
+		items, _ := bazaarCatalog.SearchResources(query, resourceType, limit)
+		if items == nil {
+			items = []bazaar.DiscoveryResource{}
+		}
+
+		c.JSON(http.StatusOK, gin.H{
+			"x402Version":    2,
+			"resources":      items,
+			"partialResults": false,
+			"pagination":     nil,
 		})
 	})
 

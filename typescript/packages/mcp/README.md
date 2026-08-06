@@ -1,4 +1,4 @@
-# @x402/mcp
+# `@x402/mcp` • [![npm version](https://img.shields.io/npm/v/%40x402%2Fmcp.svg)](https://www.npmjs.com/package/@x402/mcp)
 
 MCP (Model Context Protocol) integration for the x402 payment protocol. This package enables paid tool calls in MCP servers and automatic payment handling in MCP clients.
 

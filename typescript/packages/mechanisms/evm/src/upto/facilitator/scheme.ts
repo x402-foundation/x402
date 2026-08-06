@@ -55,12 +55,14 @@ export class UptoEvmScheme implements SchemeNetworkFacilitator {
    * @param payload - The payment payload to verify
    * @param requirements - The payment requirements to verify against
    * @param context - Optional facilitator context
+   * @param _ - Payment required extensions (unused; reserved for interface parity)
    * @returns Promise resolving to a verification response
    */
   async verify(
     payload: PaymentPayload,
     requirements: PaymentRequirements,
     context?: FacilitatorContext,
+    _?: Record<string, unknown>,
   ): Promise<VerifyResponse> {
     const rawPayload = payload.payload as Record<string, unknown>;
     if (!isUptoPermit2Payload(rawPayload)) {

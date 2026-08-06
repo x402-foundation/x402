@@ -308,7 +308,7 @@ class TestAsyncClientHooks:
         )
 
         accepts = [build_cash_payment_requirements("Test", "USD", "1")]
-        payment_required = self.server.create_payment_required_response(accepts)
+        payment_required = await self.server.create_payment_required_response(accepts)
 
         await client.create_payment_payload(payment_required)
 
@@ -331,7 +331,7 @@ class TestAsyncClientHooks:
         )
 
         accepts = [build_cash_payment_requirements("Test", "USD", "1")]
-        payment_required = self.server.create_payment_required_response(accepts)
+        payment_required = await self.server.create_payment_required_response(accepts)
 
         await client.create_payment_payload(payment_required)
 
@@ -373,7 +373,7 @@ class TestAsyncPaymentFlow:
             description="Async resource",
             mime_type="application/json",
         )
-        payment_required = self.server.create_payment_required_response(accepts, resource)
+        payment_required = await self.server.create_payment_required_response(accepts, resource)
 
         # Native async calls
         payment_payload = await self.client.create_payment_payload(payment_required)
@@ -390,7 +390,7 @@ class TestAsyncPaymentFlow:
     async def test_async_facilitator_direct_calls(self) -> None:
         """Test async facilitator verify and settle directly."""
         requirements = build_cash_payment_requirements("Direct", "EUR", "10")
-        payment_required = self.server.create_payment_required_response([requirements])
+        payment_required = await self.server.create_payment_required_response([requirements])
 
         payload = await self.client.create_payment_payload(payment_required)
 
@@ -410,7 +410,7 @@ class TestAsyncPaymentFlow:
         http_client = x402HTTPClient(payment_client)
 
         accepts = [build_cash_payment_requirements("HTTP Merchant", "USD", "2")]
-        payment_required = self.server.create_payment_required_response(accepts)
+        payment_required = await self.server.create_payment_required_response(accepts)
 
         # Async create payment payload through HTTP client
         payload = await http_client.create_payment_payload(payment_required)

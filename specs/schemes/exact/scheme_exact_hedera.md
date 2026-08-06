@@ -149,11 +149,12 @@ A facilitator verifying an `exact`‑scheme Hedera payment MUST enforce all of t
   - The net amount to `payTo` is not exactly equal to `PaymentRequirements.amount`, or
   - The client is sending more than `PaymentRequirements.amount` in total for the specified `asset`.
 
-### 6. General validity and replay protection
+### 6. Payer signature, general validity, and replay protection
 
+- The facilitator MUST verify that the inferred payer actually signed the frozen transaction body before sponsoring it. The facilitator fetches the payer's onchain account key (e.g. via a consensus-node `AccountInfoQuery`) and checks that the transaction carries a valid signature satisfying that key, including KeyList/threshold accounts. A transaction signed with the wrong key, or left unsigned, MUST be rejected (reason `invalid_exact_hedera_payload_signature_invalid`). Without this check a payload that fails at settlement with `INVALID_SIGNATURE` would otherwise pass verification.
 - The transaction MUST:
   - Not have been previously submitted/observed (implementations SHOULD perform idempotency / replay checks where possible).
-- The facilitator SHOULD simulate or pre‑check the transaction using Hedera APIs where available to ensure:
+- The facilitator SHOULD pre‑check the transaction to ensure:
   - The client has sufficient balance of the `asset` to cover the transfer.
   - The transaction is expected to succeed on chain (no obvious `INSUFFICIENT_BALANCE`, invalid token association, or similar failures).
 

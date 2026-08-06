@@ -4,8 +4,8 @@ import (
 	"net/http"
 	"time"
 
-	x402 "github.com/x402-foundation/x402/go"
-	x402http "github.com/x402-foundation/x402/go/http"
+	x402 "github.com/x402-foundation/x402/go/v2"
+	x402http "github.com/x402-foundation/x402/go/v2/http"
 )
 
 // Config provides struct-based configuration for x402 payment middleware.

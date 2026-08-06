@@ -1,6 +1,9 @@
 """Tests for ExactSvmScheme server."""
 
+from unittest.mock import MagicMock
+
 import pytest
+from solders.hash import Hash
 
 from x402.mechanisms.svm import (
     SOLANA_DEVNET_CAIP2,
@@ -135,6 +138,27 @@ class TestParsePrice:
 class TestEnhancePaymentRequirements:
     """Test enhancePaymentRequirements method."""
 
+    @staticmethod
+    def _requirements(extra: dict[str, object] | None = None) -> PaymentRequirements:
+        return PaymentRequirements(
+            scheme="exact",
+            network=SOLANA_DEVNET_CAIP2,
+            asset=USDC_DEVNET_ADDRESS,
+            amount="100000",
+            pay_to="PayToAddress11111111111111111111111111",
+            max_timeout_seconds=3600,
+            extra=extra or {},
+        )
+
+    @staticmethod
+    def _supported_kind() -> SupportedKind:
+        return SupportedKind(
+            x402_version=2,
+            scheme="exact",
+            network=SOLANA_DEVNET_CAIP2,
+            extra={"feePayer": "FeePayer1111111111111111111111111111"},
+        )
+
     def test_should_add_fee_payer_to_payment_requirements(self):
         """Should add feePayer to payment requirements."""
         server = ExactSvmServerScheme()
@@ -188,6 +212,64 @@ class TestEnhancePaymentRequirements:
         assert result.extra is not None
         assert result.extra.get("custom") == "value"
         assert result.extra.get("feePayer") == "FeePayer1111111111111111111111111111"
+
+    def test_configured_rpc_adds_blockhash_hints_and_preserves_extras(self):
+        """Configured servers should enrich requirements with construction hints."""
+        server = ExactSvmServerScheme(rpc_url="https://example.invalid")
+        rpc_response = MagicMock()
+        rpc_response.value.blockhash = Hash.from_string(
+            "5Tx8F3jgSHx21CbtjwmdaKPLM5tWmreWAnPrbqHomSJF"
+        )
+        rpc_response.value.last_valid_block_height = 123456
+        server._rpc_client = MagicMock()
+        server._rpc_client.get_latest_blockhash.return_value = rpc_response
+
+        result = server.enhance_payment_requirements(
+            self._requirements({"custom": "value"}), self._supported_kind(), []
+        )
+
+        assert result.extra == {
+            "custom": "value",
+            "feePayer": "FeePayer1111111111111111111111111111",
+            "recentBlockhash": "5Tx8F3jgSHx21CbtjwmdaKPLM5tWmreWAnPrbqHomSJF",
+            "lastValidBlockHeight": "123456",
+        }
+
+    def test_without_rpc_configuration_omits_blockhash_hints(self):
+        """Unconfigured servers should leave blockhash lookup to clients."""
+        server = ExactSvmServerScheme()
+
+        result = server.enhance_payment_requirements(
+            self._requirements({"custom": "value"}), self._supported_kind(), []
+        )
+
+        assert result.extra == {
+            "custom": "value",
+            "feePayer": "FeePayer1111111111111111111111111111",
+        }
+
+    def test_rpc_failure_omits_blockhash_hints_and_preserves_extras(self):
+        """RPC failures should not prevent the server from returning requirements."""
+        server = ExactSvmServerScheme(rpc_url="https://example.invalid")
+        server._rpc_client = MagicMock()
+        server._rpc_client.get_latest_blockhash.side_effect = RuntimeError("RPC unavailable")
+
+        result = server.enhance_payment_requirements(
+            self._requirements(
+                {
+                    "custom": "value",
+                    "recentBlockhash": "stale",
+                    "lastValidBlockHeight": "1",
+                }
+            ),
+            self._supported_kind(),
+            [],
+        )
+
+        assert result.extra == {
+            "custom": "value",
+            "feePayer": "FeePayer1111111111111111111111111111",
+        }
 
 
 class TestRegisterMoneyParser:

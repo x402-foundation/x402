@@ -31,22 +31,19 @@ This is a **Server ↔ Client** extension. The Facilitator is not involved in th
 
 ## Server Usage
 
-### Recommended: Hooks (Automatic)
+### Recommended: Extension Factories
 
-The easiest way to implement SIWX is using the provided hooks, which handle all the complexity automatically:
+The easiest way to implement SIWX is registering the provided extension factories:
 
 <Tabs>
   <Tab title="TypeScript">
     ```typescript
     import {
       declareSIWxExtension,
-      siwxResourceServerExtension,
-      createSIWxSettleHook,
-      createSIWxRequestHook,
+      createSIWxResourceServerExtension,
       InMemorySIWxStorage,
     } from '@x402/extensions/sign-in-with-x';
     import { x402ResourceServer } from '@x402/core/server';
-    import { x402HTTPResourceServer } from '@x402/core/http';
     import { HTTPFacilitatorClient } from '@x402/core/http';
     import { ExactEvmScheme } from '@x402/evm/exact/server';
 
@@ -60,11 +57,13 @@ The easiest way to implement SIWX is using the provided hooks, which handle all 
       url: 'https://x402.org/facilitator'
     });
 
-    // 1. Register extension for time-based field refreshment
+    // 1. Register extension
     const resourceServer = new x402ResourceServer(facilitatorClient)
       .register(NETWORK, new ExactEvmScheme())
-      .registerExtension(siwxResourceServerExtension)  // Refreshes nonce/timestamps
-      .onAfterSettle(createSIWxSettleHook({ storage }));  // Records payments
+      .registerExtension(createSIWxResourceServerExtension({
+        storage,
+        origin: 'https://api.example.com',
+      }));
 
     // 2. Declare SIWX support in routes
     const routes = {
@@ -89,23 +88,166 @@ The easiest way to implement SIWX is using the provided hooks, which handle all 
       },
     };
 
-    // 3. Verify incoming SIWX proofs
-    const httpServer = new x402HTTPResourceServer(resourceServer, routes)
-      .onProtectedRequest(createSIWxRequestHook({ storage }));  // Grants access for auth-only or paid routes
+    ```
+  </Tab>
+  <Tab title="Go">
+    ```go
+    import (
+        x402 "github.com/x402-foundation/x402/go/v2"
+        "github.com/x402-foundation/x402/go/v2/extensions/signinwithx"
+        x402http "github.com/x402-foundation/x402/go/v2/http"
+        exactevmserver "github.com/x402-foundation/x402/go/v2/mechanisms/evm/exact/server"
+    )
+
+    const NETWORK = "eip155:8453" // Base mainnet
+
+    // Storage for tracking paid addresses
+    storage := signinwithx.NewInMemoryStorage()
+    extension := signinwithx.MustCreateResourceServerExtension(signinwithx.ServerOptions{
+        Storage: storage,
+        Origin:  "https://api.example.com",
+    })
+
+    // Declare SIWX support in routes
+    routes := x402http.RoutesConfig{
+        "GET /data": {
+            Accepts: x402http.PaymentOptions{{
+                Scheme:  "exact",
+                Price:   "$0.01",
+                Network: NETWORK,
+                PayTo:   "0xYourAddress",
+            }},
+            Extensions: map[string]interface{}{
+                signinwithx.ExtensionKey: signinwithx.DeclareExtension(signinwithx.DeclareOptions{
+                    Networks: []string{NETWORK},
+                })[signinwithx.ExtensionKey],
+            },
+        },
+        "GET /profile": {
+            Accepts:     x402http.PaymentOptions{}, // Auth-only route: no payment required
+            Extensions: map[string]interface{}{
+                signinwithx.ExtensionKey: signinwithx.DeclareExtension(signinwithx.DeclareOptions{
+                    Statement:         "Sign in to view your profile",
+                    Networks:          []string{NETWORK}, // Required for auth-only routes
+                    ExpirationSeconds: 300,
+                })[signinwithx.ExtensionKey],
+            },
+        },
+    }
+
+    // Register extension with the HTTP server
+    facilitatorClient := x402http.NewHTTPFacilitatorClient(&x402http.FacilitatorConfig{
+        URL: "https://x402.org/facilitator",
+    })
+    resourceServer := x402.Newx402ResourceServer(
+        x402.WithFacilitatorClient(facilitatorClient),
+        x402.WithSchemeServer(NETWORK, exactevmserver.NewExactEvmScheme()),
+    )
+    httpServer := x402http.Wrappedx402HTTPResourceServer(routes, resourceServer).
+        RegisterExtension(extension)
+    ```
+  </Tab>
+  <Tab title="Python">
+    ```python
+    from x402.extensions.sign_in_with_x import (
+        CreateSIWxHookOptions,
+        DeclareSIWxOptions,
+        InMemorySIWxStorage,
+        create_siwx_resource_server_extension,
+        declare_siwx_extension,
+    )
+    from x402.http import FacilitatorConfig, HTTPFacilitatorClient
+    from x402.http.middleware.fastapi import PaymentMiddlewareASGI
+    from x402.http.types import PaymentOption, RouteConfig
+    from x402.mechanisms.evm.exact import ExactEvmServerScheme
+    from x402.server import x402ResourceServer
+
+    NETWORK = "eip155:8453"  # Base mainnet
+    PAY_TO = "0xYourAddress"
+
+    # Storage for tracking paid addresses
+    storage = InMemorySIWxStorage()
+
+    facilitator = HTTPFacilitatorClient(FacilitatorConfig(url="https://x402.org/facilitator"))
+
+    # 1. Register extension
+    server = x402ResourceServer(facilitator)
+    server.register(NETWORK, ExactEvmServerScheme())
+    server.register_extension(
+        create_siwx_resource_server_extension(
+            CreateSIWxHookOptions(
+                storage=storage,
+                origin="https://api.example.com",
+            )
+        )
+    )
+
+    # 2. Declare SIWX support in routes
+    routes = {
+        "GET /data": RouteConfig(
+            accepts=[PaymentOption(scheme="exact", price="$0.01", network=NETWORK, pay_to=PAY_TO)],
+            extensions=declare_siwx_extension(),
+        ),
+        "GET /profile": RouteConfig(
+            accepts=[],  # Auth-only route: no payment required
+            extensions=declare_siwx_extension(
+                DeclareSIWxOptions(
+                    network=[NETWORK],  # Required for auth-only routes
+                    statement="Sign in to view your profile",
+                    expiration_seconds=300,
+                )
+            ),
+        ),
+    }
+
+    # 3. Add middleware to your FastAPI app
+    app.add_middleware(PaymentMiddlewareASGI, routes=routes, server=server)
     ```
   </Tab>
 </Tabs>
 
-The hooks automatically:
-- **siwxResourceServerExtension**: Derives `network` from `accepts`, `domain`/`uri` from request URL, refreshes `nonce`/`issuedAt`/`expirationTime` per request
-- **createSIWxSettleHook**: Records payment when settlement succeeds
-- **createSIWxRequestHook**: Validates and verifies SIWX proofs, grants access for auth-only routes (`accepts: []`) or when wallet has paid
+The server extension derives `network` from `accepts`, derives `domain`/`uri` from the configured `origin` and request path, refreshes nonce/timestamps per request, records successful payments, and validates SIWX proofs for declared HTTP routes.
 
 **Auth-only routes** (declared with `accepts: []`) grant access based on a valid SIWX signature alone, without requiring payment. This is useful for wallet-gated content that doesn't need micropayments.
 
+### Configured origin (required)
+
+SIWX proofs bind to the public origin configured when creating the server extension or request hook. Challenge issuance and validation both use this value — never request headers such as `Host`, `X-Forwarded-Host`, or `X-Forwarded-Proto`.
+
+<Tabs>
+  <Tab title="TypeScript">
+    ```typescript
+    createSIWxResourceServerExtension({
+      storage,
+      origin: 'https://api.example.com',
+    });
+    ```
+  </Tab>
+  <Tab title="Go">
+    ```go
+    signinwithx.MustCreateResourceServerExtension(signinwithx.ServerOptions{
+        Storage: storage,
+        Origin:  "https://api.example.com",
+    })
+    ```
+  </Tab>
+  <Tab title="Python">
+    ```python
+    create_siwx_resource_server_extension(
+        CreateSIWxHookOptions(
+            storage=storage,
+            origin="https://api.example.com",
+        )
+    )
+    ```
+  </Tab>
+</Tabs>
+
+Behind a TLS-terminating reverse proxy, set `origin` to the browser-visible URL (for example `https://api.example.com`), not the upstream listener address (for example `http://127.0.0.1:4021`). The request path is rebased onto the configured origin for each challenge.
+
 ### Smart Wallet Support (EIP-1271 / EIP-6492)
 
-By default, only EOA (Externally Owned Account) signatures are verified. To support smart contract wallets (like Coinbase Smart Wallet, Safe, etc.), pass `publicClient.verifyMessage` from viem:
+By default, only EOA (Externally Owned Account) signatures are verified. To support smart contract wallets (like Coinbase Smart Wallet, Safe, etc.), pass a verifier via `verifyOptions`:
 
 <Tabs>
   <Tab title="TypeScript">
@@ -118,11 +260,60 @@ By default, only EOA (Externally Owned Account) signatures are verified. To supp
       transport: http()
     });
 
-    const httpServer = new x402HTTPResourceServer(resourceServer, routes)
-      .onProtectedRequest(createSIWxRequestHook({
+    const resourceServer = new x402ResourceServer(facilitatorClient)
+      .register(NETWORK, new ExactEvmScheme())
+      .registerExtension(createSIWxResourceServerExtension({
         storage,
+        origin: 'https://api.example.com',
         verifyOptions: { evmVerifier: publicClient.verifyMessage },
       }));
+    ```
+  </Tab>
+  <Tab title="Go">
+    ```go
+    import (
+        "github.com/ethereum/go-ethereum/ethclient"
+        siwe "github.com/signinwithethereum/siwe-go"
+        "github.com/x402-foundation/x402/go/v2/extensions/signinwithx"
+    )
+
+    // An ethclient.Client satisfies the siwe-go ContractSignatureVerifier interface
+    // used for deployed EIP-1271 and counterfactual EIP-6492 verification.
+    ethClient, err := ethclient.Dial("https://mainnet.base.org")
+    if err != nil {
+        log.Fatal(err)
+    }
+    contractVerifier := siwe.NewEthCallerVerifier(ethClient)
+
+    extension := signinwithx.MustCreateResourceServerExtension(signinwithx.ServerOptions{
+        Storage: storage,
+        Origin:  "https://api.example.com",
+        VerifyOptions: signinwithx.VerifyOptions{
+            EVMContractVerifier: contractVerifier,
+        },
+    })
+    ```
+  </Tab>
+  <Tab title="Python">
+    ```python
+    from web3 import Web3
+    from x402.extensions.sign_in_with_x import (
+        CreateSIWxHookOptions,
+        SIWxVerifyOptions,
+        create_siwx_resource_server_extension,
+    )
+
+    provider = Web3(Web3.HTTPProvider("https://mainnet.base.org")).provider
+
+    server.register_extension(
+        create_siwx_resource_server_extension(
+            CreateSIWxHookOptions(
+                storage=storage,
+                origin="https://api.example.com",
+                verify_options=SIWxVerifyOptions(provider=provider),
+            )
+        )
+    )
     ```
   </Tab>
 </Tabs>
@@ -132,6 +323,55 @@ This enables:
 - **EIP-6492**: Verification of counterfactual (not-yet-deployed) wallets
 
 Note: Smart wallet verification requires RPC calls, while EOA verification is purely local.
+
+### Using Hook Adapters Directly
+
+If you need more control over the integration, you can use the individual hook adapter functions instead of `createSIWxResourceServerExtension`. This is useful when you want to attach SIWX behavior to an existing server setup:
+
+<Tabs>
+  <Tab title="TypeScript">
+    ```typescript
+    import {
+      createSIWxSettleHook,
+      createSIWxRequestHook,
+      InMemorySIWxStorage,
+    } from '@x402/extensions/sign-in-with-x';
+    import { x402ResourceServer } from '@x402/core/server';
+    import { x402HTTPResourceServer } from '@x402/core/http';
+
+    const storage = new InMemorySIWxStorage();
+
+    // Attach settle hook to record payments after settlement
+    const resourceServer = new x402ResourceServer(facilitatorClient)
+      .register(NETWORK, new ExactEvmScheme())
+      .onAfterSettle(createSIWxSettleHook({ storage }));
+
+    // Attach request hook to validate SIWX proofs on incoming requests
+    const httpServer = new x402HTTPResourceServer(resourceServer, routes)
+      .onProtectedRequest(createSIWxRequestHook({
+        storage,
+        origin: 'https://api.example.com',
+      }));
+    ```
+  </Tab>
+</Tabs>
+
+Similarly, on the client side you can use `createSIWxClientHook` for a single signer, or attach it directly to an HTTP client:
+
+<Tabs>
+  <Tab title="TypeScript">
+    ```typescript
+    import { createSIWxClientHook } from '@x402/extensions/sign-in-with-x';
+    import { x402HTTPClient } from '@x402/fetch';
+    import { privateKeyToAccount } from 'viem/accounts';
+
+    const signer = privateKeyToAccount(process.env.EVM_PRIVATE_KEY as `0x${string}`);
+
+    const httpClient = new x402HTTPClient(client)
+      .onPaymentRequired(createSIWxClientHook(signer));
+    ```
+  </Tab>
+</Tabs>
 
 ### Manual Usage (Advanced)
 
@@ -151,8 +391,6 @@ For custom implementations, you can use the low-level functions directly:
     // 1. Declare in PaymentRequired response
     const extensions = {
       [SIGN_IN_WITH_X]: declareSIWxExtension({
-        domain: 'api.example.com',
-        resourceUri: 'https://api.example.com/data',
         network: 'eip155:8453',
         statement: 'Sign in to access your purchased content',
       }),
@@ -169,22 +407,22 @@ For custom implementations, you can use the low-level functions directly:
       // Validate message fields (expiry, nonce, domain, etc.)
       const validation = await validateSIWxMessage(
         payload,
-        'https://api.example.com/data'
+        new URL('https://api.example.com')
       );
-      if (!validation.valid) {
-        return { error: validation.error };
+      if (!validation.isValid) {
+        return { error: validation.invalidMessage, code: validation.invalidReason };
       }
 
       // Verify signature and recover address
       const verification = await verifySIWxSignature(payload);
-      if (!verification.valid) {
-        return { error: verification.error };
+      if (!verification.isValid) {
+        return { error: verification.invalidMessage, code: verification.invalidReason };
       }
 
-      // verification.address is the verified wallet
+      // verification.payer is the verified wallet address
       // Grant access for auth-only routes or if wallet has paid
       const isAuthOnly = await checkIfAuthOnlyRoute(request);
-      const hasPaid = await checkPaymentHistory(verification.address);
+      const hasPaid = await checkPaymentHistory(verification.payer);
       if (isAuthOnly || hasPaid) {
         // Grant access
       }
@@ -195,14 +433,14 @@ For custom implementations, you can use the low-level functions directly:
 
 ## Client Usage
 
-### Recommended: Client Hook (Automatic)
+### Recommended: Client Extension
 
-The easiest way to use SIWX as a client is with the provided hook:
+The easiest way to use SIWX as a client is with the provided client extension:
 
 <Tabs>
   <Tab title="TypeScript">
     ```typescript
-    import { createSIWxClientHook } from '@x402/extensions/sign-in-with-x';
+    import { createSIWxClientExtension } from '@x402/extensions/sign-in-with-x';
     import { x402HTTPClient } from '@x402/fetch';
     import { x402Client } from '@x402/core/client';
     import { privateKeyToAccount } from 'viem/accounts';
@@ -210,17 +448,96 @@ The easiest way to use SIWX as a client is with the provided hook:
     const signer = privateKeyToAccount(process.env.EVM_PRIVATE_KEY as `0x${string}`);
     const client = new x402Client();
 
-    // Configure client with SIWX hook - automatically tries SIWX auth before payment
-    const httpClient = new x402HTTPClient(client)
-      .onPaymentRequired(createSIWxClientHook(signer));
+    client.registerExtension(createSIWxClientExtension({ signers: [signer] }));
+    const httpClient = new x402HTTPClient(client);
 
     // Requests automatically use SIWX auth when server supports it
     const response = await httpClient.fetch('https://api.example.com/data');
     ```
   </Tab>
+  <Tab title="Go">
+    ```go
+    import (
+        x402 "github.com/x402-foundation/x402/go/v2"
+        "github.com/x402-foundation/x402/go/v2/extensions/signinwithx"
+        x402http "github.com/x402-foundation/x402/go/v2/http"
+        exactevmclient "github.com/x402-foundation/x402/go/v2/mechanisms/evm/exact/client"
+        evmsigner "github.com/x402-foundation/x402/go/v2/signers/evm"
+    )
+
+    evmSigner, err := evmsigner.NewClientSignerFromPrivateKey(os.Getenv("EVM_PRIVATE_KEY"))
+    if err != nil {
+        log.Fatal(err)
+    }
+    siwxSigner := evmSigner.(signinwithx.EVMSigner)
+
+    client := x402.Newx402Client().
+        Register("eip155:*", exactevmclient.NewExactEvmScheme(evmSigner, nil)).
+        RegisterExtension(signinwithx.CreateClientExtension(siwxSigner))
+    httpClient := x402http.Newx402HTTPClient(client)
+
+    // Requests automatically use SIWX auth when server supports it
+    wrappedClient := x402http.WrapHTTPClientWithPayment(http.DefaultClient, httpClient)
+    resp, err := wrappedClient.Get("https://api.example.com/data")
+    ```
+
+    For multi-chain clients (EVM + Solana), pass ordered signers. The first compatible signer for the server's `supportedChains` is used:
+
+    ```go
+    import (
+        exactsvmclient "github.com/x402-foundation/x402/go/v2/mechanisms/svm/exact/client"
+        svmsigner "github.com/x402-foundation/x402/go/v2/signers/svm"
+    )
+
+    svmSigner, err := svmsigner.NewClientSignerFromPrivateKey(os.Getenv("SVM_PRIVATE_KEY"))
+    if err != nil {
+        log.Fatal(err)
+    }
+
+    // Wrap the Solana signer to satisfy the signinwithx.SolanaSigner interface
+    type solanaSIWXSigner struct{ signer *svmsigner.ClientSigner }
+    func (s *solanaSIWXSigner) Address() string { return s.signer.Address().String() }
+    func (s *solanaSIWXSigner) SignMessage(ctx context.Context, msg string) (string, error) {
+        return s.signer.SignMessage(ctx, msg)
+    }
+
+    client := x402.Newx402Client().
+        Register("eip155:*", exactevmclient.NewExactEvmScheme(evmSigner, nil)).
+        Register("solana:*", exactsvmclient.NewExactSvmScheme(svmSigner)).
+        RegisterExtension(signinwithx.CreateClientExtensionWithSigners(
+            signinwithx.NewEVMSIWXSigner(siwxSigner),
+            signinwithx.NewSolanaSIWXSigner(&solanaSIWXSigner{signer: svmSigner.(*svmsigner.ClientSigner)}),
+        ))
+    ```
+  </Tab>
+  <Tab title="Python">
+    ```python
+    from eth_account import Account
+    from x402 import x402Client
+    from x402.extensions.sign_in_with_x import (
+        CreateSIWxClientExtensionOptions,
+        create_siwx_client_extension,
+    )
+    from x402.http.clients import x402HttpxClient
+    from x402.mechanisms.evm import EthAccountSigner
+    from x402.mechanisms.evm.exact.register import register_exact_evm_client
+
+    account = Account.from_key("0xYourPrivateKey")
+    client = x402Client()
+    register_exact_evm_client(client, EthAccountSigner(account))
+
+    client.register_extension(
+        create_siwx_client_extension(CreateSIWxClientExtensionOptions(signers=[account]))
+    )
+
+    async with x402HttpxClient(client) as http:
+        # Requests automatically use SIWX auth when server supports it
+        response = await http.get("https://api.example.com/data")
+    ```
+  </Tab>
 </Tabs>
 
-The client hook automatically:
+The client extension automatically:
 - Detects SIWX support in 402 responses
 - Matches your wallet's chain with server's `supportedChains`
 - Signs and sends the authentication proof
@@ -329,13 +646,10 @@ Clients match their wallet's `chainId` against `supportedChains` and use the fir
 
 ### `declareSIWxExtension(options?)`
 
-Creates the extension object for servers to include in PaymentRequired. Most fields are derived automatically from request context when using `siwxResourceServerExtension`.
+Creates the extension declaration for servers to include in PaymentRequired. Domain and URI are derived from the configured `origin` passed to the server extension factory (`createSIWxResourceServerExtension` in TypeScript/Python, `CreateResourceServerExtension` in Go). Do not set `domain` or `resource_uri`/`ResourceURI` in route declarations.
 
 ```typescript
 declareSIWxExtension({
-  // All fields optional - derived from context if omitted
-  domain?: string;                     // Server domain (derived from request URL)
-  resourceUri?: string;                // Full resource URI (derived from request URL)
   network?: string | string[];         // CAIP-2 network(s) (derived from accepts[].network)
   statement?: string;                  // Human-readable purpose
   version?: string;                    // CAIP-122 version (default: "1")
@@ -343,23 +657,78 @@ declareSIWxExtension({
 })
 ```
 
+Go: `DeclareExtension(DeclareOptions{Statement, Version, Networks, ExpirationSeconds})`
+
+Python: `declare_siwx_extension(DeclareSIWxOptions(...))`
+
 **Note for auth-only routes:** When using `accepts: []`, the `network` parameter cannot be inferred from payment requirements and must be provided explicitly.
+
+### `createSIWxResourceServerExtension(options)` / `CreateResourceServerExtension` / `create_siwx_resource_server_extension`
+
+Creates the server extension that enriches SIWX challenges, records successful payments, and verifies HTTP SIWX proofs for declared routes. Requires `origin` / `Origin`. Internally uses settle and request hooks.
+
+Go: `CreateResourceServerExtension(ServerOptions{Storage, Origin, VerifyOptions, OnEvent})`
+
+Python: `create_siwx_resource_server_extension(CreateSIWxHookOptions(storage=..., origin=...))`
+
+### `createSIWxSettleHook(options)`
+
+Creates an `onAfterSettle` hook that records payments for SIWX. Use this when you want to attach SIWX payment recording to an existing `x402ResourceServer` without registering the full extension.
+
+```typescript
+createSIWxSettleHook({
+  storage: SIWxStorage;          // Storage for tracking paid addresses
+  onEvent?: (event) => void;     // Optional callback for logging/debugging
+})
+// Returns: hook function for x402ResourceServer.onAfterSettle()
+```
+
+### `createSIWxRequestHook(options)`
+
+Creates an `onProtectedRequest` hook that validates SIWX proofs on incoming HTTP requests. For paid routes, grants access when the signature is valid and the address has paid. For auth-only routes (`accepts: []`), grants access on a valid signature alone.
+
+```typescript
+createSIWxRequestHook({
+  storage: SIWxStorage;                  // Storage for tracking paid addresses
+  origin: string;                        // Public browser-visible origin (required)
+  verifyOptions?: SIWxVerifyOptions;     // Optional smart wallet verification settings
+  onEvent?: (event) => void;             // Optional callback for logging/debugging
+})
+// Returns: hook function for x402HTTPResourceServer.onProtectedRequest()
+```
+
+### `createSIWxClientHook(signer)`
+
+Creates an `onPaymentRequired` hook for a single wallet signer. Matches the signer type (EVM or Solana) to a compatible chain in the server's `supportedChains` and signs the SIWX challenge.
+
+```typescript
+createSIWxClientHook(signer: SIWxSigner)
+// Returns: hook function for x402HTTPClient.onPaymentRequired()
+```
+
+### `createSIWxClientExtension({ signers })`
+
+Creates the client extension that signs compatible SIWX challenges before falling back to payment. Accepts multiple signers (tried in order until one succeeds).
 
 ### `parseSIWxHeader(header)`
 
 Parses a base64-encoded SIGN-IN-WITH-X header into a payload object.
 
-### `validateSIWxMessage(payload, resourceUri, options?)`
+### `validateSIWxMessage(payload, expectedOrigin, options?)` / `ValidateMessage` / `validate_siwx_message`
 
 Validates message fields (expiry, domain binding, nonce, etc.).
 
 ```typescript
-validateSIWxMessage(payload, resourceUri, {
+validateSIWxMessage(payload, new URL('https://api.example.com'), {
   maxAge?: number;                    // Max age for issuedAt (default: 5 min)
   checkNonce?: (nonce) => boolean;    // Custom nonce validation
 })
-// Returns: { valid: boolean; error?: string }
+// Returns: { isValid: true } | { isValid: false; invalidReason: SIWxValidationCode; invalidMessage: string }
 ```
+
+Go: `ValidateMessage(payload, *url.URL, ValidationOptions)`
+
+Python: `validate_siwx_message(message, expected_origin: str, options=None)`
 
 ### `verifySIWxSignature(payload, options?)`
 
@@ -369,7 +738,7 @@ Verifies the cryptographic signature and recovers the signer address.
 verifySIWxSignature(payload, {
   evmVerifier?: EVMMessageVerifier;  // For smart wallet support
 })
-// Returns: { valid: boolean; address?: string; error?: string }
+// Returns: { isValid: true; payer: string } | { isValid: false; invalidReason: SIWxVerifyCode; invalidMessage: string }
 ```
 
 ### `createSIWxPayload(serverInfo, signer)`
@@ -380,22 +749,40 @@ Client helper that creates and signs a complete payload.
 
 Encodes a payload as base64 for the SIGN-IN-WITH-X header.
 
+### `SIWxHookEvent`
+
+Event type emitted by SIWX hooks when `onEvent` is configured. Useful for logging and debugging:
+
+```typescript
+type SIWxHookEvent =
+  | { type: "payment_recorded"; resource: string; address: string }
+  | { type: "access_granted"; resource: string; address: string }
+  | { type: "validation_failed"; resource: string; error?: string }
+  | { type: "nonce_reused"; resource: string; nonce: string }
+  | { type: "siwx_header_sent"; resource: string };
+```
+
 ### Storage Interface
 
 Implement `SIWxStorage` to track which wallets have paid:
 
 ```typescript
 interface SIWxStorage {
-  hasPaid(address: string, resourceUri: string): Promise<boolean>;
-  recordPayment(address: string, resourceUri: string): Promise<void>;
+  hasPaid(resource: string, address: string): boolean | Promise<boolean>;
+  recordPayment(resource: string, address: string): void | Promise<void>;
+  // Optional: nonce tracking to prevent signature replay attacks
+  hasUsedNonce?(nonce: string): boolean | Promise<boolean>;
+  recordNonce?(nonce: string): void | Promise<void>;
 }
 ```
 
 The package includes `InMemorySIWxStorage` for development. For production, implement persistent storage (database, Redis, etc.).
 
+Optionally implement `hasUsedNonce` and `recordNonce` to prevent replay attacks where an intercepted SIWX header could be reused. Both methods must be implemented together — implementing only one will throw an error at startup.
+
 ## Security Considerations
 
-- **Domain Binding**: The `domain` field prevents signature reuse across different services
+- **Origin Binding**: The configured `origin` prevents signature reuse across different services. Validation compares `message.domain` and the origin of `message.uri` against this operator-defined value, not request headers.
 - **Nonce Uniqueness**: Each challenge MUST have a unique nonce to prevent replay attacks
 - **Temporal Bounds**: The `issuedAt`, `expirationTime`, and `notBefore` fields constrain signature validity windows
 - **Chain-Specific Verification**: Signatures are verified using chain-appropriate algorithms, preventing cross-chain signature reuse
@@ -405,7 +792,9 @@ The package includes `InMemorySIWxStorage` for development. For production, impl
 
 ### Signature Verification Fails
 
-**Problem:** `verifySIWxSignature` returns `valid: false`.
+**Problem:** `verifySIWxSignature` returns `{ isValid: false }`.
+
+Check `invalidReason` for the specific failure code (e.g., `invalid_siwx_signature`, `invalid_siwx_unsupported_chain`).
 
 **Solutions:**
 - Ensure the message was signed with the correct wallet
@@ -415,13 +804,15 @@ The package includes `InMemorySIWxStorage` for development. For production, impl
 
 ### Message Validation Fails
 
-**Problem:** `validateSIWxMessage` returns `valid: false`.
+**Problem:** `validateSIWxMessage` returns `{ isValid: false }`.
+
+Check `invalidReason` for the specific failure code (e.g., `invalid_siwx_expired`, `invalid_siwx_domain_mismatch`).
 
 **Solutions:**
 - Check that `issuedAt` is recent (within `maxAge`, default 5 minutes)
 - Verify `expirationTime` hasn't passed
-- Ensure `domain` matches the server's domain
-- Confirm `uri` matches the resource URI
+- Ensure `domain` matches the configured origin host
+- Confirm `message.uri` origin exactly matches the configured origin
 
 ### Client Hook Not Working
 

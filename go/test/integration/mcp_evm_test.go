@@ -33,13 +33,13 @@ import (
 	"time"
 
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
-	x402 "github.com/x402-foundation/x402/go"
-	"github.com/x402-foundation/x402/go/extensions/bazaar"
-	"github.com/x402-foundation/x402/go/mcp"
-	evmclient "github.com/x402-foundation/x402/go/mechanisms/evm/exact/client"
-	evmfacilitator "github.com/x402-foundation/x402/go/mechanisms/evm/exact/facilitator"
-	evmserver "github.com/x402-foundation/x402/go/mechanisms/evm/exact/server"
-	evmsigners "github.com/x402-foundation/x402/go/signers/evm"
+	x402 "github.com/x402-foundation/x402/go/v2"
+	"github.com/x402-foundation/x402/go/v2/extensions/bazaar"
+	"github.com/x402-foundation/x402/go/v2/mcp"
+	evmclient "github.com/x402-foundation/x402/go/v2/mechanisms/evm/exact/client"
+	evmfacilitator "github.com/x402-foundation/x402/go/v2/mechanisms/evm/exact/facilitator"
+	evmserver "github.com/x402-foundation/x402/go/v2/mechanisms/evm/exact/server"
+	evmsigners "github.com/x402-foundation/x402/go/v2/signers/evm"
 )
 
 const (
@@ -94,9 +94,7 @@ func TestMCPEVMIntegration(t *testing.T) {
 		}
 
 		facilitator := x402.Newx402Facilitator()
-		evmConfig := &evmfacilitator.ExactEvmSchemeConfig{
-			DeployERC4337WithEIP6492: true,
-		}
+		evmConfig := &evmfacilitator.ExactEvmSchemeConfig{}
 		evmFacilitator := evmfacilitator.NewExactEvmScheme(facilitatorSigner, evmConfig)
 		facilitator.Register([]x402.Network{TEST_NETWORK}, evmFacilitator)
 
@@ -359,17 +357,18 @@ func TestMCPEVMIntegration(t *testing.T) {
 			}
 
 			// Verify the MCP input contains the expected tool name
-			if ext.Info.McpInput == nil {
-				t.Fatal("Expected McpInput to be set in bazaar extension")
+			mcpInput, ok := ext.Info.Input.(bazaar.McpInput)
+			if !ok {
+				t.Fatalf("Expected McpInput in bazaar extension Info.Input, got %T", ext.Info.Input)
 			}
-			if ext.Info.McpInput.ToolName != "get_weather" {
-				t.Errorf("Expected toolName 'get_weather', got '%s'", ext.Info.McpInput.ToolName)
+			if mcpInput.ToolName != "get_weather" {
+				t.Errorf("Expected toolName 'get_weather', got '%s'", mcpInput.ToolName)
 			}
-			if ext.Info.McpInput.Type != "mcp" {
-				t.Errorf("Expected type 'mcp', got '%s'", ext.Info.McpInput.Type)
+			if mcpInput.Type != "mcp" {
+				t.Errorf("Expected type 'mcp', got '%s'", mcpInput.Type)
 			}
 
-			t.Logf("✅ Bazaar extension present in 402 response with toolName: %s", ext.Info.McpInput.ToolName)
+			t.Logf("✅ Bazaar extension present in 402 response with toolName: %s", mcpInput.ToolName)
 		})
 
 		// ========================================================================

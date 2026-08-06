@@ -13,13 +13,13 @@ import (
 	solana "github.com/gagliardetto/solana-go"
 	"github.com/gagliardetto/solana-go/rpc"
 
-	x402 "github.com/x402-foundation/x402/go"
-	svm "github.com/x402-foundation/x402/go/mechanisms/svm"
-	svmclient "github.com/x402-foundation/x402/go/mechanisms/svm/exact/client"
-	svmfacilitator "github.com/x402-foundation/x402/go/mechanisms/svm/exact/facilitator"
-	svmserver "github.com/x402-foundation/x402/go/mechanisms/svm/exact/server"
-	svmsigners "github.com/x402-foundation/x402/go/signers/svm"
-	"github.com/x402-foundation/x402/go/types"
+	x402 "github.com/x402-foundation/x402/go/v2"
+	svm "github.com/x402-foundation/x402/go/v2/mechanisms/svm"
+	svmclient "github.com/x402-foundation/x402/go/v2/mechanisms/svm/exact/client"
+	svmfacilitator "github.com/x402-foundation/x402/go/v2/mechanisms/svm/exact/facilitator"
+	svmserver "github.com/x402-foundation/x402/go/v2/mechanisms/svm/exact/server"
+	svmsigners "github.com/x402-foundation/x402/go/v2/signers/svm"
+	"github.com/x402-foundation/x402/go/v2/types"
 )
 
 // newRealClientSvmSigner creates a client signer using the helper

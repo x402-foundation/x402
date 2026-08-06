@@ -1,5 +1,5 @@
 import Link from 'next/link';
-import WordmarkCondensed from './assets/x402_wordmark_light.svg';
+import wordmarkCondensed from './assets/x402_wordmark_light.svg';
 
 export default function Home() {
   return (
@@ -9,7 +9,7 @@ export default function Home() {
         <section className="max-w-6xl mx-auto px-4 py-20 lg:py-28">
           <div className="text-center">
             <div className="w-64 mb-6 mx-auto">
-              <WordmarkCondensed className="mx-auto" />
+              <img src={wordmarkCondensed.src} alt="x402" className="mx-auto" />
             </div>
             <p className="text-xl text-gray-600 mb-8 font-mono">
               Fullstack demo powered by Next.js

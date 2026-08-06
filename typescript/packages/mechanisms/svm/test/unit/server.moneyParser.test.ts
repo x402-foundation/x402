@@ -509,6 +509,18 @@ describe("ExactSvmScheme - registerMoneyParser", () => {
       expect(receivedAmount).toBe(999999999.99);
     });
 
+    it("should throw when price is too small to represent in USDC precision", async () => {
+      const server = new ExactSvmScheme();
+      // USDC has 6 decimals: $0.00000001 = 1e-8 * 1e6 = 0.01 → rounds to 0 → must throw
+      await expect(
+        server.parsePrice("$0.00000001", "solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp"),
+      ).rejects.toThrow("too small");
+      // Also throws when passed as a number
+      await expect(
+        server.parsePrice(0.00000001, "solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp"),
+      ).rejects.toThrow("too small");
+    });
+
     it("should handle negative amounts (parser can validate)", async () => {
       const server = new ExactSvmScheme();
 

@@ -4,13 +4,15 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
-	x402 "github.com/x402-foundation/x402/go"
-	x402http "github.com/x402-foundation/x402/go/http"
-	"github.com/x402-foundation/x402/go/test/mocks/cash"
-	"github.com/x402-foundation/x402/go/types"
+	x402 "github.com/x402-foundation/x402/go/v2"
+	x402http "github.com/x402-foundation/x402/go/v2/http"
+	"github.com/x402-foundation/x402/go/v2/test/mocks/cash"
+	"github.com/x402-foundation/x402/go/v2/types"
 )
 
 // mockHTTPAdapter implements the HTTPAdapter interface for testing
@@ -218,6 +220,7 @@ func TestHTTPIntegration(t *testing.T) {
 			*httpProcessResult2.PaymentRequirements,
 			nil,
 			nil,
+			nil,
 		)
 		if !settlementResult.Success {
 			t.Fatalf("Failed to process settlement: %v", settlementResult.ErrorReason)
@@ -247,4 +250,142 @@ func TestHTTPIntegration(t *testing.T) {
 			t.Errorf("Expected successful settlement, got error: %s", settleResponse.ErrorReason)
 		}
 	})
+}
+
+// TestHTTPIntegration_FacilitatorReturnsIsValidFalse is a regression test for the security
+// bug where a facilitator HTTP-200 response carrying {"isValid":false} was not treated as a
+// hard gate failure. It exercises the full local SDK stack:
+//
+//	httptest facilitator stub (HTTP 200, {"isValid":false})
+//	  → x402http.HTTPFacilitatorClient.verifyHTTP (parses response)
+//	  → x402.VerifyPaymentWithExtensions (new IsValid guard)
+//	  → x402http.ProcessHTTPRequest (must return ResultPaymentError, not ResultPaymentVerified)
+//
+// No real blockchain or external service is used.
+func TestHTTPIntegration_FacilitatorReturnsIsValidFalse(t *testing.T) {
+	for _, tc := range []struct {
+		name          string
+		invalidReason string
+		wantReason    string
+	}{
+		{
+			name:          "isValid false with reason",
+			invalidReason: "insufficient_balance",
+			wantReason:    "insufficient_balance",
+		},
+		{
+			name:          "isValid false without reason",
+			invalidReason: "",
+			wantReason:    x402.ErrCodeInvalidPayment,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := context.Background()
+
+			// Stand up a minimal HTTP facilitator stub. /supported tells the resource
+			// server which schemes are available; /verify always returns isValid:false
+			// with HTTP 200, simulating a facilitator that is reachable but rejects
+			// the payment at the protocol level.
+			stub := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				switch r.URL.Path {
+				case "/supported":
+					json.NewEncoder(w).Encode(map[string]interface{}{
+						"kinds": []map[string]interface{}{
+							{"x402Version": 2, "scheme": "cash", "network": "x402:cash"},
+						},
+						"extensions": []string{},
+						"signers":    map[string][]string{},
+					})
+				case "/verify":
+					resp := map[string]interface{}{"isValid": false}
+					if tc.invalidReason != "" {
+						resp["invalidReason"] = tc.invalidReason
+					}
+					json.NewEncoder(w).Encode(resp)
+				default:
+					w.WriteHeader(http.StatusNotFound)
+				}
+			}))
+			defer stub.Close()
+
+			// Wire the real HTTPFacilitatorClient to the stub — this exercises the
+			// full HTTP parse path (verifyHTTP → parseVerifySuccessResponse).
+			facilitatorClient := x402http.NewHTTPFacilitatorClient(&x402http.FacilitatorConfig{
+				URL: stub.URL,
+			})
+
+			routes := x402http.RoutesConfig{
+				"/api/protected": {
+					Accepts: x402http.PaymentOptions{
+						{
+							Scheme:  "cash",
+							PayTo:   "merchant@example.com",
+							Price:   "$0.10",
+							Network: "x402:cash",
+						},
+					},
+				},
+			}
+
+			server := x402http.Newx402HTTPResourceServer(
+				routes,
+				x402.WithFacilitatorClient(facilitatorClient),
+			)
+			server.Register("x402:cash", cash.NewSchemeNetworkServer())
+
+			if err := server.Initialize(ctx); err != nil {
+				t.Fatalf("server.Initialize: %v", err)
+			}
+
+			// Build a structurally valid payment payload using the cash client so
+			// the server accepts the header encoding and reaches the facilitator call.
+			x402Client := x402.Newx402Client()
+			x402Client.Register("x402:cash", cash.NewSchemeNetworkClient("Alice"))
+			httpClient := x402http.Newx402HTTPClient(x402Client)
+
+			requirements := cash.BuildPaymentRequirements("merchant@example.com", "USD", "0.10")
+			payload, err := x402Client.CreatePaymentPayload(ctx, requirements, nil, nil)
+			if err != nil {
+				t.Fatalf("CreatePaymentPayload: %v", err)
+			}
+			payloadBytes, _ := json.Marshal(payload)
+			paymentHeaders, err := httpClient.EncodePaymentSignatureHeader(payloadBytes)
+			if err != nil {
+				t.Fatalf("EncodePaymentSignatureHeader: %v", err)
+			}
+
+			reqCtx := x402http.HTTPRequestContext{
+				Adapter: &mockHTTPAdapter{
+					headers: paymentHeaders,
+					method:  "GET",
+					path:    "/api/protected",
+					url:     "https://example.com/api/protected",
+				},
+				Path:   "/api/protected",
+				Method: "GET",
+			}
+
+			result := server.ProcessHTTPRequest(ctx, reqCtx, nil)
+
+			// The gate must not pass — protected handler must not execute.
+			if result.Type == x402http.ResultPaymentVerified {
+				t.Fatal("ProcessHTTPRequest returned ResultPaymentVerified for isValid:false — payment gate bypass")
+			}
+			if result.Type != x402http.ResultPaymentError {
+				t.Fatalf("Expected ResultPaymentError, got %s", result.Type)
+			}
+			if result.Response == nil {
+				t.Fatal("Expected 402 response instructions, got nil")
+			}
+			if result.Response.Status != 402 {
+				t.Fatalf("Expected HTTP 402, got %d", result.Response.Status)
+			}
+
+			// The PAYMENT-REQUIRED header must be set so the client knows how to retry.
+			if result.Response.Headers["PAYMENT-REQUIRED"] == "" {
+				t.Error("Expected PAYMENT-REQUIRED header in 402 response")
+			}
+		})
+	}
 }

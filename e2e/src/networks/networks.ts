@@ -1,12 +1,12 @@
 /**
  * Network configuration for E2E tests
- * 
+ *
  * This is the single source of truth for all network configs.
  * Use getNetworkSet() to get configs for testnet or mainnet mode.
  */
 
 export type NetworkMode = 'testnet' | 'mainnet';
-export type ProtocolFamily = 'evm' | 'svm' | 'avm' | 'aptos' | 'stellar';
+export type ProtocolFamily = 'evm' | 'svm' | 'avm' | 'aptos' | 'hedera' | 'keeta' | 'near' | 'stellar' | 'ccd' | 'tvm' | 'xrpl';
 
 export type NetworkConfig = {
   name: string;
@@ -20,7 +20,13 @@ export type NetworkSet = {
   svm: NetworkConfig;
   avm: NetworkConfig;
   aptos: NetworkConfig;
+  hedera: NetworkConfig;
+  keeta: NetworkConfig;
   stellar: NetworkConfig;
+  ccd: NetworkConfig;
+  tvm: NetworkConfig;
+  near: NetworkConfig;
+  xrpl: NetworkConfig;
 };
 
 /**
@@ -41,18 +47,49 @@ const NETWORK_SETS: Record<NetworkMode, NetworkSet> = {
     },
     avm: {
       name: 'Algorand Testnet',
-      caip2: 'algorand:SGO1GKSzyE7IEPItTxCByw9x8FmnrCDexi9/cOUJOiI=',
+      caip2: 'algorand:SGO1GKSzyE7IEPItTxCByw9x8FmnrCDe',
       rpcUrl: process.env.AVM_TESTNET_RPC_URL || 'https://testnet-api.4160.nodely.dev',
+    },
+    ccd: {
+      name: 'Concordium Testnet',
+      caip2: 'ccd:4221332d34e1694168c2a0c0b3fd0f27',
+      rpcUrl: process.env.CONCORDIUM_TESTNET_GRPC_URL || 'grpc.testnet.concordium.com:20000',
     },
     aptos: {
       name: 'Aptos Testnet',
       caip2: 'aptos:2',
       rpcUrl: process.env.APTOS_TESTNET_RPC_URL || 'https://fullnode.testnet.aptoslabs.com/v1',
     },
+    hedera: {
+      name: 'Hedera Testnet',
+      caip2: 'hedera:testnet',
+      rpcUrl: process.env.HEDERA_TESTNET_NODE_URL || '',
+    },
+    keeta: {
+      name: 'Keeta Testnet',
+      caip2: 'keeta:1413829460',
+      // Unused in Keeta, representative API endpoints are set in the SDK itself
+      rpcUrl: '',
+    },
     stellar: {
       name: 'Stellar Testnet',
       caip2: 'stellar:testnet',
       rpcUrl: process.env.STELLAR_TESTNET_RPC_URL || 'https://soroban-testnet.stellar.org',
+    },
+    tvm: {
+      name: 'TON Testnet',
+      caip2: 'tvm:-3',
+      rpcUrl: process.env.TONCENTER_TESTNET_BASE_URL || 'https://testnet.toncenter.com',
+    },
+    near: {
+      name: 'NEAR Testnet',
+      caip2: 'near:testnet',
+      rpcUrl: process.env.NEAR_TESTNET_RPC_URL || 'https://rpc.testnet.fastnear.com',
+    },
+    xrpl: {
+      name: 'XRPL Testnet',
+      caip2: 'xrpl:1',
+      rpcUrl: process.env.XRPL_TESTNET_WS_URL || 'wss://s.altnet.rippletest.net:51233',
     },
   },
   mainnet: {
@@ -69,37 +106,85 @@ const NETWORK_SETS: Record<NetworkMode, NetworkSet> = {
     },
     avm: {
       name: 'Algorand Mainnet',
-      caip2: 'algorand:wGHE2Pwdvd7S12BL5FaOP20EGYesN73ktiC1qzkkit8=',
+      caip2: 'algorand:wGHE2Pwdvd7S12BL5FaOP20EGYesN73k',
       rpcUrl: process.env.AVM_RPC_URL || 'https://mainnet-api.4160.nodely.dev',
+    },
+    ccd: {
+      name: 'Concordium Mainnet',
+      caip2: 'ccd:9dd9ca4d19e9393877d2c44b70f89acb',
+      rpcUrl: process.env.CONCORDIUM_MAINNET_GRPC_URL || 'grpc.mainnet.concordium.software:20000',
     },
     aptos: {
       name: 'Aptos',
       caip2: 'aptos:1',
       rpcUrl: process.env.APTOS_RPC_URL || 'https://fullnode.mainnet.aptoslabs.com/v1',
     },
+    hedera: {
+      name: 'Hedera Mainnet',
+      caip2: 'hedera:mainnet',
+      rpcUrl: process.env.HEDERA_NODE_URL || '',
+    },
+    keeta: {
+      name: 'Keeta',
+      caip2: 'keeta:21378',
+      // Unused in Keeta, representative API endpoints are set in the SDK itself
+      rpcUrl: '',
+    },
     stellar: {
       name: 'Stellar Pubnet',
       caip2: 'stellar:pubnet',
       rpcUrl: process.env.STELLAR_RPC_URL || 'https://mainnet.sorobanrpc.com',
+    },
+    tvm: {
+      name: 'TON Mainnet',
+      caip2: 'tvm:-239',
+      rpcUrl: process.env.TONCENTER_MAINNET_BASE_URL || 'https://toncenter.com',
+    },
+    near: {
+      name: 'NEAR',
+      caip2: 'near:mainnet',
+      rpcUrl: process.env.NEAR_RPC_URL || 'https://rpc.mainnet.fastnear.com',
+    },
+    xrpl: {
+      name: 'XRPL',
+      caip2: 'xrpl:0',
+      rpcUrl: process.env.XRPL_MAINNET_WS_URL || 'wss://s1.ripple.com:51233',
     },
   },
 };
 
 /**
  * Get the network set for a given mode
- * 
+ *
  * @param mode - 'testnet' or 'mainnet'
- * @returns NetworkSet containing EVM, SVM, and Aptos network configs
+ * @returns NetworkSet containing configured protocol network configs
  */
 export function getNetworkSet(mode: NetworkMode): NetworkSet {
   return NETWORK_SETS[mode];
 }
 
 /**
+ * Permit2-priced routes read `process.env.EVM_PERMIT2_ASSET` in server processes.
+ * Use the same resolution here and when spawning resource servers (`generic-server`)
+ * so cold-start revoke/approve targets the token those routes bill.
+ *
+ * Precedence: non-empty `EVM_PERMIT2_ASSET`, then `networks.evm.permit2Asset`.
+ * When the env var is unset, defaults are Base Sepolia USDC (`eip155:84532`) and
+ * Base mainnet USDC (`eip155:8453`) from {@link NETWORK_SETS}.
+ */
+export function resolveEvmPermit2Asset(networks: NetworkSet): string {
+  const fromEnv = process.env.EVM_PERMIT2_ASSET?.trim();
+  if (fromEnv) {
+    return fromEnv;
+  }
+  return (networks.evm.permit2Asset ?? '').trim();
+}
+
+/**
  * Get network config for a protocol family in a given mode
- * 
+ *
  * @param mode - 'testnet' or 'mainnet'
- * @param protocolFamily - 'evm', 'svm', 'avm', 'aptos', or 'stellar'
+ * @param protocolFamily - 'evm', 'svm', 'avm', 'aptos', 'hedera', 'near', 'stellar', 'ccd', 'tvm', or 'xrpl'
  * @returns NetworkConfig for the specified protocol
  */
 export function getNetworkForProtocol(
@@ -111,12 +196,12 @@ export function getNetworkForProtocol(
 
 /**
  * Get display string for a network mode
- * 
+ *
  * @param mode - 'testnet' or 'mainnet'
  * @returns Human-readable description of the networks
  */
 export function getNetworkModeDescription(mode: NetworkMode): string {
   const set = NETWORK_SETS[mode];
-  const networks = [set.evm.name, set.svm.name, set.avm.name, set.aptos.name, set.stellar.name];
+  const networks = [set.evm.name, set.svm.name, set.avm.name, set.aptos.name, set.hedera.name, set.keeta.name, set.near.name, set.stellar.name, set.ccd.name, set.tvm.name, set.xrpl.name];
   return networks.join(' + ');
 }

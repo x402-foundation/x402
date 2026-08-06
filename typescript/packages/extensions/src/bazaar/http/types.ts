@@ -176,11 +176,17 @@ export interface DiscoveredHTTPResource {
   resourceUrl: string;
   description?: string;
   mimeType?: string;
+  /** Sanitized service metadata. See `sanitizeResourceServiceMetadata` for rules. */
+  serviceName?: string;
+  tags?: string[];
+  iconUrl?: string;
   /** Present after server extension enrichment; may be absent for pre-enrichment data */
   method?: string;
   routeTemplate?: string;
   x402Version: number;
   discoveryInfo: DiscoveryInfo;
+  /** Extension payloads for catalog echo (v2: payload.extensions; v1: synthesized extensions.bazaar) */
+  extensions?: Record<string, unknown>;
 }
 
 export const isQueryExtensionConfig = (

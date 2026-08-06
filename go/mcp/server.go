@@ -13,8 +13,8 @@ import (
 	"fmt"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
-	x402 "github.com/x402-foundation/x402/go"
-	"github.com/x402-foundation/x402/go/types"
+	x402 "github.com/x402-foundation/x402/go/v2"
+	"github.com/x402-foundation/x402/go/v2/types"
 )
 
 // ToolHandler is the function signature for MCP tool handlers.
@@ -80,8 +80,15 @@ func (w *PaymentWrapper) Wrap(handler ToolHandler) ToolHandler {
 			return w.paymentRequiredResult(fmt.Sprintf("Invalid payment payload: %v", err)), nil
 		}
 
+		// Match the payload against the advertised accepts
+		matched := w.server.FindMatchingRequirements(w.config.Accepts, payload)
+		if matched == nil {
+			return w.paymentRequiredResult("No matching payment requirements found"), nil
+		}
+		requirements := *matched
+
 		// Verify payment -- return tool error result, NOT Go error
-		verifyResp, err := w.server.VerifyPayment(ctx, payload, w.config.Accepts[0])
+		verifyResp, err := w.server.VerifyPayment(ctx, payload, requirements)
 		if err != nil {
 			return w.paymentRequiredResult(
 				fmt.Sprintf("Payment verification error: %v", err)), nil
@@ -99,7 +106,7 @@ func (w *PaymentWrapper) Wrap(handler ToolHandler) ToolHandler {
 			hookCtx := ServerHookContext{
 				ToolName:            request.Params.Name,
 				Arguments:           args,
-				PaymentRequirements: w.config.Accepts[0],
+				PaymentRequirements: requirements,
 				PaymentPayload:      payload,
 			}
 			ok, err := (*w.config.Hooks.OnBeforeExecution)(hookCtx)
@@ -129,7 +136,7 @@ func (w *PaymentWrapper) Wrap(handler ToolHandler) ToolHandler {
 				ServerHookContext: ServerHookContext{
 					ToolName:            request.Params.Name,
 					Arguments:           args,
-					PaymentRequirements: w.config.Accepts[0],
+					PaymentRequirements: requirements,
 					PaymentPayload:      payload,
 				},
 				Result: mcpResult,
@@ -138,7 +145,7 @@ func (w *PaymentWrapper) Wrap(handler ToolHandler) ToolHandler {
 		}
 
 		// Settle payment -- return tool error result, NOT Go error
-		settleResp, err := w.server.SettlePayment(ctx, payload, w.config.Accepts[0], nil)
+		settleResp, err := w.server.SettlePayment(ctx, payload, requirements, nil)
 		if err != nil {
 			return w.settlementFailedResult(
 				fmt.Sprintf("Settlement error: %v", err)), nil
@@ -154,7 +161,7 @@ func (w *PaymentWrapper) Wrap(handler ToolHandler) ToolHandler {
 				ServerHookContext: ServerHookContext{
 					ToolName:            request.Params.Name,
 					Arguments:           args,
-					PaymentRequirements: w.config.Accepts[0],
+					PaymentRequirements: requirements,
 					PaymentPayload:      payload,
 				},
 				Settlement: *settleResp,

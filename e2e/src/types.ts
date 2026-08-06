@@ -1,8 +1,54 @@
 import type { NetworkSet } from './networks/networks';
 
-export type ProtocolFamily = 'evm' | 'svm' | 'avm' | 'aptos' | 'stellar';
+export type ProtocolFamily = 'evm' | 'svm' | 'avm' | 'aptos' | 'hedera' | 'keeta' | 'near' | 'stellar' | 'ccd' | 'tvm' | 'xrpl';
 export type Transport = 'http' | 'mcp';
-export type TransferMethod = 'eip3009' | 'permit2' | 'upto';
+export type PaymentScheme = 'exact' | 'upto' | 'batch-settlement';
+export type AssetTransferMethod = 'eip3009' | 'permit2' | 'sequence' | 'ticketSequence';
+
+/**
+ * Resolved asset transfer method for an endpoint.
+ */
+export function endpointAssetTransferMethod(endpoint: TestEndpoint): AssetTransferMethod | undefined {
+  const family = endpoint.protocolFamily ?? 'evm';
+  if (endpoint.assetTransferMethod != null) {
+    return endpoint.assetTransferMethod;
+  }
+  if (family === 'evm') {
+    const scheme = endpoint.scheme ?? 'exact';
+    return scheme === 'upto' ? 'permit2' : 'eip3009';
+  }
+  if (family === 'xrpl') {
+    return 'sequence';
+  }
+  return undefined;
+}
+
+/**
+ * Resolved payment scheme for an EVM endpoint.
+ * Defaults to `exact` when omitted (non-batch endpoints).
+ */
+export function endpointPaymentScheme(endpoint: TestEndpoint): PaymentScheme | undefined {
+  const family = endpoint.protocolFamily ?? 'evm';
+  if (family !== 'evm') {
+    return undefined;
+  }
+  return endpoint.scheme ?? 'exact';
+}
+
+/** Harness knobs for exact / upto endpoints (Permit2 settle paths). */
+export interface Permit2SchemeOptions {
+  permit2Direct?: boolean;
+  coldstart?: boolean;
+}
+
+/** Harness knobs for batch-settlement endpoints. */
+export type BatchSettlementSchemeOptions = Permit2SchemeOptions;
+
+export type SchemeOptions = Permit2SchemeOptions | BatchSettlementSchemeOptions;
+
+export function endpointUsesBatchSettlement(endpoint: TestEndpoint): boolean {
+  return endpoint.scheme === 'batch-settlement';
+}
 
 export interface ClientResult {
   success: boolean;
@@ -12,16 +58,57 @@ export interface ClientResult {
   error?: string;
 }
 
+/** Scheme-specific configs for a batch-settlement scenario. */
+export type BatchSettlementPhase = 'initial' | 'recovery-refund' | 'full';
+
+export interface BatchSettlementClientConfig {
+  /** Per-scenario unique salt that derives the onchain channel id (avoids collisions across runs). */
+  channelSalt: string;
+  /** Fixed e2e phase to run for this one-shot client process. */
+  phase: BatchSettlementPhase;
+  /** Optional alternate EOA used to sign vouchers (deposits still use the main client signer). */
+  voucherSignerPrivateKey?: string;
+}
+
+/** Scheme-specific knobs the harness forwards to a server for a batch-settlement scenario. */
+export interface BatchSettlementServerConfig {
+  /** Optional EOA private key the server uses as a self-managed receiver authorizer. */
+  receiverAuthorizerPrivateKey: string;
+}
+
 export interface ClientConfig {
   evmPrivateKey: string;
   svmPrivateKey: string;
   avmPrivateKey: string;
   aptosPrivateKey: string;
+  ccdPrivateKey: string;
+  ccdAddress: string;
+  hederaAccountId: string;
+  hederaPrivateKey: string;
+  keetaClientMnemonic: string;
   stellarPrivateKey: string;
+  tvmPrivateKey: string;
   serverUrl: string;
   endpointPath: string;
   evmNetwork: string;
   evmRpcUrl: string;
+  svmNetwork: string;
+  svmRpcUrl: string;
+  ccdNetwork: string;
+  ccdGrpcUrl: string;
+  hederaNetwork: string;
+  hederaNodeUrl: string;
+  keetaNetwork: string;
+  tvmNetwork: string;
+  tvmRpcUrl: string;
+  nearAccountId: string;
+  nearPrivateKey: string;
+  nearNetwork: string;
+  nearRpcUrl: string;
+  xrplSeed: string;
+  xrplNetwork: string;
+  xrplWsUrl: string;
+  batchSettlement?: BatchSettlementClientConfig;
 }
 
 export interface ServerConfig {
@@ -30,10 +117,24 @@ export interface ServerConfig {
   svmPayTo: string;
   avmPayTo: string;
   aptosPayTo: string;
+  ccdPayTo: string;
+  hederaPayTo: string;
+  hederaAsset?: string;
+  hederaAmount?: string;
+  keetaPayTo: string;
   stellarPayTo: string;
+  tvmPayTo: string;
+  nearPayTo: string;
+  nearAsset?: string;
+  nearAmount?: string;
+  xrplPayTo: string;
+  xrplAsset?: string;
+  xrplAmount?: string;
+  xrplIssuer?: string;
   networks: NetworkSet;
   facilitatorUrl?: string;
   mockFacilitatorUrl?: string;
+  batchSettlement?: BatchSettlementServerConfig;
 }
 
 export interface ServerProxy {
@@ -54,12 +155,14 @@ export interface TestEndpoint {
   description: string;
   requiresPayment?: boolean;
   protocolFamily?: ProtocolFamily;
-  transferMethod?: TransferMethod;
+  scheme?: PaymentScheme;
+  assetTransferMethod?: AssetTransferMethod;
+  schemeOptions?: SchemeOptions;
   extensions?: string[];
-  /** True for Permit2 standard/direct settle - requires pre-approval (approve before test, not revoke) */
-  permit2Direct?: boolean;
-  /** True for endpoints that require Permit2 revocation + fund/drain state setup before the first test (coldstart). */
-  coldstart?: boolean;
+  /** For MCP tools: the tool name used in tools/call. Defaults to path if not specified. */
+  toolName?: string;
+  /** For MCP tools: expected MCP wire transport for discovery metadata. */
+  mcpTransport?: 'streamable-http' | 'sse';
   health?: boolean;
   close?: boolean;
 }
@@ -67,14 +170,21 @@ export interface TestEndpoint {
 export interface TestConfig {
   name: string;
   type: 'server' | 'client' | 'facilitator';
+  enabled?: boolean;
   transport?: Transport;
   language: string;
   protocolFamilies?: ProtocolFamily[];
   x402Version?: number;
   x402Versions?: number[];
   extensions?: string[];
+  /**
+   * Payment schemes the component supports. Required on clients and
+   * facilitators that participate in EVM scenarios; the discovery filter
+   * skips pairings whose endpoint scheme is not in this list.
+   */
+  schemes?: PaymentScheme[];
   evm?: {
-    transferMethods: TransferMethod[];
+    assetTransferMethods?: AssetTransferMethod[];
   };
   endpoints?: TestEndpoint[];
   supportedMethods?: string[];

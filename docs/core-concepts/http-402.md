@@ -39,6 +39,8 @@ x402 V2 uses three standardized headers for payment communication:
 
 All headers contain valid Base64-encoded JSON strings. This encoding ensures compatibility across different HTTP implementations and prevents issues with special characters in JSON payloads.
 
+Whether funds move **onchain** in the same HTTP round trip depends on the **scheme**: **`exact`** and **`upto`** typically settle immediately, while **`batch-settlement`** confirms the payment authorization up front and redeems value **onchain** later according to the network binding (see **[Batch settlement](/schemes/batch-settlement)**).
+
 ### Summary
 
 HTTP 402 is the foundation of the x402 protocol, enabling services to declare payment requirements directly within HTTP responses. It:

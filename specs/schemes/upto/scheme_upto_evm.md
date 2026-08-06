@@ -156,6 +156,8 @@ The verifier must execute these checks in order:
 
 4.  **Verify** the `permit2Authorization.permitted.amount` equals the `amount` from requirements.
 
+    > **Note**: This check applies at **verification** time, where `requirements.amount` represents the authorized maximum. At **settlement** time, `requirements.amount` carries the actual settlement amount, which may be less than `permitted.amount`. See [Phase 4 — Settle-Time Verification](#settle-time-verification) for the required handling.
+
 5.  **Verify** the `deadline` (not expired) and `witness.validAfter` (active).
 
 6.  **Verify** the Token and Network match the requirement.
@@ -177,6 +179,48 @@ The server determines the actual amount based on resource consumption during the
 - The settled `amount` MUST be `<=` the authorized maximum
 - The settled `amount` MAY be `0` (no charge if no usage occurred)
 - The settled `amount` is determined by the resource server, not the client
+
+#### Settle-Time Verification
+
+Before executing an on-chain settlement, the facilitator MUST re-verify the client's signature. Because the `upto` scheme uses phase-dependent `amount` semantics (see [§2 PaymentRequirements Schema](#2-paymentrequirements-schema)), the `/settle` request will carry `paymentRequirements.amount` set to the **actual settlement amount** (as communicated by the resource server via `setSettlementOverrides`), which may be less than `paymentPayload.payload.permit2Authorization.permitted.amount` (the **authorized maximum** the client signed).
+
+The facilitator MUST handle this case as follows:
+
+1.  **Verify the signature against `permitted.amount`** — When re-verifying the client's signature at settle time, use `permit2Authorization.permitted.amount` (the ceiling from the signed payload), NOT `paymentRequirements.amount` (the actual settlement amount). The client signed for the ceiling; comparing against the metered amount would always fail for partial settlements.
+
+2.  **Validate** `paymentRequirements.amount <= permit2Authorization.permitted.amount` — The actual settlement amount must not exceed the authorized maximum.
+
+3.  **Execute the on-chain transfer for `paymentRequirements.amount`** — The `x402UptoPermit2Proxy.settle` call uses the actual settlement amount, not the ceiling.
+
+> **Conformance note**: A facilitator that enforces `paymentRequirements.amount === permit2Authorization.permitted.amount` at settle time will reject all partial settlements, breaking the core `upto` value proposition. The Phase 3 step 4 equality check (`permitted.amount === requirements.amount`) applies only to the `/verify` endpoint, where `requirements.amount` carries the ceiling.
+
+**Example settle request wire shape** (partial settlement):
+
+```json
+{
+  "x402Version": 2,
+  "paymentPayload": {
+    "x402Version": 2,
+    "accepted": { "scheme": "upto", "network": "eip155:84532", "amount": "20000", ... },
+    "payload": {
+      "signature": "0x...",
+      "permit2Authorization": {
+        "permitted": { "token": "0x036CbD53...", "amount": "20000" },
+        "from": "<buyer>", "spender": "0x4020A4f3b7b90ccA423B9fabCc0CE57C6C240002",
+        "nonce": "...", "deadline": "...",
+        "witness": { "to": "<payTo>", "facilitator": "<facilitatorAddress>", "validAfter": "0" }
+      }
+    }
+  },
+  "paymentRequirements": {
+    "scheme": "upto", "network": "eip155:84532",
+    "asset": "0x036CbD53...", "payTo": "<payTo>",
+    "amount": "1858"
+  }
+}
+```
+
+In this example, the buyer signed for up to `20000` atomic units. The resource server consumed `1858` units of work. The facilitator verifies the signature against `permitted.amount` (`20000`), confirms `1858 <= 20000`, then transfers `1858` on-chain.
 
 **Settlement Process:**
 

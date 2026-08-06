@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	x402 "github.com/x402-foundation/x402/go"
+	x402 "github.com/x402-foundation/x402/go/v2"
 )
 
 // Note: mockHTTPAdapter and mockSchemeServer are defined in server_test.go

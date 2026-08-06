@@ -3,15 +3,16 @@ package facilitator
 import (
 	"context"
 	"errors"
+	"fmt"
 	"math/big"
 	"strings"
 	"time"
 
-	x402 "github.com/x402-foundation/x402/go"
-	"github.com/x402-foundation/x402/go/extensions/eip2612gassponsor"
-	"github.com/x402-foundation/x402/go/extensions/erc20approvalgassponsor"
-	"github.com/x402-foundation/x402/go/mechanisms/evm"
-	"github.com/x402-foundation/x402/go/types"
+	x402 "github.com/x402-foundation/x402/go/v2"
+	"github.com/x402-foundation/x402/go/v2/extensions/eip2612gassponsor"
+	"github.com/x402-foundation/x402/go/v2/extensions/erc20approvalgassponsor"
+	"github.com/x402-foundation/x402/go/v2/mechanisms/evm"
+	"github.com/x402-foundation/x402/go/v2/types"
 )
 
 // VerifyPermit2Options controls optional behaviour for VerifyPermit2.
@@ -55,6 +56,12 @@ func VerifyPermit2(
 	}
 
 	tokenAddress := evm.NormalizeAddress(requirements.Asset)
+
+	if errReason, err := evm.ValidateAssetIsContract(ctx, signer, requirements.Asset); err != nil {
+		return nil, fmt.Errorf("asset contract check failed: %w", err)
+	} else if errReason != "" {
+		return nil, x402.NewVerifyError(errReason, payer, fmt.Sprintf("asset %s is not a deployed contract", requirements.Asset))
+	}
 
 	// Verify spender is x402ExactPermit2Proxy
 	if !strings.EqualFold(permit2Payload.Permit2Authorization.Spender, evm.X402ExactPermit2ProxyAddress) {
@@ -236,6 +243,11 @@ func SettlePermit2(
 	permitStruct := args.permitStruct()
 	witnessStruct := args.witnessStruct()
 
+	dataSuffix, err := evm.ResolveDataSuffix(facilCtx, evm.DataSuffixContext{Payload: payload, Requirements: requirements})
+	if err != nil {
+		return nil, x402.NewSettleError(ErrInvalidPayload, payer, network, "", err.Error())
+	}
+
 	eip2612Info, _ := eip2612gassponsor.ExtractEip2612GasSponsoringInfo(payload.Extensions)
 	erc20Info, _ := erc20approvalgassponsor.ExtractInfo(payload.Extensions)
 
@@ -277,6 +289,7 @@ func SettlePermit2(
 			evm.X402ExactPermit2ProxyAddress,
 			evm.X402ExactPermit2ProxySettleWithPermitABI,
 			evm.FunctionSettleWithPermit,
+			dataSuffix,
 			permit2612Struct,
 			permitStruct,
 			args.Owner,
@@ -293,10 +306,11 @@ func SettlePermit2(
 		}
 		if extensionSigner != nil {
 			settle := erc20approvalgassponsor.WriteContractCall{
-				Address:  evm.X402ExactPermit2ProxyAddress,
-				ABI:      evm.X402ExactPermit2ProxySettleABI,
-				Function: evm.FunctionSettle,
-				Args:     []interface{}{permitStruct, args.Owner, witnessStruct, args.Signature},
+				Address:    evm.X402ExactPermit2ProxyAddress,
+				ABI:        evm.X402ExactPermit2ProxySettleABI,
+				Function:   evm.FunctionSettle,
+				Args:       []interface{}{permitStruct, args.Owner, witnessStruct, args.Signature},
+				DataSuffix: dataSuffix,
 			}
 			txHashes, sendErr := extensionSigner.SendTransactions(ctx, []erc20approvalgassponsor.TransactionRequest{
 				{Serialized: erc20Info.SignedTransaction},
@@ -313,6 +327,7 @@ func SettlePermit2(
 				evm.X402ExactPermit2ProxyAddress,
 				evm.X402ExactPermit2ProxySettleABI,
 				evm.FunctionSettle,
+				dataSuffix,
 				permitStruct,
 				args.Owner,
 				witnessStruct,
@@ -326,6 +341,7 @@ func SettlePermit2(
 			evm.X402ExactPermit2ProxyAddress,
 			evm.X402ExactPermit2ProxySettleABI,
 			evm.FunctionSettle,
+			dataSuffix,
 			permitStruct,
 			args.Owner,
 			witnessStruct,

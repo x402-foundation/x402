@@ -1,5 +1,4 @@
 #!/bin/bash
-# TypeScript build handled by pnpm at root level
-# This file is intentionally empty
-exit 0
-
+set -e
+export FACILITATOR_URL="${FACILITATOR_URL:-http://localhost:4022}"
+pnpm build

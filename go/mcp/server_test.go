@@ -4,11 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
-	x402 "github.com/x402-foundation/x402/go"
-	"github.com/x402-foundation/x402/go/types"
+	x402 "github.com/x402-foundation/x402/go/v2"
+	"github.com/x402-foundation/x402/go/v2/types"
 )
 
 // Mock facilitator client for testing
@@ -622,6 +623,117 @@ func TestNewPaymentWrapper_NilExtensionsOmitted(t *testing.T) {
 	}
 	if _, ok := sc["extensions"]; ok {
 		t.Error("Expected 'extensions' key to be absent when Extensions is nil")
+	}
+}
+
+func TestNewPaymentWrapper_MatchesNonFirstAccept(t *testing.T) {
+	var verifiedReq types.PaymentRequirements
+	mockFacilitator := &mockFacilitatorClient{
+		verifyFunc: func(ctx context.Context, payloadBytes []byte, requirementsBytes []byte) (*x402.VerifyResponse, error) {
+			_ = json.Unmarshal(requirementsBytes, &verifiedReq)
+			return &x402.VerifyResponse{IsValid: true, Payer: "test-payer"}, nil
+		},
+	}
+	mockSchemeServer := &mockSchemeNetworkServer{scheme: "cash"}
+
+	server := x402.Newx402ResourceServer(
+		x402.WithFacilitatorClient(mockFacilitator),
+		x402.WithSchemeServer("x402:cash", mockSchemeServer),
+	)
+
+	ctx := context.Background()
+	if err := server.Initialize(ctx); err != nil {
+		t.Fatalf("Failed to initialize server: %v", err)
+	}
+
+	first := types.PaymentRequirements{Scheme: "cash", Network: "x402:cash", Amount: "1000", PayTo: "recipient-A"}
+	second := types.PaymentRequirements{Scheme: "cash", Network: "x402:cash", Amount: "2000", PayTo: "recipient-B"}
+
+	config := PaymentWrapperConfig{Accepts: []types.PaymentRequirements{first, second}}
+	wrapper := NewPaymentWrapper(server, config)
+	handler := func(ctx context.Context, request *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		return &mcp.CallToolResult{
+			Content: []mcp.Content{&mcp.TextContent{Text: "success"}},
+		}, nil
+	}
+	wrapped := wrapper.Wrap(handler)
+
+	// Client paid the SECOND requirement, not accepts[0].
+	payload := types.PaymentPayload{
+		X402Version: 2,
+		Accepted:    second,
+		Payload:     map[string]interface{}{"signature": "~test-payer"},
+	}
+	req := makeCallToolRequest(map[string]interface{}{}, mcp.Meta{MCP_PAYMENT_META_KEY: payload})
+	result, err := wrapped(ctx, req)
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	if result.IsError {
+		t.Error("Expected success result when payload matches a non-first accept")
+	}
+	if verifiedReq.PayTo != "recipient-B" || verifiedReq.Amount != "2000" {
+		t.Errorf("Expected verification against the matched (second) accept, got payTo=%q amount=%q",
+			verifiedReq.PayTo, verifiedReq.Amount)
+	}
+}
+
+func TestNewPaymentWrapper_NoMatchingAccept(t *testing.T) {
+	verifyCalled := false
+	mockFacilitator := &mockFacilitatorClient{
+		verifyFunc: func(ctx context.Context, payloadBytes []byte, requirementsBytes []byte) (*x402.VerifyResponse, error) {
+			verifyCalled = true
+			return &x402.VerifyResponse{IsValid: true, Payer: "test-payer"}, nil
+		},
+	}
+	mockSchemeServer := &mockSchemeNetworkServer{scheme: "cash"}
+
+	server := x402.Newx402ResourceServer(
+		x402.WithFacilitatorClient(mockFacilitator),
+		x402.WithSchemeServer("x402:cash", mockSchemeServer),
+	)
+
+	ctx := context.Background()
+	if err := server.Initialize(ctx); err != nil {
+		t.Fatalf("Failed to initialize server: %v", err)
+	}
+
+	config := PaymentWrapperConfig{
+		Accepts: []types.PaymentRequirements{
+			{Scheme: "cash", Network: "x402:cash", Amount: "1000", PayTo: "recipient-A"},
+		},
+	}
+	wrapper := NewPaymentWrapper(server, config)
+	handler := func(ctx context.Context, request *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		return &mcp.CallToolResult{}, nil
+	}
+	wrapped := wrapper.Wrap(handler)
+
+	// Payload requirement matches none of the advertised accepts.
+	payload := types.PaymentPayload{
+		X402Version: 2,
+		Accepted:    types.PaymentRequirements{Scheme: "cash", Network: "x402:cash", Amount: "9999", PayTo: "recipient-Z"},
+		Payload:     map[string]interface{}{"signature": "~test-payer"},
+	}
+	req := makeCallToolRequest(map[string]interface{}{}, mcp.Meta{MCP_PAYMENT_META_KEY: payload})
+	result, err := wrapped(ctx, req)
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	if !result.IsError {
+		t.Error("Expected error result when no accept matches the payload")
+	}
+	if verifyCalled {
+		t.Error("Verification should not run when no accept matches")
+	}
+	sc, ok := result.StructuredContent.(map[string]interface{})
+	if !ok {
+		t.Fatalf("Expected structuredContent to be a map, got %T", result.StructuredContent)
+	}
+	if errMsg, _ := sc["error"].(string); !strings.Contains(errMsg, "No matching payment requirements") {
+		t.Errorf("Expected a no-match error message, got %q", errMsg)
 	}
 }
 

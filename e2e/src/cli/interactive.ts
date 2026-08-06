@@ -1,6 +1,14 @@
 import prompts from 'prompts';
 import { DiscoveredClient, DiscoveredServer, DiscoveredFacilitator, TestScenario } from '../types';
-import { TestFilters, getUniqueVersions, getUniqueProtocolFamilies } from './filters';
+import {
+  TestFilters,
+  filterScenarios,
+  getUniqueVersions,
+  getUniqueProtocolFamilies,
+  getUniquePaymentSchemes,
+  getScenarioPaymentScheme,
+  PaymentSchemeKind,
+} from './filters';
 import { log } from '../logger';
 import { NetworkMode, getNetworkModeDescription } from '../networks/networks';
 
@@ -280,7 +288,44 @@ export async function runInteractiveMode(
     selectedFamilies = availableFamilies;
   }
 
-  // Question 8: Endpoint filter (optional free-text, comma-separated regex patterns)
+  // Question 8 (CONDITIONAL): Payment scheme — exact vs upto vs batch-settlement (EVM transfer semantics)
+  const scenariosForScheme = filterScenarios(preliminaryScenarios, {
+    versions: selectedVersions,
+    protocolFamilies: selectedFamilies,
+  });
+  const availableSchemes = getUniquePaymentSchemes(scenariosForScheme);
+  let selectedSchemes: string[] | undefined;
+
+  if (availableSchemes.length > 1) {
+    const schemeChoices = availableSchemes.map((k: PaymentSchemeKind) => {
+      const count = scenariosForScheme.filter(s => getScenarioPaymentScheme(s) === k).length;
+      return {
+        title: `${k} (${count} scenarios)`,
+        value: k,
+        selected: true,
+      };
+    });
+
+    const schemesResponse = await prompts({
+      type: 'multiselect',
+      name: 'schemes',
+      message: 'Select payment schemes',
+      choices: schemeChoices,
+      min: 1,
+      hint: 'exact = eip3009/permit2-style; upto = usage-based; batch-settlement = voucher channel',
+      instructions: false,
+    });
+
+    if (!schemesResponse.schemes || schemesResponse.schemes.length === 0) {
+      return null;
+    }
+
+    selectedSchemes = schemesResponse.schemes;
+  } else if (availableSchemes.length === 1) {
+    selectedSchemes = availableSchemes;
+  }
+
+  // Question 9: Endpoint filter (optional free-text, comma-separated regex patterns)
   const endpointsResponse = await prompts({
     type: 'text',
     name: 'endpoints',
@@ -297,7 +342,7 @@ export async function runInteractiveMode(
     ? (endpointsResponse.endpoints as string).split(',').map((p: string) => p.trim()).filter((p: string) => p.length > 0)
     : undefined;
 
-  // Question 9: Select network mode (testnet/mainnet) - LAST question
+  // Question 10: Select network mode (testnet/mainnet) - LAST question
   // Skip if preselected via CLI flag
   let networkMode: NetworkMode;
 
@@ -346,6 +391,7 @@ export async function runInteractiveMode(
     extensions: selectedExtensions,
     versions: selectedVersions,
     protocolFamilies: selectedFamilies,
+    schemes: selectedSchemes,
     endpoints: selectedEndpoints,
     networkMode,
   };

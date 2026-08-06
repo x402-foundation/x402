@@ -25,6 +25,10 @@ const (
 	ErrTransactionSigningFailed       = "invalid_exact_solana_transaction_signing_failed"
 	ErrTransactionSimulationFailed    = "invalid_exact_solana_transaction_simulation_failed"
 
+	// Memo verification errors
+	ErrMemoMismatch = "invalid_exact_solana_payload_memo_mismatch"
+	ErrMemoCount    = "invalid_exact_solana_payload_memo_count"
+
 	// Settle errors
 	ErrVerificationFailed            = "invalid_exact_solana_verification_failed"
 	ErrFeePayerMismatch              = "invalid_exact_solana_fee_payer_mismatch"

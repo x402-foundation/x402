@@ -57,14 +57,29 @@ func HashTypedData(
 		typedData.Types[typeName] = typedFields
 	}
 
-	// Add EIP712Domain type if not present
+	// Add EIP712Domain type if not present.
+	// Domains with empty Name/Version/VerifyingContract or nil ChainID are treated
+	// as "absent" — go-ethereum's apitypes.TypedDataDomain.Map() drops empty fields,
+	// so the EIP712Domain type list must match exactly what's in the domain map or
+	// HashStruct fails with "provided data '<nil>' doesn't match type 'string'".
+	// This mirrors viem's getTypesForEIP712Domain which only declares fields whose
+	// domain values are present. Permit2's domain (name + chainId + verifyingContract,
+	// no version) is the canonical case this guards against.
 	if _, exists := typedData.Types["EIP712Domain"]; !exists {
-		typedData.Types["EIP712Domain"] = []apitypes.Type{
-			{Name: "name", Type: "string"},
-			{Name: "version", Type: "string"},
-			{Name: "chainId", Type: "uint256"},
-			{Name: "verifyingContract", Type: "address"},
+		domainFields := make([]apitypes.Type, 0, 4)
+		if domain.Name != "" {
+			domainFields = append(domainFields, apitypes.Type{Name: "name", Type: "string"})
 		}
+		if domain.Version != "" {
+			domainFields = append(domainFields, apitypes.Type{Name: "version", Type: "string"})
+		}
+		if domain.ChainID != nil {
+			domainFields = append(domainFields, apitypes.Type{Name: "chainId", Type: "uint256"})
+		}
+		if domain.VerifyingContract != "" {
+			domainFields = append(domainFields, apitypes.Type{Name: "verifyingContract", Type: "address"})
+		}
+		typedData.Types["EIP712Domain"] = domainFields
 	}
 
 	// Hash the struct data

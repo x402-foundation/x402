@@ -20,13 +20,15 @@ Facilitators must declare which x402 protocol versions they support using the `x
 Facilitators must declare which protocol extensions they support using the `extensions` field:
 - **extensions**: Array of supported extension names (e.g., ["bazaar"])
 
-## EVM Transfer Method Support
-Facilitators that support the EVM protocol family must declare which transfer methods they support using the `evm.transferMethods` field:
-- **eip3009**: EIP-3009 transferWithAuthorization
-- **permit2**: Uniswap Permit2 approval-based transfer
+## EVM asset transfer method support
+Facilitators that support the EVM protocol family must declare which **asset authorization** paths they implement using **`evm.assetTransferMethods`**:
+- **eip3009**: EIP-3009 `transferWithAuthorization`
+- **permit2**: Uniswap Permit2
+
+Payment **schemes** (exact / upto / batch-settlement) are chosen per server endpoint; the facilitator is matched only on **`assetTransferMethod`**.
 
 If the `evm` field is omitted, the facilitator is assumed to only support `["eip3009"]`.
-The test suite uses this to skip scenarios where a server endpoint requires a transfer method the facilitator does not support.
+The test suite uses this to skip scenarios where a server endpoint requires an asset transfer method the facilitator does not support.
 
 Example configuration:
 ```json
@@ -38,7 +40,7 @@ Example configuration:
   "x402Versions": [2],
   "extensions": ["bazaar"],
   "evm": {
-    "transferMethods": ["eip3009", "permit2"]
+    "assetTransferMethods": ["eip3009", "permit2"]
   },
   "environment": {
     "required": ["PORT", "EVM_PRIVATE_KEY", "EVM_NETWORK"],
@@ -57,7 +59,7 @@ Python facilitator example (eip3009 only):
   "x402Versions": [2],
   "extensions": ["bazaar"],
   "evm": {
-    "transferMethods": ["eip3009"]
+    "assetTransferMethods": ["eip3009"]
   },
   "environment": {
     "required": ["PORT", "EVM_PRIVATE_KEY", "SVM_PRIVATE_KEY", "APTOS_PRIVATE_KEY"],

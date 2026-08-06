@@ -5,9 +5,13 @@ description = "Advanced x402 client examples demonstrating hooks, custom selecto
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
-    "x402[evm,svm,httpx]",
+    "x402[evm,svm,tvm,httpx]",
     "python-dotenv>=1.0.0",
 ]
+
+[tool.uv]
+required-version = ">=0.11.0"
+exclude-newer = "3 days"
 
 [tool.uv.sources]
 x402 = { path = "../../../../python/x402", editable = true }

@@ -8,8 +8,8 @@ import (
 	"testing"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
-	x402 "github.com/x402-foundation/x402/go"
-	"github.com/x402-foundation/x402/go/types"
+	x402 "github.com/x402-foundation/x402/go/v2"
+	"github.com/x402-foundation/x402/go/v2/types"
 )
 
 // mockMCPCaller implements MCPCaller for testing.
@@ -485,6 +485,63 @@ func TestX402MCPClient_CallTool_AutoPaymentE2E(t *testing.T) {
 	}
 	if result.PaymentResponse == nil {
 		t.Error("Expected PaymentResponse to be set")
+	}
+	if mockMCPCaller.callCount != 2 {
+		t.Errorf("Expected 2 calls to CallTool, got %d", mockMCPCaller.callCount)
+	}
+}
+
+func TestX402MCPClient_CallTool_SelectsSupportedNonFirstAccept(t *testing.T) {
+	// accepts[0] is on an unsupported network; the supported requirement is second.
+	// The client must select via SelectPaymentRequirements rather than accepts[0],
+	// otherwise CreatePaymentPayload fails for the unregistered first network.
+	paymentRequired := types.PaymentRequired{
+		X402Version: 2,
+		Accepts: []types.PaymentRequirements{
+			{Scheme: "exact", Network: "eip155:1", Amount: "1000", Asset: "USDC", PayTo: "0xrecipient", MaxTimeoutSeconds: 300},
+			{Scheme: "exact", Network: "eip155:84532", Amount: "1000", Asset: "USDC", PayTo: "0xrecipient", MaxTimeoutSeconds: 300},
+		},
+	}
+
+	structuredBytes, _ := json.Marshal(paymentRequired)
+	var structuredContent map[string]interface{}
+	if err := json.Unmarshal(structuredBytes, &structuredContent); err != nil {
+		t.Fatalf("Failed to unmarshal structured content: %v", err)
+	}
+
+	mockMCPCaller := &mockMCPCaller{
+		callToolResults: []MCPToolResult{
+			{IsError: true, StructuredContent: structuredContent},
+			{
+				Content: []MCPContentItem{{Type: "text", Text: "success"}},
+				IsError: false,
+				Meta: map[string]interface{}{
+					MCP_PAYMENT_RESPONSE_META_KEY: map[string]interface{}{
+						"success":     true,
+						"transaction": "0xtxhash",
+						"network":     "eip155:84532",
+					},
+				},
+			},
+		},
+	}
+
+	paymentClient := x402.Newx402Client()
+	// Only the second accept's network is supported.
+	paymentClient.Register("eip155:84532", &mockSchemeNetworkClient{scheme: "exact"})
+
+	x402Client := NewX402MCPClient(mockMCPCaller, paymentClient, Options{
+		AutoPayment: BoolPtr(true),
+	})
+
+	ctx := context.Background()
+	result, err := x402Client.CallTool(ctx, "paid_tool", map[string]interface{}{})
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	if !result.PaymentMade {
+		t.Error("Expected PaymentMade to be true via the supported (second) accept")
 	}
 	if mockMCPCaller.callCount != 2 {
 		t.Errorf("Expected 2 calls to CallTool, got %d", mockMCPCaller.callCount)

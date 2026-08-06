@@ -1,3 +1,0 @@
-kind: added
-body: Add net/http standard library adapter for x402 payment middleware (http/nethttp package)
-time: 2026-03-03T12:19:13.785928+09:00

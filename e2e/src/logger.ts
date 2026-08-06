@@ -44,11 +44,14 @@ class Logger {
     }
   }
 
-  close(): void {
-    if (this.logStream) {
-      this.logStream.end();
-      this.logStream = null;
+  close(): Promise<void> {
+    if (!this.logStream) {
+      return Promise.resolve();
     }
+
+    const stream = this.logStream;
+    this.logStream = null;
+    return new Promise(resolve => stream.end(resolve));
   }
 }
 
@@ -60,7 +63,7 @@ let globalLogger: Logger | null = null;
  */
 export function config(options: LoggerConfig): void {
   if (globalLogger) {
-    globalLogger.close();
+    void globalLogger.close();
   }
   globalLogger = new Logger(options);
 }
@@ -111,9 +114,9 @@ export function createComboLogger(comboIndex: number, serverName: string, facili
 /**
  * Close the logger and its file streams
  */
-export function close(): void {
+export async function close(): Promise<void> {
   if (globalLogger) {
-    globalLogger.close();
+    await globalLogger.close();
     globalLogger = null;
   }
 } 

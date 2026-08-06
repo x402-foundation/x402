@@ -62,7 +62,7 @@ type AssetInfo struct {
 }
 
 // NetworkConfig contains network-specific configuration
-// See DEFAULT_ASSET.md for guidelines on adding new chains
+// See DEFAULT_ASSETS.md for guidelines on adding new chains
 type NetworkConfig struct {
 	Name         string    // Network name
 	CAIP2        string    // CAIP-2 identifier
@@ -73,6 +73,11 @@ type NetworkConfig struct {
 // ClientConfig contains optional client configuration
 type ClientConfig struct {
 	RPCURL string // Custom RPC URL
+}
+
+// ServerConfig contains optional server configuration.
+type ServerConfig struct {
+	RPCURL string // Custom RPC URL for challenge enrichment
 }
 
 // ToMap converts an ExactSvmPayload to a map for JSON marshaling

@@ -516,6 +516,73 @@ class PaymentFilterTest {
             "Settlement response should contain null payer when authorization malformed: " + jsonString);
     }
 
+    /* ------------ URI normalization bypass attempts → 402 ---------------
+     *
+     * These tests verify that an attacker cannot bypass payment enforcement by
+     * sending obfuscated paths that the servlet container normalizes to a paid
+     * route before dispatch but that a raw-URI lookup would miss.
+     * --------------------------------------------------------------------- */
+
+    @Test
+    void percentEncodedPathRequiresPayment() throws Exception {
+        // "%70" == 'p', so /%70rivate normalises to /private (a paid route)
+        when(req.getRequestURI()).thenReturn("/%70rivate");
+        when(req.getHeader("X-PAYMENT")).thenReturn(null);
+
+        filter.doFilter(req, resp, chain);
+
+        verify(resp).setStatus(HttpServletResponse.SC_PAYMENT_REQUIRED);
+        verify(chain, never()).doFilter(any(), any());
+    }
+
+    @Test
+    void matrixParameterPathRequiresPayment() throws Exception {
+        // Servlet containers strip ;params before routing — filter must do the same
+        when(req.getRequestURI()).thenReturn("/private;jsessionid=abc123");
+        when(req.getHeader("X-PAYMENT")).thenReturn(null);
+
+        filter.doFilter(req, resp, chain);
+
+        verify(resp).setStatus(HttpServletResponse.SC_PAYMENT_REQUIRED);
+        verify(chain, never()).doFilter(any(), any());
+    }
+
+    @Test
+    void doubleSlashPathRequiresPayment() throws Exception {
+        // //private normalises to /private in all major servlet containers
+        when(req.getRequestURI()).thenReturn("//private");
+        when(req.getHeader("X-PAYMENT")).thenReturn(null);
+
+        filter.doFilter(req, resp, chain);
+
+        verify(resp).setStatus(HttpServletResponse.SC_PAYMENT_REQUIRED);
+        verify(chain, never()).doFilter(any(), any());
+    }
+
+    @Test
+    void dotSegmentPathRequiresPayment() throws Exception {
+        // /./private normalises to /private
+        when(req.getRequestURI()).thenReturn("/./private");
+        when(req.getHeader("X-PAYMENT")).thenReturn(null);
+
+        filter.doFilter(req, resp, chain);
+
+        verify(resp).setStatus(HttpServletResponse.SC_PAYMENT_REQUIRED);
+        verify(chain, never()).doFilter(any(), any());
+    }
+
+    @Test
+    void parentSegmentPathRequiresPayment() throws Exception {
+        // /api/../private normalises to /private
+        when(req.getRequestURI()).thenReturn("/api/../private");
+        when(req.getHeader("X-PAYMENT")).thenReturn(null);
+
+        filter.doFilter(req, resp, chain);
+
+        verify(resp).setStatus(HttpServletResponse.SC_PAYMENT_REQUIRED);
+        verify(chain, never()).doFilter(any(), any());
+    }
+
     /* ------------ facilitator IOException returns 500 --------------------- */
     @Test
     void facilitatorIOExceptionReturns500() throws Exception {

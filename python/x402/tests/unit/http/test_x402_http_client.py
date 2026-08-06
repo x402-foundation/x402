@@ -27,6 +27,7 @@ from x402.schemas import (
     PaymentRequirements,
     SettleResponse,
 )
+from x402.schemas.hooks import RecoveredResponseResult
 from x402.schemas.v1 import PaymentPayloadV1, PaymentRequiredV1
 
 # =============================================================================
@@ -61,10 +62,15 @@ class MockX402Client:
     def __init__(self, payload_to_return: PaymentPayload | PaymentPayloadV1 | None = None):
         self.payload_to_return = payload_to_return or make_v2_payload()
         self.create_payment_calls: list = []
+        self.handle_payment_response_calls: list = []
 
     async def create_payment_payload(self, payment_required):
         self.create_payment_calls.append(payment_required)
         return self.payload_to_return
+
+    async def handle_payment_response(self, ctx):
+        self.handle_payment_response_calls.append(ctx)
+        return None
 
 
 class MockX402ClientSync:
@@ -73,10 +79,15 @@ class MockX402ClientSync:
     def __init__(self, payload_to_return: PaymentPayload | PaymentPayloadV1 | None = None):
         self.payload_to_return = payload_to_return or make_v2_payload()
         self.create_payment_calls: list = []
+        self.handle_payment_response_calls: list = []
 
     def create_payment_payload(self, payment_required):
         self.create_payment_calls.append(payment_required)
         return self.payload_to_return
+
+    def handle_payment_response(self, ctx):
+        self.handle_payment_response_calls.append(ctx)
+        return None
 
 
 # =============================================================================
@@ -351,6 +362,108 @@ class TestX402HTTPClientSync:
 
         with pytest.raises(TypeError, match="requires a sync client"):
             x402HTTPClientSync(mock_async_client)  # type: ignore
+
+
+# =============================================================================
+# process_payment_result Tests
+# =============================================================================
+
+
+class TestProcessPaymentResult:
+    @pytest.mark.asyncio
+    async def test_v1_skips_response_hooks(self):
+        mock_client = MockX402Client()
+        http_client = x402HTTPClient(mock_client)
+        payload = PaymentPayloadV1(
+            x402_version=1,
+            scheme="exact",
+            network="base-sepolia",
+            payload={"signature": "0xabc"},
+        )
+
+        result = await http_client.process_payment_result(payload, lambda _: None, 200)
+
+        assert result.recovered is False
+        assert len(mock_client.handle_payment_response_calls) == 0
+
+    @pytest.mark.asyncio
+    async def test_v2_settle_header_dispatches_hooks(self):
+        mock_client = MockX402Client()
+        http_client = x402HTTPClient(mock_client)
+        payload = make_v2_payload()
+        settle = SettleResponse(
+            success=True,
+            transaction="0xabc",
+            network="eip155:8453",
+        )
+        encoded = encode_payment_response_header(settle)
+
+        result = await http_client.process_payment_result(
+            payload,
+            lambda name: encoded if name == PAYMENT_RESPONSE_HEADER else None,
+            200,
+        )
+
+        assert result.recovered is False
+        assert result.settle_response is not None
+        assert len(mock_client.handle_payment_response_calls) == 1
+
+    @pytest.mark.asyncio
+    async def test_v2_corrective_402_dispatches_hooks(self):
+        mock_client = MockX402Client()
+        http_client = x402HTTPClient(mock_client)
+        payload = make_v2_payload()
+        payment_required = PaymentRequired(
+            x402_version=2,
+            accepts=[make_payment_requirements()],
+        )
+        encoded = encode_payment_required_header(payment_required)
+
+        result = await http_client.process_payment_result(
+            payload,
+            lambda name: encoded if name == PAYMENT_REQUIRED_HEADER else None,
+            402,
+        )
+
+        assert result.recovered is False
+        assert len(mock_client.handle_payment_response_calls) == 1
+        assert mock_client.handle_payment_response_calls[0].payment_required is not None
+
+    @pytest.mark.asyncio
+    async def test_recovery_from_hook(self):
+        mock_client = MockX402Client()
+
+        async def recover(ctx):
+            return RecoveredResponseResult()
+
+        mock_client.handle_payment_response = recover  # type: ignore[method-assign]
+        http_client = x402HTTPClient(mock_client)
+        payload = make_v2_payload()
+        settle = SettleResponse(
+            success=False,
+            error_reason="failed",
+            transaction="0x0",
+            network="eip155:8453",
+        )
+        encoded = encode_payment_response_header(settle)
+
+        result = await http_client.process_payment_result(
+            payload,
+            lambda name: encoded if name == PAYMENT_RESPONSE_HEADER else None,
+            402,
+        )
+
+        assert result.recovered is True
+
+    def test_sync_v2_no_headers_skips_hooks(self):
+        mock_client = MockX402ClientSync()
+        http_client = x402HTTPClientSync(mock_client)
+        payload = make_v2_payload()
+
+        result = http_client.process_payment_result(payload, lambda _: None, 200)
+
+        assert result.recovered is False
+        assert len(mock_client.handle_payment_response_calls) == 0
 
 
 # =============================================================================

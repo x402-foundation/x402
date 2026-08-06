@@ -1,4 +1,4 @@
-# @x402/express
+# `@x402/express` [![npm version](https://img.shields.io/npm/v/%40x402%2Fexpress.svg)](https://www.npmjs.com/package/@x402/express)
 
 Express middleware integration for the x402 Payment Protocol. This package provides a simple middleware function for adding x402 payment requirements to your Express.js applications.
 
@@ -18,11 +18,9 @@ import { HTTPFacilitatorClient } from "@x402/core/server";
 
 const app = express();
 
-const facilitatorClient = new HTTPFacilitatorClient({ url: "https://facilitator.x402.org" });
-const resourceServer = new x402ResourceServer(facilitatorClient).register(
-  "eip155:84532",
-  new ExactEvmScheme(),
-);
+const facilitatorClient = new HTTPFacilitatorClient({ url: "https://x402.org/facilitator" });
+const resourceServer = new x402ResourceServer(facilitatorClient)
+  .register("eip155:84532", new ExactEvmScheme());
 
 // Apply the payment middleware with your configuration
 app.use(
@@ -269,10 +267,8 @@ const customFacilitator = new HTTPFacilitatorClient({
   }),
 });
 
-const resourceServer = new x402ResourceServer(customFacilitator).register(
-  "eip155:84532",
-  new ExactEvmScheme(),
-);
+const resourceServer = new x402ResourceServer(customFacilitator)
+  .register("eip155:84532", new ExactEvmScheme());
 
 app.use(paymentMiddleware(routes, resourceServer, paywallConfig));
 ```
@@ -308,10 +304,8 @@ import { HTTPFacilitatorClient } from "@x402/core/server";
 import { ExactEvmScheme } from "@x402/evm/exact/server";
 
 const facilitator = new HTTPFacilitatorClient({ url: facilitatorUrl });
-const resourceServer = new x402ResourceServer(facilitator).register(
-  "eip155:84532",
-  new ExactEvmScheme(),
-);
+const resourceServer = new x402ResourceServer(facilitator)
+  .register("eip155:84532", new ExactEvmScheme());
 
 app.use(
   paymentMiddleware(

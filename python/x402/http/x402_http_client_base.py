@@ -6,12 +6,15 @@ Contains shared logic for HTTP client implementations.
 from __future__ import annotations
 
 import json
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
 from typing import Any
 
 from ..schemas import (
     PaymentPayload,
     PaymentRequired,
+    PaymentRequiredContext,
+    PaymentResponseContext,
     SettleResponse,
 )
 from ..schemas.v1 import PaymentPayloadV1, PaymentRequiredV1
@@ -28,6 +31,21 @@ from .utils import (
     encode_payment_signature_header,
 )
 
+OnPaymentRequiredHook = Callable[
+    [PaymentRequiredContext],
+    Awaitable[Any] | Any,
+]
+SyncOnPaymentRequiredHook = Callable[[PaymentRequiredContext], Any]
+
+
+@dataclass
+class ProcessPaymentResult:
+    """Outcome of process_payment_result for transport wrappers."""
+
+    recovered: bool
+    settle_response: SettleResponse | None = None
+
+
 # ============================================================================
 # Base HTTP Client
 # ============================================================================
@@ -38,6 +56,42 @@ class x402HTTPClientBase:
 
     Contains header encoding/decoding logic.
     """
+
+    def __init__(self) -> None:
+        self._payment_required_hooks: list[Any] = []
+        self._client: Any = None
+
+    def _collect_payment_required_hooks(
+        self,
+        payment_required: PaymentRequired | PaymentRequiredV1,
+    ) -> list[Any]:
+        hooks = list(self._payment_required_hooks)
+        declared = getattr(payment_required, "extensions", None)
+        if not declared or self._client is None:
+            return hooks
+
+        for extension in self._client.get_extensions():
+            transport_hooks = getattr(extension, "transport_hooks", None)
+            if transport_hooks is None:
+                continue
+            http_hooks = getattr(transport_hooks, "http", None)
+            if http_hooks is None:
+                continue
+            ext_hook = getattr(http_hooks, "on_payment_required", None)
+            if ext_hook is None or extension.key not in declared:
+                continue
+            declaration = declared[extension.key]
+
+            def extension_hook(
+                ctx: PaymentRequiredContext,
+                *,
+                _declaration: Any = declaration,
+                _hook: Any = ext_hook,
+            ) -> Any:
+                return _hook(_declaration, ctx)
+
+            hooks.append(extension_hook)
+        return hooks
 
     def encode_payment_signature_header(
         self,
@@ -84,7 +138,7 @@ class x402HTTPClientBase:
             ValueError: If no payment required info found.
         """
         header = get_header(PAYMENT_REQUIRED_HEADER)
-        if header:
+        if isinstance(header, str) and header:
             return decode_payment_required_header(header)
 
         if body:
@@ -113,11 +167,11 @@ class x402HTTPClientBase:
             ValueError: If no payment response header found.
         """
         header = get_header(PAYMENT_RESPONSE_HEADER)
-        if header:
+        if isinstance(header, str) and header:
             return decode_payment_response_header(header)
 
         header = get_header(X_PAYMENT_RESPONSE_HEADER)
-        if header:
+        if isinstance(header, str) and header:
             return decode_payment_response_header(header)
 
         raise ValueError("Payment response header not found")
@@ -149,3 +203,42 @@ class x402HTTPClientBase:
                 pass
 
         return get_header, body_data
+
+    def _build_payment_response_context(
+        self,
+        payment_payload: PaymentPayload | PaymentPayloadV1,
+        get_header: Callable[[str], str | None],
+        status: int,
+    ) -> tuple[PaymentResponseContext | None, SettleResponse | None]:
+        settle_response: SettleResponse | None = None
+        try:
+            settle_response = self.get_payment_settle_response(get_header)
+        except ValueError:
+            pass
+
+        if payment_payload.x402_version == 1:
+            return None, settle_response
+
+        payment_required: PaymentRequired | PaymentRequiredV1 | None = None
+        if settle_response is None and status == 402:
+            try:
+                payment_required = self.get_payment_required_response(get_header)
+            except ValueError:
+                pass
+
+        if settle_response is None and payment_required is None:
+            return None, settle_response
+
+        requirements = payment_payload.accepted
+        if requirements is None:
+            raise ValueError("Invalid x402 v2 payment payload: missing `accepted`")
+
+        return (
+            PaymentResponseContext(
+                payment_payload=payment_payload,
+                requirements=requirements,
+                settle_response=settle_response,
+                payment_required=payment_required,
+            ),
+            settle_response,
+        )

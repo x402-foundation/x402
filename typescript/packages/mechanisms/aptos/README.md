@@ -1,4 +1,4 @@
-# @x402/aptos
+# `@x402/aptos` [![npm version](https://img.shields.io/npm/v/%40x402%2Faptos.svg)](https://www.npmjs.com/package/@x402/aptos)
 
 Aptos implementation of the x402 payment protocol.
 

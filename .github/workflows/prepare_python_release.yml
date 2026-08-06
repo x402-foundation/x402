@@ -1,0 +1,145 @@
+name: Prepare Python Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Python SDK release version in X.Y.Z format. Leave blank to use bump."
+        required: false
+        type: string
+      bump:
+        description: "Version bump to use when version is blank. Scheduled releases always use minor."
+        required: false
+        default: minor
+        type: choice
+        options:
+          - minor
+          - patch
+  schedule:
+    - cron: "0 14 * * 5"
+
+permissions:
+  contents: write
+  pull-requests: write
+  id-token: none
+
+concurrency:
+  group: prepare-python-release
+  cancel-in-progress: false
+
+jobs:
+  prepare-python-release:
+    runs-on: ubuntu-latest
+    if: github.repository == 'x402-foundation/x402' && github.ref == 'refs/heads/main'
+
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          fetch-depth: 0
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86 # v5.4.2
+        with:
+          enable-cache: true
+          cache-dependency-glob: "python/x402/uv.lock"
+
+      - name: Set up Python
+        working-directory: ./python/x402
+        run: uv python install
+
+      - name: Install dependencies
+        working-directory: ./python/x402
+        run: uv sync --all-extras --dev
+
+      - name: Prepare release branch
+        id: branch
+        run: |
+          set -euo pipefail
+
+          branch="release/python-$(date -u +%F)-${GITHUB_RUN_NUMBER}"
+          echo "branch=${branch}" >> "${GITHUB_OUTPUT}"
+
+      - name: Prepare Python release files
+        id: prep
+        env:
+          GH_TOKEN: ${{ github.token }}
+          INPUT_VERSION: ${{ github.event_name == 'workflow_dispatch' && inputs.version || '' }}
+          INPUT_BUMP: ${{ github.event_name == 'workflow_dispatch' && inputs.bump || 'minor' }}
+        run: |
+          set -euo pipefail
+
+          if [[ -n "${INPUT_VERSION}" ]]; then
+            python3 scripts/prepare-python-release.py --version "${INPUT_VERSION}"
+          else
+            python3 scripts/prepare-python-release.py --bump "${INPUT_BUMP}"
+          fi
+
+          version="$(
+            uv run python - <<'PY'
+          from pathlib import Path
+          import re
+
+          pyproject = Path("pyproject.toml")
+          match = re.search(r'^version = "([^"]+)"$', pyproject.read_text(), re.MULTILINE)
+          if match is None:
+              raise SystemExit("Could not read Python SDK version from pyproject.toml")
+          print(match.group(1))
+          PY
+          )"
+
+          echo "version=${version}" >> "${GITHUB_OUTPUT}"
+
+      - name: Create GitHub-signed release commit
+        id: commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BRANCH: ${{ steps.branch.outputs.branch }}
+        run: |
+          set -euo pipefail
+
+          paths=(
+            python/x402/pyproject.toml
+            python/x402/uv.lock
+            python/x402/__init__.py
+            python/x402/CHANGELOG.md
+            python/x402/changelog.d
+          )
+
+          git status --short -- "${paths[@]}"
+          if git diff --quiet HEAD -- "${paths[@]}"; then
+            echo "committed=false" >> "${GITHUB_OUTPUT}"
+            exit 0
+          fi
+
+          python3 .github/scripts/create-github-release-commit.py \
+            --branch "${BRANCH}" \
+            --message "chore: version python package" \
+            "${paths[@]}"
+
+          echo "committed=true" >> "${GITHUB_OUTPUT}"
+
+      - name: Create release PR
+        if: steps.commit.outputs.committed == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BRANCH: ${{ steps.branch.outputs.branch }}
+          VERSION: ${{ steps.prep.outputs.version }}
+          BASE_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          set -euo pipefail
+
+          title="chore: prepare Python SDK release ${VERSION}"
+          body="$(
+            cat <<EOF
+          ## Summary
+          Bumps the Python SDK package version to ${VERSION}.
+          EOF
+          )"
+
+          gh pr create \
+            --repo "${GITHUB_REPOSITORY}" \
+            --base "${BASE_BRANCH}" \
+            --head "${BRANCH}" \
+            --title "${title}" \
+            --body "${body}"

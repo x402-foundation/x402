@@ -4,16 +4,20 @@ import (
 	"context"
 	"fmt"
 
-	x402 "github.com/x402-foundation/x402/go"
-	"github.com/x402-foundation/x402/go/mechanisms/evm"
-	"github.com/x402-foundation/x402/go/types"
+	x402 "github.com/x402-foundation/x402/go/v2"
+	"github.com/x402-foundation/x402/go/v2/mechanisms/evm"
+	"github.com/x402-foundation/x402/go/v2/types"
 )
 
 // ExactEvmSchemeConfig holds configuration for the ExactEvmScheme facilitator
 type ExactEvmSchemeConfig struct {
-	// DeployERC4337WithEIP6492 enables automatic deployment of ERC-4337 smart wallets
-	// via EIP-6492 when encountering undeployed contract signatures during settlement
-	DeployERC4337WithEIP6492 bool
+	// EIP6492AllowedFactories is the allowlist of factory contract addresses (hex strings,
+	// case-insensitive) that the facilitator will call when deploying an undeployed smart wallet
+	// via ERC-6492. A non-empty list enables ERC-4337 smart wallet deployment. An empty list
+	// (the default) denies all factory deployment calls. Facilitators must explicitly list every
+	// factory they trust to prevent arbitrary transaction injection via attacker-controlled
+	// ERC-6492 signature wrappers.
+	EIP6492AllowedFactories []string
 	// SimulateInSettle reruns transfer simulation during settle. Verify always simulates.
 	SimulateInSettle bool
 }
@@ -108,5 +112,5 @@ func (f *ExactEvmScheme) Settle(
 		})
 	}
 
-	return f.settleEIP3009(ctx, payload, requirements)
+	return f.settleEIP3009(ctx, payload, requirements, fctx)
 }

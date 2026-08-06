@@ -5,17 +5,18 @@ import (
 	"encoding/json"
 	"fmt"
 	"math/rand"
+	"net"
 	"net/http"
 	"os"
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
-	x402 "github.com/x402-foundation/x402/go"
-	"github.com/x402-foundation/x402/go/extensions/bazaar"
-	x402http "github.com/x402-foundation/x402/go/http"
-	mcp402 "github.com/x402-foundation/x402/go/mcp"
-	evm "github.com/x402-foundation/x402/go/mechanisms/evm/exact/server"
-	"github.com/x402-foundation/x402/go/types"
+	x402 "github.com/x402-foundation/x402/go/v2"
+	"github.com/x402-foundation/x402/go/v2/extensions/bazaar"
+	x402http "github.com/x402-foundation/x402/go/v2/http"
+	mcp402 "github.com/x402-foundation/x402/go/v2/mcp"
+	evm "github.com/x402-foundation/x402/go/v2/mechanisms/evm/exact/server"
+	"github.com/x402-foundation/x402/go/v2/types"
 )
 
 // getWeatherData simulates fetching weather data for a city.
@@ -217,11 +218,21 @@ func main() {
 	// Mount SSE handler as catch-all
 	mux.Handle("/", sseHandler)
 
+	// Bind the socket first and only then print the "listening" log, so the
+	// e2e harness (which treats this log line as the readiness signal)
+	// doesn't consider the server ready before it can actually accept
+	// connections.
+	listener, err := net.Listen("tcp", ":"+port)
+	if err != nil {
+		fmt.Printf("Error starting server: %v\n", err)
+		os.Exit(1)
+	}
+
 	fmt.Printf("Server listening on port %s\n", port)
 	fmt.Printf("SSE endpoint: http://localhost:%s/sse\n", port)
 	fmt.Printf("Health: http://localhost:%s/health\n", port)
 
-	if err := http.ListenAndServe(":"+port, mux); err != nil {
+	if err := http.Serve(listener, mux); err != nil {
 		fmt.Printf("Error starting server: %v\n", err)
 		os.Exit(1)
 	}

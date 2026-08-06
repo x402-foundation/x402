@@ -3,7 +3,13 @@
 import json
 from typing import Any
 
-from ..schemas import PaymentPayload, PaymentRequired, SettleResponse
+from ..schemas import (
+    PaymentPayload,
+    PaymentRequired,
+    PaymentRequiredV1,
+    SettleResponse,
+    parse_payment_required,
+)
 from .types import (
     MCP_PAYMENT_META_KEY,
     MCP_PAYMENT_REQUIRED_CODE,
@@ -57,8 +63,15 @@ def attach_payment_to_meta(params: dict[str, Any], payload: PaymentPayload) -> d
     """
     result = params.copy()
     meta = result.get("_meta", {}).copy() if isinstance(result.get("_meta"), dict) else {}
+    # exclude_none mirrors the HTTP encoder (encode_payment_signature_header uses
+    # model_dump_json(by_alias=True, exclude_none=True)). Without it, optional fields serialize
+    # as explicit nulls (e.g. resource.mimeType: null); strict facilitators — and proxies that
+    # re-marshal this payload into a PAYMENT-SIGNATURE header (CDP Bazaar) — reject such payloads
+    # as 'paymentPayload is invalid'. Keeping the two encoders consistent fixes that.
     meta[MCP_PAYMENT_META_KEY] = (
-        payload.model_dump(by_alias=True) if hasattr(payload, "model_dump") else payload
+        payload.model_dump(by_alias=True, exclude_none=True)
+        if hasattr(payload, "model_dump")
+        else payload
     )
     result["_meta"] = meta
     return result
@@ -122,8 +135,8 @@ def attach_payment_response_to_meta(
 
 def extract_payment_required_from_result(
     result: MCPToolResult,
-) -> PaymentRequired | None:
-    """Extract PaymentRequired from tool result (dual format).
+) -> PaymentRequired | PaymentRequiredV1 | None:
+    """Extract PaymentRequired from tool result (dual format, x402 v1 and v2).
 
     Handles both structuredContent (preferred) and content[0].text (fallback).
     """
@@ -154,14 +167,19 @@ def extract_payment_required_from_result(
 
 def _extract_payment_required_from_object(
     obj: dict[str, Any],
-) -> PaymentRequired | None:
-    """Extract PaymentRequired from object.
+) -> PaymentRequired | PaymentRequiredV1 | None:
+    """Extract PaymentRequired from object (version-aware).
+
+    Dispatches on the declared ``x402Version`` so a v1 server (x402Version=1,
+    ``maxAmountRequired``, legacy network names) parses as ``PaymentRequiredV1`` and a
+    v2 server as ``PaymentRequired``. Hardcoding v2 here previously caused v1
+    payment-required responses to be silently dropped (payment never attempted).
 
     Args:
         obj: Object to extract from
 
     Returns:
-        PaymentRequired if valid, None otherwise
+        PaymentRequired / PaymentRequiredV1 if valid, None otherwise
     """
     # Check for x402Version/x402_version and accepts fields
     if "x402Version" not in obj and "x402_version" not in obj:
@@ -171,10 +189,13 @@ def _extract_payment_required_from_object(
     if not isinstance(accepts, list) or len(accepts) == 0:
         return None
 
+    # parse_payment_required reads the wire field name ("x402Version"); normalize a
+    # snake_case key onto it, defaulting to v2 when the version is absent.
+    version = obj.get("x402Version", obj.get("x402_version"))
+    data = {k: v for k, v in obj.items() if k != "x402_version"}
+    data["x402Version"] = version if version is not None else 2
     try:
-        # Normalize camelCase to snake_case for Pydantic
-        normalized = {("x402_version" if k == "x402Version" else k): v for k, v in obj.items()}
-        return PaymentRequired(**normalized)
+        return parse_payment_required(data)
     except (TypeError, ValueError, KeyError):
         return None
 
@@ -192,6 +213,36 @@ def create_tool_resource_url(tool_name: str, custom_url: str | None = None) -> s
     if custom_url:
         return custom_url
     return f"mcp://tool/{tool_name}"
+
+
+def build_tool_resource_info(
+    tool_name: str,
+    config_resource: Any | None,
+) -> Any:
+    """Build ResourceInfo for an MCP tool from wrapper config.
+
+    Args:
+        tool_name: Name of the MCP tool
+        config_resource: Optional MCP wrapper resource metadata
+
+    Returns:
+        Schema ResourceInfo for PaymentRequired / matching
+    """
+    from ..schemas import ResourceInfo as SchemaResourceInfo
+
+    resource_info = SchemaResourceInfo(
+        url=create_tool_resource_url(tool_name, config_resource.url if config_resource else None),
+        description=(config_resource.description if config_resource else f"Tool: {tool_name}"),
+        mime_type=(config_resource.mime_type if config_resource else "application/json"),
+    )
+    if config_resource is not None:
+        if config_resource.service_name is not None:
+            resource_info.service_name = config_resource.service_name
+        if config_resource.tags is not None:
+            resource_info.tags = config_resource.tags
+        if config_resource.icon_url is not None:
+            resource_info.icon_url = config_resource.icon_url
+    return resource_info
 
 
 def is_object(value: Any) -> bool:
@@ -235,7 +286,7 @@ def create_payment_required_error(
     )
 
 
-def extract_payment_required_from_error(error: Any) -> PaymentRequired | None:
+def extract_payment_required_from_error(error: Any) -> PaymentRequired | PaymentRequiredV1 | None:
     """Extract PaymentRequired from an MCP JSON-RPC error.
 
     This function checks if the error is a 402 payment required error and extracts

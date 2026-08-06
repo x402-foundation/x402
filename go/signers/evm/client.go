@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/ethereum/go-ethereum"
+	"github.com/ethereum/go-ethereum/accounts"
 	"github.com/ethereum/go-ethereum/accounts/abi"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/math"
@@ -16,7 +17,7 @@ import (
 	"github.com/ethereum/go-ethereum/ethclient"
 	"github.com/ethereum/go-ethereum/signer/core/apitypes"
 
-	x402evm "github.com/x402-foundation/x402/go/mechanisms/evm"
+	x402evm "github.com/x402-foundation/x402/go/v2/mechanisms/evm"
 )
 
 // ClientSigner implements x402evm.ClientEvmSigner using an ECDSA private key.
@@ -79,6 +80,16 @@ func (s *ClientSigner) Address() string {
 	return s.address.Hex()
 }
 
+// SignMessage signs a UTF-8 message using the EIP-191 personal-sign format.
+func (s *ClientSigner) SignMessage(_ context.Context, message string) (string, error) {
+	signature, err := crypto.Sign(accounts.TextHash([]byte(message)), s.privateKey)
+	if err != nil {
+		return "", fmt.Errorf("failed to sign message: %w", err)
+	}
+	signature[64] += 27
+	return "0x" + common.Bytes2Hex(signature), nil
+}
+
 // SignTypedData signs EIP-712 typed data.
 //
 // Args:
@@ -125,14 +136,30 @@ func (s *ClientSigner) SignTypedData(
 		typedData.Types[typeName] = typedFields
 	}
 
-	// Add EIP712Domain type if not present
+	// Add EIP712Domain type if not present.
+	//
+	// Domain fields are conditionally declared based on which TypedDataDomain
+	// fields are populated. go-ethereum's `apitypes.TypedDataDomain.Map()`
+	// drops empty Name/Version/VerifyingContract and nil ChainID; if the type
+	// list still names them, `HashStruct("EIP712Domain", ...)` errors with
+	// "provided data '<nil>' doesn't match type 'string'" (Permit2's no-version
+	// domain is the canonical case). Mirrors viem's `getTypesForEIP712Domain`
+	// and the same fix applied to `go/mechanisms/evm/eip712.go`.
 	if _, exists := typedData.Types["EIP712Domain"]; !exists {
-		typedData.Types["EIP712Domain"] = []apitypes.Type{
-			{Name: "name", Type: "string"},
-			{Name: "version", Type: "string"},
-			{Name: "chainId", Type: "uint256"},
-			{Name: "verifyingContract", Type: "address"},
+		domainFields := make([]apitypes.Type, 0, 4)
+		if typedData.Domain.Name != "" {
+			domainFields = append(domainFields, apitypes.Type{Name: "name", Type: "string"})
 		}
+		if typedData.Domain.Version != "" {
+			domainFields = append(domainFields, apitypes.Type{Name: "version", Type: "string"})
+		}
+		if typedData.Domain.ChainId != nil {
+			domainFields = append(domainFields, apitypes.Type{Name: "chainId", Type: "uint256"})
+		}
+		if typedData.Domain.VerifyingContract != "" {
+			domainFields = append(domainFields, apitypes.Type{Name: "verifyingContract", Type: "address"})
+		}
+		typedData.Types["EIP712Domain"] = domainFields
 	}
 
 	// Hash the struct data
@@ -230,6 +257,13 @@ func (s *ClientSigner) SignTransaction(ctx context.Context, tx *types.Transactio
 	}
 
 	return rlpBytes, nil
+}
+
+// HasRPCClient reports whether the signer is backed by an ethclient. When false, its
+// RPC-dependent methods (ReadContract, GetTransactionCount) are non-functional, so callers
+// such as evm.ResolveReadSigner fall back to a scheme-configured RPC URL.
+func (s *ClientSigner) HasRPCClient() bool {
+	return s.ethClient != nil
 }
 
 // ReadContract reads data from a smart contract.

@@ -23,42 +23,42 @@ There are pre-configured examples available in the x402 repo for both [Node.js](
     Install the [x402 Express middleware package](https://www.npmjs.com/package/@x402/express).
 
     ```bash
-    npm install @x402/express @x402/core @x402/evm @x402/svm
+    npm install @x402/express @x402/core @x402/evm @x402/svm @x402/avm
     ```
   </Tab>
   <Tab title="Next.js">
     Install the [x402 Next.js middleware package](https://www.npmjs.com/package/@x402/next).
 
     ```bash
-    npm install @x402/next @x402/core @x402/evm @x402/svm
+    npm install @x402/next @x402/core @x402/evm @x402/svm @x402/avm
     ```
   </Tab>
   <Tab title="Hono">
     Install the [x402 Hono middleware package](https://www.npmjs.com/package/@x402/hono).
 
     ```bash
-    npm install @x402/hono @x402/core @x402/evm @x402/svm
+    npm install @x402/hono @x402/core @x402/evm @x402/svm @x402/avm
     ```
   </Tab>
   <Tab title="Fastify">
     Install the [x402 Fastify middleware package](https://www.npmjs.com/package/@x402/fastify).
 
     ```bash
-    npm install @x402/fastify @x402/core @x402/evm @x402/svm
+    npm install @x402/fastify @x402/core @x402/evm @x402/svm @x402/avm
     ```
   </Tab>
   <Tab title="Go (Gin)">
     Add the x402 Go module to your project:
 
     ```bash
-    go get github.com/x402-foundation/x402/go
+    go get github.com/x402-foundation/x402/go/v2
     ```
   </Tab>
   <Tab title="Go (Echo)">
     Add the x402 Go module to your project:
 
     ```bash
-    go get github.com/x402-foundation/x402/go
+    go get github.com/x402-foundation/x402/go/v2
     ```
   </Tab>
   <Tab title="FastAPI">
@@ -101,6 +101,7 @@ Integrate the payment middleware into your application. You will need to provide
     import { paymentMiddleware, x402ResourceServer } from "@x402/express";
     import { ExactEvmScheme } from "@x402/evm/exact/server";
     import { ExactSvmScheme } from "@x402/svm/exact/server";
+    import { ExactAvmScheme } from "@x402/avm/exact/server";
     import { HTTPFacilitatorClient } from "@x402/core/server";
 
     const app = express();
@@ -108,6 +109,7 @@ Integrate the payment middleware into your application. You will need to provide
     // Your receiving wallet addresses
     const evmAddress = "0xYourEvmAddress";
     const svmAddress = "YourSolanaAddress";
+    const avmAddress = "YourAlgorandAddress";
 
     // Create facilitator client (testnet)
     const facilitatorClient = new HTTPFacilitatorClient({
@@ -131,6 +133,12 @@ Integrate the payment middleware into your application. You will need to provide
                 network: "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1", // Solana Devnet
                 payTo: svmAddress,
               },
+              {
+                scheme: "exact",
+                price: "$0.001",
+                network: "algorand:SGO1GKSzyE7IEPItTxCByw9x8FmnrCDe", // Algorand Testnet
+                payTo: avmAddress,
+              },
             ],
             description: "Weather data",
             mimeType: "application/json",
@@ -138,7 +146,8 @@ Integrate the payment middleware into your application. You will need to provide
         },
         new x402ResourceServer(facilitatorClient)
           .register("eip155:84532", new ExactEvmScheme())
-          .register("solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1", new ExactSvmScheme()),
+          .register("solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1", new ExactSvmScheme())
+          .register("algorand:SGO1GKSzyE7IEPItTxCByw9x8FmnrCDe", new ExactAvmScheme()),
       ),
     );
 
@@ -380,11 +389,11 @@ Integrate the payment middleware into your application. You will need to provide
         "net/http"
         "time"
 
-        x402 "github.com/x402-foundation/x402/go"
-        x402http "github.com/x402-foundation/x402/go/http"
-        ginmw "github.com/x402-foundation/x402/go/http/gin"
-        evm "github.com/x402-foundation/x402/go/mechanisms/evm/exact/server"
-        svm "github.com/x402-foundation/x402/go/mechanisms/svm/exact/server"
+        x402 "github.com/x402-foundation/x402/go/v2"
+        x402http "github.com/x402-foundation/x402/go/v2/http"
+        ginmw "github.com/x402-foundation/x402/go/v2/http/gin"
+        evm "github.com/x402-foundation/x402/go/v2/mechanisms/evm/exact/server"
+        svm "github.com/x402-foundation/x402/go/v2/mechanisms/svm/exact/server"
         "github.com/gin-gonic/gin"
     )
 
@@ -454,11 +463,11 @@ Integrate the payment middleware into your application. You will need to provide
         "net/http"
         "time"
 
-        x402 "github.com/x402-foundation/x402/go"
-        x402http "github.com/x402-foundation/x402/go/http"
-        nethttpmw "github.com/x402-foundation/x402/go/http/nethttp"
-        evm "github.com/x402-foundation/x402/go/mechanisms/evm/exact/server"
-        svm "github.com/x402-foundation/x402/go/mechanisms/svm/exact/server"
+        x402 "github.com/x402-foundation/x402/go/v2"
+        x402http "github.com/x402-foundation/x402/go/v2/http"
+        nethttpmw "github.com/x402-foundation/x402/go/v2/http/nethttp"
+        evm "github.com/x402-foundation/x402/go/v2/mechanisms/evm/exact/server"
+        svm "github.com/x402-foundation/x402/go/v2/mechanisms/svm/exact/server"
     )
 
     func main() {
@@ -532,11 +541,11 @@ Integrate the payment middleware into your application. You will need to provide
         "net/http"
         "time"
 
-        x402 "github.com/x402-foundation/x402/go"
-        x402http "github.com/x402-foundation/x402/go/http"
-        echomw "github.com/x402-foundation/x402/go/http/echo"
-        evm "github.com/x402-foundation/x402/go/mechanisms/evm/exact/server"
-        svm "github.com/x402-foundation/x402/go/mechanisms/svm/exact/server"
+        x402 "github.com/x402-foundation/x402/go/v2"
+        x402http "github.com/x402-foundation/x402/go/v2/http"
+        echomw "github.com/x402-foundation/x402/go/v2/http/echo"
+        evm "github.com/x402-foundation/x402/go/v2/mechanisms/evm/exact/server"
+        svm "github.com/x402-foundation/x402/go/v2/mechanisms/svm/exact/server"
         "github.com/labstack/echo/v4"
     )
 
@@ -745,8 +754,8 @@ Integrate the payment middleware into your application. You will need to provide
 ```typescript
 interface RouteConfig {
   accepts: Array<{
-    scheme: string;           // Payment scheme: "exact" or "upto"
-    price: string;            // For "exact": the fixed price. For "upto": the maximum authorized amount.
+    scheme: string;           // Payment scheme: "exact", "upto", or "batch-settlement"
+    price: string;            // For "exact": the fixed price. For "upto" / "batch-settlement": the per-request maximum authorized amount.
     network: string;          // Network in CAIP-2 format (e.g., "eip155:84532" or "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1")
     payTo: string;            // Your wallet address
   }>;
@@ -758,13 +767,15 @@ interface RouteConfig {
 
 When a request is made to these routes without payment, your server will respond with the HTTP 402 Payment Required code and payment instructions.
 
-### Payment Schemes: Exact vs Upto
+### Payment Schemes: Exact, Upto, and Batch Settlement
 
-x402 supports two payment schemes that control how charges are calculated:
+x402 supports several payment schemes that control how charges are calculated:
 
-**`exact`** (default) — The client pays the exact advertised price. This is the simplest scheme and works across all networks (EVM, SVM, Stellar, Aptos) and all SDKs (TypeScript, Go, Python). Best for fixed-price endpoints where the cost is known upfront.
+**`exact`** (default) — The client pays the exact advertised price. This is the simplest scheme and works on all supported networks — see [Networks & Token Support](/core-concepts/network-and-token-support). TypeScript supports every network; Go and Python support a subset — see [SDK Features](/sdk-features). Best for fixed-price endpoints where the cost is known upfront.
 
-**`upto`** — The client authorizes a **maximum** amount, but the server settles **only what was actually used**. This enables usage-based billing where the final charge depends on work performed (LLM token count, compute time, bytes served, etc.). Currently available on EVM networks only (Permit2), in TypeScript and Go SDKs.
+**`upto`** — The client authorizes a **maximum** amount, but the server settles **only what was actually used**. This enables usage-based billing where the final charge depends on work performed (LLM token count, compute time, bytes served, etc.). Currently available on EVM networks only (Permit2), in TypeScript, Go, and Python SDKs.
+
+**`batch-settlement`** — For high-frequency or repeated micropayment traffic, the buyer funds a channel once, signs off-chain vouchers per request, and the seller settles onchain in batches (not every request). Each call still advertises a per-request maximum (`price`); you can charge actual usage up to that cap using the same **`setSettlementOverrides`** pattern as `upto`. See **[Batch settlement](/schemes/batch-settlement)** and the [Payment Schemes overview](/schemes/overview).
 
 The examples in step 2 above all use the `exact` scheme. To use `upto` instead, there are two key differences:
 
@@ -843,10 +854,10 @@ The examples in step 2 above all use the `exact` scheme. To use `upto` instead, 
         "net/http"
         "time"
 
-        x402 "github.com/x402-foundation/x402/go"
-        x402http "github.com/x402-foundation/x402/go/http"
-        ginmw "github.com/x402-foundation/x402/go/http/gin"
-        uptoevm "github.com/x402-foundation/x402/go/mechanisms/evm/upto/server"
+        x402 "github.com/x402-foundation/x402/go/v2"
+        x402http "github.com/x402-foundation/x402/go/v2/http"
+        ginmw "github.com/x402-foundation/x402/go/v2/http/gin"
+        uptoevm "github.com/x402-foundation/x402/go/v2/mechanisms/evm/upto/server"
         "github.com/gin-gonic/gin"
     )
 
@@ -907,6 +918,76 @@ The examples in step 2 above all use the `exact` scheme. To use `upto` instead, 
     }
     ```
   </Tab>
+  <Tab title="FastAPI">
+    ```python
+    import random
+    from typing import Any
+
+    from fastapi import FastAPI
+    from starlette.responses import Response
+
+    from x402.http import FacilitatorConfig, HTTPFacilitatorClient, PaymentOption
+    from x402.http.middleware.fastapi import PaymentMiddlewareASGI, set_settlement_overrides
+    from x402.http.types import RouteConfig
+    from x402.mechanisms.evm.upto import UptoEvmServerScheme
+    from x402.schemas import Network
+    from x402.server import x402ResourceServer
+
+    app = FastAPI()
+
+    evm_address = "0xYourEvmAddress"
+    EVM_NETWORK: Network = "eip155:84532"  # Base Sepolia
+
+    facilitator = HTTPFacilitatorClient(
+        FacilitatorConfig(url="https://x402.org/facilitator")
+    )
+
+    server = x402ResourceServer(facilitator)
+    server.register(EVM_NETWORK, UptoEvmServerScheme())
+
+    max_price = "$0.10"  # Maximum the client authorizes (10 cents)
+
+    routes: dict[str, RouteConfig] = {
+        "GET /api/generate": RouteConfig(
+            accepts=[
+                PaymentOption(
+                    scheme="upto",
+                    pay_to=evm_address,
+                    price=max_price,
+                    network=EVM_NETWORK,
+                ),
+            ],
+            mime_type="application/json",
+            description="AI text generation — billed by token usage",
+        ),
+    }
+
+    app.add_middleware(PaymentMiddlewareASGI, routes=routes, server=server)
+
+
+    @app.get("/api/generate")
+    async def generate(response: Response) -> dict[str, Any]:
+        # Simulate variable-cost work (LLM tokens, compute time, etc.)
+        max_amount_atomic = 100000  # 10 cents in 6-decimal USDC atomic units
+        actual_usage = random.randint(0, max_amount_atomic)
+
+        # Settle only the actual usage — the client is never charged more than this
+        set_settlement_overrides(response, {"amount": str(actual_usage)})
+
+        return {
+            "result": "Here is your generated text...",
+            "usage": {
+                "authorizedMaxAtomic": str(max_amount_atomic),
+                "actualChargedAtomic": str(actual_usage),
+            },
+        }
+
+
+    if __name__ == "__main__":
+        import uvicorn
+        uvicorn.run(app, host="0.0.0.0", port=4021)
+    ```
+  </Tab>
 </Tabs>
 
 The `setSettlementOverrides` amount supports three formats:
@@ -915,7 +996,7 @@ The `setSettlementOverrides` amount supports three formats:
 * **Percentage of authorized maximum** — e.g., `"50%"` settles 50% of `PaymentRequirements.amount`. Supports up to two decimal places (e.g., `"33.33%"`). The result is floored to the nearest atomic unit.
 * **Dollar price** — e.g., `"$0.05"` converts a USD-denominated price to atomic units. This format works when you configured your route with `$`-prefixed pricing (e.g., `price: "$0.10"`). Token decimals are determined from the registered scheme. The result is rounded to the nearest atomic unit.
 
-The resolved amount must always be &lt;= the authorized maximum. If the amount is `"0"`, no on-chain transaction occurs and the client is not charged.
+The resolved amount must always be &lt;= the authorized maximum. If the amount is `"0"`, no onchain transaction occurs and the client is not charged.
 
 ### 3. Test Your Integration
 
@@ -929,36 +1010,50 @@ To verify:
 
 ### 4. Enhance Discovery with Metadata (Recommended)
 
-When using a facilitator that supports the Bazaar extension, your endpoints can be listed in the [x402 Bazaar](/extensions/bazaar), the discovery layer that helps buyers and AI agents find services. To enable discovery:
+When using a facilitator that supports the Bazaar extension, your endpoints can be listed in the [x402 Bazaar](/extensions/bazaar), the discovery layer that helps buyers and AI agents find services.
+
+**For HTTP endpoints**, add the discovery extension to your route config:
 
 ```typescript
+import { declareDiscoveryExtension } from "@x402/extensions/bazaar";
+
 {
   "GET /weather": {
-    accepts: [
-      {
-        scheme: "exact",
-        price: "$0.001",
-        network: "eip155:8453",
-        payTo: "0xYourAddress",
-      },
-      {
-        scheme: "exact",
-        price: "$0.001",
-        network: "solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp",  // Solana mainnet
-        payTo: "YourSolanaAddress",
-      },
-    ],
+    accepts: [{ scheme: "exact", price: "$0.001", network: "eip155:8453", payTo: "0xYourAddress" }],
     description: "Get real-time weather data including temperature, conditions, and humidity",
     mimeType: "application/json",
     extensions: {
-      bazaar: {
-        discoverable: true,
-        category: "weather",
-        tags: ["forecast", "real-time"],
-      },
+      ...declareDiscoveryExtension({
+        input: { city: "San Francisco" },
+        inputSchema: {
+          properties: { city: { type: "string", description: "City name" } },
+          required: ["city"],
+        },
+      }),
     },
   },
 }
+```
+
+**For MCP tools**, pass the discovery extension in your payment wrapper config:
+
+```typescript
+import { createPaymentWrapper } from "@x402/mcp";
+import { declareDiscoveryExtension } from "@x402/extensions/bazaar";
+
+const paid = createPaymentWrapper(resourceServer, {
+  accepts,
+  resource: { url: "mcp://tool/get_weather", description: "Get current weather for a city" },
+  extensions: declareDiscoveryExtension({
+    toolName: "get_weather",
+    description: "Get current weather for a city",
+    transport: "sse",
+    inputSchema: {
+      properties: { city: { type: "string", description: "City name" } },
+      required: ["city"],
+    },
+  }),
+});
 ```
 
 Learn more about the discovery layer in the [Bazaar documentation](/extensions/bazaar).
@@ -968,6 +1063,12 @@ Learn more about the discovery layer in the [Bazaar documentation](/extensions/b
 * If you run into trouble, check out the examples in the [repo](https://github.com/x402-foundation/x402/tree/main/examples) for more context and full code.
 * Run `npm install` or `go mod tidy` to install dependencies
 
+### 6. Enable Signed Offers & Receipts
+
+The [Signed Offers & Receipts extension](/extensions/offer-receipt) adds cryptographic proof-of-interaction to your payment flows. When enabled, your server automatically signs **offers** on every `402` response (committing to payment terms) and a **receipt** on every `200` response (confirming service delivery).
+
+This creates portable, verifiable artifacts that clients and third parties can use for auditing, dispute resolution, and increasing the reputation of your service. See the [full setup guide](/extensions/offer-receipt) for installation, configuration, and signer authorization options.
+
 ---
 
 ## Running on Mainnet
@@ -976,7 +1077,7 @@ Once you've tested your integration on testnet, you're ready to accept real paym
 
 ### 1. Update the Facilitator URL
 
-For mainnet, use a production facilitator. See the [x402 Ecosystem](https://www.x402.org/ecosystem?filter=facilitators) for available options. Example using one facilitator:
+For mainnet, use a production facilitator. See [Facilitators](/dev-tools/facilitators) for selected options. Example using one facilitator:
 
 <Tabs>
   <Tab title="Node.js">
@@ -1024,6 +1125,8 @@ For mainnet, use a production facilitator. See the [x402 Ecosystem](https://www.
     ```
   </Tab>
 </Tabs>
+
+Do not reuse `https://x402.org/facilitator` for mainnet routes. The default x402.org facilitator is intended for testnet development only.
 
 ### 2. Update Your Network Identifier
 
@@ -1089,8 +1192,8 @@ For multi-network support, register both EVM and SVM schemes:
   <Tab title="Go (Gin)">
     ```go
     import (
-        evm "github.com/x402-foundation/x402/go/mechanisms/evm/exact/server"
-        svm "github.com/x402-foundation/x402/go/mechanisms/svm/exact/server"
+        evm "github.com/x402-foundation/x402/go/v2/mechanisms/evm/exact/server"
+        svm "github.com/x402-foundation/x402/go/v2/mechanisms/svm/exact/server"
     )
 
     r.Use(ginmw.X402Payment(ginmw.Config{
@@ -1105,8 +1208,8 @@ For multi-network support, register both EVM and SVM schemes:
   <Tab title="Go (Echo)">
     ```go
     import (
-        evm "github.com/coinbase/x402/go/mechanisms/evm/exact/server"
-        svm "github.com/coinbase/x402/go/mechanisms/svm/exact/server"
+        evm "github.com/x402-foundation/x402/go/v2/mechanisms/evm/exact/server"
+        svm "github.com/x402-foundation/x402/go/v2/mechanisms/svm/exact/server"
     )
 
     e.Use(echomw.X402Payment(echomw.Config{
@@ -1165,10 +1268,10 @@ See [Network Support](/core-concepts/network-and-token-support) for the full lis
 
 * Check out the [Advanced Example](https://github.com/x402-foundation/x402/tree/main/examples/typescript/servers/advanced) for a more complex payment flow
 * Explore [Advanced Concepts](/advanced-concepts/lifecycle-hooks) like lifecycle hooks for custom logic before/after verification/settlement
-* Explore [Extensions](/extensions/bazaar) like Bazaar for service discovery
+* Explore Extensions like [Bazaar](/extensions/bazaar) for service discovery and [Signed Offers & Receipts](/extensions/offer-receipt) for verifiable trust and reputation
 * Get started as a [buyer](/getting-started/quickstart-for-buyers)
 
-For questions or support, join our [Discord](https://discord.gg/cdp).
+For questions or support, join our [Slack](http://slack.x402.org/).
 
 ### Summary
 
@@ -1176,7 +1279,7 @@ This quickstart covered:
 
 * Installing the x402 SDK and relevant middleware
 * Adding payment middleware to your API and configuring it
-* Choosing between `exact` (fixed-price) and `upto` (usage-based) payment schemes
+* Choosing between `exact` (fixed-price), `upto` (usage-based per settlement), and `batch-settlement` (EVM micropayments with batched redemption) payment schemes
 * Testing your integration
 * Deploying to mainnet with CAIP-2 network identifiers
 

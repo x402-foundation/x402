@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { withX402 } from "@x402/next";
 import { declareDiscoveryExtension } from "@x402/extensions/bazaar";
-import { server, EVM_PAYEE_ADDRESS, EVM_NETWORK } from "../../../proxy";
+import { server, EVM_PAYEE_ADDRESS, EVM_NETWORK } from "@/proxy";
 
 /**
  * Handler for the protected endpoint

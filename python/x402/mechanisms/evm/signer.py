@@ -109,6 +109,7 @@ class FacilitatorEvmSigner(Protocol):
         abi: list[dict[str, Any]],
         function_name: str,
         *args: Any,
+        data_suffix: str | None = None,
     ) -> str:
         """Execute a smart contract transaction.
 
@@ -117,6 +118,7 @@ class FacilitatorEvmSigner(Protocol):
             abi: Contract ABI.
             function_name: Function to call.
             *args: Function arguments.
+            data_suffix: Optional hex suffix appended to the encoded calldata.
 
         Returns:
             Transaction hash.

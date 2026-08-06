@@ -5,9 +5,13 @@ import type {
   Network,
   SchemeNetworkClient,
 } from "@x402/core/types";
-import { isPaymentRequired } from "@x402/core/schemas";
+import { parsePaymentRequired } from "@x402/core/schemas";
 import { x402Client } from "@x402/core/client";
-import type { x402ClientConfig } from "@x402/core/client";
+import type {
+  PaymentPolicy,
+  SelectPaymentRequirements,
+  x402ClientConfig,
+} from "@x402/core/client";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 
 import type {
@@ -17,7 +21,11 @@ import type {
   PaymentRequiredHook,
   PaymentRequiredContext,
 } from "../types";
-import { MCP_PAYMENT_REQUIRED_CODE, MCP_PAYMENT_META_KEY } from "../types";
+import {
+  MCP_PAYMENT_REQUIRED_CODE,
+  MCP_PAYMENT_META_KEY,
+  isPaymentRequiredError,
+} from "../types";
 import { extractPaymentResponseFromMeta } from "../utils";
 
 // ============================================================================
@@ -463,15 +471,33 @@ export class x402MCPClient {
     options?: { timeout?: number; signal?: AbortSignal; resetTimeoutOnProgress?: boolean },
   ): Promise<x402MCPToolCallResult> {
     // First attempt without payment
-    const result = await this.mcpClient.callTool({ name, arguments: args }, undefined, options);
+    let result: MCPCallToolResult;
+    let paymentRequired: PaymentRequired | null = null;
 
-    // Validate result structure
-    if (!isMCPCallToolResult(result)) {
-      throw new Error("Invalid MCP tool result: missing content array");
+    try {
+      const rawResult = await this.mcpClient.callTool(
+        { name, arguments: args },
+        undefined,
+        options,
+      );
+
+      if (!isMCPCallToolResult(rawResult)) {
+        throw new Error("Invalid MCP tool result: missing content array");
+      }
+
+      result = rawResult;
+      paymentRequired = this.extractPaymentRequiredFromResult(result);
+    } catch (error: unknown) {
+      // Handle MCP UrlElicitationRequired (-32042) used for payment flows (SEP-1036).
+      // The MCP SDK throws McpError for -32042 with error.data preserved.
+      const extracted = this.extractPaymentRequiredFromError(error);
+      if (extracted) {
+        paymentRequired = extracted;
+        result = { content: [], isError: true };
+      } else {
+        throw error;
+      }
     }
-
-    // Check if this is a payment required response (isError with payment_required in content)
-    const paymentRequired = this.extractPaymentRequiredFromResult(result);
 
     if (!paymentRequired) {
       // Not a payment required response, forward original MCP response as-is
@@ -599,6 +625,104 @@ export class x402MCPClient {
       });
     }
 
+    const paymentRequired = this.extractPaymentRequiredFromResult(result);
+    const recoveryResult = paymentPayload.accepted
+      ? await this._paymentClient.handlePaymentResponse({
+        paymentPayload,
+        requirements: paymentPayload.accepted,
+        ...(paymentResponse ? { settleResponse: paymentResponse } : {}),
+        ...(paymentRequired ? { paymentRequired } : {}),
+      })
+      : undefined;
+
+    // A paid attempt can return a corrective 402. Scheme hooks recover local
+    // state from it, then we retry once with a fresh payload from that response.
+    // Corrective terms (amount/asset/payTo) are server-controlled — re-run the
+    // same approval / abort gates used for the first payment before signing again.
+    if (recoveryResult?.recovered && paymentRequired) {
+      const correctiveRequiredContext: PaymentRequiredContext = {
+        toolName: name,
+        arguments: args,
+        paymentRequired,
+      };
+      let correctivePayload: PaymentPayload | undefined;
+      for (const hook of this.paymentRequiredHooks) {
+        const hookResult = await hook(correctiveRequiredContext);
+        if (hookResult?.abort) {
+          throw new Error("Payment aborted by hook");
+        }
+        if (hookResult?.payment) {
+          correctivePayload = hookResult.payment;
+          break;
+        }
+      }
+      if (!correctivePayload) {
+        const correctiveRequestedContext: PaymentRequestedContext = {
+          toolName: name,
+          arguments: args,
+          paymentRequired,
+        };
+        const correctiveApproved =
+          await this.options.onPaymentRequested(correctiveRequestedContext);
+        if (!correctiveApproved) {
+          throw new Error("Payment request denied");
+        }
+        for (const hook of this.beforePaymentHooks) {
+          await hook(correctiveRequestedContext);
+        }
+        correctivePayload = await this._paymentClient.createPaymentPayload(paymentRequired);
+      }
+
+      const freshPayload = correctivePayload;
+      const retryCallParams = {
+        name,
+        arguments: args,
+        _meta: {
+          [MCP_PAYMENT_META_KEY]: freshPayload,
+        },
+      };
+      const retryResult = await this.mcpClient.callTool(retryCallParams, undefined, options);
+
+      if (!isMCPCallToolResult(retryResult)) {
+        throw new Error("Invalid MCP tool result: missing content array");
+      }
+
+      const retryResultWithMeta: MCPResultWithMeta = {
+        content: retryResult.content,
+        isError: retryResult.isError,
+        _meta: retryResult._meta,
+      };
+      const retryPaymentResponse = extractPaymentResponseFromMeta(retryResultWithMeta);
+
+      for (const hook of this.afterPaymentHooks) {
+        await hook({
+          toolName: name,
+          paymentPayload: freshPayload,
+          result: retryResultWithMeta,
+          settleResponse: retryPaymentResponse,
+        });
+      }
+
+      const retryCorrectivePaymentRequired = this.extractPaymentRequiredFromResult(retryResult);
+      if (freshPayload.accepted) {
+        await this._paymentClient.handlePaymentResponse({
+          paymentPayload: freshPayload,
+          requirements: freshPayload.accepted,
+          ...(retryPaymentResponse ? { settleResponse: retryPaymentResponse } : {}),
+          ...(retryCorrectivePaymentRequired
+            ? { paymentRequired: retryCorrectivePaymentRequired }
+            : {}),
+        });
+      }
+
+      return {
+        content: retryResult.content,
+        isError: retryResult.isError,
+        paymentResponse: retryPaymentResponse ?? undefined,
+        paymentMade: true,
+      };
+    }
+
     // Forward original MCP response content as-is
     return {
       content: result.content,
@@ -642,15 +766,24 @@ export class x402MCPClient {
   ): Promise<PaymentRequired | null> {
     // Note: This actually calls the tool to trigger 402 if paid.
     // If the tool is free, it will execute as a side effect.
-    const result = await this.mcpClient.callTool({ name, arguments: args });
+    try {
+      const result = await this.mcpClient.callTool({ name, arguments: args });
 
-    // Validate result structure
-    if (!isMCPCallToolResult(result)) {
-      return null;
+      if (!isMCPCallToolResult(result)) {
+        return null;
+      }
+
+      return this.extractPaymentRequiredFromResult(result);
+    } catch (error: unknown) {
+      // Handle McpError(-32042) payment challenges; re-throw anything else
+      // so non-payment failures aren't indistinguishable from "free tool"
+      // (mirrors callTool's catch above).
+      const extracted = this.extractPaymentRequiredFromError(error);
+      if (extracted) {
+        return extracted;
+      }
+      throw error;
     }
-
-    // Check if this is a payment required response
-    return this.extractPaymentRequiredFromResult(result);
   }
 
   // ============================================================================
@@ -715,11 +848,30 @@ export class x402MCPClient {
    * @returns PaymentRequired if found, null otherwise
    */
   private extractPaymentRequiredFromObject(obj: Record<string, unknown>): PaymentRequired | null {
-    if (isPaymentRequired(obj)) {
-      return obj as PaymentRequired;
+    // parsePaymentRequired yields the schema (V1 | V2) union; cast to the transport PaymentRequired type
+    const result = parsePaymentRequired(obj);
+    return result.success ? (result.data as PaymentRequired) : null;
+  }
+
+  /**
+   * Extracts PaymentRequired from a thrown MCP error.
+   *
+   * Uses isPaymentRequiredError() to validate the error structure (supports
+   * both 402 and -32042 codes), then extracts PaymentRequired from the
+   * correct location (error.data directly or error.data.x402 for namespaced
+   * -32042 errors).
+   *
+   * @param error - The caught error
+   * @returns PaymentRequired if this is a payment error, null otherwise
+   */
+  private extractPaymentRequiredFromError(error: unknown): PaymentRequired | null {
+    if (!isPaymentRequiredError(error)) {
+      return null;
     }
 
-    return null;
+    const data = "x402" in error.data ? error.data.x402 : error.data;
+    const result = parsePaymentRequired(data);
+    return result.success ? (result.data as PaymentRequired) : null;
   }
 
 }
@@ -743,6 +895,25 @@ export interface x402MCPClientConfig {
     client: SchemeNetworkClient;
     x402Version?: number;
   }>;
+
+  /**
+   * Optional spend / selection policies (same as x402Client.fromConfig).
+   * Use these to cap amount, filter assets/networks, etc.
+   *
+   * @example
+   * ```typescript
+   * policies: [
+   *   (_version, reqs) => reqs.filter(r => BigInt(r.amount) < 1_000_000n),
+   * ],
+   * ```
+   */
+  policies?: PaymentPolicy[];
+
+  /**
+   * Custom selector for which accept entry to pay.
+   * Default (via x402Client) is server-ordered accepts[0] — prefer an explicit selector in production.
+   */
+  paymentRequirementsSelector?: SelectPaymentRequirements;
 
   /**
    * Whether to automatically retry tool calls with payment on 402 errors.
@@ -860,6 +1031,10 @@ export function wrapMCPClientWithPaymentFromConfig(
  *   schemes: [
  *     { network: "eip155:84532", client: new ExactEvmScheme(account) },
  *   ],
+ *   // Optional spend policies
+ *   policies: [
+ *     (_v, reqs) => reqs.filter(r => BigInt(r.amount ?? "0") < 1_000_000n),
+ *   ],
  *   autoPayment: true,
  *   onPaymentRequested: async ({ paymentRequired }) => {
  *     console.log(`Payment required: ${paymentRequired.accepts[0].amount}`);
@@ -888,17 +1063,12 @@ export function createx402MCPClient(config: x402MCPClientConfig): x402MCPClient 
     config.mcpClientOptions,
   );
 
-  // Create x402 payment client
-  const paymentClient = new x402Client();
-
-  // Register schemes
-  for (const scheme of config.schemes) {
-    if (scheme.x402Version === 1) {
-      paymentClient.registerV1(scheme.network, scheme.client);
-    } else {
-      paymentClient.register(scheme.network, scheme.client);
-    }
-  }
+  // Apply schemes (and optional policies/selector) via fromConfig.
+  const paymentClient = x402Client.fromConfig({
+    schemes: config.schemes,
+    policies: config.policies,
+    paymentRequirementsSelector: config.paymentRequirementsSelector,
+  });
 
   // Create x402MCPClient with options
   return new x402MCPClient(mcpClient, paymentClient, {

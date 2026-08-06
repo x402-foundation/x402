@@ -19,9 +19,7 @@ import httpx
 client = x402Client()
 client.register("eip155:*", ExactEvmScheme(signer=signer))
 
-async with httpx.AsyncClient(
-    transport=x402_httpx_transport(client)
-) as http:
+async with httpx.AsyncClient(transport=x402_httpx_transport(client)) as http:
     response = await http.get("https://api.example.com/paid")
 ```
 

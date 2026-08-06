@@ -223,6 +223,42 @@ async def test_async_operation():
     assert result is not None
 ```
 
+### Integration Tests
+
+Tests under `tests/integrations/` exercise real RPC endpoints and require
+test credentials. They are skipped automatically when the required
+environment variables are not set, so a missing `.env` only disables those
+tests — unit tests still run normally.
+
+`tests/conftest.py` loads `.env` automatically, searching (in order):
+
+1. `python/x402/.env`
+2. the repository root `.env`
+
+Create one and populate the variables for the chains you want to cover:
+
+```bash
+cd python/x402
+cat > .env <<'EOF'
+# EVM (Base Sepolia testnet by default)
+EVM_CLIENT_PRIVATE_KEY=
+EVM_FACILITATOR_PRIVATE_KEY=
+EVM_RESOURCE_SERVER_ADDRESS=
+# Optional: override the RPC endpoint
+# EVM_RPC_URL=https://sepolia.base.org
+
+# SVM (Solana)
+SVM_CLIENT_PRIVATE_KEY=
+SVM_FACILITATOR_PRIVATE_KEY=
+SVM_FACILITATOR_ADDRESS=
+SVM_RESOURCE_SERVER_ADDRESS=
+SVM_RPC_URL=
+EOF
+```
+
+See `tests/integrations/test_evm.py`, `test_mcp_evm.py`, and `test_svm.py`
+for the authoritative list of variables each suite reads.
+
 ## Code Quality
 
 ### Linting

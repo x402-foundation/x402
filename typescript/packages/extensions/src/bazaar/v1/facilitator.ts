@@ -9,7 +9,13 @@
 
 import type { PaymentRequirementsV1 } from "@x402/core/types";
 import type { BodyMethods, QueryParamMethods } from "@x402/core/http";
-import type { DiscoveryInfo, QueryDiscoveryInfo, BodyDiscoveryInfo } from "../types";
+import type {
+  DiscoveryExtension,
+  DiscoveryInfo,
+  QueryDiscoveryInfo,
+  BodyDiscoveryInfo,
+} from "../types";
+import { BAZAAR } from "../types";
 
 /**
  * Type guard to check if an object has the v1 outputSchema structure
@@ -294,4 +300,54 @@ export function extractResourceMetadataV1(paymentRequirements: PaymentRequiremen
     description: paymentRequirements.description,
     mimeType: paymentRequirements.mimeType,
   };
+}
+
+/**
+ * Builds a v2 bazaar extension from extracted v1 discovery info.
+ *
+ * V1 had no formal schema validation, so the synthesized schema is permissive.
+ *
+ * @param discoveryInfo - Discovery info extracted from v1 payment requirements
+ * @returns A bazaar extension suitable for catalog echo
+ */
+export function buildBazaarExtensionFromDiscoveryInfo(
+  discoveryInfo: DiscoveryInfo,
+): DiscoveryExtension {
+  // V1 had no formal schema; use a permissive envelope for catalog echo only.
+  return {
+    info: discoveryInfo,
+    schema: {
+      $schema: "https://json-schema.org/draft/2020-12/schema",
+      type: "object",
+      properties: {
+        input: { type: "object" },
+        output: { type: "object" },
+      },
+      required: ["input"],
+    },
+  } as DiscoveryExtension;
+}
+
+/**
+ * Normalizes v1 catalog extension payloads to v2 bazaar format.
+ *
+ * Preserves non-bazaar extensions from the payment payload. Replaces legacy
+ * `outputSchema` entries with a synthesized `bazaar` extension.
+ *
+ * @param existingExtensions - Extension payloads from the v1 payment payload, if any
+ * @param discoveryInfo - Discovery info extracted from v1 payment requirements
+ * @returns Normalized extension payloads with a `bazaar` entry
+ */
+export function buildV1CatalogExtensions(
+  existingExtensions: Record<string, unknown> | undefined,
+  discoveryInfo: DiscoveryInfo,
+): Record<string, unknown> {
+  if (existingExtensions?.[BAZAAR.key]) {
+    return existingExtensions;
+  }
+
+  const extensions: Record<string, unknown> = existingExtensions ? { ...existingExtensions } : {};
+  delete extensions.outputSchema;
+  extensions[BAZAAR.key] = buildBazaarExtensionFromDiscoveryInfo(discoveryInfo);
+  return extensions;
 }

@@ -264,6 +264,60 @@ describe("x402 Schemas", () => {
         const result = PaymentPayloadV2Schema.safeParse(withoutResource);
         expect(result.success).toBe(true);
       });
+
+      it("should accept null resource and normalize it to undefined", () => {
+        const result = PaymentPayloadV2Schema.safeParse({
+          ...validPaymentPayloadV2,
+          resource: null,
+        });
+        expect(result.success).toBe(true);
+        if (result.success) {
+          expect(result.data.resource).toBeUndefined();
+        }
+      });
+    });
+
+    describe("Nullable optional field normalization", () => {
+      it("should accept explicit null for optional ResourceInfo fields and normalize to undefined", () => {
+        const result = PaymentRequiredV2Schema.safeParse({
+          ...validPaymentRequiredV2,
+          resource: {
+            url: "https://api.example.com/premium-data",
+            description: null,
+            mimeType: null,
+            serviceName: null,
+            tags: null,
+            iconUrl: null,
+          },
+        });
+        expect(result.success).toBe(true);
+        if (result.success) {
+          expect(result.data.resource.description).toBeUndefined();
+          expect(result.data.resource.mimeType).toBeUndefined();
+          expect(result.data.resource.serviceName).toBeUndefined();
+          expect(result.data.resource.tags).toBeUndefined();
+          expect(result.data.resource.iconUrl).toBeUndefined();
+        }
+      });
+
+      it("should accept explicit null for PaymentRequiredV2 error and normalize to undefined", () => {
+        const result = PaymentRequiredV2Schema.safeParse({
+          ...validPaymentRequiredV2,
+          error: null,
+        });
+        expect(result.success).toBe(true);
+        if (result.success) {
+          expect(result.data.error).toBeUndefined();
+        }
+      });
+
+      it("should still reject a resource missing the required url", () => {
+        const result = PaymentRequiredV2Schema.safeParse({
+          ...validPaymentRequiredV2,
+          resource: { url: null },
+        });
+        expect(result.success).toBe(false);
+      });
     });
 
     describe("V2 Type Guards", () => {

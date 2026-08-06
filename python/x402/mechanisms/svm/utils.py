@@ -1,10 +1,13 @@
 """SVM utility functions for network, address, and amount handling."""
 
 import base64
+import hashlib
 import re
 from decimal import Decimal
+from typing import TYPE_CHECKING
 
 try:
+    from solders.hash import Hash, ParseHashError
     from solders.pubkey import Pubkey
     from solders.transaction import VersionedTransaction
 except ImportError as e:
@@ -28,6 +31,20 @@ from .constants import (
     NetworkConfig,
 )
 from .types import ExactSvmPayload, TransactionInfo
+
+if TYPE_CHECKING:
+    from solana.rpc.api import Client as SolanaClient
+
+
+def resolve_blockhash(client: "SolanaClient", recent_blockhash: object = None) -> Hash:
+    """Use a valid supplied blockhash, falling back to the latest blockhash from RPC."""
+    if isinstance(recent_blockhash, str) and recent_blockhash:
+        try:
+            return Hash.from_string(recent_blockhash)
+        except ParseHashError:
+            pass
+
+    return client.get_latest_blockhash().value.blockhash
 
 
 def normalize_network(network: str) -> str:
@@ -209,6 +226,23 @@ def parse_money_to_decimal(money: str | float | int) -> float:
     clean = clean.strip()
 
     return float(clean)
+
+
+def transaction_message_hash(tx: VersionedTransaction) -> str:
+    """Return a stable, immutable cache key for a transaction.
+
+    The fee-payer signature (slot 0) is overwritten by the facilitator before
+    broadcast, so an attacker can randomize those bytes to bypass a wire-bytes
+    cache key. The message is what every signer commits to, so its SHA-256 hash
+    uniquely and immutably identifies a payment.
+
+    Args:
+        tx: Decoded versioned transaction.
+
+    Returns:
+        Base64-encoded SHA-256 hash of the serialized transaction message.
+    """
+    return base64.b64encode(hashlib.sha256(bytes(tx.message)).digest()).decode()
 
 
 def decode_transaction_from_payload(payload: ExactSvmPayload) -> VersionedTransaction:

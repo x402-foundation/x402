@@ -15,6 +15,10 @@ from .types import (
     BodyDiscoveryInfo,
     BodyInput,
     BodyType,
+    McpDiscoveryExtension,
+    McpDiscoveryInfo,
+    McpInput,
+    McpTransport,
     OutputInfo,
     QueryDiscoveryExtension,
     QueryDiscoveryInfo,
@@ -221,6 +225,113 @@ def _create_body_discovery_extension(
     }
 
     return BodyDiscoveryExtension(info=body_info, schema=schema)
+
+
+@dataclass
+class DeclareMcpDiscoveryConfig:
+    """Configuration for declaring an MCP tool discovery extension."""
+
+    tool_name: str
+    input_schema: dict[str, Any]
+    description: str | None = None
+    transport: McpTransport | None = None
+    example: dict[str, Any] | None = None
+    output: OutputConfig | None = None
+
+
+def declare_mcp_discovery_extension(
+    config: DeclareMcpDiscoveryConfig,
+) -> dict[str, Any]:
+    """Create a Bazaar discovery extension for an MCP tool.
+
+    Use this when registering a paid MCP tool so facilitators can catalog and
+    index it in the Bazaar under the ``"mcp"`` resource type.
+
+    Args:
+        config: MCP tool declaration configuration.
+
+    Returns:
+        A dict with ``"bazaar"`` key containing the discovery extension.
+        Pass this as ``extensions`` in your payment wrapper config.
+
+    Example:
+        ```python
+        from x402.extensions.bazaar import declare_mcp_discovery_extension, DeclareMcpDiscoveryConfig
+
+        extensions = declare_mcp_discovery_extension(
+            DeclareMcpDiscoveryConfig(
+                tool_name="get_weather",
+                description="Get current weather for a city",
+                input_schema={
+                    "properties": {"city": {"type": "string"}},
+                    "required": ["city"],
+                },
+                example={"city": "San Francisco"},
+            )
+        )
+        ```
+    """
+    mcp_input = McpInput(
+        toolName=config.tool_name,
+        description=config.description,
+        transport=config.transport,
+        inputSchema=config.input_schema,
+        example=config.example,
+    )
+
+    output_info = None
+    if config.output and config.output.example is not None:
+        output_info = OutputInfo(type="json", example=config.output.example)
+
+    mcp_info = McpDiscoveryInfo(input=mcp_input, output=output_info)
+
+    # Build the JSON Schema that validates the info structure
+    input_properties: dict[str, Any] = {
+        "type": {"type": "string", "const": "mcp"},
+        "toolName": {"type": "string"},
+        "inputSchema": {"type": "object"},
+    }
+    if config.description is not None:
+        input_properties["description"] = {"type": "string"}
+    if config.transport is not None:
+        input_properties["transport"] = {
+            "type": "string",
+            "enum": ["streamable-http", "sse"],
+        }
+    if config.example is not None:
+        input_properties["example"] = {"type": "object"}
+
+    schema_properties: dict[str, Any] = {
+        "input": {
+            "type": "object",
+            "properties": input_properties,
+            "required": ["type", "toolName", "inputSchema"],
+            "additionalProperties": False,
+        }
+    }
+
+    if config.output and config.output.example is not None:
+        output_schema: dict[str, Any] = {
+            "type": "object",
+            "properties": {
+                "type": {"type": "string"},
+                "example": {},
+            },
+            "required": ["type"],
+        }
+        if config.output.schema:
+            output_schema["properties"]["example"].update(config.output.schema)
+        schema_properties["output"] = output_schema
+
+    schema = {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": schema_properties,
+        "required": ["input"],
+    }
+
+    extension = McpDiscoveryExtension(info=mcp_info, schema=schema)
+    return {BAZAAR.key: extension.model_dump(by_alias=True, exclude_none=True)}
 
 
 def declare_discovery_extension(

@@ -104,6 +104,8 @@ Supports ERC-3009 compatible tokens:
 - EURC
 - Any token implementing `transferWithAuthorization()`
 
+For the current list of chains with default assets configured, see [Default Assets for Dollar-String Pricing](../../../../docs/core-concepts/network-and-token-support.mdx#default-assets-for-dollar-string-pricing) in the x402 docs. To add default asset support for a new chain, see [Adding Support for New Networks](../../../../docs/core-concepts/network-and-token-support.mdx#adding-support-for-new-networks).
+
 ## Technical Details
 
 ### EIP-3009 TransferWithAuthorization
@@ -112,12 +114,12 @@ The Exact scheme uses signed authorizations:
 
 ```python
 {
-    "from": "0x...",      # Payer address
-    "to": "0x...",        # Recipient (payTo)
-    "value": 1000000,     # Amount in token units
-    "validAfter": 0,      # Unix timestamp
-    "validBefore": ...,   # Expiration timestamp
-    "nonce": "0x...",     # Random nonce
+    "from": "0x...",  # Payer address
+    "to": "0x...",  # Recipient (payTo)
+    "value": 1000000,  # Amount in token units
+    "validAfter": 0,  # Unix timestamp
+    "validBefore": ...,  # Expiration timestamp
+    "nonce": "0x...",  # Random nonce
 }
 ```
 

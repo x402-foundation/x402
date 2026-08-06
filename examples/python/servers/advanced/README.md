@@ -1,6 +1,6 @@
 # x402 FastAPI Advanced Example
 
-FastAPI server demonstrating advanced x402 patterns including dynamic pricing, payment routing, lifecycle hooks and API discoverability.
+FastAPI server demonstrating advanced x402 patterns including dynamic pricing, payment routing, lifecycle hooks and API discoverability across EVM, SVM, and TVM.
 
 ```python
 from fastapi import FastAPI
@@ -10,18 +10,21 @@ from x402.http.types import RouteConfig
 from x402.server import x402ResourceServer
 from x402.mechanisms.evm.exact import ExactEvmServerScheme
 from x402.mechanisms.svm.exact import ExactSvmServerScheme
+from x402.mechanisms.tvm.exact import ExactTvmServerScheme
 
 app = FastAPI()
 
 server = x402ResourceServer(HTTPFacilitatorClient(FacilitatorConfig(url=facilitator_url)))
 server.register("eip155:84532", ExactEvmServerScheme())
 server.register("solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1", ExactSvmServerScheme())
+server.register("tvm:-3", ExactTvmServerScheme())
 
 routes = {
     "GET /weather": RouteConfig(
         accepts=[
             PaymentOption(scheme="exact", price="$0.01", network="eip155:84532", pay_to=evm_address),
             PaymentOption(scheme="exact", price="$0.01", network="solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1", pay_to=svm_address),
+            PaymentOption(scheme="exact", price="$0.001", network="tvm:-3", pay_to=tvm_address),
         ]
     ),
 }
@@ -36,8 +39,10 @@ async def get_weather():
 
 - Python 3.10+
 - uv (install via [docs.astral.sh/uv](https://docs.astral.sh/uv/getting-started/installation/))
-- Valid EVM address for receiving payments (Base Sepolia)
-- Valid SVM address for receiving payments (Solana Devnet)
+- Optional payment addresses for one or more networks:
+  - EVM address for Base Sepolia
+  - SVM address for Solana Devnet
+  - TVM address for TON testnet/mainnet
 - URL of a facilitator supporting the desired payment network, see [facilitator list](https://www.x402.org/ecosystem?category=facilitators)
 
 ## Setup
@@ -52,6 +57,8 @@ cp .env-local .env
 
 - `EVM_ADDRESS` - Ethereum address to receive payments (Base Sepolia)
 - `SVM_ADDRESS` - Solana address to receive payments (Solana Devnet)
+- `TVM_ADDRESS` - TON wallet address to receive TVM payments
+- `TVM_NETWORK` - TVM CAIP-2 network (optional, defaults to `tvm:-3`)
 - `FACILITATOR_URL` - Facilitator endpoint URL (optional, defaults to production)
 
 3. Install dependencies:
@@ -156,6 +163,13 @@ routes = {
                 network="solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1",
                 pay_to=SVM_ADDRESS,
             ),
+            # TVM payment option
+            PaymentOption(
+                scheme="exact",
+                price="$0.10",
+                network="tvm:-3",
+                pay_to=TVM_ADDRESS,
+            ),
         ]
     ),
 }
@@ -192,6 +206,10 @@ Network identifiers use [CAIP-2](https://github.com/ChainAgnostic/CAIPs/blob/mai
 **SVM Networks:**
 - `solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1` — Solana Devnet
 - `solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp` — Solana Mainnet
+
+**TVM Networks:**
+- `tvm:-3` — TON Testnet
+- `tvm:-239` — TON Mainnet
 
 ## Advanced Features
 

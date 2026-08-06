@@ -7,12 +7,12 @@ import (
 	"context"
 	"testing"
 
-	x402 "github.com/x402-foundation/x402/go"
-	"github.com/x402-foundation/x402/go/extensions/bazaar"
-	"github.com/x402-foundation/x402/go/extensions/eip2612gassponsor"
-	"github.com/x402-foundation/x402/go/extensions/paymentidentifier"
-	gohttp "github.com/x402-foundation/x402/go/http"
-	"github.com/x402-foundation/x402/go/types"
+	x402 "github.com/x402-foundation/x402/go/v2"
+	"github.com/x402-foundation/x402/go/v2/extensions/bazaar"
+	"github.com/x402-foundation/x402/go/v2/extensions/eip2612gassponsor"
+	"github.com/x402-foundation/x402/go/v2/extensions/paymentidentifier"
+	gohttp "github.com/x402-foundation/x402/go/v2/http"
+	"github.com/x402-foundation/x402/go/v2/types"
 )
 
 // extTestHTTPAdapter is a minimal HTTPAdapter for use in this external test package.

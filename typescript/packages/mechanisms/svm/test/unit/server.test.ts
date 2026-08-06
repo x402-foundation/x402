@@ -104,6 +104,12 @@ describe("ExactSvmScheme", () => {
           async () => await server.parsePrice("abc", SOLANA_MAINNET_CAIP2),
         ).rejects.toThrow("Invalid money format");
       });
+
+      it("should reject partially numeric money strings", async () => {
+        await expect(
+          async () => await server.parsePrice("1abc", SOLANA_MAINNET_CAIP2),
+        ).rejects.toThrow("Invalid money format");
+      });
     });
   });
 

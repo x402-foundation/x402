@@ -1,5 +1,9 @@
 import { Horizon, rpc } from "@stellar/stellar-sdk";
 import {
+  convertToTokenAmount as coreConvertToTokenAmount,
+  numberToDecimalString,
+} from "@x402/core/utils";
+import {
   DEFAULT_PUBNET_HORIZON_URL,
   DEFAULT_TESTNET_HORIZON_URL,
   DEFAULT_TESTNET_RPC_URL,
@@ -171,45 +175,19 @@ export function getUsdcAddress(network: Network): string {
   }
 }
 
+export { numberToDecimalString };
+
 /**
- * Converts a decimal amount to token smallest units
- *
- * Handles both regular decimal strings (e.g., "0.10") and scientific notation (e.g., "1e-7").
- * The result is truncated (not rounded) to the specified number of decimal places.
+ * Converts a decimal amount to token smallest units.
+ * Wraps the core utility with Stellar's default of 7 decimal places.
  *
  * @param decimalAmount - The decimal amount as a string
- * @param decimals - Number of decimal places for the token (default: 7 for USDC)
- * @returns The amount in smallest units as a string with leading zeros removed
- * @throws {Error} If the amount is invalid or decimals is out of range
- *
- * @example
- * ```ts
- * convertToTokenAmount("0.1", 7)      // "1000000"
- * convertToTokenAmount("1.5", 7)      // "15000000"
- * convertToTokenAmount("1e-7", 7)     // "1"
- * convertToTokenAmount("1.5", 0)      // "1" (truncated)
- * ```
+ * @param decimals - Number of decimal places for the token (default: 7 for Stellar USDC)
+ * @returns The amount in smallest units as a string
  */
 export function convertToTokenAmount(
   decimalAmount: string,
   decimals: number = DEFAULT_TOKEN_DECIMALS,
 ): string {
-  const amount = parseFloat(decimalAmount);
-  if (isNaN(amount)) {
-    throw new Error(`Invalid amount: ${decimalAmount}`);
-  }
-
-  if (decimals < 0 || decimals > 20) {
-    throw new Error(`Decimals must be between 0 and 20, got ${decimals}`);
-  }
-
-  // Normalize scientific notation to fixed decimal string
-  const normalizedDecimal = /[eE]/.test(decimalAmount)
-    ? amount.toFixed(Math.max(decimals, 20))
-    : decimalAmount;
-
-  const [intPart, decPart = ""] = normalizedDecimal.split(".");
-  const paddedDec = decPart.padEnd(decimals, "0").slice(0, decimals);
-
-  return (intPart + paddedDec).replace(/^0+/, "") || "0";
+  return coreConvertToTokenAmount(decimalAmount, decimals);
 }

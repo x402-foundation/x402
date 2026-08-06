@@ -49,6 +49,7 @@ class WriteContractCall:
     abi: list[dict[str, Any]]
     function: str
     args: list[Any] = field(default_factory=list)
+    data_suffix: str | None = None
 
 
 TransactionRequest = str | WriteContractCall

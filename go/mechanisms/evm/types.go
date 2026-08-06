@@ -254,7 +254,7 @@ type FacilitatorEvmSigner interface {
 	VerifyTypedData(ctx context.Context, address string, domain TypedDataDomain, types map[string][]TypedDataField, primaryType string, message map[string]interface{}, signature []byte) (bool, error)
 
 	// WriteContract executes a smart contract transaction
-	WriteContract(ctx context.Context, address string, abi []byte, functionName string, args ...interface{}) (string, error)
+	WriteContract(ctx context.Context, address string, abi []byte, functionName string, dataSuffix []byte, args ...interface{}) (string, error)
 
 	// SendTransaction sends a raw transaction with arbitrary calldata
 	// Used for smart wallet deployment where calldata is pre-encoded
@@ -290,9 +290,10 @@ type TypedDataField struct {
 
 // TransactionReceipt represents the receipt of a mined transaction
 type TransactionReceipt struct {
-	Status      uint64 `json:"status"`
-	BlockNumber uint64 `json:"blockNumber"`
-	TxHash      string `json:"transactionHash"`
+	Status      uint64            `json:"status"`
+	BlockNumber uint64            `json:"blockNumber"`
+	TxHash      string            `json:"transactionHash"`
+	Logs        []*goethtypes.Log `json:"logs,omitempty"`
 }
 
 // AssetInfo contains information about an ERC20 token
@@ -306,7 +307,7 @@ type AssetInfo struct {
 }
 
 // NetworkConfig contains network-specific configuration
-// See DEFAULT_ASSET.md for guidelines on adding new chains
+// See DEFAULT_ASSETS.md for guidelines on adding new chains
 type NetworkConfig struct {
 	ChainID      *big.Int
 	DefaultAsset AssetInfo
