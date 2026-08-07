@@ -185,13 +185,19 @@ Rules:
   which a new operator begins, and that depth differs per platform. A
   Cloudflare account sits directly under `workers.dev` (the worker name
   above the account is not a new operator), while Railway tenants sit under
-  `up.railway.app` — an entry of `railway.app` would merge all 66 censused
-  tenants into a single bucket, the same failure this rule exists to
-  prevent, one level down. The test for a candidate entry: if the label
-  directly above it changes hands between unrelated parties, the boundary
-  is below it, not at it. Ten boundaries cover every platform host in the
-  census today, at the cost of occasional updates as new platforms appear
-  in the wild.
+  `up.railway.app` and Cloud Run services under `a.run.app` — an entry of
+  `railway.app` or `run.app` merges every tenant into a single bucket, the
+  same failure this rule exists to prevent, one level down. The test for a
+  candidate entry: if the label directly above it changes hands between
+  unrelated parties, the boundary is below it, not at it — and the test is
+  mechanical, so run it as a script over census data rather than reading
+  platform documentation; a scripted pass is what caught the second case.
+  Wildcard-DNS mappers (`sslip.io`, `nip.io`) belong on such lists for a
+  different reason: every name under them resolves for whoever asks and
+  there is no account level at all, so the operator-boundary test does not
+  apply — they are listed so each name stands alone. Ten boundaries cover
+  every platform host in the census today, at the cost of occasional
+  updates as new platforms appear in the wild.
 
 Why this exists: with peer hints the network is crawlable from **any seed**.
 One known-good domain reaches its connected component with no directory, no
