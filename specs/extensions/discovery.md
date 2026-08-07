@@ -170,6 +170,20 @@ Rules:
   names under registrable domains not yet visited, and treat a frontier
   dominated by one registrable domain as measuring an operator's fleet
   rather than the network.
+- "Registrable domain" SHOULD be judged against the public-suffix boundary,
+  not by counting labels. The same census makes the failure concrete from the
+  other side: 394 of the 1,521 hosts sit directly under shared-platform
+  suffixes (`vercel.app` 202, `workers.dev` 72, `railway.app` 66,
+  `onrender.com` 27, and the rest across `fly.dev`, `replit.app`,
+  `netlify.app`, `run.app`, `sslip.io`, `nip.io`), where each name is a
+  DIFFERENT operator deploying on a common platform. A last-two-labels rule
+  collapses those 394 operators into ten buckets and hands the most
+  operator-diverse quarter of the network one operator's crawl budget —
+  inverting the diversity rule's intent. Consumers that do not carry a full
+  Public Suffix List can satisfy this with a short static list of platform
+  suffixes treated as public: the ten named here cover every platform host
+  in the census today, at the cost of occasional updates as new platforms
+  appear in the wild.
 
 Why this exists: with peer hints the network is crawlable from **any seed**.
 One known-good domain reaches its connected component with no directory, no
