@@ -1085,13 +1085,19 @@ export class x402ResourceServer {
     // Apply settlement overrides (e.g., partial settlement for upto scheme)
     let effectiveRequirements = requirements;
     if (settlementOverrides?.amount !== undefined) {
-      const scheme = findByNetworkAndScheme(
-        this.registeredServerSchemes,
-        requirements.scheme,
-        requirements.network as Network,
-      );
-      const decimals =
-        scheme?.getAssetDecimals?.(requirements.asset ?? "", requirements.network as Network) ?? 6;
+      // Only `$…` overrides need asset decimals. Atomic and percent formats must
+      // not force a decimals lookup (unknown custom mints would otherwise fail).
+      let decimals = 6;
+      if (/^\$\d+(?:\.\d+)?$/.test(settlementOverrides.amount)) {
+        const scheme = findByNetworkAndScheme(
+          this.registeredServerSchemes,
+          requirements.scheme,
+          requirements.network as Network,
+        );
+        decimals =
+          scheme?.getAssetDecimals?.(requirements.asset ?? "", requirements.network as Network) ??
+          6;
+      }
       effectiveRequirements = {
         ...requirements,
         amount: resolveSettlementOverrideAmount(settlementOverrides.amount, requirements, decimals),
@@ -1335,9 +1341,19 @@ export class x402ResourceServer {
       case 2:
         // For v2, all server-declared requirements must match.
         // The client may include additive scheme-specific metadata under `accepted.extra`.
-        return availableRequirements.find(paymentRequirements =>
-          paymentRequirementsMatchAccepted(paymentRequirements, paymentPayload.accepted),
-        );
+        // Scheme-declared dynamicExtraFields are omitted from the extra comparison
+        return availableRequirements.find(paymentRequirements => {
+          const scheme = findByNetworkAndScheme(
+            this.registeredServerSchemes,
+            paymentRequirements.scheme,
+            paymentRequirements.network,
+          );
+          return paymentRequirementsMatchAccepted(
+            paymentRequirements,
+            paymentPayload.accepted,
+            scheme?.dynamicExtraFields,
+          );
+        });
       case 1:
         // For v1, match by scheme and network
         return availableRequirements.find(
@@ -1526,6 +1542,9 @@ export class x402ResourceServer {
 
   /**
    * Notify hooks that verified work ended before settlement.
+   * After cleanup hooks, asks the matched scheme for {@link SchemeNetworkServer.settleOnCancel}
+   * requirements and settles once when provided. Settlement errors are warned, not thrown,
+   * so transports can preserve the original application failure.
    *
    * @param paymentPayload - Signed payment payload from the client
    * @param requirements - Requirements matched to the payload
@@ -1565,6 +1584,31 @@ export class x402ResourceServer {
       } catch (error) {
         this.warnResourceServerHookFailure("onVerifiedPaymentCanceled", label, error);
       }
+    }
+
+    const scheme = findByNetworkAndScheme(
+      this.registeredServerSchemes,
+      matchedScheme.scheme,
+      matchedScheme.network,
+    );
+    if (!scheme?.settleOnCancel) {
+      return;
+    }
+
+    const label = `scheme "${matchedScheme.scheme}" settleOnCancel`;
+    try {
+      const cancelRequirements = await scheme.settleOnCancel(context);
+      if (!cancelRequirements) {
+        return;
+      }
+      await this.settlePayment(
+        paymentPayload as PaymentPayload,
+        cancelRequirements,
+        declaredExtensions as Record<string, unknown>,
+        fallbackTransportContext,
+      );
+    } catch (error) {
+      this.warnResourceServerHookFailure("settleOnCancel", label, error);
     }
   }
 
@@ -1663,9 +1707,9 @@ function getExtensionInfo(value: unknown): unknown {
 }
 
 /**
- * Returns a copy of an extension info object without the named dynamic fields.
+ * Returns a copy of an object without the named dynamic fields.
  *
- * @param value - Extension info payload to filter.
+ * @param value - Object to filter (extension info or payment-requirements extra).
  * @param fields - Field names regenerated per response that must not be compared.
  * @returns The value unchanged when no fields apply; otherwise a copy without them.
  */
@@ -1699,14 +1743,17 @@ function extensionInfoMatchesAdvertised(advertised: unknown, echoed: unknown): b
  *
  * Core payment terms and all server-declared `extra` fields must match exactly,
  * but clients may include additive scheme-specific metadata under `accepted.extra`.
+ * Fields listed in `dynamicExtraFields` are excluded from the extra comparison.
  *
  * @param required - Server-advertised payment requirement.
  * @param accepted - Client-selected payment requirement from the payment payload.
+ * @param dynamicExtraFields - Scheme-declared `extra` keys regenerated per PaymentRequired.
  * @returns True when `accepted` preserves every server-declared requirement.
  */
 function paymentRequirementsMatchAccepted(
   required: PaymentRequirements,
   accepted: PaymentRequirements,
+  dynamicExtraFields?: string[],
 ): boolean {
   const { extra: requiredExtra, ...requiredCore } = required;
   const { extra: acceptedExtra, ...acceptedCore } = accepted;
@@ -1719,7 +1766,10 @@ function paymentRequirementsMatchAccepted(
     return true;
   }
 
-  return objectContainsSubset(requiredExtra, acceptedExtra);
+  return objectContainsSubset(
+    omitFields(requiredExtra, dynamicExtraFields),
+    omitFields(acceptedExtra, dynamicExtraFields),
+  );
 }
 
 /**

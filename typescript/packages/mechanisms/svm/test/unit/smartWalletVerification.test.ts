@@ -432,6 +432,9 @@ describe("verifyPostSettlement", () => {
 
     const mockSigner = {
       getAddresses: () => [],
+      getSigner: () => {
+        throw new Error("No signer");
+      },
       signTransaction: async () => "",
       simulateTransaction: async () => {},
       sendTransaction: async () => "",
@@ -480,6 +483,9 @@ describe("verifyPostSettlement", () => {
 
     const mockSigner = {
       getAddresses: () => [],
+      getSigner: () => {
+        throw new Error("No signer");
+      },
       signTransaction: async () => "",
       simulateTransaction: async () => {},
       sendTransaction: async () => "",
@@ -514,6 +520,9 @@ describe("verifyPostSettlement", () => {
 
     const mockSigner = {
       getAddresses: () => [],
+      getSigner: () => {
+        throw new Error("No signer");
+      },
       signTransaction: async () => "",
       simulateTransaction: async () => {},
       sendTransaction: async () => "",
@@ -542,6 +551,9 @@ describe("verifyPostSettlement", () => {
 
     const mockSigner = {
       getAddresses: () => [],
+      getSigner: () => {
+        throw new Error("No signer");
+      },
       signTransaction: async () => "",
       simulateTransaction: async () => {},
       sendTransaction: async () => "",
@@ -570,6 +582,9 @@ describe("verifyPostSettlement", () => {
 
     const mockSigner = {
       getAddresses: () => [],
+      getSigner: () => {
+        throw new Error("No signer");
+      },
       signTransaction: async () => "",
       simulateTransaction: async () => {},
       sendTransaction: async () => "",
@@ -598,6 +613,9 @@ describe("verifyPostSettlement", () => {
 
     const mockSigner = {
       getAddresses: () => [],
+      getSigner: () => {
+        throw new Error("No signer");
+      },
       signTransaction: async () => "",
       simulateTransaction: async () => {},
       sendTransaction: async () => "",
@@ -630,6 +648,9 @@ describe("verifyPostSettlement", () => {
 
     const mockSigner = {
       getAddresses: () => [],
+      getSigner: () => {
+        throw new Error("No signer");
+      },
       signTransaction: async () => "",
       simulateTransaction: async () => {},
       sendTransaction: async () => "",
@@ -663,6 +684,9 @@ describe("verifyPostSettlement", () => {
     let callCount = 0;
     const mockSigner = {
       getAddresses: () => [],
+      getSigner: () => {
+        throw new Error("No signer");
+      },
       signTransaction: async () => "",
       simulateTransaction: async () => {},
       sendTransaction: async () => "",
@@ -701,6 +725,9 @@ describe("verifyPostSettlement", () => {
     let callCount = 0;
     const mockSigner = {
       getAddresses: () => [],
+      getSigner: () => {
+        throw new Error("No signer");
+      },
       signTransaction: async () => "",
       simulateTransaction: async () => {},
       sendTransaction: async () => "",
@@ -735,6 +762,9 @@ describe("ExactSvmScheme constructor enforcement", () => {
 
     const incompleteSigner = {
       getAddresses: () => [],
+      getSigner: () => {
+        throw new Error("No signer");
+      },
       signTransaction: async () => "",
       simulateTransaction: async () => {},
       sendTransaction: async () => "",
@@ -756,6 +786,9 @@ describe("ExactSvmScheme constructor enforcement", () => {
     // because ALT-using wallets would otherwise fail later at verify time.
     const signerMissingAlt = {
       getAddresses: () => [],
+      getSigner: () => {
+        throw new Error("No signer");
+      },
       signTransaction: async () => "",
       simulateTransaction: async () => {},
       sendTransaction: async () => "",
@@ -778,6 +811,9 @@ describe("ExactSvmScheme constructor enforcement", () => {
 
     const completeSigner = {
       getAddresses: () => [],
+      getSigner: () => {
+        throw new Error("No signer");
+      },
       signTransaction: async () => "",
       simulateTransaction: async () => {},
       sendTransaction: async () => "",
@@ -801,6 +837,9 @@ describe("ExactSvmScheme constructor enforcement", () => {
 
     const minimalSigner = {
       getAddresses: () => [],
+      getSigner: () => {
+        throw new Error("No signer");
+      },
       signTransaction: async () => "",
       simulateTransaction: async () => {},
       sendTransaction: async () => "",
@@ -870,6 +909,7 @@ describe("assertFeePayerIsolated ALT handling", () => {
 
     const signerWithoutALT = {
       getAddresses: () => [feePayer.address],
+      getSigner: () => feePayer as never,
       signTransaction: async () => "",
       simulateTransaction: async () => {},
       sendTransaction: async () => "",
@@ -925,6 +965,7 @@ describe("assertFeePayerIsolated ALT handling", () => {
 
     const signerWithALT = {
       getAddresses: () => [feePayer.address],
+      getSigner: () => feePayer as never,
       signTransaction: async () => "",
       simulateTransaction: async () => {},
       sendTransaction: async () => "",
@@ -986,6 +1027,7 @@ describe("assertFeePayerIsolated ALT handling", () => {
     // isolation check fails closed rather than proceeding with unresolved accounts.
     const signerWithFailingALT = {
       getAddresses: () => [feePayer.address],
+      getSigner: () => feePayer as never,
       signTransaction: async () => "",
       simulateTransaction: async () => {},
       sendTransaction: async () => "",

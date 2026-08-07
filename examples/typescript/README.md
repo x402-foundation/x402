@@ -74,6 +74,7 @@ Services that verify and settle payments on-chain.
 | --- | --- |
 | [`basic/`](./facilitator/basic/) | Minimal facilitator exposing `/verify` and `/settle` |
 | [`advanced/`](./facilitator/advanced/) | All-networks support, Bazaar discovery, gas-sponsoring extensions, hooks |
+| [`upto/`](./facilitator/upto/) | `upto` scheme with SVM rent cleanup manager (EVM + SVM) |
 | [`batch-settlement/`](./facilitator/batch-settlement/) | Submits batch-settlement contract calls |
 | [`builder-code/`](./facilitator/builder-code/) | Appends ERC-8021 wallet attribution at settlement |
 

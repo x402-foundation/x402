@@ -22,6 +22,10 @@ import {
   USDG_MAINNET_ADDRESS,
   USDT_MAINNET_ADDRESS,
 } from "../../src/index";
+import type { FacilitatorSvmSigner } from "../../src/signer";
+import { UptoSvmScheme } from "../../src/upto/facilitator/scheme";
+import { UptoSvmRentCleanupManager } from "../../src/upto/facilitator/rentCleanupManager";
+import { SOLANA_DEVNET_CAIP2 } from "../../src/constants";
 import { ExactSvmScheme as ServerExactSvmScheme } from "../../src/exact/server/scheme";
 
 describe("@x402/svm", () => {
@@ -118,6 +122,42 @@ describe("@x402/svm", () => {
       expect(getStablecoinTokenProgram("CASH", SOLANA_MAINNET_CAIP2)).toBe(
         TOKEN_2022_PROGRAM_ADDRESS,
       );
+    });
+  });
+
+  describe("FacilitatorSvmSigner", () => {
+    const exactOnlySigner: FacilitatorSvmSigner = {
+      getAddresses: () => ["11111111111111111111111111111111" as never],
+      signTransaction: async () => "tx",
+      simulateTransaction: async () => {},
+      sendTransaction: async () => "sig",
+      confirmTransaction: async () => {},
+    };
+
+    it("allows exact-only signers without getSigner", () => {
+      expect(exactOnlySigner.getAddresses()).toHaveLength(1);
+      expect(exactOnlySigner.getSigner).toBeUndefined();
+    });
+
+    it("accepts exact-only signers for ExactSvmScheme", () => {
+      expect(() => new ExactSvmScheme(exactOnlySigner)).not.toThrow();
+    });
+
+    it("accepts exact-only signers for UptoSvmScheme at compile time but rejects missing getSigner at runtime", () => {
+      expect(() => new UptoSvmScheme(exactOnlySigner)).toThrow(
+        "UptoSvmScheme requires getSigner on the signer",
+      );
+    });
+
+    it("rejects exact-only signers for UptoSvmRentCleanupManager at runtime", () => {
+      expect(
+        () =>
+          new UptoSvmRentCleanupManager({
+            signer: exactOnlySigner,
+            storage: { upsert: async () => {}, get: async () => undefined, list: async () => [], delete: async () => {} },
+            network: SOLANA_DEVNET_CAIP2,
+          }),
+      ).toThrow("UptoSvmRentCleanupManager requires getSigner on the signer");
     });
   });
 

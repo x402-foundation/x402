@@ -1,5 +1,5 @@
 /**
- * Canonical payment-channel voucher payload + Ed25519 verifier.
+ * Canonical payment-channel voucher payload + Ed25519 signer/verifier.
  *
  * The 50-byte voucher message is the exact byte layout the onchain
  * payment-channels program signs over:
@@ -13,7 +13,14 @@
  * (rust/crates/mpp/src/protocol/intents/session.rs) and `pc::voucher_message_bytes`.
  */
 
-import { getBase58Encoder, getI64Encoder, getU64Encoder } from "@solana/kit";
+import {
+  createSignableMessage,
+  getBase58Decoder,
+  getBase58Encoder,
+  getI64Encoder,
+  getU64Encoder,
+  type MessagePartialSigner,
+} from "@solana/kit";
 
 /**
  * Constant 2-byte magic prefix of the signed voucher payload. The program
@@ -50,6 +57,62 @@ export function encodeVoucherMessageBytes(args: {
 }
 
 /**
+ * Sign a payment-channel voucher and return the base58 signature.
+ *
+ * @param receiverAuthorizer - The channel's authorized signer
+ * @param voucher - The voucher fields
+ * @param voucher.channelId - Channel PDA (base58)
+ * @param voucher.cumulativeAmount - Cumulative settled amount (base units)
+ * @param voucher.expiresAt - Voucher deadline (Unix seconds, i64)
+ * @returns The base58-encoded 64-byte Ed25519 signature
+ */
+export async function signVoucher(
+  receiverAuthorizer: MessagePartialSigner,
+  voucher: { channelId: string; cumulativeAmount: bigint; expiresAt: bigint },
+): Promise<string> {
+  const message = encodeVoucherMessageBytes(voucher);
+  const [dict] = await receiverAuthorizer.signMessages([createSignableMessage(message)]);
+  const signature = dict[receiverAuthorizer.address];
+  if (!signature) throw new Error("receiverAuthorizer did not return a voucher signature");
+  return getBase58Decoder().decode(signature as Uint8Array);
+}
+
+/**
+ * Verify a raw Ed25519 signature over a message.
+ *
+ * @param args - Verification inputs
+ * @param args.signature - 64-byte signature
+ * @param args.publicKey - 32-byte verifying key
+ * @param args.message - Message bytes the signer committed to
+ * @returns Whether the signature is valid
+ */
+export async function verifyEd25519Signature(args: {
+  signature: Uint8Array;
+  publicKey: Uint8Array;
+  message: Uint8Array;
+}): Promise<boolean> {
+  if (args.signature.byteLength !== 64) {
+    throw new Error(`signature must be 64 bytes; got ${args.signature.byteLength}`);
+  }
+  if (args.publicKey.byteLength !== 32) {
+    throw new Error(`publicKey must be 32 bytes; got ${args.publicKey.byteLength}`);
+  }
+  const key = await crypto.subtle.importKey(
+    "raw",
+    toArrayBufferBacked(args.publicKey),
+    "Ed25519",
+    false,
+    ["verify"],
+  );
+  return await crypto.subtle.verify(
+    "Ed25519",
+    key,
+    toArrayBufferBacked(args.signature),
+    toArrayBufferBacked(args.message),
+  );
+}
+
+/**
  * Verify an Ed25519 voucher signature against the authorized signer.
  * Both the signature and signer are base58-encoded (Solana wire format).
  *
@@ -65,17 +128,13 @@ export async function verifyVoucherSignature(args: {
   message: Uint8Array;
 }): Promise<boolean> {
   const base58 = getBase58Encoder();
-  const signatureBytes = toArrayBufferBacked(base58.encode(args.signatureBase58) as Uint8Array);
-  if (signatureBytes.byteLength !== 64) {
-    throw new Error(`signature must decode to 64 bytes; got ${signatureBytes.byteLength}`);
-  }
-  const pubkeyBytes = toArrayBufferBacked(base58.encode(args.signerBase58) as Uint8Array);
-  if (pubkeyBytes.byteLength !== 32) {
-    throw new Error(`signer must decode to 32 bytes; got ${pubkeyBytes.byteLength}`);
-  }
-  const message = toArrayBufferBacked(args.message);
-  const key = await crypto.subtle.importKey("raw", pubkeyBytes, "Ed25519", false, ["verify"]);
-  return await crypto.subtle.verify("Ed25519", key, signatureBytes, message);
+  const signatureBytes = base58.encode(args.signatureBase58) as Uint8Array;
+  const pubkeyBytes = base58.encode(args.signerBase58) as Uint8Array;
+  return verifyEd25519Signature({
+    message: args.message,
+    publicKey: pubkeyBytes,
+    signature: signatureBytes,
+  });
 }
 
 /**

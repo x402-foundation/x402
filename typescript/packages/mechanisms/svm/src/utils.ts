@@ -213,6 +213,51 @@ export async function resolveBlockhash(
 }
 
 /**
+ * Resolve the channel open-slot anchor (`open_slot` PDA seed) for a payment.
+ *
+ * Prefers a server-provided slot carried in the 402 challenge
+ * (`extra.recentSlot`) so the client needn't make its own RPC round-trip. Falls
+ * back to `rpc.getSlot()` when the challenge omits it or contains a malformed
+ * value. Default RPC commitment (`finalized`) keeps `openSlot <= clock.slot`
+ * true when the open lands.
+ *
+ * @param rpc - RPC client used for the fallback fetch
+ * @param requirements - The payment requirements (challenge) being paid
+ * @returns The open slot as a u64 bigint
+ */
+export async function resolveOpenSlot(
+  rpc: ReturnType<typeof createRpcClient>,
+  requirements: PaymentRequirements,
+): Promise<bigint> {
+  const provided = requirements.extra?.recentSlot;
+  if (provided !== undefined && provided !== null) {
+    try {
+      let parsed: bigint;
+      if (typeof provided === "bigint") {
+        parsed = provided;
+      } else if (typeof provided === "number") {
+        if (!Number.isSafeInteger(provided) || provided < 0) {
+          throw new Error("extra.recentSlot must be a non-negative safe integer");
+        }
+        parsed = BigInt(provided);
+      } else if (typeof provided === "string" && /^\d+$/.test(provided)) {
+        parsed = BigInt(provided);
+      } else {
+        throw new Error("extra.recentSlot must be an unsigned integer");
+      }
+      if (parsed > (1n << 64n) - 1n) {
+        throw new Error("extra.recentSlot must fit in u64");
+      }
+      return parsed;
+    } catch {
+      // Invalid optional hints are ignored; fetch a usable slot below.
+    }
+  }
+
+  return await rpc.getSlot().send();
+}
+
+/**
  * Get the default USDC mint address for a network
  *
  * @param network - Network identifier (CAIP-2 or V1 format)

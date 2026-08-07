@@ -3,6 +3,7 @@ import { x402Client, wrapAxiosWithPayment, x402HTTPClient } from "@x402/axios";
 import { ExactEvmScheme } from "@x402/evm/exact/client";
 import { UptoEvmScheme } from "@x402/evm/upto/client";
 import { ExactSvmScheme } from "@x402/svm/exact/client";
+import { UptoSvmScheme } from "@x402/svm/upto/client";
 import { privateKeyToAccount } from "viem/accounts";
 import { createKeyPairSignerFromBytes } from "@solana/kit";
 import { base58 } from "@scure/base";
@@ -38,6 +39,7 @@ async function main(): Promise<void> {
   client.register("eip155:*", new ExactEvmScheme(evmSigner, rpcOptions));
   client.register("eip155:*", new UptoEvmScheme(evmSigner, rpcOptions));
   client.register("solana:*", new ExactSvmScheme(svmSigner));
+  client.register("solana:*", new UptoSvmScheme(svmSigner));
 
   const api = wrapAxiosWithPayment(axios.create(), client);
   const httpClient = new x402HTTPClient(client);

@@ -37,6 +37,7 @@ const PRICE_STABLECOINS = new Set(["USDC", "USDT", "USDG", "PYUSD", "CASH"]);
  */
 export class ExactSvmScheme implements SchemeNetworkServer {
   readonly scheme = "exact";
+  readonly dynamicExtraFields = ["recentBlockhash", "lastValidBlockHeight"];
   private moneyParsers: MoneyParser[] = [];
 
   /**

@@ -28,6 +28,7 @@ describe("ExactSvmSchemeV1", () => {
           "FeePayer1111111111111111111111111111",
           "FacilitatorAddress1111111111111111111",
         ]) as never,
+      getSigner: vi.fn() as never,
       signTransactions: vi.fn() as never,
       signMessages: vi.fn().mockResolvedValue([
         {

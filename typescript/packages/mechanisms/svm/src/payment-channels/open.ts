@@ -14,6 +14,7 @@ import {
   createNoopSigner,
   createTransactionMessage,
   getAddressEncoder,
+  getBase58Encoder,
   getBase64Codec,
   getBase64EncodedWireTransaction,
   getCompiledTransactionMessageDecoder,
@@ -36,9 +37,17 @@ import {
 } from "./generated/instructions/open";
 import { findEventAuthorityPda } from "./generated/pdas/eventAuthority";
 import { ASSOCIATED_TOKEN_PROGRAM_ID, PAYMENT_CHANNELS_PROGRAM_ID } from "./onchain";
+import { verifyEd25519Signature } from "./voucher";
 
 const U64_MAX = (1n << 64n) - 1n;
-const OPEN_SLOT_WINDOW = 1_500n;
+
+/**
+ * Slot freshness / reclaim gate window for payment-channel PDAs.
+ * `open` must land within this many slots of `open_slot`; `reclaim` (and
+ * distribute's PDA deallocation fast path) require
+ * `clock.slot > open_slot + OPEN_SLOT_WINDOW`.
+ */
+export const OPEN_SLOT_WINDOW = 1_500n;
 const SYSTEM_PROGRAM_ID =
   "11111111111111111111111111111111" as Address<"11111111111111111111111111111111">;
 const RENT_SYSVAR =
@@ -245,6 +254,11 @@ export interface VerifyOpenExpected {
   authorizedSigner: string;
   /** Fee payer expected in the transaction fee-payer and rentPayer slots. */
   feePayer: string;
+  /**
+   * Payer wallet (`payload.from`). Must be a required signer, match the open
+   * instruction payer, and have a valid signature over the message bytes.
+   */
+  from: string;
   /** SPL mint expected in the open. */
   mint: string;
   /** SPL Token or Token-2022 program expected in the open. */
@@ -302,6 +316,7 @@ export async function verifyOpenTransaction(
     decoded.messageBytes,
   ) as unknown as {
     addressTableLookups?: readonly unknown[];
+    header: { numSignerAccounts: number };
     instructions: readonly {
       accountIndices?: readonly number[];
       data?: Uint8Array | undefined;
@@ -327,6 +342,41 @@ export async function verifyOpenTransaction(
     throw new Error(
       `verifyOpenTransaction: expected exactly one open instruction, found ${message.instructions.length}`,
     );
+  }
+
+  // Required-signer set must equal the distinct addresses in
+  // `{ payload.from, extra.feePayer }` — no other signature may be required.
+  const expectedSigners = new Set(
+    expected.feePayer === expected.from ? [expected.from] : [expected.feePayer, expected.from],
+  );
+  const numSigners = message.header.numSignerAccounts;
+  const signerAddresses = message.staticAccounts.slice(0, numSigners);
+  if (signerAddresses.length !== expectedSigners.size) {
+    throw new Error(
+      `verifyOpenTransaction: required-signer count ${signerAddresses.length} != expected ${expectedSigners.size}`,
+    );
+  }
+  for (const signer of signerAddresses) {
+    if (!expectedSigners.has(signer)) {
+      throw new Error(
+        `verifyOpenTransaction: unexpected required signer ${signer}; expected {${[...expectedSigners].join(", ")}}`,
+      );
+    }
+  }
+
+  // The payer signature must be present and valid before the facilitator signs.
+  const fromSignature = decoded.signatures[expected.from as Address];
+  if (fromSignature == null) {
+    throw new Error(`verifyOpenTransaction: missing signature for payload.from ${expected.from}`);
+  }
+  const fromPubkey = getBase58Encoder().encode(expected.from) as Uint8Array;
+  const fromSigValid = await verifyEd25519Signature({
+    message: decoded.messageBytes as unknown as Uint8Array,
+    publicKey: fromPubkey,
+    signature: fromSignature as unknown as Uint8Array,
+  });
+  if (!fromSigValid) {
+    throw new Error(`verifyOpenTransaction: invalid signature for payload.from ${expected.from}`);
   }
   const instruction = message.instructions[0];
   if (!instruction) {
@@ -380,6 +430,11 @@ export async function verifyOpenTransaction(
   const selfProgramAddr = accountAt(13, "selfProgram");
   const feePayerAddr = message.staticAccounts[0];
 
+  if (payerAddr !== expected.from) {
+    throw new Error(
+      `verifyOpenTransaction: payer ${payerAddr} != expected payload.from ${expected.from}`,
+    );
+  }
   if (feePayerAddr !== expected.feePayer) {
     throw new Error(
       `verifyOpenTransaction: feePayer ${feePayerAddr} != expected ${expected.feePayer}`,

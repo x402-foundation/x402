@@ -9,6 +9,7 @@ import type { SupportedKind } from "../../../src/types/facilitator";
 export class MockSchemeNetworkServer implements SchemeNetworkServer {
   public readonly scheme: string;
   public readonly schemeHooks?: SchemeServerHooks;
+  public settleOnCancel?: SchemeNetworkServer["settleOnCancel"];
   private parsePriceResult: AssetAmount | Error;
   private enhanceResult: PaymentRequirements | Error | null = null;
   private assetDecimalsResult: number | null = null;

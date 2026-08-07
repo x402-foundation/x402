@@ -1,6 +1,8 @@
 /**
- * Channel-flow glue for the `upto` facilitator: voucher signing, co-signing,
- * broadcasting the client `open` (idempotent), and submitting settle+distribute.
+ * Channel-flow glue for the `upto` facilitator: co-signing, broadcasting the
+ * client `open` (idempotent), simulating settlement readiness (atomic
+ * open∥settle∥distribute before open; settle-only once open), and submitting
+ * settle+distribute.
  *
  * Kept separate from the scheme orchestration so the onchain mechanics stay
  * readable. All RPC access is threaded in by the caller.
@@ -8,17 +10,26 @@
 
 import { createHash } from "node:crypto";
 import {
+  getSetComputeUnitLimitInstruction,
+  parseSetComputeUnitPriceInstruction,
+} from "@solana-program/compute-budget";
+import {
   address,
+  type Address,
+  addSignersToInstruction,
   appendTransactionMessageInstructions,
   type Blockhash,
-  createSignableMessage,
+  createNoopSigner,
   createTransactionMessage,
-  getBase58Decoder,
+  decompileTransactionMessage,
   getBase58Encoder,
   getBase64Codec,
   getBase64EncodedWireTransaction,
+  getCompiledTransactionMessageDecoder,
   getTransactionDecoder,
+  type Instruction,
   type MessagePartialSigner,
+  partiallySignTransactionMessageWithSigners,
   pipe,
   setTransactionMessageFeePayerSigner,
   setTransactionMessageLifetimeUsingBlockhash,
@@ -27,41 +38,28 @@ import {
   type TransactionSigner,
 } from "@solana/kit";
 
+import { COMPUTE_BUDGET_PROGRAM_ADDRESS } from "../../constants";
 import { fetchChannel, type Channel } from "../../payment-channels/generated/accounts/channel";
-import { type ServerInstruction } from "../../payment-channels/onchain";
+import {
+  buildDistributeInstruction,
+  buildSettleAndSealInstructions,
+  type ServerInstruction,
+} from "../../payment-channels/onchain";
 import type { ChannelSplit } from "../../payment-channels/open";
-import { encodeVoucherMessageBytes } from "../../payment-channels/voucher";
+import type { FacilitatorSvmSigner } from "../../signer";
 import { createRpcClient } from "../../utils";
 
-const CHANNEL_ACCOUNT_DISCRIMINATOR = 0;
+/** Payment-channels `AccountDiscriminator::Channel` (byte 0 is reserved for uninitialized accounts). */
+const CHANNEL_ACCOUNT_DISCRIMINATOR = 1;
 const CHANNEL_STATUS_OPEN = 0;
+/** Solana per-transaction compute-unit max; used only for facilitator-built sims. */
+const SIM_COMPUTE_UNIT_LIMIT = 1_400_000;
 
 /** Signer capable of signing Solana transactions and raw Ed25519 messages. */
 export type UptoSvmSigner = TransactionSigner & MessagePartialSigner;
 
 /** RPC client shape used by the channel helpers. */
 export type ChannelRpc = ReturnType<typeof createRpcClient>;
-
-/**
- * Sign a payment-channel voucher and return the base58 signature.
- *
- * @param receiverAuthorizer - The channel's authorized signer
- * @param voucher - The voucher fields
- * @param voucher.channelId - Channel PDA (base58)
- * @param voucher.cumulativeAmount - Cumulative settled amount (base units)
- * @param voucher.expiresAt - Voucher deadline (Unix seconds, i64)
- * @returns The base58-encoded 64-byte Ed25519 signature
- */
-export async function signVoucher(
-  receiverAuthorizer: UptoSvmSigner,
-  voucher: { channelId: string; cumulativeAmount: bigint; expiresAt: bigint },
-): Promise<string> {
-  const message = encodeVoucherMessageBytes(voucher);
-  const [dict] = await receiverAuthorizer.signMessages([createSignableMessage(message)]);
-  const signature = dict[receiverAuthorizer.address];
-  if (!signature) throw new Error("receiverAuthorizer did not return a voucher signature");
-  return getBase58Decoder().decode(signature as Uint8Array);
-}
 
 /**
  * Whether the channel account already exists onchain (open already broadcast).
@@ -89,9 +87,11 @@ export interface ExpectedOpenChannel {
 
 /** Onchain channel facts retained from verification through settlement. */
 export interface VerifiedOpenChannel {
+  authorizedSigner: string;
   channelId: string;
   deposit: bigint;
   mint: string;
+  openSlot: bigint;
   payee: string;
   payer: string;
   rentPayer: string;
@@ -99,7 +99,7 @@ export interface VerifiedOpenChannel {
 }
 
 /**
- * Fetch and bind the confirmed channel account before the resource is served.
+ * Fetch and bind the confirmed channel account before resource execution.
  *
  * @param rpc - RPC client used to read the channel
  * @param channelId - Channel PDA
@@ -159,9 +159,11 @@ export function verifyOpenChannelAccount(
   }
 
   return {
+    authorizedSigner: expected.authorizedSigner,
     channelId,
     deposit: channel.deposit,
     mint: channel.mint,
+    openSlot: channel.openSlot,
     payee: channel.payee,
     payer: channel.payer,
     rentPayer: channel.rentPayer,
@@ -174,29 +176,149 @@ export function verifyOpenChannelAccount(
  * broadcast it, and wait for confirmation. No-op skip is the caller's job
  * (see {@link channelExists}).
  *
- * @param feePayer - The fee-payer signer
- * @param rpc - The RPC client
+ * Uses the wire-level FacilitatorSvmSigner methods (same path as exact).
+ *
+ * @param facilitator - Facilitator signer with wire sign/send/confirm
+ * @param feePayer - Fee-payer address to co-sign with
+ * @param network - CAIP-2 network identifier
  * @param openTransactionBase64 - The client-signed open transaction
  * @returns The broadcast signature
  */
 export async function broadcastOpen(
+  facilitator: Pick<
+    FacilitatorSvmSigner,
+    "signTransaction" | "sendTransaction" | "confirmTransaction"
+  >,
+  feePayer: Address,
+  network: string,
+  openTransactionBase64: string,
+): Promise<string> {
+  const wire = await facilitator.signTransaction(openTransactionBase64, feePayer, network);
+  const signature = await facilitator.sendTransaction(wire, network);
+  await facilitator.confirmTransaction(signature, network);
+  return signature;
+}
+
+/** Channel fields needed to build settle+distribute for readiness simulation. */
+export interface SettlementSimChannel {
+  channelId: string;
+  mint: string;
+  /** CAIP-2 network; selects the payment-channels treasury owner. */
+  network: string;
+  payee: string;
+  payer: string;
+  rentPayer: string;
+  splits: readonly ChannelSplit[];
+  tokenProgram: string;
+}
+
+/**
+ * Simulate `open ∥ settle_and_seal(has_voucher=0) ∥ distribute` against live
+ * state before broadcasting open, so settlement-account failures reject without
+ * escrowing the deposit. Never broadcast — only the original open-only tx is.
+ *
+ * Rebuilds a facilitator-owned message: client non-compute-budget instructions
+ * kept verbatim, compute-unit limit raised to the per-tx max (client opens cap
+ * at 400_000; the composite can exceed that), payer attached as a noop signer,
+ * `sigVerify: false`.
+ *
+ * @param feePayer - The fee-payer / channel payee signer
+ * @param rpc - The RPC client
+ * @param args - Open transaction and challenge-bound channel terms
+ * @param args.openTransactionBase64 - Client-signed open transaction
+ * @param args.channel - Challenge-bound channel terms for settle/distribute
+ */
+export async function simulateOpenSettleDistribute(
   feePayer: UptoSvmSigner,
   rpc: ChannelRpc,
-  openTransactionBase64: string,
-): Promise<Signature> {
+  args: {
+    openTransactionBase64: string;
+    channel: SettlementSimChannel;
+  },
+): Promise<void> {
+  const { channel, openTransactionBase64 } = args;
   const tx = getTransactionDecoder().decode(getBase64Codec().encode(openTransactionBase64));
-  const signable = { content: tx.messageBytes, signatures: tx.signatures };
-  const [dict] = await feePayer.signMessages([signable as never]);
-  const fullySigned = {
-    ...tx,
-    signatures: { ...tx.signatures, ...dict },
-  };
-  const wire = getBase64EncodedWireTransaction(
-    fullySigned as Parameters<typeof getBase64EncodedWireTransaction>[0],
+  const compiled = getCompiledTransactionMessageDecoder().decode(tx.messageBytes);
+  const decompiled = decompileTransactionMessage(compiled);
+  const openInstructions = (decompiled.instructions ?? []) as Instruction[];
+
+  let computeUnitPrice: Instruction | undefined;
+  const nonComputeBudget: Instruction[] = [];
+  for (const ix of openInstructions) {
+    if (ix.programAddress.toString() !== COMPUTE_BUDGET_PROGRAM_ADDRESS) {
+      nonComputeBudget.push(ix);
+      continue;
+    }
+    // Preserve SetComputeUnitPrice (discriminator 3); drop the client's limit.
+    if (ix.data && ix.data.length > 0 && ix.data[0] === 3) {
+      parseSetComputeUnitPriceInstruction(ix as never); // reject malformed price ix
+      computeUnitPrice = ix;
+    }
+  }
+
+  // Kit rejects two distinct signer objects for one address; when payer ==
+  // feePayer the real signer covers both roles.
+  const payerSigner =
+    channel.payer === feePayer.address ? feePayer : createNoopSigner(address(channel.payer));
+  const openWithPayer = nonComputeBudget.map(ix =>
+    addSignersToInstruction([payerSigner, feePayer], ix),
   );
-  const signature = await rpc.sendTransaction(wire, { encoding: "base64" }).send();
-  await confirmSignature(rpc, signature);
-  return signature;
+
+  const settle = buildSettleAndSealInstructions({
+    channelId: channel.channelId,
+    payeeSigner: feePayer,
+  });
+  const distribute = await buildDistributeInstruction({
+    channelId: channel.channelId,
+    mint: channel.mint,
+    network: channel.network,
+    payee: channel.payee,
+    payer: channel.payer,
+    rentPayer: channel.rentPayer,
+    splits: channel.splits,
+    tokenProgram: channel.tokenProgram,
+  });
+
+  const instructions: Instruction[] = [
+    getSetComputeUnitLimitInstruction({ units: SIM_COMPUTE_UNIT_LIMIT }),
+    ...(computeUnitPrice ? [computeUnitPrice] : []),
+    ...openWithPayer,
+    ...settle,
+    distribute,
+  ];
+
+  await simulateInstructions(feePayer, rpc, instructions);
+}
+
+/**
+ * Simulate the zero-charge settlement path (`settle_and_seal` with
+ * `has_voucher = 0` + `distribute`) for an already-open channel so bad
+ * ATA/account derivations fail before resource execution.
+ *
+ * @param feePayer - The fee-payer / channel payee signer
+ * @param rpc - The RPC client
+ * @param channel - Verified open-channel facts
+ */
+export async function simulateZeroChargeSettle(
+  feePayer: UptoSvmSigner,
+  rpc: ChannelRpc,
+  channel: SettlementSimChannel,
+): Promise<void> {
+  const settle = buildSettleAndSealInstructions({
+    channelId: channel.channelId,
+    payeeSigner: feePayer,
+  });
+  const distribute = await buildDistributeInstruction({
+    channelId: channel.channelId,
+    mint: channel.mint,
+    network: channel.network,
+    payee: channel.payee,
+    payer: channel.payer,
+    rentPayer: channel.rentPayer,
+    splits: channel.splits,
+    tokenProgram: channel.tokenProgram,
+  });
+  await simulateInstructions(feePayer, rpc, [...settle, distribute]);
 }
 
 /**
@@ -254,7 +376,10 @@ export async function confirmSignature(
     const status = value[0];
     if (status) {
       if (status.err) {
-        throw new Error(`tx ${signature} failed onchain: ${JSON.stringify(status.err)}`);
+        const errorStr = JSON.stringify(status.err, (_, v) =>
+          typeof v === "bigint" ? v.toString() : v,
+        );
+        throw new Error(`tx ${signature} failed onchain: ${errorStr}`);
       }
       const level = status.confirmationStatus;
       if (level === undefined || level === null || level === "confirmed" || level === "finalized") {
@@ -301,4 +426,50 @@ export function getChannelDistributionHash(splits: readonly ChannelSplit[]): Uin
   }
 
   return hasher.digest();
+}
+
+/**
+ * Partially sign and simulate a facilitator-built instruction list without
+ * broadcasting. Always uses `sigVerify: false` (sims are never landed; the
+ * open composite may carry a noop payer) and `replaceRecentBlockhash: true`.
+ *
+ * @param feePayer - The fee-payer signer
+ * @param rpc - The RPC client
+ * @param instructions - Instructions to simulate
+ */
+async function simulateInstructions(
+  feePayer: UptoSvmSigner,
+  rpc: ChannelRpc,
+  instructions: readonly Instruction[],
+): Promise<void> {
+  const { value: latestBlockhash } = await rpc.getLatestBlockhash().send();
+  const message = pipe(
+    createTransactionMessage({ version: 0 }),
+    m => setTransactionMessageFeePayerSigner(feePayer, m),
+    m =>
+      setTransactionMessageLifetimeUsingBlockhash(
+        {
+          blockhash: latestBlockhash.blockhash as Blockhash,
+          lastValidBlockHeight: latestBlockhash.lastValidBlockHeight,
+        },
+        m,
+      ),
+    m => appendTransactionMessageInstructions(instructions, m),
+  );
+  const signed = await partiallySignTransactionMessageWithSigners(message);
+  const wire = getBase64EncodedWireTransaction(signed);
+  const result = await rpc
+    .simulateTransaction(wire, {
+      commitment: "confirmed",
+      encoding: "base64",
+      replaceRecentBlockhash: true,
+      sigVerify: false,
+    })
+    .send();
+  if (result.value.err) {
+    const errorStr = JSON.stringify(result.value.err, (_, v) =>
+      typeof v === "bigint" ? v.toString() : v,
+    );
+    throw new Error(`zero-charge settlement simulation failed: ${errorStr}`);
+  }
 }

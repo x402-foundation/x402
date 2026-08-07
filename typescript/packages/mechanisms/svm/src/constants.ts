@@ -75,6 +75,9 @@ export const SVM_STABLECOIN_MINTS = {
 
 export type SvmStablecoinSymbol = keyof typeof SVM_STABLECOIN_MINTS;
 
+/** Decimal precision for every mint in {@link SVM_STABLECOIN_MINTS}. */
+export const SVM_STABLECOIN_DECIMALS = 6;
+
 export const SVM_STABLECOIN_TOKEN_PROGRAMS: Record<SvmStablecoinSymbol, string> = {
   USDC: TOKEN_PROGRAM_ADDRESS,
   USDT: TOKEN_PROGRAM_ADDRESS,

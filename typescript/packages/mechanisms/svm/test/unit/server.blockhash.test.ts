@@ -1,4 +1,5 @@
-import { beforeEach, describe, it, expect, vi } from "vitest";
+import { generateKeyPairSigner } from "@solana/kit";
+import { beforeAll, beforeEach, describe, it, expect, vi } from "vitest";
 
 const { getLatestBlockhashSend } = vi.hoisted(() => ({
   getLatestBlockhashSend: vi.fn(),
@@ -81,6 +82,12 @@ describe("ExactSvmScheme — recent blockhash in the 402 challenge", () => {
 });
 
 describe("UptoSvmScheme — recent blockhash + slot in the 402 challenge", () => {
+  let authorizer: Awaited<ReturnType<typeof generateKeyPairSigner>>;
+
+  beforeAll(async () => {
+    authorizer = await generateKeyPairSigner();
+  });
+
   beforeEach(() => {
     getLatestBlockhashSend.mockReset();
     getLatestBlockhashSend.mockResolvedValue({
@@ -105,26 +112,30 @@ describe("UptoSvmScheme — recent blockhash + slot in the 402 challenge", () =>
     x402Version: 2,
     scheme: "upto",
     network: SOLANA_DEVNET_CAIP2,
-    extra: { facilitatorAddress: "Op3rator111111111111111111111111111111111" },
+    extra: { feePayer: "FeePay3r1111111111111111111111111111111111" },
   };
 
   it("embeds recentBlockhash + recentSlot (from the same response) when an rpcUrl is configured", async () => {
-    const scheme = new UptoSvmScheme({ rpcUrl: "https://rpc.example" });
+    const scheme = new UptoSvmScheme({
+      receiverAuthorizerSigner: authorizer,
+      rpcUrl: "https://rpc.example",
+    });
     const req = await scheme.enhancePaymentRequirements(base as never, supportedKind as never, []);
     expect(req.extra?.recentBlockhash).toBe("EZ3rST5dvHmbanh75jc4PuLfV96vp9fEYBVeNk4FfM1k");
     expect(req.extra?.lastValidBlockHeight).toBe("12345");
     // The slot the blockhash was produced at — the channel-PDA `open_slot` anchor.
     expect(req.extra?.recentSlot).toBe("98765");
-    // The facilitator binding is still threaded through alongside.
-    expect(req.extra?.facilitatorAddress).toBe("Op3rator111111111111111111111111111111111");
+    expect(req.extra?.feePayer).toBe("FeePay3r1111111111111111111111111111111111");
+    expect(req.extra?.receiverAuthorizer).toBe(authorizer.address);
   });
 
   it("omits the blockhash and slot when no rpcUrl is configured", async () => {
-    const scheme = new UptoSvmScheme();
+    const scheme = new UptoSvmScheme({ receiverAuthorizerSigner: authorizer });
     const req = await scheme.enhancePaymentRequirements(base as never, supportedKind as never, []);
     expect(req.extra?.recentBlockhash).toBeUndefined();
     expect(req.extra?.lastValidBlockHeight).toBeUndefined();
     expect(req.extra?.recentSlot).toBeUndefined();
-    expect(req.extra?.facilitatorAddress).toBe("Op3rator111111111111111111111111111111111");
+    expect(req.extra?.feePayer).toBe("FeePay3r1111111111111111111111111111111111");
+    expect(req.extra?.receiverAuthorizer).toBe(authorizer.address);
   });
 });

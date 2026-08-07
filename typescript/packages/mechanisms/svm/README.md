@@ -31,7 +31,7 @@ This package provides three main components for handling x402 payments on Solana
 **Facilitator:**
 - `ExactSvmFacilitator` - V2 facilitator for payment verification and settlement
 - `toFacilitatorSvmSigner(keypair)` - Converts Solana keypairs to facilitator signers
-- `FacilitatorSvmSigner` - TypeScript type for facilitator signers
+- `FacilitatorSvmSigner` - TypeScript type for facilitator signers (`getSigner` optional; required by upto)
 - `FacilitatorRpcClient` - RPC client interface
 
 **Service:**
