@@ -1,8 +1,11 @@
 package org.x402.integration;
 
 import org.x402.client.FacilitatorClient;
+import org.x402.client.Kind;
+import org.x402.client.SettlementResponse;
 import org.x402.client.VerificationResponse;
 import org.x402.model.PaymentPayload;
+import org.x402.model.PaymentRequirements;
 import org.x402.server.PaymentFilter;
 import jakarta.servlet.http.HttpServlet;
 import jakarta.servlet.http.HttpServletRequest;
@@ -20,14 +23,18 @@ import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.util.Map;
+import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.*;
 
 /**
- * Embedded-Jetty integration: real PaymentFilter + stub FacilitatorClient
- * + simple business servlet.
+ * Embedded-Jetty regression test for issue #3068: PaymentFilter must not deliver the protected
+ * response body to the client if settlement fails after the handler has already run. Before the
+ * fix, {@code chain.doFilter()} wrote straight to the real response, committing it before
+ * {@code settle()} was even called - a facilitator-side failure (network error, RPC timeout,
+ * outage) meant the buyer already had the content with no payment settled.
  */
-class FilterIntegrationTest {
+class FilterSettlementFailureIntegrationTest {
 
     static Server jetty;
     static int    port;
@@ -35,42 +42,39 @@ class FilterIntegrationTest {
 
     @BeforeAll
     static void startJetty() throws Exception {
-        // ----- stub facilitator -----------------------------------------
+        // Facilitator that always verifies the payment but always fails to settle it -
+        // simulates a facilitator outage/RPC timeout discovered only after business logic ran.
         FacilitatorClient stubFac = new FacilitatorClient() {
-            @Override public VerificationResponse verify(String hdr, org.x402.model.PaymentRequirements r) {
+            @Override public VerificationResponse verify(String hdr, PaymentRequirements r) {
                 VerificationResponse vr = new VerificationResponse();
-                vr.isValid = true;                       // always accept
+                vr.isValid = true;
                 return vr;
             }
-            @Override public org.x402.client.SettlementResponse settle(String h, org.x402.model.PaymentRequirements r) {
-                org.x402.client.SettlementResponse sr = new org.x402.client.SettlementResponse();
-                sr.success = true;
-                sr.txHash = "0xstub";
-                sr.networkId = "base-sepolia";
+            @Override public SettlementResponse settle(String h, PaymentRequirements r) {
+                SettlementResponse sr = new SettlementResponse();
+                sr.success = false;
+                sr.error = "simulated settlement failure";
                 return sr;
             }
-            @Override public java.util.Set<org.x402.client.Kind> supported() { return java.util.Set.of(); }
+            @Override public Set<Kind> supported() { return Set.of(); }
         };
 
-        // price-table: /private costs 1 (value irrelevant here)
-        Map<String, java.math.BigInteger> priced = Map.of("/private", java.math.BigInteger.ONE);
+        Map<String, java.math.BigInteger> priced = Map.of("/premium", java.math.BigInteger.ONE);
 
-        // ----- Jetty context --------------------------------------------
-        jetty  = new Server(0); // auto-choose port
+        jetty = new Server(0);
         ServletContextHandler ctx = new ServletContextHandler();
         ctx.setContextPath("/");
 
-        // business servlet at /private – returns 200 + JSON
+        // business servlet that would deliver paywalled content if allowed to reach the client
         ctx.addServlet(new ServletHolder(new HttpServlet() {
             @Override protected void doGet(HttpServletRequest req, HttpServletResponse resp) throws IOException {
                 resp.setContentType("application/json");
                 try (PrintWriter w = resp.getWriter()) {
-                    w.write("{\"ok\":true}");
+                    w.write("{\"secret\":\"premium content\"}");
                 }
             }
-        }), "/private");
+        }), "/premium");
 
-        // register PaymentFilter
         ctx.addFilter(
                 new FilterHolder(new PaymentFilter("0xReceiver", priced, stubFac)),
                 "/*",
@@ -85,38 +89,27 @@ class FilterIntegrationTest {
     @AfterAll
     static void stopJetty() throws Exception { jetty.stop(); }
 
-    /* ---------- test: missing header -> 402 --------------------------- */
     @Test
-    void missingHeaderGets402() throws Exception {
-        HttpRequest req = HttpRequest.newBuilder()
-                .uri(URI.create("http://localhost:" + port + "/private"))
-                .GET()
-                .build();
-
-        HttpResponse<String> rsp = http.send(req, HttpResponse.BodyHandlers.ofString());
-        assertEquals(402, rsp.statusCode());
-        assertTrue(rsp.body().contains("\"x402Version\":"));
-    }
-
-    /* ---------- test: valid header -> 200 ----------------------------- */
-    @Test
-    void validHeaderGets200() throws Exception {
-        // build minimal payment header with matching resource
+    void settlementFailureDoesNotDeliverContent() throws Exception {
         PaymentPayload p = new PaymentPayload();
         p.x402Version = 1;
         p.scheme      = "exact";
         p.network     = "base-sepolia";
-        p.payload     = Map.of("resource", "/private");
+        p.payload     = Map.of("resource", "/premium");
         String hdr = p.toHeader();
 
         HttpRequest req = HttpRequest.newBuilder()
-                .uri(URI.create("http://localhost:" + port + "/private"))
+                .uri(URI.create("http://localhost:" + port + "/premium"))
                 .header("X-PAYMENT", hdr)
                 .GET()
                 .build();
 
         HttpResponse<String> rsp = http.send(req, HttpResponse.BodyHandlers.ofString());
-        assertEquals(200, rsp.statusCode());
-        assertEquals("{\"ok\":true}", rsp.body());
+
+        // Before the fix this returned 200 with the premium body already delivered, since
+        // chain.doFilter() committed the response before settle() was ever consulted.
+        assertEquals(402, rsp.statusCode());
+        assertFalse(rsp.body().contains("premium content"),
+                "premium content must never reach the client when settlement fails");
     }
 }

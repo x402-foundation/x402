@@ -143,56 +143,75 @@ public class PaymentFilter implements Filter {
             return;
         }
 
-        /* -------- payment verified → continue business logic ----------- */
-        chain.doFilter(req, res);
+        /* -------- payment verified → continue business logic, buffered -----
+         * The response body is buffered rather than written straight to the client: if
+         * settlement fails below, the buffered body is discarded and a 402 is sent instead.
+         * Without this, a settlement failure (network error, RPC timeout, facilitator outage)
+         * after the handler has already run would leave premium content already delivered to
+         * the buyer with no payment settled - see the docs/express reference implementation,
+         * which buffers for the same reason. */
+        BufferingHttpServletResponseWrapper buffered = new BufferingHttpServletResponseWrapper(response);
+        chain.doFilter(req, buffered);
 
         /* -------- settlement (return errors to user) ------------- */
-        // Don't settle if response failed (4xx/5xx status codes)
+        // Don't settle if response failed (4xx/5xx status codes) - still flush the buffered body,
+        // it's just not eligible for settlement.
         if (response.getStatus() >= 400) {
+            flushBuffered(buffered, response);
             return;
         }
 
         try {
             SettlementResponse sr = facilitator.settle(header, buildRequirements(path));
             if (sr == null || !sr.success) {
-                // Settlement failed - return 402 if headers not sent yet
-                if (!response.isCommitted()) {
-                    String errorMsg = sr != null && sr.error != null ? sr.error : "settlement failed";
-                    respond402(response, path, errorMsg);
-                }
+                // Settlement failed - buffered body is discarded, send 402 instead.
+                // response is still uncommitted here: nothing was ever written to it directly.
+                String errorMsg = sr != null && sr.error != null ? sr.error : "settlement failed";
+                respond402(response, path, errorMsg);
                 return;
             }
-            
-            // Settlement succeeded - add settlement response header (base64-encoded JSON) 
+
+            // Settlement succeeded - add settlement response header (base64-encoded JSON)
             try {
                 // Extract payer from payment payload (wallet address of person making payment)
                 String payer = extractPayerFromPayload(payload);
-                
+
                 String base64Header = createPaymentResponseHeader(sr, payer);
                 response.setHeader("X-PAYMENT-RESPONSE", base64Header);
-                
+
                 // Set CORS header to expose X-PAYMENT-RESPONSE to browser clients
                 response.setHeader("Access-Control-Expose-Headers", "X-PAYMENT-RESPONSE");
+
+                // Only now, with settlement confirmed, does the buffered body reach the client.
+                flushBuffered(buffered, response);
             } catch (Exception ex) {
-                // If header creation fails, return 500
-                if (!response.isCommitted()) {
-                    response.setStatus(HttpServletResponse.SC_INTERNAL_SERVER_ERROR);
-                    response.setContentType("application/json");
-                    try {
-                        response.getWriter().write("{\"error\":\"Failed to create settlement response header\"}");
-                    } catch (IOException writeEx) {
-                        System.err.println("Failed to write error response: " + writeEx.getMessage());
-                    }
+                // If header creation fails, return 500 - buffered body is discarded.
+                response.setStatus(HttpServletResponse.SC_INTERNAL_SERVER_ERROR);
+                response.setContentType("application/json");
+                try {
+                    response.getWriter().write("{\"error\":\"Failed to create settlement response header\"}");
+                } catch (IOException writeEx) {
+                    System.err.println("Failed to write error response: " + writeEx.getMessage());
                 }
                 return;
             }
         } catch (Exception ex) {
-            // Network/communication errors during settlement - return 402
-            if (!response.isCommitted()) {
-                respond402(response, path, "settlement error: " + ex.getMessage());
-            }
+            // Network/communication errors during settlement - buffered body is discarded,
+            // return 402 (response is still uncommitted, same as the settlement-failed case).
+            respond402(response, path, "settlement error: " + ex.getMessage());
             return;
         }
+    }
+
+    /** Writes the buffered body to the real response and flushes it to the client. */
+    private static void flushBuffered(BufferingHttpServletResponseWrapper buffered,
+                                      HttpServletResponse             response)
+            throws IOException {
+        byte[] body = buffered.getBufferedBody();
+        if (body.length > 0) {
+            response.getOutputStream().write(body);
+        }
+        response.flushBuffer();
     }
 
     /* ------------------------------------------------ helpers ---------- */
