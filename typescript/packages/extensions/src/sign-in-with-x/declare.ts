@@ -36,20 +36,16 @@ export interface SIWxDeclaration extends SIWxExtension {
 /**
  * Create SIWX extension declaration for PaymentRequired.extensions
  *
- * Most fields are derived automatically from request context when using
- * siwxResourceServerExtension:
- * - `network`: From payment requirements (accepts[].network)
- * - `resourceUri`: From request URL
- * - `domain`: Parsed from resourceUri
- *
- * Explicit values in options override automatic derivation.
+ * When using `createSIWxResourceServerExtension`, domain and URI are derived
+ * from the configured `origin` and request path. Network defaults to payment
+ * requirements unless explicitly set (required for auth-only routes).
  *
  * @param options - Configuration options (most are optional)
  * @returns Extension object ready for PaymentRequired.extensions
  *
  * @example
  * ```typescript
- * // Minimal - derives network, domain, resourceUri from context
+ * // Minimal - derives network, domain, and uri from extension context
  * const extensions = declareSIWxExtension({
  *   statement: 'Sign in to access your purchased content',
  * });
@@ -60,10 +56,8 @@ export interface SIWxDeclaration extends SIWxExtension {
  *   statement: 'Sign in to access',
  * });
  *
- * // Full explicit config (no derivation)
+ * // Auth-only route with explicit networks
  * const extensions = declareSIWxExtension({
- *   domain: 'api.example.com',
- *   resourceUri: 'https://api.example.com/data',
  *   network: ['eip155:8453', 'solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp'],
  *   statement: 'Sign in to access',
  *   expirationSeconds: 300,
@@ -73,21 +67,11 @@ export interface SIWxDeclaration extends SIWxExtension {
 export function declareSIWxExtension(
   options: DeclareSIWxOptions = {},
 ): Record<string, SIWxDeclaration> {
-  // Build partial info with static fields only
-  // Time-based fields (nonce, issuedAt, expirationTime) are generated
-  // per-request by enrichPaymentRequiredResponse in siwxResourceServerExtension
+  // Time-based challenge fields are generated per request by the server extension.
   const info: Partial<SIWxExtensionInfo> & { version: string } = {
     version: options.version ?? "1",
   };
 
-  // Add fields that are provided
-  if (options.domain) {
-    info.domain = options.domain;
-  }
-  if (options.resourceUri) {
-    info.uri = options.resourceUri;
-    info.resources = [options.resourceUri];
-  }
   if (options.statement) {
     info.statement = options.statement;
   }

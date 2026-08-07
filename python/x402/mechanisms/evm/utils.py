@@ -2,7 +2,6 @@
 
 import os
 import re
-from datetime import datetime, timedelta
 from decimal import Decimal
 
 try:
@@ -13,8 +12,6 @@ except ImportError as e:
     ) from e
 
 from .constants import (
-    DEFAULT_VALIDITY_BUFFER,
-    DEFAULT_VALIDITY_PERIOD,
     NETWORK_CONFIGS,
     AssetInfo,
     NetworkConfig,
@@ -213,28 +210,6 @@ def format_amount(amount: int, decimals: int) -> str:
     return str(d / divisor)
 
 
-def create_validity_window(
-    duration: timedelta | None = None,
-    buffer: int = DEFAULT_VALIDITY_BUFFER,
-) -> tuple[int, int]:
-    """Create valid_after/valid_before timestamps.
-
-    Args:
-        duration: How long authorization is valid (default: 1 hour).
-        buffer: Seconds before now for valid_after (clock skew).
-
-    Returns:
-        (valid_after, valid_before) as Unix timestamps.
-    """
-    if duration is None:
-        duration = timedelta(seconds=DEFAULT_VALIDITY_PERIOD)
-
-    now = int(datetime.now().timestamp())
-    valid_after = now - buffer
-    valid_before = now + int(duration.total_seconds())
-    return (valid_after, valid_before)
-
-
 def hex_to_bytes(hex_str: str) -> bytes:
     """Convert hex string to bytes (handles 0x prefix).
 
@@ -257,6 +232,24 @@ def bytes_to_hex(data: bytes) -> str:
         Hex string with 0x prefix.
     """
     return "0x" + data.hex()
+
+
+def is_contract_revert(error: Exception | None) -> bool:
+    """Report whether error looks like an on-chain contract revert (vs a transport/RPC failure).
+
+    Used by the post-deploy ERC-6492 simulation paths so a transient RPC error is not
+    misreported as a deterministic "signature unsupported" rejection. Matches the
+    revert-substring heuristic the EIP-3009 revert-reason parsers already rely on.
+
+    Args:
+        error: The exception raised by a simulation/eth_call, if any.
+
+    Returns:
+        True if the error looks like a contract revert, False for transport/RPC failures.
+    """
+    if error is None:
+        return False
+    return "revert" in str(error).lower()
 
 
 def parse_money_to_decimal(money: str | float | int) -> float:

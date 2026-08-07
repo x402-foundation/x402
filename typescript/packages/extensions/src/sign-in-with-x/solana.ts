@@ -5,6 +5,7 @@
  * for Solana wallets.
  */
 
+import { ed25519 } from "@noble/curves/ed25519";
 import { base58 } from "@scure/base";
 import nacl from "tweetnacl";
 import type { CompleteSIWxInfo } from "./client";
@@ -122,6 +123,17 @@ export function verifySolanaSignature(
   signature: Uint8Array,
   publicKey: Uint8Array,
 ): boolean {
+  // Reject small-order public keys. Classic Ed25519 verify (tweetnacl) accepts
+  // identity-point forgeries of the form (R=identity, S=0) for any message.
+  try {
+    const point = ed25519.ExtendedPoint.fromHex(publicKey);
+    if (point.isSmallOrder()) {
+      return false;
+    }
+  } catch {
+    return false;
+  }
+
   const messageBytes = new TextEncoder().encode(message);
   return nacl.sign.detached.verify(messageBytes, signature, publicKey);
 }

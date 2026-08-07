@@ -11,6 +11,9 @@ import {
   getFacilitatorResponseError,
   SETTLEMENT_OVERRIDES_HEADER,
   SettlementOverrides,
+  checkIfBazaarNeeded,
+  PaymentCancellationDispatcher,
+  withPrivateCacheControl,
 } from "@x402/core/server";
 import {
   SchemeNetworkServer,
@@ -33,6 +36,7 @@ export function setSettlementOverrides(reply: FastifyReply, overrides: Settlemen
 }
 
 interface X402PaymentContext {
+  cancellationDispatcher: PaymentCancellationDispatcher;
   paymentPayload: PaymentPayload;
   paymentRequirements: PaymentRequirements;
   declaredExtensions?: Record<string, unknown>;
@@ -114,22 +118,6 @@ function getResponseBodyBuffer(payload: unknown): Buffer | undefined {
   }
 
   return Buffer.from(JSON.stringify(payload ?? {}));
-}
-
-/**
- * Check if any routes in the configuration declare bazaar extensions.
- *
- * @param routes - Route configuration
- * @returns True if any route has extensions.bazaar defined
- */
-function checkIfBazaarNeeded(routes: RoutesConfig): boolean {
-  if ("accepts" in routes) {
-    return !!(routes.extensions && "bazaar" in routes.extensions);
-  }
-
-  return Object.values(routes).some(routeConfig => {
-    return !!(routeConfig.extensions && "bazaar" in routeConfig.extensions);
-  });
 }
 
 /**
@@ -281,6 +269,11 @@ export function paymentMiddlewareFromHTTPServer(
   app.decorateRequest("x402RawGuard", undefined);
 
   let initPromise: Promise<void> | null = syncFacilitatorOnStart ? httpServer.initialize() : null;
+  // Attach a no-op rejection handler so an early failure (e.g. a facilitator
+  // request timeout) cannot become an unhandled rejection before the first
+  // protected request awaits initPromise. The original promise is kept, so that
+  // request still observes the failure and triggers the retry path.
+  void initPromise?.catch(() => {});
   let isInitialized = false;
 
   /**
@@ -305,10 +298,18 @@ export function paymentMiddlewareFromHTTPServer(
   }
 
   let bazaarPromise: Promise<void> | null = null;
-  if (checkIfBazaarNeeded(httpServer.routes) && !httpServer.server.hasExtension("bazaar")) {
-    bazaarPromise = import("@x402/extensions/bazaar")
-      .then(({ bazaarResourceServerExtension }) => {
-        httpServer.server.registerExtension(bazaarResourceServerExtension);
+  if (checkIfBazaarNeeded(httpServer.routes)) {
+    if (!httpServer.server.hasExtension("bazaar")) {
+      bazaarPromise = import("@x402/extensions/bazaar").then(
+        ({ bazaarResourceServerExtension }) => {
+          httpServer.server.registerExtension(bazaarResourceServerExtension);
+        },
+      );
+    }
+    bazaarPromise = (bazaarPromise ?? Promise.resolve())
+      .then(() => import("@x402/extensions/bazaar"))
+      .then(({ validateBazaarRouteExtensions }) => {
+        validateBazaarRouteExtensions(httpServer.routes);
       })
       .catch(err => {
         console.error("Failed to load bazaar extension:", err);
@@ -376,6 +377,7 @@ export function paymentMiddlewareFromHTTPServer(
 
       case "payment-verified": {
         request.x402Context = {
+          cancellationDispatcher: result.cancellationDispatcher,
           paymentPayload: result.paymentPayload,
           paymentRequirements: result.paymentRequirements,
           declaredExtensions: result.declaredExtensions,
@@ -426,6 +428,11 @@ export function paymentMiddlewareFromHTTPServer(
     }
 
     if (reply.statusCode >= 400) {
+      await x402Context.cancellationDispatcher.cancel({
+        reason: "handler_failed",
+        responseStatus: reply.statusCode,
+      });
+      reply.removeHeader(SETTLEMENT_OVERRIDES_HEADER);
       return effectivePayload;
     }
 
@@ -448,6 +455,7 @@ export function paymentMiddlewareFromHTTPServer(
 
       if (!settleResult.success) {
         const { response } = settleResult;
+        reply.removeHeader(SETTLEMENT_OVERRIDES_HEADER);
         for (const [key, value] of Object.entries(response.headers)) {
           reply.header(key, value);
         }
@@ -462,18 +470,40 @@ export function paymentMiddlewareFromHTTPServer(
       for (const [key, value] of Object.entries(settleResult.headers)) {
         reply.header(key, value);
       }
+      reply.header(
+        "Cache-Control",
+        withPrivateCacheControl(
+          reply.getHeader("Cache-Control") != null
+            ? String(reply.getHeader("Cache-Control"))
+            : null,
+        ),
+      );
+      reply.removeHeader(SETTLEMENT_OVERRIDES_HEADER);
       return effectivePayload;
     } catch (error) {
       if (error instanceof FacilitatorResponseError) {
+        reply.removeHeader(SETTLEMENT_OVERRIDES_HEADER);
         reply.status(502);
         reply.type("application/json");
         return JSON.stringify({ error: error.message });
       }
       console.error(error);
+      reply.removeHeader(SETTLEMENT_OVERRIDES_HEADER);
       reply.status(402);
       reply.type("application/json");
       return JSON.stringify({});
     }
+  });
+
+  app.addHook("onError", async (request: FastifyRequest, _reply: FastifyReply, error: Error) => {
+    const x402Context = request.x402Context;
+    if (!x402Context) {
+      return;
+    }
+    await x402Context.cancellationDispatcher.cancel({
+      reason: "handler_threw",
+      error,
+    });
   });
 }
 

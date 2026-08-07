@@ -48,7 +48,9 @@ class MockAsyncResourceServer:
                 return req
         return None
 
-    async def _create_payment_required_response_real(self, accepts, resource_info, error_msg):
+    async def _create_payment_required_response_real(
+        self, accepts, resource_info, error_msg, extensions=None
+    ):
         """Real implementation of create payment required response."""
         from x402.schemas import PaymentRequired
 
@@ -377,6 +379,79 @@ async def test_create_payment_wrapper_async_settlement_failure():
 
     assert result.is_error is True
     assert "settlement" in str(result.content).lower() or result.structured_content is not None
+
+
+@pytest.mark.asyncio
+async def test_create_payment_wrapper_async_settlement_returns_failure():
+    """Replay attack regression: settle returning success=False must withhold tool output."""
+    from x402.mcp.types import MCP_PAYMENT_RESPONSE_META_KEY
+
+    server = MockAsyncResourceServer()
+    server.settle_payment = AsyncMock(
+        return_value=SettleResponse(
+            success=False,
+            error_reason="AuthorizationAlreadyUsed",
+            transaction="",
+            network="eip155:84532",
+        )
+    )
+
+    after_settlement_calls = []
+
+    async def on_after_settlement(ctx):
+        after_settlement_calls.append(ctx)
+
+    config = PaymentWrapperConfig(
+        accepts=[
+            PaymentRequirements(
+                scheme="exact",
+                network="eip155:84532",
+                amount="1000",
+                asset="USDC",
+                pay_to="0xrecipient",
+                max_timeout_seconds=300,
+            )
+        ],
+        hooks=PaymentWrapperHooks(on_after_settlement=on_after_settlement),
+    )
+
+    paid = create_payment_wrapper(server, config)
+
+    async def handler(args, context):
+        return {"content": [{"type": "text", "text": "should-not-be-returned"}]}
+
+    wrapped = paid(handler)
+    payload = PaymentPayload(
+        x402_version=2,
+        accepted={
+            "scheme": "exact",
+            "network": "eip155:84532",
+            "amount": "1000",
+            "asset": "USDC",
+            "pay_to": "0xrecipient",
+            "max_timeout_seconds": 300,
+        },
+        payload={"signature": "0x123"},
+    )
+    result = await wrapped(
+        {"test": "value"},
+        {
+            "_meta": {
+                "x402/payment": (
+                    payload.model_dump() if hasattr(payload, "model_dump") else payload
+                )
+            }
+        },
+    )
+
+    assert result.is_error is True
+    assert "should-not-be-returned" not in str(result.content)
+    assert "should-not-be-returned" not in str(result.structured_content)
+    assert result.structured_content is not None
+    payment_response = result.structured_content[MCP_PAYMENT_RESPONSE_META_KEY]
+    assert payment_response["success"] is False
+    assert "AuthorizationAlreadyUsed" in result.structured_content["error"]
+    assert after_settlement_calls == []
 
 
 @pytest.mark.asyncio

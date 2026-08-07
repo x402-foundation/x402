@@ -19,8 +19,8 @@ import (
 	"github.com/ethereum/go-ethereum/signer/core/apitypes"
 	solana "github.com/gagliardetto/solana-go"
 	"github.com/gagliardetto/solana-go/rpc"
-	evmmech "github.com/x402-foundation/x402/go/mechanisms/evm"
-	svmmech "github.com/x402-foundation/x402/go/mechanisms/svm"
+	evmmech "github.com/x402-foundation/x402/go/v2/mechanisms/evm"
+	svmmech "github.com/x402-foundation/x402/go/v2/mechanisms/svm"
 )
 
 const (
@@ -202,10 +202,12 @@ func (s *facilitatorEvmSigner) ReadContract(
 		return nil, fmt.Errorf("failed to pack method call: %w", err)
 	}
 
-	// Make the call
+	// Make the call. Set From to the facilitator address — required by the upto/exact
+	// proxies which enforce msg.sender == witness.facilitator in settle().
 	to := common.HexToAddress(contractAddress)
 
 	msg := ethereum.CallMsg{
+		From: s.address,
 		To:   &to,
 		Data: data,
 	}
@@ -237,6 +239,7 @@ func (s *facilitatorEvmSigner) WriteContract(
 	contractAddress string,
 	abiJSON []byte,
 	method string,
+	dataSuffix []byte,
 	args ...interface{},
 ) (string, error) {
 	// Parse ABI
@@ -250,6 +253,7 @@ func (s *facilitatorEvmSigner) WriteContract(
 	if err != nil {
 		return "", fmt.Errorf("failed to pack method call: %w", err)
 	}
+	data = evmmech.AppendDataSuffix(data, dataSuffix)
 
 	// Get nonce
 	nonce, err := s.client.PendingNonceAt(ctx, s.address)

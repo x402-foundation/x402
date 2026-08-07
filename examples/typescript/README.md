@@ -14,56 +14,72 @@ pnpm build
 
 ## Example Structure
 
-The examples are organized into several categories:
+To see a full payment flow end to end, run a server from [`servers/`](./servers/) and point a client from [`clients/`](./clients/) at it.
 
 ### Clients
 
-Examples of different client implementations for interacting with X402 services:
+Clients that pay for x402-protected endpoints. See [`clients/`](./clients/).
 
-- `clients/axios/` - Axios client with x402 payment interceptor from `x402-axios`.
-- `clients/fetch/` - Client using the `x402-fetch` wrapper around the native fetch API.
-- `clients/cdp-sdk/` - Client that uses CDP Server Wallets as the signer with `x402-axios`.
-- `clients/chainlink-vrf-nft/` - Example using [Chainlink](docs.chain.link) to mint a randomized NFT (see them on [Opensea](https://testnets.opensea.io/collection/vrfnft-1)). Demonstrates verify/settle flow with `x402-axios`.
-
-### Agents
-
-- `agent/` - Anthropic agent that pays via a Go proxy using `x402-fetch`.
-- `dynamic_agent/` - Agent that discovers tools dynamically and pays per-request using x402.
-
-### Discovery
-
-- `discovery/` - Uses the facilitator to list available x402-protected resources (Bazaar).
-
-### MCP
-
-- `mcp/` - MCP server that makes paid API requests via `x402-axios` (Claude Desktop compatible).
-- `mcp-embedded-wallet/` - Electron-based MCP server with an embedded wallet that signs requests via IPC.
-
-### Facilitator
-
-- `facilitator/` - Example implementation of an x402 payment facilitator exposing `/verify` and `/settle`.
-
-### Fullstack
-
-- `fullstack/next/` - Next.js app demonstrating route protection with `x402-next` middleware.
-- `fullstack/mainnet/` - Next.js app configured for Base mainnet using the Coinbase hosted facilitator.
-- `fullstack/next-advanced/` - [WIP] Deep Next.js integration using a paywall + session cookie after verify/settle.
-- `fullstack/browser-wallet-example/` - Browser wallet template: Hono server + React client with session and one-time payments.
-- `fullstack/farcaster-miniapp/` - Farcaster Mini App template with x402-protected APIs using [MiniKit](https://www.base.org/build/mini-apps).
-- `fullstack/auth_based_pricing/` - SIWE + JWT with conditional pricing ($0.01 with JWT vs $0.10 without) using x402.
+| Directory | Description |
+| --- | --- |
+| [`fetch/`](./clients/fetch/) | `@x402/fetch` wrapper around the native Fetch API |
+| [`axios/`](./clients/axios/) | `@x402/axios` payment interceptor |
+| [`advanced/`](./clients/advanced/) | Builder-pattern registration, payment lifecycle hooks, network preferences |
+| [`custom/`](./clients/custom/) | Manual payment handling without `@x402/fetch` or `@x402/axios` |
+| [`auth-capture/`](./clients/auth-capture/) | Pays an auth-capture endpoint by signing an ERC-3009 `ReceiveWithAuthorization` |
+| [`batch-settlement/`](./clients/batch-settlement/) | Pays a sequence of requests over one payment channel using cumulative vouchers |
+| [`builder-code/`](./clients/builder-code/) | Verifies ERC-8021 builder-code attribution on the settlement transaction |
+| [`erc7702/`](./clients/erc7702/) | Paying from an ERC-7702 delegated EOA |
+| [`offer-receipt/`](./clients/offer-receipt/) | Extracts and verifies signed offers and receipts |
+| [`payment-identifier/`](./clients/payment-identifier/) | Idempotent retries via the `payment-identifier` extension |
+| [`sign-in-with-x/`](./clients/sign-in-with-x/) | Both SIWX flows: auth-only access and paid-once access |
+| [`mcp/`](./clients/mcp/) | MCP client that pays for tool calls |
+| [`mcp-chatbot/`](./clients/mcp-chatbot/) | Chatbot combining an LLM, MCP tool discovery, and x402 payments |
 
 ### Servers
 
-Examples of different server implementations:
+Servers that put a paywall in front of a resource. See [`servers/`](./servers/).
 
-- `servers/express/` - Express.js server using `x402-express` middleware.
-- `servers/hono/` - Hono server using `x402-hono` middleware.
-- `servers/advanced/` - Express server without middleware: delayed settlement, dynamic pricing, multiple requirements.
-- `servers/mainnet/` - Server example for accepting real USDC on Base mainnet using the Coinbase hosted facilitator.
+| Directory | Description |
+| --- | --- |
+| [`express/`](./servers/express/) | `@x402/express` middleware |
+| [`hono/`](./servers/hono/) | `@x402/hono` middleware |
+| [`fastify/`](./servers/fastify/) | `@x402/fastify` middleware |
+| [`advanced/`](./servers/advanced/) | Dynamic pricing, payment routing, lifecycle hooks, discoverability |
+| [`custom/`](./servers/custom/) | Manual payment handling without an x402 middleware package |
+| [`self-facilitation/`](./servers/self-facilitation/) | In-process `x402Facilitator` instead of an external facilitator URL |
+| [`upto/`](./servers/upto/) | `upto` scheme: authorize a ceiling, settle only actual usage |
+| [`batch-settlement/`](./servers/batch-settlement/) | Off-chain vouchers claimed and settled in batches by a `ChannelManager` |
+| [`bazaar/`](./servers/bazaar/) | Makes a paid API discoverable via the Bazaar extension |
+| [`builder-code/`](./servers/builder-code/) | ERC-8021 builder-code attribution on paid endpoints |
+| [`offer-receipt/`](./servers/offer-receipt/) | Signed offers (payment terms) and receipts (proof of delivery) |
+| [`payment-identifier/`](./servers/payment-identifier/) | Idempotency via the `payment-identifier` extension |
+| [`sign-in-with-x/`](./servers/sign-in-with-x/) | Auth-only routes and pay-once-then-authenticate routes |
+| [`cloudfront-lambda-edge/`](./servers/cloudfront-lambda-edge/) | Adds x402 at the CDN edge without modifying the backend |
+| [`mcp/`](./servers/mcp/) | MCP server exposing paid tools |
+
+### Fullstack
+
+| Directory | Description |
+| --- | --- |
+| [`next/`](./fullstack/next/) | Next.js route protection with `@x402/next` middleware |
+| [`miniapp/`](./fullstack/miniapp/) | Farcaster Mini App with x402-protected API routes |
+| [`next-batch-settlement-redis/`](./fullstack/next-batch-settlement-redis/) | Next.js batch-settlement with Redis-backed channel storage |
+
+### Facilitator
+
+Services that verify and settle payments on-chain.
+
+| Directory | Description |
+| --- | --- |
+| [`basic/`](./facilitator/basic/) | Minimal facilitator exposing `/verify` and `/settle` |
+| [`advanced/`](./facilitator/advanced/) | All-networks support, Bazaar discovery, gas-sponsoring extensions, hooks |
+| [`batch-settlement/`](./facilitator/batch-settlement/) | Submits batch-settlement contract calls |
+| [`builder-code/`](./facilitator/builder-code/) | Appends ERC-8021 wallet attribution at settlement |
 
 ## Running Examples
 
-Each example directory contains its own README with specific instructions for running that example. Navigate to the desired example directory and follow its instructions.
+Most example directories contain their own README with specific instructions for running that example. Navigate to the desired example directory and follow its instructions.
 
 ## Development
 

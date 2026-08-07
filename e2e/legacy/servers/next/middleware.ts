@@ -1,12 +1,12 @@
 import { Address } from "viem";
-import { paymentMiddleware, Network, Resource, FacilitatorConfig } from "x402-next";
+import { paymentMiddleware, Network, Resource } from "x402-next";
 
 const payTo = process.env.EVM_PAYEE_ADDRESS as Address;
 const network = process.env.EVM_NETWORK as Network;
 const facilitatorUrl = process.env.FACILITATOR_URL;
 
 // Create facilitator config if URL is provided
-const facilitatorConfig: FacilitatorConfig | undefined = facilitatorUrl
+const facilitatorConfig: { url: Resource } | undefined = facilitatorUrl
   ? { url: facilitatorUrl as Resource }
   : undefined;
 

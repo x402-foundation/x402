@@ -1,7 +1,7 @@
 package paymentidentifier
 
 import (
-	"github.com/x402-foundation/x402/go/extensions/types"
+	"github.com/x402-foundation/x402/go/v2/extensions/types"
 )
 
 // Re-export constants and patterns from shared types for convenience

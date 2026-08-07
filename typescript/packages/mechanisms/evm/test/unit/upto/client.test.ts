@@ -141,17 +141,14 @@ describe("UptoEvmScheme (Client)", () => {
       }
     });
 
-    it("should set validAfter to 10 minutes before current time", async () => {
+    it("should set validAfter to 0", async () => {
       const fakeNow = 1700000000000;
       vi.useFakeTimers();
       vi.setSystemTime(fakeNow);
 
       try {
         const result = await client.createPaymentPayload(2, makeRequirements());
-        const validAfter = parseInt(result.payload.permit2Authorization.witness.validAfter);
-        const expectedValidAfter = Math.floor(fakeNow / 1000) - 600;
-
-        expect(validAfter).toBe(expectedValidAfter);
+        expect(result.payload.permit2Authorization.witness.validAfter).toBe("0");
       } finally {
         vi.useRealTimers();
       }

@@ -22,16 +22,16 @@ import (
 	"github.com/ethereum/go-ethereum/ethclient"
 	"github.com/ethereum/go-ethereum/signer/core/apitypes"
 
-	x402 "github.com/x402-foundation/x402/go"
-	"github.com/x402-foundation/x402/go/mechanisms/evm"
-	exactevmclient "github.com/x402-foundation/x402/go/mechanisms/evm/exact/client"
-	exactevmfacilitator "github.com/x402-foundation/x402/go/mechanisms/evm/exact/facilitator"
-	exactevmserver "github.com/x402-foundation/x402/go/mechanisms/evm/exact/server"
-	uptoevmclient "github.com/x402-foundation/x402/go/mechanisms/evm/upto/client"
-	uptoevmfacilitator "github.com/x402-foundation/x402/go/mechanisms/evm/upto/facilitator"
-	uptoevmserver "github.com/x402-foundation/x402/go/mechanisms/evm/upto/server"
-	evmsigners "github.com/x402-foundation/x402/go/signers/evm"
-	"github.com/x402-foundation/x402/go/types"
+	x402 "github.com/x402-foundation/x402/go/v2"
+	"github.com/x402-foundation/x402/go/v2/mechanisms/evm"
+	exactevmclient "github.com/x402-foundation/x402/go/v2/mechanisms/evm/exact/client"
+	exactevmfacilitator "github.com/x402-foundation/x402/go/v2/mechanisms/evm/exact/facilitator"
+	exactevmserver "github.com/x402-foundation/x402/go/v2/mechanisms/evm/exact/server"
+	uptoevmclient "github.com/x402-foundation/x402/go/v2/mechanisms/evm/upto/client"
+	uptoevmfacilitator "github.com/x402-foundation/x402/go/v2/mechanisms/evm/upto/facilitator"
+	uptoevmserver "github.com/x402-foundation/x402/go/v2/mechanisms/evm/upto/server"
+	evmsigners "github.com/x402-foundation/x402/go/v2/signers/evm"
+	"github.com/x402-foundation/x402/go/v2/types"
 )
 
 // newRealClientEvmSigner creates a client signer using the helper
@@ -188,6 +188,7 @@ func (s *realFacilitatorEvmSigner) WriteContract(
 	contractAddress string,
 	abiBytes []byte,
 	functionName string,
+	dataSuffix []byte,
 	args ...interface{},
 ) (string, error) {
 	contractABI, err := abi.JSON(strings.NewReader(string(abiBytes)))
@@ -199,6 +200,7 @@ func (s *realFacilitatorEvmSigner) WriteContract(
 	if err != nil {
 		return "", fmt.Errorf("failed to pack method call: %w", err)
 	}
+	data = evm.AppendDataSuffix(data, dataSuffix)
 
 	to := common.HexToAddress(contractAddress)
 	return s.sendTxWithRetry(ctx, to, data, 300000)
@@ -275,6 +277,7 @@ func (s *realFacilitatorEvmSigner) WaitForTransactionReceipt(ctx context.Context
 				Status:      status,
 				BlockNumber: receipt.BlockNumber.Uint64(),
 				TxHash:      receipt.TxHash.Hex(),
+				Logs:        receipt.Logs,
 			}, nil
 		}
 
@@ -325,7 +328,15 @@ func (s *realFacilitatorEvmSigner) VerifyTypedData(
 		typedData.Types[typeName] = typedFields
 	}
 
-	// Hash the data
+	if _, exists := typedData.Types["EIP712Domain"]; !exists {
+		typedData.Types["EIP712Domain"] = []apitypes.Type{
+			{Name: "name", Type: "string"},
+			{Name: "version", Type: "string"},
+			{Name: "chainId", Type: "uint256"},
+			{Name: "verifyingContract", Type: "address"},
+		}
+	}
+
 	dataHash, err := typedData.HashStruct(typedData.PrimaryType, typedData.Message)
 	if err != nil {
 		return false, err
@@ -341,12 +352,10 @@ func (s *realFacilitatorEvmSigner) VerifyTypedData(
 	rawData = append(rawData, dataHash...)
 	digest := crypto.Keccak256(rawData)
 
-	// Recover the public key from the signature
 	if len(signature) != 65 {
 		return false, fmt.Errorf("invalid signature length: %d", len(signature))
 	}
 
-	// Adjust v value back for recovery
 	v := signature[64]
 	if v >= 27 {
 		v -= 27
@@ -428,10 +437,7 @@ func TestEVMIntegrationV2(t *testing.T) {
 
 		// Setup facilitator with EVM v2 scheme
 		facilitator := x402.Newx402Facilitator()
-		// Enable smart wallet deployment via EIP-6492
-		evmConfig := &exactevmfacilitator.ExactEvmSchemeConfig{
-			DeployERC4337WithEIP6492: true,
-		}
+		evmConfig := &exactevmfacilitator.ExactEvmSchemeConfig{}
 		evmFacilitator := exactevmfacilitator.NewExactEvmScheme(facilitatorSigner, evmConfig)
 		// Register for Base Sepolia
 		facilitator.Register([]x402.Network{"eip155:84532"}, evmFacilitator)
@@ -611,9 +617,7 @@ func TestEVMIntegrationV2Permit2(t *testing.T) {
 
 		// Setup facilitator with EVM v2 scheme
 		facilitator := x402.Newx402Facilitator()
-		evmConfig := &exactevmfacilitator.ExactEvmSchemeConfig{
-			DeployERC4337WithEIP6492: true,
-		}
+		evmConfig := &exactevmfacilitator.ExactEvmSchemeConfig{}
 		evmFacilitator := exactevmfacilitator.NewExactEvmScheme(facilitatorSigner, evmConfig)
 		facilitator.Register([]x402.Network{"eip155:84532"}, evmFacilitator)
 
@@ -882,6 +886,7 @@ func (s *permit2FacilitatorEvmSigner) WriteContract(
 	contractAddress string,
 	abiBytes []byte,
 	functionName string,
+	dataSuffix []byte,
 	args ...interface{},
 ) (string, error) {
 	contractABI, err := abi.JSON(strings.NewReader(string(abiBytes)))
@@ -893,6 +898,7 @@ func (s *permit2FacilitatorEvmSigner) WriteContract(
 	if err != nil {
 		return "", fmt.Errorf("failed to pack method call: %w", err)
 	}
+	data = evm.AppendDataSuffix(data, dataSuffix)
 
 	to := common.HexToAddress(contractAddress)
 	return s.sendTxWithRetry(ctx, to, data, 300000)
@@ -968,6 +974,7 @@ func (s *permit2FacilitatorEvmSigner) WaitForTransactionReceipt(ctx context.Cont
 				Status:      status,
 				BlockNumber: receipt.BlockNumber.Uint64(),
 				TxHash:      receipt.TxHash.Hex(),
+				Logs:        receipt.Logs,
 			}, nil
 		}
 
@@ -1018,7 +1025,15 @@ func (s *permit2FacilitatorEvmSigner) VerifyTypedData(
 		typedData.Types[typeName] = typedFields
 	}
 
-	// Hash the data
+	if _, exists := typedData.Types["EIP712Domain"]; !exists {
+		typedData.Types["EIP712Domain"] = []apitypes.Type{
+			{Name: "name", Type: "string"},
+			{Name: "version", Type: "string"},
+			{Name: "chainId", Type: "uint256"},
+			{Name: "verifyingContract", Type: "address"},
+		}
+	}
+
 	dataHash, err := typedData.HashStruct(typedData.PrimaryType, typedData.Message)
 	if err != nil {
 		return false, err
@@ -1034,12 +1049,10 @@ func (s *permit2FacilitatorEvmSigner) VerifyTypedData(
 	rawData = append(rawData, dataHash...)
 	digest := crypto.Keccak256(rawData)
 
-	// Recover the public key from the signature
 	if len(signature) != 65 {
 		return false, fmt.Errorf("invalid signature length: %d", len(signature))
 	}
 
-	// Adjust v value back for recovery
 	v := signature[64]
 	if v >= 27 {
 		v -= 27

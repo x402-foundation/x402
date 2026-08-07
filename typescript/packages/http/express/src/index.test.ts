@@ -40,48 +40,71 @@ let mockProcessSettlement: ReturnType<typeof vi.fn>;
 let mockRegisterPaywallProvider: ReturnType<typeof vi.fn>;
 let mockRequiresPayment: ReturnType<typeof vi.fn>;
 
-vi.mock("@x402/core/server", () => ({
-  SETTLEMENT_OVERRIDES_HEADER: "Settlement-Overrides",
-  FacilitatorResponseError: class FacilitatorResponseError extends Error {
-    /**
-     * Creates a mock facilitator response error.
-     *
-     * @param message - Error message.
-     */
-    constructor(message: string) {
-      super(message);
-      this.name = "FacilitatorResponseError";
-    }
-  },
-  getFacilitatorResponseError: (error: unknown) => {
-    let current = error;
-    while (current instanceof Error) {
-      if (current.name === "FacilitatorResponseError") {
-        return current;
+type PaymentVerifiedResult = Extract<HTTPProcessResult, { type: "payment-verified" }>;
+type MockHTTPProcessResult =
+  | Exclude<HTTPProcessResult, PaymentVerifiedResult>
+  | (Omit<PaymentVerifiedResult, "cancellationDispatcher"> & {
+      cancellationDispatcher?: PaymentVerifiedResult["cancellationDispatcher"];
+    });
+
+/**
+ * Creates a mock payment cancellation dispatcher.
+ *
+ * @returns Mock payment cancellation dispatcher.
+ */
+function createMockPaymentCancellationDispatcher(): PaymentVerifiedResult["cancellationDispatcher"] {
+  return {
+    cancel: vi.fn().mockResolvedValue(undefined),
+  } as unknown as PaymentVerifiedResult["cancellationDispatcher"];
+}
+
+vi.mock("@x402/core/server", async importOriginal => {
+  const actual = await importOriginal<typeof import("@x402/core/server")>();
+  return {
+    ...actual,
+    SETTLEMENT_OVERRIDES_HEADER: "Settlement-Overrides",
+    FacilitatorResponseError: class FacilitatorResponseError extends Error {
+      /**
+       * Creates a mock facilitator response error.
+       *
+       * @param message - Error message.
+       */
+      constructor(message: string) {
+        super(message);
+        this.name = "FacilitatorResponseError";
       }
-      current = (current as Error & { cause?: unknown }).cause;
-    }
-    return null;
-  },
-  x402ResourceServer: vi.fn().mockImplementation(() => ({
-    initialize: vi.fn().mockResolvedValue(undefined),
-    registerExtension: vi.fn(),
-    register: vi.fn(),
-    hasExtension: vi.fn().mockReturnValue(false),
-  })),
-  x402HTTPResourceServer: vi.fn().mockImplementation((server, routes) => ({
-    initialize: vi.fn().mockResolvedValue(undefined),
-    processHTTPRequest: mockProcessHTTPRequest,
-    processSettlement: mockProcessSettlement,
-    registerPaywallProvider: mockRegisterPaywallProvider,
-    requiresPayment: mockRequiresPayment,
-    routes: routes,
-    server: server || {
-      hasExtension: vi.fn().mockReturnValue(false),
-      registerExtension: vi.fn(),
     },
-  })),
-}));
+    getFacilitatorResponseError: (error: unknown) => {
+      let current = error;
+      while (current instanceof Error) {
+        if (current.name === "FacilitatorResponseError") {
+          return current;
+        }
+        current = (current as Error & { cause?: unknown }).cause;
+      }
+      return null;
+    },
+    x402ResourceServer: vi.fn().mockImplementation(() => ({
+      initialize: vi.fn().mockResolvedValue(undefined),
+      registerExtension: vi.fn(),
+      register: vi.fn(),
+      hasExtension: vi.fn().mockReturnValue(false),
+    })),
+    x402HTTPResourceServer: vi.fn().mockImplementation((server, routes) => ({
+      initialize: vi.fn().mockResolvedValue(undefined),
+      processHTTPRequest: mockProcessHTTPRequest,
+      processSettlement: mockProcessSettlement,
+      registerPaywallProvider: mockRegisterPaywallProvider,
+      requiresPayment: mockRequiresPayment,
+      routes: routes,
+      server: server || {
+        hasExtension: vi.fn().mockReturnValue(false),
+        registerExtension: vi.fn(),
+      },
+    })),
+    checkIfBazaarNeeded: vi.fn().mockReturnValue(false),
+  };
+});
 
 // --- Mock Factories ---
 /**
@@ -91,7 +114,7 @@ vi.mock("@x402/core/server", () => ({
  * @param settlementResult - Result to return from processSettlement.
  */
 function setupMockHttpServer(
-  processResult: HTTPProcessResult,
+  processResult: MockHTTPProcessResult,
   settlementResult:
     | { success: true; headers: Record<string, string> }
     | {
@@ -104,7 +127,15 @@ function setupMockHttpServer(
     headers: {},
   },
 ): void {
-  mockProcessHTTPRequest.mockResolvedValue(processResult);
+  const normalizedResult =
+    processResult.type === "payment-verified"
+      ? {
+          ...processResult,
+          cancellationDispatcher:
+            processResult.cancellationDispatcher ?? createMockPaymentCancellationDispatcher(),
+        }
+      : processResult;
+  mockProcessHTTPRequest.mockResolvedValue(normalizedResult);
   mockProcessSettlement.mockResolvedValue(settlementResult);
 }
 
@@ -368,6 +399,37 @@ describe("paymentMiddleware", () => {
     expect(res.setHeader).toHaveBeenCalledWith("PAYMENT-RESPONSE", "settled");
   });
 
+  it("strips settlement override header from client response", async () => {
+    setupMockHttpServer(
+      {
+        type: "payment-verified",
+        paymentPayload: mockPaymentPayload,
+        paymentRequirements: mockPaymentRequirements,
+      },
+      { success: true, headers: { "PAYMENT-RESPONSE": "settled" } },
+    );
+
+    const middleware = paymentMiddleware(
+      mockRoutes,
+      {} as unknown as x402ResourceServer,
+      undefined,
+      undefined,
+      false,
+    );
+    const req = createMockRequest();
+    const res = createMockResponse();
+    const next = vi.fn(() => {
+      res.setHeader("Settlement-Overrides", JSON.stringify({ amount: "32%" }));
+      res.statusCode = 200;
+      res.end();
+    });
+
+    await middleware(req, res, next);
+
+    expect(res.removeHeader).toHaveBeenCalledWith("Settlement-Overrides");
+    expect(res._headers["Settlement-Overrides"]).toBeUndefined();
+  });
+
   it("skips settlement when handler returns >= 400", async () => {
     setupMockHttpServer(
       {
@@ -389,6 +451,7 @@ describe("paymentMiddleware", () => {
     const res = createMockResponse();
     const next = vi.fn(() => {
       // Simulate handler returning error
+      res.setHeader("Settlement-Overrides", JSON.stringify({ amount: "32%" }));
       res.statusCode = 500;
       res.end();
     });
@@ -397,6 +460,55 @@ describe("paymentMiddleware", () => {
 
     expect(next).toHaveBeenCalled();
     expect(mockProcessSettlement).not.toHaveBeenCalled();
+    expect(res.removeHeader).toHaveBeenCalledWith("Settlement-Overrides");
+    expect(res._headers["Settlement-Overrides"]).toBeUndefined();
+    const cancellationDispatcher = (await mockProcessHTTPRequest.mock.results[0].value)
+      .cancellationDispatcher;
+    expect(cancellationDispatcher.cancel).toHaveBeenCalledWith(
+      expect.objectContaining({
+        reason: "handler_failed",
+        responseStatus: 500,
+      }),
+    );
+  });
+
+  it("cancels payment when handler throws", async () => {
+    const cancellationDispatcher = createMockPaymentCancellationDispatcher();
+    setupMockHttpServer(
+      {
+        type: "payment-verified",
+        paymentPayload: mockPaymentPayload,
+        paymentRequirements: mockPaymentRequirements,
+        cancellationDispatcher,
+      },
+      { success: true, headers: { "PAYMENT-RESPONSE": "settled" } },
+    );
+
+    const middleware = paymentMiddleware(
+      mockRoutes,
+      {} as unknown as x402ResourceServer,
+      undefined,
+      undefined,
+      false,
+    );
+    const req = createMockRequest();
+    const res = createMockResponse();
+    const handlerError = new Error("Handler failed");
+    const next = vi.fn((error?: unknown) => {
+      if (error) {
+        return;
+      }
+      throw handlerError;
+    });
+
+    await middleware(req, res, next);
+
+    expect(cancellationDispatcher.cancel).toHaveBeenCalledWith({
+      reason: "handler_threw",
+      error: handlerError,
+    });
+    expect(mockProcessSettlement).not.toHaveBeenCalled();
+    expect(next).toHaveBeenCalledWith(handlerError);
   });
 
   it("returns 402 when settlement throws error", async () => {
@@ -417,12 +529,14 @@ describe("paymentMiddleware", () => {
     const req = createMockRequest();
     const res = createMockResponse();
     const next = vi.fn(() => {
+      res.setHeader("Settlement-Overrides", JSON.stringify({ amount: "32%" }));
       res.statusCode = 200;
       res.end();
     });
 
     await middleware(req, res, next);
 
+    expect(res.removeHeader).toHaveBeenCalledWith("Settlement-Overrides");
     expect(res.status).toHaveBeenCalledWith(402);
     expect(res.json).toHaveBeenCalledWith({});
   });
@@ -507,6 +621,59 @@ describe("paymentMiddleware", () => {
     expect(initialize).toHaveBeenCalledTimes(2);
     expect(mockProcessHTTPRequest).toHaveBeenCalledTimes(1);
     expect(next).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not surface an eager initialization failure as an unhandled rejection", async () => {
+    const unhandled: unknown[] = [];
+    const onUnhandledRejection = (reason: unknown) => {
+      unhandled.push(reason);
+    };
+    process.on("unhandledRejection", onUnhandledRejection);
+    try {
+      const initializationError = new Error("facilitator request timed out");
+      // Hand-rolled instead of vi.fn(): the spy instruments promise results to
+      // record settlements, which attaches a rejection handler and would mask
+      // the unhandled rejection this test exists to detect.
+      let initializeCalls = 0;
+      const initialize = (): Promise<void> => {
+        initializeCalls += 1;
+        return initializeCalls === 1
+          ? Promise.reject(initializationError)
+          : Promise.resolve(undefined);
+      };
+      vi.mocked(HTTPResourceServer).mockImplementation(
+        (server, routes) =>
+          ({
+            initialize,
+            processHTTPRequest: mockProcessHTTPRequest,
+            processSettlement: mockProcessSettlement,
+            registerPaywallProvider: mockRegisterPaywallProvider,
+            requiresPayment: mockRequiresPayment,
+            routes,
+            server: server || {
+              hasExtension: vi.fn().mockReturnValue(false),
+              registerExtension: vi.fn(),
+            },
+          }) as unknown as x402HTTPResourceServer,
+      );
+      mockProcessHTTPRequest.mockResolvedValue({ type: "no-payment-required" });
+
+      const middleware = paymentMiddleware(mockRoutes, {} as unknown as x402ResourceServer);
+      await new Promise(resolve => setTimeout(resolve, 0));
+      await new Promise(resolve => setTimeout(resolve, 0));
+      expect(unhandled).toHaveLength(0);
+
+      const firstNext = vi.fn();
+      await middleware(createMockRequest(), createMockResponse(), firstNext);
+      expect(firstNext).toHaveBeenCalledWith(initializationError);
+
+      const secondNext = vi.fn();
+      await middleware(createMockRequest(), createMockResponse(), secondNext);
+      expect(secondNext).toHaveBeenCalledWith();
+      expect(initializeCalls).toBe(2);
+    } finally {
+      process.off("unhandledRejection", onUnhandledRejection);
+    }
   });
 
   it("returns 502 when processHTTPRequest surfaces FacilitatorResponseError", async () => {
@@ -598,12 +765,14 @@ describe("paymentMiddleware", () => {
     const req = createMockRequest();
     const res = createMockResponse();
     const next = vi.fn(() => {
+      res.setHeader("Settlement-Overrides", JSON.stringify({ amount: "32%" }));
       res.statusCode = 200;
       res.end();
     });
 
     await middleware(req, res, next);
 
+    expect(res.removeHeader).toHaveBeenCalledWith("Settlement-Overrides");
     expect(res.setHeader).toHaveBeenCalledWith("PAYMENT-RESPONSE", "settlement-failed-encoded");
     expect(res.status).toHaveBeenCalledWith(402);
     expect(res.json).toHaveBeenCalledWith({});

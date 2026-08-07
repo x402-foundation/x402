@@ -270,6 +270,59 @@ class TestServerInitialization:
         assert server._facilitator_clients_map["eip155:8453"]["exact"] is client1
 
 
+class _ValidatingSchemeServer(MockSchemeServer):
+    """Mock scheme exposing the optional validate_facilitator_support hook."""
+
+    def __init__(self, scheme: str = "mock", problem: str | None = None):
+        super().__init__(scheme)
+        self._problem = problem
+        self.calls: list = []
+
+    def validate_facilitator_support(self, network, supported_kind, facilitator_extensions):
+        self.calls.append((network, supported_kind, facilitator_extensions))
+        return self._problem
+
+
+class TestValidateFacilitatorCapabilities:
+    """Tests for the fail-fast facilitator-capability validation in initialize()."""
+
+    def _client(self) -> MockFacilitatorClient:
+        return MockFacilitatorClient(
+            [SupportedKind(x402_version=2, scheme="mock", network="eip155:8453")]
+        )
+
+    def test_initialize_raises_when_scheme_reports_problem(self):
+        server = x402ResourceServer(self._client())
+        server.register("eip155:8453", _ValidatingSchemeServer("mock", problem="needs authorizer"))
+
+        with pytest.raises(ValueError, match="needs authorizer"):
+            server.initialize()
+
+    def test_initialize_succeeds_when_hook_returns_none(self):
+        scheme = _ValidatingSchemeServer("mock", problem=None)
+        server = x402ResourceServer(self._client())
+        server.register("eip155:8453", scheme)
+
+        server.initialize()
+
+        assert server._initialized is True
+        assert len(scheme.calls) == 1
+
+    def test_initialize_skips_unsupported_scheme_network(self):
+        scheme = _ValidatingSchemeServer("mock", problem="should not be evaluated")
+        # Facilitator advertises a different network than the scheme is registered on.
+        client = MockFacilitatorClient(
+            [SupportedKind(x402_version=2, scheme="mock", network="eip155:1")]
+        )
+        server = x402ResourceServer(client)
+        server.register("eip155:8453", scheme)
+
+        server.initialize()
+
+        assert server._initialized is True
+        assert scheme.calls == []
+
+
 # =============================================================================
 # has_registered_scheme Tests
 # =============================================================================

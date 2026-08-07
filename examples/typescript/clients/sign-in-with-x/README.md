@@ -8,7 +8,7 @@ Client demonstrating both SIWX flows supported by x402:
 import { x402Client, x402HTTPClient, wrapFetchWithPayment } from "@x402/fetch";
 import { registerExactEvmScheme } from "@x402/evm/exact/client";
 import { registerExactSvmScheme } from "@x402/svm/exact/client";
-import { createSIWxClientHook } from "@x402/extensions/sign-in-with-x";
+import { createSIWxClientExtension } from "@x402/extensions/sign-in-with-x";
 import { privateKeyToAccount } from "viem/accounts";
 import { createKeyPairSignerFromBytes } from "@solana/kit";
 
@@ -20,9 +20,9 @@ registerExactEvmScheme(client, { signer: evmSigner });
 // Optional: registerExactSvmScheme(client, { signer: svmSigner });
 
 // SIWX works with both EVM (eip191) and Solana (ed25519) signers
-const httpClient = new x402HTTPClient(client).onPaymentRequired(
-  createSIWxClientHook(evmSigner) // or svmSigner
-);
+client.registerExtension(createSIWxClientExtension({ signers: [evmSigner] }));
+
+const httpClient = new x402HTTPClient(client);
 
 const fetchWithPayment = wrapFetchWithPayment(fetch, httpClient);
 

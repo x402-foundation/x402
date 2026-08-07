@@ -1,0 +1,471 @@
+---
+title: "Builder Code (ERC-8021)"
+description: "The builder-code extension enables on-chain attribution tracking for x402 payments by appending ERC-8021 Schema 2 builder codes to settlement transaction calldata."
+---
+
+The builder-code extension enables **on-chain attribution tracking** for x402 payments. It appends [ERC-8021](https://eip.tools/eip/8021) Schema 2 builder codes to settlement transaction calldata, identifying which application exposed the paid endpoint, which facilitator settled the payment, and which client participated.
+
+## Minting Builder Codes
+
+Builder codes are minted through any [ERC-8021](https://eip.tools/eip/8021) implementation. Currently, the primary implementation in production is available at [base.dev](https://base.dev), where you can mint codes for your app, wallet, or service.
+
+## How It Works
+
+Three parties each contribute an attribution code:
+
+| Field | Set by | Description |
+|-------|--------|-------------|
+| `a` | Resource server | App code — identifies the application exposing the paid endpoint |
+| `w` | Facilitator | Wallet code — identifies the facilitator settling the payment on-chain |
+| `s` | Client, server, and/or facilitator | Service code(s) — attribution codes from the payment path; each party has its own dedicated reservation (`MAX_CLIENT_SERVICE_CODES`, `MAX_SERVER_SERVICE_CODES`, `MAX_FACILITATOR_SERVICE_CODES`) so declaring up to that amount never crowds out another party's codes |
+
+These codes are CBOR-encoded as an [ERC-8021](https://eip.tools/eip/8021) Schema 2 suffix and appended to the settlement transaction calldata. Off-chain tools can parse the calldata to verify attribution.
+
+### Builder Code Format
+
+All codes must match `^[a-z0-9_]{1,32}$`:
+- 1–32 characters
+- Lowercase letters, digits, and underscores only
+
+## Quickstart for Sellers (Servers)
+
+Declare your app builder code per-route in the payment middleware configuration:
+
+<Tabs>
+  <Tab title="TypeScript">
+```typescript
+import { paymentMiddleware, x402ResourceServer } from "@x402/express";
+import { ExactEvmScheme } from "@x402/evm/exact/server";
+import { HTTPFacilitatorClient } from "@x402/core/server";
+import { BUILDER_CODE, declareBuilderCodeExtension } from "@x402/extensions/builder-code";
+
+const facilitatorClient = new HTTPFacilitatorClient({ url: process.env.FACILITATOR_URL });
+
+const resourceServer = new x402ResourceServer(facilitatorClient).register(
+  "eip155:84532",
+  new ExactEvmScheme(),
+);
+
+app.use(
+  paymentMiddleware(
+    {
+      "GET /weather": {
+        accepts: {
+          scheme: "exact",
+          price: "$0.001",
+          network: "eip155:84532",
+          payTo: evmAddress,
+        },
+        extensions: {
+          [BUILDER_CODE]: declareBuilderCodeExtension("bc_my_app"),
+        },
+      },
+    },
+    resourceServer,
+  ),
+);
+```
+  </Tab>
+  <Tab title="Go">
+```go
+import (
+    x402 "github.com/x402-foundation/x402/go/v2"
+    "github.com/x402-foundation/x402/go/v2/extensions/buildercode"
+    x402http "github.com/x402-foundation/x402/go/v2/http"
+    ginmw "github.com/x402-foundation/x402/go/v2/http/gin"
+    evm "github.com/x402-foundation/x402/go/v2/mechanisms/evm/exact/server"
+)
+
+facilitatorClient := x402http.NewHTTPFacilitatorClient(&x402http.FacilitatorConfig{
+    URL: facilitatorURL,
+})
+
+server := x402.Newx402ResourceServer(
+    x402.WithFacilitatorClient(facilitatorClient),
+).Register("eip155:84532", evm.NewExactEvmScheme())
+
+builderCodeExt := buildercode.DeclareBuilderCodeExtension("bc_my_app")
+extensions := make(map[string]interface{})
+for k, v := range builderCodeExt {
+    extensions[k] = v
+}
+
+routes := x402http.RoutesConfig{
+    "GET /weather": {
+        Accepts: x402http.PaymentOptions{
+            {
+                Scheme:  "exact",
+                Price:   "$0.001",
+                Network: "eip155:84532",
+                PayTo:   evmAddress,
+            },
+        },
+        Extensions: extensions,
+    },
+}
+
+r.Use(ginmw.PaymentMiddleware(routes, server))
+```
+  </Tab>
+  <Tab title="Python">
+```python
+from x402.extensions.builder_code import BUILDER_CODE, declare_builder_code_extension
+from x402.http import FacilitatorConfig, HTTPFacilitatorClient, PaymentOption
+from x402.http.middleware.fastapi import PaymentMiddlewareASGI
+from x402.http.types import RouteConfig
+from x402.mechanisms.evm.exact import ExactEvmServerScheme
+from x402.server import x402ResourceServer
+
+facilitator = HTTPFacilitatorClient(FacilitatorConfig(url=FACILITATOR_URL))
+server = x402ResourceServer(facilitator)
+server.register("eip155:84532", ExactEvmServerScheme())
+
+routes = {
+    "GET /weather": RouteConfig(
+        accepts=[
+            PaymentOption(
+                scheme="exact",
+                price="$0.001",
+                network="eip155:84532",
+                pay_to=EVM_ADDRESS,
+            ),
+        ],
+        extensions={
+            BUILDER_CODE: declare_builder_code_extension("bc_my_app"),
+        },
+    ),
+}
+
+app.add_middleware(PaymentMiddlewareASGI, routes=routes, server=server)
+```
+  </Tab>
+</Tabs>
+
+`declareBuilderCodeExtension` / `DeclareBuilderCodeExtension` validates the code format and returns the extension declaration (including the JSON Schema) for inclusion in the `PaymentRequired` response. It also accepts optional service code(s), for cases where the application itself wants to attribute a dependency (e.g. a server-side SDK):
+
+```typescript
+declareBuilderCodeExtension("bc_my_app", "bc_server_sdk");
+```
+
+Client-provided service codes are merged with these by the core client (client entries first).
+
+## Quickstart for Buyers (Clients)
+
+Register the `BuilderCodeClientExtension` on your x402 client. It attaches your service code (`s`) to every payment payload when registered. When the server declared `builder-code`, the core client merge also preserves the server's app code (`a`):
+
+<Tabs>
+  <Tab title="TypeScript">
+```typescript
+import { x402Client, wrapFetchWithPayment } from "@x402/fetch";
+import { ExactEvmScheme } from "@x402/evm/exact/client";
+import { BuilderCodeClientExtension } from "@x402/extensions/builder-code";
+import { privateKeyToAccount } from "viem/accounts";
+
+const evmSigner = privateKeyToAccount(process.env.EVM_PRIVATE_KEY as `0x${string}`);
+
+const client = new x402Client();
+client.register("eip155:*", new ExactEvmScheme(evmSigner, { rpcUrl: process.env.EVM_RPC_URL }));
+client.registerExtension(new BuilderCodeClientExtension("bc_my_client"));
+
+const fetchWithPayment = wrapFetchWithPayment(fetch, client);
+const response = await fetchWithPayment("https://api.example.com/weather");
+```
+  </Tab>
+  <Tab title="Go">
+```go
+import (
+    x402 "github.com/x402-foundation/x402/go/v2"
+    "github.com/x402-foundation/x402/go/v2/extensions/buildercode"
+    x402http "github.com/x402-foundation/x402/go/v2/http"
+    exactevm "github.com/x402-foundation/x402/go/v2/mechanisms/evm/exact/client"
+    evmsigners "github.com/x402-foundation/x402/go/v2/signers/evm"
+)
+
+evmSigner, _ := evmsigners.NewClientSignerFromPrivateKey(evmPrivateKey)
+
+client := x402.Newx402Client()
+client.Register("eip155:*", exactevm.NewExactEvmScheme(evmSigner, &exactevm.ExactEvmSchemeConfig{
+    RPCURL: evmRpcURL,
+}))
+// Single service code
+client.RegisterExtension(buildercode.NewBuilderCodeClientExtension("bc_my_client"))
+
+// Multiple service codes (layered clients)
+// client.RegisterExtension(buildercode.NewBuilderCodeClientExtension("bc_mcp_server", "bc_my_app"))
+
+httpClient := x402http.WrapHTTPClientWithPayment(
+    http.DefaultClient,
+    x402http.Newx402HTTPClient(client),
+)
+
+resp, _ := httpClient.Get("https://api.example.com/weather")
+```
+  </Tab>
+  <Tab title="Python">
+```python
+from x402 import x402Client
+from x402.extensions.builder_code import BuilderCodeClientExtension
+from x402.http.clients import x402HttpxClient
+from x402.mechanisms.evm import EthAccountSigner
+from x402.mechanisms.evm.exact.register import register_exact_evm_client
+from eth_account import Account
+
+account = Account.from_key(EVM_PRIVATE_KEY)
+client = x402Client()
+register_exact_evm_client(client, EthAccountSigner(account))
+
+# Single service code
+client.register_extension(BuilderCodeClientExtension("bc_my_client"))
+
+# Multiple service codes (layered clients)
+# client.register_extension(BuilderCodeClientExtension(["bc_mcp_server", "bc_my_app"]))
+
+async with x402HttpxClient(client) as http:
+    response = await http.get("https://api.example.com/weather")
+```
+  </Tab>
+</Tabs>
+
+## Quickstart for Facilitators
+
+Register the `BuilderCodeFacilitatorExtension` on your facilitator. At settlement time it reads `a` and `s` from the payment payload, adds its own `w` code and, optionally, its own `s` entry (up to `MAX_FACILITATOR_SERVICE_CODES`), and appends the ERC-8021 CBOR suffix to the transaction calldata:
+
+<Tabs>
+  <Tab title="TypeScript">
+```typescript
+import { x402Facilitator } from "@x402/core/facilitator";
+import { BuilderCodeFacilitatorExtension } from "@x402/extensions/builder-code";
+
+const facilitator = new x402Facilitator()
+  .registerExtension(
+    new BuilderCodeFacilitatorExtension({
+      builderCode: "bc_my_facilitator",
+      serviceCode: "bc_my_facilitator_sdk", // optional
+    }),
+  );
+```
+  </Tab>
+  <Tab title="Go">
+```go
+import (
+    x402 "github.com/x402-foundation/x402/go/v2"
+    "github.com/x402-foundation/x402/go/v2/extensions/buildercode"
+    evm "github.com/x402-foundation/x402/go/v2/mechanisms/evm/exact/facilitator"
+)
+
+facilitator := x402.Newx402Facilitator()
+facilitator.Register([]x402.Network{"eip155:84532"}, evm.NewExactEvmScheme(evmSigner, nil))
+
+facilitator.RegisterExtension(&buildercode.BuilderCodeFacilitatorExtension{
+    BuilderCode: "bc_my_facilitator",
+    ServiceCode: "bc_my_facilitator_sdk", // optional
+})
+```
+  </Tab>
+  <Tab title="Python">
+```python
+from x402 import x402Facilitator
+from x402.extensions.builder_code import BuilderCodeFacilitatorExtension
+from x402.mechanisms.evm import FacilitatorWeb3Signer
+from x402.mechanisms.evm.exact import register_exact_evm_facilitator
+
+evm_signer = FacilitatorWeb3Signer(
+    private_key=EVM_PRIVATE_KEY,
+    rpc_url="https://sepolia.base.org",
+)
+
+facilitator = (
+    x402Facilitator()
+    .register_extension(
+        BuilderCodeFacilitatorExtension(
+            builder_code="bc_my_facilitator",
+            service_code="bc_my_facilitator_sdk",  # optional
+        )
+    )
+)
+
+register_exact_evm_facilitator(facilitator, evm_signer, networks="eip155:84532")
+```
+  </Tab>
+</Tabs>
+
+## Protocol Flow
+
+```
+Client                         Resource Server                Facilitator
+  |                                  |                              |
+  |--- GET /weather ---------------->|                              |
+  |                                  |                              |
+  |<-- 402 PaymentRequired ----------|                              |
+  |    extensions.builder-code:      |                              |
+  |      { a: "bc_my_app" }         |                              |
+  |                                  |                              |
+  | (sign payment, echo a, attach s) |                              |
+  |                                  |                              |
+  |--- GET /weather + payment ------>|                              |
+  |    extensions.builder-code:      |                              |
+  |      { a: "bc_my_app",          |                              |
+  |        s: ["bc_my_client"] }    |                              |
+  |                                  |                              |
+  |                                  |--- settle ------------------>|
+  |                                  |    extensions.builder-code:  |
+  |                                  |      { a: "bc_my_app",      |
+  |                                  |        s: ["bc_my_client"] }|
+  |                                  |                              |
+  |                                  |    Facilitator adds w,       |
+  |                                  |    encodes CBOR suffix,      |
+  |                                  |    appends to calldata       |
+  |                                  |                              |
+  |<-- 200 OK + resource data -------|                              |
+```
+
+## Verifying Attribution On-Chain
+
+After settlement, you can parse the ERC-8021 suffix from the transaction calldata to verify attribution:
+
+```typescript
+import { parseBuilderCodeSuffixFromCalldata } from "@x402/extensions/builder-code";
+import { createPublicClient, http } from "viem";
+import { baseSepolia } from "viem/chains";
+
+const publicClient = createPublicClient({
+  chain: baseSepolia,
+  transport: http(),
+});
+
+const tx = await publicClient.getTransaction({ hash: txHash });
+const attribution = parseBuilderCodeSuffixFromCalldata(tx.input);
+
+console.log(attribution);
+// { a: "bc_my_app", s: ["bc_my_client"], w: "bc_my_facilitator" }
+```
+
+## ERC-8021 Schema 2 Calldata Format
+
+The suffix appended to settlement calldata (reading from the end backwards):
+
+| Component | Size | Description |
+|-----------|------|-------------|
+| `ercMarker` | 16 bytes | Constant: `80218021802180218021802180218021` |
+| `schemaId` | 1 byte | `0x02` for Schema 2 |
+| `cborLength` | 2 bytes | Length of CBOR data (big-endian) |
+| `cborData` | variable | CBOR-encoded map with `a`, `w`, and/or `s` fields |
+
+Wire order: `[cborData][cborLength (2B)][schemaId (1B)][ercMarker (16B)]`
+
+## API Reference
+
+### Server
+
+#### `declareBuilderCodeExtension(appCode, serviceCodes?)`
+
+Validates `appCode` and returns the extension declaration for `PaymentRequired.extensions`.
+
+```typescript
+import { BUILDER_CODE, declareBuilderCodeExtension } from "@x402/extensions/builder-code";
+
+extensions: {
+  [BUILDER_CODE]: declareBuilderCodeExtension("bc_my_app"),
+}
+
+// Optionally declare the application's own service code(s) as well
+extensions: {
+  [BUILDER_CODE]: declareBuilderCodeExtension("bc_my_app", "bc_server_sdk"),
+}
+```
+
+Throws if `appCode` or any `serviceCodes` entry does not match `^[a-z0-9_]{1,32}$`, or if more than `MAX_SERVER_SERVICE_CODES` service codes are given.
+
+### Client
+
+#### `BuilderCodeClientExtension`
+
+```typescript
+import { BuilderCodeClientExtension } from "@x402/extensions/builder-code";
+
+// Single service code
+client.registerExtension(new BuilderCodeClientExtension("bc_my_client"));
+
+// Multiple service codes (layered clients, e.g. an MCP middleware)
+client.registerExtension(new BuilderCodeClientExtension(["bc_mcp_server", "bc_my_app"]));
+```
+
+Accepts a single string or an array of strings. Attaches the client's `s` code(s) to every payment payload when registered. When the server declared `builder-code`, the core client merge also preserves the server's `a` code, concatenating any server-declared `s` with the client's (client entries first). Multiple codes are useful for layered clients (e.g. an MCP server acting as middleware) that need to attribute multiple participants. Throws if more than `MAX_CLIENT_SERVICE_CODES` codes are given.
+
+<Note>`s` is split into dedicated, non-overlapping reservations: up to `MAX_CLIENT_SERVICE_CODES` (**5**) for the client, `MAX_SERVER_SERVICE_CODES` (**5**) for the server, and `MAX_FACILITATOR_SERVICE_CODES` (**1**) for the facilitator's own code — a total of `MAX_SERVICE_CODES` (**11**). `declareBuilderCodeExtension`, `BuilderCodeClientExtension`, and the facilitator's `serviceCode` config each reject more entries than their own reservation, so no compliant combination can crowd out another party's codes. The resource server also rejects a client echo whose combined `s` exceeds the client+server budget (**10**) before settlement, and facilitators additionally truncate to that same budget as a defensive backstop against a malformed payload sent directly to a facilitator.</Note>
+
+### Facilitator
+
+#### `BuilderCodeFacilitatorExtension`
+
+```typescript
+import { BuilderCodeFacilitatorExtension } from "@x402/extensions/builder-code";
+
+facilitator.registerExtension(
+  new BuilderCodeFacilitatorExtension({
+    builderCode: "bc_my_facilitator",
+    serviceCode: "bc_my_facilitator_sdk", // optional, up to MAX_FACILITATOR_SERVICE_CODES
+  }),
+);
+```
+
+Reads `a` and `s` from the payment payload at settlement time, adds `w`, appends its own `serviceCode` to `s` (deduped), and encodes the ERC-8021 CBOR suffix.
+
+### Utilities
+
+#### `encodeBuilderCodeSuffix(data)`
+
+Encodes builder code fields as an ERC-8021 Schema 2 hex suffix.
+
+```typescript
+import { encodeBuilderCodeSuffix } from "@x402/extensions/builder-code";
+
+const suffix = encodeBuilderCodeSuffix({ a: "bc_my_app", w: "bc_my_fac", s: ["bc_my_client"] });
+// Returns hex string to append to calldata
+```
+
+#### `parseBuilderCodeSuffixFromCalldata(calldata)`
+
+Parses ERC-8021 Schema 2 attribution from settlement transaction calldata.
+
+```typescript
+import { parseBuilderCodeSuffixFromCalldata } from "@x402/extensions/builder-code";
+
+const attribution = parseBuilderCodeSuffixFromCalldata(tx.input);
+// Returns { a?, w?, s? } or null if no valid suffix found
+```
+
+### Constants
+
+```typescript
+import {
+  BUILDER_CODE,                    // "builder-code"
+  BUILDER_CODE_PATTERN,            // /^[a-z0-9_]{1,32}$/
+  MAX_CLIENT_SERVICE_CODES,        // 5 — client's dedicated `s` reservation
+  MAX_SERVER_SERVICE_CODES,        // 5 — server's dedicated `s` reservation
+  MAX_FACILITATOR_SERVICE_CODES,   // 1 — facilitator's dedicated `s` reservation
+  MAX_SERVICE_CODES,               // 11 — on-chain cap for `s` (sum of the above)
+  ERC_8021_MARKER,                 // "80218021802180218021802180218021"
+  SCHEMA_2_ID,                     // 0x02
+} from "@x402/extensions/builder-code";
+```
+
+## Examples
+
+Full working examples are available in the x402 repository:
+
+- [TypeScript Server Example](https://github.com/x402-foundation/x402/tree/main/examples/typescript/servers/builder-code)
+- [TypeScript Client Example](https://github.com/x402-foundation/x402/tree/main/examples/typescript/clients/builder-code)
+- [TypeScript Facilitator Example](https://github.com/x402-foundation/x402/tree/main/examples/typescript/facilitator/builder-code)
+- [Go Server Example](https://github.com/x402-foundation/x402/tree/main/examples/go/servers/builder-code)
+- [Go Client Example](https://github.com/x402-foundation/x402/tree/main/examples/go/clients/builder-code)
+- [Go Facilitator Example](https://github.com/x402-foundation/x402/tree/main/examples/go/facilitator/builder-code)
+- [Python Server Example](https://github.com/x402-foundation/x402/tree/main/examples/python/servers/builder-code)
+- [Python Client Example](https://github.com/x402-foundation/x402/tree/main/examples/python/clients/builder-code)
+- [Python Facilitator Example](https://github.com/x402-foundation/x402/tree/main/examples/python/facilitator/builder-code)
+
+## Further Reading
+
+- [ERC-8021 Specification](https://eip.tools/eip/8021)
+- [Builder Code Extension Spec](https://github.com/x402-foundation/x402/blob/main/specs/extensions/builder_code.md)
+- [@x402/extensions source](https://github.com/x402-foundation/x402/tree/main/typescript/packages/extensions/src/builder-code)

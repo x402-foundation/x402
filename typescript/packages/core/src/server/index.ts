@@ -8,23 +8,56 @@ export type {
   SettleContext,
   SettleResultContext,
   SettleFailureContext,
+  VerifiedPaymentCanceledContext,
+  VerifiedPaymentCancellationReason,
+  VerifiedPaymentCancelOptions,
+  PaymentCancellationDispatcher,
   SettlementOverrides,
+  ExtensionValidationResult,
+  SkipHandlerDirective,
+  ResourceVerifyRespone,
   BeforeVerifyHook,
   AfterVerifyHook,
   OnVerifyFailureHook,
   BeforeSettleHook,
   AfterSettleHook,
   OnSettleFailureHook,
+  OnVerifiedPaymentCanceledHook,
 } from "./x402ResourceServer";
+export type {
+  SchemeEnrichPaymentRequiredResponseHook,
+  SchemePaymentRequiredContext,
+  SchemeEnrichSettlementPayloadHook,
+  SchemeEnrichSettlementResponseHook,
+} from "../types/mechanisms";
+
+export {
+  assertAdditivePayloadEnrichment,
+  assertAdditiveSettlementExtra,
+  assertAcceptsAdditiveExtraAfterSchemeEnrich,
+  assertAcceptsAllowlistedAfterExtensionEnrich,
+  assertSettleResponseCoreUnchanged,
+  isVacantStringField,
+  snapshotPaymentRequirementsList,
+  snapshotSettleResponseCore,
+} from "./hookPolicy";
+export type { SettleResponseCoreSnapshot } from "./hookPolicy";
 
 export { HTTPFacilitatorClient } from "../http/httpFacilitatorClient";
 export type { FacilitatorClient, FacilitatorConfig } from "../http/httpFacilitatorClient";
-export { FacilitatorResponseError, getFacilitatorResponseError } from "../types";
+export {
+  FacilitatorResponseError,
+  FacilitatorTimeoutError,
+  getFacilitatorResponseError,
+} from "../types";
 
 export {
   x402HTTPResourceServer,
   RouteConfigurationError,
   SETTLEMENT_OVERRIDES_HEADER,
+  PAYMENT_REQUIRED_CACHE_CONTROL,
+  withPrivateCacheControl,
+  checkIfBazaarNeeded,
 } from "../http/x402HTTPResourceServer";
 export type {
   HTTPRequestContext,

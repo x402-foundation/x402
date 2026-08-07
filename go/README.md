@@ -9,7 +9,7 @@ x402 is a protocol that enables HTTP resources to require cryptocurrency payment
 ## Installation
 
 ```bash
-go get github.com/x402-foundation/x402/go
+go get github.com/x402-foundation/x402/go/v2
 ```
 
 ## What This Package Exports
@@ -186,7 +186,7 @@ For payment processing services that verify and settle payments.
 ## Package Structure
 
 ```
-github.com/x402-foundation/x402/go
+github.com/x402-foundation/x402/go/v2
 │
 ├── Core (framework-agnostic)
 │   ├── client.go              - x402.X402Client

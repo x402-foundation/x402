@@ -37,8 +37,8 @@ export type ExactDefaultAssetInfo = DefaultAssetInfo & {
  * Default stablecoins indexed by CAIP-2 network identifier.
  *
  * Each network has the right to determine its own default stablecoin that can
- * be expressed as a USD string by calling servers. See DEFAULT_ASSET.md in
- * exact/server/ for how to add new chains.
+ * be expressed as a USD string by calling servers. See DEFAULT_ASSETS.md at the
+ * repository root for how to add new chains.
  */
 export const DEFAULT_STABLECOINS: Record<string, ExactDefaultAssetInfo> = {
   "eip155:8453": {
@@ -97,6 +97,14 @@ export const DEFAULT_STABLECOINS: Record<string, ExactDefaultAssetInfo> = {
     version: "2",
     decimals: 6,
   }, // Arbitrum Sepolia USDC
+  "eip155:31612": {
+    address: "0xdD468A1DDc392dcdbEf6db6e34E89AA338F9F186",
+    name: "Mezo USD",
+    version: "1",
+    decimals: 18,
+    assetTransferMethod: "permit2",
+    supportsEip2612: true,
+  }, // Mezo mainnet mUSD (no EIP-3009, supports EIP-2612)
   "eip155:31611": {
     address: "0x118917a40FAF1CD7a13dB0Ef56C86De7973Ac503",
     name: "Mezo USD",
@@ -105,6 +113,77 @@ export const DEFAULT_STABLECOINS: Record<string, ExactDefaultAssetInfo> = {
     assetTransferMethod: "permit2",
     supportsEip2612: true,
   }, // Mezo Testnet mUSD (no EIP-3009, supports EIP-2612)
+  "eip155:723487": {
+    address: "0x33ad9e4BD16B69B5BFdED37D8B5D9fF9aba014Fb",
+    name: "Stable Coin",
+    version: "1",
+    decimals: 6,
+    assetTransferMethod: "permit2",
+    supportsEip2612: true,
+  }, // Radius Network SBC (no EIP-3009, supports EIP-2612)
+  "eip155:72344": {
+    address: "0x33ad9e4BD16B69B5BFdED37D8B5D9fF9aba014Fb",
+    name: "Stable Coin",
+    version: "1",
+    decimals: 6,
+    assetTransferMethod: "permit2",
+    supportsEip2612: true,
+  }, // Radius Testnet SBC (no EIP-3009, supports EIP-2612)
+  "eip155:36900": {
+    address: "0x9cb8142aEBBcdc60AF7c97Af897A67A8f3CA71C2",
+    name: "USDC.e",
+    version: "2",
+    decimals: 6,
+  }, // ADI Chain USDC.e (EIP-3009 supported)
+  "eip155:190415": {
+    address: "0x401eCb1D350407f13ba348573E5630B83638E30D",
+    name: "Bridged USDC",
+    version: "2",
+    decimals: 6,
+  }, // HPP mainnet USDC.e
+  "eip155:181228": {
+    address: "0x401eCb1D350407f13ba348573E5630B83638E30D",
+    name: "Bridged USDC",
+    version: "2",
+    decimals: 6,
+  }, // HPP Sepolia USDC.e
+  "eip155:50": {
+    address: "0xfA2958CB79b0491CC627c1557F441eF849Ca8eb1",
+    name: "USDC",
+    version: "2",
+    decimals: 6,
+  }, // XDC Network mainnet USDC (Bridged USDC Standard, EIP-3009 supported)
+  "eip155:51": {
+    address: "0xb5AB69F7bBada22B28e79C8FFAECe55eF1c771D4",
+    name: "USDC",
+    version: "2",
+    decimals: 6,
+  }, // XDC Apothem testnet USDC (Bridged USDC Standard, EIP-3009 supported)
+  "eip155:38833": {
+    address: "0xA5b8BF902b2844dA17d4506cc827F7F1681735E7",
+    name: "USDC",
+    version: "1",
+    decimals: 6,
+    assetTransferMethod: "permit2",
+  }, // Igra mainnet USDC (no EIP-3009, no EIP-2612)
+  "eip155:14": {
+    address: "0xe7cd86e13AC4309349F30B3435a9d337750fC82D",
+    name: "USD\u20AE0",
+    version: "1",
+    decimals: 6,
+  }, // Flare mainnet USD₮0 (EIP-3009 supported)
+  "eip155:42220": {
+    address: "0xcebA9300f2b948710d2653dD7B07f33A8B32118C",
+    name: "USDC",
+    version: "2",
+    decimals: 6,
+  }, // Celo mainnet USDC (EIP-3009 supported)
+  "eip155:11142220": {
+    address: "0x01C5C0122039549AD1493B8220cABEdD739BC44E",
+    name: "USDC",
+    version: "2",
+    decimals: 6,
+  }, // Celo Sepolia testnet USDC (EIP-3009 supported)
 };
 
 /**

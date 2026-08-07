@@ -5,15 +5,18 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/labstack/echo/v4"
-	x402 "github.com/x402-foundation/x402/go"
-	x402http "github.com/x402-foundation/x402/go/http"
-	"github.com/x402-foundation/x402/go/types"
+	x402 "github.com/x402-foundation/x402/go/v2"
+	x402http "github.com/x402-foundation/x402/go/v2/http"
+	"github.com/x402-foundation/x402/go/v2/types"
 )
 
 // ============================================================================
@@ -1335,5 +1338,213 @@ func TestResponseCapture_WriteHeaderOnlyOnce(t *testing.T) {
 
 	if capture.statusCode != http.StatusCreated {
 		t.Errorf("Expected status 201 (first call), got %d", capture.statusCode)
+	}
+}
+
+// ============================================================================
+// Bazaar Extension Validation Tests
+// ============================================================================
+
+func captureStdout(f func()) string {
+	old := os.Stdout
+	r, w, _ := os.Pipe()
+	os.Stdout = w
+	f()
+	w.Close()
+	os.Stdout = old
+	var buf bytes.Buffer
+	io.Copy(&buf, r) //nolint:errcheck
+	return buf.String()
+}
+
+func TestValidateBazaarExtensions_NoBazaar(t *testing.T) {
+	routes := x402http.RoutesConfig{
+		"GET /api": {
+			Accepts: x402http.PaymentOptions{
+				{Scheme: "exact", PayTo: "0xtest", Price: "$1.00", Network: "eip155:8453"},
+			},
+		},
+	}
+
+	output := captureStdout(func() {
+		validateBazaarExtensions(routes)
+	})
+
+	if strings.Contains(output, "Warning") || strings.Contains(output, "bazaar") {
+		t.Errorf("Expected no bazaar warning, got: %s", output)
+	}
+}
+
+func TestValidateBazaarExtensions_ValidExtension(t *testing.T) {
+	routes := x402http.RoutesConfig{
+		"GET /api": {
+			Accepts: x402http.PaymentOptions{
+				{Scheme: "exact", PayTo: "0xtest", Price: "$1.00", Network: "eip155:8453"},
+			},
+			Extensions: map[string]interface{}{
+				"bazaar": map[string]interface{}{
+					"info": map[string]interface{}{
+						"input": map[string]interface{}{
+							"type":   "http",
+							"method": "GET",
+						},
+					},
+					"schema": map[string]interface{}{
+						"type": "object",
+						"properties": map[string]interface{}{
+							"input": map[string]interface{}{"type": "object"},
+						},
+						"required": []interface{}{"input"},
+					},
+				},
+			},
+		},
+	}
+
+	output := captureStdout(func() {
+		validateBazaarExtensions(routes)
+	})
+
+	if strings.Contains(output, "Warning") || strings.Contains(output, "invalid") {
+		t.Errorf("Expected no warning for valid bazaar extension, got: %s", output)
+	}
+}
+
+func TestValidateBazaarExtensions_InvalidExtension(t *testing.T) {
+	routes := x402http.RoutesConfig{
+		"GET /api": {
+			Accepts: x402http.PaymentOptions{
+				{Scheme: "exact", PayTo: "0xtest", Price: "$1.00", Network: "eip155:8453"},
+			},
+			Extensions: map[string]interface{}{
+				"bazaar": map[string]interface{}{
+					"info": map[string]interface{}{
+						"input": map[string]interface{}{
+							"type":   "http",
+							"method": "GET",
+						},
+					},
+					"schema": map[string]interface{}{
+						"type": "object",
+						"properties": map[string]interface{}{
+							"input": map[string]interface{}{"type": "object"},
+							"jobs":  map[string]interface{}{"type": "array"},
+							"count": map[string]interface{}{"type": "integer"},
+						},
+						"required": []interface{}{"input", "jobs", "count"},
+					},
+				},
+			},
+		},
+	}
+
+	output := captureStdout(func() {
+		validateBazaarExtensions(routes)
+	})
+
+	if !strings.Contains(output, "Warning") {
+		t.Errorf("Expected warning for invalid bazaar extension, got: %q", output)
+	}
+	if !strings.Contains(output, "bazaar") {
+		t.Errorf("Expected 'bazaar' in warning output, got: %q", output)
+	}
+}
+
+func TestValidateBazaarExtensions_MalformedExtension(t *testing.T) {
+	routes := x402http.RoutesConfig{
+		"GET /api": {
+			Accepts: x402http.PaymentOptions{
+				{Scheme: "exact", PayTo: "0xtest", Price: "$1.00", Network: "eip155:8453"},
+			},
+			Extensions: map[string]interface{}{
+				"bazaar": "not-an-object",
+			},
+		},
+	}
+
+	output := captureStdout(func() {
+		validateBazaarExtensions(routes)
+	})
+
+	if !strings.Contains(output, "Warning") {
+		t.Errorf("Expected warning for malformed bazaar extension, got: %q", output)
+	}
+	if !strings.Contains(output, "malformed") {
+		t.Errorf("Expected 'malformed' in warning output, got: %q", output)
+	}
+}
+
+// TestPaymentMiddleware_EncodedPathDoesNotBypassPaymentGate guards against a
+// path-equivalence bypass (CWE-436): Echo's router dispatches on the escaped
+// path, so a request carrying "%2F" in a ":param" segment reaches the protected
+// handler. If the middleware matched routes on the decoded URL.Path instead,
+// the encoded slash would split the segment, the route regex would miss, and
+// the paid handler would run with no payment verification or settlement.
+func TestPaymentMiddleware_EncodedPathDoesNotBypassPaymentGate(t *testing.T) {
+	bypassPaths := []string{
+		"/api/users/1",       // baseline: plainly protected
+		"/api/users/x%2Fy",   // encoded slash splits the :id segment
+		"/api/users/x%2fy",   // lowercase encoding
+		"/api/users/x%252Fy", // double encoding survives a second decode pass
+		"/api/users/x%5Cy",   // encoded backslash
+		"/api/premium/",      // wildcard route with a bare trailing slash
+		"/api/premium/a%2Fb", // wildcard route with an encoded slash
+	}
+
+	routes := x402http.RoutesConfig{
+		"GET /api/users/:id": x402http.RouteConfig{
+			Accepts: x402http.PaymentOptions{
+				{Scheme: "exact", PayTo: "0xtest", Price: "$1.00", Network: "eip155:1"},
+			},
+		},
+		"GET /api/premium/*": x402http.RouteConfig{
+			Accepts: x402http.PaymentOptions{
+				{Scheme: "exact", PayTo: "0xtest", Price: "$1.00", Network: "eip155:1"},
+			},
+		},
+	}
+
+	for _, path := range bypassPaths {
+		t.Run(path, func(t *testing.T) {
+			mockClient := &mockFacilitatorClient{
+				supportedFunc: func(ctx context.Context) (x402.SupportedResponse, error) {
+					return x402.SupportedResponse{
+						Kinds: []x402.SupportedKind{
+							{X402Version: 2, Scheme: "exact", Network: "eip155:1"},
+						},
+						Extensions: []string{},
+						Signers:    make(map[string][]string),
+					}, nil
+				},
+			}
+
+			e := createTestEcho()
+			e.Use(PaymentMiddlewareFromConfig(routes,
+				WithFacilitatorClient(mockClient),
+				WithScheme("eip155:1", &mockSchemeServer{scheme: "exact"}),
+				WithSyncFacilitatorOnStart(true),
+				WithTimeout(5*time.Second),
+			))
+
+			handlerRan := false
+			paidHandler := func(c echo.Context) error {
+				handlerRan = true
+				return c.JSON(http.StatusOK, map[string]interface{}{"data": "protected"})
+			}
+			e.GET("/api/users/:id", paidHandler)
+			e.GET("/api/premium/*", paidHandler)
+
+			req := httptest.NewRequest("GET", path, nil)
+			req.Header.Set("Accept", "application/json")
+			w := httptest.NewRecorder()
+			e.ServeHTTP(w, req)
+
+			if handlerRan {
+				t.Errorf("payment bypassed: paid handler ran for %s (status %d)", path, w.Code)
+			}
+			if w.Code != http.StatusPaymentRequired {
+				t.Errorf("Expected status 402 for %s, got %d", path, w.Code)
+			}
+		})
 	}
 }

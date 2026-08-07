@@ -40,10 +40,10 @@ describe("Extension Integration Tests", () => {
       let enrichWasCalled = false;
       const testExtension: ClientExtension = {
         key: "testGasSponsoring",
-        enrichPaymentPayload: async (
-          payload: PaymentPayload,
-          _paymentRequired: PaymentRequired,
-        ) => {
+        enrichPaymentPayload: async (payload: PaymentPayload, paymentRequired: PaymentRequired) => {
+          if (!paymentRequired.extensions?.testGasSponsoring) {
+            return payload;
+          }
           enrichWasCalled = true;
           const extensions = { ...(payload.extensions ?? {}) };
           extensions["testGasSponsoring"] = {
@@ -87,11 +87,14 @@ describe("Extension Integration Tests", () => {
       expect((extData.info as Record<string, unknown>)?.from).toBe("0x1234");
     });
 
-    it("should NOT enrich extensions when extension key is not in paymentRequired", async () => {
+    it("should not enrich server-gated extensions when extension key is not in paymentRequired", async () => {
       let enrichWasCalled = false;
       const testExtension: ClientExtension = {
-        key: "missingExtension",
-        enrichPaymentPayload: async (payload: PaymentPayload) => {
+        key: "testGasSponsoring",
+        enrichPaymentPayload: async (payload: PaymentPayload, paymentRequired: PaymentRequired) => {
+          if (!paymentRequired.extensions?.testGasSponsoring) {
+            return payload;
+          }
           enrichWasCalled = true;
           return payload;
         },
@@ -106,10 +109,40 @@ describe("Extension Integration Tests", () => {
       };
       const paymentRequired = await server.createPaymentRequiredResponse(accepts, resource);
 
-      // No extensions on the paymentRequired
       await client.createPaymentPayload(paymentRequired);
 
       expect(enrichWasCalled).toBe(false);
+    });
+
+    it("should enrich client-owned extensions when extension key is not in paymentRequired", async () => {
+      let enrichWasCalled = false;
+      const testExtension: ClientExtension = {
+        key: "clientOwnedExtension",
+        enrichPaymentPayload: async (payload: PaymentPayload) => {
+          enrichWasCalled = true;
+          const extensions = { ...(payload.extensions ?? {}) };
+          extensions["clientOwnedExtension"] = {
+            info: { s: "client_service" },
+          };
+          return { ...payload, extensions };
+        },
+      };
+      client.registerExtension(testExtension);
+
+      const accepts = [buildCashPaymentRequirements("Company Co.", "USD", "1")];
+      const resource = {
+        url: "https://company.co",
+        description: "Test",
+        mimeType: "application/json",
+      };
+      const paymentRequired = await server.createPaymentRequiredResponse(accepts, resource);
+
+      const paymentPayload = await client.createPaymentPayload(paymentRequired);
+
+      expect(enrichWasCalled).toBe(true);
+      expect((paymentPayload.extensions as Record<string, unknown>)?.clientOwnedExtension).toEqual({
+        info: { s: "client_service" },
+      });
     });
   });
 });

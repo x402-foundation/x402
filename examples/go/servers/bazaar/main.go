@@ -8,12 +8,12 @@ import (
 
 	ginfw "github.com/gin-gonic/gin"
 	"github.com/joho/godotenv"
-	"github.com/x402-foundation/x402/go/extensions/bazaar"
-	"github.com/x402-foundation/x402/go/extensions/types"
-	x402http "github.com/x402-foundation/x402/go/http"
-	ginmw "github.com/x402-foundation/x402/go/http/gin"
-	evm "github.com/x402-foundation/x402/go/mechanisms/evm/exact/server"
-	svm "github.com/x402-foundation/x402/go/mechanisms/svm/exact/server"
+	"github.com/x402-foundation/x402/go/v2/extensions/bazaar"
+	"github.com/x402-foundation/x402/go/v2/extensions/types"
+	x402http "github.com/x402-foundation/x402/go/v2/http"
+	ginmw "github.com/x402-foundation/x402/go/v2/http/gin"
+	evm "github.com/x402-foundation/x402/go/v2/mechanisms/evm/exact/server"
+	svm "github.com/x402-foundation/x402/go/v2/mechanisms/svm/exact/server"
 )
 
 const (
@@ -105,12 +105,16 @@ func main() {
 			Accepts:     paymentOptions,
 			Description: "Weather data for a city",
 			MimeType:    "application/json",
+			ServiceName: "Weather API",
+			Tags:        []string{"weather", "api"},
 			Extensions:  map[string]interface{}{bazaar.BAZAAR.Key(): weatherByCityExt},
 		},
 		"GET /weather/:country/:city": {
 			Accepts:     paymentOptions,
 			Description: "Weather data for a city in a specific country",
 			MimeType:    "application/json",
+			ServiceName: "Weather API",
+			Tags:        []string{"weather", "api"},
 			Extensions:  map[string]interface{}{bazaar.BAZAAR.Key(): weatherByCountryCityExt},
 		},
 	}

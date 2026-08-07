@@ -16,10 +16,12 @@ load_dotenv()
 PORT = int(os.getenv("PORT", "4022"))
 EVM_NETWORK = os.getenv("EVM_NETWORK", "eip155:84532")
 EVM_PAYEE_ADDRESS = os.getenv("EVM_PAYEE_ADDRESS", "")
+TVM_NETWORK = os.getenv("TVM_NETWORK", "tvm:-3")
+TVM_PAYEE_ADDRESS = os.getenv("TVM_PAYEE_ADDRESS", "")
 FACILITATOR_URL = os.getenv("FACILITATOR_URL", "")
 
-if not EVM_PAYEE_ADDRESS:
-    print("EVM_PAYEE_ADDRESS environment variable is required")
+if not EVM_PAYEE_ADDRESS and not TVM_PAYEE_ADDRESS:
+    print("At least one of EVM_PAYEE_ADDRESS or TVM_PAYEE_ADDRESS is required")
     exit(1)
 
 if not FACILITATOR_URL:
@@ -40,9 +42,14 @@ def main() -> None:
     from mcp.server.fastmcp import FastMCP
 
     from x402 import ResourceConfig, ResourceInfo, x402ResourceServer
+    from x402.extensions.bazaar import (
+        DeclareMcpDiscoveryConfig,
+        declare_mcp_discovery_extension,
+    )
     from x402.http import FacilitatorConfig, HTTPFacilitatorClient
     from x402.mcp import create_payment_wrapper
     from x402.mechanisms.evm.exact import register_exact_evm_server
+    from x402.mechanisms.tvm.exact import ExactTvmServerScheme
 
     # Create FastMCP server
     mcp = FastMCP("x402 MCP E2E Server")
@@ -50,39 +57,61 @@ def main() -> None:
     # Set up x402 resource server
     facilitator_client = HTTPFacilitatorClient(FacilitatorConfig(url=FACILITATOR_URL))
     resource_server = x402ResourceServer(facilitator_client)
-    register_exact_evm_server(resource_server, EVM_NETWORK)
+    if EVM_PAYEE_ADDRESS:
+        register_exact_evm_server(resource_server, EVM_NETWORK)
+    if TVM_PAYEE_ADDRESS:
+        resource_server.register(TVM_NETWORK, ExactTvmServerScheme())
 
     # Initialize (fetches supported kinds from facilitator)
     resource_server.initialize()
 
-    # Build payment requirements for the weather tool
-    weather_config = ResourceConfig(
-        scheme="exact",
-        network=EVM_NETWORK,
-        pay_to=EVM_PAYEE_ADDRESS,
-        price="$0.001",
-    )
-    weather_accepts = resource_server.build_payment_requirements(weather_config)
+    # Expose one paid tool per protocol family
+    def register_weather_tool(tool_name: str, network: str, pay_to: str) -> None:
+        accepts = resource_server.build_payment_requirements(
+            ResourceConfig(
+                scheme="exact",
+                network=network,
+                pay_to=pay_to,
+                price="$0.001",
+            )
+        )
+        discovery = declare_mcp_discovery_extension(
+            DeclareMcpDiscoveryConfig(
+                tool_name=tool_name,
+                description="Get current weather for a city",
+                transport="sse",
+                input_schema={
+                    "properties": {
+                        "city": {"type": "string", "description": "City name"}
+                    },
+                    "required": ["city"],
+                },
+                example={"city": "San Francisco"},
+            )
+        )
+        wrapper = create_payment_wrapper(
+            resource_server,
+            accepts=accepts,
+            resource=ResourceInfo(
+                url=f"mcp://tool/{tool_name}",
+                description="Get current weather for a city",
+                mime_type="application/json",
+            ),
+            extensions=discovery,
+        )
 
-    # Create payment wrapper for the weather tool
-    weather_wrapper = create_payment_wrapper(
-        resource_server,
-        accepts=weather_accepts,
-        resource=ResourceInfo(
-            url="mcp://tool/get_weather",
-            description="Get current weather for a city",
-            mime_type="application/json",
-        ),
-    )
+        @mcp.tool(
+            name=tool_name,
+            description="Get current weather for a city. Requires payment of $0.001.",
+        )
+        @wrapper
+        async def _get_weather(city: str) -> str:
+            return json.dumps(get_weather_data(city))
 
-    @mcp.tool(
-        name="get_weather",
-        description="Get current weather for a city. Requires payment of $0.001.",
-    )
-    @weather_wrapper
-    async def get_weather(city: str) -> str:
-        """Return weather data as JSON string."""
-        return json.dumps(get_weather_data(city))
+    if EVM_PAYEE_ADDRESS:
+        register_weather_tool("get_weather", EVM_NETWORK, EVM_PAYEE_ADDRESS)
+    if TVM_PAYEE_ADDRESS:
+        register_weather_tool("get_weather_tvm", TVM_NETWORK, TVM_PAYEE_ADDRESS)
 
     @mcp.tool(name="ping", description="A free health check tool")
     def ping() -> str:
@@ -96,7 +125,22 @@ def main() -> None:
 
     async def health(request):
         return JSONResponse(
-            {"status": "ok", "tools": ["get_weather (paid: $0.001)", "ping (free)"]}
+            {
+                "status": "ok",
+                "tools": [
+                    *(["get_weather (paid: $0.001)"] if EVM_PAYEE_ADDRESS else []),
+                    *(["get_weather_tvm (paid: $0.001)"] if TVM_PAYEE_ADDRESS else []),
+                    "ping (free)",
+                ],
+                "protocols": [
+                    protocol
+                    for protocol, enabled in {
+                        "evm": bool(EVM_PAYEE_ADDRESS),
+                        "tvm": bool(TVM_PAYEE_ADDRESS),
+                    }.items()
+                    if enabled
+                ],
+            }
         )
 
     async def close(request):
@@ -111,6 +155,18 @@ def main() -> None:
         threading.Thread(target=shutdown, daemon=True).start()
         return response
 
+    async def on_startup() -> None:
+        # Emitted from the ASGI startup hook (not before uvicorn.run()) so the
+        # "Server listening" log only appears once the socket is actually
+        # bound and the app is ready to accept requests.
+        print(f"Server listening on port {PORT}", flush=True)
+        print(f"SSE endpoint: http://localhost:{PORT}/sse", flush=True)
+        print(f"Health: http://localhost:{PORT}/health", flush=True)
+        if EVM_PAYEE_ADDRESS:
+            print(f"EVM payments enabled on {EVM_NETWORK}", flush=True)
+        if TVM_PAYEE_ADDRESS:
+            print(f"TVM payments enabled on {TVM_NETWORK}", flush=True)
+
     # Create MCP SSE app
     mcp_app = mcp.sse_app()
 
@@ -120,14 +176,11 @@ def main() -> None:
             Route("/health", health, methods=["GET"]),
             Route("/close", close, methods=["POST"]),
         ],
+        on_startup=[on_startup],
     )
 
     # Mount MCP SSE app at root so /sse and /messages work
     app.mount("/", mcp_app)
-
-    print(f"Server listening on port {PORT}")
-    print(f"SSE endpoint: http://localhost:{PORT}/sse")
-    print(f"Health: http://localhost:{PORT}/health")
 
     uvicorn.run(app, host="0.0.0.0", port=PORT, log_level="warning")
 

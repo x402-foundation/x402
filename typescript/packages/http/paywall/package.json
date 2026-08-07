@@ -1,6 +1,6 @@
 {
   "name": "@x402/paywall",
-  "version": "2.9.0",
+  "version": "2.21.0",
   "main": "./dist/cjs/index.js",
   "module": "./dist/esm/index.js",
   "types": "./dist/index.d.ts",
@@ -39,7 +39,7 @@
     "@x402/evm": "workspace:~",
     "@x402/svm": "workspace:~",
     "buffer": "^6.0.3",
-    "esbuild": "^0.25.4",
+    "esbuild": "^0.27.2",
     "eslint": "^9.24.0",
     "eslint-plugin-import": "^2.31.0",
     "eslint-plugin-jsdoc": "^50.6.9",
@@ -48,7 +48,7 @@
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
     "tsup": "^8.4.0",
-    "tsx": "^4.19.2",
+    "tsx": "^4.21.0",
     "typescript": "^5.7.3",
     "vite": "^6.2.6",
     "vite-tsconfig-paths": "^5.1.4",
@@ -75,9 +75,8 @@
     "@wallet-standard/base": "^1.1.0",
     "@wallet-standard/features": "^1.1.0",
     "@x402/core": "workspace:~",
-    "viem": "^2.39.3",
-    "wagmi": "^2.17.1",
-    "zod": "^3.24.2"
+    "viem": "^2.48.11",
+    "wagmi": "^2.17.1"
   },
   "peerDependencies": {
     "react": "^19.0.0",

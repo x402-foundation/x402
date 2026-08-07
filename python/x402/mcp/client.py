@@ -28,10 +28,10 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from ..client import x402Client, x402ClientSync
-from ..schemas.payments import PaymentRequired
 from ..schemas.responses import SettleResponse
 from .constants import MCP_PAYMENT_META_KEY, MCP_PAYMENT_RESPONSE_META_KEY
 from .utils import (
+    _extract_payment_required_from_object,
     convert_mcp_result,
     extract_payment_required_from_result,
     extract_payment_response_from_meta,
@@ -161,21 +161,20 @@ class x402MCPSession:
             raw_result=result,
         )
 
-    def _extract_payment_required(self, result: Any) -> PaymentRequired | None:
-        """Extract PaymentRequired from an error result.
+    def _extract_payment_required(self, result: Any) -> Any:
+        """Extract PaymentRequired (x402 v1 or v2) from an error result.
 
         Prefers ``structuredContent`` (per spec), falls back to parsing
         ``content[0].text`` as JSON.  Also handles FastMCP-wrapped error
-        formats via regex fallback.
+        formats via regex fallback. Version-aware so v1 servers are detected too.
         """
         # Preferred path: check structuredContent first (per MCP x402 spec)
         if hasattr(result, "structuredContent") and result.structuredContent:
             sc = result.structuredContent
-            if isinstance(sc, dict) and "accepts" in sc and "x402Version" in sc:
-                try:
-                    return PaymentRequired.model_validate(sc)
-                except Exception:
-                    pass
+            if isinstance(sc, dict) and "accepts" in sc:
+                pr = _extract_payment_required_from_object(sc)
+                if pr is not None:
+                    return pr
 
         # Fallback: parse content[].text as JSON
         if not hasattr(result, "content") or not result.content:
@@ -186,10 +185,9 @@ class x402MCPSession:
                 continue
             parsed = _try_extract_payment_json(item.text)
             if parsed:
-                try:
-                    return PaymentRequired.model_validate(parsed)
-                except Exception:
-                    pass
+                pr = _extract_payment_required_from_object(parsed)
+                if pr is not None:
+                    return pr
 
         return None
 

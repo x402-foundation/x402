@@ -26,9 +26,9 @@
           "href": "https://github.com/x402-foundation/x402"
         },
         {
-          "anchor": "Discord",
-          "icon": "discord",
-          "href": "https://discord.gg/cdp"
+          "anchor": "Slack",
+          "icon": "slack",
+          "href": "http://slack.x402.org/"
         },
         {
           "anchor": "Vercel Starter",
@@ -63,10 +63,20 @@
         ]
       },
       {
+        "group": "Payment Schemes",
+        "pages": [
+          "schemes/overview",
+          "schemes/exact",
+          "schemes/upto",
+          "schemes/batch-settlement"
+        ]
+      },
+      {
         "group": "Extensions",
         "pages": [
           "extensions/overview",
           "extensions/bazaar",
+          "extensions/builder-code",
           "extensions/payment-identifier",
           "extensions/sign-in-with-x",
           "extensions/offer-receipt",
@@ -77,7 +87,8 @@
       {
         "group": "Advanced Concepts",
         "pages": [
-          "advanced-concepts/lifecycle-hooks"
+          "advanced-concepts/lifecycle-hooks",
+          "advanced-concepts/wallet-compatibility"
         ]
       },
       {
@@ -85,6 +96,15 @@
         "pages": [
           "guides/mcp-server-with-x402",
           "guides/migration-v1-to-v2"
+        ]
+      },
+      {
+        "group": "Developer Tools",
+        "pages": [
+          "dev-tools/overview",
+          "dev-tools/third-party-sdks",
+          "dev-tools/third-party-extensions",
+          "dev-tools/facilitators"
         ]
       },
       {

@@ -4,7 +4,7 @@ import { FacilitatorExtension } from "../types/extensions";
 import { SchemeNetworkFacilitator, FacilitatorContext } from "../types/mechanisms";
 import { PaymentPayload, PaymentRequirements } from "../types/payments";
 import { Network } from "../types";
-import { type SchemeData } from "../utils";
+import { networkMatchesPattern, type SchemeData } from "../utils";
 
 /**
  * Facilitator Hook Context Interfaces
@@ -318,8 +318,7 @@ export class x402Facilitator {
             break;
           }
           // Try pattern matching
-          const patternRegex = new RegExp("^" + schemeData.pattern.replace("*", ".*") + "$");
-          if (patternRegex.test(paymentRequirements.network)) {
+          if (networkMatchesPattern(schemeData.pattern, paymentRequirements.network)) {
             schemeNetworkFacilitator = schemeData.facilitator;
             break;
           }
@@ -436,8 +435,7 @@ export class x402Facilitator {
             break;
           }
           // Try pattern matching
-          const patternRegex = new RegExp("^" + schemeData.pattern.replace("*", ".*") + "$");
-          if (patternRegex.test(paymentRequirements.network)) {
+          if (networkMatchesPattern(schemeData.pattern, paymentRequirements.network)) {
             schemeNetworkFacilitator = schemeData.facilitator;
             break;
           }

@@ -46,6 +46,12 @@ routes = {
         accepts=payment_options,
         mime_type="application/json",
         description="Weather data for a city",
+        # Service metadata rides on the top-level `resource` block so catalogs
+        # can render a named, tagged listing instead of the raw domain.
+        # Indexers soft-drop violations: service_name <= 32 printable-ASCII
+        # chars, <= 5 tags of <= 32 chars each, absolute http(s) icon URL.
+        service_name="Weather API",
+        tags=["weather", "api"],
         extensions=declare_discovery_extension(
             path_params_schema={
                 "properties": {"city": {"type": "string", "description": "City name slug"}},
@@ -63,6 +69,10 @@ routes = {
         accepts=payment_options,
         mime_type="application/json",
         description="Weather data for a city in a specific country",
+        # Keep service metadata identical across routes — catalogs group
+        # routes into one service page by name.
+        service_name="Weather API",
+        tags=["weather", "api"],
         extensions=declare_discovery_extension(
             path_params_schema={
                 "properties": {

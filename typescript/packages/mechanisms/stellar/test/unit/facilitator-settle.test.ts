@@ -6,6 +6,8 @@ import {
   SorobanDataBuilder,
   TransactionBuilder,
   FeeBumpTransaction,
+  Transaction,
+  BASE_FEE,
 } from "@stellar/stellar-sdk";
 import { Api } from "@stellar/stellar-sdk/rpc";
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
@@ -15,6 +17,25 @@ import { createEd25519Signer } from "../../src/signer";
 import * as stellarUtils from "../../src/utils";
 import type { FacilitatorStellarSigner } from "../../src/signer";
 import type { PaymentPayload, PaymentRequirements } from "@x402/core/types";
+
+function mockVerifySuccess(minResourceFee = "100") {
+  return {
+    response: {
+      isValid: true as const,
+      payer: "GBBO4ZDDZTSM2IUKQYBAST3CFHNPFXECGEFTGWTA2WELR2BIWDK57UVE",
+    },
+    simResponse: {
+      id: "test",
+      latestLedger: 123,
+      events: [],
+      _parsed: true,
+      transactionData: new SorobanDataBuilder().setResourceFee(minResourceFee),
+      minResourceFee,
+      cost: { cpuInsns: "0", memBytes: "0" },
+      results: [],
+    } as Api.SimulateTransactionSuccessResponse,
+  };
+}
 
 vi.mock("../../src/utils", async () => {
   const actual = await vi.importActual<typeof stellarUtils>("../../src/utils");
@@ -123,13 +144,11 @@ describe("ExactStellarScheme - Settle (randomly using 1-2 facilitator signers)",
     vi.mocked(stellarUtils.getNetworkPassphrase).mockReturnValue(StellarNetworks.TESTNET);
     vi.mocked(stellarUtils.getRpcUrl).mockReturnValue("https://soroban-testnet.stellar.org");
 
-    // Mock verify to pass for settle tests (verify is tested separately)
-    // The expiration check may reject the test transaction, so we mock verify for settle tests
-    // Note: This is reset in tests that need to test actual verify behavior
-    vi.spyOn(facilitator, "verify").mockImplementation(async () => ({
-      isValid: true,
-      payer: CLIENT_PUBLIC,
-    }));
+    // Mock _verify to pass for settle tests (verify is tested separately)
+    vi.spyOn(
+      facilitator as unknown as { _verify: typeof facilitator.verify },
+      "_verify",
+    ).mockImplementation(async () => mockVerifySuccess());
 
     // Mock signTransaction for all signers to return the mock signed XDR
     vi.spyOn(facilitatorSigner1, "signTransaction").mockResolvedValue({
@@ -144,7 +163,10 @@ describe("ExactStellarScheme - Settle (randomly using 1-2 facilitator signers)",
 
   describe("settlement failures", () => {
     it("should return error when verify fails", async () => {
-      vi.spyOn(facilitator, "verify").mockRestore();
+      vi.spyOn(
+        facilitator as unknown as { _verify: typeof facilitator.verify },
+        "_verify",
+      ).mockRestore();
       // Use requirements with wrong amount to make verify fail
       const invalidRequirements = {
         ...validRequirements,
@@ -311,6 +333,20 @@ describe("ExactStellarScheme - Settle (randomly using 1-2 facilitator signers)",
       expect(result.success).toBe(true);
       expect(mockServer.getTransaction).toHaveBeenCalledTimes(2);
     });
+
+    it("should set rebuilt transaction fee from simulation-derived resource fee plus inclusion buffer", async () => {
+      const minResourceFee = "100";
+      vi.spyOn(
+        facilitator as unknown as { _verify: typeof facilitator.verify },
+        "_verify",
+      ).mockImplementation(async () => mockVerifySuccess(minResourceFee));
+
+      await facilitator.settle(validPayload, validRequirements);
+
+      const rebuiltTxXdr = vi.mocked(facilitatorSigner1.signTransaction).mock.calls[0][0];
+      const rebuiltTx = new Transaction(rebuiltTxXdr, StellarNetworks.TESTNET);
+      expect(rebuiltTx.fee).toBe(String(parseInt(minResourceFee, 10) + parseInt(BASE_FEE, 10)));
+    });
   });
 
   describe("multi-signer tests", () => {
@@ -321,10 +357,10 @@ describe("ExactStellarScheme - Settle (randomly using 1-2 facilitator signers)",
         selectSigner: addrs => addrs[1],
       });
 
-      vi.spyOn(customFacilitator, "verify").mockResolvedValue({
-        isValid: true,
-        payer: CLIENT_PUBLIC,
-      });
+      vi.spyOn(
+        customFacilitator as unknown as { _verify: typeof customFacilitator.verify },
+        "_verify",
+      ).mockImplementation(async () => mockVerifySuccess());
 
       const result = await customFacilitator.settle(validPayload, validRequirements);
 
@@ -337,10 +373,10 @@ describe("ExactStellarScheme - Settle (randomly using 1-2 facilitator signers)",
     it("should use round-robin by default with multiple signers", async () => {
       const roundRobinFacilitator = new ExactStellarScheme(multiSigners);
 
-      vi.spyOn(roundRobinFacilitator, "verify").mockResolvedValue({
-        isValid: true,
-        payer: CLIENT_PUBLIC,
-      });
+      vi.spyOn(
+        roundRobinFacilitator as unknown as { _verify: typeof roundRobinFacilitator.verify },
+        "_verify",
+      ).mockImplementation(async () => mockVerifySuccess());
 
       const calledAddresses: string[] = [];
 
@@ -475,7 +511,10 @@ describe("ExactStellarScheme - Settle with feeBumpSigner", () => {
       });
 
     const facilitator = new ExactStellarScheme([facilitatorSigner1], { feeBumpSigner });
-    vi.spyOn(facilitator, "verify").mockResolvedValue({ isValid: true, payer: CLIENT_PUBLIC });
+    vi.spyOn(
+      facilitator as unknown as { _verify: typeof facilitator.verify },
+      "_verify",
+    ).mockImplementation(async () => mockVerifySuccess());
 
     const result = await facilitator.settle(validPayload, validRequirements);
 
@@ -497,7 +536,10 @@ describe("ExactStellarScheme - Settle with feeBumpSigner", () => {
     });
 
     const facilitator = new ExactStellarScheme([facilitatorSigner1], { feeBumpSigner });
-    vi.spyOn(facilitator, "verify").mockResolvedValue({ isValid: true, payer: CLIENT_PUBLIC });
+    vi.spyOn(
+      facilitator as unknown as { _verify: typeof facilitator.verify },
+      "_verify",
+    ).mockImplementation(async () => mockVerifySuccess());
 
     const result = await facilitator.settle(validPayload, validRequirements);
 
@@ -512,7 +554,10 @@ describe("ExactStellarScheme - Settle with feeBumpSigner", () => {
 
   it("should not use fee bump when feeBumpSigner is not set", async () => {
     const facilitator = new ExactStellarScheme([facilitatorSigner1]);
-    vi.spyOn(facilitator, "verify").mockResolvedValue({ isValid: true, payer: CLIENT_PUBLIC });
+    vi.spyOn(
+      facilitator as unknown as { _verify: typeof facilitator.verify },
+      "_verify",
+    ).mockImplementation(async () => mockVerifySuccess());
 
     const result = await facilitator.settle(validPayload, validRequirements);
 
@@ -530,7 +575,10 @@ describe("ExactStellarScheme - Settle with feeBumpSigner", () => {
     const facilitator = new ExactStellarScheme([facilitatorSigner1, facilitatorSigner2], {
       feeBumpSigner,
     });
-    vi.spyOn(facilitator, "verify").mockResolvedValue({ isValid: true, payer: CLIENT_PUBLIC });
+    vi.spyOn(
+      facilitator as unknown as { _verify: typeof facilitator.verify },
+      "_verify",
+    ).mockImplementation(async () => mockVerifySuccess());
 
     // First settle — should use signer1 for inner tx
     await facilitator.settle(validPayload, validRequirements);

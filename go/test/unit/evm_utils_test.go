@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/x402-foundation/x402/go/mechanisms/evm"
+	"github.com/x402-foundation/x402/go/v2/mechanisms/evm"
 )
 
 // TestGetEvmChainId tests chain ID retrieval for various network formats
@@ -535,28 +535,29 @@ func TestGetAssetInfo(t *testing.T) {
 // TestCreateValidityWindow tests validity window creation
 func TestCreateValidityWindow(t *testing.T) {
 	t.Run("Creates valid window", func(t *testing.T) {
+		now := time.Now().Unix()
 		validAfter, validBefore := evm.CreateValidityWindow(time.Hour) // 1 hour
 
-		// validAfter should be ~30 seconds in the past
+		if validAfter.Int64() != 0 {
+			t.Errorf("validAfter should be 0, got %d", validAfter.Int64())
+		}
+
 		if validAfter.Int64() >= validBefore.Int64() {
 			t.Error("validAfter should be before validBefore")
 		}
 
-		// Window should be approximately 1 hour + 600 seconds buffer
-		window := validBefore.Int64() - validAfter.Int64()
-		if window < 4100 || window > 4300 { // Allow some tolerance
-			t.Errorf("Expected window ~4200 seconds, got %d", window)
+		// validBefore should be approximately now + 1 hour
+		diff := validBefore.Int64() - now
+		if diff < 3595 || diff > 3605 { // Allow some tolerance
+			t.Errorf("Expected validBefore ~3600 seconds in the future, diff was %d", diff)
 		}
 	})
 
-	t.Run("validAfter is in the past", func(t *testing.T) {
-		now := time.Now().Unix()
+	t.Run("validAfter is zero", func(t *testing.T) {
 		validAfter, _ := evm.CreateValidityWindow(time.Minute)
 
-		// validAfter should be approximately now - 600
-		diff := now - validAfter.Int64()
-		if diff < 595 || diff > 605 { // Allow tolerance for test execution time
-			t.Errorf("validAfter should be ~600 seconds in the past, diff was %d", diff)
+		if validAfter.Int64() != 0 {
+			t.Errorf("validAfter should be 0, got %d", validAfter.Int64())
 		}
 	})
 

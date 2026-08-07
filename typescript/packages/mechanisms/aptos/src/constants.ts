@@ -28,6 +28,13 @@ export const TRANSFER_FUNCTION = "0x1::primary_fungible_store::transfer";
 export const MAX_GAS_AMOUNT = 500000n;
 
 /**
+ * Maximum gas unit price (in Octas) allowed for sponsored transactions to prevent gas draining attacks.
+ * Aptos mainnet typically prices gas at ~100 Octas; this allows 10x headroom for network congestion.
+ * Gas cost = gas_used × gas_unit_price, so bounding both prevents fee-payer wallet draining.
+ */
+export const MAX_GAS_UNIT_PRICE = 1000n;
+
+/**
  * Maps CAIP-2 network identifiers to Aptos chain IDs.
  *
  * @param network - The CAIP-2 network identifier (e.g., "aptos:1")

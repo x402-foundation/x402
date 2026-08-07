@@ -6,7 +6,7 @@ requires-python = ">=3.10"
 dependencies = [
     "uvicorn>=0.24.0",
     "python-dotenv>=1.0.0",
-    "x402[evm,svm,fastapi,extensions]"
+    "x402[evm,svm,tvm,fastapi,extensions]"
 ]
 
 [build-system]
@@ -20,6 +20,8 @@ packages = ["."]
 allow-direct-references = true
 
 [tool.uv]
+required-version = ">=0.11.0"
+exclude-newer = "3 days"
 package = false
 
 [tool.uv.sources]

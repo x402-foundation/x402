@@ -18,6 +18,7 @@ import jakarta.servlet.ServletResponse;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import java.io.IOException;
+import java.net.URI;
 import java.nio.charset.StandardCharsets;
 import java.util.Base64;
 import java.math.BigInteger;
@@ -84,10 +85,10 @@ public class PaymentFilter implements Filter {
 
         HttpServletRequest  request  = (HttpServletRequest)  req;
         HttpServletResponse response = (HttpServletResponse) res;
-        String              path     = request.getRequestURI();
+        String              path     = normalizePath(request.getRequestURI());
 
         /* -------- path is free? skip check ----------------------------- */
-        if (!priceTable.containsKey(path)) {
+        if (path == null || !priceTable.containsKey(path)) {
             chain.doFilter(req, res);
             return;
         }
@@ -208,6 +209,38 @@ public class PaymentFilter implements Filter {
         pr.payTo             = payTo;
         pr.maxTimeoutSeconds = 30;
         return pr;
+    }
+
+    /**
+     * Normalizes a raw HTTP request URI to the canonical path the servlet container routes to.
+     *
+     * Servlet containers (Tomcat, Jetty, Undertow) normalize paths before dispatch, but
+     * {@code getRequestURI()} returns the raw, un-normalized value. An attacker can bypass a
+     * price-table lookup by sending {@code /%70rivate}, {@code /private;x}, {@code //private},
+     * or {@code /./private} — all of which the container routes identically to {@code /private}.
+     *
+     * This method mirrors that normalization: strips matrix parameters, percent-decodes,
+     * resolves {@code .}/{@code ..} segments, and collapses consecutive slashes.
+     *
+     * Note: prepending a dummy scheme+authority ({@code http://x}) before parsing is required
+     * because {@code new URI("//private")} incorrectly treats {@code //private} as an
+     * authority component, returning an empty path. The dummy prefix forces path-only parsing.
+     *
+     * @return the normalized path, or {@code null} if the URI cannot be parsed
+     */
+    private static String normalizePath(String rawUri) {
+        if (rawUri == null) return null;
+        try {
+            // Strip matrix parameters (;param) that servlet containers remove before routing.
+            String stripped = rawUri.replaceAll(";[^/?#]*", "");
+            // Prepend dummy scheme+authority so URI treats the value as a path component.
+            // Without this, "//foo" would be parsed as authority="foo", path="".
+            String normalized = new URI("http://x" + stripped).normalize().getPath();
+            // Collapse consecutive slashes that normalize() leaves intact (e.g. //foo → /foo).
+            return normalized.replaceAll("/+", "/");
+        } catch (Exception e) {
+            return null;
+        }
     }
 
     /** Create a base64-encoded payment response header. */

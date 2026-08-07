@@ -32,4 +32,5 @@ const (
 	// Smart wallet errors
 	ErrUndeployedSmartWallet       = "invalid_exact_evm_payload_undeployed_smart_wallet"
 	ErrSmartWalletDeploymentFailed = "smart_wallet_deployment_failed"
+	ErrFactoryNotAllowed           = "eip6492_factory_not_allowed"
 )

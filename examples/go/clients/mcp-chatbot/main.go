@@ -24,11 +24,11 @@ import (
 	"github.com/joho/godotenv"
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
 	openai "github.com/sashabaranov/go-openai"
-	x402 "github.com/x402-foundation/x402/go"
-	"github.com/x402-foundation/x402/go/mcp"
-	exactevm "github.com/x402-foundation/x402/go/mechanisms/evm/exact/client"
-	uptoevm "github.com/x402-foundation/x402/go/mechanisms/evm/upto/client"
-	evmsigners "github.com/x402-foundation/x402/go/signers/evm"
+	x402 "github.com/x402-foundation/x402/go/v2"
+	"github.com/x402-foundation/x402/go/v2/mcp"
+	exactevm "github.com/x402-foundation/x402/go/v2/mechanisms/evm/exact/client"
+	uptoevm "github.com/x402-foundation/x402/go/v2/mechanisms/evm/upto/client"
+	evmsigners "github.com/x402-foundation/x402/go/v2/signers/evm"
 )
 
 // ============================================================================

@@ -12,11 +12,11 @@ import (
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/crypto"
 
-	"github.com/x402-foundation/x402/go/mechanisms/evm"
-	evmclient "github.com/x402-foundation/x402/go/mechanisms/evm/exact/client"
-	evmfacilitator "github.com/x402-foundation/x402/go/mechanisms/evm/exact/facilitator"
-	evmv1facilitator "github.com/x402-foundation/x402/go/mechanisms/evm/exact/v1/facilitator"
-	"github.com/x402-foundation/x402/go/types"
+	"github.com/x402-foundation/x402/go/v2/mechanisms/evm"
+	evmclient "github.com/x402-foundation/x402/go/v2/mechanisms/evm/exact/client"
+	evmfacilitator "github.com/x402-foundation/x402/go/v2/mechanisms/evm/exact/facilitator"
+	evmv1facilitator "github.com/x402-foundation/x402/go/v2/mechanisms/evm/exact/v1/facilitator"
+	"github.com/x402-foundation/x402/go/v2/types"
 )
 
 // =========================================================================
@@ -84,6 +84,7 @@ type mockFacilitatorSigner struct {
 	verifyTypedDataResult  bool
 	verifyTypedDataError   error
 	code                   []byte
+	codeByAddress          map[string][]byte // per-address override; falls back to code
 	getCodeError           error
 	authorizationStateUsed bool
 	lastWriteFunctionName  string
@@ -110,6 +111,9 @@ func (m *mockFacilitatorSigner) GetChainID(ctx context.Context) (*big.Int, error
 func (m *mockFacilitatorSigner) GetCode(ctx context.Context, address string) ([]byte, error) {
 	if m.getCodeError != nil {
 		return nil, m.getCodeError
+	}
+	if code, ok := m.codeByAddress[strings.ToLower(address)]; ok {
+		return code, nil
 	}
 	return m.code, nil
 }
@@ -150,6 +154,7 @@ func (m *mockFacilitatorSigner) WriteContract(
 	contractAddress string,
 	abi []byte,
 	functionName string,
+	dataSuffix []byte,
 	args ...interface{},
 ) (string, error) {
 	m.lastWriteFunctionName = functionName
@@ -859,11 +864,98 @@ func TestVerifyPermit2InvalidInputs(t *testing.T) {
 	})
 }
 
+// TestAssetContractValidation tests that verify rejects payments whose asset address is an EOA.
+func TestAssetContractValidation(t *testing.T) {
+	ctx := context.Background()
+	eoaAsset := "0x036CbD53842c5426634e7929541eC2318f3dCF7e"
+	// Payer address used in defaultEIP3009Payload.
+	payerAddr := "0x1234567890123456789012345678901234567890"
+
+	// The EIP-3009 asset check fires after all cheap payload checks and signature
+	// verification — so tests need the signature path to succeed first. We use a
+	// >65-byte (smart-wallet) signature with an EIP-1271 mock that returns the
+	// magic value, and set the payer as a deployed contract via codeByAddress.
+	// The asset address is intentionally absent, so it falls through to code=nil (EOA).
+	smartWalletSig := "0x" + strings.Repeat("cc", 66) // 66 bytes → smart-wallet branch
+
+	makeEIP3009SignerWithEOAAsset := func() *mockFacilitatorSigner {
+		return &mockFacilitatorSigner{
+			// Payer is a deployed contract; asset (USDC addr) is absent → nil → EOA.
+			codeByAddress: map[string][]byte{
+				strings.ToLower(payerAddr): {0x60},
+			},
+			readContractFn: func(_ string, _ []byte, fn string, _ ...interface{}) (interface{}, error) {
+				if fn == "isValidSignature" {
+					return []byte{0x16, 0x26, 0xba, 0x7e}, nil // EIP-1271 magic value
+				}
+				return nil, fmt.Errorf("unsupported: %s", fn)
+			},
+		}
+	}
+
+	t.Run("EIP-3009: rejects EOA asset", func(t *testing.T) {
+		signer := makeEIP3009SignerWithEOAAsset()
+		scheme := evmfacilitator.NewExactEvmScheme(signer, nil)
+
+		_, err := scheme.Verify(ctx, defaultEIP3009Payload(smartWalletSig), defaultEIP3009Requirements(), nil)
+		if err == nil {
+			t.Fatal("expected error for EOA asset")
+		}
+		if !strings.Contains(err.Error(), evm.ErrAssetNotDeployedContract) {
+			t.Errorf("expected %q error, got: %v", evm.ErrAssetNotDeployedContract, err)
+		}
+	})
+
+	t.Run("EIP-3009: GetCode RPC failure propagates as internal error", func(t *testing.T) {
+		signer := makeEIP3009SignerWithEOAAsset()
+		signer.getCodeError = fmt.Errorf("rpc: connection refused")
+		// getCodeError overrides codeByAddress in the mock, so both payer and asset
+		// GetCode calls fail. The payer call happens first (EIP-1271 path) and returns
+		// the RPC error, which propagates as an internal error — not asset_not_deployed_contract.
+		scheme := evmfacilitator.NewExactEvmScheme(signer, nil)
+
+		_, err := scheme.Verify(ctx, defaultEIP3009Payload(smartWalletSig), defaultEIP3009Requirements(), nil)
+		if err == nil {
+			t.Fatal("expected error on GetCode failure")
+		}
+		if strings.Contains(err.Error(), evm.ErrAssetNotDeployedContract) {
+			t.Error("RPC error should not produce asset_not_deployed_contract; expected internal error")
+		}
+	})
+
+	t.Run("Permit2 exact: rejects EOA asset", func(t *testing.T) {
+		permit2Payload, _ := signedPermit2TestData(t)
+		signer := &mockFacilitatorSigner{
+			verifyTypedDataResult: true,
+			// code == nil → asset appears as EOA
+		}
+		validRequirements := types.PaymentRequirements{
+			Scheme:  evm.SchemeExact,
+			Network: "eip155:84532",
+			Asset:   eoaAsset,
+			Amount:  "1000000",
+			PayTo:   "0x9876543210987654321098765432109876543210",
+		}
+
+		_, err := evmfacilitator.SettlePermit2(ctx, signer, types.PaymentPayload{
+			X402Version: 2,
+			Accepted:    types.PaymentRequirements{Scheme: evm.SchemeExact, Network: "eip155:84532"},
+		}, validRequirements, permit2Payload, nil, nil)
+		if err == nil {
+			t.Fatal("expected error for EOA asset")
+		}
+		if !strings.Contains(err.Error(), evm.ErrAssetNotDeployedContract) {
+			t.Errorf("expected %q error, got: %v", evm.ErrAssetNotDeployedContract, err)
+		}
+	})
+}
+
 // TestVerifyEIP3009TimingValidation tests validAfter/validBefore timing checks in EIP-3009 verification
 func TestVerifyEIP3009TimingValidation(t *testing.T) {
 	ctx := context.Background()
 	signer := &mockFacilitatorSigner{
 		verifyTypedDataResult: true,
+		codeByAddress:         map[string][]byte{"0x036cbd53842c5426634e7929541ec2318f3dcf7e": {0x60}},
 	}
 	scheme := evmfacilitator.NewExactEvmScheme(signer, nil)
 
@@ -941,6 +1033,7 @@ func TestVerifyEIP3009RejectsOverpayment(t *testing.T) {
 
 	signer := &mockFacilitatorSigner{
 		verifyTypedDataResult: true,
+		codeByAddress:         map[string][]byte{"0x036cbd53842c5426634e7929541ec2318f3dcf7e": {0x60}},
 		readContractFn: func(contractAddress string, abiBytes []byte, functionName string, args ...interface{}) (interface{}, error) {
 			if functionName == evm.FunctionTransferWithAuthorization {
 				return nil, nil
@@ -989,6 +1082,9 @@ func TestVerifyEIP3009SimulationParity(t *testing.T) {
 	ctx := context.Background()
 	requirements := defaultEIP3009Requirements()
 
+	// assetCode marks the token contract as deployed for all ERC-6492 simulation tests.
+	assetCode := map[string][]byte{"0x036cbd53842c5426634e7929541ec2318f3dcf7e": {0x60}}
+
 	t.Run("Rejects wrong token name from simulation diagnostics", func(t *testing.T) {
 		factory := common.HexToAddress("0x1111111111111111111111111111111111111111")
 		payload := defaultEIP3009Payload("0x")
@@ -996,6 +1092,7 @@ func TestVerifyEIP3009SimulationParity(t *testing.T) {
 
 		multicallCount := 0
 		signer := &mockFacilitatorSigner{
+			codeByAddress: assetCode,
 			readContractFn: func(contractAddress string, abiBytes []byte, functionName string, args ...interface{}) (interface{}, error) {
 				if functionName != evm.FunctionTryAggregate {
 					return nil, fmt.Errorf("unsupported function: %s", functionName)
@@ -1015,7 +1112,11 @@ func TestVerifyEIP3009SimulationParity(t *testing.T) {
 				}, nil
 			},
 		}
-		scheme := evmfacilitator.NewExactEvmScheme(signer, nil)
+		// Factory must be allowlisted so verify reaches simulation diagnostics rather than
+		// short-circuiting on the allowlist gate.
+		scheme := evmfacilitator.NewExactEvmScheme(signer, &evmfacilitator.ExactEvmSchemeConfig{
+			EIP6492AllowedFactories: []string{factory.Hex()},
+		})
 
 		_, err := scheme.Verify(ctx, payload, requirements, nil)
 		if err == nil {
@@ -1033,6 +1134,7 @@ func TestVerifyEIP3009SimulationParity(t *testing.T) {
 
 		multicallCount := 0
 		signer := &mockFacilitatorSigner{
+			codeByAddress: assetCode,
 			readContractFn: func(contractAddress string, abiBytes []byte, functionName string, args ...interface{}) (interface{}, error) {
 				if functionName != evm.FunctionTryAggregate {
 					return nil, fmt.Errorf("unsupported function: %s", functionName)
@@ -1052,7 +1154,9 @@ func TestVerifyEIP3009SimulationParity(t *testing.T) {
 				}, nil
 			},
 		}
-		scheme := evmfacilitator.NewExactEvmScheme(signer, nil)
+		scheme := evmfacilitator.NewExactEvmScheme(signer, &evmfacilitator.ExactEvmSchemeConfig{
+			EIP6492AllowedFactories: []string{factory.Hex()},
+		})
 
 		_, err := scheme.Verify(ctx, payload, requirements, nil)
 		if err == nil {
@@ -1095,6 +1199,7 @@ func TestVerifyEIP3009SimulationParity(t *testing.T) {
 
 		multicallCount := 0
 		signer := &mockFacilitatorSigner{
+			codeByAddress: assetCode,
 			readContractFn: func(contractAddress string, abiBytes []byte, functionName string, args ...interface{}) (interface{}, error) {
 				if functionName != evm.FunctionTryAggregate {
 					return nil, fmt.Errorf("unsupported function: %s", functionName)
@@ -1114,7 +1219,9 @@ func TestVerifyEIP3009SimulationParity(t *testing.T) {
 				}, nil
 			},
 		}
-		scheme := evmfacilitator.NewExactEvmScheme(signer, nil)
+		scheme := evmfacilitator.NewExactEvmScheme(signer, &evmfacilitator.ExactEvmSchemeConfig{
+			EIP6492AllowedFactories: []string{factory.Hex()},
+		})
 
 		_, err := scheme.Verify(ctx, payload, requirements, nil)
 		if err == nil {
@@ -1131,6 +1238,7 @@ func TestVerifyEIP3009SimulationParity(t *testing.T) {
 		payload.Payload["signature"] = wrapERC6492SignatureForTest(t, factory, []byte{0xbe, 0xef}, make([]byte, 65))
 
 		signer := &mockFacilitatorSigner{
+			codeByAddress: assetCode,
 			readContractFn: func(contractAddress string, abiBytes []byte, functionName string, args ...interface{}) (interface{}, error) {
 				if functionName != evm.FunctionTryAggregate {
 					return nil, fmt.Errorf("unsupported function: %s", functionName)
@@ -1141,7 +1249,9 @@ func TestVerifyEIP3009SimulationParity(t *testing.T) {
 				}, nil
 			},
 		}
-		scheme := evmfacilitator.NewExactEvmScheme(signer, nil)
+		scheme := evmfacilitator.NewExactEvmScheme(signer, &evmfacilitator.ExactEvmSchemeConfig{
+			EIP6492AllowedFactories: []string{factory.Hex()},
+		})
 
 		verifyResp, err := scheme.Verify(ctx, payload, requirements, nil)
 		if err != nil {
@@ -1225,7 +1335,9 @@ func TestVerifyEIP3009V1UsesSimulationDiagnostics(t *testing.T) {
 			}, nil
 		},
 	}
-	scheme := evmv1facilitator.NewExactEvmSchemeV1(signer, nil)
+	scheme := evmv1facilitator.NewExactEvmSchemeV1(signer, &evmv1facilitator.ExactEvmSchemeV1Config{
+		EIP6492AllowedFactories: []string{factory.Hex()},
+	})
 
 	_, err := scheme.Verify(ctx, payload, requirements, nil)
 	if err == nil {
@@ -1249,7 +1361,7 @@ func TestExactEvmFacilitatorScheme(t *testing.T) {
 
 	t.Run("Creates scheme with config", func(t *testing.T) {
 		config := &evmfacilitator.ExactEvmSchemeConfig{
-			DeployERC4337WithEIP6492: true,
+			EIP6492AllowedFactories: []string{"0x1111111111111111111111111111111111111111"},
 		}
 		scheme := evmfacilitator.NewExactEvmScheme(signer, config)
 		if scheme == nil {
@@ -1432,6 +1544,7 @@ func TestSettlePermit2_EIP2612Routing(t *testing.T) {
 
 		signer := &mockFacilitatorSigner{
 			verifyTypedDataResult: true,
+			codeByAddress:         map[string][]byte{"0x036cbd53842c5426634e7929541ec2318f3dcf7e": {0x60}},
 		}
 
 		validRequirements := types.PaymentRequirements{
@@ -1482,6 +1595,7 @@ func TestSettlePermit2_EIP2612Routing(t *testing.T) {
 
 		signer := &mockFacilitatorSigner{
 			verifyTypedDataResult: true,
+			codeByAddress:         map[string][]byte{"0x036cbd53842c5426634e7929541ec2318f3dcf7e": {0x60}},
 		}
 
 		validRequirements := types.PaymentRequirements{
@@ -1585,6 +1699,7 @@ func TestSettlePermit2_ContractRevertErrors(t *testing.T) {
 			signer := &mockFacilitatorSigner{
 				verifyTypedDataResult: true,
 				writeContractError:    fmt.Errorf("%s", tc.revertMessage),
+				code:                  []byte{0x60}, // asset is a deployed contract
 			}
 
 			payload := types.PaymentPayload{

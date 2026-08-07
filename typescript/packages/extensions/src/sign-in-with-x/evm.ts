@@ -130,8 +130,12 @@ export async function verifyEVMSignature(
     return verifier(args);
   }
 
-  // Fallback to standalone verifyMessage (EOA only, no RPC)
-  return verifyMessage(args);
+  // Fallback to standalone verifyMessage (EOA only, no RPC).
+  try {
+    return await verifyMessage(args);
+  } catch {
+    return false;
+  }
 }
 
 /**

@@ -1,8 +1,14 @@
 import { x402Version } from "..";
 import { SchemeNetworkClient } from "../types/mechanisms";
 import { PaymentPayload, PaymentRequirements } from "../types/payments";
-import { Network, PaymentRequired } from "../types";
-import { findByNetworkAndScheme, findSchemesByNetwork } from "../utils";
+import { Network, PaymentRequired, SettleResponse } from "../types";
+import {
+  ADDITIVE_ARRAY_INFO_FIELDS,
+  deepEqual,
+  findByNetworkAndScheme,
+  findSchemesByNetwork,
+  toComparableArray,
+} from "../utils";
 
 /**
  * Client Hook Context Interfaces
@@ -35,7 +41,64 @@ export type OnPaymentCreationFailureHook = (
   context: PaymentCreationFailureContext,
 ) => Promise<void | { recovered: true; payload: PaymentPayload }>;
 
+/**
+ * Context provided to payment response hooks after the paid request completes.
+ *
+ * Discriminate by what's present:
+ * - `settleResponse` with `success: true` → settle succeeded
+ * - `settleResponse` with `success: false` → settle failed
+ * - `paymentRequired` (no `settleResponse`) → verify failed
+ * - `error` → transport or parse error
+ */
+export interface PaymentResponseContext {
+  paymentPayload: PaymentPayload;
+  requirements: PaymentRequirements;
+  settleResponse?: SettleResponse;
+  paymentRequired?: PaymentRequired;
+  error?: Error;
+}
+
+/**
+ * Hook fired after a paid request completes.
+ * Return `{ recovered: true }` to signal the transport should retry with a fresh payload.
+ */
+export type OnPaymentResponseHook = (
+  ctx: PaymentResponseContext,
+) => Promise<void | { recovered: true }>;
+
 export type SelectPaymentRequirements = (x402Version: number, paymentRequirements: PaymentRequirements[]) => PaymentRequirements;
+
+type ClientHookAdapterHandles = {
+  beforePaymentCreation?: BeforePaymentCreationHook;
+  afterPaymentCreation?: AfterPaymentCreationHook;
+  onPaymentCreationFailure?: OnPaymentCreationFailureHook;
+  onPaymentResponse?: OnPaymentResponseHook;
+};
+
+type ClientHookPhase = keyof ClientHookAdapterHandles;
+
+export interface ClientExtensionHooks {
+  onBeforePaymentCreation?: (
+    declaration: unknown,
+    context: PaymentCreationContext,
+  ) => Promise<void | { abort: true; reason: string }>;
+  onAfterPaymentCreation?: (
+    declaration: unknown,
+    context: PaymentCreatedContext,
+  ) => Promise<void>;
+  onPaymentCreationFailure?: (
+    declaration: unknown,
+    context: PaymentCreationFailureContext,
+  ) => Promise<void | { recovered: true; payload: PaymentPayload }>;
+  onPaymentResponse?: (
+    declaration: unknown,
+    context: PaymentResponseContext,
+  ) => Promise<void | { recovered: true }>;
+}
+
+export interface ClientTransportExtensionHooks {
+  [transport: string]: unknown;
+}
 
 /**
  * Extension that can enrich payment payloads on the client side.
@@ -52,9 +115,10 @@ export interface ClientExtension {
   key: string;
 
   /**
-   * Called after payload creation when the extension key is present in
-   * paymentRequired.extensions. Allows the extension to enrich the payload
-   * with extension-specific data (e.g., signing an EIP-2612 permit).
+   * Called after payload creation for every registered extension. Allows the
+   * extension to enrich the payload with extension-specific data. Extensions
+   * that require a server declaration must no-op internally when the server
+   * did not advertise them in paymentRequired.extensions.
    *
    * @param paymentPayload - The payment payload to enrich
    * @param paymentRequired - The original PaymentRequired response
@@ -64,6 +128,9 @@ export interface ClientExtension {
     paymentPayload: PaymentPayload,
     paymentRequired: PaymentRequired,
   ) => Promise<PaymentPayload>;
+
+  hooks?: ClientExtensionHooks;
+  transportHooks?: ClientTransportExtensionHooks;
 }
 
 /**
@@ -129,12 +196,14 @@ export interface x402ClientConfig {
 export class x402Client {
   private readonly paymentRequirementsSelector: SelectPaymentRequirements;
   private readonly registeredClientSchemes: Map<number, Map<string, Map<string, SchemeNetworkClient>>> = new Map();
+  private readonly schemeClientHookAdapters: Map<number, Map<string, Map<string, ClientHookAdapterHandles>>> = new Map();
   private readonly policies: PaymentPolicy[] = [];
   private readonly registeredExtensions: Map<string, ClientExtension> = new Map();
 
   private beforePaymentCreationHooks: BeforePaymentCreationHook[] = [];
   private afterPaymentCreationHooks: AfterPaymentCreationHook[] = [];
   private onPaymentCreationFailureHooks: OnPaymentCreationFailureHook[] = [];
+  private paymentResponseHooks: OnPaymentResponseHook[] = [];
 
   /**
    * Creates a new x402Client instance.
@@ -219,9 +288,9 @@ export class x402Client {
    * Registers a client extension that can enrich payment payloads.
    *
    * Extensions are invoked after the scheme creates the base payload and the
-   * payload is wrapped with extensions/resource/accepted data. If the extension's
-   * key is present in `paymentRequired.extensions`, the extension's
-   * `enrichPaymentPayload` hook is called to modify the payload.
+   * payload is wrapped with extensions/resource/accepted data. Every registered
+   * extension's `enrichPaymentPayload` hook is called to modify the payload.
+   * Server-declared fields are preserved via merge after enrichment.
    *
    * @param extension - The client extension to register
    * @returns The x402Client instance for chaining
@@ -229,6 +298,15 @@ export class x402Client {
   registerExtension(extension: ClientExtension): x402Client {
     this.registeredExtensions.set(extension.key, extension);
     return this;
+  }
+
+  /**
+   * Get all registered client extensions.
+   *
+   * @returns Array of registered extensions
+   */
+  getExtensions(): ClientExtension[] {
+    return Array.from(this.registeredExtensions.values());
   }
 
   /**
@@ -267,6 +345,42 @@ export class x402Client {
   }
 
   /**
+   * Register a hook to execute after a paid request completes.
+   * Can signal recovery by returning { recovered: true }, causing the transport to retry.
+   *
+   * @param hook - The hook function to register
+   * @returns The x402Client instance for chaining
+   */
+  onPaymentResponse(hook: OnPaymentResponseHook): x402Client {
+    this.paymentResponseHooks.push(hook);
+    return this;
+  }
+
+  /**
+   * Fires all registered payment response hooks in order.
+   * Returns `{ recovered: true }` if any hook signals recovery (first wins).
+   *
+   * @param ctx - The payment response context
+   * @returns Recovery signal or undefined
+   */
+  async handlePaymentResponse(
+    ctx: PaymentResponseContext,
+  ): Promise<{ recovered: true } | undefined> {
+    for (const hook of this.getLabeledHooks(
+      "onPaymentResponse",
+      ctx.paymentPayload.x402Version,
+      ctx.requirements,
+      ctx.paymentRequired?.extensions ?? ctx.paymentPayload.extensions,
+    )) {
+      const result = await hook(ctx);
+      if (result && "recovered" in result && result.recovered) {
+        return { recovered: true };
+      }
+    }
+    return undefined;
+  }
+
+  /**
    * Creates a payment payload based on a PaymentRequired response.
    *
    * Automatically extracts x402Version, resource, and extensions from the PaymentRequired
@@ -290,8 +404,12 @@ export class x402Client {
       selectedRequirements: requirements,
     };
 
-    // Execute beforePaymentCreation hooks
-    for (const hook of this.beforePaymentCreationHooks) {
+    for (const hook of this.getLabeledHooks(
+      "beforePaymentCreation",
+      paymentRequired.x402Version,
+      requirements,
+      paymentRequired.extensions,
+    )) {
       const result = await hook(context);
       if (result && "abort" in result && result.abort) {
         throw new Error(`Payment creation aborted: ${result.reason}`);
@@ -333,13 +451,17 @@ export class x402Client {
       // Enrich payload via registered client extensions (for non-scheme extensions)
       paymentPayload = await this.enrichPaymentPayloadWithExtensions(paymentPayload, paymentRequired);
 
-      // Execute afterPaymentCreation hooks
       const createdContext: PaymentCreatedContext = {
         ...context,
         paymentPayload,
       };
 
-      for (const hook of this.afterPaymentCreationHooks) {
+      for (const hook of this.getLabeledHooks(
+        "afterPaymentCreation",
+        paymentRequired.x402Version,
+        requirements,
+        paymentRequired.extensions,
+      )) {
         await hook(createdContext);
       }
 
@@ -350,8 +472,12 @@ export class x402Client {
         error: error as Error,
       };
 
-      // Execute onPaymentCreationFailure hooks
-      for (const hook of this.onPaymentCreationFailureHooks) {
+      for (const hook of this.getLabeledHooks(
+        "onPaymentCreationFailure",
+        paymentRequired.x402Version,
+        requirements,
+        paymentRequired.extensions,
+      )) {
         const result = await hook(failureContext);
         if (result && "recovered" in result && result.recovered) {
           return result.payload;
@@ -365,43 +491,96 @@ export class x402Client {
 
 
   /**
-   * Merges server-declared extensions with scheme-provided extensions.
-   * Scheme extensions overlay on top of server extensions at each key,
-   * preserving server-provided schema while overlaying scheme-provided info.
+   * Merges server-declared extensions with client extension echoes.
+   * Client extension data may add fields, but server-declared fields remain intact.
+   * For fields listed in `ADDITIVE_ARRAY_INFO_FIELDS` (e.g. builder-code `s`), a
+   * conflicting array is concatenated with client entries first (so a downstream
+   * length cap trims server entries rather than the client's) and duplicates
+   * removed; a scalar on either side is treated as a single-element array. Every
+   * other conflicting array keeps the server's value, same as any other scalar.
    *
    * @param serverExtensions - Extensions declared by the server in the 402 response
-   * @param schemeExtensions - Extensions provided by the scheme client (e.g. EIP-2612)
+   * @param clientExtensions - Extensions provided by the client or scheme
    * @returns The merged extensions object, or undefined if both inputs are undefined
    */
   private mergeExtensions(
     serverExtensions?: Record<string, unknown>,
-    schemeExtensions?: Record<string, unknown>,
+    clientExtensions?: Record<string, unknown>,
   ): Record<string, unknown> | undefined {
-    if (!schemeExtensions) return serverExtensions;
-    if (!serverExtensions) return schemeExtensions;
+    if (!clientExtensions) return serverExtensions;
+    if (!serverExtensions) return clientExtensions;
 
     const merged = { ...serverExtensions };
-    for (const [key, schemeValue] of Object.entries(schemeExtensions)) {
+    for (const [key, clientValue] of Object.entries(clientExtensions)) {
       const serverValue = merged[key];
       if (
-        serverValue &&
-        typeof serverValue === "object" &&
-        schemeValue &&
-        typeof schemeValue === "object"
+        serverValue === null ||
+        typeof serverValue !== "object" ||
+        Array.isArray(serverValue) ||
+        clientValue === null ||
+        typeof clientValue !== "object" ||
+        Array.isArray(clientValue)
       ) {
-        // Deep merge: scheme info overlays server info, schema preserved
-        merged[key] = { ...serverValue as Record<string, unknown>, ...schemeValue as Record<string, unknown> };
-      } else {
-        merged[key] = schemeValue;
+        merged[key] = clientValue;
+        continue;
       }
+
+      const serverRecord = serverValue as Record<string, unknown>;
+      const clientRecord = clientValue as Record<string, unknown>;
+      const additiveFields = ADDITIVE_ARRAY_INFO_FIELDS[key];
+      const extensionValue = { ...serverRecord };
+      const pending = [{ target: extensionValue, source: clientRecord }];
+      for (const item of pending) {
+        for (const [fieldKey, clientFieldValue] of Object.entries(item.source)) {
+          const serverFieldValue = item.target[fieldKey];
+          if (
+            serverFieldValue !== null &&
+            typeof serverFieldValue === "object" &&
+            !Array.isArray(serverFieldValue) &&
+            clientFieldValue !== null &&
+            typeof clientFieldValue === "object" &&
+            !Array.isArray(clientFieldValue)
+          ) {
+            const nestedValue = { ...(serverFieldValue as Record<string, unknown>) };
+            item.target[fieldKey] = nestedValue;
+            pending.push({
+              target: nestedValue,
+              source: clientFieldValue as Record<string, unknown>,
+            });
+            continue;
+          }
+
+          // A scalar on one side (e.g. builder-code `s` sent as a bare string)
+          // merges as a single-element array against an array on the other side.
+          // Only additive fields concatenate; other conflicting arrays keep the
+          // server's value below, same as any other scalar leaf field.
+          if (
+            additiveFields?.has(fieldKey) &&
+            (Array.isArray(serverFieldValue) || Array.isArray(clientFieldValue))
+          ) {
+            const serverArray = toComparableArray(serverFieldValue);
+            const clientArray = toComparableArray(clientFieldValue);
+            if (serverArray && clientArray) {
+              item.target[fieldKey] = mergeArraysUnique(clientArray, serverArray);
+              continue;
+            }
+          }
+
+          if (!Object.prototype.hasOwnProperty.call(item.target, fieldKey)) {
+            item.target[fieldKey] = clientFieldValue;
+          }
+        }
+      }
+
+      merged[key] = extensionValue;
     }
     return merged;
   }
 
   /**
    * Enriches a payment payload by calling registered extension hooks.
-   * For each extension key present in the PaymentRequired response,
-   * invokes the corresponding extension's enrichPaymentPayload callback.
+   * Invokes enrichPaymentPayload for every registered extension, then merges
+   * server-declared extension fields back into the result.
    *
    * @param paymentPayload - The payment payload to enrich with extension data
    * @param paymentRequired - The PaymentRequired response containing extension declarations
@@ -411,18 +590,21 @@ export class x402Client {
     paymentPayload: PaymentPayload,
     paymentRequired: PaymentRequired,
   ): Promise<PaymentPayload> {
-    if (!paymentRequired.extensions || this.registeredExtensions.size === 0) {
+    if (this.registeredExtensions.size === 0) {
       return paymentPayload;
     }
 
     let enriched = paymentPayload;
-    for (const [key, extension] of this.registeredExtensions) {
-      if (key in paymentRequired.extensions && extension.enrichPaymentPayload) {
+    for (const [, extension] of this.registeredExtensions) {
+      if (extension.enrichPaymentPayload) {
         enriched = await extension.enrichPaymentPayload(enriched, paymentRequired);
       }
     }
 
-    return enriched;
+    return {
+      ...enriched,
+      extensions: this.mergeExtensions(paymentRequired.extensions, enriched.extensions),
+    };
   }
 
   /**
@@ -495,10 +677,154 @@ export class x402Client {
     }
 
     const clientByScheme = clientSchemesByNetwork.get(network)!;
-    if (!clientByScheme.has(client.scheme)) {
-      clientByScheme.set(client.scheme, client);
+    clientByScheme.set(client.scheme, client);
+
+    if (!this.schemeClientHookAdapters.has(x402Version)) {
+      this.schemeClientHookAdapters.set(x402Version, new Map());
+    }
+    const adaptersByNetwork = this.schemeClientHookAdapters.get(x402Version)!;
+    if (!adaptersByNetwork.has(network)) {
+      adaptersByNetwork.set(network, new Map());
+    }
+
+    const adaptersByScheme = adaptersByNetwork.get(network)!;
+    const hooks = client.schemeHooks;
+    if (!hooks) {
+      adaptersByScheme.delete(client.scheme);
+      return this;
+    }
+
+    const handles: ClientHookAdapterHandles = {};
+    if (hooks.onBeforePaymentCreation) {
+      handles.beforePaymentCreation = hooks.onBeforePaymentCreation;
+    }
+    if (hooks.onAfterPaymentCreation) {
+      handles.afterPaymentCreation = hooks.onAfterPaymentCreation;
+    }
+    if (hooks.onPaymentCreationFailure) {
+      handles.onPaymentCreationFailure = hooks.onPaymentCreationFailure;
+    }
+    if (hooks.onPaymentResponse) {
+      handles.onPaymentResponse = hooks.onPaymentResponse;
+    }
+
+    if (Object.keys(handles).length > 0) {
+      adaptersByScheme.set(client.scheme, handles);
+    } else {
+      adaptersByScheme.delete(client.scheme);
     }
 
     return this;
   }
+
+  /**
+   * Returns manual hooks followed by the selected scheme hook and declared extension hooks.
+   *
+   * @param phase - Hook slot to collect
+   * @param x402Version - Protocol version for the selected requirement
+   * @param requirements - Selected payment requirement
+   * @param declaredExtensions - Extension declarations that scope extension hooks
+   * @returns Hooks in invocation order
+   */
+  private getLabeledHooks<P extends ClientHookPhase>(
+    phase: P,
+    x402Version: number,
+    requirements: PaymentRequirements,
+    declaredExtensions?: Record<string, unknown>,
+  ): Array<NonNullable<ClientHookAdapterHandles[P]>> {
+    let manual: Array<NonNullable<ClientHookAdapterHandles[P]>>;
+    switch (phase) {
+      case "beforePaymentCreation":
+        manual = this.beforePaymentCreationHooks as Array<
+          NonNullable<ClientHookAdapterHandles[P]>
+        >;
+        break;
+      case "afterPaymentCreation":
+        manual = this.afterPaymentCreationHooks as Array<
+          NonNullable<ClientHookAdapterHandles[P]>
+        >;
+        break;
+      case "onPaymentCreationFailure":
+        manual = this.onPaymentCreationFailureHooks as Array<
+          NonNullable<ClientHookAdapterHandles[P]>
+        >;
+        break;
+      case "onPaymentResponse":
+        manual = this.paymentResponseHooks as Array<NonNullable<ClientHookAdapterHandles[P]>>;
+        break;
+    }
+
+    const out: Array<NonNullable<ClientHookAdapterHandles[P]>> = [...manual];
+    const adaptersByNetwork = this.schemeClientHookAdapters.get(x402Version);
+    const schemeAdapter = adaptersByNetwork
+      ? findByNetworkAndScheme(adaptersByNetwork, requirements.scheme, requirements.network)
+      : undefined;
+    const hook = schemeAdapter?.[phase];
+    if (hook !== undefined) {
+      out.push(hook);
+    }
+    if (!declaredExtensions) {
+      return out;
+    }
+
+    const extensionHookKey = this.getClientExtensionHookKey(phase);
+    for (const [extensionKey, extension] of this.registeredExtensions) {
+      if (!(extensionKey in declaredExtensions)) continue;
+
+      const extensionHook = extension.hooks?.[extensionHookKey];
+      if (!extensionHook) continue;
+
+      type HookFn = NonNullable<ClientHookAdapterHandles[P]>;
+      type HookContext = Parameters<HookFn>[0];
+      out.push((async (ctx: HookContext) => {
+        return (
+          extensionHook as (
+            declaration: unknown,
+            context: HookContext,
+          ) => ReturnType<HookFn>
+        )(declaredExtensions[extensionKey], ctx);
+      }) as HookFn);
+    }
+    return out;
+  }
+
+  /**
+   * Maps internal hook phases to extension hook names.
+   *
+   * @param phase - Internal hook phase
+   * @returns Extension hook key for the phase
+   */
+  private getClientExtensionHookKey<P extends ClientHookPhase>(
+    phase: P,
+  ): keyof ClientExtensionHooks {
+    switch (phase) {
+      case "beforePaymentCreation":
+        return "onBeforePaymentCreation";
+      case "afterPaymentCreation":
+        return "onAfterPaymentCreation";
+      case "onPaymentCreationFailure":
+        return "onPaymentCreationFailure";
+      case "onPaymentResponse":
+        return "onPaymentResponse";
+    }
+  }
+}
+
+/**
+ * Concatenates two arrays, keeping client entries first (so a downstream length
+ * cap trims server entries rather than the client's) and dropping duplicates
+ * (deep equality) wherever they occur, including within either input array.
+ *
+ * @param client - Client-provided array values
+ * @param server - Server-declared array values
+ * @returns Deduplicated concatenation
+ */
+function mergeArraysUnique(client: unknown[], server: unknown[]): unknown[] {
+  const merged: unknown[] = [];
+  for (const item of [...client, ...server]) {
+    if (!merged.some(existing => deepEqual(existing, item))) {
+      merged.push(item);
+    }
+  }
+  return merged;
 }

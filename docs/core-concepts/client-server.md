@@ -50,7 +50,7 @@ Servers do not need to manage client identities or maintain session state. Verif
 
 #### Duplicate Settlement on Solana
 
-If your server settles payments directly on Solana (without delegating to a facilitator), be aware of a race condition: the same signed payment transaction can be submitted multiple times before the first submission is confirmed on-chain. Solana's RPC will return "success" for each submission, since the network deduplicates at the consensus level. A malicious client can exploit this to obtain access to multiple resources while only paying once.
+If your server settles payments directly on Solana (without delegating to a facilitator), be aware of a race condition: the same signed payment transaction can be submitted multiple times before the first submission is confirmed onchain. Solana's RPC will return "success" for each submission, since the network deduplicates at the consensus level. A malicious client can exploit this to obtain access to multiple resources while only paying once.
 
 To mitigate this, servers that settle Solana payments themselves **must** maintain a short-lived, in-memory cache of transaction payloads currently being settled:
 
@@ -83,5 +83,5 @@ This interaction is stateless, HTTP-native, and compatible with both human appli
 
 Next, explore:
 
-* [Facilitator](/docs/core-concepts/facilitator.md) — how servers verify and settle payments
-* [HTTP 402](/docs/core-concepts/http-402.md) — how servers communicate payment requirements to clients
+* [Facilitator](/core-concepts/facilitator) — how servers verify and settle payments
+* [HTTP 402](/core-concepts/http-402) — how servers communicate payment requirements to clients

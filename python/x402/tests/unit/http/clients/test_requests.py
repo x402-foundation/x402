@@ -13,9 +13,11 @@ from x402.http.clients.requests import (
     x402_requests,
     x402HTTPAdapter,
 )
-from x402.http.utils import encode_payment_required_header
+from x402.http.utils import encode_payment_required_header, encode_payment_response_header
 from x402.http.x402_http_client import x402HTTPClientSync
-from x402.schemas import PaymentPayload, PaymentRequired, PaymentRequirements
+from x402.http.x402_http_client_base import ProcessPaymentResult
+from x402.schemas import PaymentPayload, PaymentRequired, PaymentRequirements, SettleResponse
+from x402.schemas.hooks import PaymentRequiredHeadersResult, RecoveredResponseResult
 
 # Skip tests if requests not installed
 pytest.importorskip("requests")
@@ -62,6 +64,14 @@ class MockX402ClientSync:
     def create_payment_payload(self, payment_required):
         self.create_calls.append(payment_required)
         return self.payload
+
+    def handle_payment_response(self, ctx):
+        return None
+
+
+class MockRecoveringClientSync(MockX402ClientSync):
+    def handle_payment_response(self, ctx):
+        return RecoveredResponseResult()
 
 
 class MockX402ClientAsync:
@@ -277,6 +287,105 @@ class TestX402HTTPAdapter:
             with pytest.raises(PaymentError):
                 adapter.send(mock_request)
 
+    def test_hook_header_retry_bypasses_payment(self):
+        """Hook-provided headers that succeed skip payment creation."""
+        mock_client = MockX402ClientSync()
+        http_client = x402HTTPClientSync(mock_client)
+        http_client.on_payment_required(
+            lambda ctx: PaymentRequiredHeadersResult(headers={"Authorization": "Bearer x"})
+        )
+        adapter = x402HTTPAdapter(http_client)
+
+        payment_required = PaymentRequired(
+            x402_version=2,
+            accepts=[make_payment_requirements()],
+        )
+        encoded = encode_payment_required_header(payment_required)
+
+        mock_request = MagicMock(spec=requests.PreparedRequest)
+        mock_request.headers = {}
+
+        mock_402 = MagicMock(spec=requests.Response)
+        mock_402.status_code = 402
+        mock_402.headers = {"PAYMENT-REQUIRED": encoded}
+        mock_402.content = b"{}"
+
+        mock_200 = MagicMock(spec=requests.Response)
+        mock_200.status_code = 200
+        mock_200.headers = {}
+        mock_200.content = b"{}"
+
+        call_count = [0]
+
+        def mock_send(req, **kwargs):
+            call_count[0] += 1
+            if call_count[0] == 1:
+                return mock_402
+            return mock_200
+
+        with patch.object(requests.adapters.HTTPAdapter, "send", side_effect=mock_send):
+            response = adapter.send(mock_request)
+
+        assert response == mock_200
+        assert len(mock_client.create_calls) == 0
+        assert call_count[0] == 2
+
+    def test_recovery_calls_create_payment_payload_twice(self):
+        """Recovery retry creates a fresh payload after hook signals recovered."""
+        mock_client = MockRecoveringClientSync()
+        adapter = x402HTTPAdapter(mock_client)
+
+        payment_required = PaymentRequired(
+            x402_version=2,
+            accepts=[make_payment_requirements()],
+        )
+        encoded_required = encode_payment_required_header(payment_required)
+        settle = SettleResponse(
+            success=False,
+            error_reason="failed",
+            transaction="0x0",
+            network="eip155:8453",
+        )
+        encoded_response = encode_payment_response_header(settle)
+
+        mock_request = MagicMock(spec=requests.PreparedRequest)
+        mock_request.headers = {}
+        mock_retry_request = MagicMock(spec=requests.PreparedRequest)
+        mock_retry_request.headers = {}
+        mock_request.copy.return_value = mock_retry_request
+
+        mock_initial_402 = MagicMock(spec=requests.Response)
+        mock_initial_402.status_code = 402
+        mock_initial_402.headers = {"PAYMENT-REQUIRED": encoded_required}
+        mock_initial_402.content = b"{}"
+
+        mock_paid_402 = MagicMock(spec=requests.Response)
+        mock_paid_402.status_code = 402
+        mock_paid_402.headers = {"PAYMENT-RESPONSE": encoded_response}
+        mock_paid_402.content = b"{}"
+
+        mock_success = MagicMock(spec=requests.Response)
+        mock_success.status_code = 200
+        mock_success.headers = {}
+        mock_success.content = b"{}"
+
+        call_count = [0]
+
+        def mock_send(req, **kwargs):
+            call_count[0] += 1
+            if call_count[0] == 1:
+                return mock_initial_402
+            if call_count[0] == 2:
+                return mock_paid_402
+            return mock_success
+
+        with patch.object(requests.adapters.HTTPAdapter, "send", side_effect=mock_send):
+            response = adapter.send(mock_request)
+
+        assert response == mock_success
+        assert len(mock_client.create_calls) == 2
+        assert call_count[0] == 3
+
 
 # =============================================================================
 # Factory Function Tests
@@ -372,6 +481,12 @@ class MockX402HTTPClient:
     def encode_payment_signature_header(self, _payload):
         return {"X-Payment": "mock_payment_header"}
 
+    def handle_payment_required(self, _payment_required):
+        return None
+
+    def process_payment_result(self, _payment_payload, _get_header, _status):
+        return ProcessPaymentResult(recovered=False)
+
 
 @pytest.fixture(scope="function")
 def mock_client():
@@ -397,6 +512,7 @@ def adapter(mock_client, mock_http_client):
     adapter._http_client = mock_http_client
     adapter.send = x402HTTPAdapter.send.__get__(adapter, x402HTTPAdapter)
     adapter.RETRY_HEADER = x402HTTPAdapter.RETRY_HEADER
+    adapter.RECOVERY_HEADER = x402HTTPAdapter.RECOVERY_HEADER
     return adapter
 
 

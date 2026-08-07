@@ -1,12 +1,15 @@
 import { config } from "dotenv";
 import { x402Client, x402HTTPClient, wrapFetchWithPayment } from "@x402/fetch";
 import { ExactEvmScheme } from "@x402/evm/exact/client";
-import { UptoEvmScheme } from "@x402/evm/upto/client";
 import { ExactSvmScheme } from "@x402/svm/exact/client";
 import { privateKeyToAccount } from "viem/accounts";
 import { createKeyPairSignerFromBytes } from "@solana/kit";
 import { base58 } from "@scure/base";
-import { createSIWxClientHook, type SolanaSigner } from "@x402/extensions/sign-in-with-x";
+import {
+  createSIWxClientExtension,
+  type SIWxSigner,
+  type SolanaSigner,
+} from "@x402/extensions/sign-in-with-x";
 config();
 
 const evmPrivateKey = process.env.EVM_PRIVATE_KEY as `0x${string}` | undefined;
@@ -24,26 +27,20 @@ const svmSigner = svmPrivateKey
   ? await createKeyPairSignerFromBytes(base58.decode(svmPrivateKey))
   : undefined;
 
-// Configure client with available signers
 const client = new x402Client();
 if (evmSigner) {
   client.register("eip155:*", new ExactEvmScheme(evmSigner));
-  client.register("eip155:*", new UptoEvmScheme(evmSigner));
 }
 if (svmSigner) {
   client.register("solana:*", new ExactSvmScheme(svmSigner));
 }
 
-// Configure HTTP client with SIWX hooks for each signer
-// Each hook auto-detects the chain type and fails gracefully if mismatched
+const signers: SIWxSigner[] = [];
+if (evmSigner) signers.push(evmSigner);
+if (svmSigner) signers.push(svmSigner as unknown as SolanaSigner);
+client.registerExtension(createSIWxClientExtension({ signers }));
+
 const httpClient = new x402HTTPClient(client);
-if (evmSigner) {
-  httpClient.onPaymentRequired(createSIWxClientHook(evmSigner));
-}
-if (svmSigner) {
-  // Cast needed until @x402/extensions is rebuilt
-  httpClient.onPaymentRequired(createSIWxClientHook(svmSigner as SolanaSigner));
-}
 
 const fetchWithPayment = wrapFetchWithPayment(fetch, httpClient);
 

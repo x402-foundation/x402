@@ -114,10 +114,16 @@ export {
   validateDiscoveryExtension,
   isValidRouteTemplate,
   validateRouteTemplate,
+  isValidServiceName,
+  sanitizeTags,
+  isValidIconUrl,
+  sanitizeResourceServiceMetadata,
+  validateDiscoveryExtensionSpec,
   extractDiscoveryInfo,
   extractDiscoveryInfoFromExtension,
   validateAndExtract,
   type ValidationResult,
+  type SanitizedResourceServiceMetadata,
   type DiscoveredHTTPResource,
   type DiscoveredMCPResource,
   type DiscoveredResource,
@@ -126,11 +132,16 @@ export {
 // Export v1 functions (v1 data is transformed to v2 DiscoveryInfo format)
 export { extractDiscoveryInfoV1, isDiscoverableV1, extractResourceMetadataV1 } from "./v1";
 
+// Export startup validation helpers (for middleware packages)
+export { checkIfBazaarNeeded, validateBazaarRouteExtensions } from "./startupValidation";
+
 // Export client extension (for facilitator clients querying discovery)
 export {
   withBazaar,
-  BazaarClientExtension,
-  ListDiscoveryResourcesParams,
-  DiscoveryResource,
-  DiscoveryResourcesResponse,
+  type BazaarClientExtension,
+  type ListDiscoveryResourcesParams,
+  type SearchDiscoveryResourcesParams,
+  type DiscoveryResource,
+  type DiscoveryResourcesResponse,
+  type SearchDiscoveryResourcesResponse,
 } from "./facilitatorClient";

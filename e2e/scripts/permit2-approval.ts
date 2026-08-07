@@ -70,6 +70,20 @@ const erc20Abi = parseAbi([
   'function balanceOf(address account) view returns (uint256)',
 ]);
 
+async function waitForApprovalReceipt(
+  publicClient: {
+    waitForTransactionReceipt: (args: { hash: `0x${string}` }) => Promise<{ status: string }>;
+  },
+  hash: `0x${string}`,
+  actionLabel: string,
+) {
+  const receipt = await publicClient.waitForTransactionReceipt({ hash });
+  if (receipt.status !== 'success') {
+    throw new Error(`${actionLabel} transaction failed: ${hash}`);
+  }
+  console.log(`   ✅ ${actionLabel} confirmed (tx: ${hash})`);
+}
+
 async function main() {
   const action = process.argv[2];
   const tokenAddressArg = process.argv[3];
@@ -176,6 +190,7 @@ Environment variables required:
       });
 
       console.log(`   ✅ Revoke submitted (tx: ${hash})`);
+      await waitForApprovalReceipt(publicClient, hash, 'Revoke');
     }
     return;
   }
@@ -198,6 +213,7 @@ Environment variables required:
     });
 
     console.log(`   ✅ Approve submitted (tx: ${hash})`);
+    await waitForApprovalReceipt(publicClient, hash, 'Approve');
   }
 }
 

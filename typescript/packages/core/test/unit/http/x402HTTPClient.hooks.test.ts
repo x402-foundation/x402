@@ -142,5 +142,85 @@ describe("x402HTTPClient", () => {
 
       expect(result).toBeNull();
     });
+
+    it("should run declared extension hooks after manual hooks", async () => {
+      const client = new x402Client();
+      const httpClient = new x402HTTPClient(client);
+      const order: string[] = [];
+
+      httpClient.onPaymentRequired(async () => {
+        order.push("manual");
+      });
+      client.registerExtension({
+        key: "httpExtension",
+        transportHooks: {
+          http: {
+            onPaymentRequired: async declaration => {
+              order.push("extension");
+              expect(declaration).toEqual({ enabled: true });
+              return { headers: { "X-Extension": "yes" } };
+            },
+          },
+        },
+      });
+
+      const paymentRequired = buildPaymentRequired({
+        extensions: { httpExtension: { enabled: true } },
+      });
+      const result = await httpClient.handlePaymentRequired(paymentRequired);
+
+      expect(result).toEqual({ "X-Extension": "yes" });
+      expect(order).toEqual(["manual", "extension"]);
+    });
+
+    it("should skip extension hooks when the 402 response does not declare the extension", async () => {
+      const client = new x402Client();
+      const httpClient = new x402HTTPClient(client);
+      let extensionCalled = false;
+
+      client.registerExtension({
+        key: "httpExtension",
+        transportHooks: {
+          http: {
+            onPaymentRequired: async () => {
+              extensionCalled = true;
+              return { headers: { "X-Extension": "yes" } };
+            },
+          },
+        },
+      });
+
+      const result = await httpClient.handlePaymentRequired(buildPaymentRequired());
+
+      expect(result).toBeNull();
+      expect(extensionCalled).toBe(false);
+    });
+
+    it("should stop before extension hooks when a manual hook provides headers", async () => {
+      const client = new x402Client();
+      const httpClient = new x402HTTPClient(client);
+      let extensionCalled = false;
+
+      httpClient.onPaymentRequired(async () => ({ headers: { "X-Manual": "yes" } }));
+      client.registerExtension({
+        key: "httpExtension",
+        transportHooks: {
+          http: {
+            onPaymentRequired: async () => {
+              extensionCalled = true;
+              return { headers: { "X-Extension": "yes" } };
+            },
+          },
+        },
+      });
+
+      const paymentRequired = buildPaymentRequired({
+        extensions: { httpExtension: {} },
+      });
+      const result = await httpClient.handlePaymentRequired(paymentRequired);
+
+      expect(result).toEqual({ "X-Manual": "yes" });
+      expect(extensionCalled).toBe(false);
+    });
   });
 });
