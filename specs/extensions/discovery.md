@@ -180,10 +180,18 @@ Rules:
   collapses those 394 operators into ten buckets and hands the most
   operator-diverse quarter of the network one operator's crawl budget —
   inverting the diversity rule's intent. Consumers that do not carry a full
-  Public Suffix List can satisfy this with a short static list of platform
-  suffixes treated as public: the ten named here cover every platform host
-  in the census today, at the cost of occasional updates as new platforms
-  appear in the wild.
+  Public Suffix List can satisfy this with a short static list of operator
+  boundaries treated as public — with one care: each entry is the DEPTH at
+  which a new operator begins, and that depth differs per platform. A
+  Cloudflare account sits directly under `workers.dev` (the worker name
+  above the account is not a new operator), while Railway tenants sit under
+  `up.railway.app` — an entry of `railway.app` would merge all 66 censused
+  tenants into a single bucket, the same failure this rule exists to
+  prevent, one level down. The test for a candidate entry: if the label
+  directly above it changes hands between unrelated parties, the boundary
+  is below it, not at it. Ten boundaries cover every platform host in the
+  census today, at the cost of occasional updates as new platforms appear
+  in the wild.
 
 Why this exists: with peer hints the network is crawlable from **any seed**.
 One known-good domain reaches its connected component with no directory, no
