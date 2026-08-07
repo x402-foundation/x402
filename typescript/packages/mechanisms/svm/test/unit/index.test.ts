@@ -154,7 +154,12 @@ describe("@x402/svm", () => {
         () =>
           new UptoSvmRentCleanupManager({
             signer: exactOnlySigner,
-            storage: { upsert: async () => {}, get: async () => undefined, list: async () => [], delete: async () => {} },
+            storage: {
+              upsert: async () => {},
+              get: async () => undefined,
+              list: async () => [],
+              delete: async () => {},
+            },
             network: SOLANA_DEVNET_CAIP2,
           }),
       ).toThrow("UptoSvmRentCleanupManager requires getSigner on the signer");

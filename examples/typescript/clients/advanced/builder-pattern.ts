@@ -49,7 +49,9 @@ export async function runBuilderPatternExample(
   console.log("  - eip155:* (all EVM) with default signer");
   console.log("  - eip155:1 (Ethereum mainnet) with mainnet signer");
   console.log("  - solana:* (all Solana) with default signer (exact + upto)");
-  console.log("  - solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1 (devnet) with devnet signer (exact + upto)");
+  console.log(
+    "  - solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1 (devnet) with devnet signer (exact + upto)",
+  );
   console.log();
 
   const fetchWithPayment = wrapFetchWithPayment(fetch, client);
