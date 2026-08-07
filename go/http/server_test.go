@@ -986,6 +986,16 @@ func TestNormalizePath(t *testing.T) {
 		{"/api#fragment", "/api"},
 		{"/api%20space", "/api space"},
 		{"", "/"},
+
+		// Encoded separators must stay inside the segment they were sent in,
+		// otherwise they split a ":param" segment that the router keeps whole.
+		{"/api/users/x%2Fy", "/api/users/x%2Fy"},
+		{"/api/users/x%2fy", "/api/users/x%2Fy"},
+		{"/api/users/x%5Cy", "/api/users/x%5Cy"},
+		// Only one round of decoding: %252F must not collapse into a separator.
+		{"/api/users/x%252Fy", "/api/users/x%2Fy"},
+		// Malformed escapes are matched raw rather than silently widened.
+		{"/api/users/x%zzy", "/api/users/x%zzy"},
 	}
 
 	for _, tt := range tests {
@@ -993,6 +1003,53 @@ func TestNormalizePath(t *testing.T) {
 			result := normalizePath(tt.input)
 			if result != tt.expected {
 				t.Errorf("Expected %s, got %s", tt.expected, result)
+			}
+		})
+	}
+}
+
+// TestRouteMatching_PathNormalizationBypass covers CWE-436 path-equivalence
+// bypasses: a request the router dispatches to a protected handler must still
+// match the route pattern that guards it. Paths here are the escaped form the
+// middleware passes in (URL.EscapedPath).
+func TestRouteMatching_PathNormalizationBypass(t *testing.T) {
+	tests := []struct {
+		name        string
+		pattern     string
+		escapedPath string
+		shouldMatch bool
+	}{
+		{"param baseline", "GET /api/users/:id", "/api/users/1", true},
+		{"param encoded slash", "GET /api/users/:id", "/api/users/x%2Fy", true},
+		{"param lowercase encoded slash", "GET /api/users/:id", "/api/users/x%2fy", true},
+		{"param double encoded slash", "GET /api/users/:id", "/api/users/x%252Fy", true},
+		{"param encoded backslash", "GET /api/users/:id", "/api/users/x%5Cy", true},
+		{"param encoded percent", "GET /api/users/:id", "/api/users/x%25y", true},
+		{"bracket param encoded slash", "GET /api/users/[id]", "/api/users/x%2Fy", true},
+		// A genuine extra segment is a different route and must not match.
+		{"param real extra segment", "GET /api/users/:id", "/api/users/x/y", false},
+
+		{"wildcard baseline", "GET /api/premium/*", "/api/premium/abc", true},
+		{"wildcard trailing slash", "GET /api/premium/*", "/api/premium/", true},
+		{"wildcard bare prefix", "GET /api/premium/*", "/api/premium", true},
+		{"wildcard deep path", "GET /api/premium/*", "/api/premium/a/b/c", true},
+		// The wildcard must not leak onto a sibling prefix.
+		{"wildcard sibling prefix", "GET /api/premium/*", "/api/premiumx", false},
+		{"wildcard unrelated", "GET /api/premium/*", "/api/other", false},
+
+		{"static baseline", "GET /api/compute", "/api/compute", true},
+		{"static trailing slash", "GET /api/compute", "/api/compute/", true},
+		{"static unrelated", "GET /api/compute", "/api/computex", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, _, regex := parseRoutePattern(tt.pattern)
+			normalized := normalizePath(tt.escapedPath)
+
+			if got := regex.MatchString(normalized); got != tt.shouldMatch {
+				t.Errorf("pattern %q vs path %q (normalized %q): match=%v, want %v",
+					tt.pattern, tt.escapedPath, normalized, got, tt.shouldMatch)
 			}
 		})
 	}
