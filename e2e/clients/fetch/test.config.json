@@ -2,7 +2,7 @@
   "name": "fetch",
   "type": "client",
   "language": "typescript",
-  "protocolFamilies": ["evm", "svm", "avm", "aptos", "hedera", "keeta", "near", "stellar", "tvm", "ccd"],
+  "protocolFamilies": ["evm", "svm", "avm", "aptos", "hedera", "keeta", "near", "stellar", "tvm", "ccd", "xrpl"],
   "x402Versions": [1, 2],
   "schemes": ["exact", "upto", "batch-settlement"],
   "evm": {
@@ -38,7 +38,10 @@
       "NEAR_ACCOUNT_ID",
       "NEAR_PRIVATE_KEY",
       "NEAR_NETWORK",
-      "NEAR_RPC_URL"
+      "NEAR_RPC_URL",
+      "XRPL_SEED",
+      "XRPL_NETWORK",
+      "XRPL_WS_URL"
     ]
   }
 }

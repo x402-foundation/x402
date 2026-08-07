@@ -1,4 +1,4 @@
-"""Unit tests for resource server hook skip and skipHandler return primitives."""
+"""Unit tests for resource server hook skip, skipHandler, and after-verify abort."""
 
 import asyncio
 
@@ -6,6 +6,7 @@ import pytest
 
 from x402 import x402ResourceServer, x402ResourceServerSync
 from x402.schemas import (
+    AbortResult,
     PaymentPayload,
     PaymentRequirements,
     SettleResponse,
@@ -25,6 +26,8 @@ class MockFacilitatorClient:
     def __init__(self) -> None:
         self.verify_calls: list = []
         self.settle_calls: list = []
+        self.verify_raises: Exception | None = None
+        self.verify_result: VerifyResponse | None = None
 
     def get_supported(self) -> SupportedResponse:
         return SupportedResponse(
@@ -41,6 +44,10 @@ class MockFacilitatorClient:
 
     async def verify(self, payload, requirements) -> VerifyResponse:
         self.verify_calls.append((payload, requirements))
+        if self.verify_raises is not None:
+            raise self.verify_raises
+        if self.verify_result is not None:
+            return self.verify_result
         return VerifyResponse(is_valid=True, payer="0xfacilitator")
 
     async def settle(self, payload, requirements) -> SettleResponse:
@@ -58,6 +65,8 @@ class MockFacilitatorClientSync:
     def __init__(self) -> None:
         self.verify_calls: list = []
         self.settle_calls: list = []
+        self.verify_raises: Exception | None = None
+        self.verify_result: VerifyResponse | None = None
 
     def get_supported(self) -> SupportedResponse:
         return SupportedResponse(
@@ -74,6 +83,10 @@ class MockFacilitatorClientSync:
 
     def verify(self, payload, requirements) -> VerifyResponse:
         self.verify_calls.append((payload, requirements))
+        if self.verify_raises is not None:
+            raise self.verify_raises
+        if self.verify_result is not None:
+            return self.verify_result
         return VerifyResponse(is_valid=True, payer="0xfacilitator")
 
     def settle(self, payload, requirements) -> SettleResponse:
@@ -117,6 +130,12 @@ def server(request):
     return resource_server, client
 
 
+def _verify(resource_server, payload, requirements):
+    if isinstance(resource_server, x402ResourceServer):
+        return asyncio.run(resource_server.verify_payment(payload, requirements))
+    return resource_server.verify_payment(payload, requirements)
+
+
 class TestBeforeVerifySkip:
     def test_skips_facilitator_verification(self, server):
         resource_server, client = server
@@ -126,13 +145,7 @@ class TestBeforeVerifySkip:
             )
         )
 
-        payload = build_payload()
-        requirements = build_requirements()
-
-        if isinstance(resource_server, x402ResourceServer):
-            result = asyncio.run(resource_server.verify_payment(payload, requirements))
-        else:
-            result = resource_server.verify_payment(payload, requirements)
+        result = _verify(resource_server, build_payload(), build_requirements())
 
         assert len(client.verify_calls) == 0
         assert result.is_valid is True
@@ -152,13 +165,7 @@ class TestBeforeVerifySkip:
 
         resource_server.on_before_verify(before_hook).on_after_verify(after_hook)
 
-        payload = build_payload()
-        requirements = build_requirements()
-
-        if isinstance(resource_server, x402ResourceServer):
-            asyncio.run(resource_server.verify_payment(payload, requirements))
-        else:
-            resource_server.verify_payment(payload, requirements)
+        _verify(resource_server, build_payload(), build_requirements())
 
         assert len(client.verify_calls) == 0
         assert execution_order == ["before", "after"]
@@ -176,13 +183,7 @@ class TestAfterVerifySkipHandler:
             )
         )
 
-        payload = build_payload()
-        requirements = build_requirements()
-
-        if isinstance(resource_server, x402ResourceServer):
-            result = asyncio.run(resource_server.verify_payment(payload, requirements))
-        else:
-            result = resource_server.verify_payment(payload, requirements)
+        result = _verify(resource_server, build_payload(), build_requirements())
 
         assert result.is_valid is True
         assert result.skip_handler is not None
@@ -202,17 +203,103 @@ class TestAfterVerifySkipHandler:
             )
         )
 
-        payload = build_payload()
-        requirements = build_requirements()
-
-        if isinstance(resource_server, x402ResourceServer):
-            result = asyncio.run(resource_server.verify_payment(payload, requirements))
-        else:
-            result = resource_server.verify_payment(payload, requirements)
+        result = _verify(resource_server, build_payload(), build_requirements())
 
         assert result.skip_handler is not None
         assert result.skip_handler.content_type == "application/json"
         assert result.skip_handler.body == "second"
+
+
+class TestAfterVerifyAbort:
+    def test_returns_invalid_and_stops_later_hooks(self, server):
+        resource_server, _client = server
+        cancel_reasons: list[str] = []
+        later_called = False
+
+        resource_server.on_after_verify(
+            lambda _ctx: AbortResult(reason="reservation_lost", message="channel busy")
+        )
+
+        def later_hook(_ctx):
+            nonlocal later_called
+            later_called = True
+
+        resource_server.on_after_verify(later_hook)
+        resource_server.on_verified_payment_canceled(lambda ctx: cancel_reasons.append(ctx.reason))
+
+        result = _verify(resource_server, build_payload(), build_requirements())
+
+        assert result.is_valid is False
+        assert result.invalid_reason == "reservation_lost"
+        assert result.invalid_message == "channel busy"
+        assert later_called is False
+        assert cancel_reasons == ["after_verify_aborted"]
+
+    def test_keeps_abort_when_cancel_cleanup_throws(self, server):
+        resource_server, _client = server
+
+        resource_server.on_after_verify(
+            lambda _ctx: AbortResult(reason="reservation_lost", message="channel busy")
+        )
+        resource_server.on_verified_payment_canceled(
+            lambda _ctx: (_ for _ in ()).throw(RuntimeError("cleanup boom"))
+        )
+
+        result = _verify(resource_server, build_payload(), build_requirements())
+
+        assert result.is_valid is False
+        assert result.invalid_reason == "reservation_lost"
+
+
+class TestOnVerifyFailureRecovery:
+    def test_runs_after_verify_hooks_when_exception_recovers(self, server):
+        from x402.schemas import RecoveredVerifyResult
+
+        resource_server, client = server
+        client.verify_raises = RuntimeError("facilitator down")
+        after_called = False
+
+        resource_server.on_verify_failure(
+            lambda _ctx: RecoveredVerifyResult(
+                result=VerifyResponse(is_valid=True, payer="0xrecovered")
+            )
+        )
+
+        def after_hook(ctx):
+            nonlocal after_called
+            after_called = True
+            assert ctx.result.payer == "0xrecovered"
+
+        resource_server.on_after_verify(after_hook)
+
+        result = _verify(resource_server, build_payload(), build_requirements())
+
+        assert result.is_valid is True
+        assert result.payer == "0xrecovered"
+        assert after_called is True
+
+    def test_fails_closed_when_after_verify_aborts_recovered_verify(self, server):
+        from x402.schemas import RecoveredVerifyResult
+
+        resource_server, client = server
+        client.verify_raises = RuntimeError("facilitator down")
+        cancel_reasons: list[str] = []
+
+        resource_server.on_verify_failure(
+            lambda _ctx: RecoveredVerifyResult(
+                result=VerifyResponse(is_valid=True, payer="0xrecovered")
+            )
+        )
+        resource_server.on_after_verify(
+            lambda _ctx: AbortResult(reason="reservation_lost", message="channel busy")
+        )
+        resource_server.on_verified_payment_canceled(lambda ctx: cancel_reasons.append(ctx.reason))
+
+        result = _verify(resource_server, build_payload(), build_requirements())
+
+        assert result.is_valid is False
+        assert result.invalid_reason == "reservation_lost"
+        assert cancel_reasons == ["after_verify_aborted"]
 
 
 class TestBeforeSettleSkip:

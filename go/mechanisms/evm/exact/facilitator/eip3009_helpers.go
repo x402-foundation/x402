@@ -8,6 +8,7 @@ import (
 
 	"github.com/ethereum/go-ethereum/accounts/abi"
 	"github.com/ethereum/go-ethereum/common"
+	goethtypes "github.com/ethereum/go-ethereum/core/types"
 
 	"github.com/x402-foundation/x402/go/v2/mechanisms/evm"
 )
@@ -28,6 +29,54 @@ type EIP3009SignatureClassification struct {
 	IsSmartWallet bool
 	IsUndeployed  bool
 	SigData       *evm.ERC6492SignatureData
+}
+
+type expectedTransferEvent struct {
+	From  common.Address
+	To    common.Address
+	Value *big.Int
+}
+
+// verifyEIP3009TransferEvent checks for a matching ERC-20 Transfer event in receipt logs.
+func verifyEIP3009TransferEvent(
+	logs []*goethtypes.Log,
+	tokenAddress common.Address,
+	expected expectedTransferEvent,
+) (bool, error) {
+	contractABI, err := abi.JSON(strings.NewReader(string(evm.ERC20TransferEventABI)))
+	if err != nil {
+		return false, fmt.Errorf("parse transfer event ABI: %w", err)
+	}
+
+	transferEvent := contractABI.Events["Transfer"]
+	for _, receiptLog := range logs {
+		if receiptLog == nil ||
+			receiptLog.Address != tokenAddress ||
+			len(receiptLog.Topics) != 3 ||
+			receiptLog.Topics[0] != transferEvent.ID {
+			continue
+		}
+
+		values, err := contractABI.Unpack("Transfer", receiptLog.Data)
+		if err != nil {
+			continue
+		}
+		if len(values) != 1 {
+			continue
+		}
+		value, ok := values[0].(*big.Int)
+		if !ok {
+			continue
+		}
+
+		from := common.BytesToAddress(receiptLog.Topics[1].Bytes())
+		to := common.BytesToAddress(receiptLog.Topics[2].Bytes())
+		if from == expected.From && to == expected.To && value.Cmp(expected.Value) == 0 {
+			return true, nil
+		}
+	}
+
+	return false, nil
 }
 
 // ParseEIP3009Authorization parses authorization fields into contract-call arguments.

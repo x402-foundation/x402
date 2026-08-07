@@ -136,7 +136,7 @@ Integrate the payment middleware into your application. You will need to provide
               {
                 scheme: "exact",
                 price: "$0.001",
-                network: "algorand:SGO1GKSzyE7IEPItTxCByw9x8FmnrCDexi9/cOUJOiI=", // Algorand Testnet
+                network: "algorand:SGO1GKSzyE7IEPItTxCByw9x8FmnrCDe", // Algorand Testnet
                 payTo: avmAddress,
               },
             ],
@@ -147,7 +147,7 @@ Integrate the payment middleware into your application. You will need to provide
         new x402ResourceServer(facilitatorClient)
           .register("eip155:84532", new ExactEvmScheme())
           .register("solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1", new ExactSvmScheme())
-          .register("algorand:SGO1GKSzyE7IEPItTxCByw9x8FmnrCDexi9/cOUJOiI=", new ExactAvmScheme()),
+          .register("algorand:SGO1GKSzyE7IEPItTxCByw9x8FmnrCDe", new ExactAvmScheme()),
       ),
     );
 
@@ -1063,6 +1063,12 @@ Learn more about the discovery layer in the [Bazaar documentation](/extensions/b
 * If you run into trouble, check out the examples in the [repo](https://github.com/x402-foundation/x402/tree/main/examples) for more context and full code.
 * Run `npm install` or `go mod tidy` to install dependencies
 
+### 6. Enable Signed Offers & Receipts
+
+The [Signed Offers & Receipts extension](/extensions/offer-receipt) adds cryptographic proof-of-interaction to your payment flows. When enabled, your server automatically signs **offers** on every `402` response (committing to payment terms) and a **receipt** on every `200` response (confirming service delivery).
+
+This creates portable, verifiable artifacts that clients and third parties can use for auditing, dispute resolution, and increasing the reputation of your service. See the [full setup guide](/extensions/offer-receipt) for installation, configuration, and signer authorization options.
+
 ---
 
 ## Running on Mainnet
@@ -1262,10 +1268,10 @@ See [Network Support](/core-concepts/network-and-token-support) for the full lis
 
 * Check out the [Advanced Example](https://github.com/x402-foundation/x402/tree/main/examples/typescript/servers/advanced) for a more complex payment flow
 * Explore [Advanced Concepts](/advanced-concepts/lifecycle-hooks) like lifecycle hooks for custom logic before/after verification/settlement
-* Explore [Extensions](/extensions/bazaar) like Bazaar for service discovery
+* Explore Extensions like [Bazaar](/extensions/bazaar) for service discovery and [Signed Offers & Receipts](/extensions/offer-receipt) for verifiable trust and reputation
 * Get started as a [buyer](/getting-started/quickstart-for-buyers)
 
-For questions or support, join our [Discord](https://discord.gg/cdp).
+For questions or support, join our [Slack](http://slack.x402.org/).
 
 ### Summary
 

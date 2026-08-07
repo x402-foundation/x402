@@ -7,6 +7,7 @@ Uses x402HTTPResourceServerSync for synchronous request processing without async
 from __future__ import annotations
 
 import json
+import logging
 import threading
 from collections.abc import Callable, Iterator
 from typing import TYPE_CHECKING, Any
@@ -18,7 +19,7 @@ except ImportError as e:
         "Flask middleware requires the flask package. Install with: uv add x402[flask]"
     ) from e
 
-from ...schemas import VerifiedPaymentCancelOptions
+from ...schemas import SettleResponse, VerifiedPaymentCancelOptions
 from ..constants import SETTLEMENT_OVERRIDES_HEADER
 from ..facilitator_client_base import FacilitatorResponseError
 from ..types import (
@@ -29,6 +30,7 @@ from ..types import (
     RoutesConfig,
 )
 from ..x402_http_server import PaywallProvider, x402HTTPResourceServerSync
+from ..x402_http_server_base import PAYMENT_REQUIRED_CACHE_CONTROL, with_private_cache_control
 
 if TYPE_CHECKING:
     from ...server import x402ResourceServerSync
@@ -47,6 +49,8 @@ from ._bazaar_utils import (
 from ._bazaar_utils import (
     validate_bazaar_extensions as _validate_bazaar_extensions,
 )
+
+logger = logging.getLogger(__name__)
 
 # ============================================================================
 # Flask Adapter
@@ -444,6 +448,31 @@ class PaymentMiddleware:
                             # Add settlement headers
                             for key, value in settle_result.headers.items():
                                 response_wrapper.add_header(key, value)
+                            existing_cache_control = next(
+                                (
+                                    value
+                                    for key, value in response_wrapper.headers
+                                    if key.lower() == "cache-control"
+                                ),
+                                None,
+                            )
+                            private_cache_control = with_private_cache_control(
+                                existing_cache_control
+                            )
+                            cache_control_updated = False
+                            for index, (key, _) in enumerate(response_wrapper.headers):
+                                if key.lower() == "cache-control":
+                                    response_wrapper.headers[index] = (
+                                        key,
+                                        private_cache_control,
+                                    )
+                                    cache_control_updated = True
+                                    break
+                            if not cache_control_updated:
+                                response_wrapper.add_header(
+                                    "Cache-Control",
+                                    private_cache_control,
+                                )
                         else:
                             # Settlement failed - use response from process_settlement
                             # (includes PAYMENT-RESPONSE header and empty body by default)
@@ -470,10 +499,33 @@ class PaymentMiddleware:
                         return _facilitator_error_wsgi_response(start_response, error)
 
                     except Exception:
-                        # Settlement error - return empty body with 402
+                        # An unexpected error here (RPC failure, bug, ...) is a
+                        # server-side failure, not a payment problem. Log it so
+                        # operators get a signal (the module otherwise logs
+                        # nothing), and surface it as a settle failure
+                        # (402 + PAYMENT-RESPONSE, success=False) - consistent with
+                        # the not-settle_result.success path and distinguishable
+                        # from a genuine "payment required". The client-facing
+                        # reason stays generic; the raw exception detail is logged
+                        # only. Mirrors the FastAPI fix in #2622.
+                        logger.exception("x402: unexpected error while settling a verified payment")
+                        settle_response = SettleResponse(
+                            success=False,
+                            error_reason="unexpected_settle_error",
+                            error_message="Unexpected error during settlement",
+                            transaction="",
+                            network=result.payment_requirements.network,
+                        )
+                        settle_headers = self._http_server._create_settlement_headers(
+                            settle_response, result.payment_requirements
+                        )
                         start_response(
                             "402 Payment Required",
-                            [("Content-Type", "application/json")],
+                            [
+                                ("Content-Type", "application/json"),
+                                ("Cache-Control", PAYMENT_REQUIRED_CACHE_CONTROL),
+                                *settle_headers.items(),
+                            ],
                         )
                         return [json.dumps({}).encode("utf-8")]
 

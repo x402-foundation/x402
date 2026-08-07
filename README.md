@@ -1,5 +1,7 @@
 # x402
 
+[![Slack Community](https://img.shields.io/badge/Slack-Join%20Community-4A154B?logo=slack&logoColor=white)](http://slack.x402.org/)
+
 x402 is an open standard for internet native payments. It aims to support all networks (both crypto & fiat) and forms of value (stablecoins, tokens, fiat).
 
 ```typescript
@@ -82,7 +84,9 @@ go get github.com/x402-foundation/x402/go/v2
 
 ## Ecosystem
 
-Curated third-party SDKs, extensions, and facilitators are listed in the [Developer Tools docs](https://docs.x402.org/dev-tools/overview). For broader discovery of x402 services and integrations, see community-maintained directories such as [x402scan.com](https://x402scan.com), [Agentic.Market](https://agentic.market), [Pay.sh](https://pay.sh), and [app.ampersend.ai/discover](https://app.ampersend.ai/discover).
+**Community:** join the [x402 Slack](http://slack.x402.org/) to ask questions, discuss ideas, and share what you're building.
+
+Curated third-party SDKs, extensions, and facilitators are listed in the [Developer Tools docs](https://docs.x402.org/dev-tools/overview). For broader discovery of x402 services and integrations, see community-maintained directories such as [x402scan.com](https://x402scan.com), [Agentic.Market](https://agentic.market), [Pay.sh](https://pay.sh), [app.ampersend.ai/discover](https://app.ampersend.ai/discover), and [x402-list.com](https://x402-list.com).
 
 **Roadmap:** see [ROADMAP.md](https://github.com/x402-foundation/x402/blob/main/ROADMAP.md)
 

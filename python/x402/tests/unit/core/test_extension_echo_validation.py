@@ -79,6 +79,100 @@ def test_passes_when_builder_code_echo_is_additive() -> None:
     assert server.validate_extensions(required, payload).valid
 
 
+def test_passes_when_echoed_s_array_is_superset_of_advertised() -> None:
+    server = x402ResourceServer()
+    required = _payment_required(
+        {BUILDER_CODE: {"info": {"a": "bc_myapp", "s": ["bc_server"]}, "schema": 2}}
+    )
+    payload = _payment_payload(
+        {
+            BUILDER_CODE: {
+                "info": {"a": "bc_myapp", "s": ["bc_server", "bc_client"]},
+                "schema": 2,
+            }
+        }
+    )
+
+    assert server.validate_extensions(required, payload).valid
+
+
+def test_rejects_when_echoed_s_array_drops_advertised_element() -> None:
+    server = x402ResourceServer()
+    required = _payment_required({BUILDER_CODE: {"info": {"s": ["bc_server"]}, "schema": 2}})
+    payload = _payment_payload({BUILDER_CODE: {"info": {"s": ["bc_client"]}, "schema": 2}})
+
+    result = server.validate_extensions(required, payload)
+    assert not result.valid
+    assert result.invalid_reason == ERR_EXTENSION_ECHO_MISMATCH
+    assert result.extension_key == BUILDER_CODE
+
+
+def test_rejects_when_echoed_s_array_exceeds_the_combined_budget_even_as_a_superset() -> None:
+    # Regression test: a hand-crafted echo padding `s` past the combined
+    # client+server budget must be rejected outright rather than accepted and
+    # left to be silently truncated downstream (e.g. by a facilitator
+    # extension), which could crowd out the legitimately advertised entry.
+    server = x402ResourceServer()
+    required = _payment_required({BUILDER_CODE: {"info": {"s": ["bc_server"]}, "schema": 2}})
+    padded = ["bc_server"] + [f"bc_fake_{i}" for i in range(10)]
+    payload = _payment_payload({BUILDER_CODE: {"info": {"s": padded}, "schema": 2}})
+
+    result = server.validate_extensions(required, payload)
+    assert not result.valid
+    assert result.invalid_reason == ERR_EXTENSION_ECHO_MISMATCH
+    assert result.extension_key == BUILDER_CODE
+
+
+def test_passes_when_echoed_s_array_is_exactly_at_the_combined_budget() -> None:
+    server = x402ResourceServer()
+    required = _payment_required({BUILDER_CODE: {"info": {"s": ["bc_server"]}, "schema": 2}})
+    at_budget = ["bc_server"] + [f"bc_client_{i}" for i in range(9)]
+    payload = _payment_payload({BUILDER_CODE: {"info": {"s": at_budget}, "schema": 2}})
+
+    assert server.validate_extensions(required, payload).valid
+
+
+def test_passes_when_advertised_s_is_a_scalar_and_echo_is_an_array_containing_it() -> None:
+    server = x402ResourceServer()
+    required = _payment_required({BUILDER_CODE: {"info": {"s": "bc_server"}, "schema": 2}})
+    payload = _payment_payload(
+        {BUILDER_CODE: {"info": {"s": ["bc_server", "bc_client"]}, "schema": 2}}
+    )
+
+    assert server.validate_extensions(required, payload).valid
+
+
+def test_passes_when_advertised_s_is_an_array_and_echo_is_a_matching_scalar() -> None:
+    server = x402ResourceServer()
+    required = _payment_required({BUILDER_CODE: {"info": {"s": ["bc_server"]}, "schema": 2}})
+    payload = _payment_payload({BUILDER_CODE: {"info": {"s": "bc_server"}, "schema": 2}})
+
+    assert server.validate_extensions(required, payload).valid
+
+
+def test_rejects_when_non_builder_code_extension_array_field_gains_an_echoed_element() -> None:
+    # Additive-array echo matching is scoped to builder-code's `s`; other
+    # extensions' array fields (e.g. sign-in-with-x's `resources`) must still
+    # match exactly so clients cannot smuggle extra values into the echo.
+    server = x402ResourceServer()
+    required = _payment_required(
+        {"sign-in-with-x": {"info": {"resources": ["https://api.example.com/data"]}, "schema": 2}}
+    )
+    payload = _payment_payload(
+        {
+            "sign-in-with-x": {
+                "info": {"resources": ["https://api.example.com/data", "https://evil.example.com"]},
+                "schema": 2,
+            }
+        }
+    )
+
+    result = server.validate_extensions(required, payload)
+    assert not result.valid
+    assert result.invalid_reason == ERR_EXTENSION_ECHO_MISMATCH
+    assert result.extension_key == "sign-in-with-x"
+
+
 def test_rejects_when_advertised_field_missing() -> None:
     server = x402ResourceServer()
     required = _payment_required({BUILDER_CODE: {"info": {"a": "bc_myapp"}, "schema": 2}})

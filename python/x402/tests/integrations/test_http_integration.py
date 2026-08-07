@@ -226,6 +226,7 @@ class TestHTTPIntegration:
         assert result.response is not None
         assert result.response.status == 402
         assert "PAYMENT-REQUIRED" in result.response.headers
+        assert result.response.headers["Cache-Control"] == "no-store"
         assert result.response.is_html is False
         assert result.response.body == {}
 
@@ -278,6 +279,7 @@ class TestHTTPIntegration:
             )
         assert settlement.success is True
         assert "PAYMENT-RESPONSE" in settlement.headers
+        assert "Cache-Control" not in settlement.headers
 
     def test_no_payment_required_for_unprotected_route(
         self,
@@ -746,6 +748,7 @@ class TestSettlementFailureWithContext:
         assert response.status == 402
         assert response.body == {}
         assert "PAYMENT-RESPONSE" in response.headers
+        assert response.headers["Cache-Control"] == "no-store"
 
 
 class TestColonParamRouteMatching:

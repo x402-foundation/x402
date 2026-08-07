@@ -527,7 +527,7 @@ func (s *x402HTTPResourceServer) ProcessHTTPRequest(ctx context.Context, reqCtx 
 	if err != nil {
 		return HTTPProcessResult{
 			Type:     ResultPaymentError,
-			Response: &HTTPResponseInstructions{Status: 400, Body: map[string]string{"error": "Invalid payment"}},
+			Response: &HTTPResponseInstructions{Status: 400, Body: map[string]string{"error": "invalid_payload"}},
 		}
 	}
 
@@ -761,6 +761,24 @@ func (s *x402HTTPResourceServer) RequiresPayment(reqCtx HTTPRequestContext) bool
 // with both http.Header methods and direct map access.
 const SettlementOverridesHeader = "Settlement-Overrides"
 
+// PaymentRequiredCacheControl is the Cache-Control directive for 402/412 responses
+// carrying PAYMENT-REQUIRED or 402 settlement-failure PAYMENT-RESPONSE.
+const PaymentRequiredCacheControl = "no-store"
+
+// WithPrivateCacheControl appends the private directive for 200 responses with
+// PAYMENT-RESPONSE without clobbering existing handler Cache-Control values.
+func WithPrivateCacheControl(value string) string {
+	if value == "" {
+		return "private"
+	}
+	for _, directive := range strings.Split(value, ",") {
+		if strings.EqualFold(strings.TrimSpace(directive), "private") {
+			return value
+		}
+	}
+	return value + ", private"
+}
+
 // MarshalSettlementOverrides serializes overrides to the JSON string suitable for
 // the SettlementOverridesHeader value. Returns an empty string on marshal failure
 // (which cannot happen for a well-formed SettlementOverrides value).
@@ -847,20 +865,28 @@ func (s *x402HTTPResourceServer) buildSettlementFailureResult(errorReason string
 			Success:     false,
 			ErrorReason: errorReason,
 			Response: &HTTPResponseInstructions{
-				Status:  402,
-				Headers: map[string]string{},
-				Body:    map[string]interface{}{},
+				Status: 402,
+				Headers: map[string]string{
+					"Cache-Control": PaymentRequiredCacheControl,
+				},
+				Body: map[string]interface{}{},
 			},
 		}
 	}
 
+	responseHeaders := make(map[string]string, len(headers)+1)
+	for k, v := range headers {
+		responseHeaders[k] = v
+	}
+	responseHeaders["Cache-Control"] = PaymentRequiredCacheControl
+
 	return &ProcessSettleResult{
 		Success:     false,
 		ErrorReason: errorReason,
-		Headers:     headers,
+		Headers:     responseHeaders,
 		Response: &HTTPResponseInstructions{
 			Status:  402,
-			Headers: headers,
+			Headers: responseHeaders,
 			Body:    map[string]interface{}{},
 		},
 	}
@@ -958,6 +984,7 @@ func (s *x402HTTPResourceServer) createHTTPResponseV2(paymentRequired types.Paym
 			Headers: map[string]string{
 				"Content-Type":     "text/html",
 				"PAYMENT-REQUIRED": encodedHeader,
+				"Cache-Control":    PaymentRequiredCacheControl,
 			},
 			Body:   html,
 			IsHTML: true,
@@ -978,6 +1005,7 @@ func (s *x402HTTPResourceServer) createHTTPResponseV2(paymentRequired types.Paym
 		Headers: map[string]string{
 			"Content-Type":     contentType,
 			"PAYMENT-REQUIRED": encodedHeader,
+			"Cache-Control":    PaymentRequiredCacheControl,
 		},
 		Body: body,
 	}, nil
@@ -1212,10 +1240,24 @@ func parseRoutePattern(pattern string) (string, string, *regexp.Regexp) {
 
 	// Convert pattern to regex
 	regexPattern := "^" + regexp.QuoteMeta(path)
+
+	// A trailing "/*" must also match the bare prefix. normalizePath strips the
+	// trailing slash, so a request for "/api/premium/" arrives as "/api/premium",
+	// which a literal "/.*?" suffix would not match even though routers dispatch
+	// it to the protected handler.
+	trailingWildcard := strings.HasSuffix(regexPattern, `/\*`)
+	if trailingWildcard {
+		regexPattern = strings.TrimSuffix(regexPattern, `/\*`)
+	}
+
 	regexPattern = strings.ReplaceAll(regexPattern, `\*`, `.*?`)
 	// Handle parameters: [param] (Next.js style) and :param (Express style)
 	regexPattern = paramRegex.ReplaceAllString(regexPattern, `[^/]+`)
 	regexPattern = colonParamRegex.ReplaceAllString(regexPattern, `[^/]+`)
+
+	if trailingWildcard {
+		regexPattern += `(?:/.*?)?`
+	}
 	regexPattern += "$"
 
 	regex := regexp.MustCompile(regexPattern)
@@ -1223,20 +1265,40 @@ func parseRoutePattern(pattern string) (string, string, *regexp.Regexp) {
 	return verb, path, regex
 }
 
-// normalizePath normalizes a URL path for matching
+// normalizePath normalizes a URL path for matching.
+//
+// The input is expected to be the *escaped* request path (net/url's
+// URL.EscapedPath), which is the same view HTTP routers use to split a request
+// into segments. Percent-escapes are therefore decoded one segment at a time
+// and any separator they yield is re-escaped, so a decoded byte can never
+// create a segment boundary that the router did not see.
+//
+// Decoding the whole path in one pass, as an earlier version did, let an
+// attacker smuggle "%2F" (or "%5C") into a single segment: the middleware saw
+// "/api/users/x/y" and stopped matching "GET /api/users/:id", while the router
+// still dispatched the request to the protected handler, bypassing the payment
+// gate entirely (CWE-436).
 func normalizePath(path string) string {
 	// Remove query string and fragment
 	if idx := strings.IndexAny(path, "?#"); idx >= 0 {
 		path = path[:idx]
 	}
 
-	// Decode URL encoding
-	if decoded, err := url.PathUnescape(path); err == nil {
-		path = decoded
+	// Decode percent-escapes per segment, keeping decoded separators inside the
+	// segment they came from.
+	segments := strings.Split(path, "/")
+	for i, segment := range segments {
+		decoded, err := url.PathUnescape(segment)
+		if err != nil {
+			// Malformed escape sequence: match on the raw segment rather than
+			// silently widening it.
+			continue
+		}
+		decoded = strings.ReplaceAll(decoded, `/`, `%2F`)
+		segments[i] = strings.ReplaceAll(decoded, `\`, `%5C`)
 	}
+	path = strings.Join(segments, "/")
 
-	// Normalize slashes
-	path = strings.ReplaceAll(path, `\`, `/`)
 	// Replace multiple slashes with single slash
 	path = multiSlashRegex.ReplaceAllString(path, `/`)
 	// Remove trailing slash

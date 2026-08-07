@@ -5,13 +5,16 @@
  * optional chain configuration via environment variables.
  *
  * New chain support should be added here in alphabetic order by network prefix
- * (e.g., "algorand" before "ccd" before "eip155" before "hedera" before "near" before "solana" before "stellar" before "tvm").
+ * (e.g., "algorand" before "aptos" before "ccd" before "eip155" before "hedera" before "near" before "solana" before "stellar" before "tvm" before "xrpl").
  */
 
 import { config } from "dotenv";
 import express from "express";
 import { paymentMiddleware, x402ResourceServer } from "@x402/express";
+import { APTOS_TESTNET_CAIP2 } from "@x402/aptos";
+import { ExactAptosScheme } from "@x402/aptos/exact/server";
 import { ExactAvmScheme } from "@x402/avm/exact/server";
+import { ALGORAND_TESTNET_CAIP2 } from "@x402/avm";
 import { ExactConcordiumScheme } from "@x402/concordium/exact/server";
 import { ExactEvmScheme } from "@x402/evm/exact/server";
 import { ExactHederaScheme } from "@x402/hedera/exact/server";
@@ -22,6 +25,8 @@ import { NEAR_TESTNET_CAIP2 } from "@x402/near";
 import { ExactNearScheme } from "@x402/near/exact/server";
 import { ExactStellarScheme } from "@x402/stellar/exact/server";
 import { ExactTvmScheme } from "@x402/tvm/exact/server";
+import { XRPL_TESTNET } from "@x402/xrpl";
+import { ExactXrplScheme } from "@x402/xrpl/exact/server";
 import { HTTPFacilitatorClient } from "@x402/core/server";
 import type { Network, Price } from "@x402/core/types";
 
@@ -29,6 +34,7 @@ config();
 
 // Configuration - optional per network
 const avmAddress = process.env.AVM_ADDRESS as string | undefined;
+const aptosAddress = process.env.APTOS_ADDRESS as string | undefined;
 const ccdAddress = process.env.CCD_ADDRESS as string | undefined;
 const evmAddress = process.env.EVM_ADDRESS as `0x${string}` | undefined;
 const hederaAddress = process.env.HEDERA_ACCOUNT_ID as string | undefined;
@@ -37,10 +43,12 @@ const nearAddress = process.env.NEAR_ADDRESS as string | undefined;
 const svmAddress = process.env.SVM_ADDRESS as string | undefined;
 const stellarAddress = process.env.STELLAR_ADDRESS as string | undefined;
 const tvmAddress = process.env.TVM_ADDRESS as string | undefined;
+const xrplAddress = process.env.XRPL_ADDRESS as string | undefined;
 
 // Validate at least one address is provided
 if (
   !avmAddress &&
+  !aptosAddress &&
   !ccdAddress &&
   !evmAddress &&
   !svmAddress &&
@@ -48,10 +56,11 @@ if (
   !nearAddress &&
   !stellarAddress &&
   !hederaAddress &&
-  !tvmAddress
+  !tvmAddress &&
+  !xrplAddress
 ) {
   console.error(
-    "❌ At least one of AVM_ADDRESS, CCD_ADDRESS, EVM_ADDRESS, KEETA_ADDRESS, NEAR_ADDRESS, SVM_ADDRESS, STELLAR_ADDRESS, HEDERA_ACCOUNT_ID, or TVM_ADDRESS is required",
+    "❌ At least one of AVM_ADDRESS, APTOS_ADDRESS, CCD_ADDRESS, EVM_ADDRESS, KEETA_ADDRESS, NEAR_ADDRESS, SVM_ADDRESS, STELLAR_ADDRESS, HEDERA_ACCOUNT_ID, TVM_ADDRESS, or XRPL_ADDRESS is required",
   );
   process.exit(1);
 }
@@ -63,7 +72,8 @@ if (!facilitatorUrl) {
 }
 
 // Network configuration
-const AVM_NETWORK = "algorand:SGO1GKSzyE7IEPItTxCByw9x8FmnrCDexi9/cOUJOiI=" as const; // Algorand Testnet
+const AVM_NETWORK = (process.env.AVM_NETWORK || ALGORAND_TESTNET_CAIP2) as Network; // Algorand Testnet
+const APTOS_NETWORK = (process.env.APTOS_NETWORK || APTOS_TESTNET_CAIP2) as Network; // Aptos Testnet
 const CCD_NETWORK = "ccd:4221332d34e1694168c2a0c0b3fd0f27" as const; // Concordium Testnet
 const EVM_NETWORK = "eip155:84532" as const; // Base Sepolia
 const HEDERA_NETWORK = "hedera:testnet" as const; // Hedera Testnet
@@ -74,6 +84,7 @@ const STELLAR_NETWORK = "stellar:testnet" as const; // Stellar Testnet
 const HEDERA_HBAR_ASSET = "0.0.0" as const; // Native HBAR asset id
 const HEDERA_WEATHER_PRICE_TINYBARS = "100000" as const; // 0.001 HBAR
 const TVM_NETWORK = (process.env.TVM_NETWORK || "tvm:-3") as Network; // TON Testnet
+const XRPL_NETWORK = (process.env.XRPL_NETWORK || XRPL_TESTNET) as Network; // XRPL Testnet
 const CCD_WEATHER_PRICE_MICRO_CCD = "1000" as const; // 0.001 CCD
 
 // Build accepts array dynamically based on configured addresses
@@ -89,6 +100,14 @@ if (avmAddress) {
     price: "$0.001",
     network: AVM_NETWORK,
     payTo: avmAddress,
+  });
+}
+if (aptosAddress) {
+  accepts.push({
+    scheme: "exact",
+    price: "$0.001",
+    network: APTOS_NETWORK,
+    payTo: aptosAddress,
   });
 }
 if (ccdAddress) {
@@ -161,6 +180,17 @@ if (tvmAddress) {
     payTo: tvmAddress,
   });
 }
+if (xrplAddress) {
+  accepts.push({
+    scheme: "exact",
+    price: {
+      amount: process.env.XRPL_AMOUNT || "1000",
+      asset: "XRP",
+    },
+    network: XRPL_NETWORK,
+    payTo: xrplAddress,
+  });
+}
 
 // Create facilitator client
 const facilitatorClient = new HTTPFacilitatorClient({ url: facilitatorUrl });
@@ -169,6 +199,9 @@ const facilitatorClient = new HTTPFacilitatorClient({ url: facilitatorUrl });
 const server = new x402ResourceServer(facilitatorClient);
 if (avmAddress) {
   server.register(AVM_NETWORK, new ExactAvmScheme());
+}
+if (aptosAddress) {
+  server.register(APTOS_NETWORK, new ExactAptosScheme());
 }
 if (ccdAddress) {
   server.register(CCD_NETWORK, new ExactConcordiumScheme());
@@ -193,6 +226,9 @@ if (stellarAddress) {
 }
 if (tvmAddress) {
   server.register(TVM_NETWORK, new ExactTvmScheme());
+}
+if (xrplAddress) {
+  server.register(XRPL_NETWORK, new ExactXrplScheme());
 }
 
 // Create Express app
@@ -234,6 +270,9 @@ app.listen(port, () => {
   if (avmAddress) {
     console.log(`   AVM: ${avmAddress} on ${AVM_NETWORK}`);
   }
+  if (aptosAddress) {
+    console.log(`   Aptos: ${aptosAddress} on ${APTOS_NETWORK}`);
+  }
   if (ccdAddress) {
     console.log(`   CCD: ${ccdAddress} on ${CCD_NETWORK}`);
   }
@@ -257,6 +296,9 @@ app.listen(port, () => {
   }
   if (tvmAddress) {
     console.log(`   TVM: ${tvmAddress} on ${TVM_NETWORK}`);
+  }
+  if (xrplAddress) {
+    console.log(`   XRPL: ${xrplAddress} on ${XRPL_NETWORK}`);
   }
   console.log(`   Facilitator: ${facilitatorUrl}`);
   console.log();

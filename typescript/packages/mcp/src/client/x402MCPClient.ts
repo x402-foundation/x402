@@ -7,7 +7,11 @@ import type {
 } from "@x402/core/types";
 import { parsePaymentRequired } from "@x402/core/schemas";
 import { x402Client } from "@x402/core/client";
-import type { x402ClientConfig } from "@x402/core/client";
+import type {
+  PaymentPolicy,
+  SelectPaymentRequirements,
+  x402ClientConfig,
+} from "@x402/core/client";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 
 import type {
@@ -633,8 +637,43 @@ export class x402MCPClient {
 
     // A paid attempt can return a corrective 402. Scheme hooks recover local
     // state from it, then we retry once with a fresh payload from that response.
+    // Corrective terms (amount/asset/payTo) are server-controlled — re-run the
+    // same approval / abort gates used for the first payment before signing again.
     if (recoveryResult?.recovered && paymentRequired) {
-      const freshPayload = await this._paymentClient.createPaymentPayload(paymentRequired);
+      const correctiveRequiredContext: PaymentRequiredContext = {
+        toolName: name,
+        arguments: args,
+        paymentRequired,
+      };
+      let correctivePayload: PaymentPayload | undefined;
+      for (const hook of this.paymentRequiredHooks) {
+        const hookResult = await hook(correctiveRequiredContext);
+        if (hookResult?.abort) {
+          throw new Error("Payment aborted by hook");
+        }
+        if (hookResult?.payment) {
+          correctivePayload = hookResult.payment;
+          break;
+        }
+      }
+      if (!correctivePayload) {
+        const correctiveRequestedContext: PaymentRequestedContext = {
+          toolName: name,
+          arguments: args,
+          paymentRequired,
+        };
+        const correctiveApproved =
+          await this.options.onPaymentRequested(correctiveRequestedContext);
+        if (!correctiveApproved) {
+          throw new Error("Payment request denied");
+        }
+        for (const hook of this.beforePaymentHooks) {
+          await hook(correctiveRequestedContext);
+        }
+        correctivePayload = await this._paymentClient.createPaymentPayload(paymentRequired);
+      }
+
+      const freshPayload = correctivePayload;
       const retryCallParams = {
         name,
         arguments: args,
@@ -858,6 +897,25 @@ export interface x402MCPClientConfig {
   }>;
 
   /**
+   * Optional spend / selection policies (same as x402Client.fromConfig).
+   * Use these to cap amount, filter assets/networks, etc.
+   *
+   * @example
+   * ```typescript
+   * policies: [
+   *   (_version, reqs) => reqs.filter(r => BigInt(r.amount) < 1_000_000n),
+   * ],
+   * ```
+   */
+  policies?: PaymentPolicy[];
+
+  /**
+   * Custom selector for which accept entry to pay.
+   * Default (via x402Client) is server-ordered accepts[0] — prefer an explicit selector in production.
+   */
+  paymentRequirementsSelector?: SelectPaymentRequirements;
+
+  /**
    * Whether to automatically retry tool calls with payment on 402 errors.
    *
    * @default true
@@ -973,6 +1031,10 @@ export function wrapMCPClientWithPaymentFromConfig(
  *   schemes: [
  *     { network: "eip155:84532", client: new ExactEvmScheme(account) },
  *   ],
+ *   // Optional spend policies
+ *   policies: [
+ *     (_v, reqs) => reqs.filter(r => BigInt(r.amount ?? "0") < 1_000_000n),
+ *   ],
  *   autoPayment: true,
  *   onPaymentRequested: async ({ paymentRequired }) => {
  *     console.log(`Payment required: ${paymentRequired.accepts[0].amount}`);
@@ -1001,17 +1063,12 @@ export function createx402MCPClient(config: x402MCPClientConfig): x402MCPClient 
     config.mcpClientOptions,
   );
 
-  // Create x402 payment client
-  const paymentClient = new x402Client();
-
-  // Register schemes
-  for (const scheme of config.schemes) {
-    if (scheme.x402Version === 1) {
-      paymentClient.registerV1(scheme.network, scheme.client);
-    } else {
-      paymentClient.register(scheme.network, scheme.client);
-    }
-  }
+  // Apply schemes (and optional policies/selector) via fromConfig.
+  const paymentClient = x402Client.fromConfig({
+    schemes: config.schemes,
+    policies: config.policies,
+    paymentRequirementsSelector: config.paymentRequirementsSelector,
+  });
 
   // Create x402MCPClient with options
   return new x402MCPClient(mcpClient, paymentClient, {

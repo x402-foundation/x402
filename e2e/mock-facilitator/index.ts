@@ -16,6 +16,7 @@ const SVM_NETWORK = process.env.SVM_NETWORK || "solana:EtWTRABZaYq6iMfeYKouRu166
 const APTOS_NETWORK = process.env.APTOS_NETWORK || "aptos:2";
 const STELLAR_NETWORK = process.env.STELLAR_NETWORK || "stellar:testnet";
 const NEAR_NETWORK = process.env.NEAR_NETWORK || "near:testnet";
+const XRPL_NETWORK = process.env.XRPL_NETWORK || "xrpl:1";
 
 const DUMMY_EVM_SIGNER = "0x0000000000000000000000000000000000000001";
 const DUMMY_SVM_SIGNER = "11111111111111111111111111111111";
@@ -56,6 +57,11 @@ function buildSupportedResponse() {
         kinds.push({ x402Version: version, scheme, network: NEAR_NETWORK });
       }
     }
+    if (XRPL_NETWORK) {
+      for (const scheme of otherSchemes) {
+        kinds.push({ x402Version: version, scheme, network: XRPL_NETWORK });
+      }
+    }
   }
 
   const signers: Record<string, string[]> = {
@@ -70,6 +76,9 @@ function buildSupportedResponse() {
   }
   if (NEAR_NETWORK) {
     signers["near:*"] = ["relayer.testnet"];
+  }
+  if (XRPL_NETWORK) {
+    signers["xrpl:*"] = [];
   }
 
   return { kinds, extensions: [], signers };

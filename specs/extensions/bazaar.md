@@ -318,8 +318,9 @@ The `schema` field contains a JSON Schema (Draft 2020-12) that validates the str
 - Must validate that `input.type` equals `"http"` (for HTTP endpoints) or `"mcp"` (for MCP tools)
 - For HTTP endpoints: Must validate the appropriate `method` enum based on operation type
 - For MCP tools: Must require `toolName` and `inputSchema` fields
+- `$ref` and `$id` values must be same-document JSON Pointer fragments (starting with `#`); external references (`http(s)://`, `file://`, or any other absolute/relative URI) are not allowed
 
-Facilitators **must** validate `info` against `schema` before cataloging.
+Facilitators **must** validate `info` against `schema` before cataloging. Facilitators **must not** resolve external `$ref`/`$id` values (e.g. by fetching a URL or reading a file) when validating an untrusted `schema`.
 
 ### MCP Schema Example
 

@@ -20,6 +20,7 @@ import {
   diagnoseEip3009SimulationFailure,
   executeTransferWithAuthorization,
   simulateEip3009Transfer,
+  verifyEip3009TransferEvent,
 } from "../../facilitator/eip3009-utils";
 
 export interface VerifyV1Options {
@@ -222,6 +223,26 @@ export class ExactEvmSchemeV1 implements SchemeNetworkFacilitator {
           transaction: tx,
           network: payloadV1.network,
           payer: exactEvmPayload.authorization.from,
+        };
+      }
+
+      // Receipt status only proves the tx did not revert.
+      // When logs are present, require the expected ERC-20 Transfer event.
+      const auth = exactEvmPayload.authorization;
+      if (
+        receipt.logs != null &&
+        !verifyEip3009TransferEvent(receipt.logs, getAddress(requirements.asset), {
+          from: getAddress(auth.from),
+          to: getAddress(auth.to),
+          value: BigInt(auth.value),
+        })
+      ) {
+        return {
+          success: false,
+          errorReason: Errors.ErrTransferEventMismatch,
+          transaction: tx,
+          network: payloadV1.network,
+          payer: auth.from,
         };
       }
 

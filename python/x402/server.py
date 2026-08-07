@@ -212,15 +212,27 @@ class x402ResourceServer(x402ResourceServerBase):
         try:
             while True:
                 phase, target, ctx = gen.send(result)
-                if phase == "call_facilitator":
-                    # target is client, ctx is (method_name, payload, requirements)
-                    method_name, p, r = ctx
-                    if method_name == "verify":
-                        result = await target.verify(p, r)
-                    else:
-                        result = await target.settle(p, r)
-                else:
-                    result = await self._execute_hook(target, ctx)
+                while True:
+                    try:
+                        if phase == "call_facilitator":
+                            method_name, p, r = ctx
+                            if method_name == "verify":
+                                result = await target.verify(p, r)
+                            else:
+                                result = await target.settle(p, r)
+                        elif phase == "dispatch_cancel":
+                            p, r, declared, transport = ctx
+                            await self._dispatch_verified_payment_canceled(
+                                p, r, declared, target, transport
+                            )
+                            result = None
+                        else:
+                            result = await self._execute_hook(target, ctx)
+                        break
+                    except Exception as e:
+                        if phase != "call_facilitator":
+                            raise
+                        phase, target, ctx = gen.throw(e)
         except StopIteration as e:
             return e.value
 
@@ -481,15 +493,27 @@ class x402ResourceServerSync(x402ResourceServerBase):
         try:
             while True:
                 phase, target, ctx = gen.send(result)
-                if phase == "call_facilitator":
-                    # target is client, ctx is (method_name, payload, requirements)
-                    method_name, p, r = ctx
-                    if method_name == "verify":
-                        result = target.verify(p, r)
-                    else:
-                        result = target.settle(p, r)
-                else:
-                    result = self._execute_hook_sync(target, ctx)
+                while True:
+                    try:
+                        if phase == "call_facilitator":
+                            method_name, p, r = ctx
+                            if method_name == "verify":
+                                result = target.verify(p, r)
+                            else:
+                                result = target.settle(p, r)
+                        elif phase == "dispatch_cancel":
+                            p, r, declared, transport = ctx
+                            self._dispatch_verified_payment_canceled_sync(
+                                p, r, declared, target, transport
+                            )
+                            result = None
+                        else:
+                            result = self._execute_hook_sync(target, ctx)
+                        break
+                    except Exception as e:
+                        if phase != "call_facilitator":
+                            raise
+                        phase, target, ctx = gen.throw(e)
         except StopIteration as e:
             return e.value
 

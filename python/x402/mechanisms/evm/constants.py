@@ -341,6 +341,7 @@ ERR_TOKEN_NAME_MISMATCH = "invalid_exact_evm_token_name_mismatch"
 ERR_TOKEN_VERSION_MISMATCH = "invalid_exact_evm_token_version_mismatch"
 ERR_EIP3009_NOT_SUPPORTED = "invalid_exact_evm_eip3009_not_supported"
 ERR_TRANSACTION_SIMULATION_FAILED = "invalid_exact_evm_transaction_simulation_failed"
+ERR_TRANSFER_EVENT_MISMATCH = "invalid_exact_evm_transfer_event_mismatch"
 
 # Permit2-specific error codes
 ERR_PERMIT2_INVALID_SPENDER = "invalid_permit2_spender"
@@ -604,6 +605,36 @@ NETWORK_CONFIGS: dict[str, NetworkConfig] = {
             "version": "1",
             "decimals": 6,
             "asset_transfer_method": "permit2",
+        },
+    },
+    # Flare Mainnet
+    "eip155:14": {
+        "chain_id": 14,
+        "default_asset": {
+            "address": "0xe7cd86e13AC4309349F30B3435a9d337750fC82D",
+            "name": "USD₮0",
+            "version": "1",
+            "decimals": 6,
+        },
+    },
+    # Celo Mainnet
+    "eip155:42220": {
+        "chain_id": 42220,
+        "default_asset": {
+            "address": "0xcebA9300f2b948710d2653dD7B07f33A8B32118C",
+            "name": "USDC",
+            "version": "2",
+            "decimals": 6,
+        },
+    },
+    # Celo Sepolia (Testnet)
+    "eip155:11142220": {
+        "chain_id": 11142220,
+        "default_asset": {
+            "address": "0x01C5C0122039549AD1493B8220cABEdD739BC44E",
+            "name": "USDC",
+            "version": "2",
+            "decimals": 6,
         },
     },
 }

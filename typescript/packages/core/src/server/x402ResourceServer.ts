@@ -14,7 +14,13 @@ import {
 import { SchemeNetworkServer, SchemePaymentRequiredContext } from "../types/mechanisms";
 import { Price, Network, ResourceServerExtension, ResourceServerExtensionHooks } from "../types";
 import type { DeepReadonly } from "../types/readonly";
-import { deepEqual, findByNetworkAndScheme } from "../utils";
+import {
+  ADDITIVE_ARRAY_INFO_FIELDS,
+  ADDITIVE_ARRAY_MAX_LENGTHS,
+  deepEqual,
+  findByNetworkAndScheme,
+  toComparableArray,
+} from "../utils";
 import {
   assertAcceptsAllowlistedAfterExtensionEnrich,
   assertAcceptsAdditiveExtraAfterSchemeEnrich,
@@ -109,7 +115,10 @@ export interface SettleFailureContext extends SettleContext {
   error: Error;
 }
 
-export type VerifiedPaymentCancellationReason = "handler_threw" | "handler_failed";
+export type VerifiedPaymentCancellationReason =
+  | "handler_threw"
+  | "handler_failed"
+  | "after_verify_aborted";
 
 export interface VerifiedPaymentCanceledContext extends SettleContext {
   reason: VerifiedPaymentCancellationReason;
@@ -135,7 +144,11 @@ export type BeforeVerifyHook = (
 
 export type AfterVerifyHook = (
   context: VerifyResultContext,
-) => Promise<void | { skipHandler: true; response?: SkipHandlerDirective }>;
+) => Promise<
+  | void
+  | { skipHandler: true; response?: SkipHandlerDirective }
+  | { abort: true; reason: string; message?: string }
+>;
 
 export type OnVerifyFailureHook = (
   context: VerifyFailureContext,
@@ -1005,7 +1018,12 @@ export class x402ResourceServer {
         try {
           const result = await hook(failureContext);
           if (result && "recovered" in result && result.recovered) {
-            return result.result;
+            return this.runAfterVerifyHooks(
+              result.result,
+              context,
+              extensionKeysInUse,
+              matchedScheme,
+            );
           }
         } catch (error) {
           this.warnResourceServerHookFailure("onVerifyFailure", label, error);
@@ -1291,10 +1309,14 @@ export class x402ResourceServer {
       const echoedInfo = getExtensionInfo(echoedValue);
 
       const dynamicFields = this.registeredExtensions.get(key)?.dynamicInfoFields;
+      const additiveFields = ADDITIVE_ARRAY_INFO_FIELDS[key];
+      const maxLengths = ADDITIVE_ARRAY_MAX_LENGTHS[key];
       if (
         !extensionInfoMatchesAdvertised(
           omitFields(advertisedInfo, dynamicFields),
           omitFields(echoedInfo, dynamicFields),
+          additiveFields,
+          maxLengths,
         )
       ) {
         return {
@@ -1430,6 +1452,20 @@ export class x402ResourceServer {
     )) {
       try {
         const directive = await hook(resultContext);
+        if (directive && "abort" in directive && directive.abort) {
+          await this.dispatchVerifiedPaymentCanceled(
+            context.paymentPayload,
+            context.requirements,
+            context.declaredExtensions,
+            { reason: "after_verify_aborted" },
+            context.transportContext,
+          );
+          return {
+            isValid: false,
+            invalidReason: directive.reason,
+            invalidMessage: directive.message,
+          };
+        }
         if (directive && "skipHandler" in directive && directive.skipHandler) {
           skipHandler = directive.response ?? {};
         }
@@ -1508,9 +1544,9 @@ export class x402ResourceServer {
    * @param fallbackTransportContext - Optional transport-specific context
    */
   private async dispatchVerifiedPaymentCanceled(
-    paymentPayload: PaymentPayload,
-    requirements: PaymentRequirements,
-    declaredExtensions: Record<string, unknown>,
+    paymentPayload: DeepReadonly<PaymentPayload>,
+    requirements: DeepReadonly<PaymentRequirements>,
+    declaredExtensions: DeepReadonly<Record<string, unknown>>,
     options: VerifiedPaymentCancelOptions,
     fallbackTransportContext?: unknown,
   ): Promise<void> {
@@ -1659,13 +1695,23 @@ function omitFields(value: unknown, fields?: string[]): unknown {
 
 /**
  * Returns whether a client-echoed extension payload preserves the server advertisement.
+ * Fields listed in `additiveFields` (e.g. builder-code `s`) allow the echo to add array
+ * entries; every other array field must match exactly via `deepEqual`, same as the
+ * exact-match arrays required when matching a client's selected `extra` fields.
  *
  * @param advertised - Extension info advertised by the server.
  * @param echoed - Extension info echoed back by the client.
+ * @param additiveFields - Field names whose array values may be extended by the echo.
+ * @param maxLengths - Combined-length caps for additive fields, keyed by field name.
  * @returns True when `echoed` contains every field from `advertised`.
  */
-function extensionInfoMatchesAdvertised(advertised: unknown, echoed: unknown): boolean {
-  return objectContainsSubset(advertised, echoed);
+function extensionInfoMatchesAdvertised(
+  advertised: unknown,
+  echoed: unknown,
+  additiveFields?: ReadonlySet<string>,
+  maxLengths?: Record<string, number>,
+): boolean {
+  return objectContainsSubset(advertised, echoed, additiveFields, maxLengths);
 }
 
 /**
@@ -1698,13 +1744,50 @@ function paymentRequirementsMatchAccepted(
 
 /**
  * Recursively checks that `actual` contains every field and value from `expected`.
- * Object values may contain additional fields; arrays and primitives must match exactly.
+ * Object values may contain additional fields. Primitives must match exactly.
+ *
+ * When the current field's name is in `additiveFields` (e.g. builder-code `s`) and
+ * either side is an array, the array is additive: every element of `expected` must
+ * appear in `actual` (extra elements allowed), and a bare scalar on either side is
+ * treated as a single-element array so it compares against an array on the other
+ * side. When `fieldKey` also has an entry in `maxLengths`, `actual` is rejected
+ * outright if it exceeds that combined length, rather than being accepted and
+ * silently truncated downstream. Every other array field - including
+ * payment-requirements `extra` matching, which never passes `additiveFields` - must
+ * match exactly via `deepEqual`, same as any other primitive.
  *
  * @param expected - Required subset.
  * @param actual - Candidate object.
+ * @param additiveFields - Field names whose array values may be extended by `actual`.
+ * @param maxLengths - Combined-length caps for additive fields, keyed by field name.
+ * @param fieldKey - Name of the field being compared at this recursion level, used to
+ *   test membership in `additiveFields`; undefined at the root call.
  * @returns True when `actual` contains `expected`.
  */
-function objectContainsSubset(expected: unknown, actual: unknown): boolean {
+function objectContainsSubset(
+  expected: unknown,
+  actual: unknown,
+  additiveFields?: ReadonlySet<string>,
+  maxLengths?: Record<string, number>,
+  fieldKey?: string,
+): boolean {
+  if (
+    fieldKey !== undefined &&
+    additiveFields?.has(fieldKey) &&
+    (Array.isArray(expected) || Array.isArray(actual))
+  ) {
+    const expectedArray = toComparableArray(expected);
+    const actualArray = toComparableArray(actual);
+    if (!expectedArray || !actualArray) {
+      return false;
+    }
+    const maxLength = maxLengths?.[fieldKey];
+    if (maxLength !== undefined && actualArray.length > maxLength) {
+      return false;
+    }
+    return expectedArray.every(expItem => actualArray.some(actItem => deepEqual(expItem, actItem)));
+  }
+
   if (expected === null || typeof expected !== "object" || Array.isArray(expected)) {
     return deepEqual(expected, actual);
   }
@@ -1719,7 +1802,7 @@ function objectContainsSubset(expected: unknown, actual: unknown): boolean {
     if (!hasActualKey) {
       return value === undefined;
     }
-    return objectContainsSubset(value, actualRecord[key]);
+    return objectContainsSubset(value, actualRecord[key], additiveFields, maxLengths, key);
   });
 }
 

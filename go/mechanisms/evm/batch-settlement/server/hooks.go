@@ -26,19 +26,58 @@ const (
 	maxPendingTtlMs = 10 * 60 * 1000 // 10 minutes
 )
 
-// BeforeVerifyHook reserves the channel for this request via an atomic
-// UpdateChannel call. Three outcomes are possible:
-//   - busy: a live (unexpired) reservation already exists → abort
-//   - mismatch: client's signed cap does not match server's expected base →
-//     remember the snapshot so EnrichPaymentRequiredResponse can return
-//     corrective state, then abort with ErrCumulativeAmountMismatch
-//   - reserved: write a new PendingRequest into storage and merge the
-//     channelId/pendingId/snapshot into the per-payload request context so
-//     AfterVerifyHook / BeforeSettleHook can commit (or release) it
-//
-// When no local channel record exists, a provisional one is created so the
-// reservation has somewhere to live; ClearPendingRequest will delete it
-// later if the request fails (snapshot is nil).
+func pendingExpiresAt(maxTimeoutSeconds int, now int64) int64 {
+	ttl := int64(maxTimeoutSeconds) * 1000
+	if ttl < minPendingTtlMs {
+		ttl = minPendingTtlMs
+	}
+	if ttl > maxPendingTtlMs {
+		ttl = maxPendingTtlMs
+	}
+	return now + ttl
+}
+
+func isPendingLive(pending *PendingRequest, now int64) bool {
+	return pending != nil && pending.ExpiresAt > now
+}
+
+func verificationStateUnavailable() *x402.BeforeHookResult {
+	return &x402.BeforeHookResult{
+		Abort:   true,
+		Reason:  batchsettlement.ErrVerificationStateUnavailable,
+		Message: "Unable to establish channel verification state",
+	}
+}
+
+func verificationStateUnavailableAfter() *x402.AfterVerifyResult {
+	return &x402.AfterVerifyResult{
+		Abort:   true,
+		Reason:  batchsettlement.ErrVerificationStateUnavailable,
+		Message: "Unable to establish channel verification state",
+	}
+}
+
+func inferMissingLocalChargedAmount(signedMaxClaimable, price string, isPaidPayload bool) string {
+	if !isPaidPayload {
+		return signedMaxClaimable
+	}
+	signed, ok := new(big.Int).SetString(signedMaxClaimable, 10)
+	if !ok {
+		signed = big.NewInt(0)
+	}
+	amount, ok := new(big.Int).SetString(price, 10)
+	if !ok {
+		amount = big.NewInt(0)
+	}
+	if signed.Cmp(amount) < 0 {
+		return "0"
+	}
+	return new(big.Int).Sub(signed, amount).String()
+}
+
+// BeforeVerifyHook binds the claimed channelId and reads a channel snapshot.
+// This phase performs no storage mutation. Reservation + persist happen in
+// AfterVerifyHook after successful verification.
 func (s *BatchSettlementEvmScheme) BeforeVerifyHook() x402.BeforeVerifyHook {
 	return func(ctx x402.VerifyContext) (*x402.BeforeHookResult, error) {
 		if ctx.Requirements.GetScheme() != batchsettlement.SchemeBatched {
@@ -58,140 +97,94 @@ func (s *BatchSettlementEvmScheme) BeforeVerifyHook() x402.BeforeVerifyHook {
 			return nil, nil
 		}
 		rawChannelId, _ := voucherFields["channelId"].(string)
-		channelId := batchsettlement.NormalizeChannelId(rawChannelId)
 		signedMaxStr, _ := voucherFields["maxClaimableAmount"].(string)
 		signature, _ := voucherFields["signature"].(string)
-		signedMax, _ := new(big.Int).SetString(signedMaxStr, 10)
-		if signedMax == nil {
-			signedMax = big.NewInt(0)
+
+		cfgMap, _ := payload["channelConfig"].(map[string]interface{})
+		cfg, cfgErr := batchsettlement.ChannelConfigFromMap(cfgMap)
+		if cfgErr != nil {
+			return verificationStateUnavailable(), nil //nolint:nilerr // map storage/parse failures to fail-closed abort
 		}
 
-		reqAmount, _ := new(big.Int).SetString(ctx.Requirements.GetAmount(), 10)
-		if reqAmount == nil {
-			reqAmount = big.NewInt(0)
+		if bindErr := batchsettlement.ChannelIdBindingError(cfg, rawChannelId, ctx.Requirements.GetNetwork()); bindErr != "" {
+			return &x402.BeforeHookResult{
+				Abort:   true,
+				Reason:  bindErr,
+				Message: "Channel id does not match channel config",
+			}, nil
+		}
+
+		channelId := rawChannelId
+		if normalized, err := batchsettlement.NormalizeChannelId(rawChannelId); err == nil {
+			channelId = normalized
 		}
 
 		now := time.Now().UnixMilli()
 		pendingNonce, err := evm.CreateNonce()
 		if err != nil {
-			return nil, fmt.Errorf("create pending nonce: %w", err)
+			return verificationStateUnavailable(), nil //nolint:nilerr // map nonce failures to fail-closed abort
 		}
 		pendingId := pendingNonce
 
-		var (
-			outcomeStatus      string // "busy" | "mismatch" | "reserved"
-			outcomeChannel     *ChannelSession
-			outcomePrevSession *ChannelSession // when "reserved" with existing row
-		)
-
-		_, updateErr := s.storage.UpdateChannel(channelId, func(current *ChannelSession) *ChannelSession {
-			// A live (unexpired) reservation already exists → abort.
-			if current != nil && current.PendingRequest != nil && current.PendingRequest.ExpiresAt > now {
-				outcomeStatus = "busy"
-				return current
-			}
-
-			var prevCharged *big.Int
-			if current != nil {
-				prevCharged, _ = new(big.Int).SetString(current.ChargedCumulativeAmount, 10)
-			}
-			if prevCharged == nil {
-				// When storage has no row yet, derive a sensible charged base so
-				// the mismatch check still works for the first request on a
-				// brand-new channel.
-				switch {
-				case !isPaid:
-					prevCharged = new(big.Int).Set(signedMax)
-				case signedMax.Cmp(reqAmount) < 0:
-					prevCharged = big.NewInt(0)
-				default:
-					prevCharged = new(big.Int).Sub(signedMax, reqAmount)
-				}
-			}
-
-			var expectedMax *big.Int
-			if isZeroCharge {
-				expectedMax = new(big.Int).Set(prevCharged)
-			} else {
-				expectedMax = new(big.Int).Add(prevCharged, reqAmount)
-			}
-
-			if signedMax.Cmp(expectedMax) != 0 {
-				outcomeStatus = "mismatch"
-				if current != nil {
-					outcomeChannel = current
-				} else {
-					outcomeChannel = buildProvisionalChannelFromPayload(
-						channelId, signedMaxStr, signature, payload, prevCharged.String(), now,
-					)
-				}
-				return current
-			}
-
-			outcomeStatus = "reserved"
-			outcomePrevSession = current
-			next := &ChannelSession{}
-			if current != nil {
-				cp := *current
-				next = &cp
-			} else {
-				prov := buildProvisionalChannelFromPayload(
-					channelId, signedMaxStr, signature, payload, prevCharged.String(), now,
-				)
-				next = prov
-			}
-			// Compute the reservation expiry as now + clamp(maxTimeoutSeconds*1000, [min,max]) ms.
-			ttl := int64(ctx.Requirements.GetMaxTimeoutSeconds()) * 1000
-			if ttl < minPendingTtlMs {
-				ttl = minPendingTtlMs
-			}
-			if ttl > maxPendingTtlMs {
-				ttl = maxPendingTtlMs
-			}
-			next.PendingRequest = &PendingRequest{
-				PendingId:          pendingId,
-				SignedMaxClaimable: signedMaxStr,
-				ExpiresAt:          now + ttl,
-			}
-			next.LastRequestTimestamp = now
-			return next
-		})
-		if updateErr != nil {
-			return nil, updateErr
+		channelSnapshot, getErr := s.storage.Get(channelId)
+		if getErr != nil {
+			return verificationStateUnavailable(), nil //nolint:nilerr // map storage failures to fail-closed abort
 		}
 
-		switch outcomeStatus {
-		case "busy":
-			return &x402.BeforeHookResult{
-				Abort:   true,
-				Reason:  batchsettlement.ErrChannelBusy,
-				Message: "Channel is already processing a request",
-			}, nil
-		case "mismatch":
-			s.RememberChannelSnapshot(ctx.Payload, outcomeChannel)
+		chargedCumulativeAmount := inferMissingLocalChargedAmount(signedMaxStr, ctx.Requirements.GetAmount(), isPaid)
+		if channelSnapshot != nil {
+			chargedCumulativeAmount = channelSnapshot.ChargedCumulativeAmount
+		}
+
+		prevCharged, _ := new(big.Int).SetString(chargedCumulativeAmount, 10)
+		if prevCharged == nil {
+			prevCharged = big.NewInt(0)
+		}
+		reqAmount, _ := new(big.Int).SetString(ctx.Requirements.GetAmount(), 10)
+		if reqAmount == nil {
+			reqAmount = big.NewInt(0)
+		}
+		signedMax, _ := new(big.Int).SetString(signedMaxStr, 10)
+		if signedMax == nil {
+			signedMax = big.NewInt(0)
+		}
+
+		var expectedMax *big.Int
+		if isZeroCharge {
+			expectedMax = new(big.Int).Set(prevCharged)
+		} else {
+			expectedMax = new(big.Int).Add(prevCharged, reqAmount)
+		}
+
+		if signedMax.Cmp(expectedMax) != 0 {
+			snapshot := channelSnapshot
+			if snapshot == nil {
+				snapshot = buildProvisionalChannelFromPayload(
+					channelId, signedMaxStr, signature, payload, prevCharged.String(), now,
+				)
+			}
+			s.RememberChannelSnapshot(ctx.Payload, snapshot)
 			return &x402.BeforeHookResult{
 				Abort:   true,
 				Reason:  batchsettlement.ErrCumulativeAmountMismatch,
 				Message: "Client voucher base does not match server state",
 			}, nil
-		case "reserved":
-			s.MergeRequestContext(ctx.Payload, BatchSettlementRequestContext{
-				ChannelId:       channelId,
-				PendingId:       pendingId,
-				ChannelSnapshot: outcomePrevSession,
-			})
+		}
 
-			// Try a local voucher verification when cached onchain state is fresh.
-			// Only voucher payloads (not deposit/refund) qualify.
-			if batchsettlement.IsVoucherPayload(payload) {
-				localResult := s.verifyVoucherLocally(ctx.Requirements, payload, outcomePrevSession, now)
-				if localResult != nil {
-					s.MergeRequestContext(ctx.Payload, BatchSettlementRequestContext{LocalVerify: true})
-					return &x402.BeforeHookResult{
-						Skip:             true,
-						SkipVerifyResult: localResult,
-					}, nil
-				}
+		s.MergeRequestContext(ctx.Payload, BatchSettlementRequestContext{
+			ChannelId:       channelId,
+			PendingId:       pendingId,
+			ChannelSnapshot: channelSnapshot,
+		})
+
+		if batchsettlement.IsVoucherPayload(payload) {
+			localResult := s.verifyVoucherLocally(ctx.Requirements, payload, channelSnapshot, now)
+			if localResult != nil {
+				s.MergeRequestContext(ctx.Payload, BatchSettlementRequestContext{LocalVerify: true})
+				return &x402.BeforeHookResult{
+					Skip:             true,
+					SkipVerifyResult: localResult,
+				}, nil
 			}
 		}
 		return nil, nil
@@ -362,9 +355,8 @@ func buildProvisionalChannelFromPayload(
 	}
 }
 
-// AfterVerifyHook returns a hook that persists channel session state after
-// successful verification.  It extracts channelId, voucher signature, and
-// onchain snapshot from the verify response and stores/updates the session.
+// AfterVerifyHook atomically reserves the channel and persists session state
+// after successful verification. Busy / stale / missing-context outcomes abort.
 //
 // For refund vouchers (refund: true), additionally returns a SkipHandler
 // directive so the resource server bypasses the application handler and
@@ -375,15 +367,13 @@ func (s *BatchSettlementEvmScheme) AfterVerifyHook() x402.AfterVerifyHook {
 			return nil, nil
 		}
 		if ctx.Result == nil || !ctx.Result.IsValid || ctx.Result.Payer == "" {
-			// Verify failed or returned invalid: release this request's reservation.
-			_ = s.ClearPendingRequest(ctx.Payload)
 			return nil, nil
 		}
 
 		payload := ctx.Payload.GetPayload()
 
 		var channelId, signedMaxClaimable, signature string
-		var channelConfig *batchsettlement.ChannelConfig
+		var channelConfig batchsettlement.ChannelConfig
 		isRefundVoucher := false
 
 		switch {
@@ -395,8 +385,7 @@ func (s *BatchSettlementEvmScheme) AfterVerifyHook() x402.AfterVerifyHook {
 			channelId = dp.Voucher.ChannelId
 			signedMaxClaimable = dp.Voucher.MaxClaimableAmount
 			signature = dp.Voucher.Signature
-			cfg := dp.ChannelConfig
-			channelConfig = &cfg
+			channelConfig = dp.ChannelConfig
 		case batchsettlement.IsVoucherPayload(payload):
 			vp, parseErr := batchsettlement.VoucherPayloadFromMap(payload)
 			if parseErr != nil {
@@ -405,8 +394,7 @@ func (s *BatchSettlementEvmScheme) AfterVerifyHook() x402.AfterVerifyHook {
 			channelId = vp.Voucher.ChannelId
 			signedMaxClaimable = vp.Voucher.MaxClaimableAmount
 			signature = vp.Voucher.Signature
-			cfg := vp.ChannelConfig
-			channelConfig = &cfg
+			channelConfig = vp.ChannelConfig
 		case batchsettlement.IsRefundPayload(payload):
 			rp, parseErr := batchsettlement.RefundPayloadFromMap(payload)
 			if parseErr != nil {
@@ -415,8 +403,7 @@ func (s *BatchSettlementEvmScheme) AfterVerifyHook() x402.AfterVerifyHook {
 			channelId = rp.Voucher.ChannelId
 			signedMaxClaimable = rp.Voucher.MaxClaimableAmount
 			signature = rp.Voucher.Signature
-			cfg := rp.ChannelConfig
-			channelConfig = &cfg
+			channelConfig = rp.ChannelConfig
 			isRefundVoucher = true
 		default:
 			return nil, nil
@@ -428,73 +415,76 @@ func (s *BatchSettlementEvmScheme) AfterVerifyHook() x402.AfterVerifyHook {
 		withdrawRequestedAt := mapIntField(ex, "withdrawRequestedAt", 0)
 		refundNonce := mapIntField(ex, "refundNonce", 0)
 
-		normalizedId := batchsettlement.NormalizeChannelId(channelId)
+		normalizedId, normErr := batchsettlement.NormalizeChannelId(channelId)
+		if normErr != nil {
+			return verificationStateUnavailableAfter(), nil //nolint:nilerr // map invalid ids to fail-closed abort
+		}
 		now := time.Now().UnixMilli()
 
-		// Only commit when current.PendingRequest.PendingId matches this
-		// request's reservation. Without a valid reservation context (e.g.
-		// hooks invoked out-of-band by tests), fall back to a plain Set so
-		// existing direct-call behavior is preserved.
 		rc := s.ReadRequestContext(ctx.Payload)
 		if rc == nil || rc.PendingId == "" {
-			prev, _ := s.storage.Get(normalizedId)
-			resolvedConfig := channelConfig
-			if resolvedConfig == nil && prev != nil {
-				resolvedConfig = &prev.ChannelConfig
-			}
-			if resolvedConfig == nil {
-				return nil, nil
-			}
-			prevCharged := totalClaimed
-			if prev != nil {
-				prevCharged = prev.ChargedCumulativeAmount
-			}
-			session := &ChannelSession{
-				ChannelId:               normalizedId,
-				ChannelConfig:           *resolvedConfig,
-				ChargedCumulativeAmount: prevCharged,
-				SignedMaxClaimable:      signedMaxClaimable,
-				Signature:               signature,
-				Balance:                 balance,
-				TotalClaimed:            totalClaimed,
-				WithdrawRequestedAt:     withdrawRequestedAt,
-				RefundNonce:             refundNonce,
-				LastRequestTimestamp:    now,
-				OnchainSyncedAt:         now,
-			}
-			if err := s.storage.Set(normalizedId, session); err != nil {
-				return nil, err
-			}
-			if isRefundVoucher {
-				return &x402.AfterVerifyResult{
-					SkipHandler: true,
-					Response: &x402.SkipHandlerDirective{
-						ContentType: "application/json",
-						Body: map[string]interface{}{
-							"message":   "Refund acknowledged",
-							"channelId": normalizedId,
-						},
-					},
-				}, nil
-			}
-			return nil, nil
+			return verificationStateUnavailableAfter(), nil
 		}
+		pendingId := rc.PendingId
+		localVerify := rc.LocalVerify
 
-		// When local verify already succeeded for a voucher payload, the cached
-		// onchain fields were trusted as-is — preserve the existing
-		// OnchainSyncedAt rather than treating this commit as a fresh sync.
+		var outcomeStatus string // "reserved" | "busy" | "stale"
+		var outcomeStaleChannel *ChannelSession
+
 		updateRes, err := s.storage.UpdateChannel(normalizedId, func(current *ChannelSession) *ChannelSession {
-			if current == nil || current.PendingRequest == nil ||
-				current.PendingRequest.PendingId != rc.PendingId {
+			var pending *PendingRequest
+			if current != nil {
+				pending = current.PendingRequest
+			}
+			if isPendingLive(pending, now) {
+				outcomeStatus = "busy"
 				return current
 			}
+
+			base := inferMissingLocalChargedAmount(signedMaxClaimable, ctx.Requirements.GetAmount(), !isRefundVoucher)
+			if current != nil {
+				base = current.ChargedCumulativeAmount
+			}
+			baseAmt, _ := new(big.Int).SetString(base, 10)
+			if baseAmt == nil {
+				baseAmt = big.NewInt(0)
+			}
+			reqAmount, _ := new(big.Int).SetString(ctx.Requirements.GetAmount(), 10)
+			if reqAmount == nil {
+				reqAmount = big.NewInt(0)
+			}
+			signedMax, _ := new(big.Int).SetString(signedMaxClaimable, 10)
+			if signedMax == nil {
+				signedMax = big.NewInt(0)
+			}
+			var expectedMax *big.Int
+			if isRefundVoucher {
+				expectedMax = new(big.Int).Set(baseAmt)
+			} else {
+				expectedMax = new(big.Int).Add(baseAmt, reqAmount)
+			}
+			if signedMax.Cmp(expectedMax) != 0 {
+				outcomeStatus = "stale"
+				if current != nil {
+					outcomeStaleChannel = current
+				} else {
+					outcomeStaleChannel = buildProvisionalChannelFromPayload(
+						normalizedId, signedMaxClaimable, signature, payload, base, now,
+					)
+				}
+				return current
+			}
+
 			onchainSyncedAt := now
-			if rc.LocalVerify && batchsettlement.IsVoucherPayload(payload) {
+			if localVerify && batchsettlement.IsVoucherPayload(payload) && current != nil {
 				onchainSyncedAt = current.OnchainSyncedAt
 			}
-			next := &ChannelSession{
+
+			outcomeStatus = "reserved"
+			return &ChannelSession{
 				ChannelId:               normalizedId,
-				ChargedCumulativeAmount: current.ChargedCumulativeAmount,
+				ChannelConfig:           channelConfig,
+				ChargedCumulativeAmount: base,
 				SignedMaxClaimable:      signedMaxClaimable,
 				Signature:               signature,
 				Balance:                 balance,
@@ -503,19 +493,35 @@ func (s *BatchSettlementEvmScheme) AfterVerifyHook() x402.AfterVerifyHook {
 				RefundNonce:             refundNonce,
 				OnchainSyncedAt:         onchainSyncedAt,
 				LastRequestTimestamp:    now,
-				PendingRequest:          current.PendingRequest,
+				PendingRequest: &PendingRequest{
+					PendingId:          pendingId,
+					SignedMaxClaimable: signedMaxClaimable,
+					ExpiresAt:          pendingExpiresAt(ctx.Requirements.GetMaxTimeoutSeconds(), now),
+				},
 			}
-			if channelConfig != nil {
-				next.ChannelConfig = *channelConfig
-			} else {
-				next.ChannelConfig = current.ChannelConfig
-			}
-			return next
 		})
 		if err != nil {
-			return nil, err
+			return verificationStateUnavailableAfter(), nil //nolint:nilerr // map storage failures to fail-closed abort
 		}
+
+		switch outcomeStatus {
+		case "busy":
+			return &x402.AfterVerifyResult{
+				Abort:   true,
+				Reason:  batchsettlement.ErrChannelBusy,
+				Message: "Channel is already processing a request",
+			}, nil
+		case "stale":
+			s.RememberChannelSnapshot(ctx.Payload, outcomeStaleChannel)
+			return &x402.AfterVerifyResult{
+				Abort:   true,
+				Reason:  batchsettlement.ErrCumulativeAmountMismatch,
+				Message: "Client voucher base does not match server state",
+			}, nil
+		}
+
 		if updateRes.Status == ChannelUpdated && updateRes.Channel != nil {
+			s.MergeRequestContext(ctx.Payload, BatchSettlementRequestContext{ReservationCommitted: true})
 			s.RememberChannelSnapshot(ctx.Payload, updateRes.Channel)
 		}
 
@@ -576,9 +582,8 @@ func (s *BatchSettlementEvmScheme) BeforeSettleHook() x402.BeforeSettleHook {
 			return nil, nil
 		}
 		channelId, _ := voucherMap["channelId"].(string)
-		normalizedId := batchsettlement.NormalizeChannelId(channelId)
 
-		session, storageErr := s.storage.Get(normalizedId)
+		session, storageErr := s.storage.Get(channelId)
 		if storageErr != nil || session == nil {
 			return &x402.BeforeHookResult{ //nolint:nilerr // storage error treated as missing session
 				Abort:   true,
@@ -609,7 +614,7 @@ func (s *BatchSettlementEvmScheme) BeforeSettleHook() x402.BeforeSettleHook {
 			committedNewCharged *big.Int
 		)
 
-		_, updateErr := s.storage.UpdateChannel(normalizedId, func(current *ChannelSession) *ChannelSession {
+		_, updateErr := s.storage.UpdateChannel(channelId, func(current *ChannelSession) *ChannelSession {
 			if current == nil {
 				outcome = "missing"
 				return current
@@ -678,7 +683,7 @@ func (s *BatchSettlementEvmScheme) BeforeSettleHook() x402.BeforeSettleHook {
 		skipExtra := &batchsettlement.BatchSettlementPaymentResponseExtra{
 			ChargedAmount: ctx.Requirements.GetAmount(),
 			ChannelState: &batchsettlement.BatchSettlementChannelStateExtra{
-				ChannelId:               normalizedId,
+				ChannelId:               channelId,
 				Balance:                 committedNew.Balance,
 				TotalClaimed:            committedNew.TotalClaimed,
 				WithdrawRequestedAt:     committedNew.WithdrawRequestedAt,
@@ -733,9 +738,8 @@ func (s *BatchSettlementEvmScheme) EnrichSettlementPayload(ctx x402.SettleContex
 		voucherMap = map[string]interface{}{}
 	}
 	channelIdStr, _ := voucherMap["channelId"].(string)
-	normalizedId := batchsettlement.NormalizeChannelId(channelIdStr)
 
-	session, storageErr := s.storage.Get(normalizedId)
+	session, storageErr := s.storage.Get(channelIdStr)
 	if storageErr != nil || session == nil {
 		return nil, errors.New(batchsettlement.ErrMissingChannel)
 	}
@@ -810,7 +814,7 @@ func (s *BatchSettlementEvmScheme) EnrichSettlementPayload(ctx x402.SettleContex
 
 	if s.receiverAuthorizerSigner != nil {
 		network := ctx.Requirements.GetNetwork()
-		authSig, err := s.SignRefund(context.Background(), normalizedId, refundAmount.String(), nonce, network)
+		authSig, err := s.SignRefund(context.Background(), channelIdStr, refundAmount.String(), nonce, network)
 		if err != nil {
 			return nil, fmt.Errorf("failed to sign refund: %w", err)
 		}
@@ -861,7 +865,7 @@ func (s *BatchSettlementEvmScheme) AfterSettleHook() x402.AfterSettleHook {
 				log.Printf("[batched] AfterSettle deposit: parse payload failed: %v", parseErr)
 				return nil //nolint:nilerr // parse failure in after-hook is non-fatal
 			}
-			normalizedId := batchsettlement.NormalizeChannelId(dp.Voucher.ChannelId)
+			normalizedId := dp.Voucher.ChannelId
 			rc := s.ReadRequestContext(ctx.Payload)
 			var pendingId string
 			if rc != nil {
@@ -937,7 +941,7 @@ func (s *BatchSettlementEvmScheme) AfterSettleHook() x402.AfterSettleHook {
 				log.Printf("[batched] AfterSettle refund: ComputeChannelId failed: %v", err)
 				return nil //nolint:nilerr
 			}
-			normalizedId := batchsettlement.NormalizeChannelId(channelId)
+			normalizedId := channelId
 			rc := s.ReadRequestContext(ctx.Payload)
 			var pendingId string
 			if rc != nil {

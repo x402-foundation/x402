@@ -405,6 +405,159 @@ describe("x402Client", () => {
         });
       });
 
+      it("merges conflicting array fields instead of replacing client values", async () => {
+        const client = new x402Client();
+        const mockClient = new MockSchemeNetworkClient("exact", {
+          x402Version: 2,
+          payload: { signature: "mock_signature" },
+        } as any);
+        client.register("eip155:8453" as Network, mockClient);
+        client.registerExtension({
+          key: "builder-code",
+          enrichPaymentPayload: async payload => ({
+            ...payload,
+            extensions: {
+              ...payload.extensions,
+              "builder-code": { info: { s: ["bc_shared", "bc_client"] } },
+            },
+          }),
+        });
+
+        const result = await client.createPaymentPayload(
+          buildPaymentRequired({
+            accepts: [
+              buildPaymentRequirements({ scheme: "exact", network: "eip155:8453" as Network }),
+            ],
+            extensions: {
+              "builder-code": {
+                info: { a: "bc_app", s: ["bc_server", "bc_shared"] },
+                schema: { type: "object" },
+              },
+            },
+          }),
+        );
+
+        expect(result.extensions?.["builder-code"]).toEqual({
+          info: { a: "bc_app", s: ["bc_shared", "bc_client", "bc_server"] },
+          schema: { type: "object" },
+        });
+      });
+
+      it("merges a scalar array field against an array on the other side", async () => {
+        const client = new x402Client();
+        const mockClient = new MockSchemeNetworkClient("exact", {
+          x402Version: 2,
+          payload: { signature: "mock_signature" },
+        } as any);
+        client.register("eip155:8453" as Network, mockClient);
+        client.registerExtension({
+          key: "builder-code",
+          enrichPaymentPayload: async payload => ({
+            ...payload,
+            extensions: {
+              ...payload.extensions,
+              "builder-code": { info: { s: ["bc_client"] } },
+            },
+          }),
+        });
+
+        const result = await client.createPaymentPayload(
+          buildPaymentRequired({
+            accepts: [
+              buildPaymentRequirements({ scheme: "exact", network: "eip155:8453" as Network }),
+            ],
+            extensions: {
+              "builder-code": {
+                info: { a: "bc_app", s: "bc_server" },
+                schema: { type: "object" },
+              },
+            },
+          }),
+        );
+
+        expect(result.extensions?.["builder-code"]).toEqual({
+          info: { a: "bc_app", s: ["bc_client", "bc_server"] },
+          schema: { type: "object" },
+        });
+      });
+
+      it("dedupes repeated entries within a single side of a merged array field", async () => {
+        const client = new x402Client();
+        const mockClient = new MockSchemeNetworkClient("exact", {
+          x402Version: 2,
+          payload: { signature: "mock_signature" },
+        } as any);
+        client.register("eip155:8453" as Network, mockClient);
+        client.registerExtension({
+          key: "builder-code",
+          enrichPaymentPayload: async payload => ({
+            ...payload,
+            extensions: {
+              ...payload.extensions,
+              "builder-code": { info: { s: ["bc_client", "bc_client"] } },
+            },
+          }),
+        });
+
+        const result = await client.createPaymentPayload(
+          buildPaymentRequired({
+            accepts: [
+              buildPaymentRequirements({ scheme: "exact", network: "eip155:8453" as Network }),
+            ],
+            extensions: {
+              "builder-code": {
+                info: { a: "bc_app", s: ["bc_server", "bc_server"] },
+                schema: { type: "object" },
+              },
+            },
+          }),
+        );
+
+        expect(result.extensions?.["builder-code"]).toEqual({
+          info: { a: "bc_app", s: ["bc_client", "bc_server"] },
+          schema: { type: "object" },
+        });
+      });
+
+      it("keeps the server array for a non-additive extension field instead of concatenating", async () => {
+        // Array concatenation is scoped to ADDITIVE_ARRAY_INFO_FIELDS (builder-code's
+        // `s`); other extensions' conflicting array fields must keep the server's
+        // value, matching x402ResourceServer's exact-match requirement for them.
+        const client = new x402Client();
+        const mockClient = new MockSchemeNetworkClient("exact", {
+          x402Version: 2,
+          payload: { signature: "mock_signature" },
+        } as any);
+        client.register("eip155:8453" as Network, mockClient);
+        client.registerExtension({
+          key: "sign-in-with-x",
+          enrichPaymentPayload: async payload => ({
+            ...payload,
+            extensions: {
+              ...payload.extensions,
+              "sign-in-with-x": { info: { resources: ["https://evil.example.com"] } },
+            },
+          }),
+        });
+
+        const result = await client.createPaymentPayload(
+          buildPaymentRequired({
+            accepts: [
+              buildPaymentRequirements({ scheme: "exact", network: "eip155:8453" as Network }),
+            ],
+            extensions: {
+              "sign-in-with-x": {
+                info: { resources: ["https://api.example.com/data"] },
+              },
+            },
+          }),
+        );
+
+        expect(result.extensions?.["sign-in-with-x"]).toEqual({
+          info: { resources: ["https://api.example.com/data"] },
+        });
+      });
+
       it("should call scheme client's createPaymentPayload", async () => {
         const client = new x402Client();
         const mockClient = new MockSchemeNetworkClient("exact");
@@ -768,17 +921,23 @@ describe("x402Client", () => {
       });
     });
 
-    it("should NOT invoke extension when key is not in paymentRequired.extensions", async () => {
+    it("should invoke registered extension enrichPaymentPayload even when key is not in paymentRequired.extensions", async () => {
       const client = new x402Client();
       const mockClient = new MockSchemeNetworkClient("exact");
       client.register("eip155:84532" as Network, mockClient);
 
       let enrichCalled = false;
       client.registerExtension({
-        key: "missingExtension",
+        key: "clientOwnedExtension",
         enrichPaymentPayload: async payload => {
           enrichCalled = true;
-          return payload;
+          return {
+            ...payload,
+            extensions: {
+              ...payload.extensions,
+              clientOwnedExtension: { info: { s: "client_data" } },
+            },
+          };
         },
       });
 
@@ -792,9 +951,12 @@ describe("x402Client", () => {
         extensions: {},
       });
 
-      await client.createPaymentPayload(paymentRequired);
+      const result = await client.createPaymentPayload(paymentRequired);
 
-      expect(enrichCalled).toBe(false);
+      expect(enrichCalled).toBe(true);
+      expect((result.extensions as Record<string, unknown>)?.clientOwnedExtension).toEqual({
+        info: { s: "client_data" },
+      });
     });
 
     it("should support chaining registerExtension", () => {

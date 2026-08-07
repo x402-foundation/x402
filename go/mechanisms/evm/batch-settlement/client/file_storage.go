@@ -3,7 +3,6 @@ package client
 import (
 	"os"
 	"path/filepath"
-	"strings"
 
 	batchsettlement "github.com/x402-foundation/x402/go/v2/mechanisms/evm/batch-settlement"
 )
@@ -19,13 +18,21 @@ func NewFileClientChannelStorage(opts batchsettlement.FileChannelStorageOptions)
 	return &FileClientChannelStorage{root: opts.Directory}
 }
 
-func (s *FileClientChannelStorage) filePath(key string) string {
-	return filepath.Join(s.root, "client", strings.ToLower(key)+".json")
+func (s *FileClientChannelStorage) filePath(key string) (string, error) {
+	id, err := batchsettlement.NormalizeChannelId(key)
+	if err != nil {
+		return "", err
+	}
+	return batchsettlement.ResolveWithinDir(filepath.Join(s.root, "client"), id+".json")
 }
 
 func (s *FileClientChannelStorage) Get(channelId string) (*BatchSettlementClientContext, error) {
+	path, err := s.filePath(channelId)
+	if err != nil {
+		return nil, err
+	}
 	out := &BatchSettlementClientContext{}
-	ok, err := batchsettlement.ReadJSONFile(s.filePath(channelId), out)
+	ok, err := batchsettlement.ReadJSONFile(path, out)
 	if err != nil {
 		return nil, err
 	}
@@ -36,11 +43,19 @@ func (s *FileClientChannelStorage) Get(channelId string) (*BatchSettlementClient
 }
 
 func (s *FileClientChannelStorage) Set(channelId string, ctx *BatchSettlementClientContext) error {
-	return batchsettlement.WriteJSONAtomic(s.filePath(channelId), ctx)
+	path, err := s.filePath(channelId)
+	if err != nil {
+		return err
+	}
+	return batchsettlement.WriteJSONAtomic(path, ctx)
 }
 
 func (s *FileClientChannelStorage) Delete(channelId string) error {
-	if err := os.Remove(s.filePath(channelId)); err != nil && !batchsettlement.IsNotExist(err) {
+	path, err := s.filePath(channelId)
+	if err != nil {
+		return err
+	}
+	if err := os.Remove(path); err != nil && !batchsettlement.IsNotExist(err) {
 		return err
 	}
 	return nil

@@ -16,11 +16,37 @@ export const SOLANA_NETWORK_REFS = {
   DEVNET: "EtWTRABZaYq6iMfeYKouRu166VU2xqa1",
 } as const;
 
-// Algorand Network References (CAIP-2 format: algorand:genesisHash)
+// Algorand Network References (full base64 genesis hash for SDK/RPC routing)
 export const ALGORAND_NETWORK_REFS = {
   MAINNET: "wGHE2Pwdvd7S12BL5FaOP20EGYesN73ktiC1qzkkit8=",
   TESTNET: "SGO1GKSzyE7IEPItTxCByw9x8FmnrCDexi9/cOUJOiI=",
 } as const;
+
+/** Canonical truncated CAIP-2 references per the Algorand namespace profile. */
+const ALGORAND_CANONICAL_REFS = {
+  MAINNET: "wGHE2Pwdvd7S12BL5FaOP20EGYesN73k",
+  TESTNET: "SGO1GKSzyE7IEPItTxCByw9x8FmnrCDe",
+} as const;
+
+/**
+ * Resolves a CAIP-2 Algorand network identifier to its full genesis hash reference.
+ *
+ * @param network - CAIP-2 network identifier (canonical or legacy full-hash form)
+ * @returns Full base64 genesis hash reference
+ */
+export function resolveAlgorandGenesisRef(network: string): string {
+  const ref = network.split(":")[1];
+  if (ref === ALGORAND_NETWORK_REFS.MAINNET || ref === ALGORAND_NETWORK_REFS.TESTNET) {
+    return ref;
+  }
+  if (ref === ALGORAND_CANONICAL_REFS.MAINNET) {
+    return ALGORAND_NETWORK_REFS.MAINNET;
+  }
+  if (ref === ALGORAND_CANONICAL_REFS.TESTNET) {
+    return ALGORAND_NETWORK_REFS.TESTNET;
+  }
+  return ref;
+}
 
 /**
  * Normalizes the payment requirements into an array.
@@ -134,7 +160,7 @@ export function getNetworkDisplayName(network: string): string {
   }
 
   if (network.startsWith("algorand:")) {
-    const ref = network.split(":")[1];
+    const ref = resolveAlgorandGenesisRef(network);
     return ref === ALGORAND_NETWORK_REFS.TESTNET ? "Algorand Testnet" : "Algorand Mainnet";
   }
 
@@ -161,7 +187,7 @@ export function isTestnetNetwork(network: string): boolean {
   }
 
   if (network.startsWith("algorand:")) {
-    const ref = network.split(":")[1];
+    const ref = resolveAlgorandGenesisRef(network);
     return ref === ALGORAND_NETWORK_REFS.TESTNET;
   }
 

@@ -62,6 +62,7 @@ class BatchSettlementRequestContext:
     pending_id: str | None = None
     channel_snapshot: Channel | None = None
     local_verify: bool = False
+    reservation_committed: bool = False
 
 
 def _default_onchain_state_ttl_ms(withdraw_delay_seconds: int) -> int:
@@ -148,6 +149,8 @@ class BatchSettlementEvmScheme:
                 existing.channel_snapshot = context.channel_snapshot
             if context.local_verify:
                 existing.local_verify = context.local_verify
+            if context.reservation_committed:
+                existing.reservation_committed = True
 
     def read_request_context(self, payload: PaymentPayload) -> BatchSettlementRequestContext | None:
         with self._request_lock:
@@ -172,7 +175,7 @@ class BatchSettlementEvmScheme:
 
     def clear_pending_request(self, payload: PaymentPayload) -> None:
         ctx = self.take_request_context(payload)
-        if not ctx or not ctx.channel_id or not ctx.pending_id:
+        if not ctx or not ctx.reservation_committed or not ctx.channel_id or not ctx.pending_id:
             return
         snapshot = ctx.channel_snapshot
 
@@ -315,7 +318,7 @@ class BatchSettlementEvmScheme:
 
         return handle_before_verify(self, context)
 
-    def after_verify(self, context: VerifyResultContext) -> SkipHandlerResult | None:
+    def after_verify(self, context: VerifyResultContext) -> AbortResult | SkipHandlerResult | None:
         from .verify import handle_after_verify
 
         return handle_after_verify(self, context)

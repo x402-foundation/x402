@@ -10,6 +10,7 @@ import {
   getFacilitatorResponseError as getCoreFacilitatorResponseError,
   PaymentCancellationDispatcher,
   SETTLEMENT_OVERRIDES_HEADER,
+  withPrivateCacheControl,
 } from "@x402/core/server";
 import type { PaymentPayload, PaymentRequirements } from "@x402/core/types";
 import { NextAdapter } from "./adapter";
@@ -58,6 +59,11 @@ export function prepareHttpServer(
   // Store initialization promise (not the result)
   // httpServer.initialize() fetches facilitator support and validates routes
   let initPromise: Promise<void> | null = syncFacilitatorOnStart ? httpServer.initialize() : null;
+  // Attach a no-op rejection handler so an early failure (e.g. a facilitator
+  // request timeout) cannot become an unhandled rejection before the first
+  // protected request awaits initPromise. The original promise is kept, so that
+  // request still observes the failure and triggers the retry path.
+  void initPromise?.catch(() => {});
   let isInitialized = false;
 
   return {
@@ -207,6 +213,10 @@ export async function handleSettlement(
     Object.entries(result.headers).forEach(([key, value]) => {
       response.headers.set(key, value);
     });
+    response.headers.set(
+      "Cache-Control",
+      withPrivateCacheControl(response.headers.get("Cache-Control")),
+    );
 
     // Strip internal settlement override header before sending to client.
     response.headers.delete(SETTLEMENT_OVERRIDES_HEADER);

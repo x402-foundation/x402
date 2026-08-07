@@ -15,8 +15,10 @@
     "lint:check": "eslint . --ext .ts"
   },
   "dependencies": {
+    "@aptos-labs/ts-sdk": "^5.2.1",
     "@keetanetwork/keetanet-client": "^0.18.1",
     "@scure/base": "^1.2.6",
+    "@x402/aptos": "workspace:*",
     "@x402/avm": "workspace:*",
     "@x402/concordium": "workspace:*",
     "@x402/evm": "workspace:*",
@@ -26,12 +28,14 @@
     "@x402/stellar": "workspace:*",
     "@x402/hedera": "workspace:*",
     "@x402/tvm": "workspace:*",
+    "@x402/xrpl": "workspace:*",
     "@x402/fetch": "workspace:*",
     "@ton/crypto": "^3.3.0",
     "@concordium/web-sdk": "^12.0.0",
     "dotenv": "^16.4.7",
     "viem": "^2.48.11",
-    "@solana/kit": "^6.1.0"
+    "@solana/kit": "^6.1.0",
+    "xrpl": "^4.6.0"
   },
   "devDependencies": {
     "@eslint/js": "^9.24.0",

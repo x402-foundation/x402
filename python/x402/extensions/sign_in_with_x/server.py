@@ -6,37 +6,45 @@ import secrets
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any
-from urllib.parse import urlparse
+from urllib.parse import urlparse, urlunparse
 
 from x402.http.types import HTTPTransportContext
 from x402.schemas.extensions import ResourceServerExtension
 from x402.schemas.hooks import ServerPaymentRequiredContext
 
 from .declare import get_signature_type
-from .hooks import CreateSIWxHookOptions, create_siwx_request_hook, create_siwx_settle_hook
+from .hooks import (
+    CreateSIWxRequestHookOptions,
+    create_siwx_request_hook,
+    create_siwx_settle_hook,
+    normalize_configured_origin,
+)
 from .schema import build_siwx_schema
 from .types import SIGN_IN_WITH_X, DeclareSIWxOptions
 
-CreateSIWxResourceServerExtensionOptions = CreateSIWxHookOptions
+CreateSIWxResourceServerExtensionOptions = CreateSIWxRequestHookOptions
+
+
+def _rebase_resource_path(resource_url: str, configured_origin: str) -> str:
+    resource = urlparse(resource_url)
+    origin = urlparse(configured_origin)
+    rebased = origin._replace(path=resource.path, query=resource.query)
+    return urlunparse(rebased)
 
 
 async def _enrich_siwx_payment_required_response(
     declaration: Any,
     context: ServerPaymentRequiredContext,
+    configured_origin: str,
 ) -> dict[str, Any]:
     decl = declaration if isinstance(declaration, dict) else declaration
     opts: DeclareSIWxOptions = decl.get("_options") or DeclareSIWxOptions()
 
-    resource_uri = opts.resource_uri
-    if not resource_uri and context.resource_info:
-        resource_uri = context.resource_info.url
+    resource_uri = ""
+    if context.resource_info:
+        resource_uri = _rebase_resource_path(context.resource_info.url, configured_origin)
 
-    domain = opts.domain
-    if not domain and resource_uri:
-        try:
-            domain = urlparse(resource_uri).hostname or ""
-        except ValueError:
-            domain = ""
+    domain = urlparse(configured_origin).netloc
 
     if opts.network:
         supported_networks = opts.network if isinstance(opts.network, list) else [opts.network]
@@ -54,8 +62,8 @@ async def _enrich_siwx_payment_required_response(
         )
 
     info: dict[str, Any] = {
-        "domain": domain or "",
-        "uri": resource_uri or "",
+        "domain": domain,
+        "uri": resource_uri,
         "version": opts.version or "1",
         "nonce": nonce,
         "issuedAt": issued_at,
@@ -81,6 +89,7 @@ def create_siwx_resource_server_extension(
     options: CreateSIWxResourceServerExtensionOptions,
 ) -> ResourceServerExtension:
     """Create a SIWX server extension for registration with x402ResourceServer."""
+    configured_origin = normalize_configured_origin(options.origin)
     settle_hook = create_siwx_settle_hook(options)
     request_hook = create_siwx_request_hook(options)
 
@@ -98,7 +107,9 @@ def create_siwx_resource_server_extension(
             declaration: Any,
             context: ServerPaymentRequiredContext,
         ) -> dict[str, Any] | None:
-            return await _enrich_siwx_payment_required_response(declaration, context)
+            return await _enrich_siwx_payment_required_response(
+                declaration, context, configured_origin
+            )
 
         @property
         def hooks(self) -> _SIWxServerHooks:

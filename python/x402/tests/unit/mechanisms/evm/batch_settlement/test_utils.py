@@ -8,11 +8,18 @@ from __future__ import annotations
 import pytest
 
 try:
+    from x402.mechanisms.evm.batch_settlement.errors import (
+        ERR_CHANNEL_ID_MISMATCH,
+        ERR_INVALID_CHANNEL_ID,
+    )
     from x402.mechanisms.evm.batch_settlement.types import ChannelConfig
     from x402.mechanisms.evm.batch_settlement.utils import (
+        channel_id_binding_error,
         coerce_bytes32,
         compute_channel_id,
         get_batch_settlement_eip712_domain,
+        is_canonical_channel_id,
+        normalize_channel_id,
     )
 except ImportError:
     pytest.skip("batch_settlement requires evm extras", allow_module_level=True)
@@ -100,3 +107,40 @@ class TestCoerceBytes32:
     def test_rejects_short_bytes(self):
         with pytest.raises(ValueError):
             coerce_bytes32(b"\x01")
+
+
+class TestIsCanonicalChannelId:
+    def test_accepts_mixed_case(self):
+        assert is_canonical_channel_id("0x" + "aB" * 32) is True
+
+    def test_rejects_short_and_path_escape(self):
+        assert is_canonical_channel_id("0xabcd") is False
+        assert is_canonical_channel_id("../../evil") is False
+        assert is_canonical_channel_id(None) is False
+
+
+class TestNormalizeChannelId:
+    def test_lowercases(self):
+        assert normalize_channel_id("0x" + "AB" * 32) == "0x" + "ab" * 32
+
+    def test_rejects_malformed(self):
+        with pytest.raises(ValueError, match=ERR_INVALID_CHANNEL_ID):
+            normalize_channel_id("../../evil")
+
+
+class TestChannelIdBindingError:
+    def test_valid_binding(self):
+        cfg = _sample_config()
+        cid = compute_channel_id(cfg, NETWORK)
+        assert channel_id_binding_error(cfg, cid, NETWORK) is None
+
+    def test_malformed(self):
+        assert (
+            channel_id_binding_error(_sample_config(), "0xabcd", NETWORK) == ERR_INVALID_CHANNEL_ID
+        )
+
+    def test_mismatch(self):
+        assert (
+            channel_id_binding_error(_sample_config(), "0x" + "ab" * 32, NETWORK)
+            == ERR_CHANNEL_ID_MISMATCH
+        )

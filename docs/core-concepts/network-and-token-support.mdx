@@ -10,16 +10,18 @@ x402 uses [CAIP-2](https://chainagnostic.org/CAIPs/caip-2) standard network iden
 - **EVM networks**: `eip155:<chainId>` — any EVM chain is supported (e.g., `eip155:8453` for Base)
 - **Solana**: `solana:<genesisHash>` (first 32 bytes of the genesis block hash)
 - **TON (TVM)**: `tvm:<workchain>` (e.g., `tvm:-239` for mainnet, `tvm:-3` for testnet)
-- **Algorand**: `algorand:<genesisHash>` (base64-encoded genesis hash)
+- **Algorand**: `algorand:<reference>` — URL-safe base64 of the genesis hash, first 32 characters ([Algorand CAIP-2 profile](https://namespaces.chainagnostic.org/algorand/caip2))
 - **Stellar**: `stellar:<network>` (`pubnet` or `testnet`)
 - **Aptos**: `aptos:<chainId>` (e.g., `aptos:1` for mainnet)
 - **Hedera**: `hedera:<network>` (`mainnet` or `testnet`)
 - **Keeta**: `keeta:<networkId>` (e.g., `keeta:21378` for mainnet)
+- **NEAR**: `near:<network>` (`mainnet` or `testnet`)
 - **Concordium**: `ccd:<genesisHash>` (e.g., `ccd:9dd9ca4d19e9393877d2c44b70f89acb` for mainnet)
+- **XRPL**: `xrpl:<networkId>` (e.g., `xrpl:0` for mainnet, `xrpl:1` for testnet)
 
 ## Token Support
 
-x402 supports tokens on EVM, Solana, TON, Algorand (AVM), Stellar, Aptos, Hedera, Keeta, and Concordium networks:
+x402 supports tokens on EVM, Solana, TON, Algorand (AVM), Stellar, Aptos, Hedera, Keeta, NEAR, Concordium, and XRPL networks:
 
 | Ecosystem | Supported Tokens | Transfer Method |
 |-----------|------------------|-----------------|
@@ -31,9 +33,13 @@ x402 supports tokens on EVM, Solana, TON, Algorand (AVM), Stellar, Aptos, Hedera
 | **Aptos** | Any fungible asset | `primary_fungible_store::transfer` |
 | **Hedera** | HBAR or any HTS fungible token | Hedera Transfer Transaction |
 | **Keeta** | Any Keeta token | `SEND` operation |
+| **NEAR** | Any NEP-141 token | NEP-366 `SignedDelegate` authorizing `ft_transfer` |
 | **Concordium** | CCD or any PLT token (e.g., EURR) | Sponsored V1 transfer |
+| **XRPL** | XRP or any issued currency (e.g., RLUSD) | Payer-signed `Payment` transaction |
 
 Facilitators support **networks**, not specific tokens — any compatible token works on any facilitator that supports that network.
+
+For NEAR, the payer signs a delegated NEP-141 transfer. The facilitator relayer sponsors NEAR gas and the required `1` yoctoNEAR deposit, so the payer spends only the NEP-141 token amount.
 
 ## Production Network Support
 
@@ -111,7 +117,7 @@ When you use `"$0.01"` syntax, x402 needs to know which stablecoin to use. The f
 | Stable Testnet | `eip155:2201` | `0x78Cf24370174180738C5B8E352B6D14c83a6c9A9` | USDT0 | 6 | EIP-3009 |
 | MegaETH | `eip155:4326` | `0xFAfDdbb3FC7688494971a79cc65DCa3EF82079E7` | MegaUSD | 18 | Permit2 + EIP-2612 |
 | Mezo | `eip155:31612` | `0xdD468A1DDc392dcdbEf6db6e34E89AA338F9F186` | Mezo USD | 18 | Permit2 + EIP-2612 |
-| Mezo Testnet | `eip155:31611` | `0x118917a40FAf1CD7a13dB0Ef56C86De7973Ac503` | Mezo USD | 18 | Permit2 + EIP-2612 |
+| Mezo Testnet | `eip155:31611` | `0x118917a40FAF1CD7a13dB0Ef56C86De7973Ac503` | Mezo USD | 18 | Permit2 + EIP-2612 |
 | Radius | `eip155:723487` | `0x33ad9e4BD16B69B5BFdED37D8B5D9fF9aba014Fb` | Stable Coin | 6 | Permit2 + EIP-2612 |
 | Radius Testnet | `eip155:72344` | `0x33ad9e4BD16B69B5BFdED37D8B5D9fF9aba014Fb` | Stable Coin | 6 | Permit2 + EIP-2612 |
 | ADI Chain | `eip155:36900` | `0x9cb8142aEBBcdc60AF7c97Af897A67A8f3CA71C2` | USDC.e | 6 | EIP-3009 |
@@ -120,6 +126,9 @@ When you use `"$0.01"` syntax, x402 needs to know which stablecoin to use. The f
 | XDC Network | `eip155:50` | `0xfA2958CB79b0491CC627c1557F441eF849Ca8eb1` | USDC | 6 | EIP-3009 |
 | XDC Apothem Testnet | `eip155:51` | `0xb5AB69F7bBada22B28e79C8FFAECe55eF1c771D4` | USDC | 6 | EIP-3009 |
 | Igra | `eip155:38833` | `0xA5b8BF902b2844dA17d4506cc827F7F1681735E7` | USDC | 6 | Permit2 |
+| Flare | `eip155:14` | `0xe7cd86e13AC4309349F30B3435a9d337750fC82D` | USD₮0 | 6 | EIP-3009 |
+| Celo | `eip155:42220` | `0xcebA9300f2b948710d2653dD7B07f33A8B32118C` | USDC | 6 | EIP-3009 |
+| Celo Sepolia | `eip155:11142220` | `0x01C5C0122039549AD1493B8220cABEdD739BC44E` | USDC | 6 | EIP-3009 |
 
 
 
@@ -141,8 +150,8 @@ When you use `"$0.01"` syntax, x402 needs to know which stablecoin to use. The f
 
 | Chain | CAIP-2 | ASA ID | Decimals |
 |-------|--------|--------|----------|
-| Algorand Mainnet | `algorand:wGHE2Pwdvd7S12BL5FaOP20EGYesN73ktiC1qzkkit8=` | `31566704` (USDC) | 6 |
-| Algorand Testnet | `algorand:SGO1GKSzyE7IEPItTxCByw9x8FmnrCDexi9/cOUJOiI=` | `10458941` (USDC) | 6 |
+| Algorand Mainnet | `algorand:wGHE2Pwdvd7S12BL5FaOP20EGYesN73k` | `31566704` (USDC) | 6 |
+| Algorand Testnet | `algorand:SGO1GKSzyE7IEPItTxCByw9x8FmnrCDe` | `10458941` (USDC) | 6 |
 
 ### Stellar
 
@@ -173,6 +182,13 @@ HBAR (native token) is also supported using asset ID `0.0.0`, with amounts in ti
 |-------|--------|---------------|----------|
 | Keeta Mainnet | `keeta:21378` | `keeta_amnkge74xitii5dsobstldatv3irmyimujfjotftx7plaaaseam4bntb7wnna` (USDC) | 6 |
 | Keeta Testnet | `keeta:1413829460` | `keeta_apna75yhhvnv4ei7ape55hndk4yepno7a7i2mhtiwahiygixjcnmvswxhnmnk` (USDC) | 6 |
+
+### NEAR
+
+| Chain | CAIP-2 | Token Contract | Decimals |
+|-------|--------|----------------|----------|
+| NEAR Mainnet | `near:mainnet` | `17208628f84f5d6ad33f0da3bbbeb27ffcb398eac501a31bd6ad2011e36133a1` (USDC) | 6 |
+| NEAR Testnet | `near:testnet` | `3e2210e1184b45b64c8a434c0a7e7b23cc04ea7eb7a6c3c32520d03d4afcb8af` (USDC) | 6 |
 
 ## Adding Support for New Networks
 
@@ -283,7 +299,7 @@ Network support in x402 depends on which facilitator you use. See [Facilitators]
 
 ### x402.org Facilitator
 
-* **Supports**: `eip155:84532` (Base Sepolia), `solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1` (Solana Devnet), `stellar:testnet` (Stellar Testnet), `aptos:2` (Aptos Testnet), `hedera:testnet` (Hedera Testnet)
+* **Supports**: `eip155:84532` (Base Sepolia), `solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1` (Solana Devnet), `stellar:testnet` (Stellar Testnet), `aptos:2` (Aptos Testnet), `hedera:testnet` (Hedera Testnet), `xrpl:1` (XRPL Testnet)
 * **Notes**: Recommended for testing and development. This is the default facilitator in the x402 packages and requires no setup.
 
 ### Production Facilitators
@@ -294,7 +310,7 @@ Multiple production-ready facilitators are available supporting various networks
 
 | Facilitator Type | Networks Supported | Production Ready | Requirements |
 | ---------------- | ------------------ | ---------------- | ------------ |
-| x402.org (Default) | `eip155:84532`, `solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1`, `stellar:testnet`, `aptos:2`, `hedera:testnet` | Testnet only | None |
+| x402.org (Default) | `eip155:84532`, `solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1`, `stellar:testnet`, `aptos:2`, `hedera:testnet`, `xrpl:1` | Testnet only | None |
 | [Production Facilitators](/dev-tools/facilitators) | Various (Base, Solana, Polygon, Avalanche, etc.) | Yes | Varies |
 | Self-hosted | Any network  | Yes | Technical setup |
 
@@ -312,14 +328,14 @@ Video Guide: [Adding EVM Chains to x402](https://x.com/jaycoolh/status/192085155
 
 ## Getting Help
 
-* Join the [x402 Discord community](https://discord.gg/cdp)
+* Join the [x402 Slack community](http://slack.x402.org/)
 * Check the [x402 GitHub repository](https://github.com/x402-foundation/x402)
 
 ## Summary
 
 Key takeaways:
 
-* **Any EVM chain** is supported via `eip155:<chainId>` — plus Solana, TON (TVM), Algorand (AVM), Stellar, Aptos, Hedera, Keeta, and Concordium
+* **Any EVM chain** is supported via `eip155:<chainId>` — plus Solana, TON (TVM), Algorand (AVM), Stellar, Aptos, Hedera, Keeta, NEAR, Concordium, and XRPL
 * [Default assets](#default-assets-for-dollar-string-pricing) are a convenience for `"$0.01"` dollar-string pricing; explicit `TokenAmount` works on any chain
 * Any ERC-20 token works on any EVM facilitator (via EIP-3009 or Permit2)
 * CAIP-2 identifiers provide unambiguous cross-chain support

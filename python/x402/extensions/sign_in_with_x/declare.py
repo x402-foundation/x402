@@ -24,11 +24,6 @@ def declare_siwx_extension(options: DeclareSIWxOptions | None = None) -> dict[st
     opts = options or DeclareSIWxOptions()
     info = SIWxExtensionInfo(version=opts.version or "1")
 
-    if opts.domain:
-        info.domain = opts.domain
-    if opts.resource_uri:
-        info.uri = opts.resource_uri
-        info.resources = [opts.resource_uri]
     if opts.statement:
         info.statement = opts.statement
 

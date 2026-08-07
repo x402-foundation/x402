@@ -132,6 +132,10 @@ Yes. Programmatic wallets (e.g., **CDP Wallet API**, **viem**, **ethers‑v6** H
 * Confirm your wallet has _mainnet_ USDC.
 * Gas fees are higher on mainnet; fund the wallet with a small amount of ETH for gas.
 
+#### My service settles payments but doesn't appear in a facilitator's catalog — why?
+
+Catalog indexing is a **facilitator implementation detail**, not something the x402 OSS repo controls. Contact the facilitator or catalog operator you're using first. For common self-checks (echoed `bazaar` extension, SDK helpers, async indexing) and [reference server examples](https://github.com/x402-foundation/x402/tree/main/examples), see [Bazaar — Troubleshooting catalog visibility](/extensions/bazaar#troubleshooting-catalog-visibility).
+
 ### Still have questions?
 
 • Open a GitHub Discussion or Issue in the [x402 repo](https://github.com/x402-foundation/x402)

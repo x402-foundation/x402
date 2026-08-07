@@ -112,7 +112,10 @@ class TestProcessSettleResponse:
         storage = InMemoryClientChannelStorage()
         process_settle_response(storage, _settle_response(None))
         process_settle_response(storage, _settle_response({}))
-        assert storage.get("0xabc") is None
+        assert (
+            storage.get("0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
+            is None
+        )
 
     def test_creates_context_when_absent(self):
         storage = InMemoryClientChannelStorage()
@@ -121,7 +124,7 @@ class TestProcessSettleResponse:
             _settle_response(
                 {
                     "channelState": {
-                        "channelId": "0xABC",
+                        "channelId": "0xAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
                         "balance": "1000",
                         "totalClaimed": "100",
                         "chargedCumulativeAmount": "100",
@@ -129,7 +132,7 @@ class TestProcessSettleResponse:
                 }
             ),
         )
-        got = storage.get("0xabc")
+        got = storage.get("0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
         assert got is not None
         assert got.balance == "1000"
         assert got.total_claimed == "100"
@@ -138,7 +141,7 @@ class TestProcessSettleResponse:
     def test_updates_existing_context_in_place(self):
         storage = InMemoryClientChannelStorage()
         storage.set(
-            "0xabc",
+            "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
             BatchSettlementClientContext(
                 balance="2000",
                 signed_max_claimable="50",
@@ -150,7 +153,7 @@ class TestProcessSettleResponse:
             _settle_response(
                 {
                     "channelState": {
-                        "channelId": "0xabc",
+                        "channelId": "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
                         "balance": "1000",
                         "totalClaimed": "100",
                         "chargedCumulativeAmount": "100",
@@ -158,7 +161,7 @@ class TestProcessSettleResponse:
                 }
             ),
         )
-        got = storage.get("0xabc")
+        got = storage.get("0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
         assert got is not None
         assert got.balance == "1000"
         # Unrelated fields are preserved.
@@ -169,19 +172,30 @@ class TestProcessSettleResponse:
 class TestUpdateChannelAfterRefund:
     def test_no_extra_deletes_record(self):
         storage = InMemoryClientChannelStorage()
-        storage.set("0xabc", BatchSettlementClientContext(balance="100"))
-        update_channel_after_refund(storage, "0xabc", None)
-        assert storage.get("0xabc") is None
+        storage.set(
+            "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            BatchSettlementClientContext(balance="100"),
+        )
+        update_channel_after_refund(
+            storage, "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", None
+        )
+        assert (
+            storage.get("0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
+            is None
+        )
 
     def test_zero_balance_keeps_sentinel_record(self):
         storage = InMemoryClientChannelStorage()
-        storage.set("0xabc", BatchSettlementClientContext(balance="100"))
+        storage.set(
+            "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            BatchSettlementClientContext(balance="100"),
+        )
         update_channel_after_refund(
             storage,
-            "0xabc",
+            "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
             {
                 "channelState": {
-                    "channelId": "0xabc",
+                    "channelId": "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
                     "balance": "0",
                     "totalClaimed": "100",
                 }
@@ -189,27 +203,30 @@ class TestUpdateChannelAfterRefund:
         )
         # Full refund: sentinel kept so subsequent refund attempts fail locally
         # with "no remaining balance" rather than triggering unnecessary I/O.
-        ctx = storage.get("0xabc")
+        ctx = storage.get("0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
         assert ctx is not None
         assert ctx.balance == "0"
         assert ctx.total_claimed == "100"
 
     def test_remaining_balance_updates_record(self):
         storage = InMemoryClientChannelStorage()
-        storage.set("0xabc", BatchSettlementClientContext(balance="100"))
+        storage.set(
+            "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            BatchSettlementClientContext(balance="100"),
+        )
         update_channel_after_refund(
             storage,
-            "0xabc",
+            "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
             {
                 "channelState": {
-                    "channelId": "0xabc",
+                    "channelId": "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
                     "balance": "30",
                     "totalClaimed": "70",
                     "chargedCumulativeAmount": "70",
                 }
             },
         )
-        got = storage.get("0xabc")
+        got = storage.get("0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
         assert got is not None
         assert got.balance == "30"
         assert got.total_claimed == "70"
@@ -218,11 +235,26 @@ class TestUpdateChannelAfterRefund:
 class TestHasAndGetChannel:
     def test_get_returns_record_case_insensitively(self):
         storage = InMemoryClientChannelStorage()
-        storage.set("0xabc", BatchSettlementClientContext(balance="100"))
-        assert get_channel(storage, "0xABC") is not None
+        storage.set(
+            "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            BatchSettlementClientContext(balance="100"),
+        )
+        assert (
+            get_channel(
+                storage, "0xAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+            )
+            is not None
+        )
 
     def test_has_channel(self):
         storage = InMemoryClientChannelStorage()
-        assert not has_channel(storage, "0xABC")
-        storage.set("0xabc", BatchSettlementClientContext(balance="100"))
-        assert has_channel(storage, "0xABC")
+        assert not has_channel(
+            storage, "0xAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+        )
+        storage.set(
+            "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            BatchSettlementClientContext(balance="100"),
+        )
+        assert has_channel(
+            storage, "0xAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+        )

@@ -230,8 +230,11 @@ func createMiddlewareHandler(server *x402http.HTTPServer, config *MiddlewareConf
 			adapter := NewNetHTTPAdapter(r)
 			reqCtx := x402http.HTTPRequestContext{
 				Adapter: adapter,
-				Path:    r.URL.Path,
-				Method:  r.Method,
+				// EscapedPath, not Path: routers dispatch on the escaped path, so
+				// matching on the decoded one lets "%2F" split a segment here but
+				// not in the router, bypassing the payment gate.
+				Path:   r.URL.EscapedPath(),
+				Method: r.Method,
 			}
 
 			// Check if route requires payment
@@ -387,6 +390,7 @@ func handlePaymentVerified(w http.ResponseWriter, r *http.Request, next http.Han
 	for key, value := range settleResult.Headers {
 		w.Header().Set(key, value)
 	}
+	w.Header().Set("Cache-Control", x402http.WithPrivateCacheControl(w.Header().Get("Cache-Control")))
 
 	// Call settlement handler if configured
 	if config.SettlementHandler != nil {

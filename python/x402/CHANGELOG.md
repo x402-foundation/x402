@@ -2,6 +2,50 @@
 
 <!-- towncrier release notes start -->
 
+## [2.18.0] - 2026-08-04
+
+### Fixed
+
+- Merge server and client builder-code `s` arrays during extension re-merge instead of dropping the client's (fully deduped, including duplicates within either side), treat echoed builder-code `s` specifically as additive (client-first, with scalar/list coercion) in extension echo validation while other extensions' array fields keep exact echo matching, and let `declare_builder_code_extension` optionally declare service codes for the application itself. ([#3027](https://github.com/x402-foundation/x402/pull/3027)) - Thanks [@ethanoroshiba](https://github.com/ethanoroshiba)!
+- Registered client extensions now always receive `enrich_payment_payload`, regardless of whether the resource server advertised the extension key in `PaymentRequired.extensions`. Server declarations continue to govern field preservation via merge and echo validation. Extensions that require a server declaration must no-op internally when the server did not advertise them.
+- Reject bazaar discovery extension schemas containing external "$ref"/"$id" values (anything other than a same-document "#" fragment) before validation, preventing an attacker-controlled schema from triggering an outbound HTTP request or local file read (SSRF/LFI, CWE-918) ([#3039](https://github.com/x402-foundation/x402/pull/3039)) - Thanks [@CarsonRoscoe](https://github.com/CarsonRoscoe)!
+- Set Cache-Control on x402 HTTP payment responses: `no-store` on 402/412 PAYMENT-REQUIRED and settlement failures, and merge `private` on 200 PAYMENT-RESPONSE success so shared caches cannot store user-specific settlement metadata. ([#2990](https://github.com/x402-foundation/x402/pull/2990)) - Thanks [@phdargen](https://github.com/phdargen)!
+- Verify the expected ERC-20 Transfer event in exact EIP-3009 settle receipts when logs are available, matching the Go SDK check from #2727 and the open TypeScript fix in #2385. ([#3032](https://github.com/x402-foundation/x402/pull/3032)) - Thanks [@SashaMIT](https://github.com/SashaMIT)!
+- `validate_extensions` now rejects a client echo whose builder-code `s` exceeds the combined client+server budget instead of accepting it and leaving truncation to the facilitator. ([#3027](https://github.com/x402-foundation/x402/pull/3027)) - Thanks [@ethanoroshiba](https://github.com/ethanoroshiba)!
+
+### Added
+
+- Add Celo mainnet (chain ID 42220) and Celo Sepolia (chain ID 11142220) support with USDC as the default stablecoin ([#3025](https://github.com/x402-foundation/x402/pull/3025)) - Thanks [@GigaHierz](https://github.com/GigaHierz) and [@claude](https://github.com/claude)!
+- Add Flare mainnet (chain ID 14) support with USD₮0 as the default stablecoin ([#3031](https://github.com/x402-foundation/x402/pull/3031)) - Thanks [@whawk46](https://github.com/whawk46)!
+- `builder-code` `s` entries now use dedicated per-party reservations (`MAX_CLIENT_SERVICE_CODES`=5, `MAX_SERVER_SERVICE_CODES`=5, `MAX_FACILITATOR_SERVICE_CODES`=1, summing to `MAX_SERVICE_CODES`=11) instead of one shared cap, and `BuilderCodeFacilitatorExtension` gained a new `service_code` field so the facilitator can append its own service code at settlement. ([#3027](https://github.com/x402-foundation/x402/pull/3027)) - Thanks [@ethanoroshiba](https://github.com/ethanoroshiba)!
+
+
+## [2.17.0] - 2026-07-27
+
+### Fixed
+
+- Cap builder-code service codes to 5 entries. ([#2912](https://github.com/x402-foundation/x402/pull/2912)) - Thanks [@phdargen](https://github.com/phdargen)!
+- Preserve streaming request bodies when retrying an HTTPX request with payment headers. ([#2899](https://github.com/x402-foundation/x402/pull/2899)) - Thanks [@realmehmetali](https://github.com/realmehmetali)!
+
+### Added
+
+- Add SVM server blockhash hints and client fallback behavior. ([#2937](https://github.com/x402-foundation/x402/pull/2937)) - Thanks [@phdargen](https://github.com/phdargen)!
+
+
+## [2.16.0] - 2026-07-17
+
+### Fixed
+
+- Defer batch-settlement channel reservation until after successful verify, validate canonical channel ids with path confinement, and allow after-verify hooks to abort with `after_verify_aborted` cleanup. ([#2863](https://github.com/x402-foundation/x402/pull/2863)) - Thanks [@phdargen](https://github.com/phdargen)!
+- Fixed auto-wrapping of custom signers extending eth_account's BaseAccount (not just LocalAccount) for x402 payment signing ([#2884](https://github.com/x402-foundation/x402/pull/2884)) - Thanks [@0xkurious](https://github.com/0xkurious)!
+- Require a configured `origin` for SIWX server integration. Challenge issuance and proof validation now bind to this operator-defined public origin instead of deriving trust from request headers or per-route declaration fields. Pass `origin` to `create_siwx_resource_server_extension()` or `create_siwx_request_hook()`; remove `domain` and `resource_uri` from `declare_siwx_extension()`. ([#2859](https://github.com/x402-foundation/x402/pull/2859)) - Thanks [@phdargen](https://github.com/phdargen)!
+- The Flask WSGI middleware now logs the exception and surfaces a settle failure (`402` with a `PAYMENT-RESPONSE` header, `success=false`) when the settlement path raises an unexpected error, instead of a silent empty-body `402`. The client-facing reason is kept generic; the raw exception detail is logged only. Mirrors the FastAPI fix in #2622. ([#2721](https://github.com/x402-foundation/x402/pull/2721)) - Thanks [@kakedashi3](https://github.com/kakedashi3)!
+
+### Removals
+
+- SIWX validation and verification results now use `is_valid`, `invalid_reason`, `invalid_message`, and `payer` instead of `valid`, `error`, and `address`. Each failure includes a machine-readable `invalid_siwx_*` code aligned with the TypeScript SDK. ([#2889](https://github.com/x402-foundation/x402/pull/2889)) - Thanks [@phdargen](https://github.com/phdargen)!
+
+
 ## [2.15.0] - 2026-07-10
 
 ### Fixed

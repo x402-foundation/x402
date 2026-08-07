@@ -135,6 +135,22 @@ func (e mockClientExtension) EnrichPaymentPayload(_ context.Context, payload typ
 	return payload, nil
 }
 
+type enrichingClientExtension struct {
+	key      string
+	enrichFn func(types.PaymentPayload, types.PaymentRequired) (types.PaymentPayload, error)
+}
+
+func (e enrichingClientExtension) Key() string {
+	return e.key
+}
+
+func (e enrichingClientExtension) EnrichPaymentPayload(_ context.Context, payload types.PaymentPayload, required types.PaymentRequired) (types.PaymentPayload, error) {
+	if e.enrichFn != nil {
+		return e.enrichFn(payload, required)
+	}
+	return payload, nil
+}
+
 func TestClientSelectPaymentRequirements(t *testing.T) {
 	client := Newx402Client()
 	mockClient := &mockSchemeNetworkClientV2{scheme: "exact"}
@@ -308,6 +324,70 @@ func TestClientCreatePaymentPayloadEchoesRegisteredExtensions(t *testing.T) {
 
 	require.Contains(t, payload.Extensions, "auth")
 	require.Contains(t, payload.Extensions, "keep")
+}
+
+func TestClientCreatePaymentPayloadEnrichesRegisteredExtensionWithoutServerDeclaration(t *testing.T) {
+	ctx := context.Background()
+	client := Newx402Client()
+	client.Register("eip155:1", &mockSchemeNetworkClientV2{scheme: "exact"})
+
+	var enrichCalled bool
+	client.RegisterExtension(enrichingClientExtension{
+		key: "clientOwnedExtension",
+		enrichFn: func(payload types.PaymentPayload, _ types.PaymentRequired) (types.PaymentPayload, error) {
+			enrichCalled = true
+			if payload.Extensions == nil {
+				payload.Extensions = map[string]interface{}{}
+			}
+			payload.Extensions["clientOwnedExtension"] = map[string]interface{}{
+				"info": map[string]interface{}{"s": "client_data"},
+			}
+			return payload, nil
+		},
+	})
+
+	payload, err := client.CreatePaymentPayload(ctx, types.PaymentRequirements{
+		Scheme:  "exact",
+		Network: "eip155:1",
+		Asset:   "USDC",
+		Amount:  "1000",
+		PayTo:   "0xrecipient",
+	}, nil, nil)
+	require.NoError(t, err)
+	require.True(t, enrichCalled)
+	require.Equal(t, map[string]interface{}{
+		"info": map[string]interface{}{"s": "client_data"},
+	}, payload.Extensions["clientOwnedExtension"])
+}
+
+func TestClientCreatePaymentPayloadServerGatedExtensionNoOpsWithoutDeclaration(t *testing.T) {
+	ctx := context.Background()
+	client := Newx402Client()
+	client.Register("eip155:1", &mockSchemeNetworkClientV2{scheme: "exact"})
+
+	var enrichCalled bool
+	client.RegisterExtension(enrichingClientExtension{
+		key: "testGasSponsoring",
+		enrichFn: func(payload types.PaymentPayload, required types.PaymentRequired) (types.PaymentPayload, error) {
+			if required.Extensions == nil || required.Extensions["testGasSponsoring"] == nil {
+				return payload, nil
+			}
+			enrichCalled = true
+			return payload, nil
+		},
+	})
+
+	_, err := client.CreatePaymentPayload(ctx, types.PaymentRequirements{
+		Scheme:  "exact",
+		Network: "eip155:1",
+		Asset:   "USDC",
+		Amount:  "1000",
+		PayTo:   "0xrecipient",
+	}, nil, map[string]interface{}{
+		"other-extension": map[string]interface{}{},
+	})
+	require.NoError(t, err)
+	require.False(t, enrichCalled)
 }
 
 func TestClientCreatePaymentPayloadValidation(t *testing.T) {
@@ -561,6 +641,149 @@ func TestMergeExtensions(t *testing.T) {
 		merged := mergeExtensions(server, client)
 		if _, ok := merged["k"].(map[string]interface{}); !ok {
 			t.Fatalf("client object should replace non-object server value, got %T", merged["k"])
+		}
+	})
+
+	t.Run("merges conflicting array fields instead of replacing", func(t *testing.T) {
+		server := map[string]interface{}{
+			"builder-code": map[string]interface{}{
+				"info": map[string]interface{}{
+					"a": "bc_app",
+					"s": []interface{}{"bc_server", "bc_shared"},
+				},
+				"schema": map[string]interface{}{"type": "object"},
+			},
+		}
+		client := map[string]interface{}{
+			"builder-code": map[string]interface{}{
+				"info": map[string]interface{}{
+					"s": []interface{}{"bc_shared", "bc_client"},
+				},
+			},
+		}
+
+		merged := mergeExtensions(server, client)
+		info := merged["builder-code"].(map[string]interface{})["info"].(map[string]interface{})
+		got, ok := asSlice(info["s"])
+		if !ok {
+			t.Fatalf("expected merged s array, got %T", info["s"])
+		}
+		want := []interface{}{"bc_shared", "bc_client", "bc_server"}
+		if !DeepEqual(got, want) {
+			t.Fatalf("expected s=%v, got %v", want, got)
+		}
+		if info["a"] != "bc_app" {
+			t.Fatalf("server a should be preserved, got %v", info["a"])
+		}
+	})
+
+	t.Run("merges []string array fields from typed Go maps", func(t *testing.T) {
+		server := map[string]interface{}{
+			"builder-code": map[string]interface{}{
+				"info": map[string]interface{}{"s": []string{"bc_server"}},
+			},
+		}
+		client := map[string]interface{}{
+			"builder-code": map[string]interface{}{
+				"info": map[string]interface{}{"s": []string{"bc_client"}},
+			},
+		}
+
+		merged := mergeExtensions(server, client)
+		info := merged["builder-code"].(map[string]interface{})["info"].(map[string]interface{})
+		got, ok := asSlice(info["s"])
+		if !ok || !DeepEqual(got, []interface{}{"bc_client", "bc_server"}) {
+			t.Fatalf("expected [bc_client bc_server], got %v", info["s"])
+		}
+	})
+
+	t.Run("merges []map[string]interface{} array fields via JSON round-trip", func(t *testing.T) {
+		server := map[string]interface{}{
+			"builder-code": map[string]interface{}{
+				"info": map[string]interface{}{
+					"s": []interface{}{map[string]interface{}{"a": 1.0}},
+				},
+			},
+		}
+		client := map[string]interface{}{
+			"builder-code": map[string]interface{}{
+				"info": map[string]interface{}{
+					"s": []map[string]interface{}{{"a": 1.0}, {"b": 2.0}},
+				},
+			},
+		}
+
+		merged := mergeExtensions(server, client)
+		info := merged["builder-code"].(map[string]interface{})["info"].(map[string]interface{})
+		got, ok := asSlice(info["s"])
+		want := []interface{}{
+			map[string]interface{}{"a": 1.0},
+			map[string]interface{}{"b": 2.0},
+		}
+		if !ok || !DeepEqual(got, want) {
+			t.Fatalf("expected %v, got %v (ok=%v)", want, got, ok)
+		}
+	})
+
+	t.Run("merges a scalar against an array on the other side", func(t *testing.T) {
+		server := map[string]interface{}{
+			"builder-code": map[string]interface{}{
+				"info": map[string]interface{}{"s": "bc_server"},
+			},
+		}
+		client := map[string]interface{}{
+			"builder-code": map[string]interface{}{
+				"info": map[string]interface{}{"s": []interface{}{"bc_client"}},
+			},
+		}
+
+		merged := mergeExtensions(server, client)
+		info := merged["builder-code"].(map[string]interface{})["info"].(map[string]interface{})
+		got, ok := asSlice(info["s"])
+		if !ok || !DeepEqual(got, []interface{}{"bc_client", "bc_server"}) {
+			t.Fatalf("expected [bc_client bc_server], got %v", info["s"])
+		}
+	})
+
+	t.Run("dedupes repeated entries within a single side of a merged array field", func(t *testing.T) {
+		server := map[string]interface{}{
+			"builder-code": map[string]interface{}{
+				"info": map[string]interface{}{"s": []interface{}{"bc_server", "bc_server"}},
+			},
+		}
+		client := map[string]interface{}{
+			"builder-code": map[string]interface{}{
+				"info": map[string]interface{}{"s": []interface{}{"bc_client", "bc_client"}},
+			},
+		}
+
+		merged := mergeExtensions(server, client)
+		info := merged["builder-code"].(map[string]interface{})["info"].(map[string]interface{})
+		got, ok := asSlice(info["s"])
+		if !ok || !DeepEqual(got, []interface{}{"bc_client", "bc_server"}) {
+			t.Fatalf("expected [bc_client bc_server], got %v", info["s"])
+		}
+	})
+
+	t.Run("keeps the server array for a non-additive extension field instead of concatenating", func(t *testing.T) {
+		// Array concatenation is scoped to additiveArrayInfoFields (builder-code's
+		// "s"); other extensions' conflicting array fields must keep the server's
+		// value, matching ValidateExtensions' exact-match requirement for them.
+		server := map[string]interface{}{
+			"sign-in-with-x": map[string]interface{}{
+				"info": map[string]interface{}{"resources": []interface{}{"https://api.example.com/data"}},
+			},
+		}
+		client := map[string]interface{}{
+			"sign-in-with-x": map[string]interface{}{
+				"info": map[string]interface{}{"resources": []interface{}{"https://evil.example.com"}},
+			},
+		}
+
+		merged := mergeExtensions(server, client)
+		info := merged["sign-in-with-x"].(map[string]interface{})["info"].(map[string]interface{})
+		if !DeepEqual(info["resources"], []interface{}{"https://api.example.com/data"}) {
+			t.Fatalf("expected server resources to be preserved, got %v", info["resources"])
 		}
 	})
 }

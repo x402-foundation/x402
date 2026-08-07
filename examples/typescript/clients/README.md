@@ -9,7 +9,16 @@ This directory contains TypeScript client examples demonstrating how to make HTT
 | [`fetch/`](./fetch/) | Using `@x402/fetch` with the native Fetch API |
 | [`axios/`](./axios/) | Using `@x402/axios` with Axios |
 | [`advanced/`](./advanced/) | Advanced patterns: lifecycle hooks, network preferences |
-| [`custom/`](./custom/) | Manual implementation using only `@x402/core` |
+| [`custom/`](./custom/) | Manual implementation without `@x402/fetch` or `@x402/axios` |
+| [`auth-capture/`](./auth-capture/) | Pays an auth-capture endpoint by signing an ERC-3009 `ReceiveWithAuthorization` |
+| [`batch-settlement/`](./batch-settlement/) | Pays a sequence of requests over one payment channel using cumulative vouchers |
+| [`builder-code/`](./builder-code/) | Verifies ERC-8021 builder-code attribution on the settlement transaction |
+| [`erc7702/`](./erc7702/) | Paying from an ERC-7702 delegated EOA |
+| [`offer-receipt/`](./offer-receipt/) | Extracts and verifies signed offers and receipts |
+| [`payment-identifier/`](./payment-identifier/) | Idempotent retries via the `payment-identifier` extension |
+| [`sign-in-with-x/`](./sign-in-with-x/) | Both SIWX flows: auth-only access and paid-once access |
+| [`mcp/`](./mcp/) | MCP client that pays for tool calls |
+| [`mcp-chatbot/`](./mcp-chatbot/) | Chatbot combining an LLM, MCP tool discovery, and x402 payments |
 
 ## Framework Examples
 
@@ -33,7 +42,7 @@ These patterns are useful for production applications that need observability, c
 
 ## Custom Implementation
 
-The **custom** directory shows how to implement x402 payment handling manually using only `@x402/core`, without any client interceptors. Use this approach when:
+The **custom** directory shows how to implement x402 payment handling manually, without any client interceptors. Use this approach when:
 
 - You need complete control over the payment flow
 - You're integrating with an HTTP client we don't have a package for
@@ -42,6 +51,6 @@ The **custom** directory shows how to implement x402 payment handling manually u
 ## Getting Started
 
 1. Pick an example directory
-2. Follow the README in that directory
+2. Follow the README in that directory, if it has one
 3. Make sure you have a [server](../servers/) running to test against
 

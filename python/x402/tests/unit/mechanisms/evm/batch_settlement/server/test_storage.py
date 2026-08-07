@@ -10,6 +10,7 @@ import threading
 import pytest
 
 try:
+    from x402.mechanisms.evm.batch_settlement.errors import ERR_INVALID_CHANNEL_ID
     from x402.mechanisms.evm.batch_settlement.server.storage import (
         Channel,
         InMemoryChannelStorage,
@@ -19,8 +20,11 @@ try:
 except ImportError:
     pytest.skip("batch_settlement requires evm extras", allow_module_level=True)
 
+TEST_CH_A = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+TEST_CH_B = "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
 
-def _sample_channel(channel_id: str = "0xch", charged: str = "10") -> Channel:
+
+def _sample_channel(channel_id: str = TEST_CH_A, charged: str = "10") -> Channel:
     return Channel(
         channel_id=channel_id,
         channel_config=ChannelConfig(
@@ -44,7 +48,12 @@ def _sample_channel(channel_id: str = "0xch", charged: str = "10") -> Channel:
 class TestGet:
     def test_missing_returns_none(self):
         s = InMemoryChannelStorage()
-        assert s.get("missing") is None
+        assert s.get(TEST_CH_A) is None
+
+    def test_malformed_raises(self):
+        s = InMemoryChannelStorage()
+        with pytest.raises(ValueError, match=ERR_INVALID_CHANNEL_ID):
+            s.get("missing")
 
     def test_returns_a_copy(self):
         s = InMemoryChannelStorage()
@@ -66,80 +75,87 @@ class TestList:
 
     def test_lists_all_channels(self):
         s = InMemoryChannelStorage()
-        s.update_channel("0xa", lambda _: _sample_channel("0xa", "1"))
-        s.update_channel("0xb", lambda _: _sample_channel("0xb", "2"))
+        s.update_channel(TEST_CH_A, lambda _: _sample_channel(TEST_CH_A, "1"))
+        s.update_channel(TEST_CH_B, lambda _: _sample_channel(TEST_CH_B, "2"))
 
         ids = sorted(c.channel_id for c in s.list())
-        assert ids == ["0xa", "0xb"]
+        assert ids == [TEST_CH_A, TEST_CH_B]
 
 
 class TestUpdateChannel:
     def test_returns_updated_when_callback_returns_new(self):
         s = InMemoryChannelStorage()
-        result = s.update_channel("0xch", lambda _: _sample_channel())
+        result = s.update_channel(TEST_CH_A, lambda _: _sample_channel())
         assert result.status == "updated"
         assert result.channel is not None
-        assert result.channel.channel_id == "0xch"
+        assert result.channel.channel_id == TEST_CH_A
 
     def test_returns_unchanged_when_callback_returns_same_object(self):
         s = InMemoryChannelStorage()
-        s.update_channel("0xch", lambda _: _sample_channel())
-        result = s.update_channel("0xch", lambda current: current)
+        s.update_channel(TEST_CH_A, lambda _: _sample_channel())
+        result = s.update_channel(TEST_CH_A, lambda current: current)
         assert result.status == "unchanged"
 
     def test_returns_deleted_when_callback_returns_none(self):
         s = InMemoryChannelStorage()
-        s.update_channel("0xch", lambda _: _sample_channel())
-        result = s.update_channel("0xch", lambda _: None)
+        s.update_channel(TEST_CH_A, lambda _: _sample_channel())
+        result = s.update_channel(TEST_CH_A, lambda _: None)
         assert result.status == "deleted"
-        assert s.get("0xch") is None
+        assert s.get(TEST_CH_A) is None
 
     def test_returns_unchanged_when_deleting_missing_channel(self):
         s = InMemoryChannelStorage()
-        result = s.update_channel("0xmissing", lambda _: None)
+        result = s.update_channel(TEST_CH_A, lambda _: None)
         assert result.status == "unchanged"
 
     def test_callback_receives_current_snapshot(self):
         s = InMemoryChannelStorage()
-        first = _sample_channel("0xch", "10")
-        s.update_channel("0xch", lambda _: first)
+        first = _sample_channel(TEST_CH_A, "10")
+        s.update_channel(TEST_CH_A, lambda _: first)
 
         captured: list[Channel | None] = []
 
         def cb(current: Channel | None) -> Channel:
             captured.append(current)
             assert current is not None
-            return _sample_channel("0xch", "20")
+            return _sample_channel(TEST_CH_A, "20")
 
-        s.update_channel("0xch", cb)
+        s.update_channel(TEST_CH_A, cb)
         assert len(captured) == 1
         assert captured[0] is not None
         assert captured[0].charged_cumulative_amount == "10"
 
     def test_callback_snapshot_is_a_copy(self):
         s = InMemoryChannelStorage()
-        s.update_channel("0xch", lambda _: _sample_channel("0xch", "10"))
+        s.update_channel(TEST_CH_A, lambda _: _sample_channel(TEST_CH_A, "10"))
 
         def mutating_cb(current: Channel | None) -> Channel | None:
             assert current is not None
             current.balance = "9999"  # mutating the snapshot
             return current  # returning same identity → "unchanged"
 
-        s.update_channel("0xch", mutating_cb)
-        assert s.get("0xch").balance == "900"
+        s.update_channel(TEST_CH_A, mutating_cb)
+        assert s.get(TEST_CH_A).balance == "900"
 
     def test_channel_id_is_case_insensitive(self):
         s = InMemoryChannelStorage()
-        s.update_channel("0xABC", lambda _: _sample_channel("0xABC", "10"))
-        assert s.get("0xabc") is not None
+        upper = "0x" + "AB" * 32
+        lower = upper.lower()
+        s.update_channel(upper, lambda _: _sample_channel(upper, "10"))
+        assert s.get(lower) is not None
+
+    def test_malformed_raises(self):
+        s = InMemoryChannelStorage()
+        with pytest.raises(ValueError, match=ERR_INVALID_CHANNEL_ID):
+            s.update_channel("../../evil", lambda _: _sample_channel())
 
     def test_concurrent_updates_do_not_deadlock(self):
         s = InMemoryChannelStorage()
-        s.update_channel("0xch", lambda _: _sample_channel())
+        s.update_channel(TEST_CH_A, lambda _: _sample_channel())
 
         def loop() -> None:
             for _ in range(50):
-                s.update_channel("0xch", lambda c: _sample_channel("0xch", "20"))
+                s.update_channel(TEST_CH_A, lambda c: _sample_channel(TEST_CH_A, "20"))
                 s.list()
 
         threads = [threading.Thread(target=loop) for _ in range(4)]
@@ -148,7 +164,7 @@ class TestUpdateChannel:
         for t in threads:
             t.join()
 
-        assert s.get("0xch") is not None
+        assert s.get(TEST_CH_A) is not None
 
 
 class TestChannelDataclass:

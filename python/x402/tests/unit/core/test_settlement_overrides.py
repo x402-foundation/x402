@@ -2,8 +2,15 @@
 
 from __future__ import annotations
 
-from x402.http.x402_http_server_base import x402HTTPServerBase
-from x402.schemas import PaymentRequirements
+from unittest.mock import MagicMock
+
+from x402.http.types import RouteConfig
+from x402.http.x402_http_server_base import (
+    PAYMENT_REQUIRED_CACHE_CONTROL,
+    with_private_cache_control,
+    x402HTTPServerBase,
+)
+from x402.schemas import PaymentRequired, PaymentRequirements, ResourceInfo
 
 
 def _requirements(amount: str = "2000") -> PaymentRequirements:
@@ -109,3 +116,32 @@ class TestHttpSettlementOverrides:
             {"amount": "7%"},
         )
         assert effective.amount == "700"
+
+
+class TestCacheControl:
+    def test_payment_required_cache_control_constant(self):
+        assert PAYMENT_REQUIRED_CACHE_CONTROL == "no-store"
+
+    def test_with_private_cache_control_without_existing_header(self):
+        assert with_private_cache_control(None) == "private"
+        assert with_private_cache_control("") == "private"
+
+    def test_with_private_cache_control_appends_private(self):
+        assert with_private_cache_control("max-age=60") == "max-age=60, private"
+
+    def test_with_private_cache_control_is_idempotent(self):
+        assert with_private_cache_control("max-age=60, private") == "max-age=60, private"
+
+    def test_create_http_response_sets_no_store(self):
+        http_server = x402HTTPServerBase(MagicMock(), {"*": RouteConfig(accepts=[])})
+        payment_required = PaymentRequired(
+            x402_version=2,
+            accepts=[],
+            resource=ResourceInfo(url="https://example.com", description="", mime_type=""),
+        )
+        response = http_server._create_http_response(
+            payment_required,
+            is_web_browser=False,
+        )
+        assert response.headers["Cache-Control"] == "no-store"
+        assert "PAYMENT-REQUIRED" in response.headers

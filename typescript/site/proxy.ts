@@ -16,7 +16,7 @@ const facilitatorUrl = process.env.FACILITATOR_URL as string;
 
 const EVM_NETWORK = "eip155:84532" as const; // Base Sepolia
 const SVM_NETWORK = "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1" as const; // Solana Devnet
-const AVM_NETWORK = "algorand:SGO1GKSzyE7IEPItTxCByw9x8FmnrCDexi9/cOUJOiI=" as const; // Algorand Testnet
+const AVM_NETWORK = "algorand:SGO1GKSzyE7IEPItTxCByw9x8FmnrCDe" as const; // Algorand Testnet
 
 // List of blocked countries and regions
 const BLOCKED_COUNTRIES = [

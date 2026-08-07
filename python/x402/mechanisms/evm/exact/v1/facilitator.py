@@ -18,6 +18,7 @@ from ...constants import (
     ERR_RECIPIENT_MISMATCH,
     ERR_SMART_WALLET_DEPLOYMENT_FAILED,
     ERR_TRANSACTION_FAILED,
+    ERR_TRANSFER_EVENT_MISMATCH,
     ERR_UNDEPLOYED_SMART_WALLET,
     ERR_UNSUPPORTED_SCHEME,
     ERR_VALID_AFTER_FUTURE,
@@ -37,6 +38,7 @@ from ..eip3009_utils import (
     parse_eip3009_authorization,
     parse_eip3009_transfer_error,
     simulate_eip3009_transfer,
+    verify_eip3009_transfer_event,
 )
 
 
@@ -385,6 +387,21 @@ class ExactEvmSchemeV1:
                 return SettleResponse(
                     success=False,
                     error_reason=ERR_TRANSACTION_FAILED,
+                    transaction=tx_hash,
+                    network=network,
+                    payer=payer,
+                )
+
+            if receipt.logs is not None and not verify_eip3009_transfer_event(
+                receipt.logs,
+                token_address,
+                from_address=parsed_authorization.from_address,
+                to=parsed_authorization.to,
+                value=parsed_authorization.value,
+            ):
+                return SettleResponse(
+                    success=False,
+                    error_reason=ERR_TRANSFER_EVENT_MISMATCH,
                     transaction=tx_hash,
                     network=network,
                     payer=payer,

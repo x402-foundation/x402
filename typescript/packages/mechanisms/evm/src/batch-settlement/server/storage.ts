@@ -1,4 +1,5 @@
 import type { ChannelConfig } from "../types";
+import { normalizeChannelId } from "../utils";
 
 export interface Channel {
   channelId: string;
@@ -62,7 +63,7 @@ export class InMemoryChannelStorage implements ChannelStorage {
    * @returns The channel record or undefined when not found.
    */
   async get(channelId: string): Promise<Channel | undefined> {
-    return this.channels.get(channelId.toLowerCase());
+    return this.channels.get(normalizeChannelId(channelId));
   }
 
   /**
@@ -85,7 +86,7 @@ export class InMemoryChannelStorage implements ChannelStorage {
     channelId: string,
     update: (current: Channel | undefined) => Channel | undefined,
   ): Promise<ChannelUpdateResult> {
-    const key = channelId.toLowerCase();
+    const key = normalizeChannelId(channelId);
     return this.withChannelLock(key, async () => {
       const current = this.channels.get(key);
       const next = update(current);

@@ -10,6 +10,7 @@ export {
   VerifyError,
   SettleError,
   FacilitatorResponseError,
+  FacilitatorTimeoutError,
   getFacilitatorResponseError,
 } from "./facilitator";
 export type {

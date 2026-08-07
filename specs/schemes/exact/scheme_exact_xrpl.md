@@ -435,10 +435,11 @@ If simulation is unavailable, implementations MUST perform targeted checks that 
 Given verified `(paymentPayload, paymentRequirements)`, the facilitator:
 
 1. Re-runs verification.
-2. Submits `signedTxBlob` to the XRPL network identified by `paymentRequirements.network`.
-3. Waits for a validated result by polling `tx` until `validated=true`.
-4. Treats settlement as successful only when the validated result is `tesSUCCESS`.
-5. Returns the transaction hash and payer address.
+2. Rejects the settlement as a duplicate when the transaction hash is already pending settlement (see [Duplicate Settlement Mitigation](#duplicate-settlement-mitigation-required)).
+3. Submits `signedTxBlob` to the XRPL network identified by `paymentRequirements.network`.
+4. Waits for a validated result by polling `tx` until `validated=true`.
+5. Treats settlement as successful only when the validated result is `tesSUCCESS`.
+6. Returns the transaction hash and payer address.
 
 ### Fee Responsibility
 
@@ -451,6 +452,27 @@ The payer pays the XRPL transaction fee because:
 ### Settlement Timeout
 
 The facilitator SHOULD wait for a validated result before returning success to prevent releasing resources for transactions that never validate.
+
+### Duplicate Settlement Mitigation (REQUIRED)
+
+#### Vulnerability
+
+Without a dedup guard, concurrent `/settle` calls carrying the same signed transaction blob each return a successful response. XRPL deduplicates the ledger effect — only one payment lands — but reliable submission is an idempotent read keyed on the transaction hash: submitting an already-known blob and waiting for its hash resolves with the same validated `tesSUCCESS` outcome for every caller instead of failing for all but the first. A malicious client can exploit this to obtain access to the resource N times while paying once.
+
+Unlike a probabilistic confirmation race, this behavior is deterministic on XRPL, so the mitigation is REQUIRED rather than RECOMMENDED.
+
+#### Required Mitigation
+
+Facilitators MUST deduplicate in-flight settlements across every process that serves `/settle`, keyed on the transaction hash. Before submitting a verified transaction:
+
+1. After verification succeeds, derive the cache key from the signed transaction blob: the canonical XRPL transaction hash (as returned by, e.g., `hashSignedTx`).
+2. If the key is already present, reject the settlement with a `"duplicate_settlement"` error.
+3. If the key is not present, record it and proceed with submission.
+4. Retain the key until its transaction can no longer land — that is, until its `LastLedgerSequence` has passed (bounded by `maxTimeoutSeconds`; see [§7. Expiry and Account Sequencing](#7-expiry-and-account-sequencing)). A shorter window reopens the race: while the transaction is still landable, a re-submission passes re-verification because the consumed sequence number — or ticket — is not yet consumed, so the entry MUST outlive that window rather than a fixed interval. (Solana's fixed ~60-90s blockhash lifetime lets its cache use a constant TTL; XRPL's expiry is policy-derived, so the retention window is too.)
+
+The check and record MUST be performed atomically with respect to concurrent settlement requests. A single-process facilitator MAY satisfy this with an in-process map (checking and inserting synchronously between the verification result and the first subsequent suspension point); a horizontally scaled facilitator MUST use a shared store providing the same atomicity, otherwise duplicates routed to different replicas each pass their local guard.
+
+Because the key is retained until the transaction expires rather than removed on completion, a re-submission of the same signed blob after a transient settlement failure is also rejected with `"duplicate_settlement"` within that window; `"duplicate_settlement"` therefore indicates the transaction was already seen, not that it settled successfully.
 
 ## `SettlementResponse`
 
@@ -488,6 +510,7 @@ Implementations MAY include additional fields when defined by the SDK or facilit
 - With `assetTransferMethod="ticketSequence"`, the ticket reserves the payment's sequencing slot at the protocol level across the `/verify` -> resource handler -> `/settle` gap.
 - With `assetTransferMethod="sequence"`, that gap is protected only cooperatively: the facilitator verifies the sequence is current at `/verify` and re-checks it at `/settle`, and clients avoid other transactions from the same account while the payment is pending. A payer that consumes the sequence elsewhere invalidates settlement after resource execution; resource servers that accept `"sequence"` accept this risk.
 - `NetworkID` provides signed network binding only for XRPL networks with `networkId > 1024`; standard XRPL networks require facilitators to route strictly by `paymentRequirements.network`.
+- Concurrent `/settle` calls carrying the same signed blob are rejected through a settlement cache keyed on the transaction hash (see [Duplicate Settlement Mitigation](#duplicate-settlement-mitigation-required)).
 - Clients SHOULD use different XRPL accounts for standard networks such as mainnet and testnet to reduce replay risk when `NetworkID` must be omitted.
 
 ### Partial Payment Protection

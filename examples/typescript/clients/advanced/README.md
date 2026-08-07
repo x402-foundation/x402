@@ -38,6 +38,7 @@ cp .env-local .env
 
 and fill required environment variables:
 
+- `APTOS_PRIVATE_KEY` - Aptos Ed25519 private key for Aptos payments (optional; `all-networks`)
 - `CCD_PRIVATE_KEY` - Concordium Ed25519 private key for Concordium payments (optional; `all-networks`)
 - `CCD_ADDRESS` - Concordium account address for Concordium payments (optional; `all-networks`)
 - `EVM_PRIVATE_KEY` - Ethereum private key for EVM payments
@@ -47,6 +48,9 @@ and fill required environment variables:
 - `HEDERA_PRIVATE_KEY` - Hedera **ECDSA** private key (0x-prefixed or DER-encoded) for Hedera payments (optional)
 - `HEDERA_NETWORK` - Hedera network (optional, defaults to `hedera:testnet`)
 - `KEETA_MNEMONIC` - Keeta mnemonic for Keeta payments
+- `XRPL_SEED` - XRPL family seed (starts with `s`) for XRPL payments (optional; `all-networks`)
+- `XRPL_NETWORK` - XRPL network CAIP-2 (optional, defaults to `xrpl:1` XRPL Testnet)
+- `XRPL_WS_URL` - Custom XRPL WebSocket endpoint (optional, defaults to the public endpoint for `XRPL_NETWORK`)
 
 2. Install and build all packages from the typescript examples root:
 
@@ -80,6 +84,13 @@ To create a Keeta Testnet wallet:
 2. Use the [Keeta Testnet Faucet](https://faucet.test.keeta.com/) to send Testnet KTA to your wallet.
 3. To get Testnet USDC on Keeta, go to the "Receive" page in the wallet, click on "Any token from Keeta Testnet", select "USDC from Base (Sepolia) Testnet" and copy the deposit address (starting with `0x`). Then go the [Circle Faucet](https://faucet.circle.com/), select Base network and enter your Base deposit address.
 
+#### Aptos Testnet
+
+For testing on Aptos testnet, you can obtain test tokens from these faucets:
+
+- **Test APT**: https://aptos.dev/network/faucet or through an account on [geomi.dev](https://geomi.dev/manage/faucet)
+- **Test USDC**: https://faucet.circle.com/
+
 #### Concordium Testnet
 
 To get test CCD:
@@ -94,6 +105,14 @@ To get test PLT, there is no universal public faucet for arbitrary PLT symbols. 
 
 1. Use a token issuer's own test distribution for the symbol you want to use, or
 2. Request your own PLT issuance on testnet, then mint/distribute balances from the nominated governance account. Official guide: [Request PLT](https://docs.concordium.com/en/mainnet/tutorials/plt/request-plt.html).
+
+#### XRPL Testnet
+
+To create and fund an XRPL Testnet payer account:
+
+1. Use the [XRPL Testnet faucet](https://xrpl.org/resources/dev-tools/xrp-faucets) to generate a funded account, and copy its family seed (starts with `s`) into `XRPL_SEED`.
+2. Keep the [base reserve](https://xrpl.org/docs/concepts/accounts/reserves) funded (currently 1 XRP; the faucet funding is more than enough). The `all-networks` example pays in XRP drops, so no further setup is needed.
+3. For issued-currency (IOU) payments, the payer needs a sufficient issued-currency balance, and the receiving account must hold a [trust line](https://xrpl.org/docs/concepts/tokens/fungible-tokens) to the issuer.
 
 ## Available Examples
 

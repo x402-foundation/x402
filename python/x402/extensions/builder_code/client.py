@@ -6,7 +6,7 @@ Attaches the client's service code(s) (``s``) to the payment payload.
 from __future__ import annotations
 
 from ...schemas import PaymentPayload, PaymentRequired
-from .types import BUILDER_CODE, BUILDER_CODE_PATTERN
+from .types import BUILDER_CODE, BUILDER_CODE_PATTERN, MAX_CLIENT_SERVICE_CODES
 
 
 class BuilderCodeClientExtension:
@@ -34,9 +34,15 @@ class BuilderCodeClientExtension:
                 alphanumeric/underscore characters.
 
         Raises:
-            ValueError: If any code is not a valid builder code.
+            ValueError: If any code is not a valid builder code, or if more than
+                ``MAX_CLIENT_SERVICE_CODES`` are given.
         """
         codes = [service_codes] if isinstance(service_codes, str) else list(service_codes)
+        if len(codes) > MAX_CLIENT_SERVICE_CODES:
+            raise ValueError(
+                f"Too many service codes: {len(codes)} exceeds the maximum of "
+                f"{MAX_CLIENT_SERVICE_CODES}."
+            )
         for code in codes:
             if not BUILDER_CODE_PATTERN.match(code):
                 raise ValueError(

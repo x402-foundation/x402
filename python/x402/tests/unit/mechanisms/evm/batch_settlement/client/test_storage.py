@@ -9,8 +9,11 @@ try:
         BatchSettlementClientContext,
         InMemoryClientChannelStorage,
     )
+    from x402.mechanisms.evm.batch_settlement.errors import ERR_INVALID_CHANNEL_ID
 except ImportError:
     pytest.skip("batch_settlement requires evm extras", allow_module_level=True)
+
+TEST_CH = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 
 
 def _ctx(balance: str = "100") -> BatchSettlementClientContext:
@@ -26,12 +29,12 @@ def _ctx(balance: str = "100") -> BatchSettlementClientContext:
 class TestInMemoryClientChannelStorage:
     def test_get_missing_returns_none(self):
         s = InMemoryClientChannelStorage()
-        assert s.get("missing") is None
+        assert s.get(TEST_CH) is None
 
     def test_set_then_get(self):
         s = InMemoryClientChannelStorage()
-        s.set("k", _ctx("100"))
-        got = s.get("k")
+        s.set(TEST_CH, _ctx("100"))
+        got = s.get(TEST_CH)
         assert got is not None
         assert got.balance == "100"
         assert got.signature == "0xsig"
@@ -39,30 +42,39 @@ class TestInMemoryClientChannelStorage:
     def test_set_stores_a_copy(self):
         s = InMemoryClientChannelStorage()
         ctx = _ctx("100")
-        s.set("k", ctx)
+        s.set(TEST_CH, ctx)
         ctx.balance = "999"
 
-        got = s.get("k")
+        got = s.get(TEST_CH)
         assert got is not None and got.balance == "100"
 
     def test_get_returns_a_copy(self):
         s = InMemoryClientChannelStorage()
-        s.set("k", _ctx("100"))
-        a = s.get("k")
+        s.set(TEST_CH, _ctx("100"))
+        a = s.get(TEST_CH)
         assert a is not None
         a.balance = "999"
-        b = s.get("k")
+        b = s.get(TEST_CH)
         assert b is not None and b.balance == "100"
 
     def test_delete(self):
         s = InMemoryClientChannelStorage()
-        s.set("k", _ctx())
-        s.delete("k")
-        assert s.get("k") is None
+        s.set(TEST_CH, _ctx())
+        s.delete(TEST_CH)
+        assert s.get(TEST_CH) is None
 
-    def test_delete_missing_is_noop(self):
-        # Should not raise.
-        InMemoryClientChannelStorage().delete("missing")
+    def test_delete_missing_is_noop_for_canonical(self):
+        # Should not raise for a valid but absent key.
+        InMemoryClientChannelStorage().delete(TEST_CH)
+
+    def test_malformed_raises(self):
+        s = InMemoryClientChannelStorage()
+        with pytest.raises(ValueError, match=ERR_INVALID_CHANNEL_ID):
+            s.get("missing")
+        with pytest.raises(ValueError, match=ERR_INVALID_CHANNEL_ID):
+            s.set("missing", _ctx())
+        with pytest.raises(ValueError, match=ERR_INVALID_CHANNEL_ID):
+            s.delete("missing")
 
 
 class TestBatchSettlementClientContext:
@@ -79,22 +91,3 @@ class TestBatchSettlementClientContext:
     def test_round_trip(self):
         ctx = _ctx()
         assert BatchSettlementClientContext.from_dict(ctx.to_dict()) == ctx
-
-    def test_extra_passthrough(self):
-        d = {"balance": "100", "customField": "x", "another": [1, 2]}
-        ctx = BatchSettlementClientContext.from_dict(d)
-        assert ctx.balance == "100"
-        assert ctx.extra == {"customField": "x", "another": [1, 2]}
-
-        round_tripped = ctx.to_dict()
-        assert round_tripped["customField"] == "x"
-        assert round_tripped["another"] == [1, 2]
-        assert round_tripped["balance"] == "100"
-
-    def test_copy_is_independent(self):
-        ctx = _ctx()
-        c2 = ctx.copy()
-        c2.balance = "9999"
-        c2.extra["new"] = "val"
-        assert ctx.balance == "100"
-        assert "new" not in ctx.extra

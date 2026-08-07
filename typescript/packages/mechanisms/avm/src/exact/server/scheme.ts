@@ -13,7 +13,8 @@ import type {
   MoneyParser,
 } from "@x402/core/types";
 import { convertToTokenAmount, numberToDecimalString, parseMoneyString } from "@x402/core/utils";
-import { USDC_CONFIG, USDC_DECIMALS } from "../../constants";
+import { USDC_CONFIG } from "../../constants";
+import { normalizeAlgorandNetwork } from "../../utils";
 
 /**
  * AVM server implementation for the Exact payment scheme.
@@ -113,28 +114,18 @@ export class ExactAvmScheme implements SchemeNetworkServer {
     // Mark unused parameter
     void extensionKeys;
 
-    // Get USDC config for the network
-    const usdcConfig = USDC_CONFIG[supportedKind.network];
-    const decimals = usdcConfig?.decimals ?? USDC_DECIMALS;
+    // Add feePayer from supportedKind.extra if provided
+    if (!supportedKind.extra?.feePayer) {
+      return Promise.resolve(paymentRequirements);
+    }
 
-    // Build enhanced requirements with feePayer and decimals
-    const enhanced: PaymentRequirements = {
+    return Promise.resolve({
       ...paymentRequirements,
       extra: {
         ...paymentRequirements.extra,
-        decimals,
-      },
-    };
-
-    // Add feePayer from supportedKind.extra if provided
-    if (supportedKind.extra?.feePayer) {
-      enhanced.extra = {
-        ...enhanced.extra,
         feePayer: supportedKind.extra.feePayer,
-      };
-    }
-
-    return Promise.resolve(enhanced);
+      },
+    });
   }
 
   /**
@@ -181,7 +172,7 @@ export class ExactAvmScheme implements SchemeNetworkServer {
     name: string;
     decimals: number;
   } {
-    const assetInfo = USDC_CONFIG[network];
+    const assetInfo = USDC_CONFIG[normalizeAlgorandNetwork(network)];
     if (!assetInfo) {
       throw new Error(`No default asset configured for network ${network}`);
     }

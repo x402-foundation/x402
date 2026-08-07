@@ -52,11 +52,13 @@ Add to the `DEFAULT_STABLECOINS` map:
 <details>
 <summary><strong>Go</strong> — <code>go/mechanisms/evm/constants.go</code></summary>
 
-Add to the `NetworkConfigs` map:
+Declare the chain ID in the `ChainID*` var block, then add to the `NetworkConfigs` map:
 
 ```go
+ChainIDYourChain = big.NewInt(YOUR_CHAIN_ID)
+
 "eip155:YOUR_CHAIN_ID": {
-    ChainID: big.NewInt(YOUR_CHAIN_ID),
+    ChainID: ChainIDYourChain,
     DefaultAsset: AssetInfo{
         Address:  "0xYOUR_STABLECOIN_ADDRESS",
         Name:     "Token Name",  // EIP-712 domain name
@@ -75,17 +77,17 @@ Add to the `NetworkConfigs` map:
 Add to the `NETWORK_CONFIGS` dict:
 
 ```python
-"eip155:YOUR_CHAIN_ID": NetworkConfig(
-    chain_id=YOUR_CHAIN_ID,
-    default_asset=AssetInfo(
-        address="0xYOUR_STABLECOIN_ADDRESS",
-        name="Token Name",       # EIP-712 domain name
-        version="1",             # EIP-712 domain version
-        decimals=6,
-        # asset_transfer_method=AssetTransferMethod.PERMIT2,  # Only if token lacks EIP-3009
-        # supports_eip2612=True,                               # Only for Permit2 tokens with EIP-2612
-    ),
-),
+"eip155:YOUR_CHAIN_ID": {
+    "chain_id": YOUR_CHAIN_ID,
+    "default_asset": {
+        "address": "0xYOUR_STABLECOIN_ADDRESS",
+        "name": "Token Name",    # EIP-712 domain name
+        "version": "1",          # EIP-712 domain version
+        "decimals": 6,
+        # "asset_transfer_method": "permit2",  # Only if token lacks EIP-3009
+        # "supports_eip2612": True,            # Only for Permit2 tokens with EIP-2612
+    },
+},
 ```
 </details>
 

@@ -6,6 +6,9 @@ import (
 	"testing"
 )
 
+const testChannelID = "0xabcdef0000000000000000000000000000000000000000000000000000000001"
+const missingChannelID = "0x0000000000000000000000000000000000000000000000000000000000000099"
+
 func sampleCtx() *BatchSettlementClientContext {
 	return &BatchSettlementClientContext{
 		ChargedCumulativeAmount: "100",
@@ -17,9 +20,39 @@ func sampleCtx() *BatchSettlementClientContext {
 	}
 }
 
+type failingClientChannelStorage struct {
+	storage   ClientChannelStorage
+	getErr    error
+	setErr    error
+	deleteErr error
+	setCalls  int
+}
+
+func (s *failingClientChannelStorage) Get(channelId string) (*BatchSettlementClientContext, error) {
+	if s.getErr != nil {
+		return nil, s.getErr
+	}
+	return s.storage.Get(channelId)
+}
+
+func (s *failingClientChannelStorage) Set(channelId string, ctx *BatchSettlementClientContext) error {
+	s.setCalls++
+	if s.setErr != nil {
+		return s.setErr
+	}
+	return s.storage.Set(channelId, ctx)
+}
+
+func (s *failingClientChannelStorage) Delete(channelId string) error {
+	if s.deleteErr != nil {
+		return s.deleteErr
+	}
+	return s.storage.Delete(channelId)
+}
+
 func TestInMemoryClientChannelStorage_GetMissing(t *testing.T) {
 	s := NewInMemoryClientChannelStorage()
-	got, err := s.Get("missing")
+	got, err := s.Get(missingChannelID)
 	if err != nil {
 		t.Fatalf("err: %v", err)
 	}
@@ -31,10 +64,10 @@ func TestInMemoryClientChannelStorage_GetMissing(t *testing.T) {
 func TestInMemoryClientChannelStorage_SetGet(t *testing.T) {
 	s := NewInMemoryClientChannelStorage()
 	in := sampleCtx()
-	if err := s.Set("ch", in); err != nil {
+	if err := s.Set(testChannelID, in); err != nil {
 		t.Fatalf("Set: %v", err)
 	}
-	got, err := s.Get("ch")
+	got, err := s.Get(testChannelID)
 	if err != nil {
 		t.Fatalf("Get: %v", err)
 	}
@@ -46,18 +79,18 @@ func TestInMemoryClientChannelStorage_SetGet(t *testing.T) {
 func TestInMemoryClientChannelStorage_ReturnsCopy(t *testing.T) {
 	s := NewInMemoryClientChannelStorage()
 	in := sampleCtx()
-	_ = s.Set("ch", in)
+	_ = s.Set(testChannelID, in)
 
 	// Mutating the input should not affect stored value.
 	in.Balance = "0"
-	got, _ := s.Get("ch")
+	got, _ := s.Get(testChannelID)
 	if got.Balance != "900" {
 		t.Fatalf("storage shares input pointer: %s", got.Balance)
 	}
 
 	// Mutating returned value should not affect storage.
 	got.Balance = "1"
-	got2, _ := s.Get("ch")
+	got2, _ := s.Get(testChannelID)
 	if got2.Balance != "900" {
 		t.Fatalf("storage shares output pointer: %s", got2.Balance)
 	}
@@ -65,16 +98,16 @@ func TestInMemoryClientChannelStorage_ReturnsCopy(t *testing.T) {
 
 func TestInMemoryClientChannelStorage_Delete(t *testing.T) {
 	s := NewInMemoryClientChannelStorage()
-	_ = s.Set("ch", sampleCtx())
-	if err := s.Delete("ch"); err != nil {
+	_ = s.Set(testChannelID, sampleCtx())
+	if err := s.Delete(testChannelID); err != nil {
 		t.Fatalf("Delete: %v", err)
 	}
-	got, _ := s.Get("ch")
+	got, _ := s.Get(testChannelID)
 	if got != nil {
 		t.Fatalf("expected nil after delete, got %+v", got)
 	}
 	// Deleting missing should not error.
-	if err := s.Delete("missing"); err != nil {
+	if err := s.Delete(missingChannelID); err != nil {
 		t.Fatalf("Delete missing: %v", err)
 	}
 }
@@ -86,12 +119,12 @@ func TestInMemoryClientChannelStorage_ConcurrentAccess(t *testing.T) {
 		wg.Add(2)
 		go func(i int) {
 			defer wg.Done()
-			_ = s.Set("ch", sampleCtx())
+			_ = s.Set(testChannelID, sampleCtx())
 			_ = i
 		}(i)
 		go func() {
 			defer wg.Done()
-			_, _ = s.Get("ch")
+			_, _ = s.Get(testChannelID)
 		}()
 	}
 	wg.Wait()

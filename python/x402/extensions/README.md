@@ -193,7 +193,12 @@ server.register_extension(create_siwx_resource_server_extension(storage=storage)
 
 routes = {
     "GET /weather": {
-        "accepts": {"scheme": "exact", "price": "$0.001", "network": "eip155:84532", "payTo": "0x..."},
+        "accepts": {
+            "scheme": "exact",
+            "price": "$0.001",
+            "network": "eip155:84532",
+            "payTo": "0x...",
+        },
         "extensions": declare_siwx_extension(),
     },
     "GET /profile": {

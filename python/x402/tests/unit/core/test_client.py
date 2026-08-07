@@ -422,6 +422,178 @@ class TestRegisterExtension:
         assert payload.extensions is not None
         assert payload.extensions["test-ext"]["enriched"] is True
 
+    @pytest.mark.asyncio
+    async def test_merges_conflicting_array_fields_instead_of_replacing(self):
+        class Ext:
+            key = "builder-code"
+
+            def enrich_payment_payload(self, payload, payment_required):
+                extensions = dict(payload.extensions or {})
+                extensions["builder-code"] = {"info": {"s": ["bc_shared", "bc_client"]}}
+                return payload.model_copy(update={"extensions": extensions})
+
+        client = x402Client()
+        client.register("eip155:8453", MockSchemeClient("exact"))
+        client.register_extension(Ext())
+
+        payment_required = PaymentRequired(
+            x402_version=2,
+            accepts=[_make_payment_requirements()],
+            extensions={
+                "builder-code": {
+                    "info": {"a": "bc_app", "s": ["bc_server", "bc_shared"]},
+                    "schema": {"type": "object"},
+                }
+            },
+        )
+        payload = await client.create_payment_payload(payment_required)
+        assert payload.extensions is not None
+        assert payload.extensions["builder-code"] == {
+            "info": {"a": "bc_app", "s": ["bc_shared", "bc_client", "bc_server"]},
+            "schema": {"type": "object"},
+        }
+
+    @pytest.mark.asyncio
+    async def test_merges_a_scalar_field_against_an_array_on_the_other_side(self):
+        class Ext:
+            key = "builder-code"
+
+            def enrich_payment_payload(self, payload, payment_required):
+                extensions = dict(payload.extensions or {})
+                extensions["builder-code"] = {"info": {"s": ["bc_client"]}}
+                return payload.model_copy(update={"extensions": extensions})
+
+        client = x402Client()
+        client.register("eip155:8453", MockSchemeClient("exact"))
+        client.register_extension(Ext())
+
+        payment_required = PaymentRequired(
+            x402_version=2,
+            accepts=[_make_payment_requirements()],
+            extensions={
+                "builder-code": {
+                    "info": {"a": "bc_app", "s": "bc_server"},
+                    "schema": {"type": "object"},
+                }
+            },
+        )
+        payload = await client.create_payment_payload(payment_required)
+        assert payload.extensions is not None
+        assert payload.extensions["builder-code"] == {
+            "info": {"a": "bc_app", "s": ["bc_client", "bc_server"]},
+            "schema": {"type": "object"},
+        }
+
+    @pytest.mark.asyncio
+    async def test_dedupes_repeated_entries_within_a_single_side_of_a_merged_array_field(self):
+        class Ext:
+            key = "builder-code"
+
+            def enrich_payment_payload(self, payload, payment_required):
+                extensions = dict(payload.extensions or {})
+                extensions["builder-code"] = {"info": {"s": ["bc_client", "bc_client"]}}
+                return payload.model_copy(update={"extensions": extensions})
+
+        client = x402Client()
+        client.register("eip155:8453", MockSchemeClient("exact"))
+        client.register_extension(Ext())
+
+        payment_required = PaymentRequired(
+            x402_version=2,
+            accepts=[_make_payment_requirements()],
+            extensions={
+                "builder-code": {
+                    "info": {"a": "bc_app", "s": ["bc_server", "bc_server"]},
+                    "schema": {"type": "object"},
+                }
+            },
+        )
+        payload = await client.create_payment_payload(payment_required)
+        assert payload.extensions is not None
+        assert payload.extensions["builder-code"] == {
+            "info": {"a": "bc_app", "s": ["bc_client", "bc_server"]},
+            "schema": {"type": "object"},
+        }
+
+    @pytest.mark.asyncio
+    async def test_keeps_the_server_array_for_a_non_additive_extension_field(self):
+        # Array concatenation is scoped to _ADDITIVE_LIST_INFO_FIELDS (builder-code's
+        # "s"); other extensions' conflicting list fields must keep the server's
+        # value, matching x402ResourceServer's exact-match requirement for them.
+        class Ext:
+            key = "sign-in-with-x"
+
+            def enrich_payment_payload(self, payload, payment_required):
+                extensions = dict(payload.extensions or {})
+                extensions["sign-in-with-x"] = {"info": {"resources": ["https://evil.example.com"]}}
+                return payload.model_copy(update={"extensions": extensions})
+
+        client = x402Client()
+        client.register("eip155:8453", MockSchemeClient("exact"))
+        client.register_extension(Ext())
+
+        payment_required = PaymentRequired(
+            x402_version=2,
+            accepts=[_make_payment_requirements()],
+            extensions={
+                "sign-in-with-x": {"info": {"resources": ["https://api.example.com/data"]}}
+            },
+        )
+        payload = await client.create_payment_payload(payment_required)
+        assert payload.extensions is not None
+        assert payload.extensions["sign-in-with-x"] == {
+            "info": {"resources": ["https://api.example.com/data"]}
+        }
+
+    @pytest.mark.asyncio
+    async def test_register_extension_enriches_without_server_declaration(self):
+        class Ext:
+            key = "clientOwnedExtension"
+
+            def enrich_payment_payload(self, payload, payment_required):
+                extensions = dict(payload.extensions or {})
+                extensions["clientOwnedExtension"] = {"info": {"s": "client_data"}}
+                return payload.model_copy(update={"extensions": extensions})
+
+        client = x402Client()
+        client.register("eip155:8453", MockSchemeClient("exact"))
+        client.register_extension(Ext())
+
+        payment_required = PaymentRequired(
+            x402_version=2,
+            accepts=[_make_payment_requirements()],
+            extensions={},
+        )
+        payload = await client.create_payment_payload(payment_required)
+        assert payload.extensions is not None
+        assert payload.extensions["clientOwnedExtension"] == {"info": {"s": "client_data"}}
+
+    @pytest.mark.asyncio
+    async def test_server_gated_extension_noops_without_declaration(self):
+        class Ext:
+            key = "testGasSponsoring"
+
+            def enrich_payment_payload(self, payload, payment_required):
+                if not payment_required.extensions or "testGasSponsoring" not in (
+                    payment_required.extensions
+                ):
+                    return payload
+                extensions = dict(payload.extensions or {})
+                extensions["testGasSponsoring"] = {"enriched": True}
+                return payload.model_copy(update={"extensions": extensions})
+
+        client = x402Client()
+        client.register("eip155:8453", MockSchemeClient("exact"))
+        client.register_extension(Ext())
+
+        payment_required = PaymentRequired(
+            x402_version=2,
+            accepts=[_make_payment_requirements()],
+            extensions={"other-extension": {}},
+        )
+        payload = await client.create_payment_payload(payment_required)
+        assert payload.extensions is None or "testGasSponsoring" not in payload.extensions
+
 
 # =============================================================================
 # get_registered_schemes Tests

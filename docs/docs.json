@@ -26,9 +26,9 @@
           "href": "https://github.com/x402-foundation/x402"
         },
         {
-          "anchor": "Discord",
-          "icon": "discord",
-          "href": "https://discord.gg/cdp"
+          "anchor": "Slack",
+          "icon": "slack",
+          "href": "http://slack.x402.org/"
         },
         {
           "anchor": "Vercel Starter",

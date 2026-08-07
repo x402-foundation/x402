@@ -291,6 +291,39 @@ export interface ValidationResult {
 }
 
 /**
+ * Recursively scans a decoded JSON Schema document for "$ref"/"$id" values that are not
+ * same-document fragments (i.e. do not start with "#").
+ *
+ * Ajv's default `compile` throws rather than dereferencing an unregistered absolute/relative
+ * `$ref`, so this SDK does not fetch or read anything by default. This guard exists for
+ * defense-in-depth and to give a consistent, explicit rejection message across all x402 SDKs,
+ * since schema is client-controlled (it arrives in the payment payload) and any external
+ * $ref/$id is a CWE-918 SSRF / local file disclosure pattern other JSON Schema tooling
+ * (including future Ajv options like `loadSchema`) can act on.
+ *
+ * @param node - The (sub)tree of a decoded JSON Schema document to scan
+ * @returns True if any non-fragment "$ref"/"$id" value is found
+ */
+function hasExternalSchemaReference(node: unknown): boolean {
+  if (Array.isArray(node)) {
+    return node.some(item => hasExternalSchemaReference(item));
+  }
+  if (node && typeof node === "object") {
+    for (const [key, value] of Object.entries(node as Record<string, unknown>)) {
+      if (key === "$ref" || key === "$id") {
+        if (typeof value !== "string" || !value.startsWith("#")) {
+          return true;
+        }
+      }
+      if (hasExternalSchemaReference(value)) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+/**
  * Validates a discovery extension's info against its schema
  *
  * @param extension - The discovery extension containing info and schema
@@ -310,6 +343,16 @@ export interface ValidationResult {
  */
 export function validateDiscoveryExtension(extension: DiscoveryExtension): ValidationResult {
   try {
+    // The schema is attacker-controlled (it arrives in the client's payment payload). Only
+    // same-document fragment references (e.g. "#/definitions/foo") are safe, since they
+    // resolve against the in-memory document instead of fetching or reading anything.
+    if (hasExternalSchemaReference(extension.schema)) {
+      return {
+        valid: false,
+        errors: ["schema must not contain external $ref/$id references"],
+      };
+    }
+
     const ajv = new Ajv({ strict: false, allErrors: true });
     const validate = ajv.compile(extension.schema);
 

@@ -28,8 +28,11 @@ from ..erc6492 import has_deployment_info, parse_erc6492_signature
 from ..multicall import MulticallCall, encode_contract_call, multicall
 from ..signer import FacilitatorEvmSigner
 from ..types import ERC6492SignatureData, ExactEIP3009Authorization
-from ..utils import bytes_to_hex, hex_to_bytes
+from ..utils import bytes_to_hex, hex_to_bytes, normalize_address
 from ..verify import verify_typed_data_strict
+
+# keccak256("Transfer(address,address,uint256)")
+ERC20_TRANSFER_EVENT_TOPIC = "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef"
 
 
 @dataclass
@@ -292,6 +295,77 @@ def diagnose_eip3009_simulation_failure(
             pass
 
     return ERR_TRANSACTION_SIMULATION_FAILED
+
+
+def _log_field(log: object, key: str) -> object:
+    if isinstance(log, dict):
+        return log.get(key)
+    return getattr(log, key, None)
+
+
+def _as_hex(value: object) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, bytes):
+        return "0x" + value.hex()
+    text = str(value)
+    return text if text.startswith("0x") else "0x" + text
+
+
+def _topic_to_address(topic: object) -> str:
+    hex_topic = _as_hex(topic).lower().removeprefix("0x")
+    if len(hex_topic) < 40:
+        raise ValueError(f"invalid address topic: {topic!r}")
+    return normalize_address("0x" + hex_topic[-40:])
+
+
+def verify_eip3009_transfer_event(
+    logs: list[object] | None,
+    token_address: str,
+    *,
+    from_address: str,
+    to: str,
+    value: int,
+) -> bool:
+    """Return True when receipt logs contain the expected ERC-20 Transfer."""
+    if not logs:
+        return False
+
+    expected_token = normalize_address(token_address)
+    expected_from = normalize_address(from_address)
+    expected_to = normalize_address(to)
+    expected_value = int(value)
+    expected_topic = ERC20_TRANSFER_EVENT_TOPIC.lower()
+
+    for log in logs:
+        try:
+            log_address = normalize_address(str(_log_field(log, "address")))
+        except Exception:
+            continue
+        if log_address != expected_token:
+            continue
+
+        topics = _log_field(log, "topics") or []
+        if len(topics) != 3:
+            continue
+        if _as_hex(topics[0]).lower() != expected_topic:
+            continue
+
+        data = _as_hex(_log_field(log, "data"))
+        data_hex = data.lower().removeprefix("0x")
+        if len(data_hex) < 64:
+            continue
+        try:
+            log_value = int(data_hex[-64:], 16)
+            log_from = _topic_to_address(topics[1])
+            log_to = _topic_to_address(topics[2])
+        except Exception:
+            continue
+
+        if log_from == expected_from and log_to == expected_to and log_value == expected_value:
+            return True
+
+    return False
 
 
 def parse_eip3009_transfer_error(error: Exception) -> str:

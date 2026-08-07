@@ -18,10 +18,11 @@ import (
 // BatchSettlementRequestContext carries per-request state across the verify->settle
 // lifecycle for a single payment.
 type BatchSettlementRequestContext struct {
-	ChannelId       string
-	PendingId       string
-	ChannelSnapshot *ChannelSession
-	LocalVerify     bool
+	ChannelId            string
+	PendingId            string
+	ChannelSnapshot      *ChannelSession
+	LocalVerify          bool
+	ReservationCommitted bool
 }
 
 const (
@@ -88,7 +89,7 @@ func requestContextKey(payload any) string {
 			view.GetScheme(),
 			view.GetNetwork(),
 			payloadType,
-			batchsettlement.NormalizeChannelId(channelId),
+			strings.ToLower(channelId),
 			maxClaimable,
 			signature,
 			channelConfigKey(payloadMap["channelConfig"]),
@@ -214,6 +215,9 @@ func (s *BatchSettlementEvmScheme) MergeRequestContext(payload any, partial Batc
 	if partial.LocalVerify {
 		merged.LocalVerify = true
 	}
+	if partial.ReservationCommitted {
+		merged.ReservationCommitted = true
+	}
 	s.requestContexts[key] = &merged
 }
 
@@ -268,7 +272,7 @@ func (s *BatchSettlementEvmScheme) TakeChannelSnapshot(payload any) *ChannelSess
 // record is deleted entirely.
 func (s *BatchSettlementEvmScheme) ClearPendingRequest(payload any) error {
 	rc := s.TakeRequestContext(payload)
-	if rc == nil || rc.ChannelId == "" || rc.PendingId == "" {
+	if rc == nil || !rc.ReservationCommitted || rc.ChannelId == "" || rc.PendingId == "" {
 		return nil
 	}
 	_, err := s.storage.UpdateChannel(rc.ChannelId, func(current *ChannelSession) *ChannelSession {
@@ -297,9 +301,19 @@ func (s *BatchSettlementEvmScheme) EnrichPaymentRequiredResponse(ctx x402.Paymen
 		return
 	}
 
-	channelId := extractChannelIdFromPayload(ctx.PaymentPayload.Payload)
+	payload := ctx.PaymentPayload.Payload
+	channelId := extractChannelIdFromPayload(payload)
 	if channelId == "" {
 		return
+	}
+
+	// Soft-fail when the claimed channelId does not bind to channelConfig+network.
+	if cfgMap, ok := payload["channelConfig"].(map[string]interface{}); ok {
+		if cfg, err := batchsettlement.ChannelConfigFromMap(cfgMap); err == nil {
+			if batchsettlement.ChannelIdBindingError(cfg, channelId, ctx.PaymentPayload.Accepted.Network) != "" {
+				return
+			}
+		}
 	}
 
 	var session *ChannelSession
@@ -307,7 +321,7 @@ func (s *BatchSettlementEvmScheme) EnrichPaymentRequiredResponse(ctx x402.Paymen
 		session = s.TakeChannelSnapshot(ctx.PaymentPayload)
 	}
 	if session == nil {
-		stored, err := s.storage.Get(batchsettlement.NormalizeChannelId(channelId))
+		stored, err := s.storage.Get(channelId)
 		if err != nil || stored == nil {
 			return
 		}
@@ -354,7 +368,8 @@ func (s *BatchSettlementEvmScheme) EnrichPaymentRequiredResponse(ctx x402.Paymen
 func (s *BatchSettlementEvmScheme) OnVerifiedPaymentCanceledHook() x402.OnVerifiedPaymentCanceledHook {
 	return func(ctx x402.VerifiedPaymentCanceledContext) error {
 		if ctx.Reason != x402.CancellationReasonHandlerThrew &&
-			ctx.Reason != x402.CancellationReasonHandlerFailed {
+			ctx.Reason != x402.CancellationReasonHandlerFailed &&
+			ctx.Reason != x402.CancellationReasonAfterVerifyAborted {
 			return nil
 		}
 		return s.ClearPendingRequest(ctx.Payload)
@@ -700,17 +715,17 @@ func (s *BatchSettlementEvmScheme) CreateChannelManager(facilitator x402.Facilit
 
 // UpdateSession updates or creates a session for a channel.
 func (s *BatchSettlementEvmScheme) UpdateSession(channelId string, session *ChannelSession) error {
-	return s.storage.Set(batchsettlement.NormalizeChannelId(channelId), session)
+	return s.storage.Set(channelId, session)
 }
 
 // GetSession retrieves a session for a channel.
 func (s *BatchSettlementEvmScheme) GetSession(channelId string) (*ChannelSession, error) {
-	return s.storage.Get(batchsettlement.NormalizeChannelId(channelId))
+	return s.storage.Get(channelId)
 }
 
 // DeleteSession removes a session for a channel.
 func (s *BatchSettlementEvmScheme) DeleteSession(channelId string) error {
-	return s.storage.Delete(batchsettlement.NormalizeChannelId(channelId))
+	return s.storage.Delete(channelId)
 }
 
 // Helper functions

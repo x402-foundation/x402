@@ -4,8 +4,10 @@ import base64
 import hashlib
 import re
 from decimal import Decimal
+from typing import TYPE_CHECKING
 
 try:
+    from solders.hash import Hash, ParseHashError
     from solders.pubkey import Pubkey
     from solders.transaction import VersionedTransaction
 except ImportError as e:
@@ -29,6 +31,20 @@ from .constants import (
     NetworkConfig,
 )
 from .types import ExactSvmPayload, TransactionInfo
+
+if TYPE_CHECKING:
+    from solana.rpc.api import Client as SolanaClient
+
+
+def resolve_blockhash(client: "SolanaClient", recent_blockhash: object = None) -> Hash:
+    """Use a valid supplied blockhash, falling back to the latest blockhash from RPC."""
+    if isinstance(recent_blockhash, str) and recent_blockhash:
+        try:
+            return Hash.from_string(recent_blockhash)
+        except ParseHashError:
+            pass
+
+    return client.get_latest_blockhash().value.blockhash
 
 
 def normalize_network(network: str) -> str:

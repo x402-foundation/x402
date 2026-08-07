@@ -1,9 +1,11 @@
 package http
 
 import (
+	"bytes"
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -192,6 +194,12 @@ func (t *PaymentRoundTripper) RoundTrip(req *http.Request) (*http.Response, erro
 		return nil, fmt.Errorf("payment retry limit exceeded")
 	}
 
+	preparedReq, err := prepareRequestBody(req)
+	if err != nil {
+		return nil, err
+	}
+	req = preparedReq
+
 	// Make initial request
 	resp, err := t.Transport.RoundTrip(req)
 	if err != nil {
@@ -267,6 +275,7 @@ func (t *PaymentRoundTripper) RoundTrip(req *http.Request) (*http.Response, erro
 	// retry once more with a freshly built payload (mirrors @x402/fetch recovery).
 	recovered, err := t.dispatchPaymentResponseHooks(ctx, build, newResp)
 	if err != nil {
+		newResp.Body.Close()
 		return nil, err
 	}
 	if !recovered || newResp.StatusCode != http.StatusPaymentRequired {
@@ -303,9 +312,40 @@ func (t *PaymentRoundTripper) RoundTrip(req *http.Request) (*http.Response, erro
 	correctiveBuild.paymentPayload = freshPayload
 	correctiveBuild.payloadBytes = freshBytes
 	if _, err := t.dispatchPaymentResponseHooks(ctx, &correctiveBuild, correctiveResp); err != nil {
-		return correctiveResp, nil
+		correctiveResp.Body.Close()
+		return nil, err
 	}
 	return correctiveResp, nil
+}
+
+func prepareRequestBody(req *http.Request) (*http.Request, error) {
+	if req.Body == nil || req.Body == http.NoBody || req.GetBody != nil {
+		return req, nil
+	}
+
+	var closeErr error
+	var closeOnce sync.Once
+	closeBody := func() {
+		closeOnce.Do(func() {
+			closeErr = req.Body.Close()
+		})
+	}
+
+	stopClose := context.AfterFunc(req.Context(), closeBody)
+	body, readErr := io.ReadAll(req.Body)
+	stopClose()
+	closeBody()
+
+	if err := errors.Join(context.Cause(req.Context()), readErr, closeErr); err != nil {
+		return nil, fmt.Errorf("failed to buffer request body: %w", err)
+	}
+
+	preparedReq := req.Clone(req.Context())
+	preparedReq.Body = io.NopCloser(bytes.NewReader(body))
+	preparedReq.GetBody = func() (io.ReadCloser, error) {
+		return io.NopCloser(bytes.NewReader(body)), nil
+	}
+	return preparedReq, nil
 }
 
 func (t *PaymentRoundTripper) tryPaymentRequiredHooks(

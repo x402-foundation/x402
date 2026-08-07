@@ -239,3 +239,51 @@ export function deepEqual(obj1: unknown, obj2: unknown): boolean {
     return JSON.stringify(obj1) === JSON.stringify(obj2);
   }
 }
+
+/**
+ * Coerces a value for array-aware merging/comparison: an array passes through
+ * unchanged, while a bare scalar is wrapped as a single-element array so it can
+ * merge or compare against an array declared on the other side (e.g. an
+ * extension field documented as "string or array of strings"). Returns
+ * undefined for values that cannot participate (null, undefined, objects).
+ *
+ * @param value - Value to coerce
+ * @returns The value as an array, or undefined if it cannot be treated as one
+ */
+export function toComparableArray(value: unknown): unknown[] | undefined {
+  if (Array.isArray(value)) {
+    return value;
+  }
+  if (value === null || value === undefined || typeof value === "object") {
+    return undefined;
+  }
+  return [value];
+}
+
+/**
+ * Extension info fields, keyed by extension key, where a conflicting array
+ * value declared by both server and client is additive rather than exclusive:
+ * the client's merge concatenates both sides (client first, deduped, see
+ * `mergeArraysUnique`), and the server's echo validation accepts any echo that
+ * is a superset of the advertised value. Scoped narrowly per field (rather
+ * than making all array fields additive) so unrelated extensions - e.g.
+ * sign-in-with-x's `resources` - keep exact array matching in both directions.
+ */
+export const ADDITIVE_ARRAY_INFO_FIELDS: Record<string, ReadonlySet<string>> = {
+  "builder-code": new Set(["s"]),
+};
+
+/**
+ * Caps the combined echoed length of an additive array field (see
+ * {@link ADDITIVE_ARRAY_INFO_FIELDS}) so a hand-crafted payload cannot pad the
+ * field past the sum of every party's own reservation and later crowd out a
+ * legitimately declared entry once truncated further downstream (e.g. by a
+ * facilitator extension). Core has no dependency on extension packages, so
+ * this value (builder-code's `MAX_CLIENT_SERVICE_CODES` +
+ * `MAX_SERVER_SERVICE_CODES`) is duplicated from
+ * `packages/extensions/src/builder-code/types.ts` and must be kept in sync by
+ * hand.
+ */
+export const ADDITIVE_ARRAY_MAX_LENGTHS: Record<string, Record<string, number>> = {
+  "builder-code": { s: 10 },
+};

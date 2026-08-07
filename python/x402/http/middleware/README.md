@@ -37,6 +37,7 @@ routes = {
     },
 }
 
+
 # Add middleware
 @app.middleware("http")
 async def x402_middleware(request, call_next):
@@ -103,6 +104,7 @@ routes = {
 # Add middleware
 PaymentMiddleware(app, routes, server)
 
+
 @app.route("/api/weather")
 def weather():
     payload = g.payment_payload
@@ -154,9 +156,11 @@ Browser requests to protected routes show an HTML paywall. API requests receive 
 ```python
 from x402.http import PaywallProvider
 
+
 class MyPaywall(PaywallProvider):
     def generate_html(self, payment_required, config):
         return "<html>Custom paywall...</html>"
+
 
 PaymentMiddleware(app, routes, server, paywall_provider=MyPaywall())
 ```

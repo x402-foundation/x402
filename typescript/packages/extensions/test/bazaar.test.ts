@@ -2575,4 +2575,133 @@ describe("Bazaar Discovery Extension", () => {
       spy.mockRestore();
     });
   });
+
+  describe("SSRF via external $ref/$id in schema (CWE-918)", () => {
+    // The schema is attacker-controlled (it arrives in the client's payment payload). Some
+    // JSON Schema validators dereference "$ref"/"$id" values via an outbound HTTP request or
+    // filesystem read during schema compilation, before the instance is ever checked. Ajv's
+    // default `compile` already throws rather than fetching an unregistered external `$ref`,
+    // but validateDiscoveryExtension explicitly rejects these up front for a consistent error
+    // message across SDKs and as defense-in-depth.
+    /**
+     * Starts a local HTTP server that counts requests it receives, runs the given callback
+     * against it, and tears it down afterwards.
+     *
+     * @param run - Callback invoked with the server's base URL and a hit-count getter
+     * @returns A promise that resolves once the callback has run and the server has shut down
+     */
+    async function withHitCountingServer(
+      run: (baseUrl: string, getHits: () => number) => void | Promise<void>,
+    ): Promise<void> {
+      const http = await import("node:http");
+      let hits = 0;
+      const server = http.createServer((_req, res) => {
+        hits += 1;
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ type: "object" }));
+      });
+      await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
+      try {
+        const address = server.address();
+        const port = typeof address === "object" && address ? address.port : 0;
+        await run(`http://127.0.0.1:${port}`, () => hits);
+      } finally {
+        await new Promise<void>(resolve => server.close(() => resolve()));
+      }
+    }
+
+    it("rejects a $ref over http without dereferencing it", async () => {
+      await withHitCountingServer((baseUrl, getHits) => {
+        const extension = {
+          info: { input: { type: "http", method: "GET" } },
+          schema: { $ref: `${baseUrl}/attacker-schema.json` },
+        } as unknown as DiscoveryExtension;
+
+        const result = validateDiscoveryExtension(extension);
+
+        expect(getHits()).toBe(0);
+        expect(result.valid).toBe(false);
+      });
+    });
+
+    it("rejects a $ref via file:// URI without reading the file", () => {
+      const extension = {
+        info: { input: { type: "http", method: "GET" } },
+        schema: { $ref: "file:///etc/passwd" },
+      } as unknown as DiscoveryExtension;
+
+      const result = validateDiscoveryExtension(extension);
+
+      expect(result.valid).toBe(false);
+    });
+
+    it("rejects a $ref nested inside schema properties", async () => {
+      await withHitCountingServer((baseUrl, getHits) => {
+        const extension = {
+          info: { input: { type: "http", method: "GET" } },
+          schema: {
+            properties: {
+              input: { $ref: `${baseUrl}/attacker-schema.json` },
+            },
+          },
+        } as unknown as DiscoveryExtension;
+
+        const result = validateDiscoveryExtension(extension);
+
+        expect(getHits()).toBe(0);
+        expect(result.valid).toBe(false);
+      });
+    });
+
+    it("rejects an external $id", () => {
+      const extension = {
+        info: { input: { type: "http", method: "GET" } },
+        schema: { $id: "https://evil.example.com/schema.json", type: "object" },
+      } as unknown as DiscoveryExtension;
+
+      const result = validateDiscoveryExtension(extension);
+
+      expect(result.valid).toBe(false);
+    });
+
+    it("still validates schemas with only local fragment refs", () => {
+      const extension = {
+        info: { input: { type: "http", method: "GET" } },
+        schema: {
+          $ref: "#/definitions/root",
+          definitions: { root: { type: "object" } },
+        },
+      } as unknown as DiscoveryExtension;
+
+      const result = validateDiscoveryExtension(extension);
+
+      expect(result.valid).toBe(true);
+    });
+
+    it("rejects an external $ref end-to-end via extractDiscoveryInfo without dereferencing it", async () => {
+      await withHitCountingServer((baseUrl, getHits) => {
+        const extension = {
+          info: { input: { type: "http", method: "GET" } },
+          schema: { $ref: `${baseUrl}/attacker-schema.json` },
+        };
+
+        const paymentPayload = {
+          x402Version: 2,
+          scheme: "exact",
+          network: "eip155:84532" as unknown,
+          payload: {},
+          accepted: {} as unknown,
+          resource: { url: "http://api.example.com/weather" },
+          extensions: {
+            [BAZAAR.key]: extension,
+          },
+        };
+
+        const discovered = extractDiscoveryInfo(paymentPayload, {} as unknown);
+
+        expect(getHits()).toBe(0);
+        expect(discovered).toBeNull();
+      });
+    });
+  });
 });

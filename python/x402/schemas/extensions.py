@@ -4,11 +4,13 @@ from collections.abc import Awaitable
 from typing import Any, Protocol
 
 from .hooks import (
+    AbortResult,
     ProtectedRequestHookResult,
     ServerPaymentRequiredContext,
     SettleContext,
     SettleFailureContext,
     SettleResultContext,
+    SkipHandlerResult,
     VerifiedPaymentCanceledContext,
     VerifyContext,
     VerifyFailureContext,
@@ -46,7 +48,9 @@ class ResourceServerExtensionHooks(Protocol):
         self,
         declaration: Any,
         context: VerifyResultContext,
-    ) -> None | Awaitable[None]: ...
+    ) -> (
+        None | AbortResult | SkipHandlerResult | Awaitable[None | AbortResult | SkipHandlerResult]
+    ): ...
 
     def on_verify_failure(
         self,
@@ -201,7 +205,11 @@ class ClientExtension(Protocol):
         payment_payload: Any,
         payment_required: Any,
     ) -> Any | Awaitable[Any]:
-        """Enrich payload when the extension key is present on the 402 response."""
+        """Enrich payload after creation for every registered extension.
+
+        Extensions that require a server declaration must no-op when the server
+        did not advertise them.
+        """
         ...
 
     @property

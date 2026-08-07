@@ -1,5 +1,50 @@
 # @x402/express Changelog
 
+## 2.21.0
+
+### Minor Changes
+
+- Updated dependencies [242d6e9](https://github.com/x402-foundation/x402/commit/242d6e9)
+- Updated dependencies [e805616](https://github.com/x402-foundation/x402/commit/e805616)
+- Updated dependencies [e805616](https://github.com/x402-foundation/x402/commit/e805616)
+- Updated dependencies [e335d4f](https://github.com/x402-foundation/x402/commit/e335d4f)
+- Updated dependencies [183b270](https://github.com/x402-foundation/x402/commit/183b270)
+- Updated dependencies [6b04d5e](https://github.com/x402-foundation/x402/commit/6b04d5e)
+- Updated dependencies [ee1b148](https://github.com/x402-foundation/x402/commit/ee1b148)
+- Updated dependencies [e805616](https://github.com/x402-foundation/x402/commit/e805616)
+- Updated dependencies [5192e50](https://github.com/x402-foundation/x402/commit/5192e50)
+  - @x402/paywall@2.21.0
+  - @x402/extensions@2.21.0
+  - @x402/core@2.21.0
+
+### Patch Changes
+
+- [183b270](https://github.com/x402-foundation/x402/commit/183b270): Add a configurable per-request timeout to `HTTPFacilitatorClient` (`FacilitatorConfig.timeoutMs`, default 30s, matching the Go and Python facilitator clients; must be a positive integer of at most 2^31 - 1 milliseconds). `verify()`, `settle()`, and each `getSupported()` attempt now reject with a typed `FacilitatorTimeoutError` — a `FacilitatorResponseError` subclass the HTTP middlewares already surface as a 502 — instead of hanging indefinitely when a facilitator accepts a connection but never completes the response. A `settle()` timeout is indeterminate: the facilitator may still have completed the settlement. The Hono, Express, Fastify, and Next middlewares now attach a rejection handler to the eagerly created facilitator initialization promise, so an initialization failure before the first protected request no longer surfaces as an unhandled rejection; the first protected request still observes the failure and retries initialization. ([#2974](https://github.com/x402-foundation/x402/pull/2974)) - Thanks [@notorious-d-e-v](https://github.com/notorious-d-e-v)!
+- [ee1b148](https://github.com/x402-foundation/x402/commit/ee1b148): Set Cache-Control on x402 HTTP payment responses: `no-store` on 402/412 PAYMENT-REQUIRED and settlement failures, and merge `private` on 200 PAYMENT-RESPONSE success so shared caches cannot store user-specific settlement metadata. ([#2990](https://github.com/x402-foundation/x402/pull/2990)) - Thanks [@phdargen](https://github.com/phdargen)!
+- [5192e50](https://github.com/x402-foundation/x402/commit/5192e50): Fixed a payment bypass on wildcard (`*`) route patterns: the compiled route regex used `.*?` without the dotAll flag, so a percent-encoded ECMAScript line terminator (e.g. `%E2%80%A8`, `%0A`, `%0D`) surviving path normalization would fail to match, causing `requiresPayment()` to return `false` and the middleware to skip payment verification and settlement entirely. The route regex now compiles with the dotAll flag so wildcard segments match any character, including line terminators. ([#3036](https://github.com/x402-foundation/x402/pull/3036)) - Thanks [@CarsonRoscoe](https://github.com/CarsonRoscoe)!
+
+## 2.20.0
+
+### Minor Changes
+
+- Updated dependencies [b7bfa69](https://github.com/x402-foundation/x402/commit/b7bfa69)
+- Updated dependencies [4453a92](https://github.com/x402-foundation/x402/commit/4453a92)
+- Updated dependencies [32464a2](https://github.com/x402-foundation/x402/commit/32464a2)
+  - @x402/extensions@2.20.0
+  - @x402/core@2.20.0
+  - @x402/paywall@2.20.0
+
+## 2.19.0
+
+### Minor Changes
+
+- Updated dependencies [c72cfee](https://github.com/x402-foundation/x402/commit/c72cfee)
+- Updated dependencies [21b0745](https://github.com/x402-foundation/x402/commit/21b0745)
+- Updated dependencies [c1f2d90](https://github.com/x402-foundation/x402/commit/c1f2d90)
+  - @x402/core@2.19.0
+  - @x402/extensions@2.19.0
+  - @x402/paywall@2.19.0
+
 ## 2.18.0
 
 ### Minor Changes

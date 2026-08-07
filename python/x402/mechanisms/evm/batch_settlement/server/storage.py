@@ -136,7 +136,9 @@ class InMemoryChannelStorage:
         self._channel_locks: dict[str, threading.Lock] = {}
 
     def get(self, channel_id: str) -> Channel | None:
-        key = channel_id.lower()
+        from ..utils import normalize_channel_id
+
+        key = normalize_channel_id(channel_id)
         with self._global_lock:
             ch = self._channels.get(key)
             return ch.copy() if ch else None
@@ -146,7 +148,9 @@ class InMemoryChannelStorage:
             return [c.copy() for c in self._channels.values()]
 
     def update_channel(self, channel_id: str, update: ChannelUpdate) -> ChannelUpdateResult:
-        key = channel_id.lower()
+        from ..utils import normalize_channel_id
+
+        key = normalize_channel_id(channel_id)
         with self._global_lock:
             lock = self._channel_locks.get(key)
             if lock is None:

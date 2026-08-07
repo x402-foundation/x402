@@ -11,6 +11,7 @@ import {
   SETTLEMENT_OVERRIDES_HEADER,
   SettlementOverrides,
   checkIfBazaarNeeded,
+  withPrivateCacheControl,
 } from "@x402/core/server";
 import { SchemeNetworkServer, Network } from "@x402/core/types";
 import { Context, MiddlewareHandler } from "hono";
@@ -91,6 +92,11 @@ export function paymentMiddlewareFromHTTPServer(
   // Store initialization promise (not the result)
   // httpServer.initialize() fetches facilitator support and validates routes
   let initPromise: Promise<void> | null = syncFacilitatorOnStart ? httpServer.initialize() : null;
+  // Attach a no-op rejection handler so an early failure (e.g. a facilitator
+  // request timeout) cannot become an unhandled rejection before the first
+  // protected request awaits initPromise. The original promise is kept, so that
+  // request still observes the failure and triggers the retry path.
+  void initPromise?.catch(() => {});
   let isInitialized = false;
 
   /**
@@ -259,6 +265,10 @@ export function paymentMiddlewareFromHTTPServer(
             Object.entries(settleResult.headers).forEach(([key, value]) => {
               res.headers.set(key, value);
             });
+            res.headers.set(
+              "Cache-Control",
+              withPrivateCacheControl(res.headers.get("Cache-Control")),
+            );
             res.headers.delete(SETTLEMENT_OVERRIDES_HEADER);
           }
         } catch (error) {

@@ -277,6 +277,7 @@ func (s *realFacilitatorEvmSigner) WaitForTransactionReceipt(ctx context.Context
 				Status:      status,
 				BlockNumber: receipt.BlockNumber.Uint64(),
 				TxHash:      receipt.TxHash.Hex(),
+				Logs:        receipt.Logs,
 			}, nil
 		}
 
@@ -973,6 +974,7 @@ func (s *permit2FacilitatorEvmSigner) WaitForTransactionReceipt(ctx context.Cont
 				Status:      status,
 				BlockNumber: receipt.BlockNumber.Uint64(),
 				TxHash:      receipt.TxHash.Hex(),
+				Logs:        receipt.Logs,
 			}, nil
 		}
 

@@ -154,6 +154,8 @@ export class GenericFacilitatorProxy extends BaseProxy implements FacilitatorPro
       TVM_NETWORK: config.networks.tvm.caip2,
       NEAR_NETWORK: config.networks.near.caip2,
       NEAR_RPC_URL: config.networks.near.rpcUrl,
+      XRPL_NETWORK: config.networks.xrpl.caip2,
+      XRPL_WS_URL: config.networks.xrpl.rpcUrl,
       TVM_PROVIDER: process.env.TVM_PROVIDER || '',
       TONCENTER_BASE_URL: process.env.TONCENTER_BASE_URL || config.networks.tvm.rpcUrl,
       TONAPI_API_KEY: process.env.TONAPI_API_KEY || '',

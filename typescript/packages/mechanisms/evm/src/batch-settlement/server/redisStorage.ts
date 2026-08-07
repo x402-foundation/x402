@@ -1,4 +1,5 @@
 import type { Channel, ChannelStorage, ChannelUpdateResult } from "./storage";
+import { normalizeChannelId } from "../utils";
 
 const DEFAULT_KEY_PREFIX = "x402:batch-settlement";
 const DEFAULT_LOCK_RETRY_INTERVAL_MS = 10;
@@ -197,7 +198,7 @@ export class RedisChannelStorage implements ChannelStorage {
    * @returns Redis key for the channel JSON.
    */
   private channelKey(channelId: string) {
-    return `${this.channelKeyPrefix}:${channelId.toLowerCase()}`;
+    return `${this.channelKeyPrefix}:${normalizeChannelId(channelId)}`;
   }
 }
 

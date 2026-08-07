@@ -18,6 +18,7 @@ import {
   executeTransferWithAuthorization,
   parseEip3009TransferError,
   simulateEip3009TransferResult,
+  verifyEip3009TransferEvent,
 } from "./eip3009-utils";
 
 export interface VerifyEIP3009Options {
@@ -382,6 +383,26 @@ export async function settleEIP3009(
       return {
         success: false,
         errorReason: Errors.ErrTransactionFailed,
+        transaction: tx,
+        network: payload.accepted.network,
+        payer,
+      };
+    }
+
+    // Receipt status only proves the tx did not revert.
+    // When logs are present, require the expected ERC-20 Transfer event.
+    const auth = eip3009Payload.authorization;
+    if (
+      receipt.logs != null &&
+      !verifyEip3009TransferEvent(receipt.logs, getAddress(requirements.asset), {
+        from: getAddress(auth.from),
+        to: getAddress(auth.to),
+        value: BigInt(auth.value),
+      })
+    ) {
+      return {
+        success: false,
+        errorReason: Errors.ErrTransferEventMismatch,
         transaction: tx,
         network: payload.accepted.network,
         payer,

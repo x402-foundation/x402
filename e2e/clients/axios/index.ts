@@ -26,6 +26,9 @@ import { ExactTvmScheme } from "@x402/tvm/exact/client";
 import { toClientTvmSigner, TVM_PROVIDER_TONAPI, TVM_PROVIDER_TONCENTER } from "@x402/tvm";
 import { createClientNearSigner, type ClientNearSignerConfig } from "@x402/near";
 import { ExactNearScheme as ExactNearClientScheme } from "@x402/near/exact/client";
+import { createXrplWalletSigner } from "@x402/xrpl";
+import { ExactXrplScheme as ExactXrplClientScheme } from "@x402/xrpl/exact/client";
+import { Wallet } from "xrpl";
 import { ExactAvmScheme as ExactAvmClientScheme } from "@x402/avm/exact/client";
 import { toClientAvmSigner } from "@x402/avm";
 import { ExactConcordiumScheme } from "@x402/concordium/exact/client";
@@ -217,6 +220,19 @@ if (process.env.NEAR_ACCOUNT_ID && process.env.NEAR_PRIVATE_KEY) {
     rpcUrls: process.env.NEAR_RPC_URL ? { [nearNetwork]: process.env.NEAR_RPC_URL } : undefined,
   });
   client.register(nearNetwork, new ExactNearClientScheme(nearSigner));
+}
+if (process.env.XRPL_SEED) {
+  const xrplNetwork = (process.env.XRPL_NETWORK || "xrpl:1") as `xrpl:${number}`;
+  const xrplSigner = createXrplWalletSigner(Wallet.fromSeed(process.env.XRPL_SEED));
+  client.register(
+    xrplNetwork,
+    new ExactXrplClientScheme(
+      xrplSigner,
+      process.env.XRPL_WS_URL
+        ? { wsUrlByNetwork: { [xrplNetwork]: process.env.XRPL_WS_URL } }
+        : {},
+    ),
+  );
 }
 
 const axiosWithPayment = wrapAxiosWithPayment(axios.create(), client);

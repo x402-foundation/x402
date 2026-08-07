@@ -35,9 +35,25 @@ const (
 
 	// ErrChannelBusy signals that another request is currently holding the
 	// per-channel concurrency lock. Clients should back off briefly and
-	// retry. Emitted by BeforeSettleHook for both voucher commits and
-	// refund rewrites when a pending request is in flight.
+	// retry. Emitted by AfterVerifyHook / BeforeSettleHook when a pending
+	// request is in flight.
 	ErrChannelBusy = "invalid_batch_settlement_evm_channel_busy"
+
+	// ErrInvalidChannelId signals a non-canonical channel id (not `0x` + 64 hex).
+	// Surfaced by binding checks and storage key normalization so untrusted
+	// ids never reach path builders or map keys.
+	ErrInvalidChannelId = "invalid_batch_settlement_evm_channel_id_invalid"
+
+	// ErrChannelIdMismatch signals that a claimed channel id does not match
+	// the EIP-712 hash of the payload's channelConfig for the payment network.
+	// Duplicated from facilitator/errors.go so utils can reference it without
+	// importing facilitator (which would cycle).
+	ErrChannelIdMismatch = "invalid_batch_settlement_evm_channel_id_mismatch"
+
+	// ErrVerificationStateUnavailable signals that the resource server could
+	// not establish local verification state (storage failure, missing
+	// reservation context). Fail-closed — clients should retry.
+	ErrVerificationStateUnavailable = "invalid_batch_settlement_evm_verification_state_unavailable"
 
 	// ErrMissingChannel signals that the server has no record of the
 	// channel referenced by the payload. Emitted by BeforeSettleHook for

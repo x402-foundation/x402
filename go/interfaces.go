@@ -143,9 +143,10 @@ type ClientExtension interface {
 	// Must match the extension key used in PaymentRequired.Extensions.
 	Key() string
 
-	// EnrichPaymentPayload is called after payload creation when the extension key
-	// is present in paymentRequired.Extensions. Allows the extension to enrich the
-	// payload with extension-specific data (e.g., signing an EIP-2612 permit).
+	// EnrichPaymentPayload is called after payload creation for every registered
+	// extension. Allows the extension to enrich the payload with extension-specific
+	// data (e.g., builder-code service codes). Extensions that require a server
+	// declaration must no-op when the server did not advertise them.
 	EnrichPaymentPayload(ctx context.Context, payload types.PaymentPayload, required types.PaymentRequired) (types.PaymentPayload, error)
 }
 

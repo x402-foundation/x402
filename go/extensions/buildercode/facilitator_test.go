@@ -91,6 +91,89 @@ func TestBuildDataSuffixServiceCodeArray(t *testing.T) {
 	}
 }
 
+func TestBuildDataSuffixTruncatesServiceCodesToEchoedBudget(t *testing.T) {
+	codes := []interface{}{
+		"bc_1", "bc_2", "bc_3", "bc_4", "bc_5", "bc_6", "bc_7", "bc_8", "bc_9", "bc_10", "bc_11",
+	}
+	parsed := parsedFromFacilitator(t, suffixContext(map[string]interface{}{"s": codes}))
+	want := []string{"bc_1", "bc_2", "bc_3", "bc_4", "bc_5", "bc_6", "bc_7", "bc_8", "bc_9", "bc_10"}
+	if parsed.W != walletCode || !reflect.DeepEqual(parsed.S, want) {
+		t.Fatalf("expected first %d service codes, got %+v", maxEchoedServiceCodes, parsed)
+	}
+}
+
+func TestBuildDataSuffixFiltersInvalidBeforeTruncatingToEchoedBudget(t *testing.T) {
+	info := map[string]interface{}{
+		"s": []interface{}{
+			"INVALID", "bc_1", "bc_2", "bc_3", "bc_4", "bc_5", "bc_6", "bc_7", "bc_8", "bc_9", "bc_10", "bc_11", "bc_12",
+		},
+	}
+	parsed := parsedFromFacilitator(t, suffixContext(info))
+	want := []string{"bc_1", "bc_2", "bc_3", "bc_4", "bc_5", "bc_6", "bc_7", "bc_8", "bc_9", "bc_10"}
+	if parsed.W != walletCode || !reflect.DeepEqual(parsed.S, want) {
+		t.Fatalf("expected first %d valid service codes, got %+v", maxEchoedServiceCodes, parsed)
+	}
+}
+
+func TestBuildDataSuffixDoesNotDropServerEntriesWhenClientAndServerUseFullReservation(t *testing.T) {
+	// Regression test: client provides MAX_CLIENT_SERVICE_CODES codes and server
+	// provides MAX_SERVER_SERVICE_CODES codes; neither side should crowd out the other.
+	clientCodes := []string{"bc_c1", "bc_c2", "bc_c3", "bc_c4", "bc_c5"}
+	serverCodes := []string{"bc_s1", "bc_s2", "bc_s3", "bc_s4", "bc_s5"}
+	info := map[string]interface{}{"s": append(append([]string{}, clientCodes...), serverCodes...)}
+	parsed := parsedFromFacilitator(t, suffixContext(info))
+	want := append(append([]string{}, clientCodes...), serverCodes...)
+	if parsed.W != walletCode || !reflect.DeepEqual(parsed.S, want) {
+		t.Fatalf("expected all client and server codes, got %+v", parsed)
+	}
+}
+
+func TestBuildDataSuffixAppendsFacilitatorServiceCodeAfterEchoedCodes(t *testing.T) {
+	ext := &BuilderCodeFacilitatorExtension{BuilderCode: walletCode, ServiceCode: "bc_fac"}
+	ctx := suffixContext(map[string]interface{}{"s": serviceCode})
+	suffix, err := ext.BuildDataSuffix(ctx)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	parsed, ok := ParseBuilderCodeSuffixFromCalldata("0xdeadbeef" + hex.EncodeToString(suffix))
+	if !ok {
+		t.Fatal("expected a valid suffix")
+	}
+	want := []string{serviceCode, "bc_fac"}
+	if parsed.W != walletCode || !reflect.DeepEqual(parsed.S, want) {
+		t.Fatalf("expected facilitator service code appended, got %+v", parsed)
+	}
+}
+
+func TestBuildDataSuffixDoesNotDuplicateFacilitatorServiceCodeWhenAlreadyEchoed(t *testing.T) {
+	ext := &BuilderCodeFacilitatorExtension{BuilderCode: walletCode, ServiceCode: serviceCode}
+	ctx := suffixContext(map[string]interface{}{"s": serviceCode})
+	suffix, err := ext.BuildDataSuffix(ctx)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	parsed, ok := ParseBuilderCodeSuffixFromCalldata("0xdeadbeef" + hex.EncodeToString(suffix))
+	if !ok {
+		t.Fatal("expected a valid suffix")
+	}
+	want := []string{serviceCode}
+	if parsed.W != walletCode || !reflect.DeepEqual(parsed.S, want) {
+		t.Fatalf("expected no duplicate service code, got %+v", parsed)
+	}
+}
+
+func TestBuildDataSuffixRejectsInvalidFacilitatorServiceCode(t *testing.T) {
+	ext := &BuilderCodeFacilitatorExtension{BuilderCode: walletCode, ServiceCode: "Bad-Code"}
+	ctx := suffixContext(map[string]interface{}{"a": appCode})
+	suffix, err := ext.BuildDataSuffix(ctx)
+	if err == nil {
+		t.Fatal("expected an error for an invalid facilitator service code")
+	}
+	if suffix != nil {
+		t.Fatalf("expected no suffix on error, got %x", suffix)
+	}
+}
+
 func TestBuildDataSuffixIgnoresInvalidServiceCode(t *testing.T) {
 	parsed := parsedFromFacilitator(t, suffixContext(map[string]interface{}{"s": "Also_Invalid"}))
 	if parsed.W != walletCode || len(parsed.S) != 0 || parsed.A != "" {

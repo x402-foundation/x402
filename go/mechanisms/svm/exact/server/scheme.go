@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/gagliardetto/solana-go/rpc"
 	x402 "github.com/x402-foundation/x402/go/v2"
 	"github.com/x402-foundation/x402/go/v2/mechanisms/svm"
 	"github.com/x402-foundation/x402/go/v2/types"
@@ -15,12 +16,18 @@ import (
 // ExactSvmScheme implements the SchemeNetworkServer interface for SVM (Solana) exact payments (V2)
 type ExactSvmScheme struct {
 	moneyParsers []x402.MoneyParser
+	config       *svm.ServerConfig
 }
 
 // NewExactSvmScheme creates a new ExactSvmScheme
-func NewExactSvmScheme() *ExactSvmScheme {
+func NewExactSvmScheme(config ...*svm.ServerConfig) *ExactSvmScheme {
+	var cfg *svm.ServerConfig
+	if len(config) > 0 {
+		cfg = config[0]
+	}
 	return &ExactSvmScheme{
 		moneyParsers: []x402.MoneyParser{},
+		config:       cfg,
 	}
 }
 
@@ -240,6 +247,8 @@ func (s *ExactSvmScheme) EnhancePaymentRequirements(
 		}
 	}
 
+	s.enrichRecentBlockhash(ctx, requirements.Extra)
+
 	// Copy extensions from supportedKind if provided
 	if supportedKind.Extra != nil {
 		for _, key := range extensionKeys {
@@ -250,4 +259,18 @@ func (s *ExactSvmScheme) EnhancePaymentRequirements(
 	}
 
 	return requirements, nil
+}
+
+func (s *ExactSvmScheme) enrichRecentBlockhash(ctx context.Context, extra map[string]interface{}) {
+	if s.config == nil || s.config.RPCURL == "" {
+		return
+	}
+
+	latestBlockhash, err := rpc.New(s.config.RPCURL).GetLatestBlockhash(ctx, rpc.CommitmentFinalized)
+	if err != nil {
+		return
+	}
+
+	extra["recentBlockhash"] = latestBlockhash.Value.Blockhash.String()
+	extra["lastValidBlockHeight"] = strconv.FormatUint(latestBlockhash.Value.LastValidBlockHeight, 10)
 }

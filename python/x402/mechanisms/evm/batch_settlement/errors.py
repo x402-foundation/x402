@@ -89,6 +89,8 @@ ERR_TRANSACTION_REVERTED = "invalid_batch_settlement_evm_transaction_reverted"
 
 # Server-emitted lifecycle reasons
 ERR_CHANNEL_BUSY = "invalid_batch_settlement_evm_channel_busy"
+ERR_INVALID_CHANNEL_ID = "invalid_batch_settlement_evm_channel_id_invalid"
+ERR_VERIFICATION_STATE_UNAVAILABLE = "invalid_batch_settlement_evm_verification_state_unavailable"
 ERR_CHARGE_EXCEEDS_SIGNED_CUMULATIVE = (
     "invalid_batch_settlement_evm_charge_exceeds_signed_cumulative"
 )

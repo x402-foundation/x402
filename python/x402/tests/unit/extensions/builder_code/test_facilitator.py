@@ -4,6 +4,8 @@ import pytest
 
 from x402.extensions.builder_code import (
     BUILDER_CODE,
+    MAX_CLIENT_SERVICE_CODES,
+    MAX_SERVER_SERVICE_CODES,
     BuilderCodeExtensionData,
     BuilderCodeFacilitatorExtension,
     parse_builder_code_suffix_from_calldata,
@@ -39,6 +41,10 @@ class TestConstructorValidation:
         with pytest.raises(ValueError, match="Invalid builder code"):
             BuilderCodeFacilitatorExtension(builder_code="X-bad")
 
+    def test_rejects_invalid_service_code(self) -> None:
+        with pytest.raises(ValueError, match="Invalid builder code"):
+            BuilderCodeFacilitatorExtension(service_code="Bad-Code")
+
     def test_default_key(self) -> None:
         assert BuilderCodeFacilitatorExtension().key == BUILDER_CODE
 
@@ -69,6 +75,46 @@ class TestBuildDataSuffix:
         )
         assert _parse(ext, payload) == BuilderCodeExtensionData(w=WALLET, s=[SERVICE, "bc_other"])
 
+    def test_truncates_echoed_service_codes_to_client_plus_server_budget(self) -> None:
+        ext = BuilderCodeFacilitatorExtension(builder_code=WALLET)
+        codes = [f"bc_{i}" for i in range(1, 12)]
+        payload = _payload({BUILDER_CODE: {"info": {"s": codes}, "schema": {}}})
+        assert _parse(ext, payload) == BuilderCodeExtensionData(
+            w=WALLET, s=[f"bc_{i}" for i in range(1, 11)]
+        )
+
+    def test_filters_invalid_before_truncating_to_echoed_budget(self) -> None:
+        ext = BuilderCodeFacilitatorExtension(builder_code=WALLET)
+        payload = _payload(
+            {
+                BUILDER_CODE: {
+                    "info": {"s": ["INVALID", *[f"bc_{i}" for i in range(1, 13)]]},
+                    "schema": {},
+                }
+            }
+        )
+        assert _parse(ext, payload) == BuilderCodeExtensionData(
+            w=WALLET, s=[f"bc_{i}" for i in range(1, 11)]
+        )
+
+    def test_does_not_drop_entries_when_client_and_server_each_use_full_reservation(
+        self,
+    ) -> None:
+        # Regression test: client provides MAX_CLIENT_SERVICE_CODES codes and server
+        # provides MAX_SERVER_SERVICE_CODES codes; neither side should crowd out the
+        # other. This simulates what the core merge would have already concatenated.
+        client_codes = ["bc_c1", "bc_c2", "bc_c3", "bc_c4", "bc_c5"]
+        server_codes = ["bc_s1", "bc_s2", "bc_s3", "bc_s4", "bc_s5"]
+        assert len(client_codes) == MAX_CLIENT_SERVICE_CODES
+        assert len(server_codes) == MAX_SERVER_SERVICE_CODES
+        ext = BuilderCodeFacilitatorExtension(builder_code=WALLET)
+        payload = _payload(
+            {BUILDER_CODE: {"info": {"s": client_codes + server_codes}, "schema": {}}}
+        )
+        assert _parse(ext, payload) == BuilderCodeExtensionData(
+            w=WALLET, s=client_codes + server_codes
+        )
+
     def test_ignores_invalid_client_service_string(self) -> None:
         ext = BuilderCodeFacilitatorExtension(builder_code=WALLET)
         payload = _payload({BUILDER_CODE: {"info": {"s": "Also_Invalid"}, "schema": {}}})
@@ -78,3 +124,15 @@ class TestBuildDataSuffix:
         ext = BuilderCodeFacilitatorExtension(builder_code=WALLET)
         payload = _payload({BUILDER_CODE: {"info": {"a": "Bad-App"}, "schema": {}}})
         assert _parse(ext, payload) == BuilderCodeExtensionData(w=WALLET)
+
+
+class TestFacilitatorServiceCode:
+    def test_appends_facilitator_service_code_after_echoed_codes(self) -> None:
+        ext = BuilderCodeFacilitatorExtension(builder_code=WALLET, service_code="bc_fac")
+        payload = _payload({BUILDER_CODE: {"info": {"s": [SERVICE]}, "schema": {}}})
+        assert _parse(ext, payload) == BuilderCodeExtensionData(w=WALLET, s=[SERVICE, "bc_fac"])
+
+    def test_does_not_duplicate_facilitator_service_code_when_already_echoed(self) -> None:
+        ext = BuilderCodeFacilitatorExtension(builder_code=WALLET, service_code=SERVICE)
+        payload = _payload({BUILDER_CODE: {"info": {"s": [SERVICE]}, "schema": {}}})
+        assert _parse(ext, payload) == BuilderCodeExtensionData(w=WALLET, s=[SERVICE])

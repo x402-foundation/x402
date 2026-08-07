@@ -188,6 +188,100 @@ func TestProcessHTTPRequestPaymentRequired(t *testing.T) {
 	if result.Response.Headers["PAYMENT-REQUIRED"] == "" {
 		t.Error("Expected PAYMENT-REQUIRED header")
 	}
+	if result.Response.Headers["Cache-Control"] != "no-store" {
+		t.Errorf("Expected Cache-Control no-store, got %q", result.Response.Headers["Cache-Control"])
+	}
+}
+
+func TestProcessHTTPRequestMalformedPaymentSignature(t *testing.T) {
+	ctx := context.Background()
+
+	routes := RoutesConfig{
+		"GET /api": {
+			Accepts: PaymentOptions{
+				{
+					Scheme:  "exact",
+					PayTo:   "0xtest",
+					Price:   "$1.00",
+					Network: "eip155:1",
+				},
+			},
+		},
+	}
+
+	mockServer := &mockSchemeServer{scheme: "exact"}
+	mockClient := &mockFacilitatorClient{
+		supported: func(ctx context.Context) (x402.SupportedResponse, error) {
+			return x402.SupportedResponse{
+				Kinds: []x402.SupportedKind{
+					{X402Version: 2, Scheme: "exact", Network: "eip155:1"},
+				},
+				Extensions: []string{},
+				Signers:    make(map[string][]string),
+			}, nil
+		},
+	}
+
+	server := Newx402HTTPResourceServer(
+		routes,
+		x402.WithFacilitatorClient(mockClient),
+		x402.WithSchemeServer("eip155:1", mockServer),
+	)
+	_ = server.Initialize(ctx)
+
+	tests := []struct {
+		name   string
+		header string
+	}{
+		{
+			name:   "non-base64 header",
+			header: "garbage-value",
+		},
+		{
+			name:   "base64 invalid JSON",
+			header: base64.StdEncoding.EncodeToString([]byte("not-json")),
+		},
+		{
+			name:   "unsupported x402 version",
+			header: base64.StdEncoding.EncodeToString(mustMarshal(t, map[string]interface{}{"x402Version": 1})),
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			adapter := &mockHTTPAdapter{
+				method: "GET",
+				path:   "/api",
+				url:    "http://example.com/api",
+				headers: map[string]string{
+					"PAYMENT-SIGNATURE": tt.header,
+				},
+			}
+
+			result := server.ProcessHTTPRequest(ctx, HTTPRequestContext{
+				Adapter: adapter,
+				Path:    "/api",
+				Method:  "GET",
+			}, nil)
+
+			if result.Type != ResultPaymentError {
+				t.Fatalf("expected ResultPaymentError, got %s", result.Type)
+			}
+			if result.Response == nil {
+				t.Fatal("expected response instructions")
+			}
+			if result.Response.Status != 400 {
+				t.Fatalf("expected status 400, got %d", result.Response.Status)
+			}
+			body, ok := result.Response.Body.(map[string]string)
+			if !ok {
+				t.Fatalf("expected string map body, got %T", result.Response.Body)
+			}
+			if body["error"] != "invalid_payload" {
+				t.Fatalf("expected invalid_payload error, got %q", body["error"])
+			}
+		})
+	}
 }
 
 func TestProcessHTTPRequestServiceMetadataOnResource(t *testing.T) {
@@ -551,6 +645,9 @@ func TestProcessSettlement(t *testing.T) {
 	if result.Headers["PAYMENT-RESPONSE"] == "" {
 		t.Error("Expected PAYMENT-RESPONSE header")
 	}
+	if _, ok := result.Headers["Cache-Control"]; ok {
+		t.Errorf("Expected settlement headers to omit Cache-Control, got %q", result.Headers["Cache-Control"])
+	}
 }
 
 func TestProcessSettlement_Failure(t *testing.T) {
@@ -603,6 +700,9 @@ func TestProcessSettlement_Failure(t *testing.T) {
 	body, ok := result.Response.Body.(map[string]interface{})
 	if !ok || len(body) != 0 {
 		t.Errorf("Expected empty body {}, got %v", result.Response.Body)
+	}
+	if result.Response.Headers["Cache-Control"] != "no-store" {
+		t.Errorf("Expected Cache-Control no-store, got %q", result.Response.Headers["Cache-Control"])
 	}
 }
 
@@ -886,6 +986,16 @@ func TestNormalizePath(t *testing.T) {
 		{"/api#fragment", "/api"},
 		{"/api%20space", "/api space"},
 		{"", "/"},
+
+		// Encoded separators must stay inside the segment they were sent in,
+		// otherwise they split a ":param" segment that the router keeps whole.
+		{"/api/users/x%2Fy", "/api/users/x%2Fy"},
+		{"/api/users/x%2fy", "/api/users/x%2Fy"},
+		{"/api/users/x%5Cy", "/api/users/x%5Cy"},
+		// Only one round of decoding: %252F must not collapse into a separator.
+		{"/api/users/x%252Fy", "/api/users/x%2Fy"},
+		// Malformed escapes are matched raw rather than silently widened.
+		{"/api/users/x%zzy", "/api/users/x%zzy"},
 	}
 
 	for _, tt := range tests {
@@ -893,6 +1003,53 @@ func TestNormalizePath(t *testing.T) {
 			result := normalizePath(tt.input)
 			if result != tt.expected {
 				t.Errorf("Expected %s, got %s", tt.expected, result)
+			}
+		})
+	}
+}
+
+// TestRouteMatching_PathNormalizationBypass covers CWE-436 path-equivalence
+// bypasses: a request the router dispatches to a protected handler must still
+// match the route pattern that guards it. Paths here are the escaped form the
+// middleware passes in (URL.EscapedPath).
+func TestRouteMatching_PathNormalizationBypass(t *testing.T) {
+	tests := []struct {
+		name        string
+		pattern     string
+		escapedPath string
+		shouldMatch bool
+	}{
+		{"param baseline", "GET /api/users/:id", "/api/users/1", true},
+		{"param encoded slash", "GET /api/users/:id", "/api/users/x%2Fy", true},
+		{"param lowercase encoded slash", "GET /api/users/:id", "/api/users/x%2fy", true},
+		{"param double encoded slash", "GET /api/users/:id", "/api/users/x%252Fy", true},
+		{"param encoded backslash", "GET /api/users/:id", "/api/users/x%5Cy", true},
+		{"param encoded percent", "GET /api/users/:id", "/api/users/x%25y", true},
+		{"bracket param encoded slash", "GET /api/users/[id]", "/api/users/x%2Fy", true},
+		// A genuine extra segment is a different route and must not match.
+		{"param real extra segment", "GET /api/users/:id", "/api/users/x/y", false},
+
+		{"wildcard baseline", "GET /api/premium/*", "/api/premium/abc", true},
+		{"wildcard trailing slash", "GET /api/premium/*", "/api/premium/", true},
+		{"wildcard bare prefix", "GET /api/premium/*", "/api/premium", true},
+		{"wildcard deep path", "GET /api/premium/*", "/api/premium/a/b/c", true},
+		// The wildcard must not leak onto a sibling prefix.
+		{"wildcard sibling prefix", "GET /api/premium/*", "/api/premiumx", false},
+		{"wildcard unrelated", "GET /api/premium/*", "/api/other", false},
+
+		{"static baseline", "GET /api/compute", "/api/compute", true},
+		{"static trailing slash", "GET /api/compute", "/api/compute/", true},
+		{"static unrelated", "GET /api/compute", "/api/computex", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, _, regex := parseRoutePattern(tt.pattern)
+			normalized := normalizePath(tt.escapedPath)
+
+			if got := regex.MatchString(normalized); got != tt.shouldMatch {
+				t.Errorf("pattern %q vs path %q (normalized %q): match=%v, want %v",
+					tt.pattern, tt.escapedPath, normalized, got, tt.shouldMatch)
 			}
 		})
 	}
@@ -1654,4 +1811,25 @@ func (e testProtectedRequestExtension) EnrichDeclaration(declaration interface{}
 
 func (e testProtectedRequestExtension) ProtectedRequestHook() ProtectedRequestHook {
 	return e.hook
+}
+
+func TestWithPrivateCacheControl(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+		want  string
+	}{
+		{name: "empty", input: "", want: "private"},
+		{name: "append private", input: "max-age=60", want: "max-age=60, private"},
+		{name: "idempotent lowercase", input: "max-age=60, private", want: "max-age=60, private"},
+		{name: "idempotent mixed case", input: "max-age=60, Private", want: "max-age=60, Private"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := WithPrivateCacheControl(tt.input); got != tt.want {
+				t.Errorf("WithPrivateCacheControl(%q) = %q, want %q", tt.input, got, tt.want)
+			}
+		})
+	}
 }

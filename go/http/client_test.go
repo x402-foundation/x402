@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -312,6 +313,59 @@ func (f roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) {
 	return f(req)
 }
 
+type oneShotBody struct {
+	reader     io.Reader
+	closed     bool
+	closeCalls int
+}
+
+type failingBody struct {
+	readErr    error
+	closeErr   error
+	closeCalls int
+}
+
+func (b *failingBody) Read([]byte) (int, error) {
+	if b.readErr != nil {
+		return 0, b.readErr
+	}
+	return 0, io.EOF
+}
+
+func (b *failingBody) Close() error {
+	b.closeCalls++
+	return b.closeErr
+}
+
+type blockingBody struct {
+	closed     chan struct{}
+	closeCalls int
+}
+
+func (b *blockingBody) Read([]byte) (int, error) {
+	<-b.closed
+	return 0, io.ErrClosedPipe
+}
+
+func (b *blockingBody) Close() error {
+	b.closeCalls++
+	close(b.closed)
+	return nil
+}
+
+func (b *oneShotBody) Read(p []byte) (int, error) {
+	if b.closed {
+		return 0, errors.New("read after close")
+	}
+	return b.reader.Read(p)
+}
+
+func (b *oneShotBody) Close() error {
+	b.closed = true
+	b.closeCalls++
+	return nil
+}
+
 type testHTTPClientExtension struct {
 	key  string
 	hook PaymentRequiredHook
@@ -585,6 +639,231 @@ func TestPaymentRoundTripper(t *testing.T) {
 	}
 }
 
+func TestPaymentRoundTripper_ReplaysOneShotBody(t *testing.T) {
+	tests := []struct {
+		name         string
+		authRetry    bool
+		wantAttempts int
+	}{
+		{name: "payment retry", wantAttempts: 2},
+		{name: "auth then payment retry", authRetry: true, wantAttempts: 3},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			payload := "streaming request body"
+			var bodies []string
+			required := types.PaymentRequired{
+				X402Version: 2,
+				Extensions: map[string]interface{}{
+					"sign-in-with-x": map[string]interface{}{"info": map[string]interface{}{"nonce": "abc"}},
+				},
+				Accepts: []types.PaymentRequirements{{
+					Scheme: "mock", Network: "test:1", Asset: "TEST", Amount: "1000", PayTo: "0xtest",
+				}},
+			}
+			requiredHeader, err := encodePaymentRequiredHeader(required)
+			if err != nil {
+				t.Fatalf("encodePaymentRequiredHeader() error = %v", err)
+			}
+
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				body, err := io.ReadAll(r.Body)
+				if err != nil {
+					t.Errorf("ReadAll(request body) error = %v", err)
+				}
+				bodies = append(bodies, string(body))
+				if r.Header.Get("PAYMENT-SIGNATURE") != "" {
+					w.WriteHeader(http.StatusOK)
+					return
+				}
+				w.Header().Set("PAYMENT-REQUIRED", requiredHeader)
+				w.WriteHeader(http.StatusPaymentRequired)
+			}))
+			defer server.Close()
+
+			x402Client := x402.Newx402Client()
+			x402Client.Register("test:1", &mockSchemeClient{scheme: "mock"})
+			client := Newx402HTTPClient(x402Client)
+			if tt.authRetry {
+				client.OnPaymentRequired(func(context.Context, types.PaymentRequired) (*PaymentRequiredHookResult, error) {
+					return &PaymentRequiredHookResult{Headers: map[string]string{"SIGN-IN-WITH-X": "signed"}}, nil
+				})
+			}
+
+			originalBody := &oneShotBody{reader: strings.NewReader(payload)}
+			req, err := http.NewRequest(http.MethodPost, server.URL, originalBody)
+			if err != nil {
+				t.Fatalf("NewRequest() error = %v", err)
+			}
+			req.Header.Set("X-Test", "original")
+			resp, err := WrapHTTPClientWithPayment(&http.Client{}, client).Do(req)
+			if err != nil {
+				t.Fatalf("Do() error = %v", err)
+			}
+			defer resp.Body.Close()
+
+			if len(bodies) != tt.wantAttempts {
+				t.Fatalf("request count = %d, want %d", len(bodies), tt.wantAttempts)
+			}
+			for i, body := range bodies {
+				if body != payload {
+					t.Errorf("request %d body = %q, want %q", i+1, body, payload)
+				}
+			}
+			if originalBody.closeCalls != 1 {
+				t.Errorf("original body close calls = %d, want 1", originalBody.closeCalls)
+			}
+			if req.Body != originalBody || req.GetBody != nil {
+				t.Error("caller request body fields were modified")
+			}
+			if req.Header.Get("PAYMENT-SIGNATURE") != "" || req.Header.Get("SIGN-IN-WITH-X") != "" {
+				t.Errorf("caller request headers were modified: %v", req.Header)
+			}
+		})
+	}
+}
+
+func TestPaymentRoundTripper_RequestBodyPreparationErrors(t *testing.T) {
+	readErr := errors.New("read failed")
+	closeErr := errors.New("close failed")
+	tests := []struct {
+		name     string
+		body     *failingBody
+		wantErrs []error
+	}{
+		{name: "read", body: &failingBody{readErr: readErr}, wantErrs: []error{readErr}},
+		{name: "close", body: &failingBody{closeErr: closeErr}, wantErrs: []error{closeErr}},
+		{name: "read and close", body: &failingBody{readErr: readErr, closeErr: closeErr}, wantErrs: []error{readErr, closeErr}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			transportCalls := 0
+			rt := &PaymentRoundTripper{
+				Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+					transportCalls++
+					return stringResponse(http.StatusOK, nil, "")
+				}),
+				retryCount: &sync.Map{},
+			}
+			req, err := http.NewRequest(http.MethodPost, "https://api.example.com", tt.body)
+			if err != nil {
+				t.Fatalf("NewRequest() error = %v", err)
+			}
+
+			resp, err := rt.RoundTrip(req)
+			if resp != nil {
+				if resp.Body != nil {
+					resp.Body.Close()
+				}
+				t.Fatalf("response = %v, want nil", resp)
+			}
+			for _, wantErr := range tt.wantErrs {
+				if !errors.Is(err, wantErr) {
+					t.Errorf("error = %v, want errors.Is(_, %v)", err, wantErr)
+				}
+			}
+			if transportCalls != 0 {
+				t.Errorf("transport calls = %d, want 0", transportCalls)
+			}
+			if tt.body.closeCalls != 1 {
+				t.Errorf("body close calls = %d, want 1", tt.body.closeCalls)
+			}
+		})
+	}
+}
+
+func TestPaymentRoundTripper_CancelsRequestBodyBuffering(t *testing.T) {
+	transportCalls := 0
+	rt := &PaymentRoundTripper{
+		Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+			transportCalls++
+			return stringResponse(http.StatusOK, nil, "")
+		}),
+		retryCount: &sync.Map{},
+	}
+	body := &blockingBody{closed: make(chan struct{})}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, "https://api.example.com", body)
+	if err != nil {
+		t.Fatalf("NewRequestWithContext() error = %v", err)
+	}
+
+	resp, err := rt.RoundTrip(req)
+	if resp != nil {
+		if resp.Body != nil {
+			resp.Body.Close()
+		}
+		t.Fatalf("response = %v, want nil", resp)
+	}
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("error = %v, want context.Canceled", err)
+	}
+	if transportCalls != 0 {
+		t.Errorf("transport calls = %d, want 0", transportCalls)
+	}
+	if body.closeCalls != 1 {
+		t.Errorf("body close calls = %d, want 1", body.closeCalls)
+	}
+}
+
+func TestPrepareRequestBodyPreservesMetadata(t *testing.T) {
+	type contextKey string
+	ctx := context.WithValue(context.Background(), contextKey("key"), "value")
+	body := &oneShotBody{reader: strings.NewReader("payload")}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, "https://api.example.com/resource", body)
+	if err != nil {
+		t.Fatalf("NewRequestWithContext() error = %v", err)
+	}
+	req.Host = "service.example.com"
+	req.ContentLength = 7
+	req.TransferEncoding = []string{"identity"}
+
+	prepared, err := prepareRequestBody(req)
+	if err != nil {
+		t.Fatalf("prepareRequestBody() error = %v", err)
+	}
+	defer prepared.Body.Close()
+	if prepared == req {
+		t.Fatal("prepareRequestBody() returned the caller request")
+	}
+	if prepared.Method != req.Method || prepared.URL.String() != req.URL.String() || prepared.Host != req.Host {
+		t.Errorf("request metadata changed: method=%q URL=%q Host=%q", prepared.Method, prepared.URL, prepared.Host)
+	}
+	if prepared.ContentLength != req.ContentLength || strings.Join(prepared.TransferEncoding, ",") != strings.Join(req.TransferEncoding, ",") {
+		t.Errorf("body metadata changed: ContentLength=%d TransferEncoding=%v", prepared.ContentLength, prepared.TransferEncoding)
+	}
+	if prepared.Context().Value(contextKey("key")) != "value" {
+		t.Error("request context was not preserved")
+	}
+	if req.Body != body || req.GetBody != nil || body.closeCalls != 1 {
+		t.Error("caller request body fields or ownership were changed")
+	}
+}
+
+func TestPrepareRequestBodySkipsReplayableOrEmptyBodies(t *testing.T) {
+	requests := []*http.Request{
+		{Method: http.MethodGet},
+		{Method: http.MethodPost, Body: http.NoBody},
+	}
+	replayable, err := http.NewRequest(http.MethodPost, "https://api.example.com", strings.NewReader("payload"))
+	if err != nil {
+		t.Fatalf("NewRequest() error = %v", err)
+	}
+	requests = append(requests, replayable)
+
+	for _, req := range requests {
+		prepared, err := prepareRequestBody(req)
+		if err != nil {
+			t.Errorf("prepareRequestBody() error = %v", err)
+		} else if prepared != req {
+			t.Error("prepareRequestBody() cloned a replayable or empty request")
+		}
+	}
+}
+
 func TestPaymentRoundTripperNoRetryOn200(t *testing.T) {
 	// Server that always returns 200
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -696,6 +975,7 @@ type hookSchemeClient struct {
 	settleCalls      int
 	correctiveCalls  int
 	signalRecover    bool
+	settleErr        error
 	createPayloadCnt int
 }
 
@@ -712,6 +992,9 @@ func (m *hookSchemeClient) CreatePaymentPayload(ctx context.Context, requirement
 func (m *hookSchemeClient) OnPaymentResponse(ctx context.Context, prCtx x402.PaymentResponseContext) (x402.PaymentResponseResult, error) {
 	if prCtx.SettleResponse != nil {
 		m.settleCalls++
+		if m.settleErr != nil {
+			return x402.PaymentResponseResult{}, m.settleErr
+		}
 		return x402.PaymentResponseResult{}, nil
 	}
 	if prCtx.PaymentRequired != nil {
@@ -791,6 +1074,85 @@ func TestPaymentRoundTripper_DispatchesOnPaymentResponseOnSuccess(t *testing.T) 
 	}
 }
 
+func TestPaymentRoundTripper_PropagatesPaymentResponseHookErrors(t *testing.T) {
+	accepts := []types.PaymentRequirements{{
+		Scheme:  "test-scheme",
+		Network: "eip155:1",
+		Asset:   "USDC",
+		Amount:  "100",
+		PayTo:   "0xrecipient",
+	}}
+
+	for _, tt := range []struct {
+		name       string
+		corrective bool
+	}{
+		{name: "first paid response"},
+		{name: "corrective response", corrective: true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			hookErr := errors.New("payment response hook failed")
+			scheme := &hookSchemeClient{
+				scheme:        "test-scheme",
+				signalRecover: tt.corrective,
+				settleErr:     hookErr,
+			}
+			x402Client := x402.Newx402Client()
+			x402Client.Register("eip155:1", scheme)
+
+			responseBody := &oneShotBody{reader: strings.NewReader("response")}
+			attempt := 0
+			transport := roundTripFunc(func(*http.Request) (*http.Response, error) {
+				attempt++
+				if attempt == 1 || tt.corrective && attempt == 2 {
+					return stringResponse(http.StatusPaymentRequired, map[string]string{
+						"PAYMENT-REQUIRED": paymentRequiredHeader(t, accepts),
+					}, "")
+				}
+
+				resp := &http.Response{
+					StatusCode: http.StatusOK,
+					Header:     make(http.Header),
+					Body:       responseBody,
+				}
+				resp.Header.Set("PAYMENT-RESPONSE", paymentResponseHeader(t, x402.SettleResponse{
+					Success:     true,
+					Transaction: "0xtx",
+					Network:     "eip155:1",
+				}))
+				return resp, nil
+			})
+			rt := &PaymentRoundTripper{
+				Transport:  transport,
+				x402Client: Newx402HTTPClient(x402Client),
+				retryCount: &sync.Map{},
+			}
+			req, err := http.NewRequest(http.MethodGet, "https://api.example.com/resource", nil)
+			if err != nil {
+				t.Fatalf("NewRequest() error = %v", err)
+			}
+
+			resp, err := rt.RoundTrip(req)
+			if !errors.Is(err, hookErr) {
+				if resp != nil && resp.Body != nil {
+					resp.Body.Close()
+				}
+				t.Fatalf("RoundTrip() error = %v, want %v", err, hookErr)
+			}
+			if resp != nil {
+				resp.Body.Close()
+				t.Fatalf("RoundTrip() response = %v, want nil", resp)
+			}
+			if !responseBody.closed {
+				t.Fatal("response body was not closed")
+			}
+			if responseBody.closeCalls != 1 {
+				t.Fatalf("response body close calls = %d, want 1", responseBody.closeCalls)
+			}
+		})
+	}
+}
+
 // TestPaymentRoundTripper_RetriesOnceWhenHookSignalsRecovered verifies the
 // corrective-recovery path: scheme returns Recovered=true on a 402 + PAYMENT-REQUIRED,
 // transport rebuilds the payload and retries one more time.
@@ -807,9 +1169,16 @@ func TestPaymentRoundTripper_RetriesOnceWhenHookSignalsRecovered(t *testing.T) {
 		PayTo:   "0xrecipient",
 	}}
 
+	payload := "recoverable streaming request"
+	var bodies []string
 	var attempt int
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		attempt++
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Errorf("ReadAll(request body) error = %v", err)
+		}
+		bodies = append(bodies, string(body))
 		paymentSig := r.Header.Get("PAYMENT-SIGNATURE")
 		switch {
 		case paymentSig == "":
@@ -833,7 +1202,8 @@ func TestPaymentRoundTripper_RetriesOnceWhenHookSignalsRecovered(t *testing.T) {
 	defer server.Close()
 
 	httpClient := WrapHTTPClientWithPayment(&http.Client{}, Newx402HTTPClient(x402Client))
-	req, _ := http.NewRequestWithContext(context.Background(), "GET", server.URL, nil)
+	originalBody := &oneShotBody{reader: strings.NewReader(payload)}
+	req, _ := http.NewRequestWithContext(context.Background(), http.MethodPost, server.URL, originalBody)
 	resp, err := httpClient.Do(req)
 	if err != nil {
 		t.Fatalf("Do: %v", err)
@@ -854,6 +1224,14 @@ func TestPaymentRoundTripper_RetriesOnceWhenHookSignalsRecovered(t *testing.T) {
 	}
 	if attempt != 3 {
 		t.Fatalf("expected exactly 3 server attempts (initial + retry + recovery), got %d", attempt)
+	}
+	for i, body := range bodies {
+		if body != payload {
+			t.Errorf("request %d body = %q, want %q", i+1, body, payload)
+		}
+	}
+	if originalBody.closeCalls != 1 {
+		t.Errorf("original body close calls = %d, want 1", originalBody.closeCalls)
 	}
 }
 

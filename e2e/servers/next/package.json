@@ -26,6 +26,7 @@
     "@x402/stellar": "workspace:*",
     "@x402/svm": "workspace:*",
     "@x402/tvm": "workspace:*",
+    "@x402/xrpl": "workspace:*",
     "next": "^16.2.6",
     "react": "^19.2.6",
     "react-dom": "^19.2.6",

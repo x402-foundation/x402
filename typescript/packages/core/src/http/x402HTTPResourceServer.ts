@@ -23,6 +23,28 @@ import { x402Version } from "..";
 
 export const SETTLEMENT_OVERRIDES_HEADER = "Settlement-Overrides";
 
+export const PAYMENT_REQUIRED_CACHE_CONTROL = "no-store";
+
+/**
+ * Appends the `private` directive to an existing Cache-Control header value.
+ * Shared caches must not store responses with user-specific settlement metadata.
+ *
+ * @param value - Existing Cache-Control header value, or null/empty if unset
+ * @returns Cache-Control value with `private` merged in
+ */
+export function withPrivateCacheControl(value: string | null): string {
+  if (!value) {
+    return "private";
+  }
+
+  const directives = value.split(",").map(directive => directive.trim().toLowerCase());
+  if (directives.includes("private")) {
+    return value;
+  }
+
+  return `${value}, private`;
+}
+
 /**
  * Framework-agnostic HTTP adapter interface
  * Implementations provide framework-specific HTTP operations
@@ -844,6 +866,7 @@ export class x402HTTPResourceServer {
         headers: {
           "Content-Type": contentType,
           ...settleResult.headers,
+          "Cache-Control": withPrivateCacheControl(null),
         },
         body,
         isHtml: contentType.includes("text/html"),
@@ -880,6 +903,7 @@ export class x402HTTPResourceServer {
       headers: {
         "Content-Type": contentType,
         ...settlementHeaders,
+        "Cache-Control": PAYMENT_REQUIRED_CACHE_CONTROL,
       },
       body,
       isHtml: contentType.includes("text/html"),
@@ -1106,6 +1130,7 @@ export class x402HTTPResourceServer {
     return {
       headers: {
         "PAYMENT-REQUIRED": encodePaymentRequiredHeader(paymentRequired),
+        "Cache-Control": PAYMENT_REQUIRED_CACHE_CONTROL,
       },
     };
   }
@@ -1140,7 +1165,8 @@ export class x402HTTPResourceServer {
           .replace(/:([a-zA-Z_][a-zA-Z0-9_]*)/g, "[^/]+") // Parameters (Express style :param)
           .replace(/\//g, "\\/") // Escape slashes
       }$`,
-      "i",
+      // "s" (dotAll): without it, "." can't match LF/CR/U+2028/U+2029, so a wildcard segment containing one fails to match.
+      "is",
     );
 
     return { verb: verb.toUpperCase(), regex, path };

@@ -216,16 +216,18 @@ github.com/x402-foundation/x402/go/v2/extensions/buildercode
 ```
 
 **Purpose:**
-- Servers declare their app code (`a`) per-route in the 402 response
-- Clients echo `a` and attach their own service code(s) (`s`)
-- Facilitators add their wallet code (`w`) at settlement and encode the ERC-8021 calldata suffix
+- Servers declare their app code (`a`) per-route in the 402 response, and optionally up to `MAX_SERVER_SERVICE_CODES` of their own service code(s)
+- Clients echo `a` and attach up to `MAX_CLIENT_SERVICE_CODES` of their own service code(s) (`s`)
+- Facilitators add their wallet code (`w`) at settlement, optionally append up to `MAX_FACILITATOR_SERVICE_CODES` of their own service code (`s`), and encode the ERC-8021 calldata suffix
+
+Each party has its own dedicated, non-overlapping reservation in `s` (`MAX_CLIENT_SERVICE_CODES` + `MAX_SERVER_SERVICE_CODES` + `MAX_FACILITATOR_SERVICE_CODES` = `MAX_SERVICE_CODES`), so no party's service codes can be crowded out by another's.
 
 All codes must match `^[a-z0-9_]{1,32}$` (1-32 characters, lowercase alphanumeric and underscores).
 
 **What it provides:**
 - `DeclareBuilderCodeExtension()` - Server helper to declare the app code (`a`) in `PaymentRequired.extensions`
 - `NewBuilderCodeClientExtension()` - Client helper that attaches service code(s) (`s`) to payment payloads
-- `BuilderCodeFacilitatorExtension` - Facilitator extension that encodes the ERC-8021 suffix at settlement (optionally with a wallet code `w`)
+- `BuilderCodeFacilitatorExtension` - Facilitator extension that encodes the ERC-8021 suffix at settlement (optionally with a wallet code `w` and its own service code `ServiceCode`)
 - `EncodeBuilderCodeSuffix()` / `ParseBuilderCodeSuffixFromCalldata()` - Low-level CBOR helpers to build and parse the suffix
 
 **Server Example:**
@@ -259,6 +261,7 @@ import "github.com/x402-foundation/x402/go/v2/extensions/buildercode"
 
 facilitator.RegisterExtension(&buildercode.BuilderCodeFacilitatorExtension{
     BuilderCode: "bc_my_facilitator", // optional wallet code (w)
+    ServiceCode: "bc_my_facilitator_sdk", // optional facilitator service code (s)
 })
 ```
 

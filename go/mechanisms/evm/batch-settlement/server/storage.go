@@ -104,9 +104,13 @@ func (s *InMemoryChannelStorage) lockFor(channelId string) *sync.Mutex {
 }
 
 func (s *InMemoryChannelStorage) Get(channelId string) (*ChannelSession, error) {
+	key, err := batchsettlement.NormalizeChannelId(channelId)
+	if err != nil {
+		return nil, err
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	session, ok := s.sessions[channelId]
+	session, ok := s.sessions[key]
 	if !ok {
 		return nil, nil
 	}
@@ -115,17 +119,25 @@ func (s *InMemoryChannelStorage) Get(channelId string) (*ChannelSession, error) 
 }
 
 func (s *InMemoryChannelStorage) Set(channelId string, session *ChannelSession) error {
+	key, err := batchsettlement.NormalizeChannelId(channelId)
+	if err != nil {
+		return err
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	cp := *session
-	s.sessions[channelId] = &cp
+	s.sessions[key] = &cp
 	return nil
 }
 
 func (s *InMemoryChannelStorage) Delete(channelId string) error {
+	key, err := batchsettlement.NormalizeChannelId(channelId)
+	if err != nil {
+		return err
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	delete(s.sessions, channelId)
+	delete(s.sessions, key)
 	// NOTE: the per-channel lock entry is intentionally retained. Removing it
 	// would let a stale lockFor caller (already holding the old *sync.Mutex)
 	// race with a fresh caller (allocating a new *sync.Mutex) for the same
@@ -146,24 +158,32 @@ func (s *InMemoryChannelStorage) List() ([]*ChannelSession, error) {
 }
 
 func (s *InMemoryChannelStorage) CompareAndSet(channelId string, expectedCharged string, session *ChannelSession) (bool, error) {
+	key, err := batchsettlement.NormalizeChannelId(channelId)
+	if err != nil {
+		return false, err
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	current, ok := s.sessions[channelId]
+	current, ok := s.sessions[key]
 	if ok && current.ChargedCumulativeAmount != expectedCharged {
 		return false, nil
 	}
 	cp := *session
-	s.sessions[channelId] = &cp
+	s.sessions[key] = &cp
 	return true, nil
 }
 
 func (s *InMemoryChannelStorage) UpdateChannel(channelId string, update func(current *ChannelSession) *ChannelSession) (*ChannelUpdateResult, error) {
-	lock := s.lockFor(channelId)
+	key, err := batchsettlement.NormalizeChannelId(channelId)
+	if err != nil {
+		return nil, err
+	}
+	lock := s.lockFor(key)
 	lock.Lock()
 	defer lock.Unlock()
 
 	s.mu.Lock()
-	current, exists := s.sessions[channelId]
+	current, exists := s.sessions[key]
 	var currentCopy *ChannelSession
 	if exists {
 		cp := *current
@@ -182,13 +202,13 @@ func (s *InMemoryChannelStorage) UpdateChannel(channelId string, update func(cur
 	defer s.mu.Unlock()
 	if next == nil {
 		if exists {
-			delete(s.sessions, channelId)
+			delete(s.sessions, key)
 			return &ChannelUpdateResult{Channel: nil, Status: ChannelDeleted}, nil
 		}
 		return &ChannelUpdateResult{Channel: nil, Status: ChannelUnchanged}, nil
 	}
 	cp := *next
-	s.sessions[channelId] = &cp
+	s.sessions[key] = &cp
 	stored := cp
 	return &ChannelUpdateResult{Channel: &stored, Status: ChannelUpdated}, nil
 }

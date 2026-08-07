@@ -31,6 +31,7 @@ from ..types import (
     RoutesConfig,
 )
 from ..x402_http_server import PaywallProvider, x402HTTPResourceServer
+from ..x402_http_server_base import PAYMENT_REQUIRED_CACHE_CONTROL, with_private_cache_control
 
 if TYPE_CHECKING:
     from ...server import x402ResourceServer
@@ -367,6 +368,7 @@ def payment_middleware(
                 # Add settlement headers
                 headers = dict(response.headers)
                 headers.update(settle_result.headers)
+                headers["Cache-Control"] = with_private_cache_control(headers.get("Cache-Control"))
 
                 return Response(
                     content=body,
@@ -398,7 +400,11 @@ def payment_middleware(
                 return JSONResponse(
                     content={},
                     status_code=402,
-                    headers={"Content-Type": "application/json", **settle_headers},
+                    headers={
+                        "Content-Type": "application/json",
+                        "Cache-Control": PAYMENT_REQUIRED_CACHE_CONTROL,
+                        **settle_headers,
+                    },
                 )
 
         # Fallthrough - should not happen

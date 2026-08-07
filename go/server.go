@@ -758,8 +758,17 @@ func (s *x402ResourceServer) ValidateExtensions(
 
 	// pair carries an advertised value and its client echo while a worklist walks
 	// nested objects: the echo must contain every advertised field (objects may
-	// add fields; arrays/primitives must match exactly via DeepEqual).
-	type pair struct{ advertised, echoed interface{} }
+	// add fields; primitives must match exactly via DeepEqual). additive marks
+	// pairs whose array values may be extended by the echo (see
+	// additiveArrayInfoFields); all other array fields must match exactly.
+	// field names the object field this pair was read from, used to look up a
+	// combined-length cap for additive array fields (see
+	// additiveArrayMaxLengths); empty for the root pair.
+	type pair struct {
+		advertised, echoed interface{}
+		additive           bool
+		field              string
+	}
 
 	// normalize converts a server-declared value (which may be a typed struct)
 	// into the generic JSON shape the echoed payload already uses.
@@ -803,9 +812,37 @@ func (s *x402ResourceServer) ValidateExtensions(
 			echoed = omitFields(echoed, dynamicFields)
 		}
 
+		additiveFields := additiveArrayInfoFields[key]
+		maxLengths := additiveArrayMaxLengths[key]
 		mismatch := false
-		pending := []pair{{advertised, echoed}}
+		pending := []pair{{advertised, echoed, false, ""}}
 		for i := 0; i < len(pending) && !mismatch; i++ {
+			if pending[i].additive {
+				advSlice, advIsSlice := asSlice(pending[i].advertised)
+				echoSlice, echoIsSlice := asSlice(pending[i].echoed)
+				// A scalar on either side (e.g. builder-code `s` sent as a bare string)
+				// is treated as a single-element array so it compares against an array
+				// on the other side. Two scalars fall through to the plain DeepEqual
+				// comparison below unchanged.
+				if advIsSlice || echoIsSlice {
+					if !advIsSlice {
+						advSlice, advIsSlice = asScalarSingleton(pending[i].advertised)
+					}
+					if !echoIsSlice {
+						echoSlice, echoIsSlice = asScalarSingleton(pending[i].echoed)
+					}
+					if !advIsSlice || !echoIsSlice || !arrayContainsSubset(advSlice, echoSlice) {
+						mismatch = true
+					} else if maxLen := maxLengths[pending[i].field]; maxLen > 0 && len(echoSlice) > maxLen {
+						// A hand-crafted echo may pad an additive field past the
+						// combined reservation of the parties allowed to contribute
+						// to it; reject outright rather than let it through only to
+						// be silently truncated further downstream.
+						mismatch = true
+					}
+					continue
+				}
+			}
 			advertisedMap, isObject := pending[i].advertised.(map[string]interface{})
 			if !isObject {
 				mismatch = !DeepEqual(pending[i].advertised, pending[i].echoed)
@@ -823,7 +860,7 @@ func (s *x402ResourceServer) ValidateExtensions(
 					break
 				}
 				if exists {
-					pending = append(pending, pair{advValue, echoValue})
+					pending = append(pending, pair{advValue, echoValue, additiveFields[field], field})
 				}
 			}
 		}
@@ -838,6 +875,29 @@ func (s *x402ResourceServer) ValidateExtensions(
 	}
 
 	return ExtensionValidationResult{Valid: true}
+}
+
+// additiveArrayInfoFields lists extension info fields, keyed by extension key,
+// where a conflicting array value declared by both server and client is
+// additive rather than exclusive: mergeExtensions concatenates both sides
+// (client first, deduped) and ValidateExtensions accepts any echo that is a
+// superset of the advertised value. Scoped narrowly per extension + field so
+// unrelated extensions (e.g. sign-in-with-x's "resources") keep exact array
+// matching in both directions.
+var additiveArrayInfoFields = map[string]map[string]bool{
+	"builder-code": {"s": true},
+}
+
+// additiveArrayMaxLengths caps the combined echoed length of an additive array
+// field (see additiveArrayInfoFields) so a hand-crafted payload cannot pad the
+// field past the sum of every party's own reservation and later crowd out a
+// legitimately declared entry once truncated further downstream (e.g. by a
+// facilitator extension). A missing or zero entry means no cap is enforced
+// here. Core has no dependency on extension packages, so this value (builder-
+// code's MAX_CLIENT_SERVICE_CODES + MAX_SERVER_SERVICE_CODES) is duplicated
+// from go/extensions/buildercode/types.go and must be kept in sync by hand.
+var additiveArrayMaxLengths = map[string]map[string]int{
+	"builder-code": {"s": 10},
 }
 
 // dynamicInfoFields returns the dynamic `info` field names declared by the
@@ -956,20 +1016,9 @@ func (s *x402ResourceServer) VerifyPaymentWithExtensions(
 	}
 
 	// Short-circuit: a BeforeVerify hook produced a local verify result. Still run
-	// AfterVerify hooks so cooperative-refund SkipHandler signaling works.
+	// AfterVerify hooks so cooperative-refund SkipHandler signaling and abort work.
 	if skipVerifyResult != nil {
-		resultCtx := VerifyResultContext{VerifyContext: hookCtx, Result: skipVerifyResult}
-		for _, lh := range afterVerifyHooks {
-			directive, _ := lh.Hook(resultCtx)
-			if directive != nil && directive.SkipHandler {
-				resp := directive.Response
-				if resp == nil {
-					resp = &SkipHandlerDirective{}
-				}
-				skipVerifyResult.SkipHandler = resp
-			}
-		}
-		return skipVerifyResult, nil
+		return s.runAfterVerifyHooks(payload, requirements, declaredExtensions, hookCtx, afterVerifyHooks, skipVerifyResult)
 	}
 
 	if facilitator == nil {
@@ -985,7 +1034,7 @@ func (s *x402ResourceServer) VerifyPaymentWithExtensions(
 		for _, lh := range verifyFailureHooks {
 			result, _ := lh.Hook(failureCtx)
 			if result != nil && result.Recovered {
-				return result.Result, nil
+				return s.runAfterVerifyHooks(payload, requirements, declaredExtensions, hookCtx, afterVerifyHooks, result.Result)
 			}
 		}
 		return verifyResult, verifyErr
@@ -1009,19 +1058,51 @@ func (s *x402ResourceServer) VerifyPaymentWithExtensions(
 		for _, lh := range verifyFailureHooks {
 			result, _ := lh.Hook(failureCtx)
 			if result != nil && result.Recovered {
-				return result.Result, nil
+				return s.runAfterVerifyHooks(payload, requirements, declaredExtensions, hookCtx, afterVerifyHooks, result.Result)
 			}
 		}
 		return verifyResult, ve
 	}
 
-	// Execute afterVerify hooks. The last hook to return a SkipHandler directive
-	// wins; this lets schemes signal that a self-contained operation (e.g.
-	// cooperative refund) should bypass the resource handler and settle inline.
+	return s.runAfterVerifyHooks(payload, requirements, declaredExtensions, hookCtx, afterVerifyHooks, verifyResult)
+}
+
+// runAfterVerifyHooks runs after-verify hooks against a verify result.
+// On Abort, remaining hooks stop, after_verify_aborted cancellation fires, and
+// verification fails closed. Otherwise the last SkipHandler directive wins.
+func (s *x402ResourceServer) runAfterVerifyHooks(
+	payload types.PaymentPayload,
+	requirements types.PaymentRequirements,
+	declaredExtensions map[string]interface{},
+	hookCtx VerifyContext,
+	afterVerifyHooks []labeledHook[AfterVerifyHook],
+	verifyResult *VerifyResponse,
+) (*VerifyResponse, error) {
+	if verifyResult == nil {
+		return nil, NewVerifyError(ErrCodeInvalidPayment, "", "missing verify result")
+	}
+
 	resultCtx := VerifyResultContext{VerifyContext: hookCtx, Result: verifyResult}
 	for _, lh := range afterVerifyHooks {
 		directive, _ := lh.Hook(resultCtx) // Log errors but don't fail
-		if directive != nil && directive.SkipHandler {
+		if directive == nil {
+			continue
+		}
+		if directive.Abort {
+			dispatcher := s.CreatePaymentCancellationDispatcherWithExtensions(
+				hookCtx.Ctx, payload, requirements, declaredExtensions,
+			)
+			dispatcher.Cancel(VerifiedPaymentCancelOptions{
+				Reason: CancellationReasonAfterVerifyAborted,
+			})
+			return &VerifyResponse{
+					IsValid:        false,
+					InvalidReason:  directive.Reason,
+					InvalidMessage: directive.Message,
+				},
+				NewVerifyError(directive.Reason, "", directive.Message)
+		}
+		if directive.SkipHandler {
 			resp := directive.Response
 			if resp == nil {
 				resp = &SkipHandlerDirective{}

@@ -89,9 +89,12 @@ var (
 	ChainIDXDC           = big.NewInt(50)
 	ChainIDXDCApothem    = big.NewInt(51)
 	ChainIDIgra          = big.NewInt(38833)
+	ChainIDFlare         = big.NewInt(14)
+	ChainIDCelo          = big.NewInt(42220)
+	ChainIDCeloSepolia   = big.NewInt(11142220)
 
 	// Network configurations
-	// See DEFAULT_ASSET.md for guidelines on adding new chains
+	// See DEFAULT_ASSETS.md for guidelines on adding new chains
 	//
 	// Default Asset Selection Policy:
 	// - Each chain has the right to determine its own default stablecoin
@@ -100,7 +103,7 @@ var (
 	//
 	// Both EIP-3009 (transferWithAuthorization) and Permit2 asset transfer methods are supported.
 	// EIP-3009 is the default. Set AssetTransferMethod to AssetTransferMethodPermit2 for tokens
-	// that don't support EIP-3009. See DEFAULT_ASSET.md for details.
+	// that don't support EIP-3009. See DEFAULT_ASSETS.md for details.
 	NetworkConfigs = map[string]NetworkConfig{
 		// Base Mainnet
 		"eip155:8453": {
@@ -303,6 +306,36 @@ var (
 				AssetTransferMethod: AssetTransferMethodPermit2,
 			},
 		},
+		// Celo Mainnet
+		// Flare (Mainnet)
+		"eip155:14": {
+			ChainID: ChainIDFlare,
+			DefaultAsset: AssetInfo{
+				Address:  "0xe7cd86e13AC4309349F30B3435a9d337750fC82D", // USD₮0 on Flare
+				Name:     "USD₮0",
+				Version:  "1",
+				Decimals: DefaultDecimals,
+			},
+		},
+		"eip155:42220": {
+			ChainID: ChainIDCelo,
+			DefaultAsset: AssetInfo{
+				Address:  "0xcebA9300f2b948710d2653dD7B07f33A8B32118C", // USDC on Celo
+				Name:     "USDC",
+				Version:  "2",
+				Decimals: DefaultDecimals,
+			},
+		},
+		// Celo Sepolia (Testnet)
+		"eip155:11142220": {
+			ChainID: ChainIDCeloSepolia,
+			DefaultAsset: AssetInfo{
+				Address:  "0x01C5C0122039549AD1493B8220cABEdD739BC44E", // USDC on Celo Sepolia
+				Name:     "USDC",
+				Version:  "2",
+				Decimals: DefaultDecimals,
+			},
+		},
 	}
 
 	// EIP-3009 ABI for transferWithAuthorization with v,r,s (EOA signatures)
@@ -347,6 +380,20 @@ var (
 
 	// Legacy: Combined ABI (deprecated, use specific ABIs above)
 	TransferWithAuthorizationABI = TransferWithAuthorizationVRSABI
+
+	// ERC20TransferEventABI for parsing Transfer event logs
+	ERC20TransferEventABI = []byte(`[
+		{
+			"anonymous": false,
+			"inputs": [
+				{"indexed": true, "name": "from", "type": "address"},
+				{"indexed": true, "name": "to", "type": "address"},
+				{"indexed": false, "name": "value", "type": "uint256"}
+			],
+			"name": "Transfer",
+			"type": "event"
+		}
+	]`)
 
 	// ABI for authorizationState check
 	AuthorizationStateABI = []byte(`[

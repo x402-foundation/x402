@@ -560,6 +560,7 @@ class FacilitatorWeb3Signer:
             status=TX_STATUS_SUCCESS if receipt["status"] == 1 else 0,
             block_number=receipt["blockNumber"],
             tx_hash=tx_hash,
+            logs=list(receipt.get("logs") or []),
         )
 
     def get_balance(self, address: str, token_address: str) -> int:

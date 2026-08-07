@@ -498,7 +498,7 @@ function maskPrivateKeys<T>(value: T): T {
     const masked: Record<string, unknown> = {};
     for (const [key, entry] of Object.entries(value)) {
       masked[key] =
-        /privateKey/i.test(key) && typeof entry === 'string' && entry.length > 0
+        /(privateKey|seed)$/i.test(key) && typeof entry === 'string' && entry.length > 0
           ? maskSecret(entry)
           : maskPrivateKeys(entry);
     }
@@ -731,6 +731,7 @@ async function runTest() {
   const serverStellarAddress = process.env.SERVER_STELLAR_ADDRESS;
   const serverTvmAddress = process.env.SERVER_TVM_ADDRESS;
   const serverNearAddress = process.env.SERVER_NEAR_ADDRESS;
+  const serverXrplAddress = process.env.SERVER_XRPL_ADDRESS;
   const clientEvmPrivateKey = process.env.CLIENT_EVM_PRIVATE_KEY;
   const clientSvmPrivateKey = process.env.CLIENT_SVM_PRIVATE_KEY;
   const clientAvmPrivateKey = process.env.CLIENT_AVM_PRIVATE_KEY;
@@ -744,6 +745,7 @@ async function runTest() {
   const clientTvmPrivateKey = process.env.CLIENT_TVM_PRIVATE_KEY;
   const clientNearAccountId = process.env.CLIENT_NEAR_ACCOUNT_ID;
   const clientNearPrivateKey = process.env.CLIENT_NEAR_PRIVATE_KEY;
+  const clientXrplSeed = process.env.CLIENT_XRPL_SEED;
   const facilitatorEvmPrivateKey = process.env.FACILITATOR_EVM_PRIVATE_KEY;
   const facilitatorSvmPrivateKey = process.env.FACILITATOR_SVM_PRIVATE_KEY;
   const facilitatorAvmPrivateKey = process.env.FACILITATOR_AVM_PRIVATE_KEY;
@@ -843,6 +845,7 @@ async function runTest() {
   log(`   STELLAR: ${networks.stellar.name} (${networks.stellar.caip2})`);
   log(`   TVM: ${networks.tvm.name} (${networks.tvm.caip2})`);
   log(`   NEAR: ${networks.near.name} (${networks.near.caip2})`);
+  log(`   XRPL: ${networks.xrpl.name} (${networks.xrpl.caip2})`);
 
   if (networkMode === 'mainnet') {
     log('\n⚠️  WARNING: Running on MAINNET - real funds will be used!');
@@ -909,6 +912,10 @@ async function runTest() {
       ['CLIENT_NEAR_PRIVATE_KEY', clientNearPrivateKey],
       ['FACILITATOR_NEAR_ACCOUNT_ID', facilitatorNearAccountId],
       ['FACILITATOR_NEAR_PRIVATE_KEY', facilitatorNearPrivateKey],
+    ],
+    xrpl: [
+      ['SERVER_XRPL_ADDRESS', serverXrplAddress],
+      ['CLIENT_XRPL_SEED', clientXrplSeed],
     ],
   };
 
@@ -1129,6 +1136,12 @@ async function runTest() {
     'NEAR_PAYEE_ADDRESS',
     'NEAR_ASSET',
     'NEAR_AMOUNT',
+    'XRPL_NETWORK',
+    'XRPL_WS_URL',
+    'XRPL_SEED',
+    'XRPL_PAYEE_ADDRESS',
+    'XRPL_ASSET',
+    'XRPL_AMOUNT',
   ]);
 
   for (const [facilitatorName, facilitator] of uniqueFacilitators) {
@@ -1290,6 +1303,7 @@ async function runTest() {
         STELLAR_NETWORK: networks.stellar.caip2,
         TVM_NETWORK: networks.tvm.caip2,
         NEAR_NETWORK: networks.near.caip2,
+        XRPL_NETWORK: networks.xrpl.caip2,
       },
       stdio: 'pipe',
     },
@@ -1375,6 +1389,9 @@ async function runTest() {
       nearPrivateKey: clientNearPrivateKey || '',
       nearNetwork: networks.near.caip2,
       nearRpcUrl: networks.near.rpcUrl,
+      xrplSeed: clientXrplSeed || '',
+      xrplNetwork: networks.xrpl.caip2,
+      xrplWsUrl: networks.xrpl.rpcUrl,
     };
 
     try {
@@ -1608,6 +1625,7 @@ async function runTest() {
     const facilitatorSupportsStellar = facilitatorConfig?.protocolFamilies?.includes('stellar') ?? false;
     const facilitatorSupportsTvm = facilitatorConfig?.protocolFamilies?.includes('tvm') ?? false;
     const facilitatorSupportsNear = facilitatorConfig?.protocolFamilies?.includes('near') ?? false;
+    const facilitatorSupportsXrpl = facilitatorConfig?.protocolFamilies?.includes('xrpl') ?? false;
 
     const serverConfig: ServerConfig = {
       port,
@@ -1630,6 +1648,10 @@ async function runTest() {
       nearPayTo: facilitatorSupportsNear ? (serverNearAddress || '') : '',
       nearAsset: process.env.SERVER_NEAR_ASSET,
       nearAmount: process.env.SERVER_NEAR_AMOUNT,
+      xrplPayTo: facilitatorSupportsXrpl ? (serverXrplAddress || '') : '',
+      xrplAsset: process.env.SERVER_XRPL_ASSET,
+      xrplAmount: process.env.SERVER_XRPL_AMOUNT,
+      xrplIssuer: process.env.SERVER_XRPL_ISSUER,
       networks,
       facilitatorUrl,
       mockFacilitatorUrl,

@@ -1,4 +1,9 @@
-import { AccountAddress, Deserializer, Ed25519PublicKey, PublicKey } from "@aptos-labs/ts-sdk";
+import {
+  AccountAddress,
+  Deserializer,
+  PublicKey,
+  generateSigningMessageForTransaction,
+} from "@aptos-labs/ts-sdk";
 import type {
   PaymentPayload,
   PaymentRequirements,
@@ -110,11 +115,17 @@ export class ExactAptosScheme implements SchemeNetworkFacilitator {
         };
       }
 
-      // Verify sender matches authenticator public key (for Ed25519 accounts)
-      // Note: SingleKey and MultiKey authenticators are validated during simulation (step 11)
+      // Verify sender authenticator signature before any network calls.
+      // Simulation uses a dummy all-zero signature and does not validate senderAuthenticator.signature.
+      const signingMessage = generateSigningMessageForTransaction(transaction);
+      let publicKey: PublicKey | undefined;
+      let signatureValid: boolean;
+
       if (senderAuthenticator.isEd25519()) {
-        const pubKey = senderAuthenticator.public_key as Ed25519PublicKey;
-        const derivedAddress = AccountAddress.from(pubKey.authKey().derivedAddress());
+        publicKey = senderAuthenticator.public_key;
+        const derivedAddress = AccountAddress.from(
+          senderAuthenticator.public_key.authKey().derivedAddress(),
+        );
         if (!derivedAddress.equals(transaction.rawTransaction.sender)) {
           return {
             isValid: false,
@@ -122,6 +133,36 @@ export class ExactAptosScheme implements SchemeNetworkFacilitator {
             payer: senderAddress,
           };
         }
+        signatureValid = publicKey.verifySignature({
+          message: signingMessage,
+          signature: senderAuthenticator.signature,
+        });
+      } else if (senderAuthenticator.isSingleKey()) {
+        publicKey = senderAuthenticator.public_key;
+        signatureValid = publicKey.verifySignature({
+          message: signingMessage,
+          signature: senderAuthenticator.signature,
+        });
+      } else if (senderAuthenticator.isMultiKey()) {
+        publicKey = senderAuthenticator.public_keys;
+        signatureValid = publicKey.verifySignature({
+          message: signingMessage,
+          signature: senderAuthenticator.signatures,
+        });
+      } else {
+        return {
+          isValid: false,
+          invalidReason: "invalid_exact_aptos_payload_unsupported_authenticator",
+          payer: senderAddress,
+        };
+      }
+
+      if (!signatureValid) {
+        return {
+          isValid: false,
+          invalidReason: "invalid_exact_aptos_payload_sender_authenticator_invalid_signature",
+          payer: senderAddress,
+        };
       }
 
       // For sponsored transactions, verify max gas and gas unit price to prevent gas draining
@@ -282,15 +323,6 @@ export class ExactAptosScheme implements SchemeNetworkFacilitator {
       }
 
       // Step 11: Simulate the transaction
-      let publicKey: PublicKey | undefined;
-      if (senderAuthenticator.isEd25519()) {
-        publicKey = senderAuthenticator.public_key;
-      } else if (senderAuthenticator.isSingleKey()) {
-        publicKey = senderAuthenticator.public_key;
-      } else if (senderAuthenticator.isMultiKey()) {
-        publicKey = senderAuthenticator.public_keys;
-      }
-
       const simulationResult = (
         await aptos.transaction.simulate.simple({ signerPublicKey: publicKey, transaction })
       )[0];

@@ -26,6 +26,7 @@ from .types import (
     RoutesConfig,
 )
 from .x402_http_server_base import (
+    PAYMENT_REQUIRED_CACHE_CONTROL,
     PaywallProvider,
     x402HTTPServerBase,
 )
@@ -309,6 +310,7 @@ class x402HTTPResourceServer(x402HTTPServerBase):
             headers={
                 "Content-Type": content_type,
                 **settlement_headers,
+                "Cache-Control": PAYMENT_REQUIRED_CACHE_CONTROL,
             },
             body=body,
             is_html=content_type.startswith("text/html"),

@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
-from ..storage_utils import delete_file, read_json_file, write_json_atomic
+from ..storage_utils import delete_file, read_json_file, resolve_within_dir, write_json_atomic
 from .storage import BatchSettlementClientContext, ClientChannelStorage
 
 
@@ -39,7 +39,10 @@ class FileClientChannelStorage(ClientChannelStorage):
         delete_file(self._file_path(key))
 
     def _file_path(self, key: str) -> Path:
-        return self._root / "client" / f"{key.lower()}.json"
+        from ..utils import normalize_channel_id
+
+        normalized = normalize_channel_id(key)
+        return resolve_within_dir(self._root / "client", f"{normalized}.json")
 
 
 __all__ = ["FileChannelStorageOptions", "FileClientChannelStorage"]

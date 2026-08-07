@@ -2,7 +2,13 @@ import { x402Version } from "..";
 import { SchemeNetworkClient } from "../types/mechanisms";
 import { PaymentPayload, PaymentRequirements } from "../types/payments";
 import { Network, PaymentRequired, SettleResponse } from "../types";
-import { findByNetworkAndScheme, findSchemesByNetwork } from "../utils";
+import {
+  ADDITIVE_ARRAY_INFO_FIELDS,
+  deepEqual,
+  findByNetworkAndScheme,
+  findSchemesByNetwork,
+  toComparableArray,
+} from "../utils";
 
 /**
  * Client Hook Context Interfaces
@@ -109,9 +115,10 @@ export interface ClientExtension {
   key: string;
 
   /**
-   * Called after payload creation when the extension key is present in
-   * paymentRequired.extensions. Allows the extension to enrich the payload
-   * with extension-specific data (e.g., signing an EIP-2612 permit).
+   * Called after payload creation for every registered extension. Allows the
+   * extension to enrich the payload with extension-specific data. Extensions
+   * that require a server declaration must no-op internally when the server
+   * did not advertise them in paymentRequired.extensions.
    *
    * @param paymentPayload - The payment payload to enrich
    * @param paymentRequired - The original PaymentRequired response
@@ -281,9 +288,9 @@ export class x402Client {
    * Registers a client extension that can enrich payment payloads.
    *
    * Extensions are invoked after the scheme creates the base payload and the
-   * payload is wrapped with extensions/resource/accepted data. If the extension's
-   * key is present in `paymentRequired.extensions`, the extension's
-   * `enrichPaymentPayload` hook is called to modify the payload.
+   * payload is wrapped with extensions/resource/accepted data. Every registered
+   * extension's `enrichPaymentPayload` hook is called to modify the payload.
+   * Server-declared fields are preserved via merge after enrichment.
    *
    * @param extension - The client extension to register
    * @returns The x402Client instance for chaining
@@ -486,6 +493,11 @@ export class x402Client {
   /**
    * Merges server-declared extensions with client extension echoes.
    * Client extension data may add fields, but server-declared fields remain intact.
+   * For fields listed in `ADDITIVE_ARRAY_INFO_FIELDS` (e.g. builder-code `s`), a
+   * conflicting array is concatenated with client entries first (so a downstream
+   * length cap trims server entries rather than the client's) and duplicates
+   * removed; a scalar on either side is treated as a single-element array. Every
+   * other conflicting array keeps the server's value, same as any other scalar.
    *
    * @param serverExtensions - Extensions declared by the server in the 402 response
    * @param clientExtensions - Extensions provided by the client or scheme
@@ -515,6 +527,7 @@ export class x402Client {
 
       const serverRecord = serverValue as Record<string, unknown>;
       const clientRecord = clientValue as Record<string, unknown>;
+      const additiveFields = ADDITIVE_ARRAY_INFO_FIELDS[key];
       const extensionValue = { ...serverRecord };
       const pending = [{ target: extensionValue, source: clientRecord }];
       for (const item of pending) {
@@ -537,6 +550,22 @@ export class x402Client {
             continue;
           }
 
+          // A scalar on one side (e.g. builder-code `s` sent as a bare string)
+          // merges as a single-element array against an array on the other side.
+          // Only additive fields concatenate; other conflicting arrays keep the
+          // server's value below, same as any other scalar leaf field.
+          if (
+            additiveFields?.has(fieldKey) &&
+            (Array.isArray(serverFieldValue) || Array.isArray(clientFieldValue))
+          ) {
+            const serverArray = toComparableArray(serverFieldValue);
+            const clientArray = toComparableArray(clientFieldValue);
+            if (serverArray && clientArray) {
+              item.target[fieldKey] = mergeArraysUnique(clientArray, serverArray);
+              continue;
+            }
+          }
+
           if (!Object.prototype.hasOwnProperty.call(item.target, fieldKey)) {
             item.target[fieldKey] = clientFieldValue;
           }
@@ -550,8 +579,8 @@ export class x402Client {
 
   /**
    * Enriches a payment payload by calling registered extension hooks.
-   * For each extension key present in the PaymentRequired response,
-   * invokes the corresponding extension's enrichPaymentPayload callback.
+   * Invokes enrichPaymentPayload for every registered extension, then merges
+   * server-declared extension fields back into the result.
    *
    * @param paymentPayload - The payment payload to enrich with extension data
    * @param paymentRequired - The PaymentRequired response containing extension declarations
@@ -561,13 +590,13 @@ export class x402Client {
     paymentPayload: PaymentPayload,
     paymentRequired: PaymentRequired,
   ): Promise<PaymentPayload> {
-    if (!paymentRequired.extensions || this.registeredExtensions.size === 0) {
+    if (this.registeredExtensions.size === 0) {
       return paymentPayload;
     }
 
     let enriched = paymentPayload;
-    for (const [key, extension] of this.registeredExtensions) {
-      if (key in paymentRequired.extensions && extension.enrichPaymentPayload) {
+    for (const [, extension] of this.registeredExtensions) {
+      if (extension.enrichPaymentPayload) {
         enriched = await extension.enrichPaymentPayload(enriched, paymentRequired);
       }
     }
@@ -779,4 +808,23 @@ export class x402Client {
         return "onPaymentResponse";
     }
   }
+}
+
+/**
+ * Concatenates two arrays, keeping client entries first (so a downstream length
+ * cap trims server entries rather than the client's) and dropping duplicates
+ * (deep equality) wherever they occur, including within either input array.
+ *
+ * @param client - Client-provided array values
+ * @param server - Server-declared array values
+ * @returns Deduplicated concatenation
+ */
+function mergeArraysUnique(client: unknown[], server: unknown[]): unknown[] {
+  const merged: unknown[] = [];
+  for (const item of [...client, ...server]) {
+    if (!merged.some(existing => deepEqual(existing, item))) {
+      merged.push(item);
+    }
+  }
+  return merged;
 }

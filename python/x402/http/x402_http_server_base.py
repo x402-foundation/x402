@@ -61,6 +61,20 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger("x402")
 
+PAYMENT_REQUIRED_CACHE_CONTROL = "no-store"
+
+
+def with_private_cache_control(value: str | None) -> str:
+    """Append the ``private`` directive to an existing Cache-Control header value."""
+    if not value:
+        return "private"
+
+    directives = [directive.strip().lower() for directive in value.split(",")]
+    if "private" in directives:
+        return value
+
+    return f"{value}, private"
+
 
 # ============================================================================
 # Paywall Provider Protocol
@@ -674,6 +688,7 @@ class x402HTTPServerBase:
                 headers={
                     "Content-Type": content_type,
                     **settle_result.headers,
+                    "Cache-Control": with_private_cache_control(None),
                 },
                 body=body,
                 is_html="text/html" in content_type,
@@ -817,6 +832,7 @@ class x402HTTPServerBase:
                 headers={
                     "Content-Type": "text/html",
                     PAYMENT_REQUIRED_HEADER: encode_payment_required_header(payment_required),
+                    "Cache-Control": PAYMENT_REQUIRED_CACHE_CONTROL,
                 },
                 body=html_content,
                 is_html=True,
@@ -835,6 +851,7 @@ class x402HTTPServerBase:
             headers={
                 "Content-Type": content_type,
                 PAYMENT_REQUIRED_HEADER: encode_payment_required_header(payment_required),
+                "Cache-Control": PAYMENT_REQUIRED_CACHE_CONTROL,
             },
             body=body,
         )
@@ -877,6 +894,7 @@ class x402HTTPServerBase:
             headers={
                 "Content-Type": content_type,
                 **settlement_headers,
+                "Cache-Control": PAYMENT_REQUIRED_CACHE_CONTROL,
             },
             body=body,
             is_html=content_type.startswith("text/html"),

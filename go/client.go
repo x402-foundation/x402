@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"reflect"
 	"sync"
 
 	"github.com/x402-foundation/x402/go/v2/types"
@@ -100,9 +101,10 @@ func (c *x402Client) RegisterPolicy(policy PaymentPolicy) *x402Client {
 }
 
 // RegisterExtension registers a client extension that can enrich payment payloads.
-// Extensions are invoked after the scheme creates the base payload. If the extension's
-// key is present in paymentRequired.Extensions, the extension's EnrichPaymentPayload
-// method is called to modify the payload.
+// Extensions are invoked after the scheme creates the base payload and the payload
+// is wrapped with extensions/resource/accepted data. Every registered extension's
+// EnrichPaymentPayload hook is called to modify the payload. Server-declared fields
+// are preserved via merge after enrichment.
 func (c *x402Client) RegisterExtension(ext ClientExtension) *x402Client {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -522,26 +524,24 @@ func (c *x402Client) GetRegisteredSchemes() map[int][]struct {
 	return result
 }
 
-// enrichPaymentPayloadWithExtensions invokes registered client extensions
-// to enrich the payment payload. For each registered extension whose key is
-// present in the PaymentRequired extensions, calls EnrichPaymentPayload.
+// enrichPaymentPayloadWithExtensions invokes EnrichPaymentPayload for every
+// registered extension, then merges server-declared extension fields back into
+// the result.
 func (c *x402Client) enrichPaymentPayloadWithExtensions(
 	ctx context.Context,
 	payload types.PaymentPayload,
 	required types.PaymentRequired,
 ) (types.PaymentPayload, error) {
-	if len(required.Extensions) == 0 || len(c.extensions) == 0 {
+	if len(c.extensions) == 0 {
 		return payload, nil
 	}
 
 	enriched := payload
 	for key, ext := range c.extensions {
-		if _, exists := required.Extensions[key]; exists {
-			var err error
-			enriched, err = ext.EnrichPaymentPayload(ctx, enriched, required)
-			if err != nil {
-				return types.PaymentPayload{}, fmt.Errorf("extension %s enrichment failed: %w", key, err)
-			}
+		var err error
+		enriched, err = ext.EnrichPaymentPayload(ctx, enriched, required)
+		if err != nil {
+			return types.PaymentPayload{}, fmt.Errorf("extension %s enrichment failed: %w", key, err)
 		}
 	}
 
@@ -575,10 +575,15 @@ func asStringMap(v interface{}) (map[string]interface{}, bool) {
 }
 
 // mergeExtensions merges server-declared extensions with client/scheme-provided
-// extensions, always preserving server-declared fields. For keys present on both
-// sides whose values are objects, server fields win and only client fields the
-// server did not declare are added (recursing into nested objects); for any
-// other key the client value is used.
+// extensions, always preserving server-declared fields. For keys present on
+// both sides whose values are objects, server fields win and only client
+// fields the server did not declare are added (recursing into nested objects).
+// For fields listed in additiveArrayInfoFields (e.g. builder-code `s`), a
+// conflicting array is concatenated with client entries first (so a downstream
+// length cap trims server entries rather than the client's) and duplicates
+// removed; a scalar on either side is treated as a single-element array. Every
+// other conflicting array keeps the server's value, same as any other scalar.
+// For any other key the client value is used.
 func mergeExtensions(server, client map[string]interface{}) map[string]interface{} {
 	if client == nil {
 		return server
@@ -601,7 +606,11 @@ func mergeExtensions(server, client map[string]interface{}) map[string]interface
 		}
 
 		// Deep-merge into a copy of the server object, preserving server fields and
-		// only adding client fields the server did not declare.
+		// only adding client fields the server did not declare. Conflicting arrays
+		// in an additive field (see additiveArrayInfoFields) are concatenated
+		// (client first) with duplicates removed; every other conflicting array
+		// keeps the server's value.
+		additiveFields := additiveArrayInfoFields[key]
 		extensionValue := make(map[string]interface{}, len(serverMap))
 		for k, v := range serverMap {
 			extensionValue[k] = v
@@ -622,6 +631,22 @@ func mergeExtensions(server, client map[string]interface{}) map[string]interface
 					pending = append(pending, mergePair{target: nested, source: clientFieldMap})
 					continue
 				}
+				if additiveFields[fieldKey] {
+					serverSlice, ssOk := asSlice(target[fieldKey])
+					clientSlice, csOk := asSlice(clientFieldVal)
+					// A scalar on one side (e.g. builder-code `s` sent as a bare string)
+					// merges as a single-element array against an array on the other side.
+					if !ssOk && csOk {
+						serverSlice, ssOk = asScalarSingleton(target[fieldKey])
+					}
+					if !csOk && ssOk {
+						clientSlice, csOk = asScalarSingleton(clientFieldVal)
+					}
+					if ssOk && csOk {
+						target[fieldKey] = mergeSlicesUnique(clientSlice, serverSlice)
+						continue
+					}
+				}
 				if _, exists := target[fieldKey]; !exists {
 					target[fieldKey] = clientFieldVal
 				}
@@ -631,4 +656,89 @@ func mergeExtensions(server, client map[string]interface{}) map[string]interface
 		merged[key] = extensionValue
 	}
 	return merged
+}
+
+// asSlice returns v as a []interface{} so array fields can participate in merge
+// and echo subset checks. []interface{} is returned directly; any other slice or
+// array type (e.g. []string, []map[string]interface{} built directly by Go scheme
+// code) is coerced via a JSON round-trip, mirroring the payload's eventual
+// serialization. Non-slice values return ok=false so the caller treats them
+// atomically or as a scalar (see asScalarSingleton).
+func asSlice(v interface{}) ([]interface{}, bool) {
+	if s, ok := v.([]interface{}); ok {
+		return s, true
+	}
+	if v == nil {
+		return nil, false
+	}
+	switch reflect.ValueOf(v).Kind() {
+	case reflect.Slice, reflect.Array:
+	default:
+		return nil, false
+	}
+	data, err := json.Marshal(v)
+	if err != nil {
+		return nil, false
+	}
+	var s []interface{}
+	if err := json.Unmarshal(data, &s); err != nil {
+		return nil, false
+	}
+	return s, true
+}
+
+// asScalarSingleton wraps a non-nil, non-array, non-map value in a single-element
+// slice so a scalar declaration (e.g. builder-code `s` sent as a bare string) can
+// merge or compare against an array declared on the other side.
+func asScalarSingleton(v interface{}) ([]interface{}, bool) {
+	if v == nil {
+		return nil, false
+	}
+	switch reflect.ValueOf(v).Kind() {
+	case reflect.Slice, reflect.Array, reflect.Map:
+		return nil, false
+	default:
+		return []interface{}{v}, true
+	}
+}
+
+// mergeSlicesUnique concatenates client then server, dropping duplicate items
+// (DeepEqual) wherever they occur, including within either input slice. Client
+// entries lead so a downstream cap on array length (e.g. builder-code's
+// MAX_SERVICE_CODES) truncates excess server entries rather than the client's.
+func mergeSlicesUnique(client, server []interface{}) []interface{} {
+	merged := make([]interface{}, 0, len(client)+len(server))
+	appendUnique := func(item interface{}) {
+		for _, existing := range merged {
+			if DeepEqual(existing, item) {
+				return
+			}
+		}
+		merged = append(merged, item)
+	}
+	for _, item := range client {
+		appendUnique(item)
+	}
+	for _, item := range server {
+		appendUnique(item)
+	}
+	return merged
+}
+
+// arrayContainsSubset reports whether every element of expected appears in
+// actual (DeepEqual membership). Extra actual elements are allowed.
+func arrayContainsSubset(expected, actual []interface{}) bool {
+	for _, exp := range expected {
+		found := false
+		for _, act := range actual {
+			if DeepEqual(exp, act) {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return false
+		}
+	}
+	return true
 }

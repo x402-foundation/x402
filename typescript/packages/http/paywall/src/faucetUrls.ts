@@ -12,11 +12,11 @@ export const FAUCET_URLS: Record<string, string> = {
   "eip155:31611": "https://faucet.test.mezo.org/", // Mezo Testnet
   "eip155:2201": "https://faucet.stable.xyz/faucet", // Stable Testnet
   "eip155:72344": "https://testnet.radiustech.xyz/wallet", // Radius Testnet
+  "eip155:11142220": "https://faucet.circle.com/", // Celo Sepolia
   // SVM testnets
   "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1": "https://faucet.circle.com/",
   // AVM testnets
-  "algorand:SGO1GKSzyE7IEPItTxCByw9x8FmnrCDexi9/cOUJOiI=":
-    "https://dispenser.testnet.aws.algodev.network/",
+  "algorand:SGO1GKSzyE7IEPItTxCByw9x8FmnrCDe": "https://dispenser.testnet.aws.algodev.network/",
 };
 
 /**

@@ -1,5 +1,32 @@
 # @x402/stellar Changelog
 
+## 2.21.0
+
+### Minor Changes
+
+- Updated dependencies [e805616](https://github.com/x402-foundation/x402/commit/e805616)
+- Updated dependencies [e335d4f](https://github.com/x402-foundation/x402/commit/e335d4f)
+- Updated dependencies [183b270](https://github.com/x402-foundation/x402/commit/183b270)
+- Updated dependencies [ee1b148](https://github.com/x402-foundation/x402/commit/ee1b148)
+- Updated dependencies [e805616](https://github.com/x402-foundation/x402/commit/e805616)
+- Updated dependencies [5192e50](https://github.com/x402-foundation/x402/commit/5192e50)
+  - @x402/core@2.21.0
+
+## 2.20.0
+
+### Minor Changes
+
+- Updated dependencies [4453a92](https://github.com/x402-foundation/x402/commit/4453a92)
+  - @x402/core@2.20.0
+
+## 2.19.0
+
+### Minor Changes
+
+- [c4d2de6](https://github.com/x402-foundation/x402/commit/c4d2de6): Fixed Stellar exact facilitator settlement to derive fees from settle-time simulation (BASE_FEE + resource fee) instead of the client bid, fixing SDK v16 resource-fee double-counting. ([#2852](https://github.com/x402-foundation/x402/pull/2852)) - Thanks [@phdargen](https://github.com/phdargen)!
+- Updated dependencies [c72cfee](https://github.com/x402-foundation/x402/commit/c72cfee)
+  - @x402/core@2.19.0
+
 ## 2.18.0
 
 ### Minor Changes

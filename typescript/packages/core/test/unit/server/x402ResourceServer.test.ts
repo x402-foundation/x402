@@ -793,6 +793,78 @@ describe("x402ResourceServer", () => {
 
         expect(afterVerifyCalled).toBe(false);
       });
+
+      it("returns a failed verify response and stops later hooks when an afterVerify hook aborts", async () => {
+        const laterHook = vi.fn();
+        const cancellationHook = vi.fn();
+
+        server
+          .onAfterVerify(async () => ({
+            abort: true,
+            reason: "reservation_lost",
+            message: "channel busy",
+          }))
+          .onAfterVerify(laterHook)
+          .onVerifiedPaymentCanceled(cancellationHook);
+
+        const result = await server.verifyPayment(
+          buildPaymentPayload(),
+          buildPaymentRequirements(),
+        );
+
+        expect(result.isValid).toBe(false);
+        expect(result.invalidReason).toBe("reservation_lost");
+        expect(result.invalidMessage).toBe("channel busy");
+        expect(result.skipHandler).toBeUndefined();
+        expect(laterHook).not.toHaveBeenCalled();
+        expect(cancellationHook).toHaveBeenCalledTimes(1);
+        expect(cancellationHook).toHaveBeenCalledWith(
+          expect.objectContaining({ reason: "after_verify_aborted" }),
+        );
+      });
+
+      it("keeps an afterVerify abort when cancellation cleanup throws", async () => {
+        const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+        server
+          .onAfterVerify(async () => ({
+            abort: true,
+            reason: "reservation_lost",
+          }))
+          .onVerifiedPaymentCanceled(async () => {
+            throw new Error("cleanup failed");
+          });
+
+        const result = await server.verifyPayment(
+          buildPaymentPayload(),
+          buildPaymentRequirements(),
+        );
+
+        expect(result).toMatchObject({
+          isValid: false,
+          invalidReason: "reservation_lost",
+        });
+        expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining("onVerifiedPaymentCanceled"));
+
+        warnSpy.mockRestore();
+      });
+
+      it("still attaches a skipHandler directive from an afterVerify hook", async () => {
+        server.onAfterVerify(async () => ({
+          skipHandler: true,
+          response: { contentType: "application/json", body: { ok: true } },
+        }));
+
+        const result = await server.verifyPayment(
+          buildPaymentPayload(),
+          buildPaymentRequirements(),
+        );
+
+        expect(result.isValid).toBe(true);
+        expect(result.skipHandler).toEqual({
+          contentType: "application/json",
+          body: { ok: true },
+        });
+      });
     });
 
     describe("onVerifyFailure", () => {
@@ -833,6 +905,56 @@ describe("x402ResourceServer", () => {
 
         expect(result.isValid).toBe(true);
         expect(result.payer).toBe("0xRecovered");
+      });
+
+      it("runs afterVerify hooks when onVerifyFailure recovers", async () => {
+        const afterVerify = vi.fn();
+        mockClient.setVerifyResponse(new Error("Temporary failure"));
+
+        server
+          .onVerifyFailure(async () => ({
+            recovered: true,
+            result: { isValid: true, payer: "0xRecovered" },
+          }))
+          .onAfterVerify(afterVerify);
+
+        const result = await server.verifyPayment(
+          buildPaymentPayload(),
+          buildPaymentRequirements(),
+        );
+
+        expect(result.isValid).toBe(true);
+        expect(result.payer).toBe("0xRecovered");
+        expect(afterVerify).toHaveBeenCalledTimes(1);
+        expect(afterVerify).toHaveBeenCalledWith(
+          expect.objectContaining({
+            result: expect.objectContaining({ isValid: true, payer: "0xRecovered" }),
+          }),
+        );
+      });
+
+      it("fails closed when an afterVerify hook aborts a recovered verify", async () => {
+        mockClient.setVerifyResponse(new Error("Temporary failure"));
+
+        server
+          .onVerifyFailure(async () => ({
+            recovered: true,
+            result: { isValid: true, payer: "0xRecovered" },
+          }))
+          .onAfterVerify(async () => ({
+            abort: true,
+            reason: "reservation_lost",
+            message: "channel busy",
+          }));
+
+        const result = await server.verifyPayment(
+          buildPaymentPayload(),
+          buildPaymentRequirements(),
+        );
+
+        expect(result.isValid).toBe(false);
+        expect(result.invalidReason).toBe("reservation_lost");
+        expect(result.invalidMessage).toBe("channel busy");
       });
 
       it("should try all hooks until one recovers", async () => {
@@ -1705,6 +1827,141 @@ describe("x402ResourceServer", () => {
       expect(server.validateExtensions(paymentRequired, payload)).toEqual({ valid: true });
     });
 
+    it("passes when echoed array is a superset of the advertised array", () => {
+      const server = new x402ResourceServer();
+      const paymentRequired = buildPaymentRequired({
+        extensions: {
+          "builder-code": { info: { a: "bc_app", s: ["bc_server"] } },
+        },
+      });
+      const payload = buildPaymentPayload({
+        extensions: {
+          "builder-code": { info: { a: "bc_app", s: ["bc_server", "bc_client"] } },
+        },
+      });
+
+      expect(server.validateExtensions(paymentRequired, payload)).toEqual({ valid: true });
+    });
+
+    it("fails when echoed array drops an advertised element", () => {
+      const server = new x402ResourceServer();
+      const paymentRequired = buildPaymentRequired({
+        extensions: {
+          "builder-code": { info: { s: ["bc_server"] } },
+        },
+      });
+      const payload = buildPaymentPayload({
+        extensions: {
+          "builder-code": { info: { s: ["bc_client"] } },
+        },
+      });
+
+      expect(server.validateExtensions(paymentRequired, payload)).toEqual({
+        valid: false,
+        invalidReason: "extension_echo_mismatch",
+        extensionKey: "builder-code",
+      });
+    });
+
+    it("fails when echoed array exceeds the combined client+server budget even as a superset", () => {
+      // Regression test: a hand-crafted echo padding `s` past the combined
+      // budget must be rejected outright rather than accepted and left to be
+      // silently truncated downstream (e.g. by a facilitator extension),
+      // which could crowd out the legitimately advertised entry.
+      const server = new x402ResourceServer();
+      const paymentRequired = buildPaymentRequired({
+        extensions: {
+          "builder-code": { info: { s: ["bc_server"] } },
+        },
+      });
+      const padded = ["bc_server", ...Array.from({ length: 10 }, (_, i) => `bc_fake_${i}`)];
+      const payload = buildPaymentPayload({
+        extensions: {
+          "builder-code": { info: { s: padded } },
+        },
+      });
+
+      expect(server.validateExtensions(paymentRequired, payload)).toEqual({
+        valid: false,
+        invalidReason: "extension_echo_mismatch",
+        extensionKey: "builder-code",
+      });
+    });
+
+    it("passes when echoed array is exactly at the combined client+server budget", () => {
+      const server = new x402ResourceServer();
+      const paymentRequired = buildPaymentRequired({
+        extensions: {
+          "builder-code": { info: { s: ["bc_server"] } },
+        },
+      });
+      const atBudget = ["bc_server", ...Array.from({ length: 9 }, (_, i) => `bc_client_${i}`)];
+      const payload = buildPaymentPayload({
+        extensions: {
+          "builder-code": { info: { s: atBudget } },
+        },
+      });
+
+      expect(server.validateExtensions(paymentRequired, payload)).toEqual({ valid: true });
+    });
+
+    it("passes when the advertised s is a scalar and the echo is an array containing it", () => {
+      const server = new x402ResourceServer();
+      const paymentRequired = buildPaymentRequired({
+        extensions: {
+          "builder-code": { info: { s: "bc_server" } },
+        },
+      });
+      const payload = buildPaymentPayload({
+        extensions: {
+          "builder-code": { info: { s: ["bc_server", "bc_client"] } },
+        },
+      });
+
+      expect(server.validateExtensions(paymentRequired, payload)).toEqual({ valid: true });
+    });
+
+    it("passes when the advertised s is an array and the echo is a matching scalar", () => {
+      const server = new x402ResourceServer();
+      const paymentRequired = buildPaymentRequired({
+        extensions: {
+          "builder-code": { info: { s: ["bc_server"] } },
+        },
+      });
+      const payload = buildPaymentPayload({
+        extensions: {
+          "builder-code": { info: { s: "bc_server" } },
+        },
+      });
+
+      expect(server.validateExtensions(paymentRequired, payload)).toEqual({ valid: true });
+    });
+
+    it("fails when a non-builder-code extension's array field gains an echoed element", () => {
+      // Additive-array echo matching is scoped to builder-code's `s`; other
+      // extensions' array fields (e.g. sign-in-with-x's `resources`) must still
+      // match exactly so clients cannot smuggle extra values into the echo.
+      const server = new x402ResourceServer();
+      const paymentRequired = buildPaymentRequired({
+        extensions: {
+          "sign-in-with-x": { info: { resources: ["https://api.example.com/data"] } },
+        },
+      });
+      const payload = buildPaymentPayload({
+        extensions: {
+          "sign-in-with-x": {
+            info: { resources: ["https://api.example.com/data", "https://evil.example.com"] },
+          },
+        },
+      });
+
+      expect(server.validateExtensions(paymentRequired, payload)).toEqual({
+        valid: false,
+        invalidReason: "extension_echo_mismatch",
+        extensionKey: "sign-in-with-x",
+      });
+    });
+
     it("passes when only a declared dynamic info field differs", () => {
       const server = new x402ResourceServer();
       server.registerExtension({ key: "siwx", dynamicInfoFields: ["nonce"] });
@@ -1864,6 +2121,54 @@ describe("x402ResourceServer", () => {
             ...req.extra,
             version: "3",
           },
+        },
+      });
+
+      const result = server.findMatchingRequirements([req], payload);
+
+      expect(result).toBeUndefined();
+    });
+
+    it("should not match v2 requirements when accepted.extra array is a superset of the server's", () => {
+      const server = new x402ResourceServer();
+
+      const req = buildPaymentRequirements({
+        scheme: "batch-settlement",
+        network: "eip155:8453" as Network,
+        amount: "1000000",
+        asset: "USDC",
+        extra: { allowedSigners: ["0xalice"] },
+      });
+
+      const payload = buildPaymentPayload({
+        x402Version: 2,
+        accepted: {
+          ...req,
+          extra: { allowedSigners: ["0xmallory", "0xalice"] },
+        },
+      });
+
+      const result = server.findMatchingRequirements([req], payload);
+
+      expect(result).toBeUndefined();
+    });
+
+    it("should not match v2 requirements when accepted.extra array is reordered", () => {
+      const server = new x402ResourceServer();
+
+      const req = buildPaymentRequirements({
+        scheme: "batch-settlement",
+        network: "eip155:8453" as Network,
+        amount: "1000000",
+        asset: "USDC",
+        extra: { allowedSigners: ["0xalice", "0xbob"] },
+      });
+
+      const payload = buildPaymentPayload({
+        x402Version: 2,
+        accepted: {
+          ...req,
+          extra: { allowedSigners: ["0xbob", "0xalice"] },
         },
       });
 

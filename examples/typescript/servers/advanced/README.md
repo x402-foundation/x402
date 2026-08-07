@@ -67,12 +67,18 @@ cp .env-local .env
 and fill required environment variables:
 
 - `FACILITATOR_URL` - Facilitator endpoint URL
+- `AVM_ADDRESS` - Algorand address to receive payments (optional for `all-networks`)
+- `AVM_NETWORK` - Algorand network CAIP-2 (optional; defaults to canonical Algorand Testnet)
+- `APTOS_ADDRESS` - Aptos account address to receive payments (optional for `all-networks`)
 - `CCD_ADDRESS` - Concordium account address to receive payments (optional for `all-networks`)
 - `EVM_ADDRESS` - Ethereum address to receive payments
 - `SVM_ADDRESS` - Solana address to receive payments (optional for `all-networks`)
 - `STELLAR_ADDRESS` - Stellar public address (starts with `G`) to receive payments
 - `HEDERA_ACCOUNT_ID` - Hedera account id to receive payments (optional for `all-networks`; format: `0.0.XXXXX`)
 - `KEETA_ADDRESS` - Keeta address (starts with `keeta_`) to receive payments
+- `XRPL_ADDRESS` - XRPL classic address (starts with `r`) to receive payments (optional for `all-networks`)
+- `XRPL_NETWORK` - XRPL network CAIP-2 (optional, defaults to `xrpl:1` XRPL Testnet)
+- `XRPL_AMOUNT` - XRPL price in drops (optional, defaults to `1000` = 0.001 XRP)
 
 > **Hedera Testnet:** Get testnet HBAR from the [Hedera Faucet](https://portal.hedera.com/faucet).
 
@@ -88,6 +94,16 @@ cd servers/advanced
 
 ```bash
 pnpm dev
+```
+
+### Network configuration
+
+The `network` in route `accepts` and `.register(...)` must **exactly match** a scheme/network pair from your facilitator's `/supported` response. The server checks this on startup; a mismatch fails initialization.
+
+Check what your facilitator supports before configuring networks:
+
+```bash
+curl -s "$FACILITATOR_URL/supported" | jq '.kinds[] | {scheme, network}'
 ```
 
 ### Account Setup Instructions
@@ -107,6 +123,20 @@ To create a Keeta Testnet wallet:
 1. Go to [Keeta Testnet Wallet](https://wallet.test.keeta.com/) and follow the steps to create your wallet. Make sure to save your mnemonic (seed phrase) to keep access to your wallet. To get your Keeta address, click on "Receive" and copy the deposit address (starting with `keeta_`).
 2. Use the [Keeta Testnet Faucet](https://faucet.test.keeta.com/) to send Testnet KTA to your wallet.
 3. To get Testnet USDC on Keeta, go to the "Receive" page in the wallet, click on "Any token from Keeta Testnet", select "USDC from Base (Sepolia) Testnet" and copy the deposit address (starting with `0x`). Then go the [Circle Faucet](https://faucet.circle.com/), select Base network and enter your Base deposit address.
+
+#### Aptos Testnet
+
+For testing on Aptos testnet, you can obtain test tokens from these faucets:
+
+- **Test APT**: https://aptos.dev/network/faucet or through an account on [geomi.dev](https://geomi.dev/manage/faucet)
+- **Test USDC**: https://faucet.circle.com/
+
+#### XRPL Testnet
+
+The receiving account must exist on the ledger, i.e. hold the [base reserve](https://xrpl.org/docs/concepts/accounts/reserves) (currently 1 XRP):
+
+1. Use the [XRPL Testnet faucet](https://xrpl.org/resources/dev-tools/xrp-faucets) to generate a funded account, and copy its classic address (starts with `r`) into `XRPL_ADDRESS`.
+2. The `all-networks` example prices in XRP drops, so no further setup is needed. To receive issued-currency (IOU) payments instead, the receiving account must hold a [trust line](https://xrpl.org/docs/concepts/tokens/fungible-tokens) to the issuer.
 
 ## Available Examples
 

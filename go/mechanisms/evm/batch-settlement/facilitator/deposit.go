@@ -277,18 +277,11 @@ func VerifyDeposit(
 		}
 	}
 
-	// Build response with projected state after deposit
-	projectedState := &batchsettlement.ChannelState{
-		Balance:             effectiveBalance,
-		TotalClaimed:        state.TotalClaimed,
-		WithdrawRequestedAt: state.WithdrawRequestedAt,
-		RefundNonce:         state.RefundNonce,
-	}
-
+	// Return current onchain state
 	return &x402.VerifyResponse{
 		IsValid: true,
 		Payer:   config.Payer,
-		Extra:   BuildVerifyExtra(channelId, projectedState),
+		Extra:   BuildVerifyExtra(channelId, state),
 	}, nil
 }
 
@@ -371,6 +364,28 @@ func SettleDeposit(
 		}
 	}
 
+	// Read pre-submit onchain state. Used as the baseline for the optimistic
+	// post-deposit fallback (priorBalance + depositAmount). Reading after the
+	// receipt would already include the deposit when the RPC is current, and
+	// adding depositAmount again would double-count.
+	priorState, _ := ReadChannelState(ctx, signer, payload.Voucher.ChannelId)
+	priorBalance := big.NewInt(0)
+	priorTotalClaimed := big.NewInt(0)
+	priorWithdrawRequestedAt := 0
+	priorRefundNonce := big.NewInt(0)
+	if priorState != nil {
+		if priorState.Balance != nil {
+			priorBalance = priorState.Balance
+		}
+		if priorState.TotalClaimed != nil {
+			priorTotalClaimed = priorState.TotalClaimed
+		}
+		priorWithdrawRequestedAt = priorState.WithdrawRequestedAt
+		if priorState.RefundNonce != nil {
+			priorRefundNonce = priorState.RefundNonce
+		}
+	}
+
 	// Branch on extension settlement strategy:
 	//   erc20Approval → broadcast pre-signed approve() then deposit() via the
 	//                   facilitator extension signer's SendTransactions.
@@ -429,27 +444,11 @@ func SettleDeposit(
 	}
 
 	// Optimistic post-deposit extra (fallback if RPC hasn't caught up to
-	// the just-confirmed tx). The settle response intentionally omits
-	// `chargedCumulativeAmount` — that field is added by the resource
-	// server's `enrichSettlementResponse` hook, and emitting
-	// it from the facilitator violates the additive-enrichment policy.
-	priorState, _ := ReadChannelState(ctx, signer, payload.Voucher.ChannelId)
-	priorBalance := big.NewInt(0)
-	priorTotalClaimed := big.NewInt(0)
-	priorWithdrawRequestedAt := 0
-	priorRefundNonce := big.NewInt(0)
-	if priorState != nil {
-		if priorState.Balance != nil {
-			priorBalance = priorState.Balance
-		}
-		if priorState.TotalClaimed != nil {
-			priorTotalClaimed = priorState.TotalClaimed
-		}
-		priorWithdrawRequestedAt = priorState.WithdrawRequestedAt
-		if priorState.RefundNonce != nil {
-			priorRefundNonce = priorState.RefundNonce
-		}
-	}
+	// the just-confirmed tx). Anchored to the pre-submit read above so we
+	// add depositAmount exactly once. The settle response intentionally
+	// omits `chargedCumulativeAmount` — that field is added by the resource
+	// server's `enrichSettlementResponse` hook, and emitting it from the
+	// facilitator violates the additive-enrichment policy.
 	optimisticBalance := new(big.Int).Add(priorBalance, depositAmount)
 	optimisticState := &batchsettlement.ChannelState{
 		Balance:             optimisticBalance,

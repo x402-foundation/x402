@@ -73,15 +73,57 @@ func TestComputeChannelId_RejectsTooLongSalt(t *testing.T) {
 
 func TestNormalizeChannelId(t *testing.T) {
 	cases := map[string]string{
-		"0xABCDEF":         "0xabcdef",
-		"0xabc":            "0xabc",
-		"0x":               "0x",
-		"0xMixedCASE12345": "0xmixedcase12345",
+		"0xABCDEF0000000000000000000000000000000000000000000000000000000000": "0xabcdef0000000000000000000000000000000000000000000000000000000000",
+		"0x00000000000000000000000000000000000000000000000000000000000000ab": "0x00000000000000000000000000000000000000000000000000000000000000ab",
+		"0xAbCdEf1234567890AbCdEf1234567890AbCdEf1234567890AbCdEf1234567890": "0xabcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890",
 	}
 	for in, want := range cases {
-		if got := NormalizeChannelId(in); got != want {
+		got, err := NormalizeChannelId(in)
+		if err != nil {
+			t.Fatalf("NormalizeChannelId(%q): unexpected err %v", in, err)
+		}
+		if got != want {
 			t.Fatalf("NormalizeChannelId(%q) = %q, want %q", in, got, want)
 		}
+	}
+
+	invalid := []string{"0xABCDEF", "0xabc", "0x", "not-a-channel-id", "", "../../../etc/passwd", "/etc/passwd"}
+	for _, in := range invalid {
+		if _, err := NormalizeChannelId(in); err == nil {
+			t.Fatalf("NormalizeChannelId(%q): expected error", in)
+		}
+	}
+}
+
+func TestIsCanonicalChannelId(t *testing.T) {
+	if !IsCanonicalChannelId("0xAbCdEf1234567890AbCdEf1234567890AbCdEf1234567890AbCdEf1234567890") {
+		t.Fatal("expected mixed-case 64-hex to be canonical")
+	}
+	for _, in := range []string{"0x1234", "", "0x" + strings.Repeat("g", 64), "../../../etc/passwd"} {
+		if IsCanonicalChannelId(in) {
+			t.Fatalf("IsCanonicalChannelId(%q) = true", in)
+		}
+	}
+}
+
+func TestChannelIdBindingError(t *testing.T) {
+	cfg := sampleConfig()
+	id, err := ComputeChannelId(cfg, testNetwork)
+	if err != nil {
+		t.Fatalf("ComputeChannelId: %v", err)
+	}
+	if got := ChannelIdBindingError(cfg, id, testNetwork); got != "" {
+		t.Fatalf("expected empty binding error, got %q", got)
+	}
+	if got := ChannelIdBindingError(cfg, "0x"+strings.ToUpper(id[2:]), testNetwork); got != "" {
+		t.Fatalf("mixed-case id should bind, got %q", got)
+	}
+	if got := ChannelIdBindingError(cfg, "0xabcd", testNetwork); got != ErrInvalidChannelId {
+		t.Fatalf("malformed = %q, want %q", got, ErrInvalidChannelId)
+	}
+	wrong := "0x" + strings.Repeat("11", 32)
+	if got := ChannelIdBindingError(cfg, wrong, testNetwork); got != ErrChannelIdMismatch {
+		t.Fatalf("mismatch = %q, want %q", got, ErrChannelIdMismatch)
 	}
 }
 

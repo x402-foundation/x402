@@ -34,8 +34,18 @@ github.com/x402-foundation/x402/go/v2/mechanisms/svm/exact/server
 
 **Exports:**
 - `NewExactSvmScheme()` - Creates server-side SVM exact payment mechanism
+- `NewExactSvmScheme(&svm.ServerConfig{RPCURL: "https://api.devnet.solana.com"})` - Optionally embeds a recent blockhash in the 402 challenge
 - Used for building payment requirements and parsing prices
 - Supports custom money parsers via `RegisterMoneyParser()`
+
+```go
+import svm "github.com/x402-foundation/x402/go/v2/mechanisms/svm"
+import svmserver "github.com/x402-foundation/x402/go/v2/mechanisms/svm/exact/server"
+
+scheme := svmserver.NewExactSvmScheme(&svm.ServerConfig{
+	RPCURL: "https://api.devnet.solana.com",
+})
+```
 
 #### For Facilitators
 

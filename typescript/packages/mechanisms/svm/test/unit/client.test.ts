@@ -3,6 +3,36 @@ import { ExactSvmScheme } from "../../src/exact";
 import type { ClientSvmSigner } from "../../src/signer";
 import type { PaymentRequirements } from "@x402/core/types";
 import { USDC_DEVNET_ADDRESS, SOLANA_DEVNET_CAIP2 } from "../../src/constants";
+import { resolveBlockhash } from "../../src/utils";
+
+const PROVIDED_BLOCKHASH = "EZ3rST5dvHmbanh75jc4PuLfV96vp9fEYBVeNk4FfM1k";
+const FALLBACK_BLOCKHASH = "5Tx8F3jgSHx21CbtjwmdaKPLM5tWmreWAnPrbqHomSJF";
+
+function createBlockhashRpc() {
+  const send = vi.fn().mockResolvedValue({
+    value: {
+      blockhash: FALLBACK_BLOCKHASH,
+      lastValidBlockHeight: 67890n,
+    },
+  });
+  const rpc = {
+    getLatestBlockhash: () => ({ send }),
+  };
+
+  return { rpc, send };
+}
+
+function requirementsWithRecentBlockhash(
+  recentBlockhash?: string | number,
+  lastValidBlockHeight?: string | number,
+) {
+  return {
+    extra: {
+      ...(recentBlockhash === undefined ? {} : { recentBlockhash }),
+      ...(lastValidBlockHeight === undefined ? {} : { lastValidBlockHeight }),
+    },
+  };
+}
 
 describe("ExactSvmScheme", () => {
   let mockSigner: ClientSvmSigner;
@@ -99,5 +129,59 @@ describe("ExactSvmScheme", () => {
       }
       expect(client.scheme).toBe("exact");
     });
+  });
+});
+
+describe("resolveBlockhash", () => {
+  it("uses a valid server-provided blockhash without an RPC call", async () => {
+    const { rpc, send } = createBlockhashRpc();
+
+    const result = await resolveBlockhash(
+      rpc as never,
+      requirementsWithRecentBlockhash(PROVIDED_BLOCKHASH, "12345") as never,
+    );
+
+    expect(result).toEqual({
+      blockhash: PROVIDED_BLOCKHASH,
+      lastValidBlockHeight: 12345n,
+    });
+    expect(send).not.toHaveBeenCalled();
+  });
+
+  it("uses a valid blockhash when lastValidBlockHeight is absent or malformed", async () => {
+    const { rpc, send } = createBlockhashRpc();
+
+    const missingHeight = await resolveBlockhash(
+      rpc as never,
+      requirementsWithRecentBlockhash(PROVIDED_BLOCKHASH) as never,
+    );
+    const malformedHeight = await resolveBlockhash(
+      rpc as never,
+      requirementsWithRecentBlockhash(PROVIDED_BLOCKHASH, "not-a-height") as never,
+    );
+
+    expect(missingHeight.lastValidBlockHeight).toBe(0n);
+    expect(malformedHeight.lastValidBlockHeight).toBe(0n);
+    expect(send).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["absent", undefined],
+    ["empty", ""],
+    ["non-string", 12345],
+    ["malformed", "not-a-blockhash"],
+  ])("falls back to RPC when recentBlockhash is %s", async (_name, recentBlockhash) => {
+    const { rpc, send } = createBlockhashRpc();
+
+    const result = await resolveBlockhash(
+      rpc as never,
+      requirementsWithRecentBlockhash(recentBlockhash) as never,
+    );
+
+    expect(result).toEqual({
+      blockhash: FALLBACK_BLOCKHASH,
+      lastValidBlockHeight: 67890n,
+    });
+    expect(send).toHaveBeenCalledOnce();
   });
 });

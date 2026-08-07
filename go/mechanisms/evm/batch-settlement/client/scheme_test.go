@@ -280,18 +280,22 @@ func TestHasSession_GetSession(t *testing.T) {
 	storage := NewInMemoryClientChannelStorage()
 	scheme := NewBatchSettlementEvmScheme(&mockSigner{address: "0x1"}, &BatchSettlementEvmSchemeOptions{Storage: storage})
 
-	if scheme.HasSession("0xMISSING") {
+	const missingID = "0x0000000000000000000000000000000000000000000000000000000000000099"
+	const channelID = "0xabcdef0000000000000000000000000000000000000000000000000000000000"
+	const channelIDUpper = "0xABCDEF0000000000000000000000000000000000000000000000000000000000"
+
+	if scheme.HasSession(missingID) {
 		t.Fatal("missing should be false")
 	}
-	if _, ok := scheme.GetSession("0xMISSING"); ok {
+	if _, ok := scheme.GetSession(missingID); ok {
 		t.Fatal("missing should not return ok")
 	}
 
-	_ = storage.Set("0xabc", &BatchSettlementClientContext{Balance: "100"})
-	if !scheme.HasSession("0xABC") {
+	_ = storage.Set(channelID, &BatchSettlementClientContext{Balance: "100"})
+	if !scheme.HasSession(channelIDUpper) {
 		t.Fatal("case-insensitive lookup failed")
 	}
-	got, ok := scheme.GetSession("0xABC")
+	got, ok := scheme.GetSession(channelIDUpper)
 	if !ok || got.Balance != "100" {
 		t.Fatalf("GetSession = %+v ok=%v", got, ok)
 	}
@@ -310,9 +314,12 @@ func TestProcessSettleResponse_StoresSession(t *testing.T) {
 	storage := NewInMemoryClientChannelStorage()
 	scheme := NewBatchSettlementEvmScheme(&mockSigner{address: "0x1"}, &BatchSettlementEvmSchemeOptions{Storage: storage})
 
+	const channelID = "0xABCDEF0000000000000000000000000000000000000000000000000000000000"
+	const channelIDLower = "0xabcdef0000000000000000000000000000000000000000000000000000000000"
+
 	err := scheme.ProcessSettleResponse(map[string]interface{}{
 		"channelState": map[string]interface{}{
-			"channelId":               "0xABC",
+			"channelId":               channelID,
 			"chargedCumulativeAmount": "10",
 			"balance":                 "1000",
 			"totalClaimed":            "5",
@@ -321,9 +328,31 @@ func TestProcessSettleResponse_StoresSession(t *testing.T) {
 	if err != nil {
 		t.Fatalf("err: %v", err)
 	}
-	got, _ := storage.Get("0xabc")
+	got, _ := storage.Get(channelIDLower)
 	if got == nil || got.Balance != "1000" || got.ChargedCumulativeAmount != "10" {
 		t.Fatalf("session = %+v", got)
+	}
+}
+
+func TestProcessSettleResponse_GetError(t *testing.T) {
+	storageErr := errors.New("storage unavailable")
+	storage := &failingClientChannelStorage{
+		storage: NewInMemoryClientChannelStorage(),
+		getErr:  storageErr,
+	}
+	scheme := NewBatchSettlementEvmScheme(&mockSigner{address: "0x1"}, &BatchSettlementEvmSchemeOptions{Storage: storage})
+
+	err := scheme.ProcessSettleResponse(map[string]interface{}{
+		"channelState": map[string]interface{}{
+			"channelId": testChannelID,
+			"balance":   "1000",
+		},
+	})
+	if !errors.Is(err, storageErr) {
+		t.Fatalf("expected storage error, got %v", err)
+	}
+	if storage.setCalls != 0 {
+		t.Fatalf("Set called %d time(s) after Get failure", storage.setCalls)
 	}
 }
 
@@ -332,19 +361,20 @@ func TestProcessSettleResponse_StoresSession(t *testing.T) {
 // UpdateSessionAfterRefund, called explicitly at the refund call site.
 func TestProcessSettleResponse_DoesNotDeleteOnZeroBalance(t *testing.T) {
 	storage := NewInMemoryClientChannelStorage()
-	_ = storage.Set("0xabc", &BatchSettlementClientContext{Balance: "100"})
+	const channelID = "0xabcdef0000000000000000000000000000000000000000000000000000000000"
+	_ = storage.Set(channelID, &BatchSettlementClientContext{Balance: "100"})
 
 	scheme := NewBatchSettlementEvmScheme(&mockSigner{address: "0x1"}, &BatchSettlementEvmSchemeOptions{Storage: storage})
 	err := scheme.ProcessSettleResponse(map[string]interface{}{
 		"channelState": map[string]interface{}{
-			"channelId": "0xabc",
+			"channelId": channelID,
 			"balance":   "0",
 		},
 	})
 	if err != nil {
 		t.Fatalf("err: %v", err)
 	}
-	got, _ := storage.Get("0xabc")
+	got, _ := storage.Get(channelID)
 	if got == nil {
 		t.Fatal("session unexpectedly deleted by ProcessSettleResponse")
 	}
@@ -377,7 +407,7 @@ func TestCreatePaymentPayload_VoucherWhenSessionHasFunds(t *testing.T) {
 		t.Fatalf("BuildChannelConfig: %v", err)
 	}
 	channelId, _ := batchsettlement.ComputeChannelId(channelConfig, testNetwork)
-	channelId = batchsettlement.NormalizeChannelId(channelId)
+	channelId, _ = batchsettlement.NormalizeChannelId(channelId)
 	_ = storage.Set(channelId, &BatchSettlementClientContext{Balance: "1000", ChargedCumulativeAmount: "100"})
 
 	payload, err := scheme.CreatePaymentPayload(context.Background(), defaultRequirements())
@@ -399,7 +429,7 @@ func TestCreatePaymentPayload_TopsUpOnInsufficient(t *testing.T) {
 		t.Fatalf("BuildChannelConfig: %v", err)
 	}
 	channelId, _ := batchsettlement.ComputeChannelId(channelConfig, testNetwork)
-	channelId = batchsettlement.NormalizeChannelId(channelId)
+	channelId, _ = batchsettlement.NormalizeChannelId(channelId)
 	_ = storage.Set(channelId, &BatchSettlementClientContext{Balance: "50", ChargedCumulativeAmount: "0"})
 
 	payload, err := scheme.CreatePaymentPayload(context.Background(), defaultRequirements())
@@ -429,7 +459,7 @@ func TestCreatePaymentPayload_DepositStrategySkipYieldsVoucher(t *testing.T) {
 		t.Fatalf("BuildChannelConfig: %v", err)
 	}
 	channelId, _ := batchsettlement.ComputeChannelId(channelConfig, testNetwork)
-	channelId = batchsettlement.NormalizeChannelId(channelId)
+	channelId, _ = batchsettlement.NormalizeChannelId(channelId)
 	_ = storage.Set(channelId, &BatchSettlementClientContext{Balance: "50"})
 
 	payload, err := scheme.CreatePaymentPayload(context.Background(), defaultRequirements())
@@ -648,13 +678,14 @@ func TestOnPaymentResponse_SettleResponseFoldsState(t *testing.T) {
 	storage := NewInMemoryClientChannelStorage()
 	scheme := NewBatchSettlementEvmScheme(&mockSigner{address: "0x1"}, &BatchSettlementEvmSchemeOptions{Storage: storage})
 
+	const channelID = "0xabcdef0000000000000000000000000000000000000000000000000000000000"
 	res, err := scheme.OnPaymentResponse(context.Background(), x402.PaymentResponseContext{
 		Requirements: defaultRequirements(),
 		SettleResponse: &x402.SettleResponse{
 			Success: true,
 			Extra: map[string]interface{}{
 				"channelState": map[string]interface{}{
-					"channelId":               "0xabc",
+					"channelId":               channelID,
 					"chargedCumulativeAmount": "12345",
 					"balance":                 "67890",
 					"totalClaimed":            "100",
@@ -668,7 +699,7 @@ func TestOnPaymentResponse_SettleResponseFoldsState(t *testing.T) {
 	if res.Recovered {
 		t.Fatal("settle response should not signal Recovered")
 	}
-	got, _ := storage.Get("0xabc")
+	got, _ := storage.Get(channelID)
 	if got == nil || got.ChargedCumulativeAmount != "12345" || got.Balance != "67890" {
 		t.Fatalf("session not folded: %+v", got)
 	}
