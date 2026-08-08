@@ -4,13 +4,13 @@
 
 The merged `offer-receipt` extension gives x402 a cryptographic proof of payment, and stays deliberately privacy-minimal. What it does not give sellers is a record a tax authority, accountant, or auditor can consume — and those requirements are dated and near-term: EU member-state structured e-invoicing through 2026 (EN 16931 EU-wide under ViDA), Japan's Qualified Invoice System and Korea e-Tax (live), Hong Kong IRO s.51C record-keeping (7-year retention), US 1099-DA gross-proceeds context, MiCA Art 68(9) for CASP customers.
 
-`compliance-fields` defines an OPTIONAL, signed **compliance record** that composes with the base receipt by digest reference. Sellers that ignore it lose nothing; sellers that emit it get machine-verifiable records their accountants and regulators already recognize.
+`compliance-fields` defines an OPTIONAL, signed **compliance record** that composes with the base receipt by digest reference. Sellers that ignore it lose nothing; sellers that emit it get machine-verifiable records built from the content vocabularies their accountants and auditors already work in. Whether any given tax authority, auditor, or venue accepts a particular record remains that party's decision; this extension defines content and verifiability, not acceptance.
 
 Design principles:
 
 1. **Never touches the offer-receipt schema.** The record binds to the receipt artifact by `receiptDigest`; the base EIP-712 types stay fixed.
 2. **Micro-transaction-honest.** A MINIMAL tier isomorphic to the EU simplified-invoice content (VAT Directive Arts 220a/226b — ~5 fields, legally sufficient sub-€100), with EN 16931-aligned fields as an optional FULL tier.
-3. **Vocabulary reuse, not invention.** EN 16931 business-term semantics; the adjustment enum ACP and UCP have converged on (`refund/return/credit/price_adjustment/dispute/cancellation` × `pending/completed/failed`).
+3. **Vocabulary reuse, not invention.** EN 16931 business-term semantics; the adjustment vocabulary UCP publishes — `type` as an OPEN string whose typical values are `refund`/`return`/`credit`/`price_adjustment`/`dispute`/`cancellation`, and `status` as a fixed enum of `pending`/`completed`/`failed` (verified against the UCP order specification; only `status` is enumerated, and calling `type` an enum would overstate the convergence).
 4. **Corrections are chained.** Refund/correction records reference the original by digest (`refundOf`), matching ViDA's mandatory corrective-invoice reference; composes with `exact`, `auth-capture`, and `batch-settlement` refund flows.
 5. **Attestation signs digests only** (fixed EIP-712 schema), so the record schema can evolve without breaking signatures — the same forward-compatibility approach as `offer-receipt`.
 
