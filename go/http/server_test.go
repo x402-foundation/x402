@@ -1033,6 +1033,17 @@ func TestRouteMatching_PathNormalizationBypass(t *testing.T) {
 		{"wildcard trailing slash", "GET /api/premium/*", "/api/premium/", true},
 		{"wildcard bare prefix", "GET /api/premium/*", "/api/premium", true},
 		{"wildcard deep path", "GET /api/premium/*", "/api/premium/a/b/c", true},
+		// normalizePath decodes %0A to a raw LF inside the segment. RE2's `.`
+		// does not match LF without (?s), so these missed the wildcard while
+		// routers still dispatched the handler — payment bypass (CWE-436),
+		// Go counterpart of the TypeScript/Python dotAll fixes.
+		{"wildcard encoded LF", "GET /api/premium/*", "/api/premium/a%0Ab", true},
+		{"wildcard trailing encoded LF", "GET /api/premium/*", "/api/premium/report%0A", true},
+		{"wildcard LF in deep path", "GET /api/premium/*", "/api/premium/a%0A/b", true},
+		// RE2's `.` excludes only \n; CR already matched before the (?s) fix.
+		{"wildcard encoded CR", "GET /api/premium/*", "/api/premium/a%0Db", true},
+		// Params compile to [^/]+, which matches LF regardless of (?s).
+		{"param encoded LF", "GET /api/users/:id", "/api/users/x%0Ay", true},
 		// The wildcard must not leak onto a sibling prefix.
 		{"wildcard sibling prefix", "GET /api/premium/*", "/api/premiumx", false},
 		{"wildcard unrelated", "GET /api/premium/*", "/api/other", false},

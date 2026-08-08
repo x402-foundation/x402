@@ -1,0 +1,3 @@
+kind: fixed
+body: 'Compile route patterns with the (?s) flag so wildcard-derived `.*?` matches a line feed: normalizePath decodes %0A to a raw LF inside a segment, and without (?s) a wildcard route missed such a path while routers still dispatched it to the protected handler, skipping payment verification (Go counterpart of the TypeScript #3036 and Python #3055 dotAll fixes)'
+time: 2026-08-08T16:05:00.000000-07:00

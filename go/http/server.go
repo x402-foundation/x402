@@ -1238,8 +1238,12 @@ func parseRoutePattern(pattern string) (string, string, *regexp.Regexp) {
 		path = pattern
 	}
 
-	// Convert pattern to regex
-	regexPattern := "^" + regexp.QuoteMeta(path)
+	// Convert pattern to regex. The (?s) flag lets wildcard-derived `.*?` match
+	// a line feed: normalizePath decodes "%0A" to a raw LF inside a segment, and
+	// without (?s) a wildcard route misses such a path while routers still
+	// dispatch it to the protected handler, skipping payment verification
+	// (Go counterpart of the TypeScript dotAll fix).
+	regexPattern := "(?s)^" + regexp.QuoteMeta(path)
 
 	// A trailing "/*" must also match the bare prefix. normalizePath strips the
 	// trailing slash, so a request for "/api/premium/" arrives as "/api/premium",
