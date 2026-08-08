@@ -320,12 +320,12 @@ describe("facilitator - smart wallet deployment check", () => {
     const AMOUNT = 1000000n;
     const MOCK_TX = padHex("0xabc", { size: 32 });
 
-    function makeTransferLog(opts: {
+    const makeTransferLog = (opts: {
       address: Address;
       from: Address;
       to: Address;
       value: bigint;
-    }) {
+    }) => {
       return {
         address: opts.address,
         topics: [
@@ -341,9 +341,9 @@ describe("facilitator - smart wallet deployment check", () => {
         logIndex: 0,
         removed: false,
       };
-    }
+    };
 
-    function walletWithReceipt(logs: ReturnType<typeof makeTransferLog>[]) {
+    const walletWithReceipt = (logs: ReturnType<typeof makeTransferLog>[]) => {
       return {
         getCode: vi.fn().mockResolvedValue("0x"),
         verifyTypedData: vi.fn().mockResolvedValue(true),
@@ -356,7 +356,7 @@ describe("facilitator - smart wallet deployment check", () => {
         chain: { id: 84532 },
         account: { address: RECEIVER as Address },
       } as unknown as SignerWallet<Chain, Transport>;
-    }
+    };
 
     it("rejects fee-on-transfer underpay when Transfer value is short", async () => {
       const wallet = walletWithReceipt([

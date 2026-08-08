@@ -47,6 +47,14 @@ const erc20TransferEventAbi = [
  * Receipt status alone does not prove the payee received the authorized amount
  * (fee-on-transfer / non-conforming tokens). Mirrors the v2 EIP-3009 settle
  * guard (`verifyEip3009TransferEvent`) that landed after #2385 / #3032.
+ *
+ * @param logs - Receipt logs to search for a matching Transfer
+ * @param erc20Address - The ERC-20 token contract that should have emitted the Transfer
+ * @param expected - The expected Transfer arguments from the authorization
+ * @param expected.from - Expected `from` of the Transfer event
+ * @param expected.to - Expected `to` of the Transfer event
+ * @param expected.value - Expected `value` of the Transfer event
+ * @returns true when a matching Transfer log is present, false otherwise
  */
 export function verifyExactEvmTransferEvent(
   logs: readonly Log[],
