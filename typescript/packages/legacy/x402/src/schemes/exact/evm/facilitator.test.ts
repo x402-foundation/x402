@@ -1,8 +1,20 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { Address, Chain, parseSignature, Transport } from "viem";
+import {
+  Address,
+  Chain,
+  encodeAbiParameters,
+  getAddress,
+  keccak256,
+  padHex,
+  parseSignature,
+  toBytes,
+  Transport,
+} from "viem";
 import { PaymentPayload, PaymentRequirements, ExactEvmPayload } from "../../../types/verify";
 import { verify, settle } from "./facilitator";
 import type { SignerWallet } from "../../../types/shared/evm";
+
+const TRANSFER_TOPIC = keccak256(toBytes("Transfer(address,address,uint256)"));
 
 vi.mock("../../../shared", () => ({
   getNetworkId: vi.fn().mockReturnValue(84532),
@@ -298,6 +310,96 @@ describe("facilitator - smart wallet deployment check", () => {
           args: expect.arrayContaining([28, mockR, mockS]),
         }),
       );
+    });
+  });
+
+  describe("settle - Transfer event verification", () => {
+    const TOKEN = getAddress("0x036CbD53842c5426634e7929541eC2318f3dCF7e");
+    const RECEIVER = getAddress("0x1234567890123456789012345678901234567890");
+    const PAYER = getAddress("0xabcdef1234567890123456789012345678901234");
+    const AMOUNT = 1000000n;
+    const MOCK_TX = padHex("0xabc", { size: 32 });
+
+    function makeTransferLog(opts: {
+      address: Address;
+      from: Address;
+      to: Address;
+      value: bigint;
+    }) {
+      return {
+        address: opts.address,
+        topics: [
+          TRANSFER_TOPIC,
+          padHex(opts.from, { size: 32 }),
+          padHex(opts.to, { size: 32 }),
+        ] as [`0x${string}`, `0x${string}`, `0x${string}`],
+        data: encodeAbiParameters([{ type: "uint256" }], [opts.value]),
+        blockHash: padHex("0x1", { size: 32 }),
+        blockNumber: 1n,
+        transactionHash: MOCK_TX,
+        transactionIndex: 0,
+        logIndex: 0,
+        removed: false,
+      };
+    }
+
+    function walletWithReceipt(logs: ReturnType<typeof makeTransferLog>[]) {
+      return {
+        getCode: vi.fn().mockResolvedValue("0x"),
+        verifyTypedData: vi.fn().mockResolvedValue(true),
+        writeContract: vi.fn().mockResolvedValue(MOCK_TX),
+        waitForTransactionReceipt: vi.fn().mockResolvedValue({
+          status: "success",
+          logs,
+          transactionHash: MOCK_TX,
+        }),
+        chain: { id: 84532 },
+        account: { address: RECEIVER as Address },
+      } as unknown as SignerWallet<Chain, Transport>;
+    }
+
+    it("rejects fee-on-transfer underpay when Transfer value is short", async () => {
+      const wallet = walletWithReceipt([
+        makeTransferLog({
+          address: TOKEN,
+          from: PAYER,
+          to: RECEIVER,
+          value: AMOUNT - 100n,
+        }),
+      ]);
+      const payload = createMockPayload({ signatureLength: 130, from: PAYER });
+
+      const result = await settle(wallet, payload, mockPaymentRequirements);
+
+      expect(result.success).toBe(false);
+      expect(result.errorReason).toBe("invalid_exact_evm_transfer_event_mismatch");
+    });
+
+    it("rejects successful receipts with empty logs (no Transfer)", async () => {
+      const wallet = walletWithReceipt([]);
+      const payload = createMockPayload({ signatureLength: 130, from: PAYER });
+
+      const result = await settle(wallet, payload, mockPaymentRequirements);
+
+      expect(result.success).toBe(false);
+      expect(result.errorReason).toBe("invalid_exact_evm_transfer_event_mismatch");
+    });
+
+    it("accepts settle when Transfer matches authorized amount", async () => {
+      const wallet = walletWithReceipt([
+        makeTransferLog({
+          address: TOKEN,
+          from: PAYER,
+          to: RECEIVER,
+          value: AMOUNT,
+        }),
+      ]);
+      const payload = createMockPayload({ signatureLength: 130, from: PAYER });
+
+      const result = await settle(wallet, payload, mockPaymentRequirements);
+
+      expect(result.success).toBe(true);
+      expect(result.transaction).toBe(MOCK_TX);
     });
   });
 });

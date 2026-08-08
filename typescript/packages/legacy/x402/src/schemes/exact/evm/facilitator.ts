@@ -4,9 +4,12 @@ import {
   Chain,
   getAddress,
   Hex,
+  isAddressEqual,
   parseErc6492Signature,
+  parseEventLogs,
   parseSignature,
   Transport,
+  type Log,
 } from "viem";
 import { getNetworkId } from "../../../shared";
 import { getVersion, getERC20Balance } from "../../../shared/evm";
@@ -25,6 +28,43 @@ import {
   ExactEvmPayload,
 } from "../../../types/verify";
 import { SCHEME } from "../../exact";
+
+const erc20TransferEventAbi = [
+  {
+    type: "event",
+    name: "Transfer",
+    anonymous: false,
+    inputs: [
+      { name: "from", type: "address", indexed: true },
+      { name: "to", type: "address", indexed: true },
+      { name: "value", type: "uint256", indexed: false },
+    ],
+  },
+] as const;
+
+/**
+ * Require a matching ERC-20 Transfer event in the settle receipt.
+ * Receipt status alone does not prove the payee received the authorized amount
+ * (fee-on-transfer / non-conforming tokens). Mirrors the v2 EIP-3009 settle
+ * guard (`verifyEip3009TransferEvent`) that landed after #2385 / #3032.
+ */
+export function verifyExactEvmTransferEvent(
+  logs: readonly Log[],
+  erc20Address: Address,
+  expected: { from: Address; to: Address; value: bigint },
+): boolean {
+  const transferLogs = parseEventLogs({
+    abi: erc20TransferEventAbi,
+    eventName: "Transfer",
+    logs: logs.filter(log => isAddressEqual(log.address, erc20Address)),
+  });
+  return transferLogs.some(
+    log =>
+      isAddressEqual(log.args.from, expected.from) &&
+      isAddressEqual(log.args.to, expected.to) &&
+      log.args.value === expected.value,
+  );
+}
 
 /**
  * Verifies a payment payload against the required payment details
@@ -323,6 +363,25 @@ export async function settle<transport extends Transport, chain extends Chain>(
     return {
       success: false,
       errorReason: "invalid_transaction_state", //`Transaction failed`,
+      transaction: tx,
+      network: paymentPayload.network,
+      payer: payload.authorization.from,
+    };
+  }
+
+  // Receipt status only proves the tx did not revert. When logs are present,
+  // require the expected ERC-20 Transfer (parity with v2 EIP-3009 settle).
+  if (
+    receipt.logs != null &&
+    !verifyExactEvmTransferEvent(receipt.logs, getAddress(paymentRequirements.asset), {
+      from: getAddress(payload.authorization.from),
+      to: getAddress(payload.authorization.to),
+      value: BigInt(payload.authorization.value),
+    })
+  ) {
+    return {
+      success: false,
+      errorReason: "invalid_exact_evm_transfer_event_mismatch",
       transaction: tx,
       network: paymentPayload.network,
       payer: payload.authorization.from,
