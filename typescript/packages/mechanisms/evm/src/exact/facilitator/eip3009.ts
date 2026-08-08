@@ -234,22 +234,31 @@ export async function verifyEIP3009(
       // only when the revert could not be classified. ErrEip3009SimulationFailed reports that
       // the payload was valid but the simulation could not run, so a caller may retry it; a
       // revert is terminal and must not share that code. Mirrors the Python facilitator.
+      const reverted = isContractRevert(simError);
       let revertReason: string | undefined;
-      if (isContractRevert(simError)) {
+      if (reverted) {
         const mapped = parseEip3009TransferError(simError);
         if (mapped !== Errors.ErrTransactionFailed) {
           revertReason = mapped;
         }
       }
-      const response: VerifyResponse = revertReason
-        ? { isValid: false, invalidReason: revertReason, payer }
-        : await diagnoseEip3009SimulationFailure(
-            signer,
-            erc20Address,
-            eip3009Payload,
-            requirements,
-            requirements.amount,
-          );
+      let response: VerifyResponse;
+      if (revertReason) {
+        response = { isValid: false, invalidReason: revertReason, payer };
+      } else if (reverted || !simError) {
+        // Probe only when the node answered: either the call reverted, or the simulation
+        // reported failure without an error at all. Probing after a transport failure sends
+        // four more reads down the same dead path.
+        response = await diagnoseEip3009SimulationFailure(
+          signer,
+          erc20Address,
+          eip3009Payload,
+          requirements,
+          requirements.amount,
+        );
+      } else {
+        response = { isValid: false, invalidReason: Errors.ErrEip3009SimulationFailed, payer };
+      }
       // Carry the raw revert text so the concrete reason survives the mapping to a code.
       const rawMessage =
         simError instanceof Error ? simError.message : simError ? String(simError) : undefined;

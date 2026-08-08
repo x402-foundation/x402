@@ -15,6 +15,12 @@ const requirements: PaymentRequirements = {
   extra: { name: "USDC", version: "2" },
 };
 
+interface VerifyOutcome {
+  reason: string | undefined;
+  /** How many times the diagnostic probe's multicall ran. */
+  diagnosticCalls: number;
+}
+
 describe("verify: EIP-3009 simulation failure reason", () => {
   let client: ClientExactEvmScheme;
   let mockClientSigner: ClientEvmSigner;
@@ -30,18 +36,19 @@ describe("verify: EIP-3009 simulation failure reason", () => {
 
   /**
    * Runs verify against a deployed ERC-1271 payer whose off-chain signature check passes, so
-   * verify reaches the transfer simulation, and returns the reason it reports.
+   * verify reaches the transfer simulation.
    *
    * @param simulationError - what the simulated transferWithAuthorization throws
-   * @returns the invalidReason verify reports
+   * @returns the reason verify reports and how many times the diagnostic probe ran
    */
-  async function verifyReasonFor(simulationError: Error): Promise<string | undefined> {
+  async function verifyOutcomeFor(simulationError: Error): Promise<VerifyOutcome> {
+    let diagnosticCalls = 0;
     const signer: FacilitatorEvmSigner = {
       getAddresses: vi.fn().mockReturnValue(["0x742D35CC6634c0532925A3b844BC9E7595F0BEb0"]),
       readContract: vi.fn().mockImplementation(async (args: { functionName?: string }) => {
         // The payer's own validator accepts the signature: this is a valid ERC-1271 payer.
         if (args?.functionName === "isValidSignature") return "0x1626ba7e";
-        // Both the simulated transfer and the diagnostic multicall fail the same way.
+        if (args?.functionName === "tryAggregate") diagnosticCalls++;
         throw simulationError;
       }),
       verifyTypedData: vi.fn().mockResolvedValue(true),
@@ -61,7 +68,7 @@ describe("verify: EIP-3009 simulation failure reason", () => {
 
     const response = await facilitator.verify(fullPayload, requirements);
     expect(response.isValid).toBe(false);
-    return response.invalidReason;
+    return { reason: response.invalidReason, diagnosticCalls };
   }
 
   // A token whose transferWithAuthorization verifies with ecrecover only rejects every contract
@@ -69,7 +76,7 @@ describe("verify: EIP-3009 simulation failure reason", () => {
   // on-chain revert reason says so, and settle already maps that reason to ErrInvalidSignature
   // through parseEip3009TransferError. Verify must report the same terminal reason.
   it("reports a reverted simulation with the revert's own reason, not the retryable code", async () => {
-    const reason = await verifyReasonFor(
+    const { reason } = await verifyOutcomeFor(
       new Error("execution reverted: EIP3009: invalid signature"),
     );
 
@@ -77,13 +84,25 @@ describe("verify: EIP-3009 simulation failure reason", () => {
     expect(reason).toBe(Errors.ErrInvalidSignature);
   });
 
-  // The transient case must keep ErrEip3009SimulationFailed: the payload is fine and the
-  // simulation simply could not run, so retrying is the correct client behaviour.
-  it("keeps the retryable code when the simulation could not run", async () => {
-    const reason = await verifyReasonFor(
+  // A transport failure says nothing about the payload, so the retryable code stays correct — and
+  // the probe must not run, since it would send four more reads down the same dead path.
+  it("keeps the retryable code after a transport failure without probing", async () => {
+    const { reason, diagnosticCalls } = await verifyOutcomeFor(
       new Error("dial tcp 10.0.0.1:8545: connect: connection refused"),
     );
 
+    expect(reason).toBe(Errors.ErrEip3009SimulationFailed);
+    expect(diagnosticCalls).toBe(0);
+  });
+
+  // A revert whose reason no parser recognises still deserves the probe: the node answered, so
+  // the diagnostic reads can run and may identify a used nonce or an insufficient balance.
+  it("still probes when the revert reason is not recognised", async () => {
+    const { reason, diagnosticCalls } = await verifyOutcomeFor(
+      new Error("execution reverted: Pausable: paused"),
+    );
+
+    expect(diagnosticCalls).toBeGreaterThan(0);
     expect(reason).toBe(Errors.ErrEip3009SimulationFailed);
   });
 });
