@@ -36,6 +36,7 @@ import {
   checkPermit2Prerequisites,
   validateEip2612PermitForPayment,
   buildExactPermit2SettleArgs,
+  buildExpectedPermit2Transfer,
   splitEip2612Signature,
   waitAndReturnSettleResponse,
   mapSettleError,
@@ -438,7 +439,13 @@ async function settlePermit2WithEIP2612(
       dataSuffix,
     });
 
-    return waitAndReturnSettleResponse(signer, tx, payload, payer);
+    return waitAndReturnSettleResponse(
+      signer,
+      tx,
+      payload,
+      payer,
+      buildExpectedPermit2Transfer(permit2Payload),
+    );
   } catch (error) {
     return mapSettleError(error, payload, payer);
   }
@@ -482,7 +489,13 @@ async function settlePermit2WithERC20Approval(
     ]);
 
     const settleTxHash = txHashes[txHashes.length - 1];
-    return waitAndReturnSettleResponse(extensionSigner, settleTxHash, payload, payer);
+    return waitAndReturnSettleResponse(
+      extensionSigner,
+      settleTxHash,
+      payload,
+      payer,
+      buildExpectedPermit2Transfer(permit2Payload),
+    );
   } catch (error) {
     return mapSettleError(error, payload, payer);
   }
@@ -515,7 +528,13 @@ async function settlePermit2Direct(
       dataSuffix,
     });
 
-    return waitAndReturnSettleResponse(signer, tx, payload, payer);
+    return waitAndReturnSettleResponse(
+      signer,
+      tx,
+      payload,
+      payer,
+      buildExpectedPermit2Transfer(permit2Payload),
+    );
   } catch (error) {
     return mapSettleError(error, payload, payer);
   }

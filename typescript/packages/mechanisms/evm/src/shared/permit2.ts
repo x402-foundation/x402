@@ -39,7 +39,9 @@ import {
   ErrEip2612SpenderNotPermit2,
   ErrEip2612DeadlineExpired,
   ErrErc20ApprovalTxFailed,
+  ErrTransferEventMismatch,
 } from "../exact/facilitator/errors";
+import { verifyEip3009TransferEvent } from "../exact/facilitator/eip3009-utils";
 import { ClientEvmSigner, FacilitatorEvmSigner } from "../signer";
 import { ExactPermit2Payload, Permit2Authorization, UptoPermit2Payload } from "../types";
 import { validateErc20ApprovalForPayment } from "./erc20approval";
@@ -160,10 +162,20 @@ export async function verifyPermit2Allowance(
 /**
  * Waits for a transaction receipt and returns the appropriate SettleResponse.
  *
+ * Receipt status alone only proves the proxy call did not revert: a
+ * fee-on-transfer or otherwise non-conforming token can underpay (or pay
+ * nothing) without reverting. A successful receipt must therefore contain the
+ * expected ERC-20 Transfer event, mirroring the EIP-3009 settle path.
+ *
  * @param signer - Signer with waitForTransactionReceipt capability
  * @param tx - The transaction hash to wait for
  * @param payload - The payment payload (for network info)
  * @param payer - The payer address
+ * @param expectedTransfer - The Transfer fields a successful receipt must contain
+ * @param expectedTransfer.token - The token contract that must have emitted the Transfer
+ * @param expectedTransfer.from - Expected `from` of the Transfer event
+ * @param expectedTransfer.to - Expected `to` of the Transfer event
+ * @param expectedTransfer.value - Expected `value` of the Transfer event
  * @returns Promise resolving to a settlement response indicating success or failure
  */
 export async function waitAndReturnSettleResponse(
@@ -171,6 +183,12 @@ export async function waitAndReturnSettleResponse(
   tx: `0x${string}`,
   payload: PaymentPayload,
   payer: `0x${string}`,
+  expectedTransfer: {
+    token: `0x${string}`;
+    from: `0x${string}`;
+    to: `0x${string}`;
+    value: bigint;
+  },
 ): Promise<SettleResponse> {
   const receipt = await signer.waitForTransactionReceipt({ hash: tx });
 
@@ -178,6 +196,23 @@ export async function waitAndReturnSettleResponse(
     return {
       success: false,
       errorReason: ErrInvalidTransactionState,
+      transaction: tx,
+      network: payload.accepted.network,
+      payer,
+    };
+  }
+
+  if (
+    receipt.logs != null &&
+    !verifyEip3009TransferEvent(receipt.logs, expectedTransfer.token, {
+      from: expectedTransfer.from,
+      to: expectedTransfer.to,
+      value: expectedTransfer.value,
+    })
+  ) {
+    return {
+      success: false,
+      errorReason: ErrTransferEventMismatch,
       transaction: tx,
       network: payload.accepted.network,
       payer,
@@ -515,6 +550,29 @@ export async function checkPermit2Prerequisites(
   }
 
   return { isValid: true, invalidReason: undefined, payer };
+}
+
+/**
+ * Derives the ERC-20 Transfer event fields a Permit2 settle receipt must contain.
+ * The proxy pulls funds through Permit2 directly to the witness recipient, so a
+ * conforming token emits Transfer(payer, witness.to, settled amount) from the
+ * permitted token contract.
+ *
+ * @param permit2Payload - The Permit2 payload containing the authorization
+ * @param value - The settled amount. Defaults to the full permitted amount (exact
+ *   scheme); the upto scheme passes its actual settlement amount, which may be lower.
+ * @returns The expected Transfer fields for receipt verification
+ */
+export function buildExpectedPermit2Transfer(
+  permit2Payload: Permit2PayloadBase,
+  value: bigint = BigInt(permit2Payload.permit2Authorization.permitted.amount),
+): { token: `0x${string}`; from: `0x${string}`; to: `0x${string}`; value: bigint } {
+  return {
+    token: getAddress(permit2Payload.permit2Authorization.permitted.token),
+    from: getAddress(permit2Payload.permit2Authorization.from),
+    to: getAddress(permit2Payload.permit2Authorization.witness.to),
+    value,
+  };
 }
 
 /**

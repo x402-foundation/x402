@@ -36,6 +36,7 @@ import { validateErc20ApprovalForPayment } from "../../shared/erc20approval";
 import { verifyTypedDataSignature } from "../../shared/verifySignature";
 import {
   buildUptoPermit2SettleArgs,
+  buildExpectedPermit2Transfer,
   waitAndReturnSettleResponse,
   mapSettleError,
   splitEip2612Signature,
@@ -501,7 +502,13 @@ async function settleUptoWithEIP2612(
       dataSuffix,
     });
 
-    const response = await waitAndReturnSettleResponse(signer, tx, payload, payer);
+    const response = await waitAndReturnSettleResponse(
+      signer,
+      tx,
+      payload,
+      payer,
+      buildExpectedPermit2Transfer(permit2Payload, settlementAmount),
+    );
     return { ...response, amount: settlementAmount.toString() };
   } catch (error) {
     return mapSettleError(error, payload, payer);
@@ -556,6 +563,7 @@ async function settleUptoWithERC20Approval(
       settleTxHash,
       payload,
       payer,
+      buildExpectedPermit2Transfer(permit2Payload, settlementAmount),
     );
     return { ...response, amount: settlementAmount.toString() };
   } catch (error) {
@@ -592,7 +600,13 @@ async function settleUptoDirect(
       dataSuffix,
     });
 
-    const response = await waitAndReturnSettleResponse(signer, tx, payload, payer);
+    const response = await waitAndReturnSettleResponse(
+      signer,
+      tx,
+      payload,
+      payer,
+      buildExpectedPermit2Transfer(permit2Payload, settlementAmount),
+    );
     return { ...response, amount: settlementAmount.toString() };
   } catch (error) {
     return mapSettleError(error, payload, payer);
