@@ -19,6 +19,30 @@ Register hooks on the core resource server for verification and settlement lifec
 * **onSettleFailure** — Runs on settlement failure. Return `{ recovered: true, result }` to override.
 * **onVerifiedPaymentCanceled** — Runs when a verified payment is not settled. Triggered when the protected handler throws or returns an error response (`handler_threw`, `handler_failed`), or when an `onAfterVerify` hook aborts (`after_verify_aborted`).
 
+#### Settlement phases and multi-settle flows
+
+Every settle hook receives a `phase` field on its context indicating which settle invocation is running:
+
+| Phase | When it runs |
+|---|---|
+| `before-handler` | Settlement before the resource handler (e.g. `upfront`, `escrow` deposit) |
+| `after-handler` | Settlement after the resource handler (e.g. `authorization` charge, `escrow` claim) |
+| `cancel` | Refund or close settle from a verified-payment cancellation |
+
+The `escrow` payment flow settles twice — once before the handler and once after — so `onBeforeSettle`, `onAfterSettle`, `onSettleFailure`, and `enrichSettlementPayload` / `enrichSettlementResponse` each fire once per settle. If your hook has side effects that must not run twice (for example, sending a receipt email), branch on `context.phase`:
+
+```typescript
+server.onAfterSettle(async (context) => {
+  // Only send receipt on the final charge, not the escrow deposit
+  if (context.phase !== "after-handler") return;
+
+  await sendReceipt({
+    transaction: context.result.transaction,
+    payer: context.result.payer,
+  });
+});
+```
+
 These server-level hooks run for every payment regardless of which extensions are active. Extensions and schemes can also contribute lifecycle hook adapters that run only when their extension key or scheme/network is used. See [Extensions Overview](/extensions/overview) for extension-level behavior.
 
 <Tabs>
