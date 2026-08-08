@@ -2,6 +2,12 @@
 
 <!-- towncrier release notes start -->
 
+## [Unreleased]
+
+### Fixed
+
+- Verify the expected ERC-20 Transfer event in exact and upto Permit2 settle receipts when logs are available, matching the EIP-3009 settle check and the TypeScript/Go Permit2 fixes (#2385 / #3080 / #3084).
+
 ## [2.18.0] - 2026-08-04
 
 ### Fixed
