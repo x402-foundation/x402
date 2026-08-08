@@ -1,0 +1,3 @@
+kind: fixed
+body: 'Bring the Go exact/EVM verify path to parity with Python: when the EIP-3009 transfer simulation fails, classify an on-chain revert through parseEIP3009TransferError (guarded by evm.IsContractRevert) before falling back to the diagnostic probe, instead of returning invalid_exact_evm_transaction_simulation_failed for every simulation failure. That code reports a payload that is valid but whose simulation could not run, so a caller may retry it; a revert is terminal and the same payload is rejected on every attempt. The diagnostic probe now runs only when the node answered, so a transport failure no longer triggers four more reads down the same dead path.'
+time: 2026-08-08T22:52:39.000000+09:00

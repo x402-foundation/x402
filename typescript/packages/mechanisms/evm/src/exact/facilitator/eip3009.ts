@@ -12,6 +12,7 @@ import { getEvmChainId } from "../../utils";
 import { ExactEIP3009Payload } from "../../types";
 import * as Errors from "./errors";
 import { resolveDataSuffix } from "../../shared/extensions";
+import { isContractRevert } from "../../shared/revert";
 import { verifyTypedDataSignature, classifyErc6492Payer } from "../../shared/verifySignature";
 import {
   diagnoseEip3009SimulationFailure,
@@ -228,17 +229,31 @@ export async function verifyEIP3009(
       eip6492Deployment,
     );
     if (!ok) {
-      const diagnosis = await diagnoseEip3009SimulationFailure(
-        signer,
-        erc20Address,
-        eip3009Payload,
-        requirements,
-        requirements.amount,
-      );
+      // Prefer the concrete on-chain revert reason the simulation surfaced (e.g. insufficient
+      // balance / used nonce) over the opaque generic code. Fall back to the diagnostic probe
+      // only when the revert could not be classified. ErrEip3009SimulationFailed reports that
+      // the payload was valid but the simulation could not run, so a caller may retry it; a
+      // revert is terminal and must not share that code. Mirrors the Python facilitator.
+      let revertReason: string | undefined;
+      if (isContractRevert(simError)) {
+        const mapped = parseEip3009TransferError(simError);
+        if (mapped !== Errors.ErrTransactionFailed) {
+          revertReason = mapped;
+        }
+      }
+      const response: VerifyResponse = revertReason
+        ? { isValid: false, invalidReason: revertReason, payer }
+        : await diagnoseEip3009SimulationFailure(
+            signer,
+            erc20Address,
+            eip3009Payload,
+            requirements,
+            requirements.amount,
+          );
       // Carry the raw revert text so the concrete reason survives the mapping to a code.
       const rawMessage =
         simError instanceof Error ? simError.message : simError ? String(simError) : undefined;
-      return rawMessage ? { ...diagnosis, invalidMessage: rawMessage } : diagnosis;
+      return rawMessage ? { ...response, invalidMessage: rawMessage } : response;
     }
   }
 
