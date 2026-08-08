@@ -48,6 +48,6 @@ While implementation details vary by network, facilitators MUST enforce security
 - Signature validity: the SNIP-12 hash MUST be computed from the facilitator's own canonical reconstruction of the typed data and validate via SNIP-6 `is_valid_signature`.
 - Caller binding and expiry: `Caller` MUST equal `extra.feePayer` — the required sponsor address the facilitator announces via `/supported` and the resource server puts in the requirements; `Execute Before` MUST cover the advertised `maxTimeoutSeconds` window (within a skew margin) at verification, with a minimum remaining window at settlement.
 - Replay protection: the SNIP-9 nonce MUST be unused at verification; it is consumed on-chain at execution.
-- Simulation verification: MUST simulate the settlement and fail closed unless it shows exactly one asset `Transfer` from payer to `payTo` for the exact amount.
+- Simulation verification: MUST simulate the settlement and fail closed unless it shows exactly one asset `Transfer` sent by the payer, to `payTo`, for the exact amount.
 
 Network-specific rules are in per-network documents: `scheme_exact_svm.md` (Solana), `scheme_exact_stellar.md` (Stellar), `scheme_exact_evm.md` (EVM), `scheme_exact_sui.md` (SUI), `scheme_exact_ton.md` (TON), `scheme_exact_starknet.md` (Starknet).
