@@ -48,6 +48,20 @@ A protected resource advertises one or more payment requirements in its HTTP 402
 
 Servers register scheme implementations for the networks they advertise. Clients register scheme implementations for the networks they can pay on. When the client receives a 402 response, the SDK selects an `accepts` entry whose `scheme` and `network` match a registered implementation.
 
+### Payment flows
+
+Every scheme declares which payment flows it supports per asset transfer method. A payment flow controls when verification and settlement happen relative to the resource handler:
+
+| Flow | Verify before handler | Settle before handler | Settle after handler | Description |
+|---|---|---|---|---|
+| `authorization` | ✅ | ❌ | ✅ | Verify the authorization signature before serving the response; charge after. Default for all current schemes. |
+| `upfront` | ❌ | ✅ | ❌ | Settle before the handler runs; no after-handler settle. Payment is committed before the resource is served. |
+| `escrow` | ❌ | ✅ | ✅ | Settle before the handler (deposit) and again after (claim). Settle hooks fire once per settle — see [Lifecycle Hooks](/advanced-concepts/lifecycle-hooks) for how to branch on `phase`. |
+
+The server resolves the flow from the scheme's `paymentFlows` table using the `assetTransferMethod` in the payment requirements. When the resolved flow is not `authorization`, the server signals it to clients via `extra.paymentFlow` in the 402 response.
+
+All current scheme implementations declare `authorization` only.
+
 ### Specs
 
 For scheme-level payload semantics, see the network-agnostic specifications. Each scheme page links to its currently implemented network specs.
