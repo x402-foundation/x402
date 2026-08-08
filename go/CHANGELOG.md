@@ -1,3 +1,7 @@
+## Unreleased
+### Fixed
+- Verify matching ERC-20 Transfer logs in Go Permit2 settle receipts (exact and upto) instead of trusting receipt status alone, so fee-on-transfer / non-conforming tokens cannot underpay while settle reports success (parity with EIP-3009 #2727 and TypeScript #3080)
+
 ## v2.21.0 - 2026-08-04
 ### Added
 - Add Celo mainnet (chain ID 42220) and Celo Sepolia (chain ID 11142220) support with USDC as the default stablecoin ([#3025](https://github.com/x402-foundation/x402/pull/3025)) - Thanks [@GigaHierz](https://github.com/GigaHierz) and [@claude](https://github.com/claude)!

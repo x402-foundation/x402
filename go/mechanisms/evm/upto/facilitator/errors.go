@@ -15,6 +15,8 @@ const (
 	ErrUptoFailedToGetNetworkConfig = "invalid_upto_evm_failed_to_get_network_config"
 	ErrUptoFailedToGetReceipt       = "invalid_upto_evm_failed_to_get_receipt"
 	ErrUptoTransactionFailed        = "invalid_upto_evm_transaction_failed"
+	// Same reason string as exact EIP-3009/Permit2 settle (TS #3080 / Go #2727 lineage).
+	ErrTransferEventMismatch = "invalid_exact_evm_transfer_event_mismatch"
 
 	// Shared Permit2 error constants — canonical values live in evm.ErrPermit2*
 	ErrPermit2InvalidSpender      = evm.ErrPermit2InvalidSpender

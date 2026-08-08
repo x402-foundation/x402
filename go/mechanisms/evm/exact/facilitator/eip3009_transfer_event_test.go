@@ -90,7 +90,7 @@ func TestVerifyEIP3009TransferEvent(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := verifyEIP3009TransferEvent(tt.logs, token, expectedTransferEvent{
+			got, err := VerifyEIP3009TransferEvent(tt.logs, token, ExpectedTransferEvent{
 				From:  payer,
 				To:    receiver,
 				Value: value,

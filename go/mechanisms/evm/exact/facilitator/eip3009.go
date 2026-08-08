@@ -239,7 +239,7 @@ func (f *ExactEvmScheme) settleEIP3009(
 	}
 
 	if receipt.Logs != nil {
-		transferMatched, err := verifyEIP3009TransferEvent(receipt.Logs, common.HexToAddress(tokenAddress), expectedTransferEvent{
+		transferMatched, err := VerifyEIP3009TransferEvent(receipt.Logs, common.HexToAddress(tokenAddress), ExpectedTransferEvent{
 			From:  parsedAuthorization.From,
 			To:    parsedAuthorization.To,
 			Value: parsedAuthorization.Value,

@@ -31,17 +31,18 @@ type EIP3009SignatureClassification struct {
 	SigData       *evm.ERC6492SignatureData
 }
 
-type expectedTransferEvent struct {
+// ExpectedTransferEvent is the ERC-20 Transfer that a successful settle receipt must contain.
+type ExpectedTransferEvent struct {
 	From  common.Address
 	To    common.Address
 	Value *big.Int
 }
 
-// verifyEIP3009TransferEvent checks for a matching ERC-20 Transfer event in receipt logs.
-func verifyEIP3009TransferEvent(
+// VerifyEIP3009TransferEvent checks for a matching ERC-20 Transfer event in receipt logs.
+func VerifyEIP3009TransferEvent(
 	logs []*goethtypes.Log,
 	tokenAddress common.Address,
-	expected expectedTransferEvent,
+	expected ExpectedTransferEvent,
 ) (bool, error) {
 	contractABI, err := abi.JSON(strings.NewReader(string(evm.ERC20TransferEventABI)))
 	if err != nil {
