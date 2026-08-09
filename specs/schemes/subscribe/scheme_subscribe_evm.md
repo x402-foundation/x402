@@ -380,38 +380,489 @@ To change tiers, extend a subscription, or modify the schedule, the client signs
 
 ## 6. Subscription Extension (Access Verification)
 
-Once subscribed, clients present an active-subscription proof for subsequent requests without requiring new payments. The proof travels as the `subscription` extension in `PaymentPayload.extensions`, following the V2 extension pattern (see `payment-identifier` for reference).
+Once subscribed, clients present an active-subscription proof for subsequent requests without requiring new payments. The `subscription` extension follows the V2 extension pattern (see `payment-identifier` for reference structure).
+
+**Why a fresh possession proof is REQUIRED.** The registry's public `isActive(subscriptionId)` view function proves subscription existence and status — but this is public on-chain data. The subscriber address is equally public via `getSubscription(subscriptionId)`. An unauthenticated echo containing only these values would let anyone who reads the chain free-ride on another user's subscription. Therefore, each access request MUST include a **fresh possession proof**: an EIP-712 signature over `SubscriptionAccess(subscriptionId, issuedAt, audience)` that demonstrates the requester controls the subscriber's private key. Freshness (`|now - issuedAt| <= maxProofAge`) bounds replay to a short window (RECOMMENDED 60 seconds); the optional `audience` field further restricts replay to the intended origin or resource prefix.
 
 ### 6.1 Extension Key
 
-```
-subscription
+```typescript
+export const SUBSCRIPTION = "subscription";
 ```
 
-### 6.2 Extension Info Structure
+### 6.2 Schema Definition (JSON Schema Draft 2020-12)
+
+The server advertises the `subscription` extension with a schema; the client echoes the extension with populated `info`. The `subscriber` and `tierId` are NOT echoed — the server reads both from the registry via `getSubscription(subscriptionId)`, reducing forgeable surface.
 
 ```json
 {
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "subscriptionId": {
+      "type": "string",
+      "pattern": "^0x[a-fA-F0-9]{64}$",
+      "description": "The subscription ID (bytes32 hex)"
+    },
+    "issuedAt": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Unix timestamp (seconds) when the proof was signed"
+    },
+    "audience": {
+      "type": "string",
+      "description": "Optional: request origin or URL prefix this proof is scoped to"
+    },
+    "signature": {
+      "type": "string",
+      "pattern": "^0x[a-fA-F0-9]{130}$",
+      "description": "EIP-712 signature over SubscriptionAccess (65 bytes, hex)"
+    }
+  },
+  "required": ["subscriptionId", "issuedAt", "signature"]
+}
+```
+
+### 6.3 Info Structure
+
+```typescript
+export interface SubscriptionInfo {
+  /** The subscription ID (bytes32 hex, from commitment struct hash) */
+  subscriptionId: `0x${string}`;
+
+  /** Unix timestamp (seconds) when the proof was signed */
+  issuedAt: number;
+
+  /** Optional: request origin or URL prefix this proof is scoped to */
+  audience?: string;
+
+  /** EIP-712 signature over SubscriptionAccess (65 bytes, hex) */
+  signature: `0x${string}`;
+}
+```
+
+### 6.4 EIP-712 SubscriptionAccess Type
+
+The possession proof uses the registry's EIP-712 domain for consistent wallet display. Verification is off-chain only.
+
+**EIP-712 Domain (same as commitment):**
+
+```javascript
+const subscriptionAccessDomain = {
+  name: "x402SubscriptionRegistry",
+  version: "1",
+  chainId: 8453,
+  verifyingContract: "0x402SubscriptionRegistryAddress" // Registry address
+};
+```
+
+**SubscriptionAccess Type:**
+
+```javascript
+const subscriptionAccessTypes = {
+  SubscriptionAccess: [
+    { name: "subscriptionId", type: "bytes32" },
+    { name: "issuedAt", type: "uint256" },
+    { name: "audience", type: "string" }
+  ]
+};
+```
+
+**Type String:** `SubscriptionAccess(bytes32 subscriptionId,uint256 issuedAt,string audience)`
+
+The `audience` field is hashed per EIP-712 string rules (`keccak256(audience)`). When `audience` is empty, hash the empty string.
+
+### 6.5 Server Declaration (PaymentRequired.extensions)
+
+The resource server advertises that it accepts the `subscription` extension for access. The declaration indicates whether a subscription is required (for subscription-only resources) or optional (for hybrid exact + subscribe resources).
+
+```json
+{
+  "x402Version": 2,
+  "resource": { "url": "https://api.example.com/premium-data", "..." : "..." },
+  "accepts": [
+    { "scheme": "exact", "..." : "..." },
+    { "scheme": "subscribe", "..." : "..." }
+  ],
+  "extensions": {
+    "subscription": {
+      "info": {
+        "required": false,
+        "acceptedTiers": ["pro", "enterprise"]
+      },
+      "schema": { "$schema": "https://json-schema.org/draft/2020-12/schema", "..." : "..." }
+    }
+  }
+}
+```
+
+**Server Declaration Fields:**
+
+| Field | Type | Description |
+|:------|:-----|:------------|
+| `info.required` | `boolean` | If true, this resource ONLY accepts subscription access (no exact fallback). |
+| `info.acceptedTiers` | `string[]` | Optional list of tier IDs that grant access to this resource. If omitted, any active subscription suffices. |
+| `schema` | `object` | JSON Schema for client info validation. |
+
+### 6.6 Client Echo (PaymentPayload.extensions)
+
+The client echoes the extension with a fresh possession proof. The server MUST verify the signature and check on-chain state before granting access.
+
+```json
+{
+  "x402Version": 2,
+  "resource": { "url": "https://api.example.com/premium-data", "..." : "..." },
+  "accepted": { "scheme": "subscribe", "..." : "..." },
+  "payload": {},
   "extensions": {
     "subscription": {
       "info": {
         "subscriptionId": "0xabcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890",
-        "subscriber": "0x857b06519E91e3A54538791bDbb0E22373e36b66",
-        "network": "eip155:8453"
+        "issuedAt": 1740672089,
+        "audience": "https://api.example.com",
+        "signature": "0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef1b"
       }
     }
   }
 }
 ```
 
-### 6.3 Verification
+**Client Info Fields:**
 
-The resource server verifies the proof by calling `isActive(subscriptionId)` on the on-chain registry. The extension info is a **pointer to verify**, never a trusted claim.
+| Field | Type | Required | Description |
+|:------|:-----|:---------|:------------|
+| `subscriptionId` | `string` | Required | The subscription ID (bytes32 hex). |
+| `issuedAt` | `number` | Required | Unix timestamp (seconds) when the proof was signed. |
+| `audience` | `string` | Optional | Request origin or URL prefix this proof is scoped to. |
+| `signature` | `string` | Required | EIP-712 signature over SubscriptionAccess (65 bytes, hex). |
 
-```javascript
-const isValid = await registry.isActive(subscriptionId);
-if (!isValid) {
-  return { status: 402, error: "subscription_not_found" };
+### 6.7 Verification Flow
+
+The resource server (or facilitator on its behalf) MUST perform these checks **in order**:
+
+```typescript
+async function verifySubscriptionAccess(
+  registry: x402SubscriptionRegistry,
+  info: SubscriptionInfo,
+  config: { maxProofAge: number; servedOrigin?: string; acceptedTiers?: string[] }
+): Promise<{ granted: boolean; error?: string }> {
+  // 1. Fetch subscription — MUST exist
+  const sub = await registry.getSubscription(info.subscriptionId);
+  if (sub.subscriber === ADDRESS_ZERO) {
+    return { granted: false, error: "subscription_not_found" };
+  }
+
+  // 2. Recover SubscriptionAccess signer — MUST equal registry-stored subscriber
+  // This is the possession proof: the requester controls the subscriber's key
+  const domain = {
+    name: "x402SubscriptionRegistry",
+    version: "1",
+    chainId: await registry.provider.getNetwork().then(n => n.chainId),
+    verifyingContract: registry.address
+  };
+  const types = {
+    SubscriptionAccess: [
+      { name: "subscriptionId", type: "bytes32" },
+      { name: "issuedAt", type: "uint256" },
+      { name: "audience", type: "string" }
+    ]
+  };
+  const message = {
+    subscriptionId: info.subscriptionId,
+    issuedAt: info.issuedAt,
+    audience: info.audience ?? ""
+  };
+  const recoveredSigner = ethers.verifyTypedData(domain, types, message, info.signature);
+  if (recoveredSigner.toLowerCase() !== sub.subscriber.toLowerCase()) {
+    return { granted: false, error: "invalid_access_signature" };
+  }
+
+  // 3. Freshness check: |now - issuedAt| <= maxProofAge
+  const now = Math.floor(Date.now() / 1000);
+  if (Math.abs(now - info.issuedAt) > config.maxProofAge) {
+    return { granted: false, error: "stale_access_proof" };
+  }
+
+  // 4. Audience check (if present): MUST match served origin/resource prefix
+  if (info.audience && config.servedOrigin) {
+    if (!config.servedOrigin.startsWith(info.audience)) {
+      return { granted: false, error: "audience_mismatch" };
+    }
+  }
+
+  // 5. Check subscription is active on-chain
+  const isActive = await registry.isActive(info.subscriptionId);
+  if (!isActive) {
+    return { granted: false, error: "subscription_not_active" };
+  }
+
+  // 6. Check tier sufficiency (if acceptedTiers is specified)
+  if (config.acceptedTiers && config.acceptedTiers.length > 0) {
+    if (!config.acceptedTiers.includes(sub.tierId)) {
+      return { granted: false, error: "tier_insufficient" };
+    }
+  }
+
+  return { granted: true };
+}
+```
+
+**Configuration:**
+
+| Parameter | Type | Description |
+|:----------|:-----|:------------|
+| `maxProofAge` | `number` | Maximum allowed `\|now - issuedAt\|` in seconds. RECOMMENDED: 60 seconds. Server-configurable. |
+| `servedOrigin` | `string` | The origin or URL prefix being served; compared against `info.audience` if present. |
+| `acceptedTiers` | `string[]` | Optional list of tier IDs that grant access to this resource. |
+
+### 6.8 Replay Analysis
+
+Replay of a captured proof is bounded by `maxProofAge` (RECOMMENDED 60 seconds): after this window, the proof is stale and rejected. When `audience` is set, replay is further restricted to the same origin — a proof scoped to `https://api.example.com` cannot be replayed against `https://other.example.com`. TLS protects transport-layer capture.
+
+For stricter single-use semantics, servers MAY maintain a short-lived `(issuedAt, signature)` cache (TTL = `maxProofAge`) and reject duplicates. This is optional — freshness alone provides strong replay resistance for most use cases.
+
+**Contrast with previous draft:** An earlier draft used a `cycle` field to produce a proof valid for an entire billing period (up to 30 days). This was a static bearer token: anyone who intercepted it could replay indefinitely within the cycle. Freshness via `issuedAt` is the fix — the signature removal in the interim commit was not the intended resolution.
+
+> **Non-normative:** Servers MAY exchange one verified possession proof for their own session credential (cookie, API key, JWT) to avoid per-request wallet signing for human clients. This is a server-side optimization outside the x402 protocol scope.
+
+### 6.9 Failure Paths (402 Fallback)
+
+When subscription verification fails, the server MUST return a `402 Payment Required` response with the standard `accepts` array, enabling graceful fallback to payment:
+
+| Failure Reason | Behavior |
+|:---------------|:---------|
+| **Subscription not found** | 402 with `exact` + `subscribe` accepts; client can pay per-request or create new subscription |
+| **Invalid access signature** | 402 with `exact` + `subscribe` accepts; signature does not recover to the stored subscriber |
+| **Stale access proof** | 402 with `exact` + `subscribe` accepts; `\|now - issuedAt\|` exceeds `maxProofAge` |
+| **Audience mismatch** | 402 with `exact` + `subscribe` accepts; proof scoped to different origin |
+| **Subscription expired** | 402 with `exact` + `subscribe` accepts; client can renew or pay per-request |
+| **Subscription cancelled** | 402 with `exact` + `subscribe` accepts |
+| **In grace period (still active)** | 200 OK — access continues during grace |
+| **Grace period expired** | 402 with `exact` + `subscribe` accepts |
+| **Tier insufficient** | 402 with only higher-tier `subscribe` options (or `exact` if per-request is allowed) |
+
+**Error response structure:**
+
+```json
+{
+  "x402Version": 2,
+  "error": "Subscription not active",
+  "resource": { "url": "https://api.example.com/premium-data", "..." : "..." },
+  "accepts": [
+    { "scheme": "exact", "amount": "1000", "..." : "..." },
+    { "scheme": "subscribe", "amount": "5000000", "..." : "..." }
+  ],
+  "extensions": {
+    "subscription": {
+      "info": { "required": false, "acceptedTiers": ["pro", "enterprise"] },
+      "schema": { "..." : "..." }
+    }
+  }
+}
+```
+
+### 6.10 Request/Response Fixtures
+
+#### Active Subscriber — Access Granted (200 OK)
+
+**Request:**
+
+```http
+GET /api/premium-data HTTP/1.1
+Host: api.example.com
+X-PAYMENT-SIGNATURE: <base64-encoded payload below>
+```
+
+**Decoded X-PAYMENT-SIGNATURE payload:**
+
+```json
+{
+  "x402Version": 2,
+  "resource": { "url": "https://api.example.com/premium-data" },
+  "accepted": { "scheme": "subscribe" },
+  "payload": {},
+  "extensions": {
+    "subscription": {
+      "info": {
+        "subscriptionId": "0xabcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890",
+        "issuedAt": 1740672089,
+        "audience": "https://api.example.com",
+        "signature": "0x1a2b3c4d5e6f1a2b3c4d5e6f1a2b3c4d5e6f1a2b3c4d5e6f1a2b3c4d5e6f1a2b3c4d5e6f1a2b3c4d5e6f1a2b3c4d5e6f1a2b3c4d5e6f1a2b3c4d5e6f1a2b1b"
+      }
+    }
+  }
+}
+```
+
+**Server verification:**
+
+1. Calls `getSubscription(0xabcdef...)` → returns `{ subscriber: 0x857b06519E91e3A54538791bDbb0E22373e36b66, tierId: "pro", ... }`
+2. Recovers signer from `SubscriptionAccess(subscriptionId, issuedAt, audience)` signature → `0x857b06519E91e3A54538791bDbb0E22373e36b66`
+3. Signer matches stored subscriber ✓
+4. `|now - 1740672089| <= 60` (fresh) ✓
+5. `audience` matches served origin ✓
+6. `isActive(subscriptionId)` → true ✓
+7. `tierId` in `acceptedTiers` ✓
+
+**Response:**
+
+```http
+HTTP/1.1 200 OK
+Content-Type: application/json
+X-PAYMENT-RESPONSE: eyJzdWJzY3JpcHRpb24iOnsic3RhdHVzIjoiYWN0aXZlIiwiY3VycmVudFBlcmlvZEVuZCI6IjE3NDMyNjQwODkifX0=
+
+{"data": "premium content here"}
+```
+
+**Decoded X-PAYMENT-RESPONSE:**
+
+```json
+{
+  "subscription": {
+    "status": "active",
+    "currentPeriodEnd": "1743264089"
+  }
+}
+```
+
+#### Wrong-Key Signature — Payment Required (402)
+
+**Request:** Valid-looking echo with signature from the wrong key.
+
+```json
+{
+  "x402Version": 2,
+  "resource": { "url": "https://api.example.com/premium-data" },
+  "accepted": { "scheme": "subscribe" },
+  "payload": {},
+  "extensions": {
+    "subscription": {
+      "info": {
+        "subscriptionId": "0xabcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890",
+        "issuedAt": 1740672089,
+        "audience": "https://api.example.com",
+        "signature": "0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbe1c"
+      }
+    }
+  }
+}
+```
+
+**Server verification:**
+
+1. Calls `getSubscription(0xabcdef...)` → returns `{ subscriber: 0x857b06519E91e3A54538791bDbb0E22373e36b66, ... }`
+2. Recovers signer from signature → `0xAttacker1234567890123456789012345678901234` (different address)
+3. Signer does NOT match stored subscriber ✗ → **invalid_access_signature**
+
+**Response:**
+
+```http
+HTTP/1.1 402 Payment Required
+Content-Type: application/json
+
+{
+  "x402Version": 2,
+  "error": "Access signature invalid",
+  "resource": { "url": "https://api.example.com/premium-data" },
+  "accepts": [
+    { "scheme": "exact", "amount": "1000", "..." : "..." },
+    { "scheme": "subscribe", "amount": "5000000", "..." : "..." }
+  ]
+}
+```
+
+#### Lapsed Subscriber — Payment Required (402)
+
+**Request:**
+
+```http
+GET /api/premium-data HTTP/1.1
+Host: api.example.com
+X-PAYMENT-SIGNATURE: <base64-encoded payload below>
+```
+
+**Decoded X-PAYMENT-SIGNATURE payload (expired subscription):**
+
+```json
+{
+  "x402Version": 2,
+  "resource": { "url": "https://api.example.com/premium-data" },
+  "accepted": { "scheme": "subscribe" },
+  "payload": {},
+  "extensions": {
+    "subscription": {
+      "info": {
+        "subscriptionId": "0xdeadbeef0000000000000000000000000000000000000000000000000000000",
+        "issuedAt": 1740672089,
+        "signature": "0x1a2b3c4d5e6f1a2b3c4d5e6f1a2b3c4d5e6f1a2b3c4d5e6f1a2b3c4d5e6f1a2b3c4d5e6f1a2b3c4d5e6f1a2b3c4d5e6f1a2b3c4d5e6f1a2b3c4d5e6f1a2b1b"
+      }
+    }
+  }
+}
+```
+
+**Response:**
+
+```http
+HTTP/1.1 402 Payment Required
+Content-Type: application/json
+
+{
+  "x402Version": 2,
+  "error": "Subscription expired",
+  "resource": {
+    "url": "https://api.example.com/premium-data",
+    "description": "Real-time market data API",
+    "mimeType": "application/json"
+  },
+  "accepts": [
+    {
+      "scheme": "exact",
+      "network": "eip155:8453",
+      "amount": "1000",
+      "asset": "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+      "payTo": "0x209693Bc6afc0C5328bA36FaF03C514EF312287C",
+      "maxTimeoutSeconds": 60,
+      "extra": { "name": "USDC", "version": "2" }
+    },
+    {
+      "scheme": "subscribe",
+      "network": "eip155:8453",
+      "amount": "5000000",
+      "asset": "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+      "payTo": "0x209693Bc6afc0C5328bA36FaF03C514EF312287C",
+      "maxTimeoutSeconds": 300,
+      "extra": {
+        "name": "USDC",
+        "version": "2",
+        "registry": "0x402SubscriptionRegistryAddress",
+        "subscriptionDetails": {
+          "tierId": "pro",
+          "tierName": "Pro Plan",
+          "billingCycle": "monthly",
+          "billingCycleSeconds": 2592000,
+          "periodCount": 12,
+          "gracePeriodSeconds": 86400,
+          "cancellationPolicy": "end_of_cycle"
+        }
+      }
+    }
+  ],
+  "extensions": {
+    "subscription": {
+      "info": { "required": false, "acceptedTiers": ["pro", "enterprise"] },
+      "schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "subscriptionId": { "type": "string", "pattern": "^0x[a-fA-F0-9]{64}$" },
+          "subscriber": { "type": "string", "pattern": "^0x[a-fA-F0-9]{40}$" },
+          "tierId": { "type": "string" }
+        },
+        "required": ["subscriptionId", "subscriber"]
+      }
+    }
+  }
 }
 ```
 

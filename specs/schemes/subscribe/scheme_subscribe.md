@@ -396,13 +396,38 @@ When subscribing, the client sends a `PaymentPayload` with the schedule commitme
 
 Cancellation uses a client-chosen `nonce` for replay protection; the registry records used nonces.
 
-## Active-Subscription Proof (Access Verification)
+## Subscription Extension (Access Verification)
 
-Once subscribed, clients present an active-subscription proof for subsequent requests without requiring new payments. The proof travels as the `subscription` extension in `PaymentPayload.extensions`.
+Once subscribed, clients present a **fresh possession proof** for subsequent requests without requiring new payments. The proof travels as the `subscription` extension in `PaymentPayload.extensions`:
 
-The resource server verifies the proof by calling `isActive(subscriptionId)` on the on-chain registry. The extension info is a **pointer to verify**, never a trusted claim.
+```json
+{
+  "extensions": {
+    "subscription": {
+      "info": {
+        "subscriptionId": "0xabcdef...",
+        "issuedAt": 1740672089,
+        "audience": "https://api.example.com",
+        "signature": "0x..."
+      }
+    }
+  }
+}
+```
 
-Full extension definition and field tables are in [`scheme_subscribe_evm.md`](./scheme_subscribe_evm.md).
+The `signature` is an EIP-712 signature over `SubscriptionAccess(bytes32 subscriptionId, uint256 issuedAt, string audience)`. The server verifies:
+
+1. The subscription exists via `getSubscription(subscriptionId)`
+2. The recovered signer equals the registry-stored subscriber (possession proof)
+3. The proof is fresh: `|now - issuedAt| <= maxProofAge` (RECOMMENDED 60 seconds)
+4. If `audience` is present, it matches the served origin
+5. The subscription `isActive()` and tier sufficiency
+
+**Why a fresh proof?** The registry's public state proves subscription existence, not requester identity. An unauthenticated echo would let anyone free-ride using on-chain public data. The short-lived signature bounds replay to `maxProofAge`; the optional `audience` further restricts replay to the intended origin.
+
+**Failure paths:** If verification fails (invalid signature, stale proof, not found, expired, cancelled, tier insufficient), the server returns `402 Payment Required` with `exact` and `subscribe` options, enabling graceful fallback to per-request payment or subscription renewal.
+
+Full extension definition, JSON Schema, EIP-712 type, verification flow, and request/response fixtures are in [`scheme_subscribe_evm.md`](./scheme_subscribe_evm.md).
 
 ## SettlementResponse Schema
 
