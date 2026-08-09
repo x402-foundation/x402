@@ -2,23 +2,17 @@
 
 ## Summary
 
-The `subscribe` scheme on EVM enables recurring subscription-based payments where the Facilitator pays gas costs while subscribers control the exact flow of funds via cryptographic signatures.
+The `subscribe` scheme on EVM enables recurring subscription-based payments where the Facilitator pays gas costs while subscribers control the exact flow of funds via a single cryptographic commitment over an entire billing schedule.
 
-This is implemented via two components:
+This is implemented via three components:
 
-| Component                    | Purpose                                                                |
-| :--------------------------- | :--------------------------------------------------------------------- |
-| **1. Payment Authorization** | Uses EIP-3009 or Permit2 for each billing cycle payment                |
-| **2. Subscription Registry** | On-chain or off-chain registry tracking subscription state and proofs  |
+| Component | Purpose |
+|:----------|:--------|
+| **1. Schedule Commitment** | Client signs ONE EIP-712 commitment binding a Merkle root of the billing schedule |
+| **2. Standing Allowance** | Client grants ERC-20 allowance to the registry (gaslessly via EIP-2612 permit, or direct approve) |
+| **3. Subscription Registry** | Immutable on-chain contract enforcing commitment, cursor, cap, time windows, and pause |
 
-The scheme supports two subscription models:
-
-| Model                        | Description                                                            | Recommendation                                    |
-| :--------------------------- | :--------------------------------------------------------------------- | :------------------------------------------------ |
-| **Pre-authorized Renewals**  | Client signs multiple future authorizations upfront                    | **Recommended** (Seamless auto-renewal)           |
-| **On-demand Renewals**       | Client signs each renewal when prompted                                | **Flexible** (More control, requires interaction) |
-
-In all cases, the Facilitator cannot modify amounts, recipients, or timing. They serve only as the transaction broadcaster and subscription state manager.
+The client signs once; the facilitator submits periodic charges with Merkle proofs. The registry enforces all safety invariants — the facilitator cannot overcharge, charge early/late, or redirect funds.
 
 ---
 
@@ -34,72 +28,133 @@ In all cases, the Facilitator cannot modify amounts, recipients, or timing. They
 │   │          │         │              │         │     Registry       │          │
 │   └──────────┘         └──────────────┘         └────────────────────┘          │
 │        │                      │                          │                       │
-│        │ Signs EIP-3009       │ Broadcasts TX            │ Stores subscription   │
-│        │ authorizations       │ Pays gas                 │ state on-chain        │
+│        │ Signs EIP-712        │ Maintains tree           │ Immutable contract    │
+│        │ commitment +         │ off-chain; submits       │ enforces: commitment, │
+│        │ allowance permit     │ charges with proofs      │ cursor, cap, windows  │
 │        │                      │                          │                       │
 │        ▼                      ▼                          ▼                       │
 │   ┌──────────┐         ┌──────────────┐         ┌────────────────────┐          │
-│   │  WALLET  │         │  ERC-20      │         │  RESOURCE SERVER   │          │
-│   │          │         │  (USDC)      │         │                    │          │
+│   │  WALLET  │         │  ERC-20      │◀────────│  transferFrom()    │          │
+│   │          │         │  (any token) │         │  on each charge    │          │
 │   └──────────┘         └──────────────┘         └────────────────────┘          │
 │                                                                                  │
 └─────────────────────────────────────────────────────────────────────────────────┘
 ```
 
+### Role Responsibilities
+
+| Role | Responsibility |
+|:-----|:---------------|
+| **Client** | Builds Merkle tree from advertised terms; signs EIP-712 commitment over `{root, subscriber, asset, payTo, registry, chainId, tierId, start, expiry, maxPerPeriod}`; grants standing ERC-20 allowance to registry (gaslessly via EIP-2612 permit where supported, or direct approve) |
+| **Facilitator** | Maintains the Merkle tree and proofs off-chain; submits `subscribe()` with commitment + allowance signature; submits `chargePeriod()` with Merkle proofs at each billing boundary; trusted for **liveness only** |
+| **Registry** | Immutable on-chain contract; verifies EIP-712 commitment signature; enforces monotonic cursor, per-period cap (`fee <= maxPerPeriod`), time windows (`validFrom <= now <= validTo`), expiry, and cancel; calls `transferFrom(subscriber, payTo, fee)` on success |
+| **Token** | Any ERC-20; EIP-2612 support enables gasless allowance approval |
+
 ---
 
-## 2. Payment Authorization Methods
+## 2. Allowance Establishment Methods
 
-### 2.1 EIP-3009 (Recommended for USDC)
+The client must grant the `x402SubscriptionRegistry` contract an ERC-20 allowance covering the total committed spend. V1 supports two methods:
 
-For tokens supporting `transferWithAuthorization`, each billing cycle payment uses a standard EIP-3009 signature.
+### 2.1 EIP-2612 Permit (Recommended)
 
-**EIP-712 Domain:**
+For tokens supporting EIP-2612 (including USDC on Base), the client signs a `permit` authorizing the registry to spend tokens. The facilitator submits this signature bundled with `subscribe()`, making the flow gasless for the client.
+
+**EIP-712 Domain (token contract):**
 
 ```javascript
-const domain = {
+const permitDomain = {
   name: "USD Coin",      // Token name
   version: "2",          // Token version
   chainId: 8453,         // Base mainnet
-  verifyingContract: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913"
+  verifyingContract: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913" // USDC
 };
 ```
 
-**Authorization Types:**
+**Permit Types:**
 
 ```javascript
-const subscribeAuthorizationTypes = {
-  TransferWithAuthorization: [
-    { name: "from", type: "address" },
-    { name: "to", type: "address" },
+const permitTypes = {
+  Permit: [
+    { name: "owner", type: "address" },
+    { name: "spender", type: "address" },
     { name: "value", type: "uint256" },
-    { name: "validAfter", type: "uint256" },
-    { name: "validBefore", type: "uint256" },
-    { name: "nonce", type: "bytes32" }
+    { name: "nonce", type: "uint256" },
+    { name: "deadline", type: "uint256" }
   ]
 };
 ```
 
-### 2.2 Permit2 (Universal Fallback)
+The `spender` is the `x402SubscriptionRegistry` address. The `value` SHOULD equal the total committed spend (sum of all period fees), making the allowance itself an on-chain aggregate cap.
 
-For tokens without EIP-3009 support, use Permit2 with the x402SubscriptionProxy contract.
+### 2.2 Direct Approve (Non-Gasless Fallback)
 
-**Witness Type for Subscriptions:**
+For tokens without EIP-2612 support, the client submits a standard `ERC20.approve(registry, amount)` transaction directly, paying their own gas. The client must complete this approval before the facilitator can call `subscribe()`.
 
-```javascript
-const SUBSCRIPTION_WITNESS_TYPE_STRING =
-  "SubscriptionWitness witness)SubscriptionWitness(address to,uint256 validAfter,bytes32 subscriptionId,uint256 cycleNumber,bytes extra)TokenPermissions(address token,uint256 amount)";
+### 2.3 Future Work: Permit2 Funding (Non-Normative)
 
-const SUBSCRIPTION_WITNESS_TYPEHASH = keccak256(
-  "SubscriptionWitness(address to,uint256 validAfter,bytes32 subscriptionId,uint256 cycleNumber,bytes extra)"
-);
-```
+> Permit2 support is deferred to a future version. The correct approach would use **AllowanceTransfer** (specifically `PermitSingle`) to grant the registry spend permission through Permit2 — NOT SignatureTransfer with a witness, which is single-use and unsuitable for recurring charges. This requires a second pull path (`PERMIT2.transferFrom`) in the registry contract. Permit2 funding can be added later as a registry variant without changing the scheme semantics.
 
 ---
 
-## 3. PaymentPayload Structure
+## 3. EIP-712 Commitment Structure
 
-### 3.1 Initial Subscription (EIP-3009)
+The client signs a single EIP-712 typed data structure that binds the entire subscription:
+
+### 3.1 EIP-712 Domain (Registry Contract)
+
+```javascript
+const commitmentDomain = {
+  name: "x402SubscriptionRegistry",
+  version: "1",
+  chainId: 8453,
+  verifyingContract: "0x402SubscriptionRegistryAddress" // Registry address
+};
+```
+
+### 3.2 Commitment Types
+
+```javascript
+const commitmentTypes = {
+  SubscriptionCommitment: [
+    { name: "root", type: "bytes32" },
+    { name: "subscriber", type: "address" },
+    { name: "asset", type: "address" },
+    { name: "payTo", type: "address" },
+    { name: "registry", type: "address" },
+    { name: "chainId", type: "uint256" },
+    { name: "tierId", type: "string" },
+    { name: "start", type: "uint256" },
+    { name: "expiry", type: "uint256" },
+    { name: "maxPerPeriod", type: "uint256" }
+  ]
+};
+```
+
+### 3.3 Commitment Fields
+
+| Field | Type | Description |
+|:------|:-----|:------------|
+| `root` | `bytes32` | Merkle root of the billing schedule (client MUST recompute, never blind-sign) |
+| `subscriber` | `address` | Address that will be charged (signs the commitment) |
+| `asset` | `address` | ERC-20 token contract address |
+| `payTo` | `address` | Recipient address for all charges |
+| `registry` | `address` | The `x402SubscriptionRegistry` contract address |
+| `chainId` | `uint256` | EVM chain ID (prevents cross-chain replay) |
+| `tierId` | `string` | Subscription tier identifier |
+| `start` | `uint256` | Unix timestamp when subscription begins |
+| `expiry` | `uint256` | Unix timestamp after which no charges are valid |
+| `maxPerPeriod` | `uint256` | Maximum fee per charge (safety cap) |
+
+The `subscriptionId` is derived as `keccak256(abi.encode(commitmentStructHash))`, binding all parameters in one identifier.
+
+---
+
+## 4. PaymentPayload Structure
+
+### 4.1 Subscribe Action
+
+When subscribing, the client sends a `PaymentPayload` with the schedule commitment:
 
 ```json
 {
@@ -117,53 +172,79 @@ const SUBSCRIPTION_WITNESS_TYPEHASH = keccak256(
     "payTo": "0x209693Bc6afc0C5328bA36FaF03C514EF312287C",
     "maxTimeoutSeconds": 300,
     "extra": {
-      "assetTransferMethod": "eip3009",
       "name": "USDC",
       "version": "2",
+      "registry": "0x402SubscriptionRegistryAddress",
       "subscriptionDetails": {
         "tierId": "pro",
         "tierName": "Pro Plan",
         "billingCycle": "monthly",
         "billingCycleSeconds": 2592000,
-        "renewalPolicy": "auto",
-        "gracePeriodSeconds": 86400
+        "periodCount": 12,
+        "gracePeriodSeconds": 86400,
+        "cancellationPolicy": "end_of_cycle"
       }
     }
   },
   "payload": {
-    "signature": "0x...",
-    "authorization": {
-      "from": "0x857b06519E91e3A54538791bDbb0E22373e36b66",
-      "to": "0x209693Bc6afc0C5328bA36FaF03C514EF312287C",
-      "value": "5000000",
-      "validAfter": "1740672089",
-      "validBefore": "1743264089",
-      "nonce": "0xf3746613c2d920b5fdabc0856f2aeb2d4f88ee6037b8cc5d04a71a4462f13480"
-    },
-    "subscriptionPayload": {
-      "action": "subscribe",
+    "action": "subscribe",
+    "commitment": {
+      "root": "0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef",
+      "subscriber": "0x857b06519E91e3A54538791bDbb0E22373e36b66",
+      "asset": "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+      "payTo": "0x209693Bc6afc0C5328bA36FaF03C514EF312287C",
+      "registry": "0x402SubscriptionRegistryAddress",
+      "chainId": 8453,
       "tierId": "pro",
-      "startTimestamp": "1740672089",
-      "renewalAuthorizations": [
-        {
-          "cycleNumber": 2,
-          "signature": "0x...",
-          "authorization": {
-            "from": "0x857b06519E91e3A54538791bDbb0E22373e36b66",
-            "to": "0x209693Bc6afc0C5328bA36FaF03C514EF312287C",
-            "value": "5000000",
-            "validAfter": "1743264089",
-            "validBefore": "1745856089",
-            "nonce": "0x..."
-          }
-        }
-      ]
-    }
+      "start": "1740672089",
+      "expiry": "1772208089",
+      "maxPerPeriod": "5000000"
+    },
+    "commitmentSignature": "0x...",
+    "allowanceMethod": "eip2612-permit",
+    "allowanceSignature": "0x...",
+    "schedule": [
+      { "periodIndex": 0, "fee": "5000000", "validFrom": "1740672089", "validTo": "1743350489" },
+      { "periodIndex": 1, "fee": "5000000", "validFrom": "1743264089", "validTo": "1745942489" },
+      { "periodIndex": 2, "fee": "5000000", "validFrom": "1745856089", "validTo": "1748534489" }
+    ]
   }
 }
 ```
 
-### 3.2 Initial Subscription (Permit2)
+**Note:** The `schedule` array is transported so the facilitator can rebuild the Merkle tree and generate proofs. The `root` in the signed commitment is what cryptographically binds it — the facilitator cannot alter the schedule without invalidating the signature.
+
+### 4.2 Subscribe Payload Fields
+
+| Field | Type | Required | Description |
+|:------|:-----|:---------|:------------|
+| `action` | `string` | Required | `"subscribe"` for new subscriptions |
+| `commitment` | `object` | Required | The EIP-712 commitment struct |
+| `commitmentSignature` | `string` | Required | EIP-712 signature over the commitment (65 bytes, hex) |
+| `allowanceMethod` | `string` | Required | `"eip2612-permit"` or `"direct-approve"` |
+| `allowanceSignature` | `string` | Conditional | Required if `allowanceMethod` is `"eip2612-permit"` |
+| `schedule` | `array` | Required | Array of `{periodIndex, fee, validFrom, validTo}` objects |
+
+### 4.3 Schedule Leaf Structure
+
+Each element in the `schedule` array represents one billing period:
+
+| Field | Type | Description |
+|:------|:-----|:------------|
+| `periodIndex` | `number` | Zero-indexed billing period number |
+| `fee` | `string` | Amount to charge for this period (in token atomic units) |
+| `validFrom` | `string` | Unix timestamp when this period's charge becomes valid |
+| `validTo` | `string` | Unix timestamp when this period's charge expires (includes grace) |
+
+The Merkle leaf is computed as: `keccak256(keccak256(abi.encode(periodIndex, fee, validFrom, validTo)))` (OpenZeppelin double-hash convention).
+
+### 4.4 Renewal Within Committed Schedule
+
+**Renewal is NOT a client action within a committed schedule.** Once the client signs a commitment covering N periods, the facilitator submits `chargePeriod()` for each period using the stored Merkle proofs. No new client signature is needed until the schedule expires or the client wishes to change tiers.
+
+### 4.5 Cancel Action
+
+To cancel a subscription, the client signs a cancellation request with replay protection:
 
 ```json
 {
@@ -176,315 +257,276 @@ const SUBSCRIPTION_WITNESS_TYPEHASH = keccak256(
     "payTo": "0x209693Bc6afc0C5328bA36FaF03C514EF312287C",
     "maxTimeoutSeconds": 300,
     "extra": {
-      "assetTransferMethod": "permit2",
-      "name": "USDC",
-      "version": "2",
+      "registry": "0x402SubscriptionRegistryAddress",
+      "subscriptionDetails": { "tierId": "pro" }
+    }
+  },
+  "payload": {
+    "action": "cancel",
+    "subscriptionId": "0xabcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890",
+    "subscriber": "0x857b06519E91e3A54538791bDbb0E22373e36b66",
+    "nonce": "12345",
+    "signature": "0x..."
+  }
+}
+```
+
+**Cancel Payload Fields:**
+
+| Field | Type | Required | Description |
+|:------|:-----|:---------|:------------|
+| `action` | `string` | Required | `"cancel"` |
+| `subscriptionId` | `string` | Required | The subscription to cancel (bytes32, hex) |
+| `subscriber` | `string` | Required | Subscriber address (must match commitment) |
+| `nonce` | `string` | Required | Client-chosen nonce for replay protection |
+| `signature` | `string` | Required | EIP-712 signature over `{subscriptionId, nonce}` |
+
+The registry records used nonces; resubmitting the same `(subscriptionId, nonce)` pair reverts.
+
+### 4.6 Update-Root Action (Tier Change / Re-commitment)
+
+To change tiers, extend a subscription, or modify the schedule, the client signs a new commitment:
+
+```json
+{
+  "x402Version": 2,
+  "accepted": {
+    "scheme": "subscribe",
+    "network": "eip155:8453",
+    "amount": "10000000",
+    "asset": "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+    "payTo": "0x209693Bc6afc0C5328bA36FaF03C514EF312287C",
+    "maxTimeoutSeconds": 300,
+    "extra": {
+      "registry": "0x402SubscriptionRegistryAddress",
       "subscriptionDetails": {
-        "tierId": "pro",
+        "tierId": "enterprise",
+        "tierName": "Enterprise Plan",
         "billingCycle": "monthly",
         "billingCycleSeconds": 2592000,
-        "renewalPolicy": "auto"
+        "periodCount": 12
       }
     }
   },
   "payload": {
-    "signature": "0x...",
-    "permit2Authorization": {
-      "permitted": {
-        "token": "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
-        "amount": "5000000"
-      },
-      "from": "0x857b06519E91e3A54538791bDbb0E22373e36b66",
-      "spender": "0x_x402SubscriptionProxyAddress",
-      "nonce": "0x...",
-      "deadline": "1743264089",
-      "witness": {
-        "to": "0x209693Bc6afc0C5328bA36FaF03C514EF312287C",
-        "validAfter": "1740672089",
-        "subscriptionId": "0x0000000000000000000000000000000000000000000000000000000000000000",
-        "cycleNumber": "1",
-        "extra": "0x"
-      }
+    "action": "update-root",
+    "previousSubscriptionId": "0xabcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890",
+    "commitment": {
+      "root": "0xfedcba0987654321fedcba0987654321fedcba0987654321fedcba0987654321",
+      "subscriber": "0x857b06519E91e3A54538791bDbb0E22373e36b66",
+      "asset": "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+      "payTo": "0x209693Bc6afc0C5328bA36FaF03C514EF312287C",
+      "registry": "0x402SubscriptionRegistryAddress",
+      "chainId": 8453,
+      "tierId": "enterprise",
+      "start": "1772208089",
+      "expiry": "1803744089",
+      "maxPerPeriod": "10000000"
     },
-    "subscriptionPayload": {
-      "action": "subscribe",
-      "tierId": "pro",
-      "startTimestamp": "1740672089",
-      "renewalAuthorizations": []
+    "commitmentSignature": "0x...",
+    "allowanceMethod": "eip2612-permit",
+    "allowanceSignature": "0x...",
+    "schedule": [
+      { "periodIndex": 0, "fee": "10000000", "validFrom": "1772208089", "validTo": "1774886489" }
+    ]
+  }
+}
+```
+
+**Update-Root Payload Fields:**
+
+| Field | Type | Required | Description |
+|:------|:-----|:---------|:------------|
+| `action` | `string` | Required | `"update-root"` |
+| `previousSubscriptionId` | `string` | Optional | Links to previous subscription (for tier migration) |
+| `commitment` | `object` | Required | New EIP-712 commitment struct |
+| `commitmentSignature` | `string` | Required | EIP-712 signature over the new commitment |
+| `allowanceMethod` | `string` | Required | How allowance is established for new schedule |
+| `allowanceSignature` | `string` | Conditional | Required if gasless allowance method |
+| `schedule` | `array` | Required | New billing schedule |
+
+---
+
+## 5. `extra` Field Reference
+
+### 5.1 Fields in `PaymentRequirements.extra`
+
+| Field | Type | Required | Description |
+|:------|:-----|:---------|:------------|
+| `name` | `string` | Conditional | EIP-712 domain name of the token. Required for EIP-2612 permit. |
+| `version` | `string` | Conditional | EIP-712 domain version of the token. Required for EIP-2612 permit. |
+| `registry` | `string` | Required | Address of the `x402SubscriptionRegistry` contract. |
+| `subscriptionDetails` | `object` | Required | Subscription tier configuration (see below). |
+
+### 5.2 Fields in `subscriptionDetails`
+
+| Field | Type | Required | Description |
+|:------|:-----|:---------|:------------|
+| `tierId` | `string` | Required | Unique identifier for the subscription tier. |
+| `tierName` | `string` | Required | Human-readable name for the tier. |
+| `billingCycle` | `string` | Required | `"daily"`, `"weekly"`, `"monthly"`, `"annual"`, or `"custom"`. |
+| `billingCycleSeconds` | `number` | Required | Duration of billing cycle in seconds. |
+| `periodCount` | `number` | Required | Number of billing periods in the subscription term. |
+| `features` | `array` | Optional | List of features included in this tier. |
+| `rateLimits` | `object` | Optional | Rate limiting configuration for this tier. |
+| `gracePeriodSeconds` | `number` | Optional | Time after a failed charge during which access continues. |
+| `cancellationPolicy` | `string` | Required | `"immediate"` or `"end_of_cycle"`. |
+| `trialPeriodSeconds` | `number` | Optional | Duration of free trial period (if applicable). |
+
+---
+
+## 6. Subscription Extension (Access Verification)
+
+Once subscribed, clients present an active-subscription proof for subsequent requests without requiring new payments. The proof travels as the `subscription` extension in `PaymentPayload.extensions`, following the V2 extension pattern (see `payment-identifier` for reference).
+
+### 6.1 Extension Key
+
+```
+subscription
+```
+
+### 6.2 Extension Info Structure
+
+```json
+{
+  "extensions": {
+    "subscription": {
+      "info": {
+        "subscriptionId": "0xabcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890",
+        "subscriber": "0x857b06519E91e3A54538791bDbb0E22373e36b66",
+        "network": "eip155:8453"
+      }
     }
   }
 }
 ```
 
-### 3.3 Subscription Proof Header
+### 6.3 Verification
 
-For subsequent requests within an active subscription period:
-
-**X-SUBSCRIPTION-PROOF Header (Base64 encoded):**
-
-```json
-{
-  "subscriptionId": "0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef",
-  "subscriber": "0x857b06519E91e3A54538791bDbb0E22373e36b66",
-  "tierId": "pro",
-  "network": "eip155:8453",
-  "payTo": "0x209693Bc6afc0C5328bA36FaF03C514EF312287C",
-  "currentCycleNumber": 1,
-  "currentCycleStart": "1740672089",
-  "currentCycleEnd": "1743264089",
-  "signature": "0x..."
-}
-```
-
-**EIP-712 Subscription Proof Types:**
+The resource server verifies the proof by calling `isActive(subscriptionId)` on the on-chain registry. The extension info is a **pointer to verify**, never a trusted claim.
 
 ```javascript
-const subscriptionProofTypes = {
-  SubscriptionProof: [
-    { name: "subscriptionId", type: "bytes32" },
-    { name: "subscriber", type: "address" },
-    { name: "tierId", type: "string" },
-    { name: "payTo", type: "address" },
-    { name: "currentCycleNumber", type: "uint256" },
-    { name: "currentCycleStart", type: "uint256" },
-    { name: "currentCycleEnd", type: "uint256" }
-  ]
-};
+const isValid = await registry.isActive(subscriptionId);
+if (!isValid) {
+  return { status: 402, error: "subscription_not_found" };
+}
 ```
 
 ---
 
-## 4. Verification Logic
+## 7. Verification Logic
 
-### 4.1 Initial Subscription Verification
+### 7.1 Subscribe Verification
 
 The facilitator MUST perform these checks in order:
 
-1. **Verify** the `payload.signature` is valid and recovers to `authorization.from`
+1. **Verify** the `commitmentSignature` is valid and recovers to `commitment.subscriber`
 
-2. **Verify** the subscriber has sufficient balance of the `asset`:
-   ```solidity
-   require(IERC20(asset).balanceOf(from) >= amount, "insufficient_funds");
-   ```
+2. **Verify** the Merkle root:
+   - Rebuild the tree from the `schedule` array
+   - Confirm the computed root matches `commitment.root`
 
-3. **Verify** the authorization parameters meet requirements:
-   - `authorization.value` >= `accepted.amount`
-   - `authorization.to` == `accepted.payTo`
-   - `block.timestamp` >= `authorization.validAfter`
-   - `block.timestamp` < `authorization.validBefore`
+3. **Verify** commitment parameters match `PaymentRequirements`:
+   - `commitment.asset` == `accepted.asset`
+   - `commitment.payTo` == `accepted.payTo`
+   - `commitment.registry` == `accepted.extra.registry`
+   - `commitment.chainId` == chain ID from `accepted.network`
+   - `commitment.tierId` == `accepted.extra.subscriptionDetails.tierId`
 
-4. **Verify** the subscription details:
-   - `tierId` is valid and available
-   - `billingCycleSeconds` matches the tier configuration
-   - `startTimestamp` is within acceptable range (not in distant past/future)
+4. **Verify** allowance:
+   - If `allowanceMethod` is `"eip2612-permit"`: validate permit signature
+   - If `allowanceMethod` is `"direct-approve"`: confirm on-chain allowance exists
+   - Confirm allowance >= total committed spend
 
-5. **Verify** renewal authorizations (if provided):
-   - Each authorization has non-overlapping validity windows
-   - Validity windows align with billing cycle boundaries
-   - All authorizations are from the same `from` address
+5. **Verify** the subscriber has sufficient balance for at least the first period
 
-6. **Simulate** the transaction:
-   ```solidity
-   // For EIP-3009
-   token.transferWithAuthorization(from, to, value, validAfter, validBefore, nonce, signature);
-   ```
+6. **Simulate** the `subscribe()` call on the registry
 
-### 4.2 Subscription Proof Verification
+### 7.2 Charge Verification (Facilitator-side, per period)
 
-For requests with `X-SUBSCRIPTION-PROOF` header:
+Before calling `chargePeriod()`:
 
-1. **Decode** the Base64 subscription proof
+1. **Construct** Merkle proof for the current `periodIndex`
+2. **Verify** `periodIndex == cursor` (monotonic)
+3. **Verify** `validFrom <= block.timestamp <= validTo`
+4. **Verify** `fee <= maxPerPeriod`
+5. **Verify** `!cancelled && block.timestamp <= expiry`
+6. **Verify** subscriber has sufficient balance and allowance
 
-2. **Verify** the proof signature:
-   ```javascript
-   const recoveredAddress = ethers.verifyTypedData(
-     domain,
-     subscriptionProofTypes,
-     proofData,
-     proof.signature
-   );
-   require(recoveredAddress === proof.subscriber, "invalid_subscription_proof");
-   ```
+### 7.3 Cancel Verification
 
-3. **Verify** subscription is active:
-   - `block.timestamp` >= `currentCycleStart`
-   - `block.timestamp` < `currentCycleEnd`
-   - Subscription not cancelled
-
-4. **Verify** payment was settled for current cycle:
-   - Query on-chain registry OR
-   - Verify against facilitator's off-chain records
-
-5. **Verify** rate limits (if applicable):
-   - Check subscriber hasn't exceeded tier limits
-
-### 4.3 Renewal Verification
-
-When processing automatic renewals:
-
-1. **Verify** the renewal authorization matches the expected cycle:
-   - `cycleNumber` matches expected next cycle
-   - `validAfter` aligns with cycle start
-   - `validBefore` extends to cycle end
-
-2. **Verify** the subscriber still has sufficient balance
-
-3. **Verify** subscription is in good standing (not cancelled)
-
-4. **Simulate** the renewal transaction
+1. **Verify** the `signature` over `{subscriptionId, nonce}` recovers to `subscriber`
+2. **Verify** `nonce` has not been used before
+3. **Verify** subscription exists and is not already cancelled
 
 ---
 
-## 5. Settlement Logic
+## 8. Settlement Logic
 
-### 5.1 Initial Subscription Settlement (EIP-3009)
+### 8.1 Subscribe Settlement
 
 ```solidity
-// 1. Execute the payment
-IERC3009(asset).transferWithAuthorization(
-    authorization.from,
-    authorization.to,
-    authorization.value,
-    authorization.validAfter,
-    authorization.validBefore,
-    authorization.nonce,
-    signature
+// 1. If gasless allowance, execute permit first
+if (allowanceMethod == "eip2612-permit") {
+    IERC20Permit(asset).permit(subscriber, registry, totalAmount, deadline, v, r, s);
+}
+
+// 2. Execute subscribe on registry
+bytes32 subscriptionId = registry.subscribe(commitment, commitmentSignature);
+
+// 3. Optionally charge period 0 immediately
+registry.chargePeriod(subscriptionId, 0, fee, validFrom, validTo, proof);
+```
+
+### 8.2 Periodic Charge Settlement
+
+```solidity
+// Facilitator calls at each billing boundary
+registry.chargePeriod(
+    subscriptionId,
+    periodIndex,
+    fee,
+    validFrom,
+    validTo,
+    merkleProof
 );
 
-// 2. Register the subscription (on-chain or off-chain)
-bytes32 subscriptionId = keccak256(abi.encodePacked(
-    subscriber,
-    payTo,
-    tierId,
-    block.timestamp
-));
-
-// 3. Store renewal authorizations (if provided)
-for (uint i = 0; i < renewalAuthorizations.length; i++) {
-    storeRenewalAuth(subscriptionId, renewalAuthorizations[i]);
-}
-
-// 4. Return subscription details
-emit SubscriptionCreated(subscriptionId, subscriber, tierId, cycleEnd);
+// Registry internally:
+// 1. Verifies Merkle proof
+// 2. Checks periodIndex == cursor
+// 3. Checks validFrom <= now <= validTo
+// 4. Checks fee <= maxPerPeriod
+// 5. Checks !cancelled && now <= expiry
+// 6. Calls transferFrom(subscriber, payTo, fee)
+// 7. Increments cursor
 ```
 
-### 5.2 Initial Subscription Settlement (Permit2)
+### 8.3 Grace Period Handling
+
+If `chargePeriod` fails due to insufficient balance/allowance:
+
+1. Registry enters grace state: `inGracePeriod = true`
+2. `gracePeriodEnd = validTo + gracePeriodSeconds`
+3. Access continues during grace period
+4. A successful charge within grace restores active status
+5. If `block.timestamp > gracePeriodEnd` without successful charge, `isActive()` returns false
+
+### 8.4 Cancellation Settlement
 
 ```solidity
-// Call x402SubscriptionProxy.subscribe()
-x402SubscriptionProxy.subscribe(
-    permit,
-    amount,
-    owner,
-    subscriptionWitness,
-    signature,
-    tierId,
-    billingCycleSeconds
-);
-```
+registry.cancel(subscriptionId, nonce, signature);
 
-### 5.3 Renewal Settlement
-
-For automatic renewals at cycle boundaries:
-
-```solidity
-function processRenewal(bytes32 subscriptionId) external {
-    Subscription storage sub = subscriptions[subscriptionId];
-    require(block.timestamp >= sub.currentCycleEnd, "cycle_not_ended");
-    require(!sub.cancelled, "subscription_cancelled");
-
-    // Get pre-stored renewal authorization
-    RenewalAuth memory auth = renewalAuths[subscriptionId][sub.cycleNumber + 1];
-    require(auth.signature.length > 0, "no_renewal_auth");
-
-    // Execute the renewal payment
-    IERC3009(sub.asset).transferWithAuthorization(
-        auth.from,
-        auth.to,
-        auth.value,
-        auth.validAfter,
-        auth.validBefore,
-        auth.nonce,
-        auth.signature
-    );
-
-    // Update subscription state
-    sub.cycleNumber++;
-    sub.currentCycleStart = sub.currentCycleEnd;
-    sub.currentCycleEnd = sub.currentCycleStart + sub.billingCycleSeconds;
-
-    emit SubscriptionRenewed(subscriptionId, sub.cycleNumber, sub.currentCycleEnd);
-}
-```
-
-### 5.4 Cancellation Settlement
-
-Cancellation is recorded but does not trigger a blockchain payment:
-
-```solidity
-function cancelSubscription(
-    bytes32 subscriptionId,
-    bytes calldata cancellationSignature
-) external {
-    Subscription storage sub = subscriptions[subscriptionId];
-
-    // Verify cancellation is signed by subscriber
-    bytes32 cancellationHash = keccak256(abi.encodePacked(
-        subscriptionId,
-        "cancel",
-        block.timestamp
-    ));
-    address signer = ECDSA.recover(cancellationHash, cancellationSignature);
-    require(signer == sub.subscriber, "unauthorized");
-
-    // Mark as cancelled (access continues until cycle end)
-    sub.cancelled = true;
-    sub.cancellationTimestamp = block.timestamp;
-
-    // Delete unused renewal authorizations
-    for (uint i = sub.cycleNumber + 1; i <= maxStoredCycles; i++) {
-        delete renewalAuths[subscriptionId][i];
-    }
-
-    emit SubscriptionCancelled(subscriptionId, sub.currentCycleEnd);
-}
+// Registry internally:
+// 1. Verifies signature recovers to subscriber
+// 2. Checks nonce not used
+// 3. Records cancelled = true
+// 4. Stores nonce as used
+// 5. All future chargePeriod calls revert
 ```
 
 ---
 
-## 6. Grace Period Handling
-
-When a renewal fails (insufficient funds, expired auth, etc.):
-
-```solidity
-function handleFailedRenewal(bytes32 subscriptionId) internal {
-    Subscription storage sub = subscriptions[subscriptionId];
-
-    // Enter grace period
-    sub.inGracePeriod = true;
-    sub.gracePeriodEnd = sub.currentCycleEnd + sub.gracePeriodSeconds;
-
-    emit SubscriptionGracePeriod(subscriptionId, sub.gracePeriodEnd);
-}
-
-function isSubscriptionActive(bytes32 subscriptionId) public view returns (bool) {
-    Subscription storage sub = subscriptions[subscriptionId];
-
-    if (sub.cancelled && block.timestamp >= sub.currentCycleEnd) {
-        return false;
-    }
-
-    if (sub.inGracePeriod) {
-        return block.timestamp < sub.gracePeriodEnd;
-    }
-
-    return block.timestamp < sub.currentCycleEnd;
-}
-```
-
----
-
-## 7. Reference Implementation: `x402SubscriptionRegistry`
+## 9. Reference Implementation: `x402SubscriptionRegistry`
 
 This contract manages subscription state on-chain for trustless verification.
 
@@ -495,80 +537,57 @@ pragma solidity ^0.8.20;
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {ECDSA} from "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
 import {EIP712} from "@openzeppelin/contracts/utils/cryptography/EIP712.sol";
+import {MerkleProof} from "@openzeppelin/contracts/utils/cryptography/MerkleProof.sol";
 import {ReentrancyGuard} from "@openzeppelin/contracts/security/ReentrancyGuard.sol";
-
-interface IERC3009 {
-    function transferWithAuthorization(
-        address from,
-        address to,
-        uint256 value,
-        uint256 validAfter,
-        uint256 validBefore,
-        bytes32 nonce,
-        bytes memory signature
-    ) external;
-}
 
 contract x402SubscriptionRegistry is EIP712, ReentrancyGuard {
     using ECDSA for bytes32;
 
     // ============ Constants ============
 
-    bytes32 public constant SUBSCRIPTION_PROOF_TYPEHASH = keccak256(
-        "SubscriptionProof(bytes32 subscriptionId,address subscriber,string tierId,address payTo,uint256 currentCycleNumber,uint256 currentCycleStart,uint256 currentCycleEnd)"
+    bytes32 public constant COMMITMENT_TYPEHASH = keccak256(
+        "SubscriptionCommitment(bytes32 root,address subscriber,address asset,address payTo,address registry,uint256 chainId,string tierId,uint256 start,uint256 expiry,uint256 maxPerPeriod)"
     );
 
     bytes32 public constant CANCELLATION_TYPEHASH = keccak256(
-        "CancelSubscription(bytes32 subscriptionId,uint256 timestamp)"
+        "CancelSubscription(bytes32 subscriptionId,uint256 nonce)"
     );
 
     // ============ Structs ============
 
-    struct Subscription {
+    struct Commitment {
+        bytes32 root;
         address subscriber;
-        address payTo;
         address asset;
+        address payTo;
+        address registry;
+        uint256 chainId;
         string tierId;
-        uint256 amount;
-        uint256 billingCycleSeconds;
+        uint256 start;
+        uint256 expiry;
+        uint256 maxPerPeriod;
+    }
+
+    struct Subscription {
+        bytes32 root;
+        address subscriber;
+        address asset;
+        address payTo;
+        string tierId;
+        uint256 start;
+        uint256 expiry;
+        uint256 maxPerPeriod;
         uint256 gracePeriodSeconds;
-        uint256 cycleNumber;
-        uint256 currentCycleStart;
-        uint256 currentCycleEnd;
+        uint256 cursor;
         bool cancelled;
         bool inGracePeriod;
         uint256 gracePeriodEnd;
     }
 
-    struct RenewalAuthorization {
-        address from;
-        address to;
-        uint256 value;
-        uint256 validAfter;
-        uint256 validBefore;
-        bytes32 nonce;
-        bytes signature;
-    }
-
-    struct SubscribeParams {
-        address subscriber;
-        address payTo;
-        address asset;
-        string tierId;
-        uint256 amount;
-        uint256 billingCycleSeconds;
-        uint256 gracePeriodSeconds;
-        uint256 startTimestamp;
-        bytes signature;
-        RenewalAuthorization initialAuth;
-        RenewalAuthorization[] renewalAuths;
-    }
-
     // ============ State ============
 
     mapping(bytes32 => Subscription) public subscriptions;
-    mapping(bytes32 => mapping(uint256 => RenewalAuthorization)) public renewalAuthorizations;
-    mapping(address => bytes32[]) public subscriberSubscriptions;
+    mapping(bytes32 => mapping(uint256 => bool)) public usedNonces;
 
     // ============ Events ============
 
@@ -577,15 +596,19 @@ contract x402SubscriptionRegistry is EIP712, ReentrancyGuard {
         address indexed subscriber,
         address indexed payTo,
         string tierId,
-        uint256 amount,
-        uint256 cycleEnd
+        uint256 expiry
     );
 
-    event SubscriptionRenewed(
+    event PeriodCharged(
         bytes32 indexed subscriptionId,
-        uint256 cycleNumber,
-        uint256 cycleEnd,
-        bytes32 transactionHash
+        uint256 periodIndex,
+        uint256 fee
+    );
+
+    event ChargeFailed(
+        bytes32 indexed subscriptionId,
+        uint256 periodIndex,
+        string reason
     );
 
     event SubscriptionCancelled(
@@ -593,541 +616,34 @@ contract x402SubscriptionRegistry is EIP712, ReentrancyGuard {
         uint256 accessEndsAt
     );
 
-    event SubscriptionGracePeriod(
+    event GracePeriodEntered(
         bytes32 indexed subscriptionId,
         uint256 gracePeriodEnd
-    );
-
-    event RenewalFailed(
-        bytes32 indexed subscriptionId,
-        uint256 cycleNumber,
-        string reason
     );
 
     // ============ Constructor ============
 
     constructor() EIP712("x402SubscriptionRegistry", "1") {}
 
-    // ============ External Functions ============
-
-    /**
-     * @notice Create a new subscription with initial payment
-     * @param params Subscription parameters including payment authorization
-     */
-    function subscribe(SubscribeParams calldata params)
-        external
-        nonReentrant
-        returns (bytes32 subscriptionId)
-    {
-        // Generate unique subscription ID
-        subscriptionId = keccak256(abi.encodePacked(
-            params.subscriber,
-            params.payTo,
-            params.tierId,
-            params.startTimestamp,
-            block.chainid
-        ));
-
-        require(subscriptions[subscriptionId].subscriber == address(0), "subscription_exists");
-
-        // Execute initial payment via EIP-3009
-        IERC3009(params.asset).transferWithAuthorization(
-            params.initialAuth.from,
-            params.initialAuth.to,
-            params.initialAuth.value,
-            params.initialAuth.validAfter,
-            params.initialAuth.validBefore,
-            params.initialAuth.nonce,
-            params.initialAuth.signature
-        );
-
-        // Create subscription record
-        uint256 cycleEnd = params.startTimestamp + params.billingCycleSeconds;
-
-        subscriptions[subscriptionId] = Subscription({
-            subscriber: params.subscriber,
-            payTo: params.payTo,
-            asset: params.asset,
-            tierId: params.tierId,
-            amount: params.amount,
-            billingCycleSeconds: params.billingCycleSeconds,
-            gracePeriodSeconds: params.gracePeriodSeconds,
-            cycleNumber: 1,
-            currentCycleStart: params.startTimestamp,
-            currentCycleEnd: cycleEnd,
-            cancelled: false,
-            inGracePeriod: false,
-            gracePeriodEnd: 0
-        });
-
-        // Store renewal authorizations
-        for (uint256 i = 0; i < params.renewalAuths.length; i++) {
-            renewalAuthorizations[subscriptionId][i + 2] = params.renewalAuths[i];
-        }
-
-        subscriberSubscriptions[params.subscriber].push(subscriptionId);
-
-        emit SubscriptionCreated(
-            subscriptionId,
-            params.subscriber,
-            params.payTo,
-            params.tierId,
-            params.amount,
-            cycleEnd
-        );
-
-        return subscriptionId;
-    }
-
-    /**
-     * @notice Process automatic renewal for a subscription
-     * @param subscriptionId The subscription to renew
-     */
-    function processRenewal(bytes32 subscriptionId) external nonReentrant {
-        Subscription storage sub = subscriptions[subscriptionId];
-
-        require(sub.subscriber != address(0), "subscription_not_found");
-        require(!sub.cancelled, "subscription_cancelled");
-        require(block.timestamp >= sub.currentCycleEnd, "cycle_not_ended");
-
-        uint256 nextCycle = sub.cycleNumber + 1;
-        RenewalAuthorization storage auth = renewalAuthorizations[subscriptionId][nextCycle];
-
-        require(auth.signature.length > 0, "no_renewal_authorization");
-        require(block.timestamp >= auth.validAfter, "renewal_not_valid_yet");
-        require(block.timestamp < auth.validBefore, "renewal_expired");
-
-        // Check balance before attempting
-        if (IERC20(sub.asset).balanceOf(auth.from) < auth.value) {
-            _enterGracePeriod(subscriptionId);
-            emit RenewalFailed(subscriptionId, nextCycle, "insufficient_funds");
-            return;
-        }
-
-        // Execute renewal payment
-        try IERC3009(sub.asset).transferWithAuthorization(
-            auth.from,
-            auth.to,
-            auth.value,
-            auth.validAfter,
-            auth.validBefore,
-            auth.nonce,
-            auth.signature
-        ) {
-            // Update subscription state
-            sub.cycleNumber = nextCycle;
-            sub.currentCycleStart = sub.currentCycleEnd;
-            sub.currentCycleEnd = sub.currentCycleStart + sub.billingCycleSeconds;
-            sub.inGracePeriod = false;
-            sub.gracePeriodEnd = 0;
-
-            // Clear used authorization
-            delete renewalAuthorizations[subscriptionId][nextCycle];
-
-            emit SubscriptionRenewed(
-                subscriptionId,
-                nextCycle,
-                sub.currentCycleEnd,
-                bytes32(0) // Transaction hash not available in contract
-            );
-        } catch {
-            _enterGracePeriod(subscriptionId);
-            emit RenewalFailed(subscriptionId, nextCycle, "transfer_failed");
-        }
-    }
-
-    /**
-     * @notice Add renewal authorizations for future cycles
-     * @param subscriptionId The subscription to add renewals for
-     * @param startCycle First cycle number for the new authorizations
-     * @param auths Array of renewal authorizations
-     */
-    function addRenewalAuthorizations(
-        bytes32 subscriptionId,
-        uint256 startCycle,
-        RenewalAuthorization[] calldata auths
-    ) external {
-        Subscription storage sub = subscriptions[subscriptionId];
-        require(msg.sender == sub.subscriber, "unauthorized");
-        require(!sub.cancelled, "subscription_cancelled");
-
-        for (uint256 i = 0; i < auths.length; i++) {
-            require(auths[i].from == sub.subscriber, "invalid_from");
-            require(auths[i].to == sub.payTo, "invalid_to");
-            require(auths[i].value == sub.amount, "invalid_amount");
-
-            renewalAuthorizations[subscriptionId][startCycle + i] = auths[i];
-        }
-    }
-
-    /**
-     * @notice Cancel a subscription
-     * @param subscriptionId The subscription to cancel
-     * @param signature Subscriber's signature authorizing cancellation
-     */
-    function cancelSubscription(
-        bytes32 subscriptionId,
-        bytes calldata signature
-    ) external nonReentrant {
-        Subscription storage sub = subscriptions[subscriptionId];
-        require(sub.subscriber != address(0), "subscription_not_found");
-        require(!sub.cancelled, "already_cancelled");
-
-        // Verify cancellation signature
-        bytes32 structHash = keccak256(abi.encode(
-            CANCELLATION_TYPEHASH,
-            subscriptionId,
-            block.timestamp
-        ));
-        bytes32 digest = _hashTypedDataV4(structHash);
-        address signer = ECDSA.recover(digest, signature);
-        require(signer == sub.subscriber, "invalid_signature");
-
-        // Mark as cancelled
-        sub.cancelled = true;
-
-        // Clear future renewal authorizations
-        for (uint256 i = sub.cycleNumber + 1; i <= sub.cycleNumber + 12; i++) {
-            delete renewalAuthorizations[subscriptionId][i];
-        }
-
-        emit SubscriptionCancelled(subscriptionId, sub.currentCycleEnd);
-    }
-
-    // ============ View Functions ============
-
-    /**
-     * @notice Check if a subscription is currently active
-     * @param subscriptionId The subscription to check
-     * @return active Whether the subscription is active
-     */
-    function isActive(bytes32 subscriptionId) external view returns (bool active) {
-        Subscription storage sub = subscriptions[subscriptionId];
-
-        if (sub.subscriber == address(0)) {
-            return false;
-        }
-
-        if (sub.cancelled && block.timestamp >= sub.currentCycleEnd) {
-            return false;
-        }
-
-        if (sub.inGracePeriod) {
-            return block.timestamp < sub.gracePeriodEnd;
-        }
-
-        return block.timestamp < sub.currentCycleEnd;
-    }
-
-    /**
-     * @notice Get subscription details for proof generation
-     * @param subscriptionId The subscription ID
-     */
-    function getSubscription(bytes32 subscriptionId)
-        external
-        view
-        returns (Subscription memory)
-    {
-        return subscriptions[subscriptionId];
-    }
-
-    /**
-     * @notice Verify a subscription proof without state changes
-     * @param subscriptionId The subscription ID
-     * @param subscriber The subscriber address
-     * @param cycleNumber The claimed cycle number
-     * @param cycleStart The claimed cycle start
-     * @param cycleEnd The claimed cycle end
-     * @param signature The proof signature
-     */
-    function verifySubscriptionProof(
-        bytes32 subscriptionId,
-        address subscriber,
-        string calldata tierId,
-        address payTo,
-        uint256 cycleNumber,
-        uint256 cycleStart,
-        uint256 cycleEnd,
-        bytes calldata signature
-    ) external view returns (bool valid, string memory reason) {
-        Subscription storage sub = subscriptions[subscriptionId];
-
-        // Check subscription exists
-        if (sub.subscriber == address(0)) {
-            return (false, "subscription_not_found");
-        }
-
-        // Check subscription matches
-        if (sub.subscriber != subscriber) {
-            return (false, "subscriber_mismatch");
-        }
-
-        if (keccak256(bytes(sub.tierId)) != keccak256(bytes(tierId))) {
-            return (false, "tier_mismatch");
-        }
-
-        if (sub.payTo != payTo) {
-            return (false, "payTo_mismatch");
-        }
-
-        // Check cycle matches
-        if (sub.cycleNumber != cycleNumber ||
-            sub.currentCycleStart != cycleStart ||
-            sub.currentCycleEnd != cycleEnd) {
-            return (false, "cycle_mismatch");
-        }
-
-        // Check timing
-        if (block.timestamp < cycleStart) {
-            return (false, "cycle_not_started");
-        }
-
-        if (block.timestamp >= cycleEnd && !sub.inGracePeriod) {
-            return (false, "cycle_ended");
-        }
-
-        if (sub.inGracePeriod && block.timestamp >= sub.gracePeriodEnd) {
-            return (false, "grace_period_expired");
-        }
-
-        // Verify signature
-        bytes32 structHash = keccak256(abi.encode(
-            SUBSCRIPTION_PROOF_TYPEHASH,
-            subscriptionId,
-            subscriber,
-            keccak256(bytes(tierId)),
-            payTo,
-            cycleNumber,
-            cycleStart,
-            cycleEnd
-        ));
-        bytes32 digest = _hashTypedDataV4(structHash);
-        address signer = ECDSA.recover(digest, signature);
-
-        if (signer != subscriber) {
-            return (false, "invalid_signature");
-        }
-
-        return (true, "");
-    }
-
-    // ============ Internal Functions ============
-
-    function _enterGracePeriod(bytes32 subscriptionId) internal {
-        Subscription storage sub = subscriptions[subscriptionId];
-        sub.inGracePeriod = true;
-        sub.gracePeriodEnd = sub.currentCycleEnd + sub.gracePeriodSeconds;
-
-        emit SubscriptionGracePeriod(subscriptionId, sub.gracePeriodEnd);
-    }
+    // ... (contract implementation continues in later commit)
 }
 ```
+
+> **Note:** The full registry implementation, including `subscribe()`, `chargePeriod()`, `cancel()`, `updateRoot()`, and `isActive()`, will be specified in a subsequent commit.
 
 ---
 
-## 8. Reference Implementation: `x402SubscriptionProxy` (Permit2)
+## 10. Facilitator API Extensions
 
-For tokens without EIP-3009, use this Permit2-based proxy:
+Subscribe, cancel, and update-root operations flow through the standard `/verify` and `/settle` endpoints using the `action` field in the payload. Status queries are non-normative facilitator conveniences.
 
-```solidity
-// SPDX-License-Identifier: MIT
-pragma solidity ^0.8.20;
-
-import {ISignatureTransfer} from "permit2/src/interfaces/ISignatureTransfer.sol";
-import {ECDSA} from "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
-
-contract x402SubscriptionProxy {
-    ISignatureTransfer public immutable PERMIT2;
-
-    // EIP-712 Type for Subscription Witness
-    string public constant SUBSCRIPTION_WITNESS_TYPE_STRING =
-        "SubscriptionWitness witness)SubscriptionWitness(address to,uint256 validAfter,bytes32 subscriptionId,uint256 cycleNumber,bytes extra)TokenPermissions(address token,uint256 amount)";
-
-    bytes32 public constant SUBSCRIPTION_WITNESS_TYPEHASH = keccak256(
-        "SubscriptionWitness(address to,uint256 validAfter,bytes32 subscriptionId,uint256 cycleNumber,bytes extra)"
-    );
-
-    struct SubscriptionWitness {
-        address to;
-        uint256 validAfter;
-        bytes32 subscriptionId;
-        uint256 cycleNumber;
-        bytes extra;
-    }
-
-    event x402SubscriptionPayment(
-        bytes32 indexed subscriptionId,
-        address indexed from,
-        address indexed to,
-        uint256 amount,
-        uint256 cycleNumber
-    );
-
-    constructor(address _permit2) {
-        PERMIT2 = ISignatureTransfer(_permit2);
-    }
-
-    /**
-     * @notice Process a subscription payment via Permit2
-     */
-    function processPayment(
-        ISignatureTransfer.PermitTransferFrom calldata permit,
-        uint256 amount,
-        address owner,
-        SubscriptionWitness calldata witness,
-        bytes calldata signature
-    ) external {
-        require(block.timestamp >= witness.validAfter, "payment_not_valid_yet");
-        require(amount <= permit.permitted.amount, "amount_exceeds_permitted");
-
-        ISignatureTransfer.SignatureTransferDetails memory transferDetails =
-            ISignatureTransfer.SignatureTransferDetails({
-                to: witness.to,
-                requestedAmount: amount
-            });
-
-        bytes32 witnessHash = keccak256(abi.encode(
-            SUBSCRIPTION_WITNESS_TYPEHASH,
-            witness.to,
-            witness.validAfter,
-            witness.subscriptionId,
-            witness.cycleNumber,
-            keccak256(witness.extra)
-        ));
-
-        PERMIT2.permitWitnessTransferFrom(
-            permit,
-            transferDetails,
-            owner,
-            witnessHash,
-            SUBSCRIPTION_WITNESS_TYPE_STRING,
-            signature
-        );
-
-        emit x402SubscriptionPayment(
-            witness.subscriptionId,
-            owner,
-            witness.to,
-            amount,
-            witness.cycleNumber
-        );
-    }
-}
-```
+> **Note:** Full facilitator API documentation will be specified in a subsequent commit.
 
 ---
 
-## 9. Facilitator API Extensions
+## 11. Security Considerations
 
-### 9.1 POST /subscribe
-
-Create a new subscription:
-
-**Request:**
-```json
-{
-  "paymentPayload": { /* PaymentPayload with subscriptionPayload */ },
-  "paymentRequirements": { /* PaymentRequirements with subscriptionDetails */ }
-}
-```
-
-**Response:**
-```json
-{
-  "success": true,
-  "subscriptionId": "0x1234...",
-  "transaction": "0xabcd...",
-  "network": "eip155:8453",
-  "payer": "0x857b...",
-  "subscriptionDetails": {
-    "tierId": "pro",
-    "status": "active",
-    "currentCycleStart": "1740672089",
-    "currentCycleEnd": "1743264089",
-    "autoRenewEnabled": true,
-    "storedRenewalCycles": 3
-  }
-}
-```
-
-### 9.2 GET /subscription/{subscriptionId}
-
-Query subscription status:
-
-**Response:**
-```json
-{
-  "subscriptionId": "0x1234...",
-  "subscriber": "0x857b...",
-  "payTo": "0x2096...",
-  "tierId": "pro",
-  "status": "active",
-  "network": "eip155:8453",
-  "asset": "0x8335...",
-  "amount": "5000000",
-  "currentCycle": {
-    "number": 2,
-    "start": "1743264089",
-    "end": "1745856089"
-  },
-  "nextRenewal": {
-    "date": "1745856089",
-    "authorized": true
-  },
-  "cancelled": false
-}
-```
-
-### 9.3 POST /subscription/{subscriptionId}/cancel
-
-Cancel a subscription:
-
-**Request:**
-```json
-{
-  "signature": "0x...",
-  "timestamp": "1740700000"
-}
-```
-
-**Response:**
-```json
-{
-  "success": true,
-  "subscriptionId": "0x1234...",
-  "accessEndsAt": "1743264089",
-  "refundAmount": "0"
-}
-```
-
----
-
-## 10. Security Considerations
-
-### 10.1 Replay Attack Prevention
-
-- Each billing cycle uses a unique nonce
-- Pre-signed renewals have non-overlapping `validAfter`/`validBefore` windows
-- Subscription proofs include cycle-specific timestamps
-
-### 10.2 Authorization Scope
-
-- Subscribers control exact amounts per cycle
-- Pre-signed renewals can be invalidated by:
-  - Spending the nonce with a different transaction
-  - Reducing token balance below required amount
-  - Revoking Permit2 allowance (for Permit2 method)
-
-### 10.3 Facilitator Trust Model
-
-- Facilitators CANNOT modify payment amounts or recipients
-- Facilitators CAN delay renewal execution (mitigated by validity windows)
-- On-chain registry provides trustless verification fallback
-
-### 10.4 Front-running Protection
-
-- Renewal transactions can only be executed by the designated facilitator
-- Subscription IDs are deterministic and verifiable
+> **Note:** Full security considerations, including the liveness-vs-safety trust model, replay analysis, and allowance exposure analysis, will be specified in a subsequent commit.
 
 ---
 
@@ -1135,27 +651,25 @@ Cancel a subscription:
 
 ### Canonical Contract Addresses
 
-| Contract                    | Address                                      | Networks           |
-| --------------------------- | -------------------------------------------- | ------------------ |
-| `x402SubscriptionRegistry`  | TBD (CREATE2 deployment)                     | All supported EVM  |
-| `x402SubscriptionProxy`     | TBD (CREATE2 deployment)                     | All supported EVM  |
-| `Permit2`                   | `0x000000000022D473030F116dDEE9F6B43aC78BA3` | All supported EVM  |
+| Contract | Address | Networks |
+|:---------|:--------|:---------|
+| `x402SubscriptionRegistry` | TBD (CREATE2 deployment) | All supported EVM |
 
 ### Supported Networks
 
-| Network         | Chain ID | CAIP-2 Identifier  |
-| --------------- | -------- | ------------------ |
-| Base Mainnet    | 8453     | `eip155:8453`      |
-| Base Sepolia    | 84532    | `eip155:84532`     |
-| Ethereum        | 1        | `eip155:1`         |
-| Arbitrum One    | 42161    | `eip155:42161`     |
-| Optimism        | 10       | `eip155:10`        |
-| Polygon         | 137      | `eip155:137`       |
+| Network | Chain ID | CAIP-2 Identifier |
+|:--------|:---------|:------------------|
+| Base Mainnet | 8453 | `eip155:8453` |
+| Base Sepolia | 84532 | `eip155:84532` |
+| Ethereum | 1 | `eip155:1` |
+| Arbitrum One | 42161 | `eip155:42161` |
+| Optimism | 10 | `eip155:10` |
+| Polygon | 137 | `eip155:137` |
 
 ### References
 
-- [EIP-3009: Transfer With Authorization](https://eips.ethereum.org/EIPS/eip-3009)
 - [EIP-712: Typed Structured Data Hashing](https://eips.ethereum.org/EIPS/eip-712)
-- [Permit2 Documentation](https://docs.uniswap.org/contracts/permit2/overview)
+- [EIP-2612: Permit Extension for ERC-20](https://eips.ethereum.org/EIPS/eip-2612)
+- [OpenZeppelin MerkleProof](https://docs.openzeppelin.com/contracts/4.x/api/utils#MerkleProof)
 - [x402 Protocol Specification v2](../../x402-specification-v2.md)
 - [Subscribe Scheme Overview](./scheme_subscribe.md)
