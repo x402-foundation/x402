@@ -83,10 +83,10 @@ Each billing period MUST be settled at most once. The registry maintains a monot
 
 ### 2. Time-Window Validity
 
-Each charge MUST fall within the leaf's time window: `validFrom <= block.timestamp <= validTo`. Charges outside the window revert.
+Each charge MUST fall within the chargeable window: `validFrom <= block.timestamp <= validTo + gracePeriodSeconds`. The grace period extends the window to allow retries on failed charges without advancing to the next period.
 
-- Rationale: Prevents early charges (before the period starts) and late charges (after expiry or grace).
-- Implementation: The Merkle leaf encodes `(periodIndex, fee, validFrom, validTo)`; the registry verifies timestamps on every charge.
+- Rationale: Prevents early charges (before the period starts) and ensures charges happen within a bounded retry window.
+- Implementation: The Merkle leaf encodes `(periodIndex, fee, validFrom, validTo)`; the registry extends the window by `gracePeriodSeconds` (a signed commitment field) for retry tolerance.
 
 ### 3. Commitment Binding
 
@@ -136,10 +136,10 @@ After `expiry` timestamp or a recorded `cancel`, no further charges are valid re
 The facilitator is trusted for **liveness only**: it operates the Merkle tree and proofs off-chain and submits charges on-chain. The facilitator has **no safety authority** — it cannot:
 
 - Overcharge (fee <= maxPerPeriod, fee matches leaf, cursor is monotonic)
-- Charge early or late (validFrom/validTo enforced)
+- Charge early (before validFrom) or late (after validTo + gracePeriodSeconds)
 - Charge past expiry or cancel (hard on-chain checks)
 - Redirect funds (payTo/asset/registry bound in commitment)
-- Double-charge (cursor increments on success)
+- Double-charge (cursor increments only on successful transfer)
 
 **Facilitator compromise degrades to denial of service, never theft beyond the signed schedule.**
 
@@ -191,10 +191,11 @@ SubscriptionCommitment {
   uint256 start;
   uint256 expiry;
   uint256 maxPerPeriod;
+  uint256 gracePeriodSeconds;
 }
 ```
 
-The `subscriptionId` is the keccak256 hash of the ABI-encoded commitment struct, ensuring uniqueness and binding all parameters.
+The `subscriptionId` is the keccak256 hash of the ABI-encoded commitment struct, ensuring uniqueness and binding all parameters. Note that `gracePeriodSeconds` is client-signed because it extends the chargeable window and thus affects fund exposure.
 
 ### Funding: Standing Allowance
 
@@ -463,7 +464,7 @@ Facilitators and resource servers MUST perform the following verification steps:
 
 1. **Merkle Proof**: Verify the leaf `(periodIndex, fee, validFrom, validTo)` with the stored root
 2. **Cursor Check**: Verify `periodIndex == cursor`
-3. **Time Window**: Verify `validFrom <= block.timestamp <= validTo`
+3. **Time Window**: Verify `validFrom <= block.timestamp <= validTo + gracePeriodSeconds`
 4. **Fee Cap**: Verify `fee <= maxPerPeriod`
 5. **Not Cancelled/Expired**: Verify `!cancelled && block.timestamp <= expiry`
 6. **Balance/Allowance**: Verify sufficient funds for `transferFrom`
@@ -545,7 +546,7 @@ Error codes follow the V2 `invalid_<scheme>_<detail>` naming convention where ap
 | `invalid_subscribe_commitment` | Commitment signature invalid or parameter mismatch |
 | `invalid_subscribe_proof` | Merkle proof does not verify against stored root |
 | `invalid_subscribe_cursor` | periodIndex does not match current cursor |
-| `invalid_subscribe_window` | Charge attempted outside validFrom/validTo window |
+| `invalid_subscribe_window` | Charge attempted outside chargeable window [validFrom, validTo + gracePeriodSeconds] |
 | `invalid_subscribe_fee` | fee exceeds maxPerPeriod |
 | `subscription_not_found` | No subscription for the given subscriptionId |
 | `subscription_expired` | Subscription has passed its expiry timestamp |

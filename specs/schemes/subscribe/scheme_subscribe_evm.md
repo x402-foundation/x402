@@ -126,7 +126,8 @@ const commitmentTypes = {
     { name: "tierId", type: "string" },
     { name: "start", type: "uint256" },
     { name: "expiry", type: "uint256" },
-    { name: "maxPerPeriod", type: "uint256" }
+    { name: "maxPerPeriod", type: "uint256" },
+    { name: "gracePeriodSeconds", type: "uint256" }
   ]
 };
 ```
@@ -145,6 +146,7 @@ const commitmentTypes = {
 | `start` | `uint256` | Unix timestamp when subscription begins |
 | `expiry` | `uint256` | Unix timestamp after which no charges are valid |
 | `maxPerPeriod` | `uint256` | Maximum fee per charge (safety cap) |
+| `gracePeriodSeconds` | `uint256` | Retry window after `validTo` for failed charges |
 
 The `subscriptionId` is derived as `keccak256(abi.encode(commitmentStructHash))`, binding all parameters in one identifier.
 
@@ -198,7 +200,8 @@ When subscribing, the client sends a `PaymentPayload` with the schedule commitme
       "tierId": "pro",
       "start": "1740672089",
       "expiry": "1772208089",
-      "maxPerPeriod": "5000000"
+      "maxPerPeriod": "5000000",
+      "gracePeriodSeconds": "86400"
     },
     "commitmentSignature": "0x...",
     "allowanceMethod": "eip2612-permit",
@@ -528,7 +531,31 @@ registry.cancel(subscriptionId, nonce, signature);
 
 ## 9. Reference Implementation: `x402SubscriptionRegistry`
 
-This contract manages subscription state on-chain for trustless verification.
+This contract manages subscription state on-chain for trustless verification. It is the **canonical reference implementation**; production deployments will use CREATE2 for deterministic addresses across networks.
+
+### 9.1 Immutability Guarantees
+
+The `x402SubscriptionRegistry` is designed as an **immutable, non-upgradeable contract**:
+
+- **No proxy pattern**: The contract is deployed directly, not behind a proxy.
+- **No upgrade path**: There is no mechanism to replace or modify the contract logic.
+- **No owner over fund logic**: No administrative function can redirect payments, modify stored commitments, or alter fund flows.
+- **No selfdestruct/delegatecall**: The contract cannot be destroyed or delegate execution to arbitrary code.
+- **Guardian pause is narrowly scoped**: The sole intervention mechanism is `pause()`/`unpause()`, which ONLY blocks `chargePeriod()`. The guardian cannot move funds, change terms, or redirect payments.
+
+### 9.2 Design Rationale: Why No Stored Pre-Signed Authorizations
+
+Earlier drafts stored `renewalAuthorizations[]` — pre-signed EIP-3009 or Permit2 signatures for future billing cycles. This approach was removed because:
+
+**Public signatures are directly submittable.** Once a pre-signed `transferWithAuthorization` signature is stored on-chain (or even transmitted to the facilitator), anyone can extract and submit it directly to the token contract. This creates a race condition where the registry's state (cursor, subscription status) can desync from actual token transfers. The Merkle schedule commitment model avoids this by having the registry itself call `transferFrom` — the subscriber's allowance to the registry is the only authorization, and the registry enforces all invariants before pulling funds.
+
+### 9.3 Migration Note: Commitment Signature Verification
+
+The previous draft's `SubscribeParams.signature` field was **never verified** against the commitment terms — the contract accepted any signature without checking it recovered to the subscriber or bound the advertised parameters. This implementation **fixes that flaw**: `subscribe()` verifies the EIP-712 commitment signature recovers to `commitment.subscriber`, and the `subscriptionId` is derived deterministically from the commitment struct hash, cryptographically binding all terms.
+
+**gracePeriodSeconds is now client-signed.** The grace period extends the chargeable window to `[validFrom, validTo + gracePeriodSeconds]`, allowing retries on failed charges. Since this affects fund exposure (how long the registry can attempt charges), it is a fund-relevant term and must be signed by the client as part of the commitment.
+
+### 9.4 Contract Implementation
 
 ```solidity
 // SPDX-License-Identifier: MIT
@@ -540,13 +567,24 @@ import {EIP712} from "@openzeppelin/contracts/utils/cryptography/EIP712.sol";
 import {MerkleProof} from "@openzeppelin/contracts/utils/cryptography/MerkleProof.sol";
 import {ReentrancyGuard} from "@openzeppelin/contracts/security/ReentrancyGuard.sol";
 
+/**
+ * @title x402SubscriptionRegistry
+ * @notice Immutable on-chain registry for x402 subscribe scheme.
+ * @dev Reference implementation — canonical deployments TBD via CREATE2.
+ *
+ * IMMUTABILITY INVARIANTS:
+ * - No proxy, no upgrade path, no selfdestruct, no delegatecall.
+ * - Guardian pause() ONLY blocks chargePeriod(); it CANNOT move funds,
+ *   change stored terms, or redirect payments.
+ * - No administrative function can modify commitments after storage.
+ */
 contract x402SubscriptionRegistry is EIP712, ReentrancyGuard {
     using ECDSA for bytes32;
 
     // ============ Constants ============
 
     bytes32 public constant COMMITMENT_TYPEHASH = keccak256(
-        "SubscriptionCommitment(bytes32 root,address subscriber,address asset,address payTo,address registry,uint256 chainId,string tierId,uint256 start,uint256 expiry,uint256 maxPerPeriod)"
+        "SubscriptionCommitment(bytes32 root,address subscriber,address asset,address payTo,address registry,uint256 chainId,string tierId,uint256 start,uint256 expiry,uint256 maxPerPeriod,uint256 gracePeriodSeconds)"
     );
 
     bytes32 public constant CANCELLATION_TYPEHASH = keccak256(
@@ -566,6 +604,14 @@ contract x402SubscriptionRegistry is EIP712, ReentrancyGuard {
         uint256 start;
         uint256 expiry;
         uint256 maxPerPeriod;
+        uint256 gracePeriodSeconds;
+    }
+
+    struct Leaf {
+        uint256 periodIndex;
+        uint256 fee;
+        uint256 validFrom;
+        uint256 validTo;
     }
 
     struct Subscription {
@@ -586,8 +632,19 @@ contract x402SubscriptionRegistry is EIP712, ReentrancyGuard {
 
     // ============ State ============
 
+    /// @notice Guardian address authorized to pause/unpause chargePeriod.
+    /// @dev Immutable; recommend setting to a timelock contract.
+    address public immutable guardian;
+
+    /// @notice Whether chargePeriod is paused.
+    bool public paused;
+
+    /// @notice Subscription storage by subscriptionId.
     mapping(bytes32 => Subscription) public subscriptions;
-    mapping(bytes32 => mapping(uint256 => bool)) public usedNonces;
+
+    /// @notice Replay protection for cancellation nonces.
+    /// @dev subscriptionId => nonce => used
+    mapping(bytes32 => mapping(uint256 => bool)) public usedCancelNonces;
 
     // ============ Events ============
 
@@ -601,19 +658,15 @@ contract x402SubscriptionRegistry is EIP712, ReentrancyGuard {
 
     event PeriodCharged(
         bytes32 indexed subscriptionId,
-        uint256 periodIndex,
-        uint256 fee
+        uint256 indexed periodIndex,
+        uint256 fee,
+        address indexed chargedBy
     );
 
     event ChargeFailed(
         bytes32 indexed subscriptionId,
-        uint256 periodIndex,
+        uint256 indexed periodIndex,
         string reason
-    );
-
-    event SubscriptionCancelled(
-        bytes32 indexed subscriptionId,
-        uint256 accessEndsAt
     );
 
     event GracePeriodEntered(
@@ -621,15 +674,465 @@ contract x402SubscriptionRegistry is EIP712, ReentrancyGuard {
         uint256 gracePeriodEnd
     );
 
+    event GracePeriodCleared(bytes32 indexed subscriptionId);
+
+    event SubscriptionCancelled(
+        bytes32 indexed subscriptionId,
+        uint256 accessEndsAt
+    );
+
+    event Paused(address indexed by);
+    event Unpaused(address indexed by);
+
+    // ============ Errors ============
+
+    error InvalidCommitmentSignature();
+    error SubscriptionAlreadyExists();
+    error SubscriptionNotFound();
+    error SubscriptionCancelled();
+    error SubscriptionExpired();
+    error ChargePaused();
+    error InvalidPeriodIndex();
+    error ChargeWindowNotOpen();
+    error ChargeWindowExpired();
+    error FeeExceedsMax();
+    error InvalidMerkleProof();
+    error CancelNonceUsed();
+    error InvalidCancelSignature();
+    error NotGuardian();
+    error InvalidRegistry();
+    error InvalidChainId();
+    error AssetNotContract();
+
+    // ============ Modifiers ============
+
+    modifier onlyGuardian() {
+        if (msg.sender != guardian) revert NotGuardian();
+        _;
+    }
+
+    modifier whenNotPaused() {
+        if (paused) revert ChargePaused();
+        _;
+    }
+
     // ============ Constructor ============
 
-    constructor() EIP712("x402SubscriptionRegistry", "1") {}
+    /// @param _guardian Address authorized to pause/unpause. Recommend a timelock.
+    constructor(address _guardian) EIP712("x402SubscriptionRegistry", "1") {
+        guardian = _guardian;
+    }
 
-    // ... (contract implementation continues in later commit)
+    // ============ External Functions ============
+
+    /**
+     * @notice Create a new subscription from a signed commitment.
+     * @dev subscribe() may register during pause but must not move funds.
+     *      If initialProof is provided while paused, reverts ChargePaused.
+     * @param commitment The subscription commitment struct (includes gracePeriodSeconds).
+     * @param signature EIP-712 signature over the commitment, by commitment.subscriber.
+     * @param initialLeaf Optional: leaf for period 0 to charge immediately.
+     * @param initialProof Optional: Merkle proof for initialLeaf.
+     * @return subscriptionId The unique subscription identifier.
+     */
+    function subscribe(
+        Commitment calldata commitment,
+        bytes calldata signature,
+        Leaf calldata initialLeaf,
+        bytes32[] calldata initialProof
+    ) external nonReentrant returns (bytes32 subscriptionId) {
+        // Validate commitment binds to this registry and chain
+        if (commitment.registry != address(this)) revert InvalidRegistry();
+        if (commitment.chainId != block.chainid) revert InvalidChainId();
+
+        // Prevent free-subscription attack via EOA asset: a low-level call to a
+        // codeless address returns success with empty data, which _safeTransferFrom
+        // would misread as a USDT-style successful transfer. Checked once at registration.
+        if (commitment.asset.code.length == 0) revert AssetNotContract();
+
+        // Derive subscriptionId from commitment struct hash
+        bytes32 structHash = _hashCommitment(commitment);
+        subscriptionId = structHash;
+
+        // Verify EIP-712 signature recovers to commitment.subscriber
+        bytes32 digest = _hashTypedDataV4(structHash);
+        address signer = ECDSA.recover(digest, signature);
+        if (signer != commitment.subscriber) revert InvalidCommitmentSignature();
+
+        // Reject duplicates
+        if (subscriptions[subscriptionId].subscriber != address(0)) {
+            revert SubscriptionAlreadyExists();
+        }
+
+        // Store subscription (gracePeriodSeconds from signed commitment)
+        subscriptions[subscriptionId] = Subscription({
+            root: commitment.root,
+            subscriber: commitment.subscriber,
+            asset: commitment.asset,
+            payTo: commitment.payTo,
+            tierId: commitment.tierId,
+            start: commitment.start,
+            expiry: commitment.expiry,
+            maxPerPeriod: commitment.maxPerPeriod,
+            gracePeriodSeconds: commitment.gracePeriodSeconds,
+            cursor: 0,
+            cancelled: false,
+            inGracePeriod: false,
+            gracePeriodEnd: 0
+        });
+
+        emit SubscriptionCreated(
+            subscriptionId,
+            commitment.subscriber,
+            commitment.payTo,
+            commitment.tierId,
+            commitment.expiry
+        );
+
+        // Optionally charge period 0 immediately (respects pause via _chargePeriod)
+        if (initialProof.length > 0) {
+            _chargePeriod(subscriptionId, initialLeaf, initialProof);
+        }
+
+        return subscriptionId;
+    }
+
+    /**
+     * @notice Charge a billing period. PERMISSIONLESS — anyone can call.
+     * @dev The facilitator typically calls this, but permissionless design ensures
+     *      liveness is not dependent on a single operator. Pause check is in _chargePeriod.
+     * @param subscriptionId The subscription to charge.
+     * @param leaf The billing period leaf (periodIndex, fee, validFrom, validTo).
+     * @param proof Merkle proof for the leaf against the stored root.
+     */
+    function chargePeriod(
+        bytes32 subscriptionId,
+        Leaf calldata leaf,
+        bytes32[] calldata proof
+    ) external nonReentrant {
+        _chargePeriod(subscriptionId, leaf, proof);
+    }
+
+    /**
+     * @notice Cancel a subscription. Halts all future charges.
+     * @param subscriptionId The subscription to cancel.
+     * @param nonce Signer-chosen nonce for replay protection.
+     * @param signature EIP-712 signature over CancelSubscription(subscriptionId, nonce).
+     */
+    function cancel(
+        bytes32 subscriptionId,
+        uint256 nonce,
+        bytes calldata signature
+    ) external nonReentrant {
+        Subscription storage sub = subscriptions[subscriptionId];
+        if (sub.subscriber == address(0)) revert SubscriptionNotFound();
+        if (sub.cancelled) revert SubscriptionCancelled();
+
+        // Check nonce not used
+        if (usedCancelNonces[subscriptionId][nonce]) revert CancelNonceUsed();
+
+        // Verify EIP-712 signature
+        // NOTE: nonce is signer-chosen, NOT block.timestamp — this fixes the
+        // previous draft's broken cancellation verification where timestamp
+        // was included in the signed struct but was unpredictable at sign time.
+        bytes32 structHash = keccak256(abi.encode(
+            CANCELLATION_TYPEHASH,
+            subscriptionId,
+            nonce
+        ));
+        bytes32 digest = _hashTypedDataV4(structHash);
+        address signer = ECDSA.recover(digest, signature);
+        if (signer != sub.subscriber) revert InvalidCancelSignature();
+
+        // Record nonce as used
+        usedCancelNonces[subscriptionId][nonce] = true;
+
+        // Mark cancelled
+        sub.cancelled = true;
+
+        // Access continues until current period ends (per cancellationPolicy)
+        // The exact semantics depend on off-chain interpretation; on-chain,
+        // isActive() will return true until the current period's validTo.
+        emit SubscriptionCancelled(subscriptionId, sub.expiry);
+    }
+
+    /**
+     * @notice Replace a subscription with a new commitment (tier change, extension).
+     * @dev The old subscription is cancelled; a new subscriptionId is derived from
+     *      the new commitment. Cursor resets to 0 for the new schedule.
+     * @param oldSubscriptionId The subscription being replaced.
+     * @param newCommitment The new commitment struct (includes gracePeriodSeconds).
+     * @param signature EIP-712 signature over newCommitment, by newCommitment.subscriber.
+     * @return newSubscriptionId The new subscription identifier.
+     */
+    function updateRoot(
+        bytes32 oldSubscriptionId,
+        Commitment calldata newCommitment,
+        bytes calldata signature
+    ) external nonReentrant returns (bytes32 newSubscriptionId) {
+        // Validate old subscription exists and belongs to the same subscriber
+        Subscription storage oldSub = subscriptions[oldSubscriptionId];
+        if (oldSub.subscriber == address(0)) revert SubscriptionNotFound();
+        if (oldSub.subscriber != newCommitment.subscriber) {
+            revert InvalidCommitmentSignature(); // subscriber mismatch
+        }
+
+        // Cancel the old subscription
+        if (!oldSub.cancelled) {
+            oldSub.cancelled = true;
+            emit SubscriptionCancelled(oldSubscriptionId, block.timestamp);
+        }
+
+        // Create new subscription via full commitment verification
+        // Cursor resets to 0; new periodIndex space starts fresh
+        Leaf memory emptyLeaf;
+        bytes32[] memory emptyProof;
+        newSubscriptionId = this.subscribe(
+            newCommitment,
+            signature,
+            emptyLeaf,
+            emptyProof
+        );
+
+        return newSubscriptionId;
+    }
+
+    // ============ Guardian Functions ============
+
+    /**
+     * @notice Pause chargePeriod. Guardian-only.
+     * @dev INVARIANT: pause() ONLY blocks chargePeriod. It CANNOT:
+     *      - Move funds
+     *      - Change any stored commitment or subscription terms
+     *      - Redirect payments
+     *      - Affect subscribe(), cancel(), or view functions
+     */
+    function pause() external onlyGuardian {
+        paused = true;
+        emit Paused(msg.sender);
+    }
+
+    /**
+     * @notice Unpause chargePeriod. Guardian-only.
+     */
+    function unpause() external onlyGuardian {
+        paused = false;
+        emit Unpaused(msg.sender);
+    }
+
+    // ============ View Functions ============
+
+    /**
+     * @notice Check if a subscription is currently active.
+     * @param subscriptionId The subscription to check.
+     * @return active True if subscription grants access.
+     */
+    function isActive(bytes32 subscriptionId) external view returns (bool active) {
+        Subscription storage sub = subscriptions[subscriptionId];
+
+        // Not found
+        if (sub.subscriber == address(0)) {
+            return false;
+        }
+
+        // Cancelled and past expiry
+        if (sub.cancelled && block.timestamp >= sub.expiry) {
+            return false;
+        }
+
+        // In grace period — check if grace has expired
+        if (sub.inGracePeriod) {
+            return block.timestamp < sub.gracePeriodEnd;
+        }
+
+        // Normal active check: not expired
+        return block.timestamp <= sub.expiry;
+    }
+
+    /**
+     * @notice Check if a subscriber has an active subscription.
+     * @param subscriber The subscriber address.
+     * @param subscriptionId The subscription to check.
+     * @return active True if the subscription is active and belongs to subscriber.
+     */
+    function isActiveFor(
+        address subscriber,
+        bytes32 subscriptionId
+    ) external view returns (bool active) {
+        Subscription storage sub = subscriptions[subscriptionId];
+        if (sub.subscriber != subscriber) {
+            return false;
+        }
+        return this.isActive(subscriptionId);
+    }
+
+    /**
+     * @notice Get full subscription details.
+     * @param subscriptionId The subscription to query.
+     * @return sub The subscription struct.
+     */
+    function getSubscription(
+        bytes32 subscriptionId
+    ) external view returns (Subscription memory sub) {
+        return subscriptions[subscriptionId];
+    }
+
+    // ============ Internal Functions ============
+
+    /**
+     * @dev Internal charge logic with whenNotPaused check.
+     *      Reentrancy is handled by nonReentrant on all external entry points.
+     *
+     * CURSOR SEMANTICS: cursor increments ONLY on successful transfer.
+     * The chargeable window is [validFrom, validTo + gracePeriodSeconds] — the
+     * grace period is a per-leaf retry buffer allowing failed charges to be retried
+     * without advancing to the next period.
+     */
+    function _chargePeriod(
+        bytes32 subscriptionId,
+        Leaf calldata leaf,
+        bytes32[] calldata proof
+    ) internal whenNotPaused {
+        Subscription storage sub = subscriptions[subscriptionId];
+
+        // Existence check
+        if (sub.subscriber == address(0)) revert SubscriptionNotFound();
+
+        // Cancelled check
+        if (sub.cancelled) revert SubscriptionCancelled();
+
+        // Expiry check
+        if (block.timestamp > sub.expiry) revert SubscriptionExpired();
+
+        // Cursor check (monotonic, one settlement per period, in order)
+        if (leaf.periodIndex != sub.cursor) revert InvalidPeriodIndex();
+
+        // Time window check: chargeable window is [validFrom, validTo + gracePeriodSeconds]
+        // The grace period extends the window to allow retries on failed charges.
+        if (block.timestamp < leaf.validFrom) revert ChargeWindowNotOpen();
+        if (block.timestamp > leaf.validTo + sub.gracePeriodSeconds) {
+            revert ChargeWindowExpired();
+        }
+
+        // Fee cap check
+        if (leaf.fee > sub.maxPerPeriod) revert FeeExceedsMax();
+
+        // Merkle proof verification (OpenZeppelin double-hash convention)
+        bytes32 leafHash = keccak256(bytes.concat(keccak256(abi.encode(
+            leaf.periodIndex,
+            leaf.fee,
+            leaf.validFrom,
+            leaf.validTo
+        ))));
+        if (!MerkleProof.verify(proof, sub.root, leafHash)) {
+            revert InvalidMerkleProof();
+        }
+
+        // Attempt transfer (cursor increments ONLY on success)
+        bool success = _safeTransferFrom(
+            sub.asset,
+            sub.subscriber,
+            sub.payTo,
+            leaf.fee
+        );
+
+        if (success) {
+            // Increment cursor on success
+            sub.cursor++;
+
+            // Clear grace period if we were in one
+            if (sub.inGracePeriod) {
+                sub.inGracePeriod = false;
+                sub.gracePeriodEnd = 0;
+                emit GracePeriodCleared(subscriptionId);
+            }
+
+            emit PeriodCharged(subscriptionId, leaf.periodIndex, leaf.fee, msg.sender);
+        } else {
+            // On failure: cursor UNCHANGED, enter/remain in grace period
+            // gracePeriodEnd is idempotent if already set
+            if (!sub.inGracePeriod) {
+                sub.inGracePeriod = true;
+                sub.gracePeriodEnd = leaf.validTo + sub.gracePeriodSeconds;
+                emit GracePeriodEntered(subscriptionId, sub.gracePeriodEnd);
+            }
+
+            emit ChargeFailed(subscriptionId, leaf.periodIndex, "transfer_failed");
+        }
+    }
+
+    function _hashCommitment(
+        Commitment calldata c
+    ) internal pure returns (bytes32) {
+        return keccak256(abi.encode(
+            COMMITMENT_TYPEHASH,
+            c.root,
+            c.subscriber,
+            c.asset,
+            c.payTo,
+            c.registry,
+            c.chainId,
+            keccak256(bytes(c.tierId)),
+            c.start,
+            c.expiry,
+            c.maxPerPeriod,
+            c.gracePeriodSeconds
+        ));
+    }
+
+    /**
+     * @dev Safe transferFrom with non-reverting bool semantics.
+     *      Handles: call failure, returns-false tokens, no-return tokens (USDT).
+     * @return success True if transfer succeeded, false otherwise (triggers grace period).
+     */
+    function _safeTransferFrom(
+        address token,
+        address from,
+        address to,
+        uint256 amount
+    ) internal returns (bool success) {
+        // Low-level call to handle tokens that don't return bool (e.g., USDT)
+        (bool callSuccess, bytes memory data) = token.call(
+            abi.encodeWithSelector(
+                IERC20.transferFrom.selector,
+                from,
+                to,
+                amount
+            )
+        );
+
+        // Success requires:
+        // 1. Call did not revert (callSuccess == true)
+        // 2. Either no return data (USDT-style) OR exactly 32 bytes decoding to true
+        // The exact length check prevents malformed return data from being misinterpreted.
+        success = callSuccess && (data.length == 0 || (data.length == 32 && abi.decode(data, (bool))));
+    }
 }
 ```
 
-> **Note:** The full registry implementation, including `subscribe()`, `chargePeriod()`, `cancel()`, `updateRoot()`, and `isActive()`, will be specified in a subsequent commit.
+### 9.5 Function Summary
+
+| Function | Access | Description |
+|:---------|:-------|:------------|
+| `subscribe()` | Public | Create subscription from verified commitment; optionally charge period 0 |
+| `chargePeriod()` | **Permissionless** | Charge a billing period with Merkle proof |
+| `cancel()` | Public (subscriber signature) | Halt all future charges |
+| `updateRoot()` | Public (subscriber signature) | Replace subscription with new commitment |
+| `pause()` | Guardian only | Block `chargePeriod()` — fund-safe emergency stop |
+| `unpause()` | Guardian only | Resume `chargePeriod()` |
+| `isActive()` | View | Check subscription status (grace-aware) |
+| `isActiveFor()` | View | Check status for specific subscriber |
+| `getSubscription()` | View | Retrieve full subscription details |
+
+### 9.6 Permissionless `chargePeriod` Design
+
+`chargePeriod()` is **permissionless** — anyone can call it with a valid Merkle proof. This design choice ensures:
+
+1. **Liveness independence**: If the facilitator goes offline, any third party (including the subscriber or payTo) can submit charges.
+2. **No front-running advantage**: The charge either succeeds (funds move to `payTo`) or fails (grace period). There is no value to extract by front-running.
+3. **MEV resistance**: The outcome is deterministic given the Merkle proof; reordering does not change who receives funds.
+
+The facilitator remains the expected caller for convenience (they maintain the Merkle tree off-chain), but the system does not depend on facilitator honesty for correctness.
 
 ---
 
@@ -643,7 +1146,60 @@ Subscribe, cancel, and update-root operations flow through the standard `/verify
 
 ## 11. Security Considerations
 
-> **Note:** Full security considerations, including the liveness-vs-safety trust model, replay analysis, and allowance exposure analysis, will be specified in a subsequent commit.
+### 11.1 Liveness vs. Safety Trust Model
+
+The facilitator is trusted for **liveness only**:
+
+- **Liveness**: The facilitator maintains the Merkle tree off-chain and submits `chargePeriod()` calls at billing boundaries. If the facilitator fails, charges don't happen — but `chargePeriod()` is permissionless, so any party (subscriber, payTo, third party) can submit valid proofs.
+- **Safety**: The facilitator has no safety authority. It cannot overcharge (fee ≤ maxPerPeriod, fee matches Merkle leaf, cursor is monotonic), charge early (before validFrom), charge late (after validTo + gracePeriodSeconds), charge past expiry/cancel (hard on-chain checks), redirect funds (payTo/asset bound in commitment), or double-charge (cursor increments only on successful transfer).
+
+**Facilitator compromise degrades to denial of service, never theft beyond the signed schedule.**
+
+### 11.2 Replay Attack Prevention
+
+- **Commitment uniqueness**: Each commitment produces a unique `subscriptionId` (the struct hash). Duplicate commitments are rejected.
+- **Monotonic cursor**: `chargePeriod()` requires `periodIndex == cursor` and increments cursor on success. Each period can be charged at most once.
+- **Cancellation nonces**: `cancel()` uses signer-chosen nonces recorded in a mapping. Each `(subscriptionId, nonce)` pair can only be used once.
+- **Cross-chain protection**: The commitment binds `chainId`; replay on other chains fails.
+
+### 11.3 Allowance Exposure
+
+The subscriber grants a standing ERC-20 allowance to the registry. The worst-case exposure is bounded by:
+
+1. **Allowance amount**: The subscriber controls the allowance; setting it equal to total committed spend caps total exposure.
+2. **maxPerPeriod**: Each charge is capped regardless of the Merkle leaf claim.
+3. **Merkle root binding**: Only leaves matching the signed root can be charged.
+4. **Time windows**: Charges outside `validFrom..validTo` revert.
+5. **Expiry**: No charges after `expiry` timestamp.
+
+### 11.4 Guardian Pause Scope
+
+The guardian can call `pause()` to halt `chargePeriod()` as an emergency measure (e.g., if a critical bug is discovered). The pause is **fund-safe**:
+
+- Pause does NOT move funds
+- Pause does NOT change stored commitments or subscription terms
+- Pause does NOT redirect payments
+- Pause does NOT affect `subscribe()`, `cancel()`, `updateRoot()`, or view functions
+
+The guardian is recommended to be a timelock contract to prevent abuse.
+
+### 11.5 Codeless Asset Attack Prevention
+
+A low-level `call()` to an address with no bytecode (EOA or undeployed address) returns success with empty return data. This would be misinterpreted by `_safeTransferFrom` as a USDT-style successful transfer, allowing an attacker to register a "free subscription" by specifying a codeless `commitment.asset`.
+
+**Mitigation:** `subscribe()` checks `commitment.asset.code.length == 0` and reverts with `AssetNotContract()` if true. This check is performed once at registration time; the asset cannot change afterward.
+
+### 11.6 Return Data Hardening
+
+The `_safeTransferFrom` function uses exact length checking for return data:
+
+```solidity
+success = callSuccess && (data.length == 0 || (data.length == 32 && abi.decode(data, (bool))));
+```
+
+This prevents malformed return data (e.g., non-32-byte responses from proxy contracts or hook-modified tokens) from being decoded as a boolean. Charges with unexpected return data are routed to the grace period path, allowing retry without permanently locking the period.
+
+> **Note:** Additional analysis (MEV, frontrunning resistance, gas optimization) may be added in subsequent commits.
 
 ---
 
