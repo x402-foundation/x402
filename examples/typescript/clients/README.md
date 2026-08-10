@@ -19,6 +19,7 @@ This directory contains TypeScript client examples demonstrating how to make HTT
 | [`sign-in-with-x/`](./sign-in-with-x/) | Both SIWX flows: auth-only access and paid-once access |
 | [`mcp/`](./mcp/) | MCP client that pays for tool calls |
 | [`mcp-chatbot/`](./mcp-chatbot/) | Chatbot combining an LLM, MCP tool discovery, and x402 payments |
+| [`taskmarket/`](./taskmarket/) | Browses, creates (with a spending cap), and tracks tasks on TaskMarket, a third-party x402-paid task marketplace |
 
 ## Framework Examples
 
