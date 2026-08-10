@@ -109,6 +109,72 @@ For the `exact` scheme on on-chain rails, the record carries a `settlement` obje
 
 This is a real `exact`-scheme settlement from a live Sui facilitator; its on-chain `balanceChanges` independently show a net `+1000000` of `0x2::sui::SUI` to `payTo`, matching `settlement.amount` under `assertedFrom: net-balance-change-to-payTo`.
 
+**3.5 Multi-Recipient Settlements (Per-Role Record Set)**
+
+A single `exact` settlement may atomically credit more than one recipient — fee-splitting and gas-recovery facilitators land the merchant leg and the fee leg in one transaction. The settlement object deliberately binds a single `payTo` (§3.4), and the multi-recipient case does not weaken that discipline: the shape is **one record per recipient leg**, each binding that leg's payout under `assertedFrom: net-balance-change-to-payTo` with `payTo` set to that leg's recipient. Every leg of one authorized action carries the **identical action tuple** — the authorized action is the purchase, not the division — so their `actionRef`s are identical, and the records of one settlement MAY share a `txDigest`. The division is the set of records, not a field in any one of them; a party verifying its own leg needs only the record naming its address and is never required to recompute the division.
+
+Worked example (informative; not part of the §5 pinned gate). These two records bind the two legs of a real fee-split `exact` settlement on Polygon mainnet: transaction `0xa9e6c6a9ce10fd26ec2fab0d367de31d7fb0918c79d5e932b8566816ecda3249` (block 90308815), in which one signed payer authorization moved 2.0 JPYC through a split forwarder — 1.0 to the merchant, 1.0 to a fee recipient. Both records derive the identical `actionRef` from exactly these JCS bytes (`timestampMs` is the settlement block's timestamp):
+
+```
+{"actionType":"purchase.fulfill","agentId":"agent:claude/openpay-x402-mcp","scope":"merchant:0x52d4901142e2B5680027da5EB47C86CB02a3cA81/resource:coo-icp-agent-consult/amount:2.00JPYC","seq":1,"terminal":true,"timestampMs":1784168218000}
+```
+
+Merchant leg:
+
+```json
+{
+  "actionRef": "sha256:08d26a534dbbaa6653f088fe943ef7bfa129d01f612198939605c99af8a66169",
+  "actionType": "purchase.fulfill",
+  "agentId": "agent:claude/openpay-x402-mcp",
+  "schema": "x402.settlement.evm/v0",
+  "scope": "merchant:0x52d4901142e2B5680027da5EB47C86CB02a3cA81/resource:coo-icp-agent-consult/amount:2.00JPYC",
+  "seq": 1,
+  "settlement": {
+    "amount": "1000000000000000000",
+    "assertedFrom": "net-balance-change-to-payTo",
+    "asset": "0xE7C3D8C9a439feDe00D2600032D5dB0Be71C3c29",
+    "decimals": 18,
+    "network": "eip155:137",
+    "payTo": "0x52d4901142e2B5680027da5EB47C86CB02a3cA81",
+    "rail": "evm",
+    "scheme": "exact",
+    "txDigest": "0xa9e6c6a9ce10fd26ec2fab0d367de31d7fb0918c79d5e932b8566816ecda3249",
+    "verifiedBy": "facilitator://open-pay.jp"
+  },
+  "terminal": true,
+  "timestampMs": 1784168218000
+}
+```
+
+Fee leg (issued to the payer — the fee-transparency record):
+
+```json
+{
+  "actionRef": "sha256:08d26a534dbbaa6653f088fe943ef7bfa129d01f612198939605c99af8a66169",
+  "actionType": "purchase.fulfill",
+  "agentId": "agent:claude/openpay-x402-mcp",
+  "schema": "x402.settlement.evm/v0",
+  "scope": "merchant:0x52d4901142e2B5680027da5EB47C86CB02a3cA81/resource:coo-icp-agent-consult/amount:2.00JPYC",
+  "seq": 1,
+  "settlement": {
+    "amount": "1000000000000000000",
+    "assertedFrom": "net-balance-change-to-payTo",
+    "asset": "0xE7C3D8C9a439feDe00D2600032D5dB0Be71C3c29",
+    "decimals": 18,
+    "network": "eip155:137",
+    "payTo": "0x428483FbA62eDCef1E3a100d3799F6d71759c560",
+    "rail": "evm",
+    "scheme": "exact",
+    "txDigest": "0xa9e6c6a9ce10fd26ec2fab0d367de31d7fb0918c79d5e932b8566816ecda3249",
+    "verifiedBy": "facilitator://open-pay.jp"
+  },
+  "terminal": true,
+  "timestampMs": 1784168218000
+}
+```
+
+These are real records produced by the operator of a production EVM facilitator in this PR's discussion. The transaction's on-chain transfer logs independently show a net `+1000000000000000000` of the JPYC token to each record's `payTo` — and `-2000000000000000000` from the payer, resolvable from the same shared `txDigest`, which is how a payer recovers its total debit from either record it holds. The fee-transparency property falls out of the shape: a facilitator that discloses one rate and settles another cannot issue a fee-leg record that recomputes green. The even division here is an artifact of the operator's fee floor at a small amount; the construction carries no assumption about the ratio.
+
 **4. Binding a Receipt to the Settlement**
 
 A `vaara.receipt/v1` receipt commits to the settlement record through a content-addressed evidence reference inside `decisionDerived.evidenceRef`, using the receipt format's content-addressed commitment shape:
