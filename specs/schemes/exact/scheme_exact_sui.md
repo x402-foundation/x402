@@ -191,6 +191,10 @@ The facilitator returns `{ isValid, payer }` (with `invalidReason` when invalid)
 4. **Not already executed.** Recompute the transaction digest from the signed bytes and look it up
    on-chain; if it is already committed, reject (`invalid_transaction_state`). A transaction sourced
    entirely from Address Balances has no object inputs, so simulation alone cannot detect a replay.
+   The lookup is best-effort — nodes prune old transactions — but at-most-once execution does not
+   depend on it: an executed transaction can never commit again, so a replay whose digest has been
+   pruned instead fails simulation or execution (its inputs are consumed or its expiration has
+   passed).
 5. **Simulate.** Simulate the transaction with transaction checks enabled to confirm it would
    succeed (`invalid_exact_sui_payload_simulation_failed`). Checks-enabled simulation validates the
    transaction's expiration, so an expired transaction fails here.
@@ -305,11 +309,13 @@ to different instances each pass their local check.
   constrain the transaction shape with a command allowlist or a gasless-eligibility requirement.
 - **Replay prevention.** Settlement is at-most-once per signed transaction. Simulation is not a
   sufficient replay guard for a payment sourced entirely from Address Balances, since re-simulating
-  executed bytes still succeeds; verification detects a replay by recomputing the digest and looking
-  it up on-chain. A payment's validity window is bounded on-chain by the transaction's own
-  expiration, enforced by simulation at verify and by execution at settle. Serving a payment at most
-  once is an application-level concern the chain does not decide; a facilitator or resource server MAY
-  deduplicate above the chain (see [Exactly-once serving](#exactly-once-serving)).
+  executed bytes still succeeds; verification detects a recent replay by recomputing the digest and
+  looking it up on-chain, and a replay old enough to outlive node retention fails simulation or
+  execution instead, since an executed transaction can never commit again. A payment's validity
+  window is bounded on-chain by the transaction's own expiration, enforced by simulation at verify
+  and by execution at settle. Serving a payment at most once is an application-level concern the
+  chain does not decide; a facilitator or resource server MAY deduplicate above the chain (see
+  [Exactly-once serving](#exactly-once-serving)).
 - **Settlement atomicity.** The payment settles in one transaction; a Sui programmable transaction is
   all-or-nothing, so the recipient credit either lands in full or the transaction commits nothing.
 - **Independently recomputable settlement.** Because verification is effects-based, any third party
