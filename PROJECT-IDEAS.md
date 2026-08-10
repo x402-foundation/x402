@@ -62,6 +62,18 @@ Impact-based micro‑grants up to **\$3k** are available for projects that unloc
 
 ## Knowledge & Services
 
+### China Data Agent
+
+* **What it does:** Provides Chinese institutional data (employment reports, university rankings, travel guides) via x402 paid endpoints on Base chain. Live on mainnet at api.060504.shop with MCP server integration and Bazaar discovery support.
+* **Payment moments:** Per-report fixed fee ($0.01–$90 USDC) or per-call dynamic pricing ($0.005 USDC for URL-to-Markdown fetch).
+* **Suggested APIs:** Any Chinese data source (university portals, government statistics, travel platforms) wrapped behind x402.
+
+### Chinese Web Fetch Proxy
+
+* **What it does:** Converts any Chinese web page to clean Markdown via a paid x402 endpoint. Agents can retrieve structured content from Chinese-language sources that are otherwise inaccessible to English-centric tools.
+* **Payment moments:** Pay-per-call ($0.005 USDC per URL).
+* **Suggested APIs:** Target any Chinese web page; the proxy handles rendering, encoding, and Markdown conversion.
+
 ### Bounty‑Hunter Agent
 
 * Scans for open bounties, completes tasks, claims reward.
