@@ -314,6 +314,9 @@ Additional options:
 | `smartWalletMaxComputeUnits` | `number` | `400000` | Maximum compute units allowed for smart wallet transactions. |
 | `smartWalletMaxPriorityFeeMicroLamports` | `number` | `50000` | Maximum priority fee in microlamports for smart wallet transactions. |
 | `smartWalletAllowedPrograms` | `string[]` | Built-in list | Allowed smart wallet program addresses. Only transactions invoking a program in this list reach simulation-based verification. |
+| `maxPriorityFeeMicroLamports` | `number` | `5000000` | Maximum compute unit price in microlamports accepted on the static path. The facilitator pays the transaction fee, so this bounds the priority fee a payer can make it pay. |
+| `maxComputeUnits` | `number` | No limit | Maximum compute unit limit accepted on the static path. An SPL transfer with a memo uses ~20k CU; a low ceiling still leaves ample headroom for wallet-injected instructions. |
+| `maxRequiredSignatures` | `number` | No limit | Maximum number of required signatures. Every signature adds 5,000 lamports of base fee paid by the facilitator. A typical x402 payment needs two (payer + fee payer). |
 
 ### EVM Transfer Methods
 
