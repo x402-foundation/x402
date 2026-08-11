@@ -36,6 +36,7 @@ from ..constants import (  # noqa: E402
     ERR_PERMIT2_NOT_YET_VALID,
     ERR_PERMIT2_RECIPIENT_MISMATCH,
     ERR_PERMIT2_TOKEN_MISMATCH,
+    ERR_TRANSFER_EVENT_MISMATCH,
     ERR_UPTO_AMOUNT_EXCEEDS_PERMITTED,
     ERR_UPTO_FACILITATOR_MISMATCH,
     ERR_UPTO_FAILED_TO_GET_NETWORK_CONFIG,
@@ -55,8 +56,9 @@ from ..constants import (  # noqa: E402
 from ..data_suffix import resolve_data_suffix  # noqa: E402
 from ..erc6492 import parse_erc6492_signature  # noqa: E402
 
-# Reuse exact's allowance verification and settle error mapping
+# Reuse exact's allowance verification, Transfer-event check, and settle error mapping
 from ..exact.permit2_utils import (  # noqa: E402
+    _permit2_settle_transfer_matches,
     _verify_permit2_allowance,
 )
 from ..signer import FacilitatorEvmSigner  # noqa: E402
@@ -651,6 +653,22 @@ def _settle_upto_direct(
                 payer=payer,
             )
 
+        auth = permit2_payload.permit2_authorization
+        if not _permit2_settle_transfer_matches(
+            receipt,
+            token=auth.permitted.token,
+            from_address=auth.from_address,
+            to=auth.witness.to,
+            value=settlement_amount,
+        ):
+            return SettleResponse(
+                success=False,
+                error_reason=ERR_TRANSFER_EVENT_MISMATCH,
+                transaction=tx_hash,
+                network=network,
+                payer=payer,
+            )
+
         return SettleResponse(
             success=True,
             transaction=tx_hash,
@@ -721,6 +739,22 @@ def _settle_upto_with_eip2612(
                 payer=payer,
             )
 
+        auth = permit2_payload.permit2_authorization
+        if not _permit2_settle_transfer_matches(
+            receipt,
+            token=auth.permitted.token,
+            from_address=auth.from_address,
+            to=auth.witness.to,
+            value=settlement_amount,
+        ):
+            return SettleResponse(
+                success=False,
+                error_reason=ERR_TRANSFER_EVENT_MISMATCH,
+                transaction=tx_hash,
+                network=network,
+                payer=payer,
+            )
+
         return SettleResponse(
             success=True,
             transaction=tx_hash,
@@ -771,6 +805,22 @@ def _settle_upto_with_erc20_approval(
             return SettleResponse(
                 success=False,
                 error_reason=ERR_UPTO_TRANSACTION_FAILED,
+                transaction=settle_tx_hash,
+                network=network,
+                payer=payer,
+            )
+
+        auth = permit2_payload.permit2_authorization
+        if not _permit2_settle_transfer_matches(
+            receipt,
+            token=auth.permitted.token,
+            from_address=auth.from_address,
+            to=auth.witness.to,
+            value=settlement_amount,
+        ):
+            return SettleResponse(
+                success=False,
+                error_reason=ERR_TRANSFER_EVENT_MISMATCH,
                 transaction=settle_tx_hash,
                 network=network,
                 payer=payer,

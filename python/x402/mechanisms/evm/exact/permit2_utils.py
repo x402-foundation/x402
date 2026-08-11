@@ -37,6 +37,7 @@ from ..constants import (  # noqa: E402
     ERR_PERMIT2_RECIPIENT_MISMATCH,
     ERR_PERMIT2_TOKEN_MISMATCH,
     ERR_TRANSACTION_FAILED,
+    ERR_TRANSFER_EVENT_MISMATCH,
     ERR_UNSUPPORTED_SCHEME,
     PERMIT2_ADDRESS,
     PERMIT2_WITNESS_TYPES,
@@ -63,6 +64,32 @@ from ..utils import (  # noqa: E402
     normalize_address,
 )
 from ..verify import verify_typed_data_strict  # noqa: E402
+from .eip3009_utils import verify_eip3009_transfer_event  # noqa: E402
+
+
+def _permit2_settle_transfer_matches(
+    receipt: Any,
+    *,
+    token: str,
+    from_address: str,
+    to: str,
+    value: int,
+) -> bool:
+    """Return True when the settle receipt's Transfer check passes.
+
+    Receipt status alone only proves the proxy call did not revert. When logs
+    are present (including an empty list), require a matching ERC-20 Transfer,
+    matching EIP-3009 settle semantics (#2385 / #2727 / TS #3080).
+    """
+    if getattr(receipt, "logs", None) is None:
+        return True
+    return verify_eip3009_transfer_event(
+        receipt.logs,
+        token,
+        from_address=from_address,
+        to=to,
+        value=value,
+    )
 
 
 def create_permit2_payload(
@@ -527,6 +554,22 @@ def _settle_permit2_direct(
                 payer=payer,
             )
 
+        auth = permit2_payload.permit2_authorization
+        if not _permit2_settle_transfer_matches(
+            receipt,
+            token=auth.permitted.token,
+            from_address=auth.from_address,
+            to=auth.witness.to,
+            value=int(auth.permitted.amount),
+        ):
+            return SettleResponse(
+                success=False,
+                error_reason=ERR_TRANSFER_EVENT_MISMATCH,
+                transaction=tx_hash,
+                network=network,
+                payer=payer,
+            )
+
         return SettleResponse(
             success=True,
             transaction=tx_hash,
@@ -594,6 +637,22 @@ def _settle_permit2_with_eip2612(
                 payer=payer,
             )
 
+        auth = permit2_payload.permit2_authorization
+        if not _permit2_settle_transfer_matches(
+            receipt,
+            token=auth.permitted.token,
+            from_address=auth.from_address,
+            to=auth.witness.to,
+            value=int(auth.permitted.amount),
+        ):
+            return SettleResponse(
+                success=False,
+                error_reason=ERR_TRANSFER_EVENT_MISMATCH,
+                transaction=tx_hash,
+                network=network,
+                payer=payer,
+            )
+
         return SettleResponse(
             success=True,
             transaction=tx_hash,
@@ -642,6 +701,22 @@ def _settle_permit2_with_erc20_approval(
             return SettleResponse(
                 success=False,
                 error_reason=ERR_TRANSACTION_FAILED,
+                transaction=settle_tx_hash,
+                network=network,
+                payer=payer,
+            )
+
+        auth = permit2_payload.permit2_authorization
+        if not _permit2_settle_transfer_matches(
+            receipt,
+            token=auth.permitted.token,
+            from_address=auth.from_address,
+            to=auth.witness.to,
+            value=int(auth.permitted.amount),
+        ):
+            return SettleResponse(
+                success=False,
+                error_reason=ERR_TRANSFER_EVENT_MISMATCH,
                 transaction=settle_tx_hash,
                 network=network,
                 payer=payer,
