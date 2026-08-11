@@ -38,6 +38,14 @@ export type MoneyParser = (amount: number, network: Network) => Promise<AssetAmo
  * Contains the x402 version, scheme-specific payload data, and optional extension data.
  * Schemes may return extensions (e.g., EIP-2612 gas sponsoring) that get merged
  * with server-declared extensions in the final PaymentPayload.
+ *
+ * This type intentionally omits `accepted` (the `PaymentRequirements` the payload
+ * satisfies). The scheme already received `paymentRequirements` as an argument, so
+ * `x402Client.createPaymentPayload()` merges it back in (as `accepted`) after calling
+ * the scheme, producing the full `PaymentPayload`. Code that calls a scheme's
+ * `createPaymentPayload()` directly instead of going through `x402Client` must add
+ * `accepted: paymentRequirements` itself before treating the result as a `PaymentPayload`
+ * (e.g. before passing it to a facilitator's `verify()`/`settle()`).
  */
 export type PaymentPayloadResult = Pick<PaymentPayload, "x402Version" | "payload"> & {
   extensions?: Record<string, unknown>;
@@ -63,6 +71,17 @@ export interface SchemeNetworkClient {
   readonly scheme: string;
   readonly schemeHooks?: SchemeClientHooks;
 
+  /**
+   * Builds the scheme-specific portion of a payment payload for the given requirements.
+   *
+   * Returns a {@link PaymentPayloadResult}, not a full `PaymentPayload` — it does not
+   * include `accepted`. Prefer calling `x402Client.createPaymentPayload()` instead of
+   * invoking a scheme's `createPaymentPayload()` directly; the client orchestrator
+   * merges `accepted: paymentRequirements` into the result for you. If you do call this
+   * method directly (e.g. to test a facilitator or scheme in isolation), you are
+   * responsible for adding `accepted: paymentRequirements` yourself before using the
+   * result as a `PaymentPayload`.
+   */
   createPaymentPayload(
     x402Version: number,
     paymentRequirements: PaymentRequirements,
