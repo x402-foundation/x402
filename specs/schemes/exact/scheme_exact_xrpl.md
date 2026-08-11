@@ -411,17 +411,27 @@ fields silently widens what a facilitator accepts every time the XRPL adds a
 field, and the field names in any such list are not stable: XLS-68 renamed
 `FeeAmount` to `FeeAmountDelta` between the published draft and the Devnet
 `3.3.0-rc5` implementation, so a list written from the draft would already be
-wrong. Deriving the permitted set from rippled's own field template for the
-transaction type keeps the check correct without maintenance.
+wrong. The permitted set MUST therefore be a pinned, explicit snapshot chosen
+by the implementation and reviewed when an amendment activates. Deriving the
+set mechanically from rippled's field template is NOT a substitute: the
+template includes the common fields (`Memos`, `Delegate`, and — once the
+amendment is active — the sponsorship fields), so a derived set admits much
+of what this section exists to exclude. A derived set MAY be used to *detect*
+newly added fields and raise an alarm; it MUST NOT be used to admit them —
+derive to detect, pin to admit.
 
-The fields below are therefore **informative examples** of what an allowlist
-excludes for this scheme, not the mechanism itself:
+The allowlist is the mechanism. In addition to it, the facilitator MUST
+reject a transaction with any of the following, each with its own reason
+code. These checks bind values and combinations that field presence alone
+cannot express, and implementations legitimately keep several of these
+fields (e.g. `Memos`, `Delegate`) inside their permitted decode set
+precisely so each rejection can carry its own reason rather than a generic
+field-not-permitted error:
 
 - `Fee` above facilitator policy.
 - `Delegate` present.
 - Sponsorship fields — at the time of writing `Sponsor`, `SponsorFlags`, and
-  `SponsorSignature` — unless a fee-sponsoring extension is active. Named for
-  the reader's benefit; the allowlist, not this list, is what rejects them.
+  `SponsorSignature` — unless a fee-sponsoring extension is active.
   (A `SponsorshipSet` and its budget fields never reach this check in the
   base scheme: §3 already refuses any `TransactionType` other than
   `Payment`. They belong to the fee-sponsoring extension's territory and are
@@ -488,7 +498,7 @@ Unlike a probabilistic confirmation race, this behavior is deterministic on XRPL
 
 Facilitators MUST deduplicate in-flight settlements across every process that serves `/settle`, keyed on the transaction hash. Before submitting a verified transaction:
 
-1. After verification succeeds, derive the cache key from the signed transaction blob: the canonical XRPL transaction hash (as returned by, e.g., `hashSignedTx`).
+1. After verification succeeds, derive the cache key from the signed transaction blob **as received from the client**: the canonical XRPL transaction hash (as returned by, e.g., `hashSignedTx`). Under an extension that adds fields before submission — e.g. cosigned fee sponsoring — this key remains stable per client submission but is not necessarily the on-ledger txid; such an extension defines which hash `SettlementResponse.transaction` reports.
 2. If the key is already present, reject the settlement with a `"duplicate_settlement"` error.
 3. If the key is not present, record it and proceed with submission.
 4. Retain the key until its transaction can no longer land — that is, until its `LastLedgerSequence` has passed (bounded by `maxTimeoutSeconds`; see [§7. Expiry and Account Sequencing](#7-expiry-and-account-sequencing)). A shorter window reopens the race: while the transaction is still landable, a re-submission passes re-verification because the consumed sequence number — or ticket — is not yet consumed, so the entry MUST outlive that window rather than a fixed interval. (Solana's fixed ~60-90s blockhash lifetime lets its cache use a constant TTL; XRPL's expiry is policy-derived, so the retention window is too.)

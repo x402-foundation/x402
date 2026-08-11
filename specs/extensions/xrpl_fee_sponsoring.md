@@ -27,6 +27,13 @@ enabled (currently Devnet; not Mainnet).
     account, sponsee = payer) authorizes fee payment with no per-transaction
     facilitator signature. Bounded by the object's `FeeAmount` pool and
     per-transaction `MaxFee`.
+- Codec support for the XLS-68 fields in the client's signing stack — the
+  practical blocker at the time of writing: `xrpl.js` has not shipped the
+  `Sponsor`/`SponsorFlags`/`SponsorSignature` field definitions, and
+  `xrpl-py` carries them on `main` only (absent from the latest release,
+  checked against v5.0.0). Implementations SHOULD load definitions from the
+  target network's `server_definitions` rather than a library snapshot (see
+  the implementation-vs-draft note below).
 
 ## `PaymentRequired`
 
@@ -84,11 +91,54 @@ blob as in the base scheme.
   the payer's signature — and the facilitator cannot alter any other field
   without invalidating it.
 
+The client MUST echo the extension key in `PaymentPayload.extensions`. The
+echo — not the mere presence of sponsorship fields in the decoded blob — is
+what activates this extension's verification deltas for a given payload, so
+a payload carrying sponsorship fields without the echo fails the base
+scheme's §9 check deterministically instead of being inferred into the
+extension path.
+
+```json
+{
+  "x402Version": 2,
+  "resource": { "url": "https://api.example.com/data" },
+  "payload": { "signedTxBlob": "..." },
+  "extensions": { "xrplFeeSponsoring": {} }
+}
+```
+
+### Example `tx_json` (payer-built, before signing)
+
+```json
+{
+  "TransactionType": "Payment",
+  "Account": "rPayer111111111111111111111111111",
+  "Destination": "rN7n3473SaZBCG4dFL83w7a1RXtXtbk2D9",
+  "Amount": {
+    "currency": "524C555344000000000000000000000000000000",
+    "issuer": "rMwjYedjc7qqtKYVLiAccJSmCwih4LnE2q",
+    "value": "2.5"
+  },
+  "Fee": "12",
+  "Sequence": 12345678,
+  "LastLedgerSequence": 99999999,
+  "SigningPubKey": "ED...",
+  "Sponsor": "rSponsor1VktvzBz8JF2oJC6qaww6RZ7Lw",
+  "SponsorFlags": 1
+}
+```
+
+The same `tx_json` serves both modes: in `"prefunded"` the signed blob is
+submitted exactly as received; in `"cosigned"` the facilitator inserts
+`SponsorSignature` before submission (never any other field).
+
 ## Verification Logic
 
 All base-scheme verification rules apply, with these deltas:
 
-- `extra.areFeesSponsored` MUST be `true` (envelope check §1 inverted).
+- `extra.areFeesSponsored` MUST be `true`, and the payload MUST carry the
+  `xrplFeeSponsoring` key in `PaymentPayload.extensions` (envelope check §1
+  inverted; the echo is the activation signal).
 - `tx_json.Sponsor` MUST equal `info.sponsor`.
 - `tx_json.SponsorFlags` MUST equal `1` (`spfSponsorFee`). A facilitator MUST
   reject `spfSponsorReserve` unless it has an explicit reserve-sponsorship
@@ -96,8 +146,15 @@ All base-scheme verification rules apply, with these deltas:
 - `tx_json.Fee` MUST be `<= info.maxFee` (tightens safety check §9's "Fee
   above facilitator policy").
 - `"prefunded"` mode: the `Sponsorship` ledger object for
-  `(info.sponsor, tx_json.Account)` MUST exist with `FeeAmount >= tx_json.Fee`;
-  `tx_json.SponsorSignature` MUST be absent.
+  `(info.sponsor, tx_json.Account)` MUST exist with remaining fee budget
+  `>= tx_json.Fee`, its object-level `MaxFee` (when present) MUST be
+  `>= tx_json.Fee`, and its `lsfSponsorshipRequireSignForFee` flag MUST be
+  unset — a sponsorship requiring per-transaction signatures sinks an
+  unsigned submit even with sufficient budget. `tx_json.SponsorSignature`
+  MUST be absent. No shipped client library knows the `Sponsorship` entry
+  type at the time of writing; fetch it directly via `ledger_entry` using
+  the Sponsorship keylet for `(sponsor, sponsee)` against the target
+  network.
 - `"cosigned"` mode: `tx_json.SponsorSignature` MUST be absent at `/verify`
   (the facilitator adds it); the facilitator MUST co-sign only transactions
   that passed every verification rule — the sponsor signature is an
@@ -117,6 +174,23 @@ Base-scheme settlement applies unchanged, plus:
   `Sponsorship` object while such a transaction may still be live (its
   `LastLedgerSequence` has not passed) unless it intends that payment to
   settle.
+- **Transaction hash under cosigning.** `SponsorSignature` does not
+  participate in signing, but the txid is computed over the full
+  serialization — so cosigning changes the transaction hash after the
+  client last sees its transaction. Three rules keep all parties
+  consistent:
+  - The duplicate-settlement cache key (base scheme) is computed over the
+    blob **as received**; it stays stable across retries of the same client
+    submission but, under cosigning, is not the on-ledger txid.
+  - The facilitator MUST poll for and report the **final** txid — the hash
+    of the cosigned blob as submitted — in `SettlementResponse.transaction`.
+  - A cosigned-mode client MUST NOT predict its own transaction hash; it
+    MUST take the txid from the settlement response. For client-side
+    reconciliation independent of hash, the payer-scoped pair
+    `(Account, Sequence or TicketSequence)` identifies the payment in both
+    modes (e.g. via `account_tx`).
+  In `"prefunded"` mode the received blob is submitted unchanged and the
+  two hashes coincide, as in the base scheme.
 - The settlement response SHOULD include `feeSponsored: true` and the sponsor
   address, so clients can attribute network costs.
 
