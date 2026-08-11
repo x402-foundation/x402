@@ -77,6 +77,15 @@ cd servers/express
 pnpm dev
 ```
 
+Alternatively, skip running a local server and point the client at any live x402 API. For example, [scrape402](https://x402.shizu.me) is a community-operated x402 service on Base mainnet whose `/trending` endpoint takes no parameters, so it works with this demo as-is:
+
+```json
+"RESOURCE_SERVER_URL": "https://x402.shizu.me",
+"ENDPOINT_PATH": "/trending"
+```
+
+Note this settles real USDC on Base mainnet (about $0.002 per call), so use a mainnet-funded wallet — and as with any third-party endpoint, it is operated independently, not by the x402 project.
+
 #### 4. Restart Claude Desktop
 
 Restart Claude Desktop to load the new MCP server, then ask Claude to use the `get-data-from-resource-server` tool.
