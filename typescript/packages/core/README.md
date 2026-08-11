@@ -176,13 +176,19 @@ client
     // Return { abort: true, reason: '...' } to cancel
   })
   .onAfterPaymentCreation(async (ctx) => {
-    console.log('Payment created:', ctx.paymentPayload);
+    console.log('Payment created for:', {
+      network: ctx.selectedRequirements.network,
+      amount: ctx.selectedRequirements.amount,
+    });
   })
   .onPaymentCreationFailure(async (ctx) => {
     console.error('Payment failed:', ctx.error);
     // Return { recovered: true, payload: ... } to recover
   });
 ```
+
+Payment payloads can contain redeemable signatures or authorizations. Do not
+write `paymentPayload` to logs or traces.
 
 ### Server Hooks
 
