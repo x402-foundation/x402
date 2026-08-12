@@ -147,10 +147,10 @@ Set the route `price` to the maximum authorized amount. In the handler, use sett
 
 ### Client Setup
 
-Register `UptoEvmScheme` alongside `ExactEvmScheme` if your client may call both fixed-price and usage-based EVM resources.
+Register the `upto` scheme alongside `exact` if your client may call both fixed-price and usage-based resources.
 
 <Tabs>
-  <Tab title="TypeScript">
+  <Tab title="TypeScript (EVM)">
     ```typescript
     import { x402Client } from "@x402/core/client";
     import { ExactEvmScheme } from "@x402/evm/exact/client";
@@ -162,6 +162,23 @@ Register `UptoEvmScheme` alongside `ExactEvmScheme` if your client may call both
     const client = new x402Client();
     client.register("eip155:*", new ExactEvmScheme(signer));
     client.register("eip155:*", new UptoEvmScheme(signer));
+    ```
+  </Tab>
+  <Tab title="TypeScript (SVM)">
+    ```typescript
+    import { x402Client } from "@x402/core/client";
+    import { ExactSvmScheme } from "@x402/svm/exact/client";
+    import { UptoSvmScheme } from "@x402/svm/upto/client";
+    import { createKeyPairSignerFromBytes } from "@solana/kit";
+    import { base58 } from "@scure/base";
+
+    const signer = await createKeyPairSignerFromBytes(
+      base58.decode(process.env.SVM_PRIVATE_KEY),
+    );
+
+    const client = new x402Client();
+    client.register("solana:*", new ExactSvmScheme(signer)); // fixed-price services
+    client.register("solana:*", new UptoSvmScheme(signer));  // usage-based services
     ```
   </Tab>
   <Tab title="Go">
