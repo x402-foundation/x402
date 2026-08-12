@@ -186,6 +186,8 @@ A `vaara.receipt/v1` receipt commits to the settlement record through a content-
 | `ref`               | `x402:action_ref/<actionRef>` — a stable, human-legible pointer to the join key.      |
 | `schema`            | Echoes the settlement record's `schema`.                                               |
 
+The **`digest` is the binding; `ref` is advisory.** Under the per-role record set of §3.5, one `actionRef` — and therefore one `ref` — names more than one settlement record, so a consumer MUST resolve the binding by `digest` and MUST NOT treat `ref` alone as naming a unique settlement record. `settlement_binding_resolves` (§5) is what enforces this: the merchant-leg and fee-leg records share an `actionRef` but differ under the digest because `payTo` differs, so a fee-leg record presented against a merchant-leg receipt fails the digest check.
+
 The receipt is signed per `vaara.receipt/v1` (ES256/RS256/HS256, detached signature over the JCS body excluding `signature`). This extension defines only what the receipt's evidence reference points at and how its digest is computed; the receipt's decision/outcome structure and pairing are the receipt format's.
 
 **5. Recompute (Conformance Gate)**
