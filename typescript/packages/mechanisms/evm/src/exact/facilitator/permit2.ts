@@ -438,7 +438,13 @@ async function settlePermit2WithEIP2612(
       dataSuffix,
     });
 
-    return waitAndReturnSettleResponse(signer, tx, payload, payer);
+    return waitAndReturnSettleResponse(
+      signer,
+      tx,
+      payload,
+      payer,
+      exactExpectedTransfer(permit2Payload),
+    );
   } catch (error) {
     return mapSettleError(error, payload, payer);
   }
@@ -482,7 +488,13 @@ async function settlePermit2WithERC20Approval(
     ]);
 
     const settleTxHash = txHashes[txHashes.length - 1];
-    return waitAndReturnSettleResponse(extensionSigner, settleTxHash, payload, payer);
+    return waitAndReturnSettleResponse(
+      extensionSigner,
+      settleTxHash,
+      payload,
+      payer,
+      exactExpectedTransfer(permit2Payload),
+    );
   } catch (error) {
     return mapSettleError(error, payload, payer);
   }
@@ -515,8 +527,36 @@ async function settlePermit2Direct(
       dataSuffix,
     });
 
-    return waitAndReturnSettleResponse(signer, tx, payload, payer);
+    return waitAndReturnSettleResponse(
+      signer,
+      tx,
+      payload,
+      payer,
+      exactExpectedTransfer(permit2Payload),
+    );
   } catch (error) {
     return mapSettleError(error, payload, payer);
   }
+}
+
+/**
+ * Derives the Transfer event an exact Permit2 settlement must emit: the full
+ * permitted amount from the payer to the witness recipient.
+ *
+ * @param permit2Payload - The exact Permit2 payload with the authorization
+ * @returns The expected Transfer event fields for receipt verification
+ */
+function exactExpectedTransfer(permit2Payload: ExactPermit2Payload): {
+  asset: `0x${string}`;
+  from: `0x${string}`;
+  to: `0x${string}`;
+  value: bigint;
+} {
+  const auth = permit2Payload.permit2Authorization;
+  return {
+    asset: auth.permitted.token,
+    from: auth.from,
+    to: auth.witness.to,
+    value: BigInt(auth.permitted.amount),
+  };
 }

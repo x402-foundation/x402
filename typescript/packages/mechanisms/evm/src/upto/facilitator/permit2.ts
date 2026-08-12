@@ -501,7 +501,13 @@ async function settleUptoWithEIP2612(
       dataSuffix,
     });
 
-    const response = await waitAndReturnSettleResponse(signer, tx, payload, payer);
+    const response = await waitAndReturnSettleResponse(
+      signer,
+      tx,
+      payload,
+      payer,
+      uptoExpectedTransfer(permit2Payload, settlementAmount),
+    );
     return { ...response, amount: settlementAmount.toString() };
   } catch (error) {
     return mapSettleError(error, payload, payer);
@@ -556,6 +562,7 @@ async function settleUptoWithERC20Approval(
       settleTxHash,
       payload,
       payer,
+      uptoExpectedTransfer(permit2Payload, settlementAmount),
     );
     return { ...response, amount: settlementAmount.toString() };
   } catch (error) {
@@ -592,9 +599,41 @@ async function settleUptoDirect(
       dataSuffix,
     });
 
-    const response = await waitAndReturnSettleResponse(signer, tx, payload, payer);
+    const response = await waitAndReturnSettleResponse(
+      signer,
+      tx,
+      payload,
+      payer,
+      uptoExpectedTransfer(permit2Payload, settlementAmount),
+    );
     return { ...response, amount: settlementAmount.toString() };
   } catch (error) {
     return mapSettleError(error, payload, payer);
   }
+}
+
+/**
+ * Derives the Transfer event an upto Permit2 settlement must emit: the actual
+ * settlement amount (not the permitted max) from the payer to the witness recipient.
+ *
+ * @param permit2Payload - The upto Permit2 payload with the authorization
+ * @param settlementAmount - The amount actually settled on-chain
+ * @returns The expected Transfer event fields for receipt verification
+ */
+function uptoExpectedTransfer(
+  permit2Payload: UptoPermit2Payload,
+  settlementAmount: bigint,
+): {
+  asset: `0x${string}`;
+  from: `0x${string}`;
+  to: `0x${string}`;
+  value: bigint;
+} {
+  const auth = permit2Payload.permit2Authorization;
+  return {
+    asset: auth.permitted.token,
+    from: auth.from,
+    to: auth.witness.to,
+    value: settlementAmount,
+  };
 }

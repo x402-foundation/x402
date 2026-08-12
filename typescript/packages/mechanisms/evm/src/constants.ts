@@ -15,6 +15,24 @@ export const authorizationTypes = {
  * Must match the exact format expected by the Permit2 contract.
  * Note: Types must be in ALPHABETICAL order after the primary type (TokenPermissions < Witness).
  */
+/**
+ * Minimal ERC-20 Transfer event ABI, used to verify settlement receipts actually
+ * transferred the expected asset/amount to the expected recipient (receipt status
+ * alone only proves the transaction did not revert).
+ */
+export const erc20TransferEventAbi = [
+  {
+    type: "event",
+    name: "Transfer",
+    anonymous: false,
+    inputs: [
+      { name: "from", type: "address", indexed: true },
+      { name: "to", type: "address", indexed: true },
+      { name: "value", type: "uint256", indexed: false },
+    ],
+  },
+] as const;
+
 export const permit2WitnessTypes = {
   PermitWitnessTransferFrom: [
     { name: "permitted", type: "TokenPermissions" },
