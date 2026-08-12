@@ -31,17 +31,36 @@ Every settle hook receives a `phase` field on its context indicating which settl
 
 The `escrow` payment flow settles twice — once before the handler and once after — so `onBeforeSettle`, `onAfterSettle`, `onSettleFailure`, and `enrichSettlementPayload` / `enrichSettlementResponse` each fire once per settle. If your hook has side effects that must not run twice (for example, sending a receipt email), branch on `context.phase`:
 
-```typescript
-server.onAfterSettle(async (context) => {
-  // Only send receipt on the final charge, not the escrow deposit
-  if (context.phase !== "after-handler") return;
+<Tabs>
+  <Tab title="TypeScript">
+    ```typescript
+    server.onAfterSettle(async (context) => {
+      // Only send receipt on the final charge, not the escrow deposit
+      if (context.phase !== "after-handler") return;
 
-  await sendReceipt({
-    transaction: context.result.transaction,
-    payer: context.result.payer,
-  });
-});
-```
+      await sendReceipt({
+        transaction: context.result.transaction,
+        payer: context.result.payer,
+      });
+    });
+    ```
+  </Tab>
+  <Tab title="Go">
+    ```go
+    server.OnAfterSettle(func(ctx x402.SettleResultContext) error {
+        // Only send receipt on the final charge, not the escrow deposit
+        if ctx.Phase != x402.SettlePhaseAfterHandler {
+            return nil
+        }
+
+        return sendReceipt(Receipt{
+            Transaction: ctx.Result.Transaction,
+            Payer:       ctx.Result.Payer,
+        })
+    })
+    ```
+  </Tab>
+</Tabs>
 
 These server-level hooks run for every payment regardless of which extensions are active. Extensions and schemes can also contribute lifecycle hook adapters that run only when their extension key or scheme/network is used. See [Extensions Overview](/extensions/overview) for extension-level behavior.
 
