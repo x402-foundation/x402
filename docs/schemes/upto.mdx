@@ -12,7 +12,7 @@ Use `upto` for one-request usage metering, such as LLM token generation, bandwid
 Set the route `price` to the maximum authorized amount. In the handler, use settlement overrides to charge the actual amount.
 
 <Tabs>
-  <Tab title="TypeScript">
+  <Tab title="TypeScript (EVM)">
     ```typescript
     import { paymentMiddleware, setSettlementOverrides, x402ResourceServer } from "@x402/express";
     import { UptoEvmScheme } from "@x402/evm/upto/server";
@@ -27,6 +27,46 @@ Set the route `price` to the maximum authorized amount. In the handler, use sett
           price: "$0.10",
           network: "eip155:84532",
           payTo: "0xYourAddress",
+        },
+        description: "AI text generation billed by usage",
+      },
+    }, resourceServer));
+
+    app.get("/api/generate", (req, res) => {
+      const actualUsage = computeActualCost();
+      setSettlementOverrides(res, { amount: String(actualUsage) });
+      res.json({ result: "..." });
+    });
+    ```
+  </Tab>
+  <Tab title="TypeScript (SVM)">
+    ```typescript
+    import { base58 } from "@scure/base";
+    import { createKeyPairSignerFromBytes } from "@solana/kit";
+    import { paymentMiddleware, setSettlementOverrides, x402ResourceServer } from "@x402/express";
+    import { UptoSvmScheme } from "@x402/svm/upto/server";
+    import { HTTPFacilitatorClient } from "@x402/core/server";
+
+    const receiverAuthorizerSigner = await createKeyPairSignerFromBytes(
+      base58.decode(process.env.SVM_RECEIVER_AUTHORIZER_PRIVATE_KEY),
+    );
+
+    const resourceServer = new x402ResourceServer(facilitatorClient)
+      .register(
+        "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1",
+        new UptoSvmScheme({
+          receiverAuthorizerSigner,
+          rpcUrl: process.env.SVM_RPC_URL, // optional: embeds recentBlockhash in 402
+        }),
+      );
+
+    app.use(paymentMiddleware({
+      "GET /api/generate": {
+        accepts: {
+          scheme: "upto",
+          price: "$0.10",
+          network: "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1",
+          payTo: "YourSolanaAddress",
         },
         description: "AI text generation billed by usage",
       },
