@@ -8,6 +8,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/ethereum/go-ethereum/accounts/abi"
+	"github.com/ethereum/go-ethereum/common"
+	goethtypes "github.com/ethereum/go-ethereum/core/types"
 	x402 "github.com/x402-foundation/x402/go/v2"
 	"github.com/x402-foundation/x402/go/v2/extensions/eip2612gassponsor"
 	"github.com/x402-foundation/x402/go/v2/extensions/erc20approvalgassponsor"
@@ -371,6 +374,25 @@ func SettleUptoPermit2(
 		return nil, x402.NewSettleError(ErrUptoTransactionFailed, payer, network, txHash, "")
 	}
 
+	// Receipt status only proves the tx did not revert. When logs are present,
+	// require the expected ERC-20 Transfer event (payer -> witness.to of the
+	// actual settlement amount) so a deflationary/misbehaving token cannot
+	// yield success while the payee received less (or nothing) (same
+	// post-settle check the eip3009 and exact permit2 paths perform).
+	if receipt.Logs != nil {
+		transferMatched, err := verifyUptoTransferEvent(receipt.Logs, common.HexToAddress(permit2Payload.Permit2Authorization.Permitted.Token), expectedUptoTransferEvent{
+			From:  common.HexToAddress(permit2Payload.Permit2Authorization.From),
+			To:    common.HexToAddress(permit2Payload.Permit2Authorization.Witness.To),
+			Value: settlementAmount,
+		})
+		if err != nil {
+			return nil, x402.NewSettleError(ErrUptoTransferEventMismatch, payer, network, txHash, err.Error())
+		}
+		if !transferMatched {
+			return nil, x402.NewSettleError(ErrUptoTransferEventMismatch, payer, network, txHash, "")
+		}
+	}
+
 	return &x402.SettleResponse{
 		Success:     true,
 		Transaction: txHash,
@@ -378,6 +400,54 @@ func SettleUptoPermit2(
 		Payer:       verifyResp.Payer,
 		Amount:      settlementAmount.String(),
 	}, nil
+}
+
+type expectedUptoTransferEvent struct {
+	From  common.Address
+	To    common.Address
+	Value *big.Int
+}
+
+// verifyUptoTransferEvent checks for a matching ERC-20 Transfer event in receipt logs.
+func verifyUptoTransferEvent(
+	logs []*goethtypes.Log,
+	tokenAddress common.Address,
+	expected expectedUptoTransferEvent,
+) (bool, error) {
+	contractABI, err := abi.JSON(strings.NewReader(string(evm.ERC20TransferEventABI)))
+	if err != nil {
+		return false, fmt.Errorf("parse transfer event ABI: %w", err)
+	}
+
+	transferEvent := contractABI.Events["Transfer"]
+	for _, receiptLog := range logs {
+		if receiptLog == nil ||
+			receiptLog.Address != tokenAddress ||
+			len(receiptLog.Topics) != 3 ||
+			receiptLog.Topics[0] != transferEvent.ID {
+			continue
+		}
+
+		values, err := contractABI.Unpack("Transfer", receiptLog.Data)
+		if err != nil {
+			continue
+		}
+		if len(values) != 1 {
+			continue
+		}
+		value, ok := values[0].(*big.Int)
+		if !ok {
+			continue
+		}
+
+		from := common.BytesToAddress(receiptLog.Topics[1].Bytes())
+		to := common.BytesToAddress(receiptLog.Topics[2].Bytes())
+		if from == expected.From && to == expected.To && value.Cmp(expected.Value) == 0 {
+			return true, nil
+		}
+	}
+
+	return false, nil
 }
 
 func verifyUptoPermit2Signature(
