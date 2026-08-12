@@ -117,7 +117,7 @@ client must authorize at verification, and the actual amount to charge at settle
   "maxTimeoutSeconds": 300,
   "extra": {
     "areFeesSponsored": false,
-    "minSettleDelay": 60,
+    "minSettleDelay": 600,
     "validAfter": 1754136000
   }
 }
@@ -135,7 +135,7 @@ client must authorize at verification, and the actual amount to charge at settle
   "maxTimeoutSeconds": 300,
   "extra": {
     "areFeesSponsored": false,
-    "minSettleDelay": 60,
+    "minSettleDelay": 600,
     "validAfter": 1754136000
   }
 }
@@ -165,7 +165,7 @@ client must authorize at verification, and the actual amount to charge at settle
     "maxTimeoutSeconds": 300,
     "extra": {
       "areFeesSponsored": false,
-      "minSettleDelay": 60,
+      "minSettleDelay": 600,
       "validAfter": 1754136000
     }
   },
@@ -249,10 +249,15 @@ simulation by establishing that a claim against this channel would succeed.
    `PaymentChannelFund` can raise `Amount` at any time and the signed claim, not the
    deposit, is what caps settlement.
 5. **Claim signature** - `payload.publicKey` equals `PayChannel.PublicKey`, and
-   `payload.signature` verifies over `(channelId, maxAmount)` against it. This MUST be
-   checked here rather than deferred to the ledger: a resource server that trusts
-   `/verify` runs its metered work before `/settle` is called, so an unverified
-   authorization lets a client obtain the metered work for free.
+   `payload.signature` verifies against it over the claim signing message: the four-byte
+   hash prefix `CLM\0` (`0x434C4D00`), the 32-byte channel id, and `maxAmount` as a
+   big-endian unsigned 64-bit drops value, concatenated in that order. rippled's
+   `channel_verify` RPC and xrpl.js `verifyPaymentChannelClaim` are reference verifiers
+   of this message; note that `channel_verify` takes the amount in drops while
+   `verifyPaymentChannelClaim` takes XRP and converts. The check MUST run here rather
+   than be deferred to the ledger: a resource server that trusts `/verify` runs its
+   metered work before `/settle` is called, so an unverified authorization lets a
+   client obtain the metered work for free.
    For a secp256k1 key the signature MUST be fully canonical (low-`s`). XRPL signing
    produces canonical signatures, and rippled rejects a non-canonical claim signature, so
    a facilitator verifying with a generic library MUST enforce this rather than assume it.
@@ -263,17 +268,43 @@ simulation by establishing that a claim against this channel would succeed.
    one claim can settle, so the payer obtains the other work free. The
    duplicate-settlement guard below protects settlement only, not this window. A
    resource server SHOULD NOT run metered work concurrently against one channel id.
+
+   A facilitator SHOULD also keep an advisory in-flight entry on `(network, channelId)`,
+   checked and taken atomically when verification succeeds, and refuse a verification
+   that finds a live entry. Once a settlement attempt arrives the entry follows the
+   release rules of the duplicate-settlement entry below, whose verify-side twin it is;
+   if none arrives, it expires `maxTimeoutSeconds` plus the landing margin of rule 7
+   after verification. It sees only one facilitator's traffic: two payments verifying
+   through different facilitators still pass, so the resource-server rule above remains
+   the primary control.
 7. **Time bound** - `PayChannel.CancelAfter` is present and at least
    `maxTimeoutSeconds` plus a landing margin beyond the validated ledger's close time,
-   `PayChannel.Expiration` is unset, and `PayChannel.SettleDelay` is at least that margin
-   and at least `extra.minSettleDelay`. If `extra.validAfter` is present the payment MUST
+   `PayChannel.Expiration` is unset, and `PayChannel.SettleDelay` is at least
+   `maxTimeoutSeconds` plus that margin, and at least `extra.minSettleDelay`.
+   `SettleDelay` must cover the work as well as the landing: a shorter delay would let
+   the payer schedule a close mid-work and expire the channel under the claim the work
+   has earned, the same free close an expired `CancelAfter` produces.
+   If `extra.validAfter` is present the payment MUST
    be rejected while the ledger close time is before it. Time is compared against the
    validated ledger's `close_time`, not the facilitator's wall clock, because
    `CancelAfter` is expressed on the ledger's clock; `validAfter` is Unix seconds and MUST
    be converted.
 
+   `CancelAfter` is required as the authorization's end bound, not as payer
+   protection: the payer can always schedule its own exit, since a source-initiated
+   `tfClose` sets `Expiration` to `SettleDelay` from now, but without `CancelAfter`
+   the signed claim stays redeemable indefinitely, and
+   [`scheme_upto.md`](./scheme_upto.md) requires explicit time bounds on every
+   authorization and places open-ended allowances out of scope. The cost of
+   carrying the bound is the expired-channel close described under
+   [Settlement](#settlement), which the settle-time headroom re-check exists to
+   catch.
+
    The landing margin covers the ledgers a settlement takes to land, and is fixed at
-   **20 seconds**: two ledger closes at a pessimistic 10-second rate. A facilitator
+   **20 seconds**: two ledger closes at a pessimistic 10-second rate. The margin is an
+   admission floor, not a landing guarantee: degraded consensus can close ledgers more
+   slowly than it assumes, and the settlement transaction's `LastLedgerSequence` window
+   is what bounds the actual wait. A facilitator
    MUST NOT demand more headroom than this rule states, so that a channel built
    against the spec verifies against any facilitator. A client SHOULD budget slack beyond the
    minimum, since the bound is checked against the close time when `/verify` runs, not
@@ -491,6 +522,8 @@ plus the owner reserve held while the channel is open.
 
 **Invoice binding.** `PaymentChannelClaim` has no `InvoiceID` field, so a payment is bound
 by channel identity rather than on-ledger, unlike `exact`'s `invoiceId`.
+`PaymentChannelCreate` does accept a `DestinationTag`, fixed at creation and visible on
+the channel, but at 32 bits it can label a payment, not carry an invoice hash.
 
 ## References
 
