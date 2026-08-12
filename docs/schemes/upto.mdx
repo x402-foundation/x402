@@ -235,17 +235,46 @@ Setting the amount to `"0"` means no charge for that request.
 
 ### EVM Implementation
 
-`upto` uses Permit2 because the settled amount is not known when the buyer signs. The facilitator advertises a `facilitatorAddress` in the payment requirements, and the client binds the authorization to that facilitator.
+`upto` on EVM uses Permit2 because the settled amount is not known when the buyer signs. The facilitator advertises a `facilitatorAddress` in the payment requirements, and the client binds the authorization to that facilitator.
+
+### SVM Implementation
+
+`upto` on Solana uses the [payment-channels program](https://github.com/solana-foundation/payment-channels). The client escrows the ceiling amount in an onchain channel (`open`), and the server settles the actual amount with a signed voucher (`settle_and_seal` + `distribute`). The facilitator sponsors transaction fees and channel rent as a zero-share channel payee, and can always close abandoned channels to recover rent.
+
+The server must supply a `receiverAuthorizerSigner` — a hot key that signs settlement vouchers after metering. This key does not need to hold SOL or tokens.
+
+For custom facilitator implementations, use `UptoSvmScheme` from `@x402/svm/upto/facilitator`. The facilitator's `createRentCleanupManager()` method returns a manager that asynchronously seals and reclaims rent from abandoned channels:
+
+```typescript
+import { toFacilitatorSvmSigner } from "@x402/svm";
+import { UptoSvmScheme } from "@x402/svm/upto/facilitator";
+
+const svmSigner = toFacilitatorSvmSigner(keypair);
+const svmUptoScheme = new UptoSvmScheme(svmSigner, {
+  rpcUrl: process.env.SVM_RPC_URL,
+  maxChannelLifetimeSecs: 3600,
+});
+
+facilitator.register("solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1", svmUptoScheme);
+
+// Reclaim PDA rent from sealed/distributed channels
+const rentCleanup = svmUptoScheme.createRentCleanupManager(
+  "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1",
+);
+rentCleanup.start({ intervalSecs: 60 });
+```
 
 ### Examples
 
-* [TypeScript server example](https://github.com/x402-foundation/x402/tree/main/examples/typescript/servers/upto)
+* [TypeScript server example (EVM + SVM)](https://github.com/x402-foundation/x402/tree/main/examples/typescript/servers/upto)
+* [TypeScript facilitator example (EVM + SVM)](https://github.com/x402-foundation/x402/tree/main/examples/typescript/facilitator/upto)
 * [Go server example](https://github.com/x402-foundation/x402/tree/main/examples/go/servers/upto)
 
 ### Specs
 
 * [`upto` spec](https://github.com/x402-foundation/x402/blob/main/specs/schemes/upto/scheme_upto.md)
 * [`upto` EVM spec](https://github.com/x402-foundation/x402/blob/main/specs/schemes/upto/scheme_upto_evm.md)
+* [`upto` SVM spec](https://github.com/x402-foundation/x402/blob/main/specs/schemes/upto/scheme_upto_svm.md)
 
 ### See Also
 
