@@ -6,11 +6,11 @@ The **exact** scheme is the default x402 payment scheme for EVM networks. The cl
 
 | Role | Import |
 |------|--------|
-| Client | `github.com/x402-foundation/x402/go/mechanisms/evm/exact/client` |
-| Server | `github.com/x402-foundation/x402/go/mechanisms/evm/exact/server` |
-| Facilitator | `github.com/x402-foundation/x402/go/mechanisms/evm/exact/facilitator` |
-| Client (V1 legacy) | `github.com/x402-foundation/x402/go/mechanisms/evm/exact/v1/client` |
-| Facilitator (V1 legacy) | `github.com/x402-foundation/x402/go/mechanisms/evm/exact/v1/facilitator` |
+| Client | `github.com/x402-foundation/x402/go/v2/mechanisms/evm/exact/client` |
+| Server | `github.com/x402-foundation/x402/go/v2/mechanisms/evm/exact/server` |
+| Facilitator | `github.com/x402-foundation/x402/go/v2/mechanisms/evm/exact/facilitator` |
+| Client (V1 legacy) | `github.com/x402-foundation/x402/go/v2/mechanisms/evm/exact/v1/client` |
+| Facilitator (V1 legacy) | `github.com/x402-foundation/x402/go/v2/mechanisms/evm/exact/v1/facilitator` |
 
 ## Client Usage
 
@@ -18,9 +18,9 @@ Create an `ExactEvmScheme` and register it with an `x402Client` to automatically
 
 ```go
 import (
-    x402 "github.com/x402-foundation/x402/go"
-    exactevm "github.com/x402-foundation/x402/go/mechanisms/evm/exact/client"
-    evmsigners "github.com/x402-foundation/x402/go/signers/evm"
+    x402 "github.com/x402-foundation/x402/go/v2"
+    exactevm "github.com/x402-foundation/x402/go/v2/mechanisms/evm/exact/client"
+    evmsigners "github.com/x402-foundation/x402/go/v2/signers/evm"
 )
 
 evmSigner, err := evmsigners.NewClientSignerFromPrivateKey(os.Getenv("EVM_PRIVATE_KEY"))
@@ -35,9 +35,9 @@ Register `ExactEvmScheme` with middleware to protect routes with fixed-price pay
 
 ```go
 import (
-    x402http "github.com/x402-foundation/x402/go/http"
-    ginmw "github.com/x402-foundation/x402/go/http/gin"
-    exactevm "github.com/x402-foundation/x402/go/mechanisms/evm/exact/server"
+    x402http "github.com/x402-foundation/x402/go/v2/http"
+    ginmw "github.com/x402-foundation/x402/go/v2/http/gin"
+    exactevm "github.com/x402-foundation/x402/go/v2/mechanisms/evm/exact/server"
 )
 
 r.Use(ginmw.X402Payment(ginmw.Config{
@@ -66,7 +66,7 @@ For custom facilitator implementations:
 
 ```go
 import (
-    exactevm "github.com/x402-foundation/x402/go/mechanisms/evm/exact/facilitator"
+    exactevm "github.com/x402-foundation/x402/go/v2/mechanisms/evm/exact/facilitator"
 )
 
 scheme := exactevm.NewExactEvmScheme(config)
@@ -102,7 +102,7 @@ The preferred path. If the payment token supports [EIP-2612](https://eips.ethere
 
 ```go
 import (
-    "github.com/x402-foundation/x402/go/extensions/eip2612gassponsor"
+    "github.com/x402-foundation/x402/go/v2/extensions/eip2612gassponsor"
 )
 
 routes := x402http.RoutesConfig{
@@ -126,7 +126,7 @@ routes := x402http.RoutesConfig{
 
 ```go
 import (
-    "github.com/x402-foundation/x402/go/extensions/eip2612gassponsor"
+    "github.com/x402-foundation/x402/go/v2/extensions/eip2612gassponsor"
 )
 
 facilitator.RegisterExtension(eip2612gassponsor.EIP2612GasSponsoring)
@@ -140,7 +140,7 @@ Fallback for tokens that **do not** support EIP-2612. The client signs a raw ERC
 
 ```go
 import (
-    "github.com/x402-foundation/x402/go/extensions/erc20approvalgassponsor"
+    "github.com/x402-foundation/x402/go/v2/extensions/erc20approvalgassponsor"
 )
 
 routes := x402http.RoutesConfig{
@@ -157,7 +157,7 @@ routes := x402http.RoutesConfig{
 
 ```go
 import (
-    "github.com/x402-foundation/x402/go/extensions/erc20approvalgassponsor"
+    "github.com/x402-foundation/x402/go/v2/extensions/erc20approvalgassponsor"
 )
 
 erc20Ext := &erc20approvalgassponsor.Erc20ApprovalFacilitatorExtension{Signer: evmSigner}

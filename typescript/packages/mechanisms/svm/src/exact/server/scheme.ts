@@ -1,19 +1,57 @@
 import type {
   AssetAmount,
   Network,
+  PaymentFlowConfig,
   PaymentRequirements,
   Price,
   SchemeNetworkServer,
   MoneyParser,
 } from "@x402/core/types";
-import { convertToTokenAmount, getUsdcAddress, numberToDecimalString } from "../../utils";
+import { parseMoneyString } from "@x402/core/utils";
+import {
+  convertToTokenAmount,
+  createRpcClient,
+  getStablecoinAddress,
+  numberToDecimalString,
+} from "../../utils";
+import type { SvmStablecoinSymbol } from "../../constants";
+
+/** Options for the server-side {@link ExactSvmScheme}. */
+export interface ExactSvmServerOptions {
+  /**
+   * RPC endpoint used to fetch a recent blockhash to embed in the 402
+   * challenge (`extra.recentBlockhash`). When omitted, no blockhash is embedded
+   * and the client fetches its own — see {@link import('../../utils').resolveBlockhash}.
+   */
+  rpcUrl?: string;
+}
+
+type ParsedMoney = {
+  amount: number;
+  stablecoin?: SvmStablecoinSymbol;
+};
+
+const PRICE_STABLECOINS = new Set(["USDC", "USDT", "USDG", "PYUSD", "CASH"]);
 
 /**
  * SVM server implementation for the Exact payment scheme.
  */
 export class ExactSvmScheme implements SchemeNetworkServer {
   readonly scheme = "exact";
+  readonly defaultAssetTransferMethod = "default";
+  readonly paymentFlows = {
+    default: { supported: ["authorization"], default: "authorization" },
+  } as const satisfies Record<string, PaymentFlowConfig>;
+  readonly dynamicExtraFields = ["recentBlockhash", "lastValidBlockHeight"];
   private moneyParsers: MoneyParser[] = [];
+
+  /**
+   * Construct the server-side exact scheme.
+   *
+   * @param options - Optional server configuration (e.g. an `rpcUrl` to embed a
+   *   recent blockhash in the challenge).
+   */
+  constructor(private readonly options: ExactSvmServerOptions = {}) {}
 
   /**
    * Register a custom money parser in the parser chain.
@@ -54,7 +92,7 @@ export class ExactSvmScheme implements SchemeNetworkServer {
     }
 
     // Parse Money to decimal number
-    const amount = this.parseMoneyToDecimal(price);
+    const { amount, stablecoin } = this.parseMoney(price);
 
     // Try each custom money parser in order
     for (const parser of this.moneyParsers) {
@@ -65,7 +103,7 @@ export class ExactSvmScheme implements SchemeNetworkServer {
     }
 
     // All custom parsers returned null, use default conversion
-    return this.defaultMoneyConversion(amount, network);
+    return this.defaultMoneyConversion(amount, network, stablecoin);
   }
 
   /**
@@ -80,7 +118,7 @@ export class ExactSvmScheme implements SchemeNetworkServer {
    * @param extensionKeys - Extension keys supported by the facilitator
    * @returns Enhanced payment requirements with feePayer in extra
    */
-  enhancePaymentRequirements(
+  async enhancePaymentRequirements(
     paymentRequirements: PaymentRequirements,
     supportedKind: {
       x402Version: number;
@@ -93,15 +131,29 @@ export class ExactSvmScheme implements SchemeNetworkServer {
     // Mark unused parameters to satisfy linter
     void extensionKeys;
 
-    // Add feePayer from supportedKind.extra to payment requirements
-    // The facilitator provides its address as the fee payer for transaction fees
-    return Promise.resolve({
-      ...paymentRequirements,
-      extra: {
-        ...paymentRequirements.extra,
-        feePayer: supportedKind.extra?.feePayer,
-      },
-    });
+    const extra: Record<string, unknown> = {
+      ...paymentRequirements.extra,
+      // The facilitator provides its address as the fee payer for transaction fees.
+      feePayer: supportedKind.extra?.feePayer,
+    };
+
+    // When an RPC is configured, embed a fresh blockhash in the challenge so
+    // the client can build its transaction without its own RPC round-trip and
+    // against the same RPC that will settle it. The client reads it via
+    // `resolveBlockhash`. Best-effort: on failure the field is omitted and the
+    // client falls back to fetching its own.
+    if (this.options.rpcUrl) {
+      try {
+        const rpc = createRpcClient(supportedKind.network, this.options.rpcUrl);
+        const { value } = await rpc.getLatestBlockhash().send();
+        extra.recentBlockhash = value.blockhash;
+        extra.lastValidBlockHeight = value.lastValidBlockHeight.toString();
+      } catch {
+        // Leave the blockhash out; the client resolves one itself.
+      }
+    }
+
+    return { ...paymentRequirements, extra };
   }
 
   /**
@@ -111,37 +163,51 @@ export class ExactSvmScheme implements SchemeNetworkServer {
    * @param money - The money value to parse
    * @returns Decimal number
    */
-  private parseMoneyToDecimal(money: string | number): number {
+  private parseMoney(money: string | number): ParsedMoney {
     if (typeof money === "number") {
-      return money;
+      return { amount: money };
     }
 
-    // Remove $ sign and whitespace, then parse
-    const cleanMoney = money.replace(/^\$/, "").trim();
-    const amount = parseFloat(cleanMoney);
+    // Detect an optional trailing currency suffix (USD/USDC or another
+    // supported stablecoin), strip it, then parse the numeric part via the
+    // shared core parser ($-prefix + plain-decimal validation).
+    const numeric = money.replace(/\s+[A-Za-z][A-Za-z0-9]*\s*$/, "");
+    const suffix = money
+      .trim()
+      .match(/[A-Za-z][A-Za-z0-9]*$/)?.[0]
+      ?.toUpperCase();
+    const amount = parseMoneyString(numeric);
 
-    if (isNaN(amount)) {
-      throw new Error(`Invalid money format: ${money}`);
+    if (suffix === "USD") {
+      return { amount, stablecoin: "USDC" };
+    }
+    if (suffix && PRICE_STABLECOINS.has(suffix)) {
+      return { amount, stablecoin: suffix as SvmStablecoinSymbol };
     }
 
-    return amount;
+    return { amount };
   }
 
   /**
    * Default money conversion implementation.
-   * Converts decimal amount to USDC on the specified network.
+   * Converts decimal amount to a supported stablecoin on the specified network.
    *
    * @param amount - The decimal amount (e.g., 1.50)
    * @param network - The network to use
-   * @returns The parsed asset amount in USDC
+   * @param stablecoin - Stablecoin symbol to use; defaults to USDC
+   * @returns The parsed asset amount
    */
-  private defaultMoneyConversion(amount: number, network: Network): AssetAmount {
-    // Convert decimal amount to token amount (USDC has 6 decimals)
+  private defaultMoneyConversion(
+    amount: number,
+    network: Network,
+    stablecoin: SvmStablecoinSymbol = "USDC",
+  ): AssetAmount {
+    // Supported stablecoins in this SDK use 6 decimals.
     const tokenAmount = convertToTokenAmount(numberToDecimalString(amount), 6);
 
     return {
       amount: tokenAmount,
-      asset: getUsdcAddress(network),
+      asset: getStablecoinAddress(stablecoin, network),
       extra: {},
     };
   }

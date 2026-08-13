@@ -1,30 +1,40 @@
 import http from "node:http";
+import {
+  catalogNetworkIds,
+  networkCaip2Pattern,
+  resolveNetworkCaip2,
+} from "./catalog-network.ts";
 
 /**
  * Mock facilitator that claims to support all schemes/networks but errors
  * if verify or settle are actually called. Used as a fallback facilitator
  * during e2e testing so that servers with routes unsupported by the real
- * facilitator (e.g. "upto" on Go/Python facilitators) can still start.
+ * facilitator (e.g. "upto" on Go/Python facilitators, SVM "upto" on Go/Python)
+ * can still start.
  *
  * The real facilitator is always first in the client array and handles
  * all actual operations. This mock only fills validation gaps at startup.
  */
 
 const PORT = parseInt(process.env.PORT || "4099", 10);
-const EVM_NETWORK = process.env.EVM_NETWORK || "eip155:84532";
-const SVM_NETWORK = process.env.SVM_NETWORK || "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1";
-const APTOS_NETWORK = process.env.APTOS_NETWORK || "aptos:2";
-const STELLAR_NETWORK = process.env.STELLAR_NETWORK || "stellar:testnet";
 
-const DUMMY_EVM_SIGNER = "0x0000000000000000000000000000000000000001";
-const DUMMY_SVM_SIGNER = "11111111111111111111111111111111";
-const DUMMY_APTOS_SIGNER =
-  "0x0000000000000000000000000000000000000000000000000000000000000001";
-const DUMMY_STELLAR_SIGNER = "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF";
+const DUMMY_SIGNERS: Record<string, string[]> = {
+  evm: ["0x0000000000000000000000000000000000000001"],
+  svm: ["11111111111111111111111111111111"],
+  aptos: ["0x0000000000000000000000000000000000000000000000000000000000000001"],
+  stellar: ["GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF"],
+  near: ["relayer.testnet"],
+  xrpl: [],
+};
 
 function buildSupportedResponse() {
-  const evmSchemes = ["exact", "upto"];
-  const otherSchemes = ["exact"];
+  const networkIds = catalogNetworkIds();
+  const schemesForNetwork = (networkId: string): string[] => {
+    if (networkId === "evm" || networkId === "svm") {
+      return ["exact", "upto"];
+    }
+    return ["exact"];
+  };
   const versions = [1, 2];
 
   const kinds: Array<{
@@ -34,33 +44,19 @@ function buildSupportedResponse() {
   }> = [];
 
   for (const version of versions) {
-    for (const scheme of evmSchemes) {
-      kinds.push({ x402Version: version, scheme, network: EVM_NETWORK });
-    }
-    for (const scheme of otherSchemes) {
-      kinds.push({ x402Version: version, scheme, network: SVM_NETWORK });
-    }
-    if (APTOS_NETWORK) {
-      for (const scheme of otherSchemes) {
-        kinds.push({ x402Version: version, scheme, network: APTOS_NETWORK });
-      }
-    }
-    if (STELLAR_NETWORK) {
-      for (const scheme of otherSchemes) {
-        kinds.push({ x402Version: version, scheme, network: STELLAR_NETWORK });
+    for (const networkId of networkIds) {
+      const caip2 = resolveNetworkCaip2(networkId);
+      const schemes = schemesForNetwork(networkId);
+      for (const scheme of schemes) {
+        kinds.push({ x402Version: version, scheme, network: caip2 });
       }
     }
   }
 
-  const signers: Record<string, string[]> = {
-    "eip155:*": [DUMMY_EVM_SIGNER],
-    "solana:*": [DUMMY_SVM_SIGNER],
-  };
-  if (APTOS_NETWORK) {
-    signers["aptos:*"] = [DUMMY_APTOS_SIGNER];
-  }
-  if (STELLAR_NETWORK) {
-    signers["stellar:*"] = [DUMMY_STELLAR_SIGNER];
+  const signers: Record<string, string[]> = {};
+  for (const networkId of networkIds) {
+    const pattern = networkCaip2Pattern(networkId);
+    signers[pattern] = DUMMY_SIGNERS[networkId] ?? [];
   }
 
   return { kinds, extensions: [], signers };
@@ -74,6 +70,27 @@ function sendJson(res: http.ServerResponse, statusCode: number, body: unknown) {
 
 const supportedResponse = buildSupportedResponse();
 
+let shuttingDown = false;
+
+function shutdown() {
+  if (shuttingDown) {
+    return;
+  }
+
+  shuttingDown = true;
+  const forceExitTimeout = setTimeout(() => process.exit(1), 5_000);
+  forceExitTimeout.unref();
+
+  server.close(error => {
+    clearTimeout(forceExitTimeout);
+    if (error) {
+      console.error("Failed to close mock facilitator:", error);
+      process.exit(1);
+    }
+    process.exit(0);
+  });
+}
+
 const server = http.createServer((req, res) => {
   const url = new URL(req.url || "/", `http://localhost:${PORT}`);
 
@@ -84,6 +101,12 @@ const server = http.createServer((req, res) => {
 
   if (req.method === "GET" && url.pathname === "/health") {
     sendJson(res, 200, { status: "ok" });
+    return;
+  }
+
+  if (req.method === "POST" && url.pathname === "/close") {
+    sendJson(res, 200, { status: "shutting down" });
+    setImmediate(shutdown);
     return;
   }
 
@@ -110,3 +133,6 @@ server.listen(PORT, () => {
   console.log(`Mock facilitator listening on port ${PORT}`);
   console.log("Facilitator listening");
 });
+
+process.on("SIGTERM", shutdown);
+process.on("SIGINT", shutdown);

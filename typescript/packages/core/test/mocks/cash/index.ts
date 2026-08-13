@@ -6,6 +6,7 @@ import {
   VerifyResponse,
 } from "../../../../src/types/facilitator";
 import {
+  PaymentFlowConfig,
   SchemeNetworkClient,
   SchemeNetworkFacilitator,
   SchemeNetworkServer,
@@ -162,6 +163,10 @@ export function buildCashPaymentRequirements(
  */
 export class CashSchemeNetworkServer implements SchemeNetworkServer {
   readonly scheme = "cash";
+  readonly defaultAssetTransferMethod = "default";
+  readonly paymentFlows: Readonly<Record<string, PaymentFlowConfig>> = {
+    default: { supported: ["authorization"], default: "authorization" },
+  };
 
   /**
    * Parses a price into asset amount format.
@@ -235,6 +240,32 @@ export class CashSchemeNetworkServer implements SchemeNetworkServer {
     void facilitatorExtensions;
     return paymentRequirements;
   }
+}
+
+/**
+ * Cash server that declares the default `authorization` payment flow.
+ * Used by integration tests to prove verify → work → settle wiring.
+ */
+export class MockAuthorizeSchemeNetworkServer extends CashSchemeNetworkServer {}
+
+/**
+ * Cash server that declares the `upfront` payment flow.
+ * Used by integration tests to prove settle → work wiring without a real prepaid scheme.
+ */
+export class MockUpfrontSchemeNetworkServer extends CashSchemeNetworkServer {
+  override readonly paymentFlows = {
+    default: { supported: ["upfront"], default: "upfront" },
+  } as const satisfies Record<string, PaymentFlowConfig>;
+}
+
+/**
+ * Cash server that declares the `escrow` payment flow.
+ * Used by integration tests to prove settle → work → settle wiring without a real escrow scheme.
+ */
+export class MockEscrowSchemeNetworkServer extends CashSchemeNetworkServer {
+  override readonly paymentFlows = {
+    default: { supported: ["escrow"], default: "escrow" },
+  } as const satisfies Record<string, PaymentFlowConfig>;
 }
 
 /**

@@ -18,7 +18,7 @@ import { HTTPFacilitatorClient } from "@x402/core/server";
 
 const app = Fastify();
 
-const facilitatorClient = new HTTPFacilitatorClient({ url: "https://facilitator.x402.org" });
+const facilitatorClient = new HTTPFacilitatorClient({ url: "https://x402.org/facilitator" });
 const resourceServer = new x402ResourceServer(facilitatorClient)
   .register("eip155:84532", new ExactEvmScheme());
 

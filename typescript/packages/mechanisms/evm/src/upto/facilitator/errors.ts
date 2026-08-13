@@ -8,6 +8,9 @@
  * to maintain cross-SDK parity.
  */
 
+// Re-export shared EVM errors
+export { ErrAssetNotDeployedContract } from "../../exact/facilitator/errors";
+
 // Re-export shared Permit2 errors
 export {
   ErrPermit2InvalidSpender,

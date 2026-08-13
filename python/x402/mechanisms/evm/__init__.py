@@ -95,7 +95,6 @@ from .types import (
 from .utils import (
     bytes_to_hex,
     create_nonce,
-    create_validity_window,
     format_amount,
     get_asset_info,
     get_evm_chain_id,
@@ -204,7 +203,6 @@ __all__ = [
     "is_valid_address",
     "parse_amount",
     "format_amount",
-    "create_validity_window",
     "hex_to_bytes",
     "bytes_to_hex",
     "parse_money_to_decimal",

@@ -8,6 +8,7 @@ Note: All protocols are sync-first (matching legacy SDK pattern).
 
 from __future__ import annotations
 
+from collections.abc import Awaitable
 from dataclasses import dataclass
 from typing import Any, Protocol
 
@@ -15,12 +16,29 @@ from .schemas import (
     AssetAmount,
     Network,
     PaymentPayload,
+    PaymentRequired,
     PaymentRequirements,
     PaymentRequirementsV1,
     Price,
+    ResourceInfo,
     SettleResponse,
+    SettleResultContext,
     SupportedKind,
     VerifyResponse,
+)
+from .schemas.hooks import (
+    AbortResult,
+    RecoveredSettleResult,
+    RecoveredVerifyResult,
+    SettleContext,
+    SettleFailureContext,
+    SkipHandlerResult,
+    SkipSettleResult,
+    SkipVerifyResult,
+    VerifiedPaymentCanceledContext,
+    VerifyContext,
+    VerifyFailureContext,
+    VerifyResultContext,
 )
 
 # ============================================================================
@@ -143,6 +161,92 @@ class SchemeNetworkClientV1(Protocol):
 # ============================================================================
 
 
+@dataclass(frozen=True)
+class SchemePaymentRequiredContext:
+    """Context for scheme enrich_payment_required_response hooks."""
+
+    requirements: list[PaymentRequirements]
+    resource_info: ResourceInfo | None
+    error: str | None
+    payment_required_response: PaymentRequired
+    transport_context: Any = None
+    payment_payload: PaymentPayload | None = None
+
+
+class EnrichPaymentRequiredProvider(Protocol):
+    """Optional scheme hook to enrich 402 accepts."""
+
+    def enrich_payment_required_response(
+        self,
+        context: SchemePaymentRequiredContext,
+    ) -> list[PaymentRequirements] | None | Awaitable[list[PaymentRequirements] | None]: ...
+
+
+class EnrichSettlementPayloadProvider(Protocol):
+    """Optional scheme hook to enrich settlement payload before facilitator settle."""
+
+    def enrich_settlement_payload(
+        self,
+        context: SettleContext,
+    ) -> dict[str, Any] | None | Awaitable[dict[str, Any] | None]: ...
+
+
+class EnrichSettlementResponseProvider(Protocol):
+    """Optional scheme hook to enrich settlement response extra fields."""
+
+    def enrich_settlement_response(
+        self,
+        context: SettleResultContext,
+    ) -> dict[str, Any] | None | Awaitable[dict[str, Any] | None]: ...
+
+
+class BeforeVerifyHookProvider(Protocol):
+    def before_verify(
+        self, context: VerifyContext
+    ) -> (
+        AbortResult | SkipVerifyResult | None | Awaitable[AbortResult | SkipVerifyResult | None]
+    ): ...
+
+
+class AfterVerifyHookProvider(Protocol):
+    def after_verify(
+        self, context: VerifyResultContext
+    ) -> (
+        AbortResult | SkipHandlerResult | None | Awaitable[AbortResult | SkipHandlerResult | None]
+    ): ...
+
+
+class OnVerifyFailureHookProvider(Protocol):
+    def on_verify_failure(
+        self, context: VerifyFailureContext
+    ) -> RecoveredVerifyResult | None | Awaitable[RecoveredVerifyResult | None]: ...
+
+
+class BeforeSettleHookProvider(Protocol):
+    def before_settle(
+        self, context: SettleContext
+    ) -> (
+        AbortResult | SkipSettleResult | None | Awaitable[AbortResult | SkipSettleResult | None]
+    ): ...
+
+
+class AfterSettleHookProvider(Protocol):
+    def after_settle(self, context: SettleResultContext) -> None | Awaitable[None]: ...
+
+
+class OnSettleFailureHookProvider(Protocol):
+    def on_settle_failure(
+        self,
+        context: SettleFailureContext,
+    ) -> RecoveredSettleResult | None | Awaitable[RecoveredSettleResult | None]: ...
+
+
+class OnVerifiedPaymentCanceledHookProvider(Protocol):
+    def on_verified_payment_canceled(
+        self, context: VerifiedPaymentCanceledContext
+    ) -> None | Awaitable[None]: ...
+
+
 class SchemeNetworkServer(Protocol):
     """V2 server-side payment mechanism.
 
@@ -208,6 +312,39 @@ class SchemeNetworkServer(Protocol):
 
         Returns:
             Enhanced payment requirements.
+        """
+        ...
+
+
+class FacilitatorSupportValidator(Protocol):
+    """Optional scheme hook to validate facilitator capabilities at startup.
+
+    Schemes that delegate a capability to the facilitator (e.g. batch-settlement
+    delegating the receiver-authorizer role) implement this to fail fast during
+    ``initialize()`` when the facilitator does not advertise that capability. The
+    server discovers it via attribute lookup, so schemes that do not need it can
+    omit the method entirely.
+    """
+
+    def validate_facilitator_support(
+        self,
+        network: Network,
+        supported_kind: SupportedKind,
+        facilitator_extensions: list[str],
+    ) -> str | None:
+        """Validate facilitator capabilities for this scheme/network.
+
+        Invoked during ``initialize()``, only when the facilitator supports the
+        scheme.
+
+        Args:
+            network: The network identifier being validated.
+            supported_kind: The facilitator's advertised kind for this scheme/network.
+            facilitator_extensions: Extensions advertised by the facilitator.
+
+        Returns:
+            A human-readable problem message when the configuration cannot be
+            fulfilled, or None when valid.
         """
         ...
 

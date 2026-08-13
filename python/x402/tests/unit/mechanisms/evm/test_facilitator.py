@@ -13,7 +13,9 @@ except ImportError:
 
 from x402.mechanisms.evm import ERC6492_MAGIC_VALUE, get_network_config
 from x402.mechanisms.evm.constants import (
+    ERR_ASSET_NOT_DEPLOYED_CONTRACT,
     ERR_AUTHORIZATION_VALUE_MISMATCH,
+    ERR_FACTORY_NOT_ALLOWED,
     ERR_INSUFFICIENT_BALANCE,
     ERR_INVALID_SIGNATURE,
     ERR_NONCE_ALREADY_USED,
@@ -187,14 +189,23 @@ class MockFacilitatorSigner:
         addresses: list[str] | None = None,
         typed_data_valid: bool = True,
         code: bytes = b"",
+        code_by_address: dict[str, bytes] | None = None,
         transfer_simulation_should_revert: bool = False,
+        write_should_revert: bool = False,
         multicall_results: list[tuple[bool, bytes]] | None = None,
         deploy_tx_hash: str = "0x" + "12" * 32,
     ):
         self._addresses = addresses or [FACILITATOR]
         self.typed_data_valid = typed_data_valid
         self.code = code
+        # Default: token contract is always a deployed contract so the asset check passes.
+        self._code_by_address: dict[str, bytes] = {
+            TOKEN_ADDRESS.lower(): b"\x60",
+        }
+        if code_by_address:
+            self._code_by_address.update({k.lower(): v for k, v in code_by_address.items()})
         self.transfer_simulation_should_revert = transfer_simulation_should_revert
+        self.write_should_revert = write_should_revert
         self.multicall_results = multicall_results or []
         self.deploy_tx_hash = deploy_tx_hash
         self.transfer_simulation_calls = 0
@@ -214,6 +225,10 @@ class MockFacilitatorSigner:
                 raise RuntimeError("simulation reverted")
             return None
 
+        if function_name == "isValidSignature":
+            # EIP-1271 support: honour typed_data_valid for contract-path verification.
+            return bytes.fromhex("1626ba7e") if self.typed_data_valid else b"\x00\x00\x00\x00"
+
         raise AssertionError(f"unexpected read_contract call: {function_name}")
 
     def verify_typed_data(
@@ -227,8 +242,17 @@ class MockFacilitatorSigner:
     ) -> bool:
         return self.typed_data_valid
 
-    def write_contract(self, address: str, abi: list[dict], function_name: str, *args) -> str:
+    def write_contract(
+        self,
+        address: str,
+        abi: list[dict],
+        function_name: str,
+        *args,
+        data_suffix: str | None = None,
+    ) -> str:
         self.write_calls += 1
+        if self.write_should_revert:
+            raise RuntimeError("execution reverted: invalid signature")
         return "0x" + "34" * 32
 
     def send_transaction(self, to: str, data: bytes) -> str:
@@ -245,6 +269,13 @@ class MockFacilitatorSigner:
         return 8453
 
     def get_code(self, address: str) -> bytes:
+        explicit = self._code_by_address.get(address.lower())
+        if explicit is not None:
+            return explicit
+        # After a factory deployment (send_transaction called), simulate that the
+        # deployed wallet's bytecode is now visible on the node.
+        if self.send_calls > 0 and self.code == b"":
+            return b"\x60"
         return self.code
 
 
@@ -252,14 +283,16 @@ class TestExactEvmSchemeConstructor:
     def test_creates_instance_with_config(self):
         signer = MockFacilitatorSigner()
         config = ExactEvmSchemeConfig(
-            deploy_erc4337_with_eip6492=True,
+            eip6492_allowed_factories=["0x1111111111111111111111111111111111111111"],
             simulate_in_settle=True,
         )
 
         facilitator = ExactEvmFacilitatorScheme(signer, config)
 
         assert facilitator.scheme == "exact"
-        assert facilitator._config.deploy_erc4337_with_eip6492 is True
+        assert facilitator._config.eip6492_allowed_factories == [
+            "0x1111111111111111111111111111111111111111"
+        ]
         assert facilitator._config.simulate_in_settle is True
 
 
@@ -395,7 +428,10 @@ class TestVerify:
             code=b"",
             multicall_results=[(True, b""), (True, b"")],
         )
-        facilitator = ExactEvmFacilitatorScheme(signer)
+        # Verify now mirrors settle's allowlist gate, so the factory must be allowlisted.
+        facilitator = ExactEvmFacilitatorScheme(
+            signer, ExactEvmSchemeConfig(eip6492_allowed_factories=[FACTORY])
+        )
 
         result = facilitator.verify(
             make_payment_payload(signature=make_erc6492_signature(b"\x33" * 66)),
@@ -411,7 +447,9 @@ class TestVerify:
             code=b"",
             multicall_results=[(True, b""), (False, b"")],
         )
-        facilitator = ExactEvmFacilitatorScheme(signer)
+        facilitator = ExactEvmFacilitatorScheme(
+            signer, ExactEvmSchemeConfig(eip6492_allowed_factories=[FACTORY])
+        )
 
         result = facilitator.verify(
             make_payment_payload(signature=make_erc6492_signature(b"\x33" * 66)),
@@ -420,6 +458,24 @@ class TestVerify:
 
         assert result.is_valid is False
         assert result.invalid_reason == ERR_TRANSACTION_SIMULATION_FAILED
+
+    def test_undeployed_erc6492_rejects_when_factory_not_allowlisted(self):
+        # Verify must mirror settle: a counterfactual payment whose factory is not in the
+        # allowlist is rejected before simulation, just as settle would refuse to deploy it.
+        signer = MockFacilitatorSigner(
+            typed_data_valid=False,
+            code=b"",
+            multicall_results=[(True, b""), (True, b"")],
+        )
+        facilitator = ExactEvmFacilitatorScheme(signer)  # empty allowlist
+
+        result = facilitator.verify(
+            make_payment_payload(signature=make_erc6492_signature(b"\x33" * 66)),
+            make_requirements(),
+        )
+
+        assert result.is_valid is False
+        assert result.invalid_reason == ERR_FACTORY_NOT_ALLOWED
 
     def test_undeployed_smart_wallet_without_deployment_info_is_rejected(self):
         signer = MockFacilitatorSigner(typed_data_valid=False, code=b"")
@@ -479,6 +535,36 @@ class TestVerify:
         assert result.is_valid is False
         assert result.invalid_reason == ERR_INVALID_SIGNATURE
 
+    def test_rejects_eoa_asset(self):
+        # When the asset address has no bytecode (EOA), verify must reject before signature checks.
+        signer = MockFacilitatorSigner(
+            code_by_address={
+                TOKEN_ADDRESS.lower(): b"",  # token = EOA
+                PAYER.lower(): b"\x01",  # payer = contract so strict EIP-1271 path is taken
+            },
+        )
+        facilitator = ExactEvmFacilitatorScheme(signer)
+
+        result = facilitator.verify(make_payment_payload(), make_requirements())
+
+        assert result.is_valid is False
+        assert result.invalid_reason == ERR_ASSET_NOT_DEPLOYED_CONTRACT
+
+    def test_getcode_rpc_error_raises(self):
+        # An RPC error on get_code must propagate as an exception (internal error), not a 400.
+        # Payer returns code so verify_typed_data_strict can complete via EIP-1271;
+        # the RPC error fires on the asset-contract check (outside the sig try/except).
+        class _RPCErrorSigner(MockFacilitatorSigner):
+            def get_code(self, address: str) -> bytes:
+                if address.lower() == PAYER.lower():
+                    return b"\x01"  # payer has code → EIP-1271 path inside verify_typed_data_strict
+                raise RuntimeError("rpc: connection refused")
+
+        facilitator = ExactEvmFacilitatorScheme(_RPCErrorSigner())
+
+        with pytest.raises(RuntimeError, match="rpc: connection refused"):
+            facilitator.verify(make_payment_payload(), make_requirements())
+
 
 class TestSettle:
     def test_fails_settlement_if_verification_fails(self):
@@ -495,7 +581,12 @@ class TestSettle:
         assert result.network == NETWORK
 
     def test_can_rerun_simulation_during_settle(self):
-        signer = MockFacilitatorSigner(typed_data_valid=True)
+        # Payer has code so verify_typed_data_strict takes the EIP-1271 path, which
+        # honours typed_data_valid=True via the isValidSignature mock above.
+        signer = MockFacilitatorSigner(
+            typed_data_valid=True,
+            code_by_address={PAYER.lower(): b"\x01"},
+        )
         facilitator = ExactEvmFacilitatorScheme(
             signer,
             ExactEvmSchemeConfig(simulate_in_settle=True),
@@ -509,6 +600,136 @@ class TestSettle:
         assert result.success is True
         assert signer.transfer_simulation_calls == 1
         assert signer.write_calls == 1
+
+
+class TestSettleFactoryAllowlist:
+    """ERC-6492 factory allowlist enforcement during settle."""
+
+    def _erc6492_payload(self):
+        return make_payment_payload(signature=make_erc6492_signature(b"\x33" * 66))
+
+    def test_empty_allowlist_blocks_factory_deployment(self):
+        signer = MockFacilitatorSigner(typed_data_valid=True, code=b"")
+        facilitator = ExactEvmFacilitatorScheme(
+            signer,
+            ExactEvmSchemeConfig(
+                eip6492_allowed_factories=[],
+            ),
+        )
+
+        result = facilitator.settle(self._erc6492_payload(), make_requirements())
+
+        assert result.success is False
+        assert result.error_reason == ERR_FACTORY_NOT_ALLOWED
+        assert signer.send_calls == 0
+
+    def test_matching_factory_in_allowlist_deploys_and_settles(self):
+        signer = MockFacilitatorSigner(typed_data_valid=True, code=b"")
+        facilitator = ExactEvmFacilitatorScheme(
+            signer,
+            ExactEvmSchemeConfig(
+                eip6492_allowed_factories=[FACTORY],
+            ),
+        )
+
+        result = facilitator.settle(self._erc6492_payload(), make_requirements())
+
+        assert result.success is True
+        assert signer.send_calls == 1  # factory deployment
+        assert signer.write_calls == 1  # transferWithAuthorization
+
+    def test_deployed_wallet_rejecting_inner_sig_classifies_transfer_revert(self):
+        # After deploying the wallet via the allowlisted factory, settle submits the
+        # on-chain transferWithAuthorization (the authoritative signature check) — there
+        # is no separate pre-transfer gate. A deployed wallet that rejects the inner
+        # signature surfaces as a reverted transfer, classified via
+        # parse_eip3009_transfer_error.
+        signer = MockFacilitatorSigner(
+            typed_data_valid=True,
+            code=b"",
+            write_should_revert=True,
+        )
+        facilitator = ExactEvmFacilitatorScheme(
+            signer,
+            ExactEvmSchemeConfig(
+                eip6492_allowed_factories=[FACTORY],
+            ),
+        )
+
+        result = facilitator.settle(self._erc6492_payload(), make_requirements())
+
+        assert result.success is False
+        assert result.error_reason == ERR_INVALID_SIGNATURE
+        assert signer.send_calls == 1  # wallet was deployed
+        assert signer.write_calls == 1  # transfer was submitted (and reverted)
+
+    def test_case_insensitive_factory_match(self):
+        signer = MockFacilitatorSigner(typed_data_valid=True, code=b"")
+        facilitator = ExactEvmFacilitatorScheme(
+            signer,
+            ExactEvmSchemeConfig(
+                eip6492_allowed_factories=[FACTORY.upper()],
+            ),
+        )
+
+        result = facilitator.settle(self._erc6492_payload(), make_requirements())
+
+        assert result.success is True
+        assert signer.send_calls == 1
+
+    def test_non_matching_factory_is_blocked(self):
+        signer = MockFacilitatorSigner(typed_data_valid=True, code=b"")
+        facilitator = ExactEvmFacilitatorScheme(
+            signer,
+            ExactEvmSchemeConfig(
+                eip6492_allowed_factories=["0x3333333333333333333333333333333333333333"],
+            ),
+        )
+
+        result = facilitator.settle(self._erc6492_payload(), make_requirements())
+
+        assert result.success is False
+        assert result.error_reason == ERR_FACTORY_NOT_ALLOWED
+        assert signer.send_calls == 0
+
+    def test_already_deployed_wallet_skips_allowlist_check(self):
+        # Wallet already has code: deployment path is skipped entirely.
+        signer = MockFacilitatorSigner(typed_data_valid=True, code=b"\x60\x80")
+        facilitator = ExactEvmFacilitatorScheme(
+            signer,
+            ExactEvmSchemeConfig(
+                eip6492_allowed_factories=[],  # empty — would block if deployment were attempted
+            ),
+        )
+
+        result = facilitator.settle(self._erc6492_payload(), make_requirements())
+
+        assert result.success is True
+        assert signer.send_calls == 0  # no deployment needed
+        assert signer.write_calls == 1
+
+    def test_eoa_payer_unaffected_by_allowlist(self):
+        # EOA-style signature (no ERC-6492 wrapper) — allowlist is irrelevant.
+        # Payer has code so verify_typed_data_strict uses the EIP-1271 path and
+        # typed_data_valid=True makes isValidSignature return the magic value.
+        signer = MockFacilitatorSigner(
+            typed_data_valid=True,
+            code_by_address={PAYER.lower(): b"\x01"},
+        )
+        facilitator = ExactEvmFacilitatorScheme(
+            signer,
+            ExactEvmSchemeConfig(
+                eip6492_allowed_factories=[],
+            ),
+        )
+
+        result = facilitator.settle(
+            make_payment_payload(signature="0x" + "00" * 65),
+            make_requirements(),
+        )
+
+        assert result.success is True
+        assert signer.send_calls == 0
 
 
 class TestVerifyV1:

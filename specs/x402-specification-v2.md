@@ -8,7 +8,7 @@ This specification defines the core x402 protocol for internet-native payments. 
 
 - **Protocol fundamentals**: Payment requirements format, payment payload structure, and core message schemas
 - **Facilitator interface**: Standard APIs for payment verification and settlement
-- **Payment schemes**: Extensible payment methods (currently supporting the "exact" scheme)
+- **Payment schemes**: Extensible payment methods (including `exact`, `upto`, and `batch-settlement`; see `specs/schemes/`)
 - **Security considerations**: Replay attack prevention and trust minimization
 
 **Out of Scope**: This specification does not include:
@@ -24,14 +24,14 @@ This specification defines the core x402 protocol for internet-native payments. 
 x402 is made up of three core components:
 
 1. **Types**: Core data structures (e.g., `PaymentRequirements`, `PaymentPayload`, `SettlementResponse`) that are independent of both transport mechanism and payment scheme
-2. **Logic**: Payment formation and verification logic that depends on the payment scheme (e.g., exact, deferred) and network (e.g., evm, solana, etc.)
+2. **Logic**: Payment formation and verification logic that depends on the payment scheme (e.g., exact, upto, batch-settlement) and network (e.g., evm, solana, etc.)
 3. **Representation**: How payment data is transmitted and signaled, which depends on the transport mechanism (e.g., HTTP, MCP, A2A)
 
 **1. Overview**
 
 x402 is an open payment standard that enables clients to pay for external resources. The protocol defines standardized message formats and payment flows that can be implemented over various transport layers, providing a standardized mechanism for payments across different payment schemes, networks and transport layers.
 
-This specification is based on the x402 protocol implementation and documentation available in the [Coinbase x402 repository](https://github.com/x402-foundation/x402). It aims to provide a comprehensive and implementation-agnostic specification for the x402 protocol.
+This specification is based on the x402 protocol implementation and documentation available in the [x402 repository](https://github.com/x402-foundation/x402). It aims to provide a comprehensive and implementation-agnostic specification for the x402 protocol.
 
 **2. Core Payment Flow**
 
@@ -41,6 +41,8 @@ The x402 protocol follows a standard request-response cycle with payment integra
 2. **Payment Required Response**: If no valid payment is attached, the server responds with a payment required signal and payment requirements
 3. **Payment Authorization Request**: Client submits a signed payment authorization in the subsequent request
 4. **Settlement Response**: Server verifies the payment authorization and initiates blockchain settlement
+
+This cycle describes the default `authorization` payment flow, in which the payment is verified before the resource executes and settled afterward. Schemes may declare other flows that settle before execution; see section 6.1 Payment Flow Models.
 
 **3. Protocol Components**
 
@@ -69,7 +71,9 @@ This section defines the core data structures used in the x402 protocol. These a
 
 **5.1.1 JSON Payload**
 
-When a resource server requires payment, it responds with a payment required signal and a JSON payload containing payment requirements. Example:
+When a resource server requires payment, it responds with a payment required signal containing the `PaymentRequired` object. The transport defines where this object is carried. For HTTP, the canonical wire location is the base64-encoded `PAYMENT-REQUIRED` response header, see [HTTP Payment Required Signaling](./transports-v2/http.md#payment-required-signaling).
+
+Example `PaymentRequired` object:
 
 ```json
 {
@@ -78,7 +82,10 @@ When a resource server requires payment, it responds with a payment required sig
   "resource": {
     "url": "https://api.example.com/premium-data",
     "description": "Access to premium market data",
-    "mimeType": "application/json"
+    "mimeType": "application/json",
+    "serviceName": "Example Market Data",
+    "tags": ["market-data", "finance"],
+    "iconUrl": "https://api.example.com/icon.png"
   },
   "accepts": [
     {
@@ -112,23 +119,26 @@ The `PaymentRequired` schema contains the following fields:
 
 Each `PaymentRequirements` object in the `accepts` array contains:
 
-| Field Name          | Type     | Required | Description                                                                   |
-| ------------------- | -------- | -------- | ----------------------------------------------------------------------------- |
-| `scheme`            | `string` | Required | Payment scheme identifier (e.g., "exact")                                     |
-| `network`           | `string` | Required | Blockchain network identifier in CAIP-2 format (e.g., "eip155:84532")         |
-| `amount`            | `string` | Required | Required payment amount in atomic token units                                 |
+| Field Name          | Type     | Required | Description                                                                                                               |
+| ------------------- | -------- | -------- |---------------------------------------------------------------------------------------------------------------------------|
+| `scheme`            | `string` | Required | Payment scheme identifier (e.g., "exact")                                                                                 |
+| `network`           | `string` | Required | Blockchain network identifier in CAIP-2 format (e.g., "eip155:84532")                                                     |
+| `amount`            | `string` | Required | Required payment amount in atomic token units                                                                             |
 | `asset`             | `string` | Required | Token contract address or ISO 4217 currency code for fiat     |
-| `payTo`             | `string` | Required | Recipient wallet address or role constant (e.g., "merchant")                  |
-| `maxTimeoutSeconds` | `number` | Required | Maximum time allowed for payment completion                                   |
-| `extra`             | `object` | Optional | Scheme-specific additional information                                        |
+| `payTo`             | `string` | Required | Recipient wallet address or role constant (e.g., "merchant")                                                              |
+| `maxTimeoutSeconds` | `number` | Required | Maximum time allowed for payment completion                                                                               |
+| `extra`             | `object` | Optional | Additional information. Reserved protocol keys: `assetTransferMethod`, `paymentFlow` (section 6.1); other keys are scheme-specific |
 
 The `ResourceInfo` object contains:
 
-| Field Name    | Type     | Required | Description                                |
-| ------------- | -------- | -------- | ------------------------------------------ |
-| `url`         | `string` | Required | URL of the protected resource              |
-| `description` | `string` | Optional | Human-readable description of the resource |
-| `mimeType`    | `string` | Optional | MIME type of the expected response         |
+| Field Name      | Type            | Required | Description                                                                                                          |
+| --------------- | --------------- | -------- | -------------------------------------------------------------------------------------------------------------------- |
+| `url`           | `string`        | Required | URL of the protected resource                                                                                        |
+| `description`   | `string`        | Optional | Human-readable description of the resource                                                                           |
+| `mimeType`      | `string`        | Optional | MIME type of the expected response                                                                                   |
+| `serviceName`   | `string`        | Optional | Human-readable name of the service hosting the resource. Printable ASCII, max 32 characters.                         |
+| `tags`          | `array[string]` | Optional | Topical tags for the service, used for discovery filtering. Max 5 entries; each printable ASCII, max 32 characters.  |
+| `iconUrl`       | `string`        | Optional | Absolute `https`/`http` URL to an icon representing the service. Max 2048 characters.                               |
 
 The `Extensions` object is a key-value map where each key is an extension identifier and each value follows a standardized structure:
 
@@ -154,7 +164,7 @@ The client includes payment authorization as JSON in the payment payload field:
     "mimeType": "application/json"
   },
   "accepted": {
-  "scheme": "exact",
+    "scheme": "exact",
     "network": "eip155:84532",
     "amount": "10000",
     "asset": "0x036CbD53842c5426634e7929541eC2318f3dCF7e",
@@ -253,6 +263,7 @@ The `VerifyResponse` schema contains the following fields:
 | `isValid`       | `boolean` | Required | Indicates whether the payment authorization is valid    |
 | `invalidReason` | `string`  | Optional | Reason for invalidity (omitted if valid)                |
 | `payer`         | `string`  | Optional | Address of the payer's wallet                           |
+| `extra`         | `object`  | Optional | Scheme-specific additional data                         |
 
 **6. Payment Schemes (The Logic)**
 
@@ -262,55 +273,27 @@ Each scheme defines:
 
 - How to construct the `payload` field within `PaymentPayload`
 - Settlement and validation procedures
-- Scheme-specific requirements in the `extra` field of `PaymentRequirements`
+- Requirements in the `extra` field of `PaymentRequirements` (reserved protocol keys in section 6.1; remaining keys are scheme-specific)
 
-**6.1 Exact Scheme (EVM overview)**
+Individual schemes and their per-network bindings — including `exact`, `upto`, `batch-settlement`, and `auth-capture` — are specified under [`specs/schemes/`](./schemes/).
 
-The "exact" scheme uses EIP-3009 (Transfer with Authorization) to enable secure, gasless transfers of specific amounts of ERC-20 tokens.
+**6.1 Asset Transfer Methods and Payment Flow Models**
 
-**6.1.1 EIP-3009 Authorization**
+An `assetTransferMethod` identifies **how** value is authorized or moved for a mechanism (a scheme on a specific network) — for example `eip3009` vs `permit2` on EVM `exact`, or `sequence` vs `ticketSequence` on XRPL `exact`. Allowed `assetTransferMethod` string values are mechanism-defined; this protocol reserves the key name, not a global ATM vocabulary. Mechanisms MAY reuse the same ATM string across networks when semantics align. `extra.assetTransferMethod` and `extra.paymentFlow` are protocol-reserved keys in `PaymentRequirements.extra`: clients and servers MUST interpret them as defined here rather than as opaque scheme-private fields.
 
-The authorization follows the EIP-3009 standard for `transferWithAuthorization`:
+Schemes differ not only in how a payment is formed and validated, but in **when** settlement occurs relative to resource execution. A mechanism declares supported payment flows **per `assetTransferMethod`**, each with a default flow, plus a scheme-level default `assetTransferMethod` used when `extra.assetTransferMethod` is omitted. The resolved flow determines which of the facilitator's read-only `/verify` (section 7.1) and state-committing `/settle` (section 7.2) run, and in what order, around the resource server's execution of the protected request. A flow's ordering MAY omit `/verify` (see `upfront` and `escrow` below).
 
-```javascript
-const authorizationTypes = {
-  TransferWithAuthorization: [
-    { name: "from", type: "address" },
-    { name: "to", type: "address" },
-    { name: "value", type: "uint256" },
-    { name: "validAfter", type: "uint256" },
-    { name: "validBefore", type: "uint256" },
-    { name: "nonce", type: "bytes32" },
-  ],
-};
-```
+Omitting `extra.assetTransferMethod` or `extra.paymentFlow` means the mechanism default when resolving. When the resolved payment flow is not `authorization`, `PaymentRequired` `accepts[].extra.paymentFlow` MUST be present so clients can reason about pre-handler fund commitment without scheme-specific knowledge (for example, distinguishing an SVM upto `escrow` default from an EVM upto `authorization` default). `authorization` MAY be omitted or explicit. Resource servers MUST reject unsupported `assetTransferMethod` / payment flow combinations. Clients MUST NOT construct a payment for a `paymentFlow` they do not recognize, and SHOULD skip such `accepts[]` entries when selecting. When a resource offers both `authorization` (post-handler settlement) and a pre-handler-settlement flow (`upfront` or `escrow`) for the same request, clients SHOULD prefer `authorization`.
 
-**6.1.2 Verification Steps**
+The following flows are defined:
 
-The facilitator performs the following verification steps:
+| Flow                  | Ordering                                        | Description                                                                                                                              |
+| --------------------- | ----------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
+| `authorization` (default) | verify → resource → settle → respond        | Read-only verify before the resource executes; funds move only after it completes successfully. |
+| `upfront`             | settle → resource → respond                     | Payment is durably committed before the resource executes, giving the server finality first. Facilitator `/verify` is not part of this ordering; validity is established by settle. Required by networks with no pull-settlement primitive. |
+| `escrow`              | settle → resource → settle → respond            | A first settle commits a deposit or ceiling, the resource executes, and a second settle records the final charge. Facilitator `/verify` is not part of this ordering; the first settle is the pre-resource check. |
 
-1. **Signature Validation**: Verify the EIP-712 signature is valid and properly signed by the payer
-2. **Balance Verification**: Confirm the payer has sufficient token balance for the transfer
-3. **Amount Validation**: Ensure the payment amount exactly matches the required amount
-4. **Time Window Check**: Verify the authorization is within its valid time range
-5. **Parameter Matching**: Confirm authorization parameters match the original payment requirements
-6. **Transaction Simulation**: Simulate the `transferWithAuthorization` transaction to ensure it would succeed
-
-**6.1.3 Settlement**
-
-Settlement is performed by calling the `transferWithAuthorization` function on the ERC-20 contract with the signature and authorization parameters provided in the payment payload.
-
-**6.2 Exact Scheme (SVM overview)**
-
-For Solana (SVM), the `exact` scheme is implemented using `TransferChecked` for SPL tokens. Critical verification requirements include:
-
-- Enforcing a strict instruction layout (Compute Unit Limit, Compute Unit Price, TransferChecked)
-- Ensuring the facilitator fee payer does not appear in any instruction accounts and is not the transfer `authority` or `source`
-- Bounding compute unit price to mitigate gas abuse
-- Verifying the destination ATA matches the `payTo`/`asset` PDA and account existence rules
-- Requiring the transfer `amount` to exactly equal the `amount` specified in PaymentRequirements
-
-Full SVM details are specified in `specs/schemes/exact/scheme_exact_svm.md`.
+Invariant: at least one check — a verify or settle before the resource — MUST run before the resource executes. The resource never executes with nothing checked.
 
 **7. Facilitator Interface**
 
@@ -318,7 +301,7 @@ The facilitator provides HTTP REST APIs for payment verification and settlement.
 
 **7.1 POST /verify**
 
-Verifies a payment authorization without executing the transaction on the blockchain.
+Verifies a payment authorization without executing the transaction on the blockchain. `/verify` is **read-only**: it validates payment state but MUST NOT commit payment state or write onchain state. Resource servers invoke `/verify` only when the resolved payment flow's ordering includes it (section 6.1); `upfront` and `escrow` omit it.
 
 **Request (Exact Scheme):**
 
@@ -347,7 +330,7 @@ Example with actual data:
       "mimeType": "application/json"
     },
     "accepted": {
-    "scheme": "exact",
+      "scheme": "exact",
       "network": "eip155:84532",
       "amount": "10000",
       "asset": "0x036CbD53842c5426634e7929541eC2318f3dCF7e",
@@ -406,11 +389,13 @@ Example with actual data:
 
 **7.2 POST /settle**
 
-Executes a verified payment by broadcasting the transaction to the blockchain.
+Durably commits payment state for the request — establishing finality from the resource server's perspective — typically by updating a network ledger (for example, broadcasting a transaction). Commitment need not be an onchain write: for client-prepaid methods, settle MAY bind a payment proof to the request (for example, consuming a challenge or marking a transaction as used) after read-only observation of ledger or backend state. A settle need not be the final charge: it MAY establish an escrow, record a charge, or transfer funds, depending on the scheme and payment flow (see section 6.1 Payment Flow Models).
 
 **Request:** Same structure as `/verify` endpoint (contains `paymentPayload` and `paymentRequirements`).
 
 > **Note**: While the request structure is identical, some payment schemes may assign different semantics to fields at settlement time versus verification time. For example, in the `upto` scheme, the `amount` field in `paymentRequirements` represents the maximum authorized amount at verification time, but the actual amount to settle at settlement time. See individual scheme specifications for details.
+
+> **Note**: `/settle` MAY be invoked more than once for a single payment (for example, the `escrow` flow settles a deposit before the resource executes and the final charge after). A scheme defining multiple settles MUST specify how the facilitator distinguishes them from payload content. Because the client typically signs a single payload, that distinction is usually server-led (for example, a scheme-specific `step` field), though a facilitator MAY instead infer the step from network-ledger state.
 
 **Successful Response:**
 
@@ -505,6 +490,10 @@ List discoverable x402 resources from the Bazaar.
 | Parameter | Type     | Required | Description                                 | Default |
 | --------- | -------- | -------- | ------------------------------------------- | ------- |
 | `type`    | `string` | Optional | Filter by resource type (e.g., "http")      | -       |
+| `payTo`   | `string` | Optional | Filter by payment recipient address          | -       |
+| `scheme`  | `string` | Optional | Filter by payment scheme (e.g., "exact")    | -       |
+| `network` | `string` | Optional | Filter by payment network (e.g., "eip155:8453") | -   |
+| `extensions` | `string` | Optional | Filter by extension key present on each resource | -       |
 | `limit`   | `number` | Optional | Maximum number of results to return (1-100) | 20      |
 | `offset`  | `number` | Optional | Number of results to skip for pagination    | 0       |
 
@@ -547,7 +536,12 @@ List discoverable x402 resources from the Bazaar.
 }
 ```
 
-**8.2 Discovered Resource Fields**
+**8.2 GET /discovery/search**
+
+Search semantics and response shape are defined in the Bazaar extension specification at
+`specs/extensions/bazaar.md`, since this endpoint is extension-specific behavior.
+
+**8.3 Discovered Resource Fields**
 
 | Field Name    | Type     | Required | Description                                                     |
 | ------------- | -------- | -------- | --------------------------------------------------------------- |
@@ -556,9 +550,9 @@ List discoverable x402 resources from the Bazaar.
 | `x402Version` | `number` | Required | Protocol version supported by the resource                      |
 | `accepts`     | `array`  | Required | Array of PaymentRequirements objects specifying payment methods |
 | `lastUpdated` | `number` | Required | Unix timestamp of when the resource was last updated            |
-| `metadata`    | `object` | Optional | Additional metadata (category, provider, etc.)                  |
+| `extensions`  | `object` | Optional | Additional extension payloads associated with this discovered resource |
 
-**8.3 Bazaar Concept**
+**8.4 Bazaar Concept**
 
 The Bazaar is a marketplace ecosystem where x402-enabled resources can be discovered and accessed. Key features:
 
@@ -567,14 +561,17 @@ The Bazaar is a marketplace ecosystem where x402-enabled resources can be discov
 - **Provider Information**: Learn about service providers and their offerings
 - **Dynamic Updates**: Resources can be added, updated, or removed dynamically
 
-**8.4 Example Usage**
+**8.5 Example Usage**
 
 ```bash
-# Discover financial data APIs
+# List financial data APIs
 GET /discovery/resources?type=http&limit=10
 
-# Search for specific provider
-GET /discovery/resources?metadata[provider]=Coinbase
+# Search for weather APIs
+GET /discovery/search?query=weather+APIs&type=http&limit=5
+
+# Continue a paginated search (when server supports it)
+GET /discovery/search?query=financial+data&limit=10&cursor=eyJwYWdlIjoyfQ==
 ```
 
 **9. Error Handling**

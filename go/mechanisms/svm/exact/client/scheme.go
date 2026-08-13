@@ -8,20 +8,20 @@ import (
 	"fmt"
 	"strconv"
 
-	bin "github.com/gagliardetto/binary"
 	solana "github.com/gagliardetto/solana-go"
 	computebudget "github.com/gagliardetto/solana-go/programs/compute-budget"
 	"github.com/gagliardetto/solana-go/programs/token"
 	"github.com/gagliardetto/solana-go/rpc"
 
-	"github.com/x402-foundation/x402/go/mechanisms/svm"
-	"github.com/x402-foundation/x402/go/types"
+	"github.com/x402-foundation/x402/go/v2/mechanisms/svm"
+	"github.com/x402-foundation/x402/go/v2/types"
 )
 
 // ExactSvmScheme implements the SchemeNetworkClient interface for SVM (Solana) exact payments (V2)
 type ExactSvmScheme struct {
-	signer svm.ClientSvmSigner
-	config *svm.ClientConfig // Optional custom RPC configuration
+	signer    svm.ClientSvmSigner
+	config    *svm.ClientConfig // Optional custom RPC configuration
+	mintCache *svm.MintMetadataCache
 }
 
 // NewExactSvmScheme creates a new ExactSvmScheme
@@ -32,8 +32,9 @@ func NewExactSvmScheme(signer svm.ClientSvmSigner, config ...*svm.ClientConfig) 
 		cfg = config[0]
 	}
 	return &ExactSvmScheme{
-		signer: signer,
-		config: cfg,
+		signer:    signer,
+		config:    cfg,
+		mintCache: svm.NewMintMetadataCache(),
 	}
 }
 
@@ -74,14 +75,19 @@ func (c *ExactSvmScheme) CreatePaymentPayload(
 		return types.PaymentPayload{}, fmt.Errorf(ErrInvalidAssetAddress+": %w", err)
 	}
 
-	// Get mint account to determine token program
-	mintAccount, err := rpcClient.GetAccountInfo(ctx, mintPubkey)
+	mintMetadata, err := c.mintCache.GetOrFetch(ctx, rpcClient, networkStr, mintPubkey)
 	if err != nil {
+		if errors.Is(err, svm.ErrUnknownMintTokenProgram) {
+			return types.PaymentPayload{}, errors.New(ErrUnknownTokenProgram)
+		}
+		if errors.Is(err, svm.ErrFailedToDecodeMintData) {
+			return types.PaymentPayload{}, fmt.Errorf(ErrFailedToDecodeMintData+": %w", err)
+		}
 		return types.PaymentPayload{}, fmt.Errorf(ErrFailedToGetMintAccount+": %w", err)
 	}
 
 	// Determine token program (Token or Token-2022)
-	tokenProgramID := mintAccount.Value.Owner
+	tokenProgramID := mintMetadata.TokenProgramID
 	if tokenProgramID != solana.TokenProgramID && tokenProgramID != solana.Token2022ProgramID {
 		return types.PaymentPayload{}, errors.New(ErrUnknownTokenProgram)
 	}
@@ -121,19 +127,10 @@ func (c *ExactSvmScheme) CreatePaymentPayload(
 		return types.PaymentPayload{}, fmt.Errorf(ErrInvalidFeePayerAddress+": %w", err)
 	}
 
-	// Get mint account data to get decimals
-	var mintData token.Mint
-	err = bin.NewBinDecoder(mintAccount.Value.Data.GetBinary()).Decode(&mintData)
+	recentBlockhash, err := c.resolveRecentBlockhash(ctx, rpcClient, requirements)
 	if err != nil {
-		return types.PaymentPayload{}, fmt.Errorf(ErrFailedToDecodeMintData+": %w", err)
+		return types.PaymentPayload{}, err
 	}
-
-	// Get latest blockhash
-	latestBlockhash, err := rpcClient.GetLatestBlockhash(ctx, rpc.CommitmentFinalized)
-	if err != nil {
-		return types.PaymentPayload{}, fmt.Errorf(ErrFailedToGetLatestBlockhash+": %w", err)
-	}
-	recentBlockhash := latestBlockhash.Value.Blockhash
 
 	// Build compute budget instructions
 	cuLimit, err := computebudget.NewSetComputeUnitLimitInstructionBuilder().
@@ -153,7 +150,7 @@ func (c *ExactSvmScheme) CreatePaymentPayload(
 	// Build final transfer instruction
 	transferIx, err := token.NewTransferCheckedInstructionBuilder().
 		SetAmount(amount).
-		SetDecimals(mintData.Decimals).
+		SetDecimals(mintMetadata.Decimals).
 		SetSourceAccount(sourceATA).
 		SetMintAccount(mintPubkey).
 		SetDestinationAccount(destinationATA).
@@ -222,4 +219,23 @@ func (c *ExactSvmScheme) CreatePaymentPayload(
 		X402Version: 2,
 		Payload:     svmPayload.ToMap(),
 	}, nil
+}
+
+func (c *ExactSvmScheme) resolveRecentBlockhash(
+	ctx context.Context,
+	rpcClient *rpc.Client,
+	requirements types.PaymentRequirements,
+) (solana.Hash, error) {
+	if blockhash, ok := requirements.Extra["recentBlockhash"].(string); ok && blockhash != "" {
+		recentBlockhash, err := solana.HashFromBase58(blockhash)
+		if err == nil {
+			return recentBlockhash, nil
+		}
+	}
+
+	latestBlockhash, err := rpcClient.GetLatestBlockhash(ctx, rpc.CommitmentFinalized)
+	if err != nil {
+		return solana.Hash{}, fmt.Errorf(ErrFailedToGetLatestBlockhash+": %w", err)
+	}
+	return latestBlockhash.Value.Blockhash, nil
 }

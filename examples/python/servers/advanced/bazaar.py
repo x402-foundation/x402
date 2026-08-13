@@ -55,6 +55,10 @@ routes = {
                 network=EVM_NETWORK,
             ),
         ],
+        description="Weather data",
+        mime_type="application/json",
+        service_name="Weather API",
+        tags=["weather", "api"],
         extensions={
             **declare_discovery_extension(
                 input={"city": "San Francisco"},

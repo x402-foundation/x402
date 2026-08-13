@@ -1,0 +1,9 @@
+docs/
+dist/
+node_modules/
+coverage/
+.github/
+.next/
+src/client
+**/**/*.json
+*.md

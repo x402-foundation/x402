@@ -1,7 +1,0 @@
-{
-  "name": "Agent Camo",
-  "category": "Services/Endpoints",
-  "logoUrl": "/logos/agent-camo.png",
-  "description": "Residential proxy sessions with hot-swappable geo-targeting for on-chain agents, paid per-use via x402 micropayments on Base.",
-  "websiteUrl": "https://agentcamo.xyz"
-}

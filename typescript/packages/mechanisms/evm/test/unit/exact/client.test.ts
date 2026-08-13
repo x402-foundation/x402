@@ -74,7 +74,7 @@ describe("ExactEvmScheme (Client)", () => {
       expect(result1.payload.authorization.nonce).toMatch(/^0x[0-9a-f]{64}$/i);
     });
 
-    it("should set validAfter to 10 minutes before current time", async () => {
+    it("should set validAfter to 0", async () => {
       const requirements: PaymentRequirements = {
         scheme: "exact",
         network: "eip155:8453",
@@ -85,14 +85,9 @@ describe("ExactEvmScheme (Client)", () => {
         extra: { name: "USD Coin", version: "2" },
       };
 
-      const beforeTime = Math.floor(Date.now() / 1000) - 600;
       const result = await client.createPaymentPayload(2, requirements);
-      const afterTime = Math.floor(Date.now() / 1000) - 600;
 
-      const validAfter = parseInt(result.payload.authorization.validAfter);
-
-      expect(validAfter).toBeGreaterThanOrEqual(beforeTime);
-      expect(validAfter).toBeLessThanOrEqual(afterTime + 1); // Allow 1 second tolerance
+      expect(result.payload.authorization.validAfter).toBe("0");
     });
 
     it("should set validBefore based on maxTimeoutSeconds", async () => {

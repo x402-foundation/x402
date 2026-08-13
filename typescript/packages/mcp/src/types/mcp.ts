@@ -14,6 +14,21 @@ import { isObject } from "../utils/encoding";
 export const MCP_PAYMENT_REQUIRED_CODE = 402;
 
 /**
+ * MCP's UrlElicitationRequired JSON-RPC error code (-32042) from SEP-1036.
+ *
+ * SEP-1036 defines this code for flows where the server needs the client to
+ * provide something before proceeding, explicitly including payment flows.
+ * This is the only custom error code the MCP TypeScript SDK propagates with
+ * error.data intact through McpServer's tool handler catch block.
+ *
+ * Using this code for payment challenges ensures error.data (containing
+ * PaymentRequired) survives the McpServer round-trip, working around the
+ * SDK limitation tracked in:
+ * https://github.com/modelcontextprotocol/typescript-sdk/issues/774
+ */
+export const JSONRPC_PAYMENT_REQUIRED_CODE = -32042;
+
+/**
  * MCP _meta key for payment payload (client → server)
  */
 export const MCP_PAYMENT_META_KEY = "x402/payment";
@@ -289,19 +304,40 @@ export interface MCPResultWithMeta {
 }
 
 /**
- * MCP JSON-RPC error with payment required data
+ * MCP JSON-RPC error with payment required data.
+ *
+ * Discriminated by `code`:
+ * - `402` (legacy x402): PaymentRequired directly in `data`
+ * - `-32042` (SEP-1036 UrlElicitationRequired): PaymentRequired in `data`, or
+ *   namespaced under `data.x402` when servers carry additional payment-method
+ *   data alongside x402 requirements.
  */
-export interface MCPPaymentRequiredError {
-  /** JSON-RPC error code (402) */
-  code: typeof MCP_PAYMENT_REQUIRED_CODE;
-  /** Error message */
-  message: string;
-  /** PaymentRequired data */
-  data: PaymentRequired;
-}
+export type MCPPaymentRequiredError =
+  | {
+      code: typeof MCP_PAYMENT_REQUIRED_CODE;
+      message: string;
+      data: PaymentRequired;
+    }
+  | {
+      code: typeof JSONRPC_PAYMENT_REQUIRED_CODE;
+      message: string;
+      data: PaymentRequired;
+    }
+  | {
+      code: typeof JSONRPC_PAYMENT_REQUIRED_CODE;
+      message: string;
+      data: { x402: PaymentRequired } & Record<string, unknown>;
+    };
 
 /**
- * Type guard to check if an error is a payment required error
+ * Type guard to check if an error is a payment required error.
+ *
+ * Supports both the legacy x402 error code (402) and the MCP standard
+ * UrlElicitationRequired code (-32042) which covers payment flows per SEP-1036.
+ *
+ * For -32042 errors, PaymentRequired may be directly in error.data or
+ * namespaced under error.data.x402 (for servers that include additional
+ * payment method data alongside x402 requirements).
  *
  * @param error - The error to check
  * @returns True if the error is a payment required error
@@ -311,13 +347,27 @@ export function isPaymentRequiredError(error: unknown): error is MCPPaymentRequi
     return false;
   }
 
-  if (error.code !== MCP_PAYMENT_REQUIRED_CODE || typeof error.message !== "string") {
+  if (typeof error.message !== "string") {
     return false;
   }
 
-  if (!isObject(error.data)) {
+  // Legacy x402 error code (402) - PaymentRequired directly in error.data
+  if (error.code === MCP_PAYMENT_REQUIRED_CODE) {
+    if (!isObject(error.data)) return false;
+    return "x402Version" in error.data && "accepts" in error.data;
+  }
+
+  // MCP UrlElicitationRequired (-32042) - used for payment flows per SEP-1036
+  if (error.code === JSONRPC_PAYMENT_REQUIRED_CODE) {
+    if (!isObject(error.data)) return false;
+    // Direct PaymentRequired in error.data
+    if ("x402Version" in error.data && "accepts" in error.data) return true;
+    // Namespaced under error.data.x402
+    if (isObject(error.data.x402)) {
+      return "x402Version" in error.data.x402 && "accepts" in error.data.x402;
+    }
     return false;
   }
 
-  return "x402Version" in error.data && "accepts" in error.data;
+  return false;
 }

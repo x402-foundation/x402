@@ -8,9 +8,9 @@ import (
 	"strconv"
 	"strings"
 
-	x402 "github.com/x402-foundation/x402/go"
-	"github.com/x402-foundation/x402/go/mechanisms/evm"
-	"github.com/x402-foundation/x402/go/types"
+	x402 "github.com/x402-foundation/x402/go/v2"
+	"github.com/x402-foundation/x402/go/v2/mechanisms/evm"
+	"github.com/x402-foundation/x402/go/v2/types"
 )
 
 // ExactEvmScheme implements the SchemeNetworkServer interface for EVM exact payments (V2)
@@ -28,6 +28,23 @@ func NewExactEvmScheme() *ExactEvmScheme {
 // Scheme returns the scheme identifier
 func (s *ExactEvmScheme) Scheme() string {
 	return evm.SchemeExact
+}
+
+// DefaultAssetTransferMethod returns the ATM used when extra.assetTransferMethod is absent.
+func (s *ExactEvmScheme) DefaultAssetTransferMethod() string {
+	return string(evm.AssetTransferMethodEIP3009)
+}
+
+// PaymentFlows returns ATM-keyed payment flow support for exact EVM.
+func (s *ExactEvmScheme) PaymentFlows() map[string]x402.PaymentFlowConfig {
+	auth := x402.PaymentFlowConfig{
+		Supported: []x402.PaymentFlowName{x402.PaymentFlowAuthorization},
+		Default:   x402.PaymentFlowAuthorization,
+	}
+	return map[string]x402.PaymentFlowConfig{
+		string(evm.AssetTransferMethodEIP3009): auth,
+		string(evm.AssetTransferMethodPermit2): auth,
+	}
 }
 
 // GetAssetDecimals implements AssetDecimalsProvider. Returns the decimal precision for the

@@ -1,11 +1,35 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { COMPUTE_BUDGET_PROGRAM_ADDRESS } from "@solana-program/compute-budget";
 import { ExactSvmScheme } from "../../src/exact/facilitator/scheme";
 import { ExactSvmSchemeV1 } from "../../src/exact/v1/facilitator/scheme";
 import { SettlementCache } from "../../src/settlement-cache";
 import type { FacilitatorSvmSigner } from "../../src/signer";
 import type { PaymentRequirements, PaymentPayload } from "@x402/core/types";
 import type { PaymentPayloadV1, PaymentRequirementsV1 } from "@x402/core/types/v1";
-import { USDC_DEVNET_ADDRESS, SOLANA_DEVNET_CAIP2 } from "../../src/constants";
+import {
+  USDC_DEVNET_ADDRESS,
+  SOLANA_DEVNET_CAIP2,
+  MAX_COMPUTE_UNIT_PRICE_MICROLAMPORTS,
+} from "../../src/constants";
+import * as svmUtils from "../../src/utils";
+
+// Encodes a SetComputeUnitPrice instruction: discriminator(3) + microLamports as u64 LE
+function makeComputePriceData(microLamports: bigint): Uint8Array {
+  const buf = new ArrayBuffer(9);
+  const view = new DataView(buf);
+  view.setUint8(0, 3);
+  view.setBigUint64(1, microLamports, true);
+  return new Uint8Array(buf);
+}
+
+// Encodes a SetComputeUnitLimit instruction: discriminator(2) + units as u32 LE
+function makeComputeLimitData(units: number): Uint8Array {
+  const buf = new ArrayBuffer(5);
+  const view = new DataView(buf);
+  view.setUint8(0, 2);
+  view.setUint32(1, units, true);
+  return new Uint8Array(buf);
+}
 
 describe("ExactSvmScheme", () => {
   let mockSigner: FacilitatorSvmSigner;
@@ -19,6 +43,7 @@ describe("ExactSvmScheme", () => {
           "FeePayer1111111111111111111111111111",
           "FacilitatorAddress1111111111111111111",
         ]) as never,
+      getSigner: vi.fn() as never,
       signTransactions: vi.fn() as never,
       signMessages: vi.fn().mockResolvedValue([
         {
@@ -216,6 +241,146 @@ describe("ExactSvmScheme", () => {
     });
   });
 
+  describe("verifyComputePriceInstruction (price cap)", () => {
+    it("should reject price above MAX_COMPUTE_UNIT_PRICE_MICROLAMPORTS", () => {
+      const facilitator = new ExactSvmScheme(mockSigner);
+      const instruction = {
+        programAddress: COMPUTE_BUDGET_PROGRAM_ADDRESS,
+        data: makeComputePriceData(BigInt(MAX_COMPUTE_UNIT_PRICE_MICROLAMPORTS) + 1n),
+      };
+      expect(() =>
+        (
+          facilitator as unknown as { verifyComputePriceInstruction: (i: unknown) => void }
+        ).verifyComputePriceInstruction(instruction),
+      ).toThrow(
+        "invalid_exact_svm_payload_transaction_instructions_compute_price_instruction_too_high",
+      );
+    });
+
+    it("should reject price well above MAX_COMPUTE_UNIT_PRICE_MICROLAMPORTS", () => {
+      const facilitator = new ExactSvmScheme(mockSigner);
+      const instruction = {
+        programAddress: COMPUTE_BUDGET_PROGRAM_ADDRESS,
+        data: makeComputePriceData(BigInt("18446744073709551615")), // u64::MAX
+      };
+      expect(() =>
+        (
+          facilitator as unknown as { verifyComputePriceInstruction: (i: unknown) => void }
+        ).verifyComputePriceInstruction(instruction),
+      ).toThrow(
+        "invalid_exact_svm_payload_transaction_instructions_compute_price_instruction_too_high",
+      );
+    });
+
+    it("should accept price exactly at MAX_COMPUTE_UNIT_PRICE_MICROLAMPORTS", () => {
+      const facilitator = new ExactSvmScheme(mockSigner);
+      const instruction = {
+        programAddress: COMPUTE_BUDGET_PROGRAM_ADDRESS,
+        data: makeComputePriceData(BigInt(MAX_COMPUTE_UNIT_PRICE_MICROLAMPORTS)),
+      };
+      expect(() =>
+        (
+          facilitator as unknown as { verifyComputePriceInstruction: (i: unknown) => void }
+        ).verifyComputePriceInstruction(instruction),
+      ).not.toThrow();
+    });
+
+    it("should accept price well below MAX_COMPUTE_UNIT_PRICE_MICROLAMPORTS", () => {
+      const facilitator = new ExactSvmScheme(mockSigner);
+      const instruction = {
+        programAddress: COMPUTE_BUDGET_PROGRAM_ADDRESS,
+        data: makeComputePriceData(1n),
+      };
+      expect(() =>
+        (
+          facilitator as unknown as { verifyComputePriceInstruction: (i: unknown) => void }
+        ).verifyComputePriceInstruction(instruction),
+      ).not.toThrow();
+    });
+  });
+
+  describe("operator-configurable limits", () => {
+    const priceInstruction = (microLamports: bigint) => ({
+      programAddress: COMPUTE_BUDGET_PROGRAM_ADDRESS,
+      data: makeComputePriceData(microLamports),
+    });
+    const limitInstruction = (units: number) => ({
+      programAddress: COMPUTE_BUDGET_PROGRAM_ADDRESS,
+      data: makeComputeLimitData(units),
+    });
+    const callPrice = (f: ExactSvmScheme, i: unknown) =>
+      (
+        f as unknown as { verifyComputePriceInstruction: (i: unknown) => void }
+      ).verifyComputePriceInstruction(i);
+    const callLimit = (f: ExactSvmScheme, i: unknown) =>
+      (
+        f as unknown as { verifyComputeLimitInstruction: (i: unknown) => void }
+      ).verifyComputeLimitInstruction(i);
+
+    it("should enforce a lowered maxPriorityFeeMicroLamports", () => {
+      const facilitator = new ExactSvmScheme(mockSigner, undefined, {
+        maxPriorityFeeMicroLamports: 5,
+      });
+      expect(() => callPrice(facilitator, priceInstruction(6n))).toThrow(
+        "invalid_exact_svm_payload_transaction_instructions_compute_price_instruction_too_high",
+      );
+      expect(() => callPrice(facilitator, priceInstruction(5n))).not.toThrow();
+    });
+
+    it("should keep the default price cap when maxPriorityFeeMicroLamports is unset", () => {
+      const facilitator = new ExactSvmScheme(mockSigner);
+      expect(() =>
+        callPrice(facilitator, priceInstruction(BigInt(MAX_COMPUTE_UNIT_PRICE_MICROLAMPORTS))),
+      ).not.toThrow();
+    });
+
+    it("should enforce maxComputeUnits when configured", () => {
+      const facilitator = new ExactSvmScheme(mockSigner, undefined, { maxComputeUnits: 60_000 });
+      expect(() => callLimit(facilitator, limitInstruction(60_001))).toThrow(
+        "invalid_exact_svm_payload_transaction_instructions_compute_limit_instruction_too_high",
+      );
+      expect(() => callLimit(facilitator, limitInstruction(60_000))).not.toThrow();
+    });
+
+    it("should not cap compute units when maxComputeUnits is unset", () => {
+      const facilitator = new ExactSvmScheme(mockSigner);
+      expect(() => callLimit(facilitator, limitInstruction(1_400_000))).not.toThrow();
+    });
+
+    // NaN/Infinity reach these options easily via parseInt on an unset env var,
+    // and each degrades differently: a NaN compute-unit or signature ceiling
+    // makes every comparison false (no limit), while a NaN priority fee makes
+    // BigInt() throw and rejects every payment under a misleading reason code.
+    it.each([
+      ["maxPriorityFeeMicroLamports", NaN],
+      ["maxPriorityFeeMicroLamports", Infinity],
+      ["maxPriorityFeeMicroLamports", 1.5],
+      ["maxPriorityFeeMicroLamports", -1],
+      ["maxComputeUnits", NaN],
+      ["maxComputeUnits", Infinity],
+      ["maxComputeUnits", -1],
+      ["maxComputeUnits", 0],
+      ["maxRequiredSignatures", NaN],
+      ["maxRequiredSignatures", Infinity],
+      ["maxRequiredSignatures", 0],
+    ])("should reject %s = %s at construction", (option, value) => {
+      expect(
+        () => new ExactSvmScheme(mockSigner, undefined, { [option]: value as number }),
+      ).toThrow(option);
+    });
+
+    it("should accept the boundary values of each limit", () => {
+      expect(
+        () =>
+          new ExactSvmScheme(mockSigner, undefined, {
+            maxPriorityFeeMicroLamports: 0,
+            maxComputeUnits: 1,
+            maxRequiredSignatures: 1,
+          }),
+      ).not.toThrow();
+    });
+  });
+
   describe("settle", () => {
     it("should fail settlement if verification fails", async () => {
       const facilitator = new ExactSvmScheme(mockSigner);
@@ -260,6 +425,20 @@ describe("ExactSvmScheme", () => {
   });
 
   describe("duplicate settlement cache", () => {
+    beforeEach(() => {
+      // Return a fake decoded Transaction whose messageBytes are derived deterministically
+      // from the transaction string. This lets the cache key tests work with arbitrary
+      // test strings without needing real Solana transaction binaries.
+      vi.spyOn(svmUtils, "decodeTransactionFromPayload").mockImplementation(
+        (payload: { transaction: string }) =>
+          ({ messageBytes: new TextEncoder().encode(payload.transaction) }) as never,
+      );
+    });
+
+    afterEach(() => {
+      vi.restoreAllMocks();
+    });
+
     function makePayload(transaction: string): PaymentPayload {
       return {
         x402Version: 2,
@@ -292,9 +471,16 @@ describe("ExactSvmScheme", () => {
     };
 
     function setupSettleMocks(facilitator: ExactSvmScheme) {
-      vi.spyOn(facilitator, "verify").mockResolvedValue({
-        isValid: true,
-        payer: "PayerAddress",
+      // settle() calls the internal _verify (which also reports the path), so we
+      // mock that to isolate the duplicate-cache logic from real verification.
+      vi.spyOn(
+        facilitator as unknown as {
+          _verify: (...args: unknown[]) => Promise<unknown>;
+        },
+        "_verify",
+      ).mockResolvedValue({
+        response: { isValid: true, payer: "PayerAddress" },
+        verificationPath: "static",
       });
       (mockSigner as Record<string, unknown>).signTransaction = vi
         .fn()
@@ -319,6 +505,23 @@ describe("ExactSvmScheme", () => {
       const result2 = await facilitator.settle(payload, requirements);
       expect(result2.success).toBe(false);
       expect(result2.errorReason).toBe("duplicate_settlement");
+    });
+
+    it("should release the settlement cache when send/confirm fails so a retry can proceed", async () => {
+      const facilitator = new ExactSvmScheme(mockSigner);
+      setupSettleMocks(facilitator);
+      (mockSigner as Record<string, unknown>).sendTransaction = vi
+        .fn()
+        .mockRejectedValueOnce(new Error("rpc send failed"))
+        .mockResolvedValueOnce("txSignature123");
+
+      const payload = makePayload("retryAfterTransientFailure==");
+      const result1 = await facilitator.settle(payload, requirements);
+      expect(result1.success).toBe(false);
+      expect(result1.errorReason).toBe("transaction_failed");
+
+      const result2 = await facilitator.settle(payload, requirements);
+      expect(result2.success).toBe(true);
     });
 
     it("should allow settlement of distinct transactions", async () => {
@@ -359,9 +562,12 @@ describe("ExactSvmScheme", () => {
       const v1 = new ExactSvmSchemeV1(mockSigner, sharedCache);
 
       // Mock V2 settle flow
-      vi.spyOn(v2, "verify").mockResolvedValue({
-        isValid: true,
-        payer: "PayerAddress",
+      vi.spyOn(
+        v2 as unknown as { _verify: (...args: unknown[]) => Promise<unknown> },
+        "_verify",
+      ).mockResolvedValue({
+        response: { isValid: true, payer: "PayerAddress" },
+        verificationPath: "static",
       });
       (mockSigner as Record<string, unknown>).signTransaction = vi
         .fn()
@@ -404,6 +610,16 @@ describe("ExactSvmScheme", () => {
       expect(v1Result.success).toBe(false);
       expect(v1Result.errorReason).toBe("duplicate_settlement");
     });
+  });
+});
+
+describe("SettlementCache", () => {
+  it("delete releases a key so isDuplicate can accept it again", () => {
+    const cache = new SettlementCache();
+    expect(cache.isDuplicate("pending-tx")).toBe(false);
+    expect(cache.isDuplicate("pending-tx")).toBe(true);
+    cache.delete("pending-tx");
+    expect(cache.isDuplicate("pending-tx")).toBe(false);
   });
 });
 

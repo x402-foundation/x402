@@ -8,8 +8,8 @@ import (
 	"strings"
 	"time"
 
-	x402 "github.com/x402-foundation/x402/go"
-	"github.com/x402-foundation/x402/go/types"
+	x402 "github.com/x402-foundation/x402/go/v2"
+	"github.com/x402-foundation/x402/go/v2/types"
 )
 
 // ============================================================================
@@ -161,6 +161,22 @@ func NewSchemeNetworkServer() *SchemeNetworkServer {
 // Scheme returns the payment scheme identifier
 func (s *SchemeNetworkServer) Scheme() string {
 	return "cash"
+}
+
+// DefaultAssetTransferMethod returns the SDK ATM sentinel (no on-wire ATM).
+func (s *SchemeNetworkServer) DefaultAssetTransferMethod() string {
+	return x402.SDKDefaultAssetTransferMethod
+}
+
+// PaymentFlows returns ATM-keyed payment flow support for cash.
+func (s *SchemeNetworkServer) PaymentFlows() map[string]x402.PaymentFlowConfig {
+	auth := x402.PaymentFlowConfig{
+		Supported: []x402.PaymentFlowName{x402.PaymentFlowAuthorization},
+		Default:   x402.PaymentFlowAuthorization,
+	}
+	return map[string]x402.PaymentFlowConfig{
+		x402.SDKDefaultAssetTransferMethod: auth,
+	}
 }
 
 // ParsePrice parses a price into asset amount format

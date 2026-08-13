@@ -1,6 +1,6 @@
 {
   "name": "@x402/express",
-  "version": "2.10.0",
+  "version": "2.22.0",
   "main": "./dist/cjs/index.js",
   "module": "./dist/esm/index.js",
   "types": "./dist/index.d.ts",
@@ -33,7 +33,7 @@
     "express": "^4.18.2",
     "prettier": "3.5.2",
     "tsup": "^8.4.0",
-    "tsx": "^4.19.2",
+    "tsx": "^4.21.0",
     "typescript": "^5.7.3",
     "vite": "^6.2.6",
     "vite-tsconfig-paths": "^5.1.4",
@@ -41,9 +41,7 @@
   },
   "dependencies": {
     "@x402/core": "workspace:~",
-    "@x402/extensions": "workspace:~",
-    "viem": "^2.39.3",
-    "zod": "^3.24.2"
+    "@x402/extensions": "workspace:~"
   },
   "peerDependencies": {
     "@x402/paywall": "workspace:^",

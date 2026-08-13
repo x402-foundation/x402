@@ -5,8 +5,14 @@
  * Use createPaymentWrapper to wrap tool handlers with payment verification and settlement.
  */
 
-import type { PaymentRequirements } from "@x402/core/types";
-import { x402ResourceServer } from "@x402/core/server";
+import type { Network, PaymentPayload, PaymentRequirements, ResourceInfo } from "@x402/core/types";
+import {
+  CompletedSettlement,
+  resolveFailurePathSettlement,
+  resolvePaymentFlow,
+  resolvePaymentFlowPhases,
+  x402ResourceServer,
+} from "@x402/core/server";
 
 import type {
   MCPToolContext,
@@ -47,10 +53,13 @@ export interface PaymentWrapperConfig {
     description?: string;
     /** MIME type of the tool response */
     mimeType?: string;
+    /** Human-readable name for the service hosting the tool */
+    serviceName?: string;
+    /** Short topical tags for discovery search */
+    tags?: string[];
+    /** Absolute http(s) URL to a service icon */
+    iconUrl?: string;
   };
-
-  /** Extensions to include in 402 payment required responses (e.g., bazaar discovery) */
-  extensions?: Record<string, unknown>;
 
   /** Hooks for payment lifecycle events */
   hooks?: {
@@ -61,6 +70,27 @@ export interface PaymentWrapperConfig {
     /** Called after successful settlement */
     onAfterSettlement?: AfterSettlementHook;
   };
+
+  /**
+   * x402 extensions to include in the PaymentRequired response.
+   * Use this to attach Bazaar discovery metadata so facilitators can index the tool.
+   *
+   * @example
+   * ```typescript
+   * import { declareDiscoveryExtension } from "@x402/extensions/bazaar";
+   *
+   * resource: { url: "mcp://tool/get_weather" },
+   * extensions: declareDiscoveryExtension({
+   *   toolName: "get_weather",
+   *   description: "Get current weather for a city",
+   *   inputSchema: {
+   *     properties: { city: { type: "string" } },
+   *     required: ["city"],
+   *   },
+   * })
+   * ```
+   */
+  extensions?: Record<string, unknown>;
 }
 
 /**
@@ -82,6 +112,13 @@ export interface ToolResult {
   [key: string]: unknown;
   content: Array<{ type: "text"; text: string }>;
   isError?: boolean;
+}
+
+interface MCPPaymentTransportContext {
+  toolName: string;
+  arguments: Record<string, unknown>;
+  meta?: Record<string, unknown>;
+  result?: ToolResult | WrappedToolResult;
 }
 
 /**
@@ -154,138 +191,455 @@ export function createPaymentWrapper(
     throw new Error("PaymentWrapperConfig.accepts must have at least one payment requirement");
   }
 
+  for (const requirement of config.accepts) {
+    const schemeServer = resourceServer.getRegisteredScheme(
+      requirement.network as Network,
+      requirement.scheme,
+    );
+    if (!schemeServer) {
+      throw new Error(
+        `[x402] No scheme implementation registered for "${requirement.scheme}" on network "${requirement.network}"`,
+      );
+    }
+    resolvePaymentFlow(schemeServer, requirement);
+  }
+
   // Return wrapper function that takes only the handler
   return <TArgs extends Record<string, unknown>>(
     handler: PaymentWrappedHandler<TArgs>,
   ): MCPToolCallback<TArgs> => {
     return async (args: TArgs, extra: unknown): Promise<WrappedToolResult> => {
-      // Extract _meta from extra if it's an object
-      const _meta = (extra as { _meta?: Record<string, unknown> })?._meta;
-      // Derive toolName from resource URL if available, otherwise use placeholder
-      const toolName = config.resource?.url?.replace("mcp://tool/", "") || "paid_tool";
-
-      const context: MCPToolContext = {
-        toolName,
-        arguments: args,
-        meta: _meta,
-      };
-
-      // Extract payment from _meta if present
-      const paymentPayload = extractPaymentFromMeta({
-        name: toolName,
-        arguments: args,
-        _meta,
-      });
-
-      // If no payment provided, return 402 error
-      if (!paymentPayload) {
-        return createPaymentRequiredResult(
-          resourceServer,
-          toolName,
-          config,
-          "Payment required to access this tool",
-        );
-      }
-
-      // Match the client's chosen payment method against config.accepts
-      const paymentRequirements = resourceServer.findMatchingRequirements(
-        config.accepts,
-        paymentPayload,
-      );
-
-      if (!paymentRequirements) {
-        return createPaymentRequiredResult(
-          resourceServer,
-          toolName,
-          config,
-          "No matching payment requirements found",
-        );
-      }
-
-      // Verify payment
-      const verifyResult = await resourceServer.verifyPayment(paymentPayload, paymentRequirements);
-
-      if (!verifyResult.isValid) {
-        return createPaymentRequiredResult(
-          resourceServer,
-          toolName,
-          config,
-          verifyResult.invalidReason || "Payment verification failed",
-        );
-      }
-
-      // Build hook context
-      const hookContext: ServerHookContext = {
-        toolName,
-        arguments: args,
-        paymentRequirements,
-        paymentPayload,
-      };
-
-      // Run onBeforeExecution hook if present
-      if (config.hooks?.onBeforeExecution) {
-        const hookResult = await config.hooks.onBeforeExecution(hookContext);
-        if (hookResult === false) {
-          return createPaymentRequiredResult(
-            resourceServer,
-            toolName,
-            config,
-            "Execution blocked by hook",
-          );
-        }
-      }
-
-      // Execute the tool handler
-      const result = await handler(args, context);
-
-      // Build after execution context
-      const afterExecContext: AfterExecutionContext = {
-        ...hookContext,
-        result,
-      };
-
-      // Run onAfterExecution hook if present
-      if (config.hooks?.onAfterExecution) {
-        await config.hooks.onAfterExecution(afterExecContext);
-      }
-
-      // If the tool handler returned an error, don't proceed to settlement
-      if (result.isError) {
-        return result;
-      }
-
-      // Settle the payment
+      let handlerThrew = false;
       try {
-        const settleResult = await resourceServer.settlePayment(
-          paymentPayload,
-          paymentRequirements,
-        );
-
-        // Run onAfterSettlement hook if present
-        if (config.hooks?.onAfterSettlement) {
-          const settlementContext: SettlementContext = {
-            ...hookContext,
-            settlement: settleResult,
-          };
-          await config.hooks.onAfterSettlement(settlementContext);
+        return await processPaidToolCall(resourceServer, config, handler, args, extra, () => {
+          handlerThrew = true;
+        });
+      } catch (error) {
+        if (handlerThrew) {
+          throw error;
         }
-
-        // Return full result (preserving structuredContent, etc.) with payment response in _meta
+        console.error(error);
         return {
-          ...result,
-          _meta: { [MCP_PAYMENT_RESPONSE_META_KEY]: settleResult },
+          content: [{ type: "text", text: "Internal Server Error" }],
+          isError: true,
         };
-      } catch (settleError) {
-        // Settlement failed after execution - return 402 error
+      }
+    };
+  };
+}
+
+/**
+ * Runs verify / settle / handler for a single paid MCP tool call.
+ *
+ * @param resourceServer - Resource server used for payment processing
+ * @param config - Payment wrapper configuration
+ * @param handler - Underlying tool handler
+ * @param args - Tool arguments
+ * @param extra - MCP extra/context (may include _meta payment)
+ * @param markHandlerThrew - Called when the tool handler throws so the outer
+ *   catch can rethrow without sanitizing
+ * @returns Wrapped MCP tool result
+ */
+async function processPaidToolCall<TArgs extends Record<string, unknown>>(
+  resourceServer: x402ResourceServer,
+  config: PaymentWrapperConfig,
+  handler: PaymentWrappedHandler<TArgs>,
+  args: TArgs,
+  extra: unknown,
+  markHandlerThrew: () => void,
+): Promise<WrappedToolResult> {
+  // Extract _meta from extra if it's an object
+  const _meta = (extra as { _meta?: Record<string, unknown> })?._meta;
+  // Derive toolName from resource URL if available, otherwise use placeholder
+  const toolName = config.resource?.url?.replace("mcp://tool/", "") || "paid_tool";
+
+  const context: MCPToolContext = {
+    toolName,
+    arguments: args,
+    meta: _meta,
+  };
+  const transportContext: MCPPaymentTransportContext = {
+    toolName,
+    arguments: args,
+    meta: _meta,
+  };
+
+  // Extract payment from _meta if present
+  const paymentPayload = extractPaymentFromMeta({
+    name: toolName,
+    arguments: args,
+    _meta,
+  });
+
+  // If no payment provided, return 402 error
+  if (!paymentPayload) {
+    return createPaymentRequiredResult(
+      resourceServer,
+      toolName,
+      config,
+      "Payment required to access this tool",
+      transportContext,
+    );
+  }
+
+  const resourceInfoForMatch = buildToolResourceInfo(toolName, config);
+  // Match on post-enrichment accepts (same as HTTP): extensions may change payTo etc.
+  const paymentRequiredForMatch = await resourceServer.createPaymentRequiredResponse(
+    config.accepts,
+    resourceInfoForMatch,
+    undefined,
+    config.extensions,
+    transportContext,
+  );
+  const paymentRequirements = resourceServer.findMatchingRequirements(
+    paymentRequiredForMatch.accepts,
+    paymentPayload,
+  );
+
+  if (!paymentRequirements) {
+    return createPaymentRequiredResult(
+      resourceServer,
+      toolName,
+      config,
+      "No matching payment requirements found",
+      transportContext,
+    );
+  }
+
+  const extensionResult = resourceServer.validateExtensions(
+    paymentRequiredForMatch,
+    paymentPayload,
+  );
+  if (!extensionResult.valid) {
+    return createPaymentRequiredResult(
+      resourceServer,
+      toolName,
+      config,
+      extensionResult.invalidReason,
+      transportContext,
+      paymentPayload,
+    );
+  }
+
+  const extMap = config.extensions ?? {};
+  const flow = resourceServer.getPaymentFlow(paymentPayload, paymentRequirements);
+  const phases = resolvePaymentFlowPhases(flow);
+
+  // Build hook context
+  const hookContext: ServerHookContext = {
+    toolName,
+    arguments: args,
+    paymentRequirements,
+    paymentPayload,
+  };
+
+  const verifyResult = await resourceServer.verifyPayment(
+    paymentPayload,
+    paymentRequirements,
+    extMap,
+    transportContext,
+  );
+
+  if (!verifyResult.isValid) {
+    return createPaymentRequiredResult(
+      resourceServer,
+      toolName,
+      config,
+      verifyResult.invalidReason || "Payment verification failed",
+      transportContext,
+      paymentPayload,
+    );
+  }
+
+  if (verifyResult.skipHandler) {
+    return settlePaymentResult(
+      resourceServer,
+      toolName,
+      config,
+      hookContext,
+      paymentPayload,
+      paymentRequirements,
+      extMap,
+      transportContext,
+      createSkipHandlerResult(verifyResult.skipHandler.body),
+    );
+  }
+
+  let beforeHandlerSettlement: CompletedSettlement | undefined;
+
+  if (phases.settleBeforeHandler) {
+    try {
+      const beforeSettle = await resourceServer.settlePayment(
+        paymentPayload,
+        paymentRequirements,
+        extMap,
+        transportContext,
+        undefined,
+        "before-handler",
+      );
+      if (!beforeSettle.success) {
         return createSettlementFailedResult(
           resourceServer,
           toolName,
           config,
-          settleError instanceof Error ? settleError.message : "Settlement failed",
+          beforeSettle.errorReason || beforeSettle.errorMessage || "Settlement failed",
+          transportContext,
         );
       }
+      beforeHandlerSettlement = {
+        phase: "before-handler",
+        flow,
+        result: beforeSettle,
+        requirements: paymentRequirements,
+      };
+    } catch (settleError) {
+      console.error(settleError);
+      return createSettlementFailedResult(
+        resourceServer,
+        toolName,
+        config,
+        "Settlement failed",
+        transportContext,
+      );
+    }
+  }
+
+  const cancellationDispatcher = resourceServer.createPaymentCancellationDispatcher(
+    paymentPayload,
+    paymentRequirements,
+    extMap,
+    transportContext,
+    beforeHandlerSettlement ? ["before-handler"] : [],
+  );
+
+  // Run onBeforeExecution hook if present
+  if (config.hooks?.onBeforeExecution) {
+    const hookResult = await config.hooks.onBeforeExecution(hookContext);
+    if (hookResult === false) {
+      return createPaymentRequiredResult(
+        resourceServer,
+        toolName,
+        config,
+        "Execution blocked by hook",
+        transportContext,
+      );
+    }
+  }
+
+  // Execute the tool handler
+  let result: ToolResult;
+  try {
+    result = await handler(args, context);
+  } catch (error) {
+    markHandlerThrew();
+    const cancelSettlement = await cancellationDispatcher.cancel({
+      reason: "handler_threw",
+      error: error instanceof Error ? error : new Error(String(error)),
+    });
+    const failureReceipt = resolveFailurePathSettlement(
+      cancelSettlement,
+      beforeHandlerSettlement,
+      paymentPayload,
+    );
+    if (!failureReceipt) {
+      throw error;
+    }
+    return {
+      content: [{ type: "text", text: "Internal Server Error" }],
+      isError: true,
+      _meta: { [MCP_PAYMENT_RESPONSE_META_KEY]: failureReceipt },
     };
+  }
+  transportContext.result = result;
+
+  // Build after execution context
+  const afterExecContext: AfterExecutionContext = {
+    ...hookContext,
+    result,
   };
+
+  // Run onAfterExecution hook if present
+  if (config.hooks?.onAfterExecution) {
+    await config.hooks.onAfterExecution(afterExecContext);
+  }
+
+  // If the tool handler returned an error, don't proceed to settlement
+  if (result.isError) {
+    const cancelSettlement = await cancellationDispatcher.cancel({ reason: "handler_failed" });
+    const failureReceipt = resolveFailurePathSettlement(
+      cancelSettlement,
+      beforeHandlerSettlement,
+      paymentPayload,
+    );
+    if (!failureReceipt) {
+      return result;
+    }
+    return {
+      ...result,
+      _meta: {
+        ...(result._meta as Record<string, unknown> | undefined),
+        [MCP_PAYMENT_RESPONSE_META_KEY]: failureReceipt,
+      },
+    };
+  }
+
+  return settlePaymentResult(
+    resourceServer,
+    toolName,
+    config,
+    hookContext,
+    paymentPayload,
+    paymentRequirements,
+    extMap,
+    transportContext,
+    result,
+    beforeHandlerSettlement,
+  );
+}
+
+/**
+ * Builds a tool result from the verifier's `skipHandler` body when the handler is skipped but settlement still runs.
+ *
+ * @param body - Verifier-supplied body to expose as text; objects become JSON text and optional structured content.
+ * @returns MCP-compatible wrapped result with text content and optional structured content.
+ */
+function createSkipHandlerResult(body: unknown): WrappedToolResult {
+  const result: WrappedToolResult = {
+    content: [
+      {
+        type: "text",
+        text: typeof body === "string" ? body : JSON.stringify(body ?? {}),
+      },
+    ],
+  };
+
+  if (typeof body === "object" && body !== null && !Array.isArray(body)) {
+    result.structuredContent = body as Record<string, unknown>;
+  }
+
+  return result;
+}
+
+/**
+ * Settles payment after tool execution and attaches settlement metadata to the tool result.
+ *
+ * @param resourceServer - x402 resource server used to perform settlement.
+ * @param toolName - Name of the MCP tool that produced the result.
+ * @param config - Payment wrapper configuration (e.g. settlement hooks).
+ * @param hookContext - Hook context for the current server invocation.
+ * @param paymentPayload - Verified payment payload from the client.
+ * @param paymentRequirements - Payment requirements satisfied for this call.
+ * @param extMap - Extension map forwarded to the settlement call.
+ * @param transportContext - MCP payment transport context for this invocation.
+ * @param result - Successful tool result to merge settlement metadata into.
+ * @param beforeHandlerSettlement - Optional before-handler settle for PAYMENT-RESPONSE echo.
+ * @returns Tool result including `_meta` with settlement details, or a settlement-failure error result.
+ */
+async function settlePaymentResult(
+  resourceServer: x402ResourceServer,
+  toolName: string,
+  config: PaymentWrapperConfig,
+  hookContext: ServerHookContext,
+  paymentPayload: PaymentPayload,
+  paymentRequirements: PaymentRequirements,
+  extMap: Record<string, unknown>,
+  transportContext: MCPPaymentTransportContext,
+  result: WrappedToolResult | ToolResult,
+  beforeHandlerSettlement?: CompletedSettlement,
+): Promise<WrappedToolResult> {
+  try {
+    const flow =
+      beforeHandlerSettlement?.flow ??
+      resourceServer.getPaymentFlow(paymentPayload, paymentRequirements);
+    const phases = resolvePaymentFlowPhases(flow);
+
+    if (!phases.settleAfterHandler) {
+      const settleResult = beforeHandlerSettlement?.result;
+      if (!settleResult) {
+        return {
+          ...result,
+          _meta: {
+            ...(result._meta as Record<string, unknown> | undefined),
+          },
+        };
+      }
+
+      if (config.hooks?.onAfterSettlement) {
+        const settlementContext: SettlementContext = {
+          ...hookContext,
+          settlement: settleResult,
+        };
+        await config.hooks.onAfterSettlement(settlementContext);
+      }
+
+      return {
+        ...result,
+        _meta: {
+          ...(result._meta as Record<string, unknown> | undefined),
+          [MCP_PAYMENT_RESPONSE_META_KEY]: settleResult,
+        },
+      };
+    }
+
+    const settleResult = await resourceServer.settlePayment(
+      paymentPayload,
+      paymentRequirements,
+      extMap,
+      transportContext,
+      undefined,
+      "after-handler",
+    );
+
+    if (config.hooks?.onAfterSettlement) {
+      const settlementContext: SettlementContext = {
+        ...hookContext,
+        settlement: settleResult,
+      };
+      await config.hooks.onAfterSettlement(settlementContext);
+    }
+
+    return {
+      ...result,
+      _meta: {
+        ...(result._meta as Record<string, unknown> | undefined),
+        [MCP_PAYMENT_RESPONSE_META_KEY]: settleResult,
+      },
+    };
+  } catch (settleError) {
+    console.error(settleError);
+    return createSettlementFailedResult(
+      resourceServer,
+      toolName,
+      config,
+      "Settlement failed",
+      transportContext,
+    );
+  }
+}
+
+/**
+ * Builds ResourceInfo for an MCP tool from wrapper config.
+ *
+ * @param toolName - Name of the MCP tool
+ * @param config - Payment wrapper configuration
+ * @returns Resource metadata for PaymentRequired / matching
+ */
+function buildToolResourceInfo(toolName: string, config: PaymentWrapperConfig): ResourceInfo {
+  const resourceInfo: ResourceInfo = {
+    url: createToolResourceUrl(toolName, config.resource?.url),
+    description: config.resource?.description || `Tool: ${toolName}`,
+    mimeType: config.resource?.mimeType || "application/json",
+  };
+  if (config.resource?.serviceName !== undefined) {
+    resourceInfo.serviceName = config.resource.serviceName;
+  }
+  if (config.resource?.tags !== undefined) {
+    resourceInfo.tags = config.resource.tags;
+  }
+  if (config.resource?.iconUrl !== undefined) {
+    resourceInfo.iconUrl = config.resource.iconUrl;
+  }
+  return resourceInfo;
 }
 
 /**
@@ -295,6 +649,8 @@ export function createPaymentWrapper(
  * @param toolName - Name of the tool for resource URL
  * @param config - Payment wrapper configuration
  * @param errorMessage - Error message describing why payment is required
+ * @param transportContext - Optional MCP payment transport context for the current tool call.
+ * @param paymentPayload - Optional client payment payload to include when building the 402 response.
  * @returns Promise resolving to structured 402 error result with payment requirements
  */
 async function createPaymentRequiredResult(
@@ -302,18 +658,18 @@ async function createPaymentRequiredResult(
   toolName: string,
   config: PaymentWrapperConfig,
   errorMessage: string,
+  transportContext?: MCPPaymentTransportContext,
+  paymentPayload?: PaymentPayload,
 ): Promise<WrappedToolResult> {
-  const resourceInfo = {
-    url: createToolResourceUrl(toolName, config.resource?.url),
-    description: config.resource?.description || `Tool: ${toolName}`,
-    mimeType: config.resource?.mimeType || "application/json",
-  };
+  const resourceInfo = buildToolResourceInfo(toolName, config);
 
   const paymentRequired = await resourceServer.createPaymentRequiredResponse(
     config.accepts,
     resourceInfo,
     errorMessage,
     config.extensions,
+    transportContext,
+    paymentPayload,
   );
 
   return {
@@ -335,6 +691,7 @@ async function createPaymentRequiredResult(
  * @param toolName - Name of the tool for resource URL
  * @param config - Payment wrapper configuration
  * @param errorMessage - Error message describing the settlement failure
+ * @param transportContext - Optional MCP payment transport context forwarded into the error result.
  * @returns Promise resolving to structured 402 error result with settlement failure info
  */
 async function createSettlementFailedResult(
@@ -342,6 +699,7 @@ async function createSettlementFailedResult(
   toolName: string,
   config: PaymentWrapperConfig,
   errorMessage: string,
+  transportContext?: MCPPaymentTransportContext,
 ): Promise<WrappedToolResult> {
   // Per spec R5, settlement failure follows the same format as payment required
   // (structuredContent + content[0].text + isError: true) with the error message
@@ -353,5 +711,6 @@ async function createSettlementFailedResult(
     toolName,
     config,
     `Payment settlement failed: ${errorMessage}`,
+    transportContext,
   );
 }

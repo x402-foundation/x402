@@ -6,14 +6,12 @@ Express.js server demonstrating both SIWX patterns supported by x402:
 
 ```typescript
 import express from "express";
-import { paymentMiddlewareFromHTTPServer, x402ResourceServer, x402HTTPResourceServer } from "@x402/express";
+import { paymentMiddleware, x402ResourceServer } from "@x402/express";
 import { ExactEvmScheme } from "@x402/evm/exact/server";
 import { HTTPFacilitatorClient } from "@x402/core/server";
 import {
   declareSIWxExtension,
-  siwxResourceServerExtension,
-  createSIWxSettleHook,
-  createSIWxRequestHook,
+  createSIWxResourceServerExtension,
   InMemorySIWxStorage,
 } from "@x402/extensions/sign-in-with-x";
 
@@ -21,14 +19,13 @@ const storage = new InMemorySIWxStorage();
 
 const resourceServer = new x402ResourceServer(facilitatorClient)
   .register("eip155:84532", new ExactEvmScheme())
-  .registerExtension(siwxResourceServerExtension)
-  .onAfterSettle(createSIWxSettleHook({ storage }));
-
-const httpServer = new x402HTTPResourceServer(resourceServer, routes)
-  .onProtectedRequest(createSIWxRequestHook({ storage }));
+  .registerExtension(createSIWxResourceServerExtension({
+    storage,
+    origin: "http://localhost:4021",
+  }));
 
 const app = express();
-app.use(paymentMiddlewareFromHTTPServer(httpServer));
+app.use(paymentMiddleware(routes, resourceServer));
 ```
 
 ## How It Works
@@ -102,7 +99,7 @@ The client will:
 
 ## SIWX Extension Configuration
 
-The server uses three key components:
+The server uses two key components:
 
 ### 1. Extension Declaration
 
@@ -126,23 +123,19 @@ const routes = {
 };
 ```
 
-### 2. Settle Hook (Records Payments)
+### 2. Server Extension
 
 ```typescript
 const resourceServer = new x402ResourceServer(facilitatorClient)
   .register("eip155:84532", new ExactEvmScheme())
-  .registerExtension(siwxResourceServerExtension)
-  .onAfterSettle(createSIWxSettleHook({ storage })); // Records paid addresses
+  .registerExtension(createSIWxResourceServerExtension({
+    storage,
+    origin: process.env.PUBLIC_ORIGIN ?? "http://localhost:4021",
+    onEvent,
+  }));
 ```
 
-### 3. Request Hook (Verifies SIWX)
-
-```typescript
-const httpServer = new x402HTTPResourceServer(resourceServer, routes)
-  .onProtectedRequest(createSIWxRequestHook({ storage })); // Checks SIWX auth
-```
-
-For routes declared with `accepts: []`, the request hook grants access on valid SIWX alone. For paid routes, it also checks whether that wallet has already paid.
+The extension refreshes SIWX challenges, records successful payments, and checks SIWX proofs for routes that declare `sign-in-with-x`. For routes declared with `accepts: []`, it grants access on valid SIWX alone. For paid routes, it also checks whether that wallet has already paid.
 
 ## Storage Backend
 
@@ -183,7 +176,11 @@ function onEvent(event: { type: string; resource: string; address?: string }) {
   console.log(`[SIWX] ${event.type}`, event);
 }
 
-createSIWxRequestHook({ storage, onEvent });
+createSIWxResourceServerExtension({
+  storage,
+  origin: process.env.PUBLIC_ORIGIN ?? "http://localhost:4021",
+  onEvent,
+});
 ```
 
 Event types:

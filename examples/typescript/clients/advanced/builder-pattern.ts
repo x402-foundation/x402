@@ -3,6 +3,7 @@ import { x402Client, wrapFetchWithPayment, x402HTTPClient } from "@x402/fetch";
 import { ExactEvmScheme } from "@x402/evm/exact/client";
 import { UptoEvmScheme } from "@x402/evm/upto/client";
 import { ExactSvmScheme } from "@x402/svm/exact/client";
+import { UptoSvmScheme } from "@x402/svm/upto/client";
 import { createKeyPairSignerFromBytes } from "@solana/kit";
 import { base58 } from "@scure/base";
 
@@ -39,14 +40,18 @@ export async function runBuilderPatternExample(
     .register("eip155:*", new ExactEvmScheme(evmSigner)) // All EVM networks (exact)
     .register("eip155:*", new UptoEvmScheme(evmSigner)) // All EVM networks (upto)
     .register("eip155:1", new ExactEvmScheme(ethereumMainnetSigner)) // Ethereum mainnet override
-    .register("solana:*", new ExactSvmScheme(svmSigner)) // All Solana networks
-    .register("solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1", new ExactSvmScheme(solanaDevnetSigner)); // Devnet override
+    .register("solana:*", new ExactSvmScheme(svmSigner)) // All Solana networks (exact)
+    .register("solana:*", new UptoSvmScheme(svmSigner)) // All Solana networks (upto)
+    .register("solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1", new ExactSvmScheme(solanaDevnetSigner)) // Devnet override (exact)
+    .register("solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1", new UptoSvmScheme(solanaDevnetSigner)); // Devnet override (upto)
 
   console.log("Registered networks:");
   console.log("  - eip155:* (all EVM) with default signer");
   console.log("  - eip155:1 (Ethereum mainnet) with mainnet signer");
-  console.log("  - solana:* (all Solana) with default signer");
-  console.log("  - solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1 (devnet) with devnet signer");
+  console.log("  - solana:* (all Solana) with default signer (exact + upto)");
+  console.log(
+    "  - solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1 (devnet) with devnet signer (exact + upto)",
+  );
   console.log();
 
   const fetchWithPayment = wrapFetchWithPayment(fetch, client);

@@ -38,13 +38,31 @@ There are pre-configured [examples available in the x402 repo](https://github.co
 
     # For Stellar support, also add:
     npm install @x402/stellar
+
+    # For Keeta support, also add:
+    npm install @x402/keeta
+
+    # For Hedera support, also add:
+    npm install @x402/hedera
+
+    # For Concordium support, also add:
+    npm install @x402/concordium
+
+    # For TON (TVM) support, also add:
+    npm install @x402/tvm
+
+    # For NEAR support, also add:
+    npm install @x402/near
+
+    # For XRPL support, also add:
+    npm install @x402/xrpl
     ```
   </Tab>
   <Tab title="Go">
     Add the x402 Go module to your project:
 
     ```bash
-    go get github.com/x402-foundation/x402/go
+    go get github.com/x402-foundation/x402/go/v2
     ```
   </Tab>
   <Tab title="Python">
@@ -59,6 +77,9 @@ There are pre-configured [examples available in the x402 repo](https://github.co
 
     # For Solana support, also add:
     pip install "x402[svm]"
+
+    # For TON (TVM) support, also add:
+    pip install "x402[tvm]"
     ```
   </Tab>
 </Tabs>
@@ -85,7 +106,7 @@ There are pre-configured [examples available in the x402 repo](https://github.co
   <Tab title="Go">
     ```go
     import (
-        evmsigners "github.com/x402-foundation/x402/go/signers/evm"
+        evmsigners "github.com/x402-foundation/x402/go/v2/signers/evm"
     )
 
     // Load private key from environment
@@ -166,6 +187,89 @@ const stellarSigner = createEd25519Signer(
 );
 ```
 
+#### Keeta
+
+Use the Keeta SDK to instantiate a signer:
+
+```typescript
+import * as KeetaNet from "@keetanetwork/keetanet-client";
+import { toClientKeetaSigner } from "@x402/keeta";
+
+// Derive account from mnemonic
+const account = KeetaNet.lib.Account.fromSeed(
+  await KeetaNet.lib.Account.seedFromPassphrase(process.env.KEETA_MNEMONIC!),
+  0,
+);
+const keetaSigner = toClientKeetaSigner(account);
+```
+
+#### Hedera
+
+Use `@x402/hedera` to instantiate a signer:
+
+```typescript
+import { createClientHederaSigner } from "@x402/hedera";
+import { PrivateKey } from "@hiero-ledger/sdk";
+
+const hederaSigner = createClientHederaSigner(
+  process.env.HEDERA_ACCOUNT_ID!,
+  PrivateKey.fromStringECDSA(process.env.HEDERA_PRIVATE_KEY!),
+  { network: "hedera:testnet" },
+);
+```
+
+#### Concordium
+
+Use `@x402/concordium` with the Concordium web SDK to instantiate a signer:
+
+```typescript
+import { buildBasicAccountSigner, AccountAddress } from "@concordium/web-sdk";
+
+const concordiumSigner = {
+  accountAddress: AccountAddress.fromBase58(process.env.CCD_ADDRESS!),
+  signer: buildBasicAccountSigner(process.env.CCD_PRIVATE_KEY!),
+};
+```
+
+#### TON (TVM)
+
+Use `@x402/tvm` to instantiate a signer:
+
+```typescript
+import { toClientTvmSigner } from "@x402/tvm";
+import { mnemonicToPrivateKey } from "@ton/crypto";
+
+const keyPair = await mnemonicToPrivateKey(process.env.TVM_MNEMONIC!.split(" "));
+const tvmSigner = toClientTvmSigner(keyPair, {
+  network: "tvm:-3",
+  apiKey: process.env.TONCENTER_API_KEY,
+});
+```
+
+#### NEAR
+
+Use `@x402/near` to instantiate a signer:
+
+```typescript
+import { createClientNearSigner } from "@x402/near";
+
+const nearSigner = createClientNearSigner({
+  accountId: "alice.testnet",
+  secretKey: process.env.NEAR_SECRET_KEY!, // ed25519:... full-access key
+});
+```
+
+#### XRPL
+
+Use `@x402/xrpl` to instantiate a signer:
+
+```typescript
+import { Wallet } from "xrpl";
+import { createXrplWalletSigner } from "@x402/xrpl";
+
+const xrplSigner = createXrplWalletSigner(Wallet.fromSeed(process.env.XRPL_SEED!));
+```
+
 ### 3. Make Paid Requests Automatically
 
 <Tabs>
@@ -173,8 +277,8 @@ const stellarSigner = createEd25519Signer(
     **@x402/fetch** extends the native `fetch` API to handle 402 responses and payment headers for you. [Full example here](https://github.com/x402-foundation/x402/tree/main/examples/typescript/clients/fetch)
 
     ```typescript
-    import { wrapFetchWithPayment } from "@x402/fetch";
-    import { x402Client, x402HTTPClient } from "@x402/core/client";
+    import { wrapFetchWithPayment, x402HTTPClient } from "@x402/fetch";
+    import { x402Client } from "@x402/core/client";
     import { ExactEvmScheme } from "@x402/evm/exact/client";
     import { privateKeyToAccount } from "viem/accounts";
 
@@ -187,22 +291,21 @@ const stellarSigner = createEd25519Signer(
 
     // Wrap fetch with payment handling
     const fetchWithPayment = wrapFetchWithPayment(fetch, client);
+    const httpClient = new x402HTTPClient(client);
 
     // Make request - payment is handled automatically
     const response = await fetchWithPayment("https://api.example.com/paid-endpoint", {
       method: "GET",
     });
 
-    const data = await response.json();
-    console.log("Response:", data);
+    // Parse the payment result (status, body, and decoded payment header)
+    const result = await httpClient.processResponse(response);
+    console.log("Response:", result.body);
 
-    // Get payment receipt from response headers
-    if (response.ok) {
-      const httpClient = new x402HTTPClient(client);
-      const paymentResponse = httpClient.getPaymentSettleResponse(
-        (name) => response.headers.get(name)
-      );
-      console.log("Payment settled:", paymentResponse);
+    if (result.paymentStatus === "settled") {
+      console.log("Payment settled:", result.header);
+    } else if (result.paymentStatus === "settle_failed") {
+      console.error("Settlement failed:", result.header);
     }
     ```
   </Tab>
@@ -227,17 +330,24 @@ const stellarSigner = createEd25519Signer(
       axios.create({ baseURL: "https://api.example.com" }),
       client,
     );
+    const httpClient = new x402HTTPClient(client);
 
     // Make request - payment is handled automatically
     const response = await api.get("/paid-endpoint");
-    console.log("Response:", response.data);
 
-    // Get payment receipt
-    const httpClient = new x402HTTPClient(client);
-    const paymentResponse = httpClient.getPaymentSettleResponse(
-      (name) => response.headers[name.toLowerCase()]
-    );
-    console.log("Payment settled:", paymentResponse);
+    // Parse the payment result (status, body, and decoded payment header)
+    const result = httpClient.parsePaymentResult({
+      status: response.status,
+      getHeader: (name) => response.headers[name.toLowerCase()],
+      body: response.data,
+    });
+    console.log("Response:", result.body);
+
+    if (result.paymentStatus === "settled") {
+      console.log("Payment settled:", result.header);
+    } else if (result.paymentStatus === "settle_failed") {
+      console.error("Settlement failed:", result.header);
+    }
     ```
   </Tab>
   <Tab title="Go">
@@ -254,10 +364,10 @@ const stellarSigner = createEd25519Signer(
         "os"
         "time"
 
-        x402 "github.com/x402-foundation/x402/go"
-        x402http "github.com/x402-foundation/x402/go/http"
-        evm "github.com/x402-foundation/x402/go/mechanisms/evm/exact/client"
-        evmsigners "github.com/x402-foundation/x402/go/signers/evm"
+        x402 "github.com/x402-foundation/x402/go/v2"
+        x402http "github.com/x402-foundation/x402/go/v2/http"
+        evm "github.com/x402-foundation/x402/go/v2/mechanisms/evm/exact/client"
+        evmsigners "github.com/x402-foundation/x402/go/v2/signers/evm"
     )
 
     func main() {
@@ -433,17 +543,81 @@ You can register multiple payment schemes to handle different networks:
       "stellar:testnet"
     );
     client.register("stellar:*", new ExactStellarScheme(stellarSigner));
+
+    // For Keeta support, also add:
+    import * as KeetaNet from "@keetanetwork/keetanet-client";
+    import { ExactKeetaScheme, toClientKeetaSigner } from "@x402/keeta";
+
+    const keetaAccount = KeetaNet.lib.Account.fromSeed(
+      await KeetaNet.lib.Account.seedFromPassphrase(process.env.KEETA_MNEMONIC!),
+      0,
+    );
+    client.register("keeta:*", new ExactKeetaScheme(toClientKeetaSigner(keetaAccount)));
+
+    // For Hedera support, also add:
+    import { ExactHederaScheme } from "@x402/hedera/exact/client";
+    import { createClientHederaSigner, PrivateKey } from "@x402/hedera";
+
+    const hederaSigner = createClientHederaSigner(
+      process.env.HEDERA_ACCOUNT_ID!,
+      PrivateKey.fromStringECDSA(process.env.HEDERA_PRIVATE_KEY!),
+      { network: "hedera:testnet" },
+    );
+    client.register("hedera:*", new ExactHederaScheme(hederaSigner));
+
+    // For Concordium support, also add:
+    import { ExactConcordiumScheme } from "@x402/concordium/exact/client";
+    import { buildBasicAccountSigner, AccountAddress } from "@concordium/web-sdk";
+
+    const concordiumSigner = {
+      accountAddress: AccountAddress.fromBase58(process.env.CCD_ADDRESS!),
+      signer: buildBasicAccountSigner(process.env.CCD_PRIVATE_KEY!),
+    };
+    client.register("ccd:*", new ExactConcordiumScheme(concordiumSigner));
+
+    // For TON (TVM) support, also add:
+    import { ExactTvmScheme } from "@x402/tvm/exact/client";
+    import { toClientTvmSigner } from "@x402/tvm";
+    import { mnemonicToPrivateKey } from "@ton/crypto";
+
+    const tvmKeyPair = await mnemonicToPrivateKey(process.env.TVM_MNEMONIC!.split(" "));
+    client.register(
+      "tvm:*",
+      new ExactTvmScheme(
+        toClientTvmSigner(tvmKeyPair, {
+          network: "tvm:-3",
+          apiKey: process.env.TONCENTER_API_KEY,
+        }),
+      ),
+    );
+
+    // For NEAR support, also add:
+    import { ExactNearScheme, createClientNearSigner } from "@x402/near";
+
+    const nearSigner = createClientNearSigner({
+      accountId: "alice.testnet",
+      secretKey: process.env.NEAR_SECRET_KEY!, // ed25519:... full-access key
+    });
+    client.register("near:*", new ExactNearScheme(nearSigner));
+
+    // For XRPL support, also add:
+    import { Wallet } from "xrpl";
+    import { createXrplWalletSigner } from "@x402/xrpl";
+    import { ExactXrplScheme } from "@x402/xrpl/exact/client";
+
+    const xrplSigner = createXrplWalletSigner(Wallet.fromSeed(process.env.XRPL_SEED!));
+    client.register("xrpl:*", new ExactXrplScheme(xrplSigner));
     ```
   </Tab>
   <Tab title="Go">
     ```go
     import (
-        x402 "github.com/x402-foundation/x402/go"
-        x402http "github.com/x402-foundation/x402/go/http"
-        evm "github.com/x402-foundation/x402/go/mechanisms/evm/exact/client"
-        svm "github.com/x402-foundation/x402/go/mechanisms/svm/exact/client"
-        evmsigners "github.com/x402-foundation/x402/go/signers/evm"
-        svmsigners "github.com/x402-foundation/x402/go/signers/svm"
+        x402 "github.com/x402-foundation/x402/go/v2"
+        x402http "github.com/x402-foundation/x402/go/v2/http"
+        evm "github.com/x402-foundation/x402/go/v2/mechanisms/evm/exact/client"
+        svm "github.com/x402-foundation/x402/go/v2/mechanisms/svm/exact/client"
+        evmsigners "github.com/x402-foundation/x402/go/v2/signers/evm"
+        svmsigners "github.com/x402-foundation/x402/go/v2/signers/svm"
     )
 
     // Create signers
@@ -477,6 +651,8 @@ You can register multiple payment schemes to handle different networks:
     from x402.mechanisms.evm.exact.register import register_exact_evm_client
     from x402.mechanisms.svm import KeypairSigner
     from x402.mechanisms.svm.exact.register import register_exact_svm_client
+    from x402.mechanisms.tvm import TVM_TESTNET, WalletV5R1Config, WalletV5R1MnemonicSigner
+    from x402.mechanisms.tvm.exact import ExactTvmClientScheme
 
 
     async def main() -> None:
@@ -490,71 +666,9 @@ You can register multiple payment schemes to handle different networks:
         svm_signer = KeypairSigner.from_base58(os.getenv("SVM_PRIVATE_KEY"))
         register_exact_svm_client(client, svm_signer)
 
-        async with x402HttpxClient(client) as http:
-            response = await http.get("https://api.example.com/paid-endpoint")
-            print(f"Response: {response.text}")
-
-
-    asyncio.run(main())
-    ```
-  </Tab>
-</Tabs>
-
-### Supporting the Upto Scheme
-
-If you need to interact with services that use the `upto` payment scheme (usage-based billing), register the `UptoEvmScheme` alongside your existing exact schemes. The upto scheme is transparent to the buyer -- the SDK handles the max-authorization signing automatically, and you are only charged the actual settled amount (which may be less than the authorized maximum).
-
-<Tabs>
-  <Tab title="TypeScript">
-    ```typescript
-    import { x402Client } from "@x402/core/client";
-    import { ExactEvmScheme } from "@x402/evm/exact/client";
-    import { UptoEvmScheme } from "@x402/evm/upto/client";
-    import { privateKeyToAccount } from "viem/accounts";
-
-    const signer = privateKeyToAccount(process.env.EVM_PRIVATE_KEY as `0x${string}`);
-
-    const client = new x402Client();
-    client.register("eip155:*", new ExactEvmScheme(signer));
-    client.register("eip155:*", new UptoEvmScheme(signer));
-    ```
-  </Tab>
-  <Tab title="Go">
-    ```go
-    import (
-        x402 "github.com/x402-foundation/x402/go"
-        exactevm "github.com/x402-foundation/x402/go/mechanisms/evm/exact/client"
-        uptoevm "github.com/x402-foundation/x402/go/mechanisms/evm/upto/client"
-        evmsigners "github.com/x402-foundation/x402/go/signers/evm"
-    )
-
-    evmSigner, _ := evmsigners.NewClientSignerFromPrivateKey(os.Getenv("EVM_PRIVATE_KEY"))
-
-    x402Client := x402.Newx402Client().
-        Register("eip155:*", exactevm.NewExactEvmScheme(evmSigner)).
-        Register("eip155:*", uptoevm.NewUptoEvmScheme(evmSigner))
-    ```
-  </Tab>
-  <Tab title="Python">
-    ```python
-    import asyncio
-    import os
-    from eth_account import Account
-
-    from x402 import x402Client
-    from x402.http.clients import x402HttpxClient
-    from x402.mechanisms.evm import EthAccountSigner
-    from x402.mechanisms.evm.exact.register import register_exact_evm_client
-    from x402.mechanisms.evm.upto.client import UptoEvmScheme
-
-
-    async def main() -> None:
-        account = Account.from_key(os.getenv("EVM_PRIVATE_KEY"))
-        signer = EthAccountSigner(account)
-
-        client = x402Client()
-        register_exact_evm_client(client, signer)
-        client.register("eip155:*", UptoEvmScheme(signer))
+        # Register TVM scheme
+        tvm_config = WalletV5R1Config.from_private_key(TVM_TESTNET, os.getenv("TVM_PRIVATE_KEY"))
+        client.register(TVM_TESTNET, ExactTvmClientScheme(WalletV5R1MnemonicSigner(tvm_config)))
 
         async with x402HttpxClient(client) as http:
             response = await http.get("https://api.example.com/paid-endpoint")
@@ -566,7 +680,14 @@ If you need to interact with services that use the `upto` payment scheme (usage-
   </Tab>
 </Tabs>
 
-**Note:** The `upto` scheme is currently available on EVM networks only. When registered, the SDK automatically selects the correct scheme based on what the server advertises in its 402 response.
+### Payment Schemes
+
+The examples above use the simplest fixed-price scheme. If a resource advertises a different scheme in its 402 response, register that scheme for the same network namespace:
+
+* [`exact`](/schemes/exact): fixed-price payments.
+* [`upto`](/schemes/upto): usage-based payments where you authorize a maximum and the seller charges actual usage.
+* [`batch-settlement`](/schemes/batch-settlement): high-volume payments where the client deposits into escrow, signs off-chain vouchers, and the seller claims value onchain in batches.
+
 
 ### 4. Discover Available Services (Optional)
 
@@ -618,9 +739,9 @@ try {
 
 ### Summary
 
-* Install x402 client packages (`@x402/fetch` or `@x402/axios`) and mechanism packages (`@x402/evm`, `@x402/svm`, `@x402/aptos`)
+* Install x402 client packages (`@x402/fetch` or `@x402/axios`) and mechanism packages (`@x402/evm`, `@x402/svm`, `@x402/tvm`, `@x402/aptos`, `@x402/keeta`, `@x402/near`, `@x402/xrpl`)
 * Create a wallet signer
-* Create an `x402Client` and register payment schemes (`exact` for fixed-price, `upto` for usage-based billing)
+* Create an `x402Client` and register payment schemes (`exact` for fixed-price, `upto` for usage-based billing, `batch-settlement` for batched EVM micropayments when the server advertises it)
 * Use the provided wrapper/interceptor to make paid API requests
 * (Optional) Use the x402 Bazaar to discover services dynamically
 * Payment flows are handled automatically for you -- including `upto` where you only pay the actual usage
@@ -639,4 +760,4 @@ try {
 * [@x402/evm on npm](https://www.npmjs.com/package/@x402/evm)
 * [x402 Go module](https://github.com/x402-foundation/x402/tree/main/go)
 
-For questions or support, join our [Discord](https://discord.gg/cdp).
+For questions or support, join our [Slack](http://slack.x402.org/).

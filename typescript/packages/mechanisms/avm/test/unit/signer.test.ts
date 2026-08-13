@@ -114,7 +114,7 @@ describe("AVM Signer", () => {
 
       expect(signer).toBeDefined();
       // getAlgodClient should return an algod client using AlgorandClient defaults
-      const algod = signer.getAlgodClient("algorand:SGO1GKSzyE7IEPItTxCByw9x8FmnrCDexi9/cOUJOiI=");
+      const algod = signer.getAlgodClient("algorand:SGO1GKSzyE7IEPItTxCByw9x8FmnrCDe");
       expect(algod).toBeDefined();
     });
 

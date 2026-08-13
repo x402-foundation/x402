@@ -45,8 +45,8 @@ contract DeployX402Proxies is Script {
     bytes32 constant EXACT_SALT = 0x0000000000000000000000000000000000000000000000003000000007263b0e;
 
     /// @notice Salt for x402UptoPermit2Proxy deterministic deployment
-    /// @dev Vanity mined for address 0x4020a4f3b7b90cca423b9fabcc0ce57c6c240002
-    bytes32 constant UPTO_SALT = 0x000000000000000000000000000000000000000000000000b000000001db633d;
+    /// @dev Vanity mined for address 0x402015c795ecb48a360bdc6e35a2eaeb313a0002
+    bytes32 constant UPTO_SALT = 0x0000000000000000000000000000000000000000000000000800000007e2e4de;
 
     /// @notice Expected initCodeHash for x402ExactPermit2Proxy (pre-built, includes CBOR metadata)
     bytes32 constant EXACT_INIT_CODE_HASH = 0xe774d1d5a07218946ab54efe010b300481478b86861bb17d69c98a57f68a604c;

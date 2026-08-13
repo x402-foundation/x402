@@ -1,0 +1,28 @@
+{
+  "env": {
+    "SERVER_TVM_ADDRESS": { "required": true, "roles": ["server"] },
+    "CLIENT_TVM_PRIVATE_KEY": { "required": true, "roles": ["client"] },
+    "FACILITATOR_TVM_PRIVATE_KEY": { "required": true, "roles": ["facilitator"] },
+    "TVM_PROVIDER": { "required": false, "roles": ["client", "facilitator"] },
+    "TVM_TONCENTER_API_KEY": { "required": false, "roles": ["client", "facilitator"] },
+    "TVM_TONAPI_API_KEY": { "required": false, "roles": ["client", "facilitator"] }
+  },
+  "testnet": {
+    "name": "TON Testnet",
+    "caip2": "tvm:-3",
+    "rpcUrlDefault": "https://testnet.toncenter.com"
+  },
+  "mainnet": {
+    "name": "TON Mainnet",
+    "caip2": "tvm:-239",
+    "rpcUrlDefault": "https://toncenter.com"
+  },
+  "routes": {
+    "/exact/tvm": {
+      "scheme": "exact",
+      "sdks": ["typescript", "python"],
+      "price": { "usd": "$0.001" },
+      "extensions": ["bazaar"]
+    }
+  }
+}

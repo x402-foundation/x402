@@ -1,9 +1,10 @@
-import { convertToTokenAmount, numberToDecimalString } from "@x402/core/utils";
+import { convertToTokenAmount, numberToDecimalString, parseMoneyString } from "@x402/core/utils";
 import { DEFAULT_TOKEN_DECIMALS } from "../../constants";
 import { getUsdcAddress } from "../../utils";
 import type {
   AssetAmount,
   Network,
+  PaymentFlowConfig,
   PaymentRequirements,
   Price,
   SchemeNetworkServer,
@@ -15,6 +16,10 @@ import type {
  */
 export class ExactStellarScheme implements SchemeNetworkServer {
   readonly scheme = "exact";
+  readonly defaultAssetTransferMethod = "default";
+  readonly paymentFlows = {
+    default: { supported: ["authorization"], default: "authorization" },
+  } as const satisfies Record<string, PaymentFlowConfig>;
   private moneyParsers: MoneyParser[] = [];
 
   /**
@@ -119,15 +124,7 @@ export class ExactStellarScheme implements SchemeNetworkServer {
       return money;
     }
 
-    // Remove $ sign and whitespace, then parse
-    const cleanMoney = money.replace(/^\$/, "").trim();
-    const amount = parseFloat(cleanMoney);
-
-    if (isNaN(amount)) {
-      throw new Error(`Invalid money format: ${money}`);
-    }
-
-    return amount;
+    return parseMoneyString(money);
   }
 
   /**

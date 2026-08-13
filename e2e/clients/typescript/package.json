@@ -1,0 +1,49 @@
+{
+  "name": "@x402/e2e-clients-typescript",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev:axios": "tsx http/axios/index.ts",
+    "dev:fetch": "tsx http/fetch/index.ts",
+    "dev:mcp": "tsx mcp/index.ts",
+    "dev:svm-smart-wallet": "tsx http/svm-smart-wallet/index.ts"
+  },
+  "dependencies": {
+    "@aptos-labs/ts-sdk": "^5.2.1",
+    "@concordium/web-sdk": "^12.0.0",
+    "@keetanetwork/keetanet-client": "^0.18.1",
+    "@modelcontextprotocol/sdk": "^1.15.1",
+    "@scure/base": "^1.2.6",
+    "@solana-program/compute-budget": "^0.11.0",
+    "@solana-program/token": "^0.9.0",
+    "@solana-program/token-2022": "^0.6.1",
+    "@solana/kit": "^6.1.0",
+    "@swig-wallet/kit": "^2.0.0",
+    "@swig-wallet/lib": "^2.0.0",
+    "@ton/crypto": "^3.3.0",
+    "@x402/aptos": "workspace:*",
+    "@x402/avm": "workspace:*",
+    "@x402/axios": "workspace:*",
+    "@x402/concordium": "workspace:*",
+    "@x402/core": "workspace:*",
+    "@x402/evm": "workspace:*",
+    "@x402/fetch": "workspace:*",
+    "@x402/hedera": "workspace:*",
+    "@x402/keeta": "workspace:*",
+    "@x402/mcp": "workspace:*",
+    "@x402/near": "workspace:*",
+    "@x402/stellar": "workspace:*",
+    "@x402/svm": "workspace:*",
+    "@x402/tvm": "workspace:*",
+    "@x402/xrpl": "workspace:*",
+    "axios": "1.12.2",
+    "viem": "^2.48.11",
+    "ws": "^8.18.0",
+    "xrpl": "^4.6.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.13.4",
+    "tsx": "^4.21.0",
+    "typescript": "^5.7.3"
+  }
+}

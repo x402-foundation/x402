@@ -41,7 +41,7 @@ export async function createUptoPermit2Payload(
 
   const now = Math.floor(Date.now() / 1000);
   const nonce = createPermit2Nonce();
-  const validAfter = (now - 600).toString();
+  const validAfter = "0";
   const deadline = (now + paymentRequirements.maxTimeoutSeconds).toString();
 
   if (BigInt(deadline) <= BigInt(validAfter)) {

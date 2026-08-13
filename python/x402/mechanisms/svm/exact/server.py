@@ -1,10 +1,16 @@
 """SVM server implementation for the Exact payment scheme (V2)."""
 
+from __future__ import annotations
+
 from collections.abc import Callable
+from typing import TYPE_CHECKING
 
 from ....schemas import AssetAmount, Network, PaymentRequirements, Price, SupportedKind
 from ..constants import DEFAULT_DECIMALS, SCHEME_EXACT
 from ..utils import get_network_config, get_usdc_address, parse_money_to_decimal
+
+if TYPE_CHECKING:
+    from solana.rpc.api import Client as SolanaClient
 
 # Type alias for money parser (sync)
 MoneyParser = Callable[[float, str], AssetAmount | None]
@@ -24,11 +30,24 @@ class ExactSvmScheme:
 
     scheme = SCHEME_EXACT
 
-    def __init__(self):
-        """Create ExactSvmScheme."""
-        self._money_parsers: list[MoneyParser] = []
+    def __init__(self, rpc_url: str | None = None):
+        """Create ExactSvmScheme.
 
-    def register_money_parser(self, parser: MoneyParser) -> "ExactSvmScheme":
+        Args:
+            rpc_url: Optional RPC URL used to add blockhash construction hints.
+        """
+        self._money_parsers: list[MoneyParser] = []
+        self._rpc_client: SolanaClient | None = None
+        if rpc_url:
+            try:
+                from solana.rpc.api import Client as SolanaClient
+            except ImportError as e:
+                raise ImportError(
+                    "SVM mechanism requires solana packages. Install with: pip install x402[svm]"
+                ) from e
+            self._rpc_client = SolanaClient(rpc_url)
+
+    def register_money_parser(self, parser: MoneyParser) -> ExactSvmScheme:
         """Register custom money parser in the parser chain.
 
         Multiple parsers can be registered - tried in registration order.
@@ -125,6 +144,15 @@ class ExactSvmScheme:
         extra = supported_kind.extra or {}
         if "feePayer" in extra:
             requirements.extra["feePayer"] = extra["feePayer"]
+
+        if self._rpc_client:
+            try:
+                blockhash = self._rpc_client.get_latest_blockhash().value
+                requirements.extra["recentBlockhash"] = str(blockhash.blockhash)
+                requirements.extra["lastValidBlockHeight"] = str(blockhash.last_valid_block_height)
+            except Exception:
+                requirements.extra.pop("recentBlockhash", None)
+                requirements.extra.pop("lastValidBlockHeight", None)
 
         return requirements
 

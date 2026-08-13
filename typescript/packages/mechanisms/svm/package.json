@@ -1,6 +1,6 @@
 {
   "name": "@x402/svm",
-  "version": "2.10.0",
+  "version": "2.22.0",
   "main": "./dist/cjs/index.js",
   "module": "./dist/esm/index.js",
   "types": "./dist/cjs/index.d.ts",
@@ -39,7 +39,7 @@
     "eslint-plugin-prettier": "^5.2.6",
     "prettier": "3.5.2",
     "tsup": "^8.4.0",
-    "tsx": "^4.19.2",
+    "tsx": "^4.21.0",
     "typescript": "^5.7.3",
     "vite": "^6.2.6",
     "vite-tsconfig-paths": "^5.1.4",
@@ -123,6 +123,36 @@
       "require": {
         "types": "./dist/cjs/exact/v1/facilitator/index.d.ts",
         "default": "./dist/cjs/exact/v1/facilitator/index.js"
+      }
+    },
+    "./upto/client": {
+      "import": {
+        "types": "./dist/esm/upto/client/index.d.mts",
+        "default": "./dist/esm/upto/client/index.mjs"
+      },
+      "require": {
+        "types": "./dist/cjs/upto/client/index.d.ts",
+        "default": "./dist/cjs/upto/client/index.js"
+      }
+    },
+    "./upto/server": {
+      "import": {
+        "types": "./dist/esm/upto/server/index.d.mts",
+        "default": "./dist/esm/upto/server/index.mjs"
+      },
+      "require": {
+        "types": "./dist/cjs/upto/server/index.d.ts",
+        "default": "./dist/cjs/upto/server/index.js"
+      }
+    },
+    "./upto/facilitator": {
+      "import": {
+        "types": "./dist/esm/upto/facilitator/index.d.mts",
+        "default": "./dist/esm/upto/facilitator/index.mjs"
+      },
+      "require": {
+        "types": "./dist/cjs/upto/facilitator/index.d.ts",
+        "default": "./dist/cjs/upto/facilitator/index.js"
       }
     }
   },

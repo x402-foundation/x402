@@ -6,8 +6,8 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/x402-foundation/x402/go/extensions/types"
-	"github.com/x402-foundation/x402/go/http"
+	"github.com/x402-foundation/x402/go/v2/extensions/types"
+	"github.com/x402-foundation/x402/go/v2/http"
 )
 
 // bracketParamRegex matches [paramName] route segments (Next.js style).

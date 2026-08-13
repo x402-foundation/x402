@@ -1,8 +1,26 @@
-import { SettleResponse, VerifyResponse } from "./facilitator";
-import { PaymentRequirements } from "./payments";
-import { PaymentPayload } from "./payments";
+import { SettleResponse, SupportedKind, VerifyResponse } from "./facilitator";
+import { PaymentPayload, PaymentRequired, PaymentRequirements, ResourceInfo } from "./payments";
 import { Price, Network, AssetAmount } from ".";
 import { FacilitatorExtension } from "./extensions";
+import type { DeepReadonly } from "./readonly";
+import type {
+  BeforeVerifyHook,
+  AfterVerifyHook,
+  BeforeSettleHook,
+  AfterSettleHook,
+  OnVerifyFailureHook,
+  OnSettleFailureHook,
+  OnVerifiedPaymentCanceledHook,
+  SettleContext,
+  SettleResultContext,
+  VerifiedPaymentCanceledContext,
+} from "../server/x402ResourceServer";
+import type {
+  BeforePaymentCreationHook,
+  AfterPaymentCreationHook,
+  OnPaymentCreationFailureHook,
+  OnPaymentResponseHook,
+} from "../client/x402Client";
 
 /**
  * Money parser function that converts a numeric amount to an AssetAmount
@@ -35,8 +53,16 @@ export interface PaymentPayloadContext {
   extensions?: Record<string, unknown>;
 }
 
+export interface SchemeClientHooks {
+  onBeforePaymentCreation?: BeforePaymentCreationHook;
+  onAfterPaymentCreation?: AfterPaymentCreationHook;
+  onPaymentCreationFailure?: OnPaymentCreationFailureHook;
+  onPaymentResponse?: OnPaymentResponseHook;
+}
+
 export interface SchemeNetworkClient {
   readonly scheme: string;
+  readonly schemeHooks?: SchemeClientHooks;
 
   createPaymentPayload(
     x402Version: number,
@@ -128,8 +154,94 @@ export interface SchemeNetworkFacilitator {
   ): Promise<SettleResponse>;
 }
 
+export interface SchemeServerHooks {
+  onBeforeVerify?: BeforeVerifyHook;
+  onAfterVerify?: AfterVerifyHook;
+  onBeforeSettle?: BeforeSettleHook;
+  onAfterSettle?: AfterSettleHook;
+  onVerifyFailure?: OnVerifyFailureHook;
+  onSettleFailure?: OnSettleFailureHook;
+  onVerifiedPaymentCanceled?: OnVerifiedPaymentCanceledHook;
+}
+
+export type SchemeEnrichSettlementPayloadHook = (
+  ctx: SettleContext,
+) => Promise<Record<string, unknown> | void>;
+
+export type SchemeEnrichSettlementResponseHook = (
+  ctx: SettleResultContext,
+) => Promise<Record<string, unknown> | void>;
+
+export interface SchemePaymentRequiredContext {
+  requirements: PaymentRequirements[];
+  paymentPayload?: DeepReadonly<PaymentPayload>;
+  resourceInfo: ResourceInfo;
+  error?: string;
+  paymentRequiredResponse: PaymentRequired;
+  transportContext?: unknown;
+}
+
+export type SchemeEnrichPaymentRequiredResponseHook = (
+  ctx: SchemePaymentRequiredContext,
+) => Promise<PaymentRequirements[] | void>;
+
+/**
+ * Named payment flow declared by a scheme. Controls whether core verifies and/or
+ * settles before the resource handler, and whether it settles after.
+ *
+ * Multi-settle flows (`escrow`) fire settle lifecycle hooks once per settle.
+ * Side-effecting hooks should branch on {@link SettleContext.phase}.
+ */
+export type PaymentFlowName = "authorization" | "upfront" | "escrow";
+
+/**
+ * Phase flags for a {@link PaymentFlowName}.
+ */
+export interface PaymentFlowPhases {
+  verifyBeforeHandler: boolean;
+  settleBeforeHandler: boolean;
+  settleAfterHandler: boolean;
+}
+
+/**
+ * Supported payment flows for one assetTransferMethod, plus the default when
+ * `extra.paymentFlow` is omitted.
+ */
+export interface PaymentFlowConfig {
+  readonly supported: readonly PaymentFlowName[];
+  /** Must be a member of {@link PaymentFlowConfig.supported}. */
+  readonly default: PaymentFlowName;
+}
+
 export interface SchemeNetworkServer {
   readonly scheme: string;
+  /**
+   * ATM used when `requirements.extra.assetTransferMethod` is absent.
+   * Use `"default"` only as SDK plumbing when the scheme has no on-wire ATM.
+   */
+  readonly defaultAssetTransferMethod: string;
+  /**
+   * Payment flows supported per assetTransferMethod.
+   * Every ATM the scheme accepts must appear here.
+   */
+  readonly paymentFlows: Readonly<Record<string, PaymentFlowConfig>>;
+  readonly schemeHooks?: SchemeServerHooks;
+  readonly dynamicExtraFields?: string[];
+  enrichPaymentRequiredResponse?: SchemeEnrichPaymentRequiredResponseHook;
+  enrichSettlementPayload?: SchemeEnrichSettlementPayloadHook;
+  enrichSettlementResponse?: SchemeEnrichSettlementResponseHook;
+
+  /**
+   * Optional: return payment requirements to settle when a verified payment is
+   * canceled (handler failure/throw or post-verify abort). Core calls
+   * `settlePayment` with the returned requirements; return void to skip settle.
+   *
+   * @param context - Cancellation context for the verified payment
+   * @returns Requirements to settle, or void to leave the payment unsettled
+   */
+  settleOnCancel?(
+    context: VerifiedPaymentCanceledContext,
+  ): PaymentRequirements | void | Promise<PaymentRequirements | void>;
 
   /**
    * Convert a user-friendly price to the scheme's specific amount and asset format
@@ -173,12 +285,24 @@ export interface SchemeNetworkServer {
    */
   enhancePaymentRequirements(
     paymentRequirements: PaymentRequirements,
-    supportedKind: {
-      x402Version: number;
-      scheme: string;
-      network: Network;
-      extra?: Record<string, unknown>;
-    },
+    supportedKind: SupportedKind,
     facilitatorExtensions: string[],
   ): Promise<PaymentRequirements>;
+
+  /**
+   * Optional: validate that the facilitator's advertised capabilities for this
+   * scheme/network are sufficient given the scheme's own configuration. Invoked
+   * during initialize(), only when the facilitator supports the scheme.
+   *
+   * @param network - The network identifier being validated
+   * @param supportedKind - The facilitator's advertised kind for this scheme/network
+   * @param facilitatorExtensions - Extensions advertised by the facilitator
+   * @returns A human-readable problem message when the configuration cannot be
+   *   fulfilled, or void/undefined when valid.
+   */
+  validateFacilitatorSupport?(
+    network: Network,
+    supportedKind: SupportedKind,
+    facilitatorExtensions: string[],
+  ): string | void;
 }

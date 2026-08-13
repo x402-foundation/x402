@@ -2,10 +2,14 @@ import {
   PaywallConfig,
   PaywallProvider,
   x402ResourceServer,
+  x402HTTPResourceServer,
   RoutesConfig,
   RouteConfig,
   FacilitatorClient,
   FacilitatorResponseError,
+  checkIfBazaarNeeded,
+  SETTLEMENT_OVERRIDES_HEADER,
+  SettlementOverrides,
 } from "@x402/core/server";
 import { SchemeNetworkServer, Network } from "@x402/core/types";
 import { NextRequest, NextResponse } from "next/server";
@@ -15,9 +19,20 @@ import {
   handlePaymentError,
   handleSettlement,
   createFacilitatorErrorResponse,
+  createInternalErrorResponse,
   getFacilitatorResponseError,
 } from "./utils";
-import { x402HTTPResourceServer } from "@x402/core/server";
+
+/**
+ * Set settlement overrides on the response for partial settlement.
+ * `withX402` reads this header before settlement and strips it from the client response.
+ *
+ * @param res - Next.js `NextResponse` from your route handler
+ * @param overrides - Settlement overrides (for example `{ amount: "50%" }` for partial settlement)
+ */
+export function setSettlementOverrides(res: NextResponse, overrides: SettlementOverrides): void {
+  res.headers.set(SETTLEMENT_OVERRIDES_HEADER, JSON.stringify(overrides));
+}
 
 /**
  * Configuration for registering a payment scheme with a specific network
@@ -66,13 +81,19 @@ export function paymentProxyFromHTTPServer(
 ) {
   const { init } = prepareHttpServer(httpServer, paywall, syncFacilitatorOnStart);
 
-  // Dynamically register bazaar extension if routes declare it and not already registered
-  // Skip if pre-registered (e.g., in serverless environments where static imports are used)
   let bazaarPromise: Promise<void> | null = null;
-  if (checkIfBazaarNeeded(httpServer.routes) && !httpServer.server.hasExtension("bazaar")) {
-    bazaarPromise = import(/* webpackIgnore: true */ "@x402/extensions/bazaar")
-      .then(({ bazaarResourceServerExtension }) => {
-        httpServer.server.registerExtension(bazaarResourceServerExtension);
+  if (checkIfBazaarNeeded(httpServer.routes)) {
+    if (!httpServer.server.hasExtension("bazaar")) {
+      bazaarPromise = import(/* webpackIgnore: true */ "@x402/extensions/bazaar").then(
+        ({ bazaarResourceServerExtension }) => {
+          httpServer.server.registerExtension(bazaarResourceServerExtension);
+        },
+      );
+    }
+    bazaarPromise = (bazaarPromise ?? Promise.resolve())
+      .then(() => import(/* webpackIgnore: true */ "@x402/extensions/bazaar"))
+      .then(({ validateBazaarRouteExtensions }) => {
+        validateBazaarRouteExtensions(httpServer.routes);
       })
       .catch(err => {
         console.error("Failed to load bazaar extension:", err);
@@ -95,7 +116,7 @@ export function paymentProxyFromHTTPServer(
       if (facilitatorError) {
         return createFacilitatorErrorResponse(facilitatorError);
       }
-      throw error;
+      return createInternalErrorResponse(error);
     }
 
     // Await bazaar extension loading if needed
@@ -112,7 +133,7 @@ export function paymentProxyFromHTTPServer(
       if (error instanceof FacilitatorResponseError) {
         return createFacilitatorErrorResponse(error);
       }
-      throw error;
+      return createInternalErrorResponse(error);
     }
 
     // Handle the different result types
@@ -126,17 +147,17 @@ export function paymentProxyFromHTTPServer(
 
       case "payment-verified": {
         // Payment is valid, need to wrap response for settlement
-        const { paymentPayload, paymentRequirements, declaredExtensions } = result;
-
         // Proceed to the next proxy or route handler
         const nextResponse = NextResponse.next();
         return handleSettlement(
           httpServer,
           nextResponse,
-          paymentPayload,
-          paymentRequirements,
-          declaredExtensions,
+          result.paymentPayload,
+          result.paymentRequirements,
+          result.declaredExtensions,
+          result.cancellationDispatcher,
           context,
+          result.beforeHandlerSettlement,
         );
       }
     }
@@ -266,13 +287,19 @@ export function withX402FromHTTPServer<T = unknown>(
 ): (request: NextRequest) => Promise<NextResponse<T>> {
   const { init } = prepareHttpServer(httpServer, paywall, syncFacilitatorOnStart);
 
-  // Dynamically register bazaar extension if route declares it and not already registered
-  // Skip if pre-registered (e.g., in serverless environments where static imports are used)
   let bazaarPromise: Promise<void> | null = null;
-  if (checkIfBazaarNeeded(httpServer.routes) && !httpServer.server.hasExtension("bazaar")) {
-    bazaarPromise = import(/* webpackIgnore: true */ "@x402/extensions/bazaar")
-      .then(({ bazaarResourceServerExtension }) => {
-        httpServer.server.registerExtension(bazaarResourceServerExtension);
+  if (checkIfBazaarNeeded(httpServer.routes)) {
+    if (!httpServer.server.hasExtension("bazaar")) {
+      bazaarPromise = import(/* webpackIgnore: true */ "@x402/extensions/bazaar").then(
+        ({ bazaarResourceServerExtension }) => {
+          httpServer.server.registerExtension(bazaarResourceServerExtension);
+        },
+      );
+    }
+    bazaarPromise = (bazaarPromise ?? Promise.resolve())
+      .then(() => import(/* webpackIgnore: true */ "@x402/extensions/bazaar"))
+      .then(({ validateBazaarRouteExtensions }) => {
+        validateBazaarRouteExtensions(httpServer.routes);
       })
       .catch(err => {
         console.error("Failed to load bazaar extension:", err);
@@ -281,7 +308,15 @@ export function withX402FromHTTPServer<T = unknown>(
 
   return async (request: NextRequest): Promise<NextResponse<T>> => {
     // Only initialize when processing a protected route
-    await init();
+    try {
+      await init();
+    } catch (error) {
+      const facilitatorError = getFacilitatorResponseError(error);
+      if (facilitatorError) {
+        return createFacilitatorErrorResponse(facilitatorError) as NextResponse<T>;
+      }
+      return createInternalErrorResponse(error) as NextResponse<T>;
+    }
 
     // Await bazaar extension loading if needed
     if (bazaarPromise) {
@@ -292,7 +327,15 @@ export function withX402FromHTTPServer<T = unknown>(
     const context = createRequestContext(request);
 
     // Process payment requirement check
-    const result = await httpServer.processHTTPRequest(context, paywallConfig);
+    let result: Awaited<ReturnType<x402HTTPResourceServer["processHTTPRequest"]>>;
+    try {
+      result = await httpServer.processHTTPRequest(context, paywallConfig);
+    } catch (error) {
+      if (error instanceof FacilitatorResponseError) {
+        return createFacilitatorErrorResponse(error) as NextResponse<T>;
+      }
+      return createInternalErrorResponse(error) as NextResponse<T>;
+    }
 
     // Handle the different result types
     switch (result.type) {
@@ -305,15 +348,40 @@ export function withX402FromHTTPServer<T = unknown>(
 
       case "payment-verified": {
         // Payment is valid, need to wrap response for settlement
-        const { paymentPayload, paymentRequirements, declaredExtensions } = result;
-        const handlerResponse = await routeHandler(request);
+        let handlerResponse: NextResponse<T>;
+        try {
+          handlerResponse = await routeHandler(request);
+        } catch (error) {
+          const cancelSettlement = await result.cancellationDispatcher.cancel({
+            reason: "handler_threw",
+            error,
+          });
+          if (!result.beforeHandlerSettlement && !cancelSettlement) {
+            throw error;
+          }
+          const response = createInternalErrorResponse(error);
+          const failureHeaders = httpServer.createFailurePathSettlementHeaders(
+            cancelSettlement,
+            result.beforeHandlerSettlement,
+            result.paymentPayload,
+            response.headers.get("Cache-Control"),
+          );
+          if (failureHeaders) {
+            Object.entries(failureHeaders).forEach(([key, value]) => {
+              response.headers.set(key, value);
+            });
+          }
+          return response as NextResponse<T>;
+        }
         return handleSettlement(
           httpServer,
           handlerResponse,
-          paymentPayload,
-          paymentRequirements,
-          declaredExtensions,
+          result.paymentPayload,
+          result.paymentRequirements,
+          result.declaredExtensions,
+          result.cancellationDispatcher,
           context,
+          result.beforeHandlerSettlement,
         ) as Promise<NextResponse<T>>;
       }
     }
@@ -383,24 +451,6 @@ export function withX402<T = unknown>(
   );
 }
 
-/**
- * Check if any routes in the configuration declare bazaar extensions
- *
- * @param routes - Route configuration
- * @returns True if any route has extensions.bazaar defined
- */
-function checkIfBazaarNeeded(routes: RoutesConfig): boolean {
-  // Handle single route config
-  if ("accepts" in routes) {
-    return !!(routes.extensions && "bazaar" in routes.extensions);
-  }
-
-  // Handle multiple routes
-  return Object.values(routes).some(routeConfig => {
-    return !!(routeConfig.extensions && "bazaar" in routeConfig.extensions);
-  });
-}
-
 export type {
   PaymentRequired,
   PaymentRequirements,
@@ -409,7 +459,12 @@ export type {
   SchemeNetworkServer,
 } from "@x402/core/types";
 
-export type { PaywallProvider, PaywallConfig, RouteConfig } from "@x402/core/server";
+export type {
+  PaywallProvider,
+  PaywallConfig,
+  RouteConfig,
+  SettlementOverrides,
+} from "@x402/core/server";
 
 export {
   x402ResourceServer,

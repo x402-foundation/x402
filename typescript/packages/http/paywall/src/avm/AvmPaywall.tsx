@@ -7,7 +7,8 @@ import { x402Client } from "@x402/core/client";
 import type { PaymentRequired } from "@x402/core/types";
 
 import { Spinner } from "./Spinner";
-import { getNetworkDisplayName, ALGORAND_NETWORK_REFS } from "../paywallUtils";
+import { getNetworkDisplayName, isTestnetNetwork } from "../paywallUtils";
+import { resolveFaucetUrl } from "../faucetUrls";
 import { getAlgodClient } from "./algorand/rpc";
 
 type AvmPaywallProps = {
@@ -78,7 +79,8 @@ export function AvmPaywall({
 
   const network = firstRequirement.network;
   const chainName = getNetworkDisplayName(network);
-  const isTestnet = network.includes(ALGORAND_NETWORK_REFS.TESTNET);
+  const tokenName = (firstRequirement.extra?.name as string) || "USDC";
+  const isTestnet = isTestnetNetwork(network);
 
   // Get USDC ASA ID based on network
   const usdcAsaId = firstRequirement.asset
@@ -303,20 +305,24 @@ export function AvmPaywall({
         <h1 className="title">Payment Required</h1>
         <p>
           {paymentRequired.resource?.description && `${paymentRequired.resource.description}.`} To
-          access this content, please pay ${amount} {chainName} USDC.
+          access this content, please pay ${amount} {chainName} {tokenName}.
         </p>
-        {isTestnet && (
-          <p className="instructions">
-            Need Algorand Testnet USDC?{" "}
-            <a
-              href="https://dispenser.testnet.aws.algodev.network/"
-              target="_blank"
-              rel="noopener noreferrer"
-            >
-              Request some <u>here</u>.
-            </a>
-          </p>
-        )}
+        {isTestnet &&
+          (() => {
+            const faucetUrl = resolveFaucetUrl(network, x402);
+            return (
+              <p className="instructions">
+                Need {tokenName} on {chainName}?{" "}
+                {faucetUrl ? (
+                  <a href={faucetUrl} target="_blank" rel="noopener noreferrer">
+                    Request some <u>here</u>.
+                  </a>
+                ) : (
+                  <span>No faucet configured.</span>
+                )}
+              </p>
+            );
+          })()}
       </div>
 
       <div className="content w-full">

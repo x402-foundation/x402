@@ -1,0 +1,34 @@
+{
+  "env": {
+    "SERVER_NEAR_ADDRESS": { "required": true, "roles": ["server"] },
+    "CLIENT_NEAR_ACCOUNT_ID": { "required": true, "roles": ["client"] },
+    "CLIENT_NEAR_PRIVATE_KEY": { "required": true, "roles": ["client"] },
+    "FACILITATOR_NEAR_ACCOUNT_ID": { "required": true, "roles": ["facilitator"] },
+    "FACILITATOR_NEAR_PRIVATE_KEY": { "required": true, "roles": ["facilitator"] },
+    "SERVER_NEAR_AMOUNT": { "required": false, "roles": ["server"] },
+    "SERVER_NEAR_ASSET": { "required": false, "roles": ["server"] }
+  },
+  "testnet": {
+    "name": "NEAR Testnet",
+    "caip2": "near:testnet",
+    "rpcUrlDefault": "https://rpc.testnet.fastnear.com"
+  },
+  "mainnet": {
+    "name": "NEAR",
+    "caip2": "near:mainnet",
+    "rpcUrlDefault": "https://rpc.mainnet.fastnear.com"
+  },
+  "routes": {
+    "/exact/near": {
+      "scheme": "exact",
+      "sdks": ["typescript"],
+      "price": {
+        "amount": "1000000000000000000000",
+        "amountEnv": "SERVER_NEAR_AMOUNT",
+        "asset": "wrap.testnet",
+        "assetEnv": "SERVER_NEAR_ASSET"
+      },
+      "extensions": ["bazaar"]
+    }
+  }
+}

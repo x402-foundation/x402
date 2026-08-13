@@ -1,6 +1,6 @@
 {
   "name": "@x402/extensions",
-  "version": "2.10.0",
+  "version": "2.22.0",
   "main": "./dist/cjs/index.js",
   "module": "./dist/esm/index.js",
   "types": "./dist/cjs/index.d.ts",
@@ -36,7 +36,7 @@
     "eslint-plugin-prettier": "^5.2.6",
     "prettier": "3.5.2",
     "tsup": "^8.4.0",
-    "tsx": "^4.19.2",
+    "tsx": "^4.21.0",
     "typescript": "^5.7.3",
     "vite": "^6.2.6",
     "vite-tsconfig-paths": "^5.1.4",
@@ -50,7 +50,7 @@
     "jose": "^5.9.6",
     "@signinwithethereum/siwe": "^4.1.0",
     "tweetnacl": "^1.0.3",
-    "viem": "^2.43.5",
+    "viem": "^2.48.11",
     "zod": "^3.24.2"
   },
   "exports": {
@@ -102,6 +102,16 @@
       "require": {
         "types": "./dist/cjs/payment-identifier/index.d.ts",
         "default": "./dist/cjs/payment-identifier/index.js"
+      }
+    },
+    "./builder-code": {
+      "import": {
+        "types": "./dist/esm/builder-code/index.d.mts",
+        "default": "./dist/esm/builder-code/index.mjs"
+      },
+      "require": {
+        "types": "./dist/cjs/builder-code/index.d.ts",
+        "default": "./dist/cjs/builder-code/index.js"
       }
     }
   },

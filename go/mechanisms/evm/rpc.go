@@ -210,15 +210,20 @@ func (s *resolvedTxSigner) EstimateFeesPerGas(ctx context.Context) (*big.Int, *b
 }
 
 // ResolveReadSigner returns a ClientEvmSignerWithReadContract. If the signer already
-// implements ReadContract, it is returned as-is. Otherwise an RPC-backed wrapper is
-// created using rpcURL; if rpcURL is empty, nil is returned without error.
+// implements a functional ReadContract, it is returned as-is. Otherwise an RPC-backed
+// wrapper is created using rpcURL; if rpcURL is empty, nil is returned without error.
 func ResolveReadSigner(
 	ctx context.Context,
 	signer ClientEvmSigner,
 	rpcURL string,
 ) (ClientEvmSignerWithReadContract, error) {
-	if signerWithRead, ok := signer.(ClientEvmSignerWithReadContract); ok {
-		return signerWithRead, nil
+	// A signer satisfies ClientEvmSignerWithReadContract structurally even when ReadContract
+	// is non-functional (e.g. created without an RPC client), so honor the optional
+	// HasRPCClient probe before trusting it; otherwise fall back to the configured rpcURL.
+	if readSigner, ok := signer.(ClientEvmSignerWithReadContract); ok {
+		if prober, ok := signer.(interface{ HasRPCClient() bool }); !ok || prober.HasRPCClient() {
+			return readSigner, nil
+		}
 	}
 	if rpcURL == "" {
 		return nil, nil
@@ -245,8 +250,10 @@ func ResolveTxSigner(
 	}
 
 	var getNonceFn func(ctx context.Context, address string) (uint64, error)
-	if nonceSigner, hasNonce := signer.(ClientEvmSignerWithGetTransactionCount); hasNonce {
-		getNonceFn = nonceSigner.GetTransactionCount
+	if nonceSigner, ok := signer.(ClientEvmSignerWithGetTransactionCount); ok {
+		if prober, ok := signer.(interface{ HasRPCClient() bool }); !ok || prober.HasRPCClient() {
+			getNonceFn = nonceSigner.GetTransactionCount
+		}
 	}
 
 	var estimateFeesFn func(ctx context.Context) (maxFeePerGas, maxPriorityFeePerGas *big.Int, err error)

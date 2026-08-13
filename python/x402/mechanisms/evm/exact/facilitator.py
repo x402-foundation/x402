@@ -1,7 +1,8 @@
 """EVM facilitator implementation for the Exact payment scheme (V2)."""
 
+import logging
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 from ....schemas import (
@@ -12,7 +13,9 @@ from ....schemas import (
     VerifyResponse,
 )
 from ..constants import (
+    ERR_ASSET_NOT_DEPLOYED_CONTRACT,
     ERR_AUTHORIZATION_VALUE_MISMATCH,
+    ERR_FACTORY_NOT_ALLOWED,
     ERR_FAILED_TO_GET_NETWORK_CONFIG,
     ERR_FAILED_TO_VERIFY_SIGNATURE,
     ERR_INVALID_SIGNATURE,
@@ -21,6 +24,8 @@ from ..constants import (
     ERR_RECIPIENT_MISMATCH,
     ERR_SMART_WALLET_DEPLOYMENT_FAILED,
     ERR_TRANSACTION_FAILED,
+    ERR_TRANSACTION_SIMULATION_FAILED,
+    ERR_TRANSFER_EVENT_MISMATCH,
     ERR_UNDEPLOYED_SMART_WALLET,
     ERR_UNSUPPORTED_SCHEME,
     ERR_VALID_AFTER_FUTURE,
@@ -28,6 +33,7 @@ from ..constants import (
     SCHEME_EXACT,
     TX_STATUS_SUCCESS,
 )
+from ..data_suffix import resolve_data_suffix
 from ..erc6492 import has_deployment_info, parse_erc6492_signature
 from ..exact.eip3009_utils import (
     classify_eip3009_signature,
@@ -35,20 +41,36 @@ from ..exact.eip3009_utils import (
     execute_transfer_with_authorization,
     parse_eip3009_authorization,
     parse_eip3009_transfer_error,
-    simulate_eip3009_transfer,
+    simulate_eip3009_transfer_result,
+    verify_eip3009_transfer_event,
 )
 from ..exact.permit2_utils import settle_permit2, verify_permit2
 from ..signer import FacilitatorEvmSigner
 from ..types import ERC6492SignatureData, ExactEIP3009Payload, is_permit2_payload
-from ..utils import bytes_to_hex, get_evm_chain_id, hex_to_bytes, normalize_address
+from ..utils import (
+    bytes_to_hex,
+    get_evm_chain_id,
+    hex_to_bytes,
+    is_contract_revert,
+    normalize_address,
+)
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
 class ExactEvmSchemeConfig:
     """Configuration for ExactEvmScheme facilitator."""
 
-    deploy_erc4337_with_eip6492: bool = False
-    """Enable automatic smart wallet deployment via EIP-6492."""
+    eip6492_allowed_factories: list[str] = field(default_factory=list)
+    """Allowlist of factory contract addresses (hex strings, case-insensitive).
+
+    A non-empty list enables ERC-4337 smart wallet deployment via EIP-6492. The facilitator will
+    only call factories on this list when deploying an undeployed smart wallet. An empty list
+    (the default) denies all factory deployment calls. Facilitators must explicitly list every
+    factory they trust to prevent arbitrary transaction injection via attacker-controlled ERC-6492
+    signature wrappers.
+    """
 
     simulate_in_settle: bool = False
     """Rerun transfer simulation during settle."""
@@ -235,6 +257,27 @@ class ExactEvmScheme:
                 payer=payer,
             )
 
+        # Counterfactual ERC-6492 wallet (undeployed + carries factory deployment info):
+        # settle will deploy via the factory, which is gated by the allowlist. Enforce the
+        # same gate here so verify does not pass for a payment settle will reject.
+        if (
+            not classification.valid
+            and classification.is_undeployed
+            and has_deployment_info(classification.sig_data)
+        ):
+            factory_addr = bytes_to_hex(classification.sig_data.factory).lower()
+            allowed = {f.strip().lower() for f in self._config.eip6492_allowed_factories}
+            if factory_addr not in allowed:
+                return VerifyResponse(
+                    is_valid=False, invalid_reason=ERR_FACTORY_NOT_ALLOWED, payer=payer
+                )
+
+        code = self._signer.get_code(token_address)
+        if len(code) == 0:
+            return VerifyResponse(
+                is_valid=False, invalid_reason=ERR_ASSET_NOT_DEPLOYED_CONTRACT, payer=payer
+            )
+
         if not simulate:
             return VerifyResponse(is_valid=True, payer=payer)
 
@@ -248,22 +291,43 @@ class ExactEvmScheme:
                 payer=payer,
             )
 
-        if not simulate_eip3009_transfer(
+        sim_ok, sim_error = simulate_eip3009_transfer_result(
             self._signer,
             token_address,
             parsed_authorization,
             classification.sig_data,
-        ):
-            return VerifyResponse(
-                is_valid=False,
-                invalid_reason=diagnose_eip3009_simulation_failure(
+        )
+        if not sim_ok:
+            # Prefer the concrete on-chain revert reason the simulation surfaced (e.g.
+            # insufficient balance / used nonce) over the opaque generic code. Fall back
+            # to a diagnostic probe only when the revert could not be classified.
+            reason = ERR_TRANSACTION_SIMULATION_FAILED
+            if is_contract_revert(sim_error):
+                mapped = parse_eip3009_transfer_error(sim_error)
+                if mapped != ERR_TRANSACTION_FAILED:
+                    reason = mapped
+            if reason == ERR_TRANSACTION_SIMULATION_FAILED:
+                reason = diagnose_eip3009_simulation_failure(
                     self._signer,
                     token_address,
                     evm_payload.authorization,
                     int(requirements.amount),
                     extra["name"],
                     extra["version"],
-                ),
+                )
+            # Log the concrete on-chain revert before returning. The HTTP response only
+            # carries the mapped reason code (and the resource server drops invalid_message
+            # entirely), so without this the actual revert is invisible to operators.
+            logger.warning(
+                "exact verify: transfer simulation failed payer=%s reason=%s revert=%s",
+                payer,
+                reason,
+                sim_error,
+            )
+            return VerifyResponse(
+                is_valid=False,
+                invalid_reason=reason,
+                invalid_message=str(sim_error) if sim_error is not None else None,
                 payer=payer,
             )
 
@@ -328,43 +392,74 @@ class ExactEvmScheme:
                 transaction="",
             )
 
-        # Deploy smart wallet if needed
+        # Deploy smart wallet if needed (allowlist is the sole gate)
         if has_deployment_info(sig_data):
             code = self._signer.get_code(payer)
             if len(code) == 0:
-                if self._config.deploy_erc4337_with_eip6492:
-                    try:
-                        self._deploy_smart_wallet(sig_data)
-                    except Exception as e:
-                        return SettleResponse(
-                            success=False,
-                            error_reason=ERR_SMART_WALLET_DEPLOYMENT_FAILED,
-                            error_message=str(e),
-                            network=network,
-                            payer=payer,
-                            transaction="",
-                        )
-                else:
+                factory_addr = bytes_to_hex(sig_data.factory)
+                allowed = [f.lower() for f in self._config.eip6492_allowed_factories]
+                if factory_addr.lower() not in allowed:
                     return SettleResponse(
                         success=False,
-                        error_reason=ERR_UNDEPLOYED_SMART_WALLET,
+                        error_reason=ERR_FACTORY_NOT_ALLOWED,
                         network=network,
                         payer=payer,
                         transaction="",
                     )
 
+                try:
+                    self._deploy_smart_wallet(sig_data)
+                except Exception as e:
+                    return SettleResponse(
+                        success=False,
+                        error_reason=ERR_SMART_WALLET_DEPLOYMENT_FAILED,
+                        error_message=str(e),
+                        network=network,
+                        payer=payer,
+                        transaction="",
+                    )
+
+                # Do NOT re-simulate the transfer here. The single authoritative pre-check is
+                # the atomic deploy+transfer simulation that runs in verify (one eth_call via
+                # Multicall3, state carried across both sub-calls). A second standalone
+                # eth_call after the real deploy tx is unreliable — the read can race the
+                # deploy's state propagation across load-balanced RPC nodes — and was
+                # producing false inner-signature-unsupported rejections
+                # for valid wallets (e.g. Coinbase Smart Wallet). The on-chain
+                # transferWithAuthorization below is the definitive signature check; a
+                # genuinely unsupported inner signature reverts there and is classified by
+                # parse_eip3009_transfer_error.
+
         try:
+            data_suffix = resolve_data_suffix(context, payload, requirements)
             tx_hash = execute_transfer_with_authorization(
                 self._signer,
                 token_address,
                 parsed_authorization,
                 sig_data,
+                data_suffix=data_suffix,
             )
             receipt = self._signer.wait_for_transaction_receipt(tx_hash)
             if receipt.status != TX_STATUS_SUCCESS:
                 return SettleResponse(
                     success=False,
                     error_reason=ERR_TRANSACTION_FAILED,
+                    transaction=tx_hash,
+                    network=network,
+                    payer=payer,
+                )
+
+            # Receipt status only proves the tx did not revert.
+            if receipt.logs is not None and not verify_eip3009_transfer_event(
+                receipt.logs,
+                token_address,
+                from_address=parsed_authorization.from_address,
+                to=parsed_authorization.to,
+                value=parsed_authorization.value,
+            ):
+                return SettleResponse(
+                    success=False,
+                    error_reason=ERR_TRANSFER_EVENT_MISMATCH,
                     transaction=tx_hash,
                     network=network,
                     payer=payer,
@@ -378,6 +473,12 @@ class ExactEvmScheme:
             )
 
         except Exception as e:
+            logger.warning(
+                "exact settle: transferWithAuthorization failed payer=%s reason=%s revert=%s",
+                payer,
+                parse_eip3009_transfer_error(e),
+                e,
+            )
             return SettleResponse(
                 success=False,
                 error_reason=parse_eip3009_transfer_error(e),

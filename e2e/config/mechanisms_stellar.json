@@ -1,0 +1,25 @@
+{
+  "env": {
+    "SERVER_STELLAR_ADDRESS": { "required": true, "roles": ["server"] },
+    "CLIENT_STELLAR_PRIVATE_KEY": { "required": true, "roles": ["client"] },
+    "FACILITATOR_STELLAR_PRIVATE_KEY": { "required": true, "roles": ["facilitator"] }
+  },
+  "testnet": {
+    "name": "Stellar Testnet",
+    "caip2": "stellar:testnet",
+    "rpcUrlDefault": "https://soroban-testnet.stellar.org"
+  },
+  "mainnet": {
+    "name": "Stellar Pubnet",
+    "caip2": "stellar:pubnet",
+    "rpcUrlDefault": "https://mainnet.sorobanrpc.com"
+  },
+  "routes": {
+    "/exact/stellar": {
+      "scheme": "exact",
+      "sdks": ["typescript"],
+      "price": { "usd": "$0.001" },
+      "extensions": ["bazaar"]
+    }
+  }
+}

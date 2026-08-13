@@ -32,11 +32,11 @@ from ..utils import (
 
 
 def _wrap_if_local_account(signer: Any) -> ClientEvmSigner:
-    """Auto-wrap eth_account LocalAccount in EthAccountSigner if needed."""
+    """Auto-wrap an eth_account-compatible signer (any BaseAccount) in EthAccountSigner."""
     try:
-        from eth_account.signers.local import LocalAccount
+        from eth_account.signers.base import BaseAccount
 
-        if isinstance(signer, LocalAccount):
+        if isinstance(signer, BaseAccount):
             from ..signers import EthAccountSigner
 
             return EthAccountSigner(signer)
@@ -208,10 +208,14 @@ def _create_upto_permit2_payload(
             "Ensure the server is configured with an upto facilitator that provides getExtra()."
         )
 
+    timeout = requirements.max_timeout_seconds
+    if timeout is not None and timeout <= 0:
+        raise ValueError(f"Invalid time window: max_timeout_seconds ({timeout}) must be positive.")
+
     now = int(time.time())
     nonce = create_permit2_nonce()
-    valid_after = str(now - 600)
-    deadline = str(now + (requirements.max_timeout_seconds or 3600))
+    valid_after = "0"
+    deadline = str(now + (timeout or 3600))
     if int(deadline) <= int(valid_after):
         raise ValueError(
             f"Invalid time window: deadline ({deadline}) must be after validAfter ({valid_after}). "

@@ -7,6 +7,7 @@ from typing import Any
 
 from x402.mechanisms.evm import get_network_config
 from x402.mechanisms.evm.constants import (
+    ERR_ASSET_NOT_DEPLOYED_CONTRACT,
     ERR_PERMIT2_AMOUNT_MISMATCH,
     ERR_PERMIT2_DEADLINE_EXPIRED,
     ERR_PERMIT2_INSUFFICIENT_BALANCE,
@@ -135,6 +136,7 @@ class MockFacilitatorSigner:
         tx_success: bool = True,
         simulate_ok: bool = True,
         code: bytes = b"",
+        code_by_address: dict[str, bytes] | None = None,
     ):
         self._addresses = addresses or [FACILITATOR]
         self._sig_valid = sig_valid
@@ -143,6 +145,13 @@ class MockFacilitatorSigner:
         self._tx_success = tx_success
         self._simulate_ok = simulate_ok
         self._code = code
+        # Default: token contract is always a deployed contract so the asset check passes.
+        # Tests that need per-address control can pass code_by_address explicitly.
+        self._code_by_address: dict[str, bytes] = {
+            TOKEN_ADDRESS.lower(): b"\x60",
+        }
+        if code_by_address:
+            self._code_by_address.update({k.lower(): v for k, v in code_by_address.items()})
         self.write_calls: list[tuple] = []
 
     def get_addresses(self) -> list[str]:
@@ -162,7 +171,14 @@ class MockFacilitatorSigner:
     def verify_typed_data(self, *args: Any, **kwargs: Any) -> bool:
         return self._sig_valid
 
-    def write_contract(self, address: str, abi: list[dict], function_name: str, *args) -> str:
+    def write_contract(
+        self,
+        address: str,
+        abi: list[dict],
+        function_name: str,
+        *args,
+        data_suffix: str | None = None,
+    ) -> str:
         self.write_calls.append((address, function_name, args))
         return "0x" + "ab" * 32
 
@@ -180,7 +196,7 @@ class MockFacilitatorSigner:
         return 8453
 
     def get_code(self, address: str) -> bytes:
-        return self._code
+        return self._code_by_address.get(address.lower(), self._code)
 
 
 class TestUptoEvmSchemeConstructor:
@@ -359,6 +375,28 @@ class TestVerify:
         result = facilitator.verify(payload, make_requirements())
         assert result.is_valid is False
         assert result.invalid_reason == "unsupported_payload_type"
+
+    def test_rejects_eoa_asset(self):
+        # When the token address has no bytecode, verify must reject with asset_not_deployed_contract.
+        facilitator = self._make_facilitator(
+            code_by_address={TOKEN_ADDRESS.lower(): b""},  # token = EOA
+        )
+        result = facilitator.verify(make_payment_payload(), make_requirements())
+        assert result.is_valid is False
+        assert result.invalid_reason == ERR_ASSET_NOT_DEPLOYED_CONTRACT
+
+    def test_getcode_rpc_error_raises(self):
+        # An RPC error on get_code must propagate as an exception, not a 400 response.
+        import pytest
+
+        class _RPCErrorSigner(MockFacilitatorSigner):
+            def get_code(self, address: str) -> bytes:
+                raise RuntimeError("rpc: connection refused")
+
+        facilitator = UptoEvmFacilitatorScheme(_RPCErrorSigner())
+
+        with pytest.raises(RuntimeError, match="rpc: connection refused"):
+            facilitator.verify(make_payment_payload(), make_requirements())
 
 
 class TestSettle:

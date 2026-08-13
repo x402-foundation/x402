@@ -1,7 +1,9 @@
 """Tests for V1 Bazaar facilitator functions."""
 
-from x402.extensions.bazaar.types import BodyDiscoveryInfo, QueryDiscoveryInfo
+from x402.extensions.bazaar import validate_discovery_extension
+from x402.extensions.bazaar.types import BAZAAR, BodyDiscoveryInfo, QueryDiscoveryInfo
 from x402.extensions.bazaar.v1 import (
+    build_v1_catalog_extensions,
     extract_discovery_info_v1,
     extract_resource_metadata_v1,
     is_discoverable_v1,
@@ -224,3 +226,68 @@ class TestExtractResourceMetadataV1:
         assert metadata.url == ""
         assert metadata.description == ""
         assert metadata.mime_type == ""
+
+
+class TestBuildV1CatalogExtensions:
+    """Tests for v1 catalog extension normalization."""
+
+    def test_synthesizes_bazaar_extension_from_discovery_info(self) -> None:
+        requirements = {
+            "outputSchema": {
+                "input": {
+                    "type": "http",
+                    "method": "GET",
+                    "queryParams": {"token": "JWT token string"},
+                },
+                "output": {"type": "object"},
+            },
+        }
+        discovery_info = extract_discovery_info_v1(requirements)
+        assert discovery_info is not None
+
+        extensions = build_v1_catalog_extensions(None, discovery_info)
+
+        assert "outputSchema" not in extensions
+        assert BAZAAR.key in extensions
+        assert extensions[BAZAAR.key]["info"] == discovery_info
+        assert extensions[BAZAAR.key]["schema"]["required"] == ["input"]
+        assert validate_discovery_extension(extensions[BAZAAR.key]).valid is True
+
+    def test_replaces_output_schema_payload_extensions(self) -> None:
+        requirements = {
+            "outputSchema": {
+                "input": {
+                    "type": "http",
+                    "method": "GET",
+                    "queryParams": {"token": "JWT token string"},
+                },
+            },
+        }
+        discovery_info = extract_discovery_info_v1(requirements)
+        assert discovery_info is not None
+
+        payload_extensions = {"outputSchema": requirements["outputSchema"]}
+        extensions = build_v1_catalog_extensions(payload_extensions, discovery_info)
+
+        assert "outputSchema" not in extensions
+        assert extensions[BAZAAR.key]["info"] == discovery_info
+
+    def test_preserves_existing_bazaar_extension(self) -> None:
+        requirements = {
+            "outputSchema": {
+                "input": {
+                    "type": "http",
+                    "method": "GET",
+                },
+            },
+        }
+        discovery_info = extract_discovery_info_v1(requirements)
+        assert discovery_info is not None
+
+        existing = {
+            BAZAAR.key: {
+                "info": {"input": {"type": "http", "method": "GET"}},
+                "schema": {"type": "object"},
+            }
+        }
+        assert build_v1_catalog_extensions(existing, discovery_info) is existing

@@ -6,7 +6,9 @@ implementations for communicating with remote facilitator services.
 
 from __future__ import annotations
 
+import base64
 import json
+import logging
 from typing import TYPE_CHECKING, Any, TypeVar
 
 from pydantic import ValidationError
@@ -85,6 +87,45 @@ def _parse_facilitator_response(
         raise FacilitatorResponseError(
             f"Facilitator {operation} returned invalid data: {_response_excerpt(response)}"
         ) from exc
+
+
+_logger = logging.getLogger("x402")
+
+_EXTENSION_RESPONSE_LOG_FIELD_ALLOWLIST = ["status", "rejectedReason", "reason", "code"]
+
+
+def _log_extension_responses_header(response: Any) -> None:
+    """Read the EXTENSION-RESPONSES header and log allowlisted fields.
+
+    Silently ignores malformed headers.
+
+    Args:
+        response: The HTTP response object (httpx.Response).
+    """
+    header = response.headers.get("EXTENSION-RESPONSES") or response.headers.get(
+        "extension-responses"
+    )
+    if not header:
+        return
+    try:
+        decoded = base64.b64decode(header).decode("utf-8")
+        header_extensions: dict[str, Any] = json.loads(decoded)
+        if not isinstance(header_extensions, dict):
+            return
+        sanitized: dict[str, dict[str, Any]] = {}
+        for extension_key, payload in header_extensions.items():
+            filtered: dict[str, Any] = {}
+            if isinstance(payload, dict):
+                for field in _EXTENSION_RESPONSE_LOG_FIELD_ALLOWLIST:
+                    if field in payload:
+                        filtered[field] = payload[field]
+            sanitized[extension_key] = filtered
+        _logger.info(
+            "[x402] extension responses: %s",
+            json.dumps(sanitized),
+        )
+    except Exception:
+        pass
 
 
 # ============================================================================
@@ -288,7 +329,9 @@ class HTTPFacilitatorClient(HTTPFacilitatorClientBase):
         if response.status_code != 200:
             raise ValueError(f"Facilitator verify failed ({response.status_code}): {response.text}")
 
-        return _parse_facilitator_response(response, VerifyResponse, "verify")
+        result = _parse_facilitator_response(response, VerifyResponse, "verify")
+        _log_extension_responses_header(response)
+        return result
 
     async def _settle_http(
         self,
@@ -309,7 +352,9 @@ class HTTPFacilitatorClient(HTTPFacilitatorClientBase):
         if response.status_code != 200:
             raise ValueError(f"Facilitator settle failed ({response.status_code}): {response.text}")
 
-        return _parse_facilitator_response(response, SettleResponse, "settle")
+        result = _parse_facilitator_response(response, SettleResponse, "settle")
+        _log_extension_responses_header(response)
+        return result
 
 
 # ============================================================================
@@ -504,7 +549,9 @@ class HTTPFacilitatorClientSync(HTTPFacilitatorClientBase):
         if response.status_code != 200:
             raise ValueError(f"Facilitator verify failed ({response.status_code}): {response.text}")
 
-        return _parse_facilitator_response(response, VerifyResponse, "verify")
+        result = _parse_facilitator_response(response, VerifyResponse, "verify")
+        _log_extension_responses_header(response)
+        return result
 
     def _settle_http(
         self,
@@ -525,4 +572,6 @@ class HTTPFacilitatorClientSync(HTTPFacilitatorClientBase):
         if response.status_code != 200:
             raise ValueError(f"Facilitator settle failed ({response.status_code}): {response.text}")
 
-        return _parse_facilitator_response(response, SettleResponse, "settle")
+        result = _parse_facilitator_response(response, SettleResponse, "settle")
+        _log_extension_responses_header(response)
+        return result

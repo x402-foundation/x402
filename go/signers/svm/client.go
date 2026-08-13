@@ -6,7 +6,7 @@ import (
 
 	solana "github.com/gagliardetto/solana-go"
 
-	x402svm "github.com/x402-foundation/x402/go/mechanisms/svm"
+	x402svm "github.com/x402-foundation/x402/go/v2/mechanisms/svm"
 )
 
 // ClientSigner implements x402svm.ClientSvmSigner using an Ed25519 private key.
@@ -49,6 +49,15 @@ func NewClientSignerFromPrivateKey(privateKeyBase58 string) (x402svm.ClientSvmSi
 // Address returns the Solana public key of the signer.
 func (s *ClientSigner) Address() solana.PublicKey {
 	return s.privateKey.PublicKey()
+}
+
+// SignMessage signs a UTF-8 message using Ed25519 and returns a Base58 signature.
+func (s *ClientSigner) SignMessage(_ context.Context, message string) (string, error) {
+	signature, err := s.privateKey.Sign([]byte(message))
+	if err != nil {
+		return "", fmt.Errorf("failed to sign message: %w", err)
+	}
+	return signature.String(), nil
 }
 
 // SignTransaction partially signs a Solana transaction.

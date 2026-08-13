@@ -3,6 +3,7 @@ import { htmlPlugin } from "@craftamap/esbuild-plugin-html";
 import fs from "fs";
 import path from "path";
 import { getBaseTemplate } from "../baseTemplate";
+import { formatTypeScript, toPythonStringLiteral } from "../genHelpers";
 
 // SVM-specific build - only bundles Solana dependencies
 const DIST_DIR = "src/svm/dist";
@@ -76,16 +77,17 @@ async function build() {
     if (fs.existsSync(OUTPUT_HTML)) {
       const html = fs.readFileSync(OUTPUT_HTML, "utf8");
 
-      const tsContent = `// THIS FILE IS AUTO-GENERATED - DO NOT EDIT
+      const rawTsContent = `// THIS FILE IS AUTO-GENERATED - DO NOT EDIT
 /**
  * The pre-built SVM paywall template with inlined CSS and JS
  */
 export const SVM_PAYWALL_TEMPLATE = ${JSON.stringify(html)};
 `;
+      const tsContent = await formatTypeScript(OUTPUT_TS, rawTsContent);
 
       // Generate Python template file
       const pyContent = `# THIS FILE IS AUTO-GENERATED - DO NOT EDIT
-SVM_PAYWALL_TEMPLATE = ${JSON.stringify(html)}
+SVM_PAYWALL_TEMPLATE = ${toPythonStringLiteral(html)}
 `;
 
       // Generate Go template file

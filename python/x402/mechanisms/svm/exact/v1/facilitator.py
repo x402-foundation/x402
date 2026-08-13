@@ -51,6 +51,7 @@ from ...utils import (
     decode_transaction_from_payload,
     derive_ata,
     get_token_payer_from_transaction,
+    transaction_message_hash,
 )
 
 
@@ -368,8 +369,11 @@ class ExactSvmSchemeV1:
                 transaction="",
             )
 
-        # Duplicate settlement check: reject if this transaction is already being settled.
-        tx_key = svm_payload.transaction
+        # Decode the transaction to compute the message hash used as the cache key.
+        tx = decode_transaction_from_payload(svm_payload)
+
+        # Duplicate settlement check keyed on message hash (immune to mutable fee-payer sig at slot 0).
+        tx_key = transaction_message_hash(tx)
         if self._settlement_cache.is_duplicate(tx_key):
             return SettleResponse(
                 success=False,

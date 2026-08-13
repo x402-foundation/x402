@@ -1,6 +1,7 @@
 import {
   PaymentPayload,
   PaymentRequirements,
+  FacilitatorContext,
   SettleResponse,
   VerifyResponse,
 } from "@x402/core/types";
@@ -10,11 +11,14 @@ import { FacilitatorEvmSigner } from "../../signer";
 import { getEvmChainId } from "../../utils";
 import { ExactEIP3009Payload } from "../../types";
 import * as Errors from "./errors";
+import { resolveDataSuffix } from "../../shared/extensions";
+import { verifyTypedDataSignature, classifyErc6492Payer } from "../../shared/verifySignature";
 import {
   diagnoseEip3009SimulationFailure,
   executeTransferWithAuthorization,
   parseEip3009TransferError,
-  simulateEip3009Transfer,
+  simulateEip3009TransferResult,
+  verifyEip3009TransferEvent,
 } from "./eip3009-utils";
 
 export interface VerifyEIP3009Options {
@@ -24,12 +28,17 @@ export interface VerifyEIP3009Options {
 
 export interface EIP3009FacilitatorConfig {
   /**
-   * If enabled, the facilitator will deploy ERC-4337 smart wallets
-   * via EIP-6492 when encountering undeployed contract signatures.
+   * Allowlist of factory contract addresses (hex strings, case-insensitive) that the facilitator
+   * will call when deploying an undeployed smart wallet via ERC-6492.
    *
-   * @default false
+   * A non-empty list enables ERC-4337 smart wallet deployment via EIP-6492. Facilitators must
+   * explicitly list every factory they trust to prevent arbitrary transaction injection via
+   * attacker-controlled ERC-6492 signature wrappers. An empty or omitted list denies all factory
+   * deployment calls.
+   *
+   * @default []
    */
-  deployERC4337WithEIP6492: boolean;
+  eip6492AllowedFactories?: string[];
   /**
    * If enabled, simulates transaction before settling. Defaults to false, ie only simulate during verify.
    *
@@ -46,6 +55,8 @@ export interface EIP3009FacilitatorConfig {
  * @param requirements - The payment requirements
  * @param eip3009Payload - The EIP-3009 specific payload
  * @param options - Optional verification options
+ * @param allowedFactories - Allowlisted ERC-6492 factory addresses; a counterfactual payment whose
+ *   factory is not in this list is rejected here so verify mirrors settle's policy gate.
  * @returns Promise resolving to verification response
  */
 export async function verifyEIP3009(
@@ -54,6 +65,7 @@ export async function verifyEIP3009(
   requirements: PaymentRequirements,
   eip3009Payload: ExactEIP3009Payload,
   options?: VerifyEIP3009Options,
+  allowedFactories: string[] = [],
 ): Promise<VerifyResponse> {
   const payer = eip3009Payload.authorization.from;
   let eip6492Deployment:
@@ -78,7 +90,7 @@ export async function verifyEIP3009(
     };
   }
 
-  const { name, version } = requirements.extra;
+  const { name, version } = requirements.extra as { name: string; version: string };
   const erc20Address = getAddress(requirements.asset);
 
   // Verify network matches
@@ -110,65 +122,57 @@ export async function verifyEIP3009(
     },
   };
 
-  // Verify signature
-  // Note: verifyTypedData is implementation-dependent and pluggable on FacilitatorEvmSigner
-  // Some implementations only do EOA-style ECDSA recovery (e.g. viem/utils verifyTypedData, ethers.verifyTypedData)
-  // Viem's publicClient.verifyTypedData supports EOA and Smart Contract Account (ERC-1271 / ERC-6492) signature verification
-  let isValid = false;
-  try {
-    isValid = await signer.verifyTypedData({
+  const signature = eip3009Payload.signature!;
+
+  // Classify the payer: fetch code once, parse ERC-6492 wrapper, determine counterfactual.
+  // Using classifyErc6492Payer avoids duplicating this block across eip3009.ts / v1/scheme.ts.
+  const {
+    isCounterfactual,
+    innerSignature,
+    eip6492Deployment: classification6492,
+  } = await classifyErc6492Payer(signer, signature, payer);
+
+  if (classification6492) {
+    eip6492Deployment = classification6492;
+  }
+
+  if (isCounterfactual) {
+    // Counterfactual deposits are deployed by settle via the factory, which is gated by the
+    // allowlist. Enforce the same gate here so verify does not return isValid:true for a payment
+    // that settle will reject with ErrFactoryNotAllowed (verify must predict settle).
+    const factory = classification6492?.factoryAddress;
+    const factoryAllowed =
+      !!factory && allowedFactories.some(a => a.trim().toLowerCase() === factory.toLowerCase());
+    if (!factoryAllowed) {
+      return {
+        isValid: false,
+        invalidReason: Errors.ErrFactoryNotAllowed,
+        payer,
+      };
+    }
+  }
+
+  if (!isCounterfactual) {
+    // For deployed addresses (plain EOA, smart contract, 7702 EOA): verify the
+    // signature using a strict primitive that mirrors on-chain SignatureChecker
+    // semantics — ecrecover when no code, strict EIP-1271 when code is present.
+    // No ECDSA fallback for code addresses; that fallback causes pre-verify to
+    // accept sigs the on-chain token rejects (empirically confirmed on Base Sepolia).
+    const isValid = await verifyTypedDataSignature(signer, {
       address: eip3009Payload.authorization.from,
       ...permitTypedData,
-      signature: eip3009Payload.signature!,
+      signature: innerSignature,
     });
-  } catch {
-    isValid = false;
-  }
-  const signature = eip3009Payload.signature!;
-  const sigLen = signature.startsWith("0x") ? signature.length - 2 : signature.length;
-
-  // Extract EIP-6492 deployment info (factory address + calldata) if present
-  const erc6492Data = parseErc6492Signature(signature);
-  const hasDeploymentInfo =
-    erc6492Data.address &&
-    erc6492Data.data &&
-    !isAddressEqual(erc6492Data.address, "0x0000000000000000000000000000000000000000");
-
-  if (hasDeploymentInfo) {
-    eip6492Deployment = {
-      factoryAddress: erc6492Data.address!,
-      factoryCalldata: erc6492Data.data!,
-    };
-  }
-
-  if (!isValid) {
-    // Check if signature is from a smart wallet
-    const isSmartWallet = sigLen > 130; // 65 bytes = 130 hex chars for EOA
-
-    // EOA signature that failed verification — definitely invalid
-    if (!isSmartWallet) {
+    if (!isValid) {
       return {
         isValid: false,
         invalidReason: Errors.ErrInvalidSignature,
         payer,
       };
     }
-
-    // Smart wallet signature: check if deployed or has ERC-6492 deployment info
-    const bytecode = await signer.getCode({ address: payer });
-    const isDeployed = bytecode && bytecode !== "0x";
-
-    if (!isDeployed && !hasDeploymentInfo) {
-      // Undeployed smart wallet with no factory info
-      return {
-        isValid: false,
-        invalidReason: Errors.ErrUndeployedSmartWallet,
-        payer,
-      };
-    }
-    // Deployed smart wallet or undeployed with ERC-6492 factory info
-    // fall through to remaining field checks and onchain simulation
   }
+  // Counterfactual: skip pre-verify and defer to on-chain simulation/settle which
+  // deploys the factory first then atomically validates the signature.
 
   // Verify payment recipient matches
   if (getAddress(eip3009Payload.authorization.to) !== getAddress(requirements.payTo)) {
@@ -202,27 +206,39 @@ export async function verifyEIP3009(
   if (BigInt(eip3009Payload.authorization.value) !== BigInt(requirements.amount)) {
     return {
       isValid: false,
-      invalidReason: Errors.ErrInvalidAuthorizationValue,
+      invalidReason: Errors.ErrAuthorizationValueMismatch,
       payer,
     };
   }
 
+  // Reject payments whose asset is an EOA — eth_call on an EOA silently returns
+  // empty data without reverting, so simulation would pass but no Transfer event
+  // would be emitted, producing a silent no-op settlement.
+  const assetBytecode = await signer.getCode({ address: erc20Address });
+  if (!assetBytecode || assetBytecode === "0x") {
+    return { isValid: false, invalidReason: Errors.ErrAssetNotDeployedContract, payer };
+  }
+
   // Transaction simulation
   if (options?.simulate !== false) {
-    const simulationSucceeded = await simulateEip3009Transfer(
+    const { ok, error: simError } = await simulateEip3009TransferResult(
       signer,
       erc20Address,
       eip3009Payload,
       eip6492Deployment,
     );
-    if (!simulationSucceeded) {
-      return diagnoseEip3009SimulationFailure(
+    if (!ok) {
+      const diagnosis = await diagnoseEip3009SimulationFailure(
         signer,
         erc20Address,
         eip3009Payload,
         requirements,
         requirements.amount,
       );
+      // Carry the raw revert text so the concrete reason survives the mapping to a code.
+      const rawMessage =
+        simError instanceof Error ? simError.message : simError ? String(simError) : undefined;
+      return rawMessage ? { ...diagnosis, invalidMessage: rawMessage } : diagnosis;
     }
   }
 
@@ -241,6 +257,7 @@ export async function verifyEIP3009(
  * @param requirements - The payment requirements
  * @param eip3009Payload - The EIP-3009 specific payload
  * @param config - Facilitator configuration
+ * @param context - Optional facilitator context for extension capabilities
  * @returns Promise resolving to settlement response
  */
 export async function settleEIP3009(
@@ -249,13 +266,19 @@ export async function settleEIP3009(
   requirements: PaymentRequirements,
   eip3009Payload: ExactEIP3009Payload,
   config: EIP3009FacilitatorConfig,
+  context?: FacilitatorContext,
 ): Promise<SettleResponse> {
   const payer = eip3009Payload.authorization.from;
 
   // Re-verify before settling
-  const valid = await verifyEIP3009(signer, payload, requirements, eip3009Payload, {
-    simulate: config.simulateInSettle ?? false,
-  });
+  const valid = await verifyEIP3009(
+    signer,
+    payload,
+    requirements,
+    eip3009Payload,
+    { simulate: config.simulateInSettle ?? false },
+    config.eip6492AllowedFactories ?? [],
+  );
   if (!valid.isValid) {
     return {
       success: false,
@@ -267,14 +290,18 @@ export async function settleEIP3009(
   }
 
   try {
-    // Parse ERC-6492 signature if applicable (for optional deployment)
-    const { address: factoryAddress, data: factoryCalldata } = parseErc6492Signature(
-      eip3009Payload.signature!,
-    );
+    // Parse ERC-6492 signature if applicable (for optional deployment).
+    // Keep the full result so we can access the inner signature later for
+    // the post-deploy transfer simulation.
+    const settleErc6492Data = parseErc6492Signature(eip3009Payload.signature!);
+    const {
+      address: factoryAddress,
+      data: factoryCalldata,
+      signature: erc6492InnerSig,
+    } = settleErc6492Data;
 
-    // Deploy ERC-4337 smart wallet via EIP-6492 if configured and needed
+    // Deploy ERC-4337 smart wallet via EIP-6492 if factory is in the allowlist
     if (
-      config.deployERC4337WithEIP6492 &&
       factoryAddress &&
       factoryCalldata &&
       !isAddressEqual(factoryAddress, "0x0000000000000000000000000000000000000000")
@@ -283,21 +310,70 @@ export async function settleEIP3009(
       const bytecode = await signer.getCode({ address: payer });
 
       if (!bytecode || bytecode === "0x") {
+        const normalizedFactory = factoryAddress.toLowerCase();
+        const isAllowed = (config.eip6492AllowedFactories ?? []).some(
+          allowed => allowed.toLowerCase() === normalizedFactory,
+        );
+        if (!isAllowed) {
+          return {
+            success: false,
+            errorReason: Errors.ErrFactoryNotAllowed,
+            transaction: "",
+            network: payload.accepted.network,
+            payer,
+          };
+        }
+
         // Wallet not deployed - attempt deployment
         const deployTx = await signer.sendTransaction({
           to: factoryAddress as Hex,
           data: factoryCalldata as Hex,
         });
 
-        // Wait for deployment transaction
-        await signer.waitForTransactionReceipt({ hash: deployTx });
+        // Wait for deployment and check whether it actually succeeded.
+        // A reverted factory tx would silently proceed without this check, misclassifying
+        // the downstream transfer failure as an invalid-signature error.
+        const deployReceipt = await signer.waitForTransactionReceipt({ hash: deployTx });
+        if (deployReceipt.status !== "success") {
+          return {
+            success: false,
+            errorReason: Errors.ErrSmartWalletDeploymentFailed,
+            transaction: "",
+            network: payload.accepted.network,
+            payer,
+          };
+        }
+
+        // Do NOT re-simulate the transfer here. The single authoritative pre-check is the
+        // atomic Multicall3 deploy+transfer simulation that runs in verify (one eth_call,
+        // state carried across both sub-calls). A second standalone eth_call after the real
+        // deploy tx is unreliable — the read can race the deploy's state propagation across
+        // load-balanced RPC nodes — and was producing false `eip6492_deployed_inner_wallet_
+        // signature_unsupported` rejections for valid wallets (e.g. Coinbase Smart Wallet).
+        // The on-chain transferWithAuthorization below is itself the definitive signature
+        // check (the token routes to the wallet's isValidSignature); a genuinely
+        // unsupported inner signature reverts there and is classified by the catch block.
       }
     }
+
+    const dataSuffix = await resolveDataSuffix(context, {
+      paymentPayload: payload,
+      paymentRequirements: requirements,
+    });
+
+    // When the original signature was ERC-6492 wrapped (deployed wallet), use the
+    // extracted inner signature for the on-chain transferWithAuthorization call.
+    // FiatTokenV2_2's isValidSignature on the deployed contract expects the compact inner signature
+    const settlePayload =
+      erc6492InnerSig && erc6492InnerSig !== eip3009Payload.signature
+        ? { ...eip3009Payload, signature: erc6492InnerSig }
+        : eip3009Payload;
 
     const tx = await executeTransferWithAuthorization(
       signer,
       getAddress(requirements.asset),
-      eip3009Payload,
+      settlePayload,
+      dataSuffix,
     );
 
     // Wait for transaction confirmation
@@ -313,6 +389,26 @@ export async function settleEIP3009(
       };
     }
 
+    // Receipt status only proves the tx did not revert.
+    // When logs are present, require the expected ERC-20 Transfer event.
+    const auth = eip3009Payload.authorization;
+    if (
+      receipt.logs != null &&
+      !verifyEip3009TransferEvent(receipt.logs, getAddress(requirements.asset), {
+        from: getAddress(auth.from),
+        to: getAddress(auth.to),
+        value: BigInt(auth.value),
+      })
+    ) {
+      return {
+        success: false,
+        errorReason: Errors.ErrTransferEventMismatch,
+        transaction: tx,
+        network: payload.accepted.network,
+        payer,
+      };
+    }
+
     return {
       success: true,
       transaction: tx,
@@ -320,9 +416,13 @@ export async function settleEIP3009(
       payer,
     };
   } catch (error) {
+    // Preserve the raw revert text alongside the mapped code. The mapper collapses many
+    // distinct on-chain reverts into a single reason (e.g. ErrInvalidSignature), so without
+    // the original message the true cause is invisible to callers/operators.
     return {
       success: false,
       errorReason: parseEip3009TransferError(error),
+      errorMessage: error instanceof Error ? error.message : String(error),
       transaction: "",
       network: payload.accepted.network,
       payer,

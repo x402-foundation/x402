@@ -21,6 +21,14 @@ func NewSettlementCache() *SettlementCache {
 	}
 }
 
+// Delete removes a pending settlement key so a failed send/confirm can retry
+// before TTL while the blockhash is still valid.
+func (c *SettlementCache) Delete(key string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	delete(c.entries, key)
+}
+
 // IsDuplicate returns true if key is already pending settlement (duplicate).
 // Otherwise it records the key as newly pending and returns false.
 // Callers should reject the settlement when this returns true.

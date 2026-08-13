@@ -114,12 +114,12 @@ The Exact scheme uses signed authorizations:
 
 ```python
 {
-    "from": "0x...",      # Payer address
-    "to": "0x...",        # Recipient (payTo)
-    "value": 1000000,     # Amount in token units
-    "validAfter": 0,      # Unix timestamp
-    "validBefore": ...,   # Expiration timestamp
-    "nonce": "0x...",     # Random nonce
+    "from": "0x...",  # Payer address
+    "to": "0x...",  # Recipient (payTo)
+    "value": 1000000,  # Amount in token units
+    "validAfter": 0,  # Unix timestamp
+    "validBefore": ...,  # Expiration timestamp
+    "nonce": "0x...",  # Random nonce
 }
 ```
 

@@ -5,13 +5,14 @@ import (
 	"errors"
 	"fmt"
 	"math/big"
+	"strings"
 	"testing"
 	"time"
 
-	x402 "github.com/x402-foundation/x402/go"
-	"github.com/x402-foundation/x402/go/extensions/eip2612gassponsor"
-	"github.com/x402-foundation/x402/go/mechanisms/evm"
-	"github.com/x402-foundation/x402/go/types"
+	x402 "github.com/x402-foundation/x402/go/v2"
+	"github.com/x402-foundation/x402/go/v2/extensions/eip2612gassponsor"
+	"github.com/x402-foundation/x402/go/v2/mechanisms/evm"
+	"github.com/x402-foundation/x402/go/v2/types"
 )
 
 // ─── Mock facilitator signer ────────────────────────────────────────────────
@@ -23,6 +24,7 @@ type mockFacilitatorSigner struct {
 	writeContractTx    string
 	writeContractError error
 	getCodeResult      []byte
+	getCodeByAddress   map[string][]byte // per-address override; falls back to getCodeResult
 	getCodeError       error
 	verifyResult       bool
 	verifyError        error
@@ -56,7 +58,7 @@ func (m *mockFacilitatorSigner) VerifyTypedData(ctx context.Context, address str
 	return m.verifyResult, m.verifyError
 }
 
-func (m *mockFacilitatorSigner) WriteContract(ctx context.Context, address string, abi []byte, functionName string, args ...interface{}) (string, error) {
+func (m *mockFacilitatorSigner) WriteContract(ctx context.Context, address string, abi []byte, functionName string, dataSuffix []byte, args ...interface{}) (string, error) {
 	if m.writeContractError != nil {
 		return "", m.writeContractError
 	}
@@ -85,6 +87,9 @@ func (m *mockFacilitatorSigner) GetChainID(ctx context.Context) (*big.Int, error
 func (m *mockFacilitatorSigner) GetCode(ctx context.Context, address string) ([]byte, error) {
 	if m.getCodeError != nil {
 		return nil, m.getCodeError
+	}
+	if code, ok := m.getCodeByAddress[strings.ToLower(address)]; ok {
+		return code, nil
 	}
 	return m.getCodeResult, nil
 }
@@ -161,6 +166,34 @@ func buildValidRequirements() types.PaymentRequirements {
 		Amount:  testAmount,
 		Asset:   testTokenAddr,
 		PayTo:   testPayToAddr,
+	}
+}
+
+// ─── VerifyUptoPermit2 — asset contract validation ───────────────────────────
+
+func TestVerifyUptoPermit2_AssetIsEOA(t *testing.T) {
+	// When GetCode for the asset returns empty bytes, verify must reject with asset_not_deployed_contract.
+	signer := newMockSigner()
+	signer.getCodeByAddress = map[string][]byte{
+		strings.ToLower(testTokenAddr): {}, // token = EOA
+	}
+	p := buildValidUptoPayload(testFacilitatorAddr)
+	_, err := VerifyUptoPermit2(context.Background(), signer, buildValidPayload(testFacilitatorAddr), buildValidRequirements(), p, nil, false)
+	assertVerifyError(t, err, evm.ErrAssetNotDeployedContract)
+}
+
+func TestVerifyUptoPermit2_AssetGetCodeRPCError(t *testing.T) {
+	// An RPC error on GetCode must propagate as an internal error, not a 400.
+	signer := newMockSigner()
+	signer.getCodeError = fmt.Errorf("rpc: connection refused")
+	p := buildValidUptoPayload(testFacilitatorAddr)
+	_, err := VerifyUptoPermit2(context.Background(), signer, buildValidPayload(testFacilitatorAddr), buildValidRequirements(), p, nil, false)
+	if err == nil {
+		t.Fatal("expected error on GetCode failure")
+	}
+	ve := &x402.VerifyError{}
+	if errors.As(err, &ve) && ve.InvalidReason == evm.ErrAssetNotDeployedContract {
+		t.Error("RPC error should not produce a 400 verify error; expected internal error")
 	}
 }
 
@@ -284,9 +317,13 @@ func TestVerifyUptoPermit2_InvalidSignatureHex(t *testing.T) {
 }
 
 func TestVerifyUptoPermit2_InvalidSig_PayerIsEOA(t *testing.T) {
-	// ECDSA recovery fails, payer has no contract code → invalid sig
+	// ECDSA recovery fails, payer has no contract code → invalid sig.
+	// Asset (token) is a contract; only the payer is an EOA.
 	signer := newMockSigner()
-	signer.getCodeResult = []byte{} // EOA
+	signer.getCodeByAddress = map[string][]byte{
+		strings.ToLower(testTokenAddr): {0x60, 0x60}, // token = deployed contract
+		strings.ToLower(testPayerAddr): {},           // payer = EOA
+	}
 
 	p := buildValidUptoPayload(testFacilitatorAddr)
 	_, err := VerifyUptoPermit2(context.Background(), signer, buildValidPayload(testFacilitatorAddr), buildValidRequirements(), p, nil, false)

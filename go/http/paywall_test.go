@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/x402-foundation/x402/go/types"
+	"github.com/x402-foundation/x402/go/v2/types"
 )
 
 // mockPaywallProvider is a test PaywallProvider that returns configurable HTML.
@@ -320,6 +320,32 @@ func TestInjectPaywallConfig(t *testing.T) {
 		got := injectPaywallConfig(template, paymentReq, nil)
 		if !strings.Contains(got, "/api/test") {
 			t.Error("expected resource URL as currentUrl fallback")
+		}
+	})
+
+	t.Run("injects FaucetURLs map when set", func(t *testing.T) {
+		config := &PaywallConfig{
+			FaucetURLs: map[string]string{
+				"eip155:84532":  "https://example.com/base-sepolia",
+				"eip155:421614": "https://example.com/arb-sepolia",
+			},
+		}
+		got := injectPaywallConfig(template, paymentReq, config)
+		if !strings.Contains(got, "faucetUrls:") {
+			t.Errorf("expected faucetUrls in output, got %q", got)
+		}
+		if !strings.Contains(got, "https://example.com/base-sepolia") {
+			t.Errorf("expected per-chain faucet URL in output, got %q", got)
+		}
+		if !strings.Contains(got, "https://example.com/arb-sepolia") {
+			t.Errorf("expected per-chain faucet URL in output, got %q", got)
+		}
+	})
+
+	t.Run("emits faucetUrls: undefined when FaucetURLs unset", func(t *testing.T) {
+		got := injectPaywallConfig(template, paymentReq, nil)
+		if !strings.Contains(got, "faucetUrls: undefined") {
+			t.Errorf("expected faucetUrls: undefined in output, got %q", got)
 		}
 	})
 }

@@ -2,13 +2,14 @@
 
 import json
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 from .....schemas import Network, SettleResponse, VerifyResponse
 from .....schemas.v1 import PaymentPayloadV1, PaymentRequirementsV1
 from ...constants import (
     ERR_AUTHORIZATION_VALUE_MISMATCH,
+    ERR_FACTORY_NOT_ALLOWED,
     ERR_FAILED_TO_GET_NETWORK_CONFIG,
     ERR_FAILED_TO_VERIFY_SIGNATURE,
     ERR_INVALID_SIGNATURE,
@@ -17,6 +18,7 @@ from ...constants import (
     ERR_RECIPIENT_MISMATCH,
     ERR_SMART_WALLET_DEPLOYMENT_FAILED,
     ERR_TRANSACTION_FAILED,
+    ERR_TRANSFER_EVENT_MISMATCH,
     ERR_UNDEPLOYED_SMART_WALLET,
     ERR_UNSUPPORTED_SCHEME,
     ERR_VALID_AFTER_FUTURE,
@@ -36,6 +38,7 @@ from ..eip3009_utils import (
     parse_eip3009_authorization,
     parse_eip3009_transfer_error,
     simulate_eip3009_transfer,
+    verify_eip3009_transfer_event,
 )
 
 
@@ -43,8 +46,15 @@ from ..eip3009_utils import (
 class ExactEvmSchemeV1Config:
     """Configuration for ExactEvmSchemeV1 facilitator."""
 
-    deploy_erc4337_with_eip6492: bool = False
-    """Enable automatic smart wallet deployment via EIP-6492."""
+    eip6492_allowed_factories: list[str] = field(default_factory=list)
+    """Allowlist of factory contract addresses (hex strings, case-insensitive).
+
+    A non-empty list enables ERC-4337 smart wallet deployment via EIP-6492. The facilitator will
+    only call factories on this list when deploying an undeployed smart wallet. An empty list
+    (the default) denies all factory deployment calls. Facilitators must explicitly list every
+    factory they trust to prevent arbitrary transaction injection via attacker-controlled ERC-6492
+    signature wrappers.
+    """
 
     simulate_in_settle: bool = False
     """Rerun transfer simulation during settle."""
@@ -230,6 +240,21 @@ class ExactEvmSchemeV1:
                 payer=payer,
             )
 
+        # Counterfactual ERC-6492 wallet (undeployed + carries factory deployment info):
+        # settle will deploy via the factory, which is gated by the allowlist. Enforce the
+        # same gate here so verify does not pass for a payment settle will reject.
+        if (
+            not classification.valid
+            and classification.is_undeployed
+            and has_deployment_info(classification.sig_data)
+        ):
+            factory_addr = bytes_to_hex(classification.sig_data.factory).lower()
+            allowed = {f.strip().lower() for f in self._config.eip6492_allowed_factories}
+            if factory_addr not in allowed:
+                return VerifyResponse(
+                    is_valid=False, invalid_reason=ERR_FACTORY_NOT_ALLOWED, payer=payer
+                )
+
         if not simulate:
             return VerifyResponse(is_valid=True, payer=payer)
 
@@ -315,30 +340,40 @@ class ExactEvmSchemeV1:
                 transaction="",
             )
 
-        # Deploy smart wallet if needed
+        # Deploy smart wallet if needed (allowlist is the sole gate)
         if has_deployment_info(sig_data):
             code = self._signer.get_code(payer)
             if len(code) == 0:
-                if self._config.deploy_erc4337_with_eip6492:
-                    try:
-                        self._deploy_smart_wallet(sig_data)
-                    except Exception as e:
-                        return SettleResponse(
-                            success=False,
-                            error_reason=ERR_SMART_WALLET_DEPLOYMENT_FAILED,
-                            error_message=str(e),
-                            network=network,
-                            payer=payer,
-                            transaction="",
-                        )
-                else:
+                factory_addr = bytes_to_hex(sig_data.factory)
+                allowed = [f.lower() for f in self._config.eip6492_allowed_factories]
+                if factory_addr.lower() not in allowed:
                     return SettleResponse(
                         success=False,
-                        error_reason=ERR_UNDEPLOYED_SMART_WALLET,
+                        error_reason=ERR_FACTORY_NOT_ALLOWED,
                         network=network,
                         payer=payer,
                         transaction="",
                     )
+
+                try:
+                    self._deploy_smart_wallet(sig_data)
+                except Exception as e:
+                    return SettleResponse(
+                        success=False,
+                        error_reason=ERR_SMART_WALLET_DEPLOYMENT_FAILED,
+                        error_message=str(e),
+                        network=network,
+                        payer=payer,
+                        transaction="",
+                    )
+
+                # Do NOT re-simulate the transfer here. The authoritative pre-check is the
+                # atomic deploy+transfer simulation in verify; a second standalone eth_call
+                # after the real deploy tx races the deploy's state propagation across
+                # load-balanced RPC nodes and false-rejected valid wallets. The on-chain
+                # transferWithAuthorization below is the definitive signature check; a
+                # genuinely unsupported inner signature reverts there and is classified by
+                # parse_eip3009_transfer_error.
 
         try:
             tx_hash = execute_transfer_with_authorization(
@@ -352,6 +387,21 @@ class ExactEvmSchemeV1:
                 return SettleResponse(
                     success=False,
                     error_reason=ERR_TRANSACTION_FAILED,
+                    transaction=tx_hash,
+                    network=network,
+                    payer=payer,
+                )
+
+            if receipt.logs is not None and not verify_eip3009_transfer_event(
+                receipt.logs,
+                token_address,
+                from_address=parsed_authorization.from_address,
+                to=parsed_authorization.to,
+                value=parsed_authorization.value,
+            ):
+                return SettleResponse(
+                    success=False,
+                    error_reason=ERR_TRANSFER_EVENT_MISMATCH,
                     transaction=tx_hash,
                     network=network,
                     payer=payer,

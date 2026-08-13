@@ -21,9 +21,8 @@ import type {
 } from "@x402/core/types";
 import type { ClientAvmSigner, ClientAvmConfig } from "../../signer";
 import type { ExactAvmPayloadV2 } from "../../types";
-import { encodeTransaction } from "../../utils";
 import { USDC_CONFIG } from "../../constants";
-import { isTestnetNetwork } from "../../utils";
+import { encodeTransaction, isTestnetNetwork, normalizeAlgorandNetwork } from "../../utils";
 
 /**
  * AVM client implementation for the Exact payment scheme.
@@ -65,7 +64,8 @@ export class ExactAvmScheme implements SchemeNetworkClient {
     x402Version: number,
     paymentRequirements: PaymentRequirements,
   ): Promise<PaymentPayloadResult> {
-    const { amount, asset, payTo, network, extra } = paymentRequirements;
+    const { amount, asset, payTo, network: rawNetwork, extra } = paymentRequirements;
+    const network = normalizeAlgorandNetwork(rawNetwork);
 
     const algorandClient = this.getAlgorandClient(network);
 
@@ -178,6 +178,7 @@ export class ExactAvmScheme implements SchemeNetworkClient {
    * @returns AlgorandClient instance
    */
   private getAlgorandClient(network: string): AlgorandClient {
+    const normalizedNetwork = normalizeAlgorandNetwork(network);
     if (this.config?.algorandClient) {
       return this.config.algorandClient;
     }
@@ -190,7 +191,9 @@ export class ExactAvmScheme implements SchemeNetworkClient {
       });
     }
     // Auto-detect network
-    return isTestnetNetwork(network) ? AlgorandClient.testNet() : AlgorandClient.mainNet();
+    return isTestnetNetwork(normalizedNetwork)
+      ? AlgorandClient.testNet()
+      : AlgorandClient.mainNet();
   }
 
   /**
@@ -201,13 +204,14 @@ export class ExactAvmScheme implements SchemeNetworkClient {
    * @returns Asset ID as string
    */
   private getAssetId(asset: string, network: string): string {
+    const normalizedNetwork = normalizeAlgorandNetwork(network);
     // If asset is already a numeric string, use it directly
     if (/^\d+$/.test(asset)) {
       return asset;
     }
 
     // Try to get from USDC config
-    const usdcConfig = USDC_CONFIG[network];
+    const usdcConfig = USDC_CONFIG[normalizedNetwork];
     if (usdcConfig) {
       return usdcConfig.asaId;
     }

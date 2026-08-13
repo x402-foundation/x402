@@ -1,0 +1,155 @@
+{
+  "env": {
+    "SERVER_EVM_ADDRESS": { "required": true, "roles": ["server"] },
+    "CLIENT_EVM_PRIVATE_KEY": { "required": true, "roles": ["client"] },
+    "FACILITATOR_EVM_PRIVATE_KEY": { "required": true, "roles": ["facilitator"] },
+    "SERVER_EVM_RECEIVER_AUTHORIZER_PRIVATE_KEY": {
+      "required": false,
+      "roles": ["server"]
+    },
+    "EVM_PERMIT2_ASSET": { "required": false, "roles": ["server"] },
+    "EVM_BATCH_SETTLEMENT_CHANNEL": { "required": false, "roles": ["client"] },
+    "EVM_BATCH_SETTLEMENT_PHASE": { "required": false, "roles": ["client"] },
+    "EVM_BATCH_SETTLEMENT_RECOVERY": { "required": false, "roles": ["client"] },
+    "CLIENT_EVM_BATCH_SETTLEMENT_VOUCHER_SIGNER_PRIVATE_KEY": {
+      "required": false,
+      "roles": ["client"]
+    }
+  },
+  "testnet": {
+    "name": "Base Sepolia",
+    "caip2": "eip155:84532",
+    "rpcUrlDefault": "https://sepolia.base.org",
+    "permit2Asset": "0x036CbD53842c5426634e7929541eC2318f3dCF7e",
+    "permit2AssetName": "USDC"
+  },
+  "mainnet": {
+    "name": "Base",
+    "caip2": "eip155:8453",
+    "rpcUrlDefault": "https://mainnet.base.org",
+    "permit2Asset": "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+    "permit2AssetName": "USD Coin"
+  },
+  "routes": {
+    "/batch-settlement/evm/eip3009": {
+      "scheme": "batch-settlement",
+      "assetTransferMethod": "eip3009",
+      "sdks": ["typescript", "go", "python"],
+      "price": { "usd": "$0.001" },
+      "extensions": ["bazaar"]
+    },
+    "/batch-settlement/evm/permit2": {
+      "scheme": "batch-settlement",
+      "assetTransferMethod": "permit2",
+      "sdks": ["typescript", "go", "python"],
+      "schemeOptions": { "permit2Direct": true },
+      "price": {
+        "amount": "1000",
+        "assetRef": "permit2",
+        "permit2Domain": true
+      },
+      "extensions": ["bazaar"]
+    },
+    "/batch-settlement/evm/permit2-eip2612GasSponsoring": {
+      "scheme": "batch-settlement",
+      "assetTransferMethod": "permit2",
+      "sdks": ["typescript", "go", "python"],
+      "schemeOptions": { "coldstart": true },
+      "price": {
+        "usd": "$0.001",
+        "declareAssetTransferMethod": true
+      },
+      "extensions": ["bazaar", "eip2612GasSponsoring"]
+    },
+    "/batch-settlement/evm/permit2-erc20ApprovalGasSponsoring": {
+      "scheme": "batch-settlement",
+      "assetTransferMethod": "permit2",
+      "sdks": ["typescript", "go", "python"],
+      "schemeOptions": { "coldstart": true },
+      "price": {
+        "amount": "1000",
+        "assetRef": "permit2"
+      },
+      "extensions": ["bazaar", "erc20ApprovalGasSponsoring"]
+    },
+    "/exact/evm/eip3009": {
+      "scheme": "exact",
+      "assetTransferMethod": "eip3009",
+      "sdks": ["typescript", "go", "python"],
+      "price": { "usd": "$0.001" },
+      "extensions": ["bazaar"]
+    },
+    "/exact/evm/permit2": {
+      "scheme": "exact",
+      "assetTransferMethod": "permit2",
+      "sdks": ["typescript", "go", "python"],
+      "schemeOptions": { "permit2Direct": true },
+      "price": {
+        "amount": "1000",
+        "assetRef": "permit2",
+        "permit2Domain": true
+      },
+      "extensions": ["bazaar"]
+    },
+    "/exact/evm/permit2-eip2612GasSponsoring": {
+      "scheme": "exact",
+      "assetTransferMethod": "permit2",
+      "sdks": ["typescript", "go", "python"],
+      "schemeOptions": { "coldstart": true },
+      "price": {
+        "usd": "$0.001",
+        "declareAssetTransferMethod": true
+      },
+      "extensions": ["bazaar", "eip2612GasSponsoring"]
+    },
+    "/exact/evm/permit2-erc20ApprovalGasSponsoring": {
+      "scheme": "exact",
+      "assetTransferMethod": "permit2",
+      "sdks": ["typescript", "go", "python"],
+      "schemeOptions": { "coldstart": true },
+      "price": {
+        "amount": "1000",
+        "assetRef": "permit2"
+      },
+      "extensions": ["bazaar", "erc20ApprovalGasSponsoring"]
+    },
+    "/upto/evm/permit2": {
+      "scheme": "upto",
+      "assetTransferMethod": "permit2",
+      "sdks": ["typescript", "go", "python"],
+      "schemeOptions": { "permit2Direct": true },
+      "price": {
+        "amount": "2000",
+        "assetRef": "permit2",
+        "permit2Domain": true
+      },
+      "extensions": ["bazaar"],
+      "settlementOverride": { "amount": "1000" }
+    },
+    "/upto/evm/permit2-eip2612GasSponsoring": {
+      "scheme": "upto",
+      "assetTransferMethod": "permit2",
+      "sdks": ["typescript", "go", "python"],
+      "schemeOptions": { "coldstart": true },
+      "price": {
+        "amount": "2000",
+        "assetRef": "permit2",
+        "permit2Domain": true
+      },
+      "extensions": ["bazaar", "eip2612GasSponsoring"],
+      "settlementOverride": { "amount": "1000" }
+    },
+    "/upto/evm/permit2-erc20ApprovalGasSponsoring": {
+      "scheme": "upto",
+      "assetTransferMethod": "permit2",
+      "sdks": ["typescript", "go", "python"],
+      "schemeOptions": { "coldstart": true },
+      "price": {
+        "amount": "2000",
+        "assetRef": "permit2"
+      },
+      "extensions": ["bazaar", "erc20ApprovalGasSponsoring"],
+      "settlementOverride": { "amount": "1000" }
+    }
+  }
+}

@@ -1,0 +1,25 @@
+{
+  "env": {
+    "SERVER_KEETA_ADDRESS": { "required": true, "roles": ["server"] },
+    "CLIENT_KEETA_MNEMONIC": { "required": true, "roles": ["client"] },
+    "FACILITATOR_KEETA_MNEMONIC": { "required": true, "roles": ["facilitator"] }
+  },
+  "testnet": {
+    "name": "Keeta Testnet",
+    "caip2": "keeta:1413829460",
+    "rpcUrlDefault": ""
+  },
+  "mainnet": {
+    "name": "Keeta",
+    "caip2": "keeta:21378",
+    "rpcUrlDefault": ""
+  },
+  "routes": {
+    "/exact/keeta": {
+      "scheme": "exact",
+      "sdks": ["typescript"],
+      "price": { "usd": "$0.001" },
+      "extensions": ["bazaar"]
+    }
+  }
+}

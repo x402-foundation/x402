@@ -1,8 +1,14 @@
 import { describe, it, expect } from "vitest";
 import { ExactSvmScheme } from "../../src/exact/server/scheme";
 import {
+  CASH_MAINNET_ADDRESS,
+  PYUSD_DEVNET_ADDRESS,
+  PYUSD_MAINNET_ADDRESS,
   USDC_MAINNET_ADDRESS,
   USDC_DEVNET_ADDRESS,
+  USDG_DEVNET_ADDRESS,
+  USDG_MAINNET_ADDRESS,
+  USDT_MAINNET_ADDRESS,
   SOLANA_MAINNET_CAIP2,
   SOLANA_DEVNET_CAIP2,
   SOLANA_TESTNET_CAIP2,
@@ -44,6 +50,25 @@ describe("ExactSvmScheme", () => {
         expect(result.amount).toBe("1000000"); // 1 USDC
       });
 
+      it("should parse supported stablecoin suffixes", async () => {
+        await expect(server.parsePrice("0.10 USDT", network)).resolves.toMatchObject({
+          amount: "100000",
+          asset: USDT_MAINNET_ADDRESS,
+        });
+        await expect(server.parsePrice("0.10 USDG", network)).resolves.toMatchObject({
+          amount: "100000",
+          asset: USDG_MAINNET_ADDRESS,
+        });
+        await expect(server.parsePrice("0.10 PYUSD", network)).resolves.toMatchObject({
+          amount: "100000",
+          asset: PYUSD_MAINNET_ADDRESS,
+        });
+        await expect(server.parsePrice("0.10 CASH", network)).resolves.toMatchObject({
+          amount: "100000",
+          asset: CASH_MAINNET_ADDRESS,
+        });
+      });
+
       it("should avoid floating-point rounding error", async () => {
         const result = await server.parsePrice("$4.02", network);
         expect(result.amount).toBe("4020000"); // 4.02 USDC
@@ -57,6 +82,14 @@ describe("ExactSvmScheme", () => {
         const result = await server.parsePrice("1.00", network);
         expect(result.asset).toBe(USDC_DEVNET_ADDRESS);
         expect(result.amount).toBe("1000000");
+      });
+
+      it("should use Devnet Token-2022 stablecoin addresses", async () => {
+        const usdg = await server.parsePrice("1.00 USDG", network);
+        expect(usdg.asset).toBe(USDG_DEVNET_ADDRESS);
+
+        const pyusd = await server.parsePrice("1.00 PYUSD", network);
+        expect(pyusd.asset).toBe(PYUSD_DEVNET_ADDRESS);
       });
     });
 
@@ -102,6 +135,12 @@ describe("ExactSvmScheme", () => {
       it("should throw for invalid amounts", async () => {
         await expect(
           async () => await server.parsePrice("abc", SOLANA_MAINNET_CAIP2),
+        ).rejects.toThrow("Invalid money format");
+      });
+
+      it("should reject partially numeric money strings", async () => {
+        await expect(
+          async () => await server.parsePrice("1abc", SOLANA_MAINNET_CAIP2),
         ).rejects.toThrow("Invalid money format");
       });
     });

@@ -1,0 +1,34 @@
+{
+  "env": {
+    "SERVER_HEDERA_ADDRESS": { "required": true, "roles": ["server"] },
+    "CLIENT_HEDERA_ACCOUNT_ID": { "required": true, "roles": ["client"] },
+    "CLIENT_HEDERA_PRIVATE_KEY": { "required": true, "roles": ["client"] },
+    "FACILITATOR_HEDERA_ACCOUNT_ID": { "required": true, "roles": ["facilitator"] },
+    "FACILITATOR_HEDERA_PRIVATE_KEY": { "required": true, "roles": ["facilitator"] },
+    "HEDERA_AMOUNT": { "required": false, "roles": ["server"] },
+    "HEDERA_ASSET": { "required": false, "roles": ["server"] }
+  },
+  "testnet": {
+    "name": "Hedera Testnet",
+    "caip2": "hedera:testnet",
+    "rpcUrlDefault": ""
+  },
+  "mainnet": {
+    "name": "Hedera Mainnet",
+    "caip2": "hedera:mainnet",
+    "rpcUrlDefault": ""
+  },
+  "routes": {
+    "/exact/hedera": {
+      "scheme": "exact",
+      "sdks": ["typescript"],
+      "price": {
+        "amount": "100000",
+        "amountEnv": "HEDERA_AMOUNT",
+        "asset": "0.0.0",
+        "assetEnv": "HEDERA_ASSET"
+      },
+      "extensions": ["bazaar"]
+    }
+  }
+}

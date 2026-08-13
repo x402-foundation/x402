@@ -7,14 +7,24 @@ This directory contains TypeScript server examples demonstrating how to protect 
 | Directory | Description |
 | --- | --- |
 | [`express/`](./express/) | Using `@x402/express` middleware |
-| [`self-facilitation/`](./self-facilitation/) | Express middleware with in-process SDK facilitator |
 | [`hono/`](./hono/) | Using `@x402/hono` middleware |
+| [`fastify/`](./fastify/) | Using `@x402/fastify` middleware |
+| [`self-facilitation/`](./self-facilitation/) | Express middleware with in-process SDK facilitator |
 | [`advanced/`](./advanced/) | Advanced patterns: hooks, dynamic pricing, custom tokens |
-| [`custom/`](./custom/) | Manual implementation using only `@x402/core` |
+| [`custom/`](./custom/) | Manual implementation without an x402 middleware package |
+| [`upto/`](./upto/) | `upto` scheme: authorize a ceiling, settle only actual usage |
+| [`batch-settlement/`](./batch-settlement/) | Off-chain vouchers claimed and settled in batches by a `ChannelManager` |
+| [`bazaar/`](./bazaar/) | Makes a paid API discoverable via the Bazaar extension |
+| [`builder-code/`](./builder-code/) | ERC-8021 builder-code attribution on paid endpoints |
+| [`offer-receipt/`](./offer-receipt/) | Signed offers (payment terms) and receipts (proof of delivery) |
+| [`payment-identifier/`](./payment-identifier/) | Idempotency via the `payment-identifier` extension |
+| [`sign-in-with-x/`](./sign-in-with-x/) | Auth-only routes and pay-once-then-authenticate routes |
+| [`cloudfront-lambda-edge/`](./cloudfront-lambda-edge/) | Adds x402 at the CDN edge without modifying the backend |
+| [`mcp/`](./mcp/) | MCP server exposing paid tools |
 
 ## Framework Examples
 
-The **express**, **self-facilitation**, and **hono** directories showcase the minimal approach to adding x402 paywalls to your API. These use our middleware packages that automatically handle:
+The **express**, **hono**, and **fastify** directories showcase the minimal approach to adding x402 paywalls to your API. These use our middleware packages that automatically handle:
 
 1. Checking for payment headers on protected routes
 2. Returning 402 with payment requirements if no payment
@@ -37,15 +47,15 @@ These patterns are useful for production applications that need custom business 
 
 ## Custom Implementation
 
-The **custom** directory shows how to implement x402 payment handling manually using only `@x402/core`, without any middleware. Use this approach when:
+The **custom** directory shows how to implement x402 payment handling manually, without a prebuilt x402 middleware package. Use this approach when:
 
 - You need complete control over the payment flow
-- You're using a web framework we don't have a package for (Koa, Fastify, etc.)
+- You're using a web framework we don't have a package for
 - You want to understand how x402 works under the hood
 
 ## Getting Started
 
 1. Pick an example directory
-2. Follow the README in that directory
+2. Follow the README in that directory, if it has one
 3. Use one of the [clients](../clients/) to test your server
 

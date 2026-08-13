@@ -6,8 +6,8 @@ import (
 	"math/big"
 	"time"
 
-	"github.com/x402-foundation/x402/go/mechanisms/evm"
-	"github.com/x402-foundation/x402/go/types"
+	"github.com/x402-foundation/x402/go/v2/mechanisms/evm"
+	"github.com/x402-foundation/x402/go/v2/types"
 )
 
 // CreatePermit2Payload creates a Permit2 payload using the x402Permit2Proxy witness pattern.
@@ -33,7 +33,7 @@ func CreatePermit2Payload(
 	}
 
 	now := time.Now().Unix()
-	validAfter := fmt.Sprintf("%d", now-600) // 10 minutes buffer for clock skew
+	validAfter := "0"
 	deadline := fmt.Sprintf("%d", now+int64(requirements.MaxTimeoutSeconds))
 
 	// Normalize addresses

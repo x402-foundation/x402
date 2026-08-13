@@ -6,8 +6,8 @@ import (
 
 	"github.com/ethereum/go-ethereum/common"
 
-	x402 "github.com/x402-foundation/x402/go"
-	"github.com/x402-foundation/x402/go/mechanisms/evm"
+	x402 "github.com/x402-foundation/x402/go/v2"
+	"github.com/x402-foundation/x402/go/v2/mechanisms/evm"
 )
 
 // EIP2612PermitData holds the parsed EIP-2612 permit fields for settleWithPermit() calls.
@@ -62,6 +62,10 @@ func BuildUptoPermit2SettleArgs(permit2Payload *evm.UptoPermit2Payload, settleme
 	if err != nil {
 		return nil, err
 	}
+	sigData, err := evm.ParseERC6492Signature(signatureBytes)
+	if err != nil {
+		return nil, err
+	}
 
 	args := &UptoPermit2SettleArgs{}
 	args.Permit.Permitted.Token = common.HexToAddress(permit2Payload.Permit2Authorization.Permitted.Token)
@@ -73,7 +77,7 @@ func BuildUptoPermit2SettleArgs(permit2Payload *evm.UptoPermit2Payload, settleme
 	args.Witness.To = common.HexToAddress(permit2Payload.Permit2Authorization.Witness.To)
 	args.Witness.Facilitator = common.HexToAddress(permit2Payload.Permit2Authorization.Witness.Facilitator)
 	args.Witness.ValidAfter = validAfter
-	args.Signature = signatureBytes
+	args.Signature = sigData.InnerSignature
 	return args, nil
 }
 

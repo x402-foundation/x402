@@ -1,11 +1,13 @@
 """Memo-based uniqueness tests for SVM payments."""
 
+import base64
 from unittest.mock import MagicMock, patch
 
 import pytest
 from solders.hash import Hash
 from solders.keypair import Keypair
 from solders.pubkey import Pubkey
+from solders.transaction import VersionedTransaction
 
 from x402.mechanisms.svm import (
     DEFAULT_COMPUTE_UNIT_LIMIT,
@@ -18,7 +20,7 @@ from x402.mechanisms.svm import (
 from x402.mechanisms.svm.exact import ExactSvmClientScheme
 from x402.mechanisms.svm.signers import KeypairSigner
 from x402.mechanisms.svm.types import ExactSvmPayload
-from x402.mechanisms.svm.utils import decode_transaction_from_payload
+from x402.mechanisms.svm.utils import decode_transaction_from_payload, transaction_message_hash
 from x402.schemas import PaymentRequirements
 
 FIXED_BLOCKHASH = "5Tx8F3jgSHx21CbtjwmdaKPLM5tWmreWAnPrbqHomSJF"
@@ -461,3 +463,111 @@ class TestSellerMemo:
         with patch.object(client, "_get_client", return_value=mock_rpc_client):
             with pytest.raises(ValueError, match="extra.memo exceeds maximum 256 bytes"):
                 client.create_payment_payload(requirements)
+
+
+class TestMessageHashMalleabilityResistance:
+    """Verify that randomizing fee-payer signature bytes (slot 0) does not change
+    the cache key. The facilitator overwrites slot 0 before broadcast, so an
+    attacker who randomizes those bytes to bypass a wire-bytes cache key must be
+    caught by keying on the immutable message hash."""
+
+    @pytest.fixture
+    def mock_rpc_client(self):
+        mock_client = MagicMock()
+        mock_blockhash_resp = MagicMock()
+        mock_blockhash_resp.value.blockhash = Hash.from_string(FIXED_BLOCKHASH)
+        mock_client.get_latest_blockhash.return_value = mock_blockhash_resp
+
+        mock_account_info = MagicMock()
+        mock_account_info.value = MagicMock()
+        mock_account_info.value.owner = Pubkey.from_string(TOKEN_PROGRAM_ADDRESS)
+        mock_account_info.value.data = bytes(44) + bytes([6]) + bytes(37)
+        mock_client.get_account_info.return_value = mock_account_info
+        return mock_client
+
+    @pytest.fixture
+    def test_keypair(self):
+        return Keypair.from_seed(bytes([1] * 32))
+
+    @pytest.fixture
+    def test_requirements(self):
+        return PaymentRequirements(
+            scheme="exact",
+            network=SOLANA_DEVNET_CAIP2,
+            asset=USDC_DEVNET_ADDRESS,
+            amount="100000",
+            pay_to=str(Keypair.from_seed(bytes([3] * 32)).pubkey()),
+            max_timeout_seconds=3600,
+            extra={"feePayer": str(Keypair.from_seed(bytes([2] * 32)).pubkey())},
+        )
+
+    def test_cache_key_unchanged_when_fee_payer_sig_bytes_are_mutated(
+        self, mock_rpc_client, test_keypair, test_requirements
+    ):
+        """Flipping bytes in signature slot 0 must not change the message hash cache key."""
+        client = ExactSvmClientScheme(KeypairSigner(test_keypair))
+
+        with patch.object(client, "_get_client", return_value=mock_rpc_client):
+            payload = client.create_payment_payload(test_requirements)
+
+        tx = decode_transaction_from_payload(ExactSvmPayload(transaction=payload["transaction"]))
+        hash_before = transaction_message_hash(tx)
+
+        # Flip every bit in fee-payer signature slot (bytes 1–64 in the wire format;
+        # byte 0 is the compact-u16 num_signatures prefix for small counts).
+        tx_bytes = bytearray(base64.b64decode(payload["transaction"]))
+        for i in range(1, 65):
+            tx_bytes[i] ^= 0xFF
+
+        mutated_tx = VersionedTransaction.from_bytes(bytes(tx_bytes))
+        hash_after = transaction_message_hash(mutated_tx)
+
+        assert hash_before == hash_after, (
+            "message hash must be identical regardless of bytes in the fee-payer signature slot"
+        )
+
+    def test_different_messages_produce_different_hashes(
+        self, mock_rpc_client, test_keypair, test_requirements
+    ):
+        """Distinct transaction messages must produce distinct cache keys."""
+        call_count = [0]
+        blockhash_values = [FIXED_BLOCKHASH, FIXED_BLOCKHASH_ALT]
+
+        def get_mock_client(network):
+            mock = MagicMock()
+            mock_resp = MagicMock()
+            mock_resp.value.blockhash = Hash.from_string(blockhash_values[call_count[0] % 2])
+            call_count[0] += 1
+            mock.get_latest_blockhash.return_value = mock_resp
+
+            mock_account_info = MagicMock()
+            mock_account_info.value = MagicMock()
+            mock_account_info.value.owner = Pubkey.from_string(TOKEN_PROGRAM_ADDRESS)
+            mock_account_info.value.data = bytes(44) + bytes([6]) + bytes(37)
+            mock.get_account_info.return_value = mock_account_info
+            return mock
+
+        client = ExactSvmClientScheme(KeypairSigner(test_keypair))
+        with patch.object(client, "_get_client", side_effect=get_mock_client):
+            payload1 = client.create_payment_payload(test_requirements)
+            payload2 = client.create_payment_payload(test_requirements)
+
+        tx1 = decode_transaction_from_payload(ExactSvmPayload(transaction=payload1["transaction"]))
+        tx2 = decode_transaction_from_payload(ExactSvmPayload(transaction=payload2["transaction"]))
+
+        assert transaction_message_hash(tx1) != transaction_message_hash(tx2), (
+            "distinct messages (different blockhashes) must produce distinct hashes"
+        )
+
+    def test_hash_is_valid_base64_sha256(self, mock_rpc_client, test_keypair, test_requirements):
+        """Output must be a base64-encoded 32-byte SHA-256 digest."""
+        client = ExactSvmClientScheme(KeypairSigner(test_keypair))
+
+        with patch.object(client, "_get_client", return_value=mock_rpc_client):
+            payload = client.create_payment_payload(test_requirements)
+
+        tx = decode_transaction_from_payload(ExactSvmPayload(transaction=payload["transaction"]))
+        h = transaction_message_hash(tx)
+
+        decoded = base64.b64decode(h)
+        assert len(decoded) == 32, "SHA-256 digest must be 32 bytes"

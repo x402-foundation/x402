@@ -64,10 +64,17 @@ const PENDING_SETTLEMENT_HEADER = 'x-x402-pending-settlement';
  * 
  * const x402 = createX402Middleware({
  *   facilitatorUrl: 'https://x402.org/facilitator',
- *   network: 'eip155:84532',
  *   routes: {
  *     '/api/*': {
- *       accepts: { scheme: 'exact', network: 'eip155:84532', payTo: '0x...', price: '$0.01' }
+ *       accepts: [
+ *         { scheme: 'exact', network: 'eip155:84532', payTo: '0x...', price: '$0.01' },
+ *         {
+ *           scheme: 'exact',
+ *           network: 'solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1',
+ *           payTo: '...',
+ *           price: '$0.01',
+ *         },
+ *       ]
  *     }
  *   }
  * });

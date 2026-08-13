@@ -1,0 +1,57 @@
+{
+  "env": {
+    "SERVER_XRPL_ADDRESS": { "required": true, "roles": ["server"] },
+    "CLIENT_XRPL_SEED": { "required": true, "roles": ["client"] },
+    "SERVER_XRPL_AMOUNT": { "required": false, "roles": ["server"] },
+    "SERVER_XRPL_ASSET": { "required": false, "roles": ["server"] },
+    "SERVER_XRPL_ISSUER": { "required": false, "roles": ["server"] }
+  },
+  "testnet": {
+    "name": "XRPL Testnet",
+    "caip2": "xrpl:1",
+    "rpcUrlDefault": "wss://s.altnet.rippletest.net:51233"
+  },
+  "mainnet": {
+    "name": "XRPL",
+    "caip2": "xrpl:0",
+    "rpcUrlDefault": "wss://s1.ripple.com:51233"
+  },
+  "routes": {
+    "/exact/xrpl/sequence": {
+      "scheme": "exact",
+      "assetTransferMethod": "sequence",
+      "sdks": ["typescript"],
+      "price": {
+        "amount": "1000",
+        "amountEnv": "SERVER_XRPL_AMOUNT",
+        "asset": "XRP",
+        "assetEnv": "SERVER_XRPL_ASSET",
+        "extraEnv": {
+          "issuer": {
+            "env": "SERVER_XRPL_ISSUER",
+            "whenAssetOverridden": true
+          }
+        }
+      },
+      "extensions": ["bazaar"]
+    },
+    "/exact/xrpl/ticketSequence": {
+      "scheme": "exact",
+      "assetTransferMethod": "ticketSequence",
+      "sdks": ["typescript"],
+      "price": {
+        "amount": "1000",
+        "amountEnv": "SERVER_XRPL_AMOUNT",
+        "asset": "XRP",
+        "assetEnv": "SERVER_XRPL_ASSET",
+        "extraEnv": {
+          "issuer": {
+            "env": "SERVER_XRPL_ISSUER",
+            "whenAssetOverridden": true
+          }
+        }
+      },
+      "extensions": ["bazaar"]
+    }
+  }
+}

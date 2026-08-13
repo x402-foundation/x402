@@ -1,14 +1,16 @@
 import {
   AssetAmount,
   Network,
+  PaymentFlowConfig,
   PaymentRequirements,
   Price,
   SchemeNetworkServer,
   MoneyParser,
 } from "@x402/core/types";
-import { convertToTokenAmount, numberToDecimalString } from "@x402/core/utils";
+import { convertToTokenAmount, numberToDecimalString, parseMoneyString } from "@x402/core/utils";
 import { getAddress } from "viem";
 import { getDefaultAsset } from "../../shared/defaultAssets";
+import type { AssetTransferMethod } from "../../types";
 
 /**
  * EVM server implementation for the Upto payment scheme.
@@ -16,6 +18,10 @@ import { getDefaultAsset } from "../../shared/defaultAssets";
  */
 export class UptoEvmScheme implements SchemeNetworkServer {
   readonly scheme = "upto";
+  readonly defaultAssetTransferMethod: AssetTransferMethod = "permit2";
+  readonly paymentFlows = {
+    permit2: { supported: ["authorization"], default: "authorization" },
+  } as const satisfies Record<"permit2", PaymentFlowConfig>;
   private moneyParsers: MoneyParser[] = [];
 
   /**
@@ -122,14 +128,7 @@ export class UptoEvmScheme implements SchemeNetworkServer {
       return money;
     }
 
-    const cleanMoney = money.replace(/^\$/, "").trim();
-    const amount = parseFloat(cleanMoney);
-
-    if (isNaN(amount)) {
-      throw new Error(`Invalid money format: ${money}`);
-    }
-
-    return amount;
+    return parseMoneyString(money);
   }
 
   /**

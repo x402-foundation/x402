@@ -8,9 +8,11 @@ import (
 	"strings"
 	"time"
 
-	x402 "github.com/x402-foundation/x402/go"
-	"github.com/x402-foundation/x402/go/mechanisms/evm"
-	"github.com/x402-foundation/x402/go/types"
+	"github.com/ethereum/go-ethereum/common"
+
+	x402 "github.com/x402-foundation/x402/go/v2"
+	"github.com/x402-foundation/x402/go/v2/mechanisms/evm"
+	"github.com/x402-foundation/x402/go/v2/types"
 )
 
 // verifyEIP3009 verifies an EIP-3009 payment payload.
@@ -104,6 +106,21 @@ func (f *ExactEvmScheme) verifyEIP3009(
 		return nil, x402.NewVerifyError(ErrInvalidSignature, evmPayload.Authorization.From, fmt.Sprintf("invalid signature: %s", evmPayload.Signature))
 	}
 
+	// Counterfactual ERC-6492 wallet: settle deploys via the factory, gated by the
+	// allowlist. Enforce the same gate here so verify mirrors settle (a payment that
+	// settle rejects with ErrFactoryNotAllowed must not verify as valid).
+	if !classification.Valid && classification.IsUndeployed && HasEIP6492Deployment(classification.SigData) {
+		if !evm.IsFactoryAllowed(classification.SigData.Factory, f.config.EIP6492AllowedFactories) {
+			return nil, x402.NewVerifyError(ErrFactoryNotAllowed, evmPayload.Authorization.From, "factory not in EIP6492AllowedFactories allowlist")
+		}
+	}
+
+	if errReason, err := evm.ValidateAssetIsContract(ctx, f.signer, requirements.Asset); err != nil {
+		return nil, fmt.Errorf("asset contract check failed: %w", err)
+	} else if errReason != "" {
+		return nil, x402.NewVerifyError(errReason, evmPayload.Authorization.From, fmt.Sprintf("asset %s is not a deployed contract", requirements.Asset))
+	}
+
 	if simulate {
 		simulationSucceeded, err := SimulateEIP3009Transfer(
 			ctx,
@@ -140,6 +157,7 @@ func (f *ExactEvmScheme) settleEIP3009(
 	ctx context.Context,
 	payload types.PaymentPayload,
 	requirements types.PaymentRequirements,
+	fctx *x402.FacilitatorContext,
 ) (*x402.SettleResponse, error) {
 	network := x402.Network(payload.Accepted.Network)
 
@@ -176,13 +194,23 @@ func (f *ExactEvmScheme) settleEIP3009(
 		}
 
 		if len(code) == 0 {
-			if !f.config.DeployERC4337WithEIP6492 {
-				return nil, x402.NewSettleError(ErrUndeployedSmartWallet, verifyResp.Payer, network, "", "")
+			if !evm.IsFactoryAllowed(sigData.Factory, f.config.EIP6492AllowedFactories) {
+				return nil, x402.NewSettleError(ErrFactoryNotAllowed, verifyResp.Payer, network, "", "")
 			}
 
-			if err := DeploySmartWallet(ctx, f.signer, sigData); err != nil {
+			if err := SendDeployTransaction(ctx, f.signer, sigData); err != nil {
 				return nil, x402.NewSettleError(ErrSmartWalletDeploymentFailed, verifyResp.Payer, network, "", err.Error())
 			}
+
+			// Do NOT re-simulate the transfer here. The single authoritative pre-check is the
+			// atomic deploy+transfer simulation that runs in verify (one eth_call via
+			// Multicall3, state carried across both sub-calls). A second standalone eth_call
+			// after the real deploy tx is unreliable — the read can race the deploy's state
+			// propagation across load-balanced RPC nodes — and was producing false
+			// inner-signature-unsupported rejections for valid wallets (e.g.
+			// Coinbase Smart Wallet). The on-chain transferWithAuthorization below is the
+			// definitive signature check; a genuinely unsupported inner signature reverts
+			// there and is classified by parseEIP3009TransferError.
 		}
 	}
 
@@ -191,7 +219,12 @@ func (f *ExactEvmScheme) settleEIP3009(
 		return nil, x402.NewSettleError(ErrInvalidPayload, verifyResp.Payer, network, "", err.Error())
 	}
 
-	txHash, err := ExecuteTransferWithAuthorization(ctx, f.signer, tokenAddress, parsedAuthorization, sigData)
+	dataSuffix, err := evm.ResolveDataSuffix(fctx, evm.DataSuffixContext{Payload: payload, Requirements: requirements})
+	if err != nil {
+		return nil, x402.NewSettleError(ErrInvalidPayload, verifyResp.Payer, network, "", err.Error())
+	}
+
+	txHash, err := ExecuteTransferWithAuthorization(ctx, f.signer, tokenAddress, parsedAuthorization, sigData, dataSuffix)
 	if err != nil {
 		return nil, x402.NewSettleError(parseEIP3009TransferError(err), verifyResp.Payer, network, "", err.Error())
 	}
@@ -203,6 +236,20 @@ func (f *ExactEvmScheme) settleEIP3009(
 
 	if receipt.Status != evm.TxStatusSuccess {
 		return nil, x402.NewSettleError(ErrTransactionFailed, verifyResp.Payer, network, txHash, "")
+	}
+
+	if receipt.Logs != nil {
+		transferMatched, err := verifyEIP3009TransferEvent(receipt.Logs, common.HexToAddress(tokenAddress), expectedTransferEvent{
+			From:  parsedAuthorization.From,
+			To:    parsedAuthorization.To,
+			Value: parsedAuthorization.Value,
+		})
+		if err != nil {
+			return nil, x402.NewSettleError(ErrTransferEventMismatch, verifyResp.Payer, network, txHash, err.Error())
+		}
+		if !transferMatched {
+			return nil, x402.NewSettleError(ErrTransferEventMismatch, verifyResp.Payer, network, txHash, "")
+		}
 	}
 
 	return &x402.SettleResponse{

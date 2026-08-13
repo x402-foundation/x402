@@ -7,26 +7,53 @@ import (
 	"strconv"
 	"strings"
 
-	x402 "github.com/x402-foundation/x402/go"
-	"github.com/x402-foundation/x402/go/mechanisms/svm"
-	"github.com/x402-foundation/x402/go/types"
+	"github.com/gagliardetto/solana-go/rpc"
+	x402 "github.com/x402-foundation/x402/go/v2"
+	"github.com/x402-foundation/x402/go/v2/mechanisms/svm"
+	"github.com/x402-foundation/x402/go/v2/types"
 )
 
 // ExactSvmScheme implements the SchemeNetworkServer interface for SVM (Solana) exact payments (V2)
 type ExactSvmScheme struct {
 	moneyParsers []x402.MoneyParser
+	config       *svm.ServerConfig
 }
 
 // NewExactSvmScheme creates a new ExactSvmScheme
-func NewExactSvmScheme() *ExactSvmScheme {
+func NewExactSvmScheme(config ...*svm.ServerConfig) *ExactSvmScheme {
+	var cfg *svm.ServerConfig
+	if len(config) > 0 {
+		cfg = config[0]
+	}
 	return &ExactSvmScheme{
 		moneyParsers: []x402.MoneyParser{},
+		config:       cfg,
 	}
 }
 
 // Scheme returns the scheme identifier
 func (s *ExactSvmScheme) Scheme() string {
 	return svm.SchemeExact
+}
+
+// DefaultAssetTransferMethod returns the SDK ATM sentinel (no on-wire ATM).
+func (s *ExactSvmScheme) DefaultAssetTransferMethod() string {
+	return x402.SDKDefaultAssetTransferMethod
+}
+
+// DynamicExtraFields returns extra keys regenerated on each PaymentRequired response.
+func (s *ExactSvmScheme) DynamicExtraFields() []string {
+	return []string{"recentBlockhash", "lastValidBlockHeight"}
+}
+
+// PaymentFlows returns ATM-keyed payment flow support for exact SVM.
+func (s *ExactSvmScheme) PaymentFlows() map[string]x402.PaymentFlowConfig {
+	return map[string]x402.PaymentFlowConfig{
+		x402.SDKDefaultAssetTransferMethod: {
+			Supported: []x402.PaymentFlowName{x402.PaymentFlowAuthorization},
+			Default:   x402.PaymentFlowAuthorization,
+		},
+	}
 }
 
 // RegisterMoneyParser registers a custom money parser in the parser chain.
@@ -240,6 +267,8 @@ func (s *ExactSvmScheme) EnhancePaymentRequirements(
 		}
 	}
 
+	s.enrichRecentBlockhash(ctx, requirements.Extra)
+
 	// Copy extensions from supportedKind if provided
 	if supportedKind.Extra != nil {
 		for _, key := range extensionKeys {
@@ -250,4 +279,18 @@ func (s *ExactSvmScheme) EnhancePaymentRequirements(
 	}
 
 	return requirements, nil
+}
+
+func (s *ExactSvmScheme) enrichRecentBlockhash(ctx context.Context, extra map[string]interface{}) {
+	if s.config == nil || s.config.RPCURL == "" {
+		return
+	}
+
+	latestBlockhash, err := rpc.New(s.config.RPCURL).GetLatestBlockhash(ctx, rpc.CommitmentFinalized)
+	if err != nil {
+		return
+	}
+
+	extra["recentBlockhash"] = latestBlockhash.Value.Blockhash.String()
+	extra["lastValidBlockHeight"] = strconv.FormatUint(latestBlockhash.Value.LastValidBlockHeight, 10)
 }

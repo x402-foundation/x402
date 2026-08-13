@@ -5,13 +5,22 @@ Provides both async (x402HTTPClient) and sync (x402HTTPClientSync) implementatio
 
 from __future__ import annotations
 
+import asyncio
 import inspect
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
-from ..schemas import PaymentPayload, PaymentRequired
+from typing_extensions import Self
+
+from ..schemas import PaymentPayload, PaymentRequired, PaymentRequiredContext
+from ..schemas.hooks import PaymentRequiredHeadersResult
 from ..schemas.v1 import PaymentPayloadV1, PaymentRequiredV1
-from .x402_http_client_base import x402HTTPClientBase
+from .x402_http_client_base import (
+    OnPaymentRequiredHook,
+    ProcessPaymentResult,
+    SyncOnPaymentRequiredHook,
+    x402HTTPClientBase,
+)
 
 if TYPE_CHECKING:
     from ..client import x402Client, x402ClientSync
@@ -42,7 +51,50 @@ class x402HTTPClient(x402HTTPClientBase):
         Args:
             client: Underlying x402Client for payment logic.
         """
+        super().__init__()
         self._client = client
+        self._payment_required_hooks: list[OnPaymentRequiredHook] = []
+
+    def on_payment_required(self, hook: OnPaymentRequiredHook) -> Self:
+        """Register hook for 402 responses. First hook returning headers wins."""
+        self._payment_required_hooks.append(hook)
+        return self
+
+    async def handle_payment_required(
+        self,
+        payment_required: PaymentRequired | PaymentRequiredV1,
+    ) -> dict[str, str] | None:
+        """Run hooks; return headers for a pre-payment retry, or None to pay."""
+        ctx = PaymentRequiredContext(payment_required=payment_required)
+        for hook in self._collect_payment_required_hooks(payment_required):
+            result = await self._execute_hook(hook, ctx)
+            if isinstance(result, PaymentRequiredHeadersResult):
+                return result.headers
+        return None
+
+    async def _execute_hook(self, hook: Any, context: Any) -> Any:
+        result = hook(context)
+        if asyncio.iscoroutine(result) or asyncio.isfuture(result):
+            return await result
+        return result
+
+    async def process_payment_result(
+        self,
+        payment_payload: PaymentPayload | PaymentPayloadV1,
+        get_header: Callable[[str], str | None],
+        status: int,
+    ) -> ProcessPaymentResult:
+        """Parse response headers, run payment response hooks, return recovery signal."""
+        ctx, settle_response = self._build_payment_response_context(
+            payment_payload, get_header, status
+        )
+        if ctx is None:
+            return ProcessPaymentResult(recovered=False, settle_response=settle_response)
+        recovered = await self._client.handle_payment_response(ctx)
+        return ProcessPaymentResult(
+            recovered=recovered is not None,
+            settle_response=settle_response,
+        )
 
     # =========================================================================
     # Payment Creation (async, delegates to x402Client)
@@ -91,6 +143,9 @@ class x402HTTPClient(x402HTTPClientBase):
         # Get payment required
         get_header, body_data = self._handle_402_common(headers, body)
         payment_required = self.get_payment_required_response(get_header, body_data)
+        hook_headers = await self.handle_payment_required(payment_required)
+        if hook_headers:
+            return hook_headers, None
         # Create payment
         payment_payload = await self.create_payment_payload(payment_required)
         # Encode headers
@@ -120,6 +175,8 @@ class x402HTTPClientSync(x402HTTPClientBase):
         Raises:
             TypeError: If client has async methods (wrong variant).
         """
+        super().__init__()
+
         # Runtime validation - catch mismatched sync/async early
         create_method = getattr(client, "create_payment_payload", None)
         if create_method and inspect.iscoroutinefunction(create_method):
@@ -131,6 +188,48 @@ class x402HTTPClientSync(x402HTTPClientBase):
             )
 
         self._client = client
+        self._payment_required_hooks: list[SyncOnPaymentRequiredHook] = []
+
+    def on_payment_required(self, hook: SyncOnPaymentRequiredHook) -> Self:
+        """Register hook for 402 responses. First hook returning headers wins."""
+        self._payment_required_hooks.append(hook)
+        return self
+
+    def handle_payment_required(
+        self,
+        payment_required: PaymentRequired | PaymentRequiredV1,
+    ) -> dict[str, str] | None:
+        """Run hooks; return headers for a pre-payment retry, or None to pay."""
+        ctx = PaymentRequiredContext(payment_required=payment_required)
+        for hook in self._collect_payment_required_hooks(payment_required):
+            result = hook(ctx)
+            if asyncio.iscoroutine(result):
+                result.close()
+                raise TypeError(
+                    "Async hooks are not supported in x402HTTPClientSync. "
+                    "Use x402HTTPClient for async hook support."
+                )
+            if isinstance(result, PaymentRequiredHeadersResult):
+                return result.headers
+        return None
+
+    def process_payment_result(
+        self,
+        payment_payload: PaymentPayload | PaymentPayloadV1,
+        get_header: Callable[[str], str | None],
+        status: int,
+    ) -> ProcessPaymentResult:
+        """Parse response headers, run payment response hooks, return recovery signal."""
+        ctx, settle_response = self._build_payment_response_context(
+            payment_payload, get_header, status
+        )
+        if ctx is None:
+            return ProcessPaymentResult(recovered=False, settle_response=settle_response)
+        recovered = self._client.handle_payment_response(ctx)
+        return ProcessPaymentResult(
+            recovered=recovered is not None,
+            settle_response=settle_response,
+        )
 
     def create_payment_payload(
         self,
@@ -171,6 +270,9 @@ class x402HTTPClientSync(x402HTTPClientBase):
         # Get payment required
         get_header, body_data = self._handle_402_common(headers, body)
         payment_required = self.get_payment_required_response(get_header, body_data)
+        hook_headers = self.handle_payment_required(payment_required)
+        if hook_headers:
+            return hook_headers, None
         # Create payment
         payment_payload = self.create_payment_payload(payment_required)
 
@@ -237,12 +339,62 @@ class PaymentRoundTripper:
 
         self._retry_counts[request_id] = retries + 1
 
-        # Get payment headers
-        payment_headers, _ = self._x402_client.handle_402_response(headers, body)
+        get_header, body_data = self._x402_client._handle_402_common(headers, body)
+        payment_required = self._x402_client.get_payment_required_response(get_header, body_data)
+
+        hook_headers = self._x402_client.handle_payment_required(payment_required)
+        if hook_headers:
+            hook_result = retry_func(hook_headers)
+            if getattr(hook_result, "status_code", 402) != 402:
+                self._retry_counts.pop(request_id, None)
+                return hook_result
+
+        # Create payment payload and encode headers
+        payment_payload = self._x402_client.create_payment_payload(payment_required)
+        payment_headers = self._x402_client.encode_payment_signature_header(payment_payload)
         # Retry with payment
-        result = retry_func(payment_headers)
+        paid_result = retry_func(payment_headers)
+
+        if payment_payload is not None:
+            paid_headers = getattr(paid_result, "headers", None)
+
+            def paid_get_header(name: str) -> str | None:
+                if paid_headers is None:
+                    return None
+                getter = getattr(paid_headers, "get", None)
+                if callable(getter):
+                    return getter(name)
+                return None
+
+            paid_status = getattr(paid_result, "status_code", 402)
+            process_result = self._x402_client.process_payment_result(
+                payment_payload,
+                paid_get_header,
+                paid_status,
+            )
+            if process_result.recovered:
+                fresh_payload = self._x402_client.create_payment_payload(payment_required)
+                fresh_headers = self._x402_client.encode_payment_signature_header(fresh_payload)
+                recovery_result = retry_func(fresh_headers)
+                recovery_headers = getattr(recovery_result, "headers", None)
+
+                def recovery_get_header(name: str) -> str | None:
+                    if recovery_headers is None:
+                        return None
+                    getter = getattr(recovery_headers, "get", None)
+                    if callable(getter):
+                        return getter(name)
+                    return None
+
+                self._x402_client.process_payment_result(
+                    fresh_payload,
+                    recovery_get_header,
+                    getattr(recovery_result, "status_code", paid_status),
+                )
+                self._retry_counts.pop(request_id, None)
+                return recovery_result
 
         # Clean up
         self._retry_counts.pop(request_id, None)
 
-        return result
+        return paid_result

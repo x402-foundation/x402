@@ -7,13 +7,15 @@
 import type {
   AssetAmount,
   Network,
+  PaymentFlowConfig,
   PaymentRequirements,
   Price,
   SchemeNetworkServer,
   MoneyParser,
 } from "@x402/core/types";
-import { convertToTokenAmount, numberToDecimalString } from "@x402/core/utils";
-import { USDC_CONFIG, USDC_DECIMALS } from "../../constants";
+import { convertToTokenAmount, numberToDecimalString, parseMoneyString } from "@x402/core/utils";
+import { USDC_CONFIG } from "../../constants";
+import { normalizeAlgorandNetwork } from "../../utils";
 
 /**
  * AVM server implementation for the Exact payment scheme.
@@ -22,6 +24,10 @@ import { USDC_CONFIG, USDC_DECIMALS } from "../../constants";
  */
 export class ExactAvmScheme implements SchemeNetworkServer {
   readonly scheme = "exact";
+  readonly defaultAssetTransferMethod = "default";
+  readonly paymentFlows = {
+    default: { supported: ["authorization"], default: "authorization" },
+  } as const satisfies Record<string, PaymentFlowConfig>;
   private moneyParsers: MoneyParser[] = [];
 
   /**
@@ -113,28 +119,18 @@ export class ExactAvmScheme implements SchemeNetworkServer {
     // Mark unused parameter
     void extensionKeys;
 
-    // Get USDC config for the network
-    const usdcConfig = USDC_CONFIG[supportedKind.network];
-    const decimals = usdcConfig?.decimals ?? USDC_DECIMALS;
+    // Add feePayer from supportedKind.extra if provided
+    if (!supportedKind.extra?.feePayer) {
+      return Promise.resolve(paymentRequirements);
+    }
 
-    // Build enhanced requirements with feePayer and decimals
-    const enhanced: PaymentRequirements = {
+    return Promise.resolve({
       ...paymentRequirements,
       extra: {
         ...paymentRequirements.extra,
-        decimals,
-      },
-    };
-
-    // Add feePayer from supportedKind.extra if provided
-    if (supportedKind.extra?.feePayer) {
-      enhanced.extra = {
-        ...enhanced.extra,
         feePayer: supportedKind.extra.feePayer,
-      };
-    }
-
-    return Promise.resolve(enhanced);
+      },
+    });
   }
 
   /**
@@ -149,15 +145,7 @@ export class ExactAvmScheme implements SchemeNetworkServer {
       return money;
     }
 
-    // Remove $ sign and whitespace, then parse
-    const cleanMoney = money.replace(/^\$/, "").trim();
-    const amount = parseFloat(cleanMoney);
-
-    if (isNaN(amount)) {
-      throw new Error(`Invalid money format: ${money}`);
-    }
-
-    return amount;
+    return parseMoneyString(money);
   }
 
   /**
@@ -189,7 +177,7 @@ export class ExactAvmScheme implements SchemeNetworkServer {
     name: string;
     decimals: number;
   } {
-    const assetInfo = USDC_CONFIG[network];
+    const assetInfo = USDC_CONFIG[normalizeAlgorandNetwork(network)];
     if (!assetInfo) {
       throw new Error(`No default asset configured for network ${network}`);
     }

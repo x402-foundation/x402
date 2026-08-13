@@ -73,9 +73,9 @@ go run .
 
 ```go
 import (
-    x402 "github.com/x402-foundation/x402/go"
-    evm "github.com/x402-foundation/x402/go/mechanisms/evm/exact/client"
-    evmsigners "github.com/x402-foundation/x402/go/signers/evm"
+    x402 "github.com/x402-foundation/x402/go/v2"
+    evm "github.com/x402-foundation/x402/go/v2/mechanisms/evm/exact/client"
+    evmsigners "github.com/x402-foundation/x402/go/v2/signers/evm"
 )
 
 evmSigner, _ := evmsigners.NewClientSignerFromPrivateKey(os.Getenv("EVM_PRIVATE_KEY"))

@@ -28,7 +28,11 @@ from x402.mechanisms.evm.exact import (
     ExactEvmSchemeConfig,
     ExactEvmServerScheme,
 )
-from x402.mechanisms.evm.signers import EthAccountSigner, FacilitatorWeb3Signer
+from x402.mechanisms.evm.signers import (
+    EthAccountSigner,
+    EthAccountSignerWithRPC,
+    FacilitatorWeb3Signer,
+)
 from x402.mechanisms.evm.upto import (
     UptoEvmClientScheme,
     UptoEvmFacilitatorScheme,
@@ -48,7 +52,12 @@ from x402.schemas import (
 # Environment Variable Loading
 # =============================================================================
 
-CLIENT_PRIVATE_KEY = os.environ.get("EVM_CLIENT_PRIVATE_KEY")
+# Prefer EVM_CLIENT_EOA_PRIVATE_KEY (a plain EOA, not ERC-7702 delegated) so that
+# strict verify_typed_data_strict routing (code-length-based) does not cause the
+# facilitator to try EIP-1271 on an address that has been delegated for 7702 tests.
+CLIENT_PRIVATE_KEY = os.environ.get("EVM_CLIENT_EOA_PRIVATE_KEY") or os.environ.get(
+    "EVM_CLIENT_PRIVATE_KEY"
+)
 FACILITATOR_PRIVATE_KEY = os.environ.get("EVM_FACILITATOR_PRIVATE_KEY")
 
 # Base Sepolia RPC URL
@@ -60,7 +69,7 @@ USDC_ADDRESS = "0x036CbD53842c5426634e7929541eC2318f3dCF7e"
 # Skip all tests if environment variables aren't set
 pytestmark = pytest.mark.skipif(
     not CLIENT_PRIVATE_KEY or not FACILITATOR_PRIVATE_KEY,
-    reason="EVM_CLIENT_PRIVATE_KEY and EVM_FACILITATOR_PRIVATE_KEY environment variables required for EVM integration tests",
+    reason="EVM_CLIENT_EOA_PRIVATE_KEY (or EVM_CLIENT_PRIVATE_KEY) and EVM_FACILITATOR_PRIVATE_KEY environment variables required for EVM integration tests",
 )
 
 
@@ -214,7 +223,7 @@ class TestEvmIntegrationV2:
             ["eip155:84532"],
             ExactEvmFacilitatorScheme(
                 self.facilitator_signer,
-                ExactEvmSchemeConfig(deploy_erc4337_with_eip6492=True),
+                ExactEvmSchemeConfig(),
             ),
         )
 
@@ -698,8 +707,21 @@ def build_upto_payment_requirements(
         extra={
             "assetTransferMethod": "permit2",
             "facilitatorAddress": facilitator_address,
+            # Required for EIP-2612 gas sponsoring when Permit2 allowance is absent.
+            "name": "USDC",
+            "version": "2",
         },
     )
+
+
+# Advertise EIP-2612 gas sponsoring so the client signs a token permit when
+# Permit2 allowance is insufficient (matches Go integration tests).
+UPTO_EIP2612_SERVER_EXTENSIONS = {
+    "eip2612GasSponsoring": {
+        "info": {"description": "EIP-2612 gas sponsoring", "version": "1"},
+        "schema": {},
+    },
+}
 
 
 class UptoEvmFacilitatorClientSync:
@@ -727,7 +749,9 @@ class TestEvmUptoIntegrationV2:
 
     def setup_method(self) -> None:
         client_account = Account.from_key(CLIENT_PRIVATE_KEY)
-        self.client_signer = EthAccountSigner(client_account)
+        # RPC reads are required so the client can detect missing Permit2 allowance
+        # and sign the EIP-2612 gas sponsoring extension (matches Go integration tests).
+        self.client_signer = EthAccountSignerWithRPC(client_account, rpc_url=RPC_URL)
         self.facilitator_signer = FacilitatorWeb3Signer(
             private_key=FACILITATOR_PRIVATE_KEY,
             rpc_url=RPC_URL,
@@ -768,7 +792,11 @@ class TestEvmUptoIntegrationV2:
             description="LLM text generation",
             mime_type="application/json",
         )
-        payment_required = self.server.create_payment_required_response(accepts, resource)
+        payment_required = self.server.create_payment_required_response(
+            accepts,
+            resource,
+            extensions=UPTO_EIP2612_SERVER_EXTENSIONS,
+        )
 
         assert payment_required.x402_version == 2
 
@@ -782,6 +810,8 @@ class TestEvmUptoIntegrationV2:
         auth = payment_payload.payload["permit2Authorization"]
         assert auth["from"].lower() == self.client_address.lower()
         assert "facilitator" in auth["witness"]
+        assert payment_payload.extensions is not None
+        assert "eip2612GasSponsoring" in payment_payload.extensions
 
         accepted = self.server.find_matching_requirements(accepts, payment_payload)
         assert accepted is not None

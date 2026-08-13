@@ -1,35 +1,82 @@
-import { config } from 'dotenv';
+import 'dotenv/config';
 import { spawn, execSync, ChildProcess } from 'child_process';
 import { writeFileSync } from 'fs';
 import { join } from 'path';
-import { createWalletClient, createPublicClient, http, parseEther, formatEther } from 'viem';
+import { createWalletClient, createPublicClient, http, parseEther, formatEther, toHex } from 'viem';
 import { privateKeyToAccount } from 'viem/accounts';
 import { base, baseSepolia } from 'viem/chains';
 import { TestDiscovery } from './src/discovery';
-import { ClientConfig, ScenarioResult, ServerConfig, TestScenario } from './src/types';
+import { ClientConfig, ScenarioResult, ServerConfig, TestScenario, endpointAssetTransferMethod, endpointPaymentScheme, endpointUsesBatchSettlement } from './src/types';
 import { config as loggerConfig, log, verboseLog, errorLog, close as closeLogger, createComboLogger } from './src/logger';
-import { handleDiscoveryValidation, shouldRunDiscoveryValidation } from './extensions/bazaar';
+import { handleDiscoveryValidation, shouldRunDiscoveryValidation, type TestedDiscoveryScenario } from './extensions/bazaar';
 import { parseArgs, printHelp } from './src/cli/args';
 import { runInteractiveMode } from './src/cli/interactive';
 import { filterScenarios, TestFilters, shouldShowExtensionOutput } from './src/cli/filters';
 import { minimizeScenarios } from './src/sampling';
-import { getNetworkSet, NetworkMode, NetworkSet, getNetworkModeDescription } from './src/networks/networks';
+import { getNetworkSet, NetworkMode, NetworkConfig, getNetworkModeDescription, resolveEvmPermit2Asset, PROTOCOL_FAMILIES, requiredEnvForFamily, requiredRpcEnvForFamily, protocolFamilyForCredentialKey } from './src/networks/networks';
+import { injectNetworkEnv } from './src/env';
+import { FACILITATOR_ENV_PREFLIGHT_ALLOWLIST } from './src/mechanisms';
 import { GenericServerProxy } from './src/servers/generic-server';
-import { Semaphore, FacilitatorLock } from './src/concurrency';
+import { Semaphore, ResourceLock } from './src/concurrency';
 import { FacilitatorManager } from './src/facilitators/facilitator-manager';
 import { waitForHealth } from './src/health';
+import { probeMcpReady } from './src/mcpHealth';
+import { createPortAllocator } from './src/ports';
 
-// Base Sepolia token addresses used by permit2 E2E tests
-const USDC_BASE_SEPOLIA = '0x036CbD53842c5426634e7929541eC2318f3dCF7e';
-const MOCK_ERC20_BASE_SEPOLIA = '0xeED520980fC7C7B4eB379B96d61CEdea2423005a';
+/**
+ * Generates a fresh 32-byte hex salt for a batch-settlement test scenario so
+ * concurrent runs don't collide on the same on-chain channel id.
+ *
+ * @returns Hex-encoded 32-byte salt prefixed with `0x`.
+ */
+function generateChannelSalt(): `0x${string}` {
+  const bytes = new Uint8Array(32);
+  crypto.getRandomValues(bytes);
+  return toHex(bytes);
+}
+
+// ── Transient on-chain failure resilience ───────────────────────────────────
+// EVM Permit2 / gas-sponsoring / coldstart flows depend on testnet RPC state
+// (Permit2 allowance + account nonce) being visible across load-balanced nodes.
+// When that state hasn't propagated yet, the resource server's local pre-check
+// rejects the payment with a transient 402 before it ever reaches the
+// facilitator. These failures are non-deterministic (a different subset fails
+// each run) and clear on a short retry once state settles. eip3009 and non-EVM
+// flows don't exhibit this, so retries are scoped to EVM Permit2 scenarios.
+const EVM_PAYMENT_MAX_ATTEMPTS = 3;
+const EVM_PAYMENT_RETRY_DELAY_MS = 4000;
+
+/**
+ * Heuristic for whether a failed EVM payment is a transient on-chain/RPC issue
+ * worth retrying (vs a deterministic structural failure that would just repeat).
+ */
+function isTransientPaymentFailure(error?: string): boolean {
+  if (!error) return false;
+  const e = error.toLowerCase();
+  return (
+    e.includes('402') ||
+    e.includes('payment required') ||
+    e.includes('payment failed') ||
+    e.includes('nonce') ||
+    e.includes('replacement transaction') ||
+    e.includes('underpriced') ||
+    e.includes('insufficient allowance') ||
+    e.includes('timeout') ||
+    e.includes('timed out') ||
+    e.includes('econnreset') ||
+    e.includes('econnrefused') ||
+    e.includes('fetch failed') ||
+    e.includes('socket hang up')
+  );
+}
 
 /**
  * Approve Permit2 so that the standard/direct settle path can be exercised.
- * Grants unlimited Permit2 allowance for the given token (or USDC by default).
+ * Grants unlimited Permit2 allowance for the given token (permit2-approval script default if omitted).
  */
-async function approvePermit2Approval(tokenAddress?: string): Promise<boolean> {
+async function approvePermit2Approval(evm: NetworkConfig, tokenAddress?: string): Promise<boolean> {
   return new Promise((resolve) => {
-    const label = tokenAddress ? `token ${tokenAddress}` : 'USDC (default)';
+    const label = tokenAddress ? `token ${tokenAddress}` : '(script default token)';
     verboseLog(`  🔓 Approving Permit2 for ${label}...`);
 
     const args = ['scripts/permit2-approval.ts', 'approve'];
@@ -40,6 +87,7 @@ async function approvePermit2Approval(tokenAddress?: string): Promise<boolean> {
       cwd: process.cwd(),
       stdio: 'pipe',
       shell: true,
+      env: { ...process.env, EVM_NETWORK: evm.caip2, EVM_RPC_URL: evm.rpcUrl },
     });
 
     let stderr = '';
@@ -75,12 +123,11 @@ async function approvePermit2Approval(tokenAddress?: string): Promise<boolean> {
 
 /**
  * Revoke Permit2 approval so that gas sponsoring extensions are exercised.
- * Sets the Permit2 allowance to 0 for the given token (or USDC by default),
- * forcing the client into the EIP-2612 or ERC-20 approval extension path.
+ * Sets the Permit2 allowance to 0 for the given token (permit2-approval script default if omitted).
  */
-async function revokePermit2Approval(tokenAddress?: string): Promise<boolean> {
+async function revokePermit2Approval(evm: NetworkConfig, tokenAddress?: string): Promise<boolean> {
   return new Promise((resolve) => {
-    const label = tokenAddress ? `token ${tokenAddress}` : 'USDC (default)';
+    const label = tokenAddress ? `token ${tokenAddress}` : '(script default token)';
     verboseLog(`  🔓 Revoking Permit2 approval for ${label}...`);
 
     const args = ['scripts/permit2-approval.ts', 'revoke'];
@@ -91,6 +138,7 @@ async function revokePermit2Approval(tokenAddress?: string): Promise<boolean> {
       cwd: process.cwd(),
       stdio: 'pipe',
       shell: true,
+      env: { ...process.env, EVM_NETWORK: evm.caip2, EVM_RPC_URL: evm.rpcUrl },
     });
 
     let stderr = '';
@@ -125,14 +173,88 @@ async function revokePermit2Approval(tokenAddress?: string): Promise<boolean> {
 }
 
 /**
- * Shared EVM clients for the ETH sandwich helpers.
- * Lazily initialised on first use so that missing env vars don't blow up
- * non-EVM test runs.
+ * Prepare Swig smart-wallet state for svm-smart-wallet e2e client tests.
+ * Called before each endpoint; creates/funds via scripts/swig-setup.ts when balance is low.
  */
-function getEvmClients() {
-  const evmNetwork = process.env.EVM_NETWORK || 'eip155:84532';
-  const evmRpcUrl = process.env.EVM_RPC_URL;
-  const evmChain = evmNetwork === 'eip155:8453' ? base : baseSepolia;
+async function setupSwigWallet(svmRpcUrl: string): Promise<boolean> {
+  return new Promise((resolve) => {
+    verboseLog('  🔧 Running Swig wallet setup...');
+
+    const child = spawn('tsx', ['scripts/swig-setup.ts'], {
+      cwd: process.cwd(),
+      stdio: 'pipe',
+      shell: true,
+      env: {
+        ...process.env,
+        SVM_RPC_URL: svmRpcUrl,
+      },
+    });
+
+    let stdout = '';
+    let stderr = '';
+
+    child.stdout?.on('data', (data) => {
+      const text = data.toString();
+      stdout += text;
+      verboseLog(text.trim());
+    });
+
+    child.stderr?.on('data', (data) => {
+      stderr += data.toString();
+      verboseLog(data.toString().trim());
+    });
+
+    child.on('close', (code) => {
+      if (code !== 0) {
+        errorLog(`  ❌ Swig setup failed (exit code ${code})`);
+        if (stderr) {
+          errorLog(`  Error: ${stderr}`);
+        }
+        resolve(false);
+        return;
+      }
+
+      const lines = stdout.trim().split('\n');
+      for (let i = lines.length - 1; i >= 0; i--) {
+        try {
+          const parsed = JSON.parse(lines[i]!) as { ok?: boolean; swigAccountAddress?: string };
+          if (parsed.ok && parsed.swigAccountAddress) {
+            process.env.SWIG_ACCOUNT_ADDRESS = parsed.swigAccountAddress;
+            verboseLog(`  ✅ Swig setup complete: ${parsed.swigAccountAddress}`);
+            resolve(true);
+            return;
+          }
+        } catch {
+          // not JSON — keep scanning
+        }
+      }
+
+      if (process.env.SWIG_ACCOUNT_ADDRESS) {
+        verboseLog(`  ✅ Swig setup complete (using SWIG_ACCOUNT_ADDRESS=${process.env.SWIG_ACCOUNT_ADDRESS})`);
+        resolve(true);
+        return;
+      }
+
+      errorLog('  ❌ Swig setup succeeded but no swigAccountAddress in output');
+      resolve(false);
+    });
+
+    child.on('error', (error) => {
+      errorLog(`  ❌ Failed to run Swig setup: ${error.message}`);
+      resolve(false);
+    });
+  });
+}
+
+/**
+ * Shared EVM clients for the ETH sandwich helpers.
+ * Fed from the resolved NetworkSet (not the parent process env) so cold-start
+ * approve/revoke honor `--mainnet`/`--testnet` instead of silently reading
+ * whatever `EVM_RPC_URL` happens to be set to on the harness process.
+ */
+function getEvmClients(evm: NetworkConfig) {
+  const evmChain = evm.caip2 === 'eip155:8453' ? base : baseSepolia;
+  const evmRpcUrl = evm.rpcUrl;
 
   const facilitatorKey = process.env.FACILITATOR_EVM_PRIVATE_KEY;
   const clientKey = process.env.CLIENT_EVM_PRIVATE_KEY;
@@ -161,14 +283,55 @@ function getEvmClients() {
   return { publicClient, facilitatorWallet, clientWallet, facilitatorAccount, clientAccount };
 }
 
+type EvmResourceKeyContext = {
+  evmCaip2: string;
+  evmPermit2Asset: string | undefined;
+  clientEvmAddress: string | undefined;
+  facilitatorEvmAddress: string | undefined;
+};
+
+/**
+ * Derive shared-resource lock keys for a scenario. Scenarios without shared
+ * mutable state return an empty list and stay fully parallel.
+ */
+function getScenarioResourceKeys(
+  scenario: TestScenario,
+  ctx: EvmResourceKeyContext,
+): string[] {
+  if (scenario.protocolFamily !== 'evm') {
+    return [];
+  }
+
+  const facilitatorAddress = ctx.facilitatorEvmAddress;
+  if (!facilitatorAddress) {
+    return [];
+  }
+
+  const keys: string[] = [
+    `evm:${ctx.evmCaip2}:facilitator:${facilitatorAddress.toLowerCase()}`,
+  ];
+
+  const touchesClientPermit2State =
+    scenario.endpoint.schemeOptions?.permit2Direct === true ||
+    scenario.endpoint.schemeOptions?.coldstart === true;
+
+  if (touchesClientPermit2State && ctx.clientEvmAddress && ctx.evmPermit2Asset) {
+    keys.push(
+      `evm:${ctx.evmCaip2}:client:${ctx.clientEvmAddress.toLowerCase()}:permit2:${ctx.evmPermit2Asset.toLowerCase()}`,
+    );
+  }
+
+  return keys;
+}
+
 const REVOKE_FUND_AMOUNT = parseEther('0.001');
 
 /**
  * Send a small amount of ETH from the facilitator wallet to the client wallet
  * so the client can pay gas for Permit2 revocation transactions.
  */
-async function fundClientForRevoke(): Promise<boolean> {
-  const { publicClient, facilitatorWallet, facilitatorAccount, clientAccount } = getEvmClients();
+async function fundClientForRevoke(evm: NetworkConfig): Promise<boolean> {
+  const { publicClient, facilitatorWallet, facilitatorAccount, clientAccount } = getEvmClients(evm);
 
   const clientBalance = await publicClient.getBalance({ address: clientAccount.address });
   if (clientBalance >= REVOKE_FUND_AMOUNT) {
@@ -219,9 +382,9 @@ async function fundClientForRevoke(): Promise<boolean> {
  * leaving the client with ~0 ETH so the gas sponsoring funding step is
  * exercised during the test.
  */
-async function drainClientETH(): Promise<boolean> {
+async function drainClientETH(evm: NetworkConfig): Promise<boolean> {
   try {
-    const { publicClient, clientWallet, facilitatorAccount, clientAccount } = getEvmClients();
+    const { publicClient, clientWallet, facilitatorAccount, clientAccount } = getEvmClients(evm);
 
     // Use pending balance so we see any in-flight fund transaction that hasn't confirmed yet.
     const balance = await publicClient.getBalance({ address: clientAccount.address, blockTag: 'pending' });
@@ -276,23 +439,85 @@ async function drainClientETH(): Promise<boolean> {
   }
 }
 
-// Load environment variables
-config();
-
 // Parse command line arguments
 const parsedArgs = parseArgs();
 
 async function startServer(
   server: any,
-  serverConfig: ServerConfig
+  serverConfig: ServerConfig,
+  options?: { transport?: string },
 ): Promise<boolean> {
   verboseLog(`  🚀 Starting server on port ${serverConfig.port}...`);
   await server.start(serverConfig);
 
-  return waitForHealth(
+  const healthy = await waitForHealth(
     () => server.health(),
     { initialDelayMs: 250, label: 'Server' },
   );
+
+  if (!healthy) {
+    return false;
+  }
+
+  if (options?.transport !== 'mcp') {
+    if (typeof server.verifyPaidRoutes === 'function') {
+      const { ok, problems } = await server.verifyPaidRoutes(serverConfig.enabledFamilies);
+      if (!ok) {
+        errorLog(
+          `  ❌ Server does not mount every paid route it declares in the mechanisms catalog:\n     ${problems.join('\n     ')}`,
+        );
+        return false;
+      }
+    }
+    return true;
+  }
+
+  // Probe the real protocol (SSE connect + initialize handshake) before handing off to the first real test
+  // request, to avoid racing a freshly booted server's session warm-up.
+  return waitForHealth(
+    async () => ({ success: await probeMcpReady(server.getUrl()) }),
+    { intervalMs: 500, maxAttempts: 10, label: 'MCP session' },
+  );
+}
+
+/**
+ * Returns true when the settle response omits the on-chain transaction hash
+ * because the request was settled off-chain (e.g. a batch-settlement voucher
+ * recorded by the receiver but not yet claimed).
+ *
+ * @param paymentResponse - Decoded payment-response payload from the server.
+ * @returns Whether to skip the transaction-hash presence assertion.
+ */
+function isOffchainSettleResponse(paymentResponse: any): boolean {
+  if (!paymentResponse) return false;
+  const extra = paymentResponse.extra ?? {};
+  const channelState = extra.channelState ?? {};
+  const isBatchSettlement =
+    (typeof extra.channelId === 'string' && extra.channelId.length > 0) ||
+    (typeof channelState.channelId === 'string' && channelState.channelId.length > 0);
+  return isBatchSettlement;
+}
+
+function maskSecret(value: string): string {
+  if (value.length <= 10) return '[redacted]';
+  return `${value.slice(0, 6)}…${value.slice(-4)}`;
+}
+
+function maskPrivateKeys<T>(value: T): T {
+  if (Array.isArray(value)) {
+    return value.map(maskPrivateKeys) as T;
+  }
+  if (value && typeof value === 'object') {
+    const masked: Record<string, unknown> = {};
+    for (const [key, entry] of Object.entries(value)) {
+      masked[key] =
+        /(privateKey|seed)$/i.test(key) && typeof entry === 'string' && entry.length > 0
+          ? maskSecret(entry)
+          : maskPrivateKeys(entry);
+    }
+    return masked as T;
+  }
+  return value;
 }
 
 async function runClientTest(
@@ -306,10 +531,9 @@ async function runClientTest(
   };
 
   try {
-    bufferLog(`  📞 Running client: ${JSON.stringify(callConfig, null, 2)}`);
+    bufferLog(`  📞 Running client: ${JSON.stringify(maskPrivateKeys(callConfig), null, 2)}`);
     const result = await client.call(callConfig);
     bufferLog(`  📊 Client result: ${JSON.stringify(result, null, 2)}`);
-
     // Check if the client execution succeeded
     if (!result.success) {
       return {
@@ -347,8 +571,10 @@ async function runClientTest(
         };
       }
 
-      // Payment should have a transaction hash
-      if (!paymentResponse.transaction) {
+      // Payment should have a transaction hash, except for off-chain settle
+      // responses (e.g. batch-settlement vouchers that the server records but
+      // does not yet claim on-chain).
+      if (!paymentResponse.transaction && !isOffchainSettleResponse(paymentResponse)) {
         return {
           success: false,
           error: 'Payment succeeded but no transaction hash returned',
@@ -392,6 +618,106 @@ async function runClientTest(
   }
 }
 
+type ClientTestResult = ScenarioResult & { verboseLogs?: string[] };
+
+function getBatchStep(result: ClientTestResult, step: string): any {
+  return (result.data as any)?.batchSettlement?.[step];
+}
+
+function validateBatchPaymentStep(
+  result: ClientTestResult,
+  step: string,
+  label: string,
+  requireTransaction: boolean,
+): string | undefined {
+  const stepResult = getBatchStep(result, step);
+  if (!stepResult) {
+    return `Batch-settlement ${label} result missing`;
+  }
+
+  if (!stepResult.success) {
+    const reason = stepResult.payment_response?.errorReason || stepResult.error || 'unknown error';
+    return `Batch-settlement ${label} failed: ${reason}`;
+  }
+
+  const paymentResponse = stepResult.payment_response;
+  if (!paymentResponse) {
+    return `Batch-settlement ${label} missing payment response`;
+  }
+
+  if (!paymentResponse.success) {
+    return `Batch-settlement ${label} payment failed: ${paymentResponse.errorReason || 'unknown error'}`;
+  }
+
+  if (paymentResponse.errorReason) {
+    return `Batch-settlement ${label} payment has error reason: ${paymentResponse.errorReason}`;
+  }
+
+  if (requireTransaction && !paymentResponse.transaction) {
+    return `Batch-settlement ${label} succeeded but no transaction hash returned`;
+  }
+
+  if (!requireTransaction && !paymentResponse.transaction && !isOffchainSettleResponse(paymentResponse)) {
+    return `Batch-settlement ${label} succeeded but no transaction hash or channel state returned`;
+  }
+
+  return undefined;
+}
+
+function mergeVerboseLogs(...results: ClientTestResult[]): string[] {
+  return results.flatMap(result => result.verboseLogs ?? []);
+}
+
+function envFlagDefaultTrue(value: string | undefined): boolean {
+  if (value === undefined) return true;
+  return !['0', 'false', 'no', 'off'].includes(value.toLowerCase());
+}
+
+function waitForChildProcess(child: ChildProcess, timeoutMs: number): Promise<boolean> {
+  if (child.exitCode !== null || child.signalCode !== null) {
+    return Promise.resolve(true);
+  }
+
+  return new Promise(resolve => {
+    const onClose = () => {
+      clearTimeout(timeout);
+      resolve(true);
+    };
+    const timeout = setTimeout(() => {
+      child.removeListener('close', onClose);
+      resolve(false);
+    }, timeoutMs);
+
+    child.once('close', onClose);
+  });
+}
+
+async function stopMockFacilitator(child: ChildProcess, url: string): Promise<void> {
+  try {
+    const response = await fetch(`${url}/close`, {
+      method: 'POST',
+      signal: AbortSignal.timeout(2_000),
+    });
+    await response.text();
+  } catch (error) {
+    verboseLog(`Mock facilitator graceful shutdown failed: ${String(error)}`);
+  }
+
+  if (await waitForChildProcess(child, 3_000)) {
+    return;
+  }
+
+  child.kill('SIGTERM');
+  if (await waitForChildProcess(child, 3_000)) {
+    return;
+  }
+
+  child.kill('SIGKILL');
+  await waitForChildProcess(child, 2_000);
+  child.stdout?.destroy();
+  child.stderr?.destroy();
+}
+
 async function runTest() {
   // Show help if requested
   if (parsedArgs.showHelp) {
@@ -402,33 +728,20 @@ async function runTest() {
   // Initialize logger
   loggerConfig({ logFile: parsedArgs.logFile, verbose: parsedArgs.verbose });
 
+  const startTime = Date.now();
+
   log('🚀 Starting X402 E2E Test Suite');
   log('===============================');
 
-  // Load configuration from environment
-  const serverEvmAddress = process.env.SERVER_EVM_ADDRESS;
-  const serverSvmAddress = process.env.SERVER_SVM_ADDRESS;
-  const serverAvmAddress = process.env.SERVER_AVM_ADDRESS;
-  const serverAptosAddress = process.env.SERVER_APTOS_ADDRESS;
-  const serverStellarAddress = process.env.SERVER_STELLAR_ADDRESS;
+  // Env keys used below (preflight + funding use catalog/process.env directly)
   const clientEvmPrivateKey = process.env.CLIENT_EVM_PRIVATE_KEY;
-  const clientSvmPrivateKey = process.env.CLIENT_SVM_PRIVATE_KEY;
-  const clientAvmPrivateKey = process.env.CLIENT_AVM_PRIVATE_KEY;
-  const clientAptosPrivateKey = process.env.CLIENT_APTOS_PRIVATE_KEY;
-  const clientStellarPrivateKey = process.env.CLIENT_STELLAR_PRIVATE_KEY;
   const facilitatorEvmPrivateKey = process.env.FACILITATOR_EVM_PRIVATE_KEY;
-  const facilitatorSvmPrivateKey = process.env.FACILITATOR_SVM_PRIVATE_KEY;
-  const facilitatorAvmPrivateKey = process.env.FACILITATOR_AVM_PRIVATE_KEY;
-  const facilitatorAptosPrivateKey = process.env.FACILITATOR_APTOS_PRIVATE_KEY;
-  const facilitatorStellarPrivateKey = process.env.FACILITATOR_STELLAR_PRIVATE_KEY;
-  if (!serverEvmAddress || !serverSvmAddress || !clientEvmPrivateKey || !clientSvmPrivateKey || !facilitatorEvmPrivateKey || !facilitatorSvmPrivateKey) {
-    errorLog('❌ Missing required environment variables:');
-    errorLog(' SERVER_EVM_ADDRESS, SERVER_SVM_ADDRESS, CLIENT_EVM_PRIVATE_KEY, CLIENT_SVM_PRIVATE_KEY, FACILITATOR_EVM_PRIVATE_KEY, and FACILITATOR_SVM_PRIVATE_KEY must be set');
-    process.exit(1);
-  }
+  const facilitatorHederaAccountId = process.env.FACILITATOR_HEDERA_ACCOUNT_ID;
+  const facilitatorHederaPrivateKey = process.env.FACILITATOR_HEDERA_PRIVATE_KEY;
+  const batchSettlementRecovery = envFlagDefaultTrue(process.env.EVM_BATCH_SETTLEMENT_RECOVERY);
 
   // Discover all servers, clients, and facilitators (always include legacy)
-  const discovery = new TestDiscovery('.', true); // Always discover legacy
+  const discovery = new TestDiscovery('.');
 
   const allClients = discovery.discoverClients();
   const allServers = discovery.discoverServers();
@@ -492,12 +805,22 @@ async function runTest() {
 
   // Get network configuration based on selected mode
   const networks = getNetworkSet(networkMode);
+  const evmPermit2Asset = resolveEvmPermit2Asset(networks);
+
+  const permit2AssetSource = process.env.EVM_PERMIT2_ASSET?.trim()
+    ? 'EVM_PERMIT2_ASSET'
+    : networks.evm.permit2Asset
+      ? 'network default'
+      : 'unset';
 
   log(`\n🌐 Network Mode: ${networkMode.toUpperCase()}`);
-  log(`   EVM: ${networks.evm.name} (${networks.evm.caip2})`);
-  log(`   SVM: ${networks.svm.name} (${networks.svm.caip2})`);
-  log(`   APTOS: ${networks.aptos.name} (${networks.aptos.caip2})`);
-  log(`   STELLAR: ${networks.stellar.name} (${networks.stellar.caip2})`);
+  for (const family of PROTOCOL_FAMILIES) {
+    const net = networks[family];
+    log(`   ${family.toUpperCase()}: ${net.name} (${net.caip2})`);
+    if (family === 'evm') {
+      log(`   EVM Permit2 asset: ${evmPermit2Asset || '(missing)'} (${permit2AssetSource})`);
+    }
+  }
 
   if (networkMode === 'mainnet') {
     log('\n⚠️  WARNING: Running on MAINNET - real funds will be used!');
@@ -513,9 +836,15 @@ async function runTest() {
     return;
   }
 
+  const requiredEnvByFamily: Record<string, Array<[string, string | undefined]>> = {};
+  for (const family of PROTOCOL_FAMILIES) {
+    const keys = [...requiredEnvForFamily(family), ...requiredRpcEnvForFamily(family, networkMode)];
+    requiredEnvByFamily[family] = keys.map(key => [key, process.env[key]]);
+  }
+
   // Apply coverage-based minimization if --min flag is set
   if (parsedArgs.minimize) {
-    filteredScenarios = minimizeScenarios(filteredScenarios);
+    filteredScenarios = minimizeScenarios(filteredScenarios, parsedArgs.seed);
 
     if (filteredScenarios.length === 0) {
       log('❌ All scenarios are already covered');
@@ -526,6 +855,22 @@ async function runTest() {
     log(`\n✅ ${filteredScenarios.length} scenarios selected`);
   }
 
+  const selectedProtocolFamilies = new Set(filteredScenarios.map(scenario => scenario.protocolFamily));
+  const missingRequiredEnv = new Set<string>();
+  for (const family of selectedProtocolFamilies) {
+    for (const [name, value] of requiredEnvByFamily[family] || []) {
+      if (!value) {
+        missingRequiredEnv.add(name);
+      }
+    }
+  }
+
+  if (missingRequiredEnv.size > 0) {
+    errorLog('❌ Missing required environment variables for selected protocol families:');
+    Array.from(missingRequiredEnv).forEach(name => errorLog(` ${name}`));
+    process.exit(1);
+  }
+
   if (selectedExtensions && selectedExtensions.length > 0) {
     log(`🎁 Extensions enabled: ${selectedExtensions.join(', ')}`);
   }
@@ -534,37 +879,117 @@ async function runTest() {
   // Branch coverage assertions for EVM scenarios
   const evmScenarios = filteredScenarios.filter(s => s.protocolFamily === 'evm');
   if (evmScenarios.length > 0) {
-    const hasEip3009 = evmScenarios.some(s => (s.endpoint.transferMethod || 'eip3009') === 'eip3009');
-    const hasPermit2 = evmScenarios.some(s => s.endpoint.transferMethod === 'permit2');
-    const hasPermit2Direct = evmScenarios.some(s => s.endpoint.transferMethod === 'permit2' && s.endpoint.permit2Direct === true);
-    const hasPermit2Eip2612 = evmScenarios.some(s => s.endpoint.transferMethod === 'permit2' && !s.endpoint.extensions?.includes('erc20ApprovalGasSponsoring') && !s.endpoint.permit2Direct);
-    const hasPermit2Erc20 = evmScenarios.some(s => s.endpoint.transferMethod === 'permit2' && s.endpoint.extensions?.includes('erc20ApprovalGasSponsoring'));
+    const hasExactEip3009 = evmScenarios.some(
+      s => endpointPaymentScheme(s.endpoint) === 'exact' && endpointAssetTransferMethod(s.endpoint) === 'eip3009',
+    );
+    const hasExactPermit2 = evmScenarios.some(
+      s => endpointPaymentScheme(s.endpoint) === 'exact' && endpointAssetTransferMethod(s.endpoint) === 'permit2',
+    );
+    const hasPermit2Direct = evmScenarios.some(
+      s =>
+        endpointPaymentScheme(s.endpoint) === 'exact' &&
+        endpointAssetTransferMethod(s.endpoint) === 'permit2' &&
+        s.endpoint.schemeOptions?.permit2Direct === true,
+    );
+    const hasPermit2Eip2612 = evmScenarios.some(
+      s =>
+        endpointPaymentScheme(s.endpoint) === 'exact' &&
+        endpointAssetTransferMethod(s.endpoint) === 'permit2' &&
+        !s.endpoint.extensions?.includes('erc20ApprovalGasSponsoring') &&
+        s.endpoint.schemeOptions?.permit2Direct !== true,
+    );
+    const hasPermit2Erc20 = evmScenarios.some(
+      s =>
+        endpointPaymentScheme(s.endpoint) === 'exact' &&
+        endpointAssetTransferMethod(s.endpoint) === 'permit2' &&
+        s.endpoint.extensions?.includes('erc20ApprovalGasSponsoring'),
+    );
 
-    const hasUpto = evmScenarios.some(s => s.endpoint.transferMethod === 'upto');
-    const hasUptoDirect = evmScenarios.some(s => s.endpoint.transferMethod === 'upto' && s.endpoint.permit2Direct === true);
-    const hasUptoEip2612 = evmScenarios.some(s => s.endpoint.transferMethod === 'upto' && !s.endpoint.extensions?.includes('erc20ApprovalGasSponsoring') && !s.endpoint.permit2Direct);
-    const hasUptoErc20 = evmScenarios.some(s => s.endpoint.transferMethod === 'upto' && s.endpoint.extensions?.includes('erc20ApprovalGasSponsoring'));
+    const hasUpto = evmScenarios.some(s => endpointPaymentScheme(s.endpoint) === 'upto');
+    const hasUptoDirect = evmScenarios.some(
+      s =>
+        endpointPaymentScheme(s.endpoint) === 'upto' && s.endpoint.schemeOptions?.permit2Direct === true,
+    );
+    const hasUptoEip2612 = evmScenarios.some(
+      s =>
+        endpointPaymentScheme(s.endpoint) === 'upto' &&
+        !s.endpoint.extensions?.includes('erc20ApprovalGasSponsoring') &&
+        s.endpoint.schemeOptions?.permit2Direct !== true,
+    );
+    const hasUptoErc20 = evmScenarios.some(
+      s =>
+        endpointPaymentScheme(s.endpoint) === 'upto' &&
+        s.endpoint.extensions?.includes('erc20ApprovalGasSponsoring'),
+    );
+
+    const hasBatchSettlementEip3009 = evmScenarios.some(
+      s =>
+        endpointPaymentScheme(s.endpoint) === 'batch-settlement' &&
+        endpointAssetTransferMethod(s.endpoint) === 'eip3009',
+    );
+    const hasBatchSettlementPermit2 = evmScenarios.some(
+      s =>
+        endpointPaymentScheme(s.endpoint) === 'batch-settlement' &&
+        endpointAssetTransferMethod(s.endpoint) === 'permit2',
+    );
+    const hasBatchSettlementPermit2Direct = evmScenarios.some(
+      s =>
+        endpointPaymentScheme(s.endpoint) === 'batch-settlement' &&
+        endpointAssetTransferMethod(s.endpoint) === 'permit2' &&
+        s.endpoint.schemeOptions?.permit2Direct === true,
+    );
+    const hasBatchSettlementPermit2Eip2612 = evmScenarios.some(
+      s =>
+        endpointPaymentScheme(s.endpoint) === 'batch-settlement' &&
+        endpointAssetTransferMethod(s.endpoint) === 'permit2' &&
+        !s.endpoint.extensions?.includes('erc20ApprovalGasSponsoring') &&
+        s.endpoint.schemeOptions?.permit2Direct !== true,
+    );
+    const hasBatchSettlementPermit2Erc20 = evmScenarios.some(
+      s =>
+        endpointPaymentScheme(s.endpoint) === 'batch-settlement' &&
+        endpointAssetTransferMethod(s.endpoint) === 'permit2' &&
+        s.endpoint.extensions?.includes('erc20ApprovalGasSponsoring'),
+    );
 
     log('🔍 EVM Branch Coverage Check:');
-    log(`   EIP-3009 route:          ${hasEip3009 ? '✅' : '❌ MISSING'}`);
-    log(`   Permit2 route:           ${hasPermit2 ? '✅' : '❌ MISSING'}`);
-    log(`   Permit2+direct settle:   ${hasPermit2Direct ? '✅' : '⚠️  not found'}`);
-    log(`   Permit2+EIP2612 route:   ${hasPermit2Eip2612 ? '✅' : '⚠️  not found (may be covered by permit2 route if eip2612 extension enabled)'}`);
-    log(`   Permit2+ERC20 route:     ${hasPermit2Erc20 ? '✅' : '⚠️  not found'}`);
-    log(`   Upto route:              ${hasUpto ? '✅' : '⚠️  not found'}`);
-    log(`   Upto+direct settle:      ${hasUptoDirect ? '✅' : '⚠️  not found'}`);
-    log(`   Upto+EIP2612 route:      ${hasUptoEip2612 ? '✅' : '⚠️  not found'}`);
-    log(`   Upto+ERC20 route:        ${hasUptoErc20 ? '✅' : '⚠️  not found'}`);
+    log(`   Exact EIP-3009 route:          ${hasExactEip3009 ? '✅' : '⚠️  not found'}`);
+    log(`   Exact Permit2 route:           ${hasExactPermit2 ? '✅' : '⚠️  not found'}`);
+    log(`   Exact Permit2+direct settle:   ${hasPermit2Direct ? '✅' : '⚠️  not found'}`);
+    log(`   Exact Permit2+EIP2612 route:   ${hasPermit2Eip2612 ? '✅' : '⚠️  not found (may be covered by permit2 route if eip2612 extension enabled)'}`);
+    log(`   Exact Permit2+ERC20 route:     ${hasPermit2Erc20 ? '✅' : '⚠️  not found'}`);
+    log(`   Upto route:                    ${hasUpto ? '✅' : '⚠️  not found'}`);
+    log(`   Upto+direct settle:            ${hasUptoDirect ? '✅' : '⚠️  not found'}`);
+    log(`   Upto+EIP2612 route:            ${hasUptoEip2612 ? '✅' : '⚠️  not found'}`);
+    log(`   Upto+ERC20 route:              ${hasUptoErc20 ? '✅' : '⚠️  not found'}`);
+    log(`   Batch-settlement EIP-3009:     ${hasBatchSettlementEip3009 ? '✅' : '⚠️  not found'}`);
+    log(`   Batch-settlement Permit2:      ${hasBatchSettlementPermit2 ? '✅' : '⚠️  not found'}`);
+    log(`   Batch-settlement+direct:       ${hasBatchSettlementPermit2Direct ? '✅' : '⚠️  not found'}`);
+    log(`   Batch-settlement+EIP2612:      ${hasBatchSettlementPermit2Eip2612 ? '✅' : '⚠️  not found'}`);
+    log(`   Batch-settlement+ERC20:        ${hasBatchSettlementPermit2Erc20 ? '✅' : '⚠️  not found'}`);
     log('');
   }
 
   // Auto-detect Permit2 scenarios (upto uses Permit2 under the hood)
-  const hasPermit2Scenarios = filteredScenarios.some(
-    (s) => s.endpoint.transferMethod === 'permit2' || s.endpoint.transferMethod === 'upto'
-  );
+  const hasPermit2Scenarios = filteredScenarios.some(s => endpointAssetTransferMethod(s.endpoint) === 'permit2');
 
   if (hasPermit2Scenarios) {
     log('🔐 Permit2 scenarios detected — revoke before gas-sponsored tests, approve before permit2-direct tests');
+    if (!evmPermit2Asset) {
+      errorLog(
+        '❌ Permit2 scenarios need a token address: set EVM_PERMIT2_ASSET or networks.evm.permit2Asset for this mode.',
+      );
+      process.exit(1);
+    }
+  }
+
+  const hasSwigSmartWalletScenarios = filteredScenarios.some(
+    s => s.client.name === 'typescript/http/svm-smart-wallet',
+  );
+
+  if (hasSwigSmartWalletScenarios) {
+    log('🔧 Swig smart-wallet scenarios detected — swig-setup runs before each endpoint when balance is low');
+    log('');
   }
 
   // Collect unique facilitators and servers
@@ -582,30 +1007,19 @@ async function runTest() {
   log('\n🔍 Validating facilitator environment variables...\n');
   const missingEnvVars: { facilitatorName: string; missingVars: string[] }[] = [];
 
-  // Environment variables managed by the test framework (don't require user to set)
-  const systemManagedVars = new Set([
-    'PORT',
-    'EVM_PRIVATE_KEY',
-    'SVM_PRIVATE_KEY',
-    'APTOS_PRIVATE_KEY',
-    'STELLAR_PRIVATE_KEY',
-    'EVM_NETWORK',
-    'SVM_NETWORK',
-    'APTOS_NETWORK',
-    'STELLAR_NETWORK',
-    'EVM_RPC_URL',
-    'SVM_RPC_URL',
-    'APTOS_RPC_URL',
-    'STELLAR_RPC_URL',
-  ]);
-
   for (const [facilitatorName, facilitator] of uniqueFacilitators) {
     const requiredVars = facilitator.config.environment?.required || [];
     const missing: string[] = [];
 
     for (const envVar of requiredVars) {
-      // Skip variables managed by the test framework
-      if (systemManagedVars.has(envVar)) {
+      // Skip env keys the harness assigns itself (e.g. PORT), never operator-supplied
+      if (FACILITATOR_ENV_PREFLIGHT_ALLOWLIST.has(envVar)) {
+        continue;
+      }
+      // Skip credentials for families not in this run (catalog marks all wallet
+      // keys required per family; only selected families need them present).
+      const family = protocolFamilyForCredentialKey(envVar);
+      if (family && !selectedProtocolFamilies.has(family)) {
         continue;
       }
 
@@ -650,11 +1064,13 @@ async function runTest() {
     passed: boolean;
     error?: string;
     transaction?: string;
+    depositTransaction?: string;
+    refundTransaction?: string;
     network?: string;
   }
 
   let testResults: DetailedTestResult[] = [];
-  let currentPort = 4022;
+  const allocatePort = createPortAllocator(4022);
 
   // Assign ports and start all facilitators
   const facilitatorManagers = new Map<string, FacilitatorManager>();
@@ -683,23 +1099,36 @@ async function runTest() {
     comboMap.get(key)!.push(scenario);
   }
 
-  // Convert map to array of combos, assigning a unique port to each
+  // Convert map to array of combos, assigning a unique port to each.
+  // Within each combo, sort scenarios so permit2Direct tests run before
+  // coldstart tests. The coldstart flow drains the shared client wallet's
+  // ETH; if it ran first, a subsequent permit2Direct test would have no
+  // gas for its Permit2 approve transaction.
+  const schemeOptionsPriority = (scenario: TestScenario): number => {
+    if (scenario.endpoint.schemeOptions?.permit2Direct === true) return 0;
+    // No special schemeOptions (plain warmup, eip3009, etc.) — middle
+    if (!scenario.endpoint.schemeOptions?.coldstart) return 1;
+    // coldstart drains ETH — always last
+    return 2;
+  };
+
   let comboIndex = 0;
   for (const [, scenarios] of comboMap) {
-    const firstScenario = scenarios[0];
+    const sorted = [...scenarios].sort((a, b) => schemeOptionsPriority(a) - schemeOptionsPriority(b));
+    const firstScenario = sorted[0];
     serverFacilitatorCombos.push({
       serverName: firstScenario.server.name,
       facilitatorName: firstScenario.facilitator?.name,
-      scenarios,
+      scenarios: sorted,
       comboIndex,
-      port: currentPort++,
+      port: allocatePort(),
     });
     comboIndex++;
   }
 
   // Start all facilitators with unique ports
   for (const [facilitatorName, facilitator] of uniqueFacilitators) {
-    const port = currentPort++;
+    const port = allocatePort();
     log(`\n🏛️ Starting facilitator: ${facilitatorName} on port ${port}`);
 
     const manager = new FacilitatorManager(
@@ -726,19 +1155,16 @@ async function runTest() {
 
   // Start mock facilitator (claims to support everything, used as fallback so
   // servers with routes unsupported by the real facilitator can still start)
-  const mockFacilitatorPort = currentPort++;
+  const mockFacilitatorPort = allocatePort();
   log(`\n🎭 Starting mock facilitator on port ${mockFacilitatorPort}...`);
   const mockFacilitatorProcess: ChildProcess = spawn(
-    'npx', ['tsx', 'index.ts'],
+    process.execPath, ['--import', 'tsx', 'index.ts'],
     {
       cwd: join(process.cwd(), 'mock-facilitator'),
       env: {
         ...process.env,
         PORT: mockFacilitatorPort.toString(),
-        EVM_NETWORK: networks.evm.caip2,
-        SVM_NETWORK: networks.svm.caip2,
-        APTOS_NETWORK: networks.aptos.caip2,
-        STELLAR_NETWORK: networks.stellar.caip2,
+        ...injectNetworkEnv(networks),
       },
       stdio: 'pipe',
     },
@@ -764,7 +1190,7 @@ async function runTest() {
   );
   if (!mockHealthy) {
     log('❌ Failed to start mock facilitator');
-    mockFacilitatorProcess.kill();
+    await stopMockFacilitator(mockFacilitatorProcess, mockFacilitatorUrl);
     process.exit(1);
   }
   log(`  ✅ Mock facilitator ready at ${mockFacilitatorUrl}`);
@@ -780,7 +1206,7 @@ async function runTest() {
   }
   log('');
 
-  // Track which facilitators processed which servers (for discovery validation)
+  // Track which facilitators processed which servers (legacy discovery fallback)
   const facilitatorServerMap = new Map<string, Set<string>>(); // facilitatorName -> Set<serverName>
 
   // ── Helper: run a single test scenario ────────────────────────────────
@@ -793,21 +1219,165 @@ async function runTest() {
     const facilitatorLabel = scenario.facilitator ? ` via ${scenario.facilitator.name}` : '';
     const testName = `${scenario.client.name} → ${scenario.server.name} → ${scenario.endpoint.path}${facilitatorLabel}`;
 
-    const clientConfig: ClientConfig = {
-      evmPrivateKey: clientEvmPrivateKey!,
-      svmPrivateKey: clientSvmPrivateKey!,
-      avmPrivateKey: clientAvmPrivateKey || '',
-      aptosPrivateKey: clientAptosPrivateKey || '',
-      stellarPrivateKey: clientStellarPrivateKey || '',
+    const isBatchSettlement = endpointUsesBatchSettlement(scenario.endpoint);
+    const voucherSignerPrivateKey = process.env.CLIENT_EVM_BATCH_SETTLEMENT_VOUCHER_SIGNER_PRIVATE_KEY;
+    const baseClientConfig: ClientConfig = {
       serverUrl: `http://localhost:${port}`,
       endpointPath: scenario.endpoint.path,
-      evmNetwork: networks.evm.caip2,
-      evmRpcUrl: networks.evm.rpcUrl,
+      networks,
     };
 
     try {
       cLog.log(`🧪 Test #${localTestNumber}: ${testName}`);
-      const result = await runClientTest(scenario.client.proxy, clientConfig);
+
+      if (isBatchSettlement) {
+        const channelSalt = generateChannelSalt();
+        const batchBase = {
+          channelSalt,
+          ...(voucherSignerPrivateKey ? { voucherSignerPrivateKey } : {}),
+        };
+
+        if (!batchSettlementRecovery) {
+          const fullResult = await runClientTest(scenario.client.proxy, {
+            ...baseClientConfig,
+            batchSettlement: { ...batchBase, phase: 'full' },
+          });
+          const fullError = fullResult.success
+            ? validateBatchPaymentStep(fullResult, 'deposit', 'deposit', true) ||
+            validateBatchPaymentStep(fullResult, 'voucher', 'voucher', false) ||
+            validateBatchPaymentStep(fullResult, 'refund', 'refund', true)
+            : fullResult.error || 'Batch-settlement client phase failed';
+
+          const depositTransaction = getBatchStep(fullResult, 'deposit')?.payment_response?.transaction;
+          const refundTransaction = getBatchStep(fullResult, 'refund')?.payment_response?.transaction;
+          const network =
+            getBatchStep(fullResult, 'refund')?.payment_response?.network ||
+            getBatchStep(fullResult, 'deposit')?.payment_response?.network ||
+            fullResult.payment_response?.network;
+
+          const detailedResult: DetailedTestResult = {
+            testNumber: localTestNumber,
+            client: scenario.client.name,
+            server: scenario.server.name,
+            endpoint: scenario.endpoint.path,
+            facilitator: scenario.facilitator?.name || 'none',
+            protocolFamily: scenario.protocolFamily,
+            passed: !fullError,
+            error: fullError,
+            transaction: refundTransaction || depositTransaction,
+            depositTransaction,
+            refundTransaction,
+            network,
+          };
+
+          if (fullError) {
+            cLog.log(`  ❌ Test failed: ${fullError}`);
+            const verboseLogs = fullResult.verboseLogs ?? [];
+            if (verboseLogs.length > 0) {
+              cLog.log(`  🔍 Verbose logs:`);
+              verboseLogs.forEach(logLine => cLog.log(logLine));
+            }
+            cLog.verboseLog(`  🔍 Error details: ${JSON.stringify(fullResult, null, 2)}`);
+          } else {
+            cLog.log(`  ✅ Test passed`);
+          }
+
+          return detailedResult;
+        }
+
+        const initialResult = await runClientTest(scenario.client.proxy, {
+          ...baseClientConfig,
+          batchSettlement: { ...batchBase, phase: 'initial' },
+        });
+        const initialError = initialResult.success
+          ? validateBatchPaymentStep(initialResult, 'deposit', 'deposit', true) ||
+          validateBatchPaymentStep(initialResult, 'voucher', 'voucher', false)
+          : initialResult.error || 'Initial batch-settlement client phase failed';
+
+        if (initialError) {
+          const detailedResult: DetailedTestResult = {
+            testNumber: localTestNumber,
+            client: scenario.client.name,
+            server: scenario.server.name,
+            endpoint: scenario.endpoint.path,
+            facilitator: scenario.facilitator?.name || 'none',
+            protocolFamily: scenario.protocolFamily,
+            passed: false,
+            error: initialError,
+            depositTransaction: getBatchStep(initialResult, 'deposit')?.payment_response?.transaction,
+            network: initialResult.payment_response?.network,
+          };
+          cLog.log(`  ❌ Test failed: ${initialError}`);
+          const verboseLogs = initialResult.verboseLogs ?? [];
+          if (verboseLogs.length > 0) {
+            cLog.log(`  🔍 Verbose logs:`);
+            verboseLogs.forEach(logLine => cLog.log(logLine));
+          }
+          cLog.verboseLog(`  🔍 Error details: ${JSON.stringify(initialResult, null, 2)}`);
+          return detailedResult;
+        }
+
+        const recoveryResult = await runClientTest(scenario.client.proxy, {
+          ...baseClientConfig,
+          batchSettlement: { ...batchBase, phase: 'recovery-refund' },
+        });
+        const recoveryError = recoveryResult.success
+          ? validateBatchPaymentStep(recoveryResult, 'recoveryVoucher', 'recovery voucher', false) ||
+          validateBatchPaymentStep(recoveryResult, 'refund', 'refund', true)
+          : recoveryResult.error || 'Recovery/refund batch-settlement client phase failed';
+
+        const depositTransaction = getBatchStep(initialResult, 'deposit')?.payment_response?.transaction;
+        const refundTransaction = getBatchStep(recoveryResult, 'refund')?.payment_response?.transaction;
+        const network =
+          getBatchStep(recoveryResult, 'refund')?.payment_response?.network ||
+          getBatchStep(initialResult, 'deposit')?.payment_response?.network ||
+          recoveryResult.payment_response?.network ||
+          initialResult.payment_response?.network;
+
+        if (recoveryError) {
+          const detailedResult: DetailedTestResult = {
+            testNumber: localTestNumber,
+            client: scenario.client.name,
+            server: scenario.server.name,
+            endpoint: scenario.endpoint.path,
+            facilitator: scenario.facilitator?.name || 'none',
+            protocolFamily: scenario.protocolFamily,
+            passed: false,
+            error: recoveryError,
+            transaction: refundTransaction || depositTransaction,
+            depositTransaction,
+            refundTransaction,
+            network,
+          };
+          cLog.log(`  ❌ Test failed: ${recoveryError}`);
+          const verboseLogs = mergeVerboseLogs(initialResult, recoveryResult);
+          if (verboseLogs.length > 0) {
+            cLog.log(`  🔍 Verbose logs:`);
+            verboseLogs.forEach(logLine => cLog.log(logLine));
+          }
+          cLog.verboseLog(`  🔍 Error details: ${JSON.stringify({ initialResult, recoveryResult }, null, 2)}`);
+          return detailedResult;
+        }
+
+        const detailedResult: DetailedTestResult = {
+          testNumber: localTestNumber,
+          client: scenario.client.name,
+          server: scenario.server.name,
+          endpoint: scenario.endpoint.path,
+          facilitator: scenario.facilitator?.name || 'none',
+          protocolFamily: scenario.protocolFamily,
+          passed: true,
+          transaction: refundTransaction || depositTransaction,
+          depositTransaction,
+          refundTransaction,
+          network,
+        };
+
+        cLog.log(`  ✅ Test passed`);
+        return detailedResult;
+      }
+
+      const result = await runClientTest(scenario.client.proxy, baseClientConfig);
 
       const detailedResult: DetailedTestResult = {
         testNumber: localTestNumber,
@@ -854,7 +1424,8 @@ async function runTest() {
   // ── Execute a single server+facilitator combo ─────────────────────────
   async function executeCombo(
     combo: ServerFacilitatorCombo,
-    evmLock: FacilitatorLock | null,
+    resourceLock: ResourceLock | null,
+    evmResourceKeyContext: EvmResourceKeyContext,
     nextTestNumber: () => number,
   ): Promise<DetailedTestResult[]> {
     const { serverName, facilitatorName, scenarios, port } = combo;
@@ -879,23 +1450,29 @@ async function runTest() {
     cLog.log(`🚀 Starting server: ${serverName} (port ${port}) with facilitator: ${facilitatorName || 'none'}`);
 
     const facilitatorConfig = facilitatorName ? uniqueFacilitators.get(facilitatorName)?.config : undefined;
-    const facilitatorSupportsAvm = facilitatorConfig?.protocolFamilies?.includes('avm') ?? false;
-    const facilitatorSupportsAptos = facilitatorConfig?.protocolFamilies?.includes('aptos') ?? false;
-    const facilitatorSupportsStellar = facilitatorConfig?.protocolFamilies?.includes('stellar') ?? false;
 
+    const enabledFamilies: import('./src/types').ProtocolFamily[] = ['evm', 'svm'];
+    for (const family of PROTOCOL_FAMILIES) {
+      if (family === 'evm' || family === 'svm') continue;
+      if (!(facilitatorConfig?.protocolFamilies?.includes(family) ?? false)) continue;
+      if (family === 'hedera' && (!facilitatorHederaAccountId || !facilitatorHederaPrivateKey)) {
+        continue;
+      }
+      enabledFamilies.push(family);
+    }
+
+    // Optional SERVER_EVM_RECEIVER_AUTHORIZER_PRIVATE_KEY (server role only) opts
+    // into self-managed batch-settlement claim/refund signing; omit to delegate
+    // to the facilitator's /supported receiverAuthorizer.
     const serverConfig: ServerConfig = {
       port,
-      evmPayTo: serverEvmAddress!,
-      svmPayTo: serverSvmAddress!,
-      avmPayTo: facilitatorSupportsAvm ? (serverAvmAddress || '') : '',
-      aptosPayTo: facilitatorSupportsAptos ? (serverAptosAddress || '') : '',
-      stellarPayTo: facilitatorSupportsStellar ? (serverStellarAddress || '') : '',
       networks,
+      enabledFamilies,
       facilitatorUrl,
       mockFacilitatorUrl,
     };
 
-    const started = await startServer(serverProxy, serverConfig);
+    const started = await startServer(serverProxy, serverConfig, { transport: server.config.transport });
     if (!started) {
       cLog.log(`❌ Failed to start server ${serverName}`);
       return scenarios.map(scenario => ({
@@ -920,50 +1497,86 @@ async function runTest() {
       for (const scenario of scenarios) {
         const tn = nextTestNumber();
         const isEvm = scenario.protocolFamily === 'evm';
-
-        if (scenario.endpoint.permit2Direct) {
-          await approvePermit2Approval(USDC_BASE_SEPOLIA);
-        } else if (scenario.endpoint.coldstart) {
-          // Key on (client, path) so each client independently runs its own
-          // fund → revoke → drain cycle. Without the client name, the second
-          // client in a combo silently skips the coldstart and inherits
-          // whatever wallet state the first client left behind.
-          const endpointKey = `${scenario.client.name}::${scenario.endpoint.path}`;
-          if (!coldStartedEndpoints.has(endpointKey)) {
-            coldStartedEndpoints.add(endpointKey);
-            const token =
-              scenario.endpoint.extensions?.includes('erc20ApprovalGasSponsoring')
-                ? MOCK_ERC20_BASE_SEPOLIA
-                : USDC_BASE_SEPOLIA;
-            await fundClientForRevoke();
-            // Give fund tx 1s to propagate before submitting revoke (from client wallet)
-            await new Promise(resolve => setTimeout(resolve, 1000));
-            await revokePermit2Approval(token);
-            // Give revoke tx 2s to propagate before drain reads pending nonce.
-            // Load-balanced RPCs can return a stale pending nonce if queried
-            // immediately after the revoke submission, causing the drain to
-            // collide with the revoke's nonce ("replacement transaction underpriced").
-            await new Promise(resolve => setTimeout(resolve, 2000));
-            await drainClientETH();
-            // Wait for RPC nonce propagation across load-balanced nodes before the
-            // test client (which may use a separate RPC connection) queries the nonce.
-            await new Promise(resolve => setTimeout(resolve, 1500));
-          }
-        }
-
         const isAvm = scenario.protocolFamily === 'avm';
+        const resourceKeys = getScenarioResourceKeys(scenario, evmResourceKeyContext);
 
-        if (isEvm && facilitatorName && evmLock) {
-          const releaseLock = await evmLock.acquire(facilitatorName);
-          try {
-            results.push(await runSingleTest(scenario, port, tn, cLog));
-            await new Promise(resolve => setTimeout(resolve, 1000));
-          } finally {
-            releaseLock();
+        const runScenario = async (): Promise<DetailedTestResult> => {
+          const setupFailure = (error: string): DetailedTestResult => ({
+            testNumber: tn,
+            client: scenario.client.name,
+            server: scenario.server.name,
+            endpoint: scenario.endpoint.path,
+            facilitator: scenario.facilitator?.name || 'none',
+            protocolFamily: scenario.protocolFamily,
+            passed: false,
+            error,
+          });
+
+          if (scenario.client.name === 'typescript/http/svm-smart-wallet') {
+            await setupSwigWallet(networks.svm.rpcUrl);
           }
-        } else {
-          results.push(await runSingleTest(scenario, port, tn, cLog));
-          if (isAvm) {
+
+          if (scenario.endpoint.schemeOptions?.permit2Direct === true) {
+            const approved = await approvePermit2Approval(networks.evm, evmPermit2Asset);
+            if (!approved) {
+              return setupFailure('Permit2 approval setup failed');
+            }
+          } else if (scenario.endpoint.schemeOptions?.coldstart === true) {
+            // Key on (client, path) so each client independently runs its own
+            // fund → revoke → drain cycle. Without the client name, the second
+            // client in a combo silently skips the coldstart and inherits
+            // whatever wallet state the first client left behind.
+            const endpointKey = `${scenario.client.name}::${scenario.endpoint.path}`;
+            if (!coldStartedEndpoints.has(endpointKey)) {
+              const funded = await fundClientForRevoke(networks.evm);
+              if (!funded) {
+                return setupFailure('Client gas funding setup failed');
+              }
+              // Give fund tx 1s to propagate before submitting revoke (from client wallet)
+              await new Promise(resolve => setTimeout(resolve, 1000));
+              const revoked = await revokePermit2Approval(networks.evm, evmPermit2Asset);
+              if (!revoked) {
+                return setupFailure('Permit2 revoke setup failed');
+              }
+              // Give revoke tx 2s to propagate before drain reads pending nonce.
+              // Load-balanced RPCs can return a stale pending nonce if queried
+              // immediately after the revoke submission, causing the drain to
+              // collide with the revoke's nonce ("replacement transaction underpriced").
+              await new Promise(resolve => setTimeout(resolve, 2000));
+              const drained = await drainClientETH(networks.evm);
+              if (!drained) {
+                return setupFailure('Client ETH drain setup failed');
+              }
+              coldStartedEndpoints.add(endpointKey);
+              // Wait for RPC nonce propagation across load-balanced nodes before the
+              // test client (which may use a separate RPC connection) queries the nonce.
+              await new Promise(resolve => setTimeout(resolve, 1500));
+            }
+          }
+
+          // Bounded retry for EVM Permit2 flows: transient 402s here are
+          // almost always stale on-chain state (allowance/nonce not yet
+          // propagated across load-balanced RPC nodes). Retry with a delay so
+          // state can settle; eip3009 and non-EVM flows run once (maxAttempts=1).
+          const isPermit2 = endpointAssetTransferMethod(scenario.endpoint) === 'permit2';
+          const maxAttempts = isEvm && isPermit2 ? EVM_PAYMENT_MAX_ATTEMPTS : 1;
+          let result = await runSingleTest(scenario, port, tn, cLog);
+          for (
+            let attempt = 1;
+            attempt < maxAttempts && !result.passed && isTransientPaymentFailure(result.error);
+            attempt++
+          ) {
+            cLog.log(
+              `  🔁 Test #${tn} transient failure (attempt ${attempt}/${maxAttempts}): ${result.error}. ` +
+              `Retrying in ${EVM_PAYMENT_RETRY_DELAY_MS}ms to let on-chain state settle...`
+            );
+            await new Promise(resolve => setTimeout(resolve, EVM_PAYMENT_RETRY_DELAY_MS));
+            result = await runSingleTest(scenario, port, tn, cLog);
+          }
+
+          if (isEvm && resourceLock) {
+            await new Promise(resolve => setTimeout(resolve, 1000));
+          } else if (isAvm) {
             // Pause between AVM tests to avoid 403 rate limiting on free public Algorand nodes
             await new Promise(resolve => setTimeout(resolve, 8000));
           } else if (isEvm) {
@@ -973,6 +1586,19 @@ async function runTest() {
             // the two can collide on the same nonce on load-balanced RPCs.
             await new Promise(resolve => setTimeout(resolve, 1500));
           }
+
+          return result;
+        };
+
+        if (resourceKeys.length > 0 && resourceLock) {
+          const releaseLock = await resourceLock.acquireAll(resourceKeys);
+          try {
+            results.push(await runScenario());
+          } finally {
+            releaseLock();
+          }
+        } else {
+          results.push(await runScenario());
         }
       }
     } finally {
@@ -985,7 +1611,19 @@ async function runTest() {
 
   // ── Unified execution: concurrency=1 for sequential, N for parallel ──
   const effectiveConcurrency = parsedArgs.parallel ? parsedArgs.concurrency : 1;
-  const evmLock = parsedArgs.parallel ? new FacilitatorLock() : null;
+  const resourceLock = parsedArgs.parallel ? new ResourceLock() : null;
+  const clientEvmAddress = clientEvmPrivateKey
+    ? privateKeyToAccount(clientEvmPrivateKey as `0x${string}`).address
+    : undefined;
+  const facilitatorEvmAddress = facilitatorEvmPrivateKey
+    ? privateKeyToAccount(facilitatorEvmPrivateKey as `0x${string}`).address
+    : undefined;
+  const evmResourceKeyContext: EvmResourceKeyContext = {
+    evmCaip2: networks.evm.caip2,
+    evmPermit2Asset,
+    clientEvmAddress,
+    facilitatorEvmAddress,
+  };
   const semaphore = new Semaphore(effectiveConcurrency);
 
   let globalTestNumber = 0;
@@ -994,7 +1632,7 @@ async function runTest() {
   const comboPromises = serverFacilitatorCombos.map(async (combo) => {
     const release = await semaphore.acquire();
     try {
-      return await executeCombo(combo, evmLock, nextTestNumber);
+      return await executeCombo(combo, resourceLock, evmResourceKeyContext, nextTestNumber);
     } finally {
       release();
     }
@@ -1010,7 +1648,7 @@ async function runTest() {
 
   const serversArray = Array.from(uniqueServers.values());
 
-  // Build a serverName→port map for discovery validation (first combo per server).
+  // Build a serverName→port map for legacy discovery validation fallback.
   const discoveryServerPorts = new Map<string, number>();
   for (const combo of serverFacilitatorCombos) {
     if (!discoveryServerPorts.has(combo.serverName)) {
@@ -1018,16 +1656,39 @@ async function runTest() {
     }
   }
 
+  // Expected discovery entries must use the port from each facilitator+server combo.
+  const testedDiscoveryScenarios: TestedDiscoveryScenario[] = [];
+  for (const combo of serverFacilitatorCombos) {
+    if (!combo.facilitatorName) {
+      continue;
+    }
+    const server = uniqueServers.get(combo.serverName);
+    if (!server) {
+      continue;
+    }
+    for (const scenario of combo.scenarios) {
+      testedDiscoveryScenarios.push({
+        facilitatorName: combo.facilitatorName,
+        server,
+        serverPort: combo.port,
+        endpoint: scenario.endpoint,
+      });
+    }
+  }
+
   // Run discovery validation if bazaar extension is enabled
+  let discoveryFailed = false;
   const showBazaarOutput = shouldShowExtensionOutput('bazaar', selectedExtensions);
   if (showBazaarOutput && shouldRunDiscoveryValidation(facilitatorsWithConfig, serversArray)) {
     log('\n🔍 Running Bazaar Discovery Validation...\n');
-    await handleDiscoveryValidation(
+    const discoveryResult = await handleDiscoveryValidation(
       facilitatorsWithConfig,
       serversArray,
       discoveryServerPorts,
-      facilitatorServerMap
+      facilitatorServerMap,
+      testedDiscoveryScenarios,
     );
+    discoveryFailed = !discoveryResult.success;
   }
 
   // Clean up facilitators (servers already stopped in test loop for both modes)
@@ -1040,8 +1701,10 @@ async function runTest() {
     facilitatorStopPromises.push(manager.stop());
   }
   log('  🛑 Stopping mock facilitator');
-  mockFacilitatorProcess.kill();
-  await Promise.all(facilitatorStopPromises);
+  await Promise.all([
+    stopMockFacilitator(mockFacilitatorProcess, mockFacilitatorUrl),
+    ...facilitatorStopPromises,
+  ]);
 
   // Calculate totals
   const passed = testResults.filter(r => r.passed).length;
@@ -1055,6 +1718,7 @@ async function runTest() {
   log(`✅ Passed: ${passed}`);
   log(`❌ Failed: ${failed}`);
   log(`📈 Total: ${passed + failed}`);
+  log(`⏱️  Duration: ${((Date.now() - startTime) / 60_000).toFixed(2)} min`);
   log('');
 
   // Detailed results table
@@ -1075,7 +1739,13 @@ async function runTest() {
       if (test.network) {
         log(`      Network: ${test.network}`);
       }
-      if (test.transaction) {
+      if (test.depositTransaction) {
+        log(`      Deposit Tx: ${test.depositTransaction}`);
+      }
+      if (test.refundTransaction) {
+        log(`      Refund Tx: ${test.refundTransaction}`);
+      }
+      if (test.transaction && !test.depositTransaction && !test.refundTransaction) {
         log(`      Tx: ${test.transaction}`);
       }
     });
@@ -1197,12 +1867,13 @@ async function runTest() {
   }
 
   // Close logger
-  closeLogger();
-
-  if (failed > 0) {
-    process.exit(1);
-  }
+  await closeLogger();
+  process.exit(failed > 0 || discoveryFailed ? 1 : 0);
 }
 
 // Run the test
-runTest().catch(error => errorLog(error));
+runTest().catch(async error => {
+  errorLog(String(error));
+  await closeLogger();
+  process.exit(1);
+});

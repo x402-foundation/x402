@@ -68,6 +68,10 @@ Follow these rules for all code, documentation, and commit messages you produce:
 8. TEST CORRECTNESS. Generated tests must assert meaningful behavior, not just
    that "the function doesn't throw." Do not fabricate expected values — derive
    them from the spec or existing test fixtures.
+
+9. COMMUNITY CHANNELS. GitHub issues are for bug reports and concrete feature
+   proposals only. Direct questions, general discussion, and project showcases
+   to the x402 Slack community at http://slack.x402.org/.
 ```
 
 You can place this in a `CLAUDE.md`, `.cursorrules`, `codex-instructions.md`, or equivalent file at the root of your working copy. It is not committed to the repository — it is for your local development workflow.
@@ -102,7 +106,9 @@ For setup instructions, development workflow, and contribution patterns for each
 
 ### 1. Find or Create an Issue
 
-Check existing issues before starting work. For larger features, open a discussion first.
+GitHub issues are for **bug reports** and **concrete feature proposals** only. For questions, general discussion, or to share a project you're building on x402, use the [Slack community](http://slack.x402.org/) instead.
+
+Check existing Issues/PR before starting work. For larger features, discuss in Slack or open an issue first.
 
 ### 2. Fork and Clone
 
@@ -171,10 +177,16 @@ cd typescript && pnpm --filter @x402/paywall build:paywall
 This generates template files in:
 - `typescript/packages/http/paywall/src/evm/gen/template.ts`
 - `typescript/packages/http/paywall/src/svm/gen/template.ts`
+- `typescript/packages/http/paywall/src/avm/gen/template.ts`
+- `typescript/packages/http/paywall/src/evm/gen/decimals.ts` (EVM only; see below)
 - `go/http/evm_paywall_template.go`
 - `go/http/svm_paywall_template.go`
-- `python/x402/src/x402/evm_paywall_template.py`
-- `python/x402/src/x402/svm_paywall_template.py`
+- `go/http/avm_paywall_template.go`
+- `python/x402/http/paywall/evm_paywall_template.py`
+- `python/x402/http/paywall/svm_paywall_template.py`
+- `python/x402/http/paywall/avm_paywall_template.py`
+
+**EVM `decimals.ts`:** The paywall assumes **6** decimals for EVM chains (the usual USDC-style default). The generated map only lists chains where `DEFAULT_STABLECOINS` uses a different `decimals` value. If you add or change one of those entries, run `build:paywall` and commit the updated `decimals.ts` with the template files above. For a plain 6-decimal default, nothing new is added to the map.
 
 Commit the generated files with your PR.
 
@@ -200,7 +212,9 @@ Because different chains have different best practices, a scheme may have a diff
 
 If your chain is EVM-compatible and you want to add a default stablecoin for
 dollar-string pricing (`"$0.10"`), you don't need the full 3-PR workflow below. See
-[DEFAULT_ASSETS.md](DEFAULT_ASSETS.md) for instructions.
+[DEFAULT_ASSETS.md](DEFAULT_ASSETS.md) for instructions. If that default asset uses
+**decimals other than 6**, also regenerate the paywall as described in
+[Paywall Changes](#paywall-changes) so the bundled UI formats amounts correctly.
 
 ### Adding a New Chain Family
 
@@ -225,7 +239,7 @@ After spec approval, implement in a **single SDK** (TypeScript, Python OR Go).
 | SDK | Interfaces |
 |-----|------------|
 | TypeScript (`@x402/core`) | `SchemeNetworkClient`, `SchemeNetworkServer`, `SchemeNetworkFacilitator` |
-| Go (`github.com/x402-foundation/x402/go`) | `ClientScheme`, `ServerScheme`, `FacilitatorScheme` |
+| Go (`github.com/x402-foundation/x402/go/v2`) | `ClientScheme`, `ServerScheme`, `FacilitatorScheme` |
 | Python (`x402`) | `SchemeNetworkClient`, `SchemeNetworkServer`, `SchemeNetworkFacilitator` |
 
 **Required tests:**
@@ -234,7 +248,7 @@ After spec approval, implement in a **single SDK** (TypeScript, Python OR Go).
 |------|---------|-----------|
 | Unit | Isolated component tests | [`typescript/packages/mechanisms/evm/test/unit/`](typescript/packages/mechanisms/evm/test/unit/) |
 | Integration | Client/server/facilitator flow | [`typescript/packages/mechanisms/evm/test/integrations/`](typescript/packages/mechanisms/evm/test/integrations/) |
-| E2E | Full stack across SDKs | [`e2e/`](e2e/) |
+| E2E | Full stack across SDKs | [`e2e/`](e2e/) — see [Add a network](e2e/README.md#add-a-network): `config/mechanisms_<id>.json` + scheme registration in each language’s shared server/client/facilitator module (HTTP/MCP routes come from the catalog) |
 
 **Examples:**
 - Keep existing user-facing examples minimal
@@ -272,6 +286,6 @@ When adding a new example, follow the patterns in the language-specific guide.
 
 ## Getting Help
 
-- Search existing issues
-- Open a new issue with questions
+- **Questions, discussions, and project showcases:** [Join Slack](http://slack.x402.org/)
+- **Bug reports and feature proposals:** search [GitHub issues](https://github.com/x402-foundation/x402/issues); open a new issue only for bugs or well-scoped proposals
 - Check the language-specific guides for common patterns

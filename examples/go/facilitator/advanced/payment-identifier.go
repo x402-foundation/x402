@@ -9,10 +9,10 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	x402 "github.com/x402-foundation/x402/go"
-	"github.com/x402-foundation/x402/go/extensions/paymentidentifier"
-	evm "github.com/x402-foundation/x402/go/mechanisms/evm/exact/facilitator"
-	svm "github.com/x402-foundation/x402/go/mechanisms/svm/exact/facilitator"
+	x402 "github.com/x402-foundation/x402/go/v2"
+	"github.com/x402-foundation/x402/go/v2/extensions/paymentidentifier"
+	evm "github.com/x402-foundation/x402/go/v2/mechanisms/evm/exact/facilitator"
+	svm "github.com/x402-foundation/x402/go/v2/mechanisms/svm/exact/facilitator"
 )
 
 /**
@@ -105,7 +105,9 @@ func runPaymentIdentifierExample(evmPrivateKey, svmPrivateKey string) error {
 	// Register EVM scheme if signer is available
 	if evmSigner != nil {
 		evmConfig := &evm.ExactEvmSchemeConfig{
-			DeployERC4337WithEIP6492: true,
+			// Add trusted ERC-6492 factory addresses here (e.g. your chosen ERC-4337 smart wallet factory).
+			// A non-empty slice enables smart wallet deployment; an empty slice denies all factory calls.
+			EIP6492AllowedFactories: []string{},
 		}
 		facilitator.Register([]x402.Network{evmNetwork}, evm.NewExactEvmScheme(evmSigner, evmConfig))
 	}

@@ -33,6 +33,26 @@ export function numberToDecimalString(n: number): string {
 }
 
 /**
+ * Parses a money string into a finite, non-negative decimal number.
+ * Accepts plain decimal strings with an optional leading dollar sign.
+ *
+ * @param money - The money string to parse
+ * @returns Decimal number
+ */
+export function parseMoneyString(money: string): number {
+  const cleaned = money.replace(/^\$/, "").trim();
+  if (!/^-?\d+(?:\.\d+)?$/.test(cleaned) || /[eE]/.test(cleaned)) {
+    throw new Error(`Invalid money format: ${money}`);
+  }
+
+  const amount = Number(cleaned);
+  if (!Number.isFinite(amount) || amount < 0) {
+    throw new Error(`Invalid money format: ${money}`);
+  }
+  return amount;
+}
+
+/**
  * Convert a decimal amount to token smallest units.
  * Accepts only plain decimal strings — scientific notation is not allowed.
  * Throws if the amount is non-zero but too small to represent with the given decimal precision.
@@ -70,6 +90,17 @@ export interface SchemeData<T> {
   pattern: Network;
 }
 
+const escapeRegExp = (value: string): string => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+const networkPatternToRegExp = (pattern: Network): RegExp => {
+  const source = escapeRegExp(pattern).replace(/\\\*/g, ".*");
+  return new RegExp(`^${source}$`);
+};
+
+export const networkMatchesPattern = (pattern: Network, network: Network): boolean => {
+  return networkPatternToRegExp(pattern).test(network);
+};
+
 export const findSchemesByNetwork = <T>(
   map: Map<string, Map<string, T>>,
   network: Network,
@@ -80,15 +111,7 @@ export const findSchemesByNetwork = <T>(
   if (!implementationsByScheme) {
     // Try pattern matching for registered network patterns
     for (const [registeredNetworkPattern, implementations] of map.entries()) {
-      // Convert the registered network pattern to a regex
-      // e.g., "eip155:*" becomes /^eip155:.*$/
-      const pattern = registeredNetworkPattern
-        .replace(/[.*+?^${}()|[\]\\]/g, "\\$&") // Escape special regex chars except *
-        .replace(/\\\*/g, ".*"); // Replace escaped * with .*
-
-      const regex = new RegExp(`^${pattern}$`);
-
-      if (regex.test(network)) {
+      if (networkMatchesPattern(registeredNetworkPattern as Network, network)) {
         implementationsByScheme = implementations;
         break;
       }
@@ -129,8 +152,7 @@ export const findFacilitatorBySchemeAndNetwork = <T>(
   }
 
   // Try pattern matching
-  const patternRegex = new RegExp("^" + schemeData.pattern.replace("*", ".*") + "$");
-  if (patternRegex.test(network)) {
+  if (networkMatchesPattern(schemeData.pattern, network)) {
     return schemeData.facilitator;
   }
 
@@ -217,3 +239,51 @@ export function deepEqual(obj1: unknown, obj2: unknown): boolean {
     return JSON.stringify(obj1) === JSON.stringify(obj2);
   }
 }
+
+/**
+ * Coerces a value for array-aware merging/comparison: an array passes through
+ * unchanged, while a bare scalar is wrapped as a single-element array so it can
+ * merge or compare against an array declared on the other side (e.g. an
+ * extension field documented as "string or array of strings"). Returns
+ * undefined for values that cannot participate (null, undefined, objects).
+ *
+ * @param value - Value to coerce
+ * @returns The value as an array, or undefined if it cannot be treated as one
+ */
+export function toComparableArray(value: unknown): unknown[] | undefined {
+  if (Array.isArray(value)) {
+    return value;
+  }
+  if (value === null || value === undefined || typeof value === "object") {
+    return undefined;
+  }
+  return [value];
+}
+
+/**
+ * Extension info fields, keyed by extension key, where a conflicting array
+ * value declared by both server and client is additive rather than exclusive:
+ * the client's merge concatenates both sides (client first, deduped, see
+ * `mergeArraysUnique`), and the server's echo validation accepts any echo that
+ * is a superset of the advertised value. Scoped narrowly per field (rather
+ * than making all array fields additive) so unrelated extensions - e.g.
+ * sign-in-with-x's `resources` - keep exact array matching in both directions.
+ */
+export const ADDITIVE_ARRAY_INFO_FIELDS: Record<string, ReadonlySet<string>> = {
+  "builder-code": new Set(["s"]),
+};
+
+/**
+ * Caps the combined echoed length of an additive array field (see
+ * {@link ADDITIVE_ARRAY_INFO_FIELDS}) so a hand-crafted payload cannot pad the
+ * field past the sum of every party's own reservation and later crowd out a
+ * legitimately declared entry once truncated further downstream (e.g. by a
+ * facilitator extension). Core has no dependency on extension packages, so
+ * this value (builder-code's `MAX_CLIENT_SERVICE_CODES` +
+ * `MAX_SERVER_SERVICE_CODES`) is duplicated from
+ * `packages/extensions/src/builder-code/types.ts` and must be kept in sync by
+ * hand.
+ */
+export const ADDITIVE_ARRAY_MAX_LENGTHS: Record<string, Record<string, number>> = {
+  "builder-code": { s: 10 },
+};

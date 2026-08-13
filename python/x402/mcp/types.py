@@ -23,6 +23,9 @@ class ResourceInfo:
         url: str,
         description: str | None = None,
         mime_type: str | None = None,
+        service_name: str | None = None,
+        tags: list[str] | None = None,
+        icon_url: str | None = None,
     ):
         """Initialize resource info.
 
@@ -30,10 +33,16 @@ class ResourceInfo:
             url: Resource URL
             description: Optional description
             mime_type: Optional MIME type
+            service_name: Optional human-readable service name for bazaar discovery
+            tags: Optional topical tags for bazaar discovery search
+            icon_url: Optional absolute http(s) URL to a service icon
         """
         self.url = url
         self.description = description
         self.mime_type = mime_type
+        self.service_name = service_name
+        self.tags = tags
+        self.icon_url = icon_url
 
 
 class PaymentRequiredContext:
@@ -182,6 +191,7 @@ class SyncPaymentWrapperConfig:
         accepts: list[PaymentRequirements],
         resource: ResourceInfo | None = None,
         hooks: Optional["SyncPaymentWrapperHooks"] = None,  # type: ignore
+        extensions: dict[str, Any] | None = None,
     ):
         """Initialize payment wrapper config.
 
@@ -189,12 +199,16 @@ class SyncPaymentWrapperConfig:
             accepts: List of payment requirements
             resource: Optional resource info
             hooks: Optional server-side hooks
+            extensions: Optional x402 extensions to include in PaymentRequired responses.
+                Use this to attach Bazaar discovery metadata so facilitators can index
+                the tool. Example: ``declare_mcp_discovery_extension(config)``
         """
         if not accepts:
             raise ValueError("accepts must have at least one payment requirement")
         self.accepts = accepts
         self.resource = resource
         self.hooks = hooks
+        self.extensions = extensions
 
 
 class ServerHookContext:

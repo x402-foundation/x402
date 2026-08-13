@@ -11,18 +11,22 @@ import (
 
 	"github.com/ethereum/go-ethereum/common"
 
-	x402 "github.com/x402-foundation/x402/go"
-	"github.com/x402-foundation/x402/go/mechanisms/evm"
-	exactfacilitator "github.com/x402-foundation/x402/go/mechanisms/evm/exact/facilitator"
-	evmv1 "github.com/x402-foundation/x402/go/mechanisms/evm/v1"
-	"github.com/x402-foundation/x402/go/types"
+	x402 "github.com/x402-foundation/x402/go/v2"
+	"github.com/x402-foundation/x402/go/v2/mechanisms/evm"
+	exactfacilitator "github.com/x402-foundation/x402/go/v2/mechanisms/evm/exact/facilitator"
+	evmv1 "github.com/x402-foundation/x402/go/v2/mechanisms/evm/v1"
+	"github.com/x402-foundation/x402/go/v2/types"
 )
 
 // ExactEvmSchemeV1Config holds configuration for the ExactEvmSchemeV1 facilitator
 type ExactEvmSchemeV1Config struct {
-	// DeployERC4337WithEIP6492 enables automatic deployment of ERC-4337 smart wallets
-	// via EIP-6492 when encountering undeployed contract signatures during settlement
-	DeployERC4337WithEIP6492 bool
+	// EIP6492AllowedFactories is the allowlist of factory contract addresses (hex strings,
+	// case-insensitive) that the facilitator will call when deploying an undeployed smart wallet
+	// via ERC-6492. A non-empty list enables ERC-4337 smart wallet deployment. An empty list
+	// (the default) denies all factory deployment calls. Facilitators must explicitly list every
+	// factory they trust to prevent arbitrary transaction injection via attacker-controlled
+	// ERC-6492 signature wrappers.
+	EIP6492AllowedFactories []string
 	// SimulateInSettle reruns transfer simulation during settle. Verify always simulates.
 	SimulateInSettle bool
 }
@@ -206,6 +210,14 @@ func (f *ExactEvmSchemeV1) verify(
 		return nil, x402.NewVerifyError(ErrInvalidSignature, evmPayload.Authorization.From, "invalid signature")
 	}
 
+	// Counterfactual ERC-6492 wallet: settle deploys via the factory, gated by the
+	// allowlist. Enforce the same gate here so verify mirrors settle.
+	if !classification.Valid && classification.IsUndeployed && exactfacilitator.HasEIP6492Deployment(classification.SigData) {
+		if !evm.IsFactoryAllowed(classification.SigData.Factory, f.config.EIP6492AllowedFactories) {
+			return nil, x402.NewVerifyError(ErrFactoryNotAllowed, evmPayload.Authorization.From, "factory not in EIP6492AllowedFactories allowlist")
+		}
+	}
+
 	if simulate {
 		simulationSucceeded, err := exactfacilitator.SimulateEIP3009Transfer(
 			ctx,
@@ -286,17 +298,20 @@ func (f *ExactEvmSchemeV1) Settle(
 		}
 
 		if len(code) == 0 {
-			// Wallet not deployed
-			if f.config.DeployERC4337WithEIP6492 {
-				// Deploy wallet
-				err := f.deploySmartWallet(ctx, sigData)
-				if err != nil {
-					return nil, x402.NewSettleError(ErrSmartWalletDeploymentFailed, verifyResp.Payer, network, "", err.Error())
-				}
-			} else {
-				// Deployment not enabled - fail settlement
-				return nil, x402.NewSettleError(ErrUndeployedSmartWallet, verifyResp.Payer, network, "", "")
+			if !evm.IsFactoryAllowed(sigData.Factory, f.config.EIP6492AllowedFactories) {
+				return nil, x402.NewSettleError(ErrFactoryNotAllowed, verifyResp.Payer, network, "", "")
 			}
+
+			if err := f.deploySmartWallet(ctx, sigData); err != nil {
+				return nil, x402.NewSettleError(ErrSmartWalletDeploymentFailed, verifyResp.Payer, network, "", err.Error())
+			}
+
+			// Do NOT re-simulate the transfer here. The authoritative pre-check is the atomic
+			// deploy+transfer simulation in verify; a second standalone eth_call after the real
+			// deploy tx races the deploy's state propagation across load-balanced RPC nodes and
+			// false-rejected valid wallets. The on-chain transferWithAuthorization below is the
+			// definitive signature check; a genuinely unsupported inner signature reverts there
+			// and is classified by parseEIP3009TransferError.
 		}
 	}
 
@@ -305,7 +320,15 @@ func (f *ExactEvmSchemeV1) Settle(
 		return nil, x402.NewSettleError(ErrInvalidPayload, verifyResp.Payer, network, "", err.Error())
 	}
 
-	txHash, err := exactfacilitator.ExecuteTransferWithAuthorization(ctx, f.signer, tokenAddress, parsedAuthorization, sigData)
+	// V1 payloads carry no extensions, so the builder-code suffix can only contain the
+	// facilitator's own wallet code (`w`); client app (`a`) and service (`s`) codes are
+	// always absent. Empty context is intentional: PaymentPayloadV1 is not a v2 PaymentPayload.
+	dataSuffix, err := evm.ResolveDataSuffix(fctx, evm.DataSuffixContext{})
+	if err != nil {
+		return nil, x402.NewSettleError(ErrInvalidPayload, verifyResp.Payer, network, "", err.Error())
+	}
+
+	txHash, err := exactfacilitator.ExecuteTransferWithAuthorization(ctx, f.signer, tokenAddress, parsedAuthorization, sigData, dataSuffix)
 	if err != nil {
 		return nil, x402.NewSettleError(ErrTransactionFailed, verifyResp.Payer, network, "", err.Error())
 	}

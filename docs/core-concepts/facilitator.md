@@ -22,6 +22,18 @@ By using a facilitator, servers do not need to maintain direct blockchain connec
 
 The facilitator does not hold funds or act as a custodian - it performs verification and execution of onchain transactions based on signed payloads provided by clients.
 
+### Choosing a Facilitator Path
+
+There is no single facilitator deployment model for every x402 integration. In practice, most teams should choose one of three paths:
+
+| Goal | Recommended path |
+| ---- | ---------------- |
+| Fastest testnet or local quickstart | Use the public `x402.org` facilitator |
+| Managed production deployment | Use a production facilitator provider that supports your target network |
+| Full operational control | Run your own facilitator or [self-facilitate](https://github.com/x402-foundation/x402/tree/main/examples/typescript/servers/self-facilitation) inside your resource server |
+
+**Important:** the public `x402.org` facilitator is intended for development and testnet workflows. Do not assume it is the default path for production mainnet routes. For mainnet deployments, use a production facilitator that supports your network, run your own facilitator, or self-facilitate.
+
 ### Why Use a Facilitator?
 
 Using a facilitator provides:
@@ -34,7 +46,7 @@ While it is possible to implement verification and settlement locally, using a f
 
 ### Live Facilitators
 
-Multiple facilitators are live in production, supporting various networks including Base, Solana, Polygon, Avalanche, and more. For a complete and up-to-date list, see the [x402 Ecosystem](https://www.x402.org/ecosystem?filter=facilitators).
+Multiple facilitators are live in production, supporting various networks including Base, Solana, Polygon, Avalanche, and more. See [Facilitators](/dev-tools/facilitators) for selected production options.
 
 ### Interaction Flow
 
@@ -53,7 +65,7 @@ Multiple facilitators are live in production, supporting various networks includ
 
 ### Duplicate Settlement (Solana)
 
-On Solana, a race condition can occur when the same payment transaction is submitted to a facilitator's `/settle` endpoint multiple times before the first submission is confirmed on-chain. Because Solana's RPC returns "success" for duplicate submissions (the network deduplicates at the consensus level), the facilitator may return a successful settlement response for each call. A malicious client could exploit this to access multiple resources while only paying once.
+On Solana, a race condition can occur when the same payment transaction is submitted to a facilitator's `/settle` endpoint multiple times before the first submission is confirmed onchain. Because Solana's RPC returns "success" for duplicate submissions (the network deduplicates at the consensus level), the facilitator may return a successful settlement response for each call. A malicious client could exploit this to access multiple resources while only paying once.
 
 To mitigate this, the x402 SVM mechanism packages include a built-in `SettlementCache` — a short-lived, in-memory cache that detects and rejects duplicate settlement attempts for the same transaction payload. The cache requires no external storage and entries are automatically evicted after 120 seconds (approximately twice the Solana blockhash lifetime).
 
@@ -67,5 +79,5 @@ The facilitator acts as an independent verification and settlement layer within 
 
 Next, explore:
 
-* [Client / Server](/docs/core-concepts/client-server.md) — understand the roles and responsibilities of clients and servers
-* [HTTP 402](/docs/core-concepts/http-402.md) — understand how payment requirements are communicated to clients
+* [Client / Server](/core-concepts/client-server) — understand the roles and responsibilities of clients and servers
+* [HTTP 402](/core-concepts/http-402) — understand how payment requirements are communicated to clients

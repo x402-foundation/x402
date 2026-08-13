@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import {
+  findFacilitatorBySchemeAndNetwork,
   findByNetworkAndScheme,
   findSchemesByNetwork,
   deepEqual,
@@ -94,6 +95,30 @@ describe("Utils", () => {
 
       expect(result?.get("exact")).toBe("exactNetworkImpl");
     });
+
+    it("should escape regex metacharacters in network patterns", () => {
+      const map = new Map<string, Map<string, string>>();
+      const schemes = new Map<string, string>();
+      schemes.set("exact", "evmImpl");
+      map.set("eip155:8453.*", schemes);
+
+      const matching = findSchemesByNetwork(map, "eip155:8453.mainnet" as Network);
+      const nonMatching = findSchemesByNetwork(map, "eip155:8453xmainnet" as Network);
+
+      expect(matching?.get("exact")).toBe("evmImpl");
+      expect(nonMatching).toBeUndefined();
+    });
+
+    it("should handle multiple wildcard occurrences in network patterns", () => {
+      const map = new Map<string, Map<string, string>>();
+      const schemes = new Map<string, string>();
+      schemes.set("exact", "multiWildcardImpl");
+      map.set("eip155:*:*", schemes);
+
+      const result = findSchemesByNetwork(map, "eip155:8453:usdc" as Network);
+
+      expect(result?.get("exact")).toBe("multiWildcardImpl");
+    });
   });
 
   describe("findByNetworkAndScheme", () => {
@@ -137,6 +162,35 @@ describe("Utils", () => {
       const result = findByNetworkAndScheme(map, "exact", "eip155:8453" as Network);
 
       expect(result).toBe("evmImpl");
+    });
+  });
+
+  describe("findFacilitatorBySchemeAndNetwork", () => {
+    it("should escape regex metacharacters in facilitator patterns", () => {
+      const schemeMap = new Map([
+        [
+          "exact",
+          {
+            facilitator: "facilitator",
+            networks: new Set<Network>(),
+            pattern: "eip155:8453.*" as Network,
+          },
+        ],
+      ]);
+
+      const matching = findFacilitatorBySchemeAndNetwork(
+        schemeMap,
+        "exact",
+        "eip155:8453.base" as Network,
+      );
+      const nonMatching = findFacilitatorBySchemeAndNetwork(
+        schemeMap,
+        "exact",
+        "eip155:8453xbase" as Network,
+      );
+
+      expect(matching).toBe("facilitator");
+      expect(nonMatching).toBeUndefined();
     });
   });
 

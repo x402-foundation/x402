@@ -45,9 +45,9 @@ const client = new x402Client()
 
 ## Supported Networks
 
-Networks are identified via CAIP-2:
-- `algorand:wGHE2Pwdvd7S12BL5FaOP20EGYesN73ktiC1qzkkit8=` - Mainnet
-- `algorand:SGO1GKSzyE7IEPItTxCByw9x8FmnrCDexi9/cOUJOiI=` - Testnet
+Networks are identified via CAIP-2 per the [Algorand namespace profile](https://namespaces.chainagnostic.org/algorand/caip2):
+- `algorand:wGHE2Pwdvd7S12BL5FaOP20EGYesN73k` - Mainnet
+- `algorand:SGO1GKSzyE7IEPItTxCByw9x8FmnrCDe` - Testnet
 - `algorand:*` - Wildcard (matches all Algorand networks)
 
 ## Signer Implementation

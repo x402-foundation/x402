@@ -8,9 +8,9 @@ import (
 	"strconv"
 	"strings"
 
-	x402 "github.com/x402-foundation/x402/go"
-	"github.com/x402-foundation/x402/go/mechanisms/evm"
-	"github.com/x402-foundation/x402/go/types"
+	x402 "github.com/x402-foundation/x402/go/v2"
+	"github.com/x402-foundation/x402/go/v2/mechanisms/evm"
+	"github.com/x402-foundation/x402/go/v2/types"
 )
 
 // UptoEvmScheme implements the SchemeNetworkServer interface for EVM upto payments (V2).
@@ -27,6 +27,21 @@ func NewUptoEvmScheme() *UptoEvmScheme {
 
 func (s *UptoEvmScheme) Scheme() string {
 	return evm.SchemeUpto
+}
+
+// DefaultAssetTransferMethod returns the ATM used when extra.assetTransferMethod is absent.
+func (s *UptoEvmScheme) DefaultAssetTransferMethod() string {
+	return string(evm.AssetTransferMethodPermit2)
+}
+
+// PaymentFlows returns ATM-keyed payment flow support for upto EVM.
+func (s *UptoEvmScheme) PaymentFlows() map[string]x402.PaymentFlowConfig {
+	return map[string]x402.PaymentFlowConfig{
+		string(evm.AssetTransferMethodPermit2): {
+			Supported: []x402.PaymentFlowName{x402.PaymentFlowAuthorization},
+			Default:   x402.PaymentFlowAuthorization,
+		},
+	}
 }
 
 // GetAssetDecimals implements AssetDecimalsProvider. Returns the decimal precision for the

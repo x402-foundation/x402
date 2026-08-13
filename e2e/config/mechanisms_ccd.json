@@ -1,0 +1,32 @@
+{
+  "env": {
+    "SERVER_CCD_ADDRESS": { "required": true, "roles": ["server"] },
+    "CLIENT_CCD_PRIVATE_KEY": { "required": true, "roles": ["client"] },
+    "CLIENT_CCD_ADDRESS": { "required": true, "roles": ["client"] },
+    "FACILITATOR_CCD_PRIVATE_KEY": { "required": true, "roles": ["facilitator"] },
+    "FACILITATOR_CCD_ADDRESS": { "required": true, "roles": ["facilitator"] },
+    "CCD_WEATHER_PRICE_MICRO_CCD": { "required": false, "roles": ["server"] }
+  },
+  "testnet": {
+    "name": "Concordium Testnet",
+    "caip2": "ccd:4221332d34e1694168c2a0c0b3fd0f27",
+    "rpcUrlDefault": "grpc.testnet.concordium.com:20000"
+  },
+  "mainnet": {
+    "name": "Concordium Mainnet",
+    "caip2": "ccd:9dd9ca4d19e9393877d2c44b70f89acb",
+    "rpcUrlDefault": "grpc.mainnet.concordium.software:20000"
+  },
+  "routes": {
+    "/exact/ccd": {
+      "scheme": "exact",
+      "sdks": ["typescript"],
+      "price": {
+        "amount": "1000",
+        "amountEnv": "CCD_WEATHER_PRICE_MICRO_CCD",
+        "asset": "CCD"
+      },
+      "extensions": ["bazaar"]
+    }
+  }
+}

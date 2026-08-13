@@ -1,10 +1,12 @@
 .env
 .env.local
+.env~
+.env.local~
 node_modules/
 dist/
 .turbo/
 .next/
-proxy
+next-env.d.ts
 .env
 __pycache__/
 **/.DS_Store
@@ -12,28 +14,39 @@ e2e/facilitators/external-proxies/*
 !e2e/facilitators/external-proxies/README.md
 typescript/package-lock.json
 .pnpm-store/
+cdk.out/
 
 # e2e Go build artifacts (compiled binaries)
-e2e/clients/go-http/client
-e2e/clients/go-http/go-http
-e2e/clients/go-http/main
-e2e/clients/mcp-go/mcp-client
-e2e/clients/mcp-go/mcp-go
+e2e/clients/go/http/go-http/go-http
+e2e/clients/go/mcp/mcp
+e2e/clients/go/mcp/mcp-go
 e2e/facilitators/go/facilitator
 e2e/facilitators/go/go
-e2e/servers/echo/echo
-e2e/servers/gin/gin
-e2e/servers/gin/server
-e2e/servers/nethttp/nethttp
-e2e/servers/mcp-go/mcp-go
-e2e/servers/mcp-go/mcp-server
-e2e/legacy/servers/gin/gin
+e2e/servers/go/http/echo/echo
+e2e/servers/go/http/gin/gin
+e2e/servers/go/http/nethttp/nethttp
+e2e/servers/go/mcp/mcp
+e2e/servers/go/mcp/mcp-go
+e2e/legacy/servers/go/http/gin/gin
+go/legacy/bin/proxy
 
 # Example build artifacts
 examples/go/servers/upto/upto
+examples/go/clients/batch-settlement/batch-settlement
+examples/go/servers/batch-settlement/batch-settlement
+examples/go/facilitator/batch-settlement/batch-settlement
+examples/go/servers/builder-codes/builder-codes
+examples/go/facilitator/builder-codes/builder-codes
+examples/go/clients/builder-codes/builder-codes
+
+# Generated setup-script output (smart-account addresses per run)
+typescript/packages/mechanisms/evm/scripts/setup-smart-accounts.log
 
 # Agent artifacts
 TASK.md
 .claude/
-skills/
 REVIEW_PROMPT.md
+.omx/
+.omc/
+/demo/
+/contracts/tvm/

@@ -20,9 +20,6 @@ TX_STATUS_FAILED = 0
 # Default validity period (1 hour in seconds)
 DEFAULT_VALIDITY_PERIOD = 3600
 
-# Default validity buffer (10 minutes before now for clock skew)
-DEFAULT_VALIDITY_BUFFER = 600
-
 # ERC-6492 magic value (32 bytes)
 # bytes32(uint256(keccak256("erc6492.invalid.signature")) - 1)
 ERC6492_MAGIC_VALUE = bytes.fromhex(
@@ -193,6 +190,12 @@ EIP2612_PERMIT_TYPES: dict[str, list[dict[str, str]]] = {
 # Gas limit for a standard ERC-20 approve() transaction
 ERC20_APPROVE_GAS_LIMIT = 70_000
 
+# Fallback max fee per gas (1 gwei) when fee estimation fails
+DEFAULT_MAX_FEE_PER_GAS = 1_000_000_000
+
+# Fallback max priority fee per gas (0.1 gwei) when fee estimation fails
+DEFAULT_MAX_PRIORITY_FEE_PER_GAS = 100_000_000
+
 # Permit2 deadline buffer (seconds) for verification
 PERMIT2_DEADLINE_BUFFER = 6
 
@@ -316,9 +319,11 @@ X402_UPTO_PERMIT2_PROXY_SETTLE_WITH_PERMIT_ABI = [
 ]
 
 # Error codes
+ERR_ASSET_NOT_DEPLOYED_CONTRACT = "asset_not_deployed_contract"
 ERR_INVALID_SIGNATURE = "invalid_exact_evm_payload_signature"
 ERR_UNDEPLOYED_SMART_WALLET = "invalid_exact_evm_payload_undeployed_smart_wallet"
 ERR_SMART_WALLET_DEPLOYMENT_FAILED = "smart_wallet_deployment_failed"
+ERR_FACTORY_NOT_ALLOWED = "eip6492_factory_not_allowed"
 ERR_RECIPIENT_MISMATCH = "invalid_exact_evm_payload_recipient_mismatch"
 ERR_AUTHORIZATION_VALUE_MISMATCH = "invalid_exact_evm_payload_authorization_value_mismatch"
 ERR_VALID_BEFORE_EXPIRED = "invalid_exact_evm_payload_authorization_valid_before"
@@ -336,6 +341,7 @@ ERR_TOKEN_NAME_MISMATCH = "invalid_exact_evm_token_name_mismatch"
 ERR_TOKEN_VERSION_MISMATCH = "invalid_exact_evm_token_version_mismatch"
 ERR_EIP3009_NOT_SUPPORTED = "invalid_exact_evm_eip3009_not_supported"
 ERR_TRANSACTION_SIMULATION_FAILED = "invalid_exact_evm_transaction_simulation_failed"
+ERR_TRANSFER_EVENT_MISMATCH = "invalid_exact_evm_transfer_event_mismatch"
 
 # Permit2-specific error codes
 ERR_PERMIT2_INVALID_SPENDER = "invalid_permit2_spender"
@@ -429,9 +435,21 @@ NETWORK_CONFIGS: dict[str, NetworkConfig] = {
         "chain_id": 143,
         "default_asset": {
             "address": "0x754704Bc059F8C67012fEd69BC8A327a5aafb603",
-            "name": "USD Coin",
+            "name": "USDC",
             "version": "2",
             "decimals": 6,
+        },
+    },
+    # Mezo Mainnet (uses Permit2 instead of EIP-3009, supports EIP-2612)
+    "eip155:31612": {
+        "chain_id": 31612,
+        "default_asset": {
+            "address": "0xdD468A1DDc392dcdbEf6db6e34E89AA338F9F186",
+            "name": "Mezo USD",
+            "version": "1",
+            "decimals": 18,
+            "asset_transfer_method": "permit2",
+            "supports_eip2612": True,
         },
     },
     # Mezo Testnet (uses Permit2 instead of EIP-3009, supports EIP-2612)
@@ -500,6 +518,121 @@ NETWORK_CONFIGS: dict[str, NetworkConfig] = {
         "default_asset": {
             "address": "0x75faf114eafb1BDbe2F0316DF893fd58CE46AA4d",
             "name": "USD Coin",
+            "version": "2",
+            "decimals": 6,
+        },
+    },
+    # Radius Network (uses Permit2 instead of EIP-3009, supports EIP-2612)
+    "eip155:723487": {
+        "chain_id": 723487,
+        "default_asset": {
+            "address": "0x33ad9e4BD16B69B5BFdED37D8B5D9fF9aba014Fb",
+            "name": "Stable Coin",
+            "version": "1",
+            "decimals": 6,
+            "asset_transfer_method": "permit2",
+            "supports_eip2612": True,
+        },
+    },
+    # Radius Testnet (uses Permit2 instead of EIP-3009, supports EIP-2612)
+    "eip155:72344": {
+        "chain_id": 72344,
+        "default_asset": {
+            "address": "0x33ad9e4BD16B69B5BFdED37D8B5D9fF9aba014Fb",
+            "name": "Stable Coin",
+            "version": "1",
+            "decimals": 6,
+            "asset_transfer_method": "permit2",
+            "supports_eip2612": True,
+        },
+    },
+    # ADI Chain
+    "eip155:36900": {
+        "chain_id": 36900,
+        "default_asset": {
+            "address": "0x9cb8142aEBBcdc60AF7c97Af897A67A8f3CA71C2",
+            "name": "USDC.e",
+            "version": "2",
+            "decimals": 6,
+        },
+    },
+    # HPP Mainnet
+    "eip155:190415": {
+        "chain_id": 190415,
+        "default_asset": {
+            "address": "0x401eCb1D350407f13ba348573E5630B83638E30D",
+            "name": "Bridged USDC",
+            "version": "2",
+            "decimals": 6,
+        },
+    },
+    # HPP Sepolia
+    "eip155:181228": {
+        "chain_id": 181228,
+        "default_asset": {
+            "address": "0x401eCb1D350407f13ba348573E5630B83638E30D",
+            "name": "Bridged USDC",
+            "version": "2",
+            "decimals": 6,
+        },
+    },
+    # XDC Network Mainnet
+    "eip155:50": {
+        "chain_id": 50,
+        "default_asset": {
+            "address": "0xfA2958CB79b0491CC627c1557F441eF849Ca8eb1",
+            "name": "USDC",
+            "version": "2",
+            "decimals": 6,
+        },
+    },
+    # XDC Apothem Testnet
+    "eip155:51": {
+        "chain_id": 51,
+        "default_asset": {
+            "address": "0xb5AB69F7bBada22B28e79C8FFAECe55eF1c771D4",
+            "name": "USDC",
+            "version": "2",
+            "decimals": 6,
+        },
+    },
+    # Igra Mainnet (uses Permit2 instead of EIP-3009, no EIP-2612)
+    "eip155:38833": {
+        "chain_id": 38833,
+        "default_asset": {
+            "address": "0xA5b8BF902b2844dA17d4506cc827F7F1681735E7",
+            "name": "USDC",
+            "version": "1",
+            "decimals": 6,
+            "asset_transfer_method": "permit2",
+        },
+    },
+    # Flare Mainnet
+    "eip155:14": {
+        "chain_id": 14,
+        "default_asset": {
+            "address": "0xe7cd86e13AC4309349F30B3435a9d337750fC82D",
+            "name": "USD₮0",
+            "version": "1",
+            "decimals": 6,
+        },
+    },
+    # Celo Mainnet
+    "eip155:42220": {
+        "chain_id": 42220,
+        "default_asset": {
+            "address": "0xcebA9300f2b948710d2653dD7B07f33A8B32118C",
+            "name": "USDC",
+            "version": "2",
+            "decimals": 6,
+        },
+    },
+    # Celo Sepolia (Testnet)
+    "eip155:11142220": {
+        "chain_id": 11142220,
+        "default_asset": {
+            "address": "0x01C5C0122039549AD1493B8220cABEdD739BC44E",
+            "name": "USDC",
             "version": "2",
             "decimals": 6,
         },

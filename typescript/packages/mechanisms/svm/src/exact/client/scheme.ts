@@ -4,7 +4,6 @@ import {
 } from "@solana-program/compute-budget";
 import { TOKEN_PROGRAM_ADDRESS } from "@solana-program/token";
 import {
-  fetchMint,
   findAssociatedTokenPda,
   getTransferCheckedInstruction,
   TOKEN_2022_PROGRAM_ADDRESS,
@@ -29,13 +28,15 @@ import {
 } from "../../constants";
 import type { ClientSvmConfig, ClientSvmSigner } from "../../signer";
 import type { ExactSvmPayloadV2 } from "../../types";
-import { createRpcClient } from "../../utils";
+import { createRpcClient, resolveBlockhash } from "../../utils";
+import { getCachedMintMetadata, type MintMetadataCache } from "../../mint-cache";
 
 /**
  * SVM client implementation for the Exact payment scheme.
  */
 export class ExactSvmScheme implements SchemeNetworkClient {
   readonly scheme = "exact";
+  private readonly mintCache: MintMetadataCache = new Map();
 
   /**
    * Creates a new ExactSvmClient instance.
@@ -62,8 +63,13 @@ export class ExactSvmScheme implements SchemeNetworkClient {
   ): Promise<Pick<PaymentPayload, "x402Version" | "payload">> {
     const rpc = createRpcClient(paymentRequirements.network, this.config?.rpcUrl);
 
-    const tokenMint = await fetchMint(rpc, paymentRequirements.asset as Address);
-    const tokenProgramAddress = tokenMint.programAddress;
+    const mintMetadata = await getCachedMintMetadata(
+      rpc,
+      paymentRequirements.network,
+      paymentRequirements.asset as Address,
+      this.mintCache,
+    );
+    const tokenProgramAddress = mintMetadata.programAddress;
 
     if (
       tokenProgramAddress.toString() !== TOKEN_PROGRAM_ADDRESS.toString() &&
@@ -91,7 +97,7 @@ export class ExactSvmScheme implements SchemeNetworkClient {
         destination: destinationATA,
         authority: this.signer,
         amount: BigInt(paymentRequirements.amount),
-        decimals: tokenMint.data.decimals,
+        decimals: mintMetadata.decimals,
       },
       { programAddress: tokenProgramAddress },
     );
@@ -102,7 +108,7 @@ export class ExactSvmScheme implements SchemeNetworkClient {
       throw new Error("feePayer is required in paymentRequirements.extra for SVM transactions");
     }
 
-    const { value: latestBlockhash } = await rpc.getLatestBlockhash().send();
+    const latestBlockhash = await resolveBlockhash(rpc, paymentRequirements);
 
     const sellerMemo = paymentRequirements.extra?.memo as string | undefined;
     let memoData: Uint8Array;

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import timedelta
+import time
 from typing import Any
 
 from ....schemas import PaymentRequirements
@@ -16,7 +16,6 @@ from ..signer import (
 from ..types import ExactEIP3009Authorization, ExactEIP3009Payload, TypedDataField
 from ..utils import (
     create_nonce,
-    create_validity_window,
     get_asset_info,
     get_evm_chain_id,
     normalize_address,
@@ -25,11 +24,11 @@ from .permit2_utils import create_permit2_payload
 
 
 def _wrap_if_local_account(signer: Any) -> ClientEvmSigner:
-    """Auto-wrap eth_account LocalAccount in EthAccountSigner if needed."""
+    """Auto-wrap an eth_account-compatible signer (any BaseAccount) in EthAccountSigner."""
     try:
-        from eth_account.signers.local import LocalAccount
+        from eth_account.signers.base import BaseAccount
 
-        if isinstance(signer, LocalAccount):
+        if isinstance(signer, BaseAccount):
             from ..signers import EthAccountSigner
 
             return EthAccountSigner(signer)
@@ -94,16 +93,16 @@ class ExactEvmScheme:
             return result
 
         nonce = create_nonce()
-        valid_after, valid_before = create_validity_window(
-            timedelta(seconds=requirements.max_timeout_seconds or 3600)
-        )
+        now = int(time.time())
+        valid_after = "0"
+        valid_before = str(now + (requirements.max_timeout_seconds or 3600))
 
         authorization = ExactEIP3009Authorization(
             from_address=self._signer.address,
             to=requirements.pay_to,
             value=requirements.amount,
-            valid_after=str(valid_after),
-            valid_before=str(valid_before),
+            valid_after=valid_after,
+            valid_before=valid_before,
             nonce=nonce,
         )
 

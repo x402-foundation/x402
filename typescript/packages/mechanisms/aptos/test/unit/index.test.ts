@@ -8,6 +8,7 @@ import {
   APTOS_ADDRESS_REGEX,
   TRANSFER_FUNCTION,
   MAX_GAS_AMOUNT,
+  MAX_GAS_UNIT_PRICE,
   getAptosNetwork,
   getAptosRpcUrl,
   getAptosChainId,
@@ -28,6 +29,7 @@ describe("@x402/aptos", () => {
       expect(APTOS_ADDRESS_REGEX).toBeDefined();
       expect(TRANSFER_FUNCTION).toBe("0x1::primary_fungible_store::transfer");
       expect(MAX_GAS_AMOUNT).toBe(500000n);
+      expect(MAX_GAS_UNIT_PRICE).toBe(1000n);
     });
 
     it("should export utility functions", () => {
