@@ -1587,11 +1587,138 @@ The facilitator remains the expected caller for convenience (they maintain the M
 
 ---
 
-## 10. Facilitator API Extensions
+## 10. Facilitator API
 
-Subscribe, cancel, and update-root operations flow through the standard `/verify` and `/settle` endpoints using the `action` field in the payload. Status queries are non-normative facilitator conveniences.
+The `subscribe` scheme uses the standard V2 facilitator interface. No new normative endpoints are introduced; the `payload.action` field dispatches behavior within `/verify` and `/settle`.
 
-> **Note:** Full facilitator API documentation will be specified in a subsequent commit.
+### 10.1 Endpoint Summary
+
+| Endpoint | Method | Purpose |
+|:---------|:-------|:--------|
+| `/verify` | POST | Validate payload structure, signatures, and terms; return verification result |
+| `/settle` | POST | Execute on-chain transaction(s) for the action; return settlement result |
+| `/supported` | GET | Advertise scheme support (see §10.5) |
+
+### 10.2 Action: `subscribe`
+
+**`/verify` Steps (in order):**
+
+1. **Commitment signature**: Verify the EIP-712 `commitmentSignature` recovers to `commitment.subscriber`
+2. **Terms match requirements**: Confirm `commitment.{asset, payTo, registry, chainId, tierId}` match the corresponding `PaymentRequirements` fields
+3. **Schedule/root recomputation**: Rebuild the Merkle tree from the `schedule` array; confirm computed root equals `commitment.root`
+4. **Allowance path validity**:
+   - If `allowanceMethod` is `"eip2612-permit"`: validate the permit signature parameters (owner, spender, value, deadline)
+   - If `allowanceMethod` is `"direct-approve"`: confirm on-chain allowance >= total committed spend
+5. **Simulation**: Dry-run `subscribe()` call on registry; confirm it would succeed
+
+**`/settle` Steps:**
+
+1. If `allowanceMethod` is `"eip2612-permit"`: execute `permit()` on the token contract
+2. Execute `registry.subscribe(commitment, signature, initialLeaf?, initialProof?)` on-chain
+3. Return `SettlementResponse` with `subscriptionId`, `transaction`, status
+
+### 10.3 Action: `cancel`
+
+**`/verify` Steps:**
+
+1. **Subscription exists**: Confirm `getSubscription(subscriptionId).subscriber != address(0)`
+2. **Signature check**: Verify the EIP-712 `signature` over `CancelSubscription(subscriptionId, nonce)` recovers to the stored subscriber
+3. **Nonce unused**: Confirm `usedCancelNonces[subscriptionId][nonce] == false`
+4. **Not already cancelled**: Confirm `subscription.cancelled == false`
+
+**`/settle` Steps:**
+
+1. Execute `registry.cancel(subscriptionId, nonce, signature)` on-chain
+2. Return `SettlementResponse` with cancellation confirmation
+
+### 10.4 Action: `update-root`
+
+**`/verify` Steps:**
+
+1. **Previous subscription exists**: Confirm `getSubscription(previousSubscriptionId).subscriber != address(0)`
+2. **Subscriber match**: Confirm `previousSubscription.subscriber == newCommitment.subscriber`
+3. **New commitment signature**: Verify the EIP-712 `commitmentSignature` over `newCommitment` recovers to `newCommitment.subscriber`
+4. **Terms match requirements**: Same as `subscribe` action
+5. **Schedule/root recomputation**: Same as `subscribe` action
+6. **Allowance path validity**: Same as `subscribe` action
+7. **Simulation**: Dry-run `updateRoot()` call
+
+**`/settle` Steps:**
+
+1. If gasless allowance: execute permit
+2. Execute `registry.updateRoot(oldSubscriptionId, newCommitment, signature)` on-chain
+3. Return `SettlementResponse` with new `subscriptionId`
+
+### 10.5 GET /supported
+
+Facilitators supporting the `subscribe` scheme MUST include the following in their `/supported` response:
+
+```json
+{
+  "supported": [
+    {
+      "x402Version": 2,
+      "scheme": "subscribe",
+      "network": "eip155:8453"
+    }
+  ],
+  "extensions": ["subscription"]
+}
+```
+
+The `extensions` array indicates support for the `subscription` extension used for access verification.
+
+### 10.6 Recurring Charges (Operational Guidance)
+
+Periodic charges are NOT submitted via the facilitator API — they are direct on-chain transactions. The facilitator's role is **operational**, not protocol-mandated:
+
+**Scheduler responsibilities:**
+
+1. Maintain the Merkle tree and proofs off-chain (constructed from the `schedule` array at subscription time)
+2. Monitor billing boundaries (each leaf's `validFrom` timestamp)
+3. At each boundary, submit `registry.chargePeriod(subscriptionId, leaf, proof)` on-chain
+4. Handle grace period retries if initial charge fails (retry within `validTo + gracePeriodSeconds`)
+
+**Permissionless fallback:** Because `chargePeriod()` is permissionless, the facilitator is the *expected* but not *exclusive* operator. If the facilitator fails:
+
+- The payTo address can submit charges to collect revenue
+- The subscriber can submit charges to maintain active status
+- Any third party with the Merkle proofs can submit charges
+
+This design ensures liveness does not depend on a single operator's availability.
+
+---
+
+## Appendix A: Facilitator Conveniences (Non-Normative)
+
+The following endpoints are common facilitator implementations but are NOT part of the x402 protocol. Implementations MAY vary.
+
+### A.1 GET /subscription/{subscriptionId}
+
+Returns current subscription status for monitoring dashboards or client UIs.
+
+```json
+{
+  "subscriptionId": "0xabcdef...",
+  "subscriber": "0x857b06519E91e3A54538791bDbb0E22373e36b66",
+  "tierId": "pro",
+  "status": "active",
+  "cursor": 3,
+  "currentPeriodStart": 1748448089,
+  "currentPeriodEnd": 1751040089,
+  "expiry": 1772208089,
+  "inGracePeriod": false,
+  "cancelled": false
+}
+```
+
+### A.2 GET /subscriptions?subscriber={address}
+
+Lists all subscriptions for a subscriber address. Useful for wallet integrations.
+
+### A.3 POST /charge (Facilitator-initiated)
+
+Some facilitators expose an internal endpoint to trigger immediate charge attempts. This is an implementation detail for scheduler integration, not a protocol requirement.
 
 ---
 
