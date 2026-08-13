@@ -741,9 +741,9 @@ verifySIWxSignature(payload, {
 // Returns: { isValid: true; payer: string } | { isValid: false; invalidReason: SIWxVerifyCode; invalidMessage: string }
 ```
 
-### `createSIWxPayload(serverInfo, signer)`
+### `createSIWxPayload(serverInfo, signer, requestUrl)`
 
-Client helper that creates and signs a complete payload.
+Client helper that creates and signs a complete payload. `requestUrl` is the final URL of the 402 response (after redirects) and is required — signing is refused when the challenge `domain` or `uri` origin does not match that URL's origin.
 
 ### `encodeSIWxHeader(payload)`
 
