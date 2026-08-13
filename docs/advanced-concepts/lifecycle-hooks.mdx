@@ -210,12 +210,14 @@ Register hooks for HTTP-specific request handling before payment processing. Use
 
 ### x402Client (Transport-agnostic)
 
-Register hooks on the core client for payment payload creation lifecycle events. Common use cases include enforcing spending limits, requiring approval for large payments or logging outgoing transactions.
+Register hooks on the core client for payment payload creation lifecycle events. Common use cases include requiring interactive approval for large payments or logging outgoing transactions.
 
 * **onBeforePaymentCreation** — Runs before creating a payment payload. Return `{ abort: true, reason }` to cancel.
 * **onAfterPaymentCreation** — Runs after successful payload creation.
 * **onPaymentCreationFailure** — Runs on failure. Return `{ recovered: true, payload }` to provide fallback.
 * **onPaymentResponse** — Runs after a paid request completes. Return `{ recovered: true }` to tell the transport to retry with a fresh payload.
+
+For static USD caps and asset allowlists, use [`spendControls`](/getting-started/quickstart-for-buyers#spend-controls) on the client config — it runs before hooks and is the preferred way to enforce spend limits. Use `onBeforePaymentCreation` for dynamic or interactive checks (e.g. prompting the user for approval).
 
 <Tabs>
   <Tab title="TypeScript">
@@ -225,11 +227,11 @@ Register hooks on the core client for payment payload creation lifecycle events.
     const client = new x402Client();
 
     client.onBeforePaymentCreation(async (context) => {
-      const maxAmount = BigInt("10000000"); // 10 USDC
-      const requestedAmount = BigInt(context.selectedRequirements.amount);
-
-      if (requestedAmount > maxAmount) {
-        return { abort: true, reason: "Payment exceeds spending limit" };
+      // Use this hook for interactive or dynamic checks.
+      // For static USD caps and asset allowlists, use spendControls instead.
+      const approved = await promptUser(context.selectedRequirements);
+      if (!approved) {
+        return { abort: true, reason: "User declined payment" };
       }
     });
     ```
