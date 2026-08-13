@@ -157,3 +157,9 @@ This page tracks which features are implemented in each SDK (TypeScript, Go, Pyt
 | dynamicPayTo | ✅ | ✅ | ✅ |
 | dynamicPrice | ✅ | ✅ | ✅ |
 | paywall (browser UI) | ✅ | ✅ | ✅ |
+
+## Client Safety Features
+
+| Feature | TypeScript | Go | Python |
+|---------|------------|-----|--------|
+| spendControls (asset allowlist + USD cap) | ✅ | ❌ | ❌ |
