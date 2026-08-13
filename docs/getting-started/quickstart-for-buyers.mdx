@@ -680,6 +680,36 @@ You can register multiple payment schemes to handle different networks:
   </Tab>
 </Tabs>
 
+### Spend Controls
+
+By default, the x402 client only pays recognized USD-pegged assets (e.g. USDC) and caps each payment at **$1**. You can adjust these limits when creating the client:
+
+```typescript
+import { x402Client } from "@x402/core/client";
+import { ExactEvmScheme } from "@x402/evm/exact/client";
+
+const client = x402Client.fromConfig({
+  schemes: [
+    { network: "eip155:*", client: new ExactEvmScheme(signer) },
+  ],
+  spendControls: {
+    maxAmountPerPayment: "$5",          // raise the USD cap (default: "$1")
+    allowedAssets: [
+      // opt into a non-default token with an atomic cap
+      { network: "eip155:8453", asset: "0xCustomToken", maxAmountPerPayment: "2000000" },
+    ],
+  },
+});
+```
+
+| Option | Description |
+|--------|-------------|
+| `spendControls: false` | Disable all spend controls — any asset, no caps. |
+| `maxAmountPerPayment` | USD ceiling on recognized USD-pegged assets. Default is `"$1"`. Set to `false` to remove the cap. |
+| `allowedAssets` | Opt into non-default tokens. Omit for default assets only; `true` to allow any asset; or a list of `{ network, asset }` entries with an optional atomic `maxAmountPerPayment` per entry. |
+
+Spend controls run before any custom policies and before the payment payload is signed. For interactive approval flows (e.g. prompting the user), use [`onBeforePaymentCreation`](/advanced-concepts/lifecycle-hooks) hooks instead.
+
 ### Payment Schemes
 
 The examples above use the simplest fixed-price scheme. If a resource advertises a different scheme in its 402 response, register that scheme for the same network namespace:
