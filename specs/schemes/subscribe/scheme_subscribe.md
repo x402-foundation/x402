@@ -57,7 +57,7 @@ The client selects a subscription tier and:
 
 1. **Builds the Merkle schedule** from the advertised terms (see [Merkle Schedule Commitment](#merkle-schedule-commitment))
 2. **Signs an EIP-712 commitment** binding the schedule root, subscriber, asset, payTo, registry, chainId, tierId, start, expiry, and maxPerPeriod
-3. **Establishes a standing ERC-20 allowance** to the registry (gaslessly via EIP-2612 permit or Permit2, submitted by the facilitator)
+3. **Establishes a standing ERC-20 allowance** to the registry (gaslessly via EIP-2612 permit, submitted by the facilitator)
 
 ### Phase 3: Access with Subscription Proof
 
@@ -133,15 +133,11 @@ After `expiry` timestamp or a recorded `cancel`, no further charges are valid re
 
 ## Trust Model
 
-The facilitator is trusted for **liveness only**: it operates the Merkle tree and proofs off-chain and submits charges on-chain. The facilitator has **no safety authority** — it cannot:
-
-- Overcharge (fee <= maxPerPeriod, fee matches leaf, cursor is monotonic)
-- Charge early (before validFrom) or late (after validTo + gracePeriodSeconds)
-- Charge past expiry or cancel (hard on-chain checks)
-- Redirect funds (payTo/asset/registry bound in commitment)
-- Double-charge (cursor increments only on successful transfer)
+The facilitator is trusted for **liveness only**: it operates the Merkle tree and proofs off-chain and submits charges on-chain. The facilitator has **no safety authority** — it cannot overcharge, charge early/late, charge past expiry/cancel, redirect funds, or double-charge.
 
 **Facilitator compromise degrades to denial of service, never theft beyond the signed schedule.**
+
+For detailed security analysis (per-attack enumeration, replay prevention, allowance exposure, extension threat model, grace-period edge cases), see [`scheme_subscribe_evm.md` §11](./scheme_subscribe_evm.md#11-security-considerations).
 
 ## Merkle Schedule Commitment
 
@@ -202,7 +198,7 @@ The `subscriptionId` is the keccak256 hash of the ABI-encoded commitment struct,
 The client establishes an ERC-20 allowance from `subscriber` to `registry` for the total committed spend. Gasless options:
 
 - **EIP-2612 Permit**: Client signs a permit; facilitator submits it bundled with `subscribe()`
-- **Permit2**: Client signs a Permit2 allowance; facilitator submits via the Permit2 contract
+- **Permit2** (future): Deferred to a future version; see EVM network doc §2.3
 
 The allowance SHOULD equal the sum of all `fee` values in the schedule. This makes the allowance itself an on-chain aggregate cap — when it depletes, charges fail.
 
@@ -505,7 +501,7 @@ Facilitators and resource servers MUST perform the following verification steps:
 ### Initial Subscription Settlement
 
 1. Verify the EIP-712 commitment signature
-2. If gasless allowance: execute the bundled EIP-2612 permit or Permit2 approval
+2. If gasless allowance: execute the bundled EIP-2612 permit
 3. Execute `subscribe(commitment, signature)` on the registry
 4. Registry stores commitment, sets `cursor = 0`, records `start` and `expiry`
 5. Optionally charge period 0 immediately (or defer to first `chargePeriod` call)

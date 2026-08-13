@@ -621,7 +621,7 @@ Replay of a captured proof is bounded by `maxProofAge` (RECOMMENDED 60 seconds):
 
 For stricter single-use semantics, servers MAY maintain a short-lived `(issuedAt, signature)` cache (TTL = `maxProofAge`) and reject duplicates. This is optional — freshness alone provides strong replay resistance for most use cases.
 
-**Contrast with previous draft:** An earlier draft used a `cycle` field to produce a proof valid for an entire billing period (up to 30 days). This was a static bearer token: anyone who intercepted it could replay indefinitely within the cycle. Freshness via `issuedAt` is the fix — the signature removal in the interim commit was not the intended resolution.
+See §11.10 for comprehensive extension threat model including forgery, clock skew, and audience scoping analysis.
 
 > **Non-normative:** Servers MAY exchange one verified possession proof for their own session credential (cookie, API key, JWT) to avoid per-request wallet signing for human clients. This is a server-side optimization outside the x402 protocol scope.
 
@@ -1729,55 +1729,190 @@ Some facilitators expose an internal endpoint to trigger immediate charge attemp
 The facilitator is trusted for **liveness only**:
 
 - **Liveness**: The facilitator maintains the Merkle tree off-chain and submits `chargePeriod()` calls at billing boundaries. If the facilitator fails, charges don't happen — but `chargePeriod()` is permissionless, so any party (subscriber, payTo, third party) can submit valid proofs.
-- **Safety**: The facilitator has no safety authority. It cannot overcharge (fee ≤ maxPerPeriod, fee matches Merkle leaf, cursor is monotonic), charge early (before validFrom), charge late (after validTo + gracePeriodSeconds), charge past expiry/cancel (hard on-chain checks), redirect funds (payTo/asset bound in commitment), or double-charge (cursor increments only on successful transfer).
+- **Safety**: The facilitator has no safety authority over fund flows.
+
+**Per-attack enumeration:**
+
+| Attack Vector | On-Chain Mitigation |
+|:--------------|:--------------------|
+| **Overcharge** | `fee <= maxPerPeriod` enforced; fee must match Merkle leaf; cursor is monotonic (one charge per period) |
+| **Early charge** | `block.timestamp >= validFrom` required |
+| **Late charge** | `block.timestamp <= validTo + gracePeriodSeconds` required |
+| **Double charge** | Cursor increments only on successful `transferFrom`; `periodIndex == cursor` required |
+| **Charge past expiry** | `block.timestamp <= expiry` required |
+| **Charge after cancel** | `!cancelled` required |
+| **Redirect funds** | `payTo` bound in signed commitment; stored immutably |
+| **Wrong asset** | `asset` bound in signed commitment; checked at registration |
+| **Cross-chain replay** | `chainId` bound in commitment; `commitment.chainId == block.chainid` checked |
+| **Wrong registry** | `registry` bound in commitment; `commitment.registry == address(this)` checked |
 
 **Facilitator compromise degrades to denial of service, never theft beyond the signed schedule.**
 
-### 11.2 Replay Attack Prevention
+### 11.2 Blind-Signing Prevention (MUST)
 
-- **Commitment uniqueness**: Each commitment produces a unique `subscriptionId` (the struct hash). Duplicate commitments are rejected.
-- **Monotonic cursor**: `chargePeriod()` requires `periodIndex == cursor` and increments cursor on success. Each period can be charged at most once.
-- **Cancellation nonces**: `cancel()` uses signer-chosen nonces recorded in a mapping. Each `(subscriptionId, nonce)` pair can only be used once.
-- **Cross-chain protection**: The commitment binds `chainId`; replay on other chains fails.
+Clients MUST recompute the Merkle root from the advertised `schedule` array before signing the commitment. Blind-signing a facilitator-provided root would allow arbitrary charges up to `maxPerPeriod × periodCount`.
 
-### 11.3 Allowance Exposure
+**Implementation requirement:** Client libraries MUST:
 
-The subscriber grants a standing ERC-20 allowance to the registry. The worst-case exposure is bounded by:
+1. Build the Merkle tree locally from `subscriptionDetails`
+2. Compute the root using the double-hash leaf convention
+3. Reject any payload where `commitment.root` does not match the locally computed root
+4. Display the total committed spend (`sum(schedule[].fee)`) for user confirmation
 
-1. **Allowance amount**: The subscriber controls the allowance; setting it equal to total committed spend caps total exposure.
+### 11.3 Replay Attack Prevention
+
+**Commitment domain separation:**
+
+- The EIP-712 domain binds `{name: "x402SubscriptionRegistry", version: "1", chainId, verifyingContract}`
+- The `subscriptionId` is the commitment struct hash — unique per `(root, subscriber, asset, payTo, registry, chainId, tierId, start, expiry, maxPerPeriod, gracePeriodSeconds)` tuple
+- Duplicate commitments are rejected (`SubscriptionAlreadyExists`)
+
+**Merkle leaf double-hashing:**
+
+Leaves use the OpenZeppelin convention: `keccak256(keccak256(abi.encode(periodIndex, fee, validFrom, validTo)))`. The inner hash prevents second-preimage attacks where an attacker crafts a leaf that is also a valid internal node.
+
+**Monotonic cursor:**
+
+`chargePeriod()` requires `periodIndex == cursor` and increments cursor only on successful transfer. Each period can be charged at most once, in order.
+
+**Cancellation nonces:**
+
+`cancel()` uses signer-chosen nonces recorded in `usedCancelNonces[subscriptionId][nonce]`. Each `(subscriptionId, nonce)` pair can only be used once.
+
+**Cross-chain protection:**
+
+The commitment binds `chainId`; the registry verifies `commitment.chainId == block.chainid`. Replay on other chains fails.
+
+### 11.4 Allowance Exposure
+
+The subscriber grants a standing ERC-20 allowance to the registry. Worst-case exposure is bounded by:
+
+1. **Allowance amount**: The subscriber controls the allowance; setting it equal to total committed spend caps exposure.
 2. **maxPerPeriod**: Each charge is capped regardless of the Merkle leaf claim.
 3. **Merkle root binding**: Only leaves matching the signed root can be charged.
-4. **Time windows**: Charges outside `validFrom..validTo` revert.
+4. **Time windows**: Charges outside `[validFrom, validTo + gracePeriodSeconds]` revert.
 5. **Expiry**: No charges after `expiry` timestamp.
 
-### 11.4 Guardian Pause Scope
+**Token-level revocation as unilateral backstop:**
 
-The guardian can call `pause()` to halt `chargePeriod()` as an emergency measure (e.g., if a critical bug is discovered). The pause is **fund-safe**:
+If a subscriber loses trust in the system, they can call `ERC20.approve(registry, 0)` directly on the token contract to revoke allowance. This is a unilateral action requiring no cooperation from the facilitator or registry. After revocation:
 
-- Pause does NOT move funds
-- Pause does NOT change stored commitments or subscription terms
-- Pause does NOT redirect payments
-- Pause does NOT affect `subscribe()`, `cancel()`, `updateRoot()`, or view functions
+- All future `chargePeriod` calls fail (insufficient allowance)
+- The subscription enters grace period, then becomes inactive
+- No further funds can be pulled regardless of valid Merkle proofs
 
-The guardian is recommended to be a timelock contract to prevent abuse.
+This provides a hard exit path independent of the `cancel()` mechanism.
 
-### 11.5 Codeless Asset Attack Prevention
+### 11.5 Guardian Pause Scope
 
-A low-level `call()` to an address with no bytecode (EOA or undeployed address) returns success with empty return data. This would be misinterpreted by `_safeTransferFrom` as a USDT-style successful transfer, allowing an attacker to register a "free subscription" by specifying a codeless `commitment.asset`.
+The guardian can call `pause()` to halt `chargePeriod()` as an emergency measure. The pause is **fund-safe** — the guardian provably CANNOT:
 
-**Mitigation:** `subscribe()` checks `commitment.asset.code.length == 0` and reverts with `AssetNotContract()` if true. This check is performed once at registration time; the asset cannot change afterward.
+- Move funds (no transfer functions callable by guardian)
+- Change stored commitments or subscription terms (immutable after registration)
+- Redirect payments (payTo is immutably stored)
+- Affect `subscribe()`, `cancel()`, `updateRoot()`, or view functions (not gated by `whenNotPaused`)
+- Permanently lock subscriptions (unpause restores charging)
 
-### 11.6 Return Data Hardening
+The guardian is RECOMMENDED to be a timelock contract (e.g., 24-48 hour delay) to prevent abuse.
 
-The `_safeTransferFrom` function uses exact length checking for return data:
+### 11.6 Permissionless `chargePeriod` Griefing Analysis
+
+Because `chargePeriod()` is permissionless, anyone can submit a valid charge. Potential griefing vectors:
+
+**Front-running the facilitator:**
+
+An attacker submits `chargePeriod` before the facilitator. Result: The charge succeeds, funds move to `payTo`, cursor advances. The facilitator's subsequent call reverts (`InvalidPeriodIndex`). **No fund loss** — the correct party received payment; only the facilitator wasted gas.
+
+**Submitting during pause:**
+
+Calls revert with `ChargePaused`. No state change, no fund movement.
+
+**Submitting invalid proofs:**
+
+Calls revert with `InvalidMerkleProof`. Attacker wastes their own gas.
+
+**Gas-payer note:**
+
+The party submitting `chargePeriod` pays gas. In normal operation, this is the facilitator (who may recoup costs via service fees). In liveness-failure scenarios, the `payTo` address is incentivized to submit charges to collect revenue. The subscriber may also submit to maintain active status.
+
+### 11.7 Grace Period Edge Cases
+
+The chargeable window is `[validFrom, validTo + gracePeriodSeconds]`. Edge cases:
+
+**Charge fails, then allowance restored:**
+
+1. `chargePeriod` at `t1` fails (insufficient allowance) → `inGracePeriod = true`, `gracePeriodEnd = validTo + gracePeriodSeconds`
+2. Subscriber restores allowance at `t2`
+3. Facilitator retries `chargePeriod` at `t3 < gracePeriodEnd` → succeeds, cursor advances, `inGracePeriod = false`
+
+The period is NOT skipped; the same `periodIndex` can be retried until the window closes.
+
+**Cancel during grace:**
+
+Subscriber calls `cancel()` while in grace period. Result: `cancelled = true`. The current period's charge can still be retried (cursor hasn't advanced), but no future periods can be charged. Access policy (immediate vs. end_of_cycle) is enforced off-chain by the resource server.
+
+**Expiry during grace:**
+
+If `expiry` falls within the grace window, the charge can still succeed if `block.timestamp <= expiry`. Once `block.timestamp > expiry`, `chargePeriod` reverts with `SubscriptionExpired` even if `gracePeriodEnd` hasn't passed. Expiry is a hard boundary.
+
+**Multiple grace periods:**
+
+Each period has its own window. If period N fails and enters grace, period N+1's window may overlap. However, `periodIndex == cursor` prevents charging N+1 before N succeeds. Grace periods are sequential, not parallel.
+
+### 11.8 Codeless Asset Attack Prevention
+
+A low-level `call()` to an address with no bytecode (EOA or undeployed address) returns success with empty return data. This would be misinterpreted by `_safeTransferFrom` as a USDT-style successful transfer, allowing a "free subscription" attack.
+
+**Mitigation:** `subscribe()` checks `commitment.asset.code.length == 0` and reverts with `AssetNotContract()` if true. This check is performed once at registration time; the asset address is immutably stored.
+
+### 11.9 Return Data Hardening
+
+The `_safeTransferFrom` function uses exact length checking:
 
 ```solidity
 success = callSuccess && (data.length == 0 || (data.length == 32 && abi.decode(data, (bool))));
 ```
 
-This prevents malformed return data (e.g., non-32-byte responses from proxy contracts or hook-modified tokens) from being decoded as a boolean. Charges with unexpected return data are routed to the grace period path, allowing retry without permanently locking the period.
+This prevents:
 
-> **Note:** Additional analysis (MEV, frontrunning resistance, gas optimization) may be added in subsequent commits.
+- **Non-reverting false returns**: Tokens returning `false` are treated as failed charges (grace period path)
+- **Malformed return data**: Non-32-byte responses (e.g., from misconfigured proxies) are treated as failures
+- **No-return tokens (USDT-style)**: Empty return data is accepted as success (standard behavior)
+
+Charges with unexpected return data route to grace period, allowing retry without permanently locking the period.
+
+### 11.10 Subscription Extension Threat Model
+
+The `subscription` extension carries a fresh possession proof. Threat analysis:
+
+**Forgery (public on-chain data is not identity):**
+
+On-chain data (`subscriptionId`, `subscriber`, `tierId`, `isActive`) is public. An attacker reading the chain could construct a valid-looking echo. The possession proof (`SubscriptionAccess` signature) prevents this: only the holder of the subscriber's private key can produce a valid signature. The server recovers the signer and compares to the registry-stored subscriber.
+
+**Replay:**
+
+A captured proof can be replayed. Mitigations:
+
+1. **Freshness**: `|now - issuedAt| <= maxProofAge` (RECOMMENDED 60s). Replay is bounded to this window.
+2. **Audience scoping**: If `audience` is set, replay is restricted to the specified origin/prefix. A proof for `https://api.example.com` cannot be used at `https://other.example.com`.
+3. **TLS**: Transport encryption prevents passive capture.
+4. **Optional single-use cache**: Servers MAY maintain a `(issuedAt, signature)` cache (TTL = `maxProofAge`) to reject duplicates.
+
+**Clock skew:**
+
+If server and client clocks differ by more than `maxProofAge`, valid proofs may be rejected. Mitigations:
+
+- Servers SHOULD use NTP-synchronized time
+- `maxProofAge` of 60s provides reasonable tolerance for typical skew (<5s)
+- The `|now - issuedAt|` check is symmetric — both future and past proofs are rejected if too far from server time
+
+**Audience scoping:**
+
+The `audience` field is OPTIONAL. When present:
+
+- Servers MUST reject proofs where `audience` does not match the served origin/resource prefix
+- Proofs without `audience` are accepted but have no origin binding (broader replay surface)
+- Clients SHOULD set `audience` to the most specific origin they're accessing
 
 ---
 
