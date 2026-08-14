@@ -22,6 +22,7 @@ import { findAssociatedTokenPda } from "@solana-program/token-2022";
 import { SOLANA_DEVNET_CAIP2 } from "../constants";
 import { getDistributeInstruction } from "./generated/instructions/distribute";
 import { getReclaimInstruction, RECLAIM_DISCRIMINATOR } from "./generated/instructions/reclaim";
+import { getSealInstruction } from "./generated/instructions/seal";
 import { getSettleAndSealInstruction } from "./generated/instructions/settleAndSeal";
 import { findEventAuthorityPda } from "./generated/pdas/eventAuthority";
 import { ChannelStatus } from "./generated/types/channelStatus";
@@ -230,6 +231,17 @@ export function buildSettleAndSealInstructions(args: SettleAndSealBuildArgs): Se
   instructions.push(ix as unknown as ServerInstruction);
 
   return instructions;
+}
+
+/**
+ * Build the permissionless seal instruction for a Closing channel whose grace
+ * period has elapsed.
+ *
+ * @param channelId - Payment-channel address
+ * @returns The seal instruction
+ */
+export function buildSealInstruction(channelId: string): ServerInstruction {
+  return getSealInstruction({ channel: address(channelId) }) as unknown as ServerInstruction;
 }
 
 // ─────────────────────────────────────────────────────────────────────

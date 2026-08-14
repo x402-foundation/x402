@@ -8,20 +8,23 @@ export {
   UptoSvmScheme,
 } from "./scheme";
 export type { UptoChannelStorageErrorContext, UptoSvmFacilitatorConfig } from "./scheme";
-export type { UptoSvmSigner } from "./channel";
-export { InMemoryUptoChannelStorage } from "./channelStorage";
-export type { UptoChannelRecord, UptoChannelStorage } from "./channelStorage";
+export type { PaymentChannelSvmSigner as UptoSvmSigner } from "../../payment-channels/facilitator";
+export { InMemoryPaymentChannelStorage as InMemoryUptoChannelStorage } from "../../payment-channels/storage";
+export type {
+  PaymentChannelRecord as UptoChannelRecord,
+  PaymentChannelStorage as UptoChannelStorage,
+} from "../../payment-channels/storage";
 export {
   DEFAULT_ABANDON_GRACE_SECS,
   DEFAULT_MAX_CLOSES_PER_RUN,
   DEFAULT_MAX_RECLAIMS_PER_TX,
   DEFAULT_MAX_TXS_PER_RUN,
-  UptoSvmRentCleanupManager,
-} from "./rentCleanupManager";
+  PaymentChannelRentCleanupManager as UptoSvmRentCleanupManager,
+} from "../../payment-channels/rentCleanup";
 export type {
+  PaymentChannelRentCleanupManagerConfig as UptoSvmRentCleanupManagerConfig,
   RentCleanupCloseResult,
   RentCleanupOptions,
   RentCleanupReclaimResult,
   RentCleanupStartConfig,
-  UptoSvmRentCleanupManagerConfig,
-} from "./rentCleanupManager";
+} from "../../payment-channels/rentCleanup";

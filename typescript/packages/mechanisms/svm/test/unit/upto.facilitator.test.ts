@@ -11,9 +11,9 @@ const channelMocks = vi.hoisted(() => ({
   submitSettle: vi.fn(),
 }));
 
-vi.mock("../../src/upto/facilitator/channel", async () => {
-  const actual = await vi.importActual<typeof import("../../src/upto/facilitator/channel")>(
-    "../../src/upto/facilitator/channel",
+vi.mock("../../src/payment-channels/facilitator", async () => {
+  const actual = await vi.importActual<typeof import("../../src/payment-channels/facilitator")>(
+    "../../src/payment-channels/facilitator",
   );
   return {
     ...actual,
@@ -49,8 +49,8 @@ import {
   ERR_UNEXPECTED_VOUCHER,
   UptoSvmScheme,
 } from "../../src/upto/facilitator/scheme";
-import type { UptoChannelStorage } from "../../src/upto/facilitator/channelStorage";
-import { UptoSvmRentCleanupManager } from "../../src/upto/facilitator/rentCleanupManager";
+import type { PaymentChannelStorage as UptoChannelStorage } from "../../src/payment-channels/storage";
+import { PaymentChannelRentCleanupManager as UptoSvmRentCleanupManager } from "../../src/payment-channels/rentCleanup";
 import type { UptoSvmPayloadV2 } from "../../src/types";
 
 const OPEN_SLOT = 123_456_789n;
@@ -967,7 +967,7 @@ describe("UptoSvmScheme facilitator channel lifecycle", () => {
             storage: { upsert: vi.fn(), get: vi.fn(), list: vi.fn(), delete: vi.fn() },
             network: SOLANA_DEVNET_CAIP2,
           }),
-      ).toThrow("UptoSvmRentCleanupManager requires getSigner on the signer");
+      ).toThrow("PaymentChannelRentCleanupManager requires getSigner on the signer");
     });
   });
 });

@@ -1,9 +1,10 @@
 /**
- * Facilitator-side async rent cleanup for SVM `upto` channels.
+ * Facilitator-side async rent cleanup for SVM payment channels.
  *
- * Driven entirely by verify-time {@link UptoChannelStorage}: each pass lists
+ * Driven entirely by verify-time {@link PaymentChannelStorage}: each pass lists
  * stored channels, refetches live account status, then acts on whatever is
- * ready (abandon-close / distribute / reclaim). RPC is not used for discovery.
+ * ready (abandon-close / forced-close / distribute / reclaim). RPC is not
+ * used for discovery.
  *
  * Signs with the live channel `payee` / `rent_payer` (same key in this scheme)
  * from the facilitator's existing signer pool — no dedicated cleanup key.
@@ -17,20 +18,21 @@
 import { address, type Address, type Signature } from "@solana/kit";
 import type { Network } from "@x402/core/types";
 
-import { fetchMaybeChannel, type Channel } from "../../payment-channels/generated/accounts/channel";
+import { fetchMaybeChannel, type Channel } from "./generated/accounts/channel";
 import {
   buildDistributeInstruction,
   buildReclaimInstruction,
+  buildSealInstruction,
   buildSettleAndSealInstructions,
   ChannelStatus,
   type ServerInstruction,
-} from "../../payment-channels/onchain";
-import { OPEN_SLOT_WINDOW } from "../../payment-channels/open";
-import type { FacilitatorSigningCapabilities, FacilitatorSvmSigner } from "../../signer";
-import { createRpcClient } from "../../utils";
-import type { ChannelRpc, UptoSvmSigner } from "./channel";
-import { reclaimComputeUnitLimit, submitSettle } from "./channel";
-import type { UptoChannelRecord, UptoChannelStorage } from "./channelStorage";
+} from "./onchain";
+import { OPEN_SLOT_WINDOW } from "./open";
+import type { FacilitatorSigningCapabilities, FacilitatorSvmSigner } from "../signer";
+import { createRpcClient } from "../utils";
+import type { ChannelRpc, PaymentChannelSvmSigner } from "./facilitator";
+import { reclaimComputeUnitLimit, submitSettle } from "./facilitator";
+import type { PaymentChannelRecord, PaymentChannelStorage } from "./storage";
 
 /** Reclaim work item: storage key plus live rent_payer from the channel account. */
 interface ReclaimCandidate {
@@ -54,7 +56,7 @@ export const DEFAULT_MAX_CLOSES_PER_RUN = 10;
 export interface RentCleanupCloseResult {
   channelId: string;
   transaction: string;
-  action: "abandon_close" | "distribute";
+  action: "abandon_close" | "forced_close" | "distribute";
 }
 
 /** Result of a successful reclaim batch transaction. */
@@ -84,9 +86,9 @@ export interface RentCleanupStartConfig extends RentCleanupOptions {
   intervalSecs: number;
 }
 
-export interface UptoSvmRentCleanupManagerConfig {
+export interface PaymentChannelRentCleanupManagerConfig {
   signer: FacilitatorSvmSigner;
-  storage: UptoChannelStorage;
+  storage: PaymentChannelStorage;
   network: Network;
   rpcUrl?: string;
   /**
@@ -106,15 +108,15 @@ export interface UptoSvmRentCleanupManagerConfig {
 }
 
 /**
- * Storage-driven rent cleanup worker for SVM `upto`.
+ * Storage-driven rent cleanup worker for SVM payment channels.
  *
  * Operators opt in via {@link start} or an external cron calling
  * {@link cleanup}; the facilitator scheme never auto-starts this.
  */
-export class UptoSvmRentCleanupManager {
+export class PaymentChannelRentCleanupManager {
   private readonly signer: FacilitatorSvmSigner;
   private readonly getKitSigner: (feePayer: Address) => FacilitatorSigningCapabilities;
-  private readonly storage: UptoChannelStorage;
+  private readonly storage: PaymentChannelStorage;
   private readonly network: Network;
   private readonly rpcUrl: string | undefined;
   private readonly computeUnitPriceMicroLamports: number | undefined;
@@ -130,10 +132,10 @@ export class UptoSvmRentCleanupManager {
    *
    * @param config - Signer pool, channel storage, and network/RPC
    */
-  constructor(config: UptoSvmRentCleanupManagerConfig) {
+  constructor(config: PaymentChannelRentCleanupManagerConfig) {
     if (typeof config.signer.getSigner !== "function") {
       throw new Error(
-        "UptoSvmRentCleanupManager requires getSigner on the signer. " +
+        "PaymentChannelRentCleanupManager requires getSigner on the signer. " +
           "Use toFacilitatorSvmSigner() which provides all required methods.",
       );
     }
@@ -148,8 +150,9 @@ export class UptoSvmRentCleanupManager {
 
   /**
    * Clean up whatever is ready: abandon-close timed-out Open channels,
-   * distribute Sealed ones, batch-reclaim Distributed channels past the
-   * open-slot gate. Defers Closing / too-early / still-active Open.
+   * finalize Closing channels once their onchain grace period elapses,
+   * distribute Sealed ones, and batch-reclaim Distributed channels past the
+   * open-slot gate. Defers too-early Closing and still-active Open channels.
    *
    * @param opts - Work caps and callbacks
    */
@@ -181,14 +184,19 @@ export class UptoSvmRentCleanupManager {
         const live = maybe.data;
         const status = live.status as ChannelStatus;
 
-        if (status === ChannelStatus.Closing) {
-          continue;
-        }
-
-        if (status === ChannelStatus.Open || status === ChannelStatus.Sealed) {
+        if (
+          status === ChannelStatus.Open ||
+          status === ChannelStatus.Closing ||
+          status === ChannelStatus.Sealed
+        ) {
           if (status === ChannelStatus.Open) {
             const readyAt = record.expiresAt + abandonGraceSecs;
             if (nowSecs < readyAt) continue;
+          } else if (
+            status === ChannelStatus.Closing &&
+            BigInt(nowSecs) < live.closureStartedAt + BigInt(live.gracePeriod)
+          ) {
+            continue;
           }
           if (closesUsed >= maxClosesPerRun || txsUsed >= maxTxsPerRun) break;
 
@@ -223,7 +231,12 @@ export class UptoSvmRentCleanupManager {
           opts.onClose?.({
             channelId: record.channelId,
             transaction: signature,
-            action: status === ChannelStatus.Open ? "abandon_close" : "distribute",
+            action:
+              status === ChannelStatus.Open
+                ? "abandon_close"
+                : status === ChannelStatus.Closing
+                  ? "forced_close"
+                  : "distribute",
           });
           await this.syncStorageAfterAction(rpc, record.channelId);
           continue;
@@ -296,8 +309,8 @@ export class UptoSvmRentCleanupManager {
   }
 
   /**
-   * Submit settle_and_seal(has_voucher=0)+distribute for Open, or distribute
-   * alone for Sealed.
+   * Submit settle_and_seal(has_voucher=0)+distribute for Open,
+   * seal+distribute for Closing, or distribute alone for Sealed.
    *
    * @param feePayerSigner - Channel feePayer / payee signer
    * @param rpc - RPC client
@@ -307,9 +320,9 @@ export class UptoSvmRentCleanupManager {
    * @returns Broadcast signature
    */
   private async submitCloseOrDistribute(
-    feePayerSigner: UptoSvmSigner,
+    feePayerSigner: PaymentChannelSvmSigner,
     rpc: ChannelRpc,
-    record: UptoChannelRecord,
+    record: PaymentChannelRecord,
     live: Channel,
     status: ChannelStatus,
   ): Promise<Signature> {
@@ -325,16 +338,20 @@ export class UptoSvmRentCleanupManager {
       tokenProgram: record.tokenProgram,
     });
 
-    const instructions: ServerInstruction[] =
-      status === ChannelStatus.Open
-        ? [
-            ...buildSettleAndSealInstructions({
-              channelId: record.channelId,
-              payeeSigner: feePayerSigner,
-            }),
-            distribute,
-          ]
-        : [distribute];
+    let instructions: ServerInstruction[];
+    if (status === ChannelStatus.Open) {
+      instructions = [
+        ...buildSettleAndSealInstructions({
+          channelId: record.channelId,
+          payeeSigner: feePayerSigner,
+        }),
+        distribute,
+      ];
+    } else if (status === ChannelStatus.Closing) {
+      instructions = [buildSealInstruction(record.channelId), distribute];
+    } else {
+      instructions = [distribute];
+    }
 
     return submitSettle(feePayerSigner, rpc, instructions, {
       computeUnitLimit: this.settleComputeUnitLimit,
@@ -452,7 +469,7 @@ export class UptoSvmRentCleanupManager {
    * @param feePayerAddress - Live channel payee / rent_payer
    * @returns Matching signer, or undefined when not configured
    */
-  private resolveFeePayer(feePayerAddress: string): UptoSvmSigner | undefined {
+  private resolveFeePayer(feePayerAddress: string): PaymentChannelSvmSigner | undefined {
     if (!this.signer.getAddresses().includes(feePayerAddress as Address)) {
       return undefined;
     }

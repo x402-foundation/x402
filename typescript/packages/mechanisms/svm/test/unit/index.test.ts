@@ -19,7 +19,7 @@ import {
 } from "../../src/index";
 import type { FacilitatorSvmSigner } from "../../src/signer";
 import { UptoSvmScheme } from "../../src/upto/facilitator/scheme";
-import { UptoSvmRentCleanupManager } from "../../src/upto/facilitator/rentCleanupManager";
+import { PaymentChannelRentCleanupManager as UptoSvmRentCleanupManager } from "../../src/payment-channels/rentCleanup";
 import { SOLANA_DEVNET_CAIP2 } from "../../src/constants";
 import { ExactSvmScheme as ServerExactSvmScheme } from "../../src/exact/server/scheme";
 
@@ -172,7 +172,7 @@ describe("@x402/svm", () => {
             },
             network: SOLANA_DEVNET_CAIP2,
           }),
-      ).toThrow("UptoSvmRentCleanupManager requires getSigner on the signer");
+      ).toThrow("PaymentChannelRentCleanupManager requires getSigner on the signer");
     });
   });
 

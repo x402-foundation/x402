@@ -1,5 +1,5 @@
 /**
- * Channel-flow glue for the `upto` facilitator: co-signing, broadcasting the
+ * Shared payment-channel facilitator mechanics: co-signing, broadcasting a
  * client `open`, simulating settlement readiness (atomic open + settle +
  * distribute before open), and submitting settle+distribute.
  *
@@ -41,18 +41,18 @@ import {
 import {
   COMPUTE_BUDGET_PROGRAM_ADDRESS,
   DEFAULT_COMPUTE_UNIT_PRICE_MICROLAMPORTS,
-} from "../../constants";
-import { fetchChannel, type Channel } from "../../payment-channels/generated/accounts/channel";
-import { AccountDiscriminator } from "../../payment-channels/generated/types/accountDiscriminator";
-import { ChannelStatus } from "../../payment-channels/generated/types/channelStatus";
+} from "../constants";
+import { fetchChannel, type Channel } from "./generated/accounts/channel";
+import { AccountDiscriminator } from "./generated/types/accountDiscriminator";
+import { ChannelStatus } from "./generated/types/channelStatus";
 import {
   buildDistributeInstruction,
   buildSettleAndSealInstructions,
   type ServerInstruction,
-} from "../../payment-channels/onchain";
-import type { ChannelSplit } from "../../payment-channels/open";
-import type { FacilitatorSvmSigner } from "../../signer";
-import { createRpcClient } from "../../utils";
+} from "./onchain";
+import type { ChannelSplit } from "./open";
+import type { FacilitatorSvmSigner } from "../signer";
+import { createRpcClient } from "../utils";
 
 /** Solana per-transaction compute-unit maximum. */
 const MAX_TRANSACTION_COMPUTE_UNITS = 1_400_000;
@@ -99,7 +99,7 @@ export function reclaimComputeUnitLimit(channelCount: number): number {
 }
 
 /** Signer capable of signing Solana transactions and raw Ed25519 messages. */
-export type UptoSvmSigner = TransactionSigner & MessagePartialSigner;
+export type PaymentChannelSvmSigner = TransactionSigner & MessagePartialSigner;
 
 /** RPC client shape used by the channel helpers. */
 export type ChannelRpc = ReturnType<typeof createRpcClient>;
@@ -272,7 +272,7 @@ export interface SettlementSimChannel {
  * @param args.channel - Challenge-bound channel terms for settle/distribute
  */
 export async function simulateOpenSettleDistribute(
-  feePayer: UptoSvmSigner,
+  feePayer: PaymentChannelSvmSigner,
   rpc: ChannelRpc,
   args: {
     openTransactionBase64: string;
@@ -343,7 +343,7 @@ export async function simulateOpenSettleDistribute(
  * @param channel - Verified open-channel facts
  */
 export async function simulateZeroChargeSettle(
-  feePayer: UptoSvmSigner,
+  feePayer: PaymentChannelSvmSigner,
   rpc: ChannelRpc,
   channel: SettlementSimChannel,
 ): Promise<void> {
@@ -398,7 +398,7 @@ export interface SubmitSettleOptions {
  * @returns The broadcast signature
  */
 export async function submitSettle(
-  feePayer: UptoSvmSigner,
+  feePayer: PaymentChannelSvmSigner,
   rpc: ChannelRpc,
   instructions: readonly ServerInstruction[],
   options: SubmitSettleOptions = {},
@@ -515,7 +515,7 @@ export function getChannelDistributionHash(splits: readonly ChannelSplit[]): Uin
  * @param instructions - Instructions to simulate
  */
 async function simulateInstructions(
-  feePayer: UptoSvmSigner,
+  feePayer: PaymentChannelSvmSigner,
   rpc: ChannelRpc,
   instructions: readonly Instruction[],
 ): Promise<void> {
