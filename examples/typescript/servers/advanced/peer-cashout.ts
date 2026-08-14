@@ -27,6 +27,10 @@ let settledUsdc = 0n;
 const resourceServer = new x402ResourceServer(new HTTPFacilitatorClient({ url: facilitatorUrl }))
   .register("eip155:8453", new ExactEvmScheme())
   .onAfterSettle(async ({ requirements, result }) => {
+    if (!result.success) {
+      console.warn(`x402 payment failed to settle: ${result.errorReason ?? "unknown reason"}`);
+      return;
+    }
     settledUsdc += BigInt(requirements.amount);
     console.log(
       `x402 payment settled: ${formatUsdc(BigInt(requirements.amount))} USDC (${result.transaction})`,
@@ -109,6 +113,16 @@ admin.post("/cashout", async (req, res) => {
         payee: payoutPayee,
       },
     });
+
+    if (prepared.accessPolicyRequired) {
+      res.status(400).json({
+        error:
+          "this minimal planner does not automate the post-deposit access-policy transaction required by this payout platform",
+        remediation:
+          "use an unrestricted platform such as Revolut, or extend the host to finalize the confirmed createDeposit receipt and submit cash.prepareAccessPolicy(depositId)",
+      });
+      return;
+    }
 
     res.json({
       amountUsdc: formatUsdc(amount),

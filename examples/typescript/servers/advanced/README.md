@@ -51,7 +51,7 @@ app.use(
 
 ## Prerequisites
 
-- Node.js v20+ (install via [nvm](https://github.com/nvm-sh/nvm))
+- Node.js v22+ (install via [nvm](https://github.com/nvm-sh/nvm))
 - pnpm v10 (install via [pnpm.io/installation](https://pnpm.io/installation))
 - Valid EVM for receiving payments
 - URL of a facilitator supporting the desired payment network, see [facilitator list](https://www.x402.org/ecosystem?category=facilitators)
@@ -161,9 +161,9 @@ Set these additional variables in `.env`:
 ```dotenv
 EVM_ADDRESS=0x...                 # Base wallet receiving x402 revenue
 FACILITATOR_URL=https://...       # Production facilitator supporting eip155:8453
-PEER_CASH_PLATFORM=venmo
+PEER_CASH_PLATFORM=revolut
 PEER_CASH_CURRENCY=USD
-PEER_CASH_PAYEE=@your-handle
+PEER_CASH_PAYEE=your-revtag
 CASHOUT_THRESHOLD_USDC=10
 ```
 
@@ -188,6 +188,8 @@ curl -X POST http://127.0.0.1:4022/cashout \
 ```
 
 This in-memory counter is deliberately small enough to show the integration. Production servers should persist settlement transaction hashes, reconcile the receiving wallet's Base USDC balance, and mark revenue as cashed out only after the Peer deposit transaction confirms.
+
+This minimal planner accepts unrestricted payout platforms. Venmo, Cash App, and PayPal require a follow-up access-policy transaction after the `createDeposit` transaction confirms. A production host using one of those platforms must finalize that receipt, persist the returned `depositId`, and submit `cash.prepareAccessPolicy(depositId)` with the same wallet before exposing the order to buyers.
 
 ## Testing the Server
 
