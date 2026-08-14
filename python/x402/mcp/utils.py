@@ -352,7 +352,7 @@ def convert_mcp_result(mcp_result: Any) -> "MCPToolResult":
         is_error = getattr(mcp_result, "is_error", False)
 
     # Extract meta
-    meta = getattr(mcp_result, "_meta", {})
+    
     if not isinstance(meta, dict):
         meta = {}
 
