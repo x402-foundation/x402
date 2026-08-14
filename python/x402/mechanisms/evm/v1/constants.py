@@ -42,7 +42,7 @@ V1_DEFAULT_ASSETS: dict[str, AssetInfo] = {
     },
     "monad": {
         "address": "0x754704Bc059F8C67012fEd69BC8A327a5aafb603",
-        "name": "USD Coin",
+        "name": "USDC",
         "version": "2",
         "decimals": 6,
     },

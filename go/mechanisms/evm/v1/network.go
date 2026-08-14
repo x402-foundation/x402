@@ -67,7 +67,7 @@ var NetworkConfigs = map[string]evm.NetworkConfig{
 		ChainID: big.NewInt(143),
 		DefaultAsset: evm.AssetInfo{
 			Address:  "0x754704Bc059F8C67012fEd69BC8A327a5aafb603",
-			Name:     "USD Coin",
+			Name:     "USDC",
 			Version:  "2",
 			Decimals: evm.DefaultDecimals,
 		},
