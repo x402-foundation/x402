@@ -9,6 +9,7 @@
  * - dynamic-price: Dynamic pricing based on request context
  * - dynamic-pay-to: Route payments to different addresses
  * - custom-money-definition: Use alternative tokens for payments
+ * - peer-cashout: Track x402 revenue and prepare a fiat cash-out with Peer
  *
  * Usage:
  *   npm start all-networks
@@ -17,6 +18,7 @@
  *   npm start dynamic-price
  *   npm start dynamic-pay-to
  *   npm start custom-money-definition
+ *   npm start peer-cashout
  */
 
 const example = process.argv[2] || "bazaar";
@@ -42,10 +44,13 @@ switch (example) {
   case "custom-money-definition":
     await import("./custom-money-definition.js");
     break;
+  case "peer-cashout":
+    await import("./peer-cashout.js");
+    break;
   default:
     console.error(`❌ Unknown example: ${example}`);
     console.error(
-      "Available examples: all-networks, bazaar, hooks, dynamic-price, dynamic-pay-to, custom-money-definition",
+      "Available examples: all-networks, bazaar, hooks, dynamic-price, dynamic-pay-to, custom-money-definition, peer-cashout",
     );
     process.exit(1);
 }

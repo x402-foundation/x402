@@ -42,6 +42,7 @@ The **advanced** directory demonstrates advanced features supported by our middl
 - **Dynamic PayTo** — Route payments to different recipients per request
 - **Custom Tokens** — Accept payments in tokens other than USDC
 - **Bazaar Discovery** — Make your API discoverable by clients and AI agents
+- **Peer Cash-Out** — Prepare a fiat cash-out from settled Base USDC revenue
 
 These patterns are useful for production applications that need custom business logic, observability, or marketplace functionality.
 
@@ -58,4 +59,3 @@ The **custom** directory shows how to implement x402 payment handling manually, 
 1. Pick an example directory
 2. Follow the README in that directory, if it has one
 3. Use one of the [clients](../clients/) to test your server
-

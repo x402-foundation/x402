@@ -17,6 +17,7 @@
     "custom-money-definition.ts",
     "dynamic-pay-to.ts",
     "dynamic-price.ts",
-    "hooks.ts"
+    "hooks.ts",
+    "peer-cashout.ts"
   ]
 }

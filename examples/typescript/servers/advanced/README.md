@@ -150,6 +150,44 @@ Each example demonstrates a specific advanced pattern:
 | `dynamic-price` | `pnpm dev:dynamic-price` | Context-based pricing |
 | `dynamic-pay-to` | `pnpm dev:dynamic-pay-to` | Route payments to different recipients |
 | `custom-money-definition` | `pnpm dev:custom-money-definition` | Accept alternative tokens |
+| `peer-cashout` | `pnpm dev:peer-cashout` | Track Base USDC revenue and prepare a Peer fiat cash-out |
+
+## Example: Cash Out x402 Revenue with Peer
+
+The `peer-cashout` example accepts x402 payments in Base USDC and tracks them with `onAfterSettle`. Once the configured threshold is reached, a second localhost-only server can prepare a Peer cash-out. The response contains unsigned transactions; the wallet receiving the x402 revenue remains responsible for inspection, signing, and ordered submission.
+
+Set these additional variables in `.env`:
+
+```dotenv
+EVM_ADDRESS=0x...                 # Base wallet receiving x402 revenue
+FACILITATOR_URL=https://...       # Production facilitator supporting eip155:8453
+PEER_CASH_PLATFORM=venmo
+PEER_CASH_CURRENCY=USD
+PEER_CASH_PAYEE=@your-handle
+CASHOUT_THRESHOLD_USDC=10
+```
+
+Start the example:
+
+```bash
+pnpm dev:peer-cashout
+```
+
+After enough payments settle, prepare all revenue tracked since this process started:
+
+```bash
+curl -X POST http://127.0.0.1:4022/cashout
+```
+
+Or prepare a smaller amount:
+
+```bash
+curl -X POST http://127.0.0.1:4022/cashout \
+  -H 'content-type: application/json' \
+  -d '{"amountUsdc":"10"}'
+```
+
+This in-memory counter is deliberately small enough to show the integration. Production servers should persist settlement transaction hashes, reconcile the receiving wallet's Base USDC balance, and mark revenue as cashed out only after the Peer deposit transaction confirms.
 
 ## Testing the Server
 

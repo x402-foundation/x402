@@ -11,6 +11,7 @@
     "dev:dynamic-pay-to": "tsx index.ts dynamic-pay-to",
     "dev:dynamic-price": "tsx index.ts dynamic-price",
     "dev:hooks": "tsx index.ts hooks",
+    "dev:peer-cashout": "tsx index.ts peer-cashout",
     "format": "prettier -c .prettierrc --write \"**/*.{ts,js,cjs,json,md}\"",
     "format:check": "prettier -c .prettierrc --check \"**/*.{ts,js,cjs,json,md}\"",
     "lint": "eslint . --ext .ts --fix",
@@ -33,7 +34,9 @@
     "@x402/stellar": "workspace:*",
     "@x402/tvm": "workspace:*",
     "@x402/xrpl": "workspace:*",
-    "@x402/extensions": "workspace:*"
+    "@x402/extensions": "workspace:*",
+    "@zkp2p/cash": "0.4.9",
+    "viem": "2.48.11"
   },
   "devDependencies": {
     "@eslint/js": "^9.24.0",
