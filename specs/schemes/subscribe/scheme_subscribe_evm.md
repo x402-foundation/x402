@@ -47,7 +47,7 @@ The client signs once; the facilitator submits periodic charges with Merkle proo
 |:-----|:---------------|
 | **Client** | Builds Merkle tree from advertised terms; signs EIP-712 commitment over `{root, subscriber, asset, payTo, registry, chainId, tierId, start, expiry, maxPerPeriod}`; grants standing ERC-20 allowance to registry (gaslessly via EIP-2612 permit where supported, or direct approve) |
 | **Facilitator** | Maintains the Merkle tree and proofs off-chain; submits `subscribe()` with commitment + allowance signature; submits `chargePeriod()` with Merkle proofs at each billing boundary; trusted for **liveness only** |
-| **Registry** | Immutable on-chain contract; verifies EIP-712 commitment signature; enforces monotonic cursor, per-period cap (`fee <= maxPerPeriod`), time windows (`validFrom <= now <= validTo`), expiry, and cancel; calls `transferFrom(subscriber, payTo, fee)` on success |
+| **Registry** | Immutable on-chain contract; verifies EIP-712 commitment signature; enforces monotonic cursor, per-period cap (`fee <= maxPerPeriod`), time windows (`validFrom <= now <= validTo + gracePeriodSeconds`), expiry, and cancel; calls `transferFrom(subscriber, payTo, fee)` on success |
 | **Token** | Any ERC-20; EIP-2612 support enables gasless allowance approval |
 
 ---
@@ -470,7 +470,9 @@ const subscriptionAccessTypes = {
 
 **Type String:** `SubscriptionAccess(bytes32 subscriptionId,uint256 issuedAt,string audience)`
 
-The `audience` field is hashed per EIP-712 string rules (`keccak256(audience)`). When `audience` is empty, hash the empty string.
+The `audience` field is hashed per EIP-712 string rules (`keccak256(audience)`).
+
+**Empty-audience rule (MUST):** When `audience` is omitted from the client echo, clients MUST sign `SubscriptionAccess` with `audience = ""` (empty string). Servers MUST verify against empty string accordingly. EIP-712 hashes the string unconditionally; omission without this rule breaks signature interoperability.
 
 ### 6.5 Server Declaration (PaymentRequired.extensions)
 
@@ -902,7 +904,7 @@ Before calling `chargePeriod()`:
 
 1. **Construct** Merkle proof for the current `periodIndex`
 2. **Verify** `periodIndex == cursor` (monotonic)
-3. **Verify** `validFrom <= block.timestamp <= validTo`
+3. **Verify** `validFrom <= block.timestamp <= validTo + gracePeriodSeconds`
 4. **Verify** `fee <= maxPerPeriod`
 5. **Verify** `!cancelled && block.timestamp <= expiry`
 6. **Verify** subscriber has sufficient balance and allowance
@@ -1241,6 +1243,12 @@ contract x402SubscriptionRegistry is EIP712, ReentrancyGuard {
         );
 
         // Optionally charge period 0 immediately (respects pause via _chargePeriod)
+        // NOTE: A single-period schedule has an empty Merkle proof by construction
+        // (the root IS the leaf hash). The `initialProof.length > 0` gate therefore
+        // skips the initial charge for single-period subscriptions when called with
+        // an empty proof array. The charge remains submittable via chargePeriod()
+        // afterward. Reference implementations MAY use an explicit boolean parameter
+        // (e.g., `chargeInitialPeriod`) instead of proof-length detection.
         if (initialProof.length > 0) {
             _chargePeriod(subscriptionId, initialLeaf, initialProof);
         }

@@ -141,6 +141,8 @@ For detailed security analysis (per-attack enumeration, replay prevention, allow
 
 ## Merkle Schedule Commitment
 
+**Terminology:** This specification uses "period" for the mechanism (the indexed unit of the Merkle schedule) and "billing cycle" for the human-facing tier configuration (`billingCycle`, `billingCycleSeconds`). These map 1:1: each billing cycle corresponds to exactly one period in the schedule.
+
 ### Leaf Structure
 
 Each leaf in the Merkle tree represents one billing period:
