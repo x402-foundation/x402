@@ -1,0 +1,3 @@
+kind: Fixed
+body: Correct Monad USDC EIP-712 domain name to "USDC" in the v1 legacy network table; v1-signed transferWithAuthorization payloads previously failed on-chain signature recovery
+time: 2026-08-14T06:28:53.000000+00:00
