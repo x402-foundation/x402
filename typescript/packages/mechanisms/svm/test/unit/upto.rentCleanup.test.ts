@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { SOLANA_DEVNET_CAIP2, TOKEN_PROGRAM_ADDRESS } from "../../src/constants";
 import { USDC_DEVNET_ADDRESS } from "../../src/defaultAssets";
+import { AccountDiscriminator } from "../../src/payment-channels/generated/types/accountDiscriminator";
 import {
   buildReclaimInstruction,
   ChannelStatus,
@@ -70,7 +71,10 @@ vi.mock("../../src/utils", async () => {
 describe("payment-channel reclaim primitive", () => {
   it("exports OPEN_SLOT_WINDOW and builds reclaim with disc 9", async () => {
     expect(OPEN_SLOT_WINDOW).toBe(1_500n);
+    expect(AccountDiscriminator.Channel).toBe(1);
     expect(ChannelStatus.Open).toBe(0);
+    expect(ChannelStatus.Sealed).toBe(1);
+    expect(ChannelStatus.Closing).toBe(2);
     expect(ChannelStatus.Distributed).toBe(3);
 
     const channel = await generateKeyPairSigner();
