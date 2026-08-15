@@ -14,20 +14,43 @@ import (
 	"github.com/x402-foundation/x402/go/v2/types"
 )
 
+// VerifyingContractValidator validates a seller-supplied extra.verifyingContract before it is
+// trusted for EIP-712 signing. Returns true to sign against candidate; false falls back to
+// requirements.Asset, same as if no verifyingContract were supplied.
+type VerifyingContractValidator func(candidate string, requirements types.PaymentRequirements) bool
+
+// ExactEvmSchemeOption configures optional ExactEvmScheme behavior.
+type ExactEvmSchemeOption func(*ExactEvmScheme)
+
+// WithVerifyingContractValidator sets an opt-in callback that lets the client trust a
+// seller-supplied extra.verifyingContract (e.g. Circle Gateway's batch-settlement contract)
+// instead of requirements.Asset for EIP-712 signing. If not set, extra.verifyingContract is
+// never trusted and signing always uses requirements.Asset.
+func WithVerifyingContractValidator(v VerifyingContractValidator) ExactEvmSchemeOption {
+	return func(s *ExactEvmScheme) {
+		s.verifyingContractValidator = v
+	}
+}
+
 // ExactEvmScheme implements the SchemeNetworkClient interface for EVM exact payments (V2)
 type ExactEvmScheme struct {
-	signer evm.ClientEvmSigner
-	config *ExactEvmSchemeConfig
+	signer                     evm.ClientEvmSigner
+	config                     *ExactEvmSchemeConfig
+	verifyingContractValidator VerifyingContractValidator
 }
 
 // NewExactEvmScheme creates a new ExactEvmScheme.
 // Base flows only require a signer that can sign typed data.
 // Extension enrichment paths use optional runtime capabilities.
-func NewExactEvmScheme(signer evm.ClientEvmSigner, config *ExactEvmSchemeConfig) *ExactEvmScheme {
-	return &ExactEvmScheme{
+func NewExactEvmScheme(signer evm.ClientEvmSigner, config *ExactEvmSchemeConfig, opts ...ExactEvmSchemeOption) *ExactEvmScheme {
+	s := &ExactEvmScheme{
 		signer: signer,
 		config: config,
 	}
+	for _, opt := range opts {
+		opt(s)
+	}
+	return s
 }
 
 // Scheme returns the scheme identifier
@@ -272,12 +295,18 @@ func (c *ExactEvmScheme) createEIP3009Payload(
 	// Extract extra fields for EIP-3009
 	tokenName := assetInfo.Name
 	tokenVersion := assetInfo.Version
+	verifyingContract := assetInfo.Address
 	if requirements.Extra != nil {
 		if name, ok := requirements.Extra["name"].(string); ok {
 			tokenName = name
 		}
 		if ver, ok := requirements.Extra["version"].(string); ok {
 			tokenVersion = ver
+		}
+		if candidate, ok := requirements.Extra["verifyingContract"].(string); ok && candidate != "" {
+			if c.verifyingContractValidator != nil && c.verifyingContractValidator(candidate, requirements) {
+				verifyingContract = candidate
+			}
 		}
 	}
 
@@ -292,7 +321,7 @@ func (c *ExactEvmScheme) createEIP3009Payload(
 	}
 
 	// Sign the authorization
-	signature, err := c.signAuthorization(ctx, authorization, chainID, assetInfo.Address, tokenName, tokenVersion)
+	signature, err := c.signAuthorization(ctx, authorization, chainID, verifyingContract, tokenName, tokenVersion)
 	if err != nil {
 		return types.PaymentPayload{}, fmt.Errorf(ErrFailedToSignAuthorization+": %w", err)
 	}

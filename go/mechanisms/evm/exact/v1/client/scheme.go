@@ -12,16 +12,39 @@ import (
 	"github.com/x402-foundation/x402/go/v2/types"
 )
 
+// VerifyingContractValidator validates a seller-supplied extra.verifyingContract before it is
+// trusted for EIP-712 signing. Returns true to sign against candidate; false falls back to
+// requirements.Asset, same as if no verifyingContract were supplied.
+type VerifyingContractValidator func(candidate string, requirements types.PaymentRequirementsV1) bool
+
+// ExactEvmSchemeV1Option configures optional ExactEvmSchemeV1 behavior.
+type ExactEvmSchemeV1Option func(*ExactEvmSchemeV1)
+
+// WithVerifyingContractValidator sets an opt-in callback that lets the client trust a
+// seller-supplied extra.verifyingContract instead of requirements.Asset for EIP-712 signing.
+// If not set, extra.verifyingContract is never trusted and signing always uses
+// requirements.Asset.
+func WithVerifyingContractValidator(v VerifyingContractValidator) ExactEvmSchemeV1Option {
+	return func(s *ExactEvmSchemeV1) {
+		s.verifyingContractValidator = v
+	}
+}
+
 // ExactEvmSchemeV1 implements the SchemeNetworkClientV1 interface for EVM exact payments (V1)
 type ExactEvmSchemeV1 struct {
-	signer evm.ClientEvmSigner
+	signer                     evm.ClientEvmSigner
+	verifyingContractValidator VerifyingContractValidator
 }
 
 // NewExactEvmSchemeV1 creates a new ExactEvmSchemeV1
-func NewExactEvmSchemeV1(signer evm.ClientEvmSigner) *ExactEvmSchemeV1 {
-	return &ExactEvmSchemeV1{
+func NewExactEvmSchemeV1(signer evm.ClientEvmSigner, opts ...ExactEvmSchemeV1Option) *ExactEvmSchemeV1 {
+	s := &ExactEvmSchemeV1{
 		signer: signer,
 	}
+	for _, opt := range opts {
+		opt(s)
+	}
+	return s
 }
 
 // Scheme returns the scheme identifier
@@ -74,6 +97,7 @@ func (c *ExactEvmSchemeV1) CreatePaymentPayload(
 	// Extract extra fields for EIP-3009
 	tokenName := assetInfo.Name
 	tokenVersion := assetInfo.Version
+	verifyingContract := assetInfo.Address
 	if requirements.Extra != nil {
 		var extraMap map[string]interface{}
 		if err := json.Unmarshal(*requirements.Extra, &extraMap); err == nil {
@@ -82,6 +106,11 @@ func (c *ExactEvmSchemeV1) CreatePaymentPayload(
 			}
 			if ver, ok := extraMap["version"].(string); ok {
 				tokenVersion = ver
+			}
+			if candidate, ok := extraMap["verifyingContract"].(string); ok && candidate != "" {
+				if c.verifyingContractValidator != nil && c.verifyingContractValidator(candidate, requirements) {
+					verifyingContract = candidate
+				}
 			}
 		}
 	}
@@ -97,7 +126,7 @@ func (c *ExactEvmSchemeV1) CreatePaymentPayload(
 	}
 
 	// Sign the authorization
-	signature, err := c.signAuthorization(ctx, authorization, chainID, assetInfo.Address, tokenName, tokenVersion)
+	signature, err := c.signAuthorization(ctx, authorization, chainID, verifyingContract, tokenName, tokenVersion)
 	if err != nil {
 		return types.PaymentPayloadV1{}, fmt.Errorf(ErrFailedToSignAuthorization+": %w", err)
 	}
