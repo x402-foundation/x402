@@ -14,6 +14,19 @@ import { findDefaultAsset } from "../../../defaultAssets";
 import { EvmNetworkV1, getEvmChainIdV1 } from "../../../v1";
 
 /**
+ * Validates a seller-supplied extra.verifyingContract before it is trusted for EIP-712 signing.
+ *
+ * @param candidate - The address from requirements.extra.verifyingContract
+ * @param requirements - The full V1 payment requirements, for context (e.g. network)
+ * @returns True to sign against `candidate`. False to fall back to requirements.asset, same as
+ *   if no verifyingContract were supplied.
+ */
+export type VerifyingContractValidator = (
+  candidate: string,
+  requirements: PaymentRequirementsV1,
+) => boolean;
+
+/**
  * EVM client implementation for the Exact payment scheme (V1).
  */
 export class ExactEvmSchemeV1 implements SchemeNetworkClient {
@@ -24,8 +37,16 @@ export class ExactEvmSchemeV1 implements SchemeNetworkClient {
    * Creates a new ExactEvmClientV1 instance.
    *
    * @param signer - The EVM signer for client operations
+   * @param verifyingContractValidator - Optional callback invoked when a payment requirement's
+   *   extra.verifyingContract differs from requirements.asset. Receives the candidate address and
+   *   the requirements, and must return true to trust it for EIP-712 signing. If not provided
+   *   (default), extra.verifyingContract is never trusted and signing always uses
+   *   requirements.asset.
    */
-  constructor(private readonly signer: ClientEvmSigner) {}
+  constructor(
+    private readonly signer: ClientEvmSigner,
+    private readonly verifyingContractValidator?: VerifyingContractValidator,
+  ) {}
 
   /**
    * Creates a payment payload for the Exact scheme (V1).
@@ -90,11 +111,17 @@ export class ExactEvmSchemeV1 implements SchemeNetworkClient {
 
     const { name, version } = requirements.extra;
 
+    const candidate = requirements.extra?.verifyingContract as string | undefined;
+    const trusted =
+      candidate && this.verifyingContractValidator?.(candidate, requirements)
+        ? candidate
+        : requirements.asset;
+
     const domain = {
       name,
       version,
       chainId,
-      verifyingContract: getAddress(requirements.asset),
+      verifyingContract: getAddress(trusted),
     };
 
     const message = {

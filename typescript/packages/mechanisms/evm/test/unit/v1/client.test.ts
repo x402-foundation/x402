@@ -207,3 +207,58 @@ describe("ExactEvmSchemeV1", () => {
     });
   });
 });
+
+describe("ExactEvmSchemeV1 verifyingContractValidator", () => {
+  const GATEWAY_CONTRACT = "0x77777777Dcc4d5A8B6E418Fd04D8997ef11000eE";
+  const USDC_ASSET = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913";
+
+  let mockSigner: ClientEvmSigner;
+  let requirements: PaymentRequirementsV1;
+
+  beforeEach(() => {
+    mockSigner = {
+      address: "0x1234567890123456789012345678901234567890",
+      signTypedData: vi.fn().mockResolvedValue("0xmocksignature"),
+    };
+    requirements = {
+      scheme: "exact",
+      network: "base",
+      asset: USDC_ASSET,
+      maxAmountRequired: "8000",
+      payTo: "0x9876543210987654321098765432109876543210",
+      maxTimeoutSeconds: 3600,
+      extra: {
+        name: "GatewayWalletBatched",
+        version: "1",
+        verifyingContract: GATEWAY_CONTRACT,
+      },
+    };
+  });
+
+  it("signs against extra.verifyingContract when the validator approves it", async () => {
+    const client = new ExactEvmSchemeV1(mockSigner, addr => addr === GATEWAY_CONTRACT);
+
+    await client.createPaymentPayload(1, requirements as never);
+
+    const callArgs = (mockSigner.signTypedData as ReturnType<typeof vi.fn>).mock.calls[0][0];
+    expect(callArgs.domain.verifyingContract.toLowerCase()).toBe(GATEWAY_CONTRACT.toLowerCase());
+  });
+
+  it("falls back to requirements.asset when no validator is supplied", async () => {
+    const client = new ExactEvmSchemeV1(mockSigner);
+
+    await client.createPaymentPayload(1, requirements as never);
+
+    const callArgs = (mockSigner.signTypedData as ReturnType<typeof vi.fn>).mock.calls[0][0];
+    expect(callArgs.domain.verifyingContract.toLowerCase()).toBe(USDC_ASSET.toLowerCase());
+  });
+
+  it("falls back to requirements.asset when the validator rejects the candidate", async () => {
+    const client = new ExactEvmSchemeV1(mockSigner, () => false);
+
+    await client.createPaymentPayload(1, requirements as never);
+
+    const callArgs = (mockSigner.signTypedData as ReturnType<typeof vi.fn>).mock.calls[0][0];
+    expect(callArgs.domain.verifyingContract.toLowerCase()).toBe(USDC_ASSET.toLowerCase());
+  });
+});

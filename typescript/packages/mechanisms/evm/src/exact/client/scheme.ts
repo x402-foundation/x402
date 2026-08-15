@@ -6,7 +6,7 @@ import {
 } from "@x402/core/types";
 import { ClientEvmSigner } from "../../signer";
 import { AssetTransferMethod } from "../../types";
-import { createEIP3009Payload } from "./eip3009";
+import { createEIP3009Payload, VerifyingContractValidator } from "./eip3009";
 import { createPermit2Payload } from "./permit2";
 import {
   trySignEip2612PermitExtension,
@@ -39,10 +39,16 @@ export class ExactEvmScheme implements SchemeNetworkClient {
    *   Extension enrichment (EIP-2612 / ERC-20 approval sponsoring) additionally
    *   requires optional capabilities like `readContract` and tx signing helpers.
    * @param options - Optional RPC configuration used to backfill extension capabilities.
+   * @param verifyingContractValidator - Optional callback invoked when a payment requirement's
+   *   extra.verifyingContract differs from requirements.asset (e.g. Circle Gateway's
+   *   batch-settlement contract). Receives the candidate address and the requirements, and must
+   *   return true to trust it for EIP-712 signing (EIP-3009 flow only). If not provided (default),
+   *   extra.verifyingContract is never trusted and signing always uses requirements.asset.
    */
   constructor(
     private readonly signer: ClientEvmSigner,
     private readonly options?: EvmSchemeOptions,
+    private readonly verifyingContractValidator?: VerifyingContractValidator,
   ) {}
 
   /**
@@ -100,6 +106,11 @@ export class ExactEvmScheme implements SchemeNetworkClient {
       return result;
     }
 
-    return createEIP3009Payload(this.signer, x402Version, paymentRequirements);
+    return createEIP3009Payload(
+      this.signer,
+      x402Version,
+      paymentRequirements,
+      this.verifyingContractValidator,
+    );
   }
 }

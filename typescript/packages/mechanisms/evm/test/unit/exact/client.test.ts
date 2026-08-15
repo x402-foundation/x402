@@ -930,3 +930,78 @@ describe("registerExactEvmScheme", () => {
     expect(getRegisteredNetworks(client, 1).sort()).toEqual([...NETWORKS].sort());
   });
 });
+
+describe("ExactEvmScheme verifyingContractValidator", () => {
+  const GATEWAY_CONTRACT = "0x77777777Dcc4d5A8B6E418Fd04D8997ef11000eE";
+  const USDC_ASSET = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913";
+
+  let mockSigner: ClientEvmSigner;
+  let requirements: PaymentRequirements;
+
+  beforeEach(() => {
+    mockSigner = {
+      address: "0x1234567890123456789012345678901234567890",
+      signTypedData: vi.fn().mockResolvedValue("0xmocksignature123456789"),
+      readContract: vi.fn().mockResolvedValue(BigInt(0)),
+    };
+    requirements = {
+      scheme: "exact",
+      network: "eip155:8453",
+      amount: "8000",
+      asset: USDC_ASSET,
+      payTo: "0x742d35Cc6634C0532925a3b844Bc9e7595f0bEb0",
+      maxTimeoutSeconds: 300,
+      extra: {
+        name: "GatewayWalletBatched",
+        version: "1",
+        verifyingContract: GATEWAY_CONTRACT,
+      },
+    };
+  });
+
+  it("signs against extra.verifyingContract when the validator approves it", async () => {
+    const client = new ExactEvmScheme(mockSigner, undefined, addr => addr === GATEWAY_CONTRACT);
+
+    await client.createPaymentPayload(2, requirements);
+
+    const callArgs = (mockSigner.signTypedData as ReturnType<typeof vi.fn>).mock.calls[0][0];
+    expect(callArgs.domain.verifyingContract.toLowerCase()).toBe(GATEWAY_CONTRACT.toLowerCase());
+  });
+
+  it("falls back to requirements.asset when no validator is supplied", async () => {
+    const client = new ExactEvmScheme(mockSigner);
+
+    await client.createPaymentPayload(2, requirements);
+
+    const callArgs = (mockSigner.signTypedData as ReturnType<typeof vi.fn>).mock.calls[0][0];
+    expect(callArgs.domain.verifyingContract.toLowerCase()).toBe(USDC_ASSET.toLowerCase());
+  });
+
+  it("falls back to requirements.asset when the validator rejects the candidate", async () => {
+    const client = new ExactEvmScheme(mockSigner, undefined, () => false);
+
+    await client.createPaymentPayload(2, requirements);
+
+    const callArgs = (mockSigner.signTypedData as ReturnType<typeof vi.fn>).mock.calls[0][0];
+    expect(callArgs.domain.verifyingContract.toLowerCase()).toBe(USDC_ASSET.toLowerCase());
+  });
+
+  it("falls back to requirements.asset when extra.verifyingContract is absent", async () => {
+    const client = new ExactEvmScheme(mockSigner, undefined, () => true);
+    requirements.extra = { name: "USD Coin", version: "2" };
+
+    await client.createPaymentPayload(2, requirements);
+
+    const callArgs = (mockSigner.signTypedData as ReturnType<typeof vi.fn>).mock.calls[0][0];
+    expect(callArgs.domain.verifyingContract.toLowerCase()).toBe(USDC_ASSET.toLowerCase());
+  });
+
+  it("passes the candidate and requirements to the validator", async () => {
+    const validator = vi.fn().mockReturnValue(true);
+    const client = new ExactEvmScheme(mockSigner, undefined, validator);
+
+    await client.createPaymentPayload(2, requirements);
+
+    expect(validator).toHaveBeenCalledWith(GATEWAY_CONTRACT, requirements);
+  });
+});
