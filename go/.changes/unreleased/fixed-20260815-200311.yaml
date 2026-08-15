@@ -1,0 +1,3 @@
+kind: Fixed
+body: Client EIP-3009 signing and facilitator verify/settle (V1 and V2) always resolved the EIP-712 domain and settlement contract from requirements.Asset, ignoring a seller-supplied extra.verifyingContract (e.g. Circle Gateway's batch-settlement contract). Trusting extra.verifyingContract is opt-in via a VerifyingContractValidator (client: WithVerifyingContractValidator option; facilitator: ExactEvmSchemeConfig/ExactEvmSchemeV1Config field); by default (none configured) signing, verification, and settlement still always use the asset address, matching prior behavior
+time: 2026-08-15T20:03:11.000000+00:00
