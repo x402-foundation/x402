@@ -2,6 +2,7 @@
 
 import logging
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -56,6 +57,20 @@ from ..utils import (
 logger = logging.getLogger(__name__)
 
 
+VerifyingContractValidator = Callable[[str, PaymentRequirements], bool]
+"""Validates a seller-supplied extra.verifyingContract before the facilitator
+trusts it as the contract to verify against and settle through.
+
+Args:
+    candidate: The address from requirements.extra["verifyingContract"].
+    requirements: The full payment requirements, for context (e.g. network).
+
+Returns:
+    True to verify and settle against `candidate`. False to fall back to
+    requirements.asset, same as if no verifyingContract were supplied.
+"""
+
+
 @dataclass
 class ExactEvmSchemeConfig:
     """Configuration for ExactEvmScheme facilitator."""
@@ -72,6 +87,24 @@ class ExactEvmSchemeConfig:
 
     simulate_in_settle: bool = False
     """Rerun transfer simulation during settle."""
+
+    verifying_contract_validator: VerifyingContractValidator | None = None
+    """Optional callback invoked when a payment requirement's
+    extra.verifyingContract differs from requirements.asset (e.g. Circle
+    Gateway's batch-settlement contract). Receives the candidate address and
+    the requirements, and must return True to trust it.
+
+    When trusted, the candidate replaces requirements.asset everywhere this
+    facilitator resolves the payment's contract: the EIP-712 domain checked
+    during verify, the deployed-code check, the transfer simulation, and the
+    on-chain transferWithAuthorization call during settle. This mirrors the
+    client's counterpart (ExactEvmScheme.verifying_contract_validator in
+    exact/client.py): a facilitator that trusts a seller-specified verifying
+    contract must consistently verify and settle through that same contract,
+    not just check its signature against it. If not provided (default),
+    extra.verifyingContract is never trusted and requirements.asset is
+    always used, matching pre-existing behavior.
+    """
 
 
 class ExactEvmScheme:
@@ -122,6 +155,26 @@ class ExactEvmScheme:
             List of facilitator addresses.
         """
         return self._signer.get_addresses()
+
+    def _resolve_verifying_contract(
+        self,
+        extra: dict[str, Any],
+        requirements: PaymentRequirements,
+    ) -> str:
+        """Resolve the contract to verify and settle against.
+
+        Defaults to requirements.asset. Only trusts a seller-supplied
+        extra.verifyingContract if a validator was configured and it
+        returns True for this specific candidate.
+        """
+        candidate = extra.get("verifyingContract")
+        if candidate is None:
+            return normalize_address(requirements.asset)
+        if self._config.verifying_contract_validator is None:
+            return normalize_address(requirements.asset)
+        if self._config.verifying_contract_validator(candidate, requirements):
+            return normalize_address(candidate)
+        return normalize_address(requirements.asset)
 
     def verify(
         self,
@@ -182,14 +235,14 @@ class ExactEvmScheme:
                 payer=payer,
             )
 
-        token_address = normalize_address(requirements.asset)
-
         # Check EIP-712 domain params
         extra = requirements.extra or {}
         if "name" not in extra or "version" not in extra:
             return VerifyResponse(
                 is_valid=False, invalid_reason=ERR_MISSING_EIP712_DOMAIN, payer=payer
             )
+
+        token_address = self._resolve_verifying_contract(extra, requirements)
 
         # Validate recipient
         if evm_payload.authorization.to.lower() != requirements.pay_to.lower():
@@ -374,7 +427,8 @@ class ExactEvmScheme:
         evm_payload = ExactEIP3009Payload.from_dict(payload.payload)
         payer = evm_payload.authorization.from_address
         network = str(requirements.network)
-        token_address = normalize_address(requirements.asset)
+        extra = requirements.extra or {}
+        token_address = self._resolve_verifying_contract(extra, requirements)
 
         try:
             signature = hex_to_bytes(evm_payload.signature or "")

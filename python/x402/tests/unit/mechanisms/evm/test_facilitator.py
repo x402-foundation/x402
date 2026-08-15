@@ -8,6 +8,7 @@ import pytest
 
 try:
     from eth_abi import encode as abi_encode
+    from eth_account import Account
 except ImportError:
     pytest.skip("eth-abi not available", allow_module_level=True)
 
@@ -24,7 +25,11 @@ from x402.mechanisms.evm.constants import (
     ERR_TRANSACTION_SIMULATION_FAILED,
     ERR_UNDEPLOYED_SMART_WALLET,
 )
-from x402.mechanisms.evm.exact import ExactEvmFacilitatorScheme, ExactEvmSchemeConfig
+from x402.mechanisms.evm.exact import (
+    ExactEvmClientScheme,
+    ExactEvmFacilitatorScheme,
+    ExactEvmSchemeConfig,
+)
 from x402.mechanisms.evm.exact.v1.facilitator import ExactEvmSchemeV1
 from x402.mechanisms.evm.types import TransactionReceipt
 from x402.schemas import PaymentPayload, PaymentRequirements, ResourceInfo
@@ -211,6 +216,7 @@ class MockFacilitatorSigner:
         self.transfer_simulation_calls = 0
         self.write_calls = 0
         self.send_calls = 0
+        self.write_addresses: list[str] = []
 
     def get_addresses(self) -> list[str]:
         return self._addresses
@@ -251,6 +257,7 @@ class MockFacilitatorSigner:
         data_suffix: str | None = None,
     ) -> str:
         self.write_calls += 1
+        self.write_addresses.append(address)
         if self.write_should_revert:
             raise RuntimeError("execution reverted: invalid signature")
         return "0x" + "34" * 32
@@ -766,3 +773,144 @@ class TestFacilitatorSchemeAttributes:
         ]
         facilitator = ExactEvmFacilitatorScheme(MockFacilitatorSigner(addresses=addresses))
         assert facilitator.get_signers(NETWORK) == addresses
+
+
+class TestVerifyingContractValidator:
+    """The facilitator must verify and settle against extra.verifyingContract
+    when a configured validator trusts it, not unconditionally against
+    requirements.asset.
+
+    Regression coverage for the facilitator-side counterpart of #2885 (client
+    fix): the client can now sign against a seller-supplied verifying
+    contract (e.g. Circle Gateway's GatewayWalletBatched), but every
+    facilitator in the repo -- including this one -- still rebuilt the
+    EIP-712 domain from requirements.asset only, so a correctly signed
+    payment would be rejected as an invalid signature by this facilitator.
+    """
+
+    GATEWAY_CONTRACT = "0x77777777Dcc4d5A8B6E418Fd04D8997ef11000eE"
+
+    def _sign_with_client(self, account, requirements, *, trust_gateway: bool) -> PaymentPayload:
+        client = ExactEvmClientScheme(
+            signer=account,
+            verifying_contract_validator=(
+                (lambda addr, reqs: addr == self.GATEWAY_CONTRACT) if trust_gateway else None
+            ),
+        )
+        signed = client.create_payment_payload(requirements)
+        return PaymentPayload(
+            x402_version=2,
+            resource=ResourceInfo(
+                url="http://example.com/protected",
+                description="Test resource",
+                mime_type="application/json",
+            ),
+            accepted=requirements,
+            payload=signed,
+        )
+
+    def test_verifies_against_verifying_contract_when_validator_approves(self):
+        account = Account.create()
+        requirements = make_requirements(
+            pay_to=RECIPIENT,
+            extra={
+                "name": "GatewayWalletBatched",
+                "version": "1",
+                "verifyingContract": self.GATEWAY_CONTRACT,
+            },
+        )
+        payload = self._sign_with_client(account, requirements, trust_gateway=True)
+
+        signer = MockFacilitatorSigner(code_by_address={self.GATEWAY_CONTRACT.lower(): b"\x60"})
+        facilitator = ExactEvmFacilitatorScheme(
+            signer,
+            ExactEvmSchemeConfig(
+                verifying_contract_validator=lambda addr, reqs: addr == self.GATEWAY_CONTRACT
+            ),
+        )
+
+        result = facilitator.verify(payload, requirements)
+
+        assert result.is_valid is True
+
+    def test_rejects_verifying_contract_signature_when_no_validator_configured(self):
+        """A payment signed against extra.verifyingContract must NOT be
+        accepted by a facilitator that hasn't opted in -- the default
+        behavior (no validator) still checks against requirements.asset, so
+        a gateway-domain signature does not recover to the payer."""
+        account = Account.create()
+        requirements = make_requirements(
+            pay_to=RECIPIENT,
+            extra={
+                "name": "GatewayWalletBatched",
+                "version": "1",
+                "verifyingContract": self.GATEWAY_CONTRACT,
+            },
+        )
+        payload = self._sign_with_client(account, requirements, trust_gateway=True)
+
+        signer = MockFacilitatorSigner()
+        facilitator = ExactEvmFacilitatorScheme(signer)  # no validator configured
+
+        result = facilitator.verify(payload, requirements)
+
+        assert result.is_valid is False
+        assert result.invalid_reason == ERR_INVALID_SIGNATURE
+
+    def test_falls_back_to_asset_when_no_verifying_contract_in_extra(self):
+        """Unchanged behavior for a plain token EIP-3009 domain (no
+        extra.verifyingContract at all)."""
+        account = Account.create()
+        requirements = make_requirements(pay_to=RECIPIENT)
+        payload = self._sign_with_client(account, requirements, trust_gateway=False)
+
+        signer = MockFacilitatorSigner()
+        facilitator = ExactEvmFacilitatorScheme(
+            signer,
+            ExactEvmSchemeConfig(verifying_contract_validator=lambda addr, reqs: True),
+        )
+
+        result = facilitator.verify(payload, requirements)
+
+        assert result.is_valid is True
+
+    def test_settles_transferwithauthorization_against_verifying_contract(self):
+        """When the seller-supplied verifying contract is trusted, settle
+        must call transferWithAuthorization on that contract, not on
+        requirements.asset -- the facilitator that verified a signature
+        against a given domain must execute against the same contract."""
+        payload = make_payment_payload(
+            extra={
+                "name": "GatewayWalletBatched",
+                "version": "1",
+                "verifyingContract": self.GATEWAY_CONTRACT,
+            }
+        )
+        requirements = make_requirements(
+            extra={
+                "name": "GatewayWalletBatched",
+                "version": "1",
+                "verifyingContract": self.GATEWAY_CONTRACT,
+            }
+        )
+        # typed_data_valid=True + payer code takes the mocked EIP-1271 path,
+        # so this isolates settle's contract-address wiring from signature
+        # cryptography (already covered by the tests above).
+        signer = MockFacilitatorSigner(
+            typed_data_valid=True,
+            code_by_address={
+                PAYER.lower(): b"\x01",
+                self.GATEWAY_CONTRACT.lower(): b"\x60",
+            },
+        )
+        facilitator = ExactEvmFacilitatorScheme(
+            signer,
+            ExactEvmSchemeConfig(
+                verifying_contract_validator=lambda addr, reqs: addr == self.GATEWAY_CONTRACT
+            ),
+        )
+
+        result = facilitator.settle(payload, requirements)
+
+        assert result.success is True
+        assert signer.write_addresses == [self.GATEWAY_CONTRACT]

@@ -2,6 +2,7 @@
 
 import json
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -40,6 +41,20 @@ from ..eip3009_utils import (
 )
 
 
+VerifyingContractValidator = Callable[[str, PaymentRequirementsV1], bool]
+"""Validates a seller-supplied extra.verifyingContract before the facilitator
+trusts it as the contract to verify against and settle through.
+
+Args:
+    candidate: The address from requirements.extra["verifyingContract"].
+    requirements: The full payment requirements, for context (e.g. network).
+
+Returns:
+    True to verify and settle against `candidate`. False to fall back to
+    requirements.asset, same as if no verifyingContract were supplied.
+"""
+
+
 @dataclass
 class ExactEvmSchemeV1Config:
     """Configuration for ExactEvmSchemeV1 facilitator."""
@@ -56,6 +71,22 @@ class ExactEvmSchemeV1Config:
 
     simulate_in_settle: bool = False
     """Rerun transfer simulation during settle."""
+
+    verifying_contract_validator: VerifyingContractValidator | None = None
+    """Optional callback invoked when a payment requirement's
+    extra.verifyingContract differs from requirements.asset (e.g. Circle
+    Gateway's batch-settlement contract). Receives the candidate address and
+    the requirements, and must return True to trust it.
+
+    When trusted, the candidate replaces requirements.asset everywhere this
+    facilitator resolves the payment's contract: the EIP-712 domain checked
+    during verify, the transfer simulation, and the on-chain
+    transferWithAuthorization call during settle. Mirrors the client's
+    counterpart (ExactEvmSchemeV1.verifying_contract_validator in
+    exact/v1/client.py). If not provided (default), extra.verifyingContract
+    is never trusted and requirements.asset is always used, matching
+    pre-existing behavior.
+    """
 
 
 class ExactEvmSchemeV1:
@@ -111,6 +142,26 @@ class ExactEvmSchemeV1:
         """
         return self._signer.get_addresses()
 
+    def _resolve_verifying_contract(
+        self,
+        extra: dict[str, Any],
+        requirements: PaymentRequirementsV1,
+    ) -> str:
+        """Resolve the contract to verify and settle against.
+
+        Defaults to requirements.asset. Only trusts a seller-supplied
+        extra.verifyingContract if a validator was configured and it
+        returns True for this specific candidate.
+        """
+        candidate = extra.get("verifyingContract")
+        if candidate is None:
+            return normalize_address(requirements.asset)
+        if self._config.verifying_contract_validator is None:
+            return normalize_address(requirements.asset)
+        if self._config.verifying_contract_validator(candidate, requirements):
+            return normalize_address(candidate)
+        return normalize_address(requirements.asset)
+
     def verify(
         self,
         payload: PaymentPayloadV1,
@@ -164,8 +215,6 @@ class ExactEvmSchemeV1:
                 payer=payer,
             )
 
-        token_address = normalize_address(requirements.asset)
-
         # V1: Parse JSON-encoded extra
         extra = requirements.extra or {}
         if isinstance(extra, str):
@@ -175,6 +224,8 @@ class ExactEvmSchemeV1:
             return VerifyResponse(
                 is_valid=False, invalid_reason=ERR_MISSING_EIP712_DOMAIN, payer=payer
             )
+
+        token_address = self._resolve_verifying_contract(extra, requirements)
 
         # Validate recipient
         if evm_payload.authorization.to.lower() != requirements.pay_to.lower():
@@ -322,7 +373,10 @@ class ExactEvmSchemeV1:
         evm_payload = ExactEIP3009Payload.from_dict(payload.payload)
         payer = evm_payload.authorization.from_address
         network = requirements.network
-        token_address = normalize_address(requirements.asset)
+        extra = requirements.extra or {}
+        if isinstance(extra, str):
+            extra = json.loads(extra)
+        token_address = self._resolve_verifying_contract(extra, requirements)
 
         try:
             signature = hex_to_bytes(evm_payload.signature or "")
