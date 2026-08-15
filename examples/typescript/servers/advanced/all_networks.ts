@@ -75,7 +75,7 @@ if (!facilitatorUrl) {
 const AVM_NETWORK = (process.env.AVM_NETWORK || ALGORAND_TESTNET_CAIP2) as Network; // Algorand Testnet
 const APTOS_NETWORK = (process.env.APTOS_NETWORK || APTOS_TESTNET_CAIP2) as Network; // Aptos Testnet
 const CCD_NETWORK = "ccd:4221332d34e1694168c2a0c0b3fd0f27" as const; // Concordium Testnet
-const EVM_NETWORK = "eip155:84532" as const; // Base Sepolia
+const EVM_NETWORK = (process.env.EVM_NETWORK || "eip155:84532") as Network; // Defaults to Base Sepolia; override for other supported EVM networks
 const HEDERA_NETWORK = "hedera:testnet" as const; // Hedera Testnet
 const KEETA_NETWORK = KEETA_TESTNET_CAIP2; // Keeta Testnet
 const NEAR_NETWORK = (process.env.NEAR_NETWORK || NEAR_TESTNET_CAIP2) as Network; // NEAR Testnet
@@ -124,6 +124,7 @@ if (ccdAddress) {
 if (evmAddress) {
   accepts.push({
     scheme: "exact",
+    // Dollar-string pricing works out of the box only when the selected network has a configured default asset.
     price: "$0.001",
     network: EVM_NETWORK,
     payTo: evmAddress,
