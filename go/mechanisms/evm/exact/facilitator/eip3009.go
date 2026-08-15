@@ -15,6 +15,20 @@ import (
 	"github.com/x402-foundation/x402/go/v2/types"
 )
 
+// resolveVerifyingContract resolves the contract to verify and settle against. Defaults to
+// requirements.Asset. Only trusts a seller-supplied extra.verifyingContract if a validator was
+// configured and it approves this specific candidate.
+func (f *ExactEvmScheme) resolveVerifyingContract(requirements types.PaymentRequirements) string {
+	candidate, ok := requirements.Extra["verifyingContract"].(string)
+	if !ok || candidate == "" || f.config.VerifyingContractValidator == nil {
+		return evm.NormalizeAddress(requirements.Asset)
+	}
+	if f.config.VerifyingContractValidator(candidate, requirements) {
+		return evm.NormalizeAddress(candidate)
+	}
+	return evm.NormalizeAddress(requirements.Asset)
+}
+
 // verifyEIP3009 verifies an EIP-3009 payment payload.
 func (f *ExactEvmScheme) verifyEIP3009(
 	ctx context.Context,
@@ -44,7 +58,7 @@ func (f *ExactEvmScheme) verifyEIP3009(
 		return nil, x402.NewVerifyError(ErrFailedToGetNetworkConfig, "", err.Error())
 	}
 
-	tokenAddress := evm.NormalizeAddress(requirements.Asset)
+	tokenAddress := f.resolveVerifyingContract(requirements)
 
 	if !strings.EqualFold(evmPayload.Authorization.To, requirements.PayTo) {
 		return nil, x402.NewVerifyError(ErrRecipientMismatch, "", fmt.Sprintf("recipient mismatch: %s != %s", evmPayload.Authorization.To, requirements.PayTo))
@@ -115,10 +129,10 @@ func (f *ExactEvmScheme) verifyEIP3009(
 		}
 	}
 
-	if errReason, err := evm.ValidateAssetIsContract(ctx, f.signer, requirements.Asset); err != nil {
+	if errReason, err := evm.ValidateAssetIsContract(ctx, f.signer, tokenAddress); err != nil {
 		return nil, fmt.Errorf("asset contract check failed: %w", err)
 	} else if errReason != "" {
-		return nil, x402.NewVerifyError(errReason, evmPayload.Authorization.From, fmt.Sprintf("asset %s is not a deployed contract", requirements.Asset))
+		return nil, x402.NewVerifyError(errReason, evmPayload.Authorization.From, fmt.Sprintf("asset %s is not a deployed contract", tokenAddress))
 	}
 
 	if simulate {
@@ -175,7 +189,7 @@ func (f *ExactEvmScheme) settleEIP3009(
 		return nil, x402.NewSettleError(ErrInvalidPayload, verifyResp.Payer, network, "", err.Error())
 	}
 
-	tokenAddress := evm.NormalizeAddress(requirements.Asset)
+	tokenAddress := f.resolveVerifyingContract(requirements)
 
 	signatureBytes, err := evm.HexToBytes(evmPayload.Signature)
 	if err != nil {

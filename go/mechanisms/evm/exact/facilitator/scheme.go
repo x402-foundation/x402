@@ -9,6 +9,12 @@ import (
 	"github.com/x402-foundation/x402/go/v2/types"
 )
 
+// VerifyingContractValidator validates a seller-supplied extra.verifyingContract before the
+// facilitator trusts it as the contract to verify against and settle through. Returns true to
+// verify and settle against candidate; false falls back to requirements.Asset, same as if no
+// verifyingContract were supplied.
+type VerifyingContractValidator func(candidate string, requirements types.PaymentRequirements) bool
+
 // ExactEvmSchemeConfig holds configuration for the ExactEvmScheme facilitator
 type ExactEvmSchemeConfig struct {
 	// EIP6492AllowedFactories is the allowlist of factory contract addresses (hex strings,
@@ -20,6 +26,17 @@ type ExactEvmSchemeConfig struct {
 	EIP6492AllowedFactories []string
 	// SimulateInSettle reruns transfer simulation during settle. Verify always simulates.
 	SimulateInSettle bool
+	// VerifyingContractValidator is an optional callback invoked when a payment requirement's
+	// extra.verifyingContract differs from requirements.Asset (e.g. Circle Gateway's
+	// batch-settlement contract). Receives the candidate address and the requirements, and must
+	// return true to trust it.
+	//
+	// When trusted, the candidate replaces requirements.Asset everywhere this facilitator
+	// resolves the payment's contract: the EIP-712 domain checked during verify, the
+	// deployed-code check, the transfer simulation, and the on-chain transferWithAuthorization
+	// call during settle. If nil (default), extra.verifyingContract is never trusted and
+	// requirements.Asset is always used, matching pre-existing behavior.
+	VerifyingContractValidator VerifyingContractValidator
 }
 
 // ExactEvmScheme implements the SchemeNetworkFacilitator interface for EVM exact payments (V2)

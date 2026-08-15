@@ -18,6 +18,12 @@ import (
 	"github.com/x402-foundation/x402/go/v2/types"
 )
 
+// VerifyingContractValidator validates a seller-supplied extra.verifyingContract before the
+// facilitator trusts it as the contract to verify against and settle through. Returns true to
+// verify and settle against candidate; false falls back to requirements.Asset, same as if no
+// verifyingContract were supplied.
+type VerifyingContractValidator func(candidate string, requirements types.PaymentRequirementsV1) bool
+
 // ExactEvmSchemeV1Config holds configuration for the ExactEvmSchemeV1 facilitator
 type ExactEvmSchemeV1Config struct {
 	// EIP6492AllowedFactories is the allowlist of factory contract addresses (hex strings,
@@ -29,6 +35,10 @@ type ExactEvmSchemeV1Config struct {
 	EIP6492AllowedFactories []string
 	// SimulateInSettle reruns transfer simulation during settle. Verify always simulates.
 	SimulateInSettle bool
+	// VerifyingContractValidator is an optional callback to trust a seller-supplied
+	// extra.verifyingContract instead of requirements.Asset, for both verification and
+	// settlement. Not trusted by default (nil).
+	VerifyingContractValidator VerifyingContractValidator
 }
 
 // ExactEvmSchemeV1 implements the SchemeNetworkFacilitatorV1 interface for EVM exact payments (V1)
@@ -89,6 +99,24 @@ func (f *ExactEvmSchemeV1) Verify(
 	return f.verify(ctx, payload, requirements, fctx, true)
 }
 
+// resolveVerifyingContract resolves the contract to verify and settle against. Defaults to
+// requirements.Asset. Only trusts a seller-supplied extra.verifyingContract if a validator was
+// configured and it approves this specific candidate.
+func (f *ExactEvmSchemeV1) resolveVerifyingContract(requirements types.PaymentRequirementsV1) string {
+	var extraMap map[string]interface{}
+	if requirements.Extra != nil {
+		_ = json.Unmarshal(*requirements.Extra, &extraMap)
+	}
+	candidate, ok := extraMap["verifyingContract"].(string)
+	if !ok || candidate == "" || f.config.VerifyingContractValidator == nil {
+		return evm.NormalizeAddress(requirements.Asset)
+	}
+	if f.config.VerifyingContractValidator(candidate, requirements) {
+		return evm.NormalizeAddress(candidate)
+	}
+	return evm.NormalizeAddress(requirements.Asset)
+}
+
 func (f *ExactEvmSchemeV1) verify(
 	ctx context.Context,
 	payload types.PaymentPayloadV1,
@@ -131,7 +159,7 @@ func (f *ExactEvmSchemeV1) verify(
 		return nil, x402.NewVerifyError(ErrFailedToGetNetworkConfig, "", err.Error())
 	}
 
-	tokenAddress := evm.NormalizeAddress(requirements.Asset)
+	tokenAddress := f.resolveVerifyingContract(requirements)
 
 	// Check EIP-712 domain parameters
 	var extraMap map[string]interface{}
@@ -275,7 +303,7 @@ func (f *ExactEvmSchemeV1) Settle(
 		return nil, x402.NewSettleError(ErrInvalidPayload, verifyResp.Payer, network, "", err.Error())
 	}
 
-	tokenAddress := evm.NormalizeAddress(requirements.Asset)
+	tokenAddress := f.resolveVerifyingContract(requirements)
 
 	// Parse signature
 	signatureBytes, err := evm.HexToBytes(evmPayload.Signature)
