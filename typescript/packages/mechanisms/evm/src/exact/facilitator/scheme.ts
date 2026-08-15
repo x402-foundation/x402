@@ -8,7 +8,7 @@ import {
 } from "@x402/core/types";
 import { FacilitatorEvmSigner } from "../../signer";
 import { ExactEvmPayloadV2, ExactEIP3009Payload, isPermit2Payload } from "../../types";
-import { verifyEIP3009, settleEIP3009 } from "./eip3009";
+import { verifyEIP3009, settleEIP3009, VerifyingContractValidator } from "./eip3009";
 import { verifyPermit2, settlePermit2 } from "./permit2";
 
 export interface ExactEvmSchemeConfig {
@@ -28,6 +28,12 @@ export interface ExactEvmSchemeConfig {
    * @default false
    */
   simulateInSettle?: boolean;
+  /**
+   * Optional callback to trust a seller-supplied extra.verifyingContract (EIP-3009 flow only)
+   * instead of requirements.asset, for both verification and settlement. See
+   * `VerifyingContractValidator` in `./eip3009` for the full contract. Not trusted by default.
+   */
+  verifyingContractValidator?: VerifyingContractValidator;
 }
 
 /**
@@ -39,7 +45,8 @@ export interface ExactEvmSchemeConfig {
 export class ExactEvmScheme implements SchemeNetworkFacilitator {
   readonly scheme = "exact";
   readonly caipFamily = "eip155:*";
-  private readonly config: Required<ExactEvmSchemeConfig>;
+  private readonly config: Required<Omit<ExactEvmSchemeConfig, "verifyingContractValidator">> &
+    Pick<ExactEvmSchemeConfig, "verifyingContractValidator">;
 
   /**
    * Creates a new ExactEvmScheme facilitator instance.
@@ -54,6 +61,7 @@ export class ExactEvmScheme implements SchemeNetworkFacilitator {
     this.config = {
       eip6492AllowedFactories: config?.eip6492AllowedFactories ?? [],
       simulateInSettle: config?.simulateInSettle ?? false,
+      verifyingContractValidator: config?.verifyingContractValidator,
     };
   }
 
@@ -107,6 +115,7 @@ export class ExactEvmScheme implements SchemeNetworkFacilitator {
       eip3009Payload,
       undefined,
       this.config.eip6492AllowedFactories,
+      this.config.verifyingContractValidator,
     );
   }
 

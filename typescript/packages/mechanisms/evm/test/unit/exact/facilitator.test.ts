@@ -2116,3 +2116,103 @@ describe("ExactEvmScheme (Facilitator)", () => {
     });
   });
 });
+
+describe("ExactEvmScheme (Facilitator) verifyingContractValidator", () => {
+  const GATEWAY_CONTRACT = "0x77777777Dcc4d5A8B6E418Fd04D8997ef11000eE";
+  const USDC_ASSET = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913";
+
+  let mockFacilitatorSigner: FacilitatorEvmSigner;
+  let client: ClientExactEvmScheme;
+  let mockClientSigner: ClientEvmSigner;
+  let requirements: PaymentRequirements;
+
+  beforeEach(() => {
+    mockClientSigner = {
+      address: "0x1234567890123456789012345678901234567890",
+      signTypedData: vi.fn().mockResolvedValue("0xmocksignature"),
+      readContract: vi.fn().mockResolvedValue(BigInt(0)),
+    };
+
+    // Default mock: every address (payer, asset, gateway) reports as a deployed contract with
+    // an always-valid isValidSignature, so these tests isolate the resolved-address wiring from
+    // signature cryptography (already covered by the client-side tests).
+    mockFacilitatorSigner = {
+      getAddresses: vi.fn().mockReturnValue(["0x742D35CC6634c0532925A3b844BC9E7595F0BEb0"]),
+      readContract: vi.fn().mockImplementation(async (args: { functionName: string }) => {
+        if (args?.functionName === "isValidSignature") return "0x1626ba7e";
+        return 0n;
+      }),
+      verifyTypedData: vi.fn().mockResolvedValue(true),
+      writeContract: vi.fn().mockResolvedValue("0xtxhash"),
+      sendTransaction: vi.fn().mockResolvedValue("0xtxhash"),
+      waitForTransactionReceipt: vi.fn().mockResolvedValue({ status: "success" }),
+      getCode: vi.fn().mockResolvedValue("0x6080604052"),
+    };
+
+    requirements = {
+      scheme: "exact",
+      network: "eip155:8453",
+      amount: "8000",
+      asset: USDC_ASSET,
+      payTo: "0x742D35CC6634c0532925A3b844BC9E7595F0BEb0",
+      maxTimeoutSeconds: 300,
+      extra: {
+        name: "GatewayWalletBatched",
+        version: "1",
+        verifyingContract: GATEWAY_CONTRACT,
+      },
+    };
+  });
+
+  async function buildPayload(): Promise<PaymentPayload> {
+    client = new ClientExactEvmScheme(mockClientSigner);
+    const paymentPayload = await client.createPaymentPayload(2, requirements);
+    return {
+      ...paymentPayload,
+      accepted: requirements,
+      resource: { url: "test", description: "", mimeType: "" },
+    };
+  }
+
+  it("verifies against the resolved contract when the validator approves it", async () => {
+    const facilitator = new ExactEvmScheme(mockFacilitatorSigner, {
+      verifyingContractValidator: addr => addr === GATEWAY_CONTRACT,
+    });
+    const fullPayload = await buildPayload();
+
+    const result = await facilitator.verify(fullPayload, requirements);
+
+    expect(result.isValid).toBe(true);
+    expect(mockFacilitatorSigner.getCode).toHaveBeenCalledWith(
+      expect.objectContaining({ address: GATEWAY_CONTRACT }),
+    );
+  });
+
+  it("checks against requirements.asset when no validator is configured", async () => {
+    const facilitator = new ExactEvmScheme(mockFacilitatorSigner);
+    const fullPayload = await buildPayload();
+
+    await facilitator.verify(fullPayload, requirements);
+
+    expect(mockFacilitatorSigner.getCode).toHaveBeenCalledWith(
+      expect.objectContaining({ address: USDC_ASSET }),
+    );
+    expect(mockFacilitatorSigner.getCode).not.toHaveBeenCalledWith(
+      expect.objectContaining({ address: GATEWAY_CONTRACT }),
+    );
+  });
+
+  it("settles transferWithAuthorization against the resolved contract, not requirements.asset", async () => {
+    const facilitator = new ExactEvmScheme(mockFacilitatorSigner, {
+      verifyingContractValidator: addr => addr === GATEWAY_CONTRACT,
+    });
+    const fullPayload = await buildPayload();
+
+    const result = await facilitator.settle(fullPayload, requirements);
+
+    expect(result.success).toBe(true);
+    expect(mockFacilitatorSigner.writeContract).toHaveBeenCalledWith(
+      expect.objectContaining({ address: GATEWAY_CONTRACT }),
+    );
+  });
+});

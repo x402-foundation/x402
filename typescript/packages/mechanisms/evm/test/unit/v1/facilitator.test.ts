@@ -391,3 +391,91 @@ describe("ExactEvmSchemeV1", () => {
     });
   });
 });
+
+describe("ExactEvmSchemeV1 verifyingContractValidator", () => {
+  const GATEWAY_CONTRACT = "0x77777777Dcc4d5A8B6E418Fd04D8997ef11000eE";
+  const USDC_ASSET = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913";
+
+  let mockSigner: FacilitatorEvmSigner;
+  let payload: PaymentPayloadV1;
+  let requirements: PaymentRequirementsV1;
+
+  beforeEach(() => {
+    mockSigner = {
+      address: "0x742d35Cc6634C0532925a3b844Bc9e7595f0bEb0",
+      readContract: rcWithSig(BigInt("10000000")),
+      verifyTypedData: vi.fn().mockResolvedValue(true),
+      writeContract: vi.fn().mockResolvedValue("0xtxhash"),
+      waitForTransactionReceipt: vi.fn().mockResolvedValue({ status: "success" }),
+      getCode: vi.fn().mockResolvedValue("0x6080604052"),
+    };
+
+    payload = {
+      x402Version: 1,
+      scheme: "exact",
+      network: "base",
+      payload: {
+        signature: "0xvalidsignature",
+        authorization: {
+          from: "0x1234567890123456789012345678901234567890",
+          to: "0x9876543210987654321098765432109876543210",
+          value: "8000",
+          validAfter: (Math.floor(Date.now() / 1000) - 300).toString(),
+          validBefore: (Math.floor(Date.now() / 1000) + 3600).toString(),
+          nonce: "0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef",
+        },
+      },
+    };
+
+    requirements = {
+      scheme: "exact",
+      network: "base",
+      asset: USDC_ASSET,
+      maxAmountRequired: "8000",
+      payTo: "0x9876543210987654321098765432109876543210",
+      maxTimeoutSeconds: 3600,
+      extra: {
+        name: "GatewayWalletBatched",
+        version: "1",
+        verifyingContract: GATEWAY_CONTRACT,
+      },
+    };
+  });
+
+  it("verifies against the resolved contract when the validator approves it", async () => {
+    const facilitator = new ExactEvmSchemeV1(mockSigner, {
+      verifyingContractValidator: addr => addr === GATEWAY_CONTRACT,
+    });
+
+    const result = await facilitator.verify(payload as never, requirements as never);
+
+    expect(result.isValid).toBe(true);
+  });
+
+  it("settles transferWithAuthorization against the resolved contract, not requirements.asset", async () => {
+    const facilitator = new ExactEvmSchemeV1(mockSigner, {
+      verifyingContractValidator: addr => addr === GATEWAY_CONTRACT,
+    });
+
+    const result = await facilitator.settle(payload as never, requirements as never);
+
+    expect(result.success).toBe(true);
+    expect(mockSigner.writeContract).toHaveBeenCalledWith(
+      expect.objectContaining({ address: GATEWAY_CONTRACT }),
+    );
+  });
+
+  it("settles against requirements.asset when no validator is configured", async () => {
+    const facilitator = new ExactEvmSchemeV1(mockSigner);
+
+    const result = await facilitator.settle(payload as never, requirements as never);
+
+    expect(result.success).toBe(true);
+    expect(mockSigner.writeContract).toHaveBeenCalledWith(
+      expect.objectContaining({ address: USDC_ASSET }),
+    );
+    expect(mockSigner.writeContract).not.toHaveBeenCalledWith(
+      expect.objectContaining({ address: GATEWAY_CONTRACT }),
+    );
+  });
+});

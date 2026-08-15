@@ -26,6 +26,20 @@ export interface VerifyEIP3009Options {
   simulate?: boolean;
 }
 
+/**
+ * Validates a seller-supplied extra.verifyingContract before the facilitator trusts it as the
+ * contract to verify against and settle through.
+ *
+ * @param candidate - The address from requirements.extra.verifyingContract
+ * @param requirements - The full payment requirements, for context (e.g. network)
+ * @returns True to verify and settle against `candidate`. False to fall back to
+ *   requirements.asset, same as if no verifyingContract were supplied.
+ */
+export type VerifyingContractValidator = (
+  candidate: string,
+  requirements: PaymentRequirements,
+) => boolean;
+
 export interface EIP3009FacilitatorConfig {
   /**
    * Allowlist of factory contract addresses (hex strings, case-insensitive) that the facilitator
@@ -45,6 +59,38 @@ export interface EIP3009FacilitatorConfig {
    * @default false
    */
   simulateInSettle?: boolean;
+  /**
+   * Optional callback invoked when a payment requirement's extra.verifyingContract differs from
+   * requirements.asset (e.g. Circle Gateway's batch-settlement contract). Receives the candidate
+   * address and the requirements, and must return true to trust it.
+   *
+   * When trusted, the candidate replaces requirements.asset everywhere this facilitator resolves
+   * the payment's contract: the EIP-712 domain checked during verify, the deployed-code check,
+   * the transfer simulation, and the on-chain transferWithAuthorization call during settle. If
+   * not provided (default), extra.verifyingContract is never trusted and requirements.asset is
+   * always used, matching pre-existing behavior.
+   */
+  verifyingContractValidator?: VerifyingContractValidator;
+}
+
+/**
+ * Resolve the contract to verify and settle against. Defaults to requirements.asset. Only trusts
+ * a seller-supplied extra.verifyingContract if a validator was configured and it approves this
+ * specific candidate.
+ *
+ * @param requirements - The payment requirements
+ * @param validator - Optional validator to trust extra.verifyingContract
+ * @returns The address to verify and settle against
+ */
+function resolveVerifyingContract(
+  requirements: PaymentRequirements,
+  validator?: VerifyingContractValidator,
+): `0x${string}` {
+  const candidate = requirements.extra?.verifyingContract as string | undefined;
+  if (!candidate || !validator || !validator(candidate, requirements)) {
+    return getAddress(requirements.asset);
+  }
+  return getAddress(candidate);
 }
 
 /**
@@ -57,6 +103,8 @@ export interface EIP3009FacilitatorConfig {
  * @param options - Optional verification options
  * @param allowedFactories - Allowlisted ERC-6492 factory addresses; a counterfactual payment whose
  *   factory is not in this list is rejected here so verify mirrors settle's policy gate.
+ * @param verifyingContractValidator - Optional callback to trust extra.verifyingContract instead
+ *   of requirements.asset for both signature verification and settlement.
  * @returns Promise resolving to verification response
  */
 export async function verifyEIP3009(
@@ -66,6 +114,7 @@ export async function verifyEIP3009(
   eip3009Payload: ExactEIP3009Payload,
   options?: VerifyEIP3009Options,
   allowedFactories: string[] = [],
+  verifyingContractValidator?: VerifyingContractValidator,
 ): Promise<VerifyResponse> {
   const payer = eip3009Payload.authorization.from;
   let eip6492Deployment:
@@ -91,7 +140,7 @@ export async function verifyEIP3009(
   }
 
   const { name, version } = requirements.extra as { name: string; version: string };
-  const erc20Address = getAddress(requirements.asset);
+  const erc20Address = resolveVerifyingContract(requirements, verifyingContractValidator);
 
   // Verify network matches
   if (payload.accepted.network !== requirements.network) {
@@ -269,6 +318,7 @@ export async function settleEIP3009(
   context?: FacilitatorContext,
 ): Promise<SettleResponse> {
   const payer = eip3009Payload.authorization.from;
+  const erc20Address = resolveVerifyingContract(requirements, config.verifyingContractValidator);
 
   // Re-verify before settling
   const valid = await verifyEIP3009(
@@ -278,6 +328,7 @@ export async function settleEIP3009(
     eip3009Payload,
     { simulate: config.simulateInSettle ?? false },
     config.eip6492AllowedFactories ?? [],
+    config.verifyingContractValidator,
   );
   if (!valid.isValid) {
     return {
@@ -371,7 +422,7 @@ export async function settleEIP3009(
 
     const tx = await executeTransferWithAuthorization(
       signer,
-      getAddress(requirements.asset),
+      erc20Address,
       settlePayload,
       dataSuffix,
     );
@@ -394,7 +445,7 @@ export async function settleEIP3009(
     const auth = eip3009Payload.authorization;
     if (
       receipt.logs != null &&
-      !verifyEip3009TransferEvent(receipt.logs, getAddress(requirements.asset), {
+      !verifyEip3009TransferEvent(receipt.logs, erc20Address, {
         from: getAddress(auth.from),
         to: getAddress(auth.to),
         value: BigInt(auth.value),

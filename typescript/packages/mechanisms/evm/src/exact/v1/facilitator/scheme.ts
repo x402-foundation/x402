@@ -28,6 +28,20 @@ export interface VerifyV1Options {
   simulate?: boolean;
 }
 
+/**
+ * Validates a seller-supplied extra.verifyingContract before the facilitator trusts it as the
+ * contract to verify against and settle through.
+ *
+ * @param candidate - The address from requirements.extra.verifyingContract
+ * @param requirements - The full V1 payment requirements, for context (e.g. network)
+ * @returns True to verify and settle against `candidate`. False to fall back to
+ *   requirements.asset, same as if no verifyingContract were supplied.
+ */
+export type VerifyingContractValidator = (
+  candidate: string,
+  requirements: PaymentRequirementsV1,
+) => boolean;
+
 export interface ExactEvmSchemeV1Config {
   /**
    * Allowlist of factory contract addresses (hex strings, case-insensitive) that the facilitator
@@ -47,6 +61,31 @@ export interface ExactEvmSchemeV1Config {
    * @default false
    */
   simulateInSettle?: boolean;
+  /**
+   * Optional callback to trust a seller-supplied extra.verifyingContract instead of
+   * requirements.asset, for both verification and settlement. Not trusted by default.
+   */
+  verifyingContractValidator?: VerifyingContractValidator;
+}
+
+/**
+ * Resolve the contract to verify and settle against. Defaults to requirements.asset. Only trusts
+ * a seller-supplied extra.verifyingContract if a validator was configured and it approves this
+ * specific candidate.
+ *
+ * @param requirements - The V1 payment requirements
+ * @param validator - Optional validator to trust extra.verifyingContract
+ * @returns The address to verify and settle against
+ */
+function resolveVerifyingContract(
+  requirements: PaymentRequirementsV1,
+  validator?: VerifyingContractValidator,
+): `0x${string}` {
+  const candidate = requirements.extra?.verifyingContract as string | undefined;
+  if (!candidate || !validator || !validator(candidate, requirements)) {
+    return getAddress(requirements.asset);
+  }
+  return getAddress(candidate);
 }
 
 /**
@@ -55,7 +94,8 @@ export interface ExactEvmSchemeV1Config {
 export class ExactEvmSchemeV1 implements SchemeNetworkFacilitator {
   readonly scheme = "exact";
   readonly caipFamily = "eip155:*";
-  private readonly config: Required<ExactEvmSchemeV1Config>;
+  private readonly config: Required<Omit<ExactEvmSchemeV1Config, "verifyingContractValidator">> &
+    Pick<ExactEvmSchemeV1Config, "verifyingContractValidator">;
 
   /**
    * Creates a new ExactEvmFacilitatorV1 instance.
@@ -70,6 +110,7 @@ export class ExactEvmSchemeV1 implements SchemeNetworkFacilitator {
     this.config = {
       eip6492AllowedFactories: config?.eip6492AllowedFactories ?? [],
       simulateInSettle: config?.simulateInSettle ?? false,
+      verifyingContractValidator: config?.verifyingContractValidator,
     };
   }
 
@@ -123,7 +164,12 @@ export class ExactEvmSchemeV1 implements SchemeNetworkFacilitator {
     context?: FacilitatorContext,
   ): Promise<SettleResponse> {
     const payloadV1 = payload as unknown as PaymentPayloadV1;
+    const requirementsV1 = requirements as unknown as PaymentRequirementsV1;
     const exactEvmPayload = payload.payload as ExactEvmPayloadV1;
+    const erc20Address = resolveVerifyingContract(
+      requirementsV1,
+      this.config.verifyingContractValidator,
+    );
 
     // Re-verify before settling
     const valid = await this._verify(payload, requirements, {
@@ -208,7 +254,7 @@ export class ExactEvmSchemeV1 implements SchemeNetworkFacilitator {
 
       const tx = await executeTransferWithAuthorization(
         this.signer,
-        getAddress(requirements.asset),
+        erc20Address,
         exactEvmPayload,
         dataSuffix,
       );
@@ -231,7 +277,7 @@ export class ExactEvmSchemeV1 implements SchemeNetworkFacilitator {
       const auth = exactEvmPayload.authorization;
       if (
         receipt.logs != null &&
-        !verifyEip3009TransferEvent(receipt.logs, getAddress(requirements.asset), {
+        !verifyEip3009TransferEvent(receipt.logs, erc20Address, {
           from: getAddress(auth.from),
           to: getAddress(auth.to),
           value: BigInt(auth.value),
@@ -314,7 +360,10 @@ export class ExactEvmSchemeV1 implements SchemeNetworkFacilitator {
     }
 
     const { name, version } = requirements.extra as { name: string; version: string };
-    const erc20Address = getAddress(requirements.asset);
+    const erc20Address = resolveVerifyingContract(
+      requirementsV1,
+      this.config.verifyingContractValidator,
+    );
 
     // Verify network matches
     if (payloadV1.network !== requirements.network) {
