@@ -10,6 +10,21 @@ The `bazaar` extension enables **resource discovery and cataloging** for x402-en
 
 A resource server advertises its endpoint specification by including the `bazaar` extension in the `extensions` object of the **402 Payment Required** response.
 
+> [!IMPORTANT]
+> The declaration must **also** be present on the `paymentRequirements` object the resource server sends to the facilitator's `/verify` and `/settle` endpoints. The buyer-facing 402 response tells the client what the resource is; it is not what reaches the facilitator. A declaration that appears only on the 402 is never seen by the facilitator and the resource is not cataloged.
+>
+> This is a common implementation error because most servers build the 402 body and the `paymentRequirements` in separate code paths, so attaching the extension in the obvious place attaches it to only one of them. See [#2112](https://github.com/x402-foundation/x402/issues/2112), where six independent services reported the same root cause.
+>
+> ```js
+> const requirements = paymentRequirements(config, resourceUrl);
+> requirements.extensions = bazaarExtension(origin);   // required for cataloging
+>
+> await fetch(`${facilitator}/verify`, {
+>   method: "POST",
+>   body: JSON.stringify({ x402Version, paymentPayload, paymentRequirements: requirements }),
+> });
+> ```
+
 The extension follows the standard v2 pattern:
 - **`info`**: Contains the actual discovery data (HTTP method or MCP tool name, input parameters, and output format)
 - **`schema`**: JSON Schema that validates the structure of `info`
@@ -421,7 +436,7 @@ responsibility (e.g. via Cloudinary at serve time).
 
 ## Facilitator Behavior
 
-When a facilitator receives a `PaymentPayload` containing the `bazaar` extension, it should:
+When a facilitator receives a `/verify` or `/settle` request whose `paymentRequirements` carries the `bazaar` extension, it should:
 
 1. **Validate** the `info` field against the provided `schema`
 2. **Extract** the discovery information (resource URL, HTTP method or MCP tool name, input/output specs)
