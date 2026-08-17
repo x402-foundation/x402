@@ -38,23 +38,25 @@ Both artifacts use the same top-level structure, differing only in their payload
 
 Both `offer` and `receipt` objects MUST have the following structure:
 
-| Field        | Type    | Required     | Description                                              |
-| ------------ | ------- | ------------ | -------------------------------------------------------- |
-| `format`     | string  | Yes          | `"eip712"` or `"jws"`                                    |
-| `payload`    | object  | EIP-712 only | The canonical payload fields (omit for JWS)              |
-| `signature`  | string  | Yes          | The signature (format-specific encoding)                 |
-| `acceptIndex`| integer | No           | Index into `accepts[]` (offers only)                     |
+| Field         | Type    | Required     | Description                                 |
+| ------------- | ------- | ------------ | ------------------------------------------- |
+| `format`      | string  | Yes          | `"eip712"` or `"jws"`                       |
+| `payload`     | object  | EIP-712 only | The canonical payload fields (omit for JWS) |
+| `signature`   | string  | Yes          | The signature (format-specific encoding)    |
+| `acceptIndex` | integer | No           | Index into `accepts[]` (offers only)        |
 
 See §4.1.1 for `acceptIndex` usage and verification requirements.
 
 **3.1.1 Format-Specific Rules**
 
 **When `format = "eip712"`:**
+
 - `payload` is REQUIRED and contains the canonical payload fields
 - `signature` is a hex-encoded ECDSA signature (`0x`-prefixed, 65 bytes: r+s+v)
 - `network` MUST be `eip155:<chainId>` and `payTo` MUST be a valid EVM address
 
 **When `format = "jws"`:**
+
 - `payload` MUST be omitted (the JWS compact string already contains the payload)
 - `signature` is a JWS Compact Serialization string (`header.payload.signature`)
 
@@ -73,12 +75,14 @@ All EIP-712 signatures in this extension use the following domain structure:
 ```
 
 Where `name` is:
+
 - `"x402 offer"` for signed offers
 - `"x402 receipt"` for receipts
 
 The `chainId` is hardcoded to `1` (Ethereum mainnet) for all EIP-712 signatures in this extension. This is intentional: EIP-712 is used here purely as an off-chain signing format, not for on-chain transaction submission. The payment network is already identified by the `network` field in the payload. Using a constant `chainId` ensures EIP-712 signing works uniformly regardless of the payment network (including non-EVM networks like Solana).
 
 > **Versioning note:** EIP-712 artifacts have two distinct version fields:
+>
 > - **Domain `version`** (string `"1"`): Indicates the EIP-712 schema version. Changing the canonical `types` or `primaryType` requires bumping this version.
 > - **Payload `version`** (integer `1`): Indicates the offer/receipt semantic version. This field is part of the signed payload and travels with the artifact for use outside x402.
 
@@ -104,7 +108,6 @@ For JWS format, the header MUST include:
 | `alg` | string | Yes      | Signing algorithm (e.g., `ES256K`, `EdDSA`) |
 | `kid` | string | Yes      | Key identifier (DID URL) for key lookup     |
 
-
 **4. Signed Offer**
 
 A signed offer is a cryptographic commitment by the resource server to the payment terms presented in an `accepts[]` entry.
@@ -128,6 +131,7 @@ Servers SHOULD include `acceptIndex` as an unsigned convenience field to help cl
 **Within the x402 session (clients):**
 
 When `acceptIndex` is present, clients SHOULD:
+
 - Check that `acceptIndex` is in-range for the `accepts[]` array
 - Validate that `accepts[acceptIndex]` terms match the signed payload fields (`network`, `asset`, `payTo`, `amount`, etc.)
 
@@ -218,6 +222,7 @@ For the optional `validUntil` field, implementations MUST set unused fields to `
 **4.5 Offer Verification**
 
 **For EIP-712:**
+
 1. Extract `offer.payload` and `offer.signature`
 2. Check `payload.version` to select the appropriate EIP-712 types (currently only version `1` is defined; see §4.3)
 3. Construct the EIP-712 typed data hash using the domain (`name: "x402 offer"`, `version: "1"`, `chainId: 1`) and the types for the payload version. The `offer.payload` object MUST be used exactly as transmitted; verifiers MUST NOT reconstruct or infer payload fields from surrounding x402 context.
@@ -225,6 +230,7 @@ For the optional `validUntil` field, implementations MUST set unused fields to `
 5. Confirm the signer is authorized to sign for the service identified by `payload.resourceUrl` (see §4.5.1)
 
 **For JWS:**
+
 1. Parse the JWS compact string from `offer.signature`
 2. Extract `kid` from the JWS header; extract the payload by base64url-decoding the JWS payload component
 3. Check the payload's `version` to determine how to interpret the remaining fields (currently only version `1` is defined)
@@ -256,7 +262,6 @@ now > validUntil
 ```
 
 This allows servers to limit how long they commit to specific pricing or terms. Clients SHOULD check expiration before paying to avoid rejected payments, but the enforcement decision rests with the resource server.
-
 
 **5. Receipt**
 
@@ -291,6 +296,18 @@ The receipt is **privacy-minimal** by default and intentionally omits transactio
 
 **Note**: Servers MUST convert v1 network identifiers (e.g., "base-sepolia") to CAIP-2 format (e.g., "eip155:84532") in the receipt payload.
 
+**5.2.1 Version 2: Delivery-Binding Fields**
+
+A `version 1` receipt proves a payment was made for a `resourceUrl`; it does not bind _what was delivered_. A `version 2` receipt adds an optional hash of the response body, turning a proof-of-payment into a **proof-of-delivery** (see §5.6). Servers signal a version-2 receipt by setting `version` to `2` and populating the fields below.
+
+| Field                  | Type   | Required | Description                                                                                 |
+| ---------------------- | ------ | -------- | ------------------------------------------------------------------------------------------- |
+| `responseHash`         | string | v2 only  | `0x`-prefixed hash of the delivered response body                                           |
+| `responseHashAlg`      | string | v2 only  | Hash algorithm for `responseHash` (currently `"sha256"`)                                    |
+| `responseHashEncoding` | string | v2 only  | What the hash was computed over: `"raw"` (exact bytes) or `"jcs"` (RFC 8785 canonical form) |
+
+Version-2 fields are additive: a verifier that only understands version 1 ignores them, and a version-1 receipt is unchanged. Empty string in any of the three fields means "not bound".
+
 **5.3 EIP-712 Types for Receipt (Normative Schema)**
 
 The following `types` and `primaryType` are the canonical EIP-712 schema for receipts. Per §3.2.1, these definitions are used for signing and verification but MUST NOT be transmitted on the wire.
@@ -317,6 +334,36 @@ The following `types` and `primaryType` are the canonical EIP-712 schema for rec
 ```
 
 For the optional `transaction` field, implementations MUST set unused fields to empty string `""`. This rule applies only to EIP-712 signing, where fixed schemas require all fields to be present. Verifiers MUST treat empty-string optional fields as equivalent to absence.
+
+**5.3.1 EIP-712 Types for Receipt Version 2 (Normative Schema)**
+
+When `payload.version` is `2`, verifiers MUST use the following types (the version-1 fields followed by the three delivery-binding fields). Per §5.5, the types are selected by `payload.version`; the EIP-712 domain is unchanged (`name: "x402 receipt"`, `version: "1"`, `chainId: 1`).
+
+```javascript
+{
+  "primaryType": "Receipt",
+  "types": {
+    "EIP712Domain": [
+      { "name": "name", "type": "string" },
+      { "name": "version", "type": "string" },
+      { "name": "chainId", "type": "uint256" }
+    ],
+    "Receipt": [
+      { "name": "version", "type": "uint256" },
+      { "name": "network", "type": "string" },
+      { "name": "resourceUrl", "type": "string" },
+      { "name": "payer", "type": "string" },
+      { "name": "issuedAt", "type": "uint256" },
+      { "name": "transaction", "type": "string" },
+      { "name": "responseHash", "type": "string" },
+      { "name": "responseHashAlg", "type": "string" },
+      { "name": "responseHashEncoding", "type": "string" }
+    ]
+  }
+}
+```
+
+As with `transaction`, any unused delivery-binding field MUST be set to empty string `""` for EIP-712 signing, and verifiers MUST treat empty-string fields as absence.
 
 **5.4 Receipt Examples**
 
@@ -366,6 +413,7 @@ For the optional `transaction` field, implementations MUST set unused fields to 
 **5.5 Receipt Verification**
 
 **For EIP-712:**
+
 1. Extract `receipt.payload` and `receipt.signature`
 2. Check `payload.version` to select the appropriate EIP-712 types (currently only version `1` is defined; see §5.3)
 3. Construct the EIP-712 typed data hash using the domain (`name: "x402 receipt"`, `version: "1"`, `chainId: 1`) and the types for the payload version. The `receipt.payload` object MUST be used exactly as transmitted; verifiers MUST NOT reconstruct or infer payload fields from surrounding x402 context.
@@ -373,8 +421,10 @@ For the optional `transaction` field, implementations MUST set unused fields to 
 5. Confirm the signer is authorized to sign for the service identified by `payload.resourceUrl` (see §4.5.1)
 6. Confirm `issuedAt` is within acceptable verifier policy
 7. If `transaction` is present and non-empty, verifiers MAY check the blockchain to confirm the transaction exists and matches expected parameters
+8. If `payload.version` is `2` and `responseHash` is non-empty, verifiers MAY confirm delivery by recomputing the hash over the response body according to `responseHashEncoding` and checking equality with `responseHash` (see §5.6)
 
 **For JWS:**
+
 1. Parse the JWS compact string from `receipt.signature`
 2. Extract `kid` from the JWS header; extract the payload by base64url-decoding the JWS payload component
 3. Check the payload's `version` to determine how to interpret the remaining fields (currently only version `1` is defined)
@@ -383,9 +433,25 @@ For the optional `transaction` field, implementations MUST set unused fields to 
 6. Confirm the key is authorized to sign for the service identified by the payload's `resourceUrl` (see §4.5.1)
 7. Confirm `issuedAt` (from the payload) is within acceptable verifier policy
 8. If `transaction` is present, verifiers MAY check the blockchain to confirm the transaction exists
+9. If `payload.version` is `2` and `responseHash` is non-empty, verifiers MAY confirm delivery by recomputing the hash over the response body according to `responseHashEncoding` and checking equality with `responseHash` (see §5.6)
 
 When verifying a receipt outside the immediate x402 payment session (e.g., for reputation, auditing, or dispute resolution), verifiers SHOULD evaluate signer authorization as of the receipt's `issuedAt` time, not merely at the time of verification. Revocation or removal of a signing key from a mutable authorization source SHOULD be treated as prospective — it prevents future reliance on that key but does not by itself prove the key was unauthorized at `issuedAt`.
 
+**5.6 Delivery Binding (Proof-of-Delivery)**
+
+A version-2 receipt binds a hash of the response body, so the receipt attests not only that payment settled but that a specific payload was delivered. This supports dispute evidence ("I paid and received _this_"), content-integrity checks, and — for deterministic services — third-party recomputation.
+
+**Encoding.** `responseHashEncoding` selects what the hash covers:
+
+- `"raw"` — SHA-256 of the exact response bytes as delivered. Strongest byte-for-byte guarantee, but breaks if the response is parsed and re-serialized before storage.
+- `"jcs"` — SHA-256 of the [RFC 8785 (JCS)](https://www.rfc-editor.org/rfc/rfc8785) canonical form of the response, for JSON payloads. Reproducible from parsed data in any language, so the receipt stays verifiable even after the raw bytes are gone. Servers issuing JSON SHOULD prefer `"jcs"`.
+
+**Verification tiers.** The delivery binding enables two levels of assurance:
+
+1. **Attested delivery** — the verifier recomputes the hash over the delivered body and confirms it equals `responseHash`. This proves the signed receipt corresponds to _this_ content.
+2. **Recomputable delivery** — for **deterministic** services (validators, normalizers, canonicalizers) whose output is a pure function of the request, a third party can re-execute the published algorithm on the request preimage and check the result against `responseHash`, upgrading "the server attested X" to "X is independently reproducible", with no trust in the issuer. Whether a service is deterministic is a property of the service, not a wire field; services MAY advertise it out of band.
+
+Delivery binding is optional and off by default. It composes with the existing `transaction` field: a receipt MAY carry both a settlement reference and a content hash.
 
 **6. Protocol Integration Examples**
 
@@ -457,7 +523,15 @@ Note: x402 v1 uses human-readable network identifiers (e.g., "base") in the prot
                     "amount": { "type": "string" },
                     "validUntil": { "type": "integer" }
                   },
-                  "required": ["version", "resourceUrl", "scheme", "network", "asset", "payTo", "amount"]
+                  "required": [
+                    "version",
+                    "resourceUrl",
+                    "scheme",
+                    "network",
+                    "asset",
+                    "payTo",
+                    "amount"
+                  ]
                 },
                 "signature": { "type": "string" }
               },
@@ -534,7 +608,15 @@ Note: x402 v1 uses human-readable network identifiers (e.g., "base") in the prot
                     "amount": { "type": "string" },
                     "validUntil": { "type": "integer" }
                   },
-                  "required": ["version", "resourceUrl", "scheme", "network", "asset", "payTo", "amount"]
+                  "required": [
+                    "version",
+                    "resourceUrl",
+                    "scheme",
+                    "network",
+                    "asset",
+                    "payTo",
+                    "amount"
+                  ]
                 },
                 "signature": { "type": "string" }
               },
@@ -591,7 +673,10 @@ Note: x402 v1 uses human-readable network identifiers (e.g., "base") in the prot
               "properties": {
                 "format": { "type": "string", "const": "jws" },
                 "acceptIndex": { "type": "integer" },
-                "signature": { "type": "string", "description": "JWS compact serialization containing the offer payload" }
+                "signature": {
+                  "type": "string",
+                  "description": "JWS compact serialization containing the offer payload"
+                }
               },
               "required": ["format", "signature"]
             }
@@ -644,7 +729,10 @@ Note: x402 v1 uses human-readable network identifiers (e.g., "base") in the prot
               "properties": {
                 "format": { "type": "string", "const": "jws" },
                 "acceptIndex": { "type": "integer" },
-                "signature": { "type": "string", "description": "JWS compact serialization containing the offer payload" }
+                "signature": {
+                  "type": "string",
+                  "description": "JWS compact serialization containing the offer payload"
+                }
               },
               "required": ["format", "signature"]
             }
@@ -699,7 +787,13 @@ Note: x402 v1 uses human-readable network identifiers (e.g., "base") in the prot
                   "issuedAt": { "type": "integer" },
                   "transaction": { "type": "string" }
                 },
-                "required": ["version", "network", "resourceUrl", "payer", "issuedAt"]
+                "required": [
+                  "version",
+                  "network",
+                  "resourceUrl",
+                  "payer",
+                  "issuedAt"
+                ]
               },
               "signature": { "type": "string" }
             },
@@ -755,7 +849,13 @@ Note: x402 v1 uses human-readable network identifiers (e.g., "base") in the prot
                   "issuedAt": { "type": "integer" },
                   "transaction": { "type": "string" }
                 },
-                "required": ["version", "network", "resourceUrl", "payer", "issuedAt"]
+                "required": [
+                  "version",
+                  "network",
+                  "resourceUrl",
+                  "payer",
+                  "issuedAt"
+                ]
               },
               "signature": { "type": "string" }
             },
@@ -793,7 +893,10 @@ Note: x402 v1 uses human-readable network identifiers (e.g., "base") in the prot
             "type": "object",
             "properties": {
               "format": { "type": "string", "const": "jws" },
-              "signature": { "type": "string", "description": "JWS compact serialization containing the receipt payload" }
+              "signature": {
+                "type": "string",
+                "description": "JWS compact serialization containing the receipt payload"
+              }
             },
             "required": ["format", "signature"]
           }
@@ -829,7 +932,10 @@ Note: x402 v1 uses human-readable network identifiers (e.g., "base") in the prot
             "type": "object",
             "properties": {
               "format": { "type": "string", "const": "jws" },
-              "signature": { "type": "string", "description": "JWS compact serialization containing the receipt payload" }
+              "signature": {
+                "type": "string",
+                "description": "JWS compact serialization containing the receipt payload"
+              }
             },
             "required": ["format", "signature"]
           }
@@ -882,11 +988,11 @@ The `offer` and `receipt` objects defined in this extension are designed to be u
 
 **12. Version History**
 
-| Version | Date       | Changes                                                        | Author     |
-| ------- | ---------- | -------------------------------------------------------------- | ---------- |
-| 0.6     | 2026-02-04 | Make EIP-712 chain-agnostic: chainId=1, payTo type=string.     | Alfred Tom |
-| 0.5     | 2026-01-29 | First approved release.                                        | Alfred Tom |
-| 0.4     | 2026-01-26 | Add acceptIndex as unsigned envelope field.                    | Alfred Tom |
-| 0.3     | 2026-01-22 | Add validUntil for offer expiration. Move version to payload.  | Alfred Tom |
-| 0.2     | 2026-01-20 | Move offers/receipt to extensions. Add network to receipt.     | Alfred Tom |
-| 0.1     | 2025-12-22 | Initial extension draft.                                       | Alfred Tom |
+| Version | Date       | Changes                                                       | Author     |
+| ------- | ---------- | ------------------------------------------------------------- | ---------- |
+| 0.6     | 2026-02-04 | Make EIP-712 chain-agnostic: chainId=1, payTo type=string.    | Alfred Tom |
+| 0.5     | 2026-01-29 | First approved release.                                       | Alfred Tom |
+| 0.4     | 2026-01-26 | Add acceptIndex as unsigned envelope field.                   | Alfred Tom |
+| 0.3     | 2026-01-22 | Add validUntil for offer expiration. Move version to payload. | Alfred Tom |
+| 0.2     | 2026-01-20 | Move offers/receipt to extensions. Add network to receipt.    | Alfred Tom |
+| 0.1     | 2025-12-22 | Initial extension draft.                                      | Alfred Tom |
