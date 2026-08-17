@@ -56,7 +56,7 @@ This page tracks which features are implemented in each SDK (TypeScript, Go, Pyt
 | exact | xrpl | `sequence` | ✅ | ❌ | ❌ |
 | exact | xrpl | `ticketSequence` | ✅ | ❌ | ❌ |
 | upto | evm | `permit2` | ✅ | ✅ | ✅ |
-| upto | svm | - | ✅ | ❌ | ❌ |
+| upto | svm | - | ✅ | ✅ | ❌ |
 | batch-settlement | evm | `eip3009` | ✅ | ✅ | ✅ |
 | batch-settlement | evm | `permit2` | ✅ | ✅ | ✅ |
 
