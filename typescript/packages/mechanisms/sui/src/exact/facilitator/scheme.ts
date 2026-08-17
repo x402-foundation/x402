@@ -507,8 +507,7 @@ export class ExactSuiScheme implements SchemeNetworkFacilitator {
       await client.core.getTransaction({ digest });
       return true;
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      if (/not found|NOT_FOUND/i.test(message)) return false;
+      if (error instanceof Error && "code" in error && error.code === "NOT_FOUND") return false;
       throw error;
     }
   }

@@ -205,7 +205,11 @@ export function mockClient() {
   const core = {
     simulateTransaction: vi.fn(),
     executeTransaction: vi.fn(),
-    getTransaction: vi.fn().mockRejectedValue(new Error("Transaction not found")),
+    getTransaction: vi.fn().mockRejectedValue(
+      Object.assign(new Error("Transaction%20test-digest%20not%20found"), {
+        code: "NOT_FOUND",
+      }),
+    ),
     waitForTransaction: vi.fn().mockResolvedValue(undefined),
   };
   return { client: { core } as unknown as ClientWithCoreApi, core };

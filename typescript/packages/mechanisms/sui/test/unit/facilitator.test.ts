@@ -231,6 +231,14 @@ describe("ExactSuiScheme facilitator", () => {
       );
     });
 
+    it("does not treat an unrelated not-found message as a missing transaction", async () => {
+      const payload = await validPayload();
+      mock.core.getTransaction.mockRejectedValue(new Error("proxy route not found"));
+      const result = await scheme.verify(payload, testRequirements());
+      expect(result.invalidReason).toBe("invalid_exact_sui_payload_verification_error");
+      expect(mock.core.simulateTransaction).not.toHaveBeenCalled();
+    });
+
     it("rejects a failed simulation", async () => {
       const payload = await signPayload(await buildTestTransaction());
       mock.core.simulateTransaction.mockResolvedValue({
