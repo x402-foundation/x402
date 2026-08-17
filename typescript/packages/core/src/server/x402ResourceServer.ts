@@ -1462,6 +1462,10 @@ export class x402ResourceServer {
   ): PaymentRequirements | undefined {
     switch (paymentPayload.x402Version) {
       case 2:
+        if (!paymentPayload.accepted) {
+          return undefined;
+        }
+
         // For v2, all server-declared requirements must match.
         // The client may include additive scheme-specific metadata under `accepted.extra`.
         // Scheme-declared dynamicExtraFields are omitted from the extra comparison
@@ -1478,6 +1482,10 @@ export class x402ResourceServer {
           );
         });
       case 1:
+        if (!paymentPayload.accepted) {
+          return undefined;
+        }
+
         // For v1, match by scheme and network
         return availableRequirements.find(
           req =>

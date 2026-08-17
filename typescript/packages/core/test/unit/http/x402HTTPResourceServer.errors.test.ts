@@ -9,7 +9,7 @@ import {
   buildPaymentRequirements,
   buildSupportedResponse,
 } from "../../mocks";
-import { encodePaymentSignatureHeader } from "../../../src/http";
+import { decodePaymentRequiredHeader, encodePaymentSignatureHeader } from "../../../src/http";
 
 class MockHTTPAdapter implements HTTPAdapter {
   constructor(private readonly headers: Record<string, string> = {}) {}
@@ -113,6 +113,35 @@ describe("x402HTTPResourceServer facilitator response errors", () => {
       httpServer.processSettlement(buildPaymentPayload({ x402Version: 2, accepted }), accepted),
     ).rejects.toThrow(FacilitatorResponseError);
   });
+
+  it.each([
+    { x402Version: 1 as const, accepted: undefined },
+    { x402Version: 1 as const, accepted: null },
+    { x402Version: 2 as const, accepted: undefined },
+    { x402Version: 2 as const, accepted: null },
+  ])(
+    "returns a stable payment error when v$x402Version accepted is $accepted",
+    async ({ x402Version, accepted }) => {
+      const payload = Object.assign(buildPaymentPayload({ x402Version }), { accepted });
+      const paymentHeader = encodePaymentSignatureHeader(payload);
+
+      const result = await httpServer.processHTTPRequest({
+        adapter: new MockHTTPAdapter({ "payment-signature": paymentHeader }),
+        path: "/api/test",
+        method: "GET",
+        paymentHeader,
+      });
+
+      expect(result.type).toBe("payment-error");
+      if (result.type !== "payment-error") {
+        throw new Error("Expected payment-error");
+      }
+
+      const response = decodePaymentRequiredHeader(result.response.headers["PAYMENT-REQUIRED"]);
+      expect(response.error).toBe("No matching payment requirements");
+      expect(facilitator.verifyCalls).toHaveLength(0);
+    },
+  );
 
   it("returns payment-error when client extension echo mismatches before facilitator verify", async () => {
     const httpServerWithExtensions = new x402HTTPResourceServer(resourceServer, {
