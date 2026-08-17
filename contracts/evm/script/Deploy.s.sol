@@ -9,7 +9,7 @@ import {ISignatureTransfer} from "../src/interfaces/ISignatureTransfer.sol";
 /**
  * @title DeployX402Proxies
  * @notice Deployment script for x402 Permit2 Proxy contracts using CREATE2
- * @dev Run with: forge script script/Deploy.s.sol --rpc-url $RPC_URL --broadcast --verify
+ * @dev Run with: forge script script/Deploy.s.sol --rpc-url $RPC_URL --broadcast
  *
  *      ## Deployment Strategy
  *
@@ -33,6 +33,8 @@ import {ISignatureTransfer} from "../src/interfaces/ISignatureTransfer.sol";
  *      deploy it first.
  */
 contract DeployX402Proxies is Script {
+    uint256 constant ARC_TESTNET_CHAIN_ID = 5_042_002;
+
     /// @notice Canonical Permit2 address (Uniswap's official deployment)
     /// @dev Override via environment variable PERMIT2_ADDRESS for chains with different Permit2
     address constant CANONICAL_PERMIT2 = 0x000000000022D473030F116dDEE9F6B43aC78BA3;
@@ -50,6 +52,18 @@ contract DeployX402Proxies is Script {
 
     /// @notice Expected initCodeHash for x402ExactPermit2Proxy (pre-built, includes CBOR metadata)
     bytes32 constant EXACT_INIT_CODE_HASH = 0xe774d1d5a07218946ab54efe010b300481478b86861bb17d69c98a57f68a604c;
+
+    address constant ARC_TESTNET_UPTO_ADDRESS = 0x402015c795ecb48A360bDC6e35a2EaEb313a0002;
+    bytes32 constant ARC_TESTNET_UPTO_INIT_CODE_HASH =
+        0x01575bfc9cacbf6463db62ee8867594b1657139c8493a712ef6bcefa848a20b7;
+    bytes32 constant ARC_TESTNET_UPTO_RUNTIME_CODE_HASH =
+        0xc858e50b1c4c2207d032578532415db2db50ed0ad509b67b8ac7200d771c70f3;
+    bytes32 constant ARC_TESTNET_PERMIT2_RUNTIME_CODE_HASH =
+        0x53681d3cf8f702f849c1504b491049c3d0a282e4595d9b297c410dcf36f0908e;
+    bytes32 constant ARC_TESTNET_PERMIT2_DOMAIN_SEPARATOR =
+        0xe59c8d3fa907f1186bfa334839eb895f53f88b07e4cf5aafaef4af163d83ce93;
+    bytes32 constant CREATE2_DEPLOYER_RUNTIME_CODE_HASH =
+        0x2fa86add0aed31f33a762c9d88e807c475bd51d0f52bd0955754b2608f7e4989;
 
     function run() public {
         address permit2 = vm.envOr("PERMIT2_ADDRESS", CANONICAL_PERMIT2);
@@ -79,6 +93,77 @@ contract DeployX402Proxies is Script {
         console2.log("");
         console2.log("All deployments complete!");
         console2.log("");
+    }
+
+    /// @notice Deploys only x402UptoPermit2Proxy using Arc testnet's canonical dependencies.
+    function runUptoArcTestnet() public {
+        bytes memory deploymentData = prepareUptoArcTestnet();
+
+        vm.startBroadcast();
+        (bool success, bytes memory returnData) = CREATE2_DEPLOYER.call(deploymentData);
+        vm.stopBroadcast();
+
+        require(success, "CREATE2 deployment failed for Upto");
+        require(returnData.length == 20, "Unexpected CREATE2 deployer response");
+
+        address returnedAddress;
+        assembly {
+            returnedAddress := shr(96, mload(add(returnData, 32)))
+        }
+        require(returnedAddress == ARC_TESTNET_UPTO_ADDRESS, "CREATE2 deployer returned wrong address");
+
+        validateUptoArcTestnet();
+        console2.log("Deployed x402UptoPermit2Proxy to:", ARC_TESTNET_UPTO_ADDRESS);
+    }
+
+    /// @notice Validates Arc testnet dependencies and returns the exact factory calldata.
+    function prepareUptoArcTestnet() public view returns (bytes memory deploymentData) {
+        require(block.chainid == ARC_TESTNET_CHAIN_ID, "Arc testnet chain ID mismatch");
+        _validateArcTestnetDependencies();
+        deploymentData = uptoArcTestnetDeploymentData();
+        require(ARC_TESTNET_UPTO_ADDRESS.code.length == 0, "Upto target already occupied");
+    }
+
+    /// @notice Validates the deployed Arc testnet proxy against the approved artifact.
+    function validateUptoArcTestnet() public view {
+        require(block.chainid == ARC_TESTNET_CHAIN_ID, "Arc testnet chain ID mismatch");
+        _validateArcTestnetDependencies();
+        uptoArcTestnetDeploymentData();
+
+        require(
+            ARC_TESTNET_UPTO_ADDRESS.codehash == ARC_TESTNET_UPTO_RUNTIME_CODE_HASH, "Upto runtime code hash mismatch"
+        );
+        require(
+            address(x402UptoPermit2Proxy(ARC_TESTNET_UPTO_ADDRESS).PERMIT2()) == CANONICAL_PERMIT2,
+            "Upto PERMIT2 mismatch"
+        );
+    }
+
+    /// @notice Returns factory calldata only when the locally compiled Upto artifact is canonical.
+    function uptoArcTestnetDeploymentData() public pure returns (bytes memory deploymentData) {
+        bytes memory initCode = abi.encodePacked(type(x402UptoPermit2Proxy).creationCode, abi.encode(CANONICAL_PERMIT2));
+        bytes32 initCodeHash = keccak256(initCode);
+        require(initCodeHash == ARC_TESTNET_UPTO_INIT_CODE_HASH, "Upto init code hash mismatch");
+
+        address expectedAddress = _computeCreate2Addr(UPTO_SALT, initCodeHash, CREATE2_DEPLOYER);
+        require(expectedAddress == ARC_TESTNET_UPTO_ADDRESS, "Upto CREATE2 address mismatch");
+
+        deploymentData = abi.encodePacked(UPTO_SALT, initCode);
+    }
+
+    function _validateArcTestnetDependencies() internal view {
+        require(CREATE2_DEPLOYER.codehash == CREATE2_DEPLOYER_RUNTIME_CODE_HASH, "CREATE2 deployer code hash mismatch");
+        require(
+            CANONICAL_PERMIT2.codehash == ARC_TESTNET_PERMIT2_RUNTIME_CODE_HASH, "Permit2 runtime code hash mismatch"
+        );
+
+        (bool success, bytes memory returnData) =
+            CANONICAL_PERMIT2.staticcall(abi.encodeWithSignature("DOMAIN_SEPARATOR()"));
+        require(success && returnData.length == 32, "Permit2 DOMAIN_SEPARATOR call failed");
+        require(
+            abi.decode(returnData, (bytes32)) == ARC_TESTNET_PERMIT2_DOMAIN_SEPARATOR,
+            "Permit2 DOMAIN_SEPARATOR mismatch"
+        );
     }
 
     function _deployExact(

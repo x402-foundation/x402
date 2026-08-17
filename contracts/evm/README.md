@@ -66,6 +66,7 @@ Both contracts:
 ## Prerequisites
 
 - [Foundry](https://book.getfoundry.sh/getting-started/installation)
+- `curl` and `jq` for the Arc testnet receipt and verification checks
 
 ## Installation
 
@@ -78,6 +79,14 @@ forge build
 
 Anyone can deploy both contracts to their canonical addresses on any EVM chain.
 No special build environment, private key, or permission is required—only gas on the target chain.
+
+Foundry eagerly reads the explorer configuration in `foundry.toml`. Set non-secret placeholders when
+an explorer key is not needed so that local build, simulation, and test commands work in a clean shell:
+
+```bash
+export ETHERSCAN_API_KEY="${ETHERSCAN_API_KEY:-unused}"
+export POLYGONSCAN_API_KEY="${POLYGONSCAN_API_KEY:-unused}"
+```
 
 ### How it works
 
@@ -111,29 +120,211 @@ and `keccak256(initCode)`—not on who sends the transaction.
 3. **Check prerequisites on the target chain**
    - [Permit2](https://github.com/Uniswap/permit2) must be deployed at `0x000000000022D473030F116dDEE9F6B43aC78BA3`
    - The CREATE2 deployer must exist at `0x4e59b44847b379578588920cA78FbF26c0B4956C`
-   - Your wallet needs enough native gas to pay for deployment (~300k gas per contract)
+   - Your wallet needs enough native gas for the dry-run gas estimate and configured fee cap
 
 4. **Deploy**
    ```bash
-   export PRIVATE_KEY="your_private_key"
+   cast wallet import x402-deployer --interactive
 
    forge script script/Deploy.s.sol \
      --rpc-url <RPC_URL> \
+     --account x402-deployer \
+     --sender <DEPLOYER_ADDRESS> \
      --broadcast \
      --verify
    ```
 
-   The script automatically:
+   Replace the placeholder explorer key with a real key before using `--verify` on a chain whose
+   explorer requires one.
+
+   To deploy only the canonical Upto proxy to Arc testnet, use its fail-closed entry point:
+
+   ```bash
+   set -euo pipefail
+
+   export X402_DEPLOYMENT_EVIDENCE_DIR="$HOME/x402-deployment-evidence/arc-testnet"
+   export INDEPENDENT_ARC_RPC_URL="<INDEPENDENT_ARC_RPC_URL>"
+
+   REPO_ROOT=$(git rev-parse --show-toplevel)
+   EVIDENCE_DIR="${X402_DEPLOYMENT_EVIDENCE_DIR:?set this to a directory outside the Git checkout}"
+   mkdir -p "$EVIDENCE_DIR"
+   EVIDENCE_DIR=$(cd "$EVIDENCE_DIR" && pwd -P)
+   case "$EVIDENCE_DIR/" in "$REPO_ROOT/"*) echo "evidence directory must be outside $REPO_ROOT" >&2; exit 1;; esac
+   ```
+
+   Generate and persist the checksum for the exact Standard JSON before deployment:
+
+   ```bash
+   STANDARD_JSON="$EVIDENCE_DIR/x402UptoPermit2Proxy.standard.json"
+   STANDARD_JSON_CHECKSUM="$EVIDENCE_DIR/x402UptoPermit2Proxy.standard.json.sha256"
+
+   forge verify-contract 0x402015c795ecb48A360bDC6e35a2EaEb313a0002 \
+     src/x402UptoPermit2Proxy.sol:x402UptoPermit2Proxy \
+     --constructor-args $(cast abi-encode "constructor(address)" 0x000000000022D473030F116dDEE9F6B43aC78BA3) \
+     --show-standard-json-input > "$STANDARD_JSON"
+
+   shasum -a 256 "$STANDARD_JSON" > "$STANDARD_JSON_CHECKSUM"
+   shasum -a 256 -c "$STANDARD_JSON_CHECKSUM"
+   ```
+
+   ```bash
+   forge script script/Deploy.s.sol \
+     --sig "runUptoArcTestnet()" \
+     --rpc-url https://rpc.testnet.arc.network \
+     --sender <DEPLOYER_ADDRESS>
+   ```
+
+   This is a simulation-only command. It requires Arc testnet chain ID `5042002` and validates the
+   canonical factory, Permit2, init code, target address, and target vacancy.
+
+   For a reviewed deployment, construct and sign the exact factory transaction without publishing it:
+
+   ```bash
+   UPTO_SALT=0x0000000000000000000000000000000000000000000000000800000007e2e4de
+   FACTORY=0x4e59b44847b379578588920cA78FbF26c0B4956C
+   PERMIT2=0x000000000022D473030F116dDEE9F6B43aC78BA3
+   CREATION_CODE=$(forge inspect src/x402UptoPermit2Proxy.sol:x402UptoPermit2Proxy bytecode)
+   CONSTRUCTOR_ARGS=$(cast abi-encode "constructor(address)" "$PERMIT2")
+   INIT_CODE=$(cast concat-hex "$CREATION_CODE" "$CONSTRUCTOR_ARGS")
+   CALLDATA=$(cast concat-hex "$UPTO_SALT" "$INIT_CODE")
+
+   test "$(cast keccak "$INIT_CODE")" = \
+     "0x01575bfc9cacbf6463db62ee8867594b1657139c8493a712ef6bcefa848a20b7"
+
+   RAW=$(cast mktx "$FACTORY" "$CALLDATA" \
+     --rpc-url https://rpc.testnet.arc.network \
+     --chain 5042002 \
+     --from <DEPLOYER_ADDRESS> \
+     --account x402-deployer \
+     --nonce <NONCE> \
+     --gas-limit <GAS_LIMIT> \
+     --gas-price <MAX_FEE_PER_GAS> \
+     --priority-gas-price <MAX_PRIORITY_FEE_PER_GAS> \
+     --value 0)
+
+   cast decode-transaction --json "$RAW"
+   ```
+
+   Review the decoded signed transaction and record its hash. Immediately before publishing, require
+   both RPC providers to agree on a shared committed block and rerun the fail-closed preparation against
+   that block:
+
+   ```bash
+   SIGNED_TX_HASH=$(cast keccak "$RAW")
+   printf '%s\n' "$SIGNED_TX_HASH" > "$EVIDENCE_DIR/signed-deployment-transaction.hash"
+
+   REFERENCE_BLOCK=$(cast block-number --rpc-url https://rpc.testnet.arc.network)
+   PRIMARY_BLOCK_HASH=$(cast block "$REFERENCE_BLOCK" --rpc-url https://rpc.testnet.arc.network --json | jq -r '.hash')
+   INDEPENDENT_BLOCK_HASH=$(cast block "$REFERENCE_BLOCK" --rpc-url "$INDEPENDENT_ARC_RPC_URL" --json | jq -r '.hash')
+   test "$PRIMARY_BLOCK_HASH" = "$INDEPENDENT_BLOCK_HASH"
+
+   forge script script/Deploy.s.sol \
+     --sig "prepareUptoArcTestnet()" \
+     --rpc-url https://rpc.testnet.arc.network \
+     --fork-block-number "$REFERENCE_BLOCK"
+   forge script script/Deploy.s.sol \
+     --sig "prepareUptoArcTestnet()" \
+     --rpc-url "$INDEPENDENT_ARC_RPC_URL" \
+     --fork-block-number "$REFERENCE_BLOCK"
+
+   cast publish --rpc-url https://rpc.testnet.arc.network "$RAW"
+   ```
+
+   Fetch the final receipt from both providers, require status `1` and the same committed block hash,
+   then validate the actual deployed state at that receipt block:
+
+   ```bash
+   PRIMARY_RECEIPT="$EVIDENCE_DIR/deployment-receipt-primary.json"
+   INDEPENDENT_RECEIPT="$EVIDENCE_DIR/deployment-receipt-independent.json"
+   cast receipt "$SIGNED_TX_HASH" --confirmations 1 --rpc-url https://rpc.testnet.arc.network --json > "$PRIMARY_RECEIPT"
+   cast receipt "$SIGNED_TX_HASH" --confirmations 1 --rpc-url "$INDEPENDENT_ARC_RPC_URL" --json > "$INDEPENDENT_RECEIPT"
+
+   test "$(jq -r '.status' "$PRIMARY_RECEIPT")" = "0x1"
+   test "$(jq -r '.status' "$INDEPENDENT_RECEIPT")" = "0x1"
+   test "$(jq -r '.blockHash' "$PRIMARY_RECEIPT")" = "$(jq -r '.blockHash' "$INDEPENDENT_RECEIPT")"
+   RECEIPT_BLOCK=$(cast to-dec "$(jq -r '.blockNumber' "$PRIMARY_RECEIPT")")
+
+   forge script script/Deploy.s.sol \
+     --sig "validateUptoArcTestnet()" \
+     --rpc-url https://rpc.testnet.arc.network \
+     --fork-block-number "$RECEIPT_BLOCK"
+   forge script script/Deploy.s.sol \
+     --sig "validateUptoArcTestnet()" \
+     --rpc-url "$INDEPENDENT_ARC_RPC_URL" \
+     --fork-block-number "$RECEIPT_BLOCK"
+   ```
+
+   The generic `run()` entry point automatically:
    - Loads the pre-built initCode for Exact and compiler-derived initCode for Upto
    - Skips any contract already deployed at the expected address
    - Verifies `PERMIT2()` returns the correct address after deployment
 
-5. **Verify on Etherscan** (if `--verify` didn't work automatically)
+   The Arc-specific entry point is stricter: it rejects an occupied canonical Upto address before
+   deployment and validates the pinned runtime bytecode after deployment.
+
+5. **Verify separately after deployment**
+
+   For a generic deployment, verify the contract with the explorer selected for that chain:
+
    ```bash
-   forge verify-contract <DEPLOYED_ADDRESS> x402UptoPermit2Proxy \
+   forge verify-contract <DEPLOYED_ADDRESS> src/x402UptoPermit2Proxy.sol:x402UptoPermit2Proxy \
      --rpc-url <RPC_URL> \
-     --constructor-args $(cast abi-encode "constructor(address)" 0x000000000022D473030F116dDEE9F6B43aC78BA3)
+     --constructor-args $(cast abi-encode "constructor(address)" 0x000000000022D473030F116dDEE9F6B43aC78BA3) \
+     --watch
    ```
+
+   For Arc testnet, submit the exact Standard JSON and checksum generated before deployment. This binds
+   the compiler version, fully qualified contract name, and constructor arguments explicitly:
+
+   ```bash
+   set -euo pipefail
+
+   EVIDENCE_DIR="${X402_DEPLOYMENT_EVIDENCE_DIR:?set the evidence directory used before deployment}"
+   STANDARD_JSON="$EVIDENCE_DIR/x402UptoPermit2Proxy.standard.json"
+   STANDARD_JSON_CHECKSUM="$EVIDENCE_DIR/x402UptoPermit2Proxy.standard.json.sha256"
+   VERIFICATION_SUBMISSION="$EVIDENCE_DIR/arcscan-verification-submit.json"
+   VERIFICATION_STATUS="$EVIDENCE_DIR/arcscan-verification-status.json"
+
+   shasum -a 256 -c "$STANDARD_JSON_CHECKSUM"
+   CONSTRUCTOR_ARGS=$(cast abi-encode \
+     "constructor(address)" 0x000000000022D473030F116dDEE9F6B43aC78BA3)
+
+   curl --fail-with-body --request POST 'https://testnet.arcscan.app/api/' \
+     --form 'module=contract' \
+     --form 'action=verifysourcecode' \
+     --form 'codeformat=solidity-standard-json-input' \
+     --form 'contractaddress=0x402015c795ecb48A360bDC6e35a2EaEb313a0002' \
+     --form 'contractname=src/x402UptoPermit2Proxy.sol:x402UptoPermit2Proxy' \
+     --form 'compilerversion=v0.8.28+commit.7893614a' \
+     --form "sourceCode=<$STANDARD_JSON" \
+     --form "constructorArguments=${CONSTRUCTOR_ARGS#0x}" \
+     --output "$VERIFICATION_SUBMISSION"
+
+   test "$(jq -r '.status' "$VERIFICATION_SUBMISSION")" = "1"
+   VERIFICATION_GUID=$(jq -er '.result | select(type == "string" and length > 0)' "$VERIFICATION_SUBMISSION")
+
+   attempt=0
+   VERIFICATION_RESULT=""
+   while [ "$attempt" -lt 60 ]; do
+     curl --fail-with-body --get 'https://testnet.arcscan.app/api/' \
+       --data-urlencode 'module=contract' \
+       --data-urlencode 'action=checkverifystatus' \
+       --data-urlencode "guid=$VERIFICATION_GUID" \
+       --output "$VERIFICATION_STATUS"
+
+     test "$(jq -r '.status' "$VERIFICATION_STATUS")" = "1"
+     VERIFICATION_RESULT=$(jq -er '.result | select(type == "string")' "$VERIFICATION_STATUS")
+     case "$VERIFICATION_RESULT" in
+       "Pass - Verified") break ;;
+       "Pending in queue") attempt=$((attempt + 1)); sleep 2 ;;
+       *) cat "$VERIFICATION_STATUS" >&2; exit 1 ;;
+     esac
+   done
+   test "$VERIFICATION_RESULT" = "Pass - Verified"
+   ```
+
+   Preserve the submission response, terminal status response, Standard JSON, and persisted checksum
+   together in the evidence directory.
 
    For the Exact proxy, verification may require matching the original compiler metadata.
    The verified source on Base Sepolia / Base Mainnet can be used as a reference.
