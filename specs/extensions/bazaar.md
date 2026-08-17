@@ -419,6 +419,82 @@ responsibility (e.g. via Cloudinary at serve time).
 
 ---
 
+## Pricing Metadata (`pricing`)
+
+For the `exact` scheme, `accepts[].amount` is the price. For metered schemes such
+as `upto`, it is the **authorization ceiling**, which is not the price and is
+usually much larger. A catalog that surfaces the ceiling in the field agents read
+as "cost" makes every metered service look expensive next to a fixed-price one,
+and a budget filter keyed on it silently excludes metered services whose settled
+cost lands under budget.
+
+Resource servers MAY therefore publish an optional `pricing` object on the
+`bazaar` extension, as a sibling of `info` and `schema`. Like the service
+metadata above, it is purely additive: servers that omit it produce byte-identical
+402 bodies, and clients that don't recognize it ignore it. `accepts[].amount`
+remains unambiguously the authorization ceiling; `pricing` never participates in
+payment authorization or settlement.
+
+### Example
+
+```json
+{
+  "extensions": {
+    "bazaar": {
+      "info": { ... },
+      "schema": { ... },
+      "pricing": {
+        "model": "per-token",
+        "unit": { "amount": "12", "per": "1000 tokens" },
+        "typical": "350",
+        "note": "long prompts settle above typical"
+      }
+    }
+  }
+}
+```
+
+### Fields
+
+| Field     | Type   | Required | Description                                                                                                                                          |
+|-----------|--------|----------|------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `model`   | string | Yes      | One of `"per-call"`, `"per-token"`, `"per-second"`, `"per-byte"`, `"tiered"`, `"custom"`. The pricing model the resource meters by.                  |
+| `unit`    | object | No       | `{ "amount": string, "per": string }` — cost per stated quantity, e.g. `{ "amount": "12", "per": "1000 tokens" }`. Omitted when no single unit is meaningful. |
+| `typical` | string | No       | What a median call settles, in the asset's smallest unit, encoded as a decimal string like every other amount on the wire.                            |
+| `note`    | string | No       | Free-form clarification for models that fit none of the above.                                                                                       |
+
+`unit` and `typical` are optional precisely because metered products do not share
+a unit (per-token, per-second, per-byte, per-GB-month, multi-dimensional). A
+catalog that receives none of them SHOULD fall back to the ceiling and say so,
+rather than presenting the ceiling as a price.
+
+### Validation Rules
+
+`pricing` crosses the same trust boundary as the service metadata above: clients
+echo it from `PaymentRequired` into `PaymentPayload`, so facilitators MUST apply
+soft-drop rules during extraction. A field that fails its rule is discarded; the
+listing survives.
+
+| Field     | Rule                                                                                                                                     | On violation             |
+|-----------|------------------------------------------------------------------------------------------------------------------------------------------|--------------------------|
+| `pricing` | Object containing a valid `model`.                                                                                                       | Drop the whole `pricing`. |
+| `model`   | One of the six enumerated strings.                                                                                                       | Drop the whole `pricing`. |
+| `unit`    | Object; `amount` a non-empty string of ASCII digits (optionally one `.`); `per` a non-empty printable-ASCII string, length ≤ 64.          | Drop `unit`.             |
+| `typical` | Non-empty string of ASCII digits (an integer amount in the asset's smallest unit).                                                       | Drop `typical`.          |
+| `note`    | Printable ASCII (U+0020–U+007E), length ≤ 256, no Unicode control characters.                                                            | Drop `note`.             |
+
+### Catalogs and settled amounts (non-normative)
+
+A seller-declared `typical` is a claim, and the catalog is the only party
+positioned to check it. Where a settlement response exposes the actual settled
+amount in a stable location, a catalog holding a resource's settlement history
+can compare declared-`typical` against the observed median and flag or down-rank
+the gap, which keeps the field self-correcting rather than another number sellers
+optimise. How (and whether) a catalog uses `pricing` for filtering or ranking is
+an implementation detail, exactly as with the rest of discovery.
+
+---
+
 ## Facilitator Behavior
 
 When a facilitator receives a `PaymentPayload` containing the `bazaar` extension, it should:
