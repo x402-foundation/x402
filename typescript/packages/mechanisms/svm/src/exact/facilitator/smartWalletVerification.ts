@@ -465,22 +465,35 @@ export async function verifySmartWalletTransaction(
 }
 
 /**
- * Post-settlement verification for smart wallet transactions.
+ * Post-settlement verification.
  *
- * After a transaction confirms on-chain, verifies the TransferChecked actually
- * executed by inspecting the confirmed transaction's inner instructions.
- * Falls back to balance-delta checking if the RPC's transaction index has lag.
+ * Two independent evidence sources:
  *
- * This closes the TOCTOU gap where a malicious program could pass simulation
- * but skip the transfer during on-chain execution.
+ * - Inner instructions (smart-wallet settlements): confirms a TransferChecked
+ *   CPI to the expected destination ATA actually executed, closing the TOCTOU
+ *   gap where a malicious program passes simulation but skips the transfer
+ *   on-chain. Only meaningful for smart-wallet (CPI) settlements — a standard
+ *   wallet's transfer is a top-level instruction and never appears in inner
+ *   instructions, so callers pass `inspectInnerInstructions: false` there.
+ * - Balance delta (all settlements): confirms the destination ATA balance
+ *   actually increased by the required amount. This is the only check that
+ *   catches effective under-delivery — a Token-2022 mint with a transfer-fee
+ *   extension skims at execution, so the declared TransferChecked amount can
+ *   match while the payee receives less.
+ *
+ * When both sources are available, BOTH must pass: the inner-instruction
+ * amount is the declared one, so a skim can only be caught by the delta.
  *
  * @param signer - Facilitator signer with optional getConfirmedTransactionInnerInstructions
  * @param signature - Confirmed transaction signature
  * @param network - CAIP-2 network identifier
  * @param requirements - Payment requirements (asset, payTo, amount)
  * @param signerAddresses - Facilitator signer addresses
- * @param balanceBefore - Destination ATA balance before settlement (for fallback)
+ * @param balanceBefore - Destination ATA balance before settlement (for delivery check)
  * @param balanceBeforeTokenProgram - Which token program the balanceBefore was captured from (SPL Token or Token-2022)
+ * @param options - Verification options
+ * @param options.inspectInnerInstructions - Whether to inspect the confirmed
+ *   transaction's inner instructions (smart-wallet settlements only)
  * @returns Whether the transfer was verified on-chain
  */
 export async function verifyPostSettlement(
@@ -491,13 +504,17 @@ export async function verifyPostSettlement(
   signerAddresses: string[],
   balanceBefore: bigint | null,
   balanceBeforeTokenProgram?: string | null,
+  options?: { inspectInnerInstructions?: boolean },
 ): Promise<{ verified: boolean; method: "innerInstructions" | "balanceDelta" | "unverified" }> {
   const requiredAmount = BigInt(requirements.amount);
 
-  // Primary path: fetch confirmed transaction and inspect inner instructions.
+  // Smart-wallet path: fetch confirmed transaction and inspect inner instructions.
   // Retry with backoff to handle RPC indexing lag (transaction confirmed but
   // not yet indexed). Same polling pattern as confirmTransaction in the SVM signer.
-  if (typeof signer.getConfirmedTransactionInnerInstructions === "function") {
+  if (
+    options?.inspectInnerInstructions !== false &&
+    typeof signer.getConfirmedTransactionInnerInstructions === "function"
+  ) {
     let confirmed: SvmInnerInstructionsResult | null = null;
     for (let attempt = 0; attempt < 3; attempt++) {
       try {
@@ -543,6 +560,22 @@ export async function verifyPostSettlement(
         );
 
         if (matching.length >= 1) {
+          // The declared transfer executed. When a pre-balance is available,
+          // also confirm effective delivery — inner instructions carry the
+          // declared amount, so only the delta catches a transfer-fee skim.
+          if (balanceBefore !== null) {
+            const delta = await checkDeliveryBalanceDelta(
+              signer,
+              network,
+              requirements,
+              requiredAmount,
+              balanceBefore,
+              balanceBeforeTokenProgram,
+            );
+            if (delta === "bad") {
+              return { verified: false, method: "balanceDelta" };
+            }
+          }
           return { verified: true, method: "innerInstructions" };
         }
 
@@ -555,51 +588,23 @@ export async function verifyPostSettlement(
     }
   }
 
-  // Fallback: balance-delta check.
+  // Balance-delta delivery check.
   // If we recorded balanceBefore and the signer supports getTokenAccountBalance,
   // check whether the destination ATA balance increased by at least the required amount.
   // Try both SPL Token and Token-2022 programs — the payment may use either.
   if (balanceBefore !== null && typeof signer.getTokenAccountBalance === "function") {
-    // If we know which token program was used for balanceBefore, check that one first.
-    // Otherwise try both (SPL Token first, then Token-2022).
-    const tokenProgramsToCheck = balanceBeforeTokenProgram
-      ? [
-          balanceBeforeTokenProgram as Address,
-          ...(balanceBeforeTokenProgram === TOKEN_PROGRAM_ADDRESS.toString()
-            ? [TOKEN_2022_PROGRAM_ADDRESS as unknown as Address]
-            : [TOKEN_PROGRAM_ADDRESS as unknown as Address]),
-        ]
-      : [
-          TOKEN_PROGRAM_ADDRESS as unknown as Address,
-          TOKEN_2022_PROGRAM_ADDRESS as unknown as Address,
-        ];
-
-    let anyBalanceChecked = false;
-    for (const tokenProgram of tokenProgramsToCheck) {
-      try {
-        const [destinationAta] = await findAssociatedTokenPda({
-          mint: requirements.asset as Address,
-          owner: requirements.payTo as Address,
-          tokenProgram,
-        });
-
-        const balanceAfter = await signer.getTokenAccountBalance(
-          destinationAta.toString(),
-          network,
-        );
-
-        if (balanceAfter !== null) {
-          anyBalanceChecked = true;
-          if (balanceAfter - balanceBefore >= requiredAmount) {
-            return { verified: true, method: "balanceDelta" };
-          }
-        }
-      } catch {
-        // ATA doesn't exist or balance check failed for this token program. Try next.
-      }
+    const delta = await checkDeliveryBalanceDelta(
+      signer,
+      network,
+      requirements,
+      requiredAmount,
+      balanceBefore,
+      balanceBeforeTokenProgram,
+    );
+    if (delta === "ok") {
+      return { verified: true, method: "balanceDelta" };
     }
-
-    if (anyBalanceChecked) {
+    if (delta === "bad") {
       // We got balance data but it didn't show sufficient increase.
       return { verified: false, method: "balanceDelta" };
     }
@@ -609,4 +614,67 @@ export async function verifyPostSettlement(
   // Neither verification method available or both failed.
   // Return unverified — caller decides policy.
   return { verified: false, method: "unverified" };
+}
+
+/**
+ * Checks whether the destination ATA balance increased by at least the
+ * required amount. This reflects EFFECTIVE delivery: Token-2022 transfer-fee
+ * extensions and any other execution-time skim reduce the credited amount,
+ * so a short delta proves under-delivery even when every declared amount
+ * matched.
+ *
+ * @param signer - Facilitator signer with getTokenAccountBalance
+ * @param network - CAIP-2 network identifier
+ * @param requirements - Payment requirements (asset, payTo)
+ * @param requiredAmount - Minimum expected balance increase
+ * @param balanceBefore - Destination ATA balance captured pre-settlement
+ * @param balanceBeforeTokenProgram - Token program balanceBefore came from
+ * @returns "ok" (delta sufficient), "bad" (delta proven short), or
+ *   "unavailable" (no balance data could be read)
+ */
+async function checkDeliveryBalanceDelta(
+  signer: FacilitatorSvmSigner,
+  network: string,
+  requirements: PaymentRequirements,
+  requiredAmount: bigint,
+  balanceBefore: bigint,
+  balanceBeforeTokenProgram?: string | null,
+): Promise<"ok" | "bad" | "unavailable"> {
+  // If we know which token program was used for balanceBefore, check that one first.
+  // Otherwise try both (SPL Token first, then Token-2022).
+  const tokenProgramsToCheck = balanceBeforeTokenProgram
+    ? [
+        balanceBeforeTokenProgram as Address,
+        ...(balanceBeforeTokenProgram === TOKEN_PROGRAM_ADDRESS.toString()
+          ? [TOKEN_2022_PROGRAM_ADDRESS as unknown as Address]
+          : [TOKEN_PROGRAM_ADDRESS as unknown as Address]),
+      ]
+    : [
+        TOKEN_PROGRAM_ADDRESS as unknown as Address,
+        TOKEN_2022_PROGRAM_ADDRESS as unknown as Address,
+      ];
+
+  let anyBalanceChecked = false;
+  for (const tokenProgram of tokenProgramsToCheck) {
+    try {
+      const [destinationAta] = await findAssociatedTokenPda({
+        mint: requirements.asset as Address,
+        owner: requirements.payTo as Address,
+        tokenProgram,
+      });
+
+      const balanceAfter = await signer.getTokenAccountBalance!(destinationAta.toString(), network);
+
+      if (balanceAfter !== null) {
+        anyBalanceChecked = true;
+        if (balanceAfter - balanceBefore >= requiredAmount) {
+          return "ok";
+        }
+      }
+    } catch {
+      // ATA doesn't exist or balance check failed for this token program. Try next.
+    }
+  }
+
+  return anyBalanceChecked ? "bad" : "unavailable";
 }

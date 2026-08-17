@@ -754,6 +754,160 @@ describe("verifyPostSettlement", () => {
     // Should succeed on the first ATA check (Token-2022, the hinted program)
     expect(callCount).toBe(1);
   });
+
+  it("catches a transfer-fee skim when inner instructions pass but the delta is short", async () => {
+    const { verifyPostSettlement } = await import(
+      "../../src/exact/facilitator/smartWalletVerification"
+    );
+    const { findAssociatedTokenPda } = await import("@solana-program/token-2022");
+    const { TOKEN_PROGRAM_ADDRESS } = await import("@solana-program/token");
+
+    // Derive the real destination ATA so the inner-instruction match succeeds;
+    // the skim is then only catchable via the balance delta.
+    const [realDestAta] = await findAssociatedTokenPda({
+      mint: USDC_MINT as never,
+      owner: PAY_TO as never,
+      tokenProgram: TOKEN_PROGRAM_ADDRESS as never,
+    });
+
+    const mockSigner = {
+      getAddresses: () => [],
+      signTransaction: async () => "",
+      simulateTransaction: async () => {},
+      sendTransaction: async () => "",
+      confirmTransaction: async () => {},
+      // Declared TransferChecked matches requirements — but a Token-2022
+      // transfer fee skimmed at execution, so the payee only received half.
+      getConfirmedTransactionInnerInstructions: async () => ({
+        innerInstructions: [
+          {
+            index: 0,
+            instructions: [
+              {
+                programId: "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+                parsed: {
+                  type: "transferChecked",
+                  info: {
+                    mint: USDC_MINT,
+                    destination: realDestAta.toString(),
+                    authority: AUTHORITY,
+                    tokenAmount: { amount: "10000" },
+                  },
+                },
+              },
+            ],
+          },
+        ],
+      }),
+      getTokenAccountBalance: async () => BigInt(15000), // before 10000 → delta 5000 < 10000
+    };
+
+    const result = await verifyPostSettlement(
+      mockSigner as never,
+      "fakeSig123",
+      "solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp",
+      mockRequirements as never,
+      [],
+      BigInt(10000),
+      "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+    );
+
+    expect(result.verified).toBe(false);
+    expect(result.method).toBe("balanceDelta");
+  });
+
+  it("skips inner-instruction inspection when inspectInnerInstructions is false (static path)", async () => {
+    const { verifyPostSettlement } = await import(
+      "../../src/exact/facilitator/smartWalletVerification"
+    );
+
+    let innerCalled = false;
+    const mockSigner = {
+      getAddresses: () => [],
+      signTransaction: async () => "",
+      simulateTransaction: async () => {},
+      sendTransaction: async () => "",
+      confirmTransaction: async () => {},
+      getConfirmedTransactionInnerInstructions: async () => {
+        innerCalled = true;
+        return null;
+      },
+      getTokenAccountBalance: async () => BigInt(20000), // delta 10000 == required
+    };
+
+    const result = await verifyPostSettlement(
+      mockSigner as never,
+      "fakeSig123",
+      "solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp",
+      mockRequirements as never,
+      [],
+      BigInt(10000),
+      "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+      { inspectInnerInstructions: false },
+    );
+
+    expect(result.verified).toBe(true);
+    expect(result.method).toBe("balanceDelta");
+    expect(innerCalled).toBe(false);
+  });
+
+  it("fails a static-path settle when the delta proves under-delivery", async () => {
+    const { verifyPostSettlement } = await import(
+      "../../src/exact/facilitator/smartWalletVerification"
+    );
+
+    const mockSigner = {
+      getAddresses: () => [],
+      signTransaction: async () => "",
+      simulateTransaction: async () => {},
+      sendTransaction: async () => "",
+      confirmTransaction: async () => {},
+      getTokenAccountBalance: async () => BigInt(19500), // before 10000 → delta 9500 < 10000
+    };
+
+    const result = await verifyPostSettlement(
+      mockSigner as never,
+      "fakeSig123",
+      "solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp",
+      mockRequirements as never,
+      [],
+      BigInt(10000),
+      null,
+      { inspectInnerInstructions: false },
+    );
+
+    expect(result.verified).toBe(false);
+    expect(result.method).toBe("balanceDelta");
+  });
+
+  it("returns unverified on the static path when no pre-balance is available", async () => {
+    const { verifyPostSettlement } = await import(
+      "../../src/exact/facilitator/smartWalletVerification"
+    );
+
+    const mockSigner = {
+      getAddresses: () => [],
+      signTransaction: async () => "",
+      simulateTransaction: async () => {},
+      sendTransaction: async () => "",
+      confirmTransaction: async () => {},
+      getTokenAccountBalance: async () => BigInt(20000),
+    };
+
+    const result = await verifyPostSettlement(
+      mockSigner as never,
+      "fakeSig123",
+      "solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp",
+      mockRequirements as never,
+      [],
+      null,
+      null,
+      { inspectInnerInstructions: false },
+    );
+
+    expect(result.verified).toBe(false);
+    expect(result.method).toBe("unverified");
+  });
 });
 
 describe("ExactSvmScheme constructor enforcement", () => {
