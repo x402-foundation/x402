@@ -208,6 +208,9 @@ simulates with a non-zero budget; only the asset effects are asserted.
 A balance change is `{ coinType, address, amount }`; the facilitator matches the recipient by its
 `address` in the agreed asset's balance changes, summing the amounts per address.
 
+The facilitator MUST request balance changes from transports where they are opt-in and MUST reject
+verification or settlement when they are unavailable.
+
 Reading the agreed asset's `balanceChanges` (from simulation during verify, or from the executed
 effects during settle), the facilitator asserts that the declared recipient, `payTo`, was credited
 (net) exactly `amount` in the agreed asset.
@@ -344,7 +347,7 @@ to different instances each pass their local check.
 | `invalid_exact_sui_payload_missing_nonce` | verify / settle | Declared `extra.nonce` malformed (not valid Base64) or not carried as a `Pure` input in the transaction. |
 | `invalid_transaction_state` | verify | Transaction is already executed. |
 | `invalid_exact_sui_payload_simulation_failed` | verify | Simulation would not succeed. |
-| `invalid_exact_sui_payload_transfer_mismatch` | verify | Effects do not match the single-recipient requirement. |
+| `invalid_exact_sui_payload_transfer_mismatch` | verify | The declared recipient was not credited exactly `amount` in the agreed asset. |
 | `invalid_exact_sui_payload_verification_error` | verify | Catch-all for an unexpected error or RPC failure during verification. |
 | `invalid_payment_requirements` | server | Requirements are invalid. |
 | `duplicate_settlement` | settle | A repeat or concurrent settle for the same payment was rejected by deduplication. |
